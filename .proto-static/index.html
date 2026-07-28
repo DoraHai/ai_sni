@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>SEM 智投平台 v3.0 · 工作流总览</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #F5F7FA; color: #1F2937; font-size: 13px; min-height: 100vh; }
+
+  /* ===== 顶栏 ===== */
+  .topbar { background: #FFFFFF; border-bottom: 1px solid #E5E7EB; padding: 0 28px; height: 56px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+  .brand { display: flex; align-items: baseline; gap: 8px; }
+  .brand-name { font-size: 16px; font-weight: 600; color: #185FA5; }
+  .brand-ver { font-size: 11px; color: #9CA3AF; }
+  .topbar-right { display: flex; align-items: center; gap: 12px; }
+
+  /* 角色切换 */
+  .role-switch { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: #FFF7ED; border: 1px solid #FED7AA; border-radius: 6px; cursor: pointer; font-size: 12px; position: relative; user-select: none; color: #9A3412; }
+  .role-switch b { color: #BA7517; }
+  .role-switch .rs-dropdown { display: none; position: absolute; top: 100%; right: 0; margin-top: 6px; background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.12); min-width: 240px; padding: 6px; z-index: 1000; color: #1F2937; }
+  .role-switch.open .rs-dropdown { display: block; }
+  .role-switch .rs-head { font-size: 10px; color: #9CA3AF; padding: 6px 10px; font-weight: 500; }
+  .role-switch .rs-item { padding: 8px 10px; border-radius: 5px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 10px; }
+  .role-switch .rs-item:hover { background: #F4F8FD; }
+  .role-switch .rs-item.active { background: #EFF4FB; }
+  .role-switch .rs-icon { width: 24px; height: 24px; border-radius: 5px; display: flex; align-items: center; justify-content: center; color: #FFF; font-size: 12px; flex-shrink: 0; }
+  .role-switch .rs-info { flex: 1; }
+  .role-switch .rs-name { font-weight: 500; color: #1F2937; }
+  .role-switch .rs-desc { font-size: 10px; color: #9CA3AF; margin-top: 1px; }
+  .role-switch .rs-check { color: #185FA5; }
+
+  /* 客户切换（复用旧版） */
+  .client-switch { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: #F3F4F6; border-radius: 6px; cursor: pointer; font-size: 12px; position: relative; user-select: none; }
+  .client-switch b { color: #185FA5; }
+  .client-switch .cs-dropdown { display: none; position: absolute; top: 100%; right: 0; margin-top: 6px; background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.12); min-width: 300px; padding: 6px; z-index: 1000; }
+  .client-switch.open .cs-dropdown { display: block; }
+  .client-switch .cs-head { font-size: 10px; color: #9CA3AF; padding: 6px 12px; font-weight: 500; }
+  .client-switch .cs-item { padding: 8px 12px; border-radius: 5px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 10px; color: #1F2937; }
+  .client-switch .cs-item:hover { background: #F4F8FD; }
+  .client-switch .cs-item.active { background: #EFF4FB; }
+  .client-switch .cs-logo { width: 26px; height: 26px; border-radius: 5px; display: flex; align-items: center; justify-content: center; color: #FFF; font-weight: 600; font-size: 11px; flex-shrink: 0; }
+  .client-switch .cs-logo-1 { background: linear-gradient(135deg,#185FA5 0%,#2C7CC8 100%); }
+  .client-switch .cs-logo-2 { background: linear-gradient(135deg,#1D9E75 0%,#4DBE99 100%); }
+  .client-switch .cs-logo-3 { background: linear-gradient(135deg,#BA7517 0%,#DC9A47 100%); }
+  .client-switch .cs-logo-4 { background: linear-gradient(135deg,#6B47B5 0%,#9474D4 100%); }
+  .client-switch .cs-logo-5 { background: linear-gradient(135deg,#E24B4A 0%,#EE7472 100%); }
+  .client-switch .cs-name { font-weight: 500; }
+  .client-switch .cs-meta { font-size: 10px; color: #9CA3AF; margin-top: 1px; }
+  .client-switch .cs-check { color: #185FA5; margin-left: auto; }
+  .client-switch .cs-divider { height: 1px; background: #F3F4F6; margin: 6px 0; }
+
+  .user-avatar { width: 30px; height: 30px; border-radius: 50%; background: #185FA5; color: #FFF; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+
+  /* ===== 主区 ===== */
+  .container { max-width: 1320px; margin: 0 auto; padding: 28px; }
+
+  /* 欢迎条 */
+  .welcome { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 18px; }
+  .welcome-left .hello { font-size: 22px; font-weight: 600; color: #1F2937; }
+  .welcome-left .sub { font-size: 12px; color: #6B7280; margin-top: 4px; }
+  .welcome-right { display: flex; gap: 8px; }
+  .btn { padding: 6px 14px; border-radius: 5px; font-size: 12px; cursor: pointer; border: none; font-weight: 500; display: inline-flex; align-items: center; gap: 4px; }
+  .btn-primary { background: #185FA5; color: #FFF; }
+  .btn-default { background: #FFF; color: #4B5563; border: 1px solid #D1D5DB; }
+  .btn:hover { opacity: 0.9; }
+
+  /* 今日待办横条 */
+  .today-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 22px; }
+  .ts-card { background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 14px 16px; display: flex; align-items: center; gap: 14px; cursor: pointer; transition: all 0.15s; }
+  .ts-card:hover { border-color: #185FA5; box-shadow: 0 2px 8px rgba(24,95,165,0.06); }
+  .ts-card.p0 { border-left: 4px solid #E24B4A; background: linear-gradient(90deg,#FEF6F6 0%,#FFF 30%); }
+  .ts-card.p1 { border-left: 4px solid #E24B4A; }
+  .ts-card.p2 { border-left: 4px solid #BA7517; }
+  .ts-card.verify { border-left: 4px solid #BA7517; background: linear-gradient(90deg,#FCF6EA 0%,#FFF 30%); }
+  .ts-num { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+  .p0 .ts-num, .p1 .ts-num { color: #E24B4A; }
+  .p2 .ts-num, .verify .ts-num { color: #BA7517; }
+  .ts-info { flex: 1; }
+  .ts-label { font-size: 11px; color: #6B7280; }
+  .ts-title { font-size: 13px; font-weight: 600; color: #1F2937; margin-top: 2px; }
+  .ts-arrow { color: #9CA3AF; font-size: 18px; }
+
+  /* 区块标题 */
+  .section-title { font-size: 15px; font-weight: 600; color: #1F2937; margin-bottom: 14px; display: flex; align-items: center; gap: 10px; }
+  .section-title .st-line { flex: 1; height: 1px; background: #E5E7EB; }
+  .section-title .st-hint { font-size: 11px; color: #9CA3AF; font-weight: 400; }
+
+  /* 工作流卡片 */
+  .workflow-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 28px; }
+  .wf-card { background: #FFF; border: 1px solid #E5E7EB; border-radius: 10px; padding: 0; overflow: hidden; transition: all 0.2s; cursor: pointer; display: flex; flex-direction: column; position: relative; }
+  .wf-card:hover { border-color: #185FA5; box-shadow: 0 6px 20px rgba(24,95,165,0.08); transform: translateY(-2px); }
+  .wf-card.role-hidden { display: none; }
+
+  .wf-head { padding: 18px 20px 14px; border-bottom: 1px solid #F3F4F6; display: flex; align-items: flex-start; gap: 12px; }
+  .wf-icon { width: 42px; height: 42px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 20px; color: #FFF; flex-shrink: 0; }
+  .wf-1 .wf-icon { background: linear-gradient(135deg,#6B47B5 0%,#9474D4 100%); }
+  .wf-2 .wf-icon { background: linear-gradient(135deg,#185FA5 0%,#3E84C8 100%); }
+  .wf-3 .wf-icon { background: linear-gradient(135deg,#1D9E75 0%,#4DBE99 100%); }
+  .wf-4 .wf-icon { background: linear-gradient(135deg,#BA7517 0%,#DC9A47 100%); }
+  .wf-5 .wf-icon { background: linear-gradient(135deg,#E24B4A 0%,#EE7472 100%); }
+  .wf-6 .wf-icon { background: linear-gradient(135deg,#4B5563 0%,#6B7280 100%); }
+
+  .wf-titles { flex: 1; min-width: 0; }
+  .wf-num { font-size: 11px; color: #9CA3AF; font-weight: 500; letter-spacing: 0.5px; }
+  .wf-name { font-size: 16px; font-weight: 600; color: #1F2937; margin-top: 2px; }
+  .wf-tag { font-size: 12px; color: #6B7280; margin-top: 4px; }
+
+  .wf-badge { position: absolute; top: 14px; right: 14px; font-size: 10px; padding: 2px 7px; border-radius: 10px; font-weight: 500; }
+  .wf-badge.hot { background: #FEF6F6; color: #E24B4A; border: 1px solid #FECACA; }
+  .wf-badge.once { background: #F4F8FD; color: #185FA5; border: 1px solid #C5D7EE; }
+  .wf-badge.todo { background: #FCF6EA; color: #BA7517; border: 1px solid #FED7AA; }
+
+  .wf-body { padding: 12px 20px 16px; flex: 1; }
+  .wf-page-list { display: flex; flex-direction: column; gap: 2px; }
+  .wf-page-item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 5px; font-size: 12px; color: #4B5563; transition: all 0.1s; cursor: pointer; }
+  .wf-page-item:hover { background: #F4F8FD; color: #185FA5; }
+  .wf-page-item .pg-dot { width: 4px; height: 4px; border-radius: 50%; background: #D1D5DB; flex-shrink: 0; }
+  .wf-page-item:hover .pg-dot { background: #185FA5; }
+  .wf-page-item .pg-name { flex: 1; }
+  .wf-page-item .pg-arrow { color: #C5D7EE; opacity: 0; transition: opacity 0.15s; }
+  .wf-page-item:hover .pg-arrow { opacity: 1; }
+  .wf-page-item.pg-stub { color: #C5D7EE; cursor: not-allowed; }
+  .wf-page-item.pg-stub:hover { background: transparent; color: #C5D7EE; }
+  .wf-page-item.pg-stub .pg-tag { font-size: 9px; padding: 1px 5px; background: #F3F4F6; color: #9CA3AF; border-radius: 3px; margin-left: 4px; }
+
+  .wf-foot { padding: 12px 20px; background: #FAFBFC; border-top: 1px solid #F3F4F6; display: flex; justify-content: space-between; align-items: center; }
+  .wf-stats { font-size: 11px; color: #6B7280; }
+  .wf-stats b { color: #185FA5; font-weight: 600; }
+  .wf-enter { font-size: 12px; color: #185FA5; font-weight: 500; }
+
+  /* 底部辅助区 */
+  .footer-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
+  .panel { background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 18px 20px; }
+  .panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .panel-title { font-size: 14px; font-weight: 600; color: #1F2937; }
+  .panel-sub { font-size: 11px; color: #9CA3AF; }
+
+  /* 数据源健康 */
+  .source-list { display: flex; flex-direction: column; gap: 10px; }
+  .source-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #FAFBFC; border-radius: 6px; }
+  .source-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .src-ok { background: #1D9E75; }
+  .src-warn { background: #BA7517; }
+  .src-err { background: #E24B4A; }
+  .source-name { font-size: 12px; color: #1F2937; flex: 1; font-weight: 500; }
+  .source-meta { font-size: 10px; color: #9CA3AF; }
+
+  /* 推荐路径 */
+  .recommend-flow { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  .rf-step { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; background: #F4F8FD; border-radius: 5px; font-size: 11px; color: #185FA5; cursor: pointer; }
+  .rf-step:hover { background: #EFF4FB; }
+  .rf-arrow { color: #C5D7EE; font-size: 14px; }
+  .recommend-desc { font-size: 12px; color: #4B5563; line-height: 1.7; margin-top: 12px; }
+  .recommend-desc b { color: #1F2937; }
+
+  /* AI 每日提示 */
+  .ai-tip { background: linear-gradient(135deg,#F4F8FD 0%,#FAFBFC 100%); border: 1px solid #C5D7EE; border-radius: 10px; padding: 16px 20px; margin-bottom: 22px; }
+  .ai-tip-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; font-weight: 600; color: #1F2937; }
+  .ai-badge { background: linear-gradient(135deg,#185FA5 0%,#2C7CC8 100%); color: #FFF; padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 600; }
+  .ai-tip-body { font-size: 12px; color: #4B5563; line-height: 1.7; }
+  .ai-tip-body b { color: #1F2937; }
+  .btn-link { background: none; border: none; color: #185FA5; font-size: 12px; cursor: pointer; padding: 0; }
+
+  /* 客户角色 placeholder */
+  .role-hint { font-size: 10px; color: #BA7517; background: #FFF7ED; border: 1px dashed #FED7AA; padding: 2px 6px; border-radius: 3px; margin-left: 8px; }
+</style>
+</head>
+<body>
+
+<!-- ============ 顶栏 ============ -->
+<div class="topbar">
+  <div class="brand">
+    <span class="brand-name">SEM 智投平台</span>
+    <span class="brand-ver">v3.0 · 工作流版</span>
+  </div>
+  <div class="topbar-right">
+    <!-- 客户切换 -->
+    <div class="client-switch" onclick="event.stopPropagation();this.classList.toggle('open');">
+      当前客户：<b>苏尔寿</b> ▾
+      <div class="cs-dropdown" onclick="event.stopPropagation();">
+        <div class="cs-head">切换客户 / 聚合视图</div>
+        <div class="cs-item">
+          <div class="cs-logo" style="background:linear-gradient(135deg,#185FA5 0%,#1D9E75 100%);">全</div>
+          <div style="flex:1;"><div class="cs-name">全部客户聚合视图</div><div class="cs-meta">5 客户 · 9 账户 · 348 计划</div></div>
+        </div>
+        <div class="cs-divider"></div>
+        <div class="cs-head">单一客户（数据完全隔离）</div>
+        <div class="cs-item active">
+          <div class="cs-logo cs-logo-1">SU</div>
+          <div style="flex:1;"><div class="cs-name">苏尔寿</div><div class="cs-meta">工业泵/分离技术 · 3 账户 · 128 计划</div></div>
+          <span class="cs-check">✓</span>
+        </div>
+        <div class="cs-item">
+          <div class="cs-logo cs-logo-2">ME</div>
+          <div style="flex:1;"><div class="cs-name">某家电制造客户</div><div class="cs-meta">家电消费品 · 2 账户 · 86 计划</div></div>
+        </div>
+        <div class="cs-item">
+          <div class="cs-logo cs-logo-3">SH</div>
+          <div style="flex:1;"><div class="cs-name">某化工集团</div><div class="cs-meta">基础化工 · 1 账户 · 42 计划</div></div>
+        </div>
+        <div class="cs-item">
+          <div class="cs-logo cs-logo-4">EH</div>
+          <div style="flex:1;"><div class="cs-name">某医疗设备客户</div><div class="cs-meta">医疗器械 · 2 账户 · 64 计划</div></div>
+        </div>
+        <div class="cs-item">
+          <div class="cs-logo cs-logo-5">CT</div>
+          <div style="flex:1;"><div class="cs-name">某新能源客户</div><div class="cs-meta">新能源装备 · 1 账户 · 28 计划</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 角色切换 -->
+    <div class="role-switch" onclick="event.stopPropagation();this.classList.toggle('open');">
+      角色：<b id="currentRole">运营</b> ▾
+      <div class="rs-dropdown" onclick="event.stopPropagation();">
+        <div class="rs-head">切换查看角色（仅原型演示）</div>
+        <div class="rs-item" data-role="admin" onclick="switchRole('admin', this)">
+          <div class="rs-icon" style="background:#6B47B5;">管</div>
+          <div class="rs-info"><div class="rs-name">管理员</div><div class="rs-desc">全部 6 个工作流可见 · 含系统设置</div></div>
+        </div>
+        <div class="rs-item active" data-role="operator" onclick="switchRole('operator', this)">
+          <div class="rs-icon" style="background:#185FA5;">运</div>
+          <div class="rs-info"><div class="rs-name">运营</div><div class="rs-desc">5 个工作流（除"应用管理"）</div></div>
+          <span class="rs-check">✓</span>
+        </div>
+        <div class="rs-item" data-role="client" onclick="switchRole('client', this)">
+          <div class="rs-icon" style="background:#1D9E75;">客</div>
+          <div class="rs-info"><div class="rs-name">品牌方客户</div><div class="rs-desc">只看每日盯盘 + 客户交付</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="user-avatar">优</div>
+  </div>
+</div>
+
+<!-- ============ 主区 ============ -->
+<div class="container">
+
+  <!-- 欢迎 -->
+  <div class="welcome">
+    <div class="welcome-left">
+      <div class="hello">您好，<span id="userName">优运营</span></div>
+      <div class="sub">2026 年 6 月 5 日 星期五 · 数据更新时间 02:34 · 当前覆盖 <b style="color:#185FA5;">5</b> 个客户 / <b style="color:#185FA5;">348</b> 个推广计划</div>
+    </div>
+    <div class="welcome-right">
+      <button class="btn btn-default">当前月报周期 · 2026 年 5 月</button>
+      <button class="btn btn-primary" onclick="location.href='02-monitor/01-dashboard.html'">进入数据看板</button>
+    </div>
+  </div>
+
+  <!-- 今日待办横条 -->
+  <div class="today-strip">
+    <div class="ts-card p0" onclick="location.href='02-monitor/02-alerts.html'">
+      <div class="ts-num">1</div>
+      <div class="ts-info">
+        <div class="ts-label">P0 最高紧急</div>
+        <div class="ts-title">品牌词排名异常</div>
+      </div>
+      <div class="ts-arrow">›</div>
+    </div>
+    <div class="ts-card p1" onclick="location.href='02-monitor/02-alerts.html'">
+      <div class="ts-num">3</div>
+      <div class="ts-info">
+        <div class="ts-label">P1 立即执行</div>
+        <div class="ts-title">高消费零转化</div>
+      </div>
+      <div class="ts-arrow">›</div>
+    </div>
+    <div class="ts-card p2" onclick="location.href='02-monitor/02-alerts.html'">
+      <div class="ts-num">8</div>
+      <div class="ts-info">
+        <div class="ts-label">P2 本周处理</div>
+        <div class="ts-title">排名恶化 / 零转化</div>
+      </div>
+      <div class="ts-arrow">›</div>
+    </div>
+    <div class="ts-card verify" onclick="location.href='04-verify/02-verify-queue.html'">
+      <div class="ts-num">8</div>
+      <div class="ts-info">
+        <div class="ts-label">⏱ 待验证调价</div>
+        <div class="ts-title">推广实况 2-4h 复查</div>
+      </div>
+      <div class="ts-arrow">›</div>
+    </div>
+  </div>
+
+  <!-- AI 每日洞察 -->
+  <div class="ai-tip">
+    <div class="ai-tip-head">
+      <span class="ai-badge">AI 每日洞察</span>
+      基于 2026 年 6 月 4 日数据 · 跨客户聚合分析
+    </div>
+    <div class="ai-tip-body">
+      昨日整体：消费 ¥ 14,820（↑ 8.2%），线索 38 条（CPL ¥ 124）。重点关注 3 件事：
+      ① <b>苏尔寿 · 规整填料价格</b> 等 4 个重点词上方位排名单周涨幅 > 1.0，疑似竞争加剧；
+      ② <b>EO-高纯度计划</b> CPC 已连续 6 周上涨至 ¥14.20，建议排查落地页转化链路；
+      ③ <b>某家电客户</b> 5 月月报已发送，有 2 个客户反馈待整理为新需求。
+      <button class="btn-link" style="margin-left:6px;" onclick="location.href='02-monitor/01-dashboard.html'">查看完整看板 →</button>
+    </div>
+  </div>
+
+  <!-- ============ 工作流卡片 ============ -->
+  <div class="section-title">
+    按工作流进入
+    <span class="st-line"></span>
+    <span class="st-hint">依据代运营服务节奏组织 · 每一个工作流对应一次完整的任务闭环</span>
+  </div>
+
+  <div class="workflow-grid">
+
+    <!-- 4.1 首次接入 -->
+    <div class="wf-card wf-1" data-roles="admin">
+      <div class="wf-badge once">一次性</div>
+      <div class="wf-head">
+        <div class="wf-icon">🚀</div>
+        <div class="wf-titles">
+          <div class="wf-num">工作流 01</div>
+          <div class="wf-name">首次接入</div>
+          <div class="wf-tag">新客户授权、开户与初始化引导</div>
+        </div>
+      </div>
+      <div class="wf-body">
+        <div class="wf-page-list">
+          <div class="wf-page-item pg-stub"><span class="pg-dot"></span><span class="pg-name">登录</span><span class="pg-tag">待画</span></div>
+          <div class="wf-page-item pg-stub"><span class="pg-dot"></span><span class="pg-name">应用配置（OAuth 应用 CRUD）</span><span class="pg-tag">待画</span></div>
+          <div class="wf-page-item pg-stub"><span class="pg-dot"></span><span class="pg-name">百度授权引导</span><span class="pg-tag">待画</span></div>
+          <div class="wf-page-item pg-stub"><span class="pg-dot"></span><span class="pg-name">首次同步进度</span><span class="pg-tag">待画</span></div>
+        </div>
+      </div>
+      <div class="wf-foot">
+        <div class="wf-stats"><b>4</b> 个子页面 · 仅新客户首次需要</div>
+        <div class="wf-enter">进入 →</div>
+      </div>
+    </div>
+
+    <!-- 4.2 每日盯盘 -->
+    <div class="wf-card wf-2" data-roles="admin,operator,client">
+      <div class="wf-badge hot">每日</div>
+      <div class="wf-head">
+        <div class="wf-icon">📊</div>
+        <div class="wf-titles">
+          <div class="wf-num">工作流 02</div>
+          <div class="wf-name">每日盯盘</div>
+          <div class="wf-tag">每日数据巡检与异常识别处置</div>
+        </div>
+      </div>
+      <div class="wf-body">
+        <div class="wf-page-list">
+          <div class="wf-page-item pg-stub"><span class="pg-dot"></span><span class="pg-name">数据看板（KPI + 趋势 + 月报后待办）</span><span class="pg-tag">待画</span></div>
+          <div class="wf-page-item pg-stub"><span class="pg-dot"></span><span class="pg-name">异常提醒（P0~P5 分级）</span><span class="pg-tag">待画</span></div>
+          <div class="wf-page-item pg-stub"><span class="pg-dot"></span><span class="pg-name">关键词详情下钻</span><span class="pg-tag">多入口复用</span></div>
+        </div>
+      </div>
+      <div class="wf-foot">
+        <div class="wf-stats"><b>3</b> 个子页面 · 当前 <b style="color:#E24B4A;">12</b> 条待处理异常</div>
+        <div class="wf-enter">进入 →</div>
+      </div>
+    </div>
+
+    <!-- 4.3 优化执行 -->
+    <div class="wf-card wf-3" data-roles="admin,operator">
+      <div class="wf-badge hot">每周</div>
+      <div class="wf-head">
+        <div class="wf-icon">⚡</div>
+        <div class="wf-titles">
+          <div class="wf-num">工作流 03</div>
+          <div class="wf-name">优化执行</div>
+          <div class="wf-tag">关键词拓展、出价优化与否词管理</div>
+        </div>
+      </div>
+      <div class="wf-body">
+        <div class="wf-page-list">
+          <div class="wf-page-item pg-stub"><span class="pg-dot"></span><span class="pg-name">拓词（URL 爬取 + 百度规划师 + 搜索词）</span><span class="pg-tag">待画</span></div>
+          <div class="wf-page-item pg-stub"><span class="pg-dot"></span><span class="pg-name">关键词工作台（5 类分级 + 4 层系数 + AI 建议）</span><span class="pg-tag">待画</span></div>
+          <div class="wf-page-item pg-stub"><span class="pg-dot"></span><span class="pg-name">否词管理</span><span class="pg-tag">待画</span></div>
+        </div>
+      </div>
+      <div class="wf-foot">
+        <div class="wf-stats"><b>3</b> 个子页面 · 今日 <b style="color:#185FA5;">23</b> 条 AI 建议待处理</div>
+        <div class="wf-enter">进入 →</div>
+      </div>
+    </div>
+
+    <!-- 4.4 效果验证 -->
+    <div class="wf-card wf-4" data-roles="admin,operator">
+      <div class="wf-badge todo">每日</div>
+      <div class="wf-head">
+        <div class="wf-icon">🔍</div>
+        <div class="wf-titles">
+          <div class="wf-num">工作流 04</div>
+          <div class="wf-name">效果验证</div>
+          <div class="wf-tag">调价后效果复核与归因验证</div>
+        </div>
+      </div>
+      <div class="wf-body">
+        <div class="wf-page-list">
+          <div class="wf-page-item pg-stub"><span class="pg-dot"></span><span class="pg-name">调价台账（百度操作日志 + AI 建议追踪）</span><span class="pg-tag">待画</span></div>
+          <div class="wf-page-item pg-stub"><span class="pg-dot"></span><span class="pg-name">待验证调价队列（调后效果复核）</span><span class="pg-tag">待画</span></div>
+          <div class="wf-page-item pg-stub"><span class="pg-dot"></span><span class="pg-name">波动分析任务（多计划异步排队）</span><span class="pg-tag">待画</span></div>
+        </div>
+      </div>
+      <div class="wf-foot">
+        <div class="wf-stats"><b>3</b> 个子页面 · 待验证 <b style="color:#BA7517;">8</b> 条</div>
+        <div class="wf-enter">进入 →</div>
+      </div>
+    </div>
+
+    <!-- 4.5 客户交付 -->
+    <div class="wf-card wf-5" data-roles="admin,operator,client">
+      <div class="wf-badge todo">每月</div>
+      <div class="wf-head">
+        <div class="wf-icon">📨</div>
+        <div class="wf-titles">
+          <div class="wf-num">工作流 05</div>
+          <div class="wf-name">客户交付</div>
+          <div class="wf-tag">月度报告输出、客户沟通与新增活动规划</div>
+        </div>
+      </div>
+      <div class="wf-body">
+        <div class="wf-page-list">
+          <div class="wf-page-item pg-stub"><span class="pg-dot"></span><span class="pg-name">分析报告（含 PPT 分段导出）</span><span class="pg-tag">待画</span></div>
+          <div class="wf-page-item pg-stub"><span class="pg-dot"></span><span class="pg-name">月报后流程（客户反馈 + 新需求收集）</span><span class="pg-tag">待画</span></div>
+          <div class="wf-page-item pg-stub"><span class="pg-dot"></span><span class="pg-name">新增活动/产线规划</span><span class="pg-tag">待画</span></div>
+          <div class="wf-page-item pg-stub"><span class="pg-dot"></span><span class="pg-name">线索管理</span><span class="pg-tag">待画</span></div>
+        </div>
+      </div>
+      <div class="wf-foot">
+        <div class="wf-stats"><b>4</b> 个子页面 · <b style="color:#BA7517;">2</b> 个客户月报待发</div>
+        <div class="wf-enter">进入 →</div>
+      </div>
+    </div>
+
+    <!-- 4.6 系统设置 -->
+    <div class="wf-card wf-6" data-roles="admin,operator">
+      <div class="wf-badge">低频</div>
+      <div class="wf-head">
+        <div class="wf-icon">⚙️</div>
+        <div class="wf-titles">
+          <div class="wf-num">工作流 06</div>
+          <div class="wf-name">系统设置</div>
+          <div class="wf-tag">客户账户、角色权限与数据接入配置</div>
+        </div>
+      </div>
+      <div class="wf-body">
+        <div class="wf-page-list">
+          <div class="wf-page-item pg-stub"><span class="pg-dot"></span><span class="pg-name">客户管理（树形：客户→百度子账户）</span><span class="pg-tag">待画</span></div>
+          <div class="wf-page-item pg-stub"><span class="pg-dot"></span><span class="pg-name">账号与角色权限</span><span class="pg-tag">待画</span></div>
+          <div class="wf-page-item pg-stub"><span class="pg-dot"></span><span class="pg-name">应用管理（OAuth 应用 CRUD）<span class="role-hint">仅管理员</span></span><span class="pg-tag">待画</span></div>
+          <div class="wf-page-item pg-stub"><span class="pg-dot"></span><span class="pg-name">数据接入（API 健康 / token 倒计时）</span><span class="pg-tag">待画</span></div>
+        </div>
+      </div>
+      <div class="wf-foot">
+        <div class="wf-stats"><b>4</b> 个子页面 · token 23h 后到期</div>
+        <div class="wf-enter">进入 →</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============ 推荐路径 + 数据源 ============ -->
+  <div class="footer-grid">
+
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title">本日推荐工作路径</div>
+        <div class="panel-sub">基于昨日异常与待办自动生成</div>
+      </div>
+      <div class="recommend-flow">
+        <span class="rf-step" onclick="location.href='02-monitor/01-dashboard.html'">数据看板巡检</span>
+        <span class="rf-arrow">→</span>
+        <span class="rf-step" onclick="location.href='02-monitor/02-alerts.html'">处置 1 条 P0 异常</span>
+        <span class="rf-arrow">→</span>
+        <span class="rf-step" onclick="location.href='03-optimize/02-plan-management.html'">处理 23 条 AI 建议</span>
+        <span class="rf-arrow">→</span>
+        <span class="rf-step" onclick="location.href='04-verify/02-verify-queue.html'">复核昨日 8 条调价</span>
+        <span class="rf-arrow">→</span>
+        <span class="rf-step" onclick="location.href='05-delivery/02-monthly-followup.html'">月报后客户跟进 2 项</span>
+      </div>
+      <div class="recommend-desc">
+        预计耗时 <b>45 分钟</b>。优先处理苏尔寿品牌词排名异常（P0 级，当前下滑至第 2 位），其次核查 EO-高纯度计划的 CPC（已连续 6 周上涨，接近投入产出比预警阈值）。
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title">数据源健康状态</div>
+        <div class="panel-sub">实时</div>
+      </div>
+      <div class="source-list">
+        <div class="source-item">
+          <span class="source-dot src-ok"></span>
+          <span class="source-name">百度营销 API</span>
+          <span class="source-meta">02:34 已同步 · 请求频次正常</span>
+        </div>
+        <div class="source-item">
+          <span class="source-dot src-ok"></span>
+          <span class="source-name">爱番番线索接口</span>
+          <span class="source-meta">02:36 已同步 · 共 38 条</span>
+        </div>
+        <div class="source-item">
+          <span class="source-dot src-warn"></span>
+          <span class="source-name">OAuth 授权令牌</span>
+          <span class="source-meta">23 小时后到期 · 系统自动刷新</span>
+        </div>
+        <div class="source-item">
+          <span class="source-dot src-ok"></span>
+          <span class="source-name">基木鱼落地页同步</span>
+          <span class="source-meta">已覆盖 5/5 客户</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div style="text-align:center;margin-top:24px;font-size:11px;color:#9CA3AF;">
+    SEM 智投平台 v3.0 · 工作流原型 · © 2026 思文 SEM 代运营团队
+  </div>
+
+</div>
+
+<script>
+  // 全局点击关闭下拉
+  document.addEventListener('click', function() {
+    document.querySelectorAll('.client-switch.open, .role-switch.open').forEach(el => el.classList.remove('open'));
+  });
+
+  // 工作流卡片点击进入（默认跳到该工作流第一个页面，暂时全部 stub）
+  const wfEntries = {
+    'wf-1': '01-onboarding/01-login.html',
+    'wf-2': '02-monitor/01-dashboard.html',
+    'wf-3': '03-optimize/02-plan-management.html',
+    'wf-4': '04-verify/01-adjustment-log.html',
+    'wf-5': '05-delivery/01-report.html',
+    'wf-6': '06-settings/01-customers.html',
+  };
+  document.querySelectorAll('.wf-card').forEach(card => {
+    card.addEventListener('click', function(e) {
+      // 子页面点击不触发卡片整体跳转
+      if (e.target.closest('.wf-page-item')) return;
+      const cls = [...card.classList].find(c => /^wf-\d$/.test(c));
+      if (cls && wfEntries[cls]) location.href = wfEntries[cls];
+    });
+  });
+
+  // 自动接线工作流卡片内的子页面项（按名称匹配 → URL）
+  (function wirePageItems() {
+    const pgMap = {
+      '登录':'01-onboarding/01-login.html','应用配置':'01-onboarding/02-app-config.html','授权引导':'01-onboarding/03-oauth-guide.html','首次同步':'01-onboarding/04-syncing.html',
+      '数据看板':'02-monitor/01-dashboard.html','异常提醒':'02-monitor/02-alerts.html','关键词详情':'02-monitor/03-keyword-detail.html',
+      '拓词':'03-optimize/01-keyword-expand.html','关键词工作台':'03-optimize/02-plan-management.html','否词管理':'03-optimize/04-negative-words.html',
+      '调价台账':'04-verify/01-adjustment-log.html','待验证调价':'04-verify/02-verify-queue.html','波动分析任务':'04-verify/03-fluctuation-tasks.html',
+      '分析报告':'05-delivery/01-report.html','月报后流程':'05-delivery/02-monthly-followup.html','新增活动规划':'05-delivery/03-new-campaign.html','线索管理':'05-delivery/04-leads.html',
+      '客户管理':'06-settings/01-customers.html','账号与权限':'06-settings/02-accounts-roles.html','应用管理':'06-settings/03-apps.html','数据接入':'06-settings/04-data-source.html'
+    };
+    const alias = { '百度授权引导':'授权引导','首次同步进度':'首次同步','关键词详情下钻':'关键词详情','待验证调价队列':'待验证调价','新增活动/产线规划':'新增活动规划','账号与角色权限':'账号与权限' };
+    document.querySelectorAll('.wf-page-item').forEach(item => {
+      item.classList.remove('pg-stub');
+      const tag = item.querySelector('.pg-tag'); if (tag) tag.remove();
+      const nameEl = item.querySelector('.pg-name'); if (!nameEl) return;
+      let n = nameEl.textContent.trim().replace(/[（(].*/,'').trim();
+      if (alias[n]) n = alias[n];
+      if (pgMap[n]) {
+        item.setAttribute('onclick', "event.stopPropagation();location.href='" + pgMap[n] + "'");
+        item.style.cursor = 'pointer';
+      }
+    });
+  })();
+
+  // 角色切换
+  function switchRole(role, el) {
+    document.querySelectorAll('.rs-item').forEach(i => {
+      i.classList.remove('active');
+      const check = i.querySelector('.rs-check');
+      if (check) check.remove();
+    });
+    el.classList.add('active');
+    const check = document.createElement('span');
+    check.className = 'rs-check';
+    check.textContent = '✓';
+    el.appendChild(check);
+
+    const labels = { admin: '管理员', operator: '运营', client: '品牌方客户' };
+    const names = { admin: '管理员', operator: '优运营', client: '苏尔寿 · 王经理' };
+    document.getElementById('currentRole').textContent = labels[role];
+    document.getElementById('userName').textContent = names[role];
+
+    document.querySelectorAll('.wf-card').forEach(card => {
+      const allowed = (card.dataset.roles || '').split(',');
+      card.classList.toggle('role-hidden', !allowed.includes(role));
+    });
+
+    // 关闭下拉
+    document.querySelector('.role-switch').classList.remove('open');
+  }
+</script>
+
+</body>
+</html>

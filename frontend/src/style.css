@@ -1,0 +1,40 @@
+:root {
+  --sem-primary: #185FA5;
+  --sem-success: #1D9E75;
+  --sem-danger: #E24B4A;
+  --sem-text: #1F2937;
+  --sem-text-sub: #6B7280;
+  --sem-border: #E5E7EB;
+  --sem-bg: #F5F6F8;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: var(--sem-bg);
+  color: var(--sem-text);
+}
+
+/* Element Plus 主题对齐原型主色 #185FA5（原型 3.0 设计语言） */
+:root {
+  --el-color-primary: #185FA5;
+  --el-color-primary-light-3: #5d8fc0;
+  --el-color-primary-light-5: #8bafd2;
+  --el-color-primary-light-7: #bacfe4;
+  --el-color-primary-light-8: #d1dfed;
+  --el-color-primary-light-9: #e8eff6;
+  --el-color-primary-dark-2: #134c84;
+}
+
+/* 打印 / 导出 PDF：藏掉全局 app 框架（侧边栏 + 顶栏），只留正文，并释放
+   100vh + overflow 约束让报告跨页流动（月报「打印/导出 PDF」用）。
+   报告页内部的工具栏/目录由各组件 .no-print 自行隐藏。 */
+@media print {
+  .side,
+  .topbar { display: none !important; }
+  .el-container { height: auto !important; display: block !important; }
+  .main { overflow: visible !important; height: auto !important; padding: 0 !important; }
+  html, body, #app { height: auto !important; overflow: visible !important; background: #fff !important; }
+}

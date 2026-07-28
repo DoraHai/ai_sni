@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>账号与权限 · 系统设置 · SEM 智投平台</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #F5F7FA; color: #1F2937; font-size: 13px; }
+  .sidebar { position: fixed; left: 0; top: 0; width: 200px; height: 100vh; background: #FFFFFF; border-right: 1px solid #E5E7EB; padding: 18px 0 24px; z-index: 100; overflow-y: auto; }
+  .logo { padding: 0 20px 18px; font-size: 15px; font-weight: 600; color: #185FA5; border-bottom: 1px solid #F3F4F6; }
+  .logo small { display: block; font-size: 11px; color: #9CA3AF; font-weight: 400; margin-top: 4px; }
+  .nav-home { padding: 12px 20px; cursor: pointer; color: #4B5563; font-size: 12px; border-bottom: 1px solid #F3F4F6; }
+  .nav-home:hover { background: #F9FAFB; color: #185FA5; }
+  .nav-section { padding: 14px 0 8px; }
+  .nav-section-title { padding: 0 20px 6px; font-size: 11px; color: #9CA3AF; font-weight: 500; }
+  .wf-group { user-select: none; }
+  .wf-trigger { padding: 9px 20px; cursor: pointer; color: #4B5563; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .wf-trigger:hover { background: #F9FAFB; }
+  .wf-trigger.current { color: #185FA5; font-weight: 500; }
+  .wf-icon { width: 16px; font-size: 13px; }
+  .wf-name { flex: 1; }
+  .wf-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; font-weight: 500; background: #FEF6F6; color: #E24B4A; }
+  .wf-badge.warn { background: #FCF6EA; color: #BA7517; }
+  .wf-badge.info { background: #EFF4FB; color: #185FA5; }
+  .wf-toggle { font-size: 10px; color: #9CA3AF; transition: transform 0.15s; }
+  .wf-group.open .wf-toggle { transform: rotate(90deg); }
+  .wf-sub { display: none; padding-bottom: 4px; }
+  .wf-group.open .wf-sub { display: block; }
+  .wf-sub-item { padding: 7px 20px 7px 44px; cursor: pointer; color: #6B7280; font-size: 12px; display: flex; align-items: center; gap: 6px; border-left: 3px solid transparent; }
+  .wf-sub-item:hover { background: #F9FAFB; color: #185FA5; }
+  .wf-sub-item.active { background: #EFF4FB; color: #185FA5; font-weight: 500; border-left-color: #185FA5; }
+  .wf-sub-dot { width: 4px; height: 4px; border-radius: 50%; background: #D1D5DB; }
+  .wf-sub-item.active .wf-sub-dot { background: #185FA5; }
+  .wf-sub-num { font-size: 10px; color: #9CA3AF; margin-left: auto; }
+  .main { margin-left: 200px; min-height: 100vh; }
+  .topbar { background: #FFFFFF; border-bottom: 1px solid #E5E7EB; padding: 0 28px; height: 56px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 50; }
+  .breadcrumb { font-size: 13px; color: #6B7280; }
+  .breadcrumb b { color: #1F2937; font-weight: 500; }
+  .breadcrumb a { color: #6B7280; text-decoration: none; }
+  .topbar-right { display: flex; align-items: center; gap: 12px; }
+  .role-badge { font-size: 11px; padding: 4px 9px; background: #F2EBFB; color: #6B47B5; border-radius: 10px; font-weight: 500; }
+  .user-avatar { width: 30px; height: 30px; border-radius: 50%; background: #185FA5; color: #FFF; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+  .content { padding: 22px 28px; }
+  .page-header { margin-bottom: 14px; display: flex; justify-content: space-between; align-items: flex-end; }
+  .page-title { font-size: 20px; font-weight: 600; color: #1F2937; }
+  .page-desc { font-size: 12px; color: #6B7280; margin-top: 4px; }
+  .page-desc b { color: #1F2937; }
+  .btn { padding: 6px 12px; border-radius: 5px; font-size: 12px; cursor: pointer; border: none; font-weight: 500; }
+  .btn-primary { background: #185FA5; color: #FFF; }
+  .btn-default { background: #FFF; color: #4B5563; border: 1px solid #D1D5DB; }
+  .btn-default:hover { border-color: #185FA5; color: #185FA5; }
+  .btn-small { padding: 4px 10px; font-size: 11px; }
+
+  /* 视图 tabs */
+  .view-tabs { display: flex; gap: 4px; background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 4px; margin-bottom: 14px; align-self: flex-start; }
+  .view-tab { padding: 7px 16px; border-radius: 5px; font-size: 12px; cursor: pointer; color: #6B7280; font-weight: 500; }
+  .view-tab:hover { background: #F9FAFB; color: #185FA5; }
+  .view-tab.active { background: #EFF4FB; color: #185FA5; }
+  .view-tab .v-count { font-size: 10px; color: #9CA3AF; margin-left: 4px; }
+
+  /* 3 角色卡 */
+  .role-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }
+  .role-card { background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 18px 20px; }
+  .role-card.admin { border-top: 4px solid #6B47B5; }
+  .role-card.ops { border-top: 4px solid #185FA5; }
+  .role-card.client { border-top: 4px solid #1D9E75; }
+  .rc-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .rc-icon { width: 40px; height: 40px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #FFF; font-size: 16px; font-weight: 600; }
+  .role-card.admin .rc-icon { background: linear-gradient(135deg,#6B47B5 0%,#9474D4 100%); }
+  .role-card.ops .rc-icon { background: linear-gradient(135deg,#185FA5 0%,#3E84C8 100%); }
+  .role-card.client .rc-icon { background: linear-gradient(135deg,#1D9E75 0%,#4DBE99 100%); }
+  .rc-info { flex: 1; }
+  .rc-name { font-size: 15px; font-weight: 600; color: #1F2937; }
+  .rc-count { font-size: 11px; color: #9CA3AF; margin-top: 2px; }
+  .rc-desc { font-size: 12px; color: #4B5563; line-height: 1.7; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px dashed #F3F4F6; }
+  .rc-perm-title { font-size: 11px; font-weight: 600; color: #6B7280; margin-bottom: 6px; }
+  .rc-perm-list { display: flex; flex-direction: column; gap: 4px; font-size: 11px; }
+  .perm-y { color: #1D9E75; }
+  .perm-n { color: #D1D5DB; }
+
+  .panel { background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 18px 20px; margin-bottom: 16px; }
+  .panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .panel-title { font-size: 14px; font-weight: 600; color: #1F2937; }
+
+  /* 账号表 */
+  .acc-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .acc-table th { background: #FAFBFC; padding: 9px 10px; text-align: left; font-weight: 500; color: #6B7280; font-size: 11px; border-bottom: 1px solid #E5E7EB; }
+  .acc-table td { padding: 11px 10px; border-bottom: 1px solid #F3F4F6; color: #1F2937; vertical-align: middle; }
+  .acc-table tr:hover td { background: #FAFBFC; }
+  .user-cell { display: flex; align-items: center; gap: 10px; }
+  .uc-avatar { width: 30px; height: 30px; border-radius: 50%; color: #FFF; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; flex-shrink: 0; }
+  .uc-name { font-weight: 500; }
+  .uc-email { font-size: 11px; color: #9CA3AF; margin-top: 1px; }
+  .role-tag { font-size: 11px; padding: 2px 9px; border-radius: 10px; font-weight: 500; }
+  .role-tag.admin { background: #F2EBFB; color: #6B47B5; }
+  .role-tag.ops { background: #EFF4FB; color: #185FA5; }
+  .role-tag.client { background: #E5F4ED; color: #1D9E75; }
+  .scope-cell { font-size: 11px; color: #6B7280; }
+  .scope-cell b { color: #1F2937; }
+  .status-active { font-size: 11px; padding: 2px 8px; background: #E5F4ED; color: #1D9E75; border-radius: 10px; }
+  .status-disabled { font-size: 11px; padding: 2px 8px; background: #F3F4F6; color: #6B7280; border-radius: 10px; }
+  .row-actions { display: flex; gap: 4px; }
+  .row-action { font-size: 11px; padding: 3px 9px; border-radius: 4px; border: 1px solid #E5E7EB; background: #FFF; color: #4B5563; cursor: pointer; }
+  .row-action:hover { border-color: #185FA5; color: #185FA5; }
+  .row-action.danger:hover { border-color: #E24B4A; color: #E24B4A; }
+</style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="logo">SEM 智投平台<small>v3.0 · 工作流版</small></div>
+  <div class="nav-home" onclick="location.href='../index.html'">← 返回工作流总览</div>
+  <div class="nav-section">
+    <div class="nav-section-title">代运营工作流</div>
+    <div class="wf-group" data-wf="1"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">🚀</span><span class="wf-name">首次接入</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>登录</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>应用配置</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>授权引导</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>首次同步</div></div></div>
+    <div class="wf-group" data-wf="2"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">📊</span><span class="wf-name">每日盯盘</span><span class="wf-badge">12</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>数据看板</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>异常提醒<span class="wf-sub-num">12</span></div><div class="wf-sub-item"><span class="wf-sub-dot"></span>关键词详情</div></div></div>
+    <div class="wf-group" data-wf="3"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">⚡</span><span class="wf-name">优化执行</span><span class="wf-badge info">23</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>拓词</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>关键词工作台<span class="wf-sub-num">23</span></div><div class="wf-sub-item"><span class="wf-sub-dot"></span>否词管理</div></div></div>
+    <div class="wf-group" data-wf="4"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">🔍</span><span class="wf-name">效果验证</span><span class="wf-badge warn">8</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>调价台账</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>待验证调价<span class="wf-sub-num">8</span></div><div class="wf-sub-item"><span class="wf-sub-dot"></span>波动分析任务</div></div></div>
+    <div class="wf-group" data-wf="5"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">📨</span><span class="wf-name">客户交付</span><span class="wf-badge warn">2</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>分析报告</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>月报后流程<span class="wf-sub-num">2</span></div><div class="wf-sub-item"><span class="wf-sub-dot"></span>新增活动规划</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>线索管理</div></div></div>
+    <div class="wf-group open" data-wf="6"><div class="wf-trigger current" onclick="toggleWf(this)"><span class="wf-icon">⚙️</span><span class="wf-name">系统设置</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>客户管理</div><div class="wf-sub-item active"><span class="wf-sub-dot"></span>账号与权限</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>应用管理</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>数据接入</div></div></div>
+  </div>
+</aside>
+
+<main class="main">
+  <div class="topbar">
+    <div class="breadcrumb"><a href="../index.html">工作流总览</a> / 系统设置 / <b>账号与权限</b></div>
+    <div class="topbar-right">
+      <span class="role-badge">管理员</span>
+      <div class="user-avatar">管</div>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="page-header">
+      <div>
+        <div class="page-title">账号与权限</div>
+        <div class="page-desc">三级角色：管理员 / 运营 / 品牌方客户 · 共 <b>14</b> 个账号 · 当前在线 <b>6</b> 人</div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-default">导出账号清单</button>
+        <button class="btn btn-default">权限审计日志</button>
+        <button class="btn btn-primary">+ 邀请成员</button>
+      </div>
+    </div>
+
+    <!-- 3 角色定义卡 -->
+    <div class="role-cards">
+      <div class="role-card admin">
+        <div class="rc-head">
+          <div class="rc-icon">管</div>
+          <div class="rc-info"><div class="rc-name">管理员</div><div class="rc-count">2 人 · 含 1 超管</div></div>
+        </div>
+        <div class="rc-desc">系统全权限。负责账号管理、客户接入、OAuth 应用配置、20% 上限覆盖审批、数据接入等系统级操作。</div>
+        <div class="rc-perm-title">关键权限</div>
+        <div class="rc-perm-list">
+          <div><span class="perm-y">✓</span> 管理所有客户与子账户</div>
+          <div><span class="perm-y">✓</span> OAuth 应用 CRUD</div>
+          <div><span class="perm-y">✓</span> 20% 上限覆盖审批</div>
+          <div><span class="perm-y">✓</span> 解除客户接入</div>
+          <div><span class="perm-y">✓</span> 邀请 / 移除成员</div>
+          <div><span class="perm-y">✓</span> 配置接入 / 系统日志</div>
+        </div>
+      </div>
+
+      <div class="role-card ops">
+        <div class="rc-head">
+          <div class="rc-icon">运</div>
+          <div class="rc-info"><div class="rc-name">运营</div><div class="rc-count">6 人</div></div>
+        </div>
+        <div class="rc-desc">日常代运营工作。负责被指派客户的盯盘、优化执行、效果验证、客户交付。20% 上限覆盖需管理员审批。</div>
+        <div class="rc-perm-title">关键权限</div>
+        <div class="rc-perm-list">
+          <div><span class="perm-y">✓</span> 仅查看 / 操作被指派客户</div>
+          <div><span class="perm-y">✓</span> 调价（≤ 20% 自动 / &gt; 20% 需审批）</div>
+          <div><span class="perm-y">✓</span> 关键词 / 否词 / 拓词全权</div>
+          <div><span class="perm-y">✓</span> 报告生成与交付</div>
+          <div><span class="perm-n">✗</span> 客户接入 / OAuth 配置</div>
+          <div><span class="perm-n">✗</span> 20% 上限覆盖（需管理员同意）</div>
+        </div>
+      </div>
+
+      <div class="role-card client">
+        <div class="rc-head">
+          <div class="rc-icon">客</div>
+          <div class="rc-info"><div class="rc-name">品牌方客户</div><div class="rc-count">6 人 · 分布 5 客户</div></div>
+        </div>
+        <div class="rc-desc">客户方使用者。仅查看自己的数据看板、月报、线索；不能调价、不能改设置。文案自动切换为外企汇报风。</div>
+        <div class="rc-perm-title">关键权限</div>
+        <div class="rc-perm-list">
+          <div><span class="perm-y">✓</span> 查看自家数据看板</div>
+          <div><span class="perm-y">✓</span> 查看自家月报与历史</div>
+          <div><span class="perm-y">✓</span> 查看自家线索（基木鱼）</div>
+          <div><span class="perm-y">✓</span> 提交新需求 / 反馈</div>
+          <div><span class="perm-n">✗</span> 调价 / 修改任何配置</div>
+          <div><span class="perm-n">✗</span> 查看其他客户数据</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 视图 tabs -->
+    <div class="view-tabs">
+      <span class="view-tab active" onclick="switchView(this)">全部成员<span class="v-count">14</span></span>
+      <span class="view-tab" onclick="switchView(this)">管理员<span class="v-count">2</span></span>
+      <span class="view-tab" onclick="switchView(this)">运营<span class="v-count">6</span></span>
+      <span class="view-tab" onclick="switchView(this)">品牌方客户<span class="v-count">6</span></span>
+      <span class="view-tab" onclick="switchView(this)">已禁用<span class="v-count">2</span></span>
+    </div>
+
+    <!-- 账号表 -->
+    <div class="panel" style="padding:0;">
+      <table class="acc-table">
+        <thead>
+          <tr>
+            <th style="padding-left:18px;">成员</th>
+            <th>角色</th>
+            <th>负责 / 关联客户</th>
+            <th>最近登录</th>
+            <th>状态</th>
+            <th style="width:200px;padding-right:18px;">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="padding-left:18px;"><div class="user-cell"><div class="uc-avatar" style="background:#6B47B5;">总</div><div><div class="uc-name">张总（超管）</div><div class="uc-email">zhang@siwen.com</div></div></div></td>
+            <td><span class="role-tag admin">管理员 · 超管</span></td>
+            <td class="scope-cell"><b>全部</b> 5 客户</td>
+            <td>06-06 10:24</td>
+            <td><span class="status-active">● 在线</span></td>
+            <td><div class="row-actions"><button class="row-action">查看活动</button><button class="row-action">编辑</button></div></td>
+          </tr>
+          <tr>
+            <td style="padding-left:18px;"><div class="user-cell"><div class="uc-avatar" style="background:#6B47B5;">王</div><div><div class="uc-name">王 PM</div><div class="uc-email">wang.pm@siwen.com</div></div></div></td>
+            <td><span class="role-tag admin">管理员</span></td>
+            <td class="scope-cell"><b>全部</b> 5 客户</td>
+            <td>06-06 09:18</td>
+            <td><span class="status-active">● 在线</span></td>
+            <td><div class="row-actions"><button class="row-action">查看活动</button><button class="row-action">编辑</button></div></td>
+          </tr>
+          <tr>
+            <td style="padding-left:18px;"><div class="user-cell"><div class="uc-avatar" style="background:#185FA5;">优</div><div><div class="uc-name">优运营</div><div class="uc-email">youyunying@siwen.com</div></div></div></td>
+            <td><span class="role-tag ops">运营</span></td>
+            <td class="scope-cell">苏尔寿 · 某医疗设备客户</td>
+            <td>06-06 11:08</td>
+            <td><span class="status-active">● 在线</span></td>
+            <td><div class="row-actions"><button class="row-action">改指派</button><button class="row-action">编辑</button><button class="row-action danger">禁用</button></div></td>
+          </tr>
+          <tr>
+            <td style="padding-left:18px;"><div class="user-cell"><div class="uc-avatar" style="background:#185FA5;">李</div><div><div class="uc-name">小李</div><div class="uc-email">li.xiao@siwen.com</div></div></div></td>
+            <td><span class="role-tag ops">运营</span></td>
+            <td class="scope-cell">苏尔寿（EO 子账户）· 某化工集团</td>
+            <td>06-06 10:52</td>
+            <td><span class="status-active">● 在线</span></td>
+            <td><div class="row-actions"><button class="row-action">改指派</button><button class="row-action">编辑</button><button class="row-action danger">禁用</button></div></td>
+          </tr>
+          <tr>
+            <td style="padding-left:18px;"><div class="user-cell"><div class="uc-avatar" style="background:#185FA5;">陈</div><div><div class="uc-name">陈运营</div><div class="uc-email">chen.ops@siwen.com</div></div></div></td>
+            <td><span class="role-tag ops">运营</span></td>
+            <td class="scope-cell">某家电制造客户</td>
+            <td>06-06 09:42</td>
+            <td><span class="status-active">● 在线</span></td>
+            <td><div class="row-actions"><button class="row-action">改指派</button><button class="row-action">编辑</button><button class="row-action danger">禁用</button></div></td>
+          </tr>
+          <tr>
+            <td style="padding-left:18px;"><div class="user-cell"><div class="uc-avatar" style="background:#185FA5;">赵</div><div><div class="uc-name">赵运营</div><div class="uc-email">zhao.ops@siwen.com</div></div></div></td>
+            <td><span class="role-tag ops">运营</span></td>
+            <td class="scope-cell">某新能源客户</td>
+            <td>06-05 17:38</td>
+            <td><span style="font-size:11px;padding:2px 8px;background:#FCF6EA;color:#BA7517;border-radius:10px;">● 离线 17h</span></td>
+            <td><div class="row-actions"><button class="row-action">改指派</button><button class="row-action">编辑</button><button class="row-action danger">禁用</button></div></td>
+          </tr>
+          <tr>
+            <td style="padding-left:18px;"><div class="user-cell"><div class="uc-avatar" style="background:#1D9E75;">W</div><div><div class="uc-name">王经理</div><div class="uc-email">wang@sulzer.cn</div></div></div></td>
+            <td><span class="role-tag client">品牌方客户 · 决策者</span></td>
+            <td class="scope-cell">苏尔寿 · 全部 3 子账户</td>
+            <td>06-06 08:42</td>
+            <td><span class="status-active">● 在线</span></td>
+            <td><div class="row-actions"><button class="row-action">编辑范围</button><button class="row-action">重置密码</button><button class="row-action danger">禁用</button></div></td>
+          </tr>
+          <tr>
+            <td style="padding-left:18px;"><div class="user-cell"><div class="uc-avatar" style="background:#1D9E75;">L</div><div><div class="uc-name">李助理</div><div class="uc-email">li.assistant@sulzer.cn</div></div></div></td>
+            <td><span class="role-tag client">品牌方客户 · 仅查看</span></td>
+            <td class="scope-cell">苏尔寿 · 主账户 + 品牌专户</td>
+            <td>06-05 16:20</td>
+            <td><span style="font-size:11px;padding:2px 8px;background:#FCF6EA;color:#BA7517;border-radius:10px;">● 离线</span></td>
+            <td><div class="row-actions"><button class="row-action">编辑范围</button><button class="row-action">重置密码</button><button class="row-action danger">禁用</button></div></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script>
+  function toggleWf(t) { t.parentElement.classList.toggle('open'); }
+  function switchView(t) { t.parentElement.querySelectorAll('.view-tab').forEach(x=>x.classList.remove('active')); t.classList.add('active'); }
+  (function wireNav(){
+    const map={'登录':'01-onboarding/01-login.html','应用配置':'01-onboarding/02-app-config.html','授权引导':'01-onboarding/03-oauth-guide.html','首次同步':'01-onboarding/04-syncing.html','数据看板':'02-monitor/01-dashboard.html','异常提醒':'02-monitor/02-alerts.html','关键词详情':'02-monitor/03-keyword-detail.html','拓词':'03-optimize/01-keyword-expand.html','关键词工作台':'03-optimize/02-plan-management.html','否词管理':'03-optimize/04-negative-words.html','调价台账':'04-verify/01-adjustment-log.html','待验证调价':'04-verify/02-verify-queue.html','波动分析任务':'04-verify/03-fluctuation-tasks.html','分析报告':'05-delivery/01-report.html','月报后流程':'05-delivery/02-monthly-followup.html','新增活动规划':'05-delivery/03-new-campaign.html','线索管理':'05-delivery/04-leads.html','客户管理':'06-settings/01-customers.html','账号与权限':'06-settings/02-accounts-roles.html','应用管理':'06-settings/03-apps.html','数据接入':'06-settings/04-data-source.html'};
+    document.querySelectorAll('.wf-sub-item').forEach(item=>{if(item.classList.contains('active')||item.hasAttribute('onclick'))return;const c=item.cloneNode(true);c.querySelectorAll('span').forEach(s=>s.remove());const t=c.textContent.trim();if(map[t])item.setAttribute('onclick',"location.href='../"+map[t]+"'");});
+  })();
+</script>
+</body>
+</html>

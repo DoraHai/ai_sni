@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SEM · 落地页</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand"><div class="logo">投</div><div>SEM 模块<small>搜索广告投放</small></div></div>
+    <div class="nav-group">投放看板</div>
+    <a class="nav-item" href="dashboard.html"><span class="ico">📊</span> 概览</a>
+    <div class="nav-group">投放管理</div>
+    <a class="nav-item" href="keywords.html"><span class="ico">🔑</span> 词包与搜索词</a>
+    <a class="nav-item active" href="landing.html"><span class="ico">🎯</span> 落地页</a>
+    <div class="spacer"></div>
+    <a class="nav-item" href="../hub/intents.html"><span class="ico">🧭</span> 意图中心</a>
+    <a class="nav-item" href="../content/audit.html"><span class="ico">🛠️</span> 诊断中心</a>
+    <a class="back-link" href="../hub/dashboard.html">⌂ 全域驾驶舱</a>
+    <a class="back-link" style="border-top:none;padding-top:0;" href="../index.html">← 平台门户</a>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div><h1>落地页</h1><div class="sub">落地页是 SEM 花钱买来的流量承接面；诊断中心给问题，具体修复回到 SEM / SEO 工作区执行</div></div>
+      <div class="right">
+        <input class="search" placeholder="搜索落地页…">
+        <button class="btn">A/B 实验</button>
+        <button class="btn primary">+ 绑定落地页</button>
+        <div class="avatar">DZ</div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="grid cols-4" style="margin-bottom:16px;">
+        <div class="card stat"><div class="label">在投落地页</div><div class="value">8</div><div class="delta up">全部已体检</div></div>
+        <div class="card stat"><div class="label">平均转化率</div><div class="value">4.2%</div><div class="delta up">▲ 0.6pp</div></div>
+        <div class="card stat"><div class="label">最佳 CPL</div><div class="value">¥96</div><div class="delta up">/pricing</div></div>
+        <div class="card stat"><div class="label">待优化</div><div class="value">3</div><div class="delta down">转化率下降</div></div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div class="hd"><h3>落地页表现</h3>
+          <span class="tag">全部</span><span class="tag">表现好</span><span class="tag">待优化</span>
+        </div>
+        <div class="bd" style="padding:0;">
+          <table>
+            <thead><tr><th>落地页</th><th>关联计划</th><th>点击</th><th>转化率</th><th>CPL</th><th>诊断分</th><th></th></tr></thead>
+            <tbody>
+              <tr><td class="kw">/product/chat</td><td>智能客服 - 价格词</td><td>2,480</td><td>5.2%</td><td>¥96</td><td><b class="rank-up">92</b></td><td><span class="badge gray">表现好</span></td></tr>
+              <tr><td class="kw">/pricing</td><td>品牌词 - 核心</td><td>1,860</td><td>6.9%</td><td>¥96</td><td><b class="rank-up">88</b></td><td><span class="badge gray">表现好</span></td></tr>
+              <tr><td class="kw">/compare/crm</td><td>CRM - 对比词</td><td>1,840</td><td>3.2%</td><td>¥269</td><td><b>74</b></td><td><span class="badge blue">优化</span></td></tr>
+              <tr><td class="kw">/solution/data</td><td>数据分析 - 通用词</td><td>3,100</td><td>3.0%</td><td>¥161</td><td><b class="rank-down">61</b></td><td><span class="badge blue">优化</span></td></tr>
+              <tr><td class="kw">/landing/2026-promo</td><td>企业获客 - 场景词</td><td>920</td><td>1.8%</td><td>¥310</td><td><b class="rank-down">48</b></td><td><span class="badge blue">优化</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="grid cols-2">
+        <div class="card">
+          <div class="hd"><h3>「优化」点了之后发生什么</h3></div>
+          <div class="bd">
+            <div class="flow">
+              <div class="step"><span class="n">1</span><b>诊断建议</b>体检 / TDK / 结构化数据</div>
+              <div class="arrow">→</div>
+              <div class="step"><span class="n">2</span><b>修复执行</b>SEM 落地页 / SEO 站内优化</div>
+              <div class="arrow">→</div>
+              <div class="step"><span class="n">3</span><b>效果回流</b>转化率与 CPL 自动对比</div>
+            </div>
+            <p class="subtle" style="margin:14px 0 0;">同一个页面的优化同时服务三端：SEM 转化率、SEO 排名、GEO 被 AI 引用。<a href="../content/audit.html"><b>查看诊断建议 →</b></a></p>
+          </div>
+        </div>
+        <div class="card">
+          <div class="hd"><h3>近期优化回流效果</h3></div>
+          <div class="bd" style="padding:10px 18px;">
+            <ul class="checks">
+              <li><span class="badge green">已完成</span> /product/chat 首屏改版 <span style="margin-left:auto;" class="rank-up">转化率 +1.4pp</span></li>
+              <li><span class="badge green">已完成</span> /pricing 增加在线咨询组件 <span style="margin-left:auto;" class="rank-up">CPL -¥22</span></li>
+              <li><span class="badge amber">验证中</span> /compare/crm 重写对比表格 <span style="margin-left:auto;" class="muted">7 天后出结论</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="../shared/prototype-runtime-v2.js?rev=interactions-v9"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

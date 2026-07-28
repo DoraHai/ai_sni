@@ -1,0 +1,1164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>新增活动规划 · 客户交付 · SEM 智投平台</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #F5F7FA; color: #1F2937; font-size: 13px; }
+  .sidebar { position: fixed; left: 0; top: 0; width: 200px; height: 100vh; background: #FFFFFF; border-right: 1px solid #E5E7EB; padding: 18px 0 24px; z-index: 100; overflow-y: auto; }
+  .logo { padding: 0 20px 18px; font-size: 15px; font-weight: 600; color: #185FA5; border-bottom: 1px solid #F3F4F6; }
+  .logo small { display: block; font-size: 11px; color: #9CA3AF; font-weight: 400; margin-top: 4px; }
+  .nav-home { padding: 12px 20px; cursor: pointer; color: #4B5563; font-size: 12px; border-bottom: 1px solid #F3F4F6; }
+  .nav-home:hover { background: #F9FAFB; color: #185FA5; }
+  .nav-section { padding: 14px 0 8px; }
+  .nav-section-title { padding: 0 20px 6px; font-size: 11px; color: #9CA3AF; font-weight: 500; }
+  .wf-group { user-select: none; }
+  .wf-trigger { padding: 9px 20px; cursor: pointer; color: #4B5563; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .wf-trigger:hover { background: #F9FAFB; }
+  .wf-trigger.current { color: #185FA5; font-weight: 500; }
+  .wf-icon { width: 16px; font-size: 13px; }
+  .wf-name { flex: 1; }
+  .wf-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; font-weight: 500; background: #FEF6F6; color: #E24B4A; }
+  .wf-badge.warn { background: #FCF6EA; color: #BA7517; }
+  .wf-badge.info { background: #EFF4FB; color: #185FA5; }
+  .wf-toggle { font-size: 10px; color: #9CA3AF; transition: transform 0.15s; }
+  .wf-group.open .wf-toggle { transform: rotate(90deg); }
+  .wf-sub { display: none; padding-bottom: 4px; }
+  .wf-group.open .wf-sub { display: block; }
+  .wf-sub-item { padding: 7px 20px 7px 44px; cursor: pointer; color: #6B7280; font-size: 12px; display: flex; align-items: center; gap: 6px; border-left: 3px solid transparent; }
+  .wf-sub-item:hover { background: #F9FAFB; color: #185FA5; }
+  .wf-sub-item.active { background: #EFF4FB; color: #185FA5; font-weight: 500; border-left-color: #185FA5; }
+  .wf-sub-dot { width: 4px; height: 4px; border-radius: 50%; background: #D1D5DB; }
+  .wf-sub-item.active .wf-sub-dot { background: #185FA5; }
+  .wf-sub-num { font-size: 10px; color: #9CA3AF; margin-left: auto; }
+  .main { margin-left: 200px; min-height: 100vh; }
+  .topbar { background: #FFFFFF; border-bottom: 1px solid #E5E7EB; padding: 0 28px; height: 56px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 50; }
+  .breadcrumb { font-size: 13px; color: #6B7280; }
+  .breadcrumb b { color: #1F2937; font-weight: 500; }
+  .breadcrumb a { color: #6B7280; text-decoration: none; }
+  .topbar-right { display: flex; align-items: center; gap: 12px; }
+  .client-switch { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: #F3F4F6; border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .client-switch b { color: #185FA5; }
+  .role-badge { font-size: 11px; padding: 4px 9px; background: #EFF4FB; color: #185FA5; border-radius: 10px; font-weight: 500; }
+  .user-avatar { width: 30px; height: 30px; border-radius: 50%; background: #185FA5; color: #FFF; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+  .content { padding: 22px 28px; }
+  .page-header { margin-bottom: 14px; display: flex; justify-content: space-between; align-items: flex-end; }
+  .page-title { font-size: 20px; font-weight: 600; color: #1F2937; }
+  .page-desc { font-size: 12px; color: #6B7280; margin-top: 4px; }
+  .page-desc b { color: #1F2937; }
+  .page-actions { display: flex; gap: 8px; }
+  .btn { padding: 6px 12px; border-radius: 5px; font-size: 12px; cursor: pointer; border: none; font-weight: 500; }
+  .btn-primary { background: #185FA5; color: #FFF; }
+  .btn-default { background: #FFF; color: #4B5563; border: 1px solid #D1D5DB; }
+  .btn-default:hover { border-color: #185FA5; color: #185FA5; }
+  .btn-small { padding: 4px 10px; font-size: 11px; }
+  .btn-link { background: none; border: none; color: #185FA5; font-size: 12px; cursor: pointer; padding: 0; }
+
+  /* R-11 决策树 */
+  .decision-tree { background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 18px 22px; margin-bottom: 16px; }
+  .dt-title { font-size: 14px; font-weight: 600; color: #1F2937; margin-bottom: 14px; }
+  .dt-flow { display: grid; grid-template-columns: 1fr 60px 1fr 1fr; gap: 12px; align-items: stretch; }
+  .dt-box { padding: 14px 16px; border-radius: 8px; }
+  .dt-question { background: linear-gradient(135deg,#F4F8FD 0%,#FAFBFC 100%); border: 1px solid #C5D7EE; text-align: center; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 500; color: #185FA5; }
+  .dt-arrow { display: flex; align-items: center; justify-content: center; font-size: 20px; color: #9CA3AF; }
+  .dt-option { border: 1px solid #E5E7EB; }
+  .dt-option.recommend { border-color: #1D9E75; background: #F0FAF5; }
+  .dt-option-tag { font-size: 11px; font-weight: 600; color: #1D9E75; margin-bottom: 6px; }
+  .dt-option.alt .dt-option-tag { color: #BA7517; }
+  .dt-option-title { font-size: 13px; font-weight: 600; color: #1F2937; margin-bottom: 8px; }
+  .dt-option-desc { font-size: 11px; color: #4B5563; line-height: 1.7; }
+
+  /* 主区 */
+  .main-layout { display: grid; grid-template-columns: 1fr 320px; gap: 16px; align-items: start; }
+  .panel { background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 18px 20px; margin-bottom: 16px; }
+  .panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .panel-title { font-size: 14px; font-weight: 600; color: #1F2937; }
+  .panel-sub { font-size: 11px; color: #9CA3AF; margin-left: 8px; font-weight: 400; }
+
+  /* 任务卡 */
+  .plan-card { background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 14px 18px; margin-bottom: 10px; }
+  .plan-card.small { border-left: 4px solid #BA7517; }
+  .plan-card.big { border-left: 4px solid #6B47B5; }
+  .plan-card.done { border-left: 4px solid #1D9E75; opacity: 0.7; }
+  .pc-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+  .pc-type { font-size: 11px; padding: 2px 9px; border-radius: 4px; font-weight: 600; }
+  .pc-type.small { background: #FCF6EA; color: #BA7517; }
+  .pc-type.big { background: #F2EBFB; color: #6B47B5; }
+  .pc-type.done { background: #E5F4ED; color: #1D9E75; }
+  .pc-title { font-size: 14px; font-weight: 600; color: #1F2937; }
+  .pc-source { font-size: 11px; color: #9CA3AF; margin-left: auto; }
+  .pc-body { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .pc-field { font-size: 12px; }
+  .pc-field-label { color: #9CA3AF; font-size: 11px; }
+  .pc-field-value { color: #1F2937; margin-top: 2px; }
+  .pc-field-value b { color: #185FA5; }
+  .pc-progress { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #F3F4F6; }
+  .pc-pg-bar { width: 100%; height: 6px; background: #F3F4F6; border-radius: 3px; overflow: hidden; margin-top: 6px; }
+  .pc-pg-fill { height: 100%; background: linear-gradient(90deg,#185FA5 0%,#3E84C8 100%); border-radius: 3px; }
+  .pc-pg-fill.done { background: #1D9E75; }
+  .pc-pg-meta { display: flex; justify-content: space-between; font-size: 11px; color: #6B7280; margin-top: 4px; }
+  .pc-actions { display: flex; gap: 6px; padding-top: 10px; border-top: 1px dashed #F3F4F6; margin-top: 10px; }
+
+  .stage-tag { font-size: 10px; padding: 1px 7px; border-radius: 3px; background: #F3F4F6; color: #6B7280; }
+  .stage-tag.active { background: #EFF4FB; color: #185FA5; }
+  .stage-tag.done { background: #E5F4ED; color: #1D9E75; }
+
+  /* 模板项可点击 */
+  .tpl-quick { padding: 9px 12px; background: #FAFBFC; border-radius: 5px; font-size: 12px; cursor: pointer; transition: all 0.1s; display: flex; align-items: center; gap: 8px; }
+  .tpl-quick:hover { background: #F4F8FD; color: #185FA5; transform: translateX(2px); }
+  .tpl-quick:hover .tpl-quick-arrow { opacity: 1; transform: translateX(2px); }
+  .tpl-quick-arrow { opacity: 0; color: #185FA5; transition: all 0.15s; margin-left: auto; }
+
+  /* ============ Modal 基础 ============ */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000; align-items: center; justify-content: center; padding: 24px; }
+  .modal-overlay.show { display: flex; }
+  .modal { background: #FFF; border-radius: 10px; box-shadow: 0 20px 60px rgba(0,0,0,0.25); display: flex; flex-direction: column; max-height: 90vh; overflow: hidden; }
+  .modal-head { padding: 18px 22px; border-bottom: 1px solid #F3F4F6; display: flex; justify-content: space-between; align-items: flex-start; }
+  .modal-title { font-size: 16px; font-weight: 600; color: #1F2937; }
+  .modal-sub { font-size: 12px; color: #6B7280; margin-top: 3px; }
+  .modal-close { font-size: 22px; color: #9CA3AF; cursor: pointer; background: none; border: none; padding: 0; line-height: 1; }
+  .modal-close:hover { color: #1F2937; }
+  .modal-body { padding: 20px 22px; overflow-y: auto; flex: 1; }
+  .modal-foot { padding: 14px 22px; border-top: 1px solid #F3F4F6; background: #FAFBFC; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+
+  /* ============ 模板库 Modal ============ */
+  .tpl-modal { width: 880px; max-width: 100%; }
+  .tpl-layout { display: grid; grid-template-columns: 240px 1fr; gap: 18px; height: 520px; }
+  .tpl-list { background: #FAFBFC; border-radius: 8px; padding: 8px; overflow-y: auto; }
+  .tpl-item { padding: 12px 14px; border-radius: 6px; cursor: pointer; margin-bottom: 4px; transition: all 0.1s; border: 1px solid transparent; }
+  .tpl-item:hover { background: #FFF; }
+  .tpl-item.active { background: #FFF; border-color: #C5D7EE; box-shadow: 0 2px 8px rgba(24,95,165,0.08); }
+  .tpl-item-icon { width: 32px; height: 32px; border-radius: 7px; display: flex; align-items: center; justify-content: center; color: #FFF; font-size: 14px; margin-bottom: 8px; }
+  .tpl-item-name { font-size: 13px; font-weight: 600; color: #1F2937; }
+  .tpl-item-meta { font-size: 10px; color: #9CA3AF; margin-top: 2px; display: flex; gap: 6px; align-items: center; }
+  .tpl-item-tag { font-size: 9px; padding: 1px 5px; border-radius: 3px; font-weight: 600; }
+  .tpl-item-tag.small { background: #FCF6EA; color: #BA7517; }
+  .tpl-item-tag.big { background: #F2EBFB; color: #6B47B5; }
+
+  .tpl-detail { overflow-y: auto; padding: 0 4px; }
+  .tpl-detail-header { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid #F3F4F6; }
+  .tpl-detail-icon { width: 52px; height: 52px; border-radius: 10px; display: flex; align-items: center; justify-content: center; color: #FFF; font-size: 22px; flex-shrink: 0; }
+  .tpl-detail-info { flex: 1; }
+  .tpl-detail-title { font-size: 18px; font-weight: 600; color: #1F2937; display: flex; align-items: center; gap: 10px; }
+  .tpl-detail-tag { font-size: 11px; padding: 2px 9px; border-radius: 10px; font-weight: 500; }
+  .tpl-detail-sub { font-size: 12px; color: #6B7280; margin-top: 4px; line-height: 1.6; }
+
+  .tpl-section { margin-bottom: 18px; }
+  .tpl-section-title { font-size: 12px; font-weight: 600; color: #185FA5; margin-bottom: 10px; padding-bottom: 4px; border-bottom: 1px dashed #E5E7EB; }
+  .tpl-meta-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .tpl-meta-cell { padding: 9px 11px; background: #FAFBFC; border-radius: 5px; }
+  .tpl-meta-label { font-size: 10px; color: #9CA3AF; }
+  .tpl-meta-value { font-size: 13px; color: #1F2937; font-weight: 600; margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .tpl-stages { display: flex; flex-direction: column; gap: 5px; }
+  .tpl-stage-row { display: flex; align-items: center; gap: 10px; padding: 7px 11px; background: #FAFBFC; border-radius: 5px; font-size: 12px; }
+  .tpl-stage-num { width: 20px; height: 20px; border-radius: 50%; background: #C5D7EE; color: #185FA5; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .tpl-stage-name { flex: 1; color: #1F2937; }
+  .tpl-stage-time { font-size: 11px; color: #9CA3AF; font-variant-numeric: tabular-nums; }
+  .tpl-history { background: linear-gradient(135deg,#F0FAF5 0%,#FFFFFF 100%); border: 1px solid #BFE5D2; border-radius: 6px; padding: 11px 14px; font-size: 12px; color: #166D52; line-height: 1.8; }
+  .tpl-history b { color: #0D8C61; font-variant-numeric: tabular-nums; }
+
+  /* ============ 新建向导 Modal ============ */
+  .wizard-modal { width: 620px; max-width: 100%; }
+  .wizard-steps { display: flex; margin-bottom: 24px; }
+  .wiz-step { flex: 1; position: relative; text-align: center; padding-top: 32px; }
+  .wiz-step::before { content: ''; position: absolute; top: 12px; left: 0; right: 0; height: 2px; background: #E5E7EB; }
+  .wiz-step.done::before { background: #1D9E75; }
+  .wiz-step.active ~ .wiz-step::before { background: #E5E7EB; }
+  .wiz-step:first-child::before { left: 50%; }
+  .wiz-step:last-child::before { right: 50%; }
+  .wiz-step-dot { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 24px; height: 24px; border-radius: 50%; background: #E5E7EB; color: #9CA3AF; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; }
+  .wiz-step.done .wiz-step-dot { background: #1D9E75; color: #FFF; }
+  .wiz-step.active .wiz-step-dot { background: #185FA5; color: #FFF; }
+  .wiz-step-label { font-size: 11px; color: #9CA3AF; }
+  .wiz-step.done .wiz-step-label, .wiz-step.active .wiz-step-label { color: #1F2937; font-weight: 500; }
+
+  .wiz-pane { display: none; }
+  .wiz-pane.active { display: block; }
+  .wiz-question { font-size: 14px; font-weight: 600; color: #1F2937; margin-bottom: 14px; }
+
+  .type-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+  .type-card { padding: 16px; border: 2px solid #E5E7EB; border-radius: 8px; cursor: pointer; transition: all 0.15s; }
+  .type-card:hover { border-color: #C5D7EE; }
+  .type-card.active { border-color: #185FA5; background: linear-gradient(135deg,#F4F8FD 0%,#FAFBFC 100%); }
+  .type-card-icon { font-size: 22px; margin-bottom: 8px; }
+  .type-card-title { font-size: 14px; font-weight: 600; color: #1F2937; margin-bottom: 4px; }
+  .type-card-desc { font-size: 11px; color: #6B7280; line-height: 1.6; margin-bottom: 10px; }
+  .type-card-meta { font-size: 10px; color: #9CA3AF; padding-top: 8px; border-top: 1px dashed #F3F4F6; line-height: 1.7; }
+  .type-card-meta b { color: #1F2937; }
+
+  .form-row { margin-bottom: 14px; }
+  .form-label { font-size: 12px; color: #4B5563; margin-bottom: 5px; display: block; }
+  .form-input { width: 100%; padding: 8px 10px; border: 1px solid #D1D5DB; border-radius: 5px; font-size: 13px; }
+  .form-input:focus { outline: none; border-color: #185FA5; }
+  .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .form-hint { font-size: 11px; color: #9CA3AF; margin-top: 4px; }
+  .summary-box { background: linear-gradient(135deg,#F4F8FD 0%,#FAFBFC 100%); border: 1px solid #C5D7EE; border-radius: 6px; padding: 14px 16px; margin-top: 12px; font-size: 12px; color: #1F2937; line-height: 1.9; }
+  .summary-box b { color: #185FA5; }
+
+  /* 客户预算余位卡片 */
+  .budget-panel { background: #FAFBFC; border: 1px solid #E5E7EB; border-radius: 6px; padding: 12px 14px; margin-bottom: 14px; }
+  .budget-panel.warn { background: #FEF2F2; border-color: #FCA5A5; }
+  .budget-panel-head { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: #6B7280; margin-bottom: 10px; }
+  .budget-panel-head b { color: #1F2937; }
+  .bp-strategy-tag { font-size: 10px; padding: 1px 7px; border-radius: 9px; background: #EFF4FB; color: #185FA5; margin-left: 6px; font-weight: 500; }
+  .bp-strategy-tag.cost { background: #FDF4E5; color: #BA7517; }
+  /* 行式布局 */
+  .bp-rows { display: flex; flex-direction: column; }
+  .bp-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-bottom: 1px dashed #F3F4F6; font-size: 12px; gap: 8px; }
+  .bp-row:last-child { border-bottom: none; }
+  .bp-row-label { color: #4B5563; flex: 1; }
+  .bp-row-label small { color: #9CA3AF; font-size: 10px; margin-left: 4px; }
+  .bp-row-val { color: #1F2937; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .bp-row.sub { padding: 2px 0 2px 14px; border: none; font-size: 11px; color: #6B7280; }
+  .bp-row.sub .bp-row-label { color: #6B7280; }
+  .bp-row.sub .bp-row-val { color: #4B5563; font-weight: 500; }
+  .bp-row.total { border-top: 1px solid #E5E7EB; border-bottom: none; padding-top: 10px; margin-top: 4px; }
+  .bp-row.total .bp-row-label { color: #1F2937; font-weight: 600; }
+  .bp-row.total .bp-row-val { color: #185FA5; font-weight: 700; font-size: 14px; }
+  .bp-row.batch { background: #EFF4FB; margin: 6px -6px 0; padding: 8px 12px; border-radius: 5px; border: 1px solid #C5D7EE; }
+  .bp-row.batch .bp-row-label { color: #185FA5; font-weight: 600; }
+  .bp-row.batch .bp-row-val { color: #185FA5; font-weight: 700; font-size: 14px; }
+  /* 节奏 chip */
+  .bp-pace { display: inline-flex; align-items: center; gap: 2px; padding: 1px 7px; border-radius: 9px; font-size: 10px; font-weight: 600; }
+  .bp-pace.down { background: #DCFCE7; color: #166534; }
+  .bp-pace.up { background: #FEE2E2; color: #991B1B; }
+  .bp-pace.flat { background: #F3F4F6; color: #4B5563; }
+  /* 提示条 */
+  .bp-tip { background: #FFFBEB; border-left: 3px solid #F59E0B; padding: 8px 10px; margin-top: 10px; font-size: 11px; color: #6B5C2E; line-height: 1.6; border-radius: 0 4px 4px 0; }
+  .bp-tip b { color: #B45309; }
+  .bp-tip.ok { background: #ECFDF5; border-left-color: #10B981; color: #065F46; }
+  .bp-tip.ok b { color: #047857; }
+  .bp-tip.warn { background: #FEF3F2; border-left-color: #EF4444; color: #7F1D1D; font-weight: 500; }
+  .bp-tip.warn b { color: #B91C1C; }
+
+  /* 方案详情 modal */
+  .dm-section { margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid #F3F4F6; }
+  .dm-section:last-child { border-bottom: none; padding-bottom: 0; margin-bottom: 0; }
+  .dm-section-title { font-size: 12px; font-weight: 600; color: #185FA5; margin-bottom: 10px; }
+  .dm-info-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .dm-info-cell { padding: 10px 12px; background: #FAFBFC; border-radius: 6px; }
+  .dm-info-label { font-size: 10px; color: #9CA3AF; }
+  .dm-info-value { font-size: 13px; color: #1F2937; font-weight: 600; margin-top: 3px; }
+  .dm-stages-full { display: flex; flex-direction: column; gap: 6px; }
+  .dm-stage-row { display: grid; grid-template-columns: 24px 1fr 80px; gap: 10px; align-items: center; padding: 9px 12px; background: #FAFBFC; border-radius: 5px; font-size: 12px; }
+  .dm-stage-row.done { background: #F0FAF5; }
+  .dm-stage-row.current { background: #EFF4FB; border-left: 3px solid #185FA5; }
+  .dm-stage-row.future { opacity: 0.5; }
+  .dm-stage-num { width: 22px; height: 22px; border-radius: 50%; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .dm-stage-row.done .dm-stage-num { background: #1D9E75; color: #FFF; }
+  .dm-stage-row.current .dm-stage-num { background: #185FA5; color: #FFF; }
+  .dm-stage-row.future .dm-stage-num { background: #E5E7EB; color: #9CA3AF; }
+  .dm-stage-name { color: #1F2937; }
+  .dm-stage-row.future .dm-stage-name { color: #9CA3AF; }
+  .dm-stage-time { font-size: 11px; color: #9CA3AF; text-align: right; }
+  .dm-kw-list { display: flex; flex-wrap: wrap; gap: 6px; }
+  .dm-kw { font-size: 11px; padding: 3px 9px; background: #FAFBFC; border: 1px solid #E5E7EB; border-radius: 10px; color: #4B5563; }
+
+  /* 推进阶段 modal */
+  .stage-transition { background: linear-gradient(135deg,#F4F8FD 0%,#FAFBFC 100%); border: 1px solid #C5D7EE; border-radius: 8px; padding: 14px 16px; }
+  .trans-item { padding: 10px 12px; border-radius: 6px; background: #FFF; margin: 4px 0; }
+  .trans-item.done { border-left: 3px solid #1D9E75; }
+  .trans-item.next { border-left: 3px solid #185FA5; }
+  .trans-label { font-size: 10px; color: #9CA3AF; margin-bottom: 3px; }
+  .trans-name { font-size: 14px; font-weight: 600; color: #1F2937; }
+  .trans-arrow { text-align: center; color: #185FA5; font-size: 20px; font-weight: 700; margin: 2px 0; }
+
+  /* 调研中间稿 modal */
+  .res-section { margin-bottom: 20px; }
+  .res-section-title { font-size: 13px; font-weight: 600; color: #1F2937; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #F3F4F6; display: flex; align-items: center; gap: 8px; }
+  .res-progress-tag { font-size: 10px; padding: 1px 7px; border-radius: 3px; font-weight: 500; }
+  .res-tag-done { background: #E5F4ED; color: #1D9E75; }
+  .res-tag-doing { background: #EFF4FB; color: #185FA5; }
+  .res-tag-todo { background: #F3F4F6; color: #9CA3AF; }
+  .res-content { font-size: 12px; color: #4B5563; line-height: 1.8; }
+  .res-content b { color: #1F2937; }
+  .res-list { padding-left: 18px; }
+  .res-list li { padding: 3px 0; }
+  .res-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+  .res-table th { background: #FAFBFC; padding: 7px 10px; text-align: left; font-weight: 500; color: #6B7280; font-size: 11px; border-bottom: 1px solid #E5E7EB; }
+  .res-table td { padding: 8px 10px; border-bottom: 1px solid #F3F4F6; color: #1F2937; }
+  .res-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .res-todo-note { background: #FAFBFC; border-left: 3px solid #9CA3AF; padding: 10px 12px; font-size: 11px; color: #6B7280; border-radius: 5px; line-height: 1.7; }
+</style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="logo">SEM 智投平台<small>v3.0 · 工作流版</small></div>
+  <div class="nav-home" onclick="location.href='../index.html'">← 返回工作流总览</div>
+  <div class="nav-section">
+    <div class="nav-section-title">代运营工作流</div>
+    <div class="wf-group" data-wf="1"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">🚀</span><span class="wf-name">首次接入</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>登录</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>应用配置</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>授权引导</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>首次同步</div></div></div>
+    <div class="wf-group" data-wf="2"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">📊</span><span class="wf-name">每日盯盘</span><span class="wf-badge">12</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>数据看板</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>异常提醒<span class="wf-sub-num">12</span></div><div class="wf-sub-item"><span class="wf-sub-dot"></span>关键词详情</div></div></div>
+    <div class="wf-group" data-wf="3"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">⚡</span><span class="wf-name">优化执行</span><span class="wf-badge info">23</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>拓词</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>关键词工作台<span class="wf-sub-num">23</span></div><div class="wf-sub-item"><span class="wf-sub-dot"></span>否词管理</div></div></div>
+    <div class="wf-group" data-wf="4"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">🔍</span><span class="wf-name">效果验证</span><span class="wf-badge warn">8</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>调价台账</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>待验证调价<span class="wf-sub-num">8</span></div><div class="wf-sub-item"><span class="wf-sub-dot"></span>波动分析任务</div></div></div>
+    <div class="wf-group open" data-wf="5"><div class="wf-trigger current" onclick="toggleWf(this)"><span class="wf-icon">📨</span><span class="wf-name">客户交付</span><span class="wf-badge warn">2</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>分析报告</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>月报后流程<span class="wf-sub-num">2</span></div><div class="wf-sub-item active"><span class="wf-sub-dot"></span>新增活动规划</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>线索管理</div></div></div>
+    <div class="wf-group" data-wf="6"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">⚙️</span><span class="wf-name">系统设置</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>客户管理</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>账号与权限</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>应用管理</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>数据接入</div></div></div>
+  </div>
+</aside>
+
+<main class="main">
+  <div class="topbar">
+    <div class="breadcrumb"><a href="../index.html">工作流总览</a> / 客户交付 / <b>新增活动规划</b></div>
+    <div class="topbar-right">
+      <div class="client-switch">当前客户：<b>苏尔寿</b> ▾</div>
+      <span class="role-badge">运营</span>
+      <div class="useravatar">优</div>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="page-header">
+      <div>
+        <div class="page-title">新增活动规划</div>
+        <div class="page-desc">客户新需求转化为可执行投放方案 · 进行中 <b>2</b> 项 · 本月已完成 <b style="color:#1D9E75;">1</b> 项</div>
+      </div>
+      <div class="page-actions">
+        <button class="btn btn-default" onclick="openTplModal(0)">方案模板库</button>
+        <button class="btn btn-primary" onclick="openWizard()">+ 新建活动 / 方案</button>
+      </div>
+    </div>
+
+    <!-- R-11 决策树 -->
+    <div class="decision-tree">
+      <div class="dt-title">新需求决策依据 · 小活动 vs 独立方案</div>
+      <div class="dt-flow">
+        <div class="dt-box dt-question">客户新需求<br>规模评估</div>
+        <div class="dt-arrow">→</div>
+        <div class="dt-box dt-option recommend">
+          <div class="dt-option-tag">✓ 推荐 · 小活动加单元</div>
+          <div class="dt-option-title">规模小、与现有产品线高度相关</div>
+          <div class="dt-option-desc">直接在现有计划下新增单元 + 5-15 个关键词，3 天内可上线。预算 ≤ ¥ 5,000/月，无需独立报告。</div>
+        </div>
+        <div class="dt-box dt-option alt">
+          <div class="dt-option-tag">⚠ 备选 · 独立方案立项</div>
+          <div class="dt-option-title">规模大、新行业 / 新场景</div>
+          <div class="dt-option-desc">需先做市场调研 + 拓词 + 落地页规划，新建独立账户结构，1-2 周交付方案，2-4 周上线。预算 ≥ ¥ 10,000/月，需独立月报。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="main-layout">
+      <div>
+        <!-- 进行中 -->
+        <div class="panel">
+          <div class="panel-head"><div><span class="panel-title">进行中</span><span class="panel-sub">2 项</span></div></div>
+
+          <div class="plan-card small">
+            <div class="pc-head">
+              <span class="pc-type small">小活动加单元</span>
+              <span class="pc-title">EO-高纯度新规格（99.99%）</span>
+              <span class="pc-source">来自月报反馈 · 王经理 · 6/3</span>
+            </div>
+            <div class="pc-body">
+              <div>
+                <div class="pc-field"><div class="pc-field-label">所属计划</div><div class="pc-field-value">EO-高纯度</div></div>
+                <div class="pc-field" style="margin-top:8px;"><div class="pc-field-label">新增单元</div><div class="pc-field-value">高纯度 99.99% 新规格</div></div>
+                <div class="pc-field" style="margin-top:8px;"><div class="pc-field-label">候选关键词</div><div class="pc-field-value"><b>12 个</b>（已通过拓词完成）</div></div>
+              </div>
+              <div>
+                <div class="pc-field"><div class="pc-field-label">预算（月）</div><div class="pc-field-value"><b>¥ 4,200</b></div></div>
+                <div class="pc-field" style="margin-top:8px;"><div class="pc-field-label">上线截止</div><div class="pc-field-value" style="color:#BA7517;">6/15（剩 9 天）</div></div>
+                <div class="pc-field" style="margin-top:8px;"><div class="pc-field-label">负责人</div><div class="pc-field-value">优运营</div></div>
+              </div>
+            </div>
+            <div class="pc-progress">
+              <div style="display: flex; gap: 6px;">
+                <span class="stage-tag done">✓ 需求确认</span>
+                <span class="stage-tag done">✓ 拓词完成</span>
+                <span class="stage-tag active">创意撰写中</span>
+                <span class="stage-tag">落地页准备</span>
+                <span class="stage-tag">上线</span>
+              </div>
+              <div class="pc-pg-bar"><div class="pc-pg-fill" style="width:55%;"></div></div>
+              <div class="pc-pg-meta"><span>进度 55%</span><span>已用 3 天 / 预计 9 天</span></div>
+            </div>
+            <div class="pc-actions">
+              <button class="btn btn-primary btn-small" onclick="showDetails('eo')">查看详情</button>
+              <button class="btn btn-default btn-small" onclick="advanceStage('eo')">推进下一阶段</button>
+              <button class="btn btn-default btn-small" onclick="editBudget('eo')">编辑预算</button>
+            </div>
+          </div>
+
+          <div class="plan-card big">
+            <div class="pc-head">
+              <span class="pc-type big">独立方案立项</span>
+              <span class="pc-title">规整填料 · 化工新材料行业拓展</span>
+              <span class="pc-source">来自月报反馈 · 王经理 · 6/3</span>
+            </div>
+            <div class="pc-body">
+              <div>
+                <div class="pc-field"><div class="pc-field-label">目标行业</div><div class="pc-field-value">化工新材料（聚乳酸 / 聚己内酯）</div></div>
+                <div class="pc-field" style="margin-top:8px;"><div class="pc-field-label">新建计划</div><div class="pc-field-value">3 个（按子行业拆分）</div></div>
+                <div class="pc-field" style="margin-top:8px;"><div class="pc-field-label">预计关键词</div><div class="pc-field-value"><b>120-180 个</b>（拓词中）</div></div>
+              </div>
+              <div>
+                <div class="pc-field"><div class="pc-field-label">预算（月）</div><div class="pc-field-value"><b>¥ 18,000</b></div></div>
+                <div class="pc-field" style="margin-top:8px;"><div class="pc-field-label">方案交付</div><div class="pc-field-value" style="color:#E24B4A;">6/10（4 天）</div></div>
+                <div class="pc-field" style="margin-top:8px;"><div class="pc-field-label">负责人</div><div class="pc-field-value">规划组 · 张顾问</div></div>
+              </div>
+            </div>
+            <div class="pc-progress">
+              <div style="display: flex; gap: 6px;">
+                <span class="stage-tag done">✓ 立项确认</span>
+                <span class="stage-tag active">市场调研中</span>
+                <span class="stage-tag">拓词与分类</span>
+                <span class="stage-tag">落地页规划</span>
+                <span class="stage-tag">方案交付</span>
+                <span class="stage-tag">客户审批</span>
+                <span class="stage-tag">上线</span>
+              </div>
+              <div class="pc-pg-bar"><div class="pc-pg-fill" style="width:28%;"></div></div>
+              <div class="pc-pg-meta"><span>进度 28%</span><span>已用 2 天 / 预计 4 周</span></div>
+            </div>
+            <div class="pc-actions">
+              <button class="btn btn-primary btn-small" onclick="showDetails('sterling')">查看详情</button>
+              <button class="btn btn-default btn-small" onclick="advanceStage('sterling')">推进下一阶段</button>
+              <button class="btn btn-default btn-small" onclick="showResearch()">查看调研中间稿</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 已完成 -->
+        <div class="panel">
+          <div class="panel-head"><div><span class="panel-title">本月已完成</span><span class="panel-sub">1 项</span></div></div>
+
+          <div class="plan-card done">
+            <div class="pc-head">
+              <span class="pc-type done">已上线 · 小活动加单元</span>
+              <span class="pc-title">磁力泵新型号上市推广</span>
+              <span class="pc-source">来自月报反馈 · 5/3</span>
+            </div>
+            <div class="pc-body">
+              <div>
+                <div class="pc-field"><div class="pc-field-label">上线时间</div><div class="pc-field-value">5/10（耗时 7 天）</div></div>
+                <div class="pc-field" style="margin-top:8px;"><div class="pc-field-label">投放词</div><div class="pc-field-value">8 个</div></div>
+              </div>
+              <div>
+                <div class="pc-field"><div class="pc-field-label">运行效果（5/10 - 6/5）</div><div class="pc-field-value"><b>18 条线索</b> · CPL ¥ 187</div></div>
+                <div class="pc-field" style="margin-top:8px;"><div class="pc-field-label">客户反馈</div><div class="pc-field-value" style="color:#1D9E75;">✓ 满意，已转入常规投放</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右侧：本月统计 + 模板 -->
+      <div>
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">本月统计</span></div>
+          <div style="font-size:12px;line-height:2;">
+            <div style="display:flex;justify-content:space-between;"><span style="color:#6B7280;">新需求总数</span><b>3</b></div>
+            <div style="display:flex;justify-content:space-between;"><span style="color:#6B7280;">已转化方案</span><b>2</b></div>
+            <div style="display:flex;justify-content:space-between;"><span style="color:#6B7280;">已上线</span><b style="color:#1D9E75;">1</b></div>
+            <div style="display:flex;justify-content:space-between;"><span style="color:#6B7280;">小活动 / 独立方案</span><b>2 / 1</b></div>
+            <div style="display:flex;justify-content:space-between;"><span style="color:#6B7280;">平均上线周期</span><b>小活动 7 天 / 方案 28 天</b></div>
+            <div style="display:flex;justify-content:space-between;"><span style="color:#6B7280;">客户满意度</span><b style="color:#1D9E75;">4.8 / 5.0</b></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">模板库（快速复用）</span><button class="btn-link" onclick="openTplModal(0)">查看完整模板库 →</button></div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <div class="tpl-quick" onclick="openTplModal(0)">📋 新规格 / 新型号 · 小活动模板<span class="tpl-quick-arrow">→</span></div>
+            <div class="tpl-quick" onclick="openTplModal(1)">📋 新行业拓展 · 独立方案模板<span class="tpl-quick-arrow">→</span></div>
+            <div class="tpl-quick" onclick="openTplModal(2)">📋 季节性活动 · 限时投放模板<span class="tpl-quick-arrow">→</span></div>
+            <div class="tpl-quick" onclick="openTplModal(3)">📋 品牌护盘 · 应急方案模板<span class="tpl-quick-arrow">→</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- ============ 方案模板库 Modal ============ -->
+<div class="modal-overlay" id="tplModal" onclick="if(event.target===this)closeTplModal()">
+  <div class="modal tpl-modal">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title">方案模板库</div>
+        <div class="modal-sub">4 个标准模板 · 一键预填基本信息和阶段流程 · 含历史复用统计</div>
+      </div>
+      <button class="modal-close" onclick="closeTplModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="tpl-layout">
+        <div class="tpl-list" id="tplList"></div>
+        <div class="tpl-detail" id="tplDetail"></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <span style="font-size:11px;color:#9CA3AF;">点击左侧模板预览详情</span>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-default" onclick="closeTplModal()">关闭</button>
+        <button class="btn btn-primary" onclick="useTplAndCreate()">基于此模板新建</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 新建向导 Modal ============ -->
+<div class="modal-overlay" id="wizardModal" onclick="if(event.target===this)closeWizardModal()">
+  <div class="modal wizard-modal">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title">新建活动 / 方案</div>
+        <div class="modal-sub">3 步引导 · 选规模 → 填信息 → 排期</div>
+      </div>
+      <button class="modal-close" onclick="closeWizardModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="wizard-steps">
+        <div class="wiz-step active"><div class="wiz-step-dot">1</div><div class="wiz-step-label">选择类型</div></div>
+        <div class="wiz-step"><div class="wiz-step-dot">2</div><div class="wiz-step-label">基本信息</div></div>
+        <div class="wiz-step"><div class="wiz-step-dot">3</div><div class="wiz-step-label">规模与排期</div></div>
+      </div>
+
+      <!-- Step 1 -->
+      <div class="wiz-pane active" data-step="1">
+        <div class="budget-panel" id="budgetPanelStep1">
+          <div class="budget-panel-head">
+            <span>📊 <b id="bpCustomer1">苏尔寿</b> · 月度预算余位<span class="bp-strategy-tag" id="bpStrategyTag1">线索导向</span></span>
+            <span>合同周期 2026 年 · 截至 6/6（已过 6 天 · 剩 24 天）</span>
+          </div>
+          <div class="bp-rows">
+            <div class="bp-row"><div class="bp-row-label">月度合同总额度</div><div class="bp-row-val">¥ 80,000</div></div>
+            <div class="bp-row"><div class="bp-row-label">已控预算计划<small>12 个 · 硬上限合计</small></div><div class="bp-row-val">¥ 30,000</div></div>
+            <div class="bp-row"><div class="bp-row-label">未控预算计划<small>2 个 · 不设上限 · 监控仪表盘</small></div><div class="bp-row-val" style="color:#9CA3AF;font-weight:500;">见明细 ↓</div></div>
+            <div class="bp-row sub"><div class="bp-row-label">└ 上月同期实付（5/1 – 5/6）</div><div class="bp-row-val">¥ 5,200</div></div>
+            <div class="bp-row sub"><div class="bp-row-label">└ 本月已实付（6/1 – 6/6）</div><div class="bp-row-val">¥ 4,800</div></div>
+            <div class="bp-row sub"><div class="bp-row-label">└ 占上月同期</div><div class="bp-row-val"><span class="bp-pace down">92.3% ▼ 略低于上月节奏</span></div></div>
+            <div class="bp-row"><div class="bp-row-label">进行中新方案预占<small>6 个 · 已审批待上线</small></div><div class="bp-row-val">¥ 18,000</div></div>
+            <div class="bp-row total"><div class="bp-row-label">确定占用合计</div><div class="bp-row-val">¥ 52,800</div></div>
+          </div>
+          <div class="bp-tip">💡 总额度名义余位 <b>¥ 27,200</b>。未控计划按当前节奏外推剩余 24 天预计还需 <b>¥ 19,200</b>。建议本批新方案合计 ≤ <b>¥ 6,000</b>（已预留 ¥ 2,000 安全缓冲）。第 3 步填写预算后实时核算占用。</div>
+        </div>
+        <div class="wiz-question">这次新方案的规模？</div>
+        <div class="type-cards">
+          <div class="type-card active" onclick="selectType(this, 'small')">
+            <div class="type-card-icon" style="color:#BA7517;">🚀</div>
+            <div class="type-card-title">小活动加单元</div>
+            <div class="type-card-desc">在现有计划下新增单元 + 几个关键词，3 天内可上线</div>
+            <div class="type-card-meta">典型时长：<b>3-7 天</b> · 预算：<b>≤ ¥ 5,000/月</b><br>关键词：<b>5-15 个</b> · 无需独立报告</div>
+          </div>
+          <div class="type-card" onclick="selectType(this, 'big')">
+            <div class="type-card-icon" style="color:#6B47B5;">🎯</div>
+            <div class="type-card-title">独立方案立项</div>
+            <div class="type-card-desc">新建独立账户结构，需调研 + 拓词 + 落地页规划</div>
+            <div class="type-card-meta">典型时长：<b>2-4 周</b> · 预算：<b>≥ ¥ 10,000/月</b><br>关键词：<b>100+ 个</b> · 含独立月报</div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:#6B7280;padding:10px 12px;background:#FAFBFC;border-radius:5px;line-height:1.7;">
+          <b style="color:#185FA5;">💡 决策提示</b>：新规格 / 新型号 / 季节性活动通常用小活动；新行业 / 新场景 / 客户战略级 应走独立方案。不确定？建议先用小活动测试。
+        </div>
+      </div>
+
+      <!-- Step 2 -->
+      <div class="wiz-pane" data-step="2">
+        <div class="wiz-question">方案基本信息</div>
+        <div class="form-row">
+          <label class="form-label">方案名称 *</label>
+          <input type="text" class="form-input" placeholder="例如：EO-高纯度新规格（99.99%）" value="EO-高纯度新规格（99.99%）">
+        </div>
+        <div class="form-grid-2">
+          <div class="form-row">
+            <label class="form-label">来源</label>
+            <select class="form-input">
+              <option>月报反馈（王经理 · 6/3）</option>
+              <option>客户邮件</option>
+              <option>主动规划</option>
+              <option>异常应急</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label class="form-label">客户</label>
+            <select class="form-input">
+              <option>苏尔寿</option>
+              <option>某家电制造客户</option>
+              <option>某化工集团</option>
+              <option>某医疗设备客户</option>
+              <option>某新能源客户</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <label class="form-label">产品线 / 目标行业</label>
+          <input type="text" class="form-input" placeholder="例如：环氧乙烷高纯度 / 化工新材料" value="环氧乙烷 高纯度 99.99%">
+        </div>
+        <div class="form-row">
+          <label class="form-label">背景说明（可选）</label>
+          <textarea class="form-input" style="min-height:60px;resize:vertical;" placeholder="客户反馈原文或方案背景，便于后续团队成员理解上下文">客户王经理在 6/3 月报会议上提出：要在 6 月中旬之前把 99.99% 新规格推广上线，规模不大几个核心词即可。</textarea>
+        </div>
+      </div>
+
+      <!-- Step 3 -->
+      <div class="wiz-pane" data-step="3">
+        <div class="wiz-question">规模与排期</div>
+        <div class="form-grid-2">
+          <div class="form-row">
+            <label class="form-label">预估关键词数</label>
+            <input type="number" class="form-input" value="12">
+            <div class="form-hint">小活动建议 5-15 个</div>
+          </div>
+          <div class="form-row">
+            <label class="form-label">月度预算（¥）</label>
+            <input type="number" class="form-input" id="wizBudgetInput" value="4200" oninput="recalcBudgetPanel()">
+            <div class="form-hint">建议 ¥3,000-5,000</div>
+          </div>
+        </div>
+        <div class="budget-panel" id="budgetPanelStep3">
+          <div class="budget-panel-head">
+            <span>📊 <b id="bpCustomer3">苏尔寿</b> · 预算占用预测<span class="bp-strategy-tag" id="bpStrategyTag3">线索导向</span></span>
+            <span id="bpStatusTag" style="font-size:10px;padding:2px 8px;border-radius:10px;background:#DCFCE7;color:#166534;font-weight:600;">✓ 推荐上限内</span>
+          </div>
+          <div class="bp-rows">
+            <div class="bp-row"><div class="bp-row-label">月度合同总额度</div><div class="bp-row-val">¥ 80,000</div></div>
+            <div class="bp-row"><div class="bp-row-label">已控预算计划<small>12 个</small></div><div class="bp-row-val">¥ 30,000</div></div>
+            <div class="bp-row"><div class="bp-row-label">未控预算计划<small>本月已实付 · 6 天</small></div><div class="bp-row-val">¥ 4,800 <span class="bp-pace down" style="margin-left:6px;">92.3% ▼</span></div></div>
+            <div class="bp-row"><div class="bp-row-label">进行中新方案预占<small>6 个</small></div><div class="bp-row-val">¥ 18,000</div></div>
+            <div class="bp-row total"><div class="bp-row-label">确定占用合计</div><div class="bp-row-val">¥ 52,800</div></div>
+            <div class="bp-row batch"><div class="bp-row-label">本批新方案预算</div><div class="bp-row-val" id="bpBatchVal">¥ 4,200</div></div>
+          </div>
+          <div class="bp-tip ok" id="bpNote">✓ 本批预算 <b>¥ 4,200</b> 在推荐上限 <b>¥ 6,000</b> 内，剩 <b>¥ 1,800</b> 推荐空间。未控计划节奏稳定，方案可正常推进。</div>
+        </div>
+        <div class="form-grid-2">
+          <div class="form-row">
+            <label class="form-label">上线截止日期</label>
+            <input type="date" class="form-input" value="2026-06-15">
+          </div>
+          <div class="form-row">
+            <label class="form-label">负责人</label>
+            <select class="form-input">
+              <option>优运营（默认）</option>
+              <option>小李</option>
+              <option>陈运营</option>
+              <option>赵运营</option>
+            </select>
+          </div>
+        </div>
+        <div class="summary-box">
+          <b>📋 方案概要</b><br>
+          类型：<b id="sumType">小活动加单元</b> · 客户：<b>苏尔寿</b><br>
+          关键词 <b>12</b> 个 · 预算 <b>¥ 4,200/月</b> · 截止 <b>6/15（剩 9 天）</b><br>
+          阶段流程：需求确认 → 拓词分类 → 创意撰写 → 落地页准备 → 上线验证<br>
+          负责人：<b>优运营</b> · 创建后将出现在「进行中」列表
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-default" id="wizPrev" onclick="prevStep()" disabled>上一步</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-default" onclick="closeWizardModal()">取消</button>
+        <button class="btn btn-primary" id="wizNext" onclick="nextStep()">下一步</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 方案详情 Modal ============ -->
+<div class="modal-overlay" id="detailModal" onclick="if(event.target===this)closeDetailModal()">
+  <div class="modal" style="width: 720px; max-width: 100%;">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title" id="dmTitle"></div>
+        <div class="modal-sub" id="dmSub"></div>
+      </div>
+      <button class="modal-close" onclick="closeDetailModal()">×</button>
+    </div>
+    <div class="modal-body" id="dmBody"></div>
+    <div class="modal-foot">
+      <span style="font-size:11px;color:#9CA3AF;" id="dmFootMeta">最近编辑 11:08 · 优运营</span>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-default" onclick="closeDetailModal()">关闭</button>
+        <button class="btn btn-default" onclick="alert('原型演示：进入完整编辑模式')">编辑</button>
+        <button class="btn btn-primary" onclick="alert('原型演示：方案 PDF 已生成并下载')">导出方案 PDF</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 推进阶段 Modal ============ -->
+<div class="modal-overlay" id="stageModal" onclick="if(event.target===this)closeStageModal()">
+  <div class="modal" style="width: 480px;">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title">推进下一阶段</div>
+        <div class="modal-sub" id="smSub"></div>
+      </div>
+      <button class="modal-close" onclick="closeStageModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="stage-transition">
+        <div class="trans-item done">
+          <div class="trans-label">当前阶段（即将完成）</div>
+          <div class="trans-name" id="smCurrent"></div>
+        </div>
+        <div class="trans-arrow">↓</div>
+        <div class="trans-item next">
+          <div class="trans-label">下一阶段</div>
+          <div class="trans-name" id="smNext"></div>
+        </div>
+      </div>
+      <div class="form-row" style="margin-top:14px;">
+        <label class="form-label">当前阶段完成备注（可选）</label>
+        <textarea class="form-input" id="smNote" style="min-height:70px;resize:vertical;font-family:inherit;" placeholder="例如：拓词共完成 12 个候选，符合预期；落地页已请客户提供素材"></textarea>
+      </div>
+      <div class="form-row">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#4B5563;cursor:pointer;">
+          <input type="checkbox" checked style="accent-color:#185FA5;"> 同步飞书通知客户与团队
+        </label>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-default" onclick="closeStageModal()">取消</button>
+      <button class="btn btn-primary" onclick="confirmAdvance()">确认推进</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 编辑预算 Modal ============ -->
+<div class="modal-overlay" id="budgetModal" onclick="if(event.target===this)closeBudgetModal()">
+  <div class="modal" style="width: 440px;">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title">编辑月度预算</div>
+        <div class="modal-sub" id="bmSub"></div>
+      </div>
+      <button class="modal-close" onclick="closeBudgetModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <label class="form-label">当前月度预算</label>
+        <div style="font-size:18px;font-weight:700;color:#1F2937;font-variant-numeric:tabular-nums;" id="bmCurrent">¥ 4,200</div>
+      </div>
+      <div class="form-row">
+        <label class="form-label">新预算（¥）</label>
+        <input type="number" class="form-input" id="bmNew" value="4200" oninput="updateBudgetPreview()">
+      </div>
+      <div id="bmPreview" class="summary-box" style="margin-top:6px;">变化幅度 <b>0%</b> · 与当前一致</div>
+      <div style="font-size:11px;color:#9A3412;line-height:1.7;margin-top:10px;padding:10px 12px;background:#FFFBF4;border-radius:5px;border-left:3px solid #BA7517;">
+        💡 预算变更将立即生效。本月剩余 <b>25 天</b>，按新预算每日均摊约 <b id="bmDailyAvg">¥ 168</b>。
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-default" onclick="closeBudgetModal()">取消</button>
+      <button class="btn btn-primary" onclick="confirmBudget()">确认变更</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 调研中间稿 Modal ============ -->
+<div class="modal-overlay" id="researchModal" onclick="if(event.target===this)closeResearchModal()">
+  <div class="modal" style="width: 800px; max-width: 100%;">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title">市场调研中间稿 · v0.3</div>
+        <div class="modal-sub">规整填料 · 化工新材料行业拓展 · 张顾问编辑 · 2026-06-05 16:42</div>
+      </div>
+      <button class="modal-close" onclick="closeResearchModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="res-section">
+        <div class="res-section-title">1. 行业容量分析 <span class="res-progress-tag res-tag-done">已完成</span></div>
+        <div class="res-content">
+          <p>聚乳酸（PLA）+ 聚己内酯（PCL）国内生产企业约 <b>180-220 家</b>，其中年产能 5000 吨以上 <b>32 家</b>（核心目标客群）。2025 年市场规模 <b>¥ 86 亿</b>，年增速 18-22%，规整填料作为分离设备核心耗材渗透率约 12%。<b>潜在年需求约 ¥ 10.3 亿</b>，苏尔寿当前在该细分市场份额估算不足 3%。</p>
+        </div>
+      </div>
+
+      <div class="res-section">
+        <div class="res-section-title">2. 主要竞品扫描 <span class="res-progress-tag res-tag-done">已完成</span></div>
+        <table class="res-table">
+          <thead><tr><th>竞品</th><th>市场份额（估算）</th><th>定价区间</th><th>SEM 投放强度</th><th>差异点</th></tr></thead>
+          <tbody>
+            <tr><td><b>Koch-Glitsch</b></td><td class="num">28%</td><td>高端</td><td>中</td><td>历史品牌优势</td></tr>
+            <tr><td><b>Sulzer（我方）</b></td><td class="num">~ 3%</td><td>中高</td><td>低</td><td>—</td></tr>
+            <tr><td><b>RVT Process Equipment</b></td><td class="num">22%</td><td>中</td><td>高</td><td>SEM 重投入，关键词覆盖密</td></tr>
+            <tr><td><b>国内厂商（前 5 名）</b></td><td class="num">35%</td><td>低-中</td><td>极高</td><td>价格战，长尾词全覆盖</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="res-section">
+        <div class="res-section-title">3. 关键词容量分析 <span class="res-progress-tag res-tag-doing">进行中（70%）</span></div>
+        <div class="res-content">
+          <p>已通过 URL 爬取 + 百度规划师识别候选关键词 <b>320 个</b>，初步分类：</p>
+          <ul class="res-list">
+            <li><b>品牌词</b>（10 个）：聚乳酸 规整填料、PLA 分离塔 等</li>
+            <li><b>重点词</b>（48 个）：PLA 蒸馏塔 设计、PCL 提纯 填料 等</li>
+            <li><b>一般词</b>（约 140 个）：评估中</li>
+            <li><b>长尾精准词</b>（约 100 个）：评估中</li>
+          </ul>
+          <p>预估月度总搜索量 <b>~ 28,000 次</b>，竞争度中等偏高（RVT 已布局密集）。建议正式投放 <b>120-180 个</b>关键词，重点压在前 60 个。</p>
+        </div>
+      </div>
+
+      <div class="res-section">
+        <div class="res-section-title">4. 落地页规划 <span class="res-progress-tag res-tag-todo">待启动</span></div>
+        <div class="res-todo-note">
+          需新建 <b>3 个独立落地页</b>（PLA 应用 / PCL 应用 / 化工新材料综合）。建议复用基木鱼模板降低开发周期。预计 3-5 天完成。
+        </div>
+      </div>
+
+      <div class="res-section">
+        <div class="res-section-title">5. 推荐方案大纲 <span class="res-progress-tag res-tag-todo">待启动</span></div>
+        <div class="res-todo-note">
+          初步建议：新建独立账户「苏尔寿-新材料」+ 3 个产品线计划（PLA / PCL / 综合）+ 月度预算 <b>¥ 18,000</b> + 独立月报。预计 6/10 完整大纲交付客户审批。
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <span style="font-size:11px;color:#9CA3AF;">整体调研进度 28% · 预计 6/10 完成</span>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-default" onclick="closeResearchModal()">关闭</button>
+        <button class="btn btn-default" onclick="alert('原型演示：调研中间稿已导出为飞书文档')">导出飞书文档</button>
+        <button class="btn btn-primary" onclick="alert('原型演示：跳转完整编辑模式（市场调研 / 关键词容量 / 落地页规划三大模块）')">前往完整编辑</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function toggleWf(t) { t.parentElement.classList.toggle('open'); }
+
+  // ============ 模板数据 ============
+  const templates = [
+    {
+      name: '新规格 / 新型号', type: '小活动加单元', tagClass: 'small', color: 'linear-gradient(135deg,#BA7517 0%,#DC9A47 100%)', icon: '🚀',
+      scene: '客户上市新规格、新型号产品时的快速推广模板',
+      detail: '适用于新 SKU、新型号、产品微迭代等场景，与现有产品线高度相关，无需独立账户结构。3-7 天可上线。',
+      meta: [['典型时长','3-7 天'],['月度预算','¥ 3,000 - 5,000'],['关键词规模','5-15 个']],
+      stages: [['需求确认与背景梳理','30 分钟'],['拓词与分类（URL 爬取 + 规划师）','半天'],['创意撰写（3-5 套）','1 天'],['落地页准备 / 基木鱼复用','1-2 天'],['上线 + 实时排名验证','次日']],
+      history: '本年度使用 <b>8 次</b>，成功率 <b>87.5%</b>（7 成功 1 暂停）· 平均上线后月增线索 <b>+18 条</b> · 平均 CPL <b>¥ 187</b>'
+    },
+    {
+      name: '新行业拓展', type: '独立方案立项', tagClass: 'big', color: 'linear-gradient(135deg,#6B47B5 0%,#9474D4 100%)', icon: '🎯',
+      scene: '进入全新行业 / 新应用场景的战略级方案',
+      detail: '适用于客户主动开拓新行业、新应用场景。需独立调研、拓词、落地页规划，新建独立账户结构。2-4 周交付方案 + 客户审批后上线。',
+      meta: [['典型时长','2-4 周'],['月度预算','¥ 10,000 - 30,000'],['关键词规模','100-300 个']],
+      stages: [['立项确认（客户书面同意）','1 天'],['市场调研（行业 / 竞品 / 关键词容量）','3-5 天'],['拓词与 5 类分类','2-3 天'],['落地页规划（含基木鱼适配）','3-5 天'],['完整方案输出 + 客户审批','2 天'],['客户审批后正式上线','3-5 天']],
+      history: '本年度使用 <b>3 次</b>，全部成功 · 平均交付周期 <b>28 天</b> · 客户满意度 <b>4.9 / 5.0</b> · 平均月度新增线索 <b>+62 条</b>'
+    },
+    {
+      name: '季节性活动 · 限时投放', type: '小活动加单元', tagClass: 'small', color: 'linear-gradient(135deg,#1D9E75 0%,#4DBE99 100%)', icon: '🎁',
+      scene: '促销节点、展会、行业大事件的限时推广',
+      detail: '适用于双十一、节假日、行业展会、新品发布会等有明确时间窗的推广。包含自动到期下线机制和效果回顾。',
+      meta: [['典型时长','1-4 周'],['月度预算','¥ 5,000 - 15,000'],['关键词规模','15-40 个']],
+      stages: [['活动主题与时间窗确认','30 分钟'],['拓词（含活动关键词）','半天'],['创意 + 落地页（活动专版）','2-3 天'],['上线 + 全程实时盯盘','活动期间'],['到期自动下线 + 效果回顾','活动结束当天']],
+      history: '本年度使用 <b>5 次</b> · 平均 ROI <b>3.2 倍</b> · 全部按期上线 · 自动下线机制 0 失误'
+    },
+    {
+      name: '品牌护盘 · 应急方案', type: '小活动加单元', tagClass: 'small', color: 'linear-gradient(135deg,#E24B4A 0%,#EE7472 100%)', icon: '🛡',
+      scene: '竞品恶意抢位、品牌词被压制时的应急响应',
+      detail: '适用于竞品主动加价抢品牌词、负面舆情应对等紧急场景。优先级最高，可申请 20% 上限覆盖机制。1 小时内可启动。',
+      meta: [['典型时长','即时启动'],['月度预算','¥ 5,000 - 20,000'],['关键词规模','10-30 个']],
+      stages: [['触发判定（管理员审批）','15 分钟'],['品牌词列表锁定 + 紧急加价','30 分钟'],['启用 20% 上限覆盖（如需）','即时'],['持续盯盘 + 2-4 小时复核','到品牌词夺回首位'],['竞品行为分析 + 月报复盘','次日']],
+      history: '本年度使用 <b>3 次</b> · 全部成功夺回首位 · 平均生效时间 <b>2 小时 42 分</b> · 最快 1 次 <b>48 分钟</b>'
+    }
+  ];
+
+  let currentTplIdx = 0;
+  function renderTplList() {
+    document.getElementById('tplList').innerHTML = templates.map(function(t, i) {
+      return '<div class="tpl-item' + (i === currentTplIdx ? ' active' : '') + '" onclick="selectTpl(' + i + ')">' +
+        '<div class="tpl-item-icon" style="background:' + t.color + ';">' + t.icon + '</div>' +
+        '<div class="tpl-item-name">' + t.name + '</div>' +
+        '<div class="tpl-item-meta"><span class="tpl-item-tag ' + t.tagClass + '">' + (t.tagClass === 'small' ? '小活动' : '独立方案') + '</span>' + t.meta[0][1] + '</div>' +
+        '</div>';
+    }).join('');
+  }
+  function renderTplDetail() {
+    const t = templates[currentTplIdx];
+    const tagBg = t.tagClass === 'small' ? '#FCF6EA' : '#F2EBFB';
+    const tagColor = t.tagClass === 'small' ? '#BA7517' : '#6B47B5';
+    let html = '';
+    html += '<div class="tpl-detail-header">';
+    html += '<div class="tpl-detail-icon" style="background:' + t.color + ';">' + t.icon + '</div>';
+    html += '<div class="tpl-detail-info">';
+    html += '<div class="tpl-detail-title">' + t.name + ' <span class="tpl-detail-tag" style="background:' + tagBg + ';color:' + tagColor + ';">' + t.type + '</span></div>';
+    html += '<div class="tpl-detail-sub">' + t.scene + '</div></div></div>';
+    html += '<div class="tpl-section"><div class="tpl-section-title">适用场景</div><div style="font-size:12px;color:#4B5563;line-height:1.7;">' + t.detail + '</div></div>';
+    html += '<div class="tpl-section"><div class="tpl-section-title">典型参数</div><div class="tpl-meta-grid">';
+    t.meta.forEach(function(m) { html += '<div class="tpl-meta-cell"><div class="tpl-meta-label">' + m[0] + '</div><div class="tpl-meta-value">' + m[1] + '</div></div>'; });
+    html += '</div></div>';
+    html += '<div class="tpl-section"><div class="tpl-section-title">标准阶段流程</div><div class="tpl-stages">';
+    t.stages.forEach(function(s, i) { html += '<div class="tpl-stage-row"><div class="tpl-stage-num">' + (i+1) + '</div><div class="tpl-stage-name">' + s[0] + '</div><div class="tpl-stage-time">' + s[1] + '</div></div>'; });
+    html += '</div></div>';
+    html += '<div class="tpl-section"><div class="tpl-section-title">历史复用情况</div><div class="tpl-history">' + t.history + '</div></div>';
+    document.getElementById('tplDetail').innerHTML = html;
+  }
+  function openTplModal(idx) {
+    if (typeof idx === 'number') currentTplIdx = idx;
+    renderTplList(); renderTplDetail();
+    document.getElementById('tplModal').classList.add('show');
+  }
+  function closeTplModal() { document.getElementById('tplModal').classList.remove('show'); }
+  function selectTpl(idx) { currentTplIdx = idx; renderTplList(); renderTplDetail(); }
+  function useTplAndCreate() {
+    const t = templates[currentTplIdx];
+    closeTplModal();
+    alert('✓ 已基于模板「' + t.name + '」创建新方案\n\n类型：' + t.type + '\n预估时长：' + t.meta[0][1] + '\n预算范围：' + t.meta[1][1] + '\n关键词规模：' + t.meta[2][1] + '\n\n已自动预填阶段流程，请前往「进行中」列表完善细节并指派负责人。');
+  }
+
+  // ============ 新建向导 ============
+  let wizStep = 1;
+  let wizType = 'small';
+  // 线索导向客户：苏尔寿（投放策略来自客户管理页设置）
+  const CUSTOMER_PROFILE = {
+    name: '苏尔寿', strategy: 'lead',
+    totalBudget: 80000,
+    hardCapAllocated: 30000,        // 已控预算 12 个计划 · 百度推广 API 拉 budget × 30
+    uncapCurrentMonthToDate: 4800,  // 未控本月已实付
+    uncapDaysElapsed: 6, uncapDaysRemaining: 24,
+    inProgressAlloc: 18000,         // 进行中新方案预占（已审批）
+    safetyBuffer: 2000              // 推荐上限安全垫
+  };
+  function getBudgetState() {
+    const p = CUSTOMER_PROFILE;
+    const confirmed = p.hardCapAllocated + p.uncapCurrentMonthToDate + p.inProgressAlloc;
+    const nominalRemain = p.totalBudget - confirmed;
+    const uncapForecast = Math.round(p.uncapCurrentMonthToDate / p.uncapDaysElapsed * p.uncapDaysRemaining);
+    const cap = Math.max(0, nominalRemain - uncapForecast - p.safetyBuffer);
+    return { confirmed, nominalRemain, uncapForecast, cap };
+  }
+  function openWizard() { wizStep = 1; wizType = 'small'; updateWizard(); recalcBudgetPanel(); document.getElementById('wizardModal').classList.add('show'); }
+  function closeWizardModal() { document.getElementById('wizardModal').classList.remove('show'); }
+  function nextStep() {
+    if (wizStep === 3) {
+      const { nominalRemain, cap } = getBudgetState();
+      const v = parseFloat(document.getElementById('wizBudgetInput').value) || 0;
+      if (v > nominalRemain) {
+        if (!confirm('⚠ 本批预算 ¥ ' + v.toLocaleString() + ' 已超出客户月度名义余位 ¥ ' + nominalRemain.toLocaleString() + '。\n\n确认创建将直接触发合同超额，需上报客户成功经理申请额度追加。是否继续？')) return;
+      } else if (v > cap) {
+        if (!confirm('提示：本批预算 ¥ ' + v.toLocaleString() + ' 超出系统推荐上限 ¥ ' + cap.toLocaleString() + '（超 ¥ ' + (v - cap).toLocaleString() + '）。\n\n未控计划若按当前节奏继续，月底可能触合同。是否继续创建？')) return;
+      }
+      confirmCreate();
+      return;
+    }
+    wizStep++; updateWizard();
+  }
+  function recalcBudgetPanel() {
+    const inp = document.getElementById('wizBudgetInput');
+    if (!inp) return;
+    const v = parseFloat(inp.value) || 0;
+    const { nominalRemain, cap } = getBudgetState();
+    document.getElementById('bpBatchVal').textContent = '¥ ' + v.toLocaleString();
+    const panel = document.getElementById('budgetPanelStep3');
+    const tag = document.getElementById('bpStatusTag');
+    const note = document.getElementById('bpNote');
+    note.classList.remove('ok','warn');
+    note.removeAttribute('style');
+    panel.classList.remove('warn');
+    if (v > nominalRemain) {
+      panel.classList.add('warn');
+      tag.style.background = '#FEE2E2'; tag.style.color = '#B91C1C'; tag.textContent = '⚠ 超出名义余位';
+      note.classList.add('warn');
+      note.innerHTML = '⚠ 本批预算 <b>¥ ' + v.toLocaleString() + '</b> 已超出月度名义余位 <b>¥ ' + nominalRemain.toLocaleString() + '</b>（超 <b>¥ ' + (v - nominalRemain).toLocaleString() + '</b>）。即使未控计划完全不消费也会触合同，必须上报客户成功经理。';
+    } else if (v > cap) {
+      tag.style.background = '#FEF3C7'; tag.style.color = '#92400E'; tag.textContent = '⚠ 超出推荐上限';
+      note.style.background = '#FFFBEB';
+      note.style.borderLeft = '3px solid #F59E0B';
+      note.style.color = '#6B5C2E';
+      note.innerHTML = '⚠ 本批预算 <b style="color:#B45309;">¥ ' + v.toLocaleString() + '</b> 超推荐上限 <b style="color:#B45309;">¥ ' + cap.toLocaleString() + '</b>（超 <b style="color:#B45309;">¥ ' + (v - cap).toLocaleString() + '</b>）。未控计划若按当前节奏继续，月底可能触合同。可继续创建但建议先与客户成功经理对齐。';
+    } else {
+      tag.style.background = '#DCFCE7'; tag.style.color = '#166534'; tag.textContent = '✓ 推荐上限内';
+      note.classList.add('ok');
+      note.innerHTML = '✓ 本批预算 <b>¥ ' + v.toLocaleString() + '</b> 在推荐上限 <b>¥ ' + cap.toLocaleString() + '</b> 内，剩 <b>¥ ' + (cap - v).toLocaleString() + '</b> 推荐空间。未控计划节奏稳定，方案可正常推进。';
+    }
+  }
+  function prevStep() { if (wizStep > 1) { wizStep--; updateWizard(); } }
+  function updateWizard() {
+    document.querySelectorAll('#wizardModal .wiz-step').forEach(function(s, i) {
+      s.classList.toggle('done', i+1 < wizStep);
+      s.classList.toggle('active', i+1 === wizStep);
+    });
+    document.querySelectorAll('#wizardModal .wiz-pane').forEach(function(p) {
+      p.classList.toggle('active', parseInt(p.dataset.step) === wizStep);
+    });
+    document.getElementById('wizPrev').disabled = (wizStep === 1);
+    document.getElementById('wizNext').textContent = wizStep === 3 ? '确认创建' : '下一步';
+    const sumType = document.getElementById('sumType');
+    if (sumType) sumType.textContent = wizType === 'small' ? '小活动加单元' : '独立方案立项';
+  }
+  function selectType(el, type) {
+    el.parentElement.querySelectorAll('.type-card').forEach(function(c) { c.classList.remove('active'); });
+    el.classList.add('active');
+    wizType = type;
+  }
+  function confirmCreate() {
+    closeWizardModal();
+    alert('✓ 新方案已创建\n\n类型：' + (wizType === 'small' ? '小活动加单元' : '独立方案立项') + '\n名称：EO-高纯度新规格（99.99%）\n负责人：优运营 · 上线截止 6/15\n\n已进入「进行中」列表，可在卡片上推进各阶段。');
+  }
+
+  // ============ 进行中方案数据 ============
+  const campaigns = {
+    eo: {
+      name: 'EO-高纯度新规格（99.99%）',
+      type: '小活动加单元',
+      typeBadgeClass: 'small',
+      source: '月报反馈 · 王经理 · 6/3',
+      customer: '苏尔寿',
+      info: [['所属计划','EO-高纯度'],['新增单元','高纯度 99.99% 新规格'],['关联客户','苏尔寿'],['负责人','优运营'],['月度预算','¥ 4,200'],['上线截止','6/15（剩 9 天）']],
+      stages: ['需求确认与背景梳理','拓词与分类','创意撰写','落地页准备','上线 + 实时排名验证'],
+      currentStageIdx: 2,
+      progress: 55,
+      keywords: ['EO 高纯度 99.99', '环氧乙烷 高纯度 厂家', '99.99% EO 价格', '高纯度环氧乙烷 应用', 'EO 储罐 高纯度', '医药级 环氧乙烷', '电子级 EO', '高纯度 EO 蒸馏', 'EO 提纯设备', '99.99% 环氧乙烷 报价', '高纯度 EO 厂家直供', '环氧乙烷 高纯度 标准'],
+      budget: 4200,
+      cardSelector: '.plan-card.small'
+    },
+    sterling: {
+      name: '规整填料 · 化工新材料行业拓展',
+      type: '独立方案立项',
+      typeBadgeClass: 'big',
+      source: '月报反馈 · 王经理 · 6/3',
+      customer: '苏尔寿',
+      info: [['目标行业','化工新材料（PLA / PCL）'],['新建计划数','3 个（按子行业拆分）'],['预计关键词','120-180 个（拓词中）'],['负责人','规划组 · 张顾问'],['月度预算','¥ 18,000'],['方案交付截止','6/10（剩 4 天）']],
+      stages: ['立项确认（客户书面同意）','市场调研','拓词与 5 类分类','落地页规划','完整方案输出 + 客户审批','客户审批后正式上线','上线 + 持续优化'],
+      currentStageIdx: 1,
+      progress: 28,
+      keywords: ['（拓词中，已识别 320 个候选）'],
+      budget: 18000,
+      cardSelector: '.plan-card.big'
+    }
+  };
+
+  let currentCampaign = null;
+
+  // ============ 查看详情 ============
+  function showDetails(key) {
+    const c = campaigns[key];
+    currentCampaign = key;
+    document.getElementById('dmTitle').textContent = c.name;
+    document.getElementById('dmSub').textContent = c.type + ' · 来源：' + c.source;
+    let html = '';
+    // 基本信息
+    html += '<div class="dm-section"><div class="dm-section-title">基本信息</div><div class="dm-info-grid">';
+    c.info.forEach(function(item) { html += '<div class="dm-info-cell"><div class="dm-info-label">' + item[0] + '</div><div class="dm-info-value">' + item[1] + '</div></div>'; });
+    html += '</div></div>';
+    // 阶段进度
+    html += '<div class="dm-section"><div class="dm-section-title">阶段进度（' + c.progress + '%）</div><div class="dm-stages-full">';
+    c.stages.forEach(function(name, i) {
+      const cls = i < c.currentStageIdx ? 'done' : (i === c.currentStageIdx ? 'current' : 'future');
+      const status = i < c.currentStageIdx ? '✓ 已完成' : (i === c.currentStageIdx ? '进行中' : '待启动');
+      html += '<div class="dm-stage-row ' + cls + '"><div class="dm-stage-num">' + (i < c.currentStageIdx ? '✓' : (i+1)) + '</div><div class="dm-stage-name">' + name + '</div><div class="dm-stage-time">' + status + '</div></div>';
+    });
+    html += '</div></div>';
+    // 关键词清单
+    if (key === 'eo') {
+      html += '<div class="dm-section"><div class="dm-section-title">候选关键词（12 个）</div><div class="dm-kw-list">';
+      c.keywords.forEach(function(k) { html += '<div class="dm-kw">' + k + '</div>'; });
+      html += '</div></div>';
+    } else {
+      html += '<div class="dm-section"><div class="dm-section-title">候选关键词</div><div style="font-size:12px;color:#6B7280;line-height:1.7;">' + c.keywords[0] + '。拓词完成后将自动同步至此。</div></div>';
+    }
+    // 变更日志
+    html += '<div class="dm-section"><div class="dm-section-title">变更日志</div><div style="font-size:11px;color:#6B7280;line-height:1.9;">';
+    if (key === 'eo') {
+      html += '<div>06-06 11:08 · 优运营 · 创意第 3 套定稿</div><div>06-05 14:32 · 优运营 · 拓词完成，12 个候选已确认</div><div>06-04 16:18 · 优运营 · 需求确认，背景梳理完成</div><div>06-03 10:24 · 王 PM · 由月报反馈转入</div>';
+    } else {
+      html += '<div>06-05 16:42 · 张顾问 · 调研中间稿 v0.3 更新</div><div>06-04 10:08 · 张顾问 · 启动市场调研</div><div>06-03 14:52 · 王 PM · 立项确认</div><div>06-03 10:46 · 王 PM · 由月报反馈转入</div>';
+    }
+    html += '</div></div>';
+    document.getElementById('dmBody').innerHTML = html;
+    document.getElementById('detailModal').classList.add('show');
+  }
+  function closeDetailModal() { document.getElementById('detailModal').classList.remove('show'); }
+
+  // ============ 推进下一阶段 ============
+  function advanceStage(key) {
+    const c = campaigns[key];
+    currentCampaign = key;
+    if (c.currentStageIdx >= c.stages.length - 1) {
+      alert('该方案已到最终阶段，请使用「上线交付」流程完成方案。');
+      return;
+    }
+    document.getElementById('smSub').textContent = c.name;
+    document.getElementById('smCurrent').textContent = c.stages[c.currentStageIdx];
+    document.getElementById('smNext').textContent = c.stages[c.currentStageIdx + 1];
+    document.getElementById('smNote').value = '';
+    document.getElementById('stageModal').classList.add('show');
+  }
+  function closeStageModal() { document.getElementById('stageModal').classList.remove('show'); }
+  function confirmAdvance() {
+    const c = campaigns[currentCampaign];
+    const oldStage = c.stages[c.currentStageIdx];
+    c.currentStageIdx++;
+    const newStage = c.stages[c.currentStageIdx];
+    c.progress = Math.min(100, Math.round((c.currentStageIdx + 0.5) / c.stages.length * 100));
+    updateCardDOM(currentCampaign);
+    closeStageModal();
+    alert('✓ 已推进\n\n「' + oldStage + '」 → 「' + newStage + '」\n方案进度更新至 ' + c.progress + '%\n\n已通知客户与团队（飞书消息）');
+  }
+  function updateCardDOM(key) {
+    const c = campaigns[key];
+    const card = document.querySelector(c.cardSelector);
+    if (!card) return;
+    // 更新阶段标签
+    const tags = card.querySelectorAll('.stage-tag');
+    tags.forEach(function(t, i) {
+      t.classList.remove('done', 'active');
+      if (i < c.currentStageIdx) { t.classList.add('done'); if (!t.textContent.startsWith('✓')) t.textContent = '✓ ' + t.textContent.replace(/^✓\s*/, ''); }
+      else if (i === c.currentStageIdx) { t.classList.add('active'); t.textContent = t.textContent.replace(/^✓\s*/, ''); }
+      else { t.textContent = t.textContent.replace(/^✓\s*/, ''); }
+    });
+    // 更新进度条
+    const fill = card.querySelector('.pc-pg-fill');
+    if (fill) fill.style.width = c.progress + '%';
+    const meta = card.querySelector('.pc-pg-meta');
+    if (meta) meta.firstElementChild.textContent = '进度 ' + c.progress + '%';
+  }
+
+  // ============ 编辑预算 ============
+  function editBudget(key) {
+    const c = campaigns[key];
+    currentCampaign = key;
+    document.getElementById('bmSub').textContent = c.name;
+    document.getElementById('bmCurrent').textContent = '¥ ' + c.budget.toLocaleString();
+    document.getElementById('bmNew').value = c.budget;
+    updateBudgetPreview();
+    document.getElementById('budgetModal').classList.add('show');
+  }
+  function closeBudgetModal() { document.getElementById('budgetModal').classList.remove('show'); }
+  function updateBudgetPreview() {
+    const c = campaigns[currentCampaign];
+    const newVal = parseFloat(document.getElementById('bmNew').value);
+    const preview = document.getElementById('bmPreview');
+    const dailyAvg = document.getElementById('bmDailyAvg');
+    if (isNaN(newVal) || newVal <= 0) {
+      preview.innerHTML = '请输入有效预算';
+      preview.style.background = '#FEF6F6';
+      preview.style.borderColor = '#FECACA';
+      dailyAvg.textContent = '—';
+      return;
+    }
+    const delta = ((newVal - c.budget) / c.budget * 100);
+    const sign = delta >= 0 ? '+' : '';
+    const color = Math.abs(delta) < 10 ? '#185FA5' : (Math.abs(delta) < 30 ? '#BA7517' : '#E24B4A');
+    preview.innerHTML = '变化幅度 <b style="color:' + color + ';">' + sign + delta.toFixed(1) + '%</b> · 新月度预算 <b>¥ ' + newVal.toLocaleString() + '</b>';
+    preview.style.background = 'linear-gradient(135deg,#F4F8FD 0%,#FAFBFC 100%)';
+    preview.style.borderColor = '#C5D7EE';
+    dailyAvg.textContent = '¥ ' + Math.round(newVal / 25).toLocaleString();
+  }
+  function confirmBudget() {
+    const c = campaigns[currentCampaign];
+    const newVal = parseFloat(document.getElementById('bmNew').value);
+    if (isNaN(newVal) || newVal <= 0) { alert('请输入有效预算'); return; }
+    const delta = ((newVal - c.budget) / c.budget * 100);
+    const sign = delta >= 0 ? '+' : '';
+    c.budget = newVal;
+    closeBudgetModal();
+    alert('✓ 预算已更新\n\n方案：' + c.name + '\n月度预算：¥ ' + newVal.toLocaleString() + '\n变化：' + sign + delta.toFixed(1) + '%\n\n已立即生效，调价台账将记入本次变更。');
+  }
+
+  // ============ 调研中间稿 ============
+  function showResearch() { document.getElementById('researchModal').classList.add('show'); }
+  function closeResearchModal() { document.getElementById('researchModal').classList.remove('show'); }
+
+  (function wireNav(){
+
+    const map={'登录':'01-onboarding/01-login.html','应用配置':'01-onboarding/02-app-config.html','授权引导':'01-onboarding/03-oauth-guide.html','首次同步':'01-onboarding/04-syncing.html','数据看板':'02-monitor/01-dashboard.html','异常提醒':'02-monitor/02-alerts.html','关键词详情':'02-monitor/03-keyword-detail.html','拓词':'03-optimize/01-keyword-expand.html','关键词工作台':'03-optimize/02-plan-management.html','否词管理':'03-optimize/04-negative-words.html','调价台账':'04-verify/01-adjustment-log.html','待验证调价':'04-verify/02-verify-queue.html','波动分析任务':'04-verify/03-fluctuation-tasks.html','分析报告':'05-delivery/01-report.html','月报后流程':'05-delivery/02-monthly-followup.html','新增活动规划':'05-delivery/03-new-campaign.html','线索管理':'05-delivery/04-leads.html','客户管理':'06-settings/01-customers.html','账号与权限':'06-settings/02-accounts-roles.html','应用管理':'06-settings/03-apps.html','数据接入':'06-settings/04-data-source.html'};
+    document.querySelectorAll('.wf-sub-item').forEach(item=>{if(item.classList.contains('active')||item.hasAttribute('onclick'))return;const c=item.cloneNode(true);c.querySelectorAll('span').forEach(s=>s.remove());const t=c.textContent.trim();if(map[t])item.setAttribute('onclick',"location.href='../"+map[t]+"'");});
+  })();
+</script>
+</body>
+</html>

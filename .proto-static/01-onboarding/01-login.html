@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>登录 · SEM 智投平台</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: linear-gradient(135deg,#F4F8FD 0%,#E6EFF8 100%); color: #1F2937; font-size: 13px; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+
+  .login-wrap { display: grid; grid-template-columns: 1fr 480px; background: #FFF; border-radius: 14px; box-shadow: 0 20px 60px rgba(24,95,165,0.12); overflow: hidden; max-width: 1080px; width: 90%; min-height: 580px; }
+
+  /* 左侧品牌区 */
+  .brand-side { background: linear-gradient(135deg,#185FA5 0%,#2C7CC8 50%,#4D95D6 100%); color: #FFF; padding: 56px 48px; display: flex; flex-direction: column; justify-content: space-between; position: relative; overflow: hidden; }
+  .brand-side::before { content: ''; position: absolute; top: -60px; right: -60px; width: 200px; height: 200px; border-radius: 50%; background: rgba(255,255,255,0.06); }
+  .brand-side::after { content: ''; position: absolute; bottom: -80px; left: -40px; width: 240px; height: 240px; border-radius: 50%; background: rgba(255,255,255,0.05); }
+  .brand-logo { font-size: 22px; font-weight: 700; position: relative; z-index: 1; }
+  .brand-logo small { display: block; font-size: 12px; font-weight: 400; margin-top: 4px; opacity: 0.85; }
+  .brand-tagline { font-size: 28px; font-weight: 600; line-height: 1.5; margin-top: 64px; position: relative; z-index: 1; }
+  .brand-tagline-sub { font-size: 14px; opacity: 0.9; margin-top: 14px; line-height: 1.8; }
+
+  .feature-list { display: flex; flex-direction: column; gap: 14px; margin-top: 48px; position: relative; z-index: 1; }
+  .feature-item { display: flex; align-items: center; gap: 10px; font-size: 13px; opacity: 0.95; }
+  .feature-dot { width: 6px; height: 6px; border-radius: 50%; background: #FFF; opacity: 0.7; }
+  .brand-foot { font-size: 11px; opacity: 0.7; position: relative; z-index: 1; }
+
+  /* 右侧登录表单 */
+  .form-side { padding: 56px 48px; display: flex; flex-direction: column; justify-content: center; }
+  .form-title { font-size: 24px; font-weight: 700; color: #1F2937; margin-bottom: 6px; }
+  .form-sub { font-size: 13px; color: #6B7280; margin-bottom: 32px; }
+
+  .tabs { display: flex; gap: 4px; margin-bottom: 24px; border-bottom: 1px solid #E5E7EB; }
+  .tab { padding: 10px 4px; font-size: 13px; color: #6B7280; cursor: pointer; border-bottom: 2px solid transparent; margin-right: 24px; }
+  .tab.active { color: #185FA5; border-bottom-color: #185FA5; font-weight: 500; }
+  .tab:hover { color: #185FA5; }
+
+  .form-row { margin-bottom: 18px; }
+  .form-label { font-size: 12px; color: #4B5563; margin-bottom: 6px; display: block; }
+  .form-input { width: 100%; padding: 10px 12px; border: 1px solid #D1D5DB; border-radius: 6px; font-size: 14px; background: #FFF; }
+  .form-input:focus { outline: none; border-color: #185FA5; box-shadow: 0 0 0 3px rgba(24,95,165,0.1); }
+  .form-input-with-icon { position: relative; }
+  .form-input-with-icon input { padding-left: 38px; }
+  .form-input-with-icon .icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); font-size: 16px; opacity: 0.4; }
+
+  .form-options { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; font-size: 12px; }
+  .remember { display: flex; align-items: center; gap: 6px; color: #4B5563; cursor: pointer; }
+  .remember input { accent-color: #185FA5; }
+  .forgot { color: #185FA5; text-decoration: none; cursor: pointer; }
+  .forgot:hover { text-decoration: underline; }
+
+  .btn-login { width: 100%; padding: 12px; background: linear-gradient(135deg,#185FA5 0%,#2C7CC8 100%); color: #FFF; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 12px rgba(24,95,165,0.25); }
+  .btn-login:hover { box-shadow: 0 6px 16px rgba(24,95,165,0.35); }
+
+  .divider { display: flex; align-items: center; gap: 12px; margin: 24px 0; color: #9CA3AF; font-size: 11px; }
+  .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: #E5E7EB; }
+
+  .alt-login { display: flex; gap: 12px; justify-content: center; }
+  .alt-btn { width: 44px; height: 44px; border-radius: 8px; border: 1px solid #E5E7EB; background: #FFF; display: flex; align-items: center; justify-content: center; font-size: 18px; cursor: pointer; transition: all 0.15s; }
+  .alt-btn:hover { border-color: #185FA5; background: #F4F8FD; }
+
+  .form-foot { text-align: center; font-size: 12px; color: #6B7280; margin-top: 32px; }
+  .form-foot a { color: #185FA5; text-decoration: none; }
+  .form-foot a:hover { text-decoration: underline; }
+
+  .demo-tip { background: #FFFBF4; border: 1px dashed #FED7AA; border-radius: 6px; padding: 10px 12px; margin-bottom: 18px; font-size: 11px; color: #9A3412; line-height: 1.7; }
+  .demo-tip b { color: #BA7517; }
+</style>
+</head>
+<body>
+
+<div class="login-wrap">
+  <!-- 左侧品牌区 -->
+  <div class="brand-side">
+    <div class="brand-logo">SEM 智投平台<small>v3.0 · 工作流版</small></div>
+    <div>
+      <div class="brand-tagline">面向 B2B 品牌客户的<br>智能 SEM 投放管理平台</div>
+      <div class="brand-tagline-sub">在百度营销 API 之上，提供多客户聚合管理 + 关键词分级战略 + AI 二次解读 + SEM 代运营工作流闭环。</div>
+      <div class="feature-list">
+        <div class="feature-item"><span class="feature-dot"></span>跨多客户聚合视图与统一调度</div>
+        <div class="feature-item"><span class="feature-dot"></span>5 类关键词分级 + P0~P5 异常分级</div>
+        <div class="feature-item"><span class="feature-dot"></span>调价 4 层系数公式 + 单次 20% 上限</div>
+        <div class="feature-item"><span class="feature-dot"></span>调价台账自动追溯 + 调后效果复核</div>
+        <div class="feature-item"><span class="feature-dot"></span>月报自动生成 + PPT 分段导出</div>
+      </div>
+    </div>
+    <div class="brand-foot">© 2026 思文 SEM 代运营团队 · 所有权利保留</div>
+  </div>
+
+  <!-- 右侧表单区 -->
+  <div class="form-side">
+    <div class="form-title">欢迎使用</div>
+    <div class="form-sub">登录以管理您的 SEM 投放</div>
+
+    <div class="demo-tip">
+      <b>🎨 原型演示</b><br>无需真实账号，点击「登录」即可进入。<br>实际生产环境支持账号密码、手机验证码、企业 SSO 三种方式。
+    </div>
+
+    <div class="tabs">
+      <span class="tab active" onclick="switchTab(this)">账号密码</span>
+      <span class="tab" onclick="switchTab(this)">手机验证码</span>
+      <span class="tab" onclick="switchTab(this)">企业 SSO</span>
+    </div>
+
+    <div class="form-row">
+      <label class="form-label">账号</label>
+      <div class="form-input-with-icon">
+        <span class="icon">👤</span>
+        <input type="text" class="form-input" placeholder="请输入用户名 / 手机号 / 邮箱" value="youyunying@siwen.com">
+      </div>
+    </div>
+
+    <div class="form-row">
+      <label class="form-label">密码</label>
+      <div class="form-input-with-icon">
+        <span class="icon">🔒</span>
+        <input type="password" class="form-input" placeholder="请输入密码" value="••••••••">
+      </div>
+    </div>
+
+    <div class="form-options">
+      <label class="remember"><input type="checkbox" checked>7 天免登录</label>
+      <a class="forgot">忘记密码？</a>
+    </div>
+
+    <button class="btn-login" onclick="location.href='../index.html'">登录</button>
+
+    <div class="divider">其他登录方式</div>
+
+    <div class="alt-login">
+      <div class="alt-btn" title="飞书">📱</div>
+      <div class="alt-btn" title="企业微信">💬</div>
+      <div class="alt-btn" title="百度账号">🅱</div>
+      <div class="alt-btn" title="GitHub">🐙</div>
+    </div>
+
+    <div class="form-foot">
+      还没有账号？<a>申请试用</a> · <a>帮助文档</a>
+    </div>
+  </div>
+</div>
+
+<script>
+  function switchTab(t) { t.parentElement.querySelectorAll('.tab').forEach(x=>x.classList.remove('active')); t.classList.add('active'); }
+</script>
+</body>
+</html>

@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>数据接入 · 系统设置 · SEM 智投平台</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #F5F7FA; color: #1F2937; font-size: 13px; }
+  .sidebar { position: fixed; left: 0; top: 0; width: 200px; height: 100vh; background: #FFFFFF; border-right: 1px solid #E5E7EB; padding: 18px 0 24px; z-index: 100; overflow-y: auto; }
+  .logo { padding: 0 20px 18px; font-size: 15px; font-weight: 600; color: #185FA5; border-bottom: 1px solid #F3F4F6; }
+  .logo small { display: block; font-size: 11px; color: #9CA3AF; font-weight: 400; margin-top: 4px; }
+  .nav-home { padding: 12px 20px; cursor: pointer; color: #4B5563; font-size: 12px; border-bottom: 1px solid #F3F4F6; }
+  .nav-home:hover { background: #F9FAFB; color: #185FA5; }
+  .nav-section { padding: 14px 0 8px; }
+  .nav-section-title { padding: 0 20px 6px; font-size: 11px; color: #9CA3AF; font-weight: 500; }
+  .wf-group { user-select: none; }
+  .wf-trigger { padding: 9px 20px; cursor: pointer; color: #4B5563; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .wf-trigger:hover { background: #F9FAFB; }
+  .wf-trigger.current { color: #185FA5; font-weight: 500; }
+  .wf-icon { width: 16px; font-size: 13px; }
+  .wf-name { flex: 1; }
+  .wf-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; font-weight: 500; background: #FEF6F6; color: #E24B4A; }
+  .wf-badge.warn { background: #FCF6EA; color: #BA7517; }
+  .wf-badge.info { background: #EFF4FB; color: #185FA5; }
+  .wf-toggle { font-size: 10px; color: #9CA3AF; transition: transform 0.15s; }
+  .wf-group.open .wf-toggle { transform: rotate(90deg); }
+  .wf-sub { display: none; padding-bottom: 4px; }
+  .wf-group.open .wf-sub { display: block; }
+  .wf-sub-item { padding: 7px 20px 7px 44px; cursor: pointer; color: #6B7280; font-size: 12px; display: flex; align-items: center; gap: 6px; border-left: 3px solid transparent; }
+  .wf-sub-item:hover { background: #F9FAFB; color: #185FA5; }
+  .wf-sub-item.active { background: #EFF4FB; color: #185FA5; font-weight: 500; border-left-color: #185FA5; }
+  .wf-sub-dot { width: 4px; height: 4px; border-radius: 50%; background: #D1D5DB; }
+  .wf-sub-item.active .wf-sub-dot { background: #185FA5; }
+  .wf-sub-num { font-size: 10px; color: #9CA3AF; margin-left: auto; }
+  .main { margin-left: 200px; min-height: 100vh; }
+  .topbar { background: #FFFFFF; border-bottom: 1px solid #E5E7EB; padding: 0 28px; height: 56px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 50; }
+  .breadcrumb { font-size: 13px; color: #6B7280; }
+  .breadcrumb b { color: #1F2937; font-weight: 500; }
+  .breadcrumb a { color: #6B7280; text-decoration: none; }
+  .topbar-right { display: flex; align-items: center; gap: 12px; }
+  .role-badge { font-size: 11px; padding: 4px 9px; background: #F2EBFB; color: #6B47B5; border-radius: 10px; font-weight: 500; }
+  .user-avatar { width: 30px; height: 30px; border-radius: 50%; background: #185FA5; color: #FFF; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+  .content { padding: 22px 28px; }
+  .page-header { margin-bottom: 14px; display: flex; justify-content: space-between; align-items: flex-end; }
+  .page-title { font-size: 20px; font-weight: 600; color: #1F2937; }
+  .page-desc { font-size: 12px; color: #6B7280; margin-top: 4px; }
+  .page-desc b { color: #1F2937; }
+  .btn { padding: 6px 12px; border-radius: 5px; font-size: 12px; cursor: pointer; border: none; font-weight: 500; }
+  .btn-primary { background: #185FA5; color: #FFF; }
+  .btn-default { background: #FFF; color: #4B5563; border: 1px solid #D1D5DB; }
+  .btn-default:hover { border-color: #185FA5; color: #185FA5; }
+  .btn-small { padding: 4px 10px; font-size: 11px; }
+
+  /* 媒体平台 Tab */
+  .platform-tabs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 18px; }
+  .platform-tab { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; cursor: pointer; transition: all .15s; }
+  .platform-tab:hover { border-color: #C5D7EE; }
+  .platform-tab.active { border-color: #185FA5; background: #F4F8FD; box-shadow: 0 1px 3px rgba(24, 95, 165, 0.08); }
+  .platform-tab.soon { background: #FAFBFC; cursor: not-allowed; opacity: .85; }
+  .platform-tab.add { background: #FAFBFC; border-style: dashed; justify-content: center; color: #6B7280; }
+  .platform-tab.add:hover { border-color: #185FA5; color: #185FA5; background: #F4F8FD; }
+  .pt-icon { font-size: 24px; line-height: 1; }
+  .pt-info { flex: 1; min-width: 0; }
+  .pt-name { font-size: 14px; font-weight: 600; color: #1F2937; }
+  .platform-tab.active .pt-name { color: #185FA5; }
+  .pt-meta { font-size: 11px; color: #6B7280; margin-top: 2px; }
+  .pt-status { font-size: 13px; font-weight: 600; }
+  .pt-status.ok { color: #1D9E75; }
+  .pt-status.pending { color: #9CA3AF; }
+  .pt-soon-tag { font-size: 10px; padding: 2px 7px; background: #FEF3C7; color: #92400E; border-radius: 9px; margin-left: 6px; }
+
+  /* 健康卡 */
+  .health-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .health-card { background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 14px 16px; border-top: 3px solid #1D9E75; }
+  .health-card.warn { border-top-color: #BA7517; }
+  .health-card.error { border-top-color: #E24B4A; }
+  .hc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .hc-dot { width: 10px; height: 10px; border-radius: 50%; background: #1D9E75; }
+  .health-card.warn .hc-dot { background: #BA7517; animation: pulse 1.5s infinite; }
+  .health-card.error .hc-dot { background: #E24B4A; animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .hc-name { font-size: 13px; font-weight: 600; color: #1F2937; flex: 1; }
+  .hc-status { font-size: 11px; color: #1D9E75; font-weight: 500; }
+  .health-card.warn .hc-status { color: #BA7517; }
+  .health-card.error .hc-status { color: #E24B4A; }
+  .hc-meta { font-size: 11px; color: #6B7280; line-height: 1.7; }
+  .hc-meta b { color: #1F2937; }
+  .hc-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; padding-top: 10px; border-top: 1px dashed #F3F4F6; }
+  .hc-foot-stat { font-size: 11px; color: #9CA3AF; }
+  .hc-foot-stat b { color: #1F2937; font-variant-numeric: tabular-nums; }
+
+  /* 主区 2 栏 */
+  .layout { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; align-items: start; }
+
+  .panel { background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 18px 20px; margin-bottom: 16px; }
+  .panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .panel-title { font-size: 14px; font-weight: 600; color: #1F2937; }
+  .panel-sub { font-size: 11px; color: #9CA3AF; margin-left: 8px; font-weight: 400; }
+
+  /* 同步日志 */
+  .log-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .log-table th { background: #FAFBFC; padding: 8px 10px; text-align: left; font-weight: 500; color: #6B7280; font-size: 11px; border-bottom: 1px solid #E5E7EB; }
+  .log-table td { padding: 10px; border-bottom: 1px solid #F3F4F6; color: #1F2937; vertical-align: middle; }
+  .log-table .num { font-variant-numeric: tabular-nums; text-align: right; }
+
+  .log-status { font-size: 11px; padding: 2px 8px; border-radius: 10px; display: inline-flex; align-items: center; gap: 4px; }
+  .log-status.success { background: #E5F4ED; color: #1D9E75; }
+  .log-status.warn { background: #FCF6EA; color: #BA7517; }
+  .log-status.fail { background: #FEF6F6; color: #E24B4A; }
+
+  /* Token 状态 */
+  .token-list { display: flex; flex-direction: column; gap: 8px; }
+  .token-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: #FAFBFC; border-radius: 6px; }
+  .token-logo { width: 28px; height: 28px; border-radius: 5px; display: flex; align-items: center; justify-content: center; color: #FFF; font-weight: 600; font-size: 10px; flex-shrink: 0; }
+  .token-info { flex: 1; }
+  .token-name { font-size: 12px; font-weight: 500; color: #1F2937; }
+  .token-meta { font-size: 10px; color: #9CA3AF; margin-top: 2px; }
+  .token-eta { font-size: 11px; text-align: right; }
+  .token-eta-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .token-eta-value.ok { color: #1D9E75; }
+  .token-eta-value.warn { color: #BA7517; }
+  .token-eta-value.danger { color: #E24B4A; }
+  .token-eta-label { font-size: 10px; color: #9CA3AF; margin-top: 2px; }
+
+  /* 接口配额 */
+  .quota-list { display: flex; flex-direction: column; gap: 10px; }
+  .quota-item { padding: 10px 12px; background: #FAFBFC; border-radius: 6px; }
+  .quota-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; margin-bottom: 6px; }
+  .quota-name { color: #1F2937; font-weight: 500; }
+  .quota-name code { background: #FFF; padding: 1px 5px; border-radius: 3px; font-family: ui-monospace, monospace; font-size: 10px; color: #BA7517; }
+  .quota-pct { color: #6B7280; font-variant-numeric: tabular-nums; }
+  .quota-bar { width: 100%; height: 5px; background: #F3F4F6; border-radius: 3px; overflow: hidden; }
+  .quota-fill { height: 100%; background: linear-gradient(90deg,#1D9E75 0%,#4DBE99 100%); border-radius: 3px; }
+  .quota-fill.warn { background: linear-gradient(90deg,#BA7517 0%,#DC9A47 100%); }
+  .quota-fill.danger { background: linear-gradient(90deg,#E24B4A 0%,#EE7472 100%); }
+</style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="logo">SEM 智投平台<small>v3.0 · 工作流版</small></div>
+  <div class="nav-home" onclick="location.href='../index.html'">← 返回工作流总览</div>
+  <div class="nav-section">
+    <div class="nav-section-title">代运营工作流</div>
+    <div class="wf-group" data-wf="1"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">🚀</span><span class="wf-name">首次接入</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>登录</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>应用配置</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>授权引导</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>首次同步</div></div></div>
+    <div class="wf-group" data-wf="2"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">📊</span><span class="wf-name">每日盯盘</span><span class="wf-badge">12</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>数据看板</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>异常提醒<span class="wf-sub-num">12</span></div><div class="wf-sub-item"><span class="wf-sub-dot"></span>关键词详情</div></div></div>
+    <div class="wf-group" data-wf="3"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">⚡</span><span class="wf-name">优化执行</span><span class="wf-badge info">23</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>拓词</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>关键词工作台<span class="wf-sub-num">23</span></div><div class="wf-sub-item"><span class="wf-sub-dot"></span>否词管理</div></div></div>
+    <div class="wf-group" data-wf="4"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">🔍</span><span class="wf-name">效果验证</span><span class="wf-badge warn">8</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>调价台账</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>待验证调价<span class="wf-sub-num">8</span></div><div class="wf-sub-item"><span class="wf-sub-dot"></span>波动分析任务</div></div></div>
+    <div class="wf-group" data-wf="5"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">📨</span><span class="wf-name">客户交付</span><span class="wf-badge warn">2</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>分析报告</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>月报后流程<span class="wf-sub-num">2</span></div><div class="wf-sub-item"><span class="wf-sub-dot"></span>新增活动规划</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>线索管理</div></div></div>
+    <div class="wf-group open" data-wf="6"><div class="wf-trigger current" onclick="toggleWf(this)"><span class="wf-icon">⚙️</span><span class="wf-name">系统设置</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>客户管理</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>账号与权限</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>应用管理</div><div class="wf-sub-item active"><span class="wf-sub-dot"></span>数据接入</div></div></div>
+  </div>
+</aside>
+
+<main class="main">
+  <div class="topbar">
+    <div class="breadcrumb"><a href="../index.html">工作流总览</a> / 系统设置 / <b>数据接入</b></div>
+    <div class="topbar-right">
+      <span class="role-badge">管理员</span>
+      <div class="user-avatar">管</div>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="page-header">
+      <div>
+        <div class="page-title">数据接入</div>
+        <div class="page-desc">API 健康监控 · 同步日志 · Token 状态 · 接口配额管理 · 上次刷新 11:08</div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-default">手动同步</button>
+        <button class="btn btn-default">告警设置</button>
+        <button class="btn btn-primary">健康检查</button>
+      </div>
+    </div>
+
+    <!-- ============ 媒体平台 Tab ============ -->
+    <div class="platform-tabs">
+      <div class="platform-tab active" onclick="switchPlatform(this, 'baidu')">
+        <span class="pt-icon">🔵</span>
+        <div class="pt-info">
+          <div class="pt-name">百度推广</div>
+          <div class="pt-meta">已接入 <b>5 客户 · 9 子账户</b> · API 健康</div>
+        </div>
+        <span class="pt-status ok">✓</span>
+      </div>
+      <div class="platform-tab soon" onclick="alert('必应广告接入即将开放，预计 2026 Q3 上线。\n\n已规划：\n· 同一客户多平台子账户统一授权\n· 关键词/计划对象增加 platform 维度\n· 报告与看板支持平台聚合 / 下钻\n\n如有客户已有必应账户希望提前接入，请联系产品经理登记需求。')">
+        <span class="pt-icon">🟦</span>
+        <div class="pt-info">
+          <div class="pt-name">必应广告 <span class="pt-soon-tag">即将开放</span></div>
+          <div class="pt-meta">预计 2026 Q3 上线 · 点击查看接入规划</div>
+        </div>
+        <span class="pt-status pending">○</span>
+      </div>
+      <div class="platform-tab add" onclick="alert('当前仅开放百度推广接入，必应广告将于 2026 Q3 上线。\n\n其他平台（Google Ads / 搜狗 / 360）暂无接入排期，如有需求请提产品委员会评审。')">
+        <div class="pt-add">+ 添加新平台</div>
+      </div>
+    </div>
+
+    <!-- 数据源健康卡 -->
+    <div class="health-grid">
+      <div class="health-card">
+        <div class="hc-head"><span class="hc-dot"></span><span class="hc-name">百度营销 API</span><span class="hc-status">● 正常</span></div>
+        <div class="hc-meta">最后同步 <b>02:34</b><br>响应延迟 <b>320ms</b> · 成功率 <b>99.8%</b></div>
+        <div class="hc-foot"><span class="hc-foot-stat">本月调用 <b>85.4K</b></span><button class="btn btn-small btn-default">详情</button></div>
+      </div>
+      <div class="health-card">
+        <div class="hc-head"><span class="hc-dot"></span><span class="hc-name">爱番番线索 API</span><span class="hc-status">● 正常</span></div>
+        <div class="hc-meta">最后同步 <b>02:36</b><br>本日同步 <b>38 条</b> · 成功率 <b>100%</b></div>
+        <div class="hc-foot"><span class="hc-foot-stat">本月线索 <b>152</b></span><button class="btn btn-small btn-default">详情</button></div>
+      </div>
+      <div class="health-card warn">
+        <div class="hc-head"><span class="hc-dot"></span><span class="hc-name">OAuth Token</span><span class="hc-status">⚠ 23h 后到期</span></div>
+        <div class="hc-meta">某化工集团 · refreshToken<br>系统将于 <b>06-07 02:00</b> 自动刷新</div>
+        <div class="hc-foot"><span class="hc-foot-stat">活跃 <b>11</b></span><button class="btn btn-small btn-default">详情</button></div>
+      </div>
+      <div class="health-card">
+        <div class="hc-head"><span class="hc-dot"></span><span class="hc-name">基木鱼落地页</span><span class="hc-status">● 正常</span></div>
+        <div class="hc-meta">已覆盖 <b>5/5</b> 客户<br>同步基木鱼 18 个落地页</div>
+        <div class="hc-foot"><span class="hc-foot-stat">归因覆盖 <b>84%</b></span><button class="btn btn-small btn-default">详情</button></div>
+      </div>
+    </div>
+
+    <div class="layout">
+      <!-- 左：同步日志 -->
+      <div>
+        <div class="panel">
+          <div class="panel-head"><div><span class="panel-title">同步日志</span><span class="panel-sub">近 24 小时</span></div><div><button class="btn btn-small btn-default">过滤</button> <button class="btn btn-small btn-default">导出</button></div></div>
+          <table class="log-table">
+            <thead>
+              <tr><th style="width:120px;">时间</th><th>类型</th><th>客户 / 接口</th><th class="num">耗时</th><th class="num">数据量</th><th>状态</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>06-06 02:34</td>
+                <td>每日增量同步</td>
+                <td>苏尔寿 · 全部 3 子账户</td>
+                <td class="num">2 分 18 秒</td>
+                <td class="num">1.2M 行</td>
+                <td><span class="log-status success">✓ 成功</span></td>
+              </tr>
+              <tr>
+                <td>06-06 02:36</td>
+                <td>线索拉取</td>
+                <td>爱番番 · 全部 5 客户</td>
+                <td class="num">42 秒</td>
+                <td class="num">38 条</td>
+                <td><span class="log-status success">✓ 成功</span></td>
+              </tr>
+              <tr>
+                <td>06-06 02:00</td>
+                <td>Token 自动刷新</td>
+                <td>苏尔寿 · 某新能源客户 · 某医疗设备客户</td>
+                <td class="num">8 秒</td>
+                <td class="num">3 个</td>
+                <td><span class="log-status success">✓ 成功</span></td>
+              </tr>
+              <tr>
+                <td>06-06 10:32</td>
+                <td>波动分析（人工触发）</td>
+                <td>EO-高纯度 · queryFluctuationReasons</td>
+                <td class="num">— 失败</td>
+                <td class="num">—</td>
+                <td><span class="log-status fail">✗ QPS 超限</span></td>
+              </tr>
+              <tr>
+                <td>06-06 10:42</td>
+                <td>波动分析（人工触发）</td>
+                <td>规整填料-不锈钢 · queryFluctuationReasons</td>
+                <td class="num">24 秒</td>
+                <td class="num">1 计划</td>
+                <td><span class="log-status success">✓ 成功</span></td>
+              </tr>
+              <tr>
+                <td>06-05 17:08</td>
+                <td>百度推送（webhook）</td>
+                <td>某新能源客户 · 预算撞线提醒</td>
+                <td class="num">120ms</td>
+                <td class="num">1 事件</td>
+                <td><span class="log-status success">✓ 已入库</span></td>
+              </tr>
+              <tr>
+                <td>06-05 14:32</td>
+                <td>操作回写</td>
+                <td>苏尔寿 · KeywordService/updateWord（128 关键词）</td>
+                <td class="num">3.2 秒</td>
+                <td class="num">128 条</td>
+                <td><span class="log-status success">✓ 成功</span></td>
+              </tr>
+              <tr>
+                <td>06-05 02:00</td>
+                <td>Token 自动刷新</td>
+                <td>某家电制造客户</td>
+                <td class="num">— 失败</td>
+                <td class="num">—</td>
+                <td><span class="log-status warn">⚠ 已自动重试成功</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- 接口配额 -->
+        <div class="panel">
+          <div class="panel-head"><div><span class="panel-title">接口配额使用</span><span class="panel-sub">百度接口限流监控</span></div></div>
+          <div class="quota-list">
+            <div class="quota-item">
+              <div class="quota-row"><span class="quota-name"><code>OpenApiReportService/getReportData</code> · 关键词报告</span><span class="quota-pct">QPS 6 / 10</span></div>
+              <div class="quota-bar"><div class="quota-fill" style="width:60%;"></div></div>
+            </div>
+            <div class="quota-item">
+              <div class="quota-row"><span class="quota-name"><code>queryFluctuationReasons</code> · 波动分析</span><span class="quota-pct" style="color:#E24B4A;">QPS 1 / 1</span></div>
+              <div class="quota-bar"><div class="quota-fill danger" style="width:100%;"></div></div>
+            </div>
+            <div class="quota-item">
+              <div class="quota-row"><span class="quota-name"><code>KeywordService/updateWord</code> · 关键词更新</span><span class="quota-pct">单批 ≤ 10K</span></div>
+              <div class="quota-bar"><div class="quota-fill" style="width:18%;"></div></div>
+            </div>
+            <div class="quota-item">
+              <div class="quota-row"><span class="quota-name"><code>实时排名</code> · 30 分钟数据窗口</span><span class="quota-pct" style="color:#BA7517;">QPS 0.8 / 1</span></div>
+              <div class="quota-bar"><div class="quota-fill warn" style="width:80%;"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右：Token + 推送 -->
+      <div>
+        <div class="panel">
+          <div class="panel-head"><div><span class="panel-title">Token 状态</span><span class="panel-sub">5 客户 · 11 个活跃</span></div></div>
+          <div class="token-list">
+            <div class="token-item">
+              <div class="token-logo" style="background:linear-gradient(135deg,#185FA5 0%,#2C7CC8 100%);">SU</div>
+              <div class="token-info"><div class="token-name">苏尔寿 · 3 子账户复用</div><div class="token-meta">超管 sulzer_admin · refreshToken 06-07 02:00 自动续期</div></div>
+              <div class="token-eta"><div class="token-eta-value ok">23h</div><div class="token-eta-label">accessToken 剩余</div></div>
+            </div>
+            <div class="token-item">
+              <div class="token-logo" style="background:linear-gradient(135deg,#1D9E75 0%,#4DBE99 100%);">ME</div>
+              <div class="token-info"><div class="token-name">某家电制造客户 · 2 子账户</div><div class="token-meta">refreshToken 距到期 22 天</div></div>
+              <div class="token-eta"><div class="token-eta-value ok">21h</div><div class="token-eta-label">accessToken 剩余</div></div>
+            </div>
+            <div class="token-item">
+              <div class="token-logo" style="background:linear-gradient(135deg,#BA7517 0%,#DC9A47 100%);">SH</div>
+              <div class="token-info"><div class="token-name">某化工集团 · 1 子账户</div><div class="token-meta" style="color:#BA7517;">⚠ refreshToken 距到期 5 天 · 需提醒客户重新授权</div></div>
+              <div class="token-eta"><div class="token-eta-value warn">5 天</div><div class="token-eta-label">refreshToken 剩余</div></div>
+            </div>
+            <div class="token-item">
+              <div class="token-logo" style="background:linear-gradient(135deg,#6B47B5 0%,#9474D4 100%);">EH</div>
+              <div class="token-info"><div class="token-name">某医疗设备客户 · 2 子账户</div><div class="token-meta">refreshToken 距到期 26 天</div></div>
+              <div class="token-eta"><div class="token-eta-value ok">23h</div><div class="token-eta-label">accessToken 剩余</div></div>
+            </div>
+            <div class="token-item">
+              <div class="token-logo" style="background:linear-gradient(135deg,#E24B4A 0%,#EE7472 100%);">CT</div>
+              <div class="token-info"><div class="token-name">某新能源客户 · 1 子账户</div><div class="token-meta">refreshToken 距到期 19 天</div></div>
+              <div class="token-eta"><div class="token-eta-value ok">22h</div><div class="token-eta-label">accessToken 剩余</div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><div><span class="panel-title">百度信息推送（webhook）</span><span class="panel-sub">实时事件流</span></div></div>
+          <div style="font-size:12px;color:#4B5563;line-height:1.9;">
+            <div style="display:flex;justify-content:space-between;border-bottom:1px dashed #F3F4F6;padding:6px 0;"><span>📥 物料审核完成</span><b>本日 28 条</b></div>
+            <div style="display:flex;justify-content:space-between;border-bottom:1px dashed #F3F4F6;padding:6px 0;"><span>⚠ 预算撞线提醒</span><b>本日 2 条</b></div>
+            <div style="display:flex;justify-content:space-between;border-bottom:1px dashed #F3F4F6;padding:6px 0;"><span>🔄 状态变化通知</span><b>本日 14 条</b></div>
+            <div style="display:flex;justify-content:space-between;padding:6px 0;"><span>📝 物料操作动作</span><b>本日 86 条</b></div>
+          </div>
+          <button class="btn btn-default btn-small" style="margin-top:10px;width:100%;">配置 webhook 规则</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+  function toggleWf(t) { t.parentElement.classList.toggle('open'); }
+  function switchPlatform(el, key) {
+    el.parentElement.querySelectorAll('.platform-tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+  }
+  (function wireNav(){
+    const map={'登录':'01-onboarding/01-login.html','应用配置':'01-onboarding/02-app-config.html','授权引导':'01-onboarding/03-oauth-guide.html','首次同步':'01-onboarding/04-syncing.html','数据看板':'02-monitor/01-dashboard.html','异常提醒':'02-monitor/02-alerts.html','关键词详情':'02-monitor/03-keyword-detail.html','拓词':'03-optimize/01-keyword-expand.html','关键词工作台':'03-optimize/02-plan-management.html','否词管理':'03-optimize/04-negative-words.html','调价台账':'04-verify/01-adjustment-log.html','待验证调价':'04-verify/02-verify-queue.html','波动分析任务':'04-verify/03-fluctuation-tasks.html','分析报告':'05-delivery/01-report.html','月报后流程':'05-delivery/02-monthly-followup.html','新增活动规划':'05-delivery/03-new-campaign.html','线索管理':'05-delivery/04-leads.html','客户管理':'06-settings/01-customers.html','账号与权限':'06-settings/02-accounts-roles.html','应用管理':'06-settings/03-apps.html','数据接入':'06-settings/04-data-source.html'};
+    document.querySelectorAll('.wf-sub-item').forEach(item=>{if(item.classList.contains('active')||item.hasAttribute('onclick'))return;const c=item.cloneNode(true);c.querySelectorAll('span').forEach(s=>s.remove());const t=c.textContent.trim();if(map[t])item.setAttribute('onclick',"location.href='../"+map[t]+"'");});
+  })();
+</script>
+</body>
+</html>

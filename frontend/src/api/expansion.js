@@ -1,0 +1,72 @@
+import client from './client'
+
+// 拓词候选（🚫 红线：百度只读，状态标记只落本地库）
+export function fetchCandidates({
+  tenantId, source, status, suggestedCategory, minScore, q, aiRelevance, page, pageSize,
+}) {
+  return client.get('/api/v1/expansion/candidates', {
+    params: {
+      tenant_id: tenantId,
+      source: source || undefined,
+      status: status || undefined,
+      suggested_category: suggestedCategory || undefined,
+      min_score: minScore ?? undefined,
+      q: q || undefined,
+      ai_relevance: aiRelevance || undefined,
+      page,
+      page_size: pageSize,
+    },
+  })
+}
+
+// AI 语义相关性评估（治通用词噪音，按词去重批量调 DeepSeek，可能要数十秒~数分钟）
+export function evaluateCandidates({ tenantId, force }) {
+  return client.post('/api/v1/expansion/evaluate', null, {
+    params: { tenant_id: tenantId, force: force || undefined },
+    timeout: 600000,
+  })
+}
+
+export function updateCandidateStatus({ tenantId, candidateId, status }) {
+  return client.patch(`/api/v1/expansion/candidates/${candidateId}/status`, null, {
+    params: { tenant_id: tenantId, status },
+  })
+}
+
+// 加入计划：把候选词加成正式关键词到指定单元（addWord 写回，dry-run 保护）。
+// 候选词无所属单元，须传 adgroupId + price + matchMode。真写成功后候选自动标 adopted。
+export function addCandidateToPlan({ tenantId, candidateId, adgroupId, price, matchMode = 'phrase' }) {
+  return client.post(`/api/v1/expansion/candidates/${candidateId}/add-to-plan`, {
+    tenant_id: tenantId, adgroup_id: adgroupId, price, match_mode: matchMode,
+  })
+}
+
+// 手动触发同步（规划师逐种子词调用 + 搜索词报告，可能要 10-30 秒）
+export function syncExpansion({ tenantId, seeds, queryDays }) {
+  return client.post('/api/v1/admin/sync-expansion', null, {
+    params: {
+      tenant_id: tenantId,
+      seeds: seeds || undefined,
+      query_days: queryDays || undefined,
+    },
+    timeout: 120000,
+  })
+}
+
+// URL 爬取拓词(自研提词 + 流量回查,可能要 20-60 秒)
+export function syncUrlWords({ tenantId, urls }) {
+  return client.post('/api/v1/admin/sync-url-words', { tenant_id: tenantId, urls }, {
+    timeout: 180000,
+  })
+}
+
+export function candidatesExportUrl({ tenantId, source, status, suggestedCategory, minScore, q, aiRelevance }) {
+  const params = new URLSearchParams({ tenant_id: tenantId })
+  if (source) params.set('source', source)
+  if (status) params.set('status', status)
+  if (suggestedCategory) params.set('suggested_category', suggestedCategory)
+  if (minScore != null) params.set('min_score', minScore)
+  if (q) params.set('q', q)
+  if (aiRelevance) params.set('ai_relevance', aiRelevance)
+  return `/api/v1/expansion/candidates/export?${params.toString()}`
+}

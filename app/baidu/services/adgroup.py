@@ -1,0 +1,152 @@
+"""AdgroupService：搜索推广单元相关。
+
+文档 0056：AdgroupService/getAdgroup，idType=3 按计划 ID 查（单次 ≤100）。
+"""
+import logging
+from typing import Any
+
+from app.baidu.client import BaiduAPIClient, BaiduAPIError
+
+logger = logging.getLogger(__name__)
+
+# priceRatio（单元移动出价比率）：查询文档 0056 枚举漏列，但概述 0052 /
+# 批量服务列名 0346 / SDK 示例 0017 都有；被拒就剔除重试
+ADGROUP_SYNC_FIELDS = [
+    "adgroupId",
+    "campaignId",
+    "adgroupName",
+    "maxPrice",
+    "pause",
+    "status",
+    "priceRatio",
+    "negativeWords",
+    "exactNegativeWords",
+    "pcFinalUrl",
+    "mobileFinalUrl",
+    "pcTrackParam",
+    "mobileTrackParam",
+    "pcTrackTemplate",
+    "mobileTrackTemplate",
+]
+
+PROBE_FIELDS = {"priceRatio"}
+
+GET_ADGROUP_BATCH = 100  # idType=3 计划 ID 单次上限
+
+
+class AdgroupService:
+    def __init__(self, client: BaiduAPIClient):
+        self._client = client
+
+    async def add_adgroup(self, adgroup: dict[str, Any]) -> dict[str, Any]:
+        """新增推广单元（addAdgroup，文档 0058）。
+
+        ⚠️ 写接口：is_write=True 触发 dry-run 安全网。
+        """
+        return await self._client.call(
+            "AdgroupService",
+            "addAdgroup",
+            {"adgroupTypes": [adgroup]},
+            is_write=True,
+        )
+
+    async def get_adgroups_by_campaign_ids(
+        self, campaign_ids: list[int], fields: list[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """按计划 ID 批量拉单元，自动分批。
+
+        首批若因试探字段被拒，剔除后重试并对后续批次沿用剔除后的字段表。
+        """
+        use_fields = list(fields or ADGROUP_SYNC_FIELDS)
+        adgroups: list[dict[str, Any]] = []
+        for i in range(0, len(campaign_ids), GET_ADGROUP_BATCH):
+            batch = campaign_ids[i : i + GET_ADGROUP_BATCH]
+            try:
+                resp = await self._call_get(use_fields, batch)
+            except BaiduAPIError as e:
+                stripped = [f for f in use_fields if f not in PROBE_FIELDS]
+                if stripped == use_fields:
+                    raise
+                logger.warning(
+                    "getAdgroup 含试探字段被拒（code=%s msg=%s），剔除 %s 重试",
+                    e.code, e.message, PROBE_FIELDS & set(use_fields),
+                )
+                use_fields = stripped
+                resp = await self._call_get(use_fields, batch)
+            data = resp.get("data") or []
+            if isinstance(data, list):
+                adgroups.extend(data)
+        return adgroups
+
+    async def _call_get(
+        self, fields: list[str], ids: list[int]
+    ) -> dict[str, Any]:
+        return await self._client.call(
+            "AdgroupService",
+            "getAdgroup",
+            {
+                "adgroupFields": fields,
+                "ids": ids,
+                "idType": 3,
+                "getTemp": 0,
+            },
+        )
+
+    async def update_negative_words(
+        self,
+        adgroup_id: int,
+        negative_words: list[str] | None = None,
+        exact_negative_words: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """更新单元否词（updateAdgroup，文档 0057）。
+
+        ⚠️ 写接口 + 全量覆盖：百度按传入列表整体替换该单元的否词，调用方须传"现有 + 新增"
+        的完整列表（见 writeback.apply_negative_writeback）。is_write=True 触发 dry-run 安全网。
+        """
+        adgroup: dict[str, Any] = {"adgroupId": adgroup_id}
+        if negative_words is not None:
+            adgroup["negativeWords"] = negative_words
+        if exact_negative_words is not None:
+            adgroup["exactNegativeWords"] = exact_negative_words
+        return await self._client.call(
+            "AdgroupService", "updateAdgroup", {"adgroupTypes": [adgroup]}, is_write=True
+        )
+
+    async def update_adgroup_fields(
+        self,
+        adgroup_id: int,
+        *,
+        max_price: float | None = None,
+        pause: bool | None = None,
+        pc_final_url: str | None = None,
+        mobile_final_url: str | None = None,
+        pc_track_param: str | None = None,
+        mobile_track_param: str | None = None,
+        pc_track_template: str | None = None,
+        mobile_track_template: str | None = None,
+    ) -> dict[str, Any]:
+        """更新单元字段（updateAdgroup，文档 0060）。只传需要改的字段。
+
+        ⚠️ 只传 adgroupId + 指定字段，不带 negativeWords 等避免覆盖。is_write=True 走 dry-run。
+        maxPrice 范围 (0, 999.99] 且 ≤ 所属计划预算；pause=True 暂停 / False 启用。
+        """
+        adgroup: dict[str, Any] = {"adgroupId": adgroup_id}
+        if max_price is not None:
+            adgroup["maxPrice"] = max_price
+        if pause is not None:
+            adgroup["pause"] = pause
+        if pc_final_url is not None:
+            adgroup["pcFinalUrl"] = pc_final_url
+        if mobile_final_url is not None:
+            adgroup["mobileFinalUrl"] = mobile_final_url
+        if pc_track_param is not None:
+            adgroup["pcTrackParam"] = pc_track_param
+        if mobile_track_param is not None:
+            adgroup["mobileTrackParam"] = mobile_track_param
+        if pc_track_template is not None:
+            adgroup["pcTrackTemplate"] = pc_track_template
+        if mobile_track_template is not None:
+            adgroup["mobileTrackTemplate"] = mobile_track_template
+        return await self._client.call(
+            "AdgroupService", "updateAdgroup", {"adgroupTypes": [adgroup]}, is_write=True
+        )

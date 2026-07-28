@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>关键词详情 · 每日盯盘 · SEM 智投平台</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #F5F7FA; color: #1F2937; font-size: 13px; }
+
+  /* ============ 侧边导航 ============ */
+  .sidebar { position: fixed; left: 0; top: 0; width: 200px; height: 100vh; background: #FFFFFF; border-right: 1px solid #E5E7EB; padding: 18px 0 24px; z-index: 100; overflow-y: auto; }
+  .logo { padding: 0 20px 18px; font-size: 15px; font-weight: 600; color: #185FA5; border-bottom: 1px solid #F3F4F6; }
+  .logo small { display: block; font-size: 11px; color: #9CA3AF; font-weight: 400; margin-top: 4px; }
+  .nav-home { padding: 12px 20px; cursor: pointer; color: #4B5563; font-size: 12px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #F3F4F6; }
+  .nav-home:hover { background: #F9FAFB; color: #185FA5; }
+  .nav-section { padding: 14px 0 8px; }
+  .nav-section-title { padding: 0 20px 6px; font-size: 11px; color: #9CA3AF; font-weight: 500; letter-spacing: 0.3px; }
+  .wf-group { user-select: none; }
+  .wf-trigger { padding: 9px 20px; cursor: pointer; color: #4B5563; font-size: 13px; display: flex; align-items: center; gap: 8px; transition: background 0.1s; }
+  .wf-trigger:hover { background: #F9FAFB; }
+  .wf-trigger.current { color: #185FA5; font-weight: 500; }
+  .wf-icon { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; }
+  .wf-name { flex: 1; }
+  .wf-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; font-weight: 500; background: #FEF6F6; color: #E24B4A; }
+  .wf-badge.warn { background: #FCF6EA; color: #BA7517; }
+  .wf-badge.info { background: #EFF4FB; color: #185FA5; }
+  .wf-toggle { font-size: 10px; color: #9CA3AF; transition: transform 0.15s; }
+  .wf-group.open .wf-toggle { transform: rotate(90deg); }
+  .wf-sub { display: none; padding-bottom: 4px; }
+  .wf-group.open .wf-sub { display: block; }
+  .wf-sub-item { padding: 7px 20px 7px 44px; cursor: pointer; color: #6B7280; font-size: 12px; display: flex; align-items: center; gap: 6px; border-left: 3px solid transparent; }
+  .wf-sub-item:hover { background: #F9FAFB; color: #185FA5; }
+  .wf-sub-item.active { background: #EFF4FB; color: #185FA5; font-weight: 500; border-left-color: #185FA5; }
+  .wf-sub-dot { width: 4px; height: 4px; border-radius: 50%; background: #D1D5DB; flex-shrink: 0; }
+  .wf-sub-item.active .wf-sub-dot { background: #185FA5; }
+  .wf-sub-num { font-size: 10px; color: #9CA3AF; margin-left: auto; }
+
+  /* ============ 主区域 ============ */
+  .main { margin-left: 200px; min-height: 100vh; }
+  .topbar { background: #FFFFFF; border-bottom: 1px solid #E5E7EB; padding: 0 28px; height: 56px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 50; }
+  .breadcrumb { font-size: 13px; color: #6B7280; }
+  .breadcrumb b { color: #1F2937; font-weight: 500; }
+  .breadcrumb a { color: #6B7280; text-decoration: none; }
+  .breadcrumb a:hover { color: #185FA5; }
+  .topbar-right { display: flex; align-items: center; gap: 12px; }
+  .client-switch { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: #F3F4F6; border-radius: 6px; cursor: pointer; font-size: 12px; position: relative; user-select: none; }
+  .client-switch b { color: #185FA5; }
+  .client-switch .cs-dropdown { display: none; position: absolute; top: 100%; right: 0; margin-top: 6px; background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.12); min-width: 300px; padding: 6px; z-index: 1000; }
+  .client-switch.open .cs-dropdown { display: block; }
+  .client-switch .cs-head { font-size: 10px; color: #9CA3AF; padding: 6px 12px; font-weight: 500; }
+  .client-switch .cs-item { padding: 8px 12px; border-radius: 5px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 10px; color: #1F2937; }
+  .client-switch .cs-item:hover { background: #F4F8FD; }
+  .client-switch .cs-item.active { background: #EFF4FB; }
+  .client-switch .cs-logo { width: 26px; height: 26px; border-radius: 5px; display: flex; align-items: center; justify-content: center; color: #FFF; font-weight: 600; font-size: 11px; flex-shrink: 0; }
+  .client-switch .cs-logo-1 { background: linear-gradient(135deg,#185FA5 0%,#2C7CC8 100%); }
+  .client-switch .cs-logo-2 { background: linear-gradient(135deg,#1D9E75 0%,#4DBE99 100%); }
+  .client-switch .cs-logo-3 { background: linear-gradient(135deg,#BA7517 0%,#DC9A47 100%); }
+  .client-switch .cs-logo-4 { background: linear-gradient(135deg,#6B47B5 0%,#9474D4 100%); }
+  .client-switch .cs-logo-5 { background: linear-gradient(135deg,#E24B4A 0%,#EE7472 100%); }
+  .client-switch .cs-name { font-weight: 500; }
+  .client-switch .cs-meta { font-size: 10px; color: #9CA3AF; margin-top: 1px; }
+  .client-switch .cs-check { color: #185FA5; margin-left: auto; }
+  .client-switch .cs-divider { height: 1px; background: #F3F4F6; margin: 6px 0; }
+  .role-badge { font-size: 11px; padding: 4px 9px; background: #EFF4FB; color: #185FA5; border-radius: 10px; font-weight: 500; }
+  .user-avatar { width: 30px; height: 30px; border-radius: 50%; background: #185FA5; color: #FFF; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+
+  /* ============ 内容 ============ */
+  .content { padding: 18px 28px 32px; }
+
+  /* 入口溯源 */
+  .entry-bar { background: linear-gradient(90deg,#FFFBF4 0%,#FFFFFF 60%); border: 1px solid #FED7AA; border-left: 4px solid #BA7517; border-radius: 6px; padding: 10px 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 12px; font-size: 12px; color: #4B5563; }
+  .entry-bar a { color: #BA7517; text-decoration: none; font-weight: 500; cursor: pointer; }
+  .entry-bar a:hover { color: #9A3412; }
+  .entry-bar .entry-divider { color: #D1D5DB; }
+  .entry-bar .entry-other { margin-left: auto; font-size: 11px; color: #9CA3AF; }
+  .entry-bar .entry-other a { color: #6B7280; margin-left: 8px; }
+  .entry-bar .entry-other a:hover { color: #185FA5; }
+
+  /* 页头 */
+  .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; gap: 16px; }
+  .ph-left { flex: 1; min-width: 0; }
+  .kw-title { font-size: 22px; font-weight: 600; color: #1F2937; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .kw-pill { font-size: 11px; padding: 2px 9px; border-radius: 12px; font-weight: 600; }
+  .kw-pill.brand { background: #F2EBFB; color: #6B47B5; }
+  .kw-pill.focus { background: #EFF4FB; color: #185FA5; }
+  .kw-pill.normal { background: #E5F4ED; color: #1D9E75; }
+  .kw-pill.longtail { background: #FDF6E8; color: #BA7517; }
+  .kw-pill.new { background: #F3F4F6; color: #6B7280; }
+  .kw-status { font-size: 11px; padding: 2px 9px; border-radius: 4px; font-weight: 500; }
+  .kw-status.on { background: #E5F4ED; color: #1D9E75; }
+  .kw-status.off { background: #F3F4F6; color: #6B7280; }
+  .kw-path { font-size: 12px; color: #6B7280; margin-top: 6px; }
+  .kw-path b { color: #1F2937; }
+  .ph-actions { display: flex; gap: 8px; align-items: center; }
+
+  .btn { padding: 7px 14px; border-radius: 5px; font-size: 12px; cursor: pointer; border: none; font-weight: 500; display: inline-flex; align-items: center; gap: 4px; }
+  .btn-primary { background: #185FA5; color: #FFF; }
+  .btn-default { background: #FFF; color: #4B5563; border: 1px solid #D1D5DB; }
+  .btn-default:hover { border-color: #185FA5; color: #185FA5; }
+  .btn-danger { background: #E24B4A; color: #FFF; }
+  .btn-danger:hover { background: #C73E3D; }
+  .btn-small { padding: 4px 10px; font-size: 11px; }
+  .btn-link { background: none; border: none; color: #185FA5; font-size: 12px; cursor: pointer; padding: 0; }
+
+  /* 基础信息条 */
+  .info-strip { background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 14px 18px; margin-bottom: 16px; display: grid; grid-template-columns: repeat(7, 1fr); gap: 16px; }
+  .info-item .il-label { font-size: 11px; color: #9CA3AF; }
+  .info-item .il-value { font-size: 14px; font-weight: 600; color: #1F2937; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .info-item .il-value.warn { color: #BA7517; }
+  .info-item .il-value.danger { color: #E24B4A; }
+  .info-item .il-tag { font-size: 10px; padding: 1px 6px; background: #F3F4F6; color: #6B7280; border-radius: 3px; margin-left: 4px; vertical-align: middle; }
+  .info-item .il-tag.jimu { background: #E5F4ED; color: #1D9E75; }
+  .info-item .il-tag.thirdparty { background: #FCF6EA; color: #BA7517; }
+
+  /* 通用 panel */
+  .panel { background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 18px 20px; }
+  .panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .panel-title { font-size: 14px; font-weight: 600; color: #1F2937; }
+  .panel-sub { font-size: 11px; color: #9CA3AF; margin-left: 8px; font-weight: 400; }
+
+  /* ============ 出价系数详情 ============ */
+  .coef-panel { background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 18px 20px; margin-bottom: 16px; }
+  .coef-flow { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 12px; flex-wrap: wrap; }
+  .coef-box { background: #FAFBFC; border: 1px solid #E5E7EB; border-radius: 6px; padding: 10px 14px; min-width: 130px; }
+  .coef-box.warn { background: #FFFBF4; border-color: #FED7AA; }
+  .coef-box.danger { background: #FEF6F6; border-color: #FECACA; }
+  .coef-box.result { background: linear-gradient(135deg,#FFFBF4 0%,#FEF1E1 100%); border-color: #DC9A47; border-width: 2px; }
+  .coef-box-label { font-size: 10px; color: #9CA3AF; }
+  .coef-box-value { font-size: 16px; font-weight: 700; color: #1F2937; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .coef-box.warn .coef-box-value { color: #BA7517; }
+  .coef-box.danger .coef-box-value { color: #E24B4A; }
+  .coef-box.result .coef-box-value { color: #BA7517; font-size: 20px; }
+  .coef-box-meta { font-size: 10px; color: #6B7280; margin-top: 2px; }
+  .coef-op { font-size: 18px; color: #9CA3AF; }
+  .coef-warn-line { margin-top: 12px; padding: 10px 14px; background: #FFFBF4; border-left: 3px solid #BA7517; border-radius: 5px; font-size: 12px; color: #4B5563; line-height: 1.6; }
+  .coef-warn-line b { color: #BA7517; }
+
+  /* ============ 排名走势 + KPI ============ */
+  .row-rank { display: grid; grid-template-columns: 1.6fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .chart-area { height: 220px; }
+  .chart-svg { width: 100%; height: 100%; overflow: visible; }
+  .rank-tabs { display: flex; gap: 6px; }
+  .rank-tab { padding: 4px 12px; border-radius: 12px; font-size: 11px; cursor: pointer; background: #F3F4F6; color: #4B5563; }
+  .rank-tab.active { background: #185FA5; color: #FFF; }
+  .rank-legend { display: flex; gap: 14px; font-size: 11px; color: #6B7280; margin-top: 8px; padding-left: 8px; }
+  .rank-legend .lg-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: middle; }
+
+  .kpi-side { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .kpi-side .kpi-card { background: #FAFBFC; border: 1px solid #F3F4F6; border-radius: 6px; padding: 12px 14px; }
+  .kpi-side .kpi-label { font-size: 11px; color: #6B7280; }
+  .kpi-side .kpi-value { font-size: 20px; font-weight: 700; color: #1F2937; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .kpi-side .kpi-value.warn { color: #E24B4A; }
+  .kpi-side .kpi-cmp { font-size: 11px; margin-top: 4px; color: #9CA3AF; }
+  .kpi-side .kpi-cmp .up { color: #1D9E75; }
+  .kpi-side .kpi-cmp .down { color: #E24B4A; }
+
+  /* ============ 表格通用 ============ */
+  .data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .data-table th { background: #FAFBFC; padding: 8px 10px; text-align: left; font-weight: 500; color: #6B7280; font-size: 11px; border-bottom: 1px solid #E5E7EB; }
+  .data-table td { padding: 10px; border-bottom: 1px solid #F3F4F6; color: #1F2937; }
+  .data-table tr:hover td { background: #FAFBFC; }
+  .data-table tr:last-child td { border-bottom: none; }
+  .data-table .num { font-variant-numeric: tabular-nums; text-align: right; }
+  .td-op-system { font-size: 11px; padding: 1px 6px; background: #EFF4FB; color: #185FA5; border-radius: 3px; }
+  .td-op-human { font-size: 11px; padding: 1px 6px; background: #F3F4F6; color: #4B5563; border-radius: 3px; }
+  .td-op-baidu { font-size: 11px; padding: 1px 6px; background: #FEF1E1; color: #BA7517; border-radius: 3px; }
+  .td-ai-adopt { font-size: 11px; padding: 1px 6px; background: #E5F4ED; color: #1D9E75; border-radius: 3px; }
+  .td-ai-skip { font-size: 11px; padding: 1px 6px; background: #F3F4F6; color: #9CA3AF; border-radius: 3px; }
+  .td-ai-override { font-size: 11px; padding: 1px 6px; background: #FCF6EA; color: #BA7517; border-radius: 3px; }
+  .td-verify-up { color: #1D9E75; font-weight: 600; }
+  .td-verify-down { color: #E24B4A; font-weight: 600; }
+  .td-verify-pending { color: #9CA3AF; }
+
+  /* 历史调价说明 */
+  .table-foot-note { font-size: 11px; color: #9CA3AF; margin-top: 10px; line-height: 1.6; padding: 8px 10px; background: #FAFBFC; border-radius: 5px; }
+  .table-foot-note b { color: #185FA5; }
+
+  /* 搜索词 status pill */
+  .qs-pill { font-size: 10px; padding: 1px 6px; border-radius: 3px; font-weight: 500; }
+  .qs-matched { background: #E5F4ED; color: #1D9E75; }
+  .qs-unmatched { background: #FCF6EA; color: #BA7517; }
+  .qs-negated { background: #F3F4F6; color: #6B7280; }
+  .row-actions { display: flex; gap: 6px; }
+  .row-action { font-size: 11px; padding: 2px 8px; border-radius: 4px; border: 1px solid #D1D5DB; background: #FFF; color: #4B5563; cursor: pointer; }
+  .row-action:hover { border-color: #185FA5; color: #185FA5; }
+  .row-action.danger:hover { border-color: #E24B4A; color: #E24B4A; }
+
+  /* ============ 转化漏斗 ============ */
+  .funnel-wrap { display: grid; grid-template-columns: 1.4fr 1fr; gap: 18px; align-items: start; }
+  .funnel { display: flex; flex-direction: column; gap: 4px; }
+  .funnel-row { display: grid; grid-template-columns: 80px 1fr 80px 50px; gap: 12px; align-items: center; font-size: 12px; }
+  .funnel-label { color: #6B7280; font-size: 11px; }
+  .funnel-bar { height: 28px; background: linear-gradient(90deg,#185FA5 0%,#3E84C8 100%); border-radius: 5px; display: flex; align-items: center; padding: 0 10px; color: #FFF; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .funnel-bar.b2 { background: linear-gradient(90deg,#2C7CC8 0%,#5896D2 100%); }
+  .funnel-bar.b3 { background: linear-gradient(90deg,#4189C9 0%,#74A8DA 100%); }
+  .funnel-bar.b4 { background: linear-gradient(90deg,#1D9E75 0%,#4DBE99 100%); }
+  .funnel-bar.b5 { background: linear-gradient(90deg,#0D8C61 0%,#1D9E75 100%); }
+  .funnel-num { font-weight: 600; color: #1F2937; font-variant-numeric: tabular-nums; text-align: right; }
+  .funnel-rate { color: #9CA3AF; font-size: 11px; text-align: right; }
+
+  .funnel-side { font-size: 12px; color: #4B5563; line-height: 1.8; }
+  .funnel-attr-title { font-size: 12px; font-weight: 600; color: #1F2937; margin-bottom: 8px; }
+  .attr-item { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed #F3F4F6; }
+  .attr-item:last-child { border-bottom: none; }
+  .attr-label { color: #6B7280; }
+  .attr-value { font-weight: 600; color: #1F2937; }
+
+  /* ============ AI 二次解读 ============ */
+  .ai-panel { background: linear-gradient(135deg,#F4F8FD 0%,#FAFBFC 100%); border: 1px solid #C5D7EE; border-radius: 8px; padding: 18px 20px; margin-bottom: 16px; }
+  .ai-panel .panel-head { margin-bottom: 12px; }
+  .ai-badge { background: linear-gradient(135deg,#185FA5 0%,#2C7CC8 100%); color: #FFF; padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 600; margin-right: 6px; }
+  .ai-body { font-size: 13px; color: #1F2937; line-height: 1.9; }
+  .ai-body b { color: #185FA5; }
+  .ai-section { margin-top: 14px; padding: 12px 14px; background: rgba(255,255,255,0.7); border-radius: 6px; }
+  .ai-section-title { font-size: 12px; font-weight: 600; color: #185FA5; margin-bottom: 6px; }
+  .ai-actions { display: flex; gap: 8px; margin-top: 14px; }
+
+  /* 主区行间距 */
+  .stack { display: flex; flex-direction: column; gap: 16px; }
+
+  /* 暂缓下拉 */
+  .snooze-wrap { position: relative; display: inline-block; }
+  .snooze-menu { display: none; position: absolute; top: 100%; right: 0; margin-top: 4px; background: #FFF; border: 1px solid #E5E7EB; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,0.1); padding: 4px; z-index: 200; min-width: 160px; }
+  .snooze-wrap.open .snooze-menu { display: block; }
+  .snooze-item { padding: 7px 10px; font-size: 12px; color: #4B5563; cursor: pointer; border-radius: 4px; }
+  .snooze-item:hover { background: #F4F8FD; color: #185FA5; }
+</style>
+</head>
+<body>
+
+<!-- ============ 侧边导航 ============ -->
+<aside class="sidebar">
+  <div class="logo">SEM 智投平台<small>v3.0 · 工作流版</small></div>
+  <div class="nav-home" onclick="location.href='../index.html'">← 返回工作流总览</div>
+  <div class="nav-section">
+    <div class="nav-section-title">代运营工作流</div>
+    <div class="wf-group" data-wf="1">
+      <div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">🚀</span><span class="wf-name">首次接入</span><span class="wf-toggle">›</span></div>
+      <div class="wf-sub">
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>登录</div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>应用配置</div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>授权引导</div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>首次同步</div>
+      </div>
+    </div>
+    <div class="wf-group open" data-wf="2">
+      <div class="wf-trigger current" onclick="toggleWf(this)"><span class="wf-icon">📊</span><span class="wf-name">每日盯盘</span><span class="wf-badge">12</span><span class="wf-toggle">›</span></div>
+      <div class="wf-sub">
+        <div class="wf-sub-item" onclick="location.href='01-dashboard.html'"><span class="wf-sub-dot"></span>数据看板</div>
+        <div class="wf-sub-item" onclick="location.href='02-alerts.html'"><span class="wf-sub-dot"></span>异常提醒<span class="wf-sub-num">12</span></div>
+        <div class="wf-sub-item active"><span class="wf-sub-dot"></span>关键词详情</div>
+      </div>
+    </div>
+    <div class="wf-group" data-wf="3">
+      <div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">⚡</span><span class="wf-name">优化执行</span><span class="wf-badge info">23</span><span class="wf-toggle">›</span></div>
+      <div class="wf-sub">
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>拓词</div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>关键词工作台<span class="wf-sub-num">23</span></div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>否词管理</div>
+      </div>
+    </div>
+    <div class="wf-group" data-wf="4">
+      <div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">🔍</span><span class="wf-name">效果验证</span><span class="wf-badge warn">8</span><span class="wf-toggle">›</span></div>
+      <div class="wf-sub">
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>调价台账</div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>待验证调价<span class="wf-sub-num">8</span></div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>波动分析任务</div>
+      </div>
+    </div>
+    <div class="wf-group" data-wf="5">
+      <div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">📨</span><span class="wf-name">客户交付</span><span class="wf-badge warn">2</span><span class="wf-toggle">›</span></div>
+      <div class="wf-sub">
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>分析报告</div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>月报后流程<span class="wf-sub-num">2</span></div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>新增活动规划</div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>线索管理</div>
+      </div>
+    </div>
+    <div class="wf-group" data-wf="6">
+      <div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">⚙️</span><span class="wf-name">系统设置</span><span class="wf-toggle">›</span></div>
+      <div class="wf-sub">
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>客户管理</div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>账号与权限</div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>应用管理</div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>数据接入</div>
+      </div>
+    </div>
+  </div>
+</aside>
+
+<!-- ============ 主内容 ============ -->
+<main class="main">
+  <div class="topbar">
+    <div class="breadcrumb">
+      <a href="../index.html">工作流总览</a> / 每日盯盘 / <a href="02-alerts.html">异常提醒</a> / <b>关键词详情</b>
+    </div>
+    <div class="topbar-right">
+      <div class="client-switch" onclick="event.stopPropagation();this.classList.toggle('open');">
+        当前客户：<b>苏尔寿</b> ▾
+        <div class="cs-dropdown" onclick="event.stopPropagation();">
+          <div class="cs-head">切换客户 / 聚合视图</div>
+          <div class="cs-item"><div class="cs-logo" style="background:linear-gradient(135deg,#185FA5 0%,#1D9E75 100%);">全</div><div style="flex:1;"><div class="cs-name">全部客户聚合视图</div><div class="cs-meta">5 客户 · 9 账户 · 348 计划</div></div></div>
+          <div class="cs-divider"></div>
+          <div class="cs-head">单一客户（数据完全隔离）</div>
+          <div class="cs-item active"><div class="cs-logo cs-logo-1">SU</div><div style="flex:1;"><div class="cs-name">苏尔寿</div><div class="cs-meta">工业泵 / 分离技术 · 3 账户 · 128 计划</div></div><span class="cs-check">✓</span></div>
+          <div class="cs-item"><div class="cs-logo cs-logo-2">ME</div><div style="flex:1;"><div class="cs-name">某家电制造客户</div><div class="cs-meta">家电消费品 · 2 账户 · 86 计划</div></div></div>
+          <div class="cs-item"><div class="cs-logo cs-logo-3">SH</div><div style="flex:1;"><div class="cs-name">某化工集团</div><div class="cs-meta">基础化工 · 1 账户 · 42 计划</div></div></div>
+          <div class="cs-item"><div class="cs-logo cs-logo-4">EH</div><div style="flex:1;"><div class="cs-name">某医疗设备客户</div><div class="cs-meta">医疗器械 · 2 账户 · 64 计划</div></div></div>
+          <div class="cs-item"><div class="cs-logo cs-logo-5">CT</div><div style="flex:1;"><div class="cs-name">某新能源客户</div><div class="cs-meta">新能源装备 · 1 账户 · 28 计划</div></div></div>
+        </div>
+      </div>
+      <span class="role-badge">运营</span>
+      <div class="user-avatar">优</div>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- ============ 入口溯源 ============ -->
+    <div class="entry-bar">
+      <span>由</span>
+      <a onclick="location.href='02-alerts.html'">← 02 异常提醒</a>
+      <span class="entry-divider">·</span>
+      <span>下钻自 <b>P0 · 品牌词「苏尔寿 中国」上方位排名跌至第 2 位</b>（触发于 2026-06-05 08:20）</span>
+      <span class="entry-other">
+        本页支持多入口下钻：
+        <a onclick="alert('原型演示：本页同样可从「出价建议」「调价台账」下钻进入')">出价建议</a>
+        <a onclick="alert('原型演示：本页同样可从「出价建议」「调价台账」下钻进入')">调价台账</a>
+      </span>
+    </div>
+
+    <!-- ============ 页头 ============ -->
+    <div class="page-header">
+      <div class="ph-left">
+        <div class="kw-title">
+          关键词「苏尔寿 中国」
+          <span class="kw-pill brand">品牌词</span>
+          <span class="kw-status on">已启用</span>
+        </div>
+        <div class="kw-path">
+          所属 <b>账户「苏尔寿主账户」</b> / <b>计划「品牌词-苏尔寿」</b> / <b>单元「苏尔寿核心词」</b> · 创建于 2026-02-01 · 已投放 124 天
+        </div>
+      </div>
+      <div class="ph-actions">
+        <button class="btn btn-danger" onclick="alert('提价 +12%：¥18.50 → ¥20.72\\n已写入百度并加入待验证调价队列（2-4 小时复查）')">立即提价 +12%</button>
+        <button class="btn btn-default">暂停投放</button>
+        <button class="btn btn-default">加否词</button>
+        <button class="btn btn-default">编辑标签</button>
+        <div class="snooze-wrap" onclick="event.stopPropagation();this.classList.toggle('open');">
+          <button class="btn btn-default">更多 ▾</button>
+          <div class="snooze-menu">
+            <div class="snooze-item">复制关键词</div>
+            <div class="snooze-item">移动到其他单元</div>
+            <div class="snooze-item">查看百度后台</div>
+            <div class="snooze-item" style="color:#E24B4A;">删除关键词</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 基础信息条 ============ -->
+    <div class="info-strip">
+      <div class="info-item">
+        <div class="il-label">当前出价</div>
+        <div class="il-value">¥ 18.50</div>
+      </div>
+      <div class="info-item">
+        <div class="il-label">移动比例</div>
+        <div class="il-value">1.0</div>
+      </div>
+      <div class="info-item">
+        <div class="il-label">质量度</div>
+        <div class="il-value">8 <span class="il-tag" style="background:#E5F4ED;color:#1D9E75;">优秀</span></div>
+      </div>
+      <div class="info-item">
+        <div class="il-label">匹配方式</div>
+        <div class="il-value">精确</div>
+      </div>
+      <div class="info-item">
+        <div class="il-label">落地页类型</div>
+        <div class="il-value">基木鱼 <span class="il-tag jimu">全链路归因</span></div>
+      </div>
+      <div class="info-item">
+        <div class="il-label">上方位均排</div>
+        <div class="il-value danger">1.8 ↓</div>
+      </div>
+      <div class="info-item">
+        <div class="il-label">7 天点击</div>
+        <div class="il-value">86</div>
+      </div>
+    </div>
+
+    <div class="stack">
+
+      <!-- ============ 出价系数详情（4 层公式） ============ -->
+      <div class="coef-panel">
+        <div class="panel-head">
+          <div>
+            <span class="panel-title">出价系数详情</span>
+            <span class="panel-sub">实际生效出价 = 4 层系数累乘</span>
+          </div>
+          <button class="btn-link">前往「关键词工作台」调整系数 →</button>
+        </div>
+        <div class="coef-flow">
+          <div class="coef-box">
+            <div class="coef-box-label">关键词出价</div>
+            <div class="coef-box-value">¥ 18.50</div>
+            <div class="coef-box-meta">基础值</div>
+          </div>
+          <span class="coef-op">×</span>
+          <div class="coef-box warn">
+            <div class="coef-box-label">优化排名策略系数</div>
+            <div class="coef-box-value">2.20</div>
+            <div class="coef-box-meta">计划级 · 范围 1.01~10</div>
+          </div>
+          <span class="coef-op">×</span>
+          <div class="coef-box">
+            <div class="coef-box-label">分地域系数</div>
+            <div class="coef-box-value">1.00</div>
+            <div class="coef-box-meta">计划级 · 全国统一</div>
+          </div>
+          <span class="coef-op">×</span>
+          <div class="coef-box warn">
+            <div class="coef-box-label">分时段系数</div>
+            <div class="coef-box-value">1.50</div>
+            <div class="coef-box-meta">计划级 · 当前 09:00-12:00</div>
+          </div>
+          <span class="coef-op">×</span>
+          <div class="coef-box">
+            <div class="coef-box-label">移动比例</div>
+            <div class="coef-box-value">1.00</div>
+            <div class="coef-box-meta">单元级</div>
+          </div>
+          <span class="coef-op">=</span>
+          <div class="coef-box result">
+            <div class="coef-box-label">实际生效出价</div>
+            <div class="coef-box-value">¥ 61.05</div>
+            <div class="coef-box-meta">基础 × 3.30</div>
+          </div>
+        </div>
+        <div class="coef-warn-line">
+          <b>橙色提示</b>：实际生效已达基础出价的 <b>3.30 倍</b>（阈值 &gt; 3 触发提示，&gt; 4 触发红色预警）。主要来自<b>优化排名策略系数 2.2</b> + <b>当前高峰时段加价 1.5×</b>。提价 +12% 后实际生效将达 <b>¥ 68.38</b>（基础 × 3.70），仍在可控区间。
+        </div>
+      </div>
+
+      <!-- ============ 排名走势 + KPI ============ -->
+      <div class="row-rank">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <span class="panel-title">上方位排名走势</span>
+              <span class="panel-sub">近 24 小时 · 实时排名接口 · 30 分钟数据窗口</span>
+            </div>
+            <div class="rank-tabs">
+              <span class="rank-tab">近 24 小时</span>
+              <span class="rank-tab active">近 7 天</span>
+              <span class="rank-tab">近 30 天</span>
+            </div>
+          </div>
+          <div class="chart-area">
+            <svg class="chart-svg" viewBox="0 0 600 220" preserveAspectRatio="none">
+              <line x1="40" y1="40" x2="580" y2="40" stroke="#F3F4F6" stroke-width="1"/>
+              <line x1="40" y1="90" x2="580" y2="90" stroke="#F3F4F6" stroke-width="1"/>
+              <line x1="40" y1="140" x2="580" y2="140" stroke="#F3F4F6" stroke-width="1"/>
+              <line x1="40" y1="190" x2="580" y2="190" stroke="#E5E7EB" stroke-width="1"/>
+              <text x="32" y="44" font-size="10" fill="#9CA3AF" text-anchor="end">1.0</text>
+              <text x="32" y="94" font-size="10" fill="#9CA3AF" text-anchor="end">1.5</text>
+              <text x="32" y="144" font-size="10" fill="#9CA3AF" text-anchor="end">2.0</text>
+              <text x="32" y="194" font-size="10" fill="#9CA3AF" text-anchor="end">2.5</text>
+
+              <!-- 阈值线（品牌词阈值 1.5） -->
+              <line x1="40" y1="90" x2="580" y2="90" stroke="#E24B4A" stroke-width="1" stroke-dasharray="4 4" opacity="0.6"/>
+              <text x="50" y="84" font-size="10" fill="#E24B4A">品牌词阈值 1.5（超过即触发 P0）</text>
+
+              <!-- 排名值（数字越小越靠前，所以视觉上低位 = 排名前） -->
+              <polyline points="80,42 160,42 240,42 320,42 400,45 480,72 560,148"
+                        stroke="#185FA5" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="80" cy="42" r="3.5" fill="#FFF" stroke="#185FA5" stroke-width="2"/>
+              <circle cx="160" cy="42" r="3.5" fill="#FFF" stroke="#185FA5" stroke-width="2"/>
+              <circle cx="240" cy="42" r="3.5" fill="#FFF" stroke="#185FA5" stroke-width="2"/>
+              <circle cx="320" cy="42" r="3.5" fill="#FFF" stroke="#185FA5" stroke-width="2"/>
+              <circle cx="400" cy="45" r="3.5" fill="#FFF" stroke="#185FA5" stroke-width="2"/>
+              <circle cx="480" cy="72" r="3.5" fill="#FFF" stroke="#185FA5" stroke-width="2"/>
+              <circle cx="560" cy="148" r="5" fill="#E24B4A" stroke="#FFF" stroke-width="2"/>
+
+              <text x="560" y="138" font-size="11" fill="#E24B4A" text-anchor="middle" font-weight="600">1.8</text>
+
+              <text x="80" y="210" font-size="10" fill="#9CA3AF" text-anchor="middle">5/30</text>
+              <text x="160" y="210" font-size="10" fill="#9CA3AF" text-anchor="middle">5/31</text>
+              <text x="240" y="210" font-size="10" fill="#9CA3AF" text-anchor="middle">6/1</text>
+              <text x="320" y="210" font-size="10" fill="#9CA3AF" text-anchor="middle">6/2</text>
+              <text x="400" y="210" font-size="10" fill="#9CA3AF" text-anchor="middle">6/3</text>
+              <text x="480" y="210" font-size="10" fill="#9CA3AF" text-anchor="middle">6/4</text>
+              <text x="560" y="210" font-size="10" fill="#E24B4A" text-anchor="middle" font-weight="600">今日</text>
+            </svg>
+          </div>
+          <div class="rank-legend">
+            <span><span class="lg-dot" style="background:#185FA5;"></span>上方位均排</span>
+            <span><span class="lg-dot" style="background:#E24B4A;"></span>品牌词阈值线</span>
+            <span style="margin-left:auto;color:#9CA3AF;">数值越小排名越靠前 · 1.0 = 上方首位</span>
+          </div>
+        </div>
+        <div class="kpi-side">
+          <div class="kpi-card">
+            <div class="kpi-label">上方位均排</div>
+            <div class="kpi-value warn">1.8</div>
+            <div class="kpi-cmp"><span class="down">↓ 由 1.0</span> · 单日</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">上方首位胜出率</div>
+            <div class="kpi-value warn">62%</div>
+            <div class="kpi-cmp"><span class="down">↓ 36pt</span> · 昨日 98%</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">7 天点击</div>
+            <div class="kpi-value">86</div>
+            <div class="kpi-cmp"><span class="down">↓ 12.4%</span> · 上周 98</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">点击率 CTR</div>
+            <div class="kpi-value">8.4%</div>
+            <div class="kpi-cmp"><span class="down">↓ 2.1pt</span></div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">CPC</div>
+            <div class="kpi-value">¥ 17.20</div>
+            <div class="kpi-cmp"><span class="up">↑ 6.2%</span></div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">线索</div>
+            <div class="kpi-value">5</div>
+            <div class="kpi-cmp">7 天 · CPL ¥ 296</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ 调价历史台账 ============ -->
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <span class="panel-title">历史调价台账</span>
+            <span class="panel-sub">操作日志 · 百度 getOperationRecord · 叠加 AI 建议与效果追踪</span>
+          </div>
+          <button class="btn-link" onclick="location.href='../04-verify/01-adjustment-log.html'">前往完整调价台账 →</button>
+        </div>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width:130px;">时间</th>
+              <th>操作类型</th>
+              <th style="width:80px;">操作来源</th>
+              <th>调整内容</th>
+              <th style="width:110px;">AI 建议值</th>
+              <th style="width:80px;">是否采纳</th>
+              <th style="width:150px;">调后效果</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>06-05 08:20</td>
+              <td>触发 P0 提醒</td>
+              <td><span class="td-op-system">系统</span></td>
+              <td>排名跌至 1.8（超阈值）</td>
+              <td>提价 +12% → ¥ 20.72</td>
+              <td><span class="td-ai-skip">待处置</span></td>
+              <td><span class="td-verify-pending">—</span></td>
+            </tr>
+            <tr>
+              <td>06-03 14:32</td>
+              <td>分时段系数调整</td>
+              <td><span class="td-op-human">优运营</span></td>
+              <td>09-12 时段系数 1.3 → 1.5</td>
+              <td>—</td>
+              <td><span class="td-ai-skip">非 AI</span></td>
+              <td><span class="td-verify-up">↑ 排名稳定 1.0</span></td>
+            </tr>
+            <tr>
+              <td>05-28 10:15</td>
+              <td>关键词出价</td>
+              <td><span class="td-op-human">优运营</span></td>
+              <td>¥ 17.00 → ¥ 18.50（+8.8%）</td>
+              <td>提价 +10% → ¥ 18.70</td>
+              <td><span class="td-ai-adopt">已采纳</span></td>
+              <td><span class="td-verify-up">↑ 排名 1.2 → 1.0</span></td>
+            </tr>
+            <tr>
+              <td>05-15 11:08</td>
+              <td>优化排名策略系数</td>
+              <td><span class="td-op-system">系统</span></td>
+              <td>计划级系数 2.0 → 2.2</td>
+              <td>系数 +0.2</td>
+              <td><span class="td-ai-adopt">已采纳</span></td>
+              <td><span class="td-verify-up">↑ 首位胜出率 +12pt</span></td>
+            </tr>
+            <tr>
+              <td>05-08 09:30</td>
+              <td>百度优化中心</td>
+              <td><span class="td-op-baidu">百度</span></td>
+              <td>「提升质量度」建议</td>
+              <td>同步 AI 评估：不冲突</td>
+              <td><span class="td-ai-adopt">已采纳</span></td>
+              <td><span class="td-verify-up">↑ 质量度 7 → 8</span></td>
+            </tr>
+            <tr>
+              <td>04-22 15:42</td>
+              <td>关键词出价</td>
+              <td><span class="td-op-human">优运营</span></td>
+              <td>¥ 18.00 → ¥ 17.00（-5.6%）</td>
+              <td>降价 -3% → ¥ 17.45</td>
+              <td><span class="td-ai-override">人工覆盖</span></td>
+              <td><span class="td-verify-down">↓ 排名 1.0 → 1.4</span></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="table-foot-note">
+          <b>说明</b>：操作时间与调整内容来自百度 <code style="background:#FDF6E8;padding:1px 4px;border-radius:3px;font-family:ui-monospace,monospace;font-size:11px;color:#BA7517;">getOperationRecord</code> 接口，AI 建议值 / 是否采纳 / 调后效果三列由本平台自存。<b>2026-04-22 的人工覆盖案例</b>：当时系统建议降 3%，运营覆盖为降 5.6%，导致排名回落至 1.4，3 天后通过加价 +8.8% 才修复——已记入月度复盘。
+        </div>
+      </div>
+
+      <!-- ============ 触发搜索词 ============ -->
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <span class="panel-title">触发搜索词</span>
+            <span class="panel-sub">近 7 天 · 共 24 条 · 含未添加为关键词的搜索词</span>
+          </div>
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-small btn-default">仅看未添加</button>
+            <button class="btn btn-small btn-default">仅看零转化</button>
+            <button class="btn btn-small btn-default">导出</button>
+          </div>
+        </div>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>搜索词</th>
+              <th style="width:80px;">状态</th>
+              <th class="num" style="width:60px;">展现</th>
+              <th class="num" style="width:60px;">点击</th>
+              <th class="num" style="width:60px;">CTR</th>
+              <th class="num" style="width:70px;">CPC</th>
+              <th class="num" style="width:60px;">线索</th>
+              <th style="width:200px;">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>苏尔寿 中国</td>
+              <td><span class="qs-pill qs-matched">已添加</span></td>
+              <td class="num">540</td>
+              <td class="num">42</td>
+              <td class="num">7.8%</td>
+              <td class="num">¥ 18.20</td>
+              <td class="num">3</td>
+              <td><div class="row-actions"><button class="row-action">查看历史</button></div></td>
+            </tr>
+            <tr>
+              <td>sulzer 中国 官网</td>
+              <td><span class="qs-pill qs-matched">已添加</span></td>
+              <td class="num">312</td>
+              <td class="num">28</td>
+              <td class="num">9.0%</td>
+              <td class="num">¥ 16.80</td>
+              <td class="num">2</td>
+              <td><div class="row-actions"><button class="row-action">查看历史</button></div></td>
+            </tr>
+            <tr>
+              <td>苏尔寿泵业 招聘</td>
+              <td><span class="qs-pill qs-unmatched">未添加</span></td>
+              <td class="num">68</td>
+              <td class="num">9</td>
+              <td class="num">13.2%</td>
+              <td class="num">¥ 12.40</td>
+              <td class="num">0</td>
+              <td><div class="row-actions"><button class="row-action danger">加否词</button><button class="row-action">忽略</button></div></td>
+            </tr>
+            <tr>
+              <td>苏尔寿 中国 总部 地址</td>
+              <td><span class="qs-pill qs-unmatched">未添加</span></td>
+              <td class="num">42</td>
+              <td class="num">6</td>
+              <td class="num">14.3%</td>
+              <td class="num">¥ 13.50</td>
+              <td class="num">0</td>
+              <td><div class="row-actions"><button class="row-action danger">加否词</button><button class="row-action">加为关键词</button></div></td>
+            </tr>
+            <tr>
+              <td>苏尔寿 工业泵 价格</td>
+              <td><span class="qs-pill qs-matched">已添加</span></td>
+              <td class="num">85</td>
+              <td class="num">7</td>
+              <td class="num">8.2%</td>
+              <td class="num">¥ 19.10</td>
+              <td class="num">0</td>
+              <td><div class="row-actions"><button class="row-action">查看历史</button></div></td>
+            </tr>
+            <tr>
+              <td>苏尔寿 中国 怎么样</td>
+              <td><span class="qs-pill qs-negated">已否定</span></td>
+              <td class="num">18</td>
+              <td class="num">0</td>
+              <td class="num">—</td>
+              <td class="num">—</td>
+              <td class="num">—</td>
+              <td><div class="row-actions"><button class="row-action">解除否定</button></div></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="table-foot-note">
+          <b>说明</b>：搜索词状态来自百度搜索词报告 <code style="background:#FDF6E8;padding:1px 4px;border-radius:3px;font-family:ui-monospace,monospace;font-size:11px;color:#BA7517;">queryStatusName</code> 字段。本期发现 <b>2 条未添加搜索词</b>「苏尔寿泵业 招聘」「苏尔寿 中国 总部 地址」均为零转化无价值流量，建议加否词。
+        </div>
+      </div>
+
+      <!-- ============ 转化数据漏斗 ============ -->
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <span class="panel-title">转化数据漏斗</span>
+            <span class="panel-sub">近 7 天 · 基木鱼全链路归因（关键词级 Leads）</span>
+          </div>
+          <span class="il-tag jimu" style="font-size:11px;">基木鱼落地页 · 数据置信度高</span>
+        </div>
+        <div class="funnel-wrap">
+          <div class="funnel">
+            <div class="funnel-row">
+              <div class="funnel-label">展现</div>
+              <div class="funnel-bar" style="width:100%;">1,065</div>
+              <div class="funnel-num">1,065</div>
+              <div class="funnel-rate">—</div>
+            </div>
+            <div class="funnel-row">
+              <div class="funnel-label">点击</div>
+              <div class="funnel-bar b2" style="width:32%;">86</div>
+              <div class="funnel-num">86</div>
+              <div class="funnel-rate">8.08%</div>
+            </div>
+            <div class="funnel-row">
+              <div class="funnel-label">落地页 UV</div>
+              <div class="funnel-bar b3" style="width:30%;">82</div>
+              <div class="funnel-num">82</div>
+              <div class="funnel-rate">95.3%</div>
+            </div>
+            <div class="funnel-row">
+              <div class="funnel-label">表单 / 会话</div>
+              <div class="funnel-bar b4" style="width:14%;">18</div>
+              <div class="funnel-num">18</div>
+              <div class="funnel-rate">22.0%</div>
+            </div>
+            <div class="funnel-row">
+              <div class="funnel-label">有效线索</div>
+              <div class="funnel-bar b5" style="width:7%;">5</div>
+              <div class="funnel-num">5</div>
+              <div class="funnel-rate">27.8%</div>
+            </div>
+          </div>
+          <div class="funnel-side">
+            <div class="funnel-attr-title">关键词级归因（基木鱼）</div>
+            <div class="attr-item"><span class="attr-label">最佳转化时段</span><span class="attr-value">10:00 - 11:00</span></div>
+            <div class="attr-item"><span class="attr-label">最佳转化地域</span><span class="attr-value">上海 / 苏州 / 深圳</span></div>
+            <div class="attr-item"><span class="attr-label">设备占比（线索）</span><span class="attr-value">PC 80% / 移动 20%</span></div>
+            <div class="attr-item"><span class="attr-label">单条线索成本 CPL</span><span class="attr-value">¥ 296</span></div>
+            <div class="attr-item"><span class="attr-label">竞品对比转化率</span><span class="attr-value">本词 27.8% · 同行均值 22.4% <span style="color:#1D9E75;">↑</span></span></div>
+            <div class="attr-item"><span class="attr-label">线索质量评分</span><span class="attr-value">8.6 / 10（爱番番）</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ AI 二次解读 ============ -->
+      <div class="ai-panel">
+        <div class="panel-head">
+          <div>
+            <span class="ai-badge">AI</span>
+            <span class="panel-title">AI 二次解读</span>
+            <span class="panel-sub">结合 5 类分级 + 品牌词规则 + 历史调价 + 竞品行为综合分析</span>
+          </div>
+        </div>
+        <div class="ai-body">
+          本关键词为客户「<b>苏尔寿</b>」<b>品牌词</b>（5 类分级中最高优先级），按品牌词规则必须维持上方首位。今日上方位均排由 <b>1.0 跌至 1.8</b>，主因竞品「<b>EBARA 中国</b>」昨晚 19:30 起将出价上调约 18%，导致 09:00 高峰时段抢位。
+          <div class="ai-section">
+            <div class="ai-section-title">根因拆解</div>
+            竞品出价上涨（贡献度 <b>72%</b>） / 搜索量自然小幅下降（<b>14%</b>） / 创意点击率小幅下降（<b>9%</b>） / 其他（<b>5%</b>）
+          </div>
+          <div class="ai-section">
+            <div class="ai-section-title">推荐动作</div>
+            提价 <b>+12%</b>（¥ 18.50 → ¥ 20.72），实际生效预计 <b>¥ 68.38</b>（基础 × 3.70，仍在可控区间）。预计 2-4 小时内恢复上方首位。<br>
+            <b>不建议</b> 同步调整优化排名策略系数（当前 2.2 已偏高），仅调关键词出价即可。
+          </div>
+          <div class="ai-section">
+            <div class="ai-section-title">后续观察</div>
+            ① 调价后将自动加入「待验证调价队列」，2-4 小时复查排名；<br>
+            ② 若竞品维持 18% 加价超过 7 天，建议升级到 P0 持续护盘模式，联动品牌词其他 12 个关键词集体加价；<br>
+            ③ 月报中体现本次品牌词护盘成本约 <b>+¥ 124 / 周</b>。
+          </div>
+          <div class="ai-actions">
+            <button class="btn btn-danger" onclick="alert('提价 +12% 已写入百度并加入待验证调价队列')">采纳 · 立即提价 +12%</button>
+            <button class="btn btn-default">人工覆盖（自定义涨幅）</button>
+            <button class="btn btn-default" onclick="location.href='../04-verify/03-fluctuation-tasks.html'">查看百度波动分析</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+</main>
+
+<script>
+  document.addEventListener('click', function() {
+    document.querySelectorAll('.client-switch.open, .snooze-wrap.open').forEach(el => el.classList.remove('open'));
+  });
+  function toggleWf(triggerEl) {
+    triggerEl.parentElement.classList.toggle('open');
+  }
+  document.querySelectorAll('.rank-tab').forEach(t => t.addEventListener('click', function() {
+    this.parentElement.querySelectorAll('.rank-tab').forEach(x => x.classList.remove('active'));
+    this.classList.add('active');
+  }));
+
+  // 工作流子页面导航 · 自动接线
+  (function wireNav() {
+    const map = {
+      '登录':'01-onboarding/01-login.html','应用配置':'01-onboarding/02-app-config.html','授权引导':'01-onboarding/03-oauth-guide.html','首次同步':'01-onboarding/04-syncing.html',
+      '数据看板':'02-monitor/01-dashboard.html','异常提醒':'02-monitor/02-alerts.html','关键词详情':'02-monitor/03-keyword-detail.html',
+      '拓词':'03-optimize/01-keyword-expand.html','关键词工作台':'03-optimize/02-plan-management.html','否词管理':'03-optimize/04-negative-words.html',
+      '调价台账':'04-verify/01-adjustment-log.html','待验证调价':'04-verify/02-verify-queue.html','波动分析任务':'04-verify/03-fluctuation-tasks.html',
+      '分析报告':'05-delivery/01-report.html','月报后流程':'05-delivery/02-monthly-followup.html','新增活动规划':'05-delivery/03-new-campaign.html','线索管理':'05-delivery/04-leads.html',
+      '客户管理':'06-settings/01-customers.html','账号与权限':'06-settings/02-accounts-roles.html','应用管理':'06-settings/03-apps.html','数据接入':'06-settings/04-data-source.html'
+    };
+    document.querySelectorAll('.wf-sub-item').forEach(item => {
+      if (item.classList.contains('active') || item.hasAttribute('onclick')) return;
+      const c = item.cloneNode(true);
+      c.querySelectorAll('span').forEach(s => s.remove());
+      const t = c.textContent.trim();
+      if (map[t]) item.setAttribute('onclick', "location.href='../" + map[t] + "'");
+    });
+  })();
+</script>
+
+</body>
+</html>

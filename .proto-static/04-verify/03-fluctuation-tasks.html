@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>波动分析任务 · 效果验证 · SEM 智投平台</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #F5F7FA; color: #1F2937; font-size: 13px; }
+  .sidebar { position: fixed; left: 0; top: 0; width: 200px; height: 100vh; background: #FFFFFF; border-right: 1px solid #E5E7EB; padding: 18px 0 24px; z-index: 100; overflow-y: auto; }
+  .logo { padding: 0 20px 18px; font-size: 15px; font-weight: 600; color: #185FA5; border-bottom: 1px solid #F3F4F6; }
+  .logo small { display: block; font-size: 11px; color: #9CA3AF; font-weight: 400; margin-top: 4px; }
+  .nav-home { padding: 12px 20px; cursor: pointer; color: #4B5563; font-size: 12px; border-bottom: 1px solid #F3F4F6; }
+  .nav-home:hover { background: #F9FAFB; color: #185FA5; }
+  .nav-section { padding: 14px 0 8px; }
+  .nav-section-title { padding: 0 20px 6px; font-size: 11px; color: #9CA3AF; font-weight: 500; }
+  .wf-group { user-select: none; }
+  .wf-trigger { padding: 9px 20px; cursor: pointer; color: #4B5563; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .wf-trigger:hover { background: #F9FAFB; }
+  .wf-trigger.current { color: #185FA5; font-weight: 500; }
+  .wf-icon { width: 16px; font-size: 13px; }
+  .wf-name { flex: 1; }
+  .wf-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; font-weight: 500; background: #FEF6F6; color: #E24B4A; }
+  .wf-badge.warn { background: #FCF6EA; color: #BA7517; }
+  .wf-badge.info { background: #EFF4FB; color: #185FA5; }
+  .wf-toggle { font-size: 10px; color: #9CA3AF; transition: transform 0.15s; }
+  .wf-group.open .wf-toggle { transform: rotate(90deg); }
+  .wf-sub { display: none; padding-bottom: 4px; }
+  .wf-group.open .wf-sub { display: block; }
+  .wf-sub-item { padding: 7px 20px 7px 44px; cursor: pointer; color: #6B7280; font-size: 12px; display: flex; align-items: center; gap: 6px; border-left: 3px solid transparent; }
+  .wf-sub-item:hover { background: #F9FAFB; color: #185FA5; }
+  .wf-sub-item.active { background: #EFF4FB; color: #185FA5; font-weight: 500; border-left-color: #185FA5; }
+  .wf-sub-dot { width: 4px; height: 4px; border-radius: 50%; background: #D1D5DB; }
+  .wf-sub-item.active .wf-sub-dot { background: #185FA5; }
+  .wf-sub-num { font-size: 10px; color: #9CA3AF; margin-left: auto; }
+  .main { margin-left: 200px; min-height: 100vh; }
+  .topbar { background: #FFFFFF; border-bottom: 1px solid #E5E7EB; padding: 0 28px; height: 56px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 50; }
+  .breadcrumb { font-size: 13px; color: #6B7280; }
+  .breadcrumb b { color: #1F2937; font-weight: 500; }
+  .breadcrumb a { color: #6B7280; text-decoration: none; }
+  .topbar-right { display: flex; align-items: center; gap: 12px; }
+  .client-switch { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: #F3F4F6; border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .client-switch b { color: #185FA5; }
+  .role-badge { font-size: 11px; padding: 4px 9px; background: #EFF4FB; color: #185FA5; border-radius: 10px; font-weight: 500; }
+  .user-avatar { width: 30px; height: 30px; border-radius: 50%; background: #185FA5; color: #FFF; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+  .content { padding: 22px 28px; }
+  .page-header { margin-bottom: 14px; display: flex; justify-content: space-between; align-items: flex-end; }
+  .page-title { font-size: 20px; font-weight: 600; color: #1F2937; }
+  .page-desc { font-size: 12px; color: #6B7280; margin-top: 4px; }
+  .page-desc b { color: #1F2937; }
+  .page-actions { display: flex; gap: 8px; }
+  .btn { padding: 6px 12px; border-radius: 5px; font-size: 12px; cursor: pointer; border: none; font-weight: 500; }
+  .btn-primary { background: #185FA5; color: #FFF; }
+  .btn-default { background: #FFF; color: #4B5563; border: 1px solid #D1D5DB; }
+  .btn-default:hover { border-color: #185FA5; color: #185FA5; }
+  .btn-small { padding: 4px 10px; font-size: 11px; }
+  .btn-link { background: none; border: none; color: #185FA5; font-size: 12px; cursor: pointer; padding: 0; }
+
+  /* 限制说明带 */
+  .limit-banner { background: linear-gradient(90deg,#FFFBF4 0%,#FFFFFF 60%); border: 1px solid #FED7AA; border-left: 4px solid #BA7517; border-radius: 6px; padding: 12px 16px; margin-bottom: 16px; font-size: 12px; color: #4B5563; line-height: 1.7; }
+  .limit-banner b { color: #BA7517; }
+
+  /* 新建任务输入区 */
+  .new-task { background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 16px 20px; margin-bottom: 16px; }
+  .nt-row { display: flex; gap: 10px; align-items: flex-start; }
+  .nt-field { flex: 1; }
+  .nt-label { font-size: 11px; color: #6B7280; margin-bottom: 4px; display: block; }
+  .nt-select, .nt-input { width: 100%; padding: 7px 10px; border: 1px solid #D1D5DB; border-radius: 5px; font-size: 12px; background: #FFF; }
+  .nt-select:focus, .nt-input:focus { outline: none; border-color: #185FA5; }
+  .nt-actions { padding-top: 22px; }
+
+  /* KPI */
+  .kpi-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .kpi-mini { background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 12px 14px; border-left: 3px solid #185FA5; }
+  .kpi-mini.warn { border-left-color: #BA7517; }
+  .kpi-mini.danger { border-left-color: #E24B4A; }
+  .kpi-mini.success { border-left-color: #1D9E75; }
+  .km-label { font-size: 11px; color: #6B7280; }
+  .km-value { font-size: 22px; font-weight: 700; color: #1F2937; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .km-meta { font-size: 11px; color: #9CA3AF; margin-top: 4px; }
+
+  /* 任务卡 */
+  .task-card { background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 14px 18px; margin-bottom: 10px; display: grid; grid-template-columns: 100px 1fr 240px 130px; gap: 16px; align-items: center; transition: all 0.1s; }
+  .task-card.queued { border-left: 4px solid #9CA3AF; }
+  .task-card.running { border-left: 4px solid #185FA5; }
+  .task-card.done { border-left: 4px solid #1D9E75; }
+  .task-card.failed { border-left: 4px solid #E24B4A; }
+
+  .task-status { text-align: center; }
+  .status-circle { width: 36px; height: 36px; border-radius: 50%; margin: 0 auto 6px; display: flex; align-items: center; justify-content: center; font-size: 14px; color: #FFF; }
+  .status-circle.queued { background: #9CA3AF; }
+  .status-circle.running { background: #185FA5; }
+  .status-circle.done { background: #1D9E75; }
+  .status-circle.failed { background: #E24B4A; }
+  .status-text { font-size: 11px; font-weight: 600; }
+  .status-text.queued { color: #6B7280; }
+  .status-text.running { color: #185FA5; }
+  .status-text.done { color: #1D9E75; }
+  .status-text.failed { color: #E24B4A; }
+  .status-time { font-size: 10px; color: #9CA3AF; margin-top: 2px; }
+
+  .task-info-title { font-size: 13px; font-weight: 600; color: #1F2937; }
+  .task-info-meta { font-size: 11px; color: #6B7280; margin-top: 3px; }
+  .task-info-period { font-size: 11px; color: #9CA3AF; margin-top: 3px; }
+  .task-progress-bar { width: 100%; height: 4px; background: #F3F4F6; border-radius: 2px; margin-top: 8px; overflow: hidden; }
+  .task-progress-fill { height: 100%; background: linear-gradient(90deg,#185FA5 0%,#3E84C8 100%); border-radius: 2px; transition: width 0.3s; }
+  .task-progress-fill.done { background: #1D9E75; }
+  .task-progress-fill.failed { background: #E24B4A; }
+
+  /* 任务结果摘要 */
+  .task-result { background: #FAFBFC; border-radius: 6px; padding: 10px 12px; font-size: 11px; color: #4B5563; line-height: 1.7; }
+  .task-result-title { font-size: 11px; font-weight: 600; color: #185FA5; margin-bottom: 4px; }
+  .task-result b { color: #1F2937; }
+  .task-result.success { background: #E8F5EF; }
+  .task-result.success .task-result-title { color: #166D52; }
+  .task-result.failed-bg { background: #FEF6F6; }
+  .task-result.failed-bg .task-result-title { color: #9A3412; }
+  .factor-row { display: flex; justify-content: space-between; padding: 2px 0; }
+  .factor-pct { font-weight: 600; color: #1F2937; font-variant-numeric: tabular-nums; }
+
+  .task-actions { display: flex; flex-direction: column; gap: 6px; }
+  .task-actions .btn { width: 100%; justify-content: center; }
+
+  /* 任务分组 */
+  .group-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; padding: 0 4px; margin-top: 18px; }
+  .group-title { font-size: 13px; font-weight: 600; color: #1F2937; }
+  .group-count { font-size: 11px; color: #9CA3AF; }
+  .group-line { flex: 1; height: 1px; background: #E5E7EB; }
+
+  /* 队列预估时间 */
+  .eta-tag { font-size: 10px; padding: 1px 6px; border-radius: 3px; background: #FFFBF4; color: #BA7517; }
+</style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="logo">SEM 智投平台<small>v3.0 · 工作流版</small></div>
+  <div class="nav-home" onclick="location.href='../index.html'">← 返回工作流总览</div>
+  <div class="nav-section">
+    <div class="nav-section-title">代运营工作流</div>
+    <div class="wf-group" data-wf="1"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">🚀</span><span class="wf-name">首次接入</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>登录</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>应用配置</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>授权引导</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>首次同步</div></div></div>
+    <div class="wf-group" data-wf="2"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">📊</span><span class="wf-name">每日盯盘</span><span class="wf-badge">12</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>数据看板</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>异常提醒<span class="wf-sub-num">12</span></div><div class="wf-sub-item"><span class="wf-sub-dot"></span>关键词详情</div></div></div>
+    <div class="wf-group" data-wf="3"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">⚡</span><span class="wf-name">优化执行</span><span class="wf-badge info">23</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>拓词</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>关键词工作台<span class="wf-sub-num">23</span></div><div class="wf-sub-item"><span class="wf-sub-dot"></span>否词管理</div></div></div>
+    <div class="wf-group open" data-wf="4"><div class="wf-trigger current" onclick="toggleWf(this)"><span class="wf-icon">🔍</span><span class="wf-name">效果验证</span><span class="wf-badge warn">8</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>调价台账</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>待验证调价<span class="wf-sub-num">8</span></div><div class="wf-sub-item active"><span class="wf-sub-dot"></span>波动分析任务</div></div></div>
+    <div class="wf-group" data-wf="5"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">📨</span><span class="wf-name">客户交付</span><span class="wf-badge warn">2</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>分析报告</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>月报后流程<span class="wf-sub-num">2</span></div><div class="wf-sub-item"><span class="wf-sub-dot"></span>新增活动规划</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>线索管理</div></div></div>
+    <div class="wf-group" data-wf="6"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">⚙️</span><span class="wf-name">系统设置</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>客户管理</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>账号与权限</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>应用管理</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>数据接入</div></div></div>
+  </div>
+</aside>
+
+<main class="main">
+  <div class="topbar">
+    <div class="breadcrumb"><a href="../index.html">工作流总览</a> / 效果验证 / <b>波动分析任务</b></div>
+    <div class="topbar-right">
+      <div class="client-switch">当前客户：<b>苏尔寿</b> ▾</div>
+      <span class="role-badge">运营</span>
+      <div class="user-avatar">优</div>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="page-header">
+      <div>
+        <div class="page-title">波动分析任务</div>
+        <div class="page-desc">调用百度 <code style="background:#F3F4F6;padding:1px 4px;border-radius:3px;font-family:ui-monospace,monospace;font-size:11px;">DiagnosisService/queryFluctuationReasons</code> · 多计划自动排队 · 单任务约 15-30 秒</div>
+      </div>
+      <div class="page-actions">
+        <button class="btn btn-default">导出全部结果</button>
+        <button class="btn btn-default">清理已完成（7 天前）</button>
+      </div>
+    </div>
+
+    <!-- 百度限制说明 -->
+    <div class="limit-banner">
+      <b>⚠ 百度接口限制</b>：百度波动分析接口单次只能查询 <b>1 个计划 ID</b>，多计划场景必须排队异步处理。本平台自动拆分批量请求、串行调用、聚合结果，全程无需人工干预。当前 <b>QPS 1 配额</b>，单任务执行约 15-30 秒，10 个计划批量约需 3-5 分钟完成。
+    </div>
+
+    <!-- KPI -->
+    <div class="kpi-strip">
+      <div class="kpi-mini warn"><div class="km-label">排队中</div><div class="km-value" style="color:#BA7517;">4</div><div class="km-meta">预计 2-3 分钟完成</div></div>
+      <div class="kpi-mini"><div class="km-label">分析中</div><div class="km-value" style="color:#185FA5;">1</div><div class="km-meta">已执行 12 秒</div></div>
+      <div class="kpi-mini success"><div class="km-label">本日已完成</div><div class="km-value" style="color:#1D9E75;">38</div><div class="km-meta">平均耗时 22 秒</div></div>
+      <div class="kpi-mini danger"><div class="km-label">失败 · 需重试</div><div class="km-value" style="color:#E24B4A;">2</div><div class="km-meta">QPS 限流 1 + 数据缺失 1</div></div>
+    </div>
+
+    <!-- 新建任务 -->
+    <div class="new-task">
+      <div class="nt-row">
+        <div class="nt-field">
+          <label class="nt-label">选择计划（支持多选）</label>
+          <select class="nt-select" multiple style="min-height: 80px;">
+            <option selected>EO-高纯度</option>
+            <option selected>规整填料-不锈钢</option>
+            <option>工业泵-多级离心</option>
+            <option>塔器-蒸馏</option>
+            <option>品牌词-苏尔寿</option>
+            <option>工业泵-磁力</option>
+          </select>
+        </div>
+        <div class="nt-field" style="max-width: 200px;">
+          <label class="nt-label">对比周期</label>
+          <select class="nt-select"><option>近 7 天 vs 前 7 天</option><option>近 14 天 vs 前 14 天</option><option>近 30 天 vs 前 30 天</option><option>自定义</option></select>
+        </div>
+        <div class="nt-field" style="max-width: 160px;">
+          <label class="nt-label">分析指标</label>
+          <select class="nt-select"><option>消费</option><option>点击</option><option>展现</option><option>转化</option><option>排名</option></select>
+        </div>
+        <div class="nt-actions">
+          <button class="btn btn-primary" onclick="alert('已加入队列。预计执行时间：2-3 分钟（2 个计划 × 平均 22 秒 + 排队等待）')">加入分析队列</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 进行中 / 排队 -->
+    <div class="group-head">
+      <div class="group-title">进行中 + 排队</div>
+      <div class="group-count">5 条</div>
+      <div class="group-line"></div>
+    </div>
+
+    <div class="task-card running">
+      <div class="task-status">
+        <div class="status-circle running">⟳</div>
+        <div class="status-text running">分析中</div>
+        <div class="status-time">已 12 秒 / 预计 22 秒</div>
+      </div>
+      <div>
+        <div class="task-info-title">EO-高纯度计划 · 消费波动归因</div>
+        <div class="task-info-meta">近 7 天 vs 前 7 天 · 消费 ¥ 1,872 → ¥ 2,150（↑ 14.9%）</div>
+        <div class="task-info-period">提交时间 11:02:18 · 任务 ID #FT-3829</div>
+        <div class="task-progress-bar"><div class="task-progress-fill" style="width:55%;"></div></div>
+      </div>
+      <div class="task-result"><div class="task-result-title">⏳ 等待百度接口返回...</div>调用 queryFluctuationReasons · 已完成数据准备阶段</div>
+      <div class="task-actions"><button class="btn btn-default btn-small" disabled>等待完成</button><button class="btn btn-default btn-small">取消任务</button></div>
+    </div>
+
+    <div class="task-card queued">
+      <div class="task-status">
+        <div class="status-circle queued">⋯</div>
+        <div class="status-text queued">排队 #1</div>
+        <div class="status-time"><span class="eta-tag">预计 22 秒后</span></div>
+      </div>
+      <div>
+        <div class="task-info-title">规整填料-不锈钢计划 · 消费波动归因</div>
+        <div class="task-info-meta">近 7 天 vs 前 7 天 · 消费 ¥ 1,398 → ¥ 1,520（↑ 8.7%）</div>
+        <div class="task-info-period">提交时间 11:02:18 · 任务 ID #FT-3830</div>
+      </div>
+      <div class="task-result">排队中 · QPS 1 限制 · 前面 1 个任务</div>
+      <div class="task-actions"><button class="btn btn-default btn-small" disabled>等待执行</button><button class="btn btn-default btn-small">取消任务</button></div>
+    </div>
+
+    <div class="task-card queued">
+      <div class="task-status">
+        <div class="status-circle queued">⋯</div>
+        <div class="status-text queued">排队 #2</div>
+        <div class="status-time"><span class="eta-tag">预计 50 秒后</span></div>
+      </div>
+      <div>
+        <div class="task-info-title">塔器-蒸馏计划 · 转化波动归因</div>
+        <div class="task-info-meta">近 14 天 vs 前 14 天 · 线索 0 条（连续 2 周零转化）</div>
+        <div class="task-info-period">提交时间 10:58:42 · 任务 ID #FT-3828</div>
+      </div>
+      <div class="task-result">排队中 · 前面 2 个任务</div>
+      <div class="task-actions"><button class="btn btn-default btn-small" disabled>等待执行</button><button class="btn btn-default btn-small">取消任务</button></div>
+    </div>
+
+    <!-- 已完成 -->
+    <div class="group-head">
+      <div class="group-title">本日已完成</div>
+      <div class="group-count">38 条 · 展示前 3 条</div>
+      <div class="group-line"></div>
+      <div style="font-size:11px;color:#185FA5;cursor:pointer;">展开全部 →</div>
+    </div>
+
+    <div class="task-card done">
+      <div class="task-status">
+        <div class="status-circle done">✓</div>
+        <div class="status-text done">已完成</div>
+        <div class="status-time">10:42 · 24 秒</div>
+      </div>
+      <div>
+        <div class="task-info-title">规整填料-不锈钢计划 · 上方位排名波动</div>
+        <div class="task-info-meta">本周 vs 上周 · 上方位均排 1.4 → 2.6（↓ 1.2）</div>
+        <div class="task-info-period">任务 ID #FT-3812</div>
+        <div class="task-progress-bar"><div class="task-progress-fill done" style="width:100%;"></div></div>
+      </div>
+      <div class="task-result success">
+        <div class="task-result-title">✓ 归因因素</div>
+        <div class="factor-row"><span>竞争加剧（竞品出价上调）</span><span class="factor-pct">72%</span></div>
+        <div class="factor-row"><span>创意点击率诊断</span><span class="factor-pct">18%</span></div>
+        <div class="factor-row"><span>其他</span><span class="factor-pct">10%</span></div>
+      </div>
+      <div class="task-actions"><button class="btn btn-primary btn-small">查看完整报告</button><button class="btn btn-default btn-small">→ 关键词工作台</button></div>
+    </div>
+
+    <div class="task-card done">
+      <div class="task-status">
+        <div class="status-circle done">✓</div>
+        <div class="status-text done">已完成</div>
+        <div class="status-time">10:18 · 19 秒</div>
+      </div>
+      <div>
+        <div class="task-info-title">工业泵-磁力计划 · 展现量骤降归因</div>
+        <div class="task-info-meta">近 2 天 vs 前 7 天均值 · 展现量 ↓ 58%</div>
+        <div class="task-info-period">任务 ID #FT-3801 · 由异常提醒（展现骤降）自动触发</div>
+        <div class="task-progress-bar"><div class="task-progress-fill done" style="width:100%;"></div></div>
+      </div>
+      <div class="task-result success">
+        <div class="task-result-title">✓ 归因因素</div>
+        <div class="factor-row"><span>搜索量自然下降</span><span class="factor-pct">54%</span></div>
+        <div class="factor-row"><span>竞争加剧</span><span class="factor-pct">28%</span></div>
+        <div class="factor-row"><span>展现质量度变化</span><span class="factor-pct">18%</span></div>
+      </div>
+      <div class="task-actions"><button class="btn btn-primary btn-small">查看完整报告</button><button class="btn btn-default btn-small">→ 关键词工作台</button></div>
+    </div>
+
+    <div class="task-card done">
+      <div class="task-status">
+        <div class="status-circle done">✓</div>
+        <div class="status-text done">已完成</div>
+        <div class="status-time">09:55 · 28 秒</div>
+      </div>
+      <div>
+        <div class="task-info-title">品牌词-苏尔寿计划 · 关键因素分析（含竞对转化率）</div>
+        <div class="task-info-meta">本周 vs 上周 · 含 <code style="background:#FFF;padding:1px 4px;border-radius:3px;font-family:ui-monospace,monospace;font-size:11px;color:#BA7517;">competitorCvr</code> 字段</div>
+        <div class="task-info-period">任务 ID #FT-3788 · 调用 queryKeyFactors</div>
+        <div class="task-progress-bar"><div class="task-progress-fill done" style="width:100%;"></div></div>
+      </div>
+      <div class="task-result success">
+        <div class="task-result-title">✓ 关键发现</div>
+        <span><b>竞品 EBARA 转化率</b> 2.8%，本品牌 3.2%（高出 14%）。但竞品出价 +18%，需提价护盘。</span>
+      </div>
+      <div class="task-actions"><button class="btn btn-primary btn-small">查看完整报告</button><button class="btn btn-default btn-small">→ 关键词工作台</button></div>
+    </div>
+
+    <!-- 失败 -->
+    <div class="group-head">
+      <div class="group-title">失败 · 待重试</div>
+      <div class="group-count">2 条</div>
+      <div class="group-line"></div>
+    </div>
+
+    <div class="task-card failed">
+      <div class="task-status">
+        <div class="status-circle failed">✕</div>
+        <div class="status-text failed">失败</div>
+        <div class="status-time">10:32 · QPS 限流</div>
+      </div>
+      <div>
+        <div class="task-info-title">EO-高纯度计划 · CPC 上涨归因</div>
+        <div class="task-info-meta">近 6 周滚动 · CPC ¥ 11.20 → ¥ 14.20（↑ 26.8%）</div>
+        <div class="task-info-period">任务 ID #FT-3795 · 错误：QPS 超限</div>
+      </div>
+      <div class="task-result failed-bg">
+        <div class="task-result-title">✗ 失败原因</div>
+        百度接口返回 <b>RATE_LIMIT_EXCEEDED</b>（QPS = 1，同时有其他客户调用）。系统将在 1 分钟后自动重试，无需人工干预。
+      </div>
+      <div class="task-actions"><button class="btn btn-primary btn-small">立即重试</button><button class="btn btn-default btn-small">取消任务</button></div>
+    </div>
+
+    <div class="task-card failed">
+      <div class="task-status">
+        <div class="status-circle failed">✕</div>
+        <div class="status-text failed">失败</div>
+        <div class="status-time">09:42 · 数据缺失</div>
+      </div>
+      <div>
+        <div class="task-info-title">新建计划 · 关键因素分析</div>
+        <div class="task-info-meta">计划创建仅 2 天，数据量不足</div>
+        <div class="task-info-period">任务 ID #FT-3776 · 错误：数据样本不足</div>
+      </div>
+      <div class="task-result failed-bg">
+        <div class="task-result-title">✗ 失败原因</div>
+        计划存续时间过短（&lt; 7 天），数据样本不足以做归因分析。建议 <b>7 天后</b>重新提交。
+      </div>
+      <div class="task-actions"><button class="btn btn-default btn-small" disabled>暂不可重试</button><button class="btn btn-default btn-small">取消任务</button></div>
+    </div>
+  </div>
+</main>
+
+<script>
+  function toggleWf(t) { t.parentElement.classList.toggle('open'); }
+  (function wireNav(){
+    const map={'登录':'01-onboarding/01-login.html','应用配置':'01-onboarding/02-app-config.html','授权引导':'01-onboarding/03-oauth-guide.html','首次同步':'01-onboarding/04-syncing.html','数据看板':'02-monitor/01-dashboard.html','异常提醒':'02-monitor/02-alerts.html','关键词详情':'02-monitor/03-keyword-detail.html','拓词':'03-optimize/01-keyword-expand.html','关键词工作台':'03-optimize/02-plan-management.html','否词管理':'03-optimize/04-negative-words.html','调价台账':'04-verify/01-adjustment-log.html','待验证调价':'04-verify/02-verify-queue.html','波动分析任务':'04-verify/03-fluctuation-tasks.html','分析报告':'05-delivery/01-report.html','月报后流程':'05-delivery/02-monthly-followup.html','新增活动规划':'05-delivery/03-new-campaign.html','线索管理':'05-delivery/04-leads.html','客户管理':'06-settings/01-customers.html','账号与权限':'06-settings/02-accounts-roles.html','应用管理':'06-settings/03-apps.html','数据接入':'06-settings/04-data-source.html'};
+    document.querySelectorAll('.wf-sub-item').forEach(item=>{if(item.classList.contains('active')||item.hasAttribute('onclick'))return;const c=item.cloneNode(true);c.querySelectorAll('span').forEach(s=>s.remove());const t=c.textContent.trim();if(map[t])item.setAttribute('onclick',"location.href='../"+map[t]+"'");});
+  })();
+</script>
+</body>
+</html>

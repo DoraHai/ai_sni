@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>客户管理 · 系统设置 · SEM 智投平台</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #F5F7FA; color: #1F2937; font-size: 13px; }
+  .sidebar { position: fixed; left: 0; top: 0; width: 200px; height: 100vh; background: #FFFFFF; border-right: 1px solid #E5E7EB; padding: 18px 0 24px; z-index: 100; overflow-y: auto; }
+  .logo { padding: 0 20px 18px; font-size: 15px; font-weight: 600; color: #185FA5; border-bottom: 1px solid #F3F4F6; }
+  .logo small { display: block; font-size: 11px; color: #9CA3AF; font-weight: 400; margin-top: 4px; }
+  .nav-home { padding: 12px 20px; cursor: pointer; color: #4B5563; font-size: 12px; border-bottom: 1px solid #F3F4F6; }
+  .nav-home:hover { background: #F9FAFB; color: #185FA5; }
+  .nav-section { padding: 14px 0 8px; }
+  .nav-section-title { padding: 0 20px 6px; font-size: 11px; color: #9CA3AF; font-weight: 500; }
+  .wf-group { user-select: none; }
+  .wf-trigger { padding: 9px 20px; cursor: pointer; color: #4B5563; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .wf-trigger:hover { background: #F9FAFB; }
+  .wf-trigger.current { color: #185FA5; font-weight: 500; }
+  .wf-icon { width: 16px; font-size: 13px; }
+  .wf-name { flex: 1; }
+  .wf-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; font-weight: 500; background: #FEF6F6; color: #E24B4A; }
+  .wf-badge.warn { background: #FCF6EA; color: #BA7517; }
+  .wf-badge.info { background: #EFF4FB; color: #185FA5; }
+  .wf-toggle { font-size: 10px; color: #9CA3AF; transition: transform 0.15s; }
+  .wf-group.open .wf-toggle { transform: rotate(90deg); }
+  .wf-sub { display: none; padding-bottom: 4px; }
+  .wf-group.open .wf-sub { display: block; }
+  .wf-sub-item { padding: 7px 20px 7px 44px; cursor: pointer; color: #6B7280; font-size: 12px; display: flex; align-items: center; gap: 6px; border-left: 3px solid transparent; }
+  .wf-sub-item:hover { background: #F9FAFB; color: #185FA5; }
+  .wf-sub-item.active { background: #EFF4FB; color: #185FA5; font-weight: 500; border-left-color: #185FA5; }
+  .wf-sub-dot { width: 4px; height: 4px; border-radius: 50%; background: #D1D5DB; }
+  .wf-sub-item.active .wf-sub-dot { background: #185FA5; }
+  .wf-sub-num { font-size: 10px; color: #9CA3AF; margin-left: auto; }
+  .main { margin-left: 200px; min-height: 100vh; }
+  .topbar { background: #FFFFFF; border-bottom: 1px solid #E5E7EB; padding: 0 28px; height: 56px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 50; }
+  .breadcrumb { font-size: 13px; color: #6B7280; }
+  .breadcrumb b { color: #1F2937; font-weight: 500; }
+  .breadcrumb a { color: #6B7280; text-decoration: none; }
+  .topbar-right { display: flex; align-items: center; gap: 12px; }
+  .role-badge { font-size: 11px; padding: 4px 9px; background: #F2EBFB; color: #6B47B5; border-radius: 10px; font-weight: 500; }
+  .user-avatar { width: 30px; height: 30px; border-radius: 50%; background: #185FA5; color: #FFF; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+  .content { padding: 22px 28px; }
+  .page-header { margin-bottom: 14px; display: flex; justify-content: space-between; align-items: flex-end; }
+  .page-title { font-size: 20px; font-weight: 600; color: #1F2937; }
+  .page-desc { font-size: 12px; color: #6B7280; margin-top: 4px; }
+  .page-desc b { color: #1F2937; }
+  .btn { padding: 6px 12px; border-radius: 5px; font-size: 12px; cursor: pointer; border: none; font-weight: 500; }
+  .btn-primary { background: #185FA5; color: #FFF; }
+  .btn-default { background: #FFF; color: #4B5563; border: 1px solid #D1D5DB; }
+  .btn-default:hover { border-color: #185FA5; color: #185FA5; }
+  .btn-small { padding: 4px 10px; font-size: 11px; }
+  .btn-link { background: none; border: none; color: #185FA5; font-size: 12px; cursor: pointer; padding: 0; }
+
+  /* 双栏布局 */
+  .layout { display: grid; grid-template-columns: 360px 1fr; gap: 16px; align-items: start; }
+
+  /* 客户树 */
+  .tree-panel { background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 16px 18px; }
+  .tree-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid #F3F4F6; }
+  .tree-title { font-size: 13px; font-weight: 600; color: #1F2937; }
+  .tree-search { margin-bottom: 10px; }
+  .tree-search input { width: 100%; padding: 6px 10px; border: 1px solid #D1D5DB; border-radius: 5px; font-size: 12px; }
+
+  .tree-list { display: flex; flex-direction: column; gap: 4px; }
+  .tree-client { padding: 0; border-radius: 6px; }
+  .tree-client-head { display: flex; align-items: center; gap: 8px; padding: 9px 10px; cursor: pointer; border-radius: 5px; }
+  .tree-client-head:hover { background: #F4F8FD; }
+  .tree-client.active .tree-client-head { background: #EFF4FB; }
+  .tree-arrow { font-size: 10px; color: #9CA3AF; transition: transform 0.15s; }
+  .tree-client.open .tree-arrow { transform: rotate(90deg); }
+  .tree-logo { width: 26px; height: 26px; border-radius: 5px; display: flex; align-items: center; justify-content: center; color: #FFF; font-weight: 600; font-size: 11px; flex-shrink: 0; }
+  .tree-info { flex: 1; min-width: 0; }
+  .tree-name { font-size: 12px; font-weight: 600; color: #1F2937; }
+  .tree-meta { font-size: 10px; color: #9CA3AF; margin-top: 1px; }
+  .tree-status { font-size: 9px; padding: 1px 6px; border-radius: 8px; }
+  .tree-status.ok { background: #E5F4ED; color: #1D9E75; }
+  .tree-status.warn { background: #FCF6EA; color: #BA7517; }
+
+  .tree-subs { display: none; padding: 4px 0 4px 36px; }
+  .tree-client.open .tree-subs { display: block; }
+  .tree-sub { padding: 6px 10px; font-size: 11px; color: #6B7280; border-radius: 4px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+  .tree-sub:hover { background: #F4F8FD; color: #185FA5; }
+  .tree-sub-dot { width: 4px; height: 4px; border-radius: 50%; background: #D1D5DB; }
+
+  /* 详情区 */
+  .detail-panel { background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 22px 26px; }
+  .dp-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid #F3F4F6; }
+  .dp-title-row { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+  .dp-title { font-size: 18px; font-weight: 600; color: #1F2937; }
+  .dp-tag { font-size: 11px; padding: 2px 9px; border-radius: 10px; background: #E5F4ED; color: #1D9E75; }
+  .dp-meta { font-size: 12px; color: #6B7280; }
+  /* 媒体平台 chip */
+  .media-chips { display: inline-flex; gap: 6px; margin-left: 4px; }
+  .media-chip { font-size: 11px; padding: 3px 9px; border-radius: 10px; display: inline-flex; align-items: center; gap: 4px; font-weight: 500; }
+  .media-chip.ok { background: #E5F4ED; color: #1D9E75; }
+  .media-chip.pending { background: #F3F4F6; color: #9CA3AF; cursor: not-allowed; }
+  .media-chip.pending:hover { background: #FEF3C7; color: #92400E; }
+
+  .dp-section { margin-bottom: 20px; }
+  .dp-section-title { font-size: 13px; font-weight: 600; color: #1F2937; margin-bottom: 10px; }
+
+  .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .info-cell { background: #FAFBFC; border-radius: 6px; padding: 11px 14px; }
+  .info-label { font-size: 10px; color: #9CA3AF; }
+  .info-value { font-size: 13px; color: #1F2937; font-weight: 500; margin-top: 4px; }
+
+  /* 投放策略 segmented */
+  .strategy-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: stretch; }
+  .strategy-card { background: #FAFBFC; border: 1.5px solid #E5E7EB; border-radius: 6px; padding: 12px 14px; cursor: pointer; transition: all .15s; }
+  .strategy-card:hover { border-color: #C5D7EE; }
+  .strategy-card.active { background: #EFF4FB; border-color: #185FA5; }
+  .strategy-card-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .strategy-card-icon { font-size: 14px; }
+  .strategy-card-title { font-size: 13px; font-weight: 600; color: #1F2937; }
+  .strategy-card.active .strategy-card-title { color: #185FA5; }
+  .strategy-card-desc { font-size: 11px; color: #6B7280; line-height: 1.6; }
+  .strategy-card-rule { font-size: 10px; color: #9CA3AF; margin-top: 6px; padding-top: 6px; border-top: 1px dashed #E5E7EB; }
+  .strategy-budget-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  .strategy-note { font-size: 11px; color: #6B5C2E; background: #FFFBEB; border-left: 3px solid #F59E0B; padding: 8px 10px; border-radius: 0 4px 4px 0; margin-top: 10px; line-height: 1.6; }
+
+  /* 子账户管理表 */
+  .sub-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .sub-table th { background: #FAFBFC; padding: 9px 10px; text-align: left; font-weight: 500; color: #6B7280; font-size: 11px; border-bottom: 1px solid #E5E7EB; }
+  .sub-table td { padding: 10px; border-bottom: 1px solid #F3F4F6; color: #1F2937; }
+  .sub-table tr:hover td { background: #FAFBFC; }
+  .sub-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .assignee { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; background: #EFF4FB; color: #185FA5; border-radius: 10px; font-size: 11px; }
+  .role-tag-mini { font-size: 10px; padding: 1px 6px; border-radius: 3px; }
+  .rtm-admin { background: #F2EBFB; color: #6B47B5; }
+  .rtm-ops { background: #EFF4FB; color: #185FA5; }
+  .rtm-client { background: #E5F4ED; color: #1D9E75; }
+
+  .row-actions { display: flex; gap: 4px; }
+  .row-action { font-size: 11px; padding: 3px 9px; border-radius: 4px; border: 1px solid #E5E7EB; background: #FFF; color: #4B5563; cursor: pointer; }
+  .row-action:hover { border-color: #185FA5; color: #185FA5; }
+
+  .scope-explainer { background: linear-gradient(90deg,#F4F8FD 0%,#FFFFFF 60%); border: 1px solid #C5D7EE; border-left: 4px solid #185FA5; border-radius: 6px; padding: 12px 16px; font-size: 12px; color: #4B5563; line-height: 1.7; margin-bottom: 16px; }
+  .scope-explainer b { color: #185FA5; }
+</style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="logo">SEM 智投平台<small>v3.0 · 工作流版</small></div>
+  <div class="nav-home" onclick="location.href='../index.html'">← 返回工作流总览</div>
+  <div class="nav-section">
+    <div class="nav-section-title">代运营工作流</div>
+    <div class="wf-group" data-wf="1"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">🚀</span><span class="wf-name">首次接入</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>登录</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>应用配置</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>授权引导</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>首次同步</div></div></div>
+    <div class="wf-group" data-wf="2"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">📊</span><span class="wf-name">每日盯盘</span><span class="wf-badge">12</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>数据看板</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>异常提醒<span class="wf-sub-num">12</span></div><div class="wf-sub-item"><span class="wf-sub-dot"></span>关键词详情</div></div></div>
+    <div class="wf-group" data-wf="3"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">⚡</span><span class="wf-name">优化执行</span><span class="wf-badge info">23</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>拓词</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>关键词工作台<span class="wf-sub-num">23</span></div><div class="wf-sub-item"><span class="wf-sub-dot"></span>否词管理</div></div></div>
+    <div class="wf-group" data-wf="4"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">🔍</span><span class="wf-name">效果验证</span><span class="wf-badge warn">8</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>调价台账</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>待验证调价<span class="wf-sub-num">8</span></div><div class="wf-sub-item"><span class="wf-sub-dot"></span>波动分析任务</div></div></div>
+    <div class="wf-group" data-wf="5"><div class="wf-trigger" onclick="toggleWf(this)"><span class="wf-icon">📨</span><span class="wf-name">客户交付</span><span class="wf-badge warn">2</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item"><span class="wf-sub-dot"></span>分析报告</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>月报后流程<span class="wf-sub-num">2</span></div><div class="wf-sub-item"><span class="wf-sub-dot"></span>新增活动规划</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>线索管理</div></div></div>
+    <div class="wf-group open" data-wf="6"><div class="wf-trigger current" onclick="toggleWf(this)"><span class="wf-icon">⚙️</span><span class="wf-name">系统设置</span><span class="wf-toggle">›</span></div><div class="wf-sub"><div class="wf-sub-item active"><span class="wf-sub-dot"></span>客户管理</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>账号与权限</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>应用管理</div><div class="wf-sub-item"><span class="wf-sub-dot"></span>数据接入</div></div></div>
+  </div>
+</aside>
+
+<main class="main">
+  <div class="topbar">
+    <div class="breadcrumb"><a href="../index.html">工作流总览</a> / 系统设置 / <b>客户管理</b></div>
+    <div class="topbar-right">
+      <span class="role-badge">管理员</span>
+      <div class="user-avatar">管</div>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="page-header">
+      <div>
+        <div class="page-title">客户管理</div>
+        <div class="page-desc">超管模式 · 1 个客户管理账号下 → 多个百度子账户 · 共 <b>5</b> 客户 / <b>9</b> 子账户 / <b>348</b> 计划</div>
+      </div>
+      <div>
+        <button class="btn btn-default">导出客户清单</button>
+        <button class="btn btn-primary" onclick="location.href='../01-onboarding/03-oauth-guide.html'">+ 新增客户（走授权引导）</button>
+      </div>
+    </div>
+
+    <!-- 超管模式说明 -->
+    <div class="scope-explainer">
+      <b>🔑 超管授权模式</b>
+      一个客户的所有百度子账户通过<b>超管账号</b>统一授权，子账户均复用同一 accessToken（24h 自动刷新）。Token 永远不需要客户重复提交，refreshToken 30 天到期前 7 天系统提醒。子账户分组可按业务（品牌 / 效果 / 行业）灵活划分，并独立指派给不同运营。
+    </div>
+
+    <div class="layout">
+      <!-- 左：客户树 -->
+      <div class="tree-panel">
+        <div class="tree-head">
+          <div class="tree-title">客户与子账户树</div>
+          <button class="btn-link">↻ 刷新</button>
+        </div>
+        <div class="tree-search"><input type="text" placeholder="🔍 搜索客户 / 子账户"></div>
+        <div class="tree-list">
+
+          <div class="tree-client open active">
+            <div class="tree-client-head">
+              <span class="tree-arrow">▶</span>
+              <div class="tree-logo" style="background:linear-gradient(135deg,#185FA5 0%,#2C7CC8 100%);">SU</div>
+              <div class="tree-info"><div class="tree-name">苏尔寿</div><div class="tree-meta">3 子账户 · 128 计划</div></div>
+              <span class="tree-status ok">✓ 健康</span>
+            </div>
+            <div class="tree-subs">
+              <div class="tree-sub"><span class="tree-sub-dot"></span>sulzer_main · 主账户</div>
+              <div class="tree-sub"><span class="tree-sub-dot"></span>sulzer_brand · 品牌词</div>
+              <div class="tree-sub"><span class="tree-sub-dot"></span>sulzer_eo · EO 产品线</div>
+            </div>
+          </div>
+
+          <div class="tree-client">
+            <div class="tree-client-head">
+              <span class="tree-arrow">▶</span>
+              <div class="tree-logo" style="background:linear-gradient(135deg,#1D9E75 0%,#4DBE99 100%);">ME</div>
+              <div class="tree-info"><div class="tree-name">某家电制造客户</div><div class="tree-meta">2 子账户 · 86 计划</div></div>
+              <span class="tree-status ok">✓ 健康</span>
+            </div>
+            <div class="tree-subs">
+              <div class="tree-sub"><span class="tree-sub-dot"></span>me_main</div>
+              <div class="tree-sub"><span class="tree-sub-dot"></span>me_perf · 效果</div>
+            </div>
+          </div>
+
+          <div class="tree-client">
+            <div class="tree-client-head">
+              <span class="tree-arrow">▶</span>
+              <div class="tree-logo" style="background:linear-gradient(135deg,#BA7517 0%,#DC9A47 100%);">SH</div>
+              <div class="tree-info"><div class="tree-name">某化工集团</div><div class="tree-meta">1 子账户 · 42 计划</div></div>
+              <span class="tree-status warn">⚠ token 23h</span>
+            </div>
+            <div class="tree-subs"><div class="tree-sub"><span class="tree-sub-dot"></span>sh_main</div></div>
+          </div>
+
+          <div class="tree-client">
+            <div class="tree-client-head">
+              <span class="tree-arrow">▶</span>
+              <div class="tree-logo" style="background:linear-gradient(135deg,#6B47B5 0%,#9474D4 100%);">EH</div>
+              <div class="tree-info"><div class="tree-name">某医疗设备客户</div><div class="tree-meta">2 子账户 · 64 计划</div></div>
+              <span class="tree-status ok">✓ 健康</span>
+            </div>
+            <div class="tree-subs"><div class="tree-sub"><span class="tree-sub-dot"></span>eh_main</div><div class="tree-sub"><span class="tree-sub-dot"></span>eh_brand</div></div>
+          </div>
+
+          <div class="tree-client">
+            <div class="tree-client-head">
+              <span class="tree-arrow">▶</span>
+              <div class="tree-logo" style="background:linear-gradient(135deg,#E24B4A 0%,#EE7472 100%);">CT</div>
+              <div class="tree-info"><div class="tree-name">某新能源客户</div><div class="tree-meta">1 子账户 · 28 计划</div></div>
+              <span class="tree-status ok">✓ 健康</span>
+            </div>
+            <div class="tree-subs"><div class="tree-sub"><span class="tree-sub-dot"></span>ct_main</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右：客户详情 -->
+      <div class="detail-panel">
+        <div class="dp-head">
+          <div>
+            <div class="dp-title-row">
+              <div class="dp-title">苏尔寿</div>
+              <span class="media-chips">
+                <span class="media-chip ok" title="百度推广 · accessToken 有效 · 23h 后自动刷新">🔵 百度 · ✓ 已授权</span>
+                <span class="media-chip pending" onclick="alert('必应广告接入即将开放（预计 2026 Q3）。\n\n如苏尔寿已有必应账户希望提前登记，可联系产品经理。')" title="必应广告 · 即将开放">🟦 必应 · ○ 待接入</span>
+              </span>
+            </div>
+            <div class="dp-meta">工业泵 / 分离技术 · 接入于 2026-02-01 · 已运行 124 天</div>
+          </div>
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-default btn-small">编辑客户信息</button>
+            <button class="btn btn-default btn-small">重新授权</button>
+            <button class="btn btn-default btn-small" style="color:#E24B4A;">解除接入</button>
+          </div>
+        </div>
+
+        <div class="dp-section">
+          <div class="dp-section-title">基本信息</div>
+          <div class="info-grid">
+            <div class="info-cell"><div class="info-label">超管账号</div><div class="info-value">sulzer_admin</div></div>
+            <div class="info-cell"><div class="info-label">接入时间</div><div class="info-value">2026-02-01</div></div>
+            <div class="info-cell"><div class="info-label">关联 OAuth 应用</div><div class="info-value">生产应用</div></div>
+            <div class="info-cell"><div class="info-label">accessToken 状态</div><div class="info-value" style="color:#1D9E75;">✓ 有效 · 23h 后自动刷新</div></div>
+            <div class="info-cell"><div class="info-label">refreshToken 到期</div><div class="info-value">2026-07-05（剩 30 天）</div></div>
+            <div class="info-cell"><div class="info-label">联系人</div><div class="info-value">王经理 · wang@sulzer.cn</div></div>
+          </div>
+        </div>
+
+        <div class="dp-section">
+          <div class="dp-section-title">投放策略与预算</div>
+          <div class="strategy-row">
+            <div class="strategy-card active" onclick="selectStrategy(this, 'lead')">
+              <div class="strategy-card-head"><span class="strategy-card-icon">🎯</span><span class="strategy-card-title">线索导向</span></div>
+              <div class="strategy-card-desc">追求线索数量与质量为主，预算控制相对宽松。多数计划可不设日预算上限，按 CPL 复盘判断节奏。</div>
+              <div class="strategy-card-rule">未控预算计划：监控仪表盘（实付 + 占上月同期）· 不并入硬性已分配</div>
+            </div>
+            <div class="strategy-card" onclick="selectStrategy(this, 'cost')">
+              <div class="strategy-card-head"><span class="strategy-card-icon">💰</span><span class="strategy-card-title">性价比导向</span></div>
+              <div class="strategy-card-desc">严控总额度与 CPC，所有计划必须设日预算上限。未设上限的计划视为异常需补设。</div>
+              <div class="strategy-card-rule">未控预算计划：标红提醒补设 · 不允许审批新方案直至修复</div>
+            </div>
+          </div>
+          <div class="strategy-budget-row">
+            <div class="info-cell"><div class="info-label">月度合同总额度</div><div class="info-value" style="font-variant-numeric:tabular-nums;">¥ 80,000 <span style="font-size:10px;color:#9CA3AF;font-weight:400;">· 来自合同字段</span></div></div>
+            <div class="info-cell"><div class="info-label">合同周期</div><div class="info-value">2026-01-01 ~ 2026-12-31</div></div>
+          </div>
+          <div class="strategy-note">⚙️ 当前策略「<b>线索导向</b>」：在「新增活动规划」页，预算面板将显示已控预算 + 未控本月实付 + 占上月同期百分比，按当前节奏外推推荐本批新方案上限。切换至「性价比导向」后改为硬上限模式，超额硬拦截。</div>
+        </div>
+
+        <div class="dp-section">
+          <div class="dp-section-title">子账户（3 个）</div>
+          <table class="sub-table">
+            <thead>
+              <tr>
+                <th>子账户</th>
+                <th>用途</th>
+                <th class="num">计划数</th>
+                <th class="num">关键词</th>
+                <th class="num">本月消费</th>
+                <th>指派运营</th>
+                <th>状态</th>
+                <th style="width:160px;">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><b>sulzer_main</b><div style="font-size:10px;color:#9CA3AF;margin-top:2px;">主账户</div></td>
+                <td>主推产品 + 跨产品线</td>
+                <td class="num">62</td>
+                <td class="num">624</td>
+                <td class="num">¥ 18,420</td>
+                <td><span class="assignee">优运营</span></td>
+                <td><span style="font-size:11px;padding:2px 8px;background:#E5F4ED;color:#1D9E75;border-radius:10px;">运行中</span></td>
+                <td><div class="row-actions"><button class="row-action">详情</button><button class="row-action">换指派</button></div></td>
+              </tr>
+              <tr>
+                <td><b>sulzer_brand</b><div style="font-size:10px;color:#9CA3AF;margin-top:2px;">品牌专户</div></td>
+                <td>仅品牌词 / 护盘</td>
+                <td class="num">8</td>
+                <td class="num">78</td>
+                <td class="num">¥ 8,840</td>
+                <td><span class="assignee">优运营</span></td>
+                <td><span style="font-size:11px;padding:2px 8px;background:#E5F4ED;color:#1D9E75;border-radius:10px;">运行中</span></td>
+                <td><div class="row-actions"><button class="row-action">详情</button><button class="row-action">换指派</button></div></td>
+              </tr>
+              <tr>
+                <td><b>sulzer_eo</b><div style="font-size:10px;color:#9CA3AF;margin-top:2px;">EO 产品线专户</div></td>
+                <td>环氧乙烷高纯度 / 储罐 等</td>
+                <td class="num">58</td>
+                <td class="num">546</td>
+                <td class="num">¥ 11,160</td>
+                <td><span class="assignee">小李</span></td>
+                <td><span style="font-size:11px;padding:2px 8px;background:#E5F4ED;color:#1D9E75;border-radius:10px;">运行中</span></td>
+                <td><div class="row-actions"><button class="row-action">详情</button><button class="row-action">换指派</button></div></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="dp-section">
+          <div class="dp-section-title">客户方角色（2 人）</div>
+          <table class="sub-table">
+            <thead>
+              <tr>
+                <th>姓名</th>
+                <th>角色</th>
+                <th>登录账号</th>
+                <th>最近登录</th>
+                <th>查看范围</th>
+                <th style="width:160px;">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><b>王经理</b></td>
+                <td><span class="role-tag-mini rtm-client">品牌方客户 · 决策者</span></td>
+                <td>wang@sulzer.cn</td>
+                <td>06-06 08:42</td>
+                <td>全部 3 子账户</td>
+                <td><div class="row-actions"><button class="row-action">编辑权限</button><button class="row-action">重置密码</button></div></td>
+              </tr>
+              <tr>
+                <td><b>李助理</b></td>
+                <td><span class="role-tag-mini rtm-client">品牌方客户 · 仅查看</span></td>
+                <td>li.assistant@sulzer.cn</td>
+                <td>06-05 16:20</td>
+                <td>主账户 + 品牌专户</td>
+                <td><div class="row-actions"><button class="row-action">编辑权限</button><button class="row-action">重置密码</button></div></td>
+              </tr>
+            </tbody>
+          </table>
+          <button class="btn-link" style="margin-top:10px;">+ 邀请客户方成员</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+  function toggleWf(t) { t.parentElement.classList.toggle('open'); }
+  document.querySelectorAll('.tree-client-head').forEach(h=>h.addEventListener('click',function(){h.parentElement.classList.toggle('open');}));
+
+  function selectStrategy(el, type) {
+    el.parentElement.querySelectorAll('.strategy-card').forEach(c => c.classList.remove('active'));
+    el.classList.add('active');
+    const note = el.closest('.dp-section').querySelector('.strategy-note');
+    if (type === 'lead') {
+      note.innerHTML = '⚙️ 当前策略「<b>线索导向</b>」：在「新增活动规划」页，预算面板将显示已控预算 + 未控本月实付 + 占上月同期百分比，按当前节奏外推推荐本批新方案上限。切换至「性价比导向」后改为硬上限模式，超额硬拦截。';
+    } else {
+      note.innerHTML = '⚙️ 当前策略「<b>性价比导向</b>」：所有计划必须设日预算上限。未控预算计划将在「新增活动规划」页标红提醒补设，未修复前不允许审批新方案。超额时启用红色硬拦截 + 3 步逃生舱。';
+    }
+  }
+  (function wireNav(){
+    const map={'登录':'01-onboarding/01-login.html','应用配置':'01-onboarding/02-app-config.html','授权引导':'01-onboarding/03-oauth-guide.html','首次同步':'01-onboarding/04-syncing.html','数据看板':'02-monitor/01-dashboard.html','异常提醒':'02-monitor/02-alerts.html','关键词详情':'02-monitor/03-keyword-detail.html','拓词':'03-optimize/01-keyword-expand.html','关键词工作台':'03-optimize/02-plan-management.html','否词管理':'03-optimize/04-negative-words.html','调价台账':'04-verify/01-adjustment-log.html','待验证调价':'04-verify/02-verify-queue.html','波动分析任务':'04-verify/03-fluctuation-tasks.html','分析报告':'05-delivery/01-report.html','月报后流程':'05-delivery/02-monthly-followup.html','新增活动规划':'05-delivery/03-new-campaign.html','线索管理':'05-delivery/04-leads.html','客户管理':'06-settings/01-customers.html','账号与权限':'06-settings/02-accounts-roles.html','应用管理':'06-settings/03-apps.html','数据接入':'06-settings/04-data-source.html'};
+    document.querySelectorAll('.wf-sub-item').forEach(item=>{if(item.classList.contains('active')||item.hasAttribute('onclick'))return;const c=item.cloneNode(true);c.querySelectorAll('span').forEach(s=>s.remove());const t=c.textContent.trim();if(map[t])item.setAttribute('onclick',"location.href='../"+map[t]+"'");});
+  })();
+</script>
+</body>
+</html>

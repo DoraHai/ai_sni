@@ -1,0 +1,18 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: sem-postgres-dev
+    environment:
+      POSTGRES_USER: sem_app
+      POSTGRES_PASSWORD: dev_only_password
+      POSTGRES_DB: sem_prod
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sem_app -d sem_prod"]
+      interval: 5s
+      timeout: 3s
+      retries: 5

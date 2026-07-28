@@ -1,0 +1,14 @@
+{
+  "name": "growth-sniper-geo-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --config vite.config.js",
+    "build": "node scripts/build.mjs",
+    "deploy": "bash scripts/deploy.sh"
+  },
+  "devDependencies": {
+    "vite": "^8.0.12"
+  }
+}

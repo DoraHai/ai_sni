@@ -1,0 +1,18 @@
+[Unit]
+Description=Growth Sniper GEO API
+After=network.target
+
+[Service]
+Type=simple
+User=sem
+Group=sem
+WorkingDirectory=/opt/geo-service/current
+EnvironmentFile=/opt/sem-backend/.env
+ExecStart=/opt/sem-backend/.venv/bin/uvicorn app.geo_main:app --host 127.0.0.1 --port 8010 --workers 2
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/geo-service/stdout.log
+StandardError=append:/var/log/geo-service/stderr.log
+
+[Install]
+WantedBy=multi-user.target

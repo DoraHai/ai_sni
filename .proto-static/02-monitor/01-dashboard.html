@@ -1,0 +1,1270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>数据看板 · 每日盯盘 · SEM 智投平台</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #F5F7FA; color: #1F2937; font-size: 13px; }
+
+  /* ============ 侧边导航 · 工作流版 ============ */
+  .sidebar { position: fixed; left: 0; top: 0; width: 200px; height: 100vh; background: #FFFFFF; border-right: 1px solid #E5E7EB; padding: 18px 0 24px; z-index: 100; overflow-y: auto; }
+  .logo { padding: 0 20px 18px; font-size: 15px; font-weight: 600; color: #185FA5; border-bottom: 1px solid #F3F4F6; }
+  .logo small { display: block; font-size: 11px; color: #9CA3AF; font-weight: 400; margin-top: 4px; }
+  .nav-home { padding: 12px 20px; cursor: pointer; color: #4B5563; font-size: 12px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #F3F4F6; }
+  .nav-home:hover { background: #F9FAFB; color: #185FA5; }
+  .nav-section { padding: 14px 0 8px; }
+  .nav-section-title { padding: 0 20px 6px; font-size: 11px; color: #9CA3AF; font-weight: 500; letter-spacing: 0.3px; }
+
+  .wf-group { user-select: none; }
+  .wf-trigger { padding: 9px 20px; cursor: pointer; color: #4B5563; font-size: 13px; display: flex; align-items: center; gap: 8px; transition: background 0.1s; }
+  .wf-trigger:hover { background: #F9FAFB; }
+  .wf-trigger.current { color: #185FA5; font-weight: 500; }
+  .wf-icon { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; }
+  .wf-name { flex: 1; }
+  .wf-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; font-weight: 500; background: #FEF6F6; color: #E24B4A; }
+  .wf-badge.warn { background: #FCF6EA; color: #BA7517; }
+  .wf-badge.info { background: #EFF4FB; color: #185FA5; }
+  .wf-toggle { font-size: 10px; color: #9CA3AF; transition: transform 0.15s; }
+  .wf-group.open .wf-toggle { transform: rotate(90deg); }
+
+  .wf-sub { display: none; padding-bottom: 4px; }
+  .wf-group.open .wf-sub { display: block; }
+  .wf-sub-item { padding: 7px 20px 7px 44px; cursor: pointer; color: #6B7280; font-size: 12px; display: flex; align-items: center; gap: 6px; border-left: 3px solid transparent; }
+  .wf-sub-item:hover { background: #F9FAFB; color: #185FA5; }
+  .wf-sub-item.active { background: #EFF4FB; color: #185FA5; font-weight: 500; border-left-color: #185FA5; }
+  .wf-sub-dot { width: 4px; height: 4px; border-radius: 50%; background: #D1D5DB; flex-shrink: 0; }
+  .wf-sub-item.active .wf-sub-dot { background: #185FA5; }
+  .wf-sub-num { font-size: 10px; color: #9CA3AF; margin-left: auto; }
+
+  /* ============ 主区域 ============ */
+  .main { margin-left: 200px; min-height: 100vh; }
+  .topbar { background: #FFFFFF; border-bottom: 1px solid #E5E7EB; padding: 0 28px; height: 56px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 50; }
+  .breadcrumb { font-size: 13px; color: #6B7280; }
+  .breadcrumb b { color: #1F2937; font-weight: 500; }
+  .breadcrumb a { color: #6B7280; text-decoration: none; }
+  .breadcrumb a:hover { color: #185FA5; }
+  .topbar-right { display: flex; align-items: center; gap: 12px; }
+
+  /* 客户切换器（复用） */
+  .client-switch { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: #F3F4F6; border-radius: 6px; cursor: pointer; font-size: 12px; position: relative; user-select: none; }
+  .client-switch b { color: #185FA5; }
+  .client-switch .cs-dropdown { display: none; position: absolute; top: 100%; right: 0; margin-top: 6px; background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.12); min-width: 300px; padding: 6px; z-index: 1000; }
+  .client-switch.open .cs-dropdown { display: block; }
+  .client-switch .cs-head { font-size: 10px; color: #9CA3AF; padding: 6px 12px; font-weight: 500; }
+  .client-switch .cs-item { padding: 8px 12px; border-radius: 5px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 10px; color: #1F2937; }
+  .client-switch .cs-item:hover { background: #F4F8FD; }
+  .client-switch .cs-item.active { background: #EFF4FB; }
+  .client-switch .cs-logo { width: 26px; height: 26px; border-radius: 5px; display: flex; align-items: center; justify-content: center; color: #FFF; font-weight: 600; font-size: 11px; flex-shrink: 0; }
+  .client-switch .cs-logo-1 { background: linear-gradient(135deg,#185FA5 0%,#2C7CC8 100%); }
+  .client-switch .cs-logo-2 { background: linear-gradient(135deg,#1D9E75 0%,#4DBE99 100%); }
+  .client-switch .cs-logo-3 { background: linear-gradient(135deg,#BA7517 0%,#DC9A47 100%); }
+  .client-switch .cs-logo-4 { background: linear-gradient(135deg,#6B47B5 0%,#9474D4 100%); }
+  .client-switch .cs-logo-5 { background: linear-gradient(135deg,#E24B4A 0%,#EE7472 100%); }
+  .client-switch .cs-name { font-weight: 500; }
+  .client-switch .cs-meta { font-size: 10px; color: #9CA3AF; margin-top: 1px; }
+  .client-switch .cs-check { color: #185FA5; margin-left: auto; }
+  .client-switch .cs-divider { height: 1px; background: #F3F4F6; margin: 6px 0; }
+
+  .role-badge { font-size: 11px; padding: 4px 9px; background: #EFF4FB; color: #185FA5; border-radius: 10px; font-weight: 500; }
+  .user-avatar { width: 30px; height: 30px; border-radius: 50%; background: #185FA5; color: #FFF; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+
+  /* ============ 内容容器 ============ */
+  .content { padding: 22px 28px; }
+  .page-header { margin-bottom: 16px; display: flex; justify-content: space-between; align-items: flex-end; }
+  .page-title { font-size: 20px; font-weight: 600; color: #1F2937; }
+  .page-desc { font-size: 12px; color: #6B7280; margin-top: 4px; }
+  .platform-filter { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px 5px 12px; background: #FAFBFC; border: 1px solid #D1D5DB; border-radius: 5px; }
+  .pf-label { font-size: 11px; color: #9CA3AF; }
+  .pf-select { border: none; background: transparent; font-size: 12px; color: #1F2937; font-weight: 500; cursor: pointer; padding: 2px 4px; }
+  .pf-select:focus { outline: none; }
+  .page-actions { display: flex; gap: 8px; }
+
+  /* 按钮 */
+  .btn { padding: 6px 12px; border-radius: 5px; font-size: 12px; cursor: pointer; border: none; font-weight: 500; display: inline-flex; align-items: center; gap: 4px; }
+  .btn-primary { background: #185FA5; color: #FFF; }
+  .btn-default { background: #FFF; color: #4B5563; border: 1px solid #D1D5DB; }
+  .btn-default:hover { border-color: #185FA5; color: #185FA5; }
+  .btn-small { padding: 4px 10px; font-size: 11px; }
+  .btn-link { background: none; border: none; color: #185FA5; font-size: 12px; cursor: pointer; padding: 0; }
+
+  /* ============ 异常快捷条 ============ */
+  .alert-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .alert-card { background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 14px 16px; display: flex; align-items: center; gap: 14px; cursor: pointer; transition: all 0.15s; }
+  .alert-card:hover { border-color: #185FA5; box-shadow: 0 2px 8px rgba(24,95,165,0.06); }
+  .alert-card.p0 { border-left: 4px solid #E24B4A; background: linear-gradient(90deg,#FEF6F6 0%,#FFF 30%); }
+  .alert-card.p1 { border-left: 4px solid #E24B4A; }
+  .alert-card.p2 { border-left: 4px solid #BA7517; }
+  .alert-card.verify { border-left: 4px solid #BA7517; background: linear-gradient(90deg,#FCF6EA 0%,#FFF 30%); }
+  .alert-num { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+  .p0 .alert-num, .p1 .alert-num { color: #E24B4A; }
+  .p2 .alert-num, .verify .alert-num { color: #BA7517; }
+  .alert-info { flex: 1; }
+  .alert-label { font-size: 11px; color: #6B7280; }
+  .alert-title { font-size: 13px; font-weight: 600; color: #1F2937; margin-top: 2px; }
+  .alert-arrow { color: #9CA3AF; font-size: 18px; }
+
+  /* AI 每日洞察 */
+  .ai-tip { background: linear-gradient(135deg,#F4F8FD 0%,#FAFBFC 100%); border: 1px solid #C5D7EE; border-radius: 8px; padding: 14px 16px; margin-bottom: 18px; }
+  .ai-tip-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; font-weight: 600; color: #1F2937; }
+  .ai-badge { background: linear-gradient(135deg,#185FA5 0%,#2C7CC8 100%); color: #FFF; padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 600; }
+  .ai-tip-body { font-size: 12px; color: #4B5563; line-height: 1.75; }
+  .ai-tip-body b { color: #1F2937; }
+
+  /* ============ KPI 卡片 ============ */
+  .kpi-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 18px; }
+  .kpi-card { background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 14px 16px; }
+  .kpi-label { font-size: 11px; color: #6B7280; display: flex; align-items: center; gap: 4px; }
+  .kpi-tip { font-size: 9px; padding: 1px 6px; background: #F3F4F6; color: #6B7280; border-radius: 3px; }
+  .kpi-value { font-size: 22px; font-weight: 700; color: #1F2937; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  .kpi-cmp { font-size: 11px; margin-top: 6px; display: flex; align-items: center; gap: 6px; }
+  .kpi-delta { font-weight: 600; }
+  .kpi-delta.up { color: #1D9E75; }
+  .kpi-delta.down { color: #E24B4A; }
+  .kpi-delta.neutral { color: #6B7280; }
+  .kpi-vs { color: #9CA3AF; }
+  .mini-spark { display: flex; align-items: flex-end; gap: 2px; height: 22px; margin-top: 8px; }
+  .ms-bar { flex: 1; background: #C5D7EE; border-radius: 1px; }
+  .ms-bar.now { background: #185FA5; }
+  .ms-bar.bad { background: #F0B5B5; }
+  .ms-bar.bad.now { background: #E24B4A; }
+
+  /* ============ 通用面板 ============ */
+  .panel { background: #FFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 18px 20px; }
+  .panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .panel-title { font-size: 14px; font-weight: 600; color: #1F2937; }
+  .panel-sub { font-size: 11px; color: #9CA3AF; margin-left: 8px; font-weight: 400; }
+  .panel-actions { display: flex; gap: 6px; }
+
+  /* 趋势图区 */
+  .row-trend { display: grid; grid-template-columns: 1.6fr 1fr; gap: 16px; margin-bottom: 18px; }
+  .trend-tabs { display: flex; gap: 6px; }
+  .trend-tab { padding: 4px 12px; border-radius: 12px; font-size: 11px; cursor: pointer; background: #F3F4F6; color: #4B5563; }
+  .trend-tab.active { background: #185FA5; color: #FFF; }
+  .chart-area { height: 220px; position: relative; }
+  .chart-svg { width: 100%; height: 100%; overflow: visible; }
+  .chart-legend { display: flex; gap: 14px; font-size: 11px; color: #6B7280; margin-top: 8px; padding-left: 8px; }
+  .chart-legend .lg-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: middle; }
+
+  /* 设备维度 */
+  .device-row { display: flex; flex-direction: column; gap: 10px; }
+  .device-card { background: #FAFBFC; border-radius: 6px; padding: 12px 14px; }
+  .device-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .device-icon { width: 28px; height: 28px; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #FFF; font-size: 13px; }
+  .device-pc { background: #185FA5; }
+  .device-mobile { background: #1D9E75; }
+  .device-name { font-size: 13px; font-weight: 600; color: #1F2937; }
+  .device-share { font-size: 11px; color: #6B7280; margin-top: 1px; }
+  .device-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; font-size: 11px; }
+  .device-stat-label { color: #6B7280; }
+  .device-stat-value { color: #1F2937; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  /* ============ 第二行：计划/产品线 + 5 类关键词 + 系数预警 ============ */
+  .row-mid { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 16px; margin-bottom: 18px; }
+
+  /* 计划/产品线消费分布 */
+  .plan-bar-row { display: grid; grid-template-columns: 1fr 70px 1fr 70px; gap: 10px; padding: 9px 0; align-items: center; font-size: 12px; border-bottom: 1px solid #F3F4F6; }
+  .plan-bar-row:last-child { border-bottom: none; }
+  .plan-name { color: #1F2937; font-weight: 500; }
+  .plan-product { font-size: 10px; color: #9CA3AF; margin-top: 2px; }
+  .plan-bar-bg { height: 8px; background: #F3F4F6; border-radius: 4px; overflow: hidden; }
+  .plan-bar-fill { height: 100%; background: linear-gradient(90deg,#185FA5 0%,#3E84C8 100%); border-radius: 4px; }
+  .plan-bar-fill.bad { background: linear-gradient(90deg,#E24B4A 0%,#EE7472 100%); }
+  .plan-bar-fill.warn { background: linear-gradient(90deg,#BA7517 0%,#DC9A47 100%); }
+  .plan-amount { color: #1F2937; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+  .plan-pct { color: #9CA3AF; text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* 5 类关键词分布（堆叠条 + 列表） */
+  .kw-stack { display: flex; height: 14px; border-radius: 7px; overflow: hidden; margin-bottom: 14px; background: #F3F4F6; }
+  .kw-stack > div { transition: opacity 0.15s; }
+  .kw-stack > div:hover { opacity: 0.85; }
+  .kw-list { display: flex; flex-direction: column; gap: 8px; }
+  .kw-row { display: grid; grid-template-columns: 12px 1fr 60px 50px; gap: 8px; align-items: center; font-size: 12px; }
+  .kw-dot { width: 10px; height: 10px; border-radius: 3px; }
+  .kw-name { color: #1F2937; }
+  .kw-rule { font-size: 10px; color: #9CA3AF; margin-top: 1px; }
+  .kw-count { color: #1F2937; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+  .kw-pct { color: #9CA3AF; font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; }
+  .kw-c-brand { background: #6B47B5; }
+  .kw-c-focus { background: #185FA5; }
+  .kw-c-normal { background: #1D9E75; }
+  .kw-c-longtail { background: #BA7517; }
+  .kw-c-new { background: #9CA3AF; }
+
+  /* 出价系数预警 */
+  .coef-card { display: flex; flex-direction: column; gap: 10px; }
+  .coef-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 6px; background: #FAFBFC; }
+  .coef-row.warn { background: #FEF6F6; border: 1px solid #FECACA; }
+  .coef-row.orange { background: #FCF6EA; border: 1px solid #FED7AA; }
+  .coef-label { font-size: 12px; color: #1F2937; font-weight: 500; }
+  .coef-formula { font-size: 10px; color: #9CA3AF; margin-top: 2px; font-family: ui-monospace, monospace; }
+  .coef-num { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .coef-num.warn { color: #E24B4A; }
+  .coef-num.orange { color: #BA7517; }
+  .coef-num.ok { color: #1D9E75; }
+  .coef-foot { font-size: 11px; color: #6B7280; margin-top: 4px; line-height: 1.6; padding: 10px 12px; background: #F4F8FD; border-radius: 6px; }
+  .coef-foot b { color: #185FA5; }
+
+  /* ============ 第三行：月报后待办 + 数据源 + 跨客户对比 ============ */
+  .row-bottom { display: grid; grid-template-columns: 1fr 1fr 1.2fr; gap: 16px; }
+
+  /* 月报后待办 */
+  .todo-item { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px dashed #F3F4F6; font-size: 12px; }
+  .todo-item:last-child { border-bottom: none; }
+  .todo-check { width: 14px; height: 14px; border: 1.5px solid #D1D5DB; border-radius: 3px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  .todo-check.done { background: #1D9E75; border-color: #1D9E75; color: #FFF; font-size: 9px; }
+  .todo-text { flex: 1; color: #374151; }
+  .todo-text.done { text-decoration: line-through; color: #9CA3AF; }
+  .todo-meta { font-size: 10px; color: #9CA3AF; margin-top: 2px; }
+  .todo-tag { font-size: 10px; padding: 1px 6px; border-radius: 3px; }
+  .tag-pending { background: #FCF6EA; color: #BA7517; }
+  .tag-done { background: #E5F4ED; color: #1D9E75; }
+  .tag-scheduled { background: #EFF4FB; color: #185FA5; }
+  .tag-overdue { background: #FEF6F6; color: #E24B4A; }
+
+  /* 数据源健康 */
+  .source-list { display: flex; flex-direction: column; gap: 8px; }
+  .source-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; background: #FAFBFC; border-radius: 6px; }
+  .source-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .src-ok { background: #1D9E75; }
+  .src-warn { background: #BA7517; }
+  .src-err { background: #E24B4A; }
+  .source-name { font-size: 12px; color: #1F2937; flex: 1; font-weight: 500; }
+  .source-meta { font-size: 10px; color: #9CA3AF; }
+
+  /* 跨客户对比快照 */
+  .client-snapshot { display: flex; flex-direction: column; gap: 8px; }
+  .client-row { display: grid; grid-template-columns: 26px 1fr 70px 60px 60px; gap: 10px; align-items: center; padding: 9px 8px; border-radius: 6px; cursor: pointer; transition: background 0.1s; }
+  .client-row:hover { background: #F4F8FD; }
+  .client-row.current { background: #EFF4FB; }
+  .client-logo { width: 26px; height: 26px; border-radius: 5px; display: flex; align-items: center; justify-content: center; color: #FFF; font-weight: 600; font-size: 11px; flex-shrink: 0; }
+  .client-info-name { font-size: 12px; color: #1F2937; font-weight: 500; }
+  .client-info-meta { font-size: 10px; color: #9CA3AF; margin-top: 1px; }
+  .client-metric { text-align: right; font-size: 11px; }
+  .client-metric-val { font-weight: 600; color: #1F2937; font-variant-numeric: tabular-nums; }
+  .client-metric-lbl { color: #9CA3AF; font-size: 10px; margin-top: 1px; }
+  .client-status { display: flex; align-items: center; justify-content: flex-end; gap: 4px; font-size: 11px; }
+  .status-dot { width: 6px; height: 6px; border-radius: 50%; }
+  .st-ok { background: #1D9E75; color: #1D9E75; }
+  .st-warn { background: #BA7517; color: #BA7517; }
+  .st-err { background: #E24B4A; color: #E24B4A; }
+  .client-snapshot-head { display: grid; grid-template-columns: 26px 1fr 70px 60px 60px; gap: 10px; padding: 0 8px 6px; font-size: 10px; color: #9CA3AF; font-weight: 500; border-bottom: 1px solid #F3F4F6; margin-bottom: 4px; }
+  .client-snapshot-head > div:nth-child(3), .client-snapshot-head > div:nth-child(4), .client-snapshot-head > div:nth-child(5) { text-align: right; }
+</style>
+</head>
+<body>
+
+<!-- ============ 侧边导航 · 工作流版 ============ -->
+<aside class="sidebar">
+  <div class="logo">
+    SEM 智投平台
+    <small>v3.0 · 工作流版</small>
+  </div>
+
+  <div class="nav-home" onclick="location.href='../index.html'">← 返回工作流总览</div>
+
+  <div class="nav-section">
+    <div class="nav-section-title">代运营工作流</div>
+
+    <!-- 01 首次接入 -->
+    <div class="wf-group" data-wf="1">
+      <div class="wf-trigger" onclick="toggleWf(this)">
+        <span class="wf-icon">🚀</span>
+        <span class="wf-name">首次接入</span>
+        <span class="wf-toggle">›</span>
+      </div>
+      <div class="wf-sub">
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>登录</div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>应用配置</div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>授权引导</div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>首次同步</div>
+      </div>
+    </div>
+
+    <!-- 02 每日盯盘（当前展开） -->
+    <div class="wf-group open" data-wf="2">
+      <div class="wf-trigger current" onclick="toggleWf(this)">
+        <span class="wf-icon">📊</span>
+        <span class="wf-name">每日盯盘</span>
+        <span class="wf-badge">12</span>
+        <span class="wf-toggle">›</span>
+      </div>
+      <div class="wf-sub">
+        <div class="wf-sub-item active"><span class="wf-sub-dot"></span>数据看板</div>
+        <div class="wf-sub-item" onclick="location.href='02-alerts.html'"><span class="wf-sub-dot"></span>异常提醒<span class="wf-sub-num">12</span></div>
+        <div class="wf-sub-item" onclick="location.href='03-keyword-detail.html'"><span class="wf-sub-dot"></span>关键词详情</div>
+      </div>
+    </div>
+
+    <!-- 03 优化执行 -->
+    <div class="wf-group" data-wf="3">
+      <div class="wf-trigger" onclick="toggleWf(this)">
+        <span class="wf-icon">⚡</span>
+        <span class="wf-name">优化执行</span>
+        <span class="wf-badge info">23</span>
+        <span class="wf-toggle">›</span>
+      </div>
+      <div class="wf-sub">
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>拓词</div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>关键词工作台<span class="wf-sub-num">23</span></div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>否词管理</div>
+      </div>
+    </div>
+
+    <!-- 04 效果验证 -->
+    <div class="wf-group" data-wf="4">
+      <div class="wf-trigger" onclick="toggleWf(this)">
+        <span class="wf-icon">🔍</span>
+        <span class="wf-name">效果验证</span>
+        <span class="wf-badge warn">8</span>
+        <span class="wf-toggle">›</span>
+      </div>
+      <div class="wf-sub">
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>调价台账</div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>待验证调价<span class="wf-sub-num">8</span></div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>波动分析任务</div>
+      </div>
+    </div>
+
+    <!-- 05 客户交付 -->
+    <div class="wf-group" data-wf="5">
+      <div class="wf-trigger" onclick="toggleWf(this)">
+        <span class="wf-icon">📨</span>
+        <span class="wf-name">客户交付</span>
+        <span class="wf-badge warn">2</span>
+        <span class="wf-toggle">›</span>
+      </div>
+      <div class="wf-sub">
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>分析报告</div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>月报后流程<span class="wf-sub-num">2</span></div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>新增活动规划</div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>线索管理</div>
+      </div>
+    </div>
+
+    <!-- 06 系统设置 -->
+    <div class="wf-group" data-wf="6">
+      <div class="wf-trigger" onclick="toggleWf(this)">
+        <span class="wf-icon">⚙️</span>
+        <span class="wf-name">系统设置</span>
+        <span class="wf-toggle">›</span>
+      </div>
+      <div class="wf-sub">
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>客户管理</div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>账号与权限</div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>应用管理</div>
+        <div class="wf-sub-item"><span class="wf-sub-dot"></span>数据接入</div>
+      </div>
+    </div>
+
+  </div>
+</aside>
+
+<!-- ============ 主内容 ============ -->
+<main class="main">
+  <div class="topbar">
+    <div class="breadcrumb">
+      <a href="../index.html">工作流总览</a> / 每日盯盘 / <b>数据看板</b>
+    </div>
+    <div class="topbar-right">
+      <div class="client-switch" onclick="event.stopPropagation();this.classList.toggle('open');">
+        当前客户：<b>苏尔寿</b> ▾
+        <div class="cs-dropdown" onclick="event.stopPropagation();">
+          <div class="cs-head">切换客户 / 聚合视图</div>
+          <div class="cs-item">
+            <div class="cs-logo" style="background:linear-gradient(135deg,#185FA5 0%,#1D9E75 100%);">全</div>
+            <div style="flex:1;"><div class="cs-name">全部客户聚合视图</div><div class="cs-meta">5 客户 · 9 账户 · 348 计划</div></div>
+          </div>
+          <div class="cs-divider"></div>
+          <div class="cs-head">单一客户（数据完全隔离）</div>
+          <div class="cs-item active">
+            <div class="cs-logo cs-logo-1">SU</div>
+            <div style="flex:1;"><div class="cs-name">苏尔寿</div><div class="cs-meta">工业泵 / 分离技术 · 3 账户 · 128 计划</div></div>
+            <span class="cs-check">✓</span>
+          </div>
+          <div class="cs-item">
+            <div class="cs-logo cs-logo-2">ME</div>
+            <div style="flex:1;"><div class="cs-name">某家电制造客户</div><div class="cs-meta">家电消费品 · 2 账户 · 86 计划</div></div>
+          </div>
+          <div class="cs-item">
+            <div class="cs-logo cs-logo-3">SH</div>
+            <div style="flex:1;"><div class="cs-name">某化工集团</div><div class="cs-meta">基础化工 · 1 账户 · 42 计划</div></div>
+          </div>
+          <div class="cs-item">
+            <div class="cs-logo cs-logo-4">EH</div>
+            <div style="flex:1;"><div class="cs-name">某医疗设备客户</div><div class="cs-meta">医疗器械 · 2 账户 · 64 计划</div></div>
+          </div>
+          <div class="cs-item">
+            <div class="cs-logo cs-logo-5">CT</div>
+            <div style="flex:1;"><div class="cs-name">某新能源客户</div><div class="cs-meta">新能源装备 · 1 账户 · 28 计划</div></div>
+          </div>
+        </div>
+      </div>
+      <span class="role-badge">运营</span>
+      <div class="user-avatar">优</div>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- 页头 -->
+    <div class="page-header">
+      <div>
+        <div class="page-title">数据看板</div>
+        <div class="page-desc">苏尔寿 · 数据更新于 2026-06-05 02:34 · 数据源：百度营销 API + 爱番番（全部已同步）</div>
+      </div>
+      <div class="page-actions">
+        <div class="platform-filter">
+          <span class="pf-label">媒体</span>
+          <select class="pf-select" onchange="if(this.value==='bing'){alert('必应广告即将开放，预计 2026 Q3。');this.value='baidu';}">
+            <option value="baidu">百度推广</option>
+            <option value="bing" disabled>必应（即将开放）</option>
+          </select>
+        </div>
+        <select class="btn btn-default" style="padding:6px 12px;">
+          <option>本月（6 月 1 日 - 6 月 5 日）</option>
+          <option>近 7 天</option>
+          <option>近 30 天</option>
+          <option>本周 vs 上周</option>
+          <option>5 月（完整月）</option>
+        </select>
+        <button class="btn btn-default">导出数据</button>
+        <button class="btn btn-primary" onclick="location.href='../05-delivery/01-report.html'">生成完整报告</button>
+      </div>
+    </div>
+
+    <!-- ============ 异常快捷条 ============ -->
+    <div class="alert-strip">
+      <div class="alert-card p0" onclick="location.href='02-alerts.html'">
+        <div class="alert-num">1</div>
+        <div class="alert-info">
+          <div class="alert-label">P0 最高紧急</div>
+          <div class="alert-title">品牌词排名异常</div>
+        </div>
+        <div class="alert-arrow">›</div>
+      </div>
+      <div class="alert-card p1" onclick="location.href='02-alerts.html'">
+        <div class="alert-num">3</div>
+        <div class="alert-info">
+          <div class="alert-label">P1 立即执行</div>
+          <div class="alert-title">高消费零转化</div>
+        </div>
+        <div class="alert-arrow">›</div>
+      </div>
+      <div class="alert-card p2" onclick="location.href='02-alerts.html'">
+        <div class="alert-num">8</div>
+        <div class="alert-info">
+          <div class="alert-label">P2 本周处理</div>
+          <div class="alert-title">排名恶化 / 零转化</div>
+        </div>
+        <div class="alert-arrow">›</div>
+      </div>
+      <div class="alert-card verify" onclick="location.href='../04-verify/02-verify-queue.html'">
+        <div class="alert-num">8</div>
+        <div class="alert-info">
+          <div class="alert-label">待验证调价</div>
+          <div class="alert-title">推广实况 2-4 小时复查</div>
+        </div>
+        <div class="alert-arrow">›</div>
+      </div>
+    </div>
+
+    <!-- ============ AI 每日洞察 ============ -->
+    <div class="ai-tip">
+      <div class="ai-tip-head">
+        <span class="ai-badge">AI 每日洞察</span>
+        基于 2026-06-04 数据生成
+      </div>
+      <div class="ai-tip-body">
+        昨日整体：消费 ¥ 1,485（↑ 8.2%），线索 12 条（CPL ¥ 124）。重点关注 3 件事：
+        <div style="margin-top:6px;">① <b>规整填料价格</b> 等 4 个重点词上方位排名单周涨幅 > 1.0，疑似竞争加剧 <button class="btn-link" style="margin-left:4px;" onclick="location.href='02-alerts.html'">→ 查看异常</button></div>
+        <div>② <b>EO-高纯度计划</b> CPC 已连续 6 周上涨至 ¥ 14.20，建议排查落地页转化链路 <button class="btn-link" style="margin-left:4px;" onclick="location.href='../03-optimize/02-plan-management.html'">→ 计划详情</button></div>
+        <div>③ <b>5 月月报</b> 已于上周发送，<b>2 项</b> 客户反馈待整理为新需求 <button class="btn-link" style="margin-left:4px;" onclick="location.href='../05-delivery/02-monthly-followup.html'">→ 月报后流程</button></div>
+      </div>
+    </div>
+
+    <!-- ============ KPI 6 卡 ============ -->
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">本月消费 <span class="kpi-tip">¥</span></div>
+        <div class="kpi-value">¥ 7,485</div>
+        <div class="kpi-cmp">
+          <span class="kpi-delta up">↑ 12.5%</span>
+          <span class="kpi-vs">上月同期 ¥ 6,653</span>
+        </div>
+        <div class="mini-spark">
+          <div class="ms-bar" style="height:40%"></div>
+          <div class="ms-bar" style="height:55%"></div>
+          <div class="ms-bar" style="height:48%"></div>
+          <div class="ms-bar" style="height:62%"></div>
+          <div class="ms-bar now" style="height:78%"></div>
+        </div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">本月点击 <span class="kpi-tip">次</span></div>
+        <div class="kpi-value">1,096</div>
+        <div class="kpi-cmp">
+          <span class="kpi-delta up">↑ 8.2%</span>
+          <span class="kpi-vs">上月 1,013</span>
+        </div>
+        <div class="mini-spark">
+          <div class="ms-bar" style="height:55%"></div>
+          <div class="ms-bar" style="height:48%"></div>
+          <div class="ms-bar" style="height:62%"></div>
+          <div class="ms-bar" style="height:72%"></div>
+          <div class="ms-bar now" style="height:80%"></div>
+        </div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">本月展现 <span class="kpi-tip">次</span></div>
+        <div class="kpi-value">14,820</div>
+        <div class="kpi-cmp">
+          <span class="kpi-delta down">↓ 3.1%</span>
+          <span class="kpi-vs">上月 15,294</span>
+        </div>
+        <div class="mini-spark">
+          <div class="ms-bar bad" style="height:70%"></div>
+          <div class="ms-bar bad" style="height:65%"></div>
+          <div class="ms-bar bad" style="height:58%"></div>
+          <div class="ms-bar bad" style="height:62%"></div>
+          <div class="ms-bar bad now" style="height:55%"></div>
+        </div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">本月线索 <span class="kpi-tip">条</span></div>
+        <div class="kpi-value">38</div>
+        <div class="kpi-cmp">
+          <span class="kpi-delta up">↑ 18.8%</span>
+          <span class="kpi-vs">上月 32</span>
+        </div>
+        <div class="mini-spark">
+          <div class="ms-bar" style="height:45%"></div>
+          <div class="ms-bar" style="height:55%"></div>
+          <div class="ms-bar" style="height:60%"></div>
+          <div class="ms-bar" style="height:70%"></div>
+          <div class="ms-bar now" style="height:82%"></div>
+        </div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">平均 CPC <span class="kpi-tip">¥</span></div>
+        <div class="kpi-value">¥ 6.83</div>
+        <div class="kpi-cmp">
+          <span class="kpi-delta down">↑ 4.0%</span>
+          <span class="kpi-vs">上月 ¥ 6.57</span>
+        </div>
+        <div class="mini-spark">
+          <div class="ms-bar" style="height:55%"></div>
+          <div class="ms-bar" style="height:58%"></div>
+          <div class="ms-bar" style="height:62%"></div>
+          <div class="ms-bar" style="height:65%"></div>
+          <div class="ms-bar now" style="height:72%"></div>
+        </div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">单条线索成本 CPL <span class="kpi-tip">¥</span></div>
+        <div class="kpi-value">¥ 197</div>
+        <div class="kpi-cmp">
+          <span class="kpi-delta up">↓ 5.3%</span>
+          <span class="kpi-vs">上月 ¥ 208</span>
+        </div>
+        <div class="mini-spark">
+          <div class="ms-bar" style="height:78%"></div>
+          <div class="ms-bar" style="height:75%"></div>
+          <div class="ms-bar" style="height:70%"></div>
+          <div class="ms-bar" style="height:68%"></div>
+          <div class="ms-bar now" style="height:62%"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 趋势图 + 设备 ============ -->
+    <div class="row-trend">
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <span class="panel-title">消费与线索趋势</span>
+            <span class="panel-sub">近 6 周滚动</span>
+          </div>
+          <div class="trend-tabs">
+            <span class="trend-tab">消费</span>
+            <span class="trend-tab active">消费 + 线索</span>
+            <span class="trend-tab">CPC</span>
+            <span class="trend-tab">CPL</span>
+          </div>
+        </div>
+        <div class="chart-area">
+          <svg class="chart-svg" viewBox="0 0 600 220" preserveAspectRatio="none">
+            <!-- 网格 -->
+            <line x1="40" y1="40" x2="580" y2="40" stroke="#F3F4F6" stroke-width="1"/>
+            <line x1="40" y1="90" x2="580" y2="90" stroke="#F3F4F6" stroke-width="1"/>
+            <line x1="40" y1="140" x2="580" y2="140" stroke="#F3F4F6" stroke-width="1"/>
+            <line x1="40" y1="190" x2="580" y2="190" stroke="#E5E7EB" stroke-width="1"/>
+            <!-- Y 轴标签 -->
+            <text x="32" y="44" font-size="10" fill="#9CA3AF" text-anchor="end">8k</text>
+            <text x="32" y="94" font-size="10" fill="#9CA3AF" text-anchor="end">6k</text>
+            <text x="32" y="144" font-size="10" fill="#9CA3AF" text-anchor="end">3k</text>
+            <text x="32" y="194" font-size="10" fill="#9CA3AF" text-anchor="end">0</text>
+
+            <!-- 消费面积 -->
+            <defs>
+              <linearGradient id="grad-cost" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#185FA5" stop-opacity="0.25"/>
+                <stop offset="100%" stop-color="#185FA5" stop-opacity="0.02"/>
+              </linearGradient>
+            </defs>
+            <polygon points="80,190 80,150 170,135 260,120 350,105 440,95 530,75 530,190" fill="url(#grad-cost)"/>
+            <polyline points="80,150 170,135 260,120 350,105 440,95 530,75" stroke="#185FA5" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <!-- 数据点 -->
+            <circle cx="80" cy="150" r="3.5" fill="#FFF" stroke="#185FA5" stroke-width="2"/>
+            <circle cx="170" cy="135" r="3.5" fill="#FFF" stroke="#185FA5" stroke-width="2"/>
+            <circle cx="260" cy="120" r="3.5" fill="#FFF" stroke="#185FA5" stroke-width="2"/>
+            <circle cx="350" cy="105" r="3.5" fill="#FFF" stroke="#185FA5" stroke-width="2"/>
+            <circle cx="440" cy="95" r="3.5" fill="#FFF" stroke="#185FA5" stroke-width="2"/>
+            <circle cx="530" cy="75" r="4" fill="#185FA5" stroke="#FFF" stroke-width="2"/>
+
+            <!-- 线索（绿色虚线 + 圆点） -->
+            <polyline points="80,175 170,170 260,160 350,150 440,140 530,125" stroke="#1D9E75" stroke-width="1.8" fill="none" stroke-dasharray="4 4"/>
+            <circle cx="80" cy="175" r="3" fill="#1D9E75"/>
+            <circle cx="170" cy="170" r="3" fill="#1D9E75"/>
+            <circle cx="260" cy="160" r="3" fill="#1D9E75"/>
+            <circle cx="350" cy="150" r="3" fill="#1D9E75"/>
+            <circle cx="440" cy="140" r="3" fill="#1D9E75"/>
+            <circle cx="530" cy="125" r="3.5" fill="#1D9E75"/>
+
+            <!-- 当周高亮标签 -->
+            <text x="530" y="65" font-size="11" fill="#185FA5" text-anchor="middle" font-weight="600">¥ 7.5k</text>
+
+            <!-- X 轴标签 -->
+            <text x="80" y="210" font-size="10" fill="#9CA3AF" text-anchor="middle">W18</text>
+            <text x="170" y="210" font-size="10" fill="#9CA3AF" text-anchor="middle">W19</text>
+            <text x="260" y="210" font-size="10" fill="#9CA3AF" text-anchor="middle">W20</text>
+            <text x="350" y="210" font-size="10" fill="#9CA3AF" text-anchor="middle">W21</text>
+            <text x="440" y="210" font-size="10" fill="#9CA3AF" text-anchor="middle">W22</text>
+            <text x="530" y="210" font-size="10" fill="#185FA5" text-anchor="middle" font-weight="600">本周</text>
+          </svg>
+        </div>
+        <div class="chart-legend">
+          <span><span class="lg-dot" style="background:#185FA5;"></span>消费（¥）</span>
+          <span><span class="lg-dot" style="background:#1D9E75;"></span>线索（条 × 100）</span>
+          <span style="margin-left:auto;color:#9CA3AF;">CPC 已连续 3 周上涨，触发趋势预警</span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <span class="panel-title">设备维度</span>
+            <span class="panel-sub">本月</span>
+          </div>
+          <button class="btn-link">详细 →</button>
+        </div>
+        <div class="device-row">
+          <div class="device-card">
+            <div class="device-head">
+              <div class="device-icon device-pc">💻</div>
+              <div style="flex:1;">
+                <div class="device-name">PC 端</div>
+                <div class="device-share">消费占比 62%</div>
+              </div>
+            </div>
+            <div class="device-stats">
+              <div>
+                <div class="device-stat-label">点击</div>
+                <div class="device-stat-value">680</div>
+              </div>
+              <div>
+                <div class="device-stat-label">CPC</div>
+                <div class="device-stat-value">¥ 6.82</div>
+              </div>
+              <div>
+                <div class="device-stat-label">CPL</div>
+                <div class="device-stat-value">¥ 186</div>
+              </div>
+            </div>
+          </div>
+          <div class="device-card">
+            <div class="device-head">
+              <div class="device-icon device-mobile">📱</div>
+              <div style="flex:1;">
+                <div class="device-name">移动端</div>
+                <div class="device-share">消费占比 38%</div>
+              </div>
+            </div>
+            <div class="device-stats">
+              <div>
+                <div class="device-stat-label">点击</div>
+                <div class="device-stat-value">416</div>
+              </div>
+              <div>
+                <div class="device-stat-label">CPC</div>
+                <div class="device-stat-value">¥ 6.84</div>
+              </div>
+              <div>
+                <div class="device-stat-label">CPL</div>
+                <div class="device-stat-value">¥ 218</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 第二行：计划/产品线 + 5 类关键词 + 系数预警 ============ -->
+    <div class="row-mid">
+
+      <!-- 计划/产品线消费分布 -->
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <span class="panel-title">计划与产品线消费分布</span>
+            <span class="panel-sub">前 6 项 · 本月</span>
+          </div>
+          <button class="btn-link">查看全部 128 个 →</button>
+        </div>
+        <div class="plan-bar-row">
+          <div>
+            <div class="plan-name">EO-高纯度</div>
+            <div class="plan-product">产品线：环氧乙烷</div>
+          </div>
+          <div class="plan-amount">¥ 1,872</div>
+          <div class="plan-bar-bg"><div class="plan-bar-fill bad" style="width:78%"></div></div>
+          <div class="plan-pct">25.0%</div>
+        </div>
+        <div class="plan-bar-row">
+          <div>
+            <div class="plan-name">规整填料-不锈钢</div>
+            <div class="plan-product">产品线：分离设备</div>
+          </div>
+          <div class="plan-amount">¥ 1,398</div>
+          <div class="plan-bar-bg"><div class="plan-bar-fill" style="width:58%"></div></div>
+          <div class="plan-pct">18.7%</div>
+        </div>
+        <div class="plan-bar-row">
+          <div>
+            <div class="plan-name">工业泵-多级离心</div>
+            <div class="plan-product">产品线：工业泵</div>
+          </div>
+          <div class="plan-amount">¥ 1,054</div>
+          <div class="plan-bar-bg"><div class="plan-bar-fill" style="width:44%"></div></div>
+          <div class="plan-pct">14.1%</div>
+        </div>
+        <div class="plan-bar-row">
+          <div>
+            <div class="plan-name">塔器-蒸馏</div>
+            <div class="plan-product">产品线：分离设备</div>
+          </div>
+          <div class="plan-amount">¥ 892</div>
+          <div class="plan-bar-bg"><div class="plan-bar-fill warn" style="width:37%"></div></div>
+          <div class="plan-pct">11.9%</div>
+        </div>
+        <div class="plan-bar-row">
+          <div>
+            <div class="plan-name">品牌词-苏尔寿</div>
+            <div class="plan-product">产品线：品牌护盘</div>
+          </div>
+          <div class="plan-amount">¥ 640</div>
+          <div class="plan-bar-bg"><div class="plan-bar-fill" style="width:27%"></div></div>
+          <div class="plan-pct">8.5%</div>
+        </div>
+        <div class="plan-bar-row">
+          <div>
+            <div class="plan-name">工业泵-磁力</div>
+            <div class="plan-product">产品线：工业泵</div>
+          </div>
+          <div class="plan-amount">¥ 530</div>
+          <div class="plan-bar-bg"><div class="plan-bar-fill" style="width:22%"></div></div>
+          <div class="plan-pct">7.1%</div>
+        </div>
+      </div>
+
+      <!-- 5 类关键词分布 -->
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <span class="panel-title">关键词 5 类分级</span>
+            <span class="panel-sub">共 1,248 个</span>
+          </div>
+          <button class="btn-link">明细 →</button>
+        </div>
+        <div class="kw-stack">
+          <div class="kw-c-brand" style="width:6%;" title="品牌词 78 个"></div>
+          <div class="kw-c-focus" style="width:18%;" title="重点词 224 个"></div>
+          <div class="kw-c-normal" style="width:42%;" title="一般词 524 个"></div>
+          <div class="kw-c-longtail" style="width:28%;" title="长尾精准词 350 个"></div>
+          <div class="kw-c-new" style="width:6%;" title="新词 72 个"></div>
+        </div>
+        <div class="kw-list">
+          <div class="kw-row">
+            <span class="kw-dot kw-c-brand"></span>
+            <div>
+              <div class="kw-name">品牌词</div>
+              <div class="kw-rule">规则：必须第一位 · 跌出立即提价（P0）</div>
+            </div>
+            <div class="kw-count">78</div>
+            <div class="kw-pct">6.3%</div>
+          </div>
+          <div class="kw-row">
+            <span class="kw-dot kw-c-focus"></span>
+            <div>
+              <div class="kw-name">重点词</div>
+              <div class="kw-rule">规则：前二位 · 跌出第二触发提价</div>
+            </div>
+            <div class="kw-count">224</div>
+            <div class="kw-pct">17.9%</div>
+          </div>
+          <div class="kw-row">
+            <span class="kw-dot kw-c-normal"></span>
+            <div>
+              <div class="kw-name">一般词</div>
+              <div class="kw-rule">规则：前三位 · 按质量度判断</div>
+            </div>
+            <div class="kw-count">524</div>
+            <div class="kw-pct">42.0%</div>
+          </div>
+          <div class="kw-row">
+            <span class="kw-dot kw-c-longtail"></span>
+            <div>
+              <div class="kw-name">长尾精准词</div>
+              <div class="kw-rule">规则：不调价、保持投放 · 零展现属正常</div>
+            </div>
+            <div class="kw-count">350</div>
+            <div class="kw-pct">28.0%</div>
+          </div>
+          <div class="kw-row">
+            <span class="kw-dot kw-c-new"></span>
+            <div>
+              <div class="kw-name">新词 / 探索词</div>
+              <div class="kw-rule">规则：展现 &lt; 20 暂不评估</div>
+            </div>
+            <div class="kw-count">72</div>
+            <div class="kw-pct">5.8%</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 出价系数预警 -->
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <span class="panel-title">出价系数预警</span>
+            <span class="panel-sub">4 层系数叠加</span>
+          </div>
+          <button class="btn-link">公式说明 →</button>
+        </div>
+        <div class="coef-card">
+          <div class="coef-row warn">
+            <div>
+              <div class="coef-label">红色预警 · 实际生效 &gt; 基础 × 4</div>
+              <div class="coef-formula">理论最高 100×（4 层乘积）</div>
+            </div>
+            <div class="coef-num warn">3</div>
+          </div>
+          <div class="coef-row orange">
+            <div>
+              <div class="coef-label">橙色提示 · 实际生效 &gt; 基础 × 3</div>
+              <div class="coef-formula">建议核查系数设置合理性</div>
+            </div>
+            <div class="coef-num orange">12</div>
+          </div>
+          <div class="coef-row">
+            <div>
+              <div class="coef-label">正常 · 实际生效 ≤ 基础 × 3</div>
+              <div class="coef-formula">无需处理</div>
+            </div>
+            <div class="coef-num ok">1,233</div>
+          </div>
+          <div class="coef-foot">
+            实际生效出价 = 关键词出价 × <b>优化排名策略系数</b>（1.01~10）× <b>地域系数</b>（0.1~1）× <b>分时系数</b>（0.1~10）× <b>移动比例</b>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 第三行：月报后待办 + 数据源 + 跨客户对比 ============ -->
+    <div class="row-bottom">
+
+      <!-- 月报后待办 -->
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <span class="panel-title">月报后待办</span>
+            <span class="panel-sub">5 月月报</span>
+          </div>
+          <button class="btn-link" onclick="location.href='../05-delivery/02-monthly-followup.html'">详情 →</button>
+        </div>
+        <div class="todo-item">
+          <div class="todo-check done">✓</div>
+          <div style="flex:1;">
+            <div class="todo-text done">5 月月报已交付</div>
+            <div class="todo-meta">2026-06-02 16:42 由优运营发送</div>
+          </div>
+          <span class="todo-tag tag-done">已完成</span>
+        </div>
+        <div class="todo-item">
+          <div class="todo-check done">✓</div>
+          <div style="flex:1;">
+            <div class="todo-text done">月报会议（线上）</div>
+            <div class="todo-meta">2026-06-03 10:00 · 客户王经理参与</div>
+          </div>
+          <span class="todo-tag tag-done">已完成</span>
+        </div>
+        <div class="todo-item">
+          <div class="todo-check"></div>
+          <div style="flex:1;">
+            <div class="todo-text">整理客户反馈 2 项 → 新增需求</div>
+            <div class="todo-meta">来源：6 月 3 日月报会议</div>
+          </div>
+          <span class="todo-tag tag-pending">待办</span>
+        </div>
+        <div class="todo-item">
+          <div class="todo-check"></div>
+          <div style="flex:1;">
+            <div class="todo-text">EO-高纯度新规格 · 小活动加单元</div>
+            <div class="todo-meta">客户提出，规模小，建议小活动加单元方式</div>
+          </div>
+          <span class="todo-tag tag-scheduled">已排期</span>
+        </div>
+        <div class="todo-item">
+          <div class="todo-check"></div>
+          <div style="flex:1;">
+            <div class="todo-text">规整填料新产线方案评估</div>
+            <div class="todo-meta">客户提出，规模较大，建议独立方案</div>
+          </div>
+          <span class="todo-tag tag-overdue">需 6/10 前</span>
+        </div>
+      </div>
+
+      <!-- 数据源健康 -->
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <span class="panel-title">数据源健康</span>
+            <span class="panel-sub">实时</span>
+          </div>
+          <button class="btn-link" onclick="location.href='../06-settings/04-data-source.html'">详情 →</button>
+        </div>
+        <div class="source-list">
+          <div class="source-item">
+            <span class="source-dot src-ok"></span>
+            <span class="source-name">百度营销 API</span>
+            <span class="source-meta">02:34 已同步 · 请求频次正常</span>
+          </div>
+          <div class="source-item">
+            <span class="source-dot src-ok"></span>
+            <span class="source-name">爱番番线索接口</span>
+            <span class="source-meta">02:36 已同步 · 38 条</span>
+          </div>
+          <div class="source-item">
+            <span class="source-dot src-warn"></span>
+            <span class="source-name">OAuth 授权令牌</span>
+            <span class="source-meta">23 小时后到期 · 自动刷新</span>
+          </div>
+          <div class="source-item">
+            <span class="source-dot src-ok"></span>
+            <span class="source-name">基木鱼落地页</span>
+            <span class="source-meta">已覆盖 5/5 客户</span>
+          </div>
+          <div class="source-item">
+            <span class="source-dot src-warn"></span>
+            <span class="source-name">第三方落地页（2 个）</span>
+            <span class="source-meta">依赖人工统计 · 详见线索管理</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 跨客户对比快照 -->
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <span class="panel-title">跨客户快照</span>
+            <span class="panel-sub">本月 · 共 5 客户</span>
+          </div>
+          <button class="btn-link">切换到聚合视图 →</button>
+        </div>
+        <div class="client-snapshot-head">
+          <div></div>
+          <div>客户 / 产品线</div>
+          <div>消费</div>
+          <div>线索</div>
+          <div>状态</div>
+        </div>
+        <div class="client-snapshot">
+          <div class="client-row current">
+            <div class="client-logo cs-logo-1" style="background:linear-gradient(135deg,#185FA5 0%,#2C7CC8 100%);">SU</div>
+            <div>
+              <div class="client-info-name">苏尔寿 <span style="font-size:10px;color:#185FA5;">当前</span></div>
+              <div class="client-info-meta">工业泵 / 分离技术</div>
+            </div>
+            <div class="client-metric">
+              <div class="client-metric-val">¥ 7,485</div>
+              <div class="client-metric-lbl">↑ 12.5%</div>
+            </div>
+            <div class="client-metric">
+              <div class="client-metric-val">38</div>
+              <div class="client-metric-lbl">↑ 18.8%</div>
+            </div>
+            <div class="client-status"><span class="status-dot st-err"></span>P0 异常</div>
+          </div>
+          <div class="client-row">
+            <div class="client-logo" style="background:linear-gradient(135deg,#1D9E75 0%,#4DBE99 100%);">ME</div>
+            <div>
+              <div class="client-info-name">某家电制造客户</div>
+              <div class="client-info-meta">家电消费品</div>
+            </div>
+            <div class="client-metric">
+              <div class="client-metric-val">¥ 4,260</div>
+              <div class="client-metric-lbl">↑ 5.2%</div>
+            </div>
+            <div class="client-metric">
+              <div class="client-metric-val">42</div>
+              <div class="client-metric-lbl">→ 持平</div>
+            </div>
+            <div class="client-status"><span class="status-dot st-warn"></span>月报待跟进</div>
+          </div>
+          <div class="client-row">
+            <div class="client-logo" style="background:linear-gradient(135deg,#BA7517 0%,#DC9A47 100%);">SH</div>
+            <div>
+              <div class="client-info-name">某化工集团</div>
+              <div class="client-info-meta">基础化工</div>
+            </div>
+            <div class="client-metric">
+              <div class="client-metric-val">¥ 2,108</div>
+              <div class="client-metric-lbl">↓ 3.4%</div>
+            </div>
+            <div class="client-metric">
+              <div class="client-metric-val">14</div>
+              <div class="client-metric-lbl">↓ 12.5%</div>
+            </div>
+            <div class="client-status"><span class="status-dot st-warn"></span>转化下滑</div>
+          </div>
+          <div class="client-row">
+            <div class="client-logo" style="background:linear-gradient(135deg,#6B47B5 0%,#9474D4 100%);">EH</div>
+            <div>
+              <div class="client-info-name">某医疗设备客户</div>
+              <div class="client-info-meta">医疗器械</div>
+            </div>
+            <div class="client-metric">
+              <div class="client-metric-val">¥ 3,520</div>
+              <div class="client-metric-lbl">↑ 8.1%</div>
+            </div>
+            <div class="client-metric">
+              <div class="client-metric-val">28</div>
+              <div class="client-metric-lbl">↑ 16.7%</div>
+            </div>
+            <div class="client-status"><span class="status-dot st-ok"></span>健康</div>
+          </div>
+          <div class="client-row">
+            <div class="client-logo" style="background:linear-gradient(135deg,#E24B4A 0%,#EE7472 100%);">CT</div>
+            <div>
+              <div class="client-info-name">某新能源客户</div>
+              <div class="client-info-meta">新能源装备</div>
+            </div>
+            <div class="client-metric">
+              <div class="client-metric-val">¥ 1,840</div>
+              <div class="client-metric-lbl">↑ 22.3%</div>
+            </div>
+            <div class="client-metric">
+              <div class="client-metric-val">9</div>
+              <div class="client-metric-lbl">↑ 12.5%</div>
+            </div>
+            <div class="client-status"><span class="status-dot st-ok"></span>健康</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+</main>
+
+<script>
+  // 全局点击关闭下拉
+  document.addEventListener('click', function() {
+    document.querySelectorAll('.client-switch.open').forEach(el => el.classList.remove('open'));
+  });
+
+  // 工作流分组展开/折叠
+  function toggleWf(triggerEl) {
+    const group = triggerEl.parentElement;
+    group.classList.toggle('open');
+  }
+
+  // 趋势 tab 切换（仅 UI 反馈）
+  document.querySelectorAll('.trend-tab').forEach(tab => {
+    tab.addEventListener('click', function() {
+      this.parentElement.querySelectorAll('.trend-tab').forEach(t => t.classList.remove('active'));
+      this.classList.add('active');
+    });
+  });
+
+  // 工作流子页面导航 · 自动接线（按文本匹配，跳过已有 onclick 或 active 项）
+  (function wireNav() {
+    const map = {
+      '登录':'01-onboarding/01-login.html','应用配置':'01-onboarding/02-app-config.html','授权引导':'01-onboarding/03-oauth-guide.html','首次同步':'01-onboarding/04-syncing.html',
+      '数据看板':'02-monitor/01-dashboard.html','异常提醒':'02-monitor/02-alerts.html','关键词详情':'02-monitor/03-keyword-detail.html',
+      '拓词':'03-optimize/01-keyword-expand.html','关键词工作台':'03-optimize/02-plan-management.html','否词管理':'03-optimize/04-negative-words.html',
+      '调价台账':'04-verify/01-adjustment-log.html','待验证调价':'04-verify/02-verify-queue.html','波动分析任务':'04-verify/03-fluctuation-tasks.html',
+      '分析报告':'05-delivery/01-report.html','月报后流程':'05-delivery/02-monthly-followup.html','新增活动规划':'05-delivery/03-new-campaign.html','线索管理':'05-delivery/04-leads.html',
+      '客户管理':'06-settings/01-customers.html','账号与权限':'06-settings/02-accounts-roles.html','应用管理':'06-settings/03-apps.html','数据接入':'06-settings/04-data-source.html'
+    };
+    document.querySelectorAll('.wf-sub-item').forEach(item => {
+      if (item.classList.contains('active') || item.hasAttribute('onclick')) return;
+      const c = item.cloneNode(true);
+      c.querySelectorAll('span').forEach(s => s.remove());
+      const t = c.textContent.trim();
+      if (map[t]) item.setAttribute('onclick', "location.href='../" + map[t] + "'");
+    });
+  })();
+</script>
+
+<script>
+/* ============ 接真实后端数据 ============
+ * 数据源：GET /api/v1/dashboard/today（SEM 智投后端）
+ * URL 参数可覆盖：?api=http://127.0.0.1:8000&tenant=1&start=2026-05-01&end=2026-05-31&key=xxx
+ * 后端已加 API Key 鉴权：打开页面时带 ?key=<ADMIN_API_KEY>，会透传给接口。
+ * 接口不可用时保留页面原静态演示数据，并在顶部提示。
+ */
+(function () {
+  const qs = new URLSearchParams(location.search);
+  const API_BASE = qs.get('api') || 'https://sem.snipers.com.cn';
+  const API_KEY = qs.get('key') || '';
+  const TENANT_ID = qs.get('tenant') || '1';
+  // 苏尔寿 6 月停投，默认展示 5 月完整月
+  const START = qs.get('start') || '2026-05-01';
+  const END = qs.get('end') || '2026-05-31';
+
+  const fmtMoney = (v) => v == null ? '—' : '¥ ' + Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 2 });
+  const fmtInt = (v) => v == null ? '—' : Number(v).toLocaleString('zh-CN');
+
+  function banner(text, ok) {
+    const el = document.createElement('div');
+    el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;text-align:center;'
+      + 'font-size:12px;padding:4px 0;color:#fff;background:' + (ok ? '#1D9E75' : '#E24B4A');
+    el.textContent = text;
+    document.body.appendChild(el);
+    if (ok) setTimeout(() => el.remove(), 4000);
+  }
+
+  function setKpiCard(card, valueText, changePct, prevText, goodWhenDown) {
+    card.querySelector('.kpi-value').textContent = valueText;
+    const delta = card.querySelector('.kpi-delta');
+    const vs = card.querySelector('.kpi-vs');
+    if (changePct == null) {
+      delta.textContent = '—';
+      delta.className = 'kpi-delta neutral';
+    } else {
+      const up = changePct >= 0;
+      delta.textContent = (up ? '↑ ' : '↓ ') + Math.abs(changePct).toFixed(1) + '%';
+      const good = goodWhenDown ? !up : up;
+      delta.className = 'kpi-delta ' + (good ? 'up' : 'down');
+    }
+    vs.textContent = prevText;
+  }
+
+  function renderKpis(data) {
+    const cards = document.querySelectorAll('.kpi-grid .kpi-card');
+    const k = data.kpi;
+    const month = Number(data.period.start_date.slice(5, 7));
+    const labels = [month + ' 月消费', month + ' 月点击', month + ' 月展现', month + ' 月线索', '平均 CPC', '单条线索成本 CPL'];
+    cards.forEach((c, i) => {
+      const lbl = c.querySelector('.kpi-label');
+      lbl.childNodes[0].textContent = labels[i] + ' ';
+    });
+    setKpiCard(cards[0], fmtMoney(k.cost.current), k.cost.change_pct, '上期 ' + fmtMoney(k.cost.previous), false);
+    setKpiCard(cards[1], fmtInt(k.click.current), k.click.change_pct, '上期 ' + fmtInt(k.click.previous), false);
+    setKpiCard(cards[2], fmtInt(k.impression.current), k.impression.change_pct, '上期 ' + fmtInt(k.impression.previous), false);
+    setKpiCard(cards[3], data.lead == null ? '待接入' : fmtInt(data.lead), null, '转化数据 M2 接入', false);
+    setKpiCard(cards[4], fmtMoney(k.cpc.current), k.cpc.change_pct, '上期 ' + fmtMoney(k.cpc.previous), true);
+    setKpiCard(cards[5], data.cpl == null ? '待接入' : fmtMoney(data.cpl), null, '转化数据 M2 接入', false);
+  }
+
+  function renderTrend(trend) {
+    const svg = document.querySelector('.chart-svg');
+    if (!svg) return;
+    const maxCost = Math.max(...trend.map(t => t.cost), 1);
+    const X0 = 60, X1 = 560, Y0 = 190, Y1 = 50;
+    const xs = trend.map((_, i) => X0 + (X1 - X0) * i / (trend.length - 1));
+    const ys = trend.map(t => Y0 - (Y0 - Y1) * t.cost / maxCost);
+    const pts = xs.map((x, i) => x.toFixed(1) + ',' + ys[i].toFixed(1)).join(' ');
+    let inner = '<line x1="40" y1="40" x2="580" y2="40" stroke="#F3F4F6"/>'
+      + '<line x1="40" y1="115" x2="580" y2="115" stroke="#F3F4F6"/>'
+      + '<line x1="40" y1="190" x2="580" y2="190" stroke="#E5E7EB"/>'
+      + '<text x="32" y="44" font-size="10" fill="#9CA3AF" text-anchor="end">¥' + Math.round(maxCost) + '</text>'
+      + '<text x="32" y="194" font-size="10" fill="#9CA3AF" text-anchor="end">0</text>'
+      + '<defs><linearGradient id="grad-cost2" x1="0" y1="0" x2="0" y2="1">'
+      + '<stop offset="0%" stop-color="#185FA5" stop-opacity="0.25"/>'
+      + '<stop offset="100%" stop-color="#185FA5" stop-opacity="0.02"/></linearGradient></defs>'
+      + '<polygon points="' + xs[0].toFixed(1) + ',190 ' + pts + ' ' + xs[xs.length - 1].toFixed(1) + ',190" fill="url(#grad-cost2)"/>'
+      + '<polyline points="' + pts + '" stroke="#185FA5" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>';
+    trend.forEach((t, i) => {
+      inner += '<circle cx="' + xs[i].toFixed(1) + '" cy="' + ys[i].toFixed(1) + '" r="3.5" fill="#FFF" stroke="#185FA5" stroke-width="2"/>'
+        + '<text x="' + xs[i].toFixed(1) + '" y="210" font-size="10" fill="#9CA3AF" text-anchor="middle">' + t.date.slice(5) + '</text>';
+    });
+    svg.innerHTML = inner;
+    const sub = svg.closest('.panel').querySelector('.panel-sub');
+    if (sub) sub.textContent = '近 7 天 · 真实数据';
+    const legendNote = svg.closest('.panel').querySelector('.chart-legend span[style]');
+    if (legendNote) legendNote.textContent = '数据来源：百度营销 API 关键词日报';
+  }
+
+  function renderDevices(devices) {
+    const cards = document.querySelectorAll('.device-card');
+    const order = ['PC', '移动'];
+    order.forEach((name, i) => {
+      const d = devices.find(x => x.device === name);
+      const card = cards[i];
+      if (!card || !d) return;
+      card.querySelector('.device-share').textContent = '消费占比 ' + (d.cost_share_pct == null ? '—' : d.cost_share_pct + '%');
+      const vals = card.querySelectorAll('.device-stat-value');
+      vals[0].textContent = fmtInt(d.click);
+      vals[1].textContent = d.cpc == null ? '—' : fmtMoney(d.cpc);
+      vals[2].textContent = '待接入';
+    });
+  }
+
+  function renderCampaigns(campaigns, totalCost) {
+    const rows = document.querySelectorAll('.plan-bar-row');
+    const maxCost = campaigns.length ? campaigns[0].cost : 1;
+    rows.forEach((row, i) => {
+      const c = campaigns[i];
+      if (!c) { row.style.display = 'none'; return; }
+      row.querySelector('.plan-name').textContent = c.campaign_name || ('计划 ' + c.campaign_id);
+      row.querySelector('.plan-product').textContent = '点击 ' + fmtInt(c.click) + ' · CPC ' + (c.cpc == null ? '—' : fmtMoney(c.cpc));
+      row.querySelector('.plan-amount').textContent = fmtMoney(c.cost);
+      row.querySelector('.plan-bar-fill').style.width = (c.cost / maxCost * 100).toFixed(0) + '%';
+      row.querySelector('.plan-pct').textContent = totalCost ? (c.cost / totalCost * 100).toFixed(1) + '%' : '—';
+    });
+  }
+
+  const url = API_BASE + '/api/v1/dashboard/today?tenant_id=' + TENANT_ID
+    + '&start_date=' + START + '&end_date=' + END
+    + '&key=' + encodeURIComponent(API_KEY);
+  fetch(url)
+    .then(r => {
+      if (r.status === 401 || r.status === 403) throw new Error('API Key 缺失或不正确，请在页面地址后加 ?key=<ADMIN_API_KEY>');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(data => {
+      renderKpis(data);
+      renderTrend(data.trend_7d);
+      renderDevices(data.device_split);
+      renderCampaigns(data.top_campaigns, data.kpi.cost.current);
+      banner('已加载真实数据：' + data.tenant.name + ' · ' + data.period.start_date + ' ~ ' + data.period.end_date, true);
+    })
+    .catch(err => {
+      console.warn('后端接口不可用，展示静态演示数据：', err);
+      const msg = String(err.message || '').indexOf('API Key') === 0
+        ? err.message + '，当前为静态演示数据'
+        : '后端接口暂不可用，当前为静态演示数据';
+      banner(msg, false);
+    });
+})();
+</script>
+</body>
+</html>
