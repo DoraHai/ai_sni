@@ -6,6 +6,8 @@ const asset = (name) => `${assetRoot}/${name}`
 const mobileOpen = ref(false)
 const activeSection = ref('diagnosis')
 const diagnosisUrl = ref('')
+const introSlide = ref(0)
+const introPaused = ref(false)
 
 const navItems = [
   ['diagnosis', '产品'],
@@ -58,14 +60,49 @@ const prices = [
 ]
 
 let observer
+let introTimer
+let touchStartX = 0
+
+function startIntroTimer() {
+  window.clearInterval(introTimer)
+  if (introPaused.value || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  introTimer = window.setInterval(() => {
+    introSlide.value = (introSlide.value + 1) % 2
+  }, 7000)
+}
+
+function setIntroSlide(index) {
+  introSlide.value = (index + 2) % 2
+  startIntroTimer()
+}
+
+function pauseIntro(paused) {
+  introPaused.value = paused
+  if (paused) window.clearInterval(introTimer)
+  else startIntroTimer()
+}
+
+function handleIntroTouchStart(event) {
+  touchStartX = event.changedTouches[0]?.clientX ?? 0
+}
+
+function handleIntroTouchEnd(event) {
+  const distance = (event.changedTouches[0]?.clientX ?? touchStartX) - touchStartX
+  if (Math.abs(distance) > 45) setIntroSlide(introSlide.value + (distance < 0 ? 1 : -1))
+}
+
 onMounted(() => {
   observer = new IntersectionObserver((entries) => {
     const visible = entries.filter((entry) => entry.isIntersecting)
     if (visible.length) activeSection.value = visible.at(-1).target.id
   }, { rootMargin: '-18% 0px -48%', threshold: 0 })
   document.querySelectorAll('.gs-section[id]').forEach((el) => observer.observe(el))
+  startIntroTimer()
 })
-onUnmounted(() => observer?.disconnect())
+onUnmounted(() => {
+  observer?.disconnect()
+  window.clearInterval(introTimer)
+})
 
 function scrollTo(id) {
   mobileOpen.value = false
@@ -102,7 +139,23 @@ function goDiagnosis() {
     </header>
 
     <main>
-      <section id="diagnosis" class="diagnostic-teaser diagnostic-first gs-section">
+      <section
+        id="diagnosis"
+        class="intro-carousel gs-section"
+        aria-roledescription="carousel"
+        aria-label="产品核心能力"
+        tabindex="0"
+        @mouseenter="pauseIntro(true)"
+        @mouseleave="pauseIntro(false)"
+        @focusin="pauseIntro(true)"
+        @focusout="pauseIntro(false)"
+        @keydown.left.prevent="setIntroSlide(introSlide - 1)"
+        @keydown.right.prevent="setIntroSlide(introSlide + 1)"
+        @touchstart.passive="handleIntroTouchStart"
+        @touchend.passive="handleIntroTouchEnd"
+      >
+        <div class="intro-track" :style="{ transform: `translate3d(-${introSlide * 100}%, 0, 0)` }">
+      <section class="intro-slide diagnostic-teaser diagnostic-first gs-section" :aria-hidden="introSlide !== 0" :inert="introSlide !== 0">
         <div class="diagnosis-copy">
           <span class="kicker">免费诊断中心</span>
           <h2>你的专属工作台</h2>
@@ -155,7 +208,7 @@ function goDiagnosis() {
         </div>
       </section>
 
-      <section id="overview" class="hero gs-section">
+      <section class="intro-slide hero gs-section" :aria-hidden="introSlide !== 1" :inert="introSlide !== 1">
         <div class="hero-glow" />
         <div class="hero-inner">
           <div class="hero-copy reveal">
@@ -199,6 +252,22 @@ function goDiagnosis() {
             <strong>↑72%</strong><small>持续突破</small>
             <svg viewBox="0 0 260 66" aria-hidden="true"><polyline points="4,60 48,42 90,25 126,44 170,12 208,33 254,4" /></svg>
           </article>
+        </div>
+      </section>
+        </div>
+        <button class="intro-arrow prev" type="button" aria-label="上一屏" @click="setIntroSlide(introSlide - 1)">‹</button>
+        <button class="intro-arrow next" type="button" aria-label="下一屏" @click="setIntroSlide(introSlide + 1)">›</button>
+        <div class="intro-pagination" role="tablist" aria-label="选择首屏内容">
+          <button
+            v-for="index in 2"
+            :key="index"
+            type="button"
+            role="tab"
+            :class="{ active: introSlide === index - 1 }"
+            :aria-selected="introSlide === index - 1"
+            :aria-label="`第 ${index} 屏`"
+            @click="setIntroSlide(index - 1)"
+          />
         </div>
       </section>
 
@@ -377,6 +446,81 @@ nav a:after { display: none; }
 .header-cta { justify-self: end; border: 1px solid rgba(255,255,255,.72); border-radius: 999px; padding: 13px 28px; color: #fff; font-size: 15px; cursor: pointer; background: linear-gradient(105deg, #209eff, #7038f4 60%, #dc66eb); box-shadow: 0 0 24px rgba(111, 78, 255, .32), inset 0 1px rgba(255,255,255,.3); transition: .25s; }
 .header-cta:hover { transform: translateY(-2px); box-shadow: 0 0 30px rgba(191, 91, 255, .48); }
 .menu-button { display: none; }
+
+.intro-carousel {
+  position: relative;
+  min-height: 100svh;
+  padding: 0 !important;
+  overflow: hidden;
+  touch-action: pan-y;
+}
+.intro-track {
+  display: flex;
+  width: 100%;
+  align-items: stretch;
+  transition: transform .72s cubic-bezier(.22, .72, .22, 1);
+  will-change: transform;
+}
+.intro-slide {
+  flex: 0 0 100%;
+  width: 100%;
+}
+.intro-arrow {
+  position: absolute;
+  z-index: 12;
+  top: 50%;
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(223, 185, 255, .36);
+  border-radius: 50%;
+  color: #f5eaff;
+  font-size: 34px;
+  line-height: 1;
+  cursor: pointer;
+  background: rgba(7, 16, 25, .66);
+  box-shadow: 0 0 22px rgba(171, 67, 241, .22), inset 0 1px rgba(255,255,255,.08);
+  backdrop-filter: blur(14px);
+  transform: translateY(-50%);
+  transition: border-color .25s, background .25s, box-shadow .25s;
+}
+.intro-arrow:hover {
+  border-color: rgba(224, 149, 255, .8);
+  background: rgba(120, 39, 184, .42);
+  box-shadow: 0 0 28px rgba(189, 76, 255, .42);
+}
+.intro-arrow.prev { left: 24px; }
+.intro-arrow.next { right: 24px; }
+.intro-pagination {
+  position: absolute;
+  z-index: 12;
+  left: 50%;
+  bottom: 24px;
+  display: flex;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 999px;
+  background: rgba(4, 12, 19, .64);
+  backdrop-filter: blur(12px);
+  transform: translateX(-50%);
+}
+.intro-pagination button {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  background: #77818b;
+  transition: width .3s, background .3s, box-shadow .3s;
+}
+.intro-pagination button.active {
+  width: 28px;
+  background: #c15cff;
+  box-shadow: 0 0 12px #b84eff;
+}
 
 .hero {
   min-height: 100svh;
@@ -731,6 +875,9 @@ footer { min-height: 92px; display: grid; grid-template-columns: 1.4fr 1.2fr 1fr
 
 @media (max-width: 760px) {
   .site-header { height: 68px; padding: 0 18px; }.site-header .brand-mark { width: 50px; height: 50px; }.brand-copy strong { font-size: 16px; }.brand-copy em { font-size: 18px; }
+  .intro-arrow { top: auto; bottom: 12px; width: 40px; height: 40px; font-size: 28px; transform: none; }
+  .intro-arrow.prev { left: 14px; }.intro-arrow.next { right: 14px; }
+  .intro-pagination { bottom: 16px; }
   .hero { padding: 68px 18px 55px; min-height: auto; }.hero-inner { min-width: 0; width: 100%; min-height: 650px; align-items: start; padding-top: 95px; }
   .hero-copy { min-width: 0; width: 100%; text-align: center; }.eyebrow { justify-content: center; }.hero h1 { width: 100%; font-size: clamp(51px, 15.5vw, 64px); margin-top: 16px; letter-spacing: -.075em; }
   .hero-copy > p { font-size: 16px; line-height: 1.7; }.mobile-break { display: block; }.hero-actions { justify-content: center; flex-direction: column; gap: 13px; margin-top: 30px; }.button { width: min(100%, 320px); height: 54px; }
@@ -752,6 +899,7 @@ footer { min-height: 92px; display: grid; grid-template-columns: 1.4fr 1.2fr 1fr
 
 @media (prefers-reduced-motion: reduce) {
   *, *:before, *:after { animation-duration: .01ms !important; scroll-behavior: auto !important; }
+  .intro-track { transition: none; }
   .logo-marquee { overflow-x: auto; -webkit-mask-image: none; mask-image: none; }
   .logo-track { animation: none !important; }
   .logo-group[aria-hidden="true"] { display: none; }
