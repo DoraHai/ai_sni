@@ -1,5 +1,5 @@
-import { createApp } from 'vue'
-import { createRouter, createWebHistory } from 'vue-router'
+import { createApp, h } from 'vue'
+import { createRouter, createWebHistory, RouterView } from 'vue-router'
 import 'element-plus/theme-chalk/el-message.css'
 import '../src/style.css'
 import DiagnosisCenterView from '../src/views/diagnosis/DiagnosisCenterView.vue'
@@ -23,7 +23,7 @@ if (!session.isLoggedIn && !devBypass) {
     },
   })
 
-  createApp({ template: '<router-view />' })
+  createApp({ render: () => h(RouterView) })
     .use(router)
     .mount('#app')
 }
