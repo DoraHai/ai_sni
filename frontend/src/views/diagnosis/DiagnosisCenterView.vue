@@ -1,6 +1,5 @@
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   fetchLatestGeoAudit,
@@ -10,8 +9,6 @@ import {
 import { fetchTenants } from '../../api/auth'
 import { session } from '../../store/session'
 
-const route = useRoute()
-const router = useRouter()
 const tenantId = computed(() => session.tenantId || (import.meta.env.DEV && import.meta.env.VITE_API_KEY ? 1 : null))
 
 const url = ref('')
@@ -22,6 +19,7 @@ const adviceLoading = ref(false)
 const error = ref('')
 const issueFilter = ref('all')
 const loadingStage = ref(0)
+const activeReport = ref('overview')
 let stageTimer = null
 
 const reportNav = [
@@ -217,8 +215,15 @@ async function createAdvice() {
 }
 
 function navigateReport(key) {
-  router.replace({ query: { ...route.query, view: key } })
-  nextTick(() => document.querySelector(`#section-${key}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+  const target = document.querySelector(`#section-${key}`)
+  if (!target) {
+    error.value = '请先完成一次网站诊断，再查看对应的报告模块'
+    document.querySelector('#section-overview')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    return
+  }
+  activeReport.value = key
+  window.history.replaceState(null, '', `${window.location.pathname}#section-${key}`)
+  target.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
 function openAsset(page) {
@@ -263,7 +268,15 @@ watch(tenantId, () => {
 onMounted(async () => {
   await ensureTenant()
   await loadLatest()
-  if (route.query.view) navigateReport(String(route.query.view))
+  const legacyView = new URLSearchParams(window.location.search).get('view')
+  const hashView = window.location.hash.replace('#section-', '')
+  const initialView = reportNav.some((item) => item.key === hashView)
+    ? hashView
+    : reportNav.some((item) => item.key === legacyView)
+      ? legacyView
+      : 'overview'
+  await nextTick()
+  navigateReport(initialView)
 })
 </script>
 
@@ -280,7 +293,7 @@ onMounted(async () => {
         v-for="item in reportNav"
         :key="item.key"
         class="sidebar-item"
-        :class="{ active: (route.query.view || 'overview') === item.key }"
+        :class="{ active: activeReport === item.key }"
         type="button"
         @click="navigateReport(item.key)"
       >
@@ -653,6 +666,7 @@ button { color: inherit; }
 .topbar-actions button:disabled { opacity:.45; cursor:not-allowed; }
 .avatar { width:37px; height:37px; display:grid; place-items:center; margin-left:4px; border-radius:50%; color:#fff; background:var(--teal); font-size:12px; font-weight:800; }
 .diagnosis-content { max-width:1460px; margin:0 auto; padding:28px 32px 80px; }
+#section-overview,#section-seo,#section-geo,#section-issues { scroll-margin-top:18px; }
 
 .scan-panel {
   position:relative; overflow:hidden; min-height:252px; display:grid; grid-template-columns:.9fr 1.1fr; gap:54px; align-items:center;
