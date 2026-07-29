@@ -105,7 +105,7 @@ function goDiagnosis() {
       <section id="diagnosis" class="diagnostic-teaser diagnostic-first gs-section">
         <div class="diagnosis-copy">
           <span class="kicker">免费诊断中心</span>
-          <h2>打开你的专属诊断工作台，<br>看清 SEM / SEO / GEO 全部数据</h2>
+          <h2>你的专属工作台</h2>
           <p>3 分钟接入，AI 自动跑出品牌在搜索广告、自然搜索排名与 AI 搜索引擎中的真实表现。</p>
           <div class="capability-list">
             <span><i>◎</i>精准获客</span>
