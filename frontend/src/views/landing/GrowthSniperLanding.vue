@@ -170,10 +170,6 @@ function goDiagnosis() {
         aria-roledescription="carousel"
         aria-label="产品核心能力"
         tabindex="0"
-        @mouseenter="pauseIntro(true)"
-        @mouseleave="pauseIntro(false)"
-        @focusin="pauseIntro(true)"
-        @focusout="pauseIntro(false)"
         @keydown.left.prevent="setIntroSlide(introSlide - 1)"
         @keydown.right.prevent="setIntroSlide(introSlide + 1)"
         @touchstart.passive="handleIntroTouchStart"
@@ -197,7 +193,15 @@ function goDiagnosis() {
             <span><i>↗</i>转化提效</span>
           </div>
           <form class="diagnosis-form" @submit.prevent="goDiagnosis">
-            <input v-model="diagnosisUrl" type="url" inputmode="url" placeholder="请输入你的官网地址" aria-label="官网地址">
+            <input
+              v-model="diagnosisUrl"
+              type="url"
+              inputmode="url"
+              placeholder="请输入你的官网地址"
+              aria-label="官网地址"
+              @focus="pauseIntro(true)"
+              @blur="pauseIntro(false)"
+            >
             <button type="submit">开始免费诊断</button>
           </form>
           <small>无需安装代码 · 首次诊断免费 · 结果仅您可见</small>
