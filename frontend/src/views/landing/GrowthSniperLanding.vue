@@ -235,7 +235,7 @@ function goDiagnosis() {
 
       <section id="process" class="process gs-section">
         <div class="section-heading">
-          <span class="target-logo"><i /><i /><b /></span>
+          <span class="target-logo"><img :src="asset('g-snipers-mark.png')" alt="" aria-hidden="true"></span>
           <h2>全流程自动化获客，精准高效</h2>
           <p>从渠道接入到转化复盘，每一步都由数据驱动</p>
         </div>
@@ -289,7 +289,7 @@ function goDiagnosis() {
       </section>
 
       <section id="contact" class="final-cta gs-section">
-        <span class="target-logo large"><i /><i /><b /></span>
+        <span class="target-logo large"><img :src="asset('g-snipers-mark.png')" alt="" aria-hidden="true"></span>
         <small>让每一条线索，都成为增长的动力</small>
         <h2>精准获客，从这一次点击开始</h2>
         <div class="hero-actions">
@@ -492,9 +492,8 @@ nav a:after { display: none; }
 .demo-badge { position:absolute; right:23px; bottom:20px; padding:5px 10px; border-radius:999px; color:#a8b0b6; font-size:9px; background:rgba(3,10,16,.78); }
 
 .process { background: rgba(3,10,16,.28); }
-.target-logo { position: relative; width: 86px; height: 86px; margin: 0 auto 24px; display: grid; place-items: center; border: 2px solid #b84eff; border-radius: 50%; box-shadow: 0 0 22px rgba(191, 76, 255, .55), inset 0 0 18px rgba(191, 76, 255, .20); }
-.target-logo:before, .target-logo i { content:""; position:absolute; border:1px solid #bd54ff; border-radius:50%; }
-.target-logo:before { inset:10px }.target-logo i:nth-child(1){ inset:22px }.target-logo i:nth-child(2){ width:110px; height:1px; border:0; border-top:1px solid #ba51ff; transform:rotate(-42deg) }.target-logo b{ width:12px;height:12px; background:#e9b2ff; transform:rotate(45deg); box-shadow:0 0 12px #d263ff }
+.target-logo { width: 86px; height: 86px; margin: 0 auto 24px; display: block; }
+.target-logo img { display: block; width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 0 12px rgba(183,68,255,.72)); }
 .process-grid { max-width: 1500px; margin: 70px auto 90px; display: grid; grid-template-columns: repeat(4, 1fr); }
 .process-step { position: relative; text-align: center; padding: 0 28px; }
 .step-icon { width: 75px; height: 75px; margin: auto; display: grid; place-items: center; font-size: 36px; color: #e9e7e8; text-shadow: 0 3px 5px #000; }
@@ -683,9 +682,6 @@ footer { min-height: 92px; display: grid; grid-template-columns: 1.4fr 1.2fr 1fr
   .trend-panel svg { height: 125px; }
 
   .target-logo { width: 68px; height: 68px; margin-bottom: 13px; }
-  .target-logo:before { inset: 8px; }
-  .target-logo i:nth-child(1) { inset: 18px; }
-  .target-logo i:nth-child(2) { width: 88px; }
   .process-grid { margin: 35px auto 45px; }
   .step-icon { width: 58px; height: 58px; font-size: 29px; }
   .step-line { top: 29px; }
