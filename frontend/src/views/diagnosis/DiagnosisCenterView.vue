@@ -20,6 +20,7 @@ const error = ref('')
 const issueFilter = ref('all')
 const loadingStage = ref(0)
 const activeReport = ref('overview')
+const activeAsset = ref('')
 let stageTimer = null
 
 const reportNav = [
@@ -30,10 +31,32 @@ const reportNav = [
 ]
 
 const assetNav = [
-  { label: '基础信息', icon: '▰', page: 'brand' },
-  { label: '目标用户', icon: '◎', page: 'audience' },
-  { label: '知识库', icon: '▤', page: 'knowledge' },
+  {
+    label: '基础信息',
+    icon: '▰',
+    page: 'brand',
+    kicker: 'BRAND FOUNDATION',
+    description: '统一品牌名称、官网、行业定位和核心业务事实，作为诊断与内容执行的共同底座。',
+    fields: ['品牌名称与官网', '行业与业务定位', '核心产品与服务', '品牌介绍与可信信息'],
+  },
+  {
+    label: '目标用户',
+    icon: '◎',
+    page: 'audience',
+    kicker: 'AUDIENCE PROFILE',
+    description: '沉淀核心客群、决策角色和真实需求，让 SEO、GEO 与内容策略使用同一套用户定义。',
+    fields: ['核心客群', '决策角色', '购买动机', '主要痛点与搜索场景'],
+  },
+  {
+    label: '知识库',
+    icon: '▤',
+    page: 'knowledge',
+    kicker: 'KNOWLEDGE BASE',
+    description: '集中管理产品资料、案例、白皮书和常见问题，为诊断证据和内容生成提供可靠事实。',
+    fields: ['产品与服务资料', '客户案例', '行业白皮书', 'FAQ 与事实依据'],
+  },
 ]
+const currentAsset = computed(() => assetNav.find((item) => item.page === activeAsset.value) || assetNav[0])
 
 const loadingStages = [
   '正在建立安全连接',
@@ -214,7 +237,9 @@ async function createAdvice() {
   }
 }
 
-function navigateReport(key) {
+async function navigateReport(key) {
+  activeAsset.value = ''
+  await nextTick()
   const target = document.querySelector(`#section-${key}`)
   if (!target) {
     error.value = '请先完成一次网站诊断，再查看对应的报告模块'
@@ -227,7 +252,10 @@ function navigateReport(key) {
 }
 
 function openAsset(page) {
-  window.location.assign(`/deal-sniper/content/${page}`)
+  activeAsset.value = page
+  activeReport.value = ''
+  window.history.replaceState(null, '', `${window.location.pathname}#asset-${page}`)
+  window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 function severityLabel(value) {
@@ -270,6 +298,11 @@ onMounted(async () => {
   await loadLatest()
   const legacyView = new URLSearchParams(window.location.search).get('view')
   const hashView = window.location.hash.replace('#section-', '')
+  const hashAsset = window.location.hash.replace('#asset-', '')
+  if (assetNav.some((item) => item.page === hashAsset)) {
+    openAsset(hashAsset)
+    return
+  }
   const initialView = reportNav.some((item) => item.key === hashView)
     ? hashView
     : reportNav.some((item) => item.key === legacyView)
@@ -305,6 +338,7 @@ onMounted(async () => {
         v-for="item in assetNav"
         :key="item.page"
         class="sidebar-item"
+        :class="{ active: activeAsset === item.page }"
         type="button"
         @click="openAsset(item.page)"
       >
@@ -324,18 +358,21 @@ onMounted(async () => {
     <section class="diagnosis-main">
       <header class="diagnosis-topbar">
         <div>
-          <span class="topbar-kicker">DIAGNOSTIC CENTER / WEBSITE AUDIT</span>
-          <h1>网站体检</h1>
-          <p>发现问题、评估风险并给出建议；具体优化动作派发到 SEO / GEO 工作区</p>
+          <span class="topbar-kicker">{{ activeAsset ? `DIAGNOSTIC CENTER / ${currentAsset.kicker}` : 'DIAGNOSTIC CENTER / WEBSITE AUDIT' }}</span>
+          <h1>{{ activeAsset ? currentAsset.label : '网站体检' }}</h1>
+          <p>{{ activeAsset ? currentAsset.description : '发现问题、评估风险并给出建议；具体优化动作派发到 SEO / GEO 工作区' }}</p>
         </div>
         <div class="topbar-actions">
-          <button type="button" @click="loadLatest({ notify: true })">↺ 查看最近诊断</button>
-          <button type="button" :disabled="!audit" @click="printReport">⇩ 导出报告</button>
+          <template v-if="!activeAsset">
+            <button type="button" @click="loadLatest({ notify: true })">↺ 查看最近诊断</button>
+            <button type="button" :disabled="!audit" @click="printReport">⇩ 导出报告</button>
+          </template>
+          <button v-else type="button" @click="navigateReport('overview')">← 返回网站体检</button>
           <span class="avatar">DZ</span>
         </div>
       </header>
 
-      <div class="diagnosis-content">
+      <div v-if="!activeAsset" class="diagnosis-content">
         <section id="section-overview" class="scan-panel">
           <div class="scan-copy">
             <span class="section-index">01 / START AUDIT</span>
@@ -589,6 +626,38 @@ onMounted(async () => {
           </section>
         </template>
       </div>
+
+      <div v-else :id="`asset-${activeAsset}`" class="diagnosis-content asset-workspace">
+        <section class="asset-hero">
+          <div>
+            <span class="section-index">{{ currentAsset.kicker }}</span>
+            <h2>{{ currentAsset.label }}</h2>
+            <p>{{ currentAsset.description }}</p>
+          </div>
+          <span class="asset-state">功能建设中</span>
+        </section>
+
+        <section class="asset-field-grid">
+          <article v-for="(field, index) in currentAsset.fields" :key="field">
+            <span>{{ String(index + 1).padStart(2, '0') }}</span>
+            <div>
+              <small>待接入信息</small>
+              <h3>{{ field }}</h3>
+              <p>该信息将与网站诊断、SEO、GEO 和内容工作区共享，避免重复维护。</p>
+            </div>
+          </article>
+        </section>
+
+        <section class="asset-empty-panel">
+          <div class="asset-empty-mark">{{ currentAsset.icon }}</div>
+          <div>
+            <span class="section-index">SHARED ASSET</span>
+            <h2>{{ currentAsset.label }}功能正在接入</h2>
+            <p>当前先统一到诊断中心界面内展示；真实编辑、保存和跨模块同步能力完成后会在这里直接开放。</p>
+          </div>
+          <button type="button" @click="navigateReport('overview')">返回网站体检 →</button>
+        </section>
+      </div>
     </section>
   </main>
 </template>
@@ -667,6 +736,34 @@ button { color: inherit; }
 .avatar { width:37px; height:37px; display:grid; place-items:center; margin-left:4px; border-radius:50%; color:#fff; background:var(--teal); font-size:12px; font-weight:800; }
 .diagnosis-content { max-width:1460px; margin:0 auto; padding:28px 32px 80px; }
 #section-overview,#section-seo,#section-geo,#section-issues { scroll-margin-top:18px; }
+
+.asset-workspace { display:grid; gap:18px; }
+.asset-hero {
+  min-height:190px; display:flex; align-items:flex-end; justify-content:space-between; gap:40px; padding:34px 38px;
+  border:1px solid rgba(103,174,165,.2); border-radius:16px;
+  background:
+    radial-gradient(circle at 88% 0%,rgba(90,211,191,.18),transparent 34%),
+    linear-gradient(135deg,#f9fdfc 0%,#edf8f5 100%);
+  box-shadow:0 14px 38px rgba(45,87,83,.07);
+}
+.asset-hero>div { max-width:720px; }
+.asset-hero h2 { margin:12px 0 8px; font-family:"Songti SC","Noto Serif SC",serif; font-size:32px; letter-spacing:-.04em; }
+.asset-hero p { margin:0; color:#62777a; font-size:13px; line-height:1.8; }
+.asset-state { flex:none; padding:8px 12px; border:1px solid #b9ddd8; border-radius:20px; color:var(--teal-dark); background:rgba(255,255,255,.72); font-size:10px; font-weight:800; }
+.asset-field-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.asset-field-grid article { min-height:142px; display:flex; gap:20px; padding:25px; border:1px solid var(--line); border-radius:12px; background:#fff; }
+.asset-field-grid article>span { color:#c9d7d4; font:500 28px Georgia,serif; }
+.asset-field-grid small { color:var(--teal); font-size:8px; font-weight:850; letter-spacing:.12em; }
+.asset-field-grid h3 { margin:9px 0 7px; font-size:14px; }
+.asset-field-grid p { margin:0; color:#7a898c; font-size:10px; line-height:1.65; }
+.asset-empty-panel {
+  min-height:190px; display:grid; grid-template-columns:58px minmax(0,1fr) auto; gap:22px; align-items:center;
+  padding:30px 34px; border:1px dashed #bdd8d4; border-radius:14px; background:rgba(255,255,255,.66);
+}
+.asset-empty-mark { width:58px; height:58px; display:grid; place-items:center; border-radius:16px; color:#fff; background:var(--teal); box-shadow:0 12px 25px rgba(11,147,136,.2); font-size:21px; font-weight:850; }
+.asset-empty-panel h2 { margin:7px 0 6px; font-family:"Songti SC","Noto Serif SC",serif; font-size:20px; }
+.asset-empty-panel p { margin:0; color:var(--muted); font-size:11px; line-height:1.7; }
+.asset-empty-panel button { height:40px; padding:0 16px; border:0; border-radius:8px; color:#fff; background:var(--teal); font-size:10px; font-weight:800; cursor:pointer; }
 
 .scan-panel {
   position:relative; overflow:hidden; min-height:252px; display:grid; grid-template-columns:.9fr 1.1fr; gap:54px; align-items:center;
@@ -838,6 +935,11 @@ button { color: inherit; }
   .diagnosis-topbar { padding:17px 18px; }
   .diagnosis-topbar p,.topbar-kicker,.topbar-actions button { display:none; }
   .diagnosis-content { padding:18px 14px 55px; }
+  .asset-hero { min-height:160px; align-items:flex-start; flex-direction:column; padding:25px 22px; }
+  .asset-field-grid { grid-template-columns:1fr; }
+  .asset-empty-panel { grid-template-columns:48px 1fr; padding:24px 20px; }
+  .asset-empty-mark { width:48px; height:48px; }
+  .asset-empty-panel button { grid-column:1/-1; width:100%; }
   .scan-panel { padding:28px 20px; border-radius:12px; }
   .url-input-wrap { grid-template-columns:minmax(0,1fr); height:auto; padding:5px; }
   .url-input-wrap input { height:45px; padding:0 9px; }
