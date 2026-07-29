@@ -7,6 +7,7 @@ import {
   generateGeoAdvice,
   runGeoAudit,
 } from '../../api/geo'
+import { fetchTenants } from '../../api/auth'
 import { session } from '../../store/session'
 
 const route = useRoute()
@@ -16,6 +17,7 @@ const tenantId = computed(() => session.tenantId || (import.meta.env.DEV && impo
 const url = ref('')
 const audit = ref(null)
 const loading = ref(false)
+const tenantLoading = ref(false)
 const adviceLoading = ref(false)
 const error = ref('')
 const issueFilter = ref('all')
@@ -144,6 +146,25 @@ function stopStageProgress() {
   stageTimer = null
 }
 
+async function ensureTenant() {
+  if (tenantId.value) return true
+  tenantLoading.value = true
+  try {
+    const result = await fetchTenants()
+    session.setTenants(result.tenants || [])
+    if (!tenantId.value) {
+      error.value = '当前账号还没有可诊断的客户，请先在主平台完成客户配置'
+      return false
+    }
+    return true
+  } catch (e) {
+    error.value = e.message || '客户信息加载失败，请稍后重试'
+    return false
+  } finally {
+    tenantLoading.value = false
+  }
+}
+
 async function loadLatest({ notify = false } = {}) {
   if (!tenantId.value) return
   try {
@@ -163,10 +184,7 @@ async function startAudit() {
     error.value = '请输入需要诊断的网站地址'
     return
   }
-  if (!tenantId.value) {
-    error.value = '请先选择需要诊断的客户'
-    return
-  }
+  if (!tenantId.value && !await ensureTenant()) return
   loading.value = true
   audit.value = null
   startStageProgress()
@@ -243,6 +261,7 @@ watch(tenantId, () => {
 })
 
 onMounted(async () => {
+  await ensureTenant()
   await loadLatest()
   if (route.query.view) navigateReport(String(route.query.view))
 })
@@ -328,8 +347,8 @@ onMounted(async () => {
                 placeholder="www.example.com 或具体页面地址"
                 :disabled="loading"
               >
-              <button type="submit" :disabled="loading || !tenantId">
-                {{ loading ? '诊断进行中' : '开始诊断' }} <b>→</b>
+              <button type="submit" :disabled="loading || tenantLoading">
+                {{ tenantLoading ? '准备诊断…' : loading ? '诊断进行中' : '开始诊断' }} <b>→</b>
               </button>
             </div>
             <div class="scope-row">
