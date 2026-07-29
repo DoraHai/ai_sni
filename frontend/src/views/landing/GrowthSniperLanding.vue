@@ -632,8 +632,8 @@ footer { min-height: 92px; display: grid; grid-template-columns: 1.4fr 1.2fr 1fr
   }
   .pain .pain-grid { margin-top: 72px; }
   .pain-card {
+    width: 100%;
     min-height: 230px;
-    aspect-ratio: 1.96 / 1;
     border-width: 1px;
     background:
       linear-gradient(135deg,rgba(72,82,91,.72),rgba(25,34,42,.82) 52%,rgba(12,20,27,.92)),
