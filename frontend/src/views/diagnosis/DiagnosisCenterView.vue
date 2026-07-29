@@ -8,6 +8,7 @@ import {
 } from '../../api/geo'
 import { fetchTenants } from '../../api/auth'
 import { session } from '../../store/session'
+import DiagnosisAssetsView from './DiagnosisAssetsView.vue'
 
 const tenantId = computed(() => session.tenantId || (import.meta.env.DEV && import.meta.env.VITE_API_KEY ? 1 : null))
 
@@ -627,37 +628,7 @@ onMounted(async () => {
         </template>
       </div>
 
-      <div v-else :id="`asset-${activeAsset}`" class="diagnosis-content asset-workspace">
-        <section class="asset-hero">
-          <div>
-            <span class="section-index">{{ currentAsset.kicker }}</span>
-            <h2>{{ currentAsset.label }}</h2>
-            <p>{{ currentAsset.description }}</p>
-          </div>
-          <span class="asset-state">功能建设中</span>
-        </section>
-
-        <section class="asset-field-grid">
-          <article v-for="(field, index) in currentAsset.fields" :key="field">
-            <span>{{ String(index + 1).padStart(2, '0') }}</span>
-            <div>
-              <small>待接入信息</small>
-              <h3>{{ field }}</h3>
-              <p>该信息将与网站诊断、SEO、GEO 和内容工作区共享，避免重复维护。</p>
-            </div>
-          </article>
-        </section>
-
-        <section class="asset-empty-panel">
-          <div class="asset-empty-mark">{{ currentAsset.icon }}</div>
-          <div>
-            <span class="section-index">SHARED ASSET</span>
-            <h2>{{ currentAsset.label }}功能正在接入</h2>
-            <p>当前先统一到诊断中心界面内展示；真实编辑、保存和跨模块同步能力完成后会在这里直接开放。</p>
-          </div>
-          <button type="button" @click="navigateReport('overview')">返回网站体检 →</button>
-        </section>
-      </div>
+      <DiagnosisAssetsView v-else :id="`asset-${activeAsset}`" :key="activeAsset" :tenant-id="tenantId" :asset="currentAsset" />
     </section>
   </main>
 </template>
@@ -736,34 +707,6 @@ button { color: inherit; }
 .avatar { width:37px; height:37px; display:grid; place-items:center; margin-left:4px; border-radius:50%; color:#fff; background:var(--teal); font-size:12px; font-weight:800; }
 .diagnosis-content { max-width:1460px; margin:0 auto; padding:28px 32px 80px; }
 #section-overview,#section-seo,#section-geo,#section-issues { scroll-margin-top:18px; }
-
-.asset-workspace { display:grid; gap:18px; }
-.asset-hero {
-  min-height:190px; display:flex; align-items:flex-end; justify-content:space-between; gap:40px; padding:34px 38px;
-  border:1px solid rgba(103,174,165,.2); border-radius:16px;
-  background:
-    radial-gradient(circle at 88% 0%,rgba(90,211,191,.18),transparent 34%),
-    linear-gradient(135deg,#f9fdfc 0%,#edf8f5 100%);
-  box-shadow:0 14px 38px rgba(45,87,83,.07);
-}
-.asset-hero>div { max-width:720px; }
-.asset-hero h2 { margin:12px 0 8px; font-family:"Songti SC","Noto Serif SC",serif; font-size:32px; letter-spacing:-.04em; }
-.asset-hero p { margin:0; color:#62777a; font-size:13px; line-height:1.8; }
-.asset-state { flex:none; padding:8px 12px; border:1px solid #b9ddd8; border-radius:20px; color:var(--teal-dark); background:rgba(255,255,255,.72); font-size:10px; font-weight:800; }
-.asset-field-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
-.asset-field-grid article { min-height:142px; display:flex; gap:20px; padding:25px; border:1px solid var(--line); border-radius:12px; background:#fff; }
-.asset-field-grid article>span { color:#c9d7d4; font:500 28px Georgia,serif; }
-.asset-field-grid small { color:var(--teal); font-size:8px; font-weight:850; letter-spacing:.12em; }
-.asset-field-grid h3 { margin:9px 0 7px; font-size:14px; }
-.asset-field-grid p { margin:0; color:#7a898c; font-size:10px; line-height:1.65; }
-.asset-empty-panel {
-  min-height:190px; display:grid; grid-template-columns:58px minmax(0,1fr) auto; gap:22px; align-items:center;
-  padding:30px 34px; border:1px dashed #bdd8d4; border-radius:14px; background:rgba(255,255,255,.66);
-}
-.asset-empty-mark { width:58px; height:58px; display:grid; place-items:center; border-radius:16px; color:#fff; background:var(--teal); box-shadow:0 12px 25px rgba(11,147,136,.2); font-size:21px; font-weight:850; }
-.asset-empty-panel h2 { margin:7px 0 6px; font-family:"Songti SC","Noto Serif SC",serif; font-size:20px; }
-.asset-empty-panel p { margin:0; color:var(--muted); font-size:11px; line-height:1.7; }
-.asset-empty-panel button { height:40px; padding:0 16px; border:0; border-radius:8px; color:#fff; background:var(--teal); font-size:10px; font-weight:800; cursor:pointer; }
 
 .scan-panel {
   position:relative; overflow:hidden; min-height:252px; display:grid; grid-template-columns:.9fr 1.1fr; gap:54px; align-items:center;

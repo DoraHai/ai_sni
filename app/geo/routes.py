@@ -1,7 +1,8 @@
-"""GEO 网站诊断、AI 整改建议与结构化资产生成。"""
+"""GEO 网站诊断、AI 整改建议、结构化资产与诊断中心共享资料。"""
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -14,6 +15,7 @@ from app.database import get_session
 from app.geo.audit import GeoAuditError, audit_url
 from app.geo.generate import ai_advice, generate_json_ld, generate_llms_text
 from app.models import GeoAuditRun, Tenant
+from app.models.tenant_memory import TenantMemory
 from app.security.auth import AuthContext, require_scoped_auth
 
 router = APIRouter(
@@ -26,6 +28,107 @@ router = APIRouter(
 class AuditCreate(BaseModel):
     tenant_id: int
     url: str = Field(..., min_length=4, max_length=2048)
+
+
+class BrandAssetUpdate(BaseModel):
+    tenant_id: int
+    name: str = Field(..., min_length=1, max_length=100)
+    website: str = Field(default="", max_length=2048)
+    industry: str = Field(default="", max_length=100)
+    business_desc: str = Field(default="", max_length=20000)
+    brand_terms: list[str] = Field(default_factory=list, max_length=50)
+    core_products: list[str] = Field(default_factory=list, max_length=100)
+    proof_points: list[str] = Field(default_factory=list, max_length=100)
+
+
+class AudienceAssetUpdate(BaseModel):
+    tenant_id: int
+    segments: list[str] = Field(default_factory=list, max_length=100)
+    decision_roles: list[str] = Field(default_factory=list, max_length=100)
+    pain_points: list[str] = Field(default_factory=list, max_length=100)
+    search_scenarios: list[str] = Field(default_factory=list, max_length=100)
+
+
+class KnowledgeCreate(BaseModel):
+    tenant_id: int
+    title: str = Field(..., min_length=1, max_length=200)
+    item_type: str = Field(default="other", max_length=30)
+    body: str = Field(..., min_length=1, max_length=100000)
+    source_url: str = Field(default="", max_length=2048)
+
+
+def _ensure_asset_edit(ctx: AuthContext) -> None:
+    if not ctx.can_edit("geo.diagnosis"):
+        raise HTTPException(403, "当前账号只有查看权限，无法修改品牌资产")
+
+
+def _json_content(memory: TenantMemory | None) -> dict[str, Any]:
+    if memory is None:
+        return {}
+    try:
+        value = json.loads(memory.content)
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+async def _latest_memory(
+    session: AsyncSession, tenant_id: int, mem_type: str
+) -> TenantMemory | None:
+    return await session.scalar(
+        select(TenantMemory)
+        .where(
+            TenantMemory.tenant_id == tenant_id,
+            TenantMemory.mem_type == mem_type,
+            TenantMemory.active.is_(True),
+        )
+        .order_by(TenantMemory.id.desc())
+        .limit(1)
+    )
+
+
+async def _upsert_memory(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    mem_type: str,
+    data: dict[str, Any],
+    ctx: AuthContext,
+) -> TenantMemory:
+    memory = await _latest_memory(session, tenant_id, mem_type)
+    content = json.dumps(data, ensure_ascii=False)
+    if memory is None:
+        memory = TenantMemory(
+            tenant_id=tenant_id,
+            mem_type=mem_type,
+            content=content,
+            source="manual",
+            confirmed=True,
+            active=True,
+            operator_user_id=ctx.user_id,
+            operator_name=ctx.username,
+        )
+        session.add(memory)
+    else:
+        memory.content = content
+        memory.source = "manual"
+        memory.confirmed = True
+        memory.operator_user_id = ctx.user_id
+        memory.operator_name = ctx.username
+    return memory
+
+
+def _knowledge_payload(memory: TenantMemory) -> dict[str, Any]:
+    data = _json_content(memory)
+    return {
+        "id": memory.id,
+        "title": data.get("title", "未命名资料"),
+        "item_type": data.get("item_type", "other"),
+        "body": data.get("body", ""),
+        "source_url": data.get("source_url", ""),
+        "created_at": memory.created_at.isoformat() if memory.created_at else None,
+        "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
+    }
 
 
 def _payload(run: GeoAuditRun) -> dict[str, Any]:
@@ -172,3 +275,184 @@ async def create_assets(
     await session.commit()
     await session.refresh(run)
     return _payload(run)
+
+
+@router.get("/assets/profile")
+async def get_asset_profile(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    tenant = await session.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(404, "客户不存在")
+    brand_extra = _json_content(await _latest_memory(session, tenant_id, "brand_asset"))
+    audience = _json_content(await _latest_memory(session, tenant_id, "audience_profile"))
+    return {
+        "brand": {
+            "name": tenant.name,
+            "website": brand_extra.get("website", ""),
+            "industry": tenant.industry or "",
+            "business_desc": tenant.business_desc or "",
+            "brand_terms": tenant.brand_terms or [],
+            "core_products": brand_extra.get("core_products", []),
+            "proof_points": brand_extra.get("proof_points", []),
+        },
+        "audience": {
+            "segments": audience.get("segments", []),
+            "decision_roles": audience.get("decision_roles", []),
+            "pain_points": audience.get("pain_points", []),
+            "search_scenarios": audience.get("search_scenarios", []),
+        },
+    }
+
+
+@router.put("/assets/brand")
+async def update_brand_asset(
+    req: BrandAssetUpdate,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(req.tenant_id)
+    _ensure_asset_edit(ctx)
+    tenant = await session.get(Tenant, req.tenant_id)
+    if tenant is None:
+        raise HTTPException(404, "客户不存在")
+    tenant.name = req.name.strip()
+    tenant.industry = req.industry.strip() or None
+    tenant.business_desc = req.business_desc.strip() or None
+    tenant.brand_terms = [value.strip() for value in req.brand_terms if value.strip()]
+    await _upsert_memory(
+        session,
+        tenant_id=req.tenant_id,
+        mem_type="brand_asset",
+        data={
+            "website": req.website.strip(),
+            "core_products": [value.strip() for value in req.core_products if value.strip()],
+            "proof_points": [value.strip() for value in req.proof_points if value.strip()],
+        },
+        ctx=ctx,
+    )
+    await session.commit()
+    return {"ok": True}
+
+
+@router.put("/assets/audience")
+async def update_audience_asset(
+    req: AudienceAssetUpdate,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(req.tenant_id)
+    _ensure_asset_edit(ctx)
+    if await session.get(Tenant, req.tenant_id) is None:
+        raise HTTPException(404, "客户不存在")
+    await _upsert_memory(
+        session,
+        tenant_id=req.tenant_id,
+        mem_type="audience_profile",
+        data={
+            "segments": [value.strip() for value in req.segments if value.strip()],
+            "decision_roles": [value.strip() for value in req.decision_roles if value.strip()],
+            "pain_points": [value.strip() for value in req.pain_points if value.strip()],
+            "search_scenarios": [value.strip() for value in req.search_scenarios if value.strip()],
+        },
+        ctx=ctx,
+    )
+    await session.commit()
+    return {"ok": True}
+
+
+@router.get("/assets/knowledge")
+async def list_knowledge_assets(
+    tenant_id: int = Query(...),
+    q: str = Query(default="", max_length=200),
+    item_type: str = Query(default="", max_length=30),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    rows = (
+        await session.scalars(
+            select(TenantMemory)
+            .where(
+                TenantMemory.tenant_id == tenant_id,
+                TenantMemory.mem_type == "knowledge_item",
+                TenantMemory.active.is_(True),
+            )
+            .order_by(TenantMemory.created_at.desc(), TenantMemory.id.desc())
+        )
+    ).all()
+    items = [_knowledge_payload(row) for row in rows]
+    if item_type:
+        items = [item for item in items if item["item_type"] == item_type]
+    if q.strip():
+        needle = q.strip().lower()
+        items = [
+            item
+            for item in items
+            if needle in f'{item["title"]} {item["body"]} {item["source_url"]}'.lower()
+        ]
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/assets/knowledge")
+async def create_knowledge_asset(
+    req: KnowledgeCreate,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(req.tenant_id)
+    _ensure_asset_edit(ctx)
+    if await session.get(Tenant, req.tenant_id) is None:
+        raise HTTPException(404, "客户不存在")
+    allowed_types = {"product", "case", "whitepaper", "faq", "other"}
+    if req.item_type not in allowed_types:
+        raise HTTPException(400, "资料类型不正确")
+    memory = TenantMemory(
+        tenant_id=req.tenant_id,
+        mem_type="knowledge_item",
+        content=json.dumps(
+            {
+                "title": req.title.strip(),
+                "item_type": req.item_type,
+                "body": req.body.strip(),
+                "source_url": req.source_url.strip(),
+            },
+            ensure_ascii=False,
+        ),
+        source="manual",
+        confirmed=True,
+        active=True,
+        operator_user_id=ctx.user_id,
+        operator_name=ctx.username,
+    )
+    session.add(memory)
+    await session.commit()
+    await session.refresh(memory)
+    return _knowledge_payload(memory)
+
+
+@router.delete("/assets/knowledge/{knowledge_id}")
+async def delete_knowledge_asset(
+    knowledge_id: int,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    _ensure_asset_edit(ctx)
+    memory = await session.get(TenantMemory, knowledge_id)
+    if (
+        memory is None
+        or memory.tenant_id != tenant_id
+        or memory.mem_type != "knowledge_item"
+        or not memory.active
+    ):
+        raise HTTPException(404, "知识条目不存在")
+    memory.active = False
+    memory.operator_user_id = ctx.user_id
+    memory.operator_name = ctx.username
+    await session.commit()
+    return {"ok": True}

@@ -20,3 +20,31 @@ export function generateGeoAssets({ tenantId, auditId }) {
     params: { tenant_id: tenantId },
   })
 }
+
+export function fetchGeoAssetProfile(tenantId) {
+  return client.get('/api/v1/geo/assets/profile', { params: { tenant_id: tenantId } })
+}
+
+export function saveGeoBrand(payload) {
+  return client.put('/api/v1/geo/assets/brand', payload)
+}
+
+export function saveGeoAudience(payload) {
+  return client.put('/api/v1/geo/assets/audience', payload)
+}
+
+export function fetchGeoKnowledge({ tenantId, q = '', itemType = '' }) {
+  return client.get('/api/v1/geo/assets/knowledge', {
+    params: { tenant_id: tenantId, q, item_type: itemType },
+  })
+}
+
+export function createGeoKnowledge(payload) {
+  return client.post('/api/v1/geo/assets/knowledge', payload)
+}
+
+export function deleteGeoKnowledge({ tenantId, knowledgeId }) {
+  return client.delete(`/api/v1/geo/assets/knowledge/${knowledgeId}`, {
+    params: { tenant_id: tenantId },
+  })
+}
