@@ -154,8 +154,9 @@ function goDiagnosis() {
         @touchstart.passive="handleIntroTouchStart"
         @touchend.passive="handleIntroTouchEnd"
       >
-        <div class="intro-track" :style="{ transform: `translate3d(-${introSlide * 100}%, 0, 0)` }">
-      <section class="intro-slide diagnostic-teaser diagnostic-first gs-section" :aria-hidden="introSlide !== 0" :inert="introSlide !== 0">
+        <div class="intro-stage">
+          <Transition name="intro-slide">
+      <section v-if="introSlide === 0" key="diagnosis" class="intro-slide diagnostic-teaser diagnostic-first gs-section">
         <div class="diagnosis-copy">
           <span class="kicker">免费诊断中心</span>
           <h2>你的专属工作台</h2>
@@ -208,7 +209,7 @@ function goDiagnosis() {
         </div>
       </section>
 
-      <section class="intro-slide hero gs-section" :aria-hidden="introSlide !== 1" :inert="introSlide !== 1">
+      <section v-else key="overview" class="intro-slide hero gs-section">
         <div class="hero-glow" />
         <div class="hero-inner">
           <div class="hero-copy reveal">
@@ -254,6 +255,7 @@ function goDiagnosis() {
           </article>
         </div>
       </section>
+          </Transition>
         </div>
         <button class="intro-arrow prev" type="button" aria-label="上一屏" @click="setIntroSlide(introSlide - 1)">‹</button>
         <button class="intro-arrow next" type="button" aria-label="下一屏" @click="setIntroSlide(introSlide + 1)">›</button>
@@ -457,16 +459,32 @@ nav a:after { display: none; }
   overflow: hidden;
   touch-action: pan-y;
 }
-.intro-track {
-  display: flex;
+.intro-stage {
+  position: relative;
   width: 100%;
-  align-items: stretch;
-  transition: transform .72s cubic-bezier(.22, .72, .22, 1);
-  will-change: transform;
+  min-height: 100svh;
 }
 .intro-slide {
-  flex: 0 0 100%;
   width: 100%;
+}
+.intro-slide-enter-active,
+.intro-slide-leave-active {
+  transition: transform .72s cubic-bezier(.22, .72, .22, 1), opacity .72s ease;
+  will-change: transform, opacity;
+}
+.intro-slide-enter-active { z-index: 2; }
+.intro-slide-leave-active {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+}
+.intro-slide-enter-from {
+  opacity: .72;
+  transform: translate3d(100%, 0, 0);
+}
+.intro-slide-leave-to {
+  opacity: .72;
+  transform: translate3d(-100%, 0, 0);
 }
 .intro-arrow {
   position: absolute;
@@ -899,7 +917,7 @@ footer { min-height: 92px; display: grid; grid-template-columns: 1.4fr 1.2fr 1fr
 
 @media (prefers-reduced-motion: reduce) {
   *, *:before, *:after { animation-duration: .01ms !important; scroll-behavior: auto !important; }
-  .intro-track { transition: none; }
+  .intro-slide-enter-active, .intro-slide-leave-active { transition: none; }
   .logo-marquee { overflow-x: auto; -webkit-mask-image: none; mask-image: none; }
   .logo-track { animation: none !important; }
   .logo-group[aria-hidden="true"] { display: none; }
