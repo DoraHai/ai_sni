@@ -68,7 +68,7 @@ function startIntroTimer() {
   if (introPaused.value || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
   introTimer = window.setInterval(() => {
     introSlide.value = (introSlide.value + 1) % 2
-  }, 7000)
+  }, 3000)
 }
 
 function setIntroSlide(index) {
