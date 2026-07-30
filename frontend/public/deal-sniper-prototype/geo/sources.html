@@ -3,198 +3,144 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-<meta http-equiv="Pragma" content="no-cache">
-<meta http-equiv="Expires" content="0">
-<title>信源分析 · 开发中</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    min-height: 100vh;
-    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
-    background: #f5f7fb;
-    color: #1f2937;
-  }
-  .layout { min-height: 100vh; display: grid; grid-template-columns: 238px minmax(0, 1fr); }
-  .sidebar {
-    height: 100vh;
-    position: sticky;
-    top: 0;
-    display: flex;
-    flex-direction: column;
-    background: #fff;
-    border-right: 1px solid #e5e9f1;
-  }
-  .brand {
-    min-height: 76px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 18px 18px;
-    border-bottom: 1px solid #edf0f5;
-    font-weight: 760;
-  }
-  .logo {
-    width: 36px;
-    height: 36px;
-    display: grid;
-    place-items: center;
-    border-radius: 9px;
-    background: linear-gradient(135deg, #2563eb, #7c3aed);
-    color: #fff;
-    font-weight: 850;
-  }
-  .brand small {
-    display: block;
-    margin-top: 3px;
-    color: #9aa3b2;
-    font-size: 12px;
-    font-weight: 600;
-  }
-  .nav { flex: 1; overflow: auto; padding: 14px 10px; }
-  .nav-group {
-    margin: 16px 10px 8px;
-    color: #9aa3b2;
-    font-size: 12px;
-    font-weight: 760;
-  }
-  .nav-item {
-    min-height: 36px;
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    padding: 8px 10px;
-    border-radius: 7px;
-    color: #586274;
-    font-size: 13px;
-    font-weight: 650;
-    text-decoration: none;
-  }
-  .nav-item:hover { background: #f4f7fb; color: #2563eb; }
-  .nav-item.active {
-    background: #eef4ff;
-    color: #1d4ed8;
-  }
-  .ico {
-    width: 22px;
-    flex: none;
-    color: inherit;
-    opacity: 0.88;
-    text-align: center;
-    font-size: 13px;
-  }
-  .side-foot {
-    display: grid;
-    gap: 8px;
-    padding: 14px 18px 18px;
-    border-top: 1px solid #edf0f5;
-  }
-  .side-foot a {
-    color: #7b8494;
-    font-size: 12px;
-    font-weight: 650;
-    text-decoration: none;
-  }
-  .main { min-width: 0; display: flex; flex-direction: column; }
-  .topbar {
-    min-height: 58px;
-    display: flex;
-    align-items: center;
-    padding: 0 26px;
-    border-bottom: 1px solid #e5e9f1;
-    background: #fff;
-    color: #6b7280;
-    font-size: 14px;
-    font-weight: 650;
-  }
-  .topbar b { color: #1f2937; font-weight: 760; }
-  .content {
-    flex: 1;
-    min-height: 0;
-    display: grid;
-    place-items: center;
-    padding: 24px;
-  }
-  .empty {
-    transform: translateY(-5vh);
-    text-align: center;
-    color: #9aa3b2;
-  }
-  .box { width: 188px; height: 188px; opacity: 0.42; margin-bottom: 18px; }
-  .title { font-size: 17px; font-weight: 650; line-height: 1.7; }
-  @media (max-width: 760px) {
-    .layout { grid-template-columns: 1fr; }
-    .sidebar { position: static; height: auto; }
-    .nav { max-height: 42vh; }
-    .empty { transform: none; }
-  }
-</style>
+<title>事实库 · GEO</title>
+<link rel="stylesheet" href="assets/style.css?rev=geo-wb-2">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=6">
 </head>
 <body>
 <div class="layout">
-  <aside class="sidebar">
-    <div class="brand">
-      <span class="logo">G</span>
-      <div>GEO 工作台<small>生成式引擎获客</small></div>
-    </div>
-    <nav class="nav">
-    <div class="nav-group">数据看板</div>
-    <a class="nav-item" href="dashboard.html"><span class="ico">▦</span>GEO 概览</a>
-    <a class="nav-item" href="visibility.html"><span class="ico">✦</span>AI 可见度</a>
-  
-
-    <div class="nav-group">智能监测</div>
-    <a class="nav-item" href="prompts.html"><span class="ico">◌</span>提问监控</a>
-    <a class="nav-item" href="competitors.html"><span class="ico">≋</span>竞品分析</a>
-    <a class="nav-item" href="evaluation.html"><span class="ico">◉</span>评价分析</a>
-    <a class="nav-item active" href="sources.html"><span class="ico">▤</span>信源分析</a>
-  
-
-    <div class="nav-group">内容与信源</div>
-    <a class="nav-item" href="articles.html"><span class="ico">Aa</span>GEO 文章</a>
-    <a class="nav-item" href="editor.html"><span class="ico">E</span>在线编辑器</a>
-    <a class="nav-item" href="media.html"><span class="ico">⌂</span>媒体 / 信源策略</a>
-    <a class="nav-item" href="channels.html"><span class="ico">⇧</span>分发平台</a>
-  
-
-    <div class="nav-group">设置</div>
-    <a class="nav-item" href="engines.html"><span class="ico">◇</span>AI 引擎管理</a>
-  
-    </nav>
-    <div class="side-foot">
-      <a href="/deal-sniper-prototype/index.html">← 返回平台门户</a>
-      <a href="/monitor/dashboard" target="_top">进入已实现 SEM</a>
-    </div>
-  </aside>
+  <aside class="sidebar"></aside>
   <main class="main">
-    <header class="topbar">GEO 工作台 &nbsp;/&nbsp; <b>信源分析</b></header>
-    <section class="content">
-      <div class="empty">
-        <svg class="box" viewBox="0 0 240 240" aria-hidden="true">
-          <defs>
-            <linearGradient id="g1" x1="0" x2="1" y1="0" y2="1">
-              <stop offset="0" stop-color="#ffffff"/>
-              <stop offset="1" stop-color="#d9dde7"/>
-            </linearGradient>
-            <linearGradient id="g2" x1="0" x2="1" y1="0" y2="1">
-              <stop offset="0" stop-color="#eef1f7"/>
-              <stop offset="1" stop-color="#cfd5e1"/>
-            </linearGradient>
-          </defs>
-          <ellipse cx="122" cy="195" rx="86" ry="13" fill="#e9edf4"/>
-          <path d="M74 100h92v92H74z" fill="url(#g1)"/>
-          <path d="M74 100l28-42h92l-28 42z" fill="#f8fafc"/>
-          <path d="M166 100l28-42 34 52-30 42z" fill="url(#g2)"/>
-          <path d="M74 100l-31 44h31z" fill="#d9dee8"/>
-          <path d="M166 100l31 44h-31z" fill="#cfd5e1"/>
-          <path d="M102 58l64 42h-92z" fill="#eef1f7"/>
-          <path d="M142 69l48 22 10 24-47-22z" fill="#d9dee8"/>
-          <path d="M74 100h92v92H74z" fill="none" stroke="#e2e6ee"/>
-        </svg>
-        <div class="title">「信源分析」开发中，接入真实功能后开放</div>
+    <div class="topbar">
+      <div>
+        <h1>事实库</h1>
+        <div class="sub">信源分析入口 · Demo 先做带来源的事实卡</div>
       </div>
-    </section>
+    </div>
+    <div class="page">
+      <div id="authBar" class="config-bar"></div>
+      <div id="err" class="wb-error" style="display:none"></div>
+      <div class="wb-grid wb-grid-2">
+        <div class="wb-card">
+          <div class="wb-toolbar">
+            <strong>事实卡</strong>
+            <input type="file" id="csvFile" accept=".csv" style="max-width:180px">
+            <button class="wb-btn" id="btnImport">CSV 导入</button>
+            <a class="wb-btn" href="assets/sample-facts.csv" download>下载样例 CSV</a>
+            <button class="wb-btn" id="btnReload">刷新</button>
+          </div>
+          <div class="wb-hint">表头：title,statement,fact_type,source_name,source_url,observed_at,trust_level,author_name。样例含 10 条有效 + 2 条坏行，用于测行级错误。</div>
+          <table class="wb-table">
+            <thead><tr><th>标题</th><th>陈述</th><th>来源</th><th>作者</th><th>可信度</th><th></th></tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+          <div id="listEmpty" style="display:none"></div>
+        </div>
+        <div class="wb-card">
+          <strong>新建事实卡</strong>
+          <div class="wb-field" style="margin-top:12px">
+            <label class="wb-label">标题</label>
+            <input class="wb-input" id="title" placeholder="如：私有化部署">
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">事实陈述</label>
+            <textarea class="wb-textarea" id="statement" style="min-height:100px" placeholder="可被引用的完整陈述"></textarea>
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">来源名称（必填）</label>
+            <input class="wb-input" id="source_name" placeholder="产品白皮书 2026">
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">来源 URL</label>
+            <input class="wb-input" id="source_url" placeholder="https://">
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">类型</label>
+            <select class="wb-select" id="fact_type">
+              <option value="product">product</option>
+              <option value="case">case</option>
+              <option value="metric">metric</option>
+              <option value="policy">policy</option>
+              <option value="other">other</option>
+            </select>
+          </div>
+          <button class="wb-btn primary" id="btnCreate">创建</button>
+        </div>
+      </div>
+    </div>
   </main>
 </div>
+<script src="assets/geo-sidebar-v1.js?rev=6"></script>
+<script src="assets/geo-api-v1.js?rev=6"></script>
+<script src="assets/geo-workbench-v1.js?rev=6"></script>
+<script>
+(async function () {
+  GeoWB.renderAuthBar(document.getElementById('authBar'));
+  var err = document.getElementById('err');
+  async function load() {
+    GeoWB.clearError(err);
+    err.className = 'wb-error';
+    try {
+      GeoWB.requireTenant();
+      var data = await GeoAPI.listFacts();
+      var tbody = document.getElementById('rows');
+      var empty = document.getElementById('listEmpty');
+      tbody.innerHTML = '';
+      var items = data.items || [];
+      if (!items.length) {
+        empty.style.display = 'block';
+        GeoWB.renderEmpty(empty, '暂无事实卡 · 可手动新建或 CSV 导入', { inline: true, showIcon: false });
+        return;
+      }
+      empty.style.display = 'none';
+      empty.innerHTML = '';
+      items.forEach(function (f) {
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td>' + f.title + '</td>' +
+          '<td>' + f.statement + '</td>' +
+          '<td>' + f.source_name + (f.source_url ? '<div class="wb-muted">' + f.source_url + '</div>' : '') + '</td>' +
+          '<td>' + (f.author_name || '-') + '</td>' +
+          '<td>' + f.trust_level + '</td>' +
+          '<td><button class="wb-btn" data-id="' + f.id + '">核验</button></td>';
+        tr.querySelector('button').onclick = async function () {
+          try {
+            await GeoAPI.verifyFact(f.id);
+            await load();
+          } catch (e) { GeoWB.showError(err, e); }
+        };
+        tbody.appendChild(tr);
+      });
+    } catch (e) { GeoWB.showError(err, e); }
+  }
+  document.getElementById('btnReload').onclick = load;
+  document.getElementById('btnImport').onclick = async function () {
+    var file = document.getElementById('csvFile').files[0];
+    if (!file) { GeoWB.showError(err, new Error('请选择 CSV 文件')); return; }
+    try {
+      var r = await GeoAPI.importFactsCsv(file);
+      GeoWB.showImportResult(err, r);
+      await load();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnCreate').onclick = async function () {
+    try {
+      GeoWB.requireTenant();
+      await GeoAPI.createFact({
+        title: document.getElementById('title').value,
+        statement: document.getElementById('statement').value,
+        source_name: document.getElementById('source_name').value,
+        source_url: document.getElementById('source_url').value || null,
+        fact_type: document.getElementById('fact_type').value,
+        trust_level: 'needs_review',
+      });
+      document.getElementById('title').value = '';
+      document.getElementById('statement').value = '';
+      await load();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  load();
+})();
+</script>
 </body>
 </html>

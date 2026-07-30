@@ -46,6 +46,15 @@ from app.models.keyword_candidate import (
     KeywordCandidate,
 )
 from app.models.geo_audit import GeoAuditRun
+from app.models.geo_prompt import GeoPrompt
+from app.models.geo_fact import GeoFact
+from app.models.geo_content import (
+    GeoArticleVersion,
+    GeoChannelVariant,
+    GeoContentTask,
+    GeoPublication,
+    GeoTaskFact,
+)
 
 __all__ = [
     "Suggestion",
@@ -100,4 +109,11 @@ __all__ = [
     "MEMORY_TYPE_LABELS",
     "AssistantMessage",
     "GeoAuditRun",
+    "GeoPrompt",
+    "GeoFact",
+    "GeoContentTask",
+    "GeoTaskFact",
+    "GeoArticleVersion",
+    "GeoChannelVariant",
+    "GeoPublication",
 ]
