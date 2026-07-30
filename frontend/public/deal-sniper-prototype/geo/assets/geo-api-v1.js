@@ -33,12 +33,22 @@
     if (key) localStorage.setItem('geo_api_key', key);
   }
 
+  function apiOrigin() {
+    var override = localStorage.getItem('geo_api_origin') || qs().get('api_origin');
+    if (override) return override.replace(/\/$/, '');
+    // Local static/dev pages are not same-origin with geo_main (:8010)
+    if (/^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname) && window.location.port !== '8010') {
+      return 'http://127.0.0.1:8010';
+    }
+    return window.location.origin;
+  }
+
   async function api(path, options) {
     options = options || {};
     var method = options.method || 'GET';
     var body = options.body;
     var tenantId = options.tenantId != null ? options.tenantId : getTenantId();
-    var url = new URL('/api/v1/geo' + path, window.location.origin);
+    var url = new URL('/api/v1/geo' + path, apiOrigin());
     if (tenantId && method === 'GET') {
       url.searchParams.set('tenant_id', String(tenantId));
     }
