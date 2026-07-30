@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, reactive, ref } from 'vue'
 
 const assetRoot = import.meta.env.BASE_URL === '/growth-sniper/' ? '/growth-sniper/landing' : '/landing'
 const asset = (name) => `${assetRoot}/${name}`
@@ -10,6 +10,16 @@ const introSlide = ref(0)
 const introPaused = ref(false)
 const introMoving = ref(false)
 const introTarget = ref(1)
+const trialModalOpen = ref(false)
+const trialSubmitting = ref(false)
+const trialError = ref('')
+const trialCountdown = ref(0)
+const trialForm = reactive({
+  name: '',
+  email: '',
+  phone: '',
+  code: '',
+})
 
 const navItems = [
   ['diagnosis', '产品'],
@@ -63,6 +73,7 @@ const prices = [
 
 let observer
 let introTimer
+let trialCountdownTimer
 let touchStartX = 0
 
 function startIntroTimer() {
@@ -127,6 +138,8 @@ onMounted(() => {
 onUnmounted(() => {
   observer?.disconnect()
   window.clearInterval(introTimer)
+  window.clearInterval(trialCountdownTimer)
+  document.body.style.overflow = ''
 })
 
 function scrollTo(id) {
@@ -135,6 +148,54 @@ function scrollTo(id) {
 }
 
 function goDiagnosis() {
+  const target = new URL('/diagnosis', window.location.origin)
+  if (diagnosisUrl.value.trim()) target.searchParams.set('url', diagnosisUrl.value.trim())
+  window.location.assign(target.href)
+}
+
+function openTrialForm() {
+  mobileOpen.value = false
+  trialError.value = ''
+  trialModalOpen.value = true
+  pauseIntro(true)
+  document.body.style.overflow = 'hidden'
+}
+
+function closeTrialForm() {
+  trialModalOpen.value = false
+  trialError.value = ''
+  document.body.style.overflow = ''
+  pauseIntro(false)
+}
+
+function sendTrialCode() {
+  trialError.value = ''
+  if (!/^1\d{10}$/.test(trialForm.phone)) {
+    trialError.value = '请先输入有效手机号'
+    return
+  }
+  if (trialCountdown.value) return
+  trialCountdown.value = 60
+  window.clearInterval(trialCountdownTimer)
+  trialCountdownTimer = window.setInterval(() => {
+    trialCountdown.value -= 1
+    if (trialCountdown.value <= 0) window.clearInterval(trialCountdownTimer)
+  }, 1000)
+}
+
+function submitTrialForm() {
+  trialError.value = ''
+  if (!trialForm.name.trim()) return void (trialError.value = '请填写您的称呼')
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trialForm.email)) return void (trialError.value = '请填写有效邮箱')
+  if (!/^1\d{10}$/.test(trialForm.phone)) return void (trialError.value = '请填写有效手机号')
+  if (!/^\d{4,6}$/.test(trialForm.code)) return void (trialError.value = '请填写验证码')
+
+  trialSubmitting.value = true
+  window.sessionStorage.setItem('growth-sniper-trial', JSON.stringify({
+    name: trialForm.name.trim(),
+    email: trialForm.email.trim(),
+    phone: trialForm.phone,
+  }))
   const target = new URL('/diagnosis', window.location.origin)
   if (diagnosisUrl.value.trim()) target.searchParams.set('url', diagnosisUrl.value.trim())
   window.location.assign(target.href)
@@ -157,7 +218,7 @@ function goDiagnosis() {
           @click.prevent="scrollTo(id)"
         >{{ label }}</a>
       </nav>
-      <button class="header-cta" type="button" @click="goDiagnosis">免费试用</button>
+      <button class="header-cta" type="button" @click="openTrialForm">免费试用</button>
       <button class="menu-button" type="button" aria-label="切换菜单" @click="mobileOpen = !mobileOpen">
         <span /><span /><span />
       </button>
@@ -424,6 +485,48 @@ function goDiagnosis() {
       </div>
       <div class="footer-meta">隐私政策 · 服务条款 · 联系我们</div>
     </footer>
+
+    <div
+      v-if="trialModalOpen"
+      class="trial-backdrop"
+      role="presentation"
+      @click.self="closeTrialForm"
+      @keydown.esc="closeTrialForm"
+    >
+      <section class="trial-modal" role="dialog" aria-modal="true" aria-labelledby="trial-title">
+        <button class="trial-close" type="button" aria-label="关闭表单" @click="closeTrialForm">×</button>
+        <span class="trial-kicker">FINAL STEP</span>
+        <h2 id="trial-title">还差一步，马上进入你的诊断工作台</h2>
+        <p>留下联系方式，我们将为你开通免费诊断。</p>
+        <form @submit.prevent="submitTrialForm">
+          <label>
+            <span>怎么称呼您</span>
+            <input v-model="trialForm.name" autocomplete="name" placeholder="请输入姓名">
+          </label>
+          <label>
+            <span>邮箱</span>
+            <input v-model="trialForm.email" type="email" autocomplete="email" placeholder="用于接收诊断报告">
+          </label>
+          <label>
+            <span>电话</span>
+            <input v-model="trialForm.phone" inputmode="tel" autocomplete="tel" placeholder="请输入手机号" maxlength="11">
+          </label>
+          <label>
+            <span>验证码</span>
+            <span class="trial-code-row">
+              <input v-model="trialForm.code" inputmode="numeric" placeholder="请输入验证码" maxlength="6">
+              <button type="button" :disabled="trialCountdown > 0" @click="sendTrialCode">
+                {{ trialCountdown ? `${trialCountdown}s 后重试` : '获取验证码' }}
+              </button>
+            </span>
+          </label>
+          <div class="trial-error" aria-live="polite">{{ trialError }}</div>
+          <button class="trial-submit" type="submit" :disabled="trialSubmitting">
+            {{ trialSubmitting ? '正在进入…' : '立即进入诊断中心' }}
+          </button>
+        </form>
+      </section>
+    </div>
   </div>
 </template>
 
@@ -758,6 +861,82 @@ footer { min-height: 92px; display: grid; grid-template-columns: 1.4fr 1.2fr 1fr
 .footer-brand { display: flex; align-items: center; gap: 9px; }.footer-brand strong { color: white; font-size: 15px; }.brand-mark.small { width: 36px; height: 36px; margin-right: 1px; }
 .footer-links { display: flex; justify-content: center; gap: 25px; }.footer-links a { color: #818b95; text-decoration: none; }.footer-links a:hover { color: #d7a2f3; }.footer-meta { text-align: right; }
 
+.trial-backdrop {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgba(1, 7, 12, .76);
+  backdrop-filter: blur(15px);
+}
+.trial-modal {
+  position: relative;
+  width: min(660px, 100%);
+  max-height: calc(100svh - 44px);
+  overflow-y: auto;
+  padding: 42px 54px 48px;
+  border: 1px solid rgba(196, 211, 222, .48);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 85% 100%, rgba(138, 42, 236, .18), transparent 42%),
+    linear-gradient(145deg, rgba(29, 44, 56, .98), rgba(8, 19, 28, .99));
+  box-shadow: 0 38px 110px rgba(0,0,0,.72), 0 0 40px rgba(185, 69, 255, .2);
+}
+.trial-close {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  color: #aeb6bd;
+  font-size: 29px;
+  line-height: 1;
+  cursor: pointer;
+  background: transparent;
+}
+.trial-kicker { color: #ce79fa; font-size: 11px; letter-spacing: 2.5px; }
+.trial-modal h2 { margin: 8px 0 7px; font-size: 28px; letter-spacing: -.03em; }
+.trial-modal > p { margin: 0 0 23px; color: #85919a; font-size: 13px; }
+.trial-modal form { display: grid; gap: 14px; }
+.trial-modal label { display: grid; gap: 7px; color: #dce0e2; font-size: 13px; }
+.trial-modal label > input,
+.trial-code-row input {
+  min-width: 0;
+  height: 48px;
+  padding: 0 15px;
+  border: 1px solid #65727c;
+  border-radius: 10px;
+  outline: 0;
+  color: #fff;
+  background: rgba(12, 26, 36, .72);
+}
+.trial-modal input:focus { border-color: #ca62ff; box-shadow: 0 0 0 3px rgba(189, 76, 255, .1); }
+.trial-code-row { display: grid; grid-template-columns: 1fr 145px; gap: 11px; }
+.trial-code-row button {
+  border: 0;
+  border-radius: 10px;
+  color: #fff;
+  cursor: pointer;
+  background: linear-gradient(90deg, #7026dc, #b83eef);
+  box-shadow: 0 0 18px rgba(183, 65, 241, .24);
+}
+.trial-code-row button:disabled { cursor: default; opacity: .55; }
+.trial-error { min-height: 18px; margin-top: -3px; color: #ff9fa8; font-size: 12px; }
+.trial-submit {
+  height: 54px;
+  border: 1px solid rgba(255,255,255,.55);
+  border-radius: 999px;
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+  background: linear-gradient(92deg, #ff9a42, #c344eb 55%, #8b24fa);
+  box-shadow: 0 0 26px rgba(188, 65, 245, .42);
+}
+.trial-submit:disabled { cursor: wait; opacity: .65; }
+
 .reveal { animation: reveal .8s cubic-bezier(.2,.7,.2,1) both; }.delay-1 { animation-delay: .12s }.delay-2 { animation-delay: .25s }
 @keyframes reveal { from { opacity:0; transform:translateY(22px) } to { opacity:1; transform:translateY(0) } }
 
@@ -938,6 +1117,10 @@ footer { min-height: 92px; display: grid; grid-template-columns: 1.4fr 1.2fr 1fr
   .process-grid { grid-template-columns: 1fr; gap: 44px; margin: 48px auto 70px; }.process-step { padding: 0; }.step-line { width: 1px; height: 32px; top: auto; bottom: -38px; left: 50%; right: auto; }.step-line i { top: 50%; left: -3px; }
   .logo-marquee { margin-inline: -18px; }.price-card { min-height: 0; padding: 34px 28px; }.price-card.featured { transform: none; }.price-card.featured:hover { transform: translateY(-7px); }
   .final-cta { padding-inline: 18px !important; }.final-cta .hero-actions { flex-direction: column; }.footer-links { flex-wrap: wrap; gap: 14px 22px; }.footer-brand { flex-wrap: wrap; }
+  .trial-backdrop { padding: 12px; }
+  .trial-modal { padding: 36px 22px 28px; border-radius: 19px; }
+  .trial-modal h2 { font-size: 23px; line-height: 1.35; }
+  .trial-code-row { grid-template-columns: 1fr 118px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
