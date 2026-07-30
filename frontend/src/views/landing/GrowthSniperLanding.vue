@@ -466,7 +466,7 @@ function submitTrialForm() {
         <h2>精准获客，从这一次点击开始</h2>
         <div class="hero-actions">
           <button class="button primary" type="button" @click="goDiagnosis">开始免费诊断</button>
-          <a class="button ghost" href="mailto:service@g-snipers.com">预约演示 <span>↗</span></a>
+          <button class="button ghost" type="button" @click="openTrialForm">预约演示 <span>↗</span></button>
         </div>
       </section>
     </main>
