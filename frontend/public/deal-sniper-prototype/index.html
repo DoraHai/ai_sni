@@ -176,7 +176,12 @@
       <span class="enter">进入模块 →</span>
     </a>
 
-    <a class="module content-c" href="content/audit.html?rev=content-v9">
+    <a
+      class="module content-c"
+      href="/diagnostic-center/"
+      target="_top"
+      onclick="window.top.location.href = (window.location.protocol === 'file:' ? 'http://localhost:5174' : window.location.origin) + '/diagnostic-center/'; return false;"
+    >
       <div class="icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4l-6 6a1.5 1.5 0 0 0 2.1 2.1l6-6a4 4 0 0 0 5.4-5.4l-2.3 2.3-2.1-2.1z"/></svg></div>
       <span class="tag">诊断中心 · 只诊断不执行</span>
       <h2>诊断中心</h2>
