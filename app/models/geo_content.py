@@ -25,6 +25,10 @@ class GeoContentTask(Base):
     owner_user_id: Mapped[int | None] = mapped_column(BigInteger)
     brief: Mapped[dict | None] = mapped_column(JSONB)
     rule_result: Mapped[dict | None] = mapped_column(JSONB)
+    pipeline_step: Mapped[str] = mapped_column(String(32), nullable=False, default="opportunity")
+    blocked_reason: Mapped[str | None] = mapped_column(Text)
+    diagnosis_audit_id: Mapped[int | None] = mapped_column(BigInteger)
+    diagnosis_advice_code: Mapped[str | None] = mapped_column(String(64))
     ready_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -62,6 +66,7 @@ class GeoArticleVersion(Base):
     body_html: Mapped[str | None] = mapped_column(Text)
     outline: Mapped[dict | None] = mapped_column(JSONB)
     generation_meta: Mapped[dict | None] = mapped_column(JSONB)
+    author_name: Mapped[str | None] = mapped_column(String(100))
     created_by: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

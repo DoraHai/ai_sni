@@ -2,7 +2,7 @@
 
 import unittest
 
-from app.geo.content.rules import RuleInput, is_ready, run_checks
+from app.geo.content.rules import RuleInput, build_fix_patches, is_ready, run_checks
 
 
 def _base(**kwargs) -> RuleInput:
@@ -18,10 +18,14 @@ def _base(**kwargs) -> RuleInput:
             "- **Q：** 如何验证？\n"
             "  **A：** 核对应事实卡。\n\n"
             "## 结论\n\n优先核验来源后再决策。\n\n"
+            "## 来源\n\n"
+            "- 白皮书\n- 文档\n- 案例\n\n"
+            "*作者：GEO Demo*\n"
             "*更新时间：2026-07-28*\n"
         ),
         outline={
             "direct_answer": "应结合场景与可核验事实选择数据分析平台。",
+            "author_name": "GEO Demo",
             "sections": [
                 {"type": "definition", "heading": "定义", "body": "用于汇聚与分析业务数据。"},
                 {
@@ -182,3 +186,33 @@ class GeoVariantsTests(unittest.TestCase):
         )
         self.assertLessEqual(len(title), 40)
         self.assertIn("直接答案", out)
+
+
+class GeoFixPatchesTests(unittest.TestCase):
+    def test_patches_for_missing_faq_conclusion_updated_at(self):
+        patches = {
+            p["code"]: p
+            for p in build_fix_patches(
+                _base(
+                    body_markdown="直接回答：只有一句。\n",
+                    outline={"direct_answer": "只有一句。", "sections": []},
+                )
+            )
+        }
+        self.assertIn("faq_min", patches)
+        self.assertIn("conclusion_extractable", patches)
+        self.assertIn("updated_at_visible", patches)
+        self.assertIn("## FAQ", patches["faq_min"]["insert_markdown"])
+        self.assertIn("## 结论", patches["conclusion_extractable"]["insert_markdown"])
+        self.assertIn("更新时间", patches["updated_at_visible"]["insert_markdown"])
+
+    def test_no_structural_patches_when_complete(self):
+        codes = {p["code"] for p in build_fix_patches(_base())}
+        self.assertNotIn("faq_min", codes)
+        self.assertNotIn("conclusion_extractable", codes)
+        self.assertNotIn("updated_at_visible", codes)
+
+
+if __name__ == "__main__":
+    unittest.main()
+

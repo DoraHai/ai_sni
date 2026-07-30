@@ -12,10 +12,12 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
-    port: 5175,
+    port: 5174,
+    strictPort: true,
     proxy: {
       '/api': {
-        target: process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8000',
+        // GEO 独立进程（含 audits + content）；本机 8010 常被旧进程占用
+        target: process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8011',
         changeOrigin: true,
       },
     },

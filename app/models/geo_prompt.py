@@ -24,6 +24,8 @@ class GeoPrompt(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
     created_by: Mapped[int | None] = mapped_column(BigInteger)
+    owner_user_id: Mapped[int | None] = mapped_column(BigInteger)
+    last_task_id: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

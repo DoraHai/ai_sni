@@ -621,6 +621,7 @@ tests/
 | 文档 | 关系 |
 | --- | --- |
 | `docs/GEO_CONTENT_DEV_PLAN.md` | **含代码的开发计划**（切片、文件、接口骨架、排期） |
+| `docs/GEO_WAVE_A_PLAN.md` | **Wave A 产品化方案**（流水线、门禁、诊断桥、导入） |
 | `OneDrive/.../GEO项目前期方案.md` | 产品前期结论（已收窄 Demo） |
 | `frontend/public/.../PROJECT_HANDOFF.md` | 平台 IA 与 GEO/SEO 原则 |
 | `deploy/README-GEO-INDEPENDENT.md` | 独立发布与 migration 纪律 |

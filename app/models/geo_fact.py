@@ -25,6 +25,8 @@ class GeoFact(Base):
     trust_level: Mapped[str] = mapped_column(String(16), nullable=False, default="needs_review")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     meta: Mapped[dict | None] = mapped_column(JSONB)
+    author_name: Mapped[str | None] = mapped_column(String(100))
+    import_batch_id: Mapped[str | None] = mapped_column(String(64))
     created_by: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

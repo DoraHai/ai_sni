@@ -5,18 +5,27 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import delete, func, select
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
+from app.geo.content.bridge import (
+    create_and_bind_diagnosis_facts,
+    create_task_from_diagnosis,
+    editor_path,
+)
+from app.geo.content.gate import PublishGateError, assert_can_publish
 from app.geo.content.generate_article import (
     generate_master_article,
     outline_from_payload,
     to_markdown,
 )
-from app.geo.content.rules import RuleInput, is_ready, run_checks
+from app.geo.content.imports import import_facts_csv, import_prompts_csv
+from app.geo.content.pipeline import blocked_reason_from_checks, sync_pipeline_fields
+from app.geo.content.rules import RuleInput, build_fix_patches, is_ready, run_checks
 from app.geo.content.schemas import (
+    ApplyPatchRequest,
     ArticleUpdate,
     FactCreate,
     FactUpdate,
@@ -26,6 +35,8 @@ from app.geo.content.schemas import (
     PublicationCreate,
     TaskCreate,
     TaskFactsUpdate,
+    TaskFromDiagnosis,
+    TaskUpdate,
     VariantsCreate,
 )
 from app.geo.content.variants import GeoContentError, adapt_for_channel
@@ -60,6 +71,8 @@ def _prompt_payload(row: GeoPrompt) -> dict[str, Any]:
         "status": row.status,
         "source": row.source,
         "created_by": row.created_by,
+        "owner_user_id": row.owner_user_id,
+        "last_task_id": row.last_task_id,
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
     }
@@ -78,6 +91,8 @@ def _fact_payload(row: GeoFact) -> dict[str, Any]:
         "trust_level": row.trust_level,
         "status": row.status,
         "meta": row.meta or {},
+        "author_name": row.author_name,
+        "import_batch_id": row.import_batch_id,
         "created_by": row.created_by,
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
@@ -172,7 +187,32 @@ async def _bind_facts(
     for idx, fact in enumerate(facts):
         session.add(GeoTaskFact(task_id=task.id, fact_id=fact.id, sort_order=idx))
     task.status = "facts_bound" if len(facts) >= 3 else "draft"
+    await _sync_task_pipeline(session, task, checks=task.rule_result.get("checks") if task.rule_result else None)
     return facts
+
+
+async def _sync_task_pipeline(
+    session: AsyncSession,
+    task: GeoContentTask,
+    *,
+    checks: list[dict] | None = None,
+) -> None:
+    facts = await _task_facts(session, task.id)
+    article = await _latest_article(session, task.id)
+    variants = await _variants(session, task.id)
+    blocked = blocked_reason_from_checks(checks)
+    if blocked is None and task.rule_result:
+        blocked = blocked_reason_from_checks(task.rule_result.get("checks"))
+    sync_pipeline_fields(
+        task,
+        fact_count=len(facts),
+        has_article=article is not None,
+        variant_count=len(variants),
+        blocked_reason=blocked,
+    )
+    prompt = await session.get(GeoPrompt, task.prompt_id)
+    if prompt is not None:
+        prompt.last_task_id = task.id
 
 
 def _fact_dicts(facts: list[GeoFact]) -> list[dict[str, Any]]:
@@ -185,6 +225,7 @@ def _fact_dicts(facts: list[GeoFact]) -> list[dict[str, Any]]:
             "source_url": f.source_url,
             "fact_type": f.fact_type,
             "trust_level": f.trust_level,
+            "author_name": f.author_name,
             "observed_at": f.observed_at.isoformat() if f.observed_at else None,
         }
         for f in facts
@@ -197,6 +238,8 @@ async def _build_rule_input(
     prompt = await _get_prompt(session, task.prompt_id, task.tenant_id)
     facts = await _task_facts(session, task.id)
     variants = await _variants(session, task.id)
+    tenant = await session.get(Tenant, task.tenant_id)
+    default_author = tenant.name if tenant else None
     return RuleInput(
         question=prompt.question,
         title=(article.title if article else task.title) or "",
@@ -205,6 +248,8 @@ async def _build_rule_input(
         facts=_fact_dicts(facts),
         target_channels=list(task.target_channels or []),
         variants=[v.channel for v in variants],
+        author_name=article.author_name if article else None,
+        default_author=default_author,
     )
 
 
@@ -219,6 +264,10 @@ async def _task_payload(
         "prompt_question": prompt.question if prompt else None,
         "title": task.title,
         "status": task.status,
+        "pipeline_step": task.pipeline_step,
+        "blocked_reason": task.blocked_reason,
+        "diagnosis_audit_id": task.diagnosis_audit_id,
+        "diagnosis_advice_code": task.diagnosis_advice_code,
         "target_channels": task.target_channels or [],
         "owner_user_id": task.owner_user_id,
         "brief": task.brief or {},
@@ -264,6 +313,7 @@ async def _task_payload(
                 "title": article.title,
                 "body_markdown": article.body_markdown,
                 "outline": article.outline or {},
+                "author_name": article.author_name,
                 "generation_meta": article.generation_meta or {},
                 "created_at": _iso(article.created_at),
             },
@@ -421,6 +471,7 @@ async def create_fact(
         source_url=req.source_url,
         observed_at=req.observed_at,
         trust_level=req.trust_level,
+        author_name=req.author_name,
         meta=req.meta,
         created_by=ctx.user_id,
     )
@@ -469,13 +520,62 @@ async def verify_fact(
     return _fact_payload(row)
 
 
+@router.post("/facts/import")
+async def import_facts_file(
+    tenant_id: int = Query(...),
+    file: UploadFile = File(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    await _ensure_tenant_exists(session, tenant_id)
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(400, "CSV 文件为空")
+    result = await import_facts_csv(
+        session, tenant_id=tenant_id, user_id=ctx.user_id, file_bytes=raw
+    )
+    await session.commit()
+    return result
+
+
 # ---------- content tasks ----------
+
+
+@router.post("/prompts/import-csv")
+async def import_prompts_csv_file(
+    tenant_id: int = Query(...),
+    file: UploadFile = File(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    await _ensure_tenant_exists(session, tenant_id)
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(400, "CSV 文件为空")
+    result = await import_prompts_csv(
+        session, tenant_id=tenant_id, user_id=ctx.user_id, file_bytes=raw
+    )
+    await session.commit()
+    created = result.pop("items", [])
+    for row in created:
+        await session.refresh(row)
+    return {
+        "count": result["count"],
+        "errors": result["errors"],
+        "items": [_prompt_payload(r) for r in created],
+    }
 
 
 @router.get("/content-tasks")
 async def list_tasks(
     tenant_id: int = Query(...),
     status: str | None = Query(None),
+    pipeline_step: str | None = Query(None),
+    q: str | None = Query(None),
+    owner_user_id: int | None = Query(None),
+    from_diagnosis: bool | None = Query(None),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -483,6 +583,19 @@ async def list_tasks(
     stmt = select(GeoContentTask).where(GeoContentTask.tenant_id == tenant_id)
     if status:
         stmt = stmt.where(GeoContentTask.status == status)
+    if pipeline_step:
+        stmt = stmt.where(GeoContentTask.pipeline_step == pipeline_step)
+    if owner_user_id is not None:
+        stmt = stmt.where(GeoContentTask.owner_user_id == owner_user_id)
+    if from_diagnosis is True:
+        stmt = stmt.where(GeoContentTask.diagnosis_audit_id.is_not(None))
+    elif from_diagnosis is False:
+        stmt = stmt.where(GeoContentTask.diagnosis_audit_id.is_(None))
+    if q:
+        like = f"%{q.strip()}%"
+        stmt = stmt.where(
+            or_(GeoContentTask.title.ilike(like), GeoContentTask.blocked_reason.ilike(like))
+        )
     stmt = stmt.order_by(GeoContentTask.id.desc())
     rows = list(await session.scalars(stmt))
     items = [await _task_payload(session, r, detail=False) for r in rows]
@@ -506,12 +619,77 @@ async def create_task(
         status="draft",
         target_channels=req.target_channels or ["website", "zhihu"],
         owner_user_id=ctx.user_id,
+        pipeline_step="opportunity",
         brief=req.brief,
     )
     session.add(task)
     await session.flush()
+    prompt.last_task_id = task.id
     if req.fact_ids:
         await _bind_facts(session, task, req.fact_ids)
+    else:
+        await _sync_task_pipeline(session, task)
+    await session.commit()
+    await session.refresh(task)
+    return await _task_payload(session, task, detail=True)
+
+
+@router.post("/content-tasks/from-diagnosis")
+async def create_task_from_diagnosis_route(
+    req: TaskFromDiagnosis,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(req.tenant_id)
+    await _ensure_tenant_exists(session, req.tenant_id)
+    task, _prompt, _facts = await create_task_from_diagnosis(
+        session,
+        tenant_id=req.tenant_id,
+        audit_id=req.audit_id,
+        advice_code=req.advice_code,
+        user_id=ctx.user_id,
+    )
+    await session.commit()
+    await session.refresh(task)
+    payload = await _task_payload(session, task, detail=True)
+    payload["editor_path"] = editor_path(task_id=task.id, tenant_id=req.tenant_id)
+    return payload
+
+
+@router.post("/content-tasks/{task_id}/seed-diagnosis-facts")
+async def seed_diagnosis_facts_route(
+    task_id: int,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """为已有诊断桥任务补齐对齐事实卡（仅在尚未绑定时写入）。"""
+    ctx.ensure_tenant(tenant_id)
+    task = await _get_task(session, task_id, tenant_id)
+    await create_and_bind_diagnosis_facts(
+        session, task, user_id=ctx.user_id, replace_empty_only=True
+    )
+    await session.commit()
+    await session.refresh(task)
+    return await _task_payload(session, task, detail=True)
+
+
+@router.patch("/content-tasks/{task_id}")
+async def patch_task(
+    task_id: int,
+    req: TaskUpdate,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    task = await _get_task(session, task_id, tenant_id)
+    data = req.model_dump(exclude_unset=True)
+    if "title" in data and data["title"] is not None:
+        data["title"] = data["title"].strip()
+    for key, value in data.items():
+        setattr(task, key, value)
+    await _sync_task_pipeline(session, task)
     await session.commit()
     await session.refresh(task)
     return await _task_payload(session, task, detail=True)
@@ -564,6 +742,7 @@ async def save_article(
         title=req.title.strip(),
         body_markdown=req.body_markdown,
         outline=req.outline or (latest.outline if latest else {}),
+        author_name=(latest.author_name if latest else None),
         generation_meta={"source": "manual_edit", "from_version": latest.version_no if latest else None},
         created_by=ctx.user_id,
     )
@@ -571,6 +750,7 @@ async def save_article(
     task.title = req.title.strip()
     if task.status in {"draft", "facts_bound", "generating", "failed"}:
         task.status = "editing"
+    await _sync_task_pipeline(session, task)
     await session.commit()
     await session.refresh(task)
     return await _task_payload(session, task, detail=True)
@@ -590,10 +770,12 @@ async def check_task(
     rule_input = await _build_rule_input(session, task, article)
     checks = run_checks(rule_input)
     ready = is_ready(checks, require_channels=require_channels)
+    check_dicts = [c.to_dict() for c in checks]
+    patches = build_fix_patches(rule_input)
     task.rule_result = {
         "ready": ready,
         "require_channels": require_channels,
-        "checks": [c.to_dict() for c in checks],
+        "checks": check_dicts,
         "checked_at": datetime.utcnow().isoformat(),
     }
     if ready:
@@ -601,11 +783,76 @@ async def check_task(
         task.ready_at = task.ready_at or datetime.utcnow()
     elif article is not None:
         task.status = "needs_fix"
+    await _sync_task_pipeline(session, task, checks=check_dicts)
     await session.commit()
     await session.refresh(task)
     return {
         "ready": ready,
-        "checks": [c.to_dict() for c in checks],
+        "checks": check_dicts,
+        "patches": patches,
+        "task": await _task_payload(session, task, detail=True),
+    }
+
+
+@router.post("/content-tasks/{task_id}/apply-patch")
+async def apply_patch(
+    task_id: int,
+    req: ApplyPatchRequest,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    task = await _get_task(session, task_id, tenant_id)
+    article = await _latest_article(session, task.id)
+    if article is None:
+        raise HTTPException(400, "请先生成或保存母稿")
+    rule_input = await _build_rule_input(session, task, article)
+    patch = next((p for p in build_fix_patches(rule_input) if p["code"] == req.code), None)
+    if patch is None:
+        raise HTTPException(400, f"无可用修复补丁: {req.code}")
+    insert = patch["insert_markdown"]
+    if patch.get("cursor_hint") == "prepend":
+        new_body = insert + "\n" + article.body_markdown
+    else:
+        new_body = article.body_markdown.rstrip() + "\n" + insert
+    author_name = req.author_name or article.author_name
+    if req.code == "author_visible" and req.author_name:
+        author_name = req.author_name
+    version_no = article.version_no + 1
+    new_article = GeoArticleVersion(
+        task_id=task.id,
+        version_no=version_no,
+        kind="master",
+        title=article.title,
+        body_markdown=new_body,
+        outline=article.outline,
+        author_name=author_name,
+        generation_meta={"source": "apply_patch", "patch_code": req.code},
+        created_by=ctx.user_id,
+    )
+    session.add(new_article)
+    task.status = "editing"
+    await session.flush()
+    rule_input = await _build_rule_input(session, task, new_article)
+    checks = run_checks(rule_input)
+    check_dicts = [c.to_dict() for c in checks]
+    ready = is_ready(checks, require_channels=False)
+    task.rule_result = {
+        "ready": ready,
+        "require_channels": False,
+        "checks": check_dicts,
+        "checked_at": datetime.utcnow().isoformat(),
+    }
+    task.status = "ready" if ready else "needs_fix"
+    await _sync_task_pipeline(session, task, checks=check_dicts)
+    await session.commit()
+    await session.refresh(task)
+    return {
+        "applied": req.code,
+        "ready": ready,
+        "checks": check_dicts,
+        "patches": build_fix_patches(rule_input),
         "task": await _task_payload(session, task, detail=True),
     }
 
@@ -682,6 +929,7 @@ async def generate_task_article(
     task.status = "ready" if ready else "needs_fix"
     if ready:
         task.ready_at = task.ready_at or datetime.utcnow()
+    await _sync_task_pipeline(session, task, checks=[c.to_dict() for c in checks])
     await session.commit()
     await session.refresh(task)
     return await _task_payload(session, task, detail=True)
@@ -730,6 +978,7 @@ async def create_variants(
         created.append(channel)
     # refresh target channels union
     task.target_channels = sorted(set((task.target_channels or []) + channels))
+    await _sync_task_pipeline(session, task)
     await session.commit()
     await session.refresh(task)
     return await _task_payload(session, task, detail=True)
@@ -752,6 +1001,7 @@ async def export_variant(
     variant.status = "exported"
     if task.status in {"ready", "editing", "needs_fix"}:
         task.status = "exported"
+    await _sync_task_pipeline(session, task)
     await session.commit()
     return {
         "channel": channel,
@@ -778,6 +1028,12 @@ async def record_publication(
     variant = variants.get(req.channel)
     if variant is None:
         raise HTTPException(400, "请先生成该渠道版本")
+    article = await _latest_article(session, task.id)
+    rule_input = await _build_rule_input(session, task, article)
+    try:
+        assert_can_publish(rule_input)
+    except PublishGateError as exc:
+        raise HTTPException(400, str(exc)) from exc
     pub = GeoPublication(
         variant_id=variant.id,
         channel=req.channel,
@@ -790,6 +1046,7 @@ async def record_publication(
     session.add(pub)
     variant.status = "published"
     task.status = "published"
+    await _sync_task_pipeline(session, task)
     await session.commit()
     await session.refresh(task)
     return await _task_payload(session, task, detail=True)
@@ -829,10 +1086,38 @@ async def content_stats(
             GeoContentTask.tenant_id == tenant_id, GeoContentTask.status == "published"
         )
     )
+    todo_blocked = await session.scalar(
+        select(func.count()).select_from(GeoContentTask).where(
+            GeoContentTask.tenant_id == tenant_id,
+            GeoContentTask.status == "needs_fix",
+        )
+    )
+    todo_ready = await session.scalar(
+        select(func.count()).select_from(GeoContentTask).where(
+            GeoContentTask.tenant_id == tenant_id,
+            GeoContentTask.status == "ready",
+        )
+    )
+    todo_publish = await session.scalar(
+        select(func.count()).select_from(GeoContentTask).where(
+            GeoContentTask.tenant_id == tenant_id,
+            GeoContentTask.status == "exported",
+        )
+    )
+    from_diagnosis = await session.scalar(
+        select(func.count()).select_from(GeoContentTask).where(
+            GeoContentTask.tenant_id == tenant_id,
+            GeoContentTask.diagnosis_audit_id.isnot(None),
+        )
+    )
     return {
         "prompts": int(prompts or 0),
         "facts": int(facts or 0),
         "tasks": int(tasks or 0),
         "ready_or_beyond": int(ready or 0),
         "published": int(published or 0),
+        "todo_blocked": int(todo_blocked or 0),
+        "todo_ready": int(todo_ready or 0),
+        "todo_publish": int(todo_publish or 0),
+        "from_diagnosis_count": int(from_diagnosis or 0),
     }

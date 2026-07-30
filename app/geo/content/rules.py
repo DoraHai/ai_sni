@@ -16,6 +16,8 @@ class RuleInput:
     facts: list[dict[str, Any]]
     target_channels: list[str]
     variants: list[str]
+    author_name: str | None = None
+    default_author: str | None = None
 
 
 @dataclass
@@ -181,6 +183,43 @@ def check_channel_variant_ready(data: RuleInput) -> RuleCheck:
     )
 
 
+def check_author_visible(data: RuleInput) -> RuleCheck:
+    author = (data.author_name or "").strip()
+    outline = data.outline or {}
+    body = data.body_markdown or ""
+    default = (data.default_author or "").strip()
+    ok = bool(
+        author
+        or default
+        or outline.get("author_name")
+        or re.search(r"(?i)(作者|署名|撰稿)[:：]", body)
+    )
+    return RuleCheck(
+        code="author_visible",
+        passed=ok,
+        message="文中可见作者署名" if ok else "缺少作者署名",
+        action="" if ok else "在文首或文末补充作者/署名",
+    )
+
+
+def check_sources_footer(data: RuleInput) -> RuleCheck:
+    body = data.body_markdown or ""
+    facts = data.facts or []
+    ok = bool(
+        re.search(r"(?i)(##\s*来源|参考来源|信息来源|sources)", body)
+        or re.search(r"(?m)^\s*[-*]\s*来源[:：]", body)
+    )
+    if not ok and facts:
+        ok = all(str(f.get("source_name") or "").strip() for f in facts) and len(facts) >= 1
+        ok = ok and bool(re.search(r"来源|source", body, re.I))
+    return RuleCheck(
+        code="sources_footer",
+        passed=ok,
+        message="文末有来源列表" if ok else "缺少来源列表",
+        action="" if ok else "在文末插入「来源」列表",
+    )
+
+
 def run_checks(data: RuleInput) -> list[RuleCheck]:
     return [
         check_direct_answer(data),
@@ -190,8 +229,88 @@ def run_checks(data: RuleInput) -> list[RuleCheck]:
         check_facts_bound_min(data, min_n=3),
         check_facts_sourced(data),
         check_updated_at_visible(data),
+        check_author_visible(data),
+        check_sources_footer(data),
         check_channel_variant_ready(data),
     ]
+
+
+def build_fix_patches(data: RuleInput) -> list[dict[str, Any]]:
+    """返回 {code, insert_markdown, cursor_hint} 供编辑器一键插入。"""
+    patches: list[dict[str, Any]] = []
+    outline = data.outline or {}
+    body = data.body_markdown or ""
+
+    if not _has_conclusion(outline, body):
+        patches.append(
+            {
+                "code": "conclusion_extractable",
+                "insert_markdown": "\n## 结论\n\n（一句话可摘取结论）\n",
+                "cursor_hint": "append",
+            }
+        )
+
+    if _faq_count(outline, body) < 2:
+        patches.append(
+            {
+                "code": "faq_min",
+                "insert_markdown": (
+                    "\n## FAQ\n\n"
+                    "- **Q：** 用户还会问什么？\n"
+                    "  **A：** （补充答案）\n"
+                    "- **Q：** 如何验证上述信息？\n"
+                    "  **A：** 核对事实卡来源。\n"
+                ),
+                "cursor_hint": "append",
+            }
+        )
+
+    if not re.search(r"更新时间|更新日期|observed_at|20\d{2}[-/年]\d{1,2}", body):
+        patches.append(
+            {
+                "code": "updated_at_visible",
+                "insert_markdown": "\n*更新时间：2026-07-30*\n",
+                "cursor_hint": "append",
+            }
+        )
+
+    if not _has_definition(outline, body):
+        patches.append(
+            {
+                "code": "definition",
+                "insert_markdown": "\n## 定义\n\n（一句话定义目标概念）\n",
+                "cursor_hint": "append",
+            }
+        )
+
+    author = (data.author_name or data.default_author or "").strip()
+    if not author and not re.search(r"(?i)(作者|署名)[:：]", body):
+        name = author or "（作者姓名）"
+        patches.append(
+            {
+                "code": "author_visible",
+                "insert_markdown": f"\n*作者：{name}*\n",
+                "cursor_hint": "prepend",
+            }
+        )
+
+    if not re.search(r"(?i)(##\s*来源|参考来源|信息来源)", body):
+        facts = data.facts or []
+        lines = ["\n## 来源\n"]
+        for f in facts[:5]:
+            src = str(f.get("source_name") or "待补充").strip()
+            lines.append(f"- {src}")
+        if len(lines) == 1:
+            lines.append("- （补充来源名称）")
+        patches.append(
+            {
+                "code": "sources_footer",
+                "insert_markdown": "\n".join(lines) + "\n",
+                "cursor_hint": "append",
+            }
+        )
+
+    return patches
 
 
 def is_ready(checks: list[RuleCheck], *, require_channels: bool = False) -> bool:

@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>分发平台 · GEO</title>
-<link rel="stylesheet" href="assets/style.css?rev=geo-wb-1">
-<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=1">
+<link rel="stylesheet" href="assets/style.css?rev=geo-wb-2">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=6">
 </head>
 <body>
 <div class="layout">
@@ -55,9 +55,9 @@
     </div>
   </main>
 </div>
-<script src="assets/geo-sidebar-v1.js?rev=1"></script>
-<script src="assets/geo-api-v1.js?rev=1"></script>
-<script src="assets/geo-workbench-v1.js?rev=1"></script>
+<script src="assets/geo-sidebar-v1.js?rev=6"></script>
+<script src="assets/geo-api-v1.js?rev=6"></script>
+<script src="assets/geo-workbench-v1.js?rev=6"></script>
 <script>
 (async function () {
   GeoWB.renderAuthBar(document.getElementById('authBar'));
@@ -114,12 +114,16 @@
   document.getElementById('btnPublish').onclick = async function () {
     try {
       var id = Number(document.getElementById('taskSelect').value);
+      if (!id) throw new Error('请先选择任务');
+      var url = document.getElementById('url').value;
+      // 直接打后端门禁：未就绪应返回 HTTP 400（不再只做前端拦截）
       task = await GeoAPI.publish(id, {
         channel: document.getElementById('channel').value,
-        published_url: document.getElementById('url').value,
+        published_url: url,
         note: document.getElementById('note').value || null,
       });
       document.getElementById('url').value = '';
+      GeoWB.clearError(err);
       await loadDetail();
     } catch (e) { GeoWB.showError(err, e); }
   };
