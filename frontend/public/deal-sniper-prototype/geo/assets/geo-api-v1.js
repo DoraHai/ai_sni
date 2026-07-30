@@ -1,0 +1,168 @@
+/**
+ * GEO 内容工作台 API 客户端。
+ * 鉴权：优先 sem_token（与 SEM 登录一致），其次 URL ?api_key= 或 localStorage geo_api_key。
+ */
+(function (global) {
+  function qs() {
+    return new URLSearchParams(window.location.search);
+  }
+
+  function getTenantId() {
+    var fromQuery = qs().get('tenant_id');
+    if (fromQuery) {
+      localStorage.setItem('geo_tenant_id', fromQuery);
+      return Number(fromQuery);
+    }
+    var stored = localStorage.getItem('geo_tenant_id');
+    return stored ? Number(stored) : null;
+  }
+
+  function getToken() {
+    return (
+      localStorage.getItem('sem_token') ||
+      sessionStorage.getItem('sem_token') ||
+      ''
+    );
+  }
+
+  function getApiKey() {
+    return qs().get('api_key') || localStorage.getItem('geo_api_key') || '';
+  }
+
+  function setApiKey(key) {
+    if (key) localStorage.setItem('geo_api_key', key);
+  }
+
+  async function api(path, options) {
+    options = options || {};
+    var method = options.method || 'GET';
+    var body = options.body;
+    var tenantId = options.tenantId != null ? options.tenantId : getTenantId();
+    var url = new URL('/api/v1/geo' + path, window.location.origin);
+    if (tenantId && method === 'GET') {
+      url.searchParams.set('tenant_id', String(tenantId));
+    }
+    if (options.query) {
+      Object.keys(options.query).forEach(function (k) {
+        if (options.query[k] != null) url.searchParams.set(k, String(options.query[k]));
+      });
+    }
+
+    var headers = { Accept: 'application/json' };
+    var token = getToken();
+    var apiKey = getApiKey();
+    if (token) headers.Authorization = 'Bearer ' + token;
+    else if (apiKey) headers['X-API-Key'] = apiKey;
+
+    if (body != null) {
+      headers['Content-Type'] = 'application/json';
+      if (tenantId && typeof body === 'object' && body.tenant_id == null) {
+        body = Object.assign({ tenant_id: tenantId }, body);
+      }
+    }
+
+    var res = await fetch(url.toString(), {
+      method: method,
+      headers: headers,
+      body: body != null ? JSON.stringify(body) : undefined,
+    });
+
+    var text = await res.text();
+    var data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch (e) {
+      data = { detail: text };
+    }
+    if (!res.ok) {
+      var detail = data && data.detail;
+      if (Array.isArray(detail)) {
+        detail = detail.map(function (d) { return d.msg || JSON.stringify(d); }).join('; ');
+      } else if (detail && typeof detail === 'object') {
+        detail = detail.msg || JSON.stringify(detail);
+      }
+      throw new Error(detail || ('HTTP ' + res.status));
+    }
+    return data;
+  }
+
+  function withTenantQuery(extra) {
+    var tenantId = getTenantId();
+    return Object.assign({ tenant_id: tenantId }, extra || {});
+  }
+
+  global.GeoAPI = {
+    getTenantId: getTenantId,
+    getToken: getToken,
+    getApiKey: getApiKey,
+    setApiKey: setApiKey,
+    api: api,
+    contentHealth: function () { return api('/content-health'); },
+    contentStats: function () { return api('/content-stats'); },
+    listPrompts: function () { return api('/prompts'); },
+    createPrompt: function (body) { return api('/prompts', { method: 'POST', body: body }); },
+    importPrompts: function (items) {
+      return api('/prompts/import', { method: 'POST', body: { items: items } });
+    },
+    listFacts: function (trustLevel) {
+      return api('/facts', { query: trustLevel ? { trust_level: trustLevel } : {} });
+    },
+    createFact: function (body) { return api('/facts', { method: 'POST', body: body }); },
+    verifyFact: function (id) {
+      return api('/facts/' + id + '/verify', { method: 'POST', query: withTenantQuery() });
+    },
+    listTasks: function (status) {
+      return api('/content-tasks', { query: status ? { status: status } : {} });
+    },
+    getTask: function (id) {
+      return api('/content-tasks/' + id, { query: withTenantQuery() });
+    },
+    createTask: function (body) {
+      return api('/content-tasks', { method: 'POST', body: body });
+    },
+    bindFacts: function (id, factIds) {
+      return api('/content-tasks/' + id + '/facts', {
+        method: 'PUT',
+        query: withTenantQuery(),
+        body: { fact_ids: factIds },
+      });
+    },
+    saveArticle: function (id, body) {
+      return api('/content-tasks/' + id + '/article', {
+        method: 'PUT',
+        query: withTenantQuery(),
+        body: body,
+      });
+    },
+    checkTask: function (id, requireChannels) {
+      return api('/content-tasks/' + id + '/check', {
+        method: 'POST',
+        query: Object.assign(withTenantQuery(), { require_channels: !!requireChannels }),
+      });
+    },
+    generateTask: function (id) {
+      return api('/content-tasks/' + id + '/generate', {
+        method: 'POST',
+        query: withTenantQuery(),
+      });
+    },
+    createVariants: function (id, channels) {
+      return api('/content-tasks/' + id + '/variants', {
+        method: 'POST',
+        query: withTenantQuery(),
+        body: { channels: channels || ['website', 'zhihu'] },
+      });
+    },
+    exportVariant: function (id, channel) {
+      return api('/content-tasks/' + id + '/export', {
+        query: Object.assign(withTenantQuery(), { channel: channel || 'website' }),
+      });
+    },
+    publish: function (id, body) {
+      return api('/content-tasks/' + id + '/publications', {
+        method: 'POST',
+        body: body,
+      });
+    },
+  };
+})(window);

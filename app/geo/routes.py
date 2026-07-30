@@ -172,3 +172,9 @@ async def create_assets(
     await session.commit()
     await session.refresh(run)
     return _payload(run)
+
+
+# 内容工作台路由（机会/事实/任务/生成/发布回填）
+from app.geo.content.routes import router as content_router  # noqa: E402
+
+router.include_router(content_router)
