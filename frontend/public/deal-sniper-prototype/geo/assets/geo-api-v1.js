@@ -33,18 +33,37 @@
     if (key) localStorage.setItem('geo_api_key', key);
   }
 
+  function ensureAuthOrRedirect() {
+    if (getToken() || getApiKey()) return true;
+    var redirect = encodeURIComponent(window.location.href);
+    window.location.href = '/login?redirect=' + redirect;
+    return false;
+  }
+
   function apiOrigin() {
-    var override = localStorage.getItem('geo_api_origin') || qs().get('api_origin');
+    var fromQuery = qs().get('api_origin');
+    if (fromQuery) {
+      localStorage.setItem('geo_api_origin', fromQuery.replace(/\/$/, ''));
+      return fromQuery.replace(/\/$/, '');
+    }
+    var override = localStorage.getItem('geo_api_origin');
     if (override) return override.replace(/\/$/, '');
     // Local static/dev pages are not same-origin with geo_main (:8010)
-    if (/^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname) && window.location.port !== '8010') {
-      return 'http://127.0.0.1:8010';
+    if (/^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname) && window.location.port !== '8010' && window.location.port !== '8011') {
+      // Local static pages talk to geo_main; default 8011 (8010 may be an old stuck process)
+      return 'http://127.0.0.1:8011';
     }
     return window.location.origin;
   }
 
   async function api(path, options) {
     options = options || {};
+    if (options.requireAuth !== false && !getToken() && !getApiKey()) {
+      // allow explicit local demo without redirect when tenant+key in URL
+      if (!qs().get('api_key') && !localStorage.getItem('geo_api_key')) {
+        ensureAuthOrRedirect();
+      }
+    }
     var method = options.method || 'GET';
     var body = options.body;
     var tenantId = options.tenantId != null ? options.tenantId : getTenantId();
@@ -61,8 +80,15 @@
     var headers = { Accept: 'application/json' };
     var token = getToken();
     var apiKey = getApiKey();
-    if (token) headers.Authorization = 'Bearer ' + token;
-    else if (apiKey) headers['X-API-Key'] = apiKey;
+    var keyFromQuery = qs().get('api_key');
+    // Deep-link demo: URL api_key must win over a stale sem_token, otherwise getTask 401s silently for the form
+    if (keyFromQuery) {
+      headers['X-API-Key'] = keyFromQuery;
+    } else if (token) {
+      headers.Authorization = 'Bearer ' + token;
+    } else if (apiKey) {
+      headers['X-API-Key'] = apiKey;
+    }
 
     if (body != null) {
       headers['Content-Type'] = 'application/json';
@@ -106,6 +132,7 @@
     getToken: getToken,
     getApiKey: getApiKey,
     setApiKey: setApiKey,
+    ensureAuthOrRedirect: ensureAuthOrRedirect,
     api: api,
     contentHealth: function () { return api('/content-health'); },
     contentStats: function () { return api('/content-stats'); },
@@ -114,15 +141,55 @@
     importPrompts: function (items) {
       return api('/prompts/import', { method: 'POST', body: { items: items } });
     },
+    importPromptsCsv: function (file) {
+      var tenantId = getTenantId();
+      var fd = new FormData();
+      fd.append('file', file);
+      return fetch(apiOrigin() + '/api/v1/geo/prompts/import-csv?tenant_id=' + tenantId, {
+        method: 'POST',
+        headers: (function () {
+          var h = {};
+          var token = getToken();
+          var apiKey = getApiKey();
+          if (token) h.Authorization = 'Bearer ' + token;
+          else if (apiKey) h['X-API-Key'] = apiKey;
+          return h;
+        })(),
+        body: fd,
+      }).then(function (res) { return res.json().then(function (d) {
+        if (!res.ok) throw new Error(d.detail || ('HTTP ' + res.status));
+        return d;
+      }); });
+    },
     listFacts: function (trustLevel) {
       return api('/facts', { query: trustLevel ? { trust_level: trustLevel } : {} });
     },
     createFact: function (body) { return api('/facts', { method: 'POST', body: body }); },
+    importFactsCsv: function (file) {
+      var tenantId = getTenantId();
+      var fd = new FormData();
+      fd.append('file', file);
+      return fetch(apiOrigin() + '/api/v1/geo/facts/import?tenant_id=' + tenantId, {
+        method: 'POST',
+        headers: (function () {
+          var h = {};
+          var token = getToken();
+          var apiKey = getApiKey();
+          if (token) h.Authorization = 'Bearer ' + token;
+          else if (apiKey) h['X-API-Key'] = apiKey;
+          return h;
+        })(),
+        body: fd,
+      }).then(function (res) { return res.json().then(function (d) {
+        if (!res.ok) throw new Error(d.detail || ('HTTP ' + res.status));
+        return d;
+      }); });
+    },
     verifyFact: function (id) {
       return api('/facts/' + id + '/verify', { method: 'POST', query: withTenantQuery() });
     },
-    listTasks: function (status) {
-      return api('/content-tasks', { query: status ? { status: status } : {} });
+    listTasks: function (query) {
+      return api('/content-tasks', { query: query || {} });
     },
     getTask: function (id) {
       return api('/content-tasks/' + id, { query: withTenantQuery() });
@@ -137,6 +204,12 @@
         body: { fact_ids: factIds },
       });
     },
+    seedDiagnosisFacts: function (id) {
+      return api('/content-tasks/' + id + '/seed-diagnosis-facts', {
+        method: 'POST',
+        query: withTenantQuery(),
+      });
+    },
     saveArticle: function (id, body) {
       return api('/content-tasks/' + id + '/article', {
         method: 'PUT',
@@ -149,6 +222,23 @@
         method: 'POST',
         query: Object.assign(withTenantQuery(), { require_channels: !!requireChannels }),
       });
+    },
+    applyPatch: function (id, code, authorName) {
+      return api('/content-tasks/' + id + '/apply-patch', {
+        method: 'POST',
+        query: withTenantQuery(),
+        body: { code: code, author_name: authorName || null },
+      });
+    },
+    patchTask: function (id, body) {
+      return api('/content-tasks/' + id, {
+        method: 'PATCH',
+        query: withTenantQuery(),
+        body: body,
+      });
+    },
+    createTaskFromDiagnosis: function (body) {
+      return api('/content-tasks/from-diagnosis', { method: 'POST', body: body });
     },
     generateTask: function (id) {
       return api('/content-tasks/' + id + '/generate', {

@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>提问机会池 · GEO</title>
-<link rel="stylesheet" href="assets/style.css?rev=geo-wb-1">
-<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=1">
+<link rel="stylesheet" href="assets/style.css?rev=geo-wb-2">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=6">
 </head>
 <body>
 <div class="layout">
@@ -24,12 +24,15 @@
         <div class="wb-card">
           <div class="wb-toolbar">
             <strong>机会列表</strong>
+            <input type="file" id="csvFile" accept=".csv" style="max-width:180px">
+            <button class="wb-btn" id="btnImport">CSV 导入</button>
             <button class="wb-btn" id="btnReload">刷新</button>
           </div>
           <table class="wb-table">
-            <thead><tr><th>问题</th><th>优先级</th><th>标签</th><th></th></tr></thead>
+            <thead><tr><th>问题</th><th>优先级</th><th>标签</th><th>最近任务</th><th></th></tr></thead>
             <tbody id="rows"></tbody>
           </table>
+          <div id="listEmpty" style="display:none"></div>
         </div>
         <div class="wb-card">
           <strong>新建机会问题</strong>
@@ -55,9 +58,9 @@
     </div>
   </main>
 </div>
-<script src="assets/geo-sidebar-v1.js?rev=1"></script>
-<script src="assets/geo-api-v1.js?rev=1"></script>
-<script src="assets/geo-workbench-v1.js?rev=1"></script>
+<script src="assets/geo-sidebar-v1.js?rev=6"></script>
+<script src="assets/geo-api-v1.js?rev=6"></script>
+<script src="assets/geo-workbench-v1.js?rev=6"></script>
 <script>
 (async function () {
   GeoWB.renderAuthBar(document.getElementById('authBar'));
@@ -68,13 +71,23 @@
       GeoWB.requireTenant();
       var data = await GeoAPI.listPrompts();
       var tbody = document.getElementById('rows');
+      var empty = document.getElementById('listEmpty');
       tbody.innerHTML = '';
-      (data.items || []).forEach(function (p) {
+      var items = data.items || [];
+      if (!items.length) {
+        empty.style.display = 'block';
+        GeoWB.renderEmpty(empty, '暂无机会问题 · 可手动新建或 CSV 导入', { inline: true, showIcon: false });
+        return;
+      }
+      empty.style.display = 'none';
+      empty.innerHTML = '';
+      items.forEach(function (p) {
         var tr = document.createElement('tr');
         tr.innerHTML =
           '<td>' + p.question + '</td>' +
           '<td>' + p.priority + '</td>' +
           '<td>' + (p.tags || []).join(', ') + '</td>' +
+          '<td>' + (p.last_task_id ? ('#' + p.last_task_id) : '-') + '</td>' +
           '<td><button class="wb-btn primary" data-id="' + p.id + '">创建任务</button></td>';
         tr.querySelector('button').onclick = async function () {
           try {
@@ -90,6 +103,15 @@
     } catch (e) { GeoWB.showError(err, e); }
   }
   document.getElementById('btnReload').onclick = load;
+  document.getElementById('btnImport').onclick = async function () {
+    var file = document.getElementById('csvFile').files[0];
+    if (!file) { GeoWB.showError(err, new Error('请选择 CSV 文件')); return; }
+    try {
+      var r = await GeoAPI.importPromptsCsv(file);
+      GeoWB.showImportResult(err, r);
+      await load();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
   document.getElementById('btnCreate').onclick = async function () {
     try {
       GeoWB.requireTenant();

@@ -20,3 +20,11 @@ export function generateGeoAssets({ tenantId, auditId }) {
     params: { tenant_id: tenantId },
   })
 }
+
+export function createGeoTaskFromDiagnosis({ tenantId, auditId, adviceCode }) {
+  return client.post('/api/v1/geo/content-tasks/from-diagnosis', {
+    tenant_id: tenantId,
+    audit_id: auditId,
+    advice_code: adviceCode || null,
+  })
+}

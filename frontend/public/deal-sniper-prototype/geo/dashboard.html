@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>GEO 概览</title>
-<link rel="stylesheet" href="assets/style.css?rev=geo-wb-1">
-<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=1">
+<link rel="stylesheet" href="assets/style.css?rev=geo-wb-2">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=6">
 </head>
 <body>
 <div class="layout">
@@ -21,6 +21,7 @@
       <div id="authBar" class="config-bar"></div>
       <div id="err" class="wb-error" style="display:none"></div>
       <div class="wb-grid wb-grid-3" id="stats"></div>
+      <div class="wb-grid wb-grid-3" id="todos" style="margin-top:14px"></div>
       <div class="wb-card" style="margin-top:14px">
         <strong>Demo 最短路径</strong>
         <ol class="wb-muted" style="margin:10px 0 0 18px; color:var(--text)">
@@ -33,9 +34,9 @@
     </div>
   </main>
 </div>
-<script src="assets/geo-sidebar-v1.js?rev=1"></script>
-<script src="assets/geo-api-v1.js?rev=1"></script>
-<script src="assets/geo-workbench-v1.js?rev=1"></script>
+<script src="assets/geo-sidebar-v1.js?rev=6"></script>
+<script src="assets/geo-api-v1.js?rev=6"></script>
+<script src="assets/geo-workbench-v1.js?rev=6"></script>
 <script>
 (async function () {
   GeoWB.renderAuthBar(document.getElementById('authBar'));
@@ -45,16 +46,30 @@
     var s = await GeoAPI.contentStats();
     var box = document.getElementById('stats');
     [
-      ['机会问题', s.prompts],
-      ['事实卡', s.facts],
-      ['内容任务', s.tasks],
-      ['就绪及以上', s.ready_or_beyond],
-      ['已发布回填', s.published],
+      ['机会问题', s.prompts, null],
+      ['事实卡', s.facts, 'sources.html'],
+      ['内容任务', s.tasks, 'articles.html'],
+      ['就绪及以上', s.ready_or_beyond, 'articles.html?status=ready'],
+      ['已发布回填', s.published, 'articles.html?status=published'],
+      ['来自诊断', s.from_diagnosis_count || 0, 'articles.html?from_diagnosis=1'],
     ].forEach(function (row) {
-      var div = document.createElement('div');
-      div.className = 'stat';
-      div.innerHTML = '<div class="n">' + row[1] + '</div><div class="l">' + row[0] + '</div>';
-      box.appendChild(div);
+      var el = row[2] ? document.createElement('a') : document.createElement('div');
+      el.className = row[2] ? 'stat stat-link' : 'stat';
+      if (row[2]) el.href = GeoWB.withDemoQuery(row[2]);
+      el.innerHTML = '<div class="n">' + row[1] + '</div><div class="l">' + row[0] + '</div>';
+      box.appendChild(el);
+    });
+    var todos = document.getElementById('todos');
+    [
+      ['待修规则', s.todo_blocked || 0, 'articles.html?status=needs_fix'],
+      ['待导出', s.todo_ready || 0, 'articles.html?status=ready'],
+      ['待回填 URL', s.todo_publish || 0, 'articles.html?status=exported'],
+    ].forEach(function (row) {
+      var a = document.createElement('a');
+      a.className = 'stat stat-link';
+      a.href = GeoWB.withDemoQuery(row[2]);
+      a.innerHTML = '<div class="n">' + row[1] + '</div><div class="l">' + row[0] + '</div>';
+      todos.appendChild(a);
     });
   } catch (e) { GeoWB.showError(err, e); }
 })();

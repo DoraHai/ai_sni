@@ -90,6 +90,112 @@
     return id;
   }
 
+  function renderPipeline(root, step) {
+    if (!root) return;
+    var steps = [
+      ['opportunity', '提问缺口'],
+      ['evidence', '证据注入'],
+      ['draft', '生成编辑'],
+      ['adapt', '渠道适配'],
+      ['publish', '发布回填'],
+    ];
+    var idx = steps.findIndex(function (s) { return s[0] === step; });
+    root.innerHTML = steps.map(function (s, i) {
+      var cls = 'pipe-step';
+      if (s[0] === step) cls += ' active';
+      else if (idx >= 0 && i < idx) cls += ' done';
+      return '<div class="' + cls + '">' + s[1] + '</div>';
+    }).join('<span class="pipe-arrow">→</span>');
+  }
+
+  function pipelineLabel(step) {
+    var map = {
+      opportunity: '提问缺口',
+      evidence: '证据注入',
+      draft: '生成编辑',
+      adapt: '渠道适配',
+      publish: '发布回填',
+    };
+    return map[step] || step || '-';
+  }
+
+  var EMPTY_SVG =
+    '<svg class="wb-empty-box" viewBox="0 0 240 240" aria-hidden="true">' +
+    '<defs>' +
+    '<linearGradient id="wbEmptyG1" x1="0" x2="1" y1="0" y2="1">' +
+    '<stop offset="0" stop-color="#ffffff"/>' +
+    '<stop offset="1" stop-color="#d9dde7"/>' +
+    '</linearGradient>' +
+    '<linearGradient id="wbEmptyG2" x1="0" x2="1" y1="0" y2="1">' +
+    '<stop offset="0" stop-color="#eef1f7"/>' +
+    '<stop offset="1" stop-color="#cfd5e1"/>' +
+    '</linearGradient>' +
+    '</defs>' +
+    '<ellipse cx="122" cy="195" rx="86" ry="13" fill="#e9edf4"/>' +
+    '<path d="M74 100h92v92H74z" fill="url(#wbEmptyG1)"/>' +
+    '<path d="M74 100l28-42h92l-28 42z" fill="#f8fafc"/>' +
+    '<path d="M166 100l28-42 34 52-30 42z" fill="url(#wbEmptyG2)"/>' +
+    '<path d="M74 100l-31 44h31z" fill="#d9dee8"/>' +
+    '<path d="M166 100l31 44h-31z" fill="#cfd5e1"/>' +
+    '<path d="M102 58l64 42h-92z" fill="#eef1f7"/>' +
+    '<path d="M142 69l48 22 10 24-47-22z" fill="#d9dee8"/>' +
+    '<path d="M74 100h92v92H74z" fill="none" stroke="#e2e6ee"/>' +
+    '</svg>';
+
+  function renderEmpty(root, title, opts) {
+    if (!root) return;
+    opts = opts || {};
+    var cls = 'wb-empty' + (opts.inline ? ' wb-empty-inline' : '');
+    var html = opts.showIcon === false ? '' : EMPTY_SVG;
+    html += '<div class="wb-empty-title">' + (title || '暂无数据') + '</div>';
+    root.className = cls;
+    root.innerHTML = html;
+  }
+
+  function renderComingSoon(root, featureName) {
+    var name = featureName || '该模块';
+    renderEmpty(root, '「' + name + '」开发中，接入真实功能后开放');
+  }
+
+  function withDemoQuery(href) {
+    var u = new URL(href, window.location.href);
+    var tenant = (global.GeoAPI && GeoAPI.getTenantId && GeoAPI.getTenantId()) ||
+      new URLSearchParams(window.location.search).get('tenant_id') ||
+      localStorage.getItem('geo_tenant_id');
+    var key = (global.GeoAPI && GeoAPI.getApiKey && GeoAPI.getApiKey()) ||
+      new URLSearchParams(window.location.search).get('api_key') ||
+      localStorage.getItem('geo_api_key');
+    var origin = localStorage.getItem('geo_api_origin') ||
+      new URLSearchParams(window.location.search).get('api_origin');
+    if (tenant && !u.searchParams.get('tenant_id')) u.searchParams.set('tenant_id', String(tenant));
+    if (key && !u.searchParams.get('api_key')) u.searchParams.set('api_key', key);
+    if (origin && !u.searchParams.get('api_origin')) u.searchParams.set('api_origin', origin);
+    return u.pathname.split('/').pop() + u.search;
+  }
+
+  function formatImportResult(result) {
+    var ok = result.ok_count != null ? result.ok_count : result.count;
+    var lines = ['导入成功 ' + (ok || 0) + ' 条'];
+    var errors = result.errors || [];
+    if (errors.length) {
+      lines.push('失败 ' + errors.length + ' 条：');
+      errors.slice(0, 20).forEach(function (e) {
+        lines.push('· 第 ' + (e.line || '?') + ' 行：' + (e.error || JSON.stringify(e)));
+      });
+      if (errors.length > 20) lines.push('· …其余 ' + (errors.length - 20) + ' 条略');
+    }
+    return lines.join('\n');
+  }
+
+  function showImportResult(box, result) {
+    if (!box) return;
+    var errors = result.errors || [];
+    box.style.display = 'block';
+    box.style.whiteSpace = 'pre-wrap';
+    box.className = errors.length ? 'wb-error' : 'wb-ok-box';
+    box.textContent = formatImportResult(result);
+  }
+
   global.GeoWB = {
     el: el,
     statusBadge: statusBadge,
@@ -97,5 +203,12 @@
     clearError: clearError,
     renderAuthBar: renderAuthBar,
     requireTenant: requireTenant,
+    renderPipeline: renderPipeline,
+    pipelineLabel: pipelineLabel,
+    renderEmpty: renderEmpty,
+    renderComingSoon: renderComingSoon,
+    withDemoQuery: withDemoQuery,
+    formatImportResult: formatImportResult,
+    showImportResult: showImportResult,
   };
 })(window);

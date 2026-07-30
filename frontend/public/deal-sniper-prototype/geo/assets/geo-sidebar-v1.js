@@ -5,9 +5,26 @@
   var page = window.location.pathname.split('/').pop() || 'dashboard.html';
   var activePage = page === 'editor.html' ? 'articles.html' : page;
 
+  function qs() {
+    return new URLSearchParams(window.location.search);
+  }
+
+  function withCtx(href) {
+    // Only append demo auth context to same-folder GEO pages
+    if (!/\.html$/.test(href) || href.indexOf('../') === 0 || href.indexOf('/') === 0) {
+      return href;
+    }
+    var u = new URL(href, window.location.href);
+    var tenant = qs().get('tenant_id') || localStorage.getItem('geo_tenant_id');
+    var key = qs().get('api_key') || localStorage.getItem('geo_api_key');
+    if (tenant && !u.searchParams.get('tenant_id')) u.searchParams.set('tenant_id', tenant);
+    if (key && !u.searchParams.get('api_key')) u.searchParams.set('api_key', key);
+    return u.pathname.split('/').pop() + u.search;
+  }
+
   function item(file, icon, label) {
     var active = activePage === file.split('?')[0];
-    return '<a class="nav-item' + (active ? ' active' : '') + '" href="' + file + '"' +
+    return '<a class="nav-item' + (active ? ' active' : '') + '" href="' + withCtx(file) + '"' +
       (active ? ' aria-current="page"' : '') + '><span class="ico">' + icon + '</span> ' + label + '</a>';
   }
 

@@ -47,6 +47,7 @@ class FactCreate(BaseModel):
     source_url: str | None = None
     observed_at: date | None = None
     trust_level: Literal["verified", "needs_review", "draft"] = "needs_review"
+    author_name: str | None = Field(None, max_length=100)
     meta: dict[str, Any] | None = None
 
 
@@ -58,6 +59,7 @@ class FactUpdate(BaseModel):
     source_url: str | None = None
     observed_at: date | None = None
     trust_level: Literal["verified", "needs_review", "draft"] | None = None
+    author_name: str | None = Field(None, max_length=100)
     status: Literal["active", "archived"] | None = None
     meta: dict[str, Any] | None = None
 
@@ -90,3 +92,20 @@ class PublicationCreate(BaseModel):
     channel: str
     published_url: str = Field(..., min_length=8)
     note: str | None = None
+
+
+class TaskUpdate(BaseModel):
+    title: str | None = Field(None, max_length=300)
+    owner_user_id: int | None = None
+    target_channels: list[str] | None = None
+
+
+class TaskFromDiagnosis(BaseModel):
+    tenant_id: int
+    audit_id: int
+    advice_code: str | None = None
+
+
+class ApplyPatchRequest(BaseModel):
+    code: str = Field(..., min_length=1, max_length=64)
+    author_name: str | None = Field(None, max_length=100)

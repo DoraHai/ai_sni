@@ -24,8 +24,8 @@ export function createGeoFact(body) {
   return client.post('/api/v1/geo/facts', body)
 }
 
-export function listGeoContentTasks(tenantId, status) {
-  return client.get('/api/v1/geo/content-tasks', { params: { tenant_id: tenantId, status } })
+export function listGeoContentTasks(tenantId, params = {}) {
+  return client.get('/api/v1/geo/content-tasks', { params: { tenant_id: tenantId, ...params } })
 }
 
 export function getGeoContentTask(tenantId, taskId) {
@@ -69,4 +69,15 @@ export function exportGeoVariant(tenantId, taskId, channel = 'website') {
 
 export function publishGeoVariant(taskId, body) {
   return client.post(`/api/v1/geo/content-tasks/${taskId}/publications`, body)
+}
+
+export function applyGeoContentPatch(tenantId, taskId, code, authorName) {
+  return client.post(`/api/v1/geo/content-tasks/${taskId}/apply-patch`, {
+    code,
+    author_name: authorName || null,
+  }, { params: { tenant_id: tenantId } })
+}
+
+export function createGeoTaskFromDiagnosis(body) {
+  return client.post('/api/v1/geo/content-tasks/from-diagnosis', body)
 }
