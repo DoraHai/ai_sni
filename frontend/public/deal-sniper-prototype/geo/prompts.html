@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>提问机会池 · GEO</title>
 <link rel="stylesheet" href="assets/style.css?rev=geo-wb-2">
-<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=6">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=7">
 </head>
 <body>
 <div class="layout">
@@ -58,9 +58,9 @@
     </div>
   </main>
 </div>
-<script src="assets/geo-sidebar-v1.js?rev=6"></script>
-<script src="assets/geo-api-v1.js?rev=6"></script>
-<script src="assets/geo-workbench-v1.js?rev=6"></script>
+<script src="assets/geo-sidebar-v1.js?rev=7"></script>
+<script src="assets/geo-api-v1.js?rev=7"></script>
+<script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {
   GeoWB.renderAuthBar(document.getElementById('authBar'));
@@ -83,19 +83,23 @@
       empty.innerHTML = '';
       items.forEach(function (p) {
         var tr = document.createElement('tr');
+        var visHref = GeoWB.withDemoQuery('visibility.html?prompt_id=' + p.id);
         tr.innerHTML =
           '<td>' + p.question + '</td>' +
           '<td>' + p.priority + '</td>' +
           '<td>' + (p.tags || []).join(', ') + '</td>' +
           '<td>' + (p.last_task_id ? ('#' + p.last_task_id) : '-') + '</td>' +
-          '<td><button class="wb-btn primary" data-id="' + p.id + '">创建任务</button></td>';
+          '<td style="white-space:nowrap">' +
+            '<a class="wb-btn" href="' + visHref + '">可见度</a> ' +
+            '<button class="wb-btn primary" data-id="' + p.id + '">创建任务</button>' +
+          '</td>';
         tr.querySelector('button').onclick = async function () {
           try {
             var task = await GeoAPI.createTask({
               prompt_id: p.id,
               target_channels: ['website', 'zhihu'],
             });
-            location.href = 'editor.html?tenant_id=' + GeoAPI.getTenantId() + '&task_id=' + task.id;
+            location.href = GeoWB.withDemoQuery('editor.html?task_id=' + task.id);
           } catch (e) { GeoWB.showError(err, e); }
         };
         tbody.appendChild(tr);

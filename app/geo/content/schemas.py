@@ -109,3 +109,26 @@ class TaskFromDiagnosis(BaseModel):
 class ApplyPatchRequest(BaseModel):
     code: str = Field(..., min_length=1, max_length=64)
     author_name: str | None = Field(None, max_length=100)
+
+
+SnapshotEngine = Literal["chatgpt", "deepseek", "doubao", "perplexity", "other"]
+
+
+class AnswerSnapshotCreate(BaseModel):
+    tenant_id: int
+    prompt_id: int
+    engine: SnapshotEngine = "other"
+    raw_text: str = Field(..., min_length=4)
+    captured_at: str | None = None  # ISO datetime; default now
+    mentions_brand: bool = False
+    cited_urls: list[str] = Field(default_factory=list)
+    note: str | None = None
+
+
+class AnswerSnapshotUpdate(BaseModel):
+    engine: SnapshotEngine | None = None
+    raw_text: str | None = Field(None, min_length=4)
+    captured_at: str | None = None
+    mentions_brand: bool | None = None
+    cited_urls: list[str] | None = None
+    note: str | None = None

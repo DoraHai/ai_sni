@@ -48,6 +48,7 @@ from app.models.keyword_candidate import (
 from app.models.geo_audit import GeoAuditRun
 from app.models.geo_prompt import GeoPrompt
 from app.models.geo_fact import GeoFact
+from app.models.geo_answer_snapshot import GeoAnswerSnapshot
 from app.models.geo_content import (
     GeoArticleVersion,
     GeoChannelVariant,
@@ -111,6 +112,7 @@ __all__ = [
     "GeoAuditRun",
     "GeoPrompt",
     "GeoFact",
+    "GeoAnswerSnapshot",
     "GeoContentTask",
     "GeoTaskFact",
     "GeoArticleVersion",

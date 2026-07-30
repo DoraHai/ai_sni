@@ -25,6 +25,8 @@ from app.geo.content.imports import import_facts_csv, import_prompts_csv
 from app.geo.content.pipeline import blocked_reason_from_checks, sync_pipeline_fields
 from app.geo.content.rules import RuleInput, build_fix_patches, is_ready, run_checks
 from app.geo.content.schemas import (
+    AnswerSnapshotCreate,
+    AnswerSnapshotUpdate,
     ApplyPatchRequest,
     ArticleUpdate,
     FactCreate,
@@ -39,8 +41,10 @@ from app.geo.content.schemas import (
     TaskUpdate,
     VariantsCreate,
 )
+from app.geo.content.snapshots import clear_brand_missing_tag, normalize_cited_urls
 from app.geo.content.variants import GeoContentError, adapt_for_channel
 from app.models import (
+    GeoAnswerSnapshot,
     GeoArticleVersion,
     GeoChannelVariant,
     GeoContentTask,
@@ -429,6 +433,148 @@ async def import_prompts(
     for row in created:
         await session.refresh(row)
     return {"items": [_prompt_payload(r) for r in created], "count": len(created)}
+
+
+# ---------- answer snapshots (Wave B visibility) ----------
+
+
+def _parse_captured_at(raw: str | None) -> datetime:
+    if not raw or not str(raw).strip():
+        return datetime.utcnow()
+    text = str(raw).strip().replace("Z", "+00:00")
+    try:
+        value = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise HTTPException(400, f"captured_at 无效: {raw}") from exc
+    if value.tzinfo is not None:
+        value = value.replace(tzinfo=None)
+    return value
+
+
+def _snapshot_payload(row: GeoAnswerSnapshot, *, prompt_question: str | None = None) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "prompt_id": row.prompt_id,
+        "prompt_question": prompt_question,
+        "engine": row.engine,
+        "raw_text": row.raw_text,
+        "captured_at": _iso(row.captured_at),
+        "mentions_brand": bool(row.mentions_brand),
+        "cited_urls": row.cited_urls or [],
+        "note": row.note,
+        "created_by": row.created_by,
+        "created_at": _iso(row.created_at),
+    }
+
+
+async def _get_snapshot(
+    session: AsyncSession, snapshot_id: int, tenant_id: int
+) -> GeoAnswerSnapshot:
+    row = await session.get(GeoAnswerSnapshot, snapshot_id)
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, "回答快照不存在")
+    return row
+
+
+async def _apply_brand_mention_side_effect(
+    session: AsyncSession, prompt: GeoPrompt, *, mentions_brand: bool
+) -> None:
+    if not mentions_brand:
+        return
+    tags = list(prompt.tags or [])
+    if "brand_missing" not in tags:
+        return
+    prompt.tags = clear_brand_missing_tag(tags)
+
+
+@router.get("/answer-snapshots")
+async def list_answer_snapshots(
+    tenant_id: int = Query(...),
+    prompt_id: int | None = Query(None),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    stmt = select(GeoAnswerSnapshot).where(GeoAnswerSnapshot.tenant_id == tenant_id)
+    if prompt_id is not None:
+        stmt = stmt.where(GeoAnswerSnapshot.prompt_id == prompt_id)
+    stmt = stmt.order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
+    rows = list(await session.scalars(stmt))
+    prompt_ids = {r.prompt_id for r in rows}
+    questions: dict[int, str] = {}
+    if prompt_ids:
+        for p in await session.scalars(
+            select(GeoPrompt).where(
+                GeoPrompt.tenant_id == tenant_id, GeoPrompt.id.in_(prompt_ids)
+            )
+        ):
+            questions[p.id] = p.question
+    return {
+        "items": [
+            _snapshot_payload(r, prompt_question=questions.get(r.prompt_id)) for r in rows
+        ]
+    }
+
+
+@router.post("/answer-snapshots")
+async def create_answer_snapshot(
+    req: AnswerSnapshotCreate,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(req.tenant_id)
+    await _ensure_tenant_exists(session, req.tenant_id)
+    prompt = await _get_prompt(session, req.prompt_id, req.tenant_id)
+    row = GeoAnswerSnapshot(
+        tenant_id=req.tenant_id,
+        prompt_id=prompt.id,
+        engine=req.engine,
+        raw_text=req.raw_text.strip(),
+        captured_at=_parse_captured_at(req.captured_at),
+        mentions_brand=bool(req.mentions_brand),
+        cited_urls=normalize_cited_urls(req.cited_urls),
+        note=req.note,
+        created_by=ctx.user_id,
+    )
+    session.add(row)
+    await _apply_brand_mention_side_effect(
+        session, prompt, mentions_brand=bool(req.mentions_brand)
+    )
+    await session.commit()
+    await session.refresh(row)
+    return _snapshot_payload(row, prompt_question=prompt.question)
+
+
+@router.patch("/answer-snapshots/{snapshot_id}")
+async def update_answer_snapshot(
+    snapshot_id: int,
+    req: AnswerSnapshotUpdate,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    row = await _get_snapshot(session, snapshot_id, tenant_id)
+    prompt = await _get_prompt(session, row.prompt_id, tenant_id)
+    if req.engine is not None:
+        row.engine = req.engine
+    if req.raw_text is not None:
+        row.raw_text = req.raw_text.strip()
+    if req.captured_at is not None:
+        row.captured_at = _parse_captured_at(req.captured_at)
+    if req.cited_urls is not None:
+        row.cited_urls = normalize_cited_urls(req.cited_urls)
+    if req.note is not None:
+        row.note = req.note
+    if req.mentions_brand is not None:
+        row.mentions_brand = bool(req.mentions_brand)
+        await _apply_brand_mention_side_effect(
+            session, prompt, mentions_brand=bool(req.mentions_brand)
+        )
+    await session.commit()
+    await session.refresh(row)
+    return _snapshot_payload(row, prompt_question=prompt.question)
 
 
 # ---------- facts ----------

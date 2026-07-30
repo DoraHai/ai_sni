@@ -264,5 +264,20 @@
         body: body,
       });
     },
+    listAnswerSnapshots: function (promptId) {
+      var query = withTenantQuery();
+      if (promptId != null) query.prompt_id = promptId;
+      return api('/answer-snapshots', { query: query });
+    },
+    createAnswerSnapshot: function (body) {
+      return api('/answer-snapshots', { method: 'POST', body: body });
+    },
+    patchAnswerSnapshot: function (id, body) {
+      return api('/answer-snapshots/' + id, {
+        method: 'PATCH',
+        query: withTenantQuery(),
+        body: body,
+      });
+    },
   };
 })(window);
