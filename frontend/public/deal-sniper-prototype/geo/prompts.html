@@ -97,7 +97,7 @@
           try {
             var task = await GeoAPI.createTask({
               prompt_id: p.id,
-              target_channels: ['website', 'zhihu'],
+              target_channels: ['website', 'wechat', 'zhihu'],
             });
             location.href = GeoWB.withDemoQuery('editor.html?task_id=' + task.id);
           } catch (e) { GeoWB.showError(err, e); }

@@ -24,6 +24,7 @@ from app.geo.content.generate_article import (
 from app.geo.content.imports import import_facts_csv, import_prompts_csv
 from app.geo.content.pipeline import blocked_reason_from_checks, sync_pipeline_fields
 from app.geo.content.rules import RuleInput, build_fix_patches, is_ready, run_checks
+from app.geo.content.channel_profiles import get_profile, list_profiles
 from app.geo.content.engines import default_engine_rows
 from app.geo.content.schemas import (
     AnswerSnapshotCreate,
@@ -43,10 +44,16 @@ from app.geo.content.schemas import (
     TaskFromDiagnosis,
     TaskUpdate,
     TrackingEnginesPut,
+    VariantUpdate,
     VariantsCreate,
 )
 from app.geo.content.snapshots import clear_brand_missing_tag, normalize_cited_urls
-from app.geo.content.variants import GeoContentError, adapt_for_channel
+from app.geo.content.variants import (
+    GeoContentError,
+    adapt_for_channel,
+    build_adapt_meta,
+    normalize_channels,
+)
 from app.models import (
     GeoAnswerSnapshot,
     GeoArticleVersion,
@@ -336,11 +343,16 @@ async def _task_payload(
                     "status": v.status,
                     "export_format": v.export_format,
                     "article_version_id": v.article_version_id,
+                    "adapt_meta": v.adapt_meta or {},
+                    "stale": bool(
+                        article is not None and v.article_version_id != article.id
+                    ),
                     "updated_at": _iso(v.updated_at),
                 }
                 for v in variants
             ],
             "publications": pubs,
+            "channel_profiles": list_profiles(),
         }
     )
     return payload
@@ -349,6 +361,14 @@ async def _task_payload(
 @router.get("/content-health")
 async def content_health() -> dict:
     return {"module": "geo-content", "status": "ok"}
+
+
+@router.get("/channel-profiles")
+async def get_channel_profiles(
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict:
+    _ = ctx
+    return {"items": list_profiles()}
 
 
 # ---------- prompts ----------
@@ -970,7 +990,7 @@ async def create_task(
         prompt_id=prompt.id,
         title=title,
         status="draft",
-        target_channels=req.target_channels or ["website", "zhihu"],
+        target_channels=normalize_channels(req.target_channels),
         owner_user_id=ctx.user_id,
         pipeline_step="opportunity",
         brief=req.brief,
@@ -1301,7 +1321,9 @@ async def create_variants(
     article = await _latest_article(session, task.id)
     if article is None:
         raise HTTPException(400, "请先生成或保存母稿")
-    channels = req.channels or list(task.target_channels or ["website", "zhihu"])
+    channels = normalize_channels(
+        req.channels or list(task.target_channels or [])
+    )
     existing = {v.channel: v for v in await _variants(session, task.id)}
     created = []
     for channel in channels:
@@ -1311,26 +1333,72 @@ async def create_variants(
             )
         except GeoContentError as exc:
             raise HTTPException(400, str(exc)) from exc
+        meta = build_adapt_meta(
+            channel,
+            master_version_id=article.id,
+            title=title,
+            body_md=body,
+        )
         if channel in existing:
             variant = existing[channel]
+            if variant.status == "published":
+                raise HTTPException(
+                    409,
+                    f"渠道 {channel} 已发布，请先确认后再覆盖或新增任务",
+                )
+            profile = get_profile(channel)
             variant.title = title
             variant.body_markdown = body
             variant.article_version_id = article.id
+            variant.adapt_meta = meta
             variant.status = "draft"
+            if profile:
+                variant.export_format = profile.export_format
         else:
+            profile = get_profile(channel)
             variant = GeoChannelVariant(
                 task_id=task.id,
                 article_version_id=article.id,
                 channel=channel,
                 title=title,
                 body_markdown=body,
-                export_format="markdown",
+                export_format=(profile.export_format if profile else "markdown"),
                 status="draft",
+                adapt_meta=meta,
             )
             session.add(variant)
         created.append(channel)
     # refresh target channels union
     task.target_channels = sorted(set((task.target_channels or []) + channels))
+    await _sync_task_pipeline(session, task)
+    await session.commit()
+    await session.refresh(task)
+    return await _task_payload(session, task, detail=True)
+
+
+@router.patch("/content-tasks/{task_id}/variants/{channel}")
+async def update_variant(
+    task_id: int,
+    channel: str,
+    req: VariantUpdate,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    task = await _get_task(session, task_id, tenant_id)
+    channel_key = str(channel or "").strip().lower()
+    existing = {v.channel: v for v in await _variants(session, task.id)}
+    variant = existing.get(channel_key)
+    if variant is None:
+        raise HTTPException(404, f"渠道版本不存在: {channel_key}")
+    if req.title is not None:
+        variant.title = req.title.strip()
+    if req.body_markdown is not None:
+        variant.body_markdown = req.body_markdown
+    meta = dict(variant.adapt_meta or {})
+    meta["manually_edited"] = True
+    variant.adapt_meta = meta
     await _sync_task_pipeline(session, task)
     await session.commit()
     await session.refresh(task)

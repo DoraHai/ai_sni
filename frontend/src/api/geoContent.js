@@ -55,7 +55,7 @@ export function checkGeoContentTask(tenantId, taskId, requireChannels = false) {
   })
 }
 
-export function createGeoVariants(tenantId, taskId, channels = ['website', 'zhihu']) {
+export function createGeoVariants(tenantId, taskId, channels = ['website', 'wechat', 'zhihu']) {
   return client.post(`/api/v1/geo/content-tasks/${taskId}/variants`, { channels }, {
     params: { tenant_id: tenantId },
   })

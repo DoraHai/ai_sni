@@ -246,11 +246,21 @@
         query: withTenantQuery(),
       });
     },
+    listChannelProfiles: function () {
+      return api('/channel-profiles', { query: withTenantQuery() });
+    },
     createVariants: function (id, channels) {
       return api('/content-tasks/' + id + '/variants', {
         method: 'POST',
         query: withTenantQuery(),
-        body: { channels: channels || ['website', 'zhihu'] },
+        body: { channels: channels || ['website', 'wechat', 'zhihu'] },
+      });
+    },
+    patchVariant: function (id, channel, body) {
+      return api('/content-tasks/' + id + '/variants/' + encodeURIComponent(channel), {
+        method: 'PATCH',
+        query: withTenantQuery(),
+        body: body,
       });
     },
     exportVariant: function (id, channel) {

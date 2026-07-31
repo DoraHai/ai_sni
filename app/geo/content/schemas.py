@@ -68,7 +68,9 @@ class TaskCreate(BaseModel):
     tenant_id: int
     prompt_id: int
     title: str | None = Field(None, max_length=300)
-    target_channels: list[str] = Field(default_factory=lambda: ["website", "zhihu"])
+    target_channels: list[str] = Field(
+        default_factory=lambda: ["website", "wechat", "zhihu"]
+    )
     fact_ids: list[int] = Field(default_factory=list)
     brief: dict[str, Any] | None = None
 
@@ -84,7 +86,14 @@ class ArticleUpdate(BaseModel):
 
 
 class VariantsCreate(BaseModel):
-    channels: list[str] = Field(default_factory=lambda: ["website", "zhihu"])
+    channels: list[str] = Field(
+        default_factory=lambda: ["website", "wechat", "zhihu"]
+    )
+
+
+class VariantUpdate(BaseModel):
+    title: str | None = Field(None, min_length=1)
+    body_markdown: str | None = Field(None, min_length=1)
 
 
 class PublicationCreate(BaseModel):

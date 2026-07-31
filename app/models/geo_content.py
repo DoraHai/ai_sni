@@ -88,6 +88,7 @@ class GeoChannelVariant(Base):
     body_markdown: Mapped[str] = mapped_column(Text, nullable=False)
     export_format: Mapped[str] = mapped_column(String(16), nullable=False, default="markdown")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
+    adapt_meta: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
