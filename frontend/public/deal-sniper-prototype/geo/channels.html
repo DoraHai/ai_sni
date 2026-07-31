@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>分发平台 · GEO</title>
 <link rel="stylesheet" href="assets/style.css?rev=geo-wb-2">
-<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=6">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=9">
 </head>
 <body>
 <div class="layout">
@@ -14,7 +14,7 @@
     <div class="topbar">
       <div>
         <h1>分发平台</h1>
-        <div class="sub">Demo：导出复制 + URL 回填（无一键自动发布）</div>
+        <div class="sub">中国图文主渠道：复制导出 + URL 回填（无一键自动发布）</div>
       </div>
     </div>
     <div class="page">
@@ -25,9 +25,10 @@
           <label class="wb-label" style="margin:0">选择任务</label>
           <select class="wb-select" id="taskSelect" style="max-width:420px"></select>
           <button class="wb-btn" id="btnReload">加载</button>
+          <a class="wb-btn" id="btnEditor" href="#">回编辑器</a>
         </div>
         <table class="wb-table">
-          <thead><tr><th>渠道</th><th>标题</th><th>状态</th><th>操作</th></tr></thead>
+          <thead><tr><th>渠道</th><th>标题</th><th>状态</th><th>母稿同步</th><th>操作</th></tr></thead>
           <tbody id="rows"></tbody>
         </table>
       </div>
@@ -35,11 +36,7 @@
         <strong>回填发布 URL</strong>
         <div class="wb-field" style="margin-top:12px">
           <label class="wb-label">渠道</label>
-          <select class="wb-select" id="channel">
-            <option value="website">website</option>
-            <option value="zhihu">zhihu</option>
-            <option value="baijiahao">baijiahao</option>
-          </select>
+          <select class="wb-select" id="channel"></select>
         </div>
         <div class="wb-field">
           <label class="wb-label">发布链接</label>
@@ -55,14 +52,34 @@
     </div>
   </main>
 </div>
-<script src="assets/geo-sidebar-v1.js?rev=6"></script>
-<script src="assets/geo-api-v1.js?rev=6"></script>
-<script src="assets/geo-workbench-v1.js?rev=6"></script>
+<script src="assets/geo-sidebar-v1.js?rev=7"></script>
+<script src="assets/geo-api-v1.js?rev=9"></script>
+<script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {
   GeoWB.renderAuthBar(document.getElementById('authBar'));
   var err = document.getElementById('err');
   var task = null;
+  var profileName = {};
+
+  function label(channel) {
+    return profileName[channel] || channel;
+  }
+
+  async function loadProfiles() {
+    try {
+      var data = await GeoAPI.listChannelProfiles();
+      var sel = document.getElementById('channel');
+      sel.innerHTML = '';
+      (data.items || []).forEach(function (p) {
+        profileName[p.key] = p.display_name;
+        var opt = document.createElement('option');
+        opt.value = p.key;
+        opt.textContent = p.display_name + ' (' + p.key + ')';
+        sel.appendChild(opt);
+      });
+    } catch (e) { /* keep empty */ }
+  }
 
   async function loadTasks() {
     GeoWB.requireTenant();
@@ -85,50 +102,57 @@
       var id = Number(document.getElementById('taskSelect').value);
       if (!id) return;
       task = await GeoAPI.getTask(id);
+      document.getElementById('btnEditor').href = GeoWB.withDemoQuery('editor.html?task_id=' + id);
       var tbody = document.getElementById('rows');
       tbody.innerHTML = '';
       (task.variants || []).forEach(function (v) {
         var tr = document.createElement('tr');
         tr.innerHTML =
-          '<td>' + v.channel + '</td>' +
+          '<td>' + label(v.channel) + '</td>' +
           '<td>' + v.title + '</td>' +
           '<td>' + GeoWB.statusBadge(v.status) + '</td>' +
+          '<td>' + (v.stale ? '<span class="wb-badge warn">过期</span>' : '<span class="wb-badge good">同步</span>') + '</td>' +
           '<td><button class="wb-btn" data-ch="' + v.channel + '">复制</button></td>';
         tr.querySelector('button').onclick = async function () {
           try {
             var data = await GeoAPI.exportVariant(task.id, v.channel);
             await navigator.clipboard.writeText('# ' + data.title + '\n\n' + data.body_markdown);
-            alert('已复制');
+            alert('已复制 ' + label(v.channel));
+            task = await GeoAPI.getTask(task.id);
             await loadDetail();
           } catch (e) { GeoWB.showError(err, e); }
         };
         tbody.appendChild(tr);
       });
-      document.getElementById('pubs').innerHTML = (task.publications || []).map(function (p) {
-        return p.channel + ': <a href="' + p.published_url + '" target="_blank" rel="noopener">' + p.published_url + '</a>';
-      }).join('<br>') || '暂无回填记录';
+      var pubs = document.getElementById('pubs');
+      if ((task.publications || []).length) {
+        pubs.innerHTML = (task.publications || []).map(function (p) {
+          return label(p.channel) + ' · ' + (p.published_url || '-') + ' · ' + (p.status || '');
+        }).join('<br>');
+      } else {
+        pubs.textContent = '暂无回填记录';
+      }
     } catch (e) { GeoWB.showError(err, e); }
   }
 
   document.getElementById('btnReload').onclick = loadDetail;
+  document.getElementById('taskSelect').onchange = loadDetail;
   document.getElementById('btnPublish').onclick = async function () {
     try {
+      GeoWB.requireTenant();
       var id = Number(document.getElementById('taskSelect').value);
-      if (!id) throw new Error('请先选择任务');
-      var url = document.getElementById('url').value;
-      // 直接打后端门禁：未就绪应返回 HTTP 400（不再只做前端拦截）
-      task = await GeoAPI.publish(id, {
+      await GeoAPI.publish(id, {
         channel: document.getElementById('channel').value,
-        published_url: url,
+        published_url: document.getElementById('url').value,
         note: document.getElementById('note').value || null,
       });
       document.getElementById('url').value = '';
-      GeoWB.clearError(err);
       await loadDetail();
     } catch (e) { GeoWB.showError(err, e); }
   };
 
   try {
+    await loadProfiles();
     await loadTasks();
     await loadDetail();
   } catch (e) { GeoWB.showError(err, e); }

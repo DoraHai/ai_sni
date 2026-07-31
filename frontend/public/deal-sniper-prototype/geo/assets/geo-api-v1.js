@@ -246,11 +246,21 @@
         query: withTenantQuery(),
       });
     },
+    listChannelProfiles: function () {
+      return api('/channel-profiles', { query: withTenantQuery() });
+    },
     createVariants: function (id, channels) {
       return api('/content-tasks/' + id + '/variants', {
         method: 'POST',
         query: withTenantQuery(),
-        body: { channels: channels || ['website', 'zhihu'] },
+        body: { channels: channels || ['website', 'wechat', 'zhihu'] },
+      });
+    },
+    patchVariant: function (id, channel, body) {
+      return api('/content-tasks/' + id + '/variants/' + encodeURIComponent(channel), {
+        method: 'PATCH',
+        query: withTenantQuery(),
+        body: body,
       });
     },
     exportVariant: function (id, channel) {
@@ -261,6 +271,48 @@
     publish: function (id, body) {
       return api('/content-tasks/' + id + '/publications', {
         method: 'POST',
+        body: body,
+      });
+    },
+    listAnswerSnapshots: function (promptId, engine) {
+      var query = withTenantQuery();
+      if (promptId != null) query.prompt_id = promptId;
+      if (engine) query.engine = engine;
+      return api('/answer-snapshots', { query: query });
+    },
+    createAnswerSnapshot: function (body) {
+      return api('/answer-snapshots', { method: 'POST', body: body });
+    },
+    patchAnswerSnapshot: function (id, body) {
+      return api('/answer-snapshots/' + id, {
+        method: 'PATCH',
+        query: withTenantQuery(),
+        body: body,
+      });
+    },
+    listTrackingEngines: function (enabledOnly) {
+      var query = withTenantQuery();
+      if (enabledOnly) query.enabled_only = true;
+      return api('/tracking-engines', { query: query });
+    },
+    putTrackingEngines: function (items) {
+      return api('/tracking-engines', {
+        method: 'PUT',
+        body: { items: items || [] },
+      });
+    },
+    listMediaPlacements: function (status) {
+      var query = withTenantQuery();
+      if (status) query.status = status;
+      return api('/media-placements', { query: query });
+    },
+    createMediaPlacement: function (body) {
+      return api('/media-placements', { method: 'POST', body: body });
+    },
+    patchMediaPlacement: function (id, body) {
+      return api('/media-placements/' + id, {
+        method: 'PATCH',
+        query: withTenantQuery(),
         body: body,
       });
     },

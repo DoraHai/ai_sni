@@ -76,6 +76,15 @@
 .stat-link:hover { border-color: var(--accent); }
 .wb-ok-box { color: #166534; background:#f0fdf4; border:1px solid #bbf7d0; padding:10px 12px; border-radius:9px; margin-bottom:12px; white-space: pre-wrap; }
 .wb-hint { color: var(--muted); font-size: 12px; margin-top: 8px; line-height: 1.5; }
+.wb-tabs { display:flex; flex-wrap:wrap; gap:6px; margin: 0 0 12px; }
+.wb-tab {
+  border: 1px solid var(--border); background: #fff; color: var(--text);
+  border-radius: 9px; padding: 6px 12px; font-size: 12px; cursor: pointer;
+}
+.wb-tab.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.wb-tab .wb-stale { color: #b45309; margin-left: 4px; }
+.wb-channel-pick { display:flex; flex-wrap:wrap; gap:10px 14px; margin: 8px 0 4px; font-size: 13px; }
+.wb-channel-pick label { display:inline-flex; align-items:center; gap:6px; cursor:pointer; }
 .wb-empty {
   display: flex;
   flex-direction: column;

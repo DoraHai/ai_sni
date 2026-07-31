@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI 引擎管理 · GEO</title>
 <link rel="stylesheet" href="assets/style.css?rev=geo-wb-2">
-<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=2">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=8">
 </head>
 <body>
 <div class="layout">
@@ -14,18 +14,114 @@
     <div class="topbar">
       <div>
         <h1>AI 引擎管理</h1>
-        <div class="sub">监测引擎配置 · Wave B 后置</div>
+        <div class="sub">监测引擎清单 · 供可见度人工快照选用（不做自动抓取）</div>
       </div>
     </div>
     <div class="page">
-      <div id="empty"></div>
+      <div id="authBar" class="config-bar"></div>
+      <div id="err" class="wb-error" style="display:none"></div>
+      <div class="wb-card">
+        <div class="wb-toolbar">
+          <strong>租户监测引擎</strong>
+          <button class="wb-btn primary" id="btnSave">保存</button>
+          <button class="wb-btn" id="btnReload">刷新</button>
+        </div>
+        <div class="wb-hint" style="margin-bottom:12px">启用的引擎会出现在「AI 可见度」登记表单下拉中。本页不配置 API Key，也不做自动巡检。</div>
+        <table class="wb-table">
+          <thead>
+            <tr>
+              <th>启用</th>
+              <th>引擎 key</th>
+              <th>展示名</th>
+              <th>排序</th>
+              <th>备注</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
     </div>
   </main>
 </div>
-<script src="assets/geo-sidebar-v1.js?rev=2"></script>
-<script src="assets/geo-workbench-v1.js?rev=2"></script>
+<script src="assets/geo-sidebar-v1.js?rev=7"></script>
+<script src="assets/geo-api-v1.js?rev=8"></script>
+<script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
-  GeoWB.renderComingSoon(document.getElementById('empty'), 'AI 引擎管理');
+(async function () {
+  GeoWB.renderAuthBar(document.getElementById('authBar'));
+  var err = document.getElementById('err');
+  var items = [];
+
+  function render() {
+    var tbody = document.getElementById('rows');
+    tbody.innerHTML = '';
+    items.forEach(function (e, idx) {
+      var tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td><input type="checkbox" data-f="enabled" ' + (e.enabled ? 'checked' : '') + '></td>' +
+        '<td class="wb-muted">' + e.engine_key + '</td>' +
+        '<td><input class="wb-input" data-f="display_name" value="' + String(e.display_name || '').replace(/"/g, '&quot;') + '"></td>' +
+        '<td><input class="wb-input" data-f="sort_order" type="number" style="width:90px" value="' + (e.sort_order || 0) + '"></td>' +
+        '<td><input class="wb-input" data-f="note" value="' + String(e.note || '').replace(/"/g, '&quot;') + '"></td>';
+      tbody.appendChild(tr);
+      tr.querySelectorAll('[data-f]').forEach(function (input) {
+        input.onchange = input.oninput = function () {
+          var f = input.getAttribute('data-f');
+          if (f === 'enabled') items[idx].enabled = input.checked;
+          else if (f === 'sort_order') items[idx].sort_order = Number(input.value) || 0;
+          else items[idx][f] = input.value;
+        };
+      });
+    });
+  }
+
+  async function load() {
+    GeoWB.clearError(err);
+    GeoWB.requireTenant();
+    var data = await GeoAPI.listTrackingEngines();
+    items = (data.items || []).map(function (e) {
+      return {
+        engine_key: e.engine_key,
+        display_name: e.display_name,
+        enabled: !!e.enabled,
+        note: e.note || '',
+        sort_order: e.sort_order || 0,
+      };
+    });
+    render();
+  }
+
+  document.getElementById('btnReload').onclick = function () {
+    load().catch(function (e) { GeoWB.showError(err, e); });
+  };
+  document.getElementById('btnSave').onclick = async function () {
+    try {
+      GeoWB.requireTenant();
+      var payload = items.map(function (e) {
+        return {
+          engine_key: e.engine_key,
+          display_name: e.display_name || e.engine_key,
+          enabled: !!e.enabled,
+          note: e.note || null,
+          sort_order: Number(e.sort_order) || 0,
+        };
+      });
+      var data = await GeoAPI.putTrackingEngines(payload);
+      items = (data.items || []).map(function (e) {
+        return {
+          engine_key: e.engine_key,
+          display_name: e.display_name,
+          enabled: !!e.enabled,
+          note: e.note || '',
+          sort_order: e.sort_order || 0,
+        };
+      });
+      render();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+
+  try { await load(); } catch (e) { GeoWB.showError(err, e); }
+})();
 </script>
 </body>
 </html>

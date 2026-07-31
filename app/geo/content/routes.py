@@ -24,11 +24,17 @@ from app.geo.content.generate_article import (
 from app.geo.content.imports import import_facts_csv, import_prompts_csv
 from app.geo.content.pipeline import blocked_reason_from_checks, sync_pipeline_fields
 from app.geo.content.rules import RuleInput, build_fix_patches, is_ready, run_checks
+from app.geo.content.channel_profiles import get_profile, list_profiles
+from app.geo.content.engines import default_engine_rows
 from app.geo.content.schemas import (
+    AnswerSnapshotCreate,
+    AnswerSnapshotUpdate,
     ApplyPatchRequest,
     ArticleUpdate,
     FactCreate,
     FactUpdate,
+    MediaPlacementCreate,
+    MediaPlacementUpdate,
     PromptCreate,
     PromptImportRequest,
     PromptUpdate,
@@ -37,17 +43,28 @@ from app.geo.content.schemas import (
     TaskFactsUpdate,
     TaskFromDiagnosis,
     TaskUpdate,
+    TrackingEnginesPut,
+    VariantUpdate,
     VariantsCreate,
 )
-from app.geo.content.variants import GeoContentError, adapt_for_channel
+from app.geo.content.snapshots import clear_brand_missing_tag, normalize_cited_urls
+from app.geo.content.variants import (
+    GeoContentError,
+    adapt_for_channel,
+    build_adapt_meta,
+    normalize_channels,
+)
 from app.models import (
+    GeoAnswerSnapshot,
     GeoArticleVersion,
     GeoChannelVariant,
     GeoContentTask,
     GeoFact,
+    GeoMediaPlacement,
     GeoPrompt,
     GeoPublication,
     GeoTaskFact,
+    GeoTrackingEngine,
     Tenant,
 )
 from app.security.auth import AuthContext, require_scoped_auth
@@ -326,11 +343,16 @@ async def _task_payload(
                     "status": v.status,
                     "export_format": v.export_format,
                     "article_version_id": v.article_version_id,
+                    "adapt_meta": v.adapt_meta or {},
+                    "stale": bool(
+                        article is not None and v.article_version_id != article.id
+                    ),
                     "updated_at": _iso(v.updated_at),
                 }
                 for v in variants
             ],
             "publications": pubs,
+            "channel_profiles": list_profiles(),
         }
     )
     return payload
@@ -339,6 +361,14 @@ async def _task_payload(
 @router.get("/content-health")
 async def content_health() -> dict:
     return {"module": "geo-content", "status": "ok"}
+
+
+@router.get("/channel-profiles")
+async def get_channel_profiles(
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict:
+    _ = ctx
+    return {"items": list_profiles()}
 
 
 # ---------- prompts ----------
@@ -429,6 +459,349 @@ async def import_prompts(
     for row in created:
         await session.refresh(row)
     return {"items": [_prompt_payload(r) for r in created], "count": len(created)}
+
+
+# ---------- answer snapshots (Wave B visibility) ----------
+
+
+def _parse_captured_at(raw: str | None) -> datetime:
+    if not raw or not str(raw).strip():
+        return datetime.utcnow()
+    text = str(raw).strip().replace("Z", "+00:00")
+    try:
+        value = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise HTTPException(400, f"captured_at 无效: {raw}") from exc
+    if value.tzinfo is not None:
+        value = value.replace(tzinfo=None)
+    return value
+
+
+def _snapshot_payload(row: GeoAnswerSnapshot, *, prompt_question: str | None = None) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "prompt_id": row.prompt_id,
+        "prompt_question": prompt_question,
+        "engine": row.engine,
+        "raw_text": row.raw_text,
+        "captured_at": _iso(row.captured_at),
+        "mentions_brand": bool(row.mentions_brand),
+        "cited_urls": row.cited_urls or [],
+        "note": row.note,
+        "created_by": row.created_by,
+        "created_at": _iso(row.created_at),
+    }
+
+
+async def _get_snapshot(
+    session: AsyncSession, snapshot_id: int, tenant_id: int
+) -> GeoAnswerSnapshot:
+    row = await session.get(GeoAnswerSnapshot, snapshot_id)
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, "回答快照不存在")
+    return row
+
+
+async def _apply_brand_mention_side_effect(
+    session: AsyncSession, prompt: GeoPrompt, *, mentions_brand: bool
+) -> None:
+    if not mentions_brand:
+        return
+    tags = list(prompt.tags or [])
+    if "brand_missing" not in tags:
+        return
+    prompt.tags = clear_brand_missing_tag(tags)
+
+
+@router.get("/answer-snapshots")
+async def list_answer_snapshots(
+    tenant_id: int = Query(...),
+    prompt_id: int | None = Query(None),
+    engine: str | None = Query(None),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    stmt = select(GeoAnswerSnapshot).where(GeoAnswerSnapshot.tenant_id == tenant_id)
+    if prompt_id is not None:
+        stmt = stmt.where(GeoAnswerSnapshot.prompt_id == prompt_id)
+    if engine:
+        stmt = stmt.where(GeoAnswerSnapshot.engine == engine)
+    stmt = stmt.order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
+    rows = list(await session.scalars(stmt))
+    prompt_ids = {r.prompt_id for r in rows}
+    questions: dict[int, str] = {}
+    if prompt_ids:
+        for p in await session.scalars(
+            select(GeoPrompt).where(
+                GeoPrompt.tenant_id == tenant_id, GeoPrompt.id.in_(prompt_ids)
+            )
+        ):
+            questions[p.id] = p.question
+    return {
+        "items": [
+            _snapshot_payload(r, prompt_question=questions.get(r.prompt_id)) for r in rows
+        ]
+    }
+
+
+@router.post("/answer-snapshots")
+async def create_answer_snapshot(
+    req: AnswerSnapshotCreate,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(req.tenant_id)
+    await _ensure_tenant_exists(session, req.tenant_id)
+    prompt = await _get_prompt(session, req.prompt_id, req.tenant_id)
+    row = GeoAnswerSnapshot(
+        tenant_id=req.tenant_id,
+        prompt_id=prompt.id,
+        engine=req.engine,
+        raw_text=req.raw_text.strip(),
+        captured_at=_parse_captured_at(req.captured_at),
+        mentions_brand=bool(req.mentions_brand),
+        cited_urls=normalize_cited_urls(req.cited_urls),
+        note=req.note,
+        created_by=ctx.user_id,
+    )
+    session.add(row)
+    await _apply_brand_mention_side_effect(
+        session, prompt, mentions_brand=bool(req.mentions_brand)
+    )
+    await session.commit()
+    await session.refresh(row)
+    return _snapshot_payload(row, prompt_question=prompt.question)
+
+
+@router.patch("/answer-snapshots/{snapshot_id}")
+async def update_answer_snapshot(
+    snapshot_id: int,
+    req: AnswerSnapshotUpdate,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    row = await _get_snapshot(session, snapshot_id, tenant_id)
+    prompt = await _get_prompt(session, row.prompt_id, tenant_id)
+    if req.engine is not None:
+        row.engine = req.engine
+    if req.raw_text is not None:
+        row.raw_text = req.raw_text.strip()
+    if req.captured_at is not None:
+        row.captured_at = _parse_captured_at(req.captured_at)
+    if req.cited_urls is not None:
+        row.cited_urls = normalize_cited_urls(req.cited_urls)
+    if req.note is not None:
+        row.note = req.note
+    if req.mentions_brand is not None:
+        row.mentions_brand = bool(req.mentions_brand)
+        await _apply_brand_mention_side_effect(
+            session, prompt, mentions_brand=bool(req.mentions_brand)
+        )
+    await session.commit()
+    await session.refresh(row)
+    return _snapshot_payload(row, prompt_question=prompt.question)
+
+
+# ---------- tracking engines (Wave B2) ----------
+
+
+def _engine_payload(row: GeoTrackingEngine) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "engine_key": row.engine_key,
+        "display_name": row.display_name,
+        "enabled": bool(row.enabled),
+        "note": row.note,
+        "sort_order": row.sort_order,
+        "created_at": _iso(row.created_at),
+        "updated_at": _iso(row.updated_at),
+    }
+
+
+async def _ensure_default_engines(
+    session: AsyncSession, tenant_id: int
+) -> list[GeoTrackingEngine]:
+    rows = list(
+        await session.scalars(
+            select(GeoTrackingEngine)
+            .where(GeoTrackingEngine.tenant_id == tenant_id)
+            .order_by(GeoTrackingEngine.sort_order, GeoTrackingEngine.id)
+        )
+    )
+    if rows:
+        return rows
+    await _ensure_tenant_exists(session, tenant_id)
+    created: list[GeoTrackingEngine] = []
+    for item in default_engine_rows(tenant_id):
+        row = GeoTrackingEngine(**item)
+        session.add(row)
+        created.append(row)
+    await session.commit()
+    for row in created:
+        await session.refresh(row)
+    return created
+
+
+@router.get("/tracking-engines")
+async def list_tracking_engines(
+    tenant_id: int = Query(...),
+    enabled_only: bool = Query(False),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    rows = await _ensure_default_engines(session, tenant_id)
+    if enabled_only:
+        rows = [r for r in rows if r.enabled]
+    return {"items": [_engine_payload(r) for r in rows]}
+
+
+@router.put("/tracking-engines")
+async def put_tracking_engines(
+    req: TrackingEnginesPut,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(req.tenant_id)
+    await _ensure_tenant_exists(session, req.tenant_id)
+    await session.execute(
+        delete(GeoTrackingEngine).where(GeoTrackingEngine.tenant_id == req.tenant_id)
+    )
+    created: list[GeoTrackingEngine] = []
+    seen: set[str] = set()
+    for item in req.items:
+        if item.engine_key in seen:
+            continue
+        seen.add(item.engine_key)
+        row = GeoTrackingEngine(
+            tenant_id=req.tenant_id,
+            engine_key=item.engine_key,
+            display_name=item.display_name.strip(),
+            enabled=bool(item.enabled),
+            note=item.note,
+            sort_order=int(item.sort_order),
+        )
+        session.add(row)
+        created.append(row)
+    await session.commit()
+    for row in created:
+        await session.refresh(row)
+    created.sort(key=lambda r: (r.sort_order, r.id or 0))
+    return {"items": [_engine_payload(r) for r in created], "count": len(created)}
+
+
+# ---------- media placements (Wave B2) ----------
+
+
+def _media_payload(row: GeoMediaPlacement) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "name": row.name,
+        "channel_type": row.channel_type,
+        "target_url": row.target_url,
+        "authority_note": row.authority_note,
+        "status": row.status,
+        "published_url": row.published_url,
+        "priority": row.priority,
+        "related_prompt_id": row.related_prompt_id,
+        "created_by": row.created_by,
+        "created_at": _iso(row.created_at),
+        "updated_at": _iso(row.updated_at),
+    }
+
+
+async def _get_media_placement(
+    session: AsyncSession, placement_id: int, tenant_id: int
+) -> GeoMediaPlacement:
+    row = await session.get(GeoMediaPlacement, placement_id)
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, "信源布局不存在")
+    return row
+
+
+@router.get("/media-placements")
+async def list_media_placements(
+    tenant_id: int = Query(...),
+    status: str | None = Query(None),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    stmt = select(GeoMediaPlacement).where(GeoMediaPlacement.tenant_id == tenant_id)
+    if status:
+        stmt = stmt.where(GeoMediaPlacement.status == status)
+    stmt = stmt.order_by(
+        GeoMediaPlacement.priority.desc(), GeoMediaPlacement.id.desc()
+    )
+    rows = list(await session.scalars(stmt))
+    return {"items": [_media_payload(r) for r in rows]}
+
+
+@router.post("/media-placements")
+async def create_media_placement(
+    req: MediaPlacementCreate,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(req.tenant_id)
+    await _ensure_tenant_exists(session, req.tenant_id)
+    if req.related_prompt_id is not None:
+        await _get_prompt(session, req.related_prompt_id, req.tenant_id)
+    row = GeoMediaPlacement(
+        tenant_id=req.tenant_id,
+        name=req.name.strip(),
+        channel_type=req.channel_type,
+        target_url=req.target_url,
+        authority_note=req.authority_note,
+        status=req.status,
+        published_url=req.published_url,
+        priority=int(req.priority),
+        related_prompt_id=req.related_prompt_id,
+        created_by=ctx.user_id,
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return _media_payload(row)
+
+
+@router.patch("/media-placements/{placement_id}")
+async def update_media_placement(
+    placement_id: int,
+    req: MediaPlacementUpdate,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    row = await _get_media_placement(session, placement_id, tenant_id)
+    if req.name is not None:
+        row.name = req.name.strip()
+    if req.channel_type is not None:
+        row.channel_type = req.channel_type
+    if req.target_url is not None:
+        row.target_url = req.target_url
+    if req.authority_note is not None:
+        row.authority_note = req.authority_note
+    if req.status is not None:
+        row.status = req.status
+    if req.published_url is not None:
+        row.published_url = req.published_url
+    if req.priority is not None:
+        row.priority = int(req.priority)
+    if req.related_prompt_id is not None:
+        if req.related_prompt_id:
+            await _get_prompt(session, req.related_prompt_id, tenant_id)
+        row.related_prompt_id = req.related_prompt_id or None
+    await session.commit()
+    await session.refresh(row)
+    return _media_payload(row)
 
 
 # ---------- facts ----------
@@ -617,7 +990,7 @@ async def create_task(
         prompt_id=prompt.id,
         title=title,
         status="draft",
-        target_channels=req.target_channels or ["website", "zhihu"],
+        target_channels=normalize_channels(req.target_channels),
         owner_user_id=ctx.user_id,
         pipeline_step="opportunity",
         brief=req.brief,
@@ -948,7 +1321,9 @@ async def create_variants(
     article = await _latest_article(session, task.id)
     if article is None:
         raise HTTPException(400, "请先生成或保存母稿")
-    channels = req.channels or list(task.target_channels or ["website", "zhihu"])
+    channels = normalize_channels(
+        req.channels or list(task.target_channels or [])
+    )
     existing = {v.channel: v for v in await _variants(session, task.id)}
     created = []
     for channel in channels:
@@ -958,26 +1333,72 @@ async def create_variants(
             )
         except GeoContentError as exc:
             raise HTTPException(400, str(exc)) from exc
+        meta = build_adapt_meta(
+            channel,
+            master_version_id=article.id,
+            title=title,
+            body_md=body,
+        )
         if channel in existing:
             variant = existing[channel]
+            if variant.status == "published":
+                raise HTTPException(
+                    409,
+                    f"渠道 {channel} 已发布，请先确认后再覆盖或新增任务",
+                )
+            profile = get_profile(channel)
             variant.title = title
             variant.body_markdown = body
             variant.article_version_id = article.id
+            variant.adapt_meta = meta
             variant.status = "draft"
+            if profile:
+                variant.export_format = profile.export_format
         else:
+            profile = get_profile(channel)
             variant = GeoChannelVariant(
                 task_id=task.id,
                 article_version_id=article.id,
                 channel=channel,
                 title=title,
                 body_markdown=body,
-                export_format="markdown",
+                export_format=(profile.export_format if profile else "markdown"),
                 status="draft",
+                adapt_meta=meta,
             )
             session.add(variant)
         created.append(channel)
     # refresh target channels union
     task.target_channels = sorted(set((task.target_channels or []) + channels))
+    await _sync_task_pipeline(session, task)
+    await session.commit()
+    await session.refresh(task)
+    return await _task_payload(session, task, detail=True)
+
+
+@router.patch("/content-tasks/{task_id}/variants/{channel}")
+async def update_variant(
+    task_id: int,
+    channel: str,
+    req: VariantUpdate,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    task = await _get_task(session, task_id, tenant_id)
+    channel_key = str(channel or "").strip().lower()
+    existing = {v.channel: v for v in await _variants(session, task.id)}
+    variant = existing.get(channel_key)
+    if variant is None:
+        raise HTTPException(404, f"渠道版本不存在: {channel_key}")
+    if req.title is not None:
+        variant.title = req.title.strip()
+    if req.body_markdown is not None:
+        variant.body_markdown = req.body_markdown
+    meta = dict(variant.adapt_meta or {})
+    meta["manually_edited"] = True
+    variant.adapt_meta = meta
     await _sync_task_pipeline(session, task)
     await session.commit()
     await session.refresh(task)
@@ -1110,6 +1531,29 @@ async def content_stats(
             GeoContentTask.diagnosis_audit_id.isnot(None),
         )
     )
+    snapshots = await session.scalar(
+        select(func.count()).select_from(GeoAnswerSnapshot).where(
+            GeoAnswerSnapshot.tenant_id == tenant_id
+        )
+    )
+    snapshots_mention = await session.scalar(
+        select(func.count()).select_from(GeoAnswerSnapshot).where(
+            GeoAnswerSnapshot.tenant_id == tenant_id,
+            GeoAnswerSnapshot.mentions_brand.is_(True),
+        )
+    )
+    media_planned = await session.scalar(
+        select(func.count()).select_from(GeoMediaPlacement).where(
+            GeoMediaPlacement.tenant_id == tenant_id,
+            GeoMediaPlacement.status.in_(["planned", "in_progress"]),
+        )
+    )
+    media_published = await session.scalar(
+        select(func.count()).select_from(GeoMediaPlacement).where(
+            GeoMediaPlacement.tenant_id == tenant_id,
+            GeoMediaPlacement.status == "published",
+        )
+    )
     return {
         "prompts": int(prompts or 0),
         "facts": int(facts or 0),
@@ -1120,4 +1564,8 @@ async def content_stats(
         "todo_ready": int(todo_ready or 0),
         "todo_publish": int(todo_publish or 0),
         "from_diagnosis_count": int(from_diagnosis or 0),
+        "snapshots": int(snapshots or 0),
+        "snapshots_mention_brand": int(snapshots_mention or 0),
+        "media_open": int(media_planned or 0),
+        "media_published": int(media_published or 0),
     }

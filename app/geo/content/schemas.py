@@ -68,7 +68,9 @@ class TaskCreate(BaseModel):
     tenant_id: int
     prompt_id: int
     title: str | None = Field(None, max_length=300)
-    target_channels: list[str] = Field(default_factory=lambda: ["website", "zhihu"])
+    target_channels: list[str] = Field(
+        default_factory=lambda: ["website", "wechat", "zhihu"]
+    )
     fact_ids: list[int] = Field(default_factory=list)
     brief: dict[str, Any] | None = None
 
@@ -84,7 +86,14 @@ class ArticleUpdate(BaseModel):
 
 
 class VariantsCreate(BaseModel):
-    channels: list[str] = Field(default_factory=lambda: ["website", "zhihu"])
+    channels: list[str] = Field(
+        default_factory=lambda: ["website", "wechat", "zhihu"]
+    )
+
+
+class VariantUpdate(BaseModel):
+    title: str | None = Field(None, min_length=1)
+    body_markdown: str | None = Field(None, min_length=1)
 
 
 class PublicationCreate(BaseModel):
@@ -109,3 +118,66 @@ class TaskFromDiagnosis(BaseModel):
 class ApplyPatchRequest(BaseModel):
     code: str = Field(..., min_length=1, max_length=64)
     author_name: str | None = Field(None, max_length=100)
+
+
+SnapshotEngine = Literal["chatgpt", "deepseek", "doubao", "perplexity", "other"]
+
+
+class AnswerSnapshotCreate(BaseModel):
+    tenant_id: int
+    prompt_id: int
+    engine: SnapshotEngine = "other"
+    raw_text: str = Field(..., min_length=4)
+    captured_at: str | None = None  # ISO datetime; default now
+    mentions_brand: bool = False
+    cited_urls: list[str] = Field(default_factory=list)
+    note: str | None = None
+
+
+class AnswerSnapshotUpdate(BaseModel):
+    engine: SnapshotEngine | None = None
+    raw_text: str | None = Field(None, min_length=4)
+    captured_at: str | None = None
+    mentions_brand: bool | None = None
+    cited_urls: list[str] | None = None
+    note: str | None = None
+
+
+class TrackingEngineItem(BaseModel):
+    engine_key: SnapshotEngine
+    display_name: str = Field(..., min_length=1, max_length=80)
+    enabled: bool = True
+    note: str | None = None
+    sort_order: int = 0
+
+
+class TrackingEnginesPut(BaseModel):
+    tenant_id: int
+    items: list[TrackingEngineItem] = Field(..., min_length=1)
+
+
+MediaChannelType = Literal["website", "zhihu", "wechat", "news", "wiki", "other"]
+MediaPlacementStatus = Literal["planned", "in_progress", "published", "archived"]
+
+
+class MediaPlacementCreate(BaseModel):
+    tenant_id: int
+    name: str = Field(..., min_length=1, max_length=200)
+    channel_type: MediaChannelType = "other"
+    target_url: str | None = None
+    authority_note: str | None = None
+    status: MediaPlacementStatus = "planned"
+    published_url: str | None = None
+    priority: int = 0
+    related_prompt_id: int | None = None
+
+
+class MediaPlacementUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=200)
+    channel_type: MediaChannelType | None = None
+    target_url: str | None = None
+    authority_note: str | None = None
+    status: MediaPlacementStatus | None = None
+    published_url: str | None = None
+    priority: int | None = None
+    related_prompt_id: int | None = None
