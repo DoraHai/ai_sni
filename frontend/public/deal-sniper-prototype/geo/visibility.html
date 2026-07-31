@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI 可见度 · GEO</title>
 <link rel="stylesheet" href="assets/style.css?rev=geo-wb-2">
-<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=7">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=8">
 </head>
 <body>
 <div class="layout">
@@ -14,7 +14,7 @@
     <div class="topbar">
       <div>
         <h1>AI 可见度</h1>
-        <div class="sub">人工粘贴 AI 回答快照 · Wave B MVP（不做自动巡检）</div>
+        <div class="sub">人工粘贴 AI 回答快照 · Wave B（不做自动巡检）</div>
       </div>
     </div>
     <div class="page">
@@ -29,13 +29,8 @@
           </div>
           <div class="wb-field">
             <label class="wb-label">引擎</label>
-            <select class="wb-select" id="engine">
-              <option value="chatgpt">ChatGPT</option>
-              <option value="deepseek">DeepSeek</option>
-              <option value="doubao">豆包</option>
-              <option value="perplexity">Perplexity</option>
-              <option value="other">其他</option>
-            </select>
+            <select class="wb-select" id="engine"></select>
+            <div class="wb-hint">选项来自「AI 引擎管理」中已启用的引擎</div>
           </div>
           <div class="wb-field">
             <label class="wb-label">回答原文（粘贴）</label>
@@ -62,6 +57,9 @@
         <div class="wb-card">
           <div class="wb-toolbar">
             <strong>快照列表</strong>
+            <select class="wb-select" id="filterEngine" style="width:auto;min-width:140px">
+              <option value="">全部引擎</option>
+            </select>
             <button class="wb-btn" id="btnReload">刷新</button>
             <button class="wb-btn" id="btnClearFilter" style="display:none">清除问题过滤</button>
           </div>
@@ -85,7 +83,7 @@
   </main>
 </div>
 <script src="assets/geo-sidebar-v1.js?rev=7"></script>
-<script src="assets/geo-api-v1.js?rev=7"></script>
+<script src="assets/geo-api-v1.js?rev=8"></script>
 <script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {
@@ -94,10 +92,46 @@
   var params = new URLSearchParams(location.search);
   var filterPromptId = params.get('prompt_id') ? Number(params.get('prompt_id')) : null;
   var promptsById = {};
+  var engines = [];
 
   function snippet(text) {
     var s = String(text || '').replace(/\s+/g, ' ').trim();
     return s.length > 80 ? s.slice(0, 80) + '…' : s;
+  }
+
+  function fillEngineSelects() {
+    var sel = document.getElementById('engine');
+    var filter = document.getElementById('filterEngine');
+    var enabled = engines.filter(function (e) { return e.enabled; });
+    var opts = (enabled.length ? enabled : engines);
+    sel.innerHTML = '';
+    filter.innerHTML = '<option value="">全部引擎</option>';
+    opts.forEach(function (e) {
+      var o = document.createElement('option');
+      o.value = e.engine_key;
+      o.textContent = e.display_name || e.engine_key;
+      sel.appendChild(o);
+    });
+    engines.forEach(function (e) {
+      var o2 = document.createElement('option');
+      o2.value = e.engine_key;
+      o2.textContent = e.display_name || e.engine_key;
+      filter.appendChild(o2);
+    });
+    if (!sel.options.length) {
+      ['chatgpt', 'deepseek', 'doubao', 'perplexity', 'other'].forEach(function (k) {
+        var o = document.createElement('option');
+        o.value = k;
+        o.textContent = k;
+        sel.appendChild(o);
+      });
+    }
+  }
+
+  async function loadEngines() {
+    var data = await GeoAPI.listTrackingEngines();
+    engines = data.items || [];
+    fillEngineSelects();
   }
 
   async function loadPrompts() {
@@ -120,11 +154,13 @@
   async function loadSnapshots() {
     GeoWB.clearError(err);
     var pid = filterPromptId;
+    var eng = document.getElementById('filterEngine').value || undefined;
     document.getElementById('btnClearFilter').style.display = pid ? 'inline-block' : 'none';
-    document.getElementById('filterHint').textContent = pid
-      ? ('过滤机会问题 #' + pid)
-      : '显示全部快照';
-    var data = await GeoAPI.listAnswerSnapshots(pid || undefined);
+    document.getElementById('filterHint').textContent = [
+      pid ? ('过滤机会问题 #' + pid) : '显示全部快照',
+      eng ? ('引擎=' + eng) : ''
+    ].filter(Boolean).join(' · ');
+    var data = await GeoAPI.listAnswerSnapshots(pid || undefined, eng);
     var items = data.items || [];
     var tbody = document.getElementById('rows');
     var empty = document.getElementById('listEmpty');
@@ -141,14 +177,28 @@
       tr.innerHTML =
         '<td><div>' + (s.prompt_question || ('#' + s.prompt_id)) + '</div></td>' +
         '<td>' + s.engine + '</td>' +
-        '<td>' + (s.mentions_brand ? '<span class="wb-badge good">是</span>' : '<span class="wb-badge warn">否</span>') + '</td>' +
+        '<td><button class="wb-btn" data-toggle="' + s.id + '" data-on="' + (s.mentions_brand ? '1' : '0') + '">' +
+          (s.mentions_brand ? '<span class="wb-badge good">是</span>' : '<span class="wb-badge warn">否</span>') +
+          ' 切换</button></td>' +
         '<td class="wb-muted">' + (s.captured_at || '') + '</td>' +
-        '<td class="wb-muted">' + snippet(s.raw_text) + '</td>';
+        '<td class="wb-muted">' + snippet(s.raw_text) +
+          (s.note ? ('<div class="wb-hint">' + s.note + '</div>') : '') + '</td>';
       tbody.appendChild(tr);
+      tr.querySelector('[data-toggle]').onclick = async function () {
+        try {
+          var next = this.getAttribute('data-on') !== '1';
+          await GeoAPI.patchAnswerSnapshot(s.id, { mentions_brand: next });
+          await loadPrompts();
+          await loadSnapshots();
+        } catch (e) { GeoWB.showError(err, e); }
+      };
     });
   }
 
   document.getElementById('btnReload').onclick = function () {
+    loadSnapshots().catch(function (e) { GeoWB.showError(err, e); });
+  };
+  document.getElementById('filterEngine').onchange = function () {
     loadSnapshots().catch(function (e) { GeoWB.showError(err, e); });
   };
   document.getElementById('btnClearFilter').onclick = function () {
@@ -187,6 +237,7 @@
 
   try {
     GeoWB.requireTenant();
+    await loadEngines();
     await loadPrompts();
     await loadSnapshots();
   } catch (e) { GeoWB.showError(err, e); }

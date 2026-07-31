@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>媒体 / 信源策略 · GEO</title>
 <link rel="stylesheet" href="assets/style.css?rev=geo-wb-2">
-<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=2">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=8">
 </head>
 <body>
 <div class="layout">
@@ -14,18 +14,182 @@
     <div class="topbar">
       <div>
         <h1>媒体 / 信源策略</h1>
-        <div class="sub">权威信源布局 · Wave B 后置</div>
+        <div class="sub">权威信源布局清单 · 计划与已铺设 URL（不做竞品看板）</div>
       </div>
     </div>
     <div class="page">
-      <div id="empty"></div>
+      <div id="authBar" class="config-bar"></div>
+      <div id="err" class="wb-error" style="display:none"></div>
+      <div class="wb-grid wb-grid-2">
+        <div class="wb-card">
+          <strong>新增信源布局</strong>
+          <div class="wb-field" style="margin-top:12px">
+            <label class="wb-label">名称</label>
+            <input class="wb-input" id="name" placeholder="如：官网帮助中心 / 知乎机构号">
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">类型</label>
+            <select class="wb-select" id="channelType">
+              <option value="website">官网</option>
+              <option value="zhihu">知乎</option>
+              <option value="wechat">公众号</option>
+              <option value="news">新闻媒体</option>
+              <option value="wiki">百科/文档</option>
+              <option value="other">其他</option>
+            </select>
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">目标 URL（栏目/发文位）</label>
+            <input class="wb-input" id="targetUrl" placeholder="https://…">
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">布局理由</label>
+            <textarea class="wb-textarea" id="authorityNote" style="min-height:80px" placeholder="为何该信源对 AI 引用有帮助…"></textarea>
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">优先级</label>
+            <input class="wb-input" id="priority" type="number" value="0">
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">状态</label>
+            <select class="wb-select" id="status">
+              <option value="planned">计划中</option>
+              <option value="in_progress">进行中</option>
+              <option value="published">已铺设</option>
+              <option value="archived">已归档</option>
+            </select>
+          </div>
+          <button class="wb-btn primary" id="btnCreate">创建</button>
+        </div>
+        <div class="wb-card">
+          <div class="wb-toolbar">
+            <strong>布局清单</strong>
+            <select class="wb-select" id="filterStatus" style="width:auto;min-width:140px">
+              <option value="">全部状态</option>
+              <option value="planned">计划中</option>
+              <option value="in_progress">进行中</option>
+              <option value="published">已铺设</option>
+              <option value="archived">已归档</option>
+            </select>
+            <button class="wb-btn" id="btnReload">刷新</button>
+          </div>
+          <table class="wb-table">
+            <thead>
+              <tr>
+                <th>名称</th>
+                <th>类型</th>
+                <th>状态</th>
+                <th>已铺设 URL</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+          <div id="listEmpty" style="display:none"></div>
+        </div>
+      </div>
     </div>
   </main>
 </div>
-<script src="assets/geo-sidebar-v1.js?rev=2"></script>
-<script src="assets/geo-workbench-v1.js?rev=2"></script>
+<script src="assets/geo-sidebar-v1.js?rev=7"></script>
+<script src="assets/geo-api-v1.js?rev=8"></script>
+<script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
-  GeoWB.renderComingSoon(document.getElementById('empty'), '媒体 / 信源策略');
+(async function () {
+  GeoWB.renderAuthBar(document.getElementById('authBar'));
+  var err = document.getElementById('err');
+  var params = new URLSearchParams(location.search);
+  if (params.get('status')) {
+    document.getElementById('filterStatus').value = params.get('status');
+  }
+
+  var statusLabel = {
+    planned: '计划中',
+    in_progress: '进行中',
+    published: '已铺设',
+    archived: '已归档',
+  };
+
+  async function load() {
+    GeoWB.clearError(err);
+    GeoWB.requireTenant();
+    var st = document.getElementById('filterStatus').value || undefined;
+    var data = await GeoAPI.listMediaPlacements(st);
+    var items = data.items || [];
+    var tbody = document.getElementById('rows');
+    var empty = document.getElementById('listEmpty');
+    tbody.innerHTML = '';
+    if (!items.length) {
+      empty.style.display = 'block';
+      GeoWB.renderEmpty(empty, '暂无信源布局 · 在左侧添加权威信源计划', { inline: true, showIcon: false });
+      return;
+    }
+    empty.style.display = 'none';
+    empty.innerHTML = '';
+    items.forEach(function (m) {
+      var tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td><div>' + m.name + '</div>' +
+          (m.authority_note ? ('<div class="wb-muted">' + m.authority_note + '</div>') : '') +
+        '</td>' +
+        '<td>' + m.channel_type + '</td>' +
+        '<td><select class="wb-select" data-status style="width:auto">' +
+          ['planned', 'in_progress', 'published', 'archived'].map(function (s) {
+            return '<option value="' + s + '"' + (m.status === s ? ' selected' : '') + '>' +
+              (statusLabel[s] || s) + '</option>';
+          }).join('') +
+        '</select></td>' +
+        '<td><input class="wb-input" data-url placeholder="https://…" value="' +
+          String(m.published_url || '').replace(/"/g, '&quot;') + '"></td>' +
+        '<td><button class="wb-btn primary" data-save>保存</button></td>';
+      tbody.appendChild(tr);
+      tr.querySelector('[data-save]').onclick = async function () {
+        try {
+          var status = tr.querySelector('[data-status]').value;
+          var url = tr.querySelector('[data-url]').value.trim();
+          await GeoAPI.patchMediaPlacement(m.id, {
+            status: status,
+            published_url: url || null,
+          });
+          await load();
+        } catch (e) { GeoWB.showError(err, e); }
+      };
+    });
+  }
+
+  document.getElementById('btnReload').onclick = function () {
+    load().catch(function (e) { GeoWB.showError(err, e); });
+  };
+  document.getElementById('filterStatus').onchange = function () {
+    var u = new URL(location.href);
+    var v = document.getElementById('filterStatus').value;
+    if (v) u.searchParams.set('status', v);
+    else u.searchParams.delete('status');
+    history.replaceState({}, '', u.pathname + u.search);
+    load().catch(function (e) { GeoWB.showError(err, e); });
+  };
+  document.getElementById('btnCreate').onclick = async function () {
+    try {
+      GeoWB.requireTenant();
+      var name = document.getElementById('name').value.trim();
+      if (!name) throw new Error('请填写名称');
+      await GeoAPI.createMediaPlacement({
+        name: name,
+        channel_type: document.getElementById('channelType').value,
+        target_url: document.getElementById('targetUrl').value.trim() || null,
+        authority_note: document.getElementById('authorityNote').value.trim() || null,
+        status: document.getElementById('status').value,
+        priority: Number(document.getElementById('priority').value) || 0,
+      });
+      document.getElementById('name').value = '';
+      document.getElementById('targetUrl').value = '';
+      document.getElementById('authorityNote').value = '';
+      await load();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+
+  try { await load(); } catch (e) { GeoWB.showError(err, e); }
+})();
 </script>
 </body>
 </html>

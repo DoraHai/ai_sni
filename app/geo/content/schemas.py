@@ -132,3 +132,43 @@ class AnswerSnapshotUpdate(BaseModel):
     mentions_brand: bool | None = None
     cited_urls: list[str] | None = None
     note: str | None = None
+
+
+class TrackingEngineItem(BaseModel):
+    engine_key: SnapshotEngine
+    display_name: str = Field(..., min_length=1, max_length=80)
+    enabled: bool = True
+    note: str | None = None
+    sort_order: int = 0
+
+
+class TrackingEnginesPut(BaseModel):
+    tenant_id: int
+    items: list[TrackingEngineItem] = Field(..., min_length=1)
+
+
+MediaChannelType = Literal["website", "zhihu", "wechat", "news", "wiki", "other"]
+MediaPlacementStatus = Literal["planned", "in_progress", "published", "archived"]
+
+
+class MediaPlacementCreate(BaseModel):
+    tenant_id: int
+    name: str = Field(..., min_length=1, max_length=200)
+    channel_type: MediaChannelType = "other"
+    target_url: str | None = None
+    authority_note: str | None = None
+    status: MediaPlacementStatus = "planned"
+    published_url: str | None = None
+    priority: int = 0
+    related_prompt_id: int | None = None
+
+
+class MediaPlacementUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=200)
+    channel_type: MediaChannelType | None = None
+    target_url: str | None = None
+    authority_note: str | None = None
+    status: MediaPlacementStatus | None = None
+    published_url: str | None = None
+    priority: int | None = None
+    related_prompt_id: int | None = None

@@ -132,7 +132,15 @@ http://127.0.0.1:5176/geo/dashboard.html?tenant_id=1&api_key=geo-demo-local-key&
 2. 点行内 **可见度**，或侧栏 **AI 可见度**
 3. 选择该问题 → 粘贴一段回答 → 勾选「提及我方品牌」→ **保存快照**
 4. 预期：右侧列表出现记录；回到提问监控刷新后，该问题的 `brand_missing` 标签消失
-5. `engines.html` / `competitors.html` 等仍应显示「开发中」
+5. 列表内可点「切换」改提及状态；`competitors.html` / `evaluation.html` 仍为开发中
+
+### 6) 引擎管理 + 媒体信源（Wave B2）
+
+1. 侧栏打开 **AI 引擎管理**，停用某一个引擎 → **保存**
+2. 回到 **AI 可见度**，登记表单下拉应不再出现该引擎
+3. 打开 **媒体 / 信源策略**，新建一条「计划中」布局并保存；列表内改状态为「已铺设」并填 URL
+4. **GEO 概览** 应出现真实计数：回答快照 / 提及品牌 / 信源布局进行中 / 信源已铺设
+5. 先执行 migration：`alembic upgrade head`（含 `0039_geo_wave_b2`）
 
 ## 常见 404
 

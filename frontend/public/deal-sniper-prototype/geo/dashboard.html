@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>GEO 概览</title>
 <link rel="stylesheet" href="assets/style.css?rev=geo-wb-2">
-<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=6">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=8">
 </head>
 <body>
 <div class="layout">
@@ -14,7 +14,7 @@
     <div class="topbar">
       <div>
         <h1>GEO 概览</h1>
-        <div class="sub">内容生产闭环计数 · 可见度看板后置</div>
+        <div class="sub">内容生产闭环计数 · 可见度与信源布局（真实快照，无假图表）</div>
       </div>
     </div>
     <div class="page">
@@ -22,6 +22,7 @@
       <div id="err" class="wb-error" style="display:none"></div>
       <div class="wb-grid wb-grid-3" id="stats"></div>
       <div class="wb-grid wb-grid-3" id="todos" style="margin-top:14px"></div>
+      <div class="wb-grid wb-grid-3" id="visibility" style="margin-top:14px"></div>
       <div class="wb-card" style="margin-top:14px">
         <strong>Demo 最短路径</strong>
         <ol class="wb-muted" style="margin:10px 0 0 18px; color:var(--text)">
@@ -29,14 +30,15 @@
           <li>在「信源分析/事实库」准备 ≥3 条带来源事实</li>
           <li>在编辑器绑定事实 → 生成 → 检查 → 双渠道导出</li>
           <li>在「分发平台」回填发布 URL</li>
+          <li>在「AI 可见度」粘贴模型回答对照；在「媒体 / 信源策略」规划权威信源</li>
         </ol>
       </div>
     </div>
   </main>
 </div>
-<script src="assets/geo-sidebar-v1.js?rev=6"></script>
-<script src="assets/geo-api-v1.js?rev=6"></script>
-<script src="assets/geo-workbench-v1.js?rev=6"></script>
+<script src="assets/geo-sidebar-v1.js?rev=7"></script>
+<script src="assets/geo-api-v1.js?rev=8"></script>
+<script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {
   GeoWB.renderAuthBar(document.getElementById('authBar'));
@@ -70,6 +72,19 @@
       a.href = GeoWB.withDemoQuery(row[2]);
       a.innerHTML = '<div class="n">' + row[1] + '</div><div class="l">' + row[0] + '</div>';
       todos.appendChild(a);
+    });
+    var vis = document.getElementById('visibility');
+    [
+      ['回答快照', s.snapshots || 0, 'visibility.html'],
+      ['提及品牌', s.snapshots_mention_brand || 0, 'visibility.html'],
+      ['信源布局进行中', s.media_open || 0, 'media.html'],
+      ['信源已铺设', s.media_published || 0, 'media.html?status=published'],
+    ].forEach(function (row) {
+      var a = document.createElement('a');
+      a.className = 'stat stat-link';
+      a.href = GeoWB.withDemoQuery(row[2]);
+      a.innerHTML = '<div class="n">' + row[1] + '</div><div class="l">' + row[0] + '</div>';
+      vis.appendChild(a);
     });
   } catch (e) { GeoWB.showError(err, e); }
 })();

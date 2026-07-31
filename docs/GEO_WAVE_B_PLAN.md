@@ -1,6 +1,6 @@
 # GEO Wave B 方案：可见度（人工快照 MVP）
 
-> 状态：已实现（人工快照 MVP）· 分支 `feature/geo-wave-b-visibility`  
+> 状态：人工快照 MVP 已实现；B2 见 `docs/GEO_WAVE_B2_PLAN.md`  
 > 前置：Wave A 已合入 `main`（内容闭环 + 诊断桥）
 
 ## 1. 目标
@@ -10,11 +10,11 @@
 ## 2. 非目标（本切片不做）
 
 - 多模型自动巡检 / AnswerSnapshot 自动化抓取  
-- 引擎 CRUD（`engines.html` 继续占位）  
+- 引擎自动巡检 / API Key 接入（B2 仅做监测引擎清单）  
 - 可见度加权总分 / 排名看板  
 - 竞品 / 评价产品化  
 - 发布 → 提及的因果归因  
-- Dashboard 假数据图表  
+- Dashboard 假数据图表（B2 仅展示真实快照/信源计数）  
 
 ## 3. 数据模型
 
@@ -63,11 +63,15 @@ PATCH  /api/v1/geo/answer-snapshots/{id}?tenant_id=
 
 ## 7. 验收
 
-- [ ] 选 prompt → 粘贴回答 → 勾选提及品牌 → 列表可见  
-- [ ] prompts「可见度」带 `prompt_id` 过滤  
-- [ ] `mentions_brand=true` 清除 `brand_missing`  
-- [ ] engines 等页仍为开发中  
+- [x] 选 prompt → 粘贴回答 → 勾选提及品牌 → 列表可见  
+- [x] prompts「可见度」带 `prompt_id` 过滤  
+- [x] `mentions_brand=true` 清除 `brand_missing`  
+- [x] 首版 engines / media / competitors / evaluation 保持占位（B2 起 engines/media 实装）  
 
 ## 8. 本地联调
 
 见 `docs/LOCAL_GEO_DEMO.md`「可见度人工快照」一节；端口仍为 API **8011**、静态 **5176**。
+
+## 9. 后续
+
+Wave B2：鉴权修正、概览真实可见度计数、引擎管理、媒体/信源策略 —— `docs/GEO_WAVE_B2_PLAN.md`。
