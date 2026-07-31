@@ -734,7 +734,7 @@ nav a:after { display: none; }
 .warning:before { content: ""; position: absolute; inset: 2px; clip-path: polygon(50% 0, 100% 100%, 0 100%); background: linear-gradient(#efb0ff, #9a34df); }
 .warning:after { content: ""; position: absolute; inset: 7px; clip-path: polygon(50% 0, 100% 100%, 0 100%); background: #18222b; }
 .warning span { z-index: 1; }
-.warning-logo { position: absolute; z-index: 2; width: var(--brand-mark-size); height: var(--brand-mark-size); right: -47px; top: -35px; object-fit: contain; filter: drop-shadow(0 0 8px rgba(190, 74, 255, .86)); }
+.warning-logo { position: absolute; z-index: 2; width: 31px; height: 31px; right: -13px; top: -9px; object-fit: contain; filter: drop-shadow(0 0 8px rgba(190, 74, 255, .86)); }
 .pain-card h3 { font-size: 31px; margin: 22px 0 8px; color:#f1efeb; text-shadow:0 2px 1px rgba(0,0,0,.85),0 0 14px rgba(255,255,255,.08); }
 .pain-card p { margin: 0 24px; color: #b8bec5; text-align: center; font-size: 15px; line-height: 1.8; }
 .laser-divider { max-width: 1160px; height: 1px; margin: 82px auto 72px; background: linear-gradient(90deg, transparent, #9852ca 40%, #ecb1ff 50%, #9852ca 60%, transparent); box-shadow: 0 0 10px #b656ff; position: relative; }
