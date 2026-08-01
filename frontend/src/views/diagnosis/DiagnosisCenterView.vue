@@ -102,9 +102,9 @@ const dimensions = computed(() => {
   ]
   return definitions.map((definition) => {
     const rows = findings.value.filter((item) => definition.categories.includes(item.category))
-    const maxDeduction = rows.reduce((sum, item) => sum + Number(item.deduction || 0), 0)
+    const totalWeight = rows.reduce((sum, item) => sum + Number(item.weight || item.deduction || 0), 0)
     const lost = rows.filter((item) => !item.passed).reduce((sum, item) => sum + Number(item.deduction || 0), 0)
-    const score = rows.length ? Math.max(0, Math.round(100 - (lost / Math.max(maxDeduction, 1)) * 100)) : 100
+    const score = rows.length ? Math.max(0, Math.round(100 - (lost / Math.max(totalWeight, 1)) * 100)) : 100
     return { ...definition, score, passed: rows.filter((item) => item.passed).length, total: rows.length }
   })
 })
@@ -457,7 +457,7 @@ onMounted(async () => {
               <strong>{{ audit.page_title || '页面未设置标题' }}</strong>
               <a :href="audit.final_url" target="_blank" rel="noopener">{{ audit.final_url }}</a>
             </div>
-            <span>{{ formatDate(audit.created_at) }} · 单页诊断 · 规则版本 v1.0</span>
+            <span>{{ formatDate(audit.created_at) }} · 单页诊断 · 规则版本 v{{ audit.rule_version || '1.0.1' }}</span>
           </section>
 
           <section class="summary-grid">
@@ -535,6 +535,7 @@ onMounted(async () => {
                   <div class="dimension-bar"><i :style="{ width: `${item.score}%` }" /></div>
                   <small>{{ item.passed }} / {{ item.total }} 项通过</small>
                 </article>
+                <p class="dimension-method">计分规则：维度得分 = 已通过规则权重 ÷ 该维度全部规则权重 × 100。规则权重固定，通过项不会从分母中消失。</p>
               </div>
             </div>
           </section>
@@ -815,6 +816,7 @@ button { color: inherit; }
 .dimension-bar { height:5px; margin:7px 0 5px; border-radius:3px; background:#edf2f1; }
 .dimension-bar i { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,#62c9b8,var(--teal)); }
 .dimension-list small { color:#9aa6a9; font-size:9px; }
+.dimension-method { grid-column:1/-1; margin:8px 0 0; padding:10px 12px; border:1px solid #dceae7; border-radius:8px; color:#60777a; background:#f5fbf9; font-size:9px; line-height:1.65; }
 
 .check-grid { display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--line); }
 .check-grid article { min-height:108px; display:grid; grid-template-columns:29px 1fr auto; gap:12px; align-items:start; padding:19px 20px; background:#fff; }

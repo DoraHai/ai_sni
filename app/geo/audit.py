@@ -18,6 +18,27 @@ MAX_HTML_BYTES = 3 * 1024 * 1024
 MAX_REDIRECTS = 5
 FETCH_TIMEOUT = 18.0
 USER_AGENT = "Mozilla/5.0 (compatible; GrowthSniper-GEO/1.0)"
+RULE_VERSION = "1.0.1"
+
+# 每条规则的固定权重。通过与否只影响实际扣分，不能改变该维度的总权重。
+RULE_WEIGHTS = {
+    "https": 8,
+    "title": 8,
+    "description": 5,
+    "canonical": 4,
+    "indexable": 15,
+    "h1": 7,
+    "heading_depth": 5,
+    "substantial": 8,
+    "schema": 8,
+    "entity_schema": 7,
+    "faq": 5,
+    "citations": 7,
+    "freshness": 5,
+    "language": 2,
+    "robots": 3,
+    "llms": 3,
+}
 
 
 class GeoAuditError(Exception):
@@ -165,6 +186,7 @@ def _finding(
     deduction: int,
     automatable: bool = False,
 ) -> dict[str, Any]:
+    weight = RULE_WEIGHTS.get(code, deduction)
     return {
         "code": code,
         "title": title,
@@ -173,7 +195,8 @@ def _finding(
         "passed": passed,
         "evidence": evidence,
         "recommendation": recommendation,
-        "deduction": 0 if passed else deduction,
+        "weight": weight,
+        "deduction": 0 if passed else weight,
         "automatable": automatable,
     }
 
@@ -256,6 +279,7 @@ async def audit_url(url: str) -> dict[str, Any]:
     ]
     score = max(0, 100 - sum(item["deduction"] for item in checks))
     return {
+        "rule_version": RULE_VERSION,
         "url": normalize_url(url),
         "final_url": document.final_url,
         "score": score,

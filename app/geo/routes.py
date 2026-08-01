@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.deepseek import is_enabled as ai_enabled
 from app.database import get_session
-from app.geo.audit import GeoAuditError, audit_url
+from app.geo.audit import RULE_VERSION, RULE_WEIGHTS, GeoAuditError, audit_url
 from app.geo.generate import ai_advice, generate_json_ld, generate_llms_text
 from app.models import GeoAuditRun, Tenant
 from app.models.tenant_memory import TenantMemory
@@ -132,7 +132,17 @@ def _knowledge_payload(memory: TenantMemory) -> dict[str, Any]:
 
 
 def _payload(run: GeoAuditRun) -> dict[str, Any]:
-    findings = run.findings or []
+    findings = [
+        {
+            **item,
+            # 兼容 v1.0 已落库的记录：旧数据只有实际扣分，没有固定规则权重。
+            "weight": item.get(
+                "weight",
+                RULE_WEIGHTS.get(item.get("code"), item.get("deduction", 0)),
+            ),
+        }
+        for item in (run.findings or [])
+    ]
     return {
         "id": run.id,
         "tenant_id": run.tenant_id,
@@ -150,6 +160,7 @@ def _payload(run: GeoAuditRun) -> dict[str, Any]:
         "json_ld": run.json_ld,
         "llms_text": run.llms_text,
         "ai_enabled": ai_enabled(),
+        "rule_version": RULE_VERSION,
         "created_at": run.created_at.isoformat() if run.created_at else None,
         "updated_at": run.updated_at.isoformat() if run.updated_at else None,
     }
