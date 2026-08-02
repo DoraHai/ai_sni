@@ -46,6 +46,7 @@ class FactCreate(BaseModel):
     source_name: str = Field(..., min_length=1, max_length=200)
     source_url: str | None = None
     observed_at: date | None = None
+    expires_at: date | None = None
     trust_level: Literal["verified", "needs_review", "draft"] = "needs_review"
     author_name: str | None = Field(None, max_length=100)
     meta: dict[str, Any] | None = None
@@ -58,6 +59,7 @@ class FactUpdate(BaseModel):
     source_name: str | None = Field(None, min_length=1, max_length=200)
     source_url: str | None = None
     observed_at: date | None = None
+    expires_at: date | None = None
     trust_level: Literal["verified", "needs_review", "draft"] | None = None
     author_name: str | None = Field(None, max_length=100)
     status: Literal["active", "archived"] | None = None
