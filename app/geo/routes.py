@@ -19,6 +19,7 @@ from app.geo.ai_sampling import (
     run_deepseek_sample,
 )
 from app.geo.audit import RULE_VERSION, RULE_WEIGHTS, GeoAuditError, audit_url
+from app.geo.brand_profile import discover_brand_profile, website_key
 from app.geo.generate import ai_advice, generate_json_ld, generate_llms_text
 from app.geo.site_audit import audit_site
 from app.models import GeoAuditRun, Tenant
@@ -52,6 +53,11 @@ class BrandAssetUpdate(BaseModel):
     brand_terms: list[str] = Field(default_factory=list, max_length=50)
     core_products: list[str] = Field(default_factory=list, max_length=100)
     proof_points: list[str] = Field(default_factory=list, max_length=100)
+
+
+class BrandDiscoverRequest(BaseModel):
+    tenant_id: int
+    website: str = Field(..., min_length=4, max_length=2048)
 
 
 class AudienceAssetUpdate(BaseModel):
@@ -131,6 +137,72 @@ async def _upsert_memory(
     return memory
 
 
+DIAGNOSIS_BRAND_TYPE = "diagnosis_brand"
+
+
+def _empty_brand() -> dict[str, Any]:
+    return {
+        "name": "",
+        "website": "",
+        "industry": "",
+        "business_desc": "",
+        "brand_terms": [],
+        "core_products": [],
+        "proof_points": [],
+    }
+
+
+def _brand_ready(profile: dict[str, Any]) -> bool:
+    return all(
+        (
+            str(profile.get("name", "")).strip(),
+            str(profile.get("website", "")).strip(),
+            str(profile.get("industry", "")).strip(),
+            profile.get("core_products") or [],
+        )
+    )
+
+
+async def _diagnosis_brand_store(session: AsyncSession, tenant_id: int) -> dict[str, Any]:
+    data = _json_content(await _latest_memory(session, tenant_id, DIAGNOSIS_BRAND_TYPE))
+    profiles = data.get("profiles")
+    if not isinstance(profiles, dict):
+        profiles = {}
+    return {"active_key": str(data.get("active_key", "")), "profiles": profiles}
+
+
+def _profile_for_website(store: dict[str, Any], website: str = "") -> dict[str, Any]:
+    key = ""
+    if website.strip():
+        try:
+            key = website_key(website)
+        except GeoAuditError:
+            return _empty_brand()
+    else:
+        key = store.get("active_key", "")
+    value = store.get("profiles", {}).get(key, {})
+    return {**_empty_brand(), **(value if isinstance(value, dict) else {})}
+
+
+async def _brand_context(
+    session: AsyncSession, tenant_id: int, website: str, tenant: Tenant | None
+) -> dict[str, Any]:
+    profile = _profile_for_website(await _diagnosis_brand_store(session, tenant_id), website)
+    if _brand_ready(profile):
+        return profile
+    # 兼容尚未重新建档的历史报告，避免旧报告生成能力直接报错。
+    legacy = _json_content(await _latest_memory(session, tenant_id, "brand_asset"))
+    return {
+        **_empty_brand(),
+        "name": tenant.name if tenant else "当前品牌",
+        "industry": tenant.industry or "" if tenant else "",
+        "business_desc": tenant.business_desc or "" if tenant else "",
+        "brand_terms": tenant.brand_terms or [] if tenant else [],
+        "core_products": legacy.get("core_products", []),
+        "proof_points": legacy.get("proof_points", []),
+    }
+
+
 def _knowledge_payload(memory: TenantMemory) -> dict[str, Any]:
     data = _json_content(memory)
     return {
@@ -198,6 +270,11 @@ async def create_audit(
     tenant = await session.get(Tenant, req.tenant_id)
     if tenant is None:
         raise HTTPException(404, "客户不存在")
+    brand_profile = _profile_for_website(
+        await _diagnosis_brand_store(session, req.tenant_id), req.url
+    )
+    if not _brand_ready(brand_profile):
+        raise HTTPException(409, "请先完成当前网站的品牌基础信息，再开始网站体检")
     try:
         result = await (audit_site(req.url) if req.scope == "site" else audit_url(req.url))
     except GeoAuditError as exc:
@@ -210,7 +287,14 @@ async def create_audit(
         score=result["score"],
         page_title=result["title"],
         page_description=result["description"],
-        snapshot=result["snapshot"],
+        snapshot={
+            **result["snapshot"],
+            "brand_profile": {
+                "name": brand_profile["name"],
+                "website": brand_profile["website"],
+                "site_key": website_key(brand_profile["website"]),
+            },
+        },
         findings=result["checks"],
     )
     session.add(run)
@@ -256,8 +340,11 @@ async def create_advice(
     ctx.ensure_tenant(tenant_id)
     run = await _run_for_tenant(session, audit_id, tenant_id)
     tenant = await session.get(Tenant, tenant_id)
+    brand = await _brand_context(
+        session, tenant_id, run.final_url or run.url, tenant
+    )
     advice, source = await ai_advice(
-        tenant_name=tenant.name if tenant else "当前品牌",
+        tenant_name=brand["name"],
         url=run.final_url or run.url,
         score=run.score or 0,
         title=run.page_title or "",
@@ -287,8 +374,8 @@ async def create_ai_sample(
     if tenant is None:
         raise HTTPException(404, "客户不存在")
 
-    brand_asset = _json_content(
-        await _latest_memory(session, req.tenant_id, "brand_asset")
+    brand_asset = await _brand_context(
+        session, req.tenant_id, run.final_url or run.url, tenant
     )
     audience = _json_content(
         await _latest_memory(session, req.tenant_id, "audience_profile")
@@ -296,7 +383,7 @@ async def create_ai_sample(
     brand_terms = list(
         dict.fromkeys(
             item.strip()
-            for item in [tenant.name, *(tenant.brand_terms or [])]
+            for item in [brand_asset["name"], *(brand_asset.get("brand_terms") or [])]
             if item and item.strip()
         )
     )
@@ -306,7 +393,7 @@ async def create_ai_sample(
         raise HTTPException(400, str(exc)) from exc
     if not questions:
         questions = build_neutral_questions(
-            industry=tenant.industry or "",
+            industry=brand_asset.get("industry") or "",
             core_products=brand_asset.get("core_products") or [],
             audience_segments=audience.get("segments") or [],
             brand_terms=brand_terms,
@@ -314,7 +401,7 @@ async def create_ai_sample(
     try:
         sample = await run_deepseek_sample(
             questions=questions,
-            brand_name=tenant.name,
+            brand_name=brand_asset["name"],
             brand_terms=brand_terms,
             model=get_settings().deepseek_model,
         )
@@ -340,7 +427,10 @@ async def create_assets(
     ctx.ensure_tenant(tenant_id)
     run = await _run_for_tenant(session, audit_id, tenant_id)
     tenant = await session.get(Tenant, tenant_id)
-    tenant_name = tenant.name if tenant else "当前品牌"
+    brand = await _brand_context(
+        session, tenant_id, run.final_url or run.url, tenant
+    )
+    tenant_name = brand["name"]
     final_url = run.final_url or run.url
     run.json_ld = generate_json_ld(
         tenant_name=tenant_name,
@@ -363,6 +453,7 @@ async def create_assets(
 @router.get("/assets/profile")
 async def get_asset_profile(
     tenant_id: int = Query(...),
+    website: str = Query(default="", max_length=2048),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -370,18 +461,13 @@ async def get_asset_profile(
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "客户不存在")
-    brand_extra = _json_content(await _latest_memory(session, tenant_id, "brand_asset"))
+    store = await _diagnosis_brand_store(session, tenant_id)
+    brand = _profile_for_website(store, website)
     audience = _json_content(await _latest_memory(session, tenant_id, "audience_profile"))
     return {
-        "brand": {
-            "name": tenant.name,
-            "website": brand_extra.get("website", ""),
-            "industry": tenant.industry or "",
-            "business_desc": tenant.business_desc or "",
-            "brand_terms": tenant.brand_terms or [],
-            "core_products": brand_extra.get("core_products", []),
-            "proof_points": brand_extra.get("proof_points", []),
-        },
+        "brand": brand,
+        "profile_ready": _brand_ready(brand),
+        "site_key": website_key(brand["website"]) if brand["website"] else "",
         "audience": {
             "segments": audience.get("segments", []),
             "decision_roles": audience.get("decision_roles", []),
@@ -389,6 +475,22 @@ async def get_asset_profile(
             "search_scenarios": audience.get("search_scenarios", []),
         },
     }
+
+
+@router.post("/assets/brand/discover")
+async def discover_brand_asset(
+    req: BrandDiscoverRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """读取公开官网，生成需要人工确认的品牌资料候选值，不直接落库。"""
+    ctx.ensure_tenant(req.tenant_id)
+    if await session.get(Tenant, req.tenant_id) is None:
+        raise HTTPException(404, "客户不存在")
+    try:
+        return await discover_brand_profile(req.website)
+    except GeoAuditError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.put("/assets/brand")
@@ -402,23 +504,32 @@ async def update_brand_asset(
     tenant = await session.get(Tenant, req.tenant_id)
     if tenant is None:
         raise HTTPException(404, "客户不存在")
-    tenant.name = req.name.strip()
-    tenant.industry = req.industry.strip() or None
-    tenant.business_desc = req.business_desc.strip() or None
-    tenant.brand_terms = [value.strip() for value in req.brand_terms if value.strip()]
+    if not req.website.strip():
+        raise HTTPException(400, "请填写官方网站")
+    profile = {
+        "name": req.name.strip(),
+        "website": req.website.strip(),
+        "industry": req.industry.strip(),
+        "business_desc": req.business_desc.strip(),
+        "brand_terms": [value.strip() for value in req.brand_terms if value.strip()],
+        "core_products": [value.strip() for value in req.core_products if value.strip()],
+        "proof_points": [value.strip() for value in req.proof_points if value.strip()],
+    }
+    if not _brand_ready(profile):
+        raise HTTPException(400, "请填写品牌名称、官方网站、所属行业和至少一项核心产品或服务")
+    store = await _diagnosis_brand_store(session, req.tenant_id)
+    key = website_key(profile["website"])
+    profiles = dict(store["profiles"])
+    profiles[key] = profile
     await _upsert_memory(
         session,
         tenant_id=req.tenant_id,
-        mem_type="brand_asset",
-        data={
-            "website": req.website.strip(),
-            "core_products": [value.strip() for value in req.core_products if value.strip()],
-            "proof_points": [value.strip() for value in req.proof_points if value.strip()],
-        },
+        mem_type=DIAGNOSIS_BRAND_TYPE,
+        data={"active_key": key, "profiles": profiles},
         ctx=ctx,
     )
     await session.commit()
-    return {"ok": True}
+    return {"ok": True, "brand": profile, "profile_ready": True, "site_key": key}
 
 
 @router.put("/assets/audience")

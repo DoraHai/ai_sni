@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
+  fetchGeoAssetProfile,
   fetchLatestGeoAudit,
   generateGeoAdvice,
   runDeepSeekSample,
@@ -27,6 +28,7 @@ const activeReport = ref('overview')
 const activeAsset = ref('')
 const expandedEvidence = ref('')
 const sampleQuestions = ref(['', '', ''])
+const brandReady = ref(false)
 let stageTimer = null
 
 const reportNav = [
@@ -226,12 +228,25 @@ async function ensureTenant() {
   }
 }
 
+async function refreshBrandProfile(website = '') {
+  if (!tenantId.value) return false
+  try {
+    const result = await fetchGeoAssetProfile(tenantId.value, website)
+    brandReady.value = Boolean(result.profile_ready)
+    return brandReady.value
+  } catch {
+    brandReady.value = false
+    return false
+  }
+}
+
 async function loadLatest({ notify = false } = {}) {
   if (!tenantId.value) return
   try {
     const result = await fetchLatestGeoAudit(tenantId.value)
     audit.value = result.audit
     if (result.audit?.url) url.value = result.audit.url
+    await refreshBrandProfile(result.audit?.url || url.value)
     auditScope.value = result.audit?.snapshot?.audit_scope === 'site' ? 'site' : 'single'
     if (result.audit?.snapshot?.ai_sampling?.results) {
       sampleQuestions.value = result.audit.snapshot.ai_sampling.results.map((item) => item.question).slice(0, 3)
@@ -251,6 +266,12 @@ async function startAudit() {
     return
   }
   if (!tenantId.value && !await ensureTenant()) return
+  if (!await refreshBrandProfile(normalized)) {
+    url.value = normalized
+    openAsset('brand')
+    ElMessage.warning('开始体检前，请先确认当前网站的品牌基础信息')
+    return
+  }
   loading.value = true
   audit.value = null
   startStageProgress()
@@ -312,6 +333,11 @@ async function copySampleResponse(item) {
 }
 
 async function navigateReport(key) {
+  if (!brandReady.value) {
+    openAsset('brand')
+    ElMessage.warning('完成品牌基础信息后即可进入网站体检')
+    return
+  }
   activeAsset.value = ''
   await nextTick()
   const target = document.querySelector(`#section-${key}`)
@@ -330,6 +356,16 @@ function openAsset(page) {
   activeReport.value = ''
   window.history.replaceState(null, '', `${window.location.pathname}#asset-${page}`)
   window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+async function handleBrandSaved(profile) {
+  brandReady.value = true
+  url.value = profile?.website || url.value
+  activeAsset.value = ''
+  activeReport.value = 'overview'
+  window.history.replaceState(null, '', `${window.location.pathname}#section-overview`)
+  await nextTick()
+  await startAudit()
 }
 
 function severityLabel(value) {
@@ -375,6 +411,7 @@ function printReport() {
 watch(tenantId, () => {
   audit.value = null
   url.value = ''
+  brandReady.value = false
   loadLatest()
 })
 
@@ -386,6 +423,10 @@ onMounted(async () => {
   const hashAsset = window.location.hash.replace('#asset-', '')
   if (assetNav.some((item) => item.page === hashAsset)) {
     openAsset(hashAsset)
+    return
+  }
+  if (!brandReady.value) {
+    openAsset('brand')
     return
   }
   const initialView = reportNav.some((item) => item.key === hashView)
@@ -852,7 +893,15 @@ onMounted(async () => {
         </template>
       </div>
 
-      <DiagnosisAssetsView v-else :id="`asset-${activeAsset}`" :key="activeAsset" :tenant-id="tenantId" :asset="currentAsset" />
+      <DiagnosisAssetsView
+        v-else
+        :id="`asset-${activeAsset}`"
+        :key="`${activeAsset}-${url}`"
+        :tenant-id="tenantId"
+        :asset="currentAsset"
+        :initial-website="url"
+        @brand-saved="handleBrandSaved"
+      />
     </section>
   </main>
 </template>

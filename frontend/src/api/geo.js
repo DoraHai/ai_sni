@@ -30,8 +30,17 @@ export function generateGeoAssets({ tenantId, auditId }) {
   })
 }
 
-export function fetchGeoAssetProfile(tenantId) {
-  return client.get('/api/v1/geo/assets/profile', { params: { tenant_id: tenantId } })
+export function fetchGeoAssetProfile(tenantId, website = '') {
+  return client.get('/api/v1/geo/assets/profile', {
+    params: { tenant_id: tenantId, website: website || undefined },
+  })
+}
+
+export function discoverGeoBrand({ tenantId, website }) {
+  return client.post('/api/v1/geo/assets/brand/discover', {
+    tenant_id: tenantId,
+    website,
+  }, { timeout: 45000 })
 }
 
 export function saveGeoBrand(payload) {
