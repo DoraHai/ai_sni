@@ -41,6 +41,15 @@ const channels = [
   { key: 'GEO', title: 'GEO AI 搜索引擎优化', text: '地域精准覆盖，本地流量劫持，线索质量翻倍', image: asset('channel-geo.png') },
 ]
 
+const aiPlatforms = [
+  { name: 'DeepSeek', mark: '∿', className: 'deepseek' },
+  { name: '豆包', mark: '豆', className: 'doubao' },
+  { name: 'Kimi', mark: 'K', className: 'kimi' },
+  { name: '通义千问', mark: 'Q', className: 'qwen' },
+  { name: '文心一言', mark: '文', className: 'wenxin' },
+  { name: 'ChatGPT', mark: '◎', className: 'chatgpt' },
+]
+
 const process = [
   { icon: '⌘', title: '1. 接入渠道', text: '全域渠道打通，数据实时归集' },
   { icon: '▣', title: '2. AI 自动诊断与优化', text: '智能分析线索质量，自动优化获客策略' },
@@ -265,6 +274,20 @@ function submitTrialForm() {
             >
             <button type="submit">开始免费诊断</button>
           </form>
+          <div class="ai-platforms" aria-label="支持诊断的主流 AI 搜索平台">
+            <span class="platform-label">覆盖主流 AI 搜索</span>
+            <div class="platform-list">
+              <span
+                v-for="platform in aiPlatforms"
+                :key="platform.name"
+                class="platform-chip"
+                :class="platform.className"
+              >
+                <i aria-hidden="true">{{ platform.mark }}</i>
+                <b>{{ platform.name }}</b>
+              </span>
+            </div>
+          </div>
           <small>无需安装代码 · 首次诊断免费 · 结果仅您可见</small>
         </div>
         <div class="dashboard-shell" aria-label="Growth Sniper 产品数据看板示意">
@@ -763,7 +786,15 @@ nav a:after { display: none; }
 .diagnosis-form input { min-width: 0; border: 0; outline: 0; padding: 0 23px; color: #f0f2f3; font-size: 16px; background: transparent; }
 .diagnosis-form input::placeholder { color: #707c86; }
 .diagnosis-form button { min-width: 190px; border: 0; border-radius: 999px; color: #fff; font-size: 16px; cursor: pointer; background: linear-gradient(100deg,#7126e8,#c342fb 68%,#f09eea); box-shadow: 0 0 22px rgba(190,72,255,.48); }
-.diagnosis-copy > small { display: block; margin: 11px 0 0 20px; color: #76818b; }
+.ai-platforms { max-width: 720px; margin-top: 16px; }
+.platform-label { display: block; margin: 0 0 9px 4px; color: #87929c; font-size: 11px; letter-spacing: 1.2px; }
+.platform-list { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+.platform-chip { min-width: 0; height: 42px; display: flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid rgba(180,195,207,.16); border-radius: 11px; color: #aeb7bf; background: linear-gradient(145deg,rgba(27,43,55,.62),rgba(8,18,26,.72)); box-shadow: inset 0 1px rgba(255,255,255,.045); transition: transform .22s, border-color .22s, color .22s, background .22s; }
+.platform-chip i { width: 23px; height: 23px; display: grid; place-items: center; flex: none; border-radius: 7px; color: var(--platform-color); font-size: 13px; font-style: normal; font-weight: 800; background: color-mix(in srgb,var(--platform-color) 15%,rgba(255,255,255,.03)); box-shadow: 0 0 10px color-mix(in srgb,var(--platform-color) 24%,transparent); }
+.platform-chip b { overflow: hidden; font-size: 10px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.platform-chip:hover { transform: translateY(-2px); border-color: color-mix(in srgb,var(--platform-color) 48%,transparent); color: #eef1f3; background: linear-gradient(145deg,rgba(35,50,63,.78),rgba(11,22,31,.86)); }
+.platform-chip.deepseek { --platform-color: #5b8dff; }.platform-chip.doubao { --platform-color: #8d78ff; }.platform-chip.kimi { --platform-color: #f2f2f2; }.platform-chip.qwen { --platform-color: #7c68ff; }.platform-chip.wenxin { --platform-color: #4a91ff; }.platform-chip.chatgpt { --platform-color: #68d6bc; }
+.diagnosis-copy > small { display: block; margin: 10px 0 0 4px; color: #76818b; }
 .dashboard-shell { position: relative; overflow: hidden; padding: 18px; border: 1px solid rgba(181,197,208,.38); border-radius: 27px; background: linear-gradient(145deg,rgba(14,29,40,.92),rgba(5,13,20,.94)); box-shadow: 0 28px 80px rgba(0,0,0,.52),0 0 45px rgba(126,51,222,.2); transform: perspective(1300px) rotateY(-3deg); }
 .dashboard-top { height: 54px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 0 17px; border-bottom: 1px solid rgba(255,255,255,.07); color: #87929c; font-size: 12px; }
 .dash-brand { color: #fff; font-weight: 700; font-size: 16px; }.dash-dot { display: inline-block; width: 11px; height: 11px; margin-right: 8px; border: 2px solid #c25cff; border-radius: 50%; box-shadow: 0 0 8px #b551ff; }
@@ -1113,6 +1144,11 @@ footer { min-height: 92px; display: grid; grid-template-columns: 1.4fr 1.2fr 1fr
   .laser-divider { margin: 65px auto 58px; }.channel-preview { height: 160px; }.channel-copy h3 { font-size: 20px; }
   .diagnostic-first { padding-top: 110px !important; }.diagnosis-copy h2 { font-size: 37px; }.diagnosis-copy > p { font-size: 15px; }.capability-list { grid-template-columns: 1fr 1fr; }
   .diagnosis-form { grid-template-columns: 1fr; padding: 6px; border-radius: 18px; }.diagnosis-form input { min-height: 52px; }.diagnosis-form button { min-height: 48px; }
+  .ai-platforms { margin-inline: -18px; padding-left: 18px; overflow: hidden; }
+  .platform-label { margin-left: 0; }
+  .platform-list { display: flex; gap: 9px; padding-right: 18px; overflow-x: auto; scrollbar-width: none; }
+  .platform-list::-webkit-scrollbar { display: none; }
+  .platform-chip { min-width: 104px; }
   .dashboard-shell { padding: 10px; border-radius: 18px; }.dashboard-top { display: none; }.dashboard-body { padding: 5px; }
   .dash-stats { grid-template-columns: repeat(2,1fr); }.dash-stats > div { min-height: 84px; }.dash-panels { grid-template-columns: 1fr; }
   .score-panel { display: none; }.channel-summary { grid-template-columns: 1fr; }
