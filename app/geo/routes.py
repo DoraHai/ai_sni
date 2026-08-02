@@ -20,6 +20,7 @@ from app.geo.ai_sampling import (
 )
 from app.geo.audit import RULE_VERSION, RULE_WEIGHTS, GeoAuditError, audit_url
 from app.geo.generate import ai_advice, generate_json_ld, generate_llms_text
+from app.geo.site_audit import audit_site
 from app.models import GeoAuditRun, Tenant
 from app.models.tenant_memory import TenantMemory
 from app.security.auth import AuthContext, require_scoped_auth
@@ -34,6 +35,7 @@ router = APIRouter(
 class AuditCreate(BaseModel):
     tenant_id: int
     url: str = Field(..., min_length=4, max_length=2048)
+    scope: str = Field(default="single", pattern="^(single|site)$")
 
 
 class AISampleCreate(BaseModel):
@@ -197,7 +199,7 @@ async def create_audit(
     if tenant is None:
         raise HTTPException(404, "客户不存在")
     try:
-        result = await audit_url(req.url)
+        result = await (audit_site(req.url) if req.scope == "site" else audit_url(req.url))
     except GeoAuditError as exc:
         raise HTTPException(400, str(exc)) from exc
     run = GeoAuditRun(

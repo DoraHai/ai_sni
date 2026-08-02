@@ -18,7 +18,7 @@ MAX_HTML_BYTES = 3 * 1024 * 1024
 MAX_REDIRECTS = 5
 FETCH_TIMEOUT = 18.0
 USER_AGENT = "Mozilla/5.0 (compatible; GrowthSniper-GEO/1.0)"
-RULE_VERSION = "1.0.2"
+RULE_VERSION = "1.1.0"
 
 # 每条规则的固定权重。通过与否只影响实际扣分，不能改变该维度的总权重。
 RULE_WEIGHTS = {
@@ -91,13 +91,18 @@ async def _ensure_public_host(url: str) -> None:
         raise GeoAuditError("禁止诊断本机、内网或保留地址")
 
 
-async def safe_fetch(url: str, *, allow_text: bool = False) -> PageDocument:
+async def safe_fetch(
+    url: str, *, allow_text: bool = False, allow_xml: bool = False
+) -> PageDocument:
     """逐跳校验重定向目标，阻止 SSRF，并限制响应类型和体积。"""
     current = normalize_url(url)
     async with httpx.AsyncClient(
         timeout=FETCH_TIMEOUT,
         follow_redirects=False,
-        headers={"User-Agent": USER_AGENT, "Accept": "text/html,text/plain;q=0.8"},
+        headers={
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xml,text/xml;q=0.9,text/plain;q=0.8",
+        },
     ) as client:
         for _ in range(MAX_REDIRECTS + 1):
             await _ensure_public_host(current)
@@ -114,6 +119,8 @@ async def safe_fetch(url: str, *, allow_text: bool = False) -> PageDocument:
                     content_type = response.headers.get("content-type", "").lower()
                     accepted = "text/html" in content_type or (
                         allow_text and "text/plain" in content_type
+                    ) or (
+                        allow_xml and "xml" in content_type
                     )
                     if not accepted:
                         raise GeoAuditError(f"不支持的页面类型：{content_type or '未知'}")

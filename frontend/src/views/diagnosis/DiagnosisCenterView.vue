@@ -14,6 +14,7 @@ import DiagnosisAssetsView from './DiagnosisAssetsView.vue'
 const tenantId = computed(() => session.tenantId || (import.meta.env.DEV && import.meta.env.VITE_API_KEY ? 1 : null))
 
 const url = ref('')
+const auditScope = ref('single')
 const audit = ref(null)
 const loading = ref(false)
 const tenantLoading = ref(false)
@@ -87,6 +88,9 @@ const scoreLabel = computed(() => {
 const findings = computed(() => audit.value?.findings || [])
 const problems = computed(() => audit.value?.problems || [])
 const aiSample = computed(() => audit.value?.snapshot?.ai_sampling || null)
+const siteAudit = computed(() => audit.value?.snapshot?.site_audit || null)
+const isSiteAudit = computed(() => audit.value?.snapshot?.audit_scope === 'site')
+const sitePages = computed(() => siteAudit.value?.pages || [])
 const passedCount = computed(() => findings.value.filter((item) => item.passed).length)
 
 const problemCounts = computed(() => ({
@@ -134,6 +138,9 @@ const geoFindings = computed(() => findings.value.filter((item) =>
 
 function evidenceDetails(item) {
   const snapshot = audit.value?.snapshot || {}
+  if (item.page_evidence?.length) {
+    return item.page_evidence.map((page) => `${page.passed ? '通过' : '未通过'} · ${page.title || page.url} · ${page.evidence}`)
+  }
   if (item.code === 'citations') return snapshot.external_links || []
   if (item.code === 'faq') return snapshot.question_headings || []
   if (['schema', 'entity_schema'].includes(item.code)) return snapshot.schema_types || []
@@ -225,6 +232,7 @@ async function loadLatest({ notify = false } = {}) {
     const result = await fetchLatestGeoAudit(tenantId.value)
     audit.value = result.audit
     if (result.audit?.url) url.value = result.audit.url
+    auditScope.value = result.audit?.snapshot?.audit_scope === 'site' ? 'site' : 'single'
     if (result.audit?.snapshot?.ai_sampling?.results) {
       sampleQuestions.value = result.audit.snapshot.ai_sampling.results.map((item) => item.question).slice(0, 3)
       while (sampleQuestions.value.length < 3) sampleQuestions.value.push('')
@@ -247,7 +255,7 @@ async function startAudit() {
   audit.value = null
   startStageProgress()
   try {
-    audit.value = await runGeoAudit({ tenantId: tenantId.value, url: normalized })
+    audit.value = await runGeoAudit({ tenantId: tenantId.value, url: normalized, scope: auditScope.value })
     url.value = audit.value.final_url || normalized
     sampleQuestions.value = ['', '', '']
     loadingStage.value = loadingStages.length - 1
@@ -326,6 +334,12 @@ function openAsset(page) {
 
 function severityLabel(value) {
   return { critical: '阻断', high: '高优先', medium: '中优先', low: '建议' }[value] || value
+}
+
+function pageScoreTone(score) {
+  if (score >= 80) return 'good'
+  if (score >= 60) return 'fair'
+  return 'risk'
 }
 
 function categoryLabel(item) {
@@ -473,11 +487,11 @@ onMounted(async () => {
               </button>
             </div>
             <div class="scope-row">
-              <span class="scope active">● 单页快速诊断</span>
-              <span class="scope disabled" title="全站诊断将在接入 Sitemap 抓取后开放">○ 全站诊断 <small>即将开放</small></span>
+              <button type="button" class="scope" :class="{ active: auditScope === 'single' }" :disabled="loading" @click="auditScope = 'single'">{{ auditScope === 'single' ? '●' : '○' }} 单页快速诊断</button>
+              <button type="button" class="scope" :class="{ active: auditScope === 'site' }" :disabled="loading" @click="auditScope = 'site'">{{ auditScope === 'site' ? '●' : '○' }} 全站抽样诊断 <small>最多10页</small></button>
             </div>
             <p v-if="error" class="form-error">{{ error }}</p>
-            <p v-else class="form-hint">支持官网首页、产品页、文章页等公开 HTML 页面，通常在 20 秒内完成。</p>
+            <p v-else class="form-hint">{{ auditScope === 'site' ? '优先读取 Sitemap，缺失时从首页发现站内链接；通常在 1–2 分钟内完成。' : '支持官网首页、产品页、文章页等公开 HTML 页面，通常在 20 秒内完成。' }}</p>
           </form>
         </section>
 
@@ -527,7 +541,26 @@ onMounted(async () => {
               <strong>{{ audit.page_title || '页面未设置标题' }}</strong>
               <a :href="audit.final_url" target="_blank" rel="noopener">{{ audit.final_url }}</a>
             </div>
-            <span>{{ formatDate(audit.created_at) }} · 单页诊断 · 规则版本 v{{ audit.rule_version || '1.0.2' }}</span>
+            <span>{{ formatDate(audit.created_at) }} · {{ isSiteAudit ? `全站抽样 ${sitePages.length} 页` : '单页诊断' }} · 规则版本 v{{ audit.rule_version || '1.1.0' }}</span>
+          </section>
+
+          <section v-if="isSiteAudit" class="site-coverage-panel">
+            <div class="site-coverage-heading">
+              <div><span class="section-index">SITE COVERAGE</span><h2>全站抽样范围</h2></div>
+              <p>{{ siteAudit.aggregation_method }}</p>
+            </div>
+            <div class="site-coverage-meta">
+              <span>页面发现：{{ siteAudit.discovery_source === 'sitemap' ? 'Sitemap' : '首页站内链接' }}</span>
+              <span>成功诊断：{{ siteAudit.successful_pages }}/{{ siteAudit.requested_pages }} 页</span>
+              <span>加权基数：{{ siteAudit.total_weight }}</span>
+            </div>
+            <div class="site-page-grid">
+              <article v-for="(page, index) in sitePages" :key="page.url" :class="pageScoreTone(page.score)">
+                <span>{{ String(index + 1).padStart(2, '0') }}</span>
+                <div><small>{{ page.page_type }} · 权重 {{ page.weight }}</small><h3>{{ page.title || page.url }}</h3><a :href="page.url" target="_blank" rel="noopener">{{ page.url }}</a></div>
+                <strong>{{ page.score }}</strong>
+              </article>
+            </div>
           </section>
 
           <section class="summary-grid">
@@ -538,7 +571,7 @@ onMounted(async () => {
               <div><span>综合健康度</span><h2>{{ scoreLabel }}</h2><p>基于 {{ findings.length }} 项可解释规则</p></div>
             </article>
             <article class="metric-card">
-              <span>检查通过</span><strong>{{ passedCount }}<small>/{{ findings.length }}</small></strong>
+              <span>{{ isSiteAudit ? '规则全站通过' : '检查通过' }}</span><strong>{{ passedCount }}<small>/{{ findings.length }}</small></strong>
               <div class="mini-bar"><i :style="{ width: `${passedCount / Math.max(findings.length, 1) * 100}%` }" /></div>
             </article>
             <article class="metric-card risk-card">
@@ -546,8 +579,8 @@ onMounted(async () => {
               <p>{{ problemCounts.critical }} 阻断 · {{ problemCounts.high }} 高优先</p>
             </article>
             <article class="metric-card">
-              <span>页面信息量</span><strong>{{ audit.snapshot?.content_units || 0 }}</strong>
-              <p>中英文可读单元</p>
+              <span>{{ isSiteAudit ? '抽样页面' : '页面信息量' }}</span><strong>{{ isSiteAudit ? sitePages.length : (audit.snapshot?.content_units || 0) }}</strong>
+              <p>{{ isSiteAudit ? `最多 ${siteAudit.page_limit} 页` : '中英文可读单元' }}</p>
             </article>
           </section>
 
@@ -923,9 +956,9 @@ button { color: inherit; }
 .url-input-wrap button:disabled { opacity:.6; cursor:wait; }
 .url-input-wrap button b { margin-left:6px; }
 .scope-row { display:flex; gap:16px; margin-top:13px; font-size:10px; }
-.scope { color:#a9cfca; }
+.scope { padding:0; border:0; color:#789491; background:transparent; font-size:10px; cursor:pointer; }
 .scope.active { color:#71ddca; }
-.scope.disabled { color:#76908f; }
+.scope:disabled { cursor:wait; }
 .scope small { margin-left:4px; padding:2px 5px; border-radius:4px; background:rgba(255,255,255,.08); font-size:8px; }
 .form-error,.form-hint { margin:8px 0 0; font-size:10px; }
 .form-error { color:#ffad9f; }
@@ -957,6 +990,22 @@ button { color: inherit; }
 .report-meta strong { max-width:350px; overflow:hidden; color:#34464a; text-overflow:ellipsis; white-space:nowrap; }
 .report-meta a { max-width:360px; overflow:hidden; color:var(--teal); text-overflow:ellipsis; text-decoration:none; white-space:nowrap; }
 .live-dot { width:7px; height:7px; flex:none; border-radius:50%; background:#1dac79; box-shadow:0 0 0 4px rgba(29,172,121,.12); }
+
+.site-coverage-panel { margin-top:12px; overflow:hidden; border:1px solid #cfe3df; border-radius:12px; background:#fff; }
+.site-coverage-heading { min-height:70px; display:flex; align-items:center; justify-content:space-between; gap:25px; padding:15px 20px; border-bottom:1px solid #dfe9e7; background:linear-gradient(110deg,#f0f9f6,#fff); }
+.site-coverage-heading h2 { margin:4px 0 0; font-family:"Songti SC","Noto Serif SC",serif; font-size:18px; }
+.site-coverage-heading p { max-width:540px; margin:0; color:#66807e; font-size:9px; text-align:right; }
+.site-coverage-meta { display:flex; gap:22px; padding:10px 20px; border-bottom:1px solid #edf2f1; color:#758885; background:#fbfdfc; font-size:9px; }
+.site-page-grid { display:grid; grid-template-columns:1fr 1fr; gap:1px; background:#e6eceb; }
+.site-page-grid article { min-width:0; display:grid; grid-template-columns:28px minmax(0,1fr) auto; gap:11px; align-items:center; padding:15px 18px; background:#fff; }
+.site-page-grid article>span { color:#c5d1cf; font:500 19px "Iowan Old Style",Georgia,serif; }
+.site-page-grid article>div { min-width:0; }
+.site-page-grid small { color:#78908c; font-size:8px; font-weight:750; }
+.site-page-grid h3 { margin:4px 0 3px; overflow:hidden; font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+.site-page-grid a { display:block; overflow:hidden; color:#8b9997; font-size:8px; text-overflow:ellipsis; text-decoration:none; white-space:nowrap; }
+.site-page-grid strong { min-width:35px; color:#1c806f; font:600 22px "Iowan Old Style",Georgia,serif; text-align:right; }
+.site-page-grid article.fair strong { color:#c17b16; }
+.site-page-grid article.risk strong { color:#c94c4c; }
 
 .summary-grid { display:grid; grid-template-columns:1.5fr repeat(3,1fr); gap:12px; margin-top:12px; }
 .summary-grid article { min-height:147px; padding:22px; border:1px solid var(--line); border-radius:12px; background:#fff; box-shadow:0 7px 20px rgba(46,68,69,.035); }
@@ -1123,6 +1172,7 @@ button { color: inherit; }
   .dimension-list { grid-template-columns:1fr; }
   .action-grid { grid-template-columns:1fr 1fr; }
   .sample-results { grid-template-columns:1fr; }
+  .site-page-grid { grid-template-columns:1fr; }
 }
 @media (max-width: 760px) {
   .diagnosis-center { display:block; }
@@ -1162,6 +1212,9 @@ button { color: inherit; }
   .sample-metrics { grid-template-columns:1fr; }
   .sample-metrics article { border-right:0; border-bottom:1px solid #e8e4f0; }
   .sample-method { grid-template-columns:1fr; }
+  .site-coverage-heading { align-items:flex-start; flex-direction:column; }
+  .site-coverage-heading p { text-align:left; }
+  .site-coverage-meta { flex-wrap:wrap; gap:8px 16px; }
 }
 
 @media print {
@@ -1169,6 +1222,6 @@ button { color: inherit; }
   .diagnosis-sidebar,.diagnosis-topbar,.scan-panel,.preflight-grid,.topbar-actions,.issue-filters,.action-empty button { display:none !important; }
   .diagnosis-content { max-width:none; padding:0; }
   .report-meta { margin-top:0; }
-  .capability-panel,.diagnostic-section,.issues-panel,.action-panel,.ai-sample-panel,.summary-grid article { break-inside:avoid; box-shadow:none; }
+  .site-coverage-panel,.capability-panel,.diagnostic-section,.issues-panel,.action-panel,.ai-sample-panel,.summary-grid article { break-inside:avoid; box-shadow:none; }
 }
 </style>
