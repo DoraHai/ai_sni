@@ -52,6 +52,7 @@ from app.models.geo_answer_snapshot import GeoAnswerSnapshot
 from app.models.geo_tracking_engine import GeoTrackingEngine
 from app.models.geo_media_placement import GeoMediaPlacement
 from app.models.geo_ai_setting import GeoAiSetting
+from app.models.geo_publishing_channel import GeoChannelAccount, GeoPublishingChannel
 from app.models.geo_content import (
     GeoArticleVersion,
     GeoChannelVariant,
@@ -119,6 +120,8 @@ __all__ = [
     "GeoTrackingEngine",
     "GeoMediaPlacement",
     "GeoAiSetting",
+    "GeoPublishingChannel",
+    "GeoChannelAccount",
     "GeoContentTask",
     "GeoTaskFact",
     "GeoArticleVersion",

@@ -209,3 +209,56 @@ class MediaPlacementUpdate(BaseModel):
     published_url: str | None = None
     priority: int | None = None
     related_prompt_id: int | None = None
+
+
+PublishingChannelType = Literal[
+    "website",
+    "docs",
+    "wechat",
+    "zhihu",
+    "baijiahao",
+    "toutiao",
+    "industry_media",
+    "community_qa",
+    "encyclopedia",
+    "visual_content",
+]
+PublishingMode = Literal["auto_publish", "draft_then_manual", "manual_only"]
+ChannelAuthType = Literal["manual", "api_key", "oauth2", "webhook"]
+
+
+class PublishingChannelCreate(BaseModel):
+    tenant_id: int
+    name: str = Field(..., min_length=1, max_length=200)
+    channel_type: PublishingChannelType
+    publish_mode: PublishingMode = "manual_only"
+    base_url: str | None = Field(None, max_length=2000)
+    content_rules: dict[str, Any] | None = None
+    enabled: bool = True
+    sort_order: int = 0
+
+
+class PublishingChannelUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=200)
+    channel_type: PublishingChannelType | None = None
+    publish_mode: PublishingMode | None = None
+    base_url: str | None = Field(None, max_length=2000)
+    content_rules: dict[str, Any] | None = None
+    enabled: bool | None = None
+    sort_order: int | None = None
+
+
+class ChannelAccountCreate(BaseModel):
+    tenant_id: int
+    channel_id: int
+    display_name: str = Field(..., min_length=1, max_length=160)
+    auth_type: ChannelAuthType = "manual"
+    credentials: dict[str, Any] | None = None
+
+
+class ChannelAccountUpdate(BaseModel):
+    display_name: str | None = Field(None, min_length=1, max_length=160)
+    auth_type: ChannelAuthType | None = None
+    credentials: dict[str, Any] | None = None
+    clear_credentials: bool = False
+    status: Literal["unconfigured", "active", "expired", "disabled"] | None = None

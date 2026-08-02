@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 
@@ -25,6 +26,7 @@ from app.geo.content.imports import import_facts_csv, import_prompts_csv
 from app.geo.content.pipeline import blocked_reason_from_checks, sync_pipeline_fields
 from app.geo.content.rules import RuleInput, build_fix_patches, is_ready, run_checks
 from app.geo.content.channel_profiles import get_profile, list_profiles
+from app.geo.content.channels import default_channel_rows
 from app.geo.content.ai_settings import (
     apply_provider_preset,
     encrypt_api_key,
@@ -41,10 +43,14 @@ from app.geo.content.schemas import (
     AnswerSnapshotUpdate,
     ApplyPatchRequest,
     ArticleUpdate,
+    ChannelAccountCreate,
+    ChannelAccountUpdate,
     FactCreate,
     FactUpdate,
     MediaPlacementCreate,
     MediaPlacementUpdate,
+    PublishingChannelCreate,
+    PublishingChannelUpdate,
     PromptCreate,
     PromptImportRequest,
     PromptUpdate,
@@ -76,11 +82,13 @@ from app.models import (
     GeoAnswerSnapshot,
     GeoArticleVersion,
     GeoChannelVariant,
+    GeoChannelAccount,
     GeoContentTask,
     GeoFact,
     GeoMediaPlacement,
     GeoPrompt,
     GeoPublication,
+    GeoPublishingChannel,
     GeoTaskFact,
     GeoTrackingEngine,
     Tenant,
@@ -1081,6 +1089,214 @@ async def put_tracking_engines(
         await session.refresh(row)
     created.sort(key=lambda r: (r.sort_order, r.id or 0))
     return {"items": [_engine_payload(r) for r in created], "count": len(created)}
+
+
+# ---------- publishing channels ----------
+
+
+def _channel_payload(row: GeoPublishingChannel) -> dict:
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "name": row.name,
+        "channel_type": row.channel_type,
+        "publish_mode": row.publish_mode,
+        "base_url": row.base_url,
+        "content_rules": row.content_rules,
+        "enabled": row.enabled,
+        "sort_order": row.sort_order,
+        "created_at": _iso(row.created_at),
+        "updated_at": _iso(row.updated_at),
+    }
+
+
+def _channel_account_payload(row: GeoChannelAccount) -> dict:
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "channel_id": row.channel_id,
+        "display_name": row.display_name,
+        "auth_type": row.auth_type,
+        "has_credentials": bool(row.credentials_encrypted),
+        "status": row.status,
+        "expires_at": _iso(row.expires_at),
+        "last_verified_at": _iso(row.last_verified_at),
+        "created_at": _iso(row.created_at),
+        "updated_at": _iso(row.updated_at),
+    }
+
+
+async def _ensure_default_publishing_channels(
+    session: AsyncSession, tenant_id: int
+) -> list[GeoPublishingChannel]:
+    rows = list(
+        await session.scalars(
+            select(GeoPublishingChannel)
+            .where(GeoPublishingChannel.tenant_id == tenant_id)
+            .order_by(GeoPublishingChannel.sort_order, GeoPublishingChannel.id)
+        )
+    )
+    if rows:
+        return rows
+    await _ensure_tenant_exists(session, tenant_id)
+    created = [GeoPublishingChannel(**item) for item in default_channel_rows(tenant_id)]
+    session.add_all(created)
+    await session.commit()
+    for row in created:
+        await session.refresh(row)
+    return created
+
+
+async def _get_publishing_channel(
+    session: AsyncSession, channel_id: int, tenant_id: int
+) -> GeoPublishingChannel:
+    row = await session.get(GeoPublishingChannel, channel_id)
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, "发布渠道不存在")
+    return row
+
+
+async def _get_channel_account(
+    session: AsyncSession, account_id: int, tenant_id: int
+) -> GeoChannelAccount:
+    row = await session.get(GeoChannelAccount, account_id)
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, "渠道账号不存在")
+    return row
+
+
+@router.get("/publishing-channels")
+async def list_publishing_channels(
+    tenant_id: int = Query(...),
+    enabled_only: bool = Query(False),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    rows = await _ensure_default_publishing_channels(session, tenant_id)
+    if enabled_only:
+        rows = [row for row in rows if row.enabled]
+    return {"items": [_channel_payload(row) for row in rows]}
+
+
+@router.post("/publishing-channels")
+async def create_publishing_channel(
+    req: PublishingChannelCreate,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(req.tenant_id)
+    await _ensure_tenant_exists(session, req.tenant_id)
+    row = GeoPublishingChannel(
+        tenant_id=req.tenant_id,
+        name=req.name.strip(),
+        channel_type=req.channel_type,
+        publish_mode=req.publish_mode,
+        base_url=req.base_url,
+        content_rules=req.content_rules,
+        enabled=req.enabled,
+        sort_order=req.sort_order,
+        created_by=ctx.user_id,
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return _channel_payload(row)
+
+
+@router.patch("/publishing-channels/{channel_id}")
+async def update_publishing_channel(
+    channel_id: int,
+    req: PublishingChannelUpdate,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    row = await _get_publishing_channel(session, channel_id, tenant_id)
+    for field in ("channel_type", "publish_mode", "base_url", "content_rules", "enabled", "sort_order"):
+        value = getattr(req, field)
+        if value is not None:
+            setattr(row, field, value)
+    if req.name is not None:
+        row.name = req.name.strip()
+    await session.commit()
+    await session.refresh(row)
+    return _channel_payload(row)
+
+
+@router.get("/channel-accounts")
+async def list_channel_accounts(
+    tenant_id: int = Query(...),
+    channel_id: int | None = Query(None),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    if channel_id is not None:
+        await _get_publishing_channel(session, channel_id, tenant_id)
+    stmt = select(GeoChannelAccount).where(GeoChannelAccount.tenant_id == tenant_id)
+    if channel_id is not None:
+        stmt = stmt.where(GeoChannelAccount.channel_id == channel_id)
+    rows = list(await session.scalars(stmt.order_by(GeoChannelAccount.id.desc())))
+    return {"items": [_channel_account_payload(row) for row in rows]}
+
+
+@router.post("/channel-accounts")
+async def create_channel_account(
+    req: ChannelAccountCreate,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(req.tenant_id)
+    await _get_publishing_channel(session, req.channel_id, req.tenant_id)
+    credentials_encrypted = None
+    if req.credentials:
+        credentials_encrypted = encrypt_api_key(
+            json.dumps(req.credentials, ensure_ascii=False, sort_keys=True)
+        )
+    row = GeoChannelAccount(
+        tenant_id=req.tenant_id,
+        channel_id=req.channel_id,
+        display_name=req.display_name.strip(),
+        auth_type=req.auth_type,
+        credentials_encrypted=credentials_encrypted,
+        status="active" if credentials_encrypted else "unconfigured",
+        created_by=ctx.user_id,
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return _channel_account_payload(row)
+
+
+@router.patch("/channel-accounts/{account_id}")
+async def update_channel_account(
+    account_id: int,
+    req: ChannelAccountUpdate,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    row = await _get_channel_account(session, account_id, tenant_id)
+    if req.display_name is not None:
+        row.display_name = req.display_name.strip()
+    if req.auth_type is not None:
+        row.auth_type = req.auth_type
+    if req.credentials is not None:
+        row.credentials_encrypted = encrypt_api_key(
+            json.dumps(req.credentials, ensure_ascii=False, sort_keys=True)
+        )
+        row.status = "active"
+    if req.clear_credentials:
+        row.credentials_encrypted = None
+        row.status = "unconfigured"
+    if req.status is not None:
+        row.status = req.status
+    await session.commit()
+    await session.refresh(row)
+    return _channel_account_payload(row)
 
 
 # ---------- media placements (Wave B2) ----------

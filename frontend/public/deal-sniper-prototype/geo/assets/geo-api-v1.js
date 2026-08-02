@@ -343,5 +343,35 @@
         body: body,
       });
     },
+    listPublishingChannels: function (enabledOnly) {
+      var query = withTenantQuery();
+      if (enabledOnly) query.enabled_only = true;
+      return api('/publishing-channels', { query: query });
+    },
+    createPublishingChannel: function (body) {
+      return api('/publishing-channels', { method: 'POST', body: body });
+    },
+    patchPublishingChannel: function (id, body) {
+      return api('/publishing-channels/' + id, {
+        method: 'PATCH',
+        query: withTenantQuery(),
+        body: body,
+      });
+    },
+    listChannelAccounts: function (channelId) {
+      var query = withTenantQuery();
+      if (channelId) query.channel_id = channelId;
+      return api('/channel-accounts', { query: query });
+    },
+    createChannelAccount: function (body) {
+      return api('/channel-accounts', { method: 'POST', body: body });
+    },
+    patchChannelAccount: function (id, body) {
+      return api('/channel-accounts/' + id, {
+        method: 'PATCH',
+        query: withTenantQuery(),
+        body: body,
+      });
+    },
   };
 })(window);

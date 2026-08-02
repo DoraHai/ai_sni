@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>发布渠道 · GEO</title>
+<link rel="stylesheet" href="assets/style.css?rev=geo-channels-1">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=10">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <main class="main">
+    <div class="topbar"><div><h1>发布渠道</h1><div class="sub">管理内容目标渠道、发布方式和服务端账号状态</div></div></div>
+    <div class="page">
+      <div id="authBar" class="config-bar"></div>
+      <div id="err" class="wb-error" style="display:none"></div>
+      <div class="wb-card">
+        <strong>新增渠道</strong>
+        <div class="wb-grid wb-grid-3" style="margin-top:12px">
+          <label class="wb-field"><span class="wb-label">名称</span><input id="name" class="wb-input" placeholder="如：官网内容中心"></label>
+          <label class="wb-field"><span class="wb-label">类型</span><select id="type" class="wb-select"></select></label>
+          <label class="wb-field"><span class="wb-label">发布方式</span><select id="mode" class="wb-select"><option value="auto_publish">自动发布</option><option value="draft_then_manual">草稿后人工发布</option><option value="manual_only">仅人工发布</option></select></label>
+        </div>
+        <label class="wb-field"><span class="wb-label">站点或频道 URL（可选）</span><input id="baseUrl" class="wb-input" placeholder="https://"></label>
+        <button id="create" class="wb-btn primary">创建渠道</button>
+      </div>
+      <div class="wb-card">
+        <div class="wb-toolbar"><strong>已配置渠道</strong><button id="reload" class="wb-btn">刷新</button></div>
+        <table class="wb-table"><thead><tr><th>名称</th><th>类型</th><th>发布方式</th><th>账号</th><th>状态</th><th>操作</th></tr></thead><tbody id="rows"></tbody></table>
+      </div>
+      <div class="wb-card">
+        <strong>添加渠道账号</strong>
+        <div class="wb-grid wb-grid-3" style="margin-top:12px">
+          <label class="wb-field"><span class="wb-label">渠道</span><select id="accountChannel" class="wb-select"></select></label>
+          <label class="wb-field"><span class="wb-label">账号名称</span><input id="accountName" class="wb-input" placeholder="如：官网 CMS 生产账号"></label>
+          <label class="wb-field"><span class="wb-label">认证方式</span><select id="authType" class="wb-select"><option value="manual">人工</option><option value="api_key">API Key</option><option value="oauth2">OAuth 2.0</option><option value="webhook">Webhook</option></select></label>
+        </div>
+        <label class="wb-field"><span class="wb-label">凭证 JSON（仅服务端加密保存）</span><textarea id="credentials" class="wb-textarea" placeholder='{"token":"..."}'></textarea></label>
+        <button id="createAccount" class="wb-btn primary">保存账号</button>
+      </div>
+    </div>
+  </main>
+</div>
+<script src="assets/geo-sidebar-v1.js?rev=7"></script>
+<script src="assets/geo-api-v1.js?rev=11"></script>
+<script src="assets/geo-workbench-v1.js?rev=7"></script>
+<script>
+(async function () {
+  var typeLabels = {website:'官网', docs:'帮助中心 / 文档', wechat:'公众号', zhihu:'知乎', baijiahao:'百家号', toutiao:'头条号', industry_media:'行业媒体 / 垂直社区', community_qa:'问答 / 社区', encyclopedia:'百科 / 词条', visual_content:'视频 / 图文卡片'};
+  var err = document.getElementById('err');
+  var channels = [];
+  GeoWB.renderAuthBar(document.getElementById('authBar'));
+  Object.keys(typeLabels).forEach(function (key) { var o = document.createElement('option'); o.value = key; o.textContent = typeLabels[key]; document.getElementById('type').appendChild(o); });
+  function modeLabel(mode) { return {auto_publish:'自动发布', draft_then_manual:'草稿后人工发布', manual_only:'仅人工发布'}[mode] || mode; }
+  async function load() {
+    try {
+      GeoWB.requireTenant();
+      channels = (await GeoAPI.listPublishingChannels()).items || [];
+      var accounts = (await GeoAPI.listChannelAccounts()).items || [];
+      var accountCounts = {}; accounts.forEach(function (a) { accountCounts[a.channel_id] = (accountCounts[a.channel_id] || 0) + 1; });
+      var rows = document.getElementById('rows'); rows.innerHTML = '';
+      var select = document.getElementById('accountChannel'); select.innerHTML = '';
+      channels.forEach(function (channel) {
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + channel.name + '</td><td>' + (typeLabels[channel.channel_type] || channel.channel_type) + '</td><td>' + modeLabel(channel.publish_mode) + '</td><td>' + (accountCounts[channel.id] || 0) + '</td><td>' + GeoWB.statusBadge(channel.enabled ? 'active' : 'archived') + '</td><td><button class="wb-btn">' + (channel.enabled ? '停用' : '启用') + '</button></td>';
+        tr.querySelector('button').onclick = async function () { await GeoAPI.patchPublishingChannel(channel.id, {enabled: !channel.enabled}); await load(); };
+        rows.appendChild(tr);
+        var opt = document.createElement('option'); opt.value = channel.id; opt.textContent = channel.name; select.appendChild(opt);
+      });
+    } catch (e) { GeoWB.showError(err, e); }
+  }
+  document.getElementById('reload').onclick = load;
+  document.getElementById('create').onclick = async function () {
+    try { await GeoAPI.createPublishingChannel({name: document.getElementById('name').value, channel_type: document.getElementById('type').value, publish_mode: document.getElementById('mode').value, base_url: document.getElementById('baseUrl').value || null}); document.getElementById('name').value = ''; document.getElementById('baseUrl').value = ''; await load(); } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('createAccount').onclick = async function () {
+    try {
+      var raw = document.getElementById('credentials').value.trim();
+      var credentials = raw ? JSON.parse(raw) : null;
+      await GeoAPI.createChannelAccount({channel_id: Number(document.getElementById('accountChannel').value), display_name: document.getElementById('accountName').value, auth_type: document.getElementById('authType').value, credentials: credentials});
+      document.getElementById('accountName').value = ''; document.getElementById('credentials').value = ''; await load();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  await load();
+})();
+</script>
+</body>
+</html>
