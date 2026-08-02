@@ -121,6 +121,8 @@ class ApplyPatchRequest(BaseModel):
 
 
 SnapshotEngine = Literal["chatgpt", "deepseek", "doubao", "perplexity", "other"]
+BrandPosition = Literal["first", "mentioned", "absent", "unknown"]
+SnapshotSentiment = Literal["positive", "neutral", "negative", "unknown"]
 
 
 class AnswerSnapshotCreate(BaseModel):
@@ -131,6 +133,9 @@ class AnswerSnapshotCreate(BaseModel):
     captured_at: str | None = None  # ISO datetime; default now
     mentions_brand: bool = False
     cited_urls: list[str] = Field(default_factory=list)
+    competitors: list[str] = Field(default_factory=list)
+    brand_position: BrandPosition = "unknown"
+    sentiment: SnapshotSentiment = "unknown"
     note: str | None = None
 
 
@@ -140,7 +145,30 @@ class AnswerSnapshotUpdate(BaseModel):
     captured_at: str | None = None
     mentions_brand: bool | None = None
     cited_urls: list[str] | None = None
+    competitors: list[str] | None = None
+    brand_position: BrandPosition | None = None
+    sentiment: SnapshotSentiment | None = None
     note: str | None = None
+
+
+class AnswerSnapshotProbeRequest(BaseModel):
+    tenant_id: int
+    prompt_id: int
+
+
+AiProvider = Literal["dashscope", "deepseek"]
+
+
+class AiSettingsUpdate(BaseModel):
+    tenant_id: int
+    provider: AiProvider = "dashscope"
+    base_url: str | None = Field(None, max_length=300)
+    model: str | None = Field(None, max_length=80)
+    api_key: str | None = Field(None, min_length=8, max_length=200)
+    clear_api_key: bool = False
+    enabled: bool = True
+    note: str | None = None
+    apply_preset: bool = False
 
 
 class TrackingEngineItem(BaseModel):

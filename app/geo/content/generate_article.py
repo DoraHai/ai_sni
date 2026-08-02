@@ -196,6 +196,7 @@ async def generate_master_article(
     tenant_name: str,
     question: str,
     facts: list[dict[str, Any]],
+    llm: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     if len(facts) < 3:
         raise GeoContentError("生成前至少绑定 3 条带来源的事实卡")
@@ -216,7 +217,8 @@ async def generate_master_article(
         for f in facts
     ]
 
-    if not is_enabled():
+    use_ai = bool(llm) or is_enabled()
+    if not use_ai:
         return normalize_article_payload(
             deterministic_article(
                 tenant_name=tenant_name, question=question, facts=compact
@@ -236,7 +238,14 @@ async def generate_master_article(
         ensure_ascii=False,
     )
     try:
-        data = await chat_json(system, user, timeout=90)
+        kwargs = {}
+        if llm:
+            kwargs = {
+                "api_key": llm.get("api_key"),
+                "base_url": llm.get("base_url"),
+                "model": llm.get("model"),
+            }
+        data = await chat_json(system, user, timeout=90, **kwargs)
         data["_source"] = "ai"
         return normalize_article_payload(data, compact)
     except DeepSeekError:

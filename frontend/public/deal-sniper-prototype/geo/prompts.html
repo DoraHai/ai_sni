@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>提问机会池 · GEO</title>
 <link rel="stylesheet" href="assets/style.css?rev=geo-wb-2">
-<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=7">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=10">
 </head>
 <body>
 <div class="layout">
@@ -14,7 +14,7 @@
     <div class="topbar">
       <div>
         <h1>提问机会池</h1>
-        <div class="sub">人工/导入目标问题 · Demo 不做自动巡检</div>
+        <div class="sub">人工/导入目标问题 · 最近观测与标签筛选（Wave B3）</div>
       </div>
     </div>
     <div class="page">
@@ -24,12 +24,30 @@
         <div class="wb-card">
           <div class="wb-toolbar">
             <strong>机会列表</strong>
+            <select class="wb-select" id="tagFilter" style="width:auto;min-width:140px">
+              <option value="">全部标签</option>
+              <option value="brand_missing">brand_missing</option>
+              <option value="high_demand">high_demand</option>
+            </select>
+            <label class="wb-label" style="margin:0;display:flex;align-items:center;gap:6px;white-space:nowrap">
+              <input type="checkbox" id="needRecheck"> 仅待复核
+            </label>
             <input type="file" id="csvFile" accept=".csv" style="max-width:180px">
             <button class="wb-btn" id="btnImport">CSV 导入</button>
             <button class="wb-btn" id="btnReload">刷新</button>
           </div>
+          <div class="wb-muted" id="filterHint" style="margin-bottom:8px"></div>
           <table class="wb-table">
-            <thead><tr><th>问题</th><th>优先级</th><th>标签</th><th>最近任务</th><th></th></tr></thead>
+            <thead>
+              <tr>
+                <th>问题</th>
+                <th>优先级</th>
+                <th>标签</th>
+                <th>最近观测</th>
+                <th>最近任务</th>
+                <th></th>
+              </tr>
+            </thead>
             <tbody id="rows"></tbody>
           </table>
           <div id="listEmpty" style="display:none"></div>
@@ -59,17 +77,58 @@
   </main>
 </div>
 <script src="assets/geo-sidebar-v1.js?rev=7"></script>
-<script src="assets/geo-api-v1.js?rev=7"></script>
+<script src="assets/geo-api-v1.js?rev=10"></script>
 <script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {
   GeoWB.renderAuthBar(document.getElementById('authBar'));
   var err = document.getElementById('err');
+  var params = new URLSearchParams(location.search);
+  if (params.get('tag')) document.getElementById('tagFilter').value = params.get('tag');
+  if (params.get('need_recheck') === '1') document.getElementById('needRecheck').checked = true;
+
+  function obsCell(p) {
+    if (!p.last_snapshot_at) {
+      return p.need_recheck
+        ? '<span class="wb-badge warn">待复核</span>'
+        : '<span class="wb-muted">-</span>';
+    }
+    var mention = p.last_mentions_brand
+      ? '<span class="wb-badge good">提及</span>'
+      : '<span class="wb-badge warn">未提及</span>';
+    var eng = p.last_snapshot_engine ? (' · ' + p.last_snapshot_engine) : '';
+    var recheck = p.need_recheck ? ' <span class="wb-badge warn">待复核</span>' : '';
+    return mention + eng + '<div class="wb-hint">' + p.last_snapshot_at + '</div>' + recheck;
+  }
+
+  function listQuery() {
+    var q = {};
+    var tag = document.getElementById('tagFilter').value;
+    if (tag) q.tag = tag;
+    if (document.getElementById('needRecheck').checked) q.need_recheck = true;
+    return q;
+  }
+
+  function syncUrl() {
+    var u = new URL(location.href);
+    var tag = document.getElementById('tagFilter').value;
+    if (tag) u.searchParams.set('tag', tag); else u.searchParams.delete('tag');
+    if (document.getElementById('needRecheck').checked) u.searchParams.set('need_recheck', '1');
+    else u.searchParams.delete('need_recheck');
+    history.replaceState({}, '', u.pathname + u.search);
+  }
+
   async function load() {
     GeoWB.clearError(err);
     try {
       GeoWB.requireTenant();
-      var data = await GeoAPI.listPrompts();
+      syncUrl();
+      var q = listQuery();
+      document.getElementById('filterHint').textContent = [
+        q.tag ? ('标签=' + q.tag) : '全部标签',
+        q.need_recheck ? '仅待复核' : ''
+      ].filter(Boolean).join(' · ');
+      var data = await GeoAPI.listPrompts(q);
       var tbody = document.getElementById('rows');
       var empty = document.getElementById('listEmpty');
       tbody.innerHTML = '';
@@ -88,6 +147,7 @@
           '<td>' + p.question + '</td>' +
           '<td>' + p.priority + '</td>' +
           '<td>' + (p.tags || []).join(', ') + '</td>' +
+          '<td>' + obsCell(p) + '</td>' +
           '<td>' + (p.last_task_id ? ('#' + p.last_task_id) : '-') + '</td>' +
           '<td style="white-space:nowrap">' +
             '<a class="wb-btn" href="' + visHref + '">可见度</a> ' +
@@ -107,6 +167,8 @@
     } catch (e) { GeoWB.showError(err, e); }
   }
   document.getElementById('btnReload').onclick = load;
+  document.getElementById('tagFilter').onchange = load;
+  document.getElementById('needRecheck').onchange = load;
   document.getElementById('btnImport').onclick = async function () {
     var file = document.getElementById('csvFile').files[0];
     if (!file) { GeoWB.showError(err, new Error('请选择 CSV 文件')); return; }

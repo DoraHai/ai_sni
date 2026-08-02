@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>评价分析 · GEO</title>
 <link rel="stylesheet" href="assets/style.css?rev=geo-wb-2">
-<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=2">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=11">
 </head>
 <body>
 <div class="layout">
@@ -14,18 +14,99 @@
     <div class="topbar">
       <div>
         <h1>评价分析</h1>
-        <div class="sub">口碑与评价监测 · Wave C 后置</div>
+        <div class="sub">快照情感与我方位置分布 · Wave C（人工标注）</div>
       </div>
     </div>
     <div class="page">
-      <div id="empty"></div>
+      <div id="authBar" class="config-bar"></div>
+      <div id="err" class="wb-error" style="display:none"></div>
+      <div class="wb-grid wb-grid-2">
+        <div class="wb-card">
+          <div class="wb-toolbar">
+            <strong>分布</strong>
+            <button class="wb-btn" id="btnReload">刷新</button>
+          </div>
+          <div class="wb-muted" id="totalHint" style="margin-bottom:10px"></div>
+          <table class="wb-table">
+            <thead><tr><th>维度</th><th>值</th><th>次数</th></tr></thead>
+            <tbody id="distRows"></tbody>
+          </table>
+        </div>
+        <div class="wb-card">
+          <strong>最近快照</strong>
+          <table class="wb-table" style="margin-top:12px">
+            <thead>
+              <tr>
+                <th>问题</th>
+                <th>引擎</th>
+                <th>位置</th>
+                <th>情感</th>
+                <th>时间</th>
+              </tr>
+            </thead>
+            <tbody id="recentRows"></tbody>
+          </table>
+          <div id="listEmpty" style="display:none"></div>
+        </div>
+      </div>
     </div>
   </main>
 </div>
-<script src="assets/geo-sidebar-v1.js?rev=2"></script>
-<script src="assets/geo-workbench-v1.js?rev=2"></script>
+<script src="assets/geo-sidebar-v1.js?rev=7"></script>
+<script src="assets/geo-api-v1.js?rev=11"></script>
+<script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
-  GeoWB.renderComingSoon(document.getElementById('empty'), '评价分析');
+(async function () {
+  GeoWB.renderAuthBar(document.getElementById('authBar'));
+  var err = document.getElementById('err');
+  var sentLabel = { positive: '正面', neutral: '中性', negative: '负面', unknown: '未知' };
+  var posLabel = { first: '首位', mentioned: '有提及', absent: '未出现', unknown: '未知' };
+
+  async function load() {
+    GeoWB.clearError(err);
+    try {
+      GeoWB.requireTenant();
+      var data = await GeoAPI.evaluationInsights();
+      document.getElementById('totalHint').textContent = '快照总数：' + (data.total || 0);
+      var dist = document.getElementById('distRows');
+      dist.innerHTML = '';
+      Object.keys(data.sentiment_counts || {}).forEach(function (k) {
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td>情感</td><td>' + (sentLabel[k] || k) + '</td><td>' + data.sentiment_counts[k] + '</td>';
+        dist.appendChild(tr);
+      });
+      Object.keys(data.position_counts || {}).forEach(function (k) {
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td>位置</td><td>' + (posLabel[k] || k) + '</td><td>' + data.position_counts[k] + '</td>';
+        dist.appendChild(tr);
+      });
+      var recent = data.recent || [];
+      var tbody = document.getElementById('recentRows');
+      var empty = document.getElementById('listEmpty');
+      tbody.innerHTML = '';
+      if (!recent.length) {
+        empty.style.display = 'block';
+        GeoWB.renderEmpty(empty, '暂无快照 · 先在「AI 可见度」登记', { inline: true, showIcon: false });
+        return;
+      }
+      empty.style.display = 'none';
+      empty.innerHTML = '';
+      recent.forEach(function (s) {
+        var tr = document.createElement('tr');
+        var href = GeoWB.withDemoQuery('visibility.html?prompt_id=' + s.prompt_id);
+        tr.innerHTML =
+          '<td><a href="' + href + '">' + (s.prompt_question || ('#' + s.prompt_id)) + '</a></td>' +
+          '<td>' + s.engine + '</td>' +
+          '<td>' + (posLabel[s.brand_position] || s.brand_position) + '</td>' +
+          '<td>' + (sentLabel[s.sentiment] || s.sentiment) + '</td>' +
+          '<td class="wb-muted">' + (s.captured_at || '') + '</td>';
+        tbody.appendChild(tr);
+      });
+    } catch (e) { GeoWB.showError(err, e); }
+  }
+  document.getElementById('btnReload').onclick = load;
+  load();
+})();
 </script>
 </body>
 </html>

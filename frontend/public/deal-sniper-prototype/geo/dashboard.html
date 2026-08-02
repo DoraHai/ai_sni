@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>GEO 概览</title>
 <link rel="stylesheet" href="assets/style.css?rev=geo-wb-2">
-<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=8">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=11">
 </head>
 <body>
 <div class="layout">
@@ -14,7 +14,7 @@
     <div class="topbar">
       <div>
         <h1>GEO 概览</h1>
-        <div class="sub">内容生产闭环计数 · 可见度与信源布局（真实快照，无假图表）</div>
+        <div class="sub">内容闭环 · 可见度复核 · 简单提及率（Wave C）</div>
       </div>
     </div>
     <div class="page">
@@ -37,7 +37,7 @@
   </main>
 </div>
 <script src="assets/geo-sidebar-v1.js?rev=7"></script>
-<script src="assets/geo-api-v1.js?rev=8"></script>
+<script src="assets/geo-api-v1.js?rev=11"></script>
 <script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {
@@ -74,9 +74,16 @@
       todos.appendChild(a);
     });
     var vis = document.getElementById('visibility');
+    var rate = s.visibility_mention_rate;
+    var rateLabel = rate == null ? '-' : (Math.round(rate * 1000) / 10) + '%';
     [
       ['回答快照', s.snapshots || 0, 'visibility.html'],
       ['提及品牌', s.snapshots_mention_brand || 0, 'visibility.html'],
+      ['提及率', rateLabel, 'visibility.html'],
+      ['引擎覆盖', s.visibility_engines_covered || 0, 'engines.html'],
+      ['含竞品标注', s.snapshots_with_competitors || 0, 'competitors.html'],
+      ['未提及品牌', s.prompts_brand_missing || 0, 'prompts.html?tag=brand_missing'],
+      ['待复核可见度', s.prompts_need_recheck || 0, 'visibility.html?queue=recheck'],
       ['信源布局进行中', s.media_open || 0, 'media.html'],
       ['信源已铺设', s.media_published || 0, 'media.html?status=published'],
     ].forEach(function (row) {

@@ -43,6 +43,7 @@
     item('media.html', '⌂', '媒体 / 信源策略') +
     item('channels.html', '⇧', '分发平台') +
     '<div class="nav-group">设置</div>' +
+    item('ai-settings.html', '⚙', 'AI 能力配置') +
     item('engines.html', '◇', 'AI 引擎管理') +
     '<div class="spacer"></div>' +
     '<a class="nav-item" href="../content/audit.html"><span class="ico">!</span> 诊断中心</a>' +

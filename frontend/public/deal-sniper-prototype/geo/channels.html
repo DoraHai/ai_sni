@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>分发平台 · GEO</title>
 <link rel="stylesheet" href="assets/style.css?rev=geo-wb-2">
-<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=9">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=10">
 </head>
 <body>
 <div class="layout">
@@ -20,6 +20,11 @@
     <div class="page">
       <div id="authBar" class="config-bar"></div>
       <div id="err" class="wb-error" style="display:none"></div>
+      <div id="visCta" class="wb-card" style="display:none;margin-bottom:12px">
+        <strong>发布已回填</strong>
+        <div class="wb-muted" style="margin:8px 0">建议登记该提问在 AI 引擎中的可见度结果。</div>
+        <a class="wb-btn primary" id="btnGoVisibility" href="#">去登记可见度</a>
+      </div>
       <div class="wb-card">
         <div class="wb-toolbar">
           <label class="wb-label" style="margin:0">选择任务</label>
@@ -53,7 +58,7 @@
   </main>
 </div>
 <script src="assets/geo-sidebar-v1.js?rev=7"></script>
-<script src="assets/geo-api-v1.js?rev=9"></script>
+<script src="assets/geo-api-v1.js?rev=10"></script>
 <script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {
@@ -137,6 +142,17 @@
 
   document.getElementById('btnReload').onclick = loadDetail;
   document.getElementById('taskSelect').onchange = loadDetail;
+  function showVisibilityCta(promptId) {
+    var box = document.getElementById('visCta');
+    var link = document.getElementById('btnGoVisibility');
+    if (!promptId) {
+      box.style.display = 'none';
+      return;
+    }
+    box.style.display = 'block';
+    link.href = GeoWB.withDemoQuery('visibility.html?prompt_id=' + promptId);
+  }
+
   document.getElementById('btnPublish').onclick = async function () {
     try {
       GeoWB.requireTenant();
@@ -148,6 +164,7 @@
       });
       document.getElementById('url').value = '';
       await loadDetail();
+      if (task && task.prompt_id) showVisibilityCta(task.prompt_id);
     } catch (e) { GeoWB.showError(err, e); }
   };
 

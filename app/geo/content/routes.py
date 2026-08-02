@@ -25,9 +25,19 @@ from app.geo.content.imports import import_facts_csv, import_prompts_csv
 from app.geo.content.pipeline import blocked_reason_from_checks, sync_pipeline_fields
 from app.geo.content.rules import RuleInput, build_fix_patches, is_ready, run_checks
 from app.geo.content.channel_profiles import get_profile, list_profiles
+from app.geo.content.ai_settings import (
+    apply_provider_preset,
+    encrypt_api_key,
+    ensure_ai_setting,
+    preset_payload,
+    resolve_llm_credentials,
+    settings_public_payload,
+)
 from app.geo.content.engines import default_engine_rows
 from app.geo.content.schemas import (
+    AiSettingsUpdate,
     AnswerSnapshotCreate,
+    AnswerSnapshotProbeRequest,
     AnswerSnapshotUpdate,
     ApplyPatchRequest,
     ArticleUpdate,
@@ -47,7 +57,15 @@ from app.geo.content.schemas import (
     VariantUpdate,
     VariantsCreate,
 )
-from app.geo.content.snapshots import clear_brand_missing_tag, normalize_cited_urls
+from app.geo.content.snapshots import (
+    apply_brand_mention_tags,
+    needs_recheck,
+    normalize_brand_position,
+    normalize_cited_urls,
+    normalize_competitors,
+    normalize_sentiment,
+    visibility_mention_rate,
+)
 from app.geo.content.variants import (
     GeoContentError,
     adapt_for_channel,
@@ -76,8 +94,13 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
 
-def _prompt_payload(row: GeoPrompt) -> dict[str, Any]:
-    return {
+def _prompt_payload(
+    row: GeoPrompt,
+    *,
+    last_snapshot: GeoAnswerSnapshot | None = None,
+    need_recheck_flag: bool | None = None,
+) -> dict[str, Any]:
+    payload = {
         "id": row.id,
         "tenant_id": row.tenant_id,
         "question": row.question,
@@ -92,7 +115,63 @@ def _prompt_payload(row: GeoPrompt) -> dict[str, Any]:
         "last_task_id": row.last_task_id,
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
+        "last_snapshot_at": None,
+        "last_mentions_brand": None,
+        "last_snapshot_engine": None,
+        "need_recheck": bool(need_recheck_flag) if need_recheck_flag is not None else False,
     }
+    if last_snapshot is not None:
+        payload["last_snapshot_at"] = _iso(last_snapshot.captured_at)
+        payload["last_mentions_brand"] = bool(last_snapshot.mentions_brand)
+        payload["last_snapshot_engine"] = last_snapshot.engine
+    return payload
+
+
+async def _latest_snapshots_by_prompt(
+    session: AsyncSession, tenant_id: int, prompt_ids: list[int]
+) -> dict[int, GeoAnswerSnapshot]:
+    if not prompt_ids:
+        return {}
+    rows = list(
+        await session.scalars(
+            select(GeoAnswerSnapshot)
+            .where(
+                GeoAnswerSnapshot.tenant_id == tenant_id,
+                GeoAnswerSnapshot.prompt_id.in_(prompt_ids),
+            )
+            .order_by(
+                GeoAnswerSnapshot.prompt_id.asc(),
+                GeoAnswerSnapshot.captured_at.desc(),
+                GeoAnswerSnapshot.id.desc(),
+            )
+        )
+    )
+    latest: dict[int, GeoAnswerSnapshot] = {}
+    for row in rows:
+        if row.prompt_id not in latest:
+            latest[row.prompt_id] = row
+    return latest
+
+
+async def _published_task_updated_by_prompt(
+    session: AsyncSession, tenant_id: int, prompt_ids: list[int]
+) -> dict[int, datetime]:
+    """Map prompt_id -> max updated_at among published tasks."""
+    if not prompt_ids:
+        return {}
+    result = await session.execute(
+        select(
+            GeoContentTask.prompt_id,
+            func.max(GeoContentTask.updated_at),
+        )
+        .where(
+            GeoContentTask.tenant_id == tenant_id,
+            GeoContentTask.status == "published",
+            GeoContentTask.prompt_id.in_(prompt_ids),
+        )
+        .group_by(GeoContentTask.prompt_id)
+    )
+    return {int(pid): updated for pid, updated in result.all() if pid is not None}
 
 
 def _fact_payload(row: GeoFact) -> dict[str, Any]:
@@ -378,6 +457,8 @@ async def get_channel_profiles(
 async def list_prompts(
     tenant_id: int = Query(...),
     status: str | None = Query(None),
+    tag: str | None = Query(None),
+    need_recheck: bool | None = Query(None),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -387,7 +468,28 @@ async def list_prompts(
         stmt = stmt.where(GeoPrompt.status == status)
     stmt = stmt.order_by(GeoPrompt.priority.desc(), GeoPrompt.id.desc())
     rows = list(await session.scalars(stmt))
-    return {"items": [_prompt_payload(r) for r in rows]}
+    if tag:
+        needle = tag.strip()
+        rows = [r for r in rows if needle in (r.tags or [])]
+    prompt_ids = [r.id for r in rows]
+    latest = await _latest_snapshots_by_prompt(session, tenant_id, prompt_ids)
+    published_at = await _published_task_updated_by_prompt(session, tenant_id, prompt_ids)
+    items = []
+    for r in rows:
+        snap = latest.get(r.id)
+        flag = needs_recheck(
+            has_published_task=r.id in published_at,
+            task_updated_at=published_at.get(r.id),
+            last_snapshot_at=snap.captured_at if snap else None,
+        )
+        if need_recheck is True and not flag:
+            continue
+        if need_recheck is False and flag:
+            continue
+        items.append(
+            _prompt_payload(r, last_snapshot=snap, need_recheck_flag=flag)
+        )
+    return {"items": items}
 
 
 @router.post("/prompts")
@@ -488,6 +590,9 @@ def _snapshot_payload(row: GeoAnswerSnapshot, *, prompt_question: str | None = N
         "captured_at": _iso(row.captured_at),
         "mentions_brand": bool(row.mentions_brand),
         "cited_urls": row.cited_urls or [],
+        "competitors": row.competitors or [],
+        "brand_position": row.brand_position or "unknown",
+        "sentiment": row.sentiment or "unknown",
         "note": row.note,
         "created_by": row.created_by,
         "created_at": _iso(row.created_at),
@@ -506,12 +611,8 @@ async def _get_snapshot(
 async def _apply_brand_mention_side_effect(
     session: AsyncSession, prompt: GeoPrompt, *, mentions_brand: bool
 ) -> None:
-    if not mentions_brand:
-        return
-    tags = list(prompt.tags or [])
-    if "brand_missing" not in tags:
-        return
-    prompt.tags = clear_brand_missing_tag(tags)
+    _ = session
+    prompt.tags = apply_brand_mention_tags(prompt.tags, mentions_brand=mentions_brand)
 
 
 @router.get("/answer-snapshots")
@@ -563,6 +664,9 @@ async def create_answer_snapshot(
         captured_at=_parse_captured_at(req.captured_at),
         mentions_brand=bool(req.mentions_brand),
         cited_urls=normalize_cited_urls(req.cited_urls),
+        competitors=normalize_competitors(req.competitors),
+        brand_position=normalize_brand_position(req.brand_position),
+        sentiment=normalize_sentiment(req.sentiment),
         note=req.note,
         created_by=ctx.user_id,
     )
@@ -594,6 +698,12 @@ async def update_answer_snapshot(
         row.captured_at = _parse_captured_at(req.captured_at)
     if req.cited_urls is not None:
         row.cited_urls = normalize_cited_urls(req.cited_urls)
+    if req.competitors is not None:
+        row.competitors = normalize_competitors(req.competitors)
+    if req.brand_position is not None:
+        row.brand_position = normalize_brand_position(req.brand_position)
+    if req.sentiment is not None:
+        row.sentiment = normalize_sentiment(req.sentiment)
     if req.note is not None:
         row.note = req.note
     if req.mentions_brand is not None:
@@ -604,6 +714,284 @@ async def update_answer_snapshot(
     await session.commit()
     await session.refresh(row)
     return _snapshot_payload(row, prompt_question=prompt.question)
+
+
+@router.get("/competitor-insights")
+async def competitor_insights(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Aggregate competitor mentions from answer snapshots (Wave C)."""
+    ctx.ensure_tenant(tenant_id)
+    rows = list(
+        await session.scalars(
+            select(GeoAnswerSnapshot)
+            .where(GeoAnswerSnapshot.tenant_id == tenant_id)
+            .order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
+        )
+    )
+    prompt_ids = {r.prompt_id for r in rows}
+    questions: dict[int, str] = {}
+    if prompt_ids:
+        for p in await session.scalars(
+            select(GeoPrompt).where(
+                GeoPrompt.tenant_id == tenant_id, GeoPrompt.id.in_(prompt_ids)
+            )
+        ):
+            questions[p.id] = p.question
+    buckets: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        for name in row.competitors or []:
+            key = str(name).strip()
+            if not key:
+                continue
+            bucket = buckets.setdefault(
+                key,
+                {
+                    "name": key,
+                    "mention_count": 0,
+                    "prompt_ids": set(),
+                    "engines": set(),
+                    "latest_captured_at": None,
+                    "sample_prompt_question": None,
+                },
+            )
+            bucket["mention_count"] += 1
+            bucket["prompt_ids"].add(row.prompt_id)
+            bucket["engines"].add(row.engine)
+            if bucket["latest_captured_at"] is None:
+                bucket["latest_captured_at"] = _iso(row.captured_at)
+                bucket["sample_prompt_question"] = questions.get(row.prompt_id)
+    items = []
+    for bucket in buckets.values():
+        items.append(
+            {
+                "name": bucket["name"],
+                "mention_count": bucket["mention_count"],
+                "prompt_count": len(bucket["prompt_ids"]),
+                "engines": sorted(bucket["engines"]),
+                "latest_captured_at": bucket["latest_captured_at"],
+                "sample_prompt_question": bucket["sample_prompt_question"],
+            }
+        )
+    items.sort(key=lambda x: (-x["mention_count"], x["name"]))
+    return {"items": items}
+
+
+@router.get("/evaluation-insights")
+async def evaluation_insights(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Sentiment / brand-position aggregates from snapshots (Wave C)."""
+    ctx.ensure_tenant(tenant_id)
+    rows = list(
+        await session.scalars(
+            select(GeoAnswerSnapshot)
+            .where(GeoAnswerSnapshot.tenant_id == tenant_id)
+            .order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
+        )
+    )
+    sentiment_counts: dict[str, int] = {
+        "positive": 0,
+        "neutral": 0,
+        "negative": 0,
+        "unknown": 0,
+    }
+    position_counts: dict[str, int] = {
+        "first": 0,
+        "mentioned": 0,
+        "absent": 0,
+        "unknown": 0,
+    }
+    prompt_ids = {r.prompt_id for r in rows}
+    questions: dict[int, str] = {}
+    if prompt_ids:
+        for p in await session.scalars(
+            select(GeoPrompt).where(
+                GeoPrompt.tenant_id == tenant_id, GeoPrompt.id.in_(prompt_ids)
+            )
+        ):
+            questions[p.id] = p.question
+    recent = []
+    for row in rows:
+        sent = row.sentiment if row.sentiment in sentiment_counts else "unknown"
+        pos = row.brand_position if row.brand_position in position_counts else "unknown"
+        sentiment_counts[sent] += 1
+        position_counts[pos] += 1
+        if len(recent) < 40:
+            recent.append(
+                _snapshot_payload(row, prompt_question=questions.get(row.prompt_id))
+            )
+    return {
+        "sentiment_counts": sentiment_counts,
+        "position_counts": position_counts,
+        "recent": recent,
+        "total": len(rows),
+    }
+
+
+@router.post("/answer-snapshots/probe")
+async def probe_answer_snapshot(
+    req: AnswerSnapshotProbeRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """单引擎草稿探测（默认阿里云百炼 DeepSeek）：不写库，供运营确认后手工保存。"""
+    from app.ai.deepseek import DeepSeekError, chat_json
+
+    ctx.ensure_tenant(req.tenant_id)
+    prompt = await _get_prompt(session, req.prompt_id, req.tenant_id)
+    tenant = await _ensure_tenant_exists(session, req.tenant_id)
+    llm = await resolve_llm_credentials(session, req.tenant_id)
+    if not llm:
+        raise HTTPException(
+            503,
+            "未配置 AI 能力：请在「AI 能力配置」填写阿里云百炼 API Key，或改用粘贴登记",
+        )
+    brand = getattr(tenant, "name", None) or f"租户{req.tenant_id}"
+    system = (
+        "你是 GEO 可见度探测助手。请用中文直接回答用户问题，像常见 AI 助手的公开回答。"
+        "只返回 JSON：{\"raw_text\": \"完整回答正文\", \"suggested_mentions_brand\": true/false}。"
+        f"suggested_mentions_brand 表示回答是否明确提及品牌「{brand}」。不要编造不存在的官网承诺。"
+    )
+    user = f"品牌参考名：{brand}\n用户问题：{prompt.question}"
+    try:
+        data = await chat_json(
+            system,
+            user,
+            timeout=60.0,
+            api_key=llm["api_key"],
+            base_url=llm["base_url"],
+            model=llm["model"],
+        )
+    except DeepSeekError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    raw_text = str(data.get("raw_text") or "").strip()
+    if len(raw_text) < 4:
+        raise HTTPException(502, "探测结果过短，请改用粘贴")
+    suggested = bool(data.get("suggested_mentions_brand"))
+    return {
+        "prompt_id": prompt.id,
+        "prompt_question": prompt.question,
+        "engine": "deepseek",
+        "provider": llm.get("provider"),
+        "model": llm.get("model"),
+        "raw_text": raw_text,
+        "suggested_mentions_brand": suggested,
+        "persisted": False,
+    }
+
+
+@router.get("/ai-settings")
+async def get_ai_settings(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    await _ensure_tenant_exists(session, tenant_id)
+    row = await ensure_ai_setting(session, tenant_id)
+    effective = await resolve_llm_credentials(session, tenant_id)
+    payload = settings_public_payload(row)
+    payload["presets"] = preset_payload()
+    payload["effective"] = (
+        {
+            "enabled": True,
+            "provider": effective["provider"],
+            "base_url": effective["base_url"],
+            "model": effective["model"],
+            "source": effective["source"],
+        }
+        if effective
+        else {"enabled": False, "source": None}
+    )
+    return payload
+
+
+@router.put("/ai-settings")
+async def put_ai_settings(
+    req: AiSettingsUpdate,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(req.tenant_id)
+    await _ensure_tenant_exists(session, req.tenant_id)
+    row = await ensure_ai_setting(session, req.tenant_id)
+    if req.apply_preset:
+        preset = apply_provider_preset(req.provider)
+        row.provider = preset["provider"]
+        row.base_url = preset["base_url"]
+        row.model = preset["model"]
+    else:
+        row.provider = req.provider
+        if req.base_url:
+            row.base_url = req.base_url.strip().rstrip("/")
+        elif not row.base_url:
+            row.base_url = apply_provider_preset(req.provider)["base_url"]
+        if req.model:
+            row.model = req.model.strip()
+        elif not row.model:
+            row.model = apply_provider_preset(req.provider)["model"]
+    row.enabled = bool(req.enabled)
+    row.note = req.note
+    row.updated_by = ctx.user_id
+    if req.clear_api_key:
+        row.api_key_encrypted = None
+    elif req.api_key:
+        row.api_key_encrypted = encrypt_api_key(req.api_key)
+    await session.commit()
+    await session.refresh(row)
+    effective = await resolve_llm_credentials(session, req.tenant_id)
+    payload = settings_public_payload(row)
+    payload["presets"] = preset_payload()
+    payload["effective"] = (
+        {
+            "enabled": True,
+            "provider": effective["provider"],
+            "base_url": effective["base_url"],
+            "model": effective["model"],
+            "source": effective["source"],
+        }
+        if effective
+        else {"enabled": False, "source": None}
+    )
+    return payload
+
+
+@router.post("/ai-settings/test")
+async def test_ai_settings(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """用当前生效配置打一条极短 JSON 请求，验证 Key / 线路。"""
+    from app.ai.deepseek import DeepSeekError, chat_json
+
+    ctx.ensure_tenant(tenant_id)
+    llm = await resolve_llm_credentials(session, tenant_id)
+    if not llm:
+        raise HTTPException(503, "尚未配置可用的 AI API Key")
+    try:
+        data = await chat_json(
+            '只返回 JSON：{"ok": true}',
+            "ping",
+            timeout=30.0,
+            api_key=llm["api_key"],
+            base_url=llm["base_url"],
+            model=llm["model"],
+        )
+    except DeepSeekError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {
+        "ok": True,
+        "provider": llm["provider"],
+        "model": llm["model"],
+        "source": llm["source"],
+        "sample": data,
+    }
 
 
 # ---------- tracking engines (Wave B2) ----------
@@ -1248,10 +1636,12 @@ async def generate_task_article(
     task.status = "generating"
     await session.commit()
     try:
+        llm = await resolve_llm_credentials(session, tenant_id)
         payload = await generate_master_article(
             tenant_name=tenant.name,
             question=prompt.question,
             facts=_fact_dicts(facts),
+            llm=llm,
         )
         body = to_markdown(payload)
         outline = outline_from_payload(payload)
@@ -1554,6 +1944,43 @@ async def content_stats(
             GeoMediaPlacement.status == "published",
         )
     )
+    active_prompts = list(
+        await session.scalars(
+            select(GeoPrompt).where(
+                GeoPrompt.tenant_id == tenant_id, GeoPrompt.status == "active"
+            )
+        )
+    )
+    prompts_brand_missing = sum(
+        1 for p in active_prompts if "brand_missing" in (p.tags or [])
+    )
+    prompt_ids = [p.id for p in active_prompts]
+    latest = await _latest_snapshots_by_prompt(session, tenant_id, prompt_ids)
+    published_at = await _published_task_updated_by_prompt(session, tenant_id, prompt_ids)
+    prompts_need_recheck = 0
+    for p in active_prompts:
+        snap = latest.get(p.id)
+        if needs_recheck(
+            has_published_task=p.id in published_at,
+            task_updated_at=published_at.get(p.id),
+            last_snapshot_at=snap.captured_at if snap else None,
+        ):
+            prompts_need_recheck += 1
+    snap_total = int(snapshots or 0)
+    snap_mention = int(snapshots_mention or 0)
+    engines_covered = await session.scalar(
+        select(func.count(func.distinct(GeoAnswerSnapshot.engine))).where(
+            GeoAnswerSnapshot.tenant_id == tenant_id
+        )
+    )
+    competitor_cols = list(
+        await session.scalars(
+            select(GeoAnswerSnapshot.competitors).where(
+                GeoAnswerSnapshot.tenant_id == tenant_id
+            )
+        )
+    )
+    snapshots_with_competitors = sum(1 for c in competitor_cols if c)
     return {
         "prompts": int(prompts or 0),
         "facts": int(facts or 0),
@@ -1564,8 +1991,15 @@ async def content_stats(
         "todo_ready": int(todo_ready or 0),
         "todo_publish": int(todo_publish or 0),
         "from_diagnosis_count": int(from_diagnosis or 0),
-        "snapshots": int(snapshots or 0),
-        "snapshots_mention_brand": int(snapshots_mention or 0),
+        "snapshots": snap_total,
+        "snapshots_mention_brand": snap_mention,
         "media_open": int(media_planned or 0),
         "media_published": int(media_published or 0),
+        "prompts_brand_missing": int(prompts_brand_missing),
+        "prompts_need_recheck": int(prompts_need_recheck),
+        "visibility_mention_rate": visibility_mention_rate(
+            total_snapshots=snap_total, mention_snapshots=snap_mention
+        ),
+        "visibility_engines_covered": int(engines_covered or 0),
+        "snapshots_with_competitors": int(snapshots_with_competitors),
     }

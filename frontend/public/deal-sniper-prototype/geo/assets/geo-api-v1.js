@@ -136,7 +136,9 @@
     api: api,
     contentHealth: function () { return api('/content-health'); },
     contentStats: function () { return api('/content-stats'); },
-    listPrompts: function () { return api('/prompts'); },
+    listPrompts: function (query) {
+      return api('/prompts', { query: query || {} });
+    },
     createPrompt: function (body) { return api('/prompts', { method: 'POST', body: body }); },
     importPrompts: function (items) {
       return api('/prompts/import', { method: 'POST', body: { items: items } });
@@ -283,11 +285,36 @@
     createAnswerSnapshot: function (body) {
       return api('/answer-snapshots', { method: 'POST', body: body });
     },
+    probeAnswerSnapshot: function (promptId) {
+      return api('/answer-snapshots/probe', {
+        method: 'POST',
+        body: { prompt_id: promptId },
+      });
+    },
     patchAnswerSnapshot: function (id, body) {
       return api('/answer-snapshots/' + id, {
         method: 'PATCH',
         query: withTenantQuery(),
         body: body,
+      });
+    },
+    competitorInsights: function () {
+      return api('/competitor-insights', { query: withTenantQuery() });
+    },
+    evaluationInsights: function () {
+      return api('/evaluation-insights', { query: withTenantQuery() });
+    },
+    getAiSettings: function () {
+      return api('/ai-settings', { query: withTenantQuery() });
+    },
+    putAiSettings: function (body) {
+      return api('/ai-settings', { method: 'PUT', body: body || {} });
+    },
+    testAiSettings: function () {
+      return api('/ai-settings/test', {
+        method: 'POST',
+        query: withTenantQuery(),
+        body: {},
       });
     },
     listTrackingEngines: function (enabledOnly) {
