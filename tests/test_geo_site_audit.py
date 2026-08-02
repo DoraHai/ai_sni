@@ -2,7 +2,12 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from app.geo.audit import PageDocument
-from app.geo.site_audit import aggregate_site_results, discover_site_urls, page_weight
+from app.geo.site_audit import (
+    aggregate_site_results,
+    deduplicate_results,
+    discover_site_urls,
+    page_weight,
+)
 
 
 def _result(url: str, score: int, passed: bool) -> dict:
@@ -98,6 +103,12 @@ class GeoSiteAuditTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result["checks"][0]["page_evidence"]), 2)
         self.assertEqual(result["snapshot"]["site_audit"]["total_weight"], 5)
         self.assertEqual(result["snapshot"]["audit_scope"], "site")
+
+    def test_results_are_deduplicated_after_redirects(self):
+        first = _result("https://example.com/zh/home.html", 80, True)
+        duplicate = _result("https://example.com/zh/home.html", 80, True)
+        product = _result("https://example.com/products/pump", 70, False)
+        self.assertEqual(len(deduplicate_results([first, duplicate, product])), 2)
 
 
 if __name__ == "__main__":

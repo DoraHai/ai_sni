@@ -233,6 +233,19 @@ def aggregate_site_results(
     }
 
 
+def deduplicate_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """按抓取后的最终 URL 去重，避免根地址与地区首页重复计权。"""
+    unique: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for result in results:
+        final_url = _canonical_discovery_url(result["final_url"])
+        if final_url in seen:
+            continue
+        seen.add(final_url)
+        unique.append(result)
+    return unique
+
+
 async def audit_site(url: str, limit: int = MAX_SITE_PAGES) -> dict[str, Any]:
     urls, source = await discover_site_urls(url, limit=limit)
     semaphore = asyncio.Semaphore(PAGE_CONCURRENCY)
@@ -245,7 +258,7 @@ async def audit_site(url: str, limit: int = MAX_SITE_PAGES) -> dict[str, Any]:
                 return exc
 
     rows = await asyncio.gather(*(run(page_url) for page_url in urls))
-    results = [row for row in rows if isinstance(row, dict)]
+    results = deduplicate_results([row for row in rows if isinstance(row, dict)])
     return aggregate_site_results(
         results,
         discovery_source=source,
