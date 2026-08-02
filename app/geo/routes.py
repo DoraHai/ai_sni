@@ -312,6 +312,7 @@ async def create_ai_sample(
     try:
         sample = await run_deepseek_sample(
             questions=questions,
+            brand_name=tenant.name,
             brand_terms=brand_terms,
             model=get_settings().deepseek_model,
         )

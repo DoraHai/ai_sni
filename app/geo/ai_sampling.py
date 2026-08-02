@@ -90,6 +90,7 @@ def detect_brand_mentions(response: str, brand_terms: list[str]) -> list[str]:
 async def run_deepseek_sample(
     *,
     questions: list[str],
+    brand_name: str,
     brand_terms: list[str],
     model: str,
     chat: Callable[..., Awaitable[str]] | None = None,
@@ -136,6 +137,7 @@ async def run_deepseek_sample(
     return {
         "platform": "DeepSeek",
         "model": model,
+        "brand_name": brand_name,
         "executed_at": datetime.now(timezone.utc).isoformat(),
         "question_count": total,
         "mention_count": mention_count,

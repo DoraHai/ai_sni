@@ -687,7 +687,10 @@ onMounted(async () => {
                 <h2>DeepSeek 品牌提及抽样</h2>
                 <p>用中立问题真实调用模型；品牌提及由后端按已确认名称和别名匹配。</p>
               </div>
-              <span class="sample-chip">真实 API · 最多 3 个问题</span>
+              <div class="sample-chips">
+                <span class="sample-chip">待测品牌：{{ aiSample?.brand_name || '当前客户品牌' }}</span>
+                <span class="sample-chip">真实 API · 最多 3 个问题</span>
+              </div>
             </div>
 
             <div class="sample-composer">
@@ -1033,6 +1036,7 @@ button { color: inherit; }
 .sample-heading .section-index { color:#a895e5; }
 .sample-heading h2 { margin:5px 0 4px; font-family:"Songti SC","Noto Serif SC",serif; font-size:20px; }
 .sample-heading p { margin:0; color:#aeb4c5; font-size:10px; }
+.sample-chips { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:7px; }
 .sample-chip { flex:none; padding:7px 10px; border:1px solid rgba(199,185,245,.28); border-radius:14px; color:#d9cff7; background:rgba(137,111,214,.13); font-size:9px; font-weight:750; }
 .sample-composer { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:14px; align-items:end; padding:18px 21px; border-bottom:1px solid #e8e4f0; background:#fbfafd; }
 .sample-question-list { display:grid; gap:7px; }

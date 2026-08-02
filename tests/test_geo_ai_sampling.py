@@ -41,11 +41,13 @@ class GeoAISamplingTests(unittest.IsolatedAsyncioTestCase):
         )
         sample = await run_deepseek_sample(
             questions=["问题一？", "问题二？", "问题三？"],
+            brand_name="示例品牌",
             brand_terms=["示例品牌"],
             model="deepseek-chat",
             chat=chat,
         )
         self.assertEqual(sample["mention_count"], 2)
+        self.assertEqual(sample["brand_name"], "示例品牌")
         self.assertEqual(sample["mention_rate"], 0.6667)
         self.assertEqual(sample["results"][0]["source_urls"], ["https://example.org/a"])
         self.assertIn("Alpha Pumps", sample["results"][1]["response"])
