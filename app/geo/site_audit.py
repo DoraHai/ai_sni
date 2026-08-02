@@ -113,7 +113,9 @@ async def discover_site_urls(url: str, limit: int = MAX_SITE_PAGES) -> tuple[lis
             for node in soup.select("a[href]")
         ]
 
-    candidates = [homepage, final, *discovered]
+    # 用户可能直接输入地区/语言首页（如 /sg/zh/home.html）。此时再补抓域名根
+    # 地址容易被重定向到另一个地区站点，并造成两个首页重复加权。
+    candidates = [final, *([] if page_weight(final)[0] == 3 else [homepage]), *discovered]
     unique: list[str] = []
     seen: set[str] = set()
     for candidate in candidates:

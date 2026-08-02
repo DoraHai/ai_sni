@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from app.geo.audit import PageDocument
+from app.geo.audit import GeoAuditError, PageDocument
 from app.geo.site_audit import (
     aggregate_site_results,
     deduplicate_results,
@@ -88,6 +88,27 @@ class GeoSiteAuditTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(urls[0], "https://example.com/")
         self.assertIn("https://example.com/products/pump", urls)
         self.assertNotIn("https://other.example/page", urls)
+
+    async def test_localized_home_does_not_add_origin_homepage(self):
+        localized_home = PageDocument(
+            requested_url="https://example.com/sg/zh/home.html",
+            final_url="https://example.com/sg/zh/home.html",
+            html='<html><a href="/sg/zh/products/pump">Pump</a></html>',
+            content_type="text/html",
+        )
+
+        async def fake_fetch(url, **_kwargs):
+            if url.endswith("robots.txt") or url.endswith("sitemap.xml"):
+                raise GeoAuditError("not found")
+            return localized_home
+
+        with patch("app.geo.site_audit.safe_fetch", new=AsyncMock(side_effect=fake_fetch)):
+            urls, source = await discover_site_urls(
+                "https://example.com/sg/zh/home.html", limit=10
+            )
+        self.assertEqual(source, "homepage_links")
+        self.assertEqual(urls[0], "https://example.com/sg/zh/home.html")
+        self.assertNotIn("https://example.com/", urls)
 
     def test_aggregate_uses_core_page_weights_and_keeps_page_evidence(self):
         result = aggregate_site_results(
