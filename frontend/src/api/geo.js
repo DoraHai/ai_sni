@@ -15,6 +15,13 @@ export function generateGeoAdvice({ tenantId, auditId }) {
   })
 }
 
+export function runDeepSeekSample({ tenantId, auditId, questions = [] }) {
+  return client.post(`/api/v1/geo/audits/${auditId}/ai-sample`, {
+    tenant_id: tenantId,
+    questions,
+  }, { timeout: 90000 })
+}
+
 export function generateGeoAssets({ tenantId, auditId }) {
   return client.post(`/api/v1/geo/audits/${auditId}/assets`, null, {
     params: { tenant_id: tenantId },

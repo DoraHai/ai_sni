@@ -10,8 +10,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.deepseek import is_enabled as ai_enabled
+from app.ai.deepseek import DeepSeekError, is_enabled as ai_enabled
+from app.config import get_settings
 from app.database import get_session
+from app.geo.ai_sampling import (
+    build_neutral_questions,
+    clean_questions,
+    run_deepseek_sample,
+)
 from app.geo.audit import RULE_VERSION, RULE_WEIGHTS, GeoAuditError, audit_url
 from app.geo.generate import ai_advice, generate_json_ld, generate_llms_text
 from app.models import GeoAuditRun, Tenant
@@ -28,6 +34,11 @@ router = APIRouter(
 class AuditCreate(BaseModel):
     tenant_id: int
     url: str = Field(..., min_length=4, max_length=2048)
+
+
+class AISampleCreate(BaseModel):
+    tenant_id: int
+    questions: list[str] = Field(default_factory=list, max_length=3)
 
 
 class BrandAssetUpdate(BaseModel):
@@ -253,6 +264,64 @@ async def create_advice(
     )
     run.advice = advice
     run.advice_source = source
+    await session.commit()
+    await session.refresh(run)
+    return _payload(run)
+
+
+@router.post("/audits/{audit_id}/ai-sample")
+async def create_ai_sample(
+    audit_id: int,
+    req: AISampleCreate,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """使用真实 DeepSeek 回答执行单平台品牌提及抽样。"""
+    ctx.ensure_tenant(req.tenant_id)
+    if not ai_enabled():
+        raise HTTPException(503, "DeepSeek 抽样服务暂未启用")
+    run = await _run_for_tenant(session, audit_id, req.tenant_id)
+    tenant = await session.get(Tenant, req.tenant_id)
+    if tenant is None:
+        raise HTTPException(404, "客户不存在")
+
+    brand_asset = _json_content(
+        await _latest_memory(session, req.tenant_id, "brand_asset")
+    )
+    audience = _json_content(
+        await _latest_memory(session, req.tenant_id, "audience_profile")
+    )
+    brand_terms = list(
+        dict.fromkeys(
+            item.strip()
+            for item in [tenant.name, *(tenant.brand_terms or [])]
+            if item and item.strip()
+        )
+    )
+    try:
+        questions = clean_questions(req.questions, brand_terms)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not questions:
+        questions = build_neutral_questions(
+            industry=tenant.industry or "",
+            core_products=brand_asset.get("core_products") or [],
+            audience_segments=audience.get("segments") or [],
+            brand_terms=brand_terms,
+        )
+    try:
+        sample = await run_deepseek_sample(
+            questions=questions,
+            brand_terms=brand_terms,
+            model=get_settings().deepseek_model,
+        )
+    except DeepSeekError as exc:
+        # API 客户端已完成一次重试；路由只暴露可操作的失败信息，不泄露密钥或响应体。
+        raise HTTPException(502, "DeepSeek 抽样失败，请稍后重试") from exc
+
+    snapshot = dict(run.snapshot or {})
+    snapshot["ai_sampling"] = sample
+    run.snapshot = snapshot
     await session.commit()
     await session.refresh(run)
     return _payload(run)

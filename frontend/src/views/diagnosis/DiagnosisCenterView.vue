@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import {
   fetchLatestGeoAudit,
   generateGeoAdvice,
+  runDeepSeekSample,
   runGeoAudit,
 } from '../../api/geo'
 import { fetchTenants } from '../../api/auth'
@@ -17,12 +18,14 @@ const audit = ref(null)
 const loading = ref(false)
 const tenantLoading = ref(false)
 const adviceLoading = ref(false)
+const samplingLoading = ref(false)
 const error = ref('')
 const issueFilter = ref('all')
 const loadingStage = ref(0)
 const activeReport = ref('overview')
 const activeAsset = ref('')
 const expandedEvidence = ref('')
+const sampleQuestions = ref(['', '', ''])
 let stageTimer = null
 
 const reportNav = [
@@ -83,6 +86,7 @@ const scoreLabel = computed(() => {
 
 const findings = computed(() => audit.value?.findings || [])
 const problems = computed(() => audit.value?.problems || [])
+const aiSample = computed(() => audit.value?.snapshot?.ai_sampling || null)
 const passedCount = computed(() => findings.value.filter((item) => item.passed).length)
 
 const problemCounts = computed(() => ({
@@ -221,6 +225,10 @@ async function loadLatest({ notify = false } = {}) {
     const result = await fetchLatestGeoAudit(tenantId.value)
     audit.value = result.audit
     if (result.audit?.url) url.value = result.audit.url
+    if (result.audit?.snapshot?.ai_sampling?.results) {
+      sampleQuestions.value = result.audit.snapshot.ai_sampling.results.map((item) => item.question).slice(0, 3)
+      while (sampleQuestions.value.length < 3) sampleQuestions.value.push('')
+    }
     if (notify) ElMessage.success(result.audit ? '已载入最近一次诊断' : '暂无历史诊断')
   } catch {
     if (notify) ElMessage.error('历史诊断读取失败')
@@ -241,6 +249,7 @@ async function startAudit() {
   try {
     audit.value = await runGeoAudit({ tenantId: tenantId.value, url: normalized })
     url.value = audit.value.final_url || normalized
+    sampleQuestions.value = ['', '', '']
     loadingStage.value = loadingStages.length - 1
     ElMessage.success('网站诊断完成')
     await nextTick()
@@ -263,6 +272,34 @@ async function createAdvice() {
     ElMessage.error(e.message || '行动建议生成失败')
   } finally {
     adviceLoading.value = false
+  }
+}
+
+async function createDeepSeekSample() {
+  if (!audit.value || samplingLoading.value) return
+  samplingLoading.value = true
+  try {
+    audit.value = await runDeepSeekSample({
+      tenantId: tenantId.value,
+      auditId: audit.value.id,
+      questions: sampleQuestions.value.map((item) => item.trim()).filter(Boolean),
+    })
+    sampleQuestions.value = (audit.value.snapshot?.ai_sampling?.results || []).map((item) => item.question)
+    while (sampleQuestions.value.length < 3) sampleQuestions.value.push('')
+    ElMessage.success('DeepSeek 品牌提及抽样完成')
+  } catch (e) {
+    ElMessage.error(e.message || 'DeepSeek 抽样失败，请稍后重试')
+  } finally {
+    samplingLoading.value = false
+  }
+}
+
+async function copySampleResponse(item) {
+  try {
+    await navigator.clipboard.writeText(`问题：${item.question}\n\n${item.response}`)
+    ElMessage.success('原始回答已复制')
+  } catch {
+    ElMessage.error('复制失败，请手动选择内容')
   }
 }
 
@@ -643,6 +680,89 @@ onMounted(async () => {
             </div>
           </section>
 
+          <section class="ai-sample-panel">
+            <div class="sample-heading">
+              <div>
+                <span class="section-index">03B / LIVE MODEL SAMPLE</span>
+                <h2>DeepSeek 品牌提及抽样</h2>
+                <p>用中立问题真实调用模型；品牌提及由后端按已确认名称和别名匹配。</p>
+              </div>
+              <span class="sample-chip">真实 API · 最多 3 个问题</span>
+            </div>
+
+            <div class="sample-composer">
+              <div class="sample-question-list">
+                <label v-for="(_, index) in sampleQuestions" :key="index">
+                  <span>Q{{ index + 1 }}</span>
+                  <input
+                    v-model="sampleQuestions[index]"
+                    type="text"
+                    maxlength="300"
+                    :placeholder="index === 0 ? '留空则根据品牌行业自动生成三个中立问题' : '可选：输入客户真实会问的问题（不能包含待测品牌名）'"
+                    :disabled="samplingLoading"
+                  >
+                </label>
+              </div>
+              <button
+                type="button"
+                :disabled="samplingLoading || !audit.ai_enabled"
+                @click="createDeepSeekSample"
+              >
+                {{ samplingLoading ? '正在进行真实抽样…' : aiSample ? '重新抽样 →' : '开始 DeepSeek 实测 →' }}
+              </button>
+              <small v-if="!audit.ai_enabled">DeepSeek 服务当前未启用</small>
+            </div>
+
+            <template v-if="aiSample">
+              <div class="sample-metrics">
+                <article>
+                  <span>品牌被提及</span>
+                  <strong>{{ aiSample.mention_count }}<small>/{{ aiSample.question_count }}</small></strong>
+                </article>
+                <article>
+                  <span>本次提及率</span>
+                  <strong>{{ Math.round(aiSample.mention_rate * 100) }}<small>%</small></strong>
+                </article>
+                <article>
+                  <span>抽样平台</span>
+                  <strong class="model-name">{{ aiSample.platform }}</strong>
+                  <small>{{ aiSample.model }} · {{ formatDate(aiSample.executed_at) }}</small>
+                </article>
+              </div>
+
+              <div class="sample-results">
+                <article v-for="(item, index) in aiSample.results" :key="`${item.question}-${index}`" :class="{ mentioned: item.mentioned }">
+                  <span class="sample-index">{{ String(index + 1).padStart(2, '0') }}</span>
+                  <div class="sample-result-copy">
+                    <header>
+                      <span :class="item.mentioned ? 'hit' : 'miss'">{{ item.mentioned ? '已提及品牌' : '未提及品牌' }}</span>
+                      <small v-if="item.matched_terms?.length">命中：{{ item.matched_terms.join('、') }}</small>
+                    </header>
+                    <h3>{{ item.question }}</h3>
+                    <p>{{ item.response }}</p>
+                    <details>
+                      <summary>查看完整原始回答与证据</summary>
+                      <pre>{{ item.response }}</pre>
+                      <div v-if="item.source_urls?.length" class="sample-sources">
+                        <b>回答中的链接</b>
+                        <a v-for="source in item.source_urls" :key="source" :href="source" target="_blank" rel="noopener">{{ source }}</a>
+                      </div>
+                      <button type="button" @click="copySampleResponse(item)">复制原始回答</button>
+                    </details>
+                  </div>
+                </article>
+              </div>
+              <footer class="sample-method">
+                <p><b>计算口径</b>{{ aiSample.methodology }}</p>
+                <p><b>抽样局限</b>{{ aiSample.limitations }}</p>
+              </footer>
+            </template>
+            <div v-else class="sample-empty">
+              <span>DS</span>
+              <p><strong>结构就绪度不等于真实提及。</strong>运行抽样后，这里会展示每个问题的完整模型回答与品牌命中证据。</p>
+            </div>
+          </section>
+
           <section id="section-issues" class="issues-panel">
             <div class="panel-heading issue-heading">
               <div>
@@ -863,7 +983,7 @@ button { color: inherit; }
 .priority-note span { color:var(--amber); font-size:9px; font-weight:800; letter-spacing:.1em; }
 .priority-note p { margin:6px 0 0; color:#455a5e; font-size:10px; line-height:1.6; }
 
-.capability-panel,.diagnostic-section,.issues-panel,.action-panel { margin-top:16px; border:1px solid var(--line); border-radius:13px; background:#fff; }
+.capability-panel,.diagnostic-section,.issues-panel,.action-panel,.ai-sample-panel { margin-top:16px; border:1px solid var(--line); border-radius:13px; background:#fff; }
 .panel-heading { min-height:68px; display:flex; align-items:center; justify-content:space-between; gap:20px; padding:15px 21px; border-bottom:1px solid var(--line); }
 .panel-heading h2 { margin:4px 0 0; font-family:"Songti SC","Noto Serif SC",serif; font-size:18px; }
 .panel-heading>p { max-width:430px; margin:0; color:var(--muted); font-size:10px; text-align:right; }
@@ -908,6 +1028,56 @@ button { color: inherit; }
 .geo-section .evidence-toggle,.geo-section .evidence-detail header button { color:#7657be; }
 .geo-section .evidence-detail { border-color:#e3dcf5; background:#faf8ff; }
 
+.ai-sample-panel { overflow:hidden; border-color:#dcd6ea; }
+.sample-heading { min-height:90px; display:flex; align-items:center; justify-content:space-between; gap:24px; padding:20px 24px; color:#f7f4ff; background:#252938; }
+.sample-heading .section-index { color:#a895e5; }
+.sample-heading h2 { margin:5px 0 4px; font-family:"Songti SC","Noto Serif SC",serif; font-size:20px; }
+.sample-heading p { margin:0; color:#aeb4c5; font-size:10px; }
+.sample-chip { flex:none; padding:7px 10px; border:1px solid rgba(199,185,245,.28); border-radius:14px; color:#d9cff7; background:rgba(137,111,214,.13); font-size:9px; font-weight:750; }
+.sample-composer { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:14px; align-items:end; padding:18px 21px; border-bottom:1px solid #e8e4f0; background:#fbfafd; }
+.sample-question-list { display:grid; gap:7px; }
+.sample-question-list label { display:grid; grid-template-columns:29px minmax(0,1fr); align-items:center; gap:8px; }
+.sample-question-list label>span { color:#7c699e; font:800 9px "SFMono-Regular",monospace; }
+.sample-question-list input { min-width:0; height:34px; padding:0 11px; border:1px solid #ddd8e9; border-radius:7px; outline:0; color:#303440; background:#fff; font-size:10px; }
+.sample-question-list input:focus { border-color:#8870c4; box-shadow:0 0 0 3px rgba(118,87,190,.09); }
+.sample-composer>button { height:39px; padding:0 16px; border:0; border-radius:8px; color:#fff; background:#7657be; font-size:10px; font-weight:800; cursor:pointer; }
+.sample-composer>button:disabled { opacity:.5; cursor:wait; }
+.sample-composer>small { grid-column:2; color:var(--red); font-size:8px; }
+.sample-metrics { display:grid; grid-template-columns:1fr 1fr 1.25fr; border-bottom:1px solid #e8e4f0; }
+.sample-metrics article { min-height:112px; padding:20px 23px; border-right:1px solid #e8e4f0; }
+.sample-metrics article:last-child { border-right:0; }
+.sample-metrics span { display:block; color:#838797; font-size:9px; }
+.sample-metrics strong { display:block; margin-top:9px; color:#2b3040; font:500 31px "Iowan Old Style",Georgia,serif; }
+.sample-metrics strong small { display:inline; margin-left:3px; color:#969aaa; font:500 11px "Avenir Next",sans-serif; }
+.sample-metrics .model-name { font-size:23px; }
+.sample-metrics article>small { display:block; margin-top:4px; color:#989cab; font-size:8px; }
+.sample-results { display:grid; grid-template-columns:1fr 1fr 1fr; gap:1px; background:#e8e4f0; }
+.sample-results>article { min-width:0; display:grid; grid-template-columns:29px minmax(0,1fr); gap:10px; padding:20px; background:#fff; }
+.sample-results>article.mentioned { box-shadow:inset 0 3px 0 #2aa579; }
+.sample-index { color:#d4cede; font:500 22px "Iowan Old Style",Georgia,serif; }
+.sample-result-copy { min-width:0; }
+.sample-result-copy header { display:flex; align-items:center; justify-content:space-between; gap:7px; }
+.sample-result-copy header>span { padding:3px 7px; border-radius:9px; font-size:8px; font-weight:800; }
+.sample-result-copy .hit { color:#167452; background:#e6f7f0; }
+.sample-result-copy .miss { color:#9b6721; background:#fff4df; }
+.sample-result-copy header small { max-width:120px; overflow:hidden; color:#8a8e9c; font-size:8px; text-overflow:ellipsis; white-space:nowrap; }
+.sample-result-copy h3 { min-height:38px; margin:10px 0 7px; font-size:11px; line-height:1.55; }
+.sample-result-copy>p { max-height:68px; margin:0; overflow:hidden; color:#68707b; font-size:9px; line-height:1.7; }
+.sample-result-copy details { margin-top:10px; }
+.sample-result-copy summary { color:#7657be; font-size:9px; font-weight:750; cursor:pointer; }
+.sample-result-copy pre { max-height:260px; margin:9px 0; padding:11px; overflow:auto; border:1px solid #e7e2ef; border-radius:7px; color:#4d5360; background:#f8f7fa; font:9px/1.7 "SFMono-Regular",Consolas,monospace; white-space:pre-wrap; word-break:break-word; }
+.sample-result-copy details>button { padding:0; border:0; color:#7657be; background:transparent; font-size:8px; font-weight:750; cursor:pointer; }
+.sample-sources { display:grid; gap:4px; margin:8px 0; }
+.sample-sources b { color:#777c89; font-size:8px; }
+.sample-sources a { overflow:hidden; color:#7657be; font-size:8px; text-overflow:ellipsis; text-decoration:none; white-space:nowrap; }
+.sample-method { display:grid; grid-template-columns:1fr 1fr; gap:20px; padding:15px 21px; color:#777c89; background:#f8f7fa; }
+.sample-method p { margin:0; font-size:9px; line-height:1.6; }
+.sample-method b { margin-right:7px; color:#4c5260; }
+.sample-empty { min-height:108px; display:flex; align-items:center; justify-content:center; gap:13px; padding:24px; }
+.sample-empty>span { width:38px; height:38px; display:grid; place-items:center; border-radius:50%; color:#fff; background:#7657be; font-size:10px; font-weight:850; }
+.sample-empty p { max-width:610px; margin:0; color:#777c89; font-size:10px; line-height:1.7; }
+.sample-empty strong { color:#343946; }
+
 .issue-heading h2 em { display:inline-grid; place-items:center; min-width:22px; height:20px; margin-left:5px; border-radius:10px; color:#fff; background:var(--red); font:700 9px "Avenir Next",sans-serif; font-style:normal; vertical-align:3px; }
 .issue-filters { display:flex; gap:6px; }
 .issue-filters button { height:28px; padding:0 10px; border:1px solid var(--line); border-radius:7px; background:#fff; color:#758388; font-size:9px; cursor:pointer; }
@@ -948,6 +1118,7 @@ button { color: inherit; }
   .capability-body { grid-template-columns:270px 1fr; }
   .dimension-list { grid-template-columns:1fr; }
   .action-grid { grid-template-columns:1fr 1fr; }
+  .sample-results { grid-template-columns:1fr; }
 }
 @media (max-width: 760px) {
   .diagnosis-center { display:block; }
@@ -981,6 +1152,12 @@ button { color: inherit; }
   .panel-heading { align-items:flex-start; }
   .panel-heading>p { display:none; }
   .action-empty { align-items:flex-start; flex-direction:column; }
+  .sample-heading,.sample-composer { grid-template-columns:1fr; align-items:flex-start; }
+  .sample-heading { flex-direction:column; }
+  .sample-composer>button { width:100%; }
+  .sample-metrics { grid-template-columns:1fr; }
+  .sample-metrics article { border-right:0; border-bottom:1px solid #e8e4f0; }
+  .sample-method { grid-template-columns:1fr; }
 }
 
 @media print {
@@ -988,6 +1165,6 @@ button { color: inherit; }
   .diagnosis-sidebar,.diagnosis-topbar,.scan-panel,.preflight-grid,.topbar-actions,.issue-filters,.action-empty button { display:none !important; }
   .diagnosis-content { max-width:none; padding:0; }
   .report-meta { margin-top:0; }
-  .capability-panel,.diagnostic-section,.issues-panel,.action-panel,.summary-grid article { break-inside:avoid; box-shadow:none; }
+  .capability-panel,.diagnostic-section,.issues-panel,.action-panel,.ai-sample-panel,.summary-grid article { break-inside:avoid; box-shadow:none; }
 }
 </style>
