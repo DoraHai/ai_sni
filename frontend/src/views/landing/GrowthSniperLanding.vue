@@ -465,7 +465,7 @@ function submitTrialForm() {
         <small>让每一条线索，都成为增长的动力</small>
         <h2>精准获客，从这一次点击开始</h2>
         <div class="hero-actions">
-          <button class="button primary" type="button" @click="goDiagnosis">开始免费诊断</button>
+          <button class="button primary" type="button" @click="openTrialForm">开始免费诊断</button>
           <button class="button ghost" type="button" @click="openTrialForm">预约演示 <span>↗</span></button>
         </div>
       </section>
