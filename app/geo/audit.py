@@ -18,7 +18,7 @@ MAX_HTML_BYTES = 3 * 1024 * 1024
 MAX_REDIRECTS = 5
 FETCH_TIMEOUT = 18.0
 USER_AGENT = "Mozilla/5.0 (compatible; GrowthSniper-GEO/1.0)"
-RULE_VERSION = "1.0.1"
+RULE_VERSION = "1.0.2"
 
 # 每条规则的固定权重。通过与否只影响实际扣分，不能改变该维度的总权重。
 RULE_WEIGHTS = {
@@ -270,7 +270,7 @@ async def audit_url(url: str) -> dict[str, Any]:
         _finding("substantial", "正文信息量充足", "内容质量", "high", content_units >= 500, f"可读内容约 {content_units} 个中英文单元", "扩充事实、步骤、适用条件、案例和限制，避免只有营销口号。", 8, True),
         _finding("schema", "存在有效 JSON-LD", "结构化数据", "high", bool(schema_types), f"识别类型：{', '.join(sorted(schema_types)) or '无'}", "至少增加 Organization、WebSite 和 WebPage JSON-LD。", 8, True),
         _finding("entity_schema", "品牌实体 Schema 完整", "结构化数据", "high", bool(schema_types & {"Organization", "LocalBusiness", "Corporation", "Brand"}), f"识别类型：{', '.join(sorted(schema_types)) or '无'}", "用 Organization/Brand 描述品牌名称、官网和可验证的官方资料。", 7, True),
-        _finding("faq", "包含问答式内容", "AI 可引用性", "medium", "FAQPage" in schema_types or len(question_headings) >= 2, f"问答标题 {len(question_headings)} 个", "增加真实用户问题及简洁答案；符合条件时添加 FAQPage 标记。", 5, True),
+        _finding("faq", "包含问答式内容", "AI 引用就绪度", "medium", "FAQPage" in schema_types or len(question_headings) >= 2, f"问答标题 {len(question_headings)} 个", "增加真实用户问题及简洁答案；符合条件时添加 FAQPage 标记。", 5, True),
         _finding("citations", "存在外部证据或引用", "可信度", "high", len(external_links) >= 2, f"发现 {len(external_links)} 个外部来源链接", "为关键数字和结论增加权威来源、发布日期与链接。", 7),
         _finding("freshness", "作者与更新时间可识别", "可信度", "medium", has_author and has_date, f"作者：{'有' if has_author else '无'}；日期：{'有' if has_date else '无'}", "展示作者/审核人和最近更新时间，并使用结构化字段标记。", 5, True),
         _finding("language", "页面语言已声明", "技术基础", "low", bool(language), f"lang={language or '未设置'}", "在 html 元素设置准确的 lang 属性。", 2, True),
@@ -294,6 +294,7 @@ async def audit_url(url: str) -> dict[str, Any]:
             "schema_types": sorted(schema_types),
             "content_units": content_units,
             "external_link_count": len(external_links),
+            "external_links": sorted(external_links)[:100],
             "question_headings": question_headings[:12],
             "robots_url": robots_url,
             "llms_url": llms_url,

@@ -42,10 +42,14 @@ class GeoAuditTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["title"], "工业泵解决方案与维护服务 - 示例品牌")
         self.assertEqual(result["snapshot"]["schema_types"], ["Organization"])
         self.assertEqual(len(result["checks"]), 16)
-        self.assertEqual(result["rule_version"], "1.0.1")
+        self.assertEqual(result["rule_version"], "1.0.2")
         self.assertTrue(all(item["weight"] > 0 for item in result["checks"]))
         self.assertTrue(all(item["deduction"] == 0 for item in result["checks"] if item["passed"]))
         self.assertTrue(any(item["code"] == "llms" and not item["passed"] for item in result["checks"]))
+        self.assertEqual(
+            result["snapshot"]["external_links"],
+            ["https://example.net/source-b", "https://example.org/source-a"],
+        )
         self.assertGreaterEqual(result["score"], 0)
         self.assertLessEqual(result["score"], 100)
 

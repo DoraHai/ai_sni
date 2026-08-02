@@ -22,6 +22,7 @@ const issueFilter = ref('all')
 const loadingStage = ref(0)
 const activeReport = ref('overview')
 const activeAsset = ref('')
+const expandedEvidence = ref('')
 let stageTimer = null
 
 const reportNav = [
@@ -97,7 +98,7 @@ const dimensions = computed(() => {
     { key: 'semantic', label: '页面语义', categories: ['页面语义'] },
     { key: 'structure', label: '内容结构', categories: ['内容结构', '内容质量'] },
     { key: 'schema', label: '实体与 Schema', categories: ['结构化数据'] },
-    { key: 'citation', label: 'AI 可引用', categories: ['AI 可引用性', 'AI 可访问性'] },
+    { key: 'citation', label: 'AI 引用就绪度', categories: ['AI 引用就绪度', 'AI 可引用性', 'AI 可访问性'] },
     { key: 'trust', label: '可信信号', categories: ['可信度'] },
   ]
   return definitions.map((definition) => {
@@ -124,8 +125,35 @@ const seoFindings = computed(() => findings.value.filter((item) =>
 ))
 
 const geoFindings = computed(() => findings.value.filter((item) =>
-  ['结构化数据', 'AI 可引用性', 'AI 可访问性', '可信度'].includes(item.category),
+  ['结构化数据', 'AI 引用就绪度', 'AI 可引用性', 'AI 可访问性', '可信度'].includes(item.category),
 ))
+
+function evidenceDetails(item) {
+  const snapshot = audit.value?.snapshot || {}
+  if (item.code === 'citations') return snapshot.external_links || []
+  if (item.code === 'faq') return snapshot.question_headings || []
+  if (['schema', 'entity_schema'].includes(item.code)) return snapshot.schema_types || []
+  if (item.code === 'heading_depth') {
+    return (snapshot.headings || []).map((heading) => `H${heading.level} · ${heading.text}`)
+  }
+  if (item.code === 'h1') return snapshot.h1 || []
+  return []
+}
+
+function toggleEvidence(item) {
+  expandedEvidence.value = expandedEvidence.value === item.code ? '' : item.code
+}
+
+async function copyEvidence(item) {
+  const text = evidenceDetails(item).join('\n')
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('证据明细已复制')
+  } catch {
+    ElMessage.error('复制失败，请手动选择内容')
+  }
+}
 
 const filteredProblems = computed(() => {
   if (issueFilter.value === 'all') return problems.value
@@ -263,9 +291,14 @@ function severityLabel(value) {
   return { critical: '阻断', high: '高优先', medium: '中优先', low: '建议' }[value] || value
 }
 
+function categoryLabel(item) {
+  if (['AI 引用就绪度', 'AI 可引用性', 'AI 可访问性'].includes(item.category)) return 'AI 引用就绪度'
+  return item.category
+}
+
 function issueDomain(item) {
   if (['技术基础', '页面语义'].includes(item.category)) return 'seo'
-  if (['结构化数据', 'AI 可引用性', 'AI 可访问性'].includes(item.category)) return 'geo'
+  if (['结构化数据', 'AI 引用就绪度', 'AI 可引用性', 'AI 可访问性'].includes(item.category)) return 'geo'
   return 'content'
 }
 
@@ -378,7 +411,7 @@ onMounted(async () => {
           <div class="scan-copy">
             <span class="section-index">01 / START AUDIT</span>
             <h2>输入网址，开始一次<br><em>可解释的全域诊断</em></h2>
-            <p>同时检查技术可访问性、SEO 基础、Schema、内容结构、可信信号和 AI 可引用性。</p>
+            <p>同时检查技术可访问性、SEO 基础、Schema、内容结构、可信信号和 AI 引用就绪度。</p>
             <div class="scan-notes">
               <span>✓ 仅读取公开页面</span>
               <span>✓ 每项结果附带证据</span>
@@ -457,7 +490,7 @@ onMounted(async () => {
               <strong>{{ audit.page_title || '页面未设置标题' }}</strong>
               <a :href="audit.final_url" target="_blank" rel="noopener">{{ audit.final_url }}</a>
             </div>
-            <span>{{ formatDate(audit.created_at) }} · 单页诊断 · 规则版本 v{{ audit.rule_version || '1.0.1' }}</span>
+            <span>{{ formatDate(audit.created_at) }} · 单页诊断 · 规则版本 v{{ audit.rule_version || '1.0.2' }}</span>
           </section>
 
           <section class="summary-grid">
@@ -526,7 +559,7 @@ onMounted(async () => {
                 <span class="radar-label label-2">语义</span>
                 <span class="radar-label label-3">结构</span>
                 <span class="radar-label label-4">Schema</span>
-                <span class="radar-label label-5">引用</span>
+                <span class="radar-label label-5">就绪</span>
                 <span class="radar-label label-6">可信</span>
               </div>
               <div class="dimension-list">
@@ -548,12 +581,29 @@ onMounted(async () => {
             <div class="check-grid">
               <article v-for="item in seoFindings" :key="item.code" :class="{ failed: !item.passed }">
                 <span class="check-status">{{ item.passed ? '✓' : '!' }}</span>
-                <div>
-                  <small>{{ item.category }}</small>
+                <div class="check-copy">
+                  <small>{{ categoryLabel(item) }}</small>
                   <h3>{{ item.title }}</h3>
                   <p>{{ item.evidence }}</p>
+                  <button
+                    v-if="evidenceDetails(item).length"
+                    class="evidence-toggle"
+                    type="button"
+                    @click="toggleEvidence(item)"
+                  >
+                    {{ expandedEvidence === item.code ? '收起明细 ↑' : `查看 ${evidenceDetails(item).length} 条明细 ↓` }}
+                  </button>
                 </div>
                 <b v-if="!item.passed">-{{ item.deduction }}</b>
+                <div v-if="expandedEvidence === item.code" class="evidence-detail">
+                  <header><span>抓取证据明细</span><button type="button" @click="copyEvidence(item)">复制全部</button></header>
+                  <ol>
+                    <li v-for="(detail, index) in evidenceDetails(item)" :key="`${item.code}-${index}`">
+                      <a v-if="/^https?:\/\//i.test(detail)" :href="detail" target="_blank" rel="noopener">{{ detail }}</a>
+                      <span v-else>{{ detail }}</span>
+                    </li>
+                  </ol>
+                </div>
               </article>
             </div>
           </section>
@@ -566,12 +616,29 @@ onMounted(async () => {
             <div class="check-grid">
               <article v-for="item in geoFindings" :key="item.code" :class="{ failed: !item.passed }">
                 <span class="check-status">{{ item.passed ? '✓' : '!' }}</span>
-                <div>
-                  <small>{{ item.category }}</small>
+                <div class="check-copy">
+                  <small>{{ categoryLabel(item) }}</small>
                   <h3>{{ item.title }}</h3>
                   <p>{{ item.evidence }}</p>
+                  <button
+                    v-if="evidenceDetails(item).length"
+                    class="evidence-toggle"
+                    type="button"
+                    @click="toggleEvidence(item)"
+                  >
+                    {{ expandedEvidence === item.code ? '收起明细 ↑' : `查看 ${evidenceDetails(item).length} 条明细 ↓` }}
+                  </button>
                 </div>
                 <b v-if="!item.passed">-{{ item.deduction }}</b>
+                <div v-if="expandedEvidence === item.code" class="evidence-detail">
+                  <header><span>抓取证据明细</span><button type="button" @click="copyEvidence(item)">复制全部</button></header>
+                  <ol>
+                    <li v-for="(detail, index) in evidenceDetails(item)" :key="`${item.code}-${index}`">
+                      <a v-if="/^https?:\/\//i.test(detail)" :href="detail" target="_blank" rel="noopener">{{ detail }}</a>
+                      <span v-else>{{ detail }}</span>
+                    </li>
+                  </ol>
+                </div>
               </article>
             </div>
           </section>
@@ -822,13 +889,24 @@ button { color: inherit; }
 .check-grid article { min-height:108px; display:grid; grid-template-columns:29px 1fr auto; gap:12px; align-items:start; padding:19px 20px; background:#fff; }
 .check-status { width:25px; height:25px; display:grid; place-items:center; border-radius:50%; color:#fff; background:#25a77f; font-size:11px; font-weight:900; }
 .check-grid article.failed .check-status { background:#fff3e3; color:var(--amber); }
+.check-copy { min-width:0; }
 .check-grid small { color:#92a0a3; font-size:8px; font-weight:750; letter-spacing:.08em; }
 .check-grid h3 { margin:4px 0 5px; font-size:12px; }
 .check-grid p { margin:0; color:var(--muted); font-size:10px; line-height:1.55; }
 .check-grid b { color:var(--red); font:600 13px Georgia,serif; }
+.evidence-toggle { margin-top:9px; padding:0; border:0; color:var(--teal); background:transparent; font-size:9px; font-weight:750; cursor:pointer; }
+.evidence-detail { grid-column:2/-1; padding:11px 13px; border:1px solid #d9e9e6; border-radius:8px; background:#f6fbfa; }
+.evidence-detail header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:7px; }
+.evidence-detail header span { color:#466568; font-size:9px; font-weight:800; letter-spacing:.04em; }
+.evidence-detail header button { padding:0; border:0; color:var(--teal); background:transparent; font-size:9px; font-weight:750; cursor:pointer; }
+.evidence-detail ol { max-height:180px; margin:0; padding-left:18px; overflow:auto; }
+.evidence-detail li { padding:3px 0; color:#62777a; font-size:9px; line-height:1.5; word-break:break-all; }
+.evidence-detail a { color:var(--teal-dark); text-decoration:none; }
 .geo-section .section-index { color:#7657be; }
 .geo-section .check-status { background:#7657be; }
 .geo-section article.failed .check-status { color:#7657be; background:#f1edfb; }
+.geo-section .evidence-toggle,.geo-section .evidence-detail header button { color:#7657be; }
+.geo-section .evidence-detail { border-color:#e3dcf5; background:#faf8ff; }
 
 .issue-heading h2 em { display:inline-grid; place-items:center; min-width:22px; height:20px; margin-left:5px; border-radius:10px; color:#fff; background:var(--red); font:700 9px "Avenir Next",sans-serif; font-style:normal; vertical-align:3px; }
 .issue-filters { display:flex; gap:6px; }

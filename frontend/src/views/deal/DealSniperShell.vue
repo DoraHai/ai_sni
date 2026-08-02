@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 
 const route = useRoute()
 const prototypeSrc = computed(() => {
-  if (route.path === '/deal-sniper/portal') return '/deal-sniper-prototype/index.html'
+  if (route.path === '/deal-sniper/portal') return '/deal-sniper-prototype/index.html?rev=diagnosis-center-v102'
   const { section, page } = route.params
   if (section && page) return `/deal-sniper-prototype/${section}/${page}.html`
   return '/deal-sniper-prototype/index.html'
