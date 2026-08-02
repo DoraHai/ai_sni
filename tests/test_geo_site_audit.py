@@ -122,6 +122,10 @@ class GeoSiteAuditTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["score"], 97)
         self.assertEqual(result["checks"][0]["deduction"], 3.2)
         self.assertEqual(len(result["checks"][0]["page_evidence"]), 2)
+        self.assertIn(
+            "未满足“页面标题清晰完整”规则",
+            result["checks"][0]["page_evidence"][1]["reason"],
+        )
         self.assertEqual(result["snapshot"]["site_audit"]["total_weight"], 5)
         self.assertEqual(result["snapshot"]["audit_scope"], "site")
 

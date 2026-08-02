@@ -155,6 +155,9 @@ def aggregate_site_results(
                     "title": result["title"],
                     "passed": item["passed"],
                     "evidence": item["evidence"],
+                    "reason": item.get("reason") or (
+                        "" if item["passed"] else f"未满足“{item['title']}”规则：{item['evidence']}"
+                    ),
                 }
             )
         pass_rate = passed_weight / max(total_weight, 1)

@@ -201,6 +201,7 @@ def _finding(
         "severity": severity,
         "passed": passed,
         "evidence": evidence,
+        "reason": "" if passed else f"未满足“{title}”规则：{evidence}",
         "recommendation": recommendation,
         "weight": weight,
         "deduction": 0 if passed else weight,

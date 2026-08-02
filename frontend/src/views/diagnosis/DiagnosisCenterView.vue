@@ -138,19 +138,36 @@ const geoFindings = computed(() => findings.value.filter((item) =>
   ['结构化数据', 'AI 引用就绪度', 'AI 可引用性', 'AI 可访问性', '可信度'].includes(item.category),
 ))
 
-function evidenceDetails(item) {
+function evidenceRows(item) {
   const snapshot = audit.value?.snapshot || {}
   if (item.page_evidence?.length) {
-    return item.page_evidence.map((page) => `${page.passed ? '通过' : '未通过'} · ${page.title || page.url} · ${page.evidence}`)
+    return item.page_evidence.map((page) => ({
+      passed: page.passed,
+      text: page.passed
+        ? `通过 · ${page.title || page.url} · ${page.evidence}`
+        : `未通过 · ${page.title || page.url} · 原因：${page.reason || `未满足“${item.title}”规则：${page.evidence}`}`,
+    }))
   }
-  if (item.code === 'citations') return snapshot.external_links || []
-  if (item.code === 'faq') return snapshot.question_headings || []
-  if (['schema', 'entity_schema'].includes(item.code)) return snapshot.schema_types || []
+  if (item.code === 'citations') return (snapshot.external_links || []).map((text) => ({ text }))
+  if (item.code === 'faq') return (snapshot.question_headings || []).map((text) => ({ text }))
+  if (['schema', 'entity_schema'].includes(item.code)) return (snapshot.schema_types || []).map((text) => ({ text }))
   if (item.code === 'heading_depth') {
-    return (snapshot.headings || []).map((heading) => `H${heading.level} · ${heading.text}`)
+    return (snapshot.headings || []).map((heading) => ({ text: `H${heading.level} · ${heading.text}` }))
   }
-  if (item.code === 'h1') return snapshot.h1 || []
+  if (item.code === 'h1') return (snapshot.h1 || []).map((text) => ({ text }))
   return []
+}
+
+function evidenceDetails(item) {
+  return evidenceRows(item).map((row) => row.text)
+}
+
+function failureSummary(item) {
+  const failedPages = (item.page_evidence || []).filter((page) => !page.passed)
+  if (failedPages.length) {
+    return `${failedPages.length} 个页面未满足“${item.title}”规则，展开明细可查看每个页面的具体原因。`
+  }
+  return item.reason || `未满足“${item.title}”规则：${item.evidence}`
 }
 
 function toggleEvidence(item) {
@@ -696,6 +713,7 @@ onMounted(async () => {
                   <small>{{ categoryLabel(item) }}</small>
                   <h3>{{ item.title }}</h3>
                   <p>{{ item.evidence }}</p>
+                  <div v-if="!item.passed" class="failure-summary"><span>扣分原因</span><p>{{ failureSummary(item) }}</p></div>
                   <button
                     v-if="evidenceDetails(item).length"
                     class="evidence-toggle"
@@ -709,9 +727,9 @@ onMounted(async () => {
                 <div v-if="expandedEvidence === item.code" class="evidence-detail">
                   <header><span>抓取证据明细</span><button type="button" @click="copyEvidence(item)">复制全部</button></header>
                   <ol>
-                    <li v-for="(detail, index) in evidenceDetails(item)" :key="`${item.code}-${index}`">
-                      <a v-if="/^https?:\/\//i.test(detail)" :href="detail" target="_blank" rel="noopener">{{ detail }}</a>
-                      <span v-else>{{ detail }}</span>
+                    <li v-for="(detail, index) in evidenceRows(item)" :key="`${item.code}-${index}`" :class="{ failed: detail.passed === false }">
+                      <a v-if="/^https?:\/\//i.test(detail.text)" :href="detail.text" target="_blank" rel="noopener">{{ detail.text }}</a>
+                      <span v-else>{{ detail.text }}</span>
                     </li>
                   </ol>
                 </div>
@@ -731,6 +749,7 @@ onMounted(async () => {
                   <small>{{ categoryLabel(item) }}</small>
                   <h3>{{ item.title }}</h3>
                   <p>{{ item.evidence }}</p>
+                  <div v-if="!item.passed" class="failure-summary"><span>扣分原因</span><p>{{ failureSummary(item) }}</p></div>
                   <button
                     v-if="evidenceDetails(item).length"
                     class="evidence-toggle"
@@ -744,9 +763,9 @@ onMounted(async () => {
                 <div v-if="expandedEvidence === item.code" class="evidence-detail">
                   <header><span>抓取证据明细</span><button type="button" @click="copyEvidence(item)">复制全部</button></header>
                   <ol>
-                    <li v-for="(detail, index) in evidenceDetails(item)" :key="`${item.code}-${index}`">
-                      <a v-if="/^https?:\/\//i.test(detail)" :href="detail" target="_blank" rel="noopener">{{ detail }}</a>
-                      <span v-else>{{ detail }}</span>
+                    <li v-for="(detail, index) in evidenceRows(item)" :key="`${item.code}-${index}`" :class="{ failed: detail.passed === false }">
+                      <a v-if="/^https?:\/\//i.test(detail.text)" :href="detail.text" target="_blank" rel="noopener">{{ detail.text }}</a>
+                      <span v-else>{{ detail.text }}</span>
                     </li>
                   </ol>
                 </div>
@@ -1115,6 +1134,9 @@ button { color: inherit; }
 .check-grid h3 { margin:4px 0 5px; font-size:12px; }
 .check-grid p { margin:0; color:var(--muted); font-size:10px; line-height:1.55; }
 .check-grid b { color:var(--red); font:600 13px Georgia,serif; }
+.failure-summary { display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px; align-items:start; margin-top:9px; padding:8px 10px; border-left:2px solid #dc746b; border-radius:0 6px 6px 0; background:#fff6f4; }
+.failure-summary>span { padding:2px 5px; border-radius:8px; color:#b84a43; background:#ffe6e2; font-size:7px; font-weight:850; white-space:nowrap; }
+.failure-summary>p { color:#8d4d48; font-size:9px; line-height:1.55; }
 .evidence-toggle { margin-top:9px; padding:0; border:0; color:var(--teal); background:transparent; font-size:9px; font-weight:750; cursor:pointer; }
 .evidence-detail { grid-column:2/-1; padding:11px 13px; border:1px solid #d9e9e6; border-radius:8px; background:#f6fbfa; }
 .evidence-detail header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:7px; }
@@ -1122,6 +1144,7 @@ button { color: inherit; }
 .evidence-detail header button { padding:0; border:0; color:var(--teal); background:transparent; font-size:9px; font-weight:750; cursor:pointer; }
 .evidence-detail ol { max-height:180px; margin:0; padding-left:18px; overflow:auto; }
 .evidence-detail li { padding:3px 0; color:#62777a; font-size:9px; line-height:1.5; word-break:break-all; }
+.evidence-detail li.failed { margin:3px 0; padding:6px 8px; border-radius:5px; color:#9d443e; background:#fff0ed; font-weight:700; }
 .evidence-detail a { color:var(--teal-dark); text-decoration:none; }
 .geo-section .section-index { color:#7657be; }
 .geo-section .check-status { background:#7657be; }
