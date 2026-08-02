@@ -35,7 +35,8 @@ def _canonical_discovery_url(value: str) -> str:
 
 def page_weight(url: str) -> tuple[int, str]:
     path = urlparse(url).path.rstrip("/") or "/"
-    if path == "/":
+    leaf = path.rsplit("/", 1)[-1].lower()
+    if path == "/" or leaf in {"home", "home.html", "index.html", "index.htm", "default.aspx"}:
         return 3, "首页"
     if CORE_PAGE_PATTERN.search(path):
         return 2, "核心页"

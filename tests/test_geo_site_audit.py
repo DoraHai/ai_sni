@@ -40,6 +40,7 @@ def _result(url: str, score: int, passed: bool) -> dict:
 class GeoSiteAuditTests(unittest.IsolatedAsyncioTestCase):
     def test_page_weight_prioritizes_home_and_core_pages(self):
         self.assertEqual(page_weight("https://example.com/"), (3, "首页"))
+        self.assertEqual(page_weight("https://example.com/zh/home.html"), (3, "首页"))
         self.assertEqual(page_weight("https://example.com/products/pump"), (2, "核心页"))
         self.assertEqual(page_weight("https://example.com/news/a"), (1, "普通页"))
 
