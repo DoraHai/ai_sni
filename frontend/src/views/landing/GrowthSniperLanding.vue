@@ -156,8 +156,14 @@ function scrollTo(id) {
   document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
 }
 
+function diagnosisOrigin() {
+  return window.location.hostname === 'gsnipers.snipers.com.cn'
+    ? 'https://sem.snipers.com.cn'
+    : window.location.origin
+}
+
 function goDiagnosis() {
-  const target = new URL('/diagnosis', window.location.origin)
+  const target = new URL('/diagnosis', diagnosisOrigin())
   if (diagnosisUrl.value.trim()) target.searchParams.set('url', diagnosisUrl.value.trim())
   window.location.assign(target.href)
 }
@@ -205,7 +211,7 @@ function submitTrialForm() {
     email: trialForm.email.trim(),
     phone: trialForm.phone,
   }))
-  const target = new URL('/diagnosis', window.location.origin)
+  const target = new URL('/diagnosis', diagnosisOrigin())
   if (diagnosisUrl.value.trim()) target.searchParams.set('url', diagnosisUrl.value.trim())
   window.location.assign(target.href)
 }
