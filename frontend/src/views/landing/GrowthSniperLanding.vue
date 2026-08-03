@@ -218,10 +218,10 @@ function submitTrialForm() {
 </script>
 
 <template>
-  <div class="gs-site" :style="{ '--gs-stone': `url(${asset('stone-network.jpg')})` }">
+  <div class="gs-site" :style="{ '--gs-stone': `url(${asset('stone-network.avif')})` }">
     <header class="site-header">
       <a class="brand" href="#diagnosis" aria-label="获客狙击手 G-Snipers 首页" @click.prevent="scrollTo('diagnosis')">
-        <span class="brand-mark"><img :src="asset('g-snipers-mark.png')" alt="" aria-hidden="true"></span>
+        <span class="brand-mark"><img :src="asset('g-snipers-mark.avif')" alt="" aria-hidden="true" fetchpriority="high" decoding="async"></span>
         <span class="brand-copy"><strong>G-Snipers</strong><em>获客狙击手</em></span>
       </a>
       <nav :class="{ open: mobileOpen }" aria-label="主导航">
@@ -355,7 +355,7 @@ function submitTrialForm() {
             </div>
           </div>
           <div class="hero-visual reveal delay-1" aria-hidden="true">
-            <img :src="asset('hero-target.png')" alt="">
+            <img :src="asset('hero-target.avif')" alt="" loading="lazy" decoding="async">
             <span class="orbit orbit-a" />
             <span class="orbit orbit-b" />
           </div>
@@ -409,14 +409,14 @@ function submitTrialForm() {
           <article v-for="item in painPoints" :key="item.key" class="glass-card pain-card">
             <div class="warning">
               <span>!</span>
-              <img class="warning-logo" :src="asset('g-snipers-mark.png')" alt="" aria-hidden="true">
+              <img class="warning-logo" :src="asset('g-snipers-mark.avif')" alt="" aria-hidden="true" loading="lazy" decoding="async">
             </div>
             <h3>{{ item.title }}</h3>
             <p>{{ item.text }}</p>
           </article>
         </div>
         <div class="laser-divider">
-          <span class="mini-target"><img :src="asset('g-snipers-mark.png')" alt="" aria-hidden="true"></span>
+          <span class="mini-target"><img :src="asset('g-snipers-mark.avif')" alt="" aria-hidden="true" loading="lazy" decoding="async"></span>
         </div>
         <div class="section-heading compact">
           <h2>一套系统，打通三条获客通路</h2>
@@ -425,7 +425,7 @@ function submitTrialForm() {
         <div class="channel-grid">
           <article v-for="item in channels" :key="item.key" class="glass-card channel-card">
             <div class="channel-preview">
-              <img :src="item.image" :alt="`${item.title}产品界面`">
+              <img :src="item.image" :alt="`${item.title}产品界面`" loading="lazy" decoding="async">
             </div>
             <div class="channel-copy">
               <div><h3>{{ item.title }}</h3><p>{{ item.text }}</p></div>
@@ -436,7 +436,7 @@ function submitTrialForm() {
 
       <section id="process" class="process gs-section">
         <div class="section-heading">
-          <span class="target-logo"><img :src="asset('g-snipers-mark.png')" alt="" aria-hidden="true"></span>
+          <span class="target-logo"><img :src="asset('g-snipers-mark.avif')" alt="" aria-hidden="true" loading="lazy" decoding="async"></span>
           <h2>全流程自动化获客，精准高效</h2>
           <p>从渠道接入到转化复盘，每一步都由数据驱动</p>
         </div>
@@ -490,7 +490,7 @@ function submitTrialForm() {
       </section>
 
       <section id="contact" class="final-cta gs-section">
-        <span class="target-logo large"><img :src="asset('g-snipers-mark.png')" alt="" aria-hidden="true"></span>
+        <span class="target-logo large"><img :src="asset('g-snipers-mark.avif')" alt="" aria-hidden="true" loading="lazy" decoding="async"></span>
         <small>让每一条线索，都成为增长的动力</small>
         <h2>精准获客，从这一次点击开始</h2>
         <div class="hero-actions">
@@ -502,7 +502,7 @@ function submitTrialForm() {
 
     <footer>
       <div class="footer-brand">
-        <span class="brand-mark small"><img :src="asset('g-snipers-mark.png')" alt="" aria-hidden="true"></span>
+        <span class="brand-mark small"><img :src="asset('g-snipers-mark.avif')" alt="" aria-hidden="true" loading="lazy" decoding="async"></span>
         <strong>G-Snipers</strong><span>获客狙击手 · 全域智能获客解决方案</span>
       </div>
       <div class="footer-links">
