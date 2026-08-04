@@ -74,8 +74,22 @@
         </div>
       </div>
       <div class="wb-card">
-        <strong>渠道适配（中国图文主渠道）</strong>
-        <div class="wb-hint">母稿为唯一真相源；勾选平台后生成受控派生稿。默认：官网 + 公众号 + 知乎。</div>
+        <strong>审校</strong>
+        <div class="wb-hint">母稿变更会作废审校。发布回填前须审批通过。</div>
+        <div class="wb-muted" id="reviewLine" style="margin-top:8px">审校状态：-</div>
+        <div class="wb-field" style="margin-top:10px">
+          <label class="wb-label">审校备注</label>
+          <input class="wb-input" id="reviewNote" placeholder="可选说明">
+        </div>
+        <div class="wb-toolbar">
+          <button class="wb-btn" id="btnSubmitReview">提交审校</button>
+          <button class="wb-btn primary" id="btnApproveReview">通过</button>
+          <button class="wb-btn" id="btnRejectReview">驳回</button>
+        </div>
+      </div>
+      <div class="wb-card">
+        <strong>渠道适配（发布渠道注册表）</strong>
+        <div class="wb-hint">仅显示租户已启用的发布渠道；勾选后生成受控派生稿。</div>
         <div class="wb-channel-pick" id="channelPick"></div>
         <div class="wb-toolbar">
           <button class="wb-btn primary" id="btnVariants">生成所选渠道稿</button>
@@ -120,7 +134,7 @@
   </main>
 </div>
 <script src="assets/geo-sidebar-v1.js?rev=9"></script>
-<script src="assets/geo-api-v1.js?rev=15"></script>
+<script src="assets/geo-api-v1.js?rev=16"></script>
 <script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {
@@ -131,9 +145,11 @@
   var task = null;
   var allFacts = [];
   var profiles = [];
+  var channelOptions = [];
   var briefCatalog = null;
   var activeTab = 'master';
   var profileByKey = {};
+  var REVIEW_LABELS = { none: '未提交', pending: '待审', approved: '已通过', rejected: '已驳回' };
 
   function fillSelect(el, items, selected) {
     el.innerHTML = '<option value="">请选择</option>';
@@ -192,6 +208,29 @@
     box.innerHTML = '';
     var defaults = {};
     (task && task.target_channels || []).forEach(function (c) { defaults[c] = true; });
+    var options = channelOptions.length ? channelOptions : null;
+    if (options) {
+      var seen = {};
+      options.forEach(function (opt) {
+        var key = opt.adapt_key;
+        if (!key || seen[key]) return;
+        seen[key] = true;
+        var profile = opt.adapt_profile || profileByKey[key] || { key: key, display_name: opt.name || key };
+        profileByKey[key] = profile;
+        if (!Object.keys(defaults).length && opt.default_selected) defaults[key] = true;
+        var label = document.createElement('label');
+        var checked = !!defaults[key] || !!variantMap()[key];
+        var mode = opt.publish_mode ? (' · ' + opt.publish_mode) : '';
+        label.innerHTML = '<input type="checkbox" value="' + key + '"' + (checked ? ' checked' : '') + '> ' +
+          (profile.display_name || opt.name || key) +
+          ' <span class="wb-muted">(' + key + mode + ')</span>';
+        box.appendChild(label);
+      });
+      if (!box.children.length) {
+        box.innerHTML = '<span class="wb-muted">无启用发布渠道，请先到「发布渠道」配置</span>';
+      }
+      return;
+    }
     if (!Object.keys(defaults).length) {
       profiles.forEach(function (p) { if (p.default_selected) defaults[p.key] = true; });
     }
@@ -203,6 +242,17 @@
         p.display_name + ' <span class="wb-muted">(' + p.key + ')</span>';
       box.appendChild(label);
     });
+  }
+
+  function renderReview() {
+    var status = (task && task.review_status) || 'none';
+    var line = '审校状态：' + (REVIEW_LABELS[status] || status);
+    if (task && task.review_note) line += ' · ' + task.review_note;
+    if (task && task.reviewed_at) line += ' · ' + task.reviewed_at;
+    document.getElementById('reviewLine').textContent = line;
+    document.getElementById('btnSubmitReview').disabled = !(task && task.can_submit_review && task.article);
+    document.getElementById('btnApproveReview').disabled = !(task && task.can_decide_review);
+    document.getElementById('btnRejectReview').disabled = !(task && task.can_decide_review);
   }
 
   function renderTabs() {
@@ -425,11 +475,15 @@
     if (task.channel_profiles && task.channel_profiles.length) {
       profiles = task.channel_profiles;
     }
+    if (task.channel_options && task.channel_options.length) {
+      channelOptions = task.channel_options;
+    }
     renderChannelPick();
     renderTabs();
     renderEditorPane();
     renderFacts();
     renderBrief();
+    renderReview();
     renderChecks();
   }
 
@@ -448,6 +502,9 @@
       try {
         profiles = ((await GeoAPI.listChannelProfiles()).items) || [];
       } catch (e) { profiles = []; }
+      try {
+        channelOptions = ((await GeoAPI.listPublishingChannelOptions()).items) || [];
+      } catch (e) { channelOptions = []; }
       allFacts = (await GeoAPI.listFacts()).items || [];
       task = await GeoAPI.getTask(taskId);
       if (task.diagnosis_audit_id && !(task.facts || []).length) {
@@ -486,6 +543,24 @@
   document.getElementById('btnSaveBrief').onclick = async function () {
     try {
       task = await GeoAPI.patchTask(taskId, { brief: readBriefForm() });
+      renderAll();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnSubmitReview').onclick = async function () {
+    try {
+      task = await GeoAPI.submitReview(taskId, document.getElementById('reviewNote').value || null);
+      renderAll();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnApproveReview').onclick = async function () {
+    try {
+      task = await GeoAPI.decideReview(taskId, 'approved', document.getElementById('reviewNote').value || null);
+      renderAll();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnRejectReview').onclick = async function () {
+    try {
+      task = await GeoAPI.decideReview(taskId, 'rejected', document.getElementById('reviewNote').value || null);
       renderAll();
     } catch (e) { GeoWB.showError(err, e); }
   };

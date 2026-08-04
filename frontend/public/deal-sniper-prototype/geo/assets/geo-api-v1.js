@@ -258,6 +258,23 @@
     listChannelProfiles: function () {
       return api('/channel-profiles', { query: withTenantQuery() });
     },
+    listPublishingChannelOptions: function () {
+      return api('/publishing-channel-options', { query: withTenantQuery() });
+    },
+    submitReview: function (id, note) {
+      return api('/content-tasks/' + id + '/submit-review', {
+        method: 'POST',
+        query: withTenantQuery(),
+        body: { note: note || null },
+      });
+    },
+    decideReview: function (id, decision, note) {
+      return api('/content-tasks/' + id + '/review', {
+        method: 'POST',
+        query: withTenantQuery(),
+        body: { decision: decision, note: note || null },
+      });
+    },
     createVariants: function (id, channels) {
       return api('/content-tasks/' + id + '/variants', {
         method: 'POST',

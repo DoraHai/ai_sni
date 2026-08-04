@@ -26,7 +26,21 @@ from app.geo.content.imports import import_facts_csv, import_prompts_csv
 from app.geo.content.pipeline import blocked_reason_from_checks, sync_pipeline_fields
 from app.geo.content.rules import RuleInput, build_fix_patches, is_ready, run_checks
 from app.geo.content.channel_profiles import get_profile, list_profiles
+from app.geo.content.channel_registry import (
+    channel_options_from_registry,
+    enabled_types_from_rows,
+    filter_channels_by_registry,
+    publication_publish_mode,
+    publish_mode_for_channel,
+    registry_row_dicts,
+)
 from app.geo.content.channels import default_channel_rows
+from app.geo.content.review import (
+    apply_decision,
+    apply_submit,
+    invalidate_review,
+    review_payload,
+)
 from app.geo.content.ai_settings import (
     apply_provider_preset,
     encrypt_api_key,
@@ -55,6 +69,8 @@ from app.geo.content.schemas import (
     PromptImportRequest,
     PromptUpdate,
     PublicationCreate,
+    ReviewDecision,
+    ReviewSubmit,
     TaskCreate,
     TaskFactsUpdate,
     TaskFromDiagnosis,
@@ -396,6 +412,7 @@ async def _task_payload(
         "owner_user_id": task.owner_user_id,
         "brief": brief,
         "brief_ready": brief_ready(brief),
+        **review_payload(task),
         "rule_result": task.rule_result,
         "ready_at": _iso(task.ready_at),
         "created_at": _iso(task.created_at),
@@ -461,9 +478,15 @@ async def _task_payload(
             ],
             "publications": pubs,
             "channel_profiles": list_profiles(),
+            "channel_options": await _channel_options_payload(session, task.tenant_id),
         }
     )
     return payload
+
+
+async def _channel_options_payload(session: AsyncSession, tenant_id: int) -> list[dict]:
+    rows = await _ensure_default_publishing_channels(session, tenant_id)
+    return channel_options_from_registry(registry_row_dicts(rows))
 
 
 @router.get("/content-health")
@@ -488,6 +511,18 @@ async def get_channel_profiles(
 ) -> dict:
     _ = ctx
     return {"items": list_profiles()}
+
+
+@router.get("/publishing-channel-options")
+async def get_publishing_channel_options(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Enabled registry channels mapped to adapt profiles (editor picker)."""
+    ctx.ensure_tenant(tenant_id)
+    options = await _channel_options_payload(session, tenant_id)
+    return {"items": options}
 
 
 # ---------- prompts ----------
@@ -1901,6 +1936,7 @@ async def save_article(
     )
     session.add(article)
     task.title = req.title.strip()
+    invalidate_review(task)
     if task.status in {"draft", "facts_bound", "generating", "failed"}:
         task.status = "editing"
     await _sync_task_pipeline(session, task)
@@ -2025,6 +2061,7 @@ async def apply_patch(
     )
     session.add(new_article)
     task.status = "editing"
+    invalidate_review(task)
     await session.flush()
     rule_input = await _build_rule_input(session, task, new_article)
     checks = run_checks(rule_input)
@@ -2114,6 +2151,7 @@ async def generate_task_article(
         session.add(article)
         task.title = payload["title"]
         task.status = "editing"
+        invalidate_review(task)
         await session.commit()
     except GeoContentError as exc:
         task.status = "failed"
@@ -2162,9 +2200,16 @@ async def create_variants(
     article = await _latest_article(session, task.id)
     if article is None:
         raise HTTPException(400, "请先生成或保存母稿")
-    channels = normalize_channels(
-        req.channels or list(task.target_channels or [])
+    registry_rows = registry_row_dicts(
+        await _ensure_default_publishing_channels(session, tenant_id)
     )
+    enabled_types = enabled_types_from_rows(registry_rows)
+    channels = filter_channels_by_registry(
+        normalize_channels(req.channels or list(task.target_channels or [])),
+        enabled_types=enabled_types or None,
+    )
+    if not channels:
+        raise HTTPException(400, "没有可用的启用发布渠道，请先在「发布渠道」配置中启用")
     existing = {v.channel: v for v in await _variants(session, task.id)}
     created = []
     for channel in channels:
@@ -2274,6 +2319,54 @@ async def export_variant(
     }
 
 
+@router.post("/content-tasks/{task_id}/submit-review")
+async def submit_task_review(
+    task_id: int,
+    req: ReviewSubmit,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    task = await _get_task(session, task_id, tenant_id)
+    article = await _latest_article(session, task.id)
+    if article is None:
+        raise HTTPException(400, "请先生成母稿后再提交审校")
+    try:
+        apply_submit(task, note=req.note)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await _sync_task_pipeline(session, task)
+    await session.commit()
+    await session.refresh(task)
+    return await _task_payload(session, task, detail=True)
+
+
+@router.post("/content-tasks/{task_id}/review")
+async def decide_task_review(
+    task_id: int,
+    req: ReviewDecision,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    task = await _get_task(session, task_id, tenant_id)
+    try:
+        apply_decision(
+            task,
+            decision=req.decision,
+            note=req.note,
+            reviewer_id=ctx.user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await _sync_task_pipeline(session, task)
+    await session.commit()
+    await session.refresh(task)
+    return await _task_payload(session, task, detail=True)
+
+
 @router.post("/content-tasks/{task_id}/publications")
 async def record_publication(
     task_id: int,
@@ -2293,13 +2386,17 @@ async def record_publication(
     article = await _latest_article(session, task.id)
     rule_input = await _build_rule_input(session, task, article)
     try:
-        assert_can_publish(rule_input)
+        assert_can_publish(rule_input, task=task)
     except PublishGateError as exc:
         raise HTTPException(400, str(exc)) from exc
+    registry_rows = registry_row_dicts(
+        await _ensure_default_publishing_channels(session, req.tenant_id)
+    )
+    registry_mode = publish_mode_for_channel(req.channel, registry_rows)
     pub = GeoPublication(
         variant_id=variant.id,
         channel=req.channel,
-        publish_mode="manual_export",
+        publish_mode=publication_publish_mode(registry_mode),
         published_url=url,
         published_at=datetime.utcnow(),
         status="published",

@@ -124,6 +124,15 @@ class PublicationCreate(BaseModel):
     note: str | None = None
 
 
+class ReviewSubmit(BaseModel):
+    note: str | None = Field(None, max_length=2000)
+
+
+class ReviewDecision(BaseModel):
+    decision: Literal["approved", "rejected"]
+    note: str | None = Field(None, max_length=2000)
+
+
 class TaskUpdate(BaseModel):
     title: str | None = Field(None, max_length=300)
     owner_user_id: int | None = None
