@@ -140,6 +140,15 @@
       return api('/prompts', { query: query || {} });
     },
     createPrompt: function (body) { return api('/prompts', { method: 'POST', body: body }); },
+    expandPromptCandidates: function (body) {
+      return api('/prompts/expand-candidates', { method: 'POST', body: body || {} });
+    },
+    promotePromptCandidates: function (items) {
+      return api('/prompts/promote-candidates', {
+        method: 'POST',
+        body: { items: items || [] },
+      });
+    },
     importPrompts: function (items) {
       return api('/prompts/import', { method: 'POST', body: { items: items } });
     },

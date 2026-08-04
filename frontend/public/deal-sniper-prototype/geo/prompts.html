@@ -14,12 +14,39 @@
     <div class="topbar">
       <div>
         <h1>提问机会池</h1>
-        <div class="sub">人工/导入目标问题 · 最近观测与标签筛选（Wave B3）</div>
+        <div class="sub">人工/导入/拓词候选 · 最近观测与标签筛选（D4）</div>
       </div>
     </div>
     <div class="page">
       <div id="authBar" class="config-bar"></div>
       <div id="err" class="wb-error" style="display:none"></div>
+      <div class="wb-card" style="margin-bottom:14px">
+        <div class="wb-toolbar">
+          <strong>拓词候选（百度/Google 下拉）</strong>
+          <input class="wb-input" id="expandExtra" style="max-width:220px" placeholder="额外品类词，逗号分隔">
+          <select class="wb-select" id="expandMarket" style="width:auto;min-width:110px">
+            <option value="cn">国内 cn</option>
+            <option value="global">海外 global</option>
+            <option value="both">both</option>
+          </select>
+          <button class="wb-btn primary" id="btnExpand">拉取候选</button>
+          <button class="wb-btn" id="btnPromote" disabled>入库勾选项</button>
+        </div>
+        <div class="wb-hint" id="expandHint">用租户品牌/行业作词根；只产候选，勾选后才写入问题库。</div>
+        <table class="wb-table" style="margin-top:10px">
+          <thead>
+            <tr>
+              <th><input type="checkbox" id="expandCheckAll"></th>
+              <th>候选问句</th>
+              <th>组</th>
+              <th>词根</th>
+              <th>来源</th>
+              <th>库内</th>
+            </tr>
+          </thead>
+          <tbody id="expandRows"></tbody>
+        </table>
+      </div>
       <div class="wb-grid wb-grid-2">
         <div class="wb-card">
           <div class="wb-toolbar">
@@ -100,8 +127,8 @@
     </div>
   </main>
 </div>
-<script src="assets/geo-sidebar-v1.js?rev=8"></script>
-<script src="assets/geo-api-v1.js?rev=12"></script>
+<script src="assets/geo-sidebar-v1.js?rev=9"></script>
+<script src="assets/geo-api-v1.js?rev=14"></script>
 <script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {
@@ -210,6 +237,81 @@
       await load();
     } catch (e) { GeoWB.showError(err, e); }
   };
+  var expandItems = [];
+
+  function renderExpand(items) {
+    expandItems = items || [];
+    var box = document.getElementById('expandRows');
+    box.innerHTML = '';
+    expandItems.forEach(function (it, idx) {
+      var tr = document.createElement('tr');
+      var disabled = it.in_bank ? ' disabled' : '';
+      tr.innerHTML =
+        '<td><input type="checkbox" data-idx="' + idx + '"' + disabled + (it.in_bank ? '' : ' checked') + '></td>' +
+        '<td>' + (it.question || it.term) +
+          '<div class="wb-muted">' + (it.term || '') + '</div></td>' +
+        '<td>' + (it.question_group || '-') + '</td>' +
+        '<td>' + (it.root || '') + ' <span class="wb-muted">(' + (it.kind || '') + ')</span></td>' +
+        '<td>' + (it.suggest_source || '') + '/' + (it.market || '') + '</td>' +
+        '<td>' + (it.in_bank ? '<span class="wb-badge good">已有</span>' : '<span class="wb-badge warn">新</span>') + '</td>';
+      box.appendChild(tr);
+    });
+    document.getElementById('btnPromote').disabled = !expandItems.some(function (x) { return !x.in_bank; });
+  }
+
+  document.getElementById('expandCheckAll').onchange = function () {
+    var on = this.checked;
+    document.querySelectorAll('#expandRows input[type=checkbox]:not(:disabled)').forEach(function (el) {
+      el.checked = on;
+    });
+  };
+
+  document.getElementById('btnExpand').onclick = async function () {
+    try {
+      GeoWB.requireTenant();
+      var extra = document.getElementById('expandExtra').value.split(',')
+        .map(function (s) { return s.trim(); }).filter(Boolean);
+      var body = {
+        market: document.getElementById('expandMarket').value,
+        seed_from_tenant: true,
+        products: extra,
+        max_terms: 60,
+      };
+      var data = await GeoAPI.expandPromptCandidates(body);
+      document.getElementById('expandHint').textContent =
+        '词根 ' + ((data.roots || []).length) +
+        ' · 调用 ' + (data.calls || 0) +
+        ' · 候选 ' + (data.total || 0) +
+        '（新 ' + (data.new_count || 0) + '）' +
+        ((data.errors && data.errors.length) ? ' · 部分请求失败 ' + data.errors.length : '');
+      renderExpand(data.items || []);
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+
+  document.getElementById('btnPromote').onclick = async function () {
+    try {
+      var selected = [];
+      document.querySelectorAll('#expandRows input[type=checkbox]:checked').forEach(function (el) {
+        var it = expandItems[Number(el.getAttribute('data-idx'))];
+        if (!it || it.in_bank) return;
+        selected.push({
+          question: it.question,
+          question_group: it.question_group,
+          market: it.market === 'global' ? 'global' : 'cn',
+          priority: 10,
+          tags: ['from_expand', 'high_demand'],
+          demand_note: '拓词 · ' + (it.suggest_source || '') + ' · ' + (it.term || ''),
+        });
+      });
+      if (!selected.length) throw new Error('请勾选至少一条新候选');
+      var r = await GeoAPI.promotePromptCandidates(selected);
+      document.getElementById('expandHint').textContent =
+        '已入库 ' + (r.created || 0) + '，跳过重复 ' + (r.skipped || 0);
+      await load();
+      document.getElementById('btnExpand').click();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+
   document.getElementById('btnCreate').onclick = async function () {
     try {
       GeoWB.requireTenant();

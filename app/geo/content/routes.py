@@ -49,6 +49,8 @@ from app.geo.content.schemas import (
     FactUpdate,
     MediaPlacementCreate,
     MediaPlacementUpdate,
+    PromptExpandRequest,
+    PromptPromoteRequest,
     PublishingChannelCreate,
     PublishingChannelUpdate,
     PromptCreate,
@@ -559,6 +561,117 @@ async def create_prompt(
     await session.commit()
     await session.refresh(row)
     return _prompt_payload(row)
+
+
+@router.post("/prompts/expand-candidates")
+async def expand_prompt_candidates(
+    req: PromptExpandRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """百度/Google 下拉拓词 → 候选问句（不入库）。"""
+    from app.geo.content.expand import build_roots, expand_candidates
+
+    ctx.ensure_tenant(req.tenant_id)
+    tenant = await _ensure_tenant_exists(session, req.tenant_id)
+    brand_names = brand_names_from_tenant(
+        name=getattr(tenant, "name", None),
+        brand_terms=getattr(tenant, "brand_terms", None),
+    )
+    explicit = [r.model_dump() for r in req.roots] if req.roots else None
+    roots = build_roots(
+        brand_names=brand_names if req.seed_from_tenant else None,
+        industry=getattr(tenant, "industry", None) if req.seed_from_tenant else None,
+        competitors=req.competitors,
+        products=req.products,
+        market=req.market,
+        explicit_roots=explicit,
+    )
+    if not roots:
+        raise HTTPException(
+            400,
+            "缺少词根：请填写 roots，或在租户配置品牌名/行业，或传入 competitors",
+        )
+
+    existing_rows = (
+        await session.scalars(
+            select(GeoPrompt.question).where(
+                GeoPrompt.tenant_id == req.tenant_id,
+                GeoPrompt.status == "active",
+            )
+        )
+    ).all()
+    result = await expand_candidates(
+        roots=roots,
+        existing_questions=set(existing_rows),
+        max_terms=req.max_terms,
+        throttle_s=0.05,
+    )
+    return result
+
+
+@router.post("/prompts/promote-candidates")
+async def promote_prompt_candidates(
+    req: PromptPromoteRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """勾选拓词候选后批量入库（显式确认）。"""
+    ctx.ensure_tenant(req.tenant_id)
+    tenant = await _ensure_tenant_exists(session, req.tenant_id)
+    brand_names = brand_names_from_tenant(
+        name=getattr(tenant, "name", None),
+        brand_terms=getattr(tenant, "brand_terms", None),
+    )
+    existing = {
+        str(q).strip().lower()
+        for q in (
+            await session.scalars(
+                select(GeoPrompt.question).where(
+                    GeoPrompt.tenant_id == req.tenant_id,
+                    GeoPrompt.status == "active",
+                )
+            )
+        ).all()
+    }
+    created: list[GeoPrompt] = []
+    skipped = 0
+    for item in req.items:
+        q = item.question.strip()
+        if q.lower() in existing:
+            skipped += 1
+            continue
+        q_group = normalize_question_group(item.question_group)
+        probe = resolve_is_brand_probe(
+            question=q,
+            brand_names=brand_names,
+            explicit=item.is_brand_probe,
+            question_group=q_group,
+        )
+        row = GeoPrompt(
+            tenant_id=req.tenant_id,
+            question=q,
+            language="zh-CN" if item.market != "global" else "en",
+            priority=item.priority,
+            tags=item.tags or ["from_expand"],
+            demand_note=item.demand_note or "来自拓词候选",
+            source="expand",
+            question_group=q_group,
+            market=normalize_market(item.market),
+            is_brand_probe=probe,
+            created_by=ctx.user_id,
+        )
+        session.add(row)
+        created.append(row)
+        existing.add(q.lower())
+    await session.commit()
+    for row in created:
+        await session.refresh(row)
+    return {
+        "created": len(created),
+        "skipped": skipped,
+        "items": [_prompt_payload(r) for r in created],
+    }
 
 
 @router.patch("/prompts/{prompt_id}")
