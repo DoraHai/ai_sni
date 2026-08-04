@@ -36,6 +36,44 @@
         </div>
       </div>
       <div class="wb-card">
+        <strong>内容 Brief（生成必填）</strong>
+        <div class="wb-hint" id="briefHint">行业 / 受众 / 意图 / 内容类型 / CTA 填齐后才能生成母稿。</div>
+        <div class="wb-grid wb-grid-2" style="margin-top:10px">
+          <div class="wb-field">
+            <label class="wb-label">行业</label>
+            <input class="wb-input" id="briefIndustry" placeholder="如：工业泵 / B2B SaaS">
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">受众</label>
+            <input class="wb-input" id="briefAudience" placeholder="如：制造业采购负责人">
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">意图</label>
+            <select class="wb-select" id="briefIntent"></select>
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">内容类型</label>
+            <select class="wb-select" id="briefContentType"></select>
+          </div>
+          <div class="wb-field" style="grid-column:1 / -1">
+            <label class="wb-label">CTA</label>
+            <input class="wb-input" id="briefCta" placeholder="如：预约演示 / 下载白皮书">
+          </div>
+          <div class="wb-field" style="grid-column:1 / -1">
+            <label class="wb-label">禁用表述（逗号分隔，可选）</label>
+            <input class="wb-input" id="briefBanned" placeholder="如：第一名,保证收录">
+          </div>
+          <div class="wb-field" style="grid-column:1 / -1">
+            <label class="wb-label">备注（可选）</label>
+            <input class="wb-input" id="briefNotes" placeholder="补充约束或语气">
+          </div>
+        </div>
+        <div class="wb-toolbar">
+          <button class="wb-btn" id="btnSaveBrief">保存 Brief</button>
+          <span class="wb-muted" id="briefReadyLine"></span>
+        </div>
+      </div>
+      <div class="wb-card">
         <strong>渠道适配（中国图文主渠道）</strong>
         <div class="wb-hint">母稿为唯一真相源；勾选平台后生成受控派生稿。默认：官网 + 公众号 + 知乎。</div>
         <div class="wb-channel-pick" id="channelPick"></div>
@@ -81,8 +119,8 @@
     </div>
   </main>
 </div>
-<script src="assets/geo-sidebar-v1.js?rev=8"></script>
-<script src="assets/geo-api-v1.js?rev=10"></script>
+<script src="assets/geo-sidebar-v1.js?rev=9"></script>
+<script src="assets/geo-api-v1.js?rev=15"></script>
 <script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {
@@ -93,8 +131,50 @@
   var task = null;
   var allFacts = [];
   var profiles = [];
+  var briefCatalog = null;
   var activeTab = 'master';
   var profileByKey = {};
+
+  function fillSelect(el, items, selected) {
+    el.innerHTML = '<option value="">请选择</option>';
+    (items || []).forEach(function (it) {
+      var opt = document.createElement('option');
+      opt.value = it.key;
+      opt.textContent = it.label;
+      if (selected && selected === it.key) opt.selected = true;
+      el.appendChild(opt);
+    });
+  }
+
+  function readBriefForm() {
+    var banned = document.getElementById('briefBanned').value.split(/[,，]/)
+      .map(function (s) { return s.trim(); }).filter(Boolean);
+    return {
+      industry: document.getElementById('briefIndustry').value.trim(),
+      audience: document.getElementById('briefAudience').value.trim(),
+      intent: document.getElementById('briefIntent').value,
+      content_type: document.getElementById('briefContentType').value,
+      cta: document.getElementById('briefCta').value.trim(),
+      banned_claims: banned,
+      notes: document.getElementById('briefNotes').value.trim() || null,
+    };
+  }
+
+  function renderBrief() {
+    var b = (task && task.brief) || {};
+    if (briefCatalog) {
+      fillSelect(document.getElementById('briefIntent'), briefCatalog.intents, b.intent || '');
+      fillSelect(document.getElementById('briefContentType'), briefCatalog.content_types, b.content_type || '');
+    }
+    document.getElementById('briefIndustry').value = b.industry || '';
+    document.getElementById('briefAudience').value = b.audience || '';
+    document.getElementById('briefCta').value = b.cta || '';
+    document.getElementById('briefBanned').value = (b.banned_claims || []).join(', ');
+    document.getElementById('briefNotes').value = b.notes || '';
+    document.getElementById('briefReadyLine').textContent = task && task.brief_ready
+      ? 'Brief 已齐，可生成'
+      : 'Brief 未齐：请填行业/受众/意图/内容类型/CTA';
+  }
 
   function variantMap() {
     var m = {};
@@ -349,6 +429,7 @@
     renderTabs();
     renderEditorPane();
     renderFacts();
+    renderBrief();
     renderChecks();
   }
 
@@ -361,6 +442,9 @@
         throw new Error('缺少 task_id。请从诊断中心「创建 GEO 内容任务」重新打开，或从 GEO 文章列表进入。');
       }
       GeoWB.requireTenant();
+      try {
+        briefCatalog = await GeoAPI.briefCatalog();
+      } catch (e) { briefCatalog = null; }
       try {
         profiles = ((await GeoAPI.listChannelProfiles()).items) || [];
       } catch (e) { profiles = []; }
@@ -399,8 +483,15 @@
       renderAll();
     } catch (e) { GeoWB.showError(err, e); }
   };
+  document.getElementById('btnSaveBrief').onclick = async function () {
+    try {
+      task = await GeoAPI.patchTask(taskId, { brief: readBriefForm() });
+      renderAll();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
   document.getElementById('btnGenerate').onclick = async function () {
     try {
+      task = await GeoAPI.patchTask(taskId, { brief: readBriefForm() });
       task = await GeoAPI.generateTask(taskId);
       activeTab = 'master';
       renderAll();

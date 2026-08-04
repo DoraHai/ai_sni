@@ -54,6 +54,15 @@ class GeoEvidenceTests(unittest.TestCase):
 
 
 class GenerateEvidenceGateTests(unittest.IsolatedAsyncioTestCase):
+    def _brief(self):
+        return {
+            "industry": "B2B SaaS",
+            "audience": "运营负责人",
+            "intent": "recommend",
+            "content_type": "answer_guide",
+            "cta": "预约演示",
+        }
+
     async def test_generate_rejects_when_eligible_below_min(self):
         today = date(2026, 8, 2)
         facts = [
@@ -67,6 +76,7 @@ class GenerateEvidenceGateTests(unittest.IsolatedAsyncioTestCase):
                 question="数据分析平台哪个好用",
                 facts=facts,
                 today=today,
+                brief=self._brief(),
             )
         self.assertIn("可发布证据", str(ctx.exception))
 
@@ -83,6 +93,7 @@ class GenerateEvidenceGateTests(unittest.IsolatedAsyncioTestCase):
             question="数据分析平台哪个好用",
             facts=facts,
             today=today,
+            brief=self._brief(),
         )
         used = set(payload.get("used_fact_ids") or [])
         self.assertTrue(used.issubset({1, 2, 3}))

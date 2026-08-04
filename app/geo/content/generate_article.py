@@ -199,12 +199,20 @@ async def generate_master_article(
     llm: dict[str, str] | None = None,
     today: date | None = None,
     min_eligible: int = 3,
+    brief: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Generate master article using only publishable evidence facts.
 
     Bound but ineligible facts (unverified / expired / no source / archived) are
     excluded. Generation aborts when fewer than ``min_eligible`` remain.
+    Structured ``brief`` is required (industry/audience/intent/content_type/cta).
     """
+    from app.geo.content.brief import (
+        brief_generation_error_message,
+        brief_prompt_block,
+        brief_ready,
+        normalize_brief,
+    )
     from app.geo.content.evidence import (
         generation_evidence_error_message,
         prepare_facts_for_generation,
@@ -212,6 +220,10 @@ async def generate_master_article(
 
     if len(facts) < min_eligible:
         raise GeoContentError(f"生成前至少绑定 {min_eligible} 条事实卡")
+
+    brief_norm = normalize_brief(brief)
+    if not brief_ready(brief_norm):
+        raise GeoContentError(brief_generation_error_message(brief_norm))
 
     eligible, evidence_meta = prepare_facts_for_generation(
         facts, today=today, min_eligible=min_eligible
@@ -233,6 +245,7 @@ async def generate_master_article(
         }
         for f in eligible
     ]
+    brief_block = brief_prompt_block(brief_norm)
 
     use_ai = bool(llm) or is_enabled()
     if not use_ai:
@@ -243,17 +256,32 @@ async def generate_master_article(
             compact,
         )
         payload["_evidence"] = evidence_meta
+        payload["_brief"] = brief_norm
+        if brief_block and isinstance(payload.get("direct_answer"), str):
+            # Keep deterministic path honest: stamp brief into disclaimer meta only.
+            payload["disclaimer"] = (
+                str(payload.get("disclaimer") or "")
+                + f"\n\n【Brief】\n{brief_block}"
+            ).strip()
         return payload
 
     system = (
         "你是严谨的 GEO 内容写作者。只使用提供的事实卡，禁止编造数据、客户名、排名或收录承诺。"
+        "必须遵守 brief 中的行业、受众、意图、内容类型与 CTA；禁用表述不得出现。"
         "只返回 JSON 对象，字段：title, direct_answer, sections, used_fact_ids, disclaimer, updated_at。"
         "sections 为数组，每项 type 仅限 definition|comparison|faq|conclusion|body；"
         "faq 使用 items:[{q,a}]，其他类型使用 body。"
         "FAQ 至少 2 条；必须有 definition 与 conclusion；updated_at 用 YYYY-MM-DD。"
+        "文末结论或直接答案中自然呼应 CTA，不要硬塞广告口号。"
     )
     user = json.dumps(
-        {"brand": tenant_name, "question": question, "facts": compact},
+        {
+            "brand": tenant_name,
+            "question": question,
+            "facts": compact,
+            "brief": brief_norm,
+            "brief_text": brief_block,
+        },
         ensure_ascii=False,
     )
     try:
@@ -268,6 +296,7 @@ async def generate_master_article(
         data["_source"] = "ai"
         payload = normalize_article_payload(data, compact)
         payload["_evidence"] = evidence_meta
+        payload["_brief"] = brief_norm
         return payload
     except DeepSeekError:
         # 可演示降级，与诊断 advice 一致
@@ -278,4 +307,10 @@ async def generate_master_article(
             compact,
         )
         payload["_evidence"] = evidence_meta
+        payload["_brief"] = brief_norm
+        if brief_block:
+            payload["disclaimer"] = (
+                str(payload.get("disclaimer") or "")
+                + f"\n\n【Brief】\n{brief_block}"
+            ).strip()
         return payload

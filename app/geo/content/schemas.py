@@ -86,6 +86,16 @@ class TaskCreate(BaseModel):
     brief: dict[str, Any] | None = None
 
 
+class ContentBrief(BaseModel):
+    industry: str | None = Field(None, max_length=100)
+    audience: str | None = Field(None, max_length=120)
+    intent: str | None = Field(None, max_length=32)
+    content_type: str | None = Field(None, max_length=32)
+    cta: str | None = Field(None, max_length=160)
+    banned_claims: list[str] = Field(default_factory=list)
+    notes: str | None = Field(None, max_length=500)
+
+
 class TaskFactsUpdate(BaseModel):
     fact_ids: list[int] = Field(..., min_length=0)
 
@@ -118,6 +128,7 @@ class TaskUpdate(BaseModel):
     title: str | None = Field(None, max_length=300)
     owner_user_id: int | None = None
     target_channels: list[str] | None = None
+    brief: ContentBrief | dict[str, Any] | None = None
 
 
 class TaskFromDiagnosis(BaseModel):

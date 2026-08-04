@@ -378,6 +378,9 @@ async def _task_payload(
     session: AsyncSession, task: GeoContentTask, *, detail: bool = False
 ) -> dict[str, Any]:
     prompt = await session.get(GeoPrompt, task.prompt_id)
+    from app.geo.content.brief import brief_ready, normalize_brief
+
+    brief = normalize_brief(task.brief)
     payload: dict[str, Any] = {
         "id": task.id,
         "tenant_id": task.tenant_id,
@@ -391,7 +394,8 @@ async def _task_payload(
         "diagnosis_advice_code": task.diagnosis_advice_code,
         "target_channels": task.target_channels or [],
         "owner_user_id": task.owner_user_id,
-        "brief": task.brief or {},
+        "brief": brief,
+        "brief_ready": brief_ready(brief),
         "rule_result": task.rule_result,
         "ready_at": _iso(task.ready_at),
         "created_at": _iso(task.created_at),
@@ -465,6 +469,17 @@ async def _task_payload(
 @router.get("/content-health")
 async def content_health() -> dict:
     return {"module": "geo-content", "status": "ok"}
+
+
+@router.get("/content-brief-catalog")
+async def content_brief_catalog(
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict:
+    """Brief 枚举与必填字段（前端表单）。"""
+    from app.geo.content.brief import catalog_payload
+
+    _ = ctx
+    return catalog_payload()
 
 
 @router.get("/channel-profiles")
@@ -1739,6 +1754,8 @@ async def create_task(
     await _ensure_tenant_exists(session, req.tenant_id)
     prompt = await _get_prompt(session, req.prompt_id, req.tenant_id)
     title = (req.title or prompt.question).strip()
+    from app.geo.content.brief import normalize_brief
+
     task = GeoContentTask(
         tenant_id=req.tenant_id,
         prompt_id=prompt.id,
@@ -1747,7 +1764,7 @@ async def create_task(
         target_channels=normalize_channels(req.target_channels),
         owner_user_id=ctx.user_id,
         pipeline_step="opportunity",
-        brief=req.brief,
+        brief=normalize_brief(req.brief) if req.brief else {},
     )
     session.add(task)
     await session.flush()
@@ -1814,6 +1831,15 @@ async def patch_task(
     data = req.model_dump(exclude_unset=True)
     if "title" in data and data["title"] is not None:
         data["title"] = data["title"].strip()
+    if "brief" in data:
+        from app.geo.content.brief import normalize_brief
+
+        raw = data["brief"]
+        if hasattr(raw, "model_dump"):
+            raw = raw.model_dump(exclude_unset=True)
+        data["brief"] = normalize_brief(raw)
+    if "target_channels" in data and data["target_channels"] is not None:
+        data["target_channels"] = normalize_channels(data["target_channels"])
     for key, value in data.items():
         setattr(task, key, value)
     await _sync_task_pipeline(session, task)
@@ -2036,10 +2062,19 @@ async def generate_task_article(
     prompt = await _get_prompt(session, task.prompt_id, tenant_id)
     facts = await _task_facts(session, task.id)
     fact_dicts = _fact_dicts(facts)
+    from app.geo.content.brief import (
+        brief_generation_error_message,
+        brief_ready,
+        normalize_brief,
+    )
     from app.geo.content.evidence import (
         generation_evidence_error_message,
         prepare_facts_for_generation,
     )
+
+    brief_norm = normalize_brief(task.brief)
+    if not brief_ready(brief_norm):
+        raise HTTPException(400, brief_generation_error_message(brief_norm))
 
     _, evidence_preview = prepare_facts_for_generation(fact_dicts, min_eligible=3)
     if not evidence_preview["ok"]:
@@ -2054,6 +2089,7 @@ async def generate_task_article(
             question=prompt.question,
             facts=fact_dicts,
             llm=llm,
+            brief=brief_norm,
         )
         body = to_markdown(payload)
         outline = outline_from_payload(payload)
@@ -2071,6 +2107,7 @@ async def generate_task_article(
                 "source": payload.get("_source"),
                 "used_fact_ids": payload.get("used_fact_ids"),
                 "evidence": evidence_meta,
+                "brief": payload.get("_brief") or brief_norm,
             },
             created_by=ctx.user_id,
         )

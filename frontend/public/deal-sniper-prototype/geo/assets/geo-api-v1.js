@@ -135,6 +135,7 @@
     ensureAuthOrRedirect: ensureAuthOrRedirect,
     api: api,
     contentHealth: function () { return api('/content-health'); },
+    briefCatalog: function () { return api('/content-brief-catalog'); },
     contentStats: function () { return api('/content-stats'); },
     listPrompts: function (query) {
       return api('/prompts', { query: query || {} });
