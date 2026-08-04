@@ -26,7 +26,21 @@ from app.geo.content.imports import import_facts_csv, import_prompts_csv
 from app.geo.content.pipeline import blocked_reason_from_checks, sync_pipeline_fields
 from app.geo.content.rules import RuleInput, build_fix_patches, is_ready, run_checks
 from app.geo.content.channel_profiles import get_profile, list_profiles
+from app.geo.content.channel_registry import (
+    channel_options_from_registry,
+    enabled_types_from_rows,
+    filter_channels_by_registry,
+    publication_publish_mode,
+    publish_mode_for_channel,
+    registry_row_dicts,
+)
 from app.geo.content.channels import default_channel_rows
+from app.geo.content.review import (
+    apply_decision,
+    apply_submit,
+    invalidate_review,
+    review_payload,
+)
 from app.geo.content.ai_settings import (
     apply_provider_preset,
     encrypt_api_key,
@@ -57,6 +71,8 @@ from app.geo.content.schemas import (
     PromptImportRequest,
     PromptUpdate,
     PublicationCreate,
+    ReviewDecision,
+    ReviewSubmit,
     TaskCreate,
     TaskFactsUpdate,
     TaskFromDiagnosis,
@@ -380,6 +396,9 @@ async def _task_payload(
     session: AsyncSession, task: GeoContentTask, *, detail: bool = False
 ) -> dict[str, Any]:
     prompt = await session.get(GeoPrompt, task.prompt_id)
+    from app.geo.content.brief import brief_ready, normalize_brief
+
+    brief = normalize_brief(task.brief)
     payload: dict[str, Any] = {
         "id": task.id,
         "tenant_id": task.tenant_id,
@@ -393,7 +412,9 @@ async def _task_payload(
         "diagnosis_advice_code": task.diagnosis_advice_code,
         "target_channels": task.target_channels or [],
         "owner_user_id": task.owner_user_id,
-        "brief": task.brief or {},
+        "brief": brief,
+        "brief_ready": brief_ready(brief),
+        **review_payload(task),
         "rule_result": task.rule_result,
         "ready_at": _iso(task.ready_at),
         "created_at": _iso(task.created_at),
@@ -459,14 +480,31 @@ async def _task_payload(
             ],
             "publications": pubs,
             "channel_profiles": list_profiles(),
+            "channel_options": await _channel_options_payload(session, task.tenant_id),
         }
     )
     return payload
 
 
+async def _channel_options_payload(session: AsyncSession, tenant_id: int) -> list[dict]:
+    rows = await _ensure_default_publishing_channels(session, tenant_id)
+    return channel_options_from_registry(registry_row_dicts(rows))
+
+
 @router.get("/content-health")
 async def content_health() -> dict:
     return {"module": "geo-content", "status": "ok"}
+
+
+@router.get("/content-brief-catalog")
+async def content_brief_catalog(
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict:
+    """Brief 枚举与必填字段（前端表单）。"""
+    from app.geo.content.brief import catalog_payload
+
+    _ = ctx
+    return catalog_payload()
 
 
 @router.get("/channel-profiles")
@@ -475,6 +513,18 @@ async def get_channel_profiles(
 ) -> dict:
     _ = ctx
     return {"items": list_profiles()}
+
+
+@router.get("/publishing-channel-options")
+async def get_publishing_channel_options(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Enabled registry channels mapped to adapt profiles (editor picker)."""
+    ctx.ensure_tenant(tenant_id)
+    options = await _channel_options_payload(session, tenant_id)
+    return {"items": options}
 
 
 # ---------- prompts ----------
@@ -1852,6 +1902,8 @@ async def create_task(
     await _ensure_tenant_exists(session, req.tenant_id)
     prompt = await _get_prompt(session, req.prompt_id, req.tenant_id)
     title = (req.title or prompt.question).strip()
+    from app.geo.content.brief import normalize_brief
+
     task = GeoContentTask(
         tenant_id=req.tenant_id,
         prompt_id=prompt.id,
@@ -1860,7 +1912,7 @@ async def create_task(
         target_channels=normalize_channels(req.target_channels),
         owner_user_id=ctx.user_id,
         pipeline_step="opportunity",
-        brief=req.brief,
+        brief=normalize_brief(req.brief) if req.brief else {},
     )
     session.add(task)
     await session.flush()
@@ -1927,6 +1979,15 @@ async def patch_task(
     data = req.model_dump(exclude_unset=True)
     if "title" in data and data["title"] is not None:
         data["title"] = data["title"].strip()
+    if "brief" in data:
+        from app.geo.content.brief import normalize_brief
+
+        raw = data["brief"]
+        if hasattr(raw, "model_dump"):
+            raw = raw.model_dump(exclude_unset=True)
+        data["brief"] = normalize_brief(raw)
+    if "target_channels" in data and data["target_channels"] is not None:
+        data["target_channels"] = normalize_channels(data["target_channels"])
     for key, value in data.items():
         setattr(task, key, value)
     await _sync_task_pipeline(session, task)
@@ -1988,6 +2049,7 @@ async def save_article(
     )
     session.add(article)
     task.title = req.title.strip()
+    invalidate_review(task)
     if task.status in {"draft", "facts_bound", "generating", "failed"}:
         task.status = "editing"
     await _sync_task_pipeline(session, task)
@@ -2112,6 +2174,7 @@ async def apply_patch(
     )
     session.add(new_article)
     task.status = "editing"
+    invalidate_review(task)
     await session.flush()
     rule_input = await _build_rule_input(session, task, new_article)
     checks = run_checks(rule_input)
@@ -2148,8 +2211,24 @@ async def generate_task_article(
     tenant = await _ensure_tenant_exists(session, tenant_id)
     prompt = await _get_prompt(session, task.prompt_id, tenant_id)
     facts = await _task_facts(session, task.id)
-    if len(facts) < 3:
-        raise HTTPException(400, "生成前至少绑定 3 条带来源的事实卡")
+    fact_dicts = _fact_dicts(facts)
+    from app.geo.content.brief import (
+        brief_generation_error_message,
+        brief_ready,
+        normalize_brief,
+    )
+    from app.geo.content.evidence import (
+        generation_evidence_error_message,
+        prepare_facts_for_generation,
+    )
+
+    brief_norm = normalize_brief(task.brief)
+    if not brief_ready(brief_norm):
+        raise HTTPException(400, brief_generation_error_message(brief_norm))
+
+    _, evidence_preview = prepare_facts_for_generation(fact_dicts, min_eligible=3)
+    if not evidence_preview["ok"]:
+        raise HTTPException(400, generation_evidence_error_message(evidence_preview))
 
     task.status = "generating"
     await session.commit()
@@ -2158,13 +2237,15 @@ async def generate_task_article(
         payload = await generate_master_article(
             tenant_name=tenant.name,
             question=prompt.question,
-            facts=_fact_dicts(facts),
+            facts=fact_dicts,
             llm=llm,
+            brief=brief_norm,
         )
         body = to_markdown(payload)
         outline = outline_from_payload(payload)
         latest = await _latest_article(session, task.id)
         version_no = (latest.version_no + 1) if latest else 1
+        evidence_meta = payload.get("_evidence") or evidence_preview
         article = GeoArticleVersion(
             task_id=task.id,
             version_no=version_no,
@@ -2175,12 +2256,15 @@ async def generate_task_article(
             generation_meta={
                 "source": payload.get("_source"),
                 "used_fact_ids": payload.get("used_fact_ids"),
+                "evidence": evidence_meta,
+                "brief": payload.get("_brief") or brief_norm,
             },
             created_by=ctx.user_id,
         )
         session.add(article)
         task.title = payload["title"]
         task.status = "editing"
+        invalidate_review(task)
         await session.commit()
     except GeoContentError as exc:
         task.status = "failed"
@@ -2229,9 +2313,16 @@ async def create_variants(
     article = await _latest_article(session, task.id)
     if article is None:
         raise HTTPException(400, "请先生成或保存母稿")
-    channels = normalize_channels(
-        req.channels or list(task.target_channels or [])
+    registry_rows = registry_row_dicts(
+        await _ensure_default_publishing_channels(session, tenant_id)
     )
+    enabled_types = enabled_types_from_rows(registry_rows)
+    channels = filter_channels_by_registry(
+        normalize_channels(req.channels or list(task.target_channels or [])),
+        enabled_types=enabled_types or None,
+    )
+    if not channels:
+        raise HTTPException(400, "没有可用的启用发布渠道，请先在「发布渠道」配置中启用")
     existing = {v.channel: v for v in await _variants(session, task.id)}
     created = []
     for channel in channels:
@@ -2341,6 +2432,54 @@ async def export_variant(
     }
 
 
+@router.post("/content-tasks/{task_id}/submit-review")
+async def submit_task_review(
+    task_id: int,
+    req: ReviewSubmit,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    task = await _get_task(session, task_id, tenant_id)
+    article = await _latest_article(session, task.id)
+    if article is None:
+        raise HTTPException(400, "请先生成母稿后再提交审校")
+    try:
+        apply_submit(task, note=req.note)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await _sync_task_pipeline(session, task)
+    await session.commit()
+    await session.refresh(task)
+    return await _task_payload(session, task, detail=True)
+
+
+@router.post("/content-tasks/{task_id}/review")
+async def decide_task_review(
+    task_id: int,
+    req: ReviewDecision,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    task = await _get_task(session, task_id, tenant_id)
+    try:
+        apply_decision(
+            task,
+            decision=req.decision,
+            note=req.note,
+            reviewer_id=ctx.user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await _sync_task_pipeline(session, task)
+    await session.commit()
+    await session.refresh(task)
+    return await _task_payload(session, task, detail=True)
+
+
 @router.post("/content-tasks/{task_id}/publications")
 async def record_publication(
     task_id: int,
@@ -2360,13 +2499,17 @@ async def record_publication(
     article = await _latest_article(session, task.id)
     rule_input = await _build_rule_input(session, task, article)
     try:
-        assert_can_publish(rule_input)
+        assert_can_publish(rule_input, task=task)
     except PublishGateError as exc:
         raise HTTPException(400, str(exc)) from exc
+    registry_rows = registry_row_dicts(
+        await _ensure_default_publishing_channels(session, req.tenant_id)
+    )
+    registry_mode = publish_mode_for_channel(req.channel, registry_rows)
     pub = GeoPublication(
         variant_id=variant.id,
         channel=req.channel,
-        publish_mode="manual_export",
+        publish_mode=publication_publish_mode(registry_mode),
         published_url=url,
         published_at=datetime.utcnow(),
         status="published",

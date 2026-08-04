@@ -74,5 +74,64 @@ def summarize_evidence_blockers(
     return (
         False,
         f"可发布证据 {len(eligible)}/{min_eligible}（{reason_text}）",
-        "请核验事实、补来源，并移除或更新已过期事实后再发布",
+        "请核验事实、补来源，并移除或更新已过期事实后再生成/发布",
     )
+
+
+ISSUE_LABELS = {
+    "not_active": "已归档",
+    "not_verified": "未核验",
+    "missing_source": "缺来源",
+    "expired": "已过期",
+}
+
+
+def prepare_facts_for_generation(
+    facts: list[dict[str, Any]],
+    *,
+    today: date | None = None,
+    min_eligible: int = 3,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Filter to publishable evidence for generation.
+
+    Returns ``(eligible_facts, meta)``. Does not raise — caller decides to abort.
+    """
+    issues = evidence_issues(facts, today=today)
+    eligible = eligible_facts(facts, today=today)
+    excluded = [
+        {
+            "id": fact_id,
+            "issues": codes,
+            "labels": [ISSUE_LABELS.get(c, c) for c in codes],
+        }
+        for fact_id, codes in sorted(issues.items())
+    ]
+    ok, message, action = summarize_evidence_blockers(
+        facts, today=today, min_eligible=min_eligible
+    )
+    return eligible, {
+        "eligible_count": len(eligible),
+        "bound_count": len(facts),
+        "min_eligible": min_eligible,
+        "ok": ok,
+        "message": message,
+        "action": action,
+        "excluded": excluded,
+        "eligible_ids": [f.get("id") for f in eligible if f.get("id") is not None],
+    }
+
+
+def generation_evidence_error_message(meta: dict[str, Any]) -> str:
+    """Human-readable 400 body when generation is blocked by evidence."""
+    parts = [str(meta.get("message") or "可发布证据不足")]
+    excluded = meta.get("excluded") or []
+    if excluded:
+        detail = "；".join(
+            f"#{item.get('id')}({'/'.join(item.get('labels') or item.get('issues') or [])})"
+            for item in excluded[:6]
+        )
+        parts.append(f"已排除：{detail}")
+    action = str(meta.get("action") or "").strip()
+    if action:
+        parts.append(action)
+    return "。".join(parts)

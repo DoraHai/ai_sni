@@ -11,6 +11,13 @@ from app.geo.content.channels import (
     normalize_channel_type,
     normalize_publish_mode,
 )
+from app.geo.content.channel_registry import (
+    channel_options_from_registry,
+    filter_channels_by_registry,
+    publication_publish_mode,
+    publish_mode_for_channel,
+    profile_key_for_registry_type,
+)
 from app.models import GeoChannelAccount, GeoPublishingChannel
 from app.geo.content.schemas import ChannelAccountCreate, PublishingChannelCreate
 
@@ -78,6 +85,28 @@ class GeoChannelRegistryTests(unittest.TestCase):
         )
         self.assertEqual(account.auth_type, "api_key")
         self.assertEqual(account.credentials, {"token": "secret"})
+
+    def test_registry_maps_to_adapt_profiles(self):
+        self.assertEqual(profile_key_for_registry_type("docs"), "website")
+        self.assertEqual(profile_key_for_registry_type("industry_media"), "toutiao")
+        rows = [
+            {"id": 1, "name": "官网", "channel_type": "website", "publish_mode": "auto_publish", "enabled": True},
+            {"id": 2, "name": "知乎", "channel_type": "zhihu", "publish_mode": "draft_then_manual", "enabled": True},
+            {"id": 3, "name": "关", "channel_type": "toutiao", "publish_mode": "manual_only", "enabled": False},
+        ]
+        options = channel_options_from_registry(rows)
+        keys = [o["adapt_key"] for o in options]
+        self.assertEqual(keys, ["website", "zhihu"])
+        self.assertEqual(
+            filter_channels_by_registry(
+                ["website", "zhihu", "toutiao", "baijiahao"],
+                enabled_types={"website", "zhihu"},
+            ),
+            ["website", "zhihu"],
+        )
+        self.assertEqual(publish_mode_for_channel("website", rows), "auto_publish")
+        self.assertEqual(publication_publish_mode("manual_only"), "manual_export")
+        self.assertEqual(publication_publish_mode("auto_publish"), "auto_publish")
 
 
 if __name__ == "__main__":
