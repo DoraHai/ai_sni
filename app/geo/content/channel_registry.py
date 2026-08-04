@@ -85,7 +85,7 @@ def channel_options_from_registry(
             continue
         ctype = str(row.get("channel_type") or "").strip().lower()
         adapt = profile_key_for_registry_type(ctype)
-        if not adapt:
+        if not adapt or adapt in seen_adapt:
             continue
         profile = profiles.get(adapt) or (
             get_profile(adapt).to_dict() if get_profile(adapt) else None
@@ -99,8 +99,7 @@ def channel_options_from_registry(
                 "enabled": True,
                 "adapt_key": adapt,
                 "adapt_profile": profile,
-                "default_selected": bool(profile and profile.get("default_selected"))
-                and adapt not in seen_adapt,
+                "default_selected": bool(profile and profile.get("default_selected")),
             }
         )
         seen_adapt.add(adapt)
