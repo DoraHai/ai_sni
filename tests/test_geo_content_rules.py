@@ -11,7 +11,12 @@ def _base(**kwargs) -> RuleInput:
         title="数据分析平台怎么选",
         body_markdown=(
             "直接回答：应结合场景与可核验事实选择。\n\n"
-            "## 定义\n\n数据分析平台用于汇聚与分析业务数据。\n\n"
+            "## 定义\n\n数据分析平台是一种用于汇聚与分析业务数据的系统。\n\n"
+            "## 对比选型\n\n与传统报表工具相比，自助分析平台更适合跨部门协作。\n\n"
+            "## 操作步骤\n\n"
+            "步骤 1：明确分析场景。\n"
+            "步骤 2：核对事实卡来源。\n"
+            "步骤 3：完成试点验证。\n\n"
             "## FAQ\n\n"
             "- **Q：** 需要关注什么？\n"
             "  **A：** 来源与时效。\n"
@@ -20,6 +25,7 @@ def _base(**kwargs) -> RuleInput:
             "## 结论\n\n优先核验来源后再决策。\n\n"
             "## 来源\n\n"
             "- 白皮书\n- 文档\n- 案例\n\n"
+            "覆盖 80% 场景，实施约 14 天，服务 120 家客户。\n\n"
             "*作者：GEO Demo*\n"
             "*更新时间：2026-07-28*\n"
         ),
@@ -27,7 +33,7 @@ def _base(**kwargs) -> RuleInput:
             "direct_answer": "应结合场景与可核验事实选择数据分析平台。",
             "author_name": "GEO Demo",
             "sections": [
-                {"type": "definition", "heading": "定义", "body": "用于汇聚与分析业务数据。"},
+                {"type": "definition", "heading": "定义", "body": "是一种用于汇聚与分析业务数据的系统。"},
                 {
                     "type": "faq",
                     "items": [
@@ -45,9 +51,9 @@ def _base(**kwargs) -> RuleInput:
             "updated_at": "2026-07-28",
         },
         facts=[
-            {"id": 1, "statement": "支持私有化部署", "source_name": "白皮书", "trust_level": "verified", "status": "active"},
-            {"id": 2, "statement": "提供开放 API", "source_name": "文档", "trust_level": "verified", "status": "active"},
-            {"id": 3, "statement": "已服务制造行业", "source_name": "案例", "trust_level": "verified", "status": "active"},
+            {"id": 1, "statement": "支持私有化部署，覆盖 80% 场景", "source_name": "白皮书", "trust_level": "verified", "status": "active"},
+            {"id": 2, "statement": "标准实施约 14 天", "source_name": "文档", "trust_level": "verified", "status": "active"},
+            {"id": 3, "statement": "已服务 120 家制造客户", "source_name": "案例", "trust_level": "verified", "status": "active"},
         ],
         target_channels=["website", "zhihu"],
         variants=["website", "zhihu"],
@@ -202,6 +208,9 @@ class GeoFixPatchesTests(unittest.TestCase):
         self.assertIn("faq_min", patches)
         self.assertIn("conclusion_extractable", patches)
         self.assertIn("updated_at_visible", patches)
+        self.assertIn("numbers_extractable", patches)
+        self.assertIn("comparison_extractable", patches)
+        self.assertIn("howto_extractable", patches)
         self.assertIn("## FAQ", patches["faq_min"]["insert_markdown"])
         self.assertIn("## 结论", patches["conclusion_extractable"]["insert_markdown"])
         self.assertIn("更新时间", patches["updated_at_visible"]["insert_markdown"])
@@ -211,6 +220,9 @@ class GeoFixPatchesTests(unittest.TestCase):
         self.assertNotIn("faq_min", codes)
         self.assertNotIn("conclusion_extractable", codes)
         self.assertNotIn("updated_at_visible", codes)
+        self.assertNotIn("numbers_extractable", codes)
+        self.assertNotIn("comparison_extractable", codes)
+        self.assertNotIn("howto_extractable", codes)
 
     def test_evidence_publishable_requires_verified_fresh_facts(self):
         from datetime import date, timedelta

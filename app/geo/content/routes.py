@@ -1899,10 +1899,19 @@ async def check_task(
     ready = is_ready(checks, require_channels=require_channels)
     check_dicts = [c.to_dict() for c in checks]
     patches = build_fix_patches(rule_input)
+    from app.geo.content.draft_lint import lint_draft, lint_summary
+    from app.geo.content.extractable_blocks import blocks_payload
+
+    lint = lint_summary(
+        lint_draft(rule_input.body_markdown or "", facts=rule_input.facts or [])
+    )
+    blocks = blocks_payload(rule_input.body_markdown or "")
     task.rule_result = {
         "ready": ready,
         "require_channels": require_channels,
         "checks": check_dicts,
+        "lint": lint,
+        "blocks": blocks,
         "checked_at": datetime.utcnow().isoformat(),
     }
     if ready:
@@ -1917,7 +1926,37 @@ async def check_task(
         "ready": ready,
         "checks": check_dicts,
         "patches": patches,
+        "lint": lint,
+        "blocks": blocks,
         "task": await _task_payload(session, task, detail=True),
+    }
+
+
+@router.post("/content-tasks/{task_id}/lint")
+async def lint_task_article(
+    task_id: int,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """编造风险扫描（不改任务状态）。"""
+    from app.geo.content.draft_lint import lint_draft, lint_summary
+    from app.geo.content.extractable_blocks import blocks_payload
+
+    ctx.ensure_tenant(tenant_id)
+    task = await _get_task(session, task_id, tenant_id)
+    article = await _latest_article(session, task.id)
+    if article is None:
+        raise HTTPException(400, "请先生成或保存母稿")
+    rule_input = await _build_rule_input(session, task, article)
+    lint = lint_summary(
+        lint_draft(article.body_markdown or "", facts=rule_input.facts or [])
+    )
+    blocks = blocks_payload(article.body_markdown or "")
+    return {
+        "task_id": task.id,
+        "lint": lint,
+        "blocks": blocks,
     }
 
 

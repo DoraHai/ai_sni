@@ -62,8 +62,19 @@
         <div class="wb-card">
           <strong>规则清单</strong>
           <ul class="wb-checks" id="checks" style="margin-top:10px"></ul>
+          <div style="margin-top:14px">
+            <strong>可抽取块</strong>
+            <div class="wb-hint">定义 / 数字 / 对比 / 步骤 / FAQ（引用吸收信号）</div>
+            <div id="blockChips" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px"></div>
+          </div>
+          <div style="margin-top:14px">
+            <strong>编造风险</strong>
+            <div class="wb-hint" id="lintSummary">检查就绪后显示</div>
+            <ul class="wb-checks" id="lintList" style="margin-top:8px"></ul>
+          </div>
           <div id="patchBox" style="margin-top:10px"></div>
           <div class="wb-muted" id="readyLine" style="margin-top:8px"></div>
+          <button class="wb-btn" id="btnLint" style="margin-top:10px">仅扫编造风险</button>
           <button class="wb-btn" id="btnChannels" style="margin-top:10px;display:none">去回填 →</button>
         </div>
       </div>
@@ -71,7 +82,7 @@
   </main>
 </div>
 <script src="assets/geo-sidebar-v1.js?rev=8"></script>
-<script src="assets/geo-api-v1.js?rev=9"></script>
+<script src="assets/geo-api-v1.js?rev=10"></script>
 <script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {
@@ -180,6 +191,53 @@
     }
   }
 
+  var BLOCK_LABELS = {
+    definition: '定义',
+    numbers: '数字',
+    comparison: '对比',
+    howto: '步骤',
+    faq: 'FAQ'
+  };
+
+  function renderBlocksAndLint(result) {
+    var rr = (task && task.rule_result) || {};
+    var blocks = (result && result.blocks) || rr.blocks || null;
+    var lint = (result && result.lint) || rr.lint || null;
+    var chips = document.getElementById('blockChips');
+    chips.innerHTML = '';
+    if (blocks && blocks.blocks) {
+      Object.keys(BLOCK_LABELS).forEach(function (key) {
+        var ok = !!blocks.blocks[key];
+        var span = document.createElement('span');
+        span.className = 'wb-badge ' + (ok ? 'good' : 'warn');
+        span.textContent = (ok ? '✓ ' : '缺 ') + BLOCK_LABELS[key];
+        chips.appendChild(span);
+      });
+    } else {
+      chips.innerHTML = '<span class="wb-muted">尚未检查</span>';
+    }
+    var summary = document.getElementById('lintSummary');
+    var list = document.getElementById('lintList');
+    list.innerHTML = '';
+    if (!lint) {
+      summary.textContent = '检查就绪或点「仅扫编造风险」后显示';
+      return;
+    }
+    summary.textContent =
+      '共 ' + (lint.total || 0) + ' · 高 ' + (lint.high || 0) +
+      ' / 中 ' + (lint.medium || 0) + ' / 低 ' + (lint.low || 0) +
+      (lint.high ? '（高风险会阻断就绪）' : '');
+    (lint.issues || []).forEach(function (issue) {
+      var li = document.createElement('li');
+      var badge = issue.level === '高' ? 'bad' : (issue.level === '中' ? 'warn' : '');
+      li.innerHTML =
+        '<span class="wb-badge ' + badge + '">' + (issue.level || '') + '</span>' +
+        '<div><strong>' + (issue.type || issue.code || '') + '</strong> · ' + (issue.detail || '') +
+        (issue.excerpt ? '<div class="wb-muted">' + issue.excerpt + '</div>' : '') + '</div>';
+      list.appendChild(li);
+    });
+  }
+
   function renderChecks(result) {
     var box = document.getElementById('checks');
     box.innerHTML = '';
@@ -212,6 +270,7 @@
       patchBox.appendChild(btn);
     });
     document.getElementById('btnChannels').style.display = ready ? 'inline-block' : 'none';
+    renderBlocksAndLint(result);
   }
 
   function relevanceScore(fact, question) {
@@ -377,6 +436,12 @@
       task = result.task;
       renderAll();
       renderChecks(result);
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnLint').onclick = async function () {
+    try {
+      var result = await GeoAPI.lintTask(taskId);
+      renderBlocksAndLint(result);
     } catch (e) { GeoWB.showError(err, e); }
   };
   document.getElementById('btnVariants').onclick = async function () {

@@ -225,6 +225,12 @@
         query: Object.assign(withTenantQuery(), { require_channels: !!requireChannels }),
       });
     },
+    lintTask: function (id) {
+      return api('/content-tasks/' + id + '/lint', {
+        method: 'POST',
+        query: withTenantQuery(),
+      });
+    },
     applyPatch: function (id, code, authorName) {
       return api('/content-tasks/' + id + '/apply-patch', {
         method: 'POST',
