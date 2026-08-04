@@ -384,5 +384,43 @@
         body: body,
       });
     },
+    listTickets: function (query) {
+      return api('/action-tickets', { query: withTenantQuery(query) });
+    },
+    createTicket: function (body) {
+      return api('/action-tickets', {
+        method: 'POST',
+        query: withTenantQuery(),
+        body: body,
+      });
+    },
+    patchTicket: function (id, body) {
+      return api('/action-tickets/' + id, {
+        method: 'PATCH',
+        query: withTenantQuery(),
+        body: body,
+      });
+    },
+    verifyTicket: function (id, recrawl) {
+      return api('/action-tickets/' + id + '/verify', {
+        method: 'POST',
+        query: Object.assign(withTenantQuery(), { recrawl: recrawl !== false }),
+      });
+    },
+    materializeTickets: function (auditId, replaceOpen) {
+      return api('/audits/' + auditId + '/tickets', {
+        method: 'POST',
+        query: Object.assign(withTenantQuery(), { replace_open: !!replaceOpen }),
+      });
+    },
+    verifyAuditTickets: function (auditId, recrawl) {
+      return api('/audits/' + auditId + '/verify', {
+        method: 'POST',
+        query: Object.assign(withTenantQuery(), { recrawl: recrawl !== false }),
+      });
+    },
+    latestAudit: function () {
+      return api('/audits/latest', { query: withTenantQuery() });
+    },
   };
 })(window);

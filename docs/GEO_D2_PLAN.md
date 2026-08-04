@@ -19,8 +19,8 @@
 ## 非目标
 
 - 不 fork GeoLook CLI/UI
-- 不改 D3 人工核验工作流（下一切片）
 - 中/低 lint 仅提示，不阻断发布就绪
+- D3 验收工单见 `docs/GEO_D3_PLAN.md`
 
 ## 验收
 

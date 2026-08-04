@@ -41,6 +41,7 @@
     '<div class="nav-group">内容与信源</div>' +
     item('articles.html', 'Aa', 'GEO 文章') +
     item('media.html', '⌂', '媒体 / 信源策略') +
+    item('tickets.html', '✓', '验收工单') +
     item('channels.html', '⇧', '分发平台') +
     item('publishing-channels.html', '◎', '发布渠道配置') +
     '<div class="nav-group">设置</div>' +
