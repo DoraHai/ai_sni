@@ -2035,8 +2035,15 @@ async def generate_task_article(
     tenant = await _ensure_tenant_exists(session, tenant_id)
     prompt = await _get_prompt(session, task.prompt_id, tenant_id)
     facts = await _task_facts(session, task.id)
-    if len(facts) < 3:
-        raise HTTPException(400, "生成前至少绑定 3 条带来源的事实卡")
+    fact_dicts = _fact_dicts(facts)
+    from app.geo.content.evidence import (
+        generation_evidence_error_message,
+        prepare_facts_for_generation,
+    )
+
+    _, evidence_preview = prepare_facts_for_generation(fact_dicts, min_eligible=3)
+    if not evidence_preview["ok"]:
+        raise HTTPException(400, generation_evidence_error_message(evidence_preview))
 
     task.status = "generating"
     await session.commit()
@@ -2045,13 +2052,14 @@ async def generate_task_article(
         payload = await generate_master_article(
             tenant_name=tenant.name,
             question=prompt.question,
-            facts=_fact_dicts(facts),
+            facts=fact_dicts,
             llm=llm,
         )
         body = to_markdown(payload)
         outline = outline_from_payload(payload)
         latest = await _latest_article(session, task.id)
         version_no = (latest.version_no + 1) if latest else 1
+        evidence_meta = payload.get("_evidence") or evidence_preview
         article = GeoArticleVersion(
             task_id=task.id,
             version_no=version_no,
@@ -2062,6 +2070,7 @@ async def generate_task_article(
             generation_meta={
                 "source": payload.get("_source"),
                 "used_fact_ids": payload.get("used_fact_ids"),
+                "evidence": evidence_meta,
             },
             created_by=ctx.user_id,
         )

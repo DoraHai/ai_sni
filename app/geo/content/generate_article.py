@@ -197,12 +197,27 @@ async def generate_master_article(
     question: str,
     facts: list[dict[str, Any]],
     llm: dict[str, str] | None = None,
+    today: date | None = None,
+    min_eligible: int = 3,
 ) -> dict[str, Any]:
-    if len(facts) < 3:
-        raise GeoContentError("生成前至少绑定 3 条带来源的事实卡")
-    for fact in facts:
-        if not str(fact.get("source_name") or "").strip():
-            raise GeoContentError("存在缺少来源的事实卡，无法生成")
+    """Generate master article using only publishable evidence facts.
+
+    Bound but ineligible facts (unverified / expired / no source / archived) are
+    excluded. Generation aborts when fewer than ``min_eligible`` remain.
+    """
+    from app.geo.content.evidence import (
+        generation_evidence_error_message,
+        prepare_facts_for_generation,
+    )
+
+    if len(facts) < min_eligible:
+        raise GeoContentError(f"生成前至少绑定 {min_eligible} 条事实卡")
+
+    eligible, evidence_meta = prepare_facts_for_generation(
+        facts, today=today, min_eligible=min_eligible
+    )
+    if not evidence_meta["ok"]:
+        raise GeoContentError(generation_evidence_error_message(evidence_meta))
 
     compact = [
         {
@@ -213,18 +228,22 @@ async def generate_master_article(
             "source_url": f.get("source_url"),
             "fact_type": f.get("fact_type"),
             "observed_at": f.get("observed_at"),
+            "trust_level": f.get("trust_level"),
+            "expires_at": f.get("expires_at"),
         }
-        for f in facts
+        for f in eligible
     ]
 
     use_ai = bool(llm) or is_enabled()
     if not use_ai:
-        return normalize_article_payload(
+        payload = normalize_article_payload(
             deterministic_article(
                 tenant_name=tenant_name, question=question, facts=compact
             ),
             compact,
         )
+        payload["_evidence"] = evidence_meta
+        return payload
 
     system = (
         "你是严谨的 GEO 内容写作者。只使用提供的事实卡，禁止编造数据、客户名、排名或收录承诺。"
@@ -247,10 +266,16 @@ async def generate_master_article(
             }
         data = await chat_json(system, user, timeout=90, **kwargs)
         data["_source"] = "ai"
-        return normalize_article_payload(data, compact)
+        payload = normalize_article_payload(data, compact)
+        payload["_evidence"] = evidence_meta
+        return payload
     except DeepSeekError:
         # 可演示降级，与诊断 advice 一致
-        payload = deterministic_article(
-            tenant_name=tenant_name, question=question, facts=compact
+        payload = normalize_article_payload(
+            deterministic_article(
+                tenant_name=tenant_name, question=question, facts=compact
+            ),
+            compact,
         )
-        return normalize_article_payload(payload, compact)
+        payload["_evidence"] = evidence_meta
+        return payload
