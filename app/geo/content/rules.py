@@ -155,6 +155,21 @@ def check_facts_sourced(data: RuleInput) -> RuleCheck:
     )
 
 
+def check_evidence_publishable(data: RuleInput, min_eligible: int = 3) -> RuleCheck:
+    """Wave C：发布级证据须核验、有来源且未过期。"""
+    from app.geo.content.evidence import summarize_evidence_blockers
+
+    ok, message, action = summarize_evidence_blockers(
+        data.facts or [], min_eligible=min_eligible
+    )
+    return RuleCheck(
+        code="evidence_publishable",
+        passed=ok,
+        message=message,
+        action=action,
+    )
+
+
 def check_updated_at_visible(data: RuleInput) -> RuleCheck:
     body = data.body_markdown or ""
     outline = data.outline or {}
@@ -228,6 +243,7 @@ def run_checks(data: RuleInput) -> list[RuleCheck]:
         check_conclusion_extractable(data),
         check_facts_bound_min(data, min_n=3),
         check_facts_sourced(data),
+        check_evidence_publishable(data, min_eligible=3),
         check_updated_at_visible(data),
         check_author_visible(data),
         check_sources_footer(data),

@@ -330,8 +330,10 @@ def _fact_dicts(facts: list[GeoFact]) -> list[dict[str, Any]]:
             "source_url": f.source_url,
             "fact_type": f.fact_type,
             "trust_level": f.trust_level,
+            "status": f.status,
             "author_name": f.author_name,
             "observed_at": f.observed_at.isoformat() if f.observed_at else None,
+            "expires_at": f.expires_at.isoformat() if f.expires_at else None,
         }
         for f in facts
     ]
@@ -1253,9 +1255,12 @@ async def create_channel_account(
     await _get_publishing_channel(session, req.channel_id, req.tenant_id)
     credentials_encrypted = None
     if req.credentials:
-        credentials_encrypted = encrypt_api_key(
-            json.dumps(req.credentials, ensure_ascii=False, sort_keys=True)
-        )
+        try:
+            credentials_encrypted = encrypt_api_key(
+                json.dumps(req.credentials, ensure_ascii=False, sort_keys=True)
+            )
+        except ValueError as exc:
+            raise HTTPException(503, str(exc)) from exc
     row = GeoChannelAccount(
         tenant_id=req.tenant_id,
         channel_id=req.channel_id,
@@ -1286,9 +1291,12 @@ async def update_channel_account(
     if req.auth_type is not None:
         row.auth_type = req.auth_type
     if req.credentials is not None:
-        row.credentials_encrypted = encrypt_api_key(
-            json.dumps(req.credentials, ensure_ascii=False, sort_keys=True)
-        )
+        try:
+            row.credentials_encrypted = encrypt_api_key(
+                json.dumps(req.credentials, ensure_ascii=False, sort_keys=True)
+            )
+        except ValueError as exc:
+            raise HTTPException(503, str(exc)) from exc
         row.status = "active"
     if req.clear_credentials:
         row.credentials_encrypted = None

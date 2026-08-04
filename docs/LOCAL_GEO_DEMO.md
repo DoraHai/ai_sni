@@ -169,6 +169,19 @@ http://127.0.0.1:5176/geo/dashboard.html?tenant_id=1&api_key=geo-demo-local-key&
 4. 打开 **评价分析**：应看到情感与位置分布，以及最近快照列表
 5. **GEO 概览**：出现「提及率」「引擎覆盖」「含竞品标注」真实计数（提及率 = 提及快照 / 全部快照）
 
+### 9) 发布渠道账号 + 可发布证据（Wave C 收尾）
+
+1. migration 到 `0044_geo_fact_expiry`
+2. 侧栏 **发布渠道配置**：首次打开会初始化官网/文档/公众号/知乎/百家号/头条/行业媒体
+3. 添加渠道账号并粘贴凭证 JSON → 列表仅显示「已配置凭证」，不回显明文
+4. **事实库**：可为事实设置过期日；发布前需核验（verified）且未过期，否则规则 `evidence_publishable` / 回填门禁会拦截
+5. HTTP smoke：
+
+```bash
+API_KEY=geo-demo-local-key TENANT_ID=1 BASE=http://127.0.0.1:8011 \
+  bash scripts/smoke_geo_wave_c.sh
+```
+
 ## 常见 404
 
 | 错误打开 | 原因 |

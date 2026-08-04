@@ -22,9 +22,9 @@ def _ready_input(**kwargs) -> RuleInput:
         ),
         outline={"direct_answer": "应结合场景与可核验事实选择数据分析平台。", "author_name": "Demo", "updated_at": "2026-07-28"},
         facts=[
-            {"id": 1, "statement": "a", "source_name": "s"},
-            {"id": 2, "statement": "b", "source_name": "s"},
-            {"id": 3, "statement": "c", "source_name": "s"},
+            {"id": 1, "statement": "a", "source_name": "s", "trust_level": "verified", "status": "active"},
+            {"id": 2, "statement": "b", "source_name": "s", "trust_level": "verified", "status": "active"},
+            {"id": 3, "statement": "c", "source_name": "s", "trust_level": "verified", "status": "active"},
         ],
         target_channels=["website"],
         variants=["website"],
@@ -45,6 +45,24 @@ class GeoPublishGateTests(unittest.TestCase):
     def test_blocks_without_facts(self):
         with self.assertRaises(PublishGateError):
             assert_can_publish(_ready_input(facts=[]))
+
+    def test_blocks_unverified_or_expired_evidence(self):
+        from datetime import date, timedelta
+
+        facts = [
+            {"id": 1, "statement": "a", "source_name": "s", "trust_level": "needs_review", "status": "active"},
+            {"id": 2, "statement": "b", "source_name": "s", "trust_level": "verified", "status": "active"},
+            {
+                "id": 3,
+                "statement": "c",
+                "source_name": "s",
+                "trust_level": "verified",
+                "status": "active",
+                "expires_at": date.today() - timedelta(days=1),
+            },
+        ]
+        with self.assertRaises(PublishGateError):
+            assert_can_publish(_ready_input(facts=facts))
 
 
 if __name__ == "__main__":

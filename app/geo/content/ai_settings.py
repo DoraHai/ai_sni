@@ -154,4 +154,10 @@ def apply_provider_preset(provider: str) -> dict[str, str]:
 
 
 def encrypt_api_key(raw: str) -> str:
-    return encrypt(raw.strip())
+    try:
+        return encrypt(raw.strip())
+    except Exception as exc:  # noqa: BLE001 — surface config/crypto failures clearly
+        raise ValueError(
+            "无法加密凭证：请检查 CRYPTO_MASTER_KEY_B64（需标准 Base64，解码后 32 字节）。"
+            "可用：python -c \"from app.security.crypto import generate_master_key_b64 as g; print(g())\""
+        ) from exc

@@ -45,9 +45,9 @@ def _base(**kwargs) -> RuleInput:
             "updated_at": "2026-07-28",
         },
         facts=[
-            {"id": 1, "statement": "支持私有化部署", "source_name": "白皮书"},
-            {"id": 2, "statement": "提供开放 API", "source_name": "文档"},
-            {"id": 3, "statement": "已服务制造行业", "source_name": "案例"},
+            {"id": 1, "statement": "支持私有化部署", "source_name": "白皮书", "trust_level": "verified", "status": "active"},
+            {"id": 2, "statement": "提供开放 API", "source_name": "文档", "trust_level": "verified", "status": "active"},
+            {"id": 3, "statement": "已服务制造行业", "source_name": "案例", "trust_level": "verified", "status": "active"},
         ],
         target_channels=["website", "zhihu"],
         variants=["website", "zhihu"],
@@ -211,6 +211,25 @@ class GeoFixPatchesTests(unittest.TestCase):
         self.assertNotIn("faq_min", codes)
         self.assertNotIn("conclusion_extractable", codes)
         self.assertNotIn("updated_at_visible", codes)
+
+    def test_evidence_publishable_requires_verified_fresh_facts(self):
+        from datetime import date, timedelta
+
+        today = date.today()
+        stale = [
+            {"id": 1, "statement": "a", "source_name": "s", "trust_level": "needs_review", "status": "active"},
+            {"id": 2, "statement": "b", "source_name": "s", "trust_level": "verified", "status": "active"},
+            {
+                "id": 3,
+                "statement": "c",
+                "source_name": "s",
+                "trust_level": "verified",
+                "status": "active",
+                "expires_at": (today - timedelta(days=1)).isoformat(),
+            },
+        ]
+        checks = {c.code: c for c in run_checks(_base(facts=stale))}
+        self.assertFalse(checks["evidence_publishable"].passed)
 
 
 if __name__ == "__main__":
