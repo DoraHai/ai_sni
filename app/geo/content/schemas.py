@@ -14,7 +14,7 @@ class PromptCreate(BaseModel):
     priority: int = 0
     tags: list[str] = Field(default_factory=list)
     demand_note: str | None = None
-    source: Literal["manual", "import", "demo"] = "manual"
+    source: Literal["manual", "import", "demo", "expand"] = "manual"
     language: str = "zh-CN"
     question_group: str | None = Field(None, max_length=32)
     market: Literal["cn", "global", "both"] = "cn"
@@ -45,6 +45,37 @@ class PromptImportItem(BaseModel):
 class PromptImportRequest(BaseModel):
     tenant_id: int
     items: list[PromptImportItem] = Field(..., min_length=1)
+
+
+class PromptExpandRoot(BaseModel):
+    root: str = Field(..., min_length=2, max_length=80)
+    kind: Literal["brand", "competitor", "category"] = "category"
+    market: Literal["cn", "global", "both"] = "cn"
+
+
+class PromptExpandRequest(BaseModel):
+    tenant_id: int
+    market: Literal["cn", "global", "both"] = "cn"
+    roots: list[PromptExpandRoot] = Field(default_factory=list)
+    competitors: list[str] = Field(default_factory=list)
+    products: list[str] = Field(default_factory=list)
+    seed_from_tenant: bool = True
+    max_terms: int = Field(80, ge=1, le=200)
+
+
+class PromptPromoteItem(BaseModel):
+    question: str = Field(..., min_length=4, max_length=500)
+    question_group: str | None = Field(None, max_length=32)
+    market: Literal["cn", "global", "both"] = "cn"
+    priority: int = 10
+    tags: list[str] = Field(default_factory=lambda: ["from_expand"])
+    demand_note: str | None = None
+    is_brand_probe: bool | None = None
+
+
+class PromptPromoteRequest(BaseModel):
+    tenant_id: int
+    items: list[PromptPromoteItem] = Field(..., min_length=1, max_length=50)
 
 
 class FactCreate(BaseModel):
