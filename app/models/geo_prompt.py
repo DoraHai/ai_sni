@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,6 +23,9 @@ class GeoPrompt(Base):
     demand_note: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    question_group: Mapped[str | None] = mapped_column(String(32))
+    market: Mapped[str] = mapped_column(String(16), nullable=False, default="cn")
+    is_brand_probe: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_by: Mapped[int | None] = mapped_column(BigInteger)
     owner_user_id: Mapped[int | None] = mapped_column(BigInteger)
     last_task_id: Mapped[int | None] = mapped_column(BigInteger)

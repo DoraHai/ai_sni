@@ -333,6 +333,11 @@
       if (status) query.status = status;
       return api('/media-placements', { query: query });
     },
+    channelBlueprint: function (group) {
+      var query = withTenantQuery();
+      if (group) query.group = group;
+      return api('/channel-blueprint', { query: query });
+    },
     createMediaPlacement: function (body) {
       return api('/media-placements', { method: 'POST', body: body });
     },

@@ -16,6 +16,9 @@ class PromptCreate(BaseModel):
     demand_note: str | None = None
     source: Literal["manual", "import", "demo"] = "manual"
     language: str = "zh-CN"
+    question_group: str | None = Field(None, max_length=32)
+    market: Literal["cn", "global", "both"] = "cn"
+    is_brand_probe: bool | None = None
 
 
 class PromptUpdate(BaseModel):
@@ -24,6 +27,9 @@ class PromptUpdate(BaseModel):
     tags: list[str] | None = None
     demand_note: str | None = None
     status: Literal["active", "archived"] | None = None
+    question_group: str | None = Field(None, max_length=32)
+    market: Literal["cn", "global", "both"] | None = None
+    is_brand_probe: bool | None = None
 
 
 class PromptImportItem(BaseModel):
@@ -31,6 +37,9 @@ class PromptImportItem(BaseModel):
     priority: int = 0
     tags: list[str] = Field(default_factory=list)
     demand_note: str | None = None
+    question_group: str | None = Field(None, max_length=32)
+    market: Literal["cn", "global", "both"] = "cn"
+    is_brand_probe: bool | None = None
 
 
 class PromptImportRequest(BaseModel):
@@ -186,7 +195,20 @@ class TrackingEnginesPut(BaseModel):
     items: list[TrackingEngineItem] = Field(..., min_length=1)
 
 
-MediaChannelType = Literal["website", "zhihu", "wechat", "news", "wiki", "other"]
+MediaChannelType = Literal[
+    "website",
+    "zhihu",
+    "wechat",
+    "news",
+    "wiki",
+    "baijiahao",
+    "toutiao",
+    "encyclopedia",
+    "community_qa",
+    "industry_media",
+    "visual_content",
+    "other",
+]
 MediaPlacementStatus = Literal["planned", "in_progress", "published", "archived"]
 
 
@@ -194,22 +216,30 @@ class MediaPlacementCreate(BaseModel):
     tenant_id: int
     name: str = Field(..., min_length=1, max_length=200)
     channel_type: MediaChannelType = "other"
+    channel_key: str | None = Field(None, max_length=32)
     target_url: str | None = None
     authority_note: str | None = None
     status: MediaPlacementStatus = "planned"
     published_url: str | None = None
     priority: int = 0
+    priority_band: str | None = Field(None, max_length=8)
+    fits_groups: list[str] | None = None
+    citation_national: int | None = None
     related_prompt_id: int | None = None
 
 
 class MediaPlacementUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=200)
     channel_type: MediaChannelType | None = None
+    channel_key: str | None = Field(None, max_length=32)
     target_url: str | None = None
     authority_note: str | None = None
     status: MediaPlacementStatus | None = None
     published_url: str | None = None
     priority: int | None = None
+    priority_band: str | None = Field(None, max_length=8)
+    fits_groups: list[str] | None = None
+    citation_national: int | None = None
     related_prompt_id: int | None = None
 
 

@@ -14,7 +14,7 @@
     <div class="topbar">
       <div>
         <h1>GEO 概览</h1>
-        <div class="sub">内容闭环 · 可见度复核 · 简单提及率（Wave C）</div>
+        <div class="sub">内容闭环 · 可见度口径（剔点名题）· CN 阵地权重（D0/D1）</div>
       </div>
     </div>
     <div class="page">
@@ -37,7 +37,7 @@
   </main>
 </div>
 <script src="assets/geo-sidebar-v1.js?rev=8"></script>
-<script src="assets/geo-api-v1.js?rev=11"></script>
+<script src="assets/geo-api-v1.js?rev=12"></script>
 <script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {
@@ -75,11 +75,15 @@
     });
     var vis = document.getElementById('visibility');
     var rate = s.visibility_mention_rate;
-    var rateLabel = rate == null ? '-' : (Math.round(rate * 1000) / 10) + '%';
+    var rateLabel = rate == null ? '未测' : (Math.round(rate * 1000) / 10) + '%';
+    var probeRate = s.probe_recognition_rate;
+    var probeLabel = probeRate == null ? '未测' : (Math.round(probeRate * 1000) / 10) + '%';
     [
       ['回答快照', s.snapshots || 0, 'visibility.html'],
-      ['提及品牌', s.snapshots_mention_brand || 0, 'visibility.html'],
-      ['提及率', rateLabel, 'visibility.html'],
+      ['可见性提及率', rateLabel, 'visibility.html'],
+      ['可见性样本', (s.snapshots_visibility || 0) + '/' + (s.snapshots_visibility_mention || 0), 'prompts.html?is_brand_probe=0'],
+      ['品牌认知率', probeLabel, 'prompts.html?is_brand_probe=1'],
+      ['点名探测题', s.prompts_probe || 0, 'prompts.html?is_brand_probe=1'],
       ['引擎覆盖', s.visibility_engines_covered || 0, 'engines.html'],
       ['含竞品标注', s.snapshots_with_competitors || 0, 'competitors.html'],
       ['未提及品牌', s.prompts_brand_missing || 0, 'prompts.html?tag=brand_missing'],

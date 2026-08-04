@@ -1,13 +1,14 @@
 from datetime import datetime
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
 
 
 class GeoMediaPlacement(Base):
-    """权威信源 / 媒体布局条目（Wave B2）。"""
+    """权威信源 / 媒体布局条目（Wave B2 + D1 blueprint）。"""
 
     __tablename__ = "geo_media_placements"
 
@@ -17,11 +18,15 @@ class GeoMediaPlacement(Base):
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     channel_type: Mapped[str] = mapped_column(String(32), nullable=False, default="other")
+    channel_key: Mapped[str | None] = mapped_column(String(32))
     target_url: Mapped[str | None] = mapped_column(Text)
     authority_note: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="planned")
     published_url: Mapped[str | None] = mapped_column(Text)
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    priority_band: Mapped[str | None] = mapped_column(String(8))
+    fits_groups: Mapped[list | None] = mapped_column(JSONB)
+    citation_national: Mapped[int | None] = mapped_column(Integer)
     related_prompt_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("geo_prompts.id"), nullable=True
     )

@@ -63,6 +63,16 @@ from app.geo.content.schemas import (
     VariantUpdate,
     VariantsCreate,
 )
+from app.geo.content.cn_blueprint import (
+    blueprint_payload,
+    default_media_placement_rows,
+)
+from app.geo.content.prompt_taxonomy import (
+    brand_names_from_tenant,
+    normalize_market,
+    normalize_question_group,
+    resolve_is_brand_probe,
+)
 from app.geo.content.snapshots import (
     apply_brand_mention_tags,
     needs_recheck,
@@ -70,6 +80,7 @@ from app.geo.content.snapshots import (
     normalize_cited_urls,
     normalize_competitors,
     normalize_sentiment,
+    split_visibility_metrics,
     visibility_mention_rate,
 )
 from app.geo.content.variants import (
@@ -118,6 +129,9 @@ def _prompt_payload(
         "demand_note": row.demand_note,
         "status": row.status,
         "source": row.source,
+        "question_group": row.question_group,
+        "market": row.market or "cn",
+        "is_brand_probe": bool(row.is_brand_probe),
         "created_by": row.created_by,
         "owner_user_id": row.owner_user_id,
         "last_task_id": row.last_task_id,
@@ -469,6 +483,8 @@ async def list_prompts(
     tenant_id: int = Query(...),
     status: str | None = Query(None),
     tag: str | None = Query(None),
+    question_group: str | None = Query(None),
+    is_brand_probe: bool | None = Query(None),
     need_recheck: bool | None = Query(None),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
@@ -477,6 +493,10 @@ async def list_prompts(
     stmt = select(GeoPrompt).where(GeoPrompt.tenant_id == tenant_id)
     if status:
         stmt = stmt.where(GeoPrompt.status == status)
+    if is_brand_probe is not None:
+        stmt = stmt.where(GeoPrompt.is_brand_probe.is_(bool(is_brand_probe)))
+    if question_group:
+        stmt = stmt.where(GeoPrompt.question_group == question_group.strip())
     stmt = stmt.order_by(GeoPrompt.priority.desc(), GeoPrompt.id.desc())
     rows = list(await session.scalars(stmt))
     if tag:
@@ -510,7 +530,18 @@ async def create_prompt(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(req.tenant_id)
-    await _ensure_tenant_exists(session, req.tenant_id)
+    tenant = await _ensure_tenant_exists(session, req.tenant_id)
+    q_group = normalize_question_group(req.question_group)
+    brand_names = brand_names_from_tenant(
+        name=getattr(tenant, "name", None),
+        brand_terms=getattr(tenant, "brand_terms", None),
+    )
+    probe = resolve_is_brand_probe(
+        question=req.question,
+        brand_names=brand_names,
+        explicit=req.is_brand_probe,
+        question_group=q_group,
+    )
     row = GeoPrompt(
         tenant_id=req.tenant_id,
         question=req.question.strip(),
@@ -519,6 +550,9 @@ async def create_prompt(
         tags=req.tags,
         demand_note=req.demand_note,
         source=req.source,
+        question_group=q_group,
+        market=normalize_market(req.market),
+        is_brand_probe=probe,
         created_by=ctx.user_id,
     )
     session.add(row)
@@ -537,11 +571,31 @@ async def update_prompt(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     row = await _get_prompt(session, prompt_id, tenant_id)
+    tenant = await _ensure_tenant_exists(session, tenant_id)
     data = req.model_dump(exclude_unset=True)
     if "question" in data and data["question"] is not None:
         data["question"] = data["question"].strip()
+    if "question_group" in data:
+        data["question_group"] = normalize_question_group(data.get("question_group"))
+    if "market" in data and data["market"] is not None:
+        data["market"] = normalize_market(data["market"])
     for key, value in data.items():
+        if key == "is_brand_probe":
+            continue
         setattr(row, key, value)
+    brand_names = brand_names_from_tenant(
+        name=getattr(tenant, "name", None),
+        brand_terms=getattr(tenant, "brand_terms", None),
+    )
+    if "is_brand_probe" in data:
+        row.is_brand_probe = bool(data["is_brand_probe"])
+    elif "question" in data or "question_group" in data:
+        row.is_brand_probe = resolve_is_brand_probe(
+            question=row.question,
+            brand_names=brand_names,
+            explicit=None,
+            question_group=row.question_group,
+        )
     await session.commit()
     await session.refresh(row)
     return _prompt_payload(row)
@@ -554,9 +608,20 @@ async def import_prompts(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(req.tenant_id)
-    await _ensure_tenant_exists(session, req.tenant_id)
+    tenant = await _ensure_tenant_exists(session, req.tenant_id)
+    brand_names = brand_names_from_tenant(
+        name=getattr(tenant, "name", None),
+        brand_terms=getattr(tenant, "brand_terms", None),
+    )
     created = []
     for item in req.items:
+        q_group = normalize_question_group(item.question_group)
+        probe = resolve_is_brand_probe(
+            question=item.question,
+            brand_names=brand_names,
+            explicit=item.is_brand_probe,
+            question_group=q_group,
+        )
         row = GeoPrompt(
             tenant_id=req.tenant_id,
             question=item.question.strip(),
@@ -564,6 +629,9 @@ async def import_prompts(
             tags=item.tags,
             demand_note=item.demand_note,
             source="import",
+            question_group=q_group,
+            market=normalize_market(item.market),
+            is_brand_probe=probe,
             created_by=ctx.user_id,
         )
         session.add(row)
@@ -1317,16 +1385,41 @@ def _media_payload(row: GeoMediaPlacement) -> dict[str, Any]:
         "tenant_id": row.tenant_id,
         "name": row.name,
         "channel_type": row.channel_type,
+        "channel_key": row.channel_key,
         "target_url": row.target_url,
         "authority_note": row.authority_note,
         "status": row.status,
         "published_url": row.published_url,
         "priority": row.priority,
+        "priority_band": row.priority_band,
+        "fits_groups": row.fits_groups or [],
+        "citation_national": row.citation_national,
         "related_prompt_id": row.related_prompt_id,
         "created_by": row.created_by,
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
     }
+
+
+async def _ensure_default_media_placements(
+    session: AsyncSession, tenant_id: int
+) -> list[GeoMediaPlacement]:
+    rows = list(
+        await session.scalars(
+            select(GeoMediaPlacement)
+            .where(GeoMediaPlacement.tenant_id == tenant_id)
+            .order_by(GeoMediaPlacement.priority.desc(), GeoMediaPlacement.id.desc())
+        )
+    )
+    if rows:
+        return rows
+    await _ensure_tenant_exists(session, tenant_id)
+    created = [GeoMediaPlacement(**item) for item in default_media_placement_rows(tenant_id)]
+    session.add_all(created)
+    await session.commit()
+    for row in created:
+        await session.refresh(row)
+    return created
 
 
 async def _get_media_placement(
@@ -1342,18 +1435,53 @@ async def _get_media_placement(
 async def list_media_placements(
     tenant_id: int = Query(...),
     status: str | None = Query(None),
+    seed_defaults: bool = Query(
+        True,
+        description="When empty, seed CN citation blueprint placements (D1)",
+    ),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
-    stmt = select(GeoMediaPlacement).where(GeoMediaPlacement.tenant_id == tenant_id)
+    if seed_defaults:
+        rows = await _ensure_default_media_placements(session, tenant_id)
+    else:
+        rows = list(
+            await session.scalars(
+                select(GeoMediaPlacement)
+                .where(GeoMediaPlacement.tenant_id == tenant_id)
+                .order_by(GeoMediaPlacement.priority.desc(), GeoMediaPlacement.id.desc())
+            )
+        )
     if status:
-        stmt = stmt.where(GeoMediaPlacement.status == status)
-    stmt = stmt.order_by(
-        GeoMediaPlacement.priority.desc(), GeoMediaPlacement.id.desc()
-    )
-    rows = list(await session.scalars(stmt))
+        rows = [r for r in rows if r.status == status]
     return {"items": [_media_payload(r) for r in rows]}
+
+
+@router.get("/channel-blueprint")
+async def get_channel_blueprint(
+    tenant_id: int = Query(...),
+    group: str | None = Query(None, description="问题组：推荐/比较/替代/…"),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """CN citation-weighted channel recommendations (GeoLook D1)."""
+    ctx.ensure_tenant(tenant_id)
+    await _ensure_tenant_exists(session, tenant_id)
+    payload = blueprint_payload(group=normalize_question_group(group))
+    # Annotate with tenant placement coverage by channel_key
+    placements = await _ensure_default_media_placements(session, tenant_id)
+    by_key = {p.channel_key: p for p in placements if p.channel_key}
+    for item in payload["channels"]:
+        row = by_key.get(item["channel_key"])
+        item["placement_status"] = row.status if row else None
+        item["placement_id"] = row.id if row else None
+        item["published_url"] = row.published_url if row else None
+    for item in payload["all_channels"]:
+        row = by_key.get(item["channel_key"])
+        item["placement_status"] = row.status if row else None
+        item["placement_id"] = row.id if row else None
+    return payload
 
 
 @router.post("/media-placements")
@@ -1370,11 +1498,15 @@ async def create_media_placement(
         tenant_id=req.tenant_id,
         name=req.name.strip(),
         channel_type=req.channel_type,
+        channel_key=req.channel_key,
         target_url=req.target_url,
         authority_note=req.authority_note,
         status=req.status,
         published_url=req.published_url,
         priority=int(req.priority),
+        priority_band=req.priority_band,
+        fits_groups=req.fits_groups,
+        citation_national=req.citation_national,
         related_prompt_id=req.related_prompt_id,
         created_by=ctx.user_id,
     )
@@ -1398,6 +1530,8 @@ async def update_media_placement(
         row.name = req.name.strip()
     if req.channel_type is not None:
         row.channel_type = req.channel_type
+    if req.channel_key is not None:
+        row.channel_key = req.channel_key
     if req.target_url is not None:
         row.target_url = req.target_url
     if req.authority_note is not None:
@@ -1408,6 +1542,12 @@ async def update_media_placement(
         row.published_url = req.published_url
     if req.priority is not None:
         row.priority = int(req.priority)
+    if req.priority_band is not None:
+        row.priority_band = req.priority_band
+    if req.fits_groups is not None:
+        row.fits_groups = req.fits_groups
+    if req.citation_national is not None:
+        row.citation_national = req.citation_national
     if req.related_prompt_id is not None:
         if req.related_prompt_id:
             await _get_prompt(session, req.related_prompt_id, tenant_id)
@@ -2207,6 +2347,24 @@ async def content_stats(
         )
     )
     snapshots_with_competitors = sum(1 for c in competitor_cols if c)
+
+    # D0: exclude brand-probe prompts from category visibility mention_rate
+    prompt_probe = {p.id: bool(p.is_brand_probe) for p in active_prompts}
+    all_snaps = list(
+        await session.scalars(
+            select(GeoAnswerSnapshot).where(GeoAnswerSnapshot.tenant_id == tenant_id)
+        )
+    )
+    split_rows = [
+        {
+            "mentions_brand": bool(s.mentions_brand),
+            "is_brand_probe": bool(prompt_probe.get(s.prompt_id, False)),
+        }
+        for s in all_snaps
+    ]
+    split = split_visibility_metrics(split_rows)
+    prompts_probe = sum(1 for p in active_prompts if p.is_brand_probe)
+
     return {
         "prompts": int(prompts or 0),
         "facts": int(facts or 0),
@@ -2223,9 +2381,17 @@ async def content_stats(
         "media_published": int(media_published or 0),
         "prompts_brand_missing": int(prompts_brand_missing),
         "prompts_need_recheck": int(prompts_need_recheck),
-        "visibility_mention_rate": visibility_mention_rate(
+        "prompts_probe": int(prompts_probe),
+        # Raw all-snapshot rate kept for debugging; primary KPI excludes probes.
+        "visibility_mention_rate_raw": visibility_mention_rate(
             total_snapshots=snap_total, mention_snapshots=snap_mention
         ),
+        "visibility_mention_rate": split["visibility_mention_rate"],
+        "snapshots_visibility": split["snapshots_visibility"],
+        "snapshots_visibility_mention": split["snapshots_visibility_mention"],
+        "snapshots_probe": split["snapshots_probe"],
+        "snapshots_probe_mention": split["snapshots_probe_mention"],
+        "probe_recognition_rate": split["probe_recognition_rate"],
         "visibility_engines_covered": int(engines_covered or 0),
         "snapshots_with_competitors": int(snapshots_with_competitors),
     }

@@ -41,6 +41,7 @@
             <thead>
               <tr>
                 <th>问题</th>
+                <th>组</th>
                 <th>优先级</th>
                 <th>标签</th>
                 <th>最近观测</th>
@@ -58,6 +59,29 @@
             <label class="wb-label">问题</label>
             <input class="wb-input" id="q" placeholder="例如：数据分析平台哪个好用">
           </div>
+          <div class="wb-field">
+            <label class="wb-label">问题组</label>
+            <select class="wb-select" id="questionGroup">
+              <option value="推荐">推荐</option>
+              <option value="比较">比较</option>
+              <option value="替代">替代</option>
+              <option value="价格">价格</option>
+              <option value="风险">风险</option>
+              <option value="品牌验证">品牌验证（点名探测）</option>
+              <option value="场景">场景</option>
+            </select>
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">市场</label>
+            <select class="wb-select" id="market">
+              <option value="cn">国内 cn</option>
+              <option value="global">海外 global</option>
+              <option value="both">both</option>
+            </select>
+          </div>
+          <label class="wb-label" style="display:flex;align-items:center;gap:8px;margin:8px 0">
+            <input type="checkbox" id="isBrandProbe"> 点名探测题（不计入品类可见性提及率）
+          </label>
           <div class="wb-field">
             <label class="wb-label">优先级</label>
             <input class="wb-input" id="priority" type="number" value="10">
@@ -77,7 +101,7 @@
   </main>
 </div>
 <script src="assets/geo-sidebar-v1.js?rev=8"></script>
-<script src="assets/geo-api-v1.js?rev=10"></script>
+<script src="assets/geo-api-v1.js?rev=12"></script>
 <script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {
@@ -86,6 +110,9 @@
   var params = new URLSearchParams(location.search);
   if (params.get('tag')) document.getElementById('tagFilter').value = params.get('tag');
   if (params.get('need_recheck') === '1') document.getElementById('needRecheck').checked = true;
+  document.getElementById('questionGroup').onchange = function () {
+    if (this.value === '品牌验证') document.getElementById('isBrandProbe').checked = true;
+  };
 
   function obsCell(p) {
     if (!p.last_snapshot_at) {
@@ -106,6 +133,8 @@
     var tag = document.getElementById('tagFilter').value;
     if (tag) q.tag = tag;
     if (document.getElementById('needRecheck').checked) q.need_recheck = true;
+    if (params.get('is_brand_probe') === '1') q.is_brand_probe = true;
+    if (params.get('is_brand_probe') === '0') q.is_brand_probe = false;
     return q;
   }
 
@@ -126,7 +155,8 @@
       var q = listQuery();
       document.getElementById('filterHint').textContent = [
         q.tag ? ('标签=' + q.tag) : '全部标签',
-        q.need_recheck ? '仅待复核' : ''
+        q.need_recheck ? '仅待复核' : '',
+        q.is_brand_probe === true ? '仅点名探测' : (q.is_brand_probe === false ? '仅品类可见性' : '')
       ].filter(Boolean).join(' · ');
       var data = await GeoAPI.listPrompts(q);
       var tbody = document.getElementById('rows');
@@ -143,8 +173,10 @@
       items.forEach(function (p) {
         var tr = document.createElement('tr');
         var visHref = GeoWB.withDemoQuery('visibility.html?prompt_id=' + p.id);
+        var group = (p.question_group || '-') + (p.is_brand_probe ? ' <span class="wb-badge warn">探测</span>' : '');
         tr.innerHTML =
           '<td>' + p.question + '</td>' +
+          '<td>' + group + '</td>' +
           '<td>' + p.priority + '</td>' +
           '<td>' + (p.tags || []).join(', ') + '</td>' +
           '<td>' + obsCell(p) + '</td>' +
@@ -187,6 +219,9 @@
         priority: Number(document.getElementById('priority').value || 0),
         tags: tags,
         demand_note: document.getElementById('note').value || null,
+        question_group: document.getElementById('questionGroup').value,
+        market: document.getElementById('market').value,
+        is_brand_probe: document.getElementById('isBrandProbe').checked,
         source: 'manual',
       });
       document.getElementById('q').value = '';

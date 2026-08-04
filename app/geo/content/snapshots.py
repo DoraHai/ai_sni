@@ -61,9 +61,39 @@ def normalize_sentiment(raw: str | None) -> str:
 
 
 def visibility_mention_rate(*, total_snapshots: int, mention_snapshots: int) -> float | None:
+    """Category visibility rate. Return None when unmeasured (never fake 0)."""
     if total_snapshots <= 0:
         return None
     return round(mention_snapshots / total_snapshots, 4)
+
+
+def split_visibility_metrics(
+    rows: list[dict],
+) -> dict[str, float | int | None]:
+    """Split snapshots into visibility vs brand-probe buckets (GeoLook D0).
+
+    Each row: ``{mentions_brand: bool, is_brand_probe: bool}``.
+    Probe answers nearly always echo the brand name and must not inflate
+    category visibility mention_rate.
+    """
+    visibility = [r for r in rows if not r.get("is_brand_probe")]
+    probe = [r for r in rows if r.get("is_brand_probe")]
+    vis_n = len(visibility)
+    probe_n = len(probe)
+    vis_hit = sum(1 for r in visibility if r.get("mentions_brand"))
+    probe_hit = sum(1 for r in probe if r.get("mentions_brand"))
+    return {
+        "snapshots_visibility": vis_n,
+        "snapshots_visibility_mention": vis_hit,
+        "visibility_mention_rate": visibility_mention_rate(
+            total_snapshots=vis_n, mention_snapshots=vis_hit
+        ),
+        "snapshots_probe": probe_n,
+        "snapshots_probe_mention": probe_hit,
+        "probe_recognition_rate": visibility_mention_rate(
+            total_snapshots=probe_n, mention_snapshots=probe_hit
+        ),
+    }
 
 
 def needs_recheck(
