@@ -356,16 +356,32 @@ function permOk(perm) {
   const keys = Array.isArray(perm) ? perm : [perm]
   return keys.some((k) => session.canView(k))
 }
+function hasDevApiKey() {
+  const k = import.meta.env.VITE_API_KEY
+  return Boolean(
+    import.meta.env.DEV && k && String(k).trim() && String(k).trim() !== 'CHANGE_ME',
+  )
+}
+
 router.beforeEach((to) => {
-  const devBypass = !session.isLoggedIn && import.meta.env.VITE_API_KEY && import.meta.env.DEV
+  // 本地 DEV + VITE_API_KEY：未登录可进业务页（API 走 X-API-Key）
+  const devBypass = hasDevApiKey() && !session.isLoggedIn
   if (!to.meta.public && !session.isLoggedIn && !devBypass) {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
+  // 已登录访问 /login：有菜单权限则去首页；否则 DEV Key 模式去 redirect 或 GEO 工作台
   if (to.path === '/login' && session.isLoggedIn) {
     return { path: firstAllowedPath() || '/' }
   }
+  if (to.path === '/login' && !session.isLoggedIn && hasDevApiKey()) {
+    const redir = typeof to.query.redirect === 'string' ? to.query.redirect : ''
+    if (redir.startsWith('/') && !redir.startsWith('//')) return redir
+    return '/geo/workbench'
+  }
   if (devBypass || !session.isLoggedIn) return
   if (!to.meta.public && !permOk(to.meta.perm)) {
+    // 本地 Key 模式下 token 残缺无菜单权限：仍放行，避免踢回登录
+    if (hasDevApiKey()) return
     const dest = firstAllowedPath()
     if (dest && dest !== to.path) return { path: dest }
     if (!dest) return

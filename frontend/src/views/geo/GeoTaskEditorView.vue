@@ -28,11 +28,18 @@ import {
   pushGeoVariantWebhook,
   retrieveGeoTaskFacts,
   saveGeoArticle,
+  formatGeoError,
   staticGeoEditorUrl,
   submitGeoTaskReview,
   suggestGeoTaskBrief,
 } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
+
+function toastError(e, fallback) {
+  const msg = formatGeoError(e, fallback)
+  ElMessage({ type: 'error', message: msg, duration: 6000, showClose: true })
+  return msg
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -218,7 +225,7 @@ async function saveBrief() {
     applyBriefToForm(task.value.brief)
     ElMessage.success('Brief 已保存')
   } catch (e) {
-    ElMessage.error(e.message || '保存 Brief 失败')
+    toastError(e, '保存 Brief 失败')
   } finally {
     busy.value = ''
   }
@@ -238,7 +245,7 @@ async function suggestBrief() {
       )
     }
   } catch (e) {
-    ElMessage.error(e.message || '建议 Brief 失败')
+    toastError(e, '建议 Brief 失败')
   } finally {
     busy.value = ''
   }
@@ -254,7 +261,7 @@ async function saveFacts() {
     )
     ElMessage.success(`已绑定 ${selectedFactIds.value.length} 条事实`)
   } catch (e) {
-    ElMessage.error(e.message || '绑定失败')
+    toastError(e, '绑定失败')
   } finally {
     busy.value = ''
   }
@@ -275,7 +282,7 @@ async function retrieveFacts() {
       ElMessage.success(`召回 ${retrievePreview.value.length} 条`)
     }
   } catch (e) {
-    ElMessage.error(e.message || '召回失败')
+    toastError(e, '召回失败')
   } finally {
     busy.value = ''
   }
@@ -293,13 +300,51 @@ async function applyRetrieveTop() {
     selectedFactIds.value = (task.value.facts || []).map((f) => f.id)
     ElMessage.success('已绑定召回事实')
   } catch (e) {
-    ElMessage.error(e.message || '绑定失败')
+    toastError(e, '绑定失败')
   } finally {
     busy.value = ''
   }
 }
 
+function validateBeforeGenerate() {
+  const b = briefPayload()
+  const missing = []
+  if (!b.industry) missing.push('行业')
+  if (!b.audience) missing.push('受众')
+  if (!b.intent) missing.push('意图')
+  if (!b.content_type) missing.push('内容类型')
+  if (!b.cta) missing.push('CTA')
+  if (missing.length) {
+    return `Brief 缺少：${missing.join('、')}。请填齐并保存 Brief 后再生成`
+  }
+  const nBound = (task.value?.facts || []).length
+  const nSelected = selectedFactIds.value.length
+  if (nBound < 3 && nSelected < 3) {
+    return '生成前至少绑定 3 条事实卡（建议已核验）。请在左侧选择事实并点「保存绑定」'
+  }
+  if (nBound < 3 && nSelected >= 3) {
+    return '已选事实尚未保存绑定，请先点「保存绑定」再生成'
+  }
+  const verified = (task.value?.facts || []).filter((f) => f.trust_level === 'verified')
+  if (verified.length < 3) {
+    // soft warning path: still allow API to enforce exact rule (eligible may differ)
+    // but surface if clearly short on verified
+    const anyUnverified = (task.value?.facts || []).some((f) => f.trust_level !== 'verified')
+    if (anyUnverified || verified.length === 0) {
+      return null // let API return precise evidence error
+    }
+  }
+  return null
+}
+
 async function generate() {
+  error.value = ''
+  const pre = validateBeforeGenerate()
+  if (pre) {
+    error.value = pre
+    ElMessage({ type: 'error', message: pre, duration: 6000, showClose: true })
+    return
+  }
   busy.value = 'generate'
   try {
     await patchGeoContentTask(tenantId.value, taskId.value, { brief: briefPayload() })
@@ -307,9 +352,11 @@ async function generate() {
     applyArticleFromTask(task.value)
     applyBriefToForm(task.value.brief)
     selectedFactIds.value = (task.value.facts || []).map((f) => f.id)
+    error.value = ''
     ElMessage.success('母稿已生成')
   } catch (e) {
-    ElMessage.error(e.message || '生成失败')
+    const msg = toastError(e, '生成失败')
+    error.value = msg
   } finally {
     busy.value = ''
   }
@@ -331,7 +378,7 @@ async function saveArticleBody() {
     applyArticleFromTask(task.value)
     ElMessage.success('母稿已保存')
   } catch (e) {
-    ElMessage.error(e.message || '保存失败')
+    toastError(e, '保存失败')
   } finally {
     busy.value = ''
   }
@@ -352,7 +399,7 @@ async function runCheck() {
         : `尚未就绪 · Score ${res.geo_score ?? '—'}`,
     )
   } catch (e) {
-    ElMessage.error(e.message || '检查失败')
+    toastError(e, '检查失败')
   } finally {
     busy.value = ''
   }
@@ -376,7 +423,7 @@ async function runAiReview() {
     }
     ElMessage.success(res.ai_review?.summary || '审稿完成')
   } catch (e) {
-    ElMessage.error(e.message || '审稿失败')
+    toastError(e, '审稿失败')
   } finally {
     busy.value = ''
   }
@@ -397,7 +444,7 @@ async function applyPatch(code) {
     }
     ElMessage.success(`已应用补丁 ${code}`)
   } catch (e) {
-    ElMessage.error(e.message || '补丁失败')
+    toastError(e, '补丁失败')
   } finally {
     busy.value = ''
   }
@@ -421,7 +468,7 @@ async function genVariants() {
     }
     ElMessage.success('渠道稿已生成')
   } catch (e) {
-    ElMessage.error(e.message || '生成渠道稿失败')
+    toastError(e, '生成渠道稿失败')
   } finally {
     busy.value = ''
   }
@@ -442,7 +489,7 @@ async function saveVariantBody() {
     applyVariantFromTask()
     ElMessage.success('渠道稿已保存')
   } catch (e) {
-    ElMessage.error(e.message || '保存渠道稿失败')
+    toastError(e, '保存渠道稿失败')
   } finally {
     busy.value = ''
   }
@@ -459,7 +506,7 @@ async function exportCurrentVariant() {
     await load()
     ElMessage.success(`已导出 ${res.channel}（status=${res.status}）`)
   } catch (e) {
-    ElMessage.error(e.message || '导出失败')
+    toastError(e, '导出失败')
   } finally {
     busy.value = ''
   }
@@ -486,7 +533,7 @@ async function submitReview() {
     )
     ElMessage.success('已提交审校')
   } catch (e) {
-    ElMessage.error(e.message || '提交审校失败')
+    toastError(e, '提交审校失败')
   } finally {
     busy.value = ''
   }
@@ -503,7 +550,7 @@ async function decideReview(decision) {
     )
     ElMessage.success(decision === 'approved' ? '已通过审校' : '已驳回')
   } catch (e) {
-    ElMessage.error(e.message || '审校决策失败')
+    toastError(e, '审校决策失败')
   } finally {
     busy.value = ''
   }
@@ -528,7 +575,7 @@ async function recordPublication() {
     })
     ElMessage.success('已回填发布 URL')
   } catch (e) {
-    ElMessage.error(e.message || '回填失败')
+    toastError(e, '回填失败')
   } finally {
     busy.value = ''
   }
@@ -558,7 +605,7 @@ async function pushWebhook() {
     else await load()
     ElMessage.success('Webhook 推送完成')
   } catch (e) {
-    ElMessage.error(e.message || '推送失败')
+    toastError(e, '推送失败')
   } finally {
     busy.value = ''
   }
@@ -642,12 +689,20 @@ onMounted(load)
       </div>
     </div>
 
-    <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
+    <el-alert
+      v-if="error"
+      type="error"
+      :title="error"
+      show-icon
+      closable
+      class="mb"
+      @close="error = ''"
+    />
     <el-alert
       type="success"
       show-icon
       class="mb"
-      title="Vue 母稿编辑器：第一刀（Brief/事实/生成/Score/AI审稿）+ 第二刀（渠道稿/审校/回填/Webhook）。静态 editor 仍可作兜底。"
+      title="Vue 母稿编辑器：Brief/事实/生成/Score/审稿 + 渠道/审校/回填。静态台正确地址为 :5176/geo/dashboard.html（不是 /dashboard.html）。"
     />
 
     <div v-if="task" class="grid">

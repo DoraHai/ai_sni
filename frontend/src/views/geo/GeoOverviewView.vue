@@ -2,7 +2,11 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { fetchGeoContentStats, geoContentHealth } from '../../api/geoContent'
+import {
+  fetchGeoContentStats,
+  geoContentHealth,
+  staticGeoEditorUrl,
+} from '../../api/geoContent'
 import { session } from '../../store/session'
 
 const tenantId = computed(() =>
@@ -58,7 +62,12 @@ const workbenchLinks = [
   { label: '机会词', path: '/geo/prompts', desc: 'prompts 管理', vue: true },
   { label: '事实库', path: '/geo/facts', desc: 'facts 管理', vue: true },
   { label: '发布渠道', path: '/geo/publishing', desc: '渠道与 Webhook', vue: true },
-  { label: '静态编辑器', path: '/deal-sniper/geo/editor', desc: '母稿完整流水线（兼容）' },
+  {
+    label: '静态编辑器',
+    path: 'static-editor',
+    desc: '母稿完整流水线（兼容 · :5176/geo/editor.html）',
+    static: true,
+  },
   { label: '网站体检', path: '/diagnostic-center/', desc: '诊断 → 内容桥接', external: true },
 ]
 
@@ -71,6 +80,12 @@ function openWorkbench(link) {
   }
   if (link.external) {
     window.location.assign(link.path)
+    return
+  }
+  if (link.static) {
+    const tid = tenantId.value || 1
+    // correct local path: /geo/editor.html not /editor.html or /dashboard.html
+    window.open(staticGeoEditorUrl(tid), '_blank')
     return
   }
   window.open(link.path, '_blank')
