@@ -42,8 +42,8 @@ async function load() {
 }
 
 async function submitCreate() {
-  if (!form.value.title.trim() || !form.value.statement.trim()) {
-    ElMessage.warning('标题与陈述必填')
+  if (!form.value.title.trim() || !form.value.statement.trim() || !form.value.source_name.trim()) {
+    ElMessage.warning('标题、陈述与来源名必填')
     return
   }
   creating.value = true
@@ -53,7 +53,7 @@ async function submitCreate() {
       title: form.value.title.trim(),
       statement: form.value.statement.trim(),
       fact_type: form.value.fact_type,
-      source_name: form.value.source_name.trim() || null,
+      source_name: form.value.source_name.trim(),
       source_url: form.value.source_url.trim() || null,
       trust_level: form.value.trust_level,
     })
@@ -175,7 +175,7 @@ onMounted(load)
             <el-option label="其他" value="other" />
           </el-select>
         </el-form-item>
-        <el-form-item label="来源名">
+        <el-form-item label="来源名" required>
           <el-input v-model="form.source_name" />
         </el-form-item>
         <el-form-item label="来源 URL">
