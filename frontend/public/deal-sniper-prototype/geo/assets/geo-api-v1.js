@@ -317,6 +317,12 @@
         body: body,
       });
     },
+    pushVariantWebhook: function (id, body) {
+      return api('/content-tasks/' + id + '/push', {
+        method: 'POST',
+        body: body || {},
+      });
+    },
     listAnswerSnapshots: function (promptId, engine) {
       var query = withTenantQuery();
       if (promptId != null) query.prompt_id = promptId;

@@ -36,14 +36,15 @@
           <label class="wb-field"><span class="wb-label">账号名称</span><input id="accountName" class="wb-input" placeholder="如：官网 CMS 生产账号"></label>
           <label class="wb-field"><span class="wb-label">认证方式</span><select id="authType" class="wb-select"><option value="manual">人工</option><option value="api_key">API Key</option><option value="oauth2">OAuth 2.0</option><option value="webhook">Webhook</option></select></label>
         </div>
-        <label class="wb-field"><span class="wb-label">凭证 JSON（仅服务端加密保存）</span><textarea id="credentials" class="wb-textarea" placeholder='{"token":"..."}'></textarea></label>
+        <label class="wb-field"><span class="wb-label">凭证 JSON（仅服务端加密保存）</span><textarea id="credentials" class="wb-textarea" placeholder='{"webhook_url":"https://cms.example.com/hooks/geo","method":"POST","headers":{},"secret":"optional"}'></textarea></label>
+        <div class="wb-hint">官网/文档 Phase 2：认证方式选 Webhook，凭证至少含 webhook_url（https）。公众号/知乎等仍走人工回填。</div>
         <button id="createAccount" class="wb-btn primary">保存账号</button>
       </div>
     </div>
   </main>
 </div>
-<script src="assets/geo-sidebar-v1.js?rev=8"></script>
-<script src="assets/geo-api-v1.js?rev=11"></script>
+<script src="assets/geo-sidebar-v1.js?rev=9"></script>
+<script src="assets/geo-api-v1.js?rev=17"></script>
 <script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {

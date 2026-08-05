@@ -156,6 +156,16 @@ class PublicationCreate(BaseModel):
     note: str | None = None
 
 
+class WebhookPushRequest(BaseModel):
+    tenant_id: int
+    channel: str = Field(..., min_length=1, max_length=32)
+    account_id: int
+    mode: Literal["draft", "publish"] = "publish"
+    create_publication: bool = True
+    published_url: str | None = Field(None, max_length=2000)
+    note: str | None = None
+
+
 class ReviewSubmit(BaseModel):
     note: str | None = Field(None, max_length=2000)
 

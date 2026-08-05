@@ -75,6 +75,7 @@ from app.geo.content.schemas import (
     PublicationCreate,
     ReviewDecision,
     ReviewSubmit,
+    WebhookPushRequest,
     TaskCreate,
     TaskFactsUpdate,
     TaskFromDiagnosis,
@@ -2835,6 +2836,31 @@ async def decide_task_review(
     return await _task_payload(session, task, detail=True)
 
 
+async def _write_publication(
+    session: AsyncSession,
+    *,
+    task: GeoContentTask,
+    variant: GeoChannelVariant,
+    channel: str,
+    published_url: str,
+    note: str | None,
+    publish_mode: str,
+) -> None:
+    pub = GeoPublication(
+        variant_id=variant.id,
+        channel=channel,
+        publish_mode=publish_mode,
+        published_url=published_url,
+        published_at=datetime.utcnow(),
+        status="published",
+        note=note,
+    )
+    session.add(pub)
+    variant.status = "published"
+    task.status = "published"
+    await _sync_task_pipeline(session, task)
+
+
 @router.post("/content-tasks/{task_id}/publications")
 async def record_publication(
     task_id: int,
@@ -2861,22 +2887,126 @@ async def record_publication(
         await _ensure_default_publishing_channels(session, req.tenant_id)
     )
     registry_mode = publish_mode_for_channel(req.channel, registry_rows)
-    pub = GeoPublication(
-        variant_id=variant.id,
+    await _write_publication(
+        session,
+        task=task,
+        variant=variant,
         channel=req.channel,
-        publish_mode=publication_publish_mode(registry_mode),
         published_url=url,
-        published_at=datetime.utcnow(),
-        status="published",
         note=req.note,
+        publish_mode=publication_publish_mode(registry_mode),
     )
-    session.add(pub)
-    variant.status = "published"
-    task.status = "published"
-    await _sync_task_pipeline(session, task)
     await session.commit()
     await session.refresh(task)
     return await _task_payload(session, task, detail=True)
+
+
+@router.post("/content-tasks/{task_id}/push")
+async def push_variant_webhook(
+    task_id: int,
+    req: WebhookPushRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Phase 2: human-triggered website/docs webhook push (no OAuth)."""
+    from app.geo.content.connectors.webhook import (
+        WebhookConnectorError,
+        build_webhook_payload,
+        decrypt_credentials_json,
+        post_webhook,
+    )
+
+    ctx.ensure_tenant(req.tenant_id)
+    task = await _get_task(session, task_id, req.tenant_id)
+    channel = str(req.channel or "").strip().lower()
+    variants = {v.channel: v for v in await _variants(session, task.id)}
+    variant = variants.get(channel)
+    if variant is None:
+        raise HTTPException(400, "请先生成该渠道版本")
+    if variant.status not in {"exported", "published"}:
+        raise HTTPException(400, "请先导出渠道稿，再推送 Webhook")
+
+    article = await _latest_article(session, task.id)
+    rule_input = await _build_rule_input(session, task, article)
+    try:
+        assert_can_publish(rule_input, task=task)
+    except PublishGateError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    account = await session.get(GeoChannelAccount, req.account_id)
+    if account is None or account.tenant_id != req.tenant_id:
+        raise HTTPException(404, "渠道账号不存在")
+    channel_row = await session.get(GeoPublishingChannel, account.channel_id)
+    if channel_row is None or channel_row.tenant_id != req.tenant_id:
+        raise HTTPException(404, "发布渠道不存在")
+    if not channel_row.enabled:
+        raise HTTPException(400, "发布渠道已停用")
+    if channel_row.channel_type not in {"website", "docs"}:
+        raise HTTPException(400, "Phase 2 仅支持官网/文档 Webhook")
+    if channel_row.publish_mode != "auto_publish":
+        raise HTTPException(400, "该渠道发布方式不是 auto_publish")
+    if account.auth_type != "webhook":
+        raise HTTPException(400, "请使用 auth_type=webhook 的账号")
+    if not account.credentials_encrypted:
+        raise HTTPException(400, "账号未配置凭证")
+    # docs/website both adapt to website; account must match requested adapt key
+    from app.geo.content.channel_registry import profile_key_for_registry_type
+
+    adapt = profile_key_for_registry_type(channel_row.channel_type)
+    if adapt != channel:
+        raise HTTPException(
+            400,
+            f"账号渠道类型 {channel_row.channel_type} 与变体渠道 {channel} 不匹配",
+        )
+
+    try:
+        credentials = decrypt_credentials_json(account.credentials_encrypted)
+        payload = build_webhook_payload(
+            action=req.mode,
+            tenant_id=req.tenant_id,
+            task_id=task.id,
+            channel=channel,
+            channel_type=channel_row.channel_type,
+            title=variant.title or task.title or "",
+            body_markdown=variant.body_markdown or "",
+            export_format=variant.export_format or "markdown",
+            base_url=channel_row.base_url,
+        )
+        remote = await post_webhook(credentials, payload)
+    except WebhookConnectorError as exc:
+        status = 502 if "HTTP" in str(exc) or "请求失败" in str(exc) else 400
+        raise HTTPException(status, str(exc)) from exc
+
+    remote_url = (req.published_url or "").strip() or remote.get("remote_url")
+    publication_created = False
+    if req.create_publication and remote_url:
+        if not str(remote_url).startswith(("http://", "https://")):
+            raise HTTPException(400, "发布 URL 无效")
+        await _write_publication(
+            session,
+            task=task,
+            variant=variant,
+            channel=channel,
+            published_url=str(remote_url),
+            note=req.note or f"webhook {req.mode}",
+            publish_mode="auto_publish",
+        )
+        publication_created = True
+        await session.commit()
+        await session.refresh(task)
+    else:
+        await session.commit()
+
+    detail = await _task_payload(session, task, detail=True)
+    return {
+        "ok": True,
+        "http_status": remote.get("http_status"),
+        "remote_url": remote_url,
+        "webhook_host": remote.get("webhook_host"),
+        "publication_created": publication_created,
+        "mode": req.mode,
+        "task": detail,
+    }
 
 
 @router.get("/content-stats")

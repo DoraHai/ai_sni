@@ -198,7 +198,7 @@ http://127.0.0.1:5176/geo/dashboard.html?tenant_id=1&api_key=geo-demo-local-key&
 3. **提问监控**：点两次「拓词」；第二次提示「相对上次 +N」，表内出现「新↑ / 仍在」
 4. 拓词持久化**不会**自动入库；仍须勾选后「写入问题库」
 
-> 阶段验收应从 M1 开始（见 `docs/GEO_STAGE_ACCEPTANCE.md`）。Phase 2 发布连接器最后做。
+> 阶段验收应从 M1 开始（见 `docs/GEO_STAGE_ACCEPTANCE.md`）。
 
 ### 9) 发布渠道账号 + 可发布证据（Wave C 收尾）
 
@@ -212,6 +212,13 @@ http://127.0.0.1:5176/geo/dashboard.html?tenant_id=1&api_key=geo-demo-local-key&
 API_KEY=geo-demo-local-key TENANT_ID=1 BASE=http://127.0.0.1:8011 \
   bash scripts/smoke_geo_wave_c.sh
 ```
+
+### 9b) Phase 2 官网/文档 Webhook 推送
+
+1. **发布渠道配置**：为官网或文档渠道添加账号，`auth_type=webhook`，凭证含 `https` 的 `webhook_url`
+2. 内容任务：生成官网渠道稿 → 导出 → 审校通过
+3. **分发平台**：选择该 Webhook 账号 → **推送草稿** 或 **推送发布**（有 URL 时写回填）
+4. 未导出 / 未审校 → 应 400；凭证不明文回显
 
 ## 常见 404
 
