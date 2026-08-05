@@ -179,8 +179,7 @@ async function load() {
       listGeoPublishingChannels(tenantId.value, false),
       listGeoChannelAccounts(tenantId.value),
     ])
-    task.value = t
-    allFacts.value = factsRes.items || []
+    allFacts.value = (factsRes.items || []).map((f) => ({ ...f, id: Number(f.id) }))
     publishingChannels.value = chRes.items || []
     channelAccounts.value = accRes.items || []
     if (!webhookAccountId.value && channelAccounts.value.length) {
@@ -189,22 +188,28 @@ async function load() {
     if (t.target_channels?.length) {
       channelPick.value = [...t.target_channels]
     }
-    applyBriefToForm(t.brief)
-    applyArticleFromTask(t)
-    selectedFactIds.value = (t.facts || []).map((f) => f.id)
+    applyTaskPayload(t)
+    // if status says bound but facts[] empty, one more GET
+    if (
+      (t.status === 'facts_bound' || (t.pipeline_step && t.pipeline_step !== 'opportunity')) &&
+      !(t.facts || []).length
+    ) {
+      await refreshTaskDetail()
+    }
     if (docTab.value !== 'master') {
-      const still = (t.variants || []).some((v) => v.channel === docTab.value)
+      const still = (task.value?.variants || []).some((v) => v.channel === docTab.value)
       if (!still) docTab.value = 'master'
     }
     applyVariantFromTask()
-    if (t.rule_result) {
+    if (task.value?.rule_result) {
+      const rr = task.value.rule_result
       checkResult.value = {
-        ready: t.rule_result.ready,
-        checks: t.rule_result.checks || [],
-        geo_score: t.rule_result.geo_score,
-        geo_subscores: t.rule_result.geo_subscores,
-        geo_actions: t.rule_result.geo_actions || [],
-        ai_review: t.rule_result.ai_review,
+        ready: rr.ready,
+        checks: rr.checks || [],
+        geo_score: rr.geo_score,
+        geo_subscores: rr.geo_subscores,
+        geo_actions: rr.geo_actions || [],
+        ai_review: rr.ai_review,
         patches: [],
       }
     }
@@ -251,17 +256,104 @@ async function suggestBrief() {
   }
 }
 
+function coerceFactIds(list) {
+  return Array.from(
+    new Set(
+      (list || [])
+        .map((x) => {
+          if (x && typeof x === 'object') return Number(x.id ?? x.fact_id)
+          return Number(x)
+        })
+        .filter((n) => Number.isFinite(n) && n > 0),
+    ),
+  )
+}
+
+function applyTaskPayload(t) {
+  if (!t) return t
+  // normalize fact id types so el-select / bound list stay consistent
+  if (Array.isArray(t.facts)) {
+    t.facts = t.facts.map((f) => ({ ...f, id: Number(f.id) }))
+  } else {
+    t.facts = []
+  }
+  task.value = t
+  selectedFactIds.value = t.facts.map((f) => Number(f.id))
+  applyBriefToForm(t.brief)
+  applyArticleFromTask(t)
+  return t
+}
+
+async function refreshTaskDetail() {
+  const t = await getGeoContentTask(tenantId.value, taskId.value)
+  return applyTaskPayload(t)
+}
+
+/** Always PUT then GET so UI bound count never depends on a partial response. */
+async function bindAndRefresh(ids, successPrefix = '已绑定') {
+  const clean = coerceFactIds(ids)
+  if (!clean.length) {
+    const msg = '请先在下拉框中勾选至少 1 条事实，再点「保存绑定」'
+    error.value = msg
+    ElMessage.warning(msg)
+    return 0
+  }
+  await bindGeoTaskFacts(tenantId.value, taskId.value, clean)
+  // Always re-fetch detail — never trust only the PUT body for facts[]
+  let t = await refreshTaskDetail()
+  let bound = (t?.facts || []).length
+  if (bound === 0) {
+    // rare race: one more pull
+    await new Promise((r) => setTimeout(r, 200))
+    t = await refreshTaskDetail()
+    bound = (t?.facts || []).length
+  }
+  if (bound === 0) {
+    const msg =
+      `绑定请求已发送（提交 ${clean.length} 个 id）但任务仍显示 0 条。请硬刷新页面；若仍失败请确认 Vite 代理到 :8000 且 API 已重启。`
+    error.value = msg
+    ElMessage.error(msg)
+    return 0
+  }
+  ElMessage.success(`${successPrefix} ${bound} 条事实`)
+  error.value = ''
+  return bound
+}
+
 async function saveFacts() {
   busy.value = 'facts'
+  error.value = ''
   try {
-    task.value = await bindGeoTaskFacts(
-      tenantId.value,
-      taskId.value,
-      selectedFactIds.value,
-    )
-    ElMessage.success(`已绑定 ${selectedFactIds.value.length} 条事实`)
+    await bindAndRefresh(selectedFactIds.value, '已绑定')
   } catch (e) {
-    toastError(e, '绑定失败')
+    const msg = toastError(e, '绑定失败')
+    error.value = msg
+  } finally {
+    busy.value = ''
+  }
+}
+
+/** Unblock B3: bind first N verified active facts without relying on retrieve. */
+async function bindTopVerified(n = 3) {
+  const verified = (allFacts.value || [])
+    .filter((f) => f.trust_level === 'verified' && (f.status === 'active' || !f.status))
+    .map((f) => Number(f.id))
+    .filter((id) => Number.isFinite(id) && id > 0)
+  if (verified.length < n) {
+    const msg = `库中 verified 事实不足 ${n} 条（当前 ${verified.length}），请先在事实库核验`
+    error.value = msg
+    ElMessage.warning(msg)
+    return
+  }
+  const pick = verified.slice(0, Math.max(n, 3))
+  selectedFactIds.value = pick
+  busy.value = 'facts'
+  error.value = ''
+  try {
+    await bindAndRefresh(pick, '已绑定 verified')
+  } catch (e) {
+    const msg = toastError(e, '绑定失败')
+    error.value = msg
   } finally {
     busy.value = ''
   }
@@ -269,38 +361,146 @@ async function saveFacts() {
 
 async function retrieveFacts() {
   busy.value = 'retrieve'
+  error.value = ''
+  retrievePreview.value = []
   try {
-    await patchGeoContentTask(tenantId.value, taskId.value, { brief: briefPayload() })
+    // Brief patch is best-effort; do not block retrieve if it fails
+    try {
+      await patchGeoContentTask(tenantId.value, taskId.value, { brief: briefPayload() })
+    } catch (pe) {
+      console.warn('retrieve: brief patch skipped', pe)
+    }
     const res = await retrieveGeoTaskFacts(tenantId.value, taskId.value, {
       limit: 8,
       verified_only: false,
+      auto_bind: false,
     })
-    retrievePreview.value = res.items || []
-    if (!retrievePreview.value.length) {
-      ElMessage.warning('未召回到相关事实')
+    // Support both {items:[{fact_id}]} and accidental nested shapes
+    let items = Array.isArray(res?.items) ? res.items : []
+    if (!items.length && Array.isArray(res?.results)) items = res.results
+    items = items
+      .map((x) => ({
+        ...x,
+        fact_id: Number(x.fact_id ?? x.id),
+        title: x.title || x.fact_title || '',
+        score: x.score,
+        trust_level: x.trust_level,
+      }))
+      .filter((x) => Number.isFinite(x.fact_id) && x.fact_id > 0)
+    retrievePreview.value = items
+    const meta = res?.query_meta || {}
+    if (!items.length) {
+      // Client-side soft fallback: rank local allFacts by simple keyword overlap
+      const q = [
+        task.value?.prompt_question || '',
+        brief.ai_question || '',
+        brief.must_cover || '',
+        brief.industry || '',
+      ]
+        .join(' ')
+        .toLowerCase()
+      const local = (allFacts.value || [])
+        .map((f) => {
+          const hay = `${f.title || ''} ${f.statement || ''} ${f.source_name || ''}`.toLowerCase()
+          let score = f.trust_level === 'verified' ? 1 : 0
+          if (q) {
+            for (const tok of q.split(/\s+/).filter((t) => t.length >= 2).slice(0, 20)) {
+              if (hay.includes(tok)) score += tok.length >= 2 ? 2 : 1
+            }
+          }
+          return {
+            fact_id: Number(f.id),
+            title: f.title,
+            score,
+            trust_level: f.trust_level,
+            reasons: ['local_fallback'],
+          }
+        })
+        .filter((x) => x.fact_id > 0)
+        .sort((a, b) => b.score - a.score || a.fact_id - b.fact_id)
+        .slice(0, 8)
+      if (local.length) {
+        retrievePreview.value = local
+        const ids = local.map((x) => x.fact_id)
+        selectedFactIds.value = Array.from(
+          new Set([...(selectedFactIds.value || []).map(Number), ...ids]),
+        )
+        const msg =
+          `API 召回 0 条，已用本地库兜底 ${local.length} 条候选（已勾选）。请点「绑定召回 Top」或「保存绑定」。` +
+          (meta.algorithm ? `（API 算法 ${meta.algorithm}）` : '')
+        ElMessage.warning(msg)
+        error.value = msg
+      } else {
+        const msg =
+          '召回无候选：库中也无可用事实。请先在事实库创建/核验至少 3 条。' +
+          (meta.tokens ? `（分词：${(meta.tokens || []).slice(0, 8).join('、')}）` : '')
+        ElMessage.warning(msg)
+        error.value = msg
+      }
     } else {
-      ElMessage.success(`召回 ${retrievePreview.value.length} 条`)
+      const ids = coerceFactIds(items.map((x) => x.fact_id))
+      selectedFactIds.value = Array.from(
+        new Set([...(selectedFactIds.value || []).map(Number), ...ids]),
+      )
+      ElMessage.success(
+        `召回 ${items.length} 条候选（已勾选）。点「绑定召回 Top」写入任务，或「保存绑定」。`,
+      )
+      error.value = ''
     }
   } catch (e) {
-    toastError(e, '召回失败')
+    const raw = formatGeoError(e, '召回失败')
+    const msg =
+      /not found|404/i.test(raw)
+        ? '召回接口 404：请重启 uvicorn（:8000 / :8011）加载最新 retrieve-facts 路由后再试'
+        : raw
+    error.value = msg
+    ElMessage({ type: 'error', message: msg, duration: 8000, showClose: true })
   } finally {
     busy.value = ''
   }
 }
 
 async function applyRetrieveTop() {
-  const ids = retrievePreview.value.map((x) => x.fact_id).filter(Boolean)
+  let ids = coerceFactIds(retrievePreview.value.map((x) => x.fact_id))
   if (!ids.length) {
-    ElMessage.warning('请先召回事实')
+    await retrieveFacts()
+    ids = coerceFactIds(retrievePreview.value.map((x) => x.fact_id))
+  }
+  if (!ids.length) {
+    // last resort: verified from library
+    ids = (allFacts.value || [])
+      .filter((f) => f.trust_level === 'verified')
+      .slice(0, 8)
+      .map((f) => Number(f.id))
+      .filter(Boolean)
+  }
+  if (!ids.length) {
+    ElMessage.warning(
+      '仍无召回候选。请先点「召回」，或「一键绑 3 条 verified」，或手动勾选后「保存绑定」',
+    )
     return
   }
   busy.value = 'apply'
+  error.value = ''
   try {
-    task.value = await applyGeoRetrievedFacts(tenantId.value, taskId.value, ids)
-    selectedFactIds.value = (task.value.facts || []).map((f) => f.id)
-    ElMessage.success('已绑定召回事实')
+    await applyGeoRetrievedFacts(tenantId.value, taskId.value, ids)
+    const t = await refreshTaskDetail()
+    const bound = (t?.facts || []).length
+    if (bound === 0) {
+      // fallback to PUT path
+      await bindAndRefresh(ids, '已绑定召回')
+    } else {
+      ElMessage.success(`已绑定召回事实 ${bound} 条`)
+      error.value = ''
+    }
   } catch (e) {
-    toastError(e, '绑定失败')
+    // apply path failed — try PUT
+    try {
+      await bindAndRefresh(ids, '已绑定')
+    } catch (e2) {
+      const msg = toastError(e2, '绑定失败')
+      error.value = msg
+    }
   } finally {
     busy.value = ''
   }
@@ -348,10 +548,8 @@ async function generate() {
   busy.value = 'generate'
   try {
     await patchGeoContentTask(tenantId.value, taskId.value, { brief: briefPayload() })
-    task.value = await generateGeoContentTask(tenantId.value, taskId.value)
-    applyArticleFromTask(task.value)
-    applyBriefToForm(task.value.brief)
-    selectedFactIds.value = (task.value.facts || []).map((f) => f.id)
+    const gen = await generateGeoContentTask(tenantId.value, taskId.value)
+    applyTaskPayload(gen)
     error.value = ''
     ElMessage.success('母稿已生成')
   } catch (e) {
@@ -431,18 +629,63 @@ async function runAiReview() {
 
 async function applyPatch(code) {
   busy.value = 'patch'
+  error.value = ''
+  const beforeLen = (article.body_markdown || '').length
   try {
+    // Always edit master draft when applying structural patches
+    docTab.value = 'master'
     const res = await applyGeoContentPatch(tenantId.value, taskId.value, code)
+    // Prefer explicit article on response; fall back to task.article then re-GET
+    let art = res.article || res.task?.article || null
     if (res.task) {
-      task.value = res.task
-      applyArticleFromTask(res.task)
+      applyTaskPayload(res.task)
     }
+    if (art?.body_markdown != null) {
+      article.title = art.title || article.title
+      article.body_markdown = art.body_markdown
+    } else {
+      const t = await refreshTaskDetail()
+      art = t?.article || null
+    }
+    const afterLen = (article.body_markdown || '').length
+    const bodyChanged =
+      res.body_changed === true ||
+      afterLen !== beforeLen ||
+      (res.body_len_after != null && res.body_len_before != null && res.body_len_after !== res.body_len_before)
+
     checkResult.value = {
-      ...(checkResult.value || {}),
-      ...res,
-      checks: res.checks || checkResult.value?.checks,
+      ready: res.ready,
+      checks: res.checks || [],
+      patches: res.patches || [],
+      lint: res.lint,
+      blocks: res.blocks,
+      geo_score: res.geo_score,
+      geo_subscores: res.geo_subscores,
+      geo_actions: res.geo_actions || [],
+      ai_review: checkResult.value?.ai_review,
     }
-    ElMessage.success(`已应用补丁 ${code}`)
+
+    if (!bodyChanged) {
+      const msg = `补丁 ${code} 返回成功但正文长度未变化（${beforeLen}→${afterLen}）。请硬刷新后重试。`
+      error.value = msg
+      ElMessage.error(msg)
+      return
+    }
+
+    const target = (res.checks || []).find((c) => c.code === code)
+    const effective = res.effective !== false && (target ? target.passed : true)
+    const scorePart =
+      res.geo_score != null ? ` · Score ${res.geo_score}/100` : ''
+    if (effective) {
+      ElMessage.success(
+        `已应用补丁 ${code}（正文 ${beforeLen}→${afterLen} 字${scorePart}，规则已通过）`,
+      )
+    } else {
+      ElMessage.warning(
+        `已写入补丁 ${code}（正文 ${beforeLen}→${afterLen} 字${scorePart}），但该规则仍未通过，请检查插入内容或再点检查`,
+      )
+    }
+    error.value = ''
   } catch (e) {
     toastError(e, '补丁失败')
   } finally {
@@ -791,33 +1034,57 @@ onMounted(load)
                 <el-button size="small" :loading="busy === 'apply'" @click="applyRetrieveTop">
                   绑定召回 Top
                 </el-button>
+                <el-button
+                  size="small"
+                  type="success"
+                  plain
+                  :loading="busy === 'facts'"
+                  @click="bindTopVerified(3)"
+                >
+                  一键绑 3 条 verified
+                </el-button>
                 <el-button size="small" type="primary" :loading="busy === 'facts'" @click="saveFacts">
                   保存绑定
                 </el-button>
               </div>
             </div>
           </template>
-          <div class="hint mb">已绑 {{ boundFacts.length }} 条 · 生成需 ≥3 条可核验事实</div>
+          <div class="hint mb">
+            已绑 <strong>{{ boundFacts.length }}</strong> 条
+            <span v-if="task?.status"> · 状态 {{ task.status }}</span>
+            · 生成需 ≥3 条可核验事实 · 库中可选 {{ allFacts.length }} 条
+          </div>
+          <ul v-if="boundFacts.length" class="bound-list mb">
+            <li v-for="f in boundFacts" :key="f.id">
+              #{{ f.id }} [{{ f.trust_level }}] {{ f.title }}
+            </li>
+          </ul>
           <el-select
             v-model="selectedFactIds"
             multiple
             filterable
             collapse-tags
             collapse-tags-tooltip
-            placeholder="选择事实卡"
+            placeholder="选择事实卡（可多选）"
             style="width: 100%"
           >
             <el-option
               v-for="f in allFacts"
               :key="f.id"
               :label="`#${f.id} [${f.trust_level}] ${f.title}`"
-              :value="f.id"
+              :value="Number(f.id)"
             />
           </el-select>
-          <div v-if="retrievePreview.length" class="retrieve mt">
-            <div class="hint">召回预览：</div>
+          <div class="retrieve mt">
+            <div class="hint">
+              召回候选
+              <strong>{{ retrievePreview.length }}</strong>
+              条
+              <span v-if="!retrievePreview.length">（点「召回」加载；无结果时用本地库兜底）</span>
+            </div>
             <div v-for="r in retrievePreview" :key="r.fact_id" class="retrieve-row">
               #{{ r.fact_id }} · {{ r.title }} · score {{ r.score }}
+              <span v-if="r.trust_level" class="hint"> · {{ r.trust_level }}</span>
             </div>
           </div>
         </el-card>
@@ -892,6 +1159,7 @@ onMounted(load)
               </el-form-item>
               <el-form-item label="正文">
                 <el-input
+                  :key="`master-body-${task?.article?.version_no || 0}-${(article.body_markdown || '').length}`"
                   v-model="article.body_markdown"
                   type="textarea"
                   :rows="16"
@@ -901,6 +1169,7 @@ onMounted(load)
             </el-form>
             <div v-if="task.article" class="hint">
               版本 v{{ task.article.version_no }} · {{ task.article.created_at || '' }}
+              · 正文字数 {{ (article.body_markdown || '').length }}
             </div>
           </template>
           <template v-else>
@@ -1061,7 +1330,7 @@ onMounted(load)
               :loading="busy === 'patch'"
               @click="applyPatch(p.code)"
             >
-              插入修复 · {{ p.code }}
+              插入修复 · {{ p.label || p.code }}
             </el-button>
           </div>
           <div v-if="aiReview" class="mt">
@@ -1123,4 +1392,11 @@ onMounted(load)
 .warn { color: #d97706; font-size: 12px; font-weight: 600; }
 .retrieve { font-size: 12px; color: #4b5563; }
 .retrieve-row { padding: 2px 0; }
+.bound-list {
+  list-style: none; padding: 0; margin: 0 0 8px;
+  font-size: 12px; color: #374151;
+  max-height: 120px; overflow: auto;
+  border: 1px solid #f0ecf9; border-radius: 8px; padding: 8px;
+}
+.bound-list li { padding: 2px 0; }
 </style>

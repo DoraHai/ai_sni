@@ -175,9 +175,14 @@ export function createGeoContentTask(body) {
 }
 
 export function bindGeoTaskFacts(tenantId, taskId, factIds) {
-  return client.put(`/api/v1/geo/content-tasks/${taskId}/facts`, { fact_ids: factIds }, {
-    params: { tenant_id: tenantId },
-  })
+  const ids = (factIds || [])
+    .map((x) => Number(x))
+    .filter((n) => Number.isFinite(n) && n > 0)
+  return client.put(
+    `/api/v1/geo/content-tasks/${taskId}/facts`,
+    { fact_ids: ids },
+    { params: { tenant_id: tenantId } },
+  )
 }
 
 export function generateGeoContentTask(tenantId, taskId) {
@@ -217,9 +222,12 @@ export function retrieveGeoTaskFacts(tenantId, taskId, body = {}) {
 }
 
 export function applyGeoRetrievedFacts(tenantId, taskId, factIds) {
+  const ids = (factIds || [])
+    .map((x) => Number(x))
+    .filter((n) => Number.isFinite(n) && n > 0)
   return client.post(
     `/api/v1/geo/content-tasks/${taskId}/retrieve-facts/apply`,
-    { fact_ids: factIds },
+    { fact_ids: ids },
     { params: { tenant_id: tenantId } },
   )
 }

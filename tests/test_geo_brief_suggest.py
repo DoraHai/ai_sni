@@ -102,6 +102,18 @@ class FactRetrieveTests(unittest.TestCase):
         toks = tokenize("国产 工业机器人 厂商 有哪些")
         self.assertTrue(any("机器人" in t or t == "机器人" for t in toks) or "工业" in toks)
 
+    def test_tokenize_chinese_question_emits_grams_not_whole_sentence(self):
+        q = "制造业企业如何选择支持私有化部署的数据分析平台？"
+        toks = tokenize(q)
+        self.assertTrue(len(toks) >= 3)
+        self.assertTrue(any(len(t) <= 3 for t in toks))
+        # whole sentence must not be the only token
+        self.assertFalse(len(toks) == 1 and len(toks[0]) > 10)
+        self.assertTrue(
+            any(t in ("数据", "分析", "平台", "私有", "部署", "制造") for t in toks)
+            or any("数据" in t for t in toks)
+        )
+
     def test_retrieve_ranks_relevant(self):
         facts = [
             {
@@ -177,6 +189,37 @@ class FactRetrieveTests(unittest.TestCase):
         )
         ids = [i["fact_id"] for i in result["items"]]
         self.assertEqual(ids, [2])
+
+    def test_retrieve_fallback_returns_active_when_no_keyword_hit(self):
+        facts = [
+            {
+                "id": 9,
+                "title": "无关标题甲",
+                "statement": "完全不相关",
+                "source_name": "s",
+                "trust_level": "verified",
+                "status": "active",
+                "fact_type": "other",
+            },
+            {
+                "id": 10,
+                "title": "无关标题乙",
+                "statement": "也无关",
+                "source_name": "s",
+                "trust_level": "verified",
+                "status": "active",
+                "fact_type": "other",
+            },
+        ]
+        result = retrieve_facts(
+            facts,
+            question="zzzznotamatchtoken999",
+            brief=None,
+            limit=5,
+            verified_only=False,
+        )
+        self.assertTrue(result["items"], "should fallback to active facts when no keyword hit")
+        self.assertTrue(result["query_meta"].get("fallback_all_active"))
 
 
 class AuthPathTests(unittest.TestCase):

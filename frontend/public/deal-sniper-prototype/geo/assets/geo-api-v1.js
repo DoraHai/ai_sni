@@ -218,10 +218,22 @@
       return api('/content-tasks', { method: 'POST', body: body });
     },
     bindFacts: function (id, factIds) {
+      var ids = (factIds || [])
+        .map(function (x) {
+          if (x && typeof x === 'object') return Number(x.id != null ? x.id : x.fact_id);
+          return Number(x);
+        })
+        .filter(function (n) { return Number.isFinite(n) && n > 0; });
       return api('/content-tasks/' + id + '/facts', {
         method: 'PUT',
         query: withTenantQuery(),
-        body: { fact_ids: factIds },
+        body: { fact_ids: ids },
+      }).then(function (boundTask) {
+        // Always re-GET so chips/count never stick on a partial payload
+        if (boundTask && Array.isArray(boundTask.facts) && boundTask.facts.length) {
+          return boundTask;
+        }
+        return api('/content-tasks/' + id, { query: withTenantQuery() });
       });
     },
     seedDiagnosisFacts: function (id) {
@@ -278,10 +290,21 @@
       });
     },
     applyRetrievedFacts: function (id, factIds) {
+      var ids = (factIds || [])
+        .map(function (x) {
+          if (x && typeof x === 'object') return Number(x.id != null ? x.id : x.fact_id);
+          return Number(x);
+        })
+        .filter(function (n) { return Number.isFinite(n) && n > 0; });
       return api('/content-tasks/' + id + '/retrieve-facts/apply', {
         method: 'POST',
         query: withTenantQuery(),
-        body: { fact_ids: factIds || [] },
+        body: { fact_ids: ids },
+      }).then(function (boundTask) {
+        if (boundTask && Array.isArray(boundTask.facts) && boundTask.facts.length) {
+          return boundTask;
+        }
+        return api('/content-tasks/' + id, { query: withTenantQuery() });
       });
     },
     aiReviewTask: function (id, body) {

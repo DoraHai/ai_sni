@@ -225,5 +225,30 @@ API_KEY=geo-demo-local-key TENANT_ID=1 BASE=http://127.0.0.1:8011 \
 | 错误打开 | 原因 |
 | --- | --- |
 | `5175/diagnostic-center/` | 诊断中心在 **5174**；5175 若仍是旧静态服务则无此路径 |
-| `5176/dashboard.html`（无 `/geo/`） | 正确路径带 `/geo/` |
+| `5176/dashboard.html`（无 `/geo/`） | **错误路径**。正确为 `http://127.0.0.1:5176/geo/dashboard.html` |
 | `5176/geo/...` 但 API Failed to fetch | 确认 8011 已起，或 URL 带 `api_origin=http://127.0.0.1:8011` |
+
+## 浏览器测试清单（路径已同步）
+
+| 步骤 | 正确 URL / 操作 | 期望 |
+| --- | --- | --- |
+| 静态台首页 | `http://127.0.0.1:5176/geo/dashboard.html?tenant_id=1&api_key=geo-demo-local-key&api_origin=http://127.0.0.1:8011` | 200，概览可加载 |
+| ~~错误~~ 勿用 | `http://127.0.0.1:5176/dashboard.html` | **404**（无 `/geo/` 前缀） |
+| Vue 母稿编辑器 | `http://127.0.0.1:5173/geo/tasks/14`（或当前 Vite 端口） | Brief / 事实 / 生成 |
+| 静态编辑器 | `http://127.0.0.1:5176/geo/editor.html?tenant_id=1&api_key=geo-demo-local-key&api_origin=http://127.0.0.1:8011&task_id=14` | 同上链路 |
+| B3 事实绑定 | 打开任务 →「召回」应有候选；或「一键绑 3 条 verified」/ 手动勾选 +「保存绑定」 | 显示「已绑 ≥3 条」、状态 `facts_bound` |
+| 生成门禁 | 未绑满 3 条时点「生成母稿」 | 提示至少绑定 3 条事实卡 |
+| 母稿生成 | 已绑 ≥3 verified 后点「生成母稿」 | 正文出现，可继续检查/渠道/审校 |
+
+> 本地 API 冒烟（任务 14 示例）：
+>
+> ```bash
+> # 召回
+> curl -s -X POST "http://127.0.0.1:8011/api/v1/geo/content-tasks/14/retrieve-facts?tenant_id=1" \
+>   -H "X-API-Key: geo-demo-local-key" -H "Content-Type: application/json" \
+>   -d "{\"limit\":8,\"verified_only\":false}"
+> # 绑定
+> curl -s -X PUT "http://127.0.0.1:8011/api/v1/geo/content-tasks/14/facts?tenant_id=1" \
+>   -H "X-API-Key: geo-demo-local-key" -H "Content-Type: application/json" \
+>   -d "{\"fact_ids\":[43,42,41]}"
+> ```

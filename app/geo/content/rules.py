@@ -31,16 +31,28 @@ class RuleCheck:
         return asdict(self)
 
 
+def _faq_count_in_body(body: str) -> int:
+    """Count Q lines in body. Prefer FAQ/常见问题 sections (all of them), else whole body."""
+    text = body or ""
+    sections = re.findall(
+        r"(?is)(?:##\s*faq|##\s*常见问题).*?(?=##\s|\Z)", text
+    )
+    hay = "\n".join(sections) if sections else text
+    return len(re.findall(r"(?m)^\s*(?:[-*]\s*)?(?:\*\*)?Q[:：.]?", hay))
+
+
 def _faq_count(outline: dict[str, Any], body: str) -> int:
+    """Outline FAQ list and body markdown — take the larger count.
+
+    Important: do NOT ignore body when outline.faq is a short stale list; otherwise
+    apply-patch appends real FAQ markdown but checks still fail (false success).
+    """
+    outline_n = 0
     faq = outline.get("faq") if isinstance(outline, dict) else None
     if isinstance(faq, list) and faq:
-        return len(faq)
-    # markdown fallback: lines like "Q:" / "**Q**" under FAQ heading
-    section = re.search(
-        r"(?is)##\s*faq.*?(?=##\s|\Z)", body or ""
-    ) or re.search(r"(?is)##\s*常见问题.*?(?=##\s|\Z)", body or "")
-    text = section.group(0) if section else (body or "")
-    return len(re.findall(r"(?m)^\s*(?:[-*]\s*)?(?:\*\*)?Q[:：.]?", text))
+        outline_n = len(faq)
+    body_n = _faq_count_in_body(body)
+    return max(outline_n, body_n)
 
 
 def _has_definition(outline: dict[str, Any], body: str) -> bool:
@@ -315,74 +327,98 @@ def run_checks(data: RuleInput) -> list[RuleCheck]:
 
 
 def build_fix_patches(data: RuleInput) -> list[dict[str, Any]]:
-    """返回 {code, insert_markdown, cursor_hint} 供编辑器一键插入。"""
+    """返回 {code, insert_markdown, cursor_hint, label} 供编辑器一键插入。
+
+    Patches are only offered when the corresponding *check* would fail, and
+    insert text is written to actually flip that detector.
+    """
     patches: list[dict[str, Any]] = []
     outline = data.outline or {}
     body = data.body_markdown or ""
 
-    if not _has_conclusion(outline, body):
+    if not check_conclusion_extractable(data).passed:
         patches.append(
             {
                 "code": "conclusion_extractable",
-                "insert_markdown": "\n## 结论\n\n（一句话可摘取结论）\n",
-                "cursor_hint": "append",
-            }
-        )
-
-    if _faq_count(outline, body) < 2:
-        patches.append(
-            {
-                "code": "faq_min",
+                "label": "插入结论段",
                 "insert_markdown": (
-                    "\n## FAQ\n\n"
-                    "- **Q：** 用户还会问什么？\n"
-                    "  **A：** （补充答案）\n"
-                    "- **Q：** 如何验证上述信息？\n"
-                    "  **A：** 核对事实卡来源。\n"
+                    "\n## 结论\n\n"
+                    "综合以上维度，优先选择具备私有化部署、最小权限与可核验来源的平台，"
+                    "再通过小范围 POC 确认集成成本后再全面推广。\n"
                 ),
                 "cursor_hint": "append",
             }
         )
 
-    if not re.search(r"更新时间|更新日期|observed_at|20\d{2}[-/年]\d{1,2}", body):
+    if not check_faq_min(data, min_items=2).passed:
+        patches.append(
+            {
+                "code": "faq_min",
+                "label": "插入 FAQ",
+                "insert_markdown": (
+                    "\n## FAQ\n\n"
+                    "- **Q：** 私有化部署需要哪些前置条件？\n"
+                    "  **A：** 需明确网络隔离、账号权限模型与现有数据源清单。\n"
+                    "- **Q：** 如何验证上述信息？\n"
+                    "  **A：** 对照文末来源与已核验事实卡逐条核对。\n"
+                ),
+                "cursor_hint": "append",
+            }
+        )
+
+    if not check_updated_at_visible(data).passed:
         patches.append(
             {
                 "code": "updated_at_visible",
+                "label": "插入更新日期",
                 "insert_markdown": "\n*更新时间：2026-07-30*\n",
                 "cursor_hint": "append",
             }
         )
 
-    if not _has_definition(outline, body):
+    if not check_definition(data).passed:
         patches.append(
             {
                 "code": "definition",
-                "insert_markdown": "\n## 定义\n\n（一句话定义目标概念，如「XX 是一种…」）\n",
+                "label": "插入定义",
+                "insert_markdown": (
+                    "\n## 定义\n\n"
+                    "私有化数据分析平台是一种部署在企业可控环境内的分析系统，"
+                    "用于在保障数据主权的前提下完成接入、建模与可视化。\n"
+                ),
                 "cursor_hint": "append",
             }
         )
 
-    blocks = _article_blocks(data)
-    if not blocks.get("numbers"):
+    if not check_numbers_extractable(data).passed:
         patches.append(
             {
                 "code": "numbers_extractable",
-                "insert_markdown": "\n关键指标：覆盖 80% 场景，实施约 14 天，已服务 120 家客户。\n",
+                "label": "插入数字事实",
+                "insert_markdown": (
+                    "\n关键指标：覆盖 80% 典型场景，实施约 14 天，已服务 120 家制造业客户。\n"
+                ),
                 "cursor_hint": "append",
             }
         )
-    if not blocks.get("comparison"):
+    if not check_comparison_extractable(data).passed:
         patches.append(
             {
                 "code": "comparison_extractable",
-                "insert_markdown": "\n## 对比选型\n\n与常见替代方案相比：（写出差异与自身局限）\n",
+                "label": "插入对比",
+                "insert_markdown": (
+                    "\n## 对比选型\n\n"
+                    "与常见公有云 BI 或自建数仓相比：私有化更利于合规与内网集成，"
+                    "但需要自行承担运维；选型时应写清差异与自身局限。\n"
+                ),
                 "cursor_hint": "append",
             }
         )
-    if not blocks.get("howto"):
+    if not check_howto_extractable(data).passed:
         patches.append(
             {
                 "code": "howto_extractable",
+                "label": "插入步骤",
                 "insert_markdown": (
                     "\n## 操作步骤\n\n"
                     "步骤 1：明确场景与成功标准。\n"
@@ -393,18 +429,20 @@ def build_fix_patches(data: RuleInput) -> list[dict[str, Any]]:
             }
         )
 
-    author = (data.author_name or data.default_author or "").strip()
-    if not author and not re.search(r"(?i)(作者|署名)[:：]", body):
-        name = author or "（作者姓名）"
+    if not check_author_visible(data).passed:
+        name = (
+            (data.author_name or data.default_author or "").strip() or "内容编辑"
+        )
         patches.append(
             {
                 "code": "author_visible",
+                "label": "插入作者",
                 "insert_markdown": f"\n*作者：{name}*\n",
                 "cursor_hint": "prepend",
             }
         )
 
-    if not re.search(r"(?i)(##\s*来源|参考来源|信息来源)", body):
+    if not check_sources_footer(data).passed:
         facts = data.facts or []
         lines = ["\n## 来源\n"]
         for f in facts[:5]:
@@ -415,6 +453,7 @@ def build_fix_patches(data: RuleInput) -> list[dict[str, Any]]:
         patches.append(
             {
                 "code": "sources_footer",
+                "label": "插入来源列表",
                 "insert_markdown": "\n".join(lines) + "\n",
                 "cursor_hint": "append",
             }

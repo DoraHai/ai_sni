@@ -489,10 +489,36 @@
       btn.textContent = '插入修复 · ' + p.code;
       btn.onclick = async function () {
         try {
+          activeTab = 'master';
+          var beforeLen = ((task.article || {}).body_markdown || '').length;
           var r = await GeoAPI.applyPatch(taskId, p.code);
-          task = r.task;
+          if (r.task) task = r.task;
+          if (!(task.article && task.article.body_markdown) && r.article) {
+            task.article = r.article;
+          }
+          if (!(task.article && task.article.body_markdown)) {
+            task = await GeoAPI.getTask(taskId);
+          }
+          var afterLen = ((task.article || {}).body_markdown || '').length;
           renderAll();
-          renderChecks(r);
+          // merge score fields so Score line updates without extra check click
+          renderChecks(Object.assign({}, r, {
+            geo_score: r.geo_score,
+            geo_subscores: r.geo_subscores,
+            geo_actions: r.geo_actions,
+            checks: r.checks,
+            patches: r.patches,
+            ready: r.ready,
+          }));
+          var line = document.getElementById('retrieveLine');
+          if (line) {
+            line.textContent = (r.effective === false)
+              ? ('补丁 ' + p.code + ' 已写入正文 ' + beforeLen + '→' + afterLen + '，但规则仍未通过；Score ' + (r.geo_score != null ? r.geo_score : '—'))
+              : ('已应用补丁 ' + p.code + ' · 正文 ' + beforeLen + '→' + afterLen + ' · Score ' + (r.geo_score != null ? r.geo_score : '—'));
+          }
+          if (afterLen === beforeLen && !r.body_changed) {
+            GeoWB.showError(err, new Error('补丁返回成功但正文未变化，请刷新页面'));
+          }
         } catch (e) { GeoWB.showError(err, e); }
       };
       patchBox.appendChild(btn);
@@ -659,32 +685,64 @@
   };
   document.getElementById('btnRetrieveFacts').onclick = async function () {
     try {
-      await GeoAPI.patchTask(taskId, { brief: readBriefForm() });
+      try {
+        await GeoAPI.patchTask(taskId, { brief: readBriefForm() });
+      } catch (pe) { /* brief optional for retrieve */ }
       var res = await GeoAPI.retrieveFacts(taskId, { limit: 8, verified_only: false });
-      lastRetrieveIds = (res.items || []).map(function (x) { return x.fact_id; }).filter(Boolean);
+      lastRetrieveIds = (res.items || []).map(function (x) { return Number(x.fact_id); }).filter(function (n) {
+        return Number.isFinite(n) && n > 0;
+      });
       var line = (res.items || []).slice(0, 8).map(function (x) {
         return '#' + x.fact_id + ' ' + (x.title || '') + ' (' + x.score + ')';
       }).join(' · ');
-      document.getElementById('retrieveLine').textContent =
-        lastRetrieveIds.length
-          ? ('召回 ' + lastRetrieveIds.length + ' 条：' + line)
-          : '未召回到相关事实';
+      if (lastRetrieveIds.length) {
+        document.getElementById('retrieveLine').textContent =
+          '召回 ' + lastRetrieveIds.length + ' 条：' + line + '（可点「绑定召回 Top」）';
+      } else {
+        // fallback: top verified from loaded library
+        lastRetrieveIds = (allFacts || [])
+          .filter(function (f) { return f.trust_level === 'verified'; })
+          .slice(0, 8)
+          .map(function (f) { return Number(f.id); })
+          .filter(Boolean);
+        document.getElementById('retrieveLine').textContent = lastRetrieveIds.length
+          ? ('召回无关键词命中，已改用库中 verified：' + lastRetrieveIds.join(', ') + '（可点「绑定召回 Top」）')
+          : '未召回到相关事实，且库中无 verified 事实';
+      }
     } catch (e) { GeoWB.showError(err, e); }
   };
   document.getElementById('btnApplyTopFacts').onclick = async function () {
     try {
       if (!lastRetrieveIds.length) {
-        var res = await GeoAPI.retrieveFacts(taskId, { limit: 8, verified_only: true });
-        lastRetrieveIds = (res.items || []).map(function (x) { return x.fact_id; }).filter(Boolean);
+        var res = await GeoAPI.retrieveFacts(taskId, { limit: 8, verified_only: false });
+        lastRetrieveIds = (res.items || []).map(function (x) { return Number(x.fact_id); }).filter(function (n) {
+          return Number.isFinite(n) && n > 0;
+        });
       }
       if (!lastRetrieveIds.length) {
-        document.getElementById('retrieveLine').textContent = '没有可绑定的召回结果';
+        lastRetrieveIds = (allFacts || [])
+          .filter(function (f) { return f.trust_level === 'verified'; })
+          .slice(0, 3)
+          .map(function (f) { return Number(f.id); })
+          .filter(Boolean);
+      }
+      if (!lastRetrieveIds.length) {
+        document.getElementById('retrieveLine').textContent = '没有可绑定的召回结果（请先核验事实卡）';
         return;
       }
-      task = await GeoAPI.applyRetrievedFacts(taskId, lastRetrieveIds);
+      try {
+        task = await GeoAPI.applyRetrievedFacts(taskId, lastRetrieveIds);
+      } catch (applyErr) {
+        task = await GeoAPI.bindFacts(taskId, lastRetrieveIds);
+      }
+      if (!(task.facts || []).length) {
+        task = await GeoAPI.getTask(taskId);
+      }
       allFacts = (await GeoAPI.listFacts()).items || [];
       renderAll();
-      document.getElementById('retrieveLine').textContent = '已绑定召回事实：' + lastRetrieveIds.join(', ');
+      document.getElementById('retrieveLine').textContent =
+        '已绑定 ' + ((task.facts || []).length) + ' 条事实：' +
+        (task.facts || []).map(function (f) { return f.id; }).join(', ');
     } catch (e) { GeoWB.showError(err, e); }
   };
   document.getElementById('btnSubmitReview').onclick = async function () {

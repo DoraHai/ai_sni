@@ -49,21 +49,37 @@ _STOP = {
 
 
 def tokenize(text: str) -> list[str]:
-    """Simple CJK/Latin tokens for scoring."""
+    """Simple CJK/Latin tokens for scoring.
+
+    Important: do NOT keep whole CJK sentences as one token (would never hit
+    fact titles). Emit latin words + CJK 2/3-grams.
+    """
     raw = (text or "").lower()
-    # Latin words + runs of CJK + alnum
-    parts = re.findall(r"[a-z0-9]{2,}|[\u4e00-\u9fff]{1,}", raw)
     out: list[str] = []
-    for p in parts:
-        if p in _STOP:
+
+    def _add(tok: str) -> None:
+        if not tok or tok in _STOP or tok in out:
+            return
+        out.append(tok)
+
+    for m in re.findall(r"[a-z0-9]{2,}", raw):
+        _add(m)
+
+    for run in re.findall(r"[\u4e00-\u9fff]+", raw):
+        if len(run) == 1:
+            _add(run)
             continue
-        if len(p) == 1 and "\u4e00" <= p <= "\u9fff":
-            # keep single CJK only if not stop-like
-            out.append(p)
-            continue
-        if p not in out:
-            out.append(p)
-    return out
+        # prefer multi-char grams for matching
+        for n in (2, 3):
+            if len(run) < n:
+                continue
+            for i in range(0, len(run) - n + 1):
+                _add(run[i : i + n])
+        # also keep full run if short phrase (≤6)
+        if 2 <= len(run) <= 6:
+            _add(run)
+
+    return out[:100]
 
 
 def _fact_type_bonus(fact_type: str | None, intent: str, content_type: str) -> float:
@@ -183,8 +199,6 @@ def retrieve_facts(
         score, reasons = score_fact_against_query(
             fact, query_tokens=tokens, brief=brief
         )
-        if score <= 0:
-            continue
         scored.append(
             {
                 "fact_id": fact.get("id"),
@@ -195,20 +209,35 @@ def retrieve_facts(
                 "fact_type": fact.get("fact_type"),
                 "source_name": fact.get("source_name"),
                 "eligible_hint": str(fact.get("trust_level") or "") == "verified",
+                "_raw_score": score,
             }
         )
 
-    scored.sort(key=lambda x: (-float(x["score"]), int(x.get("fact_id") or 0)))
-    items = scored[:limit]
+    # Prefer keyword hits (score beyond base source/verified bonuses ~2.0)
+    with_hit = [x for x in scored if float(x.get("_raw_score") or 0) > 2.0]
+    pool = with_hit if with_hit else scored
+    pool.sort(
+        key=lambda x: (
+            -float(x.get("_raw_score") or 0),
+            0 if x.get("trust_level") == "verified" else 1,
+            int(x.get("fact_id") or 0),
+        )
+    )
+    items = []
+    for x in pool[:limit]:
+        x = dict(x)
+        x.pop("_raw_score", None)
+        items.append(x)
     return {
         "items": items,
         "query_meta": {
             "query": query[:500],
             "tokens": tokens[:40],
             "scanned": scanned,
-            "matched": len(scored),
+            "matched": len(with_hit) if with_hit else len(scored),
             "limit": limit,
             "verified_only": verified_only,
-            "algorithm": "keyword_v1",
+            "algorithm": "keyword_v1_cjk_grams",
+            "fallback_all_active": not bool(with_hit) and bool(scored),
         },
     }

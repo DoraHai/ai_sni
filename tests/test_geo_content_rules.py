@@ -215,6 +215,39 @@ class GeoFixPatchesTests(unittest.TestCase):
         self.assertIn("## 结论", patches["conclusion_extractable"]["insert_markdown"])
         self.assertIn("更新时间", patches["updated_at_visible"]["insert_markdown"])
 
+    def test_apply_faq_patch_flips_check_even_with_stale_outline_faq(self):
+        """Stale outline.faq of length 1 must not block body markdown FAQ from counting."""
+        from app.geo.content.rules import check_faq_min
+
+        body = "直接回答：选型先看合规与集成。\n"
+        data = _base(
+            body_markdown=body,
+            outline={"direct_answer": "选型先看合规与集成。", "faq": [{"q": "only one"}]},
+        )
+        self.assertFalse(check_faq_min(data, min_items=2).passed)
+        patch = next(p for p in build_fix_patches(data) if p["code"] == "faq_min")
+        new_body = body.rstrip() + patch["insert_markdown"]
+        fixed = _base(
+            body_markdown=new_body,
+            outline={"direct_answer": "选型先看合规与集成。", "faq": [{"q": "only one"}]},
+        )
+        self.assertTrue(
+            check_faq_min(fixed, min_items=2).passed,
+            "body FAQ should count even when outline.faq is short",
+        )
+
+    def test_definition_patch_flips_definition_check(self):
+        from app.geo.content.rules import check_definition
+
+        data = _base(body_markdown="直接回答：只有一句足够长的回答。\n", outline={})
+        self.assertFalse(check_definition(data).passed)
+        patch = next(p for p in build_fix_patches(data) if p["code"] == "definition")
+        fixed = _base(
+            body_markdown=data.body_markdown + patch["insert_markdown"],
+            outline={},
+        )
+        self.assertTrue(check_definition(fixed).passed)
+
     def test_no_structural_patches_when_complete(self):
         codes = {p["code"] for p in build_fix_patches(_base())}
         self.assertNotIn("faq_min", codes)
