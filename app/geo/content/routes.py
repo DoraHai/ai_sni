@@ -345,8 +345,12 @@ async def _bind_facts(
 ) -> list[GeoFact]:
     unique_ids: list[int] = []
     for fid in fact_ids:
-        if fid not in unique_ids:
-            unique_ids.append(fid)
+        try:
+            n = int(fid)
+        except (TypeError, ValueError):
+            continue
+        if n > 0 and n not in unique_ids:
+            unique_ids.append(n)
     facts: list[GeoFact] = []
     for fid in unique_ids:
         fact = await _get_fact(session, fid, task.tenant_id)
@@ -356,6 +360,8 @@ async def _bind_facts(
     await session.execute(delete(GeoTaskFact).where(GeoTaskFact.task_id == task.id))
     for idx, fact in enumerate(facts):
         session.add(GeoTaskFact(task_id=task.id, fact_id=fact.id, sort_order=idx))
+    # flush so _task_facts / pipeline sync see new link rows before commit
+    await session.flush()
     task.status = "facts_bound" if len(facts) >= 3 else "draft"
     await _sync_task_pipeline(session, task, checks=task.rule_result.get("checks") if task.rule_result else None)
     return facts
