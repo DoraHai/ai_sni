@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>提问机会池 · GEO</title>
 <link rel="stylesheet" href="assets/style.css?rev=geo-wb-2">
-<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=7">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=10">
 </head>
 <body>
 <div class="layout">
@@ -14,22 +14,68 @@
     <div class="topbar">
       <div>
         <h1>提问机会池</h1>
-        <div class="sub">人工/导入目标问题 · Demo 不做自动巡检</div>
+        <div class="sub">人工/导入/拓词候选 · 最近观测与标签筛选（D4）</div>
       </div>
     </div>
     <div class="page">
       <div id="authBar" class="config-bar"></div>
       <div id="err" class="wb-error" style="display:none"></div>
+      <div class="wb-card" style="margin-bottom:14px">
+        <div class="wb-toolbar">
+          <strong>拓词候选（百度/Google 下拉）</strong>
+          <input class="wb-input" id="expandExtra" style="max-width:220px" placeholder="额外品类词，逗号分隔">
+          <select class="wb-select" id="expandMarket" style="width:auto;min-width:110px">
+            <option value="cn">国内 cn</option>
+            <option value="global">海外 global</option>
+            <option value="both">both</option>
+          </select>
+          <button class="wb-btn primary" id="btnExpand">拉取候选</button>
+          <button class="wb-btn" id="btnPromote" disabled>入库勾选项</button>
+        </div>
+        <div class="wb-hint" id="expandHint">用租户品牌/行业作词根；只产候选，勾选后才写入问题库。</div>
+        <table class="wb-table" style="margin-top:10px">
+          <thead>
+            <tr>
+              <th><input type="checkbox" id="expandCheckAll"></th>
+              <th>候选问句</th>
+              <th>组</th>
+              <th>词根</th>
+              <th>来源</th>
+              <th>库内</th>
+            </tr>
+          </thead>
+          <tbody id="expandRows"></tbody>
+        </table>
+      </div>
       <div class="wb-grid wb-grid-2">
         <div class="wb-card">
           <div class="wb-toolbar">
             <strong>机会列表</strong>
+            <select class="wb-select" id="tagFilter" style="width:auto;min-width:140px">
+              <option value="">全部标签</option>
+              <option value="brand_missing">brand_missing</option>
+              <option value="high_demand">high_demand</option>
+            </select>
+            <label class="wb-label" style="margin:0;display:flex;align-items:center;gap:6px;white-space:nowrap">
+              <input type="checkbox" id="needRecheck"> 仅待复核
+            </label>
             <input type="file" id="csvFile" accept=".csv" style="max-width:180px">
             <button class="wb-btn" id="btnImport">CSV 导入</button>
             <button class="wb-btn" id="btnReload">刷新</button>
           </div>
+          <div class="wb-muted" id="filterHint" style="margin-bottom:8px"></div>
           <table class="wb-table">
-            <thead><tr><th>问题</th><th>优先级</th><th>标签</th><th>最近任务</th><th></th></tr></thead>
+            <thead>
+              <tr>
+                <th>问题</th>
+                <th>组</th>
+                <th>优先级</th>
+                <th>标签</th>
+                <th>最近观测</th>
+                <th>最近任务</th>
+                <th></th>
+              </tr>
+            </thead>
             <tbody id="rows"></tbody>
           </table>
           <div id="listEmpty" style="display:none"></div>
@@ -40,6 +86,29 @@
             <label class="wb-label">问题</label>
             <input class="wb-input" id="q" placeholder="例如：数据分析平台哪个好用">
           </div>
+          <div class="wb-field">
+            <label class="wb-label">问题组</label>
+            <select class="wb-select" id="questionGroup">
+              <option value="推荐">推荐</option>
+              <option value="比较">比较</option>
+              <option value="替代">替代</option>
+              <option value="价格">价格</option>
+              <option value="风险">风险</option>
+              <option value="品牌验证">品牌验证（点名探测）</option>
+              <option value="场景">场景</option>
+            </select>
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">市场</label>
+            <select class="wb-select" id="market">
+              <option value="cn">国内 cn</option>
+              <option value="global">海外 global</option>
+              <option value="both">both</option>
+            </select>
+          </div>
+          <label class="wb-label" style="display:flex;align-items:center;gap:8px;margin:8px 0">
+            <input type="checkbox" id="isBrandProbe"> 点名探测题（不计入品类可见性提及率）
+          </label>
           <div class="wb-field">
             <label class="wb-label">优先级</label>
             <input class="wb-input" id="priority" type="number" value="10">
@@ -58,18 +127,65 @@
     </div>
   </main>
 </div>
-<script src="assets/geo-sidebar-v1.js?rev=7"></script>
-<script src="assets/geo-api-v1.js?rev=7"></script>
+<script src="assets/geo-sidebar-v1.js?rev=9"></script>
+<script src="assets/geo-api-v1.js?rev=14"></script>
 <script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {
   GeoWB.renderAuthBar(document.getElementById('authBar'));
   var err = document.getElementById('err');
+  var params = new URLSearchParams(location.search);
+  if (params.get('tag')) document.getElementById('tagFilter').value = params.get('tag');
+  if (params.get('need_recheck') === '1') document.getElementById('needRecheck').checked = true;
+  document.getElementById('questionGroup').onchange = function () {
+    if (this.value === '品牌验证') document.getElementById('isBrandProbe').checked = true;
+  };
+
+  function obsCell(p) {
+    if (!p.last_snapshot_at) {
+      return p.need_recheck
+        ? '<span class="wb-badge warn">待复核</span>'
+        : '<span class="wb-muted">-</span>';
+    }
+    var mention = p.last_mentions_brand
+      ? '<span class="wb-badge good">提及</span>'
+      : '<span class="wb-badge warn">未提及</span>';
+    var eng = p.last_snapshot_engine ? (' · ' + p.last_snapshot_engine) : '';
+    var recheck = p.need_recheck ? ' <span class="wb-badge warn">待复核</span>' : '';
+    return mention + eng + '<div class="wb-hint">' + p.last_snapshot_at + '</div>' + recheck;
+  }
+
+  function listQuery() {
+    var q = {};
+    var tag = document.getElementById('tagFilter').value;
+    if (tag) q.tag = tag;
+    if (document.getElementById('needRecheck').checked) q.need_recheck = true;
+    if (params.get('is_brand_probe') === '1') q.is_brand_probe = true;
+    if (params.get('is_brand_probe') === '0') q.is_brand_probe = false;
+    return q;
+  }
+
+  function syncUrl() {
+    var u = new URL(location.href);
+    var tag = document.getElementById('tagFilter').value;
+    if (tag) u.searchParams.set('tag', tag); else u.searchParams.delete('tag');
+    if (document.getElementById('needRecheck').checked) u.searchParams.set('need_recheck', '1');
+    else u.searchParams.delete('need_recheck');
+    history.replaceState({}, '', u.pathname + u.search);
+  }
+
   async function load() {
     GeoWB.clearError(err);
     try {
       GeoWB.requireTenant();
-      var data = await GeoAPI.listPrompts();
+      syncUrl();
+      var q = listQuery();
+      document.getElementById('filterHint').textContent = [
+        q.tag ? ('标签=' + q.tag) : '全部标签',
+        q.need_recheck ? '仅待复核' : '',
+        q.is_brand_probe === true ? '仅点名探测' : (q.is_brand_probe === false ? '仅品类可见性' : '')
+      ].filter(Boolean).join(' · ');
+      var data = await GeoAPI.listPrompts(q);
       var tbody = document.getElementById('rows');
       var empty = document.getElementById('listEmpty');
       tbody.innerHTML = '';
@@ -84,10 +200,13 @@
       items.forEach(function (p) {
         var tr = document.createElement('tr');
         var visHref = GeoWB.withDemoQuery('visibility.html?prompt_id=' + p.id);
+        var group = (p.question_group || '-') + (p.is_brand_probe ? ' <span class="wb-badge warn">探测</span>' : '');
         tr.innerHTML =
           '<td>' + p.question + '</td>' +
+          '<td>' + group + '</td>' +
           '<td>' + p.priority + '</td>' +
           '<td>' + (p.tags || []).join(', ') + '</td>' +
+          '<td>' + obsCell(p) + '</td>' +
           '<td>' + (p.last_task_id ? ('#' + p.last_task_id) : '-') + '</td>' +
           '<td style="white-space:nowrap">' +
             '<a class="wb-btn" href="' + visHref + '">可见度</a> ' +
@@ -107,6 +226,8 @@
     } catch (e) { GeoWB.showError(err, e); }
   }
   document.getElementById('btnReload').onclick = load;
+  document.getElementById('tagFilter').onchange = load;
+  document.getElementById('needRecheck').onchange = load;
   document.getElementById('btnImport').onclick = async function () {
     var file = document.getElementById('csvFile').files[0];
     if (!file) { GeoWB.showError(err, new Error('请选择 CSV 文件')); return; }
@@ -116,6 +237,81 @@
       await load();
     } catch (e) { GeoWB.showError(err, e); }
   };
+  var expandItems = [];
+
+  function renderExpand(items) {
+    expandItems = items || [];
+    var box = document.getElementById('expandRows');
+    box.innerHTML = '';
+    expandItems.forEach(function (it, idx) {
+      var tr = document.createElement('tr');
+      var disabled = it.in_bank ? ' disabled' : '';
+      tr.innerHTML =
+        '<td><input type="checkbox" data-idx="' + idx + '"' + disabled + (it.in_bank ? '' : ' checked') + '></td>' +
+        '<td>' + (it.question || it.term) +
+          '<div class="wb-muted">' + (it.term || '') + '</div></td>' +
+        '<td>' + (it.question_group || '-') + '</td>' +
+        '<td>' + (it.root || '') + ' <span class="wb-muted">(' + (it.kind || '') + ')</span></td>' +
+        '<td>' + (it.suggest_source || '') + '/' + (it.market || '') + '</td>' +
+        '<td>' + (it.in_bank ? '<span class="wb-badge good">已有</span>' : '<span class="wb-badge warn">新</span>') + '</td>';
+      box.appendChild(tr);
+    });
+    document.getElementById('btnPromote').disabled = !expandItems.some(function (x) { return !x.in_bank; });
+  }
+
+  document.getElementById('expandCheckAll').onchange = function () {
+    var on = this.checked;
+    document.querySelectorAll('#expandRows input[type=checkbox]:not(:disabled)').forEach(function (el) {
+      el.checked = on;
+    });
+  };
+
+  document.getElementById('btnExpand').onclick = async function () {
+    try {
+      GeoWB.requireTenant();
+      var extra = document.getElementById('expandExtra').value.split(',')
+        .map(function (s) { return s.trim(); }).filter(Boolean);
+      var body = {
+        market: document.getElementById('expandMarket').value,
+        seed_from_tenant: true,
+        products: extra,
+        max_terms: 60,
+      };
+      var data = await GeoAPI.expandPromptCandidates(body);
+      document.getElementById('expandHint').textContent =
+        '词根 ' + ((data.roots || []).length) +
+        ' · 调用 ' + (data.calls || 0) +
+        ' · 候选 ' + (data.total || 0) +
+        '（新 ' + (data.new_count || 0) + '）' +
+        ((data.errors && data.errors.length) ? ' · 部分请求失败 ' + data.errors.length : '');
+      renderExpand(data.items || []);
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+
+  document.getElementById('btnPromote').onclick = async function () {
+    try {
+      var selected = [];
+      document.querySelectorAll('#expandRows input[type=checkbox]:checked').forEach(function (el) {
+        var it = expandItems[Number(el.getAttribute('data-idx'))];
+        if (!it || it.in_bank) return;
+        selected.push({
+          question: it.question,
+          question_group: it.question_group,
+          market: it.market === 'global' ? 'global' : 'cn',
+          priority: 10,
+          tags: ['from_expand', 'high_demand'],
+          demand_note: '拓词 · ' + (it.suggest_source || '') + ' · ' + (it.term || ''),
+        });
+      });
+      if (!selected.length) throw new Error('请勾选至少一条新候选');
+      var r = await GeoAPI.promotePromptCandidates(selected);
+      document.getElementById('expandHint').textContent =
+        '已入库 ' + (r.created || 0) + '，跳过重复 ' + (r.skipped || 0);
+      await load();
+      document.getElementById('btnExpand').click();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+
   document.getElementById('btnCreate').onclick = async function () {
     try {
       GeoWB.requireTenant();
@@ -125,6 +321,9 @@
         priority: Number(document.getElementById('priority').value || 0),
         tags: tags,
         demand_note: document.getElementById('note').value || null,
+        question_group: document.getElementById('questionGroup').value,
+        market: document.getElementById('market').value,
+        is_brand_probe: document.getElementById('isBrandProbe').checked,
         source: 'manual',
       });
       document.getElementById('q').value = '';

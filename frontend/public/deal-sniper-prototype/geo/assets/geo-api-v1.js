@@ -135,9 +135,21 @@
     ensureAuthOrRedirect: ensureAuthOrRedirect,
     api: api,
     contentHealth: function () { return api('/content-health'); },
+    briefCatalog: function () { return api('/content-brief-catalog'); },
     contentStats: function () { return api('/content-stats'); },
-    listPrompts: function () { return api('/prompts'); },
+    listPrompts: function (query) {
+      return api('/prompts', { query: query || {} });
+    },
     createPrompt: function (body) { return api('/prompts', { method: 'POST', body: body }); },
+    expandPromptCandidates: function (body) {
+      return api('/prompts/expand-candidates', { method: 'POST', body: body || {} });
+    },
+    promotePromptCandidates: function (items) {
+      return api('/prompts/promote-candidates', {
+        method: 'POST',
+        body: { items: items || [] },
+      });
+    },
     importPrompts: function (items) {
       return api('/prompts/import', { method: 'POST', body: { items: items } });
     },
@@ -223,6 +235,12 @@
         query: Object.assign(withTenantQuery(), { require_channels: !!requireChannels }),
       });
     },
+    lintTask: function (id) {
+      return api('/content-tasks/' + id + '/lint', {
+        method: 'POST',
+        query: withTenantQuery(),
+      });
+    },
     applyPatch: function (id, code, authorName) {
       return api('/content-tasks/' + id + '/apply-patch', {
         method: 'POST',
@@ -248,6 +266,23 @@
     },
     listChannelProfiles: function () {
       return api('/channel-profiles', { query: withTenantQuery() });
+    },
+    listPublishingChannelOptions: function () {
+      return api('/publishing-channel-options', { query: withTenantQuery() });
+    },
+    submitReview: function (id, note) {
+      return api('/content-tasks/' + id + '/submit-review', {
+        method: 'POST',
+        query: withTenantQuery(),
+        body: { note: note || null },
+      });
+    },
+    decideReview: function (id, decision, note) {
+      return api('/content-tasks/' + id + '/review', {
+        method: 'POST',
+        query: withTenantQuery(),
+        body: { decision: decision, note: note || null },
+      });
     },
     createVariants: function (id, channels) {
       return api('/content-tasks/' + id + '/variants', {
@@ -283,11 +318,36 @@
     createAnswerSnapshot: function (body) {
       return api('/answer-snapshots', { method: 'POST', body: body });
     },
+    probeAnswerSnapshot: function (promptId) {
+      return api('/answer-snapshots/probe', {
+        method: 'POST',
+        body: { prompt_id: promptId },
+      });
+    },
     patchAnswerSnapshot: function (id, body) {
       return api('/answer-snapshots/' + id, {
         method: 'PATCH',
         query: withTenantQuery(),
         body: body,
+      });
+    },
+    competitorInsights: function () {
+      return api('/competitor-insights', { query: withTenantQuery() });
+    },
+    evaluationInsights: function () {
+      return api('/evaluation-insights', { query: withTenantQuery() });
+    },
+    getAiSettings: function () {
+      return api('/ai-settings', { query: withTenantQuery() });
+    },
+    putAiSettings: function (body) {
+      return api('/ai-settings', { method: 'PUT', body: body || {} });
+    },
+    testAiSettings: function () {
+      return api('/ai-settings/test', {
+        method: 'POST',
+        query: withTenantQuery(),
+        body: {},
       });
     },
     listTrackingEngines: function (enabledOnly) {
@@ -306,6 +366,11 @@
       if (status) query.status = status;
       return api('/media-placements', { query: query });
     },
+    channelBlueprint: function (group) {
+      var query = withTenantQuery();
+      if (group) query.group = group;
+      return api('/channel-blueprint', { query: query });
+    },
     createMediaPlacement: function (body) {
       return api('/media-placements', { method: 'POST', body: body });
     },
@@ -315,6 +380,74 @@
         query: withTenantQuery(),
         body: body,
       });
+    },
+    listPublishingChannels: function (enabledOnly) {
+      var query = withTenantQuery();
+      if (enabledOnly) query.enabled_only = true;
+      return api('/publishing-channels', { query: query });
+    },
+    createPublishingChannel: function (body) {
+      return api('/publishing-channels', { method: 'POST', body: body });
+    },
+    patchPublishingChannel: function (id, body) {
+      return api('/publishing-channels/' + id, {
+        method: 'PATCH',
+        query: withTenantQuery(),
+        body: body,
+      });
+    },
+    listChannelAccounts: function (channelId) {
+      var query = withTenantQuery();
+      if (channelId) query.channel_id = channelId;
+      return api('/channel-accounts', { query: query });
+    },
+    createChannelAccount: function (body) {
+      return api('/channel-accounts', { method: 'POST', body: body });
+    },
+    patchChannelAccount: function (id, body) {
+      return api('/channel-accounts/' + id, {
+        method: 'PATCH',
+        query: withTenantQuery(),
+        body: body,
+      });
+    },
+    listTickets: function (query) {
+      return api('/action-tickets', { query: withTenantQuery(query) });
+    },
+    createTicket: function (body) {
+      return api('/action-tickets', {
+        method: 'POST',
+        query: withTenantQuery(),
+        body: body,
+      });
+    },
+    patchTicket: function (id, body) {
+      return api('/action-tickets/' + id, {
+        method: 'PATCH',
+        query: withTenantQuery(),
+        body: body,
+      });
+    },
+    verifyTicket: function (id, recrawl) {
+      return api('/action-tickets/' + id + '/verify', {
+        method: 'POST',
+        query: Object.assign(withTenantQuery(), { recrawl: recrawl !== false }),
+      });
+    },
+    materializeTickets: function (auditId, replaceOpen) {
+      return api('/audits/' + auditId + '/tickets', {
+        method: 'POST',
+        query: Object.assign(withTenantQuery(), { replace_open: !!replaceOpen }),
+      });
+    },
+    verifyAuditTickets: function (auditId, recrawl) {
+      return api('/audits/' + auditId + '/verify', {
+        method: 'POST',
+        query: Object.assign(withTenantQuery(), { recrawl: recrawl !== false }),
+      });
+    },
+    latestAudit: function () {
+      return api('/audits/latest', { query: withTenantQuery() });
     },
   };
 })(window);

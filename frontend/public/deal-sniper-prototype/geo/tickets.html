@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>验收工单 · GEO</title>
+<link rel="stylesheet" href="assets/style.css?rev=geo-wb-2">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=11">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>验收工单</h1>
+        <div class="sub">诊断整改 → 自动/人工验收 · site/media checker（D3）</div>
+      </div>
+      <div class="right" id="summaryLine"></div>
+    </div>
+    <div class="page">
+      <div id="authBar" class="config-bar"></div>
+      <div id="err" class="wb-error" style="display:none"></div>
+      <div class="wb-card">
+        <div class="wb-toolbar">
+          <label class="wb-label">诊断 ID
+            <input class="wb-input" id="auditId" style="width:100px;display:inline-block;margin-left:6px" placeholder="可选">
+          </label>
+          <select class="wb-select" id="statusFilter" style="width:auto;min-width:120px">
+            <option value="">全部状态</option>
+            <option value="todo">todo</option>
+            <option value="doing">doing</option>
+            <option value="done">done</option>
+            <option value="reopened">reopened</option>
+            <option value="blocked">blocked</option>
+          </select>
+          <button class="wb-btn" id="btnLoad">刷新列表</button>
+          <button class="wb-btn primary" id="btnMaterialize">从诊断生成工单</button>
+          <button class="wb-btn" id="btnBatchVerify">批量重抓验收</button>
+          <button class="wb-btn" id="btnBatchDry">批量验收（不重抓）</button>
+        </div>
+        <div class="wb-hint" id="hint">先跑诊断中心拿到 audit_id，再生成工单并验收。媒体工单可在列表中单独创建。</div>
+      </div>
+      <div class="wb-card" style="margin-top:14px">
+        <strong>工单列表</strong>
+        <table class="wb-table" style="margin-top:10px">
+          <thead>
+            <tr>
+              <th>ID</th><th>优先级</th><th>标题</th><th>验收</th><th>状态</th><th>最近判定</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <div class="wb-card" style="margin-top:14px">
+        <strong>新建媒体铺设验收</strong>
+        <div class="wb-toolbar" style="margin-top:10px">
+          <select class="wb-select" id="mediaPick" style="min-width:220px"></select>
+          <button class="wb-btn" id="btnMediaTicket">创建媒体工单</button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+<script src="assets/geo-sidebar-v1.js?rev=9"></script>
+<script src="assets/geo-api-v1.js?rev=13"></script>
+<script src="assets/geo-workbench-v1.js?rev=7"></script>
+<script>
+(async function () {
+  GeoWB.renderAuthBar(document.getElementById('authBar'));
+  var err = document.getElementById('err');
+  var params = new URLSearchParams(location.search);
+  if (params.get('audit_id')) document.getElementById('auditId').value = params.get('audit_id');
+
+  function auditId() {
+    var v = Number(document.getElementById('auditId').value || 0);
+    return v || null;
+  }
+
+  function badge(status) {
+    var map = { done: 'good', reopened: 'bad', blocked: 'warn', doing: 'warn', todo: '' };
+    return '<span class="wb-badge ' + (map[status] || '') + '">' + status + '</span>';
+  }
+
+  function render(items) {
+    var box = document.getElementById('rows');
+    box.innerHTML = '';
+    var counts = { pass: 0, fail: 0, manual: 0, open: 0 };
+    (items || []).forEach(function (t) {
+      if (t.last_verdict === 'pass') counts.pass++;
+      else if (t.last_verdict === 'fail') counts.fail++;
+      else if (t.last_verdict === 'manual') counts.manual++;
+      if (t.status !== 'done') counts.open++;
+      var tr = document.createElement('tr');
+      var acc = (t.acceptance_type || '') + (t.acceptance_check ? ' · ' + t.acceptance_check : '');
+      tr.innerHTML =
+        '<td>' + t.id + '</td>' +
+        '<td>' + (t.priority || '') + '</td>' +
+        '<td><strong>' + (t.title || '') + '</strong>' +
+          (t.action ? '<div class="wb-muted">' + t.action + '</div>' : '') +
+          (t.last_note ? '<div class="wb-hint">' + t.last_note + '</div>' : '') +
+        '</td>' +
+        '<td class="wb-muted">' + acc + '</td>' +
+        '<td>' + badge(t.status) + '</td>' +
+        '<td>' + (t.last_verdict || '-') + '</td>' +
+        '<td></td>';
+      var ops = tr.lastChild;
+      function btn(label, fn) {
+        var b = document.createElement('button');
+        b.className = 'wb-btn';
+        b.style.margin = '2px';
+        b.textContent = label;
+        b.onclick = fn;
+        ops.appendChild(b);
+      }
+      btn('验收', async function () {
+        try {
+          await GeoAPI.verifyTicket(t.id, true);
+          await load();
+        } catch (e) { GeoWB.showError(err, e); }
+      });
+      if (t.acceptance_type === 'manual' || t.last_verdict === 'manual') {
+        btn('人工通过', async function () {
+          try {
+            await GeoAPI.patchTicket(t.id, { manual_pass: true });
+            await load();
+          } catch (e) { GeoWB.showError(err, e); }
+        });
+      }
+      if (t.status === 'todo') {
+        btn('进行中', async function () {
+          try {
+            await GeoAPI.patchTicket(t.id, { status: 'doing' });
+            await load();
+          } catch (e) { GeoWB.showError(err, e); }
+        });
+      }
+      box.appendChild(tr);
+    });
+    document.getElementById('summaryLine').textContent =
+      '开立 ' + counts.open + ' · 通过线索 ' + counts.pass + ' / 未达标 ' + counts.fail + ' / 待人工 ' + counts.manual;
+  }
+
+  async function load() {
+    GeoWB.clearError(err);
+    try {
+      GeoWB.requireTenant();
+      var q = {};
+      var st = document.getElementById('statusFilter').value;
+      if (st) q.status = st;
+      var aid = auditId();
+      if (aid) q.audit_id = aid;
+      var data = await GeoAPI.listTickets(q);
+      render(data.items || []);
+    } catch (e) { GeoWB.showError(err, e); }
+  }
+
+  async function loadMedia() {
+    try {
+      var data = await GeoAPI.listMediaPlacements();
+      var sel = document.getElementById('mediaPick');
+      sel.innerHTML = '<option value="">选择媒体布局…</option>';
+      (data.items || []).forEach(function (m) {
+        var opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = '#' + m.id + ' ' + m.name + ' (' + m.status + ')';
+        sel.appendChild(opt);
+      });
+    } catch (e) { /* optional */ }
+  }
+
+  document.getElementById('btnLoad').onclick = load;
+  document.getElementById('statusFilter').onchange = load;
+  document.getElementById('btnMaterialize').onclick = async function () {
+    try {
+      var aid = auditId();
+      if (!aid) throw new Error('请填写诊断 audit_id');
+      var r = await GeoAPI.materializeTickets(aid, false);
+      document.getElementById('hint').textContent = '已生成 ' + (r.created || 0) + ' 条工单（跳过已有 code）';
+      await load();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnBatchVerify').onclick = async function () {
+    try {
+      var aid = auditId();
+      if (!aid) throw new Error('请填写诊断 audit_id');
+      var r = await GeoAPI.verifyAuditTickets(aid, true);
+      var s = r.summary || {};
+      document.getElementById('hint').textContent =
+        '批量验收：通过 ' + (s.pass || 0) + ' / 未达标 ' + (s.fail || 0) +
+        ' / 待人工 ' + (s.manual || 0) + '；状态变更 ' + (r.changed || 0);
+      await load();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnBatchDry').onclick = async function () {
+    try {
+      var aid = auditId();
+      if (!aid) throw new Error('请填写诊断 audit_id');
+      var r = await GeoAPI.verifyAuditTickets(aid, false);
+      var s = r.summary || {};
+      document.getElementById('hint').textContent =
+        '干跑验收（未重抓）：通过 ' + (s.pass || 0) + ' / 未达标 ' + (s.fail || 0) +
+        ' / 待人工 ' + (s.manual || 0);
+      await load();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnMediaTicket').onclick = async function () {
+    try {
+      var mid = Number(document.getElementById('mediaPick').value || 0);
+      if (!mid) throw new Error('请选择媒体布局');
+      var name = document.getElementById('mediaPick').selectedOptions[0].textContent;
+      await GeoAPI.createTicket({
+        title: '媒体铺设验收 · ' + name,
+        media_placement_id: mid,
+        audit_id: auditId(),
+        acceptance_desc: '该阵地 status=published 且填写 published_url',
+      });
+      await load();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+
+  await loadMedia();
+  await load();
+})();
+</script>
+</body>
+</html>

@@ -38,11 +38,15 @@ class Settings(BaseSettings):
     jwt_secret: str = ""
     jwt_expire_hours: int = 12
 
-    # DeepSeek（AI 调价建议判断层）。不配 key 则建议引擎只产规则版、不调用 AI。
-    # 阿里云大陆可直连 api.deepseek.com；模型 deepseek-chat 兼容 OpenAI 接口。
+    # DeepSeek 官方（SEM 建议引擎等）。不配 key 则建议引擎只产规则版。
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
+
+    # 阿里云百炼 DashScope（GEO 默认推荐；OpenAI 兼容模式）
+    dashscope_api_key: str = ""
+    dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    dashscope_model: str = "deepseek-v3"
 
     log_level: str = "INFO"
 

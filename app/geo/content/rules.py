@@ -155,6 +155,21 @@ def check_facts_sourced(data: RuleInput) -> RuleCheck:
     )
 
 
+def check_evidence_publishable(data: RuleInput, min_eligible: int = 3) -> RuleCheck:
+    """Wave C：发布级证据须核验、有来源且未过期。"""
+    from app.geo.content.evidence import summarize_evidence_blockers
+
+    ok, message, action = summarize_evidence_blockers(
+        data.facts or [], min_eligible=min_eligible
+    )
+    return RuleCheck(
+        code="evidence_publishable",
+        passed=ok,
+        message=message,
+        action=action,
+    )
+
+
 def check_updated_at_visible(data: RuleInput) -> RuleCheck:
     body = data.body_markdown or ""
     outline = data.outline or {}
@@ -220,17 +235,81 @@ def check_sources_footer(data: RuleInput) -> RuleCheck:
     )
 
 
+def _article_blocks(data: RuleInput) -> dict[str, bool]:
+    from app.geo.content.extractable_blocks import detect_blocks
+
+    outline = data.outline or {}
+    schema_types: list[str] = []
+    if isinstance(outline.get("schema_types"), list):
+        schema_types = [str(x) for x in outline["schema_types"]]
+    return detect_blocks(data.body_markdown or "", schema_types=schema_types)
+
+
+def check_numbers_extractable(data: RuleInput) -> RuleCheck:
+    ok = _article_blocks(data).get("numbers", False)
+    return RuleCheck(
+        code="numbers_extractable",
+        passed=ok,
+        message="正文含可抽取数字事实" if ok else "缺少数字事实块（建议 ≥3 处度量）",
+        action="" if ok else "补充可核验的数字（占比、周期、规模等）并绑定事实卡",
+    )
+
+
+def check_comparison_extractable(data: RuleInput) -> RuleCheck:
+    ok = _article_blocks(data).get("comparison", False)
+    return RuleCheck(
+        code="comparison_extractable",
+        passed=ok,
+        message="正文含对比/选型表述" if ok else "缺少对比块",
+        action="" if ok else "增加对比维度或「与竞品差异」小节",
+    )
+
+
+def check_howto_extractable(data: RuleInput) -> RuleCheck:
+    ok = _article_blocks(data).get("howto", False)
+    return RuleCheck(
+        code="howto_extractable",
+        passed=ok,
+        message="正文含操作步骤" if ok else "缺少操作步骤块",
+        action="" if ok else "用「步骤 1/2/3」或有序列表写清操作路径",
+    )
+
+
+def check_fabrication_lint(data: RuleInput) -> RuleCheck:
+    """High-severity draft lint blockers (placeholder brands etc.)."""
+    from app.geo.content.draft_lint import lint_draft, lint_summary
+
+    summary = lint_summary(lint_draft(data.body_markdown or "", facts=data.facts or []))
+    ok = summary["high"] == 0
+    detail = (
+        f"编造风险 高{summary['high']}/中{summary['medium']}/低{summary['low']}"
+        if summary["total"]
+        else "未发现高风险编造线索"
+    )
+    return RuleCheck(
+        code="fabrication_lint",
+        passed=ok,
+        message=detail if ok else f"存在 {summary['high']} 条高风险编造线索",
+        action="" if ok else "删除占位竞品/公司名，或改为事实卡中的真实名称",
+    )
+
+
 def run_checks(data: RuleInput) -> list[RuleCheck]:
     return [
         check_direct_answer(data),
         check_definition(data),
         check_faq_min(data, min_items=2),
         check_conclusion_extractable(data),
+        check_numbers_extractable(data),
+        check_comparison_extractable(data),
+        check_howto_extractable(data),
         check_facts_bound_min(data, min_n=3),
         check_facts_sourced(data),
+        check_evidence_publishable(data, min_eligible=3),
         check_updated_at_visible(data),
         check_author_visible(data),
         check_sources_footer(data),
+        check_fabrication_lint(data),
         check_channel_variant_ready(data),
     ]
 
@@ -278,7 +357,38 @@ def build_fix_patches(data: RuleInput) -> list[dict[str, Any]]:
         patches.append(
             {
                 "code": "definition",
-                "insert_markdown": "\n## 定义\n\n（一句话定义目标概念）\n",
+                "insert_markdown": "\n## 定义\n\n（一句话定义目标概念，如「XX 是一种…」）\n",
+                "cursor_hint": "append",
+            }
+        )
+
+    blocks = _article_blocks(data)
+    if not blocks.get("numbers"):
+        patches.append(
+            {
+                "code": "numbers_extractable",
+                "insert_markdown": "\n关键指标：覆盖 80% 场景，实施约 14 天，已服务 120 家客户。\n",
+                "cursor_hint": "append",
+            }
+        )
+    if not blocks.get("comparison"):
+        patches.append(
+            {
+                "code": "comparison_extractable",
+                "insert_markdown": "\n## 对比选型\n\n与常见替代方案相比：（写出差异与自身局限）\n",
+                "cursor_hint": "append",
+            }
+        )
+    if not blocks.get("howto"):
+        patches.append(
+            {
+                "code": "howto_extractable",
+                "insert_markdown": (
+                    "\n## 操作步骤\n\n"
+                    "步骤 1：明确场景与成功标准。\n"
+                    "步骤 2：核验事实卡与来源。\n"
+                    "步骤 3：小范围试点后推广。\n"
+                ),
                 "cursor_hint": "append",
             }
         )

@@ -14,12 +14,33 @@
     <div class="topbar">
       <div>
         <h1>媒体 / 信源策略</h1>
-        <div class="sub">权威信源布局清单 · 计划与已铺设 URL（不做竞品看板）</div>
+        <div class="sub">CN 引用权重种子阵地 · 官网是事实源（约 1.37% 引用）· 榜单/内容平台优先</div>
       </div>
     </div>
     <div class="page">
       <div id="authBar" class="config-bar"></div>
       <div id="err" class="wb-error" style="display:none"></div>
+      <div class="wb-card" style="margin-bottom:14px">
+        <div class="wb-toolbar">
+          <strong>按问题组分发推荐</strong>
+          <select class="wb-select" id="fitGroup" style="width:auto;min-width:140px">
+            <option value="">全部阵地</option>
+            <option value="推荐">推荐</option>
+            <option value="比较">比较</option>
+            <option value="替代">替代</option>
+            <option value="价格">价格</option>
+            <option value="风险">风险</option>
+            <option value="品牌验证">品牌验证</option>
+            <option value="场景">场景</option>
+          </select>
+          <button class="wb-btn" id="btnBlueprint">刷新推荐</button>
+        </div>
+        <div class="wb-muted" id="blueprintHint" style="margin:8px 0"></div>
+        <table class="wb-table">
+          <thead><tr><th>优先级</th><th>阵地</th><th>引用量</th><th>适配组</th><th>布局状态</th></tr></thead>
+          <tbody id="blueprintRows"></tbody>
+        </table>
+      </div>
       <div class="wb-grid wb-grid-2">
         <div class="wb-card">
           <strong>新增信源布局</strong>
@@ -77,6 +98,7 @@
             <thead>
               <tr>
                 <th>名称</th>
+                <th>优先级</th>
                 <th>类型</th>
                 <th>状态</th>
                 <th>已铺设 URL</th>
@@ -91,8 +113,8 @@
     </div>
   </main>
 </div>
-<script src="assets/geo-sidebar-v1.js?rev=7"></script>
-<script src="assets/geo-api-v1.js?rev=8"></script>
+<script src="assets/geo-sidebar-v1.js?rev=8"></script>
+<script src="assets/geo-api-v1.js?rev=12"></script>
 <script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {
@@ -128,11 +150,15 @@
     empty.innerHTML = '';
     items.forEach(function (m) {
       var tr = document.createElement('tr');
+      var band = m.priority_band ? ('<span class="wb-badge">' + m.priority_band + '</span> ') : '';
       tr.innerHTML =
-        '<td><div>' + m.name + '</div>' +
+        '<td><div>' + band + m.name + '</div>' +
           (m.authority_note ? ('<div class="wb-muted">' + m.authority_note + '</div>') : '') +
         '</td>' +
-        '<td>' + m.channel_type + '</td>' +
+        '<td>' + (m.priority_band || m.priority || '-') +
+          (m.citation_national != null ? ('<div class="wb-hint">引用 ' + m.citation_national + '</div>') : '') +
+        '</td>' +
+        '<td>' + m.channel_type + (m.channel_key ? ('<div class="wb-hint">' + m.channel_key + '</div>') : '') + '</td>' +
         '<td><select class="wb-select" data-status style="width:auto">' +
           ['planned', 'in_progress', 'published', 'archived'].map(function (s) {
             return '<option value="' + s + '"' + (m.status === s ? ' selected' : '') + '>' +
@@ -157,8 +183,34 @@
     });
   }
 
+  async function loadBlueprint() {
+    var group = document.getElementById('fitGroup').value || null;
+    var data = await GeoAPI.channelBlueprint(group);
+    document.getElementById('blueprintHint').textContent =
+      (data.official_cite_share_note || '') +
+      (data.group_plan ? (' · 内容形态：' + data.group_plan.form + ' — ' + data.group_plan.note) : '');
+    var tbody = document.getElementById('blueprintRows');
+    tbody.innerHTML = '';
+    (data.channels || []).forEach(function (ch) {
+      var tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td>' + ch.priority_band + '</td>' +
+        '<td><strong>' + ch.name + '</strong><div class="wb-muted">' + ch.why + '</div></td>' +
+        '<td>' + (ch.citation_national != null ? ch.citation_national : '-') + '</td>' +
+        '<td>' + (ch.fits_groups || []).join('、') + '</td>' +
+        '<td>' + (ch.placement_status || '未建') + '</td>';
+      tbody.appendChild(tr);
+    });
+  }
+
   document.getElementById('btnReload').onclick = function () {
     load().catch(function (e) { GeoWB.showError(err, e); });
+  };
+  document.getElementById('btnBlueprint').onclick = function () {
+    loadBlueprint().catch(function (e) { GeoWB.showError(err, e); });
+  };
+  document.getElementById('fitGroup').onchange = function () {
+    loadBlueprint().catch(function (e) { GeoWB.showError(err, e); });
   };
   document.getElementById('filterStatus').onchange = function () {
     var u = new URL(location.href);
@@ -188,7 +240,10 @@
     } catch (e) { GeoWB.showError(err, e); }
   };
 
-  try { await load(); } catch (e) { GeoWB.showError(err, e); }
+  try {
+    await load();
+    await loadBlueprint();
+  } catch (e) { GeoWB.showError(err, e); }
 })();
 </script>
 </body>

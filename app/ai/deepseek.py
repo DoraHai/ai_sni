@@ -34,19 +34,50 @@ def _parse_json_content(content: str) -> dict:
         raise
 
 
-def is_enabled() -> bool:
-    """是否配置了 DeepSeek（决定建议引擎走 AI 判断还是规则版）。"""
-    return bool(get_settings().deepseek_api_key)
-
-
-async def chat_json(system: str, user: str, timeout: float = 30.0) -> dict:
-    """调 deepseek-chat，强制 JSON 输出，解析成 dict。失败抛 DeepSeekError。"""
+def _resolve_creds(
+    api_key: str | None = None,
+    base_url: str | None = None,
+    model: str | None = None,
+) -> tuple[str, str, str]:
+    """Resolve OpenAI-compatible credentials (DeepSeek 官方 or 百炼兼容)。"""
     s = get_settings()
-    if not s.deepseek_api_key:
-        raise DeepSeekError("未配置 DEEPSEEK_API_KEY")
-    url = s.deepseek_base_url.rstrip("/") + "/chat/completions"
+    key = (api_key or s.deepseek_api_key or getattr(s, "dashscope_api_key", "") or "").strip()
+    if not key:
+        raise DeepSeekError("未配置 AI API Key（百炼 DASHSCOPE_API_KEY 或 DEEPSEEK_API_KEY）")
+    use_dash = bool(getattr(s, "dashscope_api_key", "") and not (api_key or s.deepseek_api_key))
+    url_base = (
+        base_url
+        or (s.dashscope_base_url if use_dash else None)
+        or s.deepseek_base_url
+    ).rstrip("/")
+    mdl = (
+        model
+        or (s.dashscope_model if use_dash else None)
+        or s.deepseek_model
+    )
+    return key, url_base, mdl
+
+
+def is_enabled() -> bool:
+    """是否配置了可用 AI Key（DeepSeek 官方或百炼 env）。"""
+    s = get_settings()
+    return bool(s.deepseek_api_key or getattr(s, "dashscope_api_key", ""))
+
+
+async def chat_json(
+    system: str,
+    user: str,
+    timeout: float = 30.0,
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    model: str | None = None,
+) -> dict:
+    """调 OpenAI 兼容 /chat/completions，强制 JSON 输出。失败抛 DeepSeekError。"""
+    key, url_base, mdl = _resolve_creds(api_key=api_key, base_url=base_url, model=model)
+    url = url_base + "/chat/completions"
     payload = {
-        "model": s.deepseek_model,
+        "model": mdl,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -56,7 +87,7 @@ async def chat_json(system: str, user: str, timeout: float = 30.0) -> dict:
         "stream": False,
     }
     headers = {
-        "Authorization": f"Bearer {s.deepseek_api_key}",
+        "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
     try:
@@ -67,7 +98,7 @@ async def chat_json(system: str, user: str, timeout: float = 30.0) -> dict:
         content = data["choices"][0]["message"]["content"]
         return _parse_json_content(content)
     except (httpx.HTTPError, KeyError, ValueError, json.JSONDecodeError) as e:
-        raise DeepSeekError(f"DeepSeek 调用/解析失败: {e}") from e
+        raise DeepSeekError(f"AI 调用/解析失败: {e}") from e
 
 
 async def chat_messages(
@@ -75,17 +106,19 @@ async def chat_messages(
     json_mode: bool = False,
     temperature: float = 0.5,
     timeout: float = 45.0,
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    model: str | None = None,
 ):
     """多轮对话调用（对话助手用）。messages = [{role, content}, ...]，第一条通常是 system。
 
     json_mode=True 时强制 JSON 输出并解析成 dict；否则返回自由文本 str。失败抛 DeepSeekError。
     """
-    s = get_settings()
-    if not s.deepseek_api_key:
-        raise DeepSeekError("未配置 DEEPSEEK_API_KEY")
-    url = s.deepseek_base_url.rstrip("/") + "/chat/completions"
+    key, url_base, mdl = _resolve_creds(api_key=api_key, base_url=base_url, model=model)
+    url = url_base + "/chat/completions"
     payload = {
-        "model": s.deepseek_model,
+        "model": mdl,
         "messages": messages,
         "temperature": temperature,
         "stream": False,
@@ -93,7 +126,7 @@ async def chat_messages(
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
     headers = {
-        "Authorization": f"Bearer {s.deepseek_api_key}",
+        "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
     # 调用/解析失败自动重试一次（DeepSeek 偶发返回截断的非法 JSON，重试即好）
@@ -121,4 +154,4 @@ async def chat_messages(
         except (httpx.HTTPError, KeyError, ValueError, json.JSONDecodeError) as e:
             last_err = e
             logger.warning("DeepSeek 调用/解析失败（第 %d 次）：%s", _attempt + 1, e)
-    raise DeepSeekError(f"DeepSeek 调用/解析失败（重试后仍失败）: {last_err}")
+            raise DeepSeekError(f"AI 调用/解析失败（重试后仍失败）: {last_err}")

@@ -140,7 +140,7 @@ http://127.0.0.1:5176/geo/dashboard.html?tenant_id=1&api_key=geo-demo-local-key&
 2. 点行内 **可见度**，或侧栏 **AI 可见度**
 3. 选择该问题 → 粘贴一段回答 → 勾选「提及我方品牌」→ **保存快照**
 4. 预期：右侧列表出现记录；回到提问监控刷新后，该问题的 `brand_missing` 标签消失
-5. 列表内可点「切换」改提及状态；`competitors.html` / `evaluation.html` 仍为开发中
+5. 列表内可点「切换」改提及状态；竞品/评价见 §8
 
 ### 6) 引擎管理 + 媒体信源（Wave B2）
 
@@ -149,6 +149,38 @@ http://127.0.0.1:5176/geo/dashboard.html?tenant_id=1&api_key=geo-demo-local-key&
 3. 打开 **媒体 / 信源策略**，新建一条「计划中」布局并保存；列表内改状态为「已铺设」并填 URL
 4. **GEO 概览** 应出现真实计数：回答快照 / 提及品牌 / 信源布局进行中 / 信源已铺设
 5. 先执行 migration：`alembic upgrade head`（含 `0039_geo_wave_b2`）
+
+### 7) 可见度复核闭环（Wave B3）
+
+1. **GEO 概览** 应出现「未提及品牌 / 待复核可见度」卡片；分别点击进入 `prompts.html?tag=brand_missing` 与 `visibility.html?queue=recheck`
+2. **提问监控**：可用标签筛选；列表「最近观测」列显示提及状态 / 引擎 / 时间；带 `need_recheck` 时显示待复核
+3. **分发平台**：URL 回填成功后出现「去登记可见度」→ 跳到对应 `prompt_id` 的可见度页
+4. **AI 能力配置**（侧栏设置）：默认「阿里云百炼」，粘贴百炼 API Key → 保存 → 测试连通
+   - 也可在 `.env` 配 `DASHSCOPE_API_KEY` 作为兜底
+5. **AI 可见度**：可选「用 AI 探测」预填正文；无 Key 时提示去配置页或改用粘贴；确认后仍点「保存快照」入库
+6. 保存「未提及」快照会加回 `brand_missing`；保存「提及」会清除该标签
+7. migration 需包含 `0042_geo_ai_settings`（AI 能力配置表）
+
+### 8) 竞品 / 评价 / 简单分（Wave C）
+
+1. 先执行 migration：`alembic upgrade head`（含 `0041_geo_wave_c` / `0042_geo_ai_settings`）
+2. **AI 可见度**：保存快照时填写竞品名、我方位置、情感倾向
+3. 打开 **竞品分析**：应按竞品名看到出现次数 / 关联提问 / 引擎
+4. 打开 **评价分析**：应看到情感与位置分布，以及最近快照列表
+5. **GEO 概览**：出现「提及率」「引擎覆盖」「含竞品标注」真实计数（提及率 = 提及快照 / 全部快照）
+
+### 9) 发布渠道账号 + 可发布证据（Wave C 收尾）
+
+1. migration 到 `0044_geo_fact_expiry`
+2. 侧栏 **发布渠道配置**：首次打开会初始化官网/文档/公众号/知乎/百家号/头条/行业媒体
+3. 添加渠道账号并粘贴凭证 JSON → 列表仅显示「已配置凭证」，不回显明文
+4. **事实库**：可为事实设置过期日；发布前需核验（verified）且未过期，否则规则 `evidence_publishable` / 回填门禁会拦截
+5. HTTP smoke：
+
+```bash
+API_KEY=geo-demo-local-key TENANT_ID=1 BASE=http://127.0.0.1:8011 \
+  bash scripts/smoke_geo_wave_c.sh
+```
 
 ## 常见 404
 

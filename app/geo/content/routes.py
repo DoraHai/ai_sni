@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 
@@ -25,20 +26,53 @@ from app.geo.content.imports import import_facts_csv, import_prompts_csv
 from app.geo.content.pipeline import blocked_reason_from_checks, sync_pipeline_fields
 from app.geo.content.rules import RuleInput, build_fix_patches, is_ready, run_checks
 from app.geo.content.channel_profiles import get_profile, list_profiles
+from app.geo.content.channel_registry import (
+    channel_options_from_registry,
+    enabled_types_from_rows,
+    filter_channels_by_registry,
+    publication_publish_mode,
+    publish_mode_for_channel,
+    registry_row_dicts,
+)
+from app.geo.content.channels import default_channel_rows
+from app.geo.content.review import (
+    apply_decision,
+    apply_submit,
+    invalidate_review,
+    review_payload,
+)
+from app.geo.content.ai_settings import (
+    apply_provider_preset,
+    encrypt_api_key,
+    ensure_ai_setting,
+    preset_payload,
+    resolve_llm_credentials,
+    settings_public_payload,
+)
 from app.geo.content.engines import default_engine_rows
 from app.geo.content.schemas import (
+    AiSettingsUpdate,
     AnswerSnapshotCreate,
+    AnswerSnapshotProbeRequest,
     AnswerSnapshotUpdate,
     ApplyPatchRequest,
     ArticleUpdate,
+    ChannelAccountCreate,
+    ChannelAccountUpdate,
     FactCreate,
     FactUpdate,
     MediaPlacementCreate,
     MediaPlacementUpdate,
+    PromptExpandRequest,
+    PromptPromoteRequest,
+    PublishingChannelCreate,
+    PublishingChannelUpdate,
     PromptCreate,
     PromptImportRequest,
     PromptUpdate,
     PublicationCreate,
+    ReviewDecision,
+    ReviewSubmit,
     TaskCreate,
     TaskFactsUpdate,
     TaskFromDiagnosis,
@@ -47,7 +81,26 @@ from app.geo.content.schemas import (
     VariantUpdate,
     VariantsCreate,
 )
-from app.geo.content.snapshots import clear_brand_missing_tag, normalize_cited_urls
+from app.geo.content.cn_blueprint import (
+    blueprint_payload,
+    default_media_placement_rows,
+)
+from app.geo.content.prompt_taxonomy import (
+    brand_names_from_tenant,
+    normalize_market,
+    normalize_question_group,
+    resolve_is_brand_probe,
+)
+from app.geo.content.snapshots import (
+    apply_brand_mention_tags,
+    needs_recheck,
+    normalize_brand_position,
+    normalize_cited_urls,
+    normalize_competitors,
+    normalize_sentiment,
+    split_visibility_metrics,
+    visibility_mention_rate,
+)
 from app.geo.content.variants import (
     GeoContentError,
     adapt_for_channel,
@@ -58,11 +111,13 @@ from app.models import (
     GeoAnswerSnapshot,
     GeoArticleVersion,
     GeoChannelVariant,
+    GeoChannelAccount,
     GeoContentTask,
     GeoFact,
     GeoMediaPlacement,
     GeoPrompt,
     GeoPublication,
+    GeoPublishingChannel,
     GeoTaskFact,
     GeoTrackingEngine,
     Tenant,
@@ -76,8 +131,13 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
 
-def _prompt_payload(row: GeoPrompt) -> dict[str, Any]:
-    return {
+def _prompt_payload(
+    row: GeoPrompt,
+    *,
+    last_snapshot: GeoAnswerSnapshot | None = None,
+    need_recheck_flag: bool | None = None,
+) -> dict[str, Any]:
+    payload = {
         "id": row.id,
         "tenant_id": row.tenant_id,
         "question": row.question,
@@ -87,12 +147,71 @@ def _prompt_payload(row: GeoPrompt) -> dict[str, Any]:
         "demand_note": row.demand_note,
         "status": row.status,
         "source": row.source,
+        "question_group": row.question_group,
+        "market": row.market or "cn",
+        "is_brand_probe": bool(row.is_brand_probe),
         "created_by": row.created_by,
         "owner_user_id": row.owner_user_id,
         "last_task_id": row.last_task_id,
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
+        "last_snapshot_at": None,
+        "last_mentions_brand": None,
+        "last_snapshot_engine": None,
+        "need_recheck": bool(need_recheck_flag) if need_recheck_flag is not None else False,
     }
+    if last_snapshot is not None:
+        payload["last_snapshot_at"] = _iso(last_snapshot.captured_at)
+        payload["last_mentions_brand"] = bool(last_snapshot.mentions_brand)
+        payload["last_snapshot_engine"] = last_snapshot.engine
+    return payload
+
+
+async def _latest_snapshots_by_prompt(
+    session: AsyncSession, tenant_id: int, prompt_ids: list[int]
+) -> dict[int, GeoAnswerSnapshot]:
+    if not prompt_ids:
+        return {}
+    rows = list(
+        await session.scalars(
+            select(GeoAnswerSnapshot)
+            .where(
+                GeoAnswerSnapshot.tenant_id == tenant_id,
+                GeoAnswerSnapshot.prompt_id.in_(prompt_ids),
+            )
+            .order_by(
+                GeoAnswerSnapshot.prompt_id.asc(),
+                GeoAnswerSnapshot.captured_at.desc(),
+                GeoAnswerSnapshot.id.desc(),
+            )
+        )
+    )
+    latest: dict[int, GeoAnswerSnapshot] = {}
+    for row in rows:
+        if row.prompt_id not in latest:
+            latest[row.prompt_id] = row
+    return latest
+
+
+async def _published_task_updated_by_prompt(
+    session: AsyncSession, tenant_id: int, prompt_ids: list[int]
+) -> dict[int, datetime]:
+    """Map prompt_id -> max updated_at among published tasks."""
+    if not prompt_ids:
+        return {}
+    result = await session.execute(
+        select(
+            GeoContentTask.prompt_id,
+            func.max(GeoContentTask.updated_at),
+        )
+        .where(
+            GeoContentTask.tenant_id == tenant_id,
+            GeoContentTask.status == "published",
+            GeoContentTask.prompt_id.in_(prompt_ids),
+        )
+        .group_by(GeoContentTask.prompt_id)
+    )
+    return {int(pid): updated for pid, updated in result.all() if pid is not None}
 
 
 def _fact_payload(row: GeoFact) -> dict[str, Any]:
@@ -105,6 +224,7 @@ def _fact_payload(row: GeoFact) -> dict[str, Any]:
         "source_name": row.source_name,
         "source_url": row.source_url,
         "observed_at": row.observed_at.isoformat() if row.observed_at else None,
+        "expires_at": row.expires_at.isoformat() if row.expires_at else None,
         "trust_level": row.trust_level,
         "status": row.status,
         "meta": row.meta or {},
@@ -242,8 +362,10 @@ def _fact_dicts(facts: list[GeoFact]) -> list[dict[str, Any]]:
             "source_url": f.source_url,
             "fact_type": f.fact_type,
             "trust_level": f.trust_level,
+            "status": f.status,
             "author_name": f.author_name,
             "observed_at": f.observed_at.isoformat() if f.observed_at else None,
+            "expires_at": f.expires_at.isoformat() if f.expires_at else None,
         }
         for f in facts
     ]
@@ -274,6 +396,9 @@ async def _task_payload(
     session: AsyncSession, task: GeoContentTask, *, detail: bool = False
 ) -> dict[str, Any]:
     prompt = await session.get(GeoPrompt, task.prompt_id)
+    from app.geo.content.brief import brief_ready, normalize_brief
+
+    brief = normalize_brief(task.brief)
     payload: dict[str, Any] = {
         "id": task.id,
         "tenant_id": task.tenant_id,
@@ -287,7 +412,9 @@ async def _task_payload(
         "diagnosis_advice_code": task.diagnosis_advice_code,
         "target_channels": task.target_channels or [],
         "owner_user_id": task.owner_user_id,
-        "brief": task.brief or {},
+        "brief": brief,
+        "brief_ready": brief_ready(brief),
+        **review_payload(task),
         "rule_result": task.rule_result,
         "ready_at": _iso(task.ready_at),
         "created_at": _iso(task.created_at),
@@ -353,14 +480,31 @@ async def _task_payload(
             ],
             "publications": pubs,
             "channel_profiles": list_profiles(),
+            "channel_options": await _channel_options_payload(session, task.tenant_id),
         }
     )
     return payload
 
 
+async def _channel_options_payload(session: AsyncSession, tenant_id: int) -> list[dict]:
+    rows = await _ensure_default_publishing_channels(session, tenant_id)
+    return channel_options_from_registry(registry_row_dicts(rows))
+
+
 @router.get("/content-health")
 async def content_health() -> dict:
     return {"module": "geo-content", "status": "ok"}
+
+
+@router.get("/content-brief-catalog")
+async def content_brief_catalog(
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict:
+    """Brief 枚举与必填字段（前端表单）。"""
+    from app.geo.content.brief import catalog_payload
+
+    _ = ctx
+    return catalog_payload()
 
 
 @router.get("/channel-profiles")
@@ -371,6 +515,18 @@ async def get_channel_profiles(
     return {"items": list_profiles()}
 
 
+@router.get("/publishing-channel-options")
+async def get_publishing_channel_options(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Enabled registry channels mapped to adapt profiles (editor picker)."""
+    ctx.ensure_tenant(tenant_id)
+    options = await _channel_options_payload(session, tenant_id)
+    return {"items": options}
+
+
 # ---------- prompts ----------
 
 
@@ -378,6 +534,10 @@ async def get_channel_profiles(
 async def list_prompts(
     tenant_id: int = Query(...),
     status: str | None = Query(None),
+    tag: str | None = Query(None),
+    question_group: str | None = Query(None),
+    is_brand_probe: bool | None = Query(None),
+    need_recheck: bool | None = Query(None),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -385,9 +545,34 @@ async def list_prompts(
     stmt = select(GeoPrompt).where(GeoPrompt.tenant_id == tenant_id)
     if status:
         stmt = stmt.where(GeoPrompt.status == status)
+    if is_brand_probe is not None:
+        stmt = stmt.where(GeoPrompt.is_brand_probe.is_(bool(is_brand_probe)))
+    if question_group:
+        stmt = stmt.where(GeoPrompt.question_group == question_group.strip())
     stmt = stmt.order_by(GeoPrompt.priority.desc(), GeoPrompt.id.desc())
     rows = list(await session.scalars(stmt))
-    return {"items": [_prompt_payload(r) for r in rows]}
+    if tag:
+        needle = tag.strip()
+        rows = [r for r in rows if needle in (r.tags or [])]
+    prompt_ids = [r.id for r in rows]
+    latest = await _latest_snapshots_by_prompt(session, tenant_id, prompt_ids)
+    published_at = await _published_task_updated_by_prompt(session, tenant_id, prompt_ids)
+    items = []
+    for r in rows:
+        snap = latest.get(r.id)
+        flag = needs_recheck(
+            has_published_task=r.id in published_at,
+            task_updated_at=published_at.get(r.id),
+            last_snapshot_at=snap.captured_at if snap else None,
+        )
+        if need_recheck is True and not flag:
+            continue
+        if need_recheck is False and flag:
+            continue
+        items.append(
+            _prompt_payload(r, last_snapshot=snap, need_recheck_flag=flag)
+        )
+    return {"items": items}
 
 
 @router.post("/prompts")
@@ -397,7 +582,18 @@ async def create_prompt(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(req.tenant_id)
-    await _ensure_tenant_exists(session, req.tenant_id)
+    tenant = await _ensure_tenant_exists(session, req.tenant_id)
+    q_group = normalize_question_group(req.question_group)
+    brand_names = brand_names_from_tenant(
+        name=getattr(tenant, "name", None),
+        brand_terms=getattr(tenant, "brand_terms", None),
+    )
+    probe = resolve_is_brand_probe(
+        question=req.question,
+        brand_names=brand_names,
+        explicit=req.is_brand_probe,
+        question_group=q_group,
+    )
     row = GeoPrompt(
         tenant_id=req.tenant_id,
         question=req.question.strip(),
@@ -406,12 +602,126 @@ async def create_prompt(
         tags=req.tags,
         demand_note=req.demand_note,
         source=req.source,
+        question_group=q_group,
+        market=normalize_market(req.market),
+        is_brand_probe=probe,
         created_by=ctx.user_id,
     )
     session.add(row)
     await session.commit()
     await session.refresh(row)
     return _prompt_payload(row)
+
+
+@router.post("/prompts/expand-candidates")
+async def expand_prompt_candidates(
+    req: PromptExpandRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """百度/Google 下拉拓词 → 候选问句（不入库）。"""
+    from app.geo.content.expand import build_roots, expand_candidates
+
+    ctx.ensure_tenant(req.tenant_id)
+    tenant = await _ensure_tenant_exists(session, req.tenant_id)
+    brand_names = brand_names_from_tenant(
+        name=getattr(tenant, "name", None),
+        brand_terms=getattr(tenant, "brand_terms", None),
+    )
+    explicit = [r.model_dump() for r in req.roots] if req.roots else None
+    roots = build_roots(
+        brand_names=brand_names if req.seed_from_tenant else None,
+        industry=getattr(tenant, "industry", None) if req.seed_from_tenant else None,
+        competitors=req.competitors,
+        products=req.products,
+        market=req.market,
+        explicit_roots=explicit,
+    )
+    if not roots:
+        raise HTTPException(
+            400,
+            "缺少词根：请填写 roots，或在租户配置品牌名/行业，或传入 competitors",
+        )
+
+    existing_rows = (
+        await session.scalars(
+            select(GeoPrompt.question).where(
+                GeoPrompt.tenant_id == req.tenant_id,
+                GeoPrompt.status == "active",
+            )
+        )
+    ).all()
+    result = await expand_candidates(
+        roots=roots,
+        existing_questions=set(existing_rows),
+        max_terms=req.max_terms,
+        throttle_s=0.05,
+    )
+    return result
+
+
+@router.post("/prompts/promote-candidates")
+async def promote_prompt_candidates(
+    req: PromptPromoteRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """勾选拓词候选后批量入库（显式确认）。"""
+    ctx.ensure_tenant(req.tenant_id)
+    tenant = await _ensure_tenant_exists(session, req.tenant_id)
+    brand_names = brand_names_from_tenant(
+        name=getattr(tenant, "name", None),
+        brand_terms=getattr(tenant, "brand_terms", None),
+    )
+    existing = {
+        str(q).strip().lower()
+        for q in (
+            await session.scalars(
+                select(GeoPrompt.question).where(
+                    GeoPrompt.tenant_id == req.tenant_id,
+                    GeoPrompt.status == "active",
+                )
+            )
+        ).all()
+    }
+    created: list[GeoPrompt] = []
+    skipped = 0
+    for item in req.items:
+        q = item.question.strip()
+        if q.lower() in existing:
+            skipped += 1
+            continue
+        q_group = normalize_question_group(item.question_group)
+        probe = resolve_is_brand_probe(
+            question=q,
+            brand_names=brand_names,
+            explicit=item.is_brand_probe,
+            question_group=q_group,
+        )
+        row = GeoPrompt(
+            tenant_id=req.tenant_id,
+            question=q,
+            language="zh-CN" if item.market != "global" else "en",
+            priority=item.priority,
+            tags=item.tags or ["from_expand"],
+            demand_note=item.demand_note or "来自拓词候选",
+            source="expand",
+            question_group=q_group,
+            market=normalize_market(item.market),
+            is_brand_probe=probe,
+            created_by=ctx.user_id,
+        )
+        session.add(row)
+        created.append(row)
+        existing.add(q.lower())
+    await session.commit()
+    for row in created:
+        await session.refresh(row)
+    return {
+        "created": len(created),
+        "skipped": skipped,
+        "items": [_prompt_payload(r) for r in created],
+    }
 
 
 @router.patch("/prompts/{prompt_id}")
@@ -424,11 +734,31 @@ async def update_prompt(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     row = await _get_prompt(session, prompt_id, tenant_id)
+    tenant = await _ensure_tenant_exists(session, tenant_id)
     data = req.model_dump(exclude_unset=True)
     if "question" in data and data["question"] is not None:
         data["question"] = data["question"].strip()
+    if "question_group" in data:
+        data["question_group"] = normalize_question_group(data.get("question_group"))
+    if "market" in data and data["market"] is not None:
+        data["market"] = normalize_market(data["market"])
     for key, value in data.items():
+        if key == "is_brand_probe":
+            continue
         setattr(row, key, value)
+    brand_names = brand_names_from_tenant(
+        name=getattr(tenant, "name", None),
+        brand_terms=getattr(tenant, "brand_terms", None),
+    )
+    if "is_brand_probe" in data:
+        row.is_brand_probe = bool(data["is_brand_probe"])
+    elif "question" in data or "question_group" in data:
+        row.is_brand_probe = resolve_is_brand_probe(
+            question=row.question,
+            brand_names=brand_names,
+            explicit=None,
+            question_group=row.question_group,
+        )
     await session.commit()
     await session.refresh(row)
     return _prompt_payload(row)
@@ -441,9 +771,20 @@ async def import_prompts(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(req.tenant_id)
-    await _ensure_tenant_exists(session, req.tenant_id)
+    tenant = await _ensure_tenant_exists(session, req.tenant_id)
+    brand_names = brand_names_from_tenant(
+        name=getattr(tenant, "name", None),
+        brand_terms=getattr(tenant, "brand_terms", None),
+    )
     created = []
     for item in req.items:
+        q_group = normalize_question_group(item.question_group)
+        probe = resolve_is_brand_probe(
+            question=item.question,
+            brand_names=brand_names,
+            explicit=item.is_brand_probe,
+            question_group=q_group,
+        )
         row = GeoPrompt(
             tenant_id=req.tenant_id,
             question=item.question.strip(),
@@ -451,6 +792,9 @@ async def import_prompts(
             tags=item.tags,
             demand_note=item.demand_note,
             source="import",
+            question_group=q_group,
+            market=normalize_market(item.market),
+            is_brand_probe=probe,
             created_by=ctx.user_id,
         )
         session.add(row)
@@ -488,6 +832,9 @@ def _snapshot_payload(row: GeoAnswerSnapshot, *, prompt_question: str | None = N
         "captured_at": _iso(row.captured_at),
         "mentions_brand": bool(row.mentions_brand),
         "cited_urls": row.cited_urls or [],
+        "competitors": row.competitors or [],
+        "brand_position": row.brand_position or "unknown",
+        "sentiment": row.sentiment or "unknown",
         "note": row.note,
         "created_by": row.created_by,
         "created_at": _iso(row.created_at),
@@ -506,12 +853,8 @@ async def _get_snapshot(
 async def _apply_brand_mention_side_effect(
     session: AsyncSession, prompt: GeoPrompt, *, mentions_brand: bool
 ) -> None:
-    if not mentions_brand:
-        return
-    tags = list(prompt.tags or [])
-    if "brand_missing" not in tags:
-        return
-    prompt.tags = clear_brand_missing_tag(tags)
+    _ = session
+    prompt.tags = apply_brand_mention_tags(prompt.tags, mentions_brand=mentions_brand)
 
 
 @router.get("/answer-snapshots")
@@ -563,6 +906,9 @@ async def create_answer_snapshot(
         captured_at=_parse_captured_at(req.captured_at),
         mentions_brand=bool(req.mentions_brand),
         cited_urls=normalize_cited_urls(req.cited_urls),
+        competitors=normalize_competitors(req.competitors),
+        brand_position=normalize_brand_position(req.brand_position),
+        sentiment=normalize_sentiment(req.sentiment),
         note=req.note,
         created_by=ctx.user_id,
     )
@@ -594,6 +940,12 @@ async def update_answer_snapshot(
         row.captured_at = _parse_captured_at(req.captured_at)
     if req.cited_urls is not None:
         row.cited_urls = normalize_cited_urls(req.cited_urls)
+    if req.competitors is not None:
+        row.competitors = normalize_competitors(req.competitors)
+    if req.brand_position is not None:
+        row.brand_position = normalize_brand_position(req.brand_position)
+    if req.sentiment is not None:
+        row.sentiment = normalize_sentiment(req.sentiment)
     if req.note is not None:
         row.note = req.note
     if req.mentions_brand is not None:
@@ -604,6 +956,284 @@ async def update_answer_snapshot(
     await session.commit()
     await session.refresh(row)
     return _snapshot_payload(row, prompt_question=prompt.question)
+
+
+@router.get("/competitor-insights")
+async def competitor_insights(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Aggregate competitor mentions from answer snapshots (Wave C)."""
+    ctx.ensure_tenant(tenant_id)
+    rows = list(
+        await session.scalars(
+            select(GeoAnswerSnapshot)
+            .where(GeoAnswerSnapshot.tenant_id == tenant_id)
+            .order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
+        )
+    )
+    prompt_ids = {r.prompt_id for r in rows}
+    questions: dict[int, str] = {}
+    if prompt_ids:
+        for p in await session.scalars(
+            select(GeoPrompt).where(
+                GeoPrompt.tenant_id == tenant_id, GeoPrompt.id.in_(prompt_ids)
+            )
+        ):
+            questions[p.id] = p.question
+    buckets: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        for name in row.competitors or []:
+            key = str(name).strip()
+            if not key:
+                continue
+            bucket = buckets.setdefault(
+                key,
+                {
+                    "name": key,
+                    "mention_count": 0,
+                    "prompt_ids": set(),
+                    "engines": set(),
+                    "latest_captured_at": None,
+                    "sample_prompt_question": None,
+                },
+            )
+            bucket["mention_count"] += 1
+            bucket["prompt_ids"].add(row.prompt_id)
+            bucket["engines"].add(row.engine)
+            if bucket["latest_captured_at"] is None:
+                bucket["latest_captured_at"] = _iso(row.captured_at)
+                bucket["sample_prompt_question"] = questions.get(row.prompt_id)
+    items = []
+    for bucket in buckets.values():
+        items.append(
+            {
+                "name": bucket["name"],
+                "mention_count": bucket["mention_count"],
+                "prompt_count": len(bucket["prompt_ids"]),
+                "engines": sorted(bucket["engines"]),
+                "latest_captured_at": bucket["latest_captured_at"],
+                "sample_prompt_question": bucket["sample_prompt_question"],
+            }
+        )
+    items.sort(key=lambda x: (-x["mention_count"], x["name"]))
+    return {"items": items}
+
+
+@router.get("/evaluation-insights")
+async def evaluation_insights(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Sentiment / brand-position aggregates from snapshots (Wave C)."""
+    ctx.ensure_tenant(tenant_id)
+    rows = list(
+        await session.scalars(
+            select(GeoAnswerSnapshot)
+            .where(GeoAnswerSnapshot.tenant_id == tenant_id)
+            .order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
+        )
+    )
+    sentiment_counts: dict[str, int] = {
+        "positive": 0,
+        "neutral": 0,
+        "negative": 0,
+        "unknown": 0,
+    }
+    position_counts: dict[str, int] = {
+        "first": 0,
+        "mentioned": 0,
+        "absent": 0,
+        "unknown": 0,
+    }
+    prompt_ids = {r.prompt_id for r in rows}
+    questions: dict[int, str] = {}
+    if prompt_ids:
+        for p in await session.scalars(
+            select(GeoPrompt).where(
+                GeoPrompt.tenant_id == tenant_id, GeoPrompt.id.in_(prompt_ids)
+            )
+        ):
+            questions[p.id] = p.question
+    recent = []
+    for row in rows:
+        sent = row.sentiment if row.sentiment in sentiment_counts else "unknown"
+        pos = row.brand_position if row.brand_position in position_counts else "unknown"
+        sentiment_counts[sent] += 1
+        position_counts[pos] += 1
+        if len(recent) < 40:
+            recent.append(
+                _snapshot_payload(row, prompt_question=questions.get(row.prompt_id))
+            )
+    return {
+        "sentiment_counts": sentiment_counts,
+        "position_counts": position_counts,
+        "recent": recent,
+        "total": len(rows),
+    }
+
+
+@router.post("/answer-snapshots/probe")
+async def probe_answer_snapshot(
+    req: AnswerSnapshotProbeRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """单引擎草稿探测（默认阿里云百炼 DeepSeek）：不写库，供运营确认后手工保存。"""
+    from app.ai.deepseek import DeepSeekError, chat_json
+
+    ctx.ensure_tenant(req.tenant_id)
+    prompt = await _get_prompt(session, req.prompt_id, req.tenant_id)
+    tenant = await _ensure_tenant_exists(session, req.tenant_id)
+    llm = await resolve_llm_credentials(session, req.tenant_id)
+    if not llm:
+        raise HTTPException(
+            503,
+            "未配置 AI 能力：请在「AI 能力配置」填写阿里云百炼 API Key，或改用粘贴登记",
+        )
+    brand = getattr(tenant, "name", None) or f"租户{req.tenant_id}"
+    system = (
+        "你是 GEO 可见度探测助手。请用中文直接回答用户问题，像常见 AI 助手的公开回答。"
+        "只返回 JSON：{\"raw_text\": \"完整回答正文\", \"suggested_mentions_brand\": true/false}。"
+        f"suggested_mentions_brand 表示回答是否明确提及品牌「{brand}」。不要编造不存在的官网承诺。"
+    )
+    user = f"品牌参考名：{brand}\n用户问题：{prompt.question}"
+    try:
+        data = await chat_json(
+            system,
+            user,
+            timeout=60.0,
+            api_key=llm["api_key"],
+            base_url=llm["base_url"],
+            model=llm["model"],
+        )
+    except DeepSeekError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    raw_text = str(data.get("raw_text") or "").strip()
+    if len(raw_text) < 4:
+        raise HTTPException(502, "探测结果过短，请改用粘贴")
+    suggested = bool(data.get("suggested_mentions_brand"))
+    return {
+        "prompt_id": prompt.id,
+        "prompt_question": prompt.question,
+        "engine": "deepseek",
+        "provider": llm.get("provider"),
+        "model": llm.get("model"),
+        "raw_text": raw_text,
+        "suggested_mentions_brand": suggested,
+        "persisted": False,
+    }
+
+
+@router.get("/ai-settings")
+async def get_ai_settings(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    await _ensure_tenant_exists(session, tenant_id)
+    row = await ensure_ai_setting(session, tenant_id)
+    effective = await resolve_llm_credentials(session, tenant_id)
+    payload = settings_public_payload(row)
+    payload["presets"] = preset_payload()
+    payload["effective"] = (
+        {
+            "enabled": True,
+            "provider": effective["provider"],
+            "base_url": effective["base_url"],
+            "model": effective["model"],
+            "source": effective["source"],
+        }
+        if effective
+        else {"enabled": False, "source": None}
+    )
+    return payload
+
+
+@router.put("/ai-settings")
+async def put_ai_settings(
+    req: AiSettingsUpdate,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(req.tenant_id)
+    await _ensure_tenant_exists(session, req.tenant_id)
+    row = await ensure_ai_setting(session, req.tenant_id)
+    if req.apply_preset:
+        preset = apply_provider_preset(req.provider)
+        row.provider = preset["provider"]
+        row.base_url = preset["base_url"]
+        row.model = preset["model"]
+    else:
+        row.provider = req.provider
+        if req.base_url:
+            row.base_url = req.base_url.strip().rstrip("/")
+        elif not row.base_url:
+            row.base_url = apply_provider_preset(req.provider)["base_url"]
+        if req.model:
+            row.model = req.model.strip()
+        elif not row.model:
+            row.model = apply_provider_preset(req.provider)["model"]
+    row.enabled = bool(req.enabled)
+    row.note = req.note
+    row.updated_by = ctx.user_id
+    if req.clear_api_key:
+        row.api_key_encrypted = None
+    elif req.api_key:
+        row.api_key_encrypted = encrypt_api_key(req.api_key)
+    await session.commit()
+    await session.refresh(row)
+    effective = await resolve_llm_credentials(session, req.tenant_id)
+    payload = settings_public_payload(row)
+    payload["presets"] = preset_payload()
+    payload["effective"] = (
+        {
+            "enabled": True,
+            "provider": effective["provider"],
+            "base_url": effective["base_url"],
+            "model": effective["model"],
+            "source": effective["source"],
+        }
+        if effective
+        else {"enabled": False, "source": None}
+    )
+    return payload
+
+
+@router.post("/ai-settings/test")
+async def test_ai_settings(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """用当前生效配置打一条极短 JSON 请求，验证 Key / 线路。"""
+    from app.ai.deepseek import DeepSeekError, chat_json
+
+    ctx.ensure_tenant(tenant_id)
+    llm = await resolve_llm_credentials(session, tenant_id)
+    if not llm:
+        raise HTTPException(503, "尚未配置可用的 AI API Key")
+    try:
+        data = await chat_json(
+            '只返回 JSON：{"ok": true}',
+            "ping",
+            timeout=30.0,
+            api_key=llm["api_key"],
+            base_url=llm["base_url"],
+            model=llm["model"],
+        )
+    except DeepSeekError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {
+        "ok": True,
+        "provider": llm["provider"],
+        "model": llm["model"],
+        "source": llm["source"],
+        "sample": data,
+    }
 
 
 # ---------- tracking engines (Wave B2) ----------
@@ -695,6 +1325,220 @@ async def put_tracking_engines(
     return {"items": [_engine_payload(r) for r in created], "count": len(created)}
 
 
+# ---------- publishing channels ----------
+
+
+def _channel_payload(row: GeoPublishingChannel) -> dict:
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "name": row.name,
+        "channel_type": row.channel_type,
+        "publish_mode": row.publish_mode,
+        "base_url": row.base_url,
+        "content_rules": row.content_rules,
+        "enabled": row.enabled,
+        "sort_order": row.sort_order,
+        "created_at": _iso(row.created_at),
+        "updated_at": _iso(row.updated_at),
+    }
+
+
+def _channel_account_payload(row: GeoChannelAccount) -> dict:
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "channel_id": row.channel_id,
+        "display_name": row.display_name,
+        "auth_type": row.auth_type,
+        "has_credentials": bool(row.credentials_encrypted),
+        "status": row.status,
+        "expires_at": _iso(row.expires_at),
+        "last_verified_at": _iso(row.last_verified_at),
+        "created_at": _iso(row.created_at),
+        "updated_at": _iso(row.updated_at),
+    }
+
+
+async def _ensure_default_publishing_channels(
+    session: AsyncSession, tenant_id: int
+) -> list[GeoPublishingChannel]:
+    rows = list(
+        await session.scalars(
+            select(GeoPublishingChannel)
+            .where(GeoPublishingChannel.tenant_id == tenant_id)
+            .order_by(GeoPublishingChannel.sort_order, GeoPublishingChannel.id)
+        )
+    )
+    if rows:
+        return rows
+    await _ensure_tenant_exists(session, tenant_id)
+    created = [GeoPublishingChannel(**item) for item in default_channel_rows(tenant_id)]
+    session.add_all(created)
+    await session.commit()
+    for row in created:
+        await session.refresh(row)
+    return created
+
+
+async def _get_publishing_channel(
+    session: AsyncSession, channel_id: int, tenant_id: int
+) -> GeoPublishingChannel:
+    row = await session.get(GeoPublishingChannel, channel_id)
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, "发布渠道不存在")
+    return row
+
+
+async def _get_channel_account(
+    session: AsyncSession, account_id: int, tenant_id: int
+) -> GeoChannelAccount:
+    row = await session.get(GeoChannelAccount, account_id)
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, "渠道账号不存在")
+    return row
+
+
+@router.get("/publishing-channels")
+async def list_publishing_channels(
+    tenant_id: int = Query(...),
+    enabled_only: bool = Query(False),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    rows = await _ensure_default_publishing_channels(session, tenant_id)
+    if enabled_only:
+        rows = [row for row in rows if row.enabled]
+    return {"items": [_channel_payload(row) for row in rows]}
+
+
+@router.post("/publishing-channels")
+async def create_publishing_channel(
+    req: PublishingChannelCreate,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(req.tenant_id)
+    await _ensure_tenant_exists(session, req.tenant_id)
+    row = GeoPublishingChannel(
+        tenant_id=req.tenant_id,
+        name=req.name.strip(),
+        channel_type=req.channel_type,
+        publish_mode=req.publish_mode,
+        base_url=req.base_url,
+        content_rules=req.content_rules,
+        enabled=req.enabled,
+        sort_order=req.sort_order,
+        created_by=ctx.user_id,
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return _channel_payload(row)
+
+
+@router.patch("/publishing-channels/{channel_id}")
+async def update_publishing_channel(
+    channel_id: int,
+    req: PublishingChannelUpdate,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    row = await _get_publishing_channel(session, channel_id, tenant_id)
+    for field in ("channel_type", "publish_mode", "base_url", "content_rules", "enabled", "sort_order"):
+        value = getattr(req, field)
+        if value is not None:
+            setattr(row, field, value)
+    if req.name is not None:
+        row.name = req.name.strip()
+    await session.commit()
+    await session.refresh(row)
+    return _channel_payload(row)
+
+
+@router.get("/channel-accounts")
+async def list_channel_accounts(
+    tenant_id: int = Query(...),
+    channel_id: int | None = Query(None),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    if channel_id is not None:
+        await _get_publishing_channel(session, channel_id, tenant_id)
+    stmt = select(GeoChannelAccount).where(GeoChannelAccount.tenant_id == tenant_id)
+    if channel_id is not None:
+        stmt = stmt.where(GeoChannelAccount.channel_id == channel_id)
+    rows = list(await session.scalars(stmt.order_by(GeoChannelAccount.id.desc())))
+    return {"items": [_channel_account_payload(row) for row in rows]}
+
+
+@router.post("/channel-accounts")
+async def create_channel_account(
+    req: ChannelAccountCreate,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(req.tenant_id)
+    await _get_publishing_channel(session, req.channel_id, req.tenant_id)
+    credentials_encrypted = None
+    if req.credentials:
+        try:
+            credentials_encrypted = encrypt_api_key(
+                json.dumps(req.credentials, ensure_ascii=False, sort_keys=True)
+            )
+        except ValueError as exc:
+            raise HTTPException(503, str(exc)) from exc
+    row = GeoChannelAccount(
+        tenant_id=req.tenant_id,
+        channel_id=req.channel_id,
+        display_name=req.display_name.strip(),
+        auth_type=req.auth_type,
+        credentials_encrypted=credentials_encrypted,
+        status="active" if credentials_encrypted else "unconfigured",
+        created_by=ctx.user_id,
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return _channel_account_payload(row)
+
+
+@router.patch("/channel-accounts/{account_id}")
+async def update_channel_account(
+    account_id: int,
+    req: ChannelAccountUpdate,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    row = await _get_channel_account(session, account_id, tenant_id)
+    if req.display_name is not None:
+        row.display_name = req.display_name.strip()
+    if req.auth_type is not None:
+        row.auth_type = req.auth_type
+    if req.credentials is not None:
+        try:
+            row.credentials_encrypted = encrypt_api_key(
+                json.dumps(req.credentials, ensure_ascii=False, sort_keys=True)
+            )
+        except ValueError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        row.status = "active"
+    if req.clear_credentials:
+        row.credentials_encrypted = None
+        row.status = "unconfigured"
+    if req.status is not None:
+        row.status = req.status
+    await session.commit()
+    await session.refresh(row)
+    return _channel_account_payload(row)
+
+
 # ---------- media placements (Wave B2) ----------
 
 
@@ -704,16 +1548,41 @@ def _media_payload(row: GeoMediaPlacement) -> dict[str, Any]:
         "tenant_id": row.tenant_id,
         "name": row.name,
         "channel_type": row.channel_type,
+        "channel_key": row.channel_key,
         "target_url": row.target_url,
         "authority_note": row.authority_note,
         "status": row.status,
         "published_url": row.published_url,
         "priority": row.priority,
+        "priority_band": row.priority_band,
+        "fits_groups": row.fits_groups or [],
+        "citation_national": row.citation_national,
         "related_prompt_id": row.related_prompt_id,
         "created_by": row.created_by,
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
     }
+
+
+async def _ensure_default_media_placements(
+    session: AsyncSession, tenant_id: int
+) -> list[GeoMediaPlacement]:
+    rows = list(
+        await session.scalars(
+            select(GeoMediaPlacement)
+            .where(GeoMediaPlacement.tenant_id == tenant_id)
+            .order_by(GeoMediaPlacement.priority.desc(), GeoMediaPlacement.id.desc())
+        )
+    )
+    if rows:
+        return rows
+    await _ensure_tenant_exists(session, tenant_id)
+    created = [GeoMediaPlacement(**item) for item in default_media_placement_rows(tenant_id)]
+    session.add_all(created)
+    await session.commit()
+    for row in created:
+        await session.refresh(row)
+    return created
 
 
 async def _get_media_placement(
@@ -729,18 +1598,53 @@ async def _get_media_placement(
 async def list_media_placements(
     tenant_id: int = Query(...),
     status: str | None = Query(None),
+    seed_defaults: bool = Query(
+        True,
+        description="When empty, seed CN citation blueprint placements (D1)",
+    ),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
-    stmt = select(GeoMediaPlacement).where(GeoMediaPlacement.tenant_id == tenant_id)
+    if seed_defaults:
+        rows = await _ensure_default_media_placements(session, tenant_id)
+    else:
+        rows = list(
+            await session.scalars(
+                select(GeoMediaPlacement)
+                .where(GeoMediaPlacement.tenant_id == tenant_id)
+                .order_by(GeoMediaPlacement.priority.desc(), GeoMediaPlacement.id.desc())
+            )
+        )
     if status:
-        stmt = stmt.where(GeoMediaPlacement.status == status)
-    stmt = stmt.order_by(
-        GeoMediaPlacement.priority.desc(), GeoMediaPlacement.id.desc()
-    )
-    rows = list(await session.scalars(stmt))
+        rows = [r for r in rows if r.status == status]
     return {"items": [_media_payload(r) for r in rows]}
+
+
+@router.get("/channel-blueprint")
+async def get_channel_blueprint(
+    tenant_id: int = Query(...),
+    group: str | None = Query(None, description="问题组：推荐/比较/替代/…"),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """CN citation-weighted channel recommendations (GeoLook D1)."""
+    ctx.ensure_tenant(tenant_id)
+    await _ensure_tenant_exists(session, tenant_id)
+    payload = blueprint_payload(group=normalize_question_group(group))
+    # Annotate with tenant placement coverage by channel_key
+    placements = await _ensure_default_media_placements(session, tenant_id)
+    by_key = {p.channel_key: p for p in placements if p.channel_key}
+    for item in payload["channels"]:
+        row = by_key.get(item["channel_key"])
+        item["placement_status"] = row.status if row else None
+        item["placement_id"] = row.id if row else None
+        item["published_url"] = row.published_url if row else None
+    for item in payload["all_channels"]:
+        row = by_key.get(item["channel_key"])
+        item["placement_status"] = row.status if row else None
+        item["placement_id"] = row.id if row else None
+    return payload
 
 
 @router.post("/media-placements")
@@ -757,11 +1661,15 @@ async def create_media_placement(
         tenant_id=req.tenant_id,
         name=req.name.strip(),
         channel_type=req.channel_type,
+        channel_key=req.channel_key,
         target_url=req.target_url,
         authority_note=req.authority_note,
         status=req.status,
         published_url=req.published_url,
         priority=int(req.priority),
+        priority_band=req.priority_band,
+        fits_groups=req.fits_groups,
+        citation_national=req.citation_national,
         related_prompt_id=req.related_prompt_id,
         created_by=ctx.user_id,
     )
@@ -785,6 +1693,8 @@ async def update_media_placement(
         row.name = req.name.strip()
     if req.channel_type is not None:
         row.channel_type = req.channel_type
+    if req.channel_key is not None:
+        row.channel_key = req.channel_key
     if req.target_url is not None:
         row.target_url = req.target_url
     if req.authority_note is not None:
@@ -795,6 +1705,12 @@ async def update_media_placement(
         row.published_url = req.published_url
     if req.priority is not None:
         row.priority = int(req.priority)
+    if req.priority_band is not None:
+        row.priority_band = req.priority_band
+    if req.fits_groups is not None:
+        row.fits_groups = req.fits_groups
+    if req.citation_national is not None:
+        row.citation_national = req.citation_national
     if req.related_prompt_id is not None:
         if req.related_prompt_id:
             await _get_prompt(session, req.related_prompt_id, tenant_id)
@@ -843,6 +1759,7 @@ async def create_fact(
         source_name=req.source_name.strip(),
         source_url=req.source_url,
         observed_at=req.observed_at,
+        expires_at=req.expires_at,
         trust_level=req.trust_level,
         author_name=req.author_name,
         meta=req.meta,
@@ -985,6 +1902,8 @@ async def create_task(
     await _ensure_tenant_exists(session, req.tenant_id)
     prompt = await _get_prompt(session, req.prompt_id, req.tenant_id)
     title = (req.title or prompt.question).strip()
+    from app.geo.content.brief import normalize_brief
+
     task = GeoContentTask(
         tenant_id=req.tenant_id,
         prompt_id=prompt.id,
@@ -993,7 +1912,7 @@ async def create_task(
         target_channels=normalize_channels(req.target_channels),
         owner_user_id=ctx.user_id,
         pipeline_step="opportunity",
-        brief=req.brief,
+        brief=normalize_brief(req.brief) if req.brief else {},
     )
     session.add(task)
     await session.flush()
@@ -1060,6 +1979,15 @@ async def patch_task(
     data = req.model_dump(exclude_unset=True)
     if "title" in data and data["title"] is not None:
         data["title"] = data["title"].strip()
+    if "brief" in data:
+        from app.geo.content.brief import normalize_brief
+
+        raw = data["brief"]
+        if hasattr(raw, "model_dump"):
+            raw = raw.model_dump(exclude_unset=True)
+        data["brief"] = normalize_brief(raw)
+    if "target_channels" in data and data["target_channels"] is not None:
+        data["target_channels"] = normalize_channels(data["target_channels"])
     for key, value in data.items():
         setattr(task, key, value)
     await _sync_task_pipeline(session, task)
@@ -1121,6 +2049,7 @@ async def save_article(
     )
     session.add(article)
     task.title = req.title.strip()
+    invalidate_review(task)
     if task.status in {"draft", "facts_bound", "generating", "failed"}:
         task.status = "editing"
     await _sync_task_pipeline(session, task)
@@ -1145,10 +2074,19 @@ async def check_task(
     ready = is_ready(checks, require_channels=require_channels)
     check_dicts = [c.to_dict() for c in checks]
     patches = build_fix_patches(rule_input)
+    from app.geo.content.draft_lint import lint_draft, lint_summary
+    from app.geo.content.extractable_blocks import blocks_payload
+
+    lint = lint_summary(
+        lint_draft(rule_input.body_markdown or "", facts=rule_input.facts or [])
+    )
+    blocks = blocks_payload(rule_input.body_markdown or "")
     task.rule_result = {
         "ready": ready,
         "require_channels": require_channels,
         "checks": check_dicts,
+        "lint": lint,
+        "blocks": blocks,
         "checked_at": datetime.utcnow().isoformat(),
     }
     if ready:
@@ -1163,7 +2101,37 @@ async def check_task(
         "ready": ready,
         "checks": check_dicts,
         "patches": patches,
+        "lint": lint,
+        "blocks": blocks,
         "task": await _task_payload(session, task, detail=True),
+    }
+
+
+@router.post("/content-tasks/{task_id}/lint")
+async def lint_task_article(
+    task_id: int,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """编造风险扫描（不改任务状态）。"""
+    from app.geo.content.draft_lint import lint_draft, lint_summary
+    from app.geo.content.extractable_blocks import blocks_payload
+
+    ctx.ensure_tenant(tenant_id)
+    task = await _get_task(session, task_id, tenant_id)
+    article = await _latest_article(session, task.id)
+    if article is None:
+        raise HTTPException(400, "请先生成或保存母稿")
+    rule_input = await _build_rule_input(session, task, article)
+    lint = lint_summary(
+        lint_draft(article.body_markdown or "", facts=rule_input.facts or [])
+    )
+    blocks = blocks_payload(article.body_markdown or "")
+    return {
+        "task_id": task.id,
+        "lint": lint,
+        "blocks": blocks,
     }
 
 
@@ -1206,6 +2174,7 @@ async def apply_patch(
     )
     session.add(new_article)
     task.status = "editing"
+    invalidate_review(task)
     await session.flush()
     rule_input = await _build_rule_input(session, task, new_article)
     checks = run_checks(rule_input)
@@ -1242,21 +2211,41 @@ async def generate_task_article(
     tenant = await _ensure_tenant_exists(session, tenant_id)
     prompt = await _get_prompt(session, task.prompt_id, tenant_id)
     facts = await _task_facts(session, task.id)
-    if len(facts) < 3:
-        raise HTTPException(400, "生成前至少绑定 3 条带来源的事实卡")
+    fact_dicts = _fact_dicts(facts)
+    from app.geo.content.brief import (
+        brief_generation_error_message,
+        brief_ready,
+        normalize_brief,
+    )
+    from app.geo.content.evidence import (
+        generation_evidence_error_message,
+        prepare_facts_for_generation,
+    )
+
+    brief_norm = normalize_brief(task.brief)
+    if not brief_ready(brief_norm):
+        raise HTTPException(400, brief_generation_error_message(brief_norm))
+
+    _, evidence_preview = prepare_facts_for_generation(fact_dicts, min_eligible=3)
+    if not evidence_preview["ok"]:
+        raise HTTPException(400, generation_evidence_error_message(evidence_preview))
 
     task.status = "generating"
     await session.commit()
     try:
+        llm = await resolve_llm_credentials(session, tenant_id)
         payload = await generate_master_article(
             tenant_name=tenant.name,
             question=prompt.question,
-            facts=_fact_dicts(facts),
+            facts=fact_dicts,
+            llm=llm,
+            brief=brief_norm,
         )
         body = to_markdown(payload)
         outline = outline_from_payload(payload)
         latest = await _latest_article(session, task.id)
         version_no = (latest.version_no + 1) if latest else 1
+        evidence_meta = payload.get("_evidence") or evidence_preview
         article = GeoArticleVersion(
             task_id=task.id,
             version_no=version_no,
@@ -1267,12 +2256,15 @@ async def generate_task_article(
             generation_meta={
                 "source": payload.get("_source"),
                 "used_fact_ids": payload.get("used_fact_ids"),
+                "evidence": evidence_meta,
+                "brief": payload.get("_brief") or brief_norm,
             },
             created_by=ctx.user_id,
         )
         session.add(article)
         task.title = payload["title"]
         task.status = "editing"
+        invalidate_review(task)
         await session.commit()
     except GeoContentError as exc:
         task.status = "failed"
@@ -1321,9 +2313,16 @@ async def create_variants(
     article = await _latest_article(session, task.id)
     if article is None:
         raise HTTPException(400, "请先生成或保存母稿")
-    channels = normalize_channels(
-        req.channels or list(task.target_channels or [])
+    registry_rows = registry_row_dicts(
+        await _ensure_default_publishing_channels(session, tenant_id)
     )
+    enabled_types = enabled_types_from_rows(registry_rows)
+    channels = filter_channels_by_registry(
+        normalize_channels(req.channels or list(task.target_channels or [])),
+        enabled_types=enabled_types or None,
+    )
+    if not channels:
+        raise HTTPException(400, "没有可用的启用发布渠道，请先在「发布渠道」配置中启用")
     existing = {v.channel: v for v in await _variants(session, task.id)}
     created = []
     for channel in channels:
@@ -1433,6 +2432,54 @@ async def export_variant(
     }
 
 
+@router.post("/content-tasks/{task_id}/submit-review")
+async def submit_task_review(
+    task_id: int,
+    req: ReviewSubmit,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    task = await _get_task(session, task_id, tenant_id)
+    article = await _latest_article(session, task.id)
+    if article is None:
+        raise HTTPException(400, "请先生成母稿后再提交审校")
+    try:
+        apply_submit(task, note=req.note)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await _sync_task_pipeline(session, task)
+    await session.commit()
+    await session.refresh(task)
+    return await _task_payload(session, task, detail=True)
+
+
+@router.post("/content-tasks/{task_id}/review")
+async def decide_task_review(
+    task_id: int,
+    req: ReviewDecision,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    task = await _get_task(session, task_id, tenant_id)
+    try:
+        apply_decision(
+            task,
+            decision=req.decision,
+            note=req.note,
+            reviewer_id=ctx.user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await _sync_task_pipeline(session, task)
+    await session.commit()
+    await session.refresh(task)
+    return await _task_payload(session, task, detail=True)
+
+
 @router.post("/content-tasks/{task_id}/publications")
 async def record_publication(
     task_id: int,
@@ -1452,13 +2499,17 @@ async def record_publication(
     article = await _latest_article(session, task.id)
     rule_input = await _build_rule_input(session, task, article)
     try:
-        assert_can_publish(rule_input)
+        assert_can_publish(rule_input, task=task)
     except PublishGateError as exc:
         raise HTTPException(400, str(exc)) from exc
+    registry_rows = registry_row_dicts(
+        await _ensure_default_publishing_channels(session, req.tenant_id)
+    )
+    registry_mode = publish_mode_for_channel(req.channel, registry_rows)
     pub = GeoPublication(
         variant_id=variant.id,
         channel=req.channel,
-        publish_mode="manual_export",
+        publish_mode=publication_publish_mode(registry_mode),
         published_url=url,
         published_at=datetime.utcnow(),
         status="published",
@@ -1554,6 +2605,61 @@ async def content_stats(
             GeoMediaPlacement.status == "published",
         )
     )
+    active_prompts = list(
+        await session.scalars(
+            select(GeoPrompt).where(
+                GeoPrompt.tenant_id == tenant_id, GeoPrompt.status == "active"
+            )
+        )
+    )
+    prompts_brand_missing = sum(
+        1 for p in active_prompts if "brand_missing" in (p.tags or [])
+    )
+    prompt_ids = [p.id for p in active_prompts]
+    latest = await _latest_snapshots_by_prompt(session, tenant_id, prompt_ids)
+    published_at = await _published_task_updated_by_prompt(session, tenant_id, prompt_ids)
+    prompts_need_recheck = 0
+    for p in active_prompts:
+        snap = latest.get(p.id)
+        if needs_recheck(
+            has_published_task=p.id in published_at,
+            task_updated_at=published_at.get(p.id),
+            last_snapshot_at=snap.captured_at if snap else None,
+        ):
+            prompts_need_recheck += 1
+    snap_total = int(snapshots or 0)
+    snap_mention = int(snapshots_mention or 0)
+    engines_covered = await session.scalar(
+        select(func.count(func.distinct(GeoAnswerSnapshot.engine))).where(
+            GeoAnswerSnapshot.tenant_id == tenant_id
+        )
+    )
+    competitor_cols = list(
+        await session.scalars(
+            select(GeoAnswerSnapshot.competitors).where(
+                GeoAnswerSnapshot.tenant_id == tenant_id
+            )
+        )
+    )
+    snapshots_with_competitors = sum(1 for c in competitor_cols if c)
+
+    # D0: exclude brand-probe prompts from category visibility mention_rate
+    prompt_probe = {p.id: bool(p.is_brand_probe) for p in active_prompts}
+    all_snaps = list(
+        await session.scalars(
+            select(GeoAnswerSnapshot).where(GeoAnswerSnapshot.tenant_id == tenant_id)
+        )
+    )
+    split_rows = [
+        {
+            "mentions_brand": bool(s.mentions_brand),
+            "is_brand_probe": bool(prompt_probe.get(s.prompt_id, False)),
+        }
+        for s in all_snaps
+    ]
+    split = split_visibility_metrics(split_rows)
+    prompts_probe = sum(1 for p in active_prompts if p.is_brand_probe)
+
     return {
         "prompts": int(prompts or 0),
         "facts": int(facts or 0),
@@ -1564,8 +2670,23 @@ async def content_stats(
         "todo_ready": int(todo_ready or 0),
         "todo_publish": int(todo_publish or 0),
         "from_diagnosis_count": int(from_diagnosis or 0),
-        "snapshots": int(snapshots or 0),
-        "snapshots_mention_brand": int(snapshots_mention or 0),
+        "snapshots": snap_total,
+        "snapshots_mention_brand": snap_mention,
         "media_open": int(media_planned or 0),
         "media_published": int(media_published or 0),
+        "prompts_brand_missing": int(prompts_brand_missing),
+        "prompts_need_recheck": int(prompts_need_recheck),
+        "prompts_probe": int(prompts_probe),
+        # Raw all-snapshot rate kept for debugging; primary KPI excludes probes.
+        "visibility_mention_rate_raw": visibility_mention_rate(
+            total_snapshots=snap_total, mention_snapshots=snap_mention
+        ),
+        "visibility_mention_rate": split["visibility_mention_rate"],
+        "snapshots_visibility": split["snapshots_visibility"],
+        "snapshots_visibility_mention": split["snapshots_visibility_mention"],
+        "snapshots_probe": split["snapshots_probe"],
+        "snapshots_probe_mention": split["snapshots_probe_mention"],
+        "probe_recognition_rate": split["probe_recognition_rate"],
+        "visibility_engines_covered": int(engines_covered or 0),
+        "snapshots_with_competitors": int(snapshots_with_competitors),
     }

@@ -21,3 +21,4 @@ logs/
 .vscode/
 
 postgres_data/
+_refs/
