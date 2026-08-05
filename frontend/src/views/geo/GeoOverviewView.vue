@@ -50,6 +50,7 @@ const summaryCards = computed(() => {
 const workbenchLinks = [
   { label: 'AI 可见度', path: '/geo/visibility', desc: '登记 / 多引擎探测', vue: true },
   { label: '引用域名', path: '/geo/citations', desc: '引用聚合与蓝图对照', vue: true },
+  { label: '交付摘要', path: '/geo/deliverables', desc: '周期报告 Markdown', vue: true },
   { label: '内容工作台', path: '/deal-sniper/geo/dashboard', desc: '任务、母稿与渠道稿' },
   { label: '竞品分析', path: '/deal-sniper/geo/competitors', desc: '竞品出现与份额' },
   { label: '发布渠道', path: '/deal-sniper/geo/publishing-channels', desc: 'Webhook 与渠道配置' },

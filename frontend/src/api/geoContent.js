@@ -129,3 +129,19 @@ export function fetchGeoCitationInsights(tenantId) {
     params: { tenant_id: tenantId },
   })
 }
+
+export function fetchGeoDeliverablesPack(tenantId, params = {}) {
+  return client.get('/api/v1/geo/deliverables/pack', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
+/** Absolute URL for Markdown download (uses same auth headers via browser navigation only if cookie; prefer blob fetch). */
+export async function downloadGeoDeliverablesMarkdown(tenantId, params = {}) {
+  const data = await client.get('/api/v1/geo/deliverables/pack', {
+    params: { tenant_id: tenantId, format: 'md', ...params },
+    responseType: 'text',
+    transformResponse: [(v) => v],
+  })
+  return typeof data === 'string' ? data : String(data ?? '')
+}

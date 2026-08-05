@@ -146,6 +146,7 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
         or p.startswith("/api/v1/geo/competitor-insights")
         or p.startswith("/api/v1/geo/evaluation-insights")
         or p.startswith("/api/v1/geo/visibility-period-diff")
+        or p.startswith("/api/v1/geo/deliverables")
     ):
         return {"geo.content"}, edit
     if p.startswith("/api/v1/geo"):
