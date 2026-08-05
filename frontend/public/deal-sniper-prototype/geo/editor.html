@@ -67,11 +67,39 @@
             <label class="wb-label">备注（可选）</label>
             <input class="wb-input" id="briefNotes" placeholder="补充约束或语气">
           </div>
+          <div class="wb-field" style="grid-column:1 / -1">
+            <label class="wb-label">策略 · AI 问题（可选）</label>
+            <input class="wb-input" id="briefAiQuestion" placeholder="默认=机会词问题">
+          </div>
+          <div class="wb-field" style="grid-column:1 / -1">
+            <label class="wb-label">策略 · AI 不推荐原因（逗号分隔）</label>
+            <input class="wb-input" id="briefNotRec" placeholder="缺对比,缺案例,缺权威源">
+          </div>
+          <div class="wb-field" style="grid-column:1 / -1">
+            <label class="wb-label">策略 · 信息缺口（逗号，可用枚举键或中文）</label>
+            <input class="wb-input" id="briefGaps" placeholder="comparison,customer_case,authority_source">
+          </div>
+          <div class="wb-field" style="grid-column:1 / -1">
+            <label class="wb-label">策略 · 应推荐场景</label>
+            <input class="wb-input" id="briefWhen" placeholder="何时应推荐本品牌">
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">策略 · 竞品（逗号）</label>
+            <input class="wb-input" id="briefCompetitors" placeholder="竞品A,竞品B">
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">策略 · 必须覆盖</label>
+            <input class="wb-input" id="briefMustCover" placeholder="品牌名,核心能力">
+          </div>
         </div>
         <div class="wb-toolbar">
+          <button class="wb-btn primary" id="btnSuggestBrief">AI 建议 Brief</button>
           <button class="wb-btn" id="btnSaveBrief">保存 Brief</button>
+          <button class="wb-btn" id="btnRetrieveFacts">召回事实</button>
+          <button class="wb-btn" id="btnApplyTopFacts">绑定召回 Top</button>
           <span class="wb-muted" id="briefReadyLine"></span>
         </div>
+        <div class="wb-hint" id="retrieveLine" style="margin-top:8px"></div>
       </div>
       <div class="wb-card">
         <strong>审校</strong>
@@ -162,9 +190,14 @@
     });
   }
 
+  var lastRetrieveIds = [];
+
+  function splitCsv(val) {
+    return (val || '').split(/[,，;；]/).map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+
   function readBriefForm() {
-    var banned = document.getElementById('briefBanned').value.split(/[,，]/)
-      .map(function (s) { return s.trim(); }).filter(Boolean);
+    var banned = splitCsv(document.getElementById('briefBanned').value);
     return {
       industry: document.getElementById('briefIndustry').value.trim(),
       audience: document.getElementById('briefAudience').value.trim(),
@@ -173,6 +206,13 @@
       cta: document.getElementById('briefCta').value.trim(),
       banned_claims: banned,
       notes: document.getElementById('briefNotes').value.trim() || null,
+      ai_question: document.getElementById('briefAiQuestion').value.trim() || null,
+      not_recommended_reasons: splitCsv(document.getElementById('briefNotRec').value),
+      info_gaps: splitCsv(document.getElementById('briefGaps').value),
+      recommend_when: document.getElementById('briefWhen').value.trim() || null,
+      competitors: splitCsv(document.getElementById('briefCompetitors').value),
+      must_cover: splitCsv(document.getElementById('briefMustCover').value),
+      schema_version: 2,
     };
   }
 
@@ -187,8 +227,15 @@
     document.getElementById('briefCta').value = b.cta || '';
     document.getElementById('briefBanned').value = (b.banned_claims || []).join(', ');
     document.getElementById('briefNotes').value = b.notes || '';
+    document.getElementById('briefAiQuestion').value = b.ai_question || '';
+    document.getElementById('briefNotRec').value = (b.not_recommended_reasons || []).join(', ');
+    document.getElementById('briefGaps').value = (b.info_gaps || []).join(', ');
+    document.getElementById('briefWhen').value = b.recommend_when || '';
+    document.getElementById('briefCompetitors').value = (b.competitors || []).join(', ');
+    document.getElementById('briefMustCover').value = (b.must_cover || []).join(', ');
+    var rich = task && typeof task.strategy_richness === 'number' ? task.strategy_richness : 0;
     document.getElementById('briefReadyLine').textContent = task && task.brief_ready
-      ? 'Brief 已齐，可生成'
+      ? ('Brief 已齐，可生成 · 策略完整度 ' + Math.round(rich * 100) + '%')
       : 'Brief 未齐：请填行业/受众/意图/内容类型/CTA';
   }
 
@@ -544,6 +591,49 @@
     try {
       task = await GeoAPI.patchTask(taskId, { brief: readBriefForm() });
       renderAll();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnSuggestBrief').onclick = async function () {
+    try {
+      var res = await GeoAPI.suggestBrief(taskId, { overwrite: false, use_llm: true });
+      if (res && res.suggested_brief) {
+        task.brief = res.suggested_brief;
+        task.strategy_richness = res.strategy_richness;
+        renderBrief();
+        document.getElementById('briefReadyLine').textContent =
+          '已填入建议 Brief（未保存）· 策略 ' + Math.round((res.strategy_richness || 0) * 100) + '%' +
+          (res.used_llm ? ' · LLM' : ' · 启发式');
+      }
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnRetrieveFacts').onclick = async function () {
+    try {
+      await GeoAPI.patchTask(taskId, { brief: readBriefForm() });
+      var res = await GeoAPI.retrieveFacts(taskId, { limit: 8, verified_only: false });
+      lastRetrieveIds = (res.items || []).map(function (x) { return x.fact_id; }).filter(Boolean);
+      var line = (res.items || []).slice(0, 8).map(function (x) {
+        return '#' + x.fact_id + ' ' + (x.title || '') + ' (' + x.score + ')';
+      }).join(' · ');
+      document.getElementById('retrieveLine').textContent =
+        lastRetrieveIds.length
+          ? ('召回 ' + lastRetrieveIds.length + ' 条：' + line)
+          : '未召回到相关事实';
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnApplyTopFacts').onclick = async function () {
+    try {
+      if (!lastRetrieveIds.length) {
+        var res = await GeoAPI.retrieveFacts(taskId, { limit: 8, verified_only: true });
+        lastRetrieveIds = (res.items || []).map(function (x) { return x.fact_id; }).filter(Boolean);
+      }
+      if (!lastRetrieveIds.length) {
+        document.getElementById('retrieveLine').textContent = '没有可绑定的召回结果';
+        return;
+      }
+      task = await GeoAPI.applyRetrievedFacts(taskId, lastRetrieveIds);
+      allFacts = (await GeoAPI.listFacts()).items || [];
+      renderAll();
+      document.getElementById('retrieveLine').textContent = '已绑定召回事实：' + lastRetrieveIds.join(', ');
     } catch (e) { GeoWB.showError(err, e); }
   };
   document.getElementById('btnSubmitReview').onclick = async function () {

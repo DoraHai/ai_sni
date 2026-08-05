@@ -208,10 +208,13 @@ async def generate_master_article(
     Structured ``brief`` is required (industry/audience/intent/content_type/cta).
     """
     from app.geo.content.brief import (
+        CONTENT_TYPE_SECTIONS,
         brief_generation_error_message,
         brief_prompt_block,
         brief_ready,
+        brief_strategy_block,
         normalize_brief,
+        strategy_richness,
     )
     from app.geo.content.evidence import (
         generation_evidence_error_message,
@@ -246,6 +249,23 @@ async def generate_master_article(
         for f in eligible
     ]
     brief_block = brief_prompt_block(brief_norm)
+    strategy_block = brief_strategy_block(brief_norm)
+    section_hint = CONTENT_TYPE_SECTIONS.get(brief_norm.get("content_type") or "", [])
+
+    def _stamp_brief_meta(payload: dict[str, Any]) -> dict[str, Any]:
+        payload["_evidence"] = evidence_meta
+        payload["_brief"] = brief_norm
+        payload["_strategy_richness"] = strategy_richness(brief_norm)
+        parts = []
+        if brief_block:
+            parts.append(f"【Brief】\n{brief_block}")
+        if strategy_block:
+            parts.append(f"【策略】\n{strategy_block}")
+        if parts:
+            payload["disclaimer"] = (
+                str(payload.get("disclaimer") or "") + "\n\n" + "\n\n".join(parts)
+            ).strip()
+        return payload
 
     use_ai = bool(llm) or is_enabled()
     if not use_ai:
@@ -255,25 +275,23 @@ async def generate_master_article(
             ),
             compact,
         )
-        payload["_evidence"] = evidence_meta
-        payload["_brief"] = brief_norm
-        if brief_block and isinstance(payload.get("direct_answer"), str):
-            # Keep deterministic path honest: stamp brief into disclaimer meta only.
-            payload["disclaimer"] = (
-                str(payload.get("disclaimer") or "")
-                + f"\n\n【Brief】\n{brief_block}"
-            ).strip()
-        return payload
+        return _stamp_brief_meta(payload)
 
     system = (
         "你是严谨的 GEO 内容写作者。只使用提供的事实卡，禁止编造数据、客户名、排名或收录承诺。"
         "必须遵守 brief 中的行业、受众、意图、内容类型与 CTA；禁用表述不得出现。"
+        "若提供策略层：须针对 ai_question 回答「在什么场景可被考虑/推荐」；"
+        "用事实回应 not_recommended_reasons 与 info_gaps（禁止编造填补）；"
+        "competitors 非空时 comparison 段须有可核验对比维度；"
+        "must_cover 实体须出现在 direct_answer 或 definition/conclusion 中。"
         "只返回 JSON 对象，字段：title, direct_answer, sections, used_fact_ids, disclaimer, updated_at。"
         "sections 为数组，每项 type 仅限 definition|comparison|faq|conclusion|body；"
         "faq 使用 items:[{q,a}]，其他类型使用 body。"
         "FAQ 至少 2 条；必须有 definition 与 conclusion；updated_at 用 YYYY-MM-DD。"
         "文末结论或直接答案中自然呼应 CTA，不要硬塞广告口号。"
     )
+    if section_hint:
+        system += "建议章节顺序：" + " → ".join(section_hint) + "。"
     user = json.dumps(
         {
             "brand": tenant_name,
@@ -281,6 +299,8 @@ async def generate_master_article(
             "facts": compact,
             "brief": brief_norm,
             "brief_text": brief_block,
+            "strategy_text": strategy_block,
+            "preferred_sections": section_hint,
         },
         ensure_ascii=False,
     )
@@ -297,6 +317,7 @@ async def generate_master_article(
         payload = normalize_article_payload(data, compact)
         payload["_evidence"] = evidence_meta
         payload["_brief"] = brief_norm
+        payload["_strategy_richness"] = strategy_richness(brief_norm)
         return payload
     except DeepSeekError:
         # 可演示降级，与诊断 advice 一致
@@ -306,11 +327,4 @@ async def generate_master_article(
             ),
             compact,
         )
-        payload["_evidence"] = evidence_meta
-        payload["_brief"] = brief_norm
-        if brief_block:
-            payload["disclaimer"] = (
-                str(payload.get("disclaimer") or "")
-                + f"\n\n【Brief】\n{brief_block}"
-            ).strip()
-        return payload
+        return _stamp_brief_meta(payload)

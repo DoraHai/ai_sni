@@ -263,6 +263,27 @@
         body: body,
       });
     },
+    suggestBrief: function (id, body) {
+      return api('/content-tasks/' + id + '/suggest-brief', {
+        method: 'POST',
+        query: withTenantQuery(),
+        body: body || {},
+      });
+    },
+    retrieveFacts: function (id, body) {
+      return api('/content-tasks/' + id + '/retrieve-facts', {
+        method: 'POST',
+        query: withTenantQuery(),
+        body: body || {},
+      });
+    },
+    applyRetrievedFacts: function (id, factIds) {
+      return api('/content-tasks/' + id + '/retrieve-facts/apply', {
+        method: 'POST',
+        query: withTenantQuery(),
+        body: { fact_ids: factIds || [] },
+      });
+    },
     createTaskFromDiagnosis: function (body) {
       return api('/content-tasks/from-diagnosis', { method: 'POST', body: body });
     },

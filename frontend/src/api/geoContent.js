@@ -53,6 +53,33 @@ export function generateGeoContentTask(tenantId, taskId) {
   })
 }
 
+export function suggestGeoTaskBrief(tenantId, taskId, body = {}) {
+  return client.post(`/api/v1/geo/content-tasks/${taskId}/suggest-brief`, body, {
+    params: { tenant_id: tenantId },
+    timeout: 90000,
+  })
+}
+
+export function retrieveGeoTaskFacts(tenantId, taskId, body = {}) {
+  return client.post(`/api/v1/geo/content-tasks/${taskId}/retrieve-facts`, body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function applyGeoRetrievedFacts(tenantId, taskId, factIds) {
+  return client.post(
+    `/api/v1/geo/content-tasks/${taskId}/retrieve-facts/apply`,
+    { fact_ids: factIds },
+    { params: { tenant_id: tenantId } },
+  )
+}
+
+export function patchGeoContentTask(tenantId, taskId, body) {
+  return client.patch(`/api/v1/geo/content-tasks/${taskId}`, body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
 export function checkGeoContentTask(tenantId, taskId, requireChannels = false) {
   return client.post(`/api/v1/geo/content-tasks/${taskId}/check`, null, {
     params: { tenant_id: tenantId, require_channels: requireChannels },

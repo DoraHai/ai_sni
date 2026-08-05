@@ -81,6 +81,19 @@ class AuthPathTests(unittest.TestCase):
             ({"geo.content"}, False),
         )
 
+    def test_v1_still_schema_version_1_without_strategy(self):
+        brief = normalize_brief(
+            {
+                "industry": "SaaS",
+                "audience": "运营",
+                "intent": "recommend",
+                "content_type": "answer_guide",
+                "cta": "演示",
+            }
+        )
+        self.assertEqual(brief["schema_version"], 1)
+        self.assertEqual(brief.get("source_bar"), "any")
+
 
 if __name__ == "__main__":
     unittest.main()
