@@ -31,3 +31,9 @@ def test_0050_revision_id_fits_alembic_version_column():
     revision = _revision_id(MIGRATIONS_DIR / "20260805_0050_geo_expand_runs.py")
     assert len(revision) <= 32
     assert revision == "0050_geo_expand_runs"
+
+
+def test_0051_revision_id_fits_alembic_version_column():
+    revision = _revision_id(MIGRATIONS_DIR / "20260805_0051_geo_engine_sample.py")
+    assert len(revision) <= 32
+    assert revision == "0051_geo_engine_sample"

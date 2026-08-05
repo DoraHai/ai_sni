@@ -55,7 +55,11 @@ from app.geo.content.deliverables import (
     render_deliverables_markdown,
 )
 from app.geo.content.engines import default_engine_rows
-from app.geo.content.probe import resolve_batch_engines, run_probe_draft
+from app.geo.content.probe import (
+    resolve_batch_engines,
+    resolve_engine_llm,
+    run_probe_draft,
+)
 from app.geo.content.schemas import (
     AiSettingsUpdate,
     AnswerSnapshotCreate,
@@ -1359,18 +1363,23 @@ async def probe_answer_snapshot(
 ) -> dict:
     """单引擎草稿探测：不写库，供运营确认后手工保存。
 
-    非 deepseek 引擎标签时，仍走租户同一 LLM，按引擎人设模拟回答（见 `simulated`）。
+    默认租户 LLM + 引擎人设模拟；引擎配置 sample_mode=openai_compat 且有 Key 时走真采样。
     """
     from app.ai.deepseek import DeepSeekError, chat_json
 
     ctx.ensure_tenant(req.tenant_id)
     prompt = await _get_prompt(session, req.prompt_id, req.tenant_id)
     tenant = await _ensure_tenant_exists(session, req.tenant_id)
-    llm = await resolve_llm_credentials(session, req.tenant_id)
-    if not llm:
+    tenant_llm = await resolve_llm_credentials(session, req.tenant_id)
+    engine_rows = await _ensure_default_engines(session, req.tenant_id)
+    engine_row = next((r for r in engine_rows if r.engine_key == req.engine), None)
+    llm, sample_mode, fallback_reason = resolve_engine_llm(
+        engine=req.engine, tenant_llm=tenant_llm, engine_row=engine_row
+    )
+    if not llm or not llm.get("api_key"):
         raise HTTPException(
             503,
-            "未配置 AI 能力：请在「AI 能力配置」填写阿里云百炼 API Key，或改用粘贴登记",
+            "未配置 AI 能力：请在「AI 能力配置」或引擎 openai_compat 凭证中填写 API Key，或改用粘贴登记",
         )
     brand = getattr(tenant, "name", None) or f"租户{req.tenant_id}"
     brand_names = brand_names_from_tenant(
@@ -1385,6 +1394,8 @@ async def probe_answer_snapshot(
             engine=req.engine,
             llm=llm,
             chat_json=chat_json,
+            sample_mode=sample_mode,
+            fallback_reason=fallback_reason,
         )
     except DeepSeekError as exc:
         raise HTTPException(502, str(exc)) from exc
@@ -1403,25 +1414,31 @@ async def probe_answer_snapshot_batch(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """对多个跟踪引擎生成探测草稿；不写库。失败引擎记入 error，不中断整批。"""
+    """对多个跟踪引擎生成探测草稿；不写库。失败引擎记入 error，不中断整批。
+
+    每引擎可独立 openai_compat 凭证；未配置则回退租户 LLM + 人设模拟。
+    """
     from app.ai.deepseek import DeepSeekError, chat_json
 
     ctx.ensure_tenant(req.tenant_id)
     prompt = await _get_prompt(session, req.prompt_id, req.tenant_id)
     tenant = await _ensure_tenant_exists(session, req.tenant_id)
-    llm = await resolve_llm_credentials(session, req.tenant_id)
-    if not llm:
-        raise HTTPException(
-            503,
-            "未配置 AI 能力：请在「AI 能力配置」填写阿里云百炼 API Key，或改用粘贴登记",
-        )
+    tenant_llm = await resolve_llm_credentials(session, req.tenant_id)
     engine_rows = await _ensure_default_engines(session, req.tenant_id)
+    row_by_key = {r.engine_key: r for r in engine_rows}
     enabled_keys = [r.engine_key for r in engine_rows if r.enabled]
     if not enabled_keys:
         enabled_keys = [r.engine_key for r in engine_rows]
     engines = resolve_batch_engines(req.engines, enabled_keys)
     if not engines:
         raise HTTPException(400, "没有可探测的引擎，请先在「AI 引擎管理」启用引擎")
+    if not tenant_llm and not any(
+        getattr(row_by_key.get(e), "api_key_encrypted", None) for e in engines
+    ):
+        raise HTTPException(
+            503,
+            "未配置 AI 能力：请在「AI 能力配置」或引擎 openai_compat 凭证中填写 API Key，或改用粘贴登记",
+        )
 
     brand = getattr(tenant, "name", None) or f"租户{req.tenant_id}"
     brand_names = brand_names_from_tenant(
@@ -1432,6 +1449,13 @@ async def probe_answer_snapshot_batch(
     items: list[dict] = []
     for engine in engines:
         try:
+            llm, sample_mode, fallback_reason = resolve_engine_llm(
+                engine=engine,
+                tenant_llm=tenant_llm,
+                engine_row=row_by_key.get(engine),
+            )
+            if not llm or not llm.get("api_key"):
+                raise ValueError("该引擎无可用 LLM 凭证")
             draft = await run_probe_draft(
                 question=prompt.question,
                 brand=brand,
@@ -1439,6 +1463,8 @@ async def probe_answer_snapshot_batch(
                 engine=engine,
                 llm=llm,
                 chat_json=chat_json,
+                sample_mode=sample_mode,
+                fallback_reason=fallback_reason,
             )
             items.append(
                 {
@@ -1463,8 +1489,8 @@ async def probe_answer_snapshot_batch(
     return {
         "prompt_id": prompt.id,
         "prompt_question": prompt.question,
-        "provider": llm.get("provider"),
-        "model": llm.get("model"),
+        "provider": (tenant_llm or {}).get("provider"),
+        "model": (tenant_llm or {}).get("model"),
         "engines": engines,
         "items": items,
         "ok_count": sum(1 for i in items if i.get("ok")),
@@ -1660,6 +1686,15 @@ async def test_ai_settings(
 
 
 def _engine_payload(row: GeoTrackingEngine) -> dict[str, Any]:
+    from app.geo.content.ai_settings import mask_api_key
+    from app.security.crypto import decrypt
+
+    plain = None
+    if getattr(row, "api_key_encrypted", None):
+        try:
+            plain = decrypt(row.api_key_encrypted)
+        except Exception:  # noqa: BLE001
+            plain = None
     return {
         "id": row.id,
         "tenant_id": row.tenant_id,
@@ -1668,6 +1703,11 @@ def _engine_payload(row: GeoTrackingEngine) -> dict[str, Any]:
         "enabled": bool(row.enabled),
         "note": row.note,
         "sort_order": row.sort_order,
+        "sample_mode": getattr(row, "sample_mode", None) or "mock_persona",
+        "api_base_url": getattr(row, "api_base_url", None),
+        "model": getattr(row, "model", None),
+        "api_key_configured": bool(plain),
+        "api_key_masked": mask_api_key(plain) if plain else None,
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
     }
@@ -1719,15 +1759,35 @@ async def put_tracking_engines(
 ) -> dict:
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
+    # Preserve encrypted keys when client does not resend api_key
+    existing_rows = list(
+        await session.scalars(
+            select(GeoTrackingEngine).where(GeoTrackingEngine.tenant_id == req.tenant_id)
+        )
+    )
+    existing_keys = {r.engine_key: r.api_key_encrypted for r in existing_rows}
     await session.execute(
         delete(GeoTrackingEngine).where(GeoTrackingEngine.tenant_id == req.tenant_id)
     )
     created: list[GeoTrackingEngine] = []
     seen: set[str] = set()
+    from app.geo.content.ai_settings import encrypt_api_key
+
     for item in req.items:
         if item.engine_key in seen:
             continue
         seen.add(item.engine_key)
+        enc = existing_keys.get(item.engine_key)
+        if item.clear_api_key:
+            enc = None
+        elif item.api_key:
+            try:
+                enc = encrypt_api_key(item.api_key)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+        mode = (item.sample_mode or "mock_persona").strip()
+        if mode not in ("mock_persona", "openai_compat"):
+            mode = "mock_persona"
         row = GeoTrackingEngine(
             tenant_id=req.tenant_id,
             engine_key=item.engine_key,
@@ -1735,6 +1795,10 @@ async def put_tracking_engines(
             enabled=bool(item.enabled),
             note=item.note,
             sort_order=int(item.sort_order),
+            sample_mode=mode,
+            api_base_url=(item.api_base_url or None),
+            model=(item.model or None),
+            api_key_encrypted=enc,
         )
         session.add(row)
         created.append(row)

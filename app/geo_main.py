@@ -4,7 +4,7 @@ This process intentionally mounts only GEO routes. Deploying or restarting it
 does not restart the SEM scheduler or expose unrelated SEM endpoints.
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
@@ -25,7 +25,8 @@ app.include_router(geo_router)
 
 
 @app.get("/health/geo")
-async def geo_health() -> dict:
+async def geo_health(response: Response) -> dict:
+    """Fail-closed health: HTTP 503 when DB is unreachable (deploy smoke relies on this)."""
     db_status = "ok"
     db_error: str | None = None
     try:
@@ -34,6 +35,7 @@ async def geo_health() -> dict:
     except Exception as exc:
         db_status = "error"
         db_error = str(exc)
+        response.status_code = 503
     return {
         "service": "geo-api",
         "env": settings.app_env,

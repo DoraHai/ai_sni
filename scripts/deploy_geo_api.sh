@@ -33,15 +33,20 @@ ssh "$deploy_target" \
    chown -R sem:sem '${release_dir}'
    systemctl restart geo-service"
 
+# Fail-closed: require HTTP 200 and JSON db=ok (DB down now returns 503).
 if ! ssh "$deploy_target" \
-  "curl -fsS --retry 15 --retry-delay 1 --retry-connrefused http://127.0.0.1:8010/health/geo"; then
+  "set -euo pipefail
+   body=\$(curl -fsS --retry 15 --retry-delay 1 --retry-connrefused http://127.0.0.1:8010/health/geo)
+   echo \"\$body\" | grep -q '\"db\":\"ok\"'
+   curl -fsS --retry 5 --retry-delay 1 http://127.0.0.1:8010/api/v1/geo/content-health >/dev/null
+  "; then
   if [[ -n "$previous_target" ]]; then
     ssh "$deploy_target" \
       "ln -sfn '${previous_target}' '${deploy_root}/current.next' &&
        mv -Tf '${deploy_root}/current.next' '${deploy_root}/current' &&
        systemctl restart geo-service"
   fi
-  printf '%s\n' "GEO API health check failed; previous release restored." >&2
+  printf '%s\n' "GEO API health check failed (need /health/geo db=ok); previous release restored." >&2
   exit 1
 fi
 

@@ -113,6 +113,26 @@ const routes = [
     },
   },
   {
+    path: '/geo/tasks',
+    component: () => import('../views/geo/GeoTasksView.vue'),
+    meta: {
+      title: '内容任务',
+      documentTitle: 'GEO 增长｜内容任务',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/tasks/:taskId',
+    component: () => import('../views/geo/GeoTaskEditorView.vue'),
+    meta: {
+      title: '内容编辑器',
+      documentTitle: 'GEO 增长｜内容编辑器',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
     path: '/geo/diagnosis',
     component: () => import('../views/diagnosis/DiagnosisRedirectView.vue'),
     meta: {
