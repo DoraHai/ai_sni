@@ -37,6 +37,7 @@
     item('prompts.html', '◌', '提问监控') +
     item('competitors.html', '≋', '竞品分析') +
     item('evaluation.html', '◉', '评价分析') +
+    item('citations.html', '↗', '引用域名') +
     item('sources.html', '▤', '事实库 / 信源') +
     '<div class="nav-group">内容与信源</div>' +
     item('articles.html', 'Aa', 'GEO 文章') +

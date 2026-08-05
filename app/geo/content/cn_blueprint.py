@@ -152,9 +152,51 @@ GROUP_PLAN: dict[str, tuple[str, str]] = {
     "场景": ("教程/how-to 页", "步骤块 + 数字事实提升可抽取度"),
 }
 
+# Longest-suffix first. Used to tag measured cite domains onto CHANNELS_CN.
+HOST_SUFFIX_TO_CHANNEL: list[tuple[str, str]] = [
+    ("mp.weixin.qq.com", "wechat"),
+    ("baijiahao.baidu.com", "baijia"),
+    ("baike.baidu.com", "baike"),
+    ("zhuanlan.zhihu.com", "zhihu"),
+    ("zhihu.com", "zhihu"),
+    ("toutiao.com", "toutiao"),
+    ("iesdouyin.com", "toutiao"),
+    ("csdn.net", "tech"),
+    ("cnblogs.com", "tech"),
+    ("juejin.cn", "tech"),
+    ("bilibili.com", "bilibili"),
+    ("sm.cn", "quark"),
+    ("chinapp.com", "ranking"),
+    ("cnpp.cn", "ranking"),
+    ("qq.com", "wechat"),
+]
+
 
 def channel_type_for(channel_id: str) -> str:
     return _TYPE_MAP.get(channel_id, "other")
+
+
+def match_blueprint_for_domain(domain: str) -> dict[str, Any] | None:
+    """Map a cited hostname onto CHANNELS_CN when the suffix is known."""
+    host = (domain or "").lower().strip(".")
+    if not host:
+        return None
+    channel_id = None
+    for suffix, cid in HOST_SUFFIX_TO_CHANNEL:
+        if host == suffix or host.endswith("." + suffix):
+            channel_id = cid
+            break
+    if not channel_id:
+        return None
+    ch = next((c for c in CHANNELS_CN if c["id"] == channel_id), None)
+    if not ch:
+        return None
+    return {
+        "channel_key": channel_id,
+        "channel_name": ch["name"],
+        "priority_band": ch["priority"],
+        "citation_national": ch.get("national"),
+    }
 
 
 def priority_for_band(band: str) -> int:

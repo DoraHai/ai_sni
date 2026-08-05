@@ -36,7 +36,7 @@
     </div>
   </main>
 </div>
-<script src="assets/geo-sidebar-v1.js?rev=8"></script>
+<script src="assets/geo-sidebar-v1.js?rev=9"></script>
 <script src="assets/geo-api-v1.js?rev=12"></script>
 <script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
@@ -86,6 +86,8 @@
       ['点名探测题', s.prompts_probe || 0, 'prompts.html?is_brand_probe=1'],
       ['引擎覆盖', s.visibility_engines_covered || 0, 'engines.html'],
       ['含竞品标注', s.snapshots_with_competitors || 0, 'competitors.html'],
+      ['含引用 URL', s.snapshots_with_citations || 0, 'citations.html'],
+      ['引用域名数', s.distinct_cited_domains || 0, 'citations.html'],
       ['未提及品牌', s.prompts_brand_missing || 0, 'prompts.html?tag=brand_missing'],
       ['待复核可见度', s.prompts_need_recheck || 0, 'visibility.html?queue=recheck'],
       ['信源布局进行中', s.media_open || 0, 'media.html'],

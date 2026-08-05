@@ -84,6 +84,7 @@ from app.geo.content.schemas import (
 from app.geo.content.cn_blueprint import (
     blueprint_payload,
     default_media_placement_rows,
+    match_blueprint_for_domain,
 )
 from app.geo.content.prompt_taxonomy import (
     brand_names_from_tenant,
@@ -93,6 +94,9 @@ from app.geo.content.prompt_taxonomy import (
 )
 from app.geo.content.snapshots import (
     apply_brand_mention_tags,
+    domain_matches,
+    extract_cited_domain,
+    extract_cited_domains,
     needs_recheck,
     normalize_brand_position,
     normalize_cited_urls,
@@ -1072,6 +1076,121 @@ async def evaluation_insights(
         "position_counts": position_counts,
         "recent": recent,
         "total": len(rows),
+    }
+
+
+@router.get("/citation-insights")
+async def citation_insights(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Aggregate cited_urls hostnames from answer snapshots."""
+    ctx.ensure_tenant(tenant_id)
+    rows = list(
+        await session.scalars(
+            select(GeoAnswerSnapshot)
+            .where(GeoAnswerSnapshot.tenant_id == tenant_id)
+            .order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
+        )
+    )
+    prompt_ids = {r.prompt_id for r in rows}
+    questions: dict[int, str] = {}
+    if prompt_ids:
+        for p in await session.scalars(
+            select(GeoPrompt).where(
+                GeoPrompt.tenant_id == tenant_id, GeoPrompt.id.in_(prompt_ids)
+            )
+        ):
+            questions[p.id] = p.question
+
+    own_domains: list[str] = []
+    for ch in await session.scalars(
+        select(GeoPublishingChannel).where(
+            GeoPublishingChannel.tenant_id == tenant_id,
+            GeoPublishingChannel.channel_type.in_(["website", "docs"]),
+            GeoPublishingChannel.enabled.is_(True),
+        )
+    ):
+        domain = extract_cited_domain(ch.base_url)
+        if domain and domain not in own_domains:
+            own_domains.append(domain)
+
+    buckets: dict[str, dict[str, Any]] = {}
+    snapshots_with_citations = 0
+    snapshots_own_domain = 0
+    for row in rows:
+        urls = list(row.cited_urls or [])
+        domains = extract_cited_domains(urls)
+        if not domains:
+            continue
+        snapshots_with_citations += 1
+        if own_domains and any(
+            domain_matches(d, own) for d in domains for own in own_domains
+        ):
+            snapshots_own_domain += 1
+        for domain in domains:
+            bucket = buckets.setdefault(
+                domain,
+                {
+                    "domain": domain,
+                    "cite_count": 0,
+                    "prompt_ids": set(),
+                    "engines": set(),
+                    "sample_urls": [],
+                    "latest_captured_at": None,
+                    "sample_prompt_question": None,
+                },
+            )
+            bucket["cite_count"] += 1
+            bucket["prompt_ids"].add(row.prompt_id)
+            bucket["engines"].add(row.engine)
+            if bucket["latest_captured_at"] is None:
+                bucket["latest_captured_at"] = _iso(row.captured_at)
+                bucket["sample_prompt_question"] = questions.get(row.prompt_id)
+            for url in urls:
+                if extract_cited_domain(url) != domain:
+                    continue
+                if url not in bucket["sample_urls"] and len(bucket["sample_urls"]) < 3:
+                    bucket["sample_urls"].append(url)
+
+    items = []
+    for bucket in buckets.values():
+        bp = match_blueprint_for_domain(bucket["domain"])
+        items.append(
+            {
+                "domain": bucket["domain"],
+                "cite_count": bucket["cite_count"],
+                "prompt_count": len(bucket["prompt_ids"]),
+                "engines": sorted(bucket["engines"]),
+                "latest_captured_at": bucket["latest_captured_at"],
+                "sample_prompt_question": bucket["sample_prompt_question"],
+                "sample_urls": bucket["sample_urls"],
+                "is_own_domain": bool(
+                    own_domains
+                    and any(domain_matches(bucket["domain"], own) for own in own_domains)
+                ),
+                "blueprint_channel_key": bp["channel_key"] if bp else None,
+                "blueprint_channel_name": bp["channel_name"] if bp else None,
+                "priority_band": bp["priority_band"] if bp else None,
+                "citation_national": bp["citation_national"] if bp else None,
+            }
+        )
+    items.sort(key=lambda x: (-x["cite_count"], x["domain"]))
+    own_domain_cite_rate = (
+        visibility_mention_rate(
+            total_snapshots=snapshots_with_citations,
+            mention_snapshots=snapshots_own_domain,
+        )
+        if own_domains
+        else None
+    )
+    return {
+        "items": items,
+        "snapshots_with_citations": snapshots_with_citations,
+        "distinct_cited_domains": len(items),
+        "own_domains": own_domains,
+        "own_domain_cite_rate": own_domain_cite_rate,
     }
 
 
@@ -2660,6 +2779,15 @@ async def content_stats(
     split = split_visibility_metrics(split_rows)
     prompts_probe = sum(1 for p in active_prompts if p.is_brand_probe)
 
+    cited_url_cols = [s.cited_urls for s in all_snaps]
+    snapshots_with_citations = 0
+    distinct_cited_domains: set[str] = set()
+    for urls in cited_url_cols:
+        domains = extract_cited_domains(list(urls or []))
+        if domains:
+            snapshots_with_citations += 1
+            distinct_cited_domains.update(domains)
+
     return {
         "prompts": int(prompts or 0),
         "facts": int(facts or 0),
@@ -2689,4 +2817,6 @@ async def content_stats(
         "probe_recognition_rate": split["probe_recognition_rate"],
         "visibility_engines_covered": int(engines_covered or 0),
         "snapshots_with_competitors": int(snapshots_with_competitors),
+        "snapshots_with_citations": int(snapshots_with_citations),
+        "distinct_cited_domains": len(distinct_cited_domains),
     }

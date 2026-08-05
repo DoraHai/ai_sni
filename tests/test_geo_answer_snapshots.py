@@ -6,7 +6,10 @@ import unittest
 from app.geo.content.snapshots import (
     apply_brand_mention_tags,
     clear_brand_missing_tag,
+    domain_matches,
     ensure_brand_missing_tag,
+    extract_cited_domain,
+    extract_cited_domains,
     needs_recheck,
     normalize_brand_position,
     normalize_cited_urls,
@@ -89,6 +92,25 @@ class SnapshotHelpersTests(unittest.TestCase):
         )
         self.assertEqual(urls, ["https://a.com", "https://b.com"])
         self.assertEqual(normalize_cited_urls(None), [])
+
+    def test_extract_cited_domain(self):
+        self.assertEqual(extract_cited_domain("https://www.Zhihu.com/question/1"), "zhihu.com")
+        self.assertEqual(extract_cited_domain("zhuanlan.zhihu.com/p/1"), "zhuanlan.zhihu.com")
+        self.assertEqual(extract_cited_domain("not a url :::"), None)
+        self.assertEqual(extract_cited_domain(""), None)
+        self.assertEqual(
+            extract_cited_domains(
+                [
+                    "https://www.zhihu.com/q/1",
+                    "https://zhihu.com/q/2",
+                    "https://toutiao.com/a/1",
+                    "",
+                ]
+            ),
+            ["zhihu.com", "toutiao.com"],
+        )
+        self.assertTrue(domain_matches("mp.weixin.qq.com", "qq.com"))
+        self.assertFalse(domain_matches("example.com", "ample.com"))
 
     def test_normalize_competitors(self):
         self.assertEqual(

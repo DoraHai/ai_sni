@@ -337,6 +337,9 @@
     evaluationInsights: function () {
       return api('/evaluation-insights', { query: withTenantQuery() });
     },
+    citationInsights: function () {
+      return api('/citation-insights', { query: withTenantQuery() });
+    },
     getAiSettings: function () {
       return api('/ai-settings', { query: withTenantQuery() });
     },
