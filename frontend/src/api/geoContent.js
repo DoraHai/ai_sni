@@ -20,12 +20,102 @@ export function createGeoPrompt(body) {
   return client.post('/api/v1/geo/prompts', body)
 }
 
+export function patchGeoPrompt(tenantId, promptId, body) {
+  return client.patch(`/api/v1/geo/prompts/${promptId}`, body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
 export function listGeoFacts(tenantId, params = {}) {
   return client.get('/api/v1/geo/facts', { params: { tenant_id: tenantId, ...params } })
 }
 
 export function createGeoFact(body) {
   return client.post('/api/v1/geo/facts', body)
+}
+
+export function patchGeoFact(tenantId, factId, body) {
+  return client.patch(`/api/v1/geo/facts/${factId}`, body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function verifyGeoFact(tenantId, factId) {
+  return client.post(`/api/v1/geo/facts/${factId}/verify`, null, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function fetchGeoAiSettings(tenantId) {
+  return client.get('/api/v1/geo/ai-settings', { params: { tenant_id: tenantId } })
+}
+
+export function putGeoAiSettings(body) {
+  return client.put('/api/v1/geo/ai-settings', body)
+}
+
+export function testGeoAiSettings(tenantId) {
+  return client.post('/api/v1/geo/ai-settings/test', {}, {
+    params: { tenant_id: tenantId },
+    timeout: 60000,
+  })
+}
+
+export function putGeoTrackingEngines(tenantId, items) {
+  return client.put('/api/v1/geo/tracking-engines', {
+    tenant_id: tenantId,
+    items,
+  })
+}
+
+export function listGeoPublishingChannels(tenantId, enabledOnly = false) {
+  return client.get('/api/v1/geo/publishing-channels', {
+    params: { tenant_id: tenantId, enabled_only: enabledOnly },
+  })
+}
+
+export function createGeoPublishingChannel(body) {
+  return client.post('/api/v1/geo/publishing-channels', body)
+}
+
+export function patchGeoPublishingChannel(tenantId, channelId, body) {
+  return client.patch(`/api/v1/geo/publishing-channels/${channelId}`, body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function listGeoChannelAccounts(tenantId, channelId) {
+  return client.get('/api/v1/geo/channel-accounts', {
+    params: { tenant_id: tenantId, ...(channelId ? { channel_id: channelId } : {}) },
+  })
+}
+
+export function createGeoChannelAccount(body) {
+  return client.post('/api/v1/geo/channel-accounts', body)
+}
+
+/** Deep-link to static editor (plan B: editor last). */
+export function staticGeoEditorUrl(tenantId, taskId) {
+  const qs = new URLSearchParams({ tenant_id: String(tenantId) })
+  if (taskId) qs.set('task_id', String(taskId))
+  const key = import.meta.env.VITE_API_KEY
+  if (key) qs.set('api_key', key)
+  if (import.meta.env.DEV) {
+    qs.set('api_origin', 'http://127.0.0.1:8011')
+    return `http://127.0.0.1:5176/geo/editor.html?${qs}`
+  }
+  return `/deal-sniper/geo/editor.html?${qs}`
+}
+
+export function staticGeoWorkbenchUrl(page = 'dashboard.html', tenantId = 1) {
+  const qs = new URLSearchParams({ tenant_id: String(tenantId) })
+  const key = import.meta.env.VITE_API_KEY
+  if (key) qs.set('api_key', key)
+  if (import.meta.env.DEV) {
+    qs.set('api_origin', 'http://127.0.0.1:8011')
+    return `http://127.0.0.1:5176/geo/${page}?${qs}`
+  }
+  return `/deal-sniper/geo/${page}?${qs}`
 }
 
 export function listGeoContentTasks(tenantId, params = {}) {

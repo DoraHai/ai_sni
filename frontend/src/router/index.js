@@ -113,6 +113,16 @@ const routes = [
     },
   },
   {
+    path: '/geo/workbench',
+    component: () => import('../views/geo/GeoWorkbenchHubView.vue'),
+    meta: {
+      title: '内容工作台',
+      documentTitle: 'GEO 增长｜内容工作台',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
     path: '/geo/tasks',
     component: () => import('../views/geo/GeoTasksView.vue'),
     meta: {
@@ -128,6 +138,56 @@ const routes = [
     meta: {
       title: '内容编辑器',
       documentTitle: 'GEO 增长｜内容编辑器',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/prompts',
+    component: () => import('../views/geo/GeoPromptsView.vue'),
+    meta: {
+      title: '机会词',
+      documentTitle: 'GEO 增长｜机会词',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/facts',
+    component: () => import('../views/geo/GeoFactsView.vue'),
+    meta: {
+      title: '事实库',
+      documentTitle: 'GEO 增长｜事实库',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/engines',
+    component: () => import('../views/geo/GeoEnginesView.vue'),
+    meta: {
+      title: '跟踪引擎',
+      documentTitle: 'GEO 增长｜跟踪引擎',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/ai-settings',
+    component: () => import('../views/geo/GeoAiSettingsView.vue'),
+    meta: {
+      title: 'AI 能力配置',
+      documentTitle: 'GEO 增长｜AI 配置',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/publishing',
+    component: () => import('../views/geo/GeoPublishingView.vue'),
+    meta: {
+      title: '发布渠道',
+      documentTitle: 'GEO 增长｜发布渠道',
       workflow: 'GEO 增长',
       perm: 'geo.content',
     },

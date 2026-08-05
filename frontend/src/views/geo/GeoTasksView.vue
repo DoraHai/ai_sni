@@ -6,13 +6,12 @@ import {
   createGeoContentTask,
   listGeoContentTasks,
   listGeoPrompts,
+  staticGeoWorkbenchUrl,
 } from '../../api/geoContent'
-import { session } from '../../store/session'
+import { useGeoTenant } from '../../composables/useGeoTenant'
 
 const router = useRouter()
-const tenantId = computed(() =>
-  session.tenantId || (import.meta.env.DEV && import.meta.env.VITE_API_KEY ? 1 : null),
-)
+const { tenantId } = useGeoTenant()
 
 const loading = ref(false)
 const error = ref('')
@@ -108,11 +107,7 @@ function openEditor(row) {
 }
 
 function openStaticWorkbench() {
-  const tid = tenantId.value || 1
-  const key = import.meta.env.VITE_API_KEY || ''
-  const qs = new URLSearchParams({ tenant_id: String(tid) })
-  if (key) qs.set('api_key', key)
-  window.open(`/deal-sniper/geo/dashboard.html?${qs}`, '_blank')
+  window.open(staticGeoWorkbenchUrl('dashboard.html', tenantId.value || 1), '_blank')
 }
 
 watch([tenantId, statusFilter], load)
@@ -125,11 +120,14 @@ onMounted(load)
       <div>
         <div class="page-title">内容任务</div>
         <div class="page-desc">
-          Vue 任务列表（P1）。编辑母稿/渠道稿仍复用静态编辑器流水线，减少双端断点。
+          方案 B：任务列表已 Vue。母稿完整流水线仍走静态 editor（或本页混合壳）。
         </div>
       </div>
       <div class="header-actions">
-        <el-button @click="openStaticWorkbench">全量静态工作台</el-button>
+        <router-link class="el-button" to="/geo/workbench">工作台枢纽</router-link>
+        <router-link class="el-button" to="/geo/prompts">机会词</router-link>
+        <router-link class="el-button" to="/geo/facts">事实库</router-link>
+        <el-button @click="openStaticWorkbench">兼容静态台</el-button>
         <el-button type="primary" @click="openCreate">新建任务</el-button>
         <el-button @click="load">刷新</el-button>
       </div>
