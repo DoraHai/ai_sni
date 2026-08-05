@@ -301,3 +301,34 @@ async def expand_candidates(
         "new_count": sum(1 for t in terms if not t["in_bank"]),
         "errors": errors[:12],
     }
+
+
+def candidate_term_key(item: dict[str, Any] | None) -> str:
+    if not item:
+        return ""
+    return str(item.get("term") or item.get("question") or "").strip().lower()
+
+
+def annotate_vs_last_run(
+    items: list[dict[str, Any]],
+    previous_keys: set[str] | None,
+) -> dict[str, Any]:
+    """Attach vs_last_run badges. No previous run → leave field null."""
+    prev = previous_keys if previous_keys is not None else None
+    annotated: list[dict[str, Any]] = []
+    new_vs_last = 0
+    for raw in items:
+        item = dict(raw)
+        key = candidate_term_key(item)
+        if prev is None:
+            item["vs_last_run"] = None
+        elif key and key not in prev:
+            item["vs_last_run"] = "new"
+            new_vs_last += 1
+        else:
+            item["vs_last_run"] = "still"
+        annotated.append(item)
+    return {
+        "items": annotated,
+        "new_vs_last_count": new_vs_last if prev is not None else None,
+    }

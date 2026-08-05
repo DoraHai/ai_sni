@@ -42,6 +42,7 @@
               <th>词根</th>
               <th>来源</th>
               <th>库内</th>
+              <th>相对上次</th>
             </tr>
           </thead>
           <tbody id="expandRows"></tbody>
@@ -128,7 +129,7 @@
   </main>
 </div>
 <script src="assets/geo-sidebar-v1.js?rev=9"></script>
-<script src="assets/geo-api-v1.js?rev=14"></script>
+<script src="assets/geo-api-v1.js?rev=15"></script>
 <script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {
@@ -253,7 +254,10 @@
         '<td>' + (it.question_group || '-') + '</td>' +
         '<td>' + (it.root || '') + ' <span class="wb-muted">(' + (it.kind || '') + ')</span></td>' +
         '<td>' + (it.suggest_source || '') + '/' + (it.market || '') + '</td>' +
-        '<td>' + (it.in_bank ? '<span class="wb-badge good">已有</span>' : '<span class="wb-badge warn">新</span>') + '</td>';
+        '<td>' + (it.in_bank ? '<span class="wb-badge good">已有</span>' : '<span class="wb-badge warn">新</span>') + '</td>' +
+        '<td>' + (it.vs_last_run === 'new'
+          ? '<span class="wb-badge warn">新↑</span>'
+          : (it.vs_last_run === 'still' ? '<span class="wb-muted">仍在</span>' : '<span class="wb-muted">-</span>')) + '</td>';
       box.appendChild(tr);
     });
     document.getElementById('btnPromote').disabled = !expandItems.some(function (x) { return !x.in_bank; });
@@ -282,7 +286,10 @@
         '词根 ' + ((data.roots || []).length) +
         ' · 调用 ' + (data.calls || 0) +
         ' · 候选 ' + (data.total || 0) +
-        '（新 ' + (data.new_count || 0) + '）' +
+        '（库外新 ' + (data.new_count || 0) +
+        (data.new_vs_last_count != null ? ' · 相对上次 +' + data.new_vs_last_count : '') +
+        '）' +
+        (data.run_id ? ' · run #' + data.run_id : '') +
         ((data.errors && data.errors.length) ? ' · 部分请求失败 ' + data.errors.length : '');
       renderExpand(data.items || []);
     } catch (e) { GeoWB.showError(err, e); }

@@ -101,15 +101,19 @@ from app.geo.content.snapshot_suggest import (
 )
 from app.geo.content.snapshots import (
     apply_brand_mention_tags,
+    compute_window_metrics,
     domain_matches,
     extract_cited_domain,
     extract_cited_domains,
     extract_cited_urls_from_text,
+    in_captured_window,
     needs_recheck,
     normalize_brand_position,
     normalize_cited_urls,
     normalize_competitors,
     normalize_sentiment,
+    parse_window_bound,
+    rate_delta,
     split_visibility_metrics,
     visibility_mention_rate,
 )
@@ -125,6 +129,7 @@ from app.models import (
     GeoChannelVariant,
     GeoChannelAccount,
     GeoContentTask,
+    GeoExpandRun,
     GeoFact,
     GeoMediaPlacement,
     GeoPrompt,
@@ -632,7 +637,12 @@ async def expand_prompt_candidates(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """百度/Google 下拉拓词 → 候选问句（不入库）。"""
-    from app.geo.content.expand import build_roots, expand_candidates
+    from app.geo.content.expand import (
+        annotate_vs_last_run,
+        build_roots,
+        candidate_term_key,
+        expand_candidates,
+    )
 
     ctx.ensure_tenant(req.tenant_id)
     tenant = await _ensure_tenant_exists(session, req.tenant_id)
@@ -669,6 +679,58 @@ async def expand_prompt_candidates(
         max_terms=req.max_terms,
         throttle_s=0.05,
     )
+
+    prev_run = await session.scalar(
+        select(GeoExpandRun)
+        .where(GeoExpandRun.tenant_id == req.tenant_id)
+        .order_by(GeoExpandRun.created_at.desc(), GeoExpandRun.id.desc())
+        .limit(1)
+    )
+    prev_keys: set[str] | None = None
+    last_run_id = None
+    if prev_run is not None:
+        last_run_id = prev_run.id
+        prev_keys = {
+            candidate_term_key(it)
+            for it in (prev_run.items or [])
+            if candidate_term_key(it)
+        }
+    annotated = annotate_vs_last_run(result["items"], prev_keys)
+    result["items"] = annotated["items"]
+    result["new_vs_last_count"] = annotated["new_vs_last_count"]
+    result["last_run_id"] = last_run_id
+
+    run_id = None
+    if req.persist:
+        row = GeoExpandRun(
+            tenant_id=req.tenant_id,
+            market=req.market,
+            roots=result.get("roots"),
+            items=result.get("items"),
+            calls=int(result.get("calls") or 0),
+            total=int(result.get("total") or 0),
+            new_count=int(result.get("new_count") or 0),
+            errors=result.get("errors") or [],
+            created_by=ctx.user_id,
+        )
+        session.add(row)
+        await session.flush()
+        run_id = row.id
+        # Keep last 20 runs per tenant.
+        old_ids = list(
+            await session.scalars(
+                select(GeoExpandRun.id)
+                .where(GeoExpandRun.tenant_id == req.tenant_id)
+                .order_by(GeoExpandRun.created_at.desc(), GeoExpandRun.id.desc())
+                .offset(20)
+            )
+        )
+        if old_ids:
+            await session.execute(
+                delete(GeoExpandRun).where(GeoExpandRun.id.in_(list(old_ids)))
+            )
+        await session.commit()
+    result["run_id"] = run_id
     return result
 
 
@@ -1090,6 +1152,92 @@ async def evaluation_insights(
     }
 
 
+async def _own_domains_for_tenant(session: AsyncSession, tenant_id: int) -> list[str]:
+    own_domains: list[str] = []
+    for ch in await session.scalars(
+        select(GeoPublishingChannel).where(
+            GeoPublishingChannel.tenant_id == tenant_id,
+            GeoPublishingChannel.channel_type.in_(["website", "docs"]),
+            GeoPublishingChannel.enabled.is_(True),
+        )
+    ):
+        domain = extract_cited_domain(ch.base_url)
+        if domain and domain not in own_domains:
+            own_domains.append(domain)
+    return own_domains
+
+
+@router.get("/visibility-period-diff")
+async def visibility_period_diff(
+    tenant_id: int = Query(...),
+    before_from: str = Query(...),
+    before_to: str = Query(...),
+    after_from: str = Query(...),
+    after_to: str = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Compare visibility mention + own-domain cite rates across two capture windows."""
+    ctx.ensure_tenant(tenant_id)
+    try:
+        b_from = parse_window_bound(before_from, label="before_from")
+        b_to = parse_window_bound(before_to, label="before_to")
+        a_from = parse_window_bound(after_from, label="after_from")
+        a_to = parse_window_bound(after_to, label="after_to")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if b_from > b_to or a_from > a_to:
+        raise HTTPException(400, "窗口起止时间无效：from 不得晚于 to")
+
+    prompts = list(
+        await session.scalars(
+            select(GeoPrompt).where(GeoPrompt.tenant_id == tenant_id)
+        )
+    )
+    prompt_probe = {p.id: bool(p.is_brand_probe) for p in prompts}
+    own_domains = await _own_domains_for_tenant(session, tenant_id)
+    all_snaps = list(
+        await session.scalars(
+            select(GeoAnswerSnapshot).where(GeoAnswerSnapshot.tenant_id == tenant_id)
+        )
+    )
+    before_rows = [
+        r
+        for r in all_snaps
+        if in_captured_window(r.captured_at, start=b_from, end=b_to)
+    ]
+    after_rows = [
+        r
+        for r in all_snaps
+        if in_captured_window(r.captured_at, start=a_from, end=a_to)
+    ]
+    before = compute_window_metrics(
+        before_rows, prompt_probe=prompt_probe, own_domains=own_domains
+    )
+    after = compute_window_metrics(
+        after_rows, prompt_probe=prompt_probe, own_domains=own_domains
+    )
+    before["from"] = _iso(b_from)
+    before["to"] = _iso(b_to)
+    after["from"] = _iso(a_from)
+    after["to"] = _iso(a_to)
+    return {
+        "before": before,
+        "after": after,
+        "delta": {
+            "visibility_mention_rate": rate_delta(
+                before["visibility_mention_rate"], after["visibility_mention_rate"]
+            ),
+            "own_domain_cite_rate": rate_delta(
+                before["own_domain_cite_rate"], after["own_domain_cite_rate"]
+            ),
+            "probe_recognition_rate": rate_delta(
+                before["probe_recognition_rate"], after["probe_recognition_rate"]
+            ),
+        },
+    }
+
+
 @router.get("/citation-insights")
 async def citation_insights(
     tenant_id: int = Query(...),
@@ -1115,17 +1263,7 @@ async def citation_insights(
         ):
             questions[p.id] = p.question
 
-    own_domains: list[str] = []
-    for ch in await session.scalars(
-        select(GeoPublishingChannel).where(
-            GeoPublishingChannel.tenant_id == tenant_id,
-            GeoPublishingChannel.channel_type.in_(["website", "docs"]),
-            GeoPublishingChannel.enabled.is_(True),
-        )
-    ):
-        domain = extract_cited_domain(ch.base_url)
-        if domain and domain not in own_domains:
-            own_domains.append(domain)
+    own_domains = await _own_domains_for_tenant(session, tenant_id)
 
     buckets: dict[str, dict[str, Any]] = {}
     snapshots_with_citations = 0

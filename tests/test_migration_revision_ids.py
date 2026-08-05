@@ -25,3 +25,9 @@ def test_0049_revision_id_fits_alembic_version_column():
         MIGRATIONS_DIR / "20260804_0049_clean_legacy_geo_demo_statements.py"
     )
     assert len(revision) <= 32
+
+
+def test_0050_revision_id_fits_alembic_version_column():
+    revision = _revision_id(MIGRATIONS_DIR / "20260805_0050_geo_expand_runs.py")
+    assert len(revision) <= 32
+    assert revision == "0050_geo_expand_runs"

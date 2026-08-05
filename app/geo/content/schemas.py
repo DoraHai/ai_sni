@@ -61,6 +61,7 @@ class PromptExpandRequest(BaseModel):
     products: list[str] = Field(default_factory=list)
     seed_from_tenant: bool = True
     max_terms: int = Field(80, ge=1, le=200)
+    persist: bool = True
 
 
 class PromptPromoteItem(BaseModel):

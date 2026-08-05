@@ -53,6 +53,7 @@ from app.models.geo_tracking_engine import GeoTrackingEngine
 from app.models.geo_media_placement import GeoMediaPlacement
 from app.models.geo_action_ticket import GeoActionTicket
 from app.models.geo_ai_setting import GeoAiSetting
+from app.models.geo_expand_run import GeoExpandRun
 from app.models.geo_publishing_channel import GeoChannelAccount, GeoPublishingChannel
 from app.models.geo_content import (
     GeoArticleVersion,
@@ -122,6 +123,7 @@ __all__ = [
     "GeoMediaPlacement",
     "GeoActionTicket",
     "GeoAiSetting",
+    "GeoExpandRun",
     "GeoPublishingChannel",
     "GeoChannelAccount",
     "GeoContentTask",

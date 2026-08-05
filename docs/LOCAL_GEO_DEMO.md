@@ -191,7 +191,14 @@ http://127.0.0.1:5176/geo/dashboard.html?tenant_id=1&api_key=geo-demo-local-key&
 4. 人工确认或修改后 **保存快照** → 竞品分析 / 评价分析更新  
 5. 「用 AI 探测」成功时也应带回上述建议字段  
 
-> 阶段验收应从 M1 开始（见 `docs/GEO_STAGE_ACCEPTANCE.md`），不要等本切片或发布连接器。
+### 8e) 期次对比（可见度 + 拓词）
+
+1. `alembic upgrade head`（含 `0050_geo_expand_runs`）
+2. **GEO 概览**：调整 before/after 时间窗 → **计算 Δ**；两侧无样本时显示「未测」
+3. **提问监控**：点两次「拓词」；第二次提示「相对上次 +N」，表内出现「新↑ / 仍在」
+4. 拓词持久化**不会**自动入库；仍须勾选后「写入问题库」
+
+> 阶段验收应从 M1 开始（见 `docs/GEO_STAGE_ACCEPTANCE.md`）。Phase 2 发布连接器最后做。
 
 ### 9) 发布渠道账号 + 可发布证据（Wave C 收尾）
 

@@ -11,14 +11,13 @@
   - `POST /prompts/promote-candidates` — 勾选批量写入，`source=expand`
 - 词根：请求 `roots` / `competitors` / `products`，或 `seed_from_tenant` 用品牌名+行业
 - UI：`prompts.html` 拓词面板（勾选入库）
-- **无新表**（候选 ephemeral；跨期 diff 留给后续）
+- 跨期 diff：见后续切片 `docs/GEO_PERIOD_DIFF_PLAN.md`（`geo_expand_runs`）
 
 ## 非目标
 
 - 自动改问题库
 - SEM KRService / `keyword_candidates` 复用
 - LLM 问句转写（模板即可；有 Key 时后续可加）
-- expand.json 期次 diff 徽标
 
 ## 验收
 

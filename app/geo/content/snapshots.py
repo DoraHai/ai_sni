@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
+from typing import Any
 from urllib.parse import urlparse
 
 VALID_ENGINES = frozenset({"chatgpt", "deepseek", "doubao", "perplexity", "other"})
@@ -184,3 +186,83 @@ def needs_recheck(
     if task_updated_at is None:
         return False
     return last_snapshot_at < task_updated_at
+
+
+def parse_window_bound(raw: str | None, *, label: str) -> datetime:
+    """Parse inclusive window bound; naive UTC (matches snapshot captured_at)."""
+    if not raw or not str(raw).strip():
+        raise ValueError(f"{label} 必填")
+    text = str(raw).strip().replace("Z", "+00:00")
+    try:
+        value = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError(f"{label} 无效: {raw}") from exc
+    if value.tzinfo is not None:
+        value = value.replace(tzinfo=None)
+    return value
+
+
+def in_captured_window(
+    captured_at: datetime | None,
+    *,
+    start: datetime,
+    end: datetime,
+) -> bool:
+    if captured_at is None:
+        return False
+    return start <= captured_at <= end
+
+
+def compute_window_metrics(
+    rows: list[Any],
+    *,
+    prompt_probe: dict[int, bool],
+    own_domains: list[str],
+) -> dict[str, Any]:
+    """Mention + own-domain cite metrics for one captured_at window."""
+    split_rows = [
+        {
+            "mentions_brand": bool(getattr(r, "mentions_brand", False)),
+            "is_brand_probe": bool(prompt_probe.get(getattr(r, "prompt_id", 0), False)),
+        }
+        for r in rows
+    ]
+    split = split_visibility_metrics(split_rows)
+    snapshots_with_citations = 0
+    snapshots_own_domain = 0
+    for row in rows:
+        domains = extract_cited_domains(list(getattr(row, "cited_urls", None) or []))
+        if not domains:
+            continue
+        snapshots_with_citations += 1
+        if own_domains and any(
+            domain_matches(d, own) for d in domains for own in own_domains
+        ):
+            snapshots_own_domain += 1
+    own_rate = (
+        visibility_mention_rate(
+            total_snapshots=snapshots_with_citations,
+            mention_snapshots=snapshots_own_domain,
+        )
+        if own_domains
+        else None
+    )
+    return {
+        "snapshots_total": len(rows),
+        "snapshots_visibility": split["snapshots_visibility"],
+        "snapshots_visibility_mention": split["snapshots_visibility_mention"],
+        "visibility_mention_rate": split["visibility_mention_rate"],
+        "snapshots_probe": split["snapshots_probe"],
+        "snapshots_probe_mention": split["snapshots_probe_mention"],
+        "probe_recognition_rate": split["probe_recognition_rate"],
+        "snapshots_with_citations": snapshots_with_citations,
+        "snapshots_own_domain": snapshots_own_domain,
+        "own_domain_cite_rate": own_rate,
+        "own_domains": list(own_domains),
+    }
+
+
+def rate_delta(before: float | None, after: float | None) -> float | None:
+    if before is None or after is None:
+        return None
+    return round(after - before, 4)

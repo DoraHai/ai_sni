@@ -137,6 +137,14 @@
     contentHealth: function () { return api('/content-health'); },
     briefCatalog: function () { return api('/content-brief-catalog'); },
     contentStats: function () { return api('/content-stats'); },
+    visibilityPeriodDiff: function (windows) {
+      var query = withTenantQuery();
+      query.before_from = windows.before_from;
+      query.before_to = windows.before_to;
+      query.after_from = windows.after_from;
+      query.after_to = windows.after_to;
+      return api('/visibility-period-diff', { query: query });
+    },
     listPrompts: function (query) {
       return api('/prompts', { query: query || {} });
     },
