@@ -83,6 +83,16 @@ const routes = [
     },
   },
   {
+    path: '/geo/deliverables',
+    component: () => import('../views/geo/GeoDeliverablesView.vue'),
+    meta: {
+      title: '交付摘要',
+      documentTitle: 'GEO 增长｜交付摘要',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
     path: '/geo/diagnosis',
     component: () => import('../views/diagnosis/DiagnosisRedirectView.vue'),
     meta: {

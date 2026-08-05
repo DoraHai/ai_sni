@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,6 +49,10 @@ from app.geo.content.ai_settings import (
     preset_payload,
     resolve_llm_credentials,
     settings_public_payload,
+)
+from app.geo.content.deliverables import (
+    build_deliverables_pack,
+    render_deliverables_markdown,
 )
 from app.geo.content.engines import default_engine_rows
 from app.geo.content.probe import resolve_batch_engines, run_probe_draft
@@ -3245,3 +3250,220 @@ async def content_stats(
         "snapshots_with_citations": int(snapshots_with_citations),
         "distinct_cited_domains": len(distinct_cited_domains),
     }
+
+
+@router.get("/deliverables/pack", response_model=None)
+async def geo_deliverables_pack(
+    tenant_id: int = Query(...),
+    from_: str | None = Query(None, alias="from"),
+    to: str | None = Query(None),
+    format: str | None = Query(None, description="json (default) or md"),
+    top_domains: int = Query(10, ge=1, le=50),
+    sample_snapshots: int = Query(12, ge=0, le=50),
+    task_limit: int = Query(20, ge=0, le=100),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """Client-facing GEO deliverables pack composed from existing GEO data."""
+    ctx.ensure_tenant(tenant_id)
+    tenant = await _ensure_tenant_exists(session, tenant_id)
+
+    end = (
+        parse_window_bound(to, label="to")
+        if to
+        else datetime.utcnow()
+    )
+    start = (
+        parse_window_bound(from_, label="from")
+        if from_
+        else end - timedelta(days=30)
+    )
+    if start > end:
+        raise HTTPException(400, "from 不能晚于 to")
+
+    period = {
+        "from": start.isoformat(timespec="seconds"),
+        "to": end.isoformat(timespec="seconds"),
+        "days": max(1, (end.date() - start.date()).days + 1),
+    }
+
+    # ---- windowed snapshots ----
+    snap_rows = list(
+        await session.scalars(
+            select(GeoAnswerSnapshot)
+            .where(GeoAnswerSnapshot.tenant_id == tenant_id)
+            .order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
+        )
+    )
+    window_snaps = [
+        s
+        for s in snap_rows
+        if in_captured_window(s.captured_at, start=start, end=end)
+    ]
+
+    prompt_ids = {s.prompt_id for s in window_snaps}
+    active_prompts = list(
+        await session.scalars(
+            select(GeoPrompt).where(
+                GeoPrompt.tenant_id == tenant_id, GeoPrompt.status == "active"
+            )
+        )
+    )
+    prompt_probe = {p.id: bool(p.is_brand_probe) for p in active_prompts}
+    questions = {p.id: p.question for p in active_prompts}
+    if prompt_ids:
+        for p in await session.scalars(
+            select(GeoPrompt).where(
+                GeoPrompt.tenant_id == tenant_id, GeoPrompt.id.in_(prompt_ids)
+            )
+        ):
+            questions[p.id] = p.question
+
+    split = split_visibility_metrics(
+        [
+            {
+                "mentions_brand": bool(s.mentions_brand),
+                "is_brand_probe": bool(prompt_probe.get(s.prompt_id, False)),
+            }
+            for s in window_snaps
+        ]
+    )
+    engines_covered = len({s.engine for s in window_snaps})
+
+    own_domains = await _own_domains_for_tenant(session, tenant_id)
+    buckets: dict[str, dict[str, Any]] = {}
+    snapshots_with_citations = 0
+    for row in window_snaps:
+        domains = extract_cited_domains(list(row.cited_urls or []))
+        if not domains:
+            continue
+        snapshots_with_citations += 1
+        for domain in domains:
+            bucket = buckets.setdefault(
+                domain,
+                {
+                    "domain": domain,
+                    "cite_count": 0,
+                    "engines": set(),
+                },
+            )
+            bucket["cite_count"] += 1
+            bucket["engines"].add(row.engine)
+    cite_items = []
+    for bucket in buckets.values():
+        bp = match_blueprint_for_domain(bucket["domain"])
+        cite_items.append(
+            {
+                "domain": bucket["domain"],
+                "cite_count": bucket["cite_count"],
+                "engines": sorted(bucket["engines"]),
+                "is_own_domain": bool(
+                    own_domains
+                    and any(domain_matches(bucket["domain"], own) for own in own_domains)
+                ),
+                "blueprint_channel_key": bp["channel_key"] if bp else None,
+                "blueprint_channel_name": bp["channel_name"] if bp else None,
+            }
+        )
+    cite_items.sort(key=lambda x: (-x["cite_count"], x["domain"]))
+    citations_top = cite_items[:top_domains]
+
+    # ---- tasks in window (by updated_at) ----
+    task_rows = list(
+        await session.scalars(
+            select(GeoContentTask)
+            .where(GeoContentTask.tenant_id == tenant_id)
+            .order_by(GeoContentTask.updated_at.desc(), GeoContentTask.id.desc())
+        )
+    )
+    window_tasks = [
+        t
+        for t in task_rows
+        if t.updated_at is not None and start <= t.updated_at.replace(tzinfo=None) <= end
+    ]
+    published = sum(1 for t in window_tasks if t.status == "published")
+    task_items = []
+    for t in window_tasks[:task_limit]:
+        task_items.append(
+            {
+                "id": t.id,
+                "title": t.title,
+                "status": t.status,
+                "prompt_id": t.prompt_id,
+                "prompt_question": questions.get(t.prompt_id),
+                "updated_at": _iso(t.updated_at),
+                "pipeline_step": t.pipeline_step,
+            }
+        )
+
+    # fill missing prompt questions for tasks
+    missing_pids = {
+        t["prompt_id"] for t in task_items if t["prompt_id"] and not t["prompt_question"]
+    }
+    if missing_pids:
+        for p in await session.scalars(
+            select(GeoPrompt).where(
+                GeoPrompt.tenant_id == tenant_id, GeoPrompt.id.in_(missing_pids)
+            )
+        ):
+            for item in task_items:
+                if item["prompt_id"] == p.id:
+                    item["prompt_question"] = p.question
+
+    snaps_sample = [
+        {
+            "id": s.id,
+            "prompt_id": s.prompt_id,
+            "prompt_question": questions.get(s.prompt_id),
+            "engine": s.engine,
+            "mentions_brand": bool(s.mentions_brand),
+            "brand_position": s.brand_position or "unknown",
+            "sentiment": s.sentiment or "unknown",
+            "competitors": s.competitors or [],
+            "captured_at": _iso(s.captured_at),
+        }
+        for s in window_snaps[:sample_snapshots]
+    ]
+
+    summary = {
+        "prompts": len(active_prompts),
+        "tasks": len(window_tasks),
+        "published": published,
+        "snapshots": len(window_snaps),
+        "snapshots_visibility": split["snapshots_visibility"],
+        "snapshots_visibility_mention": split["snapshots_visibility_mention"],
+        "visibility_mention_rate": split["visibility_mention_rate"],
+        "visibility_engines_covered": engines_covered,
+        "snapshots_with_citations": snapshots_with_citations,
+        "distinct_cited_domains": len(cite_items),
+        "prompts_need_recheck": sum(
+            1
+            for p in active_prompts
+            # lightweight: brand_missing tag as proxy when full recheck needs more joins
+            if "brand_missing" in (p.tags or [])
+        ),
+    }
+
+    pack = build_deliverables_pack(
+        tenant_id=tenant_id,
+        tenant_name=getattr(tenant, "name", None) or f"租户{tenant_id}",
+        period=period,
+        summary=summary,
+        citations_top=citations_top,
+        tasks=task_items,
+        snapshots_sample=snaps_sample,
+    )
+
+    fmt = (format or "json").strip().lower()
+    if fmt in ("md", "markdown"):
+        body = render_deliverables_markdown(pack)
+        filename = f"geo-deliverables-{tenant_id}.md"
+        return PlainTextResponse(
+            body,
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    if fmt not in ("", "json"):
+        raise HTTPException(400, "format 仅支持 json 或 md")
+    return pack
+
