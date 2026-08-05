@@ -8,7 +8,7 @@ const router = useRouter()
 const { tenantId } = useGeoTenant()
 
 const cards = [
-  { title: '内容任务', desc: '任务列表 · 打开混合编辑器', path: '/geo/tasks', phase: 'Vue' },
+  { title: '内容任务', desc: '任务列表 · Vue 母稿编辑器（第一刀）', path: '/geo/tasks', phase: 'Vue' },
   { title: '机会词', desc: 'prompts 列表 / 新建 / 归档', path: '/geo/prompts', phase: 'Vue' },
   { title: '事实库', desc: 'facts 列表 / 新建 / 核验', path: '/geo/facts', phase: 'Vue' },
   { title: '跟踪引擎', desc: '监测引擎开关 · sample_mode', path: '/geo/engines', phase: 'Vue' },
@@ -33,7 +33,7 @@ function openStaticFull() {
 }
 
 const note = computed(() =>
-  '方案 B：工作台按页迁 Vue。母稿 editor 仍用静态页（完整流水线），可从任务或下方按钮打开。',
+  '方案 B：工作台已 Vue。母稿第一刀在「内容任务」打开；渠道/审校仍可进静态完整 editor。',
 )
 </script>
 
