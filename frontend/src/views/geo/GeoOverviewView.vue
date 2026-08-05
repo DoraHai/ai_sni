@@ -53,9 +53,12 @@ const workbenchLinks = [
   { label: '竞品分析', path: '/geo/competitors', desc: '竞品出现与份额', vue: true },
   { label: '评价分析', path: '/geo/evaluation', desc: '情感与位置分布', vue: true },
   { label: '交付摘要', path: '/geo/deliverables', desc: '周期报告 Markdown', vue: true },
+  { label: '内容工作台', path: '/geo/workbench', desc: '方案 B 枢纽（Vue 页集合）', vue: true },
   { label: '内容任务', path: '/geo/tasks', desc: '任务列表 + 混合编辑器', vue: true },
-  { label: '静态工作台', path: '/deal-sniper/geo/dashboard', desc: '全量 HTML 流水线（兼容）' },
-  { label: '发布渠道', path: '/deal-sniper/geo/publishing-channels', desc: 'Webhook 与渠道配置' },
+  { label: '机会词', path: '/geo/prompts', desc: 'prompts 管理', vue: true },
+  { label: '事实库', path: '/geo/facts', desc: 'facts 管理', vue: true },
+  { label: '发布渠道', path: '/geo/publishing', desc: '渠道与 Webhook', vue: true },
+  { label: '静态编辑器', path: '/deal-sniper/geo/editor', desc: '母稿完整流水线（兼容）' },
   { label: '网站体检', path: '/diagnostic-center/', desc: '诊断 → 内容桥接', external: true },
 ]
 

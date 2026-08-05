@@ -52,7 +52,13 @@ const ALL_GROUPS = computed(() => [
     { label: '竞品分析', path: '/geo/competitors', key: 'geo.content' },
     { label: '评价分析', path: '/geo/evaluation', key: 'geo.content' },
     { label: '交付摘要', path: '/geo/deliverables', key: 'geo.content' },
+    { label: '内容工作台', path: '/geo/workbench', key: 'geo.content' },
     { label: '内容任务', path: '/geo/tasks', key: 'geo.content' },
+    { label: '机会词', path: '/geo/prompts', key: 'geo.content' },
+    { label: '事实库', path: '/geo/facts', key: 'geo.content' },
+    { label: '跟踪引擎', path: '/geo/engines', key: 'geo.content' },
+    { label: 'AI 配置', path: '/geo/ai-settings', key: 'geo.content' },
+    { label: '发布渠道', path: '/geo/publishing', key: 'geo.content' },
   ] },
   { label: '首次接入', icon: '🚀', children: [
     { label: '授权与同步', path: '/onboarding', key: 'onboarding' },
