@@ -332,10 +332,20 @@
     createAnswerSnapshot: function (body) {
       return api('/answer-snapshots', { method: 'POST', body: body });
     },
-    probeAnswerSnapshot: function (promptId) {
+    probeAnswerSnapshot: function (promptId, engine) {
+      var body = { prompt_id: promptId };
+      if (engine) body.engine = engine;
       return api('/answer-snapshots/probe', {
         method: 'POST',
-        body: { prompt_id: promptId },
+        body: body,
+      });
+    },
+    probeAnswerSnapshotBatch: function (promptId, engines) {
+      var body = { prompt_id: promptId };
+      if (engines && engines.length) body.engines = engines;
+      return api('/answer-snapshots/probe-batch', {
+        method: 'POST',
+        body: body,
       });
     },
     extractAnswerSnapshotUrls: function (rawText) {

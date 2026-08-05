@@ -5,7 +5,7 @@
 **以自动化为准，不强制浏览器端到端：**
 
 ```bash
-# 1) 单测
+# 1) 单测（GitHub Actions CI 同此命令）
 python -m pytest -q tests
 
 # 2) API 已起在 :8011，静态可选 :5176
@@ -13,6 +13,8 @@ python scripts/accept_geo_m1.py
 ```
 
 两项都绿即可合 PR / 开下一刀。浏览器点击仅用于演示或排查 UI，不作为合并门槛。
+
+Vue GEO 入口（权限 `geo.content`）：`/geo/overview`、`/geo/visibility`（含多引擎探测草稿）、`/geo/citations`。多引擎探测共用租户 LLM、按引擎人设模拟，确认后才写快照。
 
 ## 建议从哪一步开始验收
 

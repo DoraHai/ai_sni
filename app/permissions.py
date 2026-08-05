@@ -10,7 +10,7 @@
 MENUS: list[dict] = [
     {"key": "assistant", "label": "AI 助手", "group": "智能助手", "path": "/assistant"},
     {"key": "geo.diagnosis", "label": "GEO 诊断", "group": "GEO 增长", "path": "/geo/diagnosis"},
-    {"key": "geo.content", "label": "GEO 内容", "group": "GEO 增长", "path": "/deal-sniper/geo/articles.html"},
+    {"key": "geo.content", "label": "GEO 概览", "group": "GEO 增长", "path": "/geo/overview"},
     {"key": "onboarding", "label": "授权与同步", "group": "首次接入", "path": "/onboarding"},
     {"key": "monitor.dashboard", "label": "数据看板", "group": "每日盯盘", "path": "/monitor/dashboard"},
     {"key": "monitor.alerts", "label": "异常提醒", "group": "每日盯盘", "path": "/monitor/alerts"},

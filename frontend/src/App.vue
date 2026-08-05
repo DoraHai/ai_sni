@@ -45,6 +45,12 @@ const ALL_GROUPS = computed(() => [
   { label: '诊断中心', icon: '🩺', children: [
     { label: '网站体检', path: '/diagnostic-center/', key: 'geo.diagnosis', external: true },
   ] },
+  { label: 'GEO 增长', icon: '◈', children: [
+    { label: 'GEO 概览', path: '/geo/overview', key: 'geo.content' },
+    { label: 'AI 可见度', path: '/geo/visibility', key: 'geo.content' },
+    { label: '引用域名', path: '/geo/citations', key: 'geo.content' },
+    { label: '内容工作台', path: '/deal-sniper/geo/dashboard', key: 'geo.content', external: true },
+  ] },
   { label: '首次接入', icon: '🚀', children: [
     { label: '授权与同步', path: '/onboarding', key: 'onboarding' },
     { label: '智能搭建', path: '/onboarding/builder', key: 'onboarding' },

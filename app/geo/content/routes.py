@@ -50,10 +50,12 @@ from app.geo.content.ai_settings import (
     settings_public_payload,
 )
 from app.geo.content.engines import default_engine_rows
+from app.geo.content.probe import resolve_batch_engines, run_probe_draft
 from app.geo.content.schemas import (
     AiSettingsUpdate,
     AnswerSnapshotCreate,
     AnswerSnapshotExtractUrlsRequest,
+    AnswerSnapshotProbeBatchRequest,
     AnswerSnapshotProbeRequest,
     AnswerSnapshotSuggestFieldsRequest,
     AnswerSnapshotUpdate,
@@ -1350,7 +1352,10 @@ async def probe_answer_snapshot(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """单引擎草稿探测（默认阿里云百炼 DeepSeek）：不写库，供运营确认后手工保存。"""
+    """单引擎草稿探测：不写库，供运营确认后手工保存。
+
+    非 deepseek 引擎标签时，仍走租户同一 LLM，按引擎人设模拟回答（见 `simulated`）。
+    """
     from app.ai.deepseek import DeepSeekError, chat_json
 
     ctx.ensure_tenant(req.tenant_id)
@@ -1367,44 +1372,98 @@ async def probe_answer_snapshot(
         name=getattr(tenant, "name", None),
         brand_terms=getattr(tenant, "brand_terms", None),
     ) or [brand]
-    system = (
-        "你是 GEO 可见度探测助手。请用中文直接回答用户问题，像常见 AI 助手的公开回答。"
-        "只返回 JSON："
-        '{"raw_text": "完整回答正文", '
-        '"suggested_mentions_brand": true/false, '
-        '"competitors": ["竞品名"], '
-        '"brand_position": "first|mentioned|absent|unknown", '
-        '"sentiment": "positive|neutral|negative|unknown"}。'
-        f"suggested_mentions_brand 表示回答是否明确提及品牌「{brand}」。"
-        "competitors 不要包含该品牌自身；没有竞品就返回 []。"
-        "不要编造不存在的官网承诺或正文外竞品。"
-    )
-    user = f"品牌参考名：{brand}\n用户问题：{prompt.question}"
     try:
-        data = await chat_json(
-            system,
-            user,
-            timeout=60.0,
-            api_key=llm["api_key"],
-            base_url=llm["base_url"],
-            model=llm["model"],
+        draft = await run_probe_draft(
+            question=prompt.question,
+            brand=brand,
+            brand_names=brand_names,
+            engine=req.engine,
+            llm=llm,
+            chat_json=chat_json,
         )
     except DeepSeekError as exc:
         raise HTTPException(502, str(exc)) from exc
-    raw_text = str(data.get("raw_text") or "").strip()
-    if len(raw_text) < 4:
-        raise HTTPException(502, "探测结果过短，请改用粘贴")
-    suggest = normalize_suggest_payload(
-        data, raw_text=raw_text, brand_names=brand_names
-    )
+    except ValueError as exc:
+        raise HTTPException(502, str(exc)) from exc
     return {
         "prompt_id": prompt.id,
         "prompt_question": prompt.question,
-        "engine": "deepseek",
+        **draft,
+    }
+
+
+@router.post("/answer-snapshots/probe-batch")
+async def probe_answer_snapshot_batch(
+    req: AnswerSnapshotProbeBatchRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """对多个跟踪引擎生成探测草稿；不写库。失败引擎记入 error，不中断整批。"""
+    from app.ai.deepseek import DeepSeekError, chat_json
+
+    ctx.ensure_tenant(req.tenant_id)
+    prompt = await _get_prompt(session, req.prompt_id, req.tenant_id)
+    tenant = await _ensure_tenant_exists(session, req.tenant_id)
+    llm = await resolve_llm_credentials(session, req.tenant_id)
+    if not llm:
+        raise HTTPException(
+            503,
+            "未配置 AI 能力：请在「AI 能力配置」填写阿里云百炼 API Key，或改用粘贴登记",
+        )
+    engine_rows = await _ensure_default_engines(session, req.tenant_id)
+    enabled_keys = [r.engine_key for r in engine_rows if r.enabled]
+    if not enabled_keys:
+        enabled_keys = [r.engine_key for r in engine_rows]
+    engines = resolve_batch_engines(req.engines, enabled_keys)
+    if not engines:
+        raise HTTPException(400, "没有可探测的引擎，请先在「AI 引擎管理」启用引擎")
+
+    brand = getattr(tenant, "name", None) or f"租户{req.tenant_id}"
+    brand_names = brand_names_from_tenant(
+        name=getattr(tenant, "name", None),
+        brand_terms=getattr(tenant, "brand_terms", None),
+    ) or [brand]
+
+    items: list[dict] = []
+    for engine in engines:
+        try:
+            draft = await run_probe_draft(
+                question=prompt.question,
+                brand=brand,
+                brand_names=brand_names,
+                engine=engine,
+                llm=llm,
+                chat_json=chat_json,
+            )
+            items.append(
+                {
+                    "prompt_id": prompt.id,
+                    "prompt_question": prompt.question,
+                    "ok": True,
+                    "error": None,
+                    **draft,
+                }
+            )
+        except (DeepSeekError, ValueError) as exc:
+            items.append(
+                {
+                    "prompt_id": prompt.id,
+                    "prompt_question": prompt.question,
+                    "engine": engine,
+                    "ok": False,
+                    "error": str(exc),
+                    "persisted": False,
+                }
+            )
+    return {
+        "prompt_id": prompt.id,
+        "prompt_question": prompt.question,
         "provider": llm.get("provider"),
         "model": llm.get("model"),
-        "raw_text": raw_text,
-        **suggest,
+        "engines": engines,
+        "items": items,
+        "ok_count": sum(1 for i in items if i.get("ok")),
+        "error_count": sum(1 for i in items if not i.get("ok")),
         "persisted": False,
     }
 
