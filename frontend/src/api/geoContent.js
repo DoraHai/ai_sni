@@ -94,28 +94,72 @@ export function createGeoChannelAccount(body) {
   return client.post('/api/v1/geo/channel-accounts', body)
 }
 
-/** Deep-link to static editor (plan B: editor last). */
-export function staticGeoEditorUrl(tenantId, taskId) {
-  const qs = new URLSearchParams({ tenant_id: String(tenantId) })
-  if (taskId) qs.set('task_id', String(taskId))
+/** Normalize static page name → always under /geo/*.html */
+export function normalizeStaticGeoPage(page = 'dashboard.html') {
+  let p = String(page || 'dashboard.html').trim().replace(/^\/+/, '')
+  // accept "dashboard", "geo/dashboard", "dashboard.html", "geo/dashboard.html"
+  p = p.replace(/^geo\//, '')
+  if (!p.endsWith('.html')) p = `${p}.html`
+  // common aliases without geo/ prefix
+  const aliases = {
+    'editor.html': 'editor.html',
+    'dashboard.html': 'dashboard.html',
+    'articles.html': 'articles.html',
+    'prompts.html': 'prompts.html',
+    'sources.html': 'sources.html',
+  }
+  if (!aliases[p] && !p.includes('/')) {
+    // keep as-is under geo/
+  }
+  return p
+}
+
+function staticGeoQuery(tenantId, extra = {}) {
+  const qs = new URLSearchParams({ tenant_id: String(tenantId || 1), ...extra })
   const key = import.meta.env.VITE_API_KEY
-  if (key) qs.set('api_key', key)
+  if (key && key !== 'CHANGE_ME') qs.set('api_key', key)
+  if (import.meta.env.DEV) qs.set('api_origin', 'http://127.0.0.1:8011')
+  return qs
+}
+
+/** Deep-link to static editor (local :5176/geo/… or prod /deal-sniper/geo/…). */
+export function staticGeoEditorUrl(tenantId, taskId) {
+  const qs = staticGeoQuery(tenantId)
+  if (taskId) qs.set('task_id', String(taskId))
   if (import.meta.env.DEV) {
-    qs.set('api_origin', 'http://127.0.0.1:8011')
     return `http://127.0.0.1:5176/geo/editor.html?${qs}`
   }
   return `/deal-sniper/geo/editor.html?${qs}`
 }
 
+/**
+ * Static workbench URL.
+ * Local static server root is deal-sniper-prototype → paths are /geo/*.html
+ * NOT /dashboard.html (that 404s).
+ */
 export function staticGeoWorkbenchUrl(page = 'dashboard.html', tenantId = 1) {
-  const qs = new URLSearchParams({ tenant_id: String(tenantId) })
-  const key = import.meta.env.VITE_API_KEY
-  if (key) qs.set('api_key', key)
+  const file = normalizeStaticGeoPage(page)
+  const qs = staticGeoQuery(tenantId)
   if (import.meta.env.DEV) {
-    qs.set('api_origin', 'http://127.0.0.1:8011')
-    return `http://127.0.0.1:5176/geo/${page}?${qs}`
+    return `http://127.0.0.1:5176/geo/${file}?${qs}`
   }
-  return `/deal-sniper/geo/${page}?${qs}`
+  return `/deal-sniper/geo/${file}?${qs}`
+}
+
+/** Human-readable error from API / axios Error for toasts. */
+export function formatGeoError(err, fallback = '操作失败') {
+  if (!err) return fallback
+  const msg = err.message || err.detail || err
+  if (typeof msg === 'string' && msg.trim() && msg !== '[object Object]') {
+    return msg.trim()
+  }
+  if (Array.isArray(msg)) {
+    return msg.map((d) => d?.msg || JSON.stringify(d)).join('; ') || fallback
+  }
+  if (typeof msg === 'object') {
+    return msg.msg || msg.detail || JSON.stringify(msg) || fallback
+  }
+  return fallback
 }
 
 export function listGeoContentTasks(tenantId, params = {}) {
