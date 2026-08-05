@@ -84,8 +84,11 @@ from app.geo.content.schemas import (
     PromptImportRequest,
     PromptUpdate,
     PublicationCreate,
+    RetrieveFactsApplyRequest,
+    RetrieveFactsRequest,
     ReviewDecision,
     ReviewSubmit,
+    SuggestBriefRequest,
     WebhookPushRequest,
     TaskCreate,
     TaskFactsUpdate,
@@ -427,6 +430,8 @@ async def _task_payload(
     prompt = await session.get(GeoPrompt, task.prompt_id)
     from app.geo.content.brief import brief_ready, normalize_brief
 
+    from app.geo.content.brief import strategy_richness
+
     brief = normalize_brief(task.brief)
     payload: dict[str, Any] = {
         "id": task.id,
@@ -443,6 +448,7 @@ async def _task_payload(
         "owner_user_id": task.owner_user_id,
         "brief": brief,
         "brief_ready": brief_ready(brief),
+        "strategy_richness": strategy_richness(brief),
         **review_payload(task),
         "rule_result": task.rule_result,
         "ready_at": _iso(task.ready_at),
@@ -2489,6 +2495,132 @@ async def get_task(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
+    return await _task_payload(session, task, detail=True)
+
+
+@router.post("/content-tasks/{task_id}/suggest-brief")
+async def suggest_task_brief(
+    task_id: int,
+    req: SuggestBriefRequest,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Draft strategy brief from prompt (does not write unless client PATCHes)."""
+    from app.geo.content.ai_settings import resolve_llm_credentials
+    from app.geo.content.brief import strategy_richness
+    from app.geo.content.brief_suggest import suggest_brief_for_task
+
+    ctx.ensure_tenant(tenant_id)
+    task = await _get_task(session, task_id, tenant_id)
+    prompt = await _get_prompt(session, task.prompt_id, tenant_id)
+    tenant = await _ensure_tenant_exists(session, tenant_id)
+    brand = getattr(tenant, "name", None) or f"租户{tenant_id}"
+    llm = None
+    chat_json = None
+    if req.use_llm:
+        llm = await resolve_llm_credentials(session, tenant_id)
+        if llm:
+            try:
+                from app.ai.deepseek import chat_json as _chat_json
+
+                chat_json = _chat_json
+            except Exception:  # noqa: BLE001
+                chat_json = None
+                llm = None
+    suggested = await suggest_brief_for_task(
+        question=prompt.question,
+        brand=brand,
+        existing_brief=task.brief if isinstance(task.brief, dict) else {},
+        overwrite=bool(req.overwrite),
+        llm=llm,
+        chat_json=chat_json,
+    )
+    return {
+        "task_id": task.id,
+        "prompt_id": prompt.id,
+        "suggested_brief": suggested,
+        "strategy_richness": strategy_richness(suggested),
+        "persisted": False,
+        "overwrite": bool(req.overwrite),
+        "used_llm": bool(llm and chat_json),
+    }
+
+
+@router.post("/content-tasks/{task_id}/retrieve-facts")
+async def retrieve_task_facts(
+    task_id: int,
+    req: RetrieveFactsRequest,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Keyword rank tenant facts for this task; optional auto_bind top results."""
+    from app.geo.content.fact_retrieve import retrieve_facts
+
+    ctx.ensure_tenant(tenant_id)
+    task = await _get_task(session, task_id, tenant_id)
+    prompt = await _get_prompt(session, task.prompt_id, tenant_id)
+    rows = list(
+        await session.scalars(
+            select(GeoFact)
+            .where(GeoFact.tenant_id == tenant_id, GeoFact.status == "active")
+            .order_by(GeoFact.id.desc())
+            .limit(2000)
+        )
+    )
+    fact_dicts = [
+        {
+            "id": f.id,
+            "title": f.title,
+            "statement": f.statement,
+            "source_name": f.source_name,
+            "fact_type": f.fact_type,
+            "trust_level": f.trust_level,
+            "status": f.status,
+        }
+        for f in rows
+    ]
+    result = retrieve_facts(
+        fact_dicts,
+        question=prompt.question,
+        brief=task.brief if isinstance(task.brief, dict) else {},
+        limit=req.limit,
+        verified_only=bool(req.verified_only),
+    )
+    bound = False
+    if req.auto_bind and result["items"]:
+        if req.limit > 20:
+            raise HTTPException(400, "auto_bind 时 limit 不能超过 20")
+        fact_ids = [int(i["fact_id"]) for i in result["items"] if i.get("fact_id")]
+        await _bind_facts(session, task, fact_ids)
+        await session.commit()
+        await session.refresh(task)
+        bound = True
+    return {
+        "task_id": task.id,
+        "prompt_id": prompt.id,
+        "items": result["items"],
+        "query_meta": result["query_meta"],
+        "auto_bound": bound,
+        "task": await _task_payload(session, task, detail=True) if bound else None,
+    }
+
+
+@router.post("/content-tasks/{task_id}/retrieve-facts/apply")
+async def apply_retrieved_facts(
+    task_id: int,
+    req: RetrieveFactsApplyRequest,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Bind selected fact ids (same as PUT facts, dedicated apply path)."""
+    ctx.ensure_tenant(tenant_id)
+    task = await _get_task(session, task_id, tenant_id)
+    await _bind_facts(session, task, req.fact_ids)
+    await session.commit()
+    await session.refresh(task)
     return await _task_payload(session, task, detail=True)
 
 

@@ -126,10 +126,35 @@ class ContentBrief(BaseModel):
     cta: str | None = Field(None, max_length=160)
     banned_claims: list[str] = Field(default_factory=list)
     notes: str | None = Field(None, max_length=500)
+    # v2 strategy (optional)
+    ai_question: str | None = Field(None, max_length=300)
+    not_recommended_reasons: list[str] = Field(default_factory=list)
+    info_gaps: list[str] = Field(default_factory=list)
+    recommend_when: str | None = Field(None, max_length=300)
+    competitors: list[str] = Field(default_factory=list)
+    must_cover: list[str] = Field(default_factory=list)
+    source_bar: str | None = Field(None, max_length=40)
+    strategy_notes: str | None = Field(None, max_length=500)
+    schema_version: int | None = None
 
 
 class TaskFactsUpdate(BaseModel):
     fact_ids: list[int] = Field(..., min_length=0)
+
+
+class SuggestBriefRequest(BaseModel):
+    overwrite: bool = False
+    use_llm: bool = True
+
+
+class RetrieveFactsRequest(BaseModel):
+    limit: int = Field(10, ge=1, le=50)
+    verified_only: bool = False
+    auto_bind: bool = False
+
+
+class RetrieveFactsApplyRequest(BaseModel):
+    fact_ids: list[int] = Field(..., min_length=1, max_length=50)
 
 
 class ArticleUpdate(BaseModel):
