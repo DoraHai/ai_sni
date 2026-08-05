@@ -5,14 +5,14 @@
 **以自动化为准，不强制浏览器端到端：**
 
 ```bash
-# 1) 单测
+# 1) 单测（GitHub Actions CI 同此命令）
 python -m pytest -q tests
 
 # 2) API 已起在 :8011，静态可选 :5176
 python scripts/accept_geo_m1.py
 ```
 
-两项都绿即可合 PR / 开下一刀。浏览器点击仅用于演示或排查 UI，不作为合并门槛。
+两项都绿即可合 PR / 开下一刀。浏览器点击仅用于演示或排查 UI，不作为合并门槛。Vue 侧 GEO 概览入口：`/geo/overview`（权限 `geo.content`）。
 
 ## 建议从哪一步开始验收
 

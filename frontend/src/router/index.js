@@ -53,6 +53,16 @@ const routes = [
     meta: { title: 'AI 助手', workflow: '智能助手', perm: 'assistant' },
   },
   {
+    path: '/geo/overview',
+    component: () => import('../views/geo/GeoOverviewView.vue'),
+    meta: {
+      title: 'GEO 概览',
+      documentTitle: 'GEO 增长｜概览',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
     path: '/geo/diagnosis',
     component: () => import('../views/diagnosis/DiagnosisRedirectView.vue'),
     meta: {
@@ -187,6 +197,7 @@ const router = createRouter({
 
 const MENU_ORDER = [
   ['assistant', '/assistant'],
+  ['geo.content', '/geo/overview'],
   ['geo.diagnosis', '/geo/diagnosis'],
   ['monitor.dashboard', '/monitor/dashboard'],
   ['monitor.alerts', '/monitor/alerts'],
