@@ -22,6 +22,10 @@ RICH_BODY = (
 
 
 class ExtractableBlocksTests(unittest.TestCase):
+    def test_definition_heading_is_an_extractable_definition_block(self):
+        text = "## 定义\n\n面向采购决策的产品能力说明。"
+        self.assertTrue(detect_blocks(text)["definition"])
+
     def test_detect_all_five(self):
         blocks = detect_blocks(RICH_BODY)
         self.assertTrue(all(blocks.values()))

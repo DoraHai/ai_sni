@@ -71,8 +71,11 @@ def detect_blocks(
     howto = bool(RE_HOWTO.search(body)) or (
         bool(RE_HOWTO_SOFT.search(body)) and lis >= 3
     )
+    definition_heading = bool(
+        re.search(r"(?im)^#{1,6}\s*(?:定义|是什么|简介)\s*$", body)
+    )
     return {
-        "definition": bool(RE_DEFINITION.search(body)),
+        "definition": definition_heading or bool(RE_DEFINITION.search(body)),
         "numbers": len(RE_NUMBER.findall(body)) >= 3,
         "comparison": bool(RE_COMPARE.search(body)) or table_count >= 1,
         "howto": howto,
