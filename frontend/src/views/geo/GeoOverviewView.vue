@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { fetchGeoContentStats, geoContentHealth } from '../../api/geoContent'
 import { session } from '../../store/session'
@@ -47,15 +48,21 @@ const summaryCards = computed(() => {
 })
 
 const workbenchLinks = [
+  { label: 'AI 可见度', path: '/geo/visibility', desc: '登记 / 多引擎探测', vue: true },
+  { label: '引用域名', path: '/geo/citations', desc: '引用聚合与蓝图对照', vue: true },
   { label: '内容工作台', path: '/deal-sniper/geo/dashboard', desc: '任务、母稿与渠道稿' },
-  { label: '可见度快照', path: '/deal-sniper/geo/visibility', desc: '登记回答与复测' },
-  { label: '引用域名', path: '/deal-sniper/geo/citations', desc: '引用聚合与蓝图对照' },
   { label: '竞品分析', path: '/deal-sniper/geo/competitors', desc: '竞品出现与份额' },
   { label: '发布渠道', path: '/deal-sniper/geo/publishing-channels', desc: 'Webhook 与渠道配置' },
   { label: '网站体检', path: '/diagnostic-center/', desc: '诊断 → 内容桥接', external: true },
 ]
 
+const router = useRouter()
+
 function openWorkbench(link) {
+  if (link.vue) {
+    router.push(link.path)
+    return
+  }
   if (link.external) {
     window.location.assign(link.path)
     return

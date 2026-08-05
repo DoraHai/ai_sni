@@ -8,8 +8,12 @@ export function fetchGeoContentStats(tenantId) {
   return client.get('/api/v1/geo/content-stats', { params: { tenant_id: tenantId } })
 }
 
-export function listGeoPrompts(tenantId, status) {
-  return client.get('/api/v1/geo/prompts', { params: { tenant_id: tenantId, status } })
+export function listGeoPrompts(tenantId, statusOrParams, maybeParams) {
+  const params =
+    statusOrParams && typeof statusOrParams === 'object'
+      ? { tenant_id: tenantId, ...statusOrParams }
+      : { tenant_id: tenantId, status: statusOrParams, ...(maybeParams || {}) }
+  return client.get('/api/v1/geo/prompts', { params })
 }
 
 export function createGeoPrompt(body) {
@@ -80,4 +84,48 @@ export function applyGeoContentPatch(tenantId, taskId, code, authorName) {
 
 export function createGeoTaskFromDiagnosis(body) {
   return client.post('/api/v1/geo/content-tasks/from-diagnosis', body)
+}
+
+export function listGeoAnswerSnapshots(tenantId, params = {}) {
+  return client.get('/api/v1/geo/answer-snapshots', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
+export function createGeoAnswerSnapshot(body) {
+  return client.post('/api/v1/geo/answer-snapshots', body)
+}
+
+export function patchGeoAnswerSnapshot(tenantId, snapshotId, body) {
+  return client.patch(`/api/v1/geo/answer-snapshots/${snapshotId}`, body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function probeGeoAnswerSnapshot(body) {
+  return client.post('/api/v1/geo/answer-snapshots/probe', body, { timeout: 90000 })
+}
+
+export function probeGeoAnswerSnapshotBatch(body) {
+  return client.post('/api/v1/geo/answer-snapshots/probe-batch', body, { timeout: 300000 })
+}
+
+export function extractGeoAnswerSnapshotUrls(body) {
+  return client.post('/api/v1/geo/answer-snapshots/extract-urls', body)
+}
+
+export function suggestGeoAnswerSnapshotFields(body) {
+  return client.post('/api/v1/geo/answer-snapshots/suggest-fields', body, { timeout: 90000 })
+}
+
+export function listGeoTrackingEngines(tenantId, enabledOnly = false) {
+  return client.get('/api/v1/geo/tracking-engines', {
+    params: { tenant_id: tenantId, enabled_only: enabledOnly },
+  })
+}
+
+export function fetchGeoCitationInsights(tenantId) {
+  return client.get('/api/v1/geo/citation-insights', {
+    params: { tenant_id: tenantId },
+  })
 }

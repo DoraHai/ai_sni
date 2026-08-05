@@ -84,10 +84,12 @@
           </div>
           <div class="wb-toolbar" style="justify-content:flex-start;gap:8px">
             <button class="wb-btn" id="btnProbe">用 AI 探测</button>
+            <button class="wb-btn" id="btnProbeBatch">多引擎探测</button>
             <button class="wb-btn" id="btnSuggestFields">AI 标注建议</button>
             <button class="wb-btn primary" id="btnSave">保存快照</button>
           </div>
-          <div class="wb-hint">探测 / 标注建议只填草稿，不写库；确认后点「保存快照」。可从正文抽取引用 URL；保存时若 URL 栏为空会自动抽取。提及=是清除 brand_missing；提及=否会加回该标签。</div>
+          <div id="batchBox" class="wb-card" style="display:none;margin-top:12px"></div>
+          <div class="wb-hint">探测 / 多引擎探测 / 标注建议只填草稿，不写库；确认后点「保存快照」。多引擎共用租户 LLM，按引擎人设模拟。可从正文抽取引用 URL；保存时若 URL 栏为空会自动抽取。</div>
         </div>
         <div class="wb-card">
           <div class="wb-toolbar">
@@ -120,7 +122,7 @@
   </main>
 </div>
 <script src="assets/geo-sidebar-v1.js?rev=9"></script>
-<script src="assets/geo-api-v1.js?rev=14"></script>
+<script src="assets/geo-api-v1.js?rev=15"></script>
 <script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {
@@ -343,14 +345,55 @@
       var promptId = Number(document.getElementById('promptSelect').value);
       if (!promptId) throw new Error('请选择机会问题');
       GeoWB.clearError(err);
-      var draft = await GeoAPI.probeAnswerSnapshot(promptId);
+      var engine = document.getElementById('engine').value || 'deepseek';
+      var draft = await GeoAPI.probeAnswerSnapshot(promptId, engine);
       document.getElementById('rawText').value = draft.raw_text || '';
       applySuggestFields(draft);
-      var eng = document.getElementById('engine');
-      for (var i = 0; i < eng.options.length; i++) {
-        if (eng.options[i].value === 'deepseek') { eng.value = 'deepseek'; break; }
+      if (draft.engine) document.getElementById('engine').value = draft.engine;
+      document.getElementById('note').value =
+        (draft.simulated ? engine + ' 模拟探测草稿（待确认）' : engine + ' 探测草稿（待确认）');
+    } catch (e) {
+      GeoWB.showError(err, e);
+    }
+  };
+  document.getElementById('btnProbeBatch').onclick = async function () {
+    try {
+      GeoWB.requireTenant();
+      var promptId = Number(document.getElementById('promptSelect').value);
+      if (!promptId) throw new Error('请选择机会问题');
+      GeoWB.clearError(err);
+      var result = await GeoAPI.probeAnswerSnapshotBatch(promptId);
+      var box = document.getElementById('batchBox');
+      box.style.display = 'block';
+      box.innerHTML = '<strong>多引擎草稿</strong><div class="wb-muted" style="margin:6px 0">成功 '
+        + (result.ok_count || 0) + ' · 失败 ' + (result.error_count || 0)
+        + '（共用租户 LLM，按引擎人设模拟）</div>';
+      (result.items || []).forEach(function (item) {
+        var row = document.createElement('div');
+        row.className = 'wb-toolbar';
+        row.style.justifyContent = 'space-between';
+        row.style.marginBottom = '6px';
+        row.innerHTML = '<span><b>' + item.engine + '</b> · '
+          + (item.ok ? snippet(item.raw_text) : ('失败：' + (item.error || '')))
+          + '</span>'
+          + (item.ok ? '<button class="wb-btn" type="button">填入</button>' : '');
+        if (item.ok) {
+          row.querySelector('button').onclick = function () {
+            document.getElementById('rawText').value = item.raw_text || '';
+            applySuggestFields(item);
+            document.getElementById('engine').value = item.engine;
+            document.getElementById('note').value =
+              (item.simulated ? item.engine + ' 模拟探测草稿（待确认）' : item.engine + ' 探测草稿（待确认）');
+          };
+        }
+        box.appendChild(row);
+      });
+      var firstOk = (result.items || []).find(function (i) { return i.ok; });
+      if (firstOk) {
+        document.getElementById('rawText').value = firstOk.raw_text || '';
+        applySuggestFields(firstOk);
+        document.getElementById('engine').value = firstOk.engine;
       }
-      document.getElementById('note').value = 'DeepSeek 探测草稿（待确认）';
     } catch (e) {
       GeoWB.showError(err, e);
     }

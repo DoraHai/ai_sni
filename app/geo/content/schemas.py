@@ -227,6 +227,15 @@ class AnswerSnapshotUpdate(BaseModel):
 class AnswerSnapshotProbeRequest(BaseModel):
     tenant_id: int
     prompt_id: int
+    engine: SnapshotEngine = "deepseek"
+
+
+class AnswerSnapshotProbeBatchRequest(BaseModel):
+    """Probe multiple tracking engines; drafts only (no DB write)."""
+
+    tenant_id: int
+    prompt_id: int
+    engines: list[SnapshotEngine] | None = None
 
 
 class AnswerSnapshotExtractUrlsRequest(BaseModel):

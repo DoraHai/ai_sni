@@ -12,7 +12,9 @@ python -m pytest -q tests
 python scripts/accept_geo_m1.py
 ```
 
-两项都绿即可合 PR / 开下一刀。浏览器点击仅用于演示或排查 UI，不作为合并门槛。Vue 侧 GEO 概览入口：`/geo/overview`（权限 `geo.content`）。
+两项都绿即可合 PR / 开下一刀。浏览器点击仅用于演示或排查 UI，不作为合并门槛。
+
+Vue GEO 入口（权限 `geo.content`）：`/geo/overview`、`/geo/visibility`（含多引擎探测草稿）、`/geo/citations`。多引擎探测共用租户 LLM、按引擎人设模拟，确认后才写快照。
 
 ## 建议从哪一步开始验收
 

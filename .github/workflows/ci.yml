@@ -26,4 +26,13 @@ jobs:
       - name: Run tests
         env:
           DATABASE_URL: postgresql+asyncpg://test:test@localhost/test
+          BAIDU_APP_ID: ci-dummy
+          BAIDU_SECRET_KEY: ci-dummy
+          BAIDU_DEFAULT_USERNAME: ci-dummy
+          BAIDU_DEFAULT_UCID: "1"
+          BAIDU_SELF_ACCESS_TOKEN: ci-dummy
+          BAIDU_SELF_TOKEN_EXPIRES_AT: "2099-01-01T00:00:00+00:00"
+          # 32-byte AES key, standard base64 (tests never use live crypto)
+          CRYPTO_MASTER_KEY_B64: j/QGqbWO8IVw9cCVeAq+u/alTyjLsSQXjROH9uW/3tA=
+          ADMIN_API_KEY: ci-admin-key
         run: python -m pytest -q tests

@@ -63,6 +63,26 @@ const routes = [
     },
   },
   {
+    path: '/geo/visibility',
+    component: () => import('../views/geo/GeoVisibilityView.vue'),
+    meta: {
+      title: 'AI 可见度',
+      documentTitle: 'GEO 增长｜可见度',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/citations',
+    component: () => import('../views/geo/GeoCitationsView.vue'),
+    meta: {
+      title: '引用域名',
+      documentTitle: 'GEO 增长｜引用域名',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
     path: '/geo/diagnosis',
     component: () => import('../views/diagnosis/DiagnosisRedirectView.vue'),
     meta: {
