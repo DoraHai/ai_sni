@@ -362,6 +362,7 @@ async function bindTopVerified(n = 3) {
 async function retrieveFacts() {
   busy.value = 'retrieve'
   error.value = ''
+  retrievePreview.value = []
   try {
     // Brief patch is best-effort; do not block retrieve if it fails
     try {
@@ -372,27 +373,66 @@ async function retrieveFacts() {
     const res = await retrieveGeoTaskFacts(tenantId.value, taskId.value, {
       limit: 8,
       verified_only: false,
+      auto_bind: false,
     })
-    const items = Array.isArray(res?.items) ? res.items : []
+    // Support both {items:[{fact_id}]} and accidental nested shapes
+    let items = Array.isArray(res?.items) ? res.items : []
+    if (!items.length && Array.isArray(res?.results)) items = res.results
+    items = items
+      .map((x) => ({
+        ...x,
+        fact_id: Number(x.fact_id ?? x.id),
+        title: x.title || x.fact_title || '',
+        score: x.score,
+        trust_level: x.trust_level,
+      }))
+      .filter((x) => Number.isFinite(x.fact_id) && x.fact_id > 0)
     retrievePreview.value = items
+    const meta = res?.query_meta || {}
     if (!items.length) {
-      const meta = res?.query_meta || {}
-      // fallback: pre-select verified so user can still bind
-      const verifiedIds = (allFacts.value || [])
-        .filter((f) => f.trust_level === 'verified')
+      // Client-side soft fallback: rank local allFacts by simple keyword overlap
+      const q = [
+        task.value?.prompt_question || '',
+        brief.ai_question || '',
+        brief.must_cover || '',
+        brief.industry || '',
+      ]
+        .join(' ')
+        .toLowerCase()
+      const local = (allFacts.value || [])
+        .map((f) => {
+          const hay = `${f.title || ''} ${f.statement || ''} ${f.source_name || ''}`.toLowerCase()
+          let score = f.trust_level === 'verified' ? 1 : 0
+          if (q) {
+            for (const tok of q.split(/\s+/).filter((t) => t.length >= 2).slice(0, 20)) {
+              if (hay.includes(tok)) score += tok.length >= 2 ? 2 : 1
+            }
+          }
+          return {
+            fact_id: Number(f.id),
+            title: f.title,
+            score,
+            trust_level: f.trust_level,
+            reasons: ['local_fallback'],
+          }
+        })
+        .filter((x) => x.fact_id > 0)
+        .sort((a, b) => b.score - a.score || a.fact_id - b.fact_id)
         .slice(0, 8)
-        .map((f) => Number(f.id))
-        .filter(Boolean)
-      if (verifiedIds.length) {
-        selectedFactIds.value = verifiedIds
+      if (local.length) {
+        retrievePreview.value = local
+        const ids = local.map((x) => x.fact_id)
+        selectedFactIds.value = Array.from(
+          new Set([...(selectedFactIds.value || []).map(Number), ...ids]),
+        )
         const msg =
-          '召回无关键词命中，已预勾选库中 verified 事实，请点「保存绑定」或「一键绑 3 条 verified」。' +
-          (meta.tokens ? `（分词：${(meta.tokens || []).slice(0, 6).join('、')}）` : '')
+          `API 召回 0 条，已用本地库兜底 ${local.length} 条候选（已勾选）。请点「绑定召回 Top」或「保存绑定」。` +
+          (meta.algorithm ? `（API 算法 ${meta.algorithm}）` : '')
         ElMessage.warning(msg)
         error.value = msg
       } else {
         const msg =
-          '未召回到相关事实，且库中无 verified 事实。请先在事实库核验至少 3 条。' +
+          '召回无候选：库中也无可用事实。请先在事实库创建/核验至少 3 条。' +
           (meta.tokens ? `（分词：${(meta.tokens || []).slice(0, 8).join('、')}）` : '')
         ElMessage.warning(msg)
         error.value = msg
@@ -403,7 +443,7 @@ async function retrieveFacts() {
         new Set([...(selectedFactIds.value || []).map(Number), ...ids]),
       )
       ElMessage.success(
-        `召回 ${items.length} 条（已勾选，请点「保存绑定」或「绑定召回 Top」）`,
+        `召回 ${items.length} 条候选（已勾选）。点「绑定召回 Top」写入任务，或「保存绑定」。`,
       )
       error.value = ''
     }
@@ -411,7 +451,7 @@ async function retrieveFacts() {
     const raw = formatGeoError(e, '召回失败')
     const msg =
       /not found|404/i.test(raw)
-        ? '召回接口 404：本机 GEO/主站 API 可能是旧进程，请重启 uvicorn（app.main:8000 / app.geo_main:8011）后再试'
+        ? '召回接口 404：请重启 uvicorn（:8000 / :8011）加载最新 retrieve-facts 路由后再试'
         : raw
     error.value = msg
     ElMessage({ type: 'error', message: msg, duration: 8000, showClose: true })
@@ -435,7 +475,9 @@ async function applyRetrieveTop() {
       .filter(Boolean)
   }
   if (!ids.length) {
-    ElMessage.warning('仍无可用事实，请点「一键绑 3 条 verified」或手动勾选后「保存绑定」')
+    ElMessage.warning(
+      '仍无召回候选。请先点「召回」，或「一键绑 3 条 verified」，或手动勾选后「保存绑定」',
+    )
     return
   }
   busy.value = 'apply'
@@ -587,18 +629,63 @@ async function runAiReview() {
 
 async function applyPatch(code) {
   busy.value = 'patch'
+  error.value = ''
+  const beforeLen = (article.body_markdown || '').length
   try {
+    // Always edit master draft when applying structural patches
+    docTab.value = 'master'
     const res = await applyGeoContentPatch(tenantId.value, taskId.value, code)
+    // Prefer explicit article on response; fall back to task.article then re-GET
+    let art = res.article || res.task?.article || null
     if (res.task) {
-      task.value = res.task
-      applyArticleFromTask(res.task)
+      applyTaskPayload(res.task)
     }
+    if (art?.body_markdown != null) {
+      article.title = art.title || article.title
+      article.body_markdown = art.body_markdown
+    } else {
+      const t = await refreshTaskDetail()
+      art = t?.article || null
+    }
+    const afterLen = (article.body_markdown || '').length
+    const bodyChanged =
+      res.body_changed === true ||
+      afterLen !== beforeLen ||
+      (res.body_len_after != null && res.body_len_before != null && res.body_len_after !== res.body_len_before)
+
     checkResult.value = {
-      ...(checkResult.value || {}),
-      ...res,
-      checks: res.checks || checkResult.value?.checks,
+      ready: res.ready,
+      checks: res.checks || [],
+      patches: res.patches || [],
+      lint: res.lint,
+      blocks: res.blocks,
+      geo_score: res.geo_score,
+      geo_subscores: res.geo_subscores,
+      geo_actions: res.geo_actions || [],
+      ai_review: checkResult.value?.ai_review,
     }
-    ElMessage.success(`已应用补丁 ${code}`)
+
+    if (!bodyChanged) {
+      const msg = `补丁 ${code} 返回成功但正文长度未变化（${beforeLen}→${afterLen}）。请硬刷新后重试。`
+      error.value = msg
+      ElMessage.error(msg)
+      return
+    }
+
+    const target = (res.checks || []).find((c) => c.code === code)
+    const effective = res.effective !== false && (target ? target.passed : true)
+    const scorePart =
+      res.geo_score != null ? ` · Score ${res.geo_score}/100` : ''
+    if (effective) {
+      ElMessage.success(
+        `已应用补丁 ${code}（正文 ${beforeLen}→${afterLen} 字${scorePart}，规则已通过）`,
+      )
+    } else {
+      ElMessage.warning(
+        `已写入补丁 ${code}（正文 ${beforeLen}→${afterLen} 字${scorePart}），但该规则仍未通过，请检查插入内容或再点检查`,
+      )
+    }
+    error.value = ''
   } catch (e) {
     toastError(e, '补丁失败')
   } finally {
@@ -988,8 +1075,13 @@ onMounted(load)
               :value="Number(f.id)"
             />
           </el-select>
-          <div v-if="retrievePreview.length" class="retrieve mt">
-            <div class="hint">召回预览（点「绑定召回 Top」或「保存绑定」写入任务）：</div>
+          <div class="retrieve mt">
+            <div class="hint">
+              召回候选
+              <strong>{{ retrievePreview.length }}</strong>
+              条
+              <span v-if="!retrievePreview.length">（点「召回」加载；无结果时用本地库兜底）</span>
+            </div>
             <div v-for="r in retrievePreview" :key="r.fact_id" class="retrieve-row">
               #{{ r.fact_id }} · {{ r.title }} · score {{ r.score }}
               <span v-if="r.trust_level" class="hint"> · {{ r.trust_level }}</span>
@@ -1067,6 +1159,7 @@ onMounted(load)
               </el-form-item>
               <el-form-item label="正文">
                 <el-input
+                  :key="`master-body-${task?.article?.version_no || 0}-${(article.body_markdown || '').length}`"
                   v-model="article.body_markdown"
                   type="textarea"
                   :rows="16"
@@ -1076,6 +1169,7 @@ onMounted(load)
             </el-form>
             <div v-if="task.article" class="hint">
               版本 v{{ task.article.version_no }} · {{ task.article.created_at || '' }}
+              · 正文字数 {{ (article.body_markdown || '').length }}
             </div>
           </template>
           <template v-else>
@@ -1236,7 +1330,7 @@ onMounted(load)
               :loading="busy === 'patch'"
               @click="applyPatch(p.code)"
             >
-              插入修复 · {{ p.code }}
+              插入修复 · {{ p.label || p.code }}
             </el-button>
           </div>
           <div v-if="aiReview" class="mt">

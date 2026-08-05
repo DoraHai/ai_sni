@@ -190,6 +190,37 @@ class FactRetrieveTests(unittest.TestCase):
         ids = [i["fact_id"] for i in result["items"]]
         self.assertEqual(ids, [2])
 
+    def test_retrieve_fallback_returns_active_when_no_keyword_hit(self):
+        facts = [
+            {
+                "id": 9,
+                "title": "无关标题甲",
+                "statement": "完全不相关",
+                "source_name": "s",
+                "trust_level": "verified",
+                "status": "active",
+                "fact_type": "other",
+            },
+            {
+                "id": 10,
+                "title": "无关标题乙",
+                "statement": "也无关",
+                "source_name": "s",
+                "trust_level": "verified",
+                "status": "active",
+                "fact_type": "other",
+            },
+        ]
+        result = retrieve_facts(
+            facts,
+            question="zzzznotamatchtoken999",
+            brief=None,
+            limit=5,
+            verified_only=False,
+        )
+        self.assertTrue(result["items"], "should fallback to active facts when no keyword hit")
+        self.assertTrue(result["query_meta"].get("fallback_all_active"))
+
 
 class AuthPathTests(unittest.TestCase):
     def test_suggest_brief_requires_edit(self):

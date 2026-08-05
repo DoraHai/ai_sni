@@ -2859,23 +2859,53 @@ async def apply_patch(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    """Insert a rule fix into a new master article version and re-score.
+
+    Returns geo_score + body lengths so the UI can prove the body changed
+    (avoids “已应用补丁” false success when the editor does not refresh).
+    """
+    from app.config import get_settings
+    from app.geo.content.draft_lint import lint_draft, lint_summary
+    from app.geo.content.extractable_blocks import blocks_payload
+    from app.geo.content.geo_score import compute_geo_score, score_blocks_ready
+
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
     article = await _latest_article(session, task.id)
     if article is None:
         raise HTTPException(400, "请先生成或保存母稿")
+    old_body = article.body_markdown or ""
     rule_input = await _build_rule_input(session, task, article)
     patch = next((p for p in build_fix_patches(rule_input) if p["code"] == req.code), None)
     if patch is None:
-        raise HTTPException(400, f"无可用修复补丁: {req.code}")
-    insert = patch["insert_markdown"]
+        raise HTTPException(400, f"无可用修复补丁: {req.code}（该规则可能已通过，请先点「检查就绪」刷新）")
+    insert = str(patch.get("insert_markdown") or "")
+    if not insert.strip():
+        raise HTTPException(400, f"补丁 {req.code} 内容为空")
     if patch.get("cursor_hint") == "prepend":
-        new_body = insert + "\n" + article.body_markdown
+        new_body = insert.lstrip("\n") + ("\n" + old_body if old_body else "")
     else:
-        new_body = article.body_markdown.rstrip() + "\n" + insert
+        new_body = (old_body.rstrip() + "\n" + insert.lstrip("\n")) if old_body else insert.lstrip("\n")
+    if new_body.strip() == old_body.strip():
+        raise HTTPException(400, f"补丁 {req.code} 未改变正文，请手动编辑或重新检查")
+
     author_name = req.author_name or article.author_name
     if req.code == "author_visible" and req.author_name:
         author_name = req.author_name
+    # Drop stale outline FAQ/sections that can mask body-based detectors
+    outline = dict(article.outline or {}) if isinstance(article.outline, dict) else {}
+    if req.code == "faq_min" and isinstance(outline.get("faq"), list):
+        outline.pop("faq", None)
+    if req.code in {"definition", "conclusion_extractable"} and isinstance(
+        outline.get("sections"), list
+    ):
+        drop_type = "definition" if req.code == "definition" else "conclusion"
+        outline["sections"] = [
+            s
+            for s in outline["sections"]
+            if not (isinstance(s, dict) and s.get("type") == drop_type)
+        ]
+
     version_no = article.version_no + 1
     new_article = GeoArticleVersion(
         task_id=task.id,
@@ -2883,35 +2913,92 @@ async def apply_patch(
         kind="master",
         title=article.title,
         body_markdown=new_body,
-        outline=article.outline,
+        outline=outline,
         author_name=author_name,
-        generation_meta={"source": "apply_patch", "patch_code": req.code},
+        generation_meta={
+            "source": "apply_patch",
+            "patch_code": req.code,
+            "body_len_before": len(old_body),
+            "body_len_after": len(new_body),
+        },
         created_by=ctx.user_id,
     )
     session.add(new_article)
     task.status = "editing"
     invalidate_review(task)
     await session.flush()
+
     rule_input = await _build_rule_input(session, task, new_article)
     checks = run_checks(rule_input)
     check_dicts = [c.to_dict() for c in checks]
     ready = is_ready(checks, require_channels=False)
+    lint = lint_summary(
+        lint_draft(rule_input.body_markdown or "", facts=rule_input.facts or [])
+    )
+    blocks = blocks_payload(rule_input.body_markdown or "")
+    lint_ok = bool(lint.get("blocks_ready")) if isinstance(lint, dict) else None
+    score_payload = compute_geo_score(
+        rule_input,
+        brief=task.brief if isinstance(task.brief, dict) else {},
+        lint_ok=lint_ok,
+        rule_checks=checks,
+    )
+    settings = get_settings()
+    score_ok, score_msg = score_blocks_ready(
+        score_payload,
+        threshold=int(getattr(settings, "geo_score_threshold", 60) or 60),
+        gate_enabled=bool(getattr(settings, "geo_score_gate", False)),
+    )
+    if not score_ok:
+        ready = False
+
+    target = next((c for c in check_dicts if c.get("code") == req.code), None)
+    target_passed = bool(target and target.get("passed"))
+    prev_rr = task.rule_result if isinstance(task.rule_result, dict) else {}
+    ai_review = prev_rr.get("ai_review") if isinstance(prev_rr.get("ai_review"), dict) else None
+
     task.rule_result = {
         "ready": ready,
         "require_channels": False,
         "checks": check_dicts,
+        "lint": lint,
+        "blocks": blocks,
+        "geo_score": score_payload["geo_score"],
+        "geo_subscores": score_payload["geo_subscores"],
+        "geo_actions": score_payload["geo_actions"],
+        "geo_score_gate": bool(getattr(settings, "geo_score_gate", False)),
+        "geo_score_threshold": int(getattr(settings, "geo_score_threshold", 60) or 60),
+        "geo_score_gate_message": score_msg or None,
+        "ai_review": ai_review,
+        "last_patch": {
+            "code": req.code,
+            "effective": target_passed,
+            "body_len_before": len(old_body),
+            "body_len_after": len(new_body),
+        },
         "checked_at": datetime.utcnow().isoformat(),
     }
     task.status = "ready" if ready else "needs_fix"
     await _sync_task_pipeline(session, task, checks=check_dicts)
     await session.commit()
     await session.refresh(task)
+    task_payload = await _task_payload(session, task, detail=True)
     return {
         "applied": req.code,
+        "effective": target_passed,
+        "body_changed": True,
+        "body_len_before": len(old_body),
+        "body_len_after": len(new_body),
         "ready": ready,
         "checks": check_dicts,
         "patches": build_fix_patches(rule_input),
-        "task": await _task_payload(session, task, detail=True),
+        "lint": lint,
+        "blocks": blocks,
+        "geo_score": score_payload["geo_score"],
+        "geo_subscores": score_payload["geo_subscores"],
+        "geo_actions": score_payload["geo_actions"],
+        "task": task_payload,
+        "article": (task_payload or {}).get("article"),
     }
 
 

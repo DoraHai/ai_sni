@@ -489,10 +489,36 @@
       btn.textContent = '插入修复 · ' + p.code;
       btn.onclick = async function () {
         try {
+          activeTab = 'master';
+          var beforeLen = ((task.article || {}).body_markdown || '').length;
           var r = await GeoAPI.applyPatch(taskId, p.code);
-          task = r.task;
+          if (r.task) task = r.task;
+          if (!(task.article && task.article.body_markdown) && r.article) {
+            task.article = r.article;
+          }
+          if (!(task.article && task.article.body_markdown)) {
+            task = await GeoAPI.getTask(taskId);
+          }
+          var afterLen = ((task.article || {}).body_markdown || '').length;
           renderAll();
-          renderChecks(r);
+          // merge score fields so Score line updates without extra check click
+          renderChecks(Object.assign({}, r, {
+            geo_score: r.geo_score,
+            geo_subscores: r.geo_subscores,
+            geo_actions: r.geo_actions,
+            checks: r.checks,
+            patches: r.patches,
+            ready: r.ready,
+          }));
+          var line = document.getElementById('retrieveLine');
+          if (line) {
+            line.textContent = (r.effective === false)
+              ? ('补丁 ' + p.code + ' 已写入正文 ' + beforeLen + '→' + afterLen + '，但规则仍未通过；Score ' + (r.geo_score != null ? r.geo_score : '—'))
+              : ('已应用补丁 ' + p.code + ' · 正文 ' + beforeLen + '→' + afterLen + ' · Score ' + (r.geo_score != null ? r.geo_score : '—'));
+          }
+          if (afterLen === beforeLen && !r.body_changed) {
+            GeoWB.showError(err, new Error('补丁返回成功但正文未变化，请刷新页面'));
+          }
         } catch (e) { GeoWB.showError(err, e); }
       };
       patchBox.appendChild(btn);
