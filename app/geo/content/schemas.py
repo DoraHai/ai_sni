@@ -157,6 +157,12 @@ class RetrieveFactsApplyRequest(BaseModel):
     fact_ids: list[int] = Field(..., min_length=1, max_length=50)
 
 
+class AiReviewRequest(BaseModel):
+    """P3 AI Reviewer: default does not persist; set persist=true to store on task."""
+
+    persist: bool = True
+
+
 class ArticleUpdate(BaseModel):
     title: str = Field(..., min_length=1)
     body_markdown: str = Field(..., min_length=1)
