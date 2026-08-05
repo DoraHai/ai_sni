@@ -37,12 +37,16 @@
     item('prompts.html', '◌', '提问监控') +
     item('competitors.html', '≋', '竞品分析') +
     item('evaluation.html', '◉', '评价分析') +
+    item('citations.html', '↗', '引用域名') +
     item('sources.html', '▤', '事实库 / 信源') +
     '<div class="nav-group">内容与信源</div>' +
     item('articles.html', 'Aa', 'GEO 文章') +
     item('media.html', '⌂', '媒体 / 信源策略') +
+    item('tickets.html', '✓', '验收工单') +
     item('channels.html', '⇧', '分发平台') +
+    item('publishing-channels.html', '◎', '发布渠道配置') +
     '<div class="nav-group">设置</div>' +
+    item('ai-settings.html', '⚙', 'AI 能力配置') +
     item('engines.html', '◇', 'AI 引擎管理') +
     '<div class="spacer"></div>' +
     '<a class="nav-item" href="../content/audit.html"><span class="ico">!</span> 诊断中心</a>' +

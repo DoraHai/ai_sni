@@ -31,7 +31,7 @@
           </div>
           <div class="wb-hint">表头：title,statement,fact_type,source_name,source_url,observed_at,trust_level,author_name。样例含 10 条有效 + 2 条坏行，用于测行级错误。</div>
           <table class="wb-table">
-            <thead><tr><th>标题</th><th>陈述</th><th>来源</th><th>作者</th><th>可信度</th><th></th></tr></thead>
+            <thead><tr><th>标题</th><th>陈述</th><th>来源</th><th>作者</th><th>可信度</th><th>过期日</th><th></th></tr></thead>
             <tbody id="rows"></tbody>
           </table>
           <div id="listEmpty" style="display:none"></div>
@@ -55,6 +55,10 @@
             <input class="wb-input" id="source_url" placeholder="https://">
           </div>
           <div class="wb-field">
+            <label class="wb-label">过期日（可选）</label>
+            <input class="wb-input" id="expires_at" type="date">
+          </div>
+          <div class="wb-field">
             <label class="wb-label">类型</label>
             <select class="wb-select" id="fact_type">
               <option value="product">product</option>
@@ -70,7 +74,7 @@
     </div>
   </main>
 </div>
-<script src="assets/geo-sidebar-v1.js?rev=6"></script>
+<script src="assets/geo-sidebar-v1.js?rev=8"></script>
 <script src="assets/geo-api-v1.js?rev=6"></script>
 <script src="assets/geo-workbench-v1.js?rev=6"></script>
 <script>
@@ -102,6 +106,7 @@
           '<td>' + f.source_name + (f.source_url ? '<div class="wb-muted">' + f.source_url + '</div>' : '') + '</td>' +
           '<td>' + (f.author_name || '-') + '</td>' +
           '<td>' + f.trust_level + '</td>' +
+          '<td class="wb-muted">' + (f.expires_at || '不过期') + '</td>' +
           '<td><button class="wb-btn" data-id="' + f.id + '">核验</button></td>';
         tr.querySelector('button').onclick = async function () {
           try {
@@ -133,9 +138,11 @@
         source_url: document.getElementById('source_url').value || null,
         fact_type: document.getElementById('fact_type').value,
         trust_level: 'needs_review',
+        expires_at: document.getElementById('expires_at').value || null,
       });
       document.getElementById('title').value = '';
       document.getElementById('statement').value = '';
+      document.getElementById('expires_at').value = '';
       await load();
     } catch (e) { GeoWB.showError(err, e); }
   };

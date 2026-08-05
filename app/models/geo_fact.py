@@ -22,6 +22,7 @@ class GeoFact(Base):
     source_name: Mapped[str] = mapped_column(String(200), nullable=False)
     source_url: Mapped[str | None] = mapped_column(Text)
     observed_at: Mapped[date | None] = mapped_column(Date)
+    expires_at: Mapped[date | None] = mapped_column(Date)
     trust_level: Mapped[str] = mapped_column(String(16), nullable=False, default="needs_review")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     meta: Mapped[dict | None] = mapped_column(JSONB)

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>GEO 概览</title>
 <link rel="stylesheet" href="assets/style.css?rev=geo-wb-2">
-<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=8">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=11">
 </head>
 <body>
 <div class="layout">
@@ -14,7 +14,7 @@
     <div class="topbar">
       <div>
         <h1>GEO 概览</h1>
-        <div class="sub">内容生产闭环计数 · 可见度与信源布局（真实快照，无假图表）</div>
+        <div class="sub">内容闭环 · 可见度口径（剔点名题）· CN 阵地权重（D0/D1）</div>
       </div>
     </div>
     <div class="page">
@@ -23,6 +23,26 @@
       <div class="wb-grid wb-grid-3" id="stats"></div>
       <div class="wb-grid wb-grid-3" id="todos" style="margin-top:14px"></div>
       <div class="wb-grid wb-grid-3" id="visibility" style="margin-top:14px"></div>
+      <div class="wb-card" style="margin-top:14px">
+        <div class="wb-toolbar">
+          <strong>可见度期次对比</strong>
+          <button class="wb-btn" id="btnPeriodDiff" type="button">计算 Δ</button>
+        </div>
+        <div class="wb-grid wb-grid-2" style="gap:10px;margin-top:8px">
+          <div>
+            <div class="wb-label">基期 before</div>
+            <input class="wb-input" id="beforeFrom" type="datetime-local">
+            <input class="wb-input" id="beforeTo" type="datetime-local" style="margin-top:6px">
+          </div>
+          <div>
+            <div class="wb-label">对比期 after</div>
+            <input class="wb-input" id="afterFrom" type="datetime-local">
+            <input class="wb-input" id="afterTo" type="datetime-local" style="margin-top:6px">
+          </div>
+        </div>
+        <div class="wb-muted" id="periodHint" style="margin-top:8px">默认：近 28 天拆成两周基期 + 两周对比期。未测两侧则为 null，不造假 0%。</div>
+        <div class="wb-grid wb-grid-3" id="periodStats" style="margin-top:10px"></div>
+      </div>
       <div class="wb-card" style="margin-top:14px">
         <strong>Demo 最短路径</strong>
         <ol class="wb-muted" style="margin:10px 0 0 18px; color:var(--text)">
@@ -36,13 +56,77 @@
     </div>
   </main>
 </div>
-<script src="assets/geo-sidebar-v1.js?rev=7"></script>
-<script src="assets/geo-api-v1.js?rev=8"></script>
+<script src="assets/geo-sidebar-v1.js?rev=9"></script>
+<script src="assets/geo-api-v1.js?rev=15"></script>
 <script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {
   GeoWB.renderAuthBar(document.getElementById('authBar'));
   var err = document.getElementById('err');
+
+  function toLocalInput(d) {
+    var pad = function (n) { return String(n).padStart(2, '0'); };
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+      'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+  function toIsoLocal(value) {
+    if (!value) return '';
+    return value.length === 16 ? value + ':00' : value;
+  }
+  function fmtRate(v) {
+    return v == null ? '未测' : ((Math.round(v * 1000) / 10) + '%');
+  }
+  function fmtDelta(v) {
+    if (v == null) return '未测';
+    var pct = Math.round(v * 1000) / 10;
+    return (pct > 0 ? '+' : '') + pct + 'pt';
+  }
+  (function seedPeriodDefaults() {
+    var now = new Date();
+    var afterTo = new Date(now);
+    var afterFrom = new Date(now.getTime() - 14 * 24 * 3600 * 1000);
+    var beforeTo = new Date(afterFrom.getTime() - 60 * 1000);
+    var beforeFrom = new Date(now.getTime() - 28 * 24 * 3600 * 1000);
+    document.getElementById('beforeFrom').value = toLocalInput(beforeFrom);
+    document.getElementById('beforeTo').value = toLocalInput(beforeTo);
+    document.getElementById('afterFrom').value = toLocalInput(afterFrom);
+    document.getElementById('afterTo').value = toLocalInput(afterTo);
+  })();
+
+  async function loadPeriodDiff() {
+    GeoWB.clearError(err);
+    var data = await GeoAPI.visibilityPeriodDiff({
+      before_from: toIsoLocal(document.getElementById('beforeFrom').value),
+      before_to: toIsoLocal(document.getElementById('beforeTo').value),
+      after_from: toIsoLocal(document.getElementById('afterFrom').value),
+      after_to: toIsoLocal(document.getElementById('afterTo').value),
+    });
+    var box = document.getElementById('periodStats');
+    box.innerHTML = '';
+    [
+      ['基期提及率', fmtRate(data.before && data.before.visibility_mention_rate)],
+      ['对比期提及率', fmtRate(data.after && data.after.visibility_mention_rate)],
+      ['提及率 Δ', fmtDelta(data.delta && data.delta.visibility_mention_rate)],
+      ['基期自有域引用', fmtRate(data.before && data.before.own_domain_cite_rate)],
+      ['对比期自有域引用', fmtRate(data.after && data.after.own_domain_cite_rate)],
+      ['自有域引用 Δ', fmtDelta(data.delta && data.delta.own_domain_cite_rate)],
+    ].forEach(function (row) {
+      var el = document.createElement('div');
+      el.className = 'stat';
+      el.innerHTML = '<div class="n">' + row[1] + '</div><div class="l">' + row[0] + '</div>';
+      box.appendChild(el);
+    });
+    var b = data.before || {};
+    var a = data.after || {};
+    document.getElementById('periodHint').textContent =
+      '基期样本 ' + (b.snapshots_visibility || 0) +
+      ' · 对比期样本 ' + (a.snapshots_visibility || 0) +
+      ' · 探测题不进可见性提及率';
+  }
+  document.getElementById('btnPeriodDiff').onclick = function () {
+    loadPeriodDiff().catch(function (e) { GeoWB.showError(err, e); });
+  };
+
   try {
     GeoWB.requireTenant();
     var s = await GeoAPI.contentStats();
@@ -74,9 +158,22 @@
       todos.appendChild(a);
     });
     var vis = document.getElementById('visibility');
+    var rate = s.visibility_mention_rate;
+    var rateLabel = rate == null ? '未测' : (Math.round(rate * 1000) / 10) + '%';
+    var probeRate = s.probe_recognition_rate;
+    var probeLabel = probeRate == null ? '未测' : (Math.round(probeRate * 1000) / 10) + '%';
     [
       ['回答快照', s.snapshots || 0, 'visibility.html'],
-      ['提及品牌', s.snapshots_mention_brand || 0, 'visibility.html'],
+      ['可见性提及率', rateLabel, 'visibility.html'],
+      ['可见性样本', (s.snapshots_visibility || 0) + '/' + (s.snapshots_visibility_mention || 0), 'prompts.html?is_brand_probe=0'],
+      ['品牌认知率', probeLabel, 'prompts.html?is_brand_probe=1'],
+      ['点名探测题', s.prompts_probe || 0, 'prompts.html?is_brand_probe=1'],
+      ['引擎覆盖', s.visibility_engines_covered || 0, 'engines.html'],
+      ['含竞品标注', s.snapshots_with_competitors || 0, 'competitors.html'],
+      ['含引用 URL', s.snapshots_with_citations || 0, 'citations.html'],
+      ['引用域名数', s.distinct_cited_domains || 0, 'citations.html'],
+      ['未提及品牌', s.prompts_brand_missing || 0, 'prompts.html?tag=brand_missing'],
+      ['待复核可见度', s.prompts_need_recheck || 0, 'visibility.html?queue=recheck'],
       ['信源布局进行中', s.media_open || 0, 'media.html'],
       ['信源已铺设', s.media_published || 0, 'media.html?status=published'],
     ].forEach(function (row) {
@@ -86,6 +183,7 @@
       a.innerHTML = '<div class="n">' + row[1] + '</div><div class="l">' + row[0] + '</div>';
       vis.appendChild(a);
     });
+    await loadPeriodDiff();
   } catch (e) { GeoWB.showError(err, e); }
 })();
 </script>

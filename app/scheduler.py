@@ -8,11 +8,16 @@
 
 在 main.py 的 startup 事件里调 start_scheduler()。
 """
-import fcntl
 import logging
 from asyncio import Lock
 from datetime import datetime, timedelta
+from threading import Lock as ThreadLock
 from zoneinfo import ZoneInfo
+
+try:
+    import fcntl
+except ModuleNotFoundError:  # Windows has no POSIX file-lock module.
+    fcntl = None
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -46,9 +51,14 @@ _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 # 那个 worker 启动调度，其余 worker 跳过。锁随进程退出自动释放。
 _SCHEDULER_LOCK_PATH = "/tmp/sem_scheduler.lock"
 _lock_fh = None
+_windows_scheduler_lock = ThreadLock()
+_windows_tenant_sync_locks: dict[int, ThreadLock] = {}
 
 
 def _acquire_tenant_sync_lock(tenant_id: int):
+    if fcntl is None:
+        lock = _windows_tenant_sync_locks.setdefault(tenant_id, ThreadLock())
+        return lock if lock.acquire(blocking=False) else None
     """跨 worker 的客户级非阻塞锁，避免定时任务和人工刷新重复调用百度。"""
     fh = open(f"/tmp/sem_tenant_sync_{tenant_id}.lock", "w")
     try:
@@ -61,6 +71,9 @@ def _acquire_tenant_sync_lock(tenant_id: int):
 
 def _release_tenant_sync_lock(fh) -> None:
     if fh is None:
+        return
+    if fcntl is None:
+        fh.release()
         return
     try:
         fcntl.flock(fh, fcntl.LOCK_UN)
@@ -103,6 +116,8 @@ async def refresh_keyword_workbench_snapshot(
 
 def _acquire_scheduler_lock() -> bool:
     global _lock_fh
+    if fcntl is None:
+        return _windows_scheduler_lock.acquire(blocking=False)
     try:
         _lock_fh = open(_SCHEDULER_LOCK_PATH, "w")
         fcntl.flock(_lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)

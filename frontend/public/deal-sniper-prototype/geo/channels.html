@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>分发平台 · GEO</title>
 <link rel="stylesheet" href="assets/style.css?rev=geo-wb-2">
-<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=9">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=10">
 </head>
 <body>
 <div class="layout">
@@ -14,12 +14,18 @@
     <div class="topbar">
       <div>
         <h1>分发平台</h1>
-        <div class="sub">中国图文主渠道：复制导出 + URL 回填（无一键自动发布）</div>
+        <div class="sub">渠道稿导出 + Webhook 推送 / URL 回填（须审校通过 + 质量门禁）</div>
       </div>
     </div>
     <div class="page">
       <div id="authBar" class="config-bar"></div>
       <div id="err" class="wb-error" style="display:none"></div>
+      <div id="reviewBar" class="wb-gate-bar" style="display:none;margin-bottom:12px"></div>
+      <div id="visCta" class="wb-card" style="display:none;margin-bottom:12px">
+        <strong>发布已回填</strong>
+        <div class="wb-muted" style="margin:8px 0">建议登记该提问在 AI 引擎中的可见度结果。</div>
+        <a class="wb-btn primary" id="btnGoVisibility" href="#">去登记可见度</a>
+      </div>
       <div class="wb-card">
         <div class="wb-toolbar">
           <label class="wb-label" style="margin:0">选择任务</label>
@@ -31,6 +37,23 @@
           <thead><tr><th>渠道</th><th>标题</th><th>状态</th><th>母稿同步</th><th>操作</th></tr></thead>
           <tbody id="rows"></tbody>
         </table>
+      </div>
+      <div class="wb-card">
+        <strong>官网/文档 Webhook 推送（Phase 2）</strong>
+        <div class="wb-field" style="margin-top:12px">
+          <label class="wb-label">Webhook 账号</label>
+          <select class="wb-select" id="webhookAccount"></select>
+        </div>
+        <div class="wb-field">
+          <label class="wb-label">可选发布 URL（CMS 未回传时填）</label>
+          <input class="wb-input" id="webhookUrl" placeholder="https://">
+        </div>
+        <div class="wb-toolbar" style="justify-content:flex-start;gap:8px">
+          <button class="wb-btn" id="btnPushDraft" type="button">推送草稿</button>
+          <button class="wb-btn primary" id="btnPushPublish" type="button">推送发布</button>
+        </div>
+        <div class="wb-hint">仅 website/docs · auto_publish · auth_type=webhook；须先导出官网渠道稿且审校通过。</div>
+        <div id="pushResult" class="wb-muted" style="margin-top:8px"></div>
       </div>
       <div class="wb-card">
         <strong>回填发布 URL</strong>
@@ -52,8 +75,8 @@
     </div>
   </main>
 </div>
-<script src="assets/geo-sidebar-v1.js?rev=7"></script>
-<script src="assets/geo-api-v1.js?rev=9"></script>
+<script src="assets/geo-sidebar-v1.js?rev=9"></script>
+<script src="assets/geo-api-v1.js?rev=17"></script>
 <script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {
@@ -61,6 +84,9 @@
   var err = document.getElementById('err');
   var task = null;
   var profileName = {};
+  var webhookAccounts = [];
+  var channelById = {};
+  var REVIEW_LABELS = { none: '未提交审校', pending: '待审', approved: '已通过', rejected: '已驳回' };
 
   function label(channel) {
     return profileName[channel] || channel;
@@ -68,16 +94,31 @@
 
   async function loadProfiles() {
     try {
-      var data = await GeoAPI.listChannelProfiles();
+      var data = await GeoAPI.listPublishingChannelOptions();
       var sel = document.getElementById('channel');
       sel.innerHTML = '';
-      (data.items || []).forEach(function (p) {
-        profileName[p.key] = p.display_name;
-        var opt = document.createElement('option');
-        opt.value = p.key;
-        opt.textContent = p.display_name + ' (' + p.key + ')';
-        sel.appendChild(opt);
+      var seen = {};
+      (data.items || []).forEach(function (opt) {
+        var key = opt.adapt_key;
+        if (!key || seen[key]) return;
+        seen[key] = true;
+        var name = (opt.adapt_profile && opt.adapt_profile.display_name) || opt.name || key;
+        profileName[key] = name;
+        var option = document.createElement('option');
+        option.value = key;
+        option.textContent = name + ' (' + key + ') · ' + (opt.publish_mode || '');
+        sel.appendChild(option);
       });
+      if (!sel.options.length) {
+        var fallback = await GeoAPI.listChannelProfiles();
+        (fallback.items || []).forEach(function (p) {
+          profileName[p.key] = p.display_name;
+          var option = document.createElement('option');
+          option.value = p.key;
+          option.textContent = p.display_name + ' (' + p.key + ')';
+          sel.appendChild(option);
+        });
+      }
     } catch (e) { /* keep empty */ }
   }
 
@@ -96,6 +137,57 @@
     if (qTask) sel.value = qTask;
   }
 
+  async function loadWebhookAccounts() {
+    var channels = (await GeoAPI.listPublishingChannels()).items || [];
+    channelById = {};
+    channels.forEach(function (c) { channelById[c.id] = c; });
+    var accounts = (await GeoAPI.listChannelAccounts()).items || [];
+    webhookAccounts = accounts.filter(function (a) {
+      var ch = channelById[a.channel_id];
+      return ch && ch.enabled && (ch.channel_type === 'website' || ch.channel_type === 'docs')
+        && ch.publish_mode === 'auto_publish' && a.auth_type === 'webhook' && a.has_credentials;
+    });
+    var sel = document.getElementById('webhookAccount');
+    sel.innerHTML = '';
+    if (!webhookAccounts.length) {
+      var empty = document.createElement('option');
+      empty.value = '';
+      empty.textContent = '暂无可用 Webhook 账号（去发布渠道配置）';
+      sel.appendChild(empty);
+      return;
+    }
+    webhookAccounts.forEach(function (a) {
+      var ch = channelById[a.channel_id] || {};
+      var opt = document.createElement('option');
+      opt.value = a.id;
+      opt.textContent = (ch.name || '渠道') + ' · ' + (a.display_name || ('#' + a.id));
+      sel.appendChild(opt);
+    });
+  }
+
+  async function pushWebhook(mode) {
+    GeoWB.requireTenant();
+    var id = Number(document.getElementById('taskSelect').value);
+    var accountId = Number(document.getElementById('webhookAccount').value);
+    if (!id) throw new Error('请选择任务');
+    if (!accountId) throw new Error('请选择 Webhook 账号');
+    var result = await GeoAPI.pushVariantWebhook(id, {
+      channel: 'website',
+      account_id: accountId,
+      mode: mode,
+      create_publication: mode === 'publish',
+      published_url: document.getElementById('webhookUrl').value || null,
+      note: mode === 'publish' ? 'webhook publish' : 'webhook draft',
+    });
+    document.getElementById('pushResult').textContent =
+      '推送成功 · HTTP ' + (result.http_status || '-') +
+      (result.remote_url ? (' · ' + result.remote_url) : '') +
+      (result.publication_created ? ' · 已写回填' : ' · 未写回填');
+    task = result.task || await GeoAPI.getTask(id);
+    await loadDetail();
+    if (result.publication_created && task && task.prompt_id) showVisibilityCta(task.prompt_id);
+  }
+
   async function loadDetail() {
     GeoWB.clearError(err);
     try {
@@ -103,6 +195,11 @@
       if (!id) return;
       task = await GeoAPI.getTask(id);
       document.getElementById('btnEditor').href = GeoWB.withDemoQuery('editor.html?task_id=' + id);
+      var reviewBar = document.getElementById('reviewBar');
+      var rs = task.review_status || 'none';
+      reviewBar.style.display = 'block';
+      reviewBar.textContent = '审校：' + (REVIEW_LABELS[rs] || rs) +
+        (task.review_approved ? '（可回填）' : '（回填前须在编辑器审批通过）');
       var tbody = document.getElementById('rows');
       tbody.innerHTML = '';
       (task.variants || []).forEach(function (v) {
@@ -137,6 +234,23 @@
 
   document.getElementById('btnReload').onclick = loadDetail;
   document.getElementById('taskSelect').onchange = loadDetail;
+  document.getElementById('btnPushDraft').onclick = function () {
+    pushWebhook('draft').catch(function (e) { GeoWB.showError(err, e); });
+  };
+  document.getElementById('btnPushPublish').onclick = function () {
+    pushWebhook('publish').catch(function (e) { GeoWB.showError(err, e); });
+  };
+  function showVisibilityCta(promptId) {
+    var box = document.getElementById('visCta');
+    var link = document.getElementById('btnGoVisibility');
+    if (!promptId) {
+      box.style.display = 'none';
+      return;
+    }
+    box.style.display = 'block';
+    link.href = GeoWB.withDemoQuery('visibility.html?prompt_id=' + promptId);
+  }
+
   document.getElementById('btnPublish').onclick = async function () {
     try {
       GeoWB.requireTenant();
@@ -148,11 +262,13 @@
       });
       document.getElementById('url').value = '';
       await loadDetail();
+      if (task && task.prompt_id) showVisibilityCta(task.prompt_id);
     } catch (e) { GeoWB.showError(err, e); }
   };
 
   try {
     await loadProfiles();
+    await loadWebhookAccounts();
     await loadTasks();
     await loadDetail();
   } catch (e) { GeoWB.showError(err, e); }

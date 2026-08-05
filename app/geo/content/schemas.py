@@ -14,8 +14,11 @@ class PromptCreate(BaseModel):
     priority: int = 0
     tags: list[str] = Field(default_factory=list)
     demand_note: str | None = None
-    source: Literal["manual", "import", "demo"] = "manual"
+    source: Literal["manual", "import", "demo", "expand"] = "manual"
     language: str = "zh-CN"
+    question_group: str | None = Field(None, max_length=32)
+    market: Literal["cn", "global", "both"] = "cn"
+    is_brand_probe: bool | None = None
 
 
 class PromptUpdate(BaseModel):
@@ -24,6 +27,9 @@ class PromptUpdate(BaseModel):
     tags: list[str] | None = None
     demand_note: str | None = None
     status: Literal["active", "archived"] | None = None
+    question_group: str | None = Field(None, max_length=32)
+    market: Literal["cn", "global", "both"] | None = None
+    is_brand_probe: bool | None = None
 
 
 class PromptImportItem(BaseModel):
@@ -31,11 +37,46 @@ class PromptImportItem(BaseModel):
     priority: int = 0
     tags: list[str] = Field(default_factory=list)
     demand_note: str | None = None
+    question_group: str | None = Field(None, max_length=32)
+    market: Literal["cn", "global", "both"] = "cn"
+    is_brand_probe: bool | None = None
 
 
 class PromptImportRequest(BaseModel):
     tenant_id: int
     items: list[PromptImportItem] = Field(..., min_length=1)
+
+
+class PromptExpandRoot(BaseModel):
+    root: str = Field(..., min_length=2, max_length=80)
+    kind: Literal["brand", "competitor", "category"] = "category"
+    market: Literal["cn", "global", "both"] = "cn"
+
+
+class PromptExpandRequest(BaseModel):
+    tenant_id: int
+    market: Literal["cn", "global", "both"] = "cn"
+    roots: list[PromptExpandRoot] = Field(default_factory=list)
+    competitors: list[str] = Field(default_factory=list)
+    products: list[str] = Field(default_factory=list)
+    seed_from_tenant: bool = True
+    max_terms: int = Field(80, ge=1, le=200)
+    persist: bool = True
+
+
+class PromptPromoteItem(BaseModel):
+    question: str = Field(..., min_length=4, max_length=500)
+    question_group: str | None = Field(None, max_length=32)
+    market: Literal["cn", "global", "both"] = "cn"
+    priority: int = 10
+    tags: list[str] = Field(default_factory=lambda: ["from_expand"])
+    demand_note: str | None = None
+    is_brand_probe: bool | None = None
+
+
+class PromptPromoteRequest(BaseModel):
+    tenant_id: int
+    items: list[PromptPromoteItem] = Field(..., min_length=1, max_length=50)
 
 
 class FactCreate(BaseModel):
@@ -46,6 +87,7 @@ class FactCreate(BaseModel):
     source_name: str = Field(..., min_length=1, max_length=200)
     source_url: str | None = None
     observed_at: date | None = None
+    expires_at: date | None = None
     trust_level: Literal["verified", "needs_review", "draft"] = "needs_review"
     author_name: str | None = Field(None, max_length=100)
     meta: dict[str, Any] | None = None
@@ -58,6 +100,7 @@ class FactUpdate(BaseModel):
     source_name: str | None = Field(None, min_length=1, max_length=200)
     source_url: str | None = None
     observed_at: date | None = None
+    expires_at: date | None = None
     trust_level: Literal["verified", "needs_review", "draft"] | None = None
     author_name: str | None = Field(None, max_length=100)
     status: Literal["active", "archived"] | None = None
@@ -73,6 +116,16 @@ class TaskCreate(BaseModel):
     )
     fact_ids: list[int] = Field(default_factory=list)
     brief: dict[str, Any] | None = None
+
+
+class ContentBrief(BaseModel):
+    industry: str | None = Field(None, max_length=100)
+    audience: str | None = Field(None, max_length=120)
+    intent: str | None = Field(None, max_length=32)
+    content_type: str | None = Field(None, max_length=32)
+    cta: str | None = Field(None, max_length=160)
+    banned_claims: list[str] = Field(default_factory=list)
+    notes: str | None = Field(None, max_length=500)
 
 
 class TaskFactsUpdate(BaseModel):
@@ -103,10 +156,30 @@ class PublicationCreate(BaseModel):
     note: str | None = None
 
 
+class WebhookPushRequest(BaseModel):
+    tenant_id: int
+    channel: str = Field(..., min_length=1, max_length=32)
+    account_id: int
+    mode: Literal["draft", "publish"] = "publish"
+    create_publication: bool = True
+    published_url: str | None = Field(None, max_length=2000)
+    note: str | None = None
+
+
+class ReviewSubmit(BaseModel):
+    note: str | None = Field(None, max_length=2000)
+
+
+class ReviewDecision(BaseModel):
+    decision: Literal["approved", "rejected"]
+    note: str | None = Field(None, max_length=2000)
+
+
 class TaskUpdate(BaseModel):
     title: str | None = Field(None, max_length=300)
     owner_user_id: int | None = None
     target_channels: list[str] | None = None
+    brief: ContentBrief | dict[str, Any] | None = None
 
 
 class TaskFromDiagnosis(BaseModel):
@@ -121,6 +194,8 @@ class ApplyPatchRequest(BaseModel):
 
 
 SnapshotEngine = Literal["chatgpt", "deepseek", "doubao", "perplexity", "other"]
+BrandPosition = Literal["first", "mentioned", "absent", "unknown"]
+SnapshotSentiment = Literal["positive", "neutral", "negative", "unknown"]
 
 
 class AnswerSnapshotCreate(BaseModel):
@@ -131,6 +206,9 @@ class AnswerSnapshotCreate(BaseModel):
     captured_at: str | None = None  # ISO datetime; default now
     mentions_brand: bool = False
     cited_urls: list[str] = Field(default_factory=list)
+    competitors: list[str] = Field(default_factory=list)
+    brand_position: BrandPosition = "unknown"
+    sentiment: SnapshotSentiment = "unknown"
     note: str | None = None
 
 
@@ -140,7 +218,42 @@ class AnswerSnapshotUpdate(BaseModel):
     captured_at: str | None = None
     mentions_brand: bool | None = None
     cited_urls: list[str] | None = None
+    competitors: list[str] | None = None
+    brand_position: BrandPosition | None = None
+    sentiment: SnapshotSentiment | None = None
     note: str | None = None
+
+
+class AnswerSnapshotProbeRequest(BaseModel):
+    tenant_id: int
+    prompt_id: int
+
+
+class AnswerSnapshotExtractUrlsRequest(BaseModel):
+    tenant_id: int
+    raw_text: str = Field(..., min_length=1)
+
+
+class AnswerSnapshotSuggestFieldsRequest(BaseModel):
+    tenant_id: int
+    raw_text: str = Field(..., min_length=4)
+    prompt_id: int | None = None
+    use_llm: bool = True
+
+
+AiProvider = Literal["dashscope", "deepseek"]
+
+
+class AiSettingsUpdate(BaseModel):
+    tenant_id: int
+    provider: AiProvider = "dashscope"
+    base_url: str | None = Field(None, max_length=300)
+    model: str | None = Field(None, max_length=80)
+    api_key: str | None = Field(None, min_length=8, max_length=200)
+    clear_api_key: bool = False
+    enabled: bool = True
+    note: str | None = None
+    apply_preset: bool = False
 
 
 class TrackingEngineItem(BaseModel):
@@ -156,7 +269,20 @@ class TrackingEnginesPut(BaseModel):
     items: list[TrackingEngineItem] = Field(..., min_length=1)
 
 
-MediaChannelType = Literal["website", "zhihu", "wechat", "news", "wiki", "other"]
+MediaChannelType = Literal[
+    "website",
+    "zhihu",
+    "wechat",
+    "news",
+    "wiki",
+    "baijiahao",
+    "toutiao",
+    "encyclopedia",
+    "community_qa",
+    "industry_media",
+    "visual_content",
+    "other",
+]
 MediaPlacementStatus = Literal["planned", "in_progress", "published", "archived"]
 
 
@@ -164,20 +290,81 @@ class MediaPlacementCreate(BaseModel):
     tenant_id: int
     name: str = Field(..., min_length=1, max_length=200)
     channel_type: MediaChannelType = "other"
+    channel_key: str | None = Field(None, max_length=32)
     target_url: str | None = None
     authority_note: str | None = None
     status: MediaPlacementStatus = "planned"
     published_url: str | None = None
     priority: int = 0
+    priority_band: str | None = Field(None, max_length=8)
+    fits_groups: list[str] | None = None
+    citation_national: int | None = None
     related_prompt_id: int | None = None
 
 
 class MediaPlacementUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=200)
     channel_type: MediaChannelType | None = None
+    channel_key: str | None = Field(None, max_length=32)
     target_url: str | None = None
     authority_note: str | None = None
     status: MediaPlacementStatus | None = None
     published_url: str | None = None
     priority: int | None = None
+    priority_band: str | None = Field(None, max_length=8)
+    fits_groups: list[str] | None = None
+    citation_national: int | None = None
     related_prompt_id: int | None = None
+
+
+PublishingChannelType = Literal[
+    "website",
+    "docs",
+    "wechat",
+    "zhihu",
+    "baijiahao",
+    "toutiao",
+    "industry_media",
+    "community_qa",
+    "encyclopedia",
+    "visual_content",
+]
+PublishingMode = Literal["auto_publish", "draft_then_manual", "manual_only"]
+ChannelAuthType = Literal["manual", "api_key", "oauth2", "webhook"]
+
+
+class PublishingChannelCreate(BaseModel):
+    tenant_id: int
+    name: str = Field(..., min_length=1, max_length=200)
+    channel_type: PublishingChannelType
+    publish_mode: PublishingMode = "manual_only"
+    base_url: str | None = Field(None, max_length=2000)
+    content_rules: dict[str, Any] | None = None
+    enabled: bool = True
+    sort_order: int = 0
+
+
+class PublishingChannelUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=200)
+    channel_type: PublishingChannelType | None = None
+    publish_mode: PublishingMode | None = None
+    base_url: str | None = Field(None, max_length=2000)
+    content_rules: dict[str, Any] | None = None
+    enabled: bool | None = None
+    sort_order: int | None = None
+
+
+class ChannelAccountCreate(BaseModel):
+    tenant_id: int
+    channel_id: int
+    display_name: str = Field(..., min_length=1, max_length=160)
+    auth_type: ChannelAuthType = "manual"
+    credentials: dict[str, Any] | None = None
+
+
+class ChannelAccountUpdate(BaseModel):
+    display_name: str | None = Field(None, min_length=1, max_length=160)
+    auth_type: ChannelAuthType | None = None
+    credentials: dict[str, Any] | None = None
+    clear_credentials: bool = False
+    status: Literal["unconfigured", "active", "expired", "disabled"] | None = None
