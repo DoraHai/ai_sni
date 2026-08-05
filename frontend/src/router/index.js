@@ -83,6 +83,26 @@ const routes = [
     },
   },
   {
+    path: '/geo/competitors',
+    component: () => import('../views/geo/GeoCompetitorsView.vue'),
+    meta: {
+      title: '竞品分析',
+      documentTitle: 'GEO 增长｜竞品分析',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/evaluation',
+    component: () => import('../views/geo/GeoEvaluationView.vue'),
+    meta: {
+      title: '评价分析',
+      documentTitle: 'GEO 增长｜评价分析',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
     path: '/geo/deliverables',
     component: () => import('../views/geo/GeoDeliverablesView.vue'),
     meta: {

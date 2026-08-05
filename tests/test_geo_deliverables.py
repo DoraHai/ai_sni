@@ -58,6 +58,14 @@ class DeliverablesPackTests(unittest.TestCase):
             _required("/api/v1/geo/deliverables/pack", "GET"),
             ({"geo.content"}, False),
         )
+        self.assertEqual(
+            _required("/api/v1/geo/competitor-insights", "GET"),
+            ({"geo.content"}, False),
+        )
+        self.assertEqual(
+            _required("/api/v1/geo/evaluation-insights", "GET"),
+            ({"geo.content"}, False),
+        )
 
 
 if __name__ == "__main__":
