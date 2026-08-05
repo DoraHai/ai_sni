@@ -330,6 +330,14 @@
         body: { raw_text: rawText || '' },
       });
     },
+    suggestAnswerSnapshotFields: function (rawText, promptId) {
+      var body = { raw_text: rawText || '', use_llm: true };
+      if (promptId) body.prompt_id = promptId;
+      return api('/answer-snapshots/suggest-fields', {
+        method: 'POST',
+        body: body,
+      });
+    },
     patchAnswerSnapshot: function (id, body) {
       return api('/answer-snapshots/' + id, {
         method: 'PATCH',

@@ -55,6 +55,7 @@ from app.geo.content.schemas import (
     AnswerSnapshotCreate,
     AnswerSnapshotExtractUrlsRequest,
     AnswerSnapshotProbeRequest,
+    AnswerSnapshotSuggestFieldsRequest,
     AnswerSnapshotUpdate,
     ApplyPatchRequest,
     ArticleUpdate,
@@ -92,6 +93,11 @@ from app.geo.content.prompt_taxonomy import (
     normalize_market,
     normalize_question_group,
     resolve_is_brand_probe,
+)
+from app.geo.content.snapshot_suggest import (
+    normalize_suggest_payload,
+    suggest_system_prompt,
+    suggest_user_prompt,
 )
 from app.geo.content.snapshots import (
     apply_brand_mention_tags,
@@ -1218,10 +1224,21 @@ async def probe_answer_snapshot(
             "未配置 AI 能力：请在「AI 能力配置」填写阿里云百炼 API Key，或改用粘贴登记",
         )
     brand = getattr(tenant, "name", None) or f"租户{req.tenant_id}"
+    brand_names = brand_names_from_tenant(
+        name=getattr(tenant, "name", None),
+        brand_terms=getattr(tenant, "brand_terms", None),
+    ) or [brand]
     system = (
         "你是 GEO 可见度探测助手。请用中文直接回答用户问题，像常见 AI 助手的公开回答。"
-        "只返回 JSON：{\"raw_text\": \"完整回答正文\", \"suggested_mentions_brand\": true/false}。"
-        f"suggested_mentions_brand 表示回答是否明确提及品牌「{brand}」。不要编造不存在的官网承诺。"
+        "只返回 JSON："
+        '{"raw_text": "完整回答正文", '
+        '"suggested_mentions_brand": true/false, '
+        '"competitors": ["竞品名"], '
+        '"brand_position": "first|mentioned|absent|unknown", '
+        '"sentiment": "positive|neutral|negative|unknown"}。'
+        f"suggested_mentions_brand 表示回答是否明确提及品牌「{brand}」。"
+        "competitors 不要包含该品牌自身；没有竞品就返回 []。"
+        "不要编造不存在的官网承诺或正文外竞品。"
     )
     user = f"品牌参考名：{brand}\n用户问题：{prompt.question}"
     try:
@@ -1238,8 +1255,9 @@ async def probe_answer_snapshot(
     raw_text = str(data.get("raw_text") or "").strip()
     if len(raw_text) < 4:
         raise HTTPException(502, "探测结果过短，请改用粘贴")
-    suggested = bool(data.get("suggested_mentions_brand"))
-    suggested_urls = extract_cited_urls_from_text(raw_text)
+    suggest = normalize_suggest_payload(
+        data, raw_text=raw_text, brand_names=brand_names
+    )
     return {
         "prompt_id": prompt.id,
         "prompt_question": prompt.question,
@@ -1247,8 +1265,7 @@ async def probe_answer_snapshot(
         "provider": llm.get("provider"),
         "model": llm.get("model"),
         "raw_text": raw_text,
-        "suggested_mentions_brand": suggested,
-        "suggested_cited_urls": suggested_urls,
+        **suggest,
         "persisted": False,
     }
 
@@ -1264,6 +1281,66 @@ async def extract_answer_snapshot_urls(
     return {
         "suggested_cited_urls": urls,
         "domains": extract_cited_domains(urls),
+    }
+
+
+@router.post("/answer-snapshots/suggest-fields")
+async def suggest_answer_snapshot_fields(
+    req: AnswerSnapshotSuggestFieldsRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Suggest Wave C labels from pasted text; never writes snapshots."""
+    from app.ai.deepseek import DeepSeekError, chat_json
+
+    ctx.ensure_tenant(req.tenant_id)
+    tenant = await _ensure_tenant_exists(session, req.tenant_id)
+    brand = getattr(tenant, "name", None) or f"租户{req.tenant_id}"
+    brand_names = brand_names_from_tenant(
+        name=getattr(tenant, "name", None),
+        brand_terms=getattr(tenant, "brand_terms", None),
+    ) or [brand]
+    question = None
+    if req.prompt_id is not None:
+        prompt = await _get_prompt(session, req.prompt_id, req.tenant_id)
+        question = prompt.question
+
+    llm_data: dict | None = None
+    llm_meta: dict[str, Any] = {"used": False}
+    if req.use_llm:
+        llm = await resolve_llm_credentials(session, req.tenant_id)
+        if not llm:
+            raise HTTPException(
+                503,
+                "未配置 AI 能力：请在「AI 能力配置」填写 API Key，或将 use_llm=false 仅用启发式",
+            )
+        try:
+            llm_data = await chat_json(
+                suggest_system_prompt(brand),
+                suggest_user_prompt(
+                    brand=brand, question=question, raw_text=req.raw_text
+                ),
+                timeout=45.0,
+                api_key=llm["api_key"],
+                base_url=llm["base_url"],
+                model=llm["model"],
+            )
+        except DeepSeekError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        llm_meta = {
+            "used": True,
+            "provider": llm.get("provider"),
+            "model": llm.get("model"),
+        }
+
+    suggest = normalize_suggest_payload(
+        llm_data, raw_text=req.raw_text, brand_names=brand_names
+    )
+    return {
+        "prompt_id": req.prompt_id,
+        "persisted": False,
+        "llm": llm_meta,
+        **suggest,
     }
 
 

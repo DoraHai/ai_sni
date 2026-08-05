@@ -84,9 +84,10 @@
           </div>
           <div class="wb-toolbar" style="justify-content:flex-start;gap:8px">
             <button class="wb-btn" id="btnProbe">用 AI 探测</button>
+            <button class="wb-btn" id="btnSuggestFields">AI 标注建议</button>
             <button class="wb-btn primary" id="btnSave">保存快照</button>
           </div>
-          <div class="wb-hint">探测只填草稿，不写库；确认后点「保存快照」。可从正文抽取引用 URL；保存时若 URL 栏为空会自动抽取。提及=是清除 brand_missing；提及=否会加回该标签。</div>
+          <div class="wb-hint">探测 / 标注建议只填草稿，不写库；确认后点「保存快照」。可从正文抽取引用 URL；保存时若 URL 栏为空会自动抽取。提及=是清除 brand_missing；提及=否会加回该标签。</div>
         </div>
         <div class="wb-card">
           <div class="wb-toolbar">
@@ -119,7 +120,7 @@
   </main>
 </div>
 <script src="assets/geo-sidebar-v1.js?rev=9"></script>
-<script src="assets/geo-api-v1.js?rev=13"></script>
+<script src="assets/geo-api-v1.js?rev=14"></script>
 <script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {
@@ -293,6 +294,25 @@
       : '正文中未识别到 http(s) 链接';
   }
 
+  function applySuggestFields(draft) {
+    if (!draft) return;
+    if (typeof draft.suggested_mentions_brand === 'boolean') {
+      document.getElementById('mentionsBrand').checked = !!draft.suggested_mentions_brand;
+    }
+    if (draft.suggested_brand_position) {
+      document.getElementById('brandPosition').value = draft.suggested_brand_position;
+    }
+    if (draft.suggested_sentiment) {
+      document.getElementById('sentiment').value = draft.suggested_sentiment;
+    }
+    if (draft.suggested_competitors) {
+      document.getElementById('competitors').value = (draft.suggested_competitors || []).join(', ');
+    }
+    if (draft.suggested_cited_urls) {
+      fillCitedUrls(draft.suggested_cited_urls);
+    }
+  }
+
   document.getElementById('btnExtractUrls').onclick = async function () {
     try {
       GeoWB.requireTenant();
@@ -304,6 +324,19 @@
     } catch (e) { GeoWB.showError(err, e); }
   };
 
+  document.getElementById('btnSuggestFields').onclick = async function () {
+    try {
+      GeoWB.requireTenant();
+      GeoWB.clearError(err);
+      var text = document.getElementById('rawText').value;
+      if (!String(text || '').trim()) throw new Error('请先粘贴或探测回答正文');
+      var promptId = Number(document.getElementById('promptSelect').value) || null;
+      var draft = await GeoAPI.suggestAnswerSnapshotFields(text, promptId);
+      applySuggestFields(draft);
+      document.getElementById('extractHint').textContent = '已填入 AI 标注建议，请人工确认后保存';
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+
   document.getElementById('btnProbe').onclick = async function () {
     try {
       GeoWB.requireTenant();
@@ -312,8 +345,7 @@
       GeoWB.clearError(err);
       var draft = await GeoAPI.probeAnswerSnapshot(promptId);
       document.getElementById('rawText').value = draft.raw_text || '';
-      document.getElementById('mentionsBrand').checked = !!draft.suggested_mentions_brand;
-      fillCitedUrls(draft.suggested_cited_urls || []);
+      applySuggestFields(draft);
       var eng = document.getElementById('engine');
       for (var i = 0; i < eng.options.length; i++) {
         if (eng.options[i].value === 'deepseek') { eng.value = 'deepseek'; break; }
