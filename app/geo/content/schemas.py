@@ -265,12 +265,21 @@ class AiSettingsUpdate(BaseModel):
     apply_preset: bool = False
 
 
+SampleMode = Literal["mock_persona", "openai_compat"]
+
+
 class TrackingEngineItem(BaseModel):
     engine_key: SnapshotEngine
     display_name: str = Field(..., min_length=1, max_length=80)
     enabled: bool = True
     note: str | None = None
     sort_order: int = 0
+    # P2: real multi-engine sampling (additive; default mock_persona)
+    sample_mode: SampleMode = "mock_persona"
+    api_base_url: str | None = Field(None, max_length=300)
+    model: str | None = Field(None, max_length=80)
+    api_key: str | None = Field(None, min_length=8, max_length=400)
+    clear_api_key: bool = False
 
 
 class TrackingEnginesPut(BaseModel):

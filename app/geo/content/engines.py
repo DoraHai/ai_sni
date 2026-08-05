@@ -20,6 +20,7 @@ def default_engine_rows(tenant_id: int) -> list[dict]:
             "enabled": True,
             "note": None,
             "sort_order": order,
+            "sample_mode": "mock_persona",
         }
         for key, name, order in DEFAULT_TRACKING_ENGINES
     ]

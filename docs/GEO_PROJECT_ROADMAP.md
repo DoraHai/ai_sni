@@ -106,14 +106,15 @@ python scripts/accept_geo_m1.py   # API :8011，静态可选 :5176
 
 ### 2.4 下一波计划路径（建议顺序）
 
-| 优先级 | 主题 | 目标 | 侵入性 |
-| --- | --- | --- | --- |
-| P1 | **内容工作台迁 Vue** | editor / 任务列表进 SPA，减少静态 iframe 断点 | 中高：前端为主，API 已有 |
-| P2 | **真实多引擎采样** | ChatGPT/豆包/Perplexity 等真实 provider 映射；现为同 LLM 人设模拟 | 中：凭证模型 + 连接器 |
-| P3 | **社交渠道发布** | 微信/知乎等 OAuth 或官方 API（可选） | 高：合规与账号体系 |
-| P4 | **交付物加深** | HTML/ZIP 客户包、对标代理商三件套 | 低～中 |
-| P5 | **SEM↔GEO 意图枢纽** | 搜索词/意图与 GEO 提示词互通 | 高：跨域产品 |
-| P6 | GeoLook 对标增强 | 工单验收 DSL、重抓 verify | 高：明确后置 |
+| 优先级 | 主题 | 目标 | 侵入性 | 状态 |
+| --- | --- | --- | --- | --- |
+| P1 | **内容工作台迁 Vue** | 任务列表 `/geo/tasks` + 混合编辑器 `/geo/tasks/:id`（iframe 静态 editor）；全量 HTML 仍可打开 | 中高：前端为主，API 已有 | ✅ 2026-08-05 |
+| P2 | **真实多引擎采样** | 引擎 `sample_mode=openai_compat` + 可选 per-engine OpenAI 兼容凭证；缺 Key 回退人设模拟 | 中：凭证模型 + 连接器 | ✅ 2026-08-05 |
+| — | **生产独立 GEO 单元稳定** | `/health/geo` DB 失败 503；deploy smoke 校验 `db=ok`；`setup-geo.sh` + 验收清单 | 低：运维脚本 | ✅ 2026-08-05 |
+| P3 | **社交渠道发布** | 微信/知乎等 OAuth 或官方 API（可选） | 高：合规与账号体系 | 未开工 |
+| P4 | **交付物加深** | HTML/ZIP 客户包、对标代理商三件套 | 低～中 | 未开工 |
+| P5 | **SEM↔GEO 意图枢纽** | 搜索词/意图与 GEO 提示词互通 | 高：跨域产品 | 未开工 |
+| P6 | GeoLook 对标增强 | 工单验收 DSL、重抓 verify | 高：明确后置 | 未开工 |
 
 ---
 
@@ -129,6 +130,8 @@ python scripts/accept_geo_m1.py   # API :8011，静态可选 :5176
 | `/geo/competitors` | 竞品分析（PR #11） | `geo.content` |
 | `/geo/evaluation` | 评价分析（PR #11） | `geo.content` |
 | `/geo/deliverables` | 交付摘要 Markdown | `geo.content` |
+| `/geo/tasks` | 内容任务列表（P1） | `geo.content` |
+| `/geo/tasks/:taskId` | 混合编辑器（SPA 壳 + 静态 editor） | `geo.content` |
 | `/diagnostic-center/` | 网站体检（可独立 dev） | `geo.diagnosis` |
 | `/deal-sniper/geo/:page` | 静态工作台 iframe 壳 | 公开/原型 |
 

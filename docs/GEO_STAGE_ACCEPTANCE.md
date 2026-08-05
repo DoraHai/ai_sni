@@ -16,7 +16,7 @@ python scripts/accept_geo_m1.py
 
 两项都绿即可合 PR / 开下一刀。浏览器点击仅用于演示或排查 UI，不作为合并门槛。
 
-Vue GEO 入口（权限 `geo.content`）：`/geo/overview`、`/geo/visibility`、`/geo/citations`、`/geo/competitors`、`/geo/evaluation`、`/geo/deliverables`。多引擎探测共用租户 LLM、按引擎人设模拟，确认后才写快照。
+Vue GEO 入口（权限 `geo.content`）：`/geo/overview`、`/geo/visibility`、`/geo/citations`、`/geo/competitors`、`/geo/evaluation`、`/geo/deliverables`、`/geo/tasks`（P1 任务列表；`/geo/tasks/:id` 混合编辑器）。多引擎探测默认租户 LLM + 人设模拟；引擎可配置 `sample_mode=openai_compat` 真采样，确认后才写快照。
 
 ## 建议从哪一步开始验收
 

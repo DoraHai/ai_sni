@@ -34,3 +34,36 @@ Database configuration and authentication tables remain shared with the main
 platform. Schema migrations are intentionally not run by the GEO deploy script;
 they must be reviewed separately because a database migration can affect shared
 data even when processes are isolated.
+
+## Host bootstrap
+
+```bash
+sudo bash deploy/setup-geo.sh
+```
+
+Creates `/opt/geo-service`, `/opt/geo-frontend`, `/var/log/geo-service`, installs
+`geo-service.service` and enables it (does not start until first deploy + `.env`).
+
+## Production acceptance checklist
+
+| Check | Expect |
+| --- | --- |
+| `systemctl is-active geo-service` | `active` |
+| `curl -fsS http://127.0.0.1:8010/health/geo` | HTTP **200** and `"db":"ok"` (DB down → **503**) |
+| `curl -fsS http://127.0.0.1:8010/api/v1/geo/content-health` | `{"module":"geo-content","status":"ok"}` (needs auth if locked; public health is `/health/geo`) |
+| `curl -fsS https://<host>/geo-health` | proxies to GEO health |
+| `curl -fsSI https://<host>/deal-sniper/geo/dashboard.html` | 200 |
+| `systemctl is-active sem-backend` | unchanged by GEO deploy |
+
+Rollback API:
+
+```bash
+# list releases, re-point current, restart only geo-service
+ls /opt/geo-service/releases
+ln -sfn /opt/geo-service/releases/<stamp> /opt/geo-service/current
+systemctl restart geo-service
+```
+
+Deploy smoke (`scripts/deploy_geo_api.sh`) asserts `/health/geo` body contains
+`"db":"ok"` and probes `content-health`; on failure it restores the previous
+`current` symlink and restarts `geo-service`.

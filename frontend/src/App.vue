@@ -52,7 +52,7 @@ const ALL_GROUPS = computed(() => [
     { label: '竞品分析', path: '/geo/competitors', key: 'geo.content' },
     { label: '评价分析', path: '/geo/evaluation', key: 'geo.content' },
     { label: '交付摘要', path: '/geo/deliverables', key: 'geo.content' },
-    { label: '内容工作台', path: '/deal-sniper/geo/dashboard', key: 'geo.content', external: true },
+    { label: '内容任务', path: '/geo/tasks', key: 'geo.content' },
   ] },
   { label: '首次接入', icon: '🚀', children: [
     { label: '授权与同步', path: '/onboarding', key: 'onboarding' },

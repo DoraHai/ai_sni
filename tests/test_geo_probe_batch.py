@@ -7,8 +7,11 @@ from unittest.mock import AsyncMock
 
 from app.geo.content.probe import (
     ENGINE_PERSONAS,
+    SAMPLE_MODE_PERSONA,
+    SAMPLE_MODE_REAL,
     build_probe_system_prompt,
     resolve_batch_engines,
+    resolve_engine_llm,
     run_probe_draft,
 )
 from app.security.auth import _required
@@ -60,10 +63,58 @@ class ProbeBatchHelpersTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(draft["engine"], "chatgpt")
         self.assertTrue(draft["simulated"])
+        self.assertEqual(draft["sample_mode"], SAMPLE_MODE_PERSONA)
         self.assertFalse(draft["persisted"])
         self.assertIn("Acme", draft["raw_text"])
         self.assertTrue(draft["suggested_mentions_brand"])
         self.assertEqual(draft["suggested_competitors"], ["竞品甲"])
+
+    async def test_run_probe_draft_real_mode_not_simulated(self):
+        chat_json = AsyncMock(
+            return_value={
+                "raw_text": "真实路径回答 Acme。",
+                "suggested_mentions_brand": True,
+                "competitors": [],
+                "brand_position": "first",
+                "sentiment": "neutral",
+            }
+        )
+        draft = await run_probe_draft(
+            question="哪个品牌好？",
+            brand="Acme",
+            brand_names=["Acme"],
+            engine="chatgpt",
+            llm={
+                "api_key": "k",
+                "base_url": "https://api.openai.com/v1",
+                "model": "gpt-4o-mini",
+                "provider": "engine:chatgpt",
+            },
+            chat_json=chat_json,
+            sample_mode=SAMPLE_MODE_REAL,
+        )
+        self.assertFalse(draft["simulated"])
+        self.assertEqual(draft["sample_mode"], SAMPLE_MODE_REAL)
+
+    def test_resolve_engine_llm_falls_back_without_key(self):
+        class Row:
+            sample_mode = SAMPLE_MODE_REAL
+            api_key_encrypted = None
+            api_base_url = "https://example.com/v1"
+            model = "m"
+
+        tenant = {
+            "api_key": "tk",
+            "base_url": "https://tenant.example/v1",
+            "model": "tenant-m",
+            "provider": "dashscope",
+        }
+        llm, mode, reason = resolve_engine_llm(
+            engine="chatgpt", tenant_llm=tenant, engine_row=Row()
+        )
+        self.assertEqual(mode, SAMPLE_MODE_PERSONA)
+        self.assertEqual(llm["api_key"], "tk")
+        self.assertIn("回退", reason or "")
 
     def test_probe_batch_requires_geo_content_edit(self):
         self.assertEqual(
