@@ -53,6 +53,7 @@ from app.geo.content.engines import default_engine_rows
 from app.geo.content.schemas import (
     AiSettingsUpdate,
     AnswerSnapshotCreate,
+    AnswerSnapshotExtractUrlsRequest,
     AnswerSnapshotProbeRequest,
     AnswerSnapshotUpdate,
     ApplyPatchRequest,
@@ -97,6 +98,7 @@ from app.geo.content.snapshots import (
     domain_matches,
     extract_cited_domain,
     extract_cited_domains,
+    extract_cited_urls_from_text,
     needs_recheck,
     normalize_brand_position,
     normalize_cited_urls,
@@ -902,6 +904,9 @@ async def create_answer_snapshot(
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
     prompt = await _get_prompt(session, req.prompt_id, req.tenant_id)
+    cited_urls = normalize_cited_urls(req.cited_urls)
+    if not cited_urls:
+        cited_urls = extract_cited_urls_from_text(req.raw_text)
     row = GeoAnswerSnapshot(
         tenant_id=req.tenant_id,
         prompt_id=prompt.id,
@@ -909,7 +914,7 @@ async def create_answer_snapshot(
         raw_text=req.raw_text.strip(),
         captured_at=_parse_captured_at(req.captured_at),
         mentions_brand=bool(req.mentions_brand),
-        cited_urls=normalize_cited_urls(req.cited_urls),
+        cited_urls=cited_urls,
         competitors=normalize_competitors(req.competitors),
         brand_position=normalize_brand_position(req.brand_position),
         sentiment=normalize_sentiment(req.sentiment),
@@ -1234,6 +1239,7 @@ async def probe_answer_snapshot(
     if len(raw_text) < 4:
         raise HTTPException(502, "探测结果过短，请改用粘贴")
     suggested = bool(data.get("suggested_mentions_brand"))
+    suggested_urls = extract_cited_urls_from_text(raw_text)
     return {
         "prompt_id": prompt.id,
         "prompt_question": prompt.question,
@@ -1242,7 +1248,22 @@ async def probe_answer_snapshot(
         "model": llm.get("model"),
         "raw_text": raw_text,
         "suggested_mentions_brand": suggested,
+        "suggested_cited_urls": suggested_urls,
         "persisted": False,
+    }
+
+
+@router.post("/answer-snapshots/extract-urls")
+async def extract_answer_snapshot_urls(
+    req: AnswerSnapshotExtractUrlsRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict:
+    """Deterministic URL extract from pasted answer text (no LLM, no DB write)."""
+    ctx.ensure_tenant(req.tenant_id)
+    urls = extract_cited_urls_from_text(req.raw_text)
+    return {
+        "suggested_cited_urls": urls,
+        "domains": extract_cited_domains(urls),
     }
 
 

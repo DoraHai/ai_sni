@@ -10,6 +10,7 @@ from app.geo.content.snapshots import (
     ensure_brand_missing_tag,
     extract_cited_domain,
     extract_cited_domains,
+    extract_cited_urls_from_text,
     needs_recheck,
     normalize_brand_position,
     normalize_cited_urls,
@@ -111,6 +112,19 @@ class SnapshotHelpersTests(unittest.TestCase):
         )
         self.assertTrue(domain_matches("mp.weixin.qq.com", "qq.com"))
         self.assertFalse(domain_matches("example.com", "ample.com"))
+
+    def test_extract_cited_urls_from_text(self):
+        text = (
+            "可参考 https://www.zhihu.com/question/1 。"
+            "另见（https://toutiao.com/a/2）。"
+            "重复 https://www.zhihu.com/question/1 与 ftp://ignore.me/x"
+        )
+        self.assertEqual(
+            extract_cited_urls_from_text(text),
+            ["https://www.zhihu.com/question/1", "https://toutiao.com/a/2"],
+        )
+        self.assertEqual(extract_cited_urls_from_text("没有链接"), [])
+        self.assertEqual(extract_cited_urls_from_text(""), [])
 
     def test_normalize_competitors(self):
         self.assertEqual(

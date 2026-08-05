@@ -324,6 +324,12 @@
         body: { prompt_id: promptId },
       });
     },
+    extractAnswerSnapshotUrls: function (rawText) {
+      return api('/answer-snapshots/extract-urls', {
+        method: 'POST',
+        body: { raw_text: rawText || '' },
+      });
+    },
     patchAnswerSnapshot: function (id, body) {
       return api('/answer-snapshots/' + id, {
         method: 'PATCH',

@@ -11,11 +11,12 @@
 
 ## 2. 非目标
 
-- 从回答正文自动抽取 URL（留给后续）
 - 公众号 / CMS 一键发布连接器（Phase 2）
 - DeepSeek 自动抽取竞品/情感（C+）
 - 导入 GeoLook 全量 CN-GEO 语料做大盘对照
 - 加权「引用健康分」总分
+
+> 正文 URL 抽取见后续切片 `docs/GEO_AUTO_CITE_URLS_PLAN.md`。
 
 ## 3. API
 

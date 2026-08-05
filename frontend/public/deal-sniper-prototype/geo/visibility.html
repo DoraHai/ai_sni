@@ -73,6 +73,10 @@
           <div class="wb-field">
             <label class="wb-label">引用 URL（每行一个，可选）</label>
             <textarea class="wb-textarea" id="citedUrls" style="min-height:72px" placeholder="https://…"></textarea>
+            <div class="wb-toolbar" style="justify-content:flex-start;gap:8px;margin-top:6px">
+              <button class="wb-btn" type="button" id="btnExtractUrls">从正文抽取 URL</button>
+              <span class="wb-muted" id="extractHint"></span>
+            </div>
           </div>
           <div class="wb-field">
             <label class="wb-label">备注</label>
@@ -82,7 +86,7 @@
             <button class="wb-btn" id="btnProbe">用 AI 探测</button>
             <button class="wb-btn primary" id="btnSave">保存快照</button>
           </div>
-          <div class="wb-hint">探测只填草稿，不写库；确认后点「保存快照」。提及=是清除 brand_missing；提及=否会加回该标签。</div>
+          <div class="wb-hint">探测只填草稿，不写库；确认后点「保存快照」。可从正文抽取引用 URL；保存时若 URL 栏为空会自动抽取。提及=是清除 brand_missing；提及=否会加回该标签。</div>
         </div>
         <div class="wb-card">
           <div class="wb-toolbar">
@@ -115,7 +119,7 @@
   </main>
 </div>
 <script src="assets/geo-sidebar-v1.js?rev=9"></script>
-<script src="assets/geo-api-v1.js?rev=12"></script>
+<script src="assets/geo-api-v1.js?rev=13"></script>
 <script src="assets/geo-workbench-v1.js?rev=7"></script>
 <script>
 (async function () {
@@ -280,6 +284,26 @@
     history.replaceState({}, '', u.pathname + u.search);
     loadSnapshots().catch(function (e) { GeoWB.showError(err, e); });
   };
+  function fillCitedUrls(urls) {
+    var box = document.getElementById('citedUrls');
+    var list = (urls || []).filter(Boolean);
+    box.value = list.join('\n');
+    document.getElementById('extractHint').textContent = list.length
+      ? ('已填入 ' + list.length + ' 条，请确认后保存')
+      : '正文中未识别到 http(s) 链接';
+  }
+
+  document.getElementById('btnExtractUrls').onclick = async function () {
+    try {
+      GeoWB.requireTenant();
+      GeoWB.clearError(err);
+      var text = document.getElementById('rawText').value;
+      if (!String(text || '').trim()) throw new Error('请先粘贴或探测回答正文');
+      var data = await GeoAPI.extractAnswerSnapshotUrls(text);
+      fillCitedUrls(data.suggested_cited_urls || []);
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+
   document.getElementById('btnProbe').onclick = async function () {
     try {
       GeoWB.requireTenant();
@@ -289,6 +313,7 @@
       var draft = await GeoAPI.probeAnswerSnapshot(promptId);
       document.getElementById('rawText').value = draft.raw_text || '';
       document.getElementById('mentionsBrand').checked = !!draft.suggested_mentions_brand;
+      fillCitedUrls(draft.suggested_cited_urls || []);
       var eng = document.getElementById('engine');
       for (var i = 0; i < eng.options.length; i++) {
         if (eng.options[i].value === 'deepseek') { eng.value = 'deepseek'; break; }

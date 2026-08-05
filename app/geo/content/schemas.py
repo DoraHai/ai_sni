@@ -218,6 +218,11 @@ class AnswerSnapshotProbeRequest(BaseModel):
     prompt_id: int
 
 
+class AnswerSnapshotExtractUrlsRequest(BaseModel):
+    tenant_id: int
+    raw_text: str = Field(..., min_length=1)
+
+
 AiProvider = Literal["dashscope", "deepseek"]
 
 

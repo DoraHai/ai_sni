@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import re
 from urllib.parse import urlparse
 
 VALID_ENGINES = frozenset({"chatgpt", "deepseek", "doubao", "perplexity", "other"})
 VALID_BRAND_POSITIONS = frozenset({"first", "mentioned", "absent", "unknown"})
 VALID_SENTIMENTS = frozenset({"positive", "neutral", "negative", "unknown"})
+
+# Prefer explicit http(s) links; keep URL charset tight so CJK prose does not stick.
+_URL_IN_TEXT = re.compile(
+    r"https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+",
+    re.I,
+)
+_URL_TRAIL_PUNCT = ")]}>.,;:\"'"
 
 
 def clear_brand_missing_tag(tags: list[str] | None) -> list[str]:
@@ -73,6 +81,27 @@ def extract_cited_domains(urls: list[str] | None) -> list[str]:
         if domain and domain not in out:
             out.append(domain)
     return out
+
+
+def extract_cited_urls_from_text(text: str | None) -> list[str]:
+    """Pull http(s) URLs out of pasted/probe answer text for operator confirm."""
+    body = str(text or "")
+    if not body.strip():
+        return []
+    found: list[str] = []
+    for match in _URL_IN_TEXT.finditer(body):
+        url = match.group(0).rstrip(_URL_TRAIL_PUNCT)
+        while len(url) > 8 and url[-1] in ")]}":
+            closer = url[-1]
+            opener = {")": "(", "]": "[", "}": "{"}[closer]
+            if url.count(opener) >= url.count(closer):
+                break
+            url = url[:-1].rstrip(_URL_TRAIL_PUNCT)
+        if extract_cited_domain(url) and url not in found:
+            found.append(url[:2000])
+        if len(found) >= 50:
+            break
+    return found
 
 
 def domain_matches(domain: str, candidate: str) -> bool:
