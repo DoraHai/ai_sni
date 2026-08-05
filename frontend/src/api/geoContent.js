@@ -205,6 +205,12 @@ export function createGeoVariants(tenantId, taskId, channels = ['website', 'wech
   })
 }
 
+export function patchGeoVariant(tenantId, taskId, channel, body) {
+  return client.patch(`/api/v1/geo/content-tasks/${taskId}/variants/${channel}`, body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
 export function exportGeoVariant(tenantId, taskId, channel = 'website') {
   return client.get(`/api/v1/geo/content-tasks/${taskId}/export`, {
     params: { tenant_id: tenantId, channel },
@@ -213,6 +219,28 @@ export function exportGeoVariant(tenantId, taskId, channel = 'website') {
 
 export function publishGeoVariant(taskId, body) {
   return client.post(`/api/v1/geo/content-tasks/${taskId}/publications`, body)
+}
+
+export function pushGeoVariantWebhook(taskId, body) {
+  return client.post(`/api/v1/geo/content-tasks/${taskId}/push`, body, {
+    timeout: 60000,
+  })
+}
+
+export function submitGeoTaskReview(tenantId, taskId, note = null) {
+  return client.post(
+    `/api/v1/geo/content-tasks/${taskId}/submit-review`,
+    { note },
+    { params: { tenant_id: tenantId } },
+  )
+}
+
+export function decideGeoTaskReview(tenantId, taskId, decision, note = null) {
+  return client.post(
+    `/api/v1/geo/content-tasks/${taskId}/review`,
+    { decision, note },
+    { params: { tenant_id: tenantId } },
+  )
 }
 
 export function applyGeoContentPatch(tenantId, taskId, code, authorName) {

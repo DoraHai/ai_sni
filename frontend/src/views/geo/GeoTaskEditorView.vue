@@ -1,8 +1,8 @@
 <script setup>
 /**
- * Vue 母稿编辑器 · 第一刀
- * 覆盖：Brief / 事实绑定与召回 / 生成 / 保存 / 检查(Score) / AI 审稿
- * 渠道稿·审校·Webhook 仍可走静态 editor 完整页
+ * Vue 母稿编辑器 · 第一刀 + 第二刀
+ * 一：Brief / 事实 / 生成 / 检查(Score) / AI 审稿
+ * 二：渠道稿 / 审校 / 回填 URL / Webhook 推送
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -13,14 +13,23 @@ import {
   applyGeoRetrievedFacts,
   bindGeoTaskFacts,
   checkGeoContentTask,
+  createGeoVariants,
+  decideGeoTaskReview,
+  exportGeoVariant,
   fetchGeoBriefCatalog,
   generateGeoContentTask,
   getGeoContentTask,
+  listGeoChannelAccounts,
   listGeoFacts,
+  listGeoPublishingChannels,
   patchGeoContentTask,
+  patchGeoVariant,
+  publishGeoVariant,
+  pushGeoVariantWebhook,
   retrieveGeoTaskFacts,
   saveGeoArticle,
   staticGeoEditorUrl,
+  submitGeoTaskReview,
   suggestGeoTaskBrief,
 } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
@@ -39,6 +48,14 @@ const catalog = ref(null)
 const checkResult = ref(null)
 const retrievePreview = ref([])
 const selectedFactIds = ref([])
+const docTab = ref('master')
+const channelPick = ref(['website', 'wechat', 'zhihu'])
+const reviewNote = ref('')
+const publishUrl = ref('')
+const publishNote = ref('')
+const webhookAccountId = ref(null)
+const channelAccounts = ref([])
+const publishingChannels = ref([])
 
 const brief = reactive({
   industry: '',
@@ -60,6 +77,18 @@ const article = reactive({
   title: '',
   body_markdown: '',
 })
+
+const variantEdit = reactive({
+  title: '',
+  body_markdown: '',
+})
+
+const REVIEW_LABELS = {
+  none: '未提交',
+  pending: '待审',
+  approved: '已通过',
+  rejected: '已驳回',
+}
 
 function splitCsv(s) {
   return String(s || '')
@@ -114,6 +143,18 @@ function applyArticleFromTask(t) {
   article.body_markdown = a?.body_markdown || ''
 }
 
+function applyVariantFromTask() {
+  if (docTab.value === 'master') return
+  const v = (task.value?.variants || []).find((x) => x.channel === docTab.value)
+  variantEdit.title = v?.title || ''
+  variantEdit.body_markdown = v?.body_markdown || ''
+}
+
+function onDocTabChange(name) {
+  docTab.value = name
+  applyVariantFromTask()
+}
+
 async function load() {
   if (!tenantId.value || !taskId.value) {
     error.value = '缺少租户或任务 ID'
@@ -125,15 +166,30 @@ async function load() {
     if (!catalog.value) {
       catalog.value = await fetchGeoBriefCatalog()
     }
-    const [t, factsRes] = await Promise.all([
+    const [t, factsRes, chRes, accRes] = await Promise.all([
       getGeoContentTask(tenantId.value, taskId.value),
       listGeoFacts(tenantId.value, { status: 'active' }),
+      listGeoPublishingChannels(tenantId.value, false),
+      listGeoChannelAccounts(tenantId.value),
     ])
     task.value = t
     allFacts.value = factsRes.items || []
+    publishingChannels.value = chRes.items || []
+    channelAccounts.value = accRes.items || []
+    if (!webhookAccountId.value && channelAccounts.value.length) {
+      webhookAccountId.value = channelAccounts.value[0].id
+    }
+    if (t.target_channels?.length) {
+      channelPick.value = [...t.target_channels]
+    }
     applyBriefToForm(t.brief)
     applyArticleFromTask(t)
     selectedFactIds.value = (t.facts || []).map((f) => f.id)
+    if (docTab.value !== 'master') {
+      const still = (t.variants || []).some((v) => v.channel === docTab.value)
+      if (!still) docTab.value = 'master'
+    }
+    applyVariantFromTask()
     if (t.rule_result) {
       checkResult.value = {
         ready: t.rule_result.ready,
@@ -351,6 +407,163 @@ function openStaticFull() {
   window.open(staticGeoEditorUrl(tenantId.value || 1, taskId.value), '_blank')
 }
 
+async function genVariants() {
+  if (!channelPick.value.length) {
+    ElMessage.warning('请至少勾选一个渠道')
+    return
+  }
+  busy.value = 'variants'
+  try {
+    task.value = await createGeoVariants(tenantId.value, taskId.value, channelPick.value)
+    if (channelPick.value[0]) {
+      docTab.value = channelPick.value[0]
+      applyVariantFromTask()
+    }
+    ElMessage.success('渠道稿已生成')
+  } catch (e) {
+    ElMessage.error(e.message || '生成渠道稿失败')
+  } finally {
+    busy.value = ''
+  }
+}
+
+async function saveVariantBody() {
+  if (docTab.value === 'master') return
+  if (!variantEdit.title.trim() || !variantEdit.body_markdown.trim()) {
+    ElMessage.warning('渠道稿标题与正文不能为空')
+    return
+  }
+  busy.value = 'saveVar'
+  try {
+    task.value = await patchGeoVariant(tenantId.value, taskId.value, docTab.value, {
+      title: variantEdit.title.trim(),
+      body_markdown: variantEdit.body_markdown,
+    })
+    applyVariantFromTask()
+    ElMessage.success('渠道稿已保存')
+  } catch (e) {
+    ElMessage.error(e.message || '保存渠道稿失败')
+  } finally {
+    busy.value = ''
+  }
+}
+
+async function exportCurrentVariant() {
+  if (docTab.value === 'master') {
+    ElMessage.warning('请先切换到渠道页签')
+    return
+  }
+  busy.value = 'export'
+  try {
+    const res = await exportGeoVariant(tenantId.value, taskId.value, docTab.value)
+    await load()
+    ElMessage.success(`已导出 ${res.channel}（status=${res.status}）`)
+  } catch (e) {
+    ElMessage.error(e.message || '导出失败')
+  } finally {
+    busy.value = ''
+  }
+}
+
+async function copyCurrentDoc() {
+  const title = docTab.value === 'master' ? article.title : variantEdit.title
+  const body = docTab.value === 'master' ? article.body_markdown : variantEdit.body_markdown
+  try {
+    await navigator.clipboard.writeText(`# ${title}\n\n${body}`)
+    ElMessage.success('已复制到剪贴板')
+  } catch {
+    ElMessage.error('复制失败')
+  }
+}
+
+async function submitReview() {
+  busy.value = 'submitRev'
+  try {
+    task.value = await submitGeoTaskReview(
+      tenantId.value,
+      taskId.value,
+      reviewNote.value || null,
+    )
+    ElMessage.success('已提交审校')
+  } catch (e) {
+    ElMessage.error(e.message || '提交审校失败')
+  } finally {
+    busy.value = ''
+  }
+}
+
+async function decideReview(decision) {
+  busy.value = 'decideRev'
+  try {
+    task.value = await decideGeoTaskReview(
+      tenantId.value,
+      taskId.value,
+      decision,
+      reviewNote.value || null,
+    )
+    ElMessage.success(decision === 'approved' ? '已通过审校' : '已驳回')
+  } catch (e) {
+    ElMessage.error(e.message || '审校决策失败')
+  } finally {
+    busy.value = ''
+  }
+}
+
+async function recordPublication() {
+  if (docTab.value === 'master') {
+    ElMessage.warning('请切换到渠道页签再回填')
+    return
+  }
+  if (!publishUrl.value.trim().startsWith('http')) {
+    ElMessage.warning('请填写 http(s) 发布 URL')
+    return
+  }
+  busy.value = 'publish'
+  try {
+    task.value = await publishGeoVariant(taskId.value, {
+      tenant_id: tenantId.value,
+      channel: docTab.value,
+      published_url: publishUrl.value.trim(),
+      note: publishNote.value || null,
+    })
+    ElMessage.success('已回填发布 URL')
+  } catch (e) {
+    ElMessage.error(e.message || '回填失败')
+  } finally {
+    busy.value = ''
+  }
+}
+
+async function pushWebhook() {
+  if (docTab.value === 'master') {
+    ElMessage.warning('请切换到渠道页签')
+    return
+  }
+  if (!webhookAccountId.value) {
+    ElMessage.warning('请选择 Webhook 账号')
+    return
+  }
+  busy.value = 'push'
+  try {
+    const res = await pushGeoVariantWebhook(taskId.value, {
+      tenant_id: tenantId.value,
+      channel: docTab.value,
+      account_id: webhookAccountId.value,
+      mode: 'publish',
+      create_publication: true,
+      published_url: publishUrl.value.trim() || null,
+      note: publishNote.value || null,
+    })
+    if (res.task) task.value = res.task
+    else await load()
+    ElMessage.success('Webhook 推送完成')
+  } catch (e) {
+    ElMessage.error(e.message || '推送失败')
+  } finally {
+    busy.value = ''
+  }
+}
+
 const scoreLine = computed(() => {
   const s = checkResult.value?.geo_score
   if (s == null) return '检查后显示 GEO Score'
@@ -370,6 +583,38 @@ const aiReview = computed(
 )
 const patches = computed(() => checkResult.value?.patches || [])
 const boundFacts = computed(() => task.value?.facts || [])
+const variants = computed(() => task.value?.variants || [])
+const channelOptions = computed(() => {
+  const opts = task.value?.channel_options || []
+  if (opts.length) {
+    const seen = new Set()
+    return opts
+      .map((o) => ({
+        key: o.adapt_key || o.channel_type || o.key,
+        label: o.name || o.display_name || o.adapt_key || o.channel_type,
+      }))
+      .filter((o) => o.key && !seen.has(o.key) && (seen.add(o.key) || true))
+  }
+  const profiles = task.value?.channel_profiles || []
+  if (profiles.length) {
+    return profiles.map((p) => ({ key: p.key, label: p.display_name || p.key }))
+  }
+  return [
+    { key: 'website', label: '官网' },
+    { key: 'wechat', label: '微信' },
+    { key: 'zhihu', label: '知乎' },
+  ]
+})
+const reviewStatusLabel = computed(() => {
+  const s = task.value?.review_status || 'none'
+  return REVIEW_LABELS[s] || s
+})
+const canSubmitReview = computed(() => !!task.value?.can_submit_review && !!task.value?.article)
+const canDecideReview = computed(() => !!task.value?.can_decide_review)
+const webhookAccountsForChannel = computed(() => {
+  // show all webhook accounts; backend validates match
+  return (channelAccounts.value || []).filter((a) => a.auth_type === 'webhook' || !a.auth_type)
+})
 
 watch([tenantId, taskId], load)
 onMounted(load)
@@ -399,10 +644,10 @@ onMounted(load)
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
     <el-alert
-      type="info"
+      type="success"
       show-icon
       class="mb"
-      title="Vue 母稿编辑器第一刀：Brief / 事实 / 生成 / 检查(Score) / AI 审稿。渠道稿与发布审校请用「静态完整 editor」。"
+      title="Vue 母稿编辑器：第一刀（Brief/事实/生成/Score/AI审稿）+ 第二刀（渠道稿/审校/回填/Webhook）。静态 editor 仍可作兜底。"
     />
 
     <div v-if="task" class="grid">
@@ -528,9 +773,10 @@ onMounted(load)
         <el-card shadow="never" class="card">
           <template #header>
             <div class="card-head">
-              <span>母稿</span>
+              <span>文档</span>
               <div class="row-actions">
                 <el-button
+                  v-if="docTab === 'master'"
                   size="small"
                   type="primary"
                   :loading="busy === 'generate'"
@@ -538,9 +784,32 @@ onMounted(load)
                 >
                   生成母稿
                 </el-button>
-                <el-button size="small" :loading="busy === 'save'" @click="saveArticleBody">
+                <el-button
+                  v-if="docTab === 'master'"
+                  size="small"
+                  :loading="busy === 'save'"
+                  @click="saveArticleBody"
+                >
                   保存正文
                 </el-button>
+                <el-button
+                  v-if="docTab !== 'master'"
+                  size="small"
+                  type="primary"
+                  :loading="busy === 'saveVar'"
+                  @click="saveVariantBody"
+                >
+                  保存渠道稿
+                </el-button>
+                <el-button
+                  v-if="docTab !== 'master'"
+                  size="small"
+                  :loading="busy === 'export'"
+                  @click="exportCurrentVariant"
+                >
+                  导出
+                </el-button>
+                <el-button size="small" @click="copyCurrentDoc">复制</el-button>
                 <el-button size="small" :loading="busy === 'check'" @click="runCheck">
                   检查就绪
                 </el-button>
@@ -550,27 +819,162 @@ onMounted(load)
               </div>
             </div>
           </template>
-          <el-form label-width="56px" size="small">
-            <el-form-item label="标题">
-              <el-input v-model="article.title" />
-            </el-form-item>
-            <el-form-item label="正文">
-              <el-input
-                v-model="article.body_markdown"
-                type="textarea"
-                :rows="18"
-                placeholder="Markdown 母稿"
-              />
-            </el-form-item>
-          </el-form>
-          <div v-if="task.article" class="hint">
-            版本 v{{ task.article.version_no }} · {{ task.article.created_at || '' }}
-          </div>
+
+          <el-tabs :model-value="docTab" class="mb" @tab-change="onDocTabChange">
+            <el-tab-pane label="母稿" name="master" />
+            <el-tab-pane
+              v-for="v in variants"
+              :key="v.channel"
+              :name="v.channel"
+              :label="`${v.channel}${v.stale ? ' *' : ''}`"
+            />
+          </el-tabs>
+
+          <template v-if="docTab === 'master'">
+            <el-form label-width="56px" size="small">
+              <el-form-item label="标题">
+                <el-input v-model="article.title" />
+              </el-form-item>
+              <el-form-item label="正文">
+                <el-input
+                  v-model="article.body_markdown"
+                  type="textarea"
+                  :rows="16"
+                  placeholder="Markdown 母稿"
+                />
+              </el-form-item>
+            </el-form>
+            <div v-if="task.article" class="hint">
+              版本 v{{ task.article.version_no }} · {{ task.article.created_at || '' }}
+            </div>
+          </template>
+          <template v-else>
+            <div class="hint mb">
+              渠道 {{ docTab }} · 状态 {{ variants.find((v) => v.channel === docTab)?.status || '—' }}
+              <span v-if="variants.find((v) => v.channel === docTab)?.stale"> · 母稿已变需重生</span>
+            </div>
+            <el-form label-width="56px" size="small">
+              <el-form-item label="标题">
+                <el-input v-model="variantEdit.title" />
+              </el-form-item>
+              <el-form-item label="正文">
+                <el-input
+                  v-model="variantEdit.body_markdown"
+                  type="textarea"
+                  :rows="16"
+                  placeholder="渠道稿 Markdown"
+                />
+              </el-form-item>
+            </el-form>
+          </template>
         </el-card>
 
         <el-card shadow="never" class="card">
           <template #header>
-            <span>规则 · GEO Score · 审稿</span>
+            <div class="card-head">
+              <span>渠道稿 · 审校 · 发布</span>
+              <el-button size="small" type="primary" :loading="busy === 'variants'" @click="genVariants">
+                生成所选渠道稿
+              </el-button>
+            </div>
+          </template>
+          <div class="hint mb">勾选渠道后生成；页签切换可编辑/导出/回填。</div>
+          <el-checkbox-group v-model="channelPick" class="mb">
+            <el-checkbox
+              v-for="c in channelOptions"
+              :key="c.key"
+              :label="c.key"
+            >
+              {{ c.label }} ({{ c.key }})
+            </el-checkbox>
+          </el-checkbox-group>
+
+          <el-divider content-position="left">审校</el-divider>
+          <div class="hint mb">
+            状态：{{ reviewStatusLabel }}
+            <template v-if="task.review_note"> · {{ task.review_note }}</template>
+            <template v-if="task.reviewed_at"> · {{ task.reviewed_at }}</template>
+          </div>
+          <el-input
+            v-model="reviewNote"
+            size="small"
+            placeholder="审校备注（可选）"
+            class="mb"
+          />
+          <div class="row-actions">
+            <el-button
+              size="small"
+              :disabled="!canSubmitReview"
+              :loading="busy === 'submitRev'"
+              @click="submitReview"
+            >
+              提交审校
+            </el-button>
+            <el-button
+              size="small"
+              type="success"
+              :disabled="!canDecideReview"
+              :loading="busy === 'decideRev'"
+              @click="decideReview('approved')"
+            >
+              通过
+            </el-button>
+            <el-button
+              size="small"
+              type="danger"
+              :disabled="!canDecideReview"
+              :loading="busy === 'decideRev'"
+              @click="decideReview('rejected')"
+            >
+              驳回
+            </el-button>
+          </div>
+
+          <el-divider content-position="left">回填 / Webhook</el-divider>
+          <el-form label-width="100px" size="small">
+            <el-form-item label="发布 URL">
+              <el-input v-model="publishUrl" placeholder="https://..." />
+            </el-form-item>
+            <el-form-item label="备注">
+              <el-input v-model="publishNote" />
+            </el-form-item>
+            <el-form-item label="Webhook 账号">
+              <el-select v-model="webhookAccountId" clearable style="width: 100%" placeholder="可选">
+                <el-option
+                  v-for="a in webhookAccountsForChannel"
+                  :key="a.id"
+                  :label="`${a.display_name} (#${a.id})`"
+                  :value="a.id"
+                />
+              </el-select>
+            </el-form-item>
+          </el-form>
+          <div class="row-actions">
+            <el-button
+              size="small"
+              type="primary"
+              :disabled="docTab === 'master'"
+              :loading="busy === 'publish'"
+              @click="recordPublication"
+            >
+              回填 URL
+            </el-button>
+            <el-button
+              size="small"
+              :disabled="docTab === 'master'"
+              :loading="busy === 'push'"
+              @click="pushWebhook"
+            >
+              Webhook 推送
+            </el-button>
+            <router-link class="el-button el-button--small" to="/geo/publishing">管理渠道账号</router-link>
+          </div>
+          <div class="hint mt">推送前通常需「导出」渠道稿；发布门禁含审校通过与规则就绪。</div>
+        </el-card>
+
+        <el-card shadow="never" class="card">
+          <template #header>
+            <span>规则 · GEO Score · AI 审稿</span>
           </template>
           <div class="score">{{ scoreLine }}</div>
           <ul class="check-list">
