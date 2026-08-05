@@ -49,6 +49,8 @@ const ALL_GROUPS = computed(() => [
     { label: 'GEO 概览', path: '/geo/overview', key: 'geo.content' },
     { label: 'AI 可见度', path: '/geo/visibility', key: 'geo.content' },
     { label: '引用域名', path: '/geo/citations', key: 'geo.content' },
+    { label: '竞品分析', path: '/geo/competitors', key: 'geo.content' },
+    { label: '评价分析', path: '/geo/evaluation', key: 'geo.content' },
     { label: '交付摘要', path: '/geo/deliverables', key: 'geo.content' },
     { label: '内容工作台', path: '/deal-sniper/geo/dashboard', key: 'geo.content', external: true },
   ] },

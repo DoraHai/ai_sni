@@ -130,6 +130,18 @@ export function fetchGeoCitationInsights(tenantId) {
   })
 }
 
+export function fetchGeoCompetitorInsights(tenantId) {
+  return client.get('/api/v1/geo/competitor-insights', {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function fetchGeoEvaluationInsights(tenantId) {
+  return client.get('/api/v1/geo/evaluation-insights', {
+    params: { tenant_id: tenantId },
+  })
+}
+
 export function fetchGeoDeliverablesPack(tenantId, params = {}) {
   return client.get('/api/v1/geo/deliverables/pack', {
     params: { tenant_id: tenantId, ...params },
