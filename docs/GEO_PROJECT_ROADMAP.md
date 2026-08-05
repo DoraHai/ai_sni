@@ -3,7 +3,8 @@
 > 文档日期：2026-08-05  
 > 仓库：`ai_sni`（Growth Sniper：SEM + SEO/GEO）  
 > 本文汇总 **目标、已完成路径、剩余计划、本地/生产配置、验收与其它注意点**，便于后续接手或排期。  
-> 细切片计划仍以 `docs/GEO_*_PLAN.md` 为准；本文是总览索引。
+> 细切片计划仍以 `docs/GEO_*_PLAN.md` 为准；本文是总览索引。  
+> **端到端功能链路（系统说明书）**：`docs/GEO_SYSTEM_FUNCTION_FLOW.md`。
 
 ---
 
@@ -29,7 +30,7 @@
 | 可见度闭环 | 人工/探测快照 → 提及率口径 → 引用/竞品/评价 | ✅ Wave B/C + 引用/C+ |
 | 期次对比 | 可见度 before/after、拓词 vs 上次 | ✅ Period diff |
 | 发布自动化 Phase 2 | 官网/文档 Webhook 推送（非社交 OAuth） | ✅ 已合入 |
-| Vue 观测侧 | 概览 / 可见度 / 引用 / 交付 / 竞品 / 评价 | ✅～🟡 竞品评价见 PR #11 |
+| Vue 观测侧 | 概览 / 可见度 / 引用 / 交付 / 竞品 / 评价 / 任务列表 | ✅ PR #11 + #12 |
 | 工程门禁 | pytest CI + `accept_geo_m1.py` | ✅ |
 
 ### 1.3 刻意非目标（当前不纳入「完整」）
@@ -99,10 +100,11 @@ python scripts/accept_geo_m1.py   # API :8011，静态可选 :5176
 
 | 项 | 状态 |
 | --- | --- |
-| `main` tip | 含 PR #10 交付摘要（`eb15846` 一带） |
-| PR #11 | Vue 竞品/评价 · **CI 绿 · 待合入** · 合入后本轮产品暂停点 |
-| 自助 MVP 主环 | **基本完成** |
-| 下一波（未开工） | 见 §3 |
+| `main` tip | 含 PR #12（P1 任务 Vue + P2 引擎采样 + 生产 harden） |
+| PR #11 / #12 | 竞品评价 Vue + 任务 Vue / 真采样框架 / GEO 健康 503 · **已合入** |
+| 自助 MVP 主环 | **完成** |
+| 系统功能链路文档 | `docs/GEO_SYSTEM_FUNCTION_FLOW.md` |
+| 下一波（未开工） | P3～P6 见 §2.4 |
 
 ### 2.4 下一波计划路径（建议顺序）
 
@@ -330,6 +332,7 @@ alembic upgrade head
 
 | 文档 | 用途 |
 | --- | --- |
+| `docs/GEO_SYSTEM_FUNCTION_FLOW.md` | **系统功能链路说明书（主环/API/UI/数据）** |
 | `docs/LOCAL_GEO_DEMO.md` | 本地联调入口 |
 | `docs/GEO_STAGE_ACCEPTANCE.md` | 里程碑验收与合入门禁 |
 | `docs/GEOLOOK_COMPARISON_BRIEF.md` | 与 GeoLook 差距 / 不搬清单 |
@@ -363,3 +366,4 @@ alembic upgrade head
 | 日期 | 说明 |
 | --- | --- |
 | 2026-08-05 | 初版：汇总 Wave A→交付物/Vue 路径、配置、剩余 P1–P6 与暂停点（PR #11） |
+| 2026-08-05 | 增补：P1/P2/生产 harden 完成态；链到 `GEO_SYSTEM_FUNCTION_FLOW.md` |
