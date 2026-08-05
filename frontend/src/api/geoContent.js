@@ -86,6 +86,13 @@ export function checkGeoContentTask(tenantId, taskId, requireChannels = false) {
   })
 }
 
+export function aiReviewGeoContentTask(tenantId, taskId, body = { persist: true }) {
+  return client.post(`/api/v1/geo/content-tasks/${taskId}/ai-review`, body, {
+    params: { tenant_id: tenantId },
+    timeout: 120000,
+  })
+}
+
 export function createGeoVariants(tenantId, taskId, channels = ['website', 'wechat', 'zhihu']) {
   return client.post(`/api/v1/geo/content-tasks/${taskId}/variants`, { channels }, {
     params: { tenant_id: tenantId },

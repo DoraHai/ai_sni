@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     dashscope_model: str = "deepseek-v3"
 
+    # GEO 母稿质量门禁（P2/P3）：默认关闭，仅 warn 不挡发布
+    geo_score_gate: bool = False
+    geo_score_threshold: int = 60
+    geo_ai_review_gate: bool = False
+
     log_level: str = "INFO"
 
 

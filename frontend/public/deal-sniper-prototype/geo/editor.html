@@ -153,8 +153,19 @@
             <ul class="wb-checks" id="lintList" style="margin-top:8px"></ul>
           </div>
           <div id="patchBox" style="margin-top:10px"></div>
+          <div style="margin-top:14px">
+            <strong>GEO Score</strong>
+            <div class="wb-hint" id="geoScoreLine">检查就绪后显示 0–100 分与改进项</div>
+            <ul class="wb-checks" id="geoActionList" style="margin-top:8px"></ul>
+          </div>
+          <div style="margin-top:14px">
+            <strong>AI 审稿</strong>
+            <div class="wb-hint" id="aiReviewLine">点击「AI 审稿」生成 issues</div>
+            <ul class="wb-checks" id="aiReviewList" style="margin-top:8px"></ul>
+          </div>
           <div class="wb-muted" id="readyLine" style="margin-top:8px"></div>
           <button class="wb-btn" id="btnLint" style="margin-top:10px">仅扫编造风险</button>
+          <button class="wb-btn" id="btnAiReview" style="margin-top:10px">AI 审稿</button>
           <button class="wb-btn" id="btnChannels" style="margin-top:10px;display:none">去回填 →</button>
         </div>
       </div>
@@ -428,7 +439,47 @@
       box.appendChild(li);
     });
     var ready = result ? result.ready : (task && task.rule_result && task.rule_result.ready);
-    document.getElementById('readyLine').textContent = ready ? '已达发布就绪（渠道检查可另开）' : '尚未就绪';
+    var rr = (result) || (task && task.rule_result) || {};
+    var score = result && result.geo_score != null ? result.geo_score : rr.geo_score;
+    var subs = (result && result.geo_subscores) || rr.geo_subscores || {};
+    var gacts = (result && result.geo_actions) || rr.geo_actions || [];
+    var scoreLine = document.getElementById('geoScoreLine');
+    if (score != null) {
+      var subTxt = Object.keys(subs).map(function (k) {
+        return k + '=' + Math.round((subs[k] || 0) * 100);
+      }).join(' · ');
+      scoreLine.textContent = 'GEO Score ' + score + '/100' + (subTxt ? '（' + subTxt + '）' : '');
+    } else {
+      scoreLine.textContent = '检查就绪后显示 0–100 分与改进项';
+    }
+    var ga = document.getElementById('geoActionList');
+    ga.innerHTML = '';
+    gacts.forEach(function (a) {
+      var li = document.createElement('li');
+      li.innerHTML = '<span>⚠</span><div><strong>' + (a.code || '') + '</strong> · ' + (a.message || '') +
+        (a.action ? '<div class="wb-muted">' + a.action + '</div>' : '') + '</div>';
+      ga.appendChild(li);
+    });
+    var review = rr.ai_review || (result && result.ai_review);
+    var arLine = document.getElementById('aiReviewLine');
+    var arList = document.getElementById('aiReviewList');
+    arList.innerHTML = '';
+    if (review) {
+      arLine.textContent = (review.summary || '已审稿') +
+        ' · block ' + (review.block_count || 0) + ' · warn ' + (review.warn_count || 0);
+      (review.issues || []).forEach(function (iss) {
+        var li = document.createElement('li');
+        li.innerHTML = '<span class="wb-badge">' + (iss.severity || '') + '</span>' +
+          '<div><strong>' + (iss.category || '') + '</strong> · ' + (iss.message || '') +
+          (iss.fix_hint ? '<div class="wb-muted">' + iss.fix_hint + '</div>' : '') + '</div>';
+        arList.appendChild(li);
+      });
+    } else {
+      arLine.textContent = '点击「AI 审稿」生成 issues';
+    }
+    document.getElementById('readyLine').textContent = ready
+      ? ('已达规则就绪 · GEO Score ' + (score != null ? score : '—'))
+      : ('尚未就绪' + (score != null ? ' · Score ' + score : ''));
     var patchBox = document.getElementById('patchBox');
     patchBox.innerHTML = '';
     var patches = (result && result.patches) || [];
@@ -698,6 +749,18 @@
     try {
       var result = await GeoAPI.lintTask(taskId);
       renderBlocksAndLint(result);
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnAiReview').onclick = async function () {
+    try {
+      var result = await GeoAPI.aiReviewTask(taskId, { persist: true });
+      if (result.task) task = result.task;
+      else if (task && task.rule_result) {
+        task.rule_result = task.rule_result || {};
+        task.rule_result.ai_review = result.ai_review;
+      }
+      renderAll();
+      renderChecks({ checks: (task.rule_result && task.rule_result.checks) || [], ready: task.rule_result && task.rule_result.ready, geo_score: task.rule_result && task.rule_result.geo_score, geo_subscores: task.rule_result && task.rule_result.geo_subscores, geo_actions: task.rule_result && task.rule_result.geo_actions, ai_review: result.ai_review });
     } catch (e) { GeoWB.showError(err, e); }
   };
   document.getElementById('btnVariants').onclick = async function () {

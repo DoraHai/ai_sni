@@ -284,6 +284,13 @@
         body: { fact_ids: factIds || [] },
       });
     },
+    aiReviewTask: function (id, body) {
+      return api('/content-tasks/' + id + '/ai-review', {
+        method: 'POST',
+        query: withTenantQuery(),
+        body: body || { persist: true },
+      });
+    },
     createTaskFromDiagnosis: function (body) {
       return api('/content-tasks/from-diagnosis', { method: 'POST', body: body });
     },

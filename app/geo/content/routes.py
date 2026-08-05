@@ -84,6 +84,7 @@ from app.geo.content.schemas import (
     PromptImportRequest,
     PromptUpdate,
     PublicationCreate,
+    AiReviewRequest,
     RetrieveFactsApplyRequest,
     RetrieveFactsRequest,
     ReviewDecision,
@@ -2682,6 +2683,11 @@ async def check_task(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    from app.config import get_settings
+    from app.geo.content.draft_lint import lint_draft, lint_summary
+    from app.geo.content.extractable_blocks import blocks_payload
+    from app.geo.content.geo_score import compute_geo_score, score_blocks_ready
+
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
     article = await _latest_article(session, task.id)
@@ -2690,19 +2696,43 @@ async def check_task(
     ready = is_ready(checks, require_channels=require_channels)
     check_dicts = [c.to_dict() for c in checks]
     patches = build_fix_patches(rule_input)
-    from app.geo.content.draft_lint import lint_draft, lint_summary
-    from app.geo.content.extractable_blocks import blocks_payload
 
     lint = lint_summary(
         lint_draft(rule_input.body_markdown or "", facts=rule_input.facts or [])
     )
     blocks = blocks_payload(rule_input.body_markdown or "")
+    lint_ok = bool(lint.get("blocks_ready")) if isinstance(lint, dict) else None
+    score_payload = compute_geo_score(
+        rule_input,
+        brief=task.brief if isinstance(task.brief, dict) else {},
+        lint_ok=lint_ok,
+        rule_checks=checks,
+    )
+    settings = get_settings()
+    score_ok, score_msg = score_blocks_ready(
+        score_payload,
+        threshold=int(getattr(settings, "geo_score_threshold", 60) or 60),
+        gate_enabled=bool(getattr(settings, "geo_score_gate", False)),
+    )
+    if not score_ok:
+        ready = False
+
+    prev_rr = task.rule_result if isinstance(task.rule_result, dict) else {}
+    ai_review = prev_rr.get("ai_review") if isinstance(prev_rr.get("ai_review"), dict) else None
+
     task.rule_result = {
         "ready": ready,
         "require_channels": require_channels,
         "checks": check_dicts,
         "lint": lint,
         "blocks": blocks,
+        "geo_score": score_payload["geo_score"],
+        "geo_subscores": score_payload["geo_subscores"],
+        "geo_actions": score_payload["geo_actions"],
+        "geo_score_gate": bool(getattr(settings, "geo_score_gate", False)),
+        "geo_score_threshold": int(getattr(settings, "geo_score_threshold", 60) or 60),
+        "geo_score_gate_message": score_msg or None,
+        "ai_review": ai_review,
         "checked_at": datetime.utcnow().isoformat(),
     }
     if ready:
@@ -2719,7 +2749,71 @@ async def check_task(
         "patches": patches,
         "lint": lint,
         "blocks": blocks,
+        "geo_score": score_payload["geo_score"],
+        "geo_subscores": score_payload["geo_subscores"],
+        "geo_actions": score_payload["geo_actions"],
+        "geo_score_gate": bool(getattr(settings, "geo_score_gate", False)),
+        "geo_score_threshold": int(getattr(settings, "geo_score_threshold", 60) or 60),
         "task": await _task_payload(session, task, detail=True),
+    }
+
+
+@router.post("/content-tasks/{task_id}/ai-review")
+async def ai_review_task(
+    task_id: int,
+    req: AiReviewRequest,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """P3 AI Reviewer — drafts issues; persist into rule_result when requested."""
+    from app.geo.content.ai_reviewer import run_ai_review
+    from app.geo.content.ai_settings import resolve_llm_credentials
+
+    ctx.ensure_tenant(tenant_id)
+    task = await _get_task(session, task_id, tenant_id)
+    article = await _latest_article(session, task.id)
+    if article is None:
+        raise HTTPException(400, "请先生成或保存母稿")
+    prompt = await _get_prompt(session, task.prompt_id, tenant_id)
+    tenant = await _ensure_tenant_exists(session, tenant_id)
+    brand = getattr(tenant, "name", None) or f"租户{tenant_id}"
+    llm = await resolve_llm_credentials(session, tenant_id)
+    if not llm:
+        raise HTTPException(
+            503,
+            "未配置 AI 能力：请在「AI 能力配置」填写 API Key 后再审稿",
+        )
+    from app.ai.deepseek import DeepSeekError, chat_json
+
+    rule_input = await _build_rule_input(session, task, article)
+    try:
+        review = await run_ai_review(
+            brand=brand,
+            question=prompt.question,
+            brief=task.brief if isinstance(task.brief, dict) else {},
+            rule_input=rule_input,
+            llm=llm,
+            chat_json=chat_json,
+        )
+    except DeepSeekError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+    if req.persist:
+        rr = task.rule_result if isinstance(task.rule_result, dict) else {}
+        rr = dict(rr)
+        rr["ai_review"] = review
+        task.rule_result = rr
+        await session.commit()
+        await session.refresh(task)
+
+    return {
+        "task_id": task.id,
+        "persisted": bool(req.persist),
+        "ai_review": review,
+        "task": await _task_payload(session, task, detail=True) if req.persist else None,
     }
 
 
