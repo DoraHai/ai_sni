@@ -18,10 +18,12 @@
 
 观测侧（overview / visibility / citations / competitors / evaluation / deliverables）此前已 Vue。
 
-## 仍静态（最后一刀）
+## 母稿编辑器
 
-- **`editor.html`**：母稿生成 / Brief / Score / 审稿 / 渠道稿 / 审校全流水线  
-- 入口：工作台「打开静态编辑器」、任务页混合壳、兼容链接
+| 阶段 | 状态 | 说明 |
+| --- | --- | --- |
+| **第一刀（已实现）** | ✅ `/geo/tasks/:id` 原生 Vue | Brief / 事实绑定与召回 / 生成 / 保存 / check+Score / AI 审稿 / 规则补丁 |
+| 静态完整页 | 兼容 | 渠道稿 · 审校 · Webhook 推送仍用 `editor.html`（工具栏「静态完整 editor」） |
 
 ## 导航
 
@@ -29,5 +31,5 @@
 
 ## 后续
 
-1. Vue 化 editor（拆 Brief / 事实 / 生成 / Score 面板）  
+1. Vue 化渠道稿 / 审校 / 发布（editor 第二刀）  
 2. 静态页仅作兼容深链，最终下线  

@@ -139,7 +139,23 @@ export function bindGeoTaskFacts(tenantId, taskId, factIds) {
 export function generateGeoContentTask(tenantId, taskId) {
   return client.post(`/api/v1/geo/content-tasks/${taskId}/generate`, null, {
     params: { tenant_id: tenantId },
-    timeout: 90000,
+    timeout: 120000,
+  })
+}
+
+export function saveGeoArticle(tenantId, taskId, body) {
+  return client.put(`/api/v1/geo/content-tasks/${taskId}/article`, body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function fetchGeoBriefCatalog() {
+  return client.get('/api/v1/geo/content-brief-catalog')
+}
+
+export function lintGeoContentTask(tenantId, taskId) {
+  return client.post(`/api/v1/geo/content-tasks/${taskId}/lint`, null, {
+    params: { tenant_id: tenantId },
   })
 }
 
