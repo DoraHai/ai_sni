@@ -98,6 +98,8 @@ from app.geo.content.schemas import (
     TrackingEnginesPut,
     VariantUpdate,
     VariantsCreate,
+    VisibilityPatrolCreate,
+    VisibilityPatrolSettingsUpdate,
 )
 from app.geo.content.cn_blueprint import (
     blueprint_payload,
@@ -153,6 +155,8 @@ from app.models import (
     GeoPublishingChannel,
     GeoTaskFact,
     GeoTrackingEngine,
+    GeoVisibilityPatrolRun,
+    GeoVisibilityPatrolSettings,
     Tenant,
 )
 from app.security.auth import AuthContext, require_scoped_auth
@@ -1595,6 +1599,155 @@ async def probe_answer_snapshot_batch(
         "error_count": sum(1 for i in items if not i.get("ok")),
         "persisted": False,
     }
+
+
+# ---------- visibility auto patrol ----------
+
+
+@router.get("/visibility-patrol/settings")
+async def get_visibility_patrol_settings(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    row = await session.get(GeoVisibilityPatrolSettings, tenant_id)
+    if row is None:
+        return {
+            "tenant_id": tenant_id,
+            "enabled": False,
+            "daily_hour": 6,
+            "auto_persist": True,
+            "prefer_real": True,
+            "prompt_limit": 20,
+            "engine_keys": None,
+        }
+    return {
+        "tenant_id": row.tenant_id,
+        "enabled": bool(row.enabled),
+        "daily_hour": int(row.daily_hour),
+        "auto_persist": bool(row.auto_persist),
+        "prefer_real": bool(row.prefer_real),
+        "prompt_limit": int(row.prompt_limit),
+        "engine_keys": row.engine_keys,
+        "updated_at": _iso(row.updated_at),
+    }
+
+
+@router.put("/visibility-patrol/settings")
+async def put_visibility_patrol_settings(
+    req: VisibilityPatrolSettingsUpdate,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(req.tenant_id)
+    await _ensure_tenant_exists(session, req.tenant_id)
+    row = await session.get(GeoVisibilityPatrolSettings, req.tenant_id)
+    if row is None:
+        row = GeoVisibilityPatrolSettings(tenant_id=req.tenant_id)
+        session.add(row)
+    row.enabled = bool(req.enabled)
+    row.daily_hour = int(req.daily_hour)
+    row.auto_persist = bool(req.auto_persist)
+    row.prefer_real = bool(req.prefer_real)
+    row.prompt_limit = int(req.prompt_limit)
+    row.engine_keys = req.engine_keys
+    await session.commit()
+    await session.refresh(row)
+    return {
+        "tenant_id": row.tenant_id,
+        "enabled": bool(row.enabled),
+        "daily_hour": int(row.daily_hour),
+        "auto_persist": bool(row.auto_persist),
+        "prefer_real": bool(row.prefer_real),
+        "prompt_limit": int(row.prompt_limit),
+        "engine_keys": row.engine_keys,
+        "updated_at": _iso(row.updated_at),
+    }
+
+
+@router.get("/visibility-patrol/runs")
+async def list_visibility_patrol_runs(
+    tenant_id: int = Query(...),
+    limit: int = Query(20, ge=1, le=100),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from app.geo.content.patrol import patrol_run_payload
+
+    ctx.ensure_tenant(tenant_id)
+    rows = list(
+        await session.scalars(
+            select(GeoVisibilityPatrolRun)
+            .where(GeoVisibilityPatrolRun.tenant_id == tenant_id)
+            .order_by(GeoVisibilityPatrolRun.id.desc())
+            .limit(limit)
+        )
+    )
+    return {"items": [patrol_run_payload(r) for r in rows]}
+
+
+@router.get("/visibility-patrol/runs/{run_id}")
+async def get_visibility_patrol_run(
+    run_id: int,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from app.geo.content.patrol import patrol_run_payload
+
+    ctx.ensure_tenant(tenant_id)
+    row = await session.get(GeoVisibilityPatrolRun, run_id)
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, "巡检任务不存在")
+    return patrol_run_payload(row)
+
+
+@router.post("/visibility-patrol/runs")
+async def create_visibility_patrol_run(
+    req: VisibilityPatrolCreate,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """启动一次全自动巡检：多机会词 × 启用引擎探测，默认自动落库快照。
+
+    真采样：引擎 sample_mode=openai_compat 且配置 Key；否则租户 LLM + 人设（标记 simulated）。
+    """
+    from app.database import async_session_factory
+    from app.geo.content.patrol import execute_patrol_run, patrol_run_payload
+
+    ctx.ensure_tenant(req.tenant_id)
+    await _ensure_tenant_exists(session, req.tenant_id)
+    run = GeoVisibilityPatrolRun(
+        tenant_id=req.tenant_id,
+        status="pending",
+        trigger="manual",
+        auto_persist=bool(req.auto_persist),
+        prefer_real=bool(req.prefer_real),
+        prompt_limit=int(req.prompt_limit),
+        engine_keys=req.engine_keys,
+        created_by=ctx.user_id,
+    )
+    session.add(run)
+    await session.commit()
+    await session.refresh(run)
+    run_id = run.id
+
+    if req.run_async:
+        import asyncio
+
+        async def _bg() -> None:
+            async with async_session_factory() as s:
+                try:
+                    await execute_patrol_run(s, run_id)
+                except Exception:  # noqa: BLE001
+                    pass
+
+        asyncio.create_task(_bg())
+        return {"run": patrol_run_payload(run), "started": True, "async": True}
+
+    done = await execute_patrol_run(session, run_id)
+    return {"run": patrol_run_payload(done), "started": True, "async": False}
 
 
 @router.post("/answer-snapshots/extract-urls")

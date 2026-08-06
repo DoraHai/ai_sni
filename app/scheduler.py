@@ -228,6 +228,53 @@ async def purge_old_assistant_messages() -> None:
             logger.exception("[scheduler] 清理助手对话失败")
 
 
+async def run_geo_visibility_patrols() -> None:
+    """Hourly: for tenants with patrol settings.enabled and matching daily_hour, start a run."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from app.database import async_session_factory
+    from app.geo.content.patrol import execute_patrol_run
+    from app.models import GeoVisibilityPatrolRun, GeoVisibilityPatrolSettings
+    from sqlalchemy import select
+
+    now = datetime.now(ZoneInfo("Asia/Shanghai"))
+    hour = now.hour
+    async with async_session_factory() as session:
+        rows = list(
+            await session.scalars(
+                select(GeoVisibilityPatrolSettings).where(
+                    GeoVisibilityPatrolSettings.enabled.is_(True),
+                    GeoVisibilityPatrolSettings.daily_hour == hour,
+                )
+            )
+        )
+        for st in rows:
+            run = GeoVisibilityPatrolRun(
+                tenant_id=st.tenant_id,
+                status="pending",
+                trigger="schedule",
+                auto_persist=bool(st.auto_persist),
+                prefer_real=bool(st.prefer_real),
+                prompt_limit=int(st.prompt_limit or 20),
+                engine_keys=st.engine_keys,
+                created_by=None,
+            )
+            session.add(run)
+            await session.commit()
+            await session.refresh(run)
+            rid = run.id
+            try:
+                await execute_patrol_run(session, rid)
+                logger.info("[scheduler] geo visibility patrol done tenant=%s run=%s", st.tenant_id, rid)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "[scheduler] geo visibility patrol failed tenant=%s run=%s",
+                    st.tenant_id,
+                    rid,
+                )
+
+
 def start_scheduler() -> None:
     if not _acquire_scheduler_lock():
         logger.info(
@@ -254,6 +301,15 @@ def start_scheduler() -> None:
         purge_old_assistant_messages,
         CronTrigger(hour=3, minute=30),
         id="purge_old_assistant_messages",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    # GEO 可见度全自动巡检：每小时检查租户设置的 daily_hour
+    scheduler.add_job(
+        run_geo_visibility_patrols,
+        CronTrigger(minute=5),
+        id="geo_visibility_patrols",
         replace_existing=True,
         max_instances=1,
         coalesce=True,

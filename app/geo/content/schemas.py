@@ -318,6 +318,26 @@ class TrackingEnginesPut(BaseModel):
     items: list[TrackingEngineItem] = Field(..., min_length=1)
 
 
+class VisibilityPatrolCreate(BaseModel):
+    tenant_id: int
+    auto_persist: bool = True
+    prefer_real: bool = True
+    prompt_limit: int = Field(20, ge=1, le=50)
+    engine_keys: list[str] | None = None
+    # run immediately in background (default True)
+    run_async: bool = True
+
+
+class VisibilityPatrolSettingsUpdate(BaseModel):
+    tenant_id: int
+    enabled: bool = False
+    daily_hour: int = Field(6, ge=0, le=23)
+    auto_persist: bool = True
+    prefer_real: bool = True
+    prompt_limit: int = Field(20, ge=1, le=50)
+    engine_keys: list[str] | None = None
+
+
 MediaChannelType = Literal[
     "website",
     "zhihu",

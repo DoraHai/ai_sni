@@ -53,6 +53,7 @@ const summaryCards = computed(() => {
 
 const workbenchLinks = [
   { label: 'AI 可见度', path: '/geo/visibility', desc: '登记 / 多引擎探测', vue: true },
+  { label: '全自动巡检', path: '/geo/visibility/patrol', desc: '多词×多引擎自动探测落库', vue: true },
   { label: '引用域名', path: '/geo/citations', desc: '引用聚合与蓝图对照', vue: true },
   { label: '竞品分析', path: '/geo/competitors', desc: '竞品出现与份额', vue: true },
   { label: '评价分析', path: '/geo/evaluation', desc: '情感与位置分布', vue: true },

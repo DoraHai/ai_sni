@@ -16,6 +16,7 @@ const cards = [
   { title: '发布渠道', desc: '渠道目录 · Webhook 账号（公网 HTTPS）', path: '/geo/publishing', phase: 'Vue' },
   { title: 'GEO 概览', desc: 'KPI 与观测入口', path: '/geo/overview', phase: 'Vue' },
   { title: 'AI 可见度', desc: '快照登记与探测', path: '/geo/visibility', phase: 'Vue' },
+  { title: '全自动巡检', desc: '多词×多引擎自动探测落库', path: '/geo/visibility/patrol', phase: 'Vue' },
   { title: '交付摘要', desc: '周期报告 Markdown', path: '/geo/deliverables', phase: 'Vue' },
 ]
 
