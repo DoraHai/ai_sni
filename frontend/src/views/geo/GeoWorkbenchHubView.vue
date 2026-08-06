@@ -8,14 +8,15 @@ const router = useRouter()
 const { tenantId } = useGeoTenant()
 
 const cards = [
-  { title: '内容任务', desc: '任务列表 · Vue 母稿编辑器（第一刀）', path: '/geo/tasks', phase: 'Vue' },
+  { title: '内容任务', desc: '列表 + 母稿编辑器（Brief/事实/生成/补丁/渠道/审校/回填）', path: '/geo/tasks', phase: 'Vue' },
   { title: '机会词', desc: 'prompts 列表 / 新建 / 归档', path: '/geo/prompts', phase: 'Vue' },
-  { title: '事实库', desc: 'facts 列表 / 新建 / 核验', path: '/geo/facts', phase: 'Vue' },
+  { title: '事实库', desc: 'facts 列表 / 新建 / 核验（生成需 ≥3 verified）', path: '/geo/facts', phase: 'Vue' },
   { title: '跟踪引擎', desc: '监测引擎开关 · sample_mode', path: '/geo/engines', phase: 'Vue' },
   { title: 'AI 能力配置', desc: '租户 LLM（百炼/DeepSeek）', path: '/geo/ai-settings', phase: 'Vue' },
-  { title: '发布渠道', desc: '渠道目录 · Webhook 账号', path: '/geo/publishing', phase: 'Vue' },
+  { title: '发布渠道', desc: '渠道目录 · Webhook 账号（公网 HTTPS）', path: '/geo/publishing', phase: 'Vue' },
   { title: 'GEO 概览', desc: 'KPI 与观测入口', path: '/geo/overview', phase: 'Vue' },
   { title: 'AI 可见度', desc: '快照登记与探测', path: '/geo/visibility', phase: 'Vue' },
+  { title: '交付摘要', desc: '周期报告 Markdown', path: '/geo/deliverables', phase: 'Vue' },
 ]
 
 function go(card) {
@@ -33,7 +34,7 @@ function openStaticFull() {
 }
 
 const note = computed(() =>
-  '方案 B：工作台已 Vue。母稿第一刀在「内容任务」打开；渠道/审校仍可进静态完整 editor。',
+  '可交付 MVP：主路径走 Vue「内容任务」编辑器；静态台仅作兼容。入口见 docs/GEO_DELIVERY_CHECKLIST.md。',
 )
 </script>
 

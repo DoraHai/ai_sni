@@ -12,9 +12,12 @@ python -m pytest -q tests
 
 # 2) API 已起在 :8011，静态可选 :5176
 python scripts/accept_geo_m1.py
+
+# 3) 内容主环（Brief→事实→生成→补丁→渠道规则→发布门禁）— 可交付发版建议必过
+python scripts/accept_geo_delivery.py
 ```
 
-两项都绿即可合 PR / 开下一刀。浏览器点击仅用于演示或排查 UI，不作为合并门槛。
+`pytest` + `accept_geo_m1` 绿即可合 PR。**对外演示 / 内测发版**建议再加 `accept_geo_delivery` 全绿，并勾选 `docs/GEO_DELIVERY_CHECKLIST.md` 手测项。
 
 Vue GEO 入口（权限 `geo.content`）：`/geo/overview`、`/geo/visibility`、`/geo/citations`、`/geo/competitors`、`/geo/evaluation`、`/geo/deliverables`、`/geo/tasks`（P1 任务列表；`/geo/tasks/:id` 混合编辑器）。多引擎探测默认租户 LLM + 人设模拟；引擎可配置 `sample_mode=openai_compat` 真采样，确认后才写快照。
 

@@ -1,0 +1,133 @@
+# GEO 可交付 MVP 清单
+
+> 目标：达到**自助运营可交付**（演示 / 内测 / 单租户上线），不是 GeoLook 对标级。  
+> 日期：2026-08-06 · 关联 `docs/GEO_PROJECT_ROADMAP.md` L1
+
+## 0. 交付定义（签字用）
+
+在一个干净环境中，运营人员可独立完成：
+
+```text
+诊断/选题 → Brief → 事实绑定 → 母稿生成 → 规则补丁/Score
+→ 渠道稿 → 审校 → 回填 URL / Webhook → 可见度快照 → 交付摘要
+```
+
+**无阻断级缺陷**（静默失败、假成功、404 入口、内网 Webhook 误导等有明确提示）。
+
+---
+
+## 1. 自动化门禁（合并 / 发版前必过）
+
+```bash
+# 在仓库根目录，API 已起 :8011，静态台可选 :5176
+python -m pytest -q tests
+python scripts/accept_geo_m1.py http://127.0.0.1:8011 geo-demo-local-key 1
+python scripts/accept_geo_delivery.py http://127.0.0.1:8011 geo-demo-local-key 1
+```
+
+| 脚本 | 覆盖 |
+| --- | --- |
+| `pytest` | 规则、Brief merge、鉴权路径等 |
+| `accept_geo_m1.py` | 可见度/引用/竞品/渠道 bootstrap/Webhook 门禁/静态页 |
+| `accept_geo_delivery.py` | 内容主环：建议 Brief、召回、绑定、生成、补丁、渠道规则、审校门禁 |
+
+- [ ] 三项全绿  
+- [ ] CI（GitHub Actions `pytest`）绿  
+
+---
+
+## 2. 本地一键环境
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/start_local_geo_demo.ps1 -WithVue
+# 可选：-WithDiagnosticCenter
+python -m scripts.seed_geo_demo --tenant-id 1 --verify-facts
+```
+
+| 服务 | 端口 | 用途 |
+| --- | --- | --- |
+| 主站 API | 8000 | Vue 开发代理默认目标 |
+| GEO API | 8011 | 静态台 / 独立验收 |
+| Vue | 5173 | SPA 运营入口 |
+| 静态台 | 5176 | 兼容完整 editor / dashboard |
+
+**正确静态入口（勿漏 `/geo/`）：**
+
+`http://127.0.0.1:5176/geo/dashboard.html?tenant_id=1&api_key=geo-demo-local-key&api_origin=http://127.0.0.1:8011`
+
+- [ ] 四端口可起  
+- [ ] seed 后租户有 ≥3 条 **verified** 事实  
+
+---
+
+## 3. 浏览器主环手测（租户 1）
+
+### 3.1 Vue 路径（主入口）
+
+| # | 步骤 | 期望 | 结果 |
+| --- | --- | --- | --- |
+| V1 | 打开 `/geo/overview` | KPI 有数或 0，无白屏 | ☐ |
+| V2 | `/geo/workbench` → 内容任务 | 列表可开 | ☐ |
+| V3 | 新建或打开**空 Brief**任务 → AI 建议 | 行业/受众/意图/类型/CTA 有值 + 成功提示 | ☐ |
+| V4 | 保存 Brief | 刷新后仍在 | ☐ |
+| V5 | 召回 / 一键绑 3 条 verified / 保存绑定 | 已绑 ≥3，状态 facts_bound 或可生成 | ☐ |
+| V6 | 生成母稿 | 正文非空 + 成功/明确失败 toast | ☐ |
+| V7 | 检查就绪 → 一键应用全部补丁 | 正文字数变长，Score 更新，目标规则通过 | ☐ |
+| V8 | 生成 website/wechat/zhihu | 三页签有稿；渠道覆盖显示已有三渠道 | ☐ |
+| V9 | 提交审校 → 通过 | review_status=approved | ☐ |
+| V10 | 回填公网 URL（如 https://example.com/…） | 200，publications 有记录 | ☐ |
+| V11 | Webhook：公网 HTTPS 账号推送 | 成功或明确业务错误（非静默） | ☐ |
+| V12 | `/geo/visibility` 登记快照 | 竞品/引用页有聚合变化 | ☐ |
+| V13 | `/geo/deliverables` 导出 MD | 可下载/可复制 | ☐ |
+
+### 3.2 静态台路径（兼容）
+
+| # | 步骤 | 期望 | 结果 |
+| --- | --- | --- | --- |
+| S1 | `5176/geo/dashboard.html` | 200 | ☐ |
+| S2 | `5176/dashboard.html`（错误） | 404 或跳转说明 | ☐ |
+| S3 | editor 打开 task → AI 建议 Brief | 有提示行，字段回填 | ☐ |
+| S4 | 插入修复 | 正文变长 | ☐ |
+
+### 3.3 门禁负例
+
+| # | 步骤 | 期望 | 结果 |
+| --- | --- | --- | --- |
+| N1 | 未绑 3 事实点生成 | 明确拦截 | ☐ |
+| N2 | 未审校回填 | 400 + 审校提示 | ☐ |
+| N3 | Webhook 指向 127.0.0.1 | 400 SSRF 提示 | ☐ |
+
+---
+
+## 4. 生产最小集
+
+见 `deploy/README-GEO-INDEPENDENT.md`：
+
+- [ ] `alembic upgrade head`  
+- [ ] `geo_main` / geo-service 健康：`/api/v1/geo/content-health` 与 DB  
+- [ ] Nginx **不**注入 `VITE_API_KEY`；前端走登录  
+- [ ] `ADMIN_API_KEY` / `JWT_SECRET` / `CRYPTO_MASTER_KEY_B64` 已轮换且非仓库默认  
+- [ ] 备份与日志路径有文档  
+
+---
+
+## 5. 已知非阻塞（可进二期）
+
+- 微信/知乎 OAuth 直发（P3）  
+- 客户 HTML/ZIP 三件套加深（P4）  
+- SEM↔GEO 意图枢纽（P5）  
+- GeoLook 工单 DSL / 15 引擎大盘（P6）  
+- 浏览器 Playwright E2E（建议后补）  
+
+---
+
+## 6. 签字
+
+| 角色 | 姓名 | 日期 | 结论 |
+| --- | --- | --- | --- |
+| 研发 | | | 自动化全绿 |
+| 产品/运营 | | | 主环手测通过 |
+| 交付 | | | 可上演示 / 内测 |
+
+**发布说明模板：**  
+本版本 GEO 自助 MVP：内容闭环 + 可见度 + Webhook 回填；入口 Vue `/geo/*` + 静态 `/geo/*.html`；禁止根路径 `dashboard.html`。

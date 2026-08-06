@@ -7,6 +7,9 @@
 | 服务 | 端口 | 启动 |
 | --- | --- | --- |
 | GEO 内容工作台（静态） | **5176** | `python -m http.server 5176`（目录见下） |
+| Vue 运营台（推荐） | **5173** | `cd frontend && npm run dev`；代理 API → :8000 |
+| 可交付清单 | — | `docs/GEO_DELIVERY_CHECKLIST.md` |
+| 内容主环验收 | — | `python scripts/accept_geo_delivery.py` |
 | Vue 诊断中心 | **5174** | `npm run dev:diagnostic-center` |
 | GEO API（`geo_main`） | **8011** | `uvicorn app.geo_main:app --host 127.0.0.1 --port 8011` |
 | （可选）主站 Vue | 5173 | `npm run dev` |

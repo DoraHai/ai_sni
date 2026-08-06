@@ -2,6 +2,7 @@
 
 Usage:
   python -m scripts.seed_geo_demo --tenant-id 1
+  python -m scripts.seed_geo_demo --tenant-id 1 --verify-facts
 
 Requires DATABASE_URL / .env and an existing tenant row.
 """
@@ -11,7 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.database import async_session_factory
 from app.models import GeoFact, GeoPrompt, Tenant
@@ -41,7 +42,7 @@ FACTS = [
 ]
 
 
-async def seed(tenant_id: int) -> None:
+async def seed(tenant_id: int, *, verify_facts: bool = False) -> None:
     async with async_session_factory() as session:
         tenant = await session.get(Tenant, tenant_id)
         if tenant is None:
@@ -80,15 +81,49 @@ async def seed(tenant_id: int) -> None:
                     )
                 )
 
+        await session.flush()
+
+        if verify_facts:
+            # Ensure ≥3 verified active facts for generate gate demos
+            rows = list(
+                await session.scalars(
+                    select(GeoFact)
+                    .where(GeoFact.tenant_id == tenant_id, GeoFact.status == "active")
+                    .order_by(GeoFact.id.asc())
+                )
+            )
+            verified_n = sum(1 for f in rows if f.trust_level == "verified")
+            for f in rows:
+                if verified_n >= 3:
+                    break
+                if f.trust_level != "verified":
+                    f.trust_level = "verified"
+                    verified_n += 1
+            print(f"  verified facts now ≥ {min(verified_n, 3)} (target 3)")
+
         await session.commit()
-        print(f"GEO demo seed done for tenant_id={tenant_id} ({tenant.name})")
+        n_facts = await session.scalar(
+            select(func.count()).select_from(GeoFact).where(GeoFact.tenant_id == tenant_id)
+        )
+        n_prompts = await session.scalar(
+            select(func.count()).select_from(GeoPrompt).where(GeoPrompt.tenant_id == tenant_id)
+        )
+        print(
+            f"GEO demo seed done for tenant_id={tenant_id} ({tenant.name}) "
+            f"prompts={n_prompts} facts={n_facts}"
+        )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--tenant-id", type=int, required=True)
+    parser.add_argument(
+        "--verify-facts",
+        action="store_true",
+        help="Mark at least 3 active facts as verified (for generate demos)",
+    )
     args = parser.parse_args()
-    asyncio.run(seed(args.tenant_id))
+    asyncio.run(seed(args.tenant_id, verify_facts=bool(args.verify_facts)))
 
 
 if __name__ == "__main__":
