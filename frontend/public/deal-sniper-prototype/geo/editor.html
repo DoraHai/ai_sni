@@ -671,17 +671,49 @@
     } catch (e) { GeoWB.showError(err, e); }
   };
   document.getElementById('btnSuggestBrief').onclick = async function () {
+    var line = document.getElementById('briefReadyLine');
     try {
-      var res = await GeoAPI.suggestBrief(taskId, { overwrite: false, use_llm: true });
-      if (res && res.suggested_brief) {
-        task.brief = res.suggested_brief;
-        task.strategy_richness = res.strategy_richness;
-        renderBrief();
-        document.getElementById('briefReadyLine').textContent =
-          '已填入建议 Brief（未保存）· 策略 ' + Math.round((res.strategy_richness || 0) * 100) + '%' +
-          (res.used_llm ? ' · LLM' : ' · 启发式');
+      if (line) line.textContent = '正在请求 AI 建议…';
+      var formBrief = readBriefForm();
+      var emptyForm = !(formBrief.industry || formBrief.audience || formBrief.intent || formBrief.content_type || formBrief.cta);
+      var res = await GeoAPI.suggestBrief(taskId, { overwrite: emptyForm, use_llm: true });
+      var sb = res && (res.suggested_brief || res.brief);
+      if (!sb) {
+        if (line) line.textContent = 'AI 建议未返回 suggested_brief';
+        throw new Error('AI 建议接口未返回 suggested_brief');
       }
-    } catch (e) { GeoWB.showError(err, e); }
+      task.brief = sb;
+      task.strategy_richness = res.strategy_richness;
+      renderBrief();
+      var filled = [sb.industry, sb.audience, sb.intent, sb.content_type, sb.cta].filter(function (x) {
+        return String(x || '').trim();
+      }).length;
+      if (!filled) {
+        // force overwrite retry once
+        res = await GeoAPI.suggestBrief(taskId, { overwrite: true, use_llm: true });
+        sb = res && res.suggested_brief;
+        if (sb) {
+          task.brief = sb;
+          renderBrief();
+          filled = [sb.industry, sb.audience, sb.intent, sb.content_type, sb.cta].filter(function (x) {
+            return String(x || '').trim();
+          }).length;
+        }
+      }
+      if (!filled) {
+        if (line) line.textContent = '建议返回后 Brief 仍为空，请重试或手动填写';
+        throw new Error('建议返回后 Brief 仍为空');
+      }
+      if (line) {
+        line.textContent =
+          '已填入建议 Brief（未保存）· 策略 ' + Math.round((res.strategy_richness || 0) * 100) + '%' +
+          (res.used_llm ? ' · LLM' : ' · 启发式') +
+          ' · 请点「保存 Brief」';
+      }
+    } catch (e) {
+      if (line) line.textContent = 'AI 建议失败：' + (e && e.message ? e.message : e);
+      GeoWB.showError(err, e);
+    }
   };
   document.getElementById('btnRetrieveFacts').onclick = async function () {
     try {

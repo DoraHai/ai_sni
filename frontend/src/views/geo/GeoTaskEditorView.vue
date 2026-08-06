@@ -162,11 +162,18 @@ function onDocTabChange(name) {
   applyVariantFromTask()
 }
 
+/** Bump to ignore stale load() completions (prevents wiping AI-suggested brief). */
+let loadGeneration = 0
+/** When true, load/refresh must not overwrite local Brief form until user saves/discards. */
+const briefLocalDraft = ref(false)
+const briefSuggestHint = ref('')
+
 async function load() {
   if (!tenantId.value || !taskId.value) {
     error.value = '缺少租户或任务 ID'
     return
   }
+  const gen = ++loadGeneration
   loading.value = true
   error.value = ''
   try {
@@ -179,6 +186,8 @@ async function load() {
       listGeoPublishingChannels(tenantId.value, false),
       listGeoChannelAccounts(tenantId.value),
     ])
+    // Stale load: a newer load or AI suggest already owns the form
+    if (gen !== loadGeneration) return
     allFacts.value = (factsRes.items || []).map((f) => ({ ...f, id: Number(f.id) }))
     publishingChannels.value = chRes.items || []
     channelAccounts.value = accRes.items || []
@@ -188,13 +197,13 @@ async function load() {
     if (t.target_channels?.length) {
       channelPick.value = [...t.target_channels]
     }
-    applyTaskPayload(t)
-    // if status says bound but facts[] empty, one more GET
+    // Never clobber an in-progress AI Brief draft with empty server brief
+    applyTaskPayload(t, { skipBrief: briefLocalDraft.value || busy.value === 'suggest' })
     if (
       (t.status === 'facts_bound' || (t.pipeline_step && t.pipeline_step !== 'opportunity')) &&
       !(t.facts || []).length
     ) {
-      await refreshTaskDetail()
+      if (gen === loadGeneration) await refreshTaskDetail({ skipBrief: true })
     }
     if (docTab.value !== 'master') {
       const still = (task.value?.variants || []).some((v) => v.channel === docTab.value)
@@ -214,10 +223,11 @@ async function load() {
       }
     }
   } catch (e) {
+    if (gen !== loadGeneration) return
     error.value = e.message || '加载失败'
     task.value = null
   } finally {
-    loading.value = false
+    if (gen === loadGeneration) loading.value = false
   }
 }
 
@@ -228,6 +238,8 @@ async function saveBrief() {
       brief: briefPayload(),
     })
     applyBriefToForm(task.value.brief)
+    briefLocalDraft.value = false
+    briefSuggestHint.value = ''
     ElMessage.success('Brief 已保存')
   } catch (e) {
     toastError(e, '保存 Brief 失败')
@@ -236,21 +248,97 @@ async function saveBrief() {
   }
 }
 
+function briefRequiredEmpty() {
+  return !(
+    brief.industry?.trim() ||
+    brief.audience?.trim() ||
+    brief.intent ||
+    brief.content_type ||
+    brief.cta?.trim()
+  )
+}
+
 async function suggestBrief() {
   busy.value = 'suggest'
+  error.value = ''
+  briefSuggestHint.value = '正在请求 AI 建议…'
+  // Invalidate in-flight loads so they cannot wipe the form after we fill it
+  loadGeneration += 1
   try {
+    if (!tenantId.value || !taskId.value) {
+      const msg = '缺少租户或任务 ID，无法建议 Brief'
+      error.value = msg
+      briefSuggestHint.value = msg
+      ElMessage.error(msg)
+      return
+    }
+    // Empty form → overwrite so merge does not keep schema-normalized blanks
+    const overwrite = briefRequiredEmpty()
     const res = await suggestGeoTaskBrief(tenantId.value, taskId.value, {
-      overwrite: false,
+      overwrite,
       use_llm: true,
     })
-    if (res.suggested_brief) {
-      applyBriefToForm(res.suggested_brief)
-      ElMessage.success(
-        `已填入建议（未保存）${res.used_llm ? ' · LLM' : ' · 启发式'} · 策略 ${Math.round((res.strategy_richness || 0) * 100)}%`,
-      )
+    const sb =
+      res?.suggested_brief && typeof res.suggested_brief === 'object'
+        ? res.suggested_brief
+        : res?.brief && typeof res.brief === 'object'
+          ? res.brief
+          : null
+    if (!sb) {
+      const msg =
+        'AI 建议接口未返回 suggested_brief。请检查网络/鉴权，或到 AI 设置确认 Key 后重试。'
+      error.value = msg
+      briefSuggestHint.value = msg
+      ElMessage({ type: 'error', message: msg, duration: 8000, showClose: true })
+      return
     }
+    applyBriefToForm(sb)
+    briefLocalDraft.value = true
+    const filled = [
+      brief.industry,
+      brief.audience,
+      brief.intent,
+      brief.content_type,
+      brief.cta,
+    ].filter((x) => String(x || '').trim()).length
+    if (filled === 0) {
+      const msg =
+        '建议已返回但必填字段仍为空（可能被空 Brief 合并吞掉）。请再点一次「AI 建议」，或手动填写。'
+      error.value = msg
+      briefSuggestHint.value = msg
+      ElMessage.error(msg)
+      // one automatic retry with overwrite=true
+      try {
+        const res2 = await suggestGeoTaskBrief(tenantId.value, taskId.value, {
+          overwrite: true,
+          use_llm: true,
+        })
+        if (res2?.suggested_brief) {
+          applyBriefToForm(res2.suggested_brief)
+          briefLocalDraft.value = true
+        }
+      } catch {
+        /* keep first error */
+      }
+      const filled2 = [
+        brief.industry,
+        brief.audience,
+        brief.intent,
+        brief.content_type,
+        brief.cta,
+      ].filter((x) => String(x || '').trim()).length
+      if (filled2 === 0) return
+    }
+    const mode = res.used_llm ? 'LLM' : '启发式'
+    const rich = Math.round(Number(res.strategy_richness || 0) * 100)
+    const msg = `已填入建议（未保存）· ${mode} · 策略 ${rich}% · 必填 ${Math.max(filled, 1)}/5 · 请点「保存 Brief」落库`
+    briefSuggestHint.value = msg
+    error.value = ''
+    ElMessage({ type: 'success', message: msg, duration: 6000, showClose: true })
   } catch (e) {
-    toastError(e, '建议 Brief 失败')
+    const msg = toastError(e, '建议 Brief 失败')
+    error.value = msg
+    briefSuggestHint.value = msg
   } finally {
     busy.value = ''
   }
@@ -269,8 +357,9 @@ function coerceFactIds(list) {
   )
 }
 
-function applyTaskPayload(t) {
+function applyTaskPayload(t, opts = {}) {
   if (!t) return t
+  const skipBrief = Boolean(opts.skipBrief)
   // normalize fact id types so el-select / bound list stay consistent
   if (Array.isArray(t.facts)) {
     t.facts = t.facts.map((f) => ({ ...f, id: Number(f.id) }))
@@ -279,14 +368,16 @@ function applyTaskPayload(t) {
   }
   task.value = t
   selectedFactIds.value = t.facts.map((f) => Number(f.id))
-  applyBriefToForm(t.brief)
+  if (!skipBrief) {
+    applyBriefToForm(t.brief)
+  }
   applyArticleFromTask(t)
   return t
 }
 
-async function refreshTaskDetail() {
+async function refreshTaskDetail(opts = {}) {
   const t = await getGeoContentTask(tenantId.value, taskId.value)
-  return applyTaskPayload(t)
+  return applyTaskPayload(t, opts)
 }
 
 /** Always PUT then GET so UI bound count never depends on a partial response. */
@@ -1105,6 +1196,10 @@ onMounted(load)
               </div>
             </div>
           </template>
+          <div v-if="briefSuggestHint" class="hint mb" style="color: #2563eb">
+            {{ briefSuggestHint }}
+            <span v-if="briefLocalDraft"> · 本地草稿未保存</span>
+          </div>
           <el-form label-width="88px" size="small">
             <el-form-item label="行业" required>
               <el-input v-model="brief.industry" />
