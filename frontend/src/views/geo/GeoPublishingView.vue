@@ -31,14 +31,16 @@ const editAccOpen = ref(false)
 const editChOpen = ref(false)
 
 const CHANNEL_TYPES = [
-  { value: 'website', label: 'website · 官网（可 Webhook 自动推）', auto: true },
-  { value: 'docs', label: 'docs · 文档（可 Webhook 自动推）', auto: true },
-  { value: 'wechat', label: 'wechat · 公众号（人工回填）', auto: false },
-  { value: 'zhihu', label: 'zhihu · 知乎（人工回填）', auto: false },
-  { value: 'baijiahao', label: 'baijiahao · 百家号（人工回填）', auto: false },
-  { value: 'toutiao', label: 'toutiao · 头条（人工回填）', auto: false },
-  { value: 'industry_media', label: 'industry_media · 行业媒体（人工回填）', auto: false },
+  { value: 'website', label: 'website · 官网（Webhook）', auto: true, social: false },
+  { value: 'docs', label: 'docs · 文档（Webhook）', auto: true, social: false },
+  { value: 'wechat', label: 'wechat · 公众号（社交直发 social_api）', auto: true, social: true },
+  { value: 'zhihu', label: 'zhihu · 知乎（社交直发 social_api）', auto: true, social: true },
+  { value: 'baijiahao', label: 'baijiahao · 百家号（社交直发）', auto: true, social: true },
+  { value: 'toutiao', label: 'toutiao · 头条（社交直发）', auto: true, social: true },
+  { value: 'industry_media', label: 'industry_media · 行业媒体（人工回填）', auto: false, social: false },
 ]
+
+const SOCIAL_TYPES = new Set(['wechat', 'zhihu', 'baijiahao', 'toutiao'])
 
 const PUBLISH_MODES = [
   {
@@ -82,6 +84,10 @@ const accForm = ref({
   method: 'POST',
   secret: '',
   headers_json: '',
+  // social_api
+  platform: 'wechat',
+  api_url: '',
+  access_token: '',
 })
 
 const editForm = ref({
@@ -92,6 +98,9 @@ const editForm = ref({
   method: 'POST',
   secret: '',
   headers_json: '',
+  platform: 'wechat',
+  api_url: '',
+  access_token: '',
   clear_credentials: false,
   status: 'active',
 })
@@ -110,6 +119,17 @@ function typeSupportsWebhook(channelType) {
   return t === 'website' || t === 'docs'
 }
 
+function typeSupportsSocial(channelType) {
+  return SOCIAL_TYPES.has(String(channelType || '').toLowerCase())
+}
+
+function defaultAuthForChannel(channelId) {
+  const ch = channelById(channelId)
+  if (typeSupportsSocial(ch?.channel_type)) return 'social_api'
+  if (typeSupportsWebhook(ch?.channel_type)) return 'webhook'
+  return 'manual'
+}
+
 function modeLabel(mode) {
   const m = PUBLISH_MODES.find((x) => x.value === mode)
   return m ? m.label.split(' · ')[1] || mode : mode || '—'
@@ -125,7 +145,10 @@ const channelTabs = computed(() => {
   const list = (channels.value || []).map((c) => {
     const accs = (accounts.value || []).filter((a) => a.channel_id === c.id)
     const webhookReady = accs.some(
-      (a) => a.auth_type === 'webhook' && a.has_credentials && a.status === 'active',
+      (a) =>
+        (a.auth_type === 'webhook' || a.auth_type === 'social_api') &&
+        a.has_credentials &&
+        a.status === 'active',
     )
     return {
       key: String(c.id),
@@ -298,6 +321,23 @@ function buildWebhookCredentials(form) {
   return creds
 }
 
+function buildSocialCredentials(form, channelType) {
+  const api_url = (form.api_url || '').trim()
+  if (!api_url.startsWith('https://')) {
+    throw new Error('社交 api_url 必须是 https://（官方 API 或自建转发）')
+  }
+  const token = (form.access_token || '').trim()
+  if (!token) throw new Error('access_token 必填')
+  const platform = (form.platform || channelType || 'wechat').toLowerCase()
+  return {
+    platform,
+    api_url,
+    access_token: token,
+    method: form.method || 'POST',
+    headers: parseHeaders(form.headers_json),
+  }
+}
+
 function openCreateAccount(prefillChannelId) {
   const cid =
     prefillChannelId ||
@@ -306,26 +346,27 @@ function openCreateAccount(prefillChannelId) {
     channels.value[0]?.id ||
     null
   const ch = channelById(cid)
-  const auto = isAutoPublish(ch)
+  const auth = defaultAuthForChannel(cid)
   accForm.value = {
     channel_id: cid,
     display_name: '',
-    auth_type: auto || typeSupportsWebhook(ch?.channel_type) ? 'webhook' : 'manual',
+    auth_type: auth,
     webhook_url: '',
     method: 'POST',
     secret: '',
     headers_json: '',
+    platform: typeSupportsSocial(ch?.channel_type) ? ch.channel_type : 'wechat',
+    api_url: '',
+    access_token: '',
   }
   createAccOpen.value = true
 }
 
 function onAccChannelChange(cid) {
   const ch = channelById(cid)
-  if (isAutoPublish(ch) || typeSupportsWebhook(ch?.channel_type)) {
-    accForm.value.auth_type = 'webhook'
-  } else {
-    accForm.value.auth_type = 'manual'
-    accForm.value.webhook_url = ''
+  accForm.value.auth_type = defaultAuthForChannel(cid)
+  if (typeSupportsSocial(ch?.channel_type)) {
+    accForm.value.platform = ch.channel_type
   }
 }
 
@@ -335,10 +376,22 @@ async function createAccount() {
     return
   }
   const ch = channelById(accForm.value.channel_id)
-  // auto_publish 渠道强制走 webhook 配置
-  if (isAutoPublish(ch) && accForm.value.auth_type !== 'webhook') {
-    ElMessage.warning('该渠道为 auto_publish，请使用 Webhook 自动化配置')
+  if (
+    isAutoPublish(ch) &&
+    typeSupportsWebhook(ch?.channel_type) &&
+    accForm.value.auth_type !== 'webhook'
+  ) {
+    ElMessage.warning('官网/文档 auto_publish 请使用 Webhook')
     accForm.value.auth_type = 'webhook'
+    return
+  }
+  if (
+    isAutoPublish(ch) &&
+    typeSupportsSocial(ch?.channel_type) &&
+    accForm.value.auth_type !== 'social_api'
+  ) {
+    ElMessage.warning('社交渠道 auto_publish 请使用 social_api')
+    accForm.value.auth_type = 'social_api'
     return
   }
   try {
@@ -351,12 +404,16 @@ async function createAccount() {
     }
     if (accForm.value.auth_type === 'webhook') {
       body.credentials = buildWebhookCredentials(accForm.value)
+    } else if (accForm.value.auth_type === 'social_api') {
+      body.credentials = buildSocialCredentials(accForm.value, ch?.channel_type)
     }
     await createGeoChannelAccount(body)
     ElMessage.success(
       accForm.value.auth_type === 'webhook'
-        ? '已创建自动化 Webhook 账号'
-        : '已创建人工账号',
+        ? '已创建 Webhook 账号'
+        : accForm.value.auth_type === 'social_api'
+          ? '已创建社交直发账号'
+          : '已创建人工账号',
     )
     createAccOpen.value = false
     await load()
@@ -509,7 +566,9 @@ onMounted(load)
     <section class="block auto-overview">
       <div class="block-head">
         <h3 class="sec">自动化发布能力</h3>
-        <span class="sec-hint">仅 website / docs 且 publish_mode=auto_publish 可 Webhook 推送</span>
+        <span class="sec-hint">
+          website/docs → Webhook；wechat/zhihu/百家号/头条 → social_api 直发（auto_publish）
+        </span>
       </div>
       <div class="auto-cards">
         <div
@@ -814,8 +873,10 @@ onMounted(load)
       v-model="createAccOpen"
       :title="
         accForm.auth_type === 'webhook'
-          ? '配置 Webhook 自动化账号'
-          : '新建渠道账号（人工）'
+          ? '配置 Webhook 账号'
+          : accForm.auth_type === 'social_api'
+            ? '配置社交直发账号'
+            : '新建渠道账号（人工）'
       "
       width="540px"
     >
@@ -839,7 +900,8 @@ onMounted(load)
         </el-form-item>
         <el-form-item label="鉴权类型">
           <el-select v-model="accForm.auth_type" style="width: 100%">
-            <el-option label="webhook · 自动推送" value="webhook" />
+            <el-option label="webhook · 官网/文档" value="webhook" />
+            <el-option label="social_api · 社交直发" value="social_api" />
             <el-option label="manual · 人工回填" value="manual" />
           </el-select>
         </el-form-item>
@@ -874,6 +936,47 @@ onMounted(load)
               type="textarea"
               :rows="2"
               placeholder='可选，如 {"Authorization":"Bearer xxx"}'
+            />
+          </el-form-item>
+        </template>
+        <template v-else-if="accForm.auth_type === 'social_api'">
+          <el-divider content-position="left">社交直发（api_url + access_token）</el-divider>
+          <el-alert
+            class="mb"
+            type="info"
+            :closable="false"
+            show-icon
+            title="对接官方 API 或自建转发服务：Bearer token + HTTPS。OAuth 拿 token 在控制台完成。"
+          />
+          <el-form-item label="平台" required>
+            <el-select v-model="accForm.platform" style="width: 100%">
+              <el-option label="wechat 公众号" value="wechat" />
+              <el-option label="zhihu 知乎" value="zhihu" />
+              <el-option label="baijiahao 百家号" value="baijiahao" />
+              <el-option label="toutiao 头条" value="toutiao" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="api_url" required>
+            <el-input
+              v-model="accForm.api_url"
+              placeholder="https://api.xxx.com/.../publish"
+            />
+          </el-form-item>
+          <el-form-item label="access_token" required>
+            <el-input v-model="accForm.access_token" type="password" show-password />
+          </el-form-item>
+          <el-form-item label="HTTP 方法">
+            <el-select v-model="accForm.method" style="width: 100%">
+              <el-option label="POST" value="POST" />
+              <el-option label="PUT" value="PUT" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="Headers JSON">
+            <el-input
+              v-model="accForm.headers_json"
+              type="textarea"
+              :rows="2"
+              placeholder="可选附加头"
             />
           </el-form-item>
         </template>

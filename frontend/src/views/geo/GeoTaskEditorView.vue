@@ -1050,7 +1050,7 @@ async function pushWebhook() {
     return
   }
   if (!webhookAccountId.value) {
-    ElMessage.warning('请选择 Webhook 账号')
+    ElMessage.warning('请选择推送账号（Webhook 或社交 social_api）')
     return
   }
   if ((task.value?.review_status || 'none') !== 'approved') {
@@ -1074,7 +1074,9 @@ async function pushWebhook() {
     })
     if (res.task) task.value = res.task
     else await load()
-    ElMessage.success('Webhook 推送完成')
+    ElMessage.success(
+      res?.connector === 'social' ? '社交直发完成' : 'Webhook 推送完成',
+    )
   } catch (e) {
     toastError(e, '推送失败')
   } finally {
@@ -1216,8 +1218,15 @@ const reviewStatusLabel = computed(() => {
 const canSubmitReview = computed(() => !!task.value?.can_submit_review && !!task.value?.article)
 const canDecideReview = computed(() => !!task.value?.can_decide_review)
 const webhookAccountsForChannel = computed(() => {
-  // show all webhook accounts; backend validates match
-  return (channelAccounts.value || []).filter((a) => a.auth_type === 'webhook' || !a.auth_type)
+  // Webhook + social_api for auto push; backend validates channel match
+  return (channelAccounts.value || []).filter(
+    (a) =>
+      a.auth_type === 'webhook' ||
+      a.auth_type === 'social_api' ||
+      a.auth_type === 'api_key' ||
+      a.auth_type === 'oauth2' ||
+      !a.auth_type,
+  )
 })
 
 watch([tenantId, taskId], load)
@@ -1588,7 +1597,7 @@ onMounted(load)
             </el-button>
           </div>
 
-          <el-divider content-position="left">回填 / Webhook</el-divider>
+          <el-divider content-position="left">回填 / 一键推送</el-divider>
           <div v-if="publishGateHint" class="hint mb" style="color: #b45309">
             门禁：{{ publishGateHint }}
           </div>
@@ -1599,12 +1608,17 @@ onMounted(load)
             <el-form-item label="备注">
               <el-input v-model="publishNote" />
             </el-form-item>
-            <el-form-item label="Webhook 账号">
-              <el-select v-model="webhookAccountId" clearable style="width: 100%" placeholder="可选">
+            <el-form-item label="推送账号">
+              <el-select
+                v-model="webhookAccountId"
+                clearable
+                style="width: 100%"
+                placeholder="Webhook 或社交 social_api"
+              >
                 <el-option
                   v-for="a in webhookAccountsForChannel"
                   :key="a.id"
-                  :label="`${a.display_name} (#${a.id})`"
+                  :label="`${a.display_name} · ${a.auth_type || 'webhook'} (#${a.id})`"
                   :value="a.id"
                 />
               </el-select>
@@ -1623,10 +1637,10 @@ onMounted(load)
             <el-button
               size="small"
               :loading="busy === 'push'"
-              :title="publishGateHint || 'Webhook 推送'"
+              :title="publishGateHint || 'Webhook / 社交直发'"
               @click="pushWebhook"
             >
-              Webhook 推送
+              一键推送
             </el-button>
             <router-link class="el-button el-button--small" to="/geo/publishing">管理渠道账号</router-link>
           </div>

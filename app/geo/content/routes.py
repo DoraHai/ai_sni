@@ -2833,32 +2833,51 @@ async def list_tasks(
     owner_user_id: int | None = Query(None),
     from_diagnosis: bool | None = Query(None),
     include_archived: bool = Query(False, description="默认不列出 archived"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
-    stmt = select(GeoContentTask).where(GeoContentTask.tenant_id == tenant_id)
+    filters = [GeoContentTask.tenant_id == tenant_id]
     if status:
-        stmt = stmt.where(GeoContentTask.status == status)
+        filters.append(GeoContentTask.status == status)
     elif not include_archived:
-        stmt = stmt.where(GeoContentTask.status != "archived")
+        filters.append(GeoContentTask.status != "archived")
     if pipeline_step:
-        stmt = stmt.where(GeoContentTask.pipeline_step == pipeline_step)
+        filters.append(GeoContentTask.pipeline_step == pipeline_step)
     if owner_user_id is not None:
-        stmt = stmt.where(GeoContentTask.owner_user_id == owner_user_id)
+        filters.append(GeoContentTask.owner_user_id == owner_user_id)
     if from_diagnosis is True:
-        stmt = stmt.where(GeoContentTask.diagnosis_audit_id.is_not(None))
+        filters.append(GeoContentTask.diagnosis_audit_id.is_not(None))
     elif from_diagnosis is False:
-        stmt = stmt.where(GeoContentTask.diagnosis_audit_id.is_(None))
+        filters.append(GeoContentTask.diagnosis_audit_id.is_(None))
     if q:
         like = f"%{q.strip()}%"
-        stmt = stmt.where(
+        filters.append(
             or_(GeoContentTask.title.ilike(like), GeoContentTask.blocked_reason.ilike(like))
         )
-    stmt = stmt.order_by(GeoContentTask.id.desc())
+    total = int(
+        await session.scalar(
+            select(func.count()).select_from(GeoContentTask).where(*filters)
+        )
+        or 0
+    )
+    stmt = (
+        select(GeoContentTask)
+        .where(*filters)
+        .order_by(GeoContentTask.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
     rows = list(await session.scalars(stmt))
     items = [await _task_payload(session, r, detail=False) for r in rows]
-    return {"items": items}
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.post("/content-tasks")
@@ -3855,7 +3874,14 @@ async def push_variant_webhook(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Phase 2: human-triggered website/docs webhook push (no OAuth)."""
+    """Human-triggered push: website/docs Webhook, or social_api 社交直发."""
+    from app.geo.content.channel_registry import profile_key_for_registry_type
+    from app.geo.content.connectors.social import (
+        SOCIAL_PLATFORMS,
+        SocialError,
+        build_social_payload,
+        post_social,
+    )
     from app.geo.content.connectors.webhook import (
         WebhookConnectorError,
         build_webhook_payload,
@@ -3871,7 +3897,7 @@ async def push_variant_webhook(
     if variant is None:
         raise HTTPException(400, "请先生成该渠道版本")
     if variant.status not in {"exported", "published"}:
-        raise HTTPException(400, "请先导出渠道稿，再推送 Webhook")
+        raise HTTPException(400, "请先导出渠道稿，再推送")
 
     article = await _latest_article(session, task.id)
     rule_input = await _build_rule_input(session, task, article)
@@ -3888,39 +3914,68 @@ async def push_variant_webhook(
         raise HTTPException(404, "发布渠道不存在")
     if not channel_row.enabled:
         raise HTTPException(400, "发布渠道已停用")
-    if channel_row.channel_type not in {"website", "docs"}:
-        raise HTTPException(400, "Phase 2 仅支持官网/文档 Webhook")
     if channel_row.publish_mode != "auto_publish":
         raise HTTPException(400, "该渠道发布方式不是 auto_publish")
-    if account.auth_type != "webhook":
-        raise HTTPException(400, "请使用 auth_type=webhook 的账号")
     if not account.credentials_encrypted:
         raise HTTPException(400, "账号未配置凭证")
-    # docs/website both adapt to website; account must match requested adapt key
-    from app.geo.content.channel_registry import profile_key_for_registry_type
+
+    ctype = str(channel_row.channel_type or "").lower()
+    is_social = ctype in SOCIAL_PLATFORMS
+    is_web = ctype in {"website", "docs"}
+    if not is_social and not is_web:
+        raise HTTPException(
+            400,
+            f"渠道类型 {ctype} 暂不支持一键推送（支持 website/docs Webhook 与社交直发）",
+        )
+    if is_web and account.auth_type != "webhook":
+        raise HTTPException(400, "官网/文档请使用 auth_type=webhook")
+    if is_social and account.auth_type not in {"social_api", "api_key", "oauth2"}:
+        raise HTTPException(
+            400,
+            "社交渠道请使用 auth_type=social_api（凭证含 api_url + access_token）",
+        )
 
     adapt = profile_key_for_registry_type(channel_row.channel_type)
-    if adapt != channel:
+    if adapt != channel and ctype != channel:
         raise HTTPException(
             400,
             f"账号渠道类型 {channel_row.channel_type} 与变体渠道 {channel} 不匹配",
         )
 
+    remote: dict = {}
+    connector_kind = "webhook"
     try:
         credentials = decrypt_credentials_json(account.credentials_encrypted)
-        payload = build_webhook_payload(
-            action=req.mode,
-            tenant_id=req.tenant_id,
-            task_id=task.id,
-            channel=channel,
-            channel_type=channel_row.channel_type,
-            title=variant.title or task.title or "",
-            body_markdown=variant.body_markdown or "",
-            export_format=variant.export_format or "markdown",
-            base_url=channel_row.base_url,
-        )
-        remote = await post_webhook(credentials, payload)
-    except WebhookConnectorError as exc:
+        if is_social:
+            connector_kind = "social"
+            # Prefer explicit platform in creds; default to channel_type
+            if not credentials.get("platform"):
+                credentials = {**credentials, "platform": ctype}
+            payload = build_social_payload(
+                platform=str(credentials.get("platform") or ctype),
+                mode=req.mode,
+                tenant_id=req.tenant_id,
+                task_id=task.id,
+                channel=channel,
+                title=variant.title or task.title or "",
+                body_markdown=variant.body_markdown or "",
+                body_html=getattr(article, "body_html", None) if article else None,
+            )
+            remote = await post_social(credentials, payload)
+        else:
+            payload = build_webhook_payload(
+                action=req.mode,
+                tenant_id=req.tenant_id,
+                task_id=task.id,
+                channel=channel,
+                channel_type=channel_row.channel_type,
+                title=variant.title or task.title or "",
+                body_markdown=variant.body_markdown or "",
+                export_format=variant.export_format or "markdown",
+                base_url=channel_row.base_url,
+            )
+            remote = await post_webhook(credentials, payload)
+    except (WebhookConnectorError, SocialError) as exc:
         status = 502 if "HTTP" in str(exc) or "请求失败" in str(exc) else 400
         raise HTTPException(status, str(exc)) from exc
 
@@ -3935,7 +3990,7 @@ async def push_variant_webhook(
             variant=variant,
             channel=channel,
             published_url=str(remote_url),
-            note=req.note or f"webhook {req.mode}",
+            note=req.note or f"{connector_kind} {req.mode}",
             publish_mode="auto_publish",
         )
         publication_created = True
@@ -3947,9 +4002,11 @@ async def push_variant_webhook(
     detail = await _task_payload(session, task, detail=True)
     return {
         "ok": True,
+        "connector": connector_kind,
+        "platform": remote.get("platform"),
         "http_status": remote.get("http_status"),
         "remote_url": remote_url,
-        "webhook_host": remote.get("webhook_host"),
+        "webhook_host": remote.get("webhook_host") or remote.get("host"),
         "publication_created": publication_created,
         "mode": req.mode,
         "task": detail,

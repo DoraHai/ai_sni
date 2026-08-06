@@ -89,7 +89,7 @@ cd frontend/public/deal-sniper-prototype && python -m http.server 5176 --bind 12
 
 ### 4.1 内容主环
 
-Brief 建议 → 事实召回/绑定 → 母稿生成 → 规则补丁 / Score → 渠道稿 → 审校门禁 → URL 回填 / Webhook（官网/文档）
+Brief 建议 → 事实召回/绑定 → 母稿生成 → 规则补丁 / Score → 渠道稿 → 审校门禁 → URL 回填 / Webhook（官网/文档）/ **社交直发**（wechat/zhihu/baijiahao/toutiao，`auth_type=social_api` + api_url + access_token）
 
 ### 4.2 可见度
 

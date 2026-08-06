@@ -10,8 +10,19 @@ const error = ref('')
 const items = ref([])
 const trust = ref('')
 const createOpen = ref(false)
+const editOpen = ref(false)
 const creating = ref(false)
+const saving = ref(false)
 const form = ref({
+  title: '',
+  statement: '',
+  fact_type: 'product',
+  source_name: '',
+  source_url: '',
+  trust_level: 'needs_review',
+})
+const editForm = ref({
+  id: null,
   title: '',
   statement: '',
   fact_type: 'product',
@@ -95,6 +106,44 @@ async function archive(row) {
   }
 }
 
+function openEdit(row) {
+  editForm.value = {
+    id: row.id,
+    title: row.title || '',
+    statement: row.statement || '',
+    fact_type: row.fact_type || 'product',
+    source_name: row.source_name || '',
+    source_url: row.source_url || '',
+    trust_level: row.trust_level || 'needs_review',
+  }
+  editOpen.value = true
+}
+
+async function submitEdit() {
+  if (!editForm.value.title.trim() || !editForm.value.statement.trim()) {
+    ElMessage.warning('标题与陈述必填')
+    return
+  }
+  saving.value = true
+  try {
+    await patchGeoFact(tenantId.value, editForm.value.id, {
+      title: editForm.value.title.trim(),
+      statement: editForm.value.statement.trim(),
+      fact_type: editForm.value.fact_type,
+      source_name: editForm.value.source_name.trim() || null,
+      source_url: editForm.value.source_url.trim() || null,
+      trust_level: editForm.value.trust_level,
+    })
+    ElMessage.success('已保存')
+    editOpen.value = false
+    await load()
+  } catch (e) {
+    ElMessage.error(e.message || '保存失败')
+  } finally {
+    saving.value = false
+  }
+}
+
 watch([tenantId, trust], load)
 onMounted(load)
 </script>
@@ -140,8 +189,9 @@ onMounted(load)
       </el-table-column>
       <el-table-column prop="trust_level" label="信任" width="110" />
       <el-table-column prop="status" label="状态" width="90" />
-      <el-table-column label="操作" width="160" fixed="right">
+      <el-table-column label="操作" width="200" fixed="right">
         <template #default="{ row }">
+          <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
           <el-button
             v-if="row.trust_level !== 'verified' && row.status === 'active'"
             type="primary"
@@ -157,6 +207,43 @@ onMounted(load)
         </template>
       </el-table-column>
     </el-table>
+
+    <el-dialog v-model="editOpen" title="编辑事实" width="560px">
+      <el-form label-width="88px">
+        <el-form-item label="标题" required>
+          <el-input v-model="editForm.title" />
+        </el-form-item>
+        <el-form-item label="陈述" required>
+          <el-input v-model="editForm.statement" type="textarea" :rows="3" />
+        </el-form-item>
+        <el-form-item label="类型">
+          <el-select v-model="editForm.fact_type" style="width: 100%">
+            <el-option label="产品" value="product" />
+            <el-option label="案例" value="case" />
+            <el-option label="指标" value="metric" />
+            <el-option label="政策" value="policy" />
+            <el-option label="其他" value="other" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="来源名">
+          <el-input v-model="editForm.source_name" />
+        </el-form-item>
+        <el-form-item label="来源 URL">
+          <el-input v-model="editForm.source_url" />
+        </el-form-item>
+        <el-form-item label="信任级">
+          <el-select v-model="editForm.trust_level" style="width: 100%">
+            <el-option label="待审" value="needs_review" />
+            <el-option label="已核验" value="verified" />
+            <el-option label="草稿" value="draft" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editOpen = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="submitEdit">保存</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="createOpen" title="新建事实" width="560px">
       <el-form label-width="88px">

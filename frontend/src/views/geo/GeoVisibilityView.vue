@@ -299,6 +299,30 @@ async function toggleMention(row) {
   }
 }
 
+async function patchSnapField(row, patch) {
+  try {
+    await patchGeoAnswerSnapshot(tenantId.value, row.id, patch)
+    Object.assign(row, patch)
+    ElMessage.success('已更新')
+  } catch (e) {
+    error.value = e.message
+    ElMessage.error(e.message || '更新失败')
+    await loadSnapshots()
+  }
+}
+
+function compsText(row) {
+  return Array.isArray(row.competitors) ? row.competitors.join(', ') : ''
+}
+
+async function saveCompetitors(row, text) {
+  const competitors = String(text || '')
+    .split(/[,，]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  await patchSnapField(row, { competitors })
+}
+
 async function removeSnapshot(row) {
   try {
     await ElMessageBox.confirm(`删除快照 #${row.id}？不可恢复。`, '删除快照', {
@@ -525,19 +549,44 @@ onMounted(reloadAll)
                 </el-button>
               </template>
             </el-table-column>
-            <el-table-column label="位置" width="72" align="center">
+            <el-table-column label="位置" width="120" align="center">
               <template #default="{ row }">
-                {{ posLabel[row.brand_position] || row.brand_position || '—' }}
+                <el-select
+                  size="small"
+                  :model-value="row.brand_position || 'unknown'"
+                  style="width: 108px"
+                  @change="(v) => patchSnapField(row, { brand_position: v })"
+                >
+                  <el-option label="未知" value="unknown" />
+                  <el-option label="首位" value="first" />
+                  <el-option label="提及" value="mentioned" />
+                  <el-option label="未出现" value="absent" />
+                </el-select>
               </template>
             </el-table-column>
-            <el-table-column label="情感" width="56" align="center">
+            <el-table-column label="情感" width="110" align="center">
               <template #default="{ row }">
-                {{ sentLabel[row.sentiment] || row.sentiment || '—' }}
+                <el-select
+                  size="small"
+                  :model-value="row.sentiment || 'unknown'"
+                  style="width: 96px"
+                  @change="(v) => patchSnapField(row, { sentiment: v })"
+                >
+                  <el-option label="未知" value="unknown" />
+                  <el-option label="正" value="positive" />
+                  <el-option label="中" value="neutral" />
+                  <el-option label="负" value="negative" />
+                </el-select>
               </template>
             </el-table-column>
-            <el-table-column label="竞品" min-width="110" show-overflow-tooltip>
+            <el-table-column label="竞品" min-width="140">
               <template #default="{ row }">
-                {{ (row.competitors || []).join(', ') || '—' }}
+                <el-input
+                  size="small"
+                  :model-value="compsText(row)"
+                  placeholder="逗号分隔"
+                  @change="(v) => saveCompetitors(row, v)"
+                />
               </template>
             </el-table-column>
             <el-table-column label="观测" width="108" show-overflow-tooltip>

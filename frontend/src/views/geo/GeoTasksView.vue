@@ -23,6 +23,9 @@ const createOpen = ref(false)
 const creating = ref(false)
 const prompts = ref([])
 const form = ref({ prompt_id: null, title: '', target_channels: ['website', 'wechat', 'zhihu'] })
+const page = ref(1)
+const pageSize = ref(20)
+const total = ref(0)
 
 const statusOptions = [
   { value: '', label: '全部（不含归档）' },
@@ -53,18 +56,34 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const params = {}
+    const params = {
+      limit: pageSize.value,
+      offset: (page.value - 1) * pageSize.value,
+    }
     if (statusFilter.value) params.status = statusFilter.value
     if (q.value.trim()) params.q = q.value.trim()
     if (includeArchived.value && !statusFilter.value) params.include_archived = true
     const data = await listGeoContentTasks(tenantId.value, params)
     items.value = data.items || []
+    total.value = Number(data.total ?? items.value.length) || 0
   } catch (e) {
     error.value = e.message || '加载失败'
     items.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
+}
+
+function onPageChange(p) {
+  page.value = p
+  load()
+}
+
+function onSizeChange(s) {
+  pageSize.value = s
+  page.value = 1
+  load()
 }
 
 async function openCreate() {
@@ -143,7 +162,10 @@ async function hardDeleteTask(row) {
   }
 }
 
-watch([tenantId, statusFilter, includeArchived], load)
+watch([tenantId, statusFilter, includeArchived], () => {
+  page.value = 1
+  load()
+})
 onMounted(load)
 </script>
 
@@ -224,6 +246,19 @@ onMounted(load)
       </el-table-column>
     </el-table>
 
+    <div class="pager">
+      <el-pagination
+        background
+        layout="total, sizes, prev, pager, next"
+        :total="total"
+        :page-size="pageSize"
+        :current-page="page"
+        :page-sizes="[10, 20, 50, 100]"
+        @current-change="onPageChange"
+        @size-change="onSizeChange"
+      />
+    </div>
+
     <el-dialog v-model="createOpen" title="新建内容任务" width="480px">
       <el-form label-width="88px">
         <el-form-item label="机会词" required>
@@ -264,7 +299,8 @@ onMounted(load)
 .page-title { font-size: 20px; font-weight: 700; color: #1e2330; }
 .page-desc { margin-top: 4px; font-size: 13px; color: #6b7280; }
 .header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
+.pager { display: flex; justify-content: flex-end; margin-top: 14px; }
 .mb { margin-bottom: 12px; }
 .title-cell { font-weight: 600; color: #1e2330; }
 .sub { font-size: 12px; color: #8b93a7; margin-top: 2px; }

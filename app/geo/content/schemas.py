@@ -407,7 +407,7 @@ PublishingChannelType = Literal[
     "visual_content",
 ]
 PublishingMode = Literal["auto_publish", "draft_then_manual", "manual_only"]
-ChannelAuthType = Literal["manual", "api_key", "oauth2", "webhook"]
+ChannelAuthType = Literal["manual", "api_key", "oauth2", "webhook", "social_api"]
 
 
 class PublishingChannelCreate(BaseModel):

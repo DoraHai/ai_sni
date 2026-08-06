@@ -13,12 +13,22 @@ const error = ref('')
 const items = ref([])
 const status = ref('active')
 const createOpen = ref(false)
+const editOpen = ref(false)
 const creating = ref(false)
+const saving = ref(false)
 const form = ref({
   question: '',
   priority: 10,
   tags: '',
   question_group: '推荐',
+  is_brand_probe: false,
+})
+const editForm = ref({
+  id: null,
+  question: '',
+  priority: 10,
+  tags: '',
+  question_group: '',
   is_brand_probe: false,
 })
 
@@ -79,6 +89,44 @@ async function archive(row) {
     await load()
   } catch (e) {
     ElMessage.error(e.message || '归档失败')
+  }
+}
+
+function openEdit(row) {
+  editForm.value = {
+    id: row.id,
+    question: row.question || '',
+    priority: row.priority ?? 10,
+    tags: Array.isArray(row.tags) ? row.tags.join(', ') : '',
+    question_group: row.question_group || '',
+    is_brand_probe: !!row.is_brand_probe,
+  }
+  editOpen.value = true
+}
+
+async function submitEdit() {
+  if (!editForm.value.question.trim() || editForm.value.question.trim().length < 4) {
+    ElMessage.warning('问题至少 4 个字')
+    return
+  }
+  saving.value = true
+  try {
+    await patchGeoPrompt(tenantId.value, editForm.value.id, {
+      question: editForm.value.question.trim(),
+      priority: Number(editForm.value.priority) || 0,
+      tags: editForm.value.tags
+        ? editForm.value.tags.split(/[,，]/).map((s) => s.trim()).filter(Boolean)
+        : [],
+      question_group: editForm.value.question_group || null,
+      is_brand_probe: !!editForm.value.is_brand_probe,
+    })
+    ElMessage.success('已保存')
+    editOpen.value = false
+    await load()
+  } catch (e) {
+    ElMessage.error(e.message || '保存失败')
+  } finally {
+    saving.value = false
   }
 }
 
@@ -144,8 +192,9 @@ const tagText = (tags) => (Array.isArray(tags) ? tags.join(', ') : '—')
           <span v-else class="muted">否</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="200" fixed="right">
+      <el-table-column label="操作" width="240" fixed="right">
         <template #default="{ row }">
+          <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
           <el-button type="primary" link @click="createTask(row)">建任务</el-button>
           <el-button
             v-if="row.status === 'active'"
@@ -156,6 +205,30 @@ const tagText = (tags) => (Array.isArray(tags) ? tags.join(', ') : '—')
         </template>
       </el-table-column>
     </el-table>
+
+    <el-dialog v-model="editOpen" title="编辑机会词" width="520px">
+      <el-form label-width="100px">
+        <el-form-item label="问题" required>
+          <el-input v-model="editForm.question" type="textarea" :rows="3" />
+        </el-form-item>
+        <el-form-item label="优先级">
+          <el-input-number v-model="editForm.priority" :min="0" :max="999" />
+        </el-form-item>
+        <el-form-item label="问题组">
+          <el-input v-model="editForm.question_group" />
+        </el-form-item>
+        <el-form-item label="标签">
+          <el-input v-model="editForm.tags" placeholder="逗号分隔" />
+        </el-form-item>
+        <el-form-item label="品牌探测">
+          <el-switch v-model="editForm.is_brand_probe" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editOpen = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="submitEdit">保存</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="createOpen" title="新建机会词" width="520px">
       <el-form label-width="100px">
