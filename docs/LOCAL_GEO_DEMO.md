@@ -9,6 +9,7 @@
 | GEO 内容工作台（静态） | **5176** | `python -m http.server 5176`（目录见下） |
 | Vue 运营台（推荐） | **5173** | `cd frontend && npm run dev`；代理 API → :8000 |
 | 可交付清单 | — | `docs/GEO_DELIVERY_CHECKLIST.md` |
+| **仅代码交付（无生产机）** | — | `docs/GEO_CODE_DELIVERY.md` |
 | 内容主环验收 | — | `python scripts/accept_geo_delivery.py` |
 | Webhook 推送（第二步） | — | `python scripts/smoke_geo_webhook_push.py`（dev sink 默认；真实钩子设 `GEO_SMOKE_WEBHOOK_URL`） |
 | Vue 诊断中心 | **5174** | `npm run dev:diagnostic-center` |

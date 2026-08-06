@@ -149,11 +149,18 @@ python scripts/smoke_geo_webhook_push.py
 
 ## 4. 第三步：生产最小集 / 产品化必做
 
+> **当前交付模式（2026-08）：无生产机 · 仅 GEO 代码交付**  
+> 见 **`docs/GEO_CODE_DELIVERY.md`**。  
+> - **门禁 = 本地自动化全绿**（下表工程项 + §1 脚本）  
+> - **§4.2 生产机勾选 = 后置 / 不适用**，不阻塞代码交接  
+> - 接收方将来上线时再执行 `docs/GEO_PRODUCTION_RUNBOOK.md`
+
 > **工程门禁（代码仓内可自动验）**  
 > ```bash
 > python -m pytest -q tests
 > python scripts/verify_productization_must.py
 > python scripts/verify_productization_must.py http://127.0.0.1:8011 geo-demo-local-key 1
+> python scripts/e2e_geo_enhancements.py
 > python scripts/accept_geo_m1.py
 > python scripts/accept_geo_delivery.py
 > ```  
@@ -190,7 +197,8 @@ python scripts/smoke_geo_webhook_push.py
 - [ ] H1–H6 基建 + B1–B7 业务抽测签字（§9）  
 - [ ] 常态备份/日志（§10）  
 
-> 说明：4.1 由研发在仓库闭环；4.2 在**真实生产/预发主机**按 Runbook 执行并签字。
+> 说明：4.1 由研发在仓库闭环，**即本次代码交付范围**。  
+> 4.2 仅在有真实生产/预发主机时执行；**无生产机时勾选「不适用」**，见 `GEO_CODE_DELIVERY.md`。
 
 ---
 
@@ -219,11 +227,20 @@ python scripts/smoke_geo_webhook_push.py
 
 ## 6. 签字
 
+### 6.1 代码交付（无生产机 · 默认）
+
 | 角色 | 姓名 | 日期 | 结论 |
 | --- | --- | --- | --- |
-| 研发 | | | 自动化全绿 |
-| 产品/运营 | | | 主环手测通过 |
-| 交付 | | | 可上演示 / 内测 |
+| 研发 | | | §1 自动化全绿；范围见 `GEO_CODE_DELIVERY.md` |
+| 接收方 | | | 代码已收；可按 `LOCAL_GEO_DEMO` 本地演示 |
+| 生产部署 | — | — | **不适用**（无生产机，后置） |
 
-**发布说明模板：**  
-本版本 GEO 自助 MVP：内容闭环 + 可见度 + Webhook 回填；入口 Vue `/geo/*` + 静态 `/geo/*.html`；禁止根路径 `dashboard.html`。
+### 6.2 生产上线（有机器时另签）
+
+| 角色 | 姓名 | 日期 | 结论 |
+| --- | --- | --- | --- |
+| 运维/研发 | | | Runbook H1–H6 + 业务抽测 |
+| 产品/交付 | | | 可上演示 / 内测 / 生产 |
+
+**发布说明模板（代码交付）：**  
+本包为 GEO 自助 MVP **代码交付**：内容闭环 + 可见度巡检 + Webhook + 产品化增强；本地验收脚本全绿。不含生产机部署。入口 Vue `/geo/*` + 静态 `/geo/*.html`。生产步骤见 `GEO_PRODUCTION_RUNBOOK.md`（后置）。

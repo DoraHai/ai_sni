@@ -2,7 +2,9 @@
 
 > 适用：生产 / 预发 **Linux 主机**（与仓库 `deploy/*` 默认路径一致）  
 > 关联：`docs/GEO_DELIVERY_CHECKLIST.md` §4.2 · `deploy/README-GEO-INDEPENDENT.md`  
-> 工程侧门禁（本地/CI）见 `scripts/verify_productization_must.py`；**本文件只写机上操作**。
+> 工程侧门禁（本地/CI）见 `scripts/verify_productization_must.py`；**本文件只写机上操作**。  
+>  
+> **若无生产机、仅做 GEO 代码交付**：不必执行本文。请以 **`docs/GEO_CODE_DELIVERY.md`** 为准完成交接；本文留给接收方日后上线使用。
 
 ---
 
