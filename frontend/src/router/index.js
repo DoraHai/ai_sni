@@ -83,6 +83,16 @@ const routes = [
     },
   },
   {
+    path: '/geo/period-diff',
+    component: () => import('../views/geo/GeoPeriodDiffView.vue'),
+    meta: {
+      title: '期次对比',
+      documentTitle: 'GEO 增长｜期次对比',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
     path: '/geo/citations',
     component: () => import('../views/geo/GeoCitationsView.vue'),
     meta: {

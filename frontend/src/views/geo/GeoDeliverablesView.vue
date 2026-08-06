@@ -84,6 +84,10 @@ async function downloadMarkdown() {
   }
 }
 
+function printReport() {
+  window.print()
+}
+
 watch(tenantId, load)
 watch(range, load, { deep: true })
 onMounted(() => {
@@ -114,12 +118,14 @@ onMounted(() => {
         <el-button :loading="loading" @click="load">刷新</el-button>
         <el-button @click="copyMarkdown">复制 Markdown</el-button>
         <el-button type="primary" @click="downloadMarkdown">下载 Markdown</el-button>
+        <el-button plain @click="printReport">打印 / 一页报告</el-button>
       </div>
     </div>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" />
 
     <template v-if="pack">
+      <div id="geo-deliv-print" class="report">
       <div class="meta">
         <strong>{{ pack.tenant_name }}</strong>
         <span>· 周期 {{ pack.period?.from?.slice(0, 10) }} ~ {{ pack.period?.to?.slice(0, 10) }}</span>
@@ -130,6 +136,16 @@ onMounted(() => {
         <div class="kpi">
           <div class="kpi-label">可见性提及率</div>
           <div class="kpi-value">{{ fmtPct(pack.summary?.visibility_mention_rate) }}</div>
+          <div class="kpi-sub">排除探测题 · 未测记 —</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">首位推荐率</div>
+          <div class="kpi-value">{{ fmtPct(pack.summary?.visibility_top1_rate) }}</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">品牌认知率</div>
+          <div class="kpi-value">{{ fmtPct(pack.summary?.probe_recognition_rate) }}</div>
+          <div class="kpi-sub">仅探测题</div>
         </div>
         <div class="kpi">
           <div class="kpi-label">周期快照</div>
@@ -189,6 +205,7 @@ onMounted(() => {
           </el-table-column>
         </el-table>
       </section>
+      </div>
     </template>
   </div>
 </template>
@@ -207,9 +224,10 @@ onMounted(() => {
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .mb { margin-bottom: 14px; }
 .meta { font-size: 13px; color: #4b5563; margin-bottom: 12px; }
+.kpi-sub { font-size: 11px; color: #9ca3af; margin-top: 4px; }
 .kpi-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 12px;
   margin-bottom: 14px;
 }
@@ -237,5 +255,11 @@ onMounted(() => {
 .panel-title { font-size: 14px; font-weight: 600; color: #374151; margin-bottom: 12px; }
 @media (max-width: 960px) {
   .kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media print {
+  .page-header .header-actions,
+  .header-actions { display: none !important; }
+  .geo-deliv { padding: 0; }
+  .panel, .kpi { break-inside: avoid; box-shadow: none; }
 }
 </style>

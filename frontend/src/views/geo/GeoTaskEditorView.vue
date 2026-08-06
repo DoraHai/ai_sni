@@ -32,6 +32,7 @@ import {
   staticGeoEditorUrl,
   submitGeoTaskReview,
   suggestGeoTaskBrief,
+  fetchChannelBlueprint,
 } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
@@ -63,6 +64,7 @@ const publishNote = ref('')
 const webhookAccountId = ref(null)
 const channelAccounts = ref([])
 const publishingChannels = ref([])
+const channelBlueprint = ref(null)
 
 const brief = reactive({
   industry: '',
@@ -1113,6 +1115,27 @@ const liveChannelCoverage = computed(() => {
   }
 })
 
+async function loadChannelBlueprint() {
+  if (!tenantId.value) return
+  const group =
+    task.value?.prompt?.question_group ||
+    task.value?.prompt_question_group ||
+    brief.intent ||
+    '推荐'
+  try {
+    channelBlueprint.value = await fetchChannelBlueprint(tenantId.value, group)
+  } catch {
+    channelBlueprint.value = null
+  }
+}
+
+watch(
+  () => [task.value?.id, task.value?.prompt?.question_group, brief.intent],
+  () => {
+    loadChannelBlueprint()
+  },
+)
+
 const scoreLine = computed(() => {
   const s = checkResult.value?.geo_score ?? task.value?.rule_result?.geo_score
   if (s == null) return '检查后显示 GEO Score'
@@ -1510,6 +1533,20 @@ onMounted(load)
             </el-checkbox>
           </el-checkbox-group>
 
+          <div v-if="channelBlueprint?.channels?.length" class="blueprint-box mb">
+            <div class="blueprint-title">
+              分发推荐（问题组：{{ channelBlueprint.group || '推荐' }}）
+            </div>
+            <ul class="blueprint-list">
+              <li v-for="ch in channelBlueprint.channels.slice(0, 6)" :key="ch.channel_key || ch.id">
+                <b>{{ ch.channel_name || ch.name || ch.channel_key }}</b>
+                <span class="muted"> · {{ ch.priority_band || ch.band || '—' }}</span>
+                <span v-if="ch.placement_status" class="muted"> · 阵地 {{ ch.placement_status }}</span>
+                <div v-if="ch.why || ch.reason" class="muted small">{{ ch.why || ch.reason }}</div>
+              </li>
+            </ul>
+          </div>
+
           <el-divider content-position="left">审校</el-divider>
           <div class="hint mb">
             状态：{{ reviewStatusLabel }}
@@ -1703,6 +1740,14 @@ onMounted(load)
   display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;
 }
 .hint { font-size: 12px; color: #8b93a7; }
+.blueprint-box {
+  background: #f8f7fc; border: 1px solid #e8e4f5; border-radius: 8px; padding: 10px 12px;
+}
+.blueprint-title { font-size: 12px; font-weight: 700; color: #5b21b6; margin-bottom: 6px; }
+.blueprint-list { margin: 0; padding-left: 18px; font-size: 12px; color: #374151; }
+.blueprint-list li { margin-bottom: 4px; }
+.muted { color: #9ca3af; }
+.small { font-size: 11px; margin-top: 2px; }
 .sec { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
 .score { font-weight: 700; margin-bottom: 10px; color: #5b21b6; }
 .check-list { list-style: none; padding: 0; margin: 0; }

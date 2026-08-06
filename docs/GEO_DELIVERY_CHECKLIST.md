@@ -194,13 +194,26 @@ python scripts/smoke_geo_webhook_push.py
 
 ---
 
+## 4.3 产品化增强（建议项 · 已落地）
+
+| 增强项 | 落点 |
+| --- | --- |
+| 提及率口径纪律 | `split_visibility_metrics` · top1 · 概览分列 · `metric_notes` |
+| 巡检运营化 | `GET /visibility-patrol/ops-status` · 巡检页告警/配额/引擎健康 |
+| 交付报告 | MD + 打印一页 · 可见性/认知/top1 KPI |
+| 编造 lint 门禁 | `GEO_LINT_GATE`（默认 true）· `assert_can_publish` |
+| 阵地推荐 | 任务编辑器「分发推荐」· `channel-blueprint` |
+| 期次对比 Vue | `/geo/period-diff` |
+| 入口收敛 | 概览/工作台主推 Vue；静态标「兼容」 |
+| 增强冒烟 | `scripts/e2e_geo_enhancements.py` |
+
 ## 5. 已知非阻塞（可进二期）
 
 - 微信/知乎 OAuth 直发（P3）  
 - 客户 HTML/ZIP 三件套加深（P4）  
 - SEM↔GEO 意图枢纽（P5）  
 - GeoLook 工单 DSL / 15 引擎大盘（P6）  
-- 浏览器 Playwright E2E（建议后补）  
+- 浏览器 Playwright 全量 E2E（HTTP 冒烟已覆盖关键 API）  
 
 ---
 

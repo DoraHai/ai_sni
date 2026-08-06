@@ -7,6 +7,7 @@ import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
+  fetchVisibilityPatrolOpsStatus,
   fetchVisibilityPatrolSettings,
   getVisibilityPatrolRun,
   listVisibilityPatrolRuns,
@@ -39,6 +40,7 @@ const runs = ref([])
 const engines = ref([])
 const detail = ref(null)
 const pollTimer = ref(null)
+const ops = ref(null)
 
 const form = ref({
   auto_persist: true,
@@ -82,10 +84,11 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [s, r, eng] = await Promise.all([
+    const [s, r, eng, opsRes] = await Promise.all([
       fetchVisibilityPatrolSettings(tenantId.value),
       listVisibilityPatrolRuns(tenantId.value, 30),
       listGeoTrackingEngines(tenantId.value, false),
+      fetchVisibilityPatrolOpsStatus(tenantId.value).catch(() => null),
     ])
     settings.value = {
       ...settings.value,
@@ -101,6 +104,7 @@ async function load() {
     form.value.engine_keys = s.engine_keys || []
     runs.value = r.items || []
     engines.value = eng.items || []
+    ops.value = opsRes
     if (!form.value.engine_keys?.length) {
       form.value.engine_keys = (engines.value.filter((e) => e.enabled) || []).map(
         (e) => e.engine_key,
@@ -241,6 +245,27 @@ onUnmounted(stopPoll)
     </div>
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
+    <el-alert
+      v-for="(a, i) in ops?.alerts || []"
+      :key="'a' + i"
+      type="warning"
+      :title="a"
+      show-icon
+      class="mb"
+      :closable="false"
+    />
+    <div v-if="ops" class="ops-bar mb">
+      <span>
+        今日配额 {{ ops.quota?.used_today ?? 0 }} / {{ ops.quota?.max_per_day ?? '—' }}
+        （剩 {{ ops.quota?.remaining ?? '—' }}）
+      </span>
+      <span>
+        真采样就绪
+        {{ (ops.engines || []).filter((e) => e.ready_for_real).length }}
+        / {{ (ops.engines || []).length }}
+      </span>
+      <span v-if="ops.last_run">最近 #{{ ops.last_run.id }} · {{ ops.last_run.status }}</span>
+    </div>
 
     <div class="layout">
       <section class="panel">
@@ -395,6 +420,11 @@ onUnmounted(stopPoll)
 .page-desc code { background: #f5f0ff; padding: 1px 6px; border-radius: 4px; }
 .header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .mb { margin-bottom: 12px; }
+.ops-bar {
+  display: flex; flex-wrap: wrap; gap: 16px;
+  font-size: 12px; color: #4b5563;
+  background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 12px;
+}
 .layout {
   display: grid;
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);

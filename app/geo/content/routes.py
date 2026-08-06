@@ -1342,6 +1342,9 @@ async def visibility_period_diff(
             "visibility_mention_rate": rate_delta(
                 before["visibility_mention_rate"], after["visibility_mention_rate"]
             ),
+            "visibility_top1_rate": rate_delta(
+                before.get("visibility_top1_rate"), after.get("visibility_top1_rate")
+            ),
             "own_domain_cite_rate": rate_delta(
                 before["own_domain_cite_rate"], after["own_domain_cite_rate"]
             ),
@@ -1602,6 +1605,100 @@ async def probe_answer_snapshot_batch(
 
 
 # ---------- visibility auto patrol ----------
+
+
+@router.get("/visibility-patrol/ops-status")
+async def visibility_patrol_ops_status(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Operational snapshot for patrol: engines health, quota, last run alerts."""
+    from app.config import get_settings
+    from app.geo.content.patrol import count_patrol_runs_today, patrol_settings_payload
+    from app.models import GeoTrackingEngine
+
+    ctx.ensure_tenant(tenant_id)
+    settings_row = await session.get(GeoVisibilityPatrolSettings, tenant_id)
+    day_limit = int(getattr(get_settings(), "geo_patrol_max_runs_per_day", 24) or 24)
+    used = await count_patrol_runs_today(session, tenant_id)
+    engines = list(
+        await session.scalars(
+            select(GeoTrackingEngine)
+            .where(GeoTrackingEngine.tenant_id == tenant_id)
+            .order_by(GeoTrackingEngine.sort_order, GeoTrackingEngine.id)
+        )
+    )
+    engine_items = []
+    for e in engines:
+        has_key = bool(getattr(e, "api_key_encrypted", None))
+        mode = str(getattr(e, "sample_mode", None) or "mock_persona")
+        engine_items.append(
+            {
+                "engine_key": e.engine_key,
+                "display_name": e.display_name or e.engine_key,
+                "enabled": bool(e.enabled),
+                "sample_mode": mode,
+                "has_engine_key": has_key,
+                "ready_for_real": mode == "openai_compat" and has_key,
+                "health": (
+                    "real_ready"
+                    if mode == "openai_compat" and has_key
+                    else ("persona" if e.enabled else "disabled")
+                ),
+            }
+        )
+    last_runs = list(
+        await session.scalars(
+            select(GeoVisibilityPatrolRun)
+            .where(GeoVisibilityPatrolRun.tenant_id == tenant_id)
+            .order_by(GeoVisibilityPatrolRun.id.desc())
+            .limit(5)
+        )
+    )
+    last = last_runs[0] if last_runs else None
+    alerts: list[str] = []
+    if last and last.status == "failed":
+        alerts.append(f"最近巡检 #{last.id} 失败：{(last.error or '未知')[:200]}")
+    if last and last.status == "completed":
+        summary = last.summary or {}
+        fail = int(summary.get("cells_fail") or 0)
+        if fail:
+            alerts.append(f"最近巡检 #{last.id} 有 {fail} 格失败，请检查引擎 Key / LLM")
+        if summary.get("truncated"):
+            alerts.append(summary.get("truncated_reason") or "最近巡检触发格数截断")
+    if used >= day_limit:
+        alerts.append(f"今日巡检已达配额上限 {used}/{day_limit}")
+    if not any(e["enabled"] for e in engine_items):
+        alerts.append("无启用引擎，巡检无法运行")
+    if not any(e["ready_for_real"] for e in engine_items):
+        alerts.append("未配置 openai_compat 引擎 Key：巡检将以人设模拟为主")
+
+    from app.geo.content.patrol import patrol_run_payload
+
+    return {
+        "tenant_id": tenant_id,
+        "settings": patrol_settings_payload(settings_row, tenant_id),
+        "quota": {
+            "used_today": used,
+            "max_per_day": day_limit,
+            "remaining": max(0, day_limit - used),
+        },
+        "engines": engine_items,
+        "last_run": patrol_run_payload(last) if last else None,
+        "recent_runs": [
+            {
+                "id": r.id,
+                "status": r.status,
+                "trigger": r.trigger,
+                "summary": r.summary or {},
+                "error": r.error,
+                "created_at": _iso(r.created_at),
+            }
+            for r in last_runs
+        ],
+        "alerts": alerts,
+    }
 
 
 @router.get("/visibility-patrol/settings")
@@ -3832,6 +3929,7 @@ async def content_stats(
         {
             "mentions_brand": bool(s.mentions_brand),
             "is_brand_probe": bool(prompt_probe.get(s.prompt_id, False)),
+            "brand_position": s.brand_position,
         }
         for s in all_snaps
     ]
@@ -3869,8 +3967,10 @@ async def content_stats(
             total_snapshots=snap_total, mention_snapshots=snap_mention
         ),
         "visibility_mention_rate": split["visibility_mention_rate"],
+        "visibility_top1_rate": split.get("visibility_top1_rate"),
         "snapshots_visibility": split["snapshots_visibility"],
         "snapshots_visibility_mention": split["snapshots_visibility_mention"],
+        "snapshots_visibility_first": split.get("snapshots_visibility_first"),
         "snapshots_probe": split["snapshots_probe"],
         "snapshots_probe_mention": split["snapshots_probe_mention"],
         "probe_recognition_rate": split["probe_recognition_rate"],
@@ -3878,6 +3978,12 @@ async def content_stats(
         "snapshots_with_competitors": int(snapshots_with_competitors),
         "snapshots_with_citations": int(snapshots_with_citations),
         "distinct_cited_domains": len(distinct_cited_domains),
+        # Hygiene notes for UI
+        "metric_notes": {
+            "visibility_mention_rate": "分母排除品牌探测题；无可见性样本时为 null（未测，≠0）",
+            "probe_recognition_rate": "仅品牌探测题；用于认知，不计入可见性提及率",
+            "visibility_top1_rate": "可见性样本中 brand_position=first 占比",
+        },
     }
 
 
@@ -3953,6 +4059,7 @@ async def geo_deliverables_pack(
             {
                 "mentions_brand": bool(s.mentions_brand),
                 "is_brand_probe": bool(prompt_probe.get(s.prompt_id, False)),
+                "brand_position": s.brand_position,
             }
             for s in window_snaps
         ]
@@ -4062,6 +4169,9 @@ async def geo_deliverables_pack(
         "snapshots_visibility": split["snapshots_visibility"],
         "snapshots_visibility_mention": split["snapshots_visibility_mention"],
         "visibility_mention_rate": split["visibility_mention_rate"],
+        "visibility_top1_rate": split.get("visibility_top1_rate"),
+        "snapshots_probe": split["snapshots_probe"],
+        "probe_recognition_rate": split["probe_recognition_rate"],
         "visibility_engines_covered": engines_covered,
         "snapshots_with_citations": snapshots_with_citations,
         "distinct_cited_domains": len(cite_items),

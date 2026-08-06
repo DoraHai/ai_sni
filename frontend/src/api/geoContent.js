@@ -354,6 +354,24 @@ export function startVisibilityPatrolRun(body) {
   })
 }
 
+export function fetchVisibilityPatrolOpsStatus(tenantId) {
+  return client.get('/api/v1/geo/visibility-patrol/ops-status', {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function fetchVisibilityPeriodDiff(tenantId, windows) {
+  return client.get('/api/v1/geo/visibility-period-diff', {
+    params: { tenant_id: tenantId, ...windows },
+  })
+}
+
+export function fetchChannelBlueprint(tenantId, group = null) {
+  return client.get('/api/v1/geo/channel-blueprint', {
+    params: { tenant_id: tenantId, group: group || undefined },
+  })
+}
+
 export function createGeoAnswerSnapshot(body) {
   return client.post('/api/v1/geo/answer-snapshots', body)
 }

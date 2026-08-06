@@ -148,9 +148,9 @@ def split_visibility_metrics(
 ) -> dict[str, float | int | None]:
     """Split snapshots into visibility vs brand-probe buckets (GeoLook D0).
 
-    Each row: ``{mentions_brand: bool, is_brand_probe: bool}``.
+    Each row: ``{mentions_brand: bool, is_brand_probe: bool, brand_position?: str}``.
     Probe answers nearly always echo the brand name and must not inflate
-    category visibility mention_rate.
+    category visibility mention_rate. Unmeasured → None (never fake 0).
     """
     visibility = [r for r in rows if not r.get("is_brand_probe")]
     probe = [r for r in rows if r.get("is_brand_probe")]
@@ -158,11 +158,20 @@ def split_visibility_metrics(
     probe_n = len(probe)
     vis_hit = sum(1 for r in visibility if r.get("mentions_brand"))
     probe_hit = sum(1 for r in probe if r.get("mentions_brand"))
+    vis_first = sum(
+        1
+        for r in visibility
+        if str(r.get("brand_position") or "").lower() == "first"
+    )
     return {
         "snapshots_visibility": vis_n,
         "snapshots_visibility_mention": vis_hit,
         "visibility_mention_rate": visibility_mention_rate(
             total_snapshots=vis_n, mention_snapshots=vis_hit
+        ),
+        "snapshots_visibility_first": vis_first,
+        "visibility_top1_rate": visibility_mention_rate(
+            total_snapshots=vis_n, mention_snapshots=vis_first
         ),
         "snapshots_probe": probe_n,
         "snapshots_probe_mention": probe_hit,
@@ -224,6 +233,7 @@ def compute_window_metrics(
         {
             "mentions_brand": bool(getattr(r, "mentions_brand", False)),
             "is_brand_probe": bool(prompt_probe.get(getattr(r, "prompt_id", 0), False)),
+            "brand_position": getattr(r, "brand_position", None),
         }
         for r in rows
     ]
@@ -252,6 +262,8 @@ def compute_window_metrics(
         "snapshots_visibility": split["snapshots_visibility"],
         "snapshots_visibility_mention": split["snapshots_visibility_mention"],
         "visibility_mention_rate": split["visibility_mention_rate"],
+        "snapshots_visibility_first": split.get("snapshots_visibility_first"),
+        "visibility_top1_rate": split.get("visibility_top1_rate"),
         "snapshots_probe": split["snapshots_probe"],
         "snapshots_probe_mention": split["snapshots_probe_mention"],
         "probe_recognition_rate": split["probe_recognition_rate"],
