@@ -8,13 +8,58 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.geo.content.patrol import (
+    STALE_PENDING_SECONDS,
     clamp_interval_hours,
     execute_patrol_run,
     hour_in_window,
+    mark_patrol_run_failed,
     patrol_run_payload,
+    reconcile_stale_patrol_run,
     should_run_scheduled_patrol,
 )
 from app.geo.content.probe import SAMPLE_MODE_PERSONA, SAMPLE_MODE_REAL
+
+
+class StalePatrolReconcileTests(unittest.IsolatedAsyncioTestCase):
+    async def test_mark_failed_only_open_statuses(self):
+        row = SimpleNamespace(
+            id=2,
+            status="pending",
+            error=None,
+            finished_at=None,
+            summary=None,
+            items=None,
+        )
+        session = AsyncMock()
+        session.get = AsyncMock(return_value=row)
+        session.commit = AsyncMock()
+        session.refresh = AsyncMock()
+        out = await mark_patrol_run_failed(session, 2, "boom")
+        self.assertEqual(out.status, "failed")
+        self.assertIn("boom", out.error)
+        session.commit.assert_awaited()
+
+    async def test_reconcile_stale_pending(self):
+        from datetime import timedelta
+
+        old = datetime.utcnow() - timedelta(seconds=STALE_PENDING_SECONDS + 10)
+        row = SimpleNamespace(
+            id=3,
+            status="pending",
+            started_at=None,
+            created_at=old,
+            error=None,
+            finished_at=None,
+            summary=None,
+            items=None,
+        )
+        session = AsyncMock()
+        session.get = AsyncMock(return_value=row)
+        session.commit = AsyncMock()
+        session.refresh = AsyncMock()
+        out = await reconcile_stale_patrol_run(session, row)
+        self.assertEqual(out.status, "failed")
+        self.assertIn("后台任务", out.error or "")
 
 
 class ScheduleWindowTests(unittest.TestCase):

@@ -36,6 +36,97 @@ logger = logging.getLogger(__name__)
 # allowed interval presets (hours)
 PATROL_INTERVAL_HOURS_CHOICES = (1, 2, 3, 4, 6, 8, 12, 24)
 
+# Stuck-run recovery (async workers / process restart)
+STALE_PENDING_SECONDS = 90
+STALE_RUNNING_SECONDS = 45 * 60
+
+
+def _naive_utc(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+async def mark_patrol_run_failed(
+    session: AsyncSession,
+    run_id: int,
+    error: str,
+    *,
+    only_if_status: tuple[str, ...] = ("pending", "running"),
+) -> GeoVisibilityPatrolRun | None:
+    """Force a run into failed so the UI can leave the pending/running spinner."""
+    row = await session.get(GeoVisibilityPatrolRun, run_id)
+    if row is None:
+        return None
+    if row.status not in only_if_status:
+        return row
+    row.status = "failed"
+    row.error = (error or "未知错误")[:2000]
+    row.finished_at = datetime.utcnow()
+    if row.summary is None:
+        row.summary = {}
+    if row.items is None:
+        row.items = []
+    await session.commit()
+    await session.refresh(row)
+    logger.warning("patrol run %s marked failed: %s", run_id, row.error)
+    return row
+
+
+async def reconcile_stale_patrol_run(
+    session: AsyncSession,
+    row: GeoVisibilityPatrolRun,
+) -> GeoVisibilityPatrolRun:
+    """Close out zombie pending/running rows so history does not hang forever."""
+    if row.status not in ("pending", "running"):
+        return row
+    now = datetime.utcnow()
+    anchor = _naive_utc(row.started_at) or _naive_utc(row.created_at)
+    if anchor is None:
+        return row
+    age = (now - anchor).total_seconds()
+    if row.status == "pending" and age >= STALE_PENDING_SECONDS:
+        failed = await mark_patrol_run_failed(
+            session,
+            row.id,
+            "后台任务未在时限内启动（可能进程重启或任务丢失）。请重新「立即巡检」。",
+            only_if_status=("pending",),
+        )
+        return failed or row
+    if row.status == "running" and age >= STALE_RUNNING_SECONDS:
+        failed = await mark_patrol_run_failed(
+            session,
+            row.id,
+            f"巡检运行超时（>{STALE_RUNNING_SECONDS // 60} 分钟）已自动结束。请缩小机会词/引擎后重试。",
+            only_if_status=("running",),
+        )
+        return failed or row
+    return row
+
+
+async def run_patrol_in_background(run_id: int) -> None:
+    """Entry for FastAPI BackgroundTasks / scheduler: never leave runs hanging."""
+    from app.database import async_session_factory
+
+    try:
+        async with async_session_factory() as session:
+            try:
+                await execute_patrol_run(session, run_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("patrol background execute failed run=%s", run_id)
+                try:
+                    await mark_patrol_run_failed(
+                        session,
+                        run_id,
+                        f"巡检执行异常: {exc}",
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception("patrol mark failed also failed run=%s", run_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("patrol background session failed run=%s", run_id)
+
 
 async def count_patrol_runs_today(session: AsyncSession, tenant_id: int) -> int:
     """Count patrol runs created today in Asia/Shanghai for quota."""

@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1755,7 +1755,7 @@ async def list_visibility_patrol_runs(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    from app.geo.content.patrol import patrol_run_payload
+    from app.geo.content.patrol import patrol_run_payload, reconcile_stale_patrol_run
 
     ctx.ensure_tenant(tenant_id)
     rows = list(
@@ -1766,7 +1766,11 @@ async def list_visibility_patrol_runs(
             .limit(limit)
         )
     )
-    return {"items": [patrol_run_payload(r) for r in rows]}
+    # Close zombie pending/running so history UI does not hang forever
+    out = []
+    for r in rows:
+        out.append(await reconcile_stale_patrol_run(session, r))
+    return {"items": [patrol_run_payload(r) for r in out]}
 
 
 @router.get("/visibility-patrol/runs/{run_id}")
@@ -1776,18 +1780,20 @@ async def get_visibility_patrol_run(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    from app.geo.content.patrol import patrol_run_payload
+    from app.geo.content.patrol import patrol_run_payload, reconcile_stale_patrol_run
 
     ctx.ensure_tenant(tenant_id)
     row = await session.get(GeoVisibilityPatrolRun, run_id)
     if row is None or row.tenant_id != tenant_id:
         raise HTTPException(404, "巡检任务不存在")
+    row = await reconcile_stale_patrol_run(session, row)
     return patrol_run_payload(row)
 
 
 @router.post("/visibility-patrol/runs")
 async def create_visibility_patrol_run(
     req: VisibilityPatrolCreate,
+    background_tasks: BackgroundTasks,
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -1795,14 +1801,17 @@ async def create_visibility_patrol_run(
 
     真采样：引擎 sample_mode=openai_compat 且配置 Key；否则租户 LLM + 人设（标记 simulated）。
     产品化配额：GEO_PATROL_MAX_RUNS_PER_DAY 限制单租户自然日启动次数。
+
+    异步执行使用 Starlette BackgroundTasks（请求返回后再跑），避免 asyncio.create_task
+    被 GC/连接结束取消，导致状态永久 pending。
     """
     from app.config import get_settings
-    from app.database import async_session_factory
     from app.geo.content.patrol import (
         count_patrol_runs_today,
         execute_patrol_run,
         patrol_quota_message,
         patrol_run_payload,
+        run_patrol_in_background,
     )
 
     ctx.ensure_tenant(req.tenant_id)
@@ -1831,16 +1840,9 @@ async def create_visibility_patrol_run(
     run_id = run.id
 
     if req.run_async:
-        import asyncio
-
-        async def _bg() -> None:
-            async with async_session_factory() as s:
-                try:
-                    await execute_patrol_run(s, run_id)
-                except Exception:  # noqa: BLE001
-                    pass
-
-        asyncio.create_task(_bg())
+        # Mark queued→running intent so UI leaves pure "pending" immediately after worker picks up;
+        # execute_patrol_run also sets running on start.
+        background_tasks.add_task(run_patrol_in_background, run_id)
         return {"run": patrol_run_payload(run), "started": True, "async": True}
 
     done = await execute_patrol_run(session, run_id)

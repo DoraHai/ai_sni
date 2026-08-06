@@ -172,7 +172,9 @@ async function startRun() {
 
 function startPoll(runId) {
   stopPoll()
+  let ticks = 0
   pollTimer.value = setInterval(async () => {
+    ticks += 1
     try {
       const r = await getVisibilityPatrolRun(tenantId.value, runId)
       detail.value = r
@@ -186,6 +188,15 @@ function startPoll(runId) {
         } else {
           ElMessage.error(`巡检 #${runId} 失败：${r.error || '未知'}`)
         }
+        return
+      }
+      // ~2 min still pending → surface (server also reconciles after 90s)
+      if (r.status === 'pending' && ticks >= 48) {
+        stopPoll()
+        await load()
+        ElMessage.warning(
+          `巡检 #${runId} 长时间仍为 pending。请刷新历史；若已自动标失败请重新「立即巡检」。`,
+        )
       }
     } catch {
       /* ignore poll errors */
