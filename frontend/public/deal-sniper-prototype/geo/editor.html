@@ -796,12 +796,25 @@
     } catch (e) { GeoWB.showError(err, e); }
   };
   document.getElementById('btnGenerate').onclick = async function () {
+    var line = document.getElementById('briefReadyLine');
     try {
+      if (line) line.textContent = '正在生成母稿…';
       task = await GeoAPI.patchTask(taskId, { brief: readBriefForm() });
       task = await GeoAPI.generateTask(taskId);
       activeTab = 'master';
       renderAll();
-    } catch (e) { GeoWB.showError(err, e); }
+      var bodyLen = ((task.article || {}).body_markdown || '').length;
+      var st = task.status || '—';
+      var msg = bodyLen
+        ? ('母稿已生成（' + bodyLen + ' 字）· 状态 ' + st +
+          (st === 'needs_fix' ? ' · 请检查规则并点「插入修复」' : ''))
+        : ('生成返回成功但正文为空 · 状态 ' + st);
+      if (line) line.textContent = msg;
+      if (!bodyLen) throw new Error(msg);
+    } catch (e) {
+      if (line) line.textContent = '生成失败：' + (e && e.message ? e.message : e);
+      GeoWB.showError(err, e);
+    }
   };
   document.getElementById('btnSave').onclick = async function () {
     try {

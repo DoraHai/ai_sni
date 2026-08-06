@@ -71,7 +71,7 @@ python -m scripts.seed_geo_demo --tenant-id 1 --verify-facts
 | V3 | 新建或打开**空 Brief**任务 → AI 建议 | 行业/受众/意图/类型/CTA 有值 + 成功提示 | ☐ |
 | V4 | 保存 Brief | 刷新后仍在 | ☐ |
 | V5 | 召回 / 一键绑 3 条 verified / 保存绑定 | 已绑 ≥3，状态 facts_bound 或可生成 | ☐ |
-| V6 | 生成母稿 | 正文非空 + 成功/明确失败 toast | ☐ |
+| V6 | 生成母稿 | 正文非空 + **成功/警告 toast**（含字数与状态；`needs_fix` 属正常需修规则，非失败）+ 页内蓝字提示 | ☐ |
 | V7 | 检查就绪 → 一键应用全部补丁 | 正文字数变长，Score 更新，目标规则通过 | ☐ |
 | V8 | 生成 website/wechat/zhihu | 三页签有稿；渠道覆盖显示已有三渠道 | ☐ |
 | V9 | 提交审校 → 通过 | review_status=approved | ☐ |
@@ -86,15 +86,15 @@ python -m scripts.seed_geo_demo --tenant-id 1 --verify-facts
 | --- | --- | --- | --- |
 | S1 | `5176/geo/dashboard.html` | 200 | ☐ |
 | S2 | `5176/dashboard.html`（错误） | 404 或跳转说明 | ☐ |
-| S3 | editor 打开 task → AI 建议 Brief | 有提示行，字段回填 | ☐ |
-| S4 | 插入修复 | 正文变长 | ☐ |
+| S3 | editor 打开 task → AI 建议 Brief | `briefReadyLine` 有提示，字段回填 | ☐ |
+| S4 | 生成母稿 / 插入修复 | 生成后 `briefReadyLine` 显示字数与状态；插入修复后正文变长 | ☐ |
 
 ### 3.3 门禁负例
 
 | # | 步骤 | 期望 | 结果 |
 | --- | --- | --- | --- |
 | N1 | 未绑 3 事实点生成 | 明确拦截 | ☐ |
-| N2 | 未审校回填 | 400 + 审校提示 | ☐ |
+| N2 | 未审校回填 | **合格任一种**：① 切到渠道页签后点「回填 URL」→ toast/错误区出现审校相关文案（接口 400 或预检提示）；② 页内橙色门禁「未通过审校…」可见。不必依赖按钮 disabled。 | ☐ |
 | N3 | Webhook 指向 127.0.0.1 | 400 SSRF 提示 | ☐ |
 
 ---
