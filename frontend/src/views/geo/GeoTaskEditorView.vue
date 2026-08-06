@@ -628,11 +628,15 @@ function validateBeforeGenerate() {
   return null
 }
 
+const generateHint = ref('')
+
 async function generate() {
   error.value = ''
+  generateHint.value = '正在生成母稿…'
   const pre = validateBeforeGenerate()
   if (pre) {
     error.value = pre
+    generateHint.value = pre
     ElMessage({ type: 'error', message: pre, duration: 6000, showClose: true })
     return
   }
@@ -641,11 +645,31 @@ async function generate() {
     await patchGeoContentTask(tenantId.value, taskId.value, { brief: briefPayload() })
     const gen = await generateGeoContentTask(tenantId.value, taskId.value)
     applyTaskPayload(gen)
+    docTab.value = 'master'
+    const bodyLen = (article.body_markdown || '').length
+    const st = gen?.status || task.value?.status || '—'
     error.value = ''
-    ElMessage.success('母稿已生成')
+    // needs_fix is normal after first draft — not a failure
+    const msg =
+      bodyLen > 0
+        ? `母稿已生成（${bodyLen} 字）· 状态 ${st}` +
+          (st === 'needs_fix' ? ' · 请点「检查就绪」并用补丁修齐规则' : '')
+        : `生成返回成功但正文为空 · 状态 ${st}`
+    generateHint.value = msg
+    if (bodyLen > 0) {
+      ElMessage({
+        type: st === 'needs_fix' ? 'warning' : 'success',
+        message: msg,
+        duration: 8000,
+        showClose: true,
+      })
+    } else {
+      ElMessage({ type: 'error', message: msg, duration: 8000, showClose: true })
+    }
   } catch (e) {
     const msg = toastError(e, '生成失败')
     error.value = msg
+    generateHint.value = msg
   } finally {
     busy.value = ''
   }
@@ -965,14 +989,40 @@ async function decideReview(decision) {
   }
 }
 
+/** Why publish/push may fail — shown in UI; click still hits API when possible (N2 expects 审校提示). */
+const publishGateHint = computed(() => {
+  if (docTab.value === 'master') {
+    return '请先切换到 website/wechat/zhihu 等渠道页签再回填'
+  }
+  const rs = task.value?.review_status || 'none'
+  if (rs !== 'approved') {
+    return `未通过审校（当前：${rs}），请先提交审校并审批通过后再回填/推送`
+  }
+  if (!liveChannelCoverage.value.present.includes(normChannelKey(docTab.value))) {
+    return `当前渠道 ${docTab.value} 尚无渠道稿，请先生成渠道稿`
+  }
+  return ''
+})
+
 async function recordPublication() {
   if (docTab.value === 'master') {
-    ElMessage.warning('请切换到渠道页签再回填')
+    const msg = '请切换到渠道页签再回填 URL'
+    ElMessage.warning(msg)
+    error.value = msg
     return
   }
   if (!publishUrl.value.trim().startsWith('http')) {
     ElMessage.warning('请填写 http(s) 发布 URL')
     return
+  }
+  // Soft pre-check: still call API so gate returns 400 + 审校文案（清单 N2）
+  if ((task.value?.review_status || 'none') !== 'approved') {
+    ElMessage({
+      type: 'warning',
+      message: publishGateHint.value || '未通过审校，将请求接口确认门禁',
+      duration: 5000,
+      showClose: true,
+    })
   }
   busy.value = 'publish'
   try {
@@ -983,8 +1033,10 @@ async function recordPublication() {
       note: publishNote.value || null,
     })
     ElMessage.success('已回填发布 URL')
+    error.value = ''
   } catch (e) {
-    toastError(e, '回填失败')
+    const msg = toastError(e, '回填失败')
+    error.value = msg
   } finally {
     busy.value = ''
   }
@@ -998,6 +1050,14 @@ async function pushWebhook() {
   if (!webhookAccountId.value) {
     ElMessage.warning('请选择 Webhook 账号')
     return
+  }
+  if ((task.value?.review_status || 'none') !== 'approved') {
+    ElMessage({
+      type: 'warning',
+      message: publishGateHint.value || '未通过审校',
+      duration: 5000,
+      showClose: true,
+    })
   }
   busy.value = 'push'
   try {
@@ -1377,6 +1437,8 @@ onMounted(load)
             </div>
           </template>
 
+          <div v-if="generateHint" class="hint mb" style="color: #2563eb">{{ generateHint }}</div>
+
           <el-tabs :model-value="docTab" class="mb" @tab-change="onDocTabChange">
             <el-tab-pane label="母稿" name="master" />
             <el-tab-pane
@@ -1490,6 +1552,9 @@ onMounted(load)
           </div>
 
           <el-divider content-position="left">回填 / Webhook</el-divider>
+          <div v-if="publishGateHint" class="hint mb" style="color: #b45309">
+            门禁：{{ publishGateHint }}
+          </div>
           <el-form label-width="100px" size="small">
             <el-form-item label="发布 URL">
               <el-input v-model="publishUrl" placeholder="https://..." />
@@ -1512,23 +1577,25 @@ onMounted(load)
             <el-button
               size="small"
               type="primary"
-              :disabled="docTab === 'master'"
               :loading="busy === 'publish'"
+              :title="publishGateHint || '回填发布 URL'"
               @click="recordPublication"
             >
               回填 URL
             </el-button>
             <el-button
               size="small"
-              :disabled="docTab === 'master'"
               :loading="busy === 'push'"
+              :title="publishGateHint || 'Webhook 推送'"
               @click="pushWebhook"
             >
               Webhook 推送
             </el-button>
             <router-link class="el-button el-button--small" to="/geo/publishing">管理渠道账号</router-link>
           </div>
-          <div class="hint mt">推送前通常需「导出」渠道稿；发布门禁含审校通过与规则就绪。</div>
+          <div class="hint mt">
+            推送前通常需「导出」渠道稿。未审校时按钮可点：接口返回 400 并提示审校要求（也可用上方橙色门禁文案）。
+          </div>
         </el-card>
 
         <el-card shadow="never" class="card">
