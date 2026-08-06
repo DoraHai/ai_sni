@@ -312,6 +312,7 @@ onUnmounted(stopPoll)
           </el-button>
           <p class="hint">
             例：时段 8–20、间隔 4 小时 → 约在 8/12/16/20 点（:05）可触发。
+            日配额默认最多 24 次/租户（环境变量 GEO_PATROL_MAX_RUNS_PER_DAY）；超限返回明确错误。
             geo_main 独立部署时请保证主站或带调度的 worker 在跑。
           </p>
         </el-form>

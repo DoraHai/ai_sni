@@ -4,6 +4,8 @@ This process intentionally mounts only GEO routes. Deploying or restarting it
 does not restart the SEM scheduler or expose unrelated SEM endpoints.
 """
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -11,10 +13,19 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.database import engine
 from app.geo.routes import router as geo_router
+from app.security.prod_guard import enforce_production_secrets
 
 settings = get_settings()
 
-app = FastAPI(title="Growth Sniper GEO API", version="0.1.0")
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    # Productization must-do: refuse demo keys when APP_ENV=prod|production
+    enforce_production_secrets(settings, hard_fail=True)
+    yield
+
+
+app = FastAPI(title="Growth Sniper GEO API", version="0.1.0", lifespan=_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

@@ -180,6 +180,7 @@ def main() -> int:
         assert "website" in types
 
     def webhook_guard_without_export():
+        """Push must fail at publish gate on a *fresh* task (no export/review)."""
         _, ch = req(
             "GET", f"/api/v1/geo/publishing-channels?tenant_id={TENANT_ID}", expect=200
         )
@@ -201,11 +202,29 @@ def main() -> int:
         )
         assert acc.get("has_credentials") is True
         assert "webhook_url" not in json.dumps(acc)
-        _, tasks = req("GET", f"/api/v1/geo/content-tasks?tenant_id={TENANT_ID}", expect=200)
-        task_items = tasks.get("items") or []
-        if not task_items:
-            return  # no task yet; guard covered when tasks exist
-        tid = task_items[0]["id"]
+        # Create empty task so push cannot succeed (avoids flaky first-list-item already published)
+        stamp = int(datetime.utcnow().timestamp())
+        _, pr = req(
+            "POST",
+            "/api/v1/geo/prompts",
+            {
+                "tenant_id": TENANT_ID,
+                "question": f"m1-webhook-gate-{stamp}",
+                "status": "active",
+            },
+            expect=200,
+        )
+        _, task = req(
+            "POST",
+            "/api/v1/geo/content-tasks",
+            {
+                "tenant_id": TENANT_ID,
+                "prompt_id": pr["id"],
+                "title": f"m1-webhook-gate-{stamp}",
+            },
+            expect=200,
+        )
+        tid = task["id"]
         code, payload = req(
             "POST",
             f"/api/v1/geo/content-tasks/{tid}/push",
@@ -219,7 +238,8 @@ def main() -> int:
         )
         assert code == 400, payload
         detail = str(payload.get("detail") or "")
-        # Any publish gate is fine: export/review/rules/SSRF for bad webhook targets
+        # Must be a *gate* error, not upstream webhook HTTP status (that would mean push ran)
+        assert "Webhook 返回" not in detail, detail
         assert any(
             k in detail
             for k in (
@@ -234,6 +254,8 @@ def main() -> int:
                 "本机",
                 "事实",
                 "规则",
+                "母稿",
+                "变体",
             )
         ), detail
 

@@ -238,7 +238,12 @@ async def run_geo_visibility_patrols() -> None:
     from app.models import GeoVisibilityPatrolRun, GeoVisibilityPatrolSettings
     from sqlalchemy import select
 
+    from app.config import get_settings
+    from app.geo.content.patrol import count_patrol_runs_today
+
     now = datetime.now(ZoneInfo("Asia/Shanghai"))
+    day_limit = int(getattr(get_settings(), "geo_patrol_max_runs_per_day", 24) or 24)
+    day_limit = max(1, min(day_limit, 500))
     async with async_session_factory() as session:
         rows = list(
             await session.scalars(
@@ -259,6 +264,15 @@ async def run_geo_visibility_patrols() -> None:
                 interval_hours=interval,
                 last_scheduled_at=last_at,
             ):
+                continue
+            used = await count_patrol_runs_today(session, st.tenant_id)
+            if used >= day_limit:
+                logger.warning(
+                    "[scheduler] skip patrol tenant=%s daily quota %s/%s",
+                    st.tenant_id,
+                    used,
+                    day_limit,
+                )
                 continue
             # skip if a scheduled run is already in flight
             inflight = await session.scalar(

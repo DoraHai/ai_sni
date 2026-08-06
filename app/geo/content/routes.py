@@ -1697,12 +1697,27 @@ async def create_visibility_patrol_run(
     """启动一次全自动巡检：多机会词 × 启用引擎探测，默认自动落库快照。
 
     真采样：引擎 sample_mode=openai_compat 且配置 Key；否则租户 LLM + 人设（标记 simulated）。
+    产品化配额：GEO_PATROL_MAX_RUNS_PER_DAY 限制单租户自然日启动次数。
     """
+    from app.config import get_settings
     from app.database import async_session_factory
-    from app.geo.content.patrol import execute_patrol_run, patrol_run_payload
+    from app.geo.content.patrol import (
+        count_patrol_runs_today,
+        execute_patrol_run,
+        patrol_quota_message,
+        patrol_run_payload,
+    )
 
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
+    day_limit = int(getattr(get_settings(), "geo_patrol_max_runs_per_day", 24) or 24)
+    day_limit = max(1, min(day_limit, 500))
+    used = await count_patrol_runs_today(session, req.tenant_id)
+    if used >= day_limit:
+        raise HTTPException(
+            429,
+            patrol_quota_message(used=used, limit=day_limit),
+        )
     run = GeoVisibilityPatrolRun(
         tenant_id=req.tenant_id,
         status="pending",

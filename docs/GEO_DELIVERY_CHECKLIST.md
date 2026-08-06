@@ -147,15 +147,46 @@ python scripts/smoke_geo_webhook_push.py
 
 ---
 
-## 4. 生产最小集
+## 4. 第三步：生产最小集 / 产品化必做
 
-见 `deploy/README-GEO-INDEPENDENT.md`：
+> **工程门禁（代码仓内可自动验）**  
+> ```bash
+> python -m pytest -q tests
+> python scripts/verify_productization_must.py
+> python scripts/verify_productization_must.py http://127.0.0.1:8011 geo-demo-local-key 1
+> python scripts/accept_geo_m1.py
+> python scripts/accept_geo_delivery.py
+> ```  
+> 本地 `APP_ENV=dev` 可用 demo key；**生产 `APP_ENV=prod` 启动会硬拦截 demo/空密钥**（`app/security/prod_guard.py`）。
 
-- [ ] `alembic upgrade head`  
-- [ ] `geo_main` / geo-service 健康：`/api/v1/geo/content-health` 与 DB  
-- [ ] Nginx **不**注入 `VITE_API_KEY`；前端走登录  
-- [ ] `ADMIN_API_KEY` / `JWT_SECRET` / `CRYPTO_MASTER_KEY_B64` 已轮换且非仓库默认  
-- [ ] 备份与日志路径有文档  
+见 `deploy/README-GEO-INDEPENDENT.md`（secrets / logs / backup / smoke）。
+
+### 4.1 工程已落地（代码 + 文档）
+
+| 检查项 | 状态 |
+| --- | --- |
+| 生产密钥门禁（prod 拒 demo key / 空 JWT / 弱 CRYPTO） | ✓ `prod_guard` + main/geo_main 启动 |
+| Nginx 模板不注入 `X-API-Key`；注释禁止注入 | ✓ `deploy/nginx.conf` · `geo-routes.nginx.conf` |
+| 前端生产不依赖内嵌 Key（仅 DEV + VITE_API_KEY） | ✓ router |
+| 巡检日配额 + 单次格数上限 | ✓ `GEO_PATROL_MAX_RUNS_PER_DAY` / `MAX_CELLS_PER_RUN` |
+| 租户隔离 `ensure_tenant` 单测 | ✓ `tests/test_tenant_isolation.py` |
+| 备份与日志路径写入部署文档 | ✓ README-GEO-INDEPENDENT |
+| 可见度全自动巡检（时段/间隔/落库） | ✓ API + Vue `/geo/visibility/patrol` |
+| 产品化自动验脚本 | ✓ `scripts/verify_productization_must.py` |
+
+### 4.2 上线机操作清单（目标环境签字）
+
+- [ ] 目标机 `APP_ENV=prod`（或 `production`）  
+- [ ] `alembic upgrade head`（含 `0052` 巡检表、`0053` 时段/间隔）  
+- [ ] 已轮换 `ADMIN_API_KEY` / `JWT_SECRET`（≠ admin）/ `CRYPTO_MASTER_KEY_B64`（32 字节）  
+- [ ] `APP_BASE_URL` 为公网 HTTPS，非 localhost  
+- [ ] `geo-service` 健康：`curl -fsS http://127.0.0.1:8010/health/geo` → `"db":"ok"`  
+- [ ] `content-health` 与 `/geo-health` 反代 200  
+- [ ] Nginx **未** `proxy_set_header X-API-Key`；前端构建 **无** `VITE_API_KEY`  
+- [ ] 按 runbook 配置 Postgres 备份 + 确认 `journalctl -u geo-service` 有日志  
+- [ ] 抽测：登录 → `/geo/tasks` 主环 → Webhook 或回填 → `/geo/visibility/patrol` 一次  
+
+> 说明：4.1 由研发在仓库闭环；4.2 需在**真实生产/预发主机**由运维+研发共同勾选，代码无法代替密钥轮换与机上验收。
 
 ---
 

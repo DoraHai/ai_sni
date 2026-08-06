@@ -37,6 +37,39 @@ logger = logging.getLogger(__name__)
 PATROL_INTERVAL_HOURS_CHOICES = (1, 2, 3, 4, 6, 8, 12, 24)
 
 
+async def count_patrol_runs_today(session: AsyncSession, tenant_id: int) -> int:
+    """Count patrol runs created today in Asia/Shanghai for quota."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from sqlalchemy import func
+
+    tz = ZoneInfo("Asia/Shanghai")
+    now = datetime.now(tz)
+    start_local = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_local = start_local + timedelta(days=1)
+    # DB timestamps are naive UTC-ish (utcnow); convert window to naive UTC
+    start_utc = start_local.astimezone(timezone.utc).replace(tzinfo=None)
+    end_utc = end_local.astimezone(timezone.utc).replace(tzinfo=None)
+    n = await session.scalar(
+        select(func.count())
+        .select_from(GeoVisibilityPatrolRun)
+        .where(
+            GeoVisibilityPatrolRun.tenant_id == tenant_id,
+            GeoVisibilityPatrolRun.created_at >= start_utc,
+            GeoVisibilityPatrolRun.created_at < end_utc,
+        )
+    )
+    return int(n or 0)
+
+
+def patrol_quota_message(*, used: int, limit: int) -> str:
+    return (
+        f"今日巡检次数已达上限（{used}/{limit}）。"
+        f"请明日再试，或调高环境变量 GEO_PATROL_MAX_RUNS_PER_DAY。"
+    )
+
+
 def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt else None
 
@@ -211,6 +244,16 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
             raise ValueError("没有可探测的引擎")
         summary["engines"] = len(engines)
 
+        # cell budget (productization must-do: avoid runaway LLM cost)
+        try:
+            from app.config import get_settings
+
+            max_cells = int(getattr(get_settings(), "geo_patrol_max_cells_per_run", 200) or 200)
+        except Exception:  # noqa: BLE001
+            max_cells = 200
+        max_cells = max(1, min(max_cells, 500))
+        summary["max_cells"] = max_cells
+
         brand = getattr(tenant, "name", None) or f"租户{row.tenant_id}"
         brand_names = brand_names_from_tenant(
             name=getattr(tenant, "name", None),
@@ -242,8 +285,16 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
         if not prompts:
             raise ValueError("没有可巡检的机会词，请先在「机会词」中创建")
 
+        cells_planned = 0
         for prompt in prompts:
             for engine in engines:
+                if cells_planned >= max_cells:
+                    summary["truncated"] = True
+                    summary["truncated_reason"] = (
+                        f"达到单次巡检格数上限 {max_cells}（可调 GEO_PATROL_MAX_CELLS_PER_RUN）"
+                    )
+                    break
+                cells_planned += 1
                 cell: dict[str, Any] = {
                     "prompt_id": prompt.id,
                     "prompt_question": prompt.question,
@@ -371,6 +422,8 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
                     row.items = list(items)
                     row.summary = dict(summary)
                     await session.commit()
+            if summary.get("truncated"):
+                break
 
         row.items = items
         row.summary = summary
