@@ -1,8 +1,8 @@
 <script setup>
 /**
  * 发布渠道管理
- * 上：渠道目录（类型开关）— 渠道 ID
- * 下：渠道账号（按渠道页签）— 账号 ID；支持新增/改名/换 Webhook/禁用删除
+ * ① 渠道目录：类型 / 发布模式（auto_publish 可 Webhook 自动推）
+ * ② 渠道账号：按页签；auto 渠道强制配置 Webhook 自动化参数
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -27,28 +27,60 @@ const activeTab = ref('all')
 const createChOpen = ref(false)
 const createAccOpen = ref(false)
 const editAccOpen = ref(false)
+const editChOpen = ref(false)
+
+const CHANNEL_TYPES = [
+  { value: 'website', label: 'website · 官网（可 Webhook 自动推）', auto: true },
+  { value: 'docs', label: 'docs · 文档（可 Webhook 自动推）', auto: true },
+  { value: 'wechat', label: 'wechat · 公众号（人工回填）', auto: false },
+  { value: 'zhihu', label: 'zhihu · 知乎（人工回填）', auto: false },
+  { value: 'baijiahao', label: 'baijiahao · 百家号（人工回填）', auto: false },
+  { value: 'toutiao', label: 'toutiao · 头条（人工回填）', auto: false },
+  { value: 'industry_media', label: 'industry_media · 行业媒体（人工回填）', auto: false },
+]
+
+const PUBLISH_MODES = [
+  {
+    value: 'auto_publish',
+    label: 'auto_publish · 可自动推送（Webhook）',
+    tip: '任务审校通过后，可对已导出渠道稿一键 Webhook 推送',
+  },
+  {
+    value: 'draft_then_manual',
+    label: 'draft_then_manual · 出稿后人工发',
+    tip: '系统生成适配稿，运营在平台发完后回填 URL',
+  },
+  {
+    value: 'manual_only',
+    label: 'manual_only · 仅人工',
+    tip: '不走自动推送，仅作登记与回填',
+  },
+]
 
 const chForm = ref({
   channel_type: 'website',
   name: '',
+  publish_mode: 'auto_publish',
+  base_url: '',
   enabled: true,
 })
 
-const CHANNEL_TYPES = [
-  { value: 'website', label: 'website · 官网' },
-  { value: 'docs', label: 'docs · 文档' },
-  { value: 'wechat', label: 'wechat · 公众号' },
-  { value: 'zhihu', label: 'zhihu · 知乎' },
-  { value: 'baijiahao', label: 'baijiahao · 百家号' },
-  { value: 'toutiao', label: 'toutiao · 头条' },
-  { value: 'industry_media', label: 'industry_media · 行业媒体' },
-]
+const editChForm = ref({
+  id: null,
+  name: '',
+  publish_mode: 'auto_publish',
+  base_url: '',
+  enabled: true,
+})
 
 const accForm = ref({
   channel_id: null,
   display_name: '',
   auth_type: 'webhook',
   webhook_url: '',
+  method: 'POST',
+  secret: '',
+  headers_json: '',
 })
 
 const editForm = ref({
@@ -56,22 +88,74 @@ const editForm = ref({
   display_name: '',
   auth_type: 'webhook',
   webhook_url: '',
+  method: 'POST',
+  secret: '',
+  headers_json: '',
   clear_credentials: false,
   status: 'active',
 })
 
+function channelById(id) {
+  return channels.value.find((x) => x.id === Number(id)) || null
+}
+
+function isAutoPublish(ch) {
+  if (!ch) return false
+  return String(ch.publish_mode || '') === 'auto_publish'
+}
+
+function typeSupportsWebhook(channelType) {
+  const t = String(channelType || '').toLowerCase()
+  return t === 'website' || t === 'docs'
+}
+
+function modeLabel(mode) {
+  const m = PUBLISH_MODES.find((x) => x.value === mode)
+  return m ? m.label.split(' · ')[1] || mode : mode || '—'
+}
+
+function modeTagType(mode) {
+  if (mode === 'auto_publish') return 'success'
+  if (mode === 'draft_then_manual') return 'warning'
+  return 'info'
+}
+
 const channelTabs = computed(() => {
-  const list = (channels.value || []).map((c) => ({
-    key: String(c.id),
-    id: c.id,
-    label: c.name || c.channel_type,
-    type: c.channel_type,
-    enabled: c.enabled,
-    count: (accounts.value || []).filter((a) => a.channel_id === c.id && a.status !== 'disabled')
-      .length,
-  }))
-  return [{ key: 'all', id: null, label: '全部', type: '', enabled: true, count: accounts.value.length }, ...list]
+  const list = (channels.value || []).map((c) => {
+    const accs = (accounts.value || []).filter((a) => a.channel_id === c.id)
+    const webhookReady = accs.some(
+      (a) => a.auth_type === 'webhook' && a.has_credentials && a.status === 'active',
+    )
+    return {
+      key: String(c.id),
+      id: c.id,
+      label: c.name || c.channel_type,
+      type: c.channel_type,
+      enabled: c.enabled,
+      publish_mode: c.publish_mode,
+      auto: isAutoPublish(c),
+      count: accs.filter((a) => a.status !== 'disabled').length,
+      webhookReady,
+    }
+  })
+  return [
+    {
+      key: 'all',
+      id: null,
+      label: '全部',
+      type: '',
+      enabled: true,
+      auto: false,
+      count: accounts.value.length,
+      webhookReady: false,
+    },
+    ...list,
+  ]
 })
+
+const activeChannel = computed(() =>
+  activeTab.value === 'all' ? null : channelById(activeTab.value),
+)
 
 const filteredAccounts = computed(() => {
   let rows = accounts.value || []
@@ -82,11 +166,9 @@ const filteredAccounts = computed(() => {
   return rows
 })
 
-const webhookCapable = (channelId) => {
-  const c = channels.value.find((x) => x.id === channelId)
-  const t = (c?.channel_type || '').toLowerCase()
-  return t === 'website' || t === 'docs'
-}
+const autoChannels = computed(() =>
+  (channels.value || []).filter((c) => isAutoPublish(c) && c.enabled),
+)
 
 async function load() {
   if (!tenantId.value) {
@@ -104,14 +186,19 @@ async function load() {
     ])
     channels.value = ch.items || []
     accounts.value = acc.items || []
-    if (!accForm.value.channel_id && channels.value.length) {
-      accForm.value.channel_id = channels.value[0].id
-    }
   } catch (e) {
     error.value = e.message || '加载失败'
   } finally {
     loading.value = false
   }
+}
+
+function defaultModeForType(ctype) {
+  return typeSupportsWebhook(ctype) ? 'auto_publish' : 'draft_then_manual'
+}
+
+function onCreateChTypeChange(t) {
+  chForm.value.publish_mode = defaultModeForType(t)
 }
 
 async function createChannel() {
@@ -120,6 +207,8 @@ async function createChannel() {
       tenant_id: tenantId.value,
       channel_type: chForm.value.channel_type,
       name: chForm.value.name.trim() || chForm.value.channel_type,
+      publish_mode: chForm.value.publish_mode || defaultModeForType(chForm.value.channel_type),
+      base_url: chForm.value.base_url.trim() || null,
       enabled: chForm.value.enabled,
     })
     ElMessage.success('已创建渠道')
@@ -127,6 +216,33 @@ async function createChannel() {
     await load()
   } catch (e) {
     ElMessage.error(e.message || '创建失败')
+  }
+}
+
+function openEditChannel(row) {
+  editChForm.value = {
+    id: row.id,
+    name: row.name || '',
+    publish_mode: row.publish_mode || 'manual_only',
+    base_url: row.base_url || '',
+    enabled: !!row.enabled,
+  }
+  editChOpen.value = true
+}
+
+async function saveEditChannel() {
+  try {
+    await patchGeoPublishingChannel(tenantId.value, editChForm.value.id, {
+      name: editChForm.value.name.trim() || undefined,
+      publish_mode: editChForm.value.publish_mode,
+      base_url: editChForm.value.base_url.trim() || null,
+      enabled: editChForm.value.enabled,
+    })
+    ElMessage.success('渠道配置已保存')
+    editChOpen.value = false
+    await load()
+  } catch (e) {
+    ElMessage.error(e.message || '保存失败')
   }
 }
 
@@ -140,24 +256,57 @@ async function toggleChannel(row) {
   }
 }
 
+function parseHeaders(jsonStr) {
+  const s = String(jsonStr || '').trim()
+  if (!s) return {}
+  try {
+    const obj = JSON.parse(s)
+    if (obj && typeof obj === 'object' && !Array.isArray(obj)) return obj
+  } catch {
+    throw new Error('Headers 须为 JSON 对象，如 {"Authorization":"Bearer xxx"}')
+  }
+  throw new Error('Headers 须为 JSON 对象')
+}
+
+function buildWebhookCredentials(form) {
+  const url = form.webhook_url.trim()
+  if (!url.startsWith('https://')) {
+    throw new Error('Webhook URL 必须是公网 https://（禁止 127.0.0.1 / 内网）')
+  }
+  const creds = {
+    webhook_url: url,
+    method: form.method || 'POST',
+    headers: parseHeaders(form.headers_json),
+  }
+  if (form.secret?.trim()) creds.secret = form.secret.trim()
+  return creds
+}
+
 function openCreateAccount(prefillChannelId) {
   const cid =
     prefillChannelId ||
     (activeTab.value !== 'all' ? Number(activeTab.value) : null) ||
+    autoChannels.value[0]?.id ||
     channels.value[0]?.id ||
     null
+  const ch = channelById(cid)
+  const auto = isAutoPublish(ch)
   accForm.value = {
     channel_id: cid,
     display_name: '',
-    auth_type: webhookCapable(cid) ? 'webhook' : 'manual',
+    auth_type: auto || typeSupportsWebhook(ch?.channel_type) ? 'webhook' : 'manual',
     webhook_url: '',
+    method: 'POST',
+    secret: '',
+    headers_json: '',
   }
   createAccOpen.value = true
 }
 
 function onAccChannelChange(cid) {
-  if (webhookCapable(cid)) {
-    if (accForm.value.auth_type === 'manual') accForm.value.auth_type = 'webhook'
+  const ch = channelById(cid)
+  if (isAutoPublish(ch) || typeSupportsWebhook(ch?.channel_type)) {
+    accForm.value.auth_type = 'webhook'
   } else {
     accForm.value.auth_type = 'manual'
     accForm.value.webhook_url = ''
@@ -169,9 +318,11 @@ async function createAccount() {
     ElMessage.warning('请选择渠道并填写显示名')
     return
   }
-  const isWh = accForm.value.auth_type === 'webhook'
-  if (isWh && !accForm.value.webhook_url.trim().startsWith('https://')) {
-    ElMessage.warning('Webhook 需公网 HTTPS URL（不能用 127.0.0.1）')
+  const ch = channelById(accForm.value.channel_id)
+  // auto_publish 渠道强制走 webhook 配置
+  if (isAutoPublish(ch) && accForm.value.auth_type !== 'webhook') {
+    ElMessage.warning('该渠道为 auto_publish，请使用 Webhook 自动化配置')
+    accForm.value.auth_type = 'webhook'
     return
   }
   try {
@@ -182,14 +333,15 @@ async function createAccount() {
       auth_type: accForm.value.auth_type,
       credentials: null,
     }
-    if (isWh) {
-      body.credentials = {
-        webhook_url: accForm.value.webhook_url.trim(),
-        method: 'POST',
-      }
+    if (accForm.value.auth_type === 'webhook') {
+      body.credentials = buildWebhookCredentials(accForm.value)
     }
     await createGeoChannelAccount(body)
-    ElMessage.success('已创建渠道账号')
+    ElMessage.success(
+      accForm.value.auth_type === 'webhook'
+        ? '已创建自动化 Webhook 账号'
+        : '已创建人工账号',
+    )
     createAccOpen.value = false
     await load()
   } catch (e) {
@@ -203,6 +355,9 @@ function openEditAccount(row) {
     display_name: row.display_name || '',
     auth_type: row.auth_type || 'manual',
     webhook_url: '',
+    method: 'POST',
+    secret: '',
+    headers_json: '',
     clear_credentials: false,
     status: row.status || 'active',
   }
@@ -226,14 +381,7 @@ async function saveEditAccount() {
       editForm.value.auth_type === 'webhook' &&
       editForm.value.webhook_url.trim()
     ) {
-      if (!editForm.value.webhook_url.trim().startsWith('https://')) {
-        ElMessage.warning('Webhook 需公网 HTTPS URL')
-        return
-      }
-      body.credentials = {
-        webhook_url: editForm.value.webhook_url.trim(),
-        method: 'POST',
-      }
+      body.credentials = buildWebhookCredentials(editForm.value)
     }
     await patchGeoChannelAccount(tenantId.value, editForm.value.id, body)
     ElMessage.success('账号已更新')
@@ -267,7 +415,7 @@ async function enableAccount(row) {
 async function removeAccount(row) {
   try {
     await ElMessageBox.confirm(
-      `确定删除账号「${row.display_name}」(账号 ID ${row.id})？此操作不可恢复。`,
+      `确定删除账号「${row.display_name}」(账号 ID ${row.id})？`,
       '删除渠道账号',
       { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
     )
@@ -284,7 +432,7 @@ async function removeAccount(row) {
 }
 
 function channelName(id) {
-  const c = channels.value.find((x) => x.id === id)
+  const c = channelById(id)
   return c ? `${c.name || c.channel_type}` : `渠道#${id}`
 }
 
@@ -298,6 +446,25 @@ function statusLabel(s) {
   return map[s] || s || '—'
 }
 
+/** 当前页签：自动化配置就绪状态 */
+const autoSetupStatus = computed(() => {
+  const ch = activeChannel.value
+  if (!ch || !isAutoPublish(ch)) return null
+  const accs = (accounts.value || []).filter(
+    (a) => a.channel_id === ch.id && a.status === 'active' && a.auth_type === 'webhook' && a.has_credentials,
+  )
+  return {
+    channel: ch,
+    ready: accs.length > 0 && ch.enabled,
+    accountCount: accs.length,
+    missing: [
+      !ch.enabled && '渠道未启用',
+      ch.publish_mode !== 'auto_publish' && '发布模式不是 auto_publish',
+      accs.length === 0 && '缺少有效 Webhook 账号',
+    ].filter(Boolean),
+  }
+})
+
 watch(tenantId, load)
 onMounted(load)
 </script>
@@ -308,8 +475,8 @@ onMounted(load)
       <div>
         <div class="page-title">发布渠道</div>
         <div class="page-desc">
-          上表管理<strong>渠道类型</strong>（开哪些口）；下表按页签管理各渠道的<strong>账号</strong>（Webhook / 人工）。
-          两边 ID 独立编号，勿混用。
+          <strong>可自动推送</strong>：发布模式 = <code>auto_publish</code> 的官网/文档 + Webhook 账号（HTTPS）。
+          微信/知乎等仅支持出稿后<strong>人工发 + 回填 URL</strong>（无官方 OAuth 自动化）。
         </div>
       </div>
       <div class="header-actions">
@@ -322,33 +489,92 @@ onMounted(load)
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
 
+    <!-- 自动化渠道总览 -->
+    <section class="block auto-overview">
+      <div class="block-head">
+        <h3 class="sec">自动化发布能力</h3>
+        <span class="sec-hint">仅 website / docs 且 publish_mode=auto_publish 可 Webhook 推送</span>
+      </div>
+      <div class="auto-cards">
+        <div
+          v-for="c in channels.filter((x) => typeSupportsWebhook(x.channel_type))"
+          :key="c.id"
+          class="auto-card"
+          :class="{ ready: isAutoPublish(c) && c.enabled && accounts.some((a) => a.channel_id === c.id && a.auth_type === 'webhook' && a.has_credentials && a.status === 'active') }"
+        >
+          <div class="auto-card-title">
+            {{ c.name }}
+            <el-tag size="small" :type="modeTagType(c.publish_mode)">{{ modeLabel(c.publish_mode) }}</el-tag>
+          </div>
+          <div class="auto-card-meta">
+            渠道 ID {{ c.id }} · {{ c.channel_type }}
+            <template v-if="c.base_url"> · 站点 {{ c.base_url }}</template>
+          </div>
+          <div class="auto-card-status">
+            <template
+              v-if="
+                isAutoPublish(c) &&
+                c.enabled &&
+                accounts.some(
+                  (a) =>
+                    a.channel_id === c.id &&
+                    a.auth_type === 'webhook' &&
+                    a.has_credentials &&
+                    a.status === 'active',
+                )
+              "
+            >
+              <el-tag type="success" size="small">Webhook 已就绪</el-tag>
+              可在任务编辑器选此账号「Webhook 推送」
+            </template>
+            <template v-else>
+              <el-tag type="warning" size="small">待配置</el-tag>
+              <el-button link type="primary" @click="openEditChannel(c)">设为 auto_publish</el-button>
+              <el-button link type="primary" @click="openCreateAccount(c.id)">配置 Webhook</el-button>
+            </template>
+          </div>
+        </div>
+        <div v-if="!channels.some((x) => typeSupportsWebhook(x.channel_type))" class="hint">
+          暂无官网/文档渠道，请先新建。
+        </div>
+      </div>
+    </section>
+
     <!-- ① 渠道目录 -->
     <section class="block">
       <div class="block-head">
         <h3 class="sec">① 渠道目录</h3>
-        <span class="sec-hint">表主键列：<code>渠道 ID</code>（与下方账号 ID 无关）</span>
+        <span class="sec-hint">主键：<code>渠道 ID</code> · 点「配置」可改发布模式 / 站点 URL</span>
       </div>
       <el-table :data="channels" stripe empty-text="暂无渠道" class="mb" size="small">
         <el-table-column prop="id" label="渠道 ID" width="88" />
-        <el-table-column prop="channel_type" label="类型" width="130" show-overflow-tooltip />
-        <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
-        <el-table-column label="发布模式" width="140" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.publish_mode || '—' }}</template>
+        <el-table-column prop="channel_type" label="类型" width="120" show-overflow-tooltip />
+        <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
+        <el-table-column label="发布模式" min-width="160">
+          <template #default="{ row }">
+            <el-tag size="small" :type="modeTagType(row.publish_mode)">
+              {{ modeLabel(row.publish_mode) }}
+            </el-tag>
+          </template>
         </el-table-column>
-        <el-table-column label="启用" width="80" align="center">
+        <el-table-column label="站点 base_url" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.base_url || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="启用" width="72" align="center">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'info'" size="small">
               {{ row.enabled ? '是' : '否' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="账号数" width="80" align="center">
+        <el-table-column label="账号数" width="72" align="center">
           <template #default="{ row }">
             {{ accounts.filter((a) => a.channel_id === row.id).length }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="100" fixed="right">
+        <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
+            <el-button link type="primary" @click="openEditChannel(row)">配置</el-button>
             <el-button link type="primary" @click="toggleChannel(row)">
               {{ row.enabled ? '禁用' : '启用' }}
             </el-button>
@@ -357,11 +583,11 @@ onMounted(load)
       </el-table>
     </section>
 
-    <!-- ② 渠道账号 + 页签 -->
+    <!-- ② 渠道账号 -->
     <section class="block">
       <div class="block-head">
         <h3 class="sec">② 渠道账号</h3>
-        <span class="sec-hint">表主键列：<code>账号 ID</code> · 按渠道页签筛选；官网/文档可配 Webhook</span>
+        <span class="sec-hint">主键：<code>账号 ID</code> · 按渠道页签管理；auto 渠道请配 Webhook</span>
       </div>
 
       <el-tabs v-model="activeTab" type="card" class="acc-tabs">
@@ -369,36 +595,87 @@ onMounted(load)
           v-for="t in channelTabs"
           :key="t.key"
           :name="t.key"
-          :label="t.key === 'all' ? `全部 (${t.count})` : `${t.label} (${t.count})`"
-        />
+        >
+          <template #label>
+            <span>
+              {{ t.key === 'all' ? '全部' : t.label }}
+              <span class="tab-count">({{ t.count }})</span>
+              <el-tag
+                v-if="t.auto && t.key !== 'all'"
+                size="small"
+                :type="t.webhookReady ? 'success' : 'warning'"
+                class="tab-tag"
+              >
+                {{ t.webhookReady ? '自动就绪' : '待配 Webhook' }}
+              </el-tag>
+            </span>
+          </template>
+        </el-tab-pane>
       </el-tabs>
+
+      <!-- 当前页签自动化指引 -->
+      <el-alert
+        v-if="autoSetupStatus"
+        class="mb"
+        :type="autoSetupStatus.ready ? 'success' : 'warning'"
+        :closable="false"
+        show-icon
+      >
+        <template #title>
+          <span v-if="autoSetupStatus.ready">
+            「{{ autoSetupStatus.channel.name }}」自动化已就绪（{{ autoSetupStatus.accountCount }} 个 Webhook 账号）
+          </span>
+          <span v-else>
+            「{{ autoSetupStatus.channel.name }}」自动化未就绪：{{ autoSetupStatus.missing.join('；') }}
+          </span>
+        </template>
+        <div v-if="!autoSetupStatus.ready" class="alert-actions">
+          <el-button size="small" type="primary" @click="openEditChannel(autoSetupStatus.channel)">
+            配置发布模式
+          </el-button>
+          <el-button size="small" type="primary" @click="openCreateAccount(autoSetupStatus.channel.id)">
+            配置 Webhook 账号
+          </el-button>
+        </div>
+        <div v-else class="hint">
+          用法：内容任务 → 生成渠道稿 → 导出 → 审校通过 → 选本账号「Webhook 推送」
+        </div>
+      </el-alert>
+
+      <el-alert
+        v-else-if="activeChannel && !isAutoPublish(activeChannel)"
+        class="mb"
+        type="info"
+        :closable="false"
+        show-icon
+        :title="`「${activeChannel.name}」为人工渠道：可建 manual 账号作登记；发完后在任务里回填 URL。官方 OAuth 自动发属二期。`"
+      />
 
       <div class="tab-actions">
         <el-button
           type="primary"
           size="small"
-          :disabled="activeTab === 'all' && !channels.length"
           @click="openCreateAccount(activeTab === 'all' ? null : Number(activeTab))"
         >
-          在当前渠道新建账号
+          {{
+            activeChannel && isAutoPublish(activeChannel)
+              ? '配置 Webhook 自动化账号'
+              : '在当前渠道新建账号'
+          }}
         </el-button>
-        <span v-if="activeTab !== 'all'" class="hint">
-          当前渠道 ID {{ activeTab }} ·
-          {{ webhookCapable(Number(activeTab)) ? '支持 Webhook 推送' : '建议鉴权=manual，发完后回填 URL' }}
-        </span>
       </div>
 
-      <el-table :data="filteredAccounts" stripe empty-text="该渠道下暂无账号，可点上方新建" size="small">
+      <el-table :data="filteredAccounts" stripe empty-text="该渠道下暂无账号" size="small">
         <el-table-column prop="id" label="账号 ID" width="88" />
-        <el-table-column label="所属渠道" min-width="140" show-overflow-tooltip>
+        <el-table-column label="所属渠道" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">
             {{ channelName(row.channel_id) }}
             <span class="muted">（渠道 ID {{ row.channel_id }}）</span>
           </template>
         </el-table-column>
-        <el-table-column prop="display_name" label="显示名" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="display_name" label="显示名" min-width="150" show-overflow-tooltip />
         <el-table-column prop="auth_type" label="鉴权" width="100" />
-        <el-table-column label="状态" width="96">
+        <el-table-column label="状态" width="90">
           <template #default="{ row }">
             <el-tag
               size="small"
@@ -414,7 +691,7 @@ onMounted(load)
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="凭证" width="80" align="center">
+        <el-table-column label="凭证" width="72" align="center">
           <template #default="{ row }">
             {{ row.has_credentials ? '已配' : '无' }}
           </template>
@@ -438,10 +715,14 @@ onMounted(load)
     </section>
 
     <!-- 新建渠道 -->
-    <el-dialog v-model="createChOpen" title="新建发布渠道" width="440px">
-      <el-form label-width="88px">
+    <el-dialog v-model="createChOpen" title="新建发布渠道" width="480px">
+      <el-form label-width="100px">
         <el-form-item label="类型">
-          <el-select v-model="chForm.channel_type" style="width: 100%">
+          <el-select
+            v-model="chForm.channel_type"
+            style="width: 100%"
+            @change="onCreateChTypeChange"
+          >
             <el-option
               v-for="t in CHANNEL_TYPES"
               :key="t.value"
@@ -451,7 +732,23 @@ onMounted(load)
           </el-select>
         </el-form-item>
         <el-form-item label="名称">
-          <el-input v-model="chForm.name" placeholder="可选，默认用类型名" />
+          <el-input v-model="chForm.name" placeholder="可选" />
+        </el-form-item>
+        <el-form-item label="发布模式">
+          <el-select v-model="chForm.publish_mode" style="width: 100%">
+            <el-option
+              v-for="m in PUBLISH_MODES"
+              :key="m.value"
+              :label="m.label"
+              :value="m.value"
+            />
+          </el-select>
+          <div class="form-tip">
+            {{ PUBLISH_MODES.find((m) => m.value === chForm.publish_mode)?.tip }}
+          </div>
+        </el-form-item>
+        <el-form-item v-if="typeSupportsWebhook(chForm.channel_type)" label="站点 URL">
+          <el-input v-model="chForm.base_url" placeholder="https://www.example.com（可选）" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -460,9 +757,52 @@ onMounted(load)
       </template>
     </el-dialog>
 
-    <!-- 新建账号 -->
-    <el-dialog v-model="createAccOpen" title="新建渠道账号" width="500px">
+    <!-- 配置渠道（自动化关键） -->
+    <el-dialog v-model="editChOpen" title="配置渠道 · 发布模式" width="500px">
       <el-form label-width="110px">
+        <el-form-item label="渠道 ID">
+          <span>{{ editChForm.id }}</span>
+        </el-form-item>
+        <el-form-item label="名称">
+          <el-input v-model="editChForm.name" />
+        </el-form-item>
+        <el-form-item label="发布模式" required>
+          <el-select v-model="editChForm.publish_mode" style="width: 100%">
+            <el-option
+              v-for="m in PUBLISH_MODES"
+              :key="m.value"
+              :label="m.label"
+              :value="m.value"
+            />
+          </el-select>
+          <div class="form-tip">
+            要自动推送请选 <strong>auto_publish</strong>，再为该渠道创建 Webhook 账号。
+          </div>
+        </el-form-item>
+        <el-form-item label="站点 base_url">
+          <el-input v-model="editChForm.base_url" placeholder="https://… 可选，便于对照" />
+        </el-form-item>
+        <el-form-item label="启用">
+          <el-switch v-model="editChForm.enabled" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editChOpen = false">取消</el-button>
+        <el-button type="primary" @click="saveEditChannel">保存配置</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 新建账号（自动化表单） -->
+    <el-dialog
+      v-model="createAccOpen"
+      :title="
+        accForm.auth_type === 'webhook'
+          ? '配置 Webhook 自动化账号'
+          : '新建渠道账号（人工）'
+      "
+      width="540px"
+    >
+      <el-form label-width="120px">
         <el-form-item label="所属渠道" required>
           <el-select
             v-model="accForm.channel_id"
@@ -472,30 +812,60 @@ onMounted(load)
             <el-option
               v-for="c in channels"
               :key="c.id"
-              :label="`${c.name || c.channel_type} · 渠道 ID ${c.id}`"
+              :label="`${c.name} · ${modeLabel(c.publish_mode)} · 渠道 ID ${c.id}`"
               :value="c.id"
             />
           </el-select>
         </el-form-item>
         <el-form-item label="显示名" required>
-          <el-input v-model="accForm.display_name" placeholder="如：官网 CMS 生产" />
+          <el-input v-model="accForm.display_name" placeholder="如：官网 CMS 生产 Webhook" />
         </el-form-item>
         <el-form-item label="鉴权类型">
           <el-select v-model="accForm.auth_type" style="width: 100%">
-            <el-option label="webhook（官网/文档推送）" value="webhook" />
-            <el-option label="manual（人工发 + 回填 URL）" value="manual" />
+            <el-option label="webhook · 自动推送" value="webhook" />
+            <el-option label="manual · 人工回填" value="manual" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="accForm.auth_type === 'webhook'" label="Webhook URL" required>
-          <el-input v-model="accForm.webhook_url" placeholder="https://cms.example.com/hooks/geo" />
-          <div class="form-tip">必须公网 HTTPS；列表不会回显完整 URL</div>
-        </el-form-item>
+
+        <template v-if="accForm.auth_type === 'webhook'">
+          <el-divider content-position="left">自动化 Webhook 参数</el-divider>
+          <el-form-item label="Webhook URL" required>
+            <el-input
+              v-model="accForm.webhook_url"
+              placeholder="https://cms.example.com/hooks/geo-publish"
+            />
+            <div class="form-tip">必须公网 HTTPS；推送时 POST JSON 渠道稿</div>
+          </el-form-item>
+          <el-form-item label="HTTP 方法">
+            <el-select v-model="accForm.method" style="width: 100%">
+              <el-option label="POST" value="POST" />
+              <el-option label="PUT" value="PUT" />
+              <el-option label="PATCH" value="PATCH" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="签名 secret">
+            <el-input
+              v-model="accForm.secret"
+              type="password"
+              show-password
+              placeholder="可选；有则带 X-GEO-Signature"
+            />
+          </el-form-item>
+          <el-form-item label="Headers JSON">
+            <el-input
+              v-model="accForm.headers_json"
+              type="textarea"
+              :rows="2"
+              placeholder='可选，如 {"Authorization":"Bearer xxx"}'
+            />
+          </el-form-item>
+        </template>
         <el-alert
-          v-if="accForm.auth_type === 'manual'"
+          v-else
           type="info"
           :closable="false"
           show-icon
-          title="人工渠道：账号仅作登记，发完后在任务编辑器「回填 URL」"
+          title="人工账号：仅登记用途；在任务编辑器发完后「回填 URL」"
         />
       </el-form>
       <template #footer>
@@ -505,8 +875,8 @@ onMounted(load)
     </el-dialog>
 
     <!-- 编辑账号 -->
-    <el-dialog v-model="editAccOpen" title="编辑渠道账号" width="500px">
-      <el-form label-width="110px">
+    <el-dialog v-model="editAccOpen" title="编辑渠道账号" width="540px">
+      <el-form label-width="120px">
         <el-form-item label="账号 ID">
           <span>{{ editForm.id }}</span>
         </el-form-item>
@@ -526,15 +896,28 @@ onMounted(load)
             <el-option label="已禁用 disabled" value="disabled" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="editForm.auth_type === 'webhook'" label="新 Webhook">
-          <el-input
-            v-model="editForm.webhook_url"
-            placeholder="留空=不改凭证；填写则覆盖为新 HTTPS URL"
-          />
-        </el-form-item>
-        <el-form-item v-if="editForm.auth_type === 'webhook'" label="清除凭证">
-          <el-checkbox v-model="editForm.clear_credentials">清空已存 Webhook</el-checkbox>
-        </el-form-item>
+        <template v-if="editForm.auth_type === 'webhook'">
+          <el-divider content-position="left">更新 Webhook（留空不改）</el-divider>
+          <el-form-item label="新 Webhook URL">
+            <el-input v-model="editForm.webhook_url" placeholder="https://…" />
+          </el-form-item>
+          <el-form-item label="方法">
+            <el-select v-model="editForm.method" style="width: 100%">
+              <el-option label="POST" value="POST" />
+              <el-option label="PUT" value="PUT" />
+              <el-option label="PATCH" value="PATCH" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="secret">
+            <el-input v-model="editForm.secret" type="password" show-password />
+          </el-form-item>
+          <el-form-item label="Headers JSON">
+            <el-input v-model="editForm.headers_json" type="textarea" :rows="2" />
+          </el-form-item>
+          <el-form-item label="清除凭证">
+            <el-checkbox v-model="editForm.clear_credentials">清空已存 Webhook</el-checkbox>
+          </el-form-item>
+        </template>
       </el-form>
       <template #footer>
         <el-button @click="editAccOpen = false">取消</el-button>
@@ -550,9 +933,10 @@ onMounted(load)
   display: flex; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
 }
 .page-title { font-size: 20px; font-weight: 700; color: #1e2330; }
-.page-desc { font-size: 13px; color: #6b7280; margin-top: 4px; max-width: 640px; line-height: 1.5; }
+.page-desc { font-size: 13px; color: #6b7280; margin-top: 4px; max-width: 720px; line-height: 1.55; }
+.page-desc code { background: #f5f0ff; padding: 1px 6px; border-radius: 4px; color: #6d28d9; }
 .header-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.mb { margin-bottom: 16px; }
+.mb { margin-bottom: 14px; }
 .block {
   background: #fff;
   border: 1px solid #e8e4f5;
@@ -568,11 +952,30 @@ onMounted(load)
 .sec-hint code {
   background: #f5f0ff; padding: 1px 6px; border-radius: 4px; color: #6d28d9;
 }
-.acc-tabs { margin-bottom: 8px; }
-.tab-actions {
-  display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap;
+.auto-overview { border-color: #c4b5fd; background: linear-gradient(180deg, #faf8ff 0%, #fff 40%); }
+.auto-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
 }
+.auto-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #fff;
+}
+.auto-card.ready { border-color: #86efac; background: #f0fdf4; }
+.auto-card-title {
+  font-weight: 700; color: #1f2937; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+}
+.auto-card-meta { font-size: 12px; color: #6b7280; margin: 6px 0 8px; }
+.auto-card-status { font-size: 12px; color: #374151; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.acc-tabs { margin-bottom: 8px; }
+.tab-count { color: #9ca3af; font-size: 12px; }
+.tab-tag { margin-left: 6px; vertical-align: middle; }
+.tab-actions { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
 .hint { font-size: 12px; color: #6b7280; }
 .muted { font-size: 12px; color: #9ca3af; margin-left: 4px; }
-.form-tip { font-size: 12px; color: #9ca3af; margin-top: 4px; }
+.form-tip { font-size: 12px; color: #9ca3af; margin-top: 4px; line-height: 1.4; }
+.alert-actions { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
 </style>
