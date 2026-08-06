@@ -2620,11 +2620,19 @@ async def suggest_task_brief(
             except Exception:  # noqa: BLE001
                 chat_json = None
                 llm = None
+    existing = task.brief if isinstance(task.brief, dict) else {}
+    # Auto-overwrite when required strategy fields are blank so empty drafts
+    # (schema-normalized "") always get AI/heuristic fills.
+    overwrite = bool(req.overwrite)
+    if not overwrite:
+        required = ("industry", "audience", "intent", "content_type", "cta")
+        if all(not str(existing.get(k) or "").strip() for k in required):
+            overwrite = True
     suggested = await suggest_brief_for_task(
         question=prompt.question,
         brand=brand,
-        existing_brief=task.brief if isinstance(task.brief, dict) else {},
-        overwrite=bool(req.overwrite),
+        existing_brief=existing,
+        overwrite=overwrite,
         llm=llm,
         chat_json=chat_json,
     )
@@ -2634,7 +2642,7 @@ async def suggest_task_brief(
         "suggested_brief": suggested,
         "strategy_richness": strategy_richness(suggested),
         "persisted": False,
-        "overwrite": bool(req.overwrite),
+        "overwrite": overwrite,
         "used_llm": bool(llm and chat_json),
     }
 

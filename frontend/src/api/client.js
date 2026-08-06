@@ -40,23 +40,38 @@ function normalizeDetail(detail) {
 
 client.interceptors.response.use(
   (resp) => resp.data,
-  (error) => {
-    if (error.response?.status === 401 && session.isLoggedIn) {
-      session.logout()
-      // 本地 DEV 配了 VITE_API_KEY 时：清掉失效 JWT 后继续用 API Key，不要硬踢登录页
+  async (error) => {
+    if (error.response?.status === 401) {
       const devKey =
         import.meta.env.DEV &&
         import.meta.env.VITE_API_KEY &&
         String(import.meta.env.VITE_API_KEY).trim() &&
         import.meta.env.VITE_API_KEY !== 'CHANGE_ME'
-      if (devKey) {
-        const detail =
-          normalizeDetail(error.response?.data?.detail) ||
-          '登录已失效，已切回本地 API Key'
-        return Promise.reject(new Error(detail))
+          ? String(import.meta.env.VITE_API_KEY).trim()
+          : ''
+      // Stale JWT: clear + retry once with API Key (avoid silent hang / no toast)
+      if (devKey && error.config && !error.config.__geoRetried401) {
+        try {
+          if (session.isLoggedIn || session.token) session.logout()
+        } catch {
+          /* ignore */
+        }
+        const cfg = { ...error.config, __geoRetried401: true }
+        cfg.headers = { ...(cfg.headers || {}) }
+        delete cfg.headers.Authorization
+        cfg.headers['X-API-Key'] = devKey
+        return client.request(cfg)
       }
-      window.location.href = '/login'
-      return new Promise(() => {}) // 跳转中,挂起后续处理
+      if (session.isLoggedIn && !devKey) {
+        session.logout()
+        window.location.href = '/login'
+        // Still reject so callers get a toast if navigation is slow
+        return Promise.reject(new Error('登录已失效，请重新登录'))
+      }
+      const detail =
+        normalizeDetail(error.response?.data?.detail) ||
+        '未授权：请登录或配置 VITE_API_KEY'
+      return Promise.reject(new Error(detail))
     }
     const detail =
       normalizeDetail(error.response?.data?.detail) ||

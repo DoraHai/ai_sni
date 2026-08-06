@@ -5,6 +5,7 @@ import unittest
 from app.geo.content.brief import (
     brief_blockers,
     brief_ready,
+    merge_brief,
     missing_required_fields,
     normalize_brief,
 )
@@ -42,6 +43,31 @@ class BriefNormalizeTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("受众", message)
         self.assertIn("填写", action)
+
+    def test_merge_fills_empty_normalized_draft(self):
+        """Empty-string draft (post-normalize) must still accept AI fills."""
+        existing = normalize_brief(
+            {
+                "industry": "",
+                "audience": "",
+                "intent": "",
+                "content_type": "",
+                "cta": "",
+            }
+        )
+        suggested = {
+            "industry": "制造业",
+            "audience": "数字化负责人",
+            "intent": "recommend",
+            "content_type": "howto",
+            "cta": "预约演示",
+        }
+        out = merge_brief(existing, suggested, overwrite=False)
+        self.assertEqual(out["industry"], "制造业")
+        self.assertEqual(out["audience"], "数字化负责人")
+        self.assertEqual(out["intent"], "recommend")
+        self.assertEqual(out["content_type"], "howto")
+        self.assertEqual(out["cta"], "预约演示")
 
 
 class GenerateBriefGateTests(unittest.IsolatedAsyncioTestCase):

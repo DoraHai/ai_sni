@@ -313,18 +313,44 @@ def merge_brief(
     *,
     overwrite: bool = False,
 ) -> dict[str, Any]:
-    """Merge suggested onto existing; empty existing fields filled unless overwrite."""
+    """Merge suggested onto existing; empty existing fields filled unless overwrite.
+
+    Note: ``normalize_brief`` may materialize default empty strings / lists. Treat
+    those as empty so AI suggestions still fill a never-saved draft Brief.
+    """
     base = normalize_brief(existing)
     sug = normalize_brief(suggested)
     if overwrite:
         return sug
+
+    def _is_empty(val: Any) -> bool:
+        if val is None:
+            return True
+        if isinstance(val, str) and not val.strip():
+            return True
+        if isinstance(val, (list, dict, tuple, set)) and len(val) == 0:
+            return True
+        return False
+
     out = dict(base)
     for key, val in sug.items():
         if key == "schema_version":
+            # bump when suggestion carries a newer schema
+            try:
+                if int(val or 0) > int(out.get(key) or 0):
+                    out[key] = val
+            except (TypeError, ValueError):
+                pass
+            continue
+        # source_bar default "any" should not block a real suggestion
+        if key == "source_bar" and out.get(key) in (None, "", "any") and val not in (
+            None,
+            "",
+        ):
+            out[key] = val
             continue
         cur = out.get(key)
-        empty = cur in (None, "", [], {})
-        if empty and val not in (None, "", [], {}):
+        if _is_empty(cur) and not _is_empty(val):
             out[key] = val
     return normalize_brief(out)
 
