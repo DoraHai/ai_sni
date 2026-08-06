@@ -176,17 +176,21 @@ python scripts/smoke_geo_webhook_push.py
 
 ### 4.2 上线机操作清单（目标环境签字）
 
-- [ ] 目标机 `APP_ENV=prod`（或 `production`）  
-- [ ] `alembic upgrade head`（含 `0052` 巡检表、`0053` 时段/间隔）  
-- [ ] 已轮换 `ADMIN_API_KEY` / `JWT_SECRET`（≠ admin）/ `CRYPTO_MASTER_KEY_B64`（32 字节）  
-- [ ] `APP_BASE_URL` 为公网 HTTPS，非 localhost  
-- [ ] `geo-service` 健康：`curl -fsS http://127.0.0.1:8010/health/geo` → `"db":"ok"`  
-- [ ] `content-health` 与 `/geo-health` 反代 200  
-- [ ] Nginx **未** `proxy_set_header X-API-Key`；前端构建 **无** `VITE_API_KEY`  
-- [ ] 按 runbook 配置 Postgres 备份 + 确认 `journalctl -u geo-service` 有日志  
-- [ ] 抽测：登录 → `/geo/tasks` 主环 → Webhook 或回填 → `/geo/visibility/patrol` 一次  
+**完整步骤（命令级）：`docs/GEO_PRODUCTION_RUNBOOK.md`**
 
-> 说明：4.1 由研发在仓库闭环；4.2 需在**真实生产/预发主机**由运维+研发共同勾选，代码无法代替密钥轮换与机上验收。
+摘要勾选（细节与命令以 Runbook 为准）：
+
+- [ ] 备份 Postgres + `.env`（Runbook §2）  
+- [ ] 目标机 `APP_ENV=prod`；轮换 `ADMIN_API_KEY` / `JWT_SECRET` / `CRYPTO_MASTER_KEY_B64`；`APP_BASE_URL` 公网 HTTPS（§3）  
+- [ ] 首次：`setup-geo.sh` + Nginx include（§4）  
+- [ ] `alembic upgrade head`（含 `0052`/`0053` 巡检）（§5）  
+- [ ] 发布 `geo-service`：`/health/geo` → `"db":"ok"`（§6）  
+- [ ] 静态 GEO + 主站 Vue；**无** `VITE_API_KEY` / **无** Nginx `X-API-Key` 注入（§7）  
+- [ ] `sem-backend` 调度在跑（定时巡检依赖主站）（§8）  
+- [ ] H1–H6 基建 + B1–B7 业务抽测签字（§9）  
+- [ ] 常态备份/日志（§10）  
+
+> 说明：4.1 由研发在仓库闭环；4.2 在**真实生产/预发主机**按 Runbook 执行并签字。
 
 ---
 

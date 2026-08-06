@@ -337,6 +337,7 @@ alembic upgrade head
 | `docs/GEOLOOK_COMPARISON_BRIEF.md` | 与 GeoLook 差距 / 不搬清单 |
 | `docs/GEO_*_PLAN.md` | 各 Wave/切片设计 |
 | `deploy/README-GEO-INDEPENDENT.md` | 生产独立发布 |
+| `docs/GEO_PRODUCTION_RUNBOOK.md` | **真实服务器上线步骤**（第三步签字） |
 | `deploy/README-DEPLOY.md` | 主站部署 |
 
 ### 7.8 「项目完整完成」的判定建议

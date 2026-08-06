@@ -1,5 +1,9 @@
 # GEO independent release unit
 
+> **真实服务器上线完整步骤（中文 runbook）：**  
+> [`docs/GEO_PRODUCTION_RUNBOOK.md`](../docs/GEO_PRODUCTION_RUNBOOK.md)  
+> （备份 → 密钥 → 迁移 → 发布 → 探活 → 业务抽测 → 回滚 → 签字）
+
 Production keeps the existing public URLs but routes GEO before the shared SEM
 application:
 
