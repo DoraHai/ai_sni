@@ -431,6 +431,91 @@ async def _build_rule_input(
     )
 
 
+async def _evaluate_and_store_rules(
+    session: AsyncSession,
+    task: GeoContentTask,
+    article: GeoArticleVersion | None,
+    *,
+    require_channels: bool = False,
+) -> dict[str, Any]:
+    """Run checks + GEO Score and persist onto task.rule_result.
+
+    Used by check endpoint and after channel-variant generation so
+    channel_variant_ready does not stay stale as failed in the UI.
+    """
+    from app.config import get_settings
+    from app.geo.content.draft_lint import lint_draft, lint_summary
+    from app.geo.content.extractable_blocks import blocks_payload
+    from app.geo.content.geo_score import compute_geo_score, score_blocks_ready
+
+    rule_input = await _build_rule_input(session, task, article)
+    checks = run_checks(rule_input)
+    check_dicts = [c.to_dict() for c in checks]
+    ready = is_ready(checks, require_channels=require_channels)
+    patches = build_fix_patches(rule_input)
+    lint = lint_summary(
+        lint_draft(rule_input.body_markdown or "", facts=rule_input.facts or [])
+    )
+    blocks = blocks_payload(rule_input.body_markdown or "")
+    lint_ok = bool(lint.get("blocks_ready")) if isinstance(lint, dict) else None
+    score_payload = compute_geo_score(
+        rule_input,
+        brief=task.brief if isinstance(task.brief, dict) else {},
+        lint_ok=lint_ok,
+        rule_checks=checks,
+    )
+    settings = get_settings()
+    score_ok, score_msg = score_blocks_ready(
+        score_payload,
+        threshold=int(getattr(settings, "geo_score_threshold", 60) or 60),
+        gate_enabled=bool(getattr(settings, "geo_score_gate", False)),
+    )
+    if not score_ok:
+        ready = False
+
+    prev_rr = task.rule_result if isinstance(task.rule_result, dict) else {}
+    ai_review = prev_rr.get("ai_review") if isinstance(prev_rr.get("ai_review"), dict) else None
+    task.rule_result = {
+        "ready": ready,
+        "require_channels": require_channels,
+        "checks": check_dicts,
+        "lint": lint,
+        "blocks": blocks,
+        "geo_score": score_payload["geo_score"],
+        "geo_subscores": score_payload["geo_subscores"],
+        "geo_actions": score_payload["geo_actions"],
+        "geo_score_gate": bool(getattr(settings, "geo_score_gate", False)),
+        "geo_score_threshold": int(getattr(settings, "geo_score_threshold", 60) or 60),
+        "geo_score_gate_message": score_msg or None,
+        "ai_review": ai_review,
+        "checked_at": datetime.utcnow().isoformat(),
+        "variant_channels": list(rule_input.variants or []),
+        "target_channels": list(rule_input.target_channels or []),
+    }
+    if ready:
+        task.status = "ready"
+        task.ready_at = task.ready_at or datetime.utcnow()
+    elif article is not None:
+        # keep terminal export statuses
+        if task.status not in {"exported", "published"}:
+            task.status = "needs_fix"
+    await _sync_task_pipeline(session, task, checks=check_dicts)
+    return {
+        "ready": ready,
+        "checks": check_dicts,
+        "patches": patches,
+        "lint": lint,
+        "blocks": blocks,
+        "geo_score": score_payload["geo_score"],
+        "geo_subscores": score_payload["geo_subscores"],
+        "geo_actions": score_payload["geo_actions"],
+        "geo_score_gate": bool(getattr(settings, "geo_score_gate", False)),
+        "geo_score_threshold": int(getattr(settings, "geo_score_threshold", 60) or 60),
+        "variant_channels": list(rule_input.variants or []),
+        "target_channels": list(rule_input.target_channels or []),
+    }
+
+
 async def _task_payload(
     session: AsyncSession, task: GeoContentTask, *, detail: bool = False
 ) -> dict[str, Any]:
@@ -2590,16 +2675,51 @@ async def retrieve_task_facts(
     ]
     result = retrieve_facts(
         fact_dicts,
-        question=prompt.question,
+        question=prompt.question or task.title or "",
         brief=task.brief if isinstance(task.brief, dict) else {},
         limit=req.limit,
         verified_only=bool(req.verified_only),
     )
+    items = list(result.get("items") or [])
+    # Hard guarantee: if tenant has active facts, never return empty items
+    # (frontend "0 candidates" was often a miss on soft ranking, not an empty library).
+    if not items and fact_dicts:
+        ranked = sorted(
+            fact_dicts,
+            key=lambda f: (
+                0 if str(f.get("trust_level") or "") == "verified" else 1,
+                -int(f.get("id") or 0),
+            ),
+        )
+        for f in ranked[: max(1, min(int(req.limit or 8), 50))]:
+            items.append(
+                {
+                    "fact_id": f.get("id"),
+                    "score": 0.0,
+                    "reasons": ["library_fallback"],
+                    "title": f.get("title"),
+                    "trust_level": f.get("trust_level"),
+                    "fact_type": f.get("fact_type"),
+                    "source_name": f.get("source_name"),
+                    "eligible_hint": str(f.get("trust_level") or "") == "verified",
+                }
+            )
+        result["query_meta"] = {
+            **(result.get("query_meta") or {}),
+            "fallback_all_active": True,
+            "library_fallback": True,
+            "active_fact_count": len(fact_dicts),
+        }
+    else:
+        meta = dict(result.get("query_meta") or {})
+        meta["active_fact_count"] = len(fact_dicts)
+        result["query_meta"] = meta
+
     bound = False
-    if req.auto_bind and result["items"]:
+    if req.auto_bind and items:
         if req.limit > 20:
             raise HTTPException(400, "auto_bind 时 limit 不能超过 20")
-        fact_ids = [int(i["fact_id"]) for i in result["items"] if i.get("fact_id")]
+        fact_ids = [int(i["fact_id"]) for i in items if i.get("fact_id")]
         await _bind_facts(session, task, fact_ids)
         await session.commit()
         await session.refresh(task)
@@ -2607,7 +2727,8 @@ async def retrieve_task_facts(
     return {
         "task_id": task.id,
         "prompt_id": prompt.id,
-        "items": result["items"],
+        "items": items,
+        "count": len(items),
         "query_meta": result["query_meta"],
         "auto_bound": bound,
         "task": await _task_payload(session, task, detail=True) if bound else None,
@@ -2689,77 +2810,16 @@ async def check_task(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    from app.config import get_settings
-    from app.geo.content.draft_lint import lint_draft, lint_summary
-    from app.geo.content.extractable_blocks import blocks_payload
-    from app.geo.content.geo_score import compute_geo_score, score_blocks_ready
-
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
     article = await _latest_article(session, task.id)
-    rule_input = await _build_rule_input(session, task, article)
-    checks = run_checks(rule_input)
-    ready = is_ready(checks, require_channels=require_channels)
-    check_dicts = [c.to_dict() for c in checks]
-    patches = build_fix_patches(rule_input)
-
-    lint = lint_summary(
-        lint_draft(rule_input.body_markdown or "", facts=rule_input.facts or [])
+    scored = await _evaluate_and_store_rules(
+        session, task, article, require_channels=require_channels
     )
-    blocks = blocks_payload(rule_input.body_markdown or "")
-    lint_ok = bool(lint.get("blocks_ready")) if isinstance(lint, dict) else None
-    score_payload = compute_geo_score(
-        rule_input,
-        brief=task.brief if isinstance(task.brief, dict) else {},
-        lint_ok=lint_ok,
-        rule_checks=checks,
-    )
-    settings = get_settings()
-    score_ok, score_msg = score_blocks_ready(
-        score_payload,
-        threshold=int(getattr(settings, "geo_score_threshold", 60) or 60),
-        gate_enabled=bool(getattr(settings, "geo_score_gate", False)),
-    )
-    if not score_ok:
-        ready = False
-
-    prev_rr = task.rule_result if isinstance(task.rule_result, dict) else {}
-    ai_review = prev_rr.get("ai_review") if isinstance(prev_rr.get("ai_review"), dict) else None
-
-    task.rule_result = {
-        "ready": ready,
-        "require_channels": require_channels,
-        "checks": check_dicts,
-        "lint": lint,
-        "blocks": blocks,
-        "geo_score": score_payload["geo_score"],
-        "geo_subscores": score_payload["geo_subscores"],
-        "geo_actions": score_payload["geo_actions"],
-        "geo_score_gate": bool(getattr(settings, "geo_score_gate", False)),
-        "geo_score_threshold": int(getattr(settings, "geo_score_threshold", 60) or 60),
-        "geo_score_gate_message": score_msg or None,
-        "ai_review": ai_review,
-        "checked_at": datetime.utcnow().isoformat(),
-    }
-    if ready:
-        task.status = "ready"
-        task.ready_at = task.ready_at or datetime.utcnow()
-    elif article is not None:
-        task.status = "needs_fix"
-    await _sync_task_pipeline(session, task, checks=check_dicts)
     await session.commit()
     await session.refresh(task)
     return {
-        "ready": ready,
-        "checks": check_dicts,
-        "patches": patches,
-        "lint": lint,
-        "blocks": blocks,
-        "geo_score": score_payload["geo_score"],
-        "geo_subscores": score_payload["geo_subscores"],
-        "geo_actions": score_payload["geo_actions"],
-        "geo_score_gate": bool(getattr(settings, "geo_score_gate", False)),
-        "geo_score_threshold": int(getattr(settings, "geo_score_threshold", 60) or 60),
+        **scored,
         "task": await _task_payload(session, task, detail=True),
     }
 
@@ -3172,7 +3232,11 @@ async def create_variants(
         created.append(channel)
     # refresh target channels union
     task.target_channels = sorted(set((task.target_channels or []) + channels))
-    await _sync_task_pipeline(session, task)
+    # flush new variant rows so channel_variant_ready sees them
+    await session.flush()
+    article = await _latest_article(session, task.id)
+    # re-score rules so UI no longer shows stale「缺少 website/wechat/zhihu」
+    await _evaluate_and_store_rules(session, task, article, require_channels=False)
     await session.commit()
     await session.refresh(task)
     return await _task_payload(session, task, detail=True)

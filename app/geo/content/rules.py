@@ -197,16 +197,55 @@ def check_updated_at_visible(data: RuleInput) -> RuleCheck:
     )
 
 
+def _norm_channel_key(raw: str | None) -> str:
+    """Normalize channel labels so UI keys and stored variant.channel align."""
+    key = str(raw or "").strip().lower()
+    aliases = {
+        "web": "website",
+        "官网": "website",
+        "网站": "website",
+        "docs": "website",
+        "微信": "wechat",
+        "公众号": "wechat",
+        "weixin": "wechat",
+        "知乎": "zhihu",
+        "百家号": "baijiahao",
+        "头条": "toutiao",
+        "今日头条": "toutiao",
+    }
+    return aliases.get(key, key)
+
+
 def check_channel_variant_ready(data: RuleInput) -> RuleCheck:
-    targets = data.target_channels or []
-    have = set(data.variants or [])
-    missing = [c for c in targets if c not in have]
+    """Pass when each target channel has a matching GeoChannelVariant row.
+
+    Compares normalized keys so website/web/官网 etc. do not false-fail after
+    the editor has already generated tabs.
+    """
+    targets = [_norm_channel_key(c) for c in (data.target_channels or []) if _norm_channel_key(c)]
+    # de-dupe preserve order
+    seen: set[str] = set()
+    targets_u: list[str] = []
+    for t in targets:
+        if t not in seen:
+            seen.add(t)
+            targets_u.append(t)
+    have = {_norm_channel_key(c) for c in (data.variants or []) if _norm_channel_key(c)}
+    missing = [c for c in targets_u if c not in have]
     ok = not missing
+    have_list = sorted(have)
+    if ok:
+        msg = f"目标渠道版本齐全（已有 {', '.join(have_list) or '—'}）"
+    else:
+        msg = (
+            f"缺少渠道版本: {', '.join(missing)}"
+            + (f"；已有: {', '.join(have_list)}" if have_list else "；尚未生成任何渠道稿")
+        )
     return RuleCheck(
         code="channel_variant_ready",
         passed=ok,
-        message="目标渠道版本齐全" if ok else f"缺少渠道版本: {', '.join(missing)}",
-        action="" if ok else "生成对应渠道版本",
+        message=msg,
+        action="" if ok else "在右侧勾选渠道后点「生成所选渠道稿」，再点「检查就绪」刷新规则",
     )
 
 

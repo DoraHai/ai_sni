@@ -704,14 +704,89 @@ async function genVariants() {
   }
   busy.value = 'variants'
   try {
-    task.value = await createGeoVariants(tenantId.value, taskId.value, channelPick.value)
+    const t = await createGeoVariants(tenantId.value, taskId.value, channelPick.value)
+    applyTaskPayload(t)
     if (channelPick.value[0]) {
       docTab.value = channelPick.value[0]
       applyVariantFromTask()
     }
-    ElMessage.success('渠道稿已生成')
+    // Backend re-scores after create; pull into checkResult so channel_variant_ready updates
+    const rr = t?.rule_result
+    if (rr?.checks) {
+      checkResult.value = {
+        ...(checkResult.value || {}),
+        ready: rr.ready,
+        checks: rr.checks,
+        geo_score: rr.geo_score ?? checkResult.value?.geo_score,
+        geo_subscores: rr.geo_subscores || checkResult.value?.geo_subscores,
+        geo_actions: rr.geo_actions || checkResult.value?.geo_actions || [],
+        patches: checkResult.value?.patches || [],
+      }
+    }
+    // Always re-check so patches/score stay in sync with latest master + variants
+    try {
+      const res = await checkGeoContentTask(tenantId.value, taskId.value, false)
+      checkResult.value = res
+      if (res.task) applyTaskPayload(res.task)
+    } catch {
+      /* keep variant success even if re-check fails */
+    }
+    const have = (task.value?.variants || []).map((v) => v.channel).join(', ')
+    ElMessage.success(`渠道稿已生成（${have || channelPick.value.join(', ')}），规则已刷新`)
   } catch (e) {
     toastError(e, '生成渠道稿失败')
+  } finally {
+    busy.value = ''
+  }
+}
+
+/** Apply every available structural patch so publish gate can pass faster. */
+async function applyAllPatches() {
+  const codes = (patches.value || []).map((p) => p.code).filter(Boolean)
+  if (!codes.length) {
+    ElMessage.info('当前没有可一键插入的补丁，请先点「检查就绪」')
+    return
+  }
+  busy.value = 'patch'
+  error.value = ''
+  docTab.value = 'master'
+  let applied = 0
+  try {
+    for (const code of codes) {
+      try {
+        const res = await applyGeoContentPatch(tenantId.value, taskId.value, code)
+        if (res.task) applyTaskPayload(res.task)
+        if (res.article?.body_markdown != null) {
+          article.body_markdown = res.article.body_markdown
+          article.title = res.article.title || article.title
+        }
+        checkResult.value = {
+          ready: res.ready,
+          checks: res.checks || [],
+          patches: res.patches || [],
+          lint: res.lint,
+          blocks: res.blocks,
+          geo_score: res.geo_score,
+          geo_subscores: res.geo_subscores,
+          geo_actions: res.geo_actions || [],
+          ai_review: checkResult.value?.ai_review,
+        }
+        applied += 1
+      } catch (e) {
+        console.warn('patch skip', code, e)
+      }
+    }
+    // Final check after batch
+    const res = await checkGeoContentTask(tenantId.value, taskId.value, false)
+    checkResult.value = res
+    if (res.task) applyTaskPayload(res.task)
+    ElMessage.success(
+      `已批量应用 ${applied}/${codes.length} 个补丁 · Score ${res.geo_score ?? '—'} · ${
+        res.ready ? '规则就绪' : '仍有规则未过'
+      }`,
+    )
+  } catch (e) {
+    toastError(e, '批量补丁失败')
   } finally {
     busy.value = ''
   }
@@ -854,17 +929,82 @@ async function pushWebhook() {
   }
 }
 
+function normChannelKey(raw) {
+  const key = String(raw || '').trim().toLowerCase()
+  const aliases = {
+    web: 'website',
+    官网: 'website',
+    网站: 'website',
+    docs: 'website',
+    微信: 'wechat',
+    公众号: 'wechat',
+    weixin: 'wechat',
+    知乎: 'zhihu',
+    百家号: 'baijiahao',
+    头条: 'toutiao',
+    今日头条: 'toutiao',
+  }
+  return aliases[key] || key
+}
+
+/** Live channel coverage from task.variants (not stale rule_result). */
+const liveChannelCoverage = computed(() => {
+  const targets = (task.value?.target_channels || channelPick.value || []).map(normChannelKey)
+  const have = new Set((task.value?.variants || []).map((v) => normChannelKey(v.channel)))
+  const uniqTargets = [...new Set(targets.filter(Boolean))]
+  const missing = uniqTargets.filter((c) => !have.has(c))
+  const present = [...have]
+  return {
+    targets: uniqTargets,
+    present,
+    missing,
+    ok: missing.length === 0 && (uniqTargets.length > 0 || present.length > 0),
+  }
+})
+
 const scoreLine = computed(() => {
-  const s = checkResult.value?.geo_score
+  const s = checkResult.value?.geo_score ?? task.value?.rule_result?.geo_score
   if (s == null) return '检查后显示 GEO Score'
-  const subs = checkResult.value?.geo_subscores || {}
+  const subs = checkResult.value?.geo_subscores || task.value?.rule_result?.geo_subscores || {}
   const parts = Object.keys(subs)
     .map((k) => `${k}=${Math.round((subs[k] || 0) * 100)}`)
     .join(' · ')
   return `GEO Score ${s}/100${parts ? `（${parts}）` : ''}`
 })
 
-const checks = computed(() => checkResult.value?.checks || task.value?.rule_result?.checks || [])
+/**
+ * Prefer latest checkResult, but always overlay channel_variant_ready from live
+ * variants so generated tabs never leave a stale「缺少 website, wechat, zhihu」.
+ */
+const checks = computed(() => {
+  const base = [
+    ...(checkResult.value?.checks || task.value?.rule_result?.checks || []),
+  ]
+  const cov = liveChannelCoverage.value
+  const liveMsg = cov.ok
+    ? `目标渠道版本齐全（已有 ${cov.present.join(', ') || '—'}）`
+    : `缺少渠道版本: ${cov.missing.join(', ') || '—'}；已有: ${cov.present.join(', ') || '无'}`
+  const liveChannel = {
+    code: 'channel_variant_ready',
+    passed: cov.ok,
+    message: liveMsg,
+    action: cov.ok
+      ? ''
+      : '在右侧勾选渠道后点「生成所选渠道稿」，再点「检查就绪」',
+  }
+  let replaced = false
+  const out = base.map((c) => {
+    if (c.code === 'channel_variant_ready') {
+      replaced = true
+      return { ...c, ...liveChannel }
+    }
+    return c
+  })
+  if (!replaced && (cov.targets.length || cov.present.length)) {
+    out.push(liveChannel)
+  }
+  return out
+})
 const geoActions = computed(
   () => checkResult.value?.geo_actions || task.value?.rule_result?.geo_actions || [],
 )
@@ -1301,6 +1441,17 @@ onMounted(load)
             <span>规则 · GEO Score · AI 审稿</span>
           </template>
           <div class="score">{{ scoreLine }}</div>
+          <div class="hint mb">
+            渠道覆盖：
+            <span :class="liveChannelCoverage.ok ? 'ok' : 'bad'">
+              {{ liveChannelCoverage.ok ? '✓' : '✗' }}
+            </span>
+            已有 [{{ liveChannelCoverage.present.join(', ') || '无' }}]
+            · 目标 [{{ liveChannelCoverage.targets.join(', ') || '—' }}]
+            <span v-if="liveChannelCoverage.missing.length">
+              · 缺 {{ liveChannelCoverage.missing.join(', ') }}
+            </span>
+          </div>
           <ul class="check-list">
             <li v-for="c in checks" :key="c.code">
               <span :class="c.passed ? 'ok' : 'bad'">{{ c.passed ? '✓' : '✗' }}</span>
@@ -1323,6 +1474,15 @@ onMounted(load)
             </ul>
           </div>
           <div v-if="patches.length" class="mt row-actions">
+            <el-button
+              size="small"
+              type="warning"
+              plain
+              :loading="busy === 'patch'"
+              @click="applyAllPatches"
+            >
+              一键应用全部补丁 ({{ patches.length }})
+            </el-button>
             <el-button
               v-for="p in patches"
               :key="p.code"

@@ -134,6 +134,22 @@ class GeoContentRulesTests(unittest.TestCase):
         self.assertTrue(is_ready(checks, require_channels=False))
         self.assertFalse(is_ready(checks, require_channels=True))
 
+    def test_channel_variant_ready_normalizes_aliases(self):
+        from app.geo.content.rules import check_channel_variant_ready
+
+        data = _base(
+            target_channels=["website", "wechat", "zhihu"],
+            variants=["website", "wechat", "zhihu"],
+        )
+        self.assertTrue(check_channel_variant_ready(data).passed)
+
+        # empty variants fail with clear missing list
+        empty = _base(target_channels=["website", "wechat", "zhihu"], variants=[])
+        r = check_channel_variant_ready(empty)
+        self.assertFalse(r.passed)
+        self.assertIn("website", r.message)
+        self.assertIn("wechat", r.message)
+
     def test_updated_at_fails(self):
         checks = {
             c.code: c
