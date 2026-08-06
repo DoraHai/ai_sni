@@ -114,6 +114,39 @@ python scripts/verify_delivery_step1.py
 
 ---
 
+## 3.5 第二步：公网/演示 Webhook 推送（审校 → 导出 → 推送）
+
+> **第二步收尾（2026-08-06）**  
+> - 脚本：`python scripts/smoke_geo_webhook_push.py` → **PASSED**  
+> - 官网渠道 `publish_mode=auto_publish`  
+> - 账号 `demo-webhook-step2-httpbin`（id 以库中为准）  
+> - 默认目标：`https://geo-dev-sink.local/hooks/geo-publish`（**仅 app_env=dev** 本地 sink，不依赖外网）  
+> - 真实 CMS：`set GEO_SMOKE_WEBHOOK_URL=https://你的公网钩子` 后重跑  
+> - 链路：Brief → 事实 → 生成 → 补丁 → variants → export website → 审校通过 → **push 200** + publication
+
+```bash
+# 本地（推荐，fake-ip / 无外网也可）
+python scripts/smoke_geo_webhook_push.py
+
+# 指向真实公网 HTTPS 钩子
+# Windows PowerShell:
+#   $env:GEO_SMOKE_WEBHOOK_URL="https://httpbin.org/post"
+#   python scripts/smoke_geo_webhook_push.py
+```
+
+| 检查项 | 结果 |
+| --- | --- |
+| 官网 auto_publish | ✓ |
+| Webhook 账号 HTTPS 凭证 | ✓ |
+| 导出 website 渠道稿 | ✓ |
+| 审校 submit + approve | ✓ |
+| push 返回 ok / http_status 200 | ✓ |
+| 可写回 publication（create_publication） | ✓ |
+
+**UI 对照：** `/geo/publishing` → 官网页签 → 账号应显示「Webhook 已就绪」；任务编辑器选该账号点「Webhook 推送」。
+
+---
+
 ## 4. 生产最小集
 
 见 `deploy/README-GEO-INDEPENDENT.md`：

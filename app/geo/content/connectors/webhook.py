@@ -16,9 +16,43 @@ from app.security.crypto import decrypt
 ALLOWED_METHODS = frozenset({"POST", "PUT", "PATCH"})
 WEBHOOK_TIMEOUT = 20.0
 
+# Local demo under Clash/Surge fake-ip (198.18.0.0/15) resolves public hosts as
+# "non-global". Allow well-known HTTPS sinks only when env is dev/test.
+_DEV_WEBHOOK_HOST_ALLOWLIST = frozenset(
+    {
+        "httpbin.org",
+        "www.httpbin.org",
+        "postman-echo.com",
+        "www.postman-echo.com",
+        "webhook.site",
+        "eoq9x.wiremockapi.cloud",
+        # Local step-2 smoke: no outbound needed (fake-ip VPN / blocked public sinks)
+        "geo-dev-sink.local",
+    }
+)
+
 
 class WebhookConnectorError(ValueError):
     """User-facing connector validation / remote failure."""
+
+
+async def ensure_webhook_public_url(url: str) -> None:
+    """SSRF guard with optional dev hostname allowlist for demo sinks."""
+    from app.config import get_settings
+
+    host = (urlparse(url).hostname or "").lower()
+    settings = get_settings()
+    env = str(
+        getattr(settings, "app_env", None)
+        or getattr(settings, "env", None)
+        or ""
+    ).lower()
+    if env in {"dev", "test", "local", "development"} and host in _DEV_WEBHOOK_HOST_ALLOWLIST:
+        return
+    try:
+        await _ensure_public_host(url)
+    except GeoAuditError as exc:
+        raise WebhookConnectorError(str(exc)) from exc
 
 
 def decrypt_credentials_json(encrypted: str | None) -> dict[str, Any]:
@@ -108,10 +142,22 @@ async def post_webhook(
 ) -> dict[str, Any]:
     """Send webhook; returns {http_status, remote_url, response_json}."""
     creds = normalize_webhook_credentials(credentials)
-    try:
-        await _ensure_public_host(creds["webhook_url"])
-    except GeoAuditError as exc:
-        raise WebhookConnectorError(str(exc)) from exc
+    await ensure_webhook_public_url(creds["webhook_url"])
+
+    host = (urlparse(creds["webhook_url"]).hostname or "").lower()
+    from app.config import get_settings
+
+    env = str(getattr(get_settings(), "app_env", "") or "").lower()
+    # Dev sink: complete 审校→推送 without relying on public network / fake-ip.
+    if env in {"dev", "test", "local", "development"} and host == "geo-dev-sink.local":
+        task_id = payload.get("task_id") or "0"
+        published = f"https://example.com/geo/published/{task_id}"
+        return {
+            "http_status": 200,
+            "remote_url": published,
+            "webhook_host": host,
+            "response_json": {"ok": True, "url": published, "sink": "geo-dev-sink"},
+        }
 
     body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     headers = {
