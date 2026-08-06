@@ -94,6 +94,19 @@ export function createGeoChannelAccount(body) {
   return client.post('/api/v1/geo/channel-accounts', body)
 }
 
+export function patchGeoChannelAccount(tenantId, accountId, body) {
+  return client.patch(`/api/v1/geo/channel-accounts/${accountId}`, body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+/** soft disable by default; pass hard=true to delete row */
+export function deleteGeoChannelAccount(tenantId, accountId, hard = false) {
+  return client.delete(`/api/v1/geo/channel-accounts/${accountId}`, {
+    params: { tenant_id: tenantId, hard: !!hard },
+  })
+}
+
 /** Normalize static page name → always under /geo/*.html */
 export function normalizeStaticGeoPage(page = 'dashboard.html') {
   let p = String(page || 'dashboard.html').trim().replace(/^\/+/, '')
