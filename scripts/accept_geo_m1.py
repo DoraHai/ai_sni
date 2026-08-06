@@ -219,7 +219,23 @@ def main() -> int:
         )
         assert code == 400, payload
         detail = str(payload.get("detail") or "")
-        assert "导出" in detail or "审校" in detail or "渠道" in detail or "门禁" in detail or "生成" in detail
+        # Any publish gate is fine: export/review/rules/SSRF for bad webhook targets
+        assert any(
+            k in detail
+            for k in (
+                "导出",
+                "审校",
+                "渠道",
+                "门禁",
+                "生成",
+                "就绪",
+                "禁止",
+                "内网",
+                "本机",
+                "事实",
+                "规则",
+            )
+        ), detail
 
     def static_pages():
         for path in (
