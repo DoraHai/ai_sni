@@ -73,6 +73,26 @@ const routes = [
     },
   },
   {
+    path: '/geo/visibility/patrol',
+    component: () => import('../views/geo/GeoVisibilityPatrolView.vue'),
+    meta: {
+      title: '全自动巡检',
+      documentTitle: 'GEO 增长｜可见度巡检',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/period-diff',
+    component: () => import('../views/geo/GeoPeriodDiffView.vue'),
+    meta: {
+      title: '期次对比',
+      documentTitle: 'GEO 增长｜期次对比',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
     path: '/geo/citations',
     component: () => import('../views/geo/GeoCitationsView.vue'),
     meta: {

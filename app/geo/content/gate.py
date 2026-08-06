@@ -20,17 +20,41 @@ def assert_can_publish(
     *,
     task: Any | None = None,
 ) -> list:
+    from app.geo.content.draft_lint import lint_draft, lint_summary
+
     checks = run_checks(rule_input)
     if not is_ready(checks, require_channels=True):
         failed = [c.code for c in checks if not c.passed]
         raise PublishGateError("未达发布就绪: " + ", ".join(failed))
+
+    settings = get_settings()
+    # Fabrication lint (enhancement): block high-risk placeholders / unverified fiction
+    if bool(getattr(settings, "geo_lint_gate", True)):
+        body = getattr(rule_input, "body_markdown", None) or ""
+        facts = getattr(rule_input, "facts", None) or []
+        if not isinstance(facts, list):
+            facts = []
+        summary = lint_summary(lint_draft(body, facts=facts))
+        if not summary.get("blocks_ready"):
+            high = int(summary.get("high") or 0)
+            codes = sorted(
+                {
+                    str(i.get("code") or "")
+                    for i in (summary.get("issues") or [])
+                    if i.get("level") == "高" and i.get("code")
+                }
+            )
+            code_hint = f"（{', '.join(codes)}）" if codes else ""
+            raise PublishGateError(
+                f"编造风险 lint 未通过：高危 {high} 条{code_hint}，请修改母稿后再发布"
+            )
+
     if task is not None:
         try:
             assert_review_approved(task)
         except ValueError as exc:
             raise PublishGateError(str(exc)) from exc
         # P2 / P3 optional gates from last check / review payload
-        settings = get_settings()
         rr = getattr(task, "rule_result", None) or {}
         if not isinstance(rr, dict):
             rr = {}

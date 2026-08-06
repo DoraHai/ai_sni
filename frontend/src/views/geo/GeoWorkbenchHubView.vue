@@ -8,15 +8,17 @@ const router = useRouter()
 const { tenantId } = useGeoTenant()
 
 const cards = [
-  { title: '内容任务', desc: '列表 + 母稿编辑器（Brief/事实/生成/补丁/渠道/审校/回填）', path: '/geo/tasks', phase: 'Vue' },
-  { title: '机会词', desc: 'prompts 列表 / 新建 / 归档', path: '/geo/prompts', phase: 'Vue' },
+  { title: '内容任务', desc: '【主路径】列表 + 母稿编辑器（Brief/事实/生成/补丁/渠道/审校/回填）', path: '/geo/tasks', phase: 'Vue' },
+  { title: '机会词', desc: 'prompts · 探测题标记 / 问题组', path: '/geo/prompts', phase: 'Vue' },
   { title: '事实库', desc: 'facts 列表 / 新建 / 核验（生成需 ≥3 verified）', path: '/geo/facts', phase: 'Vue' },
   { title: '跟踪引擎', desc: '监测引擎开关 · sample_mode', path: '/geo/engines', phase: 'Vue' },
   { title: 'AI 能力配置', desc: '租户 LLM（百炼/DeepSeek）', path: '/geo/ai-settings', phase: 'Vue' },
   { title: '发布渠道', desc: '渠道目录 · Webhook 账号（公网 HTTPS）', path: '/geo/publishing', phase: 'Vue' },
-  { title: 'GEO 概览', desc: 'KPI 与观测入口', path: '/geo/overview', phase: 'Vue' },
+  { title: 'GEO 概览', desc: 'KPI · 可见性 vs 认知分列', path: '/geo/overview', phase: 'Vue' },
   { title: 'AI 可见度', desc: '快照登记与探测', path: '/geo/visibility', phase: 'Vue' },
-  { title: '交付摘要', desc: '周期报告 Markdown', path: '/geo/deliverables', phase: 'Vue' },
+  { title: '全自动巡检', desc: '多词×多引擎 · 配额与引擎健康', path: '/geo/visibility/patrol', phase: 'Vue' },
+  { title: '期次对比', desc: 'before/after 可见性 Δ', path: '/geo/period-diff', phase: 'Vue' },
+  { title: '交付摘要', desc: '周期报告 Markdown / 打印', path: '/geo/deliverables', phase: 'Vue' },
 ]
 
 function go(card) {
@@ -34,7 +36,7 @@ function openStaticFull() {
 }
 
 const note = computed(() =>
-  '可交付 MVP：主路径走 Vue「内容任务」编辑器；静态台仅作兼容。入口见 docs/GEO_DELIVERY_CHECKLIST.md。',
+  '主路径全部在 Vue：任务编辑器 → 可见度/巡检 → 期次对比 → 交付摘要。静态台仅兼容完整流水线后备，日常请优先 Vue。',
 )
 </script>
 
@@ -46,7 +48,8 @@ const note = computed(() =>
         <div class="page-desc">{{ note }}</div>
       </div>
       <div class="header-actions">
-        <el-button type="primary" @click="openStaticEditor">打开静态编辑器</el-button>
+        <el-button type="primary" @click="router.push('/geo/tasks')">内容任务</el-button>
+        <el-button @click="openStaticEditor">静态编辑器（兼容）</el-button>
         <el-button @click="openStaticFull">兼容：全量静态台</el-button>
       </div>
     </div>

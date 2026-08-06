@@ -325,6 +325,53 @@ export function listGeoAnswerSnapshots(tenantId, params = {}) {
   })
 }
 
+/** 可见度全自动巡检 */
+export function fetchVisibilityPatrolSettings(tenantId) {
+  return client.get('/api/v1/geo/visibility-patrol/settings', {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function putVisibilityPatrolSettings(body) {
+  return client.put('/api/v1/geo/visibility-patrol/settings', body)
+}
+
+export function listVisibilityPatrolRuns(tenantId, limit = 20) {
+  return client.get('/api/v1/geo/visibility-patrol/runs', {
+    params: { tenant_id: tenantId, limit },
+  })
+}
+
+export function getVisibilityPatrolRun(tenantId, runId) {
+  return client.get(`/api/v1/geo/visibility-patrol/runs/${runId}`, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function startVisibilityPatrolRun(body) {
+  return client.post('/api/v1/geo/visibility-patrol/runs', body, {
+    timeout: 120000,
+  })
+}
+
+export function fetchVisibilityPatrolOpsStatus(tenantId) {
+  return client.get('/api/v1/geo/visibility-patrol/ops-status', {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function fetchVisibilityPeriodDiff(tenantId, windows) {
+  return client.get('/api/v1/geo/visibility-period-diff', {
+    params: { tenant_id: tenantId, ...windows },
+  })
+}
+
+export function fetchChannelBlueprint(tenantId, group = null) {
+  return client.get('/api/v1/geo/channel-blueprint', {
+    params: { tenant_id: tenantId, group: group || undefined },
+  })
+}
+
 export function createGeoAnswerSnapshot(body) {
   return client.post('/api/v1/geo/answer-snapshots', body)
 }

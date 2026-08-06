@@ -147,17 +147,73 @@ python scripts/smoke_geo_webhook_push.py
 
 ---
 
-## 4. 生产最小集
+## 4. 第三步：生产最小集 / 产品化必做
 
-见 `deploy/README-GEO-INDEPENDENT.md`：
+> **当前交付模式（2026-08）：无生产机 · 仅 GEO 代码交付**  
+> 见 **`docs/GEO_CODE_DELIVERY.md`**。  
+> - **门禁 = 本地自动化全绿**（下表工程项 + §1 脚本）  
+> - **§4.2 生产机勾选 = 后置 / 不适用**，不阻塞代码交接  
+> - 接收方将来上线时再执行 `docs/GEO_PRODUCTION_RUNBOOK.md`
 
-- [ ] `alembic upgrade head`  
-- [ ] `geo_main` / geo-service 健康：`/api/v1/geo/content-health` 与 DB  
-- [ ] Nginx **不**注入 `VITE_API_KEY`；前端走登录  
-- [ ] `ADMIN_API_KEY` / `JWT_SECRET` / `CRYPTO_MASTER_KEY_B64` 已轮换且非仓库默认  
-- [ ] 备份与日志路径有文档  
+> **工程门禁（代码仓内可自动验）**  
+> ```bash
+> python -m pytest -q tests
+> python scripts/verify_productization_must.py
+> python scripts/verify_productization_must.py http://127.0.0.1:8011 geo-demo-local-key 1
+> python scripts/e2e_geo_enhancements.py
+> python scripts/accept_geo_m1.py
+> python scripts/accept_geo_delivery.py
+> ```  
+> 本地 `APP_ENV=dev` 可用 demo key；**生产 `APP_ENV=prod` 启动会硬拦截 demo/空密钥**（`app/security/prod_guard.py`）。
+
+见 `deploy/README-GEO-INDEPENDENT.md`（secrets / logs / backup / smoke）。
+
+### 4.1 工程已落地（代码 + 文档）
+
+| 检查项 | 状态 |
+| --- | --- |
+| 生产密钥门禁（prod 拒 demo key / 空 JWT / 弱 CRYPTO） | ✓ `prod_guard` + main/geo_main 启动 |
+| Nginx 模板不注入 `X-API-Key`；注释禁止注入 | ✓ `deploy/nginx.conf` · `geo-routes.nginx.conf` |
+| 前端生产不依赖内嵌 Key（仅 DEV + VITE_API_KEY） | ✓ router |
+| 巡检日配额 + 单次格数上限 | ✓ `GEO_PATROL_MAX_RUNS_PER_DAY` / `MAX_CELLS_PER_RUN` |
+| 租户隔离 `ensure_tenant` 单测 | ✓ `tests/test_tenant_isolation.py` |
+| 备份与日志路径写入部署文档 | ✓ README-GEO-INDEPENDENT |
+| 可见度全自动巡检（时段/间隔/落库） | ✓ API + Vue `/geo/visibility/patrol` |
+| 产品化自动验脚本 | ✓ `scripts/verify_productization_must.py` |
+
+### 4.2 上线机操作清单（目标环境签字）
+
+**完整步骤（命令级）：`docs/GEO_PRODUCTION_RUNBOOK.md`**
+
+摘要勾选（细节与命令以 Runbook 为准）：
+
+- [ ] 备份 Postgres + `.env`（Runbook §2）  
+- [ ] 目标机 `APP_ENV=prod`；轮换 `ADMIN_API_KEY` / `JWT_SECRET` / `CRYPTO_MASTER_KEY_B64`；`APP_BASE_URL` 公网 HTTPS（§3）  
+- [ ] 首次：`setup-geo.sh` + Nginx include（§4）  
+- [ ] `alembic upgrade head`（含 `0052`/`0053` 巡检）（§5）  
+- [ ] 发布 `geo-service`：`/health/geo` → `"db":"ok"`（§6）  
+- [ ] 静态 GEO + 主站 Vue；**无** `VITE_API_KEY` / **无** Nginx `X-API-Key` 注入（§7）  
+- [ ] `sem-backend` 调度在跑（定时巡检依赖主站）（§8）  
+- [ ] H1–H6 基建 + B1–B7 业务抽测签字（§9）  
+- [ ] 常态备份/日志（§10）  
+
+> 说明：4.1 由研发在仓库闭环，**即本次代码交付范围**。  
+> 4.2 仅在有真实生产/预发主机时执行；**无生产机时勾选「不适用」**，见 `GEO_CODE_DELIVERY.md`。
 
 ---
+
+## 4.3 产品化增强（建议项 · 已落地）
+
+| 增强项 | 落点 |
+| --- | --- |
+| 提及率口径纪律 | `split_visibility_metrics` · top1 · 概览分列 · `metric_notes` |
+| 巡检运营化 | `GET /visibility-patrol/ops-status` · 巡检页告警/配额/引擎健康 |
+| 交付报告 | MD + 打印一页 · 可见性/认知/top1 KPI |
+| 编造 lint 门禁 | `GEO_LINT_GATE`（默认 true）· `assert_can_publish` |
+| 阵地推荐 | 任务编辑器「分发推荐」· `channel-blueprint` |
+| 期次对比 Vue | `/geo/period-diff` |
+| 入口收敛 | 概览/工作台主推 Vue；静态标「兼容」 |
+| 增强冒烟 | `scripts/e2e_geo_enhancements.py` |
 
 ## 5. 已知非阻塞（可进二期）
 
@@ -165,17 +221,26 @@ python scripts/smoke_geo_webhook_push.py
 - 客户 HTML/ZIP 三件套加深（P4）  
 - SEM↔GEO 意图枢纽（P5）  
 - GeoLook 工单 DSL / 15 引擎大盘（P6）  
-- 浏览器 Playwright E2E（建议后补）  
+- 浏览器 Playwright 全量 E2E（HTTP 冒烟已覆盖关键 API）  
 
 ---
 
 ## 6. 签字
 
+### 6.1 代码交付（无生产机 · 默认）
+
 | 角色 | 姓名 | 日期 | 结论 |
 | --- | --- | --- | --- |
-| 研发 | | | 自动化全绿 |
-| 产品/运营 | | | 主环手测通过 |
-| 交付 | | | 可上演示 / 内测 |
+| 研发 | | | §1 自动化全绿；范围见 `GEO_CODE_DELIVERY.md` |
+| 接收方 | | | 代码已收；可按 `LOCAL_GEO_DEMO` 本地演示 |
+| 生产部署 | — | — | **不适用**（无生产机，后置） |
 
-**发布说明模板：**  
-本版本 GEO 自助 MVP：内容闭环 + 可见度 + Webhook 回填；入口 Vue `/geo/*` + 静态 `/geo/*.html`；禁止根路径 `dashboard.html`。
+### 6.2 生产上线（有机器时另签）
+
+| 角色 | 姓名 | 日期 | 结论 |
+| --- | --- | --- | --- |
+| 运维/研发 | | | Runbook H1–H6 + 业务抽测 |
+| 产品/交付 | | | 可上演示 / 内测 / 生产 |
+
+**发布说明模板（代码交付）：**  
+本包为 GEO 自助 MVP **代码交付**：内容闭环 + 可见度巡检 + Webhook + 产品化增强；本地验收脚本全绿。不含生产机部署。入口 Vue `/geo/*` + 静态 `/geo/*.html`。生产步骤见 `GEO_PRODUCTION_RUNBOOK.md`（后置）。

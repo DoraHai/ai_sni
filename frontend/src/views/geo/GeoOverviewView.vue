@@ -36,7 +36,12 @@ const summaryCards = computed(() => {
     {
       label: '可见性提及率',
       value: fmtPct(s.visibility_mention_rate),
-      hint: `快照 ${fmtInt(s.snapshots_visibility)} · 引擎 ${fmtInt(s.visibility_engines_covered)}`,
+      hint: `排除探测 · 快照 ${fmtInt(s.snapshots_visibility)} · top1 ${fmtPct(s.visibility_top1_rate)}`,
+    },
+    {
+      label: '品牌认知率',
+      value: fmtPct(s.probe_recognition_rate),
+      hint: `仅探测题 · 样本 ${fmtInt(s.snapshots_probe)}`,
     },
     {
       label: '引用域名',
@@ -52,20 +57,22 @@ const summaryCards = computed(() => {
 })
 
 const workbenchLinks = [
-  { label: 'AI 可见度', path: '/geo/visibility', desc: '登记 / 多引擎探测', vue: true },
+  { label: '内容任务', path: '/geo/tasks', desc: '主入口 · 列表 + 混合编辑器', vue: true, primary: true },
+  { label: 'AI 可见度', path: '/geo/visibility', desc: '登记 / 多引擎探测', vue: true, primary: true },
+  { label: '全自动巡检', path: '/geo/visibility/patrol', desc: '多词×多引擎自动探测落库', vue: true, primary: true },
+  { label: '期次对比', path: '/geo/period-diff', desc: 'before/after 可见性 Δ', vue: true, primary: true },
+  { label: '交付摘要', path: '/geo/deliverables', desc: '周期报告 Markdown / 打印', vue: true, primary: true },
   { label: '引用域名', path: '/geo/citations', desc: '引用聚合与蓝图对照', vue: true },
   { label: '竞品分析', path: '/geo/competitors', desc: '竞品出现与份额', vue: true },
   { label: '评价分析', path: '/geo/evaluation', desc: '情感与位置分布', vue: true },
-  { label: '交付摘要', path: '/geo/deliverables', desc: '周期报告 Markdown', vue: true },
-  { label: '内容工作台', path: '/geo/workbench', desc: '方案 B 枢纽（Vue 页集合）', vue: true },
-  { label: '内容任务', path: '/geo/tasks', desc: '任务列表 + 混合编辑器', vue: true },
-  { label: '机会词', path: '/geo/prompts', desc: 'prompts 管理', vue: true },
+  { label: '内容工作台', path: '/geo/workbench', desc: 'Vue 页枢纽', vue: true },
+  { label: '机会词', path: '/geo/prompts', desc: 'prompts · 探测题标记', vue: true },
   { label: '事实库', path: '/geo/facts', desc: 'facts 管理', vue: true },
   { label: '发布渠道', path: '/geo/publishing', desc: '渠道与 Webhook', vue: true },
   {
-    label: '静态编辑器',
+    label: '静态编辑器（兼容）',
     path: 'static-editor',
-    desc: '母稿完整流水线（兼容 · :5176/geo/editor.html）',
+    desc: '完整流水线后备 · :5176/geo/editor.html',
     static: true,
   },
   { label: '网站体检', path: '/diagnostic-center/', desc: '诊断 → 内容桥接', external: true },

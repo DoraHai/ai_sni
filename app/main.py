@@ -539,6 +539,10 @@ async def sync_url_words(
 
 @app.on_event("startup")
 async def on_startup() -> None:
+    from app.security.prod_guard import enforce_production_secrets
+
+    # Productization must-do: refuse demo keys when APP_ENV=prod|production
+    enforce_production_secrets(settings, hard_fail=True)
     logger.info(
         "SEM 后端启动：env=%s base_url=%s default_user=%s",
         settings.app_env,

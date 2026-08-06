@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     geo_score_gate: bool = False
     geo_score_threshold: int = 60
     geo_ai_review_gate: bool = False
+    # 编造风险 lint：高危条数 >0 时拦截发布/Webhook（产品化增强）
+    geo_lint_gate: bool = True
+
+    # GEO 巡检配额（产品化必做：防一键烧穿 LLM）
+    # 单租户自然日（Asia/Shanghai）最多启动次数（手动+定时合计）
+    geo_patrol_max_runs_per_day: int = 24
+    # 单次巡检最大探测格数 ≈ 机会词 × 引擎（超出截断并记 summary）
+    geo_patrol_max_cells_per_run: int = 200
 
     log_level: str = "INFO"
 

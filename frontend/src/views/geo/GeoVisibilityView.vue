@@ -338,9 +338,18 @@ onMounted(reloadAll)
         <div class="page-title">AI 可见度</div>
         <div class="page-desc">
           粘贴或探测回答快照；多引擎探测共用租户 LLM，按引擎人设生成草稿（不写库）。
+          批量真采样与自动落库请用
+          <router-link to="/geo/visibility/patrol">全自动巡检</router-link>。
+        </div>
+        <div class="sub-tabs">
+          <router-link class="sub-tab is-active" to="/geo/visibility">登记快照</router-link>
+          <router-link class="sub-tab" to="/geo/visibility/patrol">全自动巡检</router-link>
         </div>
       </div>
       <div class="header-actions">
+        <el-button type="primary" plain @click="router.push('/geo/visibility/patrol')">
+          全自动巡检
+        </el-button>
         <el-button @click="reloadAll">刷新</el-button>
         <router-link class="el-button" to="/geo/citations">引用域名</router-link>
         <router-link class="el-button" to="/geo/overview">GEO 概览</router-link>
@@ -547,7 +556,33 @@ onMounted(reloadAll)
   align-items: flex-start;
 }
 .page-title { font-size: 20px; font-weight: 650; color: #1f2937; }
-.page-desc { margin-top: 4px; font-size: 13px; color: #6b7280; }
+.page-desc { margin-top: 4px; font-size: 13px; color: #6b7280; max-width: 640px; line-height: 1.5; }
+.page-desc a { color: #7c3aed; text-decoration: none; }
+.page-desc a:hover { text-decoration: underline; }
+.sub-tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.sub-tab {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b7280;
+  text-decoration: none;
+  border: 1px solid transparent;
+  background: #f3f4f6;
+}
+.sub-tab:hover { color: #5b21b6; background: #f5f0ff; }
+.sub-tab.is-active {
+  color: #5b21b6;
+  background: #f5f0ff;
+  border-color: #ddd6fe;
+}
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .mb { margin-bottom: 14px; }
 .layout {

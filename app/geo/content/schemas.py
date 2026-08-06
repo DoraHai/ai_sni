@@ -318,6 +318,32 @@ class TrackingEnginesPut(BaseModel):
     items: list[TrackingEngineItem] = Field(..., min_length=1)
 
 
+class VisibilityPatrolCreate(BaseModel):
+    tenant_id: int
+    auto_persist: bool = True
+    prefer_real: bool = True
+    prompt_limit: int = Field(20, ge=1, le=50)
+    engine_keys: list[str] | None = None
+    # run immediately in background (default True)
+    run_async: bool = True
+
+
+class VisibilityPatrolSettingsUpdate(BaseModel):
+    tenant_id: int
+    enabled: bool = False
+    # legacy single-hour (optional); if window_* provided they take precedence
+    daily_hour: int | None = Field(None, ge=0, le=23)
+    # Asia/Shanghai local hour window (inclusive). Overnight ok when start > end.
+    window_start_hour: int = Field(6, ge=0, le=23)
+    window_end_hour: int = Field(22, ge=0, le=23)
+    # hours between scheduled runs; allowed: 1,2,3,4,6,8,12,24
+    interval_hours: int = Field(24, ge=1, le=24)
+    auto_persist: bool = True
+    prefer_real: bool = True
+    prompt_limit: int = Field(20, ge=1, le=50)
+    engine_keys: list[str] | None = None
+
+
 MediaChannelType = Literal[
     "website",
     "zhihu",
