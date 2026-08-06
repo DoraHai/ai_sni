@@ -1610,28 +1610,11 @@ async def get_visibility_patrol_settings(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    from app.geo.content.patrol import patrol_settings_payload
+
     ctx.ensure_tenant(tenant_id)
     row = await session.get(GeoVisibilityPatrolSettings, tenant_id)
-    if row is None:
-        return {
-            "tenant_id": tenant_id,
-            "enabled": False,
-            "daily_hour": 6,
-            "auto_persist": True,
-            "prefer_real": True,
-            "prompt_limit": 20,
-            "engine_keys": None,
-        }
-    return {
-        "tenant_id": row.tenant_id,
-        "enabled": bool(row.enabled),
-        "daily_hour": int(row.daily_hour),
-        "auto_persist": bool(row.auto_persist),
-        "prefer_real": bool(row.prefer_real),
-        "prompt_limit": int(row.prompt_limit),
-        "engine_keys": row.engine_keys,
-        "updated_at": _iso(row.updated_at),
-    }
+    return patrol_settings_payload(row, tenant_id)
 
 
 @router.put("/visibility-patrol/settings")
@@ -1640,6 +1623,12 @@ async def put_visibility_patrol_settings(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    from app.geo.content.patrol import (
+        clamp_hour,
+        clamp_interval_hours,
+        patrol_settings_payload,
+    )
+
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
     row = await session.get(GeoVisibilityPatrolSettings, req.tenant_id)
@@ -1647,23 +1636,19 @@ async def put_visibility_patrol_settings(
         row = GeoVisibilityPatrolSettings(tenant_id=req.tenant_id)
         session.add(row)
     row.enabled = bool(req.enabled)
-    row.daily_hour = int(req.daily_hour)
+    start_h = clamp_hour(req.window_start_hour, 6)
+    end_h = clamp_hour(req.window_end_hour, 22)
+    row.window_start_hour = start_h
+    row.window_end_hour = end_h
+    row.interval_hours = clamp_interval_hours(req.interval_hours, 24)
+    row.daily_hour = start_h  # compat column
     row.auto_persist = bool(req.auto_persist)
     row.prefer_real = bool(req.prefer_real)
     row.prompt_limit = int(req.prompt_limit)
     row.engine_keys = req.engine_keys
     await session.commit()
     await session.refresh(row)
-    return {
-        "tenant_id": row.tenant_id,
-        "enabled": bool(row.enabled),
-        "daily_hour": int(row.daily_hour),
-        "auto_persist": bool(row.auto_persist),
-        "prefer_real": bool(row.prefer_real),
-        "prompt_limit": int(row.prompt_limit),
-        "engine_keys": row.engine_keys,
-        "updated_at": _iso(row.updated_at),
-    }
+    return patrol_settings_payload(row, req.tenant_id)
 
 
 @router.get("/visibility-patrol/runs")

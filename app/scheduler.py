@@ -229,27 +229,54 @@ async def purge_old_assistant_messages() -> None:
 
 
 async def run_geo_visibility_patrols() -> None:
-    """Hourly: for tenants with patrol settings.enabled and matching daily_hour, start a run."""
+    """Hourly: fire enabled tenants whose window + interval allow a run (Asia/Shanghai)."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
     from app.database import async_session_factory
-    from app.geo.content.patrol import execute_patrol_run
+    from app.geo.content.patrol import execute_patrol_run, should_run_scheduled_patrol
     from app.models import GeoVisibilityPatrolRun, GeoVisibilityPatrolSettings
     from sqlalchemy import select
 
     now = datetime.now(ZoneInfo("Asia/Shanghai"))
-    hour = now.hour
     async with async_session_factory() as session:
         rows = list(
             await session.scalars(
                 select(GeoVisibilityPatrolSettings).where(
                     GeoVisibilityPatrolSettings.enabled.is_(True),
-                    GeoVisibilityPatrolSettings.daily_hour == hour,
                 )
             )
         )
         for st in rows:
+            start_h = int(getattr(st, "window_start_hour", None) or st.daily_hour or 6)
+            end_h = int(getattr(st, "window_end_hour", None) or st.daily_hour or 22)
+            interval = int(getattr(st, "interval_hours", None) or 24)
+            last_at = getattr(st, "last_scheduled_at", None)
+            if not should_run_scheduled_patrol(
+                now=now,
+                window_start_hour=start_h,
+                window_end_hour=end_h,
+                interval_hours=interval,
+                last_scheduled_at=last_at,
+            ):
+                continue
+            # skip if a scheduled run is already in flight
+            inflight = await session.scalar(
+                select(GeoVisibilityPatrolRun.id)
+                .where(
+                    GeoVisibilityPatrolRun.tenant_id == st.tenant_id,
+                    GeoVisibilityPatrolRun.trigger == "schedule",
+                    GeoVisibilityPatrolRun.status.in_(("pending", "running")),
+                )
+                .limit(1)
+            )
+            if inflight:
+                logger.info(
+                    "[scheduler] skip patrol tenant=%s already inflight run=%s",
+                    st.tenant_id,
+                    inflight,
+                )
+                continue
             run = GeoVisibilityPatrolRun(
                 tenant_id=st.tenant_id,
                 status="pending",
@@ -261,12 +288,21 @@ async def run_geo_visibility_patrols() -> None:
                 created_by=None,
             )
             session.add(run)
+            # record schedule tick immediately so interval holds even if execute fails mid-way
+            st.last_scheduled_at = datetime.utcnow()
             await session.commit()
             await session.refresh(run)
             rid = run.id
             try:
                 await execute_patrol_run(session, rid)
-                logger.info("[scheduler] geo visibility patrol done tenant=%s run=%s", st.tenant_id, rid)
+                logger.info(
+                    "[scheduler] geo visibility patrol done tenant=%s run=%s window=%s-%s interval=%sh",
+                    st.tenant_id,
+                    rid,
+                    start_h,
+                    end_h,
+                    interval,
+                )
             except Exception:  # noqa: BLE001
                 logger.exception(
                     "[scheduler] geo visibility patrol failed tenant=%s run=%s",
@@ -305,7 +341,7 @@ def start_scheduler() -> None:
         max_instances=1,
         coalesce=True,
     )
-    # GEO 可见度全自动巡检：每小时检查租户设置的 daily_hour
+    # GEO 可见度全自动巡检：每小时检查租户时间段 + 间隔
     scheduler.add_job(
         run_geo_visibility_patrols,
         CronTrigger(minute=5),

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -27,14 +27,114 @@ from app.models import (
     GeoAnswerSnapshot,
     GeoPrompt,
     GeoVisibilityPatrolRun,
+    GeoVisibilityPatrolSettings,
     Tenant,
 )
 
 logger = logging.getLogger(__name__)
 
+# allowed interval presets (hours)
+PATROL_INTERVAL_HOURS_CHOICES = (1, 2, 3, 4, 6, 8, 12, 24)
+
 
 def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt else None
+
+
+def clamp_hour(value: int | None, default: int) -> int:
+    try:
+        h = int(value if value is not None else default)
+    except (TypeError, ValueError):
+        h = default
+    return max(0, min(23, h))
+
+
+def clamp_interval_hours(value: int | None, default: int = 24) -> int:
+    try:
+        n = int(value if value is not None else default)
+    except (TypeError, ValueError):
+        n = default
+    if n in PATROL_INTERVAL_HOURS_CHOICES:
+        return n
+    # nearest allowed
+    return min(PATROL_INTERVAL_HOURS_CHOICES, key=lambda x: abs(x - max(1, min(24, n))))
+
+
+def hour_in_window(hour: int, start: int, end: int) -> bool:
+    """Whether local hour is inside [start, end] inclusive. Supports overnight (start > end)."""
+    h = int(hour) % 24
+    s = clamp_hour(start, 0)
+    e = clamp_hour(end, 23)
+    if s <= e:
+        return s <= h <= e
+    # overnight e.g. 22–6
+    return h >= s or h <= e
+
+
+def _as_utc_naive(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def should_run_scheduled_patrol(
+    *,
+    now: datetime,
+    window_start_hour: int,
+    window_end_hour: int,
+    interval_hours: int,
+    last_scheduled_at: datetime | None,
+) -> bool:
+    """Decide if a scheduled patrol should fire at ``now`` (timezone-aware preferred)."""
+    local_hour = now.hour
+    if not hour_in_window(local_hour, window_start_hour, window_end_hour):
+        return False
+    interval = clamp_interval_hours(interval_hours)
+    last = _as_utc_naive(last_scheduled_at)
+    if last is None:
+        return True
+    # compare using naive UTC-ish wall clock: convert now to naive in same fashion
+    if now.tzinfo is not None:
+        now_cmp = now.astimezone(timezone.utc).replace(tzinfo=None)
+    else:
+        now_cmp = now
+    elapsed_h = (now_cmp - last).total_seconds() / 3600.0
+    return elapsed_h >= float(interval)
+
+
+def patrol_settings_payload(row: GeoVisibilityPatrolSettings | None, tenant_id: int) -> dict[str, Any]:
+    if row is None:
+        return {
+            "tenant_id": tenant_id,
+            "enabled": False,
+            "daily_hour": 6,
+            "window_start_hour": 6,
+            "window_end_hour": 22,
+            "interval_hours": 24,
+            "last_scheduled_at": None,
+            "auto_persist": True,
+            "prefer_real": True,
+            "prompt_limit": 20,
+            "engine_keys": None,
+            "interval_choices": list(PATROL_INTERVAL_HOURS_CHOICES),
+        }
+    return {
+        "tenant_id": row.tenant_id,
+        "enabled": bool(row.enabled),
+        "daily_hour": int(getattr(row, "daily_hour", None) or row.window_start_hour or 6),
+        "window_start_hour": clamp_hour(getattr(row, "window_start_hour", None), 6),
+        "window_end_hour": clamp_hour(getattr(row, "window_end_hour", None), 22),
+        "interval_hours": clamp_interval_hours(getattr(row, "interval_hours", None), 24),
+        "last_scheduled_at": _iso(getattr(row, "last_scheduled_at", None)),
+        "auto_persist": bool(row.auto_persist),
+        "prefer_real": bool(row.prefer_real),
+        "prompt_limit": int(row.prompt_limit or 20),
+        "engine_keys": row.engine_keys,
+        "updated_at": _iso(row.updated_at),
+        "interval_choices": list(PATROL_INTERVAL_HOURS_CHOICES),
+    }
 
 
 def patrol_run_payload(row: GeoVisibilityPatrolRun) -> dict[str, Any]:

@@ -25,11 +25,15 @@ const savingSettings = ref(false)
 const error = ref('')
 const settings = ref({
   enabled: false,
-  daily_hour: 6,
+  window_start_hour: 6,
+  window_end_hour: 22,
+  interval_hours: 24,
+  last_scheduled_at: null,
   auto_persist: true,
   prefer_real: true,
   prompt_limit: 20,
   engine_keys: null,
+  interval_choices: [1, 2, 3, 4, 6, 8, 12, 24],
 })
 const runs = ref([])
 const engines = ref([])
@@ -42,6 +46,33 @@ const form = ref({
   prompt_limit: 20,
   engine_keys: [],
 })
+
+const intervalOptions = [
+  { value: 1, label: '每 1 小时' },
+  { value: 2, label: '每 2 小时' },
+  { value: 3, label: '每 3 小时' },
+  { value: 4, label: '每 4 小时' },
+  { value: 6, label: '每 6 小时' },
+  { value: 8, label: '每 8 小时' },
+  { value: 12, label: '每 12 小时' },
+  { value: 24, label: '每 24 小时（每天）' },
+]
+
+function hourLabel(h) {
+  const n = Number(h)
+  if (Number.isNaN(n)) return '—'
+  return `${String(n).padStart(2, '0')}:00`
+}
+
+function windowHint() {
+  const s = settings.value.window_start_hour
+  const e = settings.value.window_end_hour
+  if (s == null || e == null) return ''
+  if (Number(s) <= Number(e)) {
+    return `允许时段 ${hourLabel(s)} – ${hourLabel(e)}（含整点，Asia/Shanghai）`
+  }
+  return `允许时段 ${hourLabel(s)} – 次日 ${hourLabel(e)}（跨夜，含整点）`
+}
 
 async function load() {
   if (!tenantId.value) {
@@ -56,7 +87,14 @@ async function load() {
       listVisibilityPatrolRuns(tenantId.value, 30),
       listGeoTrackingEngines(tenantId.value, false),
     ])
-    settings.value = s
+    settings.value = {
+      ...settings.value,
+      ...s,
+      window_start_hour: s.window_start_hour ?? s.daily_hour ?? 6,
+      window_end_hour: s.window_end_hour ?? s.daily_hour ?? 22,
+      interval_hours: s.interval_hours ?? 24,
+      interval_choices: s.interval_choices || [1, 2, 3, 4, 6, 8, 12, 24],
+    }
     form.value.auto_persist = s.auto_persist !== false
     form.value.prefer_real = s.prefer_real !== false
     form.value.prompt_limit = s.prompt_limit || 20
@@ -78,16 +116,25 @@ async function load() {
 async function saveSettings() {
   savingSettings.value = true
   try {
-    settings.value = await putVisibilityPatrolSettings({
+    const saved = await putVisibilityPatrolSettings({
       tenant_id: tenantId.value,
       enabled: settings.value.enabled,
-      daily_hour: settings.value.daily_hour,
+      window_start_hour: settings.value.window_start_hour,
+      window_end_hour: settings.value.window_end_hour,
+      interval_hours: settings.value.interval_hours,
       auto_persist: form.value.auto_persist,
       prefer_real: form.value.prefer_real,
       prompt_limit: form.value.prompt_limit,
       engine_keys: form.value.engine_keys?.length ? form.value.engine_keys : null,
     })
-    ElMessage.success('巡检设置已保存（定时任务由主站 scheduler 每小时检查）')
+    settings.value = {
+      ...settings.value,
+      ...saved,
+      window_start_hour: saved.window_start_hour ?? 6,
+      window_end_hour: saved.window_end_hour ?? 22,
+      interval_hours: saved.interval_hours ?? 24,
+    }
+    ElMessage.success('定时设置已保存（主站 scheduler 每小时 :05 检查时间段与间隔）')
   } catch (e) {
     ElMessage.error(e.message || '保存失败')
   } finally {
@@ -224,16 +271,47 @@ onUnmounted(stopPoll)
         <div class="panel-title">定时全自动（主站 scheduler）</div>
         <el-form label-position="top" size="small">
           <el-form-item>
-            <el-switch v-model="settings.enabled" active-text="开启每日定时" />
+            <el-switch v-model="settings.enabled" active-text="开启定时巡检" />
           </el-form-item>
-          <el-form-item label="每日执行小时（Asia/Shanghai）">
-            <el-input-number v-model="settings.daily_hour" :min="0" :max="23" />
+          <el-form-item label="执行时间段（Asia/Shanghai 整点）">
+            <div class="window-row">
+              <el-input-number
+                v-model="settings.window_start_hour"
+                :min="0"
+                :max="23"
+                controls-position="right"
+              />
+              <span class="window-sep">至</span>
+              <el-input-number
+                v-model="settings.window_end_hour"
+                :min="0"
+                :max="23"
+                controls-position="right"
+              />
+            </div>
+            <p class="field-hint">{{ windowHint() }}；开始晚于结束表示跨夜（如 22→6）。</p>
           </el-form-item>
+          <el-form-item label="执行时间间隔">
+            <el-select v-model="settings.interval_hours" style="width: 100%">
+              <el-option
+                v-for="opt in intervalOptions"
+                :key="opt.value"
+                :label="opt.label"
+                :value="opt.value"
+              />
+            </el-select>
+            <p class="field-hint">
+              在允许时段内，距上次定时触发至少间隔这么久才再跑；主站每小时 :05 检查一次。
+            </p>
+          </el-form-item>
+          <p v-if="settings.last_scheduled_at" class="last-run">
+            上次定时触发：{{ settings.last_scheduled_at }}
+          </p>
           <el-button type="primary" plain :loading="savingSettings" @click="saveSettings">
             保存定时设置
           </el-button>
           <p class="hint">
-            主站进程 scheduler 每小时 :05 检查；仅当 enabled 且 daily_hour 匹配当前小时时启动巡检。
+            例：时段 8–20、间隔 4 小时 → 约在 8/12/16/20 点（:05）可触发。
             geo_main 独立部署时请保证主站或带调度的 worker 在跑。
           </p>
         </el-form>
@@ -334,6 +412,12 @@ onUnmounted(stopPoll)
   display: flex; gap: 8px; align-items: center;
 }
 .hint { font-size: 12px; color: #9ca3af; margin-top: 10px; line-height: 1.45; }
+.field-hint { font-size: 12px; color: #9ca3af; margin: 6px 0 0; line-height: 1.4; }
+.window-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; width: 100%;
+}
+.window-sep { color: #6b7280; font-size: 13px; }
+.last-run { font-size: 12px; color: #6b7280; margin: 0 0 10px; }
 .detail { margin-top: 16px; border-top: 1px solid #eee; padding-top: 12px; }
 .err { color: #b91c1c; font-size: 13px; }
 .muted { color: #9ca3af; font-size: 11px; margin-left: 4px; }

@@ -7,8 +7,77 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.geo.content.patrol import execute_patrol_run, patrol_run_payload
+from app.geo.content.patrol import (
+    clamp_interval_hours,
+    execute_patrol_run,
+    hour_in_window,
+    patrol_run_payload,
+    should_run_scheduled_patrol,
+)
 from app.geo.content.probe import SAMPLE_MODE_PERSONA, SAMPLE_MODE_REAL
+
+
+class ScheduleWindowTests(unittest.TestCase):
+    def test_hour_in_window_same_day(self):
+        self.assertTrue(hour_in_window(8, 8, 20))
+        self.assertTrue(hour_in_window(20, 8, 20))
+        self.assertFalse(hour_in_window(7, 8, 20))
+        self.assertFalse(hour_in_window(21, 8, 20))
+
+    def test_hour_in_window_overnight(self):
+        self.assertTrue(hour_in_window(23, 22, 6))
+        self.assertTrue(hour_in_window(0, 22, 6))
+        self.assertTrue(hour_in_window(6, 22, 6))
+        self.assertFalse(hour_in_window(12, 22, 6))
+
+    def test_clamp_interval(self):
+        self.assertEqual(clamp_interval_hours(4), 4)
+        self.assertEqual(clamp_interval_hours(5), 4)  # nearest
+        self.assertEqual(clamp_interval_hours(100), 24)
+
+    def test_should_run_respects_window_and_interval(self):
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("Asia/Shanghai")
+        now = datetime(2026, 8, 6, 10, 5, tzinfo=tz)
+        self.assertTrue(
+            should_run_scheduled_patrol(
+                now=now,
+                window_start_hour=8,
+                window_end_hour=20,
+                interval_hours=4,
+                last_scheduled_at=None,
+            )
+        )
+        self.assertFalse(
+            should_run_scheduled_patrol(
+                now=datetime(2026, 8, 6, 7, 5, tzinfo=tz),
+                window_start_hour=8,
+                window_end_hour=20,
+                interval_hours=4,
+                last_scheduled_at=None,
+            )
+        )
+        # last run 1h ago, interval 4h → skip
+        self.assertFalse(
+            should_run_scheduled_patrol(
+                now=now,
+                window_start_hour=8,
+                window_end_hour=20,
+                interval_hours=4,
+                last_scheduled_at=datetime(2026, 8, 6, 1, 5, 0),  # UTC naive ~9h earlier wall depends
+            )
+        )
+        # last run long ago → run
+        self.assertTrue(
+            should_run_scheduled_patrol(
+                now=now,
+                window_start_hour=8,
+                window_end_hour=20,
+                interval_hours=4,
+                last_scheduled_at=datetime(2026, 8, 5, 1, 0, 0),
+            )
+        )
 
 
 class PatrolPayloadTests(unittest.TestCase):

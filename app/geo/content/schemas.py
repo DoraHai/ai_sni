@@ -331,7 +331,13 @@ class VisibilityPatrolCreate(BaseModel):
 class VisibilityPatrolSettingsUpdate(BaseModel):
     tenant_id: int
     enabled: bool = False
-    daily_hour: int = Field(6, ge=0, le=23)
+    # legacy single-hour (optional); if window_* provided they take precedence
+    daily_hour: int | None = Field(None, ge=0, le=23)
+    # Asia/Shanghai local hour window (inclusive). Overnight ok when start > end.
+    window_start_hour: int = Field(6, ge=0, le=23)
+    window_end_hour: int = Field(22, ge=0, le=23)
+    # hours between scheduled runs; allowed: 1,2,3,4,6,8,12,24
+    interval_hours: int = Field(24, ge=1, le=24)
     auto_persist: bool = True
     prefer_real: bool = True
     prompt_limit: int = Field(20, ge=1, le=50)
