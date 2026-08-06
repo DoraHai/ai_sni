@@ -2121,6 +2121,27 @@ async def update_channel_account(
     return _channel_account_payload(row)
 
 
+@router.delete("/channel-accounts/{account_id}")
+async def delete_channel_account(
+    account_id: int,
+    tenant_id: int = Query(...),
+    hard: bool = Query(False, description="true=物理删除；默认仅 status=disabled"),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Disable or hard-delete a channel account (demo cleanup / revoke)."""
+    ctx.ensure_tenant(tenant_id)
+    row = await _get_channel_account(session, account_id, tenant_id)
+    if hard:
+        await session.delete(row)
+        await session.commit()
+        return {"deleted": True, "id": account_id, "hard": True}
+    row.status = "disabled"
+    await session.commit()
+    await session.refresh(row)
+    return {"deleted": False, "disabled": True, "account": _channel_account_payload(row)}
+
+
 # ---------- media placements (Wave B2) ----------
 
 
