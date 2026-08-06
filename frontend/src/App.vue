@@ -48,6 +48,8 @@ const ALL_GROUPS = computed(() => [
   { label: 'GEO 增长', icon: '◈', children: [
     { label: 'GEO 概览', path: '/geo/overview', key: 'geo.content' },
     { label: 'AI 可见度', path: '/geo/visibility', key: 'geo.content' },
+    { label: '全自动巡检', path: '/geo/visibility/patrol', key: 'geo.content' },
+    { label: '期次对比', path: '/geo/period-diff', key: 'geo.content' },
     { label: '引用域名', path: '/geo/citations', key: 'geo.content' },
     { label: '竞品分析', path: '/geo/competitors', key: 'geo.content' },
     { label: '评价分析', path: '/geo/evaluation', key: 'geo.content' },
