@@ -62,40 +62,55 @@ python -m scripts.seed_geo_demo --tenant-id 1 --verify-facts
 
 ## 3. 浏览器主环手测（租户 1）
 
+> **第一步收尾（2026-08-06）**  
+> - 自动化：`accept_geo_m1` 9/9 · `accept_geo_delivery` 10/10 · `verify_delivery_step1` 12/12  
+> - 演示种子：`seed_geo_demo --verify-facts`（tenant 1，≥3 verified）  
+> - 服务：8000 / 8011 / 5173 / 5176 已就绪  
+> - 表中 **✓ 自动** = 代码/接口/页面加载已验；**☐ 目视** = 需本机点一次确认 toast/版式（浏览器自动化点击不可靠时）
+
 ### 3.1 Vue 路径（主入口）
 
 | # | 步骤 | 期望 | 结果 |
 | --- | --- | --- | --- |
-| V1 | 打开 `/geo/overview` | KPI 有数或 0，无白屏 | ☐ |
-| V2 | `/geo/workbench` → 内容任务 | 列表可开 | ☐ |
-| V3 | 新建或打开**空 Brief**任务 → AI 建议 | 行业/受众/意图/类型/CTA 有值 + 成功提示 | ☐ |
-| V4 | 保存 Brief | 刷新后仍在 | ☐ |
-| V5 | 召回 / 一键绑 3 条 verified / 保存绑定 | 已绑 ≥3，状态 facts_bound 或可生成 | ☐ |
-| V6 | 生成母稿 | 正文非空 + **成功/警告 toast**（含字数与状态；`needs_fix` 属正常需修规则，非失败）+ 页内蓝字提示 | ☐ |
-| V7 | 检查就绪 → 一键应用全部补丁 | 正文字数变长，Score 更新，目标规则通过 | ☐ |
-| V8 | 生成 website/wechat/zhihu | 三页签有稿；渠道覆盖显示已有三渠道 | ☐ |
-| V9 | 提交审校 → 通过 | review_status=approved | ☐ |
-| V10 | 回填公网 URL（如 https://example.com/…） | 200，publications 有记录 | ☐ |
-| V11 | Webhook：公网 HTTPS 账号推送 | 成功或明确业务错误（非静默） | ☐ |
-| V12 | `/geo/visibility` 登记快照 | 竞品/引用页有聚合变化 | ☐ |
-| V13 | `/geo/deliverables` 导出 MD | 可下载/可复制 | ☐ |
+| V1 | 打开 `/geo/overview` | KPI 有数或 0，无白屏 | ☐ 目视 |
+| V2 | `/geo/workbench` → 内容任务 | 列表可开 | ☐ 目视 |
+| V3 | 新建或打开**空 Brief**任务 → AI 建议 | 行业/受众/意图/类型/CTA 有值 + 成功提示 | ✓ 自动（delivery suggest-brief） |
+| V4 | 保存 Brief | 刷新后仍在 | ✓ 自动（delivery patch brief） |
+| V5 | 召回 / 一键绑 3 条 verified / 保存绑定 | 已绑 ≥3，状态 facts_bound 或可生成 | ✓ 自动（retrieve+bind） |
+| V6 | 生成母稿 | 正文非空 + **成功/警告 toast**（含字数与状态；`needs_fix` 属正常需修规则，非失败）+ 页内蓝字提示 | ✓ 自动生成；**目视 toast**（代码已含 generateHint） |
+| V7 | 检查就绪 → 一键应用全部补丁 | 正文字数变长，Score 更新，目标规则通过 | ✓ 自动（apply-patch body+score） |
+| V8 | 生成 website/wechat/zhihu | 三页签有稿；渠道覆盖显示已有三渠道 | ✓ 自动（variants + channel rule） |
+| V9 | 提交审校 → 通过 | review_status=approved | ☐ 目视（门禁负例 N2 已验未审校 400） |
+| V10 | 回填公网 URL（如 https://example.com/…） | 200，publications 有记录 | ☐ 目视（需先 V9） |
+| V11 | Webhook：公网 HTTPS 账号推送 | 成功或明确业务错误（非静默） | ☐ 目视 / 内网 URL 见 N3 |
+| V12 | `/geo/visibility` 登记快照 | 竞品/引用页有聚合变化 | ✓ 自动（m1 snapshot loop） |
+| V13 | `/geo/deliverables` 导出 MD | 可下载/可复制 | ☐ 目视 |
 
 ### 3.2 静态台路径（兼容）
 
 | # | 步骤 | 期望 | 结果 |
 | --- | --- | --- | --- |
-| S1 | `5176/geo/dashboard.html` | 200 | ☐ |
-| S2 | `5176/dashboard.html`（错误） | 404 或跳转说明 | ☐ |
-| S3 | editor 打开 task → AI 建议 Brief | `briefReadyLine` 有提示，字段回填 | ☐ |
-| S4 | 生成母稿 / 插入修复 | 生成后 `briefReadyLine` 显示字数与状态；插入修复后正文变长 | ☐ |
+| S1 | `5176/geo/dashboard.html` | 200 | ✓ 自动 |
+| S2 | `5176/dashboard.html`（错误） | 404 或跳转说明 | ✓ 自动（404） |
+| S3 | editor 打开 task → AI 建议 Brief | `briefReadyLine` 有提示，字段回填 | ✓ 页面/代码；**目视点一次建议** |
+| S4 | 生成母稿 / 插入修复 | 生成后 `briefReadyLine` 显示字数与状态；插入修复后正文变长 | ✓ 代码 + API patch；**目视生成提示** |
 
 ### 3.3 门禁负例
 
 | # | 步骤 | 期望 | 结果 |
 | --- | --- | --- | --- |
-| N1 | 未绑 3 事实点生成 | 明确拦截 | ☐ |
-| N2 | 未审校回填 | **合格任一种**：① 切到渠道页签后点「回填 URL」→ toast/错误区出现审校相关文案（接口 400 或预检提示）；② 页内橙色门禁「未通过审校…」可见。不必依赖按钮 disabled。 | ☐ |
-| N3 | Webhook 指向 127.0.0.1 | 400 SSRF 提示 | ☐ |
+| N1 | 未绑 3 事实点生成 | 明确拦截 | ✓ 自动（delivery/generate 门禁路径） |
+| N2 | 未审校回填 | **合格任一种**：① 切到渠道页签后点「回填 URL」→ toast/错误区出现审校相关文案（接口 400 或预检提示）；② 页内橙色门禁「未通过审校…」可见。不必依赖按钮 disabled。 | ✓ 自动 API 400「未通过审校」+ 代码 publishGateHint |
+| N3 | Webhook 指向 127.0.0.1 | 400 SSRF 提示 | ✓ 自动（历史推送门禁；m1 webhook block） |
+
+### 3.4 第一步收尾命令（复跑）
+
+```bash
+python -m scripts.seed_geo_demo --tenant-id 1 --verify-facts
+python scripts/accept_geo_m1.py
+python scripts/accept_geo_delivery.py
+python scripts/verify_delivery_step1.py
+```
 
 ---
 
