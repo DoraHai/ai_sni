@@ -91,6 +91,7 @@ from app.geo.content.schemas import (
     ReviewSubmit,
     SuggestBriefRequest,
     WebhookPushRequest,
+    PushBatchRequest,
     TaskCreate,
     TaskFactsUpdate,
     TaskFromDiagnosis,
@@ -2272,6 +2273,7 @@ def _channel_account_payload(row: GeoChannelAccount) -> dict:
 async def _ensure_default_publishing_channels(
     session: AsyncSession, tenant_id: int
 ) -> list[GeoPublishingChannel]:
+    """Seed missing default multi-media channels (does not override existing modes)."""
     rows = list(
         await session.scalars(
             select(GeoPublishingChannel)
@@ -2279,15 +2281,27 @@ async def _ensure_default_publishing_channels(
             .order_by(GeoPublishingChannel.sort_order, GeoPublishingChannel.id)
         )
     )
-    if rows:
-        return rows
+    existing_types = {str(r.channel_type or "").lower() for r in rows}
     await _ensure_tenant_exists(session, tenant_id)
-    created = [GeoPublishingChannel(**item) for item in default_channel_rows(tenant_id)]
-    session.add_all(created)
-    await session.commit()
-    for row in created:
-        await session.refresh(row)
-    return created
+    missing = [
+        item
+        for item in default_channel_rows(tenant_id)
+        if str(item.get("channel_type") or "").lower() not in existing_types
+    ]
+    if not rows and not missing:
+        missing = list(default_channel_rows(tenant_id))
+    if missing:
+        created = [GeoPublishingChannel(**item) for item in missing]
+        session.add_all(created)
+        await session.commit()
+        rows = list(
+            await session.scalars(
+                select(GeoPublishingChannel)
+                .where(GeoPublishingChannel.tenant_id == tenant_id)
+                .order_by(GeoPublishingChannel.sort_order, GeoPublishingChannel.id)
+            )
+        )
+    return rows
 
 
 async def _get_publishing_channel(
@@ -2320,6 +2334,60 @@ async def list_publishing_channels(
     if enabled_only:
         rows = [row for row in rows if row.enabled]
     return {"items": [_channel_payload(row) for row in rows]}
+
+
+@router.get("/publishing-channels/auto-push-status")
+async def publishing_auto_push_status(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Multi-media auto-push config matrix (what is ready vs missing credentials)."""
+    from app.geo.content.multi_push import tenant_auto_push_matrix
+
+    ctx.ensure_tenant(tenant_id)
+    await _ensure_default_publishing_channels(session, tenant_id)
+    return await tenant_auto_push_matrix(session, tenant_id=tenant_id)
+
+
+@router.post("/publishing-channels/enable-multi-media-auto")
+async def enable_multi_media_auto_pack(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Ensure multi-media pack exists and set auto_publish on pushable types.
+
+    Does not create credentials — ops only fill account tokens after this.
+    """
+    from app.geo.content.multi_push import AUTO_PUSH_TYPES
+
+    ctx.ensure_tenant(tenant_id)
+    rows = await _ensure_default_publishing_channels(session, tenant_id)
+    updated = 0
+    for row in rows:
+        ctype = str(row.channel_type or "").lower()
+        if ctype not in AUTO_PUSH_TYPES:
+            continue
+        changed = False
+        if not row.enabled:
+            row.enabled = True
+            changed = True
+        if str(row.publish_mode) != "auto_publish":
+            row.publish_mode = "auto_publish"
+            changed = True
+        if changed:
+            updated += 1
+    await session.commit()
+    from app.geo.content.multi_push import tenant_auto_push_matrix
+
+    matrix = await tenant_auto_push_matrix(session, tenant_id=tenant_id)
+    return {
+        "ok": True,
+        "channels_updated": updated,
+        "matrix": matrix,
+        "next_step": "为 config_ready=false 的渠道创建 webhook/social_api 账号并填写凭证",
+    }
 
 
 @router.post("/publishing-channels")
@@ -3867,6 +3935,33 @@ async def record_publication(
     return await _task_payload(session, task, detail=True)
 
 
+@router.get("/content-tasks/{task_id}/push-targets")
+async def list_task_push_targets(
+    task_id: int,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """List multi-media push targets for a task (ready vs missing config/export)."""
+    from app.geo.content.multi_push import list_push_targets
+
+    ctx.ensure_tenant(tenant_id)
+    task = await _get_task(session, task_id, tenant_id)
+    await _ensure_default_publishing_channels(session, tenant_id)
+    variants = await _variants(session, task.id)
+    targets = await list_push_targets(
+        session, tenant_id=tenant_id, task=task, variants=variants
+    )
+    ready = [t for t in targets if t.get("ready")]
+    return {
+        "task_id": task_id,
+        "review_status": task.review_status,
+        "targets": targets,
+        "ready_count": len(ready),
+        "ready_targets": ready,
+    }
+
+
 @router.post("/content-tasks/{task_id}/push")
 async def push_variant_webhook(
     task_id: int,
@@ -3874,20 +3969,11 @@ async def push_variant_webhook(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Human-triggered push: website/docs Webhook, or social_api 社交直发."""
+    """Push one media channel (website/docs webhook or social_api)."""
     from app.geo.content.channel_registry import profile_key_for_registry_type
-    from app.geo.content.connectors.social import (
-        SOCIAL_PLATFORMS,
-        SocialError,
-        build_social_payload,
-        post_social,
-    )
-    from app.geo.content.connectors.webhook import (
-        WebhookConnectorError,
-        build_webhook_payload,
-        decrypt_credentials_json,
-        post_webhook,
-    )
+    from app.geo.content.connectors.social import SocialError
+    from app.geo.content.connectors.webhook import WebhookConnectorError
+    from app.geo.content.multi_push import execute_single_push
 
     ctx.ensure_tenant(req.tenant_id)
     task = await _get_task(session, task_id, req.tenant_id)
@@ -3916,66 +4002,26 @@ async def push_variant_webhook(
         raise HTTPException(400, "发布渠道已停用")
     if channel_row.publish_mode != "auto_publish":
         raise HTTPException(400, "该渠道发布方式不是 auto_publish")
-    if not account.credentials_encrypted:
-        raise HTTPException(400, "账号未配置凭证")
-
-    ctype = str(channel_row.channel_type or "").lower()
-    is_social = ctype in SOCIAL_PLATFORMS
-    is_web = ctype in {"website", "docs"}
-    if not is_social and not is_web:
-        raise HTTPException(
-            400,
-            f"渠道类型 {ctype} 暂不支持一键推送（支持 website/docs Webhook 与社交直发）",
-        )
-    if is_web and account.auth_type != "webhook":
-        raise HTTPException(400, "官网/文档请使用 auth_type=webhook")
-    if is_social and account.auth_type not in {"social_api", "api_key", "oauth2"}:
-        raise HTTPException(
-            400,
-            "社交渠道请使用 auth_type=social_api（凭证含 api_url + access_token）",
-        )
 
     adapt = profile_key_for_registry_type(channel_row.channel_type)
+    ctype = str(channel_row.channel_type or "").lower()
     if adapt != channel and ctype != channel:
         raise HTTPException(
             400,
             f"账号渠道类型 {channel_row.channel_type} 与变体渠道 {channel} 不匹配",
         )
 
-    remote: dict = {}
-    connector_kind = "webhook"
     try:
-        credentials = decrypt_credentials_json(account.credentials_encrypted)
-        if is_social:
-            connector_kind = "social"
-            # Prefer explicit platform in creds; default to channel_type
-            if not credentials.get("platform"):
-                credentials = {**credentials, "platform": ctype}
-            payload = build_social_payload(
-                platform=str(credentials.get("platform") or ctype),
-                mode=req.mode,
-                tenant_id=req.tenant_id,
-                task_id=task.id,
-                channel=channel,
-                title=variant.title or task.title or "",
-                body_markdown=variant.body_markdown or "",
-                body_html=getattr(article, "body_html", None) if article else None,
-            )
-            remote = await post_social(credentials, payload)
-        else:
-            payload = build_webhook_payload(
-                action=req.mode,
-                tenant_id=req.tenant_id,
-                task_id=task.id,
-                channel=channel,
-                channel_type=channel_row.channel_type,
-                title=variant.title or task.title or "",
-                body_markdown=variant.body_markdown or "",
-                export_format=variant.export_format or "markdown",
-                base_url=channel_row.base_url,
-            )
-            remote = await post_webhook(credentials, payload)
-    except (WebhookConnectorError, SocialError) as exc:
+        remote = await execute_single_push(
+            session,
+            task=task,
+            variant=variant,
+            channel_row=channel_row,
+            account=account,
+            mode=req.mode,
+            article=article,
+        )
+    except (WebhookConnectorError, SocialError, ValueError) as exc:
         status = 502 if "HTTP" in str(exc) or "请求失败" in str(exc) else 400
         raise HTTPException(status, str(exc)) from exc
 
@@ -3990,7 +4036,7 @@ async def push_variant_webhook(
             variant=variant,
             channel=channel,
             published_url=str(remote_url),
-            note=req.note or f"{connector_kind} {req.mode}",
+            note=req.note or f"{remote.get('connector')} {req.mode}",
             publish_mode="auto_publish",
         )
         publication_created = True
@@ -4002,12 +4048,141 @@ async def push_variant_webhook(
     detail = await _task_payload(session, task, detail=True)
     return {
         "ok": True,
-        "connector": connector_kind,
+        "connector": remote.get("connector"),
         "platform": remote.get("platform"),
         "http_status": remote.get("http_status"),
         "remote_url": remote_url,
-        "webhook_host": remote.get("webhook_host") or remote.get("host"),
+        "webhook_host": remote.get("host"),
         "publication_created": publication_created,
+        "mode": req.mode,
+        "task": detail,
+    }
+
+
+@router.post("/content-tasks/{task_id}/push-batch")
+async def push_variant_batch(
+    task_id: int,
+    req: PushBatchRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Push one task to multiple ready media channels (partial success allowed)."""
+    from app.geo.content.connectors.social import SocialError
+    from app.geo.content.connectors.webhook import WebhookConnectorError
+    from app.geo.content.multi_push import execute_single_push, list_push_targets
+
+    ctx.ensure_tenant(req.tenant_id)
+    task = await _get_task(session, task_id, req.tenant_id)
+    await _ensure_default_publishing_channels(session, req.tenant_id)
+    variants = await _variants(session, task.id)
+    var_map = {str(v.channel).lower(): v for v in variants}
+
+    article = await _latest_article(session, task.id)
+    rule_input = await _build_rule_input(session, task, article)
+    try:
+        assert_can_publish(rule_input, task=task)
+    except PublishGateError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    ready_all = [
+        t
+        for t in await list_push_targets(
+            session, tenant_id=req.tenant_id, task=task, variants=variants
+        )
+        if t.get("ready")
+    ]
+    if req.targets:
+        wanted = {(t.channel.lower(), int(t.account_id)) for t in req.targets}
+        ready = []
+        for t in ready_all:
+            aid = int(t["account_id"])
+            keys = {
+                (str(t.get("adapt_key") or "").lower(), aid),
+                (str(t.get("channel_type") or "").lower(), aid),
+            }
+            if keys & wanted:
+                ready.append(t)
+    else:
+        ready = ready_all
+
+    if not ready:
+        raise HTTPException(
+            400,
+            "没有可推送目标：请确认渠道 auto_publish、账号凭证、渠道稿已导出（见 push-targets）",
+        )
+
+    results: list[dict[str, Any]] = []
+    ok_n = 0
+    fail_n = 0
+    for t in ready:
+        channel_key = str(t.get("adapt_key") or t.get("channel_type") or "").lower()
+        variant = var_map.get(channel_key)
+        account = await session.get(GeoChannelAccount, int(t["account_id"]))
+        channel_row = await session.get(GeoPublishingChannel, int(t["channel_id"]))
+        if not variant or not account or not channel_row:
+            results.append(
+                {
+                    "ok": False,
+                    "channel": channel_key,
+                    "error": "目标数据缺失",
+                    "account_id": t.get("account_id"),
+                }
+            )
+            fail_n += 1
+            continue
+        try:
+            remote = await execute_single_push(
+                session,
+                task=task,
+                variant=variant,
+                channel_row=channel_row,
+                account=account,
+                mode=req.mode,
+                article=article,
+            )
+            remote_url = remote.get("remote_url")
+            publication_created = False
+            if req.create_publication and remote_url and str(remote_url).startswith(
+                ("http://", "https://")
+            ):
+                await _write_publication(
+                    session,
+                    task=task,
+                    variant=variant,
+                    channel=channel_key,
+                    published_url=str(remote_url),
+                    note=req.note or f"batch {remote.get('connector')} {req.mode}",
+                    publish_mode="auto_publish",
+                )
+                publication_created = True
+            results.append({**remote, "publication_created": publication_created})
+            ok_n += 1
+        except (WebhookConnectorError, SocialError, ValueError) as exc:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "push-batch fail channel=%s: %s", channel_key, exc
+            )
+            results.append(
+                {
+                    "ok": False,
+                    "channel": channel_key,
+                    "channel_type": t.get("channel_type"),
+                    "account_id": t.get("account_id"),
+                    "account_name": t.get("account_name"),
+                    "error": str(exc),
+                }
+            )
+            fail_n += 1
+
+    await session.commit()
+    await session.refresh(task)
+    detail = await _task_payload(session, task, detail=True)
+    return {
+        "ok": fail_n == 0,
+        "ok_count": ok_n,
+        "fail_count": fail_n,
+        "results": results,
         "mode": req.mode,
         "task": detail,
     }

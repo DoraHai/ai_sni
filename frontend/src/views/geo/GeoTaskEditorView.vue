@@ -25,6 +25,8 @@ import {
   patchGeoContentTask,
   patchGeoVariant,
   publishGeoVariant,
+  fetchTaskPushTargets,
+  pushGeoVariantBatch,
   pushGeoVariantWebhook,
   retrieveGeoTaskFacts,
   saveGeoArticle,
@@ -65,6 +67,9 @@ const webhookAccountId = ref(null)
 const channelAccounts = ref([])
 const publishingChannels = ref([])
 const channelBlueprint = ref(null)
+const pushTargets = ref([])
+const pushSelected = ref([])
+const pushBatchBusy = ref(false)
 
 const brief = reactive({
   industry: '',
@@ -201,6 +206,7 @@ async function load() {
     }
     // Never clobber an in-progress AI Brief draft with empty server brief
     applyTaskPayload(t, { skipBrief: briefLocalDraft.value || busy.value === 'suggest' })
+    await loadPushTargets()
     if (
       (t.status === 'facts_bound' || (t.pipeline_step && t.pipeline_step !== 'opportunity')) &&
       !(t.facts || []).length
@@ -1044,6 +1050,20 @@ async function recordPublication() {
   }
 }
 
+async function loadPushTargets() {
+  if (!tenantId.value || !taskId.value) return
+  try {
+    const data = await fetchTaskPushTargets(tenantId.value, taskId.value)
+    pushTargets.value = data.targets || []
+    const ready = (data.ready_targets || []).map(
+      (t) => `${t.adapt_key || t.channel_type}:${t.account_id}`,
+    )
+    if (!pushSelected.value.length) pushSelected.value = ready
+  } catch {
+    pushTargets.value = []
+  }
+}
+
 async function pushWebhook() {
   if (docTab.value === 'master') {
     ElMessage.warning('请切换到渠道页签')
@@ -1074,6 +1094,7 @@ async function pushWebhook() {
     })
     if (res.task) task.value = res.task
     else await load()
+    await loadPushTargets()
     ElMessage.success(
       res?.connector === 'social' ? '社交直发完成' : 'Webhook 推送完成',
     )
@@ -1082,6 +1103,60 @@ async function pushWebhook() {
   } finally {
     busy.value = ''
   }
+}
+
+async function pushBatchSelected() {
+  if (!pushSelected.value.length) {
+    ElMessage.warning('请勾选至少一个就绪渠道')
+    return
+  }
+  if ((task.value?.review_status || 'none') !== 'approved') {
+    ElMessage({
+      type: 'warning',
+      message: publishGateHint.value || '未通过审校',
+      duration: 5000,
+      showClose: true,
+    })
+  }
+  pushBatchBusy.value = true
+  try {
+    const targets = pushSelected.value.map((key) => {
+      const [channel, accountId] = String(key).split(':')
+      return { channel, account_id: Number(accountId) }
+    })
+    const res = await pushGeoVariantBatch(taskId.value, {
+      tenant_id: tenantId.value,
+      mode: 'publish',
+      create_publication: true,
+      targets,
+      note: publishNote.value || null,
+    })
+    if (res.task) task.value = res.task
+    else await load()
+    await loadPushTargets()
+    ElMessage.success(
+      `多媒推送完成：成功 ${res.ok_count || 0} · 失败 ${res.fail_count || 0}`,
+    )
+    if (res.fail_count) {
+      const errs = (res.results || [])
+        .filter((r) => !r.ok)
+        .map((r) => `${r.channel}: ${r.error}`)
+        .slice(0, 3)
+      if (errs.length) ElMessage.warning(errs.join('；'))
+    }
+  } catch (e) {
+    toastError(e, '批量推送失败')
+  } finally {
+    pushBatchBusy.value = false
+  }
+}
+
+async function pushBatchAllReady() {
+  const ready = (pushTargets.value || []).filter((t) => t.ready)
+  pushSelected.value = ready.map(
+    (t) => `${t.adapt_key || t.channel_type}:${t.account_id}`,
+  )
+  await pushBatchSelected()
 }
 
 function normChannelKey(raw) {
@@ -1640,7 +1715,42 @@ onMounted(load)
               :title="publishGateHint || 'Webhook / 社交直发'"
               @click="pushWebhook"
             >
-              一键推送
+              推送当前渠道
+            </el-button>
+          </div>
+
+          <el-divider content-position="left">多媒自动推送</el-divider>
+          <p class="hint mb">
+            就绪 = auto_publish + 凭证 + 渠道稿已导出。只差配置的项见「发布渠道」矩阵。
+            <el-button link type="primary" size="small" @click="loadPushTargets">刷新目标</el-button>
+          </p>
+          <el-checkbox-group v-if="pushTargets.length" v-model="pushSelected" class="mb">
+            <div v-for="t in pushTargets" :key="`${t.adapt_key}-${t.account_id || t.channel_id}`" class="push-row">
+              <el-checkbox
+                v-if="t.ready"
+                :label="`${t.adapt_key || t.channel_type}:${t.account_id}`"
+              >
+                <b>{{ t.channel_name }}</b>
+                <span class="muted"> · {{ t.channel_type }} · {{ t.push_kind || t.auth_type }}</span>
+              </el-checkbox>
+              <div v-else class="push-blocked">
+                <span class="muted">{{ t.channel_name }}（{{ t.channel_type }}）</span>
+                <span class="blocked"> — {{ (t.block_reasons || []).join('；') }}</span>
+              </div>
+            </div>
+          </el-checkbox-group>
+          <p v-else class="hint mb">暂无自动推送目标，请先在「发布渠道」一键开启多媒包并配置凭证。</p>
+          <div class="row-actions">
+            <el-button
+              size="small"
+              type="primary"
+              :loading="pushBatchBusy"
+              @click="pushBatchSelected"
+            >
+              推送勾选渠道
+            </el-button>
+            <el-button size="small" :loading="pushBatchBusy" @click="pushBatchAllReady">
+              一键推送全部就绪
             </el-button>
             <router-link class="el-button el-button--small" to="/geo/publishing">管理渠道账号</router-link>
           </div>
@@ -1762,6 +1872,9 @@ onMounted(load)
 .blueprint-list li { margin-bottom: 4px; }
 .muted { color: #9ca3af; }
 .small { font-size: 11px; margin-top: 2px; }
+.push-row { margin-bottom: 6px; }
+.push-blocked { font-size: 12px; line-height: 1.4; }
+.blocked { color: #b45309; }
 .sec { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
 .score { font-weight: 700; margin-bottom: 10px; color: #5b21b6; }
 .check-list { list-style: none; padding: 0; margin: 0; }

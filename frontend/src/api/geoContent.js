@@ -306,6 +306,30 @@ export function pushGeoVariantWebhook(taskId, body) {
   })
 }
 
+export function fetchTaskPushTargets(tenantId, taskId) {
+  return client.get(`/api/v1/geo/content-tasks/${taskId}/push-targets`, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function pushGeoVariantBatch(taskId, body) {
+  return client.post(`/api/v1/geo/content-tasks/${taskId}/push-batch`, body, {
+    timeout: 300000,
+  })
+}
+
+export function fetchAutoPushStatus(tenantId) {
+  return client.get('/api/v1/geo/publishing-channels/auto-push-status', {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function enableMultiMediaAutoPack(tenantId) {
+  return client.post('/api/v1/geo/publishing-channels/enable-multi-media-auto', null, {
+    params: { tenant_id: tenantId },
+  })
+}
+
 export function submitGeoTaskReview(tenantId, taskId, note = null) {
   return client.post(
     `/api/v1/geo/content-tasks/${taskId}/submit-review`,

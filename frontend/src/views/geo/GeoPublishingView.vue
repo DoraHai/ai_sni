@@ -11,6 +11,8 @@ import {
   createGeoPublishingChannel,
   deleteGeoChannelAccount,
   deleteGeoPublishingChannel,
+  enableMultiMediaAutoPack,
+  fetchAutoPushStatus,
   listGeoChannelAccounts,
   listGeoPublishingChannels,
   patchGeoChannelAccount,
@@ -24,6 +26,8 @@ const error = ref('')
 const channels = ref([])
 const accounts = ref([])
 const activeTab = ref('all')
+const autoMatrix = ref(null)
+const enablingPack = ref(false)
 
 const createChOpen = ref(false)
 const createAccOpen = ref(false)
@@ -210,10 +214,31 @@ async function load() {
     ])
     channels.value = ch.items || []
     accounts.value = acc.items || []
+    try {
+      autoMatrix.value = await fetchAutoPushStatus(tenantId.value)
+    } catch {
+      autoMatrix.value = null
+    }
   } catch (e) {
     error.value = e.message || '加载失败'
   } finally {
     loading.value = false
+  }
+}
+
+async function enableMediaPack() {
+  enablingPack.value = true
+  try {
+    const res = await enableMultiMediaAutoPack(tenantId.value)
+    autoMatrix.value = res.matrix || null
+    ElMessage.success(
+      `已开启多媒 auto_publish（更新 ${res.channels_updated ?? 0} 条）。请为未就绪渠道配置凭证。`,
+    )
+    await load()
+  } catch (e) {
+    ElMessage.error(e.message || '开启失败')
+  } finally {
+    enablingPack.value = false
   }
 }
 
@@ -562,10 +587,60 @@ onMounted(load)
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
 
+    <!-- 多媒自动推送矩阵 -->
+    <section v-if="autoMatrix" class="block auto-overview">
+      <div class="block-head">
+        <h3 class="sec">多媒自动推送矩阵</h3>
+        <span class="sec-hint">
+          就绪 {{ autoMatrix.ready_count }}/{{ autoMatrix.total_auto_types }} · 只差配置凭证即可推
+        </span>
+        <el-button
+          size="small"
+          type="primary"
+          plain
+          :loading="enablingPack"
+          style="margin-left: auto"
+          @click="enableMediaPack"
+        >
+          一键开启多媒 auto 包
+        </el-button>
+      </div>
+      <el-table :data="autoMatrix.items || []" size="small" class="mb" empty-text="无自动推送渠道">
+        <el-table-column prop="name" label="渠道" min-width="120" />
+        <el-table-column prop="channel_type" label="类型" width="100" />
+        <el-table-column prop="publish_mode" label="模式" width="120" />
+        <el-table-column label="凭证" width="100">
+          <template #default="{ row }">
+            {{ row.ready_accounts }}/{{ row.account_count }}
+          </template>
+        </el-table-column>
+        <el-table-column label="配置就绪" width="100">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.config_ready ? 'success' : 'warning'">
+              {{ row.config_ready ? '就绪' : '待配置' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="缺什么" min-width="200">
+          <template #default="{ row }">
+            <span v-if="row.config_ready" class="muted">填 token 即可推送</span>
+            <span v-else>{{ (row.tips || []).join('；') }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="凭证字段" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.credential_schema?.auth_type }}:
+            {{ (row.credential_schema?.fields || []).join(', ') }}
+          </template>
+        </el-table-column>
+      </el-table>
+      <p class="hint">{{ autoMatrix.hint }}</p>
+    </section>
+
     <!-- 自动化渠道总览 -->
     <section class="block auto-overview">
       <div class="block-head">
-        <h3 class="sec">自动化发布能力</h3>
+        <h3 class="sec">官网 Webhook 卡片</h3>
         <span class="sec-hint">
           website/docs → Webhook；wechat/zhihu/百家号/头条 → social_api 直发（auto_publish）
         </span>

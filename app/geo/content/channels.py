@@ -15,13 +15,14 @@ CHANNEL_TYPE_OPTIONS = (
 
 PUBLISH_MODE_OPTIONS = ("auto_publish", "draft_then_manual", "manual_only")
 
+# New tenants: multi-media auto-push ready by default (only credentials missing).
 _DEFAULT_CHANNELS = (
     ("官网内容中心", "website", "auto_publish"),
     ("帮助中心 / 产品文档", "docs", "auto_publish"),
-    ("微信公众号", "wechat", "draft_then_manual"),
-    ("知乎机构号", "zhihu", "draft_then_manual"),
-    ("百家号", "baijiahao", "draft_then_manual"),
-    ("头条号", "toutiao", "manual_only"),
+    ("微信公众号", "wechat", "auto_publish"),
+    ("知乎机构号", "zhihu", "auto_publish"),
+    ("百家号", "baijiahao", "auto_publish"),
+    ("头条号", "toutiao", "auto_publish"),
     ("行业媒体 / 垂直社区", "industry_media", "manual_only"),
 )
 

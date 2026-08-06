@@ -197,6 +197,22 @@ class WebhookPushRequest(BaseModel):
     note: str | None = None
 
 
+class PushBatchTarget(BaseModel):
+    channel: str = Field(..., min_length=1, max_length=32)
+    account_id: int
+
+
+class PushBatchRequest(BaseModel):
+    """Push one task to multiple auto-publish media channels."""
+
+    tenant_id: int
+    mode: Literal["draft", "publish"] = "publish"
+    create_publication: bool = True
+    # null/empty → all ready targets for this task
+    targets: list[PushBatchTarget] | None = None
+    note: str | None = None
+
+
 class ReviewSubmit(BaseModel):
     note: str | None = Field(None, max_length=2000)
 
