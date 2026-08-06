@@ -213,6 +213,16 @@ const routes = [
     },
   },
   {
+    path: '/geo/placements',
+    component: () => import('../views/geo/GeoPlacementsView.vue'),
+    meta: {
+      title: '媒体阵地',
+      documentTitle: 'GEO 增长｜媒体阵地',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
     path: '/geo/diagnosis',
     component: () => import('../views/diagnosis/DiagnosisRedirectView.vue'),
     meta: {

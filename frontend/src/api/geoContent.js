@@ -84,6 +84,13 @@ export function patchGeoPublishingChannel(tenantId, channelId, body) {
   })
 }
 
+/** soft disable by default; hard=true deletes channel (+ cascade accounts) */
+export function deleteGeoPublishingChannel(tenantId, channelId, hard = false) {
+  return client.delete(`/api/v1/geo/publishing-channels/${channelId}`, {
+    params: { tenant_id: tenantId, hard: !!hard },
+  })
+}
+
 export function listGeoChannelAccounts(tenantId, channelId) {
   return client.get('/api/v1/geo/channel-accounts', {
     params: { tenant_id: tenantId, ...(channelId ? { channel_id: channelId } : {}) },
@@ -185,6 +192,13 @@ export function getGeoContentTask(tenantId, taskId) {
 
 export function createGeoContentTask(body) {
   return client.post('/api/v1/geo/content-tasks', body)
+}
+
+/** hard=false archive; hard=true physical delete (cascade article/variants) */
+export function deleteGeoContentTask(tenantId, taskId, hard = false) {
+  return client.delete(`/api/v1/geo/content-tasks/${taskId}`, {
+    params: { tenant_id: tenantId, hard: !!hard },
+  })
 }
 
 export function bindGeoTaskFacts(tenantId, taskId, factIds) {
@@ -354,6 +368,18 @@ export function startVisibilityPatrolRun(body) {
   })
 }
 
+export function deleteVisibilityPatrolRun(tenantId, runId, force = false) {
+  return client.delete(`/api/v1/geo/visibility-patrol/runs/${runId}`, {
+    params: { tenant_id: tenantId, force: !!force },
+  })
+}
+
+export function cleanupVisibilityPatrolRuns(tenantId, keepLatest = 20) {
+  return client.post('/api/v1/geo/visibility-patrol/runs/cleanup', null, {
+    params: { tenant_id: tenantId, keep_latest: keepLatest, only_terminal: true },
+  })
+}
+
 export function fetchVisibilityPatrolOpsStatus(tenantId) {
   return client.get('/api/v1/geo/visibility-patrol/ops-status', {
     params: { tenant_id: tenantId },
@@ -378,6 +404,34 @@ export function createGeoAnswerSnapshot(body) {
 
 export function patchGeoAnswerSnapshot(tenantId, snapshotId, body) {
   return client.patch(`/api/v1/geo/answer-snapshots/${snapshotId}`, body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function deleteGeoAnswerSnapshot(tenantId, snapshotId) {
+  return client.delete(`/api/v1/geo/answer-snapshots/${snapshotId}`, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function listGeoMediaPlacements(tenantId) {
+  return client.get('/api/v1/geo/media-placements', {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function createGeoMediaPlacement(body) {
+  return client.post('/api/v1/geo/media-placements', body)
+}
+
+export function patchGeoMediaPlacement(tenantId, placementId, body) {
+  return client.patch(`/api/v1/geo/media-placements/${placementId}`, body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function deleteGeoMediaPlacement(tenantId, placementId) {
+  return client.delete(`/api/v1/geo/media-placements/${placementId}`, {
     params: { tenant_id: tenantId },
   })
 }

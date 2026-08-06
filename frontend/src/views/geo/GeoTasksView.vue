@@ -1,9 +1,10 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createGeoContentTask,
+  deleteGeoContentTask,
   listGeoContentTasks,
   listGeoPrompts,
   staticGeoWorkbenchUrl,
@@ -24,14 +25,16 @@ const prompts = ref([])
 const form = ref({ prompt_id: null, title: '', target_channels: ['website', 'wechat', 'zhihu'] })
 
 const statusOptions = [
-  { value: '', label: '全部状态' },
+  { value: '', label: '全部（不含归档）' },
   { value: 'draft', label: '草稿' },
   { value: 'facts_bound', label: '已绑事实' },
   { value: 'editing', label: '编辑中' },
   { value: 'needs_fix', label: '待修补' },
   { value: 'ready', label: '就绪' },
   { value: 'published', label: '已发布' },
+  { value: 'archived', label: '已归档' },
 ]
+const includeArchived = ref(false)
 
 const pipelineLabel = {
   opportunity: '机会',
@@ -53,6 +56,7 @@ async function load() {
     const params = {}
     if (statusFilter.value) params.status = statusFilter.value
     if (q.value.trim()) params.q = q.value.trim()
+    if (includeArchived.value && !statusFilter.value) params.include_archived = true
     const data = await listGeoContentTasks(tenantId.value, params)
     items.value = data.items || []
   } catch (e) {
@@ -110,7 +114,36 @@ function openStaticWorkbench() {
   window.open(staticGeoWorkbenchUrl('dashboard.html', tenantId.value || 1), '_blank')
 }
 
-watch([tenantId, statusFilter], load)
+async function archiveTask(row) {
+  try {
+    await ElMessageBox.confirm(`归档任务 #${row.id}？列表默认不再显示。`, '归档', {
+      type: 'warning',
+      confirmButtonText: '归档',
+    })
+    await deleteGeoContentTask(tenantId.value, row.id, false)
+    ElMessage.success('已归档')
+    await load()
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close') ElMessage.error(e.message || '归档失败')
+  }
+}
+
+async function hardDeleteTask(row) {
+  try {
+    await ElMessageBox.confirm(
+      `物理删除任务 #${row.id}（级联删除母稿/渠道稿，不可恢复）？`,
+      '删除',
+      { type: 'error', confirmButtonText: '删除' },
+    )
+    await deleteGeoContentTask(tenantId.value, row.id, true)
+    ElMessage.success('已删除')
+    await load()
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close') ElMessage.error(e.message || '删除失败')
+  }
+}
+
+watch([tenantId, statusFilter, includeArchived], load)
 onMounted(load)
 </script>
 
@@ -147,6 +180,7 @@ onMounted(load)
         @keyup.enter="load"
       />
       <el-button @click="load">查询</el-button>
+      <el-checkbox v-model="includeArchived" :disabled="!!statusFilter">含归档</el-checkbox>
     </div>
 
     <el-table :data="items" stripe empty-text="暂无内容任务" class="task-table">
@@ -159,7 +193,7 @@ onMounted(load)
       </el-table-column>
       <el-table-column label="状态" width="110">
         <template #default="{ row }">
-          <el-tag size="small">{{ row.status }}</el-tag>
+          <el-tag size="small" :type="row.status === 'archived' ? 'info' : ''">{{ row.status }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="流水线" width="90">
@@ -176,9 +210,16 @@ onMounted(load)
       <el-table-column label="更新" width="170">
         <template #default="{ row }">{{ row.updated_at || row.created_at || '—' }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="120" fixed="right">
+      <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
-          <el-button type="primary" link @click="openEditor(row)">打开编辑器</el-button>
+          <el-button type="primary" link @click="openEditor(row)">打开</el-button>
+          <el-button
+            v-if="row.status !== 'archived'"
+            type="warning"
+            link
+            @click="archiveTask(row)"
+          >归档</el-button>
+          <el-button type="danger" link @click="hardDeleteTask(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>

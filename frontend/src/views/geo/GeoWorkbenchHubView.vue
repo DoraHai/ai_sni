@@ -14,6 +14,7 @@ const cards = [
   { title: '跟踪引擎', desc: '监测引擎开关 · sample_mode', path: '/geo/engines', phase: 'Vue' },
   { title: 'AI 能力配置', desc: '租户 LLM（百炼/DeepSeek）', path: '/geo/ai-settings', phase: 'Vue' },
   { title: '发布渠道', desc: '渠道目录 · Webhook 账号（公网 HTTPS）', path: '/geo/publishing', phase: 'Vue' },
+  { title: '媒体阵地', desc: '权威信源 / 分发阵地 CRUD', path: '/geo/placements', phase: 'Vue' },
   { title: 'GEO 概览', desc: 'KPI · 可见性 vs 认知分列', path: '/geo/overview', phase: 'Vue' },
   { title: 'AI 可见度', desc: '快照登记与探测', path: '/geo/visibility', phase: 'Vue' },
   { title: '全自动巡检', desc: '多词×多引擎 · 配额与引擎健康', path: '/geo/visibility/patrol', phase: 'Vue' },

@@ -1,13 +1,14 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createGeoAnswerSnapshot,
   extractGeoAnswerSnapshotUrls,
   listGeoAnswerSnapshots,
   listGeoPrompts,
   listGeoTrackingEngines,
+  deleteGeoAnswerSnapshot,
   patchGeoAnswerSnapshot,
   probeGeoAnswerSnapshot,
   probeGeoAnswerSnapshotBatch,
@@ -298,6 +299,23 @@ async function toggleMention(row) {
   }
 }
 
+async function removeSnapshot(row) {
+  try {
+    await ElMessageBox.confirm(`删除快照 #${row.id}？不可恢复。`, '删除快照', {
+      type: 'warning',
+      confirmButtonText: '删除',
+    })
+    await deleteGeoAnswerSnapshot(tenantId.value, row.id)
+    ElMessage.success('已删除')
+    await loadSnapshots()
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close') {
+      error.value = e.message || '删除失败'
+      ElMessage.error(error.value)
+    }
+  }
+}
+
 async function saveBatchItem(draft) {
   if (!draft.ok || !form.value.prompt_id) return
   saving.value = true
@@ -524,6 +542,13 @@ onMounted(reloadAll)
             </el-table-column>
             <el-table-column label="观测" width="108" show-overflow-tooltip>
               <template #default="{ row }">{{ fmtCaptured(row.captured_at) }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="72" fixed="right">
+              <template #default="{ row }">
+                <el-button size="small" text type="danger" @click="removeSnapshot(row)">
+                  删除
+                </el-button>
+              </template>
             </el-table-column>
           </el-table>
         </div>

@@ -5,8 +5,10 @@
  */
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  cleanupVisibilityPatrolRuns,
+  deleteVisibilityPatrolRun,
   fetchVisibilityPatrolOpsStatus,
   fetchVisibilityPatrolSettings,
   getVisibilityPatrolRun,
@@ -220,6 +222,38 @@ async function openRun(row) {
   }
 }
 
+async function removeRun(row) {
+  try {
+    const force = row.status === 'pending' || row.status === 'running'
+    await ElMessageBox.confirm(
+      force
+        ? `强制删除进行中的巡检 #${row.id}？`
+        : `删除巡检历史 #${row.id}？`,
+      '删除巡检',
+      { type: 'warning', confirmButtonText: '删除' },
+    )
+    await deleteVisibilityPatrolRun(tenantId.value, row.id, force)
+    if (detail.value?.id === row.id) detail.value = null
+    ElMessage.success('已删除')
+    await load()
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close') ElMessage.error(e.message || '删除失败')
+  }
+}
+
+async function cleanupRuns() {
+  try {
+    await ElMessageBox.confirm('仅保留最近 20 条已结束巡检，删除更旧历史？', '清理历史', {
+      type: 'warning',
+    })
+    const res = await cleanupVisibilityPatrolRuns(tenantId.value, 20)
+    ElMessage.success(`已删除 ${res.deleted ?? 0} 条，保留 ${res.kept ?? 0} 条`)
+    await load()
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close') ElMessage.error(e.message || '清理失败')
+  }
+}
+
 function statusType(s) {
   if (s === 'completed') return 'success'
   if (s === 'failed') return 'danger'
@@ -355,7 +389,12 @@ onUnmounted(stopPoll)
       </section>
 
       <section class="panel">
-        <div class="panel-title">巡检历史</div>
+        <div class="panel-title">
+          巡检历史
+          <el-button size="small" plain style="margin-left: auto" @click="cleanupRuns">
+            清理旧记录
+          </el-button>
+        </div>
         <el-table :data="runs" size="small" empty-text="暂无巡检" @row-click="openRun">
           <el-table-column prop="id" label="ID" width="70" />
           <el-table-column label="状态" width="100">
@@ -366,15 +405,26 @@ onUnmounted(stopPoll)
           <el-table-column prop="trigger" label="触发" width="90" />
           <el-table-column label="摘要" min-width="200">
             <template #default="{ row }">
-              <span v-if="row.summary">
+              <span v-if="row.summary && Object.keys(row.summary).length">
                 词{{ row.summary.prompts }} · 引擎{{ row.summary.engines }} ·
                 成功{{ row.summary.cells_ok }} · 落库{{ row.summary.snapshots_created }} ·
                 真采样{{ row.summary.real_samples }}
               </span>
+              <span v-else-if="row.error" class="err">{{ row.error }}</span>
               <span v-else>—</span>
             </template>
           </el-table-column>
           <el-table-column prop="created_at" label="创建" width="160" />
+          <el-table-column label="操作" width="80" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                size="small"
+                text
+                type="danger"
+                @click.stop="removeRun(row)"
+              >删除</el-button>
+            </template>
+          </el-table-column>
         </el-table>
 
         <div v-if="detail" class="detail">

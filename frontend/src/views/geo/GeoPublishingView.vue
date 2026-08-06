@@ -10,6 +10,7 @@ import {
   createGeoChannelAccount,
   createGeoPublishingChannel,
   deleteGeoChannelAccount,
+  deleteGeoPublishingChannel,
   listGeoChannelAccounts,
   listGeoPublishingChannels,
   patchGeoChannelAccount,
@@ -253,6 +254,21 @@ async function toggleChannel(row) {
     await load()
   } catch (e) {
     ElMessage.error(e.message || '更新失败')
+  }
+}
+
+async function removeChannel(row) {
+  try {
+    await ElMessageBox.confirm(
+      `物理删除渠道「${row.name}」及其账号？不可恢复。`,
+      '删除渠道',
+      { type: 'error', confirmButtonText: '删除' },
+    )
+    await deleteGeoPublishingChannel(tenantId.value, row.id, true)
+    ElMessage.success('渠道已删除')
+    await load()
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close') ElMessage.error(e.message || '删除失败')
   }
 }
 
@@ -572,12 +588,13 @@ onMounted(load)
             {{ accounts.filter((a) => a.channel_id === row.id).length }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEditChannel(row)">配置</el-button>
             <el-button link type="primary" @click="toggleChannel(row)">
               {{ row.enabled ? '禁用' : '启用' }}
             </el-button>
+            <el-button link type="danger" @click="removeChannel(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>

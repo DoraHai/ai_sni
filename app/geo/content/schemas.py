@@ -211,6 +211,8 @@ class TaskUpdate(BaseModel):
     owner_user_id: int | None = None
     target_channels: list[str] | None = None
     brief: ContentBrief | dict[str, Any] | None = None
+    # draft|facts_bound|editing|needs_fix|ready|published|archived
+    status: str | None = Field(None, max_length=32)
 
 
 class TaskFromDiagnosis(BaseModel):

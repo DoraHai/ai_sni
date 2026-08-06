@@ -61,6 +61,7 @@ const ALL_GROUPS = computed(() => [
     { label: '跟踪引擎', path: '/geo/engines', key: 'geo.content' },
     { label: 'AI 配置', path: '/geo/ai-settings', key: 'geo.content' },
     { label: '发布渠道', path: '/geo/publishing', key: 'geo.content' },
+    { label: '媒体阵地', path: '/geo/placements', key: 'geo.content' },
   ] },
   { label: '首次接入', icon: '🚀', children: [
     { label: '授权与同步', path: '/onboarding', key: 'onboarding' },

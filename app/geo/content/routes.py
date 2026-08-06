@@ -1149,6 +1149,21 @@ async def update_answer_snapshot(
     return _snapshot_payload(row, prompt_question=prompt.question)
 
 
+@router.delete("/answer-snapshots/{snapshot_id}")
+async def delete_answer_snapshot(
+    snapshot_id: int,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Hard-delete one answer snapshot (test data / wrong paste cleanup)."""
+    ctx.ensure_tenant(tenant_id)
+    row = await _get_snapshot(session, snapshot_id, tenant_id)
+    await session.delete(row)
+    await session.commit()
+    return {"deleted": True, "id": snapshot_id}
+
+
 @router.get("/competitor-insights")
 async def competitor_insights(
     tenant_id: int = Query(...),
@@ -1849,6 +1864,66 @@ async def create_visibility_patrol_run(
     return {"run": patrol_run_payload(done), "started": True, "async": False}
 
 
+@router.delete("/visibility-patrol/runs/{run_id}")
+async def delete_visibility_patrol_run(
+    run_id: int,
+    tenant_id: int = Query(...),
+    force: bool = Query(False, description="true 时取消 running/pending 并删除"),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Delete a patrol run history row. Blocks active runs unless force=true."""
+    ctx.ensure_tenant(tenant_id)
+    row = await session.get(GeoVisibilityPatrolRun, run_id)
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, "巡检任务不存在")
+    if row.status in ("pending", "running") and not force:
+        raise HTTPException(
+            400,
+            "进行中的巡检不可删除；请等待结束，或 force=true 强制删除",
+        )
+    await session.delete(row)
+    await session.commit()
+    return {"deleted": True, "id": run_id}
+
+
+@router.post("/visibility-patrol/runs/cleanup")
+async def cleanup_visibility_patrol_runs(
+    tenant_id: int = Query(...),
+    keep_latest: int = Query(20, ge=0, le=200),
+    only_terminal: bool = Query(True, description="仅清理 completed/failed/cancelled"),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Keep newest N terminal runs; delete older history for this tenant."""
+    ctx.ensure_tenant(tenant_id)
+    stmt = (
+        select(GeoVisibilityPatrolRun)
+        .where(GeoVisibilityPatrolRun.tenant_id == tenant_id)
+        .order_by(GeoVisibilityPatrolRun.id.desc())
+    )
+    rows = list(await session.scalars(stmt))
+    keep_ids: set[int] = set()
+    kept = 0
+    deleted = 0
+    for r in rows:
+        terminal = r.status in ("completed", "failed", "cancelled")
+        if only_terminal and not terminal:
+            continue
+        if kept < keep_latest:
+            keep_ids.add(r.id)
+            kept += 1
+            continue
+        if only_terminal and not terminal:
+            continue
+        if r.status in ("pending", "running"):
+            continue
+        await session.delete(r)
+        deleted += 1
+    await session.commit()
+    return {"deleted": deleted, "kept": len(keep_ids), "keep_latest": keep_latest}
+
+
 @router.post("/answer-snapshots/extract-urls")
 async def extract_answer_snapshot_urls(
     req: AnswerSnapshotExtractUrlsRequest,
@@ -2272,6 +2347,28 @@ async def create_publishing_channel(
     return _channel_payload(row)
 
 
+@router.delete("/publishing-channels/{channel_id}")
+async def delete_publishing_channel(
+    channel_id: int,
+    tenant_id: int = Query(...),
+    hard: bool = Query(False, description="false=enabled=false；true=物理删除（级联账号）"),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    row = await session.get(GeoPublishingChannel, channel_id)
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, "发布渠道不存在")
+    if hard:
+        await session.delete(row)
+        await session.commit()
+        return {"deleted": True, "hard": True, "id": channel_id}
+    row.enabled = False
+    await session.commit()
+    await session.refresh(row)
+    return {"deleted": False, "disabled": True, "channel": _channel_payload(row)}
+
+
 @router.patch("/publishing-channels/{channel_id}")
 async def update_publishing_channel(
     channel_id: int,
@@ -2575,6 +2672,20 @@ async def update_media_placement(
     return _media_payload(row)
 
 
+@router.delete("/media-placements/{placement_id}")
+async def delete_media_placement(
+    placement_id: int,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    row = await _get_media_placement(session, placement_id, tenant_id)
+    await session.delete(row)
+    await session.commit()
+    return {"deleted": True, "id": placement_id}
+
+
 # ---------- facts ----------
 
 
@@ -2721,6 +2832,7 @@ async def list_tasks(
     q: str | None = Query(None),
     owner_user_id: int | None = Query(None),
     from_diagnosis: bool | None = Query(None),
+    include_archived: bool = Query(False, description="默认不列出 archived"),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -2728,6 +2840,8 @@ async def list_tasks(
     stmt = select(GeoContentTask).where(GeoContentTask.tenant_id == tenant_id)
     if status:
         stmt = stmt.where(GeoContentTask.status == status)
+    elif not include_archived:
+        stmt = stmt.where(GeoContentTask.status != "archived")
     if pipeline_step:
         stmt = stmt.where(GeoContentTask.pipeline_step == pipeline_step)
     if owner_user_id is not None:
@@ -2843,12 +2957,53 @@ async def patch_task(
         data["brief"] = normalize_brief(raw)
     if "target_channels" in data and data["target_channels"] is not None:
         data["target_channels"] = normalize_channels(data["target_channels"])
+    if "status" in data and data["status"] is not None:
+        st = str(data["status"]).strip().lower()
+        allowed = {
+            "draft",
+            "facts_bound",
+            "editing",
+            "needs_fix",
+            "ready",
+            "published",
+            "archived",
+        }
+        if st not in allowed:
+            raise HTTPException(400, f"非法 status，允许: {', '.join(sorted(allowed))}")
+        data["status"] = st
     for key, value in data.items():
         setattr(task, key, value)
-    await _sync_task_pipeline(session, task)
+    if task.status != "archived":
+        await _sync_task_pipeline(session, task)
     await session.commit()
     await session.refresh(task)
     return await _task_payload(session, task, detail=True)
+
+
+@router.delete("/content-tasks/{task_id}")
+async def delete_content_task(
+    task_id: int,
+    tenant_id: int = Query(...),
+    hard: bool = Query(False, description="false=归档；true=物理删除（级联文章/渠道稿）"),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Archive (default) or hard-delete a content task for test data cleanup."""
+    ctx.ensure_tenant(tenant_id)
+    task = await _get_task(session, task_id, tenant_id)
+    if hard:
+        await session.delete(task)
+        await session.commit()
+        return {"deleted": True, "hard": True, "id": task_id}
+    task.status = "archived"
+    await session.commit()
+    await session.refresh(task)
+    return {
+        "deleted": False,
+        "archived": True,
+        "id": task_id,
+        "status": task.status,
+    }
 
 
 @router.get("/content-tasks/{task_id}")
