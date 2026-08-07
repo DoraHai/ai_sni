@@ -60,16 +60,31 @@ export function patchGeoUnit(tenantId, unitId, body) {
   })
 }
 
-/** 按天汇总 */
+/** 按天汇总（租户 / 业务 / 单元切片） */
 export function listGeoDailyMetrics(tenantId, params = {}) {
   return client.get('/api/v1/geo/daily-metrics', {
     params: { tenant_id: tenantId, ...params },
   })
 }
 
-export function rebuildGeoDailyMetrics(tenantId, metricDate) {
+/**
+ * @param {number} tenantId
+ * @param {{ metricDate?: string, dateFrom?: string, dateTo?: string, includeEmptySlices?: boolean }} [opts]
+ */
+export function rebuildGeoDailyMetrics(tenantId, opts = {}) {
+  // 兼容旧调用：rebuildGeoDailyMetrics(tid, '2026-08-07')
+  if (typeof opts === 'string') {
+    opts = { metricDate: opts }
+  }
   return client.post('/api/v1/geo/daily-metrics/rebuild', null, {
-    params: { tenant_id: tenantId, metric_date: metricDate || undefined },
+    params: {
+      tenant_id: tenantId,
+      metric_date: opts.metricDate || undefined,
+      date_from: opts.dateFrom || undefined,
+      date_to: opts.dateTo || undefined,
+      include_empty_slices: opts.includeEmptySlices || undefined,
+    },
+    timeout: 120000,
   })
 }
 

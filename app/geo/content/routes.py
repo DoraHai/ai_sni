@@ -894,160 +894,167 @@ async def list_daily_metrics(
     business_id: int | None = Query(None),
     unit_id: int | None = Query(None),
     scope_key: str | None = Query(None),
+    scope_level: str | None = Query(
+        None, description="tenant | business | unit；与 scope_key 二选一优先 scope_key"
+    ),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """按天汇总指标（品牌提及率 / 点名认知 / AI 引用次数）。
 
-    统计口径说明（AI 引用）：
-    - distinct_cited_domains：快照 cited_urls 去重后的独立域名数
-    - citation_count：cited_urls 出现总次数
-    - 非全网抓取；仅统计系统内已登记的回答快照
+    切片：
+    - scope_key=t / scope_level=tenant：租户全量
+    - scope_key=b{id} 或 business_id + scope_level=business：优化业务
+    - scope_key=u{id} 或 unit_id + scope_level=unit：优化单元
+
+    统计口径见 citation_stat_note。
     """
-    from datetime import date as date_cls
-    from datetime import timedelta
+    from app.geo.content.daily_metrics import (
+        CITATION_STAT_NOTE,
+        METRIC_LABELS,
+        metric_row_payload,
+        scope_business,
+        scope_tenant,
+        scope_unit,
+    )
 
     ctx.ensure_tenant(tenant_id)
-    end = date_to or date_cls.today()
+    end = date_to or date.today()
     start = date_from or (end - timedelta(days=13))
     stmt = select(GeoDailyMetric).where(
         GeoDailyMetric.tenant_id == tenant_id,
         GeoDailyMetric.metric_date >= start,
         GeoDailyMetric.metric_date <= end,
     )
-    if scope_key:
-        stmt = stmt.where(GeoDailyMetric.scope_key == scope_key)
-    if business_id is not None:
-        stmt = stmt.where(GeoDailyMetric.business_id == business_id)
-    if unit_id is not None:
-        stmt = stmt.where(GeoDailyMetric.unit_id == unit_id)
-    stmt = stmt.order_by(GeoDailyMetric.metric_date.asc(), GeoDailyMetric.id.asc())
+
+    resolved_scope = scope_key
+    if not resolved_scope:
+        if unit_id is not None and (scope_level in (None, "unit")):
+            resolved_scope = scope_unit(unit_id)
+        elif business_id is not None and scope_level == "business":
+            resolved_scope = scope_business(business_id)
+        elif scope_level == "tenant":
+            resolved_scope = scope_tenant()
+        elif scope_level == "business":
+            stmt = stmt.where(GeoDailyMetric.scope_key.like("b%"))
+        elif scope_level == "unit":
+            stmt = stmt.where(GeoDailyMetric.scope_key.like("u%"))
+            if business_id is not None:
+                stmt = stmt.where(GeoDailyMetric.business_id == business_id)
+
+    if resolved_scope:
+        stmt = stmt.where(GeoDailyMetric.scope_key == resolved_scope)
+    elif business_id is not None and scope_level not in ("unit", "business"):
+        # 兼容：只传 business_id 时返回该业务 scope（b{id}），不含下属 unit
+        stmt = stmt.where(GeoDailyMetric.scope_key == scope_business(business_id))
+    elif unit_id is not None and not resolved_scope:
+        stmt = stmt.where(GeoDailyMetric.scope_key == scope_unit(unit_id))
+
+    stmt = stmt.order_by(
+        GeoDailyMetric.metric_date.asc(),
+        GeoDailyMetric.scope_key.asc(),
+        GeoDailyMetric.id.asc(),
+    )
     rows = list(await session.scalars(stmt))
-    items = [
-        {
-            "id": r.id,
-            "tenant_id": r.tenant_id,
-            "metric_date": r.metric_date.isoformat() if r.metric_date else None,
-            "scope_key": r.scope_key,
-            "business_id": r.business_id,
-            "unit_id": r.unit_id,
-            "engine": r.engine,
-            "snapshots_visibility": r.snapshots_visibility,
-            "snapshots_probe": r.snapshots_probe,
-            "brand_mentions": r.brand_mentions,
-            "brand_probe_hits": r.brand_probe_hits,
-            "top1_count": r.top1_count,
-            "distinct_cited_domains": r.distinct_cited_domains,
-            "citation_count": r.citation_count,
-            "brand_mention_rate": r.brand_mention_rate,
-            "brand_probe_recognition_rate": r.brand_probe_recognition_rate,
-            "top1_rate": r.top1_rate,
-        }
-        for r in rows
-    ]
+
+    biz_names: dict[int, str] = {}
+    unit_names: dict[int, str] = {}
+    unit_biz: dict[int, int] = {}
+    unit_ids = {r.unit_id for r in rows if r.unit_id}
+    biz_ids = {r.business_id for r in rows if r.business_id}
+    if unit_ids:
+        for u in await session.scalars(
+            select(GeoOptimizationUnit).where(
+                GeoOptimizationUnit.tenant_id == tenant_id,
+                GeoOptimizationUnit.id.in_(list(unit_ids)),
+            )
+        ):
+            unit_names[u.id] = u.name
+            unit_biz[u.id] = u.business_id
+            biz_ids.add(u.business_id)
+    if biz_ids:
+        for b in await session.scalars(
+            select(GeoOptimizationBusiness).where(
+                GeoOptimizationBusiness.tenant_id == tenant_id,
+                GeoOptimizationBusiness.id.in_(list(biz_ids)),
+            )
+        ):
+            biz_names[b.id] = b.name
+
+    items = []
+    for r in rows:
+        payload = metric_row_payload(r)
+        bid = payload.get("business_id")
+        uid = payload.get("unit_id")
+        if bid is None and uid and uid in unit_biz:
+            bid = unit_biz[uid]
+            payload["business_id"] = bid
+        payload["business_name"] = biz_names.get(bid) if bid else None
+        payload["unit_name"] = unit_names.get(uid) if uid else None
+        if payload["scope_level"] == "tenant":
+            payload["scope_label"] = "租户"
+        elif payload["scope_level"] == "business":
+            payload["scope_label"] = payload["business_name"] or f"业务#{bid}"
+        elif payload["scope_level"] == "unit":
+            un = payload["unit_name"] or f"单元#{uid}"
+            bn = payload["business_name"]
+            payload["scope_label"] = f"{bn} / {un}" if bn else un
+        else:
+            payload["scope_label"] = payload["scope_key"]
+        items.append(payload)
+
     return {
         "items": items,
         "period": {"from": start.isoformat(), "to": end.isoformat()},
-        "metric_labels": {
-            "brand_mention_rate": "品牌提及率",
-            "brand_probe_recognition_rate": "品牌点名认知率",
-            "citation_count": "AI 引用次数",
-            "distinct_cited_domains": "AI 引用·独立域名数",
+        "metric_labels": METRIC_LABELS,
+        "citation_stat_note": CITATION_STAT_NOTE,
+        "scope_levels": {
+            "tenant": "租户全量 · scope_key=t",
+            "business": "优化业务 · scope_key=b{id}",
+            "unit": "优化单元 · scope_key=u{id}",
         },
-        "citation_stat_note": (
-            "AI 引用次数来自回答快照 cited_urls 聚合："
-            "citation_count 为 URL 出现总次数，distinct_cited_domains 为独立域名数；非全网抓取。"
-        ),
     }
 
 
 @router.post("/daily-metrics/rebuild")
 async def rebuild_daily_metrics(
     tenant_id: int = Query(...),
-    metric_date: date | None = Query(None, description="默认今天；按该日快照重算租户级汇总"),
+    metric_date: date | None = Query(
+        None, description="单日重算；与 date_from/date_to 二选一，优先区间"
+    ),
+    date_from: date | None = Query(None, description="区间起点（含）"),
+    date_to: date | None = Query(None, description="区间终点（含）"),
+    include_empty_slices: bool = Query(
+        False, description="为活跃业务/单元写入 0 快照行"
+    ),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """按日重算租户级指标（雏形：scope_key=t，不切片业务/单元）。"""
-    from datetime import date as date_cls
-    from datetime import datetime as dt
-    from datetime import time, timedelta
+    """按日重算租户 + 业务 + 单元切片。
+
+    快照经意图词 unit_id → 单元 → 业务归属后分别聚合。
+    未挂单元的意图词只进租户级 t，不进业务/单元切片。
+    """
+    from app.geo.content.daily_metrics import rebuild_day, rebuild_range
 
     ctx.ensure_tenant(tenant_id)
-    day = metric_date or date_cls.today()
-    start_dt = dt.combine(day, time.min)
-    end_dt = dt.combine(day, time.max)
-
-    snaps = list(
-        await session.scalars(
-            select(GeoAnswerSnapshot).where(
-                GeoAnswerSnapshot.tenant_id == tenant_id,
-                GeoAnswerSnapshot.captured_at >= start_dt,
-                GeoAnswerSnapshot.captured_at <= end_dt,
-            )
+    if date_from or date_to:
+        end = date_to or date.today()
+        start = date_from or end
+        result = await rebuild_range(
+            session,
+            tenant_id,
+            start,
+            end,
+            include_empty_slices=include_empty_slices,
         )
+        return {"mode": "range", **result}
+
+    day = metric_date or date.today()
+    result = await rebuild_day(
+        session, tenant_id, day, include_empty_slices=include_empty_slices
     )
-    prompt_ids = {s.prompt_id for s in snaps if s.prompt_id}
-    probe_map: dict[int, bool] = {}
-    if prompt_ids:
-        for p in await session.scalars(
-            select(GeoPrompt).where(
-                GeoPrompt.tenant_id == tenant_id,
-                GeoPrompt.id.in_(list(prompt_ids)),
-            )
-        ):
-            probe_map[p.id] = bool(p.is_brand_probe)
-
-    vis = [s for s in snaps if not probe_map.get(s.prompt_id, False)]
-    probe = [s for s in snaps if probe_map.get(s.prompt_id, False)]
-    brand_mentions = sum(1 for s in vis if s.mentions_brand)
-    brand_probe_hits = sum(1 for s in probe if s.mentions_brand)
-    top1 = sum(1 for s in vis if (s.brand_position or "") == "first")
-    domains: set[str] = set()
-    cite_count = 0
-    for s in snaps:
-        urls = normalize_cited_urls(getattr(s, "cited_urls", None) or [])
-        cite_count += len(urls)
-        for u in urls:
-            d = extract_cited_domain(u)
-            if d:
-                domains.add(d)
-
-    vis_n = len(vis)
-    probe_n = len(probe)
-    metrics = {
-        "snapshots_visibility": vis_n,
-        "snapshots_probe": probe_n,
-        "brand_mentions": brand_mentions,
-        "brand_probe_hits": brand_probe_hits,
-        "top1_count": top1,
-        "distinct_cited_domains": len(domains),
-        "citation_count": cite_count,
-        "brand_mention_rate": (brand_mentions / vis_n) if vis_n else None,
-        "brand_probe_recognition_rate": (brand_probe_hits / probe_n) if probe_n else None,
-        "top1_rate": (top1 / vis_n) if vis_n else None,
-    }
-
-    row = await session.scalar(
-        select(GeoDailyMetric).where(
-            GeoDailyMetric.tenant_id == tenant_id,
-            GeoDailyMetric.metric_date == day,
-            GeoDailyMetric.scope_key == "t",
-        )
-    )
-    if not row:
-        row = GeoDailyMetric(tenant_id=tenant_id, metric_date=day, scope_key="t")
-        session.add(row)
-    for k, v in metrics.items():
-        setattr(row, k, v)
-    await session.commit()
-    await session.refresh(row)
-    return {
-        "metric_date": day.isoformat(),
-        "scope_key": "t",
-        **metrics,
-        "snapshot_total": len(snaps),
-    }
+    return {"mode": "day", **result}
 
 
 # ---------- prompts（优化意图词）----------

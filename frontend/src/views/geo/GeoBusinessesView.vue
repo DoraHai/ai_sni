@@ -18,12 +18,16 @@ const router = useRouter()
 const { tenantId } = useGeoTenant()
 
 const loading = ref(false)
+const rebuilding = ref(false)
 const error = ref('')
 const businesses = ref([])
 const units = ref([])
 const selectedBusinessId = ref(null)
+const selectedUnitId = ref(null)
 const dailyItems = ref([])
 const citationNote = ref('')
+/** tenant | business | unit | all_units_in_biz */
+const dailyScope = ref('tenant')
 
 const bizOpen = ref(false)
 const unitOpen = ref(false)
@@ -34,6 +38,23 @@ const unitForm = ref({ name: '', keyword: '', description: '' })
 const selectedBusiness = computed(() =>
   businesses.value.find((b) => b.id === selectedBusinessId.value) || null,
 )
+
+const dailyPanelTitle = computed(() => {
+  if (dailyScope.value === 'tenant') return '按天汇总 · 租户全量'
+  if (dailyScope.value === 'business') {
+    const n = selectedBusiness.value?.name || `#${selectedBusinessId.value}`
+    return `按天汇总 · 优化业务「${n}」`
+  }
+  if (dailyScope.value === 'unit') {
+    const u = units.value.find((x) => x.id === selectedUnitId.value)
+    return `按天汇总 · 优化单元「${u?.name || selectedUnitId.value}」`
+  }
+  if (dailyScope.value === 'all_units_in_biz') {
+    const n = selectedBusiness.value?.name || `#${selectedBusinessId.value}`
+    return `按天汇总 · 「${n}」下全部单元切片`
+  }
+  return '按天汇总'
+})
 
 async function loadBusinesses() {
   if (!tenantId.value) {
@@ -86,7 +107,32 @@ async function loadDaily() {
     return
   }
   try {
-    const data = await listGeoDailyMetrics(tenantId.value, { scope_key: 't' })
+    const params = {}
+    if (dailyScope.value === 'tenant') {
+      params.scope_level = 'tenant'
+    } else if (dailyScope.value === 'business') {
+      if (!selectedBusinessId.value) {
+        dailyItems.value = []
+        return
+      }
+      params.scope_level = 'business'
+      params.business_id = selectedBusinessId.value
+    } else if (dailyScope.value === 'unit') {
+      if (!selectedUnitId.value) {
+        dailyItems.value = []
+        return
+      }
+      params.scope_level = 'unit'
+      params.unit_id = selectedUnitId.value
+    } else if (dailyScope.value === 'all_units_in_biz') {
+      if (!selectedBusinessId.value) {
+        dailyItems.value = []
+        return
+      }
+      params.scope_level = 'unit'
+      params.business_id = selectedBusinessId.value
+    }
+    const data = await listGeoDailyMetrics(tenantId.value, params)
     dailyItems.value = data.items || []
     citationNote.value = data.citation_stat_note || ''
   } catch {
@@ -177,15 +223,48 @@ function goPrompts(unitId) {
 
 async function rebuildToday() {
   if (!tenantId.value) return
+  rebuilding.value = true
   try {
-    const r = await rebuildGeoDailyMetrics(tenantId.value)
+    const r = await rebuildGeoDailyMetrics(tenantId.value, { includeEmptySlices: false })
+    const t = r.tenant || {}
+    const sc = r.scope_counts || {}
     ElMessage.success(
-      `已重算 ${r.metric_date}：品牌提及 ${r.brand_mentions ?? 0} · AI 引用 ${r.citation_count ?? 0}`,
+      `已重算 ${r.metric_date || '今日'}：租户快照 ${r.snapshot_total ?? 0} · ` +
+        `业务切片 ${sc.business ?? 0} · 单元切片 ${sc.unit ?? 0} · ` +
+        `AI 引用 ${t.citation_count ?? 0}`,
     )
     await loadDaily()
   } catch (e) {
     ElMessage.error(e.message || '重算失败')
+  } finally {
+    rebuilding.value = false
   }
+}
+
+async function rebuildLast14() {
+  if (!tenantId.value) return
+  rebuilding.value = true
+  try {
+    const end = new Date()
+    const start = new Date()
+    start.setDate(end.getDate() - 13)
+    const fmt = (d) => d.toISOString().slice(0, 10)
+    const r = await rebuildGeoDailyMetrics(tenantId.value, {
+      dateFrom: fmt(start),
+      dateTo: fmt(end),
+    })
+    ElMessage.success(`已重算区间 ${r.period?.from} ~ ${r.period?.to}，共 ${r.day_count || 0} 天`)
+    await loadDaily()
+  } catch (e) {
+    ElMessage.error(e.message || '区间重算失败')
+  } finally {
+    rebuilding.value = false
+  }
+}
+
+function selectUnitForMetrics(row) {
+  selectedUnitId.value = row.id
+  dailyScope.value = 'unit'
 }
 
 const fmtPct = (v) => {
@@ -195,7 +274,12 @@ const fmtPct = (v) => {
   return `${(n * 100).toFixed(1)}%`
 }
 
-watch(selectedBusinessId, loadUnits)
+watch(selectedBusinessId, async () => {
+  selectedUnitId.value = null
+  await loadUnits()
+  if (dailyScope.value !== 'tenant') await loadDaily()
+})
+watch([dailyScope, selectedUnitId], loadDaily)
 watch(tenantId, async () => {
   await loadBusinesses()
   await loadUnits()
@@ -220,7 +304,8 @@ onMounted(async () => {
       <div class="header-actions">
         <el-button type="primary" @click="bizOpen = true">新建优化业务</el-button>
         <el-button :disabled="!selectedBusinessId" @click="unitOpen = true">新建优化单元</el-button>
-        <el-button @click="rebuildToday">重算今日指标</el-button>
+        <el-button :loading="rebuilding" type="success" @click="rebuildToday">重算今日（含业务/单元）</el-button>
+        <el-button :loading="rebuilding" @click="rebuildLast14">重算近 14 天</el-button>
         <router-link class="el-button" to="/geo/prompts">优化意图词</router-link>
         <router-link class="el-button" to="/geo/tasks">优化文章</router-link>
       </div>
@@ -268,9 +353,10 @@ onMounted(async () => {
           <el-table-column prop="name" label="单元名" min-width="120" />
           <el-table-column prop="keyword" label="关键词" min-width="120" />
           <el-table-column prop="prompt_count" label="意图词" width="80" />
-          <el-table-column label="操作" width="180" fixed="right">
+          <el-table-column label="操作" width="220" fixed="right">
             <template #default="{ row }">
               <el-button type="primary" link @click="goPrompts(row.id)">意图词</el-button>
+              <el-button type="success" link @click="selectUnitForMetrics(row)">看汇总</el-button>
               <el-button type="danger" link @click="archiveUnit(row)">归档</el-button>
             </template>
           </el-table-column>
@@ -279,19 +365,36 @@ onMounted(async () => {
     </div>
 
     <section class="panel">
-      <div class="panel-title">按天汇总（租户级 · scope_key=t）</div>
-      <el-table :data="dailyItems" size="small" empty-text="暂无按天数据，可点「重算今日指标」">
-        <el-table-column prop="metric_date" label="日期" width="120" />
-        <el-table-column label="品牌提及率" width="120">
+      <div class="panel-title-row">
+        <div class="panel-title">{{ dailyPanelTitle }}</div>
+        <div class="scope-tabs">
+          <el-radio-group v-model="dailyScope" size="small">
+            <el-radio-button label="tenant">租户</el-radio-button>
+            <el-radio-button label="business" :disabled="!selectedBusinessId">当前业务</el-radio-button>
+            <el-radio-button label="all_units_in_biz" :disabled="!selectedBusinessId">业务下单元</el-radio-button>
+            <el-radio-button label="unit" :disabled="!selectedUnitId">选中单元</el-radio-button>
+          </el-radio-group>
+          <el-button size="small" @click="loadDaily">刷新</el-button>
+        </div>
+      </div>
+      <el-table :data="dailyItems" size="small" empty-text="暂无按天数据：先挂意图词到单元，再「重算今日」">
+        <el-table-column prop="metric_date" label="日期" width="110" />
+        <el-table-column label="切片" min-width="140">
+          <template #default="{ row }">
+            {{ row.scope_label || row.scope_key }}
+            <span class="muted"> · {{ row.scope_key }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="品牌提及率" width="110">
           <template #default="{ row }">{{ fmtPct(row.brand_mention_rate) }}</template>
         </el-table-column>
-        <el-table-column label="品牌点名认知率" width="140">
+        <el-table-column label="品牌点名认知率" width="130">
           <template #default="{ row }">{{ fmtPct(row.brand_probe_recognition_rate) }}</template>
         </el-table-column>
-        <el-table-column prop="citation_count" label="AI 引用次数" width="120" />
-        <el-table-column prop="distinct_cited_domains" label="独立域名" width="100" />
-        <el-table-column prop="snapshots_visibility" label="可见快照" width="100" />
-        <el-table-column prop="snapshots_probe" label="探测快照" width="100" />
+        <el-table-column prop="citation_count" label="AI 引用次数" width="110" />
+        <el-table-column prop="distinct_cited_domains" label="独立域名" width="90" />
+        <el-table-column prop="snapshots_visibility" label="可见快照" width="90" />
+        <el-table-column prop="snapshots_probe" label="探测快照" width="90" />
       </el-table>
     </section>
 
@@ -356,5 +459,12 @@ onMounted(async () => {
   margin-bottom: 14px;
 }
 .panel-title { font-weight: 700; margin-bottom: 10px; color: #1e2330; }
+.panel-title-row {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 10px;
+}
+.panel-title-row .panel-title { margin-bottom: 0; }
+.scope-tabs { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .sub { font-weight: 400; color: #8b93a7; font-size: 13px; }
+.muted { font-size: 12px; color: #8b93a7; }
 </style>
