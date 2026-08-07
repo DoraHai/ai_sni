@@ -163,6 +163,24 @@ export function createGeoChannelAccount(body) {
   return client.post('/api/v1/geo/channel-accounts', body)
 }
 
+export function startSocialOAuth(tenantId, accountId) {
+  return client.post('/api/v1/geo/oauth/social/start', null, {
+    params: { tenant_id: tenantId, account_id: accountId },
+  })
+}
+
+export function refreshSocialOAuth(tenantId, accountId) {
+  return client.post('/api/v1/geo/oauth/social/refresh', null, {
+    params: { tenant_id: tenantId, account_id: accountId },
+  })
+}
+
+export function verifySocialAccount(tenantId, accountId) {
+  return client.post(`/api/v1/geo/channel-accounts/${accountId}/verify-social`, null, {
+    params: { tenant_id: tenantId },
+  })
+}
+
 export function patchGeoChannelAccount(tenantId, accountId, body) {
   return client.patch(`/api/v1/geo/channel-accounts/${accountId}`, body, {
     params: { tenant_id: tenantId },

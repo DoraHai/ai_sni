@@ -220,7 +220,7 @@ python scripts/smoke_geo_webhook_push.py
 
 ## 5. 已知非阻塞（可进二期）
 
-- 微信/知乎 OAuth 直发（P3）  
+- ~~微信/知乎 OAuth 直发（P3）~~ → 已合入 wechat_mp + oauth2 + gateway（`docs/GEO_SOCIAL_OAUTH.md`；需平台凭证）
 - 客户 HTML/ZIP 三件套加深（P4）  
 - SEM↔GEO 意图枢纽（P5）  
 - GeoLook 工单 DSL / 15 引擎大盘（P6）  

@@ -113,7 +113,7 @@ python scripts/accept_geo_m1.py   # API :8011，静态可选 :5176
 | P1 | **内容工作台迁 Vue** | 任务列表 `/geo/tasks` + 混合编辑器 `/geo/tasks/:id`（iframe 静态 editor）；全量 HTML 仍可打开 | 中高：前端为主，API 已有 | ✅ 2026-08-05 |
 | P2 | **真实多引擎采样** | 引擎 `sample_mode=openai_compat` + 可选 per-engine OpenAI 兼容凭证；缺 Key 回退人设模拟 | 中：凭证模型 + 连接器 | ✅ 2026-08-05 |
 | — | **生产独立 GEO 单元稳定** | `/health/geo` DB 失败 503；deploy smoke 校验 `db=ok`；`setup-geo.sh` + 验收清单 | 低：运维脚本 | ✅ 2026-08-05 |
-| P3 | **社交渠道发布** | 微信/知乎等 OAuth 或官方 API（可选） | 高：合规与账号体系 | 未开工 |
+| P3 | **社交渠道发布** | 微信公众号 wechat_mp 真接口 + 通用 OAuth2 + gateway；见 `docs/GEO_SOCIAL_OAUTH.md` | 中高 | ✅ 2026-08-07 代码就绪（凭证需客户自备） |
 | P4 | **交付物加深** | HTML/ZIP 客户包、对标代理商三件套 | 低～中 | 未开工 |
 | P5 | **SEM↔GEO 意图枢纽** | 搜索词/意图与 GEO 提示词互通 | 高：跨域产品 | 未开工 |
 | P6 | GeoLook 对标增强 | 工单验收 DSL、重抓 verify | 高：明确后置 | 未开工 |

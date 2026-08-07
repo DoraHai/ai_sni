@@ -6,6 +6,7 @@ credentials + matching exported variant. Ops only need to fill credentials.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -135,7 +136,9 @@ async def list_push_targets(
             if ctype in WEB_TYPES:
                 reasons.append("缺少 webhook 账号+凭证")
             else:
-                reasons.append("缺少 social_api 账号（api_url + access_token）")
+                reasons.append(
+                    "缺少社交账号凭证（gateway: api_url+token · wechat_mp: app_id+secret · oauth2: 授权后 token）"
+                )
 
         if reasons:
             targets.append(
@@ -199,6 +202,19 @@ async def execute_single_push(
             body_html=getattr(article, "body_html", None) if article else None,
         )
         remote = await post_social(credentials, payload)
+        # Persist refreshed OAuth / WeChat tokens
+        patch = remote.get("credential_patch") if isinstance(remote, dict) else None
+        if isinstance(patch, dict) and patch:
+            try:
+                from app.geo.content.ai_settings import encrypt_api_key
+
+                merged = {**credentials, **patch}
+                account.credentials_encrypted = encrypt_api_key(
+                    json.dumps(merged, ensure_ascii=False, sort_keys=True)
+                )
+                await session.flush()
+            except Exception:  # noqa: BLE001
+                logger.exception("failed to persist social credential patch account=%s", account.id)
     else:
         payload = build_webhook_payload(
             action=mode,

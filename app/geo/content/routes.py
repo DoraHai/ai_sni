@@ -2709,6 +2709,22 @@ def _channel_payload(row: GeoPublishingChannel) -> dict:
 
 
 def _channel_account_payload(row: GeoChannelAccount) -> dict:
+    provider = None
+    platform = None
+    oauth_authorized = False
+    if row.credentials_encrypted:
+        try:
+            from app.geo.content.connectors.social import (
+                decrypt_credentials_json,
+                resolve_provider,
+            )
+
+            creds = decrypt_credentials_json(row.credentials_encrypted)
+            provider = resolve_provider(creds)
+            platform = creds.get("platform")
+            oauth_authorized = bool(creds.get("access_token"))
+        except Exception:  # noqa: BLE001
+            pass
     return {
         "id": row.id,
         "tenant_id": row.tenant_id,
@@ -2716,6 +2732,9 @@ def _channel_account_payload(row: GeoChannelAccount) -> dict:
         "display_name": row.display_name,
         "auth_type": row.auth_type,
         "has_credentials": bool(row.credentials_encrypted),
+        "provider": provider,
+        "platform": platform,
+        "oauth_authorized": oauth_authorized,
         "status": row.status,
         "expires_at": _iso(row.expires_at),
         "last_verified_at": _iso(row.last_verified_at),
@@ -2990,6 +3009,133 @@ async def update_channel_account(
     await session.commit()
     await session.refresh(row)
     return _channel_account_payload(row)
+
+
+@router.post("/oauth/social/start")
+async def oauth_social_start(
+    tenant_id: int = Query(...),
+    account_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Build OAuth2 authorize URL for a channel account (auth_type=oauth2)."""
+    from app.geo.content.connectors.oauth2 import (
+        OAuth2Error,
+        build_authorize_url,
+        sign_oauth_state,
+    )
+    from app.geo.content.connectors.social import decrypt_credentials_json, resolve_provider
+
+    ctx.ensure_tenant(tenant_id)
+    row = await _get_channel_account(session, account_id, tenant_id)
+    if not row.credentials_encrypted:
+        raise HTTPException(400, "账号未配置 OAuth 客户端凭证（client_id 等）")
+    try:
+        creds = decrypt_credentials_json(row.credentials_encrypted)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, str(exc)) from exc
+    if resolve_provider(creds) != "oauth2" and row.auth_type not in {"oauth2", "social_api"}:
+        raise HTTPException(400, "仅 oauth2 / social_api(oauth2 provider) 支持授权跳转")
+    if resolve_provider(creds) != "oauth2":
+        raise HTTPException(400, "凭证 provider 不是 oauth2，请填写 authorize_url/token_url/client_id")
+    try:
+        state = sign_oauth_state(tenant_id=tenant_id, account_id=account_id)
+        url = build_authorize_url(creds, state=state)
+    except OAuth2Error as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {
+        "authorize_url": url,
+        "state": state,
+        "account_id": account_id,
+        "expires_in_sec": 600,
+    }
+
+
+@router.post("/oauth/social/refresh")
+async def oauth_social_refresh(
+    tenant_id: int = Query(...),
+    account_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Refresh OAuth2 access_token using stored refresh_token."""
+    from app.geo.content.ai_settings import encrypt_api_key
+    from app.geo.content.connectors.oauth2 import OAuth2Error, refresh_access_token
+    from app.geo.content.connectors.social import decrypt_credentials_json
+
+    ctx.ensure_tenant(tenant_id)
+    row = await _get_channel_account(session, account_id, tenant_id)
+    if not row.credentials_encrypted:
+        raise HTTPException(400, "账号未配置凭证")
+    try:
+        creds = decrypt_credentials_json(row.credentials_encrypted)
+        patch = await refresh_access_token(creds)
+        merged = {**creds, **patch}
+        row.credentials_encrypted = encrypt_api_key(
+            json.dumps(merged, ensure_ascii=False, sort_keys=True)
+        )
+        row.last_verified_at = datetime.utcnow()
+        await session.commit()
+    except OAuth2Error as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "account_id": account_id, "refreshed": True}
+
+
+@router.post("/channel-accounts/{account_id}/verify-social")
+async def verify_social_account(
+    account_id: int,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Probe social credentials (WeChat token / OAuth token presence)."""
+    from app.geo.content.ai_settings import encrypt_api_key
+    from app.geo.content.connectors.social import (
+        decrypt_credentials_json,
+        resolve_provider,
+    )
+    from app.geo.content.connectors.wechat_mp import ensure_wechat_access_token
+
+    ctx.ensure_tenant(tenant_id)
+    row = await _get_channel_account(session, account_id, tenant_id)
+    if not row.credentials_encrypted:
+        raise HTTPException(400, "账号未配置凭证")
+    try:
+        creds = decrypt_credentials_json(row.credentials_encrypted)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, str(exc)) from exc
+    provider = resolve_provider(creds)
+    detail: dict[str, Any] = {"provider": provider, "platform": creds.get("platform")}
+    if provider == "wechat_mp":
+        try:
+            token, patch = await ensure_wechat_access_token(creds)
+            if patch:
+                merged = {**creds, **patch}
+                row.credentials_encrypted = encrypt_api_key(
+                    json.dumps(merged, ensure_ascii=False, sort_keys=True)
+                )
+            row.last_verified_at = datetime.utcnow()
+            row.status = "active"
+            await session.commit()
+            detail["ok"] = True
+            detail["token_prefix"] = (token[:8] + "…") if token else None
+            detail["mock"] = bool(str(creds.get("app_id") or "").startswith("mock_"))
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(400, str(exc)) from exc
+    elif provider == "oauth2":
+        detail["ok"] = bool(creds.get("access_token"))
+        detail["oauth_authorized"] = bool(creds.get("access_token"))
+        if not detail["ok"]:
+            raise HTTPException(400, "尚未完成 OAuth 授权（无 access_token）")
+        row.last_verified_at = datetime.utcnow()
+        await session.commit()
+    else:
+        detail["ok"] = bool(creds.get("access_token") and (creds.get("api_url") or creds.get("webhook_url")))
+        if not detail["ok"]:
+            raise HTTPException(400, "gateway 需要 api_url + access_token")
+        row.last_verified_at = datetime.utcnow()
+        await session.commit()
+    return detail
 
 
 @router.delete("/channel-accounts/{account_id}")

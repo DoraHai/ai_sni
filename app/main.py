@@ -96,6 +96,9 @@ app.include_router(manage_router)
 app.include_router(assistant_router)
 app.include_router(onboarding_builder_router)
 app.include_router(geo_router)
+from app.geo.content.oauth_public import router as geo_oauth_public_router  # noqa: E402
+
+app.include_router(geo_oauth_public_router)
 
 
 @app.get("/health")

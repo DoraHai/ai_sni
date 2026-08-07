@@ -17,6 +17,9 @@ import {
   listGeoPublishingChannels,
   patchGeoChannelAccount,
   patchGeoPublishingChannel,
+  refreshSocialOAuth,
+  startSocialOAuth,
+  verifySocialAccount,
 } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
@@ -37,10 +40,10 @@ const editChOpen = ref(false)
 const CHANNEL_TYPES = [
   { value: 'website', label: 'website · 官网（Webhook）', auto: true, social: false },
   { value: 'docs', label: 'docs · 文档（Webhook）', auto: true, social: false },
-  { value: 'wechat', label: 'wechat · 公众号（社交直发 social_api）', auto: true, social: true },
-  { value: 'zhihu', label: 'zhihu · 知乎（社交直发 social_api）', auto: true, social: true },
-  { value: 'baijiahao', label: 'baijiahao · 百家号（社交直发）', auto: true, social: true },
-  { value: 'toutiao', label: 'toutiao · 头条（社交直发）', auto: true, social: true },
+  { value: 'wechat', label: 'wechat · 公众号（wechat_mp / OAuth / 网关）', auto: true, social: true },
+  { value: 'zhihu', label: 'zhihu · 知乎（OAuth2 / 网关）', auto: true, social: true },
+  { value: 'baijiahao', label: 'baijiahao · 百家号（OAuth2 / 网关）', auto: true, social: true },
+  { value: 'toutiao', label: 'toutiao · 头条（OAuth2 / 网关）', auto: true, social: true },
   { value: 'industry_media', label: 'industry_media · 行业媒体（人工回填）', auto: false, social: false },
 ]
 
@@ -88,10 +91,19 @@ const accForm = ref({
   method: 'POST',
   secret: '',
   headers_json: '',
-  // social_api
+  // social
+  provider: 'wechat_mp', // wechat_mp | gateway | oauth2
   platform: 'wechat',
   api_url: '',
   access_token: '',
+  app_id: '',
+  app_secret: '',
+  client_id: '',
+  client_secret: '',
+  authorize_url: '',
+  token_url: '',
+  redirect_uri: '',
+  scope: '',
 })
 
 const editForm = ref({
@@ -347,14 +359,57 @@ function buildWebhookCredentials(form) {
 }
 
 function buildSocialCredentials(form, channelType) {
+  const platform = (form.platform || channelType || 'wechat').toLowerCase()
+  const provider = (form.provider || (platform === 'wechat' ? 'wechat_mp' : 'gateway')).toLowerCase()
+
+  if (provider === 'wechat_mp') {
+    const app_id = (form.app_id || '').trim()
+    const app_secret = (form.app_secret || '').trim()
+    if (!app_id || !app_secret) throw new Error('微信公众号需要 app_id 与 app_secret')
+    return {
+      provider: 'wechat_mp',
+      platform: 'wechat',
+      app_id,
+      app_secret,
+      mode_default: 'draft',
+    }
+  }
+
+  if (provider === 'oauth2') {
+    const client_id = (form.client_id || '').trim()
+    const client_secret = (form.client_secret || '').trim()
+    const authorize_url = (form.authorize_url || '').trim()
+    const token_url = (form.token_url || '').trim()
+    const api_url = (form.api_url || '').trim()
+    const redirect_uri = (form.redirect_uri || '').trim()
+    if (!client_id || !client_secret) throw new Error('OAuth2 需要 client_id / client_secret')
+    if (!authorize_url || !token_url) throw new Error('OAuth2 需要 authorize_url / token_url')
+    if (!api_url) throw new Error('OAuth2 推送需要 api_url（发布接口）')
+    if (!redirect_uri) throw new Error('OAuth2 需要 redirect_uri（回调地址）')
+    return {
+      provider: 'oauth2',
+      platform,
+      client_id,
+      client_secret,
+      authorize_url,
+      token_url,
+      api_url,
+      redirect_uri,
+      scope: (form.scope || '').trim() || undefined,
+      method: form.method || 'POST',
+      headers: parseHeaders(form.headers_json),
+    }
+  }
+
+  // gateway
   const api_url = (form.api_url || '').trim()
   if (!api_url.startsWith('https://')) {
-    throw new Error('社交 api_url 必须是 https://（官方 API 或自建转发）')
+    throw new Error('网关 api_url 必须是 https://（官方 API 或自建转发）')
   }
   const token = (form.access_token || '').trim()
-  if (!token) throw new Error('access_token 必填')
-  const platform = (form.platform || channelType || 'wechat').toLowerCase()
+  if (!token) throw new Error('gateway 模式 access_token 必填')
   return {
+    provider: 'gateway',
     platform,
     api_url,
     access_token: token,
@@ -392,6 +447,43 @@ function onAccChannelChange(cid) {
   accForm.value.auth_type = defaultAuthForChannel(cid)
   if (typeSupportsSocial(ch?.channel_type)) {
     accForm.value.platform = ch.channel_type
+    accForm.value.provider = ch.channel_type === 'wechat' ? 'wechat_mp' : 'oauth2'
+  }
+}
+
+async function goOAuth(row) {
+  try {
+    const r = await startSocialOAuth(tenantId.value, row.id)
+    if (r?.authorize_url) {
+      window.open(r.authorize_url, '_blank')
+      ElMessage.success('已打开授权页，完成后回来点「校验」')
+    } else {
+      ElMessage.warning('未返回 authorize_url')
+    }
+  } catch (e) {
+    ElMessage.error(e.message || '启动 OAuth 失败')
+  }
+}
+
+async function doVerifySocial(row) {
+  try {
+    const r = await verifySocialAccount(tenantId.value, row.id)
+    ElMessage.success(
+      r.mock ? '凭证校验通过（mock）' : r.oauth_authorized === false ? '未授权' : '凭证校验通过',
+    )
+    await load()
+  } catch (e) {
+    ElMessage.error(e.message || '校验失败')
+  }
+}
+
+async function doRefreshOAuth(row) {
+  try {
+    await refreshSocialOAuth(tenantId.value, row.id)
+    ElMessage.success('已刷新 access_token')
+    await load()
+  } catch (e) {
+    ElMessage.error(e.message || '刷新失败')
   }
 }
 
@@ -413,9 +505,9 @@ async function createAccount() {
   if (
     isAutoPublish(ch) &&
     typeSupportsSocial(ch?.channel_type) &&
-    accForm.value.auth_type !== 'social_api'
+    !['social_api', 'oauth2'].includes(accForm.value.auth_type)
   ) {
-    ElMessage.warning('社交渠道 auto_publish 请使用 social_api')
+    ElMessage.warning('社交渠道 auto_publish 请使用 social_api 或 oauth2')
     accForm.value.auth_type = 'social_api'
     return
   }
@@ -424,24 +516,32 @@ async function createAccount() {
       tenant_id: tenantId.value,
       channel_id: accForm.value.channel_id,
       display_name: accForm.value.display_name.trim(),
-      auth_type: accForm.value.auth_type,
+      auth_type:
+        accForm.value.provider === 'oauth2' ? 'oauth2' : accForm.value.auth_type,
       credentials: null,
     }
     if (accForm.value.auth_type === 'webhook') {
       body.credentials = buildWebhookCredentials(accForm.value)
-    } else if (accForm.value.auth_type === 'social_api') {
+    } else if (['social_api', 'oauth2'].includes(accForm.value.auth_type) || typeSupportsSocial(ch?.channel_type)) {
       body.credentials = buildSocialCredentials(accForm.value, ch?.channel_type)
+      if (accForm.value.provider === 'oauth2') body.auth_type = 'oauth2'
+      else body.auth_type = 'social_api'
     }
-    await createGeoChannelAccount(body)
+    const created = await createGeoChannelAccount(body)
     ElMessage.success(
-      accForm.value.auth_type === 'webhook'
+      body.auth_type === 'webhook'
         ? '已创建 Webhook 账号'
-        : accForm.value.auth_type === 'social_api'
-          ? '已创建社交直发账号'
-          : '已创建人工账号',
+        : body.auth_type === 'oauth2'
+          ? '已创建 OAuth2 账号（请点「去授权」完成授权）'
+          : accForm.value.provider === 'wechat_mp'
+            ? '已创建微信公众号账号（可点「校验凭证」）'
+            : '已创建社交直发账号',
     )
     createAccOpen.value = false
     await load()
+    if (body.auth_type === 'oauth2' && created?.id) {
+      // optional: user clicks 去授权
+    }
   } catch (e) {
     ElMessage.error(e.message || '创建失败')
   }
@@ -826,6 +926,15 @@ onMounted(load)
         </el-table-column>
         <el-table-column prop="display_name" label="显示名" min-width="150" show-overflow-tooltip />
         <el-table-column prop="auth_type" label="鉴权" width="100" />
+        <el-table-column label="提供商" width="100">
+          <template #default="{ row }">{{ row.provider || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="OAuth" width="80">
+          <template #default="{ row }">
+            <el-tag v-if="row.oauth_authorized" size="small" type="success">已授</el-tag>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
             <el-tag
@@ -847,9 +956,26 @@ onMounted(load)
             {{ row.has_credentials ? '已配' : '无' }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="320" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEditAccount(row)">编辑</el-button>
+            <el-button
+              v-if="row.auth_type === 'oauth2' || row.provider === 'oauth2'"
+              link
+              type="primary"
+              @click="goOAuth(row)"
+            >去授权</el-button>
+            <el-button
+              v-if="row.auth_type === 'oauth2' || row.provider === 'oauth2'"
+              link
+              @click="doRefreshOAuth(row)"
+            >刷新Token</el-button>
+            <el-button
+              v-if="row.auth_type === 'social_api' || row.auth_type === 'oauth2'"
+              link
+              type="success"
+              @click="doVerifySocial(row)"
+            >校验</el-button>
             <el-button
               v-if="row.status === 'disabled'"
               link
@@ -1014,15 +1140,15 @@ onMounted(load)
             />
           </el-form-item>
         </template>
-        <template v-else-if="accForm.auth_type === 'social_api'">
-          <el-divider content-position="left">社交直发（api_url + access_token）</el-divider>
-          <el-alert
-            class="mb"
-            type="info"
-            :closable="false"
-            show-icon
-            title="对接官方 API 或自建转发服务：Bearer token + HTTPS。OAuth 拿 token 在控制台完成。"
-          />
+        <template v-else-if="accForm.auth_type === 'social_api' || accForm.auth_type === 'oauth2'">
+          <el-divider content-position="left">社交真发布</el-divider>
+          <el-form-item label="提供商" required>
+            <el-select v-model="accForm.provider" style="width: 100%">
+              <el-option label="wechat_mp · 微信公众号原生（app_id/secret）" value="wechat_mp" />
+              <el-option label="oauth2 · 授权码 + 刷新 token" value="oauth2" />
+              <el-option label="gateway · 自建转发（api_url + token）" value="gateway" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="平台" required>
             <el-select v-model="accForm.platform" style="width: 100%">
               <el-option label="wechat 公众号" value="wechat" />
@@ -1031,29 +1157,74 @@ onMounted(load)
               <el-option label="toutiao 头条" value="toutiao" />
             </el-select>
           </el-form-item>
-          <el-form-item label="api_url" required>
-            <el-input
-              v-model="accForm.api_url"
-              placeholder="https://api.xxx.com/.../publish"
+
+          <template v-if="accForm.provider === 'wechat_mp'">
+            <el-alert
+              class="mb"
+              type="success"
+              :closable="false"
+              show-icon
+              title="微信公众号：用 app_id + app_secret 自动取 token，调用 draft/add（真开放平台接口）。本地可填 mock_ 前缀做演练。"
             />
-          </el-form-item>
-          <el-form-item label="access_token" required>
-            <el-input v-model="accForm.access_token" type="password" show-password />
-          </el-form-item>
-          <el-form-item label="HTTP 方法">
-            <el-select v-model="accForm.method" style="width: 100%">
-              <el-option label="POST" value="POST" />
-              <el-option label="PUT" value="PUT" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="Headers JSON">
-            <el-input
-              v-model="accForm.headers_json"
-              type="textarea"
-              :rows="2"
-              placeholder="可选附加头"
+            <el-form-item label="app_id" required>
+              <el-input v-model="accForm.app_id" placeholder="wx… 或 mock_wx_demo" />
+            </el-form-item>
+            <el-form-item label="app_secret" required>
+              <el-input v-model="accForm.app_secret" type="password" show-password />
+            </el-form-item>
+          </template>
+
+          <template v-else-if="accForm.provider === 'oauth2'">
+            <el-alert
+              class="mb"
+              type="info"
+              :closable="false"
+              show-icon
+              title="创建后点账号列表「去授权」；回调地址须配置到平台控制台，并指向本 API 的 /api/v1/geo/oauth/social/callback"
             />
-          </el-form-item>
+            <el-form-item label="client_id" required>
+              <el-input v-model="accForm.client_id" />
+            </el-form-item>
+            <el-form-item label="client_secret" required>
+              <el-input v-model="accForm.client_secret" type="password" show-password />
+            </el-form-item>
+            <el-form-item label="authorize_url" required>
+              <el-input v-model="accForm.authorize_url" placeholder="https://…/oauth/authorize" />
+            </el-form-item>
+            <el-form-item label="token_url" required>
+              <el-input v-model="accForm.token_url" placeholder="https://…/oauth/token" />
+            </el-form-item>
+            <el-form-item label="redirect_uri" required>
+              <el-input
+                v-model="accForm.redirect_uri"
+                placeholder="https://your-api/api/v1/geo/oauth/social/callback"
+              />
+            </el-form-item>
+            <el-form-item label="api_url" required>
+              <el-input v-model="accForm.api_url" placeholder="授权后发布接口 HTTPS" />
+            </el-form-item>
+            <el-form-item label="scope">
+              <el-input v-model="accForm.scope" placeholder="可选" />
+            </el-form-item>
+          </template>
+
+          <template v-else>
+            <el-form-item label="api_url" required>
+              <el-input v-model="accForm.api_url" placeholder="https://…/publish" />
+            </el-form-item>
+            <el-form-item label="access_token" required>
+              <el-input v-model="accForm.access_token" type="password" show-password />
+            </el-form-item>
+            <el-form-item label="HTTP 方法">
+              <el-select v-model="accForm.method" style="width: 100%">
+                <el-option label="POST" value="POST" />
+                <el-option label="PUT" value="PUT" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="Headers JSON">
+              <el-input v-model="accForm.headers_json" type="textarea" :rows="2" />
+            </el-form-item>
+          </template>
         </template>
         <el-alert
           v-else

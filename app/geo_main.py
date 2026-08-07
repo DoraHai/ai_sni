@@ -12,6 +12,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.database import engine
+from app.geo.content.oauth_public import router as geo_oauth_public_router
 from app.geo.routes import router as geo_router
 from app.security.prod_guard import enforce_production_secrets
 
@@ -33,6 +34,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(geo_router)
+app.include_router(geo_oauth_public_router)
 
 
 @app.get("/health/geo")
