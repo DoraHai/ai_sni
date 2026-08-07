@@ -1545,6 +1545,12 @@ async def create_answer_snapshot(
     )
     await session.commit()
     await session.refresh(row)
+    try:
+        from app.geo.content.daily_metrics import safe_rebuild_for_captured_at
+
+        await safe_rebuild_for_captured_at(req.tenant_id, row.captured_at)
+    except Exception:  # noqa: BLE001
+        pass
     return _snapshot_payload(row, prompt_question=prompt.question)
 
 
@@ -1582,6 +1588,12 @@ async def update_answer_snapshot(
         )
     await session.commit()
     await session.refresh(row)
+    try:
+        from app.geo.content.daily_metrics import safe_rebuild_for_captured_at
+
+        await safe_rebuild_for_captured_at(tenant_id, row.captured_at)
+    except Exception:  # noqa: BLE001
+        pass
     return _snapshot_payload(row, prompt_question=prompt.question)
 
 
@@ -1595,8 +1607,15 @@ async def delete_answer_snapshot(
     """Hard-delete one answer snapshot (test data / wrong paste cleanup)."""
     ctx.ensure_tenant(tenant_id)
     row = await _get_snapshot(session, snapshot_id, tenant_id)
+    captured = row.captured_at
     await session.delete(row)
     await session.commit()
+    try:
+        from app.geo.content.daily_metrics import safe_rebuild_for_captured_at
+
+        await safe_rebuild_for_captured_at(tenant_id, captured)
+    except Exception:  # noqa: BLE001
+        pass
     return {"deleted": True, "id": snapshot_id}
 
 

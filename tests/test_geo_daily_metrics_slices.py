@@ -112,3 +112,13 @@ def test_metric_bucket_empty_rates_none():
     assert d["brand_probe_recognition_rate"] is None
     assert d["top1_rate"] is None
     assert d["citation_count"] == 0
+
+
+def test_metric_day_from_captured():
+    from datetime import date, datetime
+
+    from app.geo.content.daily_metrics import _metric_day_from_captured
+
+    assert _metric_day_from_captured(datetime(2026, 8, 7, 15, 30)).isoformat() == "2026-08-07"
+    assert _metric_day_from_captured(date(2026, 1, 2)).isoformat() == "2026-01-02"
+    assert _metric_day_from_captured(None) == date.today()

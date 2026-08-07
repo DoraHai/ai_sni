@@ -13,6 +13,7 @@ AI 引用口径：
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
@@ -28,6 +29,8 @@ from app.models import (
     GeoOptimizationUnit,
     GeoPrompt,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def scope_tenant() -> str:
@@ -340,6 +343,92 @@ async def rebuild_range(
         "days": days,
         "day_count": len(days),
     }
+
+
+def _metric_day_from_captured(captured_at: datetime | date | None) -> date:
+    """Map snapshot captured_at to metric calendar day (local date part)."""
+    if captured_at is None:
+        return date.today()
+    if isinstance(captured_at, datetime):
+        return captured_at.date()
+    return captured_at
+
+
+async def safe_rebuild_day(
+    tenant_id: int,
+    day: date | None = None,
+    *,
+    include_empty_slices: bool = False,
+) -> dict[str, Any] | None:
+    """独立 session 重算，失败只记日志（供巡检/落库后钩子）。"""
+    from app.database import async_session_factory
+
+    target = day or date.today()
+    try:
+        async with async_session_factory() as session:
+            result = await rebuild_day(
+                session,
+                tenant_id,
+                target,
+                include_empty_slices=include_empty_slices,
+            )
+            logger.info(
+                "daily metrics rebuilt tenant=%s day=%s snaps=%s scopes=%s",
+                tenant_id,
+                target.isoformat(),
+                result.get("snapshot_total"),
+                len(result.get("scopes_written") or []),
+            )
+            return result
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "daily metrics rebuild failed tenant=%s day=%s", tenant_id, target
+        )
+        return None
+
+
+async def safe_rebuild_for_captured_at(
+    tenant_id: int, captured_at: datetime | date | None
+) -> dict[str, Any] | None:
+    return await safe_rebuild_day(tenant_id, _metric_day_from_captured(captured_at))
+
+
+async def list_tenant_ids_with_recent_snapshots(
+    session: AsyncSession, *, days: int = 2
+) -> list[int]:
+    """Tenants that had any answer snapshot in the last N calendar days."""
+    from sqlalchemy import distinct
+
+    start = datetime.combine(date.today() - timedelta(days=max(0, days - 1)), time.min)
+    rows = await session.scalars(
+        select(distinct(GeoAnswerSnapshot.tenant_id)).where(
+            GeoAnswerSnapshot.captured_at >= start
+        )
+    )
+    return [int(x) for x in rows if x is not None]
+
+
+async def nightly_rebuild_recent_tenants(*, lookback_days: int = 2) -> dict[str, Any]:
+    """Rebuild today + yesterday for tenants with recent snapshots (scheduler)."""
+    from app.database import async_session_factory
+
+    today = date.today()
+    days = [today - timedelta(days=i) for i in range(lookback_days)]
+    summary: dict[str, Any] = {"tenants": 0, "rebuilt": 0, "errors": 0, "days": [d.isoformat() for d in days]}
+    async with async_session_factory() as session:
+        tenant_ids = await list_tenant_ids_with_recent_snapshots(
+            session, days=max(lookback_days, 2)
+        )
+    summary["tenants"] = len(tenant_ids)
+    for tid in tenant_ids:
+        for d in days:
+            r = await safe_rebuild_day(tid, d)
+            if r is None:
+                summary["errors"] += 1
+            else:
+                summary["rebuilt"] += 1
+    logger.info("nightly daily-metrics rebuild done %s", summary)
+    return summary
 
 
 def metric_row_payload(row: GeoDailyMetric) -> dict[str, Any]:

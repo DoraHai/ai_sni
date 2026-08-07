@@ -522,6 +522,18 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
         row.finished_at = datetime.utcnow()
         await session.commit()
         await session.refresh(row)
+        # 巡检落库后自动重算当日租户/业务/单元指标（失败不拖垮巡检）
+        if int(summary.get("snapshots_created") or 0) > 0:
+            try:
+                from app.geo.content.daily_metrics import safe_rebuild_day
+
+                await safe_rebuild_day(int(row.tenant_id))
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "post-patrol daily metrics rebuild failed tenant=%s run=%s",
+                    row.tenant_id,
+                    run_id,
+                )
         return row
     except Exception as exc:  # noqa: BLE001
         logger.exception("patrol run %s failed", run_id)

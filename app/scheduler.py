@@ -228,6 +228,17 @@ async def purge_old_assistant_messages() -> None:
             logger.exception("[scheduler] 清理助手对话失败")
 
 
+async def run_geo_daily_metrics_nightly() -> None:
+    """Nightly: rebuild daily metrics (tenant/business/unit) for recent snapshot tenants."""
+    from app.geo.content.daily_metrics import nightly_rebuild_recent_tenants
+
+    try:
+        summary = await nightly_rebuild_recent_tenants(lookback_days=2)
+        logger.info("[scheduler] geo daily metrics nightly %s", summary)
+    except Exception:  # noqa: BLE001
+        logger.exception("[scheduler] geo daily metrics nightly failed")
+
+
 async def run_geo_visibility_patrols() -> None:
     """Hourly: fire enabled tenants whose window + interval allow a run (Asia/Shanghai)."""
     from datetime import datetime
@@ -360,6 +371,15 @@ def start_scheduler() -> None:
         run_geo_visibility_patrols,
         CronTrigger(minute=5),
         id="geo_visibility_patrols",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    # GEO 按天指标：每日 0:40 重算近 2 天（租户/业务/单元切片兜底）
+    scheduler.add_job(
+        run_geo_daily_metrics_nightly,
+        CronTrigger(hour=0, minute=40),
+        id="geo_daily_metrics_nightly",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
