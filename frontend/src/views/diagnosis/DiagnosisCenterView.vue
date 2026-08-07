@@ -237,7 +237,7 @@ async function bridgeToContent(adviceCode) {
       ElMessage.success(`已创建任务 #${taskId}，正在打开编辑器`)
     }
   } catch (e) {
-    ElMessage.error(e.message || '创建内容任务失败')
+    ElMessage.error(e.message || '创建优化文章失败')
   } finally {
     bridgeLoading.value = false
   }
@@ -594,7 +594,7 @@ onMounted(async () => {
                 <p>{{ item.action }}</p>
                 <footer><b>验收</b>{{ item.acceptance }}</footer>
                 <button class="bridge-btn" :disabled="bridgeLoading" @click="bridgeToContent(item.code)">
-                  创建 GEO 内容任务 →
+                  创建 GEO 优化文章 →
                 </button>
               </article>
             </div>

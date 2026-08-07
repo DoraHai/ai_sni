@@ -8,13 +8,20 @@ from app.database import Base
 
 
 class GeoPrompt(Base):
-    """GEO 机会问题（目标提问）。"""
+    """GEO 优化意图词（目标提问 / 原机会词）。可挂到优化单元。"""
 
     __tablename__ = "geo_prompts"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     tenant_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    # 可选：挂到优化单元（关键词），实现 业务→单元→意图词 三级
+    unit_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("geo_optimization_units.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     question: Mapped[str] = mapped_column(Text, nullable=False)
     language: Mapped[str] = mapped_column(String(16), nullable=False, default="zh-CN")

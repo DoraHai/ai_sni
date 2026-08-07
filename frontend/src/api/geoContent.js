@@ -26,6 +26,53 @@ export function patchGeoPrompt(tenantId, promptId, body) {
   })
 }
 
+/** 优化业务 */
+export function listGeoBusinesses(tenantId, params = {}) {
+  return client.get('/api/v1/geo/optimization-businesses', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
+export function createGeoBusiness(body) {
+  return client.post('/api/v1/geo/optimization-businesses', body)
+}
+
+export function patchGeoBusiness(tenantId, businessId, body) {
+  return client.patch(`/api/v1/geo/optimization-businesses/${businessId}`, body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+/** 优化单元（关键词） */
+export function listGeoUnits(tenantId, params = {}) {
+  return client.get('/api/v1/geo/optimization-units', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
+export function createGeoUnit(body) {
+  return client.post('/api/v1/geo/optimization-units', body)
+}
+
+export function patchGeoUnit(tenantId, unitId, body) {
+  return client.patch(`/api/v1/geo/optimization-units/${unitId}`, body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+/** 按天汇总 */
+export function listGeoDailyMetrics(tenantId, params = {}) {
+  return client.get('/api/v1/geo/daily-metrics', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
+export function rebuildGeoDailyMetrics(tenantId, metricDate) {
+  return client.post('/api/v1/geo/daily-metrics/rebuild', null, {
+    params: { tenant_id: tenantId, metric_date: metricDate || undefined },
+  })
+}
+
 export function listGeoFacts(tenantId, params = {}) {
   return client.get('/api/v1/geo/facts', { params: { tenant_id: tenantId, ...params } })
 }

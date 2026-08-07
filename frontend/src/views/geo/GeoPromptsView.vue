@@ -1,17 +1,26 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { createGeoContentTask, createGeoPrompt, listGeoPrompts, patchGeoPrompt } from '../../api/geoContent'
+import {
+  createGeoContentTask,
+  createGeoPrompt,
+  listGeoPrompts,
+  listGeoUnits,
+  patchGeoPrompt,
+} from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
 const router = useRouter()
+const route = useRoute()
 const { tenantId } = useGeoTenant()
 
 const loading = ref(false)
 const error = ref('')
 const items = ref([])
+const units = ref([])
 const status = ref('active')
+const filterUnitId = ref(null)
 const createOpen = ref(false)
 const editOpen = ref(false)
 const creating = ref(false)
@@ -22,6 +31,7 @@ const form = ref({
   tags: '',
   question_group: '推荐',
   is_brand_probe: false,
+  unit_id: null,
 })
 const editForm = ref({
   id: null,
@@ -30,7 +40,27 @@ const editForm = ref({
   tags: '',
   question_group: '',
   is_brand_probe: false,
+  unit_id: null,
 })
+
+const unitLabel = (id) => {
+  if (!id) return '—'
+  const u = units.value.find((x) => x.id === id)
+  return u ? `${u.name}${u.keyword ? ` (${u.keyword})` : ''}` : `#${id}`
+}
+
+async function loadUnits() {
+  if (!tenantId.value) {
+    units.value = []
+    return
+  }
+  try {
+    const data = await listGeoUnits(tenantId.value, { status: 'active' })
+    units.value = data.items || []
+  } catch {
+    units.value = []
+  }
+}
 
 async function load() {
   if (!tenantId.value) {
@@ -43,6 +73,7 @@ async function load() {
   try {
     const data = await listGeoPrompts(tenantId.value, {
       status: status.value || undefined,
+      unit_id: filterUnitId.value || undefined,
     })
     items.value = data.items || []
   } catch (e) {
@@ -69,11 +100,19 @@ async function submitCreate() {
         : [],
       question_group: form.value.question_group || null,
       is_brand_probe: !!form.value.is_brand_probe,
+      unit_id: form.value.unit_id || null,
       source: 'manual',
     })
-    ElMessage.success('已创建机会词')
+    ElMessage.success('已创建优化意图词')
     createOpen.value = false
-    form.value = { question: '', priority: 10, tags: '', question_group: '推荐', is_brand_probe: false }
+    form.value = {
+      question: '',
+      priority: 10,
+      tags: '',
+      question_group: '推荐',
+      is_brand_probe: false,
+      unit_id: filterUnitId.value || null,
+    }
     await load()
   } catch (e) {
     ElMessage.error(e.message || '创建失败')
@@ -100,6 +139,7 @@ function openEdit(row) {
     tags: Array.isArray(row.tags) ? row.tags.join(', ') : '',
     question_group: row.question_group || '',
     is_brand_probe: !!row.is_brand_probe,
+    unit_id: row.unit_id || null,
   }
   editOpen.value = true
 }
@@ -119,6 +159,7 @@ async function submitEdit() {
         : [],
       question_group: editForm.value.question_group || null,
       is_brand_probe: !!editForm.value.is_brand_probe,
+      unit_id: editForm.value.unit_id || null,
     })
     ElMessage.success('已保存')
     editOpen.value = false
@@ -137,15 +178,33 @@ async function createTask(row) {
       prompt_id: row.id,
       title: row.question,
     })
-    ElMessage.success(`已创建任务 #${task.id}`)
+    ElMessage.success(`已创建优化文章 #${task.id}`)
     router.push(`/geo/tasks/${task.id}`)
   } catch (e) {
-    ElMessage.error(e.message || '创建任务失败')
+    ElMessage.error(e.message || '创建失败')
   }
 }
 
-watch([tenantId, status], load)
-onMounted(load)
+function syncUnitFilterFromRoute() {
+  const q = route.query.unit_id
+  filterUnitId.value = q ? Number(q) : null
+  if (filterUnitId.value) form.value.unit_id = filterUnitId.value
+}
+
+watch([tenantId, status, filterUnitId], load)
+watch(
+  () => route.query.unit_id,
+  () => {
+    syncUnitFilterFromRoute()
+    load()
+  },
+)
+onMounted(async () => {
+  syncUnitFilterFromRoute()
+  await loadUnits()
+  await load()
+})
+watch(tenantId, loadUnits)
 
 const tagText = (tags) => (Array.isArray(tags) ? tags.join(', ') : '—')
 </script>
@@ -154,11 +213,12 @@ const tagText = (tags) => (Array.isArray(tags) ? tags.join(', ') : '—')
   <div v-loading="loading" class="geo-page">
     <div class="page-header">
       <div>
-        <div class="page-title">机会词</div>
-        <div class="page-desc">对应静态 prompts.html · 方案 B 已迁 Vue</div>
+        <div class="page-title">优化意图词</div>
+        <div class="page-desc">业务 → 单元 → 意图词三级结构 · 探测题不计入品牌提及率</div>
       </div>
       <div class="header-actions">
-        <el-button type="primary" @click="createOpen = true">新建机会词</el-button>
+        <router-link class="el-button" to="/geo/businesses">优化业务</router-link>
+        <el-button type="primary" @click="createOpen = true">新建意图词</el-button>
         <el-button @click="load">刷新</el-button>
         <router-link class="el-button" to="/geo/workbench">工作台</router-link>
       </div>
@@ -172,15 +232,32 @@ const tagText = (tags) => (Array.isArray(tags) ? tags.join(', ') : '—')
         <el-option label="已归档" value="archived" />
         <el-option label="全部" value="" />
       </el-select>
+      <el-select
+        v-model="filterUnitId"
+        clearable
+        filterable
+        placeholder="按优化单元筛选"
+        style="width: 220px"
+      >
+        <el-option
+          v-for="u in units"
+          :key="u.id"
+          :label="`${u.name}${u.keyword ? ' · ' + u.keyword : ''}`"
+          :value="u.id"
+        />
+      </el-select>
     </div>
 
-    <el-table :data="items" stripe empty-text="暂无机会词">
+    <el-table :data="items" stripe empty-text="暂无优化意图词">
       <el-table-column prop="id" label="ID" width="72" />
       <el-table-column label="问题" min-width="240">
         <template #default="{ row }">
           <div class="title">{{ row.question }}</div>
           <div class="sub">{{ row.question_group || '—' }} · {{ row.market || 'cn' }}</div>
         </template>
+      </el-table-column>
+      <el-table-column label="优化单元" min-width="120">
+        <template #default="{ row }">{{ unitLabel(row.unit_id) }}</template>
       </el-table-column>
       <el-table-column prop="priority" label="优先级" width="80" />
       <el-table-column label="标签" min-width="120">
@@ -192,10 +269,10 @@ const tagText = (tags) => (Array.isArray(tags) ? tags.join(', ') : '—')
           <span v-else class="muted">否</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="240" fixed="right">
+      <el-table-column label="操作" width="260" fixed="right">
         <template #default="{ row }">
           <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
-          <el-button type="primary" link @click="createTask(row)">建任务</el-button>
+          <el-button type="primary" link @click="createTask(row)">建文章</el-button>
           <el-button
             v-if="row.status === 'active'"
             type="danger"
@@ -206,10 +283,20 @@ const tagText = (tags) => (Array.isArray(tags) ? tags.join(', ') : '—')
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="editOpen" title="编辑机会词" width="520px">
+    <el-dialog v-model="editOpen" title="编辑优化意图词" width="520px">
       <el-form label-width="100px">
         <el-form-item label="问题" required>
           <el-input v-model="editForm.question" type="textarea" :rows="3" />
+        </el-form-item>
+        <el-form-item label="优化单元">
+          <el-select v-model="editForm.unit_id" clearable filterable style="width: 100%" placeholder="可选">
+            <el-option
+              v-for="u in units"
+              :key="u.id"
+              :label="`${u.name}${u.keyword ? ' · ' + u.keyword : ''}`"
+              :value="u.id"
+            />
+          </el-select>
         </el-form-item>
         <el-form-item label="优先级">
           <el-input-number v-model="editForm.priority" :min="0" :max="999" />
@@ -230,10 +317,20 @@ const tagText = (tags) => (Array.isArray(tags) ? tags.join(', ') : '—')
       </template>
     </el-dialog>
 
-    <el-dialog v-model="createOpen" title="新建机会词" width="520px">
+    <el-dialog v-model="createOpen" title="新建优化意图词" width="520px">
       <el-form label-width="100px">
         <el-form-item label="问题" required>
           <el-input v-model="form.question" type="textarea" :rows="3" />
+        </el-form-item>
+        <el-form-item label="优化单元">
+          <el-select v-model="form.unit_id" clearable filterable style="width: 100%" placeholder="可选">
+            <el-option
+              v-for="u in units"
+              :key="u.id"
+              :label="`${u.name}${u.keyword ? ' · ' + u.keyword : ''}`"
+              :value="u.id"
+            />
+          </el-select>
         </el-form-item>
         <el-form-item label="优先级">
           <el-input-number v-model="form.priority" :min="0" :max="999" />

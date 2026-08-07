@@ -8,10 +8,11 @@ const router = useRouter()
 const { tenantId } = useGeoTenant()
 
 const cards = [
-  { title: '内容任务', desc: '【主路径】列表 + 母稿编辑器（Brief/事实/生成/补丁/渠道/审校/回填）', path: '/geo/tasks', phase: 'Vue' },
-  { title: '机会词', desc: 'prompts · 探测题标记 / 问题组', path: '/geo/prompts', phase: 'Vue' },
+  { title: '优化文章', desc: '【主路径】内容任务列表 + 母稿编辑器', path: '/geo/tasks', phase: 'Vue' },
+  { title: '优化业务', desc: '业务 → 单元（关键词）→ 意图词', path: '/geo/businesses', phase: 'Vue' },
+  { title: '优化意图词', desc: 'prompts · 探测题标记 / 问题组', path: '/geo/prompts', phase: 'Vue' },
   { title: '事实库', desc: 'facts 列表 / 新建 / 核验（生成需 ≥3 verified）', path: '/geo/facts', phase: 'Vue' },
-  { title: '跟踪引擎', desc: '监测引擎开关 · sample_mode', path: '/geo/engines', phase: 'Vue' },
+  { title: '引擎', desc: '监测引擎开关 · sample_mode', path: '/geo/engines', phase: 'Vue' },
   { title: 'AI 能力配置', desc: '租户 LLM（百炼/DeepSeek）', path: '/geo/ai-settings', phase: 'Vue' },
   { title: '发布渠道', desc: '渠道目录 · Webhook 账号（公网 HTTPS）', path: '/geo/publishing', phase: 'Vue' },
   { title: '媒体阵地', desc: '权威信源 / 分发阵地 CRUD', path: '/geo/placements', phase: 'Vue' },
@@ -49,7 +50,7 @@ const note = computed(() =>
         <div class="page-desc">{{ note }}</div>
       </div>
       <div class="header-actions">
-        <el-button type="primary" @click="router.push('/geo/tasks')">内容任务</el-button>
+        <el-button type="primary" @click="router.push('/geo/tasks')">优化文章</el-button>
         <el-button @click="openStaticEditor">静态编辑器（兼容）</el-button>
         <el-button @click="openStaticFull">兼容：全量静态台</el-button>
       </div>

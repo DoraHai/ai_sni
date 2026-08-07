@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
@@ -80,6 +80,10 @@ from app.geo.content.schemas import (
     PromptPromoteRequest,
     PublishingChannelCreate,
     PublishingChannelUpdate,
+    OptimizationBusinessCreate,
+    OptimizationBusinessUpdate,
+    OptimizationUnitCreate,
+    OptimizationUnitUpdate,
     PromptCreate,
     PromptImportRequest,
     PromptUpdate,
@@ -148,9 +152,12 @@ from app.models import (
     GeoChannelVariant,
     GeoChannelAccount,
     GeoContentTask,
+    GeoDailyMetric,
     GeoExpandRun,
     GeoFact,
     GeoMediaPlacement,
+    GeoOptimizationBusiness,
+    GeoOptimizationUnit,
     GeoPrompt,
     GeoPublication,
     GeoPublishingChannel,
@@ -178,6 +185,7 @@ def _prompt_payload(
     payload = {
         "id": row.id,
         "tenant_id": row.tenant_id,
+        "unit_id": getattr(row, "unit_id", None),
         "question": row.question,
         "language": row.language,
         "priority": row.priority,
@@ -659,7 +667,390 @@ async def get_publishing_channel_options(
     return {"items": options}
 
 
-# ---------- prompts ----------
+# ---------- 优化业务 / 单元（三级结构）----------
+
+
+def _business_payload(row: GeoOptimizationBusiness, *, unit_count: int | None = None) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "name": row.name,
+        "description": row.description,
+        "status": row.status,
+        "sort_order": row.sort_order,
+        "unit_count": unit_count,
+        "created_at": _iso(row.created_at),
+        "updated_at": _iso(row.updated_at),
+    }
+
+
+def _unit_payload(row: GeoOptimizationUnit, *, prompt_count: int | None = None) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "business_id": row.business_id,
+        "name": row.name,
+        "keyword": row.keyword,
+        "description": row.description,
+        "status": row.status,
+        "sort_order": row.sort_order,
+        "prompt_count": prompt_count,
+        "created_at": _iso(row.created_at),
+        "updated_at": _iso(row.updated_at),
+    }
+
+
+@router.get("/optimization-businesses")
+async def list_optimization_businesses(
+    tenant_id: int = Query(...),
+    status: str | None = Query("active"),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """优化业务列表。"""
+    ctx.ensure_tenant(tenant_id)
+    stmt = select(GeoOptimizationBusiness).where(GeoOptimizationBusiness.tenant_id == tenant_id)
+    if status:
+        stmt = stmt.where(GeoOptimizationBusiness.status == status)
+    stmt = stmt.order_by(GeoOptimizationBusiness.sort_order.asc(), GeoOptimizationBusiness.id.desc())
+    rows = list(await session.scalars(stmt))
+    items = []
+    for r in rows:
+        cnt = await session.scalar(
+            select(func.count())
+            .select_from(GeoOptimizationUnit)
+            .where(
+                GeoOptimizationUnit.business_id == r.id,
+                GeoOptimizationUnit.tenant_id == tenant_id,
+            )
+        )
+        items.append(_business_payload(r, unit_count=int(cnt or 0)))
+    return {"items": items}
+
+
+@router.post("/optimization-businesses")
+async def create_optimization_business(
+    req: OptimizationBusinessCreate,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(req.tenant_id)
+    await _ensure_tenant_exists(session, req.tenant_id)
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="业务名称不能为空")
+    exists = await session.scalar(
+        select(GeoOptimizationBusiness).where(
+            GeoOptimizationBusiness.tenant_id == req.tenant_id,
+            GeoOptimizationBusiness.name == name,
+        )
+    )
+    if exists:
+        raise HTTPException(status_code=409, detail="同名优化业务已存在")
+    row = GeoOptimizationBusiness(
+        tenant_id=req.tenant_id,
+        name=name,
+        description=req.description,
+        sort_order=req.sort_order,
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return _business_payload(row, unit_count=0)
+
+
+@router.patch("/optimization-businesses/{business_id}")
+async def update_optimization_business(
+    business_id: int,
+    req: OptimizationBusinessUpdate,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    row = await session.scalar(
+        select(GeoOptimizationBusiness).where(
+            GeoOptimizationBusiness.id == business_id,
+            GeoOptimizationBusiness.tenant_id == tenant_id,
+        )
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="优化业务不存在")
+    data = req.model_dump(exclude_unset=True)
+    if "name" in data and data["name"] is not None:
+        data["name"] = data["name"].strip()
+        if not data["name"]:
+            raise HTTPException(status_code=400, detail="业务名称不能为空")
+    for key, value in data.items():
+        setattr(row, key, value)
+    await session.commit()
+    await session.refresh(row)
+    return _business_payload(row)
+
+
+@router.get("/optimization-units")
+async def list_optimization_units(
+    tenant_id: int = Query(...),
+    business_id: int | None = Query(None),
+    status: str | None = Query("active"),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """优化单元（关键词）列表。"""
+    ctx.ensure_tenant(tenant_id)
+    stmt = select(GeoOptimizationUnit).where(GeoOptimizationUnit.tenant_id == tenant_id)
+    if business_id is not None:
+        stmt = stmt.where(GeoOptimizationUnit.business_id == business_id)
+    if status:
+        stmt = stmt.where(GeoOptimizationUnit.status == status)
+    stmt = stmt.order_by(GeoOptimizationUnit.sort_order.asc(), GeoOptimizationUnit.id.desc())
+    rows = list(await session.scalars(stmt))
+    items = []
+    for r in rows:
+        cnt = await session.scalar(
+            select(func.count())
+            .select_from(GeoPrompt)
+            .where(GeoPrompt.unit_id == r.id, GeoPrompt.tenant_id == tenant_id)
+        )
+        items.append(_unit_payload(r, prompt_count=int(cnt or 0)))
+    return {"items": items}
+
+
+@router.post("/optimization-units")
+async def create_optimization_unit(
+    req: OptimizationUnitCreate,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(req.tenant_id)
+    biz = await session.scalar(
+        select(GeoOptimizationBusiness).where(
+            GeoOptimizationBusiness.id == req.business_id,
+            GeoOptimizationBusiness.tenant_id == req.tenant_id,
+        )
+    )
+    if not biz:
+        raise HTTPException(status_code=400, detail="所属优化业务不存在")
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="单元名称不能为空")
+    row = GeoOptimizationUnit(
+        tenant_id=req.tenant_id,
+        business_id=req.business_id,
+        name=name,
+        keyword=(req.keyword or "").strip() or name,
+        description=req.description,
+        sort_order=req.sort_order,
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return _unit_payload(row, prompt_count=0)
+
+
+@router.patch("/optimization-units/{unit_id}")
+async def update_optimization_unit(
+    unit_id: int,
+    req: OptimizationUnitUpdate,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    row = await session.scalar(
+        select(GeoOptimizationUnit).where(
+            GeoOptimizationUnit.id == unit_id,
+            GeoOptimizationUnit.tenant_id == tenant_id,
+        )
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="优化单元不存在")
+    data = req.model_dump(exclude_unset=True)
+    if "name" in data and data["name"] is not None:
+        data["name"] = data["name"].strip()
+    if "keyword" in data and data["keyword"] is not None:
+        data["keyword"] = data["keyword"].strip() or None
+    if "business_id" in data and data["business_id"] is not None:
+        biz = await session.scalar(
+            select(GeoOptimizationBusiness).where(
+                GeoOptimizationBusiness.id == data["business_id"],
+                GeoOptimizationBusiness.tenant_id == tenant_id,
+            )
+        )
+        if not biz:
+            raise HTTPException(status_code=400, detail="目标优化业务不存在")
+    for key, value in data.items():
+        setattr(row, key, value)
+    await session.commit()
+    await session.refresh(row)
+    return _unit_payload(row)
+
+
+@router.get("/daily-metrics")
+async def list_daily_metrics(
+    tenant_id: int = Query(...),
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
+    business_id: int | None = Query(None),
+    unit_id: int | None = Query(None),
+    scope_key: str | None = Query(None),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """按天汇总指标（品牌提及率 / 点名认知 / AI 引用次数）。
+
+    统计口径说明（AI 引用）：
+    - distinct_cited_domains：快照 cited_urls 去重后的独立域名数
+    - citation_count：cited_urls 出现总次数
+    - 非全网抓取；仅统计系统内已登记的回答快照
+    """
+    from datetime import date as date_cls
+    from datetime import timedelta
+
+    ctx.ensure_tenant(tenant_id)
+    end = date_to or date_cls.today()
+    start = date_from or (end - timedelta(days=13))
+    stmt = select(GeoDailyMetric).where(
+        GeoDailyMetric.tenant_id == tenant_id,
+        GeoDailyMetric.metric_date >= start,
+        GeoDailyMetric.metric_date <= end,
+    )
+    if scope_key:
+        stmt = stmt.where(GeoDailyMetric.scope_key == scope_key)
+    if business_id is not None:
+        stmt = stmt.where(GeoDailyMetric.business_id == business_id)
+    if unit_id is not None:
+        stmt = stmt.where(GeoDailyMetric.unit_id == unit_id)
+    stmt = stmt.order_by(GeoDailyMetric.metric_date.asc(), GeoDailyMetric.id.asc())
+    rows = list(await session.scalars(stmt))
+    items = [
+        {
+            "id": r.id,
+            "tenant_id": r.tenant_id,
+            "metric_date": r.metric_date.isoformat() if r.metric_date else None,
+            "scope_key": r.scope_key,
+            "business_id": r.business_id,
+            "unit_id": r.unit_id,
+            "engine": r.engine,
+            "snapshots_visibility": r.snapshots_visibility,
+            "snapshots_probe": r.snapshots_probe,
+            "brand_mentions": r.brand_mentions,
+            "brand_probe_hits": r.brand_probe_hits,
+            "top1_count": r.top1_count,
+            "distinct_cited_domains": r.distinct_cited_domains,
+            "citation_count": r.citation_count,
+            "brand_mention_rate": r.brand_mention_rate,
+            "brand_probe_recognition_rate": r.brand_probe_recognition_rate,
+            "top1_rate": r.top1_rate,
+        }
+        for r in rows
+    ]
+    return {
+        "items": items,
+        "period": {"from": start.isoformat(), "to": end.isoformat()},
+        "metric_labels": {
+            "brand_mention_rate": "品牌提及率",
+            "brand_probe_recognition_rate": "品牌点名认知率",
+            "citation_count": "AI 引用次数",
+            "distinct_cited_domains": "AI 引用·独立域名数",
+        },
+        "citation_stat_note": (
+            "AI 引用次数来自回答快照 cited_urls 聚合："
+            "citation_count 为 URL 出现总次数，distinct_cited_domains 为独立域名数；非全网抓取。"
+        ),
+    }
+
+
+@router.post("/daily-metrics/rebuild")
+async def rebuild_daily_metrics(
+    tenant_id: int = Query(...),
+    metric_date: date | None = Query(None, description="默认今天；按该日快照重算租户级汇总"),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """按日重算租户级指标（雏形：scope_key=t，不切片业务/单元）。"""
+    from datetime import date as date_cls
+    from datetime import datetime as dt
+    from datetime import time, timedelta
+
+    ctx.ensure_tenant(tenant_id)
+    day = metric_date or date_cls.today()
+    start_dt = dt.combine(day, time.min)
+    end_dt = dt.combine(day, time.max)
+
+    snaps = list(
+        await session.scalars(
+            select(GeoAnswerSnapshot).where(
+                GeoAnswerSnapshot.tenant_id == tenant_id,
+                GeoAnswerSnapshot.captured_at >= start_dt,
+                GeoAnswerSnapshot.captured_at <= end_dt,
+            )
+        )
+    )
+    prompt_ids = {s.prompt_id for s in snaps if s.prompt_id}
+    probe_map: dict[int, bool] = {}
+    if prompt_ids:
+        for p in await session.scalars(
+            select(GeoPrompt).where(
+                GeoPrompt.tenant_id == tenant_id,
+                GeoPrompt.id.in_(list(prompt_ids)),
+            )
+        ):
+            probe_map[p.id] = bool(p.is_brand_probe)
+
+    vis = [s for s in snaps if not probe_map.get(s.prompt_id, False)]
+    probe = [s for s in snaps if probe_map.get(s.prompt_id, False)]
+    brand_mentions = sum(1 for s in vis if s.mentions_brand)
+    brand_probe_hits = sum(1 for s in probe if s.mentions_brand)
+    top1 = sum(1 for s in vis if (s.brand_position or "") == "first")
+    domains: set[str] = set()
+    cite_count = 0
+    for s in snaps:
+        urls = normalize_cited_urls(getattr(s, "cited_urls", None) or [])
+        cite_count += len(urls)
+        for u in urls:
+            d = extract_cited_domain(u)
+            if d:
+                domains.add(d)
+
+    vis_n = len(vis)
+    probe_n = len(probe)
+    metrics = {
+        "snapshots_visibility": vis_n,
+        "snapshots_probe": probe_n,
+        "brand_mentions": brand_mentions,
+        "brand_probe_hits": brand_probe_hits,
+        "top1_count": top1,
+        "distinct_cited_domains": len(domains),
+        "citation_count": cite_count,
+        "brand_mention_rate": (brand_mentions / vis_n) if vis_n else None,
+        "brand_probe_recognition_rate": (brand_probe_hits / probe_n) if probe_n else None,
+        "top1_rate": (top1 / vis_n) if vis_n else None,
+    }
+
+    row = await session.scalar(
+        select(GeoDailyMetric).where(
+            GeoDailyMetric.tenant_id == tenant_id,
+            GeoDailyMetric.metric_date == day,
+            GeoDailyMetric.scope_key == "t",
+        )
+    )
+    if not row:
+        row = GeoDailyMetric(tenant_id=tenant_id, metric_date=day, scope_key="t")
+        session.add(row)
+    for k, v in metrics.items():
+        setattr(row, k, v)
+    await session.commit()
+    await session.refresh(row)
+    return {
+        "metric_date": day.isoformat(),
+        "scope_key": "t",
+        **metrics,
+        "snapshot_total": len(snaps),
+    }
+
+
+# ---------- prompts（优化意图词）----------
 
 
 @router.get("/prompts")
@@ -670,6 +1061,8 @@ async def list_prompts(
     question_group: str | None = Query(None),
     is_brand_probe: bool | None = Query(None),
     need_recheck: bool | None = Query(None),
+    unit_id: int | None = Query(None),
+    business_id: int | None = Query(None),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -681,6 +1074,21 @@ async def list_prompts(
         stmt = stmt.where(GeoPrompt.is_brand_probe.is_(bool(is_brand_probe)))
     if question_group:
         stmt = stmt.where(GeoPrompt.question_group == question_group.strip())
+    if unit_id is not None:
+        stmt = stmt.where(GeoPrompt.unit_id == unit_id)
+    elif business_id is not None:
+        unit_ids = list(
+            await session.scalars(
+                select(GeoOptimizationUnit.id).where(
+                    GeoOptimizationUnit.tenant_id == tenant_id,
+                    GeoOptimizationUnit.business_id == business_id,
+                )
+            )
+        )
+        if unit_ids:
+            stmt = stmt.where(GeoPrompt.unit_id.in_(unit_ids))
+        else:
+            return {"items": []}
     stmt = stmt.order_by(GeoPrompt.priority.desc(), GeoPrompt.id.desc())
     rows = list(await session.scalars(stmt))
     if tag:
@@ -726,8 +1134,19 @@ async def create_prompt(
         explicit=req.is_brand_probe,
         question_group=q_group,
     )
+    unit_id = req.unit_id
+    if unit_id is not None:
+        unit = await session.scalar(
+            select(GeoOptimizationUnit).where(
+                GeoOptimizationUnit.id == unit_id,
+                GeoOptimizationUnit.tenant_id == req.tenant_id,
+            )
+        )
+        if not unit:
+            raise HTTPException(status_code=400, detail="优化单元不存在")
     row = GeoPrompt(
         tenant_id=req.tenant_id,
+        unit_id=unit_id,
         question=req.question.strip(),
         language=req.language,
         priority=req.priority,
@@ -931,6 +1350,15 @@ async def update_prompt(
         data["question_group"] = normalize_question_group(data.get("question_group"))
     if "market" in data and data["market"] is not None:
         data["market"] = normalize_market(data["market"])
+    if "unit_id" in data and data["unit_id"] is not None:
+        unit = await session.scalar(
+            select(GeoOptimizationUnit).where(
+                GeoOptimizationUnit.id == data["unit_id"],
+                GeoOptimizationUnit.tenant_id == tenant_id,
+            )
+        )
+        if not unit:
+            raise HTTPException(status_code=400, detail="优化单元不存在")
     for key, value in data.items():
         if key == "is_brand_probe":
             continue

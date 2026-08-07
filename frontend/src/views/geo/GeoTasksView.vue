@@ -96,13 +96,13 @@ async function openCreate() {
       form.value.prompt_id = prompts.value[0].id
     }
   } catch (e) {
-    ElMessage.error(e.message || '加载机会词失败')
+    ElMessage.error(e.message || '加载优化意图词失败')
   }
 }
 
 async function submitCreate() {
   if (!form.value.prompt_id) {
-    ElMessage.warning('请选择机会词')
+    ElMessage.warning('请选择优化意图词')
     return
   }
   creating.value = true
@@ -173,17 +173,17 @@ onMounted(load)
   <div v-loading="loading" class="geo-tasks">
     <div class="page-header">
       <div>
-        <div class="page-title">内容任务</div>
+        <div class="page-title">优化文章</div>
         <div class="page-desc">
-          方案 B：任务列表已 Vue。母稿完整流水线仍走静态 editor（或本页混合壳）。
+          内容任务列表 · 母稿完整流水线可走本页编辑器或静态 editor 兼容壳。
         </div>
       </div>
       <div class="header-actions">
         <router-link class="el-button" to="/geo/workbench">工作台枢纽</router-link>
-        <router-link class="el-button" to="/geo/prompts">机会词</router-link>
+        <router-link class="el-button" to="/geo/prompts">优化意图词</router-link>
         <router-link class="el-button" to="/geo/facts">事实库</router-link>
         <el-button @click="openStaticWorkbench">兼容静态台</el-button>
-        <el-button type="primary" @click="openCreate">新建任务</el-button>
+        <el-button type="primary" @click="openCreate">新建优化文章</el-button>
         <el-button @click="load">刷新</el-button>
       </div>
     </div>
@@ -205,7 +205,7 @@ onMounted(load)
       <el-checkbox v-model="includeArchived" :disabled="!!statusFilter">含归档</el-checkbox>
     </div>
 
-    <el-table :data="items" stripe empty-text="暂无内容任务" class="task-table">
+    <el-table :data="items" stripe empty-text="暂无优化文章" class="task-table">
       <el-table-column prop="id" label="ID" width="72" />
       <el-table-column label="标题" min-width="220">
         <template #default="{ row }">
@@ -259,10 +259,10 @@ onMounted(load)
       />
     </div>
 
-    <el-dialog v-model="createOpen" title="新建内容任务" width="480px">
-      <el-form label-width="88px">
-        <el-form-item label="机会词" required>
-          <el-select v-model="form.prompt_id" filterable style="width: 100%" placeholder="选择机会词">
+    <el-dialog v-model="createOpen" title="新建优化文章" width="480px">
+      <el-form label-width="100px">
+        <el-form-item label="优化意图词" required>
+          <el-select v-model="form.prompt_id" filterable style="width: 100%" placeholder="选择优化意图词">
             <el-option
               v-for="p in prompts"
               :key="p.id"
@@ -272,7 +272,7 @@ onMounted(load)
           </el-select>
         </el-form-item>
         <el-form-item label="标题">
-          <el-input v-model="form.title" placeholder="默认用机会词问题" />
+          <el-input v-model="form.title" placeholder="默认用意图词问题" />
         </el-form-item>
         <el-form-item label="目标渠道">
           <el-select v-model="form.target_channels" multiple style="width: 100%">

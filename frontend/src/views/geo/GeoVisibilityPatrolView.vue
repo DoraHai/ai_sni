@@ -1,7 +1,7 @@
 <script setup>
 /**
  * AI 可见度 · 全自动巡检
- * 多机会词 × 启用引擎探测；prefer_real 优先 openai_compat；auto_persist 直接落库快照。
+ * 多优化意图词 × 启用引擎探测；prefer_real 优先 openai_compat；auto_persist 直接落库快照。
  */
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -277,7 +277,7 @@ onUnmounted(stopPoll)
         </div>
         <div class="page-title">全自动巡检</div>
         <div class="page-desc">
-          对机会词 × 启用引擎批量探测；优先
+          对优化意图词 × 启用引擎批量探测；优先
           <code>openai_compat</code> 真采样（引擎已配 Key），否则租户 LLM + 人设模拟。
           开启「自动落库」后结果直接写入回答快照。
         </div>
@@ -316,7 +316,7 @@ onUnmounted(stopPoll)
       <section class="panel">
         <div class="panel-title">巡检参数</div>
         <el-form label-position="top" size="small">
-          <el-form-item label="机会词数量上限">
+          <el-form-item label="优化意图词数量上限">
             <el-input-number v-model="form.prompt_limit" :min="1" :max="50" />
           </el-form-item>
           <el-form-item label="引擎（多选，空=全部启用）">

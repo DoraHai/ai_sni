@@ -19,6 +19,7 @@ class PromptCreate(BaseModel):
     question_group: str | None = Field(None, max_length=32)
     market: Literal["cn", "global", "both"] = "cn"
     is_brand_probe: bool | None = None
+    unit_id: int | None = None
 
 
 class PromptUpdate(BaseModel):
@@ -30,6 +31,39 @@ class PromptUpdate(BaseModel):
     question_group: str | None = Field(None, max_length=32)
     market: Literal["cn", "global", "both"] | None = None
     is_brand_probe: bool | None = None
+    unit_id: int | None = None
+
+
+class OptimizationBusinessCreate(BaseModel):
+    tenant_id: int
+    name: str = Field(..., min_length=1, max_length=120)
+    description: str | None = None
+    sort_order: int = 0
+
+
+class OptimizationBusinessUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=120)
+    description: str | None = None
+    status: Literal["active", "archived"] | None = None
+    sort_order: int | None = None
+
+
+class OptimizationUnitCreate(BaseModel):
+    tenant_id: int
+    business_id: int
+    name: str = Field(..., min_length=1, max_length=120)
+    keyword: str | None = Field(None, max_length=200)
+    description: str | None = None
+    sort_order: int = 0
+
+
+class OptimizationUnitUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=120)
+    keyword: str | None = Field(None, max_length=200)
+    description: str | None = None
+    status: Literal["active", "archived"] | None = None
+    sort_order: int | None = None
+    business_id: int | None = None
 
 
 class PromptImportItem(BaseModel):

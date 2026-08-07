@@ -789,7 +789,7 @@ onMounted(load)
           </el-button>
         </div>
         <div v-else class="hint">
-          用法：内容任务 → 生成渠道稿 → 导出 → 审校通过 → 选本账号「Webhook 推送」
+          用法：优化文章 → 生成渠道稿 → 导出 → 审校通过 → 选本账号「Webhook 推送」
         </div>
       </el-alert>
 

@@ -50,25 +50,26 @@ def render_deliverables_markdown(pack: dict[str, Any]) -> str:
         "",
         "## 概览",
         "",
-        f"- 活跃提示词：{summary.get('prompts', '—')}",
-        f"- 内容任务：{summary.get('tasks', '—')}（已发布 {summary.get('published', '—')}）",
-        f"- 可见性提及率（排除探测题）：{_pct(summary.get('visibility_mention_rate'))}",
+        f"- 优化意图词：{summary.get('prompts', '—')}",
+        f"- 优化文章：{summary.get('tasks', '—')}（已发布 {summary.get('published', '—')}）",
+        f"- 品牌提及率（排除探测题）：{_pct(summary.get('visibility_mention_rate'))}",
         f"- 首位推荐率 top1：{_pct(summary.get('visibility_top1_rate'))}",
-        f"- 品牌认知率（仅探测题）：{_pct(summary.get('probe_recognition_rate'))}",
+        f"- 品牌点名认知率（仅探测题）：{_pct(summary.get('probe_recognition_rate'))}",
         f"- 可见度快照：{summary.get('snapshots_visibility', summary.get('snapshots', '—'))}"
         f"（探测题快照 {summary.get('snapshots_probe', '—')}）",
         f"- 覆盖引擎数：{summary.get('visibility_engines_covered', '—')}",
-        f"- 独立引用域名：{summary.get('distinct_cited_domains', '—')}",
-        f"- 待复测提示词：{summary.get('prompts_need_recheck', '—')}",
+        f"- AI 引用次数（独立被引域名数）：{summary.get('distinct_cited_domains', '—')}",
+        f"- 待复测意图词：{summary.get('prompts_need_recheck', '—')}",
         "",
-        "> 口径：无可见性样本时提及率记为「—」而非 0；探测题不计入可见性分母。",
+        "> 口径：无可见性样本时品牌提及率记为「—」而非 0；探测题不计入提及率分母；"
+        "AI 引用次数来自回答快照 cited_urls 聚合（独立域名 / 出现次数），非全网抓取。",
         "",
-        "## 引用域名 Top",
+        "## AI 引用次数 · 域名 Top",
         "",
     ]
     cites = pack.get("citations_top") or []
     if not cites:
-        lines.append("_本期无引用域名数据_")
+        lines.append("_本期无 AI 引用数据_")
     else:
         for row in cites:
             engines = ", ".join(row.get("engines") or []) or "—"
@@ -77,10 +78,10 @@ def render_deliverables_markdown(pack: dict[str, Any]) -> str:
             lines.append(
                 f"- `{row.get('domain')}` · {row.get('cite_count', 0)} 次 · {own} · 蓝图 {bp} · 引擎 {engines}"
             )
-    lines.extend(["", "## 内容任务", ""])
+    lines.extend(["", "## 优化文章", ""])
     tasks = pack.get("tasks") or []
     if not tasks:
-        lines.append("_本期无任务_")
+        lines.append("_本期无优化文章_")
     else:
         for t in tasks:
             lines.append(

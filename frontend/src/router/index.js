@@ -96,8 +96,8 @@ const routes = [
     path: '/geo/citations',
     component: () => import('../views/geo/GeoCitationsView.vue'),
     meta: {
-      title: '引用域名',
-      documentTitle: 'GEO 增长｜引用域名',
+      title: 'AI 引用次数',
+      documentTitle: 'GEO 增长｜AI 引用次数',
       workflow: 'GEO 增长',
       perm: 'geo.content',
     },
@@ -146,8 +146,8 @@ const routes = [
     path: '/geo/tasks',
     component: () => import('../views/geo/GeoTasksView.vue'),
     meta: {
-      title: '内容任务',
-      documentTitle: 'GEO 增长｜内容任务',
+      title: '优化文章',
+      documentTitle: 'GEO 增长｜优化文章',
       workflow: 'GEO 增长',
       perm: 'geo.content',
     },
@@ -163,11 +163,21 @@ const routes = [
     },
   },
   {
+    path: '/geo/businesses',
+    component: () => import('../views/geo/GeoBusinessesView.vue'),
+    meta: {
+      title: '优化业务',
+      documentTitle: 'GEO 增长｜优化业务',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
     path: '/geo/prompts',
     component: () => import('../views/geo/GeoPromptsView.vue'),
     meta: {
-      title: '机会词',
-      documentTitle: 'GEO 增长｜机会词',
+      title: '优化意图词',
+      documentTitle: 'GEO 增长｜优化意图词',
       workflow: 'GEO 增长',
       perm: 'geo.content',
     },
@@ -186,8 +196,8 @@ const routes = [
     path: '/geo/engines',
     component: () => import('../views/geo/GeoEnginesView.vue'),
     meta: {
-      title: '跟踪引擎',
-      documentTitle: 'GEO 增长｜跟踪引擎',
+      title: '引擎',
+      documentTitle: 'GEO 增长｜引擎',
       workflow: 'GEO 增长',
       perm: 'geo.content',
     },

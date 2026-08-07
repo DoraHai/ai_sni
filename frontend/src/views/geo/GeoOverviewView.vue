@@ -30,26 +30,26 @@ const summaryCards = computed(() => {
   const s = stats.value
   if (!s) return []
   return [
-    { label: '活跃提示词', value: fmtInt(s.prompts), hint: `探测题 ${fmtInt(s.prompts_probe)}` },
-    { label: '内容任务', value: fmtInt(s.tasks), hint: `待修 ${fmtInt(s.todo_blocked)} · 待发 ${fmtInt(s.todo_publish)}` },
+    { label: '优化意图词', value: fmtInt(s.prompts), hint: `探测题 ${fmtInt(s.prompts_probe)}` },
+    { label: '优化文章', value: fmtInt(s.tasks), hint: `待修 ${fmtInt(s.todo_blocked)} · 待发 ${fmtInt(s.todo_publish)}` },
     { label: '已发布', value: fmtInt(s.published), hint: `就绪及以上 ${fmtInt(s.ready_or_beyond)}` },
     {
-      label: '可见性提及率',
+      label: '品牌提及率',
       value: fmtPct(s.visibility_mention_rate),
       hint: `排除探测 · 快照 ${fmtInt(s.snapshots_visibility)} · top1 ${fmtPct(s.visibility_top1_rate)}`,
     },
     {
-      label: '品牌认知率',
+      label: '品牌点名认知率',
       value: fmtPct(s.probe_recognition_rate),
       hint: `仅探测题 · 样本 ${fmtInt(s.snapshots_probe)}`,
     },
     {
-      label: '引用域名',
+      label: 'AI 引用次数',
       value: fmtInt(s.distinct_cited_domains),
-      hint: `含引用快照 ${fmtInt(s.snapshots_with_citations)}`,
+      hint: `口径：独立被引域名 · 含引用快照 ${fmtInt(s.snapshots_with_citations)}`,
     },
     {
-      label: '待复测提示词',
+      label: '待复测意图词',
       value: fmtInt(s.prompts_need_recheck),
       hint: `品牌缺失标签 ${fmtInt(s.prompts_brand_missing)}`,
     },
@@ -57,16 +57,17 @@ const summaryCards = computed(() => {
 })
 
 const workbenchLinks = [
-  { label: '内容任务', path: '/geo/tasks', desc: '主入口 · 列表 + 混合编辑器', vue: true, primary: true },
+  { label: '优化文章', path: '/geo/tasks', desc: '主入口 · 列表 + 混合编辑器', vue: true, primary: true },
   { label: 'AI 可见度', path: '/geo/visibility', desc: '登记 / 多引擎探测', vue: true, primary: true },
   { label: '全自动巡检', path: '/geo/visibility/patrol', desc: '多词×多引擎自动探测落库', vue: true, primary: true },
-  { label: '期次对比', path: '/geo/period-diff', desc: 'before/after 可见性 Δ', vue: true, primary: true },
+  { label: '期次对比', path: '/geo/period-diff', desc: 'before/after 品牌提及 Δ', vue: true, primary: true },
   { label: '交付摘要', path: '/geo/deliverables', desc: '周期报告 Markdown / 打印', vue: true, primary: true },
-  { label: '引用域名', path: '/geo/citations', desc: '引用聚合与蓝图对照', vue: true },
+  { label: 'AI 引用次数', path: '/geo/citations', desc: '引用聚合 · 需看统计口径', vue: true },
   { label: '竞品分析', path: '/geo/competitors', desc: '竞品出现与份额', vue: true },
   { label: '评价分析', path: '/geo/evaluation', desc: '情感与位置分布', vue: true },
   { label: '内容工作台', path: '/geo/workbench', desc: 'Vue 页枢纽', vue: true },
-  { label: '机会词', path: '/geo/prompts', desc: 'prompts · 探测题标记', vue: true },
+  { label: '优化业务', path: '/geo/businesses', desc: '业务 → 单元 → 意图词', vue: true },
+  { label: '优化意图词', path: '/geo/prompts', desc: '意图词 · 探测题标记', vue: true },
   { label: '事实库', path: '/geo/facts', desc: 'facts 管理', vue: true },
   { label: '发布渠道', path: '/geo/publishing', desc: '渠道与 Webhook', vue: true },
   {
@@ -170,7 +171,7 @@ onMounted(load)
           有 <b>{{ stats.prompts_need_recheck }}</b> 个提示词建议复测可见度。
         </li>
         <li v-if="!stats.todo_blocked && !stats.todo_publish && !stats.prompts_need_recheck">
-          当前无阻塞待办；可继续登记快照或从诊断创建内容任务。
+          当前无阻塞待办；可继续登记快照或从诊断创建优化文章。
         </li>
       </ul>
     </section>

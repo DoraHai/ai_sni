@@ -74,7 +74,7 @@ onMounted(load)
   <div v-loading="loading" class="geo-page">
     <div class="page-header">
       <div>
-        <div class="page-title">跟踪引擎</div>
+        <div class="page-title">引擎</div>
         <div class="page-desc">对应静态 engines.html · sample_mode 支持 openai_compat 真采样</div>
       </div>
       <div class="header-actions">

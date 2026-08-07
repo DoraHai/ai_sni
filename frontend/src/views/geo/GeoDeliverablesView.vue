@@ -102,7 +102,7 @@ onMounted(() => {
       <div>
         <div class="page-title">GEO 交付摘要</div>
         <div class="page-desc">
-          按周期汇总可见度、引用与内容任务，供客户沟通；可复制 / 下载 Markdown。
+          按周期汇总可见度、AI 引用与优化文章，供客户沟通；可复制 / 下载 Markdown。
         </div>
       </div>
       <div class="header-actions">
@@ -134,7 +134,7 @@ onMounted(() => {
 
       <div class="kpi-row">
         <div class="kpi">
-          <div class="kpi-label">可见性提及率</div>
+          <div class="kpi-label">品牌提及率</div>
           <div class="kpi-value">{{ fmtPct(pack.summary?.visibility_mention_rate) }}</div>
           <div class="kpi-sub">排除探测题 · 未测记 —</div>
         </div>
@@ -143,26 +143,27 @@ onMounted(() => {
           <div class="kpi-value">{{ fmtPct(pack.summary?.visibility_top1_rate) }}</div>
         </div>
         <div class="kpi">
-          <div class="kpi-label">品牌认知率</div>
+          <div class="kpi-label">品牌点名认知率</div>
           <div class="kpi-value">{{ fmtPct(pack.summary?.probe_recognition_rate) }}</div>
-          <div class="kpi-sub">仅探测题</div>
+          <div class="kpi-sub">仅探测题 · 可选分列</div>
         </div>
         <div class="kpi">
           <div class="kpi-label">周期快照</div>
           <div class="kpi-value">{{ pack.summary?.snapshots ?? '—' }}</div>
         </div>
         <div class="kpi">
-          <div class="kpi-label">内容任务 / 已发布</div>
+          <div class="kpi-label">优化文章 / 已发布</div>
           <div class="kpi-value">{{ pack.summary?.tasks ?? 0 }} / {{ pack.summary?.published ?? 0 }}</div>
         </div>
         <div class="kpi">
-          <div class="kpi-label">引用域名</div>
+          <div class="kpi-label">AI 引用次数</div>
           <div class="kpi-value">{{ pack.summary?.distinct_cited_domains ?? '—' }}</div>
+          <div class="kpi-sub">口径：独立被引域名数</div>
         </div>
       </div>
 
       <section class="panel">
-        <div class="panel-title">引用域名 Top</div>
+        <div class="panel-title">AI 引用次数 · 域名 Top</div>
         <el-table :data="pack.citations_top || []" size="small" empty-text="本期无引用">
           <el-table-column prop="domain" label="域名" min-width="160" />
           <el-table-column prop="cite_count" label="次数" width="80" />
@@ -181,7 +182,7 @@ onMounted(() => {
       </section>
 
       <section class="panel">
-        <div class="panel-title">内容任务</div>
+        <div class="panel-title">优化文章</div>
         <el-table :data="pack.tasks || []" size="small" empty-text="本期无任务">
           <el-table-column prop="id" label="ID" width="70" />
           <el-table-column prop="status" label="状态" width="110" />

@@ -165,7 +165,7 @@ function clearPromptFilter() {
 
 async function onProbe() {
   if (!form.value.prompt_id) {
-    ElMessage.warning('请选择机会问题')
+    ElMessage.warning('请选择优化意图词')
     return
   }
   probing.value = true
@@ -187,7 +187,7 @@ async function onProbe() {
 
 async function onProbeBatch() {
   if (!form.value.prompt_id) {
-    ElMessage.warning('请选择机会问题')
+    ElMessage.warning('请选择优化意图词')
     return
   }
   batchProbing.value = true
@@ -253,7 +253,7 @@ async function onExtractUrls() {
 
 async function onSave() {
   if (!form.value.prompt_id) {
-    ElMessage.warning('请选择机会问题')
+    ElMessage.warning('请选择优化意图词')
     return
   }
   saving.value = true
@@ -393,7 +393,7 @@ onMounted(reloadAll)
           全自动巡检
         </el-button>
         <el-button @click="reloadAll">刷新</el-button>
-        <router-link class="el-button" to="/geo/citations">引用域名</router-link>
+        <router-link class="el-button" to="/geo/citations">AI 引用次数</router-link>
         <router-link class="el-button" to="/geo/overview">GEO 概览</router-link>
       </div>
     </div>
@@ -411,7 +411,7 @@ onMounted(reloadAll)
       <section class="panel">
         <div class="panel-title">登记回答快照</div>
         <el-form label-position="top" @submit.prevent>
-          <el-form-item label="机会问题">
+          <el-form-item label="优化意图词">
             <el-select v-model="form.prompt_id" filterable style="width: 100%">
               <el-option
                 v-for="p in prompts"

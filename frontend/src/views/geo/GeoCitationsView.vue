@@ -43,8 +43,11 @@ onMounted(load)
   <div v-loading="loading" class="geo-cite">
     <div class="page-header">
       <div>
-        <div class="page-title">引用域名</div>
-        <div class="page-desc">从回答快照聚合被引用域名，并对照国内蓝图主机。</div>
+        <div class="page-title">AI 引用次数</div>
+        <div class="page-desc">
+          统计口径：从回答快照的 cited_urls 聚合域名与出现次数（非独立外链全网抓取）；
+          独立域名数 / 引用次数分列展示，并对照国内蓝图主机。
+        </div>
       </div>
       <div class="header-actions">
         <el-button :loading="loading" @click="load">刷新</el-button>

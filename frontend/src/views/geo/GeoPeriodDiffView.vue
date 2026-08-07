@@ -59,7 +59,7 @@ const rows = computed(() => {
   return [
     {
       key: 'visibility_mention_rate',
-      label: '可见性提及率',
+      label: '品牌提及率',
       hint: '排除品牌探测题',
       before: b.visibility_mention_rate,
       after: a.visibility_mention_rate,
@@ -75,8 +75,8 @@ const rows = computed(() => {
     },
     {
       key: 'probe_recognition_rate',
-      label: '品牌认知率',
-      hint: '仅探测题',
+      label: '品牌点名认知率',
+      hint: '仅探测题（可选分列）',
       before: b.probe_recognition_rate,
       after: a.probe_recognition_rate,
       delta: d.probe_recognition_rate,
@@ -136,7 +136,7 @@ onMounted(() => {
         </div>
         <div class="page-title">期次对比</div>
         <div class="page-desc">
-          对比两个观测窗口的可见性提及率、首位率、品牌认知与自有域引用。
+          对比两个观测窗口的品牌提及率、首位率、品牌点名认知率与自有域引用。
           未测记为「未测」，不用 0 冒充。
         </div>
       </div>
