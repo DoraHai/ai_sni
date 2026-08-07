@@ -296,7 +296,7 @@ async def tenant_auto_push_matrix(
             tips.append(
                 "配置 webhook 凭证"
                 if ctype in WEB_TYPES
-                else "配置 social_api（api_url + access_token）"
+                else "配置社交凭证（wechat_mp / oauth2 / gateway）"
             )
         rows.append(
             {

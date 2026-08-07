@@ -60,11 +60,28 @@ export function patchGeoUnit(tenantId, unitId, body) {
   })
 }
 
+/** 运营告警（巡检 / token / 推送配置） */
+export function fetchGeoOpsAlerts(tenantId) {
+  return client.get('/api/v1/geo/ops-alerts', {
+    params: { tenant_id: tenantId },
+  })
+}
+
 /** 按天汇总（租户 / 业务 / 单元切片） */
 export function listGeoDailyMetrics(tenantId, params = {}) {
   return client.get('/api/v1/geo/daily-metrics', {
     params: { tenant_id: tenantId, ...params },
   })
+}
+
+/** 下载日汇总 CSV（blob） */
+export async function downloadGeoDailyMetricsCsv(tenantId, params = {}) {
+  const data = await client.get('/api/v1/geo/daily-metrics', {
+    params: { tenant_id: tenantId, format: 'csv', ...params },
+    responseType: 'text',
+    transformResponse: [(v) => v],
+  })
+  return typeof data === 'string' ? data : String(data ?? '')
 }
 
 /**

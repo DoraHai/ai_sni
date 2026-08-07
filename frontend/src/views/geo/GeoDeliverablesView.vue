@@ -161,44 +161,48 @@ onMounted(async () => {
         </div>
       </div>
       <div class="header-actions">
-        <el-date-picker
-          v-model="range"
-          type="daterange"
-          value-format="YYYY-MM-DD"
-          start-placeholder="开始"
-          end-placeholder="结束"
-          :clearable="false"
-          style="width: 260px"
-        />
-        <el-select
-          v-model="filterBusinessId"
-          clearable
-          filterable
-          placeholder="全部业务"
-          style="width: 160px"
-          @change="onBusinessChange"
-        >
-          <el-option v-for="b in businesses" :key="b.id" :label="b.name" :value="b.id" />
-        </el-select>
-        <el-select
-          v-model="filterUnitId"
-          clearable
-          filterable
-          placeholder="全部单元"
-          style="width: 180px"
-        >
-          <el-option
-            v-for="u in filteredUnits"
-            :key="u.id"
-            :label="`${u.name}${u.keyword ? ' · ' + u.keyword : ''}`"
-            :value="u.id"
-          />
-        </el-select>
         <el-button :loading="loading" @click="load">刷新</el-button>
         <el-button @click="copyMarkdown">复制 Markdown</el-button>
         <el-button type="primary" @click="downloadMarkdown">下载 Markdown</el-button>
-        <el-button plain @click="printReport">打印 / 一页报告</el-button>
+        <el-button plain @click="printReport">打印</el-button>
       </div>
+    </div>
+
+    <div class="geo-toolbar">
+      <el-date-picker
+        v-model="range"
+        type="daterange"
+        value-format="YYYY-MM-DD"
+        start-placeholder="开始"
+        end-placeholder="结束"
+        :clearable="false"
+        style="width: 260px"
+      />
+      <el-select
+        v-model="filterBusinessId"
+        clearable
+        filterable
+        placeholder="全部业务"
+        style="width: 180px"
+        @change="onBusinessChange"
+      >
+        <el-option v-for="b in businesses" :key="b.id" :label="b.name" :value="b.id" />
+      </el-select>
+      <el-select
+        v-model="filterUnitId"
+        clearable
+        filterable
+        placeholder="全部单元"
+        style="width: 200px"
+      >
+        <el-option
+          v-for="u in filteredUnits"
+          :key="u.id"
+          :label="`${u.name}${u.keyword ? ' · ' + u.keyword : ''}`"
+          :value="u.id"
+        />
+      </el-select>
+      <span class="toolbar-hint">筛选后刷新报告数据</span>
     </div>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" />
@@ -345,49 +349,47 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.geo-deliv { padding: 4px 2px 24px; }
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
+.mb { margin-bottom: 16px; }
+.meta {
+  font-size: 13px;
+  color: #475569;
   margin-bottom: 16px;
-  flex-wrap: wrap;
+  line-height: 1.6;
+  padding: 12px 16px;
+  background: #f8fafc;
+  border-radius: 10px;
 }
-.page-title { font-size: 20px; font-weight: 650; color: #1f2937; }
-.page-desc { margin-top: 4px; font-size: 13px; color: #6b7280; }
-.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.mb { margin-bottom: 14px; }
-.meta { font-size: 13px; color: #4b5563; margin-bottom: 12px; }
 .scope-tag { color: #2563eb; font-weight: 600; }
-.kpi-sub { font-size: 11px; color: #9ca3af; margin-top: 4px; }
+.kpi-sub { font-size: 12px; color: #94a3b8; margin-top: 6px; line-height: 1.4; }
 .kpi-row {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 12px;
-  margin-bottom: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
 }
 .kpi {
   background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  padding: 14px 16px;
+  border: 1px solid #e8edf5;
+  border-radius: 12px;
+  padding: 16px 18px;
+  min-height: 96px;
 }
-.kpi-label { font-size: 12px; color: #6b7280; }
+.kpi-label { font-size: 12px; color: #64748b; font-weight: 500; }
 .kpi-value {
-  margin-top: 6px;
+  margin-top: 8px;
   font-size: 22px;
-  font-weight: 650;
-  color: #111827;
+  font-weight: 700;
+  color: #0f172a;
   font-variant-numeric: tabular-nums;
 }
 .panel {
   background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  padding: 14px 16px;
-  margin-bottom: 14px;
+  border: 1px solid #e8edf5;
+  border-radius: 12px;
+  padding: 18px 20px;
+  margin-bottom: 18px;
 }
-.panel-title { font-size: 14px; font-weight: 650; margin-bottom: 10px; color: #1f2937; }
+.panel-title { font-size: 15px; font-weight: 650; margin-bottom: 14px; color: #1e293b; }
 @media print {
   .page-header .header-actions { display: none; }
   .geo-deliv { padding: 0; }

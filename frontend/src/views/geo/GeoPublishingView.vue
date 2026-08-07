@@ -929,10 +929,13 @@ onMounted(load)
         <el-table-column label="提供商" width="100">
           <template #default="{ row }">{{ row.provider || '—' }}</template>
         </el-table-column>
-        <el-table-column label="OAuth" width="80">
+        <el-table-column label="Token" min-width="120">
           <template #default="{ row }">
-            <el-tag v-if="row.oauth_authorized" size="small" type="success">已授</el-tag>
+            <el-tag v-if="row.token_expired" size="small" type="danger">已过期</el-tag>
+            <el-tag v-else-if="row.token_expiring_soon" size="small" type="warning">将过期</el-tag>
+            <el-tag v-else-if="row.oauth_authorized" size="small" type="success">有效</el-tag>
             <span v-else class="muted">—</span>
+            <div v-if="row.token_expires_at" class="muted">{{ row.token_expires_at }}</div>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="90">

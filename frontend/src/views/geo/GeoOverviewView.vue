@@ -3,7 +3,9 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
+  downloadGeoDailyMetricsCsv,
   fetchGeoContentStats,
+  fetchGeoOpsAlerts,
   geoContentHealth,
   listGeoBusinesses,
   listGeoDailyMetrics,
@@ -31,6 +33,9 @@ const filterUnitId = ref(null)
 const dailySeries = ref([])
 const dailyLatest = ref(null)
 const citationNote = ref('')
+const opsAlerts = ref([])
+const opsSummary = ref(null)
+const exporting = ref(false)
 
 const fmtInt = (v) => (v == null ? '—' : Number(v).toLocaleString('zh-CN'))
 const fmtPct = (v) => {
@@ -163,6 +168,20 @@ const filteredUnits = computed(() => {
   return units.value.filter((u) => u.business_id === filterBusinessId.value)
 })
 
+function dailyQueryParams() {
+  const params = {}
+  if (filterUnitId.value) {
+    params.scope_level = 'unit'
+    params.unit_id = filterUnitId.value
+  } else if (filterBusinessId.value) {
+    params.scope_level = 'business'
+    params.business_id = filterBusinessId.value
+  } else {
+    params.scope_level = 'tenant'
+  }
+  return params
+}
+
 async function loadDailySlice() {
   if (!tenantId.value) {
     dailySeries.value = []
@@ -170,17 +189,7 @@ async function loadDailySlice() {
     return
   }
   try {
-    const params = {}
-    if (filterUnitId.value) {
-      params.scope_level = 'unit'
-      params.unit_id = filterUnitId.value
-    } else if (filterBusinessId.value) {
-      params.scope_level = 'business'
-      params.business_id = filterBusinessId.value
-    } else {
-      params.scope_level = 'tenant'
-    }
-    const data = await listGeoDailyMetrics(tenantId.value, params)
+    const data = await listGeoDailyMetrics(tenantId.value, dailyQueryParams())
     const items = data.items || []
     dailySeries.value = items
     dailyLatest.value = items.length ? items[items.length - 1] : null
@@ -188,6 +197,22 @@ async function loadDailySlice() {
   } catch {
     dailySeries.value = []
     dailyLatest.value = null
+  }
+}
+
+async function loadOps() {
+  if (!tenantId.value) {
+    opsAlerts.value = []
+    opsSummary.value = null
+    return
+  }
+  try {
+    const data = await fetchGeoOpsAlerts(tenantId.value)
+    opsAlerts.value = data.alerts || []
+    opsSummary.value = data.summary || null
+  } catch {
+    opsAlerts.value = []
+    opsSummary.value = null
   }
 }
 
@@ -204,6 +229,7 @@ async function load() {
       geoContentHealth().catch(() => null),
       loadHierarchy(),
       loadDailySlice(),
+      loadOps(),
     ])
     stats.value = s
     healthOk.value = h ? h.status === 'ok' : null
@@ -213,6 +239,36 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+async function exportCsv() {
+  if (!tenantId.value) return
+  exporting.value = true
+  try {
+    const csv = await downloadGeoDailyMetricsCsv(tenantId.value, dailyQueryParams())
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' })
+    const href = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = href
+    a.download = `geo-daily-${tenantId.value}.csv`
+    a.click()
+    URL.revokeObjectURL(href)
+    ElMessage.success('已导出 CSV')
+  } catch (e) {
+    ElMessage.error(e.message || '导出失败')
+  } finally {
+    exporting.value = false
+  }
+}
+
+function alertType(level) {
+  if (level === 'error') return 'error'
+  if (level === 'warning') return 'warning'
+  return 'info'
+}
+
+function goAlert(a) {
+  if (a?.href) router.push(a.href)
 }
 
 function refresh() {
@@ -267,14 +323,38 @@ onMounted(load)
       </div>
       <div class="header-actions">
         <el-button :loading="loading" @click="refresh">刷新</el-button>
-        <el-button :loading="rebuilding" @click="rebuildToday">重算今日指标</el-button>
+        <el-button :loading="rebuilding" @click="rebuildToday">重算今日</el-button>
+        <el-button :loading="exporting" @click="exportCsv">导出 CSV</el-button>
         <el-button type="primary" @click="openWorkbench(workbenchLinks[0])">打开工作台</el-button>
       </div>
     </div>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" />
 
-    <div class="filters mb">
+    <div v-if="opsAlerts.length" class="geo-ops-stack">
+      <el-alert
+        v-for="(a, idx) in opsAlerts.slice(0, 6)"
+        :key="idx"
+        :type="alertType(a.level)"
+        :closable="false"
+        show-icon
+      >
+        <template #title>
+          <span class="ops-title" @click="goAlert(a)">{{ a.title }}</span>
+        </template>
+        <div class="ops-detail">
+          {{ a.detail }}
+          <el-button v-if="a.href" link type="primary" size="small" @click="goAlert(a)">去处理</el-button>
+        </div>
+      </el-alert>
+      <div v-if="opsSummary" class="ops-summary geo-muted">
+        运营告警 {{ opsSummary.total }} 条
+        · 错误 {{ opsSummary.error }} · 警告 {{ opsSummary.warning }}
+        · 巡检配额 {{ opsSummary.patrol_quota_used }}/{{ opsSummary.patrol_quota_max }}
+      </div>
+    </div>
+
+    <div class="geo-toolbar">
       <el-select
         v-model="filterBusinessId"
         clearable
@@ -283,12 +363,7 @@ onMounted(load)
         style="width: 200px"
         @change="onBusinessChange"
       >
-        <el-option
-          v-for="b in businesses"
-          :key="b.id"
-          :label="b.name"
-          :value="b.id"
-        />
+        <el-option v-for="b in businesses" :key="b.id" :label="b.name" :value="b.id" />
       </el-select>
       <el-select
         v-model="filterUnitId"
@@ -296,7 +371,6 @@ onMounted(load)
         filterable
         placeholder="全部优化单元"
         style="width: 220px"
-        :disabled="!filteredUnits.length && !filterBusinessId"
       >
         <el-option
           v-for="u in filteredUnits"
@@ -305,51 +379,45 @@ onMounted(load)
           :value="u.id"
         />
       </el-select>
-      <span class="filter-hint">{{ scopeHint }}</span>
-      <router-link class="el-button el-button--small" to="/geo/businesses">管理业务/单元</router-link>
+      <span class="toolbar-hint">{{ scopeHint }}</span>
+      <router-link class="el-button el-button--small is-plain" to="/geo/businesses">管理业务/单元</router-link>
     </div>
 
-    <el-alert
-      v-if="citationNote"
-      type="info"
-      :title="citationNote"
-      :closable="true"
-      show-icon
-      class="mb"
-    />
-
-    <div v-if="stats" class="kpi-grid">
-      <div v-for="card in summaryCards" :key="card.label" class="kpi">
+    <div v-if="stats" class="geo-kpi-grid">
+      <div v-for="card in summaryCards" :key="card.label" class="geo-kpi">
         <div class="kpi-label">{{ card.label }}</div>
         <div class="kpi-value">{{ card.value }}</div>
         <div class="kpi-hint">{{ card.hint }}</div>
       </div>
     </div>
 
-    <section v-if="dailySeries.length" class="panel">
-      <div class="panel-title">近 14 天 · {{ scopeHint }}</div>
-      <el-table :data="dailySeries" size="small" max-height="280">
-        <el-table-column prop="metric_date" label="日期" width="110" />
-        <el-table-column label="品牌提及率" width="110">
+    <section v-if="dailySeries.length" class="geo-panel">
+      <div class="panel-title-row">
+        <div class="panel-title">近 14 天 · {{ scopeHint }}</div>
+        <el-button size="small" :loading="exporting" @click="exportCsv">导出本切片 CSV</el-button>
+      </div>
+      <el-table :data="dailySeries" size="small" max-height="300" stripe>
+        <el-table-column prop="metric_date" label="日期" width="120" />
+        <el-table-column label="品牌提及率" min-width="110">
           <template #default="{ row }">{{ fmtPct(row.brand_mention_rate) }}</template>
         </el-table-column>
-        <el-table-column label="点名认知率" width="110">
+        <el-table-column label="点名认知率" min-width="110">
           <template #default="{ row }">{{ fmtPct(row.brand_probe_recognition_rate) }}</template>
         </el-table-column>
-        <el-table-column prop="citation_count" label="AI 引用次数" width="110" />
-        <el-table-column prop="distinct_cited_domains" label="独立域名" width="90" />
-        <el-table-column prop="snapshots_visibility" label="可见快照" width="90" />
-        <el-table-column prop="snapshots_probe" label="探测快照" width="90" />
+        <el-table-column prop="citation_count" label="AI 引用次数" min-width="110" />
+        <el-table-column prop="distinct_cited_domains" label="独立域名" min-width="100" />
+        <el-table-column prop="snapshots_visibility" label="可见快照" min-width="100" />
+        <el-table-column prop="snapshots_probe" label="探测快照" min-width="100" />
       </el-table>
     </section>
-    <section v-else-if="stats" class="panel">
+    <section v-else-if="stats" class="geo-panel">
       <div class="panel-title">近 14 天 · {{ scopeHint }}</div>
       <div class="empty-daily">
-        暂无按天汇总。登记快照 / 巡检落库后会自动重算；也可点「重算今日指标」。
+        暂无按天汇总。登记快照 / 巡检落库后会自动重算；也可点「重算今日」。
       </div>
     </section>
 
-    <section v-if="stats" class="panel">
+    <section v-if="stats" class="geo-panel">
       <div class="panel-title">下一步</div>
       <ul class="next-list">
         <li v-if="stats.todo_blocked > 0">
@@ -367,14 +435,14 @@ onMounted(load)
       </ul>
     </section>
 
-    <section class="panel">
+    <section class="geo-panel">
       <div class="panel-title">工作台入口</div>
-      <div class="link-grid">
+      <div class="geo-link-grid">
         <button
           v-for="link in workbenchLinks"
           :key="link.path"
           type="button"
-          class="link-item"
+          class="geo-link-card"
           @click="openWorkbench(link)"
         >
           <span class="link-label">{{ link.label }}</span>
@@ -386,37 +454,11 @@ onMounted(load)
 </template>
 
 <style scoped>
-.geo-overview {
-  padding: 4px 2px 24px;
-}
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-.page-title {
-  font-size: 20px;
-  font-weight: 650;
-  color: #1f2937;
-}
-.page-desc {
-  margin-top: 4px;
-  font-size: 13px;
-  color: #6b7280;
-}
-.header-actions {
-  display: flex;
-  gap: 8px;
-  flex-shrink: 0;
-  flex-wrap: wrap;
-}
 .health {
   margin-left: 8px;
   font-size: 12px;
-  padding: 1px 8px;
-  border-radius: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
 }
 .health.ok {
   background: #ecfdf5;
@@ -427,108 +469,43 @@ onMounted(load)
   color: #b91c1c;
 }
 .mb {
-  margin-bottom: 14px;
-}
-.filters {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-.filter-hint {
-  font-size: 13px;
-  color: #6b7280;
-}
-.kpi-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 14px;
-}
-@media (max-width: 960px) {
-  .kpi-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-.kpi {
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  padding: 14px 16px;
-}
-.kpi-label {
-  font-size: 12px;
-  color: #6b7280;
-}
-.kpi-value {
-  margin-top: 6px;
-  font-size: 24px;
-  font-weight: 650;
-  color: #111827;
-  font-variant-numeric: tabular-nums;
-}
-.kpi-hint {
-  margin-top: 4px;
-  font-size: 12px;
-  color: #9ca3af;
-}
-.panel {
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  padding: 16px 18px;
-  margin-bottom: 14px;
-}
-.panel-title {
-  font-size: 14px;
-  font-weight: 650;
-  color: #1f2937;
-  margin-bottom: 10px;
+  margin-bottom: 16px;
 }
 .empty-daily {
   font-size: 13px;
-  color: #6b7280;
-  padding: 8px 0;
+  color: #64748b;
+  padding: 12px 0 4px;
+  line-height: 1.5;
 }
 .next-list {
   margin: 0;
-  padding-left: 18px;
+  padding-left: 1.25rem;
   font-size: 13px;
-  color: #374151;
-  line-height: 1.7;
+  color: #334155;
+  line-height: 1.85;
 }
-.link-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-@media (max-width: 960px) {
-  .link-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-.link-item {
-  text-align: left;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  background: #fafafa;
-  padding: 12px 14px;
+.ops-title {
   cursor: pointer;
-}
-.link-item:hover {
-  border-color: #93c5fd;
-  background: #f0f9ff;
-}
-.link-label {
-  display: block;
   font-weight: 600;
-  color: #111827;
-  font-size: 13px;
 }
-.link-desc {
-  display: block;
-  margin-top: 4px;
-  font-size: 12px;
-  color: #6b7280;
+.ops-detail {
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.5;
+  margin-top: 2px;
+}
+.ops-summary {
+  padding: 0 4px 4px;
+}
+.panel-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.panel-title-row .panel-title {
+  margin-bottom: 0;
 }
 </style>

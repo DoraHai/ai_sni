@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import {
   createGeoBusiness,
   createGeoUnit,
+  downloadGeoDailyMetricsCsv,
   listGeoBusinesses,
   listGeoDailyMetrics,
   listGeoUnits,
@@ -19,6 +20,7 @@ const { tenantId } = useGeoTenant()
 
 const loading = ref(false)
 const rebuilding = ref(false)
+const exporting = ref(false)
 const error = ref('')
 const businesses = ref([])
 const units = ref([])
@@ -262,6 +264,42 @@ async function rebuildLast14() {
   }
 }
 
+function dailyParams() {
+  const params = {}
+  if (dailyScope.value === 'tenant') params.scope_level = 'tenant'
+  else if (dailyScope.value === 'business' && selectedBusinessId.value) {
+    params.scope_level = 'business'
+    params.business_id = selectedBusinessId.value
+  } else if (dailyScope.value === 'unit' && selectedUnitId.value) {
+    params.scope_level = 'unit'
+    params.unit_id = selectedUnitId.value
+  } else if (dailyScope.value === 'all_units_in_biz' && selectedBusinessId.value) {
+    params.scope_level = 'unit'
+    params.business_id = selectedBusinessId.value
+  } else params.scope_level = 'tenant'
+  return params
+}
+
+async function exportCsv() {
+  if (!tenantId.value) return
+  exporting.value = true
+  try {
+    const csv = await downloadGeoDailyMetricsCsv(tenantId.value, dailyParams())
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' })
+    const href = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = href
+    a.download = `geo-daily-slice-${tenantId.value}.csv`
+    a.click()
+    URL.revokeObjectURL(href)
+    ElMessage.success('已导出 CSV')
+  } catch (e) {
+    ElMessage.error(e.message || '导出失败')
+  } finally {
+    exporting.value = false
+  }
+}
+
 function selectUnitForMetrics(row) {
   selectedUnitId.value = row.id
   dailyScope.value = 'unit'
@@ -304,11 +342,16 @@ onMounted(async () => {
       <div class="header-actions">
         <el-button type="primary" @click="bizOpen = true">新建优化业务</el-button>
         <el-button :disabled="!selectedBusinessId" @click="unitOpen = true">新建优化单元</el-button>
-        <el-button :loading="rebuilding" type="success" @click="rebuildToday">重算今日（含业务/单元）</el-button>
-        <el-button :loading="rebuilding" @click="rebuildLast14">重算近 14 天</el-button>
-        <router-link class="el-button" to="/geo/prompts">优化意图词</router-link>
-        <router-link class="el-button" to="/geo/tasks">优化文章</router-link>
+        <router-link class="el-button is-plain" to="/geo/prompts">优化意图词</router-link>
+        <router-link class="el-button is-plain" to="/geo/tasks">优化文章</router-link>
       </div>
+    </div>
+
+    <div class="geo-toolbar">
+      <el-button :loading="rebuilding" type="success" @click="rebuildToday">重算今日</el-button>
+      <el-button :loading="rebuilding" @click="rebuildLast14">重算近 14 天</el-button>
+      <el-button :loading="exporting" @click="exportCsv">导出 CSV</el-button>
+      <span class="toolbar-hint">重算写入租户/业务/单元切片；导出当前表格范围</span>
     </div>
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
@@ -316,13 +359,13 @@ onMounted(async () => {
       v-if="citationNote"
       type="info"
       :title="citationNote"
-      :closable="false"
+      :closable="true"
       show-icon
       class="mb"
     />
 
-    <div class="layout">
-      <section class="panel">
+    <div class="geo-split-2">
+      <section class="geo-panel">
         <div class="panel-title">优化业务</div>
         <el-table
           :data="businesses"
@@ -343,7 +386,7 @@ onMounted(async () => {
         </el-table>
       </section>
 
-      <section class="panel">
+      <section class="geo-panel">
         <div class="panel-title">
           优化单元（关键词）
           <span v-if="selectedBusiness" class="sub"> · {{ selectedBusiness.name }}</span>
@@ -364,7 +407,7 @@ onMounted(async () => {
       </section>
     </div>
 
-    <section class="panel">
+    <section class="geo-panel">
       <div class="panel-title-row">
         <div class="panel-title">{{ dailyPanelTitle }}</div>
         <div class="scope-tabs">
@@ -375,6 +418,7 @@ onMounted(async () => {
             <el-radio-button label="unit" :disabled="!selectedUnitId">选中单元</el-radio-button>
           </el-radio-group>
           <el-button size="small" @click="loadDaily">刷新</el-button>
+          <el-button size="small" :loading="exporting" @click="exportCsv">CSV</el-button>
         </div>
       </div>
       <el-table :data="dailyItems" size="small" empty-text="暂无按天数据：先挂意图词到单元，再「重算今日」">
@@ -434,37 +478,8 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.geo-page { padding: 4px 2px 24px; }
-.page-header {
-  display: flex; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
-}
-.page-title { font-size: 20px; font-weight: 700; }
-.page-desc { font-size: 13px; color: #6b7280; margin-top: 4px; }
-.header-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.mb { margin-bottom: 12px; }
-.layout {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-  margin-bottom: 14px;
-}
-@media (max-width: 960px) {
-  .layout { grid-template-columns: 1fr; }
-}
-.panel {
-  background: #fff;
-  border: 1px solid #e8ebf2;
-  border-radius: 10px;
-  padding: 12px 14px 16px;
-  margin-bottom: 14px;
-}
-.panel-title { font-weight: 700; margin-bottom: 10px; color: #1e2330; }
-.panel-title-row {
-  display: flex; justify-content: space-between; align-items: center;
-  gap: 12px; flex-wrap: wrap; margin-bottom: 10px;
-}
-.panel-title-row .panel-title { margin-bottom: 0; }
-.scope-tabs { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.sub { font-weight: 400; color: #8b93a7; font-size: 13px; }
-.muted { font-size: 12px; color: #8b93a7; }
+.mb { margin-bottom: 16px; }
+.scope-tabs { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.sub { font-weight: 400; color: #94a3b8; font-size: 13px; }
+.muted { font-size: 12px; color: #94a3b8; }
 </style>

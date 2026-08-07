@@ -126,7 +126,7 @@ python scripts/accept_geo_m1.py   # API :8011，静态可选 :5176
 
 | 路径 | 页面 | 权限 |
 | --- | --- | --- |
-| `/geo/overview` | GEO 概览（KPI + 业务/单元筛选） | `geo.content` |
+| `/geo/overview` | GEO 概览（KPI + 业务/单元筛选 + 运营告警 + CSV） | `geo.content` |
 | `/geo/visibility` | AI 可见度（登记/探测/多引擎草稿） | `geo.content` |
 | `/geo/citations` | AI 引用次数（域名聚合） | `geo.content` |
 | `/geo/competitors` | 竞品分析（PR #11） | `geo.content` |

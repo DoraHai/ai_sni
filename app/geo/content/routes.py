@@ -886,6 +886,19 @@ async def update_optimization_unit(
     return _unit_payload(row)
 
 
+@router.get("/ops-alerts")
+async def geo_ops_alerts(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """运营告警：巡检失败、配额、token 过期、OAuth 未授权、推送配置缺口等。"""
+    from app.geo.content.ops_alerts import build_ops_alerts
+
+    ctx.ensure_tenant(tenant_id)
+    return await build_ops_alerts(session, tenant_id=tenant_id)
+
+
 @router.get("/daily-metrics")
 async def list_daily_metrics(
     tenant_id: int = Query(...),
@@ -897,9 +910,10 @@ async def list_daily_metrics(
     scope_level: str | None = Query(
         None, description="tenant | business | unit；与 scope_key 二选一优先 scope_key"
     ),
+    format: str | None = Query(None, description="json（默认）或 csv"),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
-) -> dict:
+):
     """按天汇总指标（品牌提及率 / 点名认知 / AI 引用次数）。
 
     切片：
@@ -1002,6 +1016,41 @@ async def list_daily_metrics(
         else:
             payload["scope_label"] = payload["scope_key"]
         items.append(payload)
+
+    fmt = (format or "json").strip().lower()
+    if fmt == "csv":
+        import csv
+        import io
+
+        buf = io.StringIO()
+        fields = [
+            "metric_date",
+            "scope_key",
+            "scope_level",
+            "scope_label",
+            "business_id",
+            "business_name",
+            "unit_id",
+            "unit_name",
+            "brand_mention_rate",
+            "brand_probe_recognition_rate",
+            "top1_rate",
+            "citation_count",
+            "distinct_cited_domains",
+            "snapshots_visibility",
+            "snapshots_probe",
+        ]
+        w = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
+        w.writeheader()
+        for it in items:
+            row = {k: it.get(k) for k in fields}
+            w.writerow(row)
+        filename = f"geo-daily-metrics-{tenant_id}.csv"
+        return PlainTextResponse(
+            buf.getvalue(),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     return {
         "items": items,
@@ -2712,17 +2761,25 @@ def _channel_account_payload(row: GeoChannelAccount) -> dict:
     provider = None
     platform = None
     oauth_authorized = False
+    token_expires_at = None
+    token_expired = False
+    token_expiring_soon = False
     if row.credentials_encrypted:
         try:
             from app.geo.content.connectors.social import (
                 decrypt_credentials_json,
                 resolve_provider,
             )
+            from app.geo.content.ops_alerts import account_token_health
 
             creds = decrypt_credentials_json(row.credentials_encrypted)
             provider = resolve_provider(creds)
             platform = creds.get("platform")
-            oauth_authorized = bool(creds.get("access_token"))
+            health = account_token_health(creds)
+            oauth_authorized = bool(health.get("oauth_authorized"))
+            token_expires_at = health.get("token_expires_at")
+            token_expired = bool(health.get("token_expired"))
+            token_expiring_soon = bool(health.get("token_expiring_soon"))
         except Exception:  # noqa: BLE001
             pass
     return {
@@ -2735,6 +2792,9 @@ def _channel_account_payload(row: GeoChannelAccount) -> dict:
         "provider": provider,
         "platform": platform,
         "oauth_authorized": oauth_authorized,
+        "token_expires_at": token_expires_at,
+        "token_expired": token_expired,
+        "token_expiring_soon": token_expiring_soon,
         "status": row.status,
         "expires_at": _iso(row.expires_at),
         "last_verified_at": _iso(row.last_verified_at),
