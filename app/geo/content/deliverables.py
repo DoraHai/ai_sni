@@ -14,17 +14,33 @@ def build_deliverables_pack(
     citations_top: list[dict[str, Any]],
     tasks: list[dict[str, Any]],
     snapshots_sample: list[dict[str, Any]],
+    scope: dict[str, Any] | None = None,
+    daily_series: list[dict[str, Any]] | None = None,
+    business_slices: list[dict[str, Any]] | None = None,
+    unit_slices: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Assemble a client-facing pack payload (no AI narrative in MVP)."""
     return {
         "tenant_id": tenant_id,
         "tenant_name": tenant_name,
         "period": period,
+        "scope": scope
+        or {
+            "level": "tenant",
+            "business_id": None,
+            "unit_id": None,
+            "business_name": None,
+            "unit_name": None,
+            "label": "租户全量",
+        },
         "summary": summary,
         "citations_top": citations_top,
         "tasks": tasks,
         "snapshots_sample": snapshots_sample,
-        "generated_kind": "geo_deliverables_pack_v1",
+        "daily_series": daily_series or [],
+        "business_slices": business_slices or [],
+        "unit_slices": unit_slices or [],
+        "generated_kind": "geo_deliverables_pack_v2",
     }
 
 
@@ -41,11 +57,13 @@ def render_deliverables_markdown(pack: dict[str, Any]) -> str:
     """Render pack as a single Markdown report for copy/download."""
     summary = pack.get("summary") or {}
     period = pack.get("period") or {}
+    scope = pack.get("scope") or {}
     lines = [
         f"# GEO 交付摘要 · {pack.get('tenant_name') or ('租户' + str(pack.get('tenant_id')))}",
         "",
         f"- 客户 ID：{pack.get('tenant_id')}",
         f"- 周期：{period.get('from') or '—'} ~ {period.get('to') or '—'}",
+        f"- 切片范围：{scope.get('label') or '租户全量'}",
         f"- 生成类型：{pack.get('generated_kind')}",
         "",
         "## 概览",
@@ -59,14 +77,55 @@ def render_deliverables_markdown(pack: dict[str, Any]) -> str:
         f"（探测题快照 {summary.get('snapshots_probe', '—')}）",
         f"- 覆盖引擎数：{summary.get('visibility_engines_covered', '—')}",
         f"- AI 引用次数（独立被引域名数）：{summary.get('distinct_cited_domains', '—')}",
+        f"- AI 引用次数（URL 出现总次）：{summary.get('citation_count', '—')}",
         f"- 待复测意图词：{summary.get('prompts_need_recheck', '—')}",
         "",
         "> 口径：无可见性样本时品牌提及率记为「—」而非 0；探测题不计入提及率分母；"
-        "AI 引用次数来自回答快照 cited_urls 聚合（独立域名 / 出现次数），非全网抓取。",
-        "",
-        "## AI 引用次数 · 域名 Top",
+        "AI 引用次数来自回答快照 cited_urls 聚合（独立域名 / 出现次数），非全网抓取；"
+        "业务/单元切片仅统计挂在该业务/单元下意图词的快照。",
         "",
     ]
+
+    daily = pack.get("daily_series") or []
+    if daily:
+        lines.extend(["## 按天汇总（切片）", ""])
+        for row in daily:
+            lines.append(
+                f"- {row.get('metric_date') or '—'} · 提及 {_pct(row.get('brand_mention_rate'))}"
+                f" · 点名 {_pct(row.get('brand_probe_recognition_rate'))}"
+                f" · AI 引用 {row.get('citation_count', 0)}"
+                f" · 独立域名 {row.get('distinct_cited_domains', 0)}"
+            )
+        lines.append("")
+
+    biz_slices = pack.get("business_slices") or []
+    if biz_slices and (scope.get("level") or "tenant") == "tenant":
+        lines.extend(["## 优化业务切片（周期内末次/汇总）", ""])
+        for row in biz_slices:
+            lines.append(
+                f"- {row.get('business_name') or ('业务#' + str(row.get('business_id')))}"
+                f" · 提及 {_pct(row.get('brand_mention_rate'))}"
+                f" · AI 引用 {row.get('citation_count', 0)}"
+                f" · 快照 {row.get('snapshots_visibility', 0)}+{row.get('snapshots_probe', 0)}"
+            )
+        lines.append("")
+
+    unit_slices = pack.get("unit_slices") or []
+    if unit_slices and (scope.get("level") or "tenant") in ("tenant", "business"):
+        lines.extend(["## 优化单元切片（周期内末次/汇总）", ""])
+        for row in unit_slices:
+            label = row.get("unit_name") or f"单元#{row.get('unit_id')}"
+            if row.get("business_name"):
+                label = f"{row['business_name']} / {label}"
+            lines.append(
+                f"- {label}"
+                f" · 提及 {_pct(row.get('brand_mention_rate'))}"
+                f" · AI 引用 {row.get('citation_count', 0)}"
+                f" · 快照 {row.get('snapshots_visibility', 0)}+{row.get('snapshots_probe', 0)}"
+            )
+        lines.append("")
+
+    lines.extend(["## AI 引用次数 · 域名 Top", ""])
     cites = pack.get("citations_top") or []
     if not cites:
         lines.append("_本期无 AI 引用数据_")

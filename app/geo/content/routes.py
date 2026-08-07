@@ -4839,10 +4839,23 @@ async def geo_deliverables_pack(
     top_domains: int = Query(10, ge=1, le=50),
     sample_snapshots: int = Query(12, ge=0, le=50),
     task_limit: int = Query(20, ge=0, le=100),
+    business_id: int | None = Query(None, description="按优化业务切片"),
+    unit_id: int | None = Query(None, description="按优化单元切片（优先于 business_id）"),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ):
-    """Client-facing GEO deliverables pack composed from existing GEO data."""
+    """Client-facing GEO deliverables pack composed from existing GEO data.
+
+    可选 business_id / unit_id：快照与任务按意图词归属切片；并附带 daily_metrics 序列。
+    """
+    from app.geo.content.daily_metrics import (
+        metric_row_payload,
+        scope_business,
+        scope_tenant,
+        scope_unit,
+    )
+    from app.geo.content.snapshots import normalize_cited_urls
+
     ctx.ensure_tenant(tenant_id)
     tenant = await _ensure_tenant_exists(session, tenant_id)
 
@@ -4865,7 +4878,90 @@ async def geo_deliverables_pack(
         "days": max(1, (end.date() - start.date()).days + 1),
     }
 
-    # ---- windowed snapshots ----
+    # ---- scope: unit > business > tenant ----
+    scope_level = "tenant"
+    scope_biz_id: int | None = None
+    scope_unit_id: int | None = None
+    scope_biz_name: str | None = None
+    scope_unit_name: str | None = None
+    allowed_prompt_ids: set[int] | None = None  # None = all
+
+    all_units = list(
+        await session.scalars(
+            select(GeoOptimizationUnit).where(GeoOptimizationUnit.tenant_id == tenant_id)
+        )
+    )
+    unit_biz = {u.id: u.business_id for u in all_units}
+    unit_names = {u.id: u.name for u in all_units}
+    biz_rows = list(
+        await session.scalars(
+            select(GeoOptimizationBusiness).where(
+                GeoOptimizationBusiness.tenant_id == tenant_id
+            )
+        )
+    )
+    biz_names = {b.id: b.name for b in biz_rows}
+
+    if unit_id is not None:
+        unit_row = next((u for u in all_units if u.id == unit_id), None)
+        if not unit_row:
+            raise HTTPException(400, "优化单元不存在")
+        scope_level = "unit"
+        scope_unit_id = unit_id
+        scope_biz_id = unit_row.business_id
+        scope_unit_name = unit_row.name
+        scope_biz_name = biz_names.get(unit_row.business_id)
+        allowed_prompt_ids = set(
+            await session.scalars(
+                select(GeoPrompt.id).where(
+                    GeoPrompt.tenant_id == tenant_id,
+                    GeoPrompt.unit_id == unit_id,
+                )
+            )
+        )
+    elif business_id is not None:
+        if business_id not in biz_names:
+            raise HTTPException(400, "优化业务不存在")
+        scope_level = "business"
+        scope_biz_id = business_id
+        scope_biz_name = biz_names[business_id]
+        unit_ids_in_biz = {u.id for u in all_units if u.business_id == business_id}
+        if unit_ids_in_biz:
+            allowed_prompt_ids = set(
+                await session.scalars(
+                    select(GeoPrompt.id).where(
+                        GeoPrompt.tenant_id == tenant_id,
+                        GeoPrompt.unit_id.in_(list(unit_ids_in_biz)),
+                    )
+                )
+            )
+        else:
+            allowed_prompt_ids = set()
+
+    if scope_level == "tenant":
+        scope_label = "租户全量"
+        dm_scope_key = scope_tenant()
+    elif scope_level == "business":
+        scope_label = f"优化业务 · {scope_biz_name or ('#' + str(scope_biz_id))}"
+        dm_scope_key = scope_business(int(scope_biz_id))
+    else:
+        scope_label = (
+            f"优化单元 · {(scope_biz_name + ' / ') if scope_biz_name else ''}"
+            f"{scope_unit_name or ('#' + str(scope_unit_id))}"
+        )
+        dm_scope_key = scope_unit(int(scope_unit_id))
+
+    scope_meta = {
+        "level": scope_level,
+        "business_id": scope_biz_id,
+        "unit_id": scope_unit_id,
+        "business_name": scope_biz_name,
+        "unit_name": scope_unit_name,
+        "label": scope_label,
+        "scope_key": dm_scope_key,
+    }
+
+    # ---- windowed snapshots (optionally filtered by prompt scope) ----
     snap_rows = list(
         await session.scalars(
             select(GeoAnswerSnapshot)
@@ -4877,6 +4973,7 @@ async def geo_deliverables_pack(
         s
         for s in snap_rows
         if in_captured_window(s.captured_at, start=start, end=end)
+        and (allowed_prompt_ids is None or s.prompt_id in allowed_prompt_ids)
     ]
 
     prompt_ids = {s.prompt_id for s in window_snaps}
@@ -4887,15 +4984,18 @@ async def geo_deliverables_pack(
             )
         )
     )
+    if allowed_prompt_ids is not None:
+        active_prompts = [p for p in active_prompts if p.id in allowed_prompt_ids]
     prompt_probe = {p.id: bool(p.is_brand_probe) for p in active_prompts}
     questions = {p.id: p.question for p in active_prompts}
     if prompt_ids:
         for p in await session.scalars(
             select(GeoPrompt).where(
-                GeoPrompt.tenant_id == tenant_id, GeoPrompt.id.in_(prompt_ids)
+                GeoPrompt.tenant_id == tenant_id, GeoPrompt.id.in_(list(prompt_ids))
             )
         ):
             questions[p.id] = p.question
+            prompt_probe.setdefault(p.id, bool(p.is_brand_probe))
 
     split = split_visibility_metrics(
         [
@@ -4912,7 +5012,10 @@ async def geo_deliverables_pack(
     own_domains = await _own_domains_for_tenant(session, tenant_id)
     buckets: dict[str, dict[str, Any]] = {}
     snapshots_with_citations = 0
+    citation_count_total = 0
     for row in window_snaps:
+        urls = normalize_cited_urls(list(row.cited_urls or []))
+        citation_count_total += len(urls)
         domains = extract_cited_domains(list(row.cited_urls or []))
         if not domains:
             continue
@@ -4947,7 +5050,7 @@ async def geo_deliverables_pack(
     cite_items.sort(key=lambda x: (-x["cite_count"], x["domain"]))
     citations_top = cite_items[:top_domains]
 
-    # ---- tasks in window (by updated_at) ----
+    # ---- tasks in window (by updated_at), filter by prompt scope ----
     task_rows = list(
         await session.scalars(
             select(GeoContentTask)
@@ -4958,7 +5061,9 @@ async def geo_deliverables_pack(
     window_tasks = [
         t
         for t in task_rows
-        if t.updated_at is not None and start <= t.updated_at.replace(tzinfo=None) <= end
+        if t.updated_at is not None
+        and start <= t.updated_at.replace(tzinfo=None) <= end
+        and (allowed_prompt_ids is None or t.prompt_id in allowed_prompt_ids)
     ]
     published = sum(1 for t in window_tasks if t.status == "published")
     task_items = []
@@ -4975,7 +5080,6 @@ async def geo_deliverables_pack(
             }
         )
 
-    # fill missing prompt questions for tasks
     missing_pids = {
         t["prompt_id"] for t in task_items if t["prompt_id"] and not t["prompt_question"]
     }
@@ -5018,13 +5122,105 @@ async def geo_deliverables_pack(
         "visibility_engines_covered": engines_covered,
         "snapshots_with_citations": snapshots_with_citations,
         "distinct_cited_domains": len(cite_items),
+        "citation_count": citation_count_total,
         "prompts_need_recheck": sum(
-            1
-            for p in active_prompts
-            # lightweight: brand_missing tag as proxy when full recheck needs more joins
-            if "brand_missing" in (p.tags or [])
+            1 for p in active_prompts if "brand_missing" in (p.tags or [])
         ),
     }
+
+    # ---- daily_metrics series for selected scope ----
+    day_from = start.date() if hasattr(start, "date") else start
+    day_to = end.date() if hasattr(end, "date") else end
+    dm_rows = list(
+        await session.scalars(
+            select(GeoDailyMetric)
+            .where(
+                GeoDailyMetric.tenant_id == tenant_id,
+                GeoDailyMetric.metric_date >= day_from,
+                GeoDailyMetric.metric_date <= day_to,
+                GeoDailyMetric.scope_key == dm_scope_key,
+            )
+            .order_by(GeoDailyMetric.metric_date.asc())
+        )
+    )
+    daily_series = [metric_row_payload(r) for r in dm_rows]
+
+    business_slices: list[dict[str, Any]] = []
+    unit_slices: list[dict[str, Any]] = []
+    if scope_level == "tenant":
+        biz_dm = list(
+            await session.scalars(
+                select(GeoDailyMetric).where(
+                    GeoDailyMetric.tenant_id == tenant_id,
+                    GeoDailyMetric.metric_date >= day_from,
+                    GeoDailyMetric.metric_date <= day_to,
+                    GeoDailyMetric.scope_key.like("b%"),
+                )
+            )
+        )
+        latest_biz: dict[int, GeoDailyMetric] = {}
+        for r in biz_dm:
+            bid = r.business_id
+            if bid is None:
+                continue
+            prev = latest_biz.get(bid)
+            if prev is None or r.metric_date >= prev.metric_date:
+                latest_biz[bid] = r
+        for bid, r in sorted(latest_biz.items()):
+            payload = metric_row_payload(r)
+            payload["business_name"] = biz_names.get(bid)
+            business_slices.append(payload)
+
+        unit_dm = list(
+            await session.scalars(
+                select(GeoDailyMetric).where(
+                    GeoDailyMetric.tenant_id == tenant_id,
+                    GeoDailyMetric.metric_date >= day_from,
+                    GeoDailyMetric.metric_date <= day_to,
+                    GeoDailyMetric.scope_key.like("u%"),
+                )
+            )
+        )
+        latest_unit: dict[int, GeoDailyMetric] = {}
+        for r in unit_dm:
+            uid = r.unit_id
+            if uid is None:
+                continue
+            prev = latest_unit.get(uid)
+            if prev is None or r.metric_date >= prev.metric_date:
+                latest_unit[uid] = r
+        for uid, r in sorted(latest_unit.items()):
+            payload = metric_row_payload(r)
+            payload["unit_name"] = unit_names.get(uid)
+            bid = r.business_id or unit_biz.get(uid)
+            payload["business_id"] = bid
+            payload["business_name"] = biz_names.get(bid) if bid else None
+            unit_slices.append(payload)
+    elif scope_level == "business" and scope_biz_id is not None:
+        unit_dm = list(
+            await session.scalars(
+                select(GeoDailyMetric).where(
+                    GeoDailyMetric.tenant_id == tenant_id,
+                    GeoDailyMetric.metric_date >= day_from,
+                    GeoDailyMetric.metric_date <= day_to,
+                    GeoDailyMetric.business_id == scope_biz_id,
+                    GeoDailyMetric.scope_key.like("u%"),
+                )
+            )
+        )
+        latest_unit = {}
+        for r in unit_dm:
+            uid = r.unit_id
+            if uid is None:
+                continue
+            prev = latest_unit.get(uid)
+            if prev is None or r.metric_date >= prev.metric_date:
+                latest_unit[uid] = r
+        for uid, r in sorted(latest_unit.items()):
+            payload = metric_row_payload(r)
+            payload["unit_name"] = unit_names.get(uid)
+            payload["business_name"] = scope_biz_name
+            unit_slices.append(payload)
 
     pack = build_deliverables_pack(
         tenant_id=tenant_id,
@@ -5034,6 +5230,10 @@ async def geo_deliverables_pack(
         citations_top=citations_top,
         tasks=task_items,
         snapshots_sample=snaps_sample,
+        scope=scope_meta,
+        daily_series=daily_series,
+        business_slices=business_slices,
+        unit_slices=unit_slices,
     )
 
     fmt = (format or "json").strip().lower()

@@ -4,6 +4,8 @@ import { ElMessage } from 'element-plus'
 import {
   downloadGeoDeliverablesMarkdown,
   fetchGeoDeliverablesPack,
+  listGeoBusinesses,
+  listGeoUnits,
 } from '../../api/geoContent'
 import { session } from '../../store/session'
 
@@ -15,6 +17,10 @@ const loading = ref(false)
 const error = ref('')
 const pack = ref(null)
 const range = ref([])
+const businesses = ref([])
+const units = ref([])
+const filterBusinessId = ref(null)
+const filterUnitId = ref(null)
 
 const fmtPct = (v) => {
   if (v == null) return '—'
@@ -31,6 +37,37 @@ function defaultRange() {
   return [iso(start), iso(end)]
 }
 
+const filteredUnits = computed(() => {
+  if (!filterBusinessId.value) return units.value
+  return units.value.filter((u) => u.business_id === filterBusinessId.value)
+})
+
+const scopeParams = computed(() => {
+  const p = {}
+  if (filterUnitId.value) p.unit_id = filterUnitId.value
+  else if (filterBusinessId.value) p.business_id = filterBusinessId.value
+  return p
+})
+
+async function loadHierarchy() {
+  if (!tenantId.value) {
+    businesses.value = []
+    units.value = []
+    return
+  }
+  try {
+    const [b, u] = await Promise.all([
+      listGeoBusinesses(tenantId.value, { status: 'active' }),
+      listGeoUnits(tenantId.value, { status: 'active' }),
+    ])
+    businesses.value = b.items || []
+    units.value = u.items || []
+  } catch {
+    businesses.value = []
+    units.value = []
+  }
+}
+
 async function load() {
   if (!tenantId.value) {
     error.value = '请先选择客户或配置本地 API Key'
@@ -43,6 +80,7 @@ async function load() {
     pack.value = await fetchGeoDeliverablesPack(tenantId.value, {
       from: `${range.value[0]}T00:00:00`,
       to: `${range.value[1]}T23:59:59`,
+      ...scopeParams.value,
     })
   } catch (e) {
     error.value = e.message || '加载失败'
@@ -57,6 +95,7 @@ async function copyMarkdown() {
     const md = await downloadGeoDeliverablesMarkdown(tenantId.value, {
       from: `${range.value[0]}T00:00:00`,
       to: `${range.value[1]}T23:59:59`,
+      ...scopeParams.value,
     })
     await navigator.clipboard.writeText(md)
     ElMessage.success('Markdown 已复制')
@@ -70,6 +109,7 @@ async function downloadMarkdown() {
     const md = await downloadGeoDeliverablesMarkdown(tenantId.value, {
       from: `${range.value[0]}T00:00:00`,
       to: `${range.value[1]}T23:59:59`,
+      ...scopeParams.value,
     })
     const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
     const href = URL.createObjectURL(blob)
@@ -88,11 +128,26 @@ function printReport() {
   window.print()
 }
 
-watch(tenantId, load)
-watch(range, load, { deep: true })
-onMounted(() => {
-  range.value = defaultRange()
+function onBusinessChange() {
+  if (
+    filterUnitId.value &&
+    !filteredUnits.value.some((u) => u.id === filterUnitId.value)
+  ) {
+    filterUnitId.value = null
+  }
   load()
+}
+
+watch(tenantId, async () => {
+  await loadHierarchy()
+  await load()
+})
+watch(range, load, { deep: true })
+watch(filterUnitId, load)
+onMounted(async () => {
+  range.value = defaultRange()
+  await loadHierarchy()
+  await load()
 })
 </script>
 
@@ -102,7 +157,7 @@ onMounted(() => {
       <div>
         <div class="page-title">GEO 交付摘要</div>
         <div class="page-desc">
-          按周期汇总可见度、AI 引用与优化文章，供客户沟通；可复制 / 下载 Markdown。
+          按周期与业务/单元切片汇总可见度、AI 引用与优化文章；可复制 / 下载 Markdown。
         </div>
       </div>
       <div class="header-actions">
@@ -115,6 +170,30 @@ onMounted(() => {
           :clearable="false"
           style="width: 260px"
         />
+        <el-select
+          v-model="filterBusinessId"
+          clearable
+          filterable
+          placeholder="全部业务"
+          style="width: 160px"
+          @change="onBusinessChange"
+        >
+          <el-option v-for="b in businesses" :key="b.id" :label="b.name" :value="b.id" />
+        </el-select>
+        <el-select
+          v-model="filterUnitId"
+          clearable
+          filterable
+          placeholder="全部单元"
+          style="width: 180px"
+        >
+          <el-option
+            v-for="u in filteredUnits"
+            :key="u.id"
+            :label="`${u.name}${u.keyword ? ' · ' + u.keyword : ''}`"
+            :value="u.id"
+          />
+        </el-select>
         <el-button :loading="loading" @click="load">刷新</el-button>
         <el-button @click="copyMarkdown">复制 Markdown</el-button>
         <el-button type="primary" @click="downloadMarkdown">下载 Markdown</el-button>
@@ -130,6 +209,7 @@ onMounted(() => {
         <strong>{{ pack.tenant_name }}</strong>
         <span>· 周期 {{ pack.period?.from?.slice(0, 10) }} ~ {{ pack.period?.to?.slice(0, 10) }}</span>
         <span>· {{ pack.period?.days }} 天</span>
+        <span class="scope-tag">· {{ pack.scope?.label || '租户全量' }}</span>
       </div>
 
       <div class="kpi-row">
@@ -157,10 +237,63 @@ onMounted(() => {
         </div>
         <div class="kpi">
           <div class="kpi-label">AI 引用次数</div>
-          <div class="kpi-value">{{ pack.summary?.distinct_cited_domains ?? '—' }}</div>
-          <div class="kpi-sub">口径：独立被引域名数</div>
+          <div class="kpi-value">
+            {{ pack.summary?.citation_count ?? pack.summary?.distinct_cited_domains ?? '—' }}
+          </div>
+          <div class="kpi-sub">
+            URL 次数 · 独立域名 {{ pack.summary?.distinct_cited_domains ?? '—' }}
+          </div>
         </div>
       </div>
+
+      <section v-if="(pack.daily_series || []).length" class="panel">
+        <div class="panel-title">按天汇总 · {{ pack.scope?.label || '租户' }}</div>
+        <el-table :data="pack.daily_series || []" size="small" max-height="260">
+          <el-table-column prop="metric_date" label="日期" width="110" />
+          <el-table-column label="品牌提及率" width="110">
+            <template #default="{ row }">{{ fmtPct(row.brand_mention_rate) }}</template>
+          </el-table-column>
+          <el-table-column label="点名认知率" width="110">
+            <template #default="{ row }">{{ fmtPct(row.brand_probe_recognition_rate) }}</template>
+          </el-table-column>
+          <el-table-column prop="citation_count" label="AI 引用" width="90" />
+          <el-table-column prop="distinct_cited_domains" label="独立域名" width="90" />
+          <el-table-column prop="snapshots_visibility" label="可见快照" width="90" />
+        </el-table>
+      </section>
+
+      <section v-if="(pack.business_slices || []).length" class="panel">
+        <div class="panel-title">优化业务切片（周期内最近一日）</div>
+        <el-table :data="pack.business_slices || []" size="small">
+          <el-table-column label="业务" min-width="140">
+            <template #default="{ row }">{{ row.business_name || `业务#${row.business_id}` }}</template>
+          </el-table-column>
+          <el-table-column prop="metric_date" label="日期" width="110" />
+          <el-table-column label="品牌提及率" width="110">
+            <template #default="{ row }">{{ fmtPct(row.brand_mention_rate) }}</template>
+          </el-table-column>
+          <el-table-column prop="citation_count" label="AI 引用" width="90" />
+          <el-table-column prop="snapshots_visibility" label="可见快照" width="90" />
+        </el-table>
+      </section>
+
+      <section v-if="(pack.unit_slices || []).length" class="panel">
+        <div class="panel-title">优化单元切片（周期内最近一日）</div>
+        <el-table :data="pack.unit_slices || []" size="small">
+          <el-table-column label="单元" min-width="160">
+            <template #default="{ row }">
+              <span v-if="row.business_name">{{ row.business_name }} / </span>
+              {{ row.unit_name || `单元#${row.unit_id}` }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="metric_date" label="日期" width="110" />
+          <el-table-column label="品牌提及率" width="110">
+            <template #default="{ row }">{{ fmtPct(row.brand_mention_rate) }}</template>
+          </el-table-column>
+          <el-table-column prop="citation_count" label="AI 引用" width="90" />
+          <el-table-column prop="snapshots_visibility" label="可见快照" width="90" />
+        </el-table>
+      </section>
 
       <section class="panel">
         <div class="panel-title">AI 引用次数 · 域名 Top</div>
@@ -225,6 +358,7 @@ onMounted(() => {
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .mb { margin-bottom: 14px; }
 .meta { font-size: 13px; color: #4b5563; margin-bottom: 12px; }
+.scope-tag { color: #2563eb; font-weight: 600; }
 .kpi-sub { font-size: 11px; color: #9ca3af; margin-top: 4px; }
 .kpi-row {
   display: grid;
@@ -250,17 +384,12 @@ onMounted(() => {
   background: #fff;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
-  padding: 16px 18px;
+  padding: 14px 16px;
   margin-bottom: 14px;
 }
-.panel-title { font-size: 14px; font-weight: 600; color: #374151; margin-bottom: 12px; }
-@media (max-width: 960px) {
-  .kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
+.panel-title { font-size: 14px; font-weight: 650; margin-bottom: 10px; color: #1f2937; }
 @media print {
-  .page-header .header-actions,
-  .header-actions { display: none !important; }
+  .page-header .header-actions { display: none; }
   .geo-deliv { padding: 0; }
-  .panel, .kpi { break-inside: avoid; box-shadow: none; }
 }
 </style>
