@@ -126,14 +126,16 @@ python scripts/accept_geo_m1.py   # API :8011，静态可选 :5176
 
 | 路径 | 页面 | 权限 |
 | --- | --- | --- |
-| `/geo/overview` | GEO 概览（content-stats） | `geo.content` |
+| `/geo/overview` | GEO 概览（KPI + 业务/单元筛选） | `geo.content` |
 | `/geo/visibility` | AI 可见度（登记/探测/多引擎草稿） | `geo.content` |
-| `/geo/citations` | 引用域名 | `geo.content` |
+| `/geo/citations` | AI 引用次数（域名聚合） | `geo.content` |
 | `/geo/competitors` | 竞品分析（PR #11） | `geo.content` |
 | `/geo/evaluation` | 评价分析（PR #11） | `geo.content` |
-| `/geo/deliverables` | 交付摘要 Markdown | `geo.content` |
-| `/geo/tasks` | 内容任务列表（P1） | `geo.content` |
+| `/geo/deliverables` | 交付摘要（业务/单元切片 + MD） | `geo.content` |
+| `/geo/businesses` | 优化业务 / 优化单元（三级结构） | `geo.content` |
+| `/geo/tasks` | 优化文章列表 | `geo.content` |
 | `/geo/tasks/:taskId` | 混合编辑器（SPA 壳 + 静态 editor） | `geo.content` |
+| `/geo/prompts` | 优化意图词 | `geo.content` |
 | `/diagnostic-center/` | 网站体检（可独立 dev） | `geo.diagnosis` |
 | `/deal-sniper/geo/:page` | 静态工作台 iframe 壳 | 公开/原型 |
 

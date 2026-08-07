@@ -1,6 +1,6 @@
 # GEO 完整功能说明 · 供 Codex 双轮测试
 
-> **版本**：`main` @ `geo-mvp-2026-08-06`（merge PR #30，`5c431d1`）  
+> **版本**：`main` @ 2026-08-07（展示名 + 三级优化结构 + 按天切片 + 交付切片）  
 > **交付形态**：仅 GEO 代码；无生产机。交接见 `docs/GEO_CODE_DELIVERY.md`。  
 > **本文用途**：给 Codex / 自动化代理做**两遍完整回归**时的功能清单 + 命令清单。
 
@@ -53,25 +53,26 @@ Pass B：清空/重启 8011 后再跑一遍同样脚本（验证可重复性）�
 
 ## 2. 前端入口（Vue :5173，权限 `geo.content`）
 
-| 路径 | 功能 |
+| 路径 | 展示名 / 功能 |
 | --- | --- |
-| `/geo/overview` | KPI：任务、可见性提及率、品牌认知率、top1、待复测 |
+| `/geo/overview` | GEO 概览 KPI：优化文章、**品牌提及率**、**品牌点名认知率**、**AI 引用次数**；可筛 **优化业务/单元** |
 | `/geo/workbench` | 工作台枢纽（主推 Vue） |
-| `/geo/tasks` | 内容任务列表 |
+| `/geo/tasks` | **优化文章**（原内容任务）列表 |
 | `/geo/tasks/:taskId` | **主编辑器**：Brief / 事实 / 生成 / 补丁 / 渠道 / 审校 / 回填 / Webhook / 分发推荐 |
-| `/geo/prompts` | 机会词；`question_group` / `is_brand_probe` |
+| `/geo/businesses` | **优化业务 → 优化单元（关键词）** 三级管理 + 按天汇总切片 |
+| `/geo/prompts` | **优化意图词**（原机会词）；可挂 `unit_id`；`question_group` / `is_brand_probe` |
 | `/geo/facts` | 事实库；核验 |
-| `/geo/engines` | 跟踪引擎；`sample_mode`（mock_persona / openai_compat） |
+| `/geo/engines` | **引擎**；`sample_mode`（mock_persona / openai_compat） |
 | `/geo/ai-settings` | 租户 LLM（百炼/DeepSeek 等） |
 | `/geo/publishing` | 发布渠道 + Webhook 账号 CRUD |
 | `/geo/visibility` | 回答快照登记 / 探测 / 多引擎草稿 |
-| `/geo/visibility/patrol` | **全自动巡检**（参数、定时、历史、ops 告警） |
-| `/geo/period-diff` | **期次对比** before/after Δ |
-| `/geo/citations` | 引用域名聚合 |
-| `/geo/competitors` | 竞品出现 |
+| `/geo/visibility/patrol` | **全自动巡检**（参数、定时、历史、ops 告警；落库后自动 rebuild 日指标） |
+| `/geo/period-diff` | **期次对比** before/after Δ（品牌提及率 / 点名认知） |
+| `/geo/citations` | **AI 引用次数**（域名聚合；需说明统计口径） |
+| `/geo/competitors` | 竞品分析 |
 | `/geo/evaluation` | 情感 / 位置 |
-| `/geo/deliverables` | 交付摘要 JSON KPI + MD 下载 + 打印 |
-| `/geo/diagnosis` 或 diagnostic-center | 网站体检 → 可桥接建任务 |
+| `/geo/deliverables` | 交付摘要：周期 + **业务/单元切片** + 按天序列 + MD 下载 + 打印 |
+| `/geo/diagnosis` 或 diagnostic-center | 网站体检 → 可桥接建优化文章 |
 
 **静态兼容台**（:5176）：`/geo/dashboard.html`、`editor.html` 等；日常主路径是 Vue。
 
@@ -83,8 +84,9 @@ Pass B：清空/重启 8011 后再跑一遍同样脚本（验证可重复性）�
 
 | 步骤 | 行为 | 关键 API / 规则 |
 | --- | --- | --- |
-| 建机会词 | 问题、组、探测题标记 | `POST /prompts` |
-| 建任务 | 绑 prompt | `POST /content-tasks` |
+| 建优化业务/单元 | 三级结构顶层 | `POST /optimization-businesses`、`POST /optimization-units` |
+| 建优化意图词 | 问题、组、探测题、`unit_id` | `POST /prompts` |
+| 建优化文章 | 绑 prompt | `POST /content-tasks` |
 | Brief | AI 建议 + 保存 | `POST .../suggest-brief`，`PATCH` task |
 | 事实 | CSV/录入、核验；召回与绑定 ≥3 verified | `facts`、`retrieve-facts`、`PUT .../facts` |
 | 生成母稿 | 仅用绑定事实 | `POST .../generate` |
@@ -121,24 +123,41 @@ Pass B：清空/重启 8011 后再跑一遍同样脚本（验证可重复性）�
 
 | 项 | 说明 |
 | --- | --- |
-| 立即巡检 | 机会词 × 启用引擎；`prefer_real` / `auto_persist` |
+| 立即巡检 | 优化意图词 × 启用引擎；`prefer_real` / `auto_persist` |
 | 落库 | 写 `geo_answer_snapshots`，更新 brand mention tags |
+| 落库后 | **自动 rebuild** 当日 `geo_daily_metrics`（租户/业务/单元） |
 | 定时 | `enabled` + **时间段** `window_start/end_hour` + **间隔** `interval_hours` |
 | 调度 | 主站 scheduler 每小时 :05（`run_geo_visibility_patrols`） |
+| 日汇总兜底 | scheduler **00:40** `run_geo_daily_metrics_nightly`（近 2 天） |
 | 配额 | `GEO_PATROL_MAX_RUNS_PER_DAY`（默认 24）→ 429；`MAX_CELLS_PER_RUN` 截断 |
 | 运营 | `GET /visibility-patrol/ops-status`（配额/引擎健康/告警） |
 
-### 3.5 观测与交付
+### 3.5 三级结构与按天汇总
+
+```text
+优化业务 → 优化单元（关键词）→ 优化意图词 → 优化文章
+```
+
+| 能力 | 说明 |
+| --- | --- |
+| 业务/单元 CRUD | `optimization-businesses` / `optimization-units` |
+| 意图词挂单元 | `geo_prompts.unit_id`；列表可 `unit_id` / `business_id` 筛选 |
+| 日汇总 scope | `t` 租户 · `b{id}` 业务 · `u{id}` 单元 |
+| rebuild | `POST /daily-metrics/rebuild` 单日或 `date_from`/`date_to` 区间 |
+| 触发 | 巡检落库、快照 CRUD、定时 nightly |
+| 口径 | **品牌提及率**排除探测题；**品牌点名认知率**仅探测题；**AI 引用**来自快照 `cited_urls`（次数+独立域名，非全网抓取） |
+
+### 3.6 观测与交付
 
 | 能力 | 口径要点 |
 | --- | --- |
 | content-stats | `visibility_mention_rate` **排除探测题**；无样本 → `null`（未测≠0） |
 | | `probe_recognition_rate` 仅探测题；`visibility_top1_rate` 首位占比 |
-| 期次对比 | 两窗 Δ：可见性/top1/认知/自有域引用 |
-| 引用/竞品/评价 | 快照聚合 |
-| 交付 pack | JSON + `format=md`；可见性/认知/top1 KPI |
+| 期次对比 | 两窗 Δ：品牌提及/top1/点名认知/自有域引用 |
+| 引用/竞品/评价 | 快照聚合（UI：**AI 引用次数**） |
+| 交付 pack | JSON + `format=md`；可选 `business_id`/`unit_id`；含 `scope` / `daily_series` / 业务·单元切片 |
 
-### 3.6 发布与阵地
+### 3.7 发布与阵地
 
 | 能力 | 说明 |
 | --- | --- |
@@ -148,7 +167,7 @@ Pass B：清空/重启 8011 后再跑一遍同样脚本（验证可重复性）�
 | channel-blueprint | 按问题组推荐国内阵地 |
 | media-placements | 空库可种子 CN 阵地 |
 
-### 3.7 工程与安全
+### 3.8 工程与安全
 
 | 能力 | 说明 |
 | --- | --- |
@@ -167,12 +186,14 @@ Base：`/api/v1/geo/`
 | --- | --- |
 | 健康 | `content-health`；进程级 `/health/geo`（geo_main） |
 | 统计 | `content-stats` |
-| 机会词/事实/任务 | `prompts`、`facts`、`content-tasks`… |
+| 三级结构 | `optimization-businesses`、`optimization-units` |
+| 意图词/事实/文章 | `prompts`（`unit_id`）、`facts`、`content-tasks`… |
+| 按天汇总 | `daily-metrics`、`daily-metrics/rebuild` |
 | 可见度 | `answer-snapshots`、`probe`、`probe-batch` |
 | 巡检 | `visibility-patrol/settings|runs|ops-status` |
 | 洞察 | `citation-insights`、`competitor-insights`、`evaluation-insights` |
 | 期次 | `visibility-period-diff` |
-| 交付 | `deliverables/pack`（`format=md`） |
+| 交付 | `deliverables/pack`（`format=md`，`business_id`/`unit_id`） |
 | 发布 | `publishing-channels`、`channel-accounts`、`.../push` |
 | 引擎/AI | `tracking-engines`、`ai-settings` |
 | 蓝图 | `channel-blueprint`、`media-placements` |
@@ -186,8 +207,9 @@ Base：`/api/v1/geo/`
 | 内容工作台、可见度、发布… | 0036～0051 等历史 GEO 迁移 |
 | 巡检 runs/settings | **`0052_geo_vis_patrol`** |
 | 巡检时段/间隔/last_scheduled | **`0053_patrol_window`** |
+| 优化业务/单元 + prompts.unit_id + daily_metrics | **`0054_geo_opt_hierarchy`** |
 
-验收前：`alembic upgrade head`，`alembic current` 应到 head（含 0053 或更新）。
+验收前：`alembic upgrade head`，`alembic current` 应到 head（含 **0054** 或更新）。
 
 ---
 
@@ -215,6 +237,7 @@ Base：`/api/v1/geo/`
 | 增强 API 冒烟 | `scripts/e2e_geo_enhancements.py` |
 | M1 可见度环 | `scripts/accept_geo_m1.py` |
 | 内容主环 | `scripts/accept_geo_delivery.py` |
+| 三级结构+日汇总 | `scripts/accept_geo_hierarchy.py` |
 | Webhook 链路 | `scripts/smoke_geo_webhook_push.py` |
 | 演示种子 | `python -m scripts.seed_geo_demo --tenant-id 1 --verify-facts` |
 
@@ -266,6 +289,8 @@ python scripts/accept_geo_m1.py http://127.0.0.1:8011 geo-demo-local-key 1
 
 python scripts/accept_geo_delivery.py http://127.0.0.1:8011 geo-demo-local-key 1
 
+python scripts/accept_geo_hierarchy.py http://127.0.0.1:8011 geo-demo-local-key 1
+
 # 可选但建议（Webhook 全链路；dev 可用本地 sink）
 python scripts/smoke_geo_webhook_push.py
 ```
@@ -283,9 +308,10 @@ python scripts/smoke_geo_webhook_push.py
 | --- | --- |
 | pytest | 全部 passed（交付时约 190+） |
 | verify_productization_must（code+live） | 0 failed |
-| e2e_geo_enhancements | 10 passed, 0 failed |
+| e2e_geo_enhancements | ≥14 passed, 0 failed（含业务/日汇总列表） |
 | accept_geo_m1 | 9 passed, 0 failed（需 5176） |
 | accept_geo_delivery | 10 passed, 0 failed |
+| accept_geo_hierarchy | 12 passed, 0 failed |
 | smoke_geo_webhook_push | PASSED（若环境无 LLM/外网，允许记录跳过原因，但优先全过） |
 
 ---

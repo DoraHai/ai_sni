@@ -28,12 +28,12 @@
 | GEO API 进程 | `app/geo_main.py`、`app/geo/**`、`app/api/geo.py`（若挂载） |
 | 内容工作台 | `app/geo/content/**`（任务、事实、Brief、门禁、巡检、交付、渠道 Webhook…） |
 | 诊断 | `app/geo/audit.py`、`app/geo/generate.py`、`app/geo/verify.py`、`app/geo/routes.py` |
-| 模型 / 迁移 | `app/models/geo_*.py`、`migrations/versions/*geo*`、`0052`/`0053` 巡检 |
+| 模型 / 迁移 | `app/models/geo_*.py`、`migrations/versions/*geo*`、`0052`/`0053` 巡检、**`0054` 业务/单元/日汇总** |
 | Vue 前端 | `frontend/src/views/geo/**`、`frontend/src/api/geoContent.js`、router 中 `/geo/*` |
 | 静态工作台 | `frontend/public/deal-sniper-prototype/geo/**` |
 | 诊断中心前端 | `frontend/diagnostic-center/**`、`frontend/geo-frontend/**`（若用独立静态发布） |
 | 部署模板（GEO 独立单元） | `deploy/geo-*`、`deploy/README-GEO-INDEPENDENT.md`、`scripts/deploy_geo_api.sh` |
-| 验收脚本 | `scripts/accept_geo_*.py`、`verify_productization_must.py`、`e2e_geo_enhancements.py`、`smoke_geo_webhook_push.py`、`seed_geo_demo.py` |
+| 验收脚本 | `scripts/accept_geo_*.py`（含 **accept_geo_hierarchy**）、`verify_productization_must.py`、`e2e_geo_enhancements.py`、`smoke_geo_webhook_push.py`、`seed_geo_demo.py` |
 | 文档 | `docs/GEO_*.md`、`docs/LOCAL_GEO_DEMO.md`、`docs/GEO_PRODUCTION_RUNBOOK.md`（后置） |
 
 ### 2.2 共享底座（GEO 运行依赖，非 SEM 业务交付）
@@ -42,7 +42,7 @@ GEO **共用** 且本次交付中作为依赖保留，**不要求**验收百度�
 
 - `app/database.py`、`app/config.py`、`app/security/**`（鉴权、加密、prod_guard）
 - `app/models/tenant.py`、`user` / `role` 等账号体系
-- 主站 `app/main.py` 中 **挂载 geo_router** 与 **scheduler 中的 `run_geo_visibility_patrols`**（定时巡检）
+- 主站 `app/main.py` 中 **挂载 geo_router** 与 **scheduler**（`run_geo_visibility_patrols` 定时巡检 + `run_geo_daily_metrics_nightly` 日汇总兜底）
 - Postgres + Alembic 全库迁移链（GEO 表挂在同一 head 上）
 
 ### 2.3 明确非 GEO 交付（可不演示）

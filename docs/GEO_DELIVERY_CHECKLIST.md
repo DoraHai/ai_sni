@@ -23,13 +23,15 @@
 python -m pytest -q tests
 python scripts/accept_geo_m1.py http://127.0.0.1:8011 geo-demo-local-key 1
 python scripts/accept_geo_delivery.py http://127.0.0.1:8011 geo-demo-local-key 1
+python scripts/accept_geo_hierarchy.py http://127.0.0.1:8011 geo-demo-local-key 1
 ```
 
 | 脚本 | 覆盖 |
 | --- | --- |
-| `pytest` | 规则、Brief merge、鉴权路径等 |
+| `pytest` | 规则、Brief merge、鉴权、日汇总切片、交付 Markdown 等 |
 | `accept_geo_m1.py` | 可见度/引用/竞品/渠道 bootstrap/Webhook 门禁/静态页 |
 | `accept_geo_delivery.py` | 内容主环：建议 Brief、召回、绑定、生成、补丁、渠道规则、审校门禁 |
+| `accept_geo_hierarchy.py` | **优化业务/单元 → 意图词 unit_id → 快照 → 日汇总 rebuild → 交付切片** |
 
 - [ ] 三项全绿  
 - [ ] CI（GitHub Actions `pytest`）绿  
@@ -72,8 +74,9 @@ python -m scripts.seed_geo_demo --tenant-id 1 --verify-facts
 
 | # | 步骤 | 期望 | 结果 |
 | --- | --- | --- | --- |
-| V1 | 打开 `/geo/overview` | KPI 有数或 0，无白屏 | ☐ 目视 |
-| V2 | `/geo/workbench` → 内容任务 | 列表可开 | ☐ 目视 |
+| V1 | 打开 `/geo/overview` | KPI 有数或 0；可筛优化业务/单元；无白屏 | ☐ 目视 |
+| V1b | `/geo/businesses` | 建业务/单元；重算今日；看租户/业务/单元日表 | ☐ 目视 |
+| V2 | `/geo/workbench` → 优化文章 | 列表可开 | ☐ 目视 |
 | V3 | 新建或打开**空 Brief**任务 → AI 建议 | 行业/受众/意图/类型/CTA 有值 + 成功提示 | ✓ 自动（delivery suggest-brief） |
 | V4 | 保存 Brief | 刷新后仍在 | ✓ 自动（delivery patch brief） |
 | V5 | 召回 / 一键绑 3 条 verified / 保存绑定 | 已绑 ≥3，状态 facts_bound 或可生成 | ✓ 自动（retrieve+bind） |
@@ -84,7 +87,7 @@ python -m scripts.seed_geo_demo --tenant-id 1 --verify-facts
 | V10 | 回填公网 URL（如 https://example.com/…） | 200，publications 有记录 | ☐ 目视（需先 V9） |
 | V11 | Webhook：公网 HTTPS 账号推送 | 成功或明确业务错误（非静默） | ☐ 目视 / 内网 URL 见 N3 |
 | V12 | `/geo/visibility` 登记快照 | 竞品/引用页有聚合变化 | ✓ 自动（m1 snapshot loop） |
-| V13 | `/geo/deliverables` 导出 MD | 可下载/可复制 | ☐ 目视 |
+| V13 | `/geo/deliverables` 导出 MD | 可下载/可复制；可筛业务/单元 | ☐ 目视 |
 
 ### 3.2 静态台路径（兼容）
 

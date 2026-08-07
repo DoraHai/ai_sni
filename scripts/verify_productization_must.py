@@ -175,6 +175,43 @@ def check_code() -> None:
     vue_patrol = ROOT / "frontend/src/views/geo/GeoVisibilityPatrolView.vue"
     ok("visibility patrol Vue page", vue_patrol.is_file())
 
+    # hierarchy + daily metrics productization
+    ok(
+        "geo optimization model",
+        (ROOT / "app/models/geo_optimization.py").is_file(),
+    )
+    ok(
+        "daily_metrics service",
+        (ROOT / "app/geo/content/daily_metrics.py").is_file(),
+    )
+    ok(
+        "migration 0054 hierarchy",
+        any(
+            "0054" in p.name and "opt" in p.name
+            for p in (ROOT / "migrations/versions").glob("*.py")
+        ),
+    )
+    ok(
+        "accept_geo_hierarchy script",
+        (ROOT / "scripts/accept_geo_hierarchy.py").is_file(),
+    )
+    routes = (ROOT / "app/geo/content/routes.py").read_text(encoding="utf-8")
+    ok("routes optimization-businesses", "optimization-businesses" in routes)
+    ok("routes daily-metrics", "daily-metrics" in routes)
+    sched = (ROOT / "app/scheduler.py").read_text(encoding="utf-8")
+    ok(
+        "scheduler daily metrics nightly",
+        "run_geo_daily_metrics_nightly" in sched or "geo_daily_metrics_nightly" in sched,
+    )
+    overview = (ROOT / "frontend/src/views/geo/GeoOverviewView.vue").read_text(
+        encoding="utf-8"
+    )
+    ok("overview business filter", "filterBusinessId" in overview or "listGeoBusinesses" in overview)
+    ok(
+        "businesses vue page",
+        (ROOT / "frontend/src/views/geo/GeoBusinessesView.vue").is_file(),
+    )
+
 
 def check_live() -> None:
     code, health = req("GET", "/health/geo")

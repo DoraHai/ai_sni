@@ -107,6 +107,10 @@ def main() -> int:
             "deliverables summary visibility_mention_rate",
             "visibility_mention_rate" in (pack.get("summary") or {}),
         )
+        ok(
+            "deliverables has scope",
+            isinstance(pack.get("scope"), dict) and "level" in (pack.get("scope") or {}),
+        )
 
     code, md = req(
         "GET",
@@ -116,6 +120,24 @@ def main() -> int:
     ok(
         "deliverables markdown",
         code == 200 and isinstance(md, str) and "GEO 交付摘要" in md,
+        f"status={code}",
+    )
+
+    # hierarchy + daily metrics (list empty OK; rebuild should 200)
+    code, biz = req("GET", f"/api/v1/geo/optimization-businesses?tenant_id={TENANT_ID}")
+    ok("optimization-businesses list", code == 200 and "items" in biz, f"status={code}")
+    code, units = req("GET", f"/api/v1/geo/optimization-units?tenant_id={TENANT_ID}")
+    ok("optimization-units list", code == 200 and "items" in units, f"status={code}")
+    code, dm = req("GET", f"/api/v1/geo/daily-metrics?tenant_id={TENANT_ID}&scope_level=tenant")
+    ok(
+        "daily-metrics list",
+        code == 200 and "items" in dm and "citation_stat_note" in dm,
+        f"status={code}",
+    )
+    code, rebuilt = req("POST", f"/api/v1/geo/daily-metrics/rebuild?tenant_id={TENANT_ID}")
+    ok(
+        "daily-metrics rebuild",
+        code == 200 and (rebuilt.get("mode") == "day" or "metric_date" in rebuilt or "tenant" in rebuilt),
         f"status={code}",
     )
 
