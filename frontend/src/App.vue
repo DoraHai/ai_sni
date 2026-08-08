@@ -46,10 +46,6 @@ const ALL_GROUPS = computed(() => [
   { label: '诊断中心', icon: '🩺', children: [
     { label: '网站体检', path: '/diagnostic-center/', key: 'geo.diagnosis', external: true },
   ] },
-  { label: 'SEO 增长', icon: '⌕', children: [
-    { label: '关键词资产', path: '/seo/keywords', key: 'seo.keywords' },
-    { label: '站内优化', path: '/seo/site', key: 'seo.site' },
-  ] },
   { label: '首次接入', icon: '🚀', children: [
     { label: '授权与同步', path: '/onboarding', key: 'onboarding' },
     { label: '智能搭建', path: '/onboarding/builder', key: 'onboarding' },

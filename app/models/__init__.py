@@ -73,7 +73,6 @@ from app.models.geo_content import (
     GeoPublication,
     GeoTaskFact,
 )
-from app.models.seo import SeoKeywordAsset, SeoRankSnapshot, SeoSitePage
 
 __all__ = [
     "Suggestion",
@@ -151,7 +150,4 @@ __all__ = [
     "GeoArticleVersion",
     "GeoChannelVariant",
     "GeoPublication",
-    "SeoKeywordAsset",
-    "SeoRankSnapshot",
-    "SeoSitePage",
 ]

@@ -43,9 +43,6 @@ const routes = [
     component: DealSniperShell,
     meta: { title: '产品门户', public: true, bare: true },
   },
-  { path: '/deal-sniper/seo/manage', redirect: '/seo/keywords' },
-  { path: '/deal-sniper/seo/keywords', redirect: '/seo/keywords' },
-  { path: '/deal-sniper/seo/tdk', redirect: '/seo/site' },
   {
     path: '/deal-sniper/:section(hub|seo|geo|content)/:page',
     component: DealSniperShell,
@@ -55,22 +52,6 @@ const routes = [
     path: '/assistant',
     component: () => import('../views/assistant/AssistantView.vue'),
     meta: { title: 'AI 助手', workflow: '智能助手', perm: 'assistant' },
-  },
-  { path: '/seo', redirect: '/seo/keywords' },
-  {
-    path: '/seo/keywords',
-    component: () => import('../views/seo/SeoKeywordAssetsView.vue'),
-    meta: { title: '关键词资产', workflow: 'SEO 增长', perm: 'seo.keywords' },
-  },
-  {
-    path: '/seo/keywords/:keywordId',
-    component: () => import('../views/seo/SeoKeywordDetailView.vue'),
-    meta: { title: '关键词详情', workflow: 'SEO 增长', perm: 'seo.keywords' },
-  },
-  {
-    path: '/seo/site',
-    component: () => import('../views/seo/SeoSiteOptimizationView.vue'),
-    meta: { title: '站内优化', workflow: 'SEO 增长', perm: 'seo.site' },
   },
   {
     path: '/geo/diagnosis',
@@ -203,8 +184,6 @@ const router = createRouter({
 const MENU_ORDER = [
   ['assistant', '/assistant'],
   ['geo.diagnosis', '/geo/diagnosis'],
-  ['seo.keywords', '/seo/keywords'],
-  ['seo.site', '/seo/site'],
   ['monitor.dashboard', '/monitor/dashboard'],
   ['monitor.alerts', '/monitor/alerts'],
   ['monitor.profile', '/monitor/profile'],

@@ -33,7 +33,6 @@ from app.api import (
     users_router,
     writeback_router,
     search_terms_router,
-    seo_router,
 )
 from app.baidu import BaiduAPIClient, BaiduAPIError
 from app.baidu.services import AccountService
@@ -72,7 +71,7 @@ app = FastAPI(title="SEM 智投平台后端", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 app.include_router(dashboard_router)
@@ -99,7 +98,6 @@ app.include_router(baidu_oauth_callback_router)
 app.include_router(manage_router)
 app.include_router(assistant_router)
 app.include_router(onboarding_builder_router)
-app.include_router(seo_router)
 
 
 @app.get("/health")

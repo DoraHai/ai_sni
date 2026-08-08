@@ -158,10 +158,6 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
         return {"geo.content"}, edit
     if p.startswith("/api/v1/geo"):
         return {"geo.diagnosis"}, False
-    if p.startswith("/api/v1/seo/keywords") or p.startswith("/api/v1/seo/rank"):
-        return {"seo.keywords"}, edit
-    if p.startswith("/api/v1/seo/site"):
-        return {"seo.site"}, edit
     if p.startswith("/api/v1/onboarding-builder"):
         # 智能搭建默认演练写入，仍归首次接入；真实写入由后端 dry-run 开关兜底。
         return {"onboarding"}, False
