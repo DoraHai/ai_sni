@@ -127,8 +127,8 @@ Pass B：清空/重启 8011 后再跑一遍同样脚本（验证可重复性）�
 | 落库 | 写 `geo_answer_snapshots`，更新 brand mention tags |
 | 落库后 | **自动 rebuild** 当日 `geo_daily_metrics`（租户/业务/单元） |
 | 定时 | `enabled` + **时间段** `window_start/end_hour` + **间隔** `interval_hours` |
-| 调度 | 主站 scheduler 每小时 :05（`run_geo_visibility_patrols`） |
-| 日汇总兜底 | scheduler **00:40** `run_geo_daily_metrics_nightly`（近 2 天） |
+| 调度 | GEO service scheduler 每小时 :05（`run_geo_visibility_patrols`） |
+| 日汇总兜底 | GEO service scheduler **00:40** `run_geo_daily_metrics_nightly`（近 2 天） |
 | 配额 | `GEO_PATROL_MAX_RUNS_PER_DAY`（默认 24）→ 429；`MAX_CELLS_PER_RUN` 截断 |
 | 运营 | `GET /visibility-patrol/ops-status`（配额/引擎健康/告警） |
 

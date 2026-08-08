@@ -14,6 +14,7 @@ from app.config import get_settings
 from app.database import engine
 from app.geo.content.oauth_public import router as geo_oauth_public_router
 from app.geo.routes import router as geo_router
+from app.geo.scheduler import shutdown_geo_scheduler, start_geo_scheduler
 from app.security.prod_guard import enforce_production_secrets
 
 settings = get_settings()
@@ -23,7 +24,11 @@ settings = get_settings()
 async def _lifespan(_app: FastAPI):
     # Productization must-do: refuse demo keys when APP_ENV=prod|production
     enforce_production_secrets(settings, hard_fail=True)
-    yield
+    start_geo_scheduler()
+    try:
+        yield
+    finally:
+        shutdown_geo_scheduler()
 
 
 app = FastAPI(title="Growth Sniper GEO API", version="0.1.0", lifespan=_lifespan)

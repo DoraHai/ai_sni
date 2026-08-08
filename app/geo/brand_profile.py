@@ -152,7 +152,7 @@ def extract_brand_candidate(document: PageDocument) -> dict[str, Any]:
 
 
 async def discover_brand_profile(website: str) -> dict[str, Any]:
-    from app.ai.deepseek import DeepSeekError, chat_json, is_enabled as ai_enabled
+    from app.geo.ai_client import DeepSeekError, chat_json, is_enabled as ai_enabled
 
     document = await safe_fetch(website)
     candidate = extract_brand_candidate(document)

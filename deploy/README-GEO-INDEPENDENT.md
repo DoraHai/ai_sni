@@ -11,8 +11,8 @@ application:
 - `/api/v1/geo/*` → `geo-service.service` on `127.0.0.1:8010`
 - `/geo-health` → the GEO service health endpoint
 
-The GEO API process mounts only `app.api.geo`. It does not start the SEM
-scheduler and a GEO release does not restart `sem-backend.service`.
+The GEO API process mounts only `app.geo.routes`, starts its own GEO scheduler,
+and never starts or restarts the SEM scheduler/service.
 
 ## First-time server setup
 

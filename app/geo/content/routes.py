@@ -2033,7 +2033,7 @@ async def probe_answer_snapshot(
 
     默认租户 LLM + 引擎人设模拟；引擎配置 sample_mode=openai_compat 且有 Key 时走真采样。
     """
-    from app.ai.deepseek import DeepSeekError, chat_json
+    from app.geo.ai_client import DeepSeekError, chat_json
 
     ctx.ensure_tenant(req.tenant_id)
     prompt = await _get_prompt(session, req.prompt_id, req.tenant_id)
@@ -2086,7 +2086,7 @@ async def probe_answer_snapshot_batch(
 
     每引擎可独立 openai_compat 凭证；未配置则回退租户 LLM + 人设模拟。
     """
-    from app.ai.deepseek import DeepSeekError, chat_json
+    from app.geo.ai_client import DeepSeekError, chat_json
 
     ctx.ensure_tenant(req.tenant_id)
     prompt = await _get_prompt(session, req.prompt_id, req.tenant_id)
@@ -2493,7 +2493,7 @@ async def suggest_answer_snapshot_fields(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Suggest Wave C labels from pasted text; never writes snapshots."""
-    from app.ai.deepseek import DeepSeekError, chat_json
+    from app.geo.ai_client import DeepSeekError, chat_json
 
     ctx.ensure_tenant(req.tenant_id)
     tenant = await _ensure_tenant_exists(session, req.tenant_id)
@@ -2629,7 +2629,7 @@ async def test_ai_settings(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """用当前生效配置打一条极短 JSON 请求，验证 Key / 线路。"""
-    from app.ai.deepseek import DeepSeekError, chat_json
+    from app.geo.ai_client import DeepSeekError, chat_json
 
     ctx.ensure_tenant(tenant_id)
     llm = await resolve_llm_credentials(session, tenant_id)
@@ -3833,7 +3833,7 @@ async def suggest_task_brief(
         llm = await resolve_llm_credentials(session, tenant_id)
         if llm:
             try:
-                from app.ai.deepseek import chat_json as _chat_json
+                from app.geo.ai_client import chat_json as _chat_json
 
                 chat_json = _chat_json
             except Exception:  # noqa: BLE001
@@ -4077,7 +4077,7 @@ async def ai_review_task(
             503,
             "未配置 AI 能力：请在「AI 能力配置」填写 API Key 后再审稿",
         )
-    from app.ai.deepseek import DeepSeekError, chat_json
+    from app.geo.ai_client import DeepSeekError, chat_json
 
     rule_input = await _build_rule_input(session, task, article)
     try:

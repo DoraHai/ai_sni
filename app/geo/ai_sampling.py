@@ -98,7 +98,7 @@ async def run_deepseek_sample(
     """并行执行独立问题，保存完整回答并由程序计算提及率。"""
     if chat is None:
         # 延迟导入，确定性问题生成与命中判断测试不依赖数据库环境配置。
-        from app.ai.deepseek import chat_messages
+        from app.geo.ai_client import chat_messages
 
         chat = chat_messages
     system = (

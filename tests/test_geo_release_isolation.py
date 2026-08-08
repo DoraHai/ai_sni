@@ -1,0 +1,49 @@
+"""Regression checks for the independently deployable GEO boundary."""
+
+from pathlib import Path
+
+
+ROOT = Path(__file__).parents[1]
+
+
+def _read(path: str) -> str:
+    return (ROOT / path).read_text(encoding="utf-8")
+
+
+def test_sem_backend_does_not_mount_geo_or_run_geo_jobs():
+    main = _read("app/main.py")
+    sem_scheduler = _read("app/scheduler.py")
+    assert "geo_router" not in main
+    assert "geo_oauth_public_router" not in main
+    assert "run_geo_visibility_patrols" not in sem_scheduler
+    assert "run_geo_daily_metrics_nightly" not in sem_scheduler
+
+
+def test_geo_service_owns_routes_guard_and_scheduler():
+    geo_main = _read("app/geo_main.py")
+    geo_scheduler = _read("app/geo/scheduler.py")
+    assert "app.include_router(geo_router)" in geo_main
+    assert "app.include_router(geo_oauth_public_router)" in geo_main
+    assert "start_geo_scheduler()" in geo_main
+    assert "enforce_production_secrets" in geo_main
+    assert "geo_visibility_patrols" in geo_scheduler
+    assert "geo_daily_metrics_nightly" in geo_scheduler
+
+
+def test_sem_frontend_has_no_geo_workbench_menu_or_routes():
+    app = _read("frontend/src/App.vue")
+    router = _read("frontend/src/router/index.js")
+    main = _read("frontend/src/main.js")
+    assert "GEO 增长" not in app
+    assert "../views/geo/" not in router
+    assert "'/geo/overview'" not in router
+    assert "./styles/geo-page.css" not in main
+
+
+def test_nginx_keeps_geo_in_the_independent_include():
+    nginx = _read("deploy/nginx.conf")
+    geo_routes = _read("deploy/geo-routes.nginx.conf")
+    assert "include /etc/nginx/snippets/geo-routes.conf;" in nginx
+    assert "127.0.0.1:8010" not in nginx
+    assert "location ^~ /api/v1/geo/" in geo_routes
+    assert "127.0.0.1:8010" in geo_routes

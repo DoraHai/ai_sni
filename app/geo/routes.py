@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.deepseek import DeepSeekError, is_enabled as ai_enabled
+from app.geo.ai_client import DeepSeekError, is_enabled as ai_enabled
 from app.config import get_settings
 from app.database import get_session
 from app.geo.ai_sampling import (

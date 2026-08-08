@@ -198,7 +198,7 @@ def check_code() -> None:
     routes = (ROOT / "app/geo/content/routes.py").read_text(encoding="utf-8")
     ok("routes optimization-businesses", "optimization-businesses" in routes)
     ok("routes daily-metrics", "daily-metrics" in routes)
-    sched = (ROOT / "app/scheduler.py").read_text(encoding="utf-8")
+    sched = (ROOT / "app/geo/scheduler.py").read_text(encoding="utf-8")
     ok(
         "scheduler daily metrics nightly",
         "run_geo_daily_metrics_nightly" in sched or "geo_daily_metrics_nightly" in sched,

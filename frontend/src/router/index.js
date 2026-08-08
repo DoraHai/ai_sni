@@ -54,186 +54,6 @@ const routes = [
     meta: { title: 'AI 助手', workflow: '智能助手', perm: 'assistant' },
   },
   {
-    path: '/geo/overview',
-    component: () => import('../views/geo/GeoOverviewView.vue'),
-    meta: {
-      title: 'GEO 概览',
-      documentTitle: 'GEO 增长｜概览',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/visibility',
-    component: () => import('../views/geo/GeoVisibilityView.vue'),
-    meta: {
-      title: 'AI 可见度',
-      documentTitle: 'GEO 增长｜可见度',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/visibility/patrol',
-    component: () => import('../views/geo/GeoVisibilityPatrolView.vue'),
-    meta: {
-      title: '全自动巡检',
-      documentTitle: 'GEO 增长｜可见度巡检',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/period-diff',
-    component: () => import('../views/geo/GeoPeriodDiffView.vue'),
-    meta: {
-      title: '期次对比',
-      documentTitle: 'GEO 增长｜期次对比',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/citations',
-    component: () => import('../views/geo/GeoCitationsView.vue'),
-    meta: {
-      title: 'AI 引用次数',
-      documentTitle: 'GEO 增长｜AI 引用次数',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/competitors',
-    component: () => import('../views/geo/GeoCompetitorsView.vue'),
-    meta: {
-      title: '竞品分析',
-      documentTitle: 'GEO 增长｜竞品分析',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/evaluation',
-    component: () => import('../views/geo/GeoEvaluationView.vue'),
-    meta: {
-      title: '评价分析',
-      documentTitle: 'GEO 增长｜评价分析',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/deliverables',
-    component: () => import('../views/geo/GeoDeliverablesView.vue'),
-    meta: {
-      title: '交付摘要',
-      documentTitle: 'GEO 增长｜交付摘要',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/workbench',
-    component: () => import('../views/geo/GeoWorkbenchHubView.vue'),
-    meta: {
-      title: '内容工作台',
-      documentTitle: 'GEO 增长｜内容工作台',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/tasks',
-    component: () => import('../views/geo/GeoTasksView.vue'),
-    meta: {
-      title: '优化文章',
-      documentTitle: 'GEO 增长｜优化文章',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/tasks/:taskId',
-    component: () => import('../views/geo/GeoTaskEditorView.vue'),
-    meta: {
-      title: '内容编辑器',
-      documentTitle: 'GEO 增长｜内容编辑器',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/businesses',
-    component: () => import('../views/geo/GeoBusinessesView.vue'),
-    meta: {
-      title: '优化业务',
-      documentTitle: 'GEO 增长｜优化业务',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/prompts',
-    component: () => import('../views/geo/GeoPromptsView.vue'),
-    meta: {
-      title: '优化意图词',
-      documentTitle: 'GEO 增长｜优化意图词',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/facts',
-    component: () => import('../views/geo/GeoFactsView.vue'),
-    meta: {
-      title: '事实库',
-      documentTitle: 'GEO 增长｜事实库',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/engines',
-    component: () => import('../views/geo/GeoEnginesView.vue'),
-    meta: {
-      title: '引擎',
-      documentTitle: 'GEO 增长｜引擎',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/ai-settings',
-    component: () => import('../views/geo/GeoAiSettingsView.vue'),
-    meta: {
-      title: 'AI 能力配置',
-      documentTitle: 'GEO 增长｜AI 配置',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/publishing',
-    component: () => import('../views/geo/GeoPublishingView.vue'),
-    meta: {
-      title: '发布渠道',
-      documentTitle: 'GEO 增长｜发布渠道',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/placements',
-    component: () => import('../views/geo/GeoPlacementsView.vue'),
-    meta: {
-      title: '媒体阵地',
-      documentTitle: 'GEO 增长｜媒体阵地',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
     path: '/geo/diagnosis',
     component: () => import('../views/diagnosis/DiagnosisRedirectView.vue'),
     meta: {
@@ -363,7 +183,6 @@ const router = createRouter({
 
 const MENU_ORDER = [
   ['assistant', '/assistant'],
-  ['geo.content', '/geo/overview'],
   ['geo.diagnosis', '/geo/diagnosis'],
   ['monitor.dashboard', '/monitor/dashboard'],
   ['monitor.alerts', '/monitor/alerts'],
@@ -392,33 +211,14 @@ function permOk(perm) {
   const keys = Array.isArray(perm) ? perm : [perm]
   return keys.some((k) => session.canView(k))
 }
-function hasDevApiKey() {
-  const k = import.meta.env.VITE_API_KEY
-  return Boolean(
-    import.meta.env.DEV && k && String(k).trim() && String(k).trim() !== 'CHANGE_ME',
-  )
-}
-
 router.beforeEach((to) => {
-  // 本地 DEV + VITE_API_KEY：未登录可进业务页（API 走 X-API-Key）
-  const devBypass = hasDevApiKey() && !session.isLoggedIn
+  const devBypass = !session.isLoggedIn && import.meta.env.VITE_API_KEY && import.meta.env.DEV
   if (!to.meta.public && !session.isLoggedIn && !devBypass) {
     window.location.assign(loginUrl(to.fullPath))
     return false
   }
-  // 已登录访问 /login：有菜单权限则去首页；否则 DEV Key 模式去 redirect 或 GEO 工作台
-  if (to.path === '/login' && session.isLoggedIn) {
-    return { path: firstAllowedPath() || '/' }
-  }
-  if (to.path === '/login' && !session.isLoggedIn && hasDevApiKey()) {
-    const redir = typeof to.query.redirect === 'string' ? to.query.redirect : ''
-    if (redir.startsWith('/') && !redir.startsWith('//')) return redir
-    return '/geo/workbench'
-  }
   if (devBypass || !session.isLoggedIn) return
   if (!to.meta.public && !permOk(to.meta.perm)) {
-    // 本地 Key 模式下 token 残缺无菜单权限：仍放行，避免踢回登录
-    if (hasDevApiKey()) return
     const dest = firstAllowedPath()
     if (dest && dest !== to.path) return { path: dest }
     if (!dest) return

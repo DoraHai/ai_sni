@@ -283,7 +283,7 @@ def patrol_run_payload(row: GeoVisibilityPatrolRun) -> dict[str, Any]:
 
 async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilityPatrolRun:
     """Run patrol to completion inside one session (commit at end of phases)."""
-    from app.ai.deepseek import DeepSeekError, chat_json
+    from app.geo.ai_client import DeepSeekError, chat_json
     from app.geo.content.ai_settings import resolve_llm_credentials
     from app.geo.content.engines import default_engine_rows
     from app.models import GeoTrackingEngine

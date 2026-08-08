@@ -136,7 +136,7 @@ async def run_probe_draft(
     fallback_reason: str | None = None,
 ) -> dict[str, Any]:
     """Call LLM and normalize a non-persisted probe draft for one engine."""
-    from app.ai.deepseek import DeepSeekError
+    from app.geo.ai_client import DeepSeekError
 
     simulated = sample_mode != SAMPLE_MODE_REAL
     # Preserve legacy: deepseek on persona path still marked simulated=False when

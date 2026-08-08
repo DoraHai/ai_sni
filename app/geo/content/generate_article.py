@@ -9,7 +9,7 @@ from typing import Any
 from app.geo.content.variants import GeoContentError
 
 try:
-    from app.ai.deepseek import DeepSeekError, chat_json, is_enabled
+    from app.geo.ai_client import DeepSeekError, chat_json, is_enabled
 except Exception:  # pragma: no cover - allows pure unit import without full deps
     DeepSeekError = Exception  # type: ignore
 
