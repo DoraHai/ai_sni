@@ -3,198 +3,900 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-<meta http-equiv="Pragma" content="no-cache">
-<meta http-equiv="Expires" content="0">
-<title>在线编辑器 · 开发中</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    min-height: 100vh;
-    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
-    background: #f5f7fb;
-    color: #1f2937;
-  }
-  .layout { min-height: 100vh; display: grid; grid-template-columns: 238px minmax(0, 1fr); }
-  .sidebar {
-    height: 100vh;
-    position: sticky;
-    top: 0;
-    display: flex;
-    flex-direction: column;
-    background: #fff;
-    border-right: 1px solid #e5e9f1;
-  }
-  .brand {
-    min-height: 76px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 18px 18px;
-    border-bottom: 1px solid #edf0f5;
-    font-weight: 760;
-  }
-  .logo {
-    width: 36px;
-    height: 36px;
-    display: grid;
-    place-items: center;
-    border-radius: 9px;
-    background: linear-gradient(135deg, #2563eb, #7c3aed);
-    color: #fff;
-    font-weight: 850;
-  }
-  .brand small {
-    display: block;
-    margin-top: 3px;
-    color: #9aa3b2;
-    font-size: 12px;
-    font-weight: 600;
-  }
-  .nav { flex: 1; overflow: auto; padding: 14px 10px; }
-  .nav-group {
-    margin: 16px 10px 8px;
-    color: #9aa3b2;
-    font-size: 12px;
-    font-weight: 760;
-  }
-  .nav-item {
-    min-height: 36px;
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    padding: 8px 10px;
-    border-radius: 7px;
-    color: #586274;
-    font-size: 13px;
-    font-weight: 650;
-    text-decoration: none;
-  }
-  .nav-item:hover { background: #f4f7fb; color: #2563eb; }
-  .nav-item.active {
-    background: #eef4ff;
-    color: #1d4ed8;
-  }
-  .ico {
-    width: 22px;
-    flex: none;
-    color: inherit;
-    opacity: 0.88;
-    text-align: center;
-    font-size: 13px;
-  }
-  .side-foot {
-    display: grid;
-    gap: 8px;
-    padding: 14px 18px 18px;
-    border-top: 1px solid #edf0f5;
-  }
-  .side-foot a {
-    color: #7b8494;
-    font-size: 12px;
-    font-weight: 650;
-    text-decoration: none;
-  }
-  .main { min-width: 0; display: flex; flex-direction: column; }
-  .topbar {
-    min-height: 58px;
-    display: flex;
-    align-items: center;
-    padding: 0 26px;
-    border-bottom: 1px solid #e5e9f1;
-    background: #fff;
-    color: #6b7280;
-    font-size: 14px;
-    font-weight: 650;
-  }
-  .topbar b { color: #1f2937; font-weight: 760; }
-  .content {
-    flex: 1;
-    min-height: 0;
-    display: grid;
-    place-items: center;
-    padding: 24px;
-  }
-  .empty {
-    transform: translateY(-5vh);
-    text-align: center;
-    color: #9aa3b2;
-  }
-  .box { width: 188px; height: 188px; opacity: 0.42; margin-bottom: 18px; }
-  .title { font-size: 17px; font-weight: 650; line-height: 1.7; }
-  @media (max-width: 760px) {
-    .layout { grid-template-columns: 1fr; }
-    .sidebar { position: static; height: auto; }
-    .nav { max-height: 42vh; }
-    .empty { transform: none; }
-  }
-</style>
+<title>GEO 编辑器</title>
+<link rel="stylesheet" href="assets/style.css?rev=geo-wb-2">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=9">
 </head>
 <body>
 <div class="layout">
-  <aside class="sidebar">
-    <div class="brand">
-      <span class="logo">G</span>
-      <div>GEO 工作台<small>生成式引擎获客</small></div>
-    </div>
-    <nav class="nav">
-    <div class="nav-group">数据看板</div>
-    <a class="nav-item" href="dashboard.html"><span class="ico">▦</span>GEO 概览</a>
-    <a class="nav-item" href="visibility.html"><span class="ico">✦</span>AI 可见度</a>
-  
-
-    <div class="nav-group">智能监测</div>
-    <a class="nav-item" href="prompts.html"><span class="ico">◌</span>提问监控</a>
-    <a class="nav-item" href="competitors.html"><span class="ico">≋</span>竞品分析</a>
-    <a class="nav-item" href="evaluation.html"><span class="ico">◉</span>评价分析</a>
-    <a class="nav-item" href="sources.html"><span class="ico">▤</span>信源分析</a>
-  
-
-    <div class="nav-group">内容与信源</div>
-    <a class="nav-item" href="articles.html"><span class="ico">Aa</span>GEO 文章</a>
-    <a class="nav-item active" href="editor.html"><span class="ico">E</span>在线编辑器</a>
-    <a class="nav-item" href="media.html"><span class="ico">⌂</span>媒体 / 信源策略</a>
-    <a class="nav-item" href="channels.html"><span class="ico">⇧</span>分发平台</a>
-  
-
-    <div class="nav-group">设置</div>
-    <a class="nav-item" href="engines.html"><span class="ico">◇</span>AI 引擎管理</a>
-  
-    </nav>
-    <div class="side-foot">
-      <a href="/deal-sniper-prototype/index.html">← 返回平台门户</a>
-      <a href="/monitor/dashboard" target="_top">进入已实现 SEM</a>
-    </div>
-  </aside>
+  <aside class="sidebar"></aside>
   <main class="main">
-    <header class="topbar">GEO 工作台 &nbsp;/&nbsp; <b>在线编辑器</b></header>
-    <section class="content">
-      <div class="empty">
-        <svg class="box" viewBox="0 0 240 240" aria-hidden="true">
-          <defs>
-            <linearGradient id="g1" x1="0" x2="1" y1="0" y2="1">
-              <stop offset="0" stop-color="#ffffff"/>
-              <stop offset="1" stop-color="#d9dde7"/>
-            </linearGradient>
-            <linearGradient id="g2" x1="0" x2="1" y1="0" y2="1">
-              <stop offset="0" stop-color="#eef1f7"/>
-              <stop offset="1" stop-color="#cfd5e1"/>
-            </linearGradient>
-          </defs>
-          <ellipse cx="122" cy="195" rx="86" ry="13" fill="#e9edf4"/>
-          <path d="M74 100h92v92H74z" fill="url(#g1)"/>
-          <path d="M74 100l28-42h92l-28 42z" fill="#f8fafc"/>
-          <path d="M166 100l28-42 34 52-30 42z" fill="url(#g2)"/>
-          <path d="M74 100l-31 44h31z" fill="#d9dee8"/>
-          <path d="M166 100l31 44h-31z" fill="#cfd5e1"/>
-          <path d="M102 58l64 42h-92z" fill="#eef1f7"/>
-          <path d="M142 69l48 22 10 24-47-22z" fill="#d9dee8"/>
-          <path d="M74 100h92v92H74z" fill="none" stroke="#e2e6ee"/>
-        </svg>
-        <div class="title">「在线编辑器」开发中，接入真实功能后开放</div>
+    <div class="topbar">
+      <div>
+        <h1>在线编辑器</h1>
+        <div class="sub">事实绑定 → 生成母稿 → 规则检查 → 渠道适配</div>
       </div>
-    </section>
+      <div class="right" id="taskStatus"></div>
+    </div>
+    <div class="page">
+      <div id="authBar" class="config-bar"></div>
+      <div id="err" class="wb-error" style="display:none"></div>
+      <div id="blockedBar" class="wb-gate-bar" style="display:none"></div>
+      <div id="pipelineBar" class="wb-pipeline"></div>
+      <div class="wb-card">
+        <div class="wb-muted" id="promptLine">目标问题：-</div>
+        <div style="margin-top:10px" id="factChips"></div>
+        <div class="wb-toolbar">
+          <select class="wb-select" id="factSelect" style="max-width:280px"></select>
+          <button class="wb-btn" id="btnAddFact">绑定事实</button>
+          <button class="wb-btn" id="btnSeedDiag">从诊断补事实</button>
+          <button class="wb-btn primary" id="btnGenerate">生成母稿</button>
+          <button class="wb-btn" id="btnSave">保存母稿</button>
+          <button class="wb-btn" id="btnCheck">检查就绪</button>
+        </div>
+      </div>
+      <div class="wb-card">
+        <strong>内容 Brief（生成必填）</strong>
+        <div class="wb-hint" id="briefHint">行业 / 受众 / 意图 / 内容类型 / CTA 填齐后才能生成母稿。</div>
+        <div class="wb-grid wb-grid-2" style="margin-top:10px">
+          <div class="wb-field">
+            <label class="wb-label">行业</label>
+            <input class="wb-input" id="briefIndustry" placeholder="如：工业泵 / B2B SaaS">
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">受众</label>
+            <input class="wb-input" id="briefAudience" placeholder="如：制造业采购负责人">
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">意图</label>
+            <select class="wb-select" id="briefIntent"></select>
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">内容类型</label>
+            <select class="wb-select" id="briefContentType"></select>
+          </div>
+          <div class="wb-field" style="grid-column:1 / -1">
+            <label class="wb-label">CTA</label>
+            <input class="wb-input" id="briefCta" placeholder="如：预约演示 / 下载白皮书">
+          </div>
+          <div class="wb-field" style="grid-column:1 / -1">
+            <label class="wb-label">禁用表述（逗号分隔，可选）</label>
+            <input class="wb-input" id="briefBanned" placeholder="如：第一名,保证收录">
+          </div>
+          <div class="wb-field" style="grid-column:1 / -1">
+            <label class="wb-label">备注（可选）</label>
+            <input class="wb-input" id="briefNotes" placeholder="补充约束或语气">
+          </div>
+          <div class="wb-field" style="grid-column:1 / -1">
+            <label class="wb-label">策略 · AI 问题（可选）</label>
+            <input class="wb-input" id="briefAiQuestion" placeholder="默认=意图词问题">
+          </div>
+          <div class="wb-field" style="grid-column:1 / -1">
+            <label class="wb-label">策略 · AI 不推荐原因（逗号分隔）</label>
+            <input class="wb-input" id="briefNotRec" placeholder="缺对比,缺案例,缺权威源">
+          </div>
+          <div class="wb-field" style="grid-column:1 / -1">
+            <label class="wb-label">策略 · 信息缺口（逗号，可用枚举键或中文）</label>
+            <input class="wb-input" id="briefGaps" placeholder="comparison,customer_case,authority_source">
+          </div>
+          <div class="wb-field" style="grid-column:1 / -1">
+            <label class="wb-label">策略 · 应推荐场景</label>
+            <input class="wb-input" id="briefWhen" placeholder="何时应推荐本品牌">
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">策略 · 竞品（逗号）</label>
+            <input class="wb-input" id="briefCompetitors" placeholder="竞品A,竞品B">
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">策略 · 必须覆盖</label>
+            <input class="wb-input" id="briefMustCover" placeholder="品牌名,核心能力">
+          </div>
+        </div>
+        <div class="wb-toolbar">
+          <button class="wb-btn primary" id="btnSuggestBrief">AI 建议 Brief</button>
+          <button class="wb-btn" id="btnSaveBrief">保存 Brief</button>
+          <button class="wb-btn" id="btnRetrieveFacts">召回事实</button>
+          <button class="wb-btn" id="btnApplyTopFacts">绑定召回 Top</button>
+          <span class="wb-muted" id="briefReadyLine"></span>
+        </div>
+        <div class="wb-hint" id="retrieveLine" style="margin-top:8px"></div>
+      </div>
+      <div class="wb-card">
+        <strong>审校</strong>
+        <div class="wb-hint">母稿变更会作废审校。发布回填前须审批通过。</div>
+        <div class="wb-muted" id="reviewLine" style="margin-top:8px">审校状态：-</div>
+        <div class="wb-field" style="margin-top:10px">
+          <label class="wb-label">审校备注</label>
+          <input class="wb-input" id="reviewNote" placeholder="可选说明">
+        </div>
+        <div class="wb-toolbar">
+          <button class="wb-btn" id="btnSubmitReview">提交审校</button>
+          <button class="wb-btn primary" id="btnApproveReview">通过</button>
+          <button class="wb-btn" id="btnRejectReview">驳回</button>
+        </div>
+      </div>
+      <div class="wb-card">
+        <strong>渠道适配（发布渠道注册表）</strong>
+        <div class="wb-hint">仅显示租户已启用的发布渠道；勾选后生成受控派生稿。</div>
+        <div class="wb-channel-pick" id="channelPick"></div>
+        <div class="wb-toolbar">
+          <button class="wb-btn primary" id="btnVariants">生成所选渠道稿</button>
+          <button class="wb-btn" id="btnCopyActive">复制当前渠道稿</button>
+          <button class="wb-btn" id="btnSaveVariant" style="display:none">保存渠道稿编辑</button>
+        </div>
+        <div id="staleHint" class="wb-gate-bar" style="display:none;margin-top:8px"></div>
+      </div>
+      <div class="wb-grid wb-grid-2">
+        <div class="wb-card">
+          <div class="wb-tabs" id="docTabs"></div>
+          <div class="wb-field">
+            <label class="wb-label" id="titleLabel">母稿标题</label>
+            <input class="wb-input" id="title">
+          </div>
+          <div class="wb-field">
+            <label class="wb-label" id="bodyLabel">母稿 Markdown</label>
+            <textarea class="wb-textarea" id="body"></textarea>
+          </div>
+          <div class="wb-muted" id="adaptMeta" style="margin-top:6px"></div>
+        </div>
+        <div class="wb-card">
+          <strong>规则清单</strong>
+          <ul class="wb-checks" id="checks" style="margin-top:10px"></ul>
+          <div style="margin-top:14px">
+            <strong>可抽取块</strong>
+            <div class="wb-hint">定义 / 数字 / 对比 / 步骤 / FAQ（引用吸收信号）</div>
+            <div id="blockChips" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px"></div>
+          </div>
+          <div style="margin-top:14px">
+            <strong>编造风险</strong>
+            <div class="wb-hint" id="lintSummary">检查就绪后显示</div>
+            <ul class="wb-checks" id="lintList" style="margin-top:8px"></ul>
+          </div>
+          <div id="patchBox" style="margin-top:10px"></div>
+          <div style="margin-top:14px">
+            <strong>GEO Score</strong>
+            <div class="wb-hint" id="geoScoreLine">检查就绪后显示 0–100 分与改进项</div>
+            <ul class="wb-checks" id="geoActionList" style="margin-top:8px"></ul>
+          </div>
+          <div style="margin-top:14px">
+            <strong>AI 审稿</strong>
+            <div class="wb-hint" id="aiReviewLine">点击「AI 审稿」生成 issues</div>
+            <ul class="wb-checks" id="aiReviewList" style="margin-top:8px"></ul>
+          </div>
+          <div class="wb-muted" id="readyLine" style="margin-top:8px"></div>
+          <button class="wb-btn" id="btnLint" style="margin-top:10px">仅扫编造风险</button>
+          <button class="wb-btn" id="btnAiReview" style="margin-top:10px">AI 审稿</button>
+          <button class="wb-btn" id="btnChannels" style="margin-top:10px;display:none">去回填 →</button>
+        </div>
+      </div>
+    </div>
   </main>
 </div>
+<script src="assets/geo-sidebar-v1.js?rev=9"></script>
+<script src="assets/geo-api-v1.js?rev=16"></script>
+<script src="assets/geo-workbench-v1.js?rev=7"></script>
+<script>
+(async function () {
+  GeoWB.renderAuthBar(document.getElementById('authBar'));
+  var err = document.getElementById('err');
+  var params = new URLSearchParams(location.search);
+  var taskId = Number(params.get('task_id') || 0);
+  var task = null;
+  var allFacts = [];
+  var profiles = [];
+  var channelOptions = [];
+  var briefCatalog = null;
+  var activeTab = 'master';
+  var profileByKey = {};
+  var REVIEW_LABELS = { none: '未提交', pending: '待审', approved: '已通过', rejected: '已驳回' };
+
+  function fillSelect(el, items, selected) {
+    el.innerHTML = '<option value="">请选择</option>';
+    (items || []).forEach(function (it) {
+      var opt = document.createElement('option');
+      opt.value = it.key;
+      opt.textContent = it.label;
+      if (selected && selected === it.key) opt.selected = true;
+      el.appendChild(opt);
+    });
+  }
+
+  var lastRetrieveIds = [];
+
+  function splitCsv(val) {
+    return (val || '').split(/[,，;；]/).map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+
+  function readBriefForm() {
+    var banned = splitCsv(document.getElementById('briefBanned').value);
+    return {
+      industry: document.getElementById('briefIndustry').value.trim(),
+      audience: document.getElementById('briefAudience').value.trim(),
+      intent: document.getElementById('briefIntent').value,
+      content_type: document.getElementById('briefContentType').value,
+      cta: document.getElementById('briefCta').value.trim(),
+      banned_claims: banned,
+      notes: document.getElementById('briefNotes').value.trim() || null,
+      ai_question: document.getElementById('briefAiQuestion').value.trim() || null,
+      not_recommended_reasons: splitCsv(document.getElementById('briefNotRec').value),
+      info_gaps: splitCsv(document.getElementById('briefGaps').value),
+      recommend_when: document.getElementById('briefWhen').value.trim() || null,
+      competitors: splitCsv(document.getElementById('briefCompetitors').value),
+      must_cover: splitCsv(document.getElementById('briefMustCover').value),
+      schema_version: 2,
+    };
+  }
+
+  function renderBrief() {
+    var b = (task && task.brief) || {};
+    if (briefCatalog) {
+      fillSelect(document.getElementById('briefIntent'), briefCatalog.intents, b.intent || '');
+      fillSelect(document.getElementById('briefContentType'), briefCatalog.content_types, b.content_type || '');
+    }
+    document.getElementById('briefIndustry').value = b.industry || '';
+    document.getElementById('briefAudience').value = b.audience || '';
+    document.getElementById('briefCta').value = b.cta || '';
+    document.getElementById('briefBanned').value = (b.banned_claims || []).join(', ');
+    document.getElementById('briefNotes').value = b.notes || '';
+    document.getElementById('briefAiQuestion').value = b.ai_question || '';
+    document.getElementById('briefNotRec').value = (b.not_recommended_reasons || []).join(', ');
+    document.getElementById('briefGaps').value = (b.info_gaps || []).join(', ');
+    document.getElementById('briefWhen').value = b.recommend_when || '';
+    document.getElementById('briefCompetitors').value = (b.competitors || []).join(', ');
+    document.getElementById('briefMustCover').value = (b.must_cover || []).join(', ');
+    var rich = task && typeof task.strategy_richness === 'number' ? task.strategy_richness : 0;
+    document.getElementById('briefReadyLine').textContent = task && task.brief_ready
+      ? ('Brief 已齐，可生成 · 策略完整度 ' + Math.round(rich * 100) + '%')
+      : 'Brief 未齐：请填行业/受众/意图/内容类型/CTA';
+  }
+
+  function variantMap() {
+    var m = {};
+    (task && task.variants || []).forEach(function (v) { m[v.channel] = v; });
+    return m;
+  }
+
+  function selectedChannels() {
+    return Array.prototype.slice.call(document.querySelectorAll('#channelPick input:checked'))
+      .map(function (el) { return el.value; });
+  }
+
+  function renderChannelPick() {
+    var box = document.getElementById('channelPick');
+    box.innerHTML = '';
+    var defaults = {};
+    (task && task.target_channels || []).forEach(function (c) { defaults[c] = true; });
+    var options = channelOptions.length ? channelOptions : null;
+    if (options) {
+      var seen = {};
+      options.forEach(function (opt) {
+        var key = opt.adapt_key;
+        if (!key || seen[key]) return;
+        seen[key] = true;
+        var profile = opt.adapt_profile || profileByKey[key] || { key: key, display_name: opt.name || key };
+        profileByKey[key] = profile;
+        if (!Object.keys(defaults).length && opt.default_selected) defaults[key] = true;
+        var label = document.createElement('label');
+        var checked = !!defaults[key] || !!variantMap()[key];
+        var mode = opt.publish_mode ? (' · ' + opt.publish_mode) : '';
+        label.innerHTML = '<input type="checkbox" value="' + key + '"' + (checked ? ' checked' : '') + '> ' +
+          (profile.display_name || opt.name || key) +
+          ' <span class="wb-muted">(' + key + mode + ')</span>';
+        box.appendChild(label);
+      });
+      if (!box.children.length) {
+        box.innerHTML = '<span class="wb-muted">无启用发布渠道，请先到「发布渠道」配置</span>';
+      }
+      return;
+    }
+    if (!Object.keys(defaults).length) {
+      profiles.forEach(function (p) { if (p.default_selected) defaults[p.key] = true; });
+    }
+    profiles.forEach(function (p) {
+      profileByKey[p.key] = p;
+      var label = document.createElement('label');
+      var checked = !!defaults[p.key] || !!variantMap()[p.key];
+      label.innerHTML = '<input type="checkbox" value="' + p.key + '"' + (checked ? ' checked' : '') + '> ' +
+        p.display_name + ' <span class="wb-muted">(' + p.key + ')</span>';
+      box.appendChild(label);
+    });
+  }
+
+  function renderReview() {
+    var status = (task && task.review_status) || 'none';
+    var line = '审校状态：' + (REVIEW_LABELS[status] || status);
+    if (task && task.review_note) line += ' · ' + task.review_note;
+    if (task && task.reviewed_at) line += ' · ' + task.reviewed_at;
+    document.getElementById('reviewLine').textContent = line;
+    document.getElementById('btnSubmitReview').disabled = !(task && task.can_submit_review && task.article);
+    document.getElementById('btnApproveReview').disabled = !(task && task.can_decide_review);
+    document.getElementById('btnRejectReview').disabled = !(task && task.can_decide_review);
+  }
+
+  function renderTabs() {
+    var tabs = document.getElementById('docTabs');
+    tabs.innerHTML = '';
+    var items = [{ key: 'master', label: '母稿' }].concat(
+      (task.variants || []).map(function (v) {
+        var name = (profileByKey[v.channel] && profileByKey[v.channel].display_name) || v.channel;
+        return { key: v.channel, label: name, stale: v.stale };
+      })
+    );
+    if (activeTab !== 'master' && !variantMap()[activeTab]) activeTab = 'master';
+    items.forEach(function (it) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'wb-tab' + (activeTab === it.key ? ' active' : '');
+      btn.innerHTML = it.label + (it.stale ? '<span class="wb-stale">过期</span>' : '');
+      btn.onclick = function () {
+        activeTab = it.key;
+        renderEditorPane();
+        renderTabs();
+      };
+      tabs.appendChild(btn);
+    });
+  }
+
+  function renderEditorPane() {
+    var titleEl = document.getElementById('title');
+    var bodyEl = document.getElementById('body');
+    var meta = document.getElementById('adaptMeta');
+    var stale = document.getElementById('staleHint');
+    var saveVar = document.getElementById('btnSaveVariant');
+    if (activeTab === 'master') {
+      document.getElementById('titleLabel').textContent = '母稿标题';
+      document.getElementById('bodyLabel').textContent = '母稿 Markdown';
+      var article = task.article || {};
+      titleEl.value = article.title || task.title || '';
+      bodyEl.value = article.body_markdown || '';
+      titleEl.readOnly = false;
+      bodyEl.readOnly = false;
+      meta.textContent = article.version_no ? ('母稿版本 #' + article.version_no) : '';
+      stale.style.display = 'none';
+      saveVar.style.display = 'none';
+      return;
+    }
+    var v = variantMap()[activeTab];
+    var pname = (profileByKey[activeTab] && profileByKey[activeTab].display_name) || activeTab;
+    document.getElementById('titleLabel').textContent = pname + ' 标题';
+    document.getElementById('bodyLabel').textContent = pname + ' 正文';
+    titleEl.value = (v && v.title) || '';
+    bodyEl.value = (v && v.body_markdown) || '';
+    titleEl.readOnly = false;
+    bodyEl.readOnly = false;
+    saveVar.style.display = 'inline-block';
+    var am = (v && v.adapt_meta) || {};
+    meta.textContent = [
+      am.profile_mode ? ('模式 ' + am.profile_mode) : '',
+      am.dropped && am.dropped.length ? ('裁剪: ' + am.dropped.join(', ')) : '裁剪: 无',
+      am.manually_edited ? '已人工改过' : '',
+    ].filter(Boolean).join(' · ');
+    if (v && v.stale) {
+      stale.style.display = 'block';
+      stale.textContent = '母稿已更新，当前「' + pname + '」渠道稿已过期，请重新生成该渠道。';
+    } else {
+      stale.style.display = 'none';
+    }
+  }
+
+  var BLOCK_LABELS = {
+    definition: '定义',
+    numbers: '数字',
+    comparison: '对比',
+    howto: '步骤',
+    faq: 'FAQ'
+  };
+
+  function renderBlocksAndLint(result) {
+    var rr = (task && task.rule_result) || {};
+    var blocks = (result && result.blocks) || rr.blocks || null;
+    var lint = (result && result.lint) || rr.lint || null;
+    var chips = document.getElementById('blockChips');
+    chips.innerHTML = '';
+    if (blocks && blocks.blocks) {
+      Object.keys(BLOCK_LABELS).forEach(function (key) {
+        var ok = !!blocks.blocks[key];
+        var span = document.createElement('span');
+        span.className = 'wb-badge ' + (ok ? 'good' : 'warn');
+        span.textContent = (ok ? '✓ ' : '缺 ') + BLOCK_LABELS[key];
+        chips.appendChild(span);
+      });
+    } else {
+      chips.innerHTML = '<span class="wb-muted">尚未检查</span>';
+    }
+    var summary = document.getElementById('lintSummary');
+    var list = document.getElementById('lintList');
+    list.innerHTML = '';
+    if (!lint) {
+      summary.textContent = '检查就绪或点「仅扫编造风险」后显示';
+      return;
+    }
+    summary.textContent =
+      '共 ' + (lint.total || 0) + ' · 高 ' + (lint.high || 0) +
+      ' / 中 ' + (lint.medium || 0) + ' / 低 ' + (lint.low || 0) +
+      (lint.high ? '（高风险会阻断就绪）' : '');
+    (lint.issues || []).forEach(function (issue) {
+      var li = document.createElement('li');
+      var badge = issue.level === '高' ? 'bad' : (issue.level === '中' ? 'warn' : '');
+      li.innerHTML =
+        '<span class="wb-badge ' + badge + '">' + (issue.level || '') + '</span>' +
+        '<div><strong>' + (issue.type || issue.code || '') + '</strong> · ' + (issue.detail || '') +
+        (issue.excerpt ? '<div class="wb-muted">' + issue.excerpt + '</div>' : '') + '</div>';
+      list.appendChild(li);
+    });
+  }
+
+  function renderChecks(result) {
+    var box = document.getElementById('checks');
+    box.innerHTML = '';
+    var checks = (result && result.checks) || (task && task.rule_result && task.rule_result.checks) || [];
+    checks.forEach(function (c) {
+      var li = document.createElement('li');
+      li.innerHTML =
+        '<span class="' + (c.passed ? 'wb-ok' : '') + '">' + (c.passed ? '✓' : '✗') + '</span>' +
+        '<div><strong>' + c.code + '</strong> · ' + c.message +
+        (c.passed ? '' : '<div class="wb-muted">' + (c.action || '') + '</div>') + '</div>';
+      box.appendChild(li);
+    });
+    var ready = result ? result.ready : (task && task.rule_result && task.rule_result.ready);
+    var rr = (result) || (task && task.rule_result) || {};
+    var score = result && result.geo_score != null ? result.geo_score : rr.geo_score;
+    var subs = (result && result.geo_subscores) || rr.geo_subscores || {};
+    var gacts = (result && result.geo_actions) || rr.geo_actions || [];
+    var scoreLine = document.getElementById('geoScoreLine');
+    if (score != null) {
+      var subTxt = Object.keys(subs).map(function (k) {
+        return k + '=' + Math.round((subs[k] || 0) * 100);
+      }).join(' · ');
+      scoreLine.textContent = 'GEO Score ' + score + '/100' + (subTxt ? '（' + subTxt + '）' : '');
+    } else {
+      scoreLine.textContent = '检查就绪后显示 0–100 分与改进项';
+    }
+    var ga = document.getElementById('geoActionList');
+    ga.innerHTML = '';
+    gacts.forEach(function (a) {
+      var li = document.createElement('li');
+      li.innerHTML = '<span>⚠</span><div><strong>' + (a.code || '') + '</strong> · ' + (a.message || '') +
+        (a.action ? '<div class="wb-muted">' + a.action + '</div>' : '') + '</div>';
+      ga.appendChild(li);
+    });
+    var review = rr.ai_review || (result && result.ai_review);
+    var arLine = document.getElementById('aiReviewLine');
+    var arList = document.getElementById('aiReviewList');
+    arList.innerHTML = '';
+    if (review) {
+      arLine.textContent = (review.summary || '已审稿') +
+        ' · block ' + (review.block_count || 0) + ' · warn ' + (review.warn_count || 0);
+      (review.issues || []).forEach(function (iss) {
+        var li = document.createElement('li');
+        li.innerHTML = '<span class="wb-badge">' + (iss.severity || '') + '</span>' +
+          '<div><strong>' + (iss.category || '') + '</strong> · ' + (iss.message || '') +
+          (iss.fix_hint ? '<div class="wb-muted">' + iss.fix_hint + '</div>' : '') + '</div>';
+        arList.appendChild(li);
+      });
+    } else {
+      arLine.textContent = '点击「AI 审稿」生成 issues';
+    }
+    document.getElementById('readyLine').textContent = ready
+      ? ('已达规则就绪 · GEO Score ' + (score != null ? score : '—'))
+      : ('尚未就绪' + (score != null ? ' · Score ' + score : ''));
+    var patchBox = document.getElementById('patchBox');
+    patchBox.innerHTML = '';
+    var patches = (result && result.patches) || [];
+    patches.forEach(function (p) {
+      var btn = document.createElement('button');
+      btn.className = 'wb-btn';
+      btn.textContent = '插入修复 · ' + p.code;
+      btn.onclick = async function () {
+        try {
+          activeTab = 'master';
+          var beforeLen = ((task.article || {}).body_markdown || '').length;
+          var r = await GeoAPI.applyPatch(taskId, p.code);
+          if (r.task) task = r.task;
+          if (!(task.article && task.article.body_markdown) && r.article) {
+            task.article = r.article;
+          }
+          if (!(task.article && task.article.body_markdown)) {
+            task = await GeoAPI.getTask(taskId);
+          }
+          var afterLen = ((task.article || {}).body_markdown || '').length;
+          renderAll();
+          // merge score fields so Score line updates without extra check click
+          renderChecks(Object.assign({}, r, {
+            geo_score: r.geo_score,
+            geo_subscores: r.geo_subscores,
+            geo_actions: r.geo_actions,
+            checks: r.checks,
+            patches: r.patches,
+            ready: r.ready,
+          }));
+          var line = document.getElementById('retrieveLine');
+          if (line) {
+            line.textContent = (r.effective === false)
+              ? ('补丁 ' + p.code + ' 已写入正文 ' + beforeLen + '→' + afterLen + '，但规则仍未通过；Score ' + (r.geo_score != null ? r.geo_score : '—'))
+              : ('已应用补丁 ' + p.code + ' · 正文 ' + beforeLen + '→' + afterLen + ' · Score ' + (r.geo_score != null ? r.geo_score : '—'));
+          }
+          if (afterLen === beforeLen && !r.body_changed) {
+            GeoWB.showError(err, new Error('补丁返回成功但正文未变化，请刷新页面'));
+          }
+        } catch (e) { GeoWB.showError(err, e); }
+      };
+      patchBox.appendChild(btn);
+    });
+    document.getElementById('btnChannels').style.display = ready ? 'inline-block' : 'none';
+    renderBlocksAndLint(result);
+  }
+
+  function relevanceScore(fact, question) {
+    var q = String(question || '').toLowerCase();
+    if (!q) return 0;
+    var hay = ((fact.title || '') + ' ' + (fact.statement || '') + ' ' + (fact.source_name || '')).toLowerCase();
+    var score = 0;
+    if (fact.meta && fact.meta.from_diagnosis) score += 100;
+    if (hay.indexOf('诊断') >= 0) score += 20;
+    q.replace(/[「」""''：:·|/\\-]/g, ' ').split(/\s+/).forEach(function (tok) {
+      if (tok.length >= 2 && hay.indexOf(tok.toLowerCase()) >= 0) score += tok.length;
+    });
+    return score;
+  }
+
+  function renderFacts() {
+    var chips = document.getElementById('factChips');
+    chips.innerHTML = '<span class="wb-muted">已绑定事实：</span>';
+    (task.facts || []).forEach(function (f) {
+      var span = document.createElement('span');
+      span.className = 'wb-chip';
+      span.innerHTML = f.title + ' <button title="移除" data-id="' + f.id + '">×</button>';
+      span.querySelector('button').onclick = async function () {
+        var ids = (task.facts || []).map(function (x) { return x.id; }).filter(function (id) { return id !== f.id; });
+        try {
+          task = await GeoAPI.bindFacts(taskId, ids);
+          renderAll();
+        } catch (e) { GeoWB.showError(err, e); }
+      };
+      chips.appendChild(span);
+    });
+    if (!(task.facts || []).length && task.diagnosis_audit_id) {
+      var tip = document.createElement('span');
+      tip.className = 'wb-muted';
+      tip.textContent = '（诊断任务可点「从诊断补事实」对齐标题）';
+      chips.appendChild(tip);
+    }
+    var sel = document.getElementById('factSelect');
+    sel.innerHTML = '';
+    var bound = {};
+    (task.facts || []).forEach(function (f) { bound[f.id] = true; });
+    var question = task.prompt_question || task.title || '';
+    allFacts
+      .slice()
+      .sort(function (a, b) { return relevanceScore(b, question) - relevanceScore(a, question); })
+      .forEach(function (f) {
+        if (bound[f.id]) return;
+        var opt = document.createElement('option');
+        opt.value = f.id;
+        var mark = relevanceScore(f, question) >= 20 ? '★ ' : '';
+        opt.textContent = mark + f.title + ' · ' + f.source_name;
+        sel.appendChild(opt);
+      });
+  }
+
+  function renderAll() {
+    document.getElementById('taskStatus').innerHTML = GeoWB.statusBadge(task.status);
+    GeoWB.renderPipeline(document.getElementById('pipelineBar'), task.pipeline_step || 'opportunity');
+    var blocked = document.getElementById('blockedBar');
+    if (task.blocked_reason) {
+      blocked.style.display = 'block';
+      blocked.textContent = '门禁未过：' + task.blocked_reason;
+    } else {
+      blocked.style.display = 'none';
+    }
+    var promptLine = '目标问题：' + (task.prompt_question || '-');
+    if (task.diagnosis_audit_id) {
+      promptLine += ' · 来自诊断 #' + task.diagnosis_audit_id;
+    }
+    document.getElementById('promptLine').textContent = promptLine;
+    document.getElementById('btnSeedDiag').style.display = task.diagnosis_audit_id ? 'inline-block' : 'none';
+    if (task.channel_profiles && task.channel_profiles.length) {
+      profiles = task.channel_profiles;
+    }
+    if (task.channel_options && task.channel_options.length) {
+      channelOptions = task.channel_options;
+    }
+    renderChannelPick();
+    renderTabs();
+    renderEditorPane();
+    renderFacts();
+    renderBrief();
+    renderReview();
+    renderChecks();
+  }
+
+  async function load() {
+    GeoWB.clearError(err);
+    try {
+      var keyFromUrl = new URLSearchParams(location.search).get('api_key');
+      if (keyFromUrl) GeoAPI.setApiKey(keyFromUrl);
+      if (!taskId) {
+        throw new Error('缺少 task_id。请从诊断中心「创建 GEO 优化文章」重新打开，或从 GEO 文章列表进入。');
+      }
+      GeoWB.requireTenant();
+      try {
+        briefCatalog = await GeoAPI.briefCatalog();
+      } catch (e) { briefCatalog = null; }
+      try {
+        profiles = ((await GeoAPI.listChannelProfiles()).items) || [];
+      } catch (e) { profiles = []; }
+      try {
+        channelOptions = ((await GeoAPI.listPublishingChannelOptions()).items) || [];
+      } catch (e) { channelOptions = []; }
+      allFacts = (await GeoAPI.listFacts()).items || [];
+      task = await GeoAPI.getTask(taskId);
+      if (task.diagnosis_audit_id && !(task.facts || []).length) {
+        task = await GeoAPI.seedDiagnosisFacts(taskId);
+        allFacts = (await GeoAPI.listFacts()).items || [];
+      }
+      renderAll();
+      if (task.article && task.article.body_markdown) {
+        try {
+          var result = await GeoAPI.checkTask(taskId, false);
+          task = result.task;
+          renderAll();
+          renderChecks(result);
+        } catch (checkErr) { /* keep */ }
+      }
+    } catch (e) { GeoWB.showError(err, e); }
+  }
+
+  document.getElementById('btnSeedDiag').onclick = async function () {
+    try {
+      task = await GeoAPI.seedDiagnosisFacts(taskId);
+      allFacts = (await GeoAPI.listFacts()).items || [];
+      renderAll();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnAddFact').onclick = async function () {
+    var fid = Number(document.getElementById('factSelect').value);
+    if (!fid) return;
+    var ids = (task.facts || []).map(function (x) { return x.id; });
+    if (ids.indexOf(fid) < 0) ids.push(fid);
+    try {
+      task = await GeoAPI.bindFacts(taskId, ids);
+      renderAll();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnSaveBrief').onclick = async function () {
+    try {
+      task = await GeoAPI.patchTask(taskId, { brief: readBriefForm() });
+      renderAll();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnSuggestBrief').onclick = async function () {
+    var line = document.getElementById('briefReadyLine');
+    try {
+      if (line) line.textContent = '正在请求 AI 建议…';
+      var formBrief = readBriefForm();
+      var emptyForm = !(formBrief.industry || formBrief.audience || formBrief.intent || formBrief.content_type || formBrief.cta);
+      var res = await GeoAPI.suggestBrief(taskId, { overwrite: emptyForm, use_llm: true });
+      var sb = res && (res.suggested_brief || res.brief);
+      if (!sb) {
+        if (line) line.textContent = 'AI 建议未返回 suggested_brief';
+        throw new Error('AI 建议接口未返回 suggested_brief');
+      }
+      task.brief = sb;
+      task.strategy_richness = res.strategy_richness;
+      renderBrief();
+      var filled = [sb.industry, sb.audience, sb.intent, sb.content_type, sb.cta].filter(function (x) {
+        return String(x || '').trim();
+      }).length;
+      if (!filled) {
+        // force overwrite retry once
+        res = await GeoAPI.suggestBrief(taskId, { overwrite: true, use_llm: true });
+        sb = res && res.suggested_brief;
+        if (sb) {
+          task.brief = sb;
+          renderBrief();
+          filled = [sb.industry, sb.audience, sb.intent, sb.content_type, sb.cta].filter(function (x) {
+            return String(x || '').trim();
+          }).length;
+        }
+      }
+      if (!filled) {
+        if (line) line.textContent = '建议返回后 Brief 仍为空，请重试或手动填写';
+        throw new Error('建议返回后 Brief 仍为空');
+      }
+      if (line) {
+        line.textContent =
+          '已填入建议 Brief（未保存）· 策略 ' + Math.round((res.strategy_richness || 0) * 100) + '%' +
+          (res.used_llm ? ' · LLM' : ' · 启发式') +
+          ' · 请点「保存 Brief」';
+      }
+    } catch (e) {
+      if (line) line.textContent = 'AI 建议失败：' + (e && e.message ? e.message : e);
+      GeoWB.showError(err, e);
+    }
+  };
+  document.getElementById('btnRetrieveFacts').onclick = async function () {
+    try {
+      try {
+        await GeoAPI.patchTask(taskId, { brief: readBriefForm() });
+      } catch (pe) { /* brief optional for retrieve */ }
+      var res = await GeoAPI.retrieveFacts(taskId, { limit: 8, verified_only: false });
+      lastRetrieveIds = (res.items || []).map(function (x) { return Number(x.fact_id); }).filter(function (n) {
+        return Number.isFinite(n) && n > 0;
+      });
+      var line = (res.items || []).slice(0, 8).map(function (x) {
+        return '#' + x.fact_id + ' ' + (x.title || '') + ' (' + x.score + ')';
+      }).join(' · ');
+      if (lastRetrieveIds.length) {
+        document.getElementById('retrieveLine').textContent =
+          '召回 ' + lastRetrieveIds.length + ' 条：' + line + '（可点「绑定召回 Top」）';
+      } else {
+        // fallback: top verified from loaded library
+        lastRetrieveIds = (allFacts || [])
+          .filter(function (f) { return f.trust_level === 'verified'; })
+          .slice(0, 8)
+          .map(function (f) { return Number(f.id); })
+          .filter(Boolean);
+        document.getElementById('retrieveLine').textContent = lastRetrieveIds.length
+          ? ('召回无关键词命中，已改用库中 verified：' + lastRetrieveIds.join(', ') + '（可点「绑定召回 Top」）')
+          : '未召回到相关事实，且库中无 verified 事实';
+      }
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnApplyTopFacts').onclick = async function () {
+    try {
+      if (!lastRetrieveIds.length) {
+        var res = await GeoAPI.retrieveFacts(taskId, { limit: 8, verified_only: false });
+        lastRetrieveIds = (res.items || []).map(function (x) { return Number(x.fact_id); }).filter(function (n) {
+          return Number.isFinite(n) && n > 0;
+        });
+      }
+      if (!lastRetrieveIds.length) {
+        lastRetrieveIds = (allFacts || [])
+          .filter(function (f) { return f.trust_level === 'verified'; })
+          .slice(0, 3)
+          .map(function (f) { return Number(f.id); })
+          .filter(Boolean);
+      }
+      if (!lastRetrieveIds.length) {
+        document.getElementById('retrieveLine').textContent = '没有可绑定的召回结果（请先核验事实卡）';
+        return;
+      }
+      try {
+        task = await GeoAPI.applyRetrievedFacts(taskId, lastRetrieveIds);
+      } catch (applyErr) {
+        task = await GeoAPI.bindFacts(taskId, lastRetrieveIds);
+      }
+      if (!(task.facts || []).length) {
+        task = await GeoAPI.getTask(taskId);
+      }
+      allFacts = (await GeoAPI.listFacts()).items || [];
+      renderAll();
+      document.getElementById('retrieveLine').textContent =
+        '已绑定 ' + ((task.facts || []).length) + ' 条事实：' +
+        (task.facts || []).map(function (f) { return f.id; }).join(', ');
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnSubmitReview').onclick = async function () {
+    try {
+      task = await GeoAPI.submitReview(taskId, document.getElementById('reviewNote').value || null);
+      renderAll();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnApproveReview').onclick = async function () {
+    try {
+      task = await GeoAPI.decideReview(taskId, 'approved', document.getElementById('reviewNote').value || null);
+      renderAll();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnRejectReview').onclick = async function () {
+    try {
+      task = await GeoAPI.decideReview(taskId, 'rejected', document.getElementById('reviewNote').value || null);
+      renderAll();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnGenerate').onclick = async function () {
+    var line = document.getElementById('briefReadyLine');
+    try {
+      if (line) line.textContent = '正在生成母稿…';
+      task = await GeoAPI.patchTask(taskId, { brief: readBriefForm() });
+      task = await GeoAPI.generateTask(taskId);
+      activeTab = 'master';
+      renderAll();
+      var bodyLen = ((task.article || {}).body_markdown || '').length;
+      var st = task.status || '—';
+      var msg = bodyLen
+        ? ('母稿已生成（' + bodyLen + ' 字）· 状态 ' + st +
+          (st === 'needs_fix' ? ' · 请检查规则并点「插入修复」' : ''))
+        : ('生成返回成功但正文为空 · 状态 ' + st);
+      if (line) line.textContent = msg;
+      if (!bodyLen) throw new Error(msg);
+    } catch (e) {
+      if (line) line.textContent = '生成失败：' + (e && e.message ? e.message : e);
+      GeoWB.showError(err, e);
+    }
+  };
+  document.getElementById('btnSave').onclick = async function () {
+    try {
+      if (activeTab !== 'master') {
+        activeTab = 'master';
+        renderEditorPane();
+      }
+      task = await GeoAPI.saveArticle(taskId, {
+        title: document.getElementById('title').value,
+        body_markdown: document.getElementById('body').value,
+        outline: (task.article && task.article.outline) || {},
+      });
+      renderAll();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnSaveVariant').onclick = async function () {
+    try {
+      if (activeTab === 'master') return;
+      task = await GeoAPI.patchVariant(taskId, activeTab, {
+        title: document.getElementById('title').value,
+        body_markdown: document.getElementById('body').value,
+      });
+      renderAll();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnCheck').onclick = async function () {
+    try {
+      var result = await GeoAPI.checkTask(taskId, false);
+      task = result.task;
+      renderAll();
+      renderChecks(result);
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnLint').onclick = async function () {
+    try {
+      var result = await GeoAPI.lintTask(taskId);
+      renderBlocksAndLint(result);
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnAiReview').onclick = async function () {
+    try {
+      var result = await GeoAPI.aiReviewTask(taskId, { persist: true });
+      if (result.task) task = result.task;
+      else if (task && task.rule_result) {
+        task.rule_result = task.rule_result || {};
+        task.rule_result.ai_review = result.ai_review;
+      }
+      renderAll();
+      renderChecks({ checks: (task.rule_result && task.rule_result.checks) || [], ready: task.rule_result && task.rule_result.ready, geo_score: task.rule_result && task.rule_result.geo_score, geo_subscores: task.rule_result && task.rule_result.geo_subscores, geo_actions: task.rule_result && task.rule_result.geo_actions, ai_review: result.ai_review });
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnVariants').onclick = async function () {
+    try {
+      var ch = selectedChannels();
+      if (!ch.length) throw new Error('请至少勾选一个渠道');
+      task = await GeoAPI.createVariants(taskId, ch);
+      if (ch[0]) activeTab = ch[0];
+      renderAll();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnCopyActive').onclick = async function () {
+    try {
+      var channel = activeTab === 'master' ? 'website' : activeTab;
+      if (activeTab === 'master') {
+        var t = document.getElementById('title').value;
+        var b = document.getElementById('body').value;
+        await navigator.clipboard.writeText('# ' + t + '\n\n' + b);
+        alert('已复制母稿到剪贴板');
+        return;
+      }
+      var data = await GeoAPI.exportVariant(taskId, channel);
+      await navigator.clipboard.writeText('# ' + data.title + '\n\n' + data.body_markdown);
+      alert('已复制 ' + channel + ' 版本到剪贴板');
+      task = await GeoAPI.getTask(taskId);
+      renderAll();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  document.getElementById('btnChannels').onclick = function () {
+    location.href = GeoWB.withDemoQuery('channels.html?task_id=' + taskId);
+  };
+  load();
+})();
+</script>
 </body>
 </html>

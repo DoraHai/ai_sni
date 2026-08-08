@@ -3,198 +3,189 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-<meta http-equiv="Pragma" content="no-cache">
-<meta http-equiv="Expires" content="0">
-<title>GEO 概览 · 开发中</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    min-height: 100vh;
-    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
-    background: #f5f7fb;
-    color: #1f2937;
-  }
-  .layout { min-height: 100vh; display: grid; grid-template-columns: 238px minmax(0, 1fr); }
-  .sidebar {
-    height: 100vh;
-    position: sticky;
-    top: 0;
-    display: flex;
-    flex-direction: column;
-    background: #fff;
-    border-right: 1px solid #e5e9f1;
-  }
-  .brand {
-    min-height: 76px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 18px 18px;
-    border-bottom: 1px solid #edf0f5;
-    font-weight: 760;
-  }
-  .logo {
-    width: 36px;
-    height: 36px;
-    display: grid;
-    place-items: center;
-    border-radius: 9px;
-    background: linear-gradient(135deg, #2563eb, #7c3aed);
-    color: #fff;
-    font-weight: 850;
-  }
-  .brand small {
-    display: block;
-    margin-top: 3px;
-    color: #9aa3b2;
-    font-size: 12px;
-    font-weight: 600;
-  }
-  .nav { flex: 1; overflow: auto; padding: 14px 10px; }
-  .nav-group {
-    margin: 16px 10px 8px;
-    color: #9aa3b2;
-    font-size: 12px;
-    font-weight: 760;
-  }
-  .nav-item {
-    min-height: 36px;
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    padding: 8px 10px;
-    border-radius: 7px;
-    color: #586274;
-    font-size: 13px;
-    font-weight: 650;
-    text-decoration: none;
-  }
-  .nav-item:hover { background: #f4f7fb; color: #2563eb; }
-  .nav-item.active {
-    background: #eef4ff;
-    color: #1d4ed8;
-  }
-  .ico {
-    width: 22px;
-    flex: none;
-    color: inherit;
-    opacity: 0.88;
-    text-align: center;
-    font-size: 13px;
-  }
-  .side-foot {
-    display: grid;
-    gap: 8px;
-    padding: 14px 18px 18px;
-    border-top: 1px solid #edf0f5;
-  }
-  .side-foot a {
-    color: #7b8494;
-    font-size: 12px;
-    font-weight: 650;
-    text-decoration: none;
-  }
-  .main { min-width: 0; display: flex; flex-direction: column; }
-  .topbar {
-    min-height: 58px;
-    display: flex;
-    align-items: center;
-    padding: 0 26px;
-    border-bottom: 1px solid #e5e9f1;
-    background: #fff;
-    color: #6b7280;
-    font-size: 14px;
-    font-weight: 650;
-  }
-  .topbar b { color: #1f2937; font-weight: 760; }
-  .content {
-    flex: 1;
-    min-height: 0;
-    display: grid;
-    place-items: center;
-    padding: 24px;
-  }
-  .empty {
-    transform: translateY(-5vh);
-    text-align: center;
-    color: #9aa3b2;
-  }
-  .box { width: 188px; height: 188px; opacity: 0.42; margin-bottom: 18px; }
-  .title { font-size: 17px; font-weight: 650; line-height: 1.7; }
-  @media (max-width: 760px) {
-    .layout { grid-template-columns: 1fr; }
-    .sidebar { position: static; height: auto; }
-    .nav { max-height: 42vh; }
-    .empty { transform: none; }
-  }
-</style>
+<title>GEO 概览</title>
+<link rel="stylesheet" href="assets/style.css?rev=geo-wb-2">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=11">
 </head>
 <body>
 <div class="layout">
-  <aside class="sidebar">
-    <div class="brand">
-      <span class="logo">G</span>
-      <div>GEO 工作台<small>生成式引擎获客</small></div>
-    </div>
-    <nav class="nav">
-    <div class="nav-group">数据看板</div>
-    <a class="nav-item active" href="dashboard.html"><span class="ico">▦</span>GEO 概览</a>
-    <a class="nav-item" href="visibility.html"><span class="ico">✦</span>AI 可见度</a>
-  
-
-    <div class="nav-group">智能监测</div>
-    <a class="nav-item" href="prompts.html"><span class="ico">◌</span>提问监控</a>
-    <a class="nav-item" href="competitors.html"><span class="ico">≋</span>竞品分析</a>
-    <a class="nav-item" href="evaluation.html"><span class="ico">◉</span>评价分析</a>
-    <a class="nav-item" href="sources.html"><span class="ico">▤</span>信源分析</a>
-  
-
-    <div class="nav-group">内容与信源</div>
-    <a class="nav-item" href="articles.html"><span class="ico">Aa</span>GEO 文章</a>
-    <a class="nav-item" href="editor.html"><span class="ico">E</span>在线编辑器</a>
-    <a class="nav-item" href="media.html"><span class="ico">⌂</span>媒体 / 信源策略</a>
-    <a class="nav-item" href="channels.html"><span class="ico">⇧</span>分发平台</a>
-  
-
-    <div class="nav-group">设置</div>
-    <a class="nav-item" href="engines.html"><span class="ico">◇</span>AI 引擎管理</a>
-  
-    </nav>
-    <div class="side-foot">
-      <a href="/deal-sniper-prototype/index.html">← 返回平台门户</a>
-      <a href="/monitor/dashboard" target="_top">进入已实现 SEM</a>
-    </div>
-  </aside>
+  <aside class="sidebar"></aside>
   <main class="main">
-    <header class="topbar">GEO 工作台 &nbsp;/&nbsp; <b>GEO 概览</b></header>
-    <section class="content">
-      <div class="empty">
-        <svg class="box" viewBox="0 0 240 240" aria-hidden="true">
-          <defs>
-            <linearGradient id="g1" x1="0" x2="1" y1="0" y2="1">
-              <stop offset="0" stop-color="#ffffff"/>
-              <stop offset="1" stop-color="#d9dde7"/>
-            </linearGradient>
-            <linearGradient id="g2" x1="0" x2="1" y1="0" y2="1">
-              <stop offset="0" stop-color="#eef1f7"/>
-              <stop offset="1" stop-color="#cfd5e1"/>
-            </linearGradient>
-          </defs>
-          <ellipse cx="122" cy="195" rx="86" ry="13" fill="#e9edf4"/>
-          <path d="M74 100h92v92H74z" fill="url(#g1)"/>
-          <path d="M74 100l28-42h92l-28 42z" fill="#f8fafc"/>
-          <path d="M166 100l28-42 34 52-30 42z" fill="url(#g2)"/>
-          <path d="M74 100l-31 44h31z" fill="#d9dee8"/>
-          <path d="M166 100l31 44h-31z" fill="#cfd5e1"/>
-          <path d="M102 58l64 42h-92z" fill="#eef1f7"/>
-          <path d="M142 69l48 22 10 24-47-22z" fill="#d9dee8"/>
-          <path d="M74 100h92v92H74z" fill="none" stroke="#e2e6ee"/>
-        </svg>
-        <div class="title">「GEO 概览」开发中，接入真实功能后开放</div>
+    <div class="topbar">
+      <div>
+        <h1>GEO 概览</h1>
+        <div class="sub">内容闭环 · 可见度口径（剔点名题）· CN 阵地权重（D0/D1）</div>
       </div>
-    </section>
+    </div>
+    <div class="page">
+      <div id="authBar" class="config-bar"></div>
+      <div id="err" class="wb-error" style="display:none"></div>
+      <div class="wb-grid wb-grid-3" id="stats"></div>
+      <div class="wb-grid wb-grid-3" id="todos" style="margin-top:14px"></div>
+      <div class="wb-grid wb-grid-3" id="visibility" style="margin-top:14px"></div>
+      <div class="wb-card" style="margin-top:14px">
+        <div class="wb-toolbar">
+          <strong>可见度期次对比</strong>
+          <button class="wb-btn" id="btnPeriodDiff" type="button">计算 Δ</button>
+        </div>
+        <div class="wb-grid wb-grid-2" style="gap:10px;margin-top:8px">
+          <div>
+            <div class="wb-label">基期 before</div>
+            <input class="wb-input" id="beforeFrom" type="datetime-local">
+            <input class="wb-input" id="beforeTo" type="datetime-local" style="margin-top:6px">
+          </div>
+          <div>
+            <div class="wb-label">对比期 after</div>
+            <input class="wb-input" id="afterFrom" type="datetime-local">
+            <input class="wb-input" id="afterTo" type="datetime-local" style="margin-top:6px">
+          </div>
+        </div>
+        <div class="wb-muted" id="periodHint" style="margin-top:8px">默认：近 28 天拆成两周基期 + 两周对比期。未测两侧则为 null，不造假 0%。</div>
+        <div class="wb-grid wb-grid-3" id="periodStats" style="margin-top:10px"></div>
+      </div>
+      <div class="wb-card" style="margin-top:14px">
+        <strong>Demo 最短路径</strong>
+        <ol class="wb-muted" style="margin:10px 0 0 18px; color:var(--text)">
+          <li>在「提问监控」录入/选择机会问题并创建任务</li>
+          <li>在「信源分析/事实库」准备 ≥3 条带来源事实</li>
+          <li>在编辑器绑定事实 → 生成 → 检查 → 双渠道导出</li>
+          <li>在「分发平台」回填发布 URL</li>
+          <li>在「AI 可见度」粘贴模型回答对照；在「媒体 / 信源策略」规划权威信源</li>
+        </ol>
+      </div>
+    </div>
   </main>
 </div>
+<script src="assets/geo-sidebar-v1.js?rev=9"></script>
+<script src="assets/geo-api-v1.js?rev=15"></script>
+<script src="assets/geo-workbench-v1.js?rev=7"></script>
+<script>
+(async function () {
+  GeoWB.renderAuthBar(document.getElementById('authBar'));
+  var err = document.getElementById('err');
+
+  function toLocalInput(d) {
+    var pad = function (n) { return String(n).padStart(2, '0'); };
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+      'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+  function toIsoLocal(value) {
+    if (!value) return '';
+    return value.length === 16 ? value + ':00' : value;
+  }
+  function fmtRate(v) {
+    return v == null ? '未测' : ((Math.round(v * 1000) / 10) + '%');
+  }
+  function fmtDelta(v) {
+    if (v == null) return '未测';
+    var pct = Math.round(v * 1000) / 10;
+    return (pct > 0 ? '+' : '') + pct + 'pt';
+  }
+  (function seedPeriodDefaults() {
+    var now = new Date();
+    var afterTo = new Date(now);
+    var afterFrom = new Date(now.getTime() - 14 * 24 * 3600 * 1000);
+    var beforeTo = new Date(afterFrom.getTime() - 60 * 1000);
+    var beforeFrom = new Date(now.getTime() - 28 * 24 * 3600 * 1000);
+    document.getElementById('beforeFrom').value = toLocalInput(beforeFrom);
+    document.getElementById('beforeTo').value = toLocalInput(beforeTo);
+    document.getElementById('afterFrom').value = toLocalInput(afterFrom);
+    document.getElementById('afterTo').value = toLocalInput(afterTo);
+  })();
+
+  async function loadPeriodDiff() {
+    GeoWB.clearError(err);
+    var data = await GeoAPI.visibilityPeriodDiff({
+      before_from: toIsoLocal(document.getElementById('beforeFrom').value),
+      before_to: toIsoLocal(document.getElementById('beforeTo').value),
+      after_from: toIsoLocal(document.getElementById('afterFrom').value),
+      after_to: toIsoLocal(document.getElementById('afterTo').value),
+    });
+    var box = document.getElementById('periodStats');
+    box.innerHTML = '';
+    [
+      ['基期提及率', fmtRate(data.before && data.before.visibility_mention_rate)],
+      ['对比期提及率', fmtRate(data.after && data.after.visibility_mention_rate)],
+      ['提及率 Δ', fmtDelta(data.delta && data.delta.visibility_mention_rate)],
+      ['基期自有域引用', fmtRate(data.before && data.before.own_domain_cite_rate)],
+      ['对比期自有域引用', fmtRate(data.after && data.after.own_domain_cite_rate)],
+      ['自有域引用 Δ', fmtDelta(data.delta && data.delta.own_domain_cite_rate)],
+    ].forEach(function (row) {
+      var el = document.createElement('div');
+      el.className = 'stat';
+      el.innerHTML = '<div class="n">' + row[1] + '</div><div class="l">' + row[0] + '</div>';
+      box.appendChild(el);
+    });
+    var b = data.before || {};
+    var a = data.after || {};
+    document.getElementById('periodHint').textContent =
+      '基期样本 ' + (b.snapshots_visibility || 0) +
+      ' · 对比期样本 ' + (a.snapshots_visibility || 0) +
+      ' · 探测题不进品牌提及率';
+  }
+  document.getElementById('btnPeriodDiff').onclick = function () {
+    loadPeriodDiff().catch(function (e) { GeoWB.showError(err, e); });
+  };
+
+  try {
+    GeoWB.requireTenant();
+    var s = await GeoAPI.contentStats();
+    var box = document.getElementById('stats');
+    [
+      ['机会问题', s.prompts, null],
+      ['事实卡', s.facts, 'sources.html'],
+      ['优化文章', s.tasks, 'articles.html'],
+      ['就绪及以上', s.ready_or_beyond, 'articles.html?status=ready'],
+      ['已发布回填', s.published, 'articles.html?status=published'],
+      ['来自诊断', s.from_diagnosis_count || 0, 'articles.html?from_diagnosis=1'],
+    ].forEach(function (row) {
+      var el = row[2] ? document.createElement('a') : document.createElement('div');
+      el.className = row[2] ? 'stat stat-link' : 'stat';
+      if (row[2]) el.href = GeoWB.withDemoQuery(row[2]);
+      el.innerHTML = '<div class="n">' + row[1] + '</div><div class="l">' + row[0] + '</div>';
+      box.appendChild(el);
+    });
+    var todos = document.getElementById('todos');
+    [
+      ['待修规则', s.todo_blocked || 0, 'articles.html?status=needs_fix'],
+      ['待导出', s.todo_ready || 0, 'articles.html?status=ready'],
+      ['待回填 URL', s.todo_publish || 0, 'articles.html?status=exported'],
+    ].forEach(function (row) {
+      var a = document.createElement('a');
+      a.className = 'stat stat-link';
+      a.href = GeoWB.withDemoQuery(row[2]);
+      a.innerHTML = '<div class="n">' + row[1] + '</div><div class="l">' + row[0] + '</div>';
+      todos.appendChild(a);
+    });
+    var vis = document.getElementById('visibility');
+    var rate = s.visibility_mention_rate;
+    var rateLabel = rate == null ? '未测' : (Math.round(rate * 1000) / 10) + '%';
+    var probeRate = s.probe_recognition_rate;
+    var probeLabel = probeRate == null ? '未测' : (Math.round(probeRate * 1000) / 10) + '%';
+    [
+      ['回答快照', s.snapshots || 0, 'visibility.html'],
+      ['品牌提及率', rateLabel, 'visibility.html'],
+      ['可见性样本', (s.snapshots_visibility || 0) + '/' + (s.snapshots_visibility_mention || 0), 'prompts.html?is_brand_probe=0'],
+      ['品牌点名认知率', probeLabel, 'prompts.html?is_brand_probe=1'],
+      ['点名探测题', s.prompts_probe || 0, 'prompts.html?is_brand_probe=1'],
+      ['引擎覆盖', s.visibility_engines_covered || 0, 'engines.html'],
+      ['含竞品标注', s.snapshots_with_competitors || 0, 'competitors.html'],
+      ['含引用 URL', s.snapshots_with_citations || 0, 'citations.html'],
+      ['AI 引用·独立域名', s.distinct_cited_domains || 0, 'citations.html'],
+      ['未提及品牌', s.prompts_brand_missing || 0, 'prompts.html?tag=brand_missing'],
+      ['待复核可见度', s.prompts_need_recheck || 0, 'visibility.html?queue=recheck'],
+      ['信源布局进行中', s.media_open || 0, 'media.html'],
+      ['信源已铺设', s.media_published || 0, 'media.html?status=published'],
+    ].forEach(function (row) {
+      var a = document.createElement('a');
+      a.className = 'stat stat-link';
+      a.href = GeoWB.withDemoQuery(row[2]);
+      a.innerHTML = '<div class="n">' + row[1] + '</div><div class="l">' + row[0] + '</div>';
+      vis.appendChild(a);
+    });
+    await loadPeriodDiff();
+  } catch (e) { GeoWB.showError(err, e); }
+})();
+</script>
 </body>
 </html>

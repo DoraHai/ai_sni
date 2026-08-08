@@ -1,0 +1,42 @@
+from datetime import datetime
+
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.database import Base
+
+
+class GeoPrompt(Base):
+    """GEO 优化意图词（目标提问 / 原机会词）。可挂到优化单元。"""
+
+    __tablename__ = "geo_prompts"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    # 可选：挂到优化单元（关键词），实现 业务→单元→意图词 三级
+    unit_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("geo_optimization_units.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    language: Mapped[str] = mapped_column(String(16), nullable=False, default="zh-CN")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tags: Mapped[list | None] = mapped_column(JSONB)
+    demand_note: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    question_group: Mapped[str | None] = mapped_column(String(32))
+    market: Mapped[str] = mapped_column(String(16), nullable=False, default="cn")
+    is_brand_probe: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_by: Mapped[int | None] = mapped_column(BigInteger)
+    owner_user_id: Mapped[int | None] = mapped_column(BigInteger)
+    last_task_id: Mapped[int | None] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )

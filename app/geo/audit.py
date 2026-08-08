@@ -288,6 +288,18 @@ async def audit_url(url: str) -> dict[str, Any]:
     noindex = bool(robots_meta and "noindex" in str(robots_meta.get("content", "")).lower())
     language = str(soup.html.get("lang", "")).strip() if soup.html else ""
 
+    from app.geo.content.extractable_blocks import block_findings, blocks_payload
+
+    table_count = len(soup.find_all("table"))
+    li_count = len(soup.find_all("li"))
+    block_info = blocks_payload(
+        compact_text,
+        li_count=li_count,
+        table_count=table_count,
+        schema_types=schema_types,
+    )
+    block_checks = block_findings(block_info["blocks"])
+
     checks = [
         _finding("https", "HTTPS 安全访问", "技术基础", "high", document.final_url.startswith("https://"), document.final_url, "启用 HTTPS 并统一跳转到安全版本。", 8),
         _finding("title", "页面标题清晰完整", "页面语义", "high", 12 <= len(title) <= 70, f"当前标题：{title or '缺失'}", "补充包含品牌、主题和用户意图的唯一标题，建议 12–70 字。", 8, True),
@@ -306,6 +318,21 @@ async def audit_url(url: str) -> dict[str, Any]:
         _finding("robots", "robots.txt 可访问", "技术基础", "medium", robots_ok and bool(robots_text.strip()), robots_url, "发布 robots.txt，明确允许公开页面被合规抓取。", 3),
         _finding("llms", "提供 llms.txt 导览", "AI 可访问性", "low", llms_ok and bool(llms_text.strip()), llms_url, "生成 llms.txt，向 AI 工具提供站点定位和关键页面导览。", 3, True),
     ]
+    # D2: five extractable blocks (definition / numbers / comparison / howto / FAQ)
+    for item in block_checks:
+        checks.append(
+            _finding(
+                item["code"],
+                item["title"],
+                item["category"],
+                item["severity"],
+                item["passed"],
+                item["evidence"],
+                item["recommendation"],
+                item["deduction"],
+                item.get("automatable", True),
+            )
+        )
     score = max(0, 100 - sum(item["deduction"] for item in checks))
     return {
         "rule_version": RULE_VERSION,
@@ -315,6 +342,7 @@ async def audit_url(url: str) -> dict[str, Any]:
         "title": title,
         "description": description,
         "checks": checks,
+        "blocks": block_info,
         "snapshot": {
             "canonical": canonical,
             "language": language,
@@ -327,6 +355,8 @@ async def audit_url(url: str) -> dict[str, Any]:
             "question_headings": question_headings[:12],
             "robots_url": robots_url,
             "llms_url": llms_url,
+            "blocks": block_info["blocks"],
+            "block_issue_codes": block_info["issue_codes"],
             "passed": sum(1 for item in checks if item["passed"]),
             "total": len(checks),
         },

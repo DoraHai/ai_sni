@@ -11,6 +11,7 @@ import {
   generateGeoAdvice,
   runDeepSeekSample,
   runCompetitorAudit,
+  createGeoTaskFromDiagnosis,
   runGeoAudit,
 } from '../../api/geo'
 import { fetchTenants } from '../../api/auth'
@@ -35,6 +36,7 @@ const loading = ref(false)
 const tenantLoading = ref(false)
 const adviceLoading = ref(false)
 const samplingLoading = ref(false)
+const bridgeLoading = ref(false)
 const error = ref('')
 const issueFilter = ref('all')
 const loadingStage = ref(0)
@@ -846,6 +848,49 @@ async function navigateReport(key) {
   activeReport.value = key
   window.history.replaceState(null, '', `${window.location.pathname}#section-${key}`)
   target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+async function bridgeToContent(adviceCode) {
+  if (!audit.value || !tenantId.value) return
+  bridgeLoading.value = true
+  try {
+    const result = await createGeoTaskFromDiagnosis({
+      tenantId: tenantId.value,
+      auditId: audit.value.id,
+      adviceCode,
+    })
+    const taskId = result?.id
+    if (!taskId) throw new Error('创建成功但未返回任务 ID')
+
+    const geoOrigin = (import.meta.env.VITE_GEO_WORKBENCH_ORIGIN || 'http://127.0.0.1:5176').replace(/\/$/, '')
+    const url = new URL(`${geoOrigin}/geo/editor.html`)
+    // Merge server deep-link params if present, then force critical query fields
+    if (result.editor_path && /^https?:\/\//i.test(result.editor_path)) {
+      try {
+        const fromApi = new URL(result.editor_path)
+        fromApi.searchParams.forEach((v, k) => url.searchParams.set(k, v))
+      } catch {
+        /* ignore bad editor_path */
+      }
+    }
+    url.searchParams.set('task_id', String(taskId))
+    url.searchParams.set('tenant_id', String(tenantId.value))
+    url.searchParams.set('api_origin', import.meta.env.VITE_GEO_API_ORIGIN || 'http://127.0.0.1:8011')
+    if (import.meta.env.VITE_API_KEY) {
+      url.searchParams.set('api_key', import.meta.env.VITE_API_KEY)
+    }
+
+    const opened = window.open(url.toString(), '_blank')
+    if (!opened) {
+      ElMessage.warning('弹窗被拦截，请允许后重试，或手动打开：' + url.toString())
+    } else {
+      ElMessage.success(`已创建任务 #${taskId}，正在打开编辑器`)
+    }
+  } catch (e) {
+    ElMessage.error(e.message || '创建优化文章失败')
+  } finally {
+    bridgeLoading.value = false
+  }
 }
 
 function openAsset(page) {
@@ -2023,6 +2068,9 @@ onMounted(async () => {
                 <h3>{{ item.title }}</h3>
                 <p>{{ item.description }}</p>
                 <small>关联 {{ item.count }} 项当前问题</small>
+                <button class="bridge-btn" :disabled="bridgeLoading" @click="bridgeToContent(item.codes[0])">
+                  创建 GEO 优化文章 →
+                </button>
               </article>
             </div>
             <div v-else class="priority-clean-state">
@@ -2429,6 +2477,11 @@ button { color: inherit; }
 .action-grid p { margin:0; color:#657579; font-size:10px; line-height:1.65; }
 .action-grid footer { margin-top:18px; padding-top:12px; border-top:1px solid var(--line); color:#7c898c; font-size:9px; line-height:1.5; }
 .action-grid footer b { margin-right:6px; color:#40565a; }
+.bridge-btn {
+  margin-top:12px; height:32px; padding:0 12px; border:1px solid var(--teal);
+  border-radius:8px; background:#fff; color:var(--teal-dark); font-size:10px; font-weight:700; cursor:pointer;
+}
+.bridge-btn:disabled { opacity:.55; cursor:not-allowed; }
 .action-empty { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:25px; }
 .action-empty strong { font-size:13px; }
 .action-empty p { margin:6px 0 0; color:var(--muted); font-size:10px; }

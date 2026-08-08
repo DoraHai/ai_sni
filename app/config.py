@@ -45,8 +45,7 @@ class Settings(BaseSettings):
     jwt_secret: str = ""
     jwt_expire_hours: int = 12
 
-    # DeepSeek（AI 调价建议判断层）。不配 key 则建议引擎只产规则版、不调用 AI。
-    # 阿里云大陆可直连 api.deepseek.com；模型 deepseek-chat 兼容 OpenAI 接口。
+    # DeepSeek 官方（SEM 建议引擎等）。不配 key 则建议引擎只产规则版。
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
@@ -73,6 +72,24 @@ class Settings(BaseSettings):
     lighthouse_cli_path: str = "/opt/lighthouse-runner/node_modules/.bin/lighthouse"
     lighthouse_chrome_path: str = "/usr/bin/chromium-browser"
     lighthouse_timeout_seconds: float = 90.0
+
+    # 阿里云百炼 DashScope（GEO 默认推荐；OpenAI 兼容模式）
+    dashscope_api_key: str = ""
+    dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    dashscope_model: str = "deepseek-v3"
+
+    # GEO 母稿质量门禁（P2/P3）：默认关闭，仅 warn 不挡发布
+    geo_score_gate: bool = False
+    geo_score_threshold: int = 60
+    geo_ai_review_gate: bool = False
+    # 编造风险 lint：高危条数 >0 时拦截发布/Webhook（产品化增强）
+    geo_lint_gate: bool = True
+
+    # GEO 巡检配额（产品化必做：防一键烧穿 LLM）
+    # 单租户自然日（Asia/Shanghai）最多启动次数（手动+定时合计）
+    geo_patrol_max_runs_per_day: int = 24
+    # 单次巡检最大探测格数 ≈ 机会词 × 引擎（超出截断并记 summary）
+    geo_patrol_max_cells_per_run: int = 200
 
     log_level: str = "INFO"
 

@@ -125,8 +125,38 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     if p.startswith("/api/v1/assistant"):
         # 对话/记忆都算"使用助手"(读性质，非编辑配置)，view 即可，POST 也不要求 edit
         return {"assistant"}, False
-    if p.startswith("/api/v1/geo"):
+    if p.startswith("/api/v1/geo/audits"):
         # 运行诊断、生成建议和资产都属于使用 GEO 工具，view 权限即可。
+        return {"geo.diagnosis"}, False
+    if (
+        p.startswith("/api/v1/geo/prompts")
+        or p.startswith("/api/v1/geo/facts")
+        or p.startswith("/api/v1/geo/content-tasks")
+        or p.startswith("/api/v1/geo/content-health")
+        or p.startswith("/api/v1/geo/content-brief-catalog")
+        or p.startswith("/api/v1/geo/content-stats")
+        or p.startswith("/api/v1/geo/answer-snapshots")
+        or p.startswith("/api/v1/geo/visibility-patrol")
+        or p.startswith("/api/v1/geo/tracking-engines")
+        or p.startswith("/api/v1/geo/media-placements")
+        or p.startswith("/api/v1/geo/channel-profiles")
+        or p.startswith("/api/v1/geo/publishing-channel-options")
+        or p.startswith("/api/v1/geo/publishing-channels")
+        or p.startswith("/api/v1/geo/channel-accounts")
+        or p.startswith("/api/v1/geo/citation-insights")
+        or p.startswith("/api/v1/geo/competitor-insights")
+        or p.startswith("/api/v1/geo/evaluation-insights")
+        or p.startswith("/api/v1/geo/visibility-period-diff")
+        or p.startswith("/api/v1/geo/deliverables")
+        or p.startswith("/api/v1/geo/optimization-businesses")
+        or p.startswith("/api/v1/geo/optimization-units")
+        or p.startswith("/api/v1/geo/daily-metrics")
+        or p.startswith("/api/v1/geo/oauth/social")
+        or p.startswith("/api/v1/geo/channel-accounts")
+        or p.startswith("/api/v1/geo/ops-alerts")
+    ):
+        return {"geo.content"}, edit
+    if p.startswith("/api/v1/geo"):
         return {"geo.diagnosis"}, False
     if p.startswith("/api/v1/onboarding-builder"):
         # 智能搭建默认演练写入，仍归首次接入；真实写入由后端 dry-run 开关兜底。

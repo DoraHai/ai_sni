@@ -1,0 +1,757 @@
+<script setup>
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  createGeoAnswerSnapshot,
+  extractGeoAnswerSnapshotUrls,
+  listGeoAnswerSnapshots,
+  listGeoPrompts,
+  listGeoTrackingEngines,
+  deleteGeoAnswerSnapshot,
+  patchGeoAnswerSnapshot,
+  probeGeoAnswerSnapshot,
+  probeGeoAnswerSnapshotBatch,
+  suggestGeoAnswerSnapshotFields,
+} from '../../api/geoContent'
+import { session } from '../../store/session'
+
+const route = useRoute()
+const router = useRouter()
+
+const tenantId = computed(() =>
+  session.tenantId || (import.meta.env.DEV && import.meta.env.VITE_API_KEY ? 1 : null),
+)
+
+const loading = ref(false)
+const probing = ref(false)
+const batchProbing = ref(false)
+const saving = ref(false)
+const error = ref('')
+const engines = ref([])
+const prompts = ref([])
+const snapshots = ref([])
+const batchDrafts = ref([])
+
+const filterPromptId = ref(route.query.prompt_id ? Number(route.query.prompt_id) : null)
+const filterEngine = ref('')
+const queueMode = computed(() => route.query.queue === 'recheck')
+
+const form = ref({
+  prompt_id: null,
+  engine: 'deepseek',
+  raw_text: '',
+  captured_at: '',
+  mentions_brand: false,
+  brand_position: 'unknown',
+  sentiment: 'unknown',
+  competitors: '',
+  cited_urls: '',
+  note: '',
+})
+
+const enabledEngines = computed(() => {
+  const enabled = engines.value.filter((e) => e.enabled)
+  return enabled.length ? enabled : engines.value
+})
+
+const posLabel = { first: '首位', mentioned: '提及', absent: '未出现', unknown: '—' }
+const sentLabel = { positive: '正', neutral: '中', negative: '负', unknown: '—' }
+
+function snippet(text, max = 100) {
+  const s = String(text || '').replace(/\s+/g, ' ').trim()
+  return s.length > max ? `${s.slice(0, max)}…` : s
+}
+
+function fmtCaptured(iso) {
+  if (!iso) return '—'
+  const s = String(iso)
+  // 2026-08-06T… → 08-06 12:30
+  const m = s.match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/)
+  if (m) return `${m[2]}-${m[3]} ${m[4]}:${m[5]}`
+  return s.length > 16 ? s.slice(0, 16) : s
+}
+
+function applySuggest(draft) {
+  if (!draft) return
+  if (typeof draft.suggested_mentions_brand === 'boolean') {
+    form.value.mentions_brand = draft.suggested_mentions_brand
+  }
+  if (draft.suggested_brand_position) form.value.brand_position = draft.suggested_brand_position
+  if (draft.suggested_sentiment) form.value.sentiment = draft.suggested_sentiment
+  const comps = draft.suggested_competitors || draft.competitors
+  if (comps) form.value.competitors = (comps || []).join(', ')
+  if (draft.suggested_cited_urls) form.value.cited_urls = (draft.suggested_cited_urls || []).join('\n')
+}
+
+function loadDraftIntoForm(draft) {
+  if (!draft?.ok && draft?.error) {
+    ElMessage.error(`${draft.engine}: ${draft.error}`)
+    return
+  }
+  form.value.raw_text = draft.raw_text || ''
+  if (draft.engine) form.value.engine = draft.engine
+  form.value.note = draft.simulated
+    ? `${draft.engine} 模拟探测草稿（待确认）`
+    : `${draft.engine || 'deepseek'} 探测草稿（待确认）`
+  applySuggest(draft)
+}
+
+async function loadEngines() {
+  const data = await listGeoTrackingEngines(tenantId.value)
+  engines.value = data.items || []
+  if (!enabledEngines.value.some((e) => e.engine_key === form.value.engine)) {
+    form.value.engine = enabledEngines.value[0]?.engine_key || 'deepseek'
+  }
+}
+
+async function loadPrompts() {
+  const data = queueMode.value
+    ? await listGeoPrompts(tenantId.value, { need_recheck: true })
+    : await listGeoPrompts(tenantId.value, { status: 'active' })
+  prompts.value = data.items || []
+  if (!queueMode.value && !prompts.value.length) {
+    const all = await listGeoPrompts(tenantId.value)
+    prompts.value = all.items || []
+  }
+  if (filterPromptId.value && prompts.value.some((p) => p.id === filterPromptId.value)) {
+    form.value.prompt_id = filterPromptId.value
+  } else if (!form.value.prompt_id && prompts.value.length) {
+    form.value.prompt_id = prompts.value[0].id
+  }
+}
+
+async function loadSnapshots() {
+  const params = {}
+  if (filterPromptId.value) params.prompt_id = filterPromptId.value
+  if (filterEngine.value) params.engine = filterEngine.value
+  const data = await listGeoAnswerSnapshots(tenantId.value, params)
+  snapshots.value = data.items || []
+}
+
+async function reloadAll() {
+  if (!tenantId.value) {
+    error.value = '请先选择客户或配置本地 API Key'
+    return
+  }
+  loading.value = true
+  error.value = ''
+  try {
+    await loadEngines()
+    await loadPrompts()
+    await loadSnapshots()
+  } catch (e) {
+    error.value = e.message || '加载失败'
+  } finally {
+    loading.value = false
+  }
+}
+
+function setPromptFilter(id) {
+  filterPromptId.value = id
+  form.value.prompt_id = id
+  const q = { ...route.query, prompt_id: String(id) }
+  router.replace({ query: q })
+  loadSnapshots().catch((e) => { error.value = e.message })
+}
+
+function clearPromptFilter() {
+  filterPromptId.value = null
+  const q = { ...route.query }
+  delete q.prompt_id
+  router.replace({ query: q })
+  loadSnapshots().catch((e) => { error.value = e.message })
+}
+
+async function onProbe() {
+  if (!form.value.prompt_id) {
+    ElMessage.warning('请选择优化意图词')
+    return
+  }
+  probing.value = true
+  error.value = ''
+  try {
+    const draft = await probeGeoAnswerSnapshot({
+      tenant_id: tenantId.value,
+      prompt_id: form.value.prompt_id,
+      engine: form.value.engine,
+    })
+    loadDraftIntoForm({ ...draft, ok: true })
+    ElMessage.success('已填入探测草稿，请确认后保存')
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    probing.value = false
+  }
+}
+
+async function onProbeBatch() {
+  if (!form.value.prompt_id) {
+    ElMessage.warning('请选择优化意图词')
+    return
+  }
+  batchProbing.value = true
+  error.value = ''
+  batchDrafts.value = []
+  try {
+    const result = await probeGeoAnswerSnapshotBatch({
+      tenant_id: tenantId.value,
+      prompt_id: form.value.prompt_id,
+    })
+    batchDrafts.value = result.items || []
+    const firstOk = batchDrafts.value.find((i) => i.ok)
+    if (firstOk) loadDraftIntoForm(firstOk)
+    ElMessage.success(
+      `多引擎探测完成：成功 ${result.ok_count || 0}，失败 ${result.error_count || 0}`,
+    )
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    batchProbing.value = false
+  }
+}
+
+async function onSuggest() {
+  if (!form.value.raw_text.trim()) {
+    ElMessage.warning('请先粘贴或探测回答正文')
+    return
+  }
+  try {
+    const draft = await suggestGeoAnswerSnapshotFields({
+      tenant_id: tenantId.value,
+      raw_text: form.value.raw_text,
+      prompt_id: form.value.prompt_id || null,
+      use_llm: true,
+    })
+    applySuggest(draft)
+    ElMessage.success('已填入标注建议')
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
+async function onExtractUrls() {
+  if (!form.value.raw_text.trim()) {
+    ElMessage.warning('请先粘贴或探测回答正文')
+    return
+  }
+  try {
+    const data = await extractGeoAnswerSnapshotUrls({
+      tenant_id: tenantId.value,
+      raw_text: form.value.raw_text,
+    })
+    form.value.cited_urls = (data.suggested_cited_urls || []).join('\n')
+    ElMessage.success(
+      data.suggested_cited_urls?.length
+        ? `已抽取 ${data.suggested_cited_urls.length} 条 URL`
+        : '正文中未识别到链接',
+    )
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
+async function onSave() {
+  if (!form.value.prompt_id) {
+    ElMessage.warning('请选择优化意图词')
+    return
+  }
+  saving.value = true
+  error.value = ''
+  try {
+    await createGeoAnswerSnapshot({
+      tenant_id: tenantId.value,
+      prompt_id: form.value.prompt_id,
+      engine: form.value.engine,
+      raw_text: form.value.raw_text,
+      captured_at: form.value.captured_at || null,
+      mentions_brand: form.value.mentions_brand,
+      brand_position: form.value.brand_position,
+      sentiment: form.value.sentiment,
+      competitors: form.value.competitors.split(/[,，]/).map((s) => s.trim()).filter(Boolean),
+      cited_urls: form.value.cited_urls.split(/\n+/).map((s) => s.trim()).filter(Boolean),
+      note: form.value.note || null,
+    })
+    form.value.raw_text = ''
+    form.value.cited_urls = ''
+    form.value.competitors = ''
+    form.value.note = ''
+    form.value.mentions_brand = false
+    form.value.brand_position = 'unknown'
+    form.value.sentiment = 'unknown'
+    ElMessage.success('快照已保存')
+    await loadSnapshots()
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    saving.value = false
+  }
+}
+
+async function toggleMention(row) {
+  try {
+    await patchGeoAnswerSnapshot(tenantId.value, row.id, {
+      mentions_brand: !row.mentions_brand,
+    })
+    await loadSnapshots()
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
+async function patchSnapField(row, patch) {
+  try {
+    await patchGeoAnswerSnapshot(tenantId.value, row.id, patch)
+    Object.assign(row, patch)
+    ElMessage.success('已更新')
+  } catch (e) {
+    error.value = e.message
+    ElMessage.error(e.message || '更新失败')
+    await loadSnapshots()
+  }
+}
+
+function compsText(row) {
+  return Array.isArray(row.competitors) ? row.competitors.join(', ') : ''
+}
+
+async function saveCompetitors(row, text) {
+  const competitors = String(text || '')
+    .split(/[,，]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  await patchSnapField(row, { competitors })
+}
+
+async function removeSnapshot(row) {
+  try {
+    await ElMessageBox.confirm(`删除快照 #${row.id}？不可恢复。`, '删除快照', {
+      type: 'warning',
+      confirmButtonText: '删除',
+    })
+    await deleteGeoAnswerSnapshot(tenantId.value, row.id)
+    ElMessage.success('已删除')
+    await loadSnapshots()
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close') {
+      error.value = e.message || '删除失败'
+      ElMessage.error(error.value)
+    }
+  }
+}
+
+async function saveBatchItem(draft) {
+  if (!draft.ok || !form.value.prompt_id) return
+  saving.value = true
+  try {
+    await createGeoAnswerSnapshot({
+      tenant_id: tenantId.value,
+      prompt_id: form.value.prompt_id,
+      engine: draft.engine,
+      raw_text: draft.raw_text,
+      mentions_brand: !!draft.suggested_mentions_brand,
+      brand_position: draft.suggested_brand_position || 'unknown',
+      sentiment: draft.suggested_sentiment || 'unknown',
+      competitors: draft.suggested_competitors || [],
+      cited_urls: draft.suggested_cited_urls || [],
+      note: draft.simulated
+        ? `${draft.engine} 模拟探测（批量确认）`
+        : `${draft.engine} 探测（批量确认）`,
+    })
+    ElMessage.success(`已保存 ${draft.engine}`)
+    draft._saved = true
+    await loadSnapshots()
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    saving.value = false
+  }
+}
+
+watch(filterEngine, () => loadSnapshots())
+watch(tenantId, reloadAll)
+onMounted(reloadAll)
+</script>
+
+<template>
+  <div v-loading="loading" class="geo-vis">
+    <div class="page-header">
+      <div>
+        <div class="page-title">AI 可见度</div>
+        <div class="page-desc">
+          粘贴或探测回答快照；多引擎探测共用租户 LLM，按引擎人设生成草稿（不写库）。
+          批量真采样与自动落库请用
+          <router-link to="/geo/visibility/patrol">全自动巡检</router-link>。
+        </div>
+        <div class="sub-tabs">
+          <router-link class="sub-tab is-active" to="/geo/visibility">登记快照</router-link>
+          <router-link class="sub-tab" to="/geo/visibility/patrol">全自动巡检</router-link>
+        </div>
+      </div>
+      <div class="header-actions">
+        <el-button type="primary" plain @click="router.push('/geo/visibility/patrol')">
+          全自动巡检
+        </el-button>
+        <el-button @click="reloadAll">刷新</el-button>
+        <router-link class="el-button" to="/geo/citations">AI 引用次数</router-link>
+        <router-link class="el-button" to="/geo/overview">GEO 概览</router-link>
+      </div>
+    </div>
+
+    <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" />
+    <el-alert
+      v-if="queueMode"
+      type="info"
+      :closable="false"
+      class="mb"
+      :title="`待复核队列 · ${prompts.length} 条（已发布但无快照，或快照早于最近发布）`"
+    />
+
+    <div class="layout">
+      <section class="panel">
+        <div class="panel-title">登记回答快照</div>
+        <el-form label-position="top" @submit.prevent>
+          <el-form-item label="优化意图词">
+            <el-select v-model="form.prompt_id" filterable style="width: 100%">
+              <el-option
+                v-for="p in prompts"
+                :key="p.id"
+                :label="`#${p.id} · ${p.question}`"
+                :value="p.id"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="引擎">
+            <el-select v-model="form.engine" style="width: 100%">
+              <el-option
+                v-for="e in enabledEngines"
+                :key="e.engine_key"
+                :label="e.display_name || e.engine_key"
+                :value="e.engine_key"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="回答原文">
+            <el-input v-model="form.raw_text" type="textarea" :rows="7" placeholder="粘贴模型回答…" />
+          </el-form-item>
+          <el-form-item label="观测时间（可选 ISO）">
+            <el-input v-model="form.captured_at" placeholder="留空则用当前时间" />
+          </el-form-item>
+          <el-form-item>
+            <el-checkbox v-model="form.mentions_brand">提及我方品牌</el-checkbox>
+          </el-form-item>
+          <div class="row2">
+            <el-form-item label="我方位置">
+              <el-select v-model="form.brand_position" style="width: 100%">
+                <el-option label="未知" value="unknown" />
+                <el-option label="首位推荐" value="first" />
+                <el-option label="有提及" value="mentioned" />
+                <el-option label="未出现" value="absent" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="情感倾向">
+              <el-select v-model="form.sentiment" style="width: 100%">
+                <el-option label="未知" value="unknown" />
+                <el-option label="正面" value="positive" />
+                <el-option label="中性" value="neutral" />
+                <el-option label="负面" value="negative" />
+              </el-select>
+            </el-form-item>
+          </div>
+          <el-form-item label="竞品名（逗号分隔）">
+            <el-input v-model="form.competitors" placeholder="竞品A, 竞品B" />
+          </el-form-item>
+          <el-form-item label="引用 URL（每行一个）">
+            <el-input v-model="form.cited_urls" type="textarea" :rows="3" />
+          </el-form-item>
+          <el-form-item label="备注">
+            <el-input v-model="form.note" />
+          </el-form-item>
+          <div class="actions">
+            <el-button :loading="probing" @click="onProbe">用 AI 探测</el-button>
+            <el-button :loading="batchProbing" type="warning" plain @click="onProbeBatch">
+              多引擎探测
+            </el-button>
+            <el-button @click="onSuggest">AI 标注建议</el-button>
+            <el-button @click="onExtractUrls">抽取 URL</el-button>
+            <el-button type="primary" :loading="saving" @click="onSave">保存快照</el-button>
+          </div>
+          <p class="hint">
+            探测 / 多引擎探测只填草稿；多引擎共用租户 LLM，按引擎人设模拟，非真实各厂 API。
+          </p>
+        </el-form>
+
+        <div v-if="batchDrafts.length" class="batch">
+          <div class="panel-title">多引擎草稿</div>
+          <div v-for="d in batchDrafts" :key="d.engine" class="batch-item">
+            <div class="batch-head">
+              <strong>{{ d.engine }}</strong>
+              <span v-if="d.ok && d.simulated" class="tag">模拟</span>
+              <span v-if="!d.ok" class="tag bad">失败</span>
+              <span v-if="d._saved" class="tag ok">已保存</span>
+            </div>
+            <p v-if="d.error" class="err-line">{{ d.error }}</p>
+            <p v-else class="snip">{{ snippet(d.raw_text) }}</p>
+            <div v-if="d.ok" class="actions">
+              <el-button size="small" @click="loadDraftIntoForm(d)">填入表单</el-button>
+              <el-button
+                size="small"
+                type="primary"
+                :disabled="d._saved"
+                :loading="saving"
+                @click="saveBatchItem(d)"
+              >
+                确认保存
+              </el-button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel panel-list">
+        <div class="list-toolbar">
+          <div class="panel-title" style="margin: 0">快照列表</div>
+          <el-select v-model="filterEngine" clearable placeholder="全部引擎" style="width: 140px">
+            <el-option
+              v-for="e in engines"
+              :key="e.engine_key"
+              :label="e.display_name || e.engine_key"
+              :value="e.engine_key"
+            />
+          </el-select>
+          <el-button v-if="filterPromptId" @click="clearPromptFilter">清除问题过滤</el-button>
+        </div>
+        <p class="hint">
+          {{ filterPromptId ? `过滤机会 #${filterPromptId}` : '显示全部快照' }}
+          <template v-if="filterEngine"> · 引擎={{ filterEngine }}</template>
+          · 共 {{ snapshots.length }} 条
+        </p>
+        <div class="table-wrap">
+          <el-table
+            :data="snapshots"
+            size="small"
+            empty-text="暂无快照"
+            stripe
+            class="snap-table"
+            style="width: 100%"
+          >
+            <el-table-column label="问题 / 摘要" min-width="220" show-overflow-tooltip>
+              <template #default="{ row }">
+                <div class="q-title">{{ row.prompt_question || `#${row.prompt_id}` }}</div>
+                <div class="snip">{{ snippet(row.raw_text, 90) }}</div>
+              </template>
+            </el-table-column>
+            <el-table-column prop="engine" label="引擎" width="96" show-overflow-tooltip />
+            <el-table-column label="提及" width="92" align="center">
+              <template #default="{ row }">
+                <el-button size="small" text type="primary" @click="toggleMention(row)">
+                  {{ row.mentions_brand ? '是' : '否' }}·切换
+                </el-button>
+              </template>
+            </el-table-column>
+            <el-table-column label="位置" width="120" align="center">
+              <template #default="{ row }">
+                <el-select
+                  size="small"
+                  :model-value="row.brand_position || 'unknown'"
+                  style="width: 108px"
+                  @change="(v) => patchSnapField(row, { brand_position: v })"
+                >
+                  <el-option label="未知" value="unknown" />
+                  <el-option label="首位" value="first" />
+                  <el-option label="提及" value="mentioned" />
+                  <el-option label="未出现" value="absent" />
+                </el-select>
+              </template>
+            </el-table-column>
+            <el-table-column label="情感" width="110" align="center">
+              <template #default="{ row }">
+                <el-select
+                  size="small"
+                  :model-value="row.sentiment || 'unknown'"
+                  style="width: 96px"
+                  @change="(v) => patchSnapField(row, { sentiment: v })"
+                >
+                  <el-option label="未知" value="unknown" />
+                  <el-option label="正" value="positive" />
+                  <el-option label="中" value="neutral" />
+                  <el-option label="负" value="negative" />
+                </el-select>
+              </template>
+            </el-table-column>
+            <el-table-column label="竞品" min-width="140">
+              <template #default="{ row }">
+                <el-input
+                  size="small"
+                  :model-value="compsText(row)"
+                  placeholder="逗号分隔"
+                  @change="(v) => saveCompetitors(row, v)"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column label="观测" width="108" show-overflow-tooltip>
+              <template #default="{ row }">{{ fmtCaptured(row.captured_at) }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="72" fixed="right">
+              <template #default="{ row }">
+                <el-button size="small" text type="danger" @click="removeSnapshot(row)">
+                  删除
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+
+        <div v-if="queueMode && prompts.length" class="queue">
+          <div class="panel-title">队列快捷</div>
+          <button
+            v-for="p in prompts"
+            :key="p.id"
+            type="button"
+            class="queue-item"
+            @click="setPromptFilter(p.id)"
+          >
+            #{{ p.id }} · {{ p.question }}
+          </button>
+        </div>
+      </section>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.geo-vis { padding: 4px 2px 24px; }
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.page-title { font-size: 20px; font-weight: 650; color: #1f2937; }
+.page-desc { margin-top: 4px; font-size: 13px; color: #6b7280; max-width: 640px; line-height: 1.5; }
+.page-desc a { color: #7c3aed; text-decoration: none; }
+.page-desc a:hover { text-decoration: underline; }
+.sub-tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.sub-tab {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b7280;
+  text-decoration: none;
+  border: 1px solid transparent;
+  background: #f3f4f6;
+}
+.sub-tab:hover { color: #5b21b6; background: #f5f0ff; }
+.sub-tab.is-active {
+  color: #5b21b6;
+  background: #f5f0ff;
+  border-color: #ddd6fe;
+}
+.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.mb { margin-bottom: 14px; }
+.layout {
+  display: grid;
+  /* 左表单收窄，右列表吃满剩余宽度，避免半宽挤扁表格首字被裁切 */
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+.panel {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 16px 18px;
+  min-width: 0; /* grid 子项允许收缩，配合内部横向滚动 */
+  overflow: hidden;
+}
+.panel-list {
+  overflow: visible;
+}
+.panel-title { font-size: 14px; font-weight: 600; color: #374151; margin-bottom: 12px; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.hint { margin: 0 0 8px; font-size: 12px; color: #9ca3af; line-height: 1.5; }
+.list-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.table-wrap {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+}
+.snap-table {
+  min-width: 720px;
+}
+.snap-table :deep(.el-table__cell) {
+  vertical-align: top;
+}
+.q-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+  line-height: 1.4;
+  word-break: break-word;
+  white-space: normal;
+}
+.snip {
+  font-size: 12px;
+  color: #9ca3af;
+  margin: 4px 0 0;
+  line-height: 1.4;
+  word-break: break-word;
+  white-space: normal;
+}
+.batch { margin-top: 18px; border-top: 1px solid #e5e7eb; padding-top: 14px; }
+.batch-item {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: #f9fafb;
+}
+.batch-head { display: flex; gap: 8px; align-items: center; }
+.tag {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #e0e7ff;
+  color: #3730a3;
+}
+.tag.bad { background: #fef2f2; color: #b91c1c; }
+.tag.ok { background: #ecfdf5; color: #047857; }
+.err-line { color: #b91c1c; font-size: 12px; margin: 6px 0; }
+.queue { margin-top: 16px; }
+.queue-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.queue-item:hover { border-color: #93c5fd; background: #eff6ff; }
+@media (max-width: 1100px) {
+  .layout { grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); }
+}
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+  .row2 { grid-template-columns: 1fr; }
+  .snap-table { min-width: 640px; }
+}
+</style>

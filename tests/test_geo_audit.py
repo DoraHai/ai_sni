@@ -41,7 +41,7 @@ class GeoAuditTests(unittest.IsolatedAsyncioTestCase):
             result = await audit_url("example.com")
         self.assertEqual(result["title"], "工业泵解决方案与维护服务 - 示例品牌")
         self.assertEqual(result["snapshot"]["schema_types"], ["Organization"])
-        self.assertEqual(len(result["checks"]), 16)
+        self.assertEqual(len(result["checks"]), 21)  # 16 base + 5 extractable blocks
         self.assertEqual(result["rule_version"], "1.1.0")
         self.assertTrue(all(item["weight"] > 0 for item in result["checks"]))
         self.assertTrue(all(item["criterion"] for item in result["checks"]))
@@ -51,6 +51,9 @@ class GeoAuditTests(unittest.IsolatedAsyncioTestCase):
             result["snapshot"]["external_links"],
             ["https://example.net/source-b", "https://example.org/source-a"],
         )
+        self.assertTrue(any(item["code"] == "block_definition" for item in result["checks"]))
+        self.assertIn("blocks", result)
+        self.assertIn("block_issue_codes", result["snapshot"])
         self.assertGreaterEqual(result["score"], 0)
         self.assertLessEqual(result["score"], 100)
 

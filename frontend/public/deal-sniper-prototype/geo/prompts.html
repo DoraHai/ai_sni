@@ -3,198 +3,342 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-<meta http-equiv="Pragma" content="no-cache">
-<meta http-equiv="Expires" content="0">
-<title>提问监控 · 开发中</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    min-height: 100vh;
-    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
-    background: #f5f7fb;
-    color: #1f2937;
-  }
-  .layout { min-height: 100vh; display: grid; grid-template-columns: 238px minmax(0, 1fr); }
-  .sidebar {
-    height: 100vh;
-    position: sticky;
-    top: 0;
-    display: flex;
-    flex-direction: column;
-    background: #fff;
-    border-right: 1px solid #e5e9f1;
-  }
-  .brand {
-    min-height: 76px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 18px 18px;
-    border-bottom: 1px solid #edf0f5;
-    font-weight: 760;
-  }
-  .logo {
-    width: 36px;
-    height: 36px;
-    display: grid;
-    place-items: center;
-    border-radius: 9px;
-    background: linear-gradient(135deg, #2563eb, #7c3aed);
-    color: #fff;
-    font-weight: 850;
-  }
-  .brand small {
-    display: block;
-    margin-top: 3px;
-    color: #9aa3b2;
-    font-size: 12px;
-    font-weight: 600;
-  }
-  .nav { flex: 1; overflow: auto; padding: 14px 10px; }
-  .nav-group {
-    margin: 16px 10px 8px;
-    color: #9aa3b2;
-    font-size: 12px;
-    font-weight: 760;
-  }
-  .nav-item {
-    min-height: 36px;
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    padding: 8px 10px;
-    border-radius: 7px;
-    color: #586274;
-    font-size: 13px;
-    font-weight: 650;
-    text-decoration: none;
-  }
-  .nav-item:hover { background: #f4f7fb; color: #2563eb; }
-  .nav-item.active {
-    background: #eef4ff;
-    color: #1d4ed8;
-  }
-  .ico {
-    width: 22px;
-    flex: none;
-    color: inherit;
-    opacity: 0.88;
-    text-align: center;
-    font-size: 13px;
-  }
-  .side-foot {
-    display: grid;
-    gap: 8px;
-    padding: 14px 18px 18px;
-    border-top: 1px solid #edf0f5;
-  }
-  .side-foot a {
-    color: #7b8494;
-    font-size: 12px;
-    font-weight: 650;
-    text-decoration: none;
-  }
-  .main { min-width: 0; display: flex; flex-direction: column; }
-  .topbar {
-    min-height: 58px;
-    display: flex;
-    align-items: center;
-    padding: 0 26px;
-    border-bottom: 1px solid #e5e9f1;
-    background: #fff;
-    color: #6b7280;
-    font-size: 14px;
-    font-weight: 650;
-  }
-  .topbar b { color: #1f2937; font-weight: 760; }
-  .content {
-    flex: 1;
-    min-height: 0;
-    display: grid;
-    place-items: center;
-    padding: 24px;
-  }
-  .empty {
-    transform: translateY(-5vh);
-    text-align: center;
-    color: #9aa3b2;
-  }
-  .box { width: 188px; height: 188px; opacity: 0.42; margin-bottom: 18px; }
-  .title { font-size: 17px; font-weight: 650; line-height: 1.7; }
-  @media (max-width: 760px) {
-    .layout { grid-template-columns: 1fr; }
-    .sidebar { position: static; height: auto; }
-    .nav { max-height: 42vh; }
-    .empty { transform: none; }
-  }
-</style>
+<title>提问机会池 · GEO</title>
+<link rel="stylesheet" href="assets/style.css?rev=geo-wb-2">
+<link rel="stylesheet" href="assets/geo-workbench-v1.css?rev=10">
 </head>
 <body>
 <div class="layout">
-  <aside class="sidebar">
-    <div class="brand">
-      <span class="logo">G</span>
-      <div>GEO 工作台<small>生成式引擎获客</small></div>
-    </div>
-    <nav class="nav">
-    <div class="nav-group">数据看板</div>
-    <a class="nav-item" href="dashboard.html"><span class="ico">▦</span>GEO 概览</a>
-    <a class="nav-item" href="visibility.html"><span class="ico">✦</span>AI 可见度</a>
-  
-
-    <div class="nav-group">智能监测</div>
-    <a class="nav-item active" href="prompts.html"><span class="ico">◌</span>提问监控</a>
-    <a class="nav-item" href="competitors.html"><span class="ico">≋</span>竞品分析</a>
-    <a class="nav-item" href="evaluation.html"><span class="ico">◉</span>评价分析</a>
-    <a class="nav-item" href="sources.html"><span class="ico">▤</span>信源分析</a>
-  
-
-    <div class="nav-group">内容与信源</div>
-    <a class="nav-item" href="articles.html"><span class="ico">Aa</span>GEO 文章</a>
-    <a class="nav-item" href="editor.html"><span class="ico">E</span>在线编辑器</a>
-    <a class="nav-item" href="media.html"><span class="ico">⌂</span>媒体 / 信源策略</a>
-    <a class="nav-item" href="channels.html"><span class="ico">⇧</span>分发平台</a>
-  
-
-    <div class="nav-group">设置</div>
-    <a class="nav-item" href="engines.html"><span class="ico">◇</span>AI 引擎管理</a>
-  
-    </nav>
-    <div class="side-foot">
-      <a href="/deal-sniper-prototype/index.html">← 返回平台门户</a>
-      <a href="/monitor/dashboard" target="_top">进入已实现 SEM</a>
-    </div>
-  </aside>
+  <aside class="sidebar"></aside>
   <main class="main">
-    <header class="topbar">GEO 工作台 &nbsp;/&nbsp; <b>提问监控</b></header>
-    <section class="content">
-      <div class="empty">
-        <svg class="box" viewBox="0 0 240 240" aria-hidden="true">
-          <defs>
-            <linearGradient id="g1" x1="0" x2="1" y1="0" y2="1">
-              <stop offset="0" stop-color="#ffffff"/>
-              <stop offset="1" stop-color="#d9dde7"/>
-            </linearGradient>
-            <linearGradient id="g2" x1="0" x2="1" y1="0" y2="1">
-              <stop offset="0" stop-color="#eef1f7"/>
-              <stop offset="1" stop-color="#cfd5e1"/>
-            </linearGradient>
-          </defs>
-          <ellipse cx="122" cy="195" rx="86" ry="13" fill="#e9edf4"/>
-          <path d="M74 100h92v92H74z" fill="url(#g1)"/>
-          <path d="M74 100l28-42h92l-28 42z" fill="#f8fafc"/>
-          <path d="M166 100l28-42 34 52-30 42z" fill="url(#g2)"/>
-          <path d="M74 100l-31 44h31z" fill="#d9dee8"/>
-          <path d="M166 100l31 44h-31z" fill="#cfd5e1"/>
-          <path d="M102 58l64 42h-92z" fill="#eef1f7"/>
-          <path d="M142 69l48 22 10 24-47-22z" fill="#d9dee8"/>
-          <path d="M74 100h92v92H74z" fill="none" stroke="#e2e6ee"/>
-        </svg>
-        <div class="title">「提问监控」开发中，接入真实功能后开放</div>
+    <div class="topbar">
+      <div>
+        <h1>提问机会池</h1>
+        <div class="sub">人工/导入/拓词候选 · 最近观测与标签筛选（D4）</div>
       </div>
-    </section>
+    </div>
+    <div class="page">
+      <div id="authBar" class="config-bar"></div>
+      <div id="err" class="wb-error" style="display:none"></div>
+      <div class="wb-card" style="margin-bottom:14px">
+        <div class="wb-toolbar">
+          <strong>拓词候选（百度/Google 下拉）</strong>
+          <input class="wb-input" id="expandExtra" style="max-width:220px" placeholder="额外品类词，逗号分隔">
+          <select class="wb-select" id="expandMarket" style="width:auto;min-width:110px">
+            <option value="cn">国内 cn</option>
+            <option value="global">海外 global</option>
+            <option value="both">both</option>
+          </select>
+          <button class="wb-btn primary" id="btnExpand">拉取候选</button>
+          <button class="wb-btn" id="btnPromote" disabled>入库勾选项</button>
+        </div>
+        <div class="wb-hint" id="expandHint">用租户品牌/行业作词根；只产候选，勾选后才写入问题库。</div>
+        <table class="wb-table" style="margin-top:10px">
+          <thead>
+            <tr>
+              <th><input type="checkbox" id="expandCheckAll"></th>
+              <th>候选问句</th>
+              <th>组</th>
+              <th>词根</th>
+              <th>来源</th>
+              <th>库内</th>
+              <th>相对上次</th>
+            </tr>
+          </thead>
+          <tbody id="expandRows"></tbody>
+        </table>
+      </div>
+      <div class="wb-grid wb-grid-2">
+        <div class="wb-card">
+          <div class="wb-toolbar">
+            <strong>机会列表</strong>
+            <select class="wb-select" id="tagFilter" style="width:auto;min-width:140px">
+              <option value="">全部标签</option>
+              <option value="brand_missing">brand_missing</option>
+              <option value="high_demand">high_demand</option>
+            </select>
+            <label class="wb-label" style="margin:0;display:flex;align-items:center;gap:6px;white-space:nowrap">
+              <input type="checkbox" id="needRecheck"> 仅待复核
+            </label>
+            <input type="file" id="csvFile" accept=".csv" style="max-width:180px">
+            <button class="wb-btn" id="btnImport">CSV 导入</button>
+            <button class="wb-btn" id="btnReload">刷新</button>
+          </div>
+          <div class="wb-muted" id="filterHint" style="margin-bottom:8px"></div>
+          <table class="wb-table">
+            <thead>
+              <tr>
+                <th>问题</th>
+                <th>组</th>
+                <th>优先级</th>
+                <th>标签</th>
+                <th>最近观测</th>
+                <th>最近任务</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+          <div id="listEmpty" style="display:none"></div>
+        </div>
+        <div class="wb-card">
+          <strong>新建机会问题</strong>
+          <div class="wb-field" style="margin-top:12px">
+            <label class="wb-label">问题</label>
+            <input class="wb-input" id="q" placeholder="例如：数据分析平台哪个好用">
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">问题组</label>
+            <select class="wb-select" id="questionGroup">
+              <option value="推荐">推荐</option>
+              <option value="比较">比较</option>
+              <option value="替代">替代</option>
+              <option value="价格">价格</option>
+              <option value="风险">风险</option>
+              <option value="品牌验证">品牌验证（点名探测）</option>
+              <option value="场景">场景</option>
+            </select>
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">市场</label>
+            <select class="wb-select" id="market">
+              <option value="cn">国内 cn</option>
+              <option value="global">海外 global</option>
+              <option value="both">both</option>
+            </select>
+          </div>
+          <label class="wb-label" style="display:flex;align-items:center;gap:8px;margin:8px 0">
+            <input type="checkbox" id="isBrandProbe"> 点名探测题（不计入品类品牌提及率）
+          </label>
+          <div class="wb-field">
+            <label class="wb-label">优先级</label>
+            <input class="wb-input" id="priority" type="number" value="10">
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">标签（逗号分隔）</label>
+            <input class="wb-input" id="tags" value="high_demand,brand_missing">
+          </div>
+          <div class="wb-field">
+            <label class="wb-label">备注</label>
+            <input class="wb-input" id="note" placeholder="需求来源说明">
+          </div>
+          <button class="wb-btn primary" id="btnCreate">创建</button>
+        </div>
+      </div>
+    </div>
   </main>
 </div>
+<script src="assets/geo-sidebar-v1.js?rev=9"></script>
+<script src="assets/geo-api-v1.js?rev=15"></script>
+<script src="assets/geo-workbench-v1.js?rev=7"></script>
+<script>
+(async function () {
+  GeoWB.renderAuthBar(document.getElementById('authBar'));
+  var err = document.getElementById('err');
+  var params = new URLSearchParams(location.search);
+  if (params.get('tag')) document.getElementById('tagFilter').value = params.get('tag');
+  if (params.get('need_recheck') === '1') document.getElementById('needRecheck').checked = true;
+  document.getElementById('questionGroup').onchange = function () {
+    if (this.value === '品牌验证') document.getElementById('isBrandProbe').checked = true;
+  };
+
+  function obsCell(p) {
+    if (!p.last_snapshot_at) {
+      return p.need_recheck
+        ? '<span class="wb-badge warn">待复核</span>'
+        : '<span class="wb-muted">-</span>';
+    }
+    var mention = p.last_mentions_brand
+      ? '<span class="wb-badge good">提及</span>'
+      : '<span class="wb-badge warn">未提及</span>';
+    var eng = p.last_snapshot_engine ? (' · ' + p.last_snapshot_engine) : '';
+    var recheck = p.need_recheck ? ' <span class="wb-badge warn">待复核</span>' : '';
+    return mention + eng + '<div class="wb-hint">' + p.last_snapshot_at + '</div>' + recheck;
+  }
+
+  function listQuery() {
+    var q = {};
+    var tag = document.getElementById('tagFilter').value;
+    if (tag) q.tag = tag;
+    if (document.getElementById('needRecheck').checked) q.need_recheck = true;
+    if (params.get('is_brand_probe') === '1') q.is_brand_probe = true;
+    if (params.get('is_brand_probe') === '0') q.is_brand_probe = false;
+    return q;
+  }
+
+  function syncUrl() {
+    var u = new URL(location.href);
+    var tag = document.getElementById('tagFilter').value;
+    if (tag) u.searchParams.set('tag', tag); else u.searchParams.delete('tag');
+    if (document.getElementById('needRecheck').checked) u.searchParams.set('need_recheck', '1');
+    else u.searchParams.delete('need_recheck');
+    history.replaceState({}, '', u.pathname + u.search);
+  }
+
+  async function load() {
+    GeoWB.clearError(err);
+    try {
+      GeoWB.requireTenant();
+      syncUrl();
+      var q = listQuery();
+      document.getElementById('filterHint').textContent = [
+        q.tag ? ('标签=' + q.tag) : '全部标签',
+        q.need_recheck ? '仅待复核' : '',
+        q.is_brand_probe === true ? '仅点名探测' : (q.is_brand_probe === false ? '仅品类可见性' : '')
+      ].filter(Boolean).join(' · ');
+      var data = await GeoAPI.listPrompts(q);
+      var tbody = document.getElementById('rows');
+      var empty = document.getElementById('listEmpty');
+      tbody.innerHTML = '';
+      var items = data.items || [];
+      if (!items.length) {
+        empty.style.display = 'block';
+        GeoWB.renderEmpty(empty, '暂无机会问题 · 可手动新建或 CSV 导入', { inline: true, showIcon: false });
+        return;
+      }
+      empty.style.display = 'none';
+      empty.innerHTML = '';
+      items.forEach(function (p) {
+        var tr = document.createElement('tr');
+        var visHref = GeoWB.withDemoQuery('visibility.html?prompt_id=' + p.id);
+        var group = (p.question_group || '-') + (p.is_brand_probe ? ' <span class="wb-badge warn">探测</span>' : '');
+        tr.innerHTML =
+          '<td>' + p.question + '</td>' +
+          '<td>' + group + '</td>' +
+          '<td>' + p.priority + '</td>' +
+          '<td>' + (p.tags || []).join(', ') + '</td>' +
+          '<td>' + obsCell(p) + '</td>' +
+          '<td>' + (p.last_task_id ? ('#' + p.last_task_id) : '-') + '</td>' +
+          '<td style="white-space:nowrap">' +
+            '<a class="wb-btn" href="' + visHref + '">可见度</a> ' +
+            '<button class="wb-btn primary" data-id="' + p.id + '">创建任务</button>' +
+          '</td>';
+        tr.querySelector('button').onclick = async function () {
+          try {
+            var task = await GeoAPI.createTask({
+              prompt_id: p.id,
+              target_channels: ['website', 'wechat', 'zhihu'],
+            });
+            location.href = GeoWB.withDemoQuery('editor.html?task_id=' + task.id);
+          } catch (e) { GeoWB.showError(err, e); }
+        };
+        tbody.appendChild(tr);
+      });
+    } catch (e) { GeoWB.showError(err, e); }
+  }
+  document.getElementById('btnReload').onclick = load;
+  document.getElementById('tagFilter').onchange = load;
+  document.getElementById('needRecheck').onchange = load;
+  document.getElementById('btnImport').onclick = async function () {
+    var file = document.getElementById('csvFile').files[0];
+    if (!file) { GeoWB.showError(err, new Error('请选择 CSV 文件')); return; }
+    try {
+      var r = await GeoAPI.importPromptsCsv(file);
+      GeoWB.showImportResult(err, r);
+      await load();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  var expandItems = [];
+
+  function renderExpand(items) {
+    expandItems = items || [];
+    var box = document.getElementById('expandRows');
+    box.innerHTML = '';
+    expandItems.forEach(function (it, idx) {
+      var tr = document.createElement('tr');
+      var disabled = it.in_bank ? ' disabled' : '';
+      tr.innerHTML =
+        '<td><input type="checkbox" data-idx="' + idx + '"' + disabled + (it.in_bank ? '' : ' checked') + '></td>' +
+        '<td>' + (it.question || it.term) +
+          '<div class="wb-muted">' + (it.term || '') + '</div></td>' +
+        '<td>' + (it.question_group || '-') + '</td>' +
+        '<td>' + (it.root || '') + ' <span class="wb-muted">(' + (it.kind || '') + ')</span></td>' +
+        '<td>' + (it.suggest_source || '') + '/' + (it.market || '') + '</td>' +
+        '<td>' + (it.in_bank ? '<span class="wb-badge good">已有</span>' : '<span class="wb-badge warn">新</span>') + '</td>' +
+        '<td>' + (it.vs_last_run === 'new'
+          ? '<span class="wb-badge warn">新↑</span>'
+          : (it.vs_last_run === 'still' ? '<span class="wb-muted">仍在</span>' : '<span class="wb-muted">-</span>')) + '</td>';
+      box.appendChild(tr);
+    });
+    document.getElementById('btnPromote').disabled = !expandItems.some(function (x) { return !x.in_bank; });
+  }
+
+  document.getElementById('expandCheckAll').onchange = function () {
+    var on = this.checked;
+    document.querySelectorAll('#expandRows input[type=checkbox]:not(:disabled)').forEach(function (el) {
+      el.checked = on;
+    });
+  };
+
+  document.getElementById('btnExpand').onclick = async function () {
+    try {
+      GeoWB.requireTenant();
+      var extra = document.getElementById('expandExtra').value.split(',')
+        .map(function (s) { return s.trim(); }).filter(Boolean);
+      var body = {
+        market: document.getElementById('expandMarket').value,
+        seed_from_tenant: true,
+        products: extra,
+        max_terms: 60,
+      };
+      var data = await GeoAPI.expandPromptCandidates(body);
+      document.getElementById('expandHint').textContent =
+        '词根 ' + ((data.roots || []).length) +
+        ' · 调用 ' + (data.calls || 0) +
+        ' · 候选 ' + (data.total || 0) +
+        '（库外新 ' + (data.new_count || 0) +
+        (data.new_vs_last_count != null ? ' · 相对上次 +' + data.new_vs_last_count : '') +
+        '）' +
+        (data.run_id ? ' · run #' + data.run_id : '') +
+        ((data.errors && data.errors.length) ? ' · 部分请求失败 ' + data.errors.length : '');
+      renderExpand(data.items || []);
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+
+  document.getElementById('btnPromote').onclick = async function () {
+    try {
+      var selected = [];
+      document.querySelectorAll('#expandRows input[type=checkbox]:checked').forEach(function (el) {
+        var it = expandItems[Number(el.getAttribute('data-idx'))];
+        if (!it || it.in_bank) return;
+        selected.push({
+          question: it.question,
+          question_group: it.question_group,
+          market: it.market === 'global' ? 'global' : 'cn',
+          priority: 10,
+          tags: ['from_expand', 'high_demand'],
+          demand_note: '拓词 · ' + (it.suggest_source || '') + ' · ' + (it.term || ''),
+        });
+      });
+      if (!selected.length) throw new Error('请勾选至少一条新候选');
+      var r = await GeoAPI.promotePromptCandidates(selected);
+      document.getElementById('expandHint').textContent =
+        '已入库 ' + (r.created || 0) + '，跳过重复 ' + (r.skipped || 0);
+      await load();
+      document.getElementById('btnExpand').click();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+
+  document.getElementById('btnCreate').onclick = async function () {
+    try {
+      GeoWB.requireTenant();
+      var tags = document.getElementById('tags').value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+      await GeoAPI.createPrompt({
+        question: document.getElementById('q').value,
+        priority: Number(document.getElementById('priority').value || 0),
+        tags: tags,
+        demand_note: document.getElementById('note').value || null,
+        question_group: document.getElementById('questionGroup').value,
+        market: document.getElementById('market').value,
+        is_brand_probe: document.getElementById('isBrandProbe').checked,
+        source: 'manual',
+      });
+      document.getElementById('q').value = '';
+      await load();
+    } catch (e) { GeoWB.showError(err, e); }
+  };
+  load();
+})();
+</script>
 </body>
 </html>

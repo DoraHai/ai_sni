@@ -5,14 +5,20 @@ import '../src/style.css'
 import DiagnosisCenterView from '../src/views/diagnosis/DiagnosisCenterView.vue'
 import { session } from '../src/store/session'
 
-// The standalone dev server only serves /diagnostic-center/, so its root-level
-// /login redirect cannot be rendered locally. Keep production authentication
-// intact while allowing the dedicated local preview to open directly.
-const devBypass = import.meta.env.DEV
+const hasDevKey = Boolean(import.meta.env.VITE_API_KEY && import.meta.env.DEV)
+const devBypass = !session.isLoggedIn && hasDevKey
 
-if (!session.isLoggedIn && !devBypass) {
-  const redirect = encodeURIComponent('/diagnostic-center/')
-  window.location.replace(`/login?redirect=${redirect}`)
+// Stale token without a usable session user: fall back to API Key in local demo
+if (session.isLoggedIn && !session.user && hasDevKey) {
+  session.logout()
+}
+
+if (!session.isLoggedIn && !devBypass && !hasDevKey) {
+  // Mini-app has no /login route; show a clear message instead of blank redirect
+  document.getElementById('app').innerHTML =
+    '<main style="min-height:100vh;display:grid;place-items:center;font:600 14px sans-serif;color:#5f7478;background:#f4f7f6;padding:24px;text-align:center">' +
+    '<div><p>请先登录主站，或在本地配置 VITE_API_KEY。</p>' +
+    '<p style="margin-top:12px;font-weight:500">见 docs/LOCAL_GEO_DEMO.md</p></div></main>'
 } else {
   const router = createRouter({
     history: createWebHistory('/diagnostic-center/'),
@@ -26,6 +32,7 @@ if (!session.isLoggedIn && !devBypass) {
     },
   })
 
+  // runtime-only Vue build: use render(), not template string
   createApp({ render: () => h(RouterView) })
     .use(router)
     .mount('#app')

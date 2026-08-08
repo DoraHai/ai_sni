@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -23,9 +23,16 @@ from app.geo.audit import RULE_VERSION, RULE_WEIGHTS, GeoAuditError, audit_url
 from app.geo.brand_profile import discover_brand_profile, website_key
 from app.geo.chinaz import fetch_chinaz_seo_metrics
 from app.geo.generate import ai_advice, generate_json_ld, generate_llms_text
+from app.geo.verify import (
+    append_evidence,
+    apply_verdict_to_status,
+    evaluate_check,
+    materialize_ticket_specs,
+    ticket_public_dict,
+)
 from app.geo.pagespeed import fetch_pagespeed_insights
 from app.geo.site_audit import audit_site
-from app.models import GeoAuditRun, Tenant
+from app.models import GeoActionTicket, GeoAuditRun, GeoMediaPlacement, Tenant
 from app.models.tenant_memory import TenantMemory
 from app.security.auth import AuthContext, require_scoped_auth
 
@@ -40,6 +47,28 @@ class AuditCreate(BaseModel):
     tenant_id: int
     url: str = Field(..., min_length=4, max_length=2048)
     scope: str = Field(default="single", pattern="^(single|site)$")
+
+
+class TicketCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=300)
+    priority: str = "medium"
+    action: str | None = None
+    advice_code: str | None = None
+    acceptance_type: Literal["auto", "manual"] = "manual"
+    acceptance_check: str | None = None
+    acceptance_desc: str | None = None
+    media_placement_id: int | None = None
+    audit_id: int | None = None
+
+
+class TicketUpdate(BaseModel):
+    status: Literal["todo", "doing", "done", "reopened", "blocked"] | None = None
+    priority: str | None = None
+    action: str | None = None
+    acceptance_type: Literal["auto", "manual"] | None = None
+    acceptance_check: str | None = None
+    acceptance_desc: str | None = None
+    manual_pass: bool | None = None
 
 
 class AISampleCreate(BaseModel):
@@ -327,6 +356,15 @@ async def _attach_external_metrics(result: dict[str, Any]) -> None:
     snapshot["external_metrics"] = metrics
 
 
+def _audit_context(run: GeoAuditRun) -> dict[str, Any]:
+    return {
+        "findings": run.findings or [],
+        "checks": run.findings or [],
+        "snapshot": run.snapshot or {},
+        "score": run.score,
+    }
+
+
 async def _run_for_tenant(
     session: AsyncSession, audit_id: int, tenant_id: int
 ) -> GeoAuditRun:
@@ -334,6 +372,73 @@ async def _run_for_tenant(
     if run is None or run.tenant_id != tenant_id:
         raise HTTPException(404, "GEO 诊断记录不存在")
     return run
+
+
+async def _ticket_for_tenant(
+    session: AsyncSession, ticket_id: int, tenant_id: int
+) -> GeoActionTicket:
+    row = await session.get(GeoActionTicket, ticket_id)
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, "验收工单不存在")
+    return row
+
+
+async def _media_rows(session: AsyncSession, tenant_id: int) -> list[dict[str, Any]]:
+    rows = (
+        await session.scalars(
+            select(GeoMediaPlacement).where(GeoMediaPlacement.tenant_id == tenant_id)
+        )
+    ).all()
+    return [
+        {
+            "id": r.id,
+            "name": r.name,
+            "channel_key": r.channel_key,
+            "status": r.status,
+            "published_url": r.published_url,
+        }
+        for r in rows
+    ]
+
+
+def _apply_check_result(
+    ticket: GeoActionTicket,
+    *,
+    ok: bool | None,
+    note: str,
+    progress: dict[str, Any] | None,
+) -> dict[str, Any]:
+    was = ticket.status
+    new_status, verdict = apply_verdict_to_status(current_status=ticket.status, ok=ok)
+    if progress:
+        stamped = dict(progress)
+        stamped["at"] = datetime.utcnow().isoformat() + "Z"
+        if ticket.progress_first is None:
+            ticket.progress_first = stamped
+        ticket.progress = stamped
+    ticket.status = new_status
+    ticket.last_verdict = verdict
+    ticket.last_note = note
+    ticket.last_verify_at = datetime.utcnow()
+    ticket.evidence = append_evidence(
+        ticket.evidence,
+        check=ticket.acceptance_check,
+        result=verdict,
+        note=note,
+    )
+    if verdict == "pass":
+        ticket.closed_at = ticket.closed_at or datetime.utcnow()
+    elif verdict == "fail" and new_status == "reopened":
+        ticket.closed_at = None
+    return {
+        "ok": ok,
+        "verdict": {True: "通过", False: "未达标", None: "待人工"}[ok],
+        "note": note,
+        "was": was,
+        "now": ticket.status,
+        "progress": ticket.progress,
+        "ticket": ticket_public_dict(ticket),
+    }
 
 
 @router.post("/audits")
@@ -800,3 +905,313 @@ async def delete_knowledge_asset(
     memory.operator_name = ctx.username
     await session.commit()
     return {"ok": True}
+
+
+@router.post("/audits/{audit_id}/tickets")
+async def materialize_tickets(
+    audit_id: int,
+    tenant_id: int = Query(...),
+    replace_open: bool = Query(False),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """从诊断 advice / 失败 findings 生成验收工单。"""
+    ctx.ensure_tenant(tenant_id)
+    run = await _run_for_tenant(session, audit_id, tenant_id)
+    specs = materialize_ticket_specs(advice=run.advice, findings=run.findings or [])
+    if not specs:
+        return {"created": 0, "items": [], "audit_id": audit_id}
+
+    existing = (
+        await session.scalars(
+            select(GeoActionTicket).where(
+                GeoActionTicket.tenant_id == tenant_id,
+                GeoActionTicket.audit_id == audit_id,
+            )
+        )
+    ).all()
+    existing_codes = {t.advice_code for t in existing if t.advice_code}
+    if replace_open:
+        for t in existing:
+            if t.status in {"todo", "doing", "reopened", "blocked"}:
+                await session.delete(t)
+                if t.advice_code:
+                    existing_codes.discard(t.advice_code)
+        await session.flush()
+
+    created: list[GeoActionTicket] = []
+    for spec in specs:
+        code = spec.get("advice_code")
+        if code and code in existing_codes:
+            continue
+        row = GeoActionTicket(
+            tenant_id=tenant_id,
+            audit_id=audit_id,
+            created_by=getattr(ctx, "user_id", None),
+            **spec,
+        )
+        session.add(row)
+        created.append(row)
+        if code:
+            existing_codes.add(code)
+    await session.commit()
+    for row in created:
+        await session.refresh(row)
+    return {
+        "audit_id": audit_id,
+        "created": len(created),
+        "items": [ticket_public_dict(r) for r in created],
+    }
+
+
+@router.post("/audits/{audit_id}/verify")
+async def verify_audit_tickets(
+    audit_id: int,
+    tenant_id: int = Query(...),
+    recrawl: bool = Query(True),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """批量验收：可选重抓诊断，再对关联工单跑 checker。"""
+    ctx.ensure_tenant(tenant_id)
+    run = await _run_for_tenant(session, audit_id, tenant_id)
+    fresh_audit: dict[str, Any] | None = None
+    if recrawl:
+        try:
+            result = await audit_url(run.final_url or run.url)
+        except GeoAuditError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        fresh = GeoAuditRun(
+            tenant_id=tenant_id,
+            url=result["url"],
+            final_url=result["final_url"],
+            status="completed",
+            score=result["score"],
+            page_title=result["title"],
+            page_description=result["description"],
+            snapshot=result["snapshot"],
+            findings=result["checks"],
+        )
+        session.add(fresh)
+        await session.flush()
+        fresh_audit = {
+            "findings": result["checks"],
+            "checks": result["checks"],
+            "snapshot": result["snapshot"],
+            "blocks": result.get("blocks"),
+            "score": result["score"],
+            "fresh_audit_id": fresh.id,
+        }
+
+    audit_ctx = fresh_audit or _audit_context(run)
+    media = await _media_rows(session, tenant_id)
+    tickets = (
+        await session.scalars(
+            select(GeoActionTicket).where(
+                GeoActionTicket.tenant_id == tenant_id,
+                GeoActionTicket.audit_id == audit_id,
+                GeoActionTicket.status.in_(
+                    ["todo", "doing", "done", "reopened", "blocked"]
+                ),
+            )
+        )
+    ).all()
+
+    results = []
+    changed = 0
+    for ticket in tickets:
+        was = ticket.status
+        if ticket.acceptance_type != "auto" or not ticket.acceptance_check:
+            ok, note, prog = None, ticket.acceptance_desc or "需人工确认", None
+        else:
+            ok, note, prog = evaluate_check(
+                ticket.acceptance_check, audit=audit_ctx, media_placements=media
+            )
+        info = _apply_check_result(ticket, ok=ok, note=note, progress=prog)
+        info["id"] = ticket.id
+        info["title"] = ticket.title
+        if was != ticket.status:
+            changed += 1
+        results.append(info)
+
+    await session.commit()
+    passed = sum(1 for r in results if r["ok"] is True)
+    failed = sum(1 for r in results if r["ok"] is False)
+    manual = sum(1 for r in results if r["ok"] is None)
+    return {
+        "audit_id": audit_id,
+        "fresh_audit_id": (fresh_audit or {}).get("fresh_audit_id"),
+        "verified_at": datetime.utcnow().isoformat() + "Z",
+        "changed": changed,
+        "summary": {"pass": passed, "fail": failed, "manual": manual},
+        "results": results,
+    }
+
+
+@router.get("/action-tickets")
+async def list_action_tickets(
+    tenant_id: int = Query(...),
+    status: str | None = Query(None),
+    audit_id: int | None = Query(None),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    stmt = select(GeoActionTicket).where(GeoActionTicket.tenant_id == tenant_id)
+    if status:
+        stmt = stmt.where(GeoActionTicket.status == status)
+    if audit_id is not None:
+        stmt = stmt.where(GeoActionTicket.audit_id == audit_id)
+    stmt = stmt.order_by(GeoActionTicket.id.desc())
+    rows = (await session.scalars(stmt)).all()
+    return {"items": [ticket_public_dict(r) for r in rows], "total": len(rows)}
+
+
+@router.post("/action-tickets")
+async def create_action_ticket(
+    req: TicketCreate,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    if req.audit_id is not None:
+        await _run_for_tenant(session, req.audit_id, tenant_id)
+    if req.media_placement_id is not None:
+        mp = await session.get(GeoMediaPlacement, req.media_placement_id)
+        if mp is None or mp.tenant_id != tenant_id:
+            raise HTTPException(404, "媒体布局不存在")
+        check = req.acceptance_check or f"media.placement_published:{mp.id}"
+        acc_type = req.acceptance_type if req.acceptance_check else "auto"
+    else:
+        check = req.acceptance_check
+        acc_type = req.acceptance_type
+    row = GeoActionTicket(
+        tenant_id=tenant_id,
+        audit_id=req.audit_id,
+        advice_code=req.advice_code,
+        media_placement_id=req.media_placement_id,
+        priority=req.priority,
+        title=req.title,
+        action=req.action,
+        status="todo",
+        acceptance_type=acc_type,
+        acceptance_check=check,
+        acceptance_desc=req.acceptance_desc or "人工或自动验收通过",
+        created_by=getattr(ctx, "user_id", None),
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return ticket_public_dict(row)
+
+
+@router.patch("/action-tickets/{ticket_id}")
+async def patch_action_ticket(
+    ticket_id: int,
+    req: TicketUpdate,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    row = await _ticket_for_tenant(session, ticket_id, tenant_id)
+    data = req.model_dump(exclude_unset=True)
+    manual_pass = data.pop("manual_pass", None)
+    for key, value in data.items():
+        setattr(row, key, value)
+    if manual_pass is True:
+        row.status = "done"
+        row.last_verdict = "pass"
+        row.last_note = "人工确认通过"
+        row.last_verify_at = datetime.utcnow()
+        row.closed_at = row.closed_at or datetime.utcnow()
+        row.evidence = append_evidence(
+            row.evidence,
+            check=row.acceptance_check,
+            result="pass",
+            note="人工确认通过",
+        )
+    elif manual_pass is False:
+        row.status = "reopened" if row.status == "done" else "todo"
+        row.last_verdict = "fail"
+        row.last_note = "人工确认未达标"
+        row.last_verify_at = datetime.utcnow()
+        row.closed_at = None
+        row.evidence = append_evidence(
+            row.evidence,
+            check=row.acceptance_check,
+            result="fail",
+            note="人工确认未达标",
+        )
+    await session.commit()
+    await session.refresh(row)
+    return ticket_public_dict(row)
+
+
+@router.post("/action-tickets/{ticket_id}/verify")
+async def verify_one_ticket(
+    ticket_id: int,
+    tenant_id: int = Query(...),
+    recrawl: bool = Query(True),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    ticket = await _ticket_for_tenant(session, ticket_id, tenant_id)
+    media = await _media_rows(session, tenant_id)
+    audit_ctx: dict[str, Any] = {}
+    fresh_audit_id = None
+    needs_page = bool(
+        ticket.acceptance_check
+        and not str(ticket.acceptance_check).startswith("media.")
+    )
+    if ticket.audit_id and needs_page:
+        run = await _run_for_tenant(session, ticket.audit_id, tenant_id)
+        if recrawl and ticket.acceptance_type == "auto":
+            try:
+                result = await audit_url(run.final_url or run.url)
+            except GeoAuditError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            fresh = GeoAuditRun(
+                tenant_id=tenant_id,
+                url=result["url"],
+                final_url=result["final_url"],
+                status="completed",
+                score=result["score"],
+                page_title=result["title"],
+                page_description=result["description"],
+                snapshot=result["snapshot"],
+                findings=result["checks"],
+            )
+            session.add(fresh)
+            await session.flush()
+            fresh_audit_id = fresh.id
+            audit_ctx = {
+                "findings": result["checks"],
+                "checks": result["checks"],
+                "snapshot": result["snapshot"],
+                "blocks": result.get("blocks"),
+                "score": result["score"],
+            }
+        else:
+            audit_ctx = _audit_context(run)
+
+    if ticket.acceptance_type != "auto" or not ticket.acceptance_check:
+        ok, note, prog = None, ticket.acceptance_desc or "需人工确认", None
+    else:
+        ok, note, prog = evaluate_check(
+            ticket.acceptance_check, audit=audit_ctx, media_placements=media
+        )
+    info = _apply_check_result(ticket, ok=ok, note=note, progress=prog)
+    await session.commit()
+    await session.refresh(ticket)
+    info["ticket"] = ticket_public_dict(ticket)
+    info["fresh_audit_id"] = fresh_audit_id
+    return info
+
+
+# 内容工作台路由（机会/事实/任务/生成/发布回填）
+from app.geo.content.routes import router as content_router  # noqa: E402
+
+router.include_router(content_router)

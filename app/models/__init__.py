@@ -48,6 +48,31 @@ from app.models.keyword_candidate import (
     KeywordCandidate,
 )
 from app.models.geo_audit import GeoAuditRun
+from app.models.geo_prompt import GeoPrompt
+from app.models.geo_optimization import (
+    GeoDailyMetric,
+    GeoOptimizationBusiness,
+    GeoOptimizationUnit,
+)
+from app.models.geo_fact import GeoFact
+from app.models.geo_answer_snapshot import GeoAnswerSnapshot
+from app.models.geo_tracking_engine import GeoTrackingEngine
+from app.models.geo_media_placement import GeoMediaPlacement
+from app.models.geo_action_ticket import GeoActionTicket
+from app.models.geo_ai_setting import GeoAiSetting
+from app.models.geo_expand_run import GeoExpandRun
+from app.models.geo_publishing_channel import GeoChannelAccount, GeoPublishingChannel
+from app.models.geo_visibility_patrol import (
+    GeoVisibilityPatrolRun,
+    GeoVisibilityPatrolSettings,
+)
+from app.models.geo_content import (
+    GeoArticleVersion,
+    GeoChannelVariant,
+    GeoContentTask,
+    GeoPublication,
+    GeoTaskFact,
+)
 
 __all__ = [
     "Suggestion",
@@ -105,4 +130,24 @@ __all__ = [
     "MEMORY_TYPE_LABELS",
     "AssistantMessage",
     "GeoAuditRun",
+    "GeoPrompt",
+    "GeoOptimizationBusiness",
+    "GeoOptimizationUnit",
+    "GeoDailyMetric",
+    "GeoFact",
+    "GeoAnswerSnapshot",
+    "GeoTrackingEngine",
+    "GeoMediaPlacement",
+    "GeoActionTicket",
+    "GeoAiSetting",
+    "GeoExpandRun",
+    "GeoPublishingChannel",
+    "GeoChannelAccount",
+    "GeoVisibilityPatrolRun",
+    "GeoVisibilityPatrolSettings",
+    "GeoContentTask",
+    "GeoTaskFact",
+    "GeoArticleVersion",
+    "GeoChannelVariant",
+    "GeoPublication",
 ]
