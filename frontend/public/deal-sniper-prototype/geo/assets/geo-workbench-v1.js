@@ -36,6 +36,7 @@
 
   function showError(box, err) {
     if (!box) return;
+    if (err && err.silent) return;
     box.style.display = 'block';
     box.textContent = (err && err.message) ? err.message : String(err || '未知错误');
   }
@@ -49,6 +50,43 @@
   function renderAuthBar(root) {
     if (!root || !global.GeoAPI) return;
     root.innerHTML = '';
+    if (GeoAPI.getToken()) {
+      var existingTenant = GeoAPI.getTenantId();
+      root.appendChild(el('span', {
+        className: 'wb-muted',
+        text: existingTenant ? '正在读取客户列表…' : '正在识别当前客户…',
+      }));
+      GeoAPI.resolveTenantContext().then(function (context) {
+        var tenants = context.tenants || [];
+        if (!context.tenantId) throw new Error('当前账号没有可用客户，请联系管理员分配');
+        if (!existingTenant || Number(existingTenant) !== Number(context.tenantId)) {
+          var target = new URL(window.location.href);
+          target.searchParams.set('tenant_id', String(context.tenantId));
+          window.location.replace(target.toString());
+          return;
+        }
+        root.innerHTML = '';
+        root.appendChild(el('span', { className: 'wb-muted', text: '当前客户' }));
+        var select = el('select', { className: 'wb-select', 'aria-label': '当前客户' });
+        tenants.forEach(function (item) {
+          var option = el('option', { value: String(item.id), text: item.name || ('客户 ' + item.id) });
+          if (Number(item.id) === Number(context.tenantId)) option.selected = true;
+          select.appendChild(option);
+        });
+        select.addEventListener('change', function () {
+          GeoAPI.setTenantId(select.value);
+          var target = new URL(window.location.href);
+          target.searchParams.set('tenant_id', select.value);
+          window.location.href = target.toString();
+        });
+        root.appendChild(select);
+        root.appendChild(el('span', { className: 'wb-muted', text: '已登录，数据按客户隔离' }));
+      }).catch(function (error) {
+        root.innerHTML = '';
+        root.appendChild(el('span', { className: 'wb-error', text: error.message || '无法识别当前客户' }));
+      });
+      return;
+    }
     var tenant = el('input', {
       className: 'wb-input',
       placeholder: 'tenant_id',
@@ -86,7 +124,12 @@
 
   function requireTenant() {
     var id = GeoAPI.getTenantId();
-    if (!id) throw new Error('请先设置 tenant_id');
+    if (!id && GeoAPI.isResolvingTenant()) {
+      var pending = new Error('正在识别当前客户');
+      pending.silent = true;
+      throw pending;
+    }
+    if (!id) throw new Error('当前账号没有可用客户，请重新登录或联系管理员');
     return id;
   }
 

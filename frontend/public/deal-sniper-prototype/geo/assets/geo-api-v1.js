@@ -3,18 +3,45 @@
  * 鉴权：优先 sem_token（与 SEM 登录一致），其次 URL ?api_key= 或 localStorage geo_api_key。
  */
 (function (global) {
+  var tenantResolution = null;
+
   function qs() {
     return new URLSearchParams(window.location.search);
   }
 
+  function positiveId(value) {
+    var id = Number(value);
+    return Number.isFinite(id) && id > 0 ? id : null;
+  }
+
+  function persistTenantId(value) {
+    var id = positiveId(value);
+    if (!id) return null;
+    localStorage.setItem('geo_tenant_id', String(id));
+    sessionStorage.setItem('sem_tenant_id', String(id));
+    return id;
+  }
+
+  function storedUserTenantId() {
+    var raw = localStorage.getItem('sem_user') || sessionStorage.getItem('sem_user');
+    if (!raw) return null;
+    try {
+      return positiveId(JSON.parse(raw).tenant_id);
+    } catch (e) {
+      return null;
+    }
+  }
+
   function getTenantId() {
     var fromQuery = qs().get('tenant_id');
-    if (fromQuery) {
-      localStorage.setItem('geo_tenant_id', fromQuery);
-      return Number(fromQuery);
-    }
-    var stored = localStorage.getItem('geo_tenant_id');
-    return stored ? Number(stored) : null;
+    if (positiveId(fromQuery)) return persistTenantId(fromQuery);
+    var stored = positiveId(localStorage.getItem('geo_tenant_id'));
+    if (stored) return stored;
+    var semContext = positiveId(sessionStorage.getItem('sem_tenant_id'));
+    if (semContext) return persistTenantId(semContext);
+    var boundTenant = storedUserTenantId();
+    if (boundTenant) return persistTenantId(boundTenant);
+    return null;
   }
 
   function getToken() {
@@ -31,6 +58,38 @@
 
   function setApiKey(key) {
     if (key) localStorage.setItem('geo_api_key', key);
+  }
+
+  async function fetchTenants() {
+    var token = getToken();
+    if (!token) return [];
+    var url = new URL('/api/v1/auth/tenants', window.location.origin);
+    var res = await fetch(url.toString(), {
+      headers: { Accept: 'application/json', Authorization: 'Bearer ' + token },
+    });
+    var data = await res.json().catch(function () { return {}; });
+    if (!res.ok) throw new Error(data.detail || '无法读取当前客户');
+    return Array.isArray(data.tenants) ? data.tenants : [];
+  }
+
+  function resolveTenantContext() {
+    var current = getTenantId();
+    if (tenantResolution) return tenantResolution;
+    if (!getToken()) return Promise.resolve({ tenantId: current, tenants: [] });
+    tenantResolution = fetchTenants().then(function (tenants) {
+      var allowed = tenants.map(function (item) { return positiveId(item.id); }).filter(Boolean);
+      var selected = current && allowed.indexOf(current) >= 0 ? current : null;
+      if (!selected) selected = allowed[0] || null;
+      if (selected) persistTenantId(selected);
+      return { tenantId: selected, tenants: tenants };
+    }).finally(function () {
+      tenantResolution = null;
+    });
+    return tenantResolution;
+  }
+
+  function isResolvingTenant() {
+    return tenantResolution != null;
   }
 
   function ensureAuthOrRedirect() {
@@ -129,6 +188,10 @@
 
   global.GeoAPI = {
     getTenantId: getTenantId,
+    setTenantId: persistTenantId,
+    fetchTenants: fetchTenants,
+    resolveTenantContext: resolveTenantContext,
+    isResolvingTenant: isResolvingTenant,
     getToken: getToken,
     getApiKey: getApiKey,
     setApiKey: setApiKey,

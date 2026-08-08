@@ -47,3 +47,16 @@ def test_nginx_keeps_geo_in_the_independent_include():
     assert "127.0.0.1:8010" not in nginx
     assert "location ^~ /api/v1/geo/" in geo_routes
     assert "127.0.0.1:8010" in geo_routes
+
+
+def test_static_geo_resolves_logged_in_tenant_context():
+    api = _read("frontend/public/deal-sniper-prototype/geo/assets/geo-api-v1.js")
+    workbench = _read(
+        "frontend/public/deal-sniper-prototype/geo/assets/geo-workbench-v1.js"
+    )
+    assert "sessionStorage.getItem('sem_tenant_id')" in api
+    assert "JSON.parse(raw).tenant_id" in api
+    assert "'/api/v1/auth/tenants'" in api
+    assert "resolveTenantContext" in api
+    assert "当前客户" in workbench
+    assert "正在识别当前客户" in workbench
