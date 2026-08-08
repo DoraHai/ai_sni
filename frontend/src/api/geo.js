@@ -6,8 +6,29 @@ export function runGeoAudit({ tenantId, url, scope = 'single' }) {
   })
 }
 
+export function runCompetitorAudit({ tenantId, url, scope = 'single' }) {
+  return client.post('/api/v1/geo/audits/competitor-preview', { tenant_id: tenantId, url, scope }, {
+    timeout: scope === 'site' ? 120000 : 45000,
+  })
+}
+
 export function fetchLatestGeoAudit(tenantId) {
   return client.get('/api/v1/geo/audits/latest', { params: { tenant_id: tenantId } })
+}
+
+export function fetchGeoAuditHistory(tenantId, limit = 12) {
+  return client.get('/api/v1/geo/audits/history', { params: { tenant_id: tenantId, limit } })
+}
+
+export function fetchGeoAudit({ tenantId, auditId }) {
+  return client.get(`/api/v1/geo/audits/${auditId}`, { params: { tenant_id: tenantId } })
+}
+
+export function fetchPageSpeedInsights({ tenantId, url, strategy = 'mobile' }) {
+  return client.get('/api/v1/geo/pagespeed', {
+    params: { tenant_id: tenantId, url, strategy },
+    timeout: 65000,
+  })
 }
 
 export function generateGeoAdvice({ tenantId, auditId }) {

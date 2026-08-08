@@ -44,6 +44,7 @@ class GeoAuditTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result["checks"]), 16)
         self.assertEqual(result["rule_version"], "1.1.0")
         self.assertTrue(all(item["weight"] > 0 for item in result["checks"]))
+        self.assertTrue(all(item["criterion"] for item in result["checks"]))
         self.assertTrue(all(item["deduction"] == 0 for item in result["checks"] if item["passed"]))
         self.assertTrue(any(item["code"] == "llms" and not item["passed"] for item in result["checks"]))
         self.assertEqual(

@@ -1,6 +1,6 @@
-"""月度分析报告接口（客户交付页，AI 应用路线 ③）。
+"""投放分析报告接口（客户交付页，AI 应用路线 ③）。
 
-生成见 app/ai/monthly_report.py。数据模块实时聚合，AI 叙述按月缓存。
+生成见 app/ai/monthly_report.py。数据模块实时聚合，AI 叙述按日期区间缓存。
 内部版 / 客户版的模块可见性由前端控制（后端一次返回全量）。
 """
 import logging
@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.monthly_report import get_monthly_report
+from app.ai.monthly_report import get_analysis_report, get_monthly_report
 from app.database import get_session
 from app.models import KwReportSnapshot, Tenant
 from app.security.auth import require_scoped_auth
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/v1/reports",
-    tags=["月度分析报告"],
+    tags=["投放分析报告"],
     dependencies=[Depends(require_scoped_auth)],
 )
 
@@ -44,7 +44,7 @@ def _rows_from_report(report: dict) -> list[list[str]]:
         [
             "报告信息",
             data["tenant"]["name"],
-            f"{period['year']}年{period['month']}月",
+            "自定义区间",
             period["start_date"],
             period["end_date"],
             f"投放 {period['active_days']}/{period['days']} 天",
@@ -67,16 +67,16 @@ def _rows_from_report(report: dict) -> list[list[str]]:
             _fmt(item.get("current")),
             _fmt(item.get("previous")),
             _fmt(item.get("change_pct")),
-            "当前值 / 上月值 / 环比%",
+            "当前值 / 上一等长区间值 / 变化%",
         ])
     budget = data["budget"]
     rows.append([
         "预算",
-        "月预算耗用",
-        _fmt(budget.get("month_cost")),
+        "区间消费与月预算参考",
+        _fmt(budget.get("period_cost", budget.get("month_cost"))),
         _fmt(budget.get("monthly_budget")),
         _fmt(budget.get("usage_pct")),
-        "本月消费 / 月预算 / 耗用%",
+        "区间消费 / 月预算参考 / 比例%",
     ])
 
     for row in data.get("trend") or []:
@@ -121,7 +121,7 @@ def _rows_from_report(report: dict) -> list[list[str]]:
     operations = data.get("operations") or {}
     rows.append([
         "优化操作",
-        "本月操作",
+        "区间操作",
         _fmt(operations.get("total")),
         _fmt(operations.get("over_limit")),
         _fmt(operations.get("ai_suggestions_adopted")),
@@ -129,13 +129,100 @@ def _rows_from_report(report: dict) -> list[list[str]]:
     ])
     for level, count in (operations.get("by_level") or {}).items():
         rows.append(["优化操作", level, _fmt(count), "", "", "按操作层级统计"])
-    for idx, item in enumerate(narrative.get("next_month_plan") or [], 1):
-        rows.append(["下月计划", f"计划{idx}", item, "", "", ""])
+    plans = narrative.get("next_period_plan") or narrative.get("next_month_plan") or []
+    for idx, item in enumerate(plans, 1):
+        rows.append(["后续计划", f"计划{idx}", item, "", "", ""])
     return rows
 
 
 def _download_filename(tenant_id: int, year: int, month: int, ext: str) -> str:
     return f"monthly_report_{tenant_id}_{year}_{month:02d}.{ext}"
+
+
+def _download_period_filename(
+    tenant_id: int, start_date: date, end_date: date, ext: str
+) -> str:
+    return (
+        f"analysis_report_{tenant_id}_{start_date.isoformat()}_"
+        f"{end_date.isoformat()}.{ext}"
+    )
+
+
+def _validate_period(start_date: date, end_date: date) -> None:
+    if start_date > end_date:
+        raise HTTPException(400, "统计起始日期不能晚于截止日期")
+    if (end_date - start_date).days > 365:
+        raise HTTPException(400, "单次报告区间不能超过 366 天")
+
+
+@router.get("/analysis")
+async def analysis_report(
+    tenant_id: int = Query(..., description="本地租户 ID"),
+    start_date: date = Query(..., description="统计起始日期"),
+    end_date: date = Query(..., description="统计截止日期"),
+    force: bool = Query(False, description="true=强制重新生成 AI 叙述"),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """某租户自定义日期区间的投放分析报告。"""
+    _validate_period(start_date, end_date)
+    tenant = await session.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(404, "租户不存在，请确认 tenant_id")
+    return await get_analysis_report(
+        session, tenant, start_date, end_date, force=force
+    )
+
+
+@router.get("/analysis/export")
+async def export_analysis_report(
+    tenant_id: int = Query(..., description="本地租户 ID"),
+    start_date: date = Query(..., description="统计起始日期"),
+    end_date: date = Query(..., description="统计截止日期"),
+    format: str = Query(
+        "csv", pattern="^(csv|xls)$", description="csv 或 xls（Excel 可打开）"
+    ),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """导出自定义日期区间报告。"""
+    _validate_period(start_date, end_date)
+    tenant = await session.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(404, "租户不存在，请确认 tenant_id")
+    report = await get_analysis_report(
+        session, tenant, start_date, end_date, force=False
+    )
+    rows = _rows_from_report(report)
+    filename = _download_period_filename(
+        tenant_id, start_date, end_date, format
+    )
+
+    if format == "xls":
+        table_rows = []
+        for row in rows:
+            cells = "".join(
+                f"<td>{html.escape(_fmt(cell))}</td>" for cell in row
+            )
+            table_rows.append(f"<tr>{cells}</tr>")
+        body = (
+            '<html><head><meta charset="utf-8"></head><body>'
+            '<table border="1">'
+            + "".join(table_rows)
+            + "</table></body></html>"
+        )
+        return Response(
+            body,
+            media_type="application/vnd.ms-excel; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerows(rows)
+    return Response(
+        "\ufeff" + buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/monthly")

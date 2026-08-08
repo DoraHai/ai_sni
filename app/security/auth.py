@@ -131,6 +131,9 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     if p.startswith("/api/v1/onboarding-builder"):
         # 智能搭建默认演练写入，仍归首次接入；真实写入由后端 dry-run 开关兜底。
         return {"onboarding"}, False
+    if p.startswith("/api/v1/oauth/baidu"):
+        # 查看授权状态需 view；发起/更新授权需 edit。
+        return {"onboarding"}, edit
     if p.startswith("/api/v1/writeback"):
         # 回写台账（只读查询）归效果验证。回写动作本身走 /keywords/{id}/writeback（optimize.keywords edit）
         return {"verify.adjustments"}, edit

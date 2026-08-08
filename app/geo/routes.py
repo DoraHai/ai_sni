@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -20,7 +21,9 @@ from app.geo.ai_sampling import (
 )
 from app.geo.audit import RULE_VERSION, RULE_WEIGHTS, GeoAuditError, audit_url
 from app.geo.brand_profile import discover_brand_profile, website_key
+from app.geo.chinaz import fetch_chinaz_seo_metrics
 from app.geo.generate import ai_advice, generate_json_ld, generate_llms_text
+from app.geo.pagespeed import fetch_pagespeed_insights
 from app.geo.site_audit import audit_site
 from app.models import GeoAuditRun, Tenant
 from app.models.tenant_memory import TenantMemory
@@ -44,6 +47,16 @@ class AISampleCreate(BaseModel):
     questions: list[str] = Field(default_factory=list, max_length=3)
 
 
+class CompetitorAsset(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    website: str = Field(default="", max_length=2048)
+    competitor_type: str = Field(default="direct", pattern="^(direct|indirect|search|ai)$")
+    overlap_products: list[str] = Field(default_factory=list, max_length=20)
+    target_market: str = Field(default="", max_length=200)
+    source: str = Field(default="manual", max_length=100)
+    confirmed: bool = False
+
+
 class BrandAssetUpdate(BaseModel):
     tenant_id: int
     name: str = Field(..., min_length=1, max_length=100)
@@ -53,6 +66,7 @@ class BrandAssetUpdate(BaseModel):
     brand_terms: list[str] = Field(default_factory=list, max_length=50)
     core_products: list[str] = Field(default_factory=list, max_length=100)
     proof_points: list[str] = Field(default_factory=list, max_length=100)
+    competitors: list[CompetitorAsset] = Field(default_factory=list, max_length=20)
 
 
 class BrandDiscoverRequest(BaseModel):
@@ -149,6 +163,7 @@ def _empty_brand() -> dict[str, Any]:
         "brand_terms": [],
         "core_products": [],
         "proof_points": [],
+        "competitors": [],
     }
 
 
@@ -251,6 +266,67 @@ def _payload(run: GeoAuditRun) -> dict[str, Any]:
     }
 
 
+def _history_payload(run: GeoAuditRun) -> dict[str, Any]:
+    """Return the compact fields needed by the diagnosis history picker."""
+    snapshot = run.snapshot or {}
+    site_audit = snapshot.get("site_audit") or {}
+    pages = site_audit.get("pages") or []
+    return {
+        "id": run.id,
+        "url": run.url,
+        "final_url": run.final_url,
+        "status": run.status,
+        "score": run.score,
+        "page_title": run.page_title,
+        "scope": "site" if snapshot.get("audit_scope") == "site" else "single",
+        "page_count": len(pages) if pages else 1,
+        "created_at": run.created_at.isoformat() if run.created_at else None,
+    }
+
+
+def _preview_payload(result: dict[str, Any], tenant_id: int) -> dict[str, Any]:
+    """Return a non-persistent competitor audit without borrowing tenant brand data."""
+    findings = result.get("checks", [])
+    created_at = datetime.now(timezone.utc).isoformat()
+    return {
+        "id": None,
+        "tenant_id": tenant_id,
+        "url": result["url"],
+        "final_url": result["final_url"],
+        "status": "completed",
+        "score": result["score"],
+        "page_title": result["title"],
+        "page_description": result["description"],
+        "snapshot": {
+            **result.get("snapshot", {}),
+            "audit_mode": "competitor",
+            "data_scope": "public_website_only",
+        },
+        "findings": findings,
+        "problems": [item for item in findings if not item.get("passed")],
+        "advice": [],
+        "advice_source": "",
+        "json_ld": "",
+        "llms_text": "",
+        "ai_enabled": False,
+        "rule_version": result.get("rule_version", RULE_VERSION),
+        "created_at": created_at,
+        "updated_at": created_at,
+    }
+
+
+async def _attach_external_metrics(result: dict[str, Any]) -> None:
+    """Attach optional third-party metrics without changing the core score."""
+    snapshot = result.setdefault("snapshot", {})
+    metrics = dict(snapshot.get("external_metrics") or {})
+    metrics.update(
+        await fetch_chinaz_seo_metrics(
+            result.get("final_url") or result.get("url") or ""
+        )
+    )
+    snapshot["external_metrics"] = metrics
+
+
 async def _run_for_tenant(
     session: AsyncSession, audit_id: int, tenant_id: int
 ) -> GeoAuditRun:
@@ -279,6 +355,7 @@ async def create_audit(
         result = await (audit_site(req.url) if req.scope == "site" else audit_url(req.url))
     except GeoAuditError as exc:
         raise HTTPException(400, str(exc)) from exc
+    await _attach_external_metrics(result)
     run = GeoAuditRun(
         tenant_id=req.tenant_id,
         url=result["url"],
@@ -303,6 +380,24 @@ async def create_audit(
     return _payload(run)
 
 
+@router.post("/audits/competitor-preview")
+async def create_competitor_preview(
+    req: AuditCreate,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Run a public-data competitor check without saving or changing brand profiles."""
+    ctx.ensure_tenant(req.tenant_id)
+    if await session.get(Tenant, req.tenant_id) is None:
+        raise HTTPException(404, "客户不存在")
+    try:
+        result = await (audit_site(req.url) if req.scope == "site" else audit_url(req.url))
+    except GeoAuditError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await _attach_external_metrics(result)
+    return _preview_payload(result, req.tenant_id)
+
+
 @router.get("/audits/latest")
 async def latest_audit(
     tenant_id: int = Query(...),
@@ -317,6 +412,46 @@ async def latest_audit(
         .limit(1)
     )
     return {"audit": _payload(run) if run else None}
+
+
+@router.get("/audits/history")
+async def audit_history(
+    tenant_id: int = Query(...),
+    limit: int = Query(default=12, ge=1, le=50),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """List recent persistent website audits for the current tenant."""
+    ctx.ensure_tenant(tenant_id)
+    runs = list(
+        (
+            await session.scalars(
+                select(GeoAuditRun)
+                .where(GeoAuditRun.tenant_id == tenant_id)
+                .order_by(GeoAuditRun.created_at.desc(), GeoAuditRun.id.desc())
+                .limit(limit)
+            )
+        ).all()
+    )
+    return {"items": [_history_payload(run) for run in runs]}
+
+
+@router.get("/pagespeed")
+async def pagespeed_insights(
+    tenant_id: int = Query(...),
+    url: str = Query(..., min_length=4, max_length=2048),
+    strategy: str = Query(default="mobile", pattern="^(mobile|desktop)$"),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Return normalized PageSpeed data without exposing the provider API key."""
+    ctx.ensure_tenant(tenant_id)
+    if await session.get(Tenant, tenant_id) is None:
+        raise HTTPException(404, "客户不存在")
+    try:
+        return await fetch_pagespeed_insights(url, strategy=strategy)
+    except GeoAuditError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.get("/audits/{audit_id}")
@@ -514,6 +649,21 @@ async def update_brand_asset(
         "brand_terms": [value.strip() for value in req.brand_terms if value.strip()],
         "core_products": [value.strip() for value in req.core_products if value.strip()],
         "proof_points": [value.strip() for value in req.proof_points if value.strip()],
+        "competitors": [
+            {
+                "name": item.name.strip(),
+                "website": item.website.strip(),
+                "competitor_type": item.competitor_type,
+                "overlap_products": [
+                    value.strip() for value in item.overlap_products if value.strip()
+                ],
+                "target_market": item.target_market.strip(),
+                "source": item.source.strip() or "manual",
+                "confirmed": True,
+            }
+            for item in req.competitors
+            if item.confirmed and item.name.strip()
+        ],
     }
     if not _brand_ready(profile):
         raise HTTPException(400, "请填写品牌名称、官方网站、所属行业和至少一项核心产品或服务")

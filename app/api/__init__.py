@@ -10,6 +10,10 @@ from app.api.leads import router as leads_router
 from app.api.manage import router as manage_router
 from app.api.negatives import router as negatives_router
 from app.api.ocpc import router as ocpc_router
+from app.api.oauth_baidu import (
+    callback_router as baidu_oauth_callback_router,
+    router as baidu_oauth_router,
+)
 from app.api.onboarding_builder import router as onboarding_builder_router
 from app.api.operations import router as operations_router
 from app.api.reports import router as reports_router
@@ -36,6 +40,8 @@ __all__ = [
     "manage_router",
     "negatives_router",
     "ocpc_router",
+    "baidu_oauth_router",
+    "baidu_oauth_callback_router",
     "onboarding_builder_router",
     "operations_router",
     "reports_router",

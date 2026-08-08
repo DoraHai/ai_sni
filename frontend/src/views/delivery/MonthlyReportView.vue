@@ -1,7 +1,7 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { fetchAvailableMonths, fetchMonthlyReport, monthlyReportExportUrl } from '../../api/reports'
+import { analysisReportExportUrl, fetchAnalysisReport } from '../../api/reports'
 import { session } from '../../store/session'
 
 const TENANT_ID = computed(() => session.tenantId)
@@ -11,8 +11,12 @@ const regenerating = ref(false)
 const exporting = ref('')
 const error = ref('')
 const report = ref(null)
-const months = ref([])
-const sel = reactive({ year: null, month: null })
+const pad = (n) => String(n).padStart(2, '0')
+const isoOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+function currentMonthRange(now = new Date()) {
+  return [`${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`, isoOf(now)]
+}
+const dateRange = ref(currentMonthRange())
 // 绑定单客户的账号（品牌方客户）锁定客户版；无绑定（内部团队）默认内部版可切
 const version = ref(session.user?.tenant_id ? 'client' : 'internal')
 const versionLocked = computed(() => !!session.user?.tenant_id)
@@ -39,26 +43,16 @@ const aiEnabled = computed(() => report.value?.ai_enabled === true)
 // 内部版才显示的模块（异常处置回顾 / 竞品占位）
 const showInternal = computed(() => version.value === 'internal')
 
-async function loadMonths() {
-  try {
-    const r = await fetchAvailableMonths({ tenantId: TENANT_ID.value })
-    months.value = r.months
-    if (!sel.year || !months.value.some((m) => m.year === sel.year && m.month === sel.month)) {
-      sel.year = r.default.year
-      sel.month = r.default.month
-    }
-  } catch (e) {
-    error.value = e.message
-  }
-}
-
 async function load(force = false) {
-  if (!sel.year) return
+  if (!dateRange.value?.[0] || !dateRange.value?.[1]) return
   force ? (regenerating.value = true) : (loading.value = true)
   error.value = ''
   try {
-    report.value = await fetchMonthlyReport({
-      tenantId: TENANT_ID.value, year: sel.year, month: sel.month, force,
+    report.value = await fetchAnalysisReport({
+      tenantId: TENANT_ID.value,
+      startDate: dateRange.value[0],
+      endDate: dateRange.value[1],
+      force,
     })
     if (force) ElMessage.success('AI 报告已重新生成')
   } catch (e) {
@@ -69,16 +63,7 @@ async function load(force = false) {
   }
 }
 
-// 月份选择器绑定 "year-month" 字符串（一个下拉覆盖跨年）
-const monthKey = computed({
-  get: () => (sel.year ? `${sel.year}-${sel.month}` : ''),
-  set: (v) => {
-    const [y, m] = v.split('-').map(Number)
-    sel.year = y
-    sel.month = m
-  },
-})
-watch(monthKey, () => { if (sel.year) load() })
+watch(dateRange, () => load())
 
 function printReport() {
   window.print()
@@ -93,13 +78,13 @@ function handleExportCommand(format) {
 }
 
 async function exportReport(format) {
-  if (!sel.year || exporting.value) return
+  if (!dateRange.value?.[0] || !dateRange.value?.[1] || exporting.value) return
   exporting.value = format
   try {
-    const resp = await fetch(monthlyReportExportUrl({
+    const resp = await fetch(analysisReportExportUrl({
       tenantId: TENANT_ID.value,
-      year: sel.year,
-      month: sel.month,
+      startDate: dateRange.value[0],
+      endDate: dateRange.value[1],
       format,
     }), {
       headers: session.token
@@ -111,7 +96,7 @@ async function exportReport(format) {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `monthly_report_${TENANT_ID.value}_${sel.year}_${String(sel.month).padStart(2, '0')}.${format}`
+    a.download = `analysis_report_${TENANT_ID.value}_${dateRange.value[0]}_${dateRange.value[1]}.${format}`
     a.click()
     URL.revokeObjectURL(url)
   } catch (e) {
@@ -121,9 +106,9 @@ async function exportReport(format) {
   }
 }
 
-watch(TENANT_ID, async () => { await loadMonths(); load() })
+watch(TENANT_ID, () => load())
 
-onMounted(async () => { await loadMonths(); load() })
+onMounted(() => load())
 
 // 趋势条形最大值（CSS 柱状）
 const trendMax = computed(() => Math.max(1, ...(data.value?.trend || []).map((d) => d.cost)))
@@ -137,7 +122,7 @@ const toc = computed(() => {
     { key: 'device', label: '设备分布' },
   ]
   if (showInternal.value) items.push({ key: 'alerts', label: '异常处置回顾' })
-  items.push({ key: 'operations', label: '优化操作 & 下月计划' })
+  items.push({ key: 'operations', label: '优化操作 & 后续计划' })
   items.push({ key: 'pending', label: '待接入模块' })
   return items
 })
@@ -152,13 +137,22 @@ function scrollTo(key) {
     <!-- 工具栏（打印时隐藏） -->
     <div class="toolbar no-print">
       <div>
-        <div class="page-title">月度分析报告</div>
-        <div class="page-desc">客户交付 · 按月聚合效果数据 + AI 分析叙述</div>
+        <div class="page-title">投放分析报告</div>
+        <div class="page-desc">客户交付 · 自定义区间效果数据 + AI 分析叙述</div>
       </div>
       <div class="tb-actions">
-        <el-select v-model="monthKey" style="width: 130px">
-          <el-option v-for="m in months" :key="m.year + '-' + m.month" :label="m.label" :value="m.year + '-' + m.month" />
-        </el-select>
+        <el-date-picker
+          v-model="dateRange"
+          type="daterange"
+          value-format="YYYY-MM-DD"
+          start-placeholder="开始日期"
+          end-placeholder="结束日期"
+          range-separator="至"
+          unlink-panels
+          :clearable="false"
+          aria-label="选择报告日期区间"
+          style="width: 268px"
+        />
         <el-radio-group v-if="!versionLocked" v-model="version" size="small">
           <el-radio-button label="internal">内部版</el-radio-button>
           <el-radio-button label="client">客户版</el-radio-button>
@@ -193,7 +187,7 @@ function scrollTo(key) {
       <div class="report-main">
         <!-- 报告头 -->
         <div class="rm-head">
-          <div class="rm-title">{{ data.tenant.name }} · {{ data.period.year }}年{{ data.period.month }}月 SEM 投放分析报告</div>
+          <div class="rm-title">{{ data.tenant.name }} · SEM 投放分析报告</div>
           <div class="rm-sub">
             统计区间 {{ data.period.start_date }} ~ {{ data.period.end_date }} · 投放 {{ data.period.active_days }}/{{ data.period.days }} 天
             <span v-if="version === 'internal'" class="ver-tag">内部版</span>
@@ -222,12 +216,14 @@ function scrollTo(key) {
               <div class="kpi-label">{{ kc.label }}</div>
               <div class="kpi-value">{{ kc.fmt(data.kpi[kc.k].current) }}</div>
               <div class="kpi-change" :class="(data.kpi[kc.k].change_pct ?? 0) >= 0 ? 'up' : 'down'">
-                {{ fmtChange(data.kpi[kc.k].change_pct) || '环比无数据' }}
+                {{ fmtChange(data.kpi[kc.k].change_pct) || '上期无可比数据' }}
               </div>
             </div>
           </div>
           <div v-if="data.budget.monthly_budget" class="budget-line">
-            月预算 {{ fmtMoney(data.budget.monthly_budget) }} · 耗用 {{ data.budget.usage_pct }}%
+            区间消费 {{ fmtMoney(data.budget.period_cost ?? data.budget.month_cost) }}
+            · 月预算参考 {{ fmtMoney(data.budget.monthly_budget) }}
+            · 比例 {{ data.budget.usage_pct }}%
             <span class="bud-bar"><span class="bud-fill" :style="{ width: Math.min(100, data.budget.usage_pct || 0) + '%' }" /></span>
           </div>
           <!-- 日趋势 CSS 柱 -->
@@ -294,11 +290,11 @@ function scrollTo(key) {
           <p v-if="comment('alerts')" class="mod-comment">{{ comment('alerts') }}</p>
         </section>
 
-        <!-- 模块 6 优化操作 & 下月计划 -->
+        <!-- 模块 6 优化操作 & 后续计划 -->
         <section id="mod-operations" class="mod">
-          <h3>优化操作 & 下月计划</h3>
+          <h3>优化操作 & 后续计划</h3>
           <div class="num-cards">
-            <div class="num-card"><div class="nc-num">{{ data.operations.total }}</div><div class="nc-label">本月操作</div></div>
+            <div class="num-card"><div class="nc-num">{{ data.operations.total }}</div><div class="nc-label">区间操作</div></div>
             <div class="num-card warn"><div class="nc-num">{{ data.operations.over_limit }}</div><div class="nc-label">超 20% 上限</div></div>
             <div class="num-card"><div class="nc-num">{{ data.operations.ai_suggestions_adopted }}</div><div class="nc-label">AI 建议采纳</div></div>
           </div>
@@ -306,9 +302,9 @@ function scrollTo(key) {
             <span v-for="(n, lvl) in data.operations.by_level" :key="lvl" class="op-chip">{{ lvl }} {{ n }}</span>
           </div>
           <p v-if="comment('operations')" class="mod-comment">{{ comment('operations') }}</p>
-          <div v-if="narrative?.next_month_plan?.length" class="plan">
-            <div class="plan-title">下月优化计划</div>
-            <ol><li v-for="(p, i) in narrative.next_month_plan" :key="i">{{ withCn(p) }}</li></ol>
+          <div v-if="narrative?.next_period_plan?.length" class="plan">
+            <div class="plan-title">后续优化计划</div>
+            <ol><li v-for="(p, i) in narrative.next_period_plan" :key="i">{{ withCn(p) }}</li></ol>
           </div>
         </section>
 
@@ -336,7 +332,7 @@ function scrollTo(key) {
 .toolbar { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 14px; }
 .page-title { font-size: 20px; font-weight: 600; color: var(--sem-text); }
 .page-desc { font-size: 12px; color: var(--sem-text-sub); margin-top: 4px; }
-.tb-actions { display: flex; gap: 8px; align-items: center; }
+.tb-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
 .dropdown-mark { margin-left: 6px; font-size: 11px; color: #909399; }
 
 .report-layout { display: flex; gap: 16px; align-items: flex-start; }

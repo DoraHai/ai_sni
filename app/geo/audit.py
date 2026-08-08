@@ -40,6 +40,26 @@ RULE_WEIGHTS = {
     "llms": 3,
 }
 
+# 与评分规则同源的用户可读释义。仅补充展示元数据，不改变 v1.1.0 的计分口径。
+RULE_CRITERIA = {
+    "https": "最终访问地址必须使用 HTTPS。",
+    "title": "页面必须有唯一标题，标题长度为 12–70 个字符。",
+    "description": "页面必须有 Meta Description，描述长度为 40–180 个字符。",
+    "canonical": "页面必须声明指向首选地址的 Canonical URL。",
+    "indexable": "页面不得通过 robots meta 声明 noindex。",
+    "h1": "页面必须且只能包含 1 个 H1 主标题。",
+    "heading_depth": "页面至少包含 3 个可识别的 H1–H6 标题节点。",
+    "substantial": "页面可读正文须达到至少 500 个中英文内容单元。",
+    "schema": "页面至少包含 1 种可解析的 JSON-LD Schema 类型。",
+    "entity_schema": "JSON-LD 至少包含 Organization、LocalBusiness、Corporation 或 Brand 之一。",
+    "faq": "页面包含 FAQPage Schema，或至少有 2 个可识别的问答式标题。",
+    "citations": "页面至少包含 2 个指向其他域名的外部证据或来源链接。",
+    "freshness": "页面必须同时提供可识别的作者信息和发布日期/更新时间。",
+    "language": "HTML 根元素必须声明非空的 lang 页面语言。",
+    "robots": "站点根目录的 robots.txt 必须可访问且内容非空。",
+    "llms": "站点根目录的 llms.txt 必须可访问且内容非空。",
+}
+
 
 class GeoAuditError(Exception):
     pass
@@ -197,6 +217,7 @@ def _finding(
     return {
         "code": code,
         "title": title,
+        "criterion": RULE_CRITERIA.get(code, recommendation),
         "category": category,
         "severity": severity,
         "passed": passed,

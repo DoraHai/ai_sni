@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { session } from '../store/session'
+import { redirectToLogin } from '../auth/loginRedirect'
 
 // 同源 /api 路径：开发期由 vite proxy 转发，生产由 Nginx 反代
 const client = axios.create({
@@ -34,7 +35,7 @@ client.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401 && session.isLoggedIn) {
       session.logout()
-      window.location.href = '/login'
+      redirectToLogin()
       return new Promise(() => {}) // 跳转中,挂起后续处理
     }
     const detail =

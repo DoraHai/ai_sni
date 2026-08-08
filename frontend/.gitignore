@@ -12,6 +12,7 @@ node_modules
 dist
 dist-website
 dist-diagnostic-center
+dist-auth
 dist-ssr
 *.local
 .env

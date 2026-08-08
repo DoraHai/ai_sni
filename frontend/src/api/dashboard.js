@@ -11,8 +11,12 @@ export function fetchDashboardToday({ tenantId, startDate, endDate }) {
 }
 
 // AI 每日洞察（盯盘页）。未配 DeepSeek 时返回 { enabled: false }
-export function fetchDashboardInsight({ tenantId, force }) {
+export function fetchDashboardInsight({ tenantId, targetDate, force }) {
   return client.get('/api/v1/dashboard/insight', {
-    params: { tenant_id: tenantId, force: force || undefined },
+    params: {
+      tenant_id: tenantId,
+      target_date: targetDate || undefined,
+      force: force || undefined,
+    },
   })
 }

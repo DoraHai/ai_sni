@@ -1,27 +1,149 @@
 <script setup>
-import { computed } from 'vue'
-import { ElMessageBox } from 'element-plus'
-import { session } from '../../store/session'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { fetchBaiduOAuthStatus, startBaiduOAuth } from '../../api/baiduOAuth'
+import { fetchTenants } from '../../api/auth'
+import { currentTenantId, session } from '../../store/session'
+
+const route = useRoute()
+const router = useRouter()
+const accounts = ref([])
+const configured = ref(false)
+const callbackUrl = ref('')
+const loading = ref(false)
+const authorizing = ref(false)
+const loadError = ref('')
+let pollTimer = null
 
 const tenantName = computed(
   () => session.tenants.find((tenant) => tenant.id === session.tenantId)?.name || '当前客户',
 )
 
 const canBind = computed(
-  () => !session.isLoggedIn || session.canEdit('onboarding'),
+  () => (!session.isLoggedIn && !!import.meta.env.VITE_API_KEY) || session.canEdit('onboarding'),
 )
 
-async function startBaiduAuthorization() {
-  if (!canBind.value) return
-  await ElMessageBox.alert(
-    '百度服务商应用审核通过，并完成 OAuth 回调接口配置后，这里会直接跳转到百度授权页。当前按钮用于确认入口与授权流程。',
-    '百度推广授权准备中',
-    {
-      confirmButtonText: '我知道了',
-      type: 'info',
-    },
-  )
+const activeAccounts = computed(() => accounts.value.filter((item) => item.status === 'active'))
+const readinessLabel = computed(() => {
+  if (!configured.value) return '待配置'
+  if (activeAccounts.value.length) return '已接入'
+  return '可授权'
+})
+
+function formatDate(value) {
+  if (!value) return '尚未同步'
+  const date = new Date(value.endsWith?.('Z') ? value : `${value}Z`)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date)
 }
+
+function accountRoleLabel(item) {
+  if (item.account_role === 'subaccount') return '子账户'
+  return item.authorization_type === 2 ? '超管账户' : '普通账户'
+}
+
+function statusLabel(status) {
+  return {
+    active: '授权有效',
+    inactive: '已取消',
+    reauthorization_required: '需重新授权',
+  }[status] || status
+}
+
+function syncStatusLabel(item) {
+  return {
+    pending: '等待首次同步',
+    syncing: '正在同步',
+    synced: '同步完成',
+    failed: '同步失败',
+  }[item.sync_status] || (item.last_synced_at ? '同步完成' : '等待首次同步')
+}
+
+function scheduleStatusPoll() {
+  window.clearTimeout(pollTimer)
+  const shouldPoll = accounts.value.some((item) =>
+    ['pending', 'syncing'].includes(item.sync_status),
+  )
+  if (shouldPoll) pollTimer = window.setTimeout(loadStatus, 3000)
+}
+
+async function loadStatus() {
+  if (!session.tenantId) return
+  loading.value = true
+  loadError.value = ''
+  try {
+    const result = await fetchBaiduOAuthStatus(session.tenantId)
+    accounts.value = result.accounts || []
+    configured.value = !!result.configured
+    callbackUrl.value = result.callback_url || ''
+  } catch (error) {
+    loadError.value = error.message
+  } finally {
+    loading.value = false
+    scheduleStatusPoll()
+  }
+}
+
+async function startBaiduAuthorization() {
+  if (!canBind.value || !session.tenantId || authorizing.value) return
+  authorizing.value = true
+  try {
+    const result = await startBaiduOAuth({
+      tenantId: session.tenantId,
+      returnPath: '/onboarding',
+    })
+    window.location.assign(result.authorize_url)
+  } catch (error) {
+    ElMessage.error(error.message)
+    authorizing.value = false
+  }
+}
+
+async function handleAuthorizationResult() {
+  if (!route.query.baidu_auth) return
+  if (route.query.baidu_auth === 'success') {
+    const count = Number(route.query.accounts || 0)
+    const targetTenantId = Number(route.query.tenant_id || 0)
+    if (targetTenantId) {
+      // 回调已确认该客户归属，先切换上下文；客户列表请求失败也不应退回旧客户。
+      session.setTenant(targetTenantId)
+    }
+    try {
+      const result = await fetchTenants()
+      session.setTenants(result.tenants || [])
+    } catch { /* 后续 loadStatus 会显示具体错误 */ }
+    ElMessage.success(
+      count
+        ? `百度授权成功，已切换到新客户（共接入 ${count} 个账号）`
+        : '百度授权成功，已切换到新客户',
+    )
+  } else {
+    const messages = {
+      invalid_app: '授权应用不匹配，请联系管理员检查配置',
+      invalid_signature: '百度回调验签失败，请联系管理员',
+      invalid_state: '授权请求已过期，请重新点击绑定',
+      oauth_upstream: '百度授权服务暂时不可用，请稍后重试',
+      oauth_rejected: '百度未接受本次授权，请重新尝试',
+      internal_error: '授权处理失败，请联系管理员查看日志',
+    }
+    ElMessage.error(messages[route.query.code] || '百度授权未完成，请重新尝试')
+  }
+  await router.replace({ path: '/onboarding' })
+}
+
+watch(currentTenantId, loadStatus)
+onMounted(async () => {
+  await handleAuthorizationResult()
+  await loadStatus()
+})
+onBeforeUnmount(() => window.clearTimeout(pollTimer))
 </script>
 
 <template>
@@ -30,7 +152,7 @@ async function startBaiduAuthorization() {
       <div>
         <div class="eyebrow">首次接入</div>
         <h1>授权与同步</h1>
-        <p>连接客户的百度营销账户，授权成功后自动建立账户关系并开始同步投放数据。</p>
+        <p>授权新的百度营销账户，系统会自动创建独立客户并开始同步投放数据。</p>
       </div>
       <div class="sync-policy">
         <span class="policy-dot" />
@@ -51,7 +173,12 @@ async function startBaiduAuthorization() {
         <div class="connect-copy">
           <div class="platform-line">
             <h2>百度推广</h2>
-            <span class="ready-tag">服务商接入准备中</span>
+            <span
+              class="ready-tag"
+              :class="{ ready: configured, connected: activeAccounts.length }"
+            >
+              {{ readinessLabel }}
+            </span>
           </div>
           <p>
             由客户登录百度营销账户并确认授权，无需向平台提供账户密码。
@@ -68,8 +195,13 @@ async function startBaiduAuthorization() {
                 <button class="bind-button" disabled>绑定百度推广</button>
               </span>
             </el-tooltip>
-            <button v-else class="bind-button" @click="startBaiduAuthorization">
-              绑定百度推广
+            <button
+              v-else
+              class="bind-button"
+              :disabled="!configured || authorizing"
+              @click="startBaiduAuthorization"
+            >
+              {{ authorizing ? '正在前往百度…' : '授权新客户账号' }}
               <span aria-hidden="true">→</span>
             </button>
             <span class="safe-note">OAuth 2.0 安全授权</span>
@@ -110,17 +242,52 @@ async function startBaiduAuthorization() {
         <div class="section-head">
           <div>
             <h3>已绑定账户</h3>
-            <p>{{ tenantName }}名下通过服务商 OAuth 接入的推广账户</p>
+            <p>{{ tenantName }}对应的百度推广账户</p>
           </div>
-          <span class="account-count">0 个账户</span>
+          <span class="account-count">{{ activeAccounts.length }} 个有效账户</span>
         </div>
 
-        <div class="empty-account">
+        <div v-if="loading" class="empty-account">
+          <div class="empty-icon loading-mark" aria-hidden="true">↻</div>
+          <div>
+            <b>正在读取授权账户</b>
+            <p>正在核对账户关系、令牌状态和最近同步时间。</p>
+          </div>
+        </div>
+
+        <div v-else-if="loadError" class="empty-account">
+          <div class="empty-icon error-mark" aria-hidden="true">!</div>
+          <div>
+            <b>授权状态读取失败</b>
+            <p>{{ loadError }}</p>
+          </div>
+        </div>
+
+        <div v-else-if="!accounts.length" class="empty-account">
           <div class="empty-icon" aria-hidden="true">⌁</div>
           <div>
             <b>尚未绑定百度推广账户</b>
             <p>完成首次授权后，账户名称、授权状态和最近同步时间会显示在这里。</p>
           </div>
+        </div>
+
+        <div v-else class="account-list">
+          <article v-for="item in accounts" :key="item.id" class="account-row">
+            <div class="account-avatar">百</div>
+            <div class="account-identity">
+              <div class="account-name">
+                {{ item.username }}
+                <span>{{ accountRoleLabel(item) }}</span>
+              </div>
+              <div class="account-meta">UCID {{ item.ucid }} · 授权主体 {{ item.authorization_name || '—' }}</div>
+            </div>
+            <div class="account-sync">
+              <small>{{ syncStatusLabel(item) }}</small>
+              <b :class="`sync-${item.sync_status || 'pending'}`">{{ formatDate(item.last_synced_at) }}</b>
+              <em v-if="item.sync_status === 'failed'" :title="item.last_sync_error || ''">系统将自动重试</em>
+            </div>
+            <span class="status-pill" :class="item.status">{{ statusLabel(item.status) }}</span>
+          </article>
         </div>
       </section>
 
@@ -131,17 +298,18 @@ async function startBaiduAuthorization() {
           <ul>
             <li>无需保存客户的百度账户密码</li>
             <li>访问令牌加密保存并自动续期</li>
-            <li>客户解除授权后立即停止同步</li>
+            <li>令牌失效或客户解除授权后停止同步</li>
           </ul>
         </div>
       </aside>
     </div>
 
-    <div class="preflight-note">
+    <div class="preflight-note" :class="{ warning: !configured }">
       <span class="note-mark">i</span>
       <div>
-        <b>上线前置条件</b>
-        <span>需先完成百度工具服务商认证、服务商应用审核，并配置正式回调地址。</span>
+        <b>{{ configured ? '正式回调已就绪' : '还差一项服务器配置' }}</b>
+        <span v-if="configured">百度授权完成后将返回 {{ callbackUrl }}，自动创建客户并开始首次同步。</span>
+        <span v-else>需要在服务器配置百度应用 SecretKey 和授权链接中的 scope，完成后即可开放绑定。</span>
       </div>
     </div>
   </section>
@@ -281,6 +449,16 @@ async function startBaiduAuthorization() {
   color: #9a5b12;
   font-size: 11px;
   font-weight: 650;
+}
+
+.ready-tag.ready {
+  background: #eaf7ef;
+  color: #23734d;
+}
+
+.ready-tag.connected {
+  background: #e8f2fb;
+  color: #185fa5;
 }
 
 .connect-copy > p {
@@ -468,6 +646,141 @@ async function startBaiduAuthorization() {
   line-height: 1.6;
 }
 
+.loading-mark {
+  animation: auth-spin 1s linear infinite;
+}
+
+.error-mark {
+  background: #fff0f0;
+  color: #b33a3a;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+@keyframes auth-spin {
+  to { transform: rotate(360deg); }
+}
+
+.account-list {
+  display: grid;
+}
+
+.account-row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) minmax(92px, auto) auto;
+  align-items: center;
+  gap: 13px;
+  padding: 16px 4px;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.account-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 2px;
+}
+
+.account-avatar {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 10px;
+  background: #edf5fc;
+  color: #185fa5;
+  font-size: 15px;
+  font-weight: 750;
+}
+
+.account-identity {
+  min-width: 0;
+}
+
+.account-name {
+  overflow: hidden;
+  color: #253041;
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-name span {
+  display: inline-block;
+  margin-left: 7px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #f0f2f5;
+  color: #747f8d;
+  font-size: 10px;
+  font-weight: 600;
+  vertical-align: 1px;
+}
+
+.account-meta {
+  overflow: hidden;
+  margin-top: 5px;
+  color: #8a94a3;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-sync small,
+.account-sync b {
+  display: block;
+  text-align: right;
+}
+
+.account-sync small {
+  color: #98a1ad;
+  font-size: 10px;
+}
+
+.account-sync b {
+  margin-top: 4px;
+  color: #536071;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.account-sync b.sync-syncing,
+.account-sync b.sync-pending {
+  color: #185fa5;
+}
+
+.account-sync b.sync-failed {
+  color: #b54747;
+}
+
+.account-sync em {
+  display: block;
+  margin-top: 3px;
+  color: #b54747;
+  font-size: 9px;
+  font-style: normal;
+  text-align: right;
+}
+
+.status-pill {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #f0f2f5;
+  color: #667085;
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.status-pill.active {
+  background: #eaf7ef;
+  color: #23734d;
+}
+
+.status-pill.reauthorization_required {
+  background: #fff2e4;
+  color: #9a5b12;
+}
+
 .security-panel {
   display: flex;
   align-items: flex-start;
@@ -520,6 +833,12 @@ async function startBaiduAuthorization() {
   font-size: 12px;
 }
 
+.preflight-note.warning {
+  border-color: #f0d7aa;
+  background: #fffaf1;
+  color: #7e5a22;
+}
+
 .note-mark {
   display: grid;
   width: 20px;
@@ -566,6 +885,14 @@ async function startBaiduAuthorization() {
 
   .content-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .account-row {
+    grid-template-columns: 38px minmax(0, 1fr) auto;
+  }
+
+  .account-sync {
+    display: none;
   }
 }
 </style>

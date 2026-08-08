@@ -29,6 +29,7 @@ from app.baidu.sync import (
     sync_operation_records_for_account,
     sync_price_strategies_for_account,
 )
+from app.baidu.oauth import refresh_expiring_oauth_grants
 from app.classification import reclassify_keywords
 from app.database import async_session_factory
 from app.models import BaiduAccount, Tenant
@@ -76,6 +77,10 @@ async def refresh_keyword_workbench_snapshot(
     if lock_fh is None:
         return {"status": "busy", "tenant_id": tenant.id}
     try:
+        acc.sync_status = "syncing"
+        acc.last_sync_error = None
+        if hasattr(session, "commit"):
+            await session.commit()
         report_rows = await sync_keyword_report_for_account(session, acc, target_date)
         dimension_rows = await sync_keyword_dimension_reports_for_account(
             session, acc, target_date
@@ -85,6 +90,12 @@ async def refresh_keyword_workbench_snapshot(
         keywords = await sync_keywords_for_account(session, acc)
         strategies = await sync_price_strategies_for_account(session, acc)
         category_counts = await reclassify_keywords(session, tenant)
+        acc.last_synced_at = datetime.utcnow()
+        acc.sync_status = "synced"
+        acc.last_sync_error = None
+        # 生产传 AsyncSession；单元测试可传最小 session stub。
+        if hasattr(session, "commit"):
+            await session.commit()
         return {
             "status": "ok",
             "tenant_id": tenant.id,
@@ -97,6 +108,17 @@ async def refresh_keyword_workbench_snapshot(
             "price_strategies_synced": strategies,
             "category_counts": category_counts,
         }
+    except Exception as exc:
+        if hasattr(session, "rollback"):
+            await session.rollback()
+        failed_acc = acc
+        if hasattr(session, "get"):
+            failed_acc = await session.get(BaiduAccount, acc.id) or acc
+        failed_acc.sync_status = "failed"
+        failed_acc.last_sync_error = str(exc)[:500]
+        if hasattr(session, "commit"):
+            await session.commit()
+        raise
     finally:
         _release_tenant_sync_lock(lock_fh)
 
@@ -122,6 +144,8 @@ async def fetch_yesterday_keyword_report() -> None:
     yesterday = datetime.now(_SHANGHAI_TZ).date() - timedelta(days=1)
     logger.info("[scheduler] 开始拉取 %s 关键词报告", yesterday)
     async with async_session_factory() as session:
+        refresh_result = await refresh_expiring_oauth_grants(session)
+        logger.info("[scheduler] OAuth Token 刷新结果: %s", refresh_result)
         async with _report_sync_lock:
             result = await sync_keyword_report_for_all_active_accounts(session, yesterday)
 
@@ -176,6 +200,8 @@ async def fetch_today_keyword_report() -> None:
     logger.info("[scheduler] 开始 15 分钟关键词工作台同步 %s", today)
     async with _report_sync_lock:
         async with async_session_factory() as session:
+            refresh_result = await refresh_expiring_oauth_grants(session)
+            logger.info("[scheduler] OAuth Token 刷新结果: %s", refresh_result)
             accounts = (
                 await session.scalars(
                     select(BaiduAccount).where(BaiduAccount.status == "active")

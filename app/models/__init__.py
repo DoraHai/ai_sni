@@ -1,5 +1,6 @@
 from app.models.tenant import Tenant
 from app.models.baidu_account import BaiduAccount
+from app.models.baidu_oauth import BaiduOAuthGrant, BaiduOAuthState
 from app.models.api_audit_log import ApiAuditLog
 from app.models.kw_report_snapshot import KwReportSnapshot
 from app.models.keyword_dimension_report import KeywordHourlyReport, KeywordRegionReport
@@ -37,6 +38,7 @@ from app.models.role import Role
 from app.models.suggestion import CONFIDENCE_LABELS, SUGGESTION_TYPE_LABELS, Suggestion
 from app.models.daily_insight import DailyInsight
 from app.models.monthly_report import MonthlyReport
+from app.models.analysis_report import AnalysisReport
 from app.models.keyword_candidate import (
     CANDIDATE_AI_RECOMMEND_LABELS,
     CANDIDATE_AI_RELEVANCE_LABELS,
@@ -53,6 +55,7 @@ __all__ = [
     "CONFIDENCE_LABELS",
     "DailyInsight",
     "MonthlyReport",
+    "AnalysisReport",
     "User",
     "Role",
     "KeywordCandidate",
@@ -83,6 +86,8 @@ __all__ = [
     "TRANS_TYPE_LABELS",
     "Tenant",
     "BaiduAccount",
+    "BaiduOAuthGrant",
+    "BaiduOAuthState",
     "ApiAuditLog",
     "KwReportSnapshot",
     "KeywordRegionReport",

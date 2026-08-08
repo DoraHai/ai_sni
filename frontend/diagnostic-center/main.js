@@ -5,7 +5,10 @@ import '../src/style.css'
 import DiagnosisCenterView from '../src/views/diagnosis/DiagnosisCenterView.vue'
 import { session } from '../src/store/session'
 
-const devBypass = !session.isLoggedIn && import.meta.env.VITE_API_KEY && import.meta.env.DEV
+// The standalone dev server only serves /diagnostic-center/, so its root-level
+// /login redirect cannot be rendered locally. Keep production authentication
+// intact while allowing the dedicated local preview to open directly.
+const devBypass = import.meta.env.DEV
 
 if (!session.isLoggedIn && !devBypass) {
   const redirect = encodeURIComponent('/diagnostic-center/')

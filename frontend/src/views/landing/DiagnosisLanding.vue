@@ -1,6 +1,7 @@
 <script setup>
 import { onUnmounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { loginUrl } from '../../auth/loginRedirect'
 
 const route = useRoute()
 const router = useRouter()
@@ -81,7 +82,8 @@ async function submitLead() {
   submitting.value = true
   window.setTimeout(() => {
     submitting.value = false
-    router.push({ path: '/login', query: { diagnosis: 'created', website: website.value } })
+    const params = new URLSearchParams({ diagnosis: 'created', website: website.value })
+    window.location.assign(loginUrl(`/diagnostic-center/?${params.toString()}`))
   }, 700)
 }
 

@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { session } from '../store/session'
+import { loginUrl } from '../auth/loginRedirect'
 
 // 路由按原型 v3.0 的 6 个工作流划分，未实现的页面挂占位组件。
 // meta.perm = 该页所需菜单权限 key（自定义角色 RBAC）；可为数组=任一可见即可（下钻页）。
@@ -67,11 +68,6 @@ const routes = [
     path: '/diagnostic-center',
     component: () => import('../views/diagnosis/DiagnosisRedirectView.vue'),
     meta: { title: '诊断中心', perm: 'geo.diagnosis', bare: true },
-  },
-  {
-    path: '/login',
-    component: () => import('../views/LoginView.vue'),
-    meta: { title: '登录', public: true, bare: true },
   },
   {
     path: '/monitor/dashboard',
@@ -218,10 +214,8 @@ function permOk(perm) {
 router.beforeEach((to) => {
   const devBypass = !session.isLoggedIn && import.meta.env.VITE_API_KEY && import.meta.env.DEV
   if (!to.meta.public && !session.isLoggedIn && !devBypass) {
-    return { path: '/login', query: { redirect: to.fullPath } }
-  }
-  if (to.path === '/login' && session.isLoggedIn) {
-    return { path: firstAllowedPath() || '/' }
+    window.location.assign(loginUrl(to.fullPath))
+    return false
   }
   if (devBypass || !session.isLoggedIn) return
   if (!to.meta.public && !permOk(to.meta.perm)) {

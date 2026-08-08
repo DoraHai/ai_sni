@@ -17,11 +17,57 @@ os.environ.setdefault(
 )
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
+from app.baidu.sync import sync_keyword_dimension_reports_for_account
 from app.scheduler import refresh_keyword_workbench_snapshot
 from app.security.auth import _required
 
 
 class KeywordRefreshTests(unittest.IsolatedAsyncioTestCase):
+    async def test_dimension_reports_use_chunked_upserts(self):
+        svc = SimpleNamespace(
+            get_keyword_region_report=AsyncMock(
+                return_value=[{"id": i} for i in range(1700)]
+            ),
+            get_keyword_hourly_report=AsyncMock(
+                return_value=[{"id": i} for i in range(400)]
+            ),
+        )
+        chunked = AsyncMock()
+        account = SimpleNamespace(
+            id=5,
+            tenant_id=9,
+            baidu_username="large-account",
+            access_token_encrypted="encrypted",
+        )
+        with (
+            patch("app.baidu.sync.BaiduAPIClient"),
+            patch("app.baidu.sync.decrypt", return_value="token"),
+            patch("app.baidu.sync.ReportService", return_value=svc),
+            patch(
+                "app.baidu.sync._row_to_region_record",
+                side_effect=lambda row, *_: {"keyword_id": row["id"]},
+            ),
+            patch(
+                "app.baidu.sync._row_to_hourly_record",
+                side_effect=lambda row, *_: {"keyword_id": row["id"]},
+            ),
+            patch("app.baidu.sync._chunked_upsert", new=chunked),
+        ):
+            result = await sync_keyword_dimension_reports_for_account(
+                object(), account, date(2026, 7, 31)
+            )
+
+        self.assertEqual(result, {"region": 1700, "hourly": 400})
+        self.assertEqual(chunked.await_count, 2)
+        self.assertEqual(
+            chunked.await_args_list[0].args[3],
+            "uq_kw_region_report_tenant_date_kw_region_device",
+        )
+        self.assertEqual(
+            chunked.await_args_list[1].args[3],
+            "uq_kw_hourly_report_tenant_dt_kw_device",
+        )
+
     async def test_refresh_runs_report_structure_and_classification(self):
         session = object()
         tenant = SimpleNamespace(id=7)
@@ -84,6 +130,31 @@ class KeywordRefreshTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, {"status": "busy", "tenant_id": 7})
         report_sync.assert_not_awaited()
+
+    async def test_refresh_records_failed_sync_status(self):
+        tenant = SimpleNamespace(id=7)
+        account = SimpleNamespace(id=12, tenant_id=7)
+        session = SimpleNamespace(
+            commit=AsyncMock(),
+            rollback=AsyncMock(),
+            get=AsyncMock(return_value=account),
+        )
+        with (
+            patch("app.scheduler._acquire_tenant_sync_lock", return_value=object()),
+            patch("app.scheduler._release_tenant_sync_lock"),
+            patch(
+                "app.scheduler.sync_keyword_report_for_account",
+                new=AsyncMock(side_effect=RuntimeError("region batch failed")),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "region batch failed"):
+                await refresh_keyword_workbench_snapshot(
+                    session, tenant, account, date(2026, 7, 31)
+                )
+
+        self.assertEqual(account.sync_status, "failed")
+        self.assertEqual(account.last_sync_error, "region batch failed")
+        session.rollback.assert_awaited_once()
 
     def test_manual_refresh_requires_keyword_edit_permission(self):
         self.assertEqual(

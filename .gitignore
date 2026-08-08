@@ -21,3 +21,6 @@ logs/
 .vscode/
 
 postgres_data/
+
+# 独立官网仓库（拥有自己的 Git 历史）
+gsnipers-website/

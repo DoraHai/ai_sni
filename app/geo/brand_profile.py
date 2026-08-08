@@ -47,6 +47,47 @@ def _unique(values: list[str], limit: int = 12) -> list[str]:
     return result
 
 
+def _competitor_candidates(value: Any, limit: int = 5) -> list[dict[str, Any]]:
+    """清洗 AI 市场候选；候选必须在前端由用户确认后才能保存。"""
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    allowed_types = {"direct", "indirect", "search", "ai"}
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        name = _clean_name(item.get("name", ""))
+        marker = name.casefold()
+        if not name or marker in seen:
+            continue
+        seen.add(marker)
+        website = str(item.get("website", "")).strip()[:2048]
+        if website and not re.match(r"^https?://", website, re.I):
+            website = ""
+        competitor_type = str(item.get("competitor_type", "direct")).strip().lower()
+        if competitor_type not in allowed_types:
+            competitor_type = "direct"
+        overlap = item.get("overlap_products", [])
+        result.append(
+            {
+                "name": name,
+                "website": website,
+                "competitor_type": competitor_type,
+                "overlap_products": _unique(
+                    [str(entry) for entry in overlap] if isinstance(overlap, list) else [],
+                    limit=8,
+                ),
+                "target_market": _clean_name(item.get("target_market", "")),
+                "source": "AI 市场候选",
+                "confirmed": False,
+            }
+        )
+        if len(result) >= limit:
+            break
+    return result
+
+
 def extract_brand_candidate(document: PageDocument) -> dict[str, Any]:
     soup = BeautifulSoup(document.html, "html.parser")
     schema_nodes: list[dict[str, Any]] = []
@@ -100,6 +141,7 @@ def extract_brand_candidate(document: PageDocument) -> dict[str, Any]:
         "brand_terms": _unique([name, fallback_name], limit=6),
         "core_products": schema_offers or headings,
         "proof_points": [],
+        "competitors": [],
         "evidence": {
             "name": name_source,
             "business_desc": "Meta Description" if description else "待补充",
@@ -115,13 +157,17 @@ async def discover_brand_profile(website: str) -> dict[str, Any]:
     document = await safe_fetch(website)
     candidate = extract_brand_candidate(document)
     ai_used = False
+    competitor_discovery_status = "unavailable"
     if ai_enabled():
         context = candidate.pop("page_context")
         try:
             structured = await chat_json(
-                "你负责从官网公开信息中整理品牌建档候选值。只使用给定事实，不得虚构。"
-                "返回 JSON：name、industry、business_desc、brand_terms、core_products。"
-                "brand_terms 和 core_products 必须是字符串数组；不确定的字段返回空值。",
+                "你负责整理品牌建档候选值。品牌字段只能使用给定官网事实，不得虚构。"
+                "另外基于品牌、行业和产品生成最多 5 个竞品市场候选，仅供人工确认。"
+                "返回 JSON：name、industry、business_desc、brand_terms、core_products、competitors。"
+                "brand_terms 和 core_products 必须是字符串数组。competitors 是对象数组，每项包含 "
+                "name、website、competitor_type、overlap_products、target_market；competitor_type 只能是 "
+                "direct、indirect、search、ai。不确定的竞品官网必须留空，不得编造网址。",
                 f"官网：{candidate['website']}\n页面事实：{context}",
                 timeout=25,
             )
@@ -137,9 +183,16 @@ async def discover_brand_profile(website: str) -> dict[str, Any]:
                     if cleaned:
                         candidate[field] = cleaned
                         candidate["evidence"][field] = "AI 整理自官网事实"
+            candidate["competitors"] = _competitor_candidates(structured.get("competitors"))
+            if candidate["competitors"]:
+                candidate["evidence"]["competitors"] = "AI 市场候选，需人工确认"
             ai_used = True
+            competitor_discovery_status = (
+                "candidates_found" if candidate["competitors"] else "no_high_confidence_match"
+            )
         except DeepSeekError:
             candidate["page_context"] = context
+            competitor_discovery_status = "failed"
     else:
         candidate.pop("page_context", None)
     candidate.pop("page_context", None)
@@ -147,4 +200,8 @@ async def discover_brand_profile(website: str) -> dict[str, Any]:
         "brand": candidate,
         "site_key": website_key(candidate["website"]),
         "ai_used": ai_used,
+        "competitor_discovery": {
+            "status": competitor_discovery_status,
+            "count": len(candidate.get("competitors", [])),
+        },
     }

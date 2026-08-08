@@ -17,12 +17,11 @@ const data = ref(null)
 const insight = ref(null)
 const pad = (n) => String(n).padStart(2, '0')
 const isoOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-function lastCompleteMonthRange(now = new Date()) {
-  const end = new Date(now.getFullYear(), now.getMonth(), 0)
-  const start = new Date(end.getFullYear(), end.getMonth(), 1)
-  return [isoOf(start), isoOf(end)]
+function todayRange(now = new Date()) {
+  const today = isoOf(now)
+  return [today, today]
 }
-const dateRange = ref(lastCompleteMonthRange())
+const dateRange = ref(todayRange())
 const trendChartEl = ref(null)
 let trendChart = null
 let autoRefreshTimer = null
@@ -33,41 +32,13 @@ const fmtMoney = (v) => (v == null ? '—' : '¥ ' + Number(v).toLocaleString('z
 const fmtInt = (v) => (v == null ? '—' : Number(v).toLocaleString('zh-CN'))
 const fmtPct = (v) => (v == null ? '—' : (v * 100).toFixed(2) + '%')
 
-// ===== 顶部工具栏：媒体 + 周期 =====
+// ===== 顶部工具栏：媒体 + 自定义日期区间 =====
 const media = ref('baidu')
 function onMediaChange(v) {
   if (v === 'bing') {
     ElMessage.warning('必应广告即将开放，预计 2026 Q3')
     media.value = 'baidu'
   }
-}
-
-// 默认「上月完整月」
-const selectedPeriod = ref('last_month')
-const periodOptions = computed(() => {
-  const now = new Date()
-  const y = now.getFullYear()
-  const m = now.getMonth() + 1
-  const dd = now.getDate()
-  const ago = (n) => {
-    const t = new Date(now)
-    t.setDate(t.getDate() - n)
-    return isoOf(t)
-  }
-  const lmEnd = new Date(y, m - 1, 0) // 上月最后一天
-  const lmY = lmEnd.getFullYear()
-  const lmM = lmEnd.getMonth() + 1
-  return [
-    { key: 'this_month', label: `本月（${m}月1日 - ${m}月${dd}日）`, range: [`${y}-${pad(m)}-01`, isoOf(now)] },
-    { key: 'last_7', label: '近 7 天', range: [ago(6), isoOf(now)] },
-    { key: 'last_30', label: '近 30 天', range: [ago(29), isoOf(now)] },
-    { key: 'last_month', label: `上月（${lmM}月完整月）`, range: [`${lmY}-${pad(lmM)}-01`, isoOf(lmEnd)] },
-    { key: 'custom', label: '自定义', range: null },
-  ]
-})
-function onPeriodChange(key) {
-  const opt = periodOptions.value.find((o) => o.key === key)
-  if (opt && opt.range) dateRange.value = opt.range // 触发 watch(dateRange, load)
 }
 
 function onGenerateReport() {
@@ -161,7 +132,10 @@ async function load() {
         startDate: dateRange.value?.[0],
         endDate: dateRange.value?.[1],
       }),
-      fetchDashboardInsight({ tenantId: TENANT_ID.value }).catch(() => null),
+      fetchDashboardInsight({
+        tenantId: TENANT_ID.value,
+        targetDate: dateRange.value?.[1],
+      }).catch(() => null),
     ])
     data.value = d
     insight.value = ins
@@ -216,18 +190,17 @@ onBeforeUnmount(() => {
             <el-option label="必应（即将开放）" value="bing" disabled />
           </el-select>
         </div>
-        <el-select v-model="selectedPeriod" @change="onPeriodChange" style="width: 190px">
-          <el-option v-for="o in periodOptions" :key="o.key" :label="o.label" :value="o.key" />
-        </el-select>
         <el-date-picker
-          v-if="selectedPeriod === 'custom'"
           v-model="dateRange"
           type="daterange"
           value-format="YYYY-MM-DD"
           start-placeholder="开始日期"
           end-placeholder="结束日期"
+          range-separator="至"
+          unlink-panels
           :clearable="false"
-          style="width: 260px"
+          aria-label="选择看板日期区间"
+          style="width: 268px"
         />
         <span
           v-if="data?.freshness?.last_synced_at"

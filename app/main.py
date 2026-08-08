@@ -21,6 +21,8 @@ from app.api import (
     manage_router,
     negatives_router,
     ocpc_router,
+    baidu_oauth_router,
+    baidu_oauth_callback_router,
     onboarding_builder_router,
     operations_router,
     reports_router,
@@ -92,6 +94,8 @@ app.include_router(writeback_router)
 app.include_router(search_terms_router)
 app.include_router(leads_router)
 app.include_router(ocpc_router)
+app.include_router(baidu_oauth_router)
+app.include_router(baidu_oauth_callback_router)
 app.include_router(manage_router)
 app.include_router(assistant_router)
 app.include_router(onboarding_builder_router)

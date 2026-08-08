@@ -1,10 +1,7 @@
-"""AI 月度分析报告（AI 应用路线 ③，客户交付页 / 看板「生成完整报告」按钮目标）。
+"""AI 投放分析报告（AI 应用路线 ③，客户交付页 / 看板「生成完整报告」按钮目标）。
 
-把一个月的结构化数据 → 客户能读的分析报告。两层：
-  - 数据模块（gather_report_data）：实时聚合，数字不依赖 AI——KPI+月环比、日趋势、
-    分类报告(按关键词5分级)、TOP10消费词、设备分布、异常处置回顾、本月操作统计。
-  - AI 叙述（generate_narrative）：DeepSeek 产 总览摘要 + 各模块点评 + 下月计划，按
-    (tenant, year, month) 缓存（monthly_reports 表）。未配 key / 失败 → 报告照出数据、叙述空。
+把自定义日期区间的结构化数据 → 客户能读的分析报告。数据实时聚合，AI 叙述按
+(tenant, start_date, end_date) 缓存在 analysis_reports 表。
 
 🚫 红线无关（只读聚合 + 生成文字）。复用调价建议/每日洞察那套 DeepSeek + 缓存 + 降级。
 转化/时段/地域/竞品模块依赖未接入的数据源（M2 线索 / 地域时段报告），前端占位。
@@ -19,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.deepseek import DeepSeekError, chat_json, is_enabled
 from app.models import (
     CATEGORY_LABELS,
+    AnalysisReport,
     Alert,
     Keyword,
     KwReportSnapshot,
@@ -32,51 +30,51 @@ logger = logging.getLogger(__name__)
 
 KPI_KEYS = ("cost", "click", "impression", "cpc", "ctr")
 
-# 月报模块 key → 中文名（AI 点评按 key 回填；前端 TOC 也用）
+# 报告模块 key → 中文名（AI 点评按 key 回填；前端 TOC 也用）
 MODULE_LABELS = {
     "overview": "整体数据",
     "by_category": "分类报告（按关键词分级）",
     "top_keywords": "TOP10 关键词 · 消费",
     "device": "设备分布",
     "alerts": "异常处置回顾",
-    "operations": "优化操作 & 下月计划",
+    "operations": "优化操作 & 后续计划",
 }
 
-SYSTEM_PROMPT = """你是资深 SEM 优化师，为工业品（工业泵 / 分离技术）账户写「月度分析报告」给客户/团队看。
-基于给你的一个月结构化数据，写一份务实、专业、可执行的报告叙述。当前无转化数据，按消费效率 /
+SYSTEM_PROMPT = """你是资深 SEM 优化师，为工业品（工业泵 / 分离技术）账户写「投放分析报告」给客户/团队看。
+基于给定统计区间的结构化数据，写一份务实、专业、可执行的报告叙述。当前无转化数据，按消费效率 /
 流量 / 排名 / 质量度层面分析，不要编造没有的数据（如线索、ROI）。
 
 只返回 JSON（不要多余文字）：
 {
-  "summary": "3-5 句月度总览摘要，点出本月投放概况、最值得注意的变化、整体判断",
+  "summary": "3-5 句区间总览摘要，点出该区间投放概况、最值得注意的变化、整体判断",
   "module_comments": {
-    "overview": "对整体数据 + 环比的一句点评",
+    "overview": "对整体数据 + 上一等长区间对比的一句点评",
     "by_category": "对各关键词分级表现的点评",
     "top_keywords": "对头部消费词的点评（是否集中、是否健康）",
     "device": "对 PC/移动分布的点评",
-    "alerts": "对本月异常处置情况的点评",
-    "operations": "对本月优化操作的点评"
+    "alerts": "对所选区间异常处置情况的点评",
+    "operations": "对所选区间优化操作的点评"
   },
-  "next_month_plan": ["3-5 条下月优化计划/建议，每条一句话，具体可落地"]
+  "next_period_plan": ["3-5 条后续优化计划/建议，每条一句话，具体可落地"]
 }"""
 
 
 async def gather_report_data(
-    session: AsyncSession, tenant: Tenant, year: int, month: int
+    session: AsyncSession, tenant: Tenant, start: date, end: date
 ) -> dict:
-    """聚合某租户某月的全部数据模块（不含 AI）。"""
+    """聚合某租户自定义日期区间的全部数据模块（不含 AI）。"""
     # 延迟导入避免循环（app.api.* → reports → 本模块）；复用看板/台账的口径helper
     from app.api.dashboard import DEVICE_LABELS, _change_pct, _derive, _f, _period_kpi
     from app.api.operations import _change
 
-    start = date(year, month, 1)
-    end = date(year, month, calendar.monthrange(year, month)[1])
+    if start > end:
+        raise ValueError("统计起始日期不能晚于截止日期")
     days = (end - start).days + 1
 
-    # ===== 整体 KPI + 上月环比 =====
+    # ===== 整体 KPI + 上一等长区间对比 =====
     kpi = await _period_kpi(session, tenant.id, start, end)
     prev_end = start - timedelta(days=1)
-    prev_start = prev_end.replace(day=1)
+    prev_start = prev_end - timedelta(days=days - 1)
     prev_kpi = await _period_kpi(session, tenant.id, prev_start, prev_end)
     kpi_compare = {
         k: {
@@ -97,11 +95,12 @@ async def gather_report_data(
         )
     )
 
-    # ===== 月预算耗用 =====
+    # ===== 所选区间消费 / 月预算参考 =====
     monthly_budget = _f(tenant.monthly_budget) if tenant.monthly_budget else None
     budget = {
         "monthly_budget": monthly_budget,
-        "month_cost": kpi["cost"],
+        "month_cost": kpi["cost"],  # 兼容旧前端字段名，实际为所选区间消费
+        "period_cost": kpi["cost"],
         "usage_pct": (round(kpi["cost"] / monthly_budget * 100, 1) if monthly_budget else None),
     }
 
@@ -122,7 +121,7 @@ async def gather_report_data(
             .group_by(KwReportSnapshot.report_date)
         )
     ).all()
-    # 补满整月每一天（没数据的天补 0），趋势才读得出"月内哪几天在投"，
+    # 补满所选区间每一天（没数据的天补 0），趋势才读得出哪些天在投，
     # 否则只投几天时柱子太少、被前端拉成大色块
     by_day = {r[0]: r for r in trend_rows}
     trend = []
@@ -240,7 +239,7 @@ async def gather_report_data(
         for r in dev_rows
     ]
 
-    # ===== 异常处置回顾（本月数据日的告警，按状态计数） =====
+    # ===== 异常处置回顾（所选区间告警，按状态计数） =====
     alert_rows = (
         await session.execute(
             select(Alert.status, func.count())
@@ -254,13 +253,15 @@ async def gather_report_data(
     ).all()
     alerts_review = {s: int(n) for s, n in alert_rows}
 
-    # ===== 本月优化操作统计（调价台账）+ AI 建议采纳数 =====
+    # ===== 所选区间优化操作统计（调价台账）+ AI 建议采纳数 =====
+    start_dt = datetime.combine(start, datetime.min.time())
+    end_exclusive = datetime.combine(end + timedelta(days=1), datetime.min.time())
     op_rows = (
         await session.scalars(
             select(OperationRecord).where(
                 OperationRecord.tenant_id == tenant.id,
-                OperationRecord.opt_time >= datetime(year, month, 1),
-                OperationRecord.opt_time < datetime(year, month, 1) + timedelta(days=days),
+                OperationRecord.opt_time >= start_dt,
+                OperationRecord.opt_time < end_exclusive,
             )
         )
     ).all()
@@ -276,8 +277,8 @@ async def gather_report_data(
         select(func.count()).select_from(Suggestion).where(
             Suggestion.tenant_id == tenant.id,
             Suggestion.status == "adopted",
-            Suggestion.adopted_at >= datetime(year, month, 1),
-            Suggestion.adopted_at < datetime(year, month, 1) + timedelta(days=days),
+            Suggestion.adopted_at >= start_dt,
+            Suggestion.adopted_at < end_exclusive,
         )
     )
     operations = {
@@ -290,8 +291,6 @@ async def gather_report_data(
     return {
         "tenant": {"id": tenant.id, "name": tenant.name, "strategy": tenant.strategy},
         "period": {
-            "year": year,
-            "month": month,
             "start_date": start.isoformat(),
             "end_date": end.isoformat(),
             "days": days,
@@ -320,9 +319,9 @@ def _build_prompt(data: dict) -> str:
     k = data["kpi"]
     lines = [
         f"客户：{data['tenant']['name']}",
-        f"报告月份：{p['year']}年{p['month']}月（{p['start_date']}~{p['end_date']}，投放 {p['active_days']}/{p['days']} 天）",
+        f"统计区间：{p['start_date']}~{p['end_date']}（投放 {p['active_days']}/{p['days']} 天）",
         "",
-        "【整体数据（括号内为环比上月）】",
+        "【整体数据（括号内为上一等长区间对比）】",
         f"消费 ¥{k['cost']['current']}（{_pct(k['cost']['change_pct'])}），"
         f"点击 {k['click']['current']}（{_pct(k['click']['change_pct'])}），"
         f"展现 {k['impression']['current']}（{_pct(k['impression']['change_pct'])}）",
@@ -331,7 +330,10 @@ def _build_prompt(data: dict) -> str:
     ]
     b = data["budget"]
     if b["monthly_budget"]:
-        lines.append(f"月预算 ¥{b['monthly_budget']}，耗用 {b['usage_pct']}%")
+        lines.append(
+            f"所选区间消费 ¥{b['period_cost']}，月预算参考 ¥{b['monthly_budget']}，"
+            f"区间消费相当于月预算的 {b['usage_pct']}%"
+        )
 
     if data["by_category"]:
         lines.append("\n【分类报告（按关键词分级，消费占比）】")
@@ -366,17 +368,17 @@ def _build_prompt(data: dict) -> str:
 
     o = data["operations"]
     lines.append(
-        f"\n【本月优化操作】共 {o['total']} 次"
+        f"\n【所选区间优化操作】共 {o['total']} 次"
         + (f"（{('，'.join(f'{k}{v}' for k, v in o['by_level'].items()))}）" if o["by_level"] else "")
-        + f"，其中超 20% 上限 {o['over_limit']} 次；AI 建议本月采纳 {o['ai_suggestions_adopted']} 条"
+        + f"，其中超 20% 上限 {o['over_limit']} 次；AI 建议采纳 {o['ai_suggestions_adopted']} 条"
     )
     return "\n".join(lines)
 
 
 def _pct(v) -> str:
     if v is None:
-        return "环比无数据"
-    return f"环比{'+' if v >= 0 else ''}{v}%"
+        return "上一等长区间无可比数据"
+    return f"较上一等长区间{'+' if v >= 0 else ''}{v}%"
 
 
 def _ctr(v) -> str:
@@ -384,14 +386,87 @@ def _ctr(v) -> str:
 
 
 async def generate_narrative(data: dict) -> dict | None:
-    """对结构化月度数据生成 AI 叙述。未配 key 返回 None；失败抛 DeepSeekError。"""
+    """对结构化区间数据生成 AI 叙述。未配 key 返回 None；失败抛 DeepSeekError。"""
     if not is_enabled():
         return None
     out = await chat_json(SYSTEM_PROMPT, _build_prompt(data))
     return {
         "summary": str(out.get("summary") or ""),
         "module_comments": out.get("module_comments") or {},
-        "next_month_plan": out.get("next_month_plan") or [],
+        "next_period_plan": out.get("next_period_plan") or [],
+    }
+
+
+async def get_analysis_report(
+    session: AsyncSession,
+    tenant: Tenant,
+    start: date,
+    end: date,
+    force: bool = False,
+) -> dict:
+    """组装自定义日期区间报告，并按租户+区间缓存 AI 叙述。"""
+    data = await gather_report_data(session, tenant, start, end)
+    cached = await session.scalar(
+        select(AnalysisReport).where(
+            AnalysisReport.tenant_id == tenant.id,
+            AnalysisReport.start_date == start,
+            AnalysisReport.end_date == end,
+        )
+    )
+    narrative = None
+    generated_at = None
+    if cached and not force:
+        narrative = {
+            "summary": cached.summary or "",
+            "module_comments": (cached.narrative or {}).get("module_comments", {}),
+            "next_period_plan": (cached.narrative or {}).get(
+                "next_period_plan", []
+            ),
+        }
+        generated_at = cached.generated_at
+    elif is_enabled():
+        try:
+            narrative = await generate_narrative(data)
+        except DeepSeekError as exc:
+            logger.warning(
+                "区间报告叙述生成失败 tenant=%s %s~%s：%s",
+                tenant.id,
+                start,
+                end,
+                exc,
+            )
+        if narrative is not None:
+            now = datetime.utcnow()
+            payload = {
+                "module_comments": narrative["module_comments"],
+                "next_period_plan": narrative["next_period_plan"],
+            }
+            if cached:
+                cached.summary = narrative["summary"]
+                cached.narrative = payload
+                cached.model = "deepseek-chat"
+                cached.generated_at = now
+            else:
+                session.add(
+                    AnalysisReport(
+                        tenant_id=tenant.id,
+                        start_date=start,
+                        end_date=end,
+                        summary=narrative["summary"],
+                        narrative=payload,
+                        model="deepseek-chat",
+                        generated_at=now,
+                    )
+                )
+            await session.commit()
+            generated_at = now
+
+    return {
+        "ai_enabled": is_enabled(),
+        "module_labels": MODULE_LABELS,
+        "data": data,
+        "narrative": narrative,
+        "generated_at": generated_at.isoformat() if generated_at else None,
     }
 
 
@@ -407,7 +482,10 @@ async def get_monthly_report(
     数据模块永远返回（不依赖 AI）。AI 叙述：缓存命中直接用；未命中且配了 key 才生成；
     未配 key / 生成失败 → narrative=null（前端只是不显示 AI 文字，报告照出）。
     """
-    data = await gather_report_data(session, tenant, year, month)
+    start = date(year, month, 1)
+    end = date(year, month, calendar.monthrange(year, month)[1])
+    data = await gather_report_data(session, tenant, start, end)
+    data["period"].update({"year": year, "month": month})
 
     cached = await session.scalar(
         select(MonthlyReport).where(
@@ -422,7 +500,9 @@ async def get_monthly_report(
         narrative = {
             "summary": cached.summary or "",
             "module_comments": (cached.narrative or {}).get("module_comments", {}),
-            "next_month_plan": (cached.narrative or {}).get("next_month_plan", []),
+            "next_period_plan": (cached.narrative or {}).get(
+                "next_month_plan", []
+            ),
         }
         generated_at = cached.generated_at
     elif is_enabled():
@@ -437,7 +517,7 @@ async def get_monthly_report(
                 cached.summary = narrative["summary"]
                 cached.narrative = {
                     "module_comments": narrative["module_comments"],
-                    "next_month_plan": narrative["next_month_plan"],
+                    "next_month_plan": narrative["next_period_plan"],
                 }
                 cached.model = "deepseek-chat"
                 cached.generated_at = now
@@ -447,7 +527,7 @@ async def get_monthly_report(
                     summary=narrative["summary"],
                     narrative={
                         "module_comments": narrative["module_comments"],
-                        "next_month_plan": narrative["next_month_plan"],
+                        "next_month_plan": narrative["next_period_plan"],
                     },
                     model="deepseek-chat", generated_at=now,
                 )

@@ -288,32 +288,20 @@ async def sync_keyword_dimension_reports_for_account(
         if (rec := _row_to_region_record(row, baidu_account.tenant_id, baidu_account.id, target_date))
     ]
     if region_records:
-        stmt = pg_insert(KeywordRegionReport).values(region_records)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=[
+        await _chunked_upsert(
+            session,
+            KeywordRegionReport,
+            region_records,
+            "uq_kw_region_report_tenant_date_kw_region_device",
+            {
                 "tenant_id",
                 "report_date",
                 "keyword_id",
                 "region_name",
                 "region_level",
                 "device",
-            ],
-            set_={
-                "impression": stmt.excluded.impression,
-                "click": stmt.excluded.click,
-                "cost": stmt.excluded.cost,
-                "cpc": stmt.excluded.cpc,
-                "ctr": stmt.excluded.ctr,
-                "campaign_id": stmt.excluded.campaign_id,
-                "campaign_name": stmt.excluded.campaign_name,
-                "adgroup_id": stmt.excluded.adgroup_id,
-                "adgroup_name": stmt.excluded.adgroup_name,
-                "keyword": stmt.excluded.keyword,
-                "raw_metrics": stmt.excluded.raw_metrics,
-                "fetched_at": stmt.excluded.fetched_at,
             },
         )
-        await session.execute(stmt)
 
     hourly_rows = await svc.get_keyword_hourly_report(start_date=iso_date, end_date=iso_date)
     hourly_records = [
@@ -321,27 +309,14 @@ async def sync_keyword_dimension_reports_for_account(
         if (rec := _row_to_hourly_record(row, baidu_account.tenant_id, baidu_account.id))
     ]
     if hourly_records:
-        stmt = pg_insert(KeywordHourlyReport).values(hourly_records)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["tenant_id", "report_datetime", "keyword_id", "device"],
-            set_={
-                "impression": stmt.excluded.impression,
-                "click": stmt.excluded.click,
-                "cost": stmt.excluded.cost,
-                "cpc": stmt.excluded.cpc,
-                "ctr": stmt.excluded.ctr,
-                "campaign_id": stmt.excluded.campaign_id,
-                "campaign_name": stmt.excluded.campaign_name,
-                "adgroup_id": stmt.excluded.adgroup_id,
-                "adgroup_name": stmt.excluded.adgroup_name,
-                "keyword": stmt.excluded.keyword,
-                "raw_metrics": stmt.excluded.raw_metrics,
-                "fetched_at": stmt.excluded.fetched_at,
-            },
+        await _chunked_upsert(
+            session,
+            KeywordHourlyReport,
+            hourly_records,
+            "uq_kw_hourly_report_tenant_dt_kw_device",
+            {"tenant_id", "report_datetime", "keyword_id", "device"},
         )
-        await session.execute(stmt)
 
-    await session.commit()
     logger.info(
         "账户 %s %s 关键词维度报告 upsert 地域 %d 条、小时 %d 条",
         baidu_account.baidu_username,

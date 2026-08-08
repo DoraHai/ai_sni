@@ -1,8 +1,9 @@
 """AI 每日洞察接口（盯盘页）。
 
-生成见 app/ai/insight.py。按天缓存，首次访问当天 lazy 生成；force=true 强制重算。
+生成见 app/ai/insight.py。按洞察日期缓存，首次访问 lazy 生成；force=true 强制重算。
 """
 import logging
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,14 +25,19 @@ router = APIRouter(
 @router.get("/insight")
 async def get_insight(
     tenant_id: int = Query(..., description="本地租户 ID"),
+    target_date: date | None = Query(
+        None, description="洞察日期；看板传入所选区间的结束日期"
+    ),
     force: bool = Query(False, description="true=强制重新生成（忽略当天缓存）"),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """取当天 AI 每日洞察。未配 DeepSeek 时 enabled=false（前端不显示洞察卡）。"""
+    """取所选结束日的 AI 洞察。未传日期时回退到最新数据日。"""
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
-    ins = await generate_insight(session, tenant, force=force)
+    ins = await generate_insight(
+        session, tenant, target_date=target_date, force=force
+    )
     if ins is None:
         return {"enabled": False}
     return {

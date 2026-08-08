@@ -23,6 +23,19 @@ class BaiduAccount(Base):
     access_token_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     refresh_token_encrypted: Mapped[str | None] = mapped_column(Text)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    oauth_grant_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("baidu_oauth_grants.id"), nullable=True
+    )
+    account_role: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="standalone"
+    )
+    refresh_expires_at: Mapped[datetime | None] = mapped_column(DateTime)
+    authorized_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime)
+    sync_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending"
+    )
+    last_sync_error: Mapped[str | None] = mapped_column(Text)
     auth_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="self")
     status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

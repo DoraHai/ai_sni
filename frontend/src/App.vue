@@ -6,12 +6,13 @@ import { changePassword, fetchMe, fetchTenants } from './api/auth'
 import { fetchAlerts } from './api/alerts'
 import { fetchCandidates } from './api/expansion'
 import { session } from './store/session'
+import { redirectToLogin } from './auth/loginRedirect'
 
 const route = useRoute()
 const router = useRouter()
 const currentTitle = computed(() => route.meta.title || '')
 const currentWorkflow = computed(() => route.meta.workflow || '')
-const bare = computed(() => route.meta.bare) // 登录页等无框页面
+const bare = computed(() => route.meta.bare) // 门户、诊断等无框页面
 const tenantPopoverOpen = ref(false)
 
 const platformShortcuts = [
@@ -169,7 +170,7 @@ function onTenantChange(id) {
 async function onUserCommand(cmd) {
   if (cmd === 'logout') {
     session.logout()
-    router.push('/login')
+    redirectToLogin('/')
     return
   }
   if (cmd === 'password') {
