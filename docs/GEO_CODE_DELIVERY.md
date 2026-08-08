@@ -17,6 +17,15 @@
 
 本次「可交付」= **GEO 自助运营 MVP 代码完成 + 产品化增强代码完成 + 本地门禁通过**。
 
+### 可用性说明（接手必看）
+
+| 项 | 说明 |
+| --- | --- |
+| 主路径 UI | **Vue SPA**（`:5173` `/geo/*`）；静态台为兼容路径，展示名已对齐 |
+| 迁移 | `alembic upgrade head` 须含 **0054**；`GET /api/v1/geo/content-health` 的 `schema` 可自检 |
+| 社交真发布 | 需客户自备平台凭证；无密钥时用 `mock_` app_id 或 `accept_geo_social_usability.py` |
+| 微信封面 | 凭证支持 `thumb_media_id` / `cover_image_url` / `cover_image_base64` |
+
 ---
 
 ## 2. GEO 范围边界（代码地图）

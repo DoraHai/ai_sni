@@ -33,6 +33,8 @@ WechatMpError = WebhookConnectorError
 TOKEN_URL = "https://api.weixin.qq.com/cgi-bin/token"
 DRAFT_ADD_URL = "https://api.weixin.qq.com/cgi-bin/draft/add"
 FREE_PUBLISH_URL = "https://api.weixin.qq.com/cgi-bin/freepublish/submit"
+# 永久素材：图文封面 thumb（type=thumb）
+MEDIA_UPLOAD_URL = "https://api.weixin.qq.com/cgi-bin/material/add_material"
 
 
 def wechat_mp_mock_enabled(app_id: str | None = None) -> bool:
@@ -111,6 +113,121 @@ async def ensure_wechat_access_token(creds: dict[str, Any]) -> tuple[str, dict[s
     }
 
 
+async def download_image_bytes(url: str) -> tuple[bytes, str]:
+    """Fetch cover image bytes; returns (data, filename)."""
+    if not str(url).startswith(("https://", "http://")):
+        raise WechatMpError("cover_image_url 须为 http(s) 地址")
+    try:
+        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT, follow_redirects=True) as client:
+            resp = await client.get(url)
+    except httpx.HTTPError as exc:
+        raise WechatMpError(f"下载封面失败: {exc}") from exc
+    if resp.status_code >= 400:
+        raise WechatMpError(f"下载封面 HTTP {resp.status_code}")
+    data = resp.content or b""
+    if len(data) < 100:
+        raise WechatMpError("封面图片过小或为空")
+    if len(data) > 2 * 1024 * 1024:
+        raise WechatMpError("封面图片超过 2MB")
+    ctype = (resp.headers.get("content-type") or "").lower()
+    ext = "jpg"
+    if "png" in ctype:
+        ext = "png"
+    elif "gif" in ctype:
+        ext = "gif"
+    elif "webp" in ctype:
+        ext = "jpg"
+    return data, f"cover.{ext}"
+
+
+async def wechat_upload_thumb(
+    *,
+    access_token: str,
+    image_bytes: bytes,
+    filename: str = "cover.jpg",
+    app_id: str | None = None,
+) -> str:
+    """Upload permanent thumb material; returns media_id."""
+    if wechat_mp_mock_enabled(app_id):
+        return f"mock_thumb_{abs(hash(filename + str(len(image_bytes)))) % 10_000_000}"
+
+    url = f"{MEDIA_UPLOAD_URL}?access_token={access_token}&type=thumb"
+    files = {"media": (filename, image_bytes, "application/octet-stream")}
+    try:
+        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT) as client:
+            resp = await client.post(url, files=files)
+    except httpx.HTTPError as exc:
+        raise WechatMpError(f"微信上传封面失败: {exc}") from exc
+    try:
+        body = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        raise WechatMpError(f"微信上传封面非 JSON: {(resp.text or '')[:300]}") from exc
+    if body.get("errcode") not in (None, 0):
+        raise WechatMpError(
+            f"微信上传封面失败 errcode={body.get('errcode')} errmsg={body.get('errmsg')}"
+        )
+    mid = str(body.get("media_id") or body.get("thumb_media_id") or "").strip()
+    if not mid:
+        raise WechatMpError("微信上传封面未返回 media_id")
+    return mid
+
+
+async def resolve_thumb_media_id(
+    credentials: dict[str, Any],
+    *,
+    access_token: str,
+) -> tuple[str | None, dict[str, Any]]:
+    """Resolve cover: thumb_media_id | cover_image_url | cover_image_base64.
+
+    Returns (thumb_media_id, credential_patch) — patch may cache uploaded id.
+    """
+    existing = str(credentials.get("thumb_media_id") or "").strip()
+    if existing:
+        return existing, {}
+
+    app_id = str(credentials.get("app_id") or "")
+    patch: dict[str, Any] = {}
+
+    b64 = str(credentials.get("cover_image_base64") or "").strip()
+    if b64:
+        import base64
+
+        raw = b64.split(",", 1)[-1]
+        try:
+            data = base64.b64decode(raw, validate=False)
+        except Exception as exc:  # noqa: BLE001
+            raise WechatMpError("cover_image_base64 无效") from exc
+        if len(data) < 8:
+            raise WechatMpError("cover_image_base64 解码后为空")
+        mid = await wechat_upload_thumb(
+            access_token=access_token,
+            image_bytes=data,
+            filename="cover.jpg",
+            app_id=app_id,
+        )
+        patch["thumb_media_id"] = mid
+        return mid, patch
+
+    cover_url = str(credentials.get("cover_image_url") or "").strip()
+    if cover_url:
+        data, fname = await download_image_bytes(cover_url)
+        mid = await wechat_upload_thumb(
+            access_token=access_token,
+            image_bytes=data,
+            filename=fname,
+            app_id=app_id,
+        )
+        patch["thumb_media_id"] = mid
+        return mid, patch
+
+    # optional: default mock thumb so draft always has a cover in mock mode
+    if wechat_mp_mock_enabled(app_id):
+        mid = "mock_thumb_default"
+        return mid, {}
+
+    return None, {}
+
+
 async def wechat_draft_add(
     *,
     access_token: str,
@@ -118,6 +235,7 @@ async def wechat_draft_add(
     content_html: str,
     author: str = "GEO",
     digest: str = "",
+    thumb_media_id: str | None = None,
     app_id: str | None = None,
 ) -> dict[str, Any]:
     if wechat_mp_mock_enabled(app_id):
@@ -125,22 +243,22 @@ async def wechat_draft_add(
             "ok": True,
             "mock": True,
             "media_id": f"mock_media_{abs(hash(title)) % 10_000_000}",
+            "thumb_media_id": thumb_media_id or "mock_thumb_default",
             "http_status": 200,
         }
 
-    payload = {
-        "articles": [
-            {
-                "title": (title or "未命名")[:64],
-                "author": (author or "GEO")[:16],
-                "digest": (digest or content_html or "")[:120],
-                "content": content_html or "",
-                "content_source_url": "",
-                "need_open_comment": 0,
-                "only_fans_can_comment": 0,
-            }
-        ]
+    article: dict[str, Any] = {
+        "title": (title or "未命名")[:64],
+        "author": (author or "GEO")[:16],
+        "digest": (digest or content_html or "")[:120],
+        "content": content_html or "",
+        "content_source_url": "",
+        "need_open_comment": 0,
+        "only_fans_can_comment": 0,
     }
+    if thumb_media_id:
+        article["thumb_media_id"] = thumb_media_id
+    payload = {"articles": [article]}
     url = f"{DRAFT_ADD_URL}?access_token={access_token}"
     try:
         async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT) as client:
@@ -214,15 +332,28 @@ async def publish_wechat_mp(
     body_markdown: str,
     body_html: str | None = None,
 ) -> dict[str, Any]:
-    """Full draft (+ optional freepublish). Returns connector result + credential patch."""
+    """Full draft (+ optional freepublish). Returns connector result + credential patch.
+
+    Cover resolution order: credentials.thumb_media_id → cover_image_url → cover_image_base64.
+    Uploaded thumb_media_id is cached back into credentials for reuse.
+    """
     token, patch = await ensure_wechat_access_token(credentials)
+    app_id = str(credentials.get("app_id") or "")
+    thumb_id, thumb_patch = await resolve_thumb_media_id(
+        {**credentials, **patch},
+        access_token=token,
+    )
+    if thumb_patch:
+        patch = {**patch, **thumb_patch}
+
     content = body_html or body_markdown or ""
     draft = await wechat_draft_add(
         access_token=token,
         title=title,
         content_html=content,
         digest=(body_markdown or "")[:120],
-        app_id=str(credentials.get("app_id") or ""),
+        thumb_media_id=thumb_id,
+        app_id=app_id,
     )
     result: dict[str, Any] = {
         "ok": True,
@@ -231,6 +362,7 @@ async def publish_wechat_mp(
         "http_status": draft.get("http_status", 200),
         "remote_url": None,
         "media_id": draft.get("media_id"),
+        "thumb_media_id": thumb_id or draft.get("thumb_media_id"),
         "host": "api.weixin.qq.com",
         "response": draft.get("response") or draft,
         "credential_patch": patch,

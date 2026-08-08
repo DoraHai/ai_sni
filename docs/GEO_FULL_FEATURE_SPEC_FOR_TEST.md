@@ -291,6 +291,8 @@ python scripts/accept_geo_delivery.py http://127.0.0.1:8011 geo-demo-local-key 1
 
 python scripts/accept_geo_hierarchy.py http://127.0.0.1:8011 geo-demo-local-key 1
 
+python scripts/accept_geo_social_usability.py http://127.0.0.1:8011 geo-demo-local-key 1
+
 # 可选但建议（Webhook 全链路；dev 可用本地 sink）
 python scripts/smoke_geo_webhook_push.py
 ```

@@ -32,6 +32,7 @@ python scripts/accept_geo_hierarchy.py http://127.0.0.1:8011 geo-demo-local-key 
 | `accept_geo_m1.py` | 可见度/引用/竞品/渠道 bootstrap/Webhook 门禁/静态页 |
 | `accept_geo_delivery.py` | 内容主环：建议 Brief、召回、绑定、生成、补丁、渠道规则、审校门禁 |
 | `accept_geo_hierarchy.py` | **优化业务/单元 → 意图词 unit_id → 快照 → 日汇总 rebuild → 交付切片** |
+| `accept_geo_social_usability.py` | **微信封面 mock、平台 payload、content-health 迁移自检、社交账号校验** |
 
 - [ ] 三项全绿  
 - [ ] CI（GitHub Actions `pytest`）绿  

@@ -116,9 +116,65 @@ def test_payload_wechat_articles():
         channel="wechat",
         title="标题",
         body_markdown="md",
+        extra={"thumb_media_id": "thumb1"},
     )
     assert "articles" in p
     assert p["articles"][0]["title"] == "标题"
+    assert p["articles"][0]["thumb_media_id"] == "thumb1"
+
+
+def test_payload_zhihu_baijia_toutiao():
+    z = build_social_payload(
+        platform="zhihu",
+        mode="draft",
+        tenant_id=1,
+        task_id=1,
+        channel="zhihu",
+        title="Z",
+        body_markdown="m",
+        body_html="<p>m</p>",
+    )
+    assert z["zhihu"]["content_html"] == "<p>m</p>"
+    b = build_social_payload(
+        platform="baijiahao",
+        mode="draft",
+        tenant_id=1,
+        task_id=1,
+        channel="baijiahao",
+        title="T" * 50,
+        body_markdown="m",
+    )
+    assert b["article"]["is_original"] == 1
+    assert len(b["article"]["title"]) <= 40
+    t = build_social_payload(
+        platform="toutiao",
+        mode="draft",
+        tenant_id=1,
+        task_id=1,
+        channel="toutiao",
+        title="TT",
+        body_markdown="m",
+    )
+    assert t["data"]["title"] == "TT"
+
+
+def test_wechat_cover_thumb_cached():
+    import asyncio
+
+    r = asyncio.run(
+        publish_wechat_mp(
+            {
+                "app_id": "mock_wx_cover",
+                "app_secret": "s",
+                "thumb_media_id": "already_uploaded",
+            },
+            mode="draft",
+            title="t",
+            body_markdown="b",
+        )
+    )
+    assert r["ok"]
+    assert r.get("thumb_media_id") == "already_uploaded"
 
 
 def test_token_needs_refresh_empty():

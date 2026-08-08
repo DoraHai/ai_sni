@@ -121,7 +121,7 @@
     document.getElementById('periodHint').textContent =
       '基期样本 ' + (b.snapshots_visibility || 0) +
       ' · 对比期样本 ' + (a.snapshots_visibility || 0) +
-      ' · 探测题不进可见性提及率';
+      ' · 探测题不进品牌提及率';
   }
   document.getElementById('btnPeriodDiff').onclick = function () {
     loadPeriodDiff().catch(function (e) { GeoWB.showError(err, e); });
@@ -134,7 +134,7 @@
     [
       ['机会问题', s.prompts, null],
       ['事实卡', s.facts, 'sources.html'],
-      ['内容任务', s.tasks, 'articles.html'],
+      ['优化文章', s.tasks, 'articles.html'],
       ['就绪及以上', s.ready_or_beyond, 'articles.html?status=ready'],
       ['已发布回填', s.published, 'articles.html?status=published'],
       ['来自诊断', s.from_diagnosis_count || 0, 'articles.html?from_diagnosis=1'],
@@ -164,14 +164,14 @@
     var probeLabel = probeRate == null ? '未测' : (Math.round(probeRate * 1000) / 10) + '%';
     [
       ['回答快照', s.snapshots || 0, 'visibility.html'],
-      ['可见性提及率', rateLabel, 'visibility.html'],
+      ['品牌提及率', rateLabel, 'visibility.html'],
       ['可见性样本', (s.snapshots_visibility || 0) + '/' + (s.snapshots_visibility_mention || 0), 'prompts.html?is_brand_probe=0'],
-      ['品牌认知率', probeLabel, 'prompts.html?is_brand_probe=1'],
+      ['品牌点名认知率', probeLabel, 'prompts.html?is_brand_probe=1'],
       ['点名探测题', s.prompts_probe || 0, 'prompts.html?is_brand_probe=1'],
       ['引擎覆盖', s.visibility_engines_covered || 0, 'engines.html'],
       ['含竞品标注', s.snapshots_with_competitors || 0, 'competitors.html'],
       ['含引用 URL', s.snapshots_with_citations || 0, 'citations.html'],
-      ['引用域名数', s.distinct_cited_domains || 0, 'citations.html'],
+      ['AI 引用·独立域名', s.distinct_cited_domains || 0, 'citations.html'],
       ['未提及品牌', s.prompts_brand_missing || 0, 'prompts.html?tag=brand_missing'],
       ['待复核可见度', s.prompts_need_recheck || 0, 'visibility.html?queue=recheck'],
       ['信源布局进行中', s.media_open || 0, 'media.html'],

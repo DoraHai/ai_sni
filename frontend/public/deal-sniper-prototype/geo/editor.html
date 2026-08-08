@@ -69,7 +69,7 @@
           </div>
           <div class="wb-field" style="grid-column:1 / -1">
             <label class="wb-label">策略 · AI 问题（可选）</label>
-            <input class="wb-input" id="briefAiQuestion" placeholder="默认=机会词问题">
+            <input class="wb-input" id="briefAiQuestion" placeholder="默认=意图词问题">
           </div>
           <div class="wb-field" style="grid-column:1 / -1">
             <label class="wb-label">策略 · AI 不推荐原因（逗号分隔）</label>
@@ -617,7 +617,7 @@
       var keyFromUrl = new URLSearchParams(location.search).get('api_key');
       if (keyFromUrl) GeoAPI.setApiKey(keyFromUrl);
       if (!taskId) {
-        throw new Error('缺少 task_id。请从诊断中心「创建 GEO 内容任务」重新打开，或从 GEO 文章列表进入。');
+        throw new Error('缺少 task_id。请从诊断中心「创建 GEO 优化文章」重新打开，或从 GEO 文章列表进入。');
       }
       GeoWB.requireTenant();
       try {

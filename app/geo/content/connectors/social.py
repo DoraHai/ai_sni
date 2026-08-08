@@ -134,9 +134,17 @@ def build_social_payload(
     title: str,
     body_markdown: str,
     body_html: str | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Platform-shaped payload; remotes may ignore unknown fields."""
-    base = {
+    """Platform-shaped payload for gateway/oauth2 publishers.
+
+    Field shapes follow common open-platform conventions so middleware can
+    map 1:1; remotes may ignore unknown keys.
+    """
+    md = body_markdown or ""
+    html = body_html or md
+    digest = md.replace("\n", " ").strip()[:120]
+    base: dict[str, Any] = {
         "source": "growth-sniper-geo",
         "action": mode,
         "tenant_id": tenant_id,
@@ -144,24 +152,63 @@ def build_social_payload(
         "channel": channel,
         "platform": platform,
         "title": title,
-        "content_markdown": body_markdown,
-        "content_html": body_html or body_markdown,
+        "content_markdown": md,
+        "content_html": html,
+        "summary": digest,
+        "excerpt": digest[:100],
     }
     if platform == "wechat":
-        base["articles"] = [
-            {
-                "title": title[:64],
-                "author": "GEO",
-                "digest": (body_markdown or "")[:120],
-                "content": body_html or body_markdown,
-                "content_source_url": "",
-            }
-        ]
+        # 对齐公众号草稿 articles[]（gateway 转发时可用）
+        art: dict[str, Any] = {
+            "title": (title or "")[:64],
+            "author": "GEO",
+            "digest": digest,
+            "content": html,
+            "content_source_url": "",
+            "need_open_comment": 0,
+            "only_fans_can_comment": 0,
+        }
+        if extra and extra.get("thumb_media_id"):
+            art["thumb_media_id"] = extra["thumb_media_id"]
+        base["articles"] = [art]
     elif platform == "zhihu":
+        # 知乎机构号常见：文章 title + content（markdown/html）
+        base["type"] = "article"
         base["question_or_article"] = "article"
-        base["content"] = body_markdown
-    elif platform in {"baijiahao", "toutiao"}:
-        base["article"] = {"title": title, "content": body_markdown}
+        base["content"] = md
+        base["content_html"] = html
+        base["zhihu"] = {
+            "title": title,
+            "content": md,
+            "content_html": html,
+            "excerpt": digest[:100],
+            "can_reward": False,
+        }
+    elif platform == "baijiahao":
+        # 百家号图文：title ≤40 汉字级、content HTML、is_original
+        base["article"] = {
+            "title": (title or "")[:40],
+            "content": html,
+            "origin_url": "",
+            "cover_images": list((extra or {}).get("cover_images") or []),
+            "is_original": 1,
+            "abstract": digest[:80],
+        }
+        base["baijiahao"] = base["article"]
+    elif platform == "toutiao":
+        # 头条号常见 data 包裹
+        base["data"] = {
+            "title": title,
+            "content": html,
+            "content_markdown": md,
+            "abstract": digest[:100],
+            "article_type": 0,
+            "cover_images": list((extra or {}).get("cover_images") or []),
+        }
+        base["article"] = base["data"]
+        base["toutiao"] = base["data"]
+    if extra:
+        base["extra"] = extra
     return base
 
 

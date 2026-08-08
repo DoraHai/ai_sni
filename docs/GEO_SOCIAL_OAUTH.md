@@ -39,7 +39,31 @@
 - 使用官方 `client_credential` 取 token（服务端，不是用户扫码网页授权）  
 - 草稿箱接口：`cgi-bin/draft/add`  
 - 可选群发：`cgi-bin/freepublish/submit`（推送 mode=`publish`）  
+- **封面 thumb**：凭证可带  
+  - `thumb_media_id`（已上传素材 ID）  
+  - 或 `cover_image_url`（HTTPS 图，系统下载后 `material/add_material?type=thumb`）  
+  - 或 `cover_image_base64`  
+  上传成功后会回写 `thumb_media_id` 避免重复传  
 - **本地演练**：`GEO_WECHAT_MP_MOCK=1` 或 `app_id` 以 `mock_` 开头 → 不访问微信  
+
+## 知乎 / 百家号 / 头条 payload
+
+gateway / oauth2 推送时 body 含平台约定字段（便于自建转发 1:1 映射）：
+
+| 平台 | 主要字段 |
+| --- | --- |
+| zhihu | `zhihu.title/content/content_html/excerpt` |
+| baijiahao | `article.title(≤40)/content/is_original/abstract/cover_images` |
+| toutiao | `data.title/content/abstract/cover_images` |
+
+## 可用性验收（无真实密钥）
+
+```bash
+# 进程内 mock + API（需 8011）
+python scripts/accept_geo_social_usability.py http://127.0.0.1:8011 geo-demo-local-key 1
+```
+
+`GET /api/v1/geo/content-health` 的 `schema` 可检查 0054 迁移是否已执行。
 
 ## OAuth2 回调 URL 示例
 

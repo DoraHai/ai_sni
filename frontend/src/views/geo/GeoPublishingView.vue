@@ -98,6 +98,7 @@ const accForm = ref({
   access_token: '',
   app_id: '',
   app_secret: '',
+  cover_image_url: '',
   client_id: '',
   client_secret: '',
   authorize_url: '',
@@ -366,13 +367,16 @@ function buildSocialCredentials(form, channelType) {
     const app_id = (form.app_id || '').trim()
     const app_secret = (form.app_secret || '').trim()
     if (!app_id || !app_secret) throw new Error('微信公众号需要 app_id 与 app_secret')
-    return {
+    const cred = {
       provider: 'wechat_mp',
       platform: 'wechat',
       app_id,
       app_secret,
       mode_default: 'draft',
     }
+    const cover = (form.cover_image_url || '').trim()
+    if (cover) cred.cover_image_url = cover
+    return cred
   }
 
   if (provider === 'oauth2') {
@@ -1174,6 +1178,13 @@ onMounted(load)
             </el-form-item>
             <el-form-item label="app_secret" required>
               <el-input v-model="accForm.app_secret" type="password" show-password />
+            </el-form-item>
+            <el-form-item label="封面图 URL">
+              <el-input
+                v-model="accForm.cover_image_url"
+                placeholder="可选 HTTPS 图片；将上传为 thumb_media_id"
+              />
+              <div class="form-tip">也可在凭证 JSON 里填 thumb_media_id / cover_image_base64</div>
             </el-form-item>
           </template>
 

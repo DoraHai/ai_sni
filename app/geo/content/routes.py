@@ -632,8 +632,52 @@ async def _channel_options_payload(session: AsyncSession, tenant_id: int) -> lis
 
 
 @router.get("/content-health")
-async def content_health() -> dict:
-    return {"module": "geo-content", "status": "ok"}
+async def content_health(
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Module health + schema readiness (migration 0054 hierarchy / daily metrics)."""
+    from sqlalchemy import text
+
+    async def _probe(sql: str) -> tuple[str, str | None]:
+        try:
+            await session.execute(text(sql))
+            return "ok", None
+        except Exception as exc:  # noqa: BLE001
+            try:
+                await session.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            return "missing", str(exc)[:160]
+
+    checks: dict[str, Any] = {}
+    status = "ok"
+    for table, key in (
+        ("geo_optimization_businesses", "optimization_businesses"),
+        ("geo_optimization_units", "optimization_units"),
+        ("geo_daily_metrics", "daily_metrics"),
+    ):
+        st, err = await _probe(f"SELECT 1 FROM {table} LIMIT 1")
+        checks[key] = st
+        if err:
+            checks[f"{key}_error"] = err
+            status = "degraded"
+    st, err = await _probe("SELECT unit_id FROM geo_prompts LIMIT 1")
+    checks["prompts_unit_id"] = st
+    if err:
+        checks["prompts_unit_id_error"] = err
+        status = "degraded"
+
+    hint = None
+    if status != "ok":
+        hint = "请在仓库根执行: alembic upgrade head （需 revision 0054_geo_opt_hierarchy）"
+    return {
+        "module": "geo-content",
+        "status": status,
+        "schema": checks,
+        "hint": hint,
+        "display_names": "vue",
+        "static_workbench": "compat",
+    }
 
 
 @router.get("/content-brief-catalog")
