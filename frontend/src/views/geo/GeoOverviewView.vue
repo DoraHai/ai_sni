@@ -13,6 +13,7 @@ import {
   rebuildGeoDailyMetrics,
   staticGeoEditorUrl,
 } from '../../api/geoContent'
+import { useClientPager } from '../../composables/useClientPager'
 import { session } from '../../store/session'
 
 const tenantId = computed(() =>
@@ -36,6 +37,7 @@ const citationNote = ref('')
 const opsAlerts = ref([])
 const opsSummary = ref(null)
 const exporting = ref(false)
+const dailyPager = useClientPager(dailySeries, { pageSize: 14 })
 
 const fmtInt = (v) => (v == null ? '—' : Number(v).toLocaleString('zh-CN'))
 const fmtPct = (v) => {
@@ -396,7 +398,7 @@ onMounted(load)
         <div class="panel-title">近 14 天 · {{ scopeHint }}</div>
         <el-button size="small" :loading="exporting" @click="exportCsv">导出本切片 CSV</el-button>
       </div>
-      <el-table :data="dailySeries" size="small" max-height="300" stripe>
+      <el-table :data="dailyPager.pagedItems" size="small" stripe>
         <el-table-column prop="metric_date" label="日期" width="120" />
         <el-table-column label="品牌提及率" min-width="110">
           <template #default="{ row }">{{ fmtPct(row.brand_mention_rate) }}</template>
@@ -409,6 +411,18 @@ onMounted(load)
         <el-table-column prop="snapshots_visibility" label="可见快照" min-width="100" />
         <el-table-column prop="snapshots_probe" label="探测快照" min-width="100" />
       </el-table>
+      <div class="geo-pager">
+        <el-pagination
+          background
+          layout="total, sizes, prev, pager, next"
+          :total="dailyPager.total"
+          :page-size="dailyPager.pageSize"
+          :current-page="dailyPager.page"
+          :page-sizes="[7, 14, 30, 60]"
+          @current-change="dailyPager.onPageChange"
+          @size-change="dailyPager.onSizeChange"
+        />
+      </div>
     </section>
     <section v-else-if="stats" class="geo-panel">
       <div class="panel-title">近 14 天 · {{ scopeHint }}</div>

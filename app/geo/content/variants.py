@@ -194,6 +194,7 @@ def build_adapt_meta(
     master_version_id: int | None,
     title: str,
     body_md: str,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     profile = get_profile(channel)
     if profile is None:
@@ -208,7 +209,7 @@ def build_adapt_meta(
             dropped.append("long_body_sections")
         if profile.key == "wechat":
             dropped.append("clickable_external_links")
-    return {
+    meta = {
         "channel": channel,
         "profile_key": profile.key,
         "profile_mode": profile.mode,
@@ -219,4 +220,8 @@ def build_adapt_meta(
         "body_chars": len(body_md or ""),
         "dropped": dropped,
         "engine": "deterministic_v1",
+        "quality": "adapted_draft",
     }
+    if extra:
+        meta.update(extra)
+    return meta

@@ -140,6 +140,16 @@ export function testGeoAiSettings(tenantId) {
   })
 }
 
+export function fetchChannelPolishPrompts(tenantId) {
+  return client.get('/api/v1/geo/channel-polish-prompts', {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function putChannelPolishPrompts(body) {
+  return client.put('/api/v1/geo/channel-polish-prompts', body)
+}
+
 export function putGeoTrackingEngines(tenantId, items) {
   return client.put('/api/v1/geo/tracking-engines', {
     tenant_id: tenantId,
@@ -375,10 +385,21 @@ export function aiReviewGeoContentTask(tenantId, taskId, body = { persist: true 
   })
 }
 
-export function createGeoVariants(tenantId, taskId, channels = ['website', 'wechat', 'zhihu']) {
-  return client.post(`/api/v1/geo/content-tasks/${taskId}/variants`, { channels }, {
-    params: { tenant_id: tenantId },
-  })
+export function createGeoVariants(
+  tenantId,
+  taskId,
+  channels = ['website', 'wechat', 'zhihu'],
+  { useLlm = true } = {},
+) {
+  return client.post(
+    `/api/v1/geo/content-tasks/${taskId}/variants`,
+    { channels, use_llm: useLlm },
+    {
+      params: { tenant_id: tenantId },
+      // LLM polish per channel can take a while
+      timeout: 180000,
+    },
+  )
 }
 
 export function patchGeoVariant(tenantId, taskId, channel, body) {

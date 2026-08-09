@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { fetchGeoCompetitorInsights } from '../../api/geoContent'
+import { useClientPager } from '../../composables/useClientPager'
 import { session } from '../../store/session'
 
 const tenantId = computed(() =>
@@ -10,6 +11,7 @@ const tenantId = computed(() =>
 const loading = ref(false)
 const error = ref('')
 const items = ref([])
+const pager = useClientPager(items, { pageSize: 20 })
 
 async function load() {
   if (!tenantId.value) {
@@ -53,7 +55,7 @@ onMounted(load)
     <section class="panel">
       <div class="panel-title">竞品提及聚合</div>
       <el-table
-        :data="items"
+        :data="pager.pagedItems"
         size="small"
         empty-text="暂无竞品标注 · 在「AI 可见度」保存快照时填写竞品名"
       >
@@ -66,6 +68,18 @@ onMounted(load)
         <el-table-column prop="latest_captured_at" label="最近观测" width="170" />
         <el-table-column prop="sample_prompt_question" label="样例提问" min-width="200" />
       </el-table>
+      <div class="geo-pager">
+        <el-pagination
+          background
+          layout="total, sizes, prev, pager, next"
+          :total="pager.total"
+          :page-size="pager.pageSize"
+          :current-page="pager.page"
+          :page-sizes="[10, 20, 50, 100]"
+          @current-change="pager.onPageChange"
+          @size-change="pager.onSizeChange"
+        />
+      </div>
     </section>
   </div>
 </template>

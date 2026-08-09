@@ -62,6 +62,7 @@ from app.geo.content.probe import (
 )
 from app.geo.content.schemas import (
     AiSettingsUpdate,
+    ChannelPolishPromptsUpdate,
     AnswerSnapshotCreate,
     AnswerSnapshotExtractUrlsRequest,
     AnswerSnapshotProbeBatchRequest,
@@ -142,7 +143,6 @@ from app.geo.content.snapshots import (
 )
 from app.geo.content.variants import (
     GeoContentError,
-    adapt_for_channel,
     build_adapt_meta,
     normalize_channels,
 )
@@ -2622,6 +2622,42 @@ async def put_ai_settings(
     return payload
 
 
+@router.get("/channel-polish-prompts")
+async def get_channel_polish_prompts(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """租户生效的渠道成稿提示词（含代码默认与自定义标记）。"""
+    from app.geo.content.channel_polish_prompts import get_effective_prompts
+
+    ctx.ensure_tenant(tenant_id)
+    await _ensure_tenant_exists(session, tenant_id)
+    return await get_effective_prompts(session, tenant_id)
+
+
+@router.put("/channel-polish-prompts")
+async def put_channel_polish_prompts(
+    req: ChannelPolishPromptsUpdate,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """保存渠道成稿提示词覆盖；reset_system / channel.reset 恢复代码默认。"""
+    from app.geo.content.channel_polish_prompts import upsert_prompts
+
+    ctx.ensure_tenant(req.tenant_id)
+    await _ensure_tenant_exists(session, req.tenant_id)
+    channel_payload = [c.model_dump() for c in req.channels]
+    return await upsert_prompts(
+        session,
+        req.tenant_id,
+        system_prompt=req.system_prompt,
+        reset_system=bool(req.reset_system),
+        channels=channel_payload,
+        updated_by=ctx.user_id,
+    )
+
+
 @router.post("/ai-settings/test")
 async def test_ai_settings(
     tenant_id: int = Query(...),
@@ -4413,20 +4449,41 @@ async def create_variants(
     )
     if not channels:
         raise HTTPException(400, "没有可用的启用发布渠道，请先在「发布渠道」配置中启用")
+    from app.geo.content.channel_polish import adapt_or_polish_for_channel
+    from app.geo.content.channel_polish_prompts import resolve_for_channel
+
+    tenant = await _ensure_tenant_exists(session, tenant_id)
+    llm = None
+    if req.use_llm:
+        llm = await resolve_llm_credentials(session, tenant_id)
     existing = {v.channel: v for v in await _variants(session, task.id)}
     created = []
+    polish_stats = {"llm": 0, "fallback": 0}
     for channel in channels:
+        prompts = await resolve_for_channel(session, tenant_id, channel)
         try:
-            title, body = adapt_for_channel(
-                channel, article.title, article.body_markdown, article.outline or {}
+            title, body, polish_meta = await adapt_or_polish_for_channel(
+                channel,
+                article.title,
+                article.body_markdown,
+                article.outline or {},
+                llm=llm,
+                brand=tenant.name if tenant else None,
+                use_llm=bool(req.use_llm),
+                prompts=prompts,
             )
         except GeoContentError as exc:
             raise HTTPException(400, str(exc)) from exc
+        if polish_meta.get("fallback"):
+            polish_stats["fallback"] += 1
+        else:
+            polish_stats["llm"] += 1
         meta = build_adapt_meta(
             channel,
             master_version_id=article.id,
             title=title,
             body_md=body,
+            extra=polish_meta,
         )
         if channel in existing:
             variant = existing[channel]
@@ -4466,7 +4523,13 @@ async def create_variants(
     await _evaluate_and_store_rules(session, task, article, require_channels=False)
     await session.commit()
     await session.refresh(task)
-    return await _task_payload(session, task, detail=True)
+    payload = await _task_payload(session, task, detail=True)
+    payload["variant_polish"] = {
+        **polish_stats,
+        "use_llm": bool(req.use_llm),
+        "channels": created,
+    }
+    return payload
 
 
 @router.patch("/content-tasks/{task_id}/variants/{channel}")

@@ -14,6 +14,7 @@ import {
   probeGeoAnswerSnapshotBatch,
   suggestGeoAnswerSnapshotFields,
 } from '../../api/geoContent'
+import { useClientPager } from '../../composables/useClientPager'
 import { session } from '../../store/session'
 
 const route = useRoute()
@@ -32,6 +33,7 @@ const engines = ref([])
 const prompts = ref([])
 const snapshots = ref([])
 const batchDrafts = ref([])
+const snapPager = useClientPager(snapshots, { pageSize: 20 })
 
 const filterPromptId = ref(route.query.prompt_id ? Number(route.query.prompt_id) : null)
 const filterEngine = ref('')
@@ -127,6 +129,7 @@ async function loadSnapshots() {
   if (filterEngine.value) params.engine = filterEngine.value
   const data = await listGeoAnswerSnapshots(tenantId.value, params)
   snapshots.value = data.items || []
+  snapPager.resetPage()
 }
 
 async function reloadAll() {
@@ -528,7 +531,7 @@ onMounted(reloadAll)
         </p>
         <div class="table-wrap">
           <el-table
-            :data="snapshots"
+            :data="snapPager.pagedItems"
             size="small"
             empty-text="暂无快照"
             stripe
@@ -600,6 +603,18 @@ onMounted(reloadAll)
               </template>
             </el-table-column>
           </el-table>
+        </div>
+        <div class="geo-pager">
+          <el-pagination
+            background
+            layout="total, sizes, prev, pager, next"
+            :total="snapPager.total"
+            :page-size="snapPager.pageSize"
+            :current-page="snapPager.page"
+            :page-sizes="[10, 20, 50, 100]"
+            @current-change="snapPager.onPageChange"
+            @size-change="snapPager.onSizeChange"
+          />
         </div>
 
         <div v-if="queueMode && prompts.length" class="queue">

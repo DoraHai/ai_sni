@@ -2,6 +2,7 @@
 import { onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { createGeoFact, listGeoFacts, patchGeoFact, verifyGeoFact } from '../../api/geoContent'
+import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
 const { tenantId } = useGeoTenant()
@@ -9,6 +10,7 @@ const loading = ref(false)
 const error = ref('')
 const items = ref([])
 const trust = ref('')
+const pager = useClientPager(items, { pageSize: 20 })
 const createOpen = ref(false)
 const editOpen = ref(false)
 const creating = ref(false)
@@ -144,7 +146,37 @@ async function submitEdit() {
   }
 }
 
-watch([tenantId, trust], load)
+const FACT_TYPE_LABELS = {
+  product: '产品',
+  case: '案例',
+  metric: '指标',
+  policy: '政策',
+  other: '其他',
+}
+const TRUST_LABELS = {
+  verified: '已核验',
+  needs_review: '待审',
+  draft: '草稿',
+}
+const STATUS_LABELS = {
+  active: '生效中',
+  archived: '已归档',
+}
+
+function factTypeLabel(v) {
+  return FACT_TYPE_LABELS[v] || v || '—'
+}
+function trustLabel(v) {
+  return TRUST_LABELS[v] || v || '—'
+}
+function statusLabel(v) {
+  return STATUS_LABELS[v] || v || '—'
+}
+
+watch([tenantId, trust], () => {
+  pager.resetPage()
+  load()
+})
 onMounted(load)
 </script>
 
@@ -172,7 +204,7 @@ onMounted(load)
       </el-select>
     </div>
 
-    <el-table :data="items" stripe empty-text="暂无事实">
+    <el-table :data="pager.pagedItems" stripe empty-text="暂无事实">
       <el-table-column prop="id" label="ID" width="72" />
       <el-table-column label="标题 / 陈述" min-width="260">
         <template #default="{ row }">
@@ -180,15 +212,21 @@ onMounted(load)
           <div class="sub">{{ row.statement }}</div>
         </template>
       </el-table-column>
-      <el-table-column prop="fact_type" label="类型" width="90" />
+      <el-table-column label="类型" width="90">
+        <template #default="{ row }">{{ factTypeLabel(row.fact_type) }}</template>
+      </el-table-column>
       <el-table-column label="来源" min-width="120">
         <template #default="{ row }">
           <div>{{ row.source_name || '—' }}</div>
           <div v-if="row.source_url" class="sub">{{ row.source_url }}</div>
         </template>
       </el-table-column>
-      <el-table-column prop="trust_level" label="信任" width="110" />
-      <el-table-column prop="status" label="状态" width="90" />
+      <el-table-column label="信任" width="110">
+        <template #default="{ row }">{{ trustLabel(row.trust_level) }}</template>
+      </el-table-column>
+      <el-table-column label="状态" width="90">
+        <template #default="{ row }">{{ statusLabel(row.status) }}</template>
+      </el-table-column>
       <el-table-column label="操作" width="200" fixed="right">
         <template #default="{ row }">
           <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
@@ -207,6 +245,18 @@ onMounted(load)
         </template>
       </el-table-column>
     </el-table>
+    <div class="geo-pager">
+      <el-pagination
+        background
+        layout="total, sizes, prev, pager, next"
+        :total="pager.total"
+        :page-size="pager.pageSize"
+        :current-page="pager.page"
+        :page-sizes="[10, 20, 50, 100]"
+        @current-change="pager.onPageChange"
+        @size-change="pager.onSizeChange"
+      />
+    </div>
 
     <el-dialog v-model="editOpen" title="编辑事实" width="560px">
       <el-form label-width="88px">

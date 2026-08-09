@@ -3,7 +3,7 @@
  * AI 可见度 · 全自动巡检
  * 多优化意图词 × 启用引擎探测；prefer_real 优先 openai_compat；auto_persist 直接落库快照。
  */
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -17,6 +17,7 @@ import {
   putVisibilityPatrolSettings,
   startVisibilityPatrolRun,
 } from '../../api/geoContent'
+import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
 const router = useRouter()
@@ -43,6 +44,9 @@ const engines = ref([])
 const detail = ref(null)
 const pollTimer = ref(null)
 const ops = ref(null)
+const runPager = useClientPager(runs, { pageSize: 10 })
+const detailItems = computed(() => detail.value?.items || [])
+const detailPager = useClientPager(detailItems, { pageSize: 20 })
 
 const form = ref({
   auto_persist: true,
@@ -216,6 +220,7 @@ function stopPoll() {
 async function openRun(row) {
   try {
     detail.value = await getVisibilityPatrolRun(tenantId.value, row.id)
+    detailPager.resetPage()
     if (row.status === 'running' || row.status === 'pending') startPoll(row.id)
   } catch (e) {
     ElMessage.error(e.message || '加载失败')
@@ -395,7 +400,7 @@ onUnmounted(stopPoll)
             清理旧记录
           </el-button>
         </div>
-        <el-table :data="runs" size="small" empty-text="暂无巡检" @row-click="openRun">
+        <el-table :data="runPager.pagedItems" size="small" empty-text="暂无巡检" @row-click="openRun">
           <el-table-column prop="id" label="ID" width="70" />
           <el-table-column label="状态" width="100">
             <template #default="{ row }">
@@ -426,6 +431,16 @@ onUnmounted(stopPoll)
             </template>
           </el-table-column>
         </el-table>
+        <div class="geo-pager">
+          <el-pagination
+            background
+            layout="total, prev, pager, next"
+            :total="runPager.total"
+            :page-size="runPager.pageSize"
+            :current-page="runPager.page"
+            @current-change="runPager.onPageChange"
+          />
+        </div>
 
         <div v-if="detail" class="detail">
           <div class="panel-title">
@@ -435,7 +450,7 @@ onUnmounted(stopPoll)
           <p v-if="detail.error" class="err">{{ detail.error }}</p>
           <el-table
             v-if="detail.items?.length"
-            :data="detail.items"
+            :data="detailPager.pagedItems"
             size="small"
             max-height="360"
             stripe
@@ -463,6 +478,18 @@ onUnmounted(stopPoll)
               </template>
             </el-table-column>
           </el-table>
+          <div v-if="detail.items?.length" class="geo-pager">
+            <el-pagination
+              background
+              layout="total, sizes, prev, pager, next"
+              :total="detailPager.total"
+              :page-size="detailPager.pageSize"
+              :current-page="detailPager.page"
+              :page-sizes="[10, 20, 50, 100]"
+              @current-change="detailPager.onPageChange"
+              @size-change="detailPager.onSizeChange"
+            />
+          </div>
         </div>
       </section>
     </div>

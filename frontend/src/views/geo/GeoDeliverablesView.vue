@@ -7,6 +7,7 @@ import {
   listGeoBusinesses,
   listGeoUnits,
 } from '../../api/geoContent'
+import { useClientPager } from '../../composables/useClientPager'
 import { session } from '../../store/session'
 
 const tenantId = computed(() =>
@@ -21,6 +22,20 @@ const businesses = ref([])
 const units = ref([])
 const filterBusinessId = ref(null)
 const filterUnitId = ref(null)
+
+const dailySeriesSrc = computed(() => pack.value?.daily_series || [])
+const bizSliceSrc = computed(() => pack.value?.business_slices || [])
+const unitSliceSrc = computed(() => pack.value?.unit_slices || [])
+const citeSrc = computed(() => pack.value?.citations_top || [])
+const taskSrc = computed(() => pack.value?.tasks || [])
+const snapSrc = computed(() => pack.value?.snapshots_sample || [])
+
+const dailyPager = useClientPager(dailySeriesSrc, { pageSize: 14 })
+const bizSlicePager = useClientPager(bizSliceSrc, { pageSize: 20 })
+const unitSlicePager = useClientPager(unitSliceSrc, { pageSize: 20 })
+const citePager = useClientPager(citeSrc, { pageSize: 20 })
+const taskPager = useClientPager(taskSrc, { pageSize: 20 })
+const snapPager = useClientPager(snapSrc, { pageSize: 20 })
 
 const fmtPct = (v) => {
   if (v == null) return '—'
@@ -250,9 +265,9 @@ onMounted(async () => {
         </div>
       </div>
 
-      <section v-if="(pack.daily_series || []).length" class="panel">
+      <section v-if="dailyPager.total" class="panel">
         <div class="panel-title">按天汇总 · {{ pack.scope?.label || '租户' }}</div>
-        <el-table :data="pack.daily_series || []" size="small" max-height="260">
+        <el-table :data="dailyPager.pagedItems" size="small">
           <el-table-column prop="metric_date" label="日期" width="110" />
           <el-table-column label="品牌提及率" width="110">
             <template #default="{ row }">{{ fmtPct(row.brand_mention_rate) }}</template>
@@ -264,11 +279,22 @@ onMounted(async () => {
           <el-table-column prop="distinct_cited_domains" label="独立域名" width="90" />
           <el-table-column prop="snapshots_visibility" label="可见快照" width="90" />
         </el-table>
+        <div class="geo-pager">
+          <el-pagination
+            background
+            small
+            layout="total, prev, pager, next"
+            :total="dailyPager.total"
+            :page-size="dailyPager.pageSize"
+            :current-page="dailyPager.page"
+            @current-change="dailyPager.onPageChange"
+          />
+        </div>
       </section>
 
-      <section v-if="(pack.business_slices || []).length" class="panel">
+      <section v-if="bizSlicePager.total" class="panel">
         <div class="panel-title">优化业务切片（周期内最近一日）</div>
-        <el-table :data="pack.business_slices || []" size="small">
+        <el-table :data="bizSlicePager.pagedItems" size="small">
           <el-table-column label="业务" min-width="140">
             <template #default="{ row }">{{ row.business_name || `业务#${row.business_id}` }}</template>
           </el-table-column>
@@ -279,11 +305,22 @@ onMounted(async () => {
           <el-table-column prop="citation_count" label="AI 引用" width="90" />
           <el-table-column prop="snapshots_visibility" label="可见快照" width="90" />
         </el-table>
+        <div class="geo-pager">
+          <el-pagination
+            background
+            small
+            layout="total, prev, pager, next"
+            :total="bizSlicePager.total"
+            :page-size="bizSlicePager.pageSize"
+            :current-page="bizSlicePager.page"
+            @current-change="bizSlicePager.onPageChange"
+          />
+        </div>
       </section>
 
-      <section v-if="(pack.unit_slices || []).length" class="panel">
+      <section v-if="unitSlicePager.total" class="panel">
         <div class="panel-title">优化单元切片（周期内最近一日）</div>
-        <el-table :data="pack.unit_slices || []" size="small">
+        <el-table :data="unitSlicePager.pagedItems" size="small">
           <el-table-column label="单元" min-width="160">
             <template #default="{ row }">
               <span v-if="row.business_name">{{ row.business_name }} / </span>
@@ -297,11 +334,22 @@ onMounted(async () => {
           <el-table-column prop="citation_count" label="AI 引用" width="90" />
           <el-table-column prop="snapshots_visibility" label="可见快照" width="90" />
         </el-table>
+        <div class="geo-pager">
+          <el-pagination
+            background
+            small
+            layout="total, prev, pager, next"
+            :total="unitSlicePager.total"
+            :page-size="unitSlicePager.pageSize"
+            :current-page="unitSlicePager.page"
+            @current-change="unitSlicePager.onPageChange"
+          />
+        </div>
       </section>
 
       <section class="panel">
         <div class="panel-title">AI 引用次数 · 域名 Top</div>
-        <el-table :data="pack.citations_top || []" size="small" empty-text="本期无引用">
+        <el-table :data="citePager.pagedItems" size="small" empty-text="本期无引用">
           <el-table-column prop="domain" label="域名" min-width="160" />
           <el-table-column prop="cite_count" label="次数" width="80" />
           <el-table-column label="自有" width="70">
@@ -316,11 +364,22 @@ onMounted(async () => {
             <template #default="{ row }">{{ (row.engines || []).join(', ') || '—' }}</template>
           </el-table-column>
         </el-table>
+        <div class="geo-pager">
+          <el-pagination
+            background
+            small
+            layout="total, prev, pager, next"
+            :total="citePager.total"
+            :page-size="citePager.pageSize"
+            :current-page="citePager.page"
+            @current-change="citePager.onPageChange"
+          />
+        </div>
       </section>
 
       <section class="panel">
         <div class="panel-title">优化文章</div>
-        <el-table :data="pack.tasks || []" size="small" empty-text="本期无任务">
+        <el-table :data="taskPager.pagedItems" size="small" empty-text="本期无任务">
           <el-table-column prop="id" label="ID" width="70" />
           <el-table-column prop="status" label="状态" width="110" />
           <el-table-column label="标题" min-width="200">
@@ -328,11 +387,22 @@ onMounted(async () => {
           </el-table-column>
           <el-table-column prop="updated_at" label="更新" width="170" />
         </el-table>
+        <div class="geo-pager">
+          <el-pagination
+            background
+            small
+            layout="total, prev, pager, next"
+            :total="taskPager.total"
+            :page-size="taskPager.pageSize"
+            :current-page="taskPager.page"
+            @current-change="taskPager.onPageChange"
+          />
+        </div>
       </section>
 
       <section class="panel">
         <div class="panel-title">可见度快照抽样</div>
-        <el-table :data="pack.snapshots_sample || []" size="small" empty-text="本期无快照">
+        <el-table :data="snapPager.pagedItems" size="small" empty-text="本期无快照">
           <el-table-column prop="captured_at" label="观测时间" width="170" />
           <el-table-column prop="engine" label="引擎" width="100" />
           <el-table-column label="提及" width="70">
@@ -342,6 +412,17 @@ onMounted(async () => {
             <template #default="{ row }">{{ row.prompt_question || `#${row.prompt_id}` }}</template>
           </el-table-column>
         </el-table>
+        <div class="geo-pager">
+          <el-pagination
+            background
+            small
+            layout="total, prev, pager, next"
+            :total="snapPager.total"
+            :page-size="snapPager.pageSize"
+            :current-page="snapPager.page"
+            @current-change="snapPager.onPageChange"
+          />
+        </div>
       </section>
       </div>
     </template>

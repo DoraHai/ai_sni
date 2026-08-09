@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { fetchGeoCitationInsights } from '../../api/geoContent'
+import { useClientPager } from '../../composables/useClientPager'
 import { session } from '../../store/session'
 
 const tenantId = computed(() =>
@@ -10,6 +11,8 @@ const tenantId = computed(() =>
 const loading = ref(false)
 const error = ref('')
 const data = ref(null)
+const citeItems = computed(() => data.value?.items || [])
+const pager = useClientPager(citeItems, { pageSize: 20 })
 
 const fmtPct = (v) => {
   if (v == null) return '—'
@@ -75,7 +78,7 @@ onMounted(load)
 
     <section v-if="data" class="panel">
       <div class="panel-title">域名明细</div>
-      <el-table :data="data.items || []" size="small" empty-text="暂无引用数据，请先在可见度登记含 URL 的快照">
+      <el-table :data="pager.pagedItems" size="small" empty-text="暂无引用数据，请先在可见度登记含 URL 的快照">
         <el-table-column prop="domain" label="域名" min-width="160" />
         <el-table-column prop="cite_count" label="次数" width="80" />
         <el-table-column label="引擎" min-width="140">
@@ -90,6 +93,18 @@ onMounted(load)
           <template #default="{ row }">{{ row.is_own_domain ? '是' : '否' }}</template>
         </el-table-column>
       </el-table>
+      <div class="geo-pager">
+        <el-pagination
+          background
+          layout="total, sizes, prev, pager, next"
+          :total="pager.total"
+          :page-size="pager.pageSize"
+          :current-page="pager.page"
+          :page-sizes="[10, 20, 50, 100]"
+          @current-change="pager.onPageChange"
+          @size-change="pager.onSizeChange"
+        />
+      </div>
     </section>
   </div>
 </template>

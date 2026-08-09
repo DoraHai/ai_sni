@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchGeoEvaluationInsights } from '../../api/geoContent'
+import { useClientPager } from '../../composables/useClientPager'
 import { session } from '../../store/session'
 
 const router = useRouter()
@@ -13,6 +14,8 @@ const tenantId = computed(() =>
 const loading = ref(false)
 const error = ref('')
 const data = ref(null)
+const recentItems = computed(() => data.value?.recent || [])
+const recentPager = useClientPager(recentItems, { pageSize: 20 })
 
 const sentLabel = {
   positive: '正面',
@@ -95,7 +98,7 @@ onMounted(load)
       <section class="panel">
         <div class="panel-title">最近快照</div>
         <el-table
-          :data="data?.recent || []"
+          :data="recentPager.pagedItems"
           size="small"
           empty-text="暂无快照 · 先在「AI 可见度」登记"
         >
@@ -115,6 +118,17 @@ onMounted(load)
           </el-table-column>
           <el-table-column prop="captured_at" label="时间" width="170" />
         </el-table>
+        <div class="geo-pager">
+          <el-pagination
+            background
+            small
+            layout="total, prev, pager, next"
+            :total="recentPager.total"
+            :page-size="recentPager.pageSize"
+            :current-page="recentPager.page"
+            @current-change="recentPager.onPageChange"
+          />
+        </div>
       </section>
     </div>
   </div>

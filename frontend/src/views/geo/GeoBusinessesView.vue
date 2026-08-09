@@ -13,6 +13,7 @@ import {
   patchGeoUnit,
   rebuildGeoDailyMetrics,
 } from '../../api/geoContent'
+import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
 const router = useRouter()
@@ -30,6 +31,10 @@ const dailyItems = ref([])
 const citationNote = ref('')
 /** tenant | business | unit | all_units_in_biz */
 const dailyScope = ref('tenant')
+
+const bizPager = useClientPager(businesses, { pageSize: 10 })
+const unitPager = useClientPager(units, { pageSize: 10 })
+const dailyPager = useClientPager(dailyItems, { pageSize: 20 })
 
 const bizOpen = ref(false)
 const unitOpen = ref(false)
@@ -314,11 +319,18 @@ const fmtPct = (v) => {
 
 watch(selectedBusinessId, async () => {
   selectedUnitId.value = null
+  unitPager.resetPage()
   await loadUnits()
   if (dailyScope.value !== 'tenant') await loadDaily()
 })
-watch([dailyScope, selectedUnitId], loadDaily)
+watch([dailyScope, selectedUnitId], () => {
+  dailyPager.resetPage()
+  loadDaily()
+})
 watch(tenantId, async () => {
+  bizPager.resetPage()
+  unitPager.resetPage()
+  dailyPager.resetPage()
   await loadBusinesses()
   await loadUnits()
   await loadDaily()
@@ -368,7 +380,7 @@ onMounted(async () => {
       <section class="geo-panel">
         <div class="panel-title">优化业务</div>
         <el-table
-          :data="businesses"
+          :data="bizPager.pagedItems"
           stripe
           highlight-current-row
           empty-text="暂无优化业务"
@@ -384,6 +396,16 @@ onMounted(async () => {
             </template>
           </el-table-column>
         </el-table>
+        <div v-if="bizPager.total > 10" class="geo-pager">
+          <el-pagination
+            background
+            layout="total, prev, pager, next"
+            :total="bizPager.total"
+            :page-size="bizPager.pageSize"
+            :current-page="bizPager.page"
+            @current-change="bizPager.onPageChange"
+          />
+        </div>
       </section>
 
       <section class="geo-panel">
@@ -391,7 +413,7 @@ onMounted(async () => {
           优化单元（关键词）
           <span v-if="selectedBusiness" class="sub"> · {{ selectedBusiness.name }}</span>
         </div>
-        <el-table :data="units" stripe empty-text="请选择业务或新建单元">
+        <el-table :data="unitPager.pagedItems" stripe empty-text="请选择业务或新建单元">
           <el-table-column prop="id" label="ID" width="64" />
           <el-table-column prop="name" label="单元名" min-width="120" />
           <el-table-column prop="keyword" label="关键词" min-width="120" />
@@ -404,6 +426,16 @@ onMounted(async () => {
             </template>
           </el-table-column>
         </el-table>
+        <div v-if="unitPager.total > 10" class="geo-pager">
+          <el-pagination
+            background
+            layout="total, prev, pager, next"
+            :total="unitPager.total"
+            :page-size="unitPager.pageSize"
+            :current-page="unitPager.page"
+            @current-change="unitPager.onPageChange"
+          />
+        </div>
       </section>
     </div>
 
@@ -421,7 +453,7 @@ onMounted(async () => {
           <el-button size="small" :loading="exporting" @click="exportCsv">CSV</el-button>
         </div>
       </div>
-      <el-table :data="dailyItems" size="small" empty-text="暂无按天数据：先挂意图词到单元，再「重算今日」">
+      <el-table :data="dailyPager.pagedItems" size="small" empty-text="暂无按天数据：先挂意图词到单元，再「重算今日」">
         <el-table-column prop="metric_date" label="日期" width="110" />
         <el-table-column label="切片" min-width="140">
           <template #default="{ row }">
@@ -440,6 +472,18 @@ onMounted(async () => {
         <el-table-column prop="snapshots_visibility" label="可见快照" width="90" />
         <el-table-column prop="snapshots_probe" label="探测快照" width="90" />
       </el-table>
+      <div class="geo-pager">
+        <el-pagination
+          background
+          layout="total, sizes, prev, pager, next"
+          :total="dailyPager.total"
+          :page-size="dailyPager.pageSize"
+          :current-page="dailyPager.page"
+          :page-sizes="[10, 20, 50, 100]"
+          @current-change="dailyPager.onPageChange"
+          @size-change="dailyPager.onSizeChange"
+        />
+      </div>
     </section>
 
     <el-dialog v-model="bizOpen" title="新建优化业务" width="480px">

@@ -4,7 +4,8 @@
 .geo-overview,
 .geo-deliv {
   padding: 8px 4px 32px;
-  max-width: 1280px;
+  max-width: none;
+  width: 100%;
 }
 
 .geo-page .page-header,
@@ -208,4 +209,10 @@
 .geo-muted {
   font-size: 12px;
   color: #94a3b8;
+}
+
+.geo-pager {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
 }

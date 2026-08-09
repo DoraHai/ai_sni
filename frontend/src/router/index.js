@@ -213,6 +213,16 @@ const routes = [
     },
   },
   {
+    path: '/geo/channel-polish-prompts',
+    component: () => import('../views/geo/GeoChannelPolishPromptsView.vue'),
+    meta: {
+      title: '渠道成稿提示词',
+      documentTitle: 'GEO 增长｜渠道成稿提示词',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
     path: '/geo/publishing',
     component: () => import('../views/geo/GeoPublishingView.vue'),
     meta: {

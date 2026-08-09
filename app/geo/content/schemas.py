@@ -207,6 +207,8 @@ class VariantsCreate(BaseModel):
     channels: list[str] = Field(
         default_factory=lambda: ["website", "wechat", "zhihu"]
     )
+    # True: LLM 按渠道润色成接近可发的渠道稿；失败回退确定性裁剪
+    use_llm: bool = True
 
 
 class VariantUpdate(BaseModel):
@@ -346,6 +348,20 @@ class AiSettingsUpdate(BaseModel):
     enabled: bool = True
     note: str | None = None
     apply_preset: bool = False
+
+
+class ChannelPolishPromptChannelUpdate(BaseModel):
+    channel_key: str = Field(..., min_length=1, max_length=32)
+    voice_prompt: str | None = Field(None, max_length=20000)
+    min_body_chars: int | None = Field(None, ge=100, le=20000)
+    reset: bool = False
+
+
+class ChannelPolishPromptsUpdate(BaseModel):
+    tenant_id: int
+    system_prompt: str | None = Field(None, max_length=50000)
+    reset_system: bool = False
+    channels: list[ChannelPolishPromptChannelUpdate] = Field(default_factory=list)
 
 
 SampleMode = Literal["mock_persona", "openai_compat"]

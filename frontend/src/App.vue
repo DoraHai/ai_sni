@@ -12,6 +12,10 @@ const router = useRouter()
 const currentTitle = computed(() => route.meta.title || '')
 const currentWorkflow = computed(() => route.meta.workflow || '')
 const bare = computed(() => route.meta.bare) // 登录页等无框页面
+/** 母稿编辑器等宽屏工作台：取消内容区 max-width，吃满主栏 */
+const fluidMain = computed(() =>
+  route.path.startsWith('/geo/tasks/') || route.meta.fluidMain === true,
+)
 const tenantPopoverOpen = ref(false)
 
 const platformShortcuts = [
@@ -45,24 +49,40 @@ const ALL_GROUPS = computed(() => [
   { label: '诊断中心', icon: '🩺', children: [
     { label: '网站体检', path: '/diagnostic-center/', key: 'geo.diagnosis', external: true },
   ] },
+  // GEO：二级=内容生产 / 效果监测 / 能力配置；三级=相关能力聚合
   { label: 'GEO 增长', icon: '◈', children: [
-    { label: 'GEO 概览', path: '/geo/overview', key: 'geo.content' },
-    { label: 'AI 可见度', path: '/geo/visibility', key: 'geo.content' },
-    { label: '全自动巡检', path: '/geo/visibility/patrol', key: 'geo.content' },
-    { label: '期次对比', path: '/geo/period-diff', key: 'geo.content' },
-    { label: 'AI 引用次数', path: '/geo/citations', key: 'geo.content' },
-    { label: '竞品分析', path: '/geo/competitors', key: 'geo.content' },
-    { label: '评价分析', path: '/geo/evaluation', key: 'geo.content' },
-    { label: '交付摘要', path: '/geo/deliverables', key: 'geo.content' },
-    { label: '内容工作台', path: '/geo/workbench', key: 'geo.content' },
-    { label: '优化文章', path: '/geo/tasks', key: 'geo.content' },
-    { label: '优化业务', path: '/geo/businesses', key: 'geo.content' },
-    { label: '优化意图词', path: '/geo/prompts', key: 'geo.content' },
-    { label: '事实库', path: '/geo/facts', key: 'geo.content' },
-    { label: '引擎', path: '/geo/engines', key: 'geo.content' },
-    { label: 'AI 配置', path: '/geo/ai-settings', key: 'geo.content' },
-    { label: '发布渠道', path: '/geo/publishing', key: 'geo.content' },
-    { label: '媒体阵地', path: '/geo/placements', key: 'geo.content' },
+    { label: '内容生产', children: [
+      { label: '内容工作台', path: '/geo/workbench', key: 'geo.content' },
+      { label: '内容资产', children: [
+        { label: '优化业务', path: '/geo/businesses', key: 'geo.content' },
+        { label: '优化意图词', path: '/geo/prompts', key: 'geo.content' },
+        { label: '事实库', path: '/geo/facts', key: 'geo.content' },
+      ] },
+      { label: '优化文章', path: '/geo/tasks', key: 'geo.content' },
+      { label: '分发发布', children: [
+        { label: '发布渠道', path: '/geo/publishing', key: 'geo.content' },
+        { label: '媒体阵地', path: '/geo/placements', key: 'geo.content' },
+      ] },
+    ] },
+    { label: '效果监测', children: [
+      { label: 'GEO 概览', path: '/geo/overview', key: 'geo.content' },
+      { label: '可见度监测', children: [
+        { label: 'AI 可见度', path: '/geo/visibility', key: 'geo.content', exact: true },
+        { label: '全自动巡检', path: '/geo/visibility/patrol', key: 'geo.content' },
+      ] },
+      { label: '效果分析', children: [
+        { label: '期次对比', path: '/geo/period-diff', key: 'geo.content' },
+        { label: 'AI 引用次数', path: '/geo/citations', key: 'geo.content' },
+        { label: '竞品分析', path: '/geo/competitors', key: 'geo.content' },
+        { label: '评价分析', path: '/geo/evaluation', key: 'geo.content' },
+      ] },
+      { label: '交付摘要', path: '/geo/deliverables', key: 'geo.content' },
+    ] },
+    { label: '能力配置', children: [
+      { label: '引擎', path: '/geo/engines', key: 'geo.content' },
+      { label: 'AI 配置', path: '/geo/ai-settings', key: 'geo.content' },
+      { label: '渠道成稿提示词', path: '/geo/channel-polish-prompts', key: 'geo.content' },
+    ] },
   ] },
   { label: '首次接入', icon: '🚀', children: [
     { label: '授权与同步', path: '/onboarding', key: 'onboarding' },
@@ -98,41 +118,106 @@ const ALL_GROUPS = computed(() => [
   ] },
 ])
 
+function filterNavItems(items, noLogin) {
+  return (items || [])
+    .map((c) => {
+      if (c.children?.length) {
+        const kids = filterNavItems(c.children, noLogin)
+        if (!kids.length) return null
+        return { ...c, children: kids }
+      }
+      if (c.alwaysShow || noLogin || (c.key && session.canView(c.key))) return c
+      return null
+    })
+    .filter(Boolean)
+}
+
+function collectLeafPaths(items, out = []) {
+  for (const c of items || []) {
+    if (c.children?.length) collectLeafPaths(c.children, out)
+    else if (c.path) out.push(c.path)
+  }
+  return out
+}
+
+function itemMatchesPath(item, path) {
+  if (!item?.path) return false
+  if (path === item.path) return true
+  if (item.exact) return false
+  if (item.path === '/' || item.path === '/onboarding') return false
+  // /geo/visibility 不应高亮 /geo/visibility/patrol
+  if (item.path === '/geo/visibility') return false
+  return path.startsWith(item.path + '/')
+}
+
+function findPathTrail(items, path, trail = []) {
+  for (const c of items || []) {
+    const next = [...trail, c.label]
+    if (c.children?.length) {
+      const hit = findPathTrail(c.children, path, next)
+      if (hit) return hit
+    } else if (itemMatchesPath(c, path)) {
+      return next
+    }
+  }
+  return null
+}
+
 const navGroups = computed(() => {
   const noLogin = !session.isLoggedIn // 本地 dev API Key 模式：全显示
   return ALL_GROUPS.value
     .map((g) => ({
       ...g,
-      // 叶子项：下钻类(alwaysShow)始终留；其余按 canView 过滤
-      children: g.children.filter((c) => c.alwaysShow || noLogin || session.canView(c.key)),
+      children: filterNavItems(g.children, noLogin),
     }))
-    // 没有任何可见叶子(或只剩下钻提示)的分组整组隐藏
-    .filter((g) => g.children.some((c) => c.key && (noLogin || session.canView(c.key))))
+    .filter((g) => collectLeafPaths(g.children).length > 0)
 })
 
-// 展开状态：默认展开当前路由所在组
+// 一级组 + 二级/三级折叠键（如 "GEO 增长/做内容"、"GEO 增长/做内容/内容资产"）
 const openGroups = ref(new Set())
+const openSections = ref(new Set())
+
 function groupOfPath(path) {
   for (const g of navGroups.value) {
-    if (g.children?.some((c) => c.path && (c.path === '/' ? path === '/' : path.startsWith(c.path)))) return g.label
+    if (findPathTrail(g.children, path)) return g.label
   }
   if (path.startsWith('/monitor/keywords')) return '每日盯盘'
   return null
 }
+
 function syncOpenToRoute() {
   const g = groupOfPath(route.path)
-  if (g) openGroups.value = new Set([...openGroups.value, g])
+  if (!g) return
+  openGroups.value = new Set([...openGroups.value, g])
+  const group = navGroups.value.find((x) => x.label === g)
+  const trail = group ? findPathTrail(group.children, route.path) : null
+  if (!trail?.length) return
+  const next = new Set(openSections.value)
+  let acc = g
+  for (const label of trail.slice(0, -1)) {
+    acc = `${acc}/${label}`
+    next.add(acc)
+  }
+  openSections.value = next
 }
+
 function toggleGroup(label) {
   const next = new Set(openGroups.value)
   next.has(label) ? next.delete(label) : next.add(label)
   openGroups.value = next
 }
-const isActive = (c) => c.path && (
-  route.path === c.path ||
-  (c.path !== '/' && c.path !== '/onboarding' && route.path.startsWith(c.path + '/'))
-)
+
+function toggleSection(sectionKey) {
+  const next = new Set(openSections.value)
+  next.has(sectionKey) ? next.delete(sectionKey) : next.add(sectionKey)
+  openSections.value = next
+}
+
+const isActive = (c) => itemMatchesPath(c, route.path)
 const isCurrentGroup = (g) => groupOfPath(route.path) === g.label
+function sectionHasActive(section, path = route.path) {
+  return !!findPathTrail(section.children || [], path)
+}
 
 function go(c) {
   if (!c.path || c.disabled) return
@@ -237,17 +322,74 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
             <span class="wf-toggle">›</span>
           </div>
           <div class="wf-sub">
-            <div
-              v-for="c in g.children"
-              :key="c.label"
-              class="wf-sub-item"
-              :class="{ active: isActive(c), disabled: c.disabled || !c.path }"
-              :title="c.hint || ''"
-              @click="go(c)"
-            >
-              <span class="wf-sub-dot" />{{ c.label }}
-              <span v-if="c.count" class="wf-sub-num">{{ c.count > 99 ? '99+' : c.count }}</span>
-            </div>
+            <template v-for="c in g.children" :key="c.label">
+              <!-- 二级分组（如 做内容 / 看效果 / 配置项） -->
+              <div v-if="c.children?.length" class="wf-section" :class="{ open: openSections.has(`${g.label}/${c.label}`) }">
+                <div
+                  class="wf-section-trigger"
+                  :class="{ current: sectionHasActive(c) }"
+                  @click="toggleSection(`${g.label}/${c.label}`)"
+                >
+                  <span class="wf-section-name">{{ c.label }}</span>
+                  <span class="wf-section-toggle">›</span>
+                </div>
+                <div class="wf-section-body">
+                  <template v-for="s in c.children" :key="s.label">
+                    <!-- 三级分组（如 内容资产 / 可见度监测） -->
+                    <div
+                      v-if="s.children?.length"
+                      class="wf-branch"
+                      :class="{ open: openSections.has(`${g.label}/${c.label}/${s.label}`) }"
+                    >
+                      <div
+                        class="wf-branch-trigger"
+                        :class="{ current: sectionHasActive(s) }"
+                        @click="toggleSection(`${g.label}/${c.label}/${s.label}`)"
+                      >
+                        <span class="wf-sub-dot" />
+                        <span class="wf-branch-name">{{ s.label }}</span>
+                        <span class="wf-section-toggle">›</span>
+                      </div>
+                      <div class="wf-branch-body">
+                        <div
+                          v-for="leaf in s.children"
+                          :key="leaf.label"
+                          class="wf-sub-item depth-3"
+                          :class="{ active: isActive(leaf), disabled: leaf.disabled || !leaf.path }"
+                          :title="leaf.hint || ''"
+                          @click="go(leaf)"
+                        >
+                          <span class="wf-sub-dot" />{{ leaf.label }}
+                          <span v-if="leaf.count" class="wf-sub-num">{{ leaf.count > 99 ? '99+' : leaf.count }}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <!-- 二级下的直接叶子 -->
+                    <div
+                      v-else
+                      class="wf-sub-item depth-2"
+                      :class="{ active: isActive(s), disabled: s.disabled || !s.path }"
+                      :title="s.hint || ''"
+                      @click="go(s)"
+                    >
+                      <span class="wf-sub-dot" />{{ s.label }}
+                      <span v-if="s.count" class="wf-sub-num">{{ s.count > 99 ? '99+' : s.count }}</span>
+                    </div>
+                  </template>
+                </div>
+              </div>
+              <!-- 一级组下的直接叶子（非 GEO 嵌套结构） -->
+              <div
+                v-else
+                class="wf-sub-item"
+                :class="{ active: isActive(c), disabled: c.disabled || !c.path }"
+                :title="c.hint || ''"
+                @click="go(c)"
+              >
+                <span class="wf-sub-dot" />{{ c.label }}
+                <span v-if="c.count" class="wf-sub-num">{{ c.count > 99 ? '99+' : c.count }}</span>
+              </div>
+            </template>
           </div>
         </div>
       </div>
@@ -334,7 +476,7 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
         </div>
       </el-header>
       <el-main class="main">
-        <div class="main-inner">
+        <div class="main-inner" :class="{ fluid: fluidMain }">
           <router-view />
         </div>
       </el-main>
@@ -364,6 +506,8 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
 .wf-sub { display: none; padding-bottom: 4px; }
 .wf-group.open .wf-sub { display: block; }
 .wf-sub-item { padding: 7px 20px 7px 44px; cursor: pointer; color: #6b7280; font-size: 12px; display: flex; align-items: center; gap: 6px; border-left: 3px solid transparent; }
+.wf-sub-item.depth-2 { padding-left: 44px; }
+.wf-sub-item.depth-3 { padding-left: 58px; font-size: 11.5px; }
 .wf-sub-item:hover { background: #f9fafb; color: var(--sem-primary); }
 .wf-sub-item.active { background: #eff4fb; color: var(--sem-primary); font-weight: 500; border-left-color: var(--sem-primary); }
 .wf-sub-item.disabled { cursor: default; color: #c0c4cc; }
@@ -371,6 +515,44 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
 .wf-sub-dot { width: 4px; height: 4px; border-radius: 50%; background: #d1d5db; flex-shrink: 0; }
 .wf-sub-item.active .wf-sub-dot { background: var(--sem-primary); }
 .wf-sub-num { font-size: 10px; color: #9ca3af; margin-left: auto; }
+
+/* GEO 二级 / 三级折叠 */
+.wf-section { margin: 2px 0; }
+.wf-section-trigger {
+  padding: 7px 16px 7px 36px;
+  cursor: pointer;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.wf-section-trigger:hover { background: #f9fafb; color: var(--sem-primary); }
+.wf-section-trigger.current { color: var(--sem-primary); }
+.wf-section-name { flex: 1; }
+.wf-section-toggle { font-size: 11px; color: #9ca3af; transition: transform 0.15s; }
+.wf-section.open > .wf-section-trigger .wf-section-toggle,
+.wf-branch.open > .wf-branch-trigger .wf-section-toggle { transform: rotate(90deg); }
+.wf-section-body { display: none; }
+.wf-section.open > .wf-section-body { display: block; }
+
+.wf-branch { margin: 0; }
+.wf-branch-trigger {
+  padding: 6px 16px 6px 44px;
+  cursor: pointer;
+  color: #6b7280;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-left: 3px solid transparent;
+}
+.wf-branch-trigger:hover { background: #f9fafb; color: var(--sem-primary); }
+.wf-branch-trigger.current { color: var(--sem-primary); }
+.wf-branch-name { flex: 1; }
+.wf-branch-body { display: none; }
+.wf-branch.open > .wf-branch-body { display: block; }
 
 .side-shortcuts {
   flex: 0 0 auto;
@@ -443,8 +625,9 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
 .user-chip { font-size: 12px; color: var(--sem-text); cursor: pointer; user-select: none; }
 .dev-badge { font-size: 11px; color: #9ca3af; }
 .main { background: var(--sem-bg); }
-/* 宽屏封顶内容宽度，左对齐，避免卡片被拉得过宽、整页显得贴边空旷 */
-.main-inner { max-width: 1440px; }
+/* 主栏吃满可用宽度，避免大屏右侧大片留白 */
+.main-inner { max-width: none; width: 100%; }
+.main-inner.fluid { max-width: none; }
 
 :global(.tenant-popover.el-popper) {
   padding: 0;

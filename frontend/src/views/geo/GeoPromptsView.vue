@@ -9,6 +9,7 @@ import {
   listGeoUnits,
   patchGeoPrompt,
 } from '../../api/geoContent'
+import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
 const router = useRouter()
@@ -21,6 +22,7 @@ const items = ref([])
 const units = ref([])
 const status = ref('active')
 const filterUnitId = ref(null)
+const pager = useClientPager(items, { pageSize: 20 })
 const createOpen = ref(false)
 const editOpen = ref(false)
 const creating = ref(false)
@@ -191,7 +193,10 @@ function syncUnitFilterFromRoute() {
   if (filterUnitId.value) form.value.unit_id = filterUnitId.value
 }
 
-watch([tenantId, status, filterUnitId], load)
+watch([tenantId, status, filterUnitId], () => {
+  pager.resetPage()
+  load()
+})
 watch(
   () => route.query.unit_id,
   () => {
@@ -248,7 +253,7 @@ const tagText = (tags) => (Array.isArray(tags) ? tags.join(', ') : '—')
       </el-select>
     </div>
 
-    <el-table :data="items" stripe empty-text="暂无优化意图词">
+    <el-table :data="pager.pagedItems" stripe empty-text="暂无优化意图词">
       <el-table-column prop="id" label="ID" width="72" />
       <el-table-column label="问题" min-width="240">
         <template #default="{ row }">
@@ -282,6 +287,18 @@ const tagText = (tags) => (Array.isArray(tags) ? tags.join(', ') : '—')
         </template>
       </el-table-column>
     </el-table>
+    <div class="geo-pager">
+      <el-pagination
+        background
+        layout="total, sizes, prev, pager, next"
+        :total="pager.total"
+        :page-size="pager.pageSize"
+        :current-page="pager.page"
+        :page-sizes="[10, 20, 50, 100]"
+        @current-change="pager.onPageChange"
+        @size-change="pager.onSizeChange"
+      />
+    </div>
 
     <el-dialog v-model="editOpen" title="编辑优化意图词" width="520px">
       <el-form label-width="100px">

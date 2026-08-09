@@ -104,6 +104,55 @@ const REVIEW_LABELS = {
   rejected: '已驳回',
 }
 
+/** 规则 code → 运营可读名（母稿就绪检查，非正式成稿） */
+const CHECK_LABELS = {
+  direct_answer: '开篇直接答',
+  definition: '定义段',
+  faq_min: 'FAQ 问答',
+  conclusion_extractable: '可抽取结论',
+  numbers_extractable: '可抽取数据',
+  comparison_extractable: '可抽取对比',
+  howto_extractable: '可抽取步骤',
+  updated_at_visible: '更新日期可见',
+  author_visible: '作者信息可见',
+  sources_footer: '信源页脚',
+  facts_bound_min: '事实绑定数量',
+  evidence_publishable: '可引用证据',
+  channel_variant_ready: '渠道稿已生成',
+  fabrication_lint: '编造风险扫描',
+}
+const SUBSCORE_LABELS = {
+  authority: '权威度',
+  structure: '结构',
+  comparison: '对比覆盖',
+  evidence_use: '证据引用',
+  gap_coverage: '缺口覆盖',
+  extractability: '可抽取性',
+}
+const CHANNEL_CN = {
+  website: '官网',
+  wechat: '微信',
+  zhihu: '知乎',
+  bilibili: 'B站',
+  toutiao: '头条',
+  baijiahao: '百家号',
+  douyin: '抖音',
+  xiaohongshu: '小红书',
+}
+const showPassedChecks = ref(false)
+
+function checkLabel(code) {
+  return CHECK_LABELS[code] || String(code || '').replace(/_/g, ' ')
+}
+function channelLabel(key) {
+  const k = String(key || '').toLowerCase()
+  return CHANNEL_CN[k] || key || '—'
+}
+function channelListLabel(list) {
+  if (!list?.length) return '无'
+  return list.map(channelLabel).join('、')
+}
+
 function splitCsv(s) {
   return String(s || '')
     .split(/[,，;；]/)
@@ -151,17 +200,33 @@ function briefPayload() {
   }
 }
 
+/** Rewrite leaked English outline keys (## definition) into Chinese draft headings. */
+function sanitizeDraftHeadings(md) {
+  const map = {
+    definition: '定义与背景',
+    comparison: '关键对比与考量',
+    faq: '常见问题',
+    conclusion: '结论与建议',
+    body: '正文',
+    howto: '操作步骤',
+  }
+  return String(md || '').replace(/^##\s*([A-Za-z_]+)\s*$/gm, (full, key) => {
+    const zh = map[String(key).toLowerCase()]
+    return zh ? `## ${zh}` : full
+  })
+}
+
 function applyArticleFromTask(t) {
   const a = t?.article
   article.title = a?.title || t?.title || ''
-  article.body_markdown = a?.body_markdown || ''
+  article.body_markdown = sanitizeDraftHeadings(a?.body_markdown || '')
 }
 
 function applyVariantFromTask() {
   if (docTab.value === 'master') return
   const v = (task.value?.variants || []).find((x) => x.channel === docTab.value)
   variantEdit.title = v?.title || ''
-  variantEdit.body_markdown = v?.body_markdown || ''
+  variantEdit.body_markdown = sanitizeDraftHeadings(v?.body_markdown || '')
 }
 
 function onDocTabChange(name) {
@@ -765,7 +830,7 @@ async function applyPatch(code) {
     }
     if (art?.body_markdown != null) {
       article.title = art.title || article.title
-      article.body_markdown = art.body_markdown
+      article.body_markdown = sanitizeDraftHeadings(art.body_markdown)
     } else {
       const t = await refreshTaskDetail()
       art = t?.article || null
@@ -827,7 +892,9 @@ async function genVariants() {
   }
   busy.value = 'variants'
   try {
-    const t = await createGeoVariants(tenantId.value, taskId.value, channelPick.value)
+    const t = await createGeoVariants(tenantId.value, taskId.value, channelPick.value, {
+      useLlm: true,
+    })
     applyTaskPayload(t)
     if (channelPick.value[0]) {
       docTab.value = channelPick.value[0]
@@ -854,14 +921,51 @@ async function genVariants() {
     } catch {
       /* keep variant success even if re-check fails */
     }
-    const have = (task.value?.variants || []).map((v) => v.channel).join(', ')
-    ElMessage.success(`渠道稿已生成（${have || channelPick.value.join(', ')}），规则已刷新`)
+    const polish = t?.variant_polish || {}
+    const llmN = polish.llm ?? 0
+    const fbN = polish.fallback ?? 0
+    const names = channelPick.value.map((k) => channelLabel(k)).join('、')
+    if (llmN && !fbN) {
+      ElMessage.success(`已生成正式渠道稿：${names}。可直接复制发布或走下方推送。`)
+    } else if (llmN && fbN) {
+      ElMessage.warning(
+        `渠道稿已生成：正式稿 ${llmN} 路，规则裁剪 ${fbN} 路。请对回退渠道重生成。`,
+      )
+    } else {
+      ElMessage.warning(
+        `仅生成了规则裁剪稿（未配置 LLM 或润色失败），不是正式成稿。请先配置 AI 后重生成。`,
+      )
+    }
   } catch (e) {
     toastError(e, '生成渠道稿失败')
   } finally {
     busy.value = ''
   }
 }
+
+const currentVariantMeta = computed(() => {
+  if (docTab.value === 'master') return null
+  const v = (task.value?.variants || []).find((x) => x.channel === docTab.value)
+  return v?.adapt_meta || null
+})
+const isPublishReadyVariant = computed(() => {
+  const m = currentVariantMeta.value
+  if (!m) return false
+  const q = m.quality || m.engine
+  return (
+    q === 'publish_ready' ||
+    q === 'channel_copy' ||
+    m.polish === 'llm_v2' ||
+    m.polish === 'llm_v1'
+  )
+})
+const currentVariantQualityLabel = computed(() => {
+  if (isPublishReadyVariant.value) return '正式渠道稿 · 可发布'
+  if (currentVariantMeta.value?.fallback || currentVariantMeta.value?.quality === 'adapted_draft') {
+    return '规则裁剪稿 · 请重生成正式稿'
+  }
+  return null
+})
 
 /** Apply every available structural patch so publish gate can pass faster. */
 async function applyAllPatches() {
@@ -880,7 +984,7 @@ async function applyAllPatches() {
         const res = await applyGeoContentPatch(tenantId.value, taskId.value, code)
         if (res.task) applyTaskPayload(res.task)
         if (res.article?.body_markdown != null) {
-          article.body_markdown = res.article.body_markdown
+          article.body_markdown = sanitizeDraftHeadings(res.article.body_markdown)
           article.title = res.article.title || article.title
         }
         checkResult.value = {
@@ -1213,14 +1317,37 @@ watch(
   },
 )
 
-const scoreLine = computed(() => {
+const scoreMeta = computed(() => {
   const s = checkResult.value?.geo_score ?? task.value?.rule_result?.geo_score
-  if (s == null) return '检查后显示 GEO Score'
   const subs = checkResult.value?.geo_subscores || task.value?.rule_result?.geo_subscores || {}
-  const parts = Object.keys(subs)
-    .map((k) => `${k}=${Math.round((subs[k] || 0) * 100)}`)
-    .join(' · ')
-  return `GEO Score ${s}/100${parts ? `（${parts}）` : ''}`
+  const chips = Object.keys(subs).map((k) => ({
+    key: k,
+    label: SUBSCORE_LABELS[k] || k,
+    value: Math.round((subs[k] || 0) * 100),
+  }))
+  let tone = 'muted'
+  if (s != null) {
+    if (s >= 80) tone = 'good'
+    else if (s >= 60) tone = 'warn'
+    else tone = 'bad'
+  }
+  return {
+    score: s,
+    chips,
+    tone,
+    headline: s == null ? '尚未检查' : `${s}`,
+    subline:
+      s == null
+        ? '点「检查」查看母稿就绪度（非正式成稿评分）'
+        : '母稿结构就绪度 · 仍需人工润色后再发布',
+  }
+})
+
+/** @deprecated kept for any leftover refs */
+const scoreLine = computed(() => {
+  const m = scoreMeta.value
+  if (m.score == null) return m.subline
+  return `GEO Score ${m.score}/100`
 })
 
 /**
@@ -1233,15 +1360,15 @@ const checks = computed(() => {
   ]
   const cov = liveChannelCoverage.value
   const liveMsg = cov.ok
-    ? `目标渠道版本齐全（已有 ${cov.present.join(', ') || '—'}）`
-    : `缺少渠道版本: ${cov.missing.join(', ') || '—'}；已有: ${cov.present.join(', ') || '无'}`
+    ? `目标渠道稿已齐：${channelListLabel(cov.present)}`
+    : `还缺渠道稿：${channelListLabel(cov.missing)}（已有 ${channelListLabel(cov.present)}）`
   const liveChannel = {
     code: 'channel_variant_ready',
     passed: cov.ok,
     message: liveMsg,
     action: cov.ok
       ? ''
-      : '在右侧勾选渠道后点「生成所选渠道稿」，再点「检查就绪」',
+      : '在中间栏勾选渠道 →「生成所选渠道稿」→ 再点检查',
   }
   let replaced = false
   const out = base.map((c) => {
@@ -1254,8 +1381,13 @@ const checks = computed(() => {
   if (!replaced && (cov.targets.length || cov.present.length)) {
     out.push(liveChannel)
   }
-  return out
+  return out.map((c) => ({
+    ...c,
+    label: checkLabel(c.code),
+  }))
 })
+const failedChecks = computed(() => checks.value.filter((c) => !c.passed))
+const passedChecks = computed(() => checks.value.filter((c) => c.passed))
 const geoActions = computed(
   () => checkResult.value?.geo_actions || task.value?.rule_result?.geo_actions || [],
 )
@@ -1348,7 +1480,7 @@ onMounted(load)
 
     <div v-if="task" class="grid">
       <!-- Left: brief + facts -->
-      <div class="col">
+      <aside class="col col-left">
         <el-card shadow="never" class="card">
           <template #header>
             <div class="card-head">
@@ -1490,10 +1622,10 @@ onMounted(load)
             </div>
           </div>
         </el-card>
-      </div>
+      </aside>
 
-      <!-- Right: article + check -->
-      <div class="col wide">
+      <!-- Center: article + publish -->
+      <div class="col col-main">
         <el-card shadow="never" class="card">
           <template #header>
             <div class="card-head">
@@ -1546,13 +1678,34 @@ onMounted(load)
 
           <div v-if="generateHint" class="hint mb" style="color: #2563eb">{{ generateHint }}</div>
 
+          <div v-if="docTab === 'master'" class="doc-draft-banner mb">
+            <b>自动生成母稿草案</b>
+            — 供内部改稿与结构检查，<b>不能直接当正式发布文</b>。
+            请润色语气、删模板痕迹、核对事实后再审校推送。
+          </div>
+          <div
+            v-else-if="isPublishReadyVariant"
+            class="channel-quality mb is-good"
+          >
+            <b>正式渠道稿</b>
+            — 可直接复制到对应平台发布；推送前建议快速核对关键数字与来源是否仍准确。
+            <span v-if="currentVariantMeta?.display_name" class="muted">
+              · {{ currentVariantMeta.display_name }}
+            </span>
+          </div>
+          <div v-else class="channel-quality mb is-warn">
+            <b>规则裁剪稿（非正式成稿）</b>
+            — 未走 AI 时接近母稿结构，不能当正式发布文。
+            请点下方「AI 生成正式渠道稿」。
+          </div>
+
           <el-tabs :model-value="docTab" class="mb" @tab-change="onDocTabChange">
-            <el-tab-pane label="母稿" name="master" />
+            <el-tab-pane label="母稿草案" name="master" />
             <el-tab-pane
               v-for="v in variants"
               :key="v.channel"
               :name="v.channel"
-              :label="`${v.channel}${v.stale ? ' *' : ''}`"
+              :label="`${channelLabel(v.channel)}${v.stale ? ' *' : ''}`"
             />
           </el-tabs>
 
@@ -1567,19 +1720,21 @@ onMounted(load)
                   v-model="article.body_markdown"
                   type="textarea"
                   :rows="16"
-                  placeholder="Markdown 母稿"
+                  placeholder="Markdown 母稿草案（需人工润色）"
                 />
               </el-form-item>
             </el-form>
             <div v-if="task.article" class="hint">
-              版本 v{{ task.article.version_no }} · {{ task.article.created_at || '' }}
+              草案 v{{ task.article.version_no }} · {{ task.article.created_at || '' }}
               · 正文字数 {{ (article.body_markdown || '').length }}
+              · 重新「生成母稿」会覆盖当前正文
             </div>
           </template>
           <template v-else>
             <div class="hint mb">
-              渠道 {{ docTab }} · 状态 {{ variants.find((v) => v.channel === docTab)?.status || '—' }}
+              渠道 {{ channelLabel(docTab) }} · 状态 {{ variants.find((v) => v.channel === docTab)?.status || '—' }}
               <span v-if="variants.find((v) => v.channel === docTab)?.stale"> · 母稿已变需重生</span>
+              <span v-if="currentVariantQualityLabel"> · {{ currentVariantQualityLabel }}</span>
             </div>
             <el-form label-width="56px" size="small">
               <el-form-item label="标题">
@@ -1590,7 +1745,7 @@ onMounted(load)
                   v-model="variantEdit.body_markdown"
                   type="textarea"
                   :rows="16"
-                  placeholder="渠道稿 Markdown"
+                  placeholder="正式渠道稿 Markdown（可直接发布）"
                 />
               </el-form-item>
             </el-form>
@@ -1600,13 +1755,16 @@ onMounted(load)
         <el-card shadow="never" class="card">
           <template #header>
             <div class="card-head">
-              <span>渠道稿 · 审校 · 发布</span>
+              <span>渠道成稿 · 审校 · 发布</span>
               <el-button size="small" type="primary" :loading="busy === 'variants'" @click="genVariants">
-                生成所选渠道稿
+                AI 生成正式渠道稿
               </el-button>
             </div>
           </template>
-          <div class="hint mb">勾选渠道后生成；页签切换可编辑/导出/回填。</div>
+          <div class="hint mb">
+            AI 按渠道写成可直接发布的正式稿（官网/微信/知乎等）；失败才回退规则裁剪。
+            正式稿可复制发布；关键数字建议发布前扫一眼。
+          </div>
           <el-checkbox-group v-model="channelPick" class="mb">
             <el-checkbox
               v-for="c in channelOptions"
@@ -1758,87 +1916,173 @@ onMounted(load)
             推送前通常需「导出」渠道稿。未审校时按钮可点：接口返回 400 并提示审校要求（也可用上方橙色门禁文案）。
           </div>
         </el-card>
+      </div>
 
-        <el-card shadow="never" class="card">
+      <!-- Right: draft readiness (not publish-ready copy) -->
+      <aside class="col col-rail">
+        <el-card shadow="never" class="card rail-card">
           <template #header>
-            <span>规则 · GEO Score · AI 审稿</span>
-          </template>
-          <div class="score">{{ scoreLine }}</div>
-          <div class="hint mb">
-            渠道覆盖：
-            <span :class="liveChannelCoverage.ok ? 'ok' : 'bad'">
-              {{ liveChannelCoverage.ok ? '✓' : '✗' }}
-            </span>
-            已有 [{{ liveChannelCoverage.present.join(', ') || '无' }}]
-            · 目标 [{{ liveChannelCoverage.targets.join(', ') || '—' }}]
-            <span v-if="liveChannelCoverage.missing.length">
-              · 缺 {{ liveChannelCoverage.missing.join(', ') }}
-            </span>
-          </div>
-          <ul class="check-list">
-            <li v-for="c in checks" :key="c.code">
-              <span :class="c.passed ? 'ok' : 'bad'">{{ c.passed ? '✓' : '✗' }}</span>
+            <div class="card-head">
               <div>
-                <strong>{{ c.code }}</strong> · {{ c.message }}
-                <div v-if="!c.passed && c.action" class="hint">{{ c.action }}</div>
+                <div class="rail-title">母稿就绪检查</div>
+                <div class="rail-sub">生成稿体检 · 非正式成稿</div>
+              </div>
+              <div class="row-actions">
+                <el-button size="small" :loading="busy === 'check'" @click="runCheck">检查</el-button>
+                <el-button size="small" :loading="busy === 'review'" @click="runAiReview">审稿</el-button>
+              </div>
+            </div>
+          </template>
+
+          <div class="draft-banner mb">
+            当前是 AI 母稿草案，通过检查只代表「结构/证据够用」，
+            <b>还不能直接当正式发布文</b>。请人工润色后再审校推送。
+          </div>
+
+          <div class="score-block" :class="'tone-' + scoreMeta.tone">
+            <div class="score-row">
+              <div class="score-num">
+                <template v-if="scoreMeta.score != null">
+                  <span class="score-big">{{ scoreMeta.headline }}</span>
+                  <span class="score-den">/100</span>
+                </template>
+                <template v-else>
+                  <span class="score-big muted-num">—</span>
+                </template>
+              </div>
+              <div class="score-copy">
+                <div class="score-label">GEO 就绪分</div>
+                <div class="score-hint">{{ scoreMeta.subline }}</div>
+              </div>
+            </div>
+            <div v-if="scoreMeta.score != null" class="score-bar">
+              <div class="score-bar-fill" :style="{ width: `${Math.min(100, scoreMeta.score)}%` }" />
+            </div>
+            <div v-if="scoreMeta.chips.length" class="score-chips">
+              <span
+                v-for="chip in scoreMeta.chips"
+                :key="chip.key"
+                class="score-chip"
+                :class="{ low: chip.value < 60 }"
+              >
+                {{ chip.label }} {{ chip.value }}
+              </span>
+            </div>
+          </div>
+
+          <div class="channel-pill mb" :class="liveChannelCoverage.ok ? 'is-ok' : 'is-warn'">
+            <span class="pill-mark">{{ liveChannelCoverage.ok ? '✓' : '!' }}</span>
+            <div>
+              <div class="pill-title">
+                {{ liveChannelCoverage.ok ? '渠道稿已齐' : '渠道稿未齐' }}
+              </div>
+              <div class="pill-desc">
+                目标 {{ channelListLabel(liveChannelCoverage.targets) }}
+                · 已有 {{ channelListLabel(liveChannelCoverage.present) }}
+                <template v-if="liveChannelCoverage.missing.length">
+                  · 还缺 {{ channelListLabel(liveChannelCoverage.missing) }}
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="failedChecks.length" class="sec-row">
+            <span class="sec">待补齐 {{ failedChecks.length }}</span>
+          </div>
+          <ul v-if="failedChecks.length" class="check-list fail-list">
+            <li v-for="c in failedChecks" :key="c.code">
+              <span class="bad">✗</span>
+              <div>
+                <div class="check-title">{{ c.label }}</div>
+                <div class="check-msg">{{ c.message }}</div>
+                <div v-if="c.action" class="check-action">{{ c.action }}</div>
               </div>
             </li>
           </ul>
+          <div v-else-if="checks.length" class="all-pass mb">结构项已全部通过 · 仍建议人工过目</div>
+
+          <button
+            v-if="passedChecks.length"
+            type="button"
+            class="toggle-passed"
+            @click="showPassedChecks = !showPassedChecks"
+          >
+            {{ showPassedChecks ? '收起' : '展开' }}已通过 {{ passedChecks.length }} 项
+          </button>
+          <ul v-if="showPassedChecks && passedChecks.length" class="check-list pass-list">
+            <li v-for="c in passedChecks" :key="c.code">
+              <span class="ok">✓</span>
+              <div>
+                <div class="check-title">{{ c.label }}</div>
+                <div class="check-msg">{{ c.message }}</div>
+              </div>
+            </li>
+          </ul>
+
           <div v-if="geoActions.length" class="mt">
-            <div class="sec">Score 改进项</div>
-            <ul class="check-list">
+            <div class="sec">建议补强</div>
+            <ul class="check-list fail-list">
               <li v-for="a in geoActions" :key="a.code">
-                <span class="warn">⚠</span>
+                <span class="warn">!</span>
                 <div>
-                  <strong>{{ a.code }}</strong> · {{ a.message }}
-                  <div v-if="a.action" class="hint">{{ a.action }}</div>
+                  <div class="check-title">{{ a.message }}</div>
+                  <div v-if="a.action" class="check-action">{{ a.action }}</div>
                 </div>
               </li>
             </ul>
           </div>
-          <div v-if="patches.length" class="mt row-actions">
-            <el-button
-              size="small"
-              type="warning"
-              plain
-              :loading="busy === 'patch'"
-              @click="applyAllPatches"
-            >
-              一键应用全部补丁 ({{ patches.length }})
-            </el-button>
-            <el-button
-              v-for="p in patches"
-              :key="p.code"
-              size="small"
-              :loading="busy === 'patch'"
-              @click="applyPatch(p.code)"
-            >
-              插入修复 · {{ p.label || p.code }}
-            </el-button>
-          </div>
-          <div v-if="aiReview" class="mt">
-            <div class="sec">
-              AI 审稿 · block {{ aiReview.block_count || 0 }} · warn {{ aiReview.warn_count || 0 }}
+
+          <div v-if="patches.length" class="mt patch-box">
+            <div class="sec">一键补结构（写入母稿，仍需人工改）</div>
+            <div class="row-actions">
+              <el-button
+                size="small"
+                type="warning"
+                plain
+                :loading="busy === 'patch'"
+                @click="applyAllPatches"
+              >
+                全部应用 ({{ patches.length }})
+              </el-button>
+              <el-button
+                v-for="p in patches"
+                :key="p.code"
+                size="small"
+                :loading="busy === 'patch'"
+                @click="applyPatch(p.code)"
+              >
+                {{ p.label || checkLabel(p.code) }}
+              </el-button>
             </div>
-            <div class="hint">{{ aiReview.summary }}</div>
+          </div>
+
+          <div v-if="aiReview" class="mt ai-box">
+            <div class="sec">
+              AI 审阅意见
+              <span class="sec-meta">
+                阻断 {{ aiReview.block_count || 0 }} · 提醒 {{ aiReview.warn_count || 0 }}
+              </span>
+            </div>
+            <div class="ai-summary">{{ aiReview.summary }}</div>
             <ul class="check-list">
               <li v-for="(iss, i) in aiReview.issues || []" :key="i">
-                <span class="warn">{{ iss.severity }}</span>
+                <span class="warn">{{ iss.severity === 'block' ? '阻断' : '提醒' }}</span>
                 <div>
-                  <strong>{{ iss.category }}</strong> · {{ iss.message }}
-                  <div v-if="iss.fix_hint" class="hint">{{ iss.fix_hint }}</div>
+                  <div class="check-title">{{ iss.category || '意见' }}</div>
+                  <div class="check-msg">{{ iss.message }}</div>
+                  <div v-if="iss.fix_hint" class="check-action">{{ iss.fix_hint }}</div>
                 </div>
               </li>
             </ul>
           </div>
         </el-card>
-      </div>
+      </aside>
     </div>
   </div>
 </template>
 
 <style scoped>
-.editor { padding: 4px 2px 28px; }
+.editor { padding: 4px 2px 28px; max-width: none; width: 100%; }
 .toolbar {
   display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
   margin-bottom: 12px; align-items: center;
@@ -1851,14 +2095,50 @@ onMounted(load)
 .mt { margin-top: 12px; }
 .grid {
   display: grid;
-  grid-template-columns: minmax(300px, 380px) 1fr;
-  gap: 12px;
+  /* 大屏：左 Brief · 中文档 · 右 Score，中间优先吃宽 */
+  grid-template-columns: minmax(280px, 0.85fr) minmax(0, 2.4fr) minmax(300px, 1fr);
+  gap: 14px;
   align-items: start;
+  width: 100%;
+}
+@media (min-width: 1800px) {
+  .grid {
+    grid-template-columns: minmax(320px, 0.9fr) minmax(0, 2.6fr) minmax(340px, 1.05fr);
+    gap: 16px;
+  }
+}
+@media (max-width: 1280px) {
+  .grid {
+    grid-template-columns: minmax(240px, 280px) minmax(0, 1fr) minmax(260px, 300px);
+  }
 }
 @media (max-width: 1100px) {
   .grid { grid-template-columns: 1fr; }
+  .col-rail { order: -1; }
+  .rail-card {
+    position: static;
+    max-height: none;
+  }
 }
 .col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.col-rail {
+  position: sticky;
+  top: 12px;
+  align-self: start;
+  max-height: calc(100vh - 88px);
+}
+.rail-card {
+  max-height: calc(100vh - 88px);
+  overflow: auto;
+  border: 1px solid #e8e4f5;
+  background: #fcfbff;
+}
+.rail-card :deep(.el-card__header) {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #fcfbff;
+}
 .card { border-radius: 12px; }
 .card-head {
   display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;
@@ -1875,15 +2155,120 @@ onMounted(load)
 .push-row { margin-bottom: 6px; }
 .push-blocked { font-size: 12px; line-height: 1.4; }
 .blocked { color: #b45309; }
-.sec { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
-.score { font-weight: 700; margin-bottom: 10px; color: #5b21b6; }
+.doc-draft-banner {
+  font-size: 12px;
+  line-height: 1.55;
+  color: #9a3412;
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.channel-quality {
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+  border-radius: 8px;
+  padding: 8px 12px;
+  border: 1px solid #e5e7eb;
+}
+.channel-quality.is-good {
+  color: #065f46;
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+}
+.channel-quality.is-warn {
+  color: #92400e;
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+.rail-title { font-weight: 700; font-size: 14px; color: #1e2330; line-height: 1.3; }
+.rail-sub { font-size: 11px; color: #8b93a7; margin-top: 2px; }
+.draft-banner {
+  font-size: 12px;
+  line-height: 1.55;
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.score-block {
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+}
+.score-block.tone-good { background: #ecfdf5; border-color: #a7f3d0; }
+.score-block.tone-warn { background: #fffbeb; border-color: #fde68a; }
+.score-block.tone-bad { background: #fef2f2; border-color: #fecaca; }
+.score-row { display: flex; gap: 12px; align-items: center; }
+.score-num { min-width: 72px; }
+.score-big { font-size: 32px; font-weight: 750; color: #1e2330; line-height: 1; font-variant-numeric: tabular-nums; }
+.score-den { font-size: 13px; color: #9ca3af; margin-left: 2px; }
+.muted-num { color: #cbd5e1; }
+.score-label { font-size: 13px; font-weight: 650; color: #374151; }
+.score-hint { font-size: 11px; color: #6b7280; margin-top: 2px; line-height: 1.4; }
+.score-bar {
+  height: 6px; border-radius: 999px; background: #e5e7eb; margin-top: 10px; overflow: hidden;
+}
+.score-bar-fill { height: 100%; background: #7c3aed; border-radius: 999px; }
+.tone-good .score-bar-fill { background: #059669; }
+.tone-warn .score-bar-fill { background: #d97706; }
+.tone-bad .score-bar-fill { background: #dc2626; }
+.score-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.score-chip {
+  font-size: 11px; color: #4b5563; background: #fff; border: 1px solid #e5e7eb;
+  border-radius: 999px; padding: 2px 8px; font-variant-numeric: tabular-nums;
+}
+.score-chip.low { color: #b45309; border-color: #fcd34d; background: #fffbeb; }
+.channel-pill {
+  display: flex; gap: 8px; align-items: flex-start;
+  border-radius: 8px; padding: 8px 10px; border: 1px solid #e5e7eb; background: #fff;
+}
+.channel-pill.is-ok { border-color: #a7f3d0; background: #ecfdf5; }
+.channel-pill.is-warn { border-color: #fde68a; background: #fffbeb; }
+.pill-mark { font-weight: 700; font-size: 14px; line-height: 1.2; }
+.channel-pill.is-ok .pill-mark { color: #059669; }
+.channel-pill.is-warn .pill-mark { color: #d97706; }
+.pill-title { font-size: 12px; font-weight: 650; color: #374151; }
+.pill-desc { font-size: 11px; color: #6b7280; margin-top: 2px; line-height: 1.45; }
+.sec-row { display: flex; align-items: center; margin: 4px 0 6px; }
+.sec { font-weight: 650; font-size: 12px; color: #374151; margin-bottom: 6px; }
+.sec-meta { font-weight: 500; color: #9ca3af; margin-left: 6px; }
+.all-pass {
+  font-size: 12px; color: #047857; background: #ecfdf5; border-radius: 8px;
+  padding: 8px 10px; border: 1px solid #a7f3d0;
+}
+.toggle-passed {
+  display: block; width: 100%; margin: 8px 0 4px; padding: 6px 8px;
+  border: 1px dashed #ddd6fe; border-radius: 8px; background: #faf5ff;
+  color: #6d28d9; font-size: 12px; cursor: pointer; text-align: left;
+}
+.toggle-passed:hover { background: #f3e8ff; }
 .check-list { list-style: none; padding: 0; margin: 0; }
 .check-list li {
-  display: flex; gap: 8px; padding: 6px 0; border-bottom: 1px solid #f3f0fa; font-size: 13px;
+  display: flex; gap: 8px; padding: 8px 0; border-bottom: 1px solid #f3f0fa; font-size: 12px;
+}
+.check-title { font-weight: 650; color: #1f2937; line-height: 1.35; }
+.check-msg { color: #6b7280; margin-top: 2px; line-height: 1.45; }
+.check-action { color: #7c3aed; margin-top: 3px; line-height: 1.4; font-size: 11px; }
+.pass-list .check-title { color: #6b7280; font-weight: 500; }
+.pass-list .check-msg { color: #9ca3af; }
+.patch-box, .ai-box {
+  border-top: 1px solid #f0ecf9; padding-top: 10px;
+}
+.ai-summary {
+  font-size: 12px; color: #4b5563; line-height: 1.5; margin-bottom: 8px;
+  background: #f8fafc; border-radius: 8px; padding: 8px 10px;
 }
 .ok { color: #059669; font-weight: 700; }
 .bad { color: #dc2626; font-weight: 700; }
-.warn { color: #d97706; font-size: 12px; font-weight: 600; }
+.warn {
+  color: #d97706; font-size: 11px; font-weight: 650; flex-shrink: 0;
+  min-width: 28px;
+}
 .retrieve { font-size: 12px; color: #4b5563; }
 .retrieve-row { padding: 2px 0; }
 .bound-list {
