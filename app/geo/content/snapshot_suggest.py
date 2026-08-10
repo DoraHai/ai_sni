@@ -7,8 +7,10 @@ from typing import Any
 from app.geo.content.snapshots import (
     extract_cited_urls_from_text,
     normalize_brand_position,
+    normalize_citation_accuracy,
     normalize_competitors,
     normalize_sentiment,
+    resolve_citation_format,
 )
 
 
@@ -52,6 +54,15 @@ def normalize_suggest_payload(
 
     sentiment = normalize_sentiment(payload.get("sentiment"))
     urls = extract_cited_urls_from_text(raw_text)
+    citation_format = resolve_citation_format(
+        payload.get("citation_format") or payload.get("suggested_citation_format"),
+        cited_urls=urls,
+        raw_text=raw_text,
+        mentions_brand=mentions,
+    )
+    citation_accuracy = normalize_citation_accuracy(
+        payload.get("citation_accuracy") or payload.get("suggested_citation_accuracy")
+    )
 
     return {
         "suggested_mentions_brand": mentions,
@@ -59,6 +70,8 @@ def normalize_suggest_payload(
         "suggested_brand_position": position,
         "suggested_sentiment": sentiment,
         "suggested_cited_urls": urls,
+        "suggested_citation_format": citation_format,
+        "suggested_citation_accuracy": citation_accuracy,
         "source": "llm" if isinstance(data, dict) and data else "heuristic",
     }
 
@@ -69,12 +82,18 @@ def suggest_system_prompt(brand: str) -> str:
         "只返回 JSON："
         '{"suggested_mentions_brand": true/false, '
         '"competitors": ["竞品名"], '
-        '"brand_position": "first|mentioned|absent|unknown", '
-        '"sentiment": "positive|neutral|negative|unknown"}。'
+        '"brand_position": "first|alternative|mentioned|absent|unknown", '
+        '"sentiment": "positive|neutral|negative|unknown", '
+        '"citation_format": "linked|plaintext|mixed|none|unknown", '
+        '"citation_accuracy": "accurate|partial|inaccurate|unknown"}。'
         f"品牌参考名：「{brand}」。"
         "competitors 不要包含该品牌自身；没有竞品就返回 []。"
-        "brand_position：品牌在回答中的位置——最先推荐用 first，被提及用 mentioned，"
-        "未出现用 absent，无法判断用 unknown。"
+        "brand_position：品牌在回答中的位置——最先推荐用 first，备选/次选用 alternative，"
+        "被提及用 mentioned，未出现用 absent，无法判断用 unknown。"
+        "citation_format：有可点击链接用 linked，仅品牌/来源纯文本用 plaintext，"
+        "两者兼有用 mixed，无引用用 none。"
+        "citation_accuracy：引用内容与事实相符用 accurate，部分不准用 partial，"
+        "明显错误用 inaccurate；无法判断用 unknown。"
         "sentiment 指对品牌的评价倾向；未提及时用 unknown。"
         "不要编造正文中不存在的竞品名。"
     )

@@ -13,9 +13,21 @@ import {
   probeGeoAnswerSnapshot,
   probeGeoAnswerSnapshotBatch,
   suggestGeoAnswerSnapshotFields,
+  checkGeoAnswerSnapshotCitations,
 } from '../../api/geoContent'
 import { useClientPager } from '../../composables/useClientPager'
 import { session } from '../../store/session'
+import {
+  CITATION_ACCURACY_LABEL,
+  CITATION_FORMAT_LABEL,
+  POSITION_LABEL,
+  REPORT_GLOSSARY,
+  SENTIMENT_LABEL,
+  downloadCsv,
+  engineDisplay,
+  fmtCaptured as fmtCapturedShared,
+  labelOf,
+} from '../../utils/geoReportLabels'
 
 const route = useRoute()
 const router = useRouter()
@@ -23,6 +35,14 @@ const router = useRouter()
 const tenantId = computed(() =>
   session.tenantId || (import.meta.env.DEV && import.meta.env.VITE_API_KEY ? 1 : null),
 )
+
+const POSITION_OPTIONS = Object.entries(POSITION_LABEL).map(([value, label]) => ({ value, label }))
+const SENTIMENT_OPTIONS = Object.entries(SENTIMENT_LABEL).map(([value, label]) => ({ value, label }))
+const FORMAT_OPTIONS = Object.entries(CITATION_FORMAT_LABEL).map(([value, label]) => ({ value, label }))
+const ACCURACY_OPTIONS = Object.entries(CITATION_ACCURACY_LABEL).map(([value, label]) => ({
+  value,
+  label,
+}))
 
 const loading = ref(false)
 const probing = ref(false)
@@ -47,6 +67,8 @@ const form = ref({
   mentions_brand: false,
   brand_position: 'unknown',
   sentiment: 'unknown',
+  citation_format: 'unknown',
+  citation_accuracy: 'unknown',
   competitors: '',
   cited_urls: '',
   note: '',
@@ -57,21 +79,55 @@ const enabledEngines = computed(() => {
   return enabled.length ? enabled : engines.value
 })
 
-const posLabel = { first: '首位', mentioned: '提及', absent: '未出现', unknown: '—' }
-const sentLabel = { positive: '正', neutral: '中', negative: '负', unknown: '—' }
-
 function snippet(text, max = 100) {
   const s = String(text || '').replace(/\s+/g, ' ').trim()
   return s.length > max ? `${s.slice(0, max)}…` : s
 }
 
 function fmtCaptured(iso) {
-  if (!iso) return '—'
-  const s = String(iso)
-  // 2026-08-06T… → 08-06 12:30
-  const m = s.match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/)
-  if (m) return `${m[2]}-${m[3]} ${m[4]}:${m[5]}`
-  return s.length > 16 ? s.slice(0, 16) : s
+  const full = fmtCapturedShared(iso)
+  if (full === '—' || full.length < 16) return full
+  // 列表紧凑：MM-DD HH:mm
+  const m = full.match(/^\d{4}-(\d{2})-(\d{2}) (\d{2}:\d{2})/)
+  return m ? `${m[1]}-${m[2]} ${m[3]}` : full
+}
+
+function exportSnapshots() {
+  const rows = snapshots.value.map((r) => [
+    r.id,
+    r.prompt_id,
+    r.prompt_question || '',
+    engineDisplay(r.engine),
+    r.mentions_brand ? '是' : '否',
+    labelOf(POSITION_LABEL, r.brand_position),
+    labelOf(SENTIMENT_LABEL, r.sentiment),
+    labelOf(CITATION_FORMAT_LABEL, r.citation_format),
+    labelOf(CITATION_ACCURACY_LABEL, r.citation_accuracy),
+    Array.isArray(r.competitors) ? r.competitors.join(' / ') : '',
+    Array.isArray(r.cited_urls) ? r.cited_urls.join(' ') : '',
+    fmtCapturedShared(r.captured_at),
+    r.note || '',
+  ])
+  downloadCsv(
+    `geo-visibility-snapshots-${tenantId.value}.csv`,
+    [
+      'ID',
+      '意图词ID',
+      '问题',
+      '引擎',
+      '提及本品',
+      '位置',
+      '情感',
+      '引用格式',
+      '引用准确性',
+      '竞品',
+      '引用URL',
+      '观测时间',
+      '备注',
+    ],
+    rows,
+  )
+  ElMessage.success(`已导出 ${rows.length} 条快照`)
 }
 
 function applySuggest(draft) {
@@ -81,6 +137,10 @@ function applySuggest(draft) {
   }
   if (draft.suggested_brand_position) form.value.brand_position = draft.suggested_brand_position
   if (draft.suggested_sentiment) form.value.sentiment = draft.suggested_sentiment
+  if (draft.suggested_citation_format) form.value.citation_format = draft.suggested_citation_format
+  if (draft.suggested_citation_accuracy) {
+    form.value.citation_accuracy = draft.suggested_citation_accuracy
+  }
   const comps = draft.suggested_competitors || draft.competitors
   if (comps) form.value.competitors = (comps || []).join(', ')
   if (draft.suggested_cited_urls) form.value.cited_urls = (draft.suggested_cited_urls || []).join('\n')
@@ -254,6 +314,29 @@ async function onExtractUrls() {
   }
 }
 
+async function onCheckCitations() {
+  const urls = form.value.cited_urls.split(/\n+/).map((s) => s.trim()).filter(Boolean)
+  if (!urls.length) {
+    ElMessage.warning('请先填写或抽取引用 URL')
+    return
+  }
+  try {
+    const data = await checkGeoAnswerSnapshotCitations({
+      tenant_id: tenantId.value,
+      cited_urls: urls,
+    })
+    if (data.suggested_citation_accuracy) {
+      form.value.citation_accuracy = data.suggested_citation_accuracy
+    }
+    ElMessage.success(
+      `校验完成：可达 ${data.reachable ?? 0}/${data.checked ?? 0} · 建议准确性 ${data.suggested_citation_accuracy}`,
+    )
+  } catch (e) {
+    error.value = e.message
+    ElMessage.error(e.message || '校验失败')
+  }
+}
+
 async function onSave() {
   if (!form.value.prompt_id) {
     ElMessage.warning('请选择优化意图词')
@@ -271,6 +354,8 @@ async function onSave() {
       mentions_brand: form.value.mentions_brand,
       brand_position: form.value.brand_position,
       sentiment: form.value.sentiment,
+      citation_format: form.value.citation_format,
+      citation_accuracy: form.value.citation_accuracy,
       competitors: form.value.competitors.split(/[,，]/).map((s) => s.trim()).filter(Boolean),
       cited_urls: form.value.cited_urls.split(/\n+/).map((s) => s.trim()).filter(Boolean),
       note: form.value.note || null,
@@ -282,6 +367,8 @@ async function onSave() {
     form.value.mentions_brand = false
     form.value.brand_position = 'unknown'
     form.value.sentiment = 'unknown'
+    form.value.citation_format = 'unknown'
+    form.value.citation_accuracy = 'unknown'
     ElMessage.success('快照已保存')
     await loadSnapshots()
   } catch (e) {
@@ -355,6 +442,8 @@ async function saveBatchItem(draft) {
       mentions_brand: !!draft.suggested_mentions_brand,
       brand_position: draft.suggested_brand_position || 'unknown',
       sentiment: draft.suggested_sentiment || 'unknown',
+      citation_format: draft.suggested_citation_format || 'unknown',
+      citation_accuracy: draft.suggested_citation_accuracy || 'unknown',
       competitors: draft.suggested_competitors || [],
       cited_urls: draft.suggested_cited_urls || [],
       note: draft.simulated
@@ -377,13 +466,13 @@ onMounted(reloadAll)
 </script>
 
 <template>
-  <div v-loading="loading" class="geo-vis">
+  <div v-loading="loading" class="geo-vis geo-page">
     <div class="page-header">
       <div>
         <div class="page-title">AI 可见度</div>
         <div class="page-desc">
-          粘贴或探测回答快照；多引擎探测共用租户 LLM，按引擎人设生成草稿（不写库）。
-          批量真采样与自动落库请用
+          登记或探测回答快照，标注提及、位置、情感与引用质量——这是下游所有报表的样本源。
+          批量真采样请用
           <router-link to="/geo/visibility/patrol">全自动巡检</router-link>。
         </div>
         <div class="sub-tabs">
@@ -396,10 +485,19 @@ onMounted(reloadAll)
           全自动巡检
         </el-button>
         <el-button @click="reloadAll">刷新</el-button>
-        <router-link class="el-button" to="/geo/citations">AI 引用次数</router-link>
+        <el-button :disabled="!snapshots.length" @click="exportSnapshots">导出 CSV</el-button>
+        <router-link class="el-button" to="/geo/citations">引用分析</router-link>
+        <router-link class="el-button" to="/geo/evaluation">评价与位置</router-link>
         <router-link class="el-button" to="/geo/overview">GEO 概览</router-link>
       </div>
     </div>
+
+    <details class="geo-glossary">
+      <summary>统计口径（点击展开）</summary>
+      <ul>
+        <li v-for="(line, i) in REPORT_GLOSSARY.visibility" :key="i">{{ line }}</li>
+      </ul>
+    </details>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" />
     <el-alert
@@ -413,6 +511,9 @@ onMounted(reloadAll)
     <div class="layout">
       <section class="panel">
         <div class="panel-title">登记回答快照</div>
+        <p class="hint">
+          探测只填草稿不写库；确认标注后再点「保存快照」。列表内可直接改字段。
+        </p>
         <el-form label-position="top" @submit.prevent>
           <el-form-item label="优化意图词">
             <el-select v-model="form.prompt_id" filterable style="width: 100%">
@@ -429,7 +530,7 @@ onMounted(reloadAll)
               <el-option
                 v-for="e in enabledEngines"
                 :key="e.engine_key"
-                :label="e.display_name || e.engine_key"
+                :label="e.display_name || engineDisplay(e.engine_key)"
                 :value="e.engine_key"
               />
             </el-select>
@@ -444,20 +545,46 @@ onMounted(reloadAll)
             <el-checkbox v-model="form.mentions_brand">提及我方品牌</el-checkbox>
           </el-form-item>
           <div class="row2">
-            <el-form-item label="我方位置">
+            <el-form-item label="本品位置">
               <el-select v-model="form.brand_position" style="width: 100%">
-                <el-option label="未知" value="unknown" />
-                <el-option label="首位推荐" value="first" />
-                <el-option label="有提及" value="mentioned" />
-                <el-option label="未出现" value="absent" />
+                <el-option
+                  v-for="o in POSITION_OPTIONS"
+                  :key="o.value"
+                  :label="o.label"
+                  :value="o.value"
+                />
               </el-select>
             </el-form-item>
             <el-form-item label="情感倾向">
               <el-select v-model="form.sentiment" style="width: 100%">
-                <el-option label="未知" value="unknown" />
-                <el-option label="正面" value="positive" />
-                <el-option label="中性" value="neutral" />
-                <el-option label="负面" value="negative" />
+                <el-option
+                  v-for="o in SENTIMENT_OPTIONS"
+                  :key="o.value"
+                  :label="o.label"
+                  :value="o.value"
+                />
+              </el-select>
+            </el-form-item>
+          </div>
+          <div class="row2">
+            <el-form-item label="引用格式">
+              <el-select v-model="form.citation_format" style="width: 100%">
+                <el-option
+                  v-for="o in FORMAT_OPTIONS"
+                  :key="o.value"
+                  :label="o.label"
+                  :value="o.value"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="引用准确性">
+              <el-select v-model="form.citation_accuracy" style="width: 100%">
+                <el-option
+                  v-for="o in ACCURACY_OPTIONS"
+                  :key="o.value"
+                  :label="o.label"
+                  :value="o.value"
+                />
               </el-select>
             </el-form-item>
           </div>
@@ -477,6 +604,7 @@ onMounted(reloadAll)
             </el-button>
             <el-button @click="onSuggest">AI 标注建议</el-button>
             <el-button @click="onExtractUrls">抽取 URL</el-button>
+            <el-button @click="onCheckCitations">校验引用</el-button>
             <el-button type="primary" :loading="saving" @click="onSave">保存快照</el-button>
           </div>
           <p class="hint">
@@ -488,7 +616,7 @@ onMounted(reloadAll)
           <div class="panel-title">多引擎草稿</div>
           <div v-for="d in batchDrafts" :key="d.engine" class="batch-item">
             <div class="batch-head">
-              <strong>{{ d.engine }}</strong>
+              <strong>{{ engineDisplay(d.engine) }}</strong>
               <span v-if="d.ok && d.simulated" class="tag">模拟</span>
               <span v-if="!d.ok" class="tag bad">失败</span>
               <span v-if="d._saved" class="tag ok">已保存</span>
@@ -518,22 +646,35 @@ onMounted(reloadAll)
             <el-option
               v-for="e in engines"
               :key="e.engine_key"
-              :label="e.display_name || e.engine_key"
+              :label="e.display_name || engineDisplay(e.engine_key)"
               :value="e.engine_key"
             />
           </el-select>
           <el-button v-if="filterPromptId" @click="clearPromptFilter">清除问题过滤</el-button>
+          <el-button size="small" :disabled="!snapshots.length" @click="exportSnapshots">导出</el-button>
         </div>
         <p class="hint">
-          {{ filterPromptId ? `过滤机会 #${filterPromptId}` : '显示全部快照' }}
-          <template v-if="filterEngine"> · 引擎={{ filterEngine }}</template>
+          {{ filterPromptId ? `过滤意图词 #${filterPromptId}` : '显示全部快照' }}
+          <template v-if="filterEngine"> · {{ engineDisplay(filterEngine) }}</template>
           · 共 {{ snapshots.length }} 条
         </p>
+        <div v-if="!snapshots.length && !loading" class="geo-empty" style="margin: 8px 0 12px">
+          <div class="empty-title">暂无回答快照</div>
+          <div>左侧登记一条，或去「全自动巡检」批量采样；保存后可在引用 / 评价报表里看到聚合。</div>
+          <div class="empty-actions">
+            <router-link class="el-button el-button--primary el-button--small" to="/geo/visibility/patrol">
+              去巡检
+            </router-link>
+            <router-link class="el-button el-button--small is-plain" to="/geo/prompts">
+              管理意图词
+            </router-link>
+          </div>
+        </div>
         <div class="table-wrap">
           <el-table
             :data="snapPager.pagedItems"
             size="small"
-            empty-text="暂无快照"
+            empty-text=" "
             stripe
             class="snap-table"
             style="width: 100%"
@@ -544,26 +685,64 @@ onMounted(reloadAll)
                 <div class="snip">{{ snippet(row.raw_text, 90) }}</div>
               </template>
             </el-table-column>
-            <el-table-column prop="engine" label="引擎" width="96" show-overflow-tooltip />
-            <el-table-column label="提及" width="92" align="center">
+            <el-table-column label="引擎" width="100" show-overflow-tooltip>
+              <template #default="{ row }">{{ engineDisplay(row.engine) }}</template>
+            </el-table-column>
+            <el-table-column label="提及本品" width="100" align="center">
               <template #default="{ row }">
                 <el-button size="small" text type="primary" @click="toggleMention(row)">
                   {{ row.mentions_brand ? '是' : '否' }}·切换
                 </el-button>
               </template>
             </el-table-column>
-            <el-table-column label="位置" width="120" align="center">
+            <el-table-column label="本品位置" width="128" align="center">
               <template #default="{ row }">
                 <el-select
                   size="small"
                   :model-value="row.brand_position || 'unknown'"
-                  style="width: 108px"
+                  style="width: 116px"
                   @change="(v) => patchSnapField(row, { brand_position: v })"
                 >
-                  <el-option label="未知" value="unknown" />
-                  <el-option label="首位" value="first" />
-                  <el-option label="提及" value="mentioned" />
-                  <el-option label="未出现" value="absent" />
+                  <el-option
+                    v-for="o in POSITION_OPTIONS"
+                    :key="o.value"
+                    :label="o.label"
+                    :value="o.value"
+                  />
+                </el-select>
+              </template>
+            </el-table-column>
+            <el-table-column label="引用格式" width="128" align="center">
+              <template #default="{ row }">
+                <el-select
+                  size="small"
+                  :model-value="row.citation_format || 'unknown'"
+                  style="width: 116px"
+                  @change="(v) => patchSnapField(row, { citation_format: v })"
+                >
+                  <el-option
+                    v-for="o in FORMAT_OPTIONS"
+                    :key="o.value"
+                    :label="o.label"
+                    :value="o.value"
+                  />
+                </el-select>
+              </template>
+            </el-table-column>
+            <el-table-column label="引用准确性" width="118" align="center">
+              <template #default="{ row }">
+                <el-select
+                  size="small"
+                  :model-value="row.citation_accuracy || 'unknown'"
+                  style="width: 106px"
+                  @change="(v) => patchSnapField(row, { citation_accuracy: v })"
+                >
+                  <el-option
+                    v-for="o in ACCURACY_OPTIONS"
+                    :key="o.value"
+                    :label="o.label"
+                    :value="o.value"
+                  />
                 </el-select>
               </template>
             </el-table-column>
@@ -575,10 +754,12 @@ onMounted(reloadAll)
                   style="width: 96px"
                   @change="(v) => patchSnapField(row, { sentiment: v })"
                 >
-                  <el-option label="未知" value="unknown" />
-                  <el-option label="正" value="positive" />
-                  <el-option label="中" value="neutral" />
-                  <el-option label="负" value="negative" />
+                  <el-option
+                    v-for="o in SENTIMENT_OPTIONS"
+                    :key="o.value"
+                    :label="o.label"
+                    :value="o.value"
+                  />
                 </el-select>
               </template>
             </el-table-column>
@@ -592,7 +773,7 @@ onMounted(reloadAll)
                 />
               </template>
             </el-table-column>
-            <el-table-column label="观测" width="108" show-overflow-tooltip>
+            <el-table-column label="观测时间" width="108" show-overflow-tooltip>
               <template #default="{ row }">{{ fmtCaptured(row.captured_at) }}</template>
             </el-table-column>
             <el-table-column label="操作" width="72" fixed="right">

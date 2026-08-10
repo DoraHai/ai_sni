@@ -8,6 +8,12 @@ export function fetchGeoContentStats(tenantId) {
   return client.get('/api/v1/geo/content-stats', { params: { tenant_id: tenantId } })
 }
 
+export function fetchGeoWeeklyInsights(tenantId, params = {}) {
+  return client.get('/api/v1/geo/weekly-insights', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
 export function listGeoPrompts(tenantId, statusOrParams, maybeParams) {
   const params =
     statusOrParams && typeof statusOrParams === 'object'
@@ -23,6 +29,30 @@ export function createGeoPrompt(body) {
 export function patchGeoPrompt(tenantId, promptId, body) {
   return client.patch(`/api/v1/geo/prompts/${promptId}`, body, {
     params: { tenant_id: tenantId },
+  })
+}
+
+/** 智能意图词推荐（百度/Google 下拉拓词，不自动入库） */
+export function expandGeoPromptCandidates(body) {
+  return client.post('/api/v1/geo/prompts/expand-candidates', body, { timeout: 120000 })
+}
+
+/** 将拓词候选确认为意图词入库 */
+export function promoteGeoPromptCandidates(body) {
+  return client.post('/api/v1/geo/prompts/promote-candidates', body)
+}
+
+/** 话题热度：意图词/问题组在快照中的提问频次趋势 */
+export function fetchGeoTopicHeat(tenantId, params = {}) {
+  return client.get('/api/v1/geo/topic-heat', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
+/** AI 动态与策略影响建议 */
+export function fetchGeoAiTrends(tenantId, params = {}) {
+  return client.get('/api/v1/geo/ai-trends', {
+    params: { tenant_id: tenantId, ...params },
   })
 }
 
@@ -594,6 +624,10 @@ export function suggestGeoAnswerSnapshotFields(body) {
   return client.post('/api/v1/geo/answer-snapshots/suggest-fields', body, { timeout: 90000 })
 }
 
+export function checkGeoAnswerSnapshotCitations(body) {
+  return client.post('/api/v1/geo/answer-snapshots/check-citations', body, { timeout: 60000 })
+}
+
 export function listGeoTrackingEngines(tenantId, enabledOnly = false) {
   return client.get('/api/v1/geo/tracking-engines', {
     params: { tenant_id: tenantId, enabled_only: enabledOnly },
@@ -610,6 +644,28 @@ export function fetchGeoCompetitorInsights(tenantId) {
   return client.get('/api/v1/geo/competitor-insights', {
     params: { tenant_id: tenantId },
   })
+}
+
+export function fetchGeoCompetitorCompare(tenantId) {
+  return client.get('/api/v1/geo/competitor-insights/compare', {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function fetchGeoCompetitorDaily(tenantId, params = {}) {
+  return client.get('/api/v1/geo/competitor-insights/daily', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
+export function fetchGeoCompetitorTrace(tenantId, name) {
+  return client.get('/api/v1/geo/competitor-insights/trace', {
+    params: { tenant_id: tenantId, name },
+  })
+}
+
+export function createGeoCompetitorReport(body) {
+  return client.post('/api/v1/geo/competitor-insights/report', body)
 }
 
 export function fetchGeoEvaluationInsights(tenantId) {

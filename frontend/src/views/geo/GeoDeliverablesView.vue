@@ -172,7 +172,7 @@ onMounted(async () => {
       <div>
         <div class="page-title">GEO 交付摘要</div>
         <div class="page-desc">
-          按周期与业务/单元切片汇总可见度、AI 引用与优化文章；可复制 / 下载 Markdown。
+          按周期与业务/单元汇总可见度、引用与优化文章，生成可对外粘贴的 Markdown 周报材料。
         </div>
       </div>
       <div class="header-actions">
@@ -182,6 +182,15 @@ onMounted(async () => {
         <el-button plain @click="printReport">打印</el-button>
       </div>
     </div>
+
+    <details class="geo-glossary">
+      <summary>统计口径（点击展开）</summary>
+      <ul>
+        <li>交付包汇总选定周期内的日指标、任务与引用样本，便于对外说明。</li>
+        <li>可按优化业务 / 单元切片；导出 Markdown 便于粘贴周报。</li>
+        <li>表格数值来自本系统快照与日汇总，不是第三方全网抓取。</li>
+      </ul>
+    </details>
 
     <div class="geo-toolbar">
       <el-date-picker

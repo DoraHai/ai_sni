@@ -98,6 +98,15 @@ async def chat_json(
         content = data["choices"][0]["message"]["content"]
         return _parse_json_content(content)
     except (httpx.HTTPError, KeyError, ValueError, json.JSONDecodeError) as e:
+        snippet = ""
+        try:
+            snippet = str(locals().get("content") or "")[:160]
+        except Exception:  # pragma: no cover
+            snippet = ""
+        if isinstance(e, json.JSONDecodeError) and snippet:
+            raise DeepSeekError(
+                f"AI 返回了非 JSON 内容（模型 {mdl}）：{snippet!r}"
+            ) from e
         raise DeepSeekError(f"AI 调用/解析失败: {e}") from e
 
 

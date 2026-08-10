@@ -9,17 +9,29 @@ from app.geo.content.daily_metrics import (
     aggregate_buckets,
     parse_scope_key,
     scope_business,
+    scope_prompt,
     scope_tenant,
     scope_unit,
+    scope_with_engine,
 )
 
 
-def _snap(prompt_id: int, *, mentions=False, position="unknown", urls=None):
+def _snap(
+    prompt_id: int,
+    *,
+    mentions=False,
+    position="unknown",
+    urls=None,
+    engine="other",
+    competitors=None,
+):
     return SimpleNamespace(
         prompt_id=prompt_id,
         mentions_brand=mentions,
         brand_position=position,
         cited_urls=urls or [],
+        engine=engine,
+        competitors=competitors or [],
     )
 
 
@@ -32,8 +44,14 @@ def test_scope_key_helpers():
         "level": "business",
         "business_id": 9,
         "unit_id": None,
+        "prompt_id": None,
+        "engine": None,
     }
     assert parse_scope_key("u4")["unit_id"] == 4
+    assert parse_scope_key("p8")["level"] == "prompt"
+    assert parse_scope_key("t@deepseek")["engine"] == "deepseek"
+    assert parse_scope_key("u3@doubao")["unit_id"] == 3
+    assert parse_scope_key("u3@doubao")["engine"] == "doubao"
 
 
 def test_aggregate_tenant_business_unit():
@@ -122,3 +140,47 @@ def test_metric_day_from_captured():
     assert _metric_day_from_captured(datetime(2026, 8, 7, 15, 30)).isoformat() == "2026-08-07"
     assert _metric_day_from_captured(date(2026, 1, 2)).isoformat() == "2026-01-02"
     assert _metric_day_from_captured(None) == date.today()
+
+
+def test_aggregate_engine_and_prompt_slices():
+    snaps = [
+        _snap(1, mentions=True, engine="deepseek"),
+        _snap(1, mentions=False, engine="doubao"),
+        _snap(2, mentions=True, engine="deepseek"),
+    ]
+    buckets = aggregate_buckets(
+        snaps,
+        probe_map={1: False, 2: False},
+        unit_of_prompt={1: 10, 2: 10},
+        business_of_unit={10: 1},
+    )
+    assert scope_prompt(1) in buckets
+    assert scope_with_engine(scope_tenant(), "deepseek") in buckets
+    assert scope_with_engine(scope_unit(10), "doubao") in buckets
+    ds = buckets[scope_with_engine(scope_tenant(), "deepseek")].to_metrics_dict()
+    assert ds["snapshots_visibility"] == 2
+    assert ds["brand_mentions"] == 2
+    p1 = buckets[scope_prompt(1)].to_metrics_dict()
+    assert p1["snapshots_visibility"] == 2
+    assert p1["brand_mentions"] == 1
+
+
+def test_competitor_mentions_in_bucket():
+    snaps = [
+        _snap(1, mentions=True, competitors=["竞品A", "竞品B"], engine="deepseek"),
+        _snap(1, mentions=False, competitors=["竞品A"], engine="deepseek"),
+        _snap(2, mentions=True, competitors=["竞品A"], engine="doubao"),
+    ]
+    buckets = aggregate_buckets(
+        snaps,
+        probe_map={1: False, 2: False},
+        unit_of_prompt={1: 10, 2: 10},
+        business_of_unit={10: 1},
+    )
+    t = buckets[scope_tenant()].to_metrics_dict()
+    assert t["any_competitor_mentions"] == 3
+    assert t["top_competitor"] == "竞品A"
+    assert t["competitor_mentions"]["竞品A"]["mentions"] == 3
+    eng = buckets[scope_with_engine(scope_tenant(), "deepseek")].to_metrics_dict()
+    assert eng["competitor_mentions"]["竞品A"]["mentions"] == 2
+    assert eng["top_competitor_rate"] == 1.0  # 2/2 visibility

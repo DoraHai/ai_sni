@@ -6,6 +6,7 @@ import {
   downloadGeoDailyMetricsCsv,
   fetchGeoContentStats,
   fetchGeoOpsAlerts,
+  fetchGeoWeeklyInsights,
   geoContentHealth,
   listGeoBusinesses,
   listGeoDailyMetrics,
@@ -15,6 +16,12 @@ import {
 } from '../../api/geoContent'
 import { useClientPager } from '../../composables/useClientPager'
 import { session } from '../../store/session'
+import {
+  DAILY_METRIC_COLUMNS,
+  REPORT_GLOSSARY,
+  fmtInt,
+  fmtPct,
+} from '../../utils/geoReportLabels'
 
 const tenantId = computed(() =>
   session.tenantId || (import.meta.env.DEV && import.meta.env.VITE_API_KEY ? 1 : null),
@@ -36,16 +43,10 @@ const dailyLatest = ref(null)
 const citationNote = ref('')
 const opsAlerts = ref([])
 const opsSummary = ref(null)
+const weekly = ref(null)
 const exporting = ref(false)
 const dailyPager = useClientPager(dailySeries, { pageSize: 14 })
-
-const fmtInt = (v) => (v == null ? '—' : Number(v).toLocaleString('zh-CN'))
-const fmtPct = (v) => {
-  if (v == null) return '—'
-  const n = Number(v)
-  if (Number.isNaN(n)) return '—'
-  return `${(n * 100).toFixed(1)}%`
-}
+const M = DAILY_METRIC_COLUMNS
 
 const scopeHint = computed(() => {
   if (filterUnitId.value) {
@@ -110,9 +111,9 @@ const workbenchLinks = [
   { label: '全自动巡检', path: '/geo/visibility/patrol', desc: '多词×多引擎自动探测落库', vue: true, primary: true },
   { label: '期次对比', path: '/geo/period-diff', desc: 'before/after 品牌提及 Δ', vue: true, primary: true },
   { label: '交付摘要', path: '/geo/deliverables', desc: '周期报告 Markdown / 打印', vue: true, primary: true },
-  { label: 'AI 引用次数', path: '/geo/citations', desc: '引用聚合 · 需看统计口径', vue: true },
-  { label: '竞品分析', path: '/geo/competitors', desc: '竞品出现与份额', vue: true },
-  { label: '评价分析', path: '/geo/evaluation', desc: '情感与位置分布', vue: true },
+  { label: '竞品监测', path: '/geo/competitors', desc: '竞品出现、同题对比与日监测', vue: true },
+  { label: '评价与位置', path: '/geo/evaluation', desc: '情感、位置与引用质量', vue: true },
+  { label: 'AI 引用分析', path: '/geo/citations', desc: '被引域名与自有域占比', vue: true },
   { label: '内容工作台', path: '/geo/workbench', desc: 'Vue 页枢纽', vue: true },
   { label: '优化业务', path: '/geo/businesses', desc: '业务 → 单元 → 意图词', vue: true },
   { label: '优化意图词', path: '/geo/prompts', desc: '意图词 · 探测题标记', vue: true },
@@ -218,6 +219,21 @@ async function loadOps() {
   }
 }
 
+async function loadWeekly() {
+  if (!tenantId.value) {
+    weekly.value = null
+    return
+  }
+  try {
+    const params = {}
+    if (filterUnitId.value) params.scope_key = `u${filterUnitId.value}`
+    else if (filterBusinessId.value) params.scope_key = `b${filterBusinessId.value}`
+    weekly.value = await fetchGeoWeeklyInsights(tenantId.value, params)
+  } catch {
+    weekly.value = null
+  }
+}
+
 async function load() {
   if (!tenantId.value) {
     error.value = '请先选择客户或配置本地 API Key'
@@ -232,6 +248,7 @@ async function load() {
       loadHierarchy(),
       loadDailySlice(),
       loadOps(),
+      loadWeekly(),
     ])
     stats.value = s
     healthOk.value = h ? h.status === 'ok' : null
@@ -305,20 +322,24 @@ function onBusinessChange() {
     filterUnitId.value = null
   }
   loadDailySlice()
+  loadWeekly()
 }
 
 watch(tenantId, load)
-watch(filterUnitId, loadDailySlice)
+watch(filterUnitId, () => {
+  loadDailySlice()
+  loadWeekly()
+})
 onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="geo-overview">
+  <div v-loading="loading" class="geo-overview geo-page">
     <div class="page-header">
       <div>
         <div class="page-title">GEO 概览</div>
         <div class="page-desc">
-          内容与可见度状态一览；可按优化业务 / 单元看品牌提及与 AI 引用切片。
+          运营告警与本周洞察优先；下方看关键 KPI 与近 14 天趋势，可按业务/单元切片。
           <span v-if="healthOk === true" class="health ok">API 正常</span>
           <span v-else-if="healthOk === false" class="health bad">API 异常</span>
         </div>
@@ -330,6 +351,14 @@ onMounted(load)
         <el-button type="primary" @click="openWorkbench(workbenchLinks[0])">打开工作台</el-button>
       </div>
     </div>
+
+    <details class="geo-glossary">
+      <summary>统计口径（点击展开）</summary>
+      <ul>
+        <li v-for="(line, i) in REPORT_GLOSSARY.overview" :key="i">{{ line }}</li>
+        <li v-for="(line, i) in REPORT_GLOSSARY.dailyMetrics" :key="`d-${i}`">{{ line }}</li>
+      </ul>
+    </details>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" />
 
@@ -393,6 +422,21 @@ onMounted(load)
       </div>
     </div>
 
+    <section v-if="weekly" class="geo-panel mb">
+      <div class="panel-title-row">
+        <div class="panel-title">本周洞察 · {{ scopeHint }}</div>
+        <router-link class="el-button el-button--small is-plain" to="/geo/topic-heat">话题热度</router-link>
+      </div>
+      <p class="week-headline">{{ weekly.headline }}</p>
+      <ul class="week-bullets">
+        <li v-for="(b, i) in (weekly.bullets || [])" :key="i">{{ b }}</li>
+      </ul>
+      <p v-if="weekly.period" class="geo-muted week-period">
+        本周 {{ weekly.period.current?.from }} ~ {{ weekly.period.current?.to }}
+        · 对照 {{ weekly.period.previous?.from }} ~ {{ weekly.period.previous?.to }}
+      </p>
+    </section>
+
     <section v-if="dailySeries.length" class="geo-panel">
       <div class="panel-title-row">
         <div class="panel-title">近 14 天 · {{ scopeHint }}</div>
@@ -400,16 +444,62 @@ onMounted(load)
       </div>
       <el-table :data="dailyPager.pagedItems" size="small" stripe>
         <el-table-column prop="metric_date" label="日期" width="120" />
-        <el-table-column label="品牌提及率" min-width="110">
+        <el-table-column min-width="110">
+          <template #header>
+            <el-tooltip :content="M.brand_mention_rate.hint" placement="top">
+              <span>{{ M.brand_mention_rate.label }}</span>
+            </el-tooltip>
+          </template>
           <template #default="{ row }">{{ fmtPct(row.brand_mention_rate) }}</template>
         </el-table-column>
-        <el-table-column label="点名认知率" min-width="110">
+        <el-table-column min-width="110">
+          <template #header>
+            <el-tooltip :content="M.brand_probe_recognition_rate.hint" placement="top">
+              <span>{{ M.brand_probe_recognition_rate.label }}</span>
+            </el-tooltip>
+          </template>
           <template #default="{ row }">{{ fmtPct(row.brand_probe_recognition_rate) }}</template>
         </el-table-column>
-        <el-table-column prop="citation_count" label="AI 引用次数" min-width="110" />
-        <el-table-column prop="distinct_cited_domains" label="独立域名" min-width="100" />
-        <el-table-column prop="snapshots_visibility" label="可见快照" min-width="100" />
-        <el-table-column prop="snapshots_probe" label="探测快照" min-width="100" />
+        <el-table-column min-width="110">
+          <template #header>
+            <el-tooltip :content="M.top1_rate.hint" placement="top">
+              <span>{{ M.top1_rate.label }}</span>
+            </el-tooltip>
+          </template>
+          <template #default="{ row }">{{ fmtPct(row.top1_rate) }}</template>
+        </el-table-column>
+        <el-table-column min-width="110">
+          <template #header>
+            <el-tooltip :content="M.citation_count.hint" placement="top">
+              <span>{{ M.citation_count.label }}</span>
+            </el-tooltip>
+          </template>
+          <template #default="{ row }">{{ row.citation_count ?? '—' }}</template>
+        </el-table-column>
+        <el-table-column min-width="100">
+          <template #header>
+            <el-tooltip :content="M.distinct_cited_domains.hint" placement="top">
+              <span>{{ M.distinct_cited_domains.label }}</span>
+            </el-tooltip>
+          </template>
+          <template #default="{ row }">{{ row.distinct_cited_domains ?? '—' }}</template>
+        </el-table-column>
+        <el-table-column min-width="100">
+          <template #header>
+            <el-tooltip :content="M.snapshots_visibility.hint" placement="top">
+              <span>{{ M.snapshots_visibility.label }}</span>
+            </el-tooltip>
+          </template>
+          <template #default="{ row }">{{ row.snapshots_visibility ?? '—' }}</template>
+        </el-table-column>
+        <el-table-column min-width="100">
+          <template #header>
+            <el-tooltip :content="M.snapshots_probe.hint" placement="top">
+              <span>{{ M.snapshots_probe.label }}</span>
+            </el-tooltip>
+          </template>
+          <template #default="{ row }">{{ row.snapshots_probe ?? '—' }}</template>
+        </el-table-column>
       </el-table>
       <div class="geo-pager">
         <el-pagination
@@ -426,8 +516,17 @@ onMounted(load)
     </section>
     <section v-else-if="stats" class="geo-panel">
       <div class="panel-title">近 14 天 · {{ scopeHint }}</div>
-      <div class="empty-daily">
-        暂无按天汇总。登记快照 / 巡检落库后会自动重算；也可点「重算今日」。
+      <div class="geo-empty">
+        <div class="empty-title">暂无按天汇总</div>
+        <div>登记快照或跑巡检后会自动重算；也可点上方「重算今日」。</div>
+        <div class="empty-actions">
+          <router-link class="el-button el-button--small el-button--primary" to="/geo/visibility">
+            去登记快照
+          </router-link>
+          <router-link class="el-button el-button--small is-plain" to="/geo/visibility/patrol">
+            全自动巡检
+          </router-link>
+        </div>
       </div>
     </section>
 
@@ -474,6 +573,20 @@ onMounted(load)
   padding: 2px 8px;
   border-radius: 999px;
 }
+.week-headline {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #111827;
+}
+.week-bullets {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: #374151;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.week-period { margin: 10px 0 0; font-size: 12px; }
 .health.ok {
   background: #ecfdf5;
   color: #047857;

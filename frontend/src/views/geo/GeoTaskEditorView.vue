@@ -292,7 +292,8 @@ async function load() {
         geo_subscores: rr.geo_subscores,
         geo_actions: rr.geo_actions || [],
         ai_review: rr.ai_review,
-        patches: [],
+        // Keep stored fix patches so rail buttons survive reload
+        patches: rr.patches || [],
       }
     }
   } catch (e) {
@@ -798,14 +799,16 @@ async function runAiReview() {
       persist: true,
     })
     if (res.task) task.value = res.task
+    const rr = task.value?.rule_result || {}
     checkResult.value = {
       ...(checkResult.value || {}),
       ai_review: res.ai_review,
-      checks: task.value?.rule_result?.checks || checkResult.value?.checks || [],
-      ready: task.value?.rule_result?.ready,
-      geo_score: task.value?.rule_result?.geo_score ?? checkResult.value?.geo_score,
-      geo_subscores: task.value?.rule_result?.geo_subscores || checkResult.value?.geo_subscores,
-      geo_actions: task.value?.rule_result?.geo_actions || checkResult.value?.geo_actions || [],
+      checks: rr.checks || checkResult.value?.checks || [],
+      ready: rr.ready,
+      geo_score: rr.geo_score ?? checkResult.value?.geo_score,
+      geo_subscores: rr.geo_subscores || checkResult.value?.geo_subscores,
+      geo_actions: rr.geo_actions || checkResult.value?.geo_actions || [],
+      patches: rr.patches || checkResult.value?.patches || [],
     }
     ElMessage.success(res.ai_review?.summary || '审稿完成')
   } catch (e) {
@@ -1394,7 +1397,9 @@ const geoActions = computed(
 const aiReview = computed(
   () => checkResult.value?.ai_review || task.value?.rule_result?.ai_review || null,
 )
-const patches = computed(() => checkResult.value?.patches || [])
+const patches = computed(
+  () => checkResult.value?.patches || task.value?.rule_result?.patches || [],
+)
 const boundFacts = computed(() => task.value?.facts || [])
 const variants = computed(() => task.value?.variants || [])
 const channelOptions = computed(() => {
@@ -2054,6 +2059,13 @@ onMounted(load)
                 {{ p.label || checkLabel(p.code) }}
               </el-button>
             </div>
+          </div>
+          <div v-else-if="failedChecks.length" class="mt patch-box">
+            <div class="sec">一键补结构</div>
+            <div class="hint mb">当前无补丁缓存，请先点上方「检查就绪」生成可插入补丁。</div>
+            <el-button size="small" type="warning" plain :loading="busy === 'check'" @click="runCheck">
+              检查就绪并生成补丁
+            </el-button>
           </div>
 
           <div v-if="aiReview" class="mt ai-box">

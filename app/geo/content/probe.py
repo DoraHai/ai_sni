@@ -16,6 +16,7 @@ ENGINE_PERSONAS: dict[str, str] = {
     "chatgpt": "请模拟 ChatGPT（OpenAI）公开回答的语气与结构（可适度分点，少空话）。",
     "deepseek": "请模拟 DeepSeek 公开回答的语气与结构（偏技术、条理清晰）。",
     "doubao": "请模拟豆包公开回答的语气与结构（口语友好、适合国内用户）。",
+    "kimi": "请模拟 Kimi（月之暗面）公开回答的语气与结构（长文能力强、条理清晰、可适度引用公开常识）。",
     "perplexity": "请模拟 Perplexity 公开回答的语气与结构（偏检索综述，可提及常见公开来源类型，勿编造具体不存在的 URL）。",
     "other": "请用常见中文 AI 助手的公开回答语气作答。",
 }
@@ -39,10 +40,14 @@ def build_probe_system_prompt(*, brand: str, engine: str, simulated: bool = True
         '{"raw_text": "完整回答正文", '
         '"suggested_mentions_brand": true/false, '
         '"competitors": ["竞品名"], '
-        '"brand_position": "first|mentioned|absent|unknown", '
-        '"sentiment": "positive|neutral|negative|unknown"}。'
+        '"brand_position": "first|alternative|mentioned|absent|unknown", '
+        '"sentiment": "positive|neutral|negative|unknown", '
+        '"citation_format": "linked|plaintext|mixed|none|unknown", '
+        '"citation_accuracy": "accurate|partial|inaccurate|unknown"}。'
         f"suggested_mentions_brand 表示回答是否明确提及品牌「{brand}」。"
         "competitors 不要包含该品牌自身；没有竞品就返回 []。"
+        "brand_position：首选 first，备选/次选 alternative，一般提及 mentioned。"
+        "citation_format：有链接用 linked，仅文本提及来源用 plaintext，兼有用 mixed。"
         "不要编造不存在的官网承诺或正文外竞品。"
     )
 
@@ -139,12 +144,6 @@ async def run_probe_draft(
     from app.ai.deepseek import DeepSeekError
 
     simulated = sample_mode != SAMPLE_MODE_REAL
-    # Preserve legacy: deepseek on persona path still marked simulated=False when
-    # using tenant deepseek-like backend without explicit real mode? Keep old rule
-    # only when sample_mode is persona and engine is deepseek.
-    if sample_mode == SAMPLE_MODE_PERSONA and engine == "deepseek":
-        simulated = False
-
     system = build_probe_system_prompt(brand=brand, engine=engine, simulated=simulated)
     user = build_probe_user_prompt(brand=brand, question=question, engine=engine)
     try:

@@ -8,6 +8,7 @@ import {
   downloadGeoDailyMetricsCsv,
   listGeoBusinesses,
   listGeoDailyMetrics,
+  listGeoPrompts,
   listGeoUnits,
   patchGeoBusiness,
   patchGeoUnit,
@@ -15,9 +16,16 @@ import {
 } from '../../api/geoContent'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
+import {
+  DAILY_METRIC_COLUMNS,
+  REPORT_GLOSSARY,
+  engineDisplay,
+  fmtPct,
+} from '../../utils/geoReportLabels'
 
 const router = useRouter()
 const { tenantId } = useGeoTenant()
+const M = DAILY_METRIC_COLUMNS
 
 const loading = ref(false)
 const rebuilding = ref(false)
@@ -25,15 +33,20 @@ const exporting = ref(false)
 const error = ref('')
 const businesses = ref([])
 const units = ref([])
+const prompts = ref([])
+const promptsLoading = ref(false)
 const selectedBusinessId = ref(null)
 const selectedUnitId = ref(null)
 const dailyItems = ref([])
 const citationNote = ref('')
+const metricsOpen = ref(false)
+const engineFilter = ref('')
 /** tenant | business | unit | all_units_in_biz */
 const dailyScope = ref('tenant')
 
-const bizPager = useClientPager(businesses, { pageSize: 10 })
-const unitPager = useClientPager(units, { pageSize: 10 })
+const bizPager = useClientPager(businesses, { pageSize: 12 })
+const unitPager = useClientPager(units, { pageSize: 12 })
+const promptPager = useClientPager(prompts, { pageSize: 12 })
 const dailyPager = useClientPager(dailyItems, { pageSize: 20 })
 
 const bizOpen = ref(false)
@@ -45,6 +58,22 @@ const unitForm = ref({ name: '', keyword: '', description: '' })
 const selectedBusiness = computed(() =>
   businesses.value.find((b) => b.id === selectedBusinessId.value) || null,
 )
+
+const selectedUnit = computed(() =>
+  units.value.find((u) => u.id === selectedUnitId.value) || null,
+)
+
+const pathSegments = computed(() => [
+  { key: 'biz', label: selectedBusiness.value?.name || '选择业务', active: !!selectedBusiness.value },
+  { key: 'unit', label: selectedUnit.value?.name || '选择单元', active: !!selectedUnit.value },
+  {
+    key: 'prompt',
+    label: selectedUnit.value
+      ? `意图词 ${prompts.value.length}`
+      : '意图词',
+    active: !!selectedUnit.value,
+  },
+])
 
 const dailyPanelTitle = computed(() => {
   if (dailyScope.value === 'tenant') return '按天汇总 · 租户全量'
@@ -94,6 +123,8 @@ async function loadBusinesses() {
 async function loadUnits() {
   if (!tenantId.value || !selectedBusinessId.value) {
     units.value = []
+    selectedUnitId.value = null
+    prompts.value = []
     return
   }
   try {
@@ -102,10 +133,51 @@ async function loadUnits() {
       status: 'active',
     })
     units.value = data.items || []
+    if (
+      selectedUnitId.value &&
+      !units.value.some((u) => u.id === selectedUnitId.value)
+    ) {
+      selectedUnitId.value = null
+    }
+    if (!selectedUnitId.value && units.value.length) {
+      selectedUnitId.value = units.value[0].id
+    }
   } catch (e) {
     ElMessage.error(e.message || '加载单元失败')
     units.value = []
   }
+}
+
+async function loadPrompts() {
+  if (!tenantId.value || !selectedUnitId.value) {
+    prompts.value = []
+    return
+  }
+  promptsLoading.value = true
+  try {
+    const data = await listGeoPrompts(tenantId.value, {
+      unit_id: selectedUnitId.value,
+      status: 'active',
+    })
+    prompts.value = data.items || []
+  } catch (e) {
+    ElMessage.error(e.message || '加载意图词失败')
+    prompts.value = []
+  } finally {
+    promptsLoading.value = false
+  }
+}
+
+function selectBusiness(row) {
+  if (!row) return
+  selectedBusinessId.value = row.id
+  dailyScope.value = 'business'
+}
+
+function selectUnit(row) {
+  if (!row) return
+  selectedUnitId.value = row.id
+  dailyScope.value = 'unit'
 }
 
 async function loadDaily() {
@@ -138,6 +210,9 @@ async function loadDaily() {
       }
       params.scope_level = 'unit'
       params.business_id = selectedBusinessId.value
+    }
+    if (engineFilter.value) {
+      params.engine = engineFilter.value
     }
     const data = await listGeoDailyMetrics(tenantId.value, params)
     dailyItems.value = data.items || []
@@ -194,6 +269,7 @@ async function submitUnit() {
     unitForm.value = { name: '', keyword: '', description: '' }
     await loadBusinesses()
     await loadUnits()
+    await loadPrompts()
   } catch (e) {
     ElMessage.error(e.message || '创建失败')
   } finally {
@@ -208,6 +284,7 @@ async function archiveBusiness(row) {
     if (selectedBusinessId.value === row.id) selectedBusinessId.value = null
     await loadBusinesses()
     await loadUnits()
+    await loadPrompts()
   } catch (e) {
     ElMessage.error(e.message || '归档失败')
   }
@@ -217,8 +294,10 @@ async function archiveUnit(row) {
   try {
     await patchGeoUnit(tenantId.value, row.id, { status: 'archived' })
     ElMessage.success(`已归档单元 #${row.id}`)
+    if (selectedUnitId.value === row.id) selectedUnitId.value = null
     await loadBusinesses()
     await loadUnits()
+    await loadPrompts()
   } catch (e) {
     ElMessage.error(e.message || '归档失败')
   }
@@ -282,6 +361,7 @@ function dailyParams() {
     params.scope_level = 'unit'
     params.business_id = selectedBusinessId.value
   } else params.scope_level = 'tenant'
+  if (engineFilter.value) params.engine = engineFilter.value
   return params
 }
 
@@ -305,39 +385,37 @@ async function exportCsv() {
   }
 }
 
-function selectUnitForMetrics(row) {
-  selectedUnitId.value = row.id
-  dailyScope.value = 'unit'
-}
-
-const fmtPct = (v) => {
-  if (v == null) return '—'
-  const n = Number(v)
-  if (Number.isNaN(n)) return '—'
-  return `${(n * 100).toFixed(1)}%`
-}
-
 watch(selectedBusinessId, async () => {
   selectedUnitId.value = null
   unitPager.resetPage()
+  promptPager.resetPage()
   await loadUnits()
+  await loadPrompts()
   if (dailyScope.value !== 'tenant') await loadDaily()
 })
-watch([dailyScope, selectedUnitId], () => {
+watch(selectedUnitId, async () => {
+  promptPager.resetPage()
+  await loadPrompts()
+  if (dailyScope.value === 'unit') await loadDaily()
+})
+watch(dailyScope, () => {
   dailyPager.resetPage()
   loadDaily()
 })
 watch(tenantId, async () => {
   bizPager.resetPage()
   unitPager.resetPage()
+  promptPager.resetPage()
   dailyPager.resetPage()
   await loadBusinesses()
   await loadUnits()
+  await loadPrompts()
   await loadDaily()
 })
 onMounted(async () => {
   await loadBusinesses()
   await loadUnits()
+  await loadPrompts()
   await loadDaily()
 })
 </script>
@@ -348,27 +426,36 @@ onMounted(async () => {
       <div>
         <div class="page-title">优化业务</div>
         <div class="page-desc">
-          三级结构：优化业务 → 优化单元（关键词）→ 优化意图词 → 优化文章
+          维护「业务 → 单元 → 意图词」结构，并查看按天汇总切片（提及率 / 引用 / 竞品）。
         </div>
       </div>
       <div class="header-actions">
         <el-button type="primary" @click="bizOpen = true">新建优化业务</el-button>
         <el-button :disabled="!selectedBusinessId" @click="unitOpen = true">新建优化单元</el-button>
         <router-link class="el-button is-plain" to="/geo/prompts">优化意图词</router-link>
+        <router-link class="el-button is-plain" to="/geo/visibility">AI 可见度</router-link>
         <router-link class="el-button is-plain" to="/geo/tasks">优化文章</router-link>
       </div>
     </div>
+
+    <details class="geo-glossary">
+      <summary>统计口径（点击展开）</summary>
+      <ul>
+        <li v-for="(line, i) in REPORT_GLOSSARY.businesses" :key="i">{{ line }}</li>
+        <li v-for="(line, i) in REPORT_GLOSSARY.dailyMetrics" :key="`d-${i}`">{{ line }}</li>
+      </ul>
+    </details>
 
     <div class="geo-toolbar">
       <el-button :loading="rebuilding" type="success" @click="rebuildToday">重算今日</el-button>
       <el-button :loading="rebuilding" @click="rebuildLast14">重算近 14 天</el-button>
       <el-button :loading="exporting" @click="exportCsv">导出 CSV</el-button>
-      <span class="toolbar-hint">重算写入租户/业务/单元切片；导出当前表格范围</span>
+      <span class="toolbar-hint">重算写入租户/业务/单元切片；导出当前按天表格范围</span>
     </div>
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
     <el-alert
-      v-if="citationNote"
+      v-if="citationNote && metricsOpen"
       type="info"
       :title="citationNote"
       :closable="true"
@@ -376,30 +463,43 @@ onMounted(async () => {
       class="mb"
     />
 
-    <div class="geo-split-2">
+    <div class="geo-path">
+      <span
+        v-for="(seg, idx) in pathSegments"
+        :key="seg.key"
+        class="path-item"
+      >
+        <span v-if="idx" class="path-sep">/</span>
+        <span class="path-seg" :class="{ 'is-active': seg.active }">{{ seg.label }}</span>
+      </span>
+    </div>
+
+    <div class="geo-split-3">
       <section class="geo-panel">
-        <div class="panel-title">优化业务</div>
+        <div class="panel-title-row">
+          <div class="panel-title">业务</div>
+          <el-button type="primary" link size="small" @click="bizOpen = true">新建</el-button>
+        </div>
         <el-table
           :data="bizPager.pagedItems"
-          stripe
+          size="small"
           highlight-current-row
+          :row-class-name="({ row }) => (row.id === selectedBusinessId ? 'is-selected-row' : '')"
           empty-text="暂无优化业务"
-          @current-change="(row) => { if (row) selectedBusinessId = row.id }"
+          @row-click="selectBusiness"
         >
-          <el-table-column prop="id" label="ID" width="64" />
-          <el-table-column prop="name" label="名称" min-width="140" />
-          <el-table-column prop="unit_count" label="单元数" width="80" />
-          <el-table-column label="操作" width="160" fixed="right">
+          <el-table-column prop="name" label="名称" min-width="120" />
+          <el-table-column prop="unit_count" label="单元" width="64" />
+          <el-table-column label="" width="56" fixed="right">
             <template #default="{ row }">
-              <el-button type="primary" link @click="selectedBusinessId = row.id">查看单元</el-button>
-              <el-button type="danger" link @click="archiveBusiness(row)">归档</el-button>
+              <el-button type="danger" link size="small" @click.stop="archiveBusiness(row)">归档</el-button>
             </template>
           </el-table-column>
         </el-table>
-        <div v-if="bizPager.total > 10" class="geo-pager">
+        <div v-if="bizPager.total > 12" class="geo-pager">
           <el-pagination
             background
-            layout="total, prev, pager, next"
+            layout="prev, pager, next"
             :total="bizPager.total"
             :page-size="bizPager.pageSize"
             :current-page="bizPager.page"
@@ -409,27 +509,40 @@ onMounted(async () => {
       </section>
 
       <section class="geo-panel">
-        <div class="panel-title">
-          优化单元（关键词）
-          <span v-if="selectedBusiness" class="sub"> · {{ selectedBusiness.name }}</span>
+        <div class="panel-title-row">
+          <div class="panel-title">
+            单元
+            <span v-if="selectedBusiness" class="sub"> · {{ selectedBusiness.name }}</span>
+          </div>
+          <el-button
+            type="primary"
+            link
+            size="small"
+            :disabled="!selectedBusinessId"
+            @click="unitOpen = true"
+          >新建</el-button>
         </div>
-        <el-table :data="unitPager.pagedItems" stripe empty-text="请选择业务或新建单元">
-          <el-table-column prop="id" label="ID" width="64" />
-          <el-table-column prop="name" label="单元名" min-width="120" />
-          <el-table-column prop="keyword" label="关键词" min-width="120" />
-          <el-table-column prop="prompt_count" label="意图词" width="80" />
-          <el-table-column label="操作" width="220" fixed="right">
+        <el-table
+          :data="unitPager.pagedItems"
+          size="small"
+          highlight-current-row
+          :row-class-name="({ row }) => (row.id === selectedUnitId ? 'is-selected-row' : '')"
+          empty-text="请选择业务或新建单元"
+          @row-click="selectUnit"
+        >
+          <el-table-column prop="name" label="单元名" min-width="100" />
+          <el-table-column prop="keyword" label="关键词" min-width="90" />
+          <el-table-column prop="prompt_count" label="意图" width="56" />
+          <el-table-column label="" width="56" fixed="right">
             <template #default="{ row }">
-              <el-button type="primary" link @click="goPrompts(row.id)">意图词</el-button>
-              <el-button type="success" link @click="selectUnitForMetrics(row)">看汇总</el-button>
-              <el-button type="danger" link @click="archiveUnit(row)">归档</el-button>
+              <el-button type="danger" link size="small" @click.stop="archiveUnit(row)">归档</el-button>
             </template>
           </el-table-column>
         </el-table>
-        <div v-if="unitPager.total > 10" class="geo-pager">
+        <div v-if="unitPager.total > 12" class="geo-pager">
           <el-pagination
             background
-            layout="total, prev, pager, next"
+            layout="prev, pager, next"
             :total="unitPager.total"
             :page-size="unitPager.pageSize"
             :current-page="unitPager.page"
@@ -437,53 +550,192 @@ onMounted(async () => {
           />
         </div>
       </section>
+
+      <section v-loading="promptsLoading" class="geo-panel">
+        <div class="panel-title-row">
+          <div class="panel-title">
+            意图词
+            <span v-if="selectedUnit" class="sub"> · {{ selectedUnit.name }}</span>
+          </div>
+          <el-button
+            type="primary"
+            link
+            size="small"
+            :disabled="!selectedUnitId"
+            @click="goPrompts(selectedUnitId)"
+          >管理</el-button>
+        </div>
+        <el-table
+          :data="promptPager.pagedItems"
+          size="small"
+          empty-text="请选择单元，或到「优化意图词」挂载"
+        >
+          <el-table-column prop="question" label="问题" min-width="160">
+            <template #default="{ row }">
+              <div class="q-line" :title="row.question">{{ row.question || '—' }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column prop="status" label="状态" width="72" />
+          <el-table-column label="" width="72" fixed="right">
+            <template #default="{ row }">
+              <el-button type="primary" link size="small" @click="goPrompts(selectedUnitId)">打开</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div v-if="promptPager.total > 12" class="geo-pager">
+          <el-pagination
+            background
+            layout="prev, pager, next"
+            :total="promptPager.total"
+            :page-size="promptPager.pageSize"
+            :current-page="promptPager.page"
+            @current-change="promptPager.onPageChange"
+          />
+        </div>
+      </section>
     </div>
 
-    <section class="geo-panel">
+    <section class="geo-panel metrics-panel">
       <div class="panel-title-row">
-        <div class="panel-title">{{ dailyPanelTitle }}</div>
+        <div class="panel-title">
+          按天汇总
+          <span class="sub"> · {{ dailyPanelTitle.replace(/^按天汇总 · /, '') }}</span>
+        </div>
         <div class="scope-tabs">
-          <el-radio-group v-model="dailyScope" size="small">
-            <el-radio-button label="tenant">租户</el-radio-button>
-            <el-radio-button label="business" :disabled="!selectedBusinessId">当前业务</el-radio-button>
-            <el-radio-button label="all_units_in_biz" :disabled="!selectedBusinessId">业务下单元</el-radio-button>
-            <el-radio-button label="unit" :disabled="!selectedUnitId">选中单元</el-radio-button>
-          </el-radio-group>
-          <el-button size="small" @click="loadDaily">刷新</el-button>
-          <el-button size="small" :loading="exporting" @click="exportCsv">CSV</el-button>
+          <el-button size="small" @click="metricsOpen = !metricsOpen">
+            {{ metricsOpen ? '收起' : '展开' }}
+          </el-button>
+          <template v-if="metricsOpen">
+            <el-radio-group v-model="dailyScope" size="small">
+              <el-radio-button label="tenant">租户</el-radio-button>
+              <el-radio-button label="business" :disabled="!selectedBusinessId">当前业务</el-radio-button>
+              <el-radio-button label="all_units_in_biz" :disabled="!selectedBusinessId">业务下单元</el-radio-button>
+              <el-radio-button label="unit" :disabled="!selectedUnitId">选中单元</el-radio-button>
+            </el-radio-group>
+            <el-select
+              v-model="engineFilter"
+              clearable
+              placeholder="全部引擎"
+              size="small"
+              style="width: 140px"
+              @change="loadDaily"
+            >
+              <el-option
+                v-for="ek in ['deepseek', 'doubao', 'kimi', 'chatgpt', 'perplexity']"
+                :key="ek"
+                :label="engineDisplay(ek)"
+                :value="ek"
+              />
+            </el-select>
+            <el-button size="small" @click="loadDaily">刷新</el-button>
+            <el-button size="small" :loading="exporting" @click="exportCsv">导出 CSV</el-button>
+          </template>
         </div>
       </div>
-      <el-table :data="dailyPager.pagedItems" size="small" empty-text="暂无按天数据：先挂意图词到单元，再「重算今日」">
-        <el-table-column prop="metric_date" label="日期" width="110" />
-        <el-table-column label="切片" min-width="140">
-          <template #default="{ row }">
-            {{ row.scope_label || row.scope_key }}
-            <span class="muted"> · {{ row.scope_key }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="品牌提及率" width="110">
-          <template #default="{ row }">{{ fmtPct(row.brand_mention_rate) }}</template>
-        </el-table-column>
-        <el-table-column label="品牌点名认知率" width="130">
-          <template #default="{ row }">{{ fmtPct(row.brand_probe_recognition_rate) }}</template>
-        </el-table-column>
-        <el-table-column prop="citation_count" label="AI 引用次数" width="110" />
-        <el-table-column prop="distinct_cited_domains" label="独立域名" width="90" />
-        <el-table-column prop="snapshots_visibility" label="可见快照" width="90" />
-        <el-table-column prop="snapshots_probe" label="探测快照" width="90" />
-      </el-table>
-      <div class="geo-pager">
-        <el-pagination
-          background
-          layout="total, sizes, prev, pager, next"
-          :total="dailyPager.total"
-          :page-size="dailyPager.pageSize"
-          :current-page="dailyPager.page"
-          :page-sizes="[10, 20, 50, 100]"
-          @current-change="dailyPager.onPageChange"
-          @size-change="dailyPager.onSizeChange"
-        />
-      </div>
+      <template v-if="metricsOpen">
+        <p class="geo-panel-desc">
+          悬停表头可看口径。无数据时：意图词挂到单元 → 有可见度快照 →「重算今日」。
+        </p>
+        <el-table
+          :data="dailyPager.pagedItems"
+          size="small"
+          empty-text="暂无按天数据：先挂意图词到单元并登记快照，再「重算今日」"
+        >
+          <el-table-column prop="metric_date" label="日期" width="110" />
+          <el-table-column label="切片" min-width="150">
+            <template #default="{ row }">
+              {{ row.scope_label || row.scope_key }}
+              <span class="muted"> · {{ row.scope_key }}</span>
+              <span v-if="row.engine" class="muted"> · {{ engineDisplay(row.engine) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column width="112">
+            <template #header>
+              <el-tooltip :content="M.brand_mention_rate.hint" placement="top">
+                <span>{{ M.brand_mention_rate.label }}</span>
+              </el-tooltip>
+            </template>
+            <template #default="{ row }">{{ fmtPct(row.brand_mention_rate) }}</template>
+          </el-table-column>
+          <el-table-column width="112">
+            <template #header>
+              <el-tooltip :content="M.brand_probe_recognition_rate.hint" placement="top">
+                <span>{{ M.brand_probe_recognition_rate.label }}</span>
+              </el-tooltip>
+            </template>
+            <template #default="{ row }">{{ fmtPct(row.brand_probe_recognition_rate) }}</template>
+          </el-table-column>
+          <el-table-column width="112">
+            <template #header>
+              <el-tooltip :content="M.top1_rate.hint" placement="top">
+                <span>{{ M.top1_rate.label }}</span>
+              </el-tooltip>
+            </template>
+            <template #default="{ row }">{{ fmtPct(row.top1_rate) }}</template>
+          </el-table-column>
+          <el-table-column width="110">
+            <template #header>
+              <el-tooltip :content="M.citation_count.hint" placement="top">
+                <span>{{ M.citation_count.label }}</span>
+              </el-tooltip>
+            </template>
+            <template #default="{ row }">{{ row.citation_count ?? '—' }}</template>
+          </el-table-column>
+          <el-table-column width="96">
+            <template #header>
+              <el-tooltip :content="M.distinct_cited_domains.hint" placement="top">
+                <span>{{ M.distinct_cited_domains.label }}</span>
+              </el-tooltip>
+            </template>
+            <template #default="{ row }">{{ row.distinct_cited_domains ?? '—' }}</template>
+          </el-table-column>
+          <el-table-column min-width="100">
+            <template #header>
+              <el-tooltip :content="M.top_competitor.hint" placement="top">
+                <span>{{ M.top_competitor.label }}</span>
+              </el-tooltip>
+            </template>
+            <template #default="{ row }">{{ row.top_competitor || '—' }}</template>
+          </el-table-column>
+          <el-table-column width="110">
+            <template #header>
+              <el-tooltip :content="M.top_competitor_rate.hint" placement="top">
+                <span>{{ M.top_competitor_rate.label }}</span>
+              </el-tooltip>
+            </template>
+            <template #default="{ row }">{{ fmtPct(row.top_competitor_rate) }}</template>
+          </el-table-column>
+          <el-table-column width="96">
+            <template #header>
+              <el-tooltip :content="M.snapshots_visibility.hint" placement="top">
+                <span>{{ M.snapshots_visibility.label }}</span>
+              </el-tooltip>
+            </template>
+            <template #default="{ row }">{{ row.snapshots_visibility ?? '—' }}</template>
+          </el-table-column>
+          <el-table-column width="96">
+            <template #header>
+              <el-tooltip :content="M.snapshots_probe.hint" placement="top">
+                <span>{{ M.snapshots_probe.label }}</span>
+              </el-tooltip>
+            </template>
+            <template #default="{ row }">{{ row.snapshots_probe ?? '—' }}</template>
+          </el-table-column>
+        </el-table>
+        <div class="geo-pager">
+          <el-pagination
+            background
+            layout="total, sizes, prev, pager, next"
+            :total="dailyPager.total"
+            :page-size="dailyPager.pageSize"
+            :current-page="dailyPager.page"
+            :page-sizes="[10, 20, 50, 100]"
+            @current-change="dailyPager.onPageChange"
+            @size-change="dailyPager.onSizeChange"
+          />
+        </div>
+      </template>
+      <div v-else class="metrics-collapsed">点击「展开」查看租户 / 业务 / 单元按天指标</div>
     </section>
 
     <el-dialog v-model="bizOpen" title="新建优化业务" width="480px">
@@ -526,4 +778,24 @@ onMounted(async () => {
 .scope-tabs { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .sub { font-weight: 400; color: #94a3b8; font-size: 13px; }
 .muted { font-size: 12px; color: #94a3b8; }
+.q-line {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.4;
+  font-size: 12px;
+  color: #334155;
+}
+.metrics-collapsed {
+  font-size: 12px;
+  color: #94a3b8;
+  padding: 4px 0 2px;
+}
+:deep(.is-selected-row) > td {
+  background: #eff6ff !important;
+}
+:deep(.el-table__body tr) {
+  cursor: pointer;
+}
 </style>

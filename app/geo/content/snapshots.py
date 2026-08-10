@@ -7,9 +7,11 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
-VALID_ENGINES = frozenset({"chatgpt", "deepseek", "doubao", "perplexity", "other"})
-VALID_BRAND_POSITIONS = frozenset({"first", "mentioned", "absent", "unknown"})
+VALID_ENGINES = frozenset({"chatgpt", "deepseek", "doubao", "kimi", "perplexity", "other"})
+VALID_BRAND_POSITIONS = frozenset({"first", "alternative", "mentioned", "absent", "unknown"})
 VALID_SENTIMENTS = frozenset({"positive", "neutral", "negative", "unknown"})
+VALID_CITATION_FORMATS = frozenset({"linked", "plaintext", "mixed", "none", "unknown"})
+VALID_CITATION_ACCURACY = frozenset({"accurate", "partial", "inaccurate", "unknown"})
 
 # Prefer explicit http(s) links; keep URL charset tight so CJK prose does not stick.
 _URL_IN_TEXT = re.compile(
@@ -128,12 +130,70 @@ def normalize_competitors(raw: list[str] | None) -> list[str]:
 
 def normalize_brand_position(raw: str | None) -> str:
     value = str(raw or "unknown").strip().lower()
+    # aliases
+    if value in {"alt", "second", "备选"}:
+        value = "alternative"
+    if value in {"top", "首位", "首选"}:
+        value = "first"
     return value if value in VALID_BRAND_POSITIONS else "unknown"
 
 
 def normalize_sentiment(raw: str | None) -> str:
     value = str(raw or "unknown").strip().lower()
     return value if value in VALID_SENTIMENTS else "unknown"
+
+
+def normalize_citation_format(raw: str | None) -> str:
+    value = str(raw or "unknown").strip().lower()
+    if value in {"link", "url", "urls", "链接"}:
+        value = "linked"
+    if value in {"text", "plain", "纯文本"}:
+        value = "plaintext"
+    return value if value in VALID_CITATION_FORMATS else "unknown"
+
+
+def normalize_citation_accuracy(raw: str | None) -> str:
+    value = str(raw or "unknown").strip().lower()
+    if value in {"ok", "correct", "true"}:
+        value = "accurate"
+    if value in {"wrong", "false", "error"}:
+        value = "inaccurate"
+    return value if value in VALID_CITATION_ACCURACY else "unknown"
+
+
+def infer_citation_format(
+    *,
+    cited_urls: list[str] | None,
+    raw_text: str | None = None,
+    mentions_brand: bool = False,
+) -> str:
+    """Derive citation presentation format from URLs + brand mention."""
+    urls = normalize_cited_urls(cited_urls)
+    text = raw_text or ""
+    has_url_in_text = bool(_URL_IN_TEXT.search(text))
+    if urls and mentions_brand and not has_url_in_text:
+        # URLs recorded separately, brand may be plain-name — treat as mixed
+        return "mixed"
+    if urls or has_url_in_text:
+        return "linked"
+    if mentions_brand:
+        return "plaintext"
+    return "none"
+
+
+def resolve_citation_format(
+    explicit: str | None,
+    *,
+    cited_urls: list[str] | None,
+    raw_text: str | None = None,
+    mentions_brand: bool = False,
+) -> str:
+    fmt = normalize_citation_format(explicit)
+    if fmt != "unknown":
+        return fmt
+    return infer_citation_format(
+        cited_urls=cited_urls, raw_text=raw_text, mentions_brand=mentions_brand
+    )
 
 
 def visibility_mention_rate(*, total_snapshots: int, mention_snapshots: int) -> float | None:

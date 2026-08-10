@@ -113,6 +113,26 @@ const routes = [
     },
   },
   {
+    path: '/geo/topic-heat',
+    component: () => import('../views/geo/GeoTopicHeatView.vue'),
+    meta: {
+      title: '话题热度',
+      documentTitle: 'GEO 增长｜话题热度',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/ai-trends',
+    component: () => import('../views/geo/GeoAiTrendsView.vue'),
+    meta: {
+      title: 'AI 动态',
+      documentTitle: 'GEO 增长｜AI 动态',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
     path: '/geo/evaluation',
     component: () => import('../views/geo/GeoEvaluationView.vue'),
     meta: {

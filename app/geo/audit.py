@@ -19,6 +19,92 @@ MAX_REDIRECTS = 5
 FETCH_TIMEOUT = 18.0
 USER_AGENT = "Mozilla/5.0 (compatible; GrowthSniper-GEO/1.0)"
 
+# Common AI crawler user-agents to audit in robots.txt
+AI_CRAWLER_AGENTS = (
+    "GPTBot",
+    "ChatGPT-User",
+    "ClaudeBot",
+    "anthropic-ai",
+    "Google-Extended",
+    "Bytespider",
+    "CCBot",
+    "PerplexityBot",
+)
+
+
+def parse_robots_ai_agents(robots_text: str) -> dict[str, Any]:
+    """Parse robots.txt for allow/disallow of known AI crawler UAs.
+
+    status: allowed | blocked | unspecified
+    """
+    text = robots_text or ""
+    blocks: list[dict[str, Any]] = []
+    current_uas: list[str] = []
+    current_rules: list[tuple[str, str]] = []
+
+    def flush() -> None:
+        nonlocal current_uas, current_rules
+        if current_uas:
+            blocks.append({"uas": list(current_uas), "rules": list(current_rules)})
+        current_uas = []
+        current_rules = []
+
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line or ":" not in line:
+            continue
+        key, val = line.split(":", 1)
+        key_l = key.strip().lower()
+        val = val.strip()
+        if key_l == "user-agent":
+            if current_rules:
+                flush()
+            elif current_uas and not current_rules:
+                # consecutive User-agent lines share rules later
+                pass
+            current_uas.append(val)
+        elif key_l in {"disallow", "allow"}:
+            if not current_uas:
+                current_uas = ["*"]
+            current_rules.append((key_l, val))
+    flush()
+
+    def status_for(ua: str) -> tuple[str, list[str]]:
+        ua_l = ua.lower()
+        matched: list[tuple[str, str]] = []
+        star: list[tuple[str, str]] = []
+        for block in blocks:
+            uas_l = [u.lower() for u in block["uas"]]
+            if ua_l in uas_l:
+                matched.extend(block["rules"])
+            if "*" in uas_l:
+                star.extend(block["rules"])
+        rules = matched if matched else star
+        disallows = [path for kind, path in rules if kind == "disallow" and path]
+        if any(path.strip() == "/" for path in disallows):
+            return "blocked", disallows
+        if matched:
+            return ("blocked" if disallows else "allowed"), disallows
+        return "unspecified", disallows
+
+    agents = []
+    allowed = blocked = unspecified = 0
+    for ua in AI_CRAWLER_AGENTS:
+        st, disallows = status_for(ua)
+        agents.append({"ua": ua, "status": st, "disallows": disallows[:8]})
+        if st == "allowed":
+            allowed += 1
+        elif st == "blocked":
+            blocked += 1
+        else:
+            unspecified += 1
+    return {
+        "agents": agents,
+        "allowed_count": allowed,
+        "blocked_count": blocked,
+        "unspecified_count": unspecified,
+    }
+
 
 class GeoAuditError(Exception):
     pass
@@ -248,6 +334,16 @@ async def audit_url(url: str) -> dict[str, Any]:
     )
     block_checks = block_findings(block_info["blocks"])
 
+    robots_ai = parse_robots_ai_agents(robots_text if robots_ok else "")
+    ai_ok = robots_ok and robots_ai["blocked_count"] == 0
+    ai_detail = (
+        f"允许 {robots_ai['allowed_count']} · "
+        f"拦截 {robots_ai['blocked_count']} · "
+        f"未声明 {robots_ai['unspecified_count']}"
+        if robots_ok
+        else "robots.txt 不可读，无法审计 AI 爬虫 UA"
+    )
+
     checks = [
         _finding("https", "HTTPS 安全访问", "技术基础", "high", document.final_url.startswith("https://"), document.final_url, "启用 HTTPS 并统一跳转到安全版本。", 8),
         _finding("title", "页面标题清晰完整", "页面语义", "high", 12 <= len(title) <= 70, f"当前标题：{title or '缺失'}", "补充包含品牌、主题和用户意图的唯一标题，建议 12–70 字。", 8, True),
@@ -264,6 +360,17 @@ async def audit_url(url: str) -> dict[str, Any]:
         _finding("freshness", "作者与更新时间可识别", "可信度", "medium", has_author and has_date, f"作者：{'有' if has_author else '无'}；日期：{'有' if has_date else '无'}", "展示作者/审核人和最近更新时间，并使用结构化字段标记。", 5, True),
         _finding("language", "页面语言已声明", "技术基础", "low", bool(language), f"lang={language or '未设置'}", "在 html 元素设置准确的 lang 属性。", 2, True),
         _finding("robots", "robots.txt 可访问", "技术基础", "medium", robots_ok and bool(robots_text.strip()), robots_url, "发布 robots.txt，明确允许公开页面被合规抓取。", 3),
+        _finding(
+            "ai_crawlers",
+            "主流 AI 爬虫未被整站拦截",
+            "AI 可访问性",
+            "high",
+            ai_ok,
+            ai_detail,
+            "在 robots.txt 中为 GPTBot / ClaudeBot / Google-Extended 等声明 Allow，避免 Disallow: /。",
+            6,
+            True,
+        ),
         _finding("llms", "提供 llms.txt 导览", "AI 可访问性", "low", llms_ok and bool(llms_text.strip()), llms_url, "生成 llms.txt，向 AI 工具提供站点定位和关键页面导览。", 3, True),
     ]
     # D2: five extractable blocks (definition / numbers / comparison / howto / FAQ)
@@ -301,6 +408,7 @@ async def audit_url(url: str) -> dict[str, Any]:
             "question_headings": question_headings[:12],
             "robots_url": robots_url,
             "llms_url": llms_url,
+            "ai_crawlers": robots_ai,
             "blocks": block_info["blocks"],
             "block_issue_codes": block_info["issue_codes"],
             "passed": sum(1 for item in checks if item["passed"]),

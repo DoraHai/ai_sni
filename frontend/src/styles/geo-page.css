@@ -164,6 +164,61 @@
   margin-bottom: 18px;
 }
 
+.geo-split-3 {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) minmax(220px, 1.1fr) minmax(260px, 1.3fr);
+  gap: 14px;
+  margin-bottom: 18px;
+  align-items: stretch;
+}
+
+.geo-split-3 > .geo-panel {
+  min-height: 420px;
+  display: flex;
+  flex-direction: column;
+}
+
+.geo-split-3 .geo-panel .el-table {
+  flex: 1;
+}
+
+.geo-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border: 1px solid #e8edf5;
+  border-radius: 10px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.geo-path .path-seg {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.geo-path .path-seg.is-active {
+  color: #2563eb;
+}
+
+.geo-path .path-sep {
+  color: #cbd5e1;
+}
+
+@media (max-width: 1100px) {
+  .geo-split-3 {
+    grid-template-columns: 1fr;
+  }
+
+  .geo-split-3 > .geo-panel {
+    min-height: 0;
+  }
+}
+
 @media (max-width: 960px) {
   .geo-split-2 {
     grid-template-columns: 1fr;
@@ -215,4 +270,112 @@
   display: flex;
   justify-content: flex-end;
   margin-top: 12px;
+}
+
+/* —— 报表页可读性：口径、空态、筛选条 —— */
+.geo-glossary {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px solid #e8edf5;
+  border-radius: 10px;
+  font-size: 12px;
+  color: #475569;
+  line-height: 1.55;
+}
+
+.geo-glossary summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #334155;
+  list-style: none;
+}
+
+.geo-glossary summary::-webkit-details-marker {
+  display: none;
+}
+
+.geo-glossary summary::before {
+  content: '▸ ';
+  color: #94a3b8;
+}
+
+.geo-glossary[open] summary::before {
+  content: '▾ ';
+}
+
+.geo-glossary ul {
+  margin: 8px 0 0;
+  padding-left: 1.1rem;
+}
+
+.geo-glossary li {
+  margin: 4px 0;
+}
+
+.geo-empty {
+  padding: 28px 20px;
+  text-align: center;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
+  background: #fafbfc;
+  border: 1px dashed #e2e8f0;
+  border-radius: 12px;
+}
+
+.geo-empty .empty-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #334155;
+  margin-bottom: 6px;
+}
+
+.geo-empty .empty-actions {
+  margin-top: 14px;
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.geo-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.geo-metric-note {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.45;
+}
+
+.geo-delta-up {
+  color: #dc2626;
+  font-variant-numeric: tabular-nums;
+}
+
+.geo-delta-down {
+  color: #2563eb;
+  font-variant-numeric: tabular-nums;
+}
+
+.geo-tag-own {
+  color: #047857;
+  font-weight: 600;
+}
+
+.geo-tag-ext {
+  color: #64748b;
+}
+
+.geo-panel-desc {
+  margin: -6px 0 12px;
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.45;
 }

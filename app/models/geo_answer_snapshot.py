@@ -27,6 +27,10 @@ class GeoAnswerSnapshot(Base):
     competitors: Mapped[list | None] = mapped_column(JSONB)
     brand_position: Mapped[str] = mapped_column(String(16), nullable=False, default="unknown")
     sentiment: Mapped[str] = mapped_column(String(16), nullable=False, default="unknown")
+    # linked | plaintext | mixed | none | unknown
+    citation_format: Mapped[str] = mapped_column(String(16), nullable=False, default="unknown")
+    # accurate | partial | inaccurate | unknown
+    citation_accuracy: Mapped[str] = mapped_column(String(16), nullable=False, default="unknown")
     note: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

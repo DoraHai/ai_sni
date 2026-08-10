@@ -16,13 +16,16 @@ from app.geo.content.probe import (
     run_probe_draft,
 )
 from app.geo.content.prompt_taxonomy import brand_names_from_tenant
-from app.geo.content.snapshots import apply_brand_mention_tags
-from app.geo.content.snapshot_suggest import (
+from app.geo.content.snapshots import (
+    apply_brand_mention_tags,
     extract_cited_urls_from_text,
     normalize_brand_position,
+    normalize_citation_accuracy,
     normalize_competitors,
     normalize_sentiment,
+    resolve_citation_format,
 )
+from app.geo.content.snapshot_suggest import normalize_suggest_payload
 from app.models import (
     GeoAnswerSnapshot,
     GeoPrompt,
@@ -442,10 +445,12 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
                             "provider": draft.get("provider"),
                         }
                     )
-                    if draft.get("simulated"):
-                        summary["persona_samples"] += 1
-                    else:
+                    if draft.get("sample_mode") == SAMPLE_MODE_REAL and not draft.get(
+                        "simulated"
+                    ):
                         summary["real_samples"] += 1
+                    else:
+                        summary["persona_samples"] += 1
                     summary["cells_ok"] += 1
 
                     if row.auto_persist:
@@ -466,6 +471,17 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
                             draft.get("sentiment") or draft.get("suggested_sentiment")
                         )
                         cited = extract_cited_urls_from_text(raw_text)
+                        cite_fmt = resolve_citation_format(
+                            draft.get("citation_format")
+                            or draft.get("suggested_citation_format"),
+                            cited_urls=cited,
+                            raw_text=raw_text,
+                            mentions_brand=mentions,
+                        )
+                        cite_acc = normalize_citation_accuracy(
+                            draft.get("citation_accuracy")
+                            or draft.get("suggested_citation_accuracy")
+                        )
                         note = (
                             f"auto-patrol #{run_id} · {draft.get('sample_mode')} · "
                             f"{'模拟' if draft.get('simulated') else '真采样'}"
@@ -481,6 +497,8 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
                             competitors=comps,
                             brand_position=pos,
                             sentiment=sent,
+                            citation_format=cite_fmt,
+                            citation_accuracy=cite_acc,
                             note=note,
                             created_by=row.created_by,
                         )

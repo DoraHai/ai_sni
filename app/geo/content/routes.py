@@ -63,11 +63,13 @@ from app.geo.content.probe import (
 from app.geo.content.schemas import (
     AiSettingsUpdate,
     ChannelPolishPromptsUpdate,
+    CompetitorTraceReportRequest,
     AnswerSnapshotCreate,
     AnswerSnapshotExtractUrlsRequest,
     AnswerSnapshotProbeBatchRequest,
     AnswerSnapshotProbeRequest,
     AnswerSnapshotSuggestFieldsRequest,
+    AnswerSnapshotCitationCheckRequest,
     AnswerSnapshotUpdate,
     ApplyPatchRequest,
     ArticleUpdate,
@@ -133,11 +135,13 @@ from app.geo.content.snapshots import (
     in_captured_window,
     needs_recheck,
     normalize_brand_position,
+    normalize_citation_accuracy,
     normalize_cited_urls,
     normalize_competitors,
     normalize_sentiment,
     parse_window_bound,
     rate_delta,
+    resolve_citation_format,
     split_visibility_metrics,
     visibility_mention_rate,
 )
@@ -943,6 +947,55 @@ async def geo_ops_alerts(
     return await build_ops_alerts(session, tenant_id=tenant_id)
 
 
+@router.get("/weekly-insights")
+async def geo_weekly_insights(
+    tenant_id: int = Query(...),
+    scope_key: str = Query("t"),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """近 7 天 vs 前 7 天盯盘周洞察（日指标 + 话题覆盖）。"""
+    from app.geo.content.weekly_insights import build_weekly_insights
+
+    ctx.ensure_tenant(tenant_id)
+    return await build_weekly_insights(
+        session, tenant_id=tenant_id, scope_key=scope_key or "t"
+    )
+
+
+@router.get("/topic-heat")
+async def geo_topic_heat(
+    tenant_id: int = Query(...),
+    days: int = Query(14, ge=3, le=60),
+    group_by: str = Query("prompt", description="prompt | group"),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """意图词覆盖热度（topic×engine×日去重）+ 监测活跃度；外部动态见 /ai-trends。"""
+    from app.geo.content.topic_heat import build_topic_heat
+
+    ctx.ensure_tenant(tenant_id)
+    gb = group_by if group_by in ("prompt", "group") else "prompt"
+    return await build_topic_heat(
+        session, tenant_id=tenant_id, days=days, group_by=gb
+    )
+
+
+@router.get("/ai-trends")
+async def geo_ai_trends(
+    tenant_id: int = Query(...),
+    region: str | None = Query(None, description="cn | global | 空=全部"),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """国内外 AI 动态目录 + 对本租户 GEO 策略的影响建议。"""
+    from app.geo.content.ai_trends import build_ai_trends_payload
+
+    ctx.ensure_tenant(tenant_id)
+    reg = region if region in ("cn", "global") else None
+    return await build_ai_trends_payload(session, tenant_id=tenant_id, region=reg)
+
+
 @router.get("/daily-metrics")
 async def list_daily_metrics(
     tenant_id: int = Query(...),
@@ -950,9 +1003,13 @@ async def list_daily_metrics(
     date_to: date | None = Query(None),
     business_id: int | None = Query(None),
     unit_id: int | None = Query(None),
+    prompt_id: int | None = Query(None),
+    engine: str | None = Query(None, description="按引擎切片，如 deepseek；空则默认不含 @引擎 行"),
+    include_engines: bool = Query(False, description="为 true 时返回含引擎切片的行"),
     scope_key: str | None = Query(None),
     scope_level: str | None = Query(
-        None, description="tenant | business | unit；与 scope_key 二选一优先 scope_key"
+        None,
+        description="tenant | business | unit | prompt；与 scope_key 二选一优先 scope_key",
     ),
     format: str | None = Query(None, description="json（默认）或 csv"),
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -964,6 +1021,8 @@ async def list_daily_metrics(
     - scope_key=t / scope_level=tenant：租户全量
     - scope_key=b{id} 或 business_id + scope_level=business：优化业务
     - scope_key=u{id} 或 unit_id + scope_level=unit：优化单元
+    - scope_key=p{id} 或 prompt_id + scope_level=prompt：优化意图词
+    - scope_key=t@deepseek 或 engine=deepseek：按模型切片
 
     统计口径见 citation_stat_note。
     """
@@ -971,9 +1030,12 @@ async def list_daily_metrics(
         CITATION_STAT_NOTE,
         METRIC_LABELS,
         metric_row_payload,
+        normalize_engine_key,
         scope_business,
+        scope_prompt,
         scope_tenant,
         scope_unit,
+        scope_with_engine,
     )
 
     ctx.ensure_tenant(tenant_id)
@@ -987,7 +1049,9 @@ async def list_daily_metrics(
 
     resolved_scope = scope_key
     if not resolved_scope:
-        if unit_id is not None and (scope_level in (None, "unit")):
+        if prompt_id is not None and (scope_level in (None, "prompt")):
+            resolved_scope = scope_prompt(prompt_id)
+        elif unit_id is not None and (scope_level in (None, "unit")):
             resolved_scope = scope_unit(unit_id)
         elif business_id is not None and scope_level == "business":
             resolved_scope = scope_business(business_id)
@@ -999,14 +1063,25 @@ async def list_daily_metrics(
             stmt = stmt.where(GeoDailyMetric.scope_key.like("u%"))
             if business_id is not None:
                 stmt = stmt.where(GeoDailyMetric.business_id == business_id)
+        elif scope_level == "prompt":
+            stmt = stmt.where(GeoDailyMetric.scope_key.like("p%"))
+
+    eng = normalize_engine_key(engine) if engine else None
+    if eng and resolved_scope and "@" not in resolved_scope:
+        resolved_scope = scope_with_engine(resolved_scope, eng)
+        eng = None
 
     if resolved_scope:
         stmt = stmt.where(GeoDailyMetric.scope_key == resolved_scope)
-    elif business_id is not None and scope_level not in ("unit", "business"):
-        # 兼容：只传 business_id 时返回该业务 scope（b{id}），不含下属 unit
+    elif business_id is not None and scope_level not in ("unit", "business", "prompt"):
         stmt = stmt.where(GeoDailyMetric.scope_key == scope_business(business_id))
     elif unit_id is not None and not resolved_scope:
         stmt = stmt.where(GeoDailyMetric.scope_key == scope_unit(unit_id))
+
+    if eng:
+        stmt = stmt.where(GeoDailyMetric.engine == eng)
+    elif not include_engines and (not resolved_scope or "@" not in (resolved_scope or "")):
+        stmt = stmt.where(~GeoDailyMetric.scope_key.contains("@"))
 
     stmt = stmt.order_by(
         GeoDailyMetric.metric_date.asc(),
@@ -1105,6 +1180,8 @@ async def list_daily_metrics(
             "tenant": "租户全量 · scope_key=t",
             "business": "优化业务 · scope_key=b{id}",
             "unit": "优化单元 · scope_key=u{id}",
+            "prompt": "优化意图词 · scope_key=p{id}",
+            "engine": "引擎切片 · scope_key={base}@{engine}",
         },
     }
 
@@ -1285,18 +1362,56 @@ async def expand_prompt_candidates(
         brand_terms=getattr(tenant, "brand_terms", None),
     )
     explicit = [r.model_dump() for r in req.roots] if req.roots else None
+    # Enrich roots from verified facts + website publishing channels
+    fact_products: list[str] = list(req.products or [])
+    website_hints: list[str] = []
+    if req.seed_from_tenant:
+        facts = list(
+            await session.scalars(
+                select(GeoFact)
+                .where(
+                    GeoFact.tenant_id == req.tenant_id,
+                    GeoFact.status == "active",
+                    GeoFact.trust_level.in_(["verified", "needs_review"]),
+                )
+                .order_by(GeoFact.updated_at.desc(), GeoFact.id.desc())
+                .limit(12)
+            )
+        )
+        for f in facts:
+            title = str(f.title or "").strip()
+            if title and title not in fact_products:
+                fact_products.append(title)
+            src = extract_cited_domain(f.source_url)
+            if src and src not in website_hints:
+                website_hints.append(src)
+        for ch in await session.scalars(
+            select(GeoPublishingChannel).where(
+                GeoPublishingChannel.tenant_id == req.tenant_id,
+                GeoPublishingChannel.channel_type.in_(["website", "docs"]),
+                GeoPublishingChannel.enabled.is_(True),
+            )
+        ):
+            d = extract_cited_domain(ch.base_url)
+            if d and d not in website_hints:
+                website_hints.append(d)
+            # Use channel name as soft category root
+            nm = str(getattr(ch, "name", None) or "").strip()
+            if nm and nm not in fact_products:
+                fact_products.append(nm)
+
     roots = build_roots(
         brand_names=brand_names if req.seed_from_tenant else None,
         industry=getattr(tenant, "industry", None) if req.seed_from_tenant else None,
         competitors=req.competitors,
-        products=req.products,
+        products=fact_products[:8],
         market=req.market,
         explicit_roots=explicit,
     )
     if not roots:
         raise HTTPException(
             400,
-            "缺少词根：请填写 roots，或在租户配置品牌名/行业，或传入 competitors",
+            "缺少词根：请填写 roots，或在租户配置品牌名/行业，或传入 competitors；也可先录入事实库/官网渠道",
         )
 
     existing_rows = (
@@ -1365,6 +1480,11 @@ async def expand_prompt_candidates(
             )
         await session.commit()
     result["run_id"] = run_id
+    result["seed_hints"] = {
+        "fact_titles": fact_products[:8],
+        "website_domains": website_hints[:8],
+        "note": "已用事实库标题与官网/文档渠道域名扩充词根（非抓取公众号正文）",
+    }
     return result
 
 
@@ -1539,6 +1659,15 @@ def _parse_captured_at(raw: str | None) -> datetime:
 
 
 def _snapshot_payload(row: GeoAnswerSnapshot, *, prompt_question: str | None = None) -> dict[str, Any]:
+    cited = list(row.cited_urls or [])
+    fmt = getattr(row, "citation_format", None) or "unknown"
+    if fmt == "unknown":
+        fmt = resolve_citation_format(
+            None,
+            cited_urls=cited,
+            raw_text=row.raw_text,
+            mentions_brand=bool(row.mentions_brand),
+        )
     return {
         "id": row.id,
         "tenant_id": row.tenant_id,
@@ -1548,10 +1677,12 @@ def _snapshot_payload(row: GeoAnswerSnapshot, *, prompt_question: str | None = N
         "raw_text": row.raw_text,
         "captured_at": _iso(row.captured_at),
         "mentions_brand": bool(row.mentions_brand),
-        "cited_urls": row.cited_urls or [],
+        "cited_urls": cited,
         "competitors": row.competitors or [],
         "brand_position": row.brand_position or "unknown",
         "sentiment": row.sentiment or "unknown",
+        "citation_format": fmt,
+        "citation_accuracy": getattr(row, "citation_accuracy", None) or "unknown",
         "note": row.note,
         "created_by": row.created_by,
         "created_at": _iso(row.created_at),
@@ -1618,6 +1749,12 @@ async def create_answer_snapshot(
     cited_urls = normalize_cited_urls(req.cited_urls)
     if not cited_urls:
         cited_urls = extract_cited_urls_from_text(req.raw_text)
+    citation_format = resolve_citation_format(
+        req.citation_format,
+        cited_urls=cited_urls,
+        raw_text=req.raw_text,
+        mentions_brand=bool(req.mentions_brand),
+    )
     row = GeoAnswerSnapshot(
         tenant_id=req.tenant_id,
         prompt_id=prompt.id,
@@ -1629,6 +1766,8 @@ async def create_answer_snapshot(
         competitors=normalize_competitors(req.competitors),
         brand_position=normalize_brand_position(req.brand_position),
         sentiment=normalize_sentiment(req.sentiment),
+        citation_format=citation_format,
+        citation_accuracy=normalize_citation_accuracy(req.citation_accuracy),
         note=req.note,
         created_by=ctx.user_id,
     )
@@ -1672,12 +1811,27 @@ async def update_answer_snapshot(
         row.brand_position = normalize_brand_position(req.brand_position)
     if req.sentiment is not None:
         row.sentiment = normalize_sentiment(req.sentiment)
+    if req.citation_accuracy is not None:
+        row.citation_accuracy = normalize_citation_accuracy(req.citation_accuracy)
     if req.note is not None:
         row.note = req.note
     if req.mentions_brand is not None:
         row.mentions_brand = bool(req.mentions_brand)
         await _apply_brand_mention_side_effect(
             session, prompt, mentions_brand=bool(req.mentions_brand)
+        )
+    # Re-resolve format when urls/text/mention/format change
+    if (
+        req.citation_format is not None
+        or req.cited_urls is not None
+        or req.raw_text is not None
+        or req.mentions_brand is not None
+    ):
+        row.citation_format = resolve_citation_format(
+            req.citation_format if req.citation_format is not None else row.citation_format,
+            cited_urls=list(row.cited_urls or []),
+            raw_text=row.raw_text,
+            mentions_brand=bool(row.mentions_brand),
         )
     await session.commit()
     await session.refresh(row)
@@ -1749,6 +1903,8 @@ async def competitor_insights(
                     "mention_count": 0,
                     "prompt_ids": set(),
                     "engines": set(),
+                    "urls": set(),
+                    "platform_keys": set(),
                     "latest_captured_at": None,
                     "sample_prompt_question": None,
                 },
@@ -1756,11 +1912,22 @@ async def competitor_insights(
             bucket["mention_count"] += 1
             bucket["prompt_ids"].add(row.prompt_id)
             bucket["engines"].add(row.engine)
+            for url in row.cited_urls or []:
+                u = str(url or "").strip()
+                if not u:
+                    continue
+                bucket["urls"].add(u)
+                domain = extract_cited_domain(u)
+                bp = match_blueprint_for_domain(domain or "")
+                bucket["platform_keys"].add(bp["channel_key"] if bp else "other")
             if bucket["latest_captured_at"] is None:
                 bucket["latest_captured_at"] = _iso(row.captured_at)
                 bucket["sample_prompt_question"] = questions.get(row.prompt_id)
     items = []
+    all_platforms: set[str] = set()
     for bucket in buckets.values():
+        pkeys = sorted(bucket["platform_keys"])
+        all_platforms.update(pkeys)
         items.append(
             {
                 "name": bucket["name"],
@@ -1769,10 +1936,216 @@ async def competitor_insights(
                 "engines": sorted(bucket["engines"]),
                 "latest_captured_at": bucket["latest_captured_at"],
                 "sample_prompt_question": bucket["sample_prompt_question"],
+                "source_count": len(bucket["urls"]),
+                "platform_count": len(bucket["platform_keys"]),
+                "platform_keys": pkeys,
             }
         )
     items.sort(key=lambda x: (-x["mention_count"], x["name"]))
-    return {"items": items}
+
+    # Unique cited URLs on competitor-tagged snapshots in last 7 days
+    cutoff = datetime.utcnow() - timedelta(days=7)
+    urls_7d: set[str] = set()
+    for row in rows:
+        captured = row.captured_at
+        if captured is not None and captured.replace(tzinfo=None) < cutoff:
+            continue
+        if not (row.competitors or []):
+            continue
+        for url in row.cited_urls or []:
+            u = str(url or "").strip()
+            if u:
+                urls_7d.add(u)
+
+    return {
+        "items": items,
+        "summary": {
+            "competitor_count": len(items),
+            "platform_count": len(all_platforms),
+            "sources_last_7d": len(urls_7d),
+        },
+    }
+
+
+@router.get("/competitor-insights/daily")
+async def competitor_insights_daily(
+    tenant_id: int = Query(...),
+    days: int = Query(14, ge=3, le=60),
+    scope_level: str = Query("tenant", description="tenant|business|unit|prompt"),
+    business_id: int | None = Query(None),
+    unit_id: int | None = Query(None),
+    prompt_id: int | None = Query(None),
+    engine: str | None = Query(None),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """竞品提及日序列：读 daily_metrics（业务/单元/意图词 × 天 × 引擎）。"""
+    from app.geo.content.daily_metrics import (
+        metric_row_payload,
+        normalize_engine_key,
+        scope_business,
+        scope_prompt,
+        scope_tenant,
+        scope_unit,
+        scope_with_engine,
+    )
+    from app.models import GeoDailyMetric
+
+    ctx.ensure_tenant(tenant_id)
+    level = (scope_level or "tenant").strip().lower()
+    if level == "prompt" and prompt_id:
+        base = scope_prompt(int(prompt_id))
+    elif level == "unit" and unit_id:
+        base = scope_unit(int(unit_id))
+    elif level == "business" and business_id:
+        base = scope_business(int(business_id))
+    else:
+        base = scope_tenant()
+        level = "tenant"
+    sk = scope_with_engine(base, engine) if engine else base
+
+    end = date.today()
+    start = end - timedelta(days=days - 1)
+    rows = list(
+        await session.scalars(
+            select(GeoDailyMetric)
+            .where(
+                GeoDailyMetric.tenant_id == tenant_id,
+                GeoDailyMetric.scope_key == sk,
+                GeoDailyMetric.metric_date >= start,
+                GeoDailyMetric.metric_date <= end,
+            )
+            .order_by(GeoDailyMetric.metric_date.asc())
+        )
+    )
+    items = [metric_row_payload(r) for r in rows]
+    # Flatten top competitors across window for table
+    name_totals: dict[str, int] = {}
+    for r in rows:
+        cm = getattr(r, "competitor_mentions", None) or {}
+        if isinstance(cm, dict):
+            for name, meta in cm.items():
+                n = int((meta or {}).get("mentions") or 0) if isinstance(meta, dict) else int(meta or 0)
+                name_totals[name] = name_totals.get(name, 0) + n
+    top_names = sorted(name_totals.items(), key=lambda x: (-x[1], x[0]))[:20]
+    return {
+        "scope_key": sk,
+        "scope_level": level,
+        "engine": normalize_engine_key(engine) if engine else None,
+        "period": {"from": start.isoformat(), "to": end.isoformat(), "days": days},
+        "items": items,
+        "competitors": [{"name": n, "mentions": m} for n, m in top_names],
+        "note": "数据来自 geo_daily_metrics；无行时请先在概览/业务页「重算」日指标。",
+    }
+
+
+@router.get("/competitor-insights/compare")
+async def competitor_insights_compare(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Same question set: brand vs competitor mention / recommended position."""
+    from app.geo.content.competitor_trace import build_competitor_compare
+
+    ctx.ensure_tenant(tenant_id)
+    rows = list(
+        await session.scalars(
+            select(GeoAnswerSnapshot)
+            .where(GeoAnswerSnapshot.tenant_id == tenant_id)
+            .order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
+        )
+    )
+    prompt_ids = {r.prompt_id for r in rows if r.prompt_id}
+    questions: dict[int, str] = {}
+    if prompt_ids:
+        for p in await session.scalars(
+            select(GeoPrompt).where(
+                GeoPrompt.tenant_id == tenant_id, GeoPrompt.id.in_(list(prompt_ids))
+            )
+        ):
+            questions[p.id] = p.question
+    return build_competitor_compare(rows=rows, questions=questions)
+
+
+@router.get("/competitor-insights/trace")
+async def competitor_insights_trace(
+    tenant_id: int = Query(...),
+    name: str = Query(..., min_length=1, max_length=120),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Reverse-trace cited URLs / CN platforms for one competitor from snapshots."""
+    from app.geo.content.competitor_trace import build_competitor_trace
+
+    ctx.ensure_tenant(tenant_id)
+    rows = list(
+        await session.scalars(
+            select(GeoAnswerSnapshot)
+            .where(GeoAnswerSnapshot.tenant_id == tenant_id)
+            .order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
+        )
+    )
+    prompt_ids = {r.prompt_id for r in rows if r.prompt_id is not None}
+    questions: dict[int, str] = {}
+    if prompt_ids:
+        for p in await session.scalars(
+            select(GeoPrompt).where(
+                GeoPrompt.tenant_id == tenant_id, GeoPrompt.id.in_(prompt_ids)
+            )
+        ):
+            questions[p.id] = p.question
+    payload = build_competitor_trace(
+        competitor=name, rows=rows, questions=questions
+    )
+    payload["tenant_id"] = tenant_id
+    return payload
+
+
+@router.post("/competitor-insights/report")
+async def competitor_insights_report(
+    req: CompetitorTraceReportRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Manually assemble a Markdown competitor source-trace report (not persisted)."""
+    from app.geo.content.competitor_trace import (
+        build_competitor_report_markdown,
+        build_competitor_trace,
+    )
+
+    ctx.ensure_tenant(req.tenant_id)
+    rows = list(
+        await session.scalars(
+            select(GeoAnswerSnapshot)
+            .where(GeoAnswerSnapshot.tenant_id == req.tenant_id)
+            .order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
+        )
+    )
+    prompt_ids = {r.prompt_id for r in rows if r.prompt_id is not None}
+    questions: dict[int, str] = {}
+    if prompt_ids:
+        for p in await session.scalars(
+            select(GeoPrompt).where(
+                GeoPrompt.tenant_id == req.tenant_id, GeoPrompt.id.in_(prompt_ids)
+            )
+        ):
+            questions[p.id] = p.question
+    trace = build_competitor_trace(
+        competitor=req.competitor, rows=rows, questions=questions
+    )
+    report = build_competitor_report_markdown(
+        competitor=req.competitor,
+        trace=trace,
+        source_urls=req.source_urls,
+        platform_keys=req.platform_keys,
+        note=req.note,
+        insight=req.insight,
+        action=req.action,
+    )
+    report["tenant_id"] = req.tenant_id
+    report["competitor"] = req.competitor.strip()
+    return report
 
 
 @router.get("/evaluation-insights")
@@ -1798,8 +2171,22 @@ async def evaluation_insights(
     }
     position_counts: dict[str, int] = {
         "first": 0,
+        "alternative": 0,
         "mentioned": 0,
         "absent": 0,
+        "unknown": 0,
+    }
+    format_counts: dict[str, int] = {
+        "linked": 0,
+        "plaintext": 0,
+        "mixed": 0,
+        "none": 0,
+        "unknown": 0,
+    }
+    accuracy_counts: dict[str, int] = {
+        "accurate": 0,
+        "partial": 0,
+        "inaccurate": 0,
         "unknown": 0,
     }
     prompt_ids = {r.prompt_id for r in rows}
@@ -1815,15 +2202,24 @@ async def evaluation_insights(
     for row in rows:
         sent = row.sentiment if row.sentiment in sentiment_counts else "unknown"
         pos = row.brand_position if row.brand_position in position_counts else "unknown"
+        payload = _snapshot_payload(row, prompt_question=questions.get(row.prompt_id))
+        fmt = payload.get("citation_format") or "unknown"
+        if fmt not in format_counts:
+            fmt = "unknown"
+        acc = payload.get("citation_accuracy") or "unknown"
+        if acc not in accuracy_counts:
+            acc = "unknown"
         sentiment_counts[sent] += 1
         position_counts[pos] += 1
+        format_counts[fmt] += 1
+        accuracy_counts[acc] += 1
         if len(recent) < 40:
-            recent.append(
-                _snapshot_payload(row, prompt_question=questions.get(row.prompt_id))
-            )
+            recent.append(payload)
     return {
         "sentiment_counts": sentiment_counts,
         "position_counts": position_counts,
+        "format_counts": format_counts,
+        "accuracy_counts": accuracy_counts,
         "recent": recent,
         "total": len(rows),
     }
@@ -2014,12 +2410,38 @@ async def citation_insights(
         if own_domains
         else None
     )
+    format_counts: dict[str, int] = {
+        "linked": 0,
+        "plaintext": 0,
+        "mixed": 0,
+        "none": 0,
+        "unknown": 0,
+    }
+    accuracy_counts: dict[str, int] = {
+        "accurate": 0,
+        "partial": 0,
+        "inaccurate": 0,
+        "unknown": 0,
+    }
+    for row in rows:
+        payload = _snapshot_payload(row)
+        fmt = payload.get("citation_format") or "unknown"
+        if fmt not in format_counts:
+            fmt = "unknown"
+        acc = payload.get("citation_accuracy") or "unknown"
+        if acc not in accuracy_counts:
+            acc = "unknown"
+        format_counts[fmt] += 1
+        accuracy_counts[acc] += 1
     return {
         "items": items,
         "snapshots_with_citations": snapshots_with_citations,
         "distinct_cited_domains": len(items),
         "own_domains": own_domains,
         "own_domain_cite_rate": own_domain_cite_rate,
+        "format_counts": format_counts,
+        "accuracy_counts": accuracy_counts,
+        "total_snapshots": len(rows),
     }
 
 
@@ -2546,6 +2968,39 @@ async def suggest_answer_snapshot_fields(
     }
 
 
+@router.post("/answer-snapshots/check-citations")
+async def check_answer_snapshot_citations(
+    req: AnswerSnapshotCitationCheckRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """校验引用 URL 可达性 / 是否自有域，并建议 citation_accuracy。"""
+    from app.geo.content.citation_quality import check_cited_urls
+
+    ctx.ensure_tenant(req.tenant_id)
+    await _ensure_tenant_exists(session, req.tenant_id)
+    urls = list(req.cited_urls or [])
+    row = None
+    if req.snapshot_id is not None:
+        row = await _get_snapshot(session, req.snapshot_id, req.tenant_id)
+        if not urls:
+            urls = list(row.cited_urls or [])
+    own_domains = await _own_domains_for_tenant(session, req.tenant_id)
+    result = await check_cited_urls(urls, own_domains=own_domains)
+    applied = False
+    if req.apply and row is not None:
+        row.citation_accuracy = result["suggested_citation_accuracy"]
+        await session.commit()
+        await session.refresh(row)
+        applied = True
+    return {
+        "snapshot_id": req.snapshot_id,
+        "own_domains": own_domains,
+        "applied": applied,
+        **result,
+    }
+
+
 @router.get("/ai-settings")
 async def get_ai_settings(
     tenant_id: int = Query(...),
@@ -2672,9 +3127,10 @@ async def test_ai_settings(
     if not llm:
         raise HTTPException(503, "尚未配置可用的 AI API Key")
     try:
+        # Avoid user="ping" — some models reply literally "PONG" and break JSON parse.
         data = await chat_json(
-            '只返回 JSON：{"ok": true}',
-            "ping",
+            '你是连通性检测。只输出一个 JSON 对象，不要 markdown 代码块。',
+            '请返回：{"ok": true, "echo": "geo-ai-settings-test"}',
             timeout=30.0,
             api_key=llm["api_key"],
             base_url=llm["base_url"],
@@ -2682,6 +3138,11 @@ async def test_ai_settings(
         )
     except DeepSeekError as exc:
         raise HTTPException(502, str(exc)) from exc
+    if not isinstance(data, dict) or data.get("ok") is not True:
+        raise HTTPException(
+            502,
+            f"AI 已连通但返回不符合约定：{data!r}",
+        )
     return {
         "ok": True,
         "provider": llm["provider"],
@@ -2725,6 +3186,7 @@ def _engine_payload(row: GeoTrackingEngine) -> dict[str, Any]:
 async def _ensure_default_engines(
     session: AsyncSession, tenant_id: int
 ) -> list[GeoTrackingEngine]:
+    """Ensure tenant has all default engines; add any newly introduced keys (e.g. kimi)."""
     rows = list(
         await session.scalars(
             select(GeoTrackingEngine)
@@ -2732,18 +3194,31 @@ async def _ensure_default_engines(
             .order_by(GeoTrackingEngine.sort_order, GeoTrackingEngine.id)
         )
     )
-    if rows:
+    existing = {str(r.engine_key) for r in rows}
+    missing = [
+        item
+        for item in default_engine_rows(tenant_id)
+        if item["engine_key"] not in existing
+    ]
+    if not rows and not missing:
         return rows
-    await _ensure_tenant_exists(session, tenant_id)
-    created: list[GeoTrackingEngine] = []
-    for item in default_engine_rows(tenant_id):
-        row = GeoTrackingEngine(**item)
-        session.add(row)
-        created.append(row)
-    await session.commit()
-    for row in created:
-        await session.refresh(row)
-    return created
+    if missing:
+        await _ensure_tenant_exists(session, tenant_id)
+        for item in missing:
+            row = GeoTrackingEngine(**item)
+            session.add(row)
+            rows.append(row)
+        await session.commit()
+        for row in rows:
+            await session.refresh(row)
+        rows = list(
+            await session.scalars(
+                select(GeoTrackingEngine)
+                .where(GeoTrackingEngine.tenant_id == tenant_id)
+                .order_by(GeoTrackingEngine.sort_order, GeoTrackingEngine.id)
+            )
+        )
+    return rows
 
 
 @router.get("/tracking-engines")

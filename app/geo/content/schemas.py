@@ -278,9 +278,11 @@ class ApplyPatchRequest(BaseModel):
     author_name: str | None = Field(None, max_length=100)
 
 
-SnapshotEngine = Literal["chatgpt", "deepseek", "doubao", "perplexity", "other"]
-BrandPosition = Literal["first", "mentioned", "absent", "unknown"]
+SnapshotEngine = Literal["chatgpt", "deepseek", "doubao", "kimi", "perplexity", "other"]
+BrandPosition = Literal["first", "alternative", "mentioned", "absent", "unknown"]
 SnapshotSentiment = Literal["positive", "neutral", "negative", "unknown"]
+CitationFormat = Literal["linked", "plaintext", "mixed", "none", "unknown"]
+CitationAccuracy = Literal["accurate", "partial", "inaccurate", "unknown"]
 
 
 class AnswerSnapshotCreate(BaseModel):
@@ -294,6 +296,8 @@ class AnswerSnapshotCreate(BaseModel):
     competitors: list[str] = Field(default_factory=list)
     brand_position: BrandPosition = "unknown"
     sentiment: SnapshotSentiment = "unknown"
+    citation_format: CitationFormat = "unknown"
+    citation_accuracy: CitationAccuracy = "unknown"
     note: str | None = None
 
 
@@ -306,6 +310,8 @@ class AnswerSnapshotUpdate(BaseModel):
     competitors: list[str] | None = None
     brand_position: BrandPosition | None = None
     sentiment: SnapshotSentiment | None = None
+    citation_format: CitationFormat | None = None
+    citation_accuracy: CitationAccuracy | None = None
     note: str | None = None
 
 
@@ -335,6 +341,13 @@ class AnswerSnapshotSuggestFieldsRequest(BaseModel):
     use_llm: bool = True
 
 
+class AnswerSnapshotCitationCheckRequest(BaseModel):
+    tenant_id: int
+    cited_urls: list[str] = Field(default_factory=list)
+    snapshot_id: int | None = None
+    apply: bool = False
+
+
 AiProvider = Literal["dashscope", "deepseek"]
 
 
@@ -362,6 +375,16 @@ class ChannelPolishPromptsUpdate(BaseModel):
     system_prompt: str | None = Field(None, max_length=50000)
     reset_system: bool = False
     channels: list[ChannelPolishPromptChannelUpdate] = Field(default_factory=list)
+
+
+class CompetitorTraceReportRequest(BaseModel):
+    tenant_id: int
+    competitor: str = Field(..., min_length=1, max_length=120)
+    source_urls: list[str] = Field(default_factory=list)
+    platform_keys: list[str] = Field(default_factory=list)
+    note: str | None = Field(None, max_length=4000)
+    insight: str | None = Field(None, max_length=8000)
+    action: str | None = Field(None, max_length=8000)
 
 
 SampleMode = Literal["mock_persona", "openai_compat"]

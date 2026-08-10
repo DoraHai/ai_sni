@@ -69,6 +69,34 @@ class ProbeBatchHelpersTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(draft["suggested_mentions_brand"])
         self.assertEqual(draft["suggested_competitors"], ["竞品甲"])
 
+    async def test_run_probe_draft_deepseek_persona_is_simulated(self):
+        """deepseek 人设路径也应标 simulated，避免巡检把模拟算成真采样。"""
+        chat_json = AsyncMock(
+            return_value={
+                "raw_text": "推荐使用 Acme。",
+                "suggested_mentions_brand": True,
+                "competitors": [],
+                "brand_position": "first",
+                "sentiment": "positive",
+            }
+        )
+        draft = await run_probe_draft(
+            question="哪个品牌好？",
+            brand="Acme",
+            brand_names=["Acme"],
+            engine="deepseek",
+            llm={
+                "api_key": "k",
+                "base_url": "https://example.com",
+                "model": "m",
+                "provider": "deepseek",
+            },
+            chat_json=chat_json,
+            sample_mode=SAMPLE_MODE_PERSONA,
+        )
+        self.assertTrue(draft["simulated"])
+        self.assertEqual(draft["sample_mode"], SAMPLE_MODE_PERSONA)
+
     async def test_run_probe_draft_real_mode_not_simulated(self):
         chat_json = AsyncMock(
             return_value={
