@@ -5033,6 +5033,21 @@ async def update_variant(
         variant.body_markdown = req.body_markdown
     meta = dict(variant.adapt_meta or {})
     meta["manually_edited"] = True
+    # Re-render HTML 正稿 so UI/export never sticks on raw MD markers
+    if req.body_markdown is not None:
+        from app.geo.content.md_to_html import (
+            ensure_comparison_table_hint,
+            html_to_plain,
+            markdown_to_publish_html,
+        )
+
+        body_html = markdown_to_publish_html(variant.body_markdown or "", wrap_article=True)
+        meta["body_html"] = body_html
+        meta["body_plain"] = html_to_plain(body_html)
+        meta["has_table"] = ensure_comparison_table_hint(variant.body_markdown or "")
+        meta["export_format"] = "html"
+        meta["delivery"] = "html_publish_ready"
+        variant.export_format = "html"
     variant.adapt_meta = meta
     await _sync_task_pipeline(session, task)
     await session.commit()

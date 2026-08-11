@@ -95,7 +95,10 @@ const article = reactive({
 const variantEdit = reactive({
   title: '',
   body_markdown: '',
+  body_html: '',
 })
+/** 渠道稿：默认预览 HTML 正稿；源码仅供改写 */
+const variantViewMode = ref('preview') // preview | source
 
 const REVIEW_LABELS = {
   none: '未提交',
@@ -222,16 +225,120 @@ function applyArticleFromTask(t) {
   article.body_markdown = sanitizeDraftHeadings(a?.body_markdown || '')
 }
 
+/** Lightweight MD→HTML for older variants missing body_html (tables + headings). */
+function mdToPublishHtmlClient(md) {
+  if (!md) return ''
+  const esc = (s) =>
+    String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+  const inline = (s) => {
+    let t = esc(s)
+    t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    t = t.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
+    t = t.replace(/`([^`]+)`/g, '<code>$1</code>')
+    return t
+  }
+  const lines = String(md).replace(/\r\n/g, '\n').split('\n')
+  const out = []
+  let i = 0
+  const isSep = (ln) => {
+    const s = ln.trim()
+    if (!s.includes('|')) return false
+    return s
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .every((c) => /^:?-{3,}:?$/.test(c.trim()))
+  }
+  const splitRow = (ln) =>
+    ln
+      .trim()
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .map((c) => c.trim())
+  while (i < lines.length) {
+    const raw = lines[i]
+    const s = raw.trim()
+    if (!s) {
+      i += 1
+      continue
+    }
+    if (s.includes('|') && i + 1 < lines.length && isSep(lines[i + 1])) {
+      const header = splitRow(s)
+      i += 2
+      const rows = []
+      while (i < lines.length && lines[i].includes('|') && lines[i].trim()) {
+        if (!isSep(lines[i])) rows.push(splitRow(lines[i]))
+        i += 1
+      }
+      const th = header.map((h) => `<th>${inline(h)}</th>`).join('')
+      const trs = rows
+        .map((r) => {
+          const cells = [...r, ...Array(header.length).fill('')].slice(0, header.length)
+          return `<tr>${cells.map((c) => `<td>${inline(c)}</td>`).join('')}</tr>`
+        })
+        .join('')
+      out.push(
+        `<table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse;width:100%;margin:12px 0;"><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`,
+      )
+      continue
+    }
+    const hm = s.match(/^(#{1,3})\s+(.+)$/)
+    if (hm) {
+      const lv = hm[1].length
+      out.push(`<h${lv}>${inline(hm[2])}</h${lv}>`)
+      i += 1
+      continue
+    }
+    const um = s.match(/^[-*+]\s+(.+)$/)
+    if (um) {
+      const items = [um[1]]
+      i += 1
+      while (i < lines.length && /^[-*+]\s+/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^[-*+]\s+/, ''))
+        i += 1
+      }
+      out.push(`<ul>${items.map((x) => `<li>${inline(x)}</li>`).join('')}</ul>`)
+      continue
+    }
+    // paragraph: gather until blank
+    const para = [s]
+    i += 1
+    while (i < lines.length && lines[i].trim() && !lines[i].trim().startsWith('#') && !lines[i].includes('|') && !/^[-*+]\s+/.test(lines[i].trim())) {
+      para.push(lines[i].trim())
+      i += 1
+    }
+    out.push(`<p>${inline(para.join(' '))}</p>`)
+  }
+  return `<div class="geo-channel-article" style="font-size:16px;line-height:1.75;color:#1f2937;">${out.join('\n')}</div>`
+}
+
+function resolveVariantHtml(v) {
+  if (!v) return ''
+  const fromApi = v.body_html || v.adapt_meta?.body_html
+  if (fromApi && String(fromApi).includes('<')) return fromApi
+  return mdToPublishHtmlClient(sanitizeDraftHeadings(v.body_markdown || ''))
+}
+
 function applyVariantFromTask() {
   if (docTab.value === 'master') return
   const v = (task.value?.variants || []).find((x) => x.channel === docTab.value)
   variantEdit.title = v?.title || ''
   variantEdit.body_markdown = sanitizeDraftHeadings(v?.body_markdown || '')
+  variantEdit.body_html = resolveVariantHtml(v)
+  // 正式稿默认看预览；母稿保持源码
+  if (v && (v.body_html || v.adapt_meta?.body_html || v.adapt_meta?.delivery === 'html_publish_ready')) {
+    variantViewMode.value = 'preview'
+  }
 }
 
 function onDocTabChange(name) {
   docTab.value = name
   applyVariantFromTask()
+  if (name !== 'master') variantViewMode.value = 'preview'
 }
 
 /** Bump to ignore stale load() completions (prevents wiping AI-suggested brief). */
@@ -924,12 +1031,16 @@ async function genVariants() {
     } catch {
       /* keep variant success even if re-check fails */
     }
+    applyVariantFromTask()
+    variantViewMode.value = 'preview'
     const polish = t?.variant_polish || {}
     const llmN = polish.llm ?? 0
     const fbN = polish.fallback ?? 0
     const names = channelPick.value.map((k) => channelLabel(k)).join('、')
     if (llmN && !fbN) {
-      ElMessage.success(`已生成正式渠道稿：${names}。可直接复制发布或走下方推送。`)
+      ElMessage.success(
+        `已生成正式渠道稿：${names}。默认「正稿预览」；点「复制」粘贴 HTML（非 ## 标记）。`,
+      )
     } else if (llmN && fbN) {
       ElMessage.warning(
         `渠道稿已生成：正式稿 ${llmN} 路，规则裁剪 ${fbN} 路。请对回退渠道重生成。`,
@@ -958,16 +1069,27 @@ const isPublishReadyVariant = computed(() => {
   return (
     q === 'publish_ready' ||
     q === 'channel_copy' ||
+    q === 'adapted_publish_html' ||
+    m.delivery === 'html_publish_ready' ||
+    m.export_format === 'html' ||
+    m.polish === 'llm_v3' ||
     m.polish === 'llm_v2' ||
     m.polish === 'llm_v1'
   )
 })
 const currentVariantQualityLabel = computed(() => {
-  if (isPublishReadyVariant.value) return '正式渠道稿 · 可发布'
+  if (isPublishReadyVariant.value) {
+    const table = currentVariantMeta.value?.has_table ? ' · 含表格' : ''
+    return `正式渠道稿 · HTML 正稿可发布${table}`
+  }
   if (currentVariantMeta.value?.fallback || currentVariantMeta.value?.quality === 'adapted_draft') {
     return '规则裁剪稿 · 请重生成正式稿'
   }
   return null
+})
+const currentVariantHasTable = computed(() => {
+  if (currentVariantMeta.value?.has_table) return true
+  return /<table/i.test(variantEdit.body_html || '')
 })
 
 /** Apply every available structural patch so publish gate can pass faster. */
@@ -1035,7 +1157,8 @@ async function saveVariantBody() {
       body_markdown: variantEdit.body_markdown,
     })
     applyVariantFromTask()
-    ElMessage.success('渠道稿已保存')
+    variantViewMode.value = 'preview'
+    ElMessage.success('渠道稿已保存并刷新 HTML 正稿')
   } catch (e) {
     toastError(e, '保存渠道稿失败')
   } finally {
@@ -1052,7 +1175,16 @@ async function exportCurrentVariant() {
   try {
     const res = await exportGeoVariant(tenantId.value, taskId.value, docTab.value)
     await load()
-    ElMessage.success(`已导出 ${res.channel}（status=${res.status}）`)
+    applyVariantFromTask()
+    if (res.body_html) {
+      variantEdit.body_html = res.body_html
+      variantViewMode.value = 'preview'
+    }
+    ElMessage.success(
+      res.export_format === 'html'
+        ? `已导出 HTML 正稿 ${res.channel}${res.has_table ? '（含表格）' : ''}`
+        : `已导出 ${res.channel}（status=${res.status}）`,
+    )
   } catch (e) {
     toastError(e, '导出失败')
   } finally {
@@ -1061,11 +1193,48 @@ async function exportCurrentVariant() {
 }
 
 async function copyCurrentDoc() {
-  const title = docTab.value === 'master' ? article.title : variantEdit.title
-  const body = docTab.value === 'master' ? article.body_markdown : variantEdit.body_markdown
   try {
-    await navigator.clipboard.writeText(`# ${title}\n\n${body}`)
-    ElMessage.success('已复制到剪贴板')
+    if (docTab.value === 'master') {
+      await navigator.clipboard.writeText(`# ${article.title}\n\n${article.body_markdown}`)
+      ElMessage.success('已复制母稿 Markdown（草案，勿直接外发）')
+      return
+    }
+    // 渠道：默认复制 HTML 正稿（无 ## / ** 标记）
+    let html = variantEdit.body_html
+    if (!html || !html.includes('<')) {
+      html = resolveVariantHtml({
+        body_markdown: variantEdit.body_markdown,
+        body_html: variantEdit.body_html,
+        adapt_meta: currentVariantMeta.value,
+      })
+      variantEdit.body_html = html
+    }
+    const title = variantEdit.title || ''
+    // Prefer rich HTML; also put plain title line for CMS
+    const payload = title
+      ? `<h1>${title.replace(/</g, '&lt;')}</h1>\n${html}`
+      : html
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': new Blob([payload], { type: 'text/html' }),
+          'text/plain': new Blob(
+            [
+              `${title}\n\n${(variantEdit.body_plain || currentVariantMeta.value?.body_plain || '').trim() || html.replace(/<[^>]+>/g, '')}`,
+            ],
+            { type: 'text/plain' },
+          ),
+        }),
+      ])
+    } catch {
+      // Fallback: plain HTML string
+      await navigator.clipboard.writeText(payload)
+    }
+    ElMessage.success(
+      currentVariantHasTable.value
+        ? '已复制 HTML 正稿（含表格，可粘贴到公众号/知乎后台）'
+        : '已复制 HTML 正稿（可粘贴到平台后台，非 Markdown）',
+    )
   } catch {
     ElMessage.error('复制失败')
   }
@@ -1692,8 +1861,9 @@ onMounted(load)
             v-else-if="isPublishReadyVariant"
             class="channel-quality mb is-good"
           >
-            <b>正式渠道稿</b>
-            — 可直接复制到对应平台发布；推送前建议快速核对关键数字与来源是否仍准确。
+            <b>正式渠道稿（HTML 正稿）</b>
+            — 下方默认「正稿预览」无 ## / ** 标记；点顶部「复制」粘贴到平台后台。
+            推送前建议快速核对关键数字与来源。
             <span v-if="currentVariantMeta?.display_name" class="muted">
               · {{ currentVariantMeta.display_name }}
             </span>
@@ -1740,18 +1910,37 @@ onMounted(load)
               渠道 {{ channelLabel(docTab) }} · 状态 {{ variants.find((v) => v.channel === docTab)?.status || '—' }}
               <span v-if="variants.find((v) => v.channel === docTab)?.stale"> · 母稿已变需重生</span>
               <span v-if="currentVariantQualityLabel"> · {{ currentVariantQualityLabel }}</span>
+              <span v-if="currentVariantHasTable"> · 含对比表</span>
             </div>
             <el-form label-width="56px" size="small">
               <el-form-item label="标题">
                 <el-input v-model="variantEdit.title" />
               </el-form-item>
               <el-form-item label="正文">
-                <el-input
-                  v-model="variantEdit.body_markdown"
-                  type="textarea"
-                  :rows="16"
-                  placeholder="正式渠道稿 Markdown（可直接发布）"
-                />
+                <div class="variant-body-wrap">
+                  <div class="variant-view-toggle mb">
+                    <el-radio-group v-model="variantViewMode" size="small">
+                      <el-radio-button label="preview">正稿预览（发布样式）</el-radio-button>
+                      <el-radio-button label="source">源码改写（高级）</el-radio-button>
+                    </el-radio-group>
+                    <span class="muted small">复制按钮默认复制 HTML 正稿，不是 ## 标记</span>
+                  </div>
+                  <div
+                    v-if="variantViewMode === 'preview'"
+                    class="variant-html-preview"
+                    v-html="variantEdit.body_html || '<p class=muted>暂无 HTML，请重新「AI 生成正式渠道稿」或点导出</p>'"
+                  />
+                  <el-input
+                    v-else
+                    v-model="variantEdit.body_markdown"
+                    type="textarea"
+                    :rows="16"
+                    placeholder="内部改写用结构化文本；保存后会重新生成 HTML 正稿"
+                  />
+                  <div v-if="variantViewMode === 'source'" class="hint">
+                    改完请点「保存渠道稿」，系统会重算 HTML 表格正稿。
+                  </div>
+                </div>
               </el-form-item>
             </el-form>
           </template>
@@ -2193,6 +2382,73 @@ onMounted(load)
   color: #92400e;
   background: #fffbeb;
   border-color: #fde68a;
+}
+.variant-body-wrap {
+  width: 100%;
+}
+.variant-view-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.variant-html-preview {
+  min-height: 320px;
+  max-height: 560px;
+  overflow: auto;
+  padding: 16px 18px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  font-size: 15px;
+  line-height: 1.75;
+  color: #1f2937;
+}
+.variant-html-preview :deep(h1),
+.variant-html-preview :deep(h2),
+.variant-html-preview :deep(h3) {
+  margin: 1em 0 0.5em;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #111827;
+}
+.variant-html-preview :deep(h2) { font-size: 1.15em; }
+.variant-html-preview :deep(h3) { font-size: 1.05em; }
+.variant-html-preview :deep(p) {
+  margin: 0 0 0.85em;
+}
+.variant-html-preview :deep(strong) {
+  font-weight: 700;
+}
+.variant-html-preview :deep(ul),
+.variant-html-preview :deep(ol) {
+  margin: 0 0 0.85em 1.25em;
+  padding: 0;
+}
+.variant-html-preview :deep(table) {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 12px 0 16px;
+  font-size: 14px;
+}
+.variant-html-preview :deep(th),
+.variant-html-preview :deep(td) {
+  border: 1px solid #d1d5db;
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.variant-html-preview :deep(th) {
+  background: #f3f4f6;
+  font-weight: 650;
+}
+.variant-html-preview :deep(blockquote) {
+  margin: 0 0 0.85em;
+  padding: 8px 12px;
+  border-left: 3px solid #93c5fd;
+  background: #f8fafc;
+  color: #475569;
 }
 .rail-title { font-weight: 700; font-size: 14px; color: #1e2330; line-height: 1.3; }
 .rail-sub { font-size: 11px; color: #8b93a7; margin-top: 2px; }
