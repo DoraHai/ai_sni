@@ -86,6 +86,31 @@ def _resolve_prompt_bundle(
     return system, voice, min_chars
 
 
+def _finalize_publish_body(channel: str, body_md: str, *, quality: str) -> tuple[str, dict[str, Any]]:
+    """Sanitize MD, convert to HTML for publish delivery."""
+    from app.geo.content.md_to_html import (
+        ensure_comparison_table_hint,
+        html_to_plain,
+        markdown_to_publish_html,
+    )
+
+    body = strip_draft_markers(body_md)
+    body = re.sub(r"(?m)^##\s*FAQ\s*$", "## 常见问题", body)
+    if "事实卡" in body:
+        body = strip_draft_markers(body)
+    if not body.endswith("\n"):
+        body += "\n"
+    body_html = markdown_to_publish_html(body, wrap_article=True)
+    return body, {
+        "body_html": body_html,
+        "body_plain": html_to_plain(body_html),
+        "export_format": "html",
+        "has_table": ensure_comparison_table_hint(body),
+        "quality": quality,
+        "delivery": "html_publish_ready",
+    }
+
+
 async def polish_for_channel(
     channel: str,
     title: str,
@@ -96,7 +121,7 @@ async def polish_for_channel(
     brand: str | None = None,
     prompts: dict[str, Any] | None = None,
 ) -> tuple[str, str, dict[str, Any]]:
-    """Return (title, body_markdown, meta). Raises GeoContentError on hard failure."""
+    """Return (title, body_markdown, meta). meta includes body_html for publish."""
     profile = get_profile(channel)
     if profile is None:
         raise GeoContentError(f"不支持的渠道: {channel}")
@@ -121,7 +146,9 @@ async def polish_for_channel(
             "direct_answer": outline.get("direct_answer") or "",
             "master_markdown": clean_body[:12000],
             "notes": profile.notes,
-            "output_goal": "publish_ready_formal_copy",
+            "output_goal": "publish_ready_formal_html_via_markdown",
+            "require_markdown_table_for_comparison": True,
+            "delivery_note": "系统会将 body_markdown 转为 HTML 正稿发布，勿输出半成品",
         },
         ensure_ascii=False,
     )
@@ -140,25 +167,52 @@ async def polish_for_channel(
     if not isinstance(data, dict):
         raise GeoContentError("渠道润色返回格式无效")
     out_title = shorten_title(str(data.get("title") or title).strip(), profile.title_max)
-    out_body = strip_draft_markers(str(data.get("body_markdown") or "").strip())
+    raw_body = str(data.get("body_markdown") or data.get("body_html") or "").strip()
+    # if model returned HTML by mistake, keep as html and derive plain md storage
+    if raw_body.lstrip().startswith("<") and "</" in raw_body:
+        from app.geo.content.md_to_html import html_to_plain
+
+        out_body = html_to_plain(raw_body) + "\n"
+        body_html = raw_body if raw_body.strip().startswith("<div") else (
+            f'<div class="geo-channel-article">{raw_body}</div>\n'
+        )
+        chars = _body_char_count(out_body)
+        if not out_title:
+            raise GeoContentError("渠道润色缺少标题")
+        if chars < max(40, min_chars // 2):
+            raise GeoContentError(f"渠道润色结果过短（{chars} 字），未达正式成稿标准")
+        meta = {
+            "polish": "llm_v3",
+            "engine": "llm_channel_polish_v3",
+            "quality": "publish_ready",
+            "fallback": False,
+            "body_chars": chars,
+            "body_html": body_html,
+            "body_plain": html_to_plain(body_html),
+            "export_format": "html",
+            "has_table": "<table" in body_html.lower(),
+            "delivery": "html_publish_ready",
+            "provider": (llm or {}).get("provider") or "env",
+            "prompt_source": "tenant" if prompts else "defaults",
+        }
+        return out_title, out_body, meta
+
+    out_body = strip_draft_markers(raw_body)
     if not out_title:
         raise GeoContentError("渠道润色缺少标题")
-    out_body = re.sub(r"(?m)^##\s*FAQ\s*$", "## 常见问题", out_body)
-    if "事实卡" in out_body:
-        out_body = strip_draft_markers(out_body)
+    out_body, fin = _finalize_publish_body(channel, out_body, quality="publish_ready")
     chars = _body_char_count(out_body)
     if chars < max(40, min_chars // 2):
         raise GeoContentError(f"渠道润色结果过短（{chars} 字），未达正式成稿标准")
-    if not out_body.endswith("\n"):
-        out_body += "\n"
     meta = {
-        "polish": "llm_v2",
-        "engine": "llm_channel_polish_v2",
+        "polish": "llm_v3",
+        "engine": "llm_channel_polish_v3",
         "quality": "publish_ready",
         "fallback": False,
         "body_chars": chars,
         "provider": (llm or {}).get("provider") or "env",
         "prompt_source": "tenant" if prompts else "defaults",
+        **fin,
     }
     return out_title, out_body, meta
 
@@ -192,14 +246,15 @@ async def adapt_or_polish_for_channel(
 
     cleaned = strip_draft_markers(body_md)
     t, b = adapt_for_channel(channel, title, cleaned, outline)
-    b = strip_draft_markers(b)
+    b, fin = _finalize_publish_body(channel, b, quality="adapted_publish_html")
     return (
         t,
         b,
         {
             "polish": "none",
             "engine": "deterministic_v1",
-            "quality": "adapted_draft",
+            "quality": fin.get("quality") or "adapted_publish_html",
             "fallback": True,
+            **fin,
         },
     )

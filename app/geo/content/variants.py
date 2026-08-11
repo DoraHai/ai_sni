@@ -221,7 +221,24 @@ def build_adapt_meta(
         "dropped": dropped,
         "engine": "deterministic_v1",
         "quality": "adapted_draft",
+        "export_format": profile.export_format or "html",
     }
+    if extra:
+        # prefer publish-ready html from polish pipeline
+        for k in (
+            "body_html",
+            "body_plain",
+            "has_table",
+            "delivery",
+            "polish",
+            "fallback",
+            "quality",
+            "engine",
+            "body_chars",
+            "export_format",
+        ):
+            if k in extra and extra[k] is not None:
+                meta[k] = extra[k]
     if extra:
         meta.update(extra)
     return meta

@@ -611,8 +611,12 @@ async def _task_payload(
                     "channel": v.channel,
                     "title": v.title,
                     "body_markdown": v.body_markdown,
+                    "body_html": (v.adapt_meta or {}).get("body_html"),
+                    "body_plain": (v.adapt_meta or {}).get("body_plain"),
                     "status": v.status,
-                    "export_format": v.export_format,
+                    "export_format": v.export_format or "html",
+                    "has_table": bool((v.adapt_meta or {}).get("has_table")),
+                    "quality": (v.adapt_meta or {}).get("quality"),
                     "article_version_id": v.article_version_id,
                     "adapt_meta": v.adapt_meta or {},
                     "stale": bool(
@@ -5054,13 +5058,37 @@ async def export_variant(
     if task.status in {"ready", "editing", "needs_fix"}:
         task.status = "exported"
     await _sync_task_pipeline(session, task)
+    # Ensure HTML 正稿 exists (含表格渲染)
+    meta = dict(variant.adapt_meta or {})
+    body_html = meta.get("body_html")
+    if not body_html:
+        from app.geo.content.md_to_html import (
+            ensure_comparison_table_hint,
+            html_to_plain,
+            markdown_to_publish_html,
+        )
+
+        body_html = markdown_to_publish_html(variant.body_markdown or "", wrap_article=True)
+        meta["body_html"] = body_html
+        meta["body_plain"] = html_to_plain(body_html)
+        meta["has_table"] = ensure_comparison_table_hint(variant.body_markdown or "")
+        meta["export_format"] = "html"
+        meta["delivery"] = "html_publish_ready"
+        variant.adapt_meta = meta
+    variant.export_format = "html"
     await session.commit()
     return {
         "channel": channel,
         "title": variant.title,
+        # 对外发布以 HTML 正稿为准；markdown 仅作中间态/兼容
+        "body_html": body_html,
+        "body_plain": meta.get("body_plain"),
         "body_markdown": variant.body_markdown,
-        "export_format": variant.export_format,
+        "export_format": "html",
+        "has_table": bool(meta.get("has_table")),
+        "quality": meta.get("quality") or "publish_ready",
         "status": variant.status,
+        "copy_hint": "请复制 body_html 到渠道后台（含表格的正式正稿，非 MD）",
     }
 
 
