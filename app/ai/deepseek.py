@@ -72,10 +72,14 @@ async def chat_json(
     api_key: str | None = None,
     base_url: str | None = None,
     model: str | None = None,
+    temperature: float | None = None,
 ) -> dict:
     """调 OpenAI 兼容 /chat/completions，强制 JSON 输出。失败抛 DeepSeekError。"""
     key, url_base, mdl = _resolve_creds(api_key=api_key, base_url=base_url, model=model)
     url = url_base + "/chat/completions"
+    # 默认 0.3 偏判断；成稿润色可传更高 temperature 提升叙述完整度
+    temp = 0.3 if temperature is None else float(temperature)
+    temp = max(0.0, min(temp, 1.2))
     payload = {
         "model": mdl,
         "messages": [
@@ -83,7 +87,7 @@ async def chat_json(
             {"role": "user", "content": user},
         ],
         "response_format": {"type": "json_object"},
-        "temperature": 0.3,  # 判断要稳定，不要发散
+        "temperature": temp,
         "stream": False,
     }
     headers = {

@@ -1068,22 +1068,30 @@ const isPublishReadyVariant = computed(() => {
   const q = m.quality || m.engine
   return (
     q === 'publish_ready' ||
+    q === 'publish_ready_with_warnings' ||
     q === 'channel_copy' ||
     q === 'adapted_publish_html' ||
     m.delivery === 'html_publish_ready' ||
     m.export_format === 'html' ||
+    m.polish === 'llm_v4' ||
     m.polish === 'llm_v3' ||
     m.polish === 'llm_v2' ||
     m.polish === 'llm_v1'
   )
 })
 const currentVariantQualityLabel = computed(() => {
-  if (isPublishReadyVariant.value) {
-    const table = currentVariantMeta.value?.has_table ? ' · 含表格' : ''
-    return `正式渠道稿 · HTML 正稿可发布${table}`
+  const m = currentVariantMeta.value
+  if (m?.quality === 'publish_ready_with_warnings') {
+    const n = (m.quality_issues || []).length
+    return `正稿已生成（有 ${n} 项质量提示）· 建议扫一眼再发`
   }
-  if (currentVariantMeta.value?.fallback || currentVariantMeta.value?.quality === 'adapted_draft') {
-    return '规则裁剪稿 · 请重生成正式稿'
+  if (isPublishReadyVariant.value) {
+    const table = m?.has_table ? ' · 含表格' : ''
+    const chars = m?.body_chars ? ` · ${m.body_chars}字` : ''
+    return `正式完整文章 · HTML 可发布${table}${chars}`
+  }
+  if (m?.fallback || m?.quality === 'adapted_draft') {
+    return '规则裁剪稿 · 请点「AI 生成正式渠道稿」写完整文章'
   }
   return null
 })
