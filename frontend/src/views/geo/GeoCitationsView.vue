@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { fetchGeoCitationInsights } from '../../api/geoContent'
 import { useClientPager } from '../../composables/useClientPager'
@@ -15,6 +16,7 @@ import {
   fmtPct,
 } from '../../utils/geoReportLabels'
 
+const router = useRouter()
 const tenantId = computed(() =>
   session.tenantId || (import.meta.env.DEV && import.meta.env.VITE_API_KEY ? 1 : null),
 )
@@ -76,6 +78,15 @@ function exportCsv() {
     rows,
   )
   ElMessage.success('已导出当前筛选结果')
+}
+
+/** 域名行 → 可见度快照（用域名作提示；引擎若唯一则带上） */
+function openDomain(row) {
+  if (!row) return
+  const q = { domain: row.domain }
+  if ((row.engines || []).length === 1) q.engine = row.engines[0]
+  router.push({ path: '/geo/visibility', query: q })
+  ElMessage.info(`已跳转可见度；可在快照中筛选含 ${row.domain} 的回答`)
 }
 
 watch(tenantId, load)
@@ -165,8 +176,14 @@ onMounted(load)
           size="small"
           stripe
           empty-text="暂无引用域名"
+          class="clickable-rows"
+          @row-click="openDomain"
         >
-          <el-table-column prop="domain" label="域名" min-width="170" show-overflow-tooltip />
+          <el-table-column prop="domain" label="域名" min-width="170" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span class="row-link">{{ row.domain }}</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="cite_count" label="引用次数" width="96" />
           <el-table-column prop="prompt_count" label="意图词数" width="96" />
           <el-table-column label="引擎" min-width="140">
@@ -184,6 +201,11 @@ onMounted(load)
               <span :class="row.is_own_domain ? 'geo-tag-own' : 'geo-tag-ext'">
                 {{ row.is_own_domain ? '自有' : '外部' }}
               </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="" width="88" fixed="right">
+            <template #default>
+              <el-button link type="primary" size="small">看快照</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -214,4 +236,6 @@ onMounted(load)
 
 <style scoped>
 .mb { margin-bottom: 14px; }
+.clickable-rows :deep(tbody tr) { cursor: pointer; }
+.row-link { color: #185fa5; font-weight: 600; }
 </style>

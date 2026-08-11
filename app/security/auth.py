@@ -157,6 +157,16 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
         or p.startswith("/api/v1/geo/weekly-insights")
         or p.startswith("/api/v1/geo/topic-heat")
         or p.startswith("/api/v1/geo/ai-trends")
+        or p.startswith("/api/v1/geo/ai-settings")
+        or p.startswith("/api/v1/geo/channel-polish-prompts")
+        or p.startswith("/api/v1/geo/gap-workbench")
+        or p.startswith("/api/v1/geo/optimization-periods")
+        or p.startswith("/api/v1/geo/metrics")
+        or p.startswith("/api/v1/geo/metric-dictionary")
+        or p.startswith("/api/v1/geo/competitor-aliases")
+        or p.startswith("/api/v1/geo/onboarding")
+        or p.startswith("/api/v1/geo/async-jobs")
+        or p.startswith("/api/v1/geo/monitoring-stance")
     ):
         return {"geo.content"}, edit
     if p.startswith("/api/v1/geo"):

@@ -82,6 +82,7 @@ def _decrypt_key(row: GeoAiSetting) -> str | None:
 
 def settings_public_payload(row: GeoAiSetting) -> dict[str, Any]:
     plain = _decrypt_key(row)
+    stance = getattr(row, "monitoring_stance", None) or "hybrid"
     return {
         "tenant_id": row.tenant_id,
         "provider": row.provider,
@@ -90,6 +91,7 @@ def settings_public_payload(row: GeoAiSetting) -> dict[str, Any]:
         "enabled": bool(row.enabled),
         "api_key_configured": bool(plain),
         "api_key_masked": mask_api_key(plain),
+        "monitoring_stance": stance,
         "note": row.note,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }

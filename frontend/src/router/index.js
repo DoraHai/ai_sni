@@ -93,6 +93,26 @@ const routes = [
     },
   },
   {
+    path: '/geo/gaps',
+    component: () => import('../views/geo/GeoGapWorkbenchView.vue'),
+    meta: {
+      title: '缺口工作台',
+      documentTitle: 'GEO 增长｜缺口工作台',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/periods',
+    component: () => import('../views/geo/GeoPeriodsView.vue'),
+    meta: {
+      title: '优化期次',
+      documentTitle: 'GEO 增长｜优化期次',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
     path: '/geo/citations',
     component: () => import('../views/geo/GeoCitationsView.vue'),
     meta: {
@@ -153,6 +173,26 @@ const routes = [
     },
   },
   {
+    path: '/geo/deliverables/share/:shareToken',
+    component: () => import('../views/geo/GeoDeliverableShareView.vue'),
+    meta: {
+      title: '交付摘要分享',
+      documentTitle: 'GEO 交付摘要 · 只读分享',
+      public: true,
+      bare: true,
+    },
+  },
+  // 兼容旧 hash 风格外链误写（部分环境会把 # 去掉后落到此路径）
+  {
+    path: '/geo/deliverables/share',
+    redirect: (to) => {
+      const t = to.query.token || to.query.share_token
+      return t
+        ? { path: `/geo/deliverables/share/${t}` }
+        : { path: '/geo/deliverables' }
+    },
+  },
+  {
     path: '/geo/workbench',
     component: () => import('../views/geo/GeoWorkbenchHubView.vue'),
     meta: {
@@ -188,6 +228,26 @@ const routes = [
     meta: {
       title: '优化业务',
       documentTitle: 'GEO 增长｜优化业务',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/businesses/:businessId',
+    component: () => import('../views/geo/GeoBusinessDetailView.vue'),
+    meta: {
+      title: '业务详情',
+      documentTitle: 'GEO 增长｜业务详情',
+      workflow: 'GEO 增长',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/onboarding',
+    component: () => import('../views/geo/GeoOnboardingView.vue'),
+    meta: {
+      title: 'GEO 开户向导',
+      documentTitle: 'GEO 增长｜开户向导',
       workflow: 'GEO 增长',
       perm: 'geo.content',
     },

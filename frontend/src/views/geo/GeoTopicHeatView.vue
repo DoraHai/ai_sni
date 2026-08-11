@@ -1,9 +1,12 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { fetchGeoTopicHeat } from '../../api/geoContent'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
+
+const router = useRouter()
 import {
   HEAT_LABEL,
   REPORT_GLOSSARY,
@@ -70,6 +73,27 @@ function heatType(h) {
   if (h === 'rising') return 'danger'
   if (h === 'falling') return 'info'
   return 'success'
+}
+
+/** 话题行 → 意图词或可见度快照 */
+function openTopic(row) {
+  if (!row) return
+  if (row.prompt_id) {
+    router.push({
+      path: '/geo/visibility',
+      query: { prompt_id: String(row.prompt_id) },
+    })
+    return
+  }
+  if (row.question_group) {
+    router.push({
+      path: '/geo/prompts',
+      query: { group: row.question_group },
+    })
+    return
+  }
+  router.push('/geo/visibility')
+  ElMessage.info('已打开可见度，可继续筛选相关意图词')
 }
 
 function exportCsv() {
@@ -224,10 +248,12 @@ onMounted(load)
         size="small"
         stripe
         empty-text="暂无数据"
+        class="clickable-rows"
+        @row-click="openTopic"
       >
         <el-table-column label="话题" min-width="200">
           <template #default="{ row }">
-            <div class="title">{{ row.label }}</div>
+            <div class="title row-link">{{ row.label }}</div>
             <div class="muted" v-if="row.question_group && groupBy === 'prompt'">
               问题组 · {{ row.question_group }}
             </div>
@@ -288,6 +314,8 @@ onMounted(load)
 <style scoped>
 .mb { margin-bottom: 16px; }
 .title { font-weight: 600; font-size: 13px; }
+.row-link { color: #185fa5; }
+.clickable-rows :deep(tbody tr) { cursor: pointer; }
 .muted { font-size: 12px; color: #94a3b8; }
 .spark-row {
   display: flex; align-items: flex-end; gap: 4px; min-height: 88px; overflow-x: auto; padding-top: 8px;

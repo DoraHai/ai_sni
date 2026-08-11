@@ -152,6 +152,13 @@ function renderTrend() {
 }
 
 async function load() {
+  if (!TENANT_ID.value) {
+    data.value = null
+    insight.value = null
+    error.value = ''
+    loading.value = false
+    return
+  }
   loading.value = true
   error.value = ''
   try {
@@ -168,11 +175,38 @@ async function load() {
     await nextTick()
     renderTrend()
   } catch (e) {
-    error.value = e.message
+    data.value = null
+    insight.value = null
+    error.value = humanizeDashError(e)
   } finally {
     loading.value = false
   }
 }
+
+function humanizeDashError(e) {
+  const raw = String(e?.message || e || '')
+  const lower = raw.toLowerCase()
+  if (!TENANT_ID.value || /field required|tenant_id/i.test(raw)) {
+    return '请先在右上角选择客户，再查看该客户的投放数据。'
+  }
+  if (/401|unauthorized|未登录|鉴权/i.test(lower) || /401/.test(raw)) {
+    return '登录已失效，请重新登录后再试。'
+  }
+  if (/403|forbidden|权限/i.test(lower)) {
+    return '当前账号没有查看该客户看板的权限。'
+  }
+  if (/network|failed to fetch|timeout|超时/i.test(lower)) {
+    return '网络不稳定或服务暂时不可用，请稍后重试。'
+  }
+  // FastAPI detail arrays often stringify poorly
+  if (/field required/i.test(raw)) {
+    return '请求参数不完整。请确认已选择客户与日期范围后刷新。'
+  }
+  return raw || '加载失败，请稍后重试'
+}
+
+const needsTenant = computed(() => !TENANT_ID.value)
+const showEmpty = computed(() => !loading.value && !data.value && !error.value && !needsTenant.value)
 
 async function manualRefresh() {
   await load()
@@ -200,13 +234,15 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-loading="loading">
+  <div v-loading="loading" class="dash-page">
     <div class="page-header">
       <div>
+        <div class="page-kicker">每日盯盘</div>
         <div class="page-title">数据看板</div>
         <div v-if="data" class="page-desc">
           {{ data.tenant.name }} · {{ data.period.start_date }} ~ {{ data.period.end_date }}（{{ data.period.days }} 天）
         </div>
+        <div v-else class="page-desc">按客户查看投放消费、点击与异常概览</div>
       </div>
       <div class="dash-toolbar">
         <div class="media-filter">
@@ -216,7 +252,12 @@ onBeforeUnmount(() => {
             <el-option label="必应（即将开放）" value="bing" disabled />
           </el-select>
         </div>
-        <el-select v-model="selectedPeriod" @change="onPeriodChange" style="width: 190px">
+        <el-select
+          v-model="selectedPeriod"
+          :disabled="needsTenant"
+          @change="onPeriodChange"
+          style="width: 190px"
+        >
           <el-option v-for="o in periodOptions" :key="o.key" :label="o.label" :value="o.key" />
         </el-select>
         <el-date-picker
@@ -227,6 +268,7 @@ onBeforeUnmount(() => {
           start-placeholder="开始日期"
           end-placeholder="结束日期"
           :clearable="false"
+          :disabled="needsTenant"
           style="width: 260px"
         />
         <span
@@ -239,12 +281,43 @@ onBeforeUnmount(() => {
           · {{ data.freshness.last_synced_at.slice(11, 16) }} 更新
           · 每 {{ data.freshness.sync_interval_minutes }} 分钟
         </span>
-        <el-button :loading="loading" aria-label="立即刷新数据看板" @click="manualRefresh">立即刷新</el-button>
+        <el-button
+          :loading="loading"
+          :disabled="needsTenant"
+          aria-label="立即刷新数据看板"
+          @click="manualRefresh"
+        >立即刷新</el-button>
         <el-button type="primary" @click="onGenerateReport">生成完整报告</el-button>
       </div>
     </div>
 
-    <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 14px" />
+    <div v-if="needsTenant" class="product-empty">
+      <div class="empty-visual" aria-hidden="true">客</div>
+      <div class="empty-title">请先选择客户</div>
+      <div class="empty-desc">
+        看板按客户隔离数据。打开右上角「当前客户」选择后，将自动加载投放概览。
+      </div>
+    </div>
+
+    <div v-else-if="error" class="product-empty is-error">
+      <div class="empty-visual" aria-hidden="true">!</div>
+      <div class="empty-title">暂时无法加载看板</div>
+      <div class="empty-desc">{{ error }}</div>
+      <div class="empty-actions">
+        <el-button type="primary" :loading="loading" @click="manualRefresh">重试</el-button>
+        <el-button @click="router.push('/onboarding')">去授权与同步</el-button>
+      </div>
+    </div>
+
+    <div v-else-if="showEmpty" class="product-empty">
+      <div class="empty-visual" aria-hidden="true">📊</div>
+      <div class="empty-title">暂无看板数据</div>
+      <div class="empty-desc">该时段可能尚未同步报表。可调整日期范围，或先完成授权与同步。</div>
+      <div class="empty-actions">
+        <el-button type="primary" :loading="loading" @click="manualRefresh">刷新</el-button>
+        <el-button @click="router.push('/onboarding')">授权与同步</el-button>
+      </div>
+    </div>
 
     <div v-if="insight?.enabled" class="ai-insight">
       <div class="aii-head">
@@ -404,32 +477,72 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.page-header { margin-bottom: 14px; display: flex; justify-content: space-between; align-items: flex-end; }
+.dash-page { animation: dash-in 0.28s ease; }
+@keyframes dash-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.page-header {
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.page-kicker {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  color: var(--sem-primary);
+  margin-bottom: 2px;
+}
 .dash-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
-.media-filter { display: flex; align-items: center; gap: 4px; padding: 2px 6px 2px 10px; background: #f3f4f6; border-radius: 6px; }
+.media-filter {
+  display: flex; align-items: center; gap: 4px;
+  padding: 2px 6px 2px 10px;
+  background: #fff;
+  border: 1px solid var(--sem-border);
+  border-radius: 999px;
+}
 .media-label { font-size: 12px; color: #606266; white-space: nowrap; }
 .media-filter :deep(.el-select .el-input__wrapper) { box-shadow: none; background: transparent; padding-left: 4px; }
-.page-title { font-size: 20px; font-weight: 600; color: var(--sem-text); }
-.page-desc { font-size: 12px; color: var(--sem-text-sub); margin-top: 4px; }
+.page-title { font-size: 22px; font-weight: 700; color: var(--sem-text); letter-spacing: -0.01em; }
+.page-desc { font-size: 13px; color: var(--sem-text-sub); margin-top: 4px; line-height: 1.45; }
 .num { font-variant-numeric: tabular-nums; }
 
 /* 通用面板（原型 panel） */
-.panel { background: #fff; border: 1px solid var(--sem-border); border-radius: 8px; padding: 16px 18px; }
+.panel {
+  background: #fff;
+  border: 1px solid var(--sem-border);
+  border-radius: 12px;
+  padding: 16px 18px;
+  box-shadow: var(--sem-shadow-sm);
+}
 .panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.panel-title { font-size: 14px; font-weight: 600; color: var(--sem-text); }
+.panel-title { font-size: 14px; font-weight: 650; color: var(--sem-text); }
 .panel-sub { font-size: 11px; color: #9ca3af; margin-left: 8px; font-weight: 400; }
 
-.account-panel { display: flex; gap: 24px; font-size: 13px; align-items: center; margin-bottom: 14px; padding: 13px 18px; }
+.account-panel {
+  display: flex; gap: 24px; font-size: 13px; align-items: center;
+  margin-bottom: 14px; padding: 14px 18px;
+  background: linear-gradient(90deg, #f8fbff 0%, #fff 40%);
+}
 .account-panel .sub { color: var(--sem-text-sub); margin-left: auto; font-size: 12px; }
 
 /* 异常快捷条（原型 alert-strip / alert-card） */
 .alert-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 14px; }
 .alert-card {
-  background: #fff; border: 1px solid var(--sem-border); border-radius: 8px;
+  background: #fff; border: 1px solid var(--sem-border); border-radius: 12px;
   padding: 14px 16px; display: flex; align-items: center; gap: 14px;
-  cursor: pointer; transition: all 0.15s;
+  cursor: pointer; transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+  box-shadow: var(--sem-shadow-sm);
 }
-.alert-card:hover { border-color: var(--sem-primary); box-shadow: 0 2px 8px rgba(24, 95, 165, 0.06); }
+.alert-card:hover {
+  border-color: #b7cce4;
+  box-shadow: var(--sem-shadow-md);
+  transform: translateY(-1px);
+}
 .alert-card.p0 { border-left: 4px solid var(--sem-danger); background: linear-gradient(90deg, #fef6f6 0%, #fff 30%); }
 .alert-card.p1 { border-left: 4px solid var(--sem-danger); }
 .alert-card.p2 { border-left: 4px solid #ba7517; }
@@ -446,7 +559,19 @@ onBeforeUnmount(() => {
 /* KPI 卡（原型 kpi-card） */
 .kpi-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 14px; }
 @media (max-width: 1280px) { .kpi-grid { grid-template-columns: repeat(3, 1fr); } }
-.kpi-card { background: #fff; border: 1px solid var(--sem-border); border-radius: 8px; padding: 14px 16px; }
+.kpi-card {
+  background: #fff;
+  border: 1px solid var(--sem-border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: var(--sem-shadow-sm);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+.kpi-card:hover {
+  border-color: #c9d9ea;
+  box-shadow: var(--sem-shadow-md);
+  transform: translateY(-1px);
+}
 .kpi-label { font-size: 11px; color: var(--sem-text-sub); display: flex; align-items: center; gap: 4px; }
 .kpi-tip { font-size: 9px; padding: 1px 6px; background: #f3f4f6; color: var(--sem-text-sub); border-radius: 3px; }
 .kpi-value { font-size: 22px; font-weight: 700; color: var(--sem-text); margin-top: 8px; font-variant-numeric: tabular-nums; }
@@ -472,7 +597,7 @@ onBeforeUnmount(() => {
 
 /* 设备维度（原型 device-card） */
 .device-row { display: flex; flex-direction: column; gap: 10px; }
-.device-card { background: #fafbfc; border-radius: 6px; padding: 12px 14px; }
+.device-card { background: #fafbfc; border-radius: 8px; padding: 12px 14px; border: 1px solid #f0f3f7; }
 .device-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .device-icon {
   width: 28px; height: 28px; border-radius: 6px; display: flex;
@@ -500,10 +625,17 @@ onBeforeUnmount(() => {
 .plan-bar-fill.warn { background: linear-gradient(90deg, #ba7517 0%, #dc9a47 100%); }
 .plan-amount { color: var(--sem-text); font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
 .plan-pct { color: #9ca3af; text-align: right; font-variant-numeric: tabular-nums; }
-.ai-insight { margin-bottom: 14px; padding: 14px 18px; background: linear-gradient(135deg, #f0f7ff, #f7faff); border: 1px solid #d4e6fb; border-radius: 10px; }
+.ai-insight {
+  margin-bottom: 14px;
+  padding: 16px 18px;
+  background: linear-gradient(135deg, #f0f7ff, #f7faff);
+  border: 1px solid #d4e6fb;
+  border-radius: 12px;
+  box-shadow: var(--sem-shadow-sm);
+}
 .freshness {
   display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
-  padding: 6px 9px; border: 1px solid #dce9e3; border-radius: 999px;
+  padding: 6px 10px; border: 1px solid #dce9e3; border-radius: 999px;
   background: #f4faf7; color: #47705e; font-size: 11px; line-height: 1;
   font-variant-numeric: tabular-nums;
 }

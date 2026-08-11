@@ -60,7 +60,8 @@ class ChannelPolishTests(unittest.TestCase):
 
         _title, out, meta = asyncio.run(_run())
         self.assertTrue(meta.get("fallback"))
-        self.assertEqual(meta.get("quality"), "adapted_draft")
+        self.assertEqual(meta.get("quality"), "adapted_draft_not_publishable")
+        self.assertFalse(meta.get("publishable", True))
         self.assertNotIn("事实卡", out)
         self.assertNotIn("草案提示", out)
         self.assertNotIn("【草案】", out)

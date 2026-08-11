@@ -8,6 +8,51 @@ export function fetchGeoContentStats(tenantId) {
   return client.get('/api/v1/geo/content-stats', { params: { tenant_id: tenantId } })
 }
 
+/** 统一品牌提及率（观察期 + 样本构成） */
+export function fetchBrandMentionMetric(tenantId, params = {}) {
+  return client.get('/api/v1/geo/metrics/brand-mention', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
+export function fetchGeoMetricDictionary() {
+  return client.get('/api/v1/geo/metric-dictionary')
+}
+
+export function listCompetitorAliases(tenantId) {
+  return client.get('/api/v1/geo/competitor-aliases', {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function putCompetitorAliases(tenantId, body) {
+  return client.put('/api/v1/geo/competitor-aliases', body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function listDeliverableArchives(tenantId, limit = 30) {
+  return client.get('/api/v1/geo/deliverables/archives', {
+    params: { tenant_id: tenantId, limit },
+  })
+}
+
+export function createDeliverableArchive(tenantId, body) {
+  return client.post('/api/v1/geo/deliverables/archives', body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function getDeliverableArchive(tenantId, archiveId) {
+  return client.get(`/api/v1/geo/deliverables/archives/${archiveId}`, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function getDeliverableByShareToken(shareToken) {
+  return client.get(`/api/v1/geo/deliverables/share/${shareToken}`)
+}
+
 export function fetchGeoWeeklyInsights(tenantId, params = {}) {
   return client.get('/api/v1/geo/weekly-insights', {
     params: { tenant_id: tenantId, ...params },
@@ -327,6 +372,48 @@ export function getGeoContentTask(tenantId, taskId) {
   return client.get(`/api/v1/geo/content-tasks/${taskId}`, { params: { tenant_id: tenantId } })
 }
 
+/** 发布后效果：引用命中 + 意图词发布前后提及率 */
+export function fetchGeoContentTaskImpact(tenantId, taskId, windowDays = 14) {
+  return client.get(`/api/v1/geo/content-tasks/${taskId}/impact`, {
+    params: { tenant_id: tenantId, window_days: windowDays },
+  })
+}
+
+export function fetchGapWorkbench(tenantId, params = {}) {
+  return client.get('/api/v1/geo/gap-workbench', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
+export function createTasksFromGaps(tenantId, promptIds) {
+  return client.post('/api/v1/geo/gap-workbench/create-tasks', {
+    tenant_id: tenantId,
+    prompt_ids: promptIds,
+  })
+}
+
+export function listOptimizationPeriods(tenantId, params = {}) {
+  return client.get('/api/v1/geo/optimization-periods', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
+export function createOptimizationPeriod(body) {
+  return client.post('/api/v1/geo/optimization-periods', body)
+}
+
+export function getOptimizationPeriod(tenantId, periodId) {
+  return client.get(`/api/v1/geo/optimization-periods/${periodId}`, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function closeOptimizationPeriod(tenantId, periodId) {
+  return client.post(`/api/v1/geo/optimization-periods/${periodId}/close`, null, {
+    params: { tenant_id: tenantId },
+  })
+}
+
 export function createGeoContentTask(body) {
   return client.post('/api/v1/geo/content-tasks', body)
 }
@@ -349,10 +436,60 @@ export function bindGeoTaskFacts(tenantId, taskId, factIds) {
   )
 }
 
-export function generateGeoContentTask(tenantId, taskId) {
+export function generateGeoContentTask(tenantId, taskId, { runAsync = true } = {}) {
   return client.post(`/api/v1/geo/content-tasks/${taskId}/generate`, null, {
+    params: { tenant_id: tenantId, run_async: !!runAsync },
+    timeout: runAsync ? 30000 : 180000,
+  })
+}
+
+export function getGeoAsyncJob(tenantId, jobId) {
+  return client.get(`/api/v1/geo/async-jobs/${jobId}`, {
     params: { tenant_id: tenantId },
-    timeout: 120000,
+  })
+}
+
+export function listGeoAsyncJobs(tenantId, params = {}) {
+  return client.get('/api/v1/geo/async-jobs', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
+/** Poll async job until terminal status */
+export async function waitGeoAsyncJob(tenantId, jobId, { intervalMs = 2000, maxMs = 180000 } = {}) {
+  const start = Date.now()
+  while (Date.now() - start < maxMs) {
+    const job = await getGeoAsyncJob(tenantId, jobId)
+    if (job.status === 'succeeded' || job.status === 'failed') return job
+    await new Promise((r) => setTimeout(r, intervalMs))
+  }
+  throw new Error('异步任务等待超时')
+}
+
+export function previewGeoOnboarding(body) {
+  return client.post('/api/v1/geo/onboarding/preview', body, { timeout: 120000 })
+}
+
+export function applyGeoOnboarding(body) {
+  return client.post('/api/v1/geo/onboarding/apply', body, { timeout: 60000 })
+}
+
+export function fetchBusinessDashboard(tenantId, businessId, days = 14) {
+  return client.get(`/api/v1/geo/optimization-businesses/${businessId}/dashboard`, {
+    params: { tenant_id: tenantId, days },
+  })
+}
+
+export function fetchMonitoringStance(tenantId) {
+  return client.get('/api/v1/geo/monitoring-stance', {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function putMonitoringStance(tenantId, stance) {
+  return client.put('/api/v1/geo/monitoring-stance', {
+    tenant_id: tenantId,
+    monitoring_stance: stance,
   })
 }
 
@@ -419,15 +556,14 @@ export function createGeoVariants(
   tenantId,
   taskId,
   channels = ['website', 'wechat', 'zhihu'],
-  { useLlm = true } = {},
+  { useLlm = true, runAsync = true } = {},
 ) {
   return client.post(
     `/api/v1/geo/content-tasks/${taskId}/variants`,
     { channels, use_llm: useLlm },
     {
-      params: { tenant_id: tenantId },
-      // LLM polish per channel can take a while
-      timeout: 180000,
+      params: { tenant_id: tenantId, run_async: !!runAsync },
+      timeout: runAsync ? 30000 : 180000,
     },
   )
 }
@@ -460,9 +596,10 @@ export function fetchTaskPushTargets(tenantId, taskId) {
   })
 }
 
-export function pushGeoVariantBatch(taskId, body) {
+export function pushGeoVariantBatch(taskId, body, { runAsync = true } = {}) {
   return client.post(`/api/v1/geo/content-tasks/${taskId}/push-batch`, body, {
-    timeout: 300000,
+    params: { run_async: !!runAsync },
+    timeout: runAsync ? 30000 : 300000,
   })
 }
 

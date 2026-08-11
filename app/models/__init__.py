@@ -65,6 +65,10 @@ from app.models.geo_visibility_patrol import (
     GeoVisibilityPatrolRun,
     GeoVisibilityPatrolSettings,
 )
+from app.models.geo_competitor_alias import GeoCompetitorAlias
+from app.models.geo_deliverable_archive import GeoDeliverableArchive
+from app.models.geo_optimization_period import GeoOptimizationPeriod
+from app.models.geo_async_job import GeoAsyncJob
 from app.models.geo_content import (
     GeoArticleVersion,
     GeoChannelVariant,
@@ -142,6 +146,10 @@ __all__ = [
     "GeoChannelAccount",
     "GeoVisibilityPatrolRun",
     "GeoVisibilityPatrolSettings",
+    "GeoCompetitorAlias",
+    "GeoDeliverableArchive",
+    "GeoOptimizationPeriod",
+    "GeoAsyncJob",
     "GeoContentTask",
     "GeoTaskFact",
     "GeoArticleVersion",

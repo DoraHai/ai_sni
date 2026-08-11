@@ -2,19 +2,27 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
+  createDeliverableArchive,
   downloadGeoDeliverablesMarkdown,
   fetchGeoDeliverablesPack,
+  getDeliverableArchive,
+  listDeliverableArchives,
   listGeoBusinesses,
   listGeoUnits,
 } from '../../api/geoContent'
 import { useClientPager } from '../../composables/useClientPager'
+import { useObservationPeriod } from '../../composables/useObservationPeriod'
 import { session } from '../../store/session'
+
+const { days: observationDays, start: obsStart, end: obsEnd, label: obsLabel } =
+  useObservationPeriod()
 
 const tenantId = computed(() =>
   session.tenantId || (import.meta.env.DEV && import.meta.env.VITE_API_KEY ? 1 : null),
 )
 
 const loading = ref(false)
+const savingArchive = ref(false)
 const error = ref('')
 const pack = ref(null)
 const range = ref([])
@@ -22,6 +30,23 @@ const businesses = ref([])
 const units = ref([])
 const filterBusinessId = ref(null)
 const filterUnitId = ref(null)
+const archives = ref([])
+const lastShare = ref(null)
+
+const hasSimulated = computed(
+  () =>
+    !!(
+      pack.value?.has_simulated_samples ||
+      pack.value?.summary?.has_simulated_samples ||
+      pack.value?.sample_composition?.has_simulated
+    ),
+)
+const sampleComposeLabel = computed(
+  () =>
+    pack.value?.sample_composition?.label ||
+    pack.value?.summary?.sample_composition?.label ||
+    '',
+)
 
 const dailySeriesSrc = computed(() => pack.value?.daily_series || [])
 const bizSliceSrc = computed(() => pack.value?.business_slices || [])
@@ -45,9 +70,11 @@ const fmtPct = (v) => {
 }
 
 function defaultRange() {
+  // 跟随全局观察期；若无则近 14 天
+  if (obsStart.value && obsEnd.value) return [obsStart.value, obsEnd.value]
   const end = new Date()
   const start = new Date()
-  start.setDate(end.getDate() - 29)
+  start.setDate(end.getDate() - (Number(observationDays.value) || 14) + 1)
   const iso = (d) => d.toISOString().slice(0, 10)
   return [iso(start), iso(end)]
 }
@@ -83,6 +110,19 @@ async function loadHierarchy() {
   }
 }
 
+async function loadArchives() {
+  if (!tenantId.value) {
+    archives.value = []
+    return
+  }
+  try {
+    const data = await listDeliverableArchives(tenantId.value, 20)
+    archives.value = data.items || []
+  } catch {
+    archives.value = []
+  }
+}
+
 async function load() {
   if (!tenantId.value) {
     error.value = '请先选择客户或配置本地 API Key'
@@ -97,11 +137,56 @@ async function load() {
       to: `${range.value[1]}T23:59:59`,
       ...scopeParams.value,
     })
+    await loadArchives()
   } catch (e) {
     error.value = e.message || '加载失败'
     pack.value = null
   } finally {
     loading.value = false
+  }
+}
+
+async function saveArchive() {
+  if (!pack.value || !tenantId.value) return
+  savingArchive.value = true
+  try {
+    const res = await createDeliverableArchive(tenantId.value, {
+      pack: pack.value,
+      title: `交付摘要 ${range.value[0]} ~ ${range.value[1]}`,
+    })
+    lastShare.value = res
+    ElMessage.success(`已存档 #${res.id}`)
+    await loadArchives()
+  } catch (e) {
+    ElMessage.error(e.message || '存档失败')
+  } finally {
+    savingArchive.value = false
+  }
+}
+
+function shareUrl(token) {
+  if (!token) return ''
+  // History 模式：/geo/deliverables/share/:token（public bare）
+  return `${window.location.origin}/geo/deliverables/share/${token}`
+}
+
+async function copyShare(token) {
+  const url = shareUrl(token)
+  try {
+    await navigator.clipboard.writeText(url)
+    ElMessage.success('分享链接已复制')
+  } catch {
+    ElMessage.info(url)
+  }
+}
+
+async function openArchive(row) {
+  try {
+    const data = await getDeliverableArchive(tenantId.value, row.id)
+    pack.value = data.pack
+    ElMessage.success(`已加载存档 #${row.id}`)
+  } catch (e) {
+    ElMessage.error(e.message || '加载存档失败')
   }
 }
 
@@ -159,6 +244,9 @@ watch(tenantId, async () => {
 })
 watch(range, load, { deep: true })
 watch(filterUnitId, load)
+watch([obsStart, obsEnd, observationDays], () => {
+  range.value = defaultRange()
+})
 onMounted(async () => {
   range.value = defaultRange()
   await loadHierarchy()
@@ -177,6 +265,9 @@ onMounted(async () => {
       </div>
       <div class="header-actions">
         <el-button :loading="loading" @click="load">刷新</el-button>
+        <el-button :loading="savingArchive" type="success" plain @click="saveArchive" :disabled="!pack">
+          存档本报告
+        </el-button>
         <el-button @click="copyMarkdown">复制 Markdown</el-button>
         <el-button type="primary" @click="downloadMarkdown">下载 Markdown</el-button>
         <el-button plain @click="printReport">打印</el-button>
@@ -186,9 +277,10 @@ onMounted(async () => {
     <details class="geo-glossary">
       <summary>统计口径（点击展开）</summary>
       <ul>
+        <li>默认周期跟随顶栏观察期（{{ obsLabel }}），可在下方改日期。</li>
         <li>交付包汇总选定周期内的日指标、任务与引用样本，便于对外说明。</li>
-        <li>可按优化业务 / 单元切片；导出 Markdown 便于粘贴周报。</li>
-        <li>表格数值来自本系统快照与日汇总，不是第三方全网抓取。</li>
+        <li>含模拟样本时必须黄标，不可当作真实引擎效果。</li>
+        <li>点「存档本报告」可回看历史与复制分享链接。</li>
       </ul>
     </details>
 
@@ -226,10 +318,51 @@ onMounted(async () => {
           :value="u.id"
         />
       </el-select>
-      <span class="toolbar-hint">筛选后刷新报告数据</span>
+      <span class="toolbar-hint">观察期 {{ obsLabel }} · 改日期后自动刷新</span>
     </div>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" />
+    <el-alert
+      v-if="pack && hasSimulated"
+      type="warning"
+      :closable="false"
+      show-icon
+      class="mb"
+      title="本报告周期含模拟样本：对外交付必须标注，不得当作真实引擎可见度"
+      :description="sampleComposeLabel || undefined"
+    />
+
+    <section v-if="archives.length" class="geo-panel mb">
+      <div class="panel-title">历史存档</div>
+      <el-table :data="archives" size="small" max-height="220">
+        <el-table-column prop="id" label="ID" width="70" />
+        <el-table-column prop="title" label="标题" min-width="180" show-overflow-tooltip />
+        <el-table-column label="模拟" width="80">
+          <template #default="{ row }">
+            <el-tag v-if="row.has_simulated" size="small" type="warning">是</el-tag>
+            <span v-else class="muted">否</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="created_at" label="存档时间" width="160" />
+        <el-table-column label="操作" width="200" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="openArchive(row)">加载</el-button>
+            <el-button
+              v-if="row.share_token"
+              link
+              size="small"
+              @click="copyShare(row.share_token)"
+            >
+              复制分享
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <p v-if="lastShare?.share_token" class="share-hint">
+        最近分享：
+        <code>{{ shareUrl(lastShare.share_token) }}</code>
+      </p>
+    </section>
 
     <template v-if="pack">
       <div id="geo-deliv-print" class="report">
@@ -238,6 +371,7 @@ onMounted(async () => {
         <span>· 周期 {{ pack.period?.from?.slice(0, 10) }} ~ {{ pack.period?.to?.slice(0, 10) }}</span>
         <span>· {{ pack.period?.days }} 天</span>
         <span class="scope-tag">· {{ pack.scope?.label || '租户全量' }}</span>
+        <span v-if="sampleComposeLabel" class="scope-tag">· {{ sampleComposeLabel }}</span>
       </div>
 
       <div class="kpi-row">
@@ -482,6 +616,20 @@ onMounted(async () => {
 .panel-title { font-size: 15px; font-weight: 650; margin-bottom: 14px; color: #1e293b; }
 @media print {
   .page-header .header-actions { display: none; }
-  .geo-deliv { padding: 0; }
+  .share-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #64748b;
+  word-break: break-all;
+}
+.share-hint code {
+  font-size: 11px;
+  background: #f1f5f9;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.muted { color: #94a3b8; font-size: 12px; }
+.mb { margin-bottom: 12px; }
+.geo-deliv { padding: 0; }
 }
 </style>

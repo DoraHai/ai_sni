@@ -16,6 +16,7 @@ from app.geo.content.probe import (
     run_probe_draft,
 )
 from app.geo.content.prompt_taxonomy import brand_names_from_tenant
+from app.geo.content.attribution import resolve_matched_publication_ids
 from app.geo.content.snapshots import (
     apply_brand_mention_tags,
     extract_cited_urls_from_text,
@@ -407,15 +408,25 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
                         tenant_llm=tenant_llm,
                         engine_row=engine_row,
                     )
-                    if row.prefer_real and sample_mode != SAMPLE_MODE_REAL and engine_row is not None:
-                        # force attempt real if engine has encrypted key even if mode wrong
-                        if getattr(engine_row, "api_key_encrypted", None):
+                    if row.prefer_real and sample_mode != SAMPLE_MODE_REAL:
+                        # prefer_real：有引擎 Key 或租户百炼时，强制走 openai_compat 真采样
+                        if engine_row is not None and (
+                            getattr(engine_row, "api_key_encrypted", None) or tenant_llm
+                        ):
                             engine_row.sample_mode = SAMPLE_MODE_REAL  # type: ignore[attr-defined]
                             llm, sample_mode, fallback_reason = resolve_engine_llm(
                                 engine=engine,
                                 tenant_llm=tenant_llm,
                                 engine_row=engine_row,
                             )
+                        elif tenant_llm and tenant_llm.get("api_key"):
+                            llm = {
+                                **tenant_llm,
+                                "provider": tenant_llm.get("provider") or "dashscope",
+                                "source": f"tenant_prefer_real:{engine}",
+                            }
+                            sample_mode = SAMPLE_MODE_REAL
+                            fallback_reason = None
                     if not llm or not llm.get("api_key"):
                         raise ValueError("无可用 LLM 凭证（请配置 AI 能力或引擎 openai_compat）")
 
@@ -482,9 +493,18 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
                             draft.get("citation_accuracy")
                             or draft.get("suggested_citation_accuracy")
                         )
+                        sample_mode = str(
+                            draft.get("sample_mode") or "openai_compat"
+                        ).strip() or "openai_compat"
+                        simulated = bool(draft.get("simulated"))
                         note = (
-                            f"auto-patrol #{run_id} · {draft.get('sample_mode')} · "
-                            f"{'模拟' if draft.get('simulated') else '真采样'}"
+                            f"auto-patrol #{run_id} · {sample_mode} · "
+                            f"{'模拟' if simulated else '真采样'}"
+                        )
+                        matched_ids = await resolve_matched_publication_ids(
+                            session,
+                            tenant_id=row.tenant_id,
+                            cited_urls=cited,
                         )
                         snap = GeoAnswerSnapshot(
                             tenant_id=row.tenant_id,
@@ -499,6 +519,10 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
                             sentiment=sent,
                             citation_format=cite_fmt,
                             citation_accuracy=cite_acc,
+                            patrol_run_id=run_id,
+                            sample_mode=sample_mode,
+                            simulated=simulated,
+                            matched_publication_ids=matched_ids or None,
                             note=note,
                             created_by=row.created_by,
                         )

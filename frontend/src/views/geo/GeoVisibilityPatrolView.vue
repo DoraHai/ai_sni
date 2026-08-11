@@ -331,6 +331,26 @@ function exportDetailCsv() {
   ElMessage.success(`已导出运行 #${detail.value.id} 明细`)
 }
 
+function fmtRate(v) {
+  if (v == null || v === '') return '—'
+  const n = Number(v)
+  if (Number.isNaN(n)) return '—'
+  return `${(n * 100).toFixed(1)}%`
+}
+function fmtDelta(v) {
+  if (v == null || v === '') return '—'
+  const n = Number(v)
+  if (Number.isNaN(n)) return '—'
+  const pct = (n * 100).toFixed(1)
+  return n > 0 ? `+${pct}pp` : `${pct}pp`
+}
+function deltaClass(v) {
+  if (v == null) return ''
+  const n = Number(v)
+  if (Number.isNaN(n) || n === 0) return ''
+  return n > 0 ? 'up' : 'down'
+}
+
 watch(tenantId, load)
 onMounted(load)
 onUnmounted(stopPoll)
@@ -598,8 +618,63 @@ onUnmounted(stopPoll)
           <p class="geo-panel-desc">
             {{ summaryText(detail) }}
             <template v-if="detail.trigger"> · {{ triggerLabel(detail.trigger) }}</template>
+            <template v-if="detail.sample_composition?.label">
+              · {{ detail.sample_composition.label }}
+            </template>
           </p>
           <p v-if="detail.error" class="err">{{ detail.error }}</p>
+
+          <!-- 本次 vs 上次 -->
+          <div v-if="detail.vs_previous" class="vs-box">
+            <div class="vs-title">本次 vs 上次巡检</div>
+            <div class="vs-grid">
+              <div class="vs-cell">
+                <div class="vs-k">本次提及率</div>
+                <div class="vs-v">{{ fmtRate(detail.vs_previous.this_brand_mention_rate) }}</div>
+                <div class="vs-h">
+                  可见样本 {{ detail.vs_previous.this_snapshots ?? '—' }} · 提及
+                  {{ detail.vs_previous.this_mentions ?? '—' }}
+                </div>
+              </div>
+              <div class="vs-cell">
+                <div class="vs-k">上次提及率</div>
+                <div class="vs-v">
+                  {{
+                    detail.vs_previous.previous_run_id
+                      ? fmtRate(detail.vs_previous.previous_brand_mention_rate)
+                      : '—'
+                  }}
+                </div>
+                <div class="vs-h">
+                  <template v-if="detail.vs_previous.previous_run_id">
+                    运行 #{{ detail.vs_previous.previous_run_id }} · 样本
+                    {{ detail.vs_previous.previous_snapshots ?? '—' }}
+                  </template>
+                  <template v-else>无更早完成的巡检</template>
+                </div>
+              </div>
+              <div class="vs-cell">
+                <div class="vs-k">Δ 提及率</div>
+                <div
+                  class="vs-v"
+                  :class="deltaClass(detail.vs_previous.brand_mention_rate_delta)"
+                >
+                  {{ fmtDelta(detail.vs_previous.brand_mention_rate_delta) }}
+                </div>
+                <div class="vs-h">
+                  首选位
+                  {{ fmtRate(detail.vs_previous.this_top1_rate) }}
+                </div>
+              </div>
+            </div>
+            <div
+              v-if="detail.sample_composition?.has_simulated"
+              class="vs-warn"
+            >
+              本运行含模拟样本，交付汇报须标注，不可当作真实引擎效果。
+            </div>
+          </div>
+
           <div v-if="!detail.items?.length" class="geo-empty" style="margin-top: 8px">
             {{
               detail.status === 'pending' || detail.status === 'running'
@@ -614,7 +689,16 @@ onUnmounted(stopPoll)
             max-height="360"
             stripe
           >
-            <el-table-column prop="prompt_id" label="意图词ID" width="88" />
+            <el-table-column prop="prompt_id" label="意图词ID" width="88">
+              <template #default="{ row }">
+                <router-link
+                  class="link"
+                  :to="{ path: '/geo/prompts', query: { q: row.prompt_id } }"
+                >
+                  #{{ row.prompt_id }}
+                </router-link>
+              </template>
+            </el-table-column>
             <el-table-column label="引擎" width="110">
               <template #default="{ row }">{{ engineDisplay(row.engine) }}</template>
             </el-table-column>
@@ -632,7 +716,21 @@ onUnmounted(stopPoll)
                 <span v-else-if="row.simulated === false" class="ok">· 真采样</span>
               </template>
             </el-table-column>
-            <el-table-column prop="snapshot_id" label="快照ID" width="90" />
+            <el-table-column label="快照" width="100">
+              <template #default="{ row }">
+                <router-link
+                  v-if="row.snapshot_id"
+                  class="link"
+                  :to="{
+                    path: '/geo/visibility',
+                    query: { snapshot_id: row.snapshot_id, patrol_run_id: detail.id },
+                  }"
+                >
+                  #{{ row.snapshot_id }}
+                </router-link>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
             <el-table-column label="摘要 / 错误" min-width="180" show-overflow-tooltip>
               <template #default="{ row }">
                 {{ row.error || (row.raw_text || '').slice(0, 80) || '—' }}
@@ -652,14 +750,20 @@ onUnmounted(stopPoll)
             />
           </div>
           <div v-if="detail.status === 'completed'" class="detail-links">
-            <router-link class="el-button el-button--small is-plain" to="/geo/visibility">
-              查看快照列表
-            </router-link>
-            <router-link class="el-button el-button--small is-plain" to="/geo/citations">
-              引用分析
+            <router-link
+              class="el-button el-button--small el-button--primary is-plain"
+              :to="{ path: '/geo/visibility', query: { patrol_run_id: detail.id } }"
+            >
+              查看本运行快照（{{ detail.snapshot_count ?? detail.snapshot_ids?.length ?? 0 }}）
             </router-link>
             <router-link class="el-button el-button--small is-plain" to="/geo/overview">
               GEO 概览
+            </router-link>
+            <router-link class="el-button el-button--small is-plain" to="/geo/period-diff">
+              期次对比
+            </router-link>
+            <router-link class="el-button el-button--small is-plain" to="/geo/citations">
+              引用分析
             </router-link>
           </div>
         </div>
@@ -670,6 +774,43 @@ onUnmounted(stopPoll)
 
 <style scoped>
 .patrol-page { padding: 4px 2px 28px; }
+.vs-box {
+  margin: 10px 0 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid #e8edf5;
+}
+.vs-title { font-weight: 700; font-size: 13px; color: #0f172a; margin-bottom: 10px; }
+.vs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+}
+.vs-cell {
+  background: #fff;
+  border: 1px solid #eef2f7;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.vs-k { font-size: 11px; color: #64748b; font-weight: 600; }
+.vs-v { font-size: 20px; font-weight: 750; color: #0f172a; margin-top: 4px; }
+.vs-v.up { color: #059669; }
+.vs-v.down { color: #dc2626; }
+.vs-h { font-size: 11px; color: #94a3b8; margin-top: 4px; line-height: 1.4; }
+.vs-warn {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #b45309;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.link { color: #185fa5; text-decoration: none; font-weight: 600; }
+.link:hover { text-decoration: underline; }
+.ok { color: #059669; font-size: 12px; }
+.muted { color: #9ca3af; font-size: 12px; }
 .page-header {
   display: flex; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
 }

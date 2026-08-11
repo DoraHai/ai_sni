@@ -29,7 +29,9 @@ def can_submit_review(*, has_article: bool, review_status: str) -> tuple[bool, s
     return True, ""
 
 
-def apply_submit(task: Any, *, note: str | None = None) -> None:
+def apply_submit(
+    task: Any, *, note: str | None = None, submitter_id: int | None = None
+) -> None:
     ok, message = can_submit_review(
         has_article=True,
         review_status=getattr(task, "review_status", None),
@@ -39,6 +41,8 @@ def apply_submit(task: Any, *, note: str | None = None) -> None:
     task.review_status = REVIEW_PENDING
     task.reviewed_at = None
     task.reviewed_by = None
+    if submitter_id is not None:
+        task.review_submitted_by = submitter_id
     if note is not None:
         text = str(note).strip()
         task.review_note = text or None
@@ -50,12 +54,23 @@ def apply_decision(
     decision: str,
     note: str | None,
     reviewer_id: int | None,
+    allow_self_approve: bool = False,
 ) -> None:
     decision_norm = str(decision or "").strip().lower()
     if decision_norm not in {REVIEW_APPROVED, REVIEW_REJECTED}:
         raise ValueError("decision 仅支持 approved / rejected")
     if normalize_review_status(task.review_status) != REVIEW_PENDING:
         raise ValueError("仅「待审」任务可审批")
+    if (
+        not allow_self_approve
+        and decision_norm == REVIEW_APPROVED
+        and reviewer_id is not None
+    ):
+        submitter = getattr(task, "review_submitted_by", None)
+        if submitter is None:
+            submitter = getattr(task, "owner_user_id", None)
+        if submitter is not None and int(submitter) == int(reviewer_id):
+            raise ValueError("禁止自审自批：请由其他账号审批通过后再发布")
     task.review_status = decision_norm
     task.review_note = (note or "").strip() or None
     task.reviewed_by = reviewer_id
@@ -66,6 +81,7 @@ def invalidate_review(task: Any) -> None:
     """母稿变更后作废已有审校结果。"""
     task.review_status = REVIEW_NONE
     task.review_note = None
+    task.review_submitted_by = None
     task.reviewed_by = None
     task.reviewed_at = None
 

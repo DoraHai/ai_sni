@@ -73,32 +73,39 @@ const note = computed(() =>
 </template>
 
 <style scoped>
-.geo-hub { padding: 4px 2px 24px; }
-.page-header {
-  display: flex; justify-content: space-between; align-items: flex-start;
-  gap: 16px; margin-bottom: 18px; flex-wrap: wrap;
-}
-.page-title { font-size: 20px; font-weight: 700; color: #1e2330; }
-.page-desc { margin-top: 4px; font-size: 13px; color: #6b7280; max-width: 640px; }
-.header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+/* 页头由 geo-page.css 提供 */
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
 }
 .hub-card {
   text-align: left;
-  border: 1px solid #e8e4f5;
-  background: #fff;
-  border-radius: 12px;
-  padding: 16px;
+  border: 1px solid #e8edf5;
+  background: linear-gradient(180deg, #fff 0%, #fafbfd 100%);
+  border-radius: 14px;
+  padding: 18px 16px 16px;
   cursor: pointer;
-  transition: box-shadow .15s, border-color .15s;
+  transition: box-shadow 0.18s, border-color 0.18s, transform 0.15s;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 .hub-card:hover {
-  border-color: #c4b5fd;
-  box-shadow: 0 4px 14px rgba(124, 58, 237, 0.08);
+  border-color: #93c5fd;
+  box-shadow: 0 8px 24px rgba(24, 95, 165, 0.1);
+  transform: translateY(-1px);
 }
-.hub-title { font-weight: 700; color: #1e2330; margin-bottom: 6px; }
-.hub-desc { font-size: 12px; color: #6b7280; margin-bottom: 10px; min-height: 32px; }
+.hub-title {
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 8px;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+.hub-desc {
+  font-size: 12px;
+  color: #64748b;
+  margin-bottom: 12px;
+  min-height: 36px;
+  line-height: 1.5;
+}
 </style>

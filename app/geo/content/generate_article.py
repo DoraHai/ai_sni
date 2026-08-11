@@ -327,11 +327,17 @@ async def generate_master_article(
         )
         return _stamp_brief_meta(payload)
 
+    from app.geo.content.brand_geo import payload_brand_issues
+
+    brand = (tenant_name or "").strip()
     system = (
         "你是严谨的 GEO 内容写作者。只使用提供的事实卡，禁止编造数据、客户名、排名或收录承诺。"
         "输出是「内部改稿用母稿草案」，不是可直接发布的成稿：语气完整可读，但 disclaimer 须标明需人工润色。"
         "必须遵守 brief 中的行业、受众、意图、内容类型与 CTA；禁用表述不得出现。"
-        "若提供策略层：须针对 ai_question 回答「在什么场景可被考虑/推荐」；"
+        "【GEO 品牌硬标准】user.brand 是本品品牌名：direct_answer（开篇直接答案）与 conclusion 结论段"
+        "必须自然点名该品牌（至少各出现 1 次）；全文禁止写成无品牌的纯品类科普——"
+        "否则无法被生成式引擎在回答中推荐/引用。禁止只写「某厂商」「行业方案」代替品牌名。"
+        "若提供策略层：须针对 ai_question 回答「在什么场景可被考虑/推荐」并落到品牌；"
         "用事实回应 not_recommended_reasons 与 info_gaps（禁止编造填补）；"
         "competitors 非空时 comparison 段须有可核验对比维度；"
         "must_cover 实体须出现在 direct_answer 或 definition/conclusion 中。"
@@ -347,35 +353,69 @@ async def generate_master_article(
     )
     if section_hint:
         system += "建议章节顺序：" + " → ".join(section_hint) + "。"
-    user = json.dumps(
-        {
-            "brand": tenant_name,
-            "question": question,
-            "facts": compact,
-            "brief": brief_norm,
-            "brief_text": brief_block,
-            "strategy_text": strategy_block,
-            "preferred_sections": section_hint,
-        },
-        ensure_ascii=False,
-    )
+    base_user: dict[str, Any] = {
+        "brand": brand,
+        "geo_goal": "brand_mention_for_generative_engine_recommendation",
+        "require_brand_in_direct_answer": True,
+        "require_brand_in_conclusion": True,
+        "question": question,
+        "facts": compact,
+        "brief": brief_norm,
+        "brief_text": brief_block,
+        "strategy_text": strategy_block,
+        "preferred_sections": section_hint,
+    }
     try:
-        kwargs = {}
+        kwargs: dict[str, Any] = {"timeout": 90}
         if llm:
-            kwargs = {
-                "api_key": llm.get("api_key"),
-                "base_url": llm.get("base_url"),
-                "model": llm.get("model"),
-            }
-        data = await chat_json(system, user, timeout=90, **kwargs)
+            kwargs.update(
+                {
+                    "api_key": llm.get("api_key"),
+                    "base_url": llm.get("base_url"),
+                    "model": llm.get("model"),
+                }
+            )
+        data = await chat_json(
+            system, json.dumps(base_user, ensure_ascii=False), **kwargs
+        )
         data["_source"] = "ai"
         payload = normalize_article_payload(data, compact)
+        brand_issues = payload_brand_issues(payload, brand)
+        if brand_issues:
+            fix_user = {
+                **base_user,
+                "rewrite_mode": True,
+                "quality_issues": brand_issues,
+                "previous_direct_answer": payload.get("direct_answer"),
+                "instruction": (
+                    f"上一版未满足 GEO 品牌可见度。请整篇重写 JSON："
+                    f"direct_answer 与 conclusion 必须明确写出品牌「{brand}」，"
+                    "说明在何种场景可被考虑/选用；禁止无品牌品类空文。"
+                ),
+            }
+            try:
+                data2 = await chat_json(
+                    system, json.dumps(fix_user, ensure_ascii=False), **kwargs
+                )
+                data2["_source"] = "ai"
+                payload = normalize_article_payload(data2, compact)
+                brand_issues = payload_brand_issues(payload, brand)
+            except DeepSeekError:
+                pass
+        if brand_issues:
+            raise GeoContentError(
+                "母稿未满足 GEO 品牌提及硬标准：" + "；".join(brand_issues[:4])
+            )
         payload["_evidence"] = evidence_meta
         payload["_brief"] = brief_norm
         payload["_strategy_richness"] = strategy_richness(brief_norm)
+        payload["_brand"] = brand
+        payload["_brand_mentioned"] = True
         return payload
+    except GeoContentError:
+        raise
     except DeepSeekError:
-        # 可演示降级，与诊断 advice 一致
+        # 可演示降级，与诊断 advice 一致（规则稿自带品牌名）
         payload = normalize_article_payload(
             deterministic_article(
                 tenant_name=tenant_name, question=question, facts=compact

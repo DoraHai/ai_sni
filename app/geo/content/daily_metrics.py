@@ -247,13 +247,15 @@ def aggregate_buckets(
 async def load_day_snapshots(
     session: AsyncSession, tenant_id: int, day: date
 ) -> list[GeoAnswerSnapshot]:
-    start_dt = datetime.combine(day, time.min)
-    end_dt = datetime.combine(day, time.max)
+    """按租户时区 Asia/Shanghai 的日历日加载快照（captured_at 存 naive UTC）。"""
+    from app.geo.content.time_windows import shanghai_day_bounds_utc_naive
+
+    start_dt, end_dt = shanghai_day_bounds_utc_naive(day)
     rows = await session.scalars(
         select(GeoAnswerSnapshot).where(
             GeoAnswerSnapshot.tenant_id == tenant_id,
             GeoAnswerSnapshot.captured_at >= start_dt,
-            GeoAnswerSnapshot.captured_at <= end_dt,
+            GeoAnswerSnapshot.captured_at < end_dt,
         )
     )
     return list(rows)
@@ -448,11 +450,13 @@ async def rebuild_range(
 
 
 def _metric_day_from_captured(captured_at: datetime | date | None) -> date:
-    """Map snapshot captured_at to metric calendar day (local date part)."""
+    """Map snapshot captured_at (naive UTC) to Asia/Shanghai calendar day."""
+    from app.geo.content.time_windows import shanghai_day_of_utc_naive, shanghai_today
+
     if captured_at is None:
-        return date.today()
+        return shanghai_today()
     if isinstance(captured_at, datetime):
-        return captured_at.date()
+        return shanghai_day_of_utc_naive(captured_at) or shanghai_today()
     return captured_at
 
 
@@ -464,8 +468,9 @@ async def safe_rebuild_day(
 ) -> dict[str, Any] | None:
     """独立 session 重算，失败只记日志（供巡检/落库后钩子）。"""
     from app.database import async_session_factory
+    from app.geo.content.time_windows import shanghai_today
 
-    target = day or date.today()
+    target = day or shanghai_today()
     try:
         async with async_session_factory() as session:
             result = await rebuild_day(

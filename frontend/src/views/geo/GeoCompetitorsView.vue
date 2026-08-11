@@ -1,5 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   createGeoCompetitorReport,
@@ -7,16 +8,23 @@ import {
   fetchGeoCompetitorDaily,
   fetchGeoCompetitorInsights,
   fetchGeoCompetitorTrace,
+  listCompetitorAliases,
+  listGeoDailyMetrics,
+  putCompetitorAliases,
   rebuildGeoDailyMetrics,
 } from '../../api/geoContent'
 import { useClientPager } from '../../composables/useClientPager'
+import { useObservationPeriod } from '../../composables/useObservationPeriod'
 import { session } from '../../store/session'
 import {
   applyAliasMap,
   findAliasClusters,
-  loadAliasMap,
-  saveAliasMap,
+  loadAliasMapAsync,
+  saveAliasMapAsync,
 } from '../../utils/competitorAlias'
+
+const router = useRouter()
+const { days: observationDays } = useObservationPeriod()
 
 const tenantId = computed(() =>
   session.tenantId || (import.meta.env.DEV && import.meta.env.VITE_API_KEY ? 1 : null),
@@ -33,9 +41,16 @@ const dailyItems = ref([])
 const dailyCompetitors = ref([])
 const dailyNote = ref('')
 const dailyDays = ref(14)
-const rebuildingDaily = ref(false)
 const aliasMap = ref({})
 const displayItems = computed(() => applyAliasMap(rawItems.value, aliasMap.value))
+// sync local dailyDays with global observation when possible
+watch(
+  observationDays,
+  (d) => {
+    if ([7, 14, 30].includes(Number(d))) dailyDays.value = Number(d)
+  },
+  { immediate: true },
+)
 const pager = useClientPager(displayItems, { pageSize: 20 })
 const aliasClusters = computed(() =>
   findAliasClusters(rawItems.value).filter((c) => {
@@ -210,28 +225,40 @@ function mergeTraces(parts, canonical) {
   }
 }
 
-function mergeCluster(cluster, canonical) {
+async function mergeCluster(cluster, canonical) {
   const next = { ...aliasMap.value }
   for (const name of cluster.names) {
     if (name === canonical) continue
     next[name] = canonical
   }
   aliasMap.value = next
-  saveAliasMap(tenantId.value, next)
-  ElMessage.success(`已合并为「${canonical}」`)
+  try {
+    await saveAliasMapAsync(tenantId.value, next, { putCompetitorAliases })
+    ElMessage.success(`已合并为「${canonical}」（已同步租户）`)
+  } catch (e) {
+    ElMessage.warning(e.message || '已本地保存，同步服务器失败')
+  }
 }
 
-function unmergeName(alias) {
+async function unmergeName(alias) {
   const next = { ...aliasMap.value }
   delete next[alias]
   aliasMap.value = next
-  saveAliasMap(tenantId.value, next)
+  try {
+    await saveAliasMapAsync(tenantId.value, next, { putCompetitorAliases })
+  } catch {
+    /* local ok */
+  }
 }
 
-function clearAllAliases() {
+async function clearAllAliases() {
   aliasMap.value = {}
-  saveAliasMap(tenantId.value, {})
-  ElMessage.success('已清除全部别名合并')
+  try {
+    await saveAliasMapAsync(tenantId.value, {}, { putCompetitorAliases })
+    ElMessage.success('已清除全部别名合并')
+  } catch (e) {
+    ElMessage.warning(e.message || '已本地清除')
+  }
 }
 
 function formatShortTime(iso) {
@@ -261,7 +288,9 @@ async function load() {
   }
   loading.value = true
   error.value = ''
-  aliasMap.value = loadAliasMap(tenantId.value)
+  aliasMap.value = await loadAliasMapAsync(tenantId.value, {
+    listCompetitorAliases,
+  })
   try {
     const [data, cmp, daily] = await Promise.all([
       fetchGeoCompetitorInsights(tenantId.value),
@@ -275,9 +304,35 @@ async function load() {
     apiSummary.value = data.summary || null
     compareItems.value = cmp?.items || []
     compareSummary.value = cmp?.summary || null
-    dailyItems.value = daily?.items || []
-    dailyCompetitors.value = daily?.competitors || []
-    dailyNote.value = daily?.note || ''
+    let dItems = daily?.items || []
+    // 缺日指标时静默补算（不暴露「重算」按钮）
+    if (!dItems.length && tenantId.value) {
+      try {
+        const to = new Date()
+        const from = new Date()
+        from.setDate(to.getDate() - (Number(dailyDays.value) || 14) + 1)
+        const iso = (d) => d.toISOString().slice(0, 10)
+        await rebuildGeoDailyMetrics(tenantId.value, {
+          dateFrom: iso(from),
+          dateTo: iso(to),
+        })
+        const daily2 = await listGeoDailyMetrics(tenantId.value, {
+          date_from: iso(from),
+          date_to: iso(to),
+          scope_level: 'tenant',
+        }).catch(() => null)
+        dItems = daily2?.items || []
+        dailyNote.value = daily2?.note || daily?.note || ''
+        dailyCompetitors.value = daily2?.competitors || daily?.competitors || []
+      } catch {
+        /* keep empty */
+      }
+    }
+    dailyItems.value = dItems
+    if (!dailyCompetitors.value?.length) {
+      dailyCompetitors.value = daily?.competitors || []
+    }
+    if (!dailyNote.value) dailyNote.value = daily?.note || ''
   } catch (e) {
     error.value = e.message || '加载失败'
     rawItems.value = []
@@ -288,27 +343,6 @@ async function load() {
     dailyCompetitors.value = []
   } finally {
     loading.value = false
-  }
-}
-
-async function rebuildDaily() {
-  if (!tenantId.value) return
-  rebuildingDaily.value = true
-  try {
-    const to = new Date()
-    const from = new Date()
-    from.setDate(to.getDate() - (Number(dailyDays.value) || 14) + 1)
-    const iso = (d) => d.toISOString().slice(0, 10)
-    await rebuildGeoDailyMetrics(tenantId.value, {
-      dateFrom: iso(from),
-      dateTo: iso(to),
-    })
-    ElMessage.success('已重算日指标')
-    await load()
-  } catch (e) {
-    ElMessage.error(e.message || '重算失败')
-  } finally {
-    rebuildingDaily.value = false
   }
 }
 
@@ -485,7 +519,7 @@ onMounted(load)
       <summary>统计口径（点击展开）</summary>
       <ul>
         <li>竞品名来自快照 competitors 字段（人工或 AI 建议）。</li>
-        <li>日监测写入按天汇总表，支持业务/单元/意图词/引擎切片（需重算）。</li>
+        <li>日监测写入按天汇总表；缺行时刷新静默补算，无需手动重算。</li>
         <li>同题对比：同一意图词下本品提及 vs 竞品提及。</li>
         <li>别名合并仅保存在本机浏览器，用于展示归并，不改库内原始名。</li>
       </ul>
@@ -524,7 +558,13 @@ onMounted(load)
         竞品领先 {{ compareSummary.competitor_lead || 0 }} ·
         持平 {{ compareSummary.tie || 0 }}
       </div>
-      <el-table :data="comparePager.pagedItems" size="small" empty-text="暂无可比对快照">
+      <el-table
+        :data="comparePager.pagedItems"
+        size="small"
+        empty-text="暂无可比对快照"
+        class="clickable-rows"
+        @row-click="(row) => row.prompt_id && router.push({ path: '/geo/visibility', query: { prompt_id: String(row.prompt_id) } })"
+      >
         <el-table-column label="提问" min-width="200">
           <template #default="{ row }">
             <div class="q-clamp" :title="row.question">{{ row.question }}</div>
@@ -577,17 +617,18 @@ onMounted(load)
             <el-option :value="14" label="近 14 天" />
             <el-option :value="30" label="近 30 天" />
           </el-select>
-          <el-button size="small" :loading="rebuildingDaily" @click="rebuildDaily">重算日指标</el-button>
         </span>
       </div>
-      <p class="dim mb">{{ dailyNote || '业务/单元/意图词/引擎切片写入 daily_metrics；此处先看租户级。' }}</p>
+      <p class="dim mb">
+        {{ dailyNote || '日监测看租户级；缺行时刷新会静默补算。建议与顶栏观察期保持一致。' }}
+      </p>
       <div v-if="dailyCompetitors.length" class="mb" style="font-size:13px;color:#4b5563">
         窗口内竞品累计：
         <span v-for="(c, i) in dailyCompetitors.slice(0, 8)" :key="c.name">
           {{ i ? ' · ' : '' }}{{ c.name }} ({{ c.mentions }})
         </span>
       </div>
-      <el-table :data="dailyItems" size="small" empty-text="暂无日指标，请点重算">
+      <el-table :data="dailyItems" size="small" empty-text="暂无日指标：跑巡检或登记快照后刷新">
         <el-table-column prop="metric_date" label="日期" width="120" />
         <el-table-column label="本品提及率" width="110">
           <template #default="{ row }">{{ fmtRate(row.brand_mention_rate) }}</template>
@@ -653,10 +694,12 @@ onMounted(load)
         :data="pager.pagedItems"
         size="small"
         empty-text="暂无竞品标注 · 在「AI 可见度」保存快照时填写竞品名"
+        class="clickable-rows"
+        @row-click="(row) => openTrace(row)"
       >
         <el-table-column prop="name" label="竞品" min-width="140">
           <template #default="{ row }">
-            <div>{{ row.name }}</div>
+            <div class="row-link">{{ row.name }}</div>
             <div v-if="(row.aliases || []).length" class="alias-sub">
               含别名 {{ row.aliases.join('、') }}
             </div>
@@ -694,7 +737,7 @@ onMounted(load)
         </el-table-column>
         <el-table-column label="操作" width="168" fixed="right">
           <template #default="{ row }">
-            <el-button type="primary" link @click="openTrace(row)">
+            <el-button type="primary" link @click.stop="openTrace(row)">
               查看来源（{{ row.source_count || 0 }}）
             </el-button>
             <div class="report-state" :class="rowHasHistory(row) ? 'ok' : 'dim'">
@@ -927,6 +970,8 @@ onMounted(load)
 </template>
 
 <style scoped>
+.clickable-rows :deep(tbody tr) { cursor: pointer; }
+.row-link { color: #185fa5; font-weight: 600; }
 .geo-comp { padding: 4px 2px 24px; }
 .page-header {
   display: flex; justify-content: space-between; gap: 16px; margin-bottom: 16px; flex-wrap: wrap;

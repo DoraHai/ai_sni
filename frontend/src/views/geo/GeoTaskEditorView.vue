@@ -19,6 +19,7 @@ import {
   fetchGeoBriefCatalog,
   generateGeoContentTask,
   getGeoContentTask,
+  fetchGeoContentTaskImpact,
   listGeoChannelAccounts,
   listGeoFacts,
   listGeoPublishingChannels,
@@ -35,6 +36,7 @@ import {
   submitGeoTaskReview,
   suggestGeoTaskBrief,
   fetchChannelBlueprint,
+  waitGeoAsyncJob,
 } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
@@ -70,6 +72,9 @@ const channelBlueprint = ref(null)
 const pushTargets = ref([])
 const pushSelected = ref([])
 const pushBatchBusy = ref(false)
+const impact = ref(null)
+const impactLoading = ref(false)
+const impactWindowDays = ref(14)
 
 const brief = reactive({
   industry: '',
@@ -81,7 +86,8 @@ const brief = reactive({
   notes: '',
   ai_question: '',
   not_recommended_reasons: '',
-  info_gaps: '',
+  /** 枚举 key 数组，如 industry_positioning；UI 用中文多选 */
+  info_gaps: [],
   recommend_when: '',
   competitors: '',
   must_cover: '',
@@ -131,7 +137,20 @@ const SUBSCORE_LABELS = {
   evidence_use: '证据引用',
   gap_coverage: '缺口覆盖',
   extractability: '可抽取性',
+  brand_mention: '品牌提及',
 }
+
+/** 信息缺口：AI 回答里缺什么、母稿必须用事实补什么（禁止编造） */
+const INFO_GAP_FALLBACK = [
+  { key: 'industry_positioning', label: '行业定位' },
+  { key: 'comparison', label: '竞品对比' },
+  { key: 'customer_case', label: '客户案例' },
+  { key: 'authority_source', label: '权威来源' },
+  { key: 'pricing_transparency', label: '价格透明度' },
+  { key: 'risk_compliance', label: '风险合规' },
+  { key: 'scenario_fit', label: '场景适配' },
+  { key: 'entity_clarity', label: '实体清晰度' },
+]
 const CHANNEL_CN = {
   website: '官网',
   wechat: '微信',
@@ -167,6 +186,13 @@ function joinCsv(arr) {
   return Array.isArray(arr) ? arr.join(', ') : ''
 }
 
+function normalizeKeyList(v) {
+  if (Array.isArray(v)) {
+    return v.map((x) => String(x || '').trim()).filter(Boolean)
+  }
+  return splitCsv(v)
+}
+
 function applyBriefToForm(b) {
   const x = b || {}
   brief.industry = x.industry || ''
@@ -178,7 +204,7 @@ function applyBriefToForm(b) {
   brief.notes = x.notes || ''
   brief.ai_question = x.ai_question || ''
   brief.not_recommended_reasons = joinCsv(x.not_recommended_reasons)
-  brief.info_gaps = joinCsv(x.info_gaps)
+  brief.info_gaps = normalizeKeyList(x.info_gaps)
   brief.recommend_when = x.recommend_when || ''
   brief.competitors = joinCsv(x.competitors)
   brief.must_cover = joinCsv(x.must_cover)
@@ -195,7 +221,9 @@ function briefPayload() {
     notes: brief.notes.trim() || null,
     ai_question: brief.ai_question.trim() || null,
     not_recommended_reasons: splitCsv(brief.not_recommended_reasons),
-    info_gaps: splitCsv(brief.info_gaps),
+    info_gaps: Array.isArray(brief.info_gaps)
+      ? brief.info_gaps.filter(Boolean)
+      : splitCsv(brief.info_gaps),
     recommend_when: brief.recommend_when.trim() || null,
     competitors: splitCsv(brief.competitors),
     must_cover: splitCsv(brief.must_cover),
@@ -373,6 +401,7 @@ async function load() {
     if (!webhookAccountId.value && channelAccounts.value.length) {
       webhookAccountId.value = channelAccounts.value[0].id
     }
+    loadImpact()
     if (t.target_channels?.length) {
       channelPick.value = [...t.target_channels]
     }
@@ -824,13 +853,27 @@ async function generate() {
   busy.value = 'generate'
   try {
     await patchGeoContentTask(tenantId.value, taskId.value, { brief: briefPayload() })
-    const gen = await generateGeoContentTask(tenantId.value, taskId.value)
-    applyTaskPayload(gen)
+    generateHint.value = '已提交后台生成，请稍候…'
+    const gen = await generateGeoContentTask(tenantId.value, taskId.value, {
+      runAsync: true,
+    })
+    let payload = gen
+    if (gen?.async && gen?.job?.id) {
+      ElMessage.info(`生成任务 #${gen.job.id} 排队中…`)
+      const job = await waitGeoAsyncJob(tenantId.value, gen.job.id, {
+        intervalMs: 2000,
+        maxMs: 180000,
+      })
+      if (job.status === 'failed') {
+        throw new Error(job.error || '后台生成失败')
+      }
+      payload = await getGeoContentTask(tenantId.value, taskId.value)
+    }
+    applyTaskPayload(payload)
     docTab.value = 'master'
     const bodyLen = (article.body_markdown || '').length
-    const st = gen?.status || task.value?.status || '—'
+    const st = payload?.status || task.value?.status || '—'
     error.value = ''
-    // needs_fix is normal after first draft — not a failure
     const msg =
       bodyLen > 0
         ? `母稿已生成（${bodyLen} 字）· 状态 ${st}` +
@@ -1002,9 +1045,24 @@ async function genVariants() {
   }
   busy.value = 'variants'
   try {
-    const t = await createGeoVariants(tenantId.value, taskId.value, channelPick.value, {
+    let t = await createGeoVariants(tenantId.value, taskId.value, channelPick.value, {
       useLlm: true,
+      runAsync: true,
     })
+    if (t?.async && t?.job?.id) {
+      ElMessage.info(`渠道稿任务 #${t.job.id} 排队中…`)
+      const job = await waitGeoAsyncJob(tenantId.value, t.job.id, {
+        intervalMs: 2000,
+        maxMs: 240000,
+      })
+      if (job.status === 'failed') {
+        throw new Error(job.error || '渠道稿后台生成失败')
+      }
+      t = await getGeoContentTask(tenantId.value, taskId.value)
+      if (job.result_meta?.variant_polish) {
+        t = { ...t, variant_polish: job.result_meta.variant_polish }
+      }
+    }
     applyTaskPayload(t)
     if (channelPick.value[0]) {
       docTab.value = channelPick.value[0]
@@ -1036,22 +1094,30 @@ async function genVariants() {
     const polish = t?.variant_polish || {}
     const llmN = polish.llm ?? 0
     const fbN = polish.fallback ?? 0
-    const names = channelPick.value.map((k) => channelLabel(k)).join('、')
-    if (llmN && !fbN) {
+    const rejN = polish.rejected ?? (polish.failed || []).length
+    const failMsg = (polish.failed || [])
+      .slice(0, 2)
+      .map((f) => `${channelLabel(f.channel)}：${(f.issues || [f.message])[0] || '未过门控'}`)
+      .join('；')
+    if (llmN && !fbN && !rejN) {
       ElMessage.success(
-        `已生成正式渠道稿：${names}。默认「正稿预览」；点「复制」粘贴 HTML（非 ## 标记）。`,
+        `已过完整文章硬门控（${llmN} 路）。可预览/复制 HTML 正稿。`,
       )
-    } else if (llmN && fbN) {
+    } else if (llmN && (fbN || rejN)) {
       ElMessage.warning(
-        `渠道稿已生成：正式稿 ${llmN} 路，规则裁剪 ${fbN} 路。请对回退渠道重生成。`,
+        `过门控 ${llmN} 路；规则裁剪 ${fbN}；硬拦 ${rejN}。${failMsg ? ' ' + failMsg : ''} 请对失败渠道重试。`,
+      )
+    } else if (rejN && !llmN) {
+      ElMessage.error(
+        `全部未过完整文章硬门控，未保存伪正稿。${failMsg || '请加长母稿后重生成。'}`,
       )
     } else {
       ElMessage.warning(
-        `仅生成了规则裁剪稿（未配置 LLM 或润色失败），不是正式成稿。请先配置 AI 后重生成。`,
+        `仅规则裁剪稿，未过发布门控。请配置 AI 后重生成；提纲体/过短会被拦截。`,
       )
     }
   } catch (e) {
-    toastError(e, '生成渠道稿失败')
+    toastError(e, '生成渠道稿失败（未过完整文章门控则不会保存伪正稿）')
   } finally {
     busy.value = ''
   }
@@ -1062,36 +1128,37 @@ const currentVariantMeta = computed(() => {
   const v = (task.value?.variants || []).find((x) => x.channel === docTab.value)
   return v?.adapt_meta || null
 })
+/** 仅 quality===publish_ready 视为过硬门控；带警告/规则裁剪均不可标「可发布」 */
 const isPublishReadyVariant = computed(() => {
   const m = currentVariantMeta.value
   if (!m) return false
-  const q = m.quality || m.engine
-  return (
-    q === 'publish_ready' ||
-    q === 'publish_ready_with_warnings' ||
-    q === 'channel_copy' ||
-    q === 'adapted_publish_html' ||
-    m.delivery === 'html_publish_ready' ||
-    m.export_format === 'html' ||
-    m.polish === 'llm_v4' ||
-    m.polish === 'llm_v3' ||
-    m.polish === 'llm_v2' ||
-    m.polish === 'llm_v1'
-  )
+  if (m.publishable === false) return false
+  const q = m.quality || ''
+  return q === 'publish_ready' && m.delivery === 'html_publish_ready'
 })
 const currentVariantQualityLabel = computed(() => {
   const m = currentVariantMeta.value
-  if (m?.quality === 'publish_ready_with_warnings') {
+  if (!m) return null
+  if (m.quality === 'publish_ready_with_warnings') {
     const n = (m.quality_issues || []).length
-    return `正稿已生成（有 ${n} 项质量提示）· 建议扫一眼再发`
+    return `未过硬门控（遗留 ${n} 项问题）· 请重新「AI 生成正式渠道稿」`
   }
   if (isPublishReadyVariant.value) {
     const table = m?.has_table ? ' · 含表格' : ''
     const chars = m?.body_chars ? ` · ${m.body_chars}字` : ''
-    return `正式完整文章 · HTML 可发布${table}${chars}`
+    const std = m?.article_standard === 'full_article_v2' ? ' · 硬门控v2' : ''
+    return `已过完整文章门控 · HTML 可发布${table}${chars}${std}`
   }
-  if (m?.fallback || m?.quality === 'adapted_draft') {
-    return '规则裁剪稿 · 请点「AI 生成正式渠道稿」写完整文章'
+  if (
+    m?.fallback ||
+    m?.quality === 'adapted_draft' ||
+    m?.quality === 'adapted_draft_not_publishable' ||
+    m?.quality === 'adapted_publish_html'
+  ) {
+    return '规则裁剪稿 · 未过发布门控 · 请点「AI 生成正式渠道稿」'
+  }
+  if (Array.isArray(m.quality_issues) && m.quality_issues.length) {
+    return `未过门控：${m.quality_issues[0]}`
   }
   return null
 })
@@ -1326,6 +1393,7 @@ async function recordPublication() {
     })
     ElMessage.success('已回填发布 URL')
     error.value = ''
+    await loadImpact()
   } catch (e) {
     const msg = toastError(e, '回填失败')
     error.value = msg
@@ -1346,6 +1414,34 @@ async function loadPushTargets() {
   } catch {
     pushTargets.value = []
   }
+}
+
+async function loadImpact() {
+  if (!tenantId.value || !taskId.value) return
+  impactLoading.value = true
+  try {
+    impact.value = await fetchGeoContentTaskImpact(
+      tenantId.value,
+      taskId.value,
+      impactWindowDays.value,
+    )
+  } catch {
+    impact.value = null
+  } finally {
+    impactLoading.value = false
+  }
+}
+
+function fmtRate(v) {
+  if (v == null || Number.isNaN(Number(v))) return '—'
+  return `${(Number(v) * 100).toFixed(1)}%`
+}
+
+function fmtDelta(v) {
+  if (v == null || Number.isNaN(Number(v))) return '—'
+  const n = Number(v) * 100
+  const sign = n > 0 ? '+' : ''
+  return `${sign}${n.toFixed(1)}pp`
 }
 
 async function pushWebhook() {
@@ -1408,15 +1504,37 @@ async function pushBatchSelected() {
       const [channel, accountId] = String(key).split(':')
       return { channel, account_id: Number(accountId) }
     })
-    const res = await pushGeoVariantBatch(taskId.value, {
-      tenant_id: tenantId.value,
-      mode: 'publish',
-      create_publication: true,
-      targets,
-      note: publishNote.value || null,
-    })
-    if (res.task) task.value = res.task
-    else await load()
+    let res = await pushGeoVariantBatch(
+      taskId.value,
+      {
+        tenant_id: tenantId.value,
+        mode: 'publish',
+        create_publication: true,
+        targets,
+        note: publishNote.value || null,
+      },
+      { runAsync: true },
+    )
+    if (res?.async && res?.job?.id) {
+      ElMessage.info(`推送任务 #${res.job.id} 排队中…`)
+      const job = await waitGeoAsyncJob(tenantId.value, res.job.id, {
+        intervalMs: 2000,
+        maxMs: 180000,
+      })
+      if (job.status === 'failed') {
+        throw new Error(job.error || '后台推送失败')
+      }
+      res = {
+        ok_count: job.result_meta?.ok_count ?? 0,
+        fail_count: job.result_meta?.fail_count ?? 0,
+        results: job.result_meta?.results || [],
+      }
+      await load()
+    } else if (res.task) {
+      task.value = res.task
+    } else {
+      await load()
+    }
     await loadPushTargets()
     ElMessage.success(
       `多媒推送完成：成功 ${res.ok_count || 0} · 失败 ${res.fail_count || 0}`,
@@ -1578,7 +1696,58 @@ const patches = computed(
   () => checkResult.value?.patches || task.value?.rule_result?.patches || [],
 )
 const boundFacts = computed(() => task.value?.facts || [])
+const boundVerifiedCount = computed(
+  () => boundFacts.value.filter((f) => f.trust_level === 'verified').length,
+)
+const factsBindReady = computed(
+  () => boundFacts.value.length >= 3 && boundVerifiedCount.value >= 3,
+)
+const libraryVerifiedCount = computed(
+  () =>
+    (allFacts.value || []).filter(
+      (f) => f.trust_level === 'verified' && (f.status === 'active' || !f.status),
+    ).length,
+)
+const infoGapOptions = computed(() => {
+  const fromCat = catalog.value?.info_gaps
+  if (Array.isArray(fromCat) && fromCat.length) return fromCat
+  return INFO_GAP_FALLBACK
+})
 const variants = computed(() => task.value?.variants || [])
+
+function trustTagType(level) {
+  if (level === 'verified') return 'success'
+  if (level === 'needs_review') return 'warning'
+  return 'info'
+}
+function trustLabel(level) {
+  if (level === 'verified') return '已核验'
+  if (level === 'needs_review') return '待核验'
+  return level || '未知'
+}
+function factOptionLabel(f) {
+  const t = trustLabel(f.trust_level)
+  const title = f.title || '未命名事实'
+  return `#${f.id} · ${t} · ${title}`
+}
+async function removeBoundFact(id) {
+  const nid = Number(id)
+  selectedFactIds.value = (selectedFactIds.value || []).filter((x) => Number(x) !== nid)
+  busy.value = 'facts'
+  try {
+    if (!selectedFactIds.value.length) {
+      await bindGeoTaskFacts(tenantId.value, taskId.value, [])
+      await refreshTaskDetail()
+      ElMessage.success('已清空事实绑定')
+    } else {
+      await bindAndRefresh(selectedFactIds.value, '已更新绑定')
+    }
+  } catch (e) {
+    toastError(e, '移除失败')
+  } finally {
+    busy.value = ''
+  }
+}
 const channelOptions = computed(() => {
   const opts = task.value?.channel_options || []
   if (opts.length) {
@@ -1722,85 +1891,213 @@ onMounted(load)
               <el-input v-model="brief.ai_question" />
             </el-form-item>
             <el-form-item label="不推荐原因">
-              <el-input v-model="brief.not_recommended_reasons" placeholder="逗号分隔" />
+              <el-input
+                v-model="brief.not_recommended_reasons"
+                type="textarea"
+                :rows="2"
+                placeholder="AI 目前不推荐你的原因，逗号分隔；母稿须用事实回应"
+              />
             </el-form-item>
-            <el-form-item label="信息缺口">
-              <el-input v-model="brief.info_gaps" placeholder="comparison,customer_case…" />
+            <el-form-item>
+              <template #label>
+                <span
+                  title="AI 回答里缺哪些信息维度。勾选后，母稿必须用已绑定事实回应这些缺口，禁止编造补全。"
+                >
+                  信息缺口
+                </span>
+              </template>
+              <el-select
+                v-model="brief.info_gaps"
+                multiple
+                collapse-tags
+                collapse-tags-tooltip
+                filterable
+                clearable
+                placeholder="选择需用事实补齐的缺口（可多选）"
+                style="width: 100%"
+              >
+                <el-option
+                  v-for="g in infoGapOptions"
+                  :key="g.key"
+                  :label="g.label"
+                  :value="g.key"
+                />
+              </el-select>
+              <div class="field-help">
+                指<strong>AI 回答里缺什么</strong>（定位/对比/案例/权威源等）。勾选后生成母稿须用事实回应，不要写英文 key。
+              </div>
             </el-form-item>
             <el-form-item label="推荐场景">
-              <el-input v-model="brief.recommend_when" />
+              <el-input v-model="brief.recommend_when" placeholder="在什么场景下可被考虑/推荐" />
             </el-form-item>
             <el-form-item label="竞品">
-              <el-input v-model="brief.competitors" placeholder="逗号分隔" />
+              <el-input v-model="brief.competitors" placeholder="逗号分隔，对比段会点名" />
             </el-form-item>
             <el-form-item label="必须覆盖">
-              <el-input v-model="brief.must_cover" placeholder="逗号分隔" />
+              <el-input v-model="brief.must_cover" placeholder="逗号分隔，如品牌名、产品线" />
             </el-form-item>
           </el-form>
         </el-card>
 
-        <el-card shadow="never" class="card">
+        <el-card shadow="never" class="card fact-bind-card">
           <template #header>
             <div class="card-head">
-              <span>事实绑定</span>
-              <div class="row-actions">
-                <el-button size="small" :loading="busy === 'retrieve'" @click="retrieveFacts">
-                  召回
-                </el-button>
-                <el-button size="small" :loading="busy === 'apply'" @click="applyRetrieveTop">
-                  绑定召回 Top
-                </el-button>
-                <el-button
+              <div class="fact-head-title">
+                <span>事实绑定</span>
+                <el-tag
                   size="small"
-                  type="success"
-                  plain
-                  :loading="busy === 'facts'"
-                  @click="bindTopVerified(3)"
+                  :type="factsBindReady ? 'success' : 'warning'"
+                  effect="plain"
                 >
-                  一键绑 3 条 verified
-                </el-button>
-                <el-button size="small" type="primary" :loading="busy === 'facts'" @click="saveFacts">
-                  保存绑定
-                </el-button>
+                  {{ factsBindReady ? '可生成' : '未就绪' }}
+                </el-tag>
               </div>
             </div>
           </template>
-          <div class="hint mb">
-            已绑 <strong>{{ boundFacts.length }}</strong> 条
-            <span v-if="task?.status"> · 状态 {{ task.status }}</span>
-            · 生成需 ≥3 条可核验事实 · 库中可选 {{ allFacts.length }} 条
-          </div>
-          <ul v-if="boundFacts.length" class="bound-list mb">
-            <li v-for="f in boundFacts" :key="f.id">
-              #{{ f.id }} [{{ f.trust_level }}] {{ f.title }}
-            </li>
-          </ul>
-          <el-select
-            v-model="selectedFactIds"
-            multiple
-            filterable
-            collapse-tags
-            collapse-tags-tooltip
-            placeholder="选择事实卡（可多选）"
-            style="width: 100%"
-          >
-            <el-option
-              v-for="f in allFacts"
-              :key="f.id"
-              :label="`#${f.id} [${f.trust_level}] ${f.title}`"
-              :value="Number(f.id)"
-            />
-          </el-select>
-          <div class="retrieve mt">
-            <div class="hint">
-              召回候选
-              <strong>{{ retrievePreview.length }}</strong>
-              条
-              <span v-if="!retrievePreview.length">（点「召回」加载；无结果时用本地库兜底）</span>
+
+          <div class="fact-status" :class="{ ready: factsBindReady }">
+            <div class="fact-status-row">
+              <span>
+                已绑
+                <strong>{{ boundFacts.length }}</strong>
+                条
+              </span>
+              <span class="dot">·</span>
+              <span>
+                已核验
+                <strong>{{ boundVerifiedCount }}</strong>
+                / 需 ≥3
+              </span>
             </div>
-            <div v-for="r in retrievePreview" :key="r.fact_id" class="retrieve-row">
-              #{{ r.fact_id }} · {{ r.title }} · score {{ r.score }}
-              <span v-if="r.trust_level" class="hint"> · {{ r.trust_level }}</span>
+            <el-progress
+              :percentage="Math.min(100, Math.round((boundVerifiedCount / 3) * 100))"
+              :stroke-width="8"
+              :status="factsBindReady ? 'success' : undefined"
+              :show-text="false"
+            />
+            <div class="hint fact-status-sub">
+              生成母稿至少绑定 <strong>3 条已核验</strong>事实。库中可选
+              {{ allFacts.length }} 条（已核验 {{ libraryVerifiedCount }}）
+              <span v-if="task?.status"> · 任务 {{ task.status }}</span>
+            </div>
+          </div>
+
+          <!-- 已绑定列表 -->
+          <div class="fact-section">
+            <div class="fact-section-label">当前绑定</div>
+            <div v-if="!boundFacts.length" class="fact-empty">
+              尚未绑定事实。可用下方「快速绑定」或从库中多选后保存。
+            </div>
+            <div v-else class="bound-chips">
+              <div v-for="f in boundFacts" :key="f.id" class="bound-chip">
+                <el-tag size="small" :type="trustTagType(f.trust_level)" effect="light">
+                  {{ trustLabel(f.trust_level) }}
+                </el-tag>
+                <span class="bound-chip-id">#{{ f.id }}</span>
+                <span class="bound-chip-title" :title="f.title">{{ f.title || '未命名' }}</span>
+                <button
+                  type="button"
+                  class="bound-chip-x"
+                  title="移除此条"
+                  @click="removeBoundFact(f.id)"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 快速操作 -->
+          <div class="fact-section">
+            <div class="fact-section-label">快速绑定</div>
+            <div class="fact-actions">
+              <el-button
+                size="small"
+                type="success"
+                :loading="busy === 'facts'"
+                :disabled="libraryVerifiedCount < 3"
+                @click="bindTopVerified(3)"
+              >
+                一键绑 3 条已核验
+              </el-button>
+              <el-button size="small" :loading="busy === 'retrieve'" @click="retrieveFacts">
+                按 Brief 召回
+              </el-button>
+              <el-button
+                size="small"
+                :loading="busy === 'apply'"
+                :disabled="!retrievePreview.length"
+                @click="applyRetrieveTop"
+              >
+                绑定召回结果
+              </el-button>
+            </div>
+            <div class="field-help">
+              推荐：有核验事实时点「一键绑 3 条」；或先「按 Brief 召回」再「绑定召回结果」。
+            </div>
+          </div>
+
+          <!-- 手动多选 -->
+          <div class="fact-section">
+            <div class="fact-section-label">从事实库勾选</div>
+            <el-select
+              v-model="selectedFactIds"
+              multiple
+              filterable
+              collapse-tags
+              collapse-tags-tooltip
+              placeholder="搜索标题 / 勾选多条事实卡"
+              style="width: 100%"
+            >
+              <el-option
+                v-for="f in allFacts"
+                :key="f.id"
+                :label="factOptionLabel(f)"
+                :value="Number(f.id)"
+              >
+                <div class="fact-option">
+                  <el-tag size="small" :type="trustTagType(f.trust_level)" effect="plain">
+                    {{ trustLabel(f.trust_level) }}
+                  </el-tag>
+                  <span class="fact-option-id">#{{ f.id }}</span>
+                  <span class="fact-option-title">{{ f.title }}</span>
+                </div>
+              </el-option>
+            </el-select>
+            <div class="fact-actions fact-actions-end">
+              <el-button
+                size="small"
+                type="primary"
+                :loading="busy === 'facts'"
+                :disabled="!selectedFactIds.length"
+                @click="saveFacts"
+              >
+                保存绑定（{{ selectedFactIds.length }}）
+              </el-button>
+            </div>
+          </div>
+
+          <!-- 召回预览 -->
+          <div v-if="retrievePreview.length" class="fact-section retrieve-box">
+            <div class="fact-section-label">
+              召回候选
+              <span class="hint">{{ retrievePreview.length }} 条 · 已勾入选择框</span>
+            </div>
+            <div
+              v-for="r in retrievePreview"
+              :key="r.fact_id"
+              class="retrieve-row"
+            >
+              <el-tag
+                size="small"
+                :type="trustTagType(r.trust_level)"
+                effect="plain"
+              >
+                {{ trustLabel(r.trust_level) }}
+              </el-tag>
+              <span class="bound-chip-id">#{{ r.fact_id }}</span>
+              <span class="retrieve-title">{{ r.title || '—' }}</span>
+              <span v-if="r.score != null" class="retrieve-score">{{ Number(r.score).toFixed(1) }}</span>
             </div>
           </div>
         </el-card>
@@ -2117,6 +2414,58 @@ onMounted(load)
           <div class="hint mt">
             推送前通常需「导出」渠道稿。未审校时按钮可点：接口返回 400 并提示审校要求（也可用上方橙色门禁文案）。
           </div>
+
+          <el-divider content-position="left">发布后效果</el-divider>
+          <div v-loading="impactLoading" class="impact-panel">
+            <div class="row-actions mb">
+              <el-select v-model="impactWindowDays" size="small" style="width: 110px" @change="loadImpact">
+                <el-option :value="7" label="±7 天" />
+                <el-option :value="14" label="±14 天" />
+                <el-option :value="30" label="±30 天" />
+              </el-select>
+              <el-button size="small" :loading="impactLoading" @click="loadImpact">刷新</el-button>
+            </div>
+            <template v-if="impact">
+              <div class="hint mb" v-if="!impact.summary?.published_count">
+                尚未回填发布 URL。发布后系统会把引用 URL 反查到本篇，并对比发布前后提及率。
+              </div>
+              <template v-else>
+                <div class="impact-kpis">
+                  <div class="impact-kpi">
+                    <div class="ik-label">引用命中</div>
+                    <div class="ik-value">{{ impact.cite_hits?.total ?? 0 }}</div>
+                    <div class="ik-hint">快照中匹配本篇 URL</div>
+                  </div>
+                  <div class="impact-kpi">
+                    <div class="ik-label">发布前提及率</div>
+                    <div class="ik-value">{{ fmtRate(impact.prompt_mention?.before?.mention_rate) }}</div>
+                    <div class="ik-hint">
+                      n={{ impact.prompt_mention?.before?.snapshot_count ?? 0 }}
+                    </div>
+                  </div>
+                  <div class="impact-kpi">
+                    <div class="ik-label">发布后提及率</div>
+                    <div class="ik-value">{{ fmtRate(impact.prompt_mention?.after?.mention_rate) }}</div>
+                    <div class="ik-hint">
+                      n={{ impact.prompt_mention?.after?.snapshot_count ?? 0 }} · Δ
+                      {{ fmtDelta(impact.prompt_mention?.delta_mention_rate) }}
+                    </div>
+                  </div>
+                </div>
+                <ul v-if="impact.publications?.length" class="impact-pubs">
+                  <li v-for="p in impact.publications" :key="p.id">
+                    <a :href="p.published_url" target="_blank" rel="noopener">{{ p.channel }}</a>
+                    <span class="muted"> · 命中 {{ p.cite_hit_count || 0 }}</span>
+                  </li>
+                </ul>
+                <p class="hint mt">
+                  首次发布 {{ impact.first_published_at || '—' }} ·
+                  对比窗 ±{{ impact.window_days }} 天 · 相关意图词 #{{ impact.prompt_id }}
+                </p>
+              </template>
+            </template>
+            <p v-else class="hint">加载效果数据…</p>
+          </div>
         </el-card>
       </div>
 
@@ -2348,11 +2697,51 @@ onMounted(load)
   z-index: 1;
   background: #fcfbff;
 }
-.card { border-radius: 12px; }
+.card {
+  border-radius: 14px;
+  overflow: hidden;
+}
+.card :deep(.el-card__header) {
+  padding: 12px 14px;
+}
+.card :deep(.el-card__body) {
+  padding: 14px 14px 16px;
+}
+.card :deep(.el-form-item) {
+  margin-bottom: 12px;
+}
+.card :deep(.el-form-item__label) {
+  font-size: 12px !important;
+}
 .card-head {
   display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-weight: 650;
+  color: #0f172a;
 }
 .hint { font-size: 12px; color: #8b93a7; }
+.impact-panel { min-height: 48px; }
+.impact-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.impact-kpi {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.ik-label { font-size: 11px; color: #64748b; }
+.ik-value { font-size: 18px; font-weight: 700; color: #0f172a; line-height: 1.3; }
+.ik-hint { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+.impact-pubs {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: #334155;
+}
+.impact-pubs li { margin-bottom: 4px; }
 .blueprint-box {
   background: #f8f7fc; border: 1px solid #e8e4f5; border-radius: 8px; padding: 10px 12px;
 }
@@ -2546,7 +2935,150 @@ onMounted(load)
   min-width: 28px;
 }
 .retrieve { font-size: 12px; color: #4b5563; }
-.retrieve-row { padding: 2px 0; }
+.field-help {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #9ca3af;
+}
+.fact-bind-card :deep(.el-card__body) {
+  padding-top: 12px;
+}
+.fact-head-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fact-status {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+}
+.fact-status.ready {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+}
+.fact-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-size: 13px;
+  color: #374151;
+  margin-bottom: 8px;
+}
+.fact-status-row .dot { color: #d1d5db; }
+.fact-status-sub { margin-top: 8px; line-height: 1.45; }
+.fact-section { margin-top: 12px; }
+.fact-section-label {
+  font-size: 12px;
+  font-weight: 650;
+  color: #4b5563;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fact-empty {
+  font-size: 12px;
+  color: #9ca3af;
+  padding: 8px 10px;
+  border: 1px dashed #e5e7eb;
+  border-radius: 8px;
+  background: #fafafa;
+}
+.fact-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.fact-actions-end {
+  margin-top: 8px;
+  justify-content: flex-end;
+}
+.bound-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bound-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  font-size: 12px;
+  min-width: 0;
+}
+.bound-chip-id {
+  color: #6b7280;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.bound-chip-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #1f2937;
+}
+.bound-chip-x {
+  border: none;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+.bound-chip-x:hover { color: #dc2626; }
+.fact-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+.fact-option-id { color: #9ca3af; flex-shrink: 0; }
+.fact-option-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.retrieve-box {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f8f7fc;
+  border: 1px solid #e8e4f5;
+}
+.retrieve-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: 12px;
+  border-bottom: 1px solid #f3f0fa;
+}
+.retrieve-row:last-child { border-bottom: none; }
+.retrieve-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #374151;
+}
+.retrieve-score {
+  flex-shrink: 0;
+  color: #7c3aed;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
 .bound-list {
   list-style: none; padding: 0; margin: 0 0 8px;
   font-size: 12px; color: #374151;

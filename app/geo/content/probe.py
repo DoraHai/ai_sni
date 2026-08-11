@@ -105,24 +105,18 @@ def resolve_engine_llm(
                 SAMPLE_MODE_REAL,
                 None,
             )
-        # Real mode without key: deepseek can reuse tenant LLM as non-sim when matching
-        if engine == "deepseek" and tenant_llm:
+        # Real mode without per-engine key：统一回退租户/环境百炼（全引擎共用）
+        if tenant_llm and tenant_llm.get("api_key"):
             return (
                 {
                     **tenant_llm,
-                    "provider": tenant_llm.get("provider") or "deepseek",
-                    "source": tenant_llm.get("source") or "tenant",
+                    "provider": tenant_llm.get("provider") or "dashscope",
+                    "source": f"tenant_fallback:{engine}",
                 },
                 SAMPLE_MODE_REAL,
                 None,
             )
-        if tenant_llm:
-            return (
-                tenant_llm,
-                SAMPLE_MODE_PERSONA,
-                "openai_compat 未配置引擎 API Key，已回退人设模拟",
-            )
-        return {}, SAMPLE_MODE_PERSONA, "无可用 LLM 凭证"
+        return {}, SAMPLE_MODE_PERSONA, "openai_compat 未配置引擎 Key 且无租户 LLM"
 
     if not tenant_llm:
         return {}, SAMPLE_MODE_PERSONA, "无租户/环境 LLM 凭证"

@@ -258,6 +258,66 @@ class ReviewDecision(BaseModel):
     note: str | None = Field(None, max_length=2000)
 
 
+class GapCreateTasksRequest(BaseModel):
+    tenant_id: int
+    prompt_ids: list[int] = Field(..., min_length=1, max_length=50)
+
+
+class OptimizationPeriodCreate(BaseModel):
+    tenant_id: int
+    name: str = Field(..., min_length=1, max_length=160)
+    starts_at: str
+    ends_at: str
+    business_id: int | None = None
+    goal_note: str | None = Field(None, max_length=2000)
+    capture_baseline: bool = True
+
+
+class GeoOnboardingPreviewRequest(BaseModel):
+    tenant_id: int
+    website_url: str = Field(..., min_length=8, max_length=2000)
+    expand: bool = True
+    max_prompt_candidates: int = Field(24, ge=4, le=80)
+
+
+class GeoOnboardingBusinessPick(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    description: str | None = None
+
+
+class GeoOnboardingPromptPick(BaseModel):
+    question: str = Field(..., min_length=4, max_length=500)
+    question_group: str | None = None
+    priority: int = 10
+    tags: list[str] = Field(default_factory=lambda: ["from_onboarding", "brand_missing"])
+    business_name: str | None = None
+
+
+class GeoOnboardingFactPick(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    statement: str = Field(..., min_length=4)
+    fact_type: Literal["product", "case", "metric", "policy", "other"] = "product"
+    source_name: str = Field(..., min_length=1, max_length=200)
+    source_url: str | None = None
+    trust_level: Literal["verified", "needs_review", "draft"] = "needs_review"
+
+
+class GeoOnboardingApplyRequest(BaseModel):
+    tenant_id: int
+    website_url: str | None = None
+    brand_terms: list[str] = Field(default_factory=list)
+    businesses: list[GeoOnboardingBusinessPick] = Field(default_factory=list)
+    prompts: list[GeoOnboardingPromptPick] = Field(default_factory=list)
+    facts: list[GeoOnboardingFactPick] = Field(default_factory=list)
+    create_website_channel: bool = True
+    dry_run: bool = False
+
+
+class MonitoringStanceUpdate(BaseModel):
+    tenant_id: int
+    monitoring_stance: Literal["simulation", "hybrid", "real_only"] = "hybrid"
+
+
 class TaskUpdate(BaseModel):
     title: str | None = Field(None, max_length=300)
     owner_user_id: int | None = None

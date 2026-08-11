@@ -39,29 +39,60 @@ def _resolve_creds(
     base_url: str | None = None,
     model: str | None = None,
 ) -> tuple[str, str, str]:
-    """Resolve OpenAI-compatible credentials (DeepSeek 官方 or 百炼兼容)。"""
+    """Resolve OpenAI-compatible credentials.
+
+    Priority when caller does not pass overrides:
+    1) 阿里云百炼 DASHSCOPE_*（全站默认）
+    2) DeepSeek 官方 DEEPSEEK_*
+    Explicit api_key/base_url/model from GEO 租户配置始终优先。
+    """
     s = get_settings()
-    key = (api_key or s.deepseek_api_key or getattr(s, "dashscope_api_key", "") or "").strip()
-    if not key:
-        raise DeepSeekError("未配置 AI API Key（百炼 DASHSCOPE_API_KEY 或 DEEPSEEK_API_KEY）")
-    use_dash = bool(getattr(s, "dashscope_api_key", "") and not (api_key or s.deepseek_api_key))
-    url_base = (
-        base_url
-        or (s.dashscope_base_url if use_dash else None)
-        or s.deepseek_base_url
-    ).rstrip("/")
-    mdl = (
-        model
-        or (s.dashscope_model if use_dash else None)
-        or s.deepseek_model
+    dash_key = (getattr(s, "dashscope_api_key", None) or "").strip()
+    deep_key = (s.deepseek_api_key or "").strip()
+    # Caller-provided key wins (tenant GEO AI settings, etc.)
+    if api_key and str(api_key).strip():
+        key = str(api_key).strip()
+        url_base = (
+            base_url
+            or (s.dashscope_base_url if dash_key else None)
+            or s.deepseek_base_url
+            or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        ).rstrip("/")
+        mdl = (
+            model
+            or (s.dashscope_model if dash_key else None)
+            or s.deepseek_model
+            or "deepseek-v3"
+        )
+        return key, url_base, mdl
+
+    # Env: prefer 百炼 so SEM/GEO 共用同一 Key
+    if dash_key:
+        key = dash_key
+        url_base = (
+            base_url or getattr(s, "dashscope_base_url", None) or ""
+        ).rstrip("/") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        mdl = model or getattr(s, "dashscope_model", None) or "deepseek-v3"
+        return key, url_base, mdl
+
+    if deep_key:
+        key = deep_key
+        url_base = (base_url or s.deepseek_base_url or "").rstrip("/")
+        mdl = model or s.deepseek_model or "deepseek-chat"
+        return key, url_base, mdl
+
+    raise DeepSeekError(
+        "未配置 AI API Key（请设置 DASHSCOPE_API_KEY 百炼，或 DEEPSEEK_API_KEY）"
     )
-    return key, url_base, mdl
 
 
 def is_enabled() -> bool:
-    """是否配置了可用 AI Key（DeepSeek 官方或百炼 env）。"""
+    """是否配置了可用 AI Key（优先百炼 env，其次 DeepSeek）。"""
     s = get_settings()
-    return bool(s.deepseek_api_key or getattr(s, "dashscope_api_key", ""))
+    return bool(
+        (getattr(s, "dashscope_api_key", None) or "").strip()
+        or (s.deepseek_api_key or "").strip()
+    )
 
 
 async def chat_json(

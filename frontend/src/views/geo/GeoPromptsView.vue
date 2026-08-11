@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -25,7 +25,17 @@ const items = ref([])
 const units = ref([])
 const status = ref('active')
 const filterUnitId = ref(null)
+const filterBrandMissing = ref(route.query.tag === 'brand_missing')
 const pager = useClientPager(items, { pageSize: 20 })
+const displayItems = computed(() => {
+  let rows = items.value || []
+  if (filterBrandMissing.value) {
+    rows = rows.filter((r) => Array.isArray(r.tags) && r.tags.includes('brand_missing'))
+  }
+  return rows
+})
+// rebind pager source when filter changes — simple: override paged via separate pager
+const filteredPager = useClientPager(displayItems, { pageSize: 20 })
 const createOpen = ref(false)
 const editOpen = ref(false)
 const expandOpen = ref(false)
@@ -360,59 +370,92 @@ const tagText = (tags) => (Array.isArray(tags) ? tags.join(', ') : '—')
       </div>
     </div>
 
-    <el-table :data="pager.pagedItems" stripe empty-text=" ">
-      <el-table-column prop="id" label="ID" width="72" />
-      <el-table-column label="问题" min-width="240">
-        <template #default="{ row }">
-          <div class="title">{{ row.question }}</div>
-          <div class="sub">{{ row.question_group || '—' }} · {{ row.market || 'cn' }}</div>
-        </template>
-      </el-table-column>
-      <el-table-column label="优化单元" min-width="120">
-        <template #default="{ row }">{{ unitLabel(row.unit_id) }}</template>
-      </el-table-column>
-      <el-table-column prop="priority" label="优先级" width="80" />
-      <el-table-column label="标签" min-width="120">
-        <template #default="{ row }">{{ tagText(row.tags) }}</template>
-      </el-table-column>
-      <el-table-column label="探测题" width="88">
-        <template #default="{ row }">
-          <el-tooltip content="探测题只计入点名认知率，不计入品牌提及率" placement="top">
-            <el-tag v-if="row.is_brand_probe" size="small" type="warning">是</el-tag>
-            <span v-else class="muted">否</span>
-          </el-tooltip>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="260" fixed="right">
-        <template #default="{ row }">
-          <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
-          <el-button type="primary" link @click="createTask(row)">建文章</el-button>
-          <el-button
-            v-if="row.status === 'active'"
-            type="danger"
-            link
-            @click="archive(row)"
-          >归档</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
-    <div class="geo-pager">
-      <el-pagination
-        background
-        layout="total, sizes, prev, pager, next"
-        :total="pager.total"
-        :page-size="pager.pageSize"
-        :current-page="pager.page"
-        :page-sizes="[10, 20, 50, 100]"
-        @current-change="pager.onPageChange"
-        @size-change="pager.onSizeChange"
-      />
+    <el-alert
+      v-if="filterBrandMissing"
+      type="warning"
+      :closable="true"
+      show-icon
+      class="mb"
+      title="仅显示 brand_missing 意图词：建议立即「生成内容」补母稿后再巡检"
+      @close="filterBrandMissing = false"
+    />
+
+    <div class="geo-table-shell">
+      <el-table :data="filteredPager.pagedItems" stripe empty-text=" ">
+        <el-table-column prop="id" label="ID" width="72" />
+        <el-table-column label="问题" min-width="240">
+          <template #default="{ row }">
+            <div class="title">{{ row.question }}</div>
+            <div class="sub">{{ row.question_group || '—' }} · {{ row.market || 'cn' }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="优化单元" min-width="120">
+          <template #default="{ row }">{{ unitLabel(row.unit_id) }}</template>
+        </el-table-column>
+        <el-table-column prop="priority" label="优先级" width="80" />
+        <el-table-column label="标签" min-width="120">
+          <template #default="{ row }">
+            {{ tagText(row.tags) }}
+            <el-tag
+              v-if="Array.isArray(row.tags) && row.tags.includes('brand_missing')"
+              size="small"
+              type="danger"
+              effect="light"
+              style="margin-left: 4px"
+            >
+              缺品牌
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="探测题" width="88">
+          <template #default="{ row }">
+            <el-tooltip content="探测题只计入点名认知率，不计入品牌提及率" placement="top">
+              <el-tag v-if="row.is_brand_probe" size="small" type="warning" effect="light">是</el-tag>
+              <span v-else class="muted">否</span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="280" fixed="right">
+          <template #default="{ row }">
+            <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
+            <el-button
+              type="success"
+              link
+              @click="createTask(row)"
+            >
+              {{
+                Array.isArray(row.tags) && row.tags.includes('brand_missing')
+                  ? '生成内容'
+                  : '建文章'
+              }}
+            </el-button>
+            <el-button
+              v-if="row.status === 'active'"
+              type="danger"
+              link
+              @click="archive(row)"
+            >归档</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div class="geo-pager">
+        <el-pagination
+          background
+          layout="total, sizes, prev, pager, next"
+          :total="filteredPager.total"
+          :page-size="filteredPager.pageSize"
+          :current-page="filteredPager.page"
+          :page-sizes="[10, 20, 50, 100]"
+          @current-change="filteredPager.onPageChange"
+          @size-change="filteredPager.onSizeChange"
+        />
+      </div>
     </div>
 
-    <el-dialog v-model="editOpen" title="编辑优化意图词" width="520px">
-      <el-form label-width="100px">
+    <el-dialog v-model="editOpen" title="编辑优化意图词" width="520px" class="geo-form-dialog">
+      <el-form label-width="100px" class="geo-dialog-form">
         <el-form-item label="问题" required>
-          <el-input v-model="editForm.question" type="textarea" :rows="3" />
+          <el-input v-model="editForm.question" type="textarea" :rows="3" placeholder="用户/AI 会问的完整问句" />
         </el-form-item>
         <el-form-item label="优化单元">
           <el-select v-model="editForm.unit_id" clearable filterable style="width: 100%" placeholder="可选">
@@ -443,10 +486,10 @@ const tagText = (tags) => (Array.isArray(tags) ? tags.join(', ') : '—')
       </template>
     </el-dialog>
 
-    <el-dialog v-model="createOpen" title="新建优化意图词" width="520px">
-      <el-form label-width="100px">
+    <el-dialog v-model="createOpen" title="新建优化意图词" width="520px" class="geo-form-dialog">
+      <el-form label-width="100px" class="geo-dialog-form">
         <el-form-item label="问题" required>
-          <el-input v-model="form.question" type="textarea" :rows="3" />
+          <el-input v-model="form.question" type="textarea" :rows="3" placeholder="用户/AI 会问的完整问句" />
         </el-form-item>
         <el-form-item label="优化单元">
           <el-select v-model="form.unit_id" clearable filterable style="width: 100%" placeholder="可选">

@@ -146,12 +146,12 @@ onMounted(load)
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
 
-    <el-card shadow="never" class="card mb">
+    <el-card shadow="never" class="mb">
       <template #header>
         <div class="card-head">
-          <span>
+          <span class="card-title">
             共享系统提示词
-            <el-tag size="small" :type="isCustomSystem ? 'warning' : 'info'" class="tag">
+            <el-tag size="small" :type="isCustomSystem ? 'warning' : 'info'" effect="light" class="tag">
               {{ isCustomSystem ? '已自定义' : '使用默认' }}
             </el-tag>
           </span>
@@ -167,15 +167,16 @@ onMounted(load)
         v-model="systemPrompt"
         type="textarea"
         :rows="10"
-        placeholder="全渠道共用的 system prompt"
+        placeholder="全渠道共用的 system prompt（硬门控：完整成文 + GEO 品牌提及）"
       />
+      <div class="form-hint">空则使用代码默认；自定义后「AI 生成正式渠道稿」优先读租户配置。</div>
     </el-card>
 
-    <el-card shadow="never" class="card">
+    <el-card shadow="never">
       <template #header>
-        <span>分渠道语气（voice）</span>
+        <span class="card-title">分渠道语气与字数</span>
       </template>
-      <el-tabs v-model="activeTab">
+      <el-tabs v-model="activeTab" class="channel-tabs">
         <el-tab-pane
           v-for="c in channels"
           :key="c.channel_key"
@@ -186,10 +187,10 @@ onMounted(load)
 
       <template v-if="current">
         <div class="channel-meta mb">
-          <el-tag size="small" :type="current.is_custom_voice ? 'warning' : 'info'">
+          <el-tag size="small" :type="current.is_custom_voice ? 'warning' : 'info'" effect="light">
             语气 {{ current.is_custom_voice ? '已自定义' : '使用默认' }}
           </el-tag>
-          <el-tag size="small" :type="current.is_custom_min_body_chars ? 'warning' : 'info'">
+          <el-tag size="small" :type="current.is_custom_min_body_chars ? 'warning' : 'info'" effect="light">
             字数 {{ current.is_custom_min_body_chars ? '已自定义' : '使用默认' }}
           </el-tag>
           <el-button size="small" @click="fillChannelDefaults">填入默认</el-button>
@@ -201,7 +202,7 @@ onMounted(load)
             恢复该渠道默认
           </el-button>
         </div>
-        <el-form label-width="110px">
+        <el-form label-width="110px" class="channel-form">
           <el-form-item label="最低成稿字数">
             <el-input-number
               v-model="current.min_body_chars"
@@ -209,7 +210,7 @@ onMounted(load)
               :max="20000"
               :step="50"
             />
-            <span class="hint">默认 {{ current.min_body_chars_default }}</span>
+            <span class="form-hint inline">默认 {{ current.min_body_chars_default }}</span>
           </el-form-item>
           <el-form-item label="渠道语气">
             <el-input
@@ -226,20 +227,38 @@ onMounted(load)
 </template>
 
 <style scoped>
-.geo-page { padding: 4px 2px 24px; }
-.page-header {
-  display: flex; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
-}
-.page-title { font-size: 20px; font-weight: 700; }
-.page-desc { font-size: 13px; color: #6b7280; margin-top: 4px; max-width: 640px; }
-.header-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.mb { margin-bottom: 12px; }
-.card { border-radius: 12px; }
 .card-head {
-  display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  width: 100%;
 }
-.card-actions { display: flex; gap: 8px; }
-.tag { margin-left: 8px; vertical-align: middle; }
-.channel-meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.hint { margin-left: 10px; font-size: 12px; color: #8b93a7; }
+.card-title {
+  font-weight: 650;
+  color: #0f172a;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.tag { vertical-align: middle; }
+.channel-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border-radius: 10px;
+  border: 1px solid #eef2f7;
+}
+.form-hint.inline {
+  display: inline;
+  margin-left: 10px;
+  margin-top: 0;
+}
+.channel-form { max-width: 920px; margin-top: 8px; }
+.channel-tabs :deep(.el-tabs__header) { margin-bottom: 14px; }
 </style>

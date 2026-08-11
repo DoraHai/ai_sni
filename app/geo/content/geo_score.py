@@ -307,13 +307,67 @@ def _sub_extractability(rule_input: RuleInput) -> tuple[float, list[dict[str, st
 
 
 WEIGHTS = {
-    "structure": 0.20,
-    "evidence_use": 0.25,
-    "authority": 0.15,
-    "comparison": 0.15,
-    "gap_coverage": 0.15,
-    "extractability": 0.10,
+    "structure": 0.18,
+    "evidence_use": 0.22,
+    "authority": 0.12,
+    "comparison": 0.12,
+    "gap_coverage": 0.12,
+    "extractability": 0.08,
+    "brand_mention": 0.16,
 }
+
+
+def _sub_brand_mention(
+    rule_input: RuleInput, brand: str | None
+) -> tuple[float, list[dict[str, str]]]:
+    """GEO core: brand must be citable in generative answers."""
+    from app.geo.content.brand_geo import (
+        brand_presence_issues,
+        extract_conclusion_from_md,
+        normalize_brand,
+        text_mentions_brand,
+    )
+
+    actions: list[dict[str, str]] = []
+    b = normalize_brand(brand) or normalize_brand(rule_input.default_author)
+    if len(b) < 2:
+        # no brand configured — neutral (don't tank score)
+        return 0.75, actions
+
+    body = _body_blob(rule_input)
+    outline = rule_input.outline or {}
+    direct = str(outline.get("direct_answer") or "")
+    conclusion = ""
+    for sec in outline.get("sections") or []:
+        if isinstance(sec, dict) and sec.get("type") == "conclusion":
+            conclusion = str(sec.get("body") or "")
+    if not conclusion:
+        conclusion = extract_conclusion_from_md(rule_input.body_markdown or "")
+
+    issues = brand_presence_issues(
+        brand=b,
+        full_text=body,
+        direct_answer=direct,
+        conclusion=conclusion,
+        require_opening=True,
+        require_conclusion=bool(conclusion),
+    )
+    if not issues and text_mentions_brand(body, b):
+        return 1.0, actions
+
+    for iss in issues:
+        actions.append(
+            {
+                "code": "geo_brand_mention",
+                "message": iss,
+                "action": f"在直接答案与结论中自然点名「{b}」",
+            }
+        )
+        break
+    if not text_mentions_brand(body, b):
+        return 0.0, actions
+    # partial (body only)
+    return 0.4, actions
 
 
 def compute_geo_score(
@@ -322,6 +376,7 @@ def compute_geo_score(
     brief: dict[str, Any] | None = None,
     lint_ok: bool | None = None,
     rule_checks: list[RuleCheck] | list[dict[str, Any]] | None = None,
+    brand: str | None = None,
 ) -> dict[str, Any]:
     """Return geo_score 0..100, subscores, actions."""
     _ = rule_checks  # reserved for future fusion with RuleCheck list
@@ -331,6 +386,7 @@ def compute_geo_score(
     s_comp, a4 = _sub_comparison(rule_input, brief)
     s_gap, a5 = _sub_gap_coverage(rule_input, brief)
     s_ext, a6 = _sub_extractability(rule_input)
+    s_brand, a7 = _sub_brand_mention(rule_input, brand)
 
     subs = {
         "structure": round(s_struct, 3),
@@ -339,12 +395,13 @@ def compute_geo_score(
         "comparison": round(s_comp, 3),
         "gap_coverage": round(s_gap, 3),
         "extractability": round(s_ext, 3),
+        "brand_mention": round(s_brand, 3),
     }
     total = 0.0
     for k, w in WEIGHTS.items():
         total += w * float(subs[k])
     geo_score = int(round(100 * total))
-    actions = a1 + a2 + a3 + a4 + a5 + a6
+    actions = a1 + a2 + a3 + a4 + a5 + a6 + a7
     # de-dupe by code
     seen: set[str] = set()
     uniq: list[dict[str, str]] = []

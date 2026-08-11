@@ -93,3 +93,24 @@ export function loadAliasMap(tenantId) {
 export function saveAliasMap(tenantId, map) {
   localStorage.setItem(aliasStorageKey(tenantId), JSON.stringify(map || {}))
 }
+
+/** Prefer server map; fall back to localStorage for offline migration. */
+export async function loadAliasMapAsync(tenantId, api) {
+  if (!tenantId || !api?.listCompetitorAliases) {
+    return loadAliasMap(tenantId)
+  }
+  try {
+    const data = await api.listCompetitorAliases(tenantId)
+    const map = data.alias_map || {}
+    saveAliasMap(tenantId, map)
+    return map
+  } catch {
+    return loadAliasMap(tenantId)
+  }
+}
+
+export async function saveAliasMapAsync(tenantId, map, api) {
+  saveAliasMap(tenantId, map)
+  if (!tenantId || !api?.putCompetitorAliases) return
+  await api.putCompetitorAliases(tenantId, { alias_map: map || {} })
+}

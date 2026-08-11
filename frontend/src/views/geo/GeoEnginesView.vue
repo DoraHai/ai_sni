@@ -2,9 +2,11 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
+  fetchMonitoringStance,
   fetchVisibilityPatrolOpsStatus,
   listGeoTrackingEngines,
   putGeoTrackingEngines,
+  putMonitoringStance,
 } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import {
@@ -20,6 +22,8 @@ const saving = ref(false)
 const error = ref('')
 const items = ref([])
 const ops = ref(null)
+const stance = ref(null)
+const stanceSaving = ref(false)
 
 const enabledCount = computed(() => items.value.filter((r) => r.enabled).length)
 const realReadyCount = computed(
@@ -62,9 +66,10 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [data, opsRes] = await Promise.all([
+    const [data, opsRes, stanceRes] = await Promise.all([
       listGeoTrackingEngines(tenantId.value, false),
       fetchVisibilityPatrolOpsStatus(tenantId.value).catch(() => null),
+      fetchMonitoringStance(tenantId.value).catch(() => null),
     ])
     items.value = (data.items || []).map((it) => ({
       ...it,
@@ -75,11 +80,26 @@ async function load() {
       clear_api_key: false,
     }))
     ops.value = opsRes
+    stance.value = stanceRes
   } catch (e) {
     error.value = e.message || '加载失败'
     items.value = []
   } finally {
     loading.value = false
+  }
+}
+
+async function saveStance(key) {
+  if (!tenantId.value || !key) return
+  stanceSaving.value = true
+  try {
+    await putMonitoringStance(tenantId.value, key)
+    stance.value = await fetchMonitoringStance(tenantId.value)
+    ElMessage.success('监测定位已更新')
+  } catch (e) {
+    ElMessage.error(e.message || '保存定位失败')
+  } finally {
+    stanceSaving.value = false
   }
 }
 
@@ -147,6 +167,42 @@ onMounted(load)
     </details>
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
+
+    <el-card v-if="stance" shadow="never" class="mb stance-card">
+      <template #header>
+        <div class="stance-head">
+          <span>监测商业定位</span>
+          <el-tag size="small" type="warning">{{ stance.banner?.badge || stance.monitoring_stance }}</el-tag>
+        </div>
+      </template>
+      <p class="stance-sum">{{ stance.banner?.summary || '' }}</p>
+      <ul class="stance-msgs">
+        <li v-for="(m, i) in stance.banner?.messages || []" :key="i">{{ m }}</li>
+      </ul>
+      <div class="stance-options">
+        <el-radio-group
+          :model-value="stance.monitoring_stance"
+          :disabled="stanceSaving"
+          @change="saveStance"
+        >
+          <el-radio
+            v-for="opt in stance.options || []"
+            :key="opt.key"
+            :value="opt.key"
+            :label="opt.key"
+            border
+            class="stance-radio"
+          >
+            <b>{{ opt.label }}</b>
+            <div class="opt-hint">{{ opt.summary }}</div>
+          </el-radio>
+        </el-radio-group>
+      </div>
+      <p class="geo-panel-desc mt">
+        产品默认 <b>混合模式</b>：有 Key 真采样、无 Key 模拟，报表强制标注样本构成。
+        签约交付建议切到「仅真采样」或在交付摘要中披露模拟占比。
+      </p>
+    </el-card>
 
     <div class="geo-kpi-grid mb">
       <div class="geo-kpi">
@@ -278,7 +334,20 @@ onMounted(load)
 
 <style scoped>
 .mb { margin-bottom: 12px; }
+.mt { margin-top: 10px; }
 .kpi-den { font-size: 14px; font-weight: 500; color: #94a3b8; margin-left: 2px; }
 .eng-key { font-weight: 600; color: #1f2937; font-size: 13px; }
 .eng-hint { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+.stance-card { border: 1px solid #fde68a; background: #fffbeb; }
+.stance-head { display: flex; align-items: center; gap: 8px; font-weight: 650; }
+.stance-sum { font-size: 13px; color: #78350f; margin: 0 0 8px; line-height: 1.5; }
+.stance-msgs { font-size: 12px; color: #92400e; margin: 0 0 12px; padding-left: 18px; }
+.stance-options :deep(.el-radio-group) {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+}
+.stance-radio { height: auto !important; margin: 0 !important; padding: 10px 12px !important; white-space: normal; }
+.opt-hint { font-size: 11px; color: #78716c; font-weight: 400; margin-top: 4px; line-height: 1.4; }
 </style>

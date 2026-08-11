@@ -214,8 +214,25 @@ async function loadDaily() {
     if (engineFilter.value) {
       params.engine = engineFilter.value
     }
-    const data = await listGeoDailyMetrics(tenantId.value, params)
-    dailyItems.value = data.items || []
+    let data = await listGeoDailyMetrics(tenantId.value, params)
+    let items = data.items || []
+    if (!items.length && tenantId.value) {
+      try {
+        const end = new Date()
+        const start = new Date()
+        start.setDate(end.getDate() - 13)
+        const fmt = (d) => d.toISOString().slice(0, 10)
+        await rebuildGeoDailyMetrics(tenantId.value, {
+          dateFrom: fmt(start),
+          dateTo: fmt(end),
+        })
+        data = await listGeoDailyMetrics(tenantId.value, params)
+        items = data.items || []
+      } catch {
+        /* keep empty */
+      }
+    }
+    dailyItems.value = items
     citationNote.value = data.citation_stat_note || ''
   } catch {
     dailyItems.value = []
@@ -432,6 +449,15 @@ onMounted(async () => {
       <div class="header-actions">
         <el-button type="primary" @click="bizOpen = true">新建优化业务</el-button>
         <el-button :disabled="!selectedBusinessId" @click="unitOpen = true">新建优化单元</el-button>
+        <el-button
+          type="success"
+          plain
+          :disabled="!selectedBusinessId"
+          @click="router.push(`/geo/businesses/${selectedBusinessId}`)"
+        >
+          业务详情一屏
+        </el-button>
+        <router-link class="el-button" to="/geo/onboarding">GEO 开户向导</router-link>
         <router-link class="el-button is-plain" to="/geo/prompts">优化意图词</router-link>
         <router-link class="el-button is-plain" to="/geo/visibility">AI 可见度</router-link>
         <router-link class="el-button is-plain" to="/geo/tasks">优化文章</router-link>
@@ -447,10 +473,8 @@ onMounted(async () => {
     </details>
 
     <div class="geo-toolbar">
-      <el-button :loading="rebuilding" type="success" @click="rebuildToday">重算今日</el-button>
-      <el-button :loading="rebuilding" @click="rebuildLast14">重算近 14 天</el-button>
       <el-button :loading="exporting" @click="exportCsv">导出 CSV</el-button>
-      <span class="toolbar-hint">重算写入租户/业务/单元切片；导出当前按天表格范围</span>
+      <span class="toolbar-hint">日指标跟随顶栏观察期；缺行时打开页面会静默补算，无需手动重算</span>
     </div>
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
@@ -634,12 +658,12 @@ onMounted(async () => {
       </div>
       <template v-if="metricsOpen">
         <p class="geo-panel-desc">
-          悬停表头可看口径。无数据时：意图词挂到单元 → 有可见度快照 →「重算今日」。
+          悬停表头可看口径。无数据时：意图词挂到单元 → 登记快照/巡检 → 刷新本页。
         </p>
         <el-table
           :data="dailyPager.pagedItems"
           size="small"
-          empty-text="暂无按天数据：先挂意图词到单元并登记快照，再「重算今日」"
+          empty-text="暂无按天数据：先挂意图词到单元并登记快照/巡检，再刷新"
         >
           <el-table-column prop="metric_date" label="日期" width="110" />
           <el-table-column label="切片" min-width="150">

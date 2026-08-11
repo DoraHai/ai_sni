@@ -31,6 +31,19 @@ class GeoAnswerSnapshot(Base):
     citation_format: Mapped[str] = mapped_column(String(16), nullable=False, default="unknown")
     # accurate | partial | inaccurate | unknown
     citation_accuracy: Mapped[str] = mapped_column(String(16), nullable=False, default="unknown")
+    # 巡检追溯：NULL=人工粘贴/单次探测落库
+    patrol_run_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("geo_visibility_patrol_runs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # manual | openai_compat | mock_persona | unknown
+    sample_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    # True = 人设模拟样本，报表须标注，不可当真实引擎效果
+    simulated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # 引用 URL 反查 geo_publications 命中的 publication id 列表
+    matched_publication_ids: Mapped[list | None] = mapped_column(JSONB)
     note: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

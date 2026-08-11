@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   downloadGeoDailyMetricsCsv,
+  fetchBrandMentionMetric,
   fetchGeoContentStats,
   fetchGeoOpsAlerts,
   fetchGeoWeeklyInsights,
@@ -15,6 +16,8 @@ import {
   staticGeoEditorUrl,
 } from '../../api/geoContent'
 import { useClientPager } from '../../composables/useClientPager'
+import { useGeoTenant } from '../../composables/useGeoTenant'
+import { useObservationPeriod } from '../../composables/useObservationPeriod'
 import { session } from '../../store/session'
 import {
   DAILY_METRIC_COLUMNS,
@@ -23,14 +26,29 @@ import {
   fmtPct,
 } from '../../utils/geoReportLabels'
 
-const tenantId = computed(() =>
-  session.tenantId || (import.meta.env.DEV && import.meta.env.VITE_API_KEY ? 1 : null),
+const { tenantId } = useGeoTenant()
+const {
+  days: observationDays,
+  start: obsStart,
+  end: obsEnd,
+  label: obsLabel,
+} = useObservationPeriod()
+
+/** 运维：账号管理权限 或 本地 DEV API Key */
+const canForceRebuild = computed(
+  () =>
+    session.canManage ||
+    (import.meta.env.DEV &&
+      import.meta.env.VITE_API_KEY &&
+      String(import.meta.env.VITE_API_KEY).trim() !== 'CHANGE_ME'),
 )
+const forceRebuildOpen = ref(false)
+const forceRebuilding = ref(false)
 
 const loading = ref(false)
-const rebuilding = ref(false)
 const error = ref('')
 const stats = ref(null)
+const brandMetric = ref(null)
 const healthOk = ref(null)
 
 const businesses = ref([])
@@ -60,34 +78,71 @@ const scopeHint = computed(() => {
   return '租户全量'
 })
 
+const sampleComposition = computed(() => {
+  const c =
+    brandMetric.value?.sample_composition ||
+    stats.value?.sample_composition ||
+    null
+  return c
+})
+
 const summaryCards = computed(() => {
   const s = stats.value
   if (!s) return []
   const d = dailyLatest.value
-  // 有切片筛选时优先用 daily-metrics；租户级优先 daily 覆盖率/引用，任务数仍走 content-stats
-  const mention = d?.brand_mention_rate ?? s.visibility_mention_rate
-  const probe = d?.brand_probe_recognition_rate ?? s.probe_recognition_rate
-  const top1 = d?.top1_rate ?? s.visibility_top1_rate
+  const bm = brandMetric.value
+  // 租户级主 KPI 走统一 metric service（观察期）；有业务/单元切片时日表最新一天作补充
+  const scoped = !!(filterUnitId.value || filterBusinessId.value)
+  const mention = scoped
+    ? (d?.brand_mention_rate ?? bm?.brand_mention_rate ?? s.visibility_mention_rate)
+    : (bm?.brand_mention_rate ?? s.visibility_mention_rate)
+  const probe = scoped
+    ? (d?.brand_probe_recognition_rate ?? bm?.brand_probe_recognition_rate ?? s.probe_recognition_rate)
+    : (bm?.brand_probe_recognition_rate ?? s.probe_recognition_rate)
+  const top1 = scoped
+    ? (d?.top1_rate ?? bm?.top1_rate ?? s.visibility_top1_rate)
+    : (bm?.top1_rate ?? s.visibility_top1_rate)
   const citeDomains = d?.distinct_cited_domains ?? s.distinct_cited_domains
   const citeCount = d?.citation_count
-  const snapVis = d?.snapshots_visibility ?? s.snapshots_visibility
-  const snapProbe = d?.snapshots_probe ?? s.snapshots_probe
+  const snapVis = scoped
+    ? (d?.snapshots_visibility ?? bm?.snapshots_visibility ?? s.snapshots_visibility)
+    : (bm?.snapshots_visibility ?? s.snapshots_visibility)
+  const snapProbe = scoped
+    ? (d?.snapshots_probe ?? bm?.snapshots_probe ?? s.snapshots_probe)
+    : (bm?.snapshots_probe ?? s.snapshots_probe)
 
   return [
-    { label: '优化意图词', value: fmtInt(s.prompts), hint: `探测题 ${fmtInt(s.prompts_probe)} · ${scopeHint.value}` },
-    { label: '优化文章', value: fmtInt(s.tasks), hint: `待修 ${fmtInt(s.todo_blocked)} · 待发 ${fmtInt(s.todo_publish)}` },
-    { label: '已发布', value: fmtInt(s.published), hint: `就绪及以上 ${fmtInt(s.ready_or_beyond)}` },
+    {
+      label: '优化意图词',
+      value: fmtInt(s.prompts),
+      hint: `探测题 ${fmtInt(s.prompts_probe)} · ${scopeHint.value}`,
+      drill: '/geo/prompts',
+    },
+    {
+      label: '优化文章',
+      value: fmtInt(s.tasks),
+      hint: `待修 ${fmtInt(s.todo_blocked)} · 待发 ${fmtInt(s.todo_publish)}`,
+      drill: '/geo/tasks',
+    },
+    {
+      label: '已发布',
+      value: fmtInt(s.published),
+      hint: `就绪及以上 ${fmtInt(s.ready_or_beyond)}`,
+      drill: '/geo/tasks',
+    },
     {
       label: '品牌提及率',
       value: fmtPct(mention),
-      hint: d
-        ? `切片 ${d.metric_date || ''} · 排除探测 · 快照 ${fmtInt(snapVis)} · top1 ${fmtPct(top1)}`
-        : `排除探测 · 快照 ${fmtInt(snapVis)} · top1 ${fmtPct(top1)}`,
+      hint: scoped
+        ? `切片 · 排除探测 · 快照 ${fmtInt(snapVis)} · top1 ${fmtPct(top1)}`
+        : `观察期 ${obsLabel.value} · 排除探测 · 快照 ${fmtInt(snapVis)} · top1 ${fmtPct(top1)}`,
+      drill: '/geo/visibility',
     },
     {
       label: '品牌点名认知率',
       value: fmtPct(probe),
       hint: `仅探测题 · 样本 ${fmtInt(snapProbe)}`,
+      drill: '/geo/visibility/patrol',
     },
     {
       label: 'AI 引用次数',
@@ -95,12 +150,14 @@ const summaryCards = computed(() => {
       hint:
         citeCount != null
           ? `口径：URL 出现次数 · 独立域名 ${fmtInt(citeDomains)}`
-          : `口径：独立被引域名 · 含引用快照 ${fmtInt(s.snapshots_with_citations)}`,
+          : `全时段独立被引域名 · 含引用快照 ${fmtInt(s.snapshots_with_citations)}（不受观察期限制）`,
+      drill: '/geo/citations',
     },
     {
       label: '待复测意图词',
       value: fmtInt(s.prompts_need_recheck),
       hint: `品牌缺失标签 ${fmtInt(s.prompts_brand_missing)}`,
+      drill: '/geo/gaps',
     },
   ]
 })
@@ -172,7 +229,10 @@ const filteredUnits = computed(() => {
 })
 
 function dailyQueryParams() {
-  const params = {}
+  const params = {
+    date_from: obsStart.value,
+    date_to: obsEnd.value,
+  }
   if (filterUnitId.value) {
     params.scope_level = 'unit'
     params.unit_id = filterUnitId.value
@@ -192,14 +252,41 @@ async function loadDailySlice() {
     return
   }
   try {
-    const data = await listGeoDailyMetrics(tenantId.value, dailyQueryParams())
-    const items = data.items || []
+    let data = await listGeoDailyMetrics(tenantId.value, dailyQueryParams())
+    let items = data.items || []
+    // 窗口内无聚合行：静默补算（客户不看到「重算」按钮）
+    if (!items.length) {
+      try {
+        await rebuildGeoDailyMetrics(tenantId.value, {
+          dateFrom: obsStart.value,
+          dateTo: obsEnd.value,
+        })
+        data = await listGeoDailyMetrics(tenantId.value, dailyQueryParams())
+        items = data.items || []
+      } catch {
+        /* 补算失败仍展示空态 */
+      }
+    }
     dailySeries.value = items
     dailyLatest.value = items.length ? items[items.length - 1] : null
     citationNote.value = data.citation_stat_note || ''
   } catch {
     dailySeries.value = []
     dailyLatest.value = null
+  }
+}
+
+async function loadBrandMetric() {
+  if (!tenantId.value) {
+    brandMetric.value = null
+    return
+  }
+  try {
+    brandMetric.value = await fetchBrandMentionMetric(tenantId.value, {
+      days: observationDays.value,
+    })
+  } catch {
+    brandMetric.value = null
   }
 }
 
@@ -247,6 +334,7 @@ async function load() {
       geoContentHealth().catch(() => null),
       loadHierarchy(),
       loadDailySlice(),
+      loadBrandMetric(),
       loadOps(),
       loadWeekly(),
     ])
@@ -296,20 +384,25 @@ function refresh() {
   })
 }
 
-async function rebuildToday() {
-  if (!tenantId.value) return
-  rebuilding.value = true
+async function forceRebuildRange() {
+  if (!tenantId.value || !canForceRebuild.value) return
+  forceRebuilding.value = true
   try {
-    const r = await rebuildGeoDailyMetrics(tenantId.value)
-    const t = r.tenant || {}
+    const r = await rebuildGeoDailyMetrics(tenantId.value, {
+      dateFrom: obsStart.value,
+      dateTo: obsEnd.value,
+    })
     ElMessage.success(
-      `已重算 ${r.metric_date || '今日'} · 快照 ${r.snapshot_total ?? 0} · AI 引用 ${t.citation_count ?? 0}`,
+      `运维重算完成 ${r.period?.from || obsStart.value} ~ ${r.period?.to || obsEnd.value}` +
+        (r.day_count != null ? ` · ${r.day_count} 天` : ''),
     )
+    forceRebuildOpen.value = false
     await loadDailySlice()
+    await loadBrandMetric()
   } catch (e) {
-    ElMessage.error(e.message || '重算失败')
+    ElMessage.error(e.message || '强制重算失败')
   } finally {
-    rebuilding.value = false
+    forceRebuilding.value = false
   }
 }
 
@@ -330,6 +423,10 @@ watch(filterUnitId, () => {
   loadDailySlice()
   loadWeekly()
 })
+watch([observationDays, obsStart, obsEnd], () => {
+  loadDailySlice()
+  loadBrandMetric()
+})
 onMounted(load)
 </script>
 
@@ -339,28 +436,75 @@ onMounted(load)
       <div>
         <div class="page-title">GEO 概览</div>
         <div class="page-desc">
-          运营告警与本周洞察优先；下方看关键 KPI 与近 14 天趋势，可按业务/单元切片。
+          运营告警与本周洞察优先；KPI 与趋势跟随顶栏<strong>观察期</strong>（{{ obsLabel }}），可按业务/单元切片。
           <span v-if="healthOk === true" class="health ok">API 正常</span>
           <span v-else-if="healthOk === false" class="health bad">API 异常</span>
         </div>
       </div>
       <div class="header-actions">
         <el-button :loading="loading" @click="refresh">刷新</el-button>
-        <el-button :loading="rebuilding" @click="rebuildToday">重算今日</el-button>
         <el-button :loading="exporting" @click="exportCsv">导出 CSV</el-button>
+        <el-button
+          v-if="canForceRebuild"
+          type="warning"
+          plain
+          @click="forceRebuildOpen = true"
+        >
+          运维·强制重算
+        </el-button>
         <el-button type="primary" @click="openWorkbench(workbenchLinks[0])">打开工作台</el-button>
       </div>
     </div>
 
+    <el-dialog
+      v-model="forceRebuildOpen"
+      title="运维：强制重算日指标"
+      width="440px"
+      class="geo-form-dialog"
+    >
+      <p class="force-hint">
+        仅管理员 / 本地开发可见。将按<strong>当前观察期</strong>
+        （{{ obsStart }} ~ {{ obsEnd }}）重写
+        <code>geo_daily_metrics</code>，客户界面已隐藏常规「重算」。
+      </p>
+      <template #footer>
+        <el-button @click="forceRebuildOpen = false">取消</el-button>
+        <el-button type="warning" :loading="forceRebuilding" @click="forceRebuildRange">
+          确认重算观察期
+        </el-button>
+      </template>
+    </el-dialog>
+
     <details class="geo-glossary">
       <summary>统计口径（点击展开）</summary>
       <ul>
+        <li>观察期：顶栏全局选择，默认近 14 个上海日历日；品牌提及率/点名认知率/日趋势均跟此窗。</li>
+        <li>品牌提及率：排除探测题；无可见性样本为「—」而非 0%。</li>
+        <li>样本构成：真采样 / 模拟 / 人工；含模拟时不得当真实引擎效果汇报。</li>
         <li v-for="(line, i) in REPORT_GLOSSARY.overview" :key="i">{{ line }}</li>
         <li v-for="(line, i) in REPORT_GLOSSARY.dailyMetrics" :key="`d-${i}`">{{ line }}</li>
       </ul>
     </details>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" />
+
+    <div
+      v-if="sampleComposition && sampleComposition.total > 0"
+      class="sample-compose"
+      :class="{ warn: sampleComposition.has_simulated }"
+    >
+      <span class="sample-compose-title">样本构成</span>
+      <span class="sample-compose-body">{{ sampleComposition.label || '—' }}</span>
+      <el-tag
+        v-if="sampleComposition.has_simulated"
+        size="small"
+        type="warning"
+        effect="light"
+      >
+        含模拟样本 · 交付须标注
+      </el-tag>
+      <span class="sample-compose-meta">全库快照（不受观察期限制）</span>
+    </div>
 
     <div v-if="opsAlerts.length" class="geo-ops-stack">
       <el-alert
@@ -415,11 +559,34 @@ onMounted(load)
     </div>
 
     <div v-if="stats" class="geo-kpi-grid">
-      <div v-for="card in summaryCards" :key="card.label" class="geo-kpi">
+      <div
+        v-for="card in summaryCards"
+        :key="card.label"
+        class="geo-kpi"
+        :class="{ clickable: card.drill }"
+        @click="card.drill && router.push(card.drill)"
+      >
         <div class="kpi-label">{{ card.label }}</div>
         <div class="kpi-value">{{ card.value }}</div>
         <div class="kpi-hint">{{ card.hint }}</div>
       </div>
+    </div>
+
+    <div
+      v-if="stats && (stats.prompts_brand_missing > 0 || stats.todo_blocked > 0)"
+      class="action-strip"
+    >
+      <span v-if="stats.prompts_brand_missing > 0">
+        <b>{{ stats.prompts_brand_missing }}</b> 个意图词品牌缺失
+        <router-link class="strip-link" to="/geo/gaps">缺口工作台</router-link>
+        <router-link class="strip-link" to="/geo/prompts?tag=brand_missing">去看意图词</router-link>
+        <router-link class="strip-link" to="/geo/tasks">去生成内容</router-link>
+      </span>
+      <span v-if="stats.todo_blocked > 0">
+        · <b>{{ stats.todo_blocked }}</b> 篇待修补
+        <router-link class="strip-link" to="/geo/tasks">打开文章列表</router-link>
+      </span>
+      <router-link class="strip-link" to="/geo/visibility/patrol">跑巡检</router-link>
     </div>
 
     <section v-if="weekly" class="geo-panel mb">
@@ -439,7 +606,7 @@ onMounted(load)
 
     <section v-if="dailySeries.length" class="geo-panel">
       <div class="panel-title-row">
-        <div class="panel-title">近 14 天 · {{ scopeHint }}</div>
+        <div class="panel-title">按天趋势 · {{ scopeHint }} · {{ obsLabel }}</div>
         <el-button size="small" :loading="exporting" @click="exportCsv">导出本切片 CSV</el-button>
       </div>
       <el-table :data="dailyPager.pagedItems" size="small" stripe>
@@ -515,10 +682,10 @@ onMounted(load)
       </div>
     </section>
     <section v-else-if="stats" class="geo-panel">
-      <div class="panel-title">近 14 天 · {{ scopeHint }}</div>
+      <div class="panel-title">按天趋势 · {{ scopeHint }} · {{ obsLabel }}</div>
       <div class="geo-empty">
-        <div class="empty-title">暂无按天汇总</div>
-        <div>登记快照或跑巡检后会自动重算；也可点上方「重算今日」。</div>
+        <div class="empty-title">观察期内暂无按天汇总</div>
+        <div>登记快照或跑巡检后会自动写入日指标；打开本页时若缺行会静默补算。</div>
         <div class="empty-actions">
           <router-link class="el-button el-button--small el-button--primary" to="/geo/visibility">
             去登记快照
@@ -634,5 +801,79 @@ onMounted(load)
 }
 .panel-title-row .panel-title {
   margin-bottom: 0;
+}
+.sample-compose {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  font-size: 13px;
+  color: #0f172a;
+}
+.sample-compose.warn {
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+.sample-compose-title {
+  font-weight: 700;
+  color: #0369a1;
+  flex-shrink: 0;
+}
+.sample-compose.warn .sample-compose-title {
+  color: #b45309;
+}
+.sample-compose-body {
+  font-weight: 600;
+  color: #1e293b;
+}
+.sample-compose-meta {
+  margin-left: auto;
+  font-size: 11px;
+  color: #94a3b8;
+}
+.geo-kpi.clickable {
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.geo-kpi.clickable:hover {
+  border-color: #93c5fd;
+  box-shadow: 0 4px 14px rgba(24, 95, 165, 0.1);
+}
+.action-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid #e8edf5;
+  font-size: 13px;
+  color: #334155;
+}
+.strip-link {
+  margin-left: 6px;
+  color: #185fa5;
+  font-weight: 650;
+  text-decoration: none;
+}
+.strip-link:hover { text-decoration: underline; }
+.force-hint {
+  font-size: 13px;
+  line-height: 1.55;
+  color: #475569;
+  margin: 0;
+}
+.force-hint code {
+  font-size: 12px;
+  background: #f1f5f9;
+  padding: 1px 6px;
+  border-radius: 4px;
 }
 </style>

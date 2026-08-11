@@ -108,57 +108,72 @@ onMounted(load)
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
 
-    <el-card shadow="never" class="card">
-      <el-form label-width="120px" style="max-width: 560px">
+    <div class="geo-form-panel">
+      <div class="form-section-title">模型与密钥</div>
+      <el-form label-width="120px" label-position="right">
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
+          <span class="form-hint inline">关闭后渠道润色/母稿生成将无法调用 LLM</span>
         </el-form-item>
-        <el-form-item label="Provider">
+        <el-form-item label="服务商">
           <el-select v-model="form.provider" style="width: 100%">
             <el-option label="阿里云百炼 DashScope" value="dashscope" />
             <el-option label="DeepSeek" value="deepseek" />
           </el-select>
         </el-form-item>
         <el-form-item label="应用预设">
-          <el-switch v-model="form.apply_preset" />
-          <span class="hint">保存时用 provider 默认 base/model</span>
+          <div class="switch-row">
+            <el-switch v-model="form.apply_preset" />
+            <span class="form-hint inline">保存时写入该服务商默认 Base / Model</span>
+          </div>
         </el-form-item>
         <el-form-item label="Base URL">
-          <el-input v-model="form.base_url" placeholder="OpenAI 兼容地址" />
+          <el-input v-model="form.base_url" placeholder="OpenAI 兼容接口地址" />
         </el-form-item>
         <el-form-item label="Model">
-          <el-input v-model="form.model" />
+          <el-input v-model="form.model" placeholder="如 deepseek-chat / qwen-plus" />
         </el-form-item>
         <el-form-item label="API Key">
           <el-input
             v-model="form.api_key"
             type="password"
             show-password
-            :placeholder="meta?.api_key_configured ? `已配置 ${meta.api_key_masked || ''}` : '未配置'"
+            :placeholder="meta?.api_key_configured ? `已配置 ${meta.api_key_masked || ''}` : '粘贴密钥（不会明文回显）'"
           />
-          <el-checkbox v-if="meta?.api_key_configured" v-model="form.clear_api_key">清除 Key</el-checkbox>
+          <el-checkbox v-if="meta?.api_key_configured" v-model="form.clear_api_key" class="mt-check">
+            清除已保存的 Key
+          </el-checkbox>
         </el-form-item>
         <el-form-item label="备注">
-          <el-input v-model="form.note" type="textarea" :rows="2" />
+          <el-input v-model="form.note" type="textarea" :rows="2" placeholder="可选：用途说明" />
         </el-form-item>
       </el-form>
-      <div v-if="meta" class="meta">
-        来源提示：{{ meta.source || '—' }} · 更新于 {{ meta.updated_at || '—' }}
+      <div v-if="meta" class="meta-bar">
+        来源：{{ meta.source || '—' }} · 更新于 {{ meta.updated_at || '—' }}
       </div>
-    </el-card>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.geo-page { padding: 4px 2px 24px; }
-.page-header {
-  display: flex; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
-.page-title { font-size: 20px; font-weight: 700; }
-.page-desc { font-size: 13px; color: #6b7280; margin-top: 4px; }
-.header-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.mb { margin-bottom: 12px; }
-.card { border-radius: 12px; }
-.hint { margin-left: 10px; font-size: 12px; color: #8b93a7; }
-.meta { margin-top: 12px; font-size: 12px; color: #8b93a7; }
+.form-hint.inline {
+  margin-top: 0;
+  margin-left: 4px;
+}
+.mt-check { margin-top: 8px; }
+.meta-bar {
+  margin: 4px 0 18px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #64748b;
+  background: #f8fafc;
+  border-radius: 10px;
+  border: 1px solid #eef2f7;
+}
 </style>

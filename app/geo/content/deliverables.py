@@ -40,7 +40,11 @@ def build_deliverables_pack(
         "daily_series": daily_series or [],
         "business_slices": business_slices or [],
         "unit_slices": unit_slices or [],
-        "generated_kind": "geo_deliverables_pack_v2",
+        "generated_kind": "geo_deliverables_pack_v3",
+        "sample_composition": (summary or {}).get("sample_composition"),
+        "has_simulated_samples": bool(
+            ((summary or {}).get("sample_composition") or {}).get("has_simulated")
+        ),
     }
 
 

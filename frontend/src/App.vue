@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { changePassword, fetchMe, fetchTenants } from './api/auth'
 import { fetchAlerts } from './api/alerts'
 import { fetchCandidates } from './api/expansion'
+import { useObservationPeriod } from './composables/useObservationPeriod'
 import { session } from './store/session'
 
 const route = useRoute()
@@ -16,7 +17,24 @@ const bare = computed(() => route.meta.bare) // 登录页等无框页面
 const fluidMain = computed(() =>
   route.path.startsWith('/geo/tasks/') || route.meta.fluidMain === true,
 )
+const isGeoRoute = computed(() => route.path.startsWith('/geo'))
+const {
+  days: observationDays,
+  label: observationLabel,
+  allowedDays: observationAllowedDays,
+  setDays: setObservationDays,
+} = useObservationPeriod()
 const tenantPopoverOpen = ref(false)
+
+const roleTone = computed(() => {
+  const label = String(session.user?.role_label || '')
+  const role = String(session.user?.role || '')
+  const blob = `${label}${role}`.toLowerCase()
+  if (/admin|管理|超管/.test(blob)) return 'admin'
+  if (/client|客户|只读/.test(blob)) return 'client'
+  if (/operator|运营|投放/.test(blob)) return 'operator'
+  return 'operator'
+})
 
 const platformShortcuts = [
   { label: '全域驾驶舱', path: '/deal-sniper/hub/dashboard', icon: '⌂' },
@@ -49,41 +67,36 @@ const ALL_GROUPS = computed(() => [
   { label: '诊断中心', icon: '🩺', children: [
     { label: '网站体检', path: '/diagnostic-center/', key: 'geo.diagnosis', external: true },
   ] },
-  // GEO：二级=内容生产 / 效果监测 / 能力配置；三级=相关能力聚合
+  // GEO：压成两层——内容 / 监测报表平级 / 配置；AI 动态归情报配置
   { label: 'GEO 增长', icon: '◈', children: [
     { label: '内容生产', children: [
       { label: '内容工作台', path: '/geo/workbench', key: 'geo.content' },
-      { label: '内容资产', children: [
-        { label: '优化业务', path: '/geo/businesses', key: 'geo.content' },
-        { label: '优化意图词', path: '/geo/prompts', key: 'geo.content' },
-        { label: '事实库', path: '/geo/facts', key: 'geo.content' },
-      ] },
+      { label: 'GEO 开户向导', path: '/geo/onboarding', key: 'geo.content' },
+      { label: '优化业务', path: '/geo/businesses', key: 'geo.content' },
+      { label: '优化意图词', path: '/geo/prompts', key: 'geo.content' },
+      { label: '缺口工作台', path: '/geo/gaps', key: 'geo.content' },
+      { label: '事实库', path: '/geo/facts', key: 'geo.content' },
       { label: '优化文章', path: '/geo/tasks', key: 'geo.content' },
-      { label: '分发发布', children: [
-        { label: '发布渠道', path: '/geo/publishing', key: 'geo.content' },
-        { label: '媒体阵地', path: '/geo/placements', key: 'geo.content' },
-      ] },
+      { label: '发布渠道', path: '/geo/publishing', key: 'geo.content' },
+      { label: '媒体阵地', path: '/geo/placements', key: 'geo.content' },
     ] },
     { label: '效果监测', children: [
       { label: 'GEO 概览', path: '/geo/overview', key: 'geo.content' },
-      { label: '可见度监测', children: [
-        { label: 'AI 可见度', path: '/geo/visibility', key: 'geo.content', exact: true },
-        { label: '全自动巡检', path: '/geo/visibility/patrol', key: 'geo.content' },
-      ] },
-      { label: '效果分析', children: [
-        { label: '期次对比', path: '/geo/period-diff', key: 'geo.content' },
-        { label: 'AI 引用分析', path: '/geo/citations', key: 'geo.content' },
-        { label: '竞品监测', path: '/geo/competitors', key: 'geo.content' },
-        { label: '评价与位置', path: '/geo/evaluation', key: 'geo.content' },
-        { label: '话题覆盖热度', path: '/geo/topic-heat', key: 'geo.content' },
-        { label: 'AI 动态与策略', path: '/geo/ai-trends', key: 'geo.content' },
-      ] },
+      { label: 'AI 可见度', path: '/geo/visibility', key: 'geo.content', exact: true },
+      { label: '全自动巡检', path: '/geo/visibility/patrol', key: 'geo.content' },
+      { label: '优化期次', path: '/geo/periods', key: 'geo.content' },
+      { label: '期次对比', path: '/geo/period-diff', key: 'geo.content' },
+      { label: 'AI 引用分析', path: '/geo/citations', key: 'geo.content' },
+      { label: '竞品监测', path: '/geo/competitors', key: 'geo.content' },
+      { label: '评价与位置', path: '/geo/evaluation', key: 'geo.content' },
+      { label: '话题覆盖热度', path: '/geo/topic-heat', key: 'geo.content' },
       { label: '交付摘要', path: '/geo/deliverables', key: 'geo.content' },
     ] },
-    { label: '能力配置', children: [
+    { label: '能力与情报', children: [
       { label: '引擎配置', path: '/geo/engines', key: 'geo.content' },
       { label: 'AI 配置', path: '/geo/ai-settings', key: 'geo.content' },
       { label: '渠道成稿提示词', path: '/geo/channel-polish-prompts', key: 'geo.content' },
+      { label: 'AI 动态与策略', path: '/geo/ai-trends', key: 'geo.content' },
     ] },
   ] },
   { label: '首次接入', icon: '🚀', children: [
@@ -304,10 +317,13 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
 <template>
   <router-view v-if="bare" />
   <el-container v-else style="height: 100vh">
-    <el-aside width="220px" class="side">
+    <el-aside width="228px" class="side">
       <div class="brand">
-        <div class="brand-name">SEM 智投平台</div>
-        <div class="brand-sub">v3.0 · 工作流版</div>
+        <div class="brand-mark" aria-hidden="true">S</div>
+        <div class="brand-copy">
+          <div class="brand-name">SEM 智投平台</div>
+          <div class="brand-sub">v3.0 · 工作流版</div>
+        </div>
       </div>
       <div class="nav-scroll">
         <div class="nav-section-title">代运营工作流</div>
@@ -411,12 +427,36 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
     </el-aside>
 
     <el-container>
-      <el-header class="topbar" height="48px">
-        <el-breadcrumb separator="/">
-          <el-breadcrumb-item>{{ currentWorkflow }}</el-breadcrumb-item>
-          <el-breadcrumb-item>{{ currentTitle }}</el-breadcrumb-item>
-        </el-breadcrumb>
+      <el-header class="topbar" height="52px">
+        <div class="crumb-block">
+          <div class="crumb-kicker">当前位置</div>
+          <el-breadcrumb separator="/">
+            <el-breadcrumb-item>{{ currentWorkflow || '工作台' }}</el-breadcrumb-item>
+            <el-breadcrumb-item>{{ currentTitle || '—' }}</el-breadcrumb-item>
+          </el-breadcrumb>
+        </div>
         <div class="topbar-right">
+          <div
+            v-if="isGeoRoute"
+            class="obs-period"
+            title="GEO 报表默认观察期（上海日历日）；全时段指标会在页面单独标注"
+          >
+            <span class="obs-period-label">观察期</span>
+            <el-select
+              :model-value="observationDays"
+              size="small"
+              class="obs-period-select"
+              @change="setObservationDays"
+            >
+              <el-option
+                v-for="d in observationAllowedDays"
+                :key="d"
+                :label="`近 ${d} 天`"
+                :value="d"
+              />
+            </el-select>
+            <span class="obs-period-range">{{ observationLabel }}</span>
+          </div>
           <template v-if="session.isLoggedIn">
             <el-popover
               v-if="session.tenants.length > 1"
@@ -427,8 +467,8 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
               popper-class="tenant-popover"
             >
               <template #reference>
-                <button class="tenant-trigger" type="button">
-                  <span class="tenant-trigger-label">当前客户：</span>
+                <button class="tenant-trigger" type="button" title="切换客户">
+                  <span class="tenant-trigger-label">当前客户</span>
                   <span class="tenant-trigger-name">{{ tenantName }}</span>
                   <span class="tenant-trigger-caret">▾</span>
                 </button>
@@ -462,10 +502,16 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
                 </button>
               </div>
             </el-popover>
-            <span v-else class="tenant-static">客户：<b>{{ tenantName }}</b></span>
-            <span class="role-badge">{{ session.user?.role_label }}</span>
+            <span v-else class="tenant-static">客户 <b>{{ tenantName }}</b></span>
+            <span class="role-badge" :class="roleTone">{{ session.user?.role_label || '成员' }}</span>
             <el-dropdown @command="onUserCommand">
-              <span class="user-chip">{{ session.user?.display_name }} ▾</span>
+              <span class="user-chip">
+                <span class="user-avatar" aria-hidden="true">
+                  {{ (session.user?.display_name || '?').slice(0, 1) }}
+                </span>
+                {{ session.user?.display_name }}
+                <span class="user-caret">▾</span>
+              </span>
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item command="password">修改密码</el-dropdown-item>
@@ -488,17 +534,66 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
 
 <style scoped>
 /* 侧边栏按原型 v3.0 sidebar 复刻（logo / wf-group / wf-badge / wf-sub-item） */
-.side { background: #fff; border-right: 1px solid var(--sem-border); display: flex; flex-direction: column; }
-.brand { padding: 18px 20px 14px; border-bottom: 1px solid #f3f4f6; }
-.brand-name { font-size: 15px; font-weight: 600; color: var(--sem-primary); }
-.brand-sub { font-size: 11px; color: #9ca3af; margin-top: 4px; }
-.nav-scroll { flex: 1; overflow-y: auto; padding: 14px 0 24px; }
-.nav-section-title { padding: 0 20px 6px; font-size: 11px; color: #9ca3af; font-weight: 500; letter-spacing: 0.3px; }
+.side {
+  background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%);
+  border-right: 1px solid var(--sem-border);
+  display: flex;
+  flex-direction: column;
+}
+.brand {
+  padding: 16px 18px 14px;
+  border-bottom: 1px solid var(--sem-border-soft);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.brand-mark {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  font-weight: 750;
+  color: #fff;
+  background: linear-gradient(145deg, #1a6bb8 0%, #134c84 100%);
+  box-shadow: 0 6px 14px rgba(24, 95, 165, 0.25);
+  flex: 0 0 auto;
+}
+.brand-copy { min-width: 0; }
+.brand-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--sem-text);
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+}
+.brand-sub { font-size: 11px; color: var(--sem-text-muted); margin-top: 3px; }
+.nav-scroll { flex: 1; overflow-y: auto; padding: 12px 0 20px; }
+.nav-section-title {
+  padding: 2px 20px 8px;
+  font-size: 11px;
+  color: var(--sem-text-muted);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
 
 .wf-group { user-select: none; }
-.wf-trigger { padding: 9px 20px; cursor: pointer; color: #4b5563; font-size: 13px; display: flex; align-items: center; gap: 8px; transition: background 0.1s; }
-.wf-trigger:hover { background: #f9fafb; }
-.wf-trigger.current { color: var(--sem-primary); font-weight: 500; }
+.wf-trigger {
+  margin: 0 8px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #4b5563;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.wf-trigger:hover { background: #f3f6fa; }
+.wf-trigger.current { color: var(--sem-primary); font-weight: 600; background: var(--sem-primary-soft); }
 .wf-icon { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; }
 .wf-name { flex: 1; }
 .wf-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; font-weight: 500; background: #fef6f6; color: #e24b4a; }
@@ -507,11 +602,40 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
 .wf-group.open .wf-toggle { transform: rotate(90deg); }
 .wf-sub { display: none; padding-bottom: 4px; }
 .wf-group.open .wf-sub { display: block; }
-.wf-sub-item { padding: 7px 20px 7px 44px; cursor: pointer; color: #6b7280; font-size: 12px; display: flex; align-items: center; gap: 6px; border-left: 3px solid transparent; }
-.wf-sub-item.depth-2 { padding-left: 44px; }
-.wf-sub-item.depth-3 { padding-left: 58px; font-size: 11.5px; }
-.wf-sub-item:hover { background: #f9fafb; color: var(--sem-primary); }
-.wf-sub-item.active { background: #eff4fb; color: var(--sem-primary); font-weight: 500; border-left-color: var(--sem-primary); }
+.wf-sub-item {
+  position: relative;
+  margin: 1px 8px;
+  padding: 7px 12px 7px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #6b7280;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-left: 0;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.wf-sub-item.depth-2 { padding-left: 32px; }
+.wf-sub-item.depth-3 { padding-left: 44px; font-size: 11.5px; }
+.wf-sub-item:hover { background: #f3f6fa; color: var(--sem-primary); }
+.wf-sub-item.active {
+  background: var(--sem-primary-soft);
+  color: var(--sem-primary);
+  font-weight: 600;
+}
+/* 选中标记用独立色条，避免 inset 阴影被圆角裁成括号形 */
+.wf-sub-item.active::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 15px;
+  border-radius: 2px;
+  background: var(--sem-primary);
+}
 .wf-sub-item.disabled { cursor: default; color: #c0c4cc; }
 .wf-sub-item.disabled:hover { background: none; color: #c0c4cc; }
 .wf-sub-dot { width: 4px; height: 4px; border-radius: 50%; background: #d1d5db; flex-shrink: 0; }
@@ -521,7 +645,9 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
 /* GEO 二级 / 三级折叠 */
 .wf-section { margin: 2px 0; }
 .wf-section-trigger {
-  padding: 7px 16px 7px 36px;
+  margin: 1px 8px;
+  border-radius: 8px;
+  padding: 7px 12px 7px 20px;
   cursor: pointer;
   color: #4b5563;
   font-size: 12px;
@@ -530,7 +656,7 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
   align-items: center;
   gap: 6px;
 }
-.wf-section-trigger:hover { background: #f9fafb; color: var(--sem-primary); }
+.wf-section-trigger:hover { background: #f3f6fa; color: var(--sem-primary); }
 .wf-section-trigger.current { color: var(--sem-primary); }
 .wf-section-name { flex: 1; }
 .wf-section-toggle { font-size: 11px; color: #9ca3af; transition: transform 0.15s; }
@@ -541,20 +667,31 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
 
 .wf-branch { margin: 0; }
 .wf-branch-trigger {
-  padding: 6px 16px 6px 44px;
+  margin: 1px 8px;
+  border-radius: 8px;
+  padding: 6px 12px 6px 32px;
   cursor: pointer;
   color: #6b7280;
   font-size: 12px;
   display: flex;
   align-items: center;
   gap: 6px;
-  border-left: 3px solid transparent;
 }
-.wf-branch-trigger:hover { background: #f9fafb; color: var(--sem-primary); }
+.wf-branch-trigger:hover { background: #f3f6fa; color: var(--sem-primary); }
 .wf-branch-trigger.current { color: var(--sem-primary); }
 .wf-branch-name { flex: 1; }
 .wf-branch-body { display: none; }
-.wf-branch.open > .wf-branch-body { display: block; }
+.wf-branch.open > .wf-branch-body { display: block; position: relative; }
+/* 层级引导线：把最深一层的同组项串起来 */
+.wf-branch.open > .wf-branch-body::before {
+  content: '';
+  position: absolute;
+  left: 34px;
+  top: 3px;
+  bottom: 3px;
+  width: 1px;
+  background: #e6ebf2;
+}
 
 .side-shortcuts {
   flex: 0 0 auto;
@@ -589,47 +726,162 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
 }
 .shortcut-group-muted { background: transparent; }
 
-.topbar { background: #fff; border-bottom: 1px solid var(--sem-border); display: flex; align-items: center; justify-content: space-between; }
-.topbar-right { display: flex; align-items: center; gap: 12px; }
+.obs-period {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 10px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #f0f6fc;
+  border: 1px solid #d6e6f5;
+  max-width: min(420px, 42vw);
+}
+.obs-period-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #185fa5;
+  flex-shrink: 0;
+}
+.obs-period-select {
+  width: 100px;
+}
+.obs-period-range {
+  font-size: 11px;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 1100px) {
+  .obs-period-range { display: none; }
+}
+.topbar {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--sem-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  gap: 16px;
+}
+.crumb-block { min-width: 0; }
+.crumb-kicker {
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  color: var(--sem-text-muted);
+  margin-bottom: 1px;
+}
+.crumb-block :deep(.el-breadcrumb__inner) {
+  font-weight: 500;
+  color: var(--sem-text-sub);
+}
+.crumb-block :deep(.el-breadcrumb__item:last-child .el-breadcrumb__inner) {
+  color: var(--sem-text);
+  font-weight: 650;
+}
+.topbar-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
 .tenant-trigger {
-  height: 30px;
-  max-width: 230px;
-  padding: 6px 12px;
-  border: 0;
-  border-radius: 6px;
-  background: #f3f4f6;
+  height: 32px;
+  max-width: 240px;
+  padding: 0 12px;
+  border: 1px solid #e5ebf2;
+  border-radius: 999px;
+  background: #f7f9fc;
   color: var(--sem-text);
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   cursor: pointer;
   box-shadow: none;
   font-size: 12px;
   line-height: 1;
   user-select: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
-.tenant-trigger:hover { background: #e9edf3; }
+.tenant-trigger:hover { background: #eef3f9; border-color: #d5e0ec; }
 .tenant-trigger-label { color: #6b7280; white-space: nowrap; }
 .tenant-trigger-name {
   color: var(--sem-primary);
-  font-weight: 600;
+  font-weight: 650;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.tenant-trigger-caret { color: #4b5563; font-size: 11px; line-height: 1; margin-left: 2px; transform: translateY(-1px); }
-.tenant-static { font-size: 12px; color: var(--sem-text-sub); }
+.tenant-trigger-caret { color: #4b5563; font-size: 11px; line-height: 1; }
+.tenant-static {
+  font-size: 12px;
+  color: var(--sem-text-sub);
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #f7f9fc;
+  border: 1px solid #e5ebf2;
+}
 .tenant-static b { color: var(--sem-primary); }
-.role-badge { font-size: 11px; padding: 3px 9px; border-radius: 10px; font-weight: 500; }
+.role-badge {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-weight: 600;
+  background: #f3f4f6;
+  color: #6b7280;
+}
 .role-badge.admin { background: #fef1e1; color: #ba7517; }
 .role-badge.operator { background: #eff4fb; color: #185fa5; }
 .role-badge.client { background: #e5f4ed; color: #1d9e75; }
-.user-chip { font-size: 12px; color: var(--sem-text); cursor: pointer; user-select: none; }
-.dev-badge { font-size: 11px; color: #9ca3af; }
-.main { background: var(--sem-bg); }
+.user-chip {
+  height: 32px;
+  padding: 0 10px 0 4px;
+  border-radius: 999px;
+  border: 1px solid #e5ebf2;
+  background: #fff;
+  font-size: 12px;
+  color: var(--sem-text);
+  cursor: pointer;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.user-chip:hover { border-color: #d5e0ec; background: #f8fafc; }
+.user-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(145deg, #3e84c8, #185fa5);
+}
+.user-caret { color: #9ca3af; font-size: 10px; }
+.dev-badge {
+  font-size: 11px;
+  color: #7c6a1f;
+  background: #fff8e1;
+  border: 1px solid #f0e2a8;
+  padding: 4px 9px;
+  border-radius: 999px;
+}
+.main {
+  background:
+    radial-gradient(1200px 400px at 0% 0%, rgba(24, 95, 165, 0.05), transparent 55%),
+    radial-gradient(900px 360px at 100% 0%, rgba(29, 158, 117, 0.04), transparent 50%),
+    var(--sem-bg);
+}
 /* 主栏吃满可用宽度，避免大屏右侧大片留白 */
-.main-inner { max-width: none; width: 100%; }
-.main-inner.fluid { max-width: none; }
+.main-inner {
+  max-width: none;
+  width: 100%;
+  padding: 12px 16px 28px;
+}
+.main-inner.fluid {
+  max-width: none;
+  padding: 10px 12px 24px;
+}
 
 :global(.tenant-popover.el-popper) {
   padding: 0;

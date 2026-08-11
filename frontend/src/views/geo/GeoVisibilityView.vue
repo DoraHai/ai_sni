@@ -57,6 +57,13 @@ const snapPager = useClientPager(snapshots, { pageSize: 20 })
 
 const filterPromptId = ref(route.query.prompt_id ? Number(route.query.prompt_id) : null)
 const filterEngine = ref('')
+const filterPatrolRunId = ref(
+  route.query.patrol_run_id ? Number(route.query.patrol_run_id) : null,
+)
+const filterSimulated = ref(
+  route.query.simulated === '1' ? true : route.query.simulated === '0' ? false : null,
+)
+const sampleComposition = ref(null)
 const queueMode = computed(() => route.query.queue === 'recheck')
 
 const form = ref({
@@ -187,9 +194,33 @@ async function loadSnapshots() {
   const params = {}
   if (filterPromptId.value) params.prompt_id = filterPromptId.value
   if (filterEngine.value) params.engine = filterEngine.value
+  if (filterPatrolRunId.value) params.patrol_run_id = filterPatrolRunId.value
+  if (filterSimulated.value === true || filterSimulated.value === false) {
+    params.simulated = filterSimulated.value
+  }
   const data = await listGeoAnswerSnapshots(tenantId.value, params)
   snapshots.value = data.items || []
+  sampleComposition.value = data.sample_composition || null
   snapPager.resetPage()
+  // deep-link 单条快照：滚动到表头提示
+  if (route.query.snapshot_id) {
+    const sid = Number(route.query.snapshot_id)
+    const hit = snapshots.value.find((s) => s.id === sid)
+    if (hit) {
+      ElMessage.info(`已定位巡检相关快照 #${sid}`)
+    }
+  }
+}
+
+function clearPatrolFilter() {
+  filterPatrolRunId.value = null
+  const q = { ...route.query }
+  delete q.patrol_run_id
+  delete q.snapshot_id
+  router.replace({ query: q })
+  loadSnapshots().catch((e) => {
+    error.value = e.message
+  })
 }
 
 async function reloadAll() {
@@ -461,6 +492,15 @@ async function saveBatchItem(draft) {
 }
 
 watch(filterEngine, () => loadSnapshots())
+watch(
+  () => route.query.patrol_run_id,
+  (v) => {
+    filterPatrolRunId.value = v ? Number(v) : null
+    loadSnapshots().catch((e) => {
+      error.value = e.message
+    })
+  },
+)
 watch(tenantId, reloadAll)
 onMounted(reloadAll)
 </script>
@@ -651,19 +691,43 @@ onMounted(reloadAll)
             />
           </el-select>
           <el-button v-if="filterPromptId" @click="clearPromptFilter">清除问题过滤</el-button>
+          <el-button v-if="filterPatrolRunId" type="warning" plain @click="clearPatrolFilter">
+            清除巡检 #{{ filterPatrolRunId }}
+          </el-button>
           <el-button size="small" :disabled="!snapshots.length" @click="exportSnapshots">导出</el-button>
         </div>
         <p class="hint">
           {{ filterPromptId ? `过滤意图词 #${filterPromptId}` : '显示全部快照' }}
           <template v-if="filterEngine"> · {{ engineDisplay(filterEngine) }}</template>
+          <template v-if="filterPatrolRunId"> · 巡检运行 #{{ filterPatrolRunId }}</template>
           · 共 {{ snapshots.length }} 条
+          <template v-if="sampleComposition?.label"> · {{ sampleComposition.label }}</template>
         </p>
+        <el-alert
+          v-if="sampleComposition?.has_simulated"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="mb"
+          title="当前列表含模拟样本：不可当作真实引擎效果汇报"
+        />
         <div v-if="!snapshots.length && !loading" class="geo-empty" style="margin: 8px 0 12px">
-          <div class="empty-title">暂无回答快照</div>
-          <div>左侧登记一条，或去「全自动巡检」批量采样；保存后可在引用 / 评价报表里看到聚合。</div>
+          <div class="empty-title">
+            {{ filterPatrolRunId ? `巡检 #${filterPatrolRunId} 暂无关联快照` : '暂无回答快照' }}
+          </div>
+          <div>
+            {{
+              filterPatrolRunId
+                ? '可能是旧巡检（迁移前未写 patrol_run_id）或未勾选自动落库。'
+                : '左侧登记一条，或去「全自动巡检」批量采样；保存后可在引用 / 评价报表里看到聚合。'
+            }}
+          </div>
           <div class="empty-actions">
             <router-link class="el-button el-button--primary el-button--small" to="/geo/visibility/patrol">
               去巡检
+            </router-link>
+            <router-link class="el-button el-button--small is-plain" to="/geo/engines">
+              检查引擎
             </router-link>
             <router-link class="el-button el-button--small is-plain" to="/geo/prompts">
               管理意图词
@@ -687,6 +751,23 @@ onMounted(reloadAll)
             </el-table-column>
             <el-table-column label="引擎" width="100" show-overflow-tooltip>
               <template #default="{ row }">{{ engineDisplay(row.engine) }}</template>
+            </el-table-column>
+            <el-table-column label="样本" width="100" align="center">
+              <template #default="{ row }">
+                <el-tag
+                  v-if="row.simulated"
+                  size="small"
+                  type="warning"
+                  effect="light"
+                >模拟</el-tag>
+                <el-tag
+                  v-else-if="row.sample_mode === 'openai_compat'"
+                  size="small"
+                  type="success"
+                  effect="light"
+                >真采样</el-tag>
+                <el-tag v-else size="small" type="info" effect="light">人工</el-tag>
+              </template>
             </el-table-column>
             <el-table-column label="提及本品" width="100" align="center">
               <template #default="{ row }">

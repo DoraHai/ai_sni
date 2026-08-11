@@ -19,6 +19,13 @@ class GeoContentTask(Base):
     prompt_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("geo_prompts.id"), nullable=False, index=True
     )
+    # 业务归属：创建时从 prompt.unit.business 反填；可空表示未分类
+    business_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("geo_optimization_businesses.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
     target_channels: Mapped[list | None] = mapped_column(JSONB)
@@ -31,6 +38,7 @@ class GeoContentTask(Base):
     diagnosis_advice_code: Mapped[str | None] = mapped_column(String(64))
     review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="none")
     review_note: Mapped[str | None] = mapped_column(Text)
+    review_submitted_by: Mapped[int | None] = mapped_column(BigInteger)
     reviewed_by: Mapped[int | None] = mapped_column(BigInteger)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
     ready_at: Mapped[datetime | None] = mapped_column(DateTime)

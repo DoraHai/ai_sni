@@ -197,69 +197,80 @@ onMounted(load)
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
 
     <div class="filters">
-      <el-select v-model="trust" clearable placeholder="信任级别" style="width: 160px">
+      <el-select v-model="trust" clearable placeholder="信任级别" style="width: 168px">
         <el-option label="已核验" value="verified" />
         <el-option label="待审" value="needs_review" />
         <el-option label="草稿" value="draft" />
       </el-select>
+      <span class="toolbar-hint">生成母稿需 ≥3 条已核验事实</span>
     </div>
 
-    <el-table :data="pager.pagedItems" stripe empty-text="暂无事实">
-      <el-table-column prop="id" label="ID" width="72" />
-      <el-table-column label="标题 / 陈述" min-width="260">
-        <template #default="{ row }">
-          <div class="title">{{ row.title }}</div>
-          <div class="sub">{{ row.statement }}</div>
-        </template>
-      </el-table-column>
-      <el-table-column label="类型" width="90">
-        <template #default="{ row }">{{ factTypeLabel(row.fact_type) }}</template>
-      </el-table-column>
-      <el-table-column label="来源" min-width="120">
-        <template #default="{ row }">
-          <div>{{ row.source_name || '—' }}</div>
-          <div v-if="row.source_url" class="sub">{{ row.source_url }}</div>
-        </template>
-      </el-table-column>
-      <el-table-column label="信任" width="110">
-        <template #default="{ row }">{{ trustLabel(row.trust_level) }}</template>
-      </el-table-column>
-      <el-table-column label="状态" width="90">
-        <template #default="{ row }">{{ statusLabel(row.status) }}</template>
-      </el-table-column>
-      <el-table-column label="操作" width="200" fixed="right">
-        <template #default="{ row }">
-          <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
-          <el-button
-            v-if="row.trust_level !== 'verified' && row.status === 'active'"
-            type="primary"
-            link
-            @click="onVerify(row)"
-          >核验</el-button>
-          <el-button
-            v-if="row.status === 'active'"
-            type="danger"
-            link
-            @click="archive(row)"
-          >归档</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
-    <div class="geo-pager">
-      <el-pagination
-        background
-        layout="total, sizes, prev, pager, next"
-        :total="pager.total"
-        :page-size="pager.pageSize"
-        :current-page="pager.page"
-        :page-sizes="[10, 20, 50, 100]"
-        @current-change="pager.onPageChange"
-        @size-change="pager.onSizeChange"
-      />
+    <div class="geo-table-shell">
+      <el-table :data="pager.pagedItems" stripe empty-text="暂无事实">
+        <el-table-column prop="id" label="ID" width="72" />
+        <el-table-column label="标题 / 陈述" min-width="260">
+          <template #default="{ row }">
+            <div class="title">{{ row.title }}</div>
+            <div class="sub">{{ row.statement }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="类型" width="90">
+          <template #default="{ row }">{{ factTypeLabel(row.fact_type) }}</template>
+        </el-table-column>
+        <el-table-column label="来源" min-width="120">
+          <template #default="{ row }">
+            <div>{{ row.source_name || '—' }}</div>
+            <div v-if="row.source_url" class="sub">{{ row.source_url }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="信任" width="110">
+          <template #default="{ row }">
+            <el-tag
+              size="small"
+              :type="row.trust_level === 'verified' ? 'success' : row.trust_level === 'needs_review' ? 'warning' : 'info'"
+              effect="light"
+            >
+              {{ trustLabel(row.trust_level) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ statusLabel(row.status) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="200" fixed="right">
+          <template #default="{ row }">
+            <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
+            <el-button
+              v-if="row.trust_level !== 'verified' && row.status === 'active'"
+              type="primary"
+              link
+              @click="onVerify(row)"
+            >核验</el-button>
+            <el-button
+              v-if="row.status === 'active'"
+              type="danger"
+              link
+              @click="archive(row)"
+            >归档</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div class="geo-pager">
+        <el-pagination
+          background
+          layout="total, sizes, prev, pager, next"
+          :total="pager.total"
+          :page-size="pager.pageSize"
+          :current-page="pager.page"
+          :page-sizes="[10, 20, 50, 100]"
+          @current-change="pager.onPageChange"
+          @size-change="pager.onSizeChange"
+        />
+      </div>
     </div>
 
-    <el-dialog v-model="editOpen" title="编辑事实" width="560px">
-      <el-form label-width="88px">
+    <el-dialog v-model="editOpen" title="编辑事实" width="560px" class="geo-form-dialog">
+      <el-form label-width="88px" label-position="right" class="geo-dialog-form">
         <el-form-item label="标题" required>
           <el-input v-model="editForm.title" />
         </el-form-item>
@@ -295,13 +306,13 @@ onMounted(load)
       </template>
     </el-dialog>
 
-    <el-dialog v-model="createOpen" title="新建事实" width="560px">
-      <el-form label-width="88px">
+    <el-dialog v-model="createOpen" title="新建事实" width="560px" class="geo-form-dialog">
+      <el-form label-width="88px" label-position="right" class="geo-dialog-form">
         <el-form-item label="标题" required>
-          <el-input v-model="form.title" />
+          <el-input v-model="form.title" placeholder="简短可检索的事实标题" />
         </el-form-item>
         <el-form-item label="陈述" required>
-          <el-input v-model="form.statement" type="textarea" :rows="3" />
+          <el-input v-model="form.statement" type="textarea" :rows="3" placeholder="可核验的陈述原文" />
         </el-form-item>
         <el-form-item label="类型">
           <el-select v-model="form.fact_type" style="width: 100%">
@@ -335,15 +346,20 @@ onMounted(load)
 </template>
 
 <style scoped>
-.geo-page { padding: 4px 2px 24px; }
-.page-header {
-  display: flex; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
+.title { font-weight: 650; color: #0f172a; }
+.sub {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-top: 3px;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
-.page-title { font-size: 20px; font-weight: 700; }
-.page-desc { font-size: 13px; color: #6b7280; margin-top: 4px; }
-.header-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.filters { margin-bottom: 12px; }
-.mb { margin-bottom: 12px; }
-.title { font-weight: 600; }
-.sub { font-size: 12px; color: #8b93a7; margin-top: 2px; }
+.toolbar-hint {
+  margin-left: auto;
+  font-size: 12px;
+  color: #94a3b8;
+}
 </style>
