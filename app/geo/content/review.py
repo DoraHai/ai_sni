@@ -54,13 +54,22 @@ def apply_decision(
     decision: str,
     note: str | None,
     reviewer_id: int | None,
-    allow_self_approve: bool = False,
+    allow_self_approve: bool | None = None,
 ) -> None:
     decision_norm = str(decision or "").strip().lower()
     if decision_norm not in {REVIEW_APPROVED, REVIEW_REJECTED}:
         raise ValueError("decision 仅支持 approved / rejected")
     if normalize_review_status(task.review_status) != REVIEW_PENDING:
         raise ValueError("仅「待审」任务可审批")
+    if allow_self_approve is None:
+        try:
+            from app.config import get_settings
+
+            allow_self_approve = bool(
+                getattr(get_settings(), "geo_allow_self_review", False)
+            )
+        except Exception:  # noqa: BLE001
+            allow_self_approve = False
     if (
         not allow_self_approve
         and decision_norm == REVIEW_APPROVED

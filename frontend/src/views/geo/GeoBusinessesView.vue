@@ -14,6 +14,7 @@ import {
   patchGeoUnit,
   rebuildGeoDailyMetrics,
 } from '../../api/geoContent'
+import NeedHintAlert from '../../components/NeedHintAlert.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import {
@@ -478,6 +479,7 @@ onMounted(async () => {
     </div>
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
+    <NeedHintAlert />
     <el-alert
       v-if="citationNote && metricsOpen"
       type="info"

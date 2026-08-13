@@ -81,6 +81,16 @@ def collect_production_issues(settings: "Settings") -> list[str]:
     if "127.0.0.1" in base or "localhost" in base:
         issues.append("APP_BASE_URL still points at localhost; set public production URL")
 
+    if bool(getattr(settings, "admin_api_key_query_enabled", False)):
+        issues.append(
+            "ADMIN_API_KEY_QUERY_ENABLED must be false in production "
+            "(API keys in URL leak via logs/Referer)"
+        )
+    if bool(getattr(settings, "geo_allow_self_review", False)):
+        issues.append(
+            "GEO_ALLOW_SELF_REVIEW is true — self-approve of content is a delivery risk"
+        )
+
     return issues
 
 

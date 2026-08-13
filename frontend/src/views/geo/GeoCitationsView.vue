@@ -2,8 +2,9 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { fetchGeoCitationInsights } from '../../api/geoContent'
+import { backfillAttribution, fetchGeoCitationInsights, formatGeoError } from '../../api/geoContent'
 import { useClientPager } from '../../composables/useClientPager'
+import { useObservationPeriod } from '../../composables/useObservationPeriod'
 import { session } from '../../store/session'
 import {
   CITATION_ACCURACY_LABEL,
@@ -17,11 +18,13 @@ import {
 } from '../../utils/geoReportLabels'
 
 const router = useRouter()
+const { days: observationDays, start: obsStart, end: obsEnd, label: obsLabel } = useObservationPeriod()
 const tenantId = computed(() =>
   session.tenantId || (import.meta.env.DEV && import.meta.env.VITE_API_KEY ? 1 : null),
 )
 
 const loading = ref(false)
+const backfilling = ref(false)
 const error = ref('')
 const data = ref(null)
 const ownOnly = ref(false)
@@ -52,7 +55,11 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    data.value = await fetchGeoCitationInsights(tenantId.value)
+    data.value = await fetchGeoCitationInsights(tenantId.value, {
+      date_from: obsStart.value,
+      date_to: obsEnd.value,
+      days: observationDays.value,
+    })
     pager.resetPage()
   } catch (e) {
     error.value = e.message || '加载失败'
@@ -80,6 +87,22 @@ function exportCsv() {
   ElMessage.success('已导出当前筛选结果')
 }
 
+async function runBackfill() {
+  if (!tenantId.value) return
+  backfilling.value = true
+  try {
+    const res = await backfillAttribution(tenantId.value, { limit: 1000, onlyEmpty: true })
+    ElMessage.success(
+      `归因回填完成：扫描 ${res.scanned || 0} · 更新 ${res.updated || 0} · 命中 ${res.matched_hits || 0}`,
+    )
+    await load()
+  } catch (e) {
+    ElMessage.error(formatGeoError(e, '回填失败'))
+  } finally {
+    backfilling.value = false
+  }
+}
+
 /** 域名行 → 可见度快照（用域名作提示；引擎若唯一则带上） */
 function openDomain(row) {
   if (!row) return
@@ -89,7 +112,7 @@ function openDomain(row) {
   ElMessage.info(`已跳转可见度；可在快照中筛选含 ${row.domain} 的回答`)
 }
 
-watch(tenantId, load)
+watch([tenantId, observationDays, obsStart, obsEnd], load)
 watch([ownOnly, domainQuery], () => pager.resetPage())
 onMounted(load)
 </script>
@@ -100,11 +123,14 @@ onMounted(load)
       <div>
         <div class="page-title">AI 引用分析</div>
         <div class="page-desc">
-          看 AI 回答引用了哪些域名、自有站是否被带到，以及引用格式/准确性标注分布。
+          看 AI 回答引用了哪些域名、自有站是否被带到。跟随顶栏观察期（{{ obsLabel }}）。
         </div>
       </div>
       <div class="header-actions">
         <el-button :loading="loading" @click="load">刷新</el-button>
+        <el-button type="primary" plain :loading="backfilling" @click="runBackfill">
+          回填发布归因
+        </el-button>
         <el-button :disabled="!citeItems.length" @click="exportCsv">导出 CSV</el-button>
         <router-link class="el-button" to="/geo/visibility">登记快照</router-link>
         <router-link class="el-button" to="/geo/evaluation">评价分析</router-link>

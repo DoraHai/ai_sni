@@ -44,6 +44,13 @@ class GeoAnswerSnapshot(Base):
     simulated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # 引用 URL 反查 geo_publications 命中的 publication id 列表
     matched_publication_ids: Mapped[list | None] = mapped_column(JSONB)
+    # 归属优化期次（可空；关闭期次后仍保留以回看）
+    period_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("geo_optimization_periods.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     note: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

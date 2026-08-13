@@ -358,3 +358,222 @@ async def preview_from_website(
         "expand": expand_meta,
         "hints": hints,
     }
+
+
+def _check(key: str, ok: bool, title: str, hint: str, href: str) -> dict[str, Any]:
+    return {"key": key, "ok": bool(ok), "title": title, "hint": hint, "href": href}
+
+
+def build_readiness_items(
+    *,
+    has_brand_terms: bool,
+    business_count: int,
+    prompt_count: int,
+    fact_count: int,
+    verified_fact_count: int,
+    engine_count: int,
+    real_engine_count: int,
+    ai_key_configured: bool,
+    patrol_enabled: bool,
+    channel_count: int,
+    stance: str = "hybrid",
+) -> dict[str, Any]:
+    """开户完成后「还差什么」检查表（纯函数，便于单测）。"""
+    items = [
+        _check(
+            "brand_terms",
+            has_brand_terms,
+            "品牌词",
+            "已填写" if has_brand_terms else "提及率依赖品牌词，请在客户资料补上",
+            "/geo/onboarding",
+        ),
+        _check(
+            "businesses",
+            business_count > 0,
+            "优化业务",
+            f"已建 {business_count} 条" if business_count else "还没有业务线，向导写入或手动新建",
+            "/geo/businesses",
+        ),
+        _check(
+            "prompts",
+            prompt_count > 0,
+            "意图词",
+            f"已建 {prompt_count} 条" if prompt_count else "没有意图词就无法巡检和写稿",
+            "/geo/prompts",
+        ),
+        _check(
+            "facts",
+            verified_fact_count >= 3 or fact_count >= 3,
+            "事实卡",
+            (
+                f"已核验 {verified_fact_count} / 共 {fact_count}"
+                if fact_count
+                else "生成母稿至少需要 3 条已核验事实"
+            ),
+            "/geo/facts",
+        ),
+        _check(
+            "engines",
+            engine_count > 0,
+            "监测引擎",
+            f"已启用 {engine_count} 个" if engine_count else "还没配引擎，巡检无处可跑",
+            "/geo/engines",
+        ),
+        _check(
+            "engine_keys",
+            real_engine_count > 0 or stance == "simulation",
+            "引擎真采样 Key",
+            (
+                f"{real_engine_count} 个引擎已配 Key"
+                if real_engine_count
+                else (
+                    "当前是模拟评估，交付须标注"
+                    if stance == "simulation"
+                    else "hybrid 下无 Key 的引擎会走模拟，客户报表会被标「含模拟」"
+                )
+            ),
+            "/geo/engines",
+        ),
+        _check(
+            "ai_key",
+            ai_key_configured,
+            "AI 能力 Key",
+            "已配置" if ai_key_configured else "写稿 / 审稿 / 探测需要租户 LLM Key",
+            "/geo/ai-settings",
+        ),
+        _check(
+            "patrol",
+            patrol_enabled,
+            "定时巡检",
+            "已打开" if patrol_enabled else "打开后才会按窗口自动采样",
+            "/geo/visibility/patrol",
+        ),
+        _check(
+            "channel",
+            channel_count > 0,
+            "发布渠道",
+            f"已配 {channel_count} 条" if channel_count else "至少配一条官网/文档渠道才能回填 URL",
+            "/geo/publishing",
+        ),
+    ]
+    ready = sum(1 for i in items if i["ok"])
+    blocking = [i["key"] for i in items if not i["ok"] and i["key"] in {"businesses", "prompts"}]
+    return {
+        "items": items,
+        "ready_count": ready,
+        "total": len(items),
+        "ready": ready == len(items),
+        "blocking": blocking,
+        "stance": stance,
+    }
+
+
+async def tenant_readiness(session: Any, tenant_id: int) -> dict[str, Any]:
+    """查库组装开户就绪检查表。"""
+    from sqlalchemy import func, select
+
+    from app.geo.content.ai_settings import get_ai_setting_row, settings_public_payload
+    from app.geo.content.monitoring_stance import normalize_stance
+    from app.models import (
+        GeoFact,
+        GeoOptimizationBusiness,
+        GeoPrompt,
+        GeoPublishingChannel,
+        GeoTrackingEngine,
+        GeoVisibilityPatrolSettings,
+        Tenant,
+    )
+
+    tenant = await session.get(Tenant, tenant_id)
+    if tenant is None:
+        return {
+            "tenant_id": tenant_id,
+            "items": [],
+            "ready_count": 0,
+            "total": 0,
+            "ready": False,
+            "blocking": ["tenant"],
+            "error": "客户不存在",
+        }
+
+    biz_n = int(
+        await session.scalar(
+            select(func.count())
+            .select_from(GeoOptimizationBusiness)
+            .where(
+                GeoOptimizationBusiness.tenant_id == tenant_id,
+                GeoOptimizationBusiness.status == "active",
+            )
+        )
+        or 0
+    )
+    prompt_n = int(
+        await session.scalar(
+            select(func.count())
+            .select_from(GeoPrompt)
+            .where(GeoPrompt.tenant_id == tenant_id, GeoPrompt.status == "active")
+        )
+        or 0
+    )
+    fact_n = int(
+        await session.scalar(
+            select(func.count())
+            .select_from(GeoFact)
+            .where(GeoFact.tenant_id == tenant_id, GeoFact.status == "active")
+        )
+        or 0
+    )
+    verified_n = int(
+        await session.scalar(
+            select(func.count())
+            .select_from(GeoFact)
+            .where(
+                GeoFact.tenant_id == tenant_id,
+                GeoFact.status == "active",
+                GeoFact.trust_level == "verified",
+            )
+        )
+        or 0
+    )
+    engines = list(
+        await session.scalars(
+            select(GeoTrackingEngine).where(GeoTrackingEngine.tenant_id == tenant_id)
+        )
+    )
+    enabled = [e for e in engines if e.enabled]
+    real = [
+        e
+        for e in enabled
+        if (e.sample_mode or "") == "openai_compat" and bool(e.api_key_encrypted)
+    ]
+    setting = await get_ai_setting_row(session, tenant_id)
+    ai_pub = settings_public_payload(setting) if setting is not None else {}
+    patrol = await session.get(GeoVisibilityPatrolSettings, tenant_id)
+    ch_n = int(
+        await session.scalar(
+            select(func.count())
+            .select_from(GeoPublishingChannel)
+            .where(
+                GeoPublishingChannel.tenant_id == tenant_id,
+                GeoPublishingChannel.enabled.is_(True),
+            )
+        )
+        or 0
+    )
+    stance = normalize_stance(getattr(setting, "monitoring_stance", None) if setting else None)
+    payload = build_readiness_items(
+        has_brand_terms=bool(tenant.brand_terms),
+        business_count=biz_n,
+        prompt_count=prompt_n,
+        fact_count=fact_n,
+        verified_fact_count=verified_n,
+        engine_count=len(enabled),
+        real_engine_count=len(real),
+        ai_key_configured=bool(ai_pub.get("api_key_configured")),
+        patrol_enabled=bool(patrol and patrol.enabled),
+        channel_count=ch_n,
+        stance=stance,
+    )
+    payload["tenant_id"] = tenant_id
+    payload["tenant_name"] = tenant.name
+    return payload

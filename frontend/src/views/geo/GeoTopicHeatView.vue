@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import { fetchGeoTopicHeat } from '../../api/geoContent'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
+import { useObservationPeriod } from '../../composables/useObservationPeriod'
 
 const router = useRouter()
 import {
@@ -18,9 +19,9 @@ import {
 } from '../../utils/geoReportLabels'
 
 const { tenantId } = useGeoTenant()
+const { days, label: obsLabel } = useObservationPeriod()
 const loading = ref(false)
 const error = ref('')
-const days = ref(14)
 const groupBy = ref('prompt')
 const heatFilter = ref('all')
 const items = ref([])
@@ -155,11 +156,7 @@ onMounted(load)
           <el-option label="按意图词" value="prompt" />
           <el-option label="按问题组" value="group" />
         </el-select>
-        <el-select v-model="days" style="width: 120px">
-          <el-option :value="7" label="近 7 天" />
-          <el-option :value="14" label="近 14 天" />
-          <el-option :value="30" label="近 30 天" />
-        </el-select>
+        <span class="geo-muted" style="font-size:12px">{{ obsLabel }}</span>
         <el-button :loading="loading" @click="load">刷新</el-button>
         <el-button :disabled="!filteredItems.length" @click="exportCsv">导出 CSV</el-button>
         <router-link class="el-button" to="/geo/ai-trends">AI 动态</router-link>

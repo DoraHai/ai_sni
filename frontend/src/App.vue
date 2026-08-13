@@ -70,9 +70,8 @@ const ALL_GROUPS = computed(() => [
   // GEO：压成两层——内容 / 监测报表平级 / 配置；AI 动态归情报配置
   { label: 'GEO 增长', icon: '◈', children: [
     { label: '内容生产', children: [
-      { label: '内容工作台', path: '/geo/workbench', key: 'geo.content' },
-      { label: 'GEO 开户向导', path: '/geo/onboarding', key: 'geo.content' },
       { label: '优化业务', path: '/geo/businesses', key: 'geo.content' },
+      { label: 'GEO 开户向导', path: '/geo/onboarding', key: 'geo.content' },
       { label: '优化意图词', path: '/geo/prompts', key: 'geo.content' },
       { label: '缺口工作台', path: '/geo/gaps', key: 'geo.content' },
       { label: '事实库', path: '/geo/facts', key: 'geo.content' },
@@ -83,14 +82,15 @@ const ALL_GROUPS = computed(() => [
     { label: '效果监测', children: [
       { label: 'GEO 概览', path: '/geo/overview', key: 'geo.content' },
       { label: 'AI 可见度', path: '/geo/visibility', key: 'geo.content', exact: true },
-      { label: '全自动巡检', path: '/geo/visibility/patrol', key: 'geo.content' },
       { label: '优化期次', path: '/geo/periods', key: 'geo.content' },
-      { label: '期次对比', path: '/geo/period-diff', key: 'geo.content' },
-      { label: 'AI 引用分析', path: '/geo/citations', key: 'geo.content' },
-      { label: '竞品监测', path: '/geo/competitors', key: 'geo.content' },
-      { label: '评价与位置', path: '/geo/evaluation', key: 'geo.content' },
-      { label: '话题覆盖热度', path: '/geo/topic-heat', key: 'geo.content' },
       { label: '交付摘要', path: '/geo/deliverables', key: 'geo.content' },
+      { label: '更多', children: [
+        { label: '全自动巡检', path: '/geo/visibility/patrol', key: 'geo.content' },
+        { label: 'AI 引用分析', path: '/geo/citations', key: 'geo.content' },
+        { label: '竞品监测', path: '/geo/competitors', key: 'geo.content' },
+        { label: '评价与位置', path: '/geo/evaluation', key: 'geo.content' },
+        { label: '话题覆盖热度', path: '/geo/topic-heat', key: 'geo.content' },
+      ] },
     ] },
     { label: '能力与情报', children: [
       { label: '引擎配置', path: '/geo/engines', key: 'geo.content' },
@@ -319,14 +319,14 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
   <el-container v-else style="height: 100vh">
     <el-aside width="228px" class="side">
       <div class="brand">
-        <div class="brand-mark" aria-hidden="true">S</div>
+        <div class="brand-mark" aria-hidden="true">{{ isGeoRoute ? 'G' : 'S' }}</div>
         <div class="brand-copy">
-          <div class="brand-name">SEM 智投平台</div>
-          <div class="brand-sub">v3.0 · 工作流版</div>
+          <div class="brand-name">{{ isGeoRoute ? 'GEO 增长' : 'SEM 智投平台' }}</div>
+          <div class="brand-sub">{{ isGeoRoute ? '内容与可见度' : 'v3.0 · 工作流版' }}</div>
         </div>
       </div>
       <div class="nav-scroll">
-        <div class="nav-section-title">代运营工作流</div>
+        <div class="nav-section-title">{{ isGeoRoute ? 'GEO 工作流' : '代运营工作流' }}</div>
         <div
           v-for="g in navGroups"
           :key="g.label"

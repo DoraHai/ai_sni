@@ -2,6 +2,7 @@
 import { onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { fetchGeoAiSettings, putGeoAiSettings, testGeoAiSettings } from '../../api/geoContent'
+import NeedHintAlert from '../../components/NeedHintAlert.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
 const { tenantId } = useGeoTenant()
@@ -107,6 +108,7 @@ onMounted(load)
     </div>
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
+    <NeedHintAlert />
 
     <div class="geo-form-panel">
       <div class="form-section-title">模型与密钥</div>

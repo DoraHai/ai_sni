@@ -317,9 +317,12 @@ export function normalizeStaticGeoPage(page = 'dashboard.html') {
 }
 
 function staticGeoQuery(tenantId, extra = {}) {
-  const qs = new URLSearchParams({ tenant_id: String(tenantId || 1), ...extra })
-  const key = import.meta.env.VITE_API_KEY
-  if (key && key !== 'CHANGE_ME') qs.set('api_key', key)
+  // 产品页禁止把 API Key 放进 URL（历史/Referer/代理日志）。静态壳仅保留 tenant 定位。
+  const tid = Number(tenantId)
+  const qs = new URLSearchParams({
+    tenant_id: String(Number.isFinite(tid) && tid > 0 ? tid : ''),
+    ...extra,
+  })
   if (import.meta.env.DEV) qs.set('api_origin', 'http://127.0.0.1:8011')
   return qs
 }
@@ -382,6 +385,18 @@ export function fetchGeoContentTaskImpact(tenantId, taskId, windowDays = 14) {
 export function fetchGapWorkbench(tenantId, params = {}) {
   return client.get('/api/v1/geo/gap-workbench', {
     params: { tenant_id: tenantId, ...params },
+  })
+}
+
+/** 历史快照 publication 归因回填 */
+export function backfillAttribution(tenantId, { limit = 500, onlyEmpty = true } = {}) {
+  return client.post('/api/v1/geo/attribution/backfill', null, {
+    params: {
+      tenant_id: tenantId,
+      limit,
+      only_empty: !!onlyEmpty,
+    },
+    timeout: 120000,
   })
 }
 
@@ -456,14 +471,24 @@ export function listGeoAsyncJobs(tenantId, params = {}) {
 }
 
 /** Poll async job until terminal status */
-export async function waitGeoAsyncJob(tenantId, jobId, { intervalMs = 2000, maxMs = 180000 } = {}) {
+export async function waitGeoAsyncJob(
+  tenantId,
+  jobId,
+  { intervalMs = 2500, maxMs = 45 * 60 * 1000 } = {},
+) {
+  // Align with backend stale running window (~45min); do not fail UI while job still runs
   const start = Date.now()
   while (Date.now() - start < maxMs) {
     const job = await getGeoAsyncJob(tenantId, jobId)
     if (job.status === 'succeeded' || job.status === 'failed') return job
     await new Promise((r) => setTimeout(r, intervalMs))
   }
-  throw new Error('异步任务等待超时')
+  // Soft timeout: return last known job so UI can say「转后台继续」
+  try {
+    return await getGeoAsyncJob(tenantId, jobId)
+  } catch {
+    throw new Error('异步任务仍在后台运行，请稍后刷新查看结果')
+  }
 }
 
 export function previewGeoOnboarding(body) {
@@ -472,6 +497,12 @@ export function previewGeoOnboarding(body) {
 
 export function applyGeoOnboarding(body) {
   return client.post('/api/v1/geo/onboarding/apply', body, { timeout: 60000 })
+}
+
+export function fetchOnboardingReadiness(tenantId) {
+  return client.get('/api/v1/geo/onboarding/readiness', {
+    params: { tenant_id: tenantId },
+  })
 }
 
 export function fetchBusinessDashboard(tenantId, businessId, days = 14) {
@@ -771,9 +802,9 @@ export function listGeoTrackingEngines(tenantId, enabledOnly = false) {
   })
 }
 
-export function fetchGeoCitationInsights(tenantId) {
+export function fetchGeoCitationInsights(tenantId, params = {}) {
   return client.get('/api/v1/geo/citation-insights', {
-    params: { tenant_id: tenantId },
+    params: { tenant_id: tenantId, ...params },
   })
 }
 
@@ -805,9 +836,9 @@ export function createGeoCompetitorReport(body) {
   return client.post('/api/v1/geo/competitor-insights/report', body)
 }
 
-export function fetchGeoEvaluationInsights(tenantId) {
+export function fetchGeoEvaluationInsights(tenantId, params = {}) {
   return client.get('/api/v1/geo/evaluation-insights', {
-    params: { tenant_id: tenantId },
+    params: { tenant_id: tenantId, ...params },
   })
 }
 

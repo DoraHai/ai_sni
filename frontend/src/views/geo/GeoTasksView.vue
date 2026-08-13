@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -7,9 +7,9 @@ import {
   deleteGeoContentTask,
   listGeoContentTasks,
   listGeoPrompts,
-  staticGeoWorkbenchUrl,
 } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
+import { pipelineLabel, taskStatusLabel } from '../../utils/geoReportLabels'
 
 const router = useRouter()
 const { tenantId } = useGeoTenant()
@@ -39,12 +39,11 @@ const statusOptions = [
 ]
 const includeArchived = ref(false)
 
-const pipelineLabel = {
-  opportunity: '机会',
-  evidence: '证据',
-  draft: '母稿',
-  adapt: '渠道',
-  publish: '发布',
+function statusTagType(status) {
+  if (status === 'published' || status === 'ready') return 'success'
+  if (status === 'needs_fix' || status === 'failed') return 'danger'
+  if (status === 'archived') return 'info'
+  return ''
 }
 
 async function load() {
@@ -129,10 +128,6 @@ function openEditor(row) {
   router.push(`/geo/tasks/${row.id}`)
 }
 
-function openStaticWorkbench() {
-  window.open(staticGeoWorkbenchUrl('dashboard.html', tenantId.value || 1), '_blank')
-}
-
 async function archiveTask(row) {
   try {
     await ElMessageBox.confirm(`归档任务 #${row.id}？列表默认不再显示。`, '归档', {
@@ -175,14 +170,12 @@ onMounted(load)
       <div>
         <div class="page-title">优化文章</div>
         <div class="page-desc">
-          内容任务列表 · 母稿完整流水线可走本页编辑器或静态 editor 兼容壳。
+          一篇文章从草稿到发出去。点进去会告诉你现在该做哪一步。
         </div>
       </div>
       <div class="header-actions">
-        <router-link class="el-button" to="/geo/workbench">工作台枢纽</router-link>
         <router-link class="el-button" to="/geo/prompts">优化意图词</router-link>
         <router-link class="el-button" to="/geo/facts">事实库</router-link>
-        <el-button @click="openStaticWorkbench">兼容静态台</el-button>
         <el-button type="primary" @click="openCreate">新建优化文章</el-button>
         <el-button @click="load">刷新</el-button>
       </div>
@@ -216,14 +209,14 @@ onMounted(load)
         </el-table-column>
         <el-table-column label="状态" width="110">
           <template #default="{ row }">
-            <el-tag size="small" :type="row.status === 'archived' ? 'info' : row.status === 'ready' ? 'success' : ''" effect="light">
-              {{ row.status }}
+            <el-tag size="small" :type="statusTagType(row.status)" effect="light">
+              {{ taskStatusLabel(row.status) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="流水线" width="90">
+        <el-table-column label="做到哪" width="100">
           <template #default="{ row }">
-            {{ pipelineLabel[row.pipeline_step] || row.pipeline_step || '—' }}
+            {{ pipelineLabel(row.pipeline_step) }}
           </template>
         </el-table-column>
         <el-table-column label="阻断" min-width="120">

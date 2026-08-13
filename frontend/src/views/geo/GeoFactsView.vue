@@ -2,6 +2,7 @@
 import { onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { createGeoFact, listGeoFacts, patchGeoFact, verifyGeoFact } from '../../api/geoContent'
+import NeedHintAlert from '../../components/NeedHintAlert.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
@@ -194,6 +195,7 @@ onMounted(load)
       </div>
     </div>
 
+    <NeedHintAlert />
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
 
     <div class="filters">

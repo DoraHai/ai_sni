@@ -11,6 +11,7 @@ import {
   patchGeoPrompt,
   promoteGeoPromptCandidates,
 } from '../../api/geoContent'
+import NeedHintAlert from '../../components/NeedHintAlert.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { REPORT_GLOSSARY } from '../../utils/geoReportLabels'
@@ -338,6 +339,7 @@ const tagText = (tags) => (Array.isArray(tags) ? tags.join(', ') : '—')
     </details>
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
+    <NeedHintAlert />
 
     <div class="geo-filter-bar filters">
       <el-select v-model="status" style="width: 140px">

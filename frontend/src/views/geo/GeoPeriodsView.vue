@@ -3,6 +3,7 @@
  * 优化期次：交付边界实体（时间窗 + 业务 + 基线 + 期末复测）
  */
 import { onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   closeOptimizationPeriod,
@@ -14,6 +15,8 @@ import {
 } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { fmtPct } from '../../utils/geoReportLabels'
+
+const router = useRouter()
 
 const { tenantId } = useGeoTenant()
 
@@ -115,6 +118,14 @@ function bizName(id) {
   return b?.name || `#${id}`
 }
 
+/** 锁窗对比 / 期次交付（period_id 入参） */
+function goPeriodDiff(id) {
+  router.push({ path: '/geo/period-diff', query: { period_id: String(id) } })
+}
+function goPeriodDeliverable(id) {
+  router.push({ path: '/geo/deliverables', query: { period_id: String(id) } })
+}
+
 watch(tenantId, load)
 onMounted(load)
 </script>
@@ -128,9 +139,11 @@ onMounted(load)
           一个期次 = 时间范围 + 目标业务 + 期初基线 + 期内发布清单 + 期末复测。对应交付合同颗粒度。
         </p>
       </div>
-      <router-link class="el-button el-button--small is-plain" to="/geo/period-diff">
-        自由日期对比
-      </router-link>
+      <div class="head-actions">
+        <router-link class="el-button el-button--small is-plain" to="/geo/period-diff">
+          自由日期对比
+        </router-link>
+      </div>
     </div>
 
     <el-card shadow="never" class="mb">
@@ -178,12 +191,18 @@ onMounted(load)
         </template>
       </el-table-column>
       <el-table-column prop="status" label="状态" width="90" />
-      <el-table-column label="操作" width="120" fixed="right">
+      <el-table-column label="操作" width="280" fixed="right">
         <template #default="{ row }">
+          <el-button link type="primary" size="small" @click.stop="goPeriodDiff(row.id)">
+            查看本期对比
+          </el-button>
+          <el-button link size="small" @click.stop="goPeriodDeliverable(row.id)">
+            期次交付
+          </el-button>
           <el-button
             v-if="row.status !== 'closed'"
             link
-            type="primary"
+            type="warning"
             size="small"
             @click.stop="closePeriod(row.id)"
           >
@@ -196,14 +215,35 @@ onMounted(load)
 
     <el-card v-if="detail" shadow="never" class="mt">
       <template #header>
-        期次详情 #{{ detail.id }} · {{ detail.name }}
-        <el-tag size="small" class="ml">{{ detail.status }}</el-tag>
+        <div class="detail-head">
+          <span>
+            期次详情 #{{ detail.id }} · {{ detail.name }}
+            <el-tag size="small" class="ml">{{ detail.status }}</el-tag>
+          </span>
+          <span class="detail-actions">
+            <el-button size="small" type="primary" plain @click="goPeriodDiff(detail.id)">
+              查看本期对比
+            </el-button>
+            <el-button size="small" plain @click="goPeriodDeliverable(detail.id)">
+              期次交付
+            </el-button>
+          </span>
+        </div>
       </template>
       <p class="hint">
         {{ (detail.starts_at || '').slice(0, 10) }} ~ {{ (detail.ends_at || '').slice(0, 10) }}
         · {{ bizName(detail.business_id) }}
       </p>
       <p v-if="detail.goal_note">目标：{{ detail.goal_note }}</p>
+      <el-alert
+        v-if="detail.status === 'closed' && detail.deliverable_pack"
+        type="success"
+        :closable="false"
+        show-icon
+        class="mb-sm"
+        title="已固化交付包"
+        :description="`冻结于 ${detail.deliverable_pack.frozen_at || '—'} · 关闭后改窗不影响本快照`"
+      />
       <div class="meta-grid">
         <div>
           <h4>期初基线</h4>
@@ -263,7 +303,17 @@ onMounted(load)
 }
 .page-title { margin: 0 0 6px; font-size: 20px; font-weight: 700; }
 .page-desc { margin: 0; font-size: 13px; color: #64748b; max-width: 560px; line-height: 1.5; }
+.head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.detail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.detail-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .mb { margin-bottom: 16px; }
+.mb-sm { margin-bottom: 12px; }
 .mt { margin-top: 16px; }
 .ml { margin-left: 8px; }
 .hint { font-size: 12px; color: #94a3b8; margin-left: 8px; }

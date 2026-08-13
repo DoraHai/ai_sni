@@ -14,7 +14,9 @@ import {
   probeGeoAnswerSnapshotBatch,
   suggestGeoAnswerSnapshotFields,
   checkGeoAnswerSnapshotCitations,
+  fetchVisibilityPatrolOpsStatus,
 } from '../../api/geoContent'
+import { diagnoseEmptyMonitoring } from '../../utils/geoEmptyReason'
 import { useClientPager } from '../../composables/useClientPager'
 import { session } from '../../store/session'
 import {
@@ -56,7 +58,8 @@ const batchDrafts = ref([])
 const snapPager = useClientPager(snapshots, { pageSize: 20 })
 
 const filterPromptId = ref(route.query.prompt_id ? Number(route.query.prompt_id) : null)
-const filterEngine = ref('')
+const filterEngine = ref(route.query.engine ? String(route.query.engine) : '')
+const filterDomain = ref(route.query.domain ? String(route.query.domain) : '')
 const filterPatrolRunId = ref(
   route.query.patrol_run_id ? Number(route.query.patrol_run_id) : null,
 )
@@ -64,7 +67,18 @@ const filterSimulated = ref(
   route.query.simulated === '1' ? true : route.query.simulated === '0' ? false : null,
 )
 const sampleComposition = ref(null)
+const patrolOps = ref(null)
 const queueMode = computed(() => route.query.queue === 'recheck')
+const emptyReason = computed(() =>
+  diagnoseEmptyMonitoring({
+    engineCount: engines.value.length,
+    enabledEngines: engines.value.filter((e) => e.enabled).length,
+    patrolEnabled: !!patrolOps.value?.settings?.enabled,
+    lastRunAt: patrolOps.value?.last_run?.created_at || patrolOps.value?.last_run?.id,
+    snapshotCount: snapshots.value.length,
+    mentionCount: snapshots.value.filter((s) => s.mentions_brand).length,
+  }),
+)
 
 const form = ref({
   prompt_id: null,
@@ -199,7 +213,14 @@ async function loadSnapshots() {
     params.simulated = filterSimulated.value
   }
   const data = await listGeoAnswerSnapshots(tenantId.value, params)
-  snapshots.value = data.items || []
+  let rows = data.items || []
+  if (filterDomain.value) {
+    const d = filterDomain.value.toLowerCase()
+    rows = rows.filter((s) =>
+      (s.cited_urls || []).some((u) => String(u || '').toLowerCase().includes(d)),
+    )
+  }
+  snapshots.value = rows
   sampleComposition.value = data.sample_composition || null
   snapPager.resetPage()
   // deep-link 单条快照：滚动到表头提示
@@ -234,6 +255,11 @@ async function reloadAll() {
     await loadEngines()
     await loadPrompts()
     await loadSnapshots()
+    try {
+      patrolOps.value = await fetchVisibilityPatrolOpsStatus(tenantId.value)
+    } catch {
+      patrolOps.value = null
+    }
   } catch (e) {
     error.value = e.message || '加载失败'
   } finally {
@@ -253,6 +279,14 @@ function clearPromptFilter() {
   filterPromptId.value = null
   const q = { ...route.query }
   delete q.prompt_id
+  router.replace({ query: q })
+  loadSnapshots().catch((e) => { error.value = e.message })
+}
+
+function clearDomainFilter() {
+  filterDomain.value = ''
+  const q = { ...route.query }
+  delete q.domain
   router.replace({ query: q })
   loadSnapshots().catch((e) => { error.value = e.message })
 }
@@ -691,6 +725,9 @@ onMounted(reloadAll)
             />
           </el-select>
           <el-button v-if="filterPromptId" @click="clearPromptFilter">清除问题过滤</el-button>
+          <el-button v-if="filterDomain" @click="clearDomainFilter">
+            清除域名 {{ filterDomain }}
+          </el-button>
           <el-button v-if="filterPatrolRunId" type="warning" plain @click="clearPatrolFilter">
             清除巡检 #{{ filterPatrolRunId }}
           </el-button>
@@ -699,6 +736,7 @@ onMounted(reloadAll)
         <p class="hint">
           {{ filterPromptId ? `过滤意图词 #${filterPromptId}` : '显示全部快照' }}
           <template v-if="filterEngine"> · {{ engineDisplay(filterEngine) }}</template>
+          <template v-if="filterDomain"> · 引用含 {{ filterDomain }}</template>
           <template v-if="filterPatrolRunId"> · 巡检运行 #{{ filterPatrolRunId }}</template>
           · 共 {{ snapshots.length }} 条
           <template v-if="sampleComposition?.label"> · {{ sampleComposition.label }}</template>
@@ -711,20 +749,35 @@ onMounted(reloadAll)
           class="mb"
           title="当前列表含模拟样本：不可当作真实引擎效果汇报"
         />
+        <el-alert
+          v-if="snapshots.length && emptyReason?.key === 'no_mention'"
+          type="warning"
+          show-icon
+          class="mb"
+          :title="emptyReason.title"
+          :description="emptyReason.detail"
+        />
         <div v-if="!snapshots.length && !loading" class="geo-empty" style="margin: 8px 0 12px">
           <div class="empty-title">
-            {{ filterPatrolRunId ? `巡检 #${filterPatrolRunId} 暂无关联快照` : '暂无回答快照' }}
+            {{
+              filterPatrolRunId
+                ? `巡检 #${filterPatrolRunId} 暂无关联快照`
+                : emptyReason?.title || '暂无回答快照'
+            }}
           </div>
           <div>
             {{
               filterPatrolRunId
-                ? '可能是旧巡检（迁移前未写 patrol_run_id）或未勾选自动落库。'
-                : '左侧登记一条，或去「全自动巡检」批量采样；保存后可在引用 / 评价报表里看到聚合。'
+                ? '可能是旧巡检未写关联，或当时没勾选自动落库。'
+                : emptyReason?.detail || '左侧登记一条，或去跑巡检批量采样。'
             }}
           </div>
           <div class="empty-actions">
-            <router-link class="el-button el-button--primary el-button--small" to="/geo/visibility/patrol">
-              去巡检
+            <router-link
+              class="el-button el-button--primary el-button--small"
+              :to="emptyReason?.href || '/geo/visibility/patrol'"
+            >
+              {{ emptyReason?.action || '去巡检' }}
             </router-link>
             <router-link class="el-button el-button--small is-plain" to="/geo/engines">
               检查引擎

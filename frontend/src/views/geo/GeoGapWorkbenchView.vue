@@ -29,6 +29,8 @@ const summary = computed(() => ({
   total: data.value?.total ?? 0,
   needs: data.value?.needs_task_total ?? 0,
   open: data.value?.has_open_task_total ?? 0,
+  sla: data.value?.sla_breached_total ?? 0,
+  slaDays: data.value?.sla_days ?? 7,
   byBiz: data.value?.by_business || [],
 }))
 
@@ -84,6 +86,15 @@ function createAllNeeds() {
   return batchCreate(ids)
 }
 
+function createSlaBreached() {
+  const ids = items.value.filter((i) => i.sla_breached).map((i) => i.prompt_id)
+  if (!ids.length) {
+    ElMessage.info('当前没有超 SLA 的待建缺口')
+    return
+  }
+  return batchCreate(ids)
+}
+
 function openTask(row) {
   const tid = row.open_task_ids?.[0] || row.last_task_id
   if (tid) router.push(`/geo/tasks/${tid}`)
@@ -95,15 +106,16 @@ onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="gap-wb">
-    <div class="page-head">
+  <div v-loading="loading" class="geo-page gap-wb">
+    <div class="page-header">
       <div>
-        <h1 class="page-title">缺口工作台</h1>
-        <p class="page-desc">
-          监测打上 brand_missing 的意图词，按业务聚合、批量建内容任务——把「发现缺口」变成生产队列。
-        </p>
+        <div class="page-title">缺口工作台</div>
+        <div class="page-desc">
+          品牌没被提到的问题，按是否超期和优先程度排好。超期默认
+          {{ summary.slaDays }} 天，会出现在概览告警里。
+        </div>
       </div>
-      <div class="head-actions">
+      <div class="header-actions">
         <el-select
           v-model="businessFilter"
           clearable
@@ -121,6 +133,9 @@ onMounted(load)
         <el-button type="primary" :loading="creating" @click="batchCreate()">
           为勾选建任务
         </el-button>
+        <el-button type="danger" plain :loading="creating" @click="createSlaBreached">
+          超期建任务
+        </el-button>
         <el-button type="warning" plain :loading="creating" @click="createAllNeeds">
           全部待办建任务
         </el-button>
@@ -137,6 +152,11 @@ onMounted(load)
       <div class="kpi warn">
         <div class="k-label">待建任务</div>
         <div class="k-val">{{ summary.needs }}</div>
+      </div>
+      <div class="kpi danger">
+        <div class="k-label">超 SLA</div>
+        <div class="k-val">{{ summary.sla }}</div>
+        <div class="k-hint">≥{{ summary.slaDays }} 天未建任务</div>
       </div>
       <div class="kpi">
         <div class="k-label">已有在产</div>
@@ -165,6 +185,13 @@ onMounted(load)
       </el-table-column>
       <el-table-column prop="unit_name" label="单元" width="120">
         <template #default="{ row }">{{ row.unit_name || '—' }}</template>
+      </el-table-column>
+      <el-table-column prop="age_days" label="天数" width="64" sortable />
+      <el-table-column label="SLA" width="88">
+        <template #default="{ row }">
+          <el-tag v-if="row.sla_breached" type="danger" size="small">超期</el-tag>
+          <span v-else class="muted">{{ row.age_days }}/{{ row.sla_days }}</span>
+        </template>
       </el-table-column>
       <el-table-column label="状态" width="120">
         <template #default="{ row }">
@@ -201,7 +228,7 @@ onMounted(load)
     </el-table>
 
     <p v-if="!loading && !items.length" class="empty">
-      当前没有 brand_missing 缺口。跑一轮巡检或在可见度里录入快照后会出现。
+      当前没有「品牌没被提到」的缺口。跑一轮巡检或在可见度里录入回答后会出现。
     </p>
   </div>
 </template>
@@ -228,8 +255,11 @@ onMounted(load)
   padding: 12px 14px;
 }
 .kpi.warn { border-color: #fdba74; background: #fff7ed; }
+.kpi.danger { border-color: #fca5a5; background: #fef2f2; }
 .k-label { font-size: 12px; color: #64748b; }
 .k-val { font-size: 22px; font-weight: 700; color: #0f172a; }
+.k-hint { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+.muted { color: #94a3b8; font-size: 12px; }
 .biz-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip {
   font-size: 12px;

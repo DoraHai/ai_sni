@@ -4,20 +4,24 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import {
+  createTasksFromGaps,
   fetchBusinessDashboard,
   formatGeoError,
 } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
-import { engineDisplay, fmtPct } from '../../utils/geoReportLabels'
+import { useObservationPeriod } from '../../composables/useObservationPeriod'
+import { engineDisplay, fmtPct, taskStatusLabel } from '../../utils/geoReportLabels'
 
 const route = useRoute()
 const router = useRouter()
 const { tenantId } = useGeoTenant()
+const { days, label: obsLabel } = useObservationPeriod()
 
 const businessId = computed(() => Number(route.params.businessId))
 const loading = ref(false)
-const days = ref(14)
+const creatingGap = ref(null)
 const data = ref(null)
 const error = ref('')
 
@@ -34,6 +38,7 @@ const citations = computed(() => data.value?.citations || {})
 const competitors = computed(() => data.value?.competitors || {})
 const funnel = computed(() => data.value?.content_funnel || {})
 const delta = computed(() => visibility.value?.delta_vs_previous || {})
+const weekActions = computed(() => data.value?.this_week || [])
 
 function rate(v) {
   if (v == null || Number.isNaN(Number(v))) return '—'
@@ -68,26 +73,56 @@ async function load() {
   }
 }
 
+async function createFromGap(promptId) {
+  if (!tenantId.value || !promptId) return
+  creatingGap.value = promptId
+  try {
+    const res = await createTasksFromGaps(tenantId.value, [promptId])
+    const created = res.created || []
+    if (created.length === 1) {
+      ElMessage.success('已建任务')
+      router.push(`/geo/tasks/${created[0].task_id}`)
+      return
+    }
+    const existing = (res.skipped || []).find((s) => s.task_id)
+    if (existing?.task_id) {
+      ElMessage.info('该缺口已有进行中的任务')
+      router.push(`/geo/tasks/${existing.task_id}`)
+      return
+    }
+    await load()
+  } catch (e) {
+    ElMessage.error(formatGeoError(e, '建任务失败'))
+  } finally {
+    creatingGap.value = null
+  }
+}
+
+function goAction(a) {
+  if (a?.kind === 'gap_sla' || a?.kind === 'gap') {
+    if (a.prompt_id) {
+      createFromGap(a.prompt_id)
+      return
+    }
+  }
+  if (a?.href) router.push(a.href)
+}
+
 watch([tenantId, businessId, days], load)
 onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="biz-detail">
-    <div class="page-head">
+  <div v-loading="loading" class="geo-page biz-detail">
+    <div class="page-header">
       <div>
         <el-button text type="primary" @click="router.push('/geo/businesses')">← 业务列表</el-button>
-        <h1 class="page-title">{{ biz?.name || `业务 #${businessId}` }}</h1>
-        <p class="page-desc">
-          主轴一屏：意图覆盖 → 可见度（含环比）→ 缺口 → 在产 → 已发 → 效果曲线 · 引擎/引用/竞品
-        </p>
+        <div class="page-title">{{ biz?.name || `业务 #${businessId}` }}</div>
+        <div class="page-desc">
+          这条业务现在怎样、本周该做什么。数字跟随顶栏观察期（{{ obsLabel }}）。
+        </div>
       </div>
-      <div class="head-actions">
-        <el-select v-model="days" style="width: 110px" size="small">
-          <el-option :value="7" label="近 7 天" />
-          <el-option :value="14" label="近 14 天" />
-          <el-option :value="30" label="近 30 天" />
-        </el-select>
+      <div class="header-actions">
         <el-button size="small" @click="load">刷新</el-button>
         <el-button size="small" type="primary" @click="router.push('/geo/gaps')">缺口工作台</el-button>
       </div>
@@ -129,7 +164,7 @@ onMounted(load)
       <div class="kpi warn">
         <div class="k-label">缺口</div>
         <div class="k-val">{{ coverage.gap_count ?? 0 }}</div>
-        <div class="k-hint">brand_missing</div>
+        <div class="k-hint">品牌没被提到</div>
       </div>
       <div class="kpi">
         <div class="k-label">在产 / 已发</div>
@@ -143,12 +178,34 @@ onMounted(load)
       type="warning"
       show-icon
       class="mb"
-      :title="`样本含模拟：真 ${sample.real || 0} · 模拟 ${sample.simulated || 0} · 人工 ${sample.manual || 0}`"
+      :title="`样本含模拟：真 ${sample.real || 0} · 模拟 ${sample.simulated || 0} · 人工 ${sample.manual || 0}。不可当作真实引擎效果汇报。`"
     />
 
-    <div class="grid">
+    <section v-if="weekActions.length" class="week-panel mb">
+      <div class="panel-title">本周该做的 {{ weekActions.length }} 件事</div>
+      <ol class="week-list">
+        <li v-for="(a, i) in weekActions" :key="a.kind + i">
+          <div class="week-copy">
+            <div class="week-title">{{ a.title }}</div>
+            <div class="week-detail">{{ a.detail }}</div>
+          </div>
+          <el-button
+            size="small"
+            type="primary"
+            :loading="(a.kind === 'gap' || a.kind === 'gap_sla') && creatingGap === a.prompt_id"
+            @click="goAction(a)"
+          >
+            {{ a.kind === 'gap' || a.kind === 'gap_sla' ? '建任务' : '去处理' }}
+          </el-button>
+        </li>
+      </ol>
+    </section>
+
+    <details class="detail-fold">
+      <summary>覆盖、漏斗与引擎明细</summary>
+      <div class="grid">
       <section class="panel">
-        <div class="panel-title">1 · 意图词覆盖</div>
+        <div class="panel-title">意图词覆盖</div>
         <p class="muted">
           单元 {{ coverage.unit_count ?? (data?.units?.length || 0) }} · 覆盖
           {{ coverage.covered_count ?? 0 }} / {{ coverage.prompt_count ?? 0 }}
@@ -162,13 +219,13 @@ onMounted(load)
       </section>
 
       <section class="panel">
-        <div class="panel-title">2 · 可见度（当前窗 vs 前窗）</div>
+        <div class="panel-title">可见度（本期 vs 上期）</div>
         <p>
           提及 <b>{{ rate(visibility.visibility_mention_rate ?? visibility.rate) }}</b>
-          · 样本 n={{ visibility.snapshots_visibility ?? visibility.snapshots ?? '—' }}
+          · 样本 {{ visibility.snapshots_visibility ?? visibility.snapshots ?? '—' }}
         </p>
         <p class="muted">
-          前窗 n={{ visibility.previous_window?.snapshots_visibility ?? '—' }}
+          上期样本 {{ visibility.previous_window?.snapshots_visibility ?? '—' }}
           · 自有域 {{ (visibility.own_domains || citations.own_domains || []).join(', ') || '未配置' }}
         </p>
         <el-button link type="primary" @click="router.push('/geo/visibility')">去可见度</el-button>
@@ -176,26 +233,35 @@ onMounted(load)
       </section>
 
       <section class="panel">
-        <div class="panel-title">3 · 缺口清单</div>
+        <div class="panel-title">缺口清单</div>
         <ul v-if="gaps.length" class="list">
-          <li v-for="g in gaps.slice(0, 8)" :key="g.prompt_id">
-            <span class="prio">P{{ g.priority }}</span> {{ g.question }}
+          <li v-for="g in gaps.slice(0, 8)" :key="g.prompt_id" class="gap-row">
+            <span class="prio">优先 {{ g.priority }}</span>
+            <span class="gap-q">{{ g.question }}</span>
+            <el-button
+              link
+              type="primary"
+              :loading="creatingGap === g.prompt_id"
+              @click="createFromGap(g.prompt_id)"
+            >
+              建任务
+            </el-button>
           </li>
         </ul>
-        <p v-else class="muted">暂无 brand_missing</p>
+        <p v-else class="muted">暂无「品牌没被提到」的意图词</p>
         <el-button link type="primary" @click="router.push('/geo/gaps')">批量建任务</el-button>
       </section>
 
       <section class="panel">
-        <div class="panel-title">4 · 内容漏斗</div>
+        <div class="panel-title">内容进度</div>
         <p class="muted">任务总数 {{ funnel.total_tasks ?? 0 }}</p>
         <ul v-if="funnel.status_counts" class="list">
-          <li v-for="(n, st) in funnel.status_counts" :key="st">{{ st }} · {{ n }}</li>
+          <li v-for="(n, st) in funnel.status_counts" :key="st">{{ taskStatusLabel(st) }} · {{ n }}</li>
         </ul>
         <ul v-if="inProd.length" class="list">
           <li v-for="t in inProd.slice(0, 5)" :key="t.id">
             <router-link :to="`/geo/tasks/${t.id}`">#{{ t.id }} {{ t.title }}</router-link>
-            <span class="muted"> · {{ t.status }}</span>
+            <span class="muted"> · {{ taskStatusLabel(t.status) }}</span>
           </li>
         </ul>
         <el-button link type="primary" @click="router.push('/geo/tasks')">全部文章</el-button>
@@ -228,19 +294,31 @@ onMounted(load)
       </section>
 
       <section class="panel wide">
-        <div class="panel-title">5 · 已发内容 &amp; 引用域</div>
+        <div class="panel-title">已发内容与引用域</div>
         <div class="two-col">
           <div>
             <div class="sub-h">发布清单</div>
             <ul v-if="published.length" class="list">
               <li v-for="(p, i) in published.slice(0, 10)" :key="i">
-                <a :href="p.published_url" target="_blank" rel="noopener">{{ p.channel }}</a>
-                · 任务 #{{ p.task_id }} · {{ (p.published_at || '').slice(0, 10) }}
+                <router-link :to="`/geo/tasks/${p.task_id}`">
+                  {{ p.title || p.channel || ('任务 #' + p.task_id) }}
+                </router-link>
+                <span class="muted">
+                  · {{ p.channel }}
+                  · {{ (p.published_at || '').slice(0, 10) }}
+                </span>
+                <a
+                  v-if="p.published_url"
+                  :href="p.published_url"
+                  target="_blank"
+                  rel="noopener"
+                  class="muted"
+                >原文</a>
               </li>
             </ul>
             <p v-else class="muted">暂无发布回填</p>
             <p class="muted">
-              快照命中已发 publication：{{ citations.snapshots_with_publication_hits ?? 0 }}
+              有 {{ citations.snapshots_with_publication_hits ?? 0 }} 条回答点到了已发文章
             </p>
           </div>
           <div>
@@ -258,7 +336,7 @@ onMounted(load)
       </section>
 
       <section class="panel wide">
-        <div class="panel-title">6 · 效果曲线</div>
+        <div class="panel-title">效果按天</div>
         <el-table v-if="series.length" :data="series" size="small" max-height="280">
           <el-table-column prop="date" label="日期" width="110" />
           <el-table-column label="提及率" width="90">
@@ -272,30 +350,41 @@ onMounted(load)
           </el-table-column>
           <el-table-column prop="citation_count" label="引用次数" width="80" />
           <el-table-column prop="top_competitor" label="Top竞品" min-width="100" />
-          <el-table-column prop="scope_key" label="scope" width="90" />
+          <el-table-column prop="scope_key" label="范围" width="90" />
         </el-table>
         <p v-else class="muted">
-          暂无业务 scope 日指标；可能回退租户级或为空。可在业务页触发日指标重建。
+          这一期还没有按天的业务数字。先跑巡检或登记快照。
         </p>
         <el-button link type="primary" @click="router.push('/geo/periods')">优化期次</el-button>
         <el-button link type="primary" @click="router.push('/geo/period-diff')">自由对比</el-button>
       </section>
-    </div>
+      </div>
+    </details>
   </div>
 </template>
 
 <style scoped>
-.biz-detail { padding: 4px 2px 40px; }
-.page-head {
+.biz-detail { padding-bottom: 40px; }
+.week-panel {
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+.week-list { margin: 0; padding: 0; list-style: none; }
+.week-list li {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
+  align-items: center;
+  padding: 8px 0;
+  border-top: 1px solid #fde68a;
 }
-.page-title { margin: 4px 0 6px; font-size: 20px; font-weight: 700; }
-.page-desc { margin: 0; font-size: 13px; color: #64748b; }
-.head-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.week-list li:first-child { border-top: 0; }
+.week-title { font-weight: 650; font-size: 13px; }
+.week-detail { font-size: 12px; color: #92400e; margin-top: 2px; }
+.gap-row { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.gap-q { flex: 1; min-width: 140px; }
 .kpi-row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
 .kpi {
   min-width: 118px;
@@ -324,7 +413,25 @@ onMounted(load)
 .sub-h { font-size: 12px; font-weight: 650; color: #475569; margin-bottom: 6px; }
 .list { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.55; }
 .prio { color: #b45309; font-size: 11px; margin-right: 4px; }
-.muted { color: #94a3b8; font-size: 12px; }
+.detail-fold {
+  margin-top: 8px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 4px 16px 16px;
+}
+.detail-fold summary {
+  cursor: pointer;
+  font-weight: 650;
+  font-size: 14px;
+  color: #334155;
+  padding: 12px 0;
+  list-style: none;
+}
+.detail-fold summary::-webkit-details-marker { display: none; }
+.detail-fold summary::before { content: '▸ '; color: #64748b; }
+.detail-fold[open] summary::before { content: '▾ '; }
+.muted { color: #64748b; font-size: 13px; }
 .mb { margin-bottom: 12px; }
 .two-col {
   display: grid;

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import (
     GeoChannelAccount,
     GeoContentTask,
+    GeoPrompt,
     GeoPublishingChannel,
     GeoVisibilityPatrolRun,
     GeoVisibilityPatrolSettings,
@@ -148,6 +149,74 @@ async def build_ops_alerts(
                 "href": "/geo/tasks",
             }
         )
+
+    # ---- gap SLA (brand_missing without open/published task) ----
+    try:
+        from app.config import get_settings as _gs
+
+        sla_days = int(getattr(_gs(), "geo_gap_sla_days", 7) or 7)
+        sla_days = max(1, min(sla_days, 90))
+        prompts = list(
+            await session.scalars(
+                select(GeoPrompt).where(
+                    GeoPrompt.tenant_id == tenant_id,
+                    GeoPrompt.status == "active",
+                )
+            )
+        )
+        missing = [p for p in prompts if "brand_missing" in (list(p.tags or []))]
+        if missing:
+            open_tasks = list(
+                await session.scalars(
+                    select(GeoContentTask).where(
+                        GeoContentTask.tenant_id == tenant_id,
+                        GeoContentTask.status.notin_(("archived",)),
+                    )
+                )
+            )
+            by_prompt: dict[int, list[GeoContentTask]] = {}
+            for t in open_tasks:
+                by_prompt.setdefault(int(t.prompt_id), []).append(t)
+            needs = 0
+            breached = 0
+            now = datetime.utcnow()
+            for p in missing:
+                rel = by_prompt.get(int(p.id)) or []
+                open_rel = [t for t in rel if t.status not in {"published", "archived"}]
+                pub_rel = [t for t in rel if t.status == "published"]
+                if open_rel or pub_rel:
+                    continue
+                needs += 1
+                anchor = p.updated_at or p.created_at or now
+                if getattr(anchor, "tzinfo", None) is not None:
+                    anchor = anchor.replace(tzinfo=None)
+                age_days = max(0, (now - anchor).days)
+                if age_days >= sla_days:
+                    breached += 1
+            if breached:
+                alerts.append(
+                    {
+                        "level": "error" if breached >= 5 else "warning",
+                        "code": "gap_sla_breach",
+                        "title": f"{breached} 个品牌缺失缺口已超 SLA（≥{sla_days} 天未建任务）",
+                        "detail": f"共 {needs} 个待建任务缺口，请到缺口工作台处理",
+                        "href": "/geo/gaps",
+                        "count": breached,
+                    }
+                )
+            elif needs:
+                alerts.append(
+                    {
+                        "level": "info",
+                        "code": "gap_needs_task",
+                        "title": f"{needs} 个意图词品牌缺失待建任务",
+                        "detail": f"SLA {sla_days} 天；优先高 priority",
+                        "href": "/geo/gaps",
+                        "count": needs,
+                    }
+                )
+    except Exception:  # noqa: BLE001
+        pass
 
     # ---- social credentials ----
     accounts = list(

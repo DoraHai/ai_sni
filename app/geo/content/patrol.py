@@ -403,11 +403,33 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
                 try:
                     engine_row = row_by_key.get(engine)
                     # prefer_real: if engine is mock but tenant has llm, still try resolve
+                    # W3: tenant monitoring_stance constrains persona fallback
+                    stance = "hybrid"
+                    try:
+                        from app.geo.content.ai_settings import ensure_ai_setting
+
+                        ai_row = await ensure_ai_setting(session, row.tenant_id)
+                        stance = (
+                            getattr(ai_row, "monitoring_stance", None) or "hybrid"
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
                     llm, sample_mode, fallback_reason = resolve_engine_llm(
                         engine=engine,
                         tenant_llm=tenant_llm,
                         engine_row=engine_row,
+                        monitoring_stance=stance,
                     )
+                    if (
+                        fallback_reason
+                        and str(fallback_reason).startswith("skipped:")
+                    ):
+                        cell["ok"] = False
+                        cell["skipped_reason"] = fallback_reason
+                        cell["error"] = fallback_reason
+                        summary["cells_fail"] = int(summary.get("cells_fail") or 0) + 1
+                        items.append(cell)
+                        continue
                     if row.prefer_real and sample_mode != SAMPLE_MODE_REAL:
                         # prefer_real：有引擎 Key 或租户百炼时，强制走 openai_compat 真采样
                         if engine_row is not None and (
@@ -418,6 +440,7 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
                                 engine=engine,
                                 tenant_llm=tenant_llm,
                                 engine_row=engine_row,
+                                monitoring_stance=stance,
                             )
                         elif tenant_llm and tenant_llm.get("api_key"):
                             llm = {

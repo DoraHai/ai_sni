@@ -314,6 +314,89 @@ async def _ensure_tenant_exists(session: AsyncSession, tenant_id: int) -> Tenant
     return tenant
 
 
+def _business_week_actions(
+    *,
+    gaps: list,
+    in_prod: list,
+    published: list[dict[str, Any]],
+    cite_hit_snaps: int,
+) -> list[dict[str, Any]]:
+    """业务详情「本周 3 件事」：超 SLA 缺口、待审稿、该复测的已发内容。"""
+    from app.config import get_settings
+
+    now = datetime.utcnow()
+    sla = int(getattr(get_settings(), "geo_gap_sla_days", 7) or 7)
+    actions: list[dict[str, Any]] = []
+
+    sla_hit = None
+    for p in gaps:
+        anchor = getattr(p, "updated_at", None) or getattr(p, "created_at", None) or now
+        if getattr(anchor, "tzinfo", None) is not None:
+            anchor = anchor.replace(tzinfo=None)
+        age = max(0, (now - anchor).days)
+        if age >= sla:
+            sla_hit = (p, age)
+            break
+    if sla_hit:
+        p, age = sla_hit
+        actions.append(
+            {
+                "kind": "gap_sla",
+                "title": f"超 SLA 缺口：{(p.question or '')[:48]}",
+                "detail": f"已 {age} 天未补内容（SLA {sla} 天）",
+                "prompt_id": p.id,
+                "href": "/geo/gaps",
+            }
+        )
+    elif gaps:
+        p = gaps[0]
+        actions.append(
+            {
+                "kind": "gap",
+                "title": f"待补缺口：{(p.question or '')[:48]}",
+                "detail": "品牌未被提及，可直接建任务",
+                "prompt_id": p.id,
+                "href": "/geo/gaps",
+            }
+        )
+
+    pending = [t for t in in_prod if (getattr(t, "review_status", None) or "none") == "pending"]
+    blocked = [
+        t
+        for t in in_prod
+        if (t.status or "") in {"needs_fix", "draft", "editing", "facts_bound"}
+    ]
+    pick = pending[0] if pending else (blocked[0] if blocked else None)
+    if pick is not None:
+        actions.append(
+            {
+                "kind": "review" if pending else "draft",
+                "title": f"{'待审稿' if pending else '推进稿件'}：{(pick.title or '')[:48]}",
+                "detail": f"状态 {pick.status} · 审校 {pick.review_status or 'none'}",
+                "task_id": pick.id,
+                "href": f"/geo/tasks/{pick.id}",
+            }
+        )
+
+    if published:
+        pub = published[0]
+        title = pub.get("title") or pub.get("channel") or f"任务 #{pub.get('task_id')}"
+        actions.append(
+            {
+                "kind": "retest",
+                "title": f"复测已发：{str(title)[:48]}",
+                "detail": (
+                    f"窗口内 {cite_hit_snaps} 条快照命中已发 URL"
+                    if cite_hit_snaps
+                    else "窗口内尚未命中引用，去看任务效果并复测"
+                ),
+                "task_id": pub.get("task_id"),
+                "href": f"/geo/tasks/{pub.get('task_id')}",
+            }
+        )
+    return actions[:3]
+
+
 async def _get_prompt(
     session: AsyncSession, prompt_id: int, tenant_id: int
 ) -> GeoPrompt:
@@ -975,13 +1058,17 @@ async def gap_workbench(
     tenant_id: int = Query(...),
     business_id: int | None = Query(None),
     limit: int = Query(100, ge=1, le=300),
+    sla_days: int | None = Query(None, ge=1, le=90, description="缺口 SLA 天数，默认读配置"),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """缺口工作台：聚合 brand_missing 意图词，按优先级/业务排序，驱动内容生产。"""
-    from app.geo.content.brief import normalize_brief
+    from app.config import get_settings
 
     ctx.ensure_tenant(tenant_id)
+    cfg_sla = int(getattr(get_settings(), "geo_gap_sla_days", 7) or 7)
+    sla = int(sla_days) if sla_days is not None else max(1, min(cfg_sla, 90))
+    now = datetime.utcnow()
     prompts = list(
         await session.scalars(
             select(GeoPrompt)
@@ -1044,6 +1131,12 @@ async def gap_workbench(
             if t.status not in {"published", "archived"}
         ]
         published_related = [t for t in related if t.status == "published"]
+        needs_task = not open_related and not published_related
+        anchor = p.updated_at or p.created_at or now
+        if getattr(anchor, "tzinfo", None) is not None:
+            anchor = anchor.replace(tzinfo=None)
+        age_days = max(0, (now - anchor).days)
+        sla_breached = bool(needs_task and age_days >= sla)
         items.append(
             {
                 "prompt_id": p.id,
@@ -1060,12 +1153,17 @@ async def gap_workbench(
                 "open_task_ids": [t.id for t in open_related[:5]],
                 "published_task_count": len(published_related),
                 "last_task_id": p.last_task_id,
-                "needs_task": not open_related and not published_related,
+                "needs_task": needs_task,
+                "age_days": age_days,
+                "sla_days": sla,
+                "sla_breached": sla_breached,
+                "updated_at": _iso(p.updated_at),
             }
         )
-    # Sort: needs_task first, then priority, then no business last
+    # Sort: SLA breach first, needs_task, priority, no business last
     items.sort(
         key=lambda x: (
+            0 if x.get("sla_breached") else 1,
             0 if x["needs_task"] else (1 if x["has_open_task"] else 2),
             -int(x["priority"] or 0),
             0 if x["business_id"] else 1,
@@ -1084,16 +1182,21 @@ async def gap_workbench(
                 "business_name": it["business_name"] or "未分类",
                 "gap_count": 0,
                 "needs_task_count": 0,
+                "sla_breached_count": 0,
             },
         )
         bucket["gap_count"] += 1
         if it["needs_task"]:
             bucket["needs_task_count"] += 1
+        if it.get("sla_breached"):
+            bucket["sla_breached_count"] += 1
 
     return {
         "tenant_id": tenant_id,
+        "sla_days": sla,
         "total": len(items),
         "needs_task_total": sum(1 for i in items if i["needs_task"]),
+        "sla_breached_total": sum(1 for i in items if i.get("sla_breached")),
         "has_open_task_total": sum(1 for i in items if i["has_open_task"]),
         "by_business": list(by_business.values()),
         "items": items,
@@ -1244,38 +1347,26 @@ async def create_optimization_period(
     baseline: dict[str, Any] | None = None
     if req.capture_baseline:
         try:
-            prompts = list(
-                await session.scalars(
-                    select(GeoPrompt).where(GeoPrompt.tenant_id == tenant_id)
-                )
-            )
-            prompt_probe = {p.id: bool(p.is_brand_probe) for p in prompts}
-            own_domains = await _own_domains_for_tenant(session, tenant_id)
-            snaps = list(
-                await session.scalars(
-                    select(GeoAnswerSnapshot).where(
-                        GeoAnswerSnapshot.tenant_id == tenant_id
-                    )
-                )
-            )
-            # last 14d before period start as baseline window
             from datetime import timedelta
 
+            from app.geo.content.metric_service import compute_metrics
+
             b_from = s_at - timedelta(days=14)
-            window = [
-                r
-                for r in snaps
-                if in_captured_window(r.captured_at, start=b_from, end=s_at)
-            ]
-            metrics = compute_window_metrics(
-                window, prompt_probe=prompt_probe, own_domains=own_domains
+            own_domains = await _own_domains_for_tenant(session, tenant_id)
+            metrics_b = await compute_metrics(
+                session,
+                tenant_id,
+                start=b_from.date() if hasattr(b_from, "date") else b_from,
+                end=s_at.date() if hasattr(s_at, "date") else s_at,
+                own_domains=own_domains,
             )
+            metrics = metrics_b.to_dict()
             baseline = {
                 "captured_at": _iso(datetime.utcnow()),
                 "window_from": _iso(b_from),
                 "window_to": _iso(s_at),
                 "metrics": metrics,
-                "sample_count": len(window),
+                "sample_count": metrics.get("snapshots_total"),
             }
         except Exception:  # noqa: BLE001
             baseline = {"error": "baseline_capture_failed"}
@@ -1311,31 +1402,62 @@ async def get_optimization_period(
     if row is None or row.tenant_id != tenant_id:
         raise HTTPException(404, "优化期次不存在")
     payload = _period_payload(row)
-    # Attach publications in window for this tenant
-    pubs = await load_tenant_publications(session, tenant_id)
-    in_period = []
-    for pr in pubs:
-        pa = pr.published_at
-        if pa is None:
-            continue
-        if getattr(pa, "tzinfo", None) is not None:
-            pa = pa.replace(tzinfo=None)
-        if row.starts_at <= pa <= row.ends_at:
-            if row.business_id is not None:
-                task = await session.get(GeoContentTask, pr.task_id)
-                if task is None or task.business_id != row.business_id:
-                    continue
+
+    # Prefer stored publication_ids (especially after close); fall back to live scan
+    stored_ids = list(row.publication_ids or [])
+    in_period: list[dict[str, Any]] = []
+    if stored_ids:
+        pub_rows = list(
+            await session.scalars(
+                select(GeoPublication).where(GeoPublication.id.in_(stored_ids))
+            )
+        )
+        by_id = {int(p.id): p for p in pub_rows}
+        for pid in stored_ids:
+            p = by_id.get(int(pid))
+            if not p:
+                continue
+            # resolve task_id via variant
+            task_id = None
+            v = await session.get(GeoChannelVariant, p.variant_id)
+            if v:
+                task_id = v.task_id
             in_period.append(
                 {
-                    "id": pr.id,
-                    "task_id": pr.task_id,
-                    "channel": pr.channel,
-                    "published_url": pr.published_url,
-                    "published_at": _iso(pr.published_at),
+                    "id": p.id,
+                    "task_id": task_id,
+                    "channel": p.channel,
+                    "published_url": p.published_url,
+                    "published_at": _iso(p.published_at),
+                    "from_store": True,
                 }
             )
+    else:
+        pubs = await load_tenant_publications(session, tenant_id)
+        for pr in pubs:
+            pa = pr.published_at
+            if pa is None:
+                continue
+            if getattr(pa, "tzinfo", None) is not None:
+                pa = pa.replace(tzinfo=None)
+            if row.starts_at <= pa <= row.ends_at:
+                if row.business_id is not None:
+                    task = await session.get(GeoContentTask, pr.task_id)
+                    if task is None or task.business_id != row.business_id:
+                        continue
+                in_period.append(
+                    {
+                        "id": pr.id,
+                        "task_id": pr.task_id,
+                        "channel": pr.channel,
+                        "published_url": pr.published_url,
+                        "published_at": _iso(pr.published_at),
+                        "from_store": False,
+                    }
+                )
     payload["publications_in_period"] = in_period
     payload["publication_count"] = len(in_period)
+    payload["deliverable_pack"] = (row.result_meta or {}).get("deliverable_pack")
     return payload
 
 
@@ -1346,47 +1468,71 @@ async def close_optimization_period(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """期末复测：写入 result_meta 并标记 closed。"""
+    """期末复测：compute_metrics 写 result_meta、固化交付 pack、标记 closed。"""
+    from app.geo.content.metric_service import compute_metrics
+
     ctx.ensure_tenant(tenant_id)
     row = await session.get(GeoOptimizationPeriod, period_id)
     if row is None or row.tenant_id != tenant_id:
         raise HTTPException(404, "优化期次不存在")
+    if row.status == "closed":
+        raise HTTPException(400, "期次已关闭，不可重复关闭或改窗口")
 
-    prompts = list(
-        await session.scalars(
-            select(GeoPrompt).where(GeoPrompt.tenant_id == tenant_id)
-        )
-    )
-    prompt_probe = {p.id: bool(p.is_brand_probe) for p in prompts}
+    s_at, e_at = row.starts_at, row.ends_at
+    if getattr(s_at, "tzinfo", None):
+        s_at = s_at.replace(tzinfo=None)
+    if getattr(e_at, "tzinfo", None):
+        e_at = e_at.replace(tzinfo=None)
+    start_d = s_at.date() if hasattr(s_at, "date") else s_at
+    end_d = e_at.date() if hasattr(e_at, "date") else e_at
+
     own_domains = await _own_domains_for_tenant(session, tenant_id)
-    snaps = list(
+    metrics_bundle = await compute_metrics(
+        session,
+        tenant_id,
+        start=start_d,
+        end=end_d,
+        own_domains=own_domains,
+    )
+    metrics = metrics_bundle.to_dict()
+
+    # Prefer publications tagged with this period_id, else date window
+    pub_rows = list(
         await session.scalars(
-            select(GeoAnswerSnapshot).where(GeoAnswerSnapshot.tenant_id == tenant_id)
+            select(GeoPublication).where(GeoPublication.period_id == period_id)
         )
     )
-    window = [
-        r
-        for r in snaps
-        if in_captured_window(r.captured_at, start=row.starts_at, end=row.ends_at)
-    ]
-    metrics = compute_window_metrics(
-        window, prompt_probe=prompt_probe, own_domains=own_domains
+    pub_ids = [int(p.id) for p in pub_rows]
+    if not pub_ids:
+        pubs = await load_tenant_publications(session, tenant_id)
+        for pr in pubs:
+            pa = pr.published_at
+            if pa is None:
+                continue
+            if getattr(pa, "tzinfo", None) is not None:
+                pa = pa.replace(tzinfo=None)
+            if s_at <= pa <= e_at:
+                if row.business_id is not None:
+                    task = await session.get(GeoContentTask, pr.task_id)
+                    if task is None or task.business_id != row.business_id:
+                        continue
+                pub_ids.append(pr.id)
+
+    tasks_in = list(
+        await session.scalars(
+            select(GeoContentTask).where(
+                GeoContentTask.tenant_id == tenant_id,
+                GeoContentTask.period_id == period_id,
+            )
+        )
     )
-    pubs = await load_tenant_publications(session, tenant_id)
-    pub_ids = []
-    for pr in pubs:
-        pa = pr.published_at
-        if pa is None:
-            continue
-        if getattr(pa, "tzinfo", None) is not None:
-            pa = pa.replace(tzinfo=None)
-        if row.starts_at <= pa <= row.ends_at:
-            pub_ids.append(pr.id)
+    prompt_ids = {int(t.prompt_id) for t in tasks_in if t.prompt_id}
 
     baseline_m = (row.baseline_meta or {}).get("metrics") or {}
     delta = {
         "visibility_mention_rate": rate_delta(
-            baseline_m.get("visibility_mention_rate"),
+            baseline_m.get("visibility_mention_rate")
+            or baseline_m.get("brand_mention_rate"),
             metrics.get("visibility_mention_rate"),
         ),
         "own_domain_cite_rate": rate_delta(
@@ -1394,21 +1540,58 @@ async def close_optimization_period(
             metrics.get("own_domain_cite_rate"),
         ),
         "probe_recognition_rate": rate_delta(
-            baseline_m.get("probe_recognition_rate"),
+            baseline_m.get("probe_recognition_rate")
+            or baseline_m.get("brand_probe_recognition_rate"),
             metrics.get("probe_recognition_rate"),
         ),
     }
+
+    # Frozen deliverable snapshot (stable after close)
+    deliverable_pack = {
+        "kind": "geo_period_deliverable_v1",
+        "period_id": period_id,
+        "period_name": row.name,
+        "frozen_at": _iso(datetime.utcnow()),
+        "window": {
+            "starts_at": _iso(s_at),
+            "ends_at": _iso(e_at),
+            "timezone": "Asia/Shanghai",
+        },
+        "headline": {
+            "published_count": len(pub_ids),
+            "tasks_in_period": len(tasks_in),
+            "prompts_covered": len(prompt_ids),
+            "mention_rate_before": baseline_m.get("visibility_mention_rate")
+            or baseline_m.get("brand_mention_rate"),
+            "mention_rate_after": metrics.get("brand_mention_rate"),
+            "mention_rate_delta": delta.get("visibility_mention_rate"),
+        },
+        "metrics": metrics,
+        "baseline_metrics": baseline_m,
+        "delta_vs_baseline": delta,
+        "sample_composition": metrics.get("sample_composition"),
+        "methodology_note": (
+            "关闭时固化；后续改窗口不会影响本快照。"
+            "对照为期前 14 天基线 vs 期内统一口径指标。"
+        ),
+    }
+
     row.result_meta = {
         "closed_at": _iso(datetime.utcnow()),
         "metrics": metrics,
-        "sample_count": len(window),
+        "sample_count": metrics.get("snapshots_total"),
         "delta_vs_baseline": delta,
+        "deliverable_pack": deliverable_pack,
+        "tasks_in_period": len(tasks_in),
+        "prompts_covered": len(prompt_ids),
     }
     row.publication_ids = pub_ids
     row.status = "closed"
     await session.commit()
     await session.refresh(row)
-    return _period_payload(row)
+    out = _period_payload(row)
+    out["deliverable_pack"] = deliverable_pack
+    return out
 
 
 @router.get("/weekly-insights")
@@ -2323,6 +2506,11 @@ async def update_answer_snapshot(
             raw_text=row.raw_text,
             mentions_brand=bool(row.mentions_brand),
         )
+    # W4: raw_text-only PATCH must re-extract URLs and recompute attribution
+    if req.raw_text is not None and req.cited_urls is None:
+        extracted = extract_cited_urls_from_text(row.raw_text)
+        if extracted:
+            row.cited_urls = extracted
     if req.cited_urls is not None or req.raw_text is not None:
         row.matched_publication_ids = (
             await resolve_matched_publication_ids(
@@ -2501,7 +2689,9 @@ async def competitor_insights_daily(
         level = "tenant"
     sk = scope_with_engine(base, engine) if engine else base
 
-    end = date.today()
+    from app.geo.content.time_windows import shanghai_today
+
+    end = shanghai_today()
     start = end - timedelta(days=days - 1)
     rows = list(
         await session.scalars(
@@ -2648,16 +2838,35 @@ async def competitor_insights_report(
 @router.get("/evaluation-insights")
 async def evaluation_insights(
     tenant_id: int = Query(...),
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
+    days: int | None = Query(None, ge=1, le=90),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Sentiment / brand-position aggregates from snapshots (Wave C)."""
+    from app.geo.content.time_windows import (
+        default_observation_window,
+        shanghai_day_bounds_utc_naive,
+    )
+
     ctx.ensure_tenant(tenant_id)
+    stmt = select(GeoAnswerSnapshot).where(GeoAnswerSnapshot.tenant_id == tenant_id)
+    if date_from or date_to or days:
+        start_d, end_d = default_observation_window(days=int(days or 14))
+        if date_from:
+            start_d = date_from
+        if date_to:
+            end_d = date_to
+        lo, _ = shanghai_day_bounds_utc_naive(start_d)
+        _, hi = shanghai_day_bounds_utc_naive(end_d)
+        stmt = stmt.where(
+            GeoAnswerSnapshot.captured_at >= lo,
+            GeoAnswerSnapshot.captured_at < hi,
+        )
     rows = list(
         await session.scalars(
-            select(GeoAnswerSnapshot)
-            .where(GeoAnswerSnapshot.tenant_id == tenant_id)
-            .order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
+            stmt.order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
         )
     )
     sentiment_counts: dict[str, int] = {
@@ -2755,72 +2964,137 @@ async def _resolve_task_business_id(
 @router.get("/visibility-period-diff")
 async def visibility_period_diff(
     tenant_id: int = Query(...),
-    before_from: str = Query(...),
-    before_to: str = Query(...),
-    after_from: str = Query(...),
-    after_to: str = Query(...),
+    before_from: str | None = Query(None),
+    before_to: str | None = Query(None),
+    after_from: str | None = Query(None),
+    after_to: str | None = Query(None),
+    period_id: int | None = Query(
+        None, description="传入则锁定：before=期前基线窗，after=期次窗"
+    ),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Compare visibility mention + own-domain cite rates across two capture windows."""
-    ctx.ensure_tenant(tenant_id)
-    try:
-        b_from = parse_window_bound(before_from, label="before_from")
-        b_to = parse_window_bound(before_to, label="before_to")
-        a_from = parse_window_bound(after_from, label="after_from")
-        a_to = parse_window_bound(after_to, label="after_to")
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    if b_from > b_to or a_from > a_to:
-        raise HTTPException(400, "窗口起止时间无效：from 不得晚于 to")
+    """Compare visibility metrics across two windows (or a locked optimization period)."""
+    from datetime import timedelta
 
-    prompts = list(
-        await session.scalars(
-            select(GeoPrompt).where(GeoPrompt.tenant_id == tenant_id)
-        )
-    )
-    prompt_probe = {p.id: bool(p.is_brand_probe) for p in prompts}
+    from app.geo.content.metric_service import compute_metrics
+
+    ctx.ensure_tenant(tenant_id)
     own_domains = await _own_domains_for_tenant(session, tenant_id)
-    all_snaps = list(
-        await session.scalars(
-            select(GeoAnswerSnapshot).where(GeoAnswerSnapshot.tenant_id == tenant_id)
+    period_meta: dict[str, Any] | None = None
+
+    if period_id is not None:
+        prow = await session.get(GeoOptimizationPeriod, period_id)
+        if prow is None or prow.tenant_id != tenant_id:
+            raise HTTPException(404, "优化期次不存在")
+        s_at, e_at = prow.starts_at, prow.ends_at
+        if getattr(s_at, "tzinfo", None):
+            s_at = s_at.replace(tzinfo=None)
+        if getattr(e_at, "tzinfo", None):
+            e_at = e_at.replace(tzinfo=None)
+        b_from = s_at - timedelta(days=14)
+        b_to = s_at
+        a_from, a_to = s_at, e_at
+        # Prefer frozen baseline metrics when closed
+        baseline_m = (prow.baseline_meta or {}).get("metrics")
+        if prow.status == "closed" and baseline_m:
+            before = dict(baseline_m)
+            before["from"] = _iso(b_from)
+            before["to"] = _iso(b_to)
+            before["frozen"] = True
+        else:
+            before_m = await compute_metrics(
+                session,
+                tenant_id,
+                start=b_from.date() if hasattr(b_from, "date") else b_from,
+                end=b_to.date() if hasattr(b_to, "date") else b_to,
+                own_domains=own_domains,
+            )
+            before = before_m.to_dict()
+            before["from"] = _iso(b_from)
+            before["to"] = _iso(b_to)
+            before["frozen"] = False
+        if prow.status == "closed" and (prow.result_meta or {}).get("metrics"):
+            after = dict((prow.result_meta or {}).get("metrics") or {})
+            after["from"] = _iso(a_from)
+            after["to"] = _iso(a_to)
+            after["frozen"] = True
+        else:
+            after_m = await compute_metrics(
+                session,
+                tenant_id,
+                start=a_from.date() if hasattr(a_from, "date") else a_from,
+                end=a_to.date() if hasattr(a_to, "date") else a_to,
+                own_domains=own_domains,
+            )
+            after = after_m.to_dict()
+            after["from"] = _iso(a_from)
+            after["to"] = _iso(a_to)
+            after["frozen"] = False
+        period_meta = {
+            "id": prow.id,
+            "name": prow.name,
+            "status": prow.status,
+            "business_id": prow.business_id,
+        }
+    else:
+        if not all([before_from, before_to, after_from, after_to]):
+            raise HTTPException(
+                400, "请提供 before_from/to + after_from/to，或 period_id"
+            )
+        try:
+            b_from = parse_window_bound(before_from, label="before_from")
+            b_to = parse_window_bound(before_to, label="before_to")
+            a_from = parse_window_bound(after_from, label="after_from")
+            a_to = parse_window_bound(after_to, label="after_to")
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if b_from > b_to or a_from > a_to:
+            raise HTTPException(400, "窗口起止时间无效：from 不得晚于 to")
+        before_m = await compute_metrics(
+            session,
+            tenant_id,
+            start=b_from.date() if hasattr(b_from, "date") else b_from,
+            end=b_to.date() if hasattr(b_to, "date") else b_to,
+            own_domains=own_domains,
         )
-    )
-    before_rows = [
-        r
-        for r in all_snaps
-        if in_captured_window(r.captured_at, start=b_from, end=b_to)
-    ]
-    after_rows = [
-        r
-        for r in all_snaps
-        if in_captured_window(r.captured_at, start=a_from, end=a_to)
-    ]
-    before = compute_window_metrics(
-        before_rows, prompt_probe=prompt_probe, own_domains=own_domains
-    )
-    after = compute_window_metrics(
-        after_rows, prompt_probe=prompt_probe, own_domains=own_domains
-    )
-    before["from"] = _iso(b_from)
-    before["to"] = _iso(b_to)
-    after["from"] = _iso(a_from)
-    after["to"] = _iso(a_to)
+        after_m = await compute_metrics(
+            session,
+            tenant_id,
+            start=a_from.date() if hasattr(a_from, "date") else a_from,
+            end=a_to.date() if hasattr(a_to, "date") else a_to,
+            own_domains=own_domains,
+        )
+        before = before_m.to_dict()
+        after = after_m.to_dict()
+        before["from"] = _iso(b_from)
+        before["to"] = _iso(b_to)
+        after["from"] = _iso(a_from)
+        after["to"] = _iso(a_to)
+
     return {
+        "period": period_meta,
         "before": before,
         "after": after,
         "delta": {
             "visibility_mention_rate": rate_delta(
-                before["visibility_mention_rate"], after["visibility_mention_rate"]
+                before.get("visibility_mention_rate")
+                or before.get("brand_mention_rate"),
+                after.get("visibility_mention_rate")
+                or after.get("brand_mention_rate"),
             ),
             "visibility_top1_rate": rate_delta(
-                before.get("visibility_top1_rate"), after.get("visibility_top1_rate")
+                before.get("visibility_top1_rate") or before.get("top1_rate"),
+                after.get("visibility_top1_rate") or after.get("top1_rate"),
             ),
             "own_domain_cite_rate": rate_delta(
-                before["own_domain_cite_rate"], after["own_domain_cite_rate"]
+                before.get("own_domain_cite_rate"), after.get("own_domain_cite_rate")
             ),
             "probe_recognition_rate": rate_delta(
-                before["probe_recognition_rate"], after["probe_recognition_rate"]
+                before.get("probe_recognition_rate")
+                or before.get("brand_probe_recognition_rate"),
+                after.get("probe_recognition_rate")
+                or after.get("brand_probe_recognition_rate"),
             ),
         },
     }
@@ -2829,16 +3103,35 @@ async def visibility_period_diff(
 @router.get("/citation-insights")
 async def citation_insights(
     tenant_id: int = Query(...),
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
+    days: int | None = Query(None, ge=1, le=90),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Aggregate cited_urls hostnames from answer snapshots."""
+    from app.geo.content.time_windows import (
+        default_observation_window,
+        shanghai_day_bounds_utc_naive,
+    )
+
     ctx.ensure_tenant(tenant_id)
+    stmt = select(GeoAnswerSnapshot).where(GeoAnswerSnapshot.tenant_id == tenant_id)
+    if date_from or date_to or days:
+        start_d, end_d = default_observation_window(days=int(days or 14))
+        if date_from:
+            start_d = date_from
+        if date_to:
+            end_d = date_to
+        lo, _ = shanghai_day_bounds_utc_naive(start_d)
+        _, hi = shanghai_day_bounds_utc_naive(end_d)
+        stmt = stmt.where(
+            GeoAnswerSnapshot.captured_at >= lo,
+            GeoAnswerSnapshot.captured_at < hi,
+        )
     rows = list(
         await session.scalars(
-            select(GeoAnswerSnapshot)
-            .where(GeoAnswerSnapshot.tenant_id == tenant_id)
-            .order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
+            stmt.order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
         )
     )
     prompt_ids = {r.prompt_id for r in rows}
@@ -3343,6 +3636,20 @@ async def geo_onboarding_apply(
     }
 
 
+@router.get("/onboarding/readiness")
+async def geo_onboarding_readiness(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """开户完成后的「还差什么」检查表。"""
+    from app.geo.content.onboarding import tenant_readiness
+
+    ctx.ensure_tenant(tenant_id)
+    await _ensure_tenant_exists(session, tenant_id)
+    return await tenant_readiness(session, tenant_id)
+
+
 @router.get("/optimization-businesses/{business_id}/dashboard")
 async def business_dashboard(
     business_id: int,
@@ -3432,40 +3739,43 @@ async def business_dashboard(
                     }
                 )
 
-    end = datetime.utcnow()
+    from app.geo.content.metric_service import compute_metrics
+    from app.geo.content.time_windows import default_observation_window, shanghai_today
+
+    w_start, w_end = default_observation_window(days=days)
+    end = datetime.utcnow()  # used only for legacy series lower bound fallback
     start = end - timedelta(days=days)
-    snaps: list[GeoAnswerSnapshot] = []
-    if prompt_ids:
-        snaps = list(
-            await session.scalars(
-                select(GeoAnswerSnapshot).where(
-                    GeoAnswerSnapshot.tenant_id == tenant_id,
-                    GeoAnswerSnapshot.prompt_id.in_(prompt_ids),
-                    GeoAnswerSnapshot.captured_at >= start,
-                )
-            )
-        )
-    # Business-scoped mention rate (exclude brand probes when possible)
-    probe_map = {p.id: bool(p.is_brand_probe) for p in prompts}
-    vis_snaps = [s for s in snaps if not probe_map.get(s.prompt_id, False)]
-    vis_n = len(vis_snaps)
-    vis_hits = sum(1 for s in vis_snaps if s.mentions_brand)
+    own_domains = await _own_domains_for_tenant(session, tenant_id)
+    metrics_bundle = await compute_metrics(
+        session,
+        tenant_id,
+        start=w_start,
+        end=w_end,
+        days=days,
+        prompt_ids=prompt_ids or None,
+        own_domains=own_domains,
+    )
     mention = {
-        "rate": round(vis_hits / vis_n, 4) if vis_n else None,
-        "mentions": vis_hits,
-        "snapshots": vis_n,
+        **metrics_bundle.to_dict(),
+        "rate": metrics_bundle.brand_mention_rate,
+        "mentions": metrics_bundle.brand_mentions,
+        "snapshots": metrics_bundle.snapshots_visibility,
         "days": days,
-        "scope": "business",
+        "scope": "business" if prompt_ids else "tenant_fallback",
         "business_id": business_id,
     }
-    # Tenant-level fallback if no business-scoped prompts yet
-    if not prompt_ids:
-        try:
-            tr = await brand_mention_rate(session, tenant_id, days=days)
-            mention = tr.to_dict() if hasattr(tr, "to_dict") else dict(tr)
-            mention["scope"] = "tenant_fallback"
-        except Exception:  # noqa: BLE001
-            pass
+    # Load snaps via unified window for deeper drill sections
+    from app.geo.content.metric_service import load_snapshots_in_window
+
+    snaps = await load_snapshots_in_window(
+        session,
+        tenant_id,
+        start=w_start,
+        end=w_end,
+        prompt_ids=prompt_ids or None,
+    )
+    probe_map = {p.id: bool(p.is_brand_probe) for p in prompts}
+    vis_snaps = [s for s in snaps if not probe_map.get(s.prompt_id, False)]
     daily = list(
         await session.scalars(
             select(GeoDailyMetric)
@@ -3506,26 +3816,20 @@ async def business_dashboard(
     ]
 
     # ---- deeper metrics: multi-rate window, engine split, citations, competitors ----
-    own_domains = await _own_domains_for_tenant(session, tenant_id)
-    window_now = compute_window_metrics(
-        snaps, prompt_probe=probe_map, own_domains=own_domains
+    from datetime import timedelta as _td
+
+    prev_end = w_start - _td(days=1)
+    prev_start_d = prev_end - _td(days=days - 1)
+    prev_bundle = await compute_metrics(
+        session,
+        tenant_id,
+        start=prev_start_d,
+        end=prev_end,
+        prompt_ids=prompt_ids or None,
+        own_domains=own_domains,
     )
-    prev_start = start - timedelta(days=days)
-    prev_snaps: list[GeoAnswerSnapshot] = []
-    if prompt_ids:
-        prev_snaps = list(
-            await session.scalars(
-                select(GeoAnswerSnapshot).where(
-                    GeoAnswerSnapshot.tenant_id == tenant_id,
-                    GeoAnswerSnapshot.prompt_id.in_(prompt_ids),
-                    GeoAnswerSnapshot.captured_at >= prev_start,
-                    GeoAnswerSnapshot.captured_at < start,
-                )
-            )
-        )
-    window_prev = compute_window_metrics(
-        prev_snaps, prompt_probe=probe_map, own_domains=own_domains
-    )
+    window_now = metrics_bundle.to_dict()
+    window_prev = prev_bundle.to_dict()
     visibility_deep = {
         **mention,
         **window_now,
@@ -3548,13 +3852,13 @@ async def business_dashboard(
             ),
         },
         "previous_window": {
-            "from": _iso(prev_start),
-            "to": _iso(start),
+            "from": prev_start_d.isoformat(),
+            "to": prev_end.isoformat(),
             **window_prev,
         },
         "current_window": {
-            "from": _iso(start),
-            "to": _iso(end),
+            "from": w_start.isoformat(),
+            "to": w_end.isoformat(),
         },
     }
 
@@ -3698,6 +4002,12 @@ async def business_dashboard(
             for t in sorted(in_prod, key=lambda x: -x.id)[:30]
         ],
         "published": pubs[:30],
+        "this_week": _business_week_actions(
+            gaps=gaps,
+            in_prod=in_prod,
+            published=pubs,
+            cite_hit_snaps=cite_hit_snaps,
+        ),
         "effect_series": series,
         "days": days,
         "links": {
@@ -3718,7 +4028,12 @@ async def get_monitoring_stance(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     from app.geo.content.ai_settings import ensure_ai_setting
-    from app.geo.content.monitoring_stance import STANCES, compose_stance_banner, normalize_stance
+    from app.geo.content.monitoring_stance import (
+        STANCES,
+        build_skip_preview,
+        compose_stance_banner,
+        normalize_stance,
+    )
     from app.models import GeoTrackingEngine
 
     ctx.ensure_tenant(tenant_id)
@@ -3740,6 +4055,7 @@ async def get_monitoring_stance(
         real_ready_engines=len(real_ready),
         enabled_engines=len(enabled),
     )
+    skip_preview = build_skip_preview(engines, monitoring_stance=stance)
     return {
         "tenant_id": tenant_id,
         "monitoring_stance": stance,
@@ -3751,7 +4067,10 @@ async def get_monitoring_stance(
             "mock_persona": sum(
                 1 for e in enabled if (e.sample_mode or "mock_persona") == "mock_persona"
             ),
+            "will_run": skip_preview["enabled_will_run"],
+            "will_skip": skip_preview["enabled_will_skip"],
         },
+        "skip_preview": skip_preview,
     }
 
 
@@ -3777,6 +4096,70 @@ async def put_monitoring_stance(
     }
 
 
+@router.post("/attribution/backfill")
+async def attribution_backfill(
+    tenant_id: int = Query(...),
+    limit: int = Query(2000, ge=1, le=10000, description="本批最多处理条数"),
+    only_empty: bool = Query(True, description="仅回填 matched 为空的快照"),
+    cursor_id: int | None = Query(None, description="游标：只处理 id < cursor_id"),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """历史快照归因回填（支持游标分页跑全量）。"""
+    from app.geo.content.attribution import (
+        load_tenant_publications,
+        match_publication_ids,
+    )
+
+    ctx.ensure_tenant(tenant_id)
+    pubs = await load_tenant_publications(session, tenant_id)
+    if not pubs:
+        return {
+            "tenant_id": tenant_id,
+            "scanned": 0,
+            "updated": 0,
+            "matched_hits": 0,
+            "publication_count": 0,
+            "next_cursor": None,
+            "done": True,
+            "message": "无已发布 URL，无需回填",
+        }
+
+    stmt = select(GeoAnswerSnapshot).where(GeoAnswerSnapshot.tenant_id == tenant_id)
+    if cursor_id is not None:
+        stmt = stmt.where(GeoAnswerSnapshot.id < int(cursor_id))
+    stmt = stmt.order_by(GeoAnswerSnapshot.id.desc()).limit(limit)
+    rows = list(await session.scalars(stmt))
+    updated = 0
+    hits = 0
+    scanned = 0
+    min_id = None
+    for snap in rows:
+        scanned += 1
+        min_id = int(snap.id) if min_id is None else min(min_id, int(snap.id))
+        existing = list(getattr(snap, "matched_publication_ids", None) or [])
+        if only_empty and existing:
+            continue
+        matched = match_publication_ids(list(snap.cited_urls or []), pubs)
+        if matched != existing:
+            snap.matched_publication_ids = matched or None
+            updated += 1
+        if matched:
+            hits += 1
+    await session.commit()
+    next_cursor = min_id if scanned >= limit and min_id is not None else None
+    return {
+        "tenant_id": tenant_id,
+        "scanned": scanned,
+        "updated": updated,
+        "matched_hits": hits,
+        "publication_count": len(pubs),
+        "only_empty": only_empty,
+        "next_cursor": next_cursor,
+        "done": next_cursor is None,
+    }
+
+
 @router.get("/async-jobs/{job_id}")
 async def get_async_job(
     job_id: int,
@@ -3784,12 +4167,13 @@ async def get_async_job(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    from app.geo.content.async_jobs import job_payload
+    from app.geo.content.async_jobs import job_payload, reconcile_stale_job
 
     ctx.ensure_tenant(tenant_id)
     row = await session.get(GeoAsyncJob, job_id)
     if row is None or row.tenant_id != tenant_id:
         raise HTTPException(404, "异步作业不存在")
+    row = await reconcile_stale_job(session, row)
     return job_payload(row)
 
 
@@ -3802,9 +4186,14 @@ async def list_async_jobs(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    from app.geo.content.async_jobs import job_payload
+    from app.geo.content.async_jobs import (
+        job_payload,
+        reconcile_stale_content_tasks,
+        reconcile_stale_job,
+    )
 
     ctx.ensure_tenant(tenant_id)
+    released = await reconcile_stale_content_tasks(session, tenant_id=tenant_id)
     stmt = select(GeoAsyncJob).where(GeoAsyncJob.tenant_id == tenant_id)
     if ref_type:
         stmt = stmt.where(GeoAsyncJob.ref_type == ref_type)
@@ -3812,7 +4201,11 @@ async def list_async_jobs(
         stmt = stmt.where(GeoAsyncJob.ref_id == ref_id)
     stmt = stmt.order_by(GeoAsyncJob.id.desc()).limit(limit)
     rows = list(await session.scalars(stmt))
-    return {"items": [job_payload(r) for r in rows]}
+    out = []
+    for r in rows:
+        r = await reconcile_stale_job(session, r)
+        out.append(job_payload(r))
+    return {"items": out, "stale_tasks_released": released}
 
 
 @router.get("/visibility-patrol/ops-status")
@@ -5471,10 +5864,14 @@ async def create_task(
     from app.geo.content.brief import normalize_brief
 
     business_id = await _resolve_task_business_id(session, prompt)
+    period_id = await _resolve_active_period_id(
+        session, tenant_id=req.tenant_id, business_id=business_id
+    )
     task = GeoContentTask(
         tenant_id=req.tenant_id,
         prompt_id=prompt.id,
         business_id=business_id,
+        period_id=period_id,
         title=title,
         status="draft",
         target_channels=normalize_channels(req.target_channels),
@@ -5622,13 +6019,14 @@ async def content_task_impact(
     task_id: int,
     tenant_id: int = Query(...),
     window_days: int = Query(14, ge=1, le=90, description="发布前后对比窗天数"),
+    min_samples: int = Query(8, ge=1, le=50, description="单侧最小样本量"),
+    spillover_scope: str = Query(
+        "unit", description="相关意图词范围: prompt|unit|business"
+    ),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """发布后效果：引用命中次数 + 相关意图词发布前后提及率。
-
-    证明闭环「发了有用吗」——用 publication ↔ snapshot 关联，而非纯时间窗。
-    """
+    """发布后效果：引用命中 + 有样本量门槛/外溢/对照的证明层（W4）。"""
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
     variants = await _variants(session, task.id)
@@ -5651,7 +6049,6 @@ async def content_task_impact(
         if p.created_at is not None and first_pub_at is None:
             first_pub_at = p.created_at
 
-    # Snapshots that matched any of this task's publications
     all_snaps = list(
         await session.scalars(
             select(GeoAnswerSnapshot)
@@ -5659,7 +6056,6 @@ async def content_task_impact(
             .order_by(GeoAnswerSnapshot.captured_at.asc(), GeoAnswerSnapshot.id.asc())
         )
     )
-    # Also URL-fallback match for legacy snapshots without matched_publication_ids
     tenant_pubs = await load_tenant_publications(session, tenant_id)
     task_pub_refs = [pr for pr in tenant_pubs if pr.task_id == task.id]
     cite_hits: list[dict[str, Any]] = []
@@ -5684,27 +6080,134 @@ async def content_task_impact(
             }
         )
 
+    # Related prompt set: direct + spillover
+    direct_prompt_ids = {int(task.prompt_id)}
+    spillover_ids: set[int] = set()
+    prompt_row = await session.get(GeoPrompt, task.prompt_id)
+    scope = (spillover_scope or "unit").strip().lower()
+    if prompt_row and scope in {"unit", "business"} and prompt_row.unit_id:
+        unit = await session.get(GeoOptimizationUnit, prompt_row.unit_id)
+        if unit and scope == "unit":
+            for p in await session.scalars(
+                select(GeoPrompt).where(
+                    GeoPrompt.tenant_id == tenant_id,
+                    GeoPrompt.unit_id == unit.id,
+                    GeoPrompt.status == "active",
+                )
+            ):
+                if p.id != task.prompt_id:
+                    spillover_ids.add(int(p.id))
+        elif unit and scope == "business":
+            for p in await session.scalars(
+                select(GeoPrompt)
+                .join(
+                    GeoOptimizationUnit,
+                    GeoOptimizationUnit.id == GeoPrompt.unit_id,
+                )
+                .where(
+                    GeoPrompt.tenant_id == tenant_id,
+                    GeoOptimizationUnit.business_id == unit.business_id,
+                    GeoPrompt.status == "active",
+                )
+            ):
+                if p.id != task.prompt_id:
+                    spillover_ids.add(int(p.id))
+    related_ids = direct_prompt_ids | spillover_ids
+
     before_start, anchor, after_end = impact_windows(first_pub_at, window_days=window_days)
-    prompt_snaps = [s for s in all_snaps if s.prompt_id == task.prompt_id]
-    before_snaps: list[GeoAnswerSnapshot] = []
-    after_snaps: list[GeoAnswerSnapshot] = []
-    if anchor is not None and before_start is not None and after_end is not None:
-        for s in prompt_snaps:
+
+    def _split_window(snaps: list[GeoAnswerSnapshot]) -> tuple[list, list]:
+        b, a = [], []
+        if anchor is None or before_start is None or after_end is None:
+            return b, a
+        for s in snaps:
             ca = s.captured_at
             if ca is None:
                 continue
             if getattr(ca, "tzinfo", None) is not None:
                 ca = ca.replace(tzinfo=None)
             if before_start <= ca < anchor:
-                before_snaps.append(s)
+                b.append(s)
             elif anchor <= ca <= after_end:
-                after_snaps.append(s)
+                a.append(s)
+        return b, a
 
-    before_m = summarize_snaps(before_snaps)
-    after_m = summarize_snaps(after_snaps)
-    delta = None
-    if before_m["mention_rate"] is not None and after_m["mention_rate"] is not None:
-        delta = round(after_m["mention_rate"] - before_m["mention_rate"], 4)
+    def _rate_block(snaps_b: list, snaps_a: list) -> dict[str, Any]:
+        before_m = summarize_snaps(snaps_b)
+        after_m = summarize_snaps(snaps_a)
+        n_b = before_m["snapshot_count"]
+        n_a = after_m["snapshot_count"]
+        insufficient = n_b < min_samples or n_a < min_samples
+        delta = None
+        if (
+            not insufficient
+            and before_m["mention_rate"] is not None
+            and after_m["mention_rate"] is not None
+        ):
+            delta = round(after_m["mention_rate"] - before_m["mention_rate"], 4)
+        conf = "low"
+        if not insufficient and n_b >= min_samples * 2 and n_a >= min_samples * 2:
+            conf = "high"
+        elif not insufficient:
+            conf = "medium"
+        return {
+            "before": before_m,
+            "after": after_m,
+            "delta_mention_rate": None if insufficient else delta,
+            "insufficient_data": insufficient,
+            "min_samples": min_samples,
+            "confidence": conf,
+            "confidence_reason": (
+                f"样本量不足（前 {n_b} / 后 {n_a}，阈值 {min_samples}）"
+                if insufficient
+                else f"前 {n_b} / 后 {n_a} 条快照"
+            ),
+        }
+
+    direct_snaps = [s for s in all_snaps if s.prompt_id in direct_prompt_ids]
+    spill_snaps = [s for s in all_snaps if s.prompt_id in spillover_ids]
+    db, da = _split_window(direct_snaps)
+    sb, sa = _split_window(spill_snaps)
+    direct_block = _rate_block(db, da)
+    spill_block = _rate_block(sb, sa) if spillover_ids else None
+
+    # Control: prompts without any published task in window
+    published_prompt_ids = set(
+        await session.scalars(
+            select(GeoContentTask.prompt_id).where(
+                GeoContentTask.tenant_id == tenant_id,
+                GeoContentTask.status == "published",
+            )
+        )
+    )
+    control_ids = set(
+        await session.scalars(
+            select(GeoPrompt.id).where(
+                GeoPrompt.tenant_id == tenant_id,
+                GeoPrompt.status == "active",
+                GeoPrompt.id.notin_(list(related_ids | published_prompt_ids) or [0]),
+            )
+        )
+    )
+    control_snaps = [s for s in all_snaps if s.prompt_id in control_ids]
+    cb, ca = _split_window(control_snaps)
+    control_block = _rate_block(cb, ca)
+    net_effect = None
+    if (
+        not direct_block["insufficient_data"]
+        and not control_block["insufficient_data"]
+        and direct_block["delta_mention_rate"] is not None
+        and control_block["delta_mention_rate"] is not None
+    ):
+        net_effect = round(
+            direct_block["delta_mention_rate"] - control_block["delta_mention_rate"], 4
+        )
+
+    overall_conf = direct_block["confidence"]
+    if direct_block["insufficient_data"]:
+        overall_conf = "low"
+    elif net_effect is not None and control_block["confidence"] == "high":
+        overall_conf = "high"
 
     pubs_out = []
     for p in pubs:
@@ -5716,6 +6219,7 @@ async def content_task_impact(
                 "id": p.id,
                 "channel": p.channel,
                 "published_url": p.published_url,
+                "canonical_url": getattr(p, "canonical_url", None),
                 "published_at": _iso(p.published_at),
                 "status": p.status,
                 "cite_hit_count": hit_count,
@@ -5725,6 +6229,11 @@ async def content_task_impact(
     return {
         "task_id": task.id,
         "prompt_id": task.prompt_id,
+        "related_prompt_ids": {
+            "direct": sorted(direct_prompt_ids),
+            "spillover": sorted(spillover_ids),
+            "control_count": len(control_ids),
+        },
         "window_days": window_days,
         "first_published_at": _iso(first_pub_at),
         "publications": pubs_out,
@@ -5733,22 +6242,48 @@ async def content_task_impact(
             "items": cite_hits[:50],
         },
         "prompt_mention": {
-            "before": before_m,
-            "after": after_m,
-            "delta_mention_rate": delta,
+            **direct_block,
             "window": {
                 "before_from": _iso(before_start),
                 "published_at": _iso(anchor),
                 "after_to": _iso(after_end),
             },
+            "methodology_note": (
+                "非随机实验：对照为同期未发布内容的意图词；"
+                "请结合 cite_hits 与样本量解读，不足时勿展示确定变化率。"
+            ),
         },
+        "spillover_mention": spill_block,
+        "control_mention": control_block,
+        "net_effect_vs_control": net_effect,
+        "confidence": overall_conf,
         "summary": {
             "published_count": len([p for p in pubs if p.published_url]),
             "cite_hit_total": len(cite_hits),
-            "mention_rate_before": before_m["mention_rate"],
-            "mention_rate_after": after_m["mention_rate"],
-            "mention_rate_delta": delta,
-            "has_proof": bool(pubs) and (len(cite_hits) > 0 or after_m["snapshot_count"] > 0),
+            "mention_rate_before": (
+                None
+                if direct_block["insufficient_data"]
+                else direct_block["before"]["mention_rate"]
+            ),
+            "mention_rate_after": (
+                None
+                if direct_block["insufficient_data"]
+                else direct_block["after"]["mention_rate"]
+            ),
+            "mention_rate_delta": direct_block["delta_mention_rate"],
+            "insufficient_data": direct_block["insufficient_data"],
+            "net_effect_vs_control": net_effect,
+            "confidence": overall_conf,
+            "has_proof": bool(pubs)
+            and (
+                len(cite_hits) > 0
+                or int(direct_block["after"].get("snapshot_count") or 0) > 0
+            ),
+            "action_hint": (
+                "数据不足以判断，建议提高巡检频率或延长观察期"
+                if direct_block["insufficient_data"]
+                else None
+            ),
         },
     }
 
@@ -6240,8 +6775,8 @@ async def generate_task_article(
     task_id: int,
     tenant_id: int = Query(...),
     run_async: bool = Query(
-        False,
-        description="true=后台生成并返回 job；false=同步等待（兼容旧客户端）",
+        True,
+        description="默认后台生成；false=同步等待（兼容脚本）",
     ),
     background_tasks: BackgroundTasks = None,  # filled by FastAPI
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -6379,8 +6914,8 @@ async def create_variants(
     req: VariantsCreate,
     tenant_id: int = Query(...),
     run_async: bool = Query(
-        False,
-        description="true=后台生成渠道稿并返回 job；false=同步等待",
+        True,
+        description="默认后台生成渠道稿；false=同步等待",
     ),
     background_tasks: BackgroundTasks = None,  # type: ignore[assignment]
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -6608,6 +7143,35 @@ async def decide_task_review(
     return await _task_payload(session, task, detail=True)
 
 
+async def _resolve_active_period_id(
+    session: AsyncSession, *, tenant_id: int, business_id: int | None
+) -> int | None:
+    """Pick current active optimization period (same business preferred)."""
+    now = datetime.utcnow()
+    rows = list(
+        await session.scalars(
+            select(GeoOptimizationPeriod)
+            .where(
+                GeoOptimizationPeriod.tenant_id == tenant_id,
+                GeoOptimizationPeriod.status == "active",
+                GeoOptimizationPeriod.starts_at <= now,
+                GeoOptimizationPeriod.ends_at >= now,
+            )
+            .order_by(GeoOptimizationPeriod.id.desc())
+        )
+    )
+    if not rows:
+        return None
+    if business_id is not None:
+        for r in rows:
+            if r.business_id == business_id:
+                return int(r.id)
+    for r in rows:
+        if r.business_id is None:
+            return int(r.id)
+    return int(rows[0].id)
+
+
 async def _write_publication(
     session: AsyncSession,
     *,
@@ -6618,13 +7182,26 @@ async def _write_publication(
     note: str | None,
     publish_mode: str,
 ) -> None:
+    from app.geo.content.attribution import normalize_url_for_match
+
+    period_id = getattr(task, "period_id", None)
+    if period_id is None:
+        period_id = await _resolve_active_period_id(
+            session,
+            tenant_id=task.tenant_id,
+            business_id=getattr(task, "business_id", None),
+        )
+        if period_id is not None:
+            task.period_id = period_id
     pub = GeoPublication(
         variant_id=variant.id,
         channel=channel,
         publish_mode=publish_mode,
         published_url=published_url,
+        canonical_url=normalize_url_for_match(published_url),
         published_at=datetime.utcnow(),
         status="published",
+        period_id=period_id,
         note=note,
     )
     session.add(pub)
@@ -6801,7 +7378,7 @@ async def push_variant_webhook(
 async def push_variant_batch(
     task_id: int,
     req: PushBatchRequest,
-    run_async: bool = Query(False, description="true=后台推送并返回 job"),
+    run_async: bool = Query(True, description="默认后台推送；false=同步"),
     background_tasks: BackgroundTasks = None,  # type: ignore[assignment]
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
@@ -7093,6 +7670,10 @@ async def content_stats(
     prompts_brand_missing = sum(
         1 for p in active_prompts if "brand_missing" in (p.tags or [])
     )
+    # W6: unc 桶 — 未挂 unit 的活跃意图词（日指标 scope_key=unc）
+    prompts_unclassified = sum(
+        1 for p in active_prompts if getattr(p, "unit_id", None) is None
+    )
     prompt_ids = [p.id for p in active_prompts]
     latest = await _latest_snapshots_by_prompt(session, tenant_id, prompt_ids)
     published_at = await _published_task_updated_by_prompt(session, tenant_id, prompt_ids)
@@ -7176,6 +7757,7 @@ async def content_stats(
         "media_published": int(media_published or 0),
         "prompts_brand_missing": int(prompts_brand_missing),
         "prompts_need_recheck": int(prompts_need_recheck),
+        "prompts_unclassified": int(prompts_unclassified),
         "prompts_probe": int(prompts_probe),
         # Raw all-snapshot rate kept for debugging; primary KPI excludes probes.
         "visibility_mention_rate_raw": visibility_mention_rate(
@@ -7234,12 +7816,16 @@ async def geo_deliverables_pack(
     task_limit: int = Query(20, ge=0, le=100),
     business_id: int | None = Query(None, description="按优化业务切片"),
     unit_id: int | None = Query(None, description="按优化单元切片（优先于 business_id）"),
+    period_id: int | None = Query(
+        None, description="传入则锁定期次窗；closed 期次返回固化 pack"
+    ),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ):
     """Client-facing GEO deliverables pack composed from existing GEO data.
 
     可选 business_id / unit_id：快照与任务按意图词归属切片；并附带 daily_metrics 序列。
+    period_id：优先返回关闭期次的固化交付物。
     """
     from app.geo.content.daily_metrics import (
         metric_row_payload,
@@ -7249,27 +7835,106 @@ async def geo_deliverables_pack(
     )
     from app.geo.content.snapshots import normalize_cited_urls
 
+    from app.geo.content.metric_service import compute_metrics, composition_of
+    from app.geo.content.monitoring_stance import normalize_stance
+    from app.geo.content.time_windows import default_observation_window, shanghai_today
+    from app.geo.content.ai_settings import ensure_ai_setting
+
     ctx.ensure_tenant(tenant_id)
     tenant = await _ensure_tenant_exists(session, tenant_id)
 
-    end = (
-        parse_window_bound(to, label="to")
-        if to
-        else datetime.utcnow()
-    )
-    start = (
-        parse_window_bound(from_, label="from")
-        if from_
-        else end - timedelta(days=30)
-    )
-    if start > end:
-        raise HTTPException(400, "from 不能晚于 to")
+    # Closed period → frozen pack only
+    if period_id is not None:
+        prow = await session.get(GeoOptimizationPeriod, period_id)
+        if prow is None or prow.tenant_id != tenant_id:
+            raise HTTPException(404, "优化期次不存在")
+        if prow.status == "closed":
+            pack = (prow.result_meta or {}).get("deliverable_pack")
+            if pack:
+                if format == "md":
+                    from fastapi.responses import PlainTextResponse
 
-    period = {
-        "from": start.isoformat(timespec="seconds"),
-        "to": end.isoformat(timespec="seconds"),
-        "days": max(1, (end.date() - start.date()).days + 1),
-    }
+                    lines = [
+                        f"# {pack.get('period_name') or '期次交付'}",
+                        f"固化于 {pack.get('frozen_at')}",
+                        "",
+                        f"- 发布篇数：{(pack.get('headline') or {}).get('published_count')}",
+                        f"- 期内任务：{(pack.get('headline') or {}).get('tasks_in_period')}",
+                        f"- 覆盖意图词：{(pack.get('headline') or {}).get('prompts_covered')}",
+                        f"- 提及率：{(pack.get('headline') or {}).get('mention_rate_before')} → {(pack.get('headline') or {}).get('mention_rate_after')}",
+                        f"- Δ：{(pack.get('headline') or {}).get('mention_rate_delta')}",
+                        "",
+                        pack.get("methodology_note") or "",
+                    ]
+                    return PlainTextResponse("\n".join(lines), media_type="text/markdown")
+                return {"frozen": True, "period_id": period_id, **pack}
+        # open period: lock window to period dates
+        s_at, e_at = prow.starts_at, prow.ends_at
+        start_d = s_at.date() if hasattr(s_at, "date") else s_at
+        end_d = e_at.date() if hasattr(e_at, "date") else e_at
+        start_dt = datetime.combine(start_d, datetime.min.time())
+        end_dt = datetime.combine(end_d, datetime.min.time())
+        start, end = start_dt, end_dt
+        period = {
+            "from": start_d.isoformat(),
+            "to": end_d.isoformat(),
+            "days": max(1, (end_d - start_d).days + 1),
+            "timezone": "Asia/Shanghai",
+            "time_basis": "shanghai_calendar_day",
+            "period_id": period_id,
+            "period_name": prow.name,
+        }
+    else:
+        # W1: 默认观察期对齐上海日历日 14 天；自定义 from/to 按日期解析
+        if from_ or to:
+            try:
+                end_dt = (
+                    parse_window_bound(to, label="to") if to else datetime.combine(
+                        shanghai_today(), datetime.min.time()
+                    )
+                )
+                start_dt = (
+                    parse_window_bound(from_, label="from")
+                    if from_
+                    else end_dt - timedelta(days=13)
+                )
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            if start_dt > end_dt:
+                raise HTTPException(400, "from 不能晚于 to")
+            start_d = start_dt.date() if hasattr(start_dt, "date") else start_dt
+            end_d = end_dt.date() if hasattr(end_dt, "date") else end_dt
+        else:
+            start_d, end_d = default_observation_window(days=14)
+            start_dt = datetime.combine(start_d, datetime.min.time())
+            end_dt = datetime.combine(end_d, datetime.min.time())
+        start, end = start_dt, end_dt
+
+        period = {
+            "from": start_d.isoformat(),
+            "to": end_d.isoformat(),
+            "days": max(1, (end_d - start_d).days + 1),
+            "timezone": "Asia/Shanghai",
+            "time_basis": "shanghai_calendar_day",
+        }
+
+    # W3: real_only + simulated samples → refuse export
+    ai_row = await ensure_ai_setting(session, tenant_id)
+    stance = normalize_stance(getattr(ai_row, "monitoring_stance", None))
+    if stance == "real_only":
+        pre = await compute_metrics(
+            session,
+            tenant_id,
+            start=start_d,
+            end=end_d,
+            apply_stance=False,
+        )
+        if pre.composition.simulated > 0:
+            raise HTTPException(
+                400,
+                f"监测定位为仅真采样，但观察窗内仍有 {pre.composition.simulated} 条模拟样本；"
+                "请排除后重试，或改用 hybrid 并在交付中标注样本构成",
+            )
 
     # ---- scope: unit > business > tenant ----
     scope_level = "tenant"
@@ -7354,20 +8019,26 @@ async def geo_deliverables_pack(
         "scope_key": dm_scope_key,
     }
 
-    # ---- windowed snapshots (optionally filtered by prompt scope) ----
-    snap_rows = list(
-        await session.scalars(
-            select(GeoAnswerSnapshot)
-            .where(GeoAnswerSnapshot.tenant_id == tenant_id)
-            .order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
-        )
+    # ---- windowed snapshots + 统一指标（W1 上海日历日）----
+    from app.geo.content.metric_service import load_snapshots_in_window
+
+    own_domains = await _own_domains_for_tenant(session, tenant_id)
+    window_snaps = await load_snapshots_in_window(
+        session,
+        tenant_id,
+        start=start_d,
+        end=end_d,
+        prompt_ids=list(allowed_prompt_ids) if allowed_prompt_ids is not None else None,
     )
-    window_snaps = [
-        s
-        for s in snap_rows
-        if in_captured_window(s.captured_at, start=start, end=end)
-        and (allowed_prompt_ids is None or s.prompt_id in allowed_prompt_ids)
-    ]
+    unified = await compute_metrics(
+        session,
+        tenant_id,
+        start=start_d,
+        end=end_d,
+        prompt_ids=list(allowed_prompt_ids) if allowed_prompt_ids is not None else None,
+        own_domains=own_domains,
+    )
+    split = unified.to_dict()
 
     prompt_ids = {s.prompt_id for s in window_snaps}
     active_prompts = list(
@@ -7390,19 +8061,7 @@ async def geo_deliverables_pack(
             questions[p.id] = p.question
             prompt_probe.setdefault(p.id, bool(p.is_brand_probe))
 
-    split = split_visibility_metrics(
-        [
-            {
-                "mentions_brand": bool(s.mentions_brand),
-                "is_brand_probe": bool(prompt_probe.get(s.prompt_id, False)),
-                "brand_position": s.brand_position,
-            }
-            for s in window_snaps
-        ]
-    )
     engines_covered = len({s.engine for s in window_snaps})
-
-    own_domains = await _own_domains_for_tenant(session, tenant_id)
     buckets: dict[str, dict[str, Any]] = {}
     snapshots_with_citations = 0
     citation_count_total = 0

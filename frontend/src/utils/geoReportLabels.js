@@ -47,6 +47,141 @@ export const ENGINE_LABEL = {
   other: '其他',
 }
 
+export const TASK_STATUS_LABEL = {
+  draft: '草稿',
+  facts_bound: '已绑事实',
+  editing: '写稿中',
+  generating: '生成中',
+  needs_fix: '待修补',
+  ready: '可发布',
+  exported: '已导出',
+  published: '已发布',
+  archived: '已归档',
+  failed: '生成失败',
+}
+
+export const PIPELINE_LABEL = {
+  opportunity: '补策略',
+  evidence: '绑事实',
+  draft: '写母稿',
+  adapt: '出渠道稿',
+  publish: '发布',
+}
+
+export const REVIEW_STATUS_LABEL = {
+  none: '未提交审校',
+  pending: '待审校',
+  approved: '审校已通过',
+  rejected: '审校已驳回',
+}
+
+export function taskStatusLabel(status) {
+  return TASK_STATUS_LABEL[status] || status || '—'
+}
+
+export function pipelineLabel(step) {
+  return PIPELINE_LABEL[step] || step || '—'
+}
+
+export function reviewStatusLabel(status) {
+  return REVIEW_STATUS_LABEL[status] || status || '—'
+}
+
+/**
+ * 任务编辑器「当前下一步」。只告诉人现在该做什么，不改流程。
+ */
+export function nextEditorStep(task, extras = {}) {
+  const facts = extras.boundFacts || task?.facts || []
+  const verified = facts.filter((f) => f.trust_level === 'verified').length
+  const hasArticle = extras.hasArticle ?? !!(task?.article)
+  const variants = extras.variants || task?.variants || []
+  const pubs = extras.publications || task?.publications || []
+  const review = task?.review_status || 'none'
+  const status = task?.status || 'draft'
+  const briefReady = !!task?.brief_ready
+  const checkFailed = !!extras.checkFailed
+  const blocked = extras.blocked || ''
+
+  if (status === 'published' || pubs.some((p) => p.published_url)) {
+    return {
+      key: 'impact',
+      title: '看这篇发出去之后有没有用',
+      detail: '核对提及率和引用命中。样本不够就去复测。',
+      action: '看效果',
+    }
+  }
+  if (!briefReady) {
+    return {
+      key: 'brief',
+      title: '先写清这篇要回答什么',
+      detail: '行业、受众、意图、号召保存后，才能生成能用的母稿。',
+      action: '去保存策略',
+    }
+  }
+  if (facts.length < 3 || verified < 3) {
+    return {
+      key: 'facts',
+      title: '绑上至少 3 条已核验事实',
+      detail: `现在已核验 ${verified} / 共 ${facts.length} 条。没有事实，生成会空转或编造。`,
+      action: '去绑事实',
+    }
+  }
+  if (!hasArticle) {
+    return {
+      key: 'generate',
+      title: '生成母稿',
+      detail: '策略和事实齐了，可以出第一版正文。',
+      action: '生成母稿',
+    }
+  }
+  if (status === 'needs_fix' || checkFailed) {
+    return {
+      key: 'check',
+      title: '先过检查再往下',
+      detail: blocked || '母稿还有未过项，点检查看卡在哪。',
+      action: '去检查',
+    }
+  }
+  if (!variants.length) {
+    return {
+      key: 'variants',
+      title: '生成渠道稿',
+      detail: '母稿好了，按官网 / 微信 / 知乎拆一版再发。',
+      action: '生成渠道稿',
+    }
+  }
+  if (review === 'none') {
+    return {
+      key: 'submit-review',
+      title: '提交审校',
+      detail: '渠道稿已出，通过审校后才能回填发布地址。',
+      action: '提交审校',
+    }
+  }
+  if (review === 'pending') {
+    return {
+      key: 'wait-review',
+      title: '等审校通过',
+      detail: '已经交上去了。通过后才能回填网址或推送。',
+      action: '看审校',
+    }
+  }
+  if (review === 'rejected') {
+    return {
+      key: 'fix-review',
+      title: '按审校意见改完再提',
+      detail: '上次没过。改完母稿或渠道稿后重新提交。',
+      action: '去修改',
+    }
+  }
+  return {
+    key: 'publish',
+    title: '回填发布地址',
+    detail: '审校已过。贴上发出去的网址，系统才能证明这篇有用。',
+    action: '去回填',
+  }
+}
+
 /** 各报表页口径说明（短句，放页头或折叠「统计口径」） */
 export const REPORT_GLOSSARY = {
   citations: [

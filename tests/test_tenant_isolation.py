@@ -6,6 +6,7 @@ import unittest
 
 from fastapi import HTTPException
 
+from app.permissions import OPERATOR_PERMS
 from app.security.auth import AuthContext
 
 
@@ -38,6 +39,21 @@ class TenantIsolationTests(unittest.TestCase):
     def test_superadmin_any(self):
         ctx = self._ctx(None, superadmin=True)
         ctx.ensure_tenant(42)
+
+    def test_bound_api_key_is_not_superadmin(self):
+        ctx = AuthContext(
+            user_id=None,
+            username="api-key",
+            role_name="租户运维密钥",
+            tenant_id=10,
+            permissions=dict(OPERATOR_PERMS),
+            is_superadmin=False,
+        )
+        self.assertFalse(ctx.is_superadmin)
+        self.assertTrue(ctx.can_edit("geo.content"))
+        self.assertFalse(ctx.can_edit("settings.accounts"))
+        with self.assertRaises(HTTPException):
+            ctx.ensure_tenant(11)
 
 
 if __name__ == "__main__":

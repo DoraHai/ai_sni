@@ -65,15 +65,27 @@ def resolve_engine_llm(
     engine: str,
     tenant_llm: dict[str, Any] | None,
     engine_row: Any | None = None,
+    monitoring_stance: str | None = None,
 ) -> tuple[dict[str, Any], str, str | None]:
     """Pick credentials + sample mode for one engine.
 
     Returns (llm_dict, sample_mode, fallback_reason).
     Prefer per-engine openai_compat when key is present; otherwise tenant LLM + persona.
+
+    monitoring_stance (W3):
+      real_only — 无真 Key 时不降级 persona，返回空 llm + skip reason
+      simulation — 强制 persona 标记
+      hybrid — 现行为
     """
+    stance = (monitoring_stance or "hybrid").strip().lower()
     mode = SAMPLE_MODE_PERSONA
     if engine_row is not None:
         mode = (getattr(engine_row, "sample_mode", None) or SAMPLE_MODE_PERSONA).strip()
+
+    if stance == "simulation":
+        if not tenant_llm:
+            return {}, SAMPLE_MODE_PERSONA, "simulation 定位：无租户 LLM"
+        return tenant_llm, SAMPLE_MODE_PERSONA, "simulation 定位：强制人设模拟"
 
     if mode == SAMPLE_MODE_REAL and engine_row is not None:
         from app.security.crypto import decrypt
@@ -89,6 +101,8 @@ def resolve_engine_llm(
             base = (getattr(engine_row, "api_base_url", None) or "").strip().rstrip("/")
             model = (getattr(engine_row, "model", None) or "").strip()
             if not base or not model:
+                if stance == "real_only":
+                    return {}, SAMPLE_MODE_REAL, "skipped:real_only_missing_base_or_model"
                 return (
                     tenant_llm or {},
                     SAMPLE_MODE_PERSONA,
@@ -105,8 +119,8 @@ def resolve_engine_llm(
                 SAMPLE_MODE_REAL,
                 None,
             )
-        # Real mode without per-engine key：统一回退租户/环境百炼（全引擎共用）
-        if tenant_llm and tenant_llm.get("api_key"):
+        # Real mode without per-engine key
+        if tenant_llm and tenant_llm.get("api_key") and stance != "real_only":
             return (
                 {
                     **tenant_llm,
@@ -116,7 +130,12 @@ def resolve_engine_llm(
                 SAMPLE_MODE_REAL,
                 None,
             )
+        if stance == "real_only":
+            return {}, SAMPLE_MODE_REAL, "skipped:real_only_no_engine_key"
         return {}, SAMPLE_MODE_PERSONA, "openai_compat 未配置引擎 Key 且无租户 LLM"
+
+    if stance == "real_only" and mode != SAMPLE_MODE_REAL:
+        return {}, SAMPLE_MODE_REAL, "skipped:real_only_persona_engine_disabled"
 
     if not tenant_llm:
         return {}, SAMPLE_MODE_PERSONA, "无租户/环境 LLM 凭证"

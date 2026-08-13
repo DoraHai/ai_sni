@@ -13,8 +13,9 @@ import {
   listGeoDailyMetrics,
   listGeoUnits,
   rebuildGeoDailyMetrics,
-  staticGeoEditorUrl,
+  fetchVisibilityPatrolOpsStatus,
 } from '../../api/geoContent'
+import { diagnoseEmptyMonitoring } from '../../utils/geoEmptyReason'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { useObservationPeriod } from '../../composables/useObservationPeriod'
@@ -62,6 +63,7 @@ const citationNote = ref('')
 const opsAlerts = ref([])
 const opsSummary = ref(null)
 const weekly = ref(null)
+const patrolOps = ref(null)
 const exporting = ref(false)
 const dailyPager = useClientPager(dailySeries, { pageSize: 14 })
 const M = DAILY_METRIC_COLUMNS
@@ -85,6 +87,25 @@ const sampleComposition = computed(() => {
     null
   return c
 })
+
+/** W6: 未挂 unit 的意图词 → 日指标 unc 桶 */
+const emptyReason = computed(() =>
+  diagnoseEmptyMonitoring({
+    engineCount: (patrolOps.value?.engines || []).length,
+    enabledEngines: (patrolOps.value?.engines || []).filter((e) => e.enabled).length,
+    patrolEnabled: !!patrolOps.value?.settings?.enabled,
+    lastRunAt: patrolOps.value?.last_run?.created_at || patrolOps.value?.last_run?.id,
+    snapshotCount: stats.value?.snapshots ?? 0,
+    mentionCount:
+      stats.value?.snapshots_mention_brand ??
+      brandMetric.value?.brand_mentions ??
+      null,
+  }),
+)
+
+const promptsUnclassified = computed(
+  () => Number(stats.value?.prompts_unclassified || 0),
+)
 
 const summaryCards = computed(() => {
   const s = stats.value
@@ -159,6 +180,13 @@ const summaryCards = computed(() => {
       hint: `品牌缺失标签 ${fmtInt(s.prompts_brand_missing)}`,
       drill: '/geo/gaps',
     },
+    {
+      label: '未分类意图词',
+      value: fmtInt(s.prompts_unclassified),
+      hint: '未挂优化单元 · 日指标记入 unc 桶',
+      drill: '/geo/prompts',
+      warn: Number(s.prompts_unclassified || 0) > 0,
+    },
   ]
 })
 
@@ -171,37 +199,16 @@ const workbenchLinks = [
   { label: '竞品监测', path: '/geo/competitors', desc: '竞品出现、同题对比与日监测', vue: true },
   { label: '评价与位置', path: '/geo/evaluation', desc: '情感、位置与引用质量', vue: true },
   { label: 'AI 引用分析', path: '/geo/citations', desc: '被引域名与自有域占比', vue: true },
-  { label: '内容工作台', path: '/geo/workbench', desc: 'Vue 页枢纽', vue: true },
-  { label: '优化业务', path: '/geo/businesses', desc: '业务 → 单元 → 意图词', vue: true },
+  { label: '优化业务', path: '/geo/businesses', desc: '业务 → 单元 → 意图词', vue: true, primary: true },
   { label: '优化意图词', path: '/geo/prompts', desc: '意图词 · 探测题标记', vue: true },
   { label: '事实库', path: '/geo/facts', desc: 'facts 管理', vue: true },
   { label: '发布渠道', path: '/geo/publishing', desc: '渠道与 Webhook', vue: true },
-  {
-    label: '静态编辑器（兼容）',
-    path: 'static-editor',
-    desc: '完整流水线后备 · :5176/geo/editor.html',
-    static: true,
-  },
-  { label: '网站体检', path: '/diagnostic-center/', desc: '诊断 → 内容桥接', external: true },
 ]
 
 const router = useRouter()
 
 function openWorkbench(link) {
-  if (link.vue) {
-    router.push(link.path)
-    return
-  }
-  if (link.external) {
-    window.location.assign(link.path)
-    return
-  }
-  if (link.static) {
-    const tid = tenantId.value || 1
-    window.open(staticGeoEditorUrl(tid), '_blank')
-    return
-  }
-  window.open(link.path, '_blank')
+  if (link?.path) router.push(link.path)
 }
 
 async function loadHierarchy() {
@@ -321,6 +328,18 @@ async function loadWeekly() {
   }
 }
 
+async function loadPatrolOps() {
+  if (!tenantId.value) {
+    patrolOps.value = null
+    return
+  }
+  try {
+    patrolOps.value = await fetchVisibilityPatrolOpsStatus(tenantId.value)
+  } catch {
+    patrolOps.value = null
+  }
+}
+
 async function load() {
   if (!tenantId.value) {
     error.value = '请先选择客户或配置本地 API Key'
@@ -337,6 +356,7 @@ async function load() {
       loadBrandMetric(),
       loadOps(),
       loadWeekly(),
+      loadPatrolOps(),
     ])
     stats.value = s
     healthOk.value = h ? h.status === 'ok' : null
@@ -452,7 +472,7 @@ onMounted(load)
         >
           运维·强制重算
         </el-button>
-        <el-button type="primary" @click="openWorkbench(workbenchLinks[0])">打开工作台</el-button>
+        <el-button type="primary" @click="router.push('/geo/businesses')">优化业务</el-button>
       </div>
     </div>
 
@@ -505,6 +525,15 @@ onMounted(load)
       </el-tag>
       <span class="sample-compose-meta">全库快照（不受观察期限制）</span>
     </div>
+
+    <el-alert
+      v-if="emptyReason?.key === 'no_mention'"
+      type="warning"
+      show-icon
+      class="mb"
+      :title="emptyReason.title"
+      :description="emptyReason.detail"
+    />
 
     <div v-if="opsAlerts.length" class="geo-ops-stack">
       <el-alert
@@ -563,7 +592,7 @@ onMounted(load)
         v-for="card in summaryCards"
         :key="card.label"
         class="geo-kpi"
-        :class="{ clickable: card.drill }"
+        :class="{ clickable: card.drill, 'kpi-warn': card.warn }"
         @click="card.drill && router.push(card.drill)"
       >
         <div class="kpi-label">{{ card.label }}</div>
@@ -572,8 +601,24 @@ onMounted(load)
       </div>
     </div>
 
+    <el-alert
+      v-if="promptsUnclassified > 0"
+      type="info"
+      :closable="false"
+      show-icon
+      class="mb"
+      :title="`${promptsUnclassified} 个活跃意图词未挂优化单元`"
+      description="日指标会记入 unc（未分类）桶，业务切片不会包含这些词。建议在「优化业务」下创建单元并挂载意图词。"
+    >
+      <template #default>
+        <router-link class="strip-link" to="/geo/prompts">去意图词</router-link>
+        ·
+        <router-link class="strip-link" to="/geo/businesses">管理业务/单元</router-link>
+      </template>
+    </el-alert>
+
     <div
-      v-if="stats && (stats.prompts_brand_missing > 0 || stats.todo_blocked > 0)"
+      v-if="stats && (stats.prompts_brand_missing > 0 || stats.todo_blocked > 0 || promptsUnclassified > 0)"
       class="action-strip"
     >
       <span v-if="stats.prompts_brand_missing > 0">
@@ -581,6 +626,10 @@ onMounted(load)
         <router-link class="strip-link" to="/geo/gaps">缺口工作台</router-link>
         <router-link class="strip-link" to="/geo/prompts?tag=brand_missing">去看意图词</router-link>
         <router-link class="strip-link" to="/geo/tasks">去生成内容</router-link>
+      </span>
+      <span v-if="promptsUnclassified > 0">
+        · <b>{{ promptsUnclassified }}</b> 个未分类（unc）
+        <router-link class="strip-link" to="/geo/prompts">去挂单元</router-link>
       </span>
       <span v-if="stats.todo_blocked > 0">
         · <b>{{ stats.todo_blocked }}</b> 篇待修补
@@ -684,14 +733,19 @@ onMounted(load)
     <section v-else-if="stats" class="geo-panel">
       <div class="panel-title">按天趋势 · {{ scopeHint }} · {{ obsLabel }}</div>
       <div class="geo-empty">
-        <div class="empty-title">观察期内暂无按天汇总</div>
-        <div>登记快照或跑巡检后会自动写入日指标；打开本页时若缺行会静默补算。</div>
+        <div class="empty-title">{{ emptyReason?.title || '观察期内暂无按天汇总' }}</div>
+        <div>
+          {{ emptyReason?.detail || '登记快照或跑巡检后会自动写入日指标。' }}
+        </div>
         <div class="empty-actions">
-          <router-link class="el-button el-button--small el-button--primary" to="/geo/visibility">
-            去登记快照
+          <router-link
+            class="el-button el-button--small el-button--primary"
+            :to="emptyReason?.href || '/geo/visibility'"
+          >
+            {{ emptyReason?.action || '去登记快照' }}
           </router-link>
-          <router-link class="el-button el-button--small is-plain" to="/geo/visibility/patrol">
-            全自动巡检
+          <router-link class="el-button el-button--small is-plain" to="/geo/visibility">
+            手工登记
           </router-link>
         </div>
       </div>
@@ -843,6 +897,10 @@ onMounted(load)
 .geo-kpi.clickable:hover {
   border-color: #93c5fd;
   box-shadow: 0 4px 14px rgba(24, 95, 165, 0.1);
+}
+.geo-kpi.kpi-warn {
+  border-color: #fcd34d;
+  background: #fffbeb;
 }
 .action-strip {
   display: flex;

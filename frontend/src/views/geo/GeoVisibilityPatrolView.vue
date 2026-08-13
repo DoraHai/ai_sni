@@ -17,6 +17,7 @@ import {
   putVisibilityPatrolSettings,
   startVisibilityPatrolRun,
 } from '../../api/geoContent'
+import NeedHintAlert from '../../components/NeedHintAlert.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import {
@@ -392,6 +393,7 @@ onUnmounted(stopPoll)
     </details>
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
+    <NeedHintAlert />
     <el-alert
       v-for="(a, i) in ops?.alerts || []"
       :key="'a' + i"

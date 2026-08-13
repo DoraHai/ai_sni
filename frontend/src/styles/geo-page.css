@@ -43,9 +43,21 @@
 .geo-hub .page-desc {
   margin-top: 6px;
   font-size: 13px;
-  color: #64748b;
+  color: #475569;
   line-height: 1.55;
   max-width: 52rem;
+}
+
+.geo-page .muted,
+.geo-overview .muted,
+.geo-deliv .muted,
+.geo-tasks .muted,
+.geo-muted,
+.geo-page .kpi-hint,
+.geo-overview .kpi-hint {
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.45;
 }
 
 .geo-page .header-actions,

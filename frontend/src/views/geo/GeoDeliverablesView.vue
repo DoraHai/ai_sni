@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useRoute, useRouter } from 'vue-router'
 import {
   createDeliverableArchive,
   downloadGeoDeliverablesMarkdown,
@@ -9,10 +10,14 @@ import {
   listDeliverableArchives,
   listGeoBusinesses,
   listGeoUnits,
+  listOptimizationPeriods,
 } from '../../api/geoContent'
 import { useClientPager } from '../../composables/useClientPager'
 import { useObservationPeriod } from '../../composables/useObservationPeriod'
 import { session } from '../../store/session'
+
+const route = useRoute()
+const router = useRouter()
 
 const { days: observationDays, start: obsStart, end: obsEnd, label: obsLabel } =
   useObservationPeriod()
@@ -28,10 +33,15 @@ const pack = ref(null)
 const range = ref([])
 const businesses = ref([])
 const units = ref([])
+const periods = ref([])
+const filterPeriodId = ref(null)
 const filterBusinessId = ref(null)
 const filterUnitId = ref(null)
 const archives = ref([])
 const lastShare = ref(null)
+
+const lockedByPeriod = computed(() => !!filterPeriodId.value)
+const isFrozenPack = computed(() => !!(pack.value?.frozen || pack.value?.kind === 'geo_period_deliverable_v1'))
 
 const hasSimulated = computed(
   () =>
@@ -86,6 +96,10 @@ const filteredUnits = computed(() => {
 
 const scopeParams = computed(() => {
   const p = {}
+  if (filterPeriodId.value) {
+    p.period_id = filterPeriodId.value
+    return p
+  }
   if (filterUnitId.value) p.unit_id = filterUnitId.value
   else if (filterBusinessId.value) p.business_id = filterBusinessId.value
   return p
@@ -95,19 +109,40 @@ async function loadHierarchy() {
   if (!tenantId.value) {
     businesses.value = []
     units.value = []
+    periods.value = []
     return
   }
   try {
-    const [b, u] = await Promise.all([
+    const [b, u, p] = await Promise.all([
       listGeoBusinesses(tenantId.value, { status: 'active' }),
       listGeoUnits(tenantId.value, { status: 'active' }),
+      listOptimizationPeriods(tenantId.value).catch(() => ({ items: [] })),
     ])
     businesses.value = b.items || []
     units.value = u.items || []
+    periods.value = p.items || []
   } catch {
     businesses.value = []
     units.value = []
+    periods.value = []
   }
+}
+
+function syncPeriodFromRoute() {
+  const q = route.query.period_id
+  if (q != null && q !== '') {
+    const n = Number(q)
+    if (Number.isFinite(n) && n > 0) filterPeriodId.value = n
+  }
+}
+
+function onPeriodChange(id) {
+  filterPeriodId.value = id || null
+  const q = { ...route.query }
+  if (id) q.period_id = String(id)
+  else delete q.period_id
+  router.replace({ path: route.path, query: q })
+  load()
 }
 
 async function loadArchives() {
@@ -132,11 +167,24 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    pack.value = await fetchGeoDeliverablesPack(tenantId.value, {
-      from: `${range.value[0]}T00:00:00`,
-      to: `${range.value[1]}T23:59:59`,
-      ...scopeParams.value,
-    })
+    const params = { ...scopeParams.value }
+    if (!filterPeriodId.value && range.value?.length) {
+      params.from = `${range.value[0]}T00:00:00`
+      params.to = `${range.value[1]}T23:59:59`
+    }
+    pack.value = await fetchGeoDeliverablesPack(tenantId.value, params)
+    // mirror period window into date picker when locked
+    if (filterPeriodId.value && pack.value?.period?.from && pack.value?.period?.to) {
+      range.value = [
+        String(pack.value.period.from).slice(0, 10),
+        String(pack.value.period.to).slice(0, 10),
+      ]
+    } else if (pack.value?.window?.starts_at && pack.value?.window?.ends_at) {
+      range.value = [
+        String(pack.value.window.starts_at).slice(0, 10),
+        String(pack.value.window.ends_at).slice(0, 10),
+      ]
+    }
     await loadArchives()
   } catch (e) {
     error.value = e.message || '加载失败'
@@ -190,13 +238,18 @@ async function openArchive(row) {
   }
 }
 
+function packQueryParams() {
+  const params = { ...scopeParams.value }
+  if (!filterPeriodId.value && range.value?.length) {
+    params.from = `${range.value[0]}T00:00:00`
+    params.to = `${range.value[1]}T23:59:59`
+  }
+  return params
+}
+
 async function copyMarkdown() {
   try {
-    const md = await downloadGeoDeliverablesMarkdown(tenantId.value, {
-      from: `${range.value[0]}T00:00:00`,
-      to: `${range.value[1]}T23:59:59`,
-      ...scopeParams.value,
-    })
+    const md = await downloadGeoDeliverablesMarkdown(tenantId.value, packQueryParams())
     await navigator.clipboard.writeText(md)
     ElMessage.success('Markdown 已复制')
   } catch (e) {
@@ -206,11 +259,7 @@ async function copyMarkdown() {
 
 async function downloadMarkdown() {
   try {
-    const md = await downloadGeoDeliverablesMarkdown(tenantId.value, {
-      from: `${range.value[0]}T00:00:00`,
-      to: `${range.value[1]}T23:59:59`,
-      ...scopeParams.value,
-    })
+    const md = await downloadGeoDeliverablesMarkdown(tenantId.value, packQueryParams())
     const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
     const href = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -242,13 +291,25 @@ watch(tenantId, async () => {
   await loadHierarchy()
   await load()
 })
-watch(range, load, { deep: true })
-watch(filterUnitId, load)
-watch([obsStart, obsEnd, observationDays], () => {
-  range.value = defaultRange()
+watch(range, () => {
+  if (!filterPeriodId.value) load()
+}, { deep: true })
+watch(filterUnitId, () => {
+  if (!filterPeriodId.value) load()
 })
+watch([obsStart, obsEnd, observationDays], () => {
+  if (!filterPeriodId.value) range.value = defaultRange()
+})
+watch(
+  () => route.query.period_id,
+  () => {
+    syncPeriodFromRoute()
+    load()
+  },
+)
 onMounted(async () => {
   range.value = defaultRange()
+  syncPeriodFromRoute()
   await loadHierarchy()
   await load()
 })
@@ -285,6 +346,21 @@ onMounted(async () => {
     </details>
 
     <div class="geo-toolbar">
+      <el-select
+        :model-value="filterPeriodId"
+        clearable
+        filterable
+        placeholder="锁定期次（可选）"
+        style="width: 240px"
+        @change="onPeriodChange"
+      >
+        <el-option
+          v-for="p in periods"
+          :key="p.id"
+          :label="`#${p.id} ${p.name} (${p.status})`"
+          :value="p.id"
+        />
+      </el-select>
       <el-date-picker
         v-model="range"
         type="daterange"
@@ -292,6 +368,7 @@ onMounted(async () => {
         start-placeholder="开始"
         end-placeholder="结束"
         :clearable="false"
+        :disabled="lockedByPeriod"
         style="width: 260px"
       />
       <el-select
@@ -300,6 +377,7 @@ onMounted(async () => {
         filterable
         placeholder="全部业务"
         style="width: 180px"
+        :disabled="lockedByPeriod"
         @change="onBusinessChange"
       >
         <el-option v-for="b in businesses" :key="b.id" :label="b.name" :value="b.id" />
@@ -310,6 +388,7 @@ onMounted(async () => {
         filterable
         placeholder="全部单元"
         style="width: 200px"
+        :disabled="lockedByPeriod"
       >
         <el-option
           v-for="u in filteredUnits"
@@ -318,10 +397,22 @@ onMounted(async () => {
           :value="u.id"
         />
       </el-select>
-      <span class="toolbar-hint">观察期 {{ obsLabel }} · 改日期后自动刷新</span>
+      <span class="toolbar-hint">
+        <template v-if="lockedByPeriod">期次锁窗 · closed 返回固化交付包</template>
+        <template v-else>观察期 {{ obsLabel }} · 改日期后自动刷新</template>
+      </span>
     </div>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" />
+    <el-alert
+      v-if="pack && isFrozenPack"
+      type="success"
+      :closable="false"
+      show-icon
+      class="mb"
+      title="期次固化交付包"
+      :description="`冻结于 ${pack.frozen_at || '—'} · ${pack.period_name || ''} · 关闭后改窗不影响本快照`"
+    />
     <el-alert
       v-if="pack && hasSimulated"
       type="warning"

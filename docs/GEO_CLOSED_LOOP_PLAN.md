@@ -9,8 +9,8 @@
 | 1 | **发布 ↔ 监测归因** | 证明「发了有用」 | ✅ 已落地 |
 | 2 | **缺口工作台** | brand_missing → 任务队列 | ✅ MVP 已落地 |
 | 3 | **优化期次实体** | 交付/对比有形边界 | ✅ 落库+API+页 |
-| 4 | **GEO 开户向导** | 新客户进得来 | 下一迭代（技术件已有） |
-| 5 | **安全 + 异步** | 能卖且不翻车 | ✅ 本迭代小修；异步后续 |
+| 4 | **GEO 开户向导** | 新客户进得来 | ✅ 已落地（含 audit） |
+| 5 | **安全 + 异步** | 能卖且不翻车 | ✅ 小修+异步主路径；生产收口持续 |
 
 ## 断点与对策
 
@@ -103,3 +103,42 @@
 | 引擎商业定位 | `monitoring_stance`：simulation / hybrid / real_only；引擎页选择器 |
 
 产品默认 **hybrid（混合）**：有 Key 真采样、无 Key 模拟，报表强制样本构成标注。
+
+## 工程加固（2026-08-12+）
+
+| 能力 | 说明 |
+|------|------|
+| query 禁用 API Key | `ADMIN_API_KEY_QUERY_ENABLED`；生产 `prod_guard` 强制 false |
+| API Key 租户绑定 | `ADMIN_API_KEY_TENANT_ID` 可选 |
+| 自审可配置 | `GEO_ALLOW_SELF_REVIEW`（默认 false） |
+| 异步 stale 回收 | pending/running 超时 failed + 释放 generating/adapting |
+| 日指标未分类桶 | scope_key=`unc`（无 unit 的意图词） |
+
+### 工程加固（2026-08-12 下一批）
+
+| 能力 | 说明 |
+|------|------|
+| 进程重启恢复 | `recover_jobs_on_startup`：running→failed，pending 未过期 requeue |
+| 缺口 SLA | `GEO_GAP_SLA_DAYS`；缺口台字段 + ops 告警 +「超 SLA 建任务」 |
+| 归因回填 | `POST /attribution/backfill`；引用分析页按钮 |
+| 默认主入口 | `geo.content` → `/geo/businesses` |
+
+## 口径/证明力计划（2026-08-12 已推进）
+
+| 批次 | 项 | 状态 |
+|------|-----|------|
+| 前置 | 迁移 0062：period_id + sample 回填 | ✅ |
+| 前置 | 四路径同值安全网 `test_geo_metric_parity` | ✅ |
+| W1 | `compute_metrics` 统一上海日口径 | ✅ 期次对比/业务详情/交付/竞品日趋势 |
+| W4 | http/https 归一；impact 样本量+外溢+对照；回填游标 | ✅ |
+| W2 | tasks/pubs/snapshots.period_id 写入 active 期次 | ✅ 写入 + 消费方 period_id 锁窗/固化 pack |
+| W3 | real_only 不降级 persona（patrol skip） | ✅ + 引擎页跳过预览 |
+| W5 | run_async 默认 true；前端轮询对齐 45min | ✅ |
+| W6 | ops 角色降权 / 自助开户 / unc UI | ⏳ unc 露出；RBAC/开户未做 |
+
+### 仍待
+
+- W2 消费方：period_id 入参锁死对比/交付窗 + 关闭固化 pack ✅
+- W3 报表按 stance 强制排除模拟 + 引擎页跳过预览 ✅
+- W6 API Key 降权、租户自助开通 ⏳；unc 桶露出 ✅
+- Celery/Redis（触发条件未到）

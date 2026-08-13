@@ -2,15 +2,17 @@
 /**
  * GEO 开户向导：官网 URL → 业务线 / 意图词 / 事实草稿 → 确认写入
  */
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   applyGeoOnboarding,
+  fetchOnboardingReadiness,
   formatGeoError,
   previewGeoOnboarding,
 } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
+import { needQuery } from '../../utils/geoEmptyReason'
 
 const router = useRouter()
 const { tenantId } = useGeoTenant()
@@ -26,6 +28,7 @@ const error = ref('')
 const selectedBiz = ref([])
 const selectedPrompts = ref([])
 const selectedFacts = ref([])
+const readiness = ref(null)
 
 const bizOptions = computed(() => preview.value?.businesses || [])
 const promptOptions = computed(() => preview.value?.prompt_candidates || [])
@@ -117,12 +120,36 @@ async function runApply(dryRun = false) {
     )
     step.value = 3
     preview.value = { ...preview.value, applyResult: res }
+    try {
+      readiness.value = await fetchOnboardingReadiness(tenantId.value)
+    } catch {
+      readiness.value = null
+    }
   } catch (e) {
     error.value = formatGeoError(e, '写入失败')
   } finally {
     applying.value = false
   }
 }
+
+async function loadReadiness() {
+  if (!tenantId.value) {
+    readiness.value = null
+    return
+  }
+  try {
+    readiness.value = await fetchOnboardingReadiness(tenantId.value)
+  } catch {
+    readiness.value = null
+  }
+}
+
+function goNeed(it) {
+  router.push(needQuery(it))
+}
+
+watch(tenantId, loadReadiness)
+onMounted(loadReadiness)
 </script>
 
 <template>
@@ -144,6 +171,26 @@ async function runApply(dryRun = false) {
     </el-steps>
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
+
+    <el-card v-if="step === 1 && readiness?.items?.length" shadow="never" class="mb">
+      <div class="ready-head">
+        当前客户还差什么 · {{ readiness.ready_count }}/{{ readiness.total }}
+        <el-tag v-if="readiness.ready" type="success" size="small">已就绪</el-tag>
+        <el-tag v-else type="warning" size="small">未就绪</el-tag>
+      </div>
+      <div
+        v-for="it in readiness.items.filter((x) => !x.ok)"
+        :key="it.key"
+        class="ready-row"
+      >
+        <span class="ready-mark">!</span>
+        <div class="ready-body">
+          <div class="ready-title">{{ it.title }}</div>
+          <div class="ready-hint">{{ it.hint }}</div>
+        </div>
+        <el-button v-if="it.href" size="small" @click="goNeed(it)">去处理</el-button>
+      </div>
+    </el-card>
 
     <el-card v-if="step === 1" shadow="never">
       <el-form label-width="100px">
@@ -273,17 +320,34 @@ async function runApply(dryRun = false) {
     </template>
 
     <el-card v-if="step === 3" shadow="never">
-      <el-result icon="success" title="开户草稿已写入" sub-title="可以开始巡检与内容生产">
+      <el-result icon="success" title="开户草稿已写入" sub-title="先补齐下面还缺的项，再开始巡检和写稿">
         <template #extra>
           <el-button type="primary" @click="router.push('/geo/businesses')">看优化业务</el-button>
           <el-button @click="router.push('/geo/gaps')">缺口工作台</el-button>
-          <el-button @click="router.push('/geo/engines')">引擎配置</el-button>
-          <el-button @click="router.push('/geo/facts')">核验事实卡</el-button>
         </template>
       </el-result>
-      <pre v-if="preview?.applyResult" class="result-pre">{{
-        JSON.stringify(preview.applyResult.counts, null, 2)
-      }}</pre>
+      <div v-if="readiness?.items?.length" class="ready-list">
+        <div class="ready-head">
+          还差什么 · {{ readiness.ready_count }}/{{ readiness.total }}
+          <el-tag v-if="readiness.ready" type="success" size="small">可以开干</el-tag>
+          <el-tag v-else type="warning" size="small">未就绪</el-tag>
+        </div>
+        <div
+          v-for="it in readiness.items"
+          :key="it.key"
+          class="ready-row"
+          :class="{ ok: it.ok }"
+        >
+          <span class="ready-mark">{{ it.ok ? '✓' : '!' }}</span>
+          <div class="ready-body">
+            <div class="ready-title">{{ it.title }}</div>
+            <div class="ready-hint">{{ it.hint }}</div>
+          </div>
+          <el-button v-if="!it.ok && it.href" size="small" @click="goNeed(it)">
+            去处理
+          </el-button>
+        </div>
+      </div>
     </el-card>
   </div>
 </template>
@@ -317,6 +381,36 @@ async function runApply(dryRun = false) {
 .check-row.fact { align-items: flex-start; }
 .fact-st { font-size: 12px; color: #64748b; margin-top: 2px; max-width: 720px; line-height: 1.45; }
 .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.ready-list { max-width: 640px; margin: 0 auto 16px; }
+.ready-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 650;
+  margin-bottom: 10px;
+}
+.ready-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid #e2e8f0;
+}
+.ready-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff7ed;
+  color: #c2410c;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.ready-row.ok .ready-mark { background: #ecfdf5; color: #047857; }
+.ready-title { font-size: 13px; font-weight: 650; }
+.ready-hint { font-size: 12px; color: #64748b; margin-top: 2px; }
 .result-pre {
   background: #f8fafc;
   border-radius: 8px;

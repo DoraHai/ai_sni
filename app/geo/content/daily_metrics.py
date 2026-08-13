@@ -5,7 +5,8 @@ scope_key 约定：
   b{id}       优化业务切片（意图词 unit 属于该业务）
   u{id}       优化单元切片（意图词挂在该 unit）
   p{id}       优化意图词切片
-  {base}@{engine}  上述任一维度 × 引擎（如 t@deepseek、u3@doubao）
+  unc         未分类（意图词未挂 unit，显式桶，避免业务切片静默丢数）
+  {base}@{engine}  上述任一维度 × 引擎（如 t@deepseek、u3@doubao、unc@deepseek）
 
 AI 引用口径：
   citation_count          快照 cited_urls 出现总次数
@@ -58,6 +59,11 @@ def scope_prompt(prompt_id: int) -> str:
     return f"p{int(prompt_id)}"
 
 
+def scope_unclassified() -> str:
+    """未挂优化单元的意图词显式归入此桶（业务汇报可见）。"""
+    return "unc"
+
+
 def normalize_engine_key(engine: str | None) -> str:
     raw = (engine or "other").strip().lower() or "other"
     cleaned = _ENGINE_SAFE.sub("", raw)[:32]
@@ -105,6 +111,14 @@ def parse_scope_key(scope_key: str) -> dict[str, Any]:
             "business_id": None,
             "unit_id": None,
             "prompt_id": int(sk[1:]),
+            "engine": engine,
+        }
+    if sk == "unc":
+        return {
+            "level": "unclassified",
+            "business_id": None,
+            "unit_id": None,
+            "prompt_id": None,
             "engine": engine,
         }
     return {
@@ -231,6 +245,9 @@ def aggregate_buckets(
             bases.append((scope_unit(unit_id), biz_id, unit_id))
         if biz_id:
             bases.append((scope_business(biz_id), biz_id, None))
+        elif pid and not unit_id:
+            # 未归属业务/单元：显式「未分类」桶，避免只进 t/p 导致业务维度静默丢数
+            bases.append((scope_unclassified(), None, None))
 
         for base, b_id, u_id in bases:
             _ensure(base, business_id=b_id, unit_id=u_id).add_snapshot(
@@ -397,6 +414,15 @@ async def rebuild_day(
             }
             for sk in sorted(scopes_written)
             if parse_scope_key(sk)["level"] == "business"
+        ],
+        "unclassified_scopes": [
+            {
+                "scope_key": sk,
+                "label": "未分类",
+                **buckets[sk].to_metrics_dict(),
+            }
+            for sk in sorted(scopes_written)
+            if parse_scope_key(sk)["level"] == "unclassified"
         ],
         "unit_scopes": [
             {

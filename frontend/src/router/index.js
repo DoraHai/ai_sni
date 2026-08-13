@@ -457,7 +457,7 @@ const router = createRouter({
 
 const MENU_ORDER = [
   ['assistant', '/assistant'],
-  ['geo.content', '/geo/overview'],
+  ['geo.content', '/geo/businesses'],
   ['geo.diagnosis', '/geo/diagnosis'],
   ['monitor.dashboard', '/monitor/dashboard'],
   ['monitor.alerts', '/monitor/alerts'],
@@ -518,7 +518,8 @@ router.beforeEach((to) => {
   }
 })
 router.afterEach((to) => {
+  const suffix = to.path.startsWith('/geo') ? 'GEO 增长' : 'SEM 智投平台'
   document.title =
-    to.meta.documentTitle || (to.meta.title ? to.meta.title + ' · ' : '') + 'SEM 智投平台'
+    to.meta.documentTitle || (to.meta.title ? to.meta.title + ' · ' : '') + suffix
 })
 export default router

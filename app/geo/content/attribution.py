@@ -38,9 +38,8 @@ def normalize_url_for_match(url: str | None) -> str | None:
         host = host[4:]
     if not host or "." not in host:
         return None
-    scheme = (p.scheme or "https").lower()
-    if scheme not in {"http", "https"}:
-        scheme = "https"
+    # Always normalize identity scheme to https so http/https match (W4)
+    scheme = "https"
     path = p.path or ""
     if path != "/" and path.endswith("/"):
         path = path.rstrip("/")
@@ -50,9 +49,8 @@ def normalize_url_for_match(url: str | None) -> str | None:
     except ValueError:
         port = None
     netloc = host
-    if port and not (
-        (scheme == "https" and port == 443) or (scheme == "http" and port == 80)
-    ):
+    # ignore non-default ports only when not 80/443 (already dropped with scheme normalize)
+    if port and port not in (80, 443):
         netloc = f"{host}:{port}"
     return urlunparse((scheme, netloc, path or "", "", "", ""))
 

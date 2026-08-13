@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { fetchGeoEvaluationInsights } from '../../api/geoContent'
 import { useClientPager } from '../../composables/useClientPager'
+import { useObservationPeriod } from '../../composables/useObservationPeriod'
 import { session } from '../../store/session'
 import {
   CITATION_ACCURACY_LABEL,
@@ -20,6 +21,7 @@ import {
 } from '../../utils/geoReportLabels'
 
 const router = useRouter()
+const { days: observationDays, start: obsStart, end: obsEnd, label: obsLabel } = useObservationPeriod()
 
 const tenantId = computed(() =>
   session.tenantId || (import.meta.env.DEV && import.meta.env.VITE_API_KEY ? 1 : null),
@@ -77,7 +79,11 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    data.value = await fetchGeoEvaluationInsights(tenantId.value)
+    data.value = await fetchGeoEvaluationInsights(tenantId.value, {
+      date_from: obsStart.value,
+      date_to: obsEnd.value,
+      days: observationDays.value,
+    })
     recentPager.resetPage()
   } catch (e) {
     error.value = e.message || '加载失败'
@@ -109,7 +115,7 @@ function exportRecent() {
   ElMessage.success('已导出最近快照')
 }
 
-watch(tenantId, load)
+watch([tenantId, observationDays, obsStart, obsEnd], load)
 onMounted(load)
 </script>
 
@@ -119,7 +125,7 @@ onMounted(load)
       <div>
         <div class="page-title">评价与位置</div>
         <div class="page-desc">
-          汇总回答快照中的本品位置、情感倾向与引用质量，用于周度盯盘与内容复盘。
+          汇总回答快照中的本品位置、情感倾向与引用质量。跟随顶栏观察期（{{ obsLabel }}）。
         </div>
       </div>
       <div class="header-actions">

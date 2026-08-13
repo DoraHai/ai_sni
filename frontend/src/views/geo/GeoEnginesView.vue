@@ -8,6 +8,7 @@ import {
   putGeoTrackingEngines,
   putMonitoringStance,
 } from '../../api/geoContent'
+import NeedHintAlert from '../../components/NeedHintAlert.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import {
   REPORT_GLOSSARY,
@@ -28,6 +29,13 @@ const stanceSaving = ref(false)
 const enabledCount = computed(() => items.value.filter((r) => r.enabled).length)
 const realReadyCount = computed(
   () => items.value.filter((r) => isRealReady(r)).length,
+)
+const skipPreviewItems = computed(() => stance.value?.skip_preview?.items || [])
+const skipPreviewSummary = computed(
+  () => stance.value?.skip_preview?.summary || '',
+)
+const skipCount = computed(
+  () => stance.value?.skip_preview?.enabled_will_skip ?? 0,
 )
 
 function isRealReady(row) {
@@ -167,6 +175,7 @@ onMounted(load)
     </details>
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
+    <NeedHintAlert />
 
     <el-card v-if="stance" shadow="never" class="mb stance-card">
       <template #header>
@@ -202,6 +211,50 @@ onMounted(load)
         产品默认 <b>混合模式</b>：有 Key 真采样、无 Key 模拟，报表强制标注样本构成。
         签约交付建议切到「仅真采样」或在交付摘要中披露模拟占比。
       </p>
+      <div v-if="skipPreviewItems.length" class="skip-preview">
+        <div class="skip-preview-head">
+          <span class="skip-title">巡检跳过预览</span>
+          <el-tag size="small" :type="skipCount > 0 ? 'warning' : 'success'">
+            {{ skipPreviewSummary || '—' }}
+          </el-tag>
+        </div>
+        <p class="skip-hint">
+          按当前监测定位，预测各引擎在巡检时是否执行（不调用模型、不落库）。
+          切到「仅真采样」后，无 Key / 人设模拟引擎会被跳过。
+        </p>
+        <el-table :data="skipPreviewItems" size="small" max-height="220" stripe>
+          <el-table-column label="引擎" width="120">
+            <template #default="{ row }">
+              {{ row.display_name || engineDisplay(row.engine_key) || row.engine_key }}
+            </template>
+          </el-table-column>
+          <el-table-column label="启用" width="70" align="center">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.enabled ? 'success' : 'info'">
+                {{ row.enabled ? '是' : '否' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="结果" width="100" align="center">
+            <template #default="{ row }">
+              <el-tag
+                size="small"
+                :type="row.will_skip ? 'danger' : row.will_run ? 'success' : 'info'"
+              >
+                {{ row.will_skip ? '跳过' : row.will_run ? '执行' : '—' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="说明" min-width="200">
+            <template #default="{ row }">{{ row.reason_label || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="有效模式" width="120">
+            <template #default="{ row }">
+              {{ row.sample_mode_effective ? modeLabel(row.sample_mode_effective) : '—' }}
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
     </el-card>
 
     <div class="geo-kpi-grid mb">
@@ -350,4 +403,18 @@ onMounted(load)
 }
 .stance-radio { height: auto !important; margin: 0 !important; padding: 10px 12px !important; white-space: normal; }
 .opt-hint { font-size: 11px; color: #78716c; font-weight: 400; margin-top: 4px; line-height: 1.4; }
+.skip-preview {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed #fcd34d;
+}
+.skip-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.skip-title { font-weight: 650; font-size: 13px; color: #78350f; }
+.skip-hint { font-size: 12px; color: #92400e; margin: 0 0 10px; line-height: 1.45; }
 </style>

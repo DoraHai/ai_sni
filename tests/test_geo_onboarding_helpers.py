@@ -11,6 +11,7 @@ from app.geo.content.onboarding import (
     _business_candidates,
     _fact_drafts,
     _host_brand,
+    build_readiness_items,
 )
 
 
@@ -35,6 +36,58 @@ class OnboardingHelpersTests(unittest.TestCase):
         )
         self.assertGreaterEqual(len(d), 1)
         self.assertEqual(d[0]["trust_level"], "needs_review")
+
+    def test_readiness_empty_not_ready(self):
+        r = build_readiness_items(
+            has_brand_terms=False,
+            business_count=0,
+            prompt_count=0,
+            fact_count=0,
+            verified_fact_count=0,
+            engine_count=0,
+            real_engine_count=0,
+            ai_key_configured=False,
+            patrol_enabled=False,
+            channel_count=0,
+        )
+        self.assertFalse(r["ready"])
+        self.assertIn("businesses", r["blocking"])
+        self.assertIn("prompts", r["blocking"])
+        self.assertEqual(r["ready_count"], 0)
+
+    def test_readiness_full_ready(self):
+        r = build_readiness_items(
+            has_brand_terms=True,
+            business_count=1,
+            prompt_count=5,
+            fact_count=4,
+            verified_fact_count=3,
+            engine_count=2,
+            real_engine_count=1,
+            ai_key_configured=True,
+            patrol_enabled=True,
+            channel_count=1,
+            stance="hybrid",
+        )
+        self.assertTrue(r["ready"])
+        self.assertEqual(r["ready_count"], r["total"])
+
+    def test_readiness_simulation_skips_engine_keys(self):
+        r = build_readiness_items(
+            has_brand_terms=True,
+            business_count=1,
+            prompt_count=1,
+            fact_count=3,
+            verified_fact_count=3,
+            engine_count=1,
+            real_engine_count=0,
+            ai_key_configured=True,
+            patrol_enabled=True,
+            channel_count=1,
+            stance="simulation",
+        )
+        keys = {i["key"]: i["ok"] for i in r["items"]}
+        self.assertTrue(keys["engine_keys"])
 
 
 class StanceTests(unittest.TestCase):

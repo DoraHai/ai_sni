@@ -1,11 +1,8 @@
 <script setup>
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { staticGeoWorkbenchUrl } from '../../api/geoContent'
-import { useGeoTenant } from '../../composables/useGeoTenant'
 
 const router = useRouter()
-const { tenantId } = useGeoTenant()
 
 const cards = [
   { title: '优化文章', desc: '【主路径】内容任务列表 + 母稿编辑器', path: '/geo/tasks', phase: 'Vue' },
@@ -27,18 +24,8 @@ function go(card) {
   router.push(card.path)
 }
 
-function openStaticEditor() {
-  const tid = tenantId.value || 1
-  window.open(staticGeoWorkbenchUrl('editor.html', tid), '_blank')
-}
-
-function openStaticFull() {
-  const tid = tenantId.value || 1
-  window.open(staticGeoWorkbenchUrl('dashboard.html', tid), '_blank')
-}
-
 const note = computed(() =>
-  '主路径全部在 Vue：任务编辑器 → 可见度/巡检 → 期次对比 → 交付摘要。静态台仅兼容完整流水线后备，日常请优先 Vue。',
+  '快捷入口。日常请从「优化业务」进主轴：缺口 → 写稿 → 发布 → 本期效果。',
 )
 </script>
 
@@ -50,9 +37,8 @@ const note = computed(() =>
         <div class="page-desc">{{ note }}</div>
       </div>
       <div class="header-actions">
-        <el-button type="primary" @click="router.push('/geo/tasks')">优化文章</el-button>
-        <el-button @click="openStaticEditor">静态编辑器（兼容）</el-button>
-        <el-button @click="openStaticFull">兼容：全量静态台</el-button>
+        <el-button type="primary" @click="router.push('/geo/businesses')">优化业务</el-button>
+        <el-button @click="router.push('/geo/tasks')">优化文章</el-button>
       </div>
     </div>
 

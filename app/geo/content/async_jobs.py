@@ -1,9 +1,9 @@
-"""GEO 长任务异步执行（生成母稿 / 批量推送），模式对齐巡检 BackgroundTasks。"""
+"""GEO 长任务异步执行（生成母稿 / 渠道稿 / 批量推送），模式对齐巡检 BackgroundTasks。"""
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 KIND_GENERATE = "generate_article"
 KIND_PUSH_BATCH = "push_batch"
 KIND_VARIANTS = "create_variants"
+
+# Defaults; runtime reads settings when reconciling
+STALE_PENDING_SECONDS = 120
+STALE_RUNNING_SECONDS = 45 * 60
 
 
 def job_payload(row: GeoAsyncJob) -> dict[str, Any]:
@@ -34,6 +38,124 @@ def job_payload(row: GeoAsyncJob) -> dict[str, Any]:
         "started_at": row.started_at.isoformat() if row.started_at else None,
         "finished_at": row.finished_at.isoformat() if row.finished_at else None,
     }
+
+
+def _stale_limits() -> tuple[int, int]:
+    try:
+        from app.config import get_settings
+
+        s = get_settings()
+        pending = int(
+            getattr(s, "geo_async_stale_pending_seconds", STALE_PENDING_SECONDS)
+            or STALE_PENDING_SECONDS
+        )
+        running = int(
+            getattr(s, "geo_async_stale_running_seconds", STALE_RUNNING_SECONDS)
+            or STALE_RUNNING_SECONDS
+        )
+        return max(30, pending), max(60, running)
+    except Exception:  # noqa: BLE001
+        return STALE_PENDING_SECONDS, STALE_RUNNING_SECONDS
+
+
+def _age_seconds(dt: datetime | None) -> float | None:
+    if dt is None:
+        return None
+    now = datetime.utcnow()
+    if getattr(dt, "tzinfo", None) is not None:
+        dt = dt.replace(tzinfo=None)
+    return max(0.0, (now - dt).total_seconds())
+
+
+async def _release_task_lock(
+    session: AsyncSession, job: GeoAsyncJob, *, reason: str
+) -> None:
+    if not job.ref_id or job.ref_type not in {None, "content_task"}:
+        return
+    if job.kind not in {KIND_GENERATE, KIND_VARIANTS}:
+        return
+    task = await session.get(GeoContentTask, job.ref_id)
+    if task is None:
+        return
+    if task.status in {"generating", "adapting"}:
+        task.status = "editing"
+        logger.warning(
+            "async job stale released task=%s status→editing reason=%s",
+            task.id,
+            reason,
+        )
+
+
+async def reconcile_stale_job(
+    session: AsyncSession, row: GeoAsyncJob
+) -> GeoAsyncJob:
+    """Mark hanging pending/running jobs failed; free content-task locks."""
+    if row.status not in {"pending", "running"}:
+        return row
+    pending_lim, running_lim = _stale_limits()
+    if row.status == "pending":
+        age = _age_seconds(row.created_at)
+        if age is None or age < pending_lim:
+            return row
+        reason = f"作业排队超时（>{pending_lim}s）已自动失败；请重试"
+        row.status = "failed"
+        row.error = reason
+        row.finished_at = datetime.utcnow()
+        await _release_task_lock(session, row, reason=reason)
+        await session.commit()
+        await session.refresh(row)
+        return row
+    # running
+    age = _age_seconds(row.started_at or row.created_at)
+    if age is None or age < running_lim:
+        return row
+    reason = f"作业执行超时（>{running_lim // 60} 分钟）已自动失败；请缩小任务或检查 LLM"
+    row.status = "failed"
+    row.error = reason
+    row.finished_at = datetime.utcnow()
+    await _release_task_lock(session, row, reason=reason)
+    await session.commit()
+    await session.refresh(row)
+    return row
+
+
+async def reconcile_stale_content_tasks(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    max_age_seconds: int | None = None,
+) -> int:
+    """Orphan generating/adapting tasks with no live job → editing."""
+    _, running_lim = _stale_limits()
+    max_age = max_age_seconds or running_lim
+    cutoff = datetime.utcnow() - timedelta(seconds=max_age)
+    stuck = list(
+        await session.scalars(
+            select(GeoContentTask).where(
+                GeoContentTask.tenant_id == tenant_id,
+                GeoContentTask.status.in_(["generating", "adapting"]),
+                GeoContentTask.updated_at < cutoff,
+            )
+        )
+    )
+    n = 0
+    for task in stuck:
+        live = await session.scalar(
+            select(GeoAsyncJob.id)
+            .where(
+                GeoAsyncJob.tenant_id == tenant_id,
+                GeoAsyncJob.ref_id == task.id,
+                GeoAsyncJob.status.in_(["pending", "running"]),
+            )
+            .limit(1)
+        )
+        if live:
+            continue
+        task.status = "editing"
+        n += 1
+    if n:
+        await session.commit()
+    return n
 
 
 async def create_job(
@@ -59,6 +181,67 @@ async def create_job(
     await session.commit()
     await session.refresh(row)
     return row
+
+
+async def recover_jobs_on_startup(*, requeue_pending: bool = True) -> dict[str, int]:
+    """进程启动时：running 一律标失败；pending 未过期则 requeue，过期标失败。
+
+    BackgroundTasks 不跨进程，重启后需显式恢复，否则任务永久卡在 generating。
+    """
+    import asyncio
+
+    from app.database import async_session_factory
+
+    pending_lim, _running_lim = _stale_limits()
+    stats = {"failed_running": 0, "failed_stale_pending": 0, "requeued": 0}
+    requeue_ids: list[int] = []
+
+    async with async_session_factory() as session:
+        rows = list(
+            await session.scalars(
+                select(GeoAsyncJob).where(
+                    GeoAsyncJob.status.in_(["pending", "running"])
+                )
+            )
+        )
+        for row in rows:
+            if row.status == "running":
+                reason = "进程重启：中断的 running 作业已标记失败，请重试"
+                row.status = "failed"
+                row.error = reason
+                row.finished_at = datetime.utcnow()
+                await _release_task_lock(session, row, reason=reason)
+                stats["failed_running"] += 1
+                continue
+            # pending
+            age = _age_seconds(row.created_at)
+            if age is not None and age >= pending_lim:
+                reason = f"进程重启且排队已超时（>{pending_lim}s），标记失败"
+                row.status = "failed"
+                row.error = reason
+                row.finished_at = datetime.utcnow()
+                await _release_task_lock(session, row, reason=reason)
+                stats["failed_stale_pending"] += 1
+            elif requeue_pending:
+                requeue_ids.append(int(row.id))
+                stats["requeued"] += 1
+            else:
+                reason = "进程重启：pending 作业未自动续跑（requeue 关闭）"
+                row.status = "failed"
+                row.error = reason
+                row.finished_at = datetime.utcnow()
+                await _release_task_lock(session, row, reason=reason)
+                stats["failed_stale_pending"] += 1
+        await session.commit()
+
+    for jid in requeue_ids:
+        try:
+            asyncio.create_task(run_job_in_background(jid))
+        except Exception:  # noqa: BLE001
+            logger.exception("requeue job %s failed", jid)
+    if any(stats.values()):
+        logger.info("geo async recover_on_startup %s", stats)
+    return stats
 
 
 async def mark_job(

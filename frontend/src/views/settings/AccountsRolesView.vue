@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { createUser, fetchUsers, updateUser } from '../../api/auth'
+import { createTenant, createUser, fetchTenants, fetchUsers, updateUser } from '../../api/auth'
 import { createRole, deleteRole, fetchRoles, updateRole } from '../../api/roles'
 import { session } from '../../store/session'
 
@@ -10,6 +10,16 @@ const loading = ref(false)
 const error = ref('')
 const usersData = ref(null)
 const rolesData = ref(null)
+const tenantDialog = ref(false)
+const savingTenant = ref(false)
+const tform = reactive({
+  name: '',
+  brandTerms: '',
+  industry: '',
+  adminUsername: '',
+  adminPassword: '',
+  adminDisplayName: '',
+})
 
 const LEVELS = [
   { v: '', l: '无' },
@@ -44,6 +54,54 @@ const userDialog = ref(false)
 const savingUser = ref(false)
 const editingUserId = ref(null)
 const uform = reactive({ username: '', password: '', displayName: '', roleId: null, tenantId: null })
+
+function openCreateTenant() {
+  Object.assign(tform, {
+    name: '',
+    brandTerms: '',
+    industry: '',
+    adminUsername: '',
+    adminPassword: '',
+    adminDisplayName: '',
+  })
+  tenantDialog.value = true
+}
+
+async function submitTenant() {
+  if (!tform.name.trim()) {
+    ElMessage.warning('客户名称必填')
+    return
+  }
+  if (tform.adminUsername && tform.adminPassword.length < 8) {
+    ElMessage.warning('同时建账号时密码至少 8 位')
+    return
+  }
+  savingTenant.value = true
+  try {
+    const terms = tform.brandTerms
+      .split(/[,，、\s]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    const res = await createTenant({
+      name: tform.name.trim(),
+      brand_terms: terms,
+      industry: tform.industry.trim() || undefined,
+      admin_username: tform.adminUsername.trim() || undefined,
+      admin_password: tform.adminPassword || undefined,
+      admin_display_name: tform.adminDisplayName.trim() || undefined,
+    })
+    const t = await fetchTenants()
+    session.setTenants(t.tenants || [])
+    if (res.tenant?.id) session.setTenant(res.tenant.id)
+    ElMessage.success(`客户「${res.tenant?.name}」已创建`)
+    tenantDialog.value = false
+    load()
+  } catch (e) {
+    ElMessage.error(e.message || '创建客户失败')
+  } finally {
+    savingTenant.value = false
+  }
+}
 
 function openCreateUser() {
   editingUserId.value = null
@@ -187,6 +245,7 @@ onMounted(load)
         <div class="page-desc">自定义角色 · 权限细到左侧每个菜单（可见 / 可编辑）· 每个账号归属一个角色，可选限定单客户</div>
       </div>
       <div class="page-actions">
+        <el-button v-if="tab === 'accounts'" @click="openCreateTenant">新建客户</el-button>
         <el-button v-if="tab === 'accounts'" type="primary" @click="openCreateUser">新建账号</el-button>
         <el-button v-else type="primary" @click="openCreateRole">新建角色</el-button>
       </div>
@@ -263,6 +322,33 @@ onMounted(load)
         </div>
       </el-tab-pane>
     </el-tabs>
+
+    <el-dialog v-model="tenantDialog" title="新建客户" width="480px">
+      <el-form label-width="96px">
+        <el-form-item label="客户名称" required>
+          <el-input v-model="tform.name" placeholder="如：苏尔寿" />
+        </el-form-item>
+        <el-form-item label="品牌词">
+          <el-input v-model="tform.brandTerms" placeholder="逗号分隔，如：苏尔寿, Sulzer" />
+        </el-form-item>
+        <el-form-item label="行业">
+          <el-input v-model="tform.industry" placeholder="选填" />
+        </el-form-item>
+        <el-form-item label="管理员账号">
+          <el-input v-model="tform.adminUsername" placeholder="选填；填了会同时建绑定该客户的账号" />
+        </el-form-item>
+        <el-form-item v-if="tform.adminUsername" label="初始密码">
+          <el-input v-model="tform.adminPassword" type="password" show-password placeholder="至少 8 位" />
+        </el-form-item>
+        <el-form-item v-if="tform.adminUsername" label="显示名">
+          <el-input v-model="tform.adminDisplayName" placeholder="选填" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="tenantDialog = false">取消</el-button>
+        <el-button type="primary" :loading="savingTenant" @click="submitTenant">创建</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 账号 dialog -->
     <el-dialog v-model="userDialog" :title="editingUserId ? '编辑账号' : '新建账号'" width="460px">

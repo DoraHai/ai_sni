@@ -8,6 +8,12 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
+  nextEditorStep,
+  pipelineLabel,
+  reviewStatusLabel as reviewStatusText,
+  taskStatusLabel,
+} from '../../utils/geoReportLabels'
+import {
   aiReviewGeoContentTask,
   applyGeoContentPatch,
   applyGeoRetrievedFacts,
@@ -32,7 +38,6 @@ import {
   retrieveGeoTaskFacts,
   saveGeoArticle,
   formatGeoError,
-  staticGeoEditorUrl,
   submitGeoTaskReview,
   suggestGeoTaskBrief,
   fetchChannelBlueprint,
@@ -1034,10 +1039,6 @@ async function applyPatch(code) {
   }
 }
 
-function openStaticFull() {
-  window.open(staticGeoEditorUrl(tenantId.value || 1, taskId.value), '_blank')
-}
-
 async function genVariants() {
   if (!channelPick.value.length) {
     ElMessage.warning('请至少勾选一个渠道')
@@ -1444,6 +1445,20 @@ function fmtDelta(v) {
   return `${sign}${n.toFixed(1)}pp`
 }
 
+const impactInsufficient = computed(
+  () =>
+    !!(
+      impact.value?.summary?.insufficient_data ||
+      impact.value?.prompt_mention?.insufficient_data
+    ),
+)
+const impactActionHint = computed(
+  () =>
+    impact.value?.summary?.action_hint ||
+    impact.value?.prompt_mention?.confidence_reason ||
+    '',
+)
+
 async function pushWebhook() {
   if (docTab.value === 'master') {
     ElMessage.warning('请切换到渠道页签')
@@ -1714,6 +1729,52 @@ const infoGapOptions = computed(() => {
   return INFO_GAP_FALLBACK
 })
 const variants = computed(() => task.value?.variants || [])
+const nextStep = computed(() =>
+  nextEditorStep(task.value, {
+    boundFacts: boundFacts.value,
+    hasArticle: !!(task.value?.article || article.body_markdown),
+    variants: variants.value,
+    publications: task.value?.publications || impact.value?.publications || [],
+    checkFailed: failedChecks.value.length > 0 && !!checkResult.value,
+    blocked: failedChecks.value
+      .slice(0, 2)
+      .map((c) => c.label || c.code)
+      .join('、'),
+  }),
+)
+
+const foldBrief = ref(false)
+const foldFacts = ref(false)
+
+watch(
+  nextStep,
+  (s) => {
+    const k = s?.key
+    foldBrief.value = k !== 'brief'
+    foldFacts.value = k !== 'brief' && k !== 'facts'
+  },
+  { immediate: true },
+)
+
+function goNextStep() {
+  const key = nextStep.value?.key
+  if (key === 'generate') return generate()
+  if (key === 'check') return runCheck()
+  if (key === 'variants') return genVariants()
+  if (key === 'submit-review') return submitReview()
+  if (key === 'brief') foldBrief.value = false
+  if (key === 'facts') foldFacts.value = false
+  const map = {
+    brief: 'step-brief',
+    facts: 'step-facts',
+    'wait-review': 'step-publish',
+    'fix-review': 'step-publish',
+    publish: 'step-publish',
+    impact: 'step-impact',
+  }
+  const id = map[key]
+  if (id) document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
 
 function trustTagType(level) {
   if (level === 'verified') return 'success'
@@ -1799,18 +1860,27 @@ onMounted(load)
         <div class="meta">
           <span class="title">任务 #{{ taskId }}</span>
           <span v-if="task" class="sub">
-            {{ task.title }} · {{ task.status }} · {{ task.pipeline_step || '—' }}
-            <template v-if="task.brief_ready"> · Brief✓</template>
-            <template v-if="task.strategy_richness != null">
-              · 策略{{ Math.round(task.strategy_richness * 100) }}%
-            </template>
+            {{ task.title }}
+            · {{ taskStatusLabel(task.status) }}
+            · {{ pipelineLabel(task.pipeline_step) }}
+            · {{ reviewStatusText(task.review_status) }}
           </span>
         </div>
       </div>
       <div class="right">
-        <el-button @click="openStaticFull">静态完整 editor</el-button>
         <el-button @click="load" :disabled="!!busy">刷新</el-button>
       </div>
+    </div>
+
+    <div v-if="task && nextStep" class="next-step" :class="{ done: nextStep.key === 'impact' }">
+      <div class="next-copy">
+        <div class="next-kicker">当前下一步</div>
+        <div class="next-title">{{ nextStep.title }}</div>
+        <div class="next-detail">{{ nextStep.detail }}</div>
+      </div>
+      <el-button type="primary" :loading="!!busy" @click="goNextStep">
+        {{ nextStep.action }}
+      </el-button>
     </div>
 
     <el-alert
@@ -1822,30 +1892,27 @@ onMounted(load)
       class="mb"
       @close="error = ''"
     />
-    <el-alert
-      type="success"
-      show-icon
-      class="mb"
-      title="Vue 母稿编辑器：Brief/事实/生成/Score/审稿 + 渠道/审校/回填。静态台正确地址为 :5176/geo/dashboard.html（不是 /dashboard.html）。"
-    />
-
     <div v-if="task" class="grid">
       <!-- Left: brief + facts -->
       <aside class="col col-left">
-        <el-card shadow="never" class="card">
+        <el-card id="step-brief" shadow="never" class="card">
           <template #header>
             <div class="card-head">
-              <span>内容 Brief</span>
-              <div class="row-actions">
+              <button type="button" class="fold-toggle" @click="foldBrief = !foldBrief">
+                {{ foldBrief ? '▸' : '▾' }} 内容策略
+                <el-tag v-if="foldBrief && task?.brief_ready" size="small" type="success" effect="plain">已齐</el-tag>
+              </button>
+              <div v-show="!foldBrief" class="row-actions">
                 <el-button size="small" :loading="busy === 'suggest'" @click="suggestBrief">
                   AI 建议
                 </el-button>
                 <el-button size="small" type="primary" :loading="busy === 'brief'" @click="saveBrief">
-                  保存 Brief
+                  保存策略
                 </el-button>
               </div>
             </div>
           </template>
+          <div v-show="!foldBrief">
           <div v-if="briefSuggestHint" class="hint mb" style="color: #2563eb">
             {{ briefSuggestHint }}
             <span v-if="briefLocalDraft"> · 本地草稿未保存</span>
@@ -1937,13 +2004,14 @@ onMounted(load)
               <el-input v-model="brief.must_cover" placeholder="逗号分隔，如品牌名、产品线" />
             </el-form-item>
           </el-form>
+          </div>
         </el-card>
 
-        <el-card shadow="never" class="card fact-bind-card">
+        <el-card id="step-facts" shadow="never" class="card fact-bind-card">
           <template #header>
             <div class="card-head">
-              <div class="fact-head-title">
-                <span>事实绑定</span>
+              <button type="button" class="fold-toggle" @click="foldFacts = !foldFacts">
+                {{ foldFacts ? '▸' : '▾' }} 事实绑定
                 <el-tag
                   size="small"
                   :type="factsBindReady ? 'success' : 'warning'"
@@ -1951,9 +2019,10 @@ onMounted(load)
                 >
                   {{ factsBindReady ? '可生成' : '未就绪' }}
                 </el-tag>
-              </div>
+              </button>
             </div>
           </template>
+          <div v-show="!foldFacts">
 
           <div class="fact-status" :class="{ ready: factsBindReady }">
             <div class="fact-status-row">
@@ -1978,7 +2047,7 @@ onMounted(load)
             <div class="hint fact-status-sub">
               生成母稿至少绑定 <strong>3 条已核验</strong>事实。库中可选
               {{ allFacts.length }} 条（已核验 {{ libraryVerifiedCount }}）
-              <span v-if="task?.status"> · 任务 {{ task.status }}</span>
+              <span v-if="task?.status"> · {{ taskStatusLabel(task.status) }}</span>
             </div>
           </div>
 
@@ -2100,12 +2169,13 @@ onMounted(load)
               <span v-if="r.score != null" class="retrieve-score">{{ Number(r.score).toFixed(1) }}</span>
             </div>
           </div>
+          </div>
         </el-card>
       </aside>
 
       <!-- Center: article + publish -->
       <div class="col col-main">
-        <el-card shadow="never" class="card">
+        <el-card id="step-doc" shadow="never" class="card">
           <template #header>
             <div class="card-head">
               <span>文档</span>
@@ -2251,7 +2321,7 @@ onMounted(load)
           </template>
         </el-card>
 
-        <el-card shadow="never" class="card">
+        <el-card id="step-publish" shadow="never" class="card">
           <template #header>
             <div class="card-head">
               <span>渠道成稿 · 审校 · 发布</span>
@@ -2415,7 +2485,7 @@ onMounted(load)
             推送前通常需「导出」渠道稿。未审校时按钮可点：接口返回 400 并提示审校要求（也可用上方橙色门禁文案）。
           </div>
 
-          <el-divider content-position="left">发布后效果</el-divider>
+          <el-divider id="step-impact" content-position="left">发布后效果</el-divider>
           <div v-loading="impactLoading" class="impact-panel">
             <div class="row-actions mb">
               <el-select v-model="impactWindowDays" size="small" style="width: 110px" @change="loadImpact">
@@ -2430,6 +2500,15 @@ onMounted(load)
                 尚未回填发布 URL。发布后系统会把引用 URL 反查到本篇，并对比发布前后提及率。
               </div>
               <template v-else>
+                <el-alert
+                  v-if="impactInsufficient"
+                  type="warning"
+                  show-icon
+                  :closable="false"
+                  class="mb"
+                  :title="impactActionHint || '数据不足以判断'"
+                  description="任一侧快照不足阈值时不展示变化率。建议提高巡检频率或延长观察期。"
+                />
                 <div class="impact-kpis">
                   <div class="impact-kpi">
                     <div class="ik-label">引用命中</div>
@@ -2438,20 +2517,42 @@ onMounted(load)
                   </div>
                   <div class="impact-kpi">
                     <div class="ik-label">发布前提及率</div>
-                    <div class="ik-value">{{ fmtRate(impact.prompt_mention?.before?.mention_rate) }}</div>
+                    <div class="ik-value">
+                      {{
+                        impactInsufficient
+                          ? '—'
+                          : fmtRate(impact.prompt_mention?.before?.mention_rate)
+                      }}
+                    </div>
                     <div class="ik-hint">
-                      n={{ impact.prompt_mention?.before?.snapshot_count ?? 0 }}
+                      样本 {{ impact.prompt_mention?.before?.snapshot_count ?? 0 }}
                     </div>
                   </div>
                   <div class="impact-kpi">
                     <div class="ik-label">发布后提及率</div>
-                    <div class="ik-value">{{ fmtRate(impact.prompt_mention?.after?.mention_rate) }}</div>
+                    <div class="ik-value">
+                      {{
+                        impactInsufficient
+                          ? '—'
+                          : fmtRate(impact.prompt_mention?.after?.mention_rate)
+                      }}
+                    </div>
                     <div class="ik-hint">
-                      n={{ impact.prompt_mention?.after?.snapshot_count ?? 0 }} · Δ
-                      {{ fmtDelta(impact.prompt_mention?.delta_mention_rate) }}
+                      样本 {{ impact.prompt_mention?.after?.snapshot_count ?? 0 }}
+                      <template v-if="!impactInsufficient">
+                        · Δ {{ fmtDelta(impact.prompt_mention?.delta_mention_rate) }}
+                      </template>
                     </div>
                   </div>
                 </div>
+                <p v-if="impact.net_effect_vs_control != null && !impactInsufficient" class="hint">
+                  净效应（处理 − 对照）
+                  <b>{{ fmtDelta(impact.net_effect_vs_control) }}</b>
+                  · 置信度 {{ impact.confidence || impact.summary?.confidence || '—' }}
+                </p>
+                <p v-else-if="impact.prompt_mention?.methodology_note" class="hint">
+                  {{ impact.prompt_mention.methodology_note }}
+                </p>
                 <ul v-if="impact.publications?.length" class="impact-pubs">
                   <li v-for="p in impact.publications" :key="p.id">
                     <a :href="p.published_url" target="_blank" rel="noopener">{{ p.channel }}</a>
@@ -2471,7 +2572,7 @@ onMounted(load)
 
       <!-- Right: draft readiness (not publish-ready copy) -->
       <aside class="col col-rail">
-        <el-card shadow="never" class="card rail-card">
+        <el-card id="step-check" shadow="never" class="card rail-card">
           <template #header>
             <div class="card-head">
               <div>
@@ -2648,7 +2749,45 @@ onMounted(load)
 .left, .right, .row-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .meta { display: flex; flex-direction: column; }
 .title { font-weight: 700; color: #1e2330; }
-.sub { font-size: 12px; color: #6b7280; }
+.sub { font-size: 13px; color: #64748b; }
+.next-step {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin: 0 0 14px;
+  padding: 12px 16px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 12px;
+}
+.next-step.done {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+}
+.next-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #1d4ed8;
+  margin-bottom: 2px;
+}
+.next-step.done .next-kicker { color: #047857; }
+.next-title { font-size: 15px; font-weight: 700; color: #0f172a; }
+.next-detail { font-size: 13px; color: #475569; margin-top: 2px; line-height: 1.45; }
+.fold-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  font-weight: 650;
+  color: #0f172a;
+  cursor: pointer;
+}
 .mb { margin-bottom: 10px; }
 .mt { margin-top: 12px; }
 .grid {
