@@ -10,12 +10,70 @@ from typing import Any
 from urllib.parse import urlparse
 
 from app.geo.content.expand import expand_candidates
+from app.geo.content.prompt_taxonomy import resolve_is_brand_probe
 from app.geo.content.snapshots import extract_cited_domain
 from app.urlwords import UrlFetchError, extract_words, fetch_page_text, validate_url
 
 # 业务线启发：标题/H 中的产品短语
-_BIZ_SPLIT = re.compile(r"[|｜/\-—·,，、;；\s]+")
+_BIZ_SPLIT = re.compile(r"[|｜/\-—·,，、;；\s\[\]【】]+")
 _SENT_SPLIT = re.compile(r"[。！？!?\n]+")
+
+_WEAK_ROOTS = {
+    "官网",
+    "首页",
+    "网站",
+    "公司",
+    "企业",
+    "我们",
+    "服务",
+    "产品",
+    "智能",
+    "场景",
+    "客户",
+    "渠道",
+    "平台",
+    "系统",
+    "方案",
+    "联系",
+    "国际化",
+    "数字化",
+    "信息化",
+}
+_LATIN_WEAK_ROOTS = {"agent", "agents", "ai", "app", "web", "www"}
+
+# 标题含这些产品信号时，补不带品牌的品类根（否则拓词全是「智齿科技怎么样」）
+_CATEGORY_SEEDS: list[tuple[re.Pattern[str], list[str]]] = [
+    (re.compile(r"客服|呼叫中心|联络"), ["智能客服", "在线客服", "呼叫中心"]),
+    (re.compile(r"工单"), ["工单系统"]),
+    (re.compile(r"泵|离心"), ["工业泵", "离心泵"]),
+]
+
+_VIS_TEMPLATES: list[tuple[str, str]] = [
+    ("{t}哪个好", "推荐"),
+    ("{t}对比怎么选", "比较"),
+    ("{t}怎么选", "推荐"),
+    ("{t}价格大概多少", "价格"),
+]
+_PROBE_TEMPLATES: list[tuple[str, str]] = [
+    ("{t}怎么样", "品牌验证"),
+    ("{t}是哪家公司", "品牌验证"),
+]
+
+
+def _usable_category_root(word: str, pool: list[str]) -> bool:
+    r = (word or "").strip()
+    if not (2 <= len(r) <= 16):
+        return False
+    if r in _WEAK_ROOTS or r.lower() in _LATIN_WEAK_ROOTS:
+        return False
+    if re.search(r"官网|首页|welcome|home", r, re.I):
+        return False
+    if re.match(r"^(的|了|着|过|和|与|及|驱动)", r):
+        return False
+    # 两字根已被更长短语覆盖时丢掉（智齿 ⊂ 智齿客服）
+    if len(r) <= 2 and any(r != other and r in other for other in pool):
+        return False
+    return True
 
 
 def _host_brand(url: str) -> str | None:
@@ -31,6 +89,257 @@ def _host_brand(url: str) -> str | None:
     return parts[0] if parts else None
 
 
+def match_prompt_business(
+    question: str,
+    business_names: list[str],
+    explicit: str | None = None,
+) -> str | None:
+    """把意图词挂到名称出现在问句里的业务；跳过 AI 这类碎片名。"""
+    names = [str(n).strip() for n in business_names if str(n).strip()]
+    if not names:
+        return None
+
+    def usable(n: str) -> bool:
+        if n in _WEAK_ROOTS or n.lower() in _LATIN_WEAK_ROOTS:
+            return False
+        return not re.fullmatch(r"[A-Za-z]{1,4}", n)
+
+    q = question or ""
+    for n in sorted(names, key=len, reverse=True):
+        if usable(n) and n in q:
+            return n
+    if explicit and explicit in names and usable(explicit):
+        return explicit
+    for n in names:
+        if usable(n):
+            return n
+    return names[0]
+
+
+def website_channel_name(existing_names: set[str] | list[str], domain: str | None = None) -> str:
+    """同一租户渠道名唯一：已有「官网」则用「官网 · 域名」。"""
+    taken = {str(n).strip() for n in existing_names if n}
+    if "官网" not in taken:
+        return "官网"
+    if domain:
+        alt = f"官网 · {domain}"
+        if alt not in taken:
+            return alt
+        n = 2
+        while f"{alt} ({n})" in taken:
+            n += 1
+        return f"{alt} ({n})"
+    n = 2
+    while f"官网 {n}" in taken:
+        n += 1
+    return f"官网 {n}"
+
+
+def _title_brand(title: str) -> str | None:
+    """标题里的中文品牌段；不用 ASCII 域名（zhichi 会被百度扩成拼音噪声）。"""
+    for seg in _BIZ_SPLIT.split(title or ""):
+        s = re.sub(r"\s+", " ", (seg or "").strip())
+        if not (2 <= len(s) <= 16):
+            continue
+        if not re.search(r"[一-鿿]{2,}", s):
+            continue
+        if re.search(r"官网|首页|welcome|home", s, re.I):
+            continue
+        return s
+    return None
+
+
+def brand_tokens_for_onboarding(
+    title: str,
+    url: str = "",
+    extra: list[str] | None = None,
+) -> list[str]:
+    """品牌全称 + 二字简称，用来识别探测题、避开品类根。"""
+    out: list[str] = []
+
+    def add(raw: str | None) -> None:
+        t = (raw or "").strip()
+        if len(t) < 2:
+            return
+        if t.lower() in {x.lower() for x in out}:
+            return
+        out.append(t)
+
+    add(_title_brand(title))
+    host = _host_brand(url)
+    if host and re.search(r"[一-鿿]", host):
+        add(host)
+    for item in extra or []:
+        add(item)
+    for token in list(out):
+        cjk = "".join(re.findall(r"[一-鿿]", token))
+        if len(cjk) >= 4:
+            add(cjk[:2])
+    return out
+
+
+def contains_brand(text: str, brand_tokens: list[str]) -> bool:
+    blob = text or ""
+    return any(t and t in blob for t in brand_tokens)
+
+
+def category_seed_roots(title: str, words: list[str]) -> list[str]:
+    blob = f"{title} {' '.join(words)}"
+    seeds: list[str] = []
+    for rx, extras in _CATEGORY_SEEDS:
+        if rx.search(blob):
+            for s in extras:
+                if s not in seeds:
+                    seeds.append(s)
+    return seeds
+
+
+def onboarding_expand_roots(
+    words: list[str],
+    *,
+    title: str = "",
+    url: str = "",
+) -> list[dict[str, str]]:
+    """品类根不带品牌（测可见度）；品牌根单独保留（探测题）。"""
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    title_segs = [
+        re.sub(r"\s+", " ", (seg or "").strip())
+        for seg in _BIZ_SPLIT.split(title or "")
+        if (seg or "").strip()
+    ]
+    pool = title_segs + list(words)
+    tokens = brand_tokens_for_onboarding(title, url)
+
+    def add(root: str | None, kind: str) -> None:
+        r = (root or "").strip()
+        if len(r) < 2 or r.lower() in seen:
+            return
+        if kind == "category":
+            if contains_brand(r, tokens):
+                return
+            if not _usable_category_root(r, pool):
+                return
+        seen.add(r.lower())
+        out.append({"root": r, "kind": kind, "market": "cn"})
+
+    brand = _title_brand(title)
+    add(brand, "brand")
+    for seed in category_seed_roots(title, words):
+        add(seed, "category")
+    for seg in title_segs:
+        if brand and seg == brand:
+            continue
+        add(seg, "category")
+    for w in words:
+        add(w, "category")
+        if sum(1 for r in out if r["kind"] == "category") >= 6:
+            break
+    long_cjk = [
+        r
+        for r in out
+        if r["kind"] == "category" and len(re.findall(r"[一-鿿]", r["root"])) >= 3
+    ]
+    if len(long_cjk) >= 2:
+        out[:] = [
+            r
+            for r in out
+            if not (
+                r["kind"] == "category"
+                and (
+                    re.fullmatch(r"[一-鿿]{1,2}", r["root"])
+                    or re.fullmatch(r"[A-Za-z][A-Za-z0-9\-]*", r["root"])
+                )
+            )
+        ]
+    if not out:
+        host = _host_brand(url)
+        if host and re.search(r"[一-鿿]", host):
+            add(host, "brand")
+    return out
+
+
+def finalize_onboarding_prompts(
+    expand_items: list[dict[str, Any]],
+    *,
+    words: list[str],
+    title: str,
+    url: str,
+    max_items: int = 24,
+    existing_questions: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """扩词结果 + 模板：品类可见度优先，带品牌的标探测题。"""
+    tokens = brand_tokens_for_onboarding(title, url)
+    existing = {q.strip().lower() for q in (existing_questions or set()) if q}
+    seen: set[str] = set(existing)
+    vis: list[dict[str, Any]] = []
+    probes: list[dict[str, Any]] = []
+
+    def push(question: str, group: str, *, term: str, root: str, kind: str) -> None:
+        q = (question or "").strip()
+        key = q.lower()
+        if len(q) < 4 or key in seen:
+            return
+        probe = resolve_is_brand_probe(
+            question=q,
+            brand_names=tokens,
+            question_group=group,
+        )
+        item = {
+            "question": q,
+            "question_group": group or "推荐",
+            "priority": 8 if probe else 14,
+            "tags": ["from_onboarding", "from_expand"]
+            + (["brand_probe"] if probe else ["brand_missing"]),
+            "term": term,
+            "root": root,
+            "kind": kind,
+            "is_brand_probe": probe,
+        }
+        seen.add(key)
+        (probes if probe else vis).append(item)
+
+    for it in expand_items:
+        if it.get("in_bank"):
+            continue
+        push(
+            str(it.get("question") or it.get("term") or ""),
+            str(it.get("question_group") or "推荐"),
+            term=str(it.get("term") or ""),
+            root=str(it.get("root") or ""),
+            kind=str(it.get("kind") or "category"),
+        )
+
+    cat_roots = [
+        r["root"]
+        for r in onboarding_expand_roots(words, title=title, url=url)
+        if r["kind"] == "category"
+    ]
+    for w in cat_roots[:4]:
+        for tpl, grp in _VIS_TEMPLATES:
+            push(tpl.format(t=w), grp, term=w, root=w, kind="category")
+    brand = tokens[0] if tokens else ""
+    if brand:
+        for tpl, grp in _PROBE_TEMPLATES:
+            push(tpl.format(t=brand), grp, term=brand, root=brand, kind="brand")
+
+    # 先品类（默认勾选最多 8），再少量探测题（最多 2）
+    picked = vis[: max(8, max_items - 4)] + probes[:4]
+    picked = picked[:max_items]
+    vis_sel = 0
+    probe_sel = 0
+    for item in picked:
+        if item["is_brand_probe"]:
+            item["selected"] = probe_sel < 2
+            if item["selected"]:
+                probe_sel += 1
+        else:
+            item["selected"] = vis_sel < 8
+            if item["selected"]:
+                vis_sel += 1
+    return picked
+
+
 def _business_candidates(title: str, words: list[str], headings_blob: str) -> list[dict[str, Any]]:
     """Suggest 1–4 business lines from page title/words."""
     cands: list[dict[str, Any]] = []
@@ -39,6 +348,10 @@ def _business_candidates(title: str, words: list[str], headings_blob: str) -> li
     def add(name: str, reason: str) -> None:
         n = re.sub(r"\s+", " ", (name or "").strip())[:80]
         if len(n) < 2:
+            return
+        if n in _WEAK_ROOTS or n.lower() in _LATIN_WEAK_ROOTS:
+            return
+        if re.fullmatch(r"[A-Za-z]{1,4}", n):
             return
         key = n.lower()
         if key in seen:
@@ -259,65 +572,47 @@ async def preview_from_website(
     prompt_items: list[dict[str, Any]] = []
     expand_meta: dict[str, Any] = {"calls": 0, "errors": [], "skipped": not expand}
     if expand and words:
-        roots = []
-        for w in words[:5]:
-            roots.append({"root": w, "kind": "category", "market": "cn"})
-        if brand and brand not in {r["root"] for r in roots}:
-            roots.insert(0, {"root": brand, "kind": "brand", "market": "cn"})
+        roots = onboarding_expand_roots(words, title=title, url=url)
+        context_tokens = list(words)
+        for b in businesses:
+            nm = str(b.get("name") or "").strip()
+            if nm:
+                context_tokens.append(nm)
         try:
             result = await expand_candidates(
                 roots=roots,
                 existing_questions=existing_questions,
                 max_terms=max_prompt_candidates,
+                max_per_root=8,
                 throttle_s=0.03,
+                context_tokens=context_tokens,
             )
             expand_meta = {
                 "calls": result.get("calls"),
                 "errors": (result.get("errors") or [])[:5],
                 "roots": result.get("roots"),
             }
-            for it in result.get("items") or []:
-                if it.get("in_bank"):
-                    continue
-                prompt_items.append(
-                    {
-                        "question": it.get("question") or it.get("term"),
-                        "question_group": it.get("question_group") or "推荐",
-                        "priority": 15 if it.get("kind") == "brand" else 10,
-                        "tags": ["from_onboarding", "brand_missing", "from_expand"],
-                        "term": it.get("term"),
-                        "root": it.get("root"),
-                        "selected": len(prompt_items) < 12,
-                    }
-                )
-                if len(prompt_items) >= max_prompt_candidates:
-                    break
+            prompt_items = finalize_onboarding_prompts(
+                list(result.get("items") or []),
+                words=words,
+                title=title,
+                url=url,
+                max_items=max_prompt_candidates,
+                existing_questions=existing_questions,
+            )
         except Exception as exc:  # noqa: BLE001
             expand_meta["errors"] = [str(exc)]
             expand = False
 
-    # Fallback templates if expand empty
-    if not prompt_items and words:
-        templates = [
-            ("{t}哪个好", "推荐"),
-            ("{t}怎么样", "品牌验证"),
-            ("{t}对比怎么选", "比较"),
-            ("{t}价格大概多少", "价格"),
-        ]
-        for w in words[:4]:
-            for tpl, grp in templates:
-                q = tpl.format(t=w)
-                prompt_items.append(
-                    {
-                        "question": q,
-                        "question_group": grp,
-                        "priority": 10,
-                        "tags": ["from_onboarding", "brand_missing"],
-                        "term": w,
-                        "root": w,
-                        "selected": len(prompt_items) < 10,
-                    }
-                )
+    if not prompt_items:
+        prompt_items = finalize_onboarding_prompts(
+            [],
+            words=words,
+            title=title,
+            url=url,
+            max_items=max_prompt_candidates,
+            existing_questions=existing_questions,
+        )
 
     parsed = urlparse(url if "://" in url else f"https://{url}")
     hints = [
@@ -341,7 +636,7 @@ async def preview_from_website(
     return {
         "source_url": url,
         "page_title": title,
-        "brand_guess": brand,
+        "brand_guess": _title_brand(title) or brand,
         "domain": extract_cited_domain(url),
         "keywords": words,
         "businesses": businesses,

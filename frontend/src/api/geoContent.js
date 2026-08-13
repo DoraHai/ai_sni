@@ -836,6 +836,10 @@ export function createGeoCompetitorReport(body) {
   return client.post('/api/v1/geo/competitor-insights/report', body)
 }
 
+export function createGeoCompetitorRecTasks(body) {
+  return client.post('/api/v1/geo/competitor-insights/create-tasks', body)
+}
+
 export function fetchGeoEvaluationInsights(tenantId, params = {}) {
   return client.get('/api/v1/geo/evaluation-insights', {
     params: { tenant_id: tenantId, ...params },

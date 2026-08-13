@@ -291,6 +291,7 @@ class GeoOnboardingPromptPick(BaseModel):
     priority: int = 10
     tags: list[str] = Field(default_factory=lambda: ["from_onboarding", "brand_missing"])
     business_name: str | None = None
+    is_brand_probe: bool | None = None
 
 
 class GeoOnboardingFactPick(BaseModel):
@@ -445,6 +446,20 @@ class CompetitorTraceReportRequest(BaseModel):
     note: str | None = Field(None, max_length=4000)
     insight: str | None = Field(None, max_length=8000)
     action: str | None = Field(None, max_length=8000)
+
+
+class CompetitorRecTaskItem(BaseModel):
+    prompt_id: int
+    title: str | None = Field(None, max_length=300)
+    channel_key: str | None = None
+    reason: str | None = Field(None, max_length=800)
+    sample_question: str | None = None
+
+
+class CompetitorCreateTasksRequest(BaseModel):
+    tenant_id: int
+    competitor: str = Field(..., min_length=1, max_length=120)
+    items: list[CompetitorRecTaskItem] = Field(default_factory=list, max_length=8)
 
 
 SampleMode = Literal["mock_persona", "openai_compat"]

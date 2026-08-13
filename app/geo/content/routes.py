@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import delete, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
@@ -63,6 +64,7 @@ from app.geo.content.probe import (
 from app.geo.content.schemas import (
     AiSettingsUpdate,
     ChannelPolishPromptsUpdate,
+    CompetitorCreateTasksRequest,
     CompetitorTraceReportRequest,
     AnswerSnapshotCreate,
     AnswerSnapshotExtractUrlsRequest,
@@ -731,9 +733,28 @@ async def _task_payload(
             "publications": pubs,
             "channel_profiles": list_profiles(),
             "channel_options": await _channel_options_payload(session, task.tenant_id),
+            "variant_polish": await _latest_variant_polish(session, task),
         }
     )
     return payload
+
+
+async def _latest_variant_polish(session: AsyncSession, task: GeoContentTask) -> dict | None:
+    job = await session.scalar(
+        select(GeoAsyncJob)
+        .where(
+            GeoAsyncJob.tenant_id == task.tenant_id,
+            GeoAsyncJob.kind == "create_variants",
+            GeoAsyncJob.ref_type == "content_task",
+            GeoAsyncJob.ref_id == task.id,
+        )
+        .order_by(GeoAsyncJob.id.desc())
+        .limit(1)
+    )
+    if job is None or not job.result_meta:
+        return None
+    polish = job.result_meta.get("variant_polish")
+    return polish if isinstance(polish, dict) else None
 
 
 async def _channel_options_payload(session: AsyncSession, tenant_id: int) -> list[dict]:
@@ -1613,7 +1634,7 @@ async def geo_weekly_insights(
 @router.get("/topic-heat")
 async def geo_topic_heat(
     tenant_id: int = Query(...),
-    days: int = Query(14, ge=3, le=60),
+    days: int = Query(14, ge=3, le=90),
     group_by: str = Query("prompt", description="prompt | group"),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
@@ -2069,12 +2090,24 @@ async def expand_prompt_candidates(
             )
         )
     ).all()
+    context_tokens: list[str] = list(fact_products)
+    context_tokens.extend(brand_names)
+    industry = getattr(tenant, "industry", None)
+    if industry:
+        context_tokens.append(str(industry))
     result = await expand_candidates(
         roots=roots,
         existing_questions=set(existing_rows),
         max_terms=req.max_terms,
         throttle_s=0.05,
+        context_tokens=context_tokens,
     )
+    for it in result.get("items") or []:
+        it["is_brand_probe"] = resolve_is_brand_probe(
+            question=str(it.get("question") or it.get("term") or ""),
+            brand_names=brand_names,
+            question_group=it.get("question_group"),
+        )
 
     prev_run = await session.scalar(
         select(GeoExpandRun)
@@ -2655,7 +2688,7 @@ async def competitor_insights(
 @router.get("/competitor-insights/daily")
 async def competitor_insights_daily(
     tenant_id: int = Query(...),
-    days: int = Query(14, ge=3, le=60),
+    days: int = Query(14, ge=3, le=90),
     scope_level: str = Query("tenant", description="tenant|business|unit|prompt"),
     business_id: int | None = Query(None),
     unit_id: int | None = Query(None),
@@ -2785,6 +2818,30 @@ async def competitor_insights_trace(
     payload = build_competitor_trace(
         competitor=name, rows=rows, questions=questions
     )
+    groups: dict[int, str] = {}
+    if prompt_ids:
+        for p in await session.scalars(
+            select(GeoPrompt).where(
+                GeoPrompt.tenant_id == tenant_id, GeoPrompt.id.in_(prompt_ids)
+            )
+        ):
+            if p.question_group:
+                groups[p.id] = p.question_group
+    from app.geo.content.competitor_placements import attach_geo_reverse
+    from app.geo.content.competitor_trace import snapshot_mentions_competitor
+
+    mention_ids: list[int] = []
+    for row in rows:
+        if snapshot_mentions_competitor(getattr(row, "competitors", None), name):
+            if row.prompt_id is not None:
+                mention_ids.append(int(row.prompt_id))
+    attach_geo_reverse(
+        payload,
+        competitor=name,
+        mention_prompt_ids=mention_ids,
+        questions=questions,
+        question_groups=groups,
+    )
     payload["tenant_id"] = tenant_id
     return payload
 
@@ -2833,6 +2890,89 @@ async def competitor_insights_report(
     report["tenant_id"] = req.tenant_id
     report["competitor"] = req.competitor.strip()
     return report
+
+
+@router.post("/competitor-insights/create-tasks")
+async def competitor_insights_create_tasks(
+    req: CompetitorCreateTasksRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """把竞品逆向建议落成内容任务。同意图词已有未归档任务则跳过。"""
+    from app.geo.content.brief import normalize_brief
+    from app.geo.content.channel_profiles import normalize_channels
+    from app.geo.content.competitor_placements import _CHANNEL_TO_TASK
+
+    ctx.ensure_tenant(req.tenant_id)
+    await _ensure_tenant_exists(session, req.tenant_id)
+    created: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for item in req.items[:8]:
+        try:
+            prompt = await _get_prompt(session, item.prompt_id, req.tenant_id)
+        except HTTPException:
+            skipped.append({"prompt_id": item.prompt_id, "reason": "意图词不存在"})
+            continue
+        existing = await session.scalar(
+            select(GeoContentTask.id).where(
+                GeoContentTask.tenant_id == req.tenant_id,
+                GeoContentTask.prompt_id == prompt.id,
+                GeoContentTask.status.notin_(["archived", "cancelled"]),
+            )
+        )
+        if existing:
+            skipped.append(
+                {
+                    "prompt_id": prompt.id,
+                    "task_id": existing,
+                    "reason": "该意图词已有任务",
+                }
+            )
+            continue
+        channel = _CHANNEL_TO_TASK.get(item.channel_key or "official", "website")
+        title = (item.title or prompt.question).strip()[:300]
+        brief = normalize_brief(
+            {
+                "ai_question": item.sample_question or prompt.question,
+                "notes": item.reason or f"竞品逆向：{req.competitor}",
+                "competitors": [req.competitor],
+                "must_cover": [req.competitor],
+            }
+        )
+        business_id = await _resolve_task_business_id(session, prompt)
+        period_id = await _resolve_active_period_id(
+            session, tenant_id=req.tenant_id, business_id=business_id
+        )
+        task = GeoContentTask(
+            tenant_id=req.tenant_id,
+            prompt_id=prompt.id,
+            business_id=business_id,
+            period_id=period_id,
+            title=title,
+            status="draft",
+            target_channels=normalize_channels([channel]),
+            owner_user_id=ctx.user_id,
+            pipeline_step="opportunity",
+            brief=brief,
+        )
+        session.add(task)
+        await session.flush()
+        prompt.last_task_id = task.id
+        created.append(
+            {
+                "task_id": task.id,
+                "prompt_id": prompt.id,
+                "title": title,
+                "editor_path": f"/geo/tasks/{task.id}",
+            }
+        )
+    await session.commit()
+    return {
+        "created": created,
+        "skipped": skipped,
+        "created_count": len(created),
+        "skipped_count": len(skipped),
+    }
 
 
 @router.get("/evaluation-insights")
@@ -3508,6 +3648,24 @@ async def geo_onboarding_apply(
         created["businesses"].append({"id": row.id, "name": name, "existed": False})
         created["units"].append({"id": unit.id, "business_id": row.id, "name": unit.name})
 
+    from app.geo.content.onboarding import brand_tokens_for_onboarding, match_prompt_business
+    from app.geo.content.prompt_taxonomy import brand_names_from_tenant, resolve_is_brand_probe
+
+    apply_brand_names = brand_names_from_tenant(
+        name=getattr(tenant, "name", None),
+        brand_terms=list(getattr(tenant, "brand_terms", None) or [])
+        + list(req.brand_terms or []),
+    )
+    apply_brand_names = list(
+        dict.fromkeys(
+            apply_brand_names
+            + brand_tokens_for_onboarding(
+                getattr(tenant, "name", "") or "",
+                extra=apply_brand_names,
+            )
+        )
+    )
+
     default_biz = next(iter(biz_by_name.values()), None)
     default_unit_id = None
     if default_biz is not None:
@@ -3537,8 +3695,13 @@ async def geo_onboarding_apply(
             created["prompts"].append({"id": exists, "question": q, "existed": True})
             continue
         unit_id = default_unit_id
-        if p.business_name and p.business_name in biz_by_name:
-            biz = biz_by_name[p.business_name]
+        matched_name = match_prompt_business(
+            q,
+            list(biz_by_name.keys()),
+            explicit=p.business_name,
+        )
+        if matched_name and matched_name in biz_by_name:
+            biz = biz_by_name[matched_name]
             u = await session.scalar(
                 select(GeoOptimizationUnit)
                 .where(
@@ -3552,6 +3715,14 @@ async def geo_onboarding_apply(
         tags = list(p.tags or ["from_onboarding", "brand_missing"])
         if "from_onboarding" not in tags:
             tags.append("from_onboarding")
+        probe = resolve_is_brand_probe(
+            question=q,
+            brand_names=apply_brand_names,
+            explicit=p.is_brand_probe,
+            question_group=p.question_group,
+        )
+        if probe and "brand_probe" not in tags:
+            tags.append("brand_probe")
         row = GeoPrompt(
             tenant_id=req.tenant_id,
             question=q,
@@ -3561,6 +3732,7 @@ async def geo_onboarding_apply(
             source="expand",
             question_group=p.question_group,
             market="cn",
+            is_brand_probe=probe,
             unit_id=unit_id,
         )
         session.add(row)
@@ -3585,35 +3757,49 @@ async def geo_onboarding_apply(
         created["facts"].append({"id": row.id, "title": row.title})
 
     if req.create_website_channel and req.website_url:
+        from app.geo.content.onboarding import website_channel_name
         from app.geo.content.snapshots import extract_cited_domain
 
         base = req.website_url.strip()
         domain = extract_cited_domain(base)
         existing_ch = None
+        existing_names: list[str] = []
         for ch in await session.scalars(
             select(GeoPublishingChannel).where(
                 GeoPublishingChannel.tenant_id == req.tenant_id,
-                GeoPublishingChannel.channel_type == "website",
             )
         ):
-            if extract_cited_domain(ch.base_url) == domain:
+            existing_names.append(ch.name)
+            if (
+                ch.channel_type == "website"
+                and domain
+                and extract_cited_domain(ch.base_url) == domain
+            ):
                 existing_ch = ch
-                break
         if existing_ch is None:
             ch = GeoPublishingChannel(
                 tenant_id=req.tenant_id,
                 channel_type="website",
-                name="官网",
+                name=website_channel_name(existing_names, domain),
                 base_url=base if base.startswith("http") else f"https://{base}",
                 enabled=True,
             )
-            # optional fields may vary — set only common ones
             session.add(ch)
-            await session.flush()
-            created["channel"] = {"id": ch.id, "base_url": ch.base_url, "existed": False}
+            try:
+                await session.flush()
+            except IntegrityError:
+                await session.rollback()
+                raise HTTPException(409, "发布渠道名称已存在，请改名后重试或取消勾选创建官网渠道")
+            created["channel"] = {
+                "id": ch.id,
+                "name": ch.name,
+                "base_url": ch.base_url,
+                "existed": False,
+            }
         else:
             created["channel"] = {
                 "id": existing_ch.id,
+                "name": existing_ch.name,
                 "base_url": existing_ch.base_url,
                 "existed": True,
             }

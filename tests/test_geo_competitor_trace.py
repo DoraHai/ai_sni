@@ -6,6 +6,10 @@ import unittest
 from datetime import datetime
 from types import SimpleNamespace
 
+from app.geo.content.competitor_placements import (
+    attach_geo_reverse,
+    resolve_placement_profile,
+)
 from app.geo.content.competitor_trace import (
     build_competitor_compare,
     build_competitor_report_markdown,
@@ -135,6 +139,54 @@ class CompetitorTraceTests(unittest.TestCase):
         self.assertEqual(by_id[1]["winner"], "competitor")
         self.assertEqual(by_id[2]["winner"], "brand")
         self.assertEqual(by_id[1]["top_competitor"], "Tableau")
+
+
+class CompetitorPlacementTests(unittest.TestCase):
+    def test_resolve_qiyu_aliases(self):
+        self.assertEqual(resolve_placement_profile("网易七鱼")["canonical"], "网易七鱼")
+        self.assertEqual(resolve_placement_profile("七鱼")["canonical"], "网易七鱼")
+        self.assertEqual(resolve_placement_profile("Udesk")["canonical"], "Udesk")
+        self.assertIsNone(resolve_placement_profile("不存在的品牌xyz"))
+
+    def test_trace_without_urls_gets_inferred_and_recs(self):
+        rows = [
+            SimpleNamespace(
+                id=11,
+                competitors=["网易七鱼"],
+                cited_urls=[],
+                engine="deepseek",
+                prompt_id=47,
+                captured_at=datetime(2026, 8, 13, 15, 0, 0),
+            ),
+            SimpleNamespace(
+                id=12,
+                competitors=["网易七鱼"],
+                cited_urls=[],
+                engine="chatgpt",
+                prompt_id=48,
+                captured_at=datetime(2026, 8, 13, 15, 1, 0),
+            ),
+        ]
+        trace = build_competitor_trace(
+            competitor="网易七鱼",
+            rows=rows,
+            questions={47: "在线客服哪个好", 48: "在线客服对比怎么选"},
+        )
+        self.assertEqual(trace["unique_url_count"], 0)
+        attach_geo_reverse(
+            trace,
+            competitor="网易七鱼",
+            mention_prompt_ids=[47, 47, 48],
+            questions={47: "在线客服哪个好", 48: "在线客服对比怎么选"},
+            question_groups={47: "推荐", 48: "比较"},
+        )
+        self.assertTrue(trace["inferred_placements"])
+        self.assertTrue(trace["platforms"])
+        self.assertTrue(any(s.get("inferred") for s in trace["sources_agg"]))
+        recs = trace["recommendations"]
+        self.assertGreaterEqual(len(recs), 2)
+        self.assertTrue(any("对比" in (r["title"] + r["reason"]) for r in recs))
+        self.assertTrue(trace["suggested_action"])
 
 
 if __name__ == "__main__":

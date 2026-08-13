@@ -82,7 +82,7 @@ def compute_topic_heat_rows(
     start: date,
 ) -> dict[str, Any]:
     """Pure aggregation used by API + tests (no DB)."""
-    days = max(3, min(int(days or 14), 60))
+    days = max(3, min(int(days or 14), 90))
     gb = group_by if group_by in ("prompt", "group") else "prompt"
     timeline = [(start + timedelta(days=i)).isoformat() for i in range(days)]
 
@@ -209,7 +209,7 @@ async def build_topic_heat(
     Heat series counts unique (topic × engine × day) cells.
     Monitoring counters use raw snapshots (patrol vs manual).
     """
-    days = max(3, min(int(days or 14), 60))
+    days = max(3, min(int(days or 14), 90))
     gb = group_by if group_by in ("prompt", "group") else "prompt"
     end = date.today()
     start = end - timedelta(days=days - 1)

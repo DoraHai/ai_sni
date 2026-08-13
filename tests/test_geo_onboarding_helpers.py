@@ -11,7 +11,13 @@ from app.geo.content.onboarding import (
     _business_candidates,
     _fact_drafts,
     _host_brand,
+    _title_brand,
+    brand_tokens_for_onboarding,
     build_readiness_items,
+    finalize_onboarding_prompts,
+    match_prompt_business,
+    onboarding_expand_roots,
+    website_channel_name,
 )
 
 
@@ -20,11 +26,102 @@ class OnboardingHelpersTests(unittest.TestCase):
         self.assertEqual(_host_brand("https://www.acme.com/products"), "acme")
         self.assertEqual(_host_brand("https://blog.foo.com.cn/a"), "foo")
 
+    def test_website_channel_name_avoids_dup(self):
+        self.assertEqual(website_channel_name(set()), "官网")
+        self.assertEqual(website_channel_name({"官网"}, "zhichi.com"), "官网 · zhichi.com")
+        self.assertEqual(
+            website_channel_name({"官网", "官网 · zhichi.com"}, "zhichi.com"),
+            "官网 · zhichi.com (2)",
+        )
+
+    def test_title_brand_prefers_cjk(self):
+        self.assertEqual(_title_brand("智齿科技 | 智能客服"), "智齿科技")
+        self.assertIsNone(_title_brand("Welcome | Home"))
+
+    def test_onboarding_roots_skip_ascii_host(self):
+        roots = onboarding_expand_roots(
+            ["智能客服", "工单系统", "在线客服"],
+            title="智齿科技 | 智能客服",
+            url="https://www.zhichi.com/",
+        )
+        vals = [r["root"] for r in roots]
+        self.assertNotIn("zhichi", vals)
+        self.assertIn("智能客服", vals)
+        self.assertTrue(any(r["kind"] == "category" for r in roots))
+
+    def test_onboarding_roots_prefer_title_product(self):
+        roots = onboarding_expand_roots(
+            ["智齿科技", "官网", "智齿", "Agents", "渠道", "客户"],
+            title="智齿科技-智齿客服｜AI Agent 驱动的新一代客户联络平台【官网】",
+            url="https://www.zhichi.com/",
+        )
+        vals = [r["root"] for r in roots]
+        self.assertIn("智能客服", vals)
+        self.assertNotIn("zhichi", vals)
+        self.assertNotIn("官网", vals)
+        self.assertNotIn("Agents", vals)
+        self.assertNotIn("智齿", vals)
+        self.assertNotIn("渠道", vals)
+        self.assertFalse(any(v.startswith("驱动") for v in vals))
+        self.assertFalse(any("智齿" in v and r["kind"] == "category" for r, v in zip(roots, vals)))
+        self.assertTrue(any(r["kind"] == "brand" and r["root"] == "智齿科技" for r in roots))
+
+    def test_finalize_prompts_marks_probes_and_keeps_category(self):
+        items = finalize_onboarding_prompts(
+            [
+                {
+                    "question": "智齿科技怎么样？用过的说说实际体验。",
+                    "question_group": "品牌验证",
+                    "term": "智齿科技怎么样",
+                    "root": "智齿科技",
+                    "kind": "brand",
+                },
+                {
+                    "question": "智能客服，有值得推荐的吗？",
+                    "question_group": "推荐",
+                    "term": "智能客服推荐",
+                    "root": "智能客服",
+                    "kind": "category",
+                },
+            ],
+            words=["智能客服", "在线客服"],
+            title="智齿科技-智齿客服｜智能客服",
+            url="https://www.zhichi.com/",
+            max_items=16,
+        )
+        qs = [i["question"] for i in items]
+        self.assertTrue(any(i["is_brand_probe"] and "智齿" in i["question"] for i in items))
+        self.assertTrue(any(not i["is_brand_probe"] and "智能客服" in i["question"] for i in items))
+        self.assertTrue(any("智能客服" in q for q in qs))
+        selected_vis = [i for i in items if i.get("selected") and not i["is_brand_probe"]]
+        self.assertGreaterEqual(len(selected_vis), 1)
+
+    def test_brand_tokens_include_short_form(self):
+        toks = brand_tokens_for_onboarding("智齿科技 | 智能客服", "https://www.zhichi.com/")
+        self.assertIn("智齿科技", toks)
+        self.assertIn("智齿", toks)
+
     def test_business_candidates(self):
         c = _business_candidates("智能泵 | 苏尔寿", ["离心泵", "分离"], "")
         names = [x["name"] for x in c]
         self.assertTrue(any("智能泵" in n or "苏尔寿" in n for n in names))
         self.assertTrue(any(x.get("selected") for x in c))
+
+    def test_business_candidates_skip_ai_fragment(self):
+        c = _business_candidates(
+            "智齿科技-智齿客服｜AI Agent 驱动的新一代客户联络平台",
+            ["智齿"],
+            "",
+        )
+        names = [x["name"] for x in c]
+        self.assertNotIn("AI", names)
+        self.assertNotIn("Agent", names)
+        self.assertIn("智齿科技", names)
+
+    def test_match_prompt_business(self):
+        names = ["AI", "智齿科技", "智齿客服"]
+        self.assertEqual(match_prompt_business("智齿客服怎么样", names), "智齿客服")
+        self.assertEqual(match_prompt_business("随便问问", names), "智齿科技")
 
     def test_fact_drafts(self):
         d = _fact_drafts(

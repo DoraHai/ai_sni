@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
+  createGeoCompetitorRecTasks,
   createGeoCompetitorReport,
   fetchGeoCompetitorCompare,
   fetchGeoCompetitorDaily,
@@ -92,6 +93,7 @@ const reportSaved = ref(false)
 const expandedUrl = ref('')
 const historyItems = ref([])
 const sourceTableRef = ref(null)
+const creatingTasks = ref(false)
 
 const maxCite = computed(() =>
   Math.max(1, ...(trace.value?.platforms || []).map((p) => p.cite_count || 0)),
@@ -212,6 +214,23 @@ function mergeTraces(parts, canonical) {
   const sources_agg = [...byUrl.values()].sort(
     (a, b) => (b.cite_count || 0) - (a.cite_count || 0),
   )
+  const inferred = []
+  const recs = []
+  let insight = ''
+  let action = ''
+  for (const t of parts) {
+    if (!t) continue
+    for (const p of t.inferred_placements || []) {
+      if (!inferred.some((x) => x.channel_key === p.channel_key && x.url === p.url)) {
+        inferred.push(p)
+      }
+    }
+    for (const r of t.recommendations || []) {
+      if (!recs.some((x) => x.key === r.key)) recs.push(r)
+    }
+    if (!insight && t.suggested_insight) insight = t.suggested_insight
+    if (!action && t.suggested_action) action = t.suggested_action
+  }
   return {
     competitor: canonical,
     mention_count: mention,
@@ -222,6 +241,10 @@ function mergeTraces(parts, canonical) {
     platforms: [...platforms.values()].sort(
       (a, b) => (b.cite_count || 0) - (a.cite_count || 0),
     ),
+    inferred_placements: inferred,
+    recommendations: recs,
+    suggested_insight: insight,
+    suggested_action: action,
   }
 }
 
@@ -388,7 +411,9 @@ async function openTrace(row) {
         : mergeTraces(parts.filter(Boolean), row.name)
     trace.value = data
     selectedPlatforms.value = (data.platforms || []).map((p) => p.channel_key)
-    selectedUrls.value = (data.sources_agg || []).map((s) => s.url)
+    selectedUrls.value = (data.sources_agg || []).filter((s) => s.url).map((s) => s.url)
+    if (data.suggested_insight) insight.value = data.suggested_insight
+    if (data.suggested_action) action.value = data.suggested_action
     await nextTick()
     await nextTick()
     sourceTableRef.value?.clearSelection?.()
@@ -427,11 +452,54 @@ function onSourceSelection(rows) {
 }
 
 function goStep(n) {
-  if (n === 1 && !selectedUrls.value.length && !selectedPlatforms.value.length) {
+  const hasInferred = (trace.value?.inferred_placements || []).length > 0
+  if (
+    n === 1
+    && !selectedUrls.value.length
+    && !selectedPlatforms.value.length
+    && !hasInferred
+  ) {
     ElMessage.warning('请先选择至少一个平台或来源')
     return
   }
   reportStep.value = n
+}
+
+async function createRecTasks(recs) {
+  const items = (recs || []).filter((r) => r.prompt_id)
+  if (!items.length) {
+    ElMessage.warning('这些建议还没有关联意图词，无法建任务')
+    return
+  }
+  creatingTasks.value = true
+  try {
+    const res = await createGeoCompetitorRecTasks({
+      tenant_id: tenantId.value,
+      competitor: activeName.value,
+      items: items.map((r) => ({
+        prompt_id: r.prompt_id,
+        title: r.title,
+        channel_key: r.channel_key,
+        reason: r.reason,
+        sample_question: r.sample_question,
+      })),
+    })
+    const n = res.created_count || 0
+    const skip = res.skipped_count || 0
+    ElMessage.success(
+      n
+        ? `已建 ${n} 条任务${skip ? `，跳过 ${skip} 条已有任务` : ''}`
+        : skip
+          ? `未新建：${skip} 条意图词已有任务`
+          : '没有可建的任务',
+    )
+    const first = (res.created || [])[0]
+    if (first?.editor_path) router.push(first.editor_path)
+  } catch (e) {
+    ElMessage.error(e.message || '建任务失败')
+  } finally {
+    creatingTasks.value = false
+  }
 }
 
 async function genAndSaveReport() {
@@ -772,6 +840,9 @@ onMounted(load)
             提及 {{ trace.mention_count || 0 }} · 提问 {{ trace.prompt_count || 0 }} ·
             去重来源 {{ trace.unique_url_count ?? (trace.sources_agg || []).length }} ·
             平台 {{ (trace.platforms || []).length }}
+            <span v-if="(trace.inferred_placements || []).length" class="infer-flag">
+              · 含推定阵地
+            </span>
           </div>
 
           <el-steps :active="reportStep" finish-status="success" align-center class="mb steps">
@@ -792,7 +863,7 @@ onMounted(load)
               >查看全部 URL</el-button>
             </div>
             <div v-if="!(trace.platforms || []).length" class="empty-hint mb">
-              无平台数据：请到 AI 可见度补录 cited_urls
+              本次回答没有引用 URL，也没有匹配到竞品阵地库。
             </div>
             <div v-else class="plat-grid mb">
               <button
@@ -807,12 +878,56 @@ onMounted(load)
                 @click="togglePlatformCard(p.channel_key)"
               >
                 <div class="plat-name">{{ p.channel_name }}</div>
-                <div class="plat-count">{{ p.cite_count }} 次引用</div>
+                <div class="plat-count">
+                  {{ p.inferred ? '推定阵地' : `${p.cite_count} 次引用` }}
+                </div>
                 <div class="plat-bar">
                   <i :style="{ width: `${Math.round((p.cite_count / maxCite) * 100)}%` }" />
                 </div>
                 <div class="plat-domains">{{ (p.domains || []).slice(0, 2).join(' · ') || '—' }}</div>
               </button>
+            </div>
+
+            <div v-if="(trace.inferred_placements || []).length" class="infer-box mb">
+              <div class="section-title">推定发布位置</div>
+              <p class="infer-hint">
+                本次快照几乎没有引用链接。下面是该竞品的已知官网/知乎阵地，供逆向对照，不是这次被 AI 点名的具体页面。
+              </p>
+              <ul class="infer-list">
+                <li v-for="(p, i) in trace.inferred_placements" :key="i">
+                  <span class="infer-ch">{{ p.channel_name }}</span>
+                  <span>{{ p.label }}</span>
+                  <a v-if="p.url" :href="p.url" target="_blank" rel="noopener">{{ p.url }}</a>
+                  <span v-else class="dim">无稳定公开 URL</span>
+                </li>
+              </ul>
+            </div>
+
+            <div v-if="(trace.recommendations || []).length" class="rec-box mb">
+              <div class="section-head">
+                <span class="section-title">GEO 逆向建议</span>
+                <el-button
+                  size="small"
+                  type="primary"
+                  :loading="creatingTasks"
+                  @click="createRecTasks(trace.recommendations)"
+                >全部建任务</el-button>
+              </div>
+              <div v-for="r in trace.recommendations" :key="r.key" class="rec-card">
+                <div class="rec-title">{{ r.title }}</div>
+                <div class="rec-meta">
+                  {{ r.form }} · {{ r.question_group }} · {{ r.channel_name || r.channel_key }}
+                </div>
+                <div class="rec-reason">{{ r.reason }}</div>
+                <div class="rec-actions">
+                  <el-button
+                    size="small"
+                    :disabled="!r.prompt_id"
+                    :loading="creatingTasks"
+                    @click="createRecTasks([r])"
+                  >建任务</el-button>
+                </div>
+              </div>
             </div>
 
             <div class="section-head">
@@ -1059,6 +1174,20 @@ onMounted(load)
   color: #1f2937; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .empty-hint { font-size: 13px; color: #9ca3af; }
+.infer-flag { color: #b45309; }
+.infer-box, .rec-box {
+  border: 1px solid #fde68a; background: #fffbeb; border-radius: 8px; padding: 10px 12px;
+}
+.infer-hint { margin: 6px 0 8px; font-size: 12px; color: #92400e; line-height: 1.45; }
+.infer-list { margin: 0; padding-left: 18px; font-size: 12px; color: #374151; line-height: 1.6; }
+.infer-ch { font-weight: 650; margin-right: 6px; }
+.rec-card {
+  background: #fff; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 12px; margin-top: 8px;
+}
+.rec-title { font-size: 13px; font-weight: 650; color: #111827; }
+.rec-meta { font-size: 11px; color: #9ca3af; margin: 3px 0 4px; }
+.rec-reason { font-size: 12px; color: #4b5563; line-height: 1.45; }
+.rec-actions { margin-top: 8px; }
 .hist-card {
   border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; margin-bottom: 10px; background: #fff;
 }

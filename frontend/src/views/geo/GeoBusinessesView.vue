@@ -38,6 +38,7 @@ const prompts = ref([])
 const promptsLoading = ref(false)
 const selectedBusinessId = ref(null)
 const selectedUnitId = ref(null)
+const showArchived = ref(false)
 const dailyItems = ref([])
 const citationNote = ref('')
 const metricsOpen = ref(false)
@@ -93,6 +94,21 @@ const dailyPanelTitle = computed(() => {
   return '按天汇总'
 })
 
+async function pickBusinessWithPrompts() {
+  const fallback = businesses.value[0]?.id || null
+  try {
+    const data = await listGeoUnits(tenantId.value, { status: 'active' })
+    const countByBiz = new Map()
+    for (const u of data.items || []) {
+      countByBiz.set(u.business_id, (countByBiz.get(u.business_id) || 0) + Number(u.prompt_count || 0))
+    }
+    const hit = businesses.value.find((b) => (countByBiz.get(b.id) || 0) > 0)
+    return hit?.id || fallback
+  } catch {
+    return fallback
+  }
+}
+
 async function loadBusinesses() {
   if (!tenantId.value) {
     error.value = '请先选择客户或配置本地 API Key'
@@ -102,16 +118,21 @@ async function loadBusinesses() {
   loading.value = true
   error.value = ''
   try {
-    const data = await listGeoBusinesses(tenantId.value, { status: 'active' })
-    businesses.value = data.items || []
-    if (!selectedBusinessId.value && businesses.value.length) {
-      selectedBusinessId.value = businesses.value[0].id
+    const active = await listGeoBusinesses(tenantId.value, { status: 'active' })
+    if (showArchived.value) {
+      const archived = await listGeoBusinesses(tenantId.value, { status: 'archived' })
+      businesses.value = [...(active.items || []), ...(archived.items || [])]
+    } else {
+      businesses.value = active.items || []
     }
     if (
       selectedBusinessId.value &&
       !businesses.value.some((b) => b.id === selectedBusinessId.value)
     ) {
-      selectedBusinessId.value = businesses.value[0]?.id || null
+      selectedBusinessId.value = null
+    }
+    if (!selectedBusinessId.value && businesses.value.length) {
+      selectedBusinessId.value = await pickBusinessWithPrompts()
     }
   } catch (e) {
     error.value = e.message || '加载失败'
@@ -129,11 +150,20 @@ async function loadUnits() {
     return
   }
   try {
-    const data = await listGeoUnits(tenantId.value, {
+    const unitParams = {
       business_id: selectedBusinessId.value,
       status: 'active',
-    })
-    units.value = data.items || []
+    }
+    const active = await listGeoUnits(tenantId.value, unitParams)
+    if (showArchived.value) {
+      const archived = await listGeoUnits(tenantId.value, {
+        ...unitParams,
+        status: 'archived',
+      })
+      units.value = [...(active.items || []), ...(archived.items || [])]
+    } else {
+      units.value = active.items || []
+    }
     if (
       selectedUnitId.value &&
       !units.value.some((u) => u.id === selectedUnitId.value)
@@ -298,7 +328,7 @@ async function submitUnit() {
 async function archiveBusiness(row) {
   try {
     await patchGeoBusiness(tenantId.value, row.id, { status: 'archived' })
-    ElMessage.success(`已归档业务 #${row.id}`)
+    ElMessage.success(`已归档「${row.name}」。打开「显示已归档」可恢复。`)
     if (selectedBusinessId.value === row.id) selectedBusinessId.value = null
     await loadBusinesses()
     await loadUnits()
@@ -308,16 +338,40 @@ async function archiveBusiness(row) {
   }
 }
 
+async function restoreBusiness(row) {
+  try {
+    await patchGeoBusiness(tenantId.value, row.id, { status: 'active' })
+    ElMessage.success(`已恢复业务「${row.name}」`)
+    await loadBusinesses()
+    await loadUnits()
+    await loadPrompts()
+  } catch (e) {
+    ElMessage.error(e.message || '恢复失败')
+  }
+}
+
 async function archiveUnit(row) {
   try {
     await patchGeoUnit(tenantId.value, row.id, { status: 'archived' })
-    ElMessage.success(`已归档单元 #${row.id}`)
+    ElMessage.success(`已归档单元「${row.name}」。打开「显示已归档」可恢复。`)
     if (selectedUnitId.value === row.id) selectedUnitId.value = null
     await loadBusinesses()
     await loadUnits()
     await loadPrompts()
   } catch (e) {
     ElMessage.error(e.message || '归档失败')
+  }
+}
+
+async function restoreUnit(row) {
+  try {
+    await patchGeoUnit(tenantId.value, row.id, { status: 'active' })
+    ElMessage.success(`已恢复单元「${row.name}」`)
+    await loadBusinesses()
+    await loadUnits()
+    await loadPrompts()
+  } catch (e) {
+    ElMessage.error(e.message || '恢复失败')
   }
 }
 
@@ -420,6 +474,10 @@ watch(dailyScope, () => {
   dailyPager.resetPage()
   loadDaily()
 })
+watch(showArchived, async () => {
+  await loadBusinesses()
+  await loadUnits()
+})
 watch(tenantId, async () => {
   bizPager.resetPage()
   unitPager.resetPage()
@@ -475,7 +533,8 @@ onMounted(async () => {
 
     <div class="geo-toolbar">
       <el-button :loading="exporting" @click="exportCsv">导出 CSV</el-button>
-      <span class="toolbar-hint">日指标跟随顶栏观察期；缺行时打开页面会静默补算，无需手动重算</span>
+      <el-checkbox v-model="showArchived">显示已归档</el-checkbox>
+      <span class="toolbar-hint">归档不是删除。勾选「显示已归档」后可点恢复。</span>
     </div>
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
@@ -514,11 +573,29 @@ onMounted(async () => {
           empty-text="暂无优化业务"
           @row-click="selectBusiness"
         >
-          <el-table-column prop="name" label="名称" min-width="120" />
-          <el-table-column prop="unit_count" label="单元" width="64" />
-          <el-table-column label="" width="56" fixed="right">
+          <el-table-column prop="name" label="名称" min-width="120">
             <template #default="{ row }">
-              <el-button type="danger" link size="small" @click.stop="archiveBusiness(row)">归档</el-button>
+              {{ row.name }}
+              <el-tag v-if="row.status === 'archived'" size="small" type="info" class="ml-tag">已归档</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="unit_count" label="单元" width="64" />
+          <el-table-column label="" width="72" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                v-if="row.status === 'archived'"
+                type="primary"
+                link
+                size="small"
+                @click.stop="restoreBusiness(row)"
+              >恢复</el-button>
+              <el-button
+                v-else
+                type="danger"
+                link
+                size="small"
+                @click.stop="archiveBusiness(row)"
+              >归档</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -556,12 +633,30 @@ onMounted(async () => {
           empty-text="请选择业务或新建单元"
           @row-click="selectUnit"
         >
-          <el-table-column prop="name" label="单元名" min-width="100" />
+          <el-table-column prop="name" label="单元名" min-width="100">
+            <template #default="{ row }">
+              {{ row.name }}
+              <el-tag v-if="row.status === 'archived'" size="small" type="info" class="ml-tag">已归档</el-tag>
+            </template>
+          </el-table-column>
           <el-table-column prop="keyword" label="关键词" min-width="90" />
           <el-table-column prop="prompt_count" label="意图" width="56" />
-          <el-table-column label="" width="56" fixed="right">
+          <el-table-column label="" width="72" fixed="right">
             <template #default="{ row }">
-              <el-button type="danger" link size="small" @click.stop="archiveUnit(row)">归档</el-button>
+              <el-button
+                v-if="row.status === 'archived'"
+                type="primary"
+                link
+                size="small"
+                @click.stop="restoreUnit(row)"
+              >恢复</el-button>
+              <el-button
+                v-else
+                type="danger"
+                link
+                size="small"
+                @click.stop="archiveUnit(row)"
+              >归档</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -594,7 +689,7 @@ onMounted(async () => {
         <el-table
           :data="promptPager.pagedItems"
           size="small"
-          empty-text="请选择单元，或到「优化意图词」挂载"
+          empty-text="当前单元没有意图词。点左侧其他业务看看，或到「优化意图词」挂载"
         >
           <el-table-column prop="question" label="问题" min-width="160">
             <template #default="{ row }">
@@ -800,6 +895,7 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.ml-tag { margin-left: 6px; }
 .mb { margin-bottom: 16px; }
 .scope-tabs { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .sub { font-weight: 400; color: #94a3b8; font-size: 13px; }

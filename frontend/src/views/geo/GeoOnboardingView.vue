@@ -87,6 +87,7 @@ async function runApply(dryRun = false) {
         priority: p.priority || 10,
         tags: p.tags || ['from_onboarding', 'brand_missing'],
         business_name: businesses[0]?.name || null,
+        is_brand_probe: !!p.is_brand_probe,
       }))
     const facts = factOptions.value
       .filter((f) => selectedFacts.value.includes(f.title))
@@ -279,6 +280,8 @@ onMounted(loadReadiness)
             <el-checkbox :label="p.question">
               {{ p.question }}
               <el-tag size="small" class="ml">{{ p.question_group || '—' }}</el-tag>
+              <el-tag v-if="p.is_brand_probe" size="small" type="warning" class="ml">探测题</el-tag>
+              <el-tag v-else size="small" type="success" class="ml" effect="plain">品类可见度</el-tag>
             </el-checkbox>
           </div>
         </el-checkbox-group>

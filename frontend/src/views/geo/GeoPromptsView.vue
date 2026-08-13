@@ -268,7 +268,7 @@ async function promoteSelected() {
       market: expandForm.value.market === 'both' ? 'cn' : expandForm.value.market,
       priority: 10,
       tags: ['from_expand'],
-      is_brand_probe: false,
+      is_brand_probe: !!row.is_brand_probe,
     })).filter((x) => x.question && String(x.question).length >= 4)
     const r = await promoteGeoPromptCandidates({
       tenant_id: tenantId.value,
@@ -573,7 +573,11 @@ const tagText = (tags) => (Array.isArray(tags) ? tags.join(', ') : '—')
         <el-table-column label="候选问题" min-width="220">
           <template #default="{ row }">
             <div>{{ row.question || row.term }}</div>
-            <div class="sub">{{ row.question_group || '—' }} · {{ row.market || expandForm.market }}</div>
+            <div class="sub">
+              {{ row.question_group || '—' }} · {{ row.market || expandForm.market }}
+              <el-tag v-if="row.is_brand_probe" size="small" type="warning" class="ml-tag">探测题</el-tag>
+              <el-tag v-else size="small" type="success" effect="plain" class="ml-tag">品类可见度</el-tag>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="100">
@@ -608,6 +612,7 @@ const tagText = (tags) => (Array.isArray(tags) ? tags.join(', ') : '—')
 .mb { margin-bottom: 12px; }
 .title { font-weight: 600; }
 .sub, .muted { font-size: 12px; color: #8b93a7; }
+.ml-tag { margin-left: 6px; }
 .expand-row { display: flex; gap: 16px; flex-wrap: wrap; }
 .expand-meta { font-size: 13px; color: #4b5563; }
 .seed-hints { margin-top: 6px; font-size: 12px; color: #6b7280; }

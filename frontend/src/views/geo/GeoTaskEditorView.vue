@@ -1039,6 +1039,22 @@ async function applyPatch(code) {
   }
 }
 
+async function retryFailedVariants() {
+  const keys = failedVariantItems.value.map((f) => f.channel).filter(Boolean)
+  if (!keys.length) {
+    ElMessage.warning('没有失败渠道可重试')
+    return
+  }
+  channelPick.value = [...new Set([...channelPick.value, ...keys])]
+  const keep = channelPick.value
+  channelPick.value = keys
+  try {
+    await genVariants()
+  } finally {
+    channelPick.value = [...new Set([...keep, ...channelPick.value])]
+  }
+}
+
 async function genVariants() {
   if (!channelPick.value.length) {
     ElMessage.warning('请至少勾选一个渠道')
@@ -1729,6 +1745,10 @@ const infoGapOptions = computed(() => {
   return INFO_GAP_FALLBACK
 })
 const variants = computed(() => task.value?.variants || [])
+const failedVariantItems = computed(() => {
+  const failed = task.value?.variant_polish?.failed
+  return Array.isArray(failed) ? failed : []
+})
 const nextStep = computed(() =>
   nextEditorStep(task.value, {
     boundFacts: boundFacts.value,
@@ -1745,16 +1765,6 @@ const nextStep = computed(() =>
 
 const foldBrief = ref(false)
 const foldFacts = ref(false)
-
-watch(
-  nextStep,
-  (s) => {
-    const k = s?.key
-    foldBrief.value = k !== 'brief'
-    foldFacts.value = k !== 'brief' && k !== 'facts'
-  },
-  { immediate: true },
-)
 
 function goNextStep() {
   const key = nextStep.value?.key
@@ -1786,10 +1796,16 @@ function trustLabel(level) {
   if (level === 'needs_review') return '待核验'
   return level || '未知'
 }
+function factSnippet(f, max = 72) {
+  const stmt = String(f?.statement || '').replace(/\s+/g, ' ').trim()
+  if (!stmt) return ''
+  return stmt.length > max ? `${stmt.slice(0, max)}…` : stmt
+}
 function factOptionLabel(f) {
   const t = trustLabel(f.trust_level)
   const title = f.title || '未命名事实'
-  return `#${f.id} · ${t} · ${title}`
+  const snippet = factSnippet(f, 40)
+  return snippet ? `#${f.id} · ${t} · ${title} — ${snippet}` : `#${f.id} · ${t} · ${title}`
 }
 async function removeBoundFact(id) {
   const nid = Number(id)
@@ -2059,19 +2075,30 @@ onMounted(load)
             </div>
             <div v-else class="bound-chips">
               <div v-for="f in boundFacts" :key="f.id" class="bound-chip">
-                <el-tag size="small" :type="trustTagType(f.trust_level)" effect="light">
-                  {{ trustLabel(f.trust_level) }}
-                </el-tag>
-                <span class="bound-chip-id">#{{ f.id }}</span>
-                <span class="bound-chip-title" :title="f.title">{{ f.title || '未命名' }}</span>
-                <button
-                  type="button"
-                  class="bound-chip-x"
-                  title="移除此条"
-                  @click="removeBoundFact(f.id)"
-                >
-                  ×
-                </button>
+                <div class="bound-chip-main">
+                  <div class="bound-chip-top">
+                    <el-tag size="small" :type="trustTagType(f.trust_level)" effect="light">
+                      {{ trustLabel(f.trust_level) }}
+                    </el-tag>
+                    <span class="bound-chip-id">#{{ f.id }}</span>
+                    <span class="bound-chip-title" :title="f.title">{{ f.title || '未命名' }}</span>
+                    <button
+                      type="button"
+                      class="bound-chip-x"
+                      title="移除此条"
+                      @click="removeBoundFact(f.id)"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <div v-if="f.statement" class="bound-chip-stmt" :title="f.statement">
+                    {{ f.statement }}
+                  </div>
+                  <div v-else class="bound-chip-stmt is-empty">这条事实没有正文</div>
+                  <div v-if="f.source_name || f.source_url" class="bound-chip-src">
+                    来源 {{ f.source_name || f.source_url }}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -2129,7 +2156,10 @@ onMounted(load)
                     {{ trustLabel(f.trust_level) }}
                   </el-tag>
                   <span class="fact-option-id">#{{ f.id }}</span>
-                  <span class="fact-option-title">{{ f.title }}</span>
+                  <div class="fact-option-text">
+                    <div class="fact-option-title">{{ f.title || '未命名' }}</div>
+                    <div v-if="factSnippet(f, 48)" class="fact-option-stmt">{{ factSnippet(f, 48) }}</div>
+                  </div>
                 </div>
               </el-option>
             </el-select>
@@ -2165,7 +2195,10 @@ onMounted(load)
                 {{ trustLabel(r.trust_level) }}
               </el-tag>
               <span class="bound-chip-id">#{{ r.fact_id }}</span>
-              <span class="retrieve-title">{{ r.title || '—' }}</span>
+              <div class="retrieve-text">
+                <span class="retrieve-title">{{ r.title || '—' }}</span>
+                <span v-if="r.statement" class="retrieve-stmt">{{ factSnippet(r, 48) }}</span>
+              </div>
               <span v-if="r.score != null" class="retrieve-score">{{ Number(r.score).toFixed(1) }}</span>
             </div>
           </div>
@@ -2343,6 +2376,27 @@ onMounted(load)
               {{ c.label }} ({{ c.key }})
             </el-checkbox>
           </el-checkbox-group>
+          <el-alert
+            v-if="failedVariantItems.length"
+            type="warning"
+            show-icon
+            :closable="false"
+            class="mb"
+          >
+            <template #title>
+              勾选 {{ channelPick.length }} 个渠道，已成稿 {{ variants.length }} 个；
+              {{ failedVariantItems.length }} 个未过门控
+            </template>
+            <ul class="variant-fail-list">
+              <li v-for="f in failedVariantItems" :key="f.channel">
+                <b>{{ channelLabel(f.channel) }}</b>
+                ：{{ (f.issues && f.issues[0]) || f.message || '未达完整文章标准' }}
+              </li>
+            </ul>
+            <el-button size="small" :loading="busy === 'variants'" @click="retryFailedVariants">
+              重试失败渠道
+            </el-button>
+          </el-alert>
 
           <div v-if="channelBlueprint?.channels?.length" class="blueprint-box mb">
             <div class="blueprint-title">
@@ -2887,6 +2941,7 @@ onMounted(load)
 .blueprint-title { font-size: 12px; font-weight: 700; color: #5b21b6; margin-bottom: 6px; }
 .blueprint-list { margin: 0; padding-left: 18px; font-size: 12px; color: #374151; }
 .blueprint-list li { margin-bottom: 4px; }
+.variant-fail-list { margin: 6px 0 8px; padding-left: 18px; font-size: 12px; line-height: 1.5; }
 .muted { color: #9ca3af; }
 .small { font-size: 11px; margin-top: 2px; }
 .push-row { margin-bottom: 6px; }
@@ -3144,13 +3199,23 @@ onMounted(load)
 }
 .bound-chip {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
-  padding: 6px 8px;
+  padding: 8px;
   border-radius: 8px;
   background: #f8fafc;
   border: 1px solid #e5e7eb;
   font-size: 12px;
+  min-width: 0;
+}
+.bound-chip-main {
+  flex: 1;
+  min-width: 0;
+}
+.bound-chip-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
 }
 .bound-chip-id {
@@ -3165,6 +3230,26 @@ onMounted(load)
   text-overflow: ellipsis;
   white-space: nowrap;
   color: #1f2937;
+  font-weight: 600;
+}
+.bound-chip-stmt {
+  margin-top: 4px;
+  color: #374151;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
+}
+.bound-chip-stmt.is-empty { color: #9ca3af; }
+.bound-chip-src {
+  margin-top: 3px;
+  color: #6b7280;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .bound-chip-x {
   border: none;
@@ -3179,15 +3264,35 @@ onMounted(load)
 .bound-chip-x:hover { color: #dc2626; }
 .fact-option {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   max-width: 100%;
 }
 .fact-option-id { color: #9ca3af; flex-shrink: 0; }
+.fact-option-text { min-width: 0; flex: 1; }
 .fact-option-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 600;
+}
+.fact-option-stmt {
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
+}
+.retrieve-text {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.retrieve-stmt {
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.35;
 }
 .retrieve-box {
   padding: 8px 10px;

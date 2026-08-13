@@ -32,7 +32,14 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    [usersData.value, rolesData.value] = await Promise.all([fetchUsers(), fetchRoles()])
+    const [users, roles, tenants] = await Promise.all([
+      fetchUsers(),
+      fetchRoles(),
+      fetchTenants(),
+    ])
+    usersData.value = users
+    rolesData.value = roles
+    session.setTenants(tenants.tenants || [])
   } catch (e) {
     error.value = e.message
   } finally {
@@ -93,7 +100,13 @@ async function submitTenant() {
     const t = await fetchTenants()
     session.setTenants(t.tenants || [])
     if (res.tenant?.id) session.setTenant(res.tenant.id)
-    ElMessage.success(`客户「${res.tenant?.name}」已创建`)
+    if (res.admin_user) {
+      ElMessage.success(`客户「${res.tenant?.name}」已创建，并建了账号 ${res.admin_user.username}`)
+    } else {
+      ElMessage.success(
+        `客户「${res.tenant?.name}」已创建。这是空客户，业务数据不会从别的客户带过来；请顶栏切过去后走 GEO 开户向导。`,
+      )
+    }
     tenantDialog.value = false
     load()
   } catch (e) {
@@ -101,6 +114,12 @@ async function submitTenant() {
   } finally {
     savingTenant.value = false
   }
+}
+
+function switchToTenant(row) {
+  if (!row?.id) return
+  session.setTenant(row.id)
+  ElMessage.success(`已切换到「${row.name}」`)
 }
 
 function openCreateUser() {
@@ -256,6 +275,30 @@ onMounted(load)
     <el-tabs v-model="tab">
       <!-- ===== 账号 ===== -->
       <el-tab-pane label="账号" name="accounts">
+        <div class="table-panel tenant-panel">
+          <div class="panel-kicker">已建客户（{{ session.tenants.length }}）</div>
+          <el-table :data="session.tenants" row-key="id" size="small">
+            <el-table-column prop="id" label="ID" width="72" />
+            <el-table-column prop="name" label="客户名称" min-width="180" />
+            <el-table-column label="当前" width="90">
+              <template #default="{ row }">
+                <el-tag v-if="row.id === session.tenantId" type="success" size="small">使用中</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="140" fixed="right">
+              <template #default="{ row }">
+                <el-button
+                  size="small"
+                  :disabled="row.id === session.tenantId"
+                  @click="switchToTenant(row)"
+                >切到此客户</el-button>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <div class="empty-line">还没有客户，点右上角「新建客户」。</div>
+            </template>
+          </el-table>
+        </div>
         <div class="table-panel">
           <el-table :data="usersData?.users || []" row-key="id">
             <el-table-column label="用户名" min-width="140">
@@ -288,7 +331,11 @@ onMounted(load)
                 >{{ row.is_active ? '停用' : '启用' }}</el-button>
               </template>
             </el-table-column>
-            <template #empty><div class="empty-line">还没有账号，点右上角「新建账号」。</div></template>
+            <template #empty>
+              <div class="empty-line">
+                本地 API Key 模式下可以没有登录账号。新建客户不会自动出现在这张表；要出现一行请在「新建客户」里同时填管理员账号，或点「新建账号」并限定到该客户。
+              </div>
+            </template>
           </el-table>
         </div>
       </el-tab-pane>
@@ -414,6 +461,8 @@ onMounted(load)
 .page-title { font-size: 20px; font-weight: 600; color: var(--sem-text); }
 .page-desc { font-size: 12px; color: var(--sem-text-sub); margin-top: 4px; }
 .table-panel { background: #fff; border: 1px solid var(--sem-border); border-radius: 8px; overflow: hidden; }
+.tenant-panel { margin-bottom: 14px; }
+.panel-kicker { padding: 10px 14px 0; font-size: 12px; color: var(--sem-text-sub); }
 .sub { font-size: 12px; color: var(--sem-text-sub); }
 .empty-line { font-size: 12px; color: var(--sem-text-sub); padding: 18px 0; }
 .role-pill { font-size: 11px; padding: 2px 9px; border-radius: 10px; background: #eff4fb; color: #185fa5; }
