@@ -52,6 +52,7 @@ class Settings(BaseSettings):
 
     # 站长之家 SEO 数据。仅在 GEO 诊断后端调用，Key 不得进入前端构建产物。
     # 不同商品可能下发不同 API Key；各项独立 Key 为空时回退到通用 Key。
+    chinaz_api_enabled: bool = True
     chinaz_api_key: str = ""
     chinaz_baidu_index_api_key: str = ""
     chinaz_baidu_pc_keywords_api_key: str = ""

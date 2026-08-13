@@ -1,0 +1,29 @@
+<script setup>
+import { computed, onMounted, ref, watch } from 'vue'
+import { fetchSeoKeywords, fetchSeoOverview } from '../../api/seo'
+import { currentTenantId } from '../../store/session'
+
+const loading=ref(false),error=ref(''),range=ref(30),engine=ref('baidu'),overview=ref({stats:{},trend:[]}),keywords=ref([])
+const stats=computed(()=>overview.value.stats||{})
+const ranked=computed(()=>keywords.value.filter(item=>item.latest_rank!=null))
+const buckets=computed(()=>[
+  ['第 1–3 名',ranked.value.filter(i=>i.latest_rank<=3).length],['第 4–10 名',ranked.value.filter(i=>i.latest_rank>=4&&i.latest_rank<=10).length],['第 11–20 名',ranked.value.filter(i=>i.latest_rank>=11&&i.latest_rank<=20).length],['第 21–50 名',ranked.value.filter(i=>i.latest_rank>=21&&i.latest_rank<=50).length],['50 名以后',ranked.value.filter(i=>i.latest_rank>50).length],
+])
+const movers=computed(()=>[...ranked.value].sort((a,b)=>(b.rank_delta||0)-(a.rank_delta||0)))
+function points(key){const rows=overview.value.trend||[];if(!rows.length)return'';const max=Math.max(...rows.map(r=>Number(r[key]||0)),1);return rows.map((r,i)=>`${38+i*(706/Math.max(rows.length-1,1))},${220-Number(r[key]||0)/max*180}`).join(' ')}
+function printReport(){window.print()}
+async function load(){if(!currentTenantId.value){error.value='请先选择客户';return}loading.value=true;try{[overview.value,keywords.value]=await Promise.all([fetchSeoOverview({tenantId:currentTenantId.value,engine:engine.value}),fetchSeoKeywords({tenantId:currentTenantId.value,engine:engine.value,pageSize:200})]).then(([a,b])=>[a,b.items]);error.value=''}catch(e){error.value=e.message}finally{loading.value=false}}
+watch([engine,currentTenantId],load);onMounted(load)
+</script>
+
+<template><div class="keyword-assets portfolio-page" v-loading="loading">
+  <section class="kw-hero"><div><div class="kw-kicker">Portfolio trends</div><h2>趋势总览</h2><p>从单词波动上升到词库资产视角，观察首页覆盖、排名分布与本周期净增长。</p></div><div class="kw-actions"><div class="kw-segment"><button v-for="n in [14,30,90]" :key="n" :class="{active:range===n}" @click="range=n">近 {{n}} 天</button></div><button class="kw-btn" @click="printReport">生成周报</button></div></section>
+  <el-alert v-if="error" :title="error" type="warning" :closable="false"/>
+  <section class="kw-metrics"><article class="kw-metric" data-mark="S"><span>SEO 可见关键词</span><strong>{{stats.ranked||0}}</strong><small class="up">共 {{stats.keywords||0}} 个监控词</small></article><article class="kw-metric" data-mark="10"><span>前 10 名覆盖</span><strong>{{stats.top10||0}}</strong><small class="up">覆盖率 {{stats.top10_rate||0}}%</small></article><article class="kw-metric" data-mark="R"><span>已有自然排名</span><strong>{{ranked.length}}</strong><small>当前搜索引擎口径</small></article><article class="kw-metric" data-mark="Δ"><span>本期净提升</span><strong>{{movers.filter(i=>i.rank_delta>0).length-movers.filter(i=>i.rank_delta<0).length}}</strong><small class="up">上涨减下跌</small></article></section>
+  <div class="kw-grid-2"><section class="kw-card"><header class="kw-card-head"><div><h3>关键词覆盖趋势</h3><p>同一批监控词在不同排名区间的累计数量</p></div></header><div v-if="overview.trend?.length" class="kw-chart"><svg viewBox="0 0 760 250" preserveAspectRatio="none"><line v-for="y in [40,85,130,175,220]" :key="y" class="gridline" x1="38" :y1="y" x2="744" :y2="y"/><polyline class="line" :points="points('top10')"/><polyline class="line alt" :points="points('top20')"/></svg><div class="kw-chart-note"><span><i style="background:#2457d6"/>前 10 名关键词</span><span><i style="background:#22a6a1"/>前 20 名关键词</span></div></div><div v-else class="kw-empty"><b>暂无趋势数据</b>积累至少两次排名快照后生成</div></section>
+    <section class="kw-card"><header class="kw-card-head"><div><h3>当前排名分布</h3><p>共 {{keywords.length}} 个监控关键词</p></div></header><div class="kw-card-body"><div class="kw-distribution"><div v-for="item in buckets" :key="item[0]" class="kw-dist-row"><span>{{item[0]}}</span><div class="track"><i :style="{width:`${keywords.length?item[1]/keywords.length*100:0}%`}"/></div><b>{{item[1]}}</b></div></div></div></section></div>
+  <div class="kw-grid-equal lower"><section class="kw-card"><header class="kw-card-head"><div><h3>本期提升最快</h3><p>值得继续投入内容与内链资源</p></div></header><div class="kw-card-body"><div class="kw-alert-list"><div v-for="item in movers.filter(i=>i.rank_delta>0).slice(0,4)" :key="item.id" class="kw-alert"><span class="mark good">↑{{item.rank_delta}}</span><div><h4>{{item.keyword}}</h4><p>当前排名 #{{item.latest_rank}} · {{item.cluster||'未归类'}}</p></div><time>{{item.priority}}</time></div><div v-if="!movers.some(i=>i.rank_delta>0)" class="kw-empty">暂无提升关键词</div></div></div></section><section class="kw-card"><header class="kw-card-head"><div><h3>本期重点关注</h3><p>优先排查排名下降与承接缺口</p></div></header><div class="kw-card-body"><div class="kw-alert-list"><div v-for="item in movers.filter(i=>i.rank_delta<0||!i.landing_page).slice(0,4)" :key="item.id" class="kw-alert"><span class="mark">{{item.rank_delta<0?`↓${Math.abs(item.rank_delta)}`:'!'}}</span><div><h4>{{item.keyword}}</h4><p>{{item.landing_page?`当前排名 #${item.latest_rank}`:'尚未配置承接页面'}}</p></div><time>{{item.priority}}</time></div><div v-if="!movers.some(i=>i.rank_delta<0||!i.landing_page)" class="kw-empty">当前没有重点风险</div></div></div></section></div>
+</div></template>
+
+<style>@import url('/deal-sniper-prototype/seo/assets/keyword-assets-v2.css');</style>
+<style scoped>.portfolio-page{min-height:100%;padding:22px 26px 30px;background:#f5f7fb}.lower{margin-top:15px}.kw-chart{padding:16px}.kw-chart svg{width:100%;height:250px}.kw-chart .gridline{stroke:#e9edf4}.kw-chart .line{fill:none;stroke:#2457d6;stroke-width:3}.kw-chart .line.alt{stroke:#22a6a1}.kw-chart-note{display:flex;gap:18px;color:#758096;font-size:11px}.kw-chart-note i{display:inline-block;width:10px;height:3px;margin-right:6px}.good{color:#23775a!important;background:#eaf7f1!important}</style>

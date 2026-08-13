@@ -11,6 +11,13 @@ MENUS: list[dict] = [
     {"key": "assistant", "label": "AI 助手", "group": "智能助手", "path": "/assistant"},
     {"key": "geo.diagnosis", "label": "GEO 诊断", "group": "GEO 增长", "path": "/geo/diagnosis"},
     {"key": "geo.content", "label": "GEO 概览", "group": "GEO 增长", "path": "/geo/overview"},
+    {"key": "seo.dashboard", "label": "排名看板", "group": "SEO 增长", "path": "/seo/dashboard"},
+    {"key": "seo.alerts", "label": "异常提醒", "group": "SEO 增长", "path": "/seo/alerts"},
+    {"key": "seo.keywords", "label": "关键词资产", "group": "SEO 增长", "path": "/seo/keywords"},
+    {"key": "seo.content", "label": "内容创作", "group": "SEO 增长", "path": "/seo/content"},
+    {"key": "seo.site", "label": "站内优化", "group": "SEO 增长", "path": "/seo/site"},
+    {"key": "seo.links", "label": "内外链管理", "group": "SEO 增长", "path": "/seo/links"},
+    {"key": "seo.competitors", "label": "竞品监控", "group": "SEO 增长", "path": "/seo/competitors"},
     {"key": "onboarding", "label": "授权与同步", "group": "首次接入", "path": "/onboarding"},
     {"key": "monitor.dashboard", "label": "数据看板", "group": "每日盯盘", "path": "/monitor/dashboard"},
     {"key": "monitor.alerts", "label": "异常提醒", "group": "每日盯盘", "path": "/monitor/alerts"},
@@ -44,6 +51,13 @@ CLIENT_PERMS = {
     "delivery.report": "view",
     "geo.diagnosis": "view",
     "geo.content": "view",
+    "seo.keywords": "view",
+    "seo.site": "view",
+    "seo.dashboard": "view",
+    "seo.alerts": "view",
+    "seo.content": "view",
+    "seo.links": "view",
+    "seo.competitors": "view",
 }
 
 SYSTEM_ROLES = [

@@ -3,10 +3,6 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   discoverGeoBrand,
-  fetchGeoAudit,
-  fetchGeoAuditHistory,
-  fetchGeoAssetProfile,
-  fetchLatestGeoAudit,
   fetchPageSpeedInsights,
   generateGeoAdvice,
   runDeepSeekSample,
@@ -46,10 +42,6 @@ const expandedEvidence = ref('')
 const sampleQuestions = ref(['', '', ''])
 const brandReady = ref(false)
 const brandProfile = ref({})
-const historyOpen = ref(false)
-const historyLoading = ref(false)
-const historyItems = ref([])
-const historySelectingId = ref(null)
 let stageTimer = null
 let pageSpeedRequestId = 0
 
@@ -76,14 +68,6 @@ const assetNav = [
     kicker: 'AUDIENCE PROFILE',
     description: '沉淀核心客群、决策角色和真实需求，让 SEO、GEO 与内容策略使用同一套用户定义。',
     fields: ['核心客群', '决策角色', '购买动机', '主要痛点与搜索场景'],
-  },
-  {
-    label: '知识库',
-    icon: '▤',
-    page: 'knowledge',
-    kicker: 'KNOWLEDGE BASE',
-    description: '集中管理产品资料、案例、白皮书和常见问题，为诊断证据和内容生成提供可靠事实。',
-    fields: ['产品与服务资料', '客户案例', '行业白皮书', 'FAQ 与事实依据'],
   },
 ]
 const currentAsset = computed(() => assetNav.find((item) => item.page === activeAsset.value) || assetNav[0])
@@ -563,58 +547,14 @@ async function ensureTenant() {
   }
 }
 
-async function refreshBrandProfile(website = '') {
-  if (!tenantId.value) return false
-  try {
-    const result = await fetchGeoAssetProfile(tenantId.value, website)
-    brandReady.value = Boolean(result.profile_ready)
-    brandProfile.value = result.brand || {}
-    if (!url.value && result.brand?.website) url.value = result.brand.website
-    return brandReady.value
-  } catch {
-    brandReady.value = false
-    brandProfile.value = {}
-    return false
-  }
-}
-
-async function applyAudit(nextAudit) {
-  audit.value = nextAudit || null
-  if (!nextAudit) return
-  if (nextAudit.url) {
-    url.value = nextAudit.url
-    quickMode.value = 'own'
-    quickUrl.value = nextAudit.url
-  }
-  await refreshBrandProfile(nextAudit.url || url.value)
-  auditScope.value = nextAudit.snapshot?.audit_scope === 'site' ? 'site' : 'single'
-  if (nextAudit.snapshot?.ai_sampling?.results) {
-    sampleQuestions.value = nextAudit.snapshot.ai_sampling.results.map((item) => item.question).slice(0, 3)
-    while (sampleQuestions.value.length < 3) sampleQuestions.value.push('')
-  } else {
-    sampleQuestions.value = ['', '', '']
-  }
-}
-
-async function loadLatest({ notify = false } = {}) {
-  if (!tenantId.value) return
-  try {
-    const result = await fetchLatestGeoAudit(tenantId.value)
-    await applyAudit(result.audit)
-    if (notify) ElMessage.success(result.audit ? '已载入最近一次诊断' : '暂无历史诊断')
-  } catch {
-    if (notify) ElMessage.error('历史诊断读取失败')
-  }
-}
-
 async function startNewDiagnosis() {
   if (loading.value) return
   if (audit.value) {
     try {
       await ElMessageBox.confirm(
-        '当前报告已保存在诊断记录中。新建后将清空当前页面，等待输入新的诊断网址。',
+        '新建后将清空当前页面，并重新填写本次诊断的基础信息。',
         '新建诊断',
-        { confirmButtonText: '继续新建', cancelButtonText: '保留当前报告', type: 'info' },
+        { confirmButtonText: '重新填写', cancelButtonText: '保留当前页面', type: 'info' },
       )
     } catch {
       return
@@ -628,44 +568,23 @@ async function startNewDiagnosis() {
   sampleQuestions.value = ['', '', '']
   quickMode.value = 'own'
   quickUrl.value = ''
+  quickProfile.value = null
+  quickProfileOpen.value = false
   auditScope.value = 'single'
-  activeReport.value = 'overview'
-  historyOpen.value = false
-  window.history.replaceState(null, '', `${window.location.pathname}#section-overview`)
+  brandReady.value = false
+  brandProfile.value = {}
+  url.value = ''
+  activeReport.value = ''
+  openAsset('brand')
   await nextTick()
-  focusQuickInput()
-  ElMessage.success('已创建新的诊断任务，请输入官网地址')
+  ElMessage.success('请填写本次诊断的基础信息')
 }
 
-async function openAuditHistory() {
-  if (!tenantId.value) return
-  historyOpen.value = true
-  historyLoading.value = true
+function websiteKey(value) {
   try {
-    const result = await fetchGeoAuditHistory(tenantId.value, 12)
-    historyItems.value = result.items || []
-  } catch (e) {
-    ElMessage.error(e.message || '诊断记录读取失败')
-  } finally {
-    historyLoading.value = false
-  }
-}
-
-async function selectHistoricalAudit(item) {
-  if (!item?.id || historySelectingId.value) return
-  historySelectingId.value = item.id
-  try {
-    const result = await fetchGeoAudit({ tenantId: tenantId.value, auditId: item.id })
-    await applyAudit(result)
-    historyOpen.value = false
-    pageSpeed.value = null
-    await nextTick()
-    document.querySelector('#diagnosis-report')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    ElMessage.success('历史诊断已载入')
-  } catch (e) {
-    ElMessage.error(e.message || '历史诊断载入失败')
-  } finally {
-    historySelectingId.value = null
+    return new URL(normalizeUrl(value)).hostname.replace(/^www\./i, '').toLowerCase()
+  } catch {
+    return ''
   }
 }
 
@@ -677,10 +596,13 @@ async function startAudit() {
     return
   }
   if (!tenantId.value && !await ensureTenant()) return
-  if (!await refreshBrandProfile(normalized)) {
+  const preparedWebsite = brandProfile.value?.website || ''
+  if (!brandReady.value || websiteKey(preparedWebsite) !== websiteKey(normalized)) {
     url.value = normalized
+    brandReady.value = false
+    brandProfile.value = {}
     openAsset('brand')
-    ElMessage.warning('开始体检前，请先确认当前网站的品牌基础信息')
+    ElMessage.warning('每次体检前都需要填写并确认本次诊断的基础信息')
     return
   }
   loading.value = true
@@ -894,6 +816,14 @@ async function bridgeToContent(adviceCode) {
 }
 
 function openAsset(page) {
+  if (page !== 'brand' && !brandReady.value) {
+    activeAsset.value = 'brand'
+    activeReport.value = ''
+    window.history.replaceState(null, '', `${window.location.pathname}#asset-brand`)
+    ElMessage.warning('请先完成本次诊断的基础信息')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+    return
+  }
   activeAsset.value = page
   activeReport.value = ''
   window.history.replaceState(null, '', `${window.location.pathname}#asset-${page}`)
@@ -1020,7 +950,6 @@ async function loadPageSpeed(targetUrl) {
 
 async function printReport() {
   if (!audit.value) return
-  historyOpen.value = false
   ElMessage.closeAll()
   ElMessageBox.close()
   const originalTitle = document.title
@@ -1050,7 +979,7 @@ watch(tenantId, () => {
   quickProfileOpen.value = false
   brandReady.value = false
   brandProfile.value = {}
-  loadLatest()
+  openAsset('brand')
 })
 
 watch(
@@ -1060,25 +989,12 @@ watch(
 
 onMounted(async () => {
   await ensureTenant()
-  await loadLatest()
-  const legacyView = new URLSearchParams(window.location.search).get('view')
-  const hashView = window.location.hash.replace('#section-', '')
-  const hashAsset = window.location.hash.replace('#asset-', '')
-  if (assetNav.some((item) => item.page === hashAsset)) {
-    openAsset(hashAsset)
-    return
-  }
-  if (!brandReady.value) {
-    openAsset('brand')
-    return
-  }
-  const initialView = reportNav.some((item) => item.key === hashView)
-    ? hashView
-    : reportNav.some((item) => item.key === legacyView)
-      ? legacyView
-      : 'overview'
-  await nextTick()
-  navigateReport(initialView)
+  audit.value = null
+  brandReady.value = false
+  brandProfile.value = {}
+  url.value = ''
+  quickUrl.value = ''
+  openAsset('brand')
 })
 </script>
 
@@ -1134,51 +1050,12 @@ onMounted(async () => {
         <div class="topbar-actions">
           <template v-if="!activeAsset">
             <button type="button" :disabled="loading" @click="startNewDiagnosis">⌁ 新建诊断</button>
-            <button type="button" @click="openAuditHistory">↺ 查看最近诊断</button>
             <button type="button" :disabled="!audit" @click="printReport">⇩ 导出报告</button>
           </template>
-          <button v-else type="button" @click="navigateReport('overview')">← 返回网站体检</button>
+          <button v-else-if="brandReady" type="button" @click="navigateReport('overview')">← 返回网站体检</button>
           <span class="avatar">DZ</span>
         </div>
       </header>
-
-      <div v-if="historyOpen" class="history-modal-backdrop" role="presentation" @click.self="historyOpen = false">
-        <section class="history-modal" role="dialog" aria-modal="true" aria-labelledby="history-title">
-          <header>
-            <div>
-              <span>DIAGNOSIS ARCHIVE</span>
-              <h2 id="history-title">最近诊断记录</h2>
-              <p>选择一份已保存的官网报告继续查看；竞品临时对标不会写入记录。</p>
-            </div>
-            <button type="button" aria-label="关闭诊断记录" @click="historyOpen = false">×</button>
-          </header>
-          <div v-if="historyLoading" class="history-loading"><i /><span>正在读取诊断记录…</span></div>
-          <div v-else-if="!historyItems.length" class="history-empty">
-            <b>暂无诊断记录</b>
-            <p>完成首次官网诊断后，报告会自动保存在这里。</p>
-            <button type="button" @click="historyOpen = false; startNewDiagnosis()">开始首次诊断</button>
-          </div>
-          <div v-else class="history-list">
-            <button
-              v-for="item in historyItems"
-              :key="item.id"
-              type="button"
-              :class="{ current: audit?.id === item.id }"
-              :disabled="historySelectingId === item.id"
-              @click="selectHistoricalAudit(item)"
-            >
-              <span class="history-score" :class="pageScoreTone(item.score)"><b>{{ item.score ?? '—' }}</b><small>/100</small></span>
-              <span class="history-copy">
-                <strong>{{ item.page_title || '未设置页面标题' }}</strong>
-                <em>{{ item.final_url || item.url }}</em>
-                <small>{{ formatDate(item.created_at) }} · {{ item.scope === 'site' ? `全站抽样 ${item.page_count} 页` : '单页诊断' }}</small>
-              </span>
-              <span class="history-action">{{ historySelectingId === item.id ? '载入中…' : (audit?.id === item.id ? '当前报告' : '查看报告 →') }}</span>
-            </button>
-          </div>
-          <footer><i />最多显示最近 12 次正式官网诊断，按诊断时间倒序排列。</footer>
-        </section>
-      </div>
 
       <div v-if="!activeAsset" class="diagnosis-content">
         <div id="section-overview" class="report-overview-anchor" />
@@ -1192,7 +1069,6 @@ onMounted(async () => {
             </div>
             <div class="quick-mode-switch" aria-label="切换诊断对象">
               <button type="button" :class="{ active: quickMode === 'own' }" @click="selectQuickMode('own')">我的官网</button>
-              <button type="button" :class="{ active: quickMode === 'competitor' }" @click="selectQuickMode('competitor')">竞品网站</button>
             </div>
           </header>
           <div class="quick-audit-form">
@@ -1217,7 +1093,7 @@ onMounted(async () => {
             </div>
             <p v-if="quickMode === 'competitor'"><i />仅检测公开网站数据，不写入你的品牌档案，也不覆盖最近一次官网诊断。</p>
             <p v-else><i />本次网址不会自动修改基础信息中的官方网站。</p>
-            <button v-if="isCompetitorAudit" class="return-own-report" type="button" @click="loadLatest({ notify: true })">返回我的官网报告</button>
+            <button v-if="isCompetitorAudit" class="return-own-report" type="button" @click="startNewDiagnosis">开始新的官网诊断</button>
           </footer>
 
           <section class="quick-profile-context" :class="{ empty: !quickProfileContext?.name }">
@@ -1231,7 +1107,6 @@ onMounted(async () => {
               <span><b>{{ quickProfileStats.products }}</b>产品与服务</span>
               <span><b>{{ quickProfileStats.terms }}</b>品牌词</span>
               <span><b>{{ quickProfileStats.proof }}</b>可信证明</span>
-              <span v-if="quickMode === 'own'"><b>{{ quickProfileStats.competitors }}</b>已确认竞品</span>
             </div>
             <div class="quick-profile-actions">
               <button v-if="quickMode === 'own'" type="button" @click="openAsset('brand')">查看全部基础信息 →</button>
@@ -1486,7 +1361,7 @@ onMounted(async () => {
             </article>
 
             <article class="dashboard-card recent-dashboard-card">
-              <header><div><h3>当前诊断范围</h3><small>CURRENT DIAGNOSTICS</small></div><span>···</span></header>
+              <header><div><h3>本次抽样页面</h3><small>CURRENT SAMPLE</small></div><span>···</span></header>
               <div class="recent-diagnostics">
                 <template v-if="sitePages.length">
                   <div v-for="page in sitePages.slice(0, 3)" :key="`recent-${page.url}`"><i>✓</i><p><strong>{{ page.title || page.url }}</strong><small>{{ page.page_type }} · 权重 {{ page.weight }}</small></p><b>{{ page.score }} 分</b></div>
@@ -1499,7 +1374,7 @@ onMounted(async () => {
             <a class="dashboard-cta" href="#flow-action"><span>✦</span><p><strong>智能优化建议</strong><small>根据当前问题形成行动路线</small></p><b>查看建议 →</b></a>
 
             <article class="dashboard-card suggestions-dashboard-card">
-              <header><div><h3>最近优化建议</h3><small>RECENT OPTIMIZATION SUGGESTIONS</small></div><span>···</span></header>
+              <header><div><h3>本次优化建议</h3><small>CURRENT OPTIMIZATION SUGGESTIONS</small></div><span>···</span></header>
               <div class="dashboard-suggestions">
                 <a v-for="item in problems.slice(0, 4)" :key="`suggestion-${item.code}`" href="#flow-action"><i :class="item.severity">{{ item.severity === 'critical' ? '!' : '✓' }}</i><p><strong>{{ item.title }}</strong><small>{{ item.recommendation }}</small></p><b>去处理</b></a>
                 <p v-if="!problems.length" class="dashboard-clean">当前没有需要优先处理的问题</p>
@@ -2092,6 +1967,7 @@ onMounted(async () => {
         :tenant-id="tenantId"
         :asset="currentAsset"
         :initial-website="url"
+        :initial-brand="brandReady ? brandProfile : null"
         @brand-saved="handleBrandSaved"
       />
     </section>
@@ -2204,7 +2080,7 @@ button { color: inherit; }
 .quick-audit-form { position:relative; z-index:1; min-height:52px; display:grid; grid-template-columns:30px minmax(0,1fr) auto; align-items:center; padding:4px 5px 4px 10px; border:1px solid #dcd6e6; border-radius:12px; background:#fff; box-shadow:0 7px 19px rgba(57,43,78,.045); }.quick-audit-form:focus-within { border-color:#9f7bd1; box-shadow:0 0 0 4px rgba(121,59,215,.07),0 7px 19px rgba(57,43,78,.045); }.quick-audit-form>span { color:#8a6cb8; font-size:17px; }.quick-audit-form input { width:100%; min-width:0; height:42px; box-sizing:border-box; border:0; outline:0; color:#30333c; background:transparent; font-size:12px; }.quick-audit-form input::placeholder { color:#aaa8b1; }.quick-audit-form>button { height:42px; padding:0 18px; border:0; border-radius:9px; color:#fff; background:linear-gradient(105deg,#793bd7,#6f5ad5 48%,#10aa86); font-size:10px; font-weight:850; cursor:pointer; box-shadow:0 7px 16px rgba(90,65,178,.18); }.quick-audit-form>button:disabled { opacity:.45; cursor:not-allowed; }
 .quick-audit-bar>footer { min-height:24px; }.quick-scope-switch { display:flex; align-items:center; gap:6px; }.quick-scope-switch label { display:inline-flex; align-items:center; gap:4px; padding:4px 7px; border-radius:11px; color:#85838c; font-size:8px; cursor:pointer; }.quick-scope-switch label.active { color:#6f48ad; background:#f1ecf8; font-weight:800; }.quick-scope-switch input { width:11px; height:11px; margin:0; accent-color:#793bd7; }.quick-scope-switch small { color:#0b9171; font-size:7px; }.quick-audit-bar>footer p { display:flex; align-items:center; gap:6px; margin:0 0 0 auto; color:#85838c; font-size:8px; }.quick-audit-bar>footer p i { width:6px; height:6px; flex:none; border-radius:50%; background:#10aa86; box-shadow:0 0 0 3px rgba(16,170,134,.1); }.return-own-report { flex:none; padding:5px 9px; border:1px solid #d7c9e9; border-radius:12px; color:#7048aa; background:#fff; font-size:8px; font-weight:800; cursor:pointer; }
 .quick-profile-context { position:relative; z-index:1; display:grid; grid-template-columns:minmax(220px,1.1fr) minmax(340px,1.5fr) auto; align-items:center; gap:18px; padding:13px 14px; border:1px solid #e2ddeb; border-radius:12px; background:linear-gradient(100deg,rgba(247,243,252,.94),rgba(255,255,255,.98) 52%,rgba(237,249,246,.88)); }.quick-profile-context.empty { grid-template-columns:minmax(260px,1fr) auto; }.quick-profile-identity { min-width:0; display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; gap:2px 9px; }.quick-profile-identity>span { grid-row:1/3; align-self:stretch; display:flex; align-items:center; padding-right:10px; border-right:2px solid #8e55d5; color:#7954aa; font-size:8px; font-weight:850; letter-spacing:.08em; }.quick-profile-identity strong,.quick-profile-identity small { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.quick-profile-identity strong { color:#30313a; font-size:11px; }.quick-profile-identity small { color:#8b8992; font-size:8px; }
-.quick-profile-metrics { display:grid; grid-template-columns:repeat(4,minmax(68px,1fr)); gap:1px; overflow:hidden; border:1px solid #ebe7ee; border-radius:9px; background:#ebe7ee; }.quick-profile-metrics span { min-height:42px; display:flex; align-items:center; justify-content:center; gap:5px; padding:0 8px; color:#85838c; background:rgba(255,255,255,.94); font-size:8px; white-space:nowrap; }.quick-profile-metrics b { color:#6d3fad; font:650 16px Georgia,serif; }.quick-profile-actions { justify-self:end; }.quick-profile-actions button { min-width:116px; height:34px; padding:0 12px; border:1px solid #cfc1e4; border-radius:17px; color:#7043ad; background:#fff; font-size:8px; font-weight:850; cursor:pointer; transition:.2s; }.quick-profile-actions button:hover { border-color:#9667cf; box-shadow:0 5px 13px rgba(121,59,215,.1); transform:translateY(-1px); }.quick-profile-actions button:disabled { opacity:.45; cursor:not-allowed; transform:none; }
+.quick-profile-metrics { display:grid; grid-template-columns:repeat(3,minmax(88px,1fr)); gap:1px; overflow:hidden; border:1px solid #ebe7ee; border-radius:9px; background:#ebe7ee; }.quick-profile-metrics span { min-height:42px; display:flex; align-items:center; justify-content:center; gap:5px; padding:0 8px; color:#85838c; background:rgba(255,255,255,.94); font-size:8px; white-space:nowrap; }.quick-profile-metrics b { color:#6d3fad; font:650 16px Georgia,serif; }.quick-profile-actions { justify-self:end; }.quick-profile-actions button { min-width:116px; height:34px; padding:0 12px; border:1px solid #cfc1e4; border-radius:17px; color:#7043ad; background:#fff; font-size:8px; font-weight:850; cursor:pointer; transition:.2s; }.quick-profile-actions button:hover { border-color:#9667cf; box-shadow:0 5px 13px rgba(121,59,215,.1); transform:translateY(-1px); }.quick-profile-actions button:disabled { opacity:.45; cursor:not-allowed; transform:none; }
 .quick-profile-detail { position:relative; z-index:1; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1px; overflow:hidden; border:1px solid #ded6e9; border-radius:12px; background:#e4deeb; animation:quick-profile-reveal .24s ease-out; }.quick-profile-detail>section { min-width:0; min-height:76px; display:grid; align-content:start; gap:5px; padding:13px 15px; background:rgba(255,255,255,.97); }.quick-profile-detail>section.wide { grid-column:1/-1; min-height:auto; }.quick-profile-detail span { color:#7951ae; font-size:8px; font-weight:850; letter-spacing:.05em; }.quick-profile-detail strong { color:#30323a; font-size:11px; line-height:1.45; }.quick-profile-detail p { margin:0; color:#555964; font-size:10px; line-height:1.6; }.quick-profile-detail small { color:#aaa5b0; font-size:7px; }.quick-profile-tags { display:flex; flex-wrap:wrap; gap:5px; }.quick-profile-tags i { padding:4px 7px; border:1px solid #d8eee8; border-radius:10px; color:#157a68; background:#f1faf7; font-size:8px; font-style:normal; }.quick-profile-tags em { color:#a09da6; font-size:9px; font-style:normal; }.quick-profile-detail>footer { grid-column:1/-1; display:flex; align-items:center; gap:7px; padding:8px 14px; color:#817d89; background:#faf8fc; font-size:8px; }.quick-profile-detail>footer i { width:6px; height:6px; border-radius:50%; background:#10aa86; box-shadow:0 0 0 3px rgba(16,170,134,.1); }
 @keyframes quick-profile-reveal { from { opacity:0; transform:translateY(-5px); } to { opacity:1; transform:translateY(0); } }
 

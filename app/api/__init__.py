@@ -25,6 +25,7 @@ from app.api.insights import router as insights_router
 from app.api.users import router as users_router
 from app.api.writeback import router as writeback_router
 from app.api.geo import router as geo_router
+from app.api.seo import router as seo_router
 
 __all__ = [
     "adjustments_verify_router",
@@ -52,4 +53,5 @@ __all__ = [
     "writeback_router",
     "search_terms_router",
     "geo_router",
+    "seo_router",
 ]

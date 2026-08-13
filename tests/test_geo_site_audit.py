@@ -129,6 +129,40 @@ class GeoSiteAuditTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["snapshot"]["site_audit"]["total_weight"], 5)
         self.assertEqual(result["snapshot"]["audit_scope"], "site")
 
+    def test_aggregate_supports_extractable_block_rules(self):
+        homepage = _result("https://example.com/", 94, False)
+        homepage["checks"][0].update(
+            {
+                "code": "block_definition",
+                "title": "可抽取块 · 定义",
+                "category": "AI 可引用性",
+                "weight": 6,
+                "deduction": 6,
+            }
+        )
+        result = aggregate_site_results(
+            [homepage], discovery_source="homepage_links", requested_count=1
+        )
+        self.assertEqual(result["checks"][0]["weight"], 6)
+        self.assertEqual(result["checks"][0]["deduction"], 6)
+        self.assertEqual(result["score"], 94)
+
+    def test_aggregate_keeps_unknown_future_rules_compatible(self):
+        homepage = _result("https://example.com/", 96, False)
+        homepage["checks"][0].update(
+            {
+                "code": "future_rule",
+                "title": "未来规则",
+                "weight": 4,
+                "deduction": 4,
+            }
+        )
+        result = aggregate_site_results(
+            [homepage], discovery_source="homepage_links", requested_count=1
+        )
+        self.assertEqual(result["checks"][0]["weight"], 4)
+        self.assertEqual(result["score"], 96)
+
     def test_results_are_deduplicated_after_redirects(self):
         first = _result("https://example.com/zh/home.html", 80, True)
         duplicate = _result("https://example.com/zh/home.html", 80, True)

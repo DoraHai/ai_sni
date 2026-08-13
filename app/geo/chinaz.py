@@ -541,6 +541,25 @@ async def fetch_whois(
 
 async def fetch_chinaz_seo_metrics(url: str) -> dict[str, dict[str, Any]]:
     """一次诊断并发获取五项指标；每项独立降级，任一失败不阻断主诊断。"""
+    if not get_settings().chinaz_api_enabled:
+        baidu_index, pc_keywords, mobile_keywords, weight, whois = await asyncio.gather(
+            fetch_baidu_index_count(url, api_key=""),
+            fetch_baidu_pc_keywords(url, api_key=""),
+            fetch_baidu_mobile_keywords(url, api_key=""),
+            fetch_comprehensive_weight(url, api_key=""),
+            fetch_whois(url, api_key=""),
+        )
+        disabled = {
+            "baidu_index": baidu_index,
+            "baidu_pc_keywords": pc_keywords,
+            "baidu_mobile_keywords": mobile_keywords,
+            "comprehensive_weight": weight,
+            "whois": whois,
+        }
+        for metric in disabled.values():
+            metric.update(status="unavailable", reason="站长之家数据查询已暂停")
+        return disabled
+
     async with httpx.AsyncClient() as client:
         baidu_index, pc_keywords, mobile_keywords, weight, whois = await asyncio.gather(
             fetch_baidu_index_count(url, client=client),

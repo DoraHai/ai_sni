@@ -43,6 +43,16 @@ const routes = [
     component: DealSniperShell,
     meta: { title: '产品门户', public: true, bare: true },
   },
+  { path: '/deal-sniper/seo/manage', redirect: '/seo/keywords' },
+  { path: '/deal-sniper/seo/keywords', redirect: '/seo/keywords' },
+  { path: '/deal-sniper/seo/tdk', redirect: '/seo/site' },
+  { path: '/deal-sniper/seo/dashboard', redirect: '/seo/dashboard' },
+  { path: '/deal-sniper/seo/trends', redirect: '/seo/dashboard' },
+  { path: '/deal-sniper/seo/competitors', redirect: '/seo/competitors' },
+  { path: '/deal-sniper/seo/articles', redirect: '/seo/content/articles' },
+  { path: '/deal-sniper/seo/rewrites', redirect: '/seo/content/rewrites' },
+  { path: '/deal-sniper/seo/questions', redirect: '/seo/content/qa' },
+  { path: '/deal-sniper/seo/channels', redirect: '/seo/distribution' },
   {
     path: '/deal-sniper/:section(hub|seo|geo|content)/:page',
     component: DealSniperShell,
@@ -52,6 +62,93 @@ const routes = [
     path: '/assistant',
     component: () => import('../views/assistant/AssistantView.vue'),
     meta: { title: 'AI 助手', workflow: '智能助手', perm: 'assistant' },
+  },
+  {
+    path: '/seo',
+    component: () => import('../views/seo/SeoWorkspaceShell.vue'),
+    meta: { bare: true },
+    children: [
+      { path: '', redirect: '/seo/dashboard' },
+      {
+        path: 'dashboard',
+        component: () => import('../views/seo/SeoDashboardView.vue'),
+        meta: { title: 'SEO 工作台', workflow: '今日概览', perm: 'seo.dashboard', bare: true, immersive: true },
+      },
+      {
+        path: 'alerts',
+        component: () => import('../views/seo/SeoAlertsView.vue'),
+        meta: { title: '异常提醒', workflow: '数据看板', perm: 'seo.alerts', bare: true },
+      },
+      {
+        path: 'keywords',
+        component: () => import('../views/seo/SeoKeywordAssetsView.vue'),
+        meta: { title: '关键词管理', workflow: '关键词资产', perm: 'seo.keywords', bare: true, immersive: true },
+      },
+      {
+        path: 'keywords/:keywordId',
+        component: () => import('../views/seo/SeoKeywordDetailView.vue'),
+        meta: { title: '关键词详情', workflow: '关键词资产', perm: 'seo.keywords', bare: true },
+      },
+      {
+        path: 'rankings',
+        component: () => import('../views/seo/SeoRankingMonitorView.vue'),
+        meta: { title: '排名监控', workflow: '关键词资产', perm: 'seo.keywords', bare: true },
+      },
+      {
+        path: 'trends',
+        component: () => import('../views/seo/SeoTrendsView.vue'),
+        meta: { title: '趋势总览', workflow: '关键词资产', perm: 'seo.keywords', bare: true },
+      },
+      {
+        path: 'site',
+        component: () => import('../views/seo/SeoSiteOptimizationView.vue'),
+        meta: { title: '站内优化', workflow: '站内增长', perm: 'seo.site', bare: true },
+      },
+      {
+        path: 'content',
+        redirect: '/seo/content/articles',
+      },
+      {
+        path: 'content/articles',
+        component: () => import('../views/seo/SeoContentView.vue'),
+        meta: { title: '原创文章', workflow: '内容增长', contentMode: 'article', perm: 'seo.content', bare: true, immersive: true },
+      },
+      {
+        path: 'content/rewrites',
+        component: () => import('../views/seo/SeoRewriteView.vue'),
+        meta: { title: '文章改写', workflow: '内容增长', contentMode: 'rewrite', perm: 'seo.content', bare: true, immersive: true },
+      },
+      {
+        path: 'content/qa',
+        component: () => import('../views/seo/SeoContentView.vue'),
+        meta: { title: '问答运营', workflow: '内容增长', contentMode: 'qa', perm: 'seo.content', bare: true, immersive: true },
+      },
+      {
+        path: 'content/editor',
+        component: () => import('../views/seo/SeoContentEditorView.vue'),
+        meta: { title: '在线编辑器', workflow: '内容增长', perm: 'seo.content', bare: true, immersive: true },
+      },
+      {
+        path: 'content/answer-editor',
+        component: () => import('../views/seo/SeoContentEditorView.vue'),
+        meta: { title: '问答编辑器', workflow: '内容增长', perm: 'seo.content', bare: true, immersive: true },
+      },
+      {
+        path: 'distribution',
+        component: () => import('../views/seo/SeoDistributionView.vue'),
+        meta: { title: '分发平台', workflow: '内容增长', perm: 'seo.content', bare: true },
+      },
+      {
+        path: 'links',
+        component: () => import('../views/seo/SeoLinksView.vue'),
+        meta: { title: '内外链管理', workflow: '站内增长', perm: 'seo.links', bare: true },
+      },
+      {
+        path: 'competitors',
+        component: () => import('../views/seo/SeoCompetitorsView.vue'),
+        meta: { title: '竞品监控', workflow: '竞品市场', perm: 'seo.competitors', bare: true },
+      },
+    ],
   },
   {
     path: '/geo/diagnosis',
@@ -184,6 +281,13 @@ const router = createRouter({
 const MENU_ORDER = [
   ['assistant', '/assistant'],
   ['geo.diagnosis', '/geo/diagnosis'],
+  ['seo.dashboard', '/seo/dashboard'],
+  ['seo.alerts', '/seo/alerts'],
+  ['seo.keywords', '/seo/keywords'],
+  ['seo.content', '/seo/content'],
+  ['seo.site', '/seo/site'],
+  ['seo.links', '/seo/links'],
+  ['seo.competitors', '/seo/competitors'],
   ['monitor.dashboard', '/monitor/dashboard'],
   ['monitor.alerts', '/monitor/alerts'],
   ['monitor.profile', '/monitor/profile'],
@@ -225,7 +329,7 @@ router.beforeEach((to) => {
   }
 })
 router.afterEach((to) => {
-  document.title =
-    to.meta.documentTitle || (to.meta.title ? to.meta.title + ' · ' : '') + 'SEM 智投平台'
+  const productName = to.path.startsWith('/seo') ? 'SEO 工作台' : 'SEM 智投平台'
+  document.title = to.meta.documentTitle || (to.meta.title ? to.meta.title + ' · ' : '') + productName
 })
 export default router

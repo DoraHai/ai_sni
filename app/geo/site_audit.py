@@ -162,6 +162,11 @@ def aggregate_site_results(
             )
         pass_rate = passed_weight / max(total_weight, 1)
         passed_pages = sum(1 for item in page_checks if item["passed"])
+        # 新规则可能先由单页诊断产出，再被加入固定权重表。全站汇总应优先
+        # 使用固定权重，同时对尚未登记的规则保持兼容，避免整次诊断返回 500。
+        rule_weight = RULE_WEIGHTS.get(
+            code, template.get("weight", template.get("deduction", 0))
+        )
         checks.append(
             {
                 **template,
@@ -170,8 +175,8 @@ def aggregate_site_results(
                     f"{passed_pages}/{len(page_checks)} 个页面通过 · "
                     f"核心页面加权通过率 {round(pass_rate * 100)}%"
                 ),
-                "weight": RULE_WEIGHTS[code],
-                "deduction": round(RULE_WEIGHTS[code] * (1 - pass_rate), 1),
+                "weight": rule_weight,
+                "deduction": round(rule_weight * (1 - pass_rate), 1),
                 "page_evidence": page_checks,
             }
         )

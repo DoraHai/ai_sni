@@ -14,7 +14,7 @@
     activePage = 'questions.html';
   }
 
-  if (page === 'keyword-trend.html' || page === 'trends.html') {
+  if (page === 'keyword-trend.html') {
     activePage = 'keywords.html';
   }
 
@@ -31,6 +31,7 @@
     '<div class="nav-group">关键词资产</div>' +
     item('manage.html', '⌕', '关键词管理') +
     item('keywords.html?rev=platform-v1', '↗', '排名监控') +
+    item('trends.html', '⌁', '趋势总览') +
     item('competitors.html', '≋', '竞品表现') +
     '<div class="nav-group">内容增长</div>' +
     item('articles.html', 'Aa', '原创文章') +

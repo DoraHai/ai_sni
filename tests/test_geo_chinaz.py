@@ -1,4 +1,6 @@
 import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -8,6 +10,7 @@ from app.geo.chinaz import (
     fetch_baidu_index_count,
     fetch_baidu_mobile_keywords,
     fetch_baidu_pc_keywords,
+    fetch_chinaz_seo_metrics,
     fetch_comprehensive_weight,
     fetch_whois,
 )
@@ -219,6 +222,22 @@ class ChinazBaiduIndexTests(unittest.IsolatedAsyncioTestCase):
         result = await fetch_whois("https://example.com", api_key="")
         self.assertEqual(result["status"], "unavailable")
         self.assertEqual(result["reason"], "站长之家 Whois 查询接口尚未配置")
+
+    async def test_global_switch_pauses_all_provider_requests(self):
+        with (
+            patch(
+                "app.geo.chinaz.get_settings",
+                return_value=SimpleNamespace(chinaz_api_enabled=False),
+            ),
+            patch("app.geo.chinaz._request_json", new=AsyncMock()) as request_json,
+        ):
+            metrics = await fetch_chinaz_seo_metrics("https://example.com")
+
+        request_json.assert_not_awaited()
+        self.assertEqual(len(metrics), 5)
+        self.assertTrue(
+            all(item["reason"] == "站长之家数据查询已暂停" for item in metrics.values())
+        )
 
 
 if __name__ == "__main__":

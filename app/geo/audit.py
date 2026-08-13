@@ -38,6 +38,11 @@ RULE_WEIGHTS = {
     "language": 2,
     "robots": 3,
     "llms": 3,
+    "block_definition": 6,
+    "block_numbers": 6,
+    "block_comparison": 5,
+    "block_howto": 5,
+    "block_faq": 3,
 }
 
 # 与评分规则同源的用户可读释义。仅补充展示元数据，不改变 v1.1.0 的计分口径。
@@ -58,6 +63,11 @@ RULE_CRITERIA = {
     "language": "HTML 根元素必须声明非空的 lang 页面语言。",
     "robots": "站点根目录的 robots.txt 必须可访问且内容非空。",
     "llms": "站点根目录的 llms.txt 必须可访问且内容非空。",
+    "block_definition": "正文必须包含可独立摘取的定义性内容。",
+    "block_numbers": "正文必须包含至少 3 项可核验的数字事实。",
+    "block_comparison": "正文必须包含可识别的对比、差异或选型内容。",
+    "block_howto": "正文必须包含可识别的步骤或操作流程。",
+    "block_faq": "正文必须包含 FAQ、常见问题或问答式内容。",
 }
 
 
