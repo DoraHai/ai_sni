@@ -51,6 +51,8 @@ class SearchTermReport(Base):
     cost: Mapped[float | None] = mapped_column(Numeric(12, 2))
     ctr: Mapped[float | None] = mapped_column(Numeric(8, 4))
     cpc: Mapped[float | None] = mapped_column(Numeric(10, 2))
+    conversions: Mapped[int | None] = mapped_column(BigInteger)
+    cvr: Mapped[float | None] = mapped_column(Numeric(8, 4))
 
     window_start: Mapped[date | None] = mapped_column(Date)
     window_end: Mapped[date | None] = mapped_column(Date)

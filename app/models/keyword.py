@@ -19,7 +19,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
 
-# 5 类分级（业务规则之首）。longtail 只能人工标，自动分类不产出
+# 5 类分级（业务规则之首）。
 CATEGORY_LABELS = {
     "brand": "品牌词",
     "focus": "重点词",

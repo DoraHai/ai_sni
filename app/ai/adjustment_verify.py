@@ -87,6 +87,7 @@ async def _window_metrics(session, tenant_id, keyword_id, start: date, end: date
         "days": days,
         "cost_per_day": round(cost / days, 2),
         "click_per_day": round(click / days, 1),
+        "impression_per_day": round(imp / days, 1),
         "ctr": round(click / imp, 4) if imp else None,
         "avg_rank": _f(row[3]),
     }

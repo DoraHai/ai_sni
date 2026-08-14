@@ -3,6 +3,7 @@ from app.models.baidu_account import BaiduAccount
 from app.models.baidu_oauth import BaiduOAuthGrant, BaiduOAuthState
 from app.models.api_audit_log import ApiAuditLog
 from app.models.kw_report_snapshot import KwReportSnapshot
+from app.models.kw_region_snapshot import KwRegionSnapshot
 from app.models.keyword_dimension_report import KeywordHourlyReport, KeywordRegionReport
 from app.models.alert import Alert
 from app.models.keyword import CATEGORY_LABELS, Keyword
@@ -125,6 +126,7 @@ __all__ = [
     "BaiduOAuthState",
     "ApiAuditLog",
     "KwReportSnapshot",
+    "KwRegionSnapshot",
     "KeywordRegionReport",
     "KeywordHourlyReport",
     "Alert",

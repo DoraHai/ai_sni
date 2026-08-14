@@ -39,6 +39,7 @@ from app.models import (
     KeywordCandidate,
     KeywordHourlyReport,
     KeywordRegionReport,
+    KwRegionSnapshot,
     KwReportSnapshot,
     Lead,
     OcpcPackage,
@@ -201,6 +202,18 @@ def _row_to_hourly_record(
     }
 
 
+def _row_region_date(row: dict[str, Any], fallback: date) -> date:
+    parsed = _parse_report_hour(row.get("date"))
+    return parsed.date() if parsed is not None else fallback
+
+
+def _province_name(row: dict[str, Any]) -> str:
+    province = row.get("provinceName")
+    if province is None or str(province).strip() in ("", "-"):
+        return "未知"
+    return str(province).strip()
+
+
 async def sync_keyword_report_for_account(
     session: AsyncSession,
     baidu_account: BaiduAccount,
@@ -325,6 +338,82 @@ async def sync_keyword_dimension_reports_for_account(
         len(hourly_records),
     )
     return {"region": len(region_records), "hourly": len(hourly_records)}
+
+
+async def sync_region_snapshot(
+    session: AsyncSession,
+    tenant: Tenant | None,
+    baidu_account: BaiduAccount,
+    start_date: date,
+    end_date: date,
+) -> int:
+    """按省汇总关键词报表地域数据，upsert 进 kw_region_snapshots。"""
+    client = BaiduAPIClient(
+        username=baidu_account.baidu_username,
+        access_token=decrypt(baidu_account.access_token_encrypted),
+    )
+    svc = ReportService(client)
+    rows = await svc.get_keyword_province_report(
+        start_date=start_date.isoformat(),
+        end_date=end_date.isoformat(),
+    )
+
+    agg: dict[tuple[int, date, str], dict[str, Any]] = {}
+    fetched_at = datetime.utcnow()
+    for row in rows:
+        province = _province_name(row)
+        report_date = _row_region_date(row, start_date)
+        tenant_id = tenant.id if tenant is not None else baidu_account.tenant_id
+        key = (baidu_account.tenant_id, report_date, province)
+        item = agg.setdefault(
+            key,
+            {
+                "tenant_id": tenant_id,
+                "baidu_account_id": baidu_account.id,
+                "report_date": report_date,
+                "province": province,
+                "cost": 0.0,
+                "click": 0,
+                "impression": 0,
+                "fetched_at": fetched_at,
+            },
+        )
+        item["cost"] += _to_float(row.get("cost")) or 0.0
+        item["click"] += _to_int(row.get("click")) or 0
+        item["impression"] += _to_int(row.get("impression")) or 0
+
+    records = [
+        {**item, "cost": round(float(item["cost"]), 2)}
+        for item in agg.values()
+    ]
+    if records:
+        await _chunked_upsert(
+            session,
+            KwRegionSnapshot,
+            records,
+            "uq_kw_region_snapshot",
+            {"tenant_id", "report_date", "province"},
+        )
+
+    logger.info(
+        "账户 %s %s~%s 省级地域汇总 upsert %d 条",
+        baidu_account.baidu_username,
+        start_date,
+        end_date,
+        len(records),
+    )
+    return len(records)
+
+
+async def sync_keyword_region_snapshots_for_account(
+    session: AsyncSession,
+    baidu_account: BaiduAccount,
+    target_date: date,
+) -> int:
+    """兼容旧调用：同步单日省级地域汇总。"""
+    return await sync_region_snapshot(
+        session, None, baidu_account, target_date, target_date
+    )
 
 
 def _parse_baidu_time(v: Any) -> datetime | None:
@@ -990,6 +1079,8 @@ async def sync_search_terms_for_account(
                 cost=_to_float(row.get("cost")),
                 ctr=_to_float(row.get("ctr")),
                 cpc=_to_float(row.get("cpc")),
+                conversions=_to_int(row.get("ocpcConversionsDetail2")),
+                cvr=_to_float(row.get("ocpcConversionsDetail2CVR")),
                 window_start=start_date,
                 window_end=end_date,
                 is_added=(status == 0),

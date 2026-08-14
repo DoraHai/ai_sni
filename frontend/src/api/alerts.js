@@ -13,3 +13,10 @@ export function fetchAlerts({ tenantId, status = 'open', priority }) {
 export function resolveAlert(alertId) {
   return client.patch(`/api/v1/alerts/${alertId}/resolve`)
 }
+
+export function batchResolveAlerts({ tenantId, alertIds }) {
+  return client.post('/api/v1/alerts/batch-resolve', {
+    tenant_id: tenantId,
+    alert_ids: alertIds,
+  })
+}

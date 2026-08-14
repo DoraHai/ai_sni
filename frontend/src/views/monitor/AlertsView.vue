@@ -2,7 +2,7 @@
 import { onMounted, ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { fetchAlerts, resolveAlert } from '../../api/alerts'
+import { batchResolveAlerts, fetchAlerts, resolveAlert } from '../../api/alerts'
 import { session } from '../../store/session'
 
 const router = useRouter()
@@ -15,6 +15,7 @@ const alerts = ref([])
 const openCounts = ref({})
 const statusFilter = ref('open')
 const priorityFilter = ref('')
+const selection = ref([])
 
 // 原型 p-badge / alert-card 配色：P0/P1 红、P2 琥珀、P3 蓝、P4 绿、P5 灰
 const PRIORITY_META = {
@@ -52,11 +53,28 @@ async function load() {
     })
     alerts.value = data.alerts
     openCounts.value = data.open_counts
+    selection.value = selection.value.filter((id) => data.alerts.some((a) => a.id === id))
   } catch (e) {
     error.value = e.message
   } finally {
     loading.value = false
   }
+}
+
+const openAlerts = computed(() => alerts.value.filter((row) => row.status === 'open'))
+const selectedOpenCount = computed(() => selection.value.length)
+const allOpenSelected = computed(() => openAlerts.value.length > 0 && selection.value.length === openAlerts.value.length)
+
+function toggleSelect(row) {
+  if (row.status !== 'open') return
+  const set = new Set(selection.value)
+  if (set.has(row.id)) set.delete(row.id)
+  else set.add(row.id)
+  selection.value = [...set]
+}
+
+function toggleSelectAllOpen() {
+  selection.value = allOpenSelected.value ? [] : openAlerts.value.map((row) => row.id)
 }
 
 function setPriority(p) {
@@ -73,6 +91,24 @@ async function onResolve(row) {
   try {
     await resolveAlert(row.id)
     ElMessage.success('已标记为已处理')
+    await load()
+  } catch (e) {
+    ElMessage.error(e.message)
+  }
+}
+
+async function onBatchResolve() {
+  if (!selection.value.length) {
+    ElMessage.warning('请至少选择一条告警')
+    return
+  }
+  try {
+    const res = await batchResolveAlerts({
+      tenantId: TENANT_ID.value,
+      alertIds: selection.value,
+    })
+    ElMessage.success(`已标记 ${res.resolved_count} 条告警为已处理`)
+    selection.value = []
     await load()
   } catch (e) {
     ElMessage.error(e.message)
@@ -124,6 +160,23 @@ onMounted(load)
       </div>
     </div>
 
+    <div v-if="statusFilter === 'open' && alerts.length" class="bulk-toolbar">
+      <label class="bulk-check">
+        <input type="checkbox" :checked="allOpenSelected" @change="toggleSelectAllOpen" />
+        <span>选择当前列表未处理告警</span>
+      </label>
+      <span v-if="selectedOpenCount" class="bulk-count">已选 {{ selectedOpenCount }} 条</span>
+      <span class="bulk-spacer" />
+      <button
+        v-if="session.canEdit('monitor.alerts')"
+        class="bulk-btn primary"
+        :disabled="!selectedOpenCount"
+        @click="onBatchResolve"
+      >
+        批量标记已处理
+      </button>
+    </div>
+
     <!-- 告警卡片流（原型 alert-card） -->
     <div
       v-for="row in alerts"
@@ -133,6 +186,13 @@ onMounted(load)
     >
       <div class="ac-body">
         <div class="ac-head">
+          <input
+            v-if="row.status === 'open'"
+            class="row-check"
+            type="checkbox"
+            :checked="selection.includes(row.id)"
+            @change="toggleSelect(row)"
+          />
           <span class="p-badge" :class="'p-badge-' + (row.priority?.slice(1) || '5')">{{ row.priority }}</span>
           <!-- 关键词作主标题（醒目、可点下钻）；告警类型降为次级标签 -->
           <template v-if="row.keyword_id">
@@ -152,6 +212,10 @@ onMounted(load)
           <template v-if="row.campaign_name">
             <span class="ac-grid-label">所属计划</span>
             <span class="ac-grid-value">{{ row.campaign_name }}</span>
+          </template>
+          <template v-if="row.entity_ref && !row.keyword_id">
+            <span class="ac-grid-label">关联对象</span>
+            <span class="ac-grid-value">{{ row.entity_ref }}</span>
           </template>
           <template v-if="Object.keys(row.metrics || {}).length">
             <span class="ac-grid-label">关键指标</span>
@@ -200,6 +264,30 @@ onMounted(load)
 .view-tab { padding: 6px 14px; border-radius: 5px; font-size: 12px; cursor: pointer; color: var(--sem-text-sub); font-weight: 500; user-select: none; }
 .view-tab:hover { background: #f9fafb; color: var(--sem-primary); }
 .view-tab.active { background: #eff4fb; color: var(--sem-primary); }
+.bulk-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid var(--sem-border);
+  border-radius: 8px;
+}
+.bulk-check { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: #4b5563; cursor: pointer; }
+.bulk-count { font-size: 12px; color: var(--sem-primary); font-weight: 600; }
+.bulk-spacer { flex: 1; }
+.bulk-btn {
+  padding: 5px 12px;
+  border: 1px solid #dcdfe6;
+  background: #fff;
+  border-radius: 4px;
+  color: #606266;
+  cursor: pointer;
+  font-size: 12px;
+}
+.bulk-btn.primary { background: var(--sem-primary); border-color: var(--sem-primary); color: #fff; }
+.bulk-btn:disabled { opacity: .45; cursor: not-allowed; }
 
 /* 告警卡片（原型 alert-card） */
 .alert-card {
@@ -214,6 +302,7 @@ onMounted(load)
 .alert-card.p-5 { border-left: 4px solid #9ca3af; }
 .ac-body { padding: 14px 18px; }
 .ac-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.row-check { width: 14px; height: 14px; accent-color: var(--sem-primary); }
 .ac-title { font-size: 14px; font-weight: 600; color: var(--sem-text); }
 /* 关键词作主标题：醒目、可点 */
 .ac-kw { font-size: 16px; font-weight: 700; color: var(--sem-primary); cursor: pointer; }

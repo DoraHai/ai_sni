@@ -21,6 +21,7 @@ WRITEBACK_ACTION_LABELS = {
     "remove_negative": "删否词",
     "pause": "暂停",
     "enable": "启用",
+    "set_match_type": "改匹配模式",
     "set_account_budget": "改账户日预算",
     "set_campaign_budget": "改计划日预算",
     "campaign_pause": "暂停计划",

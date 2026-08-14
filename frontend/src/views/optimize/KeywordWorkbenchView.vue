@@ -1,12 +1,13 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   batchUpdateCategory,
   fetchAdgroupList,
   fetchCampaignList,
   fetchKeywordList,
+  matchTypeWriteback,
   pauseKeywordBatch,
   refreshKeywordWorkbench,
   writebackKeyword,
@@ -20,6 +21,7 @@ import MetricLabel from '../../components/MetricLabel.vue'
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
 
 const router = useRouter()
+const route = useRoute()
 const loading = ref(false)
 const refreshing = ref(false)
 const error = ref('')
@@ -313,6 +315,14 @@ const CATEGORY_CHIPS = [
   { code: 'longtail', label: '长尾精准', color: '#BA7517' },
   { code: 'new', label: '新词', color: '#6B7280' },
 ]
+const CATEGORY_CODES = new Set(CATEGORY_CHIPS.map((c) => c.code).filter(Boolean))
+
+const MATCH_TYPE_OPTIONS = {
+  exact: { matchType: 1, phraseType: 1, label: '精确匹配' },
+  phrase: { matchType: 2, phraseType: 1, label: '短语匹配' },
+  smart: { matchType: 2, phraseType: 3, label: '智能匹配' },
+}
+
 const BATCH_CATEGORY_OPTIONS = [
   { code: 'brand', label: '标记为品牌词' },
   { code: 'focus', label: '标记为重点词' },
@@ -323,7 +333,7 @@ const BATCH_CATEGORY_OPTIONS = [
 ]
 
 const filters = reactive({
-  category: '',
+  category: route.query.category && CATEGORY_CODES.has(String(route.query.category)) ? String(route.query.category) : '',
   campaignId: null,
   pause: null, // null=全部 false=已启用 true=已暂停
   serving: null, // null=全部 true=当前在投 false=当前未投（暂停或时段不投）
@@ -415,6 +425,16 @@ function initFinalPrices(rows) {
 watch(
   () => [filters.category, filters.campaignId, filters.pause, filters.serving, filters.coefWarning, filters.hasSuggestion],
   () => { filters.page = 1; load() },
+)
+watch(
+  () => route.query.category,
+  (category) => {
+    const next = category && CATEGORY_CODES.has(String(category)) ? String(category) : ''
+    if (next && next !== filters.category) {
+      filters.category = next
+      activeView.value = 'keywords'
+    }
+  },
 )
 let qTimer = null
 watch(() => filters.q, () => {
@@ -513,6 +533,40 @@ async function applyWriteback(row) {
   }
 }
 
+async function openMatchTypeDialog(row, command) {
+  if (!command) return
+  const target = MATCH_TYPE_OPTIONS[command]
+  if (!target) return
+  try {
+    await ElMessageBox.confirm(
+      `确认将「${row.keyword}」的匹配模式从「${row.match_type || '—'}」改为「${target.label}」？\n` +
+        `当前为演练模式时，仅记入回写台账、不会真改线上匹配模式。`,
+      '确认修改匹配模式',
+      { confirmButtonText: '确认修改', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  try {
+    const res = await matchTypeWriteback({
+      keywordId: row.keyword_id,
+      tenantId: TENANT_ID.value,
+      matchType: target.matchType,
+      phraseType: target.phraseType,
+    })
+    if (res.dry_run) {
+      ElMessage.warning('演练模式：已记入台账，未真改线上匹配模式')
+    } else if (res.status === 'failed') {
+      ElMessage.error(res.writeback?.error_msg || '修改匹配模式失败')
+    } else {
+      ElMessage.success(`已回写百度：${target.label}`)
+      load()
+    }
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || e.message)
+  }
+}
+
 async function batchWriteback() {
   // 勾选行的最终执行价批量回写（每行各自的 finalPrices）
   const items = selection.value
@@ -544,6 +598,33 @@ async function batchWriteback() {
     else ElMessage.success(msg)
     res.applied.forEach((kwId) => _removeSuggestion(kwId))
     tableRef.value?.clearSelection()
+    if (res.applied.length) load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || e.message)
+  }
+}
+
+async function togglePause(row) {
+  const pause = !row.pause
+  const action = pause ? '暂停' : '启用'
+  try {
+    await ElMessageBox.confirm(
+      `将${action}关键词「${row.keyword}」。\n受 dry-run 保护，演练模式下不真改线上。`,
+      `确认${action}`,
+      { confirmButtonText: `确认${action}`, cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  try {
+    const res = await pauseKeywordBatch({ tenantId: TENANT_ID.value, keywordIds: [row.keyword_id], pause })
+    const parts = []
+    if (res.applied.length) parts.push(`已${action} ${res.applied.length}`)
+    if (res.simulated.length) parts.push(`演练 ${res.simulated.length}（未真改线上）`)
+    if (res.failed.length) parts.push(`失败 ${res.failed.length}`)
+    const msg = parts.join(' · ') || '无可操作关键词'
+    if (res.failed.length || res.simulated.length) ElMessage.warning(msg)
+    else ElMessage.success(msg)
     if (res.applied.length) load()
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || e.message)
@@ -806,7 +887,19 @@ onBeforeUnmount(() => {
               >{{ row.category.label }}<template v-if="row.category.source === 'manual'">·人工</template></span>
             </div>
             <div class="kw-cell-sub">
-              {{ row.match_type || '—' }}<template v-if="servingDays(row)"> · 已投放 {{ servingDays(row) }} 天</template>
+              <el-dropdown trigger="click" @command="(cmd) => openMatchTypeDialog(row, cmd)">
+                <span class="match-type-trigger">
+                  {{ row.match_type || '—' }}
+                  <span class="match-type-caret">▾</span>
+                </span>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="exact">精确匹配</el-dropdown-item>
+                    <el-dropdown-item command="phrase">短语匹配</el-dropdown-item>
+                    <el-dropdown-item command="smart">智能匹配</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown><template v-if="servingDays(row)"> · 已投放 {{ servingDays(row) }} 天</template>
             </div>
           </template>
         </el-table-column>
@@ -926,6 +1019,8 @@ onBeforeUnmount(() => {
           <template #default="{ row }">
             <div class="op-cell">
               <button class="op-btn primary" @click="applyWriteback(row)">回写出价</button>
+              <button class="op-btn" @click="openMatchTypeDialog(row, 'phrase')">改匹配</button>
+              <button class="op-btn" @click="togglePause(row)">{{ row.pause ? '启用' : '暂停' }}</button>
               <button v-if="suggestionMap[row.keyword_id]" class="op-btn" @click="ignoreSuggestion(suggestionMap[row.keyword_id])">忽略建议</button>
               <button class="op-btn" @click="gotoDetail(row)">详情</button>
             </div>
@@ -1279,6 +1374,16 @@ onBeforeUnmount(() => {
 .kw-cell-name { font-weight: 500; cursor: pointer; color: var(--sem-text); }
 .kw-cell-name:hover { color: var(--sem-primary); }
 .kw-cell-sub { font-size: 10px; color: #9ca3af; margin-top: 2px; }
+.match-type-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #667085;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.match-type-trigger:hover { color: var(--sem-primary); }
+.match-type-caret { font-size: 9px; }
 .plan-line { font-size: 12px; }
 .num { font-variant-numeric: tabular-nums; }
 .dim { color: #9ca3af; }

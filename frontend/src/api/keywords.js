@@ -66,6 +66,14 @@ export function writebackKeyword({ keywordId, tenantId, price }) {
 }
 
 // 批量回写：items = [{ keyword_id, price }]。返回 { total, applied, simulated, rejected, failed }
+export function matchTypeWriteback({ keywordId, tenantId, matchType, phraseType }) {
+  return client.post(`/api/v1/keywords/${keywordId}/match-type-writeback`, {
+    tenant_id: tenantId,
+    match_type: matchType,
+    phrase_type: phraseType,
+  })
+}
+
 export function writebackKeywordBatch({ tenantId, items }) {
   return client.post('/api/v1/keywords/writeback-batch', {
     tenant_id: tenantId,

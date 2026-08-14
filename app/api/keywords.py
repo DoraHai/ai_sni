@@ -23,7 +23,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dashboard import DEVICE_LABELS, _change_pct, _derive, _f
-from app.classification import classify_one
+from app.classification import _brand_terms, _compute_context, classify_one, preview_reclassify
 from app.database import get_session
 from app.models import (
     CATEGORY_LABELS,
@@ -41,7 +41,12 @@ from app.models import (
     SearchTermReport,
     Tenant,
 )
-from app.baidu.writeback import WritebackError, apply_keyword_writeback, apply_pause_writeback
+from app.baidu.writeback import (
+    WritebackError,
+    apply_keyword_writeback,
+    apply_match_type_writeback,
+    apply_pause_writeback,
+)
 from app.security.auth import AuthContext, require_scoped_auth
 
 logger = logging.getLogger(__name__)
@@ -977,18 +982,27 @@ async def batch_update_category(
         raise HTTPException(404, "所选关键词都不在维度表中，请先执行关键词维度同步")
 
     brand_terms: list[str] = []
+    classify_ctx: dict[str, Any] | None = None
     if req.category == "auto":
         tenant = await session.get(Tenant, req.tenant_id)
-        brand_terms = [
-            t.strip() for t in (tenant.brand_terms or []) if t and t.strip()
-        ] or ([tenant.name.strip()] if tenant.name else [])
+        if tenant is None:
+            raise HTTPException(404, "租户不存在")
+        brand_terms = _brand_terms(tenant)
+        classify_ctx = await _compute_context(session, tenant)
 
     now = datetime.utcnow()
     for kw in kws:
         if req.category == "auto":
+            impression = classify_ctx["impressions"].get(kw.keyword_id, kw.total_impression or 0)
+            cost_7d = classify_ctx["cost_7d_map"].get(kw.keyword_id)
             kw.category = classify_one(
-                kw.keyword, kw.tabs, kw.total_impression, brand_terms
+                kw.keyword,
+                impression,
+                brand_terms,
+                cost_7d,
+                kw.keyword_id in classify_ctx["top20_ids"],
             )
+            kw.total_impression = impression
             kw.category_source = "auto"
         else:
             kw.category = req.category
@@ -1001,6 +1015,18 @@ async def batch_update_category(
         "updated": len(kws),
         "missing": sorted(set(req.keyword_ids) - {k.keyword_id for k in kws}),
     }
+
+
+@router.get("/reclassify-preview")
+async def reclassify_preview(
+    tenant_id: int = Query(...),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """预演新分类规则，不落库，只看会变化多少词、怎么变。"""
+    tenant = await session.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(404, "租户不存在")
+    return await preview_reclassify(session, tenant)
 
 
 @router.patch("/{keyword_id}/category")
@@ -1028,12 +1054,20 @@ async def update_keyword_category(
 
     if category == "auto":
         tenant = await session.get(Tenant, tenant_id)
-        brand_terms = [
-            t.strip() for t in (tenant.brand_terms or []) if t and t.strip()
-        ] or ([tenant.name.strip()] if tenant.name else [])
+        if tenant is None:
+            raise HTTPException(404, "租户不存在")
+        brand_terms = _brand_terms(tenant)
+        classify_ctx = await _compute_context(session, tenant)
+        impression = classify_ctx["impressions"].get(kw.keyword_id, kw.total_impression or 0)
+        cost_7d = classify_ctx["cost_7d_map"].get(kw.keyword_id)
         kw.category = classify_one(
-            kw.keyword, kw.tabs, kw.total_impression, brand_terms
+            kw.keyword,
+            impression,
+            brand_terms,
+            cost_7d,
+            kw.keyword_id in classify_ctx["top20_ids"],
         )
+        kw.total_impression = impression
         kw.category_source = "auto"
     else:
         kw.category = category
@@ -1367,6 +1401,12 @@ class KeywordWritebackRequest(BaseModel):
     price: float = Field(..., gt=0, description="最终执行价（元）")
 
 
+class MatchTypeWritebackRequest(BaseModel):
+    tenant_id: int
+    match_type: int
+    phrase_type: int
+
+
 class WritebackBatchItem(BaseModel):
     keyword_id: int
     price: float = Field(..., gt=0)
@@ -1480,3 +1520,44 @@ async def writeback_one(
     except WritebackError as e:
         raise HTTPException(400, str(e))
     return {"status": "ok", "dry_run": rec.dry_run, "writeback": wb_to_dict(rec)}
+
+
+@router.post("/{keyword_id}/match-type-writeback")
+async def match_type_writeback(
+    keyword_id: int,
+    req: MatchTypeWritebackRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """把单个关键词的匹配模式回写百度。校验失败返回 400；响应 dry_run 标明是否演练。"""
+    ctx.ensure_tenant(req.tenant_id)
+    try:
+        rec = await apply_match_type_writeback(
+            session,
+            req.tenant_id,
+            keyword_id,
+            req.match_type,
+            req.phrase_type,
+            operator_user_id=ctx.user_id,
+            operator_name=ctx.username,
+        )
+    except WritebackError as e:
+        raise HTTPException(400, str(e))
+    return {
+        "status": "ok",
+        "dry_run": rec.dry_run,
+        "writeback": {
+            "id": rec.id,
+            "action_type": rec.action_type,
+            "word": rec.word,
+            "match_type": req.match_type,
+            "phrase_type": req.phrase_type,
+            "match_label": rec.match_mode,
+            "dry_run": rec.dry_run,
+            "status": rec.status,
+            "error_msg": rec.error_msg,
+            "operator_name": rec.operator_name,
+            "created_at": rec.created_at.isoformat() if rec.created_at else None,
+            "executed_at": rec.executed_at.isoformat() if rec.executed_at else None,
+        },
+    }

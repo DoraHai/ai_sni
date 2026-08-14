@@ -161,6 +161,11 @@ async def apply_keyword_writeback(
 # 匹配方式 → 百度 addWord (matchType, phraseType)（文档 0064/0068 核对）：
 # 精确=1+1、短语=2+1、智能=2+3。两者必须配合传，否则百度按默认细分匹配处理。
 _MATCH_BY_MODE = {"exact": (1, 1), "phrase": (2, 1)}
+_VALID_MATCH_COMBOS = {
+    (1, 1): "精确匹配",
+    (2, 1): "短语匹配",
+    (2, 3): "智能匹配",
+}
 
 
 async def _active_account(session: AsyncSession, tenant_id: int) -> BaiduAccount:
@@ -241,6 +246,89 @@ async def apply_negative_writeback(
         rec.error_msg = str(e)[:2000]
         rec.executed_at = datetime.utcnow()
         logger.exception("加否词异常 adgroup=%s word=%s", adgroup_id, word)
+
+    await session.commit()
+    await session.refresh(rec)
+    return rec
+
+
+async def apply_negative_writeback_campaign(
+    session: AsyncSession,
+    tenant_id: int,
+    word: str,
+    campaign_id: int,
+    *,
+    match_mode: str,
+    operator_user_id: int | None,
+    operator_name: str | None,
+) -> WritebackAction:
+    """把搜索词加成计划级否词。match_mode: exact=精确否 / phrase=短语否。"""
+    word = (word or "").strip()
+    if not word:
+        raise WritebackError("否词不能为空")
+    if match_mode not in ("exact", "phrase"):
+        raise WritebackError("匹配方式只能是 exact（精确否）/ phrase（短语否）")
+
+    camp = await session.scalar(
+        select(Campaign).where(
+            Campaign.tenant_id == tenant_id,
+            Campaign.campaign_id == campaign_id,
+        )
+    )
+    if camp is None:
+        raise WritebackError("计划不在维度表中，请先执行计划维度同步")
+    acc = await _active_account(session, tenant_id)
+
+    field = "exact_negative_words" if match_mode == "exact" else "negative_words"
+    current = list(getattr(camp, field) or [])
+    if word in current:
+        raise WritebackError(
+            f"「{word}」已在该计划的{'精确' if match_mode == 'exact' else '短语'}否词中"
+        )
+    new_list = current + [word]
+
+    dry_run = get_settings().baidu_write_dry_run
+    rec = WritebackAction(
+        tenant_id=tenant_id,
+        baidu_account_id=acc.id,
+        action_type="negative",
+        word=word,
+        match_mode=match_mode,
+        campaign_id=campaign_id,
+        campaign_name=camp.campaign_name,
+        dry_run=dry_run,
+        status="pending",
+        operator_user_id=operator_user_id,
+        operator_name=operator_name,
+    )
+    session.add(rec)
+    await session.flush()
+
+    try:
+        kwargs = (
+            {"exact_negative_words": new_list}
+            if match_mode == "exact"
+            else {"negative_words": new_list}
+        )
+        resp = await CampaignService(_account_client(acc)).update_campaign_negative_words(
+            campaign_id,
+            **kwargs,
+        )
+        rec.status = "dry_run" if dry_run else "success"
+        rec.baidu_response = str(resp)[:2000]
+        rec.executed_at = datetime.utcnow()
+        if not dry_run:
+            setattr(camp, field, new_list)
+    except BaiduAPIError as e:
+        rec.status = "failed"
+        rec.error_msg = f"[{e.code}] {e.message}"[:2000]
+        rec.executed_at = datetime.utcnow()
+        logger.warning("计划级加否词失败 campaign=%s word=%s: %s", campaign_id, word, e)
+    except Exception as e:
+        rec.status = "failed"
+        rec.error_msg = str(e)[:2000]
+        rec.executed_at = datetime.utcnow()
+        logger.exception("计划级加否词异常 campaign=%s word=%s", campaign_id, word)
 
     await session.commit()
     await session.refresh(rec)
@@ -357,6 +445,77 @@ async def apply_pause_writeback(
         rec.error_msg = "未知错误"
         rec.executed_at = datetime.utcnow()
         logger.exception("启停异常 keyword_id=%s", keyword_id)
+
+    await session.commit()
+    await session.refresh(rec)
+    return rec
+
+
+async def apply_match_type_writeback(
+    session: AsyncSession,
+    tenant_id: int,
+    keyword_id: int,
+    match_type: int,
+    phrase_type: int,
+    *,
+    operator_user_id: int | None,
+    operator_name: str | None,
+) -> WritebackAction:
+    """修改关键词匹配模式（updateWord matchType/phraseType）。dry_run 时拦截不真发。"""
+    combo = (match_type, phrase_type)
+    if combo not in _VALID_MATCH_COMBOS:
+        raise WritebackError(
+            f"不支持的匹配模式组合 matchType={match_type}, phraseType={phrase_type}，"
+            f"仅支持精确(1,1) / 短语(2,1) / 智能(2,3)"
+        )
+
+    kw = await session.scalar(
+        select(Keyword).where(
+            Keyword.tenant_id == tenant_id,
+            Keyword.keyword_id == keyword_id,
+        )
+    )
+    if kw is None:
+        raise WritebackError("关键词不在维度表中，请先执行关键词维度同步")
+    acc = await _active_account(session, tenant_id)
+
+    dry_run = get_settings().baidu_write_dry_run
+    rec = WritebackAction(
+        tenant_id=tenant_id,
+        baidu_account_id=acc.id,
+        action_type="set_match_type",
+        word=kw.keyword,
+        match_mode=_VALID_MATCH_COMBOS[combo],
+        campaign_id=kw.campaign_id,
+        adgroup_id=kw.adgroup_id,
+        old_value=kw.match_type,
+        new_value=match_type,
+        dry_run=dry_run,
+        status="pending",
+        operator_user_id=operator_user_id,
+        operator_name=operator_name,
+    )
+    session.add(rec)
+    await session.flush()
+    try:
+        svc = KeywordService(_account_client(acc))
+        resp = await svc.update_word_match_type(keyword_id, match_type, phrase_type)
+        rec.status = "dry_run" if dry_run else "success"
+        rec.baidu_response = str(resp)[:2000]
+        rec.executed_at = datetime.utcnow()
+        if not dry_run:
+            kw.match_type = match_type
+            kw.phrase_type = phrase_type
+    except BaiduAPIError as e:
+        rec.status = "failed"
+        rec.error_msg = f"[{e.code}] {e.message}"[:2000]
+        rec.executed_at = datetime.utcnow()
+        logger.warning("改匹配模式失败 keyword_id=%s: %s", keyword_id, e)
+    except Exception:
+        rec.status = "failed"
+        rec.error_msg = "未知错误"
+        rec.executed_at = datetime.utcnow()
+        logger.exception("改匹配模式异常 keyword_id=%s", keyword_id)
 
     await session.commit()
     await session.refresh(rec)

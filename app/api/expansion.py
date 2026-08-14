@@ -6,7 +6,7 @@
 import csv
 import io
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -16,7 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.deepseek import is_enabled as ai_enabled
 from app.ai.expansion_eval import evaluate_candidates_for_tenant
-from app.baidu.writeback import WritebackError, apply_add_word_writeback
+from app.baidu.writeback import (
+    WritebackError,
+    apply_add_word_writeback,
+    apply_negative_writeback,
+)
 from app.database import get_session
 from app.models import (
     CANDIDATE_AI_RECOMMEND_LABELS,
@@ -25,6 +29,7 @@ from app.models import (
     CANDIDATE_STATUS_LABELS,
     SUGGESTED_CATEGORY_LABELS,
     KeywordCandidate,
+    KwReportSnapshot,
     Tenant,
 )
 from app.security.auth import AuthContext, require_scoped_auth
@@ -38,9 +43,16 @@ router = APIRouter(
 )
 
 COMPETITION_LABELS = {1: "低", 2: "中", 3: "高"}
+SORTABLE_CANDIDATE_FIELDS = {
+    "potential_score": KeywordCandidate.potential_score,
+    "monthly_pv": KeywordCandidate.monthly_pv,
+    "recommend_price_pc": KeywordCandidate.recommend_price_pc,
+    "impression": KeywordCandidate.impression,
+    "click": KeywordCandidate.click,
+}
 
 
-def _candidate_payload(c: KeywordCandidate) -> dict[str, Any]:
+def _candidate_payload(c: KeywordCandidate, conversions_30d: int | None = None) -> dict[str, Any]:
     return {
         "id": c.id,
         "word": c.word,
@@ -56,11 +68,14 @@ def _candidate_payload(c: KeywordCandidate) -> dict[str, Any]:
         "recommend_price_mobile": (
             float(c.recommend_price_mobile) if c.recommend_price_mobile is not None else None
         ),
+        "preset_price": float(c.preset_price) if c.preset_price is not None else None,
+        "preset_match_mode": c.preset_match_mode,
         "show_reasons": c.show_reasons or [],
         "impression": c.impression,
         "click": c.click,
         "cost": float(c.cost) if c.cost is not None else None,
         "matched_keyword": c.matched_keyword,
+        "conversions_30d": conversions_30d,
         "potential_score": float(c.potential_score) if c.potential_score is not None else None,
         "suggested_category": c.suggested_category,
         "suggested_category_label": SUGGESTED_CATEGORY_LABELS.get(c.suggested_category),
@@ -104,6 +119,39 @@ def _filters(
     return cond
 
 
+async def _conversion_lookup(
+    session: AsyncSession,
+    tenant_id: int,
+    matched_keywords: list[str],
+    days: int = 30,
+) -> dict[str, int]:
+    """按触发词文本反查近 N 天转化数，仅作候选否词时的参考归因。"""
+    keywords = sorted({kw for kw in matched_keywords if kw})
+    if not keywords:
+        return {}
+    latest = await session.scalar(
+        select(func.max(KwReportSnapshot.report_date)).where(
+            KwReportSnapshot.tenant_id == tenant_id
+        )
+    )
+    if latest is None:
+        return {}
+    start = latest - timedelta(days=days - 1)
+    rows = (
+        await session.execute(
+            select(KwReportSnapshot.keyword, func.sum(KwReportSnapshot.conversions))
+            .where(
+                KwReportSnapshot.tenant_id == tenant_id,
+                KwReportSnapshot.keyword.in_(keywords),
+                KwReportSnapshot.report_date >= start,
+                KwReportSnapshot.report_date <= latest,
+            )
+            .group_by(KwReportSnapshot.keyword)
+        )
+    ).all()
+    return {kw: int(conversions or 0) for kw, conversions in rows}
+
+
 @router.get("/candidates")
 async def list_candidates(
     tenant_id: int = Query(..., description="本地租户 ID"),
@@ -115,6 +163,11 @@ async def list_candidates(
     ai_relevance: str | None = Query(
         None, description="AI 相关性：relevant / generic / irrelevant"
     ),
+    sort_by: str = Query(
+        "potential_score",
+        description="potential_score/monthly_pv/recommend_price_pc/impression/click",
+    ),
+    order: str = Query("desc", description="asc/desc"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
     session: AsyncSession = Depends(get_session),
@@ -125,14 +178,17 @@ async def list_candidates(
     total = await session.scalar(
         select(func.count()).select_from(KeywordCandidate).where(*cond)
     )
+    sort_col = SORTABLE_CANDIDATE_FIELDS.get(sort_by, KeywordCandidate.potential_score)
+    sort_exp = (
+        sort_col.asc().nulls_last()
+        if order.lower() == "asc"
+        else sort_col.desc().nulls_last()
+    )
     rows = (
         await session.scalars(
             select(KeywordCandidate)
             .where(*cond)
-            .order_by(
-                KeywordCandidate.potential_score.desc().nulls_last(),
-                KeywordCandidate.id,
-            )
+            .order_by(sort_exp, KeywordCandidate.id)
             .offset((page - 1) * page_size)
             .limit(page_size)
         )
@@ -180,6 +236,15 @@ async def list_candidates(
             KeywordCandidate.tenant_id == tenant_id
         )
     )
+    conversion_map = (
+        await _conversion_lookup(
+            session,
+            tenant_id,
+            [c.matched_keyword for c in rows if c.matched_keyword],
+        )
+        if suggested_category == "negative"
+        else {}
+    )
 
     return {
         "total": int(total or 0),
@@ -201,7 +266,13 @@ async def list_candidates(
             for code, label in CANDIDATE_AI_RELEVANCE_LABELS.items()
         ],
         "last_ai_eval_at": last_ai_eval.isoformat() if last_ai_eval else None,
-        "candidates": [_candidate_payload(c) for c in rows],
+        "candidates": [
+            _candidate_payload(
+                c,
+                conversion_map.get(c.matched_keyword) if c.matched_keyword else None,
+            )
+            for c in rows
+        ],
     }
 
 
@@ -222,6 +293,137 @@ async def update_candidate_status(
     cand.status_updated_at = datetime.utcnow()
     await session.commit()
     return {"status": "ok", "id": cand.id, "candidate_status": cand.status}
+
+
+class BatchSetPresetRequest(BaseModel):
+    tenant_id: int
+    candidate_ids: list[int]
+    preset_price: float | None = None
+    preset_match_mode: str | None = None  # exact / phrase
+
+
+async def _candidate_batch_rows(
+    session: AsyncSession, tenant_id: int, candidate_ids: list[int]
+) -> list[KeywordCandidate]:
+    return (
+        await session.scalars(
+            select(KeywordCandidate).where(
+                KeywordCandidate.tenant_id == tenant_id,
+                KeywordCandidate.id.in_(candidate_ids),
+            )
+        )
+    ).all()
+
+
+@router.post("/candidates/batch-set-preset")
+async def batch_set_preset(
+    req: BatchSetPresetRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """批量设置候选词的预设出价/匹配方式，供加入计划时默认填充。"""
+    ctx.ensure_tenant(req.tenant_id)
+    if req.preset_match_mode is not None and req.preset_match_mode not in ("exact", "phrase"):
+        raise HTTPException(400, "匹配方式只能是 exact / phrase")
+    rows = await _candidate_batch_rows(session, req.tenant_id, req.candidate_ids)
+    for cand in rows:
+        if req.preset_price is not None:
+            cand.preset_price = req.preset_price
+        if req.preset_match_mode is not None:
+            cand.preset_match_mode = req.preset_match_mode
+    await session.commit()
+    return {"status": "ok", "updated": len(rows)}
+
+
+class BatchSetCategoryRequest(BaseModel):
+    tenant_id: int
+    candidate_ids: list[int]
+    category: str  # 核心关键词圈选传 "focus"
+
+
+@router.post("/candidates/batch-set-category")
+async def batch_set_category(
+    req: BatchSetCategoryRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """批量设置建议分类（核心关键词圈选 = 批量设为 focus）。"""
+    ctx.ensure_tenant(req.tenant_id)
+    rows = await _candidate_batch_rows(session, req.tenant_id, req.candidate_ids)
+    for cand in rows:
+        cand.suggested_category = req.category
+    await session.commit()
+    return {"status": "ok", "updated": len(rows)}
+
+
+class BatchStatusRequest(BaseModel):
+    tenant_id: int
+    candidate_ids: list[int]
+    status: str  # ignored（标记已处理）/ pending（恢复）
+
+
+@router.post("/candidates/batch-status")
+async def batch_set_status(
+    req: BatchStatusRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """批量标记已处理（忽略）或批量恢复。"""
+    ctx.ensure_tenant(req.tenant_id)
+    if req.status not in ("ignored", "pending"):
+        raise HTTPException(400, "status 只能是 ignored（标记已处理）或 pending（恢复）")
+    rows = await _candidate_batch_rows(session, req.tenant_id, req.candidate_ids)
+    now = datetime.utcnow()
+    for cand in rows:
+        cand.status = req.status
+        cand.status_updated_at = now
+    await session.commit()
+    return {"status": "ok", "updated": len(rows)}
+
+
+class BatchNegativeRequest(BaseModel):
+    tenant_id: int
+    candidate_ids: list[int]
+    adgroup_id: int
+    match_mode: str = "phrase"
+
+
+@router.post("/candidates/batch-negative")
+async def batch_add_negative(
+    req: BatchNegativeRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """批量把候选词加为指定单元的否词，成功的候选词标记为 ignored。"""
+    ctx.ensure_tenant(req.tenant_id)
+    rows = await _candidate_batch_rows(session, req.tenant_id, req.candidate_ids)
+    results = []
+    for cand in rows:
+        try:
+            rec = await apply_negative_writeback(
+                session,
+                req.tenant_id,
+                cand.word,
+                req.adgroup_id,
+                match_mode=req.match_mode,
+                operator_user_id=ctx.user_id,
+                operator_name=ctx.username,
+            )
+            if rec.status in ("dry_run", "success"):
+                cand.status = "ignored"
+                cand.status_updated_at = datetime.utcnow()
+            results.append({"candidate_id": cand.id, "word": cand.word, "status": rec.status})
+        except WritebackError as exc:
+            results.append(
+                {
+                    "candidate_id": cand.id,
+                    "word": cand.word,
+                    "status": "failed",
+                    "error": str(exc),
+                }
+            )
+    await session.commit()
+    return {"status": "ok", "results": results}
 
 
 class AddToPlanRequest(BaseModel):

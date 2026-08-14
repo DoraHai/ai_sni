@@ -68,6 +68,8 @@ SEARCH_TERM_REPORT_COLUMNS = [
     "cost",
     "ctr",
     "cpc",
+    "ocpcConversionsDetail2",
+    "ocpcConversionsDetail2CVR",
 ]
 
 
@@ -88,6 +90,15 @@ KEYWORD_REGION_REPORT_COLUMNS = [
     "cost",
     "ctr",
     "cpc",
+]
+
+
+KEYWORD_PROVINCE_REPORT_COLUMNS = [
+    "date",
+    "provinceName",
+    "impression",
+    "click",
+    "cost",
 ]
 
 
@@ -173,6 +184,24 @@ class ReportService:
             start_date,
             end_date,
             columns or KEYWORD_REGION_REPORT_COLUMNS,
+            time_unit,
+            page_size,
+        )
+
+    async def get_keyword_province_report(
+        self,
+        start_date: str,
+        end_date: str,
+        columns: list[str] | None = None,
+        time_unit: str = "DAY",
+        page_size: int = 10000,
+    ) -> list[dict[str, Any]]:
+        """关键词报告省级汇总源数据，调用 provinceName 维度后本地按省聚合。"""
+        return await self._get_report_rows(
+            self.KEYWORD_REPORT_TYPE,
+            start_date,
+            end_date,
+            columns or KEYWORD_PROVINCE_REPORT_COLUMNS,
             time_unit,
             page_size,
         )

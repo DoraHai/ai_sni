@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.adjustment_verify import build_one, generate_verdict, list_pending
+from app.ai.budget_adjustment_verify import list_pending_budget
 from app.ai.deepseek import is_enabled as ai_enabled
 from app.database import get_session
 from app.models import VERDICT_LABELS, AdjustmentReview, Tenant
@@ -38,6 +39,29 @@ async def list_adjustments(
         "ai_enabled": ai_enabled(),
         "verdict_labels": VERDICT_LABELS,
         "summary": {"total": len(items), "pending": pending, "verified": len(items) - pending},
+        "items": items,
+    }
+
+
+@router.get("/budget")
+async def list_budget_adjustments(
+    tenant_id: int = Query(..., description="本地租户 ID"),
+    days: int = Query(7, ge=1, le=90),
+    status: str | None = Query(None, description="pending / verified，默认全部"),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    tenant = await session.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(404, "租户不存在，请确认 tenant_id")
+    items = await list_pending_budget(session, tenant, days=days, status=status)
+    pending = sum(1 for it in items if it["review"]["status"] == "pending")
+    return {
+        "verdict_labels": VERDICT_LABELS,
+        "summary": {
+            "total": len(items),
+            "pending": pending,
+            "verified": len(items) - pending,
+        },
         "items": items,
     }
 

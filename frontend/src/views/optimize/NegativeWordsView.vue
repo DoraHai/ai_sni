@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { addNegativeWord, fetchNegativeWords, removeNegativeWord } from '../../api/negatives'
 import { fetchCandidates, updateCandidateStatus } from '../../api/expansion'
 import { fetchAdgroupList, fetchCampaignList } from '../../api/keywords'
+import AddToPlanDialog from '../../components/AddToPlanDialog.vue'
 import { session } from '../../store/session'
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
@@ -15,6 +16,7 @@ const scanData = ref(null) // 自研扫描待审（拓词"建议否定"候选，
 const rejectedData = ref(null) // 已驳回（同候选，ignored）
 
 const view = ref('review') // review=待审建议 existing=现有否词 rejected=已驳回
+const addToPlanDialogRef = ref(null)
 
 const filters = reactive({ scope: '', match: '', flag: '', q: '' })
 
@@ -58,6 +60,7 @@ const reviewCount = computed(() =>
 // 待审建议合并行：自研扫描候选在前（可操作），重复/冲突检测在后（写回类禁用）
 const reviewRows = computed(() => {
   const scans = (scanData.value?.candidates || []).map((c) => ({
+    ...c,
     kind: 'scan',
     id: c.id,
     word: c.word,
@@ -66,6 +69,7 @@ const reviewRows = computed(() => {
     scopeText: '待人工定（线下添加时选）',
     matchLabel: '—',
     trigger: c.impression != null ? `${c.impression} 次` : '—',
+    conversions30d: c.conversions_30d,
     basis: [
       c.matched_keyword ? `触发词「${c.matched_keyword}」` : null,
       c.impression != null ? `窗口展现 ${c.impression} / 点击 ${c.click ?? 0}` : null,
@@ -103,6 +107,10 @@ async function setScanStatus(row, status, label) {
   } catch (e) {
     ElMessage.error(e.message)
   }
+}
+
+function openAddToPlan(row) {
+  addToPlanDialogRef.value?.open(row)
 }
 
 const fmtInt = (v) => (v == null ? '—' : Number(v).toLocaleString('zh-CN'))
@@ -253,14 +261,22 @@ onMounted(load)
         <el-table-column label="近 30 天触发" width="106" align="right">
           <template #default="{ row }"><span class="num">{{ row.trigger }}</span></template>
         </el-table-column>
+        <el-table-column label="近30天转化" width="106" align="right">
+          <template #default="{ row }">
+            <span class="num">{{ row.kind === 'scan' ? fmtInt(row.conversions30d) : '—' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="判定依据" min-width="260">
           <template #default="{ row }"><span class="basis">{{ row.basis }}</span></template>
         </el-table-column>
-        <el-table-column label="操作" width="190" fixed="right">
+        <el-table-column label="操作" width="270" fixed="right">
           <template #default="{ row }">
             <div class="row-actions" v-if="row.kind === 'scan' && session.canEdit('optimize.negatives')">
               <el-tooltip content="选目标单元加成否词（updateAdgroup 写回，dry-run 保护）" placement="top">
                 <el-button size="small" type="primary" plain @click="openAddNeg(row.word)">加否词</el-button>
+              </el-tooltip>
+              <el-tooltip content="打开加入计划弹窗，选单元、出价和匹配方式后设为正式关键词" placement="top">
+                <el-button size="small" plain @click="openAddToPlan(row)">设为关键词</el-button>
               </el-tooltip>
               <el-button size="small" @click="setScanStatus(row, 'ignored', '已驳回')">驳回</el-button>
             </div>
@@ -373,6 +389,8 @@ onMounted(load)
       {{ fmtInt(summary?.adgroup_level) }}；短语否 {{ fmtInt(summary?.phrase) }} / 精确否 {{ fmtInt(summary?.exact) }}）。
       配额上限按百度账户星级浮动（200-900 条），星级数据待接入；定期清理重复/冷门否词可释放配额。
     </div>
+
+    <AddToPlanDialog ref="addToPlanDialogRef" :tenant-id="TENANT_ID" @success="load" />
 
     <!-- 添加否词弹框（单元级 updateAdgroup 写回） -->
     <el-dialog v-model="negDialog.visible" title="添加否词" width="440px">

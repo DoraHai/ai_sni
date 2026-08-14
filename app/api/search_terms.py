@@ -16,6 +16,7 @@ from app.baidu.writeback import (
     WritebackError,
     apply_add_word_writeback,
     apply_negative_writeback,
+    apply_negative_writeback_campaign,
 )
 from app.database import get_session
 from app.models import (
@@ -55,6 +56,8 @@ def _to_dict(r: SearchTermReport) -> dict:
         "cost": float(r.cost) if r.cost is not None else None,
         "ctr": float(r.ctr) if r.ctr is not None else None,
         "cpc": float(r.cpc) if r.cpc is not None else None,
+        "conversions": r.conversions,
+        "cvr": float(r.cvr) if r.cvr is not None else None,
     }
 
 
@@ -186,7 +189,9 @@ def _action_dict(r: WritebackAction) -> dict:
 class NegativeRequest(BaseModel):
     tenant_id: int
     word: str
-    adgroup_id: int
+    scope: str = "adgroup"
+    adgroup_id: int | None = None
+    campaign_id: int | None = None
     match_mode: str = "exact"  # exact=精确否 / phrase=短语否
 
 
@@ -207,10 +212,32 @@ async def add_negative(
     """把搜索词加成单元否词（updateAdgroup 追加）。dry-run 保护 + 台账。"""
     ctx.ensure_tenant(req.tenant_id)
     try:
-        rec = await apply_negative_writeback(
-            session, req.tenant_id, req.word, req.adgroup_id,
-            match_mode=req.match_mode, operator_user_id=ctx.user_id, operator_name=ctx.username,
-        )
+        if req.scope == "campaign":
+            if not req.campaign_id:
+                raise HTTPException(400, "计划级否词需要 campaign_id")
+            rec = await apply_negative_writeback_campaign(
+                session,
+                req.tenant_id,
+                req.word,
+                req.campaign_id,
+                match_mode=req.match_mode,
+                operator_user_id=ctx.user_id,
+                operator_name=ctx.username,
+            )
+        elif req.scope == "adgroup":
+            if not req.adgroup_id:
+                raise HTTPException(400, "单元级否词需要 adgroup_id")
+            rec = await apply_negative_writeback(
+                session,
+                req.tenant_id,
+                req.word,
+                req.adgroup_id,
+                match_mode=req.match_mode,
+                operator_user_id=ctx.user_id,
+                operator_name=ctx.username,
+            )
+        else:
+            raise HTTPException(400, "scope 只能是 adgroup / campaign")
     except WritebackError as e:
         raise HTTPException(400, str(e))
     return {"status": "ok", "dry_run": rec.dry_run, "action": _action_dict(rec)}

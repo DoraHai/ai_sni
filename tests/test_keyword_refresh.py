@@ -17,7 +17,10 @@ os.environ.setdefault(
 )
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
-from app.baidu.sync import sync_keyword_dimension_reports_for_account
+from app.baidu.sync import (
+    sync_keyword_dimension_reports_for_account,
+    sync_keyword_region_snapshots_for_account,
+)
 from app.scheduler import refresh_keyword_workbench_snapshot
 from app.security.auth import _required
 
@@ -67,6 +70,44 @@ class KeywordRefreshTests(unittest.IsolatedAsyncioTestCase):
             chunked.await_args_list[1].args[3],
             "uq_kw_hourly_report_tenant_dt_kw_device",
         )
+
+    async def test_region_snapshots_aggregate_by_province(self):
+        svc = SimpleNamespace(
+            get_keyword_province_report=AsyncMock(
+                return_value=[
+                    {"date": "2026-07-31", "provinceName": "上海", "cost": "1.20", "click": "2", "impression": "10"},
+                    {"date": "2026-07-31", "provinceName": "上海", "cost": "2.30", "click": "3", "impression": "20"},
+                    {"date": "2026-07-31", "provinceName": "江苏", "cost": "4", "click": "5", "impression": "30"},
+                    {"date": "2026-07-31", "provinceName": "", "cost": "9", "click": "9", "impression": "9"},
+                ]
+            )
+        )
+        chunked = AsyncMock()
+        account = SimpleNamespace(
+            id=5,
+            tenant_id=9,
+            baidu_username="large-account",
+            access_token_encrypted="encrypted",
+        )
+        with (
+            patch("app.baidu.sync.BaiduAPIClient"),
+            patch("app.baidu.sync.decrypt", return_value="token"),
+            patch("app.baidu.sync.ReportService", return_value=svc),
+            patch("app.baidu.sync._chunked_upsert", new=chunked),
+        ):
+            result = await sync_keyword_region_snapshots_for_account(
+                object(), account, date(2026, 7, 31)
+            )
+
+        self.assertEqual(result, 3)
+        records = chunked.await_args.args[2]
+        self.assertEqual(chunked.await_args.args[3], "uq_kw_region_snapshot")
+        by_province = {r["province"]: r for r in records}
+        self.assertEqual(by_province["上海"]["cost"], 3.5)
+        self.assertEqual(by_province["上海"]["click"], 5)
+        self.assertEqual(by_province["上海"]["impression"], 30)
+        self.assertEqual(by_province["江苏"]["cost"], 4.0)
+        self.assertEqual(by_province["未知"]["cost"], 9.0)
 
     async def test_refresh_runs_report_structure_and_classification(self):
         session = object()

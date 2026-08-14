@@ -2,7 +2,7 @@
 
 > 交接基线：`codex/handoff-sem-20260813`
 >
-> 整理日期：2026-08-13
+> 整理日期：2026-08-14
 >
 > 生产域名：<https://sem.snipers.com.cn>
 
@@ -11,6 +11,11 @@
 这是一个多租户获客运营平台，主要包含 SEM、SEO、GEO、统一登录和官网门户。后端
 基于 FastAPI + PostgreSQL，前端基于 Vue 3 + Vite。生产环境已经按发布单元拆分，
 **不要把不同前端的构建产物同步到同一个目录**。
+
+当前接手阶段仅允许操作 SEM 相关功能。未经负责人明确授权，禁止修改或部署官网门户、
+旧 Strapi、GEO 前端、GEO 服务、SEO 基线、数据库迁移、Nginx、生产环境变量和其他
+非 SEM 模块。即使同仓库内存在相关代码，也应保持模块边界，避免为了 SEM 需求顺手改动
+其他发布单元。
 
 接手第一周建议按下面顺序操作：
 
@@ -152,6 +157,21 @@ GEO 使用同一个数据库和认证表，但 API 进程、调度器、前端�
 
 入口：登录后进入 `/onboarding`，点击“授权新客户账号”。
 
+### 6.1 百度营销离线接口文档
+
+本地已交接一份百度营销商业开发者中心离线文档快照：
+
+- 路径：`D:\workspace\sem-doc\baidu-dev-docs-markdown-20260611`
+- 抓取时间：2026-06-11
+- 页面数量：1037
+- 核心文件：`README.md`、`all.md`、`catalog.json`、`pages/`
+
+后续开发百度接口时，优先使用这套离线文档定位接口、字段、QPS 限制和错误码。
+离线文档只是 2026-06-11 的快照，不代表永久最新。涉及 OAuth、权限范围、调用频次、
+写操作或已下线接口时，必须再次核对百度官方在线文档。
+
+禁止在该文档目录中添加 SecretKey、Token、客户账户凭据或生产环境配置。
+
 正常流程：
 
 1. 后端生成带签名 `state` 的百度授权链接；
@@ -163,6 +183,10 @@ GEO 使用同一个数据库和认证表，但 API 进程、调度器、前端�
 
 平台不保存客户百度账号密码。Token 使用 `CRYPTO_MASTER_KEY_B64` 加密，失效或客户解除
 授权后停止同步并提示重新授权。
+
+当前生产环境处于“不真实写回百度”的演练模式。除非负责人明确说明开启真实写回，
+不得修改写回开关、不得执行真实百度推广写操作，也不得以部署、调试或验收为由绕过
+该限制。
 
 SEM 主调度器在 `app/scheduler.py`：
 
@@ -253,6 +277,74 @@ VERIFY_ONLY=1 npm run deploy:login
 
 任何生产发布都应先取得负责人确认。推荐顺序：数据库备份/迁移 → API → 独立前端 →
 健康检查与业务抽测。
+
+服务器连接配置只允许从本地文件读取：
+
+- `D:\workspace\sem\deploy\servers.local.json`
+
+该文件包含敏感连接信息，只可本地只读使用，禁止提交、禁止贴全文、禁止打印密码、
+Token、私钥、数据库口令或生产环境变量。当前 SEM 生产主机使用其中
+`newApplicationServer` 配置，SSH key 路径以 `keyPath` 字段为准。
+
+SEM 生产路径：
+
+| 项目 | 位置 |
+| --- | --- |
+| SEM 后端代码 | `/opt/sem-backend` |
+| SEM 后端 systemd 服务 | `sem-backend` |
+| SEM 主前端 current | `/opt/sem-frontend/current` |
+| SEM 主前端版本目录 | `/opt/sem-frontend/releases/<timestamp>-<desc>` |
+| 后端本机健康检查 | `http://127.0.0.1:8000/health` |
+
+### 9.0 手动部署模板（AI 接手常用）
+
+只部署 SEM 后端文件时，本地先做语法检查：
+
+```powershell
+.venv\Scripts\python.exe -m py_compile app\path\to\file.py
+```
+
+然后上传、覆盖、重启和健康检查：
+
+```powershell
+scp -i "<keyPath-from-servers.local.json>" app/path/to/file.py root@<sem-host>:/tmp/
+ssh -i "<keyPath-from-servers.local.json>" root@<sem-host> 'set -e; cp /tmp/file.py /opt/sem-backend/app/path/to/file.py; rm -f /tmp/file.py; cd /opt/sem-backend; sudo -u sem PYTHONPATH=. .venv/bin/python -m py_compile app/path/to/file.py; systemctl restart sem-backend; sleep 5; systemctl is-active sem-backend; curl -fsS http://127.0.0.1:8000/health'
+```
+
+只部署 SEM 主前端时，本地先构建和校验：
+
+```powershell
+cd D:\workspace\sem\frontend
+npm.cmd run build
+npm.cmd run verify:sem-build
+```
+
+再打包、上传、创建 release 并切换 `current`：
+
+```powershell
+cd D:\workspace\sem
+$ts=(Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
+tar -czf "sem-frontend-$ts.tgz" -C frontend/dist .
+scp -i "<keyPath-from-servers.local.json>" "sem-frontend-$ts.tgz" root@<sem-host>:/tmp/
+ssh -i "<keyPath-from-servers.local.json>" root@<sem-host> 'set -e; release=/opt/sem-frontend/releases/<timestamp>-<desc>; mkdir -p "$release"; tar -xzf /tmp/<package>.tgz -C "$release"; ln -sfn "$release" /opt/sem-frontend/current; rm -f /tmp/<package>.tgz; readlink -f /opt/sem-frontend/current'
+Remove-Item -LiteralPath "sem-frontend-$ts.tgz" -ErrorAction SilentlyContinue
+```
+
+需要数据库迁移时必须提前获得明确授权，先确认当前版本，再执行：
+
+```bash
+cd /opt/sem-backend
+sudo -u sem PYTHONPATH=. .venv/bin/alembic current
+sudo -u sem PYTHONPATH=. .venv/bin/alembic upgrade head
+systemctl restart sem-backend
+curl -fsS http://127.0.0.1:8000/health
+```
+
+最近已执行的 SEM 迁移版本：`0061_search_term_conversions (head)`。
+
+发布禁区仍然有效：没有明确授权时，不部署官网、旧 Strapi、GEO、SEO 基线、登录页；
+不改 Nginx；不改生产 `.env`；不执行数据库迁移；不打印或提交任何密钥；不切换百度
+真实写回。当前百度写回仍为 dry-run 演练模式。
 
 ### 9.1 公共登录页
 

@@ -13,10 +13,56 @@ const error = ref('')
 const report = ref(null)
 const pad = (n) => String(n).padStart(2, '0')
 const isoOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-function currentMonthRange(now = new Date()) {
-  return [`${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`, isoOf(now)]
+function getMonday(d) {
+  const date = new Date(d)
+  const day = date.getDay() || 7
+  if (day !== 1) date.setDate(date.getDate() - day + 1)
+  return date
 }
-const dateRange = ref(currentMonthRange())
+const quickOptions = [
+  {
+    key: 'today',
+    label: '今日',
+    range: () => {
+      const today = new Date()
+      return [isoOf(today), isoOf(today)]
+    },
+  },
+  {
+    key: 'week',
+    label: '本周',
+    range: () => {
+      const monday = getMonday(new Date())
+      const sunday = new Date(monday)
+      sunday.setDate(monday.getDate() + 6)
+      return [isoOf(monday), isoOf(sunday)]
+    },
+  },
+  {
+    key: 'lastWeek',
+    label: '上周',
+    range: () => {
+      const thisMonday = getMonday(new Date())
+      const lastMonday = new Date(thisMonday)
+      lastMonday.setDate(thisMonday.getDate() - 7)
+      const lastSunday = new Date(lastMonday)
+      lastSunday.setDate(lastMonday.getDate() + 6)
+      return [isoOf(lastMonday), isoOf(lastSunday)]
+    },
+  },
+  {
+    key: 'last7',
+    label: '最近7天',
+    range: () => {
+      const end = new Date()
+      const start = new Date()
+      start.setDate(end.getDate() - 6)
+      return [isoOf(start), isoOf(end)]
+    },
+  },
+]
+const activeRangeKey = ref('week')
+const dateRange = ref(quickOptions.find((opt) => opt.key === activeRangeKey.value).range())
 // 绑定单客户的账号（品牌方客户）锁定客户版；无绑定（内部团队）默认内部版可切
 const version = ref(session.user?.tenant_id ? 'client' : 'internal')
 const versionLocked = computed(() => !!session.user?.tenant_id)
@@ -75,6 +121,15 @@ function handleExportCommand(format) {
     return
   }
   exportReport(format)
+}
+
+function applyQuickRange(opt) {
+  activeRangeKey.value = opt.key
+  dateRange.value = opt.range()
+}
+
+function clearQuickRange() {
+  activeRangeKey.value = ''
 }
 
 async function exportReport(format) {
@@ -141,6 +196,17 @@ function scrollTo(key) {
         <div class="page-desc">客户交付 · 自定义区间效果数据 + AI 分析叙述</div>
       </div>
       <div class="tb-actions">
+        <div class="quick-range-buttons" aria-label="快捷日期范围">
+          <button
+            v-for="opt in quickOptions"
+            :key="opt.key"
+            :class="{ active: activeRangeKey === opt.key }"
+            type="button"
+            @click="applyQuickRange(opt)"
+          >
+            {{ opt.label }}
+          </button>
+        </div>
         <el-date-picker
           v-model="dateRange"
           type="daterange"
@@ -152,6 +218,7 @@ function scrollTo(key) {
           :clearable="false"
           aria-label="选择报告日期区间"
           style="width: 268px"
+          @change="clearQuickRange"
         />
         <el-radio-group v-if="!versionLocked" v-model="version" size="small">
           <el-radio-button label="internal">内部版</el-radio-button>
@@ -165,7 +232,8 @@ function scrollTo(key) {
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item command="csv">CSV 表格</el-dropdown-item>
-              <el-dropdown-item command="xls">Excel 表格</el-dropdown-item>
+              <el-dropdown-item command="xls">Excel 兼容表格</el-dropdown-item>
+              <el-dropdown-item command="xlsx">Excel 文件</el-dropdown-item>
               <el-dropdown-item command="pdf">PDF 文件</el-dropdown-item>
             </el-dropdown-menu>
           </template>
@@ -334,6 +402,19 @@ function scrollTo(key) {
 .page-desc { font-size: 12px; color: var(--sem-text-sub); margin-top: 4px; }
 .tb-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
 .dropdown-mark { margin-left: 6px; font-size: 11px; color: #909399; }
+.quick-range-buttons { display: flex; gap: 6px; align-items: center; }
+.quick-range-buttons button {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  background: #fff;
+  color: #606266;
+  cursor: pointer;
+  font-size: 12px;
+}
+.quick-range-buttons button:hover { border-color: var(--sem-primary); color: var(--sem-primary); }
+.quick-range-buttons button.active { border-color: var(--sem-primary); background: var(--sem-primary); color: #fff; }
 
 .report-layout { display: flex; gap: 16px; align-items: flex-start; }
 .toc { width: 150px; flex-shrink: 0; background: #fff; border: 1px solid var(--sem-border); border-radius: 8px; padding: 12px; position: sticky; top: 12px; }

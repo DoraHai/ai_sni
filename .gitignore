@@ -24,3 +24,7 @@ postgres_data/
 # 独立官网仓库（拥有自己的 Git 历史）
 gsnipers-website/
 _refs/
+
+# Local server connection config. Never commit secrets or host credentials.
+deploy/servers.local.json
+deploy/servers.local.json.bak-*

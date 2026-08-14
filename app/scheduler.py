@@ -8,9 +8,8 @@
 
 在 main.py 的 startup 事件里调 start_scheduler()。
 """
-import fcntl
 import logging
-from asyncio import Lock
+from asyncio import Lock, sleep
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -24,6 +23,7 @@ from app.baidu.sync import (
     sync_keyword_dimension_reports_for_account,
     sync_keyword_report_for_account,
     sync_keyword_report_for_all_active_accounts,
+    sync_region_snapshot,
     sync_keywords_for_account,
     sync_ocpc_packages_for_account,
     sync_operation_records_for_account,
@@ -34,9 +34,15 @@ from app.classification import reclassify_keywords
 from app.database import async_session_factory
 from app.models import BaiduAccount, Tenant
 from app.rules import run_rules_for_all_tenants
+from app.rules.site_health import run_site_health_for_all_tenants
 from app.suggestions import run_suggestions_for_all_tenants
 
 logger = logging.getLogger(__name__)
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows local tests only
+    fcntl = None
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
 _report_sync_lock = Lock()
@@ -52,6 +58,8 @@ _lock_fh = None
 def _acquire_tenant_sync_lock(tenant_id: int):
     """跨 worker 的客户级非阻塞锁，避免定时任务和人工刷新重复调用百度。"""
     fh = open(f"/tmp/sem_tenant_sync_{tenant_id}.lock", "w")
+    if fcntl is None:
+        return fh
     try:
         fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
@@ -64,7 +72,8 @@ def _release_tenant_sync_lock(fh) -> None:
     if fh is None:
         return
     try:
-        fcntl.flock(fh, fcntl.LOCK_UN)
+        if fcntl is not None:
+            fcntl.flock(fh, fcntl.LOCK_UN)
     finally:
         fh.close()
 
@@ -127,7 +136,8 @@ def _acquire_scheduler_lock() -> bool:
     global _lock_fh
     try:
         _lock_fh = open(_SCHEDULER_LOCK_PATH, "w")
-        fcntl.flock(_lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if fcntl is not None:
+            fcntl.flock(_lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
         return True
     except OSError:
         if _lock_fh is not None:
@@ -156,6 +166,10 @@ async def fetch_yesterday_keyword_report() -> None:
         ).all()
         for acc in accounts:
             try:
+                tenant = await session.get(Tenant, acc.tenant_id)
+                if tenant is not None:
+                    await sleep(2)
+                    await sync_region_snapshot(session, tenant, acc, yesterday, yesterday)
                 await sync_campaigns_for_account(session, acc)
                 await sync_adgroups_for_account(session, acc)
                 await sync_keywords_for_account(session, acc)
@@ -239,6 +253,15 @@ async def purge_old_assistant_messages() -> None:
             logger.exception("[scheduler] 清理助手对话失败")
 
 
+async def probe_site_health_alerts() -> None:
+    """独立探测落地页可用性，避免拖慢每日报表同步链路。"""
+    today = datetime.now(_SHANGHAI_TZ).date()
+    logger.info("[scheduler] 开始落地页可用性探测 %s", today)
+    async with async_session_factory() as session:
+        result = await run_site_health_for_all_tenants(session, today)
+    logger.info("[scheduler] %s 落地页可用性探测完成: %s", today, result)
+
+
 def start_scheduler() -> None:
     if not _acquire_scheduler_lock():
         logger.info(
@@ -265,6 +288,14 @@ def start_scheduler() -> None:
         purge_old_assistant_messages,
         CronTrigger(hour=3, minute=30),
         id="purge_old_assistant_messages",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        probe_site_health_alerts,
+        CronTrigger(minute=20),
+        id="probe_site_health_alerts",
         replace_existing=True,
         max_instances=1,
         coalesce=True,

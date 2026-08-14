@@ -10,12 +10,14 @@ import io
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.monthly_report import get_analysis_report, get_monthly_report
 from app.database import get_session
 from app.models import KwReportSnapshot, Tenant
+from app.reports.excel_export import build_report_workbook
 from app.security.auth import require_scoped_auth
 
 logger = logging.getLogger(__name__)
@@ -179,7 +181,9 @@ async def export_analysis_report(
     start_date: date = Query(..., description="统计起始日期"),
     end_date: date = Query(..., description="统计截止日期"),
     format: str = Query(
-        "csv", pattern="^(csv|xls)$", description="csv 或 xls（Excel 可打开）"
+        "csv",
+        pattern="^(csv|xls|xlsx)$",
+        description="csv / xls(HTML表) / xlsx(真Excel)",
     ),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
@@ -191,6 +195,18 @@ async def export_analysis_report(
     report = await get_analysis_report(
         session, tenant, start_date, end_date, force=False
     )
+
+    if format == "xlsx":
+        buf = build_report_workbook(report)
+        filename = _download_period_filename(tenant_id, start_date, end_date, "xlsx")
+        return StreamingResponse(
+            buf,
+            media_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
     rows = _rows_from_report(report)
     filename = _download_period_filename(
         tenant_id, start_date, end_date, format
@@ -245,14 +261,30 @@ async def export_monthly_report(
     tenant_id: int = Query(..., description="本地租户 ID"),
     year: int = Query(..., ge=2020, le=2100),
     month: int = Query(..., ge=1, le=12),
-    format: str = Query("csv", pattern="^(csv|xls)$", description="csv 或 xls（Excel 可打开）"),
+    format: str = Query(
+        "csv",
+        pattern="^(csv|xls|xlsx)$",
+        description="csv / xls(HTML表) / xlsx(真Excel)",
+    ),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
-    """导出月报表格。csv 为标准逗号分隔；xls 为 Excel 可直接打开的 HTML 表格。"""
+    """导出月报表格。csv 为标准逗号分隔；xls 为 HTML 表；xlsx 为真 Excel。"""
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
     report = await get_monthly_report(session, tenant, year, month, force=False)
+
+    if format == "xlsx":
+        buf = build_report_workbook(report)
+        filename = _download_filename(tenant_id, year, month, "xlsx")
+        return StreamingResponse(
+            buf,
+            media_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
     rows = _rows_from_report(report)
 
     if format == "xls":

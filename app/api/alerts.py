@@ -7,13 +7,14 @@ import logging
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
 from app.models import Alert, Tenant
 from app.rules import run_rules_for_tenant
-from app.security.auth import require_scoped_auth
+from app.security.auth import AuthContext, require_scoped_auth
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,11 @@ router = APIRouter(
 )
 
 PRIORITY_ORDER = ["P0", "P1", "P2", "P3", "P4", "P5"]
+
+
+class BatchResolveRequest(BaseModel):
+    tenant_id: int
+    alert_ids: list[int]
 
 
 def _alert_to_dict(a: Alert) -> dict:
@@ -37,6 +43,7 @@ def _alert_to_dict(a: Alert) -> dict:
         "keyword": a.keyword,
         "campaign_id": a.campaign_id,
         "campaign_name": a.campaign_name,
+        "entity_ref": a.entity_ref,
         "metrics": a.metrics or {},
         "status": a.status,
         # 来源：ai=AI 异常扫描（R-AI），rule=自研规则引擎
@@ -138,6 +145,33 @@ async def resolve_alert(
         alert.resolved_at = datetime.utcnow()
         await session.commit()
     return {"status": "ok", "alert": _alert_to_dict(alert)}
+
+
+@router.post("/batch-resolve")
+async def batch_resolve_alerts(
+    req: BatchResolveRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict:
+    """批量标记告警为已处理。"""
+    ctx.ensure_tenant(req.tenant_id)
+    if not req.alert_ids:
+        raise HTTPException(400, "请至少选择一条告警")
+    rows = (
+        await session.scalars(
+            select(Alert).where(
+                Alert.tenant_id == req.tenant_id,
+                Alert.id.in_(req.alert_ids),
+                Alert.status != "resolved",
+            )
+        )
+    ).all()
+    now = datetime.utcnow()
+    for alert in rows:
+        alert.status = "resolved"
+        alert.resolved_at = now
+    await session.commit()
+    return {"status": "ok", "resolved_count": len(rows)}
 
 
 @router.post("/run")

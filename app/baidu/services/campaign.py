@@ -113,3 +113,35 @@ class CampaignService:
             {"campaignTypes": [{"campaignId": campaign_id, "pause": pause}]},
             is_write=True,
         )
+
+    async def update_campaign_negative_words(
+        self,
+        campaign_id: int,
+        *,
+        negative_words: list[str] | None = None,
+        exact_negative_words: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """更新计划级否词，优先专用服务，失败时回退 updateCampaign。
+
+        与单元级一致，调用方必须传“现有 + 新增”的完整列表；这里只传
+        campaignId + 否词字段，避免覆盖计划其他配置。
+        """
+        body: dict[str, Any] = {"campaignId": campaign_id}
+        if negative_words is not None:
+            body["negativeWords"] = negative_words
+        if exact_negative_words is not None:
+            body["exactNegativeWords"] = exact_negative_words
+        try:
+            return await self._client.call(
+                "NegativeWordService",
+                "updateCampaignNegativeWordsSync",
+                body,
+                is_write=True,
+            )
+        except BaiduAPIError:
+            return await self._client.call(
+                "CampaignService",
+                "updateCampaign",
+                {"campaignTypes": [body]},
+                is_write=True,
+            )

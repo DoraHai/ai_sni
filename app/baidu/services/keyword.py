@@ -73,6 +73,23 @@ class KeywordService:
             "KeywordService", "updateWord", body, is_write=True
         )
 
+    async def update_word_match_type(
+        self, keyword_id: int, match_type: int, phrase_type: int
+    ) -> dict[str, Any]:
+        """修改关键词匹配模式（updateWord 的 matchType/phraseType 字段）。"""
+        body = {
+            "keywordTypes": [
+                {
+                    "keywordId": keyword_id,
+                    "matchType": match_type,
+                    "phraseType": phrase_type,
+                }
+            ]
+        }
+        return await self._client.call(
+            "KeywordService", "updateWord", body, is_write=True
+        )
+
     async def add_word(
         self, adgroup_id: int, keyword: str, match_type: int, phrase_type: int, price: float
     ) -> dict[str, Any]:

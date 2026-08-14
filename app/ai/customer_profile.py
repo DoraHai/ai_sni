@@ -19,6 +19,7 @@ from app.models import (
     Adgroup,
     Campaign,
     Keyword,
+    KwRegionSnapshot,
     KwReportSnapshot,
     OperationRecord,
     Suggestion,
@@ -121,6 +122,7 @@ async def gather_profile(session: AsyncSession, tenant: Tenant) -> dict:
         select(func.max(KwReportSnapshot.report_date)).where(KwReportSnapshot.tenant_id == tid)
     )
     performance = {"window": None, "kpi": None, "device_split": [], "avg_quality": None}
+    region_split = []
     if latest is not None:
         start = latest - timedelta(days=PERF_DAYS - 1)
         row = (
@@ -166,6 +168,25 @@ async def gather_profile(session: AsyncSession, tenant: Tenant) -> dict:
                 ) or 0), 1
             ) or None,
         }
+
+        region_rows = (
+            await session.execute(
+                select(KwRegionSnapshot.province, func.sum(KwRegionSnapshot.cost))
+                .where(
+                    KwRegionSnapshot.tenant_id == tid,
+                    KwRegionSnapshot.report_date >= start,
+                    KwRegionSnapshot.report_date <= latest,
+                )
+                .group_by(KwRegionSnapshot.province)
+                .order_by(func.sum(KwRegionSnapshot.cost).desc())
+                .limit(10)
+            )
+        ).all()
+        region_tot = sum(_f(c) for _, c in region_rows) or None
+        region_split = [
+            {"province": p, "cost": _f(c), "cost_share_pct": _ratio(_f(c), region_tot)}
+            for p, c in region_rows
+        ]
 
     # ⑤ 调价行为（近 ADJ_DAYS 天，关键词级出价改动）
     since = datetime.utcnow() - timedelta(days=ADJ_DAYS)
@@ -222,6 +243,7 @@ async def gather_profile(session: AsyncSession, tenant: Tenant) -> dict:
         "structure": structure,
         "bid_habits": bid_habits,
         "performance": performance,
+        "region": region_split,
         "adjust_behavior": adjust_behavior,
         "adoption": adoption,
     }
@@ -229,8 +251,8 @@ async def gather_profile(session: AsyncSession, tenant: Tenant) -> dict:
 
 def profile_brief(p: dict) -> str:
     """把画像压成一段中文，喂进调价建议 prompt（控制长度）。"""
-    b, s, bh, perf, adj, ad = (
-        p["basics"], p["structure"], p["bid_habits"], p["performance"],
+    b, s, bh, perf, region, adj, ad = (
+        p["basics"], p["structure"], p["bid_habits"], p["performance"], p.get("region") or [],
         p["adjust_behavior"], p["adoption"],
     )
     lines = [f"客户：{b['name']}（行业：{b['industry']}）"]
@@ -251,6 +273,11 @@ def profile_brief(p: dict) -> str:
             f"近{PERF_DAYS}天：点击率 {round((k['ctr'] or 0) * 100, 2)}%、平均点击成本 ¥{k['cpc']}、"
             f"均排名 {k['avg_rank']}；设备消费 {dev}；平均质量度 {perf['avg_quality']}"
         )
+    if region:
+        top_regions = "、".join(
+            f"{r['province']}占{r['cost_share_pct']}%" for r in region[:5]
+        )
+        lines.append(f"地域消费：{top_regions}")
     if adj["total"]:
         lines.append(
             f"调价行为（近{adj['window_days']}天）：{adj['total']} 次，平均幅度 {adj['avg_abs_pct']}%，"
