@@ -43,10 +43,23 @@ _LATIN_WEAK_ROOTS = {"agent", "agents", "ai", "app", "web", "www"}
 
 # 标题含这些产品信号时，补不带品牌的品类根（否则拓词全是「智齿科技怎么样」）
 _CATEGORY_SEEDS: list[tuple[re.Pattern[str], list[str]]] = [
-    (re.compile(r"客服|呼叫中心|联络"), ["智能客服", "在线客服", "呼叫中心"]),
+    (re.compile(r"客服|呼叫中心|联络|工单"), ["智能客服", "在线客服"]),
     (re.compile(r"工单"), ["工单系统"]),
     (re.compile(r"泵|离心"), ["工业泵", "离心泵"]),
 ]
+
+_MUST_CATEGORY_QUESTIONS: list[tuple[re.Pattern[str], list[str]]] = [
+    (
+        re.compile(r"客服|呼叫|联络|工单|udesk|七鱼|智齿", re.I),
+        [
+            "在线客服系统怎么选",
+            "在线客服系统有哪些品牌",
+            "客服系统和呼叫中心怎么配合",
+        ],
+    ),
+]
+
+_NOISE_QUESTION = re.compile(r"电影|电视剧|下载|免费观看|壁纸|歌词|小说")
 
 _VIS_TEMPLATES: list[tuple[str, str]] = [
     ("{t}哪个好", "推荐"),
@@ -280,6 +293,8 @@ def finalize_onboarding_prompts(
         key = q.lower()
         if len(q) < 4 or key in seen:
             return
+        if _NOISE_QUESTION.search(q):
+            return
         probe = resolve_is_brand_probe(
             question=q,
             brand_names=tokens,
@@ -322,6 +337,12 @@ def finalize_onboarding_prompts(
     if brand:
         for tpl, grp in _PROBE_TEMPLATES:
             push(tpl.format(t=brand), grp, term=brand, root=brand, kind="brand")
+
+    blob = f"{title} {' '.join(words)}"
+    for rx, qs in _MUST_CATEGORY_QUESTIONS:
+        if rx.search(blob) or rx.search(url or ""):
+            for q in qs:
+                push(q, "推荐", term=q, root="在线客服", kind="category")
 
     # 先品类（默认勾选最多 8），再少量探测题（最多 2）
     picked = vis[: max(8, max_items - 4)] + probes[:4]
@@ -377,6 +398,35 @@ def _business_candidates(title: str, words: list[str], headings_blob: str) -> li
     if not cands:
         add("核心业务", "默认业务线（请改名）")
     return cands[:6]
+
+
+async def attach_orphan_onboarding_facts(
+    session, *, tenant_id: int, business_id: int | None
+) -> int:
+    """Put leftover from_onboarding facts onto the opening business (not tenant-shared)."""
+    if not business_id:
+        return 0
+    from sqlalchemy import select
+
+    from app.models import GeoFact
+
+    rows = list(
+        await session.scalars(
+            select(GeoFact).where(
+                GeoFact.tenant_id == tenant_id,
+                GeoFact.business_id.is_(None),
+                GeoFact.status == "active",
+            )
+        )
+    )
+    n = 0
+    for row in rows:
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        if not meta.get("from_onboarding"):
+            continue
+        row.business_id = int(business_id)
+        n += 1
+    return n
 
 
 def _fact_drafts(
@@ -752,12 +802,20 @@ def build_readiness_items(
         ),
     ]
     ready = sum(1 for i in items if i["ok"])
-    blocking = [i["key"] for i in items if not i["ok"] and i["key"] in {"businesses", "prompts"}]
+    first_keys = {"brand_terms", "businesses", "prompts", "facts", "engines", "ai_key"}
+    first_ready = all(i["ok"] for i in items if i["key"] in first_keys)
+    blocking = [i["key"] for i in items if not i["ok"] and i["key"] in first_keys]
+    for it in items:
+        if it["key"] == "patrol":
+            it["optional"] = True
+            it["title"] = "定时巡检（持续监测，非首次验收阻断）"
     return {
         "items": items,
         "ready_count": ready,
         "total": len(items),
-        "ready": ready == len(items),
+        "ready": first_ready,
+        "first_ready": first_ready,
+        "continuous_ready": ready == len(items),
         "blocking": blocking,
         "stance": stance,
     }
@@ -856,6 +914,20 @@ async def tenant_readiness(session: Any, tenant_id: int) -> dict[str, Any]:
         or 0
     )
     stance = normalize_stance(getattr(setting, "monitoring_stance", None) if setting else None)
+    default_biz_id = await session.scalar(
+        select(GeoOptimizationBusiness.id)
+        .where(
+            GeoOptimizationBusiness.tenant_id == tenant_id,
+            GeoOptimizationBusiness.status == "active",
+        )
+        .order_by(GeoOptimizationBusiness.id.asc())
+        .limit(1)
+    )
+    if default_biz_id:
+        await attach_orphan_onboarding_facts(
+            session, tenant_id=tenant_id, business_id=int(default_biz_id)
+        )
+        await session.commit()
     payload = build_readiness_items(
         has_brand_terms=bool(tenant.brand_terms),
         business_count=biz_n,

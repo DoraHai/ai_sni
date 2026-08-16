@@ -1,5 +1,5 @@
 <script setup>
-import { reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { login, fetchTenants } from '../api/auth'
@@ -60,6 +60,25 @@ function submitOnEnter(e) {
 function forgotPwd() {
   ElMessage.info('账号与密码由管理员分配，忘记密码请联系管理员重置')
 }
+
+const hasLocalKey = Boolean(
+  import.meta.env.VITE_API_KEY &&
+    String(import.meta.env.VITE_API_KEY).trim() &&
+    String(import.meta.env.VITE_API_KEY).trim() !== 'CHANGE_ME',
+)
+
+function enterGeoWithoutLogin() {
+  const redirect = String(route.query.redirect || '')
+  if (redirect.startsWith('/') && !redirect.startsWith('//') && !redirect.startsWith('/login')) {
+    router.replace(redirect)
+    return
+  }
+  router.replace('/geo/onboarding')
+}
+
+onMounted(() => {
+  if (hasLocalKey) enterGeoWithoutLogin()
+})
 </script>
 
 <template>
@@ -104,6 +123,14 @@ function forgotPwd() {
 
           <button type="button" class="login-btn" :disabled="loading" @click="submit">
             {{ loading ? '登录中…' : '登录' }}
+          </button>
+          <button
+            v-if="hasLocalKey"
+            type="button"
+            class="login-btn skip-btn"
+            @click="enterGeoWithoutLogin"
+          >
+            免登录进入 GEO 开户向导
           </button>
         </el-form>
       </div>
@@ -168,6 +195,13 @@ function forgotPwd() {
 }
 .login-btn:hover { filter: brightness(1.06); }
 .login-btn:disabled { opacity: 0.7; cursor: not-allowed; }
+.skip-btn {
+  background: #fff;
+  color: #8a6a28;
+  border: 1px solid #d0a64a;
+  letter-spacing: 0;
+  margin-top: 10px;
+}
 
 .copyright { margin-top: 22px; font-size: 11px; color: #a99e86; }
 

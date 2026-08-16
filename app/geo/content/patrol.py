@@ -380,6 +380,44 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
         if not prompts:
             raise ValueError("没有可巡检的机会词，请先在「机会词」中创建")
 
+        from app.geo.content.business_profile import brand_names_for_profile, display_brand
+        from app.models.geo_optimization import GeoOptimizationBusiness, GeoOptimizationUnit
+
+        units: dict[int, Any] = {}
+        businesses: dict[int, Any] = {}
+        unit_ids = {getattr(p, "unit_id", None) for p in prompts if getattr(p, "unit_id", None)}
+        if unit_ids:
+            try:
+                units = {
+                    u.id: u
+                    for u in await session.scalars(
+                        select(GeoOptimizationUnit).where(GeoOptimizationUnit.id.in_(unit_ids))
+                    )
+                }
+                biz_ids = {u.business_id for u in units.values() if u.business_id}
+                if biz_ids:
+                    businesses = {
+                        b.id: b
+                        for b in await session.scalars(
+                            select(GeoOptimizationBusiness).where(
+                                GeoOptimizationBusiness.id.in_(biz_ids)
+                            )
+                        )
+                    }
+            except Exception:  # noqa: BLE001 — mock sessions in unit tests
+                units = {}
+                businesses = {}
+
+        def _brand_for_prompt(prompt) -> tuple[str, list[str]]:
+            unit = units.get(getattr(prompt, "unit_id", None))
+            biz = businesses.get(unit.business_id) if unit and unit.business_id else None
+            product = display_brand(getattr(biz, "profile", None) if biz else None, fallback="")
+            if product:
+                return product, brand_names_for_profile(
+                    getattr(biz, "profile", None), fallback=product
+                )
+            return brand, list(brand_names)
+
         cells_planned = 0
         for prompt in prompts:
             for engine in engines:
@@ -453,10 +491,11 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
                     if not llm or not llm.get("api_key"):
                         raise ValueError("无可用 LLM 凭证（请配置 AI 能力或引擎 openai_compat）")
 
+                    cell_brand, cell_names = _brand_for_prompt(prompt)
                     draft = await run_probe_draft(
                         question=prompt.question,
-                        brand=brand,
-                        brand_names=brand_names,
+                        brand=cell_brand,
+                        brand_names=cell_names,
                         engine=engine,
                         llm=llm,
                         chat_json=chat_json,

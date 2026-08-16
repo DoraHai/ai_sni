@@ -79,10 +79,12 @@ def suggest_brief_heuristic(
     brand: str | None = None,
     industry_hint: str | None = None,
     existing: dict[str, Any] | None = None,
+    profile_hints: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Rule-based brief draft. Does not require LLM."""
     q = (question or "").strip()
     brand_name = (brand or "本品牌").strip() or "本品牌"
+    hints = profile_hints if isinstance(profile_hints, dict) else {}
     intent = _detect_intent(q)
     content_type = _detect_content_type(q, intent)
     if intent not in INTENTS:
@@ -90,31 +92,42 @@ def suggest_brief_heuristic(
     if content_type not in CONTENT_TYPES:
         content_type = "answer_guide"
 
-    industry = (industry_hint or "").strip()
+    industry = (hints.get("industry") or industry_hint or "").strip()
     if not industry:
         if any(k in q for k in ("制造", "工业", "机器人", "CDMO", "泵")):
             industry = "先进制造 / 工业"
-        elif any(k in q for k in ("SaaS", "数据", "BI", "分析", "软件")):
-            industry = "B2B 软件 / 数据分析"
+        elif any(k in q for k in ("SaaS", "数据", "BI", "分析", "软件", "客服")):
+            industry = "B2B 软件 / 智能客服"
         else:
             industry = "B2B 专业服务"
 
+    audience = str(hints.get("audience") or "").strip() or "企业采购 / 技术选型决策人"
+    cta = str(hints.get("cta") or "").strip() or f"了解 {brand_name} 能力与案例"
+    banned = list(hints.get("banned_claims") or []) or ["第一名", "保证被 AI 收录", "绝对领先"]
+    competitors = [str(x) for x in (hints.get("competitors") or []) if str(x).strip()]
+    must = list(hints.get("must_cover") or [])
+    if brand_name and brand_name not in must:
+        must = [brand_name] + must
+    rec_when = str(hints.get("recommend_when") or "").strip() or (
+        f"当买家在评估「{q[:40]}」且需要可核验能力与场景匹配时"
+    )
+
     draft = {
         "industry": industry,
-        "audience": "企业采购 / 技术选型决策人",
+        "audience": audience,
         "intent": intent,
         "content_type": content_type,
-        "cta": f"了解 {brand_name} 能力与案例",
-        "banned_claims": ["第一名", "保证被 AI 收录", "绝对领先"],
-        "notes": "自动草稿，请人工修订策略字段后再生成。",
+        "cta": cta,
+        "banned_claims": banned[:12],
+        "notes": "自动草稿，已优先读取业务画像；请人工复核后再生成。",
         "ai_question": q,
         "not_recommended_reasons": _default_not_recommended(intent),
         "info_gaps": _default_gaps(intent, content_type),
-        "recommend_when": f"当买家在评估「{q[:40]}」且需要可核验能力与场景匹配时",
-        "competitors": [],
-        "must_cover": [brand_name] if brand_name else [],
+        "recommend_when": rec_when,
+        "competitors": competitors[:12],
+        "must_cover": must[:10],
         "source_bar": "verified_only",
-        "strategy_notes": "P0 启发式建议；可补充竞品名与 must_cover。",
+        "strategy_notes": "来自业务画像 + 启发式；竞品/必须覆盖以画像为准。",
         "schema_version": 2,
     }
     return normalize_brief(draft)
@@ -128,6 +141,7 @@ async def suggest_brief_for_task(
     overwrite: bool = False,
     llm: dict[str, str] | None = None,
     chat_json=None,
+    profile_hints: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return suggested brief; merge onto existing unless overwrite.
 
@@ -135,7 +149,12 @@ async def suggest_brief_for_task(
     """
     from app.geo.content.brief import merge_brief
 
-    heuristic = suggest_brief_heuristic(question=question, brand=brand)
+    heuristic = suggest_brief_heuristic(
+        question=question,
+        brand=brand,
+        industry_hint=(existing_brief or {}).get("industry") if isinstance(existing_brief, dict) else None,
+        profile_hints=profile_hints,
+    )
     suggested = heuristic
 
     if llm and chat_json is not None:
@@ -153,7 +172,8 @@ async def suggest_brief_for_task(
                 "禁止编造具体客户名与数据；competitors 未知则 []。"
             )
             user = (
-                f"品牌：{brand or '未知'}\n问题：{question}\n"
+                f"品牌/产品：{brand or '未知'}\n问题：{question}\n"
+                f"业务画像：{profile_hints or {}}\n"
                 f"可参考启发式：{heuristic}"
             )
             data = await chat_json(

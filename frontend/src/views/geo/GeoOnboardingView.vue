@@ -4,9 +4,11 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   applyGeoOnboarding,
+  auditGeoSitemap,
+  createTasksFromSitemapAudit,
   fetchOnboardingReadiness,
   formatGeoError,
   previewGeoOnboarding,
@@ -15,7 +17,12 @@ import { useGeoTenant } from '../../composables/useGeoTenant'
 import { needQuery } from '../../utils/geoEmptyReason'
 
 const router = useRouter()
-const { tenantId } = useGeoTenant()
+const { tenantId, session } = useGeoTenant()
+const tenantName = computed(() => {
+  const hit = (session.tenants || []).find((t) => t.id === tenantId.value)
+  return hit?.name || (tenantId.value ? `客户 #${tenantId.value}` : '未选择客户')
+})
+const customPrompt = ref('')
 
 const step = ref(1)
 const websiteUrl = ref('')
@@ -24,6 +31,10 @@ const loading = ref(false)
 const applying = ref(false)
 const preview = ref(null)
 const error = ref('')
+const sitemapLoading = ref(false)
+const sitemapAudit = ref(null)
+const creatingSitemapTasks = ref(false)
+const selectedOps = ref([])
 
 const selectedBiz = ref([])
 const selectedPrompts = ref([])
@@ -71,8 +82,53 @@ async function runPreview() {
   }
 }
 
+function addCustomPrompt() {
+  const q = customPrompt.value.trim()
+  if (!q || q.length < 4) {
+    ElMessage.warning('意图词至少 4 个字')
+    return
+  }
+  if (!preview.value) return
+  const list = [...(preview.value.prompt_candidates || [])]
+  if (list.some((p) => p.question === q)) {
+    ElMessage.warning('已有相同意图词')
+    return
+  }
+  list.unshift({
+    question: q,
+    question_group: '推荐',
+    selected: true,
+    is_brand_probe: false,
+    tags: ['from_onboarding', 'manual'],
+  })
+  preview.value = { ...preview.value, prompt_candidates: list }
+  selectedPrompts.value = [q, ...selectedPrompts.value]
+  customPrompt.value = ''
+}
+
+function renamePrompt(oldQ, ev) {
+  const next = String(ev?.target?.value || ev || '').trim()
+  if (!next || next === oldQ) return
+  const list = (preview.value?.prompt_candidates || []).map((p) =>
+    p.question === oldQ ? { ...p, question: next } : p,
+  )
+  preview.value = { ...preview.value, prompt_candidates: list }
+  selectedPrompts.value = selectedPrompts.value.map((q) => (q === oldQ ? next : q))
+}
+
 async function runApply(dryRun = false) {
   if (!preview.value) return
+  if (!dryRun) {
+    try {
+      await ElMessageBox.confirm(
+        `将写入客户「${tenantName.value}」（ID ${tenantId.value}）。确认不是别的客户？`,
+        '确认写入目标客户',
+        { type: 'warning', confirmButtonText: '写入该客户', cancelButtonText: '取消' },
+      )
+    } catch {
+      return
+    }
+  }
   applying.value = true
   error.value = ''
   try {
@@ -98,6 +154,7 @@ async function runApply(dryRun = false) {
         source_name: f.source_name,
         source_url: f.source_url,
         trust_level: f.trust_level || 'needs_review',
+        business_name: businesses[0]?.name || null,
       }))
     const body = {
       tenant_id: tenantId.value,
@@ -149,6 +206,72 @@ function goNeed(it) {
   router.push(needQuery(it))
 }
 
+const typeLabel = {
+  product: '产品/方案',
+  faq: 'FAQ',
+  case: '案例',
+  about: '关于',
+  docs: '文档',
+  blog: '博客',
+  home: '首页',
+  other: '其他',
+}
+
+async function runSitemapAudit() {
+  if (!tenantId.value) {
+    error.value = '请先选择客户'
+    return
+  }
+  if (!websiteUrl.value.trim()) {
+    ElMessage.warning('请填写官网 URL')
+    return
+  }
+  sitemapLoading.value = true
+  error.value = ''
+  try {
+    sitemapAudit.value = await auditGeoSitemap(tenantId.value, websiteUrl.value.trim())
+    selectedOps.value = (sitemapAudit.value.opportunities || [])
+      .filter((o) => o.priority === 'high')
+      .map((o) => o.title)
+    ElMessage.success(
+      `全站诊断完成：抽样 ${sitemapAudit.value.page_count || 0} 页 · 机会 ${sitemapAudit.value.opportunities?.length || 0} 条`,
+    )
+  } catch (e) {
+    error.value = formatGeoError(e, '全站诊断失败')
+  } finally {
+    sitemapLoading.value = false
+  }
+}
+
+function toggleOp(title, on) {
+  if (on) {
+    if (!selectedOps.value.includes(title)) selectedOps.value = [...selectedOps.value, title]
+  } else {
+    selectedOps.value = selectedOps.value.filter((t) => t !== title)
+  }
+}
+
+async function createSitemapTasks() {
+  const picked = (sitemapAudit.value?.opportunities || []).filter((o) =>
+    selectedOps.value.includes(o.title),
+  )
+  if (!picked.length) {
+    ElMessage.warning('请先勾选要转成任务的机会')
+    return
+  }
+  creatingSitemapTasks.value = true
+  try {
+    const res = await createTasksFromSitemapAudit(tenantId.value, picked.slice(0, 5))
+    ElMessage.success(`已建 ${res.created_count || 0} 条任务${res.skipped_count ? `，跳过 ${res.skipped_count}` : ''}`)
+    const first = (res.created || [])[0]
+    if (first?.editor_path) router.push(first.editor_path)
+  } catch (e) {
+    error.value = formatGeoError(e, '建任务失败')
+  } finally {
+    creatingSitemapTasks.value = false
+  }
+}
+
 watch(tenantId, loadReadiness)
 onMounted(loadReadiness)
 </script>
@@ -159,7 +282,8 @@ onMounted(loadReadiness)
       <div>
         <h1 class="page-title">GEO 开户向导</h1>
         <p class="page-desc">
-          输入官网 URL，自动抽取业务线候选、意图词与事实卡草稿；确认后写入，即可进入监测与内容生产。
+          当前写入客户：<b>{{ tenantName }}</b>（ID {{ tenantId || '—' }}）。
+          输入官网 URL，自动抽取业务线、意图词与事实卡草稿；确认写入只进这个客户。
         </p>
       </div>
       <router-link class="el-button el-button--small" to="/geo/businesses">优化业务</router-link>
@@ -175,9 +299,11 @@ onMounted(loadReadiness)
 
     <el-card v-if="step === 1 && readiness?.items?.length" shadow="never" class="mb">
       <div class="ready-head">
-        当前客户还差什么 · {{ readiness.ready_count }}/{{ readiness.total }}
-        <el-tag v-if="readiness.ready" type="success" size="small">已就绪</el-tag>
-        <el-tag v-else type="warning" size="small">未就绪</el-tag>
+        首次验收
+        <el-tag v-if="readiness.first_ready" type="success" size="small">可开始</el-tag>
+        <el-tag v-else type="warning" size="small">还差必填项</el-tag>
+        · 持续监测 {{ readiness.ready_count }}/{{ readiness.total }}
+        <el-tag v-if="readiness.ready" type="success" size="small" effect="plain">已配齐</el-tag>
       </div>
       <div
         v-for="it in readiness.items.filter((x) => !x.ok)"
@@ -208,8 +334,78 @@ onMounted(loadReadiness)
         </el-form-item>
         <el-form-item>
           <el-button type="primary" :loading="loading" @click="runPreview">解析官网</el-button>
+          <el-button :loading="sitemapLoading" @click="runSitemapAudit">Sitemap 全站诊断</el-button>
         </el-form-item>
       </el-form>
+      <p class="hint">全站诊断抓 sitemap 抽样（最多 40 页），输出缺失页类型、结构化数据和可转 GEO 任务的优先级，不只是单页体检。</p>
+    </el-card>
+
+    <el-card v-if="sitemapAudit" shadow="never" class="mb audit-card">
+      <template #header>
+        <div class="audit-head">
+          <span>全站内容机会</span>
+          <el-tag size="small">抽样 {{ sitemapAudit.page_count }} 页</el-tag>
+          <span class="muted">{{ sitemapAudit.sitemap_url || '未找到 sitemap，已回退首页' }}</span>
+        </div>
+      </template>
+      <p v-if="sitemapAudit.sample_note" class="hint">{{ sitemapAudit.sample_note }}</p>
+      <p v-if="sitemapAudit.skipped_count" class="hint">
+        已跳过 {{ sitemapAudit.skipped_count }} 个 API/内网/机器地址，不计入页面类型。
+      </p>
+      <p class="hint">
+        页面类型
+        <template v-for="(n, k) in sitemapAudit.type_counts || {}" :key="k">
+          {{ typeLabel[k] || k }} {{ n }} ·
+        </template>
+        高优 {{ sitemapAudit.priority_summary?.high || 0 }} /
+        中 {{ sitemapAudit.priority_summary?.medium || 0 }} /
+        低 {{ sitemapAudit.priority_summary?.low || 0 }}
+      </p>
+      <p v-if="sitemapAudit.note" class="hint">{{ sitemapAudit.note }}</p>
+      <el-table :data="sitemapAudit.opportunities || []" size="small" class="mb">
+        <el-table-column label="选" width="50">
+          <template #default="{ row }">
+            <el-checkbox
+              :model-value="selectedOps.includes(row.title)"
+              @change="(v) => toggleOp(row.title, v)"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column label="优先级" width="80">
+          <template #default="{ row }">
+            <el-tag
+              size="small"
+              :type="row.priority === 'high' ? 'danger' : row.priority === 'medium' ? 'warning' : 'info'"
+            >
+              {{ row.priority }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="title" label="机会" min-width="220" />
+        <el-table-column prop="action" label="建议动作" min-width="260" />
+      </el-table>
+      <el-button
+        type="primary"
+        :loading="creatingSitemapTasks"
+        :disabled="!selectedOps.length"
+        @click="createSitemapTasks"
+      >
+        把勾选机会建成内容任务（最多 5 条）
+      </el-button>
+      <el-table :data="sitemapAudit.pages || []" size="small" max-height="280">
+        <el-table-column label="类型" width="90">
+          <template #default="{ row }">{{ typeLabel[row.page_type] || row.page_type }}</template>
+        </el-table-column>
+        <el-table-column prop="title" label="标题" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="score" label="分" width="60" />
+        <el-table-column label="JSON-LD" width="90">
+          <template #default="{ row }">
+            <span v-if="row.schema_types?.length">{{ row.schema_types.join(', ') }}</span>
+            <span v-else class="muted">无</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="url" label="URL" min-width="220" show-overflow-tooltip />
+      </el-table>
     </el-card>
 
     <template v-if="step === 2 && preview">
@@ -275,10 +471,19 @@ onMounted(loadReadiness)
         <template #header>
           意图词候选（{{ selectedPrompts.length }}/{{ promptOptions.length }}）
         </template>
+        <div class="mb" style="display:flex;gap:8px;max-width:640px">
+          <el-input v-model="customPrompt" placeholder="直接新增：如 在线客服系统怎么选" @keyup.enter="addCustomPrompt" />
+          <el-button @click="addCustomPrompt">添加意图词</el-button>
+        </div>
         <el-checkbox-group v-model="selectedPrompts">
           <div v-for="p in promptOptions" :key="p.question" class="check-row">
             <el-checkbox :label="p.question">
-              {{ p.question }}
+              <el-input
+                :model-value="p.question"
+                size="small"
+                style="width: 280px"
+                @blur="(e) => renamePrompt(p.question, e)"
+              />
               <el-tag size="small" class="ml">{{ p.question_group || '—' }}</el-tag>
               <el-tag v-if="p.is_brand_probe" size="small" type="warning" class="ml">探测题</el-tag>
               <el-tag v-else size="small" type="success" class="ml" effect="plain">品类可见度</el-tag>
@@ -331,9 +536,10 @@ onMounted(loadReadiness)
       </el-result>
       <div v-if="readiness?.items?.length" class="ready-list">
         <div class="ready-head">
-          还差什么 · {{ readiness.ready_count }}/{{ readiness.total }}
-          <el-tag v-if="readiness.ready" type="success" size="small">可以开干</el-tag>
-          <el-tag v-else type="warning" size="small">未就绪</el-tag>
+          首次验收
+          <el-tag v-if="readiness.first_ready" type="success" size="small">可开始</el-tag>
+          <el-tag v-else type="warning" size="small">还差必填</el-tag>
+          · 持续监测 {{ readiness.ready_count }}/{{ readiness.total }}
         </div>
         <div
           v-for="it in readiness.items"

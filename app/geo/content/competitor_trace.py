@@ -257,8 +257,13 @@ def build_competitor_report_markdown(
         str(k).strip() for k in (platform_keys or []) if str(k).strip()
     }
 
-    all_agg = list(trace.get("sources_agg") or aggregate_sources_by_url(trace.get("sources") or []))
-    all_platforms = list(trace.get("platforms") or [])
+    all_agg = [
+        s
+        for s in (trace.get("sources_agg") or aggregate_sources_by_url(trace.get("sources") or []))
+        if not s.get("inferred")
+    ]
+    all_platforms = [p for p in (trace.get("platforms") or []) if not p.get("inferred")]
+    inferred = [p for p in (trace.get("inferred_placements") or []) if p]
 
     if selected_platforms:
         platforms = [
@@ -290,10 +295,11 @@ def build_competitor_report_markdown(
         f"- 快照提及次数：{trace.get('mention_count') or 0}",
         f"- 关联提问数：{trace.get('prompt_count') or 0}",
         f"- 引擎：{', '.join(trace.get('engines') or []) or '—'}",
-        f"- 已选来源：{len(sources)} 条（去重 URL）",
-        f"- 已选平台：{len(platforms)}",
+        f"- 真实引用来源：{len(sources)} 条（去重 URL，不含推定）",
+        f"- 真实引用平台：{len(platforms)}",
+        f"- 推定参考阵地：{len(inferred)}（不算引用次数）",
         "",
-        "## 发布平台分布（反向溯源）",
+        "## 真实引用来源（快照 cited_urls）",
         "",
     ]
     if platforms:
@@ -307,10 +313,10 @@ def build_competitor_report_markdown(
             )
         lines.append("")
     else:
-        lines.append("（无平台数据：请确认快照已填写竞品并提取引用 URL）")
+        lines.append("（无真实引用 URL。下面的推定阵地不能当作 AI 实际引用页。）")
         lines.append("")
 
-    lines.append("## 来源明细（按 URL 去重）")
+    lines.append("## 来源明细（仅真实引用，按 URL 去重）")
     lines.append("")
     if sources:
         for i, s in enumerate(sources, 1):
@@ -328,7 +334,17 @@ def build_competitor_report_markdown(
             lines.append(f"   - {' · '.join(meta)}")
         lines.append("")
     else:
-        lines.append("（未勾选或无可用来源 URL）")
+        lines.append("（未勾选真实引用 URL，或快照里没有 cited_urls）")
+        lines.append("")
+
+    if inferred:
+        lines.append("## 推定参考阵地（非本次 AI 引用）")
+        lines.append("")
+        for p in inferred:
+            url = p.get("url") or "无稳定公开 URL"
+            lines.append(f"- {p.get('channel_name') or p.get('channel_key') or '阵地'} · {p.get('label') or ''} · {url}")
+        lines.append("")
+        lines.append("推定只供对照，不计入来源数/平台数。")
         lines.append("")
 
     if (insight or "").strip():
@@ -349,7 +365,7 @@ def build_competitor_report_markdown(
 
     lines.append("---")
     lines.append(
-        "*本报告由可见度快照中的竞品标注与引用 URL 反向归集生成，非外网实时检索。*"
+        "*真实来源仅来自可见度快照 cited_urls。推定阵地不是外网检索结果，也不是本次 AI 引用页。*"
     )
     lines.append("")
 
@@ -465,6 +481,8 @@ def build_competitor_compare(
             winner = "tie"
             tie += 1
 
+        engines_n = len(bucket["engines"])
+        sufficient = bucket["snapshot_count"] >= 8 and engines_n >= 2
         items.append(
             {
                 "prompt_id": bucket["prompt_id"],
@@ -472,23 +490,31 @@ def build_competitor_compare(
                 "snapshot_count": bucket["snapshot_count"],
                 "engines": sorted(bucket["engines"]),
                 "brand_mention_count": bucket["brand_mentions"],
-                "brand_mention_rate": round(brand_rate, 4),
+                "brand_mention_rate": round(brand_rate, 4) if sufficient else None,
                 "brand_first_count": bucket["brand_first"],
-                "brand_first_rate": round(brand_first_rate, 4),
+                "brand_first_rate": round(brand_first_rate, 4) if sufficient else None,
                 "competitors": comps,
                 "top_competitor": best_comp_name,
-                "top_competitor_rate": round(best_comp_rate, 4),
+                "top_competitor_rate": round(best_comp_rate, 4) if sufficient else None,
                 "winner": winner,
+                "sample_insufficient": not sufficient,
+                "rate_display": None if sufficient else "样本不足",
             }
         )
 
     items.sort(
         key=lambda x: (
             0 if x["winner"] == "competitor" else 1 if x["winner"] == "tie" else 2,
-            -(x["top_competitor_rate"] - x["brand_mention_rate"]),
+            -(
+                (x["top_competitor_rate"] or 0)
+                - (x["brand_mention_rate"] or 0)
+            ),
             x["prompt_id"],
         )
     )
+    from app.geo.content.metric_service import composition_of
+
+    sample = composition_of(rows).to_dict()
     return {
         "items": items,
         "summary": {
@@ -496,5 +522,9 @@ def build_competitor_compare(
             "brand_lead": brand_lead,
             "competitor_lead": competitor_lead,
             "tie": tie,
+            "sample_composition": sample,
+            "suitable_for_client": bool(sample.get("suitable_for_client")),
+            "verdict": sample.get("verdict"),
+            "verdict_reason": sample.get("verdict_reason"),
         },
     }

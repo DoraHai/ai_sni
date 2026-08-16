@@ -4,7 +4,7 @@
  */
 import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   closeOptimizationPeriod,
   createOptimizationPeriod,
@@ -100,6 +100,15 @@ async function openDetail(id) {
 }
 
 async function closePeriod(id) {
+  try {
+    await ElMessageBox.confirm(
+      "关闭后会固化期末指标，不能再当进行中期次改窗。确认关闭？",
+      "关闭期次",
+      { type: "warning", confirmButtonText: "确认关闭", cancelButtonText: "取消" },
+    )
+  } catch {
+    return
+  }
   loading.value = true
   try {
     detail.value = await closeOptimizationPeriod(tenantId.value, id)

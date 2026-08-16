@@ -38,6 +38,42 @@ class AsyncStaleHelpersTests(unittest.TestCase):
         p = job_payload(row)
         self.assertEqual(p["kind"], KIND_GENERATE)
         self.assertEqual(p["status"], "pending")
+        self.assertEqual(p["progress_label"], "")
+        self.assertIsNone(p["progress_pct"])
+        self.assertFalse(p["cancel_requested"])
+
+    def test_job_payload_progress_and_cancel(self):
+        row = SimpleNamespace(
+            id=2,
+            tenant_id=1,
+            kind=KIND_GENERATE,
+            status="running",
+            ref_type="content_task",
+            ref_id=9,
+            request_meta={
+                "progress": {"message": "正在调用模型写稿", "pct": 45},
+                "cancel_requested": True,
+            },
+            result_meta=None,
+            error=None,
+            created_by=1,
+            created_at=datetime.utcnow(),
+            started_at=datetime.utcnow(),
+            finished_at=None,
+        )
+        p = job_payload(row)
+        self.assertEqual(p["progress_label"], "正在调用模型写稿")
+        self.assertEqual(p["progress_pct"], 45)
+        self.assertTrue(p["cancel_requested"])
+
+    def test_cancel_requested_helper(self):
+        from app.geo.content.async_jobs import cancel_requested
+
+        self.assertTrue(
+            cancel_requested(SimpleNamespace(status="running", request_meta={"cancel_requested": True}))
+        )
+        self.assertTrue(cancel_requested(SimpleNamespace(status="cancelled", request_meta={})))
+        self.assertFalse(cancel_requested(SimpleNamespace(status="running", request_meta={})))
 
 
 class UnclassifiedScopeTests(unittest.TestCase):

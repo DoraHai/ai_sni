@@ -488,25 +488,28 @@ function permOk(perm) {
 }
 function hasDevApiKey() {
   const k = import.meta.env.VITE_API_KEY
-  return Boolean(
-    import.meta.env.DEV && k && String(k).trim() && String(k).trim() !== 'CHANGE_ME',
-  )
+  return Boolean(k && String(k).trim() && String(k).trim() !== 'CHANGE_ME')
+}
+
+function geoClickStart() {
+  return '/geo/onboarding'
 }
 
 router.beforeEach((to) => {
-  // 本地 DEV + VITE_API_KEY：未登录可进业务页（API 走 X-API-Key）
+  // 配了 VITE_API_KEY：未登录可进业务页（API 走 X-API-Key），不要停在登录页
   const devBypass = hasDevApiKey() && !session.isLoggedIn
+  if (devBypass && (to.path === '/login' || to.path === '/')) {
+    const redir = typeof to.query.redirect === 'string' ? to.query.redirect : ''
+    if (redir.startsWith('/') && !redir.startsWith('//') && !redir.startsWith('/login')) {
+      return redir
+    }
+    return geoClickStart()
+  }
   if (!to.meta.public && !session.isLoggedIn && !devBypass) {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
-  // 已登录访问 /login：有菜单权限则去首页；否则 DEV Key 模式去 redirect 或 GEO 工作台
   if (to.path === '/login' && session.isLoggedIn) {
-    return { path: firstAllowedPath() || '/' }
-  }
-  if (to.path === '/login' && !session.isLoggedIn && hasDevApiKey()) {
-    const redir = typeof to.query.redirect === 'string' ? to.query.redirect : ''
-    if (redir.startsWith('/') && !redir.startsWith('//')) return redir
-    return '/geo/workbench'
+    return { path: firstAllowedPath() || geoClickStart() }
   }
   if (devBypass || !session.isLoggedIn) return
   if (!to.meta.public && !permOk(to.meta.perm)) {

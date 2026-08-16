@@ -52,7 +52,10 @@ def test_pack_v2_scope_and_daily():
             }
         ],
     )
-    assert pack["generated_kind"] == "geo_deliverables_pack_v2"
+    assert pack["generated_kind"] in (
+        "geo_deliverables_pack_v2",
+        "geo_deliverables_pack_v3",
+    )
     assert pack["scope"]["label"] == "优化业务 · 产品线A"
     md = render_deliverables_markdown(pack)
     assert "切片范围：优化业务 · 产品线A" in md

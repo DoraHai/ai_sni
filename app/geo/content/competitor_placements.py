@@ -304,12 +304,10 @@ def attach_geo_reverse(
     """Mutates and returns trace with inferred placements + recs."""
     inferred = inferred_placements_for(competitor)
     trace["inferred_placements"] = inferred
-    if inferred and not (trace.get("platforms") or []):
-        trace["platforms"] = inferred_platforms(inferred)
-    if inferred and not (trace.get("sources_agg") or []):
-        sources = inferred_sources(inferred)
-        trace["sources_agg"] = sources
-        trace["unique_url_count"] = len(sources)
+    # 推定阵地不得写入 platforms / sources_agg，避免和真实引用混计。
+    trace["cited_url_count"] = len(trace.get("sources_agg") or [])
+    trace["has_real_citations"] = bool(trace.get("sources_agg") or trace.get("sources"))
+    trace["unique_url_count"] = int(trace.get("unique_url_count") or len(trace.get("sources_agg") or []))
     recs = build_competitor_geo_recs(
         competitor=competitor,
         mention_prompt_ids=mention_prompt_ids,

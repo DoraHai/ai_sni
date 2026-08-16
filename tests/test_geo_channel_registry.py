@@ -51,7 +51,7 @@ class GeoChannelRegistryTests(unittest.TestCase):
         self.assertEqual(rows[0]["tenant_id"], 7)
         self.assertEqual(rows[0]["publish_mode"], "auto_publish")
         self.assertEqual(rows[1]["publish_mode"], "auto_publish")
-        self.assertEqual(rows[2]["publish_mode"], "draft_then_manual")
+        self.assertEqual(rows[2]["publish_mode"], "auto_publish")
 
     def test_channel_type_normalizes_to_other_safe_mode(self):
         self.assertEqual(normalize_channel_type("Zhihu"), "zhihu")

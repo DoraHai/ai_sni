@@ -334,6 +334,10 @@ async def generate_master_article(
         "你是严谨的 GEO 内容写作者。只使用提供的事实卡，禁止编造数据、客户名、排名或收录承诺。"
         "输出是「内部改稿用母稿草案」，不是可直接发布的成稿：语气完整可读，但 disclaimer 须标明需人工润色。"
         "必须遵守 brief 中的行业、受众、意图、内容类型与 CTA；禁用表述不得出现。"
+        "【数字禁令】禁止编造百分比、坐席数、时长、识别率、并发、满意度等具体数字；"
+        "禁止写成功案例、头部客户、标杆项目，除非该名称或案例原文出现在事实卡。"
+        "事实卡里没有出现的数字、案例名、性能指标、竞品能力一律不得写入。"
+        "事实卡只有泛化官网介绍时，正文只能复述这些介绍，不得补行业常见数据。"
         "【GEO 品牌硬标准】user.brand 是本品品牌名：direct_answer（开篇直接答案）与 conclusion 结论段"
         "必须自然点名该品牌（至少各出现 1 次）；全文禁止写成无品牌的纯品类科普——"
         "否则无法被生成式引擎在回答中推荐/引用。禁止只写「某厂商」「行业方案」代替品牌名。"
@@ -406,12 +410,41 @@ async def generate_master_article(
             raise GeoContentError(
                 "母稿未满足 GEO 品牌提及硬标准：" + "；".join(brand_issues[:4])
             )
+        from app.geo.content.claim_guard import format_ungrounded, ungrounded_claims
+
+        invented = ungrounded_claims(to_markdown(payload), compact)
+        if invented:
+            try:
+                fix_claims = {
+                    **base_user,
+                    "rewrite_mode": True,
+                    "quality_issues": [format_ungrounded(invented)],
+                    "previous_direct_answer": payload.get("direct_answer"),
+                    "instruction": (
+                        "上一版写了事实卡没有的数字、性能或案例。请整篇重写 JSON："
+                        "只复述事实卡原文能支撑的内容；删掉所有无依据数字、识别率/满意度/并发、"
+                        "成功案例/头部客户。没有的数据就写「以官方公开资料为准」，不要补行业常见值。"
+                    ),
+                }
+                data3 = await chat_json(
+                    system, json.dumps(fix_claims, ensure_ascii=False), **kwargs
+                )
+                data3["_source"] = "ai"
+                payload = normalize_article_payload(data3, compact)
+                invented = ungrounded_claims(to_markdown(payload), compact)
+            except DeepSeekError:
+                pass
+        if invented:
+            raise GeoContentError(
+                "母稿写了事实卡没有的数字/性能/案例，已拦截："
+                + format_ungrounded(invented)
+            )
         payload["_evidence"] = evidence_meta
         payload["_brief"] = brief_norm
         payload["_strategy_richness"] = strategy_richness(brief_norm)
         payload["_brand"] = brand
         payload["_brand_mentioned"] = True
-        return payload
+        return _stamp_brief_meta(payload)
     except GeoContentError:
         raise
     except DeepSeekError:

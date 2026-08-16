@@ -22,7 +22,10 @@ from app.models import (
     GeoArticleVersion,
     GeoChannelVariant,
     GeoContentTask,
+    GeoFact,
+    GeoOptimizationBusiness,
     GeoPublishingChannel,
+    GeoTaskFact,
     Tenant,
 )
 
@@ -86,6 +89,12 @@ async def execute_variants_for_task(
         raise ValueError("没有可用的启用发布渠道，请先在「发布渠道」配置中启用")
 
     tenant = await session.get(Tenant, tenant_id)
+    from app.geo.content.business_profile import display_brand
+
+    brand = tenant.name if tenant else None
+    if getattr(task, "business_id", None):
+        biz = await session.get(GeoOptimizationBusiness, task.business_id)
+        brand = display_brand(getattr(biz, "profile", None) if biz else None, fallback=brand or "")
     llm = None
     if use_llm:
         llm = await resolve_llm_credentials(session, tenant_id)
@@ -94,6 +103,27 @@ async def execute_variants_for_task(
     created: list[str] = []
     failed: list[dict[str, Any]] = []
     polish_stats = {"llm": 0, "fallback": 0, "rejected": 0}
+
+    fact_rows = list(
+        (
+            await session.execute(
+                select(GeoFact)
+                .join(GeoTaskFact, GeoTaskFact.fact_id == GeoFact.id)
+                .where(GeoTaskFact.task_id == task.id)
+                .order_by(GeoTaskFact.sort_order.asc(), GeoFact.id.asc())
+            )
+        ).scalars()
+    )
+    fact_dicts = [
+        {
+            "id": f.id,
+            "title": f.title,
+            "statement": f.statement,
+            "source_name": f.source_name,
+            "trust_level": f.trust_level,
+        }
+        for f in fact_rows
+    ]
 
     for channel in channel_list:
         prompts = await resolve_for_channel(session, tenant_id, channel)
@@ -104,9 +134,10 @@ async def execute_variants_for_task(
                 article.body_markdown,
                 article.outline or {},
                 llm=llm,
-                brand=tenant.name if tenant else None,
+                brand=brand,
                 use_llm=bool(use_llm),
                 prompts=prompts,
+                facts=fact_dicts,
             )
         except ArticleQualityError as exc:
             polish_stats["rejected"] += 1
@@ -211,11 +242,12 @@ async def execute_variants_for_task(
             title=article.title or task.title or "",
             body_markdown=article.body_markdown or "",
             outline=article.outline or {},
-            facts=[],
+            facts=fact_dicts,
             target_channels=list(task.target_channels or []),
             variants=[v.channel for v in variants_now],
             author_name=article.author_name,
             default_author=tenant.name if tenant else None,
+            variant_bodies=[v.body_markdown or "" for v in variants_now],
         )
         checks = run_checks(ri)
         ready = is_ready(checks, require_channels=False)

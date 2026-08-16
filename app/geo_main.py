@@ -12,6 +12,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.database import engine
+from app.http_errors import register_infra_handlers
 from app.geo.content.oauth_public import router as geo_oauth_public_router
 from app.geo.routes import router as geo_router
 from app.security.prod_guard import enforce_production_secrets
@@ -39,6 +40,7 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Growth Sniper GEO API", version="0.1.0", lifespan=_lifespan)
+register_infra_handlers(app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

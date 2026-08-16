@@ -23,6 +23,8 @@ STALE_RUNNING_SECONDS = 45 * 60
 
 
 def job_payload(row: GeoAsyncJob) -> dict[str, Any]:
+    meta = row.request_meta if isinstance(row.request_meta, dict) else {}
+    progress = meta.get("progress") if isinstance(meta.get("progress"), dict) else {}
     return {
         "id": row.id,
         "tenant_id": row.tenant_id,
@@ -30,14 +32,48 @@ def job_payload(row: GeoAsyncJob) -> dict[str, Any]:
         "status": row.status,
         "ref_type": row.ref_type,
         "ref_id": row.ref_id,
-        "request_meta": row.request_meta or {},
+        "request_meta": meta,
         "result_meta": row.result_meta or {},
+        "progress": progress,
+        "progress_label": progress.get("message") or "",
+        "progress_pct": progress.get("pct"),
+        "cancel_requested": bool(meta.get("cancel_requested")),
         "error": row.error,
         "created_by": row.created_by,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "started_at": row.started_at.isoformat() if row.started_at else None,
         "finished_at": row.finished_at.isoformat() if row.finished_at else None,
     }
+
+
+async def set_job_progress(
+    session: AsyncSession, job: GeoAsyncJob, *, message: str, pct: int
+) -> None:
+    meta = dict(job.request_meta or {})
+    meta["progress"] = {"message": message, "pct": max(0, min(100, int(pct)))}
+    job.request_meta = meta
+    await session.commit()
+
+
+def cancel_requested(job: GeoAsyncJob) -> bool:
+    meta = job.request_meta if isinstance(job.request_meta, dict) else {}
+    return bool(meta.get("cancel_requested")) or job.status == "cancelled"
+
+
+async def request_cancel(session: AsyncSession, job: GeoAsyncJob) -> GeoAsyncJob:
+    if job.status in {"succeeded", "failed", "cancelled"}:
+        return job
+    meta = dict(job.request_meta or {})
+    meta["cancel_requested"] = True
+    job.request_meta = meta
+    if job.status == "pending":
+        job.status = "cancelled"
+        job.error = "已取消"
+        job.finished_at = datetime.utcnow()
+        await _release_task_lock(session, job, reason="user_cancel")
+    await session.commit()
+    await session.refresh(job)
+    return job
 
 
 def _stale_limits() -> tuple[int, int]:
@@ -258,7 +294,7 @@ async def mark_job(
     row.status = status
     if status == "running" and row.started_at is None:
         row.started_at = datetime.utcnow()
-    if status in {"succeeded", "failed"}:
+    if status in {"succeeded", "failed", "cancelled"}:
         row.finished_at = datetime.utcnow()
     if error is not None:
         row.error = error[:2000]
@@ -276,6 +312,10 @@ async def run_job_in_background(job_id: int) -> None:
             if row is None:
                 return
             await mark_job(session, job_id, status="running")
+            row = await session.get(GeoAsyncJob, job_id)
+            if row is not None and cancel_requested(row):
+                await mark_job(session, job_id, status="cancelled", error="已取消")
+                return
             try:
                 if row.kind == KIND_GENERATE:
                     result = await _execute_generate(session, row)
@@ -287,8 +327,8 @@ async def run_job_in_background(job_id: int) -> None:
                     raise ValueError(f"未知作业类型: {row.kind}")
                 await mark_job(session, job_id, status="succeeded", result_meta=result)
             except Exception as exc:  # noqa: BLE001
-                logger.exception("geo async job failed id=%s", job_id)
-                # restore task status if stuck generating / adapting
+                live = await session.get(GeoAsyncJob, job_id) or row
+                cancelled = str(exc) == "已取消" or cancel_requested(live)
                 if row.ref_id and row.kind in {KIND_GENERATE, KIND_VARIANTS}:
                     task = await session.get(GeoContentTask, row.ref_id)
                     if task is not None and task.status in {
@@ -297,6 +337,10 @@ async def run_job_in_background(job_id: int) -> None:
                     }:
                         task.status = "editing"
                         await session.commit()
+                if cancelled:
+                    await mark_job(session, job_id, status="cancelled", error="已取消")
+                    return
+                logger.exception("geo async job failed id=%s", job_id)
                 await mark_job(
                     session,
                     job_id,
@@ -354,17 +398,43 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
 
     task.status = "generating"
     await session.commit()
+    await set_job_progress(session, job, message="正在准备事实与 Brief", pct=15)
+    if cancel_requested(await session.get(GeoAsyncJob, job.id) or job):
+        task.status = "editing"
+        await session.commit()
+        raise ValueError("已取消")
 
     llm = await resolve_llm_credentials(session, job.tenant_id)
+    from app.geo.content.business_profile import display_brand
+    from app.models.geo_optimization import GeoOptimizationBusiness
+
+    biz_row = None
+    if getattr(task, "business_id", None):
+        biz_row = await session.get(GeoOptimizationBusiness, task.business_id)
+    await set_job_progress(session, job, message="正在调用模型写稿", pct=45)
     payload = await generate_master_article(
-        tenant_name=tenant.name,
+        tenant_name=display_brand(
+            getattr(biz_row, "profile", None) if biz_row else None,
+            fallback=tenant.name,
+        ),
         question=prompt.question,
         facts=fact_dicts,
         llm=llm,
         brief=brief_norm,
     )
+    job = await session.get(GeoAsyncJob, job.id) or job
+    if cancel_requested(job):
+        task.status = "editing"
+        await session.commit()
+        raise ValueError("已取消")
+    await set_job_progress(session, job, message="正在挂事实引用并落库", pct=80)
     body = to_markdown(payload)
     outline = outline_from_payload(payload)
+    from app.geo.content.evidence_cite import attach_sentence_citations
+
+    body, cites = attach_sentence_citations(body, fact_dicts)
+    outline = dict(outline or {})
+    outline["sentence_citations"] = cites
     latest = await session.scalar(
         select(GeoArticleVersion)
         .where(GeoArticleVersion.task_id == task.id)
@@ -385,6 +455,7 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
             "evidence": payload.get("_evidence") or evidence_preview,
             "brief": payload.get("_brief") or brief_norm,
             "async_job_id": job.id,
+            "sentence_citations": cites,
         },
         created_by=job.created_by,
     )

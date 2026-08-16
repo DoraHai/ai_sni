@@ -9,7 +9,10 @@ import {
   createTasksFromGaps,
   fetchBusinessDashboard,
   formatGeoError,
+  patchGeoBusiness,
 } from '../../api/geoContent'
+import GeoBusinessProfileForm from '../../components/GeoBusinessProfileForm.vue'
+import SampleCredibilityAlert from '../../components/SampleCredibilityAlert.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { useObservationPeriod } from '../../composables/useObservationPeriod'
 import { engineDisplay, fmtPct, taskStatusLabel } from '../../utils/geoReportLabels'
@@ -39,6 +42,58 @@ const competitors = computed(() => data.value?.competitors || {})
 const funnel = computed(() => data.value?.content_funnel || {})
 const delta = computed(() => visibility.value?.delta_vs_previous || {})
 const weekActions = computed(() => data.value?.this_week || [])
+const profileOpen = ref(false)
+const savingProfile = ref(false)
+const profileForm = ref({
+  product_name: '',
+  summary: '',
+  capabilities: '',
+  audience: '',
+  scenarios: '',
+  geo_scope: '',
+  industry: '',
+  competitors: '',
+  recommend_reasons: '',
+  banned_claims: '',
+  cta: '',
+})
+
+function joinList(v) {
+  return Array.isArray(v) ? v.join('，') : v || ''
+}
+
+function openProfile() {
+  const p = biz.value?.profile || {}
+  profileForm.value = {
+    product_name: p.product_name || '',
+    summary: p.summary || '',
+    capabilities: joinList(p.capabilities),
+    audience: p.audience || '',
+    scenarios: joinList(p.scenarios),
+    geo_scope: p.geo_scope || '',
+    industry: p.industry || '',
+    competitors: joinList(p.competitors),
+    recommend_reasons: joinList(p.recommend_reasons),
+    banned_claims: joinList(p.banned_claims),
+    cta: p.cta || '',
+  }
+  profileOpen.value = true
+}
+
+async function saveProfile() {
+  if (!tenantId.value || !businessId.value) return
+  savingProfile.value = true
+  try {
+    await patchGeoBusiness(tenantId.value, businessId.value, { profile: profileForm.value })
+    ElMessage.success('业务画像已保存')
+    profileOpen.value = false
+    await load()
+  } catch (e) {
+    ElMessage.error(formatGeoError(e, '保存画像失败'))
+  } finally {
+    savingProfile.value = false
+  }
+}
 
 function rate(v) {
   if (v == null || Number.isNaN(Number(v))) return '—'
@@ -124,6 +179,7 @@ onMounted(load)
       </div>
       <div class="header-actions">
         <el-button size="small" @click="load">刷新</el-button>
+        <el-button size="small" @click="openProfile">编辑画像</el-button>
         <el-button size="small" type="primary" @click="router.push('/geo/gaps')">缺口工作台</el-button>
       </div>
     </div>
@@ -173,13 +229,18 @@ onMounted(load)
       </div>
     </div>
 
-    <el-alert
-      v-if="sample.has_simulated"
-      type="warning"
-      show-icon
-      class="mb"
-      :title="`样本含模拟：真 ${sample.real || 0} · 模拟 ${sample.simulated || 0} · 人工 ${sample.manual || 0}。不可当作真实引擎效果汇报。`"
-    />
+    <SampleCredibilityAlert :composition="sample" :window-label="obsLabel" />
+
+    <section v-if="biz?.profile" class="week-panel mb">
+      <div class="panel-title">业务画像（内容生成上下文）</div>
+      <div class="week-detail">
+        产品 {{ biz.profile.product_name || biz.name }} ·
+        客户 {{ biz.profile.audience || '—' }} ·
+        行业 {{ biz.profile.industry || '—' }} ·
+        CTA {{ biz.profile.cta || '—' }}
+      </div>
+      <div v-if="biz.profile.summary" class="week-detail">{{ biz.profile.summary }}</div>
+    </section>
 
     <section v-if="weekActions.length" class="week-panel mb">
       <div class="panel-title">本周该做的 {{ weekActions.length }} 件事</div>
@@ -360,6 +421,14 @@ onMounted(load)
       </section>
       </div>
     </details>
+
+    <el-dialog v-model="profileOpen" title="编辑业务画像" width="640px">
+      <GeoBusinessProfileForm v-model="profileForm" />
+      <template #footer>
+        <el-button @click="profileOpen = false">取消</el-button>
+        <el-button type="primary" :loading="savingProfile" @click="saveProfile">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 

@@ -51,6 +51,7 @@ from app.baidu.sync import (
 from app.classification import reclassify_keywords
 from app.config import get_settings
 from app.database import async_session_factory, engine, get_session
+from app.http_errors import register_infra_handlers
 from app.models import BaiduAccount, Keyword, Tenant
 from app.scheduler import (
     refresh_keyword_workbench_snapshot,
@@ -65,6 +66,7 @@ logging.basicConfig(level=settings.log_level)
 logger = logging.getLogger("sem-backend")
 
 app = FastAPI(title="SEM 智投平台后端", version="0.3.0")
+register_infra_handlers(app)
 
 # 原型页（file:// 或其他域名）直连接口需要 CORS。API Key 走自定义头/查询参数，不涉及 credentials。
 app.add_middleware(

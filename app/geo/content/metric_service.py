@@ -89,6 +89,9 @@ METRIC_DICTIONARY: dict[str, dict[str, Any]] = {
 }
 
 DEFAULT_OBSERVATION_DAYS = 14
+MIN_CLIENT_REAL_SAMPLES = 8
+MIN_CLIENT_PROMPTS = 3
+MIN_CLIENT_ENGINES = 2
 
 
 @dataclass
@@ -98,6 +101,8 @@ class SampleComposition:
     simulated: int = 0
     manual: int = 0
     unknown: int = 0
+    prompt_n: int = 0
+    engine_n: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -106,12 +111,61 @@ class SampleComposition:
             "simulated": self.simulated,
             "manual": self.manual,
             "unknown": self.unknown,
+            "prompt_n": self.prompt_n,
+            "engine_n": self.engine_n,
             "has_simulated": self.simulated > 0,
             "label": (
                 f"真采样 {self.real} · 模拟 {self.simulated} · 人工 {self.manual}"
+                + f" · 提问 {self.prompt_n} · 引擎 {self.engine_n}"
                 + (f" · 未知 {self.unknown}" if self.unknown else "")
             ),
+            **sample_verdict(self),
         }
+
+
+def sample_verdict(comp: SampleComposition) -> dict[str, Any]:
+    """对外汇报是否站得住。样本/提问/引擎不足一律未形成有效结论。"""
+    real_n = int(comp.real or 0)
+    sim_n = int(comp.simulated or 0)
+    prompt_n = int(comp.prompt_n or 0)
+    engine_n = int(comp.engine_n or 0)
+    if real_n <= 0:
+        return {
+            "suitable_for_client": False,
+            "verdict": "未形成有效结论",
+            "verdict_reason": "观察期内没有真采样；不得显示为 0%，也不得对外汇报。",
+        }
+    if (
+        real_n < MIN_CLIENT_REAL_SAMPLES
+        or prompt_n < MIN_CLIENT_PROMPTS
+        or engine_n < MIN_CLIENT_ENGINES
+    ):
+        return {
+            "suitable_for_client": False,
+            "verdict": "未形成有效结论",
+            "verdict_reason": (
+                f"真采样 {real_n}/{MIN_CLIENT_REAL_SAMPLES} · "
+                f"提问 {prompt_n}/{MIN_CLIENT_PROMPTS} · "
+                f"引擎 {engine_n}/{MIN_CLIENT_ENGINES}。样本量不足，不能把单次命中写成 100%。"
+            ),
+        }
+    if sim_n > 0 and sim_n >= real_n:
+        return {
+            "suitable_for_client": False,
+            "verdict": "含模拟，仅内部预判",
+            "verdict_reason": f"模拟 {sim_n} ≥ 真采样 {real_n}，客户交付应只看真采样或标明含模拟。",
+        }
+    if sim_n > 0:
+        return {
+            "suitable_for_client": False,
+            "verdict": "含模拟，交付须标注",
+            "verdict_reason": f"真采样 {real_n}、模拟 {sim_n}。模拟只用于流程演示。",
+        }
+    return {
+        "suitable_for_client": True,
+        "verdict": "可对外汇报",
+        "verdict_reason": f"真采样 {real_n} 条、提问 {prompt_n}、引擎 {engine_n}，无模拟样本。",
+    }
 
 
 @dataclass
@@ -131,16 +185,18 @@ class BrandMentionResult:
     metric_id: str = "brand_mention_rate"
 
     def to_dict(self) -> dict[str, Any]:
+        # 未达对外门槛时不得显示 0%/100%。
+        rates_ok = bool(sample_verdict(self.composition).get("suitable_for_client"))
         return {
             "metric_id": self.metric_id,
-            "brand_mention_rate": self.rate,
+            "brand_mention_rate": self.rate if rates_ok else None,
             "brand_mentions": self.mentions,
             "snapshots_visibility": self.visibility_n,
             "snapshots_probe": self.probe_n,
             "brand_probe_hits": self.probe_hits,
-            "brand_probe_recognition_rate": self.probe_rate,
+            "brand_probe_recognition_rate": self.probe_rate if rates_ok else None,
             "top1_count": self.top1_count,
-            "top1_rate": self.top1_rate,
+            "top1_rate": self.top1_rate if rates_ok else None,
             "sample_composition": self.composition.to_dict(),
             "window": {
                 "start": self.window_start.isoformat() if self.window_start else None,
@@ -175,16 +231,29 @@ def _classify_sample(snap: GeoAnswerSnapshot) -> str:
 
 def composition_of(snaps: Sequence[GeoAnswerSnapshot]) -> SampleComposition:
     c = SampleComposition(total=len(snaps))
+    prompts: set[int] = set()
+    engines: set[str] = set()
     for s in snaps:
         kind = _classify_sample(s)
         if kind == "real":
             c.real += 1
+            pid = getattr(s, "prompt_id", None)
+            if pid is not None:
+                try:
+                    prompts.add(int(pid))
+                except (TypeError, ValueError):
+                    pass
+            eng = str(getattr(s, "engine", None) or "").strip()
+            if eng:
+                engines.add(eng)
         elif kind == "simulated":
             c.simulated += 1
         elif kind == "manual":
             c.manual += 1
         else:
             c.unknown += 1
+    c.prompt_n = len(prompts)
+    c.engine_n = len(engines)
     return c
 
 

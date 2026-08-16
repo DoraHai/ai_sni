@@ -90,12 +90,15 @@ class GenerateBriefGateTests(unittest.IsolatedAsyncioTestCase):
             "cta": "预约演示",
             "banned_claims": ["保证收录"],
         }
-        payload = await generate_master_article(
-            tenant_name="Demo",
-            question="数据分析平台哪个好用",
-            facts=_eligible_facts(),
-            brief=brief,
-        )
+        from unittest.mock import patch
+
+        with patch("app.geo.content.generate_article.is_enabled", return_value=False):
+            payload = await generate_master_article(
+                tenant_name="Demo",
+                question="数据分析平台哪个好用",
+                facts=_eligible_facts(),
+                brief=brief,
+            )
         self.assertEqual(payload["_brief"]["cta"], "预约演示")
         self.assertIn("Brief", payload.get("disclaimer") or "")
 

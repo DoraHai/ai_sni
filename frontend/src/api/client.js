@@ -73,10 +73,15 @@ client.interceptors.response.use(
         '未授权：请登录或配置 VITE_API_KEY'
       return Promise.reject(new Error(detail))
     }
+    const status = error.response?.status
     const detail =
       normalizeDetail(error.response?.data?.detail) ||
-      error.message ||
-      '网络异常，请稍后重试'
+      (status === 503
+        ? '数据库连不上。请先打开 Docker Desktop 并启动 Postgres，然后刷新。'
+        : status === 500
+          ? '服务内部错误。若刚打开页面就失败，多半是数据库未启动。'
+          : error.message ||
+            '网络异常，请稍后重试')
     return Promise.reject(new Error(detail))
   },
 )

@@ -71,6 +71,38 @@ class MetricComputeTests(unittest.TestCase):
         self.assertEqual(c.simulated, 1)
         self.assertEqual(c.manual, 1)
         self.assertTrue(c.to_dict()["has_simulated"])
+        d = c.to_dict()
+        self.assertFalse(d["suitable_for_client"])
+        self.assertIn(d["verdict"], ("含模拟，仅内部预判", "未形成有效结论"))
+
+    def test_no_real_sample_rates_are_none(self):
+        snaps = [
+            self._snap(sample_mode="mock_persona", simulated=True, mentions_brand=False),
+            self._snap(sample_mode="mock_persona", simulated=True, mentions_brand=False),
+        ]
+        r = compute_brand_mention_from_rows(snaps, probe_map={1: False})
+        payload = r.to_dict()
+        self.assertIsNone(payload["brand_mention_rate"])
+        self.assertIsNone(payload["top1_rate"])
+        self.assertEqual(payload["sample_composition"]["verdict"], "未形成有效结论")
+        self.assertFalse(payload["sample_composition"]["suitable_for_client"])
+
+    def test_real_only_verdict(self):
+        snaps = [
+            self._snap(prompt_id=i, engine=f"e{i % 3}", sample_mode="openai_compat", simulated=False, mentions_brand=True)
+            for i in range(1, 10)
+        ]
+        c = composition_of(snaps)
+        d = c.to_dict()
+        self.assertTrue(d["suitable_for_client"])
+        self.assertEqual(d["verdict"], "可对外汇报")
+
+    def test_single_sample_not_client_ready(self):
+        snaps = [self._snap(sample_mode="openai_compat", simulated=False, mentions_brand=True)]
+        r = compute_brand_mention_from_rows(snaps, probe_map={1: False})
+        payload = r.to_dict()
+        self.assertIsNone(payload["brand_mention_rate"])
+        self.assertEqual(payload["sample_composition"]["verdict"], "未形成有效结论")
 
 
 if __name__ == "__main__":

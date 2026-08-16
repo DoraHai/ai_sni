@@ -14,6 +14,7 @@ import {
   patchGeoUnit,
   rebuildGeoDailyMetrics,
 } from '../../api/geoContent'
+import GeoBusinessProfileForm from '../../components/GeoBusinessProfileForm.vue'
 import NeedHintAlert from '../../components/NeedHintAlert.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
@@ -52,10 +53,49 @@ const promptPager = useClientPager(prompts, { pageSize: 12 })
 const dailyPager = useClientPager(dailyItems, { pageSize: 20 })
 
 const bizOpen = ref(false)
+const profileOpen = ref(false)
 const unitOpen = ref(false)
 const saving = ref(false)
-const bizForm = ref({ name: '', description: '' })
+const emptyProfile = () => ({
+  product_name: '',
+  summary: '',
+  capabilities: '',
+  audience: '',
+  scenarios: '',
+  geo_scope: '',
+  industry: '',
+  competitors: '',
+  recommend_reasons: '',
+  banned_claims: '',
+  cta: '',
+})
+const bizForm = ref({ name: '', description: '', profile: emptyProfile() })
+const profileForm = ref(emptyProfile())
+const profileBiz = ref(null)
 const unitForm = ref({ name: '', keyword: '', description: '' })
+
+function profileFromRow(row) {
+  const p = row?.profile || {}
+  const join = (v) => (Array.isArray(v) ? v.join('，') : v || '')
+  return {
+    product_name: p.product_name || '',
+    summary: p.summary || '',
+    capabilities: join(p.capabilities),
+    audience: p.audience || '',
+    scenarios: join(p.scenarios),
+    geo_scope: p.geo_scope || '',
+    industry: p.industry || '',
+    competitors: join(p.competitors),
+    recommend_reasons: join(p.recommend_reasons),
+    banned_claims: join(p.banned_claims),
+    cta: p.cta || '',
+  }
+}
+
+function profileFilled(row) {
+  const p = row?.profile || {}
+  return !!(p.product_name || p.summary || p.audience || p.industry)
+}
 
 const selectedBusiness = computed(() =>
   businesses.value.find((b) => b.id === selectedBusinessId.value) || null,
@@ -281,10 +321,11 @@ async function submitBusiness() {
       tenant_id: tenantId.value,
       name: bizForm.value.name.trim(),
       description: bizForm.value.description || null,
+      profile: bizForm.value.profile,
     })
     ElMessage.success('已创建优化业务')
     bizOpen.value = false
-    bizForm.value = { name: '', description: '' }
+    bizForm.value = { name: '', description: '', profile: emptyProfile() }
     await loadBusinesses()
     selectedBusinessId.value = row.id
   } catch (e) {
@@ -335,6 +376,29 @@ async function archiveBusiness(row) {
     await loadPrompts()
   } catch (e) {
     ElMessage.error(e.message || '归档失败')
+  }
+}
+
+function openProfile(row) {
+  profileBiz.value = row
+  profileForm.value = profileFromRow(row)
+  profileOpen.value = true
+}
+
+async function saveProfile() {
+  if (!profileBiz.value) return
+  saving.value = true
+  try {
+    await patchGeoBusiness(tenantId.value, profileBiz.value.id, {
+      profile: profileForm.value,
+    })
+    ElMessage.success('业务画像已保存，Brief / 母稿 / 报告将读取这套上下文')
+    profileOpen.value = false
+    await loadBusinesses()
+  } catch (e) {
+    ElMessage.error(e.message || '保存画像失败')
+  } finally {
+    saving.value = false
   }
 }
 
@@ -502,7 +566,7 @@ onMounted(async () => {
       <div>
         <div class="page-title">优化业务</div>
         <div class="page-desc">
-          维护「业务 → 单元 → 意图词」结构，并查看按天汇总切片（提及率 / 引用 / 竞品）。
+          维护「业务 → 单元 → 意图词」结构。每条业务应填写专属画像，避免内容建议串到租户总品牌。
         </div>
       </div>
       <div class="header-actions">
@@ -580,8 +644,15 @@ onMounted(async () => {
             </template>
           </el-table-column>
           <el-table-column prop="unit_count" label="单元" width="64" />
-          <el-table-column label="" width="72" fixed="right">
+          <el-table-column label="画像" width="64">
             <template #default="{ row }">
+              <el-tag v-if="profileFilled(row)" size="small" type="success">已填</el-tag>
+              <el-tag v-else size="small" type="warning">缺</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="" width="108" fixed="right">
+            <template #default="{ row }">
+              <el-button type="primary" link size="small" @click.stop="openProfile(row)">画像</el-button>
               <el-button
                 v-if="row.status === 'archived'"
                 type="primary"
@@ -859,7 +930,7 @@ onMounted(async () => {
       <div v-else class="metrics-collapsed">点击「展开」查看租户 / 业务 / 单元按天指标</div>
     </section>
 
-    <el-dialog v-model="bizOpen" title="新建优化业务" width="480px">
+    <el-dialog v-model="bizOpen" title="新建优化业务" width="640px">
       <el-form label-width="88px">
         <el-form-item label="名称" required>
           <el-input v-model="bizForm.name" placeholder="如：智能客服产品线" />
@@ -868,9 +939,20 @@ onMounted(async () => {
           <el-input v-model="bizForm.description" type="textarea" :rows="2" />
         </el-form-item>
       </el-form>
+      <p class="toolbar-hint">业务画像会作为 Brief、母稿和报告的唯一品牌上下文，不要只填租户总品牌。</p>
+      <GeoBusinessProfileForm v-model="bizForm.profile" />
       <template #footer>
         <el-button @click="bizOpen = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="submitBusiness">创建</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="profileOpen" :title="`业务画像 · ${profileBiz?.name || ''}`" width="640px">
+      <p class="toolbar-hint">每条业务线独立：产品名、禁止表述、竞品和 CTA 都会进入内容生成。</p>
+      <GeoBusinessProfileForm v-model="profileForm" />
+      <template #footer>
+        <el-button @click="profileOpen = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="saveProfile">保存画像</el-button>
       </template>
     </el-dialog>
 

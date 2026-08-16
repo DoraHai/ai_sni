@@ -401,6 +401,15 @@ def compute_geo_score(
     for k, w in WEIGHTS.items():
         total += w * float(subs[k])
     geo_score = int(round(100 * total))
+    if lint_ok is False:
+        geo_score = min(geo_score, 59)
+        a2 = list(a2) + [
+            {
+                "code": "geo_evidence_ungrounded",
+                "message": "存在无依据数字、性能或案例，不能标可发布",
+                "action": "删掉事实卡没有的数据后再检查",
+            }
+        ]
     actions = a1 + a2 + a3 + a4 + a5 + a6 + a7
     # de-dupe by code
     seen: set[str] = set()

@@ -140,9 +140,11 @@ class ProbeBatchHelpersTests(unittest.IsolatedAsyncioTestCase):
         llm, mode, reason = resolve_engine_llm(
             engine="chatgpt", tenant_llm=tenant, engine_row=Row()
         )
-        self.assertEqual(mode, SAMPLE_MODE_PERSONA)
+        # 引擎未配 Key 时用租户真采样凭证，仍记为真采样，不降级人设。
+        self.assertEqual(mode, SAMPLE_MODE_REAL)
         self.assertEqual(llm["api_key"], "tk")
-        self.assertIn("回退", reason or "")
+        self.assertIn("tenant_fallback", str(llm.get("source") or ""))
+        self.assertIsNone(reason)
 
     def test_probe_batch_requires_geo_content_edit(self):
         self.assertEqual(

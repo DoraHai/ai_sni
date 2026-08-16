@@ -77,7 +77,7 @@ def test_wechat_mp_mock_publish():
 
     os.environ["GEO_WECHAT_MP_MOCK"] = "1"
     assert wechat_mp_mock_enabled("anything")
-    r = asyncio.get_event_loop().run_until_complete(
+    r = asyncio.run(
         publish_wechat_mp(
             {"app_id": "wx_real_looking", "app_secret": "s"},
             mode="draft",
@@ -95,7 +95,7 @@ def test_wechat_mp_mock_publish():
 def test_wechat_mp_mock_by_app_id_prefix():
     import asyncio
 
-    r = asyncio.get_event_loop().run_until_complete(
+    r = asyncio.run(
         publish_wechat_mp(
             {"app_id": "mock_wx_demo", "app_secret": "s"},
             mode="publish",

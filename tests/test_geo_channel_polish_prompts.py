@@ -35,7 +35,7 @@ class ChannelPolishDefaultsTests(unittest.TestCase):
         system, voice, mn = _resolve_prompt_bundle("zhihu", None)
         self.assertEqual(system, DEFAULT_SYSTEM_PROMPT)
         self.assertEqual(voice, DEFAULT_VOICE_BY_CHANNEL["zhihu"])
-        self.assertEqual(mn, 650)
+        self.assertEqual(mn, default_min_body_chars("zhihu"))
 
     def test_resolve_prompt_bundle_override(self):
         system, voice, mn = _resolve_prompt_bundle(

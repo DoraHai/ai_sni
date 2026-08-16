@@ -49,6 +49,18 @@ class OnboardingHelpersTests(unittest.TestCase):
         self.assertIn("智能客服", vals)
         self.assertTrue(any(r["kind"] == "category" for r in roots))
 
+    def test_must_category_questions_for_cs(self):
+        items = finalize_onboarding_prompts(
+            [],
+            words=["智能客服", "工单"],
+            title="Udesk 智能客服",
+            url="https://www.udesk.cn/",
+        )
+        qs = [p["question"] for p in items]
+        self.assertIn("在线客服系统怎么选", qs)
+        self.assertIn("在线客服系统有哪些品牌", qs)
+        self.assertFalse(any("电影" in q for q in qs))
+
     def test_onboarding_roots_prefer_title_product(self):
         roots = onboarding_expand_roots(
             ["智齿科技", "官网", "智齿", "Agents", "渠道", "客户"],
@@ -167,7 +179,26 @@ class OnboardingHelpersTests(unittest.TestCase):
             stance="hybrid",
         )
         self.assertTrue(r["ready"])
+        self.assertTrue(r["first_ready"])
+        self.assertTrue(r["continuous_ready"])
         self.assertEqual(r["ready_count"], r["total"])
+
+    def test_readiness_first_ready_without_patrol(self):
+        r = build_readiness_items(
+            has_brand_terms=True,
+            business_count=1,
+            prompt_count=5,
+            fact_count=4,
+            verified_fact_count=3,
+            engine_count=2,
+            real_engine_count=1,
+            ai_key_configured=True,
+            patrol_enabled=False,
+            channel_count=1,
+        )
+        self.assertTrue(r["first_ready"])
+        self.assertTrue(r["ready"])
+        self.assertFalse(r["continuous_ready"])
 
     def test_readiness_simulation_skips_engine_keys(self):
         r = build_readiness_items(

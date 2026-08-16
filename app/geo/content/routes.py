@@ -65,6 +65,8 @@ from app.geo.content.schemas import (
     AiSettingsUpdate,
     ChannelPolishPromptsUpdate,
     CompetitorCreateTasksRequest,
+    CompetitorReportPatch,
+    CompetitorReportUpsert,
     CompetitorTraceReportRequest,
     AnswerSnapshotCreate,
     AnswerSnapshotExtractUrlsRequest,
@@ -79,6 +81,7 @@ from app.geo.content.schemas import (
     ChannelAccountUpdate,
     FactCreate,
     FactUpdate,
+    FactVerifyRequest,
     GapCreateTasksRequest,
     GeoOnboardingApplyRequest,
     GeoOnboardingPreviewRequest,
@@ -298,9 +301,27 @@ def _fact_payload(row: GeoFact) -> dict[str, Any]:
         "meta": row.meta or {},
         "author_name": row.author_name,
         "import_batch_id": row.import_batch_id,
+        "business_id": getattr(row, "business_id", None),
         "created_by": row.created_by,
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
+        "verification": _fact_verification(row),
+    }
+
+
+def _fact_verification(row: GeoFact) -> dict[str, Any]:
+    meta = row.meta if isinstance(row.meta, dict) else {}
+    rec = meta.get("verification") if isinstance(meta.get("verification"), dict) else {}
+    return {
+        "verified_at": rec.get("verified_at") or meta.get("verified_at"),
+        "verified_by": rec.get("verified_by") or meta.get("verified_by"),
+        "excerpt": rec.get("excerpt") or meta.get("source_excerpt"),
+        "excerpt_locator": rec.get("excerpt_locator") or meta.get("excerpt_locator"),
+        "source_url": rec.get("source_url") or row.source_url,
+        "note": rec.get("note") or meta.get("verify_note"),
+        "complete": bool(
+            rec.get("excerpt") and rec.get("excerpt_locator") and rec.get("verified_at")
+        ),
     }
 
 
@@ -314,6 +335,55 @@ async def _ensure_tenant_exists(session: AsyncSession, tenant_id: int) -> Tenant
     if tenant is None:
         raise HTTPException(404, "客户不存在")
     return tenant
+
+
+async def _brand_context_for_prompt(
+    session: AsyncSession,
+    prompt: GeoPrompt,
+    tenant: Tenant,
+) -> tuple[str, list[str]]:
+    """Business profile product name wins; do not mix another business brand."""
+    from app.geo.content.brand_geo import brand_names_from_tenant
+    from app.geo.content.business_profile import brand_names_for_profile, display_brand
+
+    fallback = getattr(tenant, "name", None) or f"租户{getattr(tenant, 'id', None) or prompt.tenant_id}"
+    biz = None
+    unit_id = getattr(prompt, "unit_id", None)
+    if unit_id:
+        unit = await session.get(GeoOptimizationUnit, unit_id)
+        if unit and unit.business_id:
+            biz = await session.get(GeoOptimizationBusiness, unit.business_id)
+    if biz is None and getattr(prompt, "business_id", None):
+        biz = await session.get(GeoOptimizationBusiness, prompt.business_id)
+    profile = getattr(biz, "profile", None) if biz else None
+    brand = display_brand(profile, fallback=fallback)
+    names = brand_names_for_profile(profile, fallback=brand)
+    if not names:
+        names = brand_names_from_tenant(
+            name=getattr(tenant, "name", None),
+            brand_terms=getattr(tenant, "brand_terms", None),
+        ) or [brand]
+    return brand, names
+
+
+async def _brand_context_for_task(
+    session: AsyncSession,
+    task: GeoContentTask,
+    tenant: Tenant,
+) -> tuple[str, list[str]]:
+    from app.geo.content.business_profile import brand_names_for_profile, display_brand
+
+    fallback = getattr(tenant, "name", None) or f"租户{task.tenant_id}"
+    biz = None
+    if getattr(task, "business_id", None):
+        biz = await session.get(GeoOptimizationBusiness, task.business_id)
+    if biz is None:
+        prompt = await session.get(GeoPrompt, task.prompt_id)
+        if prompt:
+            return await _brand_context_for_prompt(session, prompt, tenant)
+    profile = getattr(biz, "profile", None) if biz else None
+    brand = display_brand(profile, fallback=fallback)
+    return brand, brand_names_for_profile(profile, fallback=brand) or [brand]
 
 
 def _business_week_actions(
@@ -546,6 +616,7 @@ async def _build_rule_input(
         variants=[v.channel for v in variants],
         author_name=article.author_name if article else None,
         default_author=default_author,
+        variant_bodies=[v.body_markdown or "" for v in variants],
     )
 
 
@@ -571,9 +642,10 @@ async def _evaluate_and_store_rules(
     check_dicts = [c.to_dict() for c in checks]
     ready = is_ready(checks, require_channels=require_channels)
     patches = build_fix_patches(rule_input)
-    lint = lint_summary(
-        lint_draft(rule_input.body_markdown or "", facts=rule_input.facts or [])
-    )
+    lint_issues = lint_draft(rule_input.body_markdown or "", facts=rule_input.facts or [])
+    for vb in rule_input.variant_bodies or []:
+        lint_issues.extend(lint_draft(vb or "", facts=rule_input.facts or []))
+    lint = lint_summary(lint_issues)
     blocks = blocks_payload(rule_input.body_markdown or "")
     lint_ok = bool(lint.get("blocks_ready")) if isinstance(lint, dict) else None
     tenant_for_score = await _ensure_tenant_exists(session, task.tenant_id)
@@ -582,7 +654,11 @@ async def _evaluate_and_store_rules(
         brief=task.brief if isinstance(task.brief, dict) else {},
         lint_ok=lint_ok,
         rule_checks=checks,
-        brand=getattr(tenant_for_score, "name", None) if tenant_for_score else None,
+        brand=(
+            (await _brand_context_for_task(session, task, tenant_for_score))[0]
+            if tenant_for_score
+            else None
+        ),
     )
     settings = get_settings()
     score_ok, score_msg = score_blocks_ready(
@@ -846,11 +922,14 @@ async def get_publishing_channel_options(
 
 
 def _business_payload(row: GeoOptimizationBusiness, *, unit_count: int | None = None) -> dict[str, Any]:
+    from app.geo.content.business_profile import normalize_profile
+
     return {
         "id": row.id,
         "tenant_id": row.tenant_id,
         "name": row.name,
         "description": row.description,
+        "profile": normalize_profile(getattr(row, "profile", None)),
         "status": row.status,
         "sort_order": row.sort_order,
         "unit_count": unit_count,
@@ -922,10 +1001,13 @@ async def create_optimization_business(
     )
     if exists:
         raise HTTPException(status_code=409, detail="同名优化业务已存在")
+    from app.geo.content.business_profile import normalize_profile
+
     row = GeoOptimizationBusiness(
         tenant_id=req.tenant_id,
         name=name,
         description=req.description,
+        profile=normalize_profile(req.profile) if req.profile else None,
         sort_order=req.sort_order,
     )
     session.add(row)
@@ -956,6 +1038,10 @@ async def update_optimization_business(
         data["name"] = data["name"].strip()
         if not data["name"]:
             raise HTTPException(status_code=400, detail="业务名称不能为空")
+    if "profile" in data:
+        from app.geo.content.business_profile import normalize_profile
+
+        data["profile"] = normalize_profile(data.get("profile"))
     for key, value in data.items():
         setattr(row, key, value)
     await session.commit()
@@ -2675,12 +2761,19 @@ async def competitor_insights(
             if u:
                 urls_7d.add(u)
 
+    from app.geo.content.metric_service import composition_of
+
+    sample = composition_of(rows).to_dict()
     return {
         "items": items,
         "summary": {
             "competitor_count": len(items),
             "platform_count": len(all_platforms),
             "sources_last_7d": len(urls_7d),
+            "sample_composition": sample,
+            "suitable_for_client": bool(sample.get("suitable_for_client")),
+            "verdict": sample.get("verdict"),
+            "verdict_reason": sample.get("verdict_reason"),
         },
     }
 
@@ -2846,6 +2939,22 @@ async def competitor_insights_trace(
     return payload
 
 
+@router.post("/competitor-insights/web-search")
+async def competitor_web_search(
+    tenant_id: int = Query(...),
+    name: str = Query(..., min_length=1, max_length=120),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict:
+    """Public-web harvest of competitor pages. Not snapshot citations."""
+    ctx.ensure_tenant(tenant_id)
+    from app.geo.content.competitor_web_search import search_competitor_web
+
+    try:
+        return await search_competitor_web(name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @router.post("/competitor-insights/report")
 async def competitor_insights_report(
     req: CompetitorTraceReportRequest,
@@ -2889,6 +2998,16 @@ async def competitor_insights_report(
     )
     report["tenant_id"] = req.tenant_id
     report["competitor"] = req.competitor.strip()
+    confirmed_ext = [str(u).strip() for u in (req.confirmed_external_urls or []) if str(u).strip()]
+    if confirmed_ext:
+        extra = ["", "## 人工确认的外部检索页", ""]
+        for u in confirmed_ext[:12]:
+            extra.append(f"- {u}")
+        extra.append("")
+        extra.append("这些页面来自外部检索并经人工勾选，不是本次快照 cited_urls。")
+        extra.append("")
+        report["markdown"] = (report.get("markdown") or "") + "\n".join(extra)
+        report["external_confirmed_count"] = len(confirmed_ext)
     return report
 
 
@@ -3416,11 +3535,7 @@ async def probe_answer_snapshot(
             503,
             "未配置 AI 能力：请在「AI 能力配置」或引擎 openai_compat 凭证中填写 API Key，或改用粘贴登记",
         )
-    brand = getattr(tenant, "name", None) or f"租户{req.tenant_id}"
-    brand_names = brand_names_from_tenant(
-        name=getattr(tenant, "name", None),
-        brand_terms=getattr(tenant, "brand_terms", None),
-    ) or [brand]
+    brand, brand_names = await _brand_context_for_prompt(session, prompt, tenant)
     try:
         draft = await run_probe_draft(
             question=prompt.question,
@@ -3475,11 +3590,7 @@ async def probe_answer_snapshot_batch(
             "未配置 AI 能力：请在「AI 能力配置」或引擎 openai_compat 凭证中填写 API Key，或改用粘贴登记",
         )
 
-    brand = getattr(tenant, "name", None) or f"租户{req.tenant_id}"
-    brand_names = brand_names_from_tenant(
-        name=getattr(tenant, "name", None),
-        brand_terms=getattr(tenant, "brand_terms", None),
-    ) or [brand]
+    brand, brand_names = await _brand_context_for_prompt(session, prompt, tenant)
 
     items: list[dict] = []
     for engine in engines:
@@ -3740,6 +3851,16 @@ async def geo_onboarding_apply(
         created["prompts"].append({"id": row.id, "question": q, "existed": False})
 
     for f in req.facts[:30]:
+        fact_biz = default_biz
+        matched_fact_biz = match_prompt_business(
+            f"{f.title} {f.statement}",
+            list(biz_by_name.keys()),
+            explicit=getattr(f, "business_name", None),
+        )
+        if matched_fact_biz and matched_fact_biz in biz_by_name:
+            fact_biz = biz_by_name[matched_fact_biz]
+        elif getattr(f, "business_name", None) and f.business_name in biz_by_name:
+            fact_biz = biz_by_name[f.business_name]
         row = GeoFact(
             tenant_id=req.tenant_id,
             title=f.title.strip()[:200],
@@ -3749,12 +3870,22 @@ async def geo_onboarding_apply(
             source_url=f.source_url,
             trust_level=f.trust_level,
             status="active",
+            business_id=fact_biz.id if fact_biz else None,
             meta={"from_onboarding": True, "website_url": req.website_url},
             created_by=ctx.user_id,
         )
         session.add(row)
         await session.flush()
-        created["facts"].append({"id": row.id, "title": row.title})
+        created["facts"].append(
+            {"id": row.id, "title": row.title, "business_id": row.business_id}
+        )
+
+    from app.geo.content.onboarding import attach_orphan_onboarding_facts
+
+    if default_biz is not None:
+        await attach_orphan_onboarding_facts(
+            session, tenant_id=req.tenant_id, business_id=default_biz.id
+        )
 
     if req.create_website_channel and req.website_url:
         from app.geo.content.onboarding import website_channel_name
@@ -4394,6 +4525,23 @@ async def list_async_jobs(
     return {"items": out, "stale_tasks_released": released}
 
 
+@router.post("/async-jobs/{job_id}/cancel")
+async def cancel_async_job(
+    job_id: int,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from app.geo.content.async_jobs import job_payload, request_cancel
+
+    ctx.ensure_tenant(tenant_id)
+    row = await session.get(GeoAsyncJob, job_id)
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, "异步作业不存在")
+    row = await request_cancel(session, row)
+    return job_payload(row)
+
+
 @router.get("/visibility-patrol/ops-status")
 async def visibility_patrol_ops_status(
     tenant_id: int = Query(...),
@@ -4802,6 +4950,7 @@ async def suggest_answer_snapshot_fields(
     if req.prompt_id is not None:
         prompt = await _get_prompt(session, req.prompt_id, req.tenant_id)
         question = prompt.question
+        brand, brand_names = await _brand_context_for_prompt(session, prompt, tenant)
 
     llm_data: dict | None = None
     llm_meta: dict[str, Any] = {"used": False}
@@ -5851,6 +6000,7 @@ async def list_facts(
     tenant_id: int = Query(...),
     trust_level: str | None = Query(None),
     status: str = Query("active"),
+    business_id: int | None = Query(None),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -5860,6 +6010,10 @@ async def list_facts(
         stmt = stmt.where(GeoFact.status == status)
     if trust_level:
         stmt = stmt.where(GeoFact.trust_level == trust_level)
+    if business_id is not None:
+        stmt = stmt.where(
+            or_(GeoFact.business_id == business_id, GeoFact.business_id.is_(None))
+        )
     stmt = stmt.order_by(GeoFact.id.desc())
     rows = list(await session.scalars(stmt))
     return {"items": [_fact_payload(r) for r in rows]}
@@ -5873,6 +6027,8 @@ async def create_fact(
 ) -> dict:
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
+    if req.trust_level == "verified":
+        raise HTTPException(400, "不能直接创建为已核验，请先保存再走核验并填写依据")
     _validate_fact_source(req.source_name, req.trust_level)
     row = GeoFact(
         tenant_id=req.tenant_id,
@@ -5885,6 +6041,7 @@ async def create_fact(
         expires_at=req.expires_at,
         trust_level=req.trust_level,
         author_name=req.author_name,
+        business_id=req.business_id,
         meta=req.meta,
         created_by=ctx.user_id,
     )
@@ -5907,6 +6064,8 @@ async def update_fact(
     data = req.model_dump(exclude_unset=True)
     trust = data.get("trust_level", row.trust_level)
     source_name = data.get("source_name", row.source_name)
+    if data.get("trust_level") == "verified" and row.trust_level != "verified":
+        raise HTTPException(400, "请走「核验」并填写摘录依据与定位，不能直接改为已核验")
     _validate_fact_source(source_name or "", trust)
     for key, value in data.items():
         if isinstance(value, str) and key in {"title", "statement", "source_name"}:
@@ -5920,6 +6079,7 @@ async def update_fact(
 @router.post("/facts/{fact_id}/verify")
 async def verify_fact(
     fact_id: int,
+    req: FactVerifyRequest,
     tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
@@ -5927,6 +6087,51 @@ async def verify_fact(
     ctx.ensure_tenant(tenant_id)
     row = await _get_fact(session, fact_id, tenant_id)
     _validate_fact_source(row.source_name, "verified")
+    stmt = (row.statement or "").strip()
+    if len(stmt) < 8:
+        raise HTTPException(400, "陈述过短，无法核验")
+    if len(stmt) > 220:
+        raise HTTPException(400, "陈述过长。请拆成一条不超过 220 字的原子事实后再核验")
+    excerpt = " ".join(req.excerpt.split())
+    stmt_n = "".join(stmt.split())
+    excerpt_n = "".join(excerpt.split())
+    if len(excerpt_n) < 8 or excerpt_n not in stmt_n:
+        raise HTTPException(400, "摘录必须是陈述中的连续原文，用于定位核验依据")
+    source_url = (req.source_url or row.source_url or "").strip()
+    if not source_url:
+        raise HTTPException(400, "核验必须填写来源 URL")
+    others = list(
+        await session.scalars(
+            select(GeoFact).where(
+                GeoFact.tenant_id == tenant_id,
+                GeoFact.status == "active",
+                GeoFact.trust_level == "verified",
+                GeoFact.id != row.id,
+            )
+        )
+    )
+    norm = "".join(stmt.split())
+    for other in others:
+        other_n = "".join((other.statement or "").split())
+        if other_n and (norm[:48] == other_n[:48] or norm in other_n or other_n in norm):
+            raise HTTPException(400, f"与已核验事实 #{other.id}「{other.title}」重复，请先去重")
+    now = datetime.utcnow().isoformat()
+    meta = dict(row.meta or {})
+    meta["verification"] = {
+        "excerpt": excerpt[:400],
+        "excerpt_locator": req.excerpt_locator.strip(),
+        "source_url": source_url,
+        "note": (req.note or "").strip() or None,
+        "verified_at": now,
+        "verified_by": ctx.user_id,
+    }
+    meta["verified_at"] = now
+    meta["verified_by"] = ctx.user_id
+    meta["source_excerpt"] = excerpt[:160]
+    meta["excerpt_locator"] = req.excerpt_locator.strip()
+    row.meta = meta
+    if not row.source_url:
+        row.source_url = source_url
     row.trust_level = "verified"
     await session.commit()
     await session.refresh(row)
@@ -6491,7 +6696,7 @@ async def suggest_task_brief(
     task = await _get_task(session, task_id, tenant_id)
     prompt = await _get_prompt(session, task.prompt_id, tenant_id)
     tenant = await _ensure_tenant_exists(session, tenant_id)
-    brand = getattr(tenant, "name", None) or f"租户{tenant_id}"
+    brand, _ = await _brand_context_for_task(session, task, tenant)
     llm = None
     chat_json = None
     if req.use_llm:
@@ -6512,6 +6717,16 @@ async def suggest_task_brief(
         required = ("industry", "audience", "intent", "content_type", "cta")
         if all(not str(existing.get(k) or "").strip() for k in required):
             overwrite = True
+    from app.geo.content.business_profile import display_brand, profile_brief_hints
+
+    biz_row = None
+    if getattr(task, "business_id", None):
+        biz_row = await session.get(GeoOptimizationBusiness, task.business_id)
+    hints = profile_brief_hints(getattr(biz_row, "profile", None) if biz_row else None)
+    brand = display_brand(
+        getattr(biz_row, "profile", None) if biz_row else None,
+        fallback=getattr(tenant, "name", None) or f"租户{tenant_id}",
+    )
     suggested = await suggest_brief_for_task(
         question=prompt.question,
         brand=brand,
@@ -6519,6 +6734,7 @@ async def suggest_task_brief(
         overwrite=overwrite,
         llm=llm,
         chat_json=chat_json,
+        profile_hints=hints,
     )
     return {
         "task_id": task.id,
@@ -6545,6 +6761,26 @@ async def retrieve_task_facts(
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
     prompt = await _get_prompt(session, task.prompt_id, tenant_id)
+    from app.geo.content.business_profile import normalize_profile, profile_brief_hints
+
+    biz_row = None
+    if getattr(task, "business_id", None):
+        biz_row = await session.get(GeoOptimizationBusiness, task.business_id)
+    profile = normalize_profile(getattr(biz_row, "profile", None) if biz_row else None)
+    hints = profile_brief_hints(profile)
+    question = prompt.question or task.title or ""
+    extra = " ".join(
+        filter(
+            None,
+            [
+                profile.get("product_name"),
+                profile.get("summary"),
+                " ".join(profile.get("capabilities") or []),
+            ],
+        )
+    )
+    if extra:
+        question = f"{question} {extra}"
     rows = list(
         await session.scalars(
             select(GeoFact)
@@ -6562,13 +6798,23 @@ async def retrieve_task_facts(
             "fact_type": f.fact_type,
             "trust_level": f.trust_level,
             "status": f.status,
+            "business_id": getattr(f, "business_id", None),
         }
         for f in rows
     ]
+    if getattr(task, "business_id", None):
+        fact_dicts = [
+            f
+            for f in fact_dicts
+            if f.get("business_id") in (None, task.business_id)
+        ]
+    brief = task.brief if isinstance(task.brief, dict) else {}
+    if hints:
+        brief = {**brief, **{k: v for k, v in hints.items() if k not in brief or not brief.get(k)}}
     result = retrieve_facts(
         fact_dicts,
-        question=prompt.question or task.title or "",
-        brief=task.brief if isinstance(task.brief, dict) else {},
+        question=question,
+        brief=brief,
         limit=req.limit,
         verified_only=bool(req.verified_only),
     )
@@ -6735,7 +6981,7 @@ async def ai_review_task(
         raise HTTPException(400, "请先生成或保存母稿")
     prompt = await _get_prompt(session, task.prompt_id, tenant_id)
     tenant = await _ensure_tenant_exists(session, tenant_id)
-    brand = getattr(tenant, "name", None) or f"租户{tenant_id}"
+    brand, _ = await _brand_context_for_task(session, task, tenant)
     llm = await resolve_llm_credentials(session, tenant_id)
     if not llm:
         raise HTTPException(
@@ -6884,9 +7130,10 @@ async def apply_patch(
     checks = run_checks(rule_input)
     check_dicts = [c.to_dict() for c in checks]
     ready = is_ready(checks, require_channels=False)
-    lint = lint_summary(
-        lint_draft(rule_input.body_markdown or "", facts=rule_input.facts or [])
-    )
+    lint_issues = lint_draft(rule_input.body_markdown or "", facts=rule_input.facts or [])
+    for vb in rule_input.variant_bodies or []:
+        lint_issues.extend(lint_draft(vb or "", facts=rule_input.facts or []))
+    lint = lint_summary(lint_issues)
     blocks = blocks_payload(rule_input.body_markdown or "")
     lint_ok = bool(lint.get("blocks_ready")) if isinstance(lint, dict) else None
     tenant_for_score = await _ensure_tenant_exists(session, task.tenant_id)
@@ -6895,7 +7142,11 @@ async def apply_patch(
         brief=task.brief if isinstance(task.brief, dict) else {},
         lint_ok=lint_ok,
         rule_checks=checks,
-        brand=getattr(tenant_for_score, "name", None) if tenant_for_score else None,
+        brand=(
+            (await _brand_context_for_task(session, task, tenant_for_score))[0]
+            if tenant_for_score
+            else None
+        ),
     )
     settings = get_settings()
     score_ok, score_msg = score_blocks_ready(
@@ -7028,8 +7279,16 @@ async def generate_task_article(
     await session.commit()
     try:
         llm = await resolve_llm_credentials(session, tenant_id)
+        biz_row = None
+        if getattr(task, "business_id", None):
+            biz_row = await session.get(GeoOptimizationBusiness, task.business_id)
+        from app.geo.content.business_profile import display_brand
+
         payload = await generate_master_article(
-            tenant_name=tenant.name,
+            tenant_name=display_brand(
+                getattr(biz_row, "profile", None) if biz_row else None,
+                fallback=tenant.name,
+            ),
             question=prompt.question,
             facts=fact_dicts,
             llm=llm,
@@ -7037,6 +7296,11 @@ async def generate_task_article(
         )
         body = to_markdown(payload)
         outline = outline_from_payload(payload)
+        from app.geo.content.evidence_cite import attach_sentence_citations
+
+        body, cites = attach_sentence_citations(body, fact_dicts)
+        outline = dict(outline or {})
+        outline["sentence_citations"] = cites
         latest = await _latest_article(session, task.id)
         version_no = (latest.version_no + 1) if latest else 1
         evidence_meta = payload.get("_evidence") or evidence_preview
@@ -7052,6 +7316,7 @@ async def generate_task_article(
                 "used_fact_ids": payload.get("used_fact_ids"),
                 "evidence": evidence_meta,
                 "brief": payload.get("_brief") or brief_norm,
+                "sentence_citations": cites,
             },
             created_by=ctx.user_id,
         )
@@ -7997,6 +8262,7 @@ async def geo_deliverables_pack(
     from_: str | None = Query(None, alias="from"),
     to: str | None = Query(None),
     format: str | None = Query(None, description="json (default) or md"),
+    real_only: bool = Query(True, description="交付默认只统计真采样"),
     top_domains: int = Query(10, ge=1, le=50),
     sample_snapshots: int = Query(12, ge=0, le=50),
     task_limit: int = Query(20, ge=0, le=100),
@@ -8216,6 +8482,13 @@ async def geo_deliverables_pack(
         end=end_d,
         prompt_ids=list(allowed_prompt_ids) if allowed_prompt_ids is not None else None,
     )
+    if real_only:
+        window_snaps = [
+            s
+            for s in window_snaps
+            if not bool(getattr(s, "simulated", False))
+            and (getattr(s, "sample_mode", None) or "") != "mock_persona"
+        ]
     unified = await compute_metrics(
         session,
         tenant_id,
@@ -8349,6 +8622,11 @@ async def geo_deliverables_pack(
     from app.geo.content.metric_service import composition_of
 
     sample_comp = composition_of(window_snaps)
+    mention_rate = split["visibility_mention_rate"]
+    top1_rate = split.get("visibility_top1_rate")
+    if sample_comp.real <= 0:
+        mention_rate = None
+        top1_rate = None
     summary = {
         "prompts": len(active_prompts),
         "tasks": len(window_tasks),
@@ -8356,8 +8634,8 @@ async def geo_deliverables_pack(
         "snapshots": len(window_snaps),
         "snapshots_visibility": split["snapshots_visibility"],
         "snapshots_visibility_mention": split["snapshots_visibility_mention"],
-        "visibility_mention_rate": split["visibility_mention_rate"],
-        "visibility_top1_rate": split.get("visibility_top1_rate"),
+        "visibility_mention_rate": mention_rate,
+        "visibility_top1_rate": top1_rate,
         "snapshots_probe": split["snapshots_probe"],
         "probe_recognition_rate": split["probe_recognition_rate"],
         "visibility_engines_covered": engines_covered,
@@ -8478,6 +8756,11 @@ async def geo_deliverables_pack(
         business_slices=business_slices,
         unit_slices=unit_slices,
     )
+    pack["real_only"] = bool(real_only)
+    pack["sample_composition"] = sample_comp.to_dict()
+    pack["verdict"] = sample_comp.to_dict().get("verdict")
+    pack["suitable_for_client"] = bool(sample_comp.to_dict().get("suitable_for_client"))
+    pack["impact_language"] = "发布后观察到的相关变化（非确定因果）"
 
     fmt = (format or "json").strip().lower()
     if fmt in ("md", "markdown"):
@@ -8491,6 +8774,482 @@ async def geo_deliverables_pack(
     if fmt not in ("", "json"):
         raise HTTPException(400, "format 仅支持 json 或 md")
     return pack
+
+
+# ---------- 竞品报告资产 ----------
+
+
+def _get_report(session, report_id: int, tenant_id: int):
+    from app.models.geo_competitor_report import GeoCompetitorReport
+
+    return session.get(GeoCompetitorReport, report_id)
+
+
+@router.get("/competitor-reports")
+async def list_competitor_reports(
+    tenant_id: int = Query(...),
+    competitor: str | None = Query(None),
+    status: str | None = Query(None),
+    business_id: int | None = Query(None),
+    period_id: int | None = Query(None),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from app.geo.content.competitor_reports import report_payload
+    from app.models.geo_competitor_report import GeoCompetitorReport
+
+    ctx.ensure_tenant(tenant_id)
+    stmt = select(GeoCompetitorReport).where(GeoCompetitorReport.tenant_id == tenant_id)
+    if competitor:
+        stmt = stmt.where(GeoCompetitorReport.competitor == competitor.strip())
+    if status:
+        stmt = stmt.where(GeoCompetitorReport.status == status)
+    if business_id:
+        stmt = stmt.where(GeoCompetitorReport.business_id == business_id)
+    if period_id:
+        stmt = stmt.where(GeoCompetitorReport.period_id == period_id)
+    stmt = stmt.order_by(GeoCompetitorReport.updated_at.desc(), GeoCompetitorReport.id.desc())
+    rows = list(await session.scalars(stmt.limit(80)))
+    return {"items": [report_payload(r) for r in rows], "total": len(rows)}
+
+
+@router.post("/competitor-reports")
+async def upsert_competitor_report(
+    req: CompetitorReportUpsert,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from app.geo.content.competitor_reports import report_payload, snapshot_version
+    from app.models.geo_competitor_report import GeoCompetitorReport
+
+    ctx.ensure_tenant(req.tenant_id)
+    title = (req.title or "").strip() or f"竞品溯源报告 · {req.competitor.strip()}"
+    row = GeoCompetitorReport(
+        tenant_id=req.tenant_id,
+        business_id=req.business_id,
+        period_id=req.period_id,
+        competitor=req.competitor.strip(),
+        title=title[:240],
+        status=req.status or "draft",
+        insight=req.insight,
+        action=req.action,
+        note=req.note,
+        markdown=req.markdown,
+        source_urls=req.source_urls,
+        platform_keys=req.platform_keys,
+        evidence=req.evidence,
+        version_no=1,
+        created_by=ctx.user_id,
+    )
+    session.add(row)
+    await session.flush()
+    session.add(snapshot_version(row, user_id=ctx.user_id))
+    await session.commit()
+    await session.refresh(row)
+    return report_payload(row)
+
+
+@router.get("/competitor-reports/{report_id}")
+async def get_competitor_report(
+    report_id: int,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from app.geo.content.competitor_reports import report_payload
+    from app.models.geo_competitor_report import GeoCompetitorReport, GeoCompetitorReportVersion
+
+    ctx.ensure_tenant(tenant_id)
+    row = await session.get(GeoCompetitorReport, report_id)
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, "报告不存在")
+    vers = list(
+        await session.scalars(
+            select(GeoCompetitorReportVersion)
+            .where(GeoCompetitorReportVersion.report_id == row.id)
+            .order_by(GeoCompetitorReportVersion.version_no.desc())
+        )
+    )
+    return report_payload(row, versions=vers)
+
+
+@router.patch("/competitor-reports/{report_id}")
+async def patch_competitor_report(
+    report_id: int,
+    req: CompetitorReportPatch,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from app.geo.content.competitor_reports import report_payload, snapshot_version
+    from app.models.geo_competitor_report import GeoCompetitorReport
+
+    ctx.ensure_tenant(tenant_id)
+    row = await session.get(GeoCompetitorReport, report_id)
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, "报告不存在")
+    data = req.model_dump(exclude_unset=True)
+    for k, v in data.items():
+        setattr(row, k, v)
+    row.version_no = int(row.version_no or 1) + 1
+    session.add(snapshot_version(row, user_id=ctx.user_id))
+    await session.commit()
+    await session.refresh(row)
+    return report_payload(row)
+
+
+@router.post("/competitor-reports/{report_id}/confirm")
+async def confirm_competitor_report(
+    report_id: int,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from datetime import datetime
+
+    from app.geo.content.competitor_reports import report_payload
+    from app.models.geo_competitor_report import GeoCompetitorReport
+
+    ctx.ensure_tenant(tenant_id)
+    row = await session.get(GeoCompetitorReport, report_id)
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, "报告不存在")
+    row.status = "confirmed"
+    row.confirmed_by = ctx.user_id
+    row.confirmed_at = datetime.utcnow()
+    await session.commit()
+    await session.refresh(row)
+    return report_payload(row)
+
+
+@router.post("/competitor-reports/{report_id}/archive")
+async def archive_competitor_report(
+    report_id: int,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from app.geo.content.competitor_reports import report_payload
+    from app.models.geo_competitor_report import GeoCompetitorReport
+
+    ctx.ensure_tenant(tenant_id)
+    row = await session.get(GeoCompetitorReport, report_id)
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, "报告不存在")
+    row.status = "archived"
+    await session.commit()
+    await session.refresh(row)
+    return report_payload(row)
+
+
+@router.get("/competitor-reports/{report_id}/export")
+async def export_competitor_report(
+    report_id: int,
+    tenant_id: int = Query(...),
+    format: str = Query("md"),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+):
+    from fastapi.responses import HTMLResponse, PlainTextResponse
+
+    from app.geo.content.competitor_reports import markdown_to_simple_html
+    from app.models.geo_competitor_report import GeoCompetitorReport
+
+    ctx.ensure_tenant(tenant_id)
+    row = await session.get(GeoCompetitorReport, report_id)
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, "报告不存在")
+    md = row.markdown or f"# {row.title}\n\n{row.insight or ''}\n\n{row.action or ''}\n"
+    fmt = (format or "md").lower()
+    if fmt in {"html", "htm"}:
+        return HTMLResponse(markdown_to_simple_html(md, row.title))
+    if fmt == "pdf":
+        # 最小可用：返回可打印 HTML，浏览器另存 PDF
+        return HTMLResponse(markdown_to_simple_html(md, row.title))
+    return PlainTextResponse(md, media_type="text/markdown; charset=utf-8")
+
+
+@router.post("/competitor-reports/{report_id}/restore")
+async def restore_competitor_report_version(
+    report_id: int,
+    tenant_id: int = Query(...),
+    version_no: int = Query(..., ge=1),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from app.geo.content.competitor_reports import report_payload, snapshot_version
+    from app.models.geo_competitor_report import GeoCompetitorReport, GeoCompetitorReportVersion
+
+    ctx.ensure_tenant(tenant_id)
+    row = await session.get(GeoCompetitorReport, report_id)
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, "报告不存在")
+    ver = await session.scalar(
+        select(GeoCompetitorReportVersion).where(
+            GeoCompetitorReportVersion.report_id == row.id,
+            GeoCompetitorReportVersion.version_no == version_no,
+        )
+    )
+    if ver is None:
+        raise HTTPException(404, "该版本不存在")
+    row.insight = ver.insight
+    row.action = ver.action
+    row.note = ver.note
+    row.markdown = ver.markdown
+    row.version_no = int(row.version_no or 1) + 1
+    session.add(snapshot_version(row, user_id=ctx.user_id))
+    await session.commit()
+    await session.refresh(row)
+    vers = list(
+        await session.scalars(
+            select(GeoCompetitorReportVersion)
+            .where(GeoCompetitorReportVersion.report_id == row.id)
+            .order_by(GeoCompetitorReportVersion.version_no.desc())
+        )
+    )
+    return report_payload(row, versions=vers)
+
+
+@router.post("/competitor-reports/{report_id}/create-task")
+async def create_task_from_competitor_report(
+    report_id: int,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """把已确认/草稿报告的行动建议落成一条内容任务。"""
+    from app.geo.content.brief import normalize_brief
+    from app.geo.content.channel_profiles import normalize_channels
+    from app.models.geo_competitor_report import GeoCompetitorReport
+
+    ctx.ensure_tenant(tenant_id)
+    row = await session.get(GeoCompetitorReport, report_id)
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, "报告不存在")
+
+    prompt = None
+    evidence = row.evidence if isinstance(row.evidence, dict) else {}
+    recs = evidence.get("recommendations") or []
+    rec_prompt_id = None
+    for rec in recs:
+        if isinstance(rec, dict) and rec.get("prompt_id"):
+            rec_prompt_id = int(rec["prompt_id"])
+            break
+    if rec_prompt_id:
+        prompt = await session.scalar(
+            select(GeoPrompt).where(
+                GeoPrompt.id == rec_prompt_id,
+                GeoPrompt.tenant_id == tenant_id,
+                GeoPrompt.status == "active",
+            )
+        )
+    if prompt is None and row.business_id:
+        unit_ids = list(
+            await session.scalars(
+                select(GeoOptimizationUnit.id).where(
+                    GeoOptimizationUnit.tenant_id == tenant_id,
+                    GeoOptimizationUnit.business_id == row.business_id,
+                )
+            )
+        )
+        if unit_ids:
+            prompt = await session.scalar(
+                select(GeoPrompt)
+                .where(
+                    GeoPrompt.tenant_id == tenant_id,
+                    GeoPrompt.status == "active",
+                    GeoPrompt.unit_id.in_(unit_ids),
+                )
+                .order_by(GeoPrompt.id.desc())
+                .limit(1)
+            )
+    if prompt is None:
+        prompt = await session.scalar(
+            select(GeoPrompt)
+            .where(GeoPrompt.tenant_id == tenant_id, GeoPrompt.status == "active")
+            .order_by(GeoPrompt.id.desc())
+            .limit(1)
+        )
+    if prompt is None:
+        raise HTTPException(400, "该客户还没有意图词，无法从报告建任务")
+
+    existing = await session.scalar(
+        select(GeoContentTask.id).where(
+            GeoContentTask.tenant_id == tenant_id,
+            GeoContentTask.prompt_id == prompt.id,
+            GeoContentTask.status.notin_(["archived", "cancelled"]),
+        )
+    )
+    if existing:
+        return {
+            "created": False,
+            "task_id": existing,
+            "editor_path": f"/geo/tasks/{existing}",
+            "reason": "该意图词已有进行中的任务",
+        }
+
+    title = (row.action or "").strip().splitlines()[0][:120] or f"竞品对策 · {row.competitor}"
+    brief = normalize_brief(
+        {
+            "ai_question": prompt.question,
+            "notes": f"来自竞品报告 #{row.id}：{row.insight or ''}\n行动：{row.action or ''}",
+            "competitors": [row.competitor],
+            "must_cover": [row.competitor],
+        }
+    )
+    business_id = row.business_id or await _resolve_task_business_id(session, prompt)
+    period_id = row.period_id or await _resolve_active_period_id(
+        session, tenant_id=tenant_id, business_id=business_id
+    )
+    task = GeoContentTask(
+        tenant_id=tenant_id,
+        prompt_id=prompt.id,
+        business_id=business_id,
+        period_id=period_id,
+        title=title[:300],
+        status="draft",
+        target_channels=normalize_channels(["website"]),
+        owner_user_id=ctx.user_id,
+        pipeline_step="opportunity",
+        brief=brief,
+    )
+    session.add(task)
+    await session.flush()
+    prompt.last_task_id = task.id
+    await session.commit()
+    return {
+        "created": True,
+        "task_id": task.id,
+        "prompt_id": prompt.id,
+        "title": title,
+        "editor_path": f"/geo/tasks/{task.id}",
+    }
+
+
+@router.post("/onboarding/sitemap-audit")
+async def geo_sitemap_audit(
+    tenant_id: int = Query(...),
+    website_url: str = Query(..., min_length=8),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    await _ensure_tenant_exists(session, tenant_id)
+    from app.geo.sitemap_audit import audit_sitemap
+
+    try:
+        return await audit_sitemap(website_url)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/onboarding/sitemap-audit/create-tasks")
+async def geo_sitemap_create_tasks(
+    tenant_id: int = Query(...),
+    body: dict = Body(default_factory=dict),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """把全站诊断机会落成意图词 + 内容任务（最多 5 条）。"""
+    from app.geo.content.brief import normalize_brief
+    from app.geo.content.channel_profiles import normalize_channels
+
+    ctx.ensure_tenant(tenant_id)
+    await _ensure_tenant_exists(session, tenant_id)
+    items = list(body.get("items") or [])[:5]
+    if not items:
+        raise HTTPException(400, "请至少选择一条机会")
+    default_biz = await session.scalar(
+        select(GeoOptimizationBusiness)
+        .where(
+            GeoOptimizationBusiness.tenant_id == tenant_id,
+            GeoOptimizationBusiness.status == "active",
+        )
+        .order_by(GeoOptimizationBusiness.id.desc())
+        .limit(1)
+    )
+    created: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for raw in items:
+        title = str((raw or {}).get("title") or "").strip()[:200]
+        action = str((raw or {}).get("action") or "").strip()
+        urls = [str(u) for u in ((raw or {}).get("urls") or []) if str(u).strip()]
+        question = title or action or (urls[0] if urls else "")
+        if not question:
+            skipped.append({"reason": "缺少标题"})
+            continue
+        existing_prompt = await session.scalar(
+            select(GeoPrompt).where(
+                GeoPrompt.tenant_id == tenant_id,
+                GeoPrompt.question == question,
+            )
+        )
+        if existing_prompt is None:
+            existing_prompt = GeoPrompt(
+                tenant_id=tenant_id,
+                question=question,
+                status="active",
+                source="sitemap_audit",
+                tags=["from_sitemap", "geo_task_candidate"],
+                priority=8,
+            )
+            session.add(existing_prompt)
+            await session.flush()
+        existing_task = await session.scalar(
+            select(GeoContentTask.id).where(
+                GeoContentTask.tenant_id == tenant_id,
+                GeoContentTask.prompt_id == existing_prompt.id,
+                GeoContentTask.status.notin_(["archived", "cancelled"]),
+            )
+        )
+        if existing_task:
+            skipped.append(
+                {"prompt_id": existing_prompt.id, "task_id": existing_task, "reason": "已有任务"}
+            )
+            continue
+        brief = normalize_brief(
+            {
+                "ai_question": question,
+                "notes": f"{action}\n来源：{', '.join(urls[:4])}".strip(),
+                "must_cover": urls[:3],
+            }
+        )
+        business_id = getattr(default_biz, "id", None) or await _resolve_task_business_id(
+            session, existing_prompt
+        )
+        period_id = await _resolve_active_period_id(
+            session, tenant_id=tenant_id, business_id=business_id
+        )
+        task = GeoContentTask(
+            tenant_id=tenant_id,
+            prompt_id=existing_prompt.id,
+            business_id=business_id,
+            period_id=period_id,
+            title=title or question[:300],
+            status="draft",
+            target_channels=normalize_channels(["website"]),
+            owner_user_id=ctx.user_id,
+            pipeline_step="opportunity",
+            brief=brief,
+        )
+        session.add(task)
+        await session.flush()
+        existing_prompt.last_task_id = task.id
+        created.append(
+            {
+                "task_id": task.id,
+                "prompt_id": existing_prompt.id,
+                "title": task.title,
+                "editor_path": f"/geo/tasks/{task.id}",
+            }
+        )
+    await session.commit()
+    return {
+        "created": created,
+        "skipped": skipped,
+        "created_count": len(created),
+        "skipped_count": len(skipped),
+    }
 
 
 # ---------- 竞品别名（租户级）----------

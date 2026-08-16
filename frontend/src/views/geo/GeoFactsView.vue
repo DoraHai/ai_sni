@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { createGeoFact, listGeoFacts, patchGeoFact, verifyGeoFact } from '../../api/geoContent'
+import { createGeoFact, listGeoBusinesses, listGeoFacts, patchGeoFact, verifyGeoFact } from '../../api/geoContent'
 import NeedHintAlert from '../../components/NeedHintAlert.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
@@ -11,11 +11,22 @@ const loading = ref(false)
 const error = ref('')
 const items = ref([])
 const trust = ref('')
+const filterBusinessId = ref(null)
+const businesses = ref([])
 const pager = useClientPager(items, { pageSize: 20 })
 const createOpen = ref(false)
 const editOpen = ref(false)
 const creating = ref(false)
 const saving = ref(false)
+const verifyOpen = ref(false)
+const verifying = ref(false)
+const verifyRow = ref(null)
+const verifyForm = ref({
+  excerpt: '',
+  excerpt_locator: '',
+  source_url: '',
+  note: '',
+})
 const form = ref({
   title: '',
   statement: '',
@@ -23,6 +34,7 @@ const form = ref({
   source_name: '',
   source_url: '',
   trust_level: 'needs_review',
+  business_id: null,
 })
 const editForm = ref({
   id: null,
@@ -32,7 +44,12 @@ const editForm = ref({
   source_name: '',
   source_url: '',
   trust_level: 'needs_review',
+  business_id: null,
 })
+
+function bizName(id) {
+  return businesses.value.find((b) => b.id === id)?.name || (id ? `#${id}` : '租户共用')
+}
 
 async function load() {
   if (!tenantId.value) {
@@ -45,7 +62,14 @@ async function load() {
   try {
     const params = {}
     if (trust.value) params.trust_level = trust.value
-    const data = await listGeoFacts(tenantId.value, params)
+    if (filterBusinessId.value) params.business_id = filterBusinessId.value
+    const [data, b] = await Promise.all([
+      listGeoFacts(tenantId.value, params),
+      businesses.value.length
+        ? Promise.resolve({ items: businesses.value })
+        : listGeoBusinesses(tenantId.value, { status: 'active' }).catch(() => ({ items: [] })),
+    ])
+    businesses.value = b.items || businesses.value
     items.value = data.items || []
   } catch (e) {
     error.value = e.message || '加载失败'
@@ -70,6 +94,7 @@ async function submitCreate() {
       source_name: form.value.source_name.trim(),
       source_url: form.value.source_url.trim() || null,
       trust_level: form.value.trust_level,
+      business_id: form.value.business_id || null,
     })
     ElMessage.success('已创建事实')
     createOpen.value = false
@@ -80,6 +105,7 @@ async function submitCreate() {
       source_name: '',
       source_url: '',
       trust_level: 'needs_review',
+      business_id: filterBusinessId.value || null,
     }
     await load()
   } catch (e) {
@@ -89,13 +115,42 @@ async function submitCreate() {
   }
 }
 
-async function onVerify(row) {
+function openVerify(row) {
+  verifyRow.value = row
+  verifyForm.value = {
+    excerpt: (row.statement || '').slice(0, 160),
+    excerpt_locator: '',
+    source_url: row.source_url || '',
+    note: '',
+  }
+  verifyOpen.value = true
+}
+
+async function submitVerify() {
+  if (!verifyRow.value) return
+  if (!verifyForm.value.excerpt.trim() || !verifyForm.value.excerpt_locator.trim()) {
+    ElMessage.warning('请填写摘录原文和定位（例如「官网首页第二段」）')
+    return
+  }
+  if (!verifyForm.value.source_url.trim()) {
+    ElMessage.warning('核验必须填写来源 URL')
+    return
+  }
+  verifying.value = true
   try {
-    await verifyGeoFact(tenantId.value, row.id)
-    ElMessage.success(`已核验 #${row.id}`)
+    await verifyGeoFact(tenantId.value, verifyRow.value.id, {
+      excerpt: verifyForm.value.excerpt.trim(),
+      excerpt_locator: verifyForm.value.excerpt_locator.trim(),
+      source_url: verifyForm.value.source_url.trim(),
+      note: verifyForm.value.note.trim() || null,
+    })
+    ElMessage.success(`已核验 #${verifyRow.value.id}`)
+    verifyOpen.value = false
     await load()
   } catch (e) {
     ElMessage.error(e.message || '核验失败')
+  } finally {
+    verifying.value = false
   }
 }
 
@@ -118,6 +173,7 @@ function openEdit(row) {
     source_name: row.source_name || '',
     source_url: row.source_url || '',
     trust_level: row.trust_level || 'needs_review',
+    business_id: row.business_id || null,
   }
   editOpen.value = true
 }
@@ -136,6 +192,7 @@ async function submitEdit() {
       source_name: editForm.value.source_name.trim() || null,
       source_url: editForm.value.source_url.trim() || null,
       trust_level: editForm.value.trust_level,
+      business_id: editForm.value.business_id || null,
     })
     ElMessage.success('已保存')
     editOpen.value = false
@@ -174,7 +231,7 @@ function statusLabel(v) {
   return STATUS_LABELS[v] || v || '—'
 }
 
-watch([tenantId, trust], () => {
+watch([tenantId, trust, filterBusinessId], () => {
   pager.resetPage()
   load()
 })
@@ -204,6 +261,9 @@ onMounted(load)
         <el-option label="待审" value="needs_review" />
         <el-option label="草稿" value="draft" />
       </el-select>
+      <el-select v-model="filterBusinessId" clearable filterable placeholder="业务线（含共用）" style="width: 200px">
+        <el-option v-for="b in businesses" :key="b.id" :label="b.name" :value="b.id" />
+      </el-select>
       <span class="toolbar-hint">生成母稿需 ≥3 条已核验事实</span>
     </div>
 
@@ -219,13 +279,16 @@ onMounted(load)
         <el-table-column label="类型" width="90">
           <template #default="{ row }">{{ factTypeLabel(row.fact_type) }}</template>
         </el-table-column>
+        <el-table-column label="业务" width="120">
+          <template #default="{ row }">{{ bizName(row.business_id) }}</template>
+        </el-table-column>
         <el-table-column label="来源" min-width="120">
           <template #default="{ row }">
             <div>{{ row.source_name || '—' }}</div>
             <div v-if="row.source_url" class="sub">{{ row.source_url }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="信任" width="110">
+        <el-table-column label="信任" width="160">
           <template #default="{ row }">
             <el-tag
               size="small"
@@ -234,6 +297,10 @@ onMounted(load)
             >
               {{ trustLabel(row.trust_level) }}
             </el-tag>
+            <div v-if="row.verification?.verified_at" class="sub">
+              {{ row.verification.excerpt_locator || '已记录摘录' }}
+              · {{ String(row.verification.verified_at).slice(0, 16).replace('T', ' ') }}
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="90">
@@ -246,7 +313,7 @@ onMounted(load)
               v-if="row.trust_level !== 'verified' && row.status === 'active'"
               type="primary"
               link
-              @click="onVerify(row)"
+              @click="openVerify(row)"
             >核验</el-button>
             <el-button
               v-if="row.status === 'active'"
@@ -294,12 +361,17 @@ onMounted(load)
         <el-form-item label="来源 URL">
           <el-input v-model="editForm.source_url" />
         </el-form-item>
+        <el-form-item label="所属业务">
+          <el-select v-model="editForm.business_id" clearable filterable placeholder="租户共用" style="width: 100%">
+            <el-option v-for="b in businesses" :key="b.id" :label="b.name" :value="b.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="信任级">
           <el-select v-model="editForm.trust_level" style="width: 100%">
             <el-option label="待审" value="needs_review" />
-            <el-option label="已核验" value="verified" />
             <el-option label="草稿" value="draft" />
           </el-select>
+          <div class="field-help">已核验只能通过「核验」填写摘录依据后生效</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -325,6 +397,11 @@ onMounted(load)
             <el-option label="其他" value="other" />
           </el-select>
         </el-form-item>
+        <el-form-item label="所属业务">
+          <el-select v-model="form.business_id" clearable filterable placeholder="租户共用" style="width: 100%">
+            <el-option v-for="b in businesses" :key="b.id" :label="b.name" :value="b.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="来源名" required>
           <el-input v-model="form.source_name" />
         </el-form-item>
@@ -334,7 +411,6 @@ onMounted(load)
         <el-form-item label="信任级">
           <el-select v-model="form.trust_level" style="width: 100%">
             <el-option label="待审" value="needs_review" />
-            <el-option label="已核验" value="verified" />
             <el-option label="草稿" value="draft" />
           </el-select>
         </el-form-item>
@@ -342,6 +418,38 @@ onMounted(load)
       <template #footer>
         <el-button @click="createOpen = false">取消</el-button>
         <el-button type="primary" :loading="creating" @click="submitCreate">创建</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="verifyOpen" title="核验事实" width="560px" class="geo-form-dialog">
+      <p class="verify-hint">
+        核验不是点一下过关。请从源页摘录陈述中的原文，并写明定位（章节/段落/锚点），同时留下核验 URL。
+      </p>
+      <el-form label-width="96px" label-position="right" class="geo-dialog-form">
+        <el-form-item label="摘录原文" required>
+          <el-input
+            v-model="verifyForm.excerpt"
+            type="textarea"
+            :rows="3"
+            placeholder="必须是陈述里的连续原文"
+          />
+        </el-form-item>
+        <el-form-item label="摘录定位" required>
+          <el-input
+            v-model="verifyForm.excerpt_locator"
+            placeholder="例如：官网首页「产品能力」第二段"
+          />
+        </el-form-item>
+        <el-form-item label="来源 URL" required>
+          <el-input v-model="verifyForm.source_url" placeholder="https://" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="verifyForm.note" type="textarea" :rows="2" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="verifyOpen = false">取消</el-button>
+        <el-button type="primary" :loading="verifying" @click="submitVerify">确认核验</el-button>
       </template>
     </el-dialog>
   </div>
@@ -359,6 +467,8 @@ onMounted(load)
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+.field-help { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+.verify-hint { font-size: 13px; color: #475569; line-height: 1.5; margin: 0 0 12px; }
 .toolbar-hint {
   margin-left: auto;
   font-size: 12px;

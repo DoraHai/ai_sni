@@ -243,9 +243,12 @@ function go(c) {
   router.push(c.path)
 }
 
-const tenantName = computed(
-  () => session.tenants.find((t) => t.id === session.tenantId)?.name || '—',
-)
+const tenantName = computed(() => {
+  const hit = session.tenants.find((t) => t.id === session.tenantId)
+  if (hit?.name) return hit.name
+  if (session.tenantId) return `客户 #${session.tenantId}`
+  return '未选择客户'
+})
 const tenantCountLabel = computed(() => `${session.tenants.length} 客户`)
 
 function tenantInitials(tenant) {
@@ -262,11 +265,12 @@ function tenantTone(id) {
 }
 
 async function loadTenants() {
-  if (!session.isLoggedIn) return
   try {
     const t = await fetchTenants()
-    session.setTenants(t.tenants)
-  } catch { /* 401 拦截器已处理 */ }
+    session.setTenants(t.tenants || [])
+  } catch {
+    /* 未登录且无 Key 时保持空列表 */
+  }
 }
 
 // 刷新当前用户（角色权限可能被管理员改过 → 侧边栏/按钮即时更新）
@@ -281,8 +285,9 @@ async function refreshMe() {
 function onTenantChange(id) {
   session.setTenant(id)
   tenantPopoverOpen.value = false
-  // 详情页归属上一个客户,切换后回看板
   if (route.path.startsWith('/monitor/keywords/')) router.push('/monitor/dashboard')
+  else if (route.path.startsWith('/geo/tasks/')) router.push('/geo/tasks')
+  else if (route.path.startsWith('/geo/businesses/')) router.push('/geo/businesses')
 }
 
 async function onUserCommand(cmd) {
@@ -322,7 +327,7 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
         <div class="brand-mark" aria-hidden="true">{{ isGeoRoute ? 'G' : 'S' }}</div>
         <div class="brand-copy">
           <div class="brand-name">{{ isGeoRoute ? 'GEO 增长' : 'SEM 智投平台' }}</div>
-          <div class="brand-sub">{{ isGeoRoute ? '内容与可见度' : 'v3.0 · 工作流版' }}</div>
+          <div class="brand-sub">{{ isGeoRoute ? tenantName : 'v3.0 · 工作流版' }}</div>
         </div>
       </div>
       <div class="nav-scroll">
@@ -457,9 +462,8 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
             </el-select>
             <span class="obs-period-range">{{ observationLabel }}</span>
           </div>
-          <template v-if="session.isLoggedIn">
+          <template v-if="session.tenants.length">
             <el-popover
-              v-if="session.tenants.length > 1"
               v-model:visible="tenantPopoverOpen"
               placement="bottom-end"
               :width="286"
@@ -502,8 +506,7 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
                 </button>
               </div>
             </el-popover>
-            <span v-else class="tenant-static">客户 <b>{{ tenantName }}</b></span>
-            <span class="role-badge" :class="roleTone">{{ session.user?.role_label || '成员' }}</span>
+            <span class="role-badge" :class="roleTone">{{ session.user?.role_label || session.user?.display_name || '本地 Key' }}</span>
             <el-dropdown @command="onUserCommand">
               <span class="user-chip">
                 <span class="user-avatar" aria-hidden="true">

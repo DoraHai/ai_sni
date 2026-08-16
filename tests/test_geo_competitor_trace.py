@@ -181,8 +181,9 @@ class CompetitorPlacementTests(unittest.TestCase):
             question_groups={47: "推荐", 48: "比较"},
         )
         self.assertTrue(trace["inferred_placements"])
-        self.assertTrue(trace["platforms"])
-        self.assertTrue(any(s.get("inferred") for s in trace["sources_agg"]))
+        self.assertFalse(trace["platforms"])
+        self.assertFalse(trace.get("sources_agg"))
+        self.assertFalse(trace.get("has_real_citations"))
         recs = trace["recommendations"]
         self.assertGreaterEqual(len(recs), 2)
         self.assertTrue(any("对比" in (r["title"] + r["reason"]) for r in recs))

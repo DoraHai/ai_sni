@@ -212,6 +212,9 @@ class ExecutePatrolRunTests(unittest.IsolatedAsyncioTestCase):
         session.refresh = AsyncMock()
         session.flush = AsyncMock()
         session.add = MagicMock()
+        empty_exec = MagicMock()
+        empty_exec.all.return_value = []
+        session.execute = AsyncMock(return_value=empty_exec)
 
         draft = {
             "raw_text": "推荐 Acme。https://acme.example/p",

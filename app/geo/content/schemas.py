@@ -39,6 +39,7 @@ class OptimizationBusinessCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     description: str | None = None
     sort_order: int = 0
+    profile: dict[str, Any] | None = None
 
 
 class OptimizationBusinessUpdate(BaseModel):
@@ -46,6 +47,7 @@ class OptimizationBusinessUpdate(BaseModel):
     description: str | None = None
     status: Literal["active", "archived"] | None = None
     sort_order: int | None = None
+    profile: dict[str, Any] | None = None
 
 
 class OptimizationUnitCreate(BaseModel):
@@ -124,6 +126,7 @@ class FactCreate(BaseModel):
     expires_at: date | None = None
     trust_level: Literal["verified", "needs_review", "draft"] = "needs_review"
     author_name: str | None = Field(None, max_length=100)
+    business_id: int | None = None
     meta: dict[str, Any] | None = None
 
 
@@ -138,7 +141,15 @@ class FactUpdate(BaseModel):
     trust_level: Literal["verified", "needs_review", "draft"] | None = None
     author_name: str | None = Field(None, max_length=100)
     status: Literal["active", "archived"] | None = None
+    business_id: int | None = None
     meta: dict[str, Any] | None = None
+
+
+class FactVerifyRequest(BaseModel):
+    excerpt: str = Field(..., min_length=8, max_length=400)
+    excerpt_locator: str = Field(..., min_length=2, max_length=200)
+    source_url: str | None = Field(None, max_length=800)
+    note: str | None = Field(None, max_length=500)
 
 
 class TaskCreate(BaseModel):
@@ -301,6 +312,7 @@ class GeoOnboardingFactPick(BaseModel):
     source_name: str = Field(..., min_length=1, max_length=200)
     source_url: str | None = None
     trust_level: Literal["verified", "needs_review", "draft"] = "needs_review"
+    business_name: str | None = None
 
 
 class GeoOnboardingApplyRequest(BaseModel):
@@ -443,6 +455,7 @@ class CompetitorTraceReportRequest(BaseModel):
     competitor: str = Field(..., min_length=1, max_length=120)
     source_urls: list[str] = Field(default_factory=list)
     platform_keys: list[str] = Field(default_factory=list)
+    confirmed_external_urls: list[str] = Field(default_factory=list)
     note: str | None = Field(None, max_length=4000)
     insight: str | None = Field(None, max_length=8000)
     action: str | None = Field(None, max_length=8000)
@@ -460,6 +473,36 @@ class CompetitorCreateTasksRequest(BaseModel):
     tenant_id: int
     competitor: str = Field(..., min_length=1, max_length=120)
     items: list[CompetitorRecTaskItem] = Field(default_factory=list, max_length=8)
+
+
+class CompetitorReportUpsert(BaseModel):
+    tenant_id: int
+    competitor: str = Field(..., min_length=1, max_length=120)
+    title: str | None = Field(None, max_length=240)
+    business_id: int | None = None
+    period_id: int | None = None
+    insight: str | None = Field(None, max_length=8000)
+    action: str | None = Field(None, max_length=8000)
+    note: str | None = Field(None, max_length=4000)
+    markdown: str | None = None
+    source_urls: list[str] = Field(default_factory=list)
+    platform_keys: list[str] = Field(default_factory=list)
+    evidence: dict[str, Any] | None = None
+    status: Literal["draft", "confirmed", "archived"] | None = None
+
+
+class CompetitorReportPatch(BaseModel):
+    title: str | None = Field(None, max_length=240)
+    business_id: int | None = None
+    period_id: int | None = None
+    insight: str | None = Field(None, max_length=8000)
+    action: str | None = Field(None, max_length=8000)
+    note: str | None = Field(None, max_length=4000)
+    markdown: str | None = None
+    source_urls: list[str] | None = None
+    platform_keys: list[str] | None = None
+    evidence: dict[str, Any] | None = None
+    status: Literal["draft", "confirmed", "archived"] | None = None
 
 
 SampleMode = Literal["mock_persona", "openai_compat"]

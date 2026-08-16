@@ -66,6 +66,7 @@ from app.models.geo_visibility_patrol import (
     GeoVisibilityPatrolSettings,
 )
 from app.models.geo_competitor_alias import GeoCompetitorAlias
+from app.models.geo_competitor_report import GeoCompetitorReport, GeoCompetitorReportVersion
 from app.models.geo_deliverable_archive import GeoDeliverableArchive
 from app.models.geo_optimization_period import GeoOptimizationPeriod
 from app.models.geo_async_job import GeoAsyncJob
@@ -147,6 +148,8 @@ __all__ = [
     "GeoVisibilityPatrolRun",
     "GeoVisibilityPatrolSettings",
     "GeoCompetitorAlias",
+    "GeoCompetitorReport",
+    "GeoCompetitorReportVersion",
     "GeoDeliverableArchive",
     "GeoOptimizationPeriod",
     "GeoAsyncJob",

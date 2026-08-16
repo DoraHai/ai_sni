@@ -116,10 +116,17 @@ def assess_article_quality(
     min_chars: int,
     channel: str = "",
     brand: str | None = None,
+    facts: list[dict[str, Any]] | None = None,
 ) -> list[str]:
     """Hard full-article gate. Empty list = pass; any issue = must rewrite or reject."""
     text = md or ""
     issues: list[str] = []
+    if facts is not None:
+        from app.geo.content.claim_guard import format_ungrounded, ungrounded_claims
+
+        claims = ungrounded_claims(text, facts)
+        if claims:
+            issues.append("无依据表述：" + format_ungrounded(claims))
     chars = _body_char_count(text)
     if chars < min_chars:
         issues.append(f"字数不足（{chars}/{min_chars}），未达完整文章体量")
@@ -373,6 +380,7 @@ async def polish_for_channel(
     llm: dict[str, str] | None = None,
     brand: str | None = None,
     prompts: dict[str, Any] | None = None,
+    facts: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str, dict[str, Any]]:
     """Return (title, body_markdown, meta). meta includes body_html for publish.
 
@@ -418,9 +426,12 @@ async def polish_for_channel(
             "fail_if_any_issue": True,
         },
         "brand_required": bool(brand),
+        "facts": (facts or [])[:12],
         "delivery_note": (
             "写成可直接发表的完整文章；系统会严格门控，提纲体/过短/缺表一律驳回。"
             "禁止加粗短句罗列；每节至少两段完整叙述。"
+            "只使用 facts 里的陈述；禁止编造数字、识别率、满意度、并发、成功案例、头部客户。"
+            "事实卡没有的数据就不要写，不要补行业常见值。"
             + (
                 f"GEO：开篇与结论必须自然点名品牌「{brand}」，禁止无品牌品类科普。"
                 if brand
@@ -442,7 +453,7 @@ async def polish_for_channel(
     out_body = _coerce_body(raw_body)
 
     issues = assess_article_quality(
-        out_body, min_chars=min_chars, channel=profile.key, brand=brand
+        out_body, min_chars=min_chars, channel=profile.key, brand=brand, facts=facts
     )
     retry_used = 0
     while issues and retry_used < _MAX_QUALITY_RETRIES:
@@ -485,6 +496,7 @@ async def polish_for_channel(
                 min_chars=min_chars,
                 channel=profile.key,
                 brand=brand,
+                facts=facts,
             )
         except (DeepSeekError, GeoContentError):
             # keep previous issues; try next rewrite or hard-fail
@@ -526,6 +538,7 @@ async def adapt_or_polish_for_channel(
     brand: str | None = None,
     use_llm: bool = True,
     prompts: dict[str, Any] | None = None,
+    facts: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str, dict[str, Any]]:
     """Prefer LLM formal channel polish with hard quality gate.
 
@@ -543,6 +556,7 @@ async def adapt_or_polish_for_channel(
                 llm=llm,
                 brand=brand,
                 prompts=prompts,
+                facts=facts,
             )
         except ArticleQualityError:
             # 硬拦截：不把不合格稿伪装成正稿

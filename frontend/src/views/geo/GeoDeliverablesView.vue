@@ -12,6 +12,7 @@ import {
   listGeoUnits,
   listOptimizationPeriods,
 } from '../../api/geoContent'
+import SampleCredibilityAlert from '../../components/SampleCredibilityAlert.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useObservationPeriod } from '../../composables/useObservationPeriod'
 import { session } from '../../store/session'
@@ -39,6 +40,7 @@ const filterBusinessId = ref(null)
 const filterUnitId = ref(null)
 const archives = ref([])
 const lastShare = ref(null)
+const realOnly = ref(true)
 
 const lockedByPeriod = computed(() => !!filterPeriodId.value)
 const isFrozenPack = computed(() => !!(pack.value?.frozen || pack.value?.kind === 'geo_period_deliverable_v1'))
@@ -172,6 +174,7 @@ async function load() {
       params.from = `${range.value[0]}T00:00:00`
       params.to = `${range.value[1]}T23:59:59`
     }
+    params.real_only = realOnly.value
     pack.value = await fetchGeoDeliverablesPack(tenantId.value, params)
     // mirror period window into date picker when locked
     if (filterPeriodId.value && pack.value?.period?.from && pack.value?.period?.to) {
@@ -244,8 +247,15 @@ function packQueryParams() {
     params.from = `${range.value[0]}T00:00:00`
     params.to = `${range.value[1]}T23:59:59`
   }
+  params.real_only = realOnly.value
   return params
 }
+
+const canExportClient = computed(() => {
+  if (!pack.value) return false
+  if (!realOnly.value) return true
+  return pack.value.suitable_for_client !== false
+})
 
 async function copyMarkdown() {
   try {
@@ -297,6 +307,7 @@ watch(range, () => {
 watch(filterUnitId, () => {
   if (!filterPeriodId.value) load()
 })
+watch(realOnly, load)
 watch([obsStart, obsEnd, observationDays], () => {
   if (!filterPeriodId.value) range.value = defaultRange()
 })
@@ -329,8 +340,8 @@ onMounted(async () => {
         <el-button :loading="savingArchive" type="success" plain @click="saveArchive" :disabled="!pack">
           存档本报告
         </el-button>
-        <el-button @click="copyMarkdown">复制 Markdown</el-button>
-        <el-button type="primary" @click="downloadMarkdown">下载 Markdown</el-button>
+        <el-button :disabled="!canExportClient" @click="copyMarkdown">复制 Markdown</el-button>
+        <el-button type="primary" :disabled="!canExportClient" @click="downloadMarkdown">下载 Markdown</el-button>
         <el-button plain @click="printReport">打印</el-button>
       </div>
     </div>
@@ -397,9 +408,11 @@ onMounted(async () => {
           :value="u.id"
         />
       </el-select>
+      <el-switch v-model="realOnly" active-text="仅真采样" />
       <span class="toolbar-hint">
         <template v-if="lockedByPeriod">期次锁窗 · closed 返回固化交付包</template>
         <template v-else>观察期 {{ obsLabel }} · 改日期后自动刷新</template>
+        · 客户交付默认只统计真采样
       </span>
     </div>
 
@@ -413,14 +426,20 @@ onMounted(async () => {
       title="期次固化交付包"
       :description="`冻结于 ${pack.frozen_at || '—'} · ${pack.period_name || ''} · 关闭后改窗不影响本快照`"
     />
+    <SampleCredibilityAlert
+      v-if="pack"
+      :composition="pack.sample_composition || pack.summary?.sample_composition"
+      :window-label="obsLabel"
+      :engines-covered="pack.summary?.visibility_engines_covered"
+    />
     <el-alert
-      v-if="pack && hasSimulated"
-      type="warning"
+      v-if="pack && pack.impact_language"
+      type="info"
       :closable="false"
       show-icon
       class="mb"
-      title="本报告周期含模拟样本：对外交付必须标注，不得当作真实引擎可见度"
-      :description="sampleComposeLabel || undefined"
+      :title="pack.impact_language"
+      description="客户交付默认只统计真采样。无真采样时显示「未形成有效结论」，不会写成 0%。"
     />
 
     <section v-if="archives.length" class="geo-panel mb">
