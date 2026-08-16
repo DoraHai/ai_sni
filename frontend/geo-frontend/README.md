@@ -4,11 +4,12 @@ This unit builds and deploys GEO without replacing the SEM frontend.
 
 ## Boundaries
 
-- Canonical pages: `../public/deal-sniper-prototype/geo`
+- Canonical app: standalone Vue shell in `src/`, reusing `../src/views/geo/**`
 - Local build output: `dist`
 - Production releases: `/opt/geo-frontend/releases/<timestamp>`
 - Active production release: `/opt/geo-frontend/current`
-- Public path: `/deal-sniper/geo/*`
+- Public entry: `/deal-sniper/geo/#/geo/businesses`
+- Compatibility entry: `/deal-sniper/geo/dashboard.html`
 
 ## Commands
 
@@ -22,5 +23,6 @@ Deployments switch the `current` symlink atomically. To roll back, repoint it to
 an earlier timestamped release. No SEM frontend directory is replaced and no
 SEM process is restarted.
 
-The production Nginx configuration serves this unit before the SEM SPA route,
-so existing links remain valid.
+The production Nginx configuration serves this unit before the SEM SPA route.
+Its router uses hash history, so every GEO page stays inside this independently
+deployed frontend without adding GEO routes or menus back to the SEM SPA.

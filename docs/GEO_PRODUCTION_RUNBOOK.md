@@ -250,7 +250,7 @@ npm run deploy
 探活：
 
 ```bash
-curl -fsSI https://<公网域名>/deal-sniper/geo/dashboard.html
+curl -fsSI https://<公网域名>/deal-sniper/geo/
 curl -fsS https://<公网域名>/geo-health
 ```
 

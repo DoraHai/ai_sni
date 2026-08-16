@@ -1,10 +1,27 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { fetchGeoEvaluationInsights } from '../../api/geoContent'
+import { useClientPager } from '../../composables/useClientPager'
+import { useObservationPeriod } from '../../composables/useObservationPeriod'
 import { session } from '../../store/session'
+import {
+  CITATION_ACCURACY_LABEL,
+  CITATION_FORMAT_LABEL,
+  POSITION_LABEL,
+  REPORT_GLOSSARY,
+  SENTIMENT_LABEL,
+  countsToRows,
+  downloadCsv,
+  engineDisplay,
+  fmtCaptured,
+  fmtInt,
+  labelOf,
+} from '../../utils/geoReportLabels'
 
 const router = useRouter()
+const { days: observationDays, start: obsStart, end: obsEnd, label: obsLabel } = useObservationPeriod()
 
 const tenantId = computed(() =>
   session.tenantId || (import.meta.env.DEV && import.meta.env.VITE_API_KEY ? 1 : null),
@@ -13,30 +30,45 @@ const tenantId = computed(() =>
 const loading = ref(false)
 const error = ref('')
 const data = ref(null)
+const dimFilter = ref('all')
 
-const sentLabel = {
-  positive: '正面',
-  neutral: '中性',
-  negative: '负面',
-  unknown: '未知',
-}
-const posLabel = {
-  first: '首位',
-  mentioned: '有提及',
-  absent: '未出现',
-  unknown: '未知',
-}
+const recentItems = computed(() => data.value?.recent || [])
+const recentPager = useClientPager(recentItems, { pageSize: 20 })
 
 const distRows = computed(() => {
   if (!data.value) return []
-  const rows = []
-  for (const [k, v] of Object.entries(data.value.sentiment_counts || {})) {
-    rows.push({ dim: '情感', value: sentLabel[k] || k, count: v })
-  }
-  for (const [k, v] of Object.entries(data.value.position_counts || {})) {
-    rows.push({ dim: '位置', value: posLabel[k] || k, count: v })
-  }
-  return rows
+  const all = [
+    ...countsToRows(data.value.sentiment_counts, SENTIMENT_LABEL, '情感倾向'),
+    ...countsToRows(data.value.position_counts, POSITION_LABEL, '本品位置'),
+    ...countsToRows(data.value.format_counts, CITATION_FORMAT_LABEL, '引用格式'),
+    ...countsToRows(data.value.accuracy_counts, CITATION_ACCURACY_LABEL, '引用准确性'),
+  ]
+  if (dimFilter.value === 'all') return all
+  return all.filter((r) => r.dim === dimFilter.value)
+})
+
+const kpiCards = computed(() => {
+  const total = data.value?.total || 0
+  const pos = data.value?.position_counts || {}
+  const sent = data.value?.sentiment_counts || {}
+  return [
+    { label: '快照样本', value: fmtInt(total), hint: '评价分析统计基数' },
+    {
+      label: '首位推荐',
+      value: fmtInt(pos.first),
+      hint: total ? `约占 ${((pos.first || 0) / total * 100).toFixed(0)}%` : '—',
+    },
+    {
+      label: '备选/次选',
+      value: fmtInt(pos.alternative),
+      hint: '次优推荐位',
+    },
+    {
+      label: '正面评价',
+      value: fmtInt(sent.positive),
+      hint: '对本品情感为正',
+    },
+  ]
 })
 
 async function load() {
@@ -47,7 +79,12 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    data.value = await fetchGeoEvaluationInsights(tenantId.value)
+    data.value = await fetchGeoEvaluationInsights(tenantId.value, {
+      date_from: obsStart.value,
+      date_to: obsEnd.value,
+      days: observationDays.value,
+    })
+    recentPager.resetPage()
   } catch (e) {
     error.value = e.message || '加载失败'
     data.value = null
@@ -60,92 +97,142 @@ function openVisibility(promptId) {
   router.push({ path: '/geo/visibility', query: promptId ? { prompt_id: String(promptId) } : {} })
 }
 
-watch(tenantId, load)
+function exportRecent() {
+  const rows = recentItems.value.map((r) => [
+    r.prompt_question || `#${r.prompt_id}`,
+    engineDisplay(r.engine),
+    labelOf(POSITION_LABEL, r.brand_position),
+    labelOf(SENTIMENT_LABEL, r.sentiment),
+    labelOf(CITATION_FORMAT_LABEL, r.citation_format),
+    labelOf(CITATION_ACCURACY_LABEL, r.citation_accuracy),
+    r.captured_at || '',
+  ])
+  downloadCsv(
+    `geo-evaluation-recent-${tenantId.value}.csv`,
+    ['意图词', '引擎', '本品位置', '情感', '引用格式', '引用准确性', '观测时间'],
+    rows,
+  )
+  ElMessage.success('已导出最近快照')
+}
+
+watch([tenantId, observationDays, obsStart, obsEnd], load)
 onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="geo-eval">
+  <div v-loading="loading" class="geo-page">
     <div class="page-header">
       <div>
-        <div class="page-title">评价分析</div>
-        <div class="page-desc">快照情感与我方位置分布（人工标注）。</div>
+        <div class="page-title">评价与位置</div>
+        <div class="page-desc">
+          汇总回答快照中的本品位置、情感倾向与引用质量。跟随顶栏观察期（{{ obsLabel }}）。
+        </div>
       </div>
       <div class="header-actions">
         <el-button :loading="loading" @click="load">刷新</el-button>
-        <router-link class="el-button" to="/geo/visibility">去登记快照</router-link>
-        <router-link class="el-button" to="/geo/competitors">竞品分析</router-link>
-        <router-link class="el-button" to="/geo/overview">GEO 概览</router-link>
+        <el-button :disabled="!recentItems.length" @click="exportRecent">导出样本 CSV</el-button>
+        <router-link class="el-button" to="/geo/visibility">登记快照</router-link>
+        <router-link class="el-button" to="/geo/citations">引用分析</router-link>
       </div>
     </div>
 
-    <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" />
+    <details class="geo-glossary">
+      <summary>统计口径（点击展开）</summary>
+      <ul>
+        <li v-for="(line, i) in REPORT_GLOSSARY.evaluation" :key="i">{{ line }}</li>
+      </ul>
+    </details>
 
-    <div class="layout">
-      <section class="panel">
-        <div class="panel-title">分布</div>
-        <p class="hint">快照总数：{{ data?.total ?? '—' }}</p>
-        <el-table :data="distRows" size="small" empty-text="暂无数据">
-          <el-table-column prop="dim" label="维度" width="80" />
-          <el-table-column prop="value" label="值" min-width="100" />
-          <el-table-column prop="count" label="次数" width="80" />
+    <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" show-icon />
+
+    <div v-if="data" class="geo-kpi-grid">
+      <div v-for="c in kpiCards" :key="c.label" class="geo-kpi">
+        <div class="kpi-label">{{ c.label }}</div>
+        <div class="kpi-value">{{ c.value }}</div>
+        <div class="kpi-hint">{{ c.hint }}</div>
+      </div>
+    </div>
+
+    <div v-if="data" class="geo-split-2">
+      <section class="geo-panel">
+        <div class="panel-title-row">
+          <div class="panel-title">标注分布</div>
+          <el-select v-model="dimFilter" size="small" style="width: 140px">
+            <el-option label="全部维度" value="all" />
+            <el-option label="情感倾向" value="情感倾向" />
+            <el-option label="本品位置" value="本品位置" />
+            <el-option label="引用格式" value="引用格式" />
+            <el-option label="引用准确性" value="引用准确性" />
+          </el-select>
+        </div>
+        <p class="geo-panel-desc">快照总数 {{ fmtInt(data.total) }}；「未标注/未知」偏高时优先补标。</p>
+        <el-table :data="distRows" size="small" empty-text="暂无分布">
+          <el-table-column prop="dim" label="维度" width="110" />
+          <el-table-column prop="value" label="取值" min-width="120" />
+          <el-table-column prop="count" label="快照数" width="88" />
         </el-table>
       </section>
 
-      <section class="panel">
-        <div class="panel-title">最近快照</div>
+      <section class="geo-panel">
+        <div class="panel-title">最近样本</div>
+        <p class="geo-panel-desc">点击意图词可跳转可见度页继续补标。</p>
         <el-table
-          :data="data?.recent || []"
+          :data="recentPager.pagedItems"
           size="small"
-          empty-text="暂无快照 · 先在「AI 可见度」登记"
+          stripe
+          empty-text="暂无快照"
         >
-          <el-table-column label="问题" min-width="180">
+          <el-table-column label="意图词" min-width="160" show-overflow-tooltip>
             <template #default="{ row }">
               <button type="button" class="linkish" @click="openVisibility(row.prompt_id)">
-                {{ row.prompt_question || `#${row.prompt_id}` }}
+                {{ row.prompt_question || `意图词 #${row.prompt_id}` }}
               </button>
             </template>
           </el-table-column>
-          <el-table-column prop="engine" label="引擎" width="100" />
-          <el-table-column label="位置" width="90">
-            <template #default="{ row }">{{ posLabel[row.brand_position] || row.brand_position }}</template>
+          <el-table-column label="引擎" width="100">
+            <template #default="{ row }">{{ engineDisplay(row.engine) }}</template>
           </el-table-column>
-          <el-table-column label="情感" width="80">
-            <template #default="{ row }">{{ sentLabel[row.sentiment] || row.sentiment }}</template>
+          <el-table-column label="本品位置" width="100">
+            <template #default="{ row }">{{ labelOf(POSITION_LABEL, row.brand_position) }}</template>
           </el-table-column>
-          <el-table-column prop="captured_at" label="时间" width="170" />
+          <el-table-column label="情感" width="72">
+            <template #default="{ row }">{{ labelOf(SENTIMENT_LABEL, row.sentiment) }}</template>
+          </el-table-column>
+          <el-table-column label="引用格式" width="110">
+            <template #default="{ row }">{{ labelOf(CITATION_FORMAT_LABEL, row.citation_format) }}</template>
+          </el-table-column>
+          <el-table-column label="准确性" width="88">
+            <template #default="{ row }">{{ labelOf(CITATION_ACCURACY_LABEL, row.citation_accuracy) }}</template>
+          </el-table-column>
+          <el-table-column label="观测时间" width="140">
+            <template #default="{ row }">{{ fmtCaptured(row.captured_at) }}</template>
+          </el-table-column>
         </el-table>
+        <div v-if="!recentItems.length" class="geo-empty" style="margin-top: 12px">
+          <div class="empty-title">还没有可分析的快照</div>
+          <div>先在「AI 可见度」登记或巡检落库，再回来看分布。</div>
+          <div class="empty-actions">
+            <router-link class="el-button el-button--primary" to="/geo/visibility">去登记</router-link>
+          </div>
+        </div>
+        <div class="geo-pager">
+          <el-pagination
+            background
+            small
+            layout="total, prev, pager, next"
+            :total="recentPager.total"
+            :page-size="recentPager.pageSize"
+            :current-page="recentPager.page"
+            @current-change="recentPager.onPageChange"
+          />
+        </div>
       </section>
     </div>
   </div>
 </template>
 
 <style scoped>
-.geo-eval { padding: 4px 2px 24px; }
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
-}
-.page-title { font-size: 20px; font-weight: 650; color: #1f2937; }
-.page-desc { margin-top: 4px; font-size: 13px; color: #6b7280; }
-.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .mb { margin-bottom: 14px; }
-.layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
-  gap: 14px;
-}
-.panel {
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  padding: 16px 18px;
-}
-.panel-title { font-size: 14px; font-weight: 600; color: #374151; margin-bottom: 12px; }
-.hint { margin: 0 0 10px; font-size: 12px; color: #9ca3af; }
 .linkish {
   border: 0;
   background: none;
@@ -156,7 +243,4 @@ onMounted(load)
   font: inherit;
 }
 .linkish:hover { text-decoration: underline; }
-@media (max-width: 960px) {
-  .layout { grid-template-columns: 1fr; }
-}
 </style>

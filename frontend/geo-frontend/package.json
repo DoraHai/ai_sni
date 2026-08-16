@@ -5,10 +5,17 @@
   "type": "module",
   "scripts": {
     "dev": "vite --config vite.config.js",
-    "build": "node scripts/build.mjs",
+    "build": "vite build --config vite.config.js && node scripts/create-compat-entry.mjs",
     "deploy": "bash scripts/deploy.sh"
   },
+  "dependencies": {
+    "axios": "^1.17.0",
+    "element-plus": "^2.14.1",
+    "vue": "^3.5.34",
+    "vue-router": "^5.1.0"
+  },
   "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.6",
     "vite": "^8.0.12"
   }
 }
