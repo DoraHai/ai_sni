@@ -1,6 +1,8 @@
 # Growth Sniper AI 获客平台
 
-Growth Sniper AI 是一个由 FastAPI、PostgreSQL、Vue 3 和 Vite 构建的 SEM 运营平台。
+Growth Sniper AI 是一个由 FastAPI、PostgreSQL、Vue 3 和 Vite 构建的 SEM + GEO 运营平台。
+
+**使用说明（按模块）**：[`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)
 
 ## 项目结构
 
