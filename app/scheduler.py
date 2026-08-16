@@ -10,10 +10,11 @@
 
 在 main.py 的 startup 事件里调 start_scheduler()。
 """
-import fcntl
 import logging
+import tempfile
 from asyncio import Lock
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -36,6 +37,7 @@ from app.classification import reclassify_keywords
 from app.config import get_settings
 from app.database import async_session_factory
 from app.models import BaiduAccount, SeoKeywordAsset, SeoRankSnapshot, Tenant
+from app.process_lock import acquire_file_lock, release_file_lock
 from app.rules import run_rules_for_all_tenants
 from app.suggestions import run_suggestions_for_all_tenants
 
@@ -48,29 +50,19 @@ _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 # 多 worker 防双跑：uvicorn --workers 2 时每个 worker 都会执行 startup → 各起一个
 # APScheduler，导致每日任务跑两次（重复调百度 + 重复写）。用文件排他锁，只让抢到锁的
 # 那个 worker 启动调度，其余 worker 跳过。锁随进程退出自动释放。
-_SCHEDULER_LOCK_PATH = "/tmp/sem_scheduler.lock"
-_SEO_RANK_LOCK_PATH = "/tmp/sem_seo_rank_collection.lock"
+_LOCK_DIR = Path(tempfile.gettempdir())
+_SCHEDULER_LOCK_PATH = _LOCK_DIR / "sem_scheduler.lock"
+_SEO_RANK_LOCK_PATH = _LOCK_DIR / "sem_seo_rank_collection.lock"
 _lock_fh = None
 
 
 def _acquire_tenant_sync_lock(tenant_id: int):
     """跨 worker 的客户级非阻塞锁，避免定时任务和人工刷新重复调用百度。"""
-    fh = open(f"/tmp/sem_tenant_sync_{tenant_id}.lock", "w")
-    try:
-        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        fh.close()
-        return None
-    return fh
+    return acquire_file_lock(_LOCK_DIR / f"sem_tenant_sync_{tenant_id}.lock")
 
 
 def _release_tenant_sync_lock(fh) -> None:
-    if fh is None:
-        return
-    try:
-        fcntl.flock(fh, fcntl.LOCK_UN)
-    finally:
-        fh.close()
+    release_file_lock(fh)
 
 
 async def refresh_keyword_workbench_snapshot(
@@ -129,15 +121,14 @@ async def refresh_keyword_workbench_snapshot(
 
 def _acquire_scheduler_lock() -> bool:
     global _lock_fh
-    try:
-        _lock_fh = open(_SCHEDULER_LOCK_PATH, "w")
-        fcntl.flock(_lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return True
-    except OSError:
-        if _lock_fh is not None:
-            _lock_fh.close()
-            _lock_fh = None
-        return False
+    _lock_fh = acquire_file_lock(_SCHEDULER_LOCK_PATH)
+    return _lock_fh is not None
+
+
+def _release_scheduler_lock() -> None:
+    global _lock_fh
+    release_file_lock(_lock_fh)
+    _lock_fh = None
 
 
 async def fetch_yesterday_keyword_report() -> None:
@@ -266,11 +257,8 @@ async def collect_daily_seo_rankings() -> None:
         logger.info("[scheduler][SEO] 自动排名采集已关闭")
         return
 
-    lock_fh = open(_SEO_RANK_LOCK_PATH, "w")
-    try:
-        fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        lock_fh.close()
+    lock_fh = acquire_file_lock(_SEO_RANK_LOCK_PATH)
+    if lock_fh is None:
         logger.info("[scheduler][SEO] 另一排名采集任务正在运行，本次跳过")
         return
 
@@ -362,11 +350,10 @@ async def collect_daily_seo_rankings() -> None:
                         totals["errors"] += len(result["errors"])
         logger.info("[scheduler][SEO] 每日百度前 50 排名采集完成: %s", totals)
     finally:
-        fcntl.flock(lock_fh, fcntl.LOCK_UN)
-        lock_fh.close()
+        release_file_lock(lock_fh)
 
 
-def start_scheduler() -> None:
+def _start_scheduler() -> None:
     if not _acquire_scheduler_lock():
         logger.info(
             "[scheduler] 未抢到调度锁，本 worker 不启动调度（另一 worker 已在跑，避免双跑）"
@@ -409,6 +396,14 @@ def start_scheduler() -> None:
     logger.info("[scheduler] 已启动，下次执行 %s", _next_run())
 
 
+def start_scheduler() -> None:
+    try:
+        _start_scheduler()
+    except Exception:
+        _release_scheduler_lock()
+        raise
+
+
 def _next_run() -> str | None:
     jobs = scheduler.get_jobs()
     if not jobs:
@@ -417,5 +412,8 @@ def _next_run() -> str | None:
 
 
 def shutdown_scheduler() -> None:
-    if scheduler.running:
-        scheduler.shutdown(wait=False)
+    try:
+        if scheduler.running:
+            scheduler.shutdown(wait=False)
+    finally:
+        _release_scheduler_lock()

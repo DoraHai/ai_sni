@@ -157,7 +157,7 @@ class KeywordRefreshTests(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch("app.scheduler._acquire_tenant_sync_lock", return_value=object()),
-            patch("app.scheduler._release_tenant_sync_lock"),
+            patch("app.scheduler._release_tenant_sync_lock") as release_lock,
             patch(
                 "app.scheduler.sync_keyword_report_for_account",
                 new=AsyncMock(side_effect=RuntimeError("region batch failed")),
@@ -171,6 +171,7 @@ class KeywordRefreshTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(account.sync_status, "failed")
         self.assertEqual(account.last_sync_error, "region batch failed")
         session.rollback.assert_awaited_once()
+        release_lock.assert_called_once()
 
     def test_manual_refresh_requires_keyword_edit_permission(self):
         self.assertEqual(
