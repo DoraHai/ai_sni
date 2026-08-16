@@ -18,6 +18,7 @@ class RuleInput:
     variants: list[str]
     author_name: str | None = None
     default_author: str | None = None
+    variant_bodies: list[str] | None = None
 
 
 @dataclass
@@ -297,12 +298,30 @@ def _article_blocks(data: RuleInput) -> dict[str, bool]:
 
 
 def check_numbers_extractable(data: RuleInput) -> RuleCheck:
+    from app.geo.content.claim_guard import fact_number_allowlist, invented_stat_claims
+
+    invented = invented_stat_claims(data.body_markdown or "", data.facts or [])
+    if invented:
+        shown = "、".join(invented[:6])
+        return RuleCheck(
+            code="numbers_extractable",
+            passed=False,
+            message=f"正文含事实卡没有的数字：{shown}",
+            action="删掉无依据数字，或先补核验事实卡再写",
+        )
+    if not fact_number_allowlist(data.facts or []):
+        return RuleCheck(
+            code="numbers_extractable",
+            passed=True,
+            message="事实卡无具体数字，正文未编造数字",
+            action="",
+        )
     ok = _article_blocks(data).get("numbers", False)
     return RuleCheck(
         code="numbers_extractable",
         passed=ok,
-        message="正文含可抽取数字事实" if ok else "缺少数字事实块（建议 ≥3 处度量）",
-        action="" if ok else "补充可核验的数字（占比、周期、规模等）并绑定事实卡",
+        message="正文含可抽取数字事实" if ok else "事实卡有数字但正文未引用",
+        action="" if ok else "把已核验数字写进正文，不要另编新数字",
     )
 
 
@@ -327,10 +346,14 @@ def check_howto_extractable(data: RuleInput) -> RuleCheck:
 
 
 def check_fabrication_lint(data: RuleInput) -> RuleCheck:
-    """High-severity draft lint blockers (placeholder brands etc.)."""
+    """Block ready when draft or channel variants invent numbers / cases / placeholders."""
     from app.geo.content.draft_lint import lint_draft, lint_summary
 
-    summary = lint_summary(lint_draft(data.body_markdown or "", facts=data.facts or []))
+    facts = data.facts or []
+    issues = lint_draft(data.body_markdown or "", facts=facts)
+    for vb in data.variant_bodies or []:
+        issues.extend(lint_draft(vb or "", facts=facts))
+    summary = lint_summary(issues)
     ok = summary["high"] == 0
     detail = (
         f"编造风险 高{summary['high']}/中{summary['medium']}/低{summary['low']}"
@@ -340,8 +363,8 @@ def check_fabrication_lint(data: RuleInput) -> RuleCheck:
     return RuleCheck(
         code="fabrication_lint",
         passed=ok,
-        message=detail if ok else f"存在 {summary['high']} 条高风险编造线索",
-        action="" if ok else "删除占位竞品/公司名，或改为事实卡中的真实名称",
+        message=detail if ok else f"存在 {summary['high']} 条无依据数字/性能/案例/占位名",
+        action="" if ok else "删掉事实卡没有的数字、性能指标和案例，或先补核验事实",
     )
 
 

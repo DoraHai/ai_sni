@@ -16,6 +16,12 @@ class GeoFact(Base):
     tenant_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("tenants.id"), nullable=False, index=True
     )
+    business_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("geo_optimization_businesses.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     statement: Mapped[str] = mapped_column(Text, nullable=False)
     fact_type: Mapped[str] = mapped_column(String(32), nullable=False, default="product")

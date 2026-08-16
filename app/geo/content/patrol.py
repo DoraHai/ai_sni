@@ -16,13 +16,17 @@ from app.geo.content.probe import (
     run_probe_draft,
 )
 from app.geo.content.prompt_taxonomy import brand_names_from_tenant
-from app.geo.content.snapshots import apply_brand_mention_tags
-from app.geo.content.snapshot_suggest import (
+from app.geo.content.attribution import resolve_matched_publication_ids
+from app.geo.content.snapshots import (
+    apply_brand_mention_tags,
     extract_cited_urls_from_text,
     normalize_brand_position,
+    normalize_citation_accuracy,
     normalize_competitors,
     normalize_sentiment,
+    resolve_citation_format,
 )
+from app.geo.content.snapshot_suggest import normalize_suggest_payload
 from app.models import (
     GeoAnswerSnapshot,
     GeoPrompt,
@@ -283,7 +287,7 @@ def patrol_run_payload(row: GeoVisibilityPatrolRun) -> dict[str, Any]:
 
 async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilityPatrolRun:
     """Run patrol to completion inside one session (commit at end of phases)."""
-    from app.geo.ai_client import DeepSeekError, chat_json
+    from app.ai.deepseek import DeepSeekError, chat_json
     from app.geo.content.ai_settings import resolve_llm_credentials
     from app.geo.content.engines import default_engine_rows
     from app.models import GeoTrackingEngine
@@ -376,6 +380,44 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
         if not prompts:
             raise ValueError("没有可巡检的机会词，请先在「机会词」中创建")
 
+        from app.geo.content.business_profile import brand_names_for_profile, display_brand
+        from app.models.geo_optimization import GeoOptimizationBusiness, GeoOptimizationUnit
+
+        units: dict[int, Any] = {}
+        businesses: dict[int, Any] = {}
+        unit_ids = {getattr(p, "unit_id", None) for p in prompts if getattr(p, "unit_id", None)}
+        if unit_ids:
+            try:
+                units = {
+                    u.id: u
+                    for u in await session.scalars(
+                        select(GeoOptimizationUnit).where(GeoOptimizationUnit.id.in_(unit_ids))
+                    )
+                }
+                biz_ids = {u.business_id for u in units.values() if u.business_id}
+                if biz_ids:
+                    businesses = {
+                        b.id: b
+                        for b in await session.scalars(
+                            select(GeoOptimizationBusiness).where(
+                                GeoOptimizationBusiness.id.in_(biz_ids)
+                            )
+                        )
+                    }
+            except Exception:  # noqa: BLE001 — mock sessions in unit tests
+                units = {}
+                businesses = {}
+
+        def _brand_for_prompt(prompt) -> tuple[str, list[str]]:
+            unit = units.get(getattr(prompt, "unit_id", None))
+            biz = businesses.get(unit.business_id) if unit and unit.business_id else None
+            product = display_brand(getattr(biz, "profile", None) if biz else None, fallback="")
+            if product:
+                return product, brand_names_for_profile(
+                    getattr(biz, "profile", None), fallback=product
+                )
+            return brand, list(brand_names)
+
         cells_planned = 0
         for prompt in prompts:
             for engine in engines:
@@ -399,27 +441,61 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
                 try:
                     engine_row = row_by_key.get(engine)
                     # prefer_real: if engine is mock but tenant has llm, still try resolve
+                    # W3: tenant monitoring_stance constrains persona fallback
+                    stance = "hybrid"
+                    try:
+                        from app.geo.content.ai_settings import ensure_ai_setting
+
+                        ai_row = await ensure_ai_setting(session, row.tenant_id)
+                        stance = (
+                            getattr(ai_row, "monitoring_stance", None) or "hybrid"
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
                     llm, sample_mode, fallback_reason = resolve_engine_llm(
                         engine=engine,
                         tenant_llm=tenant_llm,
                         engine_row=engine_row,
+                        monitoring_stance=stance,
                     )
-                    if row.prefer_real and sample_mode != SAMPLE_MODE_REAL and engine_row is not None:
-                        # force attempt real if engine has encrypted key even if mode wrong
-                        if getattr(engine_row, "api_key_encrypted", None):
+                    if (
+                        fallback_reason
+                        and str(fallback_reason).startswith("skipped:")
+                    ):
+                        cell["ok"] = False
+                        cell["skipped_reason"] = fallback_reason
+                        cell["error"] = fallback_reason
+                        summary["cells_fail"] = int(summary.get("cells_fail") or 0) + 1
+                        items.append(cell)
+                        continue
+                    if row.prefer_real and sample_mode != SAMPLE_MODE_REAL:
+                        # prefer_real：有引擎 Key 或租户百炼时，强制走 openai_compat 真采样
+                        if engine_row is not None and (
+                            getattr(engine_row, "api_key_encrypted", None) or tenant_llm
+                        ):
                             engine_row.sample_mode = SAMPLE_MODE_REAL  # type: ignore[attr-defined]
                             llm, sample_mode, fallback_reason = resolve_engine_llm(
                                 engine=engine,
                                 tenant_llm=tenant_llm,
                                 engine_row=engine_row,
+                                monitoring_stance=stance,
                             )
+                        elif tenant_llm and tenant_llm.get("api_key"):
+                            llm = {
+                                **tenant_llm,
+                                "provider": tenant_llm.get("provider") or "dashscope",
+                                "source": f"tenant_prefer_real:{engine}",
+                            }
+                            sample_mode = SAMPLE_MODE_REAL
+                            fallback_reason = None
                     if not llm or not llm.get("api_key"):
                         raise ValueError("无可用 LLM 凭证（请配置 AI 能力或引擎 openai_compat）")
 
+                    cell_brand, cell_names = _brand_for_prompt(prompt)
                     draft = await run_probe_draft(
                         question=prompt.question,
-                        brand=brand,
-                        brand_names=brand_names,
+                        brand=cell_brand,
+                        brand_names=cell_names,
                         engine=engine,
                         llm=llm,
                         chat_json=chat_json,
@@ -442,10 +518,12 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
                             "provider": draft.get("provider"),
                         }
                     )
-                    if draft.get("simulated"):
-                        summary["persona_samples"] += 1
-                    else:
+                    if draft.get("sample_mode") == SAMPLE_MODE_REAL and not draft.get(
+                        "simulated"
+                    ):
                         summary["real_samples"] += 1
+                    else:
+                        summary["persona_samples"] += 1
                     summary["cells_ok"] += 1
 
                     if row.auto_persist:
@@ -466,9 +544,29 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
                             draft.get("sentiment") or draft.get("suggested_sentiment")
                         )
                         cited = extract_cited_urls_from_text(raw_text)
+                        cite_fmt = resolve_citation_format(
+                            draft.get("citation_format")
+                            or draft.get("suggested_citation_format"),
+                            cited_urls=cited,
+                            raw_text=raw_text,
+                            mentions_brand=mentions,
+                        )
+                        cite_acc = normalize_citation_accuracy(
+                            draft.get("citation_accuracy")
+                            or draft.get("suggested_citation_accuracy")
+                        )
+                        sample_mode = str(
+                            draft.get("sample_mode") or "openai_compat"
+                        ).strip() or "openai_compat"
+                        simulated = bool(draft.get("simulated"))
                         note = (
-                            f"auto-patrol #{run_id} · {draft.get('sample_mode')} · "
-                            f"{'模拟' if draft.get('simulated') else '真采样'}"
+                            f"auto-patrol #{run_id} · {sample_mode} · "
+                            f"{'模拟' if simulated else '真采样'}"
+                        )
+                        matched_ids = await resolve_matched_publication_ids(
+                            session,
+                            tenant_id=row.tenant_id,
+                            cited_urls=cited,
                         )
                         snap = GeoAnswerSnapshot(
                             tenant_id=row.tenant_id,
@@ -481,6 +579,12 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
                             competitors=comps,
                             brand_position=pos,
                             sentiment=sent,
+                            citation_format=cite_fmt,
+                            citation_accuracy=cite_acc,
+                            patrol_run_id=run_id,
+                            sample_mode=sample_mode,
+                            simulated=simulated,
+                            matched_publication_ids=matched_ids or None,
                             note=note,
                             created_by=row.created_by,
                         )

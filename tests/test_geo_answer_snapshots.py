@@ -11,11 +11,15 @@ from app.geo.content.snapshots import (
     extract_cited_domain,
     extract_cited_domains,
     extract_cited_urls_from_text,
+    infer_citation_format,
     needs_recheck,
     normalize_brand_position,
+    normalize_citation_accuracy,
+    normalize_citation_format,
     normalize_cited_urls,
     normalize_competitors,
     normalize_sentiment,
+    resolve_citation_format,
     visibility_mention_rate,
 )
 
@@ -135,9 +139,64 @@ class SnapshotHelpersTests(unittest.TestCase):
 
     def test_normalize_position_sentiment(self):
         self.assertEqual(normalize_brand_position("first"), "first")
+        self.assertEqual(normalize_brand_position("alternative"), "alternative")
+        self.assertEqual(normalize_brand_position("备选"), "alternative")
         self.assertEqual(normalize_brand_position("nope"), "unknown")
         self.assertEqual(normalize_sentiment("NEGATIVE"), "negative")
         self.assertEqual(normalize_sentiment(""), "unknown")
+
+    def test_citation_format_and_accuracy(self):
+        self.assertEqual(normalize_citation_format("link"), "linked")
+        self.assertEqual(normalize_citation_format("纯文本"), "plaintext")
+        self.assertEqual(normalize_citation_format("bogus"), "unknown")
+        self.assertEqual(normalize_citation_accuracy("ok"), "accurate")
+        self.assertEqual(normalize_citation_accuracy("wrong"), "inaccurate")
+        self.assertEqual(
+            infer_citation_format(
+                cited_urls=["https://a.com"],
+                raw_text="见 https://a.com",
+                mentions_brand=True,
+            ),
+            "linked",
+        )
+        self.assertEqual(
+            infer_citation_format(
+                cited_urls=[],
+                raw_text="推荐某某品牌",
+                mentions_brand=True,
+            ),
+            "plaintext",
+        )
+        self.assertEqual(
+            infer_citation_format(
+                cited_urls=["https://a.com"],
+                raw_text="推荐某某品牌",
+                mentions_brand=True,
+            ),
+            "mixed",
+        )
+        self.assertEqual(
+            infer_citation_format(cited_urls=[], raw_text="无关", mentions_brand=False),
+            "none",
+        )
+        self.assertEqual(
+            resolve_citation_format(
+                "plaintext",
+                cited_urls=["https://a.com"],
+                raw_text="见 https://a.com",
+                mentions_brand=True,
+            ),
+            "plaintext",
+        )
+        self.assertEqual(
+            resolve_citation_format(
+                "unknown",
+                cited_urls=[],
+                raw_text="推荐品牌",
+                mentions_brand=True,
+            ),
+            "plaintext",
+        )
 
     def test_visibility_mention_rate(self):
         self.assertIsNone(

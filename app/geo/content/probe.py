@@ -16,6 +16,7 @@ ENGINE_PERSONAS: dict[str, str] = {
     "chatgpt": "请模拟 ChatGPT（OpenAI）公开回答的语气与结构（可适度分点，少空话）。",
     "deepseek": "请模拟 DeepSeek 公开回答的语气与结构（偏技术、条理清晰）。",
     "doubao": "请模拟豆包公开回答的语气与结构（口语友好、适合国内用户）。",
+    "kimi": "请模拟 Kimi（月之暗面）公开回答的语气与结构（长文能力强、条理清晰、可适度引用公开常识）。",
     "perplexity": "请模拟 Perplexity 公开回答的语气与结构（偏检索综述，可提及常见公开来源类型，勿编造具体不存在的 URL）。",
     "other": "请用常见中文 AI 助手的公开回答语气作答。",
 }
@@ -39,10 +40,14 @@ def build_probe_system_prompt(*, brand: str, engine: str, simulated: bool = True
         '{"raw_text": "完整回答正文", '
         '"suggested_mentions_brand": true/false, '
         '"competitors": ["竞品名"], '
-        '"brand_position": "first|mentioned|absent|unknown", '
-        '"sentiment": "positive|neutral|negative|unknown"}。'
+        '"brand_position": "first|alternative|mentioned|absent|unknown", '
+        '"sentiment": "positive|neutral|negative|unknown", '
+        '"citation_format": "linked|plaintext|mixed|none|unknown", '
+        '"citation_accuracy": "accurate|partial|inaccurate|unknown"}。'
         f"suggested_mentions_brand 表示回答是否明确提及品牌「{brand}」。"
         "competitors 不要包含该品牌自身；没有竞品就返回 []。"
+        "brand_position：首选 first，备选/次选 alternative，一般提及 mentioned。"
+        "citation_format：有链接用 linked，仅文本提及来源用 plaintext，兼有用 mixed。"
         "不要编造不存在的官网承诺或正文外竞品。"
     )
 
@@ -60,15 +65,27 @@ def resolve_engine_llm(
     engine: str,
     tenant_llm: dict[str, Any] | None,
     engine_row: Any | None = None,
+    monitoring_stance: str | None = None,
 ) -> tuple[dict[str, Any], str, str | None]:
     """Pick credentials + sample mode for one engine.
 
     Returns (llm_dict, sample_mode, fallback_reason).
     Prefer per-engine openai_compat when key is present; otherwise tenant LLM + persona.
+
+    monitoring_stance (W3):
+      real_only — 无真 Key 时不降级 persona，返回空 llm + skip reason
+      simulation — 强制 persona 标记
+      hybrid — 现行为
     """
+    stance = (monitoring_stance or "hybrid").strip().lower()
     mode = SAMPLE_MODE_PERSONA
     if engine_row is not None:
         mode = (getattr(engine_row, "sample_mode", None) or SAMPLE_MODE_PERSONA).strip()
+
+    if stance == "simulation":
+        if not tenant_llm:
+            return {}, SAMPLE_MODE_PERSONA, "simulation 定位：无租户 LLM"
+        return tenant_llm, SAMPLE_MODE_PERSONA, "simulation 定位：强制人设模拟"
 
     if mode == SAMPLE_MODE_REAL and engine_row is not None:
         from app.security.crypto import decrypt
@@ -84,6 +101,8 @@ def resolve_engine_llm(
             base = (getattr(engine_row, "api_base_url", None) or "").strip().rstrip("/")
             model = (getattr(engine_row, "model", None) or "").strip()
             if not base or not model:
+                if stance == "real_only":
+                    return {}, SAMPLE_MODE_REAL, "skipped:real_only_missing_base_or_model"
                 return (
                     tenant_llm or {},
                     SAMPLE_MODE_PERSONA,
@@ -100,24 +119,23 @@ def resolve_engine_llm(
                 SAMPLE_MODE_REAL,
                 None,
             )
-        # Real mode without key: deepseek can reuse tenant LLM as non-sim when matching
-        if engine == "deepseek" and tenant_llm:
+        # Real mode without per-engine key
+        if tenant_llm and tenant_llm.get("api_key") and stance != "real_only":
             return (
                 {
                     **tenant_llm,
-                    "provider": tenant_llm.get("provider") or "deepseek",
-                    "source": tenant_llm.get("source") or "tenant",
+                    "provider": tenant_llm.get("provider") or "dashscope",
+                    "source": f"tenant_fallback:{engine}",
                 },
                 SAMPLE_MODE_REAL,
                 None,
             )
-        if tenant_llm:
-            return (
-                tenant_llm,
-                SAMPLE_MODE_PERSONA,
-                "openai_compat 未配置引擎 API Key，已回退人设模拟",
-            )
-        return {}, SAMPLE_MODE_PERSONA, "无可用 LLM 凭证"
+        if stance == "real_only":
+            return {}, SAMPLE_MODE_REAL, "skipped:real_only_no_engine_key"
+        return {}, SAMPLE_MODE_PERSONA, "openai_compat 未配置引擎 Key 且无租户 LLM"
+
+    if stance == "real_only" and mode != SAMPLE_MODE_REAL:
+        return {}, SAMPLE_MODE_REAL, "skipped:real_only_persona_engine_disabled"
 
     if not tenant_llm:
         return {}, SAMPLE_MODE_PERSONA, "无租户/环境 LLM 凭证"
@@ -136,15 +154,9 @@ async def run_probe_draft(
     fallback_reason: str | None = None,
 ) -> dict[str, Any]:
     """Call LLM and normalize a non-persisted probe draft for one engine."""
-    from app.geo.ai_client import DeepSeekError
+    from app.ai.deepseek import DeepSeekError
 
     simulated = sample_mode != SAMPLE_MODE_REAL
-    # Preserve legacy: deepseek on persona path still marked simulated=False when
-    # using tenant deepseek-like backend without explicit real mode? Keep old rule
-    # only when sample_mode is persona and engine is deepseek.
-    if sample_mode == SAMPLE_MODE_PERSONA and engine == "deepseek":
-        simulated = False
-
     system = build_probe_system_prompt(brand=brand, engine=engine, simulated=simulated)
     user = build_probe_user_prompt(brand=brand, question=question, engine=engine)
     try:

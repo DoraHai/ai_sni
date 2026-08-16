@@ -4,6 +4,7 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
+import SampleCredibilityAlert from '../../components/SampleCredibilityAlert.vue'
 import { getDeliverableByShareToken } from '../../api/geoContent'
 import { fmtPct as fmtPctShared } from '../../utils/geoReportLabels'
 
@@ -88,14 +89,17 @@ onMounted(load)
       class="mb"
     />
 
+    <SampleCredibilityAlert
+      v-if="pack"
+      :composition="pack.sample_composition || pack.summary?.sample_composition"
+    />
     <el-alert
-      v-if="pack && hasSimulated"
-      type="warning"
+      v-if="pack?.impact_language"
+      type="info"
       :closable="false"
       show-icon
       class="mb"
-      title="本报告含模拟样本，不可当作真实引擎可见度效果"
-      :description="sampleLabel || undefined"
+      :title="pack.impact_language"
     />
 
     <template v-if="pack">

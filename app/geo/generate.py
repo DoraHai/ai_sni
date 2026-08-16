@@ -36,7 +36,7 @@ async def ai_advice(
     findings: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], str]:
     # 延迟导入，纯规则与资产生成不应依赖应用数据库配置。
-    from app.geo.ai_client import DeepSeekError, chat_json, is_enabled
+    from app.ai.deepseek import DeepSeekError, chat_json, is_enabled
 
     fallback = deterministic_advice(findings)
     if not is_enabled():

@@ -1,9 +1,8 @@
-"""GEO 网站诊断、AI 整改建议、结构化资产与诊断中心共享资料。"""
+"""GEO 网站诊断、AI 整改建议与结构化资产生成。"""
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,17 +10,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.geo.ai_client import DeepSeekError, is_enabled as ai_enabled
-from app.config import get_settings
+from app.ai.deepseek import is_enabled as ai_enabled
 from app.database import get_session
-from app.geo.ai_sampling import (
-    build_neutral_questions,
-    clean_questions,
-    run_deepseek_sample,
-)
-from app.geo.audit import RULE_VERSION, RULE_WEIGHTS, GeoAuditError, audit_url
-from app.geo.brand_profile import discover_brand_profile, website_key
-from app.geo.chinaz import fetch_chinaz_seo_metrics
+from app.geo.audit import GeoAuditError, audit_url
 from app.geo.generate import ai_advice, generate_json_ld, generate_llms_text
 from app.geo.verify import (
     append_evidence,
@@ -30,10 +21,7 @@ from app.geo.verify import (
     materialize_ticket_specs,
     ticket_public_dict,
 )
-from app.geo.pagespeed import fetch_pagespeed_insights
-from app.geo.site_audit import audit_site
 from app.models import GeoActionTicket, GeoAuditRun, GeoMediaPlacement, Tenant
-from app.models.tenant_memory import TenantMemory
 from app.security.auth import AuthContext, require_scoped_auth
 
 router = APIRouter(
@@ -46,7 +34,6 @@ router = APIRouter(
 class AuditCreate(BaseModel):
     tenant_id: int
     url: str = Field(..., min_length=4, max_length=2048)
-    scope: str = Field(default="single", pattern="^(single|site)$")
 
 
 class TicketCreate(BaseModel):
@@ -71,207 +58,8 @@ class TicketUpdate(BaseModel):
     manual_pass: bool | None = None
 
 
-class AISampleCreate(BaseModel):
-    tenant_id: int
-    questions: list[str] = Field(default_factory=list, max_length=3)
-
-
-class CompetitorAsset(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100)
-    website: str = Field(default="", max_length=2048)
-    competitor_type: str = Field(default="direct", pattern="^(direct|indirect|search|ai)$")
-    overlap_products: list[str] = Field(default_factory=list, max_length=20)
-    target_market: str = Field(default="", max_length=200)
-    source: str = Field(default="manual", max_length=100)
-    confirmed: bool = False
-
-
-class BrandAssetUpdate(BaseModel):
-    tenant_id: int
-    name: str = Field(..., min_length=1, max_length=100)
-    website: str = Field(default="", max_length=2048)
-    industry: str = Field(default="", max_length=100)
-    business_desc: str = Field(default="", max_length=20000)
-    brand_terms: list[str] = Field(default_factory=list, max_length=50)
-    core_products: list[str] = Field(default_factory=list, max_length=100)
-    proof_points: list[str] = Field(default_factory=list, max_length=100)
-    competitors: list[CompetitorAsset] = Field(default_factory=list, max_length=20)
-
-
-class BrandDiscoverRequest(BaseModel):
-    tenant_id: int
-    website: str = Field(..., min_length=4, max_length=2048)
-
-
-class AudienceAssetUpdate(BaseModel):
-    tenant_id: int
-    segments: list[str] = Field(default_factory=list, max_length=100)
-    decision_roles: list[str] = Field(default_factory=list, max_length=100)
-    pain_points: list[str] = Field(default_factory=list, max_length=100)
-    search_scenarios: list[str] = Field(default_factory=list, max_length=100)
-
-
-class KnowledgeCreate(BaseModel):
-    tenant_id: int
-    title: str = Field(..., min_length=1, max_length=200)
-    item_type: str = Field(default="other", max_length=30)
-    body: str = Field(..., min_length=1, max_length=100000)
-    source_url: str = Field(default="", max_length=2048)
-
-
-def _ensure_asset_edit(ctx: AuthContext) -> None:
-    if not ctx.can_edit("geo.diagnosis"):
-        raise HTTPException(403, "当前账号只有查看权限，无法修改品牌资产")
-
-
-def _json_content(memory: TenantMemory | None) -> dict[str, Any]:
-    if memory is None:
-        return {}
-    try:
-        value = json.loads(memory.content)
-    except (TypeError, ValueError):
-        return {}
-    return value if isinstance(value, dict) else {}
-
-
-async def _latest_memory(
-    session: AsyncSession, tenant_id: int, mem_type: str
-) -> TenantMemory | None:
-    return await session.scalar(
-        select(TenantMemory)
-        .where(
-            TenantMemory.tenant_id == tenant_id,
-            TenantMemory.mem_type == mem_type,
-            TenantMemory.active.is_(True),
-        )
-        .order_by(TenantMemory.id.desc())
-        .limit(1)
-    )
-
-
-async def _upsert_memory(
-    session: AsyncSession,
-    *,
-    tenant_id: int,
-    mem_type: str,
-    data: dict[str, Any],
-    ctx: AuthContext,
-) -> TenantMemory:
-    memory = await _latest_memory(session, tenant_id, mem_type)
-    content = json.dumps(data, ensure_ascii=False)
-    if memory is None:
-        memory = TenantMemory(
-            tenant_id=tenant_id,
-            mem_type=mem_type,
-            content=content,
-            source="manual",
-            confirmed=True,
-            active=True,
-            operator_user_id=ctx.user_id,
-            operator_name=ctx.username,
-        )
-        session.add(memory)
-    else:
-        memory.content = content
-        memory.source = "manual"
-        memory.confirmed = True
-        memory.operator_user_id = ctx.user_id
-        memory.operator_name = ctx.username
-    return memory
-
-
-DIAGNOSIS_BRAND_TYPE = "diagnosis_brand"
-
-
-def _empty_brand() -> dict[str, Any]:
-    return {
-        "name": "",
-        "website": "",
-        "industry": "",
-        "business_desc": "",
-        "brand_terms": [],
-        "core_products": [],
-        "proof_points": [],
-        "competitors": [],
-    }
-
-
-def _brand_ready(profile: dict[str, Any]) -> bool:
-    return all(
-        (
-            str(profile.get("name", "")).strip(),
-            str(profile.get("website", "")).strip(),
-            str(profile.get("industry", "")).strip(),
-            profile.get("core_products") or [],
-        )
-    )
-
-
-async def _diagnosis_brand_store(session: AsyncSession, tenant_id: int) -> dict[str, Any]:
-    data = _json_content(await _latest_memory(session, tenant_id, DIAGNOSIS_BRAND_TYPE))
-    profiles = data.get("profiles")
-    if not isinstance(profiles, dict):
-        profiles = {}
-    return {"active_key": str(data.get("active_key", "")), "profiles": profiles}
-
-
-def _profile_for_website(store: dict[str, Any], website: str = "") -> dict[str, Any]:
-    key = ""
-    if website.strip():
-        try:
-            key = website_key(website)
-        except GeoAuditError:
-            return _empty_brand()
-    else:
-        key = store.get("active_key", "")
-    value = store.get("profiles", {}).get(key, {})
-    return {**_empty_brand(), **(value if isinstance(value, dict) else {})}
-
-
-async def _brand_context(
-    session: AsyncSession, tenant_id: int, website: str, tenant: Tenant | None
-) -> dict[str, Any]:
-    profile = _profile_for_website(await _diagnosis_brand_store(session, tenant_id), website)
-    if _brand_ready(profile):
-        return profile
-    # 兼容尚未重新建档的历史报告，避免旧报告生成能力直接报错。
-    legacy = _json_content(await _latest_memory(session, tenant_id, "brand_asset"))
-    return {
-        **_empty_brand(),
-        "name": tenant.name if tenant else "当前品牌",
-        "industry": tenant.industry or "" if tenant else "",
-        "business_desc": tenant.business_desc or "" if tenant else "",
-        "brand_terms": tenant.brand_terms or [] if tenant else [],
-        "core_products": legacy.get("core_products", []),
-        "proof_points": legacy.get("proof_points", []),
-    }
-
-
-def _knowledge_payload(memory: TenantMemory) -> dict[str, Any]:
-    data = _json_content(memory)
-    return {
-        "id": memory.id,
-        "title": data.get("title", "未命名资料"),
-        "item_type": data.get("item_type", "other"),
-        "body": data.get("body", ""),
-        "source_url": data.get("source_url", ""),
-        "created_at": memory.created_at.isoformat() if memory.created_at else None,
-        "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
-    }
-
-
 def _payload(run: GeoAuditRun) -> dict[str, Any]:
-    findings = [
-        {
-            **item,
-            # 兼容 v1.0 已落库的记录：旧数据只有实际扣分，没有固定规则权重。
-            "weight": item.get(
-                "weight",
-                RULE_WEIGHTS.get(item.get("code"), item.get("deduction", 0)),
-            ),
-        }
-        for item in (run.findings or [])
-    ]
+    findings = run.findings or []
     return {
         "id": run.id,
         "tenant_id": run.tenant_id,
@@ -289,71 +77,9 @@ def _payload(run: GeoAuditRun) -> dict[str, Any]:
         "json_ld": run.json_ld,
         "llms_text": run.llms_text,
         "ai_enabled": ai_enabled(),
-        "rule_version": RULE_VERSION,
         "created_at": run.created_at.isoformat() if run.created_at else None,
         "updated_at": run.updated_at.isoformat() if run.updated_at else None,
     }
-
-
-def _history_payload(run: GeoAuditRun) -> dict[str, Any]:
-    """Return the compact fields needed by the diagnosis history picker."""
-    snapshot = run.snapshot or {}
-    site_audit = snapshot.get("site_audit") or {}
-    pages = site_audit.get("pages") or []
-    return {
-        "id": run.id,
-        "url": run.url,
-        "final_url": run.final_url,
-        "status": run.status,
-        "score": run.score,
-        "page_title": run.page_title,
-        "scope": "site" if snapshot.get("audit_scope") == "site" else "single",
-        "page_count": len(pages) if pages else 1,
-        "created_at": run.created_at.isoformat() if run.created_at else None,
-    }
-
-
-def _preview_payload(result: dict[str, Any], tenant_id: int) -> dict[str, Any]:
-    """Return a non-persistent competitor audit without borrowing tenant brand data."""
-    findings = result.get("checks", [])
-    created_at = datetime.now(timezone.utc).isoformat()
-    return {
-        "id": None,
-        "tenant_id": tenant_id,
-        "url": result["url"],
-        "final_url": result["final_url"],
-        "status": "completed",
-        "score": result["score"],
-        "page_title": result["title"],
-        "page_description": result["description"],
-        "snapshot": {
-            **result.get("snapshot", {}),
-            "audit_mode": "competitor",
-            "data_scope": "public_website_only",
-        },
-        "findings": findings,
-        "problems": [item for item in findings if not item.get("passed")],
-        "advice": [],
-        "advice_source": "",
-        "json_ld": "",
-        "llms_text": "",
-        "ai_enabled": False,
-        "rule_version": result.get("rule_version", RULE_VERSION),
-        "created_at": created_at,
-        "updated_at": created_at,
-    }
-
-
-async def _attach_external_metrics(result: dict[str, Any]) -> None:
-    """Attach optional third-party metrics without changing the core score."""
-    snapshot = result.setdefault("snapshot", {})
-    metrics = dict(snapshot.get("external_metrics") or {})
-    metrics.update(
-        await fetch_chinaz_seo_metrics(
-            result.get("final_url") or result.get("url") or ""
-        )
-    )
-    snapshot["external_metrics"] = metrics
 
 
 def _audit_context(run: GeoAuditRun) -> dict[str, Any]:
@@ -451,16 +177,10 @@ async def create_audit(
     tenant = await session.get(Tenant, req.tenant_id)
     if tenant is None:
         raise HTTPException(404, "客户不存在")
-    brand_profile = _profile_for_website(
-        await _diagnosis_brand_store(session, req.tenant_id), req.url
-    )
-    if not _brand_ready(brand_profile):
-        raise HTTPException(409, "请先完成当前网站的品牌基础信息，再开始网站体检")
     try:
-        result = await (audit_site(req.url) if req.scope == "site" else audit_url(req.url))
+        result = await audit_url(req.url)
     except GeoAuditError as exc:
         raise HTTPException(400, str(exc)) from exc
-    await _attach_external_metrics(result)
     run = GeoAuditRun(
         tenant_id=req.tenant_id,
         url=result["url"],
@@ -469,38 +189,13 @@ async def create_audit(
         score=result["score"],
         page_title=result["title"],
         page_description=result["description"],
-        snapshot={
-            **result["snapshot"],
-            "brand_profile": {
-                "name": brand_profile["name"],
-                "website": brand_profile["website"],
-                "site_key": website_key(brand_profile["website"]),
-            },
-        },
+        snapshot=result["snapshot"],
         findings=result["checks"],
     )
     session.add(run)
     await session.commit()
     await session.refresh(run)
     return _payload(run)
-
-
-@router.post("/audits/competitor-preview")
-async def create_competitor_preview(
-    req: AuditCreate,
-    ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    """Run a public-data competitor check without saving or changing brand profiles."""
-    ctx.ensure_tenant(req.tenant_id)
-    if await session.get(Tenant, req.tenant_id) is None:
-        raise HTTPException(404, "客户不存在")
-    try:
-        result = await (audit_site(req.url) if req.scope == "site" else audit_url(req.url))
-    except GeoAuditError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    await _attach_external_metrics(result)
-    return _preview_payload(result, req.tenant_id)
 
 
 @router.get("/audits/latest")
@@ -517,46 +212,6 @@ async def latest_audit(
         .limit(1)
     )
     return {"audit": _payload(run) if run else None}
-
-
-@router.get("/audits/history")
-async def audit_history(
-    tenant_id: int = Query(...),
-    limit: int = Query(default=12, ge=1, le=50),
-    ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    """List recent persistent website audits for the current tenant."""
-    ctx.ensure_tenant(tenant_id)
-    runs = list(
-        (
-            await session.scalars(
-                select(GeoAuditRun)
-                .where(GeoAuditRun.tenant_id == tenant_id)
-                .order_by(GeoAuditRun.created_at.desc(), GeoAuditRun.id.desc())
-                .limit(limit)
-            )
-        ).all()
-    )
-    return {"items": [_history_payload(run) for run in runs]}
-
-
-@router.get("/pagespeed")
-async def pagespeed_insights(
-    tenant_id: int = Query(...),
-    url: str = Query(..., min_length=4, max_length=2048),
-    strategy: str = Query(default="mobile", pattern="^(mobile|desktop)$"),
-    ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
-    """Return normalized PageSpeed data without exposing the provider API key."""
-    ctx.ensure_tenant(tenant_id)
-    if await session.get(Tenant, tenant_id) is None:
-        raise HTTPException(404, "客户不存在")
-    try:
-        return await fetch_pagespeed_insights(url, strategy=strategy)
-    except GeoAuditError as exc:
-        raise HTTPException(400, str(exc)) from exc
 
 
 @router.get("/audits/{audit_id}")
@@ -580,11 +235,8 @@ async def create_advice(
     ctx.ensure_tenant(tenant_id)
     run = await _run_for_tenant(session, audit_id, tenant_id)
     tenant = await session.get(Tenant, tenant_id)
-    brand = await _brand_context(
-        session, tenant_id, run.final_url or run.url, tenant
-    )
     advice, source = await ai_advice(
-        tenant_name=brand["name"],
+        tenant_name=tenant.name if tenant else "当前品牌",
         url=run.final_url or run.url,
         score=run.score or 0,
         title=run.page_title or "",
@@ -593,65 +245,6 @@ async def create_advice(
     )
     run.advice = advice
     run.advice_source = source
-    await session.commit()
-    await session.refresh(run)
-    return _payload(run)
-
-
-@router.post("/audits/{audit_id}/ai-sample")
-async def create_ai_sample(
-    audit_id: int,
-    req: AISampleCreate,
-    ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    """使用真实 DeepSeek 回答执行单平台品牌提及抽样。"""
-    ctx.ensure_tenant(req.tenant_id)
-    if not ai_enabled():
-        raise HTTPException(503, "DeepSeek 抽样服务暂未启用")
-    run = await _run_for_tenant(session, audit_id, req.tenant_id)
-    tenant = await session.get(Tenant, req.tenant_id)
-    if tenant is None:
-        raise HTTPException(404, "客户不存在")
-
-    brand_asset = await _brand_context(
-        session, req.tenant_id, run.final_url or run.url, tenant
-    )
-    audience = _json_content(
-        await _latest_memory(session, req.tenant_id, "audience_profile")
-    )
-    brand_terms = list(
-        dict.fromkeys(
-            item.strip()
-            for item in [brand_asset["name"], *(brand_asset.get("brand_terms") or [])]
-            if item and item.strip()
-        )
-    )
-    try:
-        questions = clean_questions(req.questions, brand_terms)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    if not questions:
-        questions = build_neutral_questions(
-            industry=brand_asset.get("industry") or "",
-            core_products=brand_asset.get("core_products") or [],
-            audience_segments=audience.get("segments") or [],
-            brand_terms=brand_terms,
-        )
-    try:
-        sample = await run_deepseek_sample(
-            questions=questions,
-            brand_name=brand_asset["name"],
-            brand_terms=brand_terms,
-            model=get_settings().deepseek_model,
-        )
-    except DeepSeekError as exc:
-        # API 客户端已完成一次重试；路由只暴露可操作的失败信息，不泄露密钥或响应体。
-        raise HTTPException(502, "DeepSeek 抽样失败，请稍后重试") from exc
-
-    snapshot = dict(run.snapshot or {})
-    snapshot["ai_sampling"] = sample
-    run.snapshot = snapshot
     await session.commit()
     await session.refresh(run)
     return _payload(run)
@@ -667,10 +260,7 @@ async def create_assets(
     ctx.ensure_tenant(tenant_id)
     run = await _run_for_tenant(session, audit_id, tenant_id)
     tenant = await session.get(Tenant, tenant_id)
-    brand = await _brand_context(
-        session, tenant_id, run.final_url or run.url, tenant
-    )
-    tenant_name = brand["name"]
+    tenant_name = tenant.name if tenant else "当前品牌"
     final_url = run.final_url or run.url
     run.json_ld = generate_json_ld(
         tenant_name=tenant_name,
@@ -688,223 +278,6 @@ async def create_assets(
     await session.commit()
     await session.refresh(run)
     return _payload(run)
-
-
-@router.get("/assets/profile")
-async def get_asset_profile(
-    tenant_id: int = Query(...),
-    website: str = Query(default="", max_length=2048),
-    ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    ctx.ensure_tenant(tenant_id)
-    tenant = await session.get(Tenant, tenant_id)
-    if tenant is None:
-        raise HTTPException(404, "客户不存在")
-    store = await _diagnosis_brand_store(session, tenant_id)
-    brand = _profile_for_website(store, website)
-    audience = _json_content(await _latest_memory(session, tenant_id, "audience_profile"))
-    return {
-        "brand": brand,
-        "profile_ready": _brand_ready(brand),
-        "site_key": website_key(brand["website"]) if brand["website"] else "",
-        "audience": {
-            "segments": audience.get("segments", []),
-            "decision_roles": audience.get("decision_roles", []),
-            "pain_points": audience.get("pain_points", []),
-            "search_scenarios": audience.get("search_scenarios", []),
-        },
-    }
-
-
-@router.post("/assets/brand/discover")
-async def discover_brand_asset(
-    req: BrandDiscoverRequest,
-    ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    """读取公开官网，生成需要人工确认的品牌资料候选值，不直接落库。"""
-    ctx.ensure_tenant(req.tenant_id)
-    if await session.get(Tenant, req.tenant_id) is None:
-        raise HTTPException(404, "客户不存在")
-    try:
-        return await discover_brand_profile(req.website)
-    except GeoAuditError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-
-@router.put("/assets/brand")
-async def update_brand_asset(
-    req: BrandAssetUpdate,
-    ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    ctx.ensure_tenant(req.tenant_id)
-    _ensure_asset_edit(ctx)
-    tenant = await session.get(Tenant, req.tenant_id)
-    if tenant is None:
-        raise HTTPException(404, "客户不存在")
-    if not req.website.strip():
-        raise HTTPException(400, "请填写官方网站")
-    profile = {
-        "name": req.name.strip(),
-        "website": req.website.strip(),
-        "industry": req.industry.strip(),
-        "business_desc": req.business_desc.strip(),
-        "brand_terms": [value.strip() for value in req.brand_terms if value.strip()],
-        "core_products": [value.strip() for value in req.core_products if value.strip()],
-        "proof_points": [value.strip() for value in req.proof_points if value.strip()],
-        "competitors": [
-            {
-                "name": item.name.strip(),
-                "website": item.website.strip(),
-                "competitor_type": item.competitor_type,
-                "overlap_products": [
-                    value.strip() for value in item.overlap_products if value.strip()
-                ],
-                "target_market": item.target_market.strip(),
-                "source": item.source.strip() or "manual",
-                "confirmed": True,
-            }
-            for item in req.competitors
-            if item.confirmed and item.name.strip()
-        ],
-    }
-    if not _brand_ready(profile):
-        raise HTTPException(400, "请填写品牌名称、官方网站、所属行业和至少一项核心产品或服务")
-    store = await _diagnosis_brand_store(session, req.tenant_id)
-    key = website_key(profile["website"])
-    profiles = dict(store["profiles"])
-    profiles[key] = profile
-    await _upsert_memory(
-        session,
-        tenant_id=req.tenant_id,
-        mem_type=DIAGNOSIS_BRAND_TYPE,
-        data={"active_key": key, "profiles": profiles},
-        ctx=ctx,
-    )
-    await session.commit()
-    return {"ok": True, "brand": profile, "profile_ready": True, "site_key": key}
-
-
-@router.put("/assets/audience")
-async def update_audience_asset(
-    req: AudienceAssetUpdate,
-    ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    ctx.ensure_tenant(req.tenant_id)
-    _ensure_asset_edit(ctx)
-    if await session.get(Tenant, req.tenant_id) is None:
-        raise HTTPException(404, "客户不存在")
-    await _upsert_memory(
-        session,
-        tenant_id=req.tenant_id,
-        mem_type="audience_profile",
-        data={
-            "segments": [value.strip() for value in req.segments if value.strip()],
-            "decision_roles": [value.strip() for value in req.decision_roles if value.strip()],
-            "pain_points": [value.strip() for value in req.pain_points if value.strip()],
-            "search_scenarios": [value.strip() for value in req.search_scenarios if value.strip()],
-        },
-        ctx=ctx,
-    )
-    await session.commit()
-    return {"ok": True}
-
-
-@router.get("/assets/knowledge")
-async def list_knowledge_assets(
-    tenant_id: int = Query(...),
-    q: str = Query(default="", max_length=200),
-    item_type: str = Query(default="", max_length=30),
-    ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    ctx.ensure_tenant(tenant_id)
-    rows = (
-        await session.scalars(
-            select(TenantMemory)
-            .where(
-                TenantMemory.tenant_id == tenant_id,
-                TenantMemory.mem_type == "knowledge_item",
-                TenantMemory.active.is_(True),
-            )
-            .order_by(TenantMemory.created_at.desc(), TenantMemory.id.desc())
-        )
-    ).all()
-    items = [_knowledge_payload(row) for row in rows]
-    if item_type:
-        items = [item for item in items if item["item_type"] == item_type]
-    if q.strip():
-        needle = q.strip().lower()
-        items = [
-            item
-            for item in items
-            if needle in f'{item["title"]} {item["body"]} {item["source_url"]}'.lower()
-        ]
-    return {"items": items, "total": len(items)}
-
-
-@router.post("/assets/knowledge")
-async def create_knowledge_asset(
-    req: KnowledgeCreate,
-    ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    ctx.ensure_tenant(req.tenant_id)
-    _ensure_asset_edit(ctx)
-    if await session.get(Tenant, req.tenant_id) is None:
-        raise HTTPException(404, "客户不存在")
-    allowed_types = {"product", "case", "whitepaper", "faq", "other"}
-    if req.item_type not in allowed_types:
-        raise HTTPException(400, "资料类型不正确")
-    memory = TenantMemory(
-        tenant_id=req.tenant_id,
-        mem_type="knowledge_item",
-        content=json.dumps(
-            {
-                "title": req.title.strip(),
-                "item_type": req.item_type,
-                "body": req.body.strip(),
-                "source_url": req.source_url.strip(),
-            },
-            ensure_ascii=False,
-        ),
-        source="manual",
-        confirmed=True,
-        active=True,
-        operator_user_id=ctx.user_id,
-        operator_name=ctx.username,
-    )
-    session.add(memory)
-    await session.commit()
-    await session.refresh(memory)
-    return _knowledge_payload(memory)
-
-
-@router.delete("/assets/knowledge/{knowledge_id}")
-async def delete_knowledge_asset(
-    knowledge_id: int,
-    tenant_id: int = Query(...),
-    ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    ctx.ensure_tenant(tenant_id)
-    _ensure_asset_edit(ctx)
-    memory = await session.get(TenantMemory, knowledge_id)
-    if (
-        memory is None
-        or memory.tenant_id != tenant_id
-        or memory.mem_type != "knowledge_item"
-        or not memory.active
-    ):
-        raise HTTPException(404, "知识条目不存在")
-    memory.active = False
-    memory.operator_user_id = ctx.user_id
-    memory.operator_name = ctx.username
-    await session.commit()
-    return {"ok": True}
 
 
 @router.post("/audits/{audit_id}/tickets")

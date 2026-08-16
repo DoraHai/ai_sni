@@ -120,6 +120,7 @@ def build_webhook_payload(
     body_markdown: str,
     export_format: str,
     base_url: str | None,
+    body_html: str | None = None,
 ) -> dict[str, Any]:
     return {
         "action": action,
@@ -128,8 +129,11 @@ def build_webhook_payload(
         "channel": channel,
         "channel_type": channel_type,
         "title": title,
+        # 发布以 HTML 正稿为准；markdown 仅兼容旧接收端
+        "body_html": body_html or body_markdown,
         "body_markdown": body_markdown,
-        "export_format": export_format or "markdown",
+        "export_format": export_format or "html",
+        "content_type": "text/html",
         "base_url": base_url,
     }
 

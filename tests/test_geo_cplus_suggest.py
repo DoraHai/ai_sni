@@ -32,6 +32,8 @@ class SnapshotSuggestTests(unittest.TestCase):
         self.assertEqual(out["suggested_brand_position"], "first")
         self.assertEqual(out["suggested_sentiment"], "positive")
         self.assertEqual(out["suggested_cited_urls"], ["https://zhihu.com/q/1"])
+        self.assertEqual(out["suggested_citation_format"], "linked")
+        self.assertEqual(out["suggested_citation_accuracy"], "unknown")
         self.assertEqual(out["source"], "llm")
 
     def test_normalize_falls_back_to_heuristic_without_llm(self):
@@ -44,6 +46,7 @@ class SnapshotSuggestTests(unittest.TestCase):
         self.assertEqual(out["suggested_competitors"], [])
         self.assertEqual(out["suggested_brand_position"], "mentioned")
         self.assertEqual(out["suggested_sentiment"], "unknown")
+        self.assertEqual(out["suggested_citation_format"], "plaintext")
         self.assertEqual(out["source"], "heuristic")
 
     def test_invalid_enums_become_unknown(self):
@@ -52,6 +55,8 @@ class SnapshotSuggestTests(unittest.TestCase):
                 "suggested_mentions_brand": False,
                 "brand_position": "top3",
                 "sentiment": "mixed",
+                "citation_format": "weird",
+                "citation_accuracy": "maybe",
                 "competitors": [],
             },
             raw_text="无品牌",
@@ -59,6 +64,23 @@ class SnapshotSuggestTests(unittest.TestCase):
         )
         self.assertEqual(out["suggested_brand_position"], "unknown")
         self.assertEqual(out["suggested_sentiment"], "unknown")
+        self.assertEqual(out["suggested_citation_format"], "none")
+        self.assertEqual(out["suggested_citation_accuracy"], "unknown")
+
+    def test_alternative_and_accuracy_passthrough(self):
+        out = normalize_suggest_payload(
+            {
+                "suggested_mentions_brand": True,
+                "brand_position": "alternative",
+                "citation_accuracy": "partial",
+                "citation_format": "mixed",
+            },
+            raw_text="备选推荐 Growth Sniper https://a.com",
+            brand_names=["Growth Sniper"],
+        )
+        self.assertEqual(out["suggested_brand_position"], "alternative")
+        self.assertEqual(out["suggested_citation_format"], "mixed")
+        self.assertEqual(out["suggested_citation_accuracy"], "partial")
 
 
 if __name__ == "__main__":

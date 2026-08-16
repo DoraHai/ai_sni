@@ -188,6 +188,16 @@ async def execute_single_push(
         raise ValueError("账号未配置凭证")
 
     credentials = decrypt_credentials_json(account.credentials_encrypted)
+    # Prefer channel-variant HTML 正稿 (tables rendered); fallback master article html
+    vmeta = dict(variant.adapt_meta or {})
+    body_html = vmeta.get("body_html")
+    if not body_html and variant.body_markdown:
+        from app.geo.content.md_to_html import markdown_to_publish_html
+
+        body_html = markdown_to_publish_html(variant.body_markdown, wrap_article=True)
+    if not body_html and article is not None:
+        body_html = getattr(article, "body_html", None)
+
     if kind == "social":
         if not credentials.get("platform"):
             credentials = {**credentials, "platform": ctype}
@@ -199,7 +209,7 @@ async def execute_single_push(
             channel=channel,
             title=variant.title or task.title or "",
             body_markdown=variant.body_markdown or "",
-            body_html=getattr(article, "body_html", None) if article else None,
+            body_html=body_html,
         )
         remote = await post_social(credentials, payload)
         # Persist refreshed OAuth / WeChat tokens
@@ -224,7 +234,8 @@ async def execute_single_push(
             channel_type=channel_row.channel_type,
             title=variant.title or task.title or "",
             body_markdown=variant.body_markdown or "",
-            export_format=variant.export_format or "markdown",
+            body_html=body_html,
+            export_format="html",
             base_url=channel_row.base_url,
         )
         remote = await post_webhook(credentials, payload)

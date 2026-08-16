@@ -243,6 +243,7 @@ def main() -> int:
         assert scope.get("level") == "unit", scope
         assert int(scope.get("unit_id") or 0) == state["unit_id"]
         assert pack.get("generated_kind") in (
+            "geo_deliverables_pack_v3",
             "geo_deliverables_pack_v2",
             "geo_deliverables_pack_v1",
         )

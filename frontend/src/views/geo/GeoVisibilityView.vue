@@ -16,6 +16,7 @@ import {
   checkGeoAnswerSnapshotCitations,
   fetchVisibilityPatrolOpsStatus,
 } from '../../api/geoContent'
+import SampleCredibilityAlert from '../../components/SampleCredibilityAlert.vue'
 import { diagnoseEmptyMonitoring } from '../../utils/geoEmptyReason'
 import { useClientPager } from '../../composables/useClientPager'
 import { session } from '../../store/session'
@@ -741,14 +742,7 @@ onMounted(reloadAll)
           · 共 {{ snapshots.length }} 条
           <template v-if="sampleComposition?.label"> · {{ sampleComposition.label }}</template>
         </p>
-        <el-alert
-          v-if="sampleComposition?.has_simulated"
-          type="warning"
-          :closable="false"
-          show-icon
-          class="mb"
-          title="当前列表含模拟样本：不可当作真实引擎效果汇报"
-        />
+        <SampleCredibilityAlert :composition="sampleComposition" />
         <el-alert
           v-if="snapshots.length && emptyReason?.key === 'no_mention'"
           type="warning"

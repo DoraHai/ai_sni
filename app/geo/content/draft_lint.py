@@ -57,6 +57,42 @@ def lint_draft(
                 }
             )
 
+    from app.geo.content.claim_guard import ungrounded_claims
+
+    for claim in ungrounded_claims(body, facts or []):
+        kind = claim.get("kind")
+        token = claim.get("token") or ""
+        if kind == "number":
+            issues.append(
+                {
+                    "level": "高",
+                    "code": "unverified_number",
+                    "type": "未核实数字",
+                    "detail": f"`{token}` 不在绑定事实卡里，不得写成可发布数据",
+                    "excerpt": (claim.get("excerpt") or token)[:90],
+                }
+            )
+        elif kind == "performance":
+            issues.append(
+                {
+                    "level": "高",
+                    "code": "unverified_performance",
+                    "type": "未核实性能",
+                    "detail": f"出现「{token}」但事实卡未提供该指标",
+                    "excerpt": token,
+                }
+            )
+        elif kind == "case":
+            issues.append(
+                {
+                    "level": "高",
+                    "code": "unverified_case",
+                    "type": "未核实案例",
+                    "detail": f"出现「{token}」但事实卡没有对应案例",
+                    "excerpt": token,
+                }
+            )
+
     known_values = _known_number_tokens(facts or [])
     for m in _NUMBER_IN_LINE.finditer(body):
         seg, val = m.group(0), m.group(1)
@@ -64,9 +100,11 @@ def lint_draft(
             continue
         if "待确认" in seg or "待补" in seg:
             continue
+        if any(i.get("code") == "unverified_number" and val in (i.get("detail") or "") for i in issues):
+            continue
         issues.append(
             {
-                "level": "中",
+                "level": "高",
                 "code": "unverified_number",
                 "type": "未核实数字",
                 "detail": f"`{val}` 不在绑定事实卡里且未标注待确认",

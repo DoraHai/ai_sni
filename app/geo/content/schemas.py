@@ -39,6 +39,7 @@ class OptimizationBusinessCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     description: str | None = None
     sort_order: int = 0
+    profile: dict[str, Any] | None = None
 
 
 class OptimizationBusinessUpdate(BaseModel):
@@ -46,6 +47,7 @@ class OptimizationBusinessUpdate(BaseModel):
     description: str | None = None
     status: Literal["active", "archived"] | None = None
     sort_order: int | None = None
+    profile: dict[str, Any] | None = None
 
 
 class OptimizationUnitCreate(BaseModel):
@@ -124,6 +126,7 @@ class FactCreate(BaseModel):
     expires_at: date | None = None
     trust_level: Literal["verified", "needs_review", "draft"] = "needs_review"
     author_name: str | None = Field(None, max_length=100)
+    business_id: int | None = None
     meta: dict[str, Any] | None = None
 
 
@@ -138,7 +141,15 @@ class FactUpdate(BaseModel):
     trust_level: Literal["verified", "needs_review", "draft"] | None = None
     author_name: str | None = Field(None, max_length=100)
     status: Literal["active", "archived"] | None = None
+    business_id: int | None = None
     meta: dict[str, Any] | None = None
+
+
+class FactVerifyRequest(BaseModel):
+    excerpt: str = Field(..., min_length=8, max_length=400)
+    excerpt_locator: str = Field(..., min_length=2, max_length=200)
+    source_url: str | None = Field(None, max_length=800)
+    note: str | None = Field(None, max_length=500)
 
 
 class TaskCreate(BaseModel):
@@ -207,6 +218,8 @@ class VariantsCreate(BaseModel):
     channels: list[str] = Field(
         default_factory=lambda: ["website", "wechat", "zhihu"]
     )
+    # True: LLM 按渠道润色成接近可发的渠道稿；失败回退确定性裁剪
+    use_llm: bool = True
 
 
 class VariantUpdate(BaseModel):
@@ -256,6 +269,68 @@ class ReviewDecision(BaseModel):
     note: str | None = Field(None, max_length=2000)
 
 
+class GapCreateTasksRequest(BaseModel):
+    tenant_id: int
+    prompt_ids: list[int] = Field(..., min_length=1, max_length=50)
+
+
+class OptimizationPeriodCreate(BaseModel):
+    tenant_id: int
+    name: str = Field(..., min_length=1, max_length=160)
+    starts_at: str
+    ends_at: str
+    business_id: int | None = None
+    goal_note: str | None = Field(None, max_length=2000)
+    capture_baseline: bool = True
+
+
+class GeoOnboardingPreviewRequest(BaseModel):
+    tenant_id: int
+    website_url: str = Field(..., min_length=8, max_length=2000)
+    expand: bool = True
+    max_prompt_candidates: int = Field(24, ge=4, le=80)
+
+
+class GeoOnboardingBusinessPick(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    description: str | None = None
+
+
+class GeoOnboardingPromptPick(BaseModel):
+    question: str = Field(..., min_length=4, max_length=500)
+    question_group: str | None = None
+    priority: int = 10
+    tags: list[str] = Field(default_factory=lambda: ["from_onboarding", "brand_missing"])
+    business_name: str | None = None
+    is_brand_probe: bool | None = None
+
+
+class GeoOnboardingFactPick(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    statement: str = Field(..., min_length=4)
+    fact_type: Literal["product", "case", "metric", "policy", "other"] = "product"
+    source_name: str = Field(..., min_length=1, max_length=200)
+    source_url: str | None = None
+    trust_level: Literal["verified", "needs_review", "draft"] = "needs_review"
+    business_name: str | None = None
+
+
+class GeoOnboardingApplyRequest(BaseModel):
+    tenant_id: int
+    website_url: str | None = None
+    brand_terms: list[str] = Field(default_factory=list)
+    businesses: list[GeoOnboardingBusinessPick] = Field(default_factory=list)
+    prompts: list[GeoOnboardingPromptPick] = Field(default_factory=list)
+    facts: list[GeoOnboardingFactPick] = Field(default_factory=list)
+    create_website_channel: bool = True
+    dry_run: bool = False
+
+
+class MonitoringStanceUpdate(BaseModel):
+    tenant_id: int
+    monitoring_stance: Literal["simulation", "hybrid", "real_only"] = "hybrid"
+
+
 class TaskUpdate(BaseModel):
     title: str | None = Field(None, max_length=300)
     owner_user_id: int | None = None
@@ -276,9 +351,11 @@ class ApplyPatchRequest(BaseModel):
     author_name: str | None = Field(None, max_length=100)
 
 
-SnapshotEngine = Literal["chatgpt", "deepseek", "doubao", "perplexity", "other"]
-BrandPosition = Literal["first", "mentioned", "absent", "unknown"]
+SnapshotEngine = Literal["chatgpt", "deepseek", "doubao", "kimi", "perplexity", "other"]
+BrandPosition = Literal["first", "alternative", "mentioned", "absent", "unknown"]
 SnapshotSentiment = Literal["positive", "neutral", "negative", "unknown"]
+CitationFormat = Literal["linked", "plaintext", "mixed", "none", "unknown"]
+CitationAccuracy = Literal["accurate", "partial", "inaccurate", "unknown"]
 
 
 class AnswerSnapshotCreate(BaseModel):
@@ -292,6 +369,8 @@ class AnswerSnapshotCreate(BaseModel):
     competitors: list[str] = Field(default_factory=list)
     brand_position: BrandPosition = "unknown"
     sentiment: SnapshotSentiment = "unknown"
+    citation_format: CitationFormat = "unknown"
+    citation_accuracy: CitationAccuracy = "unknown"
     note: str | None = None
 
 
@@ -304,6 +383,8 @@ class AnswerSnapshotUpdate(BaseModel):
     competitors: list[str] | None = None
     brand_position: BrandPosition | None = None
     sentiment: SnapshotSentiment | None = None
+    citation_format: CitationFormat | None = None
+    citation_accuracy: CitationAccuracy | None = None
     note: str | None = None
 
 
@@ -333,6 +414,13 @@ class AnswerSnapshotSuggestFieldsRequest(BaseModel):
     use_llm: bool = True
 
 
+class AnswerSnapshotCitationCheckRequest(BaseModel):
+    tenant_id: int
+    cited_urls: list[str] = Field(default_factory=list)
+    snapshot_id: int | None = None
+    apply: bool = False
+
+
 AiProvider = Literal["dashscope", "deepseek"]
 
 
@@ -346,6 +434,75 @@ class AiSettingsUpdate(BaseModel):
     enabled: bool = True
     note: str | None = None
     apply_preset: bool = False
+
+
+class ChannelPolishPromptChannelUpdate(BaseModel):
+    channel_key: str = Field(..., min_length=1, max_length=32)
+    voice_prompt: str | None = Field(None, max_length=20000)
+    min_body_chars: int | None = Field(None, ge=100, le=20000)
+    reset: bool = False
+
+
+class ChannelPolishPromptsUpdate(BaseModel):
+    tenant_id: int
+    system_prompt: str | None = Field(None, max_length=50000)
+    reset_system: bool = False
+    channels: list[ChannelPolishPromptChannelUpdate] = Field(default_factory=list)
+
+
+class CompetitorTraceReportRequest(BaseModel):
+    tenant_id: int
+    competitor: str = Field(..., min_length=1, max_length=120)
+    source_urls: list[str] = Field(default_factory=list)
+    platform_keys: list[str] = Field(default_factory=list)
+    confirmed_external_urls: list[str] = Field(default_factory=list)
+    note: str | None = Field(None, max_length=4000)
+    insight: str | None = Field(None, max_length=8000)
+    action: str | None = Field(None, max_length=8000)
+
+
+class CompetitorRecTaskItem(BaseModel):
+    prompt_id: int
+    title: str | None = Field(None, max_length=300)
+    channel_key: str | None = None
+    reason: str | None = Field(None, max_length=800)
+    sample_question: str | None = None
+
+
+class CompetitorCreateTasksRequest(BaseModel):
+    tenant_id: int
+    competitor: str = Field(..., min_length=1, max_length=120)
+    items: list[CompetitorRecTaskItem] = Field(default_factory=list, max_length=8)
+
+
+class CompetitorReportUpsert(BaseModel):
+    tenant_id: int
+    competitor: str = Field(..., min_length=1, max_length=120)
+    title: str | None = Field(None, max_length=240)
+    business_id: int | None = None
+    period_id: int | None = None
+    insight: str | None = Field(None, max_length=8000)
+    action: str | None = Field(None, max_length=8000)
+    note: str | None = Field(None, max_length=4000)
+    markdown: str | None = None
+    source_urls: list[str] = Field(default_factory=list)
+    platform_keys: list[str] = Field(default_factory=list)
+    evidence: dict[str, Any] | None = None
+    status: Literal["draft", "confirmed", "archived"] | None = None
+
+
+class CompetitorReportPatch(BaseModel):
+    title: str | None = Field(None, max_length=240)
+    business_id: int | None = None
+    period_id: int | None = None
+    insight: str | None = Field(None, max_length=8000)
+    action: str | None = Field(None, max_length=8000)
+    note: str | None = Field(None, max_length=4000)
+    markdown: str | None = None
+    source_urls: list[str] | None = None
+    platform_keys: list[str] | None = None
+    evidence: dict[str, Any] | None = None
+    status: Literal["draft", "confirmed", "archived"] | None = None
 
 
 SampleMode = Literal["mock_persona", "openai_compat"]

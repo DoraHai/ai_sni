@@ -15,6 +15,7 @@ import {
   rebuildGeoDailyMetrics,
   fetchVisibilityPatrolOpsStatus,
 } from '../../api/geoContent'
+import SampleCredibilityAlert from '../../components/SampleCredibilityAlert.vue'
 import { diagnoseEmptyMonitoring } from '../../utils/geoEmptyReason'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
@@ -508,23 +509,11 @@ onMounted(load)
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" />
 
-    <div
-      v-if="sampleComposition && sampleComposition.total > 0"
-      class="sample-compose"
-      :class="{ warn: sampleComposition.has_simulated }"
-    >
-      <span class="sample-compose-title">样本构成</span>
-      <span class="sample-compose-body">{{ sampleComposition.label || '—' }}</span>
-      <el-tag
-        v-if="sampleComposition.has_simulated"
-        size="small"
-        type="warning"
-        effect="light"
-      >
-        含模拟样本 · 交付须标注
-      </el-tag>
-      <span class="sample-compose-meta">全库快照（不受观察期限制）</span>
-    </div>
+    <SampleCredibilityAlert
+      :composition="sampleComposition"
+      :window-label="`观察期 ${obsLabel}`"
+      :engines-covered="stats?.visibility_engines_covered"
+    />
 
     <el-alert
       v-if="emptyReason?.key === 'no_mention'"

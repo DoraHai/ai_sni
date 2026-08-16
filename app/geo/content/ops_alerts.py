@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import (
     GeoChannelAccount,
     GeoContentTask,
+    GeoPrompt,
     GeoPublishingChannel,
     GeoVisibilityPatrolRun,
     GeoVisibilityPatrolSettings,
@@ -149,6 +150,74 @@ async def build_ops_alerts(
             }
         )
 
+    # ---- gap SLA (brand_missing without open/published task) ----
+    try:
+        from app.config import get_settings as _gs
+
+        sla_days = int(getattr(_gs(), "geo_gap_sla_days", 7) or 7)
+        sla_days = max(1, min(sla_days, 90))
+        prompts = list(
+            await session.scalars(
+                select(GeoPrompt).where(
+                    GeoPrompt.tenant_id == tenant_id,
+                    GeoPrompt.status == "active",
+                )
+            )
+        )
+        missing = [p for p in prompts if "brand_missing" in (list(p.tags or []))]
+        if missing:
+            open_tasks = list(
+                await session.scalars(
+                    select(GeoContentTask).where(
+                        GeoContentTask.tenant_id == tenant_id,
+                        GeoContentTask.status.notin_(("archived",)),
+                    )
+                )
+            )
+            by_prompt: dict[int, list[GeoContentTask]] = {}
+            for t in open_tasks:
+                by_prompt.setdefault(int(t.prompt_id), []).append(t)
+            needs = 0
+            breached = 0
+            now = datetime.utcnow()
+            for p in missing:
+                rel = by_prompt.get(int(p.id)) or []
+                open_rel = [t for t in rel if t.status not in {"published", "archived"}]
+                pub_rel = [t for t in rel if t.status == "published"]
+                if open_rel or pub_rel:
+                    continue
+                needs += 1
+                anchor = p.updated_at or p.created_at or now
+                if getattr(anchor, "tzinfo", None) is not None:
+                    anchor = anchor.replace(tzinfo=None)
+                age_days = max(0, (now - anchor).days)
+                if age_days >= sla_days:
+                    breached += 1
+            if breached:
+                alerts.append(
+                    {
+                        "level": "error" if breached >= 5 else "warning",
+                        "code": "gap_sla_breach",
+                        "title": f"{breached} 个品牌缺失缺口已超 SLA（≥{sla_days} 天未建任务）",
+                        "detail": f"共 {needs} 个待建任务缺口，请到缺口工作台处理",
+                        "href": "/geo/gaps",
+                        "count": breached,
+                    }
+                )
+            elif needs:
+                alerts.append(
+                    {
+                        "level": "info",
+                        "code": "gap_needs_task",
+                        "title": f"{needs} 个意图词品牌缺失待建任务",
+                        "detail": f"SLA {sla_days} 天；优先高 priority",
+                        "href": "/geo/gaps",
+                        "count": needs,
+                    }
+                )
+    except Exception:  # noqa: BLE001
+        pass
+
     # ---- social credentials ----
     accounts = list(
         await session.scalars(
@@ -262,6 +331,18 @@ async def build_ops_alerts(
         seen.add(key)
         uniq.append(a)
 
+    # ---- visibility metric drops (tenant daily) ----
+    try:
+        metric_alerts = await _metric_drop_alerts(session, tenant_id=tenant_id)
+        for a in metric_alerts:
+            key = f"{a.get('code')}:{a.get('title')}"
+            if key in seen:
+                continue
+            seen.add(key)
+            uniq.append(a)
+    except Exception:  # noqa: BLE001 — never block ops dashboard
+        pass
+
     level_rank = {"error": 0, "warning": 1, "info": 2}
     uniq.sort(key=lambda x: level_rank.get(str(x.get("level")), 9))
 
@@ -281,3 +362,111 @@ async def build_ops_alerts(
         },
         "alerts": uniq,
     }
+
+
+async def _metric_drop_alerts(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+) -> list[dict[str, Any]]:
+    """Compare recent tenant-level daily metrics for sudden drops."""
+    from app.models import GeoDailyMetric
+
+    rows = list(
+        await session.scalars(
+            select(GeoDailyMetric)
+            .where(
+                GeoDailyMetric.tenant_id == tenant_id,
+                GeoDailyMetric.scope_key == "t",
+            )
+            .order_by(GeoDailyMetric.metric_date.desc())
+            .limit(14)
+        )
+    )
+    # Prefer days that actually have visibility snapshots
+    with_vis = [r for r in rows if (r.snapshots_visibility or 0) > 0]
+    if len(with_vis) < 2:
+        return []
+
+    latest, prev = with_vis[0], with_vis[1]
+    out: list[dict[str, Any]] = []
+
+    def _rate_drop(a: float | None, b: float | None) -> float | None:
+        if a is None or b is None:
+            return None
+        return float(b) - float(a)
+
+    mention_drop = _rate_drop(latest.brand_mention_rate, prev.brand_mention_rate)
+    if mention_drop is not None and mention_drop >= 0.15 and (prev.brand_mention_rate or 0) >= 0.2:
+        out.append(
+            {
+                "level": "warning",
+                "code": "brand_mention_drop",
+                "title": (
+                    f"品牌提及率骤降 "
+                    f"{(prev.brand_mention_rate or 0) * 100:.0f}% → "
+                    f"{(latest.brand_mention_rate or 0) * 100:.0f}%"
+                ),
+                "detail": (
+                    f"{prev.metric_date} → {latest.metric_date}；"
+                    f"建议复查巡检与内容发布"
+                ),
+                "href": "/geo/overview",
+            }
+        )
+
+    top1_drop = _rate_drop(latest.top1_rate, prev.top1_rate)
+    if top1_drop is not None and top1_drop >= 0.15 and (prev.top1_rate or 0) >= 0.15:
+        out.append(
+            {
+                "level": "warning",
+                "code": "brand_top1_drop",
+                "title": (
+                    f"品牌首位率下降 "
+                    f"{(prev.top1_rate or 0) * 100:.0f}% → "
+                    f"{(latest.top1_rate or 0) * 100:.0f}%"
+                ),
+                "detail": f"{prev.metric_date} → {latest.metric_date}",
+                "href": "/geo/evaluation",
+            }
+        )
+
+    prev_cite = int(prev.citation_count or 0)
+    latest_cite = int(latest.citation_count or 0)
+    if prev_cite >= 5 and latest_cite < prev_cite * 0.6:
+        out.append(
+            {
+                "level": "warning",
+                "code": "citation_count_drop",
+                "title": f"AI 引用次数骤降 {prev_cite} → {latest_cite}",
+                "detail": f"{prev.metric_date} → {latest.metric_date}；检查自有域内容与引用 URL 落库",
+                "href": "/geo/citations",
+            }
+        )
+
+    # Competitor lead spike vs brand
+    latest_top_rate = getattr(latest, "top_competitor_rate", None)
+    latest_top = getattr(latest, "top_competitor", None)
+    brand_rate = latest.brand_mention_rate
+    if (
+        latest_top
+        and latest_top_rate is not None
+        and brand_rate is not None
+        and float(latest_top_rate) >= 0.25
+        and float(latest_top_rate) > float(brand_rate) + 0.1
+        and (latest.snapshots_visibility or 0) >= 3
+    ):
+        out.append(
+            {
+                "level": "warning",
+                "code": "competitor_lead_spike",
+                "title": f"竞品「{latest_top}」覆盖高于本品",
+                "detail": (
+                    f"{latest.metric_date}：竞品 {float(latest_top_rate)*100:.0f}% "
+                    f"> 本品 {float(brand_rate)*100:.0f}%"
+                ),
+                "href": "/geo/competitors",
+            }
+        )
+
+    return out

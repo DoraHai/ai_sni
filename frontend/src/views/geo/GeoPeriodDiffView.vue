@@ -10,6 +10,7 @@ import {
   fetchVisibilityPeriodDiff,
   listOptimizationPeriods,
 } from '../../api/geoContent'
+import SampleCredibilityAlert from '../../components/SampleCredibilityAlert.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import {
   REPORT_GLOSSARY,
@@ -317,12 +318,16 @@ onMounted(async () => {
       </div>
     </section>
 
-    <el-alert
-      v-if="result && sampleWarn"
-      type="warning"
-      show-icon
-      class="mb"
-      :title="`对比窗含模拟样本：前 ${sampleBefore.simulated || 0} · 后 ${sampleAfter.simulated || 0}。不可当作真实引擎效果汇报。`"
+    <SampleCredibilityAlert
+      v-if="result"
+      :composition="sampleAfter"
+      window-label="对比后窗口"
+    />
+    <SampleCredibilityAlert
+      v-if="result"
+      :composition="sampleBefore"
+      window-label="对比前窗口"
+      compact
     />
 
     <section v-if="result" class="geo-panel">

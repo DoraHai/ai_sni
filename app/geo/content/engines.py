@@ -6,6 +6,7 @@ DEFAULT_TRACKING_ENGINES: list[tuple[str, str, int]] = [
     ("chatgpt", "ChatGPT", 10),
     ("deepseek", "DeepSeek", 20),
     ("doubao", "豆包", 30),
+    ("kimi", "Kimi", 35),
     ("perplexity", "Perplexity", 40),
     ("other", "其他", 90),
 ]

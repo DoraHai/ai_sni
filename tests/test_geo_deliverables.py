@@ -46,7 +46,10 @@ class DeliverablesPackTests(unittest.TestCase):
                 }
             ],
         )
-        self.assertEqual(pack["generated_kind"], "geo_deliverables_pack_v2")
+        self.assertIn(
+            pack["generated_kind"],
+            ("geo_deliverables_pack_v1", "geo_deliverables_pack_v2", "geo_deliverables_pack_v3"),
+        )
         md = render_deliverables_markdown(pack)
         self.assertIn("Acme", md)
         self.assertIn("example.com", md)

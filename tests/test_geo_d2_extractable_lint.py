@@ -59,10 +59,11 @@ class DraftLintTests(unittest.TestCase):
         self.assertFalse(summary["blocks_ready"])
         self.assertTrue(any(i["code"] == "fake_placeholder" for i in issues))
 
-    def test_unverified_number_medium(self):
+    def test_unverified_number_blocks_ready(self):
         issues = lint_draft("市场份额达 37%", facts=[])
         self.assertTrue(any(i["code"] == "unverified_number" for i in issues))
-        self.assertEqual(lint_summary(issues)["high"], 0)
+        self.assertGreaterEqual(lint_summary(issues)["high"], 1)
+        self.assertFalse(lint_summary(issues)["blocks_ready"])
 
     def test_known_fact_number_skipped(self):
         facts = [{"statement": "覆盖 80% 场景", "source_name": "白皮书"}]

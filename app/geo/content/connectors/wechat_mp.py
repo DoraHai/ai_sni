@@ -346,7 +346,12 @@ async def publish_wechat_mp(
     if thumb_patch:
         patch = {**patch, **thumb_patch}
 
+    # 公众号 content 字段为 HTML；优先渠道正稿 HTML（含表格）
     content = body_html or body_markdown or ""
+    if content and not content.lstrip().startswith("<"):
+        from app.geo.content.md_to_html import markdown_to_publish_html
+
+        content = markdown_to_publish_html(content, wrap_article=False)
     draft = await wechat_draft_add(
         access_token=token,
         title=title,

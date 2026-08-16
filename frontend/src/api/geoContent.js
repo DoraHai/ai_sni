@@ -194,8 +194,8 @@ export function patchGeoFact(tenantId, factId, body) {
   })
 }
 
-export function verifyGeoFact(tenantId, factId) {
-  return client.post(`/api/v1/geo/facts/${factId}/verify`, null, {
+export function verifyGeoFact(tenantId, factId, body = {}) {
+  return client.post(`/api/v1/geo/facts/${factId}/verify`, body, {
     params: { tenant_id: tenantId },
   })
 }
@@ -464,6 +464,12 @@ export function getGeoAsyncJob(tenantId, jobId) {
   })
 }
 
+export function cancelGeoAsyncJob(tenantId, jobId) {
+  return client.post(`/api/v1/geo/async-jobs/${jobId}/cancel`, null, {
+    params: { tenant_id: tenantId },
+  })
+}
+
 export function listGeoAsyncJobs(tenantId, params = {}) {
   return client.get('/api/v1/geo/async-jobs', {
     params: { tenant_id: tenantId, ...params },
@@ -474,13 +480,14 @@ export function listGeoAsyncJobs(tenantId, params = {}) {
 export async function waitGeoAsyncJob(
   tenantId,
   jobId,
-  { intervalMs = 2500, maxMs = 45 * 60 * 1000 } = {},
+  { intervalMs = 2500, maxMs = 45 * 60 * 1000, onTick } = {},
 ) {
   // Align with backend stale running window (~45min); do not fail UI while job still runs
   const start = Date.now()
   while (Date.now() - start < maxMs) {
     const job = await getGeoAsyncJob(tenantId, jobId)
-    if (job.status === 'succeeded' || job.status === 'failed') return job
+    if (typeof onTick === 'function') onTick(job)
+    if (['succeeded', 'failed', 'cancelled'].includes(job.status)) return job
     await new Promise((r) => setTimeout(r, intervalMs))
   }
   // Soft timeout: return last known job so UI can say「转后台继续」
@@ -832,8 +839,85 @@ export function fetchGeoCompetitorTrace(tenantId, name) {
   })
 }
 
+export function searchGeoCompetitorWeb(tenantId, name) {
+  return client.post('/api/v1/geo/competitor-insights/web-search', null, {
+    params: { tenant_id: tenantId, name },
+    timeout: 60000,
+  })
+}
+
 export function createGeoCompetitorReport(body) {
   return client.post('/api/v1/geo/competitor-insights/report', body)
+}
+
+export function listGeoCompetitorReports(tenantId, params = {}) {
+  return client.get('/api/v1/geo/competitor-reports', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
+export function getGeoCompetitorReport(tenantId, reportId) {
+  return client.get(`/api/v1/geo/competitor-reports/${reportId}`, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function saveGeoCompetitorReport(body) {
+  return client.post('/api/v1/geo/competitor-reports', body)
+}
+
+export function patchGeoCompetitorReport(tenantId, reportId, body) {
+  return client.patch(`/api/v1/geo/competitor-reports/${reportId}`, body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function confirmGeoCompetitorReport(tenantId, reportId) {
+  return client.post(`/api/v1/geo/competitor-reports/${reportId}/confirm`, null, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function archiveGeoCompetitorReport(tenantId, reportId) {
+  return client.post(`/api/v1/geo/competitor-reports/${reportId}/archive`, null, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function createTaskFromCompetitorReport(tenantId, reportId) {
+  return client.post(`/api/v1/geo/competitor-reports/${reportId}/create-task`, null, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function restoreGeoCompetitorReport(tenantId, reportId, versionNo) {
+  return client.post(`/api/v1/geo/competitor-reports/${reportId}/restore`, null, {
+    params: { tenant_id: tenantId, version_no: versionNo },
+  })
+}
+
+export async function exportGeoCompetitorReport(tenantId, reportId, format = 'md') {
+  const data = await client.get(`/api/v1/geo/competitor-reports/${reportId}/export`, {
+    params: { tenant_id: tenantId, format },
+    responseType: 'text',
+    transformResponse: [(v) => v],
+  })
+  return typeof data === 'string' ? data : String(data ?? '')
+}
+
+export function auditGeoSitemap(tenantId, websiteUrl) {
+  return client.post('/api/v1/geo/onboarding/sitemap-audit', null, {
+    params: { tenant_id: tenantId, website_url: websiteUrl },
+    timeout: 180000,
+  })
+}
+
+export function createTasksFromSitemapAudit(tenantId, items) {
+  return client.post(
+    '/api/v1/geo/onboarding/sitemap-audit/create-tasks',
+    { items },
+    { params: { tenant_id: tenantId } },
+  )
 }
 
 export function createGeoCompetitorRecTasks(body) {

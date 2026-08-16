@@ -3,17 +3,30 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
+  archiveGeoCompetitorReport,
+  confirmGeoCompetitorReport,
   createGeoCompetitorRecTasks,
   createGeoCompetitorReport,
+  createTaskFromCompetitorReport,
+  exportGeoCompetitorReport,
   fetchGeoCompetitorCompare,
   fetchGeoCompetitorDaily,
   fetchGeoCompetitorInsights,
   fetchGeoCompetitorTrace,
+  getGeoCompetitorReport,
   listCompetitorAliases,
+  listGeoBusinesses,
+  listGeoCompetitorReports,
   listGeoDailyMetrics,
+  listOptimizationPeriods,
+  patchGeoCompetitorReport,
   putCompetitorAliases,
   rebuildGeoDailyMetrics,
+  restoreGeoCompetitorReport,
+  saveGeoCompetitorReport,
+  searchGeoCompetitorWeb,
 } from '../../api/geoContent'
+import SampleCredibilityAlert from '../../components/SampleCredibilityAlert.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useObservationPeriod } from '../../composables/useObservationPeriod'
 import { session } from '../../store/session'
@@ -72,6 +85,7 @@ const summaryCards = computed(() => {
     platform_count: platforms.size || apiSummary.value?.platform_count || 0,
     sources_last_7d: apiSummary.value?.sources_last_7d ?? 0,
     reports_pending: pending,
+    reports_saved: serverReports.value.length,
   }
 })
 
@@ -90,10 +104,27 @@ const action = ref('')
 const note = ref('')
 const report = ref(null)
 const reportSaved = ref(false)
+const savedReport = ref(null)
+const serverReports = ref([])
 const expandedUrl = ref('')
 const historyItems = ref([])
 const sourceTableRef = ref(null)
 const creatingTasks = ref(false)
+const confirming = ref(false)
+const exporting = ref(false)
+const creatingFromReport = ref(false)
+const savingEdit = ref(false)
+const businesses = ref([])
+const periods = ref([])
+const reportBusinessId = ref(null)
+const reportPeriodId = ref(null)
+const archiveStatus = ref('')
+const archiveBusinessId = ref(null)
+const archivePeriodId = ref(null)
+const webSearchLoading = ref(false)
+const webSearch = ref(null)
+const confirmedExternalUrls = ref([])
+let autosaveTimer = null
 
 const maxCite = computed(() =>
   Math.max(1, ...(trace.value?.platforms || []).map((p) => p.cite_count || 0)),
@@ -109,51 +140,66 @@ const reportTitlePreview = computed(
   () => `竞品来源溯源报告 · ${activeName.value || '—'}`,
 )
 
-function historyKey() {
-  return `geo_competitor_reports_v1_${tenantId.value || 0}`
+function statusLabel(status) {
+  if (status === 'confirmed') return '已确认'
+  if (status === 'archived') return '已归档'
+  return '草稿'
+}
+
+function statusType(status) {
+  if (status === 'confirmed') return 'success'
+  if (status === 'archived') return 'info'
+  return 'warning'
+}
+
+async function loadServerReports() {
+  if (!tenantId.value) {
+    serverReports.value = []
+    return
+  }
+  try {
+    const params = {}
+    if (archiveStatus.value) params.status = archiveStatus.value
+    if (archiveBusinessId.value) params.business_id = archiveBusinessId.value
+    if (archivePeriodId.value) params.period_id = archivePeriodId.value
+    const data = await listGeoCompetitorReports(tenantId.value, params)
+    serverReports.value = data.items || []
+  } catch {
+    serverReports.value = []
+  }
+}
+
+async function loadReportScopes() {
+  if (!tenantId.value) {
+    businesses.value = []
+    periods.value = []
+    return
+  }
+  try {
+    const [b, p] = await Promise.all([
+      listGeoBusinesses(tenantId.value, { status: 'active' }),
+      listOptimizationPeriods(tenantId.value).catch(() => ({ items: [] })),
+    ])
+    businesses.value = b.items || []
+    periods.value = p.items || []
+    if (!reportBusinessId.value && businesses.value[0]) {
+      reportBusinessId.value = businesses.value[0].id
+    }
+  } catch {
+    businesses.value = []
+    periods.value = []
+  }
 }
 
 function loadHistory(competitor) {
-  try {
-    const all = JSON.parse(localStorage.getItem(historyKey()) || '[]')
-    historyItems.value = competitor
-      ? all.filter((x) => x.competitor === competitor)
-      : all
-  } catch {
-    historyItems.value = []
-  }
-}
-
-function saveReportLocal(payload) {
-  const all = (() => {
-    try {
-      return JSON.parse(localStorage.getItem(historyKey()) || '[]')
-    } catch {
-      return []
-    }
-  })()
-  const entry = {
-    id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-    competitor: activeName.value,
-    title: payload.title,
-    markdown: payload.markdown,
-    generated_at: payload.generated_at,
-    source_count: payload.source_count,
-    platform_count: payload.platform_count,
-  }
-  all.unshift(entry)
-  localStorage.setItem(historyKey(), JSON.stringify(all.slice(0, 80)))
-  reportSaved.value = true
-  loadHistory(activeName.value)
+  const all = serverReports.value || []
+  historyItems.value = competitor
+    ? all.filter((x) => x.competitor === competitor)
+    : all
 }
 
 function hasHistory(name) {
-  try {
-    const all = JSON.parse(localStorage.getItem(historyKey()) || '[]')
-    return all.some((x) => x.competitor === name)
-  } catch {
-    return false
-  }
+  return (serverReports.value || []).some((x) => x.competitor === name)
 }
 
 function rowHasHistory(row) {
@@ -322,6 +368,8 @@ async function load() {
         days: dailyDays.value,
         scope_level: 'tenant',
       }).catch(() => null),
+      loadServerReports(),
+      loadReportScopes(),
     ])
     rawItems.value = data.items || []
     apiSummary.value = data.summary || null
@@ -369,7 +417,17 @@ async function load() {
   }
 }
 
-const fmtRate = (v) => {
+const sampleComposition = computed(
+  () =>
+    compareSummary.value?.sample_composition ||
+    apiSummary.value?.sample_composition ||
+    null,
+)
+const sampleOk = computed(() => !!sampleComposition.value?.suitable_for_client)
+
+const fmtRate = (v, row) => {
+  if (row?.sample_insufficient || row?.rate_display === '样本不足') return '样本不足'
+  if (sampleComposition.value && !sampleOk.value) return '样本不足'
   if (v == null) return '—'
   const n = Number(v)
   if (Number.isNaN(n)) return '—'
@@ -391,6 +449,51 @@ function resetWizard() {
   report.value = null
   reportSaved.value = false
   expandedUrl.value = ''
+  webSearch.value = null
+  confirmedExternalUrls.value = []
+}
+
+async function runWebSearch() {
+  if (!tenantId.value || !activeName.value) return
+  webSearchLoading.value = true
+  try {
+    webSearch.value = await searchGeoCompetitorWeb(tenantId.value, activeName.value)
+    const n = (webSearch.value.items || []).length
+    ElMessage.info(
+      n
+        ? `找到 ${n} 条外部候选，请勾选确认后再写入报告`
+        : webSearch.value.note || '没有检索到候选页',
+    )
+  } catch (e) {
+    webSearch.value = null
+    ElMessage.error(e.message || '外部检索失败')
+  } finally {
+    webSearchLoading.value = false
+  }
+}
+
+function setExternalUrl(url, on) {
+  const set = new Set(confirmedExternalUrls.value)
+  if (on) set.add(url)
+  else set.delete(url)
+  confirmedExternalUrls.value = [...set]
+}
+
+function isExternalConfirmed(url) {
+  return confirmedExternalUrls.value.includes(url)
+}
+
+function webSourceLabel(source) {
+  if (source === 'web_search') return '检索命中'
+  if (source === 'web_search_fallback') return '检索失败回退'
+  return source || '外部页'
+}
+
+function webTrustType(trust) {
+  if (trust === 'official') return 'success'
+  if (trust === 'lookalike') return 'danger'
+  if (trust === 'marketing' || trust === 'ugc') return 'warning'
+  return 'info'
 }
 
 async function openTrace(row) {
@@ -511,17 +614,140 @@ async function genAndSaveReport() {
       competitor: activeName.value,
       source_urls: selectedUrls.value,
       platform_keys: selectedPlatforms.value,
+      confirmed_external_urls: confirmedExternalUrls.value,
       insight: insight.value || null,
       action: action.value || null,
       note: note.value || null,
     })
-    saveReportLocal(report.value)
+    savedReport.value = await saveGeoCompetitorReport({
+      tenant_id: tenantId.value,
+      competitor: activeName.value,
+      title: report.value.title,
+      business_id: reportBusinessId.value || null,
+      period_id: reportPeriodId.value || null,
+      insight: insight.value || null,
+      action: action.value || null,
+      note: note.value || null,
+      markdown: report.value.markdown,
+      source_urls: selectedUrls.value,
+      platform_keys: selectedPlatforms.value,
+      evidence: {
+        source_count: report.value.source_count,
+        platform_count: report.value.platform_count,
+        generated_at: report.value.generated_at,
+        recommendations: (trace.value?.recommendations || []).slice(0, 8),
+        confirmed_external_urls: confirmedExternalUrls.value,
+        external_confirmed_count: report.value.external_confirmed_count || 0,
+      },
+      status: 'draft',
+    })
+    reportSaved.value = true
+    await loadServerReports()
+    loadHistory(activeName.value)
     reportStep.value = 2
-    ElMessage.success('报告已生成并保存到本机历史')
+    ElMessage.success('报告草稿已保存到服务端，可继续修改后确认归档')
   } catch (e) {
     ElMessage.error(e.message || '生成报告失败')
   } finally {
     reportLoading.value = false
+  }
+}
+
+async function saveReportEdits() {
+  if (!tenantId.value || !savedReport.value?.id) return
+  savingEdit.value = true
+  try {
+    savedReport.value = await patchGeoCompetitorReport(tenantId.value, savedReport.value.id, {
+      business_id: reportBusinessId.value || null,
+      period_id: reportPeriodId.value || null,
+      insight: insight.value || null,
+      action: action.value || null,
+      note: note.value || null,
+      markdown: report.value?.markdown || savedReport.value.markdown,
+    })
+    if (report.value) {
+      report.value = { ...report.value, markdown: savedReport.value.markdown }
+    }
+    ElMessage.success(`已保存第 ${savedReport.value.version_no || ''} 版`)
+    await loadServerReports()
+  } catch (e) {
+    ElMessage.error(e.message || '保存失败')
+  } finally {
+    savingEdit.value = false
+  }
+}
+
+async function confirmSavedReport() {
+  if (!tenantId.value || !savedReport.value?.id) return
+  confirming.value = true
+  try {
+    savedReport.value = await confirmGeoCompetitorReport(tenantId.value, savedReport.value.id)
+    ElMessage.success('报告已确认')
+    await loadServerReports()
+  } catch (e) {
+    ElMessage.error(e.message || '确认失败')
+  } finally {
+    confirming.value = false
+  }
+}
+
+async function archiveSavedReport() {
+  if (!tenantId.value || !savedReport.value?.id) return
+  confirming.value = true
+  try {
+    savedReport.value = await archiveGeoCompetitorReport(tenantId.value, savedReport.value.id)
+    ElMessage.success('报告已归档')
+    await loadServerReports()
+  } catch (e) {
+    ElMessage.error(e.message || '归档失败')
+  } finally {
+    confirming.value = false
+  }
+}
+
+async function exportSaved(format = 'md') {
+  const id = savedReport.value?.id
+  if (!tenantId.value || !id) {
+    downloadReport()
+    return
+  }
+  exporting.value = true
+  try {
+    const text = await exportGeoCompetitorReport(tenantId.value, id, format)
+    const title = savedReport.value.title || report.value?.title || activeName.value
+    const safe = String(title || 'competitor').replace(/[\\/:*?"<>|]/g, '_')
+    const mime = format === 'md' ? 'text/markdown;charset=utf-8' : 'text/html;charset=utf-8'
+    const ext = format === 'html' || format === 'pdf' ? 'html' : 'md'
+    const blob = new Blob([text], { type: mime })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${safe}.${ext}`
+    a.click()
+    URL.revokeObjectURL(url)
+    if (format === 'pdf') {
+      ElMessage.info('已下载可打印 HTML，用浏览器打开后另存 PDF')
+    }
+  } catch (e) {
+    ElMessage.error(e.message || '导出失败')
+  } finally {
+    exporting.value = false
+  }
+}
+
+async function createTaskFromSaved() {
+  if (!tenantId.value || !savedReport.value?.id) return
+  creatingFromReport.value = true
+  try {
+    const res = await createTaskFromCompetitorReport(tenantId.value, savedReport.value.id)
+    if (res.editor_path) {
+      ElMessage.success(res.created ? '已从报告结论创建任务' : res.reason || '已打开已有任务')
+      router.push(res.editor_path)
+    }
+  } catch (e) {
+    ElMessage.error(e.message || '建任务失败')
+  } finally {
+    creatingFromReport.value = false
   }
 }
 
@@ -555,12 +781,66 @@ function openHistory() {
   historyOpen.value = true
 }
 
-function viewHistoryItem(item) {
-  report.value = item
-  reportSaved.value = true
-  reportStep.value = 2
-  historyOpen.value = false
+function scheduleAutosave() {
+  if (!savedReport.value?.id) return
+  if (autosaveTimer) clearTimeout(autosaveTimer)
+  autosaveTimer = setTimeout(() => {
+    saveReportEdits()
+  }, 1400)
 }
+
+async function restoreVersion(versionNo) {
+  if (!tenantId.value || !savedReport.value?.id || !versionNo) return
+  savingEdit.value = true
+  try {
+    savedReport.value = await restoreGeoCompetitorReport(
+      tenantId.value,
+      savedReport.value.id,
+      versionNo,
+    )
+    insight.value = savedReport.value.insight || ''
+    action.value = savedReport.value.action || ''
+    note.value = savedReport.value.note || ''
+    if (report.value) {
+      report.value = { ...report.value, markdown: savedReport.value.markdown }
+    } else {
+      report.value = savedReport.value
+    }
+    ElMessage.success(`已回滚到 v${versionNo}，并生成新版本`)
+    await loadServerReports()
+  } catch (e) {
+    ElMessage.error(e.message || '回滚失败')
+  } finally {
+    savingEdit.value = false
+  }
+}
+
+async function viewHistoryItem(item) {
+  try {
+    const full = item.id
+      ? await getGeoCompetitorReport(tenantId.value, item.id)
+      : item
+    report.value = full
+    savedReport.value = full
+    insight.value = full.insight || ''
+    action.value = full.action || ''
+    note.value = full.note || ''
+    reportBusinessId.value = full.business_id || reportBusinessId.value
+    reportPeriodId.value = full.period_id || null
+    reportSaved.value = true
+    reportStep.value = 2
+    historyOpen.value = false
+  } catch (e) {
+    ElMessage.error(e.message || '打开报告失败')
+  }
+}
+
+watch([insight, action, note], () => {
+  if (savedReport.value?.id && reportStep.value === 2) scheduleAutosave()
+})
+watch([archiveStatus, archiveBusinessId, archivePeriodId], () => {
+  loadServerReports().then(() => loadHistory(activeName.value))
+})
 
 watch(tenantId, load)
 onMounted(load)
@@ -572,7 +852,7 @@ onMounted(load)
       <div>
         <div class="page-title">竞品监测</div>
         <div class="page-desc">
-          从可见度快照的竞品标注与引用 URL 聚合：看谁常被提到、同题谁领先，并支持按日监测与报告导出。
+          从可见度快照的竞品标注与引用 URL 聚合：看谁常被提到、同题谁领先；溯源后生成可编辑、确认、归档的服务端报告。
         </div>
       </div>
       <div class="header-actions">
@@ -589,11 +869,16 @@ onMounted(load)
         <li>竞品名来自快照 competitors 字段（人工或 AI 建议）。</li>
         <li>日监测写入按天汇总表；缺行时刷新静默补算，无需手动重算。</li>
         <li>同题对比：同一意图词下本品提及 vs 竞品提及。</li>
+        <li>竞品报告保存在服务端：草稿 → 确认 → 归档，支持版本、导出和从结论建任务。</li>
         <li>别名合并仅保存在本机浏览器，用于展示归并，不改库内原始名。</li>
       </ul>
     </details>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" />
+    <SampleCredibilityAlert
+      :composition="sampleComposition"
+      window-label="竞品页与交付摘要同一套样本门槛"
+    />
 
     <div class="geo-kpi-grid">
       <div class="geo-kpi">
@@ -614,7 +899,7 @@ onMounted(load)
       <div class="geo-kpi">
         <div class="kpi-label">待生成报告数</div>
         <div class="kpi-value">{{ summaryCards.reports_pending }}</div>
-        <div class="kpi-hint">本机尚未保存报告的竞品</div>
+        <div class="kpi-hint">服务端尚未存档 · 已存 {{ summaryCards.reports_saved || 0 }}</div>
       </div>
     </div>
 
@@ -638,16 +923,16 @@ onMounted(load)
             <div class="q-clamp" :title="row.question">{{ row.question }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="本品提及" width="88">
-          <template #default="{ row }">{{ fmtRate(row.brand_mention_rate) }}</template>
+        <el-table-column label="本品提及" width="96">
+          <template #default="{ row }">{{ fmtRate(row.brand_mention_rate, row) }}</template>
         </el-table-column>
-        <el-table-column label="本品首位" width="88">
-          <template #default="{ row }">{{ fmtRate(row.brand_first_rate) }}</template>
+        <el-table-column label="本品首位" width="96">
+          <template #default="{ row }">{{ fmtRate(row.brand_first_rate, row) }}</template>
         </el-table-column>
         <el-table-column label="最强竞品" min-width="140">
           <template #default="{ row }">
             <span v-if="row.top_competitor">
-              {{ row.top_competitor }} · {{ fmtRate(row.top_competitor_rate) }}
+              {{ row.top_competitor }} · {{ fmtRate(row.top_competitor_rate, row) }}
             </span>
             <span v-else class="dim">—</span>
           </template>
@@ -838,17 +1123,17 @@ onMounted(load)
         <template v-if="trace">
           <div class="stats mb">
             提及 {{ trace.mention_count || 0 }} · 提问 {{ trace.prompt_count || 0 }} ·
-            去重来源 {{ trace.unique_url_count ?? (trace.sources_agg || []).length }} ·
-            平台 {{ (trace.platforms || []).length }}
+            真实引用 {{ trace.cited_url_count ?? (trace.sources_agg || []).length }} ·
+            真实平台 {{ (trace.platforms || []).filter((p) => !p.inferred).length }}
             <span v-if="(trace.inferred_placements || []).length" class="infer-flag">
-              · 含推定阵地
+              · 推定阵地 {{ trace.inferred_placements.length }}（不计引用）
             </span>
           </div>
 
           <el-steps :active="reportStep" finish-status="success" align-center class="mb steps">
             <el-step title="选择平台/来源" />
             <el-step title="洞察与行动" />
-            <el-step title="生成并保存" />
+            <el-step title="确认并归档" />
           </el-steps>
 
           <!-- Step 1 -->
@@ -889,9 +1174,9 @@ onMounted(load)
             </div>
 
             <div v-if="(trace.inferred_placements || []).length" class="infer-box mb">
-              <div class="section-title">推定发布位置</div>
+              <div class="section-title">推定参考阵地（不是本次 AI 引用）</div>
               <p class="infer-hint">
-                本次快照几乎没有引用链接。下面是该竞品的已知官网/知乎阵地，供逆向对照，不是这次被 AI 点名的具体页面。
+                这些来自竞品阵地库，不是快照 cited_urls。不能计入来源数，也不能写成「检索到的发布位置」。
               </p>
               <ul class="infer-list">
                 <li v-for="(p, i) in trace.inferred_placements" :key="i">
@@ -901,6 +1186,50 @@ onMounted(load)
                   <span v-else class="dim">无稳定公开 URL</span>
                 </li>
               </ul>
+            </div>
+
+            <div class="web-box mb">
+              <div class="section-head">
+                <span class="section-title">外部检索候选（不是本次引用）</span>
+                <el-button
+                  size="small"
+                  type="primary"
+                  plain
+                  :loading="webSearchLoading"
+                  @click="runWebSearch"
+                >检索公开页</el-button>
+              </div>
+              <p class="web-hint">
+                公开网页检索结果，与快照 cited_urls、推定阵地分栏。勾选确认后才会写入报告附录，不会改来源数。
+              </p>
+              <div v-if="webSearch?.note" class="web-note">{{ webSearch.note }}</div>
+              <div v-if="(webSearch?.errors || []).length" class="web-err">
+                检索部分失败：{{ webSearch.errors.slice(0, 2).join('；') }}
+              </div>
+              <ul v-if="(webSearch?.items || []).length" class="web-list">
+                <li v-for="it in webSearch.items" :key="it.url">
+                  <el-checkbox
+                    :model-value="isExternalConfirmed(it.url)"
+                    @change="(v) => setExternalUrl(it.url, v)"
+                  >
+                    <span class="web-title">{{ it.title }}</span>
+                  </el-checkbox>
+                  <div class="web-meta">
+                    <el-tag
+                      size="small"
+                      :type="it.source === 'web_search' ? 'success' : 'warning'"
+                    >{{ webSourceLabel(it.source) }}</el-tag>
+                    <el-tag
+                      size="small"
+                      :type="webTrustType(it.trust)"
+                    >{{ it.label || '未核验域名' }}</el-tag>
+                    <a :href="it.url" target="_blank" rel="noopener">{{ it.url }}</a>
+                  </div>
+                </li>
+              </ul>
+              <div v-if="confirmedExternalUrls.length" class="web-picked">
+                已确认 {{ confirmedExternalUrls.length }} 条，将写入「人工确认的外部检索页」
+              </div>
             </div>
 
             <div v-if="(trace.recommendations || []).length" class="rec-box mb">
@@ -994,7 +1323,10 @@ onMounted(load)
 
             <div class="preview-strip mb">
               <div>预览标题：{{ reportTitlePreview }}</div>
-              <div>已选来源 {{ selectedUrls.length }} · 已选平台 {{ selectedPlatforms.length }}</div>
+              <div>
+                已选来源 {{ selectedUrls.length }} · 已选平台 {{ selectedPlatforms.length }}
+                · 确认外部页 {{ confirmedExternalUrls.length }}
+              </div>
             </div>
             <div class="actions">
               <el-button type="primary" @click="goStep(1)">下一步：补充洞察</el-button>
@@ -1006,7 +1338,10 @@ onMounted(load)
           <div v-show="reportStep === 1">
             <div class="preview-strip mb">
               <div>{{ reportTitlePreview }}</div>
-              <div>将写入报告：来源 {{ selectedUrls.length }} · 平台 {{ selectedPlatforms.length }}</div>
+              <div>
+                将写入报告：来源 {{ selectedUrls.length }} · 平台 {{ selectedPlatforms.length }}
+                · 确认外部页 {{ confirmedExternalUrls.length }}
+              </div>
             </div>
             <el-form label-position="top">
               <el-form-item label="洞察（竞品内容落点与含义）">
@@ -1032,7 +1367,7 @@ onMounted(load)
             <div class="actions">
               <el-button @click="reportStep = 0">上一步</el-button>
               <el-button type="primary" :loading="reportLoading" @click="genAndSaveReport">
-                生成并保存报告
+                生成并保存草稿
               </el-button>
             </div>
           </div>
@@ -1041,19 +1376,56 @@ onMounted(load)
           <div v-show="reportStep === 2">
             <el-result
               :icon="reportSaved ? 'success' : 'info'"
-              :title="reportSaved ? '报告已保存' : '报告已生成'"
-              :sub-title="report?.title || ''"
+              :title="reportSaved ? '报告草稿已存档' : '报告已生成'"
+              :sub-title="savedReport?.title || report?.title || ''"
             >
               <template #extra>
                 <div class="preview-strip mb">
                   来源 {{ report?.source_count ?? selectedUrls.length }} ·
                   平台 {{ report?.platform_count ?? selectedPlatforms.length }} ·
-                  {{ reportSaved ? '本机历史已写入' : '未保存' }}
+                  状态 {{ statusLabel(savedReport?.status) }} ·
+                  版本 v{{ savedReport?.version_no || 1 }}
                 </div>
+                <el-form v-if="savedReport && report" label-position="top" class="mb">
+                  <el-form-item label="归档到业务">
+                    <el-select v-model="reportBusinessId" clearable filterable placeholder="选择业务线" style="width:100%">
+                      <el-option v-for="b in businesses" :key="b.id" :label="b.name" :value="b.id" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="优化期次">
+                    <el-select v-model="reportPeriodId" clearable filterable placeholder="可选" style="width:100%">
+                      <el-option v-for="p in periods" :key="p.id" :label="p.name || ('期次 #' + p.id)" :value="p.id" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="结论（可改，自动保存）">
+                    <el-input v-model="insight" type="textarea" :rows="3" />
+                  </el-form-item>
+                  <el-form-item label="行动建议（可改，自动保存）">
+                    <el-input v-model="action" type="textarea" :rows="2" />
+                  </el-form-item>
+                  <el-form-item label="报告正文 Markdown">
+                    <el-input v-model="report.markdown" type="textarea" :rows="10" @input="scheduleAutosave" />
+                  </el-form-item>
+                </el-form>
                 <div class="actions">
-                  <el-button type="primary" @click="copyReport()">复制 Markdown</el-button>
-                  <el-button @click="downloadReport()">下载 .md</el-button>
-                  <el-button @click="openHistory">查看历史报告</el-button>
+                  <el-button :loading="savingEdit" @click="saveReportEdits">保存修改</el-button>
+                  <el-button
+                    type="success"
+                    :loading="confirming"
+                    :disabled="savedReport?.status === 'confirmed'"
+                    @click="confirmSavedReport"
+                  >确认</el-button>
+                  <el-button :loading="confirming" @click="archiveSavedReport">归档</el-button>
+                  <el-button
+                    type="primary"
+                    :loading="creatingFromReport"
+                    @click="createTaskFromSaved"
+                  >从结论建任务</el-button>
+                  <el-button type="primary" plain @click="copyReport()">复制 Markdown</el-button>
+                  <el-button :loading="exporting" @click="exportSaved('md')">导出 MD</el-button>
+                  <el-button :loading="exporting" @click="exportSaved('html')">导出 HTML</el-button>
+                  <el-button :loading="exporting" @click="exportSaved('pdf')">导出 PDF</el-button>
+                  <el-button @click="openHistory">历史版本</el-button>
                   <el-button @click="reportStep = 0">继续调整选择</el-button>
                 </div>
               </template>
@@ -1067,12 +1439,34 @@ onMounted(load)
       </div>
     </el-drawer>
 
-    <el-drawer v-model="historyOpen" title="历史报告（本机）" size="420px">
+    <el-drawer v-model="historyOpen" title="服务端报告档案" size="420px">
+      <div class="mb" style="display:flex;gap:8px;flex-wrap:wrap">
+        <el-select v-model="archiveStatus" clearable placeholder="状态" style="width:110px">
+          <el-option label="草稿" value="draft" />
+          <el-option label="已确认" value="confirmed" />
+          <el-option label="已归档" value="archived" />
+        </el-select>
+        <el-select v-model="archiveBusinessId" clearable filterable placeholder="业务" style="width:140px">
+          <el-option v-for="b in businesses" :key="b.id" :label="b.name" :value="b.id" />
+        </el-select>
+        <el-select v-model="archivePeriodId" clearable filterable placeholder="期次" style="width:140px">
+          <el-option v-for="p in periods" :key="p.id" :label="p.name || ('#' + p.id)" :value="p.id" />
+        </el-select>
+      </div>
+      <div v-if="savedReport?.versions?.length" class="mb">
+        <div class="section-title">当前报告版本</div>
+        <div v-for="v in savedReport.versions" :key="v.version_no" class="hist-card">
+          <div class="hist-meta">v{{ v.version_no }} · {{ formatShortTime(v.created_at) }}</div>
+          <el-button size="small" link type="primary" @click="restoreVersion(v.version_no)">回滚到此版</el-button>
+        </div>
+      </div>
       <div v-if="!historyItems.length" class="empty-hint">暂无已保存报告</div>
       <div v-for="h in historyItems" :key="h.id" class="hist-card">
         <div class="hist-title">{{ h.title }}</div>
         <div class="hist-meta">
-          {{ formatShortTime(h.generated_at) }} · 来源 {{ h.source_count || 0 }}
+          <el-tag size="small" :type="statusType(h.status)">{{ statusLabel(h.status) }}</el-tag>
+          · v{{ h.version_no || 1 }}
+          · {{ formatShortTime(h.updated_at || h.created_at) }}
         </div>
         <div class="actions">
           <el-button size="small" type="primary" link @click="viewHistoryItem(h)">查看</el-button>
@@ -1188,6 +1582,20 @@ onMounted(load)
 .rec-meta { font-size: 11px; color: #9ca3af; margin: 3px 0 4px; }
 .rec-reason { font-size: 12px; color: #4b5563; line-height: 1.45; }
 .rec-actions { margin-top: 8px; }
+.web-box {
+  border: 1px solid #bfdbfe; background: #eff6ff; border-radius: 8px; padding: 10px 12px;
+}
+.web-hint { margin: 6px 0 8px; font-size: 12px; color: #1e40af; line-height: 1.45; }
+.web-note { font-size: 12px; color: #334155; margin-bottom: 6px; line-height: 1.45; }
+.web-err { font-size: 12px; color: #b45309; margin-bottom: 6px; line-height: 1.45; }
+.web-list { list-style: none; margin: 0; padding: 0; }
+.web-list li { padding: 8px 0; border-top: 1px solid #dbeafe; }
+.web-title { font-size: 13px; color: #111827; }
+.web-meta {
+  font-size: 11px; color: #64748b; margin: 4px 0 0 24px;
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+}
+.web-picked { font-size: 12px; color: #1d4ed8; margin-top: 8px; font-weight: 600; }
 .hist-card {
   border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; margin-bottom: 10px; background: #fff;
 }

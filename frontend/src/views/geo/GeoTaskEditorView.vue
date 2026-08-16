@@ -42,6 +42,9 @@ import {
   suggestGeoTaskBrief,
   fetchChannelBlueprint,
   waitGeoAsyncJob,
+  getGeoAsyncJob,
+  listGeoAsyncJobs,
+  cancelGeoAsyncJob,
 } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
@@ -400,7 +403,10 @@ async function load() {
     ])
     // Stale load: a newer load or AI suggest already owns the form
     if (gen !== loadGeneration) return
-    allFacts.value = (factsRes.items || []).map((f) => ({ ...f, id: Number(f.id) }))
+    const bid = t.business_id
+    allFacts.value = (factsRes.items || [])
+      .filter((f) => !bid || !f.business_id || f.business_id === bid)
+      .map((f) => ({ ...f, id: Number(f.id) }))
     publishingChannels.value = chRes.items || []
     channelAccounts.value = accRes.items || []
     if (!webhookAccountId.value && channelAccounts.value.length) {
@@ -424,6 +430,7 @@ async function load() {
       if (!still) docTab.value = 'master'
     }
     applyVariantFromTask()
+    await resumeActiveJob()
     if (task.value?.rule_result) {
       const rr = task.value.rule_result
       checkResult.value = {
@@ -844,6 +851,97 @@ function validateBeforeGenerate() {
 }
 
 const generateHint = ref('')
+const activeJob = ref(null)
+
+function jobStorageKey() {
+  return `geo_async_job_${tenantId.value || 0}_${taskId.value || 0}`
+}
+
+function persistJobId(id) {
+  if (id) sessionStorage.setItem(jobStorageKey(), String(id))
+  else sessionStorage.removeItem(jobStorageKey())
+}
+
+const sentenceCites = computed(
+  () =>
+    task.value?.article?.outline?.sentence_citations ||
+    task.value?.article?.generation_meta?.sentence_citations ||
+    [],
+)
+
+const jobLive = computed(() =>
+  ['pending', 'running'].includes(activeJob.value?.status),
+)
+
+async function resumeActiveJob() {
+  if (!tenantId.value || !taskId.value) return
+  try {
+    const stored = Number(sessionStorage.getItem(jobStorageKey()) || 0)
+    const listed = await listGeoAsyncJobs(tenantId.value, {
+      ref_type: 'content_task',
+      ref_id: taskId.value,
+      limit: 5,
+    }).catch(() => ({ items: [] }))
+    const open = (listed.items || []).find((j) =>
+      ['pending', 'running'].includes(j.status),
+    )
+    const jobId = open?.id || stored
+    if (!jobId) return
+    const job = await getGeoAsyncJob(tenantId.value, jobId)
+    activeJob.value = job
+    if (['pending', 'running'].includes(job.status)) {
+      persistJobId(job.id)
+      generateHint.value = job.progress_label || `后台任务 #${job.id} ${job.status}`
+      busy.value = job.kind === 'create_variants' ? 'variants' : 'generate'
+      followJob(job.id)
+    } else {
+      persistJobId(null)
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+async function followJob(jobId) {
+  persistJobId(jobId)
+  try {
+    const job = await waitGeoAsyncJob(tenantId.value, jobId, {
+      intervalMs: 2000,
+      maxMs: 180000,
+      onTick: (j) => {
+        activeJob.value = j
+        if (j.cancel_requested) {
+          generateHint.value = '已请求取消，等待当前步骤结束…'
+        } else {
+          generateHint.value =
+            j.progress_label || `后台任务 #${j.id} ${j.status}`
+        }
+      },
+    })
+    activeJob.value = job
+    if (job.status === 'failed') throw new Error(job.error || '后台任务失败')
+    if (job.status === 'cancelled') {
+      generateHint.value = '已取消'
+      persistJobId(null)
+      return job
+    }
+    persistJobId(null)
+    return job
+  } finally {
+    if (busy.value === 'generate' || busy.value === 'variants') busy.value = ''
+  }
+}
+
+async function cancelActiveJob() {
+  if (!activeJob.value?.id) return
+  try {
+    activeJob.value = await cancelGeoAsyncJob(tenantId.value, activeJob.value.id)
+    generateHint.value = '已请求取消'
+    ElMessage.info('已请求取消，正在跑的模型调用结束后会停')
+  } catch (e) {
+    toastError(e, '取消失败')
+  }
+}
 
 async function generate() {
   error.value = ''
@@ -864,14 +962,14 @@ async function generate() {
     })
     let payload = gen
     if (gen?.async && gen?.job?.id) {
-      ElMessage.info(`生成任务 #${gen.job.id} 排队中…`)
-      const job = await waitGeoAsyncJob(tenantId.value, gen.job.id, {
-        intervalMs: 2000,
-        maxMs: 180000,
-      })
-      if (job.status === 'failed') {
+      activeJob.value = gen.job
+      persistJobId(gen.job.id)
+      ElMessage.info(`生成任务 #${gen.job.id} 排队中，可刷新页面稍后再看`)
+      const job = await followJob(gen.job.id)
+      if (job?.status === 'failed') {
         throw new Error(job.error || '后台生成失败')
       }
+      if (job?.status === 'cancelled') return
       payload = await getGeoContentTask(tenantId.value, taskId.value)
     }
     applyTaskPayload(payload)
@@ -1067,11 +1165,11 @@ async function genVariants() {
       runAsync: true,
     })
     if (t?.async && t?.job?.id) {
+      activeJob.value = t.job
+      persistJobId(t.job.id)
       ElMessage.info(`渠道稿任务 #${t.job.id} 排队中…`)
-      const job = await waitGeoAsyncJob(tenantId.value, t.job.id, {
-        intervalMs: 2000,
-        maxMs: 240000,
-      })
+      const job = await followJob(t.job.id)
+      if (job?.status === 'cancelled') return
       if (job.status === 'failed') {
         throw new Error(job.error || '渠道稿后台生成失败')
       }
@@ -1145,13 +1243,17 @@ const currentVariantMeta = computed(() => {
   const v = (task.value?.variants || []).find((x) => x.channel === docTab.value)
   return v?.adapt_meta || null
 })
-/** 仅 quality===publish_ready 视为过硬门控；带警告/规则裁剪均不可标「可发布」 */
+/** 仅 quality===publish_ready 且无编造风险才标「可发布」 */
 const isPublishReadyVariant = computed(() => {
   const m = currentVariantMeta.value
   if (!m) return false
   if (m.publishable === false) return false
   const q = m.quality || ''
-  return q === 'publish_ready' && m.delivery === 'html_publish_ready'
+  if (q !== 'publish_ready' || m.delivery !== 'html_publish_ready') return false
+  if ((failedChecks.value || []).some((c) => c.code === 'fabrication_lint')) return false
+  const lint = checkResult.value?.lint || task.value?.rule_result?.lint
+  if (lint && Number(lint.high || 0) > 0) return false
+  return true
 })
 const currentVariantQualityLabel = computed(() => {
   const m = currentVariantMeta.value
@@ -1654,9 +1756,13 @@ const scoreMeta = computed(() => {
     label: SUBSCORE_LABELS[k] || k,
     value: Math.round((subs[k] || 0) * 100),
   }))
+  const lintHigh = Number(
+    (checkResult.value?.lint || task.value?.rule_result?.lint || {}).high || 0,
+  )
   let tone = 'muted'
   if (s != null) {
-    if (s >= 80) tone = 'good'
+    if (lintHigh > 0) tone = 'bad'
+    else if (s >= 80) tone = 'good'
     else if (s >= 60) tone = 'warn'
     else tone = 'bad'
   }
@@ -1884,7 +1990,7 @@ onMounted(load)
         </div>
       </div>
       <div class="right">
-        <el-button @click="load" :disabled="!!busy">刷新</el-button>
+        <el-button @click="load">刷新</el-button>
       </div>
     </div>
 
@@ -2259,6 +2365,40 @@ onMounted(load)
           </template>
 
           <div v-if="generateHint" class="hint mb" style="color: #2563eb">{{ generateHint }}</div>
+          <el-alert
+            v-if="activeJob && ['pending', 'running'].includes(activeJob.status)"
+            type="info"
+            show-icon
+            class="mb"
+            :closable="false"
+            :title="`后台任务 #${activeJob.id} · ${activeJob.status}`"
+            :description="`${activeJob.cancel_requested ? '已请求取消 · ' : ''}${activeJob.progress_label || '处理中'}${activeJob.progress_pct != null ? ' · ' + activeJob.progress_pct + '%' : ''}。刷新页面不会中断，稍后可继续看结果。`"
+          >
+            <el-button
+              size="small"
+              :disabled="!!activeJob.cancel_requested"
+              @click="cancelActiveJob"
+            >取消</el-button>
+          </el-alert>
+          <el-alert
+            v-if="activeJob?.status === 'failed'"
+            type="error"
+            show-icon
+            class="mb"
+            :title="`后台任务 #${activeJob.id} 失败`"
+            :description="activeJob.error || '无错误详情'"
+          >
+            <el-button size="small" type="primary" @click="generate">重试生成</el-button>
+          </el-alert>
+          <el-alert
+            v-if="activeJob?.status === 'cancelled'"
+            type="warning"
+            show-icon
+            class="mb"
+            :closable="false"
+            :title="`后台任务 #${activeJob.id} 已取消`"
+            description="生成已停下，正文未覆盖。可再点「生成母稿」。"
+          />
 
           <div v-if="docTab === 'master'" class="doc-draft-banner mb">
             <b>自动生成母稿草案</b>
@@ -2310,8 +2450,18 @@ onMounted(load)
             <div v-if="task.article" class="hint">
               草案 v{{ task.article.version_no }} · {{ task.article.created_at || '' }}
               · 正文字数 {{ (article.body_markdown || '').length }}
-              · 重新「生成母稿」会覆盖当前正文
             </div>
+            <div v-if="sentenceCites.length" class="cite-box mb">
+              <div class="section-title">逐句证据</div>
+              <div v-for="(c, i) in sentenceCites" :key="i" class="cite-row">
+                <span class="cite-sent">{{ c.sentence }}</span>
+                <el-tag v-if="c.cited" size="small" type="success">
+                  #{{ c.fact_id }} {{ c.fact_title }}
+                </el-tag>
+                <el-tag v-else size="small" type="warning">未挂事实</el-tag>
+              </div>
+            </div>
+            <div class="hint">重新「生成母稿」会覆盖当前正文</div>
           </template>
           <template v-else>
             <div class="hint mb">
@@ -3330,4 +3480,28 @@ onMounted(load)
   border: 1px solid #f0ecf9; border-radius: 8px; padding: 8px;
 }
 .bound-list li { padding: 2px 0; }
+.cite-box {
+  border: 1px solid #dbeafe;
+  background: #eff6ff;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.cite-box .section-title {
+  font-size: 12px;
+  font-weight: 650;
+  color: #1e40af;
+  margin-bottom: 8px;
+}
+.cite-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px 8px;
+  padding: 6px 0;
+  border-top: 1px solid #dbeafe;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.cite-row:first-of-type { border-top: 0; padding-top: 0; }
+.cite-sent { flex: 1 1 220px; color: #334155; min-width: 0; }
 </style>

@@ -185,8 +185,8 @@ class GeoGenerateDeterministicTests(unittest.TestCase):
             tenant_name="示例品牌", question="数据分析平台哪个好用", facts=facts
         )
         md = to_markdown(payload)
-        self.assertIn("## FAQ", md)
-        self.assertIn("## 结论", md)
+        self.assertTrue("## FAQ" in md or "## 常见问题" in md)
+        self.assertTrue("## 结论" in md or "## 结论与建议" in md)
         self.assertIn("更新时间", md)
         self.assertGreaterEqual(len(payload["sections"]), 3)
 

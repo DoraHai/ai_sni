@@ -107,6 +107,11 @@ class GeoScoreTests(unittest.TestCase):
         self.assertIn("structure", out["geo_subscores"])
         self.assertIsInstance(out["geo_actions"], list)
 
+    def test_ungrounded_lint_caps_score(self):
+        out = compute_geo_score(_rule(), brief={}, lint_ok=False)
+        self.assertLessEqual(out["geo_score"], 59)
+        self.assertTrue(any(a["code"] == "geo_evidence_ungrounded" for a in out["geo_actions"]))
+
     def test_weak_draft_scores_lower(self):
         ri = _rule(
             title="稿",

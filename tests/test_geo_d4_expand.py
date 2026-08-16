@@ -27,6 +27,24 @@ class ClassifyTests(unittest.TestCase):
         self.assertFalse(is_relevant("某某官网下载", "某某"))
         self.assertTrue(is_relevant("数据分析平台推荐", "数据分析"))
 
+    def test_relevant_drops_offtopic_and_host_junk(self):
+        ctx = ["智能客服", "工单系统"]
+        self.assertFalse(is_relevant("zhichiq", "zhichi", kind="brand", context_tokens=ctx))
+        self.assertFalse(is_relevant("智齿牙膏", "智齿", kind="brand", context_tokens=ctx))
+        self.assertFalse(is_relevant("智齿招聘", "智齿", kind="brand", context_tokens=ctx))
+        self.assertFalse(is_relevant("智齿科技入职需谨慎", "智齿科技", kind="brand", context_tokens=ctx))
+        self.assertFalse(is_relevant("智齿股票", "智齿", kind="brand", context_tokens=ctx))
+        self.assertFalse(is_relevant("泉衡评级", "泉衡", kind="brand", context_tokens=["化工泵", "离心泵"]))
+        self.assertTrue(is_relevant("智齿客服怎么样", "智齿", kind="brand", context_tokens=ctx))
+        self.assertTrue(is_relevant("智齿怎么样", "智齿", kind="brand", context_tokens=ctx))
+        self.assertFalse(is_relevant("nexus是什么意思", "Nexus", kind="category", context_tokens=ctx))
+        self.assertTrue(is_relevant("Nexus客服工作台", "Nexus", kind="category", context_tokens=ctx))
+
+    def test_offtopic_kept_when_page_is_that_industry(self):
+        self.assertTrue(
+            is_relevant("儿童牙膏推荐", "儿童牙膏", kind="category", context_tokens=["牙膏", "口腔护理"])
+        )
+
     def test_to_question_template(self):
         q = to_question("数据分析平台", group="推荐", market="cn")
         self.assertIn("推荐", q)
@@ -45,6 +63,8 @@ class RootsTests(unittest.TestCase):
         self.assertIn("brand", kinds)
         self.assertIn("category", kinds)
         self.assertIn("competitor", kinds)
+        self.assertEqual(roots[0]["kind"], "category")
+        self.assertEqual(roots[0]["root"], "数据分析平台")
 
     def test_explicit_roots_win(self):
         roots = build_roots(
@@ -76,6 +96,34 @@ class ExpandFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("官网下载", terms)
         # template for 推荐 may mark in_bank
         self.assertTrue(any(i["question_group"] in {"推荐", "比较", "场景"} for i in out["items"]))
+
+    async def test_expand_drops_homonym_and_host_junk(self):
+        async def fake_suggest(query: str, market: str):
+            return [
+                "zhichiq",
+                "智齿牙膏",
+                "智齿招聘",
+                "智齿股票",
+                "智齿客服怎么样",
+                "智能客服推荐",
+            ]
+
+        out = await expand_candidates(
+            roots=[
+                {"root": "智能客服", "kind": "category", "market": "cn"},
+                {"root": "智齿", "kind": "brand", "market": "cn"},
+            ],
+            context_tokens=["智能客服", "工单"],
+            suggest=fake_suggest,
+            throttle_s=0,
+            max_terms=40,
+        )
+        terms = [i["term"] for i in out["items"]]
+        self.assertNotIn("zhichiq", terms)
+        self.assertNotIn("智齿牙膏", terms)
+        self.assertNotIn("智齿招聘", terms)
+        self.assertNotIn("智齿股票", terms)
+        self.assertTrue(any("客服" in t for t in terms))
 
 
 class AuthPathTests(unittest.TestCase):
