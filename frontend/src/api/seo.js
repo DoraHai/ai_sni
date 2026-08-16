@@ -1,6 +1,6 @@
 import client from './client'
 
-export function fetchSeoKeywords({ tenantId, q, priority, intent, status = 'active', engine = 'baidu', page = 1, pageSize = 50 }) {
+export function fetchSeoKeywords({ tenantId, q, priority, intent, status = 'active', engine = 'baidu', device = 'desktop', page = 1, pageSize = 50 }) {
   return client.get('/api/v1/seo/keywords', {
     params: {
       tenant_id: tenantId,
@@ -9,6 +9,7 @@ export function fetchSeoKeywords({ tenantId, q, priority, intent, status = 'acti
       intent: intent || undefined,
       status: status || undefined,
       engine,
+      device,
       page,
       page_size: pageSize,
     },
@@ -29,9 +30,9 @@ export function updateSeoKeyword({ keywordId, tenantId, payload }) {
   })
 }
 
-export function fetchSeoKeywordDetail({ keywordId, tenantId, engine = 'baidu', days = 90 }) {
+export function fetchSeoKeywordDetail({ keywordId, tenantId, engine = 'baidu', device = 'desktop', days = 90 }) {
   return client.get(`/api/v1/seo/keywords/${keywordId}`, {
-    params: { tenant_id: tenantId, engine, days },
+    params: { tenant_id: tenantId, engine, device, days },
   })
 }
 
@@ -76,8 +77,28 @@ export function auditSeoSitePage({ pageId, tenantId }) {
   })
 }
 
-export function fetchSeoOverview({ tenantId, engine = 'baidu' }) {
-  return client.get('/api/v1/seo/overview', { params: { tenant_id: tenantId, engine } })
+export function fetchSeoOverview({ tenantId, engine = 'baidu', device = 'desktop' }) {
+  return client.get('/api/v1/seo/overview', { params: { tenant_id: tenantId, engine, device } })
+}
+
+export function collectSeoRankSerp(payload) {
+  return client.post('/api/v1/seo/rank-serp/collect', payload, { timeout: 180000 })
+}
+
+export function fetchSeoSerpResults({ tenantId, device = 'desktop', ownershipType, keywordId, limit = 200 }) {
+  return client.get('/api/v1/seo/rank-serp/results', { params: { tenant_id: tenantId, device, ownership_type: ownershipType || undefined, keyword_id: keywordId || undefined, limit } })
+}
+
+export function updateSeoSerpOwnership({ resultId, tenantId, ownershipType, createAsset = true }) {
+  return client.patch(`/api/v1/seo/rank-serp/results/${resultId}`, { tenant_id: tenantId, ownership_type: ownershipType, create_asset: createAsset })
+}
+
+export function fetchSeoBrandAssets({ tenantId }) {
+  return client.get('/api/v1/seo/rank-serp/brand-assets', { params: { tenant_id: tenantId } })
+}
+
+export function createSeoBrandAsset(payload) {
+  return client.post('/api/v1/seo/rank-serp/brand-assets', payload)
 }
 
 export function fetchSeoAlerts({ tenantId, engine = 'baidu' }) {

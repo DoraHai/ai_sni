@@ -77,10 +77,12 @@ from app.models.seo import (
     SeoBacklink,
     SeoCompetitor,
     SeoCompetitorEvent,
+    SeoBrandAsset,
     SeoContentAsset,
     SeoInternalLink,
     SeoKeywordAsset,
     SeoRankSnapshot,
+    SeoSerpResult,
     SeoSitePage,
 )
 
@@ -162,6 +164,8 @@ __all__ = [
     "GeoPublication",
     "SeoKeywordAsset",
     "SeoRankSnapshot",
+    "SeoBrandAsset",
+    "SeoSerpResult",
     "SeoSitePage",
     "SeoContentAsset",
     "SeoInternalLink",

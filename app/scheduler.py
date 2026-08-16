@@ -5,13 +5,15 @@
     拉取当天累计报告，并刷新计划/单元/关键词/出价策略
   - fetch_yesterday_keyword_report：每天 02:00（Asia/Shanghai）
     报告同步 → 关键词维度同步（getWord）→ 5 类分级重算 → 规则引擎
+  - collect_daily_seo_rankings：每天 02:00（Asia/Shanghai）
+    遍历全部启用 SEO 关键词，采集百度 PC/移动前 50 并写入品牌排名快照
 
 在 main.py 的 startup 事件里调 start_scheduler()。
 """
 import fcntl
 import logging
 from asyncio import Lock
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -31,8 +33,9 @@ from app.baidu.sync import (
 )
 from app.baidu.oauth import refresh_expiring_oauth_grants
 from app.classification import reclassify_keywords
+from app.config import get_settings
 from app.database import async_session_factory
-from app.models import BaiduAccount, Tenant
+from app.models import BaiduAccount, SeoKeywordAsset, SeoRankSnapshot, Tenant
 from app.rules import run_rules_for_all_tenants
 from app.suggestions import run_suggestions_for_all_tenants
 
@@ -46,6 +49,7 @@ _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 # APScheduler，导致每日任务跑两次（重复调百度 + 重复写）。用文件排他锁，只让抢到锁的
 # 那个 worker 启动调度，其余 worker 跳过。锁随进程退出自动释放。
 _SCHEDULER_LOCK_PATH = "/tmp/sem_scheduler.lock"
+_SEO_RANK_LOCK_PATH = "/tmp/sem_seo_rank_collection.lock"
 _lock_fh = None
 
 
@@ -239,6 +243,129 @@ async def purge_old_assistant_messages() -> None:
             logger.exception("[scheduler] 清理助手对话失败")
 
 
+def _chunks(values: list[int], size: int) -> list[list[int]]:
+    size = max(1, size)
+    return [values[index : index + size] for index in range(0, len(values), size)]
+
+
+def _local_day_start_utc(now: datetime | None = None) -> datetime:
+    """返回上海自然日零点对应的无时区 UTC 时间，匹配数据库 DateTime 字段。"""
+    local_now = now or datetime.now(_SHANGHAI_TZ)
+    local_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return local_start.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+async def collect_daily_seo_rankings() -> None:
+    """每天 02:00 采集全部客户的百度 PC/移动前 50 排名。
+
+    已在当天成功形成快照的关键词/设备会跳过，因此任务重试不会重复扣费；
+    每批共用同一个 captured_at，前端可以完整读取本次全量批次。
+    """
+    settings = get_settings()
+    if not settings.seo_rank_scheduler_enabled:
+        logger.info("[scheduler][SEO] 自动排名采集已关闭")
+        return
+
+    lock_fh = open(_SEO_RANK_LOCK_PATH, "w")
+    try:
+        fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        lock_fh.close()
+        logger.info("[scheduler][SEO] 另一排名采集任务正在运行，本次跳过")
+        return
+
+    # 延迟导入，避免 scheduler 与 SEO 路由在应用启动时形成循环依赖。
+    from app.api.seo import collect_rank_serp_for_tenant
+
+    batch_captured_at = datetime.utcnow()
+    day_start_utc = _local_day_start_utc()
+    totals = {
+        "tenants": 0,
+        "keywords": 0,
+        "requests": 0,
+        "snapshots": 0,
+        "serp_results": 0,
+        "errors": 0,
+        "skipped_pairs": 0,
+    }
+    try:
+        async with async_session_factory() as session:
+            tenant_ids = list(
+                await session.scalars(
+                    select(SeoKeywordAsset.tenant_id)
+                    .where(SeoKeywordAsset.status == "active")
+                    .distinct()
+                    .order_by(SeoKeywordAsset.tenant_id)
+                )
+            )
+            for tenant_id in tenant_ids:
+                keyword_ids = list(
+                    await session.scalars(
+                        select(SeoKeywordAsset.id)
+                        .where(
+                            SeoKeywordAsset.tenant_id == tenant_id,
+                            SeoKeywordAsset.status == "active",
+                        )
+                        .order_by(SeoKeywordAsset.priority, SeoKeywordAsset.id)
+                    )
+                )
+                if not keyword_ids:
+                    continue
+                totals["tenants"] += 1
+                totals["keywords"] += len(keyword_ids)
+                completed_rows = (
+                    await session.execute(
+                        select(SeoRankSnapshot.keyword_id, SeoRankSnapshot.device).where(
+                            SeoRankSnapshot.tenant_id == tenant_id,
+                            SeoRankSnapshot.engine == "baidu",
+                            SeoRankSnapshot.source == "chinaz_top50",
+                            SeoRankSnapshot.checked_at >= day_start_utc,
+                            SeoRankSnapshot.keyword_id.in_(keyword_ids),
+                        )
+                    )
+                ).all()
+                completed = {(int(row[0]), row[1]) for row in completed_rows}
+
+                for device in ("desktop", "mobile"):
+                    pending_ids = [
+                        keyword_id
+                        for keyword_id in keyword_ids
+                        if (keyword_id, device) not in completed
+                    ]
+                    totals["skipped_pairs"] += len(keyword_ids) - len(pending_ids)
+                    for keyword_batch in _chunks(
+                        pending_ids, settings.seo_rank_scheduler_batch_size
+                    ):
+                        try:
+                            result = await collect_rank_serp_for_tenant(
+                                session=session,
+                                tenant_id=tenant_id,
+                                keyword_ids=keyword_batch,
+                                devices=[device],
+                                max_keywords=None,
+                                use_ai=settings.seo_rank_scheduler_use_ai,
+                                captured_at=batch_captured_at,
+                            )
+                        except Exception:  # noqa: BLE001
+                            await session.rollback()
+                            totals["errors"] += len(keyword_batch)
+                            logger.exception(
+                                "[scheduler][SEO] 客户 %s 的 %s 批次采集失败（关键词 %s 个）",
+                                tenant_id,
+                                device,
+                                len(keyword_batch),
+                            )
+                            continue
+                        totals["requests"] += result["requests"]
+                        totals["snapshots"] += result["snapshots"]
+                        totals["serp_results"] += result["serp_results"]
+                        totals["errors"] += len(result["errors"])
+        logger.info("[scheduler][SEO] 每日百度前 50 排名采集完成: %s", totals)
+    finally:
+        fcntl.flock(lock_fh, fcntl.LOCK_UN)
+        lock_fh.close()
+
+
 def start_scheduler() -> None:
     if not _acquire_scheduler_lock():
         logger.info(
@@ -260,6 +387,15 @@ def start_scheduler() -> None:
         replace_existing=True,
         max_instances=1,
         coalesce=True,
+    )
+    scheduler.add_job(
+        collect_daily_seo_rankings,
+        CronTrigger(hour=2, minute=0),
+        id="collect_daily_seo_rankings",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
     )
     scheduler.add_job(
         purge_old_assistant_messages,

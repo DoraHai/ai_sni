@@ -75,6 +75,71 @@ class SeoRankSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class SeoBrandAsset(Base):
+    """用于识别搜索结果归属的官网、品牌内容 URL 与平台账号规则。"""
+
+    __tablename__ = "seo_brand_assets"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    asset_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    match_value: Mapped[str] = mapped_column(Text, nullable=False)
+    platform: Mapped[str | None] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    created_by: Mapped[int | None] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "asset_type", "match_value", name="uq_seo_brand_asset_match"
+        ),
+    )
+
+
+class SeoSerpResult(Base):
+    """站长之家前 50 搜索结果及品牌归属判断。"""
+
+    __tablename__ = "seo_serp_results"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    keyword_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("seo_keyword_assets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    engine: Mapped[str] = mapped_column(String(20), nullable=False, default="baidu")
+    device: Mapped[str] = mapped_column(String(16), nullable=False)
+    region: Mapped[str] = mapped_column(String(80), nullable=False, default="全国")
+    rank: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    rank_label: Mapped[str | None] = mapped_column(String(24))
+    title: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
+    result_url: Mapped[str] = mapped_column(Text, nullable=False)
+    domain: Mapped[str | None] = mapped_column(String(255))
+    ownership_type: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="unresolved"
+    )
+    match_method: Mapped[str] = mapped_column(String(24), nullable=False, default="none")
+    confidence: Mapped[int | None] = mapped_column(SmallInteger)
+    matched_asset_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("seo_brand_assets.id", ondelete="SET NULL")
+    )
+    is_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    provider: Mapped[str] = mapped_column(String(24), nullable=False, default="chinaz")
+    captured_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class SeoSitePage(Base):
     """站内页面资产及最近一次技术/TDK 检测结果。"""
 

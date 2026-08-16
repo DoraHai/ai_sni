@@ -40,10 +40,17 @@ class Settings(BaseSettings):
     admin_api_key: str = Field(
         ..., description="admin / dashboard 接口的 API Key，调用方经 X-API-Key 请求头携带"
     )
+    # 是否允许 ?key= 传 API Key（URL 会进日志/Referer，生产必须 False）
+    admin_api_key_query_enabled: bool = True
+    # 若设置，API Key 访问绑定到该租户（ensure_tenant 生效）；None=可跨租户（仅运维）
+    admin_api_key_tenant_id: int | None = None
 
     # 登录态 JWT 签名密钥；不配则退化复用 admin_api_key（本地冒烟方便），生产必须单独配
     jwt_secret: str = ""
     jwt_expire_hours: int = 12
+
+    # GEO：是否允许同一人提交审校又审批通过（默认禁止）
+    geo_allow_self_review: bool = False
 
     # DeepSeek 官方（SEM 建议引擎等）。不配 key 则建议引擎只产规则版。
     deepseek_api_key: str = ""
@@ -57,10 +64,16 @@ class Settings(BaseSettings):
     chinaz_baidu_index_api_key: str = ""
     chinaz_baidu_pc_keywords_api_key: str = ""
     chinaz_baidu_mobile_keywords_api_key: str = ""
+    chinaz_baidu_pc_top50_api_key: str = ""
+    chinaz_baidu_mobile_top50_api_key: str = ""
     chinaz_weight_all_api_key: str = ""
     chinaz_whois_api_key: str = ""
     chinaz_api_base_url: str = "https://openapi.chinaz.net/v1/1001"
     chinaz_api_timeout_seconds: float = 8.0
+    # 每天 02:00 自动采集全部启用 SEO 关键词的百度 PC/移动前 50。
+    seo_rank_scheduler_enabled: bool = True
+    seo_rank_scheduler_batch_size: int = 20
+    seo_rank_scheduler_use_ai: bool = True
 
     # Google PageSpeed Insights。仅由后端调用，Key 不得进入前端构建产物。
     pagespeed_api_key: str = ""
@@ -91,6 +104,13 @@ class Settings(BaseSettings):
     geo_patrol_max_runs_per_day: int = 24
     # 单次巡检最大探测格数 ≈ 机会词 × 引擎（超出截断并记 summary）
     geo_patrol_max_cells_per_run: int = 200
+
+    # GEO 异步作业超时（秒）：pending/running 超时后标记 failed，并恢复任务状态
+    geo_async_stale_pending_seconds: int = 120
+    geo_async_stale_running_seconds: int = 45 * 60
+
+    # 缺口 SLA：brand_missing 且无任务超过 N 天则告警
+    geo_gap_sla_days: int = 7
 
     log_level: str = "INFO"
 

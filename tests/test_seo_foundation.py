@@ -14,12 +14,14 @@ from app.api.seo import (
 )
 from app.models.seo import (
     SeoBacklink,
+    SeoBrandAsset,
     SeoCompetitor,
     SeoCompetitorEvent,
     SeoContentAsset,
     SeoInternalLink,
     SeoKeywordAsset,
     SeoRankSnapshot,
+    SeoSerpResult,
     SeoSitePage,
 )
 from app.models.tenant import Tenant
@@ -203,6 +205,8 @@ def test_rank_delta_uses_smaller_rank_as_improvement() -> None:
 def test_models_use_separate_seo_tables() -> None:
     assert SeoKeywordAsset.__tablename__ == "seo_keyword_assets"
     assert SeoRankSnapshot.__tablename__ == "seo_rank_snapshots"
+    assert SeoBrandAsset.__tablename__ == "seo_brand_assets"
+    assert SeoSerpResult.__tablename__ == "seo_serp_results"
     assert SeoSitePage.__tablename__ == "seo_site_pages"
     assert SeoContentAsset.__tablename__ == "seo_content_assets"
     assert SeoInternalLink.__tablename__ == "seo_internal_links"
