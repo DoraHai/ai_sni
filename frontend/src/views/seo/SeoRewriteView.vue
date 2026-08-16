@@ -31,7 +31,6 @@ const actionLabel=item=>item.status==='planned'?'开始改写':item.status==='dr
 async function load(){if(!currentTenantId.value){error.value='请先选择客户';assets.value=[];return}loading.value=true;try{const [content,words]=await Promise.all([fetchSeoContentAssets({tenantId:currentTenantId.value}),fetchSeoKeywords({tenantId:currentTenantId.value,status:'',pageSize:200})]);assets.value=content.items;keywords.value=words.items;error.value=''}catch(e){error.value=e.message}finally{loading.value=false}}
 function importSource(){sourceText.value='';sourceOrigin.value='客户官网旧文';rewriteStrength.value='深度改写（推荐）';targetKeywords.value='';sourceVisible.value=true}
 function startRewrite(){if(!sourceText.value.trim())return ElMessage.warning('请粘贴待改写原文');sessionStorage.setItem('seo_pending_rewrite_source',sourceText.value.trim());sessionStorage.setItem('seo_pending_rewrite_options',JSON.stringify({sourceOrigin:sourceOrigin.value,rewriteStrength:rewriteStrength.value,targetKeywords:targetKeywords.value}));sourceVisible.value=false;router.push('/seo/content/editor?type=rewrite&new=1')}
-function clearPendingRewrite(){sessionStorage.removeItem('seo_pending_rewrite_source');sessionStorage.removeItem('seo_pending_rewrite_options')}
 function edit(item){router.push(`/seo/content/editor?type=rewrite&id=${item.id}`)}
 watch(currentTenantId,load);onMounted(load)
 </script>
@@ -40,7 +39,7 @@ watch(currentTenantId,load);onMounted(load)
   <div class="seo-content-page" v-loading="loading">
     <header class="topbar">
       <div><h1>文章改写</h1><div class="sub">基于客户已有内容智能改写，扩大关键词覆盖与全网声量</div></div>
-      <div class="right"><button v-if="canEdit" class="btn" @click="importSource">导入原文</button><router-link v-if="canEdit" class="btn primary" to="/seo/content/editor?type=rewrite&new=1" @click="clearPendingRewrite">AI 智能改写</router-link><div class="avatar">{{String(session.user?.name||session.user?.username||'DZ').slice(0,2).toUpperCase()}}</div></div>
+      <div class="right"><button v-if="canEdit" class="btn" @click="importSource">导入原文</button><button v-if="canEdit" class="btn primary" @click="importSource">AI 智能改写</button><div class="avatar">{{String(session.user?.name||session.user?.username||'DZ').slice(0,2).toUpperCase()}}</div></div>
     </header>
     <main class="content">
       <section class="article-intro rewrite">

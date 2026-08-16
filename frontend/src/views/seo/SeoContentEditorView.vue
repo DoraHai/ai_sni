@@ -34,6 +34,11 @@ const selectedTemplate = computed(() => templateMap[route.query.template] || tem
 const form = reactive({ title: '', keyword_id: null, outline: '', draft: '', author: session.user?.name || session.user?.username || '' })
 const wordCount = computed(() => Array.from(form.draft.replace(/<[^>]+>/g, '').replace(/\s+/g, '')).length)
 const keywordName = computed(() => keywords.value.find((item) => item.id === form.keyword_id)?.keyword || '尚未选择')
+const primaryAiAction = computed(() => mode.value === 'rewrite' ? 'rewrite' : 'generate')
+const primaryAiLabel = computed(() => {
+  if (aiBusy.value === primaryAiAction.value) return mode.value === 'rewrite' ? 'DeepSeek 改写中…' : 'DeepSeek 生成中…'
+  return mode.value === 'rewrite' ? 'DeepSeek 开始改写' : 'AI 生成初稿'
+})
 
 async function load() {
   if (!currentTenantId.value) return
@@ -161,7 +166,22 @@ async function save(status = 'drafting') {
   } catch (e) { ElMessage.error(e.message) } finally { saving.value = false }
 }
 
-onMounted(() => { form.outline = selectedTemplate.value.outline; sourceText.value = sessionStorage.getItem('seo_pending_rewrite_source') || ''; load() })
+function loadPendingRewrite() {
+  sourceText.value = sessionStorage.getItem('seo_pending_rewrite_source') || ''
+  if (mode.value !== 'rewrite') return
+  try {
+    const options = JSON.parse(sessionStorage.getItem('seo_pending_rewrite_options') || '{}')
+    prompt.value = [
+      options.sourceOrigin ? `原文来源：${options.sourceOrigin}` : '',
+      options.rewriteStrength ? `改写强度：${options.rewriteStrength}` : '',
+      options.targetKeywords ? `重点自然植入这些关键词：${options.targetKeywords}` : '',
+    ].filter(Boolean).join('；')
+  } catch {
+    prompt.value = ''
+  }
+}
+
+onMounted(() => { form.outline = selectedTemplate.value.outline; loadPendingRewrite(); load() })
 </script>
 
 <template>
@@ -190,7 +210,7 @@ onMounted(() => { form.outline = selectedTemplate.value.outline; sourceText.valu
 
       <aside class="ai-side">
         <header><h3>AI 内容助手</h3><p>结合关键词、模板与品牌资料辅助创作</p></header>
-        <div class="ai-body"><textarea v-model="prompt" placeholder="输入你的内容要求，例如：补充制造业案例…" /><button class="ai-primary" type="button" :disabled="!!aiBusy" @click="assist('generate')">{{aiBusy==='generate'?'DeepSeek 生成中…':'AI 生成初稿'}}</button><div class="quick-actions"><button type="button" :disabled="!!aiBusy" @click="assist('outline')">{{aiBusy==='outline'?'生成中…':'生成大纲'}}</button><button type="button" :disabled="!!aiBusy" @click="assist('title')">{{aiBusy==='title'?'优化中…':'优化标题'}}</button><button type="button" :disabled="!!aiBusy" @click="assist('keywords')">{{aiBusy==='keywords'?'检查中…':'检查关键词'}}</button><button type="button" :disabled="!!aiBusy" @click="assist('rewrite')">{{aiBusy==='rewrite'?'润色中…':'优化表达'}}</button></div><div v-if="aiMessage" class="ai-message">{{ aiMessage }}</div><ul><li><span>AI 服务</span><b class="ok">DeepSeek</b></li><li><span>标题完整</span><b :class="{ ok: form.title }">{{ form.title ? '通过' : '待完善' }}</b></li><li><span>目标关键词</span><b :class="{ ok: form.keyword_id }">{{ form.keyword_id ? '已绑定' : '待选择' }}</b></li><li><span>正文内容</span><b :class="{ ok: wordCount > 300 }">{{ wordCount > 300 ? '已形成' : '待完善' }}</b></li></ul></div>
+        <div class="ai-body"><textarea v-model="prompt" placeholder="输入你的内容要求，例如：保留事实并深度重构表达…" /><button class="ai-primary" type="button" :disabled="!!aiBusy" @click="assist(primaryAiAction)">{{ primaryAiLabel }}</button><div class="quick-actions"><button type="button" :disabled="!!aiBusy" @click="assist('outline')">{{aiBusy==='outline'?'生成中…':'生成大纲'}}</button><button type="button" :disabled="!!aiBusy" @click="assist('title')">{{aiBusy==='title'?'优化中…':'优化标题'}}</button><button type="button" :disabled="!!aiBusy" @click="assist('keywords')">{{aiBusy==='keywords'?'检查中…':'检查关键词'}}</button><button type="button" :disabled="!!aiBusy" @click="assist('rewrite')">{{aiBusy==='rewrite'?'改写中…':'重新改写'}}</button></div><div v-if="aiMessage" class="ai-message">{{ aiMessage }}</div><ul><li><span>AI 服务</span><b class="ok">DeepSeek</b></li><li><span>标题完整</span><b :class="{ ok: form.title }">{{ form.title ? '通过' : '待完善' }}</b></li><li><span>目标关键词</span><b :class="{ ok: form.keyword_id }">{{ form.keyword_id ? '已绑定' : '待选择' }}</b></li><li><span>正文内容</span><b :class="{ ok: wordCount > 300 }">{{ wordCount > 300 ? '已形成' : '待完善' }}</b></li></ul></div>
       </aside>
     </main>
   </div>

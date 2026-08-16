@@ -97,6 +97,14 @@ export function fetchSeoBrandAssets({ tenantId }) {
   return client.get('/api/v1/seo/rank-serp/brand-assets', { params: { tenant_id: tenantId } })
 }
 
+export function fetchSeoBrandProfile({ tenantId }) {
+  return client.get('/api/v1/seo/rank-serp/brand-profile', { params: { tenant_id: tenantId } })
+}
+
+export function updateSeoBrandProfile(payload) {
+  return client.patch('/api/v1/seo/rank-serp/brand-profile', payload)
+}
+
 export function createSeoBrandAsset(payload) {
   return client.post('/api/v1/seo/rank-serp/brand-assets', payload)
 }

@@ -80,6 +80,11 @@ const routes = [
         meta: { title: '异常提醒', workflow: '数据看板', perm: 'seo.alerts', bare: true },
       },
       {
+        path: 'brand-assets',
+        component: () => import('../views/seo/SeoBrandAssetsView.vue'),
+        meta: { title: '品牌资产中心', workflow: '基础资产', perm: 'seo.keywords', bare: true },
+      },
+      {
         path: 'keywords',
         component: () => import('../views/seo/SeoKeywordAssetsView.vue'),
         meta: { title: '关键词管理', workflow: '关键词资产', perm: 'seo.keywords', bare: true, immersive: true },

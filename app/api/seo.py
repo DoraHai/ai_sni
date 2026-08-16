@@ -224,6 +224,12 @@ class BrandAssetUpdate(BaseModel):
     status: Literal["active", "archived"] | None = None
 
 
+class BrandProfileUpdate(BaseModel):
+    tenant_id: int
+    brand_name: str = Field(min_length=1, max_length=100)
+    website: str = Field(min_length=1, max_length=2000)
+
+
 class SerpCollectRequest(BaseModel):
     tenant_id: int
     keyword_ids: list[int] | None = Field(None, max_length=50)
@@ -591,6 +597,144 @@ def _serp_payload(row: SeoSerpResult, keyword: str | None = None) -> dict[str, A
         "provider": row.provider,
         "captured_at": _iso(row.captured_at),
     }
+
+
+def _normalize_brand_homepage(value: str) -> tuple[str, str]:
+    try:
+        normalized = normalize_url(value)
+    except GeoAuditError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    parsed = urlparse(normalized)
+    domain = (parsed.hostname or "").lower().strip(".")
+    if not domain:
+        raise HTTPException(400, "官网地址缺少有效域名")
+    homepage = f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+    return homepage, domain
+
+
+async def _brand_profile_payload(
+    session: AsyncSession, tenant: Tenant
+) -> dict[str, Any]:
+    official_assets = list(
+        await session.scalars(
+            select(SeoBrandAsset)
+            .where(
+                SeoBrandAsset.tenant_id == tenant.id,
+                SeoBrandAsset.asset_type == "official_domain",
+                SeoBrandAsset.status == "active",
+            )
+            .order_by(SeoBrandAsset.id)
+        )
+    )
+    primary = next((item for item in official_assets if item.name == "主官网"), None)
+    primary = primary or (official_assets[0] if official_assets else None)
+    website = f"https://{primary.match_value}" if primary else ""
+    if primary:
+        page_urls = list(
+            await session.scalars(
+                select(SeoSitePage.url)
+                .where(SeoSitePage.tenant_id == tenant.id)
+                .order_by(SeoSitePage.id)
+            )
+        )
+        page_url = next(
+            (value for value in page_urls if url_domain(value) == primary.match_value),
+            None,
+        )
+        website = page_url or website
+    return {
+        "tenant_id": tenant.id,
+        "brand_name": tenant.name,
+        "brand_terms": tenant.brand_terms or [],
+        "website": website,
+        "official_domains": [item.match_value for item in official_assets],
+        "ranking_ready": bool(tenant.name.strip() and official_assets),
+    }
+
+
+@router.get("/rank-serp/brand-profile")
+async def get_brand_profile(
+    tenant_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    tenant = await _tenant(session, tenant_id)
+    return await _brand_profile_payload(session, tenant)
+
+
+@router.patch("/rank-serp/brand-profile")
+async def update_brand_profile(
+    req: BrandProfileUpdate,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    tenant = await _tenant(session, req.tenant_id)
+    brand_name = req.brand_name.strip()
+    if not brand_name:
+        raise HTTPException(400, "品牌名称不能为空")
+    homepage, domain = _normalize_brand_homepage(req.website)
+
+    tenant.name = brand_name
+    brand_terms = [
+        str(item).strip()
+        for item in (tenant.brand_terms or [])
+        if str(item).strip() and str(item).strip() != brand_name
+    ]
+    tenant.brand_terms = [brand_name, *brand_terms][:30]
+
+    primary = await session.scalar(
+        select(SeoBrandAsset).where(
+            SeoBrandAsset.tenant_id == req.tenant_id,
+            SeoBrandAsset.asset_type == "official_domain",
+            SeoBrandAsset.name == "主官网",
+        )
+    )
+    matching = await session.scalar(
+        select(SeoBrandAsset).where(
+            SeoBrandAsset.tenant_id == req.tenant_id,
+            SeoBrandAsset.asset_type == "official_domain",
+            SeoBrandAsset.match_value == domain,
+        )
+    )
+    if matching:
+        matching.name = "主官网"
+        matching.status = "active"
+        if primary and primary.id != matching.id:
+            primary.status = "archived"
+    elif primary:
+        primary.match_value = domain
+        primary.status = "active"
+    else:
+        session.add(
+            SeoBrandAsset(
+                tenant_id=req.tenant_id,
+                asset_type="official_domain",
+                name="主官网",
+                match_value=domain,
+                platform="website",
+                created_by=ctx.user_id,
+            )
+        )
+
+    homepage_page = await session.scalar(
+        select(SeoSitePage).where(
+            SeoSitePage.tenant_id == req.tenant_id,
+            SeoSitePage.url == homepage,
+        )
+    )
+    if homepage_page is None:
+        session.add(
+            SeoSitePage(
+                tenant_id=req.tenant_id,
+                url=homepage,
+                page_type="homepage",
+                status="pending",
+                created_by=ctx.user_id,
+            )
+        )
+    await session.commit()
+    await session.refresh(tenant)
+    return await _brand_profile_payload(session, tenant)
 
 
 @router.get("/rank-serp/brand-assets")

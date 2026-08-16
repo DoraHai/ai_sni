@@ -4,12 +4,14 @@ import pytest
 from pydantic import ValidationError
 
 from app.api.seo import (
+    BrandProfileUpdate,
     ContentCreate,
     KeywordCreate,
     RankSnapshotCreate,
     SeoContentAssistRequest,
     SitePageImport,
     _keyword_payload,
+    _normalize_brand_homepage,
     _seo_ai_prompt,
 )
 from app.models.seo import (
@@ -97,6 +99,19 @@ def test_keyword_and_rank_input_validation() -> None:
 def test_site_page_import_requires_at_least_one_url() -> None:
     with pytest.raises(ValidationError):
         SitePageImport(tenant_id=1, urls=[])
+
+
+def test_brand_profile_normalizes_homepage_and_domain() -> None:
+    payload = BrandProfileUpdate(
+        tenant_id=1,
+        brand_name="示例品牌",
+        website="Example.COM/products?id=1",
+    )
+    assert payload.brand_name == "示例品牌"
+    assert _normalize_brand_homepage(payload.website) == (
+        "https://example.com",
+        "example.com",
+    )
 
 
 @pytest.mark.parametrize("content_type", ["article", "rewrite", "qa", "faq"])

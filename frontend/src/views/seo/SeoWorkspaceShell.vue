@@ -10,6 +10,13 @@ const mobileOpen = ref(false)
 
 const groups = [
   {
+    label: '基础资产',
+    index: '00',
+    items: [
+      { label: '品牌资产中心', path: '/seo/brand-assets', perm: 'seo.keywords', mark: 'B' },
+    ],
+  },
+  {
     label: '今日概览',
     index: '01',
     items: [
