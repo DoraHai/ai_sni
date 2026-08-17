@@ -219,7 +219,7 @@ onMounted(load)
             <el-table-column label="最近登录" width="140">
               <template #default="{ row }"><span class="sub">{{ fmtTime(row.last_login_at) }}</span></template>
             </el-table-column>
-            <el-table-column label="操作" width="230" fixed="right">
+            <el-table-column label="操作" width="230">
               <template #default="{ row }">
                 <el-button size="small" @click="openEditUser(row)">编辑</el-button>
                 <el-button
@@ -253,7 +253,7 @@ onMounted(load)
             <el-table-column label="账号数" width="80" align="center">
               <template #default="{ row }">{{ row.user_count }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="170" fixed="right">
+            <el-table-column label="操作" width="170">
               <template #default="{ row }">
                 <el-button size="small" @click="openEditRole(row)">配置权限</el-button>
                 <el-button size="small" type="danger" plain :disabled="row.is_system || row.user_count > 0" @click="removeRole(row)">删除</el-button>

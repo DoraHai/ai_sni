@@ -29,6 +29,24 @@ export function setCampaignPause({ tenantId, campaignId, pause }) {
   })
 }
 
+// 百度官方省市地域编码快照（只读）。
+export function fetchRegionOptions() {
+  return client.get('/api/v1/manage/region-options')
+}
+
+// 计划投放地域及分地域出价系数。dry-run 演练时只记台账不真改。
+export function setCampaignRegion({
+  tenantId, campaignId, regionTarget, regionPriceFactor, geoLocationStatus,
+}) {
+  return client.post('/api/v1/manage/campaign-region', {
+    tenant_id: tenantId,
+    campaign_id: campaignId,
+    region_target: regionTarget,
+    region_price_factor: regionPriceFactor,
+    geo_location_status: geoLocationStatus,
+  })
+}
+
 // 单元列表（出价/启停，行内可改）。
 export function fetchAdgroups({ tenantId, campaignId }) {
   return client.get('/api/v1/manage/adgroups', {

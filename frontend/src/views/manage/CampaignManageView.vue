@@ -1,7 +1,13 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchCampaigns, setCampaignBudget, setCampaignPause } from '../../api/manage'
+import {
+  fetchCampaigns,
+  fetchRegionOptions,
+  setCampaignBudget,
+  setCampaignPause,
+  setCampaignRegion,
+} from '../../api/manage'
 import { session } from '../../store/session'
 
 const TENANT_ID = computed(() => session.tenantId)
@@ -10,6 +16,9 @@ const loading = ref(false)
 const error = ref('')
 const data = ref(null)
 const savingId = ref(null)
+const regionOptions = ref([])
+const regionDialogVisible = ref(false)
+const regionForm = ref({ campaignId: null, campaignName: '', regionTarget: [], factors: {}, geoLocationStatus: null })
 
 async function load() {
   loading.value = true
@@ -23,8 +32,19 @@ async function load() {
   }
 }
 
+async function loadRegionOptions() {
+  try {
+    const res = await fetchRegionOptions()
+    regionOptions.value = res.regions || []
+  } catch (e) {
+    ElMessage.error('地域编码加载失败：' + (e.response?.data?.detail || e.message))
+  }
+}
+
 watch(TENANT_ID, load)
-onMounted(load)
+onMounted(async () => {
+  await Promise.all([load(), loadRegionOptions()])
+})
 
 const fmtMoney = (v) => (v == null ? '不限' : '¥' + Number(v).toFixed(2))
 const min = computed(() => data.value?.min_budget ?? 50)
@@ -92,6 +112,66 @@ async function togglePause(row) {
     savingId.value = null
   }
 }
+
+function regionLabel(region) {
+  const parent = regionOptions.value.find((item) => item.id === region.parent_id)
+  return parent ? `${parent.name} > ${region.name}` : region.name
+}
+
+function regionNameOf(id) {
+  const region = regionOptions.value.find((item) => item.id === id)
+  return region ? regionLabel(region) : `地域 #${id}`
+}
+
+function openRegionDialog(row) {
+  const factors = Object.fromEntries(
+    (row.region_price_factor || [])
+      .filter((item) => item?.regionId != null && item.priceFactor != null)
+      .map((item) => [item.regionId, Number(item.priceFactor)]),
+  )
+  regionForm.value = {
+    campaignId: row.campaign_id,
+    campaignName: row.campaign_name,
+    regionTarget: [...(row.region_target || [])],
+    factors,
+    geoLocationStatus: row.geo_location_status ?? null,
+  }
+  regionDialogVisible.value = true
+}
+
+async function submitRegion() {
+  const form = regionForm.value
+  if (!form.regionTarget.length) {
+    ElMessage.warning('请至少选择一个地域')
+    return
+  }
+  const regionPriceFactor = Object.entries(form.factors)
+    .filter(([regionId, priceFactor]) => form.regionTarget.includes(Number(regionId)) && priceFactor != null)
+    .map(([regionId, priceFactor]) => ({ region_id: Number(regionId), price_factor: Number(priceFactor) }))
+
+  savingId.value = form.campaignId
+  try {
+    const res = await setCampaignRegion({
+      tenantId: TENANT_ID.value,
+      campaignId: form.campaignId,
+      regionTarget: form.regionTarget,
+      regionPriceFactor: regionPriceFactor.length ? regionPriceFactor : undefined,
+      geoLocationStatus: form.geoLocationStatus ?? undefined,
+    })
+    if (res.status === 'failed') {
+      ElMessage.error('写回失败：' + (res.error_msg || '未知错误'))
+      return
+    }
+    const tag = res.dry_run ? '（演练：未真改）' : ''
+    ElMessage.success(`已设置 ${res.region_count} 个地域${tag}`)
+    regionDialogVisible.value = false
+    await load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || e.message)
+  } finally {
+    savingId.value = null
+  }
+}
 </script>
 
 <template>
@@ -111,7 +191,7 @@ async function togglePause(row) {
       :closable="false"
       show-icon
       style="margin-bottom: 14px"
-      title="当前为演练模式：修改计划预算只记台账、不会真改线上百度账户。"
+      title="当前为演练模式：修改计划预算、地域或状态只记台账、不会真改线上百度账户。"
     />
 
     <div class="table-panel">
@@ -127,9 +207,10 @@ async function togglePause(row) {
         <el-table-column label="日预算" width="140" align="right">
           <template #default="{ row }"><span class="num" :class="{ unlimited: row.budget == null }">{{ fmtMoney(row.budget) }}</span></template>
         </el-table-column>
-        <el-table-column label="操作" width="220" align="center">
+        <el-table-column label="操作" width="300" align="center">
           <template #default="{ row }">
             <el-button size="small" :loading="savingId === row.campaign_id" @click="editBudget(row)">改预算</el-button>
+            <el-button size="small" :loading="savingId === row.campaign_id" @click="openRegionDialog(row)">设置地域</el-button>
             <el-button
               size="small"
               :type="(row.pause || row.status === 23) ? 'success' : 'warning'"
@@ -144,6 +225,55 @@ async function togglePause(row) {
         </template>
       </el-table>
     </div>
+
+    <el-dialog v-model="regionDialogVisible" title="设置投放地域" width="min(600px, calc(100vw - 32px))">
+      <div class="region-form">
+        <p>为计划「{{ regionForm.campaignName }}」选择投放地域：</p>
+        <el-select
+          v-model="regionForm.regionTarget"
+          multiple
+          filterable
+          collapse-tags
+          collapse-tags-tooltip
+          placeholder="选择省/市（可多选）"
+          style="width: 100%"
+        >
+          <el-option
+            v-for="region in regionOptions"
+            :key="region.id"
+            :label="regionLabel(region)"
+            :value="region.id"
+          />
+        </el-select>
+
+        <div class="geo-status-section">
+          <label>地域定向方式</label>
+          <el-radio-group v-model="regionForm.geoLocationStatus">
+            <el-radio :label="0">该地区内或搜索意图在该地区的所有用户</el-radio>
+            <el-radio :label="1">仅该地区内的所有用户</el-radio>
+          </el-radio-group>
+        </div>
+
+        <div v-if="regionForm.regionTarget.length" class="region-factor-list">
+          <p class="factor-hint">可选：为已选地域单独设置出价系数（0.1~1.0，不设则默认 1.0）</p>
+          <div v-for="regionId in regionForm.regionTarget" :key="regionId" class="factor-row">
+            <span>{{ regionNameOf(regionId) }}</span>
+            <el-input-number
+              v-model="regionForm.factors[regionId]"
+              :min="0.1"
+              :max="1.0"
+              :step="0.1"
+              :precision="1"
+              size="small"
+            />
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="regionDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="savingId === regionForm.campaignId" @click="submitRegion">确认写回</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -162,4 +292,12 @@ async function togglePause(row) {
 .status-pill.active { background: #e5f4ed; color: var(--sem-success); }
 .status-pill.paused { background: #fef1e1; color: #ba7517; }
 .empty-line { font-size: 12px; color: #9ca3af; padding: 22px 0; }
+.region-form > p { margin: 0 0 12px; color: var(--sem-text); font-size: 13px; }
+.region-factor-list { margin-top: 16px; }
+.geo-status-section { margin-top: 16px; }
+.geo-status-section > label { display: block; margin-bottom: 8px; color: var(--sem-text); font-size: 13px; }
+.geo-status-section :deep(.el-radio-group) { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.factor-hint { color: var(--sem-text-sub); font-size: 12px; }
+.factor-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 34px; border-bottom: 1px solid var(--sem-border); }
+.factor-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 </style>

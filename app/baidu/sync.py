@@ -5,7 +5,7 @@ APScheduler 和手动触发接口都走这里。
 """
 import hashlib
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import delete, func, select
@@ -476,6 +476,7 @@ async def sync_campaigns_for_account(
                 "status": _to_int(c.get("status")),
                 "equipment_type": _to_int(c.get("equipmentType")),
                 "region_target": c.get("regionTarget"),
+                "geo_location_status": _to_int(c.get("geoLocationStatus")),
                 "schedule": c.get("schedule"),
                 "region_price_factor": c.get("regionPriceFactor"),
                 "schedule_price_factors": c.get("schedulePriceFactors"),
@@ -1032,29 +1033,119 @@ async def sync_query_candidates_for_account(
     return len(records)
 
 
+_SEARCH_TERM_REPORT_MAX_WINDOW_DAYS = 31
+
+
+def _search_term_windows(start_date: date, end_date: date) -> list[tuple[date, date]]:
+    """将百度搜索词报告日期范围切成不超过 31 天的闭区间。"""
+    if start_date > end_date:
+        raise ValueError("搜索词报告开始日期不能晚于结束日期")
+
+    windows: list[tuple[date, date]] = []
+    window_start = start_date
+    while window_start <= end_date:
+        window_end = min(
+            window_start + timedelta(days=_SEARCH_TERM_REPORT_MAX_WINDOW_DAYS - 1),
+            end_date,
+        )
+        windows.append((window_start, window_end))
+        window_start = window_end + timedelta(days=1)
+    return windows
+
+
+async def _fetch_search_term_rows(
+    baidu_account: BaiduAccount,
+    start_date: date,
+    end_date: date,
+) -> list[dict[str, Any]]:
+    """拉取一个百度允许的搜索词报告窗口，不写本地库。"""
+    svc = ReportService(_account_client(baidu_account))
+    return await svc.get_search_term_report(start_date.isoformat(), end_date.isoformat())
+
+
+def _merge_search_term_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """合并分段 SUMMARY 报表，使同一搜索词维度在完整窗口中只保留一行。
+
+    每段都是互不重叠的时间区间，不能简单选择消费最高的一段，否则 91 天指标会
+    被低估。展现、点击、消费和转化按段累加；比率指标据合计值重算，名称和状态等
+    非指标字段以较后拉取到的行覆盖。
+    """
+    merged: dict[tuple[str, int | None, int | None], dict[str, Any]] = {}
+    totals: dict[tuple[str, int | None, int | None], dict[str, float]] = {}
+
+    for row in rows:
+        word = (row.get("queryWord") or "").strip()
+        if not word:
+            continue
+        key = (word, _to_int(row.get("campaignId")), _to_int(row.get("adGroupId")))
+        current = merged.get(key)
+        if current is None:
+            current = dict(row)
+            current["queryWord"] = word
+            merged[key] = current
+            totals[key] = {"impression": 0.0, "click": 0.0, "cost": 0.0, "conversions": 0.0}
+        else:
+            # 后面的窗口更新名称、触发词、状态和匹配方式等非累加字段。
+            current.update(row)
+            current["queryWord"] = word
+
+        total = totals[key]
+        total["impression"] += _to_int(row.get("impression")) or 0
+        total["click"] += _to_int(row.get("click")) or 0
+        total["cost"] += _to_float(row.get("cost")) or 0.0
+        total["conversions"] += _to_int(row.get("ocpcConversionsDetail2")) or 0
+
+    for key, row in merged.items():
+        total = totals[key]
+        impression = int(total["impression"])
+        click = int(total["click"])
+        cost = total["cost"]
+        conversions = int(total["conversions"])
+        row["impression"] = impression
+        row["click"] = click
+        row["cost"] = cost
+        row["ocpcConversionsDetail2"] = conversions
+        row["cpc"] = cost / click if click else None
+        row["ctr"] = click * 100 / impression if impression else None
+        row["ocpcConversionsDetail2CVR"] = conversions * 100 / click if click else None
+
+    return list(merged.values())
+
+
 async def sync_search_terms_for_account(
     session: AsyncSession,
     baidu_account: BaiduAccount,
     start_date: date,
     end_date: date,
 ) -> int:
-    """搜索词报告全量落库（含已添加词），窗口快照：每次同步覆盖该租户旧数据。
+    """搜索词报告全量落库（含已添加词），支持自动分段和空结果保护。
 
     与 sync_query_candidates（只留未添加词转拓词）不同，本表存全量，供搜索词报告页 +
-    关键词详情触发搜索词下钻 + 后续加否词/转拓词。返回写入条数。
+    关键词详情触发搜索词下钻 + 后续加否词/转拓词。每次成功同步覆盖该租户旧快照；
+    百度全部窗口均无数据时保留旧快照。返回写入条数。
     """
-    svc = ReportService(_account_client(baidu_account))
-    rows = await svc.get_search_term_report(start_date.isoformat(), end_date.isoformat())
+    fetched_rows: list[dict[str, Any]] = []
+    windows = _search_term_windows(start_date, end_date)
+    for window_start, window_end in windows:
+        rows = await _fetch_search_term_rows(baidu_account, window_start, window_end)
+        fetched_rows.extend(rows)
 
-    # 全量快照：先清该租户旧数据，再插新窗口
+    rows = _merge_search_term_rows(fetched_rows)
+
+    if not rows:
+        logger.warning(
+            "账户 %s 搜索词报告 %s~%s 分 %d 段拉取后仍无数据，保留本地旧快照",
+            baidu_account.baidu_username,
+            start_date,
+            end_date,
+            len(windows),
+        )
+        return 0
+
+    # 仅在全部窗口拉取并合并后存在数据时，才替换全量快照。
     await session.execute(
         delete(SearchTermReport).where(SearchTermReport.tenant_id == baidu_account.tenant_id)
     )
-    if not rows:
-        await session.commit()
-        logger.info("账户 %s 搜索词报告无数据", baidu_account.baidu_username)
-        return 0
-
     now = datetime.utcnow()
     records = []
     for row in rows:
@@ -1090,8 +1181,13 @@ async def sync_search_terms_for_account(
     session.add_all(records)
     await session.commit()
     logger.info(
-        "账户 %s 搜索词报告 %s~%s：落库 %d 条",
-        baidu_account.baidu_username, start_date, end_date, len(records),
+        "账户 %s 搜索词报告 %s~%s（%d 段）：原始 %d 条，合并落库 %d 条",
+        baidu_account.baidu_username,
+        start_date,
+        end_date,
+        len(windows),
+        len(fetched_rows),
+        len(records),
     )
     return len(records)
 

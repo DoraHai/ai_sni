@@ -194,8 +194,8 @@ const statCards = computed(() => {
     </div>
 
     <div class="table-panel">
-      <el-table :data="data?.search_terms || []" class="kw-table" row-key="id">
-        <el-table-column label="搜索词" min-width="200">
+      <el-table :data="data?.search_terms || []" class="kw-table" row-key="id" :fit="true">
+        <el-table-column label="搜索词" width="190">
           <template #header>
             <span class="th-help">
               搜索词
@@ -220,41 +220,41 @@ const statCards = computed(() => {
             </el-tooltip>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="100" align="center">
+        <el-table-column label="状态" width="88" align="center">
           <template #default="{ row }">
             <span class="st-pill" :class="row.is_added ? 'added' : 'notadded'">{{ row.status_label }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="计划 / 单元" min-width="150">
+        <el-table-column label="计划 / 单元" width="160">
           <template #default="{ row }">
             <div class="plan-line">{{ row.campaign_name || '—' }}</div>
             <div class="kw-cell-sub">{{ row.adgroup_name || '—' }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="展现" width="90" align="right">
+        <el-table-column label="展现" width="80" align="right">
           <template #default="{ row }"><span class="num">{{ fmtInt(row.impression) }}</span></template>
         </el-table-column>
-        <el-table-column label="点击" width="90" align="right">
+        <el-table-column label="点击" width="70" align="right">
           <template #default="{ row }">
             <span class="num" :class="{ zero: !row.click }">{{ fmtInt(row.click) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="点击率" width="92" align="right">
+        <el-table-column label="点击率" width="84" align="right">
           <template #header>
             <span title="CTR = 点击 ÷ 展现">点击率</span>
           </template>
           <template #default="{ row }"><span class="num">{{ fmtPct(row.ctr) }}</span></template>
         </el-table-column>
-        <el-table-column label="点击成本" width="104" align="right">
+        <el-table-column label="点击成本" width="96" align="right">
           <template #header>
             <span title="CPC = 消费 ÷ 点击">点击成本</span>
           </template>
           <template #default="{ row }"><span class="num">{{ fmtMoney(row.cpc) }}</span></template>
         </el-table-column>
-        <el-table-column label="消费" width="100" align="right">
+        <el-table-column label="消费" width="92" align="right">
           <template #default="{ row }"><span class="num">{{ fmtMoney(row.cost) }}</span></template>
         </el-table-column>
-        <el-table-column label="转化" width="96" align="right">
+        <el-table-column label="转化" width="86" align="right">
           <template #header>
             <span title="CVR = 转化 ÷ 点击">转化</span>
           </template>
@@ -263,10 +263,12 @@ const statCards = computed(() => {
             <div class="kw-cell-sub">{{ fmtPct(row.cvr) }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column label="操作" min-width="156">
           <template #default="{ row }">
-            <el-button link type="primary" size="small" :disabled="!row.adgroup_id && !row.campaign_id" @click="addNeg(row)">加否词</el-button>
-            <el-button link type="primary" size="small" :disabled="row.is_added || !row.adgroup_id" @click="expand(row)">转拓词</el-button>
+            <div class="search-term-actions">
+              <el-button class="search-action is-negative" size="small" :disabled="!row.adgroup_id && !row.campaign_id" @click="addNeg(row)">加否词</el-button>
+              <el-button class="search-action is-expand" size="small" :disabled="row.is_added || !row.adgroup_id" @click="expand(row)">设为关键词</el-button>
+            </div>
           </template>
         </el-table-column>
         <template #empty>
@@ -365,6 +367,14 @@ const statCards = computed(() => {
 .st-pill.notadded { background: #eff4fb; color: var(--sem-primary); }
 .susp-pill { font-size: 10px; padding: 1px 6px; border-radius: 3px; background: #fef1e1; color: #ba7517; margin-left: 6px; }
 .op-todo { font-size: 11px; color: #c0c4cc; }
+
+.search-term-actions { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.search-action { height: 26px; margin: 0 !important; padding: 0 8px; border-radius: 5px; font-size: 11px; font-weight: 600; transition: background .16s ease, border-color .16s ease, color .16s ease; }
+.search-action.is-negative { background: #fff; border-color: #f0c998; color: #b86b16; }
+.search-action.is-negative:not(:disabled):hover { background: #fff7ed; border-color: #e7a350; color: #9e5710; }
+.search-action.is-expand { background: #edf5ff; border-color: #b7d4f2; color: #1768ad; }
+.search-action.is-expand:not(:disabled):hover { background: #dfefff; border-color: #79addd; color: #10578f; }
+.search-action:disabled { opacity: .48; }
 
 .empty-line { font-size: 12px; color: #9ca3af; padding: 22px 0; }
 .table-footer { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: #fafbfc; border-top: 1px solid #f3f4f6; font-size: 12px; color: var(--sem-text-sub); }

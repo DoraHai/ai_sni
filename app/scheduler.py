@@ -5,6 +5,8 @@
     拉取当天累计报告，并刷新计划/单元/关键词/出价策略
   - fetch_yesterday_keyword_report：每天 02:00（Asia/Shanghai）
     报告同步 → 关键词维度同步（getWord）→ 5 类分级重算 → 规则引擎
+  - sync_search_terms_daily：每天 03:00（Asia/Shanghai）
+    搜索词报告近 31 天同步，独立于主同步流程
 
 在 main.py 的 startup 事件里调 start_scheduler()。
 """
@@ -24,6 +26,7 @@ from app.baidu.sync import (
     sync_keyword_report_for_account,
     sync_keyword_report_for_all_active_accounts,
     sync_region_snapshot,
+    sync_search_terms_for_account,
     sync_keywords_for_account,
     sync_ocpc_packages_for_account,
     sync_operation_records_for_account,
@@ -262,6 +265,40 @@ async def probe_site_health_alerts() -> None:
     logger.info("[scheduler] %s 落地页可用性探测完成: %s", today, result)
 
 
+async def sync_search_terms_daily() -> None:
+    """每日同步近 31 天搜索词报告，避免分段拉取拖慢 02:00 主同步。"""
+    end_date = datetime.now(_SHANGHAI_TZ).date()
+    start_date = end_date - timedelta(days=30)
+    logger.info(
+        "[scheduler] 开始搜索词报告每日同步 %s~%s", start_date, end_date
+    )
+    result: dict[str, int] = {}
+    async with _report_sync_lock:
+        async with async_session_factory() as session:
+            refresh_result = await refresh_expiring_oauth_grants(session)
+            logger.info("[scheduler] OAuth Token 刷新结果: %s", refresh_result)
+            accounts = (
+                await session.scalars(
+                    select(BaiduAccount).where(BaiduAccount.status == "active")
+                )
+            ).all()
+            for acc in accounts:
+                try:
+                    result[acc.baidu_username] = await sync_search_terms_for_account(
+                        session, acc, start_date, end_date
+                    )
+                    logger.info(
+                        "账户 %s 搜索词报告每日同步完成: %d 条",
+                        acc.baidu_username,
+                        result[acc.baidu_username],
+                    )
+                except Exception:  # noqa: BLE001
+                    await session.rollback()
+                    result[acc.baidu_username] = -1
+                    logger.exception("账户 %s 搜索词报告同步失败", acc.baidu_username)
+    logger.info("[scheduler] 搜索词报告每日同步完成: %s", result)
+
+
 def start_scheduler() -> None:
     if not _acquire_scheduler_lock():
         logger.info(
@@ -288,6 +325,14 @@ def start_scheduler() -> None:
         purge_old_assistant_messages,
         CronTrigger(hour=3, minute=30),
         id="purge_old_assistant_messages",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        sync_search_terms_daily,
+        CronTrigger(hour=3, minute=0),
+        id="sync_search_terms_daily",
         replace_existing=True,
         max_instances=1,
         coalesce=True,

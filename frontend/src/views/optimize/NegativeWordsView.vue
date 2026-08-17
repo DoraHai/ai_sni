@@ -243,42 +243,46 @@ onMounted(load)
 
     <!-- ===== 待审建议 ===== -->
     <div v-if="view === 'review'" class="table-panel">
-      <el-table :data="reviewRows" row-key="id">
-        <el-table-column label="否词建议" min-width="150">
+      <el-table :data="reviewRows" row-key="id" :fit="true">
+        <el-table-column label="否词建议" width="130">
           <template #default="{ row }"><b>{{ row.word }}</b></template>
         </el-table-column>
-        <el-table-column label="建议类型" width="110">
+        <el-table-column label="建议类型" width="90">
           <template #default="{ row }">
             <span class="src-tag" :class="row.typeCls">{{ row.typeLabel }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="作用范围" min-width="170">
+        <el-table-column label="作用范围" width="140">
           <template #default="{ row }">{{ row.scopeText }}</template>
         </el-table-column>
-        <el-table-column label="匹配方式" width="86" align="center">
+        <el-table-column label="匹配方式" width="80" align="center">
           <template #default="{ row }">{{ row.matchLabel }}</template>
         </el-table-column>
-        <el-table-column label="近 30 天触发" width="106" align="right">
+        <el-table-column label="近 30 天触发" width="90" align="right">
           <template #default="{ row }"><span class="num">{{ row.trigger }}</span></template>
         </el-table-column>
-        <el-table-column label="近30天转化" width="106" align="right">
+        <el-table-column label="近30天转化" width="90" align="right">
           <template #default="{ row }">
             <span class="num">{{ row.kind === 'scan' ? fmtInt(row.conversions30d) : '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="判定依据" min-width="260">
-          <template #default="{ row }"><span class="basis">{{ row.basis }}</span></template>
+        <el-table-column label="判定依据" width="170">
+          <template #default="{ row }">
+            <el-tooltip :content="row.basis" placement="top" :disabled="!row.basis">
+              <span class="basis basis-compact">{{ row.basis }}</span>
+            </el-tooltip>
+          </template>
         </el-table-column>
-        <el-table-column label="操作" width="270" fixed="right">
+        <el-table-column label="操作" min-width="196">
           <template #default="{ row }">
             <div class="row-actions" v-if="row.kind === 'scan' && session.canEdit('optimize.negatives')">
               <el-tooltip content="选目标单元加成否词（updateAdgroup 写回，dry-run 保护）" placement="top">
-                <el-button size="small" type="primary" plain @click="openAddNeg(row.word)">加否词</el-button>
+                <el-button class="review-action is-negative" size="small" @click="openAddNeg(row.word)">加否词</el-button>
               </el-tooltip>
               <el-tooltip content="打开加入计划弹窗，选单元、出价和匹配方式后设为正式关键词" placement="top">
-                <el-button size="small" plain @click="openAddToPlan(row)">设为关键词</el-button>
+                <el-button class="review-action is-expand" size="small" @click="openAddToPlan(row)">设为关键词</el-button>
               </el-tooltip>
-              <el-button size="small" @click="setScanStatus(row, 'ignored', '已驳回')">驳回</el-button>
+              <el-button class="review-action is-dismiss" size="small" @click="setScanStatus(row, 'ignored', '已驳回')">驳回</el-button>
             </div>
             <div class="row-actions" v-else-if="session.canEdit('optimize.negatives')">
               <el-tooltip v-if="row.scope === 'adgroup'" :content="row.kind === 'conflict' ? '删除该单元否词解除冲突' : '删除重复的单元否词'" placement="top">
@@ -341,7 +345,7 @@ onMounted(load)
               <span v-else class="dim">—</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="120" fixed="right">
+          <el-table-column label="操作" width="120">
             <template #default="{ row }">
               <el-button
                 v-if="session.canEdit('optimize.negatives') && row.scope === 'adgroup'"
@@ -374,7 +378,7 @@ onMounted(load)
         <el-table-column label="潜力分" width="90" align="right">
           <template #default="{ row }"><span class="num">{{ row.potential_score ?? '—' }}</span></template>
         </el-table-column>
-        <el-table-column label="操作" width="120" fixed="right">
+        <el-table-column label="操作" width="120">
           <template #default="{ row }">
             <el-button v-if="session.canEdit('optimize.negatives')" size="small" text @click="setScanStatus(row, 'pending', '已恢复待审')">恢复待审</el-button>
           </template>
@@ -453,6 +457,7 @@ onMounted(load)
 .num { font-variant-numeric: tabular-nums; }
 .dim { color: #c0c4cc; }
 .basis { font-size: 11px; color: var(--sem-text-sub); line-height: 1.5; }
+.basis-compact { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .src-tag { font-size: 11px; padding: 1px 7px; border-radius: 3px; white-space: nowrap; }
 .tag-scan { background: #eff4fb; color: #185fa5; }
@@ -464,6 +469,13 @@ onMounted(load)
 .scope-tag.adgroup { background: #f2ebfb; color: #6b47b5; }
 
 .row-actions { display: flex; gap: 4px; align-items: center; }
+.review-action { height: 26px; margin: 0 !important; padding: 0 9px; border-radius: 5px; font-size: 11px; font-weight: 600; transition: background .16s ease, border-color .16s ease, color .16s ease; }
+.review-action.is-negative { background: #fff; border-color: #f0c998; color: #b86b16; }
+.review-action.is-negative:hover { background: #fff7ed; border-color: #e7a350; color: #9e5710; }
+.review-action.is-expand { background: #edf5ff; border-color: #b7d4f2; color: #1768ad; }
+.review-action.is-expand:hover { background: #dfefff; border-color: #79addd; color: #10578f; }
+.review-action.is-dismiss { background: #fff; border-color: #d8dee8; color: #667085; }
+.review-action.is-dismiss:hover { background: #f8fafc; border-color: #aeb9c9; color: #475467; }
 .note { padding: 10px 12px; background: #fffbf4; border: 1px solid #fed7aa; border-radius: 6px; font-size: 11px; color: #4b5563; line-height: 1.8; }
 .note b { color: #9a3412; }
 .neg-tip { font-size: 12px; color: #ba7517; margin-top: 4px; }

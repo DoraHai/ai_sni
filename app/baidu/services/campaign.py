@@ -21,6 +21,7 @@ CAMPAIGN_SYNC_FIELDS = [
     "status",
     "equipmentType",
     "regionTarget",
+    "geoLocationStatus",
     "schedule",
     "regionPriceFactor",
     "schedulePriceFactors",
@@ -111,6 +112,34 @@ class CampaignService:
             "CampaignService",
             "updateCampaign",
             {"campaignTypes": [{"campaignId": campaign_id, "pause": pause}]},
+            is_write=True,
+        )
+
+    async def update_campaign_region(
+        self,
+        campaign_id: int,
+        region_target: list[int],
+        *,
+        region_price_factor: list[dict[str, Any]] | None = None,
+        geo_location_status: int | None = None,
+    ) -> dict[str, Any]:
+        """更新计划投放地域及分地域出价系数（updateCampaign，文档 0046）。
+
+        ``regionTarget`` 和 ``regionPriceFactor`` 是整表替换字段。调用方应传入
+        已确认的完整目标列表；本方法刻意不携带计划的预算、时段、否词等其它字段。
+        """
+        campaign: dict[str, Any] = {
+            "campaignId": campaign_id,
+            "regionTarget": region_target,
+        }
+        if region_price_factor is not None:
+            campaign["regionPriceFactor"] = region_price_factor
+        if geo_location_status is not None:
+            campaign["geoLocationStatus"] = geo_location_status
+        return await self._client.call(
+            "CampaignService",
+            "updateCampaign",
+            {"campaignTypes": [campaign]},
             is_write=True,
         )
 

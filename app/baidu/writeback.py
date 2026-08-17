@@ -729,6 +729,125 @@ async def apply_campaign_pause_writeback(
     return rec
 
 
+def _normalize_region_target(region_target: list[int]) -> list[int]:
+    if not isinstance(region_target, list) or not region_target:
+        raise WritebackError("投放地域不能为空，请至少选择一个省、市或全部区域")
+    normalized: list[int] = []
+    for region_id in region_target:
+        if isinstance(region_id, bool) or not isinstance(region_id, int) or region_id <= 0:
+            raise WritebackError("投放地域必须是有效的百度地域 ID")
+        if region_id not in normalized:
+            normalized.append(region_id)
+    return normalized
+
+
+def _normalize_region_price_factor(
+    region_price_factor: list[dict] | None, region_target: list[int]
+) -> list[dict[str, float | int]] | None:
+    if region_price_factor is None:
+        return None
+    if not isinstance(region_price_factor, list):
+        raise WritebackError("分地域出价系数必须是列表")
+
+    normalized: list[dict[str, float | int]] = []
+    seen: set[int] = set()
+    for item in region_price_factor:
+        if not isinstance(item, dict):
+            raise WritebackError("分地域出价系数格式错误")
+        region_id = item.get("regionId")
+        factor = item.get("priceFactor")
+        if isinstance(region_id, bool) or not isinstance(region_id, int) or region_id not in region_target:
+            raise WritebackError("分地域出价系数的地域必须在投放地域列表中")
+        if isinstance(factor, bool):
+            raise WritebackError("分地域出价系数必须是数字")
+        try:
+            normalized_factor = float(factor)
+        except (TypeError, ValueError) as exc:
+            raise WritebackError("分地域出价系数必须是数字") from exc
+        if not 0.1 <= normalized_factor <= 1.0:
+            raise WritebackError("分地域出价系数必须在 0.1 到 1.0 之间")
+        if region_id in seen:
+            raise WritebackError("同一地域只能设置一个出价系数")
+        seen.add(region_id)
+        normalized.append({"regionId": region_id, "priceFactor": normalized_factor})
+    return normalized
+
+
+async def apply_campaign_region_writeback(
+    session: AsyncSession,
+    tenant_id: int,
+    campaign_id: int,
+    region_target: list[int],
+    region_price_factor: list[dict] | None,
+    geo_location_status: int | None = None,
+    *,
+    operator_user_id: int | None,
+    operator_name: str | None,
+) -> WritebackAction:
+    """更新计划投放地域、分地域系数及地域定向方式；dry-run 时仅写入台账。"""
+    normalized_regions = _normalize_region_target(region_target)
+    normalized_factors = _normalize_region_price_factor(region_price_factor, normalized_regions)
+    if geo_location_status is not None and geo_location_status not in (0, 1):
+        raise WritebackError("地域定向方式只能是 0（含搜索意图）或 1（仅地区内用户）")
+    camp = await session.scalar(
+        select(Campaign).where(
+            Campaign.tenant_id == tenant_id, Campaign.campaign_id == campaign_id
+        )
+    )
+    if camp is None:
+        raise WritebackError("计划不在维度表中，请先执行计划维度同步")
+    acc = await _active_account(session, tenant_id)
+
+    old_regions = list(camp.region_target or [])
+    dry_run = get_settings().baidu_write_dry_run
+    rec = WritebackAction(
+        tenant_id=tenant_id,
+        baidu_account_id=acc.id,
+        action_type="set_campaign_region",
+        word=camp.campaign_name or f"计划#{campaign_id}",
+        campaign_id=campaign_id,
+        campaign_name=camp.campaign_name,
+        old_value=len(old_regions),
+        new_value=len(normalized_regions),
+        dry_run=dry_run,
+        status="pending",
+        operator_user_id=operator_user_id,
+        operator_name=operator_name,
+    )
+    session.add(rec)
+    await session.flush()
+
+    try:
+        resp = await CampaignService(_account_client(acc)).update_campaign_region(
+            campaign_id,
+            normalized_regions,
+            region_price_factor=normalized_factors,
+            geo_location_status=geo_location_status,
+        )
+        rec.status = "dry_run" if dry_run else "success"
+        rec.baidu_response = str(resp)[:2000]
+        rec.executed_at = datetime.utcnow()
+        if not dry_run:
+            camp.region_target = normalized_regions
+            if normalized_factors is not None:
+                camp.region_price_factor = normalized_factors
+            if geo_location_status is not None:
+                camp.geo_location_status = geo_location_status
+    except BaiduAPIError as exc:
+        rec.status = "failed"
+        rec.error_msg = f"[{exc.code}] {exc.message}"[:2000]
+        rec.executed_at = datetime.utcnow()
+    except Exception:  # noqa: BLE001
+        rec.status = "failed"
+        rec.error_msg = "未知错误"
+        rec.executed_at = datetime.utcnow()
+        logger.exception("地域写回异常 campaign=%s", campaign_id)
+
+    await session.commit()
+    await session.refresh(rec)
+    return rec
+
+
 async def apply_adgroup_pause_writeback(
     session: AsyncSession,
     tenant_id: int,

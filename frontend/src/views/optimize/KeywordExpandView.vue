@@ -485,11 +485,12 @@ onMounted(load)
         :data="data?.candidates || []"
         class="kw-table"
         row-key="id"
+        :fit="true"
         @selection-change="onSelectionChange"
         @sort-change="onSortChange"
       >
         <el-table-column type="selection" width="44" />
-        <el-table-column label="候选关键词" min-width="200">
+        <el-table-column label="候选关键词" width="176">
           <template #default="{ row }">
             <div class="kw-cell-name">{{ row.word }}</div>
             <div class="kw-cell-sub">
@@ -497,40 +498,38 @@ onMounted(load)
               <template v-else-if="row.seed_word && row.seed_word.startsWith('http')">来源页面：{{ row.seed_word }}</template>
               <template v-else-if="row.seed_word">种子词：{{ row.seed_word }}</template>
               <template v-else-if="row.source === 'planner'">账户主动推荐</template>
+              <span v-if="row.show_reasons.length" class="candidate-reason" :title="row.show_reasons.join(' / ')"> · {{ row.show_reasons[0] }}</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="来源" width="100">
+        <el-table-column label="来源" width="74">
           <template #default="{ row }">
             <span class="source-tag" :class="'tag-' + row.source">{{ row.source_label }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="monthly_pv" label="月搜索量" width="100" align="right" sortable="custom">
+        <el-table-column prop="monthly_pv" label="月搜索量" width="82" align="right" sortable="custom">
           <template #default="{ row }">
             <span class="num">{{ fmtInt(row.monthly_pv) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="竞争度" width="76" align="center">
-          <template #default="{ row }">{{ row.competition_label || '—' }}</template>
-        </el-table-column>
-        <el-table-column prop="recommend_price_pc" label="指导价 PC/移动" width="130" align="right" sortable="custom">
+        <el-table-column prop="recommend_price_pc" label="指导价 PC/移动" width="105" align="right" sortable="custom">
           <template #default="{ row }">
             <span class="num">{{ fmtMoney(row.recommend_price_pc) }}<template v-if="row.recommend_price_mobile != null"> / {{ Number(row.recommend_price_mobile).toFixed(2) }}</template></span>
           </template>
         </el-table-column>
-        <el-table-column prop="impression" label="窗口展现/点击" width="120" align="right" sortable="custom">
+        <el-table-column prop="impression" label="窗口展现/点击" width="100" align="right" sortable="custom">
           <template #default="{ row }">
             <span class="num" v-if="row.impression != null">{{ fmtInt(row.impression) }} / {{ fmtInt(row.click) }}</span>
             <span v-else class="dim">—</span>
           </template>
         </el-table-column>
-        <el-table-column prop="potential_score" label="潜力分" width="110" sortable="custom">
+        <el-table-column prop="potential_score" label="潜力分" width="78" sortable="custom">
           <template #default="{ row }">
             <span class="heat-bar"><span class="heat-fill" :style="{ width: (row.potential_score ?? 0) * 10 + '%' }" /></span>
             <span class="num">{{ row.potential_score ?? '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="建议分类" width="100">
+        <el-table-column label="建议分类" width="80">
           <template #default="{ row }">
             <span v-if="row.suggested_category" class="cat-pill" :class="catClass[row.suggested_category]">
               {{ row.suggested_category_label }}
@@ -538,7 +537,7 @@ onMounted(load)
             <span v-else class="dim">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="预设" width="150">
+        <el-table-column label="预设" width="104">
           <template #default="{ row }">
             <div class="preset-cell">
               <span v-if="row.preset_price || row.preset_match_mode" class="preset-tag">
@@ -556,7 +555,7 @@ onMounted(load)
             </div>
           </template>
         </el-table-column>
-        <el-table-column v-if="aiEnabled" label="AI 研判" width="150">
+        <el-table-column v-if="aiEnabled" label="AI 研判" width="90">
           <template #default="{ row }">
             <template v-if="row.ai_relevance">
               <el-tooltip :content="row.ai_reason || '—'" placement="top" :disabled="!row.ai_reason">
@@ -571,20 +570,14 @@ onMounted(load)
             <span v-else class="dim">未评估</span>
           </template>
         </el-table-column>
-        <el-table-column label="特色" min-width="110">
-          <template #default="{ row }">
-            <span v-if="row.show_reasons.length" class="reasons">{{ row.show_reasons.join(' / ') }}</span>
-            <span v-else class="dim">—</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="230" fixed="right">
+        <el-table-column label="操作" min-width="150" class-name="action-column">
           <template #default="{ row }">
             <div class="row-actions">
               <template v-if="session.canEdit('optimize.expand') && row.status === 'pending'">
                 <el-tooltip content="选目标单元 + 匹配 + 出价，加成正式关键词写回百度（dry-run 保护）" placement="top">
-                  <el-button size="small" type="primary" plain @click="openAddToPlan(row)">加入计划</el-button>
+                  <el-button class="row-action-primary" size="small" type="primary" @click="openAddToPlan(row)">加入计划</el-button>
                 </el-tooltip>
-                <el-button size="small" @click="setStatus(row, 'ignored', '已忽略')">忽略</el-button>
+                <el-button class="row-action-secondary" size="small" @click="setStatus(row, 'ignored', '已忽略')">忽略</el-button>
               </template>
               <template v-else>
                 <span class="status-mark" :class="row.status">{{ row.status_label }}</span>
@@ -768,7 +761,8 @@ onMounted(load)
 .bt-btn:disabled { opacity: .45; cursor: not-allowed; }
 .bt-btn.bt-primary { background: var(--sem-primary); border-color: var(--sem-primary); color: #fff; }
 .kw-cell-name { font-weight: 500; color: var(--sem-text); }
-.kw-cell-sub { font-size: 11px; color: var(--sem-text-sub); margin-top: 2px; }
+.kw-cell-sub { font-size: 11px; color: var(--sem-text-sub); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.candidate-reason { color: #ba7517; }
 .num { font-variant-numeric: tabular-nums; }
 .dim { color: #c0c4cc; }
 
@@ -801,7 +795,35 @@ onMounted(load)
 .ai-rec.rec-drop { color: #e24b4a; }
 
 .reasons { font-size: 11px; color: #ba7517; }
-.row-actions { display: flex; gap: 4px; align-items: center; }
+.row-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-start; white-space: nowrap; }
+.row-actions :deep(.el-button) {
+  min-width: 58px;
+  height: 26px;
+  padding: 0 10px;
+  margin-left: 0;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1;
+}
+.row-actions :deep(.row-action-primary.el-button--primary) {
+  background: #e86f1c;
+  border-color: #e86f1c;
+  color: #fff;
+}
+.row-actions :deep(.row-action-primary.el-button--primary:hover) {
+  background: #d96014;
+  border-color: #d96014;
+  color: #fff;
+}
+.row-actions :deep(.row-action-secondary) {
+  background: #fff;
+  border-color: #dfe3e8;
+  color: #344050;
+}
+.row-actions :deep(.row-action-secondary:hover) {
+  border-color: #e86f1c;
+  color: #c45f18;
+}
 .status-mark { font-size: 11px; padding: 2px 8px; border-radius: 10px; }
 .status-mark.adopted { background: #e5f4ed; color: #1d9e75; }
 .status-mark.ignored { background: #f3f4f6; color: #9ca3af; }
