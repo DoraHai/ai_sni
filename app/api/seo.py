@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.deepseek import DeepSeekError, chat_json, is_enabled
 from app.database import get_session
 from app.geo.audit import GeoAuditError, audit_url, normalize_url, safe_fetch
+from app.geo.chinaz import fetch_chinaz_seo_metrics
 from app.models import (
     SeoBacklink,
     SeoBrandAsset,
@@ -36,6 +37,8 @@ from app.models import (
     GeoMediaPlacement,
     GeoPublication,
 )
+from app.models.module_workspace import SeoSite
+from app.models.seo import SeoCrawlRun, SeoMetricSnapshot, SeoPageSnapshot
 from app.security.auth import AuthContext, require_scoped_auth
 from app.seo_serp import (
     SerpProviderError,
@@ -44,6 +47,7 @@ from app.seo_serp import (
     fetch_baidu_top50,
     url_domain,
 )
+from app.seo_crawler import crawl_site
 
 router = APIRouter(
     prefix="/api/v1/seo",
@@ -57,6 +61,8 @@ KEYWORD_STATUSES = {"active", "paused", "archived"}
 PAGE_STATUSES = {"pending", "healthy", "needs_fix", "error"}
 BRAND_ASSET_TYPES = {"official_domain", "content_url", "platform_account"}
 OWNERSHIP_TYPES = {"official_site", "brand_content", "ai_suspected", "unrelated", "unresolved"}
+METRIC_STATUSES = {"available", "not_configured", "pending", "failed", "stale"}
+METRIC_QUALITIES = {"verified", "estimated", "crawled", "imported"}
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -67,6 +73,17 @@ async def _tenant(session: AsyncSession, tenant_id: int) -> Tenant:
     row = await session.get(Tenant, tenant_id)
     if not row:
         raise HTTPException(404, "客户不存在")
+    return row
+
+
+async def _seo_site(
+    session: AsyncSession, tenant_id: int, site_id: int | None
+) -> SeoSite | None:
+    if site_id is None:
+        return None
+    row = await session.get(SeoSite, site_id)
+    if not row or row.tenant_id != tenant_id:
+        raise HTTPException(404, "SEO site does not exist for this tenant")
     return row
 
 
@@ -99,6 +116,7 @@ def _keyword_payload(
     return {
         "id": row.id,
         "tenant_id": row.tenant_id,
+        "site_id": row.site_id,
         "keyword": row.keyword,
         "cluster": row.cluster,
         "intent": row.intent,
@@ -121,6 +139,7 @@ def _keyword_payload(
 def _rank_payload(row: SeoRankSnapshot) -> dict[str, Any]:
     return {
         "id": row.id,
+        "site_id": row.site_id,
         "keyword_id": row.keyword_id,
         "engine": row.engine,
         "device": row.device,
@@ -138,6 +157,7 @@ def _page_payload(row: SeoSitePage) -> dict[str, Any]:
     return {
         "id": row.id,
         "tenant_id": row.tenant_id,
+        "site_id": row.site_id,
         "url": row.url,
         "page_type": row.page_type,
         "target_keyword_id": row.target_keyword_id,
@@ -163,6 +183,7 @@ def _page_payload(row: SeoSitePage) -> dict[str, Any]:
 
 class KeywordCreate(BaseModel):
     tenant_id: int
+    site_id: int | None = None
     keyword: str = Field(min_length=1, max_length=200)
     cluster: str | None = Field(None, max_length=120)
     intent: str | None = Field(None, max_length=24)
@@ -187,11 +208,13 @@ class KeywordUpdate(BaseModel):
 
 class KeywordImport(BaseModel):
     tenant_id: int
+    site_id: int | None = None
     items: list[KeywordCreate] = Field(min_length=1, max_length=500)
 
 
 class RankSnapshotCreate(BaseModel):
     tenant_id: int
+    site_id: int | None = None
     keyword_id: int
     engine: Literal["baidu", "google", "bing", "360", "sogou"]
     device: Literal["desktop", "mobile"] = "desktop"
@@ -211,6 +234,7 @@ class RankSnapshotBatch(BaseModel):
 
 class BrandAssetCreate(BaseModel):
     tenant_id: int
+    site_id: int | None = None
     asset_type: Literal["official_domain", "content_url", "platform_account"]
     name: str = Field(min_length=1, max_length=200)
     match_value: str = Field(min_length=1, max_length=2000)
@@ -226,12 +250,14 @@ class BrandAssetUpdate(BaseModel):
 
 class BrandProfileUpdate(BaseModel):
     tenant_id: int
+    site_id: int | None = None
     brand_name: str = Field(min_length=1, max_length=100)
     website: str = Field(min_length=1, max_length=2000)
 
 
 class SerpCollectRequest(BaseModel):
     tenant_id: int
+    site_id: int | None = None
     keyword_ids: list[int] | None = Field(None, max_length=50)
     devices: list[Literal["desktop", "mobile"]] = Field(default_factory=lambda: ["desktop"])
     max_keywords: int = Field(20, ge=1, le=50)
@@ -240,12 +266,14 @@ class SerpCollectRequest(BaseModel):
 
 class SerpOwnershipUpdate(BaseModel):
     tenant_id: int
+    site_id: int | None = None
     ownership_type: Literal["official_site", "brand_content", "unrelated", "unresolved"]
     create_asset: bool = True
 
 
 class SitePageCreate(BaseModel):
     tenant_id: int
+    site_id: int | None = None
     url: str = Field(min_length=1, max_length=2000)
     page_type: str | None = Field(None, max_length=32)
     target_keyword_id: int | None = None
@@ -255,6 +283,7 @@ class SitePageCreate(BaseModel):
 
 class SitePageImport(BaseModel):
     tenant_id: int
+    site_id: int | None = None
     urls: list[str] = Field(min_length=1, max_length=500)
 
 
@@ -266,9 +295,201 @@ class SitePageUpdate(BaseModel):
     status: Literal["pending", "healthy", "needs_fix", "error"] | None = None
 
 
+class MetricSnapshotCreate(BaseModel):
+    tenant_id: int
+    site_id: int
+    metric_type: str = Field(min_length=1, max_length=64)
+    dimension: str = Field("total", min_length=1, max_length=80)
+    numeric_value: float | None = None
+    text_value: str | None = Field(None, max_length=5000)
+    unit: str | None = Field(None, max_length=24)
+    source: str = Field(min_length=1, max_length=40)
+    data_quality: Literal["verified", "estimated", "crawled", "imported"] = "estimated"
+    status: Literal["available", "not_configured", "pending", "failed", "stale"] = "available"
+    error_message: str | None = Field(None, max_length=5000)
+    raw_payload: dict[str, Any] | list[Any] | None = None
+    observed_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class OverviewMetricCollectRequest(BaseModel):
+    tenant_id: int
+    site_id: int
+
+
+def _metric_payload(row: SeoMetricSnapshot, *, include_raw: bool = False) -> dict[str, Any]:
+    payload = {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "site_id": row.site_id,
+        "metric_type": row.metric_type,
+        "dimension": row.dimension,
+        "numeric_value": float(row.numeric_value) if row.numeric_value is not None else None,
+        "text_value": row.text_value,
+        "unit": row.unit,
+        "source": row.source,
+        "data_quality": row.data_quality,
+        "status": row.status,
+        "error_message": row.error_message,
+        "observed_at": _iso(row.observed_at),
+        "collected_at": _iso(row.collected_at),
+    }
+    if include_raw:
+        payload["raw_payload"] = row.raw_payload
+    return payload
+
+
+@router.post("/overview/metric-snapshots")
+async def create_metric_snapshot(
+    req: MetricSnapshotCreate,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    await _tenant(session, req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
+    row = SeoMetricSnapshot(**req.model_dump())
+    session.add(row)
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(409, "This SEO metric observation already exists") from exc
+    await session.refresh(row)
+    return _metric_payload(row, include_raw=True)
+
+
+@router.get("/overview/metric-snapshots/latest")
+async def list_latest_metric_snapshots(
+    tenant_id: int,
+    site_id: int,
+    metric_type: str | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    await _tenant(session, tenant_id)
+    await _seo_site(session, tenant_id, site_id)
+    latest = await _latest_site_metrics(session, tenant_id, site_id, metric_type)
+    return {"items": [_metric_payload(row) for row in latest.values()]}
+
+
+async def _latest_site_metrics(
+    session: AsyncSession,
+    tenant_id: int,
+    site_id: int,
+    metric_type: str | None = None,
+) -> dict[tuple[str, str, str], SeoMetricSnapshot]:
+    conditions = [
+        SeoMetricSnapshot.tenant_id == tenant_id,
+        SeoMetricSnapshot.site_id == site_id,
+    ]
+    if metric_type:
+        conditions.append(SeoMetricSnapshot.metric_type == metric_type)
+    rows = list(
+        await session.scalars(
+            select(SeoMetricSnapshot)
+            .where(*conditions)
+            .order_by(SeoMetricSnapshot.observed_at.desc(), SeoMetricSnapshot.id.desc())
+        )
+    )
+    latest: dict[tuple[str, str, str], SeoMetricSnapshot] = {}
+    for row in rows:
+        latest.setdefault((row.metric_type, row.dimension, row.source), row)
+    return latest
+
+
+def _provider_metric_status(value: dict[str, Any]) -> Literal[
+    "available", "not_configured", "failed"
+]:
+    status = str(value.get("status") or "").lower()
+    if status == "available":
+        return "available"
+    if status in {"unavailable", "disabled", "not_configured"}:
+        return "not_configured"
+    return "failed"
+
+
+def _number_or_text(value: Any) -> tuple[float | None, str | None]:
+    if value is None or value == "":
+        return None, None
+    if isinstance(value, (int, float)):
+        return float(value), None
+    text_value = str(value).strip()
+    try:
+        return float(text_value.replace(",", "")), None
+    except ValueError:
+        return None, text_value or None
+
+
+@router.post("/overview/collect-metrics")
+async def collect_overview_metrics(
+    req: OverviewMetricCollectRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    site = await _seo_site(session, req.tenant_id, req.site_id)
+    if site is None:
+        raise HTTPException(404, "SEO site does not exist")
+    target_url = site.default_url or f"https://{site.canonical_domain}"
+    provider = await fetch_chinaz_seo_metrics(target_url)
+    observed_at = datetime.utcnow()
+    snapshots: list[SeoMetricSnapshot] = []
+
+    def add(
+        metric_type: str,
+        value: Any,
+        source_payload: dict[str, Any],
+        *,
+        dimension: str = "total",
+        unit: str | None = None,
+    ) -> None:
+        numeric_value, text_value = _number_or_text(value)
+        status = _provider_metric_status(source_payload)
+        snapshots.append(
+            SeoMetricSnapshot(
+                tenant_id=req.tenant_id,
+                site_id=req.site_id,
+                metric_type=metric_type,
+                dimension=dimension,
+                numeric_value=numeric_value if status == "available" else None,
+                text_value=text_value if status == "available" else None,
+                unit=unit,
+                source="chinaz",
+                data_quality="estimated",
+                status=status,
+                error_message=None if status == "available" else str(source_payload.get("reason") or "Provider query failed"),
+                raw_payload=source_payload,
+                observed_at=observed_at,
+            )
+        )
+
+    index_data = provider.get("baidu_index") or {}
+    pc_data = provider.get("baidu_pc_keywords") or {}
+    mobile_data = provider.get("baidu_mobile_keywords") or {}
+    weight_data = provider.get("comprehensive_weight") or {}
+    add("baidu_index_estimate", index_data.get("site_count"), index_data, unit="pages")
+    add("baidu_keyword_coverage", pc_data.get("total"), pc_data, dimension="desktop", unit="keywords")
+    add("baidu_keyword_coverage", mobile_data.get("total"), mobile_data, dimension="mobile", unit="keywords")
+    for dimension, key in (("desktop", "baidu_pc"), ("mobile", "baidu_mobile")):
+        values = weight_data.get(key) if isinstance(weight_data.get(key), dict) else {}
+        add("baidu_weight", values.get("weight"), weight_data, dimension=dimension, unit="score")
+        add("estimated_organic_uv", values.get("uv"), weight_data, dimension=dimension, unit="visits_per_day")
+
+    session.add_all(snapshots)
+    await session.commit()
+    for row in snapshots:
+        await session.refresh(row)
+    return {
+        "site_id": req.site_id,
+        "target_url": target_url,
+        "collected_at": _iso(observed_at),
+        "items": [_metric_payload(row) for row in snapshots],
+    }
+
+
 @router.get("/keywords")
 async def list_seo_keywords(
     tenant_id: int,
+    site_id: int | None = None,
     q: str | None = None,
     priority: str | None = None,
     intent: str | None = None,
@@ -280,9 +501,12 @@ async def list_seo_keywords(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     await _tenant(session, tenant_id)
+    await _seo_site(session, tenant_id, site_id)
     if engine not in ENGINES:
         raise HTTPException(400, "不支持的搜索引擎")
     conditions = [SeoKeywordAsset.tenant_id == tenant_id]
+    if site_id is not None:
+        conditions.append(SeoKeywordAsset.site_id == site_id)
     if q:
         term = f"%{q.strip()}%"
         conditions.append(
@@ -341,12 +565,15 @@ async def list_seo_keywords(
             if rank.engine == engine and len(grouped[rank.keyword_id]) < 2:
                 grouped[rank.keyword_id].append(rank)
 
+    active_conditions = [
+        SeoKeywordAsset.tenant_id == tenant_id,
+        SeoKeywordAsset.status == "active",
+    ]
+    if site_id is not None:
+        active_conditions.append(SeoKeywordAsset.site_id == site_id)
     tenant_rows = list(
         await session.scalars(
-            select(SeoKeywordAsset).where(
-                SeoKeywordAsset.tenant_id == tenant_id,
-                SeoKeywordAsset.status == "active",
-            )
+            select(SeoKeywordAsset).where(*active_conditions)
         )
     )
     return {
@@ -395,8 +622,10 @@ async def create_seo_keyword(
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
     await _tenant(session, req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
     row = SeoKeywordAsset(
         tenant_id=req.tenant_id,
+        site_id=req.site_id,
         keyword=req.keyword.strip(),
         cluster=(req.cluster or "").strip() or None,
         intent=(req.intent or "").strip() or None,
@@ -427,9 +656,13 @@ async def import_seo_keywords(
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
     await _tenant(session, req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
+    existing_conditions = [SeoKeywordAsset.tenant_id == req.tenant_id]
+    if req.site_id is not None:
+        existing_conditions.append(SeoKeywordAsset.site_id == req.site_id)
     existing = set(
         await session.scalars(
-            select(SeoKeywordAsset.keyword).where(SeoKeywordAsset.tenant_id == req.tenant_id)
+            select(SeoKeywordAsset.keyword).where(*existing_conditions)
         )
     )
     created = []
@@ -443,6 +676,7 @@ async def import_seo_keywords(
             continue
         row = SeoKeywordAsset(
             tenant_id=req.tenant_id,
+            site_id=req.site_id,
             keyword=word,
             cluster=(item.cluster or "").strip() or None,
             intent=(item.intent or "").strip() or None,
@@ -527,7 +761,10 @@ async def create_rank_snapshot(
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
-    await _keyword(session, req.keyword_id, req.tenant_id)
+    keyword = await _keyword(session, req.keyword_id, req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
+    if req.site_id is not None and keyword.site_id not in {None, req.site_id}:
+        raise HTTPException(400, "Rank snapshot site does not match the keyword site")
     row = SeoRankSnapshot(**req.model_dump())
     session.add(row)
     await session.commit()
@@ -542,6 +779,9 @@ async def create_rank_snapshots_batch(
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
+    site_ids = {item.site_id for item in req.items if item.site_id is not None}
+    for site_id in site_ids:
+        await _seo_site(session, req.tenant_id, site_id)
     ids = {item.keyword_id for item in req.items}
     found = set(
         await session.scalars(
@@ -556,6 +796,9 @@ async def create_rank_snapshots_batch(
     for item in req.items:
         if item.tenant_id != req.tenant_id:
             raise HTTPException(400, "排名快照 tenant_id 必须一致")
+        keyword = await _keyword(session, item.keyword_id, req.tenant_id)
+        if item.site_id is not None and keyword.site_id not in {None, item.site_id}:
+            raise HTTPException(400, "Rank snapshot site does not match the keyword site")
         session.add(SeoRankSnapshot(**item.model_dump()))
     await session.commit()
     return {"created": len(req.items)}
@@ -565,6 +808,7 @@ def _brand_asset_payload(row: SeoBrandAsset) -> dict[str, Any]:
     return {
         "id": row.id,
         "tenant_id": row.tenant_id,
+        "site_id": row.site_id,
         "asset_type": row.asset_type,
         "name": row.name,
         "match_value": row.match_value,
@@ -578,6 +822,7 @@ def _brand_asset_payload(row: SeoBrandAsset) -> dict[str, Any]:
 def _serp_payload(row: SeoSerpResult, keyword: str | None = None) -> dict[str, Any]:
     return {
         "id": row.id,
+        "site_id": row.site_id,
         "keyword_id": row.keyword_id,
         "keyword": keyword,
         "engine": row.engine,
@@ -740,13 +985,18 @@ async def update_brand_profile(
 @router.get("/rank-serp/brand-assets")
 async def list_brand_assets(
     tenant_id: int,
+    site_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     await _tenant(session, tenant_id)
+    await _seo_site(session, tenant_id, site_id)
+    conditions = [SeoBrandAsset.tenant_id == tenant_id]
+    if site_id is not None:
+        conditions.append(SeoBrandAsset.site_id == site_id)
     rows = list(
         await session.scalars(
             select(SeoBrandAsset)
-            .where(SeoBrandAsset.tenant_id == tenant_id)
+            .where(*conditions)
             .order_by(SeoBrandAsset.status, SeoBrandAsset.asset_type, SeoBrandAsset.id.desc())
         )
     )
@@ -761,6 +1011,7 @@ async def create_brand_asset(
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
     await _tenant(session, req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
     value = req.match_value.strip()
     if req.asset_type == "official_domain":
         value = url_domain(value)
@@ -770,6 +1021,7 @@ async def create_brand_asset(
         raise HTTPException(400, "匹配内容无效")
     row = SeoBrandAsset(
         tenant_id=req.tenant_id,
+        site_id=req.site_id,
         asset_type=req.asset_type,
         name=req.name.strip(),
         match_value=value,
@@ -811,26 +1063,37 @@ async def update_brand_asset(
     return _brand_asset_payload(row)
 
 
-async def _brand_match_context(session: AsyncSession, tenant_id: int) -> dict[str, Any]:
+async def _brand_match_context(
+    session: AsyncSession, tenant_id: int, site_id: int | None = None
+) -> dict[str, Any]:
+    site = await _seo_site(session, tenant_id, site_id)
+    brand_conditions = [
+        SeoBrandAsset.tenant_id == tenant_id,
+        SeoBrandAsset.status == "active",
+    ]
+    page_conditions = [SeoSitePage.tenant_id == tenant_id]
+    content_conditions = [
+        SeoContentAsset.tenant_id == tenant_id,
+        SeoContentAsset.page_url.is_not(None),
+    ]
+    if site_id is not None:
+        brand_conditions.append(SeoBrandAsset.site_id == site_id)
+        page_conditions.append(SeoSitePage.site_id == site_id)
+        content_conditions.append(SeoContentAsset.site_id == site_id)
     assets = list(
         await session.scalars(
-            select(SeoBrandAsset).where(
-                SeoBrandAsset.tenant_id == tenant_id, SeoBrandAsset.status == "active"
-            )
+            select(SeoBrandAsset).where(*brand_conditions)
         )
     )
     site_urls = list(
-        await session.scalars(select(SeoSitePage.url).where(SeoSitePage.tenant_id == tenant_id))
+        await session.scalars(select(SeoSitePage.url).where(*page_conditions))
     )
     content_urls = list(
         await session.scalars(
-            select(SeoContentAsset.page_url).where(
-                SeoContentAsset.tenant_id == tenant_id,
-                SeoContentAsset.page_url.is_not(None),
-            )
+            select(SeoContentAsset.page_url).where(*content_conditions)
         )
     )
-    placement_urls = list(
+    placement_urls = [] if site_id is not None else list(
         await session.scalars(
             select(GeoMediaPlacement.published_url).where(
                 GeoMediaPlacement.tenant_id == tenant_id,
@@ -838,7 +1101,7 @@ async def _brand_match_context(session: AsyncSession, tenant_id: int) -> dict[st
             )
         )
     )
-    publication_urls = list(
+    publication_urls = [] if site_id is not None else list(
         await session.scalars(
             select(GeoPublication.published_url)
             .join(GeoChannelVariant, GeoChannelVariant.id == GeoPublication.variant_id)
@@ -850,6 +1113,8 @@ async def _brand_match_context(session: AsyncSession, tenant_id: int) -> dict[st
         )
     )
     official_domains = {url_domain(value) for value in site_urls if url_domain(value)}
+    if site is not None:
+        official_domains.add(site.canonical_domain)
     normalized_content = {
         canonical_url(value)
         for value in [*content_urls, *placement_urls, *publication_urls]
@@ -935,6 +1200,7 @@ async def collect_rank_serp_for_tenant(
     *,
     session: AsyncSession,
     tenant_id: int,
+    site_id: int | None = None,
     keyword_ids: list[int] | None = None,
     devices: list[Literal["desktop", "mobile"]] | None = None,
     max_keywords: int | None = None,
@@ -943,6 +1209,7 @@ async def collect_rank_serp_for_tenant(
 ) -> dict[str, Any]:
     """采集一个客户的百度前 50；供人工刷新与每日定时任务共用。"""
     tenant = await _tenant(session, tenant_id)
+    await _seo_site(session, tenant_id, site_id)
     devices = list(dict.fromkeys(devices or ["desktop"]))
     if not devices:
         raise HTTPException(400, "至少选择一个设备")
@@ -950,6 +1217,8 @@ async def collect_rank_serp_for_tenant(
         SeoKeywordAsset.tenant_id == tenant_id,
         SeoKeywordAsset.status == "active",
     ]
+    if site_id is not None:
+        conditions.append(SeoKeywordAsset.site_id == site_id)
     if keyword_ids:
         conditions.append(SeoKeywordAsset.id.in_(set(keyword_ids)))
     statement = (
@@ -962,7 +1231,7 @@ async def collect_rank_serp_for_tenant(
     keywords = list(await session.scalars(statement))
     if not keywords:
         raise HTTPException(400, "没有可采集的启用关键词")
-    context = await _brand_match_context(session, tenant_id)
+    context = await _brand_match_context(session, tenant_id, site_id)
     semaphore = asyncio.Semaphore(3)
 
     async def fetch_one(keyword: SeoKeywordAsset, device: str) -> tuple[SeoKeywordAsset, str, dict[str, Any] | None, str | None]:
@@ -1005,6 +1274,7 @@ async def collect_rank_serp_for_tenant(
                 item.update(ai_results[item["index"]])
             row = SeoSerpResult(
                 tenant_id=tenant_id,
+                site_id=site_id,
                 keyword_id=keyword.id,
                 engine="baidu",
                 device=device,
@@ -1035,6 +1305,7 @@ async def collect_rank_serp_for_tenant(
         session.add(
             SeoRankSnapshot(
                 tenant_id=tenant_id,
+                site_id=site_id,
                 keyword_id=keyword.id,
                 engine="baidu",
                 device=device,
@@ -1072,6 +1343,7 @@ async def collect_rank_serp(
     result = await collect_rank_serp_for_tenant(
         session=session,
         tenant_id=req.tenant_id,
+        site_id=req.site_id,
         keyword_ids=req.keyword_ids,
         devices=req.devices,
         max_keywords=req.max_keywords,
@@ -1085,6 +1357,7 @@ async def collect_rank_serp(
 @router.get("/rank-serp/results")
 async def list_rank_serp_results(
     tenant_id: int,
+    site_id: int | None = None,
     device: Literal["desktop", "mobile"] = "desktop",
     ownership_type: str | None = None,
     keyword_id: int | None = None,
@@ -1092,7 +1365,10 @@ async def list_rank_serp_results(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     await _tenant(session, tenant_id)
+    await _seo_site(session, tenant_id, site_id)
     base_conditions = [SeoSerpResult.tenant_id == tenant_id, SeoSerpResult.device == device]
+    if site_id is not None:
+        base_conditions.append(SeoSerpResult.site_id == site_id)
     conditions = list(base_conditions)
     if ownership_type:
         if ownership_type not in OWNERSHIP_TYPES:
@@ -1152,6 +1428,9 @@ async def confirm_serp_ownership(
     row = await session.get(SeoSerpResult, result_id)
     if not row or row.tenant_id != req.tenant_id:
         raise HTTPException(404, "搜索结果不存在")
+    await _seo_site(session, req.tenant_id, req.site_id)
+    if req.site_id is not None and row.site_id not in {None, req.site_id}:
+        raise HTTPException(400, "Search result site does not match the selected site")
     row.ownership_type = req.ownership_type
     row.match_method = "manual"
     row.confidence = 100
@@ -1162,6 +1441,7 @@ async def confirm_serp_ownership(
         existing = await session.scalar(
             select(SeoBrandAsset).where(
                 SeoBrandAsset.tenant_id == req.tenant_id,
+                SeoBrandAsset.site_id == row.site_id,
                 SeoBrandAsset.asset_type == asset_type,
                 SeoBrandAsset.match_value == match_value,
             )
@@ -1169,6 +1449,7 @@ async def confirm_serp_ownership(
         if existing is None:
             asset = SeoBrandAsset(
                 tenant_id=req.tenant_id,
+                site_id=row.site_id,
                 asset_type=asset_type,
                 name=row.title or row.domain or "人工确认品牌资产",
                 match_value=match_value,
@@ -1214,9 +1495,235 @@ async def confirm_serp_ownership(
     return _serp_payload(row)
 
 
+class SeoCrawlRequest(BaseModel):
+    tenant_id: int
+    site_id: int
+    max_urls: int = Field(50, ge=20, le=100)
+    max_depth: int = Field(3, ge=1, le=5)
+    seed_urls: list[str] = Field(default_factory=list, max_length=10)
+
+
+def _crawl_run_payload(row: SeoCrawlRun) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "site_id": row.site_id,
+        "status": row.status,
+        "seed_url": row.seed_url,
+        "max_urls": row.max_urls,
+        "discovered_count": row.discovered_count,
+        "fetched_count": row.fetched_count,
+        "failed_count": row.failed_count,
+        "blocked_count": row.blocked_count,
+        "issue_count": row.issue_count,
+        "error_summary": row.error_summary,
+        "started_at": _iso(row.started_at),
+        "completed_at": _iso(row.completed_at),
+    }
+
+
+def _page_snapshot_payload(row: SeoPageSnapshot) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "crawl_run_id": row.crawl_run_id,
+        "site_id": row.site_id,
+        "url": row.url,
+        "final_url": row.final_url,
+        "discovery_source": row.discovery_source,
+        "click_depth": row.click_depth,
+        "status_code": row.status_code,
+        "redirect_chain": row.redirect_chain or [],
+        "fetch_error": row.fetch_error,
+        "error_type": row.error_type,
+        "content_type": row.content_type,
+        "content_length": row.content_length,
+        "response_time_ms": row.response_time_ms,
+        "robots_allowed": row.robots_allowed,
+        "meta_robots": row.meta_robots,
+        "x_robots_tag": row.x_robots_tag,
+        "canonical_url": row.canonical_url,
+        "indexable": row.indexable,
+        "title": row.title,
+        "title_length": row.title_length,
+        "meta_description": row.meta_description,
+        "description_length": row.description_length,
+        "h1_texts": row.h1_texts or [],
+        "h1_count": row.h1_count,
+        "html_lang": row.html_lang,
+        "main_content_extractable": row.main_content_extractable,
+        "word_count": row.word_count,
+        "schema_types": row.schema_types or [],
+        "schema_jsonld_count": row.schema_jsonld_count,
+        "schema_parse_error": row.schema_parse_error,
+        "internal_links_count": row.internal_links_count,
+        "external_links_count": row.external_links_count,
+        "images_count": row.images_count,
+        "images_missing_alt_count": row.images_missing_alt_count,
+        "hreflang_tags": row.hreflang_tags or [],
+        "issue_codes": row.issue_codes or [],
+        "fetched_at": _iso(row.fetched_at),
+    }
+
+
+@router.post("/site/crawl-runs")
+async def create_seo_crawl_run(
+    req: SeoCrawlRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    site = await _seo_site(session, req.tenant_id, req.site_id)
+    if site is None:
+        raise HTTPException(404, "SEO site does not exist")
+    active = await session.scalar(
+        select(SeoCrawlRun).where(
+            SeoCrawlRun.tenant_id == req.tenant_id,
+            SeoCrawlRun.site_id == req.site_id,
+            SeoCrawlRun.status == "running",
+        )
+    )
+    if active is not None:
+        raise HTTPException(409, "This SEO site already has a crawl in progress")
+    seed_url = site.default_url or f"https://{site.canonical_domain}"
+    run = SeoCrawlRun(
+        tenant_id=req.tenant_id,
+        site_id=req.site_id,
+        status="running",
+        seed_url=seed_url,
+        max_urls=req.max_urls,
+        created_by=ctx.user_id,
+        started_at=datetime.utcnow(),
+    )
+    session.add(run)
+    await session.commit()
+    await session.refresh(run)
+    run_id = run.id
+    try:
+        result = await crawl_site(
+            seed_url,
+            max_urls=req.max_urls,
+            max_depth=req.max_depth,
+            extra_seeds=req.seed_urls,
+        )
+        snapshot_values = result.get("snapshots") or []
+        existing_pages = {
+            row.url: row
+            for row in list(
+                await session.scalars(
+                    select(SeoSitePage).where(
+                        SeoSitePage.tenant_id == req.tenant_id,
+                        SeoSitePage.site_id == req.site_id,
+                    )
+                )
+            )
+        }
+        for item in snapshot_values:
+            snapshot = SeoPageSnapshot(
+                tenant_id=req.tenant_id,
+                site_id=req.site_id,
+                crawl_run_id=run.id,
+                **item,
+            )
+            session.add(snapshot)
+            page = existing_pages.get(item["url"])
+            if page is None:
+                page = SeoSitePage(
+                    tenant_id=req.tenant_id,
+                    site_id=req.site_id,
+                    url=item["url"],
+                    created_by=ctx.user_id,
+                )
+                session.add(page)
+                existing_pages[item["url"]] = page
+            page.title = item.get("title")
+            page.meta_description = item.get("meta_description")
+            page.h1 = (item.get("h1_texts") or [None])[0]
+            page.canonical = item.get("canonical_url")
+            page.indexable = item.get("indexable")
+            page.http_status = item.get("status_code")
+            page.content_units = item.get("word_count")
+            page.issue_codes = item.get("issue_codes") or []
+            page.audit_score = max(0, 100 - len(page.issue_codes) * 10)
+            page.status = "error" if item.get("error_type") else ("healthy" if not page.issue_codes else "needs_fix")
+            page.last_error = item.get("fetch_error")
+            page.last_checked_at = datetime.utcnow()
+
+        fetched = sum(item.get("status_code") is not None and not item.get("error_type") for item in snapshot_values)
+        blocked = sum(item.get("error_type") == "robots_blocked" for item in snapshot_values)
+        failed = sum(bool(item.get("error_type")) and item.get("error_type") != "robots_blocked" for item in snapshot_values)
+        run.discovered_count = int(result.get("discovered") or len(snapshot_values))
+        run.fetched_count = fetched
+        run.failed_count = failed
+        run.blocked_count = blocked
+        run.issue_count = sum(len(item.get("issue_codes") or []) for item in snapshot_values)
+        run.status = "failed" if not fetched and failed else ("partial" if failed or blocked else "completed")
+        run.completed_at = datetime.utcnow()
+        run.error_summary = None
+        await session.commit()
+        await session.refresh(run)
+    except Exception as exc:
+        await session.rollback()
+        run = await session.get(SeoCrawlRun, run_id)
+        if run is not None:
+            run.status = "failed"
+            run.error_summary = str(exc)[:2000]
+            run.completed_at = datetime.utcnow()
+            await session.commit()
+        raise HTTPException(502, f"SEO crawl failed: {str(exc)[:300]}") from exc
+    return {
+        "run": _crawl_run_payload(run),
+        "snapshots": snapshot_values[:100],
+    }
+
+
+@router.get("/site/crawl-runs")
+async def list_seo_crawl_runs(
+    tenant_id: int,
+    site_id: int,
+    run_id: int | None = None,
+    limit: int = Query(10, ge=1, le=50),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    await _seo_site(session, tenant_id, site_id)
+    conditions = [
+        SeoCrawlRun.tenant_id == tenant_id,
+        SeoCrawlRun.site_id == site_id,
+    ]
+    if run_id is not None:
+        conditions.append(SeoCrawlRun.id == run_id)
+    runs = list(
+        await session.scalars(
+            select(SeoCrawlRun)
+            .where(*conditions)
+            .order_by(SeoCrawlRun.started_at.desc(), SeoCrawlRun.id.desc())
+            .limit(limit)
+        )
+    )
+    snapshots: list[SeoPageSnapshot] = []
+    selected_run_id = run_id or (runs[0].id if runs else None)
+    if selected_run_id is not None:
+        snapshots = list(
+            await session.scalars(
+                select(SeoPageSnapshot)
+                .where(
+                    SeoPageSnapshot.tenant_id == tenant_id,
+                    SeoPageSnapshot.site_id == site_id,
+                    SeoPageSnapshot.crawl_run_id == selected_run_id,
+                )
+                .order_by(SeoPageSnapshot.click_depth, SeoPageSnapshot.id)
+                .limit(200)
+            )
+        )
+    return {
+        "runs": [_crawl_run_payload(row) for row in runs],
+        "snapshots": [_page_snapshot_payload(row) for row in snapshots],
+    }
+
+
 @router.get("/site-pages")
 async def list_site_pages(
     tenant_id: int,
+    site_id: int | None = None,
     q: str | None = None,
     status: str | None = None,
     page: int = Query(1, ge=1),
@@ -1224,7 +1731,10 @@ async def list_site_pages(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     await _tenant(session, tenant_id)
+    await _seo_site(session, tenant_id, site_id)
     conditions = [SeoSitePage.tenant_id == tenant_id]
+    if site_id is not None:
+        conditions.append(SeoSitePage.site_id == site_id)
     if q:
         term = f"%{q.strip()}%"
         conditions.append(or_(SeoSitePage.url.ilike(term), SeoSitePage.title.ilike(term)))
@@ -1242,9 +1752,10 @@ async def list_site_pages(
             .limit(page_size)
         )
     )
-    all_rows = list(
-        await session.scalars(select(SeoSitePage).where(SeoSitePage.tenant_id == tenant_id))
-    )
+    all_conditions = [SeoSitePage.tenant_id == tenant_id]
+    if site_id is not None:
+        all_conditions.append(SeoSitePage.site_id == site_id)
+    all_rows = list(await session.scalars(select(SeoSitePage).where(*all_conditions)))
     return {
         "items": [_page_payload(row) for row in rows],
         "total": int(total or 0),
@@ -1265,10 +1776,12 @@ async def list_site_pages(
 
 
 async def _validate_target_keyword(
-    session: AsyncSession, tenant_id: int, keyword_id: int | None
+    session: AsyncSession, tenant_id: int, keyword_id: int | None, site_id: int | None = None
 ) -> None:
     if keyword_id is not None:
-        await _keyword(session, keyword_id, tenant_id)
+        keyword = await _keyword(session, keyword_id, tenant_id)
+        if site_id is not None and keyword.site_id not in {None, site_id}:
+            raise HTTPException(400, "Target keyword site does not match the page site")
 
 
 @router.post("/site-pages")
@@ -1279,13 +1792,15 @@ async def create_site_page(
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
     await _tenant(session, req.tenant_id)
-    await _validate_target_keyword(session, req.tenant_id, req.target_keyword_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
+    await _validate_target_keyword(session, req.tenant_id, req.target_keyword_id, req.site_id)
     try:
         url = normalize_url(req.url)
     except GeoAuditError as exc:
         raise HTTPException(400, str(exc)) from exc
     row = SeoSitePage(
         tenant_id=req.tenant_id,
+        site_id=req.site_id,
         url=url,
         page_type=(req.page_type or "").strip() or None,
         target_keyword_id=req.target_keyword_id,
@@ -1311,9 +1826,13 @@ async def import_site_pages(
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
     await _tenant(session, req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
+    existing_conditions = [SeoSitePage.tenant_id == req.tenant_id]
+    if req.site_id is not None:
+        existing_conditions.append(SeoSitePage.site_id == req.site_id)
     existing = set(
         await session.scalars(
-            select(SeoSitePage.url).where(SeoSitePage.tenant_id == req.tenant_id)
+            select(SeoSitePage.url).where(*existing_conditions)
         )
     )
     created = 0
@@ -1330,6 +1849,7 @@ async def import_site_pages(
         session.add(
             SeoSitePage(
                 tenant_id=req.tenant_id,
+                site_id=req.site_id,
                 url=url,
                 status="pending",
                 created_by=ctx.user_id,
@@ -1350,7 +1870,9 @@ async def update_site_page(
 ) -> dict[str, Any]:
     row = await _site_page(session, page_id, tenant_id)
     values = req.model_dump(exclude_unset=True)
-    await _validate_target_keyword(session, tenant_id, values.get("target_keyword_id"))
+    await _validate_target_keyword(
+        session, tenant_id, values.get("target_keyword_id"), row.site_id
+    )
     for key, value in values.items():
         if isinstance(value, str):
             value = value.strip() or None
@@ -1403,19 +1925,39 @@ async def audit_site_page(
 @router.get("/overview")
 async def seo_overview(
     tenant_id: int,
+    site_id: int | None = None,
     engine: str = Query("baidu"),
     device: Literal["desktop", "mobile"] = "desktop",
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     await _tenant(session, tenant_id)
+    site = await _seo_site(session, tenant_id, site_id)
     if engine not in ENGINES:
         raise HTTPException(400, "不支持的搜索引擎")
-    keywords = list(await session.scalars(select(SeoKeywordAsset).where(SeoKeywordAsset.tenant_id == tenant_id, SeoKeywordAsset.status == "active")))
-    pages = list(await session.scalars(select(SeoSitePage).where(SeoSitePage.tenant_id == tenant_id)))
-    contents = list(await session.scalars(select(SeoContentAsset).where(SeoContentAsset.tenant_id == tenant_id)))
-    backlinks = list(await session.scalars(select(SeoBacklink).where(SeoBacklink.tenant_id == tenant_id)))
-    competitors = list(await session.scalars(select(SeoCompetitor).where(SeoCompetitor.tenant_id == tenant_id, SeoCompetitor.status == "active")))
-    all_ranks = list(await session.scalars(select(SeoRankSnapshot).where(SeoRankSnapshot.tenant_id == tenant_id, SeoRankSnapshot.subject_type == "own").order_by(SeoRankSnapshot.checked_at.asc(), SeoRankSnapshot.id.asc())))
+
+    def scope(model: Any, *conditions: Any) -> list[Any]:
+        values = [model.tenant_id == tenant_id, *conditions]
+        if site_id is not None:
+            values.append(model.site_id == site_id)
+        return values
+
+    keywords = list(await session.scalars(select(SeoKeywordAsset).where(*scope(SeoKeywordAsset, SeoKeywordAsset.status == "active"))))
+    pages = list(await session.scalars(select(SeoSitePage).where(*scope(SeoSitePage))))
+    contents = list(await session.scalars(select(SeoContentAsset).where(*scope(SeoContentAsset))))
+    backlinks = list(await session.scalars(select(SeoBacklink).where(*scope(SeoBacklink))))
+    competitors = list(await session.scalars(select(SeoCompetitor).where(*scope(SeoCompetitor, SeoCompetitor.status == "active"))))
+    all_ranks = list(await session.scalars(select(SeoRankSnapshot).where(*scope(SeoRankSnapshot, SeoRankSnapshot.subject_type == "own")).order_by(SeoRankSnapshot.checked_at.asc(), SeoRankSnapshot.id.asc())))
+    latest_crawl = None
+    if site_id is not None:
+        latest_crawl = await session.scalar(
+            select(SeoCrawlRun)
+            .where(
+                SeoCrawlRun.tenant_id == tenant_id,
+                SeoCrawlRun.site_id == site_id,
+            )
+            .order_by(SeoCrawlRun.started_at.desc(), SeoCrawlRun.id.desc())
+            .limit(1)
+        )
     ranks = [item for item in all_ranks if item.engine == engine and item.device == device]
     latest_by_keyword: dict[int, SeoRankSnapshot] = {}
     previous_by_keyword: dict[int, SeoRankSnapshot] = {}
@@ -1426,6 +1968,23 @@ async def seo_overview(
             previous_by_keyword[rank.keyword_id] = rank
     ranked = [item for item in latest_by_keyword.values() if item.rank is not None]
     top10 = sum(item.rank <= 10 for item in ranked)
+    top20 = sum(item.rank <= 20 for item in ranked)
+    top50 = sum(item.rank <= 50 for item in ranked)
+    average_position = round(sum(item.rank for item in ranked) / len(ranked), 1) if ranked else None
+    rises = sum(
+        previous_by_keyword.get(keyword_id) is not None
+        and latest.rank is not None
+        and previous_by_keyword[keyword_id].rank is not None
+        and latest.rank < previous_by_keyword[keyword_id].rank
+        for keyword_id, latest in latest_by_keyword.items()
+    )
+    falls = sum(
+        previous_by_keyword.get(keyword_id) is not None
+        and latest.rank is not None
+        and previous_by_keyword[keyword_id].rank is not None
+        and latest.rank > previous_by_keyword[keyword_id].rank
+        for keyword_id, latest in latest_by_keyword.items()
+    )
     rank_anomalies = sum(
         latest.rank is not None
         and previous_by_keyword.get(keyword_id) is not None
@@ -1467,27 +2026,99 @@ async def seo_overview(
     missing_description = sum(
         item.status != "pending" and not item.meta_description for item in pages
     )
+    unchecked_pages = sum(item.status == "pending" for item in pages)
     active_content = sum(item.status in {"planned", "drafting", "review"} for item in contents)
+    latest_metrics = await _latest_site_metrics(session, tenant_id, site_id) if site_id is not None else {}
+
+    def metric(metric_type: str, dimension: str = "total", source: str = "chinaz") -> dict[str, Any]:
+        row = latest_metrics.get((metric_type, dimension, source))
+        if row is None:
+            return {
+                "metric_type": metric_type,
+                "dimension": dimension,
+                "numeric_value": None,
+                "text_value": None,
+                "status": "not_configured" if site_id is not None else "pending",
+                "source": source,
+                "data_quality": "estimated" if source == "chinaz" else "verified",
+                "observed_at": None,
+            }
+        payload = _metric_payload(row)
+        if row.status == "available" and row.observed_at < datetime.utcnow() - timedelta(days=7):
+            payload["status"] = "stale"
+        return payload
+
+    verified_rows = [
+        row
+        for row in latest_metrics.values()
+        if row.metric_type in {"gsc_clicks", "baidu_tongji_organic_visits"}
+    ]
+    verified_row = max(verified_rows, key=lambda row: row.observed_at) if verified_rows else None
+    verified_traffic = _metric_payload(verified_row) if verified_row is not None else {
+        "status": "not_configured",
+        "source": None,
+        "message": "接入百度统计或 Google Search Console 后显示真实自然流量",
+    }
+
+    dashboard_metrics = {
+        "indexing": metric("baidu_index_estimate"),
+        "keyword_coverage": {
+            "desktop": metric("baidu_keyword_coverage", "desktop"),
+            "mobile": metric("baidu_keyword_coverage", "mobile"),
+        },
+        "estimated_traffic": {
+            "desktop": metric("estimated_organic_uv", "desktop"),
+            "mobile": metric("estimated_organic_uv", "mobile"),
+        },
+        "baidu_weight": {
+            "desktop": metric("baidu_weight", "desktop"),
+            "mobile": metric("baidu_weight", "mobile"),
+        },
+        "verified_traffic": verified_traffic,
+    }
+
     tasks: list[dict[str, Any]] = []
+    if site_id is None:
+        tasks.append({"type": "setup", "count": 1, "title": "请选择 SEO 网站", "detail": "按网站查看排名、收录和流量，避免多个网站数据混合", "action": "管理网站", "path": "/seo/sites"})
+    elif dashboard_metrics["indexing"]["status"] in {"not_configured", "failed", "stale"}:
+        tasks.append({"type": "collection", "count": 1, "title": "网站指标需要更新", "detail": "采集百度收录、关键词覆盖和预估自然流量", "action": "立即采集", "path": "/seo/dashboard"})
+    if site_id is not None and latest_crawl is None:
+        tasks.append({"type": "crawl", "count": 1, "title": "网站尚未完成技术扫描", "detail": "抓取页面并检查索引控制、TDK、结构和链接问题", "action": "开始扫描", "path": "/seo/dashboard"})
+    elif latest_crawl is not None and (
+        latest_crawl.status in {"failed", "partial"}
+        or latest_crawl.started_at < datetime.utcnow() - timedelta(days=7)
+    ):
+        tasks.append({"type": "crawl", "count": latest_crawl.failed_count + latest_crawl.blocked_count, "title": "网站技术扫描需要复查", "detail": "上次扫描存在失败、阻止或数据已经过期", "action": "重新扫描", "path": "/seo/dashboard"})
     if rank_anomalies:
         tasks.append({"type": "rank", "count": rank_anomalies, "title": "关键词排名连续下降", "detail": "较上一排名快照下降至少 3 位", "action": "查看排名", "path": "/seo/rankings"})
     if active_content:
         tasks.append({"type": "content", "count": active_content, "title": "内容任务等待推进", "detail": "包含待规划、撰写中与人工审核", "action": "进入内容", "path": "/seo/content/articles"})
     if missing_description:
         tasks.append({"type": "site", "count": missing_description, "title": "页面缺少 Meta Description", "detail": "已检测页面中缺少有效描述", "action": "立即优化", "path": "/seo/site"})
+    if unchecked_pages:
+        tasks.append({"type": "site", "count": unchecked_pages, "title": "页面尚未完成检测", "detail": "这些页面还没有站内健康检查结果", "action": "检测页面", "path": "/seo/site"})
     if not tasks and keywords:
         tasks.append({"type": "healthy", "count": 0, "title": "今日没有高优先级异常", "detail": "排名、内容和站内规则未发现紧急项", "action": "查看资产", "path": "/seo/keywords"})
 
     timestamps = [item.checked_at for item in all_ranks]
     timestamps += [item.last_checked_at for item in pages if item.last_checked_at]
     timestamps += [item.updated_at for item in contents if item.updated_at]
+    timestamps += [item.observed_at for item in latest_metrics.values()]
+    if latest_crawl is not None:
+        timestamps.append(latest_crawl.completed_at or latest_crawl.started_at)
     return {
         "engine": engine,
+        "site": None if site is None else {"id": site.id, "name": site.name, "domain": site.canonical_domain, "default_url": site.default_url},
         "last_updated_at": _iso(max(timestamps)) if timestamps else None,
         "stats": {
             "keywords": len(keywords),
             "ranked": len(ranked),
             "top10": top10,
+            "top20": top20,
+            "top50": top50,
+            "average_position": average_position,
+            "rises": rises,
+            "falls": falls,
             "top10_rate": round(top10 / max(len(ranked), 1) * 100, 1),
             "rank_anomalies": rank_anomalies,
             "new_keywords_30d": sum(bool(item.created_at and item.created_at >= since) for item in keywords),
@@ -1498,7 +2129,13 @@ async def seo_overview(
             "content_published": sum(item.status == "published" for item in contents),
             "backlinks": sum(item.status == "active" for item in backlinks),
             "competitors": len(competitors),
+            "crawl_fetched": latest_crawl.fetched_count if latest_crawl else 0,
+            "crawl_failed": latest_crawl.failed_count if latest_crawl else 0,
+            "crawl_blocked": latest_crawl.blocked_count if latest_crawl else 0,
+            "crawl_issues": latest_crawl.issue_count if latest_crawl else 0,
         },
+        "metrics": dashboard_metrics,
+        "crawl": _crawl_run_payload(latest_crawl) if latest_crawl else None,
         "opportunities": sorted(
             [_keyword_payload(item, latest_by_keyword.get(item.id)) for item in keywords],
             key=lambda item: (item["priority"], -(item["monthly_volume"] or 0)),
@@ -1506,7 +2143,7 @@ async def seo_overview(
         "page_issues": [_page_payload(item) for item in pages if item.status in {"needs_fix", "error"}][:8],
         "collection_status": collection_status,
         "trend": trend,
-        "tasks": tasks[:3],
+        "tasks": tasks[:5],
     }
 
 
@@ -1634,6 +2271,7 @@ async def assist_seo_content(
 
 class ContentCreate(BaseModel):
     tenant_id: int
+    site_id: int | None = None
     title: str = Field(min_length=1, max_length=300)
     keyword_id: int | None = None
     content_type: Literal["article", "guide", "landing", "comparison", "faq", "rewrite", "qa"] = "article"
@@ -1670,13 +2308,16 @@ class ContentUpdate(BaseModel):
 
 
 def _content_payload(row: SeoContentAsset) -> dict[str, Any]:
-    return {"id": row.id, "tenant_id": row.tenant_id, "keyword_id": row.keyword_id, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "created_at": _iso(row.created_at), "updated_at": _iso(row.updated_at)}
+    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "keyword_id": row.keyword_id, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "created_at": _iso(row.created_at), "updated_at": _iso(row.updated_at)}
 
 
 @router.get("/content-assets")
-async def list_content_assets(tenant_id: int, status: str | None = None, content_type: str | None = None, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+async def list_content_assets(tenant_id: int, site_id: int | None = None, status: str | None = None, content_type: str | None = None, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
     await _tenant(session, tenant_id)
+    await _seo_site(session, tenant_id, site_id)
     conditions = [SeoContentAsset.tenant_id == tenant_id]
+    if site_id is not None:
+        conditions.append(SeoContentAsset.site_id == site_id)
     if status:
         conditions.append(SeoContentAsset.status == status)
     if content_type:
@@ -1689,7 +2330,8 @@ async def list_content_assets(tenant_id: int, status: str | None = None, content
 async def create_content_asset(req: ContentCreate, session: AsyncSession = Depends(get_session), ctx: AuthContext = Depends(require_scoped_auth)) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
     await _tenant(session, req.tenant_id)
-    await _validate_target_keyword(session, req.tenant_id, req.keyword_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
+    await _validate_target_keyword(session, req.tenant_id, req.keyword_id, req.site_id)
     row = SeoContentAsset(**req.model_dump(), created_by=ctx.user_id)
     session.add(row)
     await session.commit(); await session.refresh(row)
@@ -1715,6 +2357,7 @@ async def update_content_asset(content_id: int, tenant_id: int, req: ContentUpda
 
 class BacklinkCreate(BaseModel):
     tenant_id: int
+    site_id: int | None = None
     source_url: str = Field(min_length=1, max_length=2000)
     target_url: str = Field(min_length=1, max_length=2000)
     anchor_text: str | None = Field(None, max_length=1000)
@@ -1726,13 +2369,16 @@ class BacklinkCreate(BaseModel):
 
 
 def _backlink_payload(row: SeoBacklink) -> dict[str, Any]:
-    return {"id": row.id, "source_url": row.source_url, "target_url": row.target_url, "source_domain": row.source_domain, "anchor_text": row.anchor_text, "authority_score": row.authority_score, "toxic_score": row.toxic_score, "status": row.status, "first_seen_at": _iso(row.first_seen_at), "last_seen_at": _iso(row.last_seen_at)}
+    return {"id": row.id, "site_id": row.site_id, "source_url": row.source_url, "target_url": row.target_url, "source_domain": row.source_domain, "anchor_text": row.anchor_text, "authority_score": row.authority_score, "toxic_score": row.toxic_score, "status": row.status, "first_seen_at": _iso(row.first_seen_at), "last_seen_at": _iso(row.last_seen_at)}
 
 
 @router.get("/backlinks")
-async def list_backlinks(tenant_id: int, status: str | None = None, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+async def list_backlinks(tenant_id: int, site_id: int | None = None, status: str | None = None, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
     await _tenant(session, tenant_id)
+    await _seo_site(session, tenant_id, site_id)
     conditions = [SeoBacklink.tenant_id == tenant_id]
+    if site_id is not None:
+        conditions.append(SeoBacklink.site_id == site_id)
     if status:
         conditions.append(SeoBacklink.status == status)
     rows = list(await session.scalars(select(SeoBacklink).where(*conditions).order_by(SeoBacklink.last_seen_at.desc().nullslast(), SeoBacklink.id.desc())))
@@ -1742,6 +2388,7 @@ async def list_backlinks(tenant_id: int, status: str | None = None, session: Asy
 @router.post("/backlinks")
 async def create_backlink(req: BacklinkCreate, session: AsyncSession = Depends(get_session), ctx: AuthContext = Depends(require_scoped_auth)) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id); await _tenant(session, req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
     source = normalize_url(req.source_url); target = normalize_url(req.target_url)
     row = SeoBacklink(**req.model_dump(exclude={"source_url", "target_url"}), source_url=source, target_url=target, source_domain=urlparse(source).hostname or "")
     session.add(row)
@@ -1753,10 +2400,16 @@ async def create_backlink(req: BacklinkCreate, session: AsyncSession = Depends(g
 
 
 @router.get("/internal-links")
-async def internal_link_graph(tenant_id: int, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+async def internal_link_graph(tenant_id: int, site_id: int | None = None, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
     await _tenant(session, tenant_id)
-    pages = list(await session.scalars(select(SeoSitePage).where(SeoSitePage.tenant_id == tenant_id)))
-    edges = list(await session.scalars(select(SeoInternalLink).where(SeoInternalLink.tenant_id == tenant_id)))
+    await _seo_site(session, tenant_id, site_id)
+    page_conditions = [SeoSitePage.tenant_id == tenant_id]
+    edge_conditions = [SeoInternalLink.tenant_id == tenant_id]
+    if site_id is not None:
+        page_conditions.append(SeoSitePage.site_id == site_id)
+        edge_conditions.append(SeoInternalLink.site_id == site_id)
+    pages = list(await session.scalars(select(SeoSitePage).where(*page_conditions)))
+    edges = list(await session.scalars(select(SeoInternalLink).where(*edge_conditions)))
     incoming = defaultdict(int); outgoing = defaultdict(int)
     for edge in edges:
         outgoing[edge.source_page_id] += 1; incoming[edge.target_page_id] += 1
@@ -1779,17 +2432,20 @@ async def crawl_internal_links(tenant_id: int, page_id: int, session: AsyncSessi
         parsed = urlparse(target)
         if parsed.scheme in {"http", "https"} and parsed.hostname == source_host:
             discovered[target] = node.get_text(" ", strip=True)[:500] or None
-    known_pages = list(await session.scalars(select(SeoSitePage).where(SeoSitePage.tenant_id == tenant_id)))
+    known_conditions = [SeoSitePage.tenant_id == tenant_id]
+    if page.site_id is not None:
+        known_conditions.append(SeoSitePage.site_id == page.site_id)
+    known_pages = list(await session.scalars(select(SeoSitePage).where(*known_conditions)))
     by_url = {item.url: item for item in known_pages}
     for url in discovered:
         if url not in by_url:
-            row = SeoSitePage(tenant_id=tenant_id, url=url, status="pending")
+            row = SeoSitePage(tenant_id=tenant_id, site_id=page.site_id, url=url, status="pending")
             session.add(row); await session.flush(); by_url[url] = row
     await session.execute(delete(SeoInternalLink).where(SeoInternalLink.tenant_id == tenant_id, SeoInternalLink.source_page_id == page.id))
     for url, anchor in discovered.items():
         target = by_url[url]
         if target.id != page.id:
-            session.add(SeoInternalLink(tenant_id=tenant_id, source_page_id=page.id, target_page_id=target.id, anchor_text=anchor))
+            session.add(SeoInternalLink(tenant_id=tenant_id, site_id=page.site_id, source_page_id=page.id, target_page_id=target.id, anchor_text=anchor))
     await session.commit()
     return {"source_page_id": page.id, "discovered": len(discovered)}
 
@@ -1799,6 +2455,7 @@ async def crawl_internal_links(tenant_id: int, page_id: int, session: AsyncSessi
 
 class CompetitorCreate(BaseModel):
     tenant_id: int
+    site_id: int | None = None
     name: str = Field(min_length=1, max_length=120)
     domain: str = Field(min_length=1, max_length=255)
     notes: str | None = Field(None, max_length=5000)
@@ -1806,6 +2463,7 @@ class CompetitorCreate(BaseModel):
 
 class CompetitorEventCreate(BaseModel):
     tenant_id: int
+    site_id: int | None = None
     competitor_id: int
     event_type: Literal["content", "backlink"]
     title: str | None = Field(None, max_length=500)
@@ -1816,14 +2474,20 @@ class CompetitorEventCreate(BaseModel):
 
 
 def _competitor_payload(row: SeoCompetitor) -> dict[str, Any]:
-    return {"id": row.id, "tenant_id": row.tenant_id, "name": row.name, "domain": row.domain, "notes": row.notes, "status": row.status, "last_checked_at": _iso(row.last_checked_at), "created_at": _iso(row.created_at)}
+    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "name": row.name, "domain": row.domain, "notes": row.notes, "status": row.status, "last_checked_at": _iso(row.last_checked_at), "created_at": _iso(row.created_at)}
 
 
 @router.get("/competitors")
-async def list_competitors(tenant_id: int, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+async def list_competitors(tenant_id: int, site_id: int | None = None, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
     await _tenant(session, tenant_id)
-    rows = list(await session.scalars(select(SeoCompetitor).where(SeoCompetitor.tenant_id == tenant_id).order_by(SeoCompetitor.id.desc())))
-    events = list(await session.scalars(select(SeoCompetitorEvent).where(SeoCompetitorEvent.tenant_id == tenant_id).order_by(SeoCompetitorEvent.detected_at.desc())))
+    await _seo_site(session, tenant_id, site_id)
+    competitor_conditions = [SeoCompetitor.tenant_id == tenant_id]
+    event_conditions = [SeoCompetitorEvent.tenant_id == tenant_id]
+    if site_id is not None:
+        competitor_conditions.append(SeoCompetitor.site_id == site_id)
+        event_conditions.append(SeoCompetitorEvent.site_id == site_id)
+    rows = list(await session.scalars(select(SeoCompetitor).where(*competitor_conditions).order_by(SeoCompetitor.id.desc())))
+    events = list(await session.scalars(select(SeoCompetitorEvent).where(*event_conditions).order_by(SeoCompetitorEvent.detected_at.desc())))
     counts = defaultdict(lambda: {"content": 0, "backlink": 0})
     for event in events:
         counts[event.competitor_id][event.event_type] += 1
@@ -1833,11 +2497,12 @@ async def list_competitors(tenant_id: int, session: AsyncSession = Depends(get_s
 @router.post("/competitors")
 async def create_competitor(req: CompetitorCreate, session: AsyncSession = Depends(get_session), ctx: AuthContext = Depends(require_scoped_auth)) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id); await _tenant(session, req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
     raw_domain = req.domain.strip().lower()
     domain = urlparse(raw_domain if "://" in raw_domain else f"https://{raw_domain}").hostname
     if not domain:
         raise HTTPException(400, "竞品域名无效")
-    row = SeoCompetitor(tenant_id=req.tenant_id, name=req.name.strip(), domain=domain, notes=(req.notes or "").strip() or None)
+    row = SeoCompetitor(tenant_id=req.tenant_id, site_id=req.site_id, name=req.name.strip(), domain=domain, notes=(req.notes or "").strip() or None)
     session.add(row)
     try:
         await session.commit()
@@ -1852,6 +2517,9 @@ async def create_competitor_event(req: CompetitorEventCreate, session: AsyncSess
     competitor = await session.get(SeoCompetitor, req.competitor_id)
     if not competitor or competitor.tenant_id != req.tenant_id:
         raise HTTPException(404, "竞品不存在")
+    await _seo_site(session, req.tenant_id, req.site_id)
+    if req.site_id is not None and competitor.site_id not in {None, req.site_id}:
+        raise HTTPException(400, "Competitor event site does not match the competitor site")
     row = SeoCompetitorEvent(**req.model_dump())
     session.add(row)
     try:

@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
@@ -7,10 +8,14 @@ from app.api.seo import (
     BrandProfileUpdate,
     ContentCreate,
     KeywordCreate,
+    MetricSnapshotCreate,
     RankSnapshotCreate,
     SeoContentAssistRequest,
     SitePageImport,
     _keyword_payload,
+    _metric_payload,
+    _number_or_text,
+    _provider_metric_status,
     _normalize_brand_homepage,
     _seo_ai_prompt,
 )
@@ -20,8 +25,11 @@ from app.models.seo import (
     SeoCompetitor,
     SeoCompetitorEvent,
     SeoContentAsset,
+    SeoCrawlRun,
     SeoInternalLink,
     SeoKeywordAsset,
+    SeoMetricSnapshot,
+    SeoPageSnapshot,
     SeoRankSnapshot,
     SeoSerpResult,
     SeoSitePage,
@@ -46,6 +54,7 @@ def test_seo_permissions_are_registered_for_all_roles() -> None:
         ("/api/v1/seo/rank-snapshots", "POST", "seo.keywords", True),
         ("/api/v1/seo/site-pages", "GET", "seo.site", False),
         ("/api/v1/seo/site-pages/1/audit", "POST", "seo.site", True),
+        ("/api/v1/seo/site/crawl-runs", "POST", "seo.site", True),
         ("/api/v1/seo/overview", "GET", "seo.dashboard", False),
         ("/api/v1/seo/alerts", "GET", "seo.alerts", False),
         ("/api/v1/seo/content-assets", "POST", "seo.content", True),
@@ -228,3 +237,73 @@ def test_models_use_separate_seo_tables() -> None:
     assert SeoBacklink.__tablename__ == "seo_backlinks"
     assert SeoCompetitor.__tablename__ == "seo_competitors"
     assert SeoCompetitorEvent.__tablename__ == "seo_competitor_events"
+    assert SeoCrawlRun.__tablename__ == "seo_crawl_runs"
+    assert SeoPageSnapshot.__tablename__ == "seo_page_snapshots"
+
+
+def test_site_scoped_models_expose_site_id() -> None:
+    models = (
+        SeoKeywordAsset,
+        SeoRankSnapshot,
+        SeoBrandAsset,
+        SeoSerpResult,
+        SeoSitePage,
+        SeoContentAsset,
+        SeoInternalLink,
+        SeoBacklink,
+        SeoCompetitor,
+        SeoCompetitorEvent,
+    )
+    assert all("site_id" in model.__table__.columns for model in models)
+
+
+def test_metric_snapshot_contract_preserves_source_and_availability() -> None:
+    request = MetricSnapshotCreate(
+        tenant_id=1,
+        site_id=9,
+        metric_type="baidu_index_estimate",
+        numeric_value=128,
+        unit="pages",
+        source="chinaz",
+        data_quality="estimated",
+        status="available",
+    )
+    assert request.site_id == 9
+    with pytest.raises(ValidationError):
+        MetricSnapshotCreate(
+            tenant_id=1,
+            site_id=9,
+            metric_type="baidu_index_estimate",
+            source="chinaz",
+            status="unknown",
+        )
+
+    now = datetime(2026, 8, 18, 10, 0)
+    row = SeoMetricSnapshot(
+        id=1,
+        tenant_id=1,
+        site_id=9,
+        metric_type="baidu_index_estimate",
+        dimension="total",
+        numeric_value=Decimal("128.0000"),
+        unit="pages",
+        source="chinaz",
+        data_quality="estimated",
+        status="available",
+        observed_at=now,
+        collected_at=now,
+        created_at=now,
+    )
+    payload = _metric_payload(row)
+    assert payload["numeric_value"] == 128.0
+    assert payload["data_quality"] == "estimated"
+    assert payload["status"] == "available"
+
+
+def test_provider_metric_mapping_distinguishes_zero_from_missing() -> None:
+    assert _provider_metric_status({"status": "available"}) == "available"
+    assert _provider_metric_status({"status": "unavailable"}) == "not_configured"
+    assert _provider_metric_status({"status": "error"}) == "failed"
+    assert _number_or_text(0) == (0.0, None)
+    assert _number_or_text("1,280") == (1280.0, None)
+    assert _number_or_text("10-20") == (None, "10-20")

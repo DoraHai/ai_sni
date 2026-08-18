@@ -47,7 +47,7 @@ const routes = [
   { path: '/deal-sniper/seo/keywords', redirect: '/seo/keywords' },
   { path: '/deal-sniper/seo/tdk', redirect: '/seo/site' },
   { path: '/deal-sniper/seo/dashboard', redirect: '/seo/dashboard' },
-  { path: '/deal-sniper/seo/trends', redirect: '/seo/dashboard' },
+  { path: '/deal-sniper/seo/trends', redirect: '/seo/trends' },
   { path: '/deal-sniper/seo/competitors', redirect: '/seo/competitors' },
   { path: '/deal-sniper/seo/articles', redirect: '/seo/content/articles' },
   { path: '/deal-sniper/seo/rewrites', redirect: '/seo/content/rewrites' },
@@ -69,6 +69,11 @@ const routes = [
     meta: { bare: true },
     children: [
       { path: '', redirect: '/seo/dashboard' },
+      {
+        path: 'sites',
+        component: () => import('../views/seo/SeoSitesView.vue'),
+        meta: { title: '网站管理', workflow: '基础资产', perm: 'seo.assets', bare: true },
+      },
       {
         path: 'dashboard',
         component: () => import('../views/seo/SeoDashboardView.vue'),

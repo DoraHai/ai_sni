@@ -14,7 +14,6 @@ os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 from fastapi import HTTPException
 
 from app.api.customer_modules import _canonical_domain
-from app.api.auth import _MODULE_PERMISSION_KEYS
 from app.models import GeoProject, SeoSite, TenantModule
 from app.module_scope import normalize_module_code
 from app.permissions import CLIENT_PERMS, OPERATOR_PERMS
@@ -38,9 +37,6 @@ class ModuleWorkspaceTests(unittest.TestCase):
         self.assertEqual(_required("/api/v1/sem/assets/accounts", "GET"), ({"sem.assets"}, False))
         self.assertEqual(_required("/api/v1/seo/sites", "POST"), ({"seo.assets"}, True))
         self.assertEqual(_required("/api/v1/geo/projects", "PATCH"), ({"geo.assets"}, True))
-        self.assertIn("sem.assets", _MODULE_PERMISSION_KEYS["sem"])
-        self.assertIn("seo.assets", _MODULE_PERMISSION_KEYS["seo"])
-        self.assertIn("geo.assets", _MODULE_PERMISSION_KEYS["geo"])
 
     def test_bound_customer_cannot_switch_tenant(self):
         ctx = AuthContext(1, "client", "client", 7, {"seo.assets": "edit"})

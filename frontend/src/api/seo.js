@@ -77,8 +77,22 @@ export function auditSeoSitePage({ pageId, tenantId }) {
   })
 }
 
-export function fetchSeoOverview({ tenantId, engine = 'baidu', device = 'desktop' }) {
-  return client.get('/api/v1/seo/overview', { params: { tenant_id: tenantId, engine, device } })
+export function fetchSeoOverview({ tenantId, siteId, engine = 'baidu', device = 'desktop' }) {
+  return client.get('/api/v1/seo/overview', { params: { tenant_id: tenantId, site_id: siteId || undefined, engine, device } })
+}
+
+export function collectSeoOverviewMetrics(payload) {
+  return client.post('/api/v1/seo/overview/collect-metrics', payload, { timeout: 180000 })
+}
+
+export function crawlSeoSite(payload) {
+  return client.post('/api/v1/seo/site/crawl-runs', payload, { timeout: 300000 })
+}
+
+export function fetchSeoCrawlRuns({ tenantId, siteId, runId, limit = 10 }) {
+  return client.get('/api/v1/seo/site/crawl-runs', {
+    params: { tenant_id: tenantId, site_id: siteId, run_id: runId || undefined, limit },
+  })
 }
 
 export function collectSeoRankSerp(payload) {
