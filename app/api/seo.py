@@ -10,7 +10,7 @@ from typing import Any, Literal
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -48,6 +48,15 @@ from app.seo_serp import (
     url_domain,
 )
 from app.seo_crawler import crawl_site
+from app.seo_distribution_import import (
+    MAX_XLSX_BYTES,
+    XlsxImportError,
+    build_publication_template,
+    normalize_content_id,
+    normalize_publication_url,
+    normalize_published_at,
+    parse_publication_xlsx,
+)
 
 router = APIRouter(
     prefix="/api/v1/seo",
@@ -2336,6 +2345,132 @@ async def create_content_asset(req: ContentCreate, session: AsyncSession = Depen
     session.add(row)
     await session.commit(); await session.refresh(row)
     return _content_payload(row)
+
+
+@router.get("/content-assets/published-links-template")
+async def download_published_links_template() -> Response:
+    return Response(
+        content=build_publication_template(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="seo-published-links-template.xlsx"'},
+    )
+
+
+@router.post("/content-assets/import-published-links")
+async def import_published_links(
+    tenant_id: int,
+    dry_run: bool = Query(True),
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    await _tenant(session, tenant_id)
+    filename = (file.filename or "").strip()
+    if not filename.lower().endswith(".xlsx"):
+        raise HTTPException(400, "仅支持 .xlsx 格式的 Excel 文件")
+    try:
+        source_rows = parse_publication_xlsx(await file.read(MAX_XLSX_BYTES + 1))
+    except XlsxImportError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    assets = list(await session.scalars(select(SeoContentAsset).where(SeoContentAsset.tenant_id == tenant_id)))
+    by_id = {row.id: row for row in assets}
+    by_title: dict[str, list[SeoContentAsset]] = defaultdict(list)
+    for asset in assets:
+        by_title[asset.title.strip().casefold()].append(asset)
+
+    validated: list[tuple[SeoContentAsset, str, str, datetime]] = []
+    results: list[dict[str, Any]] = []
+    seen_asset_ids: set[int] = set()
+    for source in source_rows:
+        errors: list[str] = []
+        asset: SeoContentAsset | None = None
+        title = str(source.get("title") or "").strip()
+        try:
+            content_id = normalize_content_id(source.get("content_id"))
+        except ValueError as exc:
+            content_id = None
+            errors.append(str(exc))
+        if content_id is not None:
+            asset = by_id.get(content_id)
+            if asset is None:
+                errors.append("内容资产ID不存在或不属于当前客户")
+            elif title and asset.title.strip().casefold() != title.casefold():
+                errors.append("内容资产ID与内容标题不一致")
+        elif title:
+            matches = by_title.get(title.casefold(), [])
+            if len(matches) == 1:
+                asset = matches[0]
+            elif len(matches) > 1:
+                errors.append("内容标题存在重名，请填写内容资产ID")
+            else:
+                errors.append("内容标题未匹配到当前客户的内容资产")
+        elif not errors:
+            errors.append("内容资产ID和内容标题至少填写一项")
+        try:
+            page_url, host = normalize_publication_url(source.get("page_url"))
+        except ValueError as exc:
+            page_url, host = "", ""
+            errors.append(str(exc))
+        platform = str(source.get("platform") or "").strip() or host
+        if len(platform) > 120:
+            errors.append("发布平台不能超过120个字符")
+        try:
+            published_at = normalize_published_at(source.get("published_at"))
+        except ValueError as exc:
+            published_at = datetime.utcnow()
+            errors.append(str(exc))
+        if asset is not None:
+            if asset.id in seen_asset_ids:
+                errors.append("同一内容资产不能在一个文件中重复登记")
+            seen_asset_ids.add(asset.id)
+        result = {
+            "row_number": source["row_number"],
+            "content_id": asset.id if asset else content_id,
+            "title": asset.title if asset else title,
+            "page_url": page_url,
+            "platform": platform,
+            "published_at": _iso(published_at),
+            "action": "替换已有链接" if asset and asset.page_url and asset.page_url != page_url else "登记新链接",
+            "previous_page_url": asset.page_url if asset else None,
+            "status": "error" if errors else "valid",
+            "errors": errors,
+        }
+        results.append(result)
+        if not errors and asset is not None:
+            validated.append((asset, page_url, platform, published_at))
+
+    failed = sum(item["status"] == "error" for item in results)
+    if dry_run or failed:
+        return {
+            "dry_run": dry_run,
+            "committed": False,
+            "total": len(results),
+            "valid": len(results) - failed,
+            "failed": failed,
+            "imported": 0,
+            "rows": results,
+        }
+
+    for asset, page_url, platform, published_at in validated:
+        platforms = [str(value).strip() for value in (asset.target_platforms or []) if str(value).strip()]
+        if platform and platform not in platforms:
+            platforms.append(platform)
+        asset.page_url = page_url
+        asset.target_platforms = platforms[:20]
+        asset.status = "published"
+        asset.published_at = published_at
+    await session.commit()
+    return {
+        "dry_run": False,
+        "committed": True,
+        "total": len(results),
+        "valid": len(results),
+        "failed": 0,
+        "imported": len(validated),
+        "rows": results,
+    }
 
 
 @router.patch("/content-assets/{content_id}")

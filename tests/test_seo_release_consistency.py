@@ -16,6 +16,8 @@ def _write(root: Path, relative: str, content: str) -> None:
 
 def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed("app/api/seo.py")
+    assert source_path_allowed("app/seo_distribution_import.py")
+    assert source_path_allowed("tests/test_seo_distribution_import.py")
     assert source_path_allowed("deploy/seo-frontend.nginx.conf")
     assert source_path_allowed("frontend/src/views/seo/SeoDashboardView.vue")
     assert source_path_allowed("app/api/customer_modules.py")

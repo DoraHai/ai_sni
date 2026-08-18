@@ -139,6 +139,19 @@ export function updateSeoContentAsset({ contentId, tenantId, payload }) {
   return client.patch(`/api/v1/seo/content-assets/${contentId}`, payload, { params: { tenant_id: tenantId } })
 }
 
+export function importSeoPublishedLinks({ tenantId, file, dryRun = true }) {
+  const form = new FormData()
+  form.append('file', file)
+  return client.post('/api/v1/seo/content-assets/import-published-links', form, {
+    params: { tenant_id: tenantId, dry_run: dryRun },
+    timeout: 60000,
+  })
+}
+
+export function downloadSeoPublishedLinksTemplate() {
+  return client.get('/api/v1/seo/content-assets/published-links-template', { responseType: 'blob' })
+}
+
 export function assistSeoContent(payload) {
   return client.post('/api/v1/seo/content-ai/assist', payload, { timeout: 100000 })
 }
