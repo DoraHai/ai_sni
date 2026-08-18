@@ -133,6 +133,22 @@ def normalize_url(value: str) -> str:
     return url
 
 
+# Clash / Surge / Mihomo Fake-IP（RFC 2544 基准网段）。本机代理会把公网域名解析到这里。
+_PROXY_FAKE_IP_V4 = ipaddress.ip_network("198.18.0.0/15")
+
+
+def _is_proxy_fake_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return addr.version == 4 and addr in _PROXY_FAKE_IP_V4
+
+
+def _host_is_literal_ip(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
+
+
 async def _ensure_public_host(url: str) -> None:
     parsed = urlparse(url)
     host = parsed.hostname
@@ -140,6 +156,7 @@ async def _ensure_public_host(url: str) -> None:
         raise GeoAuditError("网址缺少主机名")
     if host.lower() == "localhost" or host.lower().endswith((".local", ".internal")):
         raise GeoAuditError("禁止诊断本机或内网地址")
+    literal = _host_is_literal_ip(host)
     try:
         addresses = [ipaddress.ip_address(host)]
     except ValueError:
@@ -152,7 +169,17 @@ async def _ensure_public_host(url: str) -> None:
         except socket.gaierror as exc:
             raise GeoAuditError(f"域名解析失败：{host}") from exc
         addresses = list({ipaddress.ip_address(info[4][0]) for info in infos})
-    if not addresses or any(not address.is_global for address in addresses):
+    if not addresses:
+        raise GeoAuditError("禁止诊断本机、内网或保留地址")
+    # 用户直接填了内网/保留 IP：仍拒绝。
+    if literal and any(not address.is_global for address in addresses):
+        raise GeoAuditError("禁止诊断本机、内网或保留地址")
+    # 公网域名经本机 Fake-IP 代理解析到 198.18.0.0/15：放行（真实流量走代理出网）。
+    if not literal and addresses and all(
+        address.is_global or _is_proxy_fake_ip(address) for address in addresses
+    ):
+        return
+    if any(not address.is_global for address in addresses):
         raise GeoAuditError("禁止诊断本机、内网或保留地址")
 
 

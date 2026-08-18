@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from app.geo.content.evidence_cite import attach_sentence_citations, split_sentences
+from app.geo.content.evidence_cite import (
+    attach_sentence_citations,
+    citation_verdict,
+    split_sentences,
+    strip_citation_appendix,
+)
 
 
 class EvidenceCiteTests(unittest.TestCase):
@@ -23,8 +28,8 @@ class EvidenceCiteTests(unittest.TestCase):
         ]
         out, rows = attach_sentence_citations(md, facts)
         self.assertTrue(any(r["cited"] and r["fact_id"] == 11 for r in rows))
-        self.assertIn("逐句证据", out)
-        self.assertIn("#11", out)
+        self.assertNotIn("## 逐句证据", out)
+        self.assertTrue(citation_verdict(rows)["ok"])
 
     def test_unmatched_sentence_needs_review(self):
         md = "今天天气很好适合出门散步看花。另一句也跟客服系统毫无关系。"
@@ -36,16 +41,36 @@ class EvidenceCiteTests(unittest.TestCase):
                 "source_name": "白皮书",
             }
         ]
-        out, rows = attach_sentence_citations(md, facts)
+        _out, rows = attach_sentence_citations(md, facts)
         self.assertTrue(rows)
         self.assertTrue(any(not r["cited"] for r in rows))
-        self.assertIn("未挂事实", out)
+        self.assertTrue(citation_verdict(rows)["ok"])
+
+    def test_uncited_stat_blocks(self):
+        md = "官方承诺识别率达到 98%，并服务过众多头部客户成功案例。"
+        facts = [
+            {
+                "id": 2,
+                "title": "能力",
+                "statement": "支持多渠道接入",
+                "source_name": "官网",
+            }
+        ]
+        _out, rows = attach_sentence_citations(md, facts)
+        self.assertTrue(any(r.get("needs_fact") for r in rows))
+        self.assertFalse(citation_verdict(rows)["ok"])
+
+    def test_strip_old_appendix(self):
+        md = "Udesk 支持全渠道客服接入。\n\n## 逐句证据\n\n1. 旧附录\n"
+        self.assertNotIn("逐句证据", strip_citation_appendix(md))
 
     def test_no_facts_leaves_body_untouched(self):
         md = "一段足够长的正文句子不会被改写。"
         out, rows = attach_sentence_citations(md, [])
         self.assertEqual(out, md)
-        self.assertEqual(rows, [])
+        self.assertTrue(rows)
+        self.assertFalse(rows[0]["cited"])
+        self.assertFalse(rows[0]["needs_fact"])
 
 
 if __name__ == "__main__":

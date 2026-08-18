@@ -1,7 +1,14 @@
+import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from app.geo.audit import GeoAuditError, PageDocument, audit_url, normalize_url
+from app.geo.audit import (
+    GeoAuditError,
+    PageDocument,
+    _ensure_public_host,
+    audit_url,
+    normalize_url,
+)
 from app.geo.generate import generate_json_ld, generate_llms_text
 
 
@@ -10,6 +17,28 @@ class GeoAuditTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(normalize_url("example.com"), "https://example.com")
         with self.assertRaises(GeoAuditError):
             normalize_url("file:///etc/passwd")
+
+    async def test_public_host_allows_clash_fake_ip_for_domain(self):
+        loop = asyncio.get_running_loop()
+        fake = [
+            (
+                None,
+                None,
+                None,
+                None,
+                ("198.18.0.191", 443),
+            )
+        ]
+        with patch.object(loop, "getaddrinfo", new=AsyncMock(return_value=fake)):
+            await _ensure_public_host("https://www.udesk.cn/")
+
+    async def test_public_host_still_blocks_literal_private_ip(self):
+        with self.assertRaises(GeoAuditError):
+            await _ensure_public_host("https://127.0.0.1/")
+        with self.assertRaises(GeoAuditError):
+            await _ensure_public_host("https://192.168.1.8/")
+        with self.assertRaises(GeoAuditError):
+            await _ensure_public_host("https://198.18.0.191/")
 
     async def test_audit_returns_explainable_findings(self):
         html = """

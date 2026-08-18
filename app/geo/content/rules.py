@@ -345,6 +345,35 @@ def check_howto_extractable(data: RuleInput) -> RuleCheck:
     )
 
 
+def check_sentence_evidence(data: RuleInput) -> RuleCheck:
+    """Uncited claim sentences (numbers / performance / cases) block ready."""
+    from app.geo.content.evidence_cite import (
+        build_sentence_citations,
+        citation_verdict,
+        strip_citation_appendix,
+    )
+
+    rows = (data.outline or {}).get("sentence_citations")
+    if not isinstance(rows, list) or not rows:
+        rows = build_sentence_citations(
+            strip_citation_appendix(data.body_markdown or ""), data.facts or []
+        )
+    verdict = citation_verdict(rows)
+    if verdict["ok"]:
+        return RuleCheck(
+            code="sentence_evidence",
+            passed=True,
+            message=f"主张句已闭环（已挂 {verdict['cited']}/{verdict['total']}）",
+            action="",
+        )
+    return RuleCheck(
+        code="sentence_evidence",
+        passed=False,
+        message=f"{verdict['blocking']} 句主张未挂事实，不能就绪",
+        action="删改这些句子，或补核验事实后点「保存正文」/「重新挂证据」",
+    )
+
+
 def check_fabrication_lint(data: RuleInput) -> RuleCheck:
     """Block ready when draft or channel variants invent numbers / cases / placeholders."""
     from app.geo.content.draft_lint import lint_draft, lint_summary
@@ -384,6 +413,7 @@ def run_checks(data: RuleInput) -> list[RuleCheck]:
         check_author_visible(data),
         check_sources_footer(data),
         check_fabrication_lint(data),
+        check_sentence_evidence(data),
         check_channel_variant_ready(data),
     ]
 

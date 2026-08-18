@@ -137,6 +137,7 @@ const CHECK_LABELS = {
   evidence_publishable: '可引用证据',
   channel_variant_ready: '渠道稿已生成',
   fabrication_lint: '编造风险扫描',
+  sentence_evidence: '逐句证据',
 }
 const SUBSCORE_LABELS = {
   authority: '权威度',
@@ -255,10 +256,14 @@ function sanitizeDraftHeadings(md) {
   })
 }
 
+function stripCiteAppendix(md) {
+  return String(md || '').replace(/\n+## 逐句证据[\s\S]*$/, '').trimEnd()
+}
+
 function applyArticleFromTask(t) {
   const a = t?.article
   article.title = a?.title || t?.title || ''
-  article.body_markdown = sanitizeDraftHeadings(a?.body_markdown || '')
+  article.body_markdown = sanitizeDraftHeadings(stripCiteAppendix(a?.body_markdown || ''))
 }
 
 /** Lightweight MD→HTML for older variants missing body_html (tables + headings). */
@@ -852,6 +857,7 @@ function validateBeforeGenerate() {
 
 const generateHint = ref('')
 const activeJob = ref(null)
+const variantFails = ref([])
 
 function jobStorageKey() {
   return `geo_async_job_${tenantId.value || 0}_${taskId.value || 0}`
@@ -868,6 +874,23 @@ const sentenceCites = computed(
     task.value?.article?.generation_meta?.sentence_citations ||
     [],
 )
+const citeBlocking = computed(() => sentenceCites.value.filter((c) => c.needs_fact))
+const citeOkCount = computed(() => sentenceCites.value.filter((c) => c.cited).length)
+
+function removeCiteSentence(sent) {
+  const body = article.body_markdown || ''
+  const next = body
+    .split('\n')
+    .map((line) => (line.includes(sent.slice(0, 24)) ? '' : line))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+  article.body_markdown = next
+  ElMessage.info('已从正文去掉该句，请保存后重新挂证据')
+}
+
+async function reciteEvidence() {
+  await saveArticleBody()
+}
 
 const jobLive = computed(() =>
   ['pending', 'running'].includes(activeJob.value?.status),
@@ -902,12 +925,12 @@ async function resumeActiveJob() {
   }
 }
 
-async function followJob(jobId) {
+async function followJob(jobId, { maxMs = 12 * 60 * 1000 } = {}) {
   persistJobId(jobId)
   try {
     const job = await waitGeoAsyncJob(tenantId.value, jobId, {
       intervalMs: 2000,
-      maxMs: 180000,
+      maxMs,
       onTick: (j) => {
         activeJob.value = j
         if (j.cancel_requested) {
@@ -919,6 +942,10 @@ async function followJob(jobId) {
       },
     })
     activeJob.value = job
+    if (['pending', 'running'].includes(job.status)) {
+      generateHint.value = `后台任务 #${job.id} 仍在跑，完成后刷新即可看到全部渠道稿`
+      return job
+    }
     if (job.status === 'failed') throw new Error(job.error || '后台任务失败')
     if (job.status === 'cancelled') {
       generateHint.value = '已取消'
@@ -1012,7 +1039,7 @@ async function saveArticleBody() {
     const outline = task.value?.article?.outline || {}
     task.value = await saveGeoArticle(tenantId.value, taskId.value, {
       title: article.title.trim(),
-      body_markdown: article.body_markdown,
+      body_markdown: stripCiteAppendix(article.body_markdown),
       outline,
     })
     applyArticleFromTask(task.value)
@@ -1173,15 +1200,23 @@ async function genVariants() {
       if (job.status === 'failed') {
         throw new Error(job.error || '渠道稿后台生成失败')
       }
+      if (['pending', 'running'].includes(job.status)) {
+        ElMessage.info('三路渠道稿还在后台写，完成后请刷新，不要重复点生成')
+        return
+      }
       t = await getGeoContentTask(tenantId.value, taskId.value)
       if (job.result_meta?.variant_polish) {
         t = { ...t, variant_polish: job.result_meta.variant_polish }
       }
     }
     applyTaskPayload(t)
-    if (channelPick.value[0]) {
-      docTab.value = channelPick.value[0]
+    const created = (t.variants || []).map((v) => v.channel)
+    const firstOk = created.find((ch) => channelPick.value.includes(ch)) || created[0]
+    if (firstOk) {
+      docTab.value = firstOk
       applyVariantFromTask()
+    } else {
+      docTab.value = 'master'
     }
     // Backend re-scores after create; pull into checkResult so channel_variant_ready updates
     const rr = t?.rule_result
@@ -1209,8 +1244,9 @@ async function genVariants() {
     const polish = t?.variant_polish || {}
     const llmN = polish.llm ?? 0
     const fbN = polish.fallback ?? 0
-    const rejN = polish.rejected ?? (polish.failed || []).length
-    const failMsg = (polish.failed || [])
+    variantFails.value = polish.failed || []
+    const rejN = polish.rejected ?? variantFails.value.length
+    const failMsg = variantFails.value
       .slice(0, 2)
       .map((f) => `${channelLabel(f.channel)}：${(f.issues || [f.message])[0] || '未过门控'}`)
       .join('；')
@@ -1852,8 +1888,9 @@ const infoGapOptions = computed(() => {
 })
 const variants = computed(() => task.value?.variants || [])
 const failedVariantItems = computed(() => {
-  const failed = task.value?.variant_polish?.failed
-  return Array.isArray(failed) ? failed : []
+  const fromTask = task.value?.variant_polish?.failed
+  if (Array.isArray(fromTask) && fromTask.length) return fromTask
+  return Array.isArray(variantFails.value) ? variantFails.value : []
 })
 const nextStep = computed(() =>
   nextEditorStep(task.value, {
@@ -2452,13 +2489,39 @@ onMounted(load)
               · 正文字数 {{ (article.body_markdown || '').length }}
             </div>
             <div v-if="sentenceCites.length" class="cite-box mb">
-              <div class="section-title">逐句证据</div>
-              <div v-for="(c, i) in sentenceCites" :key="i" class="cite-row">
+              <div class="cite-head">
+                <div class="section-title">逐句证据</div>
+                <el-button size="small" :loading="busy === 'save'" @click="reciteEvidence">
+                  重新挂证据
+                </el-button>
+              </div>
+              <p class="cite-help">
+                主张句（数字 / 性能 / 案例）必须挂上事实或删改，否则检查就绪过不了。
+                普通叙述可以不挂。改稿或补事实后点「保存正文」或「重新挂证据」。
+              </p>
+              <div class="cite-sum">
+                已挂 {{ citeOkCount }}/{{ sentenceCites.length }}
+                · 主张未挂 {{ citeBlocking.length }}
+              </div>
+              <div v-for="(c, i) in sentenceCites" :key="i" class="cite-row" :class="{ block: c.needs_fact }">
                 <span class="cite-sent">{{ c.sentence }}</span>
                 <el-tag v-if="c.cited" size="small" type="success">
                   #{{ c.fact_id }} {{ c.fact_title }}
                 </el-tag>
-                <el-tag v-else size="small" type="warning">未挂事实</el-tag>
+                <el-tag v-else-if="c.needs_fact" size="small" type="danger">主张未挂</el-tag>
+                <el-tag v-else size="small" type="info">叙述可不挂</el-tag>
+                <el-button
+                  v-if="c.needs_fact"
+                  size="small"
+                  link
+                  type="danger"
+                  @click="removeCiteSentence(c.sentence)"
+                >删这句</el-button>
+                <router-link
+                  v-if="c.needs_fact"
+                  class="cite-link"
+                  to="/geo/facts"
+                >去补事实</router-link>
               </div>
             </div>
             <div class="hint">重新「生成母稿」会覆盖当前正文</div>
@@ -2514,7 +2577,7 @@ onMounted(load)
             </div>
           </template>
           <div class="hint mb">
-            AI 按渠道写成可直接发布的正式稿（官网/微信/知乎等）；失败才回退规则裁剪。
+            勾选几个就出几个页签。三路并行调模型，大约 1～2 分钟；不过门控也会留非正式稿。
             正式稿可复制发布；关键数字建议发布前扫一眼。
           </div>
           <el-checkbox-group v-model="channelPick" class="mb">
@@ -2534,8 +2597,10 @@ onMounted(load)
             class="mb"
           >
             <template #title>
-              勾选 {{ channelPick.length }} 个渠道，已成稿 {{ variants.length }} 个；
-              {{ failedVariantItems.length }} 个未过门控
+              勾选 {{ channelPick.length }} 个渠道，已出稿 {{ variants.length }} 个
+              <template v-if="failedVariantItems.length">
+                · 其中 {{ failedVariantItems.length }} 个非正式（未过门控，可改后再重试）
+              </template>
             </template>
             <ul class="variant-fail-list">
               <li v-for="f in failedVariantItems" :key="f.channel">
@@ -3490,7 +3555,29 @@ onMounted(load)
   font-size: 12px;
   font-weight: 650;
   color: #1e40af;
-  margin-bottom: 8px;
+  margin-bottom: 0;
+}
+.cite-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.cite-help, .cite-sum {
+  font-size: 12px;
+  color: #1e40af;
+  line-height: 1.45;
+  margin: 0 0 8px;
+}
+.cite-sum { font-weight: 650; }
+.cite-row.block { background: #fff7ed; margin: 0 -8px; padding: 6px 8px; border-radius: 6px; }
+.cite-link { font-size: 12px; color: #1d4ed8; }
+.variant-fail-list {
+  margin: 6px 0 10px;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 .cite-row {
   display: flex;

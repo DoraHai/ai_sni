@@ -70,11 +70,11 @@ const ALL_GROUPS = computed(() => [
   // GEO：压成两层——内容 / 监测报表平级 / 配置；AI 动态归情报配置
   { label: 'GEO 增长', icon: '◈', children: [
     { label: '内容生产', children: [
-      { label: '优化业务', path: '/geo/businesses', key: 'geo.content' },
       { label: 'GEO 开户向导', path: '/geo/onboarding', key: 'geo.content' },
+      { label: '优化业务', path: '/geo/businesses', key: 'geo.content' },
       { label: '优化意图词', path: '/geo/prompts', key: 'geo.content' },
-      { label: '缺口工作台', path: '/geo/gaps', key: 'geo.content' },
       { label: '事实库', path: '/geo/facts', key: 'geo.content' },
+      { label: '缺口工作台', path: '/geo/gaps', key: 'geo.content' },
       { label: '优化文章', path: '/geo/tasks', key: 'geo.content' },
       { label: '发布渠道', path: '/geo/publishing', key: 'geo.content' },
       { label: '媒体阵地', path: '/geo/placements', key: 'geo.content' },
