@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import delete, func, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
@@ -6268,15 +6268,26 @@ async def create_task(
         brief=normalize_brief(req.brief) if req.brief else {},
     )
     session.add(task)
-    await session.flush()
-    prompt.last_task_id = task.id
-    if req.fact_ids:
-        await _bind_facts(session, task, req.fact_ids)
-    else:
-        await _sync_task_pipeline(session, task)
-    await session.commit()
-    await session.refresh(task)
-    return await _task_payload(session, task, detail=True)
+    try:
+        await session.flush()
+        prompt.last_task_id = task.id
+        if req.fact_ids:
+            await _bind_facts(session, task, req.fact_ids)
+        else:
+            await _sync_task_pipeline(session, task)
+        await session.commit()
+        await session.refresh(task)
+        return await _task_payload(session, task, detail=True)
+    except ProgrammingError as exc:
+        await session.rollback()
+        blob = str(getattr(exc, "orig", None) or exc)
+        if "geo_facts" in blob and "business_id" in blob:
+            raise HTTPException(
+                500,
+                "数据库缺 geo_facts.business_id，无法创建优化文章。"
+                "请在服务器执行 alembic upgrade head（0065 修复迁移）。",
+            ) from exc
+        raise HTTPException(500, f"创建优化文章失败：{blob[:240]}") from exc
 
 
 @router.post("/content-tasks/from-diagnosis")
