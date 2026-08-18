@@ -17,7 +17,9 @@ def _write(root: Path, relative: str, content: str) -> None:
 def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed("app/api/seo.py")
     assert source_path_allowed("app/seo_distribution_import.py")
+    assert source_path_allowed("app/seo_distribution.py")
     assert source_path_allowed("tests/test_seo_distribution_import.py")
+    assert source_path_allowed("tests/test_seo_distribution.py")
     assert source_path_allowed("deploy/seo-frontend.nginx.conf")
     assert source_path_allowed("frontend/src/views/seo/SeoDashboardView.vue")
     assert source_path_allowed("app/api/customer_modules.py")
@@ -73,6 +75,7 @@ def test_original_content_brief_supports_bounded_multi_keywords() -> None:
     assert 'jsonb_build_array(keyword_id)' in migration
     assert source_path_allowed("migrations/versions/20260818_0069_writeback_approvals.py")
     assert source_path_allowed("migrations/versions/20260819_0070_seo_content_multi_keywords.py")
+    assert source_path_allowed("migrations/versions/20260819_0071_seo_distribution_publishing.py")
 
 
 def test_release_diff_allows_only_seo_assets_and_hash_token_changes(tmp_path: Path) -> None:

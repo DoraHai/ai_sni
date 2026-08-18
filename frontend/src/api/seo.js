@@ -152,6 +152,46 @@ export function downloadSeoPublishedLinksTemplate() {
   return client.get('/api/v1/seo/content-assets/published-links-template', { responseType: 'blob' })
 }
 
+export function fetchSeoDistributionCatalog() {
+  return client.get('/api/v1/seo/content-distribution/catalog')
+}
+
+export function fetchSeoDistributionConnections({ tenantId }) {
+  return client.get('/api/v1/seo/content-distribution/connections', { params: { tenant_id: tenantId } })
+}
+
+export function createSeoDistributionConnection(payload) {
+  return client.post('/api/v1/seo/content-distribution/connections', payload)
+}
+
+export function updateSeoDistributionConnection({ connectionId, tenantId, payload }) {
+  return client.patch(`/api/v1/seo/content-distribution/connections/${connectionId}`, payload, { params: { tenant_id: tenantId } })
+}
+
+export function testSeoDistributionConnection({ connectionId, tenantId }) {
+  return client.post(`/api/v1/seo/content-distribution/connections/${connectionId}/test`, null, { params: { tenant_id: tenantId }, timeout: 30000 })
+}
+
+export function fetchSeoContentPublications({ tenantId, contentId, status }) {
+  return client.get('/api/v1/seo/content-distribution/publications', { params: { tenant_id: tenantId, content_id: contentId || undefined, status: status || undefined } })
+}
+
+export function createSeoManualPublication(payload) {
+  return client.post('/api/v1/seo/content-distribution/publications/manual', payload)
+}
+
+export function preflightSeoDistribution(payload) {
+  return client.post('/api/v1/seo/content-distribution/preflight', payload)
+}
+
+export function publishSeoDistribution(payload) {
+  return client.post('/api/v1/seo/content-distribution/publish', payload, { timeout: 45000 })
+}
+
+export function completeSeoManualPublication({ publicationId, payload }) {
+  return client.post(`/api/v1/seo/content-distribution/publications/${publicationId}/complete`, payload)
+}
+
 export function assistSeoContent(payload) {
   return client.post('/api/v1/seo/content-ai/assist', payload, { timeout: 100000 })
 }

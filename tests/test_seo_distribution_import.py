@@ -69,7 +69,7 @@ def test_distribution_frontend_uses_preview_before_commit() -> None:
     assert "importSeoPublishedLinks" in api
     assert "dry_run: dryRun" in api
     assert "Excel 批量登记" in view
-    assert "dryRun:true" in view
-    assert "dryRun:false" in view
+    assert "dryRun: true" in view
+    assert "dryRun: false" in view
     assert "整批不会写入" in view
     assert "下载 Excel 模板" in view

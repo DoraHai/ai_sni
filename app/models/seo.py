@@ -226,6 +226,116 @@ class SeoContentAsset(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
+class SeoDistributionConnection(Base):
+    """Tenant-owned publishing account or assisted distribution destination."""
+
+    __tablename__ = "seo_distribution_connections"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    platform_code: Mapped[str] = mapped_column(String(40), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    mode: Mapped[str] = mapped_column(String(24), nullable=False, default="manual")
+    base_url: Mapped[str | None] = mapped_column(Text)
+    config: Mapped[dict | None] = mapped_column(JSONB)
+    capabilities: Mapped[list | None] = mapped_column(JSONB)
+    credentials_encrypted: Mapped[str | None] = mapped_column(Text)
+    has_credentials: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="unconfigured")
+    last_error: Mapped[str | None] = mapped_column(Text)
+    last_tested_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_by: Mapped[int | None] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "name", name="uq_seo_distribution_connection_tenant_name"
+        ),
+    )
+
+
+class SeoContentPublication(Base):
+    """One content asset published, drafted, or handed off to one destination."""
+
+    __tablename__ = "seo_content_publications"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    content_asset_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("seo_content_assets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    connection_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("seo_distribution_connections.id", ondelete="SET NULL"),
+        index=True,
+    )
+    platform_code: Mapped[str] = mapped_column(String(40), nullable=False)
+    platform_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    publish_mode: Mapped[str] = mapped_column(String(24), nullable=False, default="manual")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    source_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    adapted_title: Mapped[str | None] = mapped_column(Text)
+    adapted_excerpt: Mapped[str | None] = mapped_column(Text)
+    adapted_content: Mapped[str | None] = mapped_column(Text)
+    external_id: Mapped[str | None] = mapped_column(String(255))
+    page_url: Mapped[str | None] = mapped_column(Text)
+    handoff_url: Mapped[str | None] = mapped_column(Text)
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), unique=True)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_by: Mapped[int | None] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "content_asset_id",
+            "page_url",
+            name="uq_seo_publication_asset_url",
+        ),
+    )
+
+
+class SeoPublishAttempt(Base):
+    """Sanitized audit trail for a publication operation."""
+
+    __tablename__ = "seo_publish_attempts"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    publication_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("seo_content_publications.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    request_summary: Mapped[dict | None] = mapped_column(JSONB)
+    response_summary: Mapped[dict | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[int | None] = mapped_column(BigInteger)
+    started_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 class SeoInternalLink(Base):
     """站内页面之间的实际链接边。"""
 

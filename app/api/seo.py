@@ -39,7 +39,25 @@ from app.models import (
 )
 from app.models.module_workspace import SeoSite
 from app.models.seo import SeoCrawlRun, SeoMetricSnapshot, SeoPageSnapshot
+from app.models.seo import (
+    SeoContentPublication,
+    SeoDistributionConnection,
+    SeoPublishAttempt,
+)
 from app.security.auth import AuthContext, require_scoped_auth
+from app.seo_distribution import (
+    SeoDistributionError,
+    decrypt_credentials,
+    encrypt_credentials,
+    normalize_base_url,
+    normalize_credentials,
+    platform_catalog,
+    platform_definition,
+    prepare_content,
+    publication_idempotency_key,
+    publish_content,
+    test_connection,
+)
 from app.seo_serp import (
     SerpProviderError,
     canonical_url,
@@ -2370,6 +2388,123 @@ class ContentUpdate(BaseModel):
     published_at: datetime | None = None
 
 
+class DistributionConnectionCreate(BaseModel):
+    tenant_id: PositiveInt
+    platform_code: str = Field(min_length=1, max_length=40)
+    name: str = Field(min_length=1, max_length=120)
+    base_url: str | None = Field(None, max_length=2000)
+    credentials: dict[str, str] | None = None
+    enabled: bool = True
+
+
+class DistributionConnectionUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=120)
+    base_url: str | None = Field(None, max_length=2000)
+    credentials: dict[str, str] | None = None
+    clear_credentials: bool = False
+    enabled: bool | None = None
+
+
+class DistributionPreflightRequest(BaseModel):
+    tenant_id: PositiveInt
+    content_ids: list[PositiveInt] = Field(min_length=1, max_length=20)
+    connection_ids: list[PositiveInt] = Field(min_length=1, max_length=10)
+    action: Literal["draft", "publish"] = "draft"
+
+
+class DistributionPublishRequest(BaseModel):
+    tenant_id: PositiveInt
+    content_id: PositiveInt
+    connection_id: PositiveInt
+    action: Literal["draft", "publish"] = "draft"
+    confirm: bool = False
+
+
+class DistributionManualPublicationCreate(BaseModel):
+    tenant_id: PositiveInt
+    content_id: PositiveInt
+    platform_name: str = Field(min_length=1, max_length=120)
+    page_url: str = Field(min_length=1, max_length=2000)
+    published_at: datetime | None = None
+
+
+class DistributionManualComplete(BaseModel):
+    tenant_id: PositiveInt
+    page_url: str = Field(min_length=1, max_length=2000)
+    published_at: datetime | None = None
+
+
+def _connection_payload(row: SeoDistributionConnection) -> dict[str, Any]:
+    definition = platform_definition(row.platform_code)
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "platform_code": row.platform_code,
+        "platform_name": definition["name"],
+        "name": row.name,
+        "mode": row.mode,
+        "base_url": row.base_url,
+        "capabilities": row.capabilities or definition.get("capabilities", []),
+        "has_credentials": bool(row.has_credentials),
+        "enabled": row.enabled,
+        "status": row.status,
+        "last_error": row.last_error,
+        "last_tested_at": _iso(row.last_tested_at),
+        "created_at": _iso(row.created_at),
+        "updated_at": _iso(row.updated_at),
+    }
+
+
+def _publication_payload(
+    row: SeoContentPublication,
+    *,
+    content: SeoContentAsset | None = None,
+    connection: SeoDistributionConnection | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "content_id": row.content_asset_id,
+        "content_title": content.title if content else None,
+        "connection_id": row.connection_id,
+        "connection_name": connection.name if connection else None,
+        "platform_code": row.platform_code,
+        "platform_name": row.platform_name,
+        "publish_mode": row.publish_mode,
+        "status": row.status,
+        "source_version": row.source_version,
+        "adapted_title": row.adapted_title,
+        "adapted_excerpt": row.adapted_excerpt,
+        "adapted_content": row.adapted_content,
+        "external_id": row.external_id,
+        "page_url": row.page_url,
+        "handoff_url": row.handoff_url,
+        "last_error": row.last_error,
+        "published_at": _iso(row.published_at),
+        "last_synced_at": _iso(row.last_synced_at),
+        "created_at": _iso(row.created_at),
+        "updated_at": _iso(row.updated_at),
+    }
+
+
+async def _distribution_connection(
+    session: AsyncSession, tenant_id: int, connection_id: int
+) -> SeoDistributionConnection:
+    row = await session.get(SeoDistributionConnection, connection_id)
+    if not row or row.tenant_id != tenant_id:
+        raise HTTPException(404, "平台连接不存在")
+    return row
+
+
+async def _distribution_content(
+    session: AsyncSession, tenant_id: int, content_id: int
+) -> SeoContentAsset:
+    row = await session.get(SeoContentAsset, content_id)
+    if not row or row.tenant_id != tenant_id:
+        raise HTTPException(404, "内容资产不存在")
+    return row
+
+
 def _content_payload(row: SeoContentAsset) -> dict[str, Any]:
     keyword_ids = row.keyword_ids or ([row.keyword_id] if row.keyword_id else [])
     return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "keyword_id": row.keyword_id, "keyword_ids": keyword_ids, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "created_at": _iso(row.created_at), "updated_at": _iso(row.updated_at)}
@@ -2439,9 +2574,21 @@ async def import_published_links(
     for asset in assets:
         by_title[asset.title.strip().casefold()].append(asset)
 
-    validated: list[tuple[SeoContentAsset, str, str, datetime]] = []
+    existing_publications = list(
+        await session.scalars(
+            select(SeoContentPublication).where(SeoContentPublication.tenant_id == tenant_id)
+        )
+    )
+    publication_by_key = {
+        (row.content_asset_id, row.page_url): row
+        for row in existing_publications
+        if row.page_url
+    }
+    validated: list[
+        tuple[SeoContentAsset, str, str, datetime, SeoContentPublication | None]
+    ] = []
     results: list[dict[str, Any]] = []
-    seen_asset_ids: set[int] = set()
+    seen_publications: set[tuple[int, str]] = set()
     for source in source_rows:
         errors: list[str] = []
         asset: SeoContentAsset | None = None
@@ -2480,10 +2627,13 @@ async def import_published_links(
         except ValueError as exc:
             published_at = datetime.utcnow()
             errors.append(str(exc))
-        if asset is not None:
-            if asset.id in seen_asset_ids:
-                errors.append("同一内容资产不能在一个文件中重复登记")
-            seen_asset_ids.add(asset.id)
+        existing_publication = None
+        if asset is not None and page_url:
+            publication_key = (asset.id, page_url)
+            if publication_key in seen_publications:
+                errors.append("同一内容资产和发布链接不能在文件中重复")
+            seen_publications.add(publication_key)
+            existing_publication = publication_by_key.get(publication_key)
         result = {
             "row_number": source["row_number"],
             "content_id": asset.id if asset else content_id,
@@ -2491,14 +2641,14 @@ async def import_published_links(
             "page_url": page_url,
             "platform": platform,
             "published_at": _iso(published_at),
-            "action": "替换已有链接" if asset and asset.page_url and asset.page_url != page_url else "登记新链接",
-            "previous_page_url": asset.page_url if asset else None,
+            "action": "更新发布记录" if existing_publication else "新增渠道记录",
+            "previous_page_url": existing_publication.page_url if existing_publication else None,
             "status": "error" if errors else "valid",
             "errors": errors,
         }
         results.append(result)
         if not errors and asset is not None:
-            validated.append((asset, page_url, platform, published_at))
+            validated.append((asset, page_url, platform, published_at, existing_publication))
 
     failed = sum(item["status"] == "error" for item in results)
     if dry_run or failed:
@@ -2512,14 +2662,34 @@ async def import_published_links(
             "rows": results,
         }
 
-    for asset, page_url, platform, published_at in validated:
+    for asset, page_url, platform, published_at, publication in validated:
         platforms = [str(value).strip() for value in (asset.target_platforms or []) if str(value).strip()]
         if platform and platform not in platforms:
             platforms.append(platform)
-        asset.page_url = page_url
+        if not asset.page_url:
+            asset.page_url = page_url
         asset.target_platforms = platforms[:20]
         asset.status = "published"
-        asset.published_at = published_at
+        asset.published_at = asset.published_at or published_at
+        if publication is None:
+            publication = SeoContentPublication(
+                tenant_id=tenant_id,
+                content_asset_id=asset.id,
+                platform_code="manual",
+                platform_name=platform,
+                publish_mode="manual",
+                status="published",
+                source_version=asset.version_count or 1,
+                page_url=page_url,
+                published_at=published_at,
+                created_by=ctx.user_id,
+            )
+            session.add(publication)
+        else:
+            publication.platform_name = platform
+            publication.status = "published"
+            publication.published_at = published_at
+            publication.last_error = None
     await session.commit()
     return {
         "dry_run": False,
@@ -2529,6 +2699,531 @@ async def import_published_links(
         "failed": 0,
         "imported": len(validated),
         "rows": results,
+    }
+
+
+@router.get("/content-distribution/catalog")
+async def get_distribution_catalog() -> dict[str, Any]:
+    return {"items": platform_catalog()}
+
+
+@router.get("/content-distribution/connections")
+async def list_distribution_connections(
+    tenant_id: int,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    await _tenant(session, tenant_id)
+    rows = list(
+        await session.scalars(
+            select(SeoDistributionConnection)
+            .where(SeoDistributionConnection.tenant_id == tenant_id)
+            .order_by(
+                SeoDistributionConnection.enabled.desc(),
+                SeoDistributionConnection.updated_at.desc(),
+                SeoDistributionConnection.id.desc(),
+            )
+        )
+    )
+    return {"items": [_connection_payload(row) for row in rows], "total": len(rows)}
+
+
+@router.post("/content-distribution/connections")
+async def create_distribution_connection(
+    req: DistributionConnectionCreate,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    await _tenant(session, req.tenant_id)
+    try:
+        platform_code = req.platform_code.strip().lower()
+        definition = platform_definition(platform_code)
+        if not definition.get("available"):
+            raise SeoDistributionError("该平台仍在规划中，暂不能创建连接")
+        base_url = normalize_base_url(req.base_url)
+        if definition["mode"] == "api" and not base_url:
+            raise SeoDistributionError("API 平台必须填写站点地址")
+        credentials = normalize_credentials(platform_code, req.credentials)
+    except SeoDistributionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    row = SeoDistributionConnection(
+        tenant_id=req.tenant_id,
+        platform_code=platform_code,
+        name=req.name.strip(),
+        mode=definition["mode"],
+        base_url=base_url,
+        capabilities=definition.get("capabilities", []),
+        credentials_encrypted=encrypt_credentials(credentials),
+        has_credentials=bool(credentials),
+        enabled=req.enabled,
+        status="ready" if definition["mode"] == "assisted" else "configured",
+        created_by=ctx.user_id,
+    )
+    session.add(row)
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(409, "平台连接名称已存在") from exc
+    await session.refresh(row)
+    return _connection_payload(row)
+
+
+@router.patch("/content-distribution/connections/{connection_id}")
+async def update_distribution_connection(
+    connection_id: int,
+    tenant_id: int,
+    req: DistributionConnectionUpdate,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    row = await _distribution_connection(session, tenant_id, connection_id)
+    try:
+        definition = platform_definition(row.platform_code)
+        connection_changed = False
+        if req.name is not None:
+            row.name = req.name.strip()
+        if req.base_url is not None:
+            row.base_url = normalize_base_url(req.base_url)
+            connection_changed = True
+        if definition["mode"] == "api" and not row.base_url:
+            raise SeoDistributionError("API 平台必须填写站点地址")
+        if req.credentials is not None:
+            credentials = normalize_credentials(row.platform_code, req.credentials)
+            row.credentials_encrypted = encrypt_credentials(credentials)
+            row.has_credentials = bool(credentials)
+            connection_changed = True
+        if req.clear_credentials:
+            row.credentials_encrypted = None
+            row.has_credentials = False
+            connection_changed = True
+        if req.enabled is not None:
+            row.enabled = req.enabled
+        if connection_changed:
+            row.status = "ready" if definition["mode"] == "assisted" else "configured"
+            row.last_error = None
+    except SeoDistributionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(409, "平台连接名称已存在") from exc
+    await session.refresh(row)
+    return _connection_payload(row)
+
+
+@router.post("/content-distribution/connections/{connection_id}/test")
+async def test_distribution_connection(
+    connection_id: int,
+    tenant_id: int,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    row = await _distribution_connection(session, tenant_id, connection_id)
+    try:
+        credentials = decrypt_credentials(row.credentials_encrypted)
+        result = await test_connection(row.platform_code, row.base_url, credentials)
+    except SeoDistributionError as exc:
+        row.status = "failed"
+        row.last_error = str(exc)
+        row.last_tested_at = datetime.utcnow()
+        await session.commit()
+        raise HTTPException(502, str(exc)) from exc
+    row.status = result["status"]
+    row.last_error = None
+    row.last_tested_at = datetime.utcnow()
+    await session.commit()
+    return {**_connection_payload(row), "message": result["message"]}
+
+
+@router.get("/content-distribution/publications")
+async def list_content_publications(
+    tenant_id: int,
+    content_id: int | None = None,
+    status: str | None = None,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    await _tenant(session, tenant_id)
+    conditions = [SeoContentPublication.tenant_id == tenant_id]
+    if content_id is not None:
+        conditions.append(SeoContentPublication.content_asset_id == content_id)
+    if status:
+        conditions.append(SeoContentPublication.status == status)
+    rows = list(
+        await session.scalars(
+            select(SeoContentPublication)
+            .where(*conditions)
+            .order_by(SeoContentPublication.updated_at.desc(), SeoContentPublication.id.desc())
+        )
+    )
+    content_ids = {row.content_asset_id for row in rows}
+    connection_ids = {row.connection_id for row in rows if row.connection_id is not None}
+    contents = {
+        row.id: row
+        for row in await session.scalars(
+            select(SeoContentAsset).where(SeoContentAsset.id.in_(content_ids))
+        )
+    } if content_ids else {}
+    connections = {
+        row.id: row
+        for row in await session.scalars(
+            select(SeoDistributionConnection).where(
+                SeoDistributionConnection.id.in_(connection_ids)
+            )
+        )
+    } if connection_ids else {}
+    items = [
+        _publication_payload(
+            row,
+            content=contents.get(row.content_asset_id),
+            connection=connections.get(row.connection_id),
+        )
+        for row in rows
+    ]
+    counts: dict[str, int] = defaultdict(int)
+    for row in rows:
+        counts[row.status] += 1
+    return {"items": items, "total": len(items), "status_counts": dict(counts)}
+
+
+@router.post("/content-distribution/publications/manual")
+async def create_manual_publication(
+    req: DistributionManualPublicationCreate,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    content = await _distribution_content(session, req.tenant_id, req.content_id)
+    try:
+        page_url, host = normalize_publication_url(req.page_url)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    existing = await session.scalar(
+        select(SeoContentPublication).where(
+            SeoContentPublication.tenant_id == req.tenant_id,
+            SeoContentPublication.content_asset_id == req.content_id,
+            SeoContentPublication.page_url == page_url,
+        )
+    )
+    if existing:
+        raise HTTPException(409, "该文章的发布链接已经登记")
+    published_at = req.published_at or datetime.utcnow()
+    row = SeoContentPublication(
+        tenant_id=req.tenant_id,
+        content_asset_id=req.content_id,
+        platform_code="manual",
+        platform_name=req.platform_name.strip() or host,
+        publish_mode="manual",
+        status="published",
+        source_version=content.version_count or 1,
+        page_url=page_url,
+        published_at=published_at,
+        created_by=ctx.user_id,
+    )
+    session.add(row)
+    if not content.page_url:
+        content.page_url = page_url
+    platforms = [str(value).strip() for value in (content.target_platforms or []) if str(value).strip()]
+    if row.platform_name not in platforms:
+        platforms.append(row.platform_name)
+    content.target_platforms = platforms[:20]
+    content.status = "published"
+    content.published_at = content.published_at or published_at
+    await session.commit()
+    await session.refresh(row)
+    return _publication_payload(row, content=content)
+
+
+@router.post("/content-distribution/preflight")
+async def preflight_content_distribution(
+    req: DistributionPreflightRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    if len(req.content_ids) != len(set(req.content_ids)) or len(req.connection_ids) != len(set(req.connection_ids)):
+        raise HTTPException(400, "文章或平台连接不能重复选择")
+    if len(req.content_ids) * len(req.connection_ids) > 50:
+        raise HTTPException(400, "单次最多创建50个发布任务")
+    contents = [
+        await _distribution_content(session, req.tenant_id, content_id)
+        for content_id in req.content_ids
+    ]
+    connections = [
+        await _distribution_connection(session, req.tenant_id, connection_id)
+        for connection_id in req.connection_ids
+    ]
+    existing_rows = list(
+        await session.scalars(
+            select(SeoContentPublication).where(
+                SeoContentPublication.tenant_id == req.tenant_id,
+                SeoContentPublication.content_asset_id.in_(req.content_ids),
+                SeoContentPublication.connection_id.in_(req.connection_ids),
+            )
+        )
+    )
+    existing = {
+        (row.content_asset_id, row.connection_id, row.source_version): row
+        for row in existing_rows
+    }
+    rows: list[dict[str, Any]] = []
+    ready = 0
+    for content in contents:
+        for connection in connections:
+            errors: list[str] = []
+            warnings: list[str] = []
+            body = content.humanized_content or content.draft or ""
+            if not connection.enabled:
+                errors.append("平台连接已停用")
+            if connection.mode == "api" and connection.status != "connected":
+                errors.append("API 平台尚未通过连接测试")
+            try:
+                prepared = prepare_content(content.title, body, connection.platform_code)
+            except SeoDistributionError as exc:
+                prepared = None
+                errors.append(str(exc))
+            previous = existing.get(
+                (content.id, connection.id, content.version_count or 1)
+            )
+            if previous:
+                if previous.status == "failed":
+                    errors.append("该任务上次失败，请先核对平台后台并人工登记结果，禁止盲目重试")
+                elif previous.status in {
+                    "publishing", "draft_created", "published", "manual_required"
+                }:
+                    errors.append("当前文章版本已存在该平台发布任务")
+            if connection.mode == "assisted":
+                warnings.append("需要在平台官方编辑器中人工确认发布")
+            if req.action == "publish":
+                warnings.append("正式发布后可能立即公开，请确认内容和平台账号")
+            if not errors:
+                ready += 1
+            rows.append(
+                {
+                    "content_id": content.id,
+                    "content_title": content.title,
+                    "connection_id": connection.id,
+                    "connection_name": connection.name,
+                    "platform_code": connection.platform_code,
+                    "platform_name": platform_definition(connection.platform_code)["name"],
+                    "mode": connection.mode,
+                    "action": req.action,
+                    "status": "ready" if not errors else "blocked",
+                    "errors": errors,
+                    "warnings": warnings,
+                    "title_preview": prepared["title"] if prepared else None,
+                    "content_chars": len(body),
+                }
+            )
+    return {
+        "total": len(rows),
+        "ready": ready,
+        "blocked": len(rows) - ready,
+        "confirm_required": req.action == "publish",
+        "rows": rows,
+    }
+
+
+@router.post("/content-distribution/publish")
+async def publish_content_distribution(
+    req: DistributionPublishRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    if req.action == "publish" and not req.confirm:
+        raise HTTPException(400, "正式发布需要明确确认")
+    content = await _distribution_content(session, req.tenant_id, req.content_id)
+    connection = await _distribution_connection(session, req.tenant_id, req.connection_id)
+    if not connection.enabled:
+        raise HTTPException(409, "平台连接已停用")
+    if connection.mode == "api" and connection.status != "connected":
+        raise HTTPException(409, "请先完成平台连接测试")
+    try:
+        prepared = prepare_content(
+            content.title,
+            content.humanized_content or content.draft or "",
+            connection.platform_code,
+        )
+        credentials = decrypt_credentials(connection.credentials_encrypted)
+    except SeoDistributionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    source_version = content.version_count or 1
+    previous = await session.scalar(
+        select(SeoContentPublication).where(
+            SeoContentPublication.tenant_id == req.tenant_id,
+            SeoContentPublication.content_asset_id == req.content_id,
+            SeoContentPublication.connection_id == req.connection_id,
+            SeoContentPublication.source_version == source_version,
+            SeoContentPublication.status.in_(
+                ["publishing", "draft_created", "published", "manual_required"]
+            ),
+        )
+    )
+    if previous:
+        raise HTTPException(409, "当前文章版本已存在该平台任务，为避免重复发布已拦截")
+    key = publication_idempotency_key(
+        req.tenant_id,
+        req.content_id,
+        req.connection_id,
+        source_version,
+        req.action,
+    )
+    existing_key = await session.scalar(
+        select(SeoContentPublication).where(SeoContentPublication.idempotency_key == key)
+    )
+    if existing_key:
+        raise HTTPException(409, "相同发布任务已经提交")
+    definition = platform_definition(connection.platform_code)
+    row = SeoContentPublication(
+        tenant_id=req.tenant_id,
+        content_asset_id=req.content_id,
+        connection_id=req.connection_id,
+        platform_code=connection.platform_code,
+        platform_name=definition["name"],
+        publish_mode=connection.mode if connection.mode != "api" else req.action,
+        status="publishing" if connection.mode == "api" else "preparing",
+        source_version=source_version,
+        adapted_title=prepared["title"],
+        adapted_excerpt=prepared["excerpt"],
+        adapted_content=prepared["content"],
+        handoff_url=definition.get("editor_url"),
+        idempotency_key=key,
+        created_by=ctx.user_id,
+    )
+    session.add(row)
+    await session.flush()
+    attempt = SeoPublishAttempt(
+        tenant_id=req.tenant_id,
+        publication_id=row.id,
+        action=req.action,
+        status="started",
+        request_summary={
+            "platform": connection.platform_code,
+            "title": prepared["title"],
+            "content_chars": len(prepared["content"]),
+        },
+        created_by=ctx.user_id,
+    )
+    session.add(attempt)
+    await session.commit()
+    try:
+        remote = await publish_content(
+            connection.platform_code,
+            connection.base_url,
+            credentials,
+            prepared,
+            req.action,
+        )
+    except SeoDistributionError as exc:
+        row.status = "failed"
+        row.last_error = str(exc)
+        attempt.status = "failed"
+        attempt.error = str(exc)
+        attempt.completed_at = datetime.utcnow()
+        await session.commit()
+        raise HTTPException(502, str(exc)) from exc
+    row.status = remote.status
+    row.external_id = remote.external_id
+    row.page_url = remote.page_url
+    row.handoff_url = (remote.response_summary or {}).get("handoff_url") or row.handoff_url
+    row.last_error = None
+    if remote.status == "published":
+        row.published_at = datetime.utcnow()
+        content.status = "published"
+        content.published_at = content.published_at or row.published_at
+        if remote.page_url and not content.page_url:
+            content.page_url = remote.page_url
+    attempt.status = "succeeded"
+    attempt.response_summary = remote.response_summary
+    attempt.completed_at = datetime.utcnow()
+    await session.commit()
+    await session.refresh(row)
+    return _publication_payload(row, content=content, connection=connection)
+
+
+@router.post("/content-distribution/publications/{publication_id}/complete")
+async def complete_manual_publication(
+    publication_id: int,
+    req: DistributionManualComplete,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    row = await session.get(SeoContentPublication, publication_id)
+    if not row or row.tenant_id != req.tenant_id:
+        raise HTTPException(404, "发布任务不存在")
+    if row.status not in {"manual_required", "failed", "preparing"}:
+        raise HTTPException(409, "当前任务状态不能人工完成")
+    try:
+        page_url, _ = normalize_publication_url(req.page_url)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    duplicate = await session.scalar(
+        select(SeoContentPublication).where(
+            SeoContentPublication.tenant_id == req.tenant_id,
+            SeoContentPublication.content_asset_id == row.content_asset_id,
+            SeoContentPublication.page_url == page_url,
+            SeoContentPublication.id != row.id,
+        )
+    )
+    if duplicate:
+        raise HTTPException(409, "该文章的发布链接已经登记")
+    content = await _distribution_content(session, req.tenant_id, row.content_asset_id)
+    row.page_url = page_url
+    row.status = "published"
+    row.published_at = req.published_at or datetime.utcnow()
+    row.last_error = None
+    content.status = "published"
+    content.published_at = content.published_at or row.published_at
+    if not content.page_url:
+        content.page_url = page_url
+    await session.commit()
+    return _publication_payload(row, content=content)
+
+
+@router.get("/content-distribution/publications/{publication_id}/attempts")
+async def list_publish_attempts(
+    publication_id: int,
+    tenant_id: int,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    row = await session.get(SeoContentPublication, publication_id)
+    if not row or row.tenant_id != tenant_id:
+        raise HTTPException(404, "发布任务不存在")
+    attempts = list(
+        await session.scalars(
+            select(SeoPublishAttempt)
+            .where(
+                SeoPublishAttempt.tenant_id == tenant_id,
+                SeoPublishAttempt.publication_id == publication_id,
+            )
+            .order_by(SeoPublishAttempt.started_at.desc(), SeoPublishAttempt.id.desc())
+        )
+    )
+    return {
+        "items": [
+            {
+                "id": item.id,
+                "action": item.action,
+                "status": item.status,
+                "request_summary": item.request_summary,
+                "response_summary": item.response_summary,
+                "error": item.error,
+                "started_at": _iso(item.started_at),
+                "completed_at": _iso(item.completed_at),
+            }
+            for item in attempts
+        ]
     }
 
 
