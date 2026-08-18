@@ -40,6 +40,21 @@ def test_standalone_seo_entry_does_not_import_shared_application() -> None:
         assert forbidden not in router
 
 
+def test_rewrite_ui_connects_source_ai_save_and_publish_steps() -> None:
+    frontend = Path(__file__).parents[1] / "frontend/src/views/seo"
+    rewrite = (frontend / "SeoRewriteView.vue").read_text(encoding="utf-8")
+    editor = (frontend / "SeoContentEditorView.vue").read_text(encoding="utf-8")
+
+    assert "原创文章列表" in rewrite
+    assert "直接粘贴" in rewrite
+    assert "autoGenerate:true" in rewrite
+    assert "await assist('rewrite')" in editor
+    assert "await save('drafting', { quiet: true })" in editor
+    assert "save('published'" in editor
+    assert "发布地址必须使用 http 或 https" in editor
+    assert "router.push('/seo/distribution')" in editor
+
+
 def test_release_diff_allows_only_seo_assets_and_hash_token_changes(tmp_path: Path) -> None:
     base, candidate = tmp_path / "base", tmp_path / "candidate"
     _write(base, "index.html", "<script src='/assets/index-old.js'></script>")

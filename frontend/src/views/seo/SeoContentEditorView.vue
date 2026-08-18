@@ -16,6 +16,9 @@ const aiBusy = ref('')
 const keywords = ref([])
 const engine = ref('百度')
 const sourceText = ref('')
+const publishVisible = ref(false)
+const publishForm = reactive({ page_url: '', target_platforms: [] })
+const publishedAt = ref(null)
 const assetId = ref(Number(route.query.id) || null)
 const assetVersion = ref(1)
 const mode = computed(() => route.query.type === 'rewrite' ? 'rewrite' : route.query.type === 'qa' ? 'qa' : 'original')
@@ -52,6 +55,8 @@ async function load() {
       const item = contentResult.items.find((row) => row.id === assetId.value)
       if (!item) return ElMessage.warning('改写任务不存在或已被删除')
       Object.assign(form,{title:item.title||'',keyword_id:item.keyword_id||null,outline:item.outline||'',draft:item.humanized_content||item.draft||'',author:item.author||form.author})
+      Object.assign(publishForm,{page_url:item.page_url||'',target_platforms:[...(item.target_platforms||[])]})
+      publishedAt.value=item.published_at||null
       sourceText.value=item.source_text||''
       assetVersion.value=item.version_count||1
       await nextTick()
@@ -123,13 +128,15 @@ async function assist(action) {
     const suggestions = Array.isArray(result.suggestions) ? result.suggestions.join('；') : ''
     aiMessage.value = result.feedback || suggestions || 'DeepSeek 已完成处理，请检查后保存。'
     ElMessage.success('DeepSeek 处理完成')
+    return true
   } catch (e) {
     aiMessage.value = e.message
     ElMessage.error(e.message)
+    return false
   } finally { aiBusy.value = '' }
 }
 
-async function save(status = 'drafting') {
+async function save(status = 'drafting', options = {}) {
   syncDraft()
   if (!currentTenantId.value) return ElMessage.warning('请先选择客户')
   if (!form.title.trim()) return ElMessage.warning('请填写文章标题')
@@ -146,12 +153,12 @@ async function save(status = 'drafting') {
       source_text: mode.value === 'rewrite' ? sourceText.value || null : null,
       rewrite_progress: mode.value === 'rewrite' ? (form.draft ? 100 : 0) : null,
       originality_score: null,
-      target_platforms: [],
+      target_platforms: options.targetPlatforms ?? publishForm.target_platforms,
       version_count: assetVersion.value,
       status,
-      page_url: null,
+      page_url: (options.pageUrl ?? publishForm.page_url) || null,
       author: form.author || null,
-      published_at: null,
+      published_at: options.publishedAt ?? publishedAt.value,
     }
     if(assetId.value){
       const {tenant_id,...values}=payload
@@ -160,17 +167,21 @@ async function save(status = 'drafting') {
       const created=await createSeoContentAsset(payload)
       assetId.value=created.id
     }
-    saveState.value = status === 'review' ? '已提交审核' : '刚刚已保存'
-    ElMessage.success(status === 'review' ? '文章已提交审核' : '文章草稿已保存')
+    saveState.value = status === 'published' ? '已发布' : status === 'review' ? '已提交审核' : '刚刚已保存'
+    if (!options.quiet) ElMessage.success(status === 'published' ? '文章发布记录已保存' : status === 'review' ? '文章已提交审核' : '文章草稿已保存')
     if (status === 'review') router.push(backPath.value)
+    return true
   } catch (e) { ElMessage.error(e.message) } finally { saving.value = false }
 }
 
 function loadPendingRewrite() {
+  if (mode.value !== 'rewrite' || assetId.value) return null
   sourceText.value = sessionStorage.getItem('seo_pending_rewrite_source') || ''
-  if (mode.value !== 'rewrite') return
+  let options = {}
   try {
-    const options = JSON.parse(sessionStorage.getItem('seo_pending_rewrite_options') || '{}')
+    options = JSON.parse(sessionStorage.getItem('seo_pending_rewrite_options') || '{}')
+    if (options.sourceTitle && !form.title) form.title = `${options.sourceTitle}（改写）`
+    if (options.keywordId) form.keyword_id = Number(options.keywordId)
     prompt.value = [
       options.sourceOrigin ? `原文来源：${options.sourceOrigin}` : '',
       options.rewriteStrength ? `改写强度：${options.rewriteStrength}` : '',
@@ -179,9 +190,41 @@ function loadPendingRewrite() {
   } catch {
     prompt.value = ''
   }
+  sessionStorage.removeItem('seo_pending_rewrite_source')
+  sessionStorage.removeItem('seo_pending_rewrite_options')
+  return options
 }
 
-onMounted(() => { form.outline = selectedTemplate.value.outline; loadPendingRewrite(); load() })
+function openPublish() {
+  syncDraft()
+  if (!form.title.trim()) return ElMessage.warning('请先填写文章标题')
+  if (!form.draft.trim()) return ElMessage.warning('请先生成或填写改写正文')
+  publishVisible.value = true
+}
+
+async function publish() {
+  let url
+  try { url = new URL(publishForm.page_url.trim()) } catch { return ElMessage.warning('请填写完整的发布地址') }
+  if (!['http:', 'https:'].includes(url.protocol)) return ElMessage.warning('发布地址必须使用 http 或 https')
+  const platforms = publishForm.target_platforms.length ? [...publishForm.target_platforms] : [url.hostname]
+  const now = new Date().toISOString()
+  const saved = await save('published', { pageUrl: url.toString(), targetPlatforms: platforms, publishedAt: now })
+  if (!saved) return
+  Object.assign(publishForm,{page_url:url.toString(),target_platforms:platforms})
+  publishedAt.value=now
+  publishVisible.value=false
+  router.push('/seo/distribution')
+}
+
+onMounted(async () => {
+  form.outline = selectedTemplate.value.outline
+  const pending = loadPendingRewrite()
+  await load()
+  if (mode.value === 'rewrite' && pending?.autoGenerate && sourceText.value) {
+    const generated = await assist('rewrite')
+    if (generated) await save('drafting', { quiet: true })
+  }
+})
 </script>
 
 <template>
@@ -189,7 +232,7 @@ onMounted(() => { form.outline = selectedTemplate.value.outline; loadPendingRewr
     <header class="editor-topbar">
       <button class="editor-back" type="button" @click="router.push(backPath)">← 返回{{ mode==='rewrite'?'文章改写':mode==='qa'?'问答运营':'原创文章' }}</button>
       <div><h1>{{ pageTitle }}</h1><p>{{ mode==='rewrite'?'基于导入原文 · 深度改写':mode==='qa'?'搜索问答 · 新建回答':`${selectedTemplate.name} · 新建内容` }}</p></div>
-      <div class="editor-top-actions"><span>{{ saveState }}</span><button type="button" @click="save('drafting')">保存草稿</button><button class="primary" type="button" :disabled="saving" @click="save('review')">提交审核</button><b>{{ String(session.user?.name || session.user?.username || 'DZ').slice(0, 2).toUpperCase() }}</b></div>
+      <div class="editor-top-actions"><span>{{ saveState }}</span><button type="button" @click="save('drafting')">保存草稿</button><button type="button" :disabled="saving" @click="save('review')">提交审核</button><button v-if="mode==='rewrite'" class="primary" type="button" :disabled="saving||!!aiBusy" @click="openPublish">发布</button><b>{{ String(session.user?.name || session.user?.username || 'DZ').slice(0, 2).toUpperCase() }}</b></div>
     </header>
 
     <main class="editor-workspace">
@@ -213,6 +256,14 @@ onMounted(() => { form.outline = selectedTemplate.value.outline; loadPendingRewr
         <div class="ai-body"><textarea v-model="prompt" placeholder="输入你的内容要求，例如：保留事实并深度重构表达…" /><button class="ai-primary" type="button" :disabled="!!aiBusy" @click="assist(primaryAiAction)">{{ primaryAiLabel }}</button><div class="quick-actions"><button type="button" :disabled="!!aiBusy" @click="assist('outline')">{{aiBusy==='outline'?'生成中…':'生成大纲'}}</button><button type="button" :disabled="!!aiBusy" @click="assist('title')">{{aiBusy==='title'?'优化中…':'优化标题'}}</button><button type="button" :disabled="!!aiBusy" @click="assist('keywords')">{{aiBusy==='keywords'?'检查中…':'检查关键词'}}</button><button type="button" :disabled="!!aiBusy" @click="assist('rewrite')">{{aiBusy==='rewrite'?'改写中…':'重新改写'}}</button></div><div v-if="aiMessage" class="ai-message">{{ aiMessage }}</div><ul><li><span>AI 服务</span><b class="ok">DeepSeek</b></li><li><span>标题完整</span><b :class="{ ok: form.title }">{{ form.title ? '通过' : '待完善' }}</b></li><li><span>目标关键词</span><b :class="{ ok: form.keyword_id }">{{ form.keyword_id ? '已绑定' : '待选择' }}</b></li><li><span>正文内容</span><b :class="{ ok: wordCount > 300 }">{{ wordCount > 300 ? '已形成' : '待完善' }}</b></li></ul></div>
       </aside>
     </main>
+    <el-dialog v-model="publishVisible" title="发布改写文章" width="620px">
+      <el-form label-position="top">
+        <el-alert title="系统登记发布结果，不会在未授权的第三方账号中自动发文。" type="info" :closable="false" show-icon />
+        <el-form-item label="发布地址" required><el-input v-model="publishForm.page_url" placeholder="https://example.com/article" /></el-form-item>
+        <el-form-item label="目标平台"><el-checkbox-group v-model="publishForm.target_platforms"><el-checkbox v-for="item in ['官网','微信公众号','知乎','百家号','头条号']" :key="item" :value="item">{{item}}</el-checkbox></el-checkbox-group></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="publishVisible=false">取消</el-button><el-button type="primary" :loading="saving" @click="publish">确认发布</el-button></template>
+    </el-dialog>
   </div>
 </template>
 
