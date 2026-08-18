@@ -91,6 +91,7 @@ from app.models.seo import (
     SeoSerpResult,
     SeoSitePage,
 )
+from app.models.module_workspace import GeoProject, SeoSite, TenantModule
 
 __all__ = [
     "Suggestion",
@@ -180,6 +181,9 @@ __all__ = [
     "SeoBrandAsset",
     "SeoSerpResult",
     "SeoSitePage",
+    "TenantModule",
+    "SeoSite",
+    "GeoProject",
     "SeoContentAsset",
     "SeoInternalLink",
     "SeoBacklink",

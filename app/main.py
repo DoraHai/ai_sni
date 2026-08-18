@@ -14,6 +14,8 @@ from app.api import (
     assistant_router,
     auth_router,
     customer_profile_router,
+    customer_modules_router,
+    geo_projects_router,
     dashboard_router,
     expansion_router,
     keywords_router,
@@ -89,6 +91,8 @@ app.include_router(suggestions_router)
 app.include_router(insights_router)
 app.include_router(reports_router)
 app.include_router(customer_profile_router)
+app.include_router(customer_modules_router)
+app.include_router(geo_projects_router)
 app.include_router(adjustments_verify_router)
 app.include_router(writeback_router)
 app.include_router(search_terms_router)

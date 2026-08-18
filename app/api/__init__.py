@@ -3,6 +3,10 @@ from app.api.alerts import router as alerts_router
 from app.api.assistant import router as assistant_router
 from app.api.auth import router as auth_router
 from app.api.customer_profile import router as customer_profile_router
+from app.api.customer_modules import (
+    geo_projects_router,
+    router as customer_modules_router,
+)
 from app.api.dashboard import router as dashboard_router
 from app.api.expansion import router as expansion_router
 from app.api.keywords import router as keywords_router
@@ -33,6 +37,8 @@ __all__ = [
     "assistant_router",
     "auth_router",
     "customer_profile_router",
+    "customer_modules_router",
+    "geo_projects_router",
     "users_router",
     "dashboard_router",
     "expansion_router",
