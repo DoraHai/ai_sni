@@ -93,14 +93,6 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     """返回 (可接受的菜单键集合 或 None=不限菜单, 是否需要 edit)。命中集合满足其一即可。"""
     edit = method not in _READ_METHODS
     p = path
-    if p.startswith("/api/v1/admin/customers"):
-        return {"settings.customers"}, True
-    if p.startswith("/api/v1/sem/assets/accounts"):
-        return {"sem.assets"}, edit
-    if p.startswith("/api/v1/seo/sites"):
-        return {"seo.assets"}, edit
-    if p.startswith("/api/v1/geo/projects"):
-        return {"geo.assets"}, edit
 
     if p.startswith("/api/v1/dashboard"):
         return {"monitor.dashboard"}, edit

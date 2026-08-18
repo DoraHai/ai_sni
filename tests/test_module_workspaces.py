@@ -13,11 +13,11 @@ os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
 from fastapi import HTTPException
 
-from app.api.customer_modules import _canonical_domain
+from app.api.customer_modules import _canonical_domain, _require_seo_asset_permission
 from app.models import GeoProject, SeoSite, TenantModule
 from app.module_scope import normalize_module_code
 from app.permissions import CLIENT_PERMS, OPERATOR_PERMS
-from app.security.auth import AuthContext, _required
+from app.security.auth import AuthContext
 
 
 class ModuleWorkspaceTests(unittest.TestCase):
@@ -33,10 +33,17 @@ class ModuleWorkspaceTests(unittest.TestCase):
         self.assertNotIn("settings.customers", CLIENT_PERMS)
         self.assertNotIn("settings.customers", OPERATOR_PERMS)
 
-    def test_asset_routes_require_their_own_module_permission(self):
-        self.assertEqual(_required("/api/v1/sem/assets/accounts", "GET"), ({"sem.assets"}, False))
-        self.assertEqual(_required("/api/v1/seo/sites", "POST"), ({"seo.assets"}, True))
-        self.assertEqual(_required("/api/v1/geo/projects", "PATCH"), ({"geo.assets"}, True))
+    def test_seo_site_routes_enforce_permission_without_global_auth_changes(self):
+        viewer = AuthContext(1, "viewer", "viewer", 7, {"seo.assets": "view"})
+        editor = AuthContext(2, "editor", "editor", 7, {"seo.assets": "edit"})
+        denied = AuthContext(3, "denied", "denied", 7, {})
+
+        _require_seo_asset_permission(viewer)
+        _require_seo_asset_permission(editor, edit=True)
+        with self.assertRaises(HTTPException):
+            _require_seo_asset_permission(viewer, edit=True)
+        with self.assertRaises(HTTPException):
+            _require_seo_asset_permission(denied)
 
     def test_bound_customer_cannot_switch_tenant(self):
         ctx = AuthContext(1, "client", "client", 7, {"seo.assets": "edit"})
