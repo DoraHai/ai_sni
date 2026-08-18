@@ -1,7 +1,7 @@
 """Add multiple target keywords to SEO content assets.
 
-Revision ID: 0069_seo_content_keywords
-Revises: 0068_seo_crawler
+Revision ID: 0070_seo_content_keywords
+Revises: 0069_writeback_approvals
 Create Date: 2026-08-19
 """
 
@@ -12,8 +12,8 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 
-revision: str = "0069_seo_content_keywords"
-down_revision: Union[str, None] = "0068_seo_crawler"
+revision: str = "0070_seo_content_keywords"
+down_revision: Union[str, None] = "0069_writeback_approvals"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
