@@ -3,6 +3,7 @@
 面向运营和交付：按左侧菜单说明每个模块做什么、先点哪里、数据从哪来、常见误判怎么避。
 
 **按客户从开户写到对外汇报的详细操作**见 [`GEO_OPERATOR_GUIDE.md`](GEO_OPERATOR_GUIDE.md)（事实核验、禁止编造、竞品三栏、样本门槛）。  
+**含现成测试数据的点击链路**见 [`GEO_CLICK_TEST_CHAIN.md`](GEO_CLICK_TEST_CHAIN.md)（Udesk优地门禁 + 智齿完整环）。  
 工程实现与指标公式见 `docs/GEO_METRIC_DICTIONARY.md`；本地联调端口见 `docs/LOCAL_GEO_DEMO.md`。
 
 产品分两条线，**不要混在一个客户里测**：
