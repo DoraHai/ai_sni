@@ -21,6 +21,7 @@ SOURCE_ALLOWED_EXACT = {
     "app/module_scope.py",
     "app/permissions.py",
     "app/seo_crawler.py",
+    "deploy/seo-frontend.nginx.conf",
     "frontend/src/api/moduleAssets.js",
     "frontend/src/api/seo.js",
     "frontend/seo/index.html",
