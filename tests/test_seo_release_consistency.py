@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 from scripts.verify_seo_release import (
     build_manifest,
@@ -20,6 +21,22 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert not source_path_allowed("app/security/auth.py")
     assert not source_path_allowed("app/api/geo.py")
     assert not source_path_allowed("frontend/src/views/LoginView.vue")
+
+
+def test_standalone_seo_entry_does_not_import_shared_application() -> None:
+    frontend = Path(__file__).parents[1] / "frontend"
+    entry = (frontend / "src/seo-main.js").read_text(encoding="utf-8")
+    router = (frontend / "src/seo-router.js").read_text(encoding="utf-8")
+    config = (frontend / "vite.seo.config.js").read_text(encoding="utf-8")
+
+    assert "./App.vue" not in entry
+    assert "./router" not in entry
+    assert "base: '/seo/'" in config
+    view_imports = re.findall(r"import\('([^']+)'\)", router)
+    assert view_imports
+    assert all(path.startswith("./views/seo/") for path in view_imports)
+    for forbidden in ("/geo/", "/monitor/", "/diagnostic-center", "LoginView", "../router"):
+        assert forbidden not in router
 
 
 def test_release_diff_allows_only_seo_assets_and_hash_token_changes(tmp_path: Path) -> None:
