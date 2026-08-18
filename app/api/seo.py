@@ -56,6 +56,7 @@ from app.seo_distribution import (
     prepare_content,
     publication_idempotency_key,
     publish_content,
+    sync_publish_status,
     test_connection,
 )
 from app.seo_serp import (
@@ -2743,7 +2744,7 @@ async def create_distribution_connection(
         if not definition.get("available"):
             raise SeoDistributionError("该平台仍在规划中，暂不能创建连接")
         base_url = normalize_base_url(req.base_url)
-        if definition["mode"] == "api" and not base_url:
+        if definition["mode"] == "api" and definition.get("base_url_required", True) and not base_url:
             raise SeoDistributionError("API 平台必须填写站点地址")
         credentials = normalize_credentials(platform_code, req.credentials)
     except SeoDistributionError as exc:
@@ -2789,7 +2790,7 @@ async def update_distribution_connection(
         if req.base_url is not None:
             row.base_url = normalize_base_url(req.base_url)
             connection_changed = True
-        if definition["mode"] == "api" and not row.base_url:
+        if definition["mode"] == "api" and definition.get("base_url_required", True) and not row.base_url:
             raise SeoDistributionError("API 平台必须填写站点地址")
         if req.credentials is not None:
             credentials = normalize_credentials(row.platform_code, req.credentials)
@@ -3001,6 +3002,8 @@ async def preflight_content_distribution(
                     errors.append("当前文章版本已存在该平台发布任务")
             if connection.mode == "assisted":
                 warnings.append("需要在平台官方编辑器中人工确认发布")
+            if connection.platform_code == "wechat_official" and "<img" in body.lower():
+                warnings.append("正文含图片；微信可能过滤未上传到公众号素材库的外链图片")
             if req.action == "publish":
                 warnings.append("正式发布后可能立即公开，请确认内容和平台账号")
             if not errors:
@@ -3187,6 +3190,63 @@ async def complete_manual_publication(
         content.page_url = page_url
     await session.commit()
     return _publication_payload(row, content=content)
+
+
+@router.post("/content-distribution/publications/{publication_id}/sync")
+async def sync_content_publication(
+    publication_id: int,
+    tenant_id: int,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    row = await session.get(SeoContentPublication, publication_id)
+    if not row or row.tenant_id != tenant_id:
+        raise HTTPException(404, "发布任务不存在")
+    if row.status != "publishing" or not row.connection_id:
+        raise HTTPException(409, "当前任务不需要同步发布状态")
+    connection = await _distribution_connection(session, tenant_id, row.connection_id)
+    attempt = SeoPublishAttempt(
+        tenant_id=tenant_id,
+        publication_id=row.id,
+        action="sync",
+        status="started",
+        request_summary={"platform": row.platform_code, "external_id": row.external_id},
+        created_by=ctx.user_id,
+    )
+    session.add(attempt)
+    await session.commit()
+    try:
+        remote = await sync_publish_status(
+            row.platform_code,
+            decrypt_credentials(connection.credentials_encrypted),
+            row.external_id,
+        )
+    except SeoDistributionError as exc:
+        row.last_error = str(exc)
+        attempt.status = "failed"
+        attempt.error = str(exc)
+        attempt.completed_at = datetime.utcnow()
+        await session.commit()
+        raise HTTPException(502, str(exc)) from exc
+    row.status = remote.status
+    row.external_id = remote.external_id or row.external_id
+    row.page_url = remote.page_url or row.page_url
+    row.last_error = remote.error
+    row.last_synced_at = datetime.utcnow()
+    attempt.status = "failed" if remote.status == "failed" else "succeeded"
+    attempt.response_summary = remote.response_summary
+    attempt.error = remote.error
+    attempt.completed_at = datetime.utcnow()
+    content = await _distribution_content(session, tenant_id, row.content_asset_id)
+    if remote.status == "published":
+        row.published_at = datetime.utcnow()
+        content.status = "published"
+        content.published_at = content.published_at or row.published_at
+        if row.page_url and not content.page_url:
+            content.page_url = row.page_url
+    await session.commit()
+    return _publication_payload(row, content=content, connection=connection)
 
 
 @router.get("/content-distribution/publications/{publication_id}/attempts")

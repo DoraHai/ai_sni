@@ -13,6 +13,7 @@ import {
   importSeoPublishedLinks,
   preflightSeoDistribution,
   publishSeoDistribution,
+  syncSeoContentPublication,
   testSeoDistributionConnection,
   updateSeoDistributionConnection,
 } from '../../api/seo'
@@ -56,6 +57,7 @@ const batchForm = reactive({ content_ids: [], connection_ids: [], action: 'draft
 const completeDialog = ref(false)
 const completeSaving = ref(false)
 const completeForm = reactive({ publication_id: null, page_url: '' })
+const syncingId = ref(null)
 
 const statusMeta = {
   pending: ['待处理', 'warning'],
@@ -278,6 +280,21 @@ async function handoffPublication(item) {
   completeDialog.value = true
 }
 
+async function syncPublication(item) {
+  syncingId.value = item.id
+  try {
+    const result = await syncSeoContentPublication({ publicationId: item.id, tenantId: currentTenantId.value })
+    if (result.status === 'published') ElMessage.success('平台状态已同步，文章发布成功')
+    else if (result.status === 'failed') ElMessage.error(result.last_error || '平台返回发布失败')
+    else ElMessage.info('平台仍在处理中，请稍后再次同步')
+    await load()
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    syncingId.value = null
+  }
+}
+
 async function completeManual() {
   if (!completeForm.page_url.trim()) return ElMessage.warning('请粘贴平台发布后的完整链接')
   completeSaving.value = true
@@ -431,6 +448,7 @@ onMounted(load)
           <el-table-column label="操作" width="180" fixed="right">
             <template #default="scope">
               <el-button v-if="scope.row.status === 'manual_required'" link type="primary" @click="handoffPublication(scope.row)">复制并打开编辑器</el-button>
+              <el-button v-else-if="scope.row.status === 'publishing' && scope.row.platform_code === 'wechat_official'" link type="primary" :loading="syncingId === scope.row.id" @click="syncPublication(scope.row)">同步状态</el-button>
               <el-tooltip v-else-if="scope.row.last_error" :content="scope.row.last_error"><el-button link type="danger">查看失败原因</el-button></el-tooltip>
               <span v-else class="muted-text">等待平台结果</span>
             </template>
@@ -460,9 +478,9 @@ onMounted(load)
       <div v-if="selectedPlatform" class="dialog-intro"><b>{{ selectedPlatform.name }}</b><span>{{ selectedPlatform.help }}</span></div>
       <el-form label-position="top">
         <el-form-item label="连接名称" required><el-input v-model="connectionForm.name" placeholder="例如：品牌官网、官方知乎账号" /></el-form-item>
-        <el-form-item v-if="selectedPlatform?.mode === 'api'" :label="selectedPlatform.base_url_label || '平台地址'" required><el-input v-model="connectionForm.base_url" placeholder="https://example.com" /></el-form-item>
+        <el-form-item v-if="selectedPlatform?.mode === 'api' && selectedPlatform?.base_url_required !== false" :label="selectedPlatform.base_url_label || '平台地址'" required><el-input v-model="connectionForm.base_url" placeholder="https://example.com" /></el-form-item>
         <el-form-item v-for="field in selectedPlatform?.credential_fields || []" :key="field.key" :label="field.label" required>
-          <el-input v-model="connectionForm.credentials[field.key]" :type="field.type" show-password autocomplete="new-password" />
+          <el-input v-model="connectionForm.credentials[field.key]" :type="field.type" :show-password="field.type === 'password'" :autocomplete="field.type === 'password' ? 'new-password' : 'off'" />
         </el-form-item>
         <el-alert v-if="selectedPlatform?.mode === 'assisted'" title="无需填写平台账号密码。发布时系统会复制适配稿并打开官方编辑器。" type="info" :closable="false" show-icon />
       </el-form>

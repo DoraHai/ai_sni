@@ -192,6 +192,10 @@ export function completeSeoManualPublication({ publicationId, payload }) {
   return client.post(`/api/v1/seo/content-distribution/publications/${publicationId}/complete`, payload)
 }
 
+export function syncSeoContentPublication({ publicationId, tenantId }) {
+  return client.post(`/api/v1/seo/content-distribution/publications/${publicationId}/sync`, null, { params: { tenant_id: tenantId }, timeout: 30000 })
+}
+
 export function assistSeoContent(payload) {
   return client.post('/api/v1/seo/content-ai/assist', payload, { timeout: 100000 })
 }

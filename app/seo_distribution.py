@@ -8,6 +8,7 @@ import html
 import ipaddress
 import json
 import socket
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -18,6 +19,9 @@ import jwt
 from bs4 import BeautifulSoup
 
 from app.security.crypto import decrypt, encrypt
+
+
+_WECHAT_TOKEN_CACHE: dict[str, tuple[str, float]] = {}
 
 
 class SeoDistributionError(RuntimeError):
@@ -87,10 +91,15 @@ PLATFORM_CATALOG: dict[str, dict[str, Any]] = {
     "wechat_official": {
         "name": "微信公众号",
         "mode": "api",
-        "available": False,
-        "capabilities": ["draft", "publish", "async_status", "media_upload"],
-        "credential_fields": [],
-        "help": "需要公众号发布接口权限、封面素材和正文图片转存，安排在下一接入阶段。",
+        "available": True,
+        "base_url_required": False,
+        "capabilities": ["connection_test", "draft", "publish", "async_status"],
+        "credential_fields": [
+            {"key": "app_id", "label": "AppID", "type": "text"},
+            {"key": "app_secret", "label": "AppSecret", "type": "password"},
+            {"key": "thumb_media_id", "label": "永久封面素材 ID", "type": "text"},
+        ],
+        "help": "通过官方草稿箱与发布接口接入；账号需具备对应权限，并将服务器出口 IP 加入白名单。",
     },
     "weibo": {
         "name": "微博",
@@ -245,7 +254,7 @@ def prepare_content(title: str, content: str, platform_code: str) -> dict[str, s
         raise SeoDistributionError("文章缺少标题")
     if not clean_content:
         raise SeoDistributionError("文章缺少可发布正文")
-    max_title = 80 if platform_code in {"wordpress", "ghost"} else 60
+    max_title = 32 if platform_code == "wechat_official" else 80 if platform_code in {"wordpress", "ghost"} else 60
     adapted_title = clean_title[:max_title]
     if "<p" in clean_content.lower() or "<h" in clean_content.lower():
         content_html = _sanitize_article_html(clean_content)
@@ -256,7 +265,7 @@ def prepare_content(title: str, content: str, platform_code: str) -> dict[str, s
         content_html = "\n".join(f"<p>{html.escape(part)}</p>" for part in paragraphs)
         adapted_content = clean_content
         plain = clean_content
-    excerpt = " ".join(plain.split())[:160]
+    excerpt = " ".join(plain.split())[:120 if platform_code == "wechat_official" else 160]
     return {
         "title": adapted_title,
         "excerpt": excerpt,
@@ -297,6 +306,48 @@ class RemotePublishResult:
     external_id: str | None = None
     page_url: str | None = None
     response_summary: dict[str, Any] | None = None
+    error: str | None = None
+
+
+def _response_json(response: httpx.Response, action: str) -> dict[str, Any]:
+    try:
+        body = response.json() if response.content else {}
+    except ValueError as exc:
+        raise SeoDistributionError(f"{action}返回了无法识别的数据") from exc
+    if response.status_code >= 400:
+        raise SeoDistributionError(f"{action}失败（HTTP {response.status_code}）")
+    if not isinstance(body, dict):
+        raise SeoDistributionError(f"{action}返回了无法识别的数据")
+    error_code = int(body.get("errcode") or 0)
+    if error_code:
+        message = str(body.get("errmsg") or "未知错误")[:200]
+        raise SeoDistributionError(f"{action}失败（微信错误码 {error_code}：{message}）")
+    return body
+
+
+async def _wechat_access_token(client: httpx.AsyncClient, credentials: dict[str, str]) -> str:
+    cache_key = hashlib.sha256(
+        f"{credentials['app_id']}:{credentials['app_secret']}".encode("utf-8")
+    ).hexdigest()
+    cached = _WECHAT_TOKEN_CACHE.get(cache_key)
+    if cached and cached[1] > time.monotonic():
+        return cached[0]
+    response = await client.post(
+        "https://api.weixin.qq.com/cgi-bin/stable_token",
+        json={
+            "grant_type": "client_credential",
+            "appid": credentials["app_id"],
+            "secret": credentials["app_secret"],
+            "force_refresh": False,
+        },
+    )
+    body = _response_json(response, "获取微信公众号调用凭证")
+    token = str(body.get("access_token") or "")
+    if not token:
+        raise SeoDistributionError("微信公众号未返回调用凭证")
+    expires_in = max(60, int(body.get("expires_in") or 300))
+    _WECHAT_TOKEN_CACHE[cache_key] = (token, time.monotonic() + min(300, expires_in - 30))
+    return token
 
 
 async def test_connection(
@@ -309,10 +360,13 @@ async def test_connection(
         return {"status": "ready", "message": "半自动发布无需保存平台账号密码"}
     if not definition.get("available"):
         raise SeoDistributionError("该平台尚未开放连接，请使用人工登记")
-    endpoint = await ensure_public_endpoint(base_url or "")
     timeout = httpx.Timeout(15.0, connect=8.0)
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
         try:
+            if platform_code == "wechat_official":
+                await _wechat_access_token(client, credentials)
+                return {"status": "connected", "message": "微信公众号授权验证通过"}
+            endpoint = await ensure_public_endpoint(base_url or "")
             if platform_code == "wordpress":
                 response = await client.get(
                     f"{endpoint}/wp-json/wp/v2/users/me",
@@ -351,11 +405,54 @@ async def publish_content(
         raise SeoDistributionError("不支持的发布方式")
     if not definition.get("available"):
         raise SeoDistributionError("该平台尚未开放 API 发布")
-    endpoint = await ensure_public_endpoint(base_url or "")
     target_status = "draft" if action == "draft" else "publish"
     timeout = httpx.Timeout(25.0, connect=8.0)
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
         try:
+            if platform_code == "wechat_official":
+                token = await _wechat_access_token(client, credentials)
+                response = await client.post(
+                    "https://api.weixin.qq.com/cgi-bin/draft/add",
+                    params={"access_token": token},
+                    json={
+                        "articles": [
+                            {
+                                "article_type": "news",
+                                "title": prepared["title"],
+                                "digest": prepared["excerpt"],
+                                "content": prepared["content_html"],
+                                "thumb_media_id": credentials["thumb_media_id"],
+                                "need_open_comment": 0,
+                                "only_fans_can_comment": 0,
+                            }
+                        ]
+                    },
+                )
+                draft = _response_json(response, "创建微信公众号草稿")
+                media_id = str(draft.get("media_id") or "")
+                if not media_id:
+                    raise SeoDistributionError("微信公众号未返回草稿素材 ID")
+                if action == "draft":
+                    return RemotePublishResult(
+                        status="draft_created",
+                        external_id=media_id,
+                        response_summary={"media_id": media_id},
+                    )
+                response = await client.post(
+                    "https://api.weixin.qq.com/cgi-bin/freepublish/submit",
+                    params={"access_token": token},
+                    json={"media_id": media_id},
+                )
+                submitted = _response_json(response, "提交微信公众号发布")
+                publish_id = str(submitted.get("publish_id") or "")
+                if not publish_id:
+                    raise SeoDistributionError("微信公众号未返回发布任务 ID")
+                return RemotePublishResult(
+                    status="publishing",
+                    external_id=publish_id,
+                    response_summary={"media_id": media_id, "publish_id": publish_id},
+                )
+            endpoint = await ensure_public_endpoint(base_url or "")
             if platform_code == "wordpress":
                 response = await client.post(
                     f"{endpoint}/wp-json/wp/v2/posts",
@@ -403,4 +500,58 @@ async def publish_content(
         external_id=external_id,
         page_url=page_url,
         response_summary={"http_status": response.status_code, "external_id": external_id},
+    )
+
+
+async def sync_publish_status(
+    platform_code: str,
+    credentials: dict[str, str],
+    external_id: str | None,
+) -> RemotePublishResult:
+    if platform_code != "wechat_official":
+        raise SeoDistributionError("该平台没有需要手动同步的异步发布任务")
+    if not external_id:
+        raise SeoDistributionError("发布任务缺少平台任务 ID")
+    timeout = httpx.Timeout(15.0, connect=8.0)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+        try:
+            token = await _wechat_access_token(client, credentials)
+            response = await client.post(
+                "https://api.weixin.qq.com/cgi-bin/freepublish/get",
+                params={"access_token": token},
+                json={"publish_id": external_id},
+            )
+            body = _response_json(response, "同步微信公众号发布状态")
+        except httpx.HTTPError as exc:
+            raise SeoDistributionError("同步微信公众号发布状态失败，请稍后重试") from exc
+    publish_status = int(body.get("publish_status", 1))
+    summary = {
+        "publish_id": external_id,
+        "publish_status": publish_status,
+        "article_id": str(body.get("article_id") or "") or None,
+        "fail_idx": body.get("fail_idx") or [],
+    }
+    if publish_status == 1:
+        return RemotePublishResult(status="publishing", external_id=external_id, response_summary=summary)
+    if publish_status == 0:
+        articles = ((body.get("article_detail") or {}).get("item") or [])
+        page_url = _safe_remote_page_url(articles[0].get("article_url")) if articles else None
+        return RemotePublishResult(
+            status="published",
+            external_id=summary["article_id"] or external_id,
+            page_url=page_url,
+            response_summary=summary,
+        )
+    messages = {
+        2: "微信公众号原创校验失败",
+        3: "微信公众号发布失败",
+        4: "微信公众号平台审核未通过",
+        5: "微信公众号文章发布后被用户删除",
+        6: "微信公众号文章发布后被系统封禁",
+    }
+    return RemotePublishResult(
+        status="failed",
+        external_id=external_id,
+        response_summary=summary,
+        error=messages.get(publish_status, f"微信公众号返回未知发布状态 {publish_status}"),
     )

@@ -22,7 +22,9 @@ def test_platform_catalog_distinguishes_api_assisted_and_planned_channels() -> N
     assert {"draft", "publish"} <= set(catalog["wordpress"]["capabilities"])
     assert catalog["zhihu"]["mode"] == "assisted"
     assert catalog["zhihu"]["credential_fields"] == []
-    assert catalog["wechat_official"]["available"] is False
+    assert catalog["wechat_official"]["available"] is True
+    assert catalog["wechat_official"]["base_url_required"] is False
+    assert "async_status" in catalog["wechat_official"]["capabilities"]
 
 
 @pytest.mark.parametrize(
@@ -140,6 +142,72 @@ def test_wordpress_adapter_uses_official_post_endpoint(monkeypatch: pytest.Monke
     assert calls[0]["auth"] == ("writer", "app-pass")
 
 
+def test_wechat_adapter_creates_draft_submits_publish_and_syncs_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict] = []
+    responses = [
+        {"access_token": "token", "expires_in": 7200},
+        {"media_id": "draft-media"},
+        {"publish_id": "publish-job"},
+        {
+            "publish_status": 0,
+            "article_id": "article-id",
+            "article_detail": {"item": [{"article_url": "https://mp.weixin.qq.com/s/example"}]},
+        },
+    ]
+
+    class FakeResponse:
+        status_code = 200
+        content = b"{}"
+
+        def __init__(self, body):
+            self.body = body
+
+        def json(self):
+            return self.body
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, url, **kwargs):
+            calls.append({"method": "GET", "url": url, **kwargs})
+            return FakeResponse(responses.pop(0))
+
+        async def post(self, url, **kwargs):
+            calls.append({"method": "POST", "url": url, **kwargs})
+            return FakeResponse(responses.pop(0))
+
+    monkeypatch.setattr(distribution.httpx, "AsyncClient", lambda **_kwargs: FakeClient())
+    distribution._WECHAT_TOKEN_CACHE.clear()
+    credentials = {"app_id": "appid", "app_secret": "secret", "thumb_media_id": "cover"}
+    published = asyncio.run(
+        distribution.publish_content(
+            "wechat_official",
+            None,
+            credentials,
+            distribution.prepare_content("微信公众号 SEO 标题", "正文", "wechat_official"),
+            "publish",
+        )
+    )
+    synced = asyncio.run(
+        distribution.sync_publish_status("wechat_official", credentials, published.external_id)
+    )
+
+    assert published.status == "publishing"
+    assert published.external_id == "publish-job"
+    assert calls[0]["url"].endswith("/cgi-bin/stable_token")
+    assert calls[0]["json"]["force_refresh"] is False
+    assert calls[1]["url"].endswith("/cgi-bin/draft/add")
+    assert calls[1]["json"]["articles"][0]["thumb_media_id"] == "cover"
+    assert calls[2]["url"].endswith("/cgi-bin/freepublish/submit")
+    assert calls[3]["url"].endswith("/cgi-bin/freepublish/get")
+    assert synced.status == "published"
+    assert synced.page_url == "https://mp.weixin.qq.com/s/example"
+
+
 def test_distribution_models_are_tenant_scoped_and_keep_credentials_private() -> None:
     assert SeoDistributionConnection.__tablename__ == "seo_distribution_connections"
     assert SeoContentPublication.__tablename__ == "seo_content_publications"
@@ -197,6 +265,7 @@ def test_distribution_frontend_exposes_guided_publish_flow() -> None:
         "preflightSeoDistribution",
         "publishSeoDistribution",
         "completeSeoManualPublication",
+        "syncSeoContentPublication",
     ):
         assert function_name in api
     credential_keys = {
