@@ -57,6 +57,22 @@ def test_rewrite_ui_connects_source_ai_save_and_publish_steps() -> None:
     assert "router.push('/seo/distribution')" in editor
 
 
+def test_original_content_brief_supports_bounded_multi_keywords() -> None:
+    root = Path(__file__).parents[1]
+    editor = (root / "frontend/src/views/seo/SeoContentEditorView.vue").read_text(encoding="utf-8")
+    content = (root / "frontend/src/views/seo/SeoContentView.vue").read_text(encoding="utf-8")
+    migration = (root / "migrations/versions/20260819_0069_seo_content_multi_keywords.py").read_text(encoding="utf-8")
+
+    assert 'v-model="form.keyword_ids"' in editor
+    assert ':multiple-limit="5"' in editor
+    assert "1 个品牌词" in editor
+    assert "keyword_ids: form.keyword_ids" in editor
+    assert 'v-model="form.keyword_ids"' in content
+    assert 'down_revision: Union[str, None] = "0068_seo_crawler"' in migration
+    assert 'jsonb_build_array(keyword_id)' in migration
+    assert source_path_allowed("migrations/versions/20260819_0069_seo_content_multi_keywords.py")
+
+
 def test_release_diff_allows_only_seo_assets_and_hash_token_changes(tmp_path: Path) -> None:
     base, candidate = tmp_path / "base", tmp_path / "candidate"
     _write(base, "index.html", "<script src='/assets/index-old.js'></script>")

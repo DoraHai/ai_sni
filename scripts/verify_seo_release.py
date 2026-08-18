@@ -35,6 +35,7 @@ SOURCE_ALLOWED_EXACT = {
     "migrations/versions/20260817_0066_module_workspaces.py",
     "migrations/versions/20260818_0067_seo_site_metrics_foundation.py",
     "migrations/versions/20260818_0068_seo_crawler_foundation.py",
+    "migrations/versions/20260819_0069_seo_content_multi_keywords.py",
     "tests/test_module_workspaces.py",
     "tests/test_seo_crawler.py",
     "tests/test_seo_distribution_import.py",

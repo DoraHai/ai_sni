@@ -14,10 +14,12 @@ from app.api.seo import (
     SitePageImport,
     _keyword_payload,
     _metric_payload,
+    _missing_content_keywords,
     _number_or_text,
     _provider_metric_status,
     _normalize_brand_homepage,
     _seo_ai_prompt,
+    _selected_keyword_ids,
 )
 from app.models.seo import (
     SeoBacklink,
@@ -174,6 +176,35 @@ def test_seo_ai_assist_request_and_prompt_are_fact_guarded() -> None:
     assert "不得编造" in system
     assert "工业软件" in user
     assert "语言更自然" in user
+
+
+def test_seo_content_supports_one_to_five_ordered_keywords() -> None:
+    request = SeoContentAssistRequest(
+        tenant_id=1,
+        action="generate",
+        keyword_ids=[11, 12, 13],
+    )
+    tenant = Tenant(id=1, name="测试品牌", industry="工业软件", brand_terms=["测试品牌"])
+    keywords = [
+        SeoKeywordAsset(id=11, tenant_id=1, keyword="测试品牌", priority="P1", status="active", source="manual"),
+        SeoKeywordAsset(id=12, tenant_id=1, keyword="工业软件", priority="P1", status="active", source="manual"),
+        SeoKeywordAsset(id=13, tenant_id=1, keyword="设备管理系统", priority="P2", status="active", source="manual"),
+    ]
+
+    system, user = _seo_ai_prompt(request, tenant, keywords)
+
+    assert "正文必须逐字、自然地包含全部目标关键词" in system
+    assert "主关键词：测试品牌" in user
+    assert "辅助关键词：工业软件、设备管理系统" in user
+    assert _selected_keyword_ids(request.keyword_ids, request.keyword_id) == [11, 12, 13]
+    assert _missing_content_keywords({"content": "测试品牌提供工业软件能力。"}, keywords) == ["设备管理系统"]
+
+
+def test_seo_content_rejects_more_than_five_keywords() -> None:
+    with pytest.raises(ValidationError):
+        SeoContentAssistRequest(tenant_id=1, action="generate", keyword_ids=[1, 2, 3, 4, 5, 6])
+    with pytest.raises(ValidationError):
+        ContentCreate(tenant_id=1, title="多关键词文章", keyword_ids=[1, 2, 3, 4, 5, 6])
 
 
 def test_seo_ai_assist_rejects_oversized_instruction() -> None:

@@ -206,6 +206,7 @@ class SeoContentAsset(Base):
     tenant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tenants.id"), nullable=False, index=True)
     site_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("seo_sites.id", ondelete="SET NULL"), index=True)
     keyword_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("seo_keyword_assets.id", ondelete="SET NULL"))
+    keyword_ids: Mapped[list | None] = mapped_column(JSONB)
     content_type: Mapped[str] = mapped_column(String(32), nullable=False, default="article")
     title: Mapped[str] = mapped_column(Text, nullable=False)
     outline: Mapped[str | None] = mapped_column(Text)
