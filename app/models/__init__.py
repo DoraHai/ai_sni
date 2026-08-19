@@ -26,6 +26,7 @@ from app.models.writeback_action import (
     WRITEBACK_ACTION_LABELS,
     WritebackAction,
 )
+from app.models.writeback_approval import WritebackApproval
 from app.models.lead import (
     LEAD_INTENT_LABELS,
     LEAD_SOURCE_LABELS,
@@ -119,6 +120,7 @@ __all__ = [
     "SearchTermReport",
     "QUERY_STATUS_LABELS",
     "WritebackAction",
+    "WritebackApproval",
     "WRITEBACK_ACTION_LABELS",
     "WB_ACTION_STATUS_LABELS",
     "MATCH_MODE_LABELS",

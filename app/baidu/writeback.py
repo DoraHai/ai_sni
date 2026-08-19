@@ -19,6 +19,14 @@ from app.baidu.services.adgroup import AdgroupService
 from app.baidu.services.campaign import CampaignService
 from app.baidu.services.keyword import KeywordService
 from app.baidu.sync import _account_client
+from app.baidu.writeback_approval import (
+    ACTION_ACCOUNT_BUDGET,
+    ACTION_ADGROUP_BID,
+    ACTION_CAMPAIGN_BUDGET,
+    ACTION_KEYWORD_BID,
+    WritebackApprovalError,
+    claim_approval,
+)
 from app.config import get_settings
 from app.models import (
     Adgroup,
@@ -46,6 +54,31 @@ class WritebackError(Exception):
     """回写前校验失败（业务拒绝，不调百度）。"""
 
 
+async def _claim_funds_approval(
+    session: AsyncSession,
+    *,
+    approval_id: int | None,
+    tenant_id: int,
+    action_type: str,
+    payload: dict,
+    operator_user_id: int | None,
+) -> None:
+    """演练不消耗审批；真实资金回写必须消费匹配的异人审批。"""
+    if get_settings().baidu_write_dry_run:
+        return
+    try:
+        await claim_approval(
+            session,
+            approval_id=approval_id,
+            tenant_id=tenant_id,
+            action_type=action_type,
+            payload=payload,
+            operator_user_id=operator_user_id,
+        )
+    except WritebackApprovalError as exc:
+        raise WritebackError(str(exc)) from exc
+
+
 def _validate(old_bid: float | None, new_bid: float) -> float | None:
     """校验目标价，返回 change_pct（无旧价则 None）。越界抛 WritebackError。"""
     if new_bid < MIN_BID or new_bid > MAX_BID:
@@ -69,6 +102,7 @@ async def apply_keyword_writeback(
     *,
     operator_user_id: int | None,
     operator_name: str | None,
+    approval_id: int | None = None,
 ) -> BidWriteback:
     """把关键词的「最终执行价」回写百度，落台账并返回台账行。
 
@@ -80,7 +114,7 @@ async def apply_keyword_writeback(
     kw = await session.scalar(
         select(Keyword).where(
             Keyword.tenant_id == tenant_id, Keyword.keyword_id == keyword_id
-        )
+        ).with_for_update()
     )
     if kw is None:
         raise WritebackError("关键词不在维度表中，请先执行关键词维度同步")
@@ -89,14 +123,7 @@ async def apply_keyword_writeback(
     new_bid = round(float(new_bid), 2)
     change_pct = _validate(old_bid, new_bid)
 
-    acc = await session.scalar(
-        select(BaiduAccount).where(
-            BaiduAccount.tenant_id == tenant_id,
-            BaiduAccount.status == "active",
-        )
-    )
-    if acc is None:
-        raise WritebackError("该租户没有生效的百度账户授权，无法回写")
+    acc = await _active_account(session, tenant_id)
 
     # 关联当下 pending 建议（可选）：用于记录来源 + 真写成功后标采纳
     sug = await session.scalar(
@@ -104,10 +131,18 @@ async def apply_keyword_writeback(
             Suggestion.tenant_id == tenant_id,
             Suggestion.keyword_id == keyword_id,
             Suggestion.status == "pending",
-        )
+        ).with_for_update()
     )
 
     dry_run = get_settings().baidu_write_dry_run
+    await _claim_funds_approval(
+        session,
+        approval_id=approval_id,
+        tenant_id=tenant_id,
+        action_type=ACTION_KEYWORD_BID,
+        payload={"keyword_id": keyword_id, "new_bid": new_bid},
+        operator_user_id=operator_user_id,
+    )
 
     rec = BidWriteback(
         tenant_id=tenant_id,
@@ -180,7 +215,7 @@ async def _active_account(
     ]
     if baidu_account_id is not None:
         conditions.append(BaiduAccount.id == baidu_account_id)
-    acc = await session.scalar(select(BaiduAccount).where(*conditions))
+    acc = await session.scalar(select(BaiduAccount).where(*conditions).with_for_update())
     if acc is None:
         if baidu_account_id is not None:
             raise WritebackError("计划所属的百度账户未授权或已停用，无法回写")
@@ -209,7 +244,9 @@ async def apply_negative_writeback(
         raise WritebackError("匹配方式只能是 exact（精确否）/ phrase（短语否）")
 
     adg = await session.scalar(
-        select(Adgroup).where(Adgroup.tenant_id == tenant_id, Adgroup.adgroup_id == adgroup_id)
+        select(Adgroup)
+        .where(Adgroup.tenant_id == tenant_id, Adgroup.adgroup_id == adgroup_id)
+        .with_for_update()
     )
     if adg is None:
         raise WritebackError("单元不在维度表中，请先执行单元维度同步")
@@ -605,6 +642,7 @@ async def apply_campaign_budget_writeback(
     *,
     operator_user_id: int | None,
     operator_name: str | None,
+    approval_id: int | None = None,
 ) -> WritebackAction:
     """计划日预算写回（updateCampaign budget，文档 0046）。dry_run 时拦截不真发。
 
@@ -620,7 +658,7 @@ async def apply_campaign_budget_writeback(
     camp = await session.scalar(
         select(Campaign).where(
             Campaign.tenant_id == tenant_id, Campaign.campaign_id == campaign_id
-        )
+        ).with_for_update()
     )
     if camp is None:
         raise WritebackError("计划不在维度表中，请先执行计划维度同步")
@@ -645,6 +683,14 @@ async def apply_campaign_budget_writeback(
 
     old_budget = float(camp.budget) if camp.budget is not None else None
     dry_run = get_settings().baidu_write_dry_run
+    await _claim_funds_approval(
+        session,
+        approval_id=approval_id,
+        tenant_id=tenant_id,
+        action_type=ACTION_CAMPAIGN_BUDGET,
+        payload={"campaign_id": campaign_id, "new_budget": new_budget},
+        operator_user_id=operator_user_id,
+    )
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id, action_type="set_campaign_budget",
         word=camp.campaign_name or f"计划#{campaign_id}",
@@ -784,7 +830,7 @@ async def apply_campaign_schedule_writeback(
     camp = await session.scalar(
         select(Campaign).where(
             Campaign.tenant_id == tenant_id, Campaign.campaign_id == campaign_id
-        )
+        ).with_for_update()
     )
     if camp is None:
         raise WritebackError("计划不在维度表中，请先执行计划维度同步")
@@ -902,7 +948,7 @@ async def apply_campaign_region_writeback(
     camp = await session.scalar(
         select(Campaign).where(
             Campaign.tenant_id == tenant_id, Campaign.campaign_id == campaign_id
-        )
+        ).with_for_update()
     )
     if camp is None:
         raise WritebackError("计划不在维度表中，请先执行计划维度同步")
@@ -973,7 +1019,7 @@ async def apply_adgroup_pause_writeback(
     adg = await session.scalar(
         select(Adgroup).where(
             Adgroup.tenant_id == tenant_id, Adgroup.adgroup_id == adgroup_id
-        )
+        ).with_for_update()
     )
     if adg is None:
         raise WritebackError("单元不在维度表中，请先执行单元维度同步")
@@ -1023,6 +1069,7 @@ async def apply_adgroup_bid_writeback(
     *,
     operator_user_id: int | None,
     operator_name: str | None,
+    approval_id: int | None = None,
 ) -> WritebackAction:
     """单元出价 maxPrice 写回（updateAdgroup）。校验 (0,999.99] 且 ≤ 所属计划预算。
 
@@ -1034,7 +1081,7 @@ async def apply_adgroup_bid_writeback(
     adg = await session.scalar(
         select(Adgroup).where(
             Adgroup.tenant_id == tenant_id, Adgroup.adgroup_id == adgroup_id
-        )
+        ).with_for_update()
     )
     if adg is None:
         raise WritebackError("单元不在维度表中，请先执行单元维度同步")
@@ -1043,7 +1090,7 @@ async def apply_adgroup_bid_writeback(
         camp = await session.scalar(
             select(Campaign).where(
                 Campaign.tenant_id == tenant_id, Campaign.campaign_id == adg.campaign_id
-            )
+            ).with_for_update()
         )
         if camp is not None and camp.budget is not None and new_price > float(camp.budget):
             raise WritebackError(
@@ -1053,6 +1100,14 @@ async def apply_adgroup_bid_writeback(
 
     old_price = float(adg.max_price) if adg.max_price is not None else None
     dry_run = get_settings().baidu_write_dry_run
+    await _claim_funds_approval(
+        session,
+        approval_id=approval_id,
+        tenant_id=tenant_id,
+        action_type=ACTION_ADGROUP_BID,
+        payload={"adgroup_id": adgroup_id, "new_price": new_price},
+        operator_user_id=operator_user_id,
+    )
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id, action_type="set_adgroup_bid",
         word=adg.adgroup_name or f"单元#{adgroup_id}",
@@ -1218,6 +1273,7 @@ async def apply_account_budget_writeback(
     *,
     operator_user_id: int | None,
     operator_name: str | None,
+    approval_id: int | None = None,
 ) -> WritebackAction:
     """账户日预算写回（updateAccountInfo budget，文档 0036）。dry_run 时拦截不真发。
 
@@ -1246,6 +1302,14 @@ async def apply_account_budget_writeback(
         logger.warning("账户预算写回：查当前预算失败，old_value 留空", exc_info=True)
 
     dry_run = get_settings().baidu_write_dry_run
+    await _claim_funds_approval(
+        session,
+        approval_id=approval_id,
+        tenant_id=tenant_id,
+        action_type=ACTION_ACCOUNT_BUDGET,
+        payload={"new_budget": new_budget},
+        operator_user_id=operator_user_id,
+    )
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id, action_type="set_account_budget",
         word="账户日预算", old_value=old_budget, new_value=new_budget,

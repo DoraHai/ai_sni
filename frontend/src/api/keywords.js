@@ -58,10 +58,11 @@ export function batchUpdateCategory({ tenantId, keywordIds, category }) {
 
 // 回写单个关键词的最终执行价到百度（updateWord）。经 dry-run 安全网 + 20% 硬上限 + 台账留痕。
 // 返回 { status, dry_run, writeback }
-export function writebackKeyword({ keywordId, tenantId, price }) {
+export function writebackKeyword({ keywordId, tenantId, price, approvalId = null }) {
   return client.post(`/api/v1/keywords/${keywordId}/writeback`, {
     tenant_id: tenantId,
     price,
+    approval_id: approvalId,
   })
 }
 
