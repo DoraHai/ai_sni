@@ -5,15 +5,15 @@
     拉取当天累计报告，并刷新计划/单元/关键词/出价策略
   - fetch_yesterday_keyword_report：每天 02:00（Asia/Shanghai）
     报告同步 → 关键词维度同步（getWord）→ 5 类分级重算 → 规则引擎
-  - collect_daily_seo_rankings：每天 02:00（Asia/Shanghai）
-    遍历全部启用 SEO 关键词，采集百度 PC/移动前 50 并写入品牌排名快照
+  - sync_search_terms_daily：每天 03:00（Asia/Shanghai）
+    搜索词报告近 31 天同步，独立于主同步流程
 
 在 main.py 的 startup 事件里调 start_scheduler()。
 """
 import logging
 import tempfile
-from asyncio import Lock
-from datetime import datetime, timedelta, timezone
+from asyncio import Lock, sleep
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -27,6 +27,8 @@ from app.baidu.sync import (
     sync_keyword_dimension_reports_for_account,
     sync_keyword_report_for_account,
     sync_keyword_report_for_all_active_accounts,
+    sync_region_snapshot,
+    sync_search_terms_for_account,
     sync_keywords_for_account,
     sync_ocpc_packages_for_account,
     sync_operation_records_for_account,
@@ -34,11 +36,11 @@ from app.baidu.sync import (
 )
 from app.baidu.oauth import refresh_expiring_oauth_grants
 from app.classification import reclassify_keywords
-from app.config import get_settings
 from app.database import async_session_factory
-from app.models import BaiduAccount, SeoKeywordAsset, SeoRankSnapshot, Tenant
+from app.models import BaiduAccount, Tenant
 from app.process_lock import acquire_file_lock, release_file_lock
 from app.rules import run_rules_for_all_tenants
+from app.rules.site_health import run_site_health_for_all_tenants
 from app.suggestions import run_suggestions_for_all_tenants
 
 logger = logging.getLogger(__name__)
@@ -50,15 +52,14 @@ _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 # 多 worker 防双跑：uvicorn --workers 2 时每个 worker 都会执行 startup → 各起一个
 # APScheduler，导致每日任务跑两次（重复调百度 + 重复写）。用文件排他锁，只让抢到锁的
 # 那个 worker 启动调度，其余 worker 跳过。锁随进程退出自动释放。
-_LOCK_DIR = Path(tempfile.gettempdir())
-_SCHEDULER_LOCK_PATH = _LOCK_DIR / "sem_scheduler.lock"
-_SEO_RANK_LOCK_PATH = _LOCK_DIR / "sem_seo_rank_collection.lock"
+_LOCK_DIRECTORY = Path(tempfile.gettempdir())
+_SCHEDULER_LOCK_PATH = _LOCK_DIRECTORY / "sem_scheduler.lock"
 _lock_fh = None
 
 
 def _acquire_tenant_sync_lock(tenant_id: int):
     """跨 worker 的客户级非阻塞锁，避免定时任务和人工刷新重复调用百度。"""
-    return acquire_file_lock(_LOCK_DIR / f"sem_tenant_sync_{tenant_id}.lock")
+    return acquire_file_lock(_LOCK_DIRECTORY / f"sem_tenant_sync_{tenant_id}.lock")
 
 
 def _release_tenant_sync_lock(fh) -> None:
@@ -151,6 +152,10 @@ async def fetch_yesterday_keyword_report() -> None:
         ).all()
         for acc in accounts:
             try:
+                tenant = await session.get(Tenant, acc.tenant_id)
+                if tenant is not None:
+                    await sleep(2)
+                    await sync_region_snapshot(session, tenant, acc, yesterday, yesterday)
                 await sync_campaigns_for_account(session, acc)
                 await sync_adgroups_for_account(session, acc)
                 await sync_keywords_for_account(session, acc)
@@ -234,174 +239,101 @@ async def purge_old_assistant_messages() -> None:
             logger.exception("[scheduler] 清理助手对话失败")
 
 
-def _chunks(values: list[int], size: int) -> list[list[int]]:
-    size = max(1, size)
-    return [values[index : index + size] for index in range(0, len(values), size)]
+async def probe_site_health_alerts() -> None:
+    """独立探测落地页可用性，避免拖慢每日报表同步链路。"""
+    today = datetime.now(_SHANGHAI_TZ).date()
+    logger.info("[scheduler] 开始落地页可用性探测 %s", today)
+    async with async_session_factory() as session:
+        result = await run_site_health_for_all_tenants(session, today)
+    logger.info("[scheduler] %s 落地页可用性探测完成: %s", today, result)
 
 
-def _local_day_start_utc(now: datetime | None = None) -> datetime:
-    """返回上海自然日零点对应的无时区 UTC 时间，匹配数据库 DateTime 字段。"""
-    local_now = now or datetime.now(_SHANGHAI_TZ)
-    local_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-    return local_start.astimezone(timezone.utc).replace(tzinfo=None)
-
-
-async def collect_daily_seo_rankings() -> None:
-    """每天 02:00 采集全部客户的百度 PC/移动前 50 排名。
-
-    已在当天成功形成快照的关键词/设备会跳过，因此任务重试不会重复扣费；
-    每批共用同一个 captured_at，前端可以完整读取本次全量批次。
-    """
-    settings = get_settings()
-    if not settings.seo_rank_scheduler_enabled:
-        logger.info("[scheduler][SEO] 自动排名采集已关闭")
-        return
-
-    lock_fh = acquire_file_lock(_SEO_RANK_LOCK_PATH)
-    if lock_fh is None:
-        logger.info("[scheduler][SEO] 另一排名采集任务正在运行，本次跳过")
-        return
-
-    # 延迟导入，避免 scheduler 与 SEO 路由在应用启动时形成循环依赖。
-    from app.api.seo import collect_rank_serp_for_tenant
-
-    batch_captured_at = datetime.utcnow()
-    day_start_utc = _local_day_start_utc()
-    totals = {
-        "tenants": 0,
-        "keywords": 0,
-        "requests": 0,
-        "snapshots": 0,
-        "serp_results": 0,
-        "errors": 0,
-        "skipped_pairs": 0,
-    }
-    try:
+async def sync_search_terms_daily() -> None:
+    """每日同步近 31 天搜索词报告，避免分段拉取拖慢 02:00 主同步。"""
+    end_date = datetime.now(_SHANGHAI_TZ).date()
+    start_date = end_date - timedelta(days=30)
+    logger.info(
+        "[scheduler] 开始搜索词报告每日同步 %s~%s", start_date, end_date
+    )
+    result: dict[str, int] = {}
+    async with _report_sync_lock:
         async with async_session_factory() as session:
-            tenant_ids = list(
+            refresh_result = await refresh_expiring_oauth_grants(session)
+            logger.info("[scheduler] OAuth Token 刷新结果: %s", refresh_result)
+            accounts = (
                 await session.scalars(
-                    select(SeoKeywordAsset.tenant_id)
-                    .where(SeoKeywordAsset.status == "active")
-                    .distinct()
-                    .order_by(SeoKeywordAsset.tenant_id)
+                    select(BaiduAccount).where(BaiduAccount.status == "active")
                 )
-            )
-            for tenant_id in tenant_ids:
-                keyword_ids = list(
-                    await session.scalars(
-                        select(SeoKeywordAsset.id)
-                        .where(
-                            SeoKeywordAsset.tenant_id == tenant_id,
-                            SeoKeywordAsset.status == "active",
-                        )
-                        .order_by(SeoKeywordAsset.priority, SeoKeywordAsset.id)
+            ).all()
+            for acc in accounts:
+                try:
+                    result[acc.baidu_username] = await sync_search_terms_for_account(
+                        session, acc, start_date, end_date
                     )
-                )
-                if not keyword_ids:
-                    continue
-                totals["tenants"] += 1
-                totals["keywords"] += len(keyword_ids)
-                completed_rows = (
-                    await session.execute(
-                        select(SeoRankSnapshot.keyword_id, SeoRankSnapshot.device).where(
-                            SeoRankSnapshot.tenant_id == tenant_id,
-                            SeoRankSnapshot.engine == "baidu",
-                            SeoRankSnapshot.source == "chinaz_top50",
-                            SeoRankSnapshot.checked_at >= day_start_utc,
-                            SeoRankSnapshot.keyword_id.in_(keyword_ids),
-                        )
+                    logger.info(
+                        "账户 %s 搜索词报告每日同步完成: %d 条",
+                        acc.baidu_username,
+                        result[acc.baidu_username],
                     )
-                ).all()
-                completed = {(int(row[0]), row[1]) for row in completed_rows}
-
-                for device in ("desktop", "mobile"):
-                    pending_ids = [
-                        keyword_id
-                        for keyword_id in keyword_ids
-                        if (keyword_id, device) not in completed
-                    ]
-                    totals["skipped_pairs"] += len(keyword_ids) - len(pending_ids)
-                    for keyword_batch in _chunks(
-                        pending_ids, settings.seo_rank_scheduler_batch_size
-                    ):
-                        try:
-                            result = await collect_rank_serp_for_tenant(
-                                session=session,
-                                tenant_id=tenant_id,
-                                keyword_ids=keyword_batch,
-                                devices=[device],
-                                max_keywords=None,
-                                use_ai=settings.seo_rank_scheduler_use_ai,
-                                captured_at=batch_captured_at,
-                            )
-                        except Exception:  # noqa: BLE001
-                            await session.rollback()
-                            totals["errors"] += len(keyword_batch)
-                            logger.exception(
-                                "[scheduler][SEO] 客户 %s 的 %s 批次采集失败（关键词 %s 个）",
-                                tenant_id,
-                                device,
-                                len(keyword_batch),
-                            )
-                            continue
-                        totals["requests"] += result["requests"]
-                        totals["snapshots"] += result["snapshots"]
-                        totals["serp_results"] += result["serp_results"]
-                        totals["errors"] += len(result["errors"])
-        logger.info("[scheduler][SEO] 每日百度前 50 排名采集完成: %s", totals)
-    finally:
-        release_file_lock(lock_fh)
+                except Exception:  # noqa: BLE001
+                    await session.rollback()
+                    result[acc.baidu_username] = -1
+                    logger.exception("账户 %s 搜索词报告同步失败", acc.baidu_username)
+    logger.info("[scheduler] 搜索词报告每日同步完成: %s", result)
 
 
-def _start_scheduler() -> None:
+def start_scheduler() -> None:
     if not _acquire_scheduler_lock():
         logger.info(
             "[scheduler] 未抢到调度锁，本 worker 不启动调度（另一 worker 已在跑，避免双跑）"
         )
         return
-    scheduler.add_job(
-        fetch_today_keyword_report,
-        CronTrigger(minute="*/15"),
-        id="fetch_today_keyword_report",
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-    )
-    scheduler.add_job(
-        fetch_yesterday_keyword_report,
-        CronTrigger(hour=2, minute=0),
-        id="fetch_yesterday_keyword_report",
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-    )
-    scheduler.add_job(
-        collect_daily_seo_rankings,
-        CronTrigger(hour=2, minute=0),
-        id="collect_daily_seo_rankings",
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=3600,
-    )
-    scheduler.add_job(
-        purge_old_assistant_messages,
-        CronTrigger(hour=3, minute=30),
-        id="purge_old_assistant_messages",
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-    )
-    scheduler.start()
-    logger.info("[scheduler] 已启动，下次执行 %s", _next_run())
-
-
-def start_scheduler() -> None:
     try:
-        _start_scheduler()
+        scheduler.add_job(
+            fetch_today_keyword_report,
+            CronTrigger(minute="*/15"),
+            id="fetch_today_keyword_report",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.add_job(
+            fetch_yesterday_keyword_report,
+            CronTrigger(hour=2, minute=0),
+            id="fetch_yesterday_keyword_report",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.add_job(
+            purge_old_assistant_messages,
+            CronTrigger(hour=3, minute=30),
+            id="purge_old_assistant_messages",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.add_job(
+            sync_search_terms_daily,
+            CronTrigger(hour=3, minute=0),
+            id="sync_search_terms_daily",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.add_job(
+            probe_site_health_alerts,
+            CronTrigger(minute=20),
+            id="probe_site_health_alerts",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.start()
     except Exception:
         _release_scheduler_lock()
         raise
+    logger.info("[scheduler] 已启动，下次执行 %s", _next_run())
 
 
 def _next_run() -> str | None:

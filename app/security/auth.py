@@ -94,6 +94,13 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     edit = method not in _READ_METHODS
     p = path
 
+    if p.startswith("/api/v1/sem/assets/accounts"):
+        return {"sem.assets"}, edit
+    if p.startswith("/api/v1/seo/sites"):
+        return {"seo.assets"}, edit
+    if p.startswith("/api/v1/geo/projects"):
+        return {"geo.assets"}, edit
+
     if p.startswith("/api/v1/dashboard"):
         return {"monitor.dashboard"}, edit
     if p.startswith("/api/v1/alerts"):

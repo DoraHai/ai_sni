@@ -11,8 +11,10 @@ export function setAccountBudget({ tenantId, budget }) {
 }
 
 // 计划列表（含日预算/状态，行内可改预算）。
-export function fetchCampaigns({ tenantId }) {
-  return client.get('/api/v1/manage/campaigns', { params: { tenant_id: tenantId } })
+export function fetchCampaigns({ tenantId, baiduAccountId }) {
+  return client.get('/api/v1/manage/campaigns', {
+    params: { tenant_id: tenantId, baidu_account_id: baiduAccountId || undefined },
+  })
 }
 
 // 写回计划日预算（dry-run 演练时只记台账不真改）。
@@ -26,6 +28,33 @@ export function setCampaignBudget({ tenantId, campaignId, budget }) {
 export function setCampaignPause({ tenantId, campaignId, pause }) {
   return client.post('/api/v1/manage/campaign-pause', {
     tenant_id: tenantId, campaign_id: campaignId, pause,
+  })
+}
+
+// 整表写回计划投放时段；pause=true 用于节假日停投模板。
+export function setCampaignSchedule({ tenantId, campaignId, schedulePriceFactors, pause = false }) {
+  return client.post('/api/v1/manage/campaign-schedule', {
+    tenant_id: tenantId,
+    campaign_id: campaignId,
+    schedule_price_factors: schedulePriceFactors.map((item) => ({
+      time_id: item.timeId,
+      price_factor: item.priceFactor,
+    })),
+    pause,
+  })
+}
+
+export function fetchRegionOptions() {
+  return client.get('/api/v1/manage/region-options')
+}
+
+export function setCampaignRegion({ tenantId, campaignId, regionTarget, regionPriceFactor, geoLocationStatus }) {
+  return client.post('/api/v1/manage/campaign-region', {
+    tenant_id: tenantId,
+    campaign_id: campaignId,
+    region_target: regionTarget,
+    region_price_factor: regionPriceFactor,
+    geo_location_status: geoLocationStatus,
   })
 }
 

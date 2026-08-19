@@ -6,7 +6,9 @@
 
 后续计划日预算（updateCampaign budget）也归这个 router。
 """
+import json
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -25,6 +27,8 @@ from app.baidu.writeback import (
     apply_adgroup_pause_writeback,
     apply_campaign_budget_writeback,
     apply_campaign_pause_writeback,
+    apply_campaign_region_writeback,
+    apply_campaign_schedule_writeback,
 )
 from app.database import get_session
 from app.models import Adgroup, BaiduAccount, Campaign
@@ -32,11 +36,33 @@ from app.security.auth import AuthContext, require_scoped_auth
 
 logger = logging.getLogger(__name__)
 
+_REGION_DATA_PATH = Path(__file__).parent.parent / "data" / "baidu_region_codes.json"
+_REGION_CACHE: list[dict] | None = None
+
+
+def _load_regions() -> list[dict]:
+    """读取内置地域编码快照；文件首行是供人工阅读的 JSONC 来源说明。"""
+    global _REGION_CACHE
+    if _REGION_CACHE is None:
+        raw = _REGION_DATA_PATH.read_text(encoding="utf-8")
+        raw = "\n".join(line for line in raw.splitlines() if not line.lstrip().startswith("//"))
+        data = json.loads(raw)
+        if not isinstance(data, list):
+            raise RuntimeError("百度地域编码资源格式错误")
+        _REGION_CACHE = data
+    return _REGION_CACHE
+
 router = APIRouter(
     prefix="/api/v1/manage",
     tags=["投放管理"],
     dependencies=[Depends(require_scoped_auth)],
 )
+
+
+@router.get("/region-options")
+async def list_region_options() -> dict:
+    """省市地域下拉选项（只读常量，来自百度官方编码表快照）。"""
+    return {"regions": _load_regions()}
 
 
 @router.get("/account-budget")
@@ -108,21 +134,37 @@ async def set_account_budget(
 @router.get("/campaigns")
 async def list_campaigns_budget(
     tenant_id: int = Query(..., description="本地租户 ID"),
+    baidu_account_id: int | None = Query(None, description="按百度账户筛选"),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """计划列表（计划管理：日预算/状态，行内可改预算）。数据来自本地维度表。"""
+    conditions = [Campaign.tenant_id == tenant_id]
+    if baidu_account_id is not None:
+        conditions.append(Campaign.baidu_account_id == baidu_account_id)
     camps = (
         await session.scalars(
-            select(Campaign).where(Campaign.tenant_id == tenant_id)
+            select(Campaign).where(*conditions)
         )
     ).all()
+    accounts = (
+        await session.scalars(
+            select(BaiduAccount).where(BaiduAccount.tenant_id == tenant_id)
+        )
+    ).all()
+    account_names = {account.id: account.baidu_username for account in accounts}
     rows = [
         {
             "campaign_id": c.campaign_id,
             "campaign_name": c.campaign_name,
+            "baidu_account_id": c.baidu_account_id,
+            "baidu_account_name": account_names.get(c.baidu_account_id),
             "budget": _to_float(c.budget) if c.budget is not None else None,
             "pause": c.pause,
             "status": c.status,
+            "region_target": c.region_target or [],
+            "region_price_factor": c.region_price_factor or [],
+            "geo_location_status": c.geo_location_status,
+            "schedule_price_factors": c.schedule_price_factors or [],
             "synced_at": c.synced_at.isoformat() if c.synced_at else None,
         }
         for c in camps
@@ -131,6 +173,14 @@ async def list_campaigns_budget(
     return {
         "total": len(rows),
         "campaigns": rows,
+        "accounts": [
+            {
+                "id": account.id,
+                "name": account.baidu_username,
+                "status": account.status,
+            }
+            for account in sorted(accounts, key=lambda item: item.baidu_username or "")
+        ],
         "min_budget": MIN_ACCOUNT_BUDGET,
         "max_budget": MAX_ACCOUNT_BUDGET,
     }
@@ -189,6 +239,103 @@ async def set_campaign_pause(
     except WritebackError as e:
         raise HTTPException(400, str(e))
     return {"status": rec.status, "dry_run": rec.dry_run, "pause": req.pause, "error_msg": rec.error_msg}
+
+
+class CampaignScheduleFactorReq(BaseModel):
+    time_id: int
+    price_factor: float = 1.0
+
+
+class CampaignScheduleReq(BaseModel):
+    tenant_id: int
+    campaign_id: int
+    schedule_price_factors: list[CampaignScheduleFactorReq]
+    pause: bool = False
+
+
+@router.post("/campaign-schedule")
+async def set_campaign_schedule(
+    req: CampaignScheduleReq,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """按模板写回计划投放时段；支持节假日停投模板。"""
+    ctx.ensure_tenant(req.tenant_id)
+    factors = [
+        {"timeId": item.time_id, "priceFactor": item.price_factor}
+        for item in req.schedule_price_factors
+    ]
+    try:
+        rec = await apply_campaign_schedule_writeback(
+            session,
+            req.tenant_id,
+            req.campaign_id,
+            factors,
+            pause=req.pause,
+            operator_user_id=ctx.user_id,
+            operator_name=ctx.username,
+        )
+    except WritebackError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {
+        "status": rec.status,
+        "dry_run": rec.dry_run,
+        "campaign_id": req.campaign_id,
+        "slot_count": len(factors),
+        "pause": req.pause,
+        "error_msg": rec.error_msg,
+    }
+
+
+class CampaignRegionFactorReq(BaseModel):
+    region_id: int
+    price_factor: float
+
+
+class CampaignRegionReq(BaseModel):
+    tenant_id: int
+    campaign_id: int
+    region_target: list[int]
+    region_price_factor: list[CampaignRegionFactorReq] | None = None
+    geo_location_status: int | None = None
+
+
+@router.post("/campaign-region")
+async def set_campaign_region(
+    req: CampaignRegionReq,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """写回计划投放地域及分地域系数。dry-run + 台账保护。"""
+    ctx.ensure_tenant(req.tenant_id)
+    region_price_factor = (
+        [
+            {"regionId": item.region_id, "priceFactor": item.price_factor}
+            for item in req.region_price_factor
+        ]
+        if req.region_price_factor is not None
+        else None
+    )
+    try:
+        rec = await apply_campaign_region_writeback(
+            session,
+            req.tenant_id,
+            req.campaign_id,
+            req.region_target,
+            region_price_factor,
+            req.geo_location_status,
+            operator_user_id=ctx.user_id,
+            operator_name=ctx.username,
+        )
+    except WritebackError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {
+        "status": rec.status,
+        "dry_run": rec.dry_run,
+        "campaign_id": req.campaign_id,
+        "region_count": len(req.region_target),
+        "error_msg": rec.error_msg,
+    }
 
 
 # ===== 单元管理（manage.adgroups）：列表 + 启停 + 出价 =====
