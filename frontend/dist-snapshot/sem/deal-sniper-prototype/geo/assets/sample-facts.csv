@@ -1,0 +1,13 @@
+title,statement,fact_type,source_name,source_url,observed_at,trust_level,author_name
+私有化部署,产品支持私有化部署，数据可留存于客户内网环境。,product,产品白皮书 2026,https://example.com/whitepaper,2026-06-01,needs_review,Demo
+开放 API,提供开放 API 与常见数据源连接器，便于与现有系统集成。,product,开发者文档,https://example.com/docs,2026-06-01,needs_review,Demo
+制造行业案例,已在制造业客户中落地生产质检与供应链分析场景。,case,公开客户案例页,https://example.com/cases,2026-05-15,needs_review,Demo
+权限体系,支持基于角色的数据权限与操作审计，满足内控要求。,policy,安全说明文档,https://example.com/security,2026-05-01,needs_review,Demo
+更新节奏,产品版本按季度发布，关键缺陷修复按优先级热修。,metric,发布说明 2026Q2,,2026-04-01,needs_review,Demo
+实施周期,标准实施周期通常为 4–8 周，视数据源复杂度调整。,product,实施服务手册,,2026-03-01,verified,Demo
+可视化能力,内置报表、仪表盘与自助探索分析能力。,product,产品功能清单,,2026-03-01,needs_review,Demo
+国产适配,可部署于常见国产服务器与数据库环境（以官方兼容列表为准）。,product,兼容性清单,,2026-03-01,needs_review,Demo
+SLA 说明,标准支持响应工作日 8 小时内首次回复。,policy,服务协议,,2026-02-01,needs_review,Demo
+培训支持,提供管理员与业务用户培训课程与操作手册。,product,培训手册,,2026-02-01,needs_review,Demo
+,,product,坏行来源,,2026-01-01,needs_review,Demo
+缺来源行,这条故意缺少来源名称用于测失败反馈。,product,,,2026-01-01,needs_review,Demo
