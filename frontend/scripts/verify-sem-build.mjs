@@ -21,6 +21,10 @@ if (!files.length) throw new Error(`No JavaScript assets found in ${assetsDir}`)
 
 const requiredMarkers = [
   '/api/v1/oauth/baidu/authorize',
+  '/api/v1/sem/assets/accounts',
+  '/api/v1/manage/campaign-schedule',
+  '/api/v1/manage/campaign-region',
+  'G-Snipers 获客指挥台',
   '授权新客户账号',
   '已切换到新客户',
 ]
