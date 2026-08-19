@@ -20,9 +20,15 @@ const scheduleForm = ref({ campaignId: null, campaignIds: [], campaignName: '', 
 const batchResult = ref(null)
 const regions = ref([])
 const regionVisible = ref(false)
-const regionForm = ref({ campaignId: null, campaignName: '', regionTarget: [], factors: {}, geoLocationStatus: null })
+const regionBatchResult = ref(null)
+const regionForm = ref({
+  campaignId: null, campaignIds: [], campaignName: '', accountId: null, accountName: '',
+  regionTarget: [], factors: {}, geoLocationStatus: 0,
+})
 
 const WEEK_DAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+const ALL_REGIONS_ID = 9999999
+const REGION_CASCADER_PROPS = { multiple: true, checkStrictly: true, emitPath: false }
 const SCHEDULE_TEMPLATES = [
   { value: 'all', label: '全天投放', days: [1, 2, 3, 4, 5, 6, 7], start: 0, end: 24 },
   { value: 'workday', label: '工作日 09:00-18:00', days: [1, 2, 3, 4, 5], start: 9, end: 18 },
@@ -60,6 +66,28 @@ onMounted(async () => { await Promise.all([load(), loadRegions()]) })
 const fmtMoney = (v) => (v == null ? '不限' : '¥' + Number(v).toFixed(2))
 const min = computed(() => data.value?.min_budget ?? 50)
 const max = computed(() => data.value?.max_budget ?? 10000000)
+const regionLookup = computed(() => new Map(regions.value.map((item) => [item.id, item])))
+const unknownSelectedRegions = computed(() => (
+  regionForm.value.regionTarget.filter((id) => !regionLookup.value.has(id))
+))
+const regionTree = computed(() => {
+  const children = new Map()
+  for (const item of regions.value) {
+    if (item.parent_id == null) continue
+    if (!children.has(item.parent_id)) children.set(item.parent_id, [])
+    children.get(item.parent_id).push({ value: item.id, label: item.name })
+  }
+  return regions.value
+    .filter((item) => item.parent_id == null)
+    .map((item) => {
+      const childOptions = children.get(item.id) || []
+      return {
+        value: item.id,
+        label: item.name,
+        children: childOptions.length ? childOptions : undefined,
+      }
+    })
+})
 // status 23=暂停推广（文档 0040），pause=true 同义
 const statusLabel = (r) => (r.pause ? '已暂停' : (r.status === 21 ? '投放中' : (r.status === 23 ? '已暂停' : '—')))
 
@@ -114,7 +142,7 @@ function openBatchSchedule() {
     return
   }
   const accountIds = new Set(selectedCampaigns.value.map((row) => row.baidu_account_id))
-  if (accountIds.size !== 1 || accountIds.has(null)) {
+  if (accountIds.size !== 1 || accountIds.has(null) || accountIds.has(undefined)) {
     ElMessage.warning('批量设置只能选择同一个百度账户下的计划')
     return
   }
@@ -200,24 +228,77 @@ function handleSelectionChange(rows) {
 }
 
 function regionLabel(region) {
-  const parent = regions.value.find((item) => item.id === region.parent_id)
+  const parent = regionLookup.value.get(region.parent_id)
   return parent ? `${parent.name} > ${region.name}` : region.name
 }
 
 function regionName(id) {
-  const region = regions.value.find((item) => item.id === id)
+  const region = regionLookup.value.get(id)
   return region ? regionLabel(region) : `地域 #${id}`
 }
 
+function regionSummary(row) {
+  const targets = row.region_target || []
+  if (targets.includes(ALL_REGIONS_ID)) return '全部区域'
+  return targets.length ? `${targets.length} 个地域` : '未设置'
+}
+
 function openRegion(row) {
+  regionBatchResult.value = null
   regionForm.value = {
     campaignId: row.campaign_id,
+    campaignIds: [row.campaign_id],
     campaignName: row.campaign_name,
+    accountId: row.baidu_account_id,
+    accountName: row.baidu_account_name || `账户 #${row.baidu_account_id}`,
     regionTarget: [...(row.region_target || [])],
     factors: Object.fromEntries((row.region_price_factor || []).map((item) => [item.regionId, Number(item.priceFactor)])),
-    geoLocationStatus: row.geo_location_status ?? null,
+    geoLocationStatus: row.geo_location_status ?? 0,
   }
   regionVisible.value = true
+}
+
+function openBatchRegion() {
+  if (!selectedCampaigns.value.length) {
+    ElMessage.warning('请先选择需要统一设置地域的计划')
+    return
+  }
+  const accountIds = new Set(selectedCampaigns.value.map((row) => row.baidu_account_id))
+  if (accountIds.size !== 1 || accountIds.has(null) || accountIds.has(undefined)) {
+    ElMessage.warning('批量设置只能选择同一个百度账户下的计划')
+    return
+  }
+  const first = selectedCampaigns.value[0]
+  regionBatchResult.value = null
+  regionForm.value = {
+    campaignId: null,
+    campaignIds: selectedCampaigns.value.map((row) => row.campaign_id),
+    campaignName: `${selectedCampaigns.value.length} 个计划`,
+    accountId: first.baidu_account_id,
+    accountName: first.baidu_account_name || `账户 #${first.baidu_account_id}`,
+    regionTarget: [],
+    factors: {},
+    geoLocationStatus: 0,
+  }
+  regionVisible.value = true
+}
+
+function selectAllRegions() {
+  regionForm.value.regionTarget = [ALL_REGIONS_ID]
+  regionForm.value.factors = {}
+}
+
+function handleRegionChange(value) {
+  let selected = Array.isArray(value) ? value : []
+  if (selected.includes(ALL_REGIONS_ID) && selected.length > 1) {
+    selected = selected[selected.length - 1] === ALL_REGIONS_ID
+      ? [ALL_REGIONS_ID]
+      : selected.filter((id) => id !== ALL_REGIONS_ID)
+    regionForm.value.regionTarget = selected
+  }
+  regionForm.value.factors = Object.fromEntries(
+    Object.entries(regionForm.value.factors).filter(([id]) => selected.includes(Number(id))),
+  )
 }
 
 async function saveRegion() {
@@ -226,27 +307,60 @@ async function saveRegion() {
     ElMessage.warning('请至少选择一个地域')
     return
   }
+  if (unknownSelectedRegions.value.length) {
+    ElMessage.warning(`当前计划包含地域码表外的 ID：${unknownSelectedRegions.value.join('、')}，请先核对百度地域编码`)
+    return
+  }
+  if (form.regionTarget.includes(ALL_REGIONS_ID) && form.regionTarget.length > 1) {
+    ElMessage.warning('“全部区域”不能与其他省市同时选择')
+    return
+  }
   const factors = Object.entries(form.factors)
     .filter(([id, factor]) => form.regionTarget.includes(Number(id)) && factor != null)
     .map(([id, factor]) => ({ region_id: Number(id), price_factor: Number(factor) }))
-  savingId.value = form.campaignId
+  const campaignIds = form.campaignIds.length ? form.campaignIds : [form.campaignId]
+  const regionPreview = form.regionTarget.slice(0, 5).map(regionName).join('、')
+  const more = form.regionTarget.length > 5 ? ` 等 ${form.regionTarget.length} 个地域` : ''
   try {
-    const res = await setCampaignRegion({
-      tenantId: TENANT_ID.value,
-      campaignId: form.campaignId,
-      regionTarget: form.regionTarget,
-      regionPriceFactor: factors.length ? factors : undefined,
-      geoLocationStatus: form.geoLocationStatus ?? undefined,
-    })
-    if (res.status === 'failed') {
-      ElMessage.error('写回失败：' + (res.error_msg || '未知错误'))
-      return
+    await ElMessageBox.confirm(
+      `即将完整覆盖「${form.accountName}」下 ${campaignIds.length} 个计划的投放地域为：${regionPreview}${more}。每个计划会独立写回并记录台账，是否继续？`,
+      campaignIds.length > 1 ? '确认批量设置投放地域' : '确认设置投放地域',
+      { confirmButtonText: '确认写回', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch { return }
+  savingId.value = campaignIds.length > 1 ? 'batch-region' : campaignIds[0]
+  regionBatchResult.value = null
+  try {
+    const results = []
+    for (const campaignId of campaignIds) {
+      try {
+        const res = await setCampaignRegion({
+          tenantId: TENANT_ID.value,
+          campaignId,
+          regionTarget: form.regionTarget,
+          regionPriceFactor: factors,
+          geoLocationStatus: form.geoLocationStatus,
+        })
+        if (res.baidu_account_id !== form.accountId) {
+          results.push({ campaignId, status: 'failed', error_msg: '后端返回的百度账户与所选账户不一致' })
+        } else {
+          results.push({ campaignId, ...res })
+        }
+      } catch (e) {
+        results.push({ campaignId, status: 'failed', error_msg: e.response?.data?.detail || e.message })
+      }
     }
-    ElMessage.success(`已设置 ${res.region_count} 个地域${res.dry_run ? '（演练：未真改）' : ''}`)
-    regionVisible.value = false
+    const failed = results.filter((item) => item.status === 'failed')
+    const succeeded = results.length - failed.length
+    regionBatchResult.value = { total: results.length, succeeded, failed }
+    if (failed.length) {
+      ElMessage.warning(`地域设置完成：成功 ${succeeded} 个，失败 ${failed.length} 个`)
+    } else {
+      const dryRun = results.every((item) => item.dry_run)
+      ElMessage.success(`已为 ${succeeded} 个计划设置投放地域${dryRun ? '（演练：未真改）' : ''}`)
+      regionVisible.value = false
+    }
     await load()
-  } catch (e) {
-    ElMessage.error(e.response?.data?.detail || e.message)
   } finally {
     savingId.value = null
   }
@@ -355,6 +469,13 @@ async function togglePause(row) {
             :loading="savingId === 'batch-schedule'"
             @click="openBatchSchedule"
           >批量设置时段</el-button>
+          <el-button
+            type="primary"
+            plain
+            :disabled="!selectedCampaigns.length"
+            :loading="savingId === 'batch-region'"
+            @click="openBatchRegion"
+          >批量设置地域</el-button>
         </div>
       </div>
       <el-table
@@ -377,6 +498,9 @@ async function togglePause(row) {
         </el-table-column>
         <el-table-column label="日预算" width="140" align="right">
           <template #default="{ row }"><span class="num" :class="{ unlimited: row.budget == null }">{{ fmtMoney(row.budget) }}</span></template>
+        </el-table-column>
+        <el-table-column label="投放地域" width="110" align="center">
+          <template #default="{ row }">{{ regionSummary(row) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="390" align="center">
           <template #default="{ row }">
@@ -458,12 +582,39 @@ async function togglePause(row) {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="regionVisible" title="设置投放地域" width="min(600px, calc(100vw - 32px))">
+    <el-dialog v-model="regionVisible" title="设置投放地域" width="min(760px, calc(100vw - 32px))">
       <div class="region-form">
-        <p>为计划「{{ regionForm.campaignName }}」选择投放地域：</p>
-        <el-select v-model="regionForm.regionTarget" multiple filterable collapse-tags collapse-tags-tooltip placeholder="选择省/市（可多选）" style="width: 100%">
-          <el-option v-for="region in regions" :key="region.id" :label="regionLabel(region)" :value="region.id" />
-        </el-select>
+        <p>为「{{ regionForm.campaignName }}」选择投放地域，所属百度账户：{{ regionForm.accountName }}</p>
+        <el-alert
+          v-if="regionForm.campaignIds.length > 1"
+          type="warning"
+          :closable="false"
+          title="批量操作会完整覆盖所选计划的地域设置；只能处理同一百度账户下的计划。"
+        />
+        <div class="region-actions">
+          <el-button size="small" @click="selectAllRegions">全部区域</el-button>
+          <el-button size="small" @click="regionForm.regionTarget = []; regionForm.factors = {}">清空</el-button>
+          <span>已选择 {{ regionForm.regionTarget.length }} 个地域</span>
+        </div>
+        <el-cascader
+          v-model="regionForm.regionTarget"
+          :options="regionTree"
+          :props="REGION_CASCADER_PROPS"
+          filterable
+          clearable
+          collapse-tags
+          collapse-tags-tooltip
+          placeholder="按省/市层级选择，可搜索"
+          style="width: 100%"
+          @change="handleRegionChange"
+        />
+        <el-alert
+          v-if="unknownSelectedRegions.length"
+          type="error"
+          :closable="false"
+          style="margin-top: 10px"
+          :title="`当前计划包含地域码表外的 ID：${unknownSelectedRegions.join('、')}，已阻止覆盖写回，请先核对或更新地域编码。`"
+        />
         <div class="geo-status-section">
           <p>地域定向方式</p>
           <el-radio-group v-model="regionForm.geoLocationStatus">
@@ -478,10 +629,27 @@ async function togglePause(row) {
             <el-input-number v-model="regionForm.factors[id]" :min="0.1" :max="1" :step="0.1" :precision="1" placeholder="1.0" />
           </div>
         </div>
+        <el-alert
+          v-if="regionBatchResult?.failed?.length"
+          type="error"
+          :closable="false"
+          style="margin-top: 14px"
+          :title="`成功 ${regionBatchResult.succeeded} 个，失败 ${regionBatchResult.failed.length} 个`"
+        >
+          <template #default>
+            <div v-for="item in regionBatchResult.failed" :key="item.campaignId">
+              计划 #{{ item.campaignId }}：{{ item.error_msg || '未知错误' }}
+            </div>
+          </template>
+        </el-alert>
       </div>
       <template #footer>
         <el-button @click="regionVisible = false">取消</el-button>
-        <el-button type="primary" :loading="savingId === regionForm.campaignId" @click="saveRegion">确认写回</el-button>
+        <el-button
+          type="primary"
+          :loading="savingId === regionForm.campaignId || savingId === 'batch-region'"
+          @click="saveRegion"
+        >{{ regionForm.campaignIds.length > 1 ? '批量确认写回' : '确认写回' }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -513,6 +681,7 @@ async function togglePause(row) {
 .schedule-day :deep(.el-input-number) { width: 110px; }
 .off-label { grid-column: 2 / -1; color: #9ca3af; }
 .region-form > p, .geo-status-section > p { color: var(--sem-text-sub); }
+.region-actions { display: flex; align-items: center; gap: 8px; margin: 14px 0 10px; color: var(--sem-text-sub); font-size: 12px; }
 .geo-status-section { margin-top: 16px; }
 .geo-status-section :deep(.el-radio-group) { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .region-factor-list { margin-top: 16px; }
