@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { assistSeoContent, createSeoContentAsset, fetchSeoContentAssets, fetchSeoKeywords, updateSeoContentAsset } from '../../api/seo'
+import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 
 const route = useRoute()
@@ -14,6 +15,8 @@ const prompt = ref('')
 const aiMessage = ref('')
 const aiBusy = ref('')
 const keywords = ref([])
+const sites = ref([])
+const siteId = ref(Number(route.query.site_id) || null)
 const engine = ref('百度')
 const sourceText = ref('')
 const publishVisible = ref(false)
@@ -44,18 +47,46 @@ const primaryAiLabel = computed(() => {
   return mode.value === 'rewrite' ? 'DeepSeek 开始改写' : 'AI 生成初稿'
 })
 
+const editorAllowedTags = new Set(['P','H1','H2','H3','H4','H5','H6','A','IMG','UL','OL','LI','STRONG','B','EM','I','U','S','BLOCKQUOTE','PRE','CODE','BR','HR','TABLE','THEAD','TBODY','TR','TH','TD','FIGURE','FIGCAPTION'])
+const editorBlockedTags = new Set(['SCRIPT','STYLE','IFRAME','OBJECT','EMBED','FORM','INPUT','BUTTON','LINK','META'])
+const editorAllowedAttributes = new Set(['href','src','data-src','alt','title'])
+
+function sanitizeEditorHtml(value) {
+  const template = document.createElement('template')
+  template.innerHTML = String(value || '')
+  for (const node of [...template.content.querySelectorAll('*')]) {
+    if (editorBlockedTags.has(node.tagName)) {
+      node.remove()
+      continue
+    }
+    if (!editorAllowedTags.has(node.tagName)) {
+      node.replaceWith(...node.childNodes)
+      continue
+    }
+    for (const attribute of [...node.attributes]) {
+      const name = attribute.name.toLowerCase()
+      if (!editorAllowedAttributes.has(name)) node.removeAttribute(attribute.name)
+    }
+    for (const name of ['href', 'src', 'data-src']) {
+      const target = node.getAttribute(name)?.trim()
+      if (target && !/^(https?:|\/|#)/i.test(target)) node.removeAttribute(name)
+    }
+  }
+  return template.innerHTML.trim()
+}
+
 async function load() {
-  if (!currentTenantId.value) return
+  if (!currentTenantId.value || !siteId.value) return
   try {
     const [wordResult,contentResult] = await Promise.all([
-      fetchSeoKeywords({ tenantId: currentTenantId.value, pageSize: 200 }),
-      assetId.value ? fetchSeoContentAssets({ tenantId: currentTenantId.value }) : Promise.resolve({items:[]}),
+      fetchSeoKeywords({ tenantId: currentTenantId.value, siteId: siteId.value, pageSize: 200 }),
+      assetId.value ? fetchSeoContentAssets({ tenantId: currentTenantId.value, siteId: siteId.value }) : Promise.resolve({items:[]}),
     ])
     keywords.value = wordResult.items
     if (assetId.value) {
       const item = contentResult.items.find((row) => row.id === assetId.value)
       if (!item) return ElMessage.warning('改写任务不存在或已被删除')
-      Object.assign(form,{title:item.title||'',keyword_ids:[...(item.keyword_ids?.length?item.keyword_ids:item.keyword_id?[item.keyword_id]:[])],outline:item.outline||'',draft:item.humanized_content||item.draft||'',author:item.author||form.author})
+      Object.assign(form,{title:item.title||'',keyword_ids:[...(item.keyword_ids?.length?item.keyword_ids:item.keyword_id?[item.keyword_id]:[])],outline:item.outline||'',draft:sanitizeEditorHtml(item.humanized_content||item.draft||''),author:item.author||form.author})
       Object.assign(publishForm,{page_url:item.page_url||'',target_platforms:[...(item.target_platforms||[])]})
       publishedAt.value=item.published_at||null
       sourceText.value=item.source_text||''
@@ -97,27 +128,86 @@ function textToHtml(value) {
   }).join('')
 }
 
+async function loadSites() {
+  if (!currentTenantId.value) return
+  sites.value = (await fetchSeoSites(currentTenantId.value)).sites || []
+  if (!sites.value.some((item) => item.id === siteId.value)) {
+    siteId.value = sites.value.find((item) => item.status === 'active')?.id || sites.value[0]?.id || null
+  }
+  await load()
+}
+
+async function changeSite() {
+  if (assetId.value) return
+  form.keyword_ids = []
+  await load()
+}
+
+function draftForAi() {
+  const template = document.createElement('template')
+  template.innerHTML = sanitizeEditorHtml(form.draft)
+  template.content.querySelectorAll('img').forEach((image) => {
+    const label = image.getAttribute('alt')?.trim()
+    image.replaceWith(document.createTextNode(label ? `[图片：${label}]` : '[图片]'))
+  })
+  return (template.content.textContent || '').trim()
+}
+
+function buildAssistPayload(action, draftText) {
+  const keywordIds = form.keyword_ids
+    .map((id) => Number(id))
+    .filter((id) => Number.isInteger(id) && id > 0)
+  const payload = {
+    tenant_id: Number(currentTenantId.value),
+    action,
+    mode: mode.value,
+    keyword_id: keywordIds[0] || null,
+    keyword_ids: keywordIds,
+    instruction: prompt.value.trim() || null,
+    template: selectedTemplate.value.name,
+    engine: engine.value,
+  }
+
+  if (action === 'generate') {
+    payload.title = form.title.trim() || null
+    payload.outline = form.outline.trim() || null
+  }
+  if (action === 'outline') payload.title = form.title.trim() || null
+  if (action === 'title') {
+    payload.title = form.title.trim() || null
+    payload.outline = form.outline.trim() || null
+  }
+  if (action === 'keywords') {
+    payload.title = form.title.trim() || null
+    payload.outline = form.outline.trim() || null
+    payload.draft = draftText || null
+  }
+  if (action === 'rewrite') {
+    payload.title = form.title.trim() || null
+    payload.outline = form.outline.trim() || null
+    payload.draft = draftText || null
+    payload.source_text = sourceText.value.trim() || null
+  }
+  return payload
+}
+
 async function assist(action) {
   if (!currentTenantId.value) return ElMessage.warning('请先选择客户')
+  if (!siteId.value) return ElMessage.warning('请先选择或创建 SEO 网站')
   if (['generate','outline','title','keywords'].includes(action) && !form.keyword_ids.length) return ElMessage.warning('请至少选择 1 个目标关键词')
   syncDraft()
+  const draftText = draftForAi()
+  if (action === 'keywords' && !form.title.trim() && !draftText) return ElMessage.warning('请先输入标题或正文，再检查关键词')
+  if (action === 'rewrite' && !draftText && !sourceText.value.trim()) return ElMessage.warning('请先输入正文，再优化表达')
+  if (prompt.value.length > 5000) return ElMessage.warning('内容要求不能超过 5000 字')
+  if (form.title.length > 300 && ['generate','outline','title','keywords','rewrite'].includes(action)) return ElMessage.warning('标题不能超过 300 字')
+  if (form.outline.length > 20000 && ['generate','title','keywords','rewrite'].includes(action)) return ElMessage.warning('大纲不能超过 20000 字')
+  if (draftText.length > 80000 && ['keywords','rewrite'].includes(action)) return ElMessage.warning('正文不能超过 80000 字，请精简后重试')
+  if (sourceText.value.length > 80000 && action === 'rewrite') return ElMessage.warning('待改写原文不能超过 80000 字，请分段处理')
   aiBusy.value = action
   aiMessage.value = ''
   try {
-    const result = await assistSeoContent({
-      tenant_id: currentTenantId.value,
-      action,
-      mode: mode.value,
-      keyword_id: form.keyword_ids[0] || null,
-      keyword_ids: form.keyword_ids,
-      title: form.title || null,
-      outline: form.outline || null,
-      draft: form.draft || null,
-      source_text: sourceText.value || null,
-      instruction: prompt.value || null,
-      template: selectedTemplate.value.name,
-      engine: engine.value,
-    })
+    const result = await assistSeoContent(buildAssistPayload(action, draftText))
     if (result.title) form.title = result.title
     if (result.outline) form.outline = result.outline
     if (result.content) {
@@ -142,12 +232,16 @@ async function assist(action) {
 async function save(status = 'drafting', options = {}) {
   syncDraft()
   if (!currentTenantId.value) return ElMessage.warning('请先选择客户')
+  if (!siteId.value) return ElMessage.warning('请先选择或创建 SEO 网站')
   if (!form.title.trim()) return ElMessage.warning('请填写文章标题')
   if (mode.value === 'original' && !form.keyword_ids.length) return ElMessage.warning('原创文章请至少选择 1 个目标关键词')
+  form.draft = sanitizeEditorHtml(form.draft)
+  if (editor.value && editor.value.innerHTML !== form.draft) editor.value.innerHTML = form.draft
   saving.value = true
   try {
     const payload = {
       tenant_id: currentTenantId.value,
+      site_id: siteId.value,
       title: form.title,
       keyword_id: form.keyword_ids[0] || null,
       keyword_ids: form.keyword_ids,
@@ -166,7 +260,7 @@ async function save(status = 'drafting', options = {}) {
       published_at: options.publishedAt ?? publishedAt.value,
     }
     if(assetId.value){
-      const {tenant_id,...values}=payload
+      const {tenant_id,site_id,...values}=payload
       await updateSeoContentAsset({contentId:assetId.value,tenantId:currentTenantId.value,payload:values})
     }else{
       const created=await createSeoContentAsset(payload)
@@ -225,7 +319,7 @@ onMounted(async () => {
   form.outline = selectedTemplate.value.outline
   if (route.query.keyword_id) form.keyword_ids = [Number(route.query.keyword_id)].filter(Number.isFinite)
   const pending = loadPendingRewrite()
-  await load()
+  try { await loadSites() } catch (e) { ElMessage.error(e.message) }
   if (mode.value === 'rewrite' && pending?.autoGenerate && sourceText.value) {
     const generated = await assist('rewrite')
     if (generated) await save('drafting', { quiet: true })
@@ -243,7 +337,7 @@ onMounted(async () => {
 
     <main class="editor-workspace">
       <aside class="editor-side">
-        <section class="side-section"><h3>内容 Brief</h3><label>搜索引擎</label><div class="engine-picks"><button v-for="item in ['百度', 'Google', 'Bing']" :key="item" :class="{ selected: engine === item }" type="button" @click="engine = item">{{ item }}</button></div><label>目标关键词（1–5个）</label><el-select v-model="form.keyword_ids" class="brief-keywords" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="2" :multiple-limit="5" filterable placeholder="选择主关键词和辅助关键词"><el-option v-for="item in keywords" :key="item.id" :label="item.keyword" :value="item.id" /></el-select><small class="keyword-guidance">第一个为主关键词。建议选择 1 个品牌词，再搭配 1–2 个产品词、应用词或行业词。</small><label>内容模式</label><input :value="mode==='rewrite'?'深度改写':mode==='qa'?'专题问答':selectedTemplate.name" readonly><label>负责人</label><input v-model="form.author" placeholder="负责人"></section>
+        <section class="side-section"><h3>内容 Brief</h3><label>SEO 网站</label><el-select v-model="siteId" :disabled="!!assetId" placeholder="选择 SEO 网站" @change="changeSite"><el-option v-for="site in sites" :key="site.id" :label="site.name || site.canonical_domain" :value="site.id" /></el-select><label>搜索引擎</label><div class="engine-picks"><button v-for="item in ['百度', 'Google', 'Bing']" :key="item" :class="{ selected: engine === item }" type="button" @click="engine = item">{{ item }}</button></div><label>目标关键词（1–5个）</label><el-select v-model="form.keyword_ids" class="brief-keywords" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="2" :multiple-limit="5" filterable placeholder="选择主关键词和辅助关键词"><el-option v-for="item in keywords" :key="item.id" :label="item.keyword" :value="item.id" /></el-select><small class="keyword-guidance">第一个为主关键词。建议选择 1 个品牌词，再搭配 1–2 个产品词、应用词或行业词。</small><label>内容模式</label><input :value="mode==='rewrite'?'深度改写':mode==='qa'?'专题问答':selectedTemplate.name" readonly><label>负责人</label><input v-model="form.author" placeholder="负责人"></section>
         <section v-if="mode==='rewrite'" class="side-section"><h3>原文事实基础</h3><div class="source-box">{{sourceText||'尚未导入原文'}}</div></section>
         <section class="side-section"><h3>文章结构</h3><textarea v-model="form.outline" rows="10" /><button class="side-action" type="button" @click="insertOutline">应用大纲到正文</button></section>
         <section class="side-section brief-score"><div><b>{{ keywords.length }}</b><span>可选关键词</span></div><div><b>{{ wordCount }}</b><span>当前字数</span></div></section>
@@ -259,7 +353,7 @@ onMounted(async () => {
 
       <aside class="ai-side">
         <header><h3>AI 内容助手</h3><p>结合关键词、模板与品牌资料辅助创作</p></header>
-        <div class="ai-body"><textarea v-model="prompt" placeholder="输入你的内容要求，例如：保留事实并深度重构表达…" /><button class="ai-primary" type="button" :disabled="!!aiBusy" @click="assist(primaryAiAction)">{{ primaryAiLabel }}</button><div class="quick-actions"><button type="button" :disabled="!!aiBusy" @click="assist('outline')">{{aiBusy==='outline'?'生成中…':'生成大纲'}}</button><button type="button" :disabled="!!aiBusy" @click="assist('title')">{{aiBusy==='title'?'优化中…':'优化标题'}}</button><button type="button" :disabled="!!aiBusy" @click="assist('keywords')">{{aiBusy==='keywords'?'检查中…':'检查关键词'}}</button><button type="button" :disabled="!!aiBusy" @click="assist('rewrite')">{{aiBusy==='rewrite'?'改写中…':'重新改写'}}</button></div><div v-if="aiMessage" class="ai-message">{{ aiMessage }}</div><ul><li><span>AI 服务</span><b class="ok">DeepSeek</b></li><li><span>标题完整</span><b :class="{ ok: form.title }">{{ form.title ? '通过' : '待完善' }}</b></li><li><span>目标关键词</span><b :class="{ ok: form.keyword_ids.length }">{{ form.keyword_ids.length ? `已绑定 ${form.keyword_ids.length} 个` : '待选择' }}</b></li><li><span>正文内容</span><b :class="{ ok: wordCount > 300 }">{{ wordCount > 300 ? '已形成' : '待完善' }}</b></li></ul></div>
+        <div class="ai-body"><textarea v-model="prompt" maxlength="5000" placeholder="输入你的内容要求，例如：保留事实并深度重构表达…" /><button class="ai-primary" type="button" :disabled="!!aiBusy" @click="assist(primaryAiAction)">{{ primaryAiLabel }}</button><div class="quick-actions"><button type="button" :disabled="!!aiBusy" @click="assist('outline')">{{aiBusy==='outline'?'生成中…':'生成大纲'}}</button><button type="button" :disabled="!!aiBusy" @click="assist('title')">{{aiBusy==='title'?'优化中…':'标题优化'}}</button><button type="button" :disabled="!!aiBusy" @click="assist('keywords')">{{aiBusy==='keywords'?'检查中…':'检查关键词'}}</button><button type="button" :disabled="!!aiBusy" @click="assist('rewrite')">{{aiBusy==='rewrite'?'优化中…':'优化表达'}}</button></div><div v-if="aiMessage" class="ai-message">{{ aiMessage }}</div><ul><li><span>AI 服务</span><b class="ok">DeepSeek</b></li><li><span>标题完整</span><b :class="{ ok: form.title }">{{ form.title ? '通过' : '待完善' }}</b></li><li><span>目标关键词</span><b :class="{ ok: form.keyword_ids.length }">{{ form.keyword_ids.length ? `已绑定 ${form.keyword_ids.length} 个` : '待选择' }}</b></li><li><span>正文内容</span><b :class="{ ok: wordCount > 300 }">{{ wordCount > 300 ? '已形成' : '待完善' }}</b></li></ul></div>
       </aside>
     </main>
     <el-dialog v-model="publishVisible" title="发布改写文章" width="620px">

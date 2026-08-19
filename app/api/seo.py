@@ -57,6 +57,7 @@ from app.seo_distribution import (
     publication_idempotency_key,
     publish_content,
     sync_publish_status,
+    sanitize_article_html,
     test_connection,
 )
 from app.seo_serp import (
@@ -1974,7 +1975,79 @@ async def seo_overview(
     contents = list(await session.scalars(select(SeoContentAsset).where(*scope(SeoContentAsset))))
     backlinks = list(await session.scalars(select(SeoBacklink).where(*scope(SeoBacklink))))
     competitors = list(await session.scalars(select(SeoCompetitor).where(*scope(SeoCompetitor, SeoCompetitor.status == "active"))))
-    all_ranks = list(await session.scalars(select(SeoRankSnapshot).where(*scope(SeoRankSnapshot, SeoRankSnapshot.subject_type == "own")).order_by(SeoRankSnapshot.checked_at.asc(), SeoRankSnapshot.id.asc())))
+    since = datetime.utcnow() - timedelta(days=30)
+    keyword_ids = [item.id for item in keywords]
+    rank_conditions = scope(
+        SeoRankSnapshot,
+        SeoRankSnapshot.subject_type == "own",
+        SeoRankSnapshot.engine == engine,
+        SeoRankSnapshot.device == device,
+    )
+    if keyword_ids:
+        rank_conditions.append(SeoRankSnapshot.keyword_id.in_(keyword_ids))
+        latest_rank_numbers = (
+            select(
+                SeoRankSnapshot.id.label("rank_id"),
+                func.row_number()
+                .over(
+                    partition_by=SeoRankSnapshot.keyword_id,
+                    order_by=(
+                        SeoRankSnapshot.checked_at.desc(),
+                        SeoRankSnapshot.id.desc(),
+                    ),
+                )
+                .label("position"),
+            )
+            .where(*rank_conditions)
+            .subquery()
+        )
+        latest_rank_rows = list(
+            await session.scalars(
+                select(SeoRankSnapshot)
+                .join(
+                    latest_rank_numbers,
+                    latest_rank_numbers.c.rank_id == SeoRankSnapshot.id,
+                )
+                .where(latest_rank_numbers.c.position <= 2)
+            )
+        )
+        recent_ranks = list(
+            await session.scalars(
+                select(SeoRankSnapshot)
+                .where(*rank_conditions, SeoRankSnapshot.checked_at >= since)
+                .order_by(SeoRankSnapshot.checked_at, SeoRankSnapshot.id)
+            )
+        )
+        baseline_numbers = (
+            select(
+                SeoRankSnapshot.id.label("rank_id"),
+                func.row_number()
+                .over(
+                    partition_by=SeoRankSnapshot.keyword_id,
+                    order_by=(
+                        SeoRankSnapshot.checked_at.desc(),
+                        SeoRankSnapshot.id.desc(),
+                    ),
+                )
+                .label("position"),
+            )
+            .where(*rank_conditions, SeoRankSnapshot.checked_at < since)
+            .subquery()
+        )
+        baseline_ranks = list(
+            await session.scalars(
+                select(SeoRankSnapshot)
+                .join(
+                    baseline_numbers,
+                    baseline_numbers.c.rank_id == SeoRankSnapshot.id,
+                )
+                .where(baseline_numbers.c.position == 1)
+            )
+        )
+    else:
+        latest_rank_rows = []
+        recent_ranks = []
+        baseline_ranks = []
     latest_crawl = None
     if site_id is not None:
         latest_crawl = await session.scalar(
@@ -1986,10 +2059,13 @@ async def seo_overview(
             .order_by(SeoCrawlRun.started_at.desc(), SeoCrawlRun.id.desc())
             .limit(1)
         )
-    ranks = [item for item in all_ranks if item.engine == engine and item.device == device]
     latest_by_keyword: dict[int, SeoRankSnapshot] = {}
     previous_by_keyword: dict[int, SeoRankSnapshot] = {}
-    for rank in reversed(ranks):
+    for rank in sorted(
+        latest_rank_rows,
+        key=lambda item: (item.checked_at, item.id),
+        reverse=True,
+    ):
         if rank.keyword_id not in latest_by_keyword:
             latest_by_keyword[rank.keyword_id] = rank
         elif rank.keyword_id not in previous_by_keyword:
@@ -2021,13 +2097,11 @@ async def seo_overview(
         for keyword_id, latest in latest_by_keyword.items()
     )
 
-    since = datetime.utcnow() - timedelta(days=30)
-    trend_state: dict[int, int | None] = {}
+    trend_state: dict[int, int | None] = {
+        item.keyword_id: item.rank for item in baseline_ranks
+    }
     trend_by_day: dict[str, dict[str, int]] = {}
-    for rank in ranks:
-        if rank.checked_at < since:
-            trend_state[rank.keyword_id] = rank.rank
-            continue
+    for rank in recent_ranks:
         trend_state[rank.keyword_id] = rank.rank
         day = rank.checked_at.date().isoformat()
         ranked_values = [value for value in trend_state.values() if value is not None]
@@ -2038,17 +2112,36 @@ async def seo_overview(
         }
     trend = [{"date": day, **values} for day, values in sorted(trend_by_day.items())]
 
+    collection_conditions = scope(
+        SeoRankSnapshot,
+        SeoRankSnapshot.subject_type == "own",
+    )
+    if keyword_ids:
+        collection_conditions.append(SeoRankSnapshot.keyword_id.in_(keyword_ids))
+        collection_rows = await session.execute(
+            select(
+                SeoRankSnapshot.engine.label("engine"),
+                func.count(func.distinct(SeoRankSnapshot.keyword_id)).label("collected"),
+                func.max(SeoRankSnapshot.checked_at).label("last_checked"),
+            )
+            .where(*collection_conditions)
+            .group_by(SeoRankSnapshot.engine)
+        )
+        collection_by_engine = {
+            item.engine: (int(item.collected or 0), item.last_checked)
+            for item in collection_rows
+        }
+    else:
+        collection_by_engine = {}
     collection_status = []
     for item_engine in ["baidu", "bing", "360", "sogou", "google"]:
-        engine_rows = [item for item in all_ranks if item.engine == item_engine]
-        collected_ids = {item.keyword_id for item in engine_rows}
-        last_checked = max((item.checked_at for item in engine_rows), default=None)
+        collected, last_checked = collection_by_engine.get(item_engine, (0, None))
         collection_status.append({
             "engine": item_engine,
-            "collected": len(collected_ids),
+            "collected": collected,
             "total": len(keywords),
             "last_checked_at": _iso(last_checked),
-            "status": "ready" if keywords and len(collected_ids) >= len(keywords) else ("partial" if collected_ids else "pending"),
+            "status": "ready" if keywords and collected >= len(keywords) else ("partial" if collected else "pending"),
         })
 
     missing_description = sum(
@@ -2128,7 +2221,11 @@ async def seo_overview(
     if not tasks and keywords:
         tasks.append({"type": "healthy", "count": 0, "title": "今日没有高优先级异常", "detail": "排名、内容和站内规则未发现紧急项", "action": "查看资产", "path": "/seo/keywords"})
 
-    timestamps = [item.checked_at for item in all_ranks]
+    timestamps = [
+        value[1]
+        for value in collection_by_engine.values()
+        if value[1] is not None
+    ]
     timestamps += [item.last_checked_at for item in pages if item.last_checked_at]
     timestamps += [item.updated_at for item in contents if item.updated_at]
     timestamps += [item.observed_at for item in latest_metrics.values()]
@@ -2310,6 +2407,44 @@ def _missing_content_keywords(result: dict[str, Any], keywords: list[SeoKeywordA
     return [item.keyword for item in keywords if item.keyword.casefold() not in content]
 
 
+def _validated_seo_assist_result(action: str, result: Any) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        raise HTTPException(502, "AI 返回格式无效，请重试")
+    expected = {
+        "generate": ("title", "outline", "content"),
+        "outline": ("outline",),
+        "title": ("title",),
+        "keywords": ("feedback", "suggestions"),
+        "rewrite": ("content",),
+    }[action]
+    if action == "keywords":
+        present = any(result.get(key) for key in expected)
+    else:
+        present = all(isinstance(result.get(key), str) and result[key].strip() for key in expected)
+    if not present:
+        labels = {
+            "generate": "标题、大纲或正文",
+            "outline": "大纲",
+            "title": "标题",
+            "keywords": "关键词检查结果",
+            "rewrite": "优化后的正文",
+        }
+        raise HTTPException(502, f"AI 未返回{labels[action]}，请重试")
+    suggestions = result.get("suggestions")
+    if suggestions is not None and not (
+        isinstance(suggestions, list)
+        and all(isinstance(item, str) and item.strip() for item in suggestions)
+    ):
+        raise HTTPException(502, "AI 返回的建议格式无效，请重试")
+    return result
+
+
+def _sanitize_content_html(value: str | None) -> str | None:
+    if value is None or "<" not in value:
+        return value
+    return sanitize_article_html(value)
+
+
 @router.post("/content-ai/assist")
 async def assist_seo_content(
     req: SeoContentAssistRequest,
@@ -2328,7 +2463,9 @@ async def assist_seo_content(
         raise HTTPException(503, "DeepSeek 尚未配置")
     system, user = _seo_ai_prompt(req, tenant, keywords)
     try:
-        result = await chat_json(system, user, timeout=90.0)
+        result = _validated_seo_assist_result(
+            req.action, await chat_json(system, user, timeout=90.0)
+        )
         missing = _missing_content_keywords(result, keywords) if req.action in {"generate", "rewrite"} else []
         if missing and result.get("content"):
             correction = "\n".join(
@@ -2339,7 +2476,9 @@ async def assist_seo_content(
                     "首轮结果：" + json.dumps(result, ensure_ascii=False),
                 ]
             )
-            result = await chat_json(system, correction, timeout=90.0)
+            result = _validated_seo_assist_result(
+                req.action, await chat_json(system, correction, timeout=90.0)
+            )
             missing = _missing_content_keywords(result, keywords)
         if missing:
             raise HTTPException(502, f"AI 未完整覆盖目标关键词：{'、'.join(missing)}，请调整要求后重试")
@@ -2534,6 +2673,8 @@ async def create_content_asset(req: ContentCreate, session: AsyncSession = Depen
     keyword_ids = _selected_keyword_ids(req.keyword_ids, req.keyword_id)
     await _content_keywords(session, req.tenant_id, keyword_ids, req.site_id)
     values = req.model_dump()
+    values["draft"] = _sanitize_content_html(values.get("draft"))
+    values["humanized_content"] = _sanitize_content_html(values.get("humanized_content"))
     values["keyword_ids"] = keyword_ids or None
     values["keyword_id"] = keyword_ids[0] if keyword_ids else None
     row = SeoContentAsset(**values, created_by=ctx.user_id)
@@ -3301,6 +3442,10 @@ async def update_content_asset(content_id: int, tenant_id: int, req: ContentUpda
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO 内容资产不存在")
     values = req.model_dump(exclude_unset=True)
+    if "draft" in values:
+        values["draft"] = _sanitize_content_html(values.get("draft"))
+    if "humanized_content" in values:
+        values["humanized_content"] = _sanitize_content_html(values.get("humanized_content"))
     if "keyword_ids" in values or "keyword_id" in values:
         if "keyword_ids" in values:
             keyword_ids = _selected_keyword_ids(values.get("keyword_ids") or [], None)

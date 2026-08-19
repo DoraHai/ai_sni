@@ -11,6 +11,7 @@ import {
   fetchSeoSerpResults,
   updateSeoSerpOwnership,
 } from '../../api/seo'
+import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId } from '../../store/session'
 
 const router = useRouter()
@@ -19,6 +20,8 @@ const collecting = ref(false)
 const error = ref('')
 const engine = ref('baidu')
 const device = ref('desktop')
+const sites = ref([])
+const siteId = ref(null)
 const view = ref('ranking')
 const ownership = ref('')
 const collectDialog = ref(false)
@@ -86,13 +89,14 @@ function exportCsv() {
 
 async function load() {
   if (!currentTenantId.value) { error.value = '请先选择客户'; return }
+  if (!siteId.value) { error.value = '请先选择或创建 SEO 网站'; return }
   loading.value = true
   try {
-    const common = { tenantId: currentTenantId.value, engine: engine.value, device: device.value }
+    const common = { tenantId: currentTenantId.value, siteId: siteId.value, engine: engine.value, device: device.value }
     ;[result.value, overview.value, serp.value] = await Promise.all([
       fetchSeoKeywords({ ...common, q: filters.q, pageSize: 200 }),
       fetchSeoOverview(common),
-      fetchSeoSerpResults({ tenantId: currentTenantId.value, device: device.value, ownershipType: ownership.value, limit: 500 }),
+      fetchSeoSerpResults({ tenantId: currentTenantId.value, siteId: siteId.value, device: device.value, ownershipType: ownership.value, limit: 500 }),
     ])
     error.value = ''
   } catch (err) {
@@ -102,12 +106,31 @@ async function load() {
   }
 }
 
+async function loadSites() {
+  if (!currentTenantId.value) {
+    sites.value = []
+    siteId.value = null
+    return load()
+  }
+  try {
+    sites.value = (await fetchSeoSites(currentTenantId.value)).sites || []
+    const selected = sites.value.some((item) => item.id === siteId.value)
+      ? siteId.value
+      : (sites.value.find((item) => item.status === 'active')?.id || sites.value[0]?.id || null)
+    if (selected !== siteId.value) siteId.value = selected
+    else await load()
+  } catch (err) {
+    error.value = err.message
+  }
+}
+
 async function collect() {
   if (!collectForm.devices.length) { ElMessage.warning('至少选择一个设备'); return }
   collecting.value = true
   try {
     const summary = await collectSeoRankSerp({
       tenant_id: currentTenantId.value,
+      site_id: siteId.value,
       max_keywords: Number(collectForm.max_keywords),
       devices: collectForm.devices,
       use_ai: collectForm.use_ai,
@@ -124,7 +147,7 @@ async function collect() {
 
 async function openAssets() {
   if (!currentTenantId.value) return
-  assets.value = await fetchSeoBrandAssets({ tenantId: currentTenantId.value })
+  assets.value = await fetchSeoBrandAssets({ tenantId: currentTenantId.value, siteId: siteId.value })
   assetDialog.value = true
 }
 async function addAsset() {
@@ -135,13 +158,14 @@ async function addAsset() {
   try {
     await createSeoBrandAsset({
       tenant_id: currentTenantId.value,
+      site_id: siteId.value,
       asset_type: assetForm.asset_type,
       name: assetForm.name,
       match_value: assetForm.match_value,
       platform: assetForm.platform || undefined,
     })
     Object.assign(assetForm, { name: '', match_value: '', platform: '' })
-    assets.value = await fetchSeoBrandAssets({ tenantId: currentTenantId.value })
+    assets.value = await fetchSeoBrandAssets({ tenantId: currentTenantId.value, siteId: siteId.value })
     ElMessage.success('品牌识别规则已添加')
   } catch (err) {
     ElMessage.error(err.message)
@@ -149,7 +173,7 @@ async function addAsset() {
 }
 async function confirmOwnership(item, ownershipType) {
   try {
-    await updateSeoSerpOwnership({ resultId: item.id, tenantId: currentTenantId.value, ownershipType })
+    await updateSeoSerpOwnership({ resultId: item.id, tenantId: currentTenantId.value, siteId: siteId.value, ownershipType })
     ElMessage.success(ownershipType === 'brand_content' ? '已确认品牌推文，并加入资产库' : ownershipType === 'official_site' ? '已确认官网结果' : '已标记非品牌')
     await load()
   } catch (err) {
@@ -159,8 +183,9 @@ async function confirmOwnership(item, ownershipType) {
 
 let timer
 watch(() => filters.q, () => { clearTimeout(timer); timer = setTimeout(load, 260) })
-watch([device, currentTenantId, ownership], load)
-onMounted(load)
+watch([device, siteId, ownership], load)
+watch(currentTenantId, loadSites)
+onMounted(loadSites)
 </script>
 
 <template>
@@ -172,6 +197,9 @@ onMounted(load)
         <p>查看百度前 50 名结果，区分官网、已确认品牌推文与 AI 疑似内容。</p>
       </div>
       <div class="hero-controls">
+        <el-select v-model="siteId" class="site-picker" placeholder="选择 SEO 网站">
+          <el-option v-for="site in sites" :key="site.id" :label="site.name || site.canonical_domain" :value="site.id" />
+        </el-select>
         <div class="kw-segment device-switch">
           <button :class="{ active: device === 'desktop' }" @click="device = 'desktop'">百度 PC</button>
           <button :class="{ active: device === 'mobile' }" @click="device = 'mobile'">百度移动</button>
@@ -287,5 +315,6 @@ onMounted(load)
 
 <style>@import url('../../../public/deal-sniper-prototype/seo/assets/keyword-assets-v2.css');</style>
 <style scoped>
+.site-picker{width:240px}
 .ranking-prototype{min-height:100%;padding:22px 26px 30px;background:#f5f7fb}.hero-controls{display:flex;flex-direction:column;align-items:flex-end;gap:18px}.device-switch{background:#f2f5fb}.kw-metrics{grid-template-columns:repeat(5,minmax(0,1fr))}.kw-metric.coral{border-top-color:#e66a5f}.monitor-head{align-items:center}.ownership-toolbar{display:flex;align-items:center;justify-content:space-between}.ownership-tabs{flex-wrap:wrap}.kw-name button{padding:0;border:0;background:none;color:#2457d6;font-weight:700;cursor:pointer}.kw-btn.active{border-color:#d9544d;color:#d9544d}.result-cell{max-width:580px}.result-cell a{display:block;color:#1a4fc4;font-weight:700;text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.result-cell small{display:block;max-width:560px;margin-top:5px;color:#8792a8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.review-actions{white-space:nowrap}.review-actions button{border:0;background:none;color:#245fdb;font-weight:700;cursor:pointer;margin-right:10px}.review-actions button.muted{color:#8c96aa}.review-actions span{color:#248a64}.collect-form{display:grid;gap:22px}.collect-form>label{display:grid;grid-template-columns:120px 1fr;align-items:center;gap:12px}.collect-form label>span{font-weight:700;color:#27334a}.collect-form label>small{grid-column:2;color:#8490a5}.cost-note{padding:16px 18px;border:1px solid #dce5f5;border-radius:12px;background:#f6f9ff}.cost-note b,.cost-note span{display:block}.cost-note span{margin-top:6px;color:#77839a}.asset-create{display:grid;grid-template-columns:150px 150px 1fr auto;gap:10px}.asset-list{margin-top:20px;border:1px solid #e3e8f1;border-radius:12px;overflow:hidden}.asset-list>div{display:grid;grid-template-columns:70px 160px 1fr;gap:12px;align-items:center;padding:13px 16px;border-bottom:1px solid #edf0f5}.asset-list>div:last-child{border-bottom:0}.asset-list small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#7b879b}@media(max-width:1280px){.kw-metrics{grid-template-columns:repeat(3,1fr)}.hero-controls{align-items:flex-start}.kw-hero{flex-direction:column}.asset-create{grid-template-columns:1fr 1fr}.result-cell{max-width:360px}}
 </style>

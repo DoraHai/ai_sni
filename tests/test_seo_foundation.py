@@ -1,5 +1,7 @@
+import asyncio
 from datetime import datetime
 from decimal import Decimal
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -20,6 +22,9 @@ from app.api.seo import (
     _normalize_brand_homepage,
     _seo_ai_prompt,
     _selected_keyword_ids,
+    _sanitize_content_html,
+    _validated_seo_assist_result,
+    assist_seo_content,
 )
 from app.models.seo import (
     SeoBacklink,
@@ -214,6 +219,99 @@ def test_seo_ai_assist_rejects_oversized_instruction() -> None:
             action="title",
             instruction="x" * 5001,
         )
+
+
+def test_seo_content_html_is_sanitized_before_storage() -> None:
+    cleaned = _sanitize_content_html(
+        '<h2 onclick="steal()">标题</h2><p>正文<script>alert(1)</script>'
+        '<img src="https://example.com/a.png" onerror="steal()"></p>'
+    )
+    assert cleaned is not None
+    assert "onclick" not in cleaned
+    assert "onerror" not in cleaned
+    assert "<script" not in cleaned
+    assert '<img src="https://example.com/a.png"/>' in cleaned
+
+
+@pytest.mark.parametrize(
+    ("action", "result"),
+    [
+        ("generate", {"content": "只有正文"}),
+        ("outline", {"feedback": "没有大纲"}),
+        ("title", {"title": ""}),
+        ("keywords", {"suggestions": []}),
+        ("rewrite", {"feedback": "没有正文"}),
+    ],
+)
+def test_seo_ai_quick_actions_reject_missing_result_fields(
+    action: str, result: dict[str, object]
+) -> None:
+    with pytest.raises(Exception) as exc:
+        _validated_seo_assist_result(action, result)
+    assert getattr(exc.value, "status_code", None) == 502
+
+
+@pytest.mark.parametrize(
+    ("action", "request_values", "ai_result", "expected_key"),
+    [
+        ("outline", {}, {"outline": "一、需求\n二、方案", "feedback": "已生成"}, "outline"),
+        ("title", {}, {"title": "目标词选型指南", "feedback": "已优化"}, "title"),
+        (
+            "keywords",
+            {"draft": "这是一篇围绕目标词展开的文章。"},
+            {"feedback": "覆盖自然", "suggestions": ["补充应用场景"]},
+            "suggestions",
+        ),
+        (
+            "rewrite",
+            {"draft": "需要优化表达的目标词正文。"},
+            {"content": "优化后的目标词正文。", "feedback": "已优化"},
+            "content",
+        ),
+    ],
+)
+def test_seo_ai_quick_actions_return_expected_contract(
+    action: str,
+    request_values: dict[str, str],
+    ai_result: dict[str, object],
+    expected_key: str,
+) -> None:
+    request = SeoContentAssistRequest(
+        tenant_id=1,
+        action=action,
+        keyword_ids=[11],
+        **request_values,
+    )
+    tenant = Tenant(id=1, name="测试品牌")
+    keywords = [
+        SeoKeywordAsset(
+            id=11,
+            tenant_id=1,
+            keyword="目标词",
+            priority="P1",
+            status="active",
+            source="manual",
+        )
+    ]
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+
+    with (
+        patch("app.api.seo._tenant", new=AsyncMock(return_value=tenant)),
+        patch("app.api.seo._content_keywords", new=AsyncMock(return_value=keywords)),
+        patch("app.api.seo.is_enabled", return_value=True),
+        patch("app.api.seo.chat_json", new=AsyncMock(return_value=ai_result)) as chat,
+    ):
+        response = asyncio.run(assist_seo_content(request, AsyncMock(), context))
+
+    assert response["action"] == action
+    assert expected_key in response
+    chat.assert_awaited_once()
 
 
 def test_rank_delta_uses_smaller_rank_as_improvement() -> None:

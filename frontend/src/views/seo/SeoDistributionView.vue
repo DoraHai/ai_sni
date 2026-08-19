@@ -17,6 +17,7 @@ import {
   testSeoDistributionConnection,
   updateSeoDistributionConnection,
 } from '../../api/seo'
+import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 
 const loading = ref(false)
@@ -28,6 +29,8 @@ const catalog = ref([])
 const connections = ref([])
 const contents = ref([])
 const publications = ref([])
+const sites = ref([])
+const siteId = ref(null)
 const canEdit = computed(() => !session.isLoggedIn || session.canEdit('seo.content'))
 
 const importInput = ref(null)
@@ -104,23 +107,48 @@ async function load() {
     error.value = '请先选择客户'
     return
   }
+  if (!siteId.value) {
+    error.value = '请先选择或创建 SEO 网站'
+    contents.value = []
+    publications.value = []
+    return
+  }
   loading.value = true
   try {
     const [catalogResult, connectionResult, contentResult, publicationResult] = await Promise.all([
       fetchSeoDistributionCatalog(),
       fetchSeoDistributionConnections({ tenantId: currentTenantId.value }),
-      fetchSeoContentAssets({ tenantId: currentTenantId.value }),
+      fetchSeoContentAssets({ tenantId: currentTenantId.value, siteId: siteId.value }),
       fetchSeoContentPublications({ tenantId: currentTenantId.value }),
     ])
     catalog.value = catalogResult.items || []
     connections.value = connectionResult.items || []
     contents.value = contentResult.items || []
-    publications.value = publicationResult.items || []
+    const contentIds = new Set(contents.value.map(item => item.id))
+    publications.value = (publicationResult.items || []).filter(item => contentIds.has(item.content_id))
     error.value = ''
   } catch (e) {
     error.value = e.message
   } finally {
     loading.value = false
+  }
+}
+
+async function loadSites() {
+  if (!currentTenantId.value) {
+    sites.value = []
+    siteId.value = null
+    return load()
+  }
+  try {
+    sites.value = (await fetchSeoSites(currentTenantId.value)).sites || []
+    const selected = sites.value.some(item => item.id === siteId.value)
+      ? siteId.value
+      : (sites.value.find(item => item.status === 'active')?.id || sites.value[0]?.id || null)
+    if (selected !== siteId.value) siteId.value = selected
+    else await load()
+  } catch (e) {
+    error.value = e.message
   }
 }
 
@@ -370,8 +398,9 @@ async function downloadTemplate() {
   }
 }
 
-watch(currentTenantId, load)
-onMounted(load)
+watch(siteId, load)
+watch(currentTenantId, loadSites)
+onMounted(loadSites)
 </script>
 
 <template>
@@ -382,11 +411,12 @@ onMounted(load)
         <h1>内容分发中心</h1>
         <p>连接发布平台、批量预检并追踪每篇文章在每个渠道的真实状态。</p>
       </div>
-      <div v-if="canEdit" class="hero-actions">
-        <input ref="importInput" class="file-input" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" @change="previewImport">
-        <el-button :loading="importing" @click="selectImport">Excel 批量登记</el-button>
-        <el-button @click="openManual()">登记发布链接</el-button>
-        <el-button type="primary" @click="openBatch()">批量发布</el-button>
+      <div class="hero-actions">
+        <el-select v-model="siteId" class="distribution-site-picker" placeholder="选择 SEO 网站"><el-option v-for="site in sites" :key="site.id" :label="site.name||site.canonical_domain" :value="site.id" /></el-select>
+        <input v-if="canEdit" ref="importInput" class="file-input" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" @change="previewImport">
+        <el-button v-if="canEdit" :loading="importing" @click="selectImport">Excel 批量登记</el-button>
+        <el-button v-if="canEdit" @click="openManual()">登记发布链接</el-button>
+        <el-button v-if="canEdit" type="primary" @click="openBatch()">批量发布</el-button>
       </div>
     </section>
 
@@ -544,6 +574,7 @@ onMounted(load)
 </template>
 
 <style scoped>
+.distribution-site-picker{width:220px}
 .distribution-page{min-height:100%;padding:22px 26px 40px;background:#f5f7fb;color:#202938}.distribution-hero{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:24px 28px;border:1px solid #e0e5ec;border-radius:12px;background:linear-gradient(135deg,#fff 60%,#eef4ff)}.distribution-hero span{color:#2563eb;font-size:10px;font-weight:800;letter-spacing:1.5px}.distribution-hero h1{margin:6px 0 5px;font-size:26px}.distribution-hero p{margin:0;color:#697386;font-size:12px}.hero-actions{display:flex;gap:8px}.file-input{display:none}.summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0}.summary-grid article{padding:17px 18px;border:1px solid #e1e5eb;border-radius:10px;background:#fff}.summary-grid span,.summary-grid small,.summary-grid strong{display:block}.summary-grid span{color:#6d7685;font-size:11px}.summary-grid strong{margin:5px 0 2px;font-size:25px}.summary-grid small{color:#949baa;font-size:10px}.view-tabs{display:flex;gap:4px;margin-bottom:14px;padding:4px;border:1px solid #e1e5eb;border-radius:9px;background:#fff}.view-tabs button{padding:8px 15px;border:0;border-radius:6px;background:transparent;color:#657083;font-size:12px;font-weight:650;cursor:pointer}.view-tabs button.active{background:#eaf1ff;color:#1d4ed8}.view-tabs b{display:inline-grid;min-width:18px;height:18px;margin-left:4px;place-items:center;border-radius:10px;background:#f59e0b;color:#fff;font-size:10px}.channel-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:14px}.channel-toolbar .el-input{width:280px;margin-left:auto}.channel-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.channel-card{display:flex;min-height:255px;padding:17px;flex-direction:column;border:1px solid #dfe4eb;border-radius:10px;background:#fff}.channel-card.muted{background:#fafbfc}.channel-card header{display:flex;align-items:center;gap:10px}.channel-card header>div{min-width:0;flex:1}.channel-card header strong,.channel-card header small{display:block}.channel-card header strong{font-size:14px}.channel-card header small{margin-top:2px;color:#8b94a3;font-size:10px}.channel-logo{display:grid;width:36px;height:36px;place-items:center;border-radius:9px;background:#2563eb;color:#fff;font-weight:800}.channel-card>p{min-height:38px;margin:14px 0 10px;color:#687386;font-size:11px;line-height:1.7}.capabilities{display:flex;flex-wrap:wrap;gap:5px}.capabilities span{padding:3px 6px;border-radius:5px;background:#eef2f7;color:#667083;font-size:9.5px}.connection-list{display:grid;gap:6px;margin-top:12px}.connection-list>div{display:flex;align-items:center;gap:7px;padding:8px;border-radius:7px;background:#f7f9fc}.connection-list>div>span{min-width:0;flex:1}.connection-list b,.connection-list small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.connection-list b{font-size:10.5px}.connection-list small{color:#9299a5;font-size:9px}.channel-card footer{display:flex;align-items:center;justify-content:space-between;margin-top:auto;padding-top:14px;color:#7b8492;font-size:10px}.table-panel,.pending-suggestions{overflow:hidden;border:1px solid #dfe4eb;border-radius:10px;background:#fff}.table-panel>header,.pending-suggestions>header{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid #e8ebef}.table-panel h2,.pending-suggestions h2{margin:0;font-size:14px}.table-panel p{margin:3px 0 0;color:#89919f;font-size:10px}.table-panel a{color:#2563eb;text-decoration:none}.muted-text{color:#9098a5;font-size:10px}.pending-suggestions{margin-top:14px}.pending-suggestions>div{display:flex;align-items:center;gap:12px;padding:11px 18px;border-bottom:1px solid #eef0f3}.pending-suggestions>div:last-child{border:0}.pending-suggestions>div>span{min-width:0;flex:1}.pending-suggestions b,.pending-suggestions small{display:block}.pending-suggestions b{font-size:11px}.pending-suggestions small{margin-top:3px;color:#9299a5;font-size:9.5px}.dialog-intro{display:flex;margin-bottom:14px;padding:12px 14px;flex-direction:column;gap:4px;border-radius:8px;background:#f2f6ff}.dialog-intro b{font-size:13px}.dialog-intro span{color:#647085;font-size:10.5px}.batch-select,.batch-preview,.batch-execution{margin-top:18px}.batch-select .el-select{width:100%}.form-tip{display:block;margin-top:6px;color:#8a93a1;font-size:10px}.check-message{margin-left:7px;color:#7a8392;font-size:10px}.batch-execution{display:grid;gap:16px}.result-list{display:grid;max-height:400px;overflow:auto;border:1px solid #e5e8ed;border-radius:8px}.result-list>div{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #edf0f3}.result-list>div:last-child{border:0}.result-list>div>span{min-width:0;flex:1}.result-list b,.result-list small{display:block}.result-list b{font-size:11px}.result-list small{margin-top:2px;color:#7f8897;font-size:9.5px}.result-list .ok{color:#16a36a}.result-list .fail{color:#d84b4b}.import-preview{display:grid;gap:14px}.import-summary{display:flex;gap:18px;color:#687386;font-size:12px}.import-summary span{margin-right:auto}.valid{color:#16825d}.invalid{color:#c2413a}.import-help{margin:0;color:#737c8b;font-size:11px}.import-help button{border:0;background:none;color:#2563eb;font-weight:700;cursor:pointer}.el-form{margin-top:12px}.el-select{width:100%}@media(max-width:1150px){.channel-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:800px){.distribution-page{padding:14px}.distribution-hero{align-items:flex-start;flex-direction:column}.hero-actions{width:100%;flex-wrap:wrap}.summary-grid,.channel-grid{grid-template-columns:1fr 1fr}.channel-toolbar{align-items:stretch;flex-direction:column}.channel-toolbar .el-input{width:100%;margin:0}.view-tabs{overflow-x:auto}.view-tabs button{white-space:nowrap}}@media(max-width:560px){.summary-grid,.channel-grid{grid-template-columns:1fr}.hero-actions .el-button{margin-left:0;flex:1}.summary-grid article{padding:14px}.distribution-hero{padding:20px}.batch-preview{overflow-x:auto}}
 .result-dot{display:grid;width:20px;height:20px;place-items:center;border-radius:50%;font-size:11px;font-style:normal;font-weight:800}.result-dot.ok{background:#e7f7ef;color:#16825d}.result-dot.fail{background:#feecec;color:#c2413a}
 .upload-state{margin:0;padding:9px 12px;border-radius:7px;background:#eef4ff;color:#315a9d;font-size:11px}

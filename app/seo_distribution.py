@@ -212,7 +212,7 @@ def decrypt_credentials(value: str | None) -> dict[str, str]:
     return {str(key): str(item) for key, item in result.items()}
 
 
-def _sanitize_article_html(value: str) -> str:
+def sanitize_article_html(value: str) -> str:
     soup = BeautifulSoup(value, "html.parser")
     blocked_tags = {"script", "style", "iframe", "object", "embed", "form", "input", "button", "link", "meta"}
     allowed_tags = {
@@ -259,7 +259,7 @@ def prepare_content(title: str, content: str, platform_code: str) -> dict[str, s
     max_title = 32 if platform_code == "wechat_official" else 80 if platform_code in {"wordpress", "ghost"} else 60
     adapted_title = clean_title[:max_title]
     if "<p" in clean_content.lower() or "<h" in clean_content.lower():
-        content_html = _sanitize_article_html(clean_content)
+        content_html = sanitize_article_html(clean_content)
         adapted_content = content_html
         plain = BeautifulSoup(content_html, "html.parser").get_text(" ", strip=True)
     else:

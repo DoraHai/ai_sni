@@ -78,6 +78,27 @@ def test_original_content_brief_supports_bounded_multi_keywords() -> None:
     assert source_path_allowed("migrations/versions/20260819_0071_seo_distribution_publishing.py")
 
 
+def test_seo_content_and_rank_views_are_site_scoped_and_html_safe() -> None:
+    root = Path(__file__).parents[1]
+    api = (root / "frontend/src/api/seo.js").read_text(encoding="utf-8")
+    editor = (root / "frontend/src/views/seo/SeoContentEditorView.vue").read_text(encoding="utf-8")
+    content = (root / "frontend/src/views/seo/SeoContentView.vue").read_text(encoding="utf-8")
+    ranking = (root / "frontend/src/views/seo/SeoRankingMonitorView.vue").read_text(encoding="utf-8")
+    rewrite = (root / "frontend/src/views/seo/SeoRewriteView.vue").read_text(encoding="utf-8")
+    distribution = (root / "frontend/src/views/seo/SeoDistributionView.vue").read_text(encoding="utf-8")
+    backend = (root / "app/api/seo.py").read_text(encoding="utf-8")
+
+    assert "sanitizeEditorHtml(item.humanized_content||item.draft||'')" in editor
+    assert 'site_id: siteId.value' in editor
+    assert 'site_id: siteId.value' in content
+    assert 'site_id: siteId.value' in ranking
+    assert 'siteId:siteId.value' in rewrite
+    assert 'siteId: siteId.value' in distribution
+    assert "site_id: siteId || undefined" in api
+    assert "func.row_number()" in backend
+    assert "all_ranks = list" not in backend
+
+
 def test_release_diff_allows_only_seo_assets_and_hash_token_changes(tmp_path: Path) -> None:
     base, candidate = tmp_path / "base", tmp_path / "candidate"
     _write(base, "index.html", "<script src='/assets/index-old.js'></script>")
