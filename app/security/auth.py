@@ -22,7 +22,7 @@ from app.config import get_settings
 from app.database import get_session
 from app.models.role import Role
 from app.models.user import User
-from app.permissions import OPERATOR_PERMS
+from app.security.api_key import resolve_api_key
 
 _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 _bearer = HTTPBearer(auto_error=False)
@@ -102,13 +102,6 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     if p.startswith("/api/v1/geo/projects"):
         return {"geo.assets"}, edit
 
-    if p.startswith("/api/v1/sem/assets/accounts"):
-        return {"sem.assets"}, edit
-    if p.startswith("/api/v1/seo/sites"):
-        return {"seo.assets"}, edit
-    if p.startswith("/api/v1/geo/projects"):
-        return {"geo.assets"}, edit
-
     if p.startswith("/api/v1/dashboard"):
         return {"monitor.dashboard"}, edit
     if p.startswith("/api/v1/alerts"):
@@ -170,21 +163,8 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
         or p.startswith("/api/v1/geo/oauth/social")
         or p.startswith("/api/v1/geo/channel-accounts")
         or p.startswith("/api/v1/geo/ops-alerts")
-        or p.startswith("/api/v1/geo/weekly-insights")
-        or p.startswith("/api/v1/geo/topic-heat")
-        or p.startswith("/api/v1/geo/ai-trends")
-        or p.startswith("/api/v1/geo/ai-settings")
-        or p.startswith("/api/v1/geo/channel-polish-prompts")
-        or p.startswith("/api/v1/geo/gap-workbench")
-        or p.startswith("/api/v1/geo/optimization-periods")
-        or p.startswith("/api/v1/geo/metrics")
-        or p.startswith("/api/v1/geo/metric-dictionary")
-        or p.startswith("/api/v1/geo/competitor-aliases")
         or p.startswith("/api/v1/geo/competitor-reports")
         or p.startswith("/api/v1/geo/onboarding")
-        or p.startswith("/api/v1/geo/async-jobs")
-        or p.startswith("/api/v1/geo/monitoring-stance")
-        or p.startswith("/api/v1/geo/attribution")
     ):
         return {"geo.content"}, edit
     if p.startswith("/api/v1/geo"):
@@ -247,7 +227,7 @@ async def _build_context(user: User, session: AsyncSession) -> AuthContext:
 async def require_auth(
     bearer: HTTPAuthorizationCredentials | None = Security(_bearer),
     header_key: str | None = Security(_api_key_header),
-    key: str | None = Query(None, description="API Key，与 X-API-Key 等价（脚本用）"),
+    key: str | None = Query(None, description="旧版 API Key 查询参数；需服务端显式开启"),
     session: AsyncSession = Depends(get_session),
 ) -> AuthContext:
     # 1) JWT（前端登录态）
@@ -263,37 +243,13 @@ async def require_auth(
             raise HTTPException(401, "账号不存在或已停用")
         return await _build_context(user, session)
 
-    # 2) admin API Key 兜底（curl / 冒烟 / 调度）
-    #    - 优先 X-API-Key 请求头
-    #    - ?key= 仅当 admin_api_key_query_enabled（生产必须关闭，避免进访问日志/Referer）
+    # 2) admin API Key 兜底（curl / 冒烟 / 调度）= 超管
     settings = get_settings()
-    provided = header_key
-    if key:
-        if settings.admin_api_key_query_enabled:
-            provided = provided or key
-        elif not header_key:
-            raise HTTPException(
-                401,
-                "已禁用 query 传 API Key，请使用 X-API-Key 请求头（生产安全要求）",
-            )
+    provided = resolve_api_key(header_key, key)
     if provided and secrets.compare_digest(provided, settings.admin_api_key):
-        # 未绑租户 = 运维超管（curl / 冒烟）。绑了租户则降为该客户运营，不再绕过 RBAC。
-        bound = getattr(settings, "admin_api_key_tenant_id", None)
-        if bound is not None:
-            return AuthContext(
-                user_id=None,
-                username="api-key",
-                role_name="租户运维密钥",
-                tenant_id=int(bound),
-                permissions=dict(OPERATOR_PERMS),
-                is_superadmin=False,
-            )
         return AuthContext(
-            user_id=None,
-            username="api-key",
-            role_name="超级管理员",
-            tenant_id=None,
-            is_superadmin=True,
+            user_id=None, username="api-key", role_name="超级管理员",
+            tenant_id=None, is_superadmin=True,
         )
 
     raise HTTPException(401, "未登录。请先登录，或通过 X-API-Key 提供管理密钥。")

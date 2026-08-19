@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -63,19 +64,37 @@ from app.scheduler import (
 )
 from app.security.auth import require_scoped_auth
 from app.security.crypto import encrypt
+from app.security.prod_guard import enforce_production_secrets
 
 settings = get_settings()
 logging.basicConfig(level=settings.log_level)
 logger = logging.getLogger("sem-backend")
 
-app = FastAPI(title="SEM 智投平台后端", version="0.3.0")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """生产配置先自检，再启动调度器；退出时保证释放调度资源。"""
+    enforce_production_secrets(settings, hard_fail=True)
+    logger.info(
+        "SEM 后端启动：env=%s base_url=%s default_user=%s",
+        settings.app_env,
+        settings.app_base_url,
+        settings.baidu_default_username,
+    )
+    start_scheduler()
+    try:
+        yield
+    finally:
+        shutdown_scheduler()
+
+
+app = FastAPI(title="SEM 智投平台后端", version="0.3.0", lifespan=lifespan)
 
 # 原型页（file:// 或其他域名）直连接口需要 CORS。API Key 走自定义头/查询参数，不涉及 credentials。
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origin_list(),
     allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["Accept", "Authorization", "Content-Type", "X-API-Key"],
 )
 app.include_router(dashboard_router)
 app.include_router(alerts_router)
@@ -538,24 +557,3 @@ async def sync_url_words(
         "candidates_written": n,
         "urls": details,
     }
-
-
-# ============================================================
-# 应用生命周期
-# ============================================================
-
-
-@app.on_event("startup")
-async def on_startup() -> None:
-    logger.info(
-        "SEM 后端启动：env=%s base_url=%s default_user=%s",
-        settings.app_env,
-        settings.app_base_url,
-        settings.baidu_default_username,
-    )
-    start_scheduler()
-
-
-@app.on_event("shutdown")
-async def on_shutdown() -> None:
-    shutdown_scheduler()

@@ -1,15 +1,17 @@
 """登录态 + 当前用户（含菜单权限）+ 租户列表（多客户切换器数据源）。"""
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.database import get_session
-from app.models import Role, Tenant, User
-from app.permissions import ALL_EDIT, OPERATOR_PERMS
+from app.models import Role, Tenant, TenantModule, User
+from app.permissions import ALL_EDIT
+from app.module_scope import list_module_tenants, module_is_available
 from app.security.auth import (
     AuthContext,
     hash_password,
@@ -43,14 +45,36 @@ class LoginRequest(BaseModel):
 
 @router.post("/login")
 async def login(req: LoginRequest, session: AsyncSession = Depends(get_session)) -> dict:
-    user = await session.scalar(select(User).where(User.username == req.username.strip()))
+    settings = get_settings()
+    now = datetime.utcnow()
+    username = req.username.strip()
+    # 行锁保证多个 worker 同时收到失败请求时不会丢失计数。
+    user = await session.scalar(
+        select(User).where(User.username == username).with_for_update()
+    )
     # 用户不存在也走一次哈希校验，避免计时侧信道探测用户名
     ok = verify_password(req.password, user.password_hash if user else hash_password("x"))
+    if user is not None and user.locked_until is not None and user.locked_until > now:
+        logger.warning("登录被临时锁定账号拒绝: %s", username)
+        raise HTTPException(401, "用户名或密码不正确")
     if user is None or not ok:
-        logger.warning("登录失败: %s", req.username)
+        if user is not None:
+            window = timedelta(minutes=settings.login_failure_window_minutes)
+            if user.last_failed_login_at is None or now - user.last_failed_login_at > window:
+                user.failed_login_attempts = 0
+            user.failed_login_attempts += 1
+            user.last_failed_login_at = now
+            if user.failed_login_attempts >= settings.login_max_failed_attempts:
+                user.locked_until = now + timedelta(minutes=settings.login_lockout_minutes)
+                logger.warning("账号因连续登录失败被临时锁定: %s", username)
+            await session.commit()
+        logger.warning("登录失败: %s", username)
         raise HTTPException(401, "用户名或密码不正确")
     if not user.is_active:
         raise HTTPException(403, "账号已停用，请联系管理员")
+    user.failed_login_attempts = 0
+    user.last_failed_login_at = None
+    user.locked_until = None
     user.last_login_at = datetime.utcnow()
     await session.commit()
     return {"token": issue_token(user), "user": await _user_payload(user, session)}
@@ -61,21 +85,10 @@ async def me(
     ctx: AuthContext = Depends(require_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    if ctx.user_id is None:  # API Key：未绑租户=超管；绑了租户=运营权限且锁客户
-        perms = dict(ctx.permissions) if ctx.permissions else (
-            ALL_EDIT if ctx.is_superadmin else dict(OPERATOR_PERMS)
-        )
-        return {
-            "user": {
-                "id": None,
-                "username": ctx.username or "api-key",
-                "display_name": ctx.role_name or "API Key",
-                "role_id": None,
-                "role_label": ctx.role_name or "API Key",
-                "permissions": perms,
-                "tenant_id": ctx.tenant_id,
-            }
-        }
+    if ctx.user_id is None:  # API Key 兜底访问者 = 超管，给全权限
+        return {"user": {"id": None, "username": "api-key", "display_name": "API Key",
+                         "role_id": None, "role_label": "超级管理员",
+                         "permissions": ALL_EDIT, "tenant_id": None}}
     user = await session.get(User, ctx.user_id)
     if user is None or not user.is_active:
         raise HTTPException(401, "账号不存在或已停用")
@@ -105,86 +118,75 @@ async def change_password(
 
 @router.get("/tenants")
 async def list_tenants(
+    module: str | None = Query(None, pattern="^(sem|seo|geo)$"),
     ctx: AuthContext = Depends(require_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """多客户切换器数据。绑定了单客户的账号只回该客户；否则全部。"""
-    cond = []
-    if ctx.tenant_id is not None:
-        cond.append(Tenant.id == ctx.tenant_id)
-    tenants = (
-        await session.scalars(select(Tenant).where(*cond).order_by(Tenant.id))
-    ).all()
-    return {"tenants": [{"id": t.id, "name": t.name} for t in tenants]}
+    if module:
+        tenants = await list_module_tenants(session, ctx, module)
+    else:
+        cond = []
+        if ctx.tenant_id is not None:
+            cond.append(Tenant.id == ctx.tenant_id)
+        tenants = list(
+            (await session.scalars(select(Tenant).where(*cond).order_by(Tenant.id))).all()
+        )
+    return {
+        "module": module,
+        "tenants": [{"id": t.id, "name": t.name} for t in tenants],
+    }
 
 
-class CreateTenantRequest(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100)
-    brand_terms: list[str] | None = None
-    industry: str | None = Field(None, max_length=100)
-    admin_username: str | None = Field(None, min_length=2, max_length=50)
-    admin_password: str | None = Field(None, min_length=8, max_length=100)
-    admin_display_name: str | None = Field(None, max_length=50)
+_MODULE_PERMISSION_KEYS = {
+    "sem": ("sem.assets", "monitor.dashboard", "manage.account"),
+    "seo": ("seo.assets", "seo.dashboard", "seo.keywords", "seo.content", "seo.site"),
+    "geo": ("geo.assets", "geo.content", "geo.diagnosis"),
+}
 
 
-@router.post("/tenants")
-async def create_tenant(
-    req: CreateTenantRequest,
+@router.get("/modules")
+async def list_my_modules(
     ctx: AuthContext = Depends(require_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """运维新建客户（名称 + 品牌词，可选同时建绑定该客户的管理员账号）。"""
-    if not ctx.can_edit("settings.accounts"):
-        raise HTTPException(403, "仅有账号与权限管理权的角色可新建客户")
+    """Modules visible in the signed-in user's workspace and module switcher."""
+    rows_by_code: dict[str, TenantModule] = {}
     if ctx.tenant_id is not None:
-        raise HTTPException(403, "绑定了单客户的账号不能新建客户")
-    name = req.name.strip()
-    if not name:
-        raise HTTPException(400, "客户名称不能为空")
-    existing = await session.scalar(select(Tenant).where(Tenant.name == name))
-    if existing is not None:
-        raise HTTPException(409, f"客户「{name}」已存在")
-    terms = []
-    for t in req.brand_terms or []:
-        tt = str(t).strip()
-        if tt and tt not in terms:
-            terms.append(tt)
-    tenant = Tenant(
-        name=name,
-        brand_terms=terms[:30] or None,
-        industry=(req.industry or "").strip() or None,
-    )
-    session.add(tenant)
-    await session.flush()
-
-    user_out = None
-    if req.admin_username and req.admin_password:
-        uname = req.admin_username.strip()
-        if await session.scalar(select(User).where(User.username == uname)):
-            raise HTTPException(409, f"用户名「{uname}」已存在")
-        admin_role = await session.scalar(select(Role).where(Role.name == "管理员"))
-        if admin_role is None:
-            admin_role = await session.scalar(select(Role).order_by(Role.id.asc()))
-        if admin_role is None:
-            raise HTTPException(400, "系统尚未配置角色，无法同时创建账号")
-        user = User(
-            username=uname,
-            display_name=(req.admin_display_name or "").strip() or uname,
-            password_hash=hash_password(req.admin_password),
-            role_id=admin_role.id,
-            tenant_id=tenant.id,
+        rows = list(
+            (
+                await session.scalars(
+                    select(TenantModule).where(TenantModule.tenant_id == ctx.tenant_id)
+                )
+            ).all()
         )
-        session.add(user)
-        await session.flush()
-        user_out = {"id": user.id, "username": user.username, "tenant_id": tenant.id}
+        rows_by_code = {row.module_code: row for row in rows}
 
-    await session.commit()
-    await session.refresh(tenant)
-    return {
-        "tenant": {"id": tenant.id, "name": tenant.name, "brand_terms": tenant.brand_terms or []},
-        "admin_user": user_out,
-        "next_paths": {
-            "onboarding": "/geo/onboarding",
-            "accounts": "/settings/accounts",
-        },
-    }
+    modules = []
+    for code in ("sem", "seo", "geo"):
+        permitted = ctx.can_view(*_MODULE_PERMISSION_KEYS[code])
+        if ctx.tenant_id is not None:
+            row = rows_by_code.get(code)
+            available = bool(row and module_is_available(row) and permitted)
+            modules.append(
+                {
+                    "module_code": code,
+                    "status": row.status if row else "not_opened",
+                    "available": available,
+                    "expires_at": row.expires_at.isoformat() if row and row.expires_at else None,
+                    "tenant_count": 1 if available else 0,
+                }
+            )
+            continue
+
+        tenants = await list_module_tenants(session, ctx, code)
+        modules.append(
+            {
+                "module_code": code,
+                "status": "active" if permitted else "no_permission",
+                "available": permitted,
+                "expires_at": None,
+                "tenant_count": len(tenants),
+            }
+        )
+    return {"tenant_id": ctx.tenant_id, "modules": modules}

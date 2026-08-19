@@ -41,13 +41,29 @@ class Settings(BaseSettings):
         ..., description="admin / dashboard 接口的 API Key，调用方经 X-API-Key 请求头携带"
     )
     # 是否允许 ?key= 传 API Key（URL 会进日志/Referer，生产必须 False）
-    admin_api_key_query_enabled: bool = True
+    # 查询参数会进入浏览器历史、代理与访问日志；默认关闭，仅兼容环境显式开启。
+    admin_api_key_query_enabled: bool = False
     # 若设置，API Key 访问绑定到该租户（ensure_tenant 生效）；None=可跨租户（仅运维）
     admin_api_key_tenant_id: int | None = None
 
     # 登录态 JWT 签名密钥；不配则退化复用 admin_api_key（本地冒烟方便），生产必须单独配
     jwt_secret: str = ""
     jwt_expire_hours: int = 12
+
+    # 登录防护：失败次数在一个时间窗内累计，达到阈值后临时锁定账号。
+    login_max_failed_attempts: int = Field(default=5, ge=3, le=20)
+    login_failure_window_minutes: int = Field(default=15, ge=1, le=1440)
+    login_lockout_minutes: int = Field(default=10, ge=1, le=1440)
+
+    # 逗号分隔，生产环境不得包含通配符。浏览器前端均应走同源 HTTPS。
+    cors_allowed_origins: str = "https://sem.snipers.com.cn"
+
+    def cors_origin_list(self) -> list[str]:
+        return [
+            origin.strip().rstrip("/")
+            for origin in self.cors_allowed_origins.split(",")
+            if origin.strip()
+        ]
 
     # GEO：是否允许同一人提交审校又审批通过（默认禁止）
     geo_allow_self_review: bool = False

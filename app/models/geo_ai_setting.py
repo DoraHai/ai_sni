@@ -20,10 +20,6 @@ class GeoAiSetting(Base):
     model: Mapped[str] = mapped_column(String(80), nullable=False)
     api_key_encrypted: Mapped[str | None] = mapped_column(Text)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    # simulation | hybrid | real_only — 监测商业定位（见 monitoring_stance.py）
-    monitoring_stance: Mapped[str] = mapped_column(
-        String(32), nullable=False, default="hybrid"
-    )
     note: Mapped[str | None] = mapped_column(Text)
     updated_by: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

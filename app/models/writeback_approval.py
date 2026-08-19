@@ -35,3 +35,4 @@ class WritebackApproval(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     decided_at: Mapped[datetime | None] = mapped_column(DateTime)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime)
+

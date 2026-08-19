@@ -83,9 +83,9 @@ from app.models.geo_content import (
 )
 from app.models.seo import (
     SeoBacklink,
-    SeoBrandAsset,
     SeoCompetitor,
     SeoCompetitorEvent,
+    SeoBrandAsset,
     SeoContentAsset,
     SeoInternalLink,
     SeoKeywordAsset,
