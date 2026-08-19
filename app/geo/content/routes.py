@@ -6285,7 +6285,7 @@ async def create_task(
             raise HTTPException(
                 500,
                 "数据库缺 geo_facts.business_id，无法创建优化文章。"
-                "请在服务器执行 alembic upgrade head（0065 修复迁移）。",
+                "请在服务器执行 alembic upgrade head（0073 修复迁移）。",
             ) from exc
         raise HTTPException(500, f"创建优化文章失败：{blob[:240]}") from exc
 
