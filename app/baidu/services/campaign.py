@@ -21,6 +21,7 @@ CAMPAIGN_SYNC_FIELDS = [
     "status",
     "equipmentType",
     "regionTarget",
+    "geoLocationStatus",
     "schedule",
     "regionPriceFactor",
     "schedulePriceFactors",
@@ -113,3 +114,84 @@ class CampaignService:
             {"campaignTypes": [{"campaignId": campaign_id, "pause": pause}]},
             is_write=True,
         )
+
+    async def update_campaign_schedule(
+        self,
+        campaign_id: int,
+        schedule_price_factors: list[dict[str, Any]],
+        *,
+        pause: bool = False,
+    ) -> dict[str, Any]:
+        """整表替换计划投放时段；停投模板同时暂停计划。"""
+        campaign: dict[str, Any] = {
+            "campaignId": campaign_id,
+            "schedulePriceFactors": schedule_price_factors,
+        }
+        if pause:
+            campaign["pause"] = True
+        return await self._client.call(
+            "CampaignService",
+            "updateCampaign",
+            {"campaignTypes": [campaign]},
+            is_write=True,
+        )
+
+    async def update_campaign_region(
+        self,
+        campaign_id: int,
+        region_target: list[int],
+        *,
+        region_price_factor: list[dict[str, Any]] | None = None,
+        geo_location_status: int | None = None,
+    ) -> dict[str, Any]:
+        """更新计划投放地域及分地域出价系数（updateCampaign，文档 0046）。
+
+        ``regionTarget`` 和 ``regionPriceFactor`` 是整表替换字段。调用方应传入
+        已确认的完整目标列表；本方法刻意不携带计划的预算、时段、否词等其它字段。
+        """
+        campaign: dict[str, Any] = {
+            "campaignId": campaign_id,
+            "regionTarget": region_target,
+        }
+        if region_price_factor is not None:
+            campaign["regionPriceFactor"] = region_price_factor
+        if geo_location_status is not None:
+            campaign["geoLocationStatus"] = geo_location_status
+        return await self._client.call(
+            "CampaignService",
+            "updateCampaign",
+            {"campaignTypes": [campaign]},
+            is_write=True,
+        )
+
+    async def update_campaign_negative_words(
+        self,
+        campaign_id: int,
+        *,
+        negative_words: list[str] | None = None,
+        exact_negative_words: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """更新计划级否词，优先专用服务，失败时回退 updateCampaign。
+
+        与单元级一致，调用方必须传“现有 + 新增”的完整列表；这里只传
+        campaignId + 否词字段，避免覆盖计划其他配置。
+        """
+        body: dict[str, Any] = {"campaignId": campaign_id}
+        if negative_words is not None:
+            body["negativeWords"] = negative_words
+        if exact_negative_words is not None:
+            body["exactNegativeWords"] = exact_negative_words
+        try:
+            return await self._client.call(
+                "NegativeWordService",
+                "updateCampaignNegativeWordsSync",
+                body,
+                is_write=True,
+            )
+        except BaiduAPIError:
+            return await self._client.call(
+                "CampaignService",
+                "updateCampaign",
+                {"campaignTypes": [body]},
+                is_write=True,
+            )

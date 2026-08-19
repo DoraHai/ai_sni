@@ -161,15 +161,28 @@ async def apply_keyword_writeback(
 # 匹配方式 → 百度 addWord (matchType, phraseType)（文档 0064/0068 核对）：
 # 精确=1+1、短语=2+1、智能=2+3。两者必须配合传，否则百度按默认细分匹配处理。
 _MATCH_BY_MODE = {"exact": (1, 1), "phrase": (2, 1)}
+_VALID_MATCH_COMBOS = {
+    (1, 1): "精确匹配",
+    (2, 1): "短语匹配",
+    (2, 3): "智能匹配",
+}
 
 
-async def _active_account(session: AsyncSession, tenant_id: int) -> BaiduAccount:
-    acc = await session.scalar(
-        select(BaiduAccount).where(
-            BaiduAccount.tenant_id == tenant_id, BaiduAccount.status == "active"
-        )
-    )
+async def _active_account(
+    session: AsyncSession,
+    tenant_id: int,
+    baidu_account_id: int | None = None,
+) -> BaiduAccount:
+    conditions = [
+        BaiduAccount.tenant_id == tenant_id,
+        BaiduAccount.status == "active",
+    ]
+    if baidu_account_id is not None:
+        conditions.append(BaiduAccount.id == baidu_account_id)
+    acc = await session.scalar(select(BaiduAccount).where(*conditions))
     if acc is None:
+        if baidu_account_id is not None:
+            raise WritebackError("计划所属的百度账户未授权或已停用，无法回写")
         raise WritebackError("该租户没有生效的百度账户授权，无法回写")
     return acc
 
@@ -241,6 +254,89 @@ async def apply_negative_writeback(
         rec.error_msg = str(e)[:2000]
         rec.executed_at = datetime.utcnow()
         logger.exception("加否词异常 adgroup=%s word=%s", adgroup_id, word)
+
+    await session.commit()
+    await session.refresh(rec)
+    return rec
+
+
+async def apply_negative_writeback_campaign(
+    session: AsyncSession,
+    tenant_id: int,
+    word: str,
+    campaign_id: int,
+    *,
+    match_mode: str,
+    operator_user_id: int | None,
+    operator_name: str | None,
+) -> WritebackAction:
+    """把搜索词加成计划级否词。match_mode: exact=精确否 / phrase=短语否。"""
+    word = (word or "").strip()
+    if not word:
+        raise WritebackError("否词不能为空")
+    if match_mode not in ("exact", "phrase"):
+        raise WritebackError("匹配方式只能是 exact（精确否）/ phrase（短语否）")
+
+    camp = await session.scalar(
+        select(Campaign).where(
+            Campaign.tenant_id == tenant_id,
+            Campaign.campaign_id == campaign_id,
+        )
+    )
+    if camp is None:
+        raise WritebackError("计划不在维度表中，请先执行计划维度同步")
+    acc = await _active_account(session, tenant_id)
+
+    field = "exact_negative_words" if match_mode == "exact" else "negative_words"
+    current = list(getattr(camp, field) or [])
+    if word in current:
+        raise WritebackError(
+            f"「{word}」已在该计划的{'精确' if match_mode == 'exact' else '短语'}否词中"
+        )
+    new_list = current + [word]
+
+    dry_run = get_settings().baidu_write_dry_run
+    rec = WritebackAction(
+        tenant_id=tenant_id,
+        baidu_account_id=acc.id,
+        action_type="negative",
+        word=word,
+        match_mode=match_mode,
+        campaign_id=campaign_id,
+        campaign_name=camp.campaign_name,
+        dry_run=dry_run,
+        status="pending",
+        operator_user_id=operator_user_id,
+        operator_name=operator_name,
+    )
+    session.add(rec)
+    await session.flush()
+
+    try:
+        kwargs = (
+            {"exact_negative_words": new_list}
+            if match_mode == "exact"
+            else {"negative_words": new_list}
+        )
+        resp = await CampaignService(_account_client(acc)).update_campaign_negative_words(
+            campaign_id,
+            **kwargs,
+        )
+        rec.status = "dry_run" if dry_run else "success"
+        rec.baidu_response = str(resp)[:2000]
+        rec.executed_at = datetime.utcnow()
+        if not dry_run:
+            setattr(camp, field, new_list)
+    except BaiduAPIError as e:
+        rec.status = "failed"
+        rec.error_msg = f"[{e.code}] {e.message}"[:2000]
+        rec.executed_at = datetime.utcnow()
+        logger.warning("计划级加否词失败 campaign=%s word=%s: %s", campaign_id, word, e)
+    except Exception as e:
+        rec.status = "failed"
+        rec.error_msg = str(e)[:2000]
+        rec.executed_at = datetime.utcnow()
+        logger.exception("计划级加否词异常 campaign=%s word=%s", campaign_id, word)
 
     await session.commit()
     await session.refresh(rec)
@@ -357,6 +453,77 @@ async def apply_pause_writeback(
         rec.error_msg = "未知错误"
         rec.executed_at = datetime.utcnow()
         logger.exception("启停异常 keyword_id=%s", keyword_id)
+
+    await session.commit()
+    await session.refresh(rec)
+    return rec
+
+
+async def apply_match_type_writeback(
+    session: AsyncSession,
+    tenant_id: int,
+    keyword_id: int,
+    match_type: int,
+    phrase_type: int,
+    *,
+    operator_user_id: int | None,
+    operator_name: str | None,
+) -> WritebackAction:
+    """修改关键词匹配模式（updateWord matchType/phraseType）。dry_run 时拦截不真发。"""
+    combo = (match_type, phrase_type)
+    if combo not in _VALID_MATCH_COMBOS:
+        raise WritebackError(
+            f"不支持的匹配模式组合 matchType={match_type}, phraseType={phrase_type}，"
+            f"仅支持精确(1,1) / 短语(2,1) / 智能(2,3)"
+        )
+
+    kw = await session.scalar(
+        select(Keyword).where(
+            Keyword.tenant_id == tenant_id,
+            Keyword.keyword_id == keyword_id,
+        )
+    )
+    if kw is None:
+        raise WritebackError("关键词不在维度表中，请先执行关键词维度同步")
+    acc = await _active_account(session, tenant_id)
+
+    dry_run = get_settings().baidu_write_dry_run
+    rec = WritebackAction(
+        tenant_id=tenant_id,
+        baidu_account_id=acc.id,
+        action_type="set_match_type",
+        word=kw.keyword,
+        match_mode=_VALID_MATCH_COMBOS[combo],
+        campaign_id=kw.campaign_id,
+        adgroup_id=kw.adgroup_id,
+        old_value=kw.match_type,
+        new_value=match_type,
+        dry_run=dry_run,
+        status="pending",
+        operator_user_id=operator_user_id,
+        operator_name=operator_name,
+    )
+    session.add(rec)
+    await session.flush()
+    try:
+        svc = KeywordService(_account_client(acc))
+        resp = await svc.update_word_match_type(keyword_id, match_type, phrase_type)
+        rec.status = "dry_run" if dry_run else "success"
+        rec.baidu_response = str(resp)[:2000]
+        rec.executed_at = datetime.utcnow()
+        if not dry_run:
+            kw.match_type = match_type
+            kw.phrase_type = phrase_type
+    except BaiduAPIError as e:
+        rec.status = "failed"
+        rec.error_msg = f"[{e.code}] {e.message}"[:2000]
+        rec.executed_at = datetime.utcnow()
+        logger.warning("改匹配模式失败 keyword_id=%s: %s", keyword_id, e)
+    except Exception:
+        rec.status = "failed"
+        rec.error_msg = "未知错误"
+        rec.executed_at = datetime.utcnow()
+        logger.exception("改匹配模式异常 keyword_id=%s", keyword_id)
 
     await session.commit()
     await session.refresh(rec)
@@ -564,6 +731,221 @@ async def apply_campaign_pause_writeback(
         rec.error_msg = "未知错误"
         rec.executed_at = datetime.utcnow()
         logger.exception("计划启停异常 campaign=%s", campaign_id)
+
+    await session.commit()
+    await session.refresh(rec)
+    return rec
+
+
+def _normalize_schedule_price_factors(items: list[dict]) -> list[dict[str, float | int]]:
+    """校验并规范百度 timeId（星期 * 100 + 小时）的完整投放时段。"""
+    if not isinstance(items, list):
+        raise WritebackError("投放时段必须是列表")
+    normalized: list[dict[str, float | int]] = []
+    seen: set[int] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            raise WritebackError("投放时段格式错误")
+        time_id = item.get("timeId")
+        factor = item.get("priceFactor", 1)
+        if isinstance(time_id, bool) or not isinstance(time_id, int):
+            raise WritebackError("投放时段 timeId 必须是整数")
+        week_day, hour = divmod(time_id, 100)
+        if not 1 <= week_day <= 7 or not 0 <= hour <= 23:
+            raise WritebackError("投放时段必须是周一至周日的整点时段")
+        try:
+            normalized_factor = float(factor)
+        except (TypeError, ValueError) as exc:
+            raise WritebackError("分时段出价系数必须是数字") from exc
+        if not 0.1 <= normalized_factor <= 10.0:
+            raise WritebackError("分时段出价系数必须在 0.1 到 10.0 之间")
+        if time_id in seen:
+            raise WritebackError("同一投放时段不能重复设置")
+        seen.add(time_id)
+        normalized.append({"timeId": time_id, "priceFactor": normalized_factor})
+    return sorted(normalized, key=lambda row: int(row["timeId"]))
+
+
+async def apply_campaign_schedule_writeback(
+    session: AsyncSession,
+    tenant_id: int,
+    campaign_id: int,
+    schedule_price_factors: list[dict],
+    *,
+    pause: bool = False,
+    operator_user_id: int | None,
+    operator_name: str | None,
+) -> WritebackAction:
+    """写回计划投放时段；空时段只允许用于节假日停投模板。"""
+    normalized = _normalize_schedule_price_factors(schedule_price_factors)
+    if not normalized and not pause:
+        raise WritebackError("投放时段不能为空；如需节假日停投请选择停投模板")
+    camp = await session.scalar(
+        select(Campaign).where(
+            Campaign.tenant_id == tenant_id, Campaign.campaign_id == campaign_id
+        )
+    )
+    if camp is None:
+        raise WritebackError("计划不在维度表中，请先执行计划维度同步")
+    if camp.baidu_account_id is None:
+        raise WritebackError("计划缺少所属百度账户，请先重新同步计划维度")
+    acc = await _active_account(session, tenant_id, camp.baidu_account_id)
+    old_schedule = list(camp.schedule_price_factors or [])
+    dry_run = get_settings().baidu_write_dry_run
+    rec = WritebackAction(
+        tenant_id=tenant_id,
+        baidu_account_id=acc.id,
+        action_type="campaign_schedule",
+        word=camp.campaign_name or f"计划#{campaign_id}",
+        campaign_id=campaign_id,
+        campaign_name=camp.campaign_name,
+        old_value=len(old_schedule),
+        new_value=len(normalized),
+        dry_run=dry_run,
+        status="pending",
+        operator_user_id=operator_user_id,
+        operator_name=operator_name,
+    )
+    session.add(rec)
+    await session.flush()
+    try:
+        resp = await CampaignService(_account_client(acc)).update_campaign_schedule(
+            campaign_id, normalized, pause=pause
+        )
+        rec.status = "dry_run" if dry_run else "success"
+        rec.baidu_response = str(resp)[:2000]
+        rec.executed_at = datetime.utcnow()
+        if not dry_run:
+            camp.schedule_price_factors = normalized
+            if pause:
+                camp.pause = True
+    except BaiduAPIError as exc:
+        rec.status = "failed"
+        rec.error_msg = f"[{exc.code}] {exc.message}"[:2000]
+        rec.executed_at = datetime.utcnow()
+    except Exception:  # noqa: BLE001
+        rec.status = "failed"
+        rec.error_msg = "未知错误"
+        rec.executed_at = datetime.utcnow()
+        logger.exception("投放时段写回异常 campaign=%s", campaign_id)
+    await session.commit()
+    await session.refresh(rec)
+    return rec
+
+
+def _normalize_region_target(region_target: list[int]) -> list[int]:
+    if not isinstance(region_target, list) or not region_target:
+        raise WritebackError("投放地域不能为空，请至少选择一个省、市或全部区域")
+    normalized: list[int] = []
+    for region_id in region_target:
+        if isinstance(region_id, bool) or not isinstance(region_id, int) or region_id <= 0:
+            raise WritebackError("投放地域必须是有效的百度地域 ID")
+        if region_id not in normalized:
+            normalized.append(region_id)
+    return normalized
+
+
+def _normalize_region_price_factor(
+    region_price_factor: list[dict] | None, region_target: list[int]
+) -> list[dict[str, float | int]] | None:
+    if region_price_factor is None:
+        return None
+    if not isinstance(region_price_factor, list):
+        raise WritebackError("分地域出价系数必须是列表")
+
+    normalized: list[dict[str, float | int]] = []
+    seen: set[int] = set()
+    for item in region_price_factor:
+        if not isinstance(item, dict):
+            raise WritebackError("分地域出价系数格式错误")
+        region_id = item.get("regionId")
+        factor = item.get("priceFactor")
+        if isinstance(region_id, bool) or not isinstance(region_id, int) or region_id not in region_target:
+            raise WritebackError("分地域出价系数的地域必须在投放地域列表中")
+        if isinstance(factor, bool):
+            raise WritebackError("分地域出价系数必须是数字")
+        try:
+            normalized_factor = float(factor)
+        except (TypeError, ValueError) as exc:
+            raise WritebackError("分地域出价系数必须是数字") from exc
+        if not 0.1 <= normalized_factor <= 1.0:
+            raise WritebackError("分地域出价系数必须在 0.1 到 1.0 之间")
+        if region_id in seen:
+            raise WritebackError("同一地域只能设置一个出价系数")
+        seen.add(region_id)
+        normalized.append({"regionId": region_id, "priceFactor": normalized_factor})
+    return normalized
+
+
+async def apply_campaign_region_writeback(
+    session: AsyncSession,
+    tenant_id: int,
+    campaign_id: int,
+    region_target: list[int],
+    region_price_factor: list[dict] | None,
+    geo_location_status: int | None = None,
+    *,
+    operator_user_id: int | None,
+    operator_name: str | None,
+) -> WritebackAction:
+    """更新计划投放地域、分地域系数及地域定向方式；dry-run 时仅写入台账。"""
+    normalized_regions = _normalize_region_target(region_target)
+    normalized_factors = _normalize_region_price_factor(region_price_factor, normalized_regions)
+    if geo_location_status is not None and geo_location_status not in (0, 1):
+        raise WritebackError("地域定向方式只能是 0（含搜索意图）或 1（仅地区内用户）")
+    camp = await session.scalar(
+        select(Campaign).where(
+            Campaign.tenant_id == tenant_id, Campaign.campaign_id == campaign_id
+        )
+    )
+    if camp is None:
+        raise WritebackError("计划不在维度表中，请先执行计划维度同步")
+    acc = await _active_account(session, tenant_id)
+
+    old_regions = list(camp.region_target or [])
+    dry_run = get_settings().baidu_write_dry_run
+    rec = WritebackAction(
+        tenant_id=tenant_id,
+        baidu_account_id=acc.id,
+        action_type="set_campaign_region",
+        word=camp.campaign_name or f"计划#{campaign_id}",
+        campaign_id=campaign_id,
+        campaign_name=camp.campaign_name,
+        old_value=len(old_regions),
+        new_value=len(normalized_regions),
+        dry_run=dry_run,
+        status="pending",
+        operator_user_id=operator_user_id,
+        operator_name=operator_name,
+    )
+    session.add(rec)
+    await session.flush()
+
+    try:
+        resp = await CampaignService(_account_client(acc)).update_campaign_region(
+            campaign_id,
+            normalized_regions,
+            region_price_factor=normalized_factors,
+            geo_location_status=geo_location_status,
+        )
+        rec.status = "dry_run" if dry_run else "success"
+        rec.baidu_response = str(resp)[:2000]
+        rec.executed_at = datetime.utcnow()
+        if not dry_run:
+            camp.region_target = normalized_regions
+            if normalized_factors is not None:
+                camp.region_price_factor = normalized_factors
+            if geo_location_status is not None:
+                camp.geo_location_status = geo_location_status
+    except BaiduAPIError as exc:
+        rec.status = "failed"
+        rec.error_msg = f"[{exc.code}] {exc.message}"[:2000]
+        rec.executed_at = datetime.utcnow()
+    except Exception:  # noqa: BLE001
+        rec.status = "failed"
+        rec.error_msg = "未知错误"
+        rec.executed_at = datetime.utcnow()
+        logger.exception("地域写回异常 campaign=%s", campaign_id)
 
     await session.commit()
     await session.refresh(rec)

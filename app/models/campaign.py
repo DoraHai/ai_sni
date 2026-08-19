@@ -40,6 +40,8 @@ class Campaign(Base):
     status: Mapped[int | None] = mapped_column(SmallInteger)
     equipment_type: Mapped[int | None] = mapped_column(SmallInteger)
     region_target: Mapped[list | None] = mapped_column(JSONB)
+    # 0=地区内或搜索意图在该地区；1=仅地区内用户
+    geo_location_status: Mapped[int | None] = mapped_column(SmallInteger)
     schedule: Mapped[list | None] = mapped_column(JSONB)  # 推广暂停时段
     region_price_factor: Mapped[list | None] = mapped_column(JSONB)  # 分地域出价系数
     schedule_price_factors: Mapped[list | None] = mapped_column(JSONB)  # 分时段出价系数

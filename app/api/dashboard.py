@@ -143,7 +143,7 @@ async def dashboard_today(
     end_date: date | None = Query(None, description="统计截止日期，默认今天"),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """看板核心数据：时段 KPI + 环比 + 月预算耗用 + 7 天趋势 + 设备维度 + 计划分布。
+    """看板核心数据：时段 KPI + 环比 + 完整时段趋势 + 设备维度 + 计划分布。
 
     苏尔寿 6 月起停投，演示时传 start_date=2026-05-01&end_date=2026-05-31 看 5 月数据。
     """
@@ -213,8 +213,8 @@ async def dashboard_today(
         ),
     }
 
-    # ===== 近 7 天趋势（以 end_date 为锚，缺数据的日期补 0） =====
-    trend_start = end - timedelta(days=6)
+    # ===== 时段趋势（完整选定区间，缺数据的日期补 0） =====
+    trend_start = start
     trend_rows = (
         await session.execute(
             select(
@@ -233,7 +233,7 @@ async def dashboard_today(
     ).all()
     by_date = {r[0]: r for r in trend_rows}
     trend = []
-    for i in range(7):
+    for i in range(period_days):
         d = trend_start + timedelta(days=i)
         r = by_date.get(d)
         trend.append(
@@ -353,6 +353,8 @@ async def dashboard_today(
         "cpl": cpl_compare,
         "budget": budget,
         "alert_counts": alert_counts,
+        "trend": trend,
+        # 兼容旧前端；下一版客户端应读取 trend（完整选定区间）。
         "trend_7d": trend,
         "device_split": device_split,
         "top_campaigns": top_campaigns,

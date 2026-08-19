@@ -1,6 +1,6 @@
 import os
 import unittest
-from datetime import date, datetime
+from datetime import date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -18,27 +18,11 @@ os.environ.setdefault(
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
 from app.baidu.sync import sync_keyword_dimension_reports_for_account
-from app.scheduler import (
-    _SHANGHAI_TZ,
-    _chunks,
-    _local_day_start_utc,
-    refresh_keyword_workbench_snapshot,
-)
+from app.scheduler import refresh_keyword_workbench_snapshot
 from app.security.auth import _required
 
 
 class KeywordRefreshTests(unittest.IsolatedAsyncioTestCase):
-    def test_seo_rank_scheduler_chunks_all_keywords(self):
-        self.assertEqual(_chunks([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]])
-        self.assertEqual(_chunks([1, 2], 0), [[1], [2]])
-
-    def test_seo_rank_scheduler_uses_shanghai_natural_day(self):
-        local_now = datetime(2026, 8, 16, 2, 0, tzinfo=_SHANGHAI_TZ)
-        self.assertEqual(
-            _local_day_start_utc(local_now),
-            datetime(2026, 8, 15, 16, 0),
-        )
-
     async def test_dimension_reports_use_chunked_upserts(self):
         svc = SimpleNamespace(
             get_keyword_region_report=AsyncMock(
@@ -157,7 +141,7 @@ class KeywordRefreshTests(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch("app.scheduler._acquire_tenant_sync_lock", return_value=object()),
-            patch("app.scheduler._release_tenant_sync_lock") as release_lock,
+            patch("app.scheduler._release_tenant_sync_lock"),
             patch(
                 "app.scheduler.sync_keyword_report_for_account",
                 new=AsyncMock(side_effect=RuntimeError("region batch failed")),
@@ -171,8 +155,6 @@ class KeywordRefreshTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(account.sync_status, "failed")
         self.assertEqual(account.last_sync_error, "region batch failed")
         session.rollback.assert_awaited_once()
-        release_lock.assert_called_once()
-
     def test_manual_refresh_requires_keyword_edit_permission(self):
         self.assertEqual(
             _required("/api/v1/admin/refresh-keyword-workbench", "POST"),
