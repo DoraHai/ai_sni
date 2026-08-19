@@ -133,6 +133,13 @@ class BaiduOAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(isinstance(row, Tenant) for row in session.added))
         self.assertTrue(any(isinstance(row, BaiduOAuthGrant) for row in session.added))
         self.assertTrue(any(isinstance(row, BaiduAccount) for row in session.added))
+        module_insert = session.execute.await_args_list[0].args[0]
+        compiled = str(module_insert.compile()).lower()
+        params = module_insert.compile().params
+        self.assertIn("on conflict", compiled)
+        self.assertIn("tenant_modules", compiled)
+        self.assertIn("sem", params.values())
+        self.assertIn(tenants[0].id, params.values())
 
 
 if __name__ == "__main__":

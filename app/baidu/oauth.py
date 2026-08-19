@@ -24,10 +24,11 @@ from urllib.parse import urlencode
 import httpx
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models import BaiduAccount, BaiduOAuthGrant, BaiduOAuthState, Tenant
+from app.models import BaiduAccount, BaiduOAuthGrant, BaiduOAuthState, Tenant, TenantModule
 from app.security.crypto import decrypt, encrypt
 
 logger = logging.getLogger(__name__)
@@ -335,6 +336,25 @@ async def persist_authorization(
     if not linked_tenants:
         raise BaiduOAuthError("no_accounts", "百度未返回可授权的推广账户。")
     primary_tenant = linked_tenants[0]
+
+    # OAuth 是 SEM 首次接入入口。新账户会自动创建独立客户，因此也必须同时
+    # 开通对应的 SEM 工作区，否则模块客户选择器会把已授权账户隐藏起来。
+    # 使用唯一约束 + ON CONFLICT 保证重复授权和并发回调不会产生重复记录；
+    # 已存在但被业务侧停用的模块不会被 OAuth 擅自重新启用。
+    await session.execute(
+        insert(TenantModule)
+        .values(
+            [
+                {
+                    "tenant_id": tenant_id,
+                    "module_code": "sem",
+                    "status": "active",
+                }
+                for tenant_id in sorted({tenant.id for tenant in linked_tenants})
+            ]
+        )
+        .on_conflict_do_nothing(constraint="uq_tenant_module_code")
+    )
 
     grant = await session.scalar(
         select(BaiduOAuthGrant)
