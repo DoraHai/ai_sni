@@ -173,8 +173,8 @@ export function testSeoDistributionConnection({ connectionId, tenantId }) {
   return client.post(`/api/v1/seo/content-distribution/connections/${connectionId}/test`, null, { params: { tenant_id: tenantId }, timeout: 30000 })
 }
 
-export function fetchSeoContentPublications({ tenantId, contentId, status }) {
-  return client.get('/api/v1/seo/content-distribution/publications', { params: { tenant_id: tenantId, content_id: contentId || undefined, status: status || undefined } })
+export function fetchSeoContentPublications({ tenantId, siteId, contentId, status }) {
+  return client.get('/api/v1/seo/content-distribution/publications', { params: { tenant_id: tenantId, site_id: siteId || undefined, content_id: contentId || undefined, status: status || undefined } })
 }
 
 export function createSeoManualPublication(payload) {
@@ -193,8 +193,16 @@ export function completeSeoManualPublication({ publicationId, payload }) {
   return client.post(`/api/v1/seo/content-distribution/publications/${publicationId}/complete`, payload)
 }
 
-export function syncSeoContentPublication({ publicationId, tenantId }) {
-  return client.post(`/api/v1/seo/content-distribution/publications/${publicationId}/sync`, null, { params: { tenant_id: tenantId }, timeout: 30000 })
+export function syncSeoContentPublication({ publicationId, tenantId, siteId }) {
+  return client.post(`/api/v1/seo/content-distribution/publications/${publicationId}/sync`, null, { params: { tenant_id: tenantId, site_id: siteId || undefined }, timeout: 30000 })
+}
+
+export function retrySeoContentPublication({ publicationId, payload }) {
+  return client.post(`/api/v1/seo/content-distribution/publications/${publicationId}/retry`, payload, { timeout: 360000 })
+}
+
+export function fetchSeoPublicationAttempts({ publicationId, tenantId, siteId }) {
+  return client.get(`/api/v1/seo/content-distribution/publications/${publicationId}/attempts`, { params: { tenant_id: tenantId, site_id: siteId || undefined } })
 }
 
 export function assistSeoContent(payload) {

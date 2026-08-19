@@ -2,11 +2,23 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.api.seo import DistributionPreflightRequest, DistributionPublishRequest
+from app.api.seo import (
+    DistributionManualComplete,
+    DistributionPreflightRequest,
+    DistributionPublishRequest,
+    DistributionRetryRequest,
+    _distribution_content,
+    complete_manual_publication,
+    preflight_content_distribution,
+    retry_content_publication,
+)
+from app.security.auth import AuthContext
 from app.models.seo import (
+    SeoContentAsset,
     SeoContentPublication,
     SeoDistributionConnection,
     SeoPublishAttempt,
@@ -307,18 +319,21 @@ def test_distribution_models_are_tenant_scoped_and_keep_credentials_private() ->
 def test_publish_requests_bound_batch_size_and_require_explicit_confirmation_field() -> None:
     request = DistributionPreflightRequest(
         tenant_id=1,
+        site_id=8,
         content_ids=[1, 2],
         connection_ids=[3],
         action="draft",
     )
     publish = DistributionPublishRequest(
         tenant_id=1,
+        site_id=8,
         content_id=1,
         connection_id=3,
         action="publish",
     )
 
     assert request.content_ids == [1, 2]
+    assert request.site_id == 8
     assert publish.confirm is False
     with pytest.raises(Exception):
         DistributionPreflightRequest(
@@ -326,6 +341,219 @@ def test_publish_requests_bound_batch_size_and_require_explicit_confirmation_fie
             content_ids=list(range(1, 22)),
             connection_ids=[3],
         )
+
+
+def test_distribution_content_rejects_cross_site_asset() -> None:
+    content = SeoContentAsset(
+        id=5,
+        tenant_id=1,
+        site_id=7,
+        content_type="article",
+        title="测试文章",
+        status="drafting",
+    )
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=content)
+
+    with pytest.raises(Exception) as exc:
+        asyncio.run(_distribution_content(session, 1, 5, site_id=8))
+
+    assert getattr(exc.value, "status_code", None) == 404
+
+
+def test_preflight_blocks_unconfigured_api_connection() -> None:
+    content = SeoContentAsset(
+        id=5,
+        tenant_id=1,
+        site_id=8,
+        content_type="article",
+        title="测试文章",
+        draft="<p>正文内容</p>",
+        status="drafting",
+        version_count=1,
+    )
+    connection = SeoDistributionConnection(
+        id=9,
+        tenant_id=1,
+        platform_code="wordpress",
+        name="品牌官网",
+        mode="api",
+        enabled=True,
+        status="configured",
+        has_credentials=False,
+    )
+    session = AsyncMock()
+    session.scalars = AsyncMock(return_value=[])
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+    request = DistributionPreflightRequest(
+        tenant_id=1,
+        site_id=8,
+        content_ids=[5],
+        connection_ids=[9],
+        action="draft",
+    )
+
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
+        patch("app.api.seo._distribution_connection", new=AsyncMock(return_value=connection)),
+    ):
+        result = asyncio.run(preflight_content_distribution(request, session, context))
+
+    assert result["blocked"] == 1
+    assert "API 平台尚未通过连接测试" in result["rows"][0]["errors"]
+    assert "API 平台尚未配置授权信息" in result["rows"][0]["errors"]
+
+
+def test_failed_publication_retry_requires_explicit_platform_confirmation() -> None:
+    request = DistributionRetryRequest(tenant_id=1, site_id=8, confirm=False)
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+
+    with patch("app.api.seo._seo_site", new=AsyncMock()):
+        with pytest.raises(Exception) as exc:
+            asyncio.run(retry_content_publication(12, request, AsyncMock(), context))
+
+    assert getattr(exc.value, "status_code", None) == 400
+    assert "核对平台后台" in str(getattr(exc.value, "detail", ""))
+
+
+def test_confirmed_failed_task_retries_same_content_version() -> None:
+    publication = SeoContentPublication(
+        id=12,
+        tenant_id=1,
+        content_asset_id=5,
+        connection_id=9,
+        platform_code="wordpress",
+        platform_name="WordPress",
+        publish_mode="draft",
+        status="failed",
+        source_version=2,
+        last_error="上次请求失败",
+    )
+    content = SeoContentAsset(
+        id=5,
+        tenant_id=1,
+        site_id=8,
+        content_type="article",
+        title="测试文章",
+        draft="<p>正文内容</p>",
+        status="drafting",
+        version_count=2,
+    )
+    connection = SeoDistributionConnection(
+        id=9,
+        tenant_id=1,
+        platform_code="wordpress",
+        name="品牌官网",
+        mode="api",
+        base_url="https://example.com",
+        enabled=True,
+        status="connected",
+        has_credentials=True,
+    )
+    session = AsyncMock()
+    session.scalar = AsyncMock(return_value=publication)
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+    request = DistributionRetryRequest(tenant_id=1, site_id=8, confirm=True)
+
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
+        patch("app.api.seo._distribution_connection", new=AsyncMock(return_value=connection)),
+        patch("app.api.seo.decrypt_credentials", return_value={"username": "u", "application_password": "p"}),
+        patch(
+            "app.api.seo.publish_content",
+            new=AsyncMock(
+                return_value=distribution.RemotePublishResult(
+                    status="draft_created",
+                    external_id="post-1",
+                    page_url="https://example.com/post-1",
+                    response_summary={"http_status": 201},
+                )
+            ),
+        ),
+    ):
+        result = asyncio.run(retry_content_publication(12, request, session, context))
+
+    attempt = session.add.call_args.args[0]
+    assert attempt.action == "retry_draft"
+    assert attempt.status == "succeeded"
+    assert publication.status == "draft_created"
+    assert publication.last_error is None
+    assert result["external_id"] == "post-1"
+
+
+def test_manual_handoff_completion_is_site_scoped_and_audited() -> None:
+    publication = SeoContentPublication(
+        id=12,
+        tenant_id=1,
+        content_asset_id=5,
+        platform_code="zhihu",
+        platform_name="知乎",
+        publish_mode="assisted",
+        status="manual_required",
+        source_version=2,
+    )
+    content = SeoContentAsset(
+        id=5,
+        tenant_id=1,
+        site_id=8,
+        content_type="article",
+        title="测试文章",
+        status="drafting",
+        version_count=2,
+    )
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=publication)
+    session.scalar = AsyncMock(return_value=None)
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+    request = DistributionManualComplete(
+        tenant_id=1,
+        site_id=8,
+        page_url="https://zhuanlan.zhihu.com/p/123",
+    )
+    content_lookup = AsyncMock(return_value=content)
+
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=content_lookup),
+    ):
+        result = asyncio.run(complete_manual_publication(12, request, session, context))
+
+    attempt = session.add.call_args.args[0]
+    content_lookup.assert_awaited_once_with(session, 1, 5, 8)
+    assert attempt.action == "manual_complete"
+    assert attempt.response_summary == {"page_url_host": "zhuanlan.zhihu.com"}
+    assert publication.status == "published"
+    assert result["page_url"] == "https://zhuanlan.zhihu.com/p/123"
 
 
 def test_distribution_migration_backfills_legacy_links_and_is_linear() -> None:
@@ -344,7 +572,7 @@ def test_distribution_frontend_exposes_guided_publish_flow() -> None:
     view = (root / "frontend/src/views/seo/SeoDistributionView.vue").read_text(encoding="utf-8")
     api = (root / "frontend/src/api/seo.js").read_text(encoding="utf-8")
 
-    for label in ("平台连接", "发布预检", "优先创建草稿", "复制并打开编辑器", "同一文章可保留多个平台链接", "正在转存"):
+    for label in ("平台连接", "编辑平台连接", "保存并测试", "发布预检", "优先创建草稿", "辅助发布交接台", "复制正文（保留格式）", "打开官方编辑器", "确认后重试", "发布尝试记录", "同一文章可保留多个平台链接", "正在转存"):
         assert label in view
     for function_name in (
         "fetchSeoDistributionConnections",
@@ -352,6 +580,8 @@ def test_distribution_frontend_exposes_guided_publish_flow() -> None:
         "publishSeoDistribution",
         "completeSeoManualPublication",
         "syncSeoContentPublication",
+        "retrySeoContentPublication",
+        "fetchSeoPublicationAttempts",
     ):
         assert function_name in api
     credential_keys = {
