@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.baidu.client import BaiduAPIError
+from app.baidu.regions import ALL_REGIONS_ID, region_ids
 from app.baidu.services.account import AccountService
 from app.baidu.services.adgroup import AdgroupService
 from app.baidu.services.campaign import CampaignService
@@ -837,11 +838,16 @@ def _normalize_region_target(region_target: list[int]) -> list[int]:
     if not isinstance(region_target, list) or not region_target:
         raise WritebackError("投放地域不能为空，请至少选择一个省、市或全部区域")
     normalized: list[int] = []
+    allowed_ids = region_ids()
     for region_id in region_target:
         if isinstance(region_id, bool) or not isinstance(region_id, int) or region_id <= 0:
             raise WritebackError("投放地域必须是有效的百度地域 ID")
+        if region_id not in allowed_ids:
+            raise WritebackError(f"地域 ID {region_id} 不在当前百度地域编码表中")
         if region_id not in normalized:
             normalized.append(region_id)
+    if ALL_REGIONS_ID in normalized and len(normalized) > 1:
+        raise WritebackError("“全部区域”不能与其他省市同时选择")
     return normalized
 
 
@@ -900,7 +906,9 @@ async def apply_campaign_region_writeback(
     )
     if camp is None:
         raise WritebackError("计划不在维度表中，请先执行计划维度同步")
-    acc = await _active_account(session, tenant_id)
+    if camp.baidu_account_id is None:
+        raise WritebackError("计划缺少所属百度账户，请先重新同步计划维度")
+    acc = await _active_account(session, tenant_id, camp.baidu_account_id)
 
     old_regions = list(camp.region_target or [])
     dry_run = get_settings().baidu_write_dry_run

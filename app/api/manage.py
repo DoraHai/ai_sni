@@ -6,15 +6,14 @@
 
 后续计划日预算（updateCampaign budget）也归这个 router。
 """
-import json
 import logging
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.baidu.regions import load_regions
 from app.baidu.services.account import AccountService
 from app.baidu.sync import _account_client, _to_float, _to_int
 from app.baidu.writeback import (
@@ -36,22 +35,6 @@ from app.security.auth import AuthContext, require_scoped_auth
 
 logger = logging.getLogger(__name__)
 
-_REGION_DATA_PATH = Path(__file__).parent.parent / "data" / "baidu_region_codes.json"
-_REGION_CACHE: list[dict] | None = None
-
-
-def _load_regions() -> list[dict]:
-    """读取内置地域编码快照；文件首行是供人工阅读的 JSONC 来源说明。"""
-    global _REGION_CACHE
-    if _REGION_CACHE is None:
-        raw = _REGION_DATA_PATH.read_text(encoding="utf-8")
-        raw = "\n".join(line for line in raw.splitlines() if not line.lstrip().startswith("//"))
-        data = json.loads(raw)
-        if not isinstance(data, list):
-            raise RuntimeError("百度地域编码资源格式错误")
-        _REGION_CACHE = data
-    return _REGION_CACHE
-
 router = APIRouter(
     prefix="/api/v1/manage",
     tags=["投放管理"],
@@ -62,7 +45,7 @@ router = APIRouter(
 @router.get("/region-options")
 async def list_region_options() -> dict:
     """省市地域下拉选项（只读常量，来自百度官方编码表快照）。"""
-    return {"regions": _load_regions()}
+    return {"regions": list(load_regions())}
 
 
 @router.get("/account-budget")
@@ -332,6 +315,7 @@ async def set_campaign_region(
     return {
         "status": rec.status,
         "dry_run": rec.dry_run,
+        "baidu_account_id": rec.baidu_account_id,
         "campaign_id": req.campaign_id,
         "region_count": len(req.region_target),
         "error_msg": rec.error_msg,
