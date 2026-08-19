@@ -270,7 +270,17 @@ const routes = [
     component: () => import('../views/settings/AccountsRolesView.vue'),
     meta: { title: '账号与权限', workflow: '系统设置', perm: 'settings.accounts' },
   },
+  {
+    path: '/settings/customers',
+    component: () => import('../views/settings/CustomerModulesView.vue'),
+    meta: { title: '客户与模块', workflow: '系统设置', perm: 'settings.customers' },
+  },
   { path: '/settings', redirect: '/settings/accounts' },
+  {
+    path: '/workspace',
+    component: () => import('../views/workspace/ModuleWorkspaceView.vue'),
+    meta: { title: '我的工作台' },
+  },
 ]
 
 const router = createRouter({
@@ -310,6 +320,7 @@ const MENU_ORDER = [
   ['delivery.report', '/delivery/report'],
   ['onboarding', '/onboarding'],
   ['settings.accounts', '/settings/accounts'],
+  ['settings.customers', '/settings/customers'],
 ]
 
 function firstAllowedPath() {

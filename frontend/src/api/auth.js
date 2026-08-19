@@ -12,6 +12,10 @@ export function fetchTenants() {
   return client.get('/api/v1/auth/tenants')
 }
 
+export function fetchModules() {
+  return client.get('/api/v1/auth/modules')
+}
+
 export function changePassword({ oldPassword, newPassword }) {
   return client.patch('/api/v1/auth/password', {
     old_password: oldPassword,

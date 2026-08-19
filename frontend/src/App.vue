@@ -86,6 +86,7 @@ const ALL_GROUPS = computed(() => [
   ] },
   { label: '系统设置', icon: '⚙', children: [
     { label: '账号与权限', path: '/settings/accounts', key: 'settings.accounts' },
+    { label: '客户与模块', path: '/settings/customers', key: 'settings.customers' },
   ] },
 ])
 
