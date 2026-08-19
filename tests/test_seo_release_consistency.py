@@ -76,6 +76,20 @@ def test_original_content_brief_supports_bounded_multi_keywords() -> None:
     assert source_path_allowed("migrations/versions/20260818_0069_writeback_approvals.py")
     assert source_path_allowed("migrations/versions/20260819_0070_seo_content_multi_keywords.py")
     assert source_path_allowed("migrations/versions/20260819_0071_seo_distribution_publishing.py")
+    assert source_path_allowed("migrations/versions/20260819_0071_login_lockout.py")
+    assert source_path_allowed("migrations/versions/20260819_0072_merge_login_seo.py")
+
+
+def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:
+    root = Path(__file__).parents[1]
+    login = (root / "migrations/versions/20260819_0071_login_lockout.py").read_text(encoding="utf-8")
+    merge = (root / "migrations/versions/20260819_0072_merge_login_seo.py").read_text(encoding="utf-8")
+
+    assert 'revision: str = "0071_login_lockout"' in login
+    assert 'down_revision: Union[str, None] = "0070_seo_content_keywords"' in login
+    assert 'revision: str = "0072_merge_login_seo"' in merge
+    assert '"0071_login_lockout"' in merge
+    assert '"0071_seo_distribution"' in merge
 
 
 def test_seo_content_and_rank_views_are_site_scoped_and_html_safe() -> None:
