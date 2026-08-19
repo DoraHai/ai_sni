@@ -1,0 +1,70 @@
+name: SEO and GEO baseline check
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/production-seo-geo-baseline
+  pull_request:
+    paths:
+      - "app/geo/**"
+      - "app/api/seo.py"
+      - "app/models/**"
+      - "app/seo_serp.py"
+      - "frontend/geo-frontend/**"
+      - "frontend/src/views/seo/**"
+      - "frontend/src/api/seo.js"
+      - "migrations/versions/**"
+      - "tests/test_geo_*.py"
+      - "tests/test_seo_*.py"
+
+permissions:
+  contents: read
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run SEO and GEO regression tests
+        env:
+          PYTHONPATH: .
+          TZ: UTC
+        run: >-
+          pytest -q
+          tests/test_geo_content_task_create.py
+          tests/test_geo_daily_metrics_slices.py
+          tests/test_geo_ai_sampling.py
+          tests/test_geo_audit.py
+          tests/test_geo_brand_profile.py
+          tests/test_geo_chinaz.py
+          tests/test_geo_content_rules.py
+          tests/test_geo_evidence_cite.py
+          tests/test_geo_pagespeed.py
+          tests/test_geo_release_isolation.py
+          tests/test_geo_site_audit.py
+          tests/test_seo_foundation.py
+          tests/test_seo_serp.py
+
+  frontend-builds:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            frontend/geo-frontend/package-lock.json
+      - name: Build independent GEO frontend
+        working-directory: frontend/geo-frontend
+        run: npm ci && npm run build
+      - name: Build frontend containing SEO workspace
+        working-directory: frontend
+        run: npm ci && npm run build
