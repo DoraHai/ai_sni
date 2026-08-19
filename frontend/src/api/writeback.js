@@ -6,3 +6,25 @@ export function fetchWritebacks({ tenantId, status = null, limit = 200 }) {
     params: { tenant_id: tenantId, status, limit },
   })
 }
+
+export function fetchWritebackApprovals({ tenantId, status = null, limit = 100 }) {
+  return client.get('/api/v1/writeback/approvals', {
+    params: { tenant_id: tenantId, status, limit },
+  })
+}
+
+export function requestWritebackApproval({ tenantId, actionType, payload, note = null }) {
+  return client.post('/api/v1/writeback/approvals', {
+    tenant_id: tenantId,
+    action_type: actionType,
+    payload,
+    note,
+  })
+}
+
+export function decideWritebackApproval(approvalId, decision, note = null) {
+  return client.post(`/api/v1/writeback/approvals/${approvalId}/decision`, {
+    decision,
+    note,
+  })
+}

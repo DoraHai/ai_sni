@@ -1365,11 +1365,13 @@ async def keyword_detail(
 class KeywordWritebackRequest(BaseModel):
     tenant_id: int
     price: float = Field(..., gt=0, description="最终执行价（元）")
+    approval_id: int | None = None
 
 
 class WritebackBatchItem(BaseModel):
     keyword_id: int
     price: float = Field(..., gt=0)
+    approval_id: int | None = None
 
 
 class WritebackBatchRequest(BaseModel):
@@ -1397,6 +1399,7 @@ async def writeback_batch(
             rec = await apply_keyword_writeback(
                 session, req.tenant_id, it.keyword_id, it.price,
                 operator_user_id=ctx.user_id, operator_name=ctx.username,
+                approval_id=it.approval_id,
             )
         except WritebackError as e:
             rejected.append({"keyword_id": it.keyword_id, "reason": str(e)})
@@ -1476,6 +1479,7 @@ async def writeback_one(
         rec = await apply_keyword_writeback(
             session, req.tenant_id, keyword_id, req.price,
             operator_user_id=ctx.user_id, operator_name=ctx.username,
+            approval_id=req.approval_id,
         )
     except WritebackError as e:
         raise HTTPException(400, str(e))
