@@ -10,14 +10,12 @@ import {
   listGeoMediaPlacements,
   patchGeoMediaPlacement,
 } from '../../api/geoContent'
-import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
 const { tenantId } = useGeoTenant()
 const loading = ref(false)
 const error = ref('')
 const items = ref([])
-const pager = useClientPager(items, { pageSize: 20 })
 const createOpen = ref(false)
 const form = ref({
   name: '',
@@ -126,7 +124,7 @@ onMounted(load)
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
 
-    <el-table :data="pager.pagedItems" stripe empty-text="暂无阵地" size="small">
+    <el-table :data="items" stripe empty-text="暂无阵地" size="small">
       <el-table-column prop="id" label="ID" width="70" />
       <el-table-column prop="name" label="名称" min-width="140" />
       <el-table-column prop="channel_type" label="类型" width="110" />
@@ -151,18 +149,6 @@ onMounted(load)
         </template>
       </el-table-column>
     </el-table>
-    <div class="geo-pager">
-      <el-pagination
-        background
-        layout="total, sizes, prev, pager, next"
-        :total="pager.total"
-        :page-size="pager.pageSize"
-        :current-page="pager.page"
-        :page-sizes="[10, 20, 50, 100]"
-        @current-change="pager.onPageChange"
-        @size-change="pager.onSizeChange"
-      />
-    </div>
 
     <el-dialog v-model="createOpen" title="新建媒体阵地" width="480px">
       <el-form label-width="96px">

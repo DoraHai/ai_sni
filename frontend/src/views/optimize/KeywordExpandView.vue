@@ -2,7 +2,10 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  addCandidateToPlan,
+  batchAddNegative,
+  batchSetCategory,
+  batchSetPreset,
+  batchSetStatus,
   candidatesExportUrl,
   evaluateCandidates,
   fetchCandidates,
@@ -11,6 +14,7 @@ import {
   updateCandidateStatus,
 } from '../../api/expansion'
 import { fetchAdgroupList, fetchCampaignList } from '../../api/keywords'
+import AddToPlanDialog from '../../components/AddToPlanDialog.vue'
 import { session } from '../../store/session'
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
@@ -40,6 +44,10 @@ const filters = reactive({
   page: 1,
   pageSize: 20,
 })
+const sortBy = ref('potential_score')
+const sortOrder = ref('desc')
+const selection = ref([])
+const addToPlanDialogRef = ref(null)
 
 const syncForm = reactive({ seeds: '', queryDays: 30 })
 const urlForm = reactive({ urls: '' })
@@ -49,7 +57,13 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    data.value = await fetchCandidates({ tenantId: TENANT_ID.value, ...filters })
+    data.value = await fetchCandidates({
+      tenantId: TENANT_ID.value,
+      ...filters,
+      sortBy: sortBy.value,
+      order: sortOrder.value,
+    })
+    selection.value = []
   } catch (e) {
     error.value = e.message
   } finally {
@@ -67,6 +81,17 @@ watch(() => filters.q, () => {
   qTimer = setTimeout(() => { filters.page = 1; load() }, 400)
 })
 watch(() => [filters.page, filters.pageSize], load)
+
+function onSelectionChange(rows) {
+  selection.value = rows
+}
+
+function onSortChange({ prop, order }) {
+  sortBy.value = prop || 'potential_score'
+  sortOrder.value = order === 'ascending' ? 'asc' : 'desc'
+  filters.page = 1
+  load()
+}
 
 function toggleSource(s) {
   if (!s.enabled) return
@@ -147,61 +172,112 @@ async function setStatus(row, status, label) {
   }
 }
 
-// 加入计划：候选词无所属单元，需选目标计划→单元 + 匹配 + 出价，再 addWord 写回
-const planDialog = reactive({
-  visible: false, row: null, campaignId: null, adgroupId: null,
-  matchMode: 'phrase', price: null, submitting: false,
-})
-const planCampaigns = ref([])
-const planAdgroups = ref([])
+const selectedIds = computed(() => selection.value.map((row) => row.id))
 
-async function openAddToPlan(row) {
-  Object.assign(planDialog, {
-    visible: true, row, campaignId: null, adgroupId: null,
-    matchMode: 'phrase',
-    price: row.ai_suggested_bid ?? row.recommend_price_pc ?? null,
-    submitting: false,
-  })
-  planAdgroups.value = []
-  if (!planCampaigns.value.length) {
+const presetDialogVisible = ref(false)
+const presetForm = ref({ price: null, matchMode: null })
+
+function openPresetDialog() {
+  if (!selection.value.length) return
+  presetForm.value = { price: null, matchMode: null }
+  presetDialogVisible.value = true
+}
+
+function editSinglePreset(row) {
+  presetForm.value = { price: row.preset_price, matchMode: row.preset_match_mode }
+  selection.value = [row]
+  presetDialogVisible.value = true
+}
+
+async function submitPreset() {
+  if (!selectedIds.value.length) return
+  try {
+    await batchSetPreset({
+      tenantId: TENANT_ID.value,
+      candidateIds: selectedIds.value,
+      presetPrice: presetForm.value.price,
+      presetMatchMode: presetForm.value.matchMode,
+    })
+    ElMessage.success('预设值已更新')
+    presetDialogVisible.value = false
+    load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || e.message)
+  }
+}
+
+async function batchMarkCore() {
+  if (!selectedIds.value.length) return
+  try {
+    await ElMessageBox.confirm(`确认把 ${selectedIds.value.length} 个候选词标记为核心关键词（重点词）？`, '确认', { type: 'warning' })
+    await batchSetCategory({ tenantId: TENANT_ID.value, candidateIds: selectedIds.value, category: 'focus' })
+    ElMessage.success('已标记为重点词')
+    load()
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error(e.response?.data?.detail || e.message)
+  }
+}
+
+async function batchMarkProcessed() {
+  if (!selectedIds.value.length) return
+  try {
+    await ElMessageBox.confirm(`确认将 ${selectedIds.value.length} 个候选词标记为已处理？`, '确认', { type: 'warning' })
+    await batchSetStatus({ tenantId: TENANT_ID.value, candidateIds: selectedIds.value, status: 'ignored' })
+    ElMessage.success('已标记已处理')
+    load()
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error(e.response?.data?.detail || e.message)
+  }
+}
+
+const negativeDialogVisible = ref(false)
+const negativeForm = ref({ adgroupId: null, matchMode: 'phrase' })
+const adgroupOptions = ref([])
+
+async function openNegativeDialog() {
+  if (!selection.value.length) return
+  negativeForm.value = { adgroupId: null, matchMode: 'phrase' }
+  negativeDialogVisible.value = true
+  if (!adgroupOptions.value.length) {
     try {
-      planCampaigns.value = (await fetchCampaignList({ tenantId: TENANT_ID.value })).campaigns || []
+      adgroupOptions.value = (await fetchAdgroupList({ tenantId: TENANT_ID.value })).adgroups || []
     } catch (e) {
-      ElMessage.error('加载计划失败：' + (e.message || ''))
+      ElMessage.error('加载单元失败：' + (e.message || ''))
     }
   }
 }
 
-async function onPlanCampaign(cid) {
-  planDialog.adgroupId = null
-  planAdgroups.value = []
-  if (!cid) return
-  try {
-    planAdgroups.value = (await fetchAdgroupList({ tenantId: TENANT_ID.value, campaignId: cid })).adgroups || []
-  } catch (e) {
-    ElMessage.error('加载单元失败：' + (e.message || ''))
+async function submitNegative() {
+  if (!negativeForm.value.adgroupId) {
+    ElMessage.warning('请选择目标单元')
+    return
   }
-}
-
-async function submitAddToPlan() {
-  if (!planDialog.adgroupId) return ElMessage.warning('请选择目标单元')
-  if (!(Number(planDialog.price) > 0)) return ElMessage.warning('请输入有效出价')
-  planDialog.submitting = true
   try {
-    const res = await addCandidateToPlan({
-      tenantId: TENANT_ID.value, candidateId: planDialog.row.id,
-      adgroupId: planDialog.adgroupId, price: Number(planDialog.price), matchMode: planDialog.matchMode,
+    const res = await batchAddNegative({
+      tenantId: TENANT_ID.value,
+      candidateIds: selectedIds.value,
+      adgroupId: negativeForm.value.adgroupId,
+      matchMode: negativeForm.value.matchMode,
     })
-    if (res.dry_run) ElMessage.warning('演练模式：已记入台账，未真改线上（候选保留待处理）')
-    else ElMessage.success(`「${planDialog.row.word}」已加入计划`)
-    planDialog.visible = false
+    const failCount = (res.results || []).filter((r) => r.status === 'failed').length
+    if (failCount) ElMessage.warning(`已处理，其中 ${failCount} 个失败（可能是重复否词）`)
+    else ElMessage.success('批量加否词成功')
+    negativeDialogVisible.value = false
     load()
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || e.message)
-  } finally {
-    planDialog.submitting = false
   }
 }
+
+async function openAddToPlan(row) {
+  addToPlanDialogRef.value?.open(row)
+}
+
+const planDialog = reactive({ visible: false, row: null, campaignId: null, adgroupId: null, matchMode: 'phrase', price: null, submitting: false })
+const planCampaigns = ref([])
+const planAdgroups = ref([])
+function onPlanCampaign() {}
+function submitAddToPlan() {}
 
 async function exportCsv() {
   exporting.value = true
@@ -385,8 +461,36 @@ onMounted(load)
 
     <!-- 候选表 -->
     <div class="table-panel">
-      <el-table :data="data?.candidates || []" class="kw-table" row-key="id">
-        <el-table-column label="候选关键词" min-width="200">
+      <div class="bulk-toolbar" :class="{ active: selection.length }">
+        <span class="bt-count">
+          已选 <b>{{ selection.length }}</b> 个
+          <span v-if="!selection.length" class="bt-hint">· 勾选候选词以启用批量操作</span>
+        </span>
+        <div class="bt-actions">
+          <button class="bt-btn" :disabled="!selection.length" @click="openPresetDialog">
+            设置预设出价/匹配 ▾
+          </button>
+          <button class="bt-btn bt-primary" :disabled="!selection.length" @click="batchMarkCore">
+            圈选为核心关键词
+          </button>
+          <button class="bt-btn" :disabled="!selection.length" @click="batchMarkProcessed">
+            标记已处理
+          </button>
+          <button class="bt-btn" :disabled="!selection.length" @click="openNegativeDialog">
+            批量加否词
+          </button>
+        </div>
+      </div>
+      <el-table
+        :data="data?.candidates || []"
+        class="kw-table"
+        row-key="id"
+        :fit="true"
+        @selection-change="onSelectionChange"
+        @sort-change="onSortChange"
+      >
+        <el-table-column type="selection" width="44" />
+        <el-table-column label="候选关键词" width="176">
           <template #default="{ row }">
             <div class="kw-cell-name">{{ row.word }}</div>
             <div class="kw-cell-sub">
@@ -394,40 +498,38 @@ onMounted(load)
               <template v-else-if="row.seed_word && row.seed_word.startsWith('http')">来源页面：{{ row.seed_word }}</template>
               <template v-else-if="row.seed_word">种子词：{{ row.seed_word }}</template>
               <template v-else-if="row.source === 'planner'">账户主动推荐</template>
+              <span v-if="row.show_reasons.length" class="candidate-reason" :title="row.show_reasons.join(' / ')"> · {{ row.show_reasons[0] }}</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="来源" width="100">
+        <el-table-column label="来源" width="74">
           <template #default="{ row }">
             <span class="source-tag" :class="'tag-' + row.source">{{ row.source_label }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="月搜索量" width="100" align="right">
+        <el-table-column prop="monthly_pv" label="月搜索量" width="82" align="right" sortable="custom">
           <template #default="{ row }">
             <span class="num">{{ fmtInt(row.monthly_pv) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="竞争度" width="76" align="center">
-          <template #default="{ row }">{{ row.competition_label || '—' }}</template>
-        </el-table-column>
-        <el-table-column label="指导价 PC/移动" width="130" align="right">
+        <el-table-column prop="recommend_price_pc" label="指导价 PC/移动" width="105" align="right" sortable="custom">
           <template #default="{ row }">
             <span class="num">{{ fmtMoney(row.recommend_price_pc) }}<template v-if="row.recommend_price_mobile != null"> / {{ Number(row.recommend_price_mobile).toFixed(2) }}</template></span>
           </template>
         </el-table-column>
-        <el-table-column label="窗口展现/点击" width="120" align="right">
+        <el-table-column prop="impression" label="窗口展现/点击" width="100" align="right" sortable="custom">
           <template #default="{ row }">
             <span class="num" v-if="row.impression != null">{{ fmtInt(row.impression) }} / {{ fmtInt(row.click) }}</span>
             <span v-else class="dim">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="潜力分" width="110">
+        <el-table-column prop="potential_score" label="潜力分" width="78" sortable="custom">
           <template #default="{ row }">
             <span class="heat-bar"><span class="heat-fill" :style="{ width: (row.potential_score ?? 0) * 10 + '%' }" /></span>
             <span class="num">{{ row.potential_score ?? '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="建议分类" width="100">
+        <el-table-column label="建议分类" width="80">
           <template #default="{ row }">
             <span v-if="row.suggested_category" class="cat-pill" :class="catClass[row.suggested_category]">
               {{ row.suggested_category_label }}
@@ -435,7 +537,25 @@ onMounted(load)
             <span v-else class="dim">—</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="aiEnabled" label="AI 研判" width="150">
+        <el-table-column label="预设" width="104">
+          <template #default="{ row }">
+            <div class="preset-cell">
+              <span v-if="row.preset_price || row.preset_match_mode" class="preset-tag">
+                ¥{{ row.preset_price ?? '-' }} / {{ row.preset_match_mode === 'exact' ? '精确' : row.preset_match_mode === 'phrase' ? '短语' : '-' }}
+              </span>
+              <span v-else class="dim">—</span>
+              <el-button
+                v-if="session.canEdit('optimize.expand')"
+                size="small"
+                text
+                @click="editSinglePreset(row)"
+              >
+                {{ row.preset_price || row.preset_match_mode ? '编辑' : '设置' }}
+              </el-button>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column v-if="aiEnabled" label="AI 研判" width="90">
           <template #default="{ row }">
             <template v-if="row.ai_relevance">
               <el-tooltip :content="row.ai_reason || '—'" placement="top" :disabled="!row.ai_reason">
@@ -450,20 +570,14 @@ onMounted(load)
             <span v-else class="dim">未评估</span>
           </template>
         </el-table-column>
-        <el-table-column label="特色" min-width="110">
-          <template #default="{ row }">
-            <span v-if="row.show_reasons.length" class="reasons">{{ row.show_reasons.join(' / ') }}</span>
-            <span v-else class="dim">—</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="230" fixed="right">
+        <el-table-column label="操作" min-width="150" class-name="action-column">
           <template #default="{ row }">
             <div class="row-actions">
               <template v-if="session.canEdit('optimize.expand') && row.status === 'pending'">
                 <el-tooltip content="选目标单元 + 匹配 + 出价，加成正式关键词写回百度（dry-run 保护）" placement="top">
-                  <el-button size="small" type="primary" plain @click="openAddToPlan(row)">加入计划</el-button>
+                  <el-button class="row-action-primary" size="small" type="primary" @click="openAddToPlan(row)">加入计划</el-button>
                 </el-tooltip>
-                <el-button size="small" @click="setStatus(row, 'ignored', '已忽略')">忽略</el-button>
+                <el-button class="row-action-secondary" size="small" @click="setStatus(row, 'ignored', '已忽略')">忽略</el-button>
               </template>
               <template v-else>
                 <span class="status-mark" :class="row.status">{{ row.status_label }}</span>
@@ -496,6 +610,8 @@ onMounted(load)
       <template v-if="aiEnabled"><br><b>AI 研判</b>：DeepSeek 对候选词做语义相关性判断（业务相关/通用噪音/不相关），
       帮你快速筛掉"设备""中心"、地名等通用词噪音；仅作参考，不影响潜力分排序。点「AI 评估」对未评估候选研判，同步时也会自动跟跑一次。</template>
     </div>
+
+    <AddToPlanDialog ref="addToPlanDialogRef" :tenant-id="TENANT_ID" @success="load" />
 
     <!-- 加入计划：候选词无所属单元，需选目标计划→单元 + 匹配 + 出价 -->
     <el-dialog v-model="planDialog.visible" title="加入计划" width="440px">
@@ -531,6 +647,52 @@ onMounted(load)
       <template #footer>
         <el-button @click="planDialog.visible = false">取消</el-button>
         <el-button type="primary" :loading="planDialog.submitting" @click="submitAddToPlan">确认加入</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="presetDialogVisible" title="设置预设出价/匹配方式" width="400px">
+      <div class="preset-form">
+        <label>预设出价（元）</label>
+        <el-input-number
+          v-model="presetForm.price"
+          :min="0"
+          :precision="2"
+          placeholder="不填则不更新"
+          style="width: 100%"
+        />
+        <label>预设匹配方式</label>
+        <el-select v-model="presetForm.matchMode" placeholder="不选则不更新" clearable style="width: 100%">
+          <el-option label="精确" value="exact" />
+          <el-option label="短语" value="phrase" />
+        </el-select>
+      </div>
+      <template #footer>
+        <el-button @click="presetDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="submitPreset">确认</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="negativeDialogVisible" title="批量加否词" width="420px">
+      <div class="negative-form">
+        <p>将把选中的 {{ selection.length }} 个候选词，添加为以下单元的否词：</p>
+        <label>目标单元</label>
+        <el-select v-model="negativeForm.adgroupId" filterable placeholder="选择单元" style="width: 100%">
+          <el-option
+            v-for="adg in adgroupOptions"
+            :key="adg.adgroup_id"
+            :label="adg.adgroup_name"
+            :value="adg.adgroup_id"
+          />
+        </el-select>
+        <label>否词匹配方式</label>
+        <el-select v-model="negativeForm.matchMode" style="width: 100%">
+          <el-option label="精确否" value="exact" />
+          <el-option label="短语否" value="phrase" />
+        </el-select>
+      </div>
+      <template #footer>
+        <el-button @click="negativeDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="submitNegative">确认添加</el-button>
       </template>
     </el-dialog>
   </div>
@@ -573,8 +735,34 @@ onMounted(load)
 .filter-row { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
 
 .table-panel { background: #fff; border: 1px solid var(--sem-border); border-radius: 8px; overflow: hidden; }
+.bulk-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--sem-border);
+  background: #fafbfc;
+}
+.bulk-toolbar.active { background: #f4f8fd; }
+.bt-count { font-size: 12px; color: var(--sem-text-sub); }
+.bt-count b { color: var(--sem-primary); }
+.bt-hint { color: #9ca3af; }
+.bt-actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+.bt-btn {
+  padding: 5px 12px;
+  border: 1px solid #dcdfe6;
+  background: #fff;
+  border-radius: 4px;
+  color: #606266;
+  cursor: pointer;
+  font-size: 12px;
+}
+.bt-btn:hover:not(:disabled) { border-color: var(--sem-primary); color: var(--sem-primary); }
+.bt-btn:disabled { opacity: .45; cursor: not-allowed; }
+.bt-btn.bt-primary { background: var(--sem-primary); border-color: var(--sem-primary); color: #fff; }
 .kw-cell-name { font-weight: 500; color: var(--sem-text); }
-.kw-cell-sub { font-size: 11px; color: var(--sem-text-sub); margin-top: 2px; }
+.kw-cell-sub { font-size: 11px; color: var(--sem-text-sub); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.candidate-reason { color: #ba7517; }
 .num { font-variant-numeric: tabular-nums; }
 .dim { color: #c0c4cc; }
 
@@ -595,6 +783,9 @@ onMounted(load)
 .cat-observe { background: #f2ebfb; color: #6b47b5; }
 .cat-negative { background: #fef6f6; color: #e24b4a; }
 
+.preset-cell { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.preset-tag { font-size: 11px; padding: 2px 7px; border-radius: 4px; background: #eff4fb; color: var(--sem-primary); }
+
 .ai-pill { font-size: 11px; padding: 2px 8px; border-radius: 10px; }
 .ai-relevant { background: #e5f4ed; color: #1d9e75; }
 .ai-generic { background: #fdf6e3; color: #b8860b; }
@@ -604,7 +795,35 @@ onMounted(load)
 .ai-rec.rec-drop { color: #e24b4a; }
 
 .reasons { font-size: 11px; color: #ba7517; }
-.row-actions { display: flex; gap: 4px; align-items: center; }
+.row-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-start; white-space: nowrap; }
+.row-actions :deep(.el-button) {
+  min-width: 58px;
+  height: 26px;
+  padding: 0 10px;
+  margin-left: 0;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1;
+}
+.row-actions :deep(.row-action-primary.el-button--primary) {
+  background: #e86f1c;
+  border-color: #e86f1c;
+  color: #fff;
+}
+.row-actions :deep(.row-action-primary.el-button--primary:hover) {
+  background: #d96014;
+  border-color: #d96014;
+  color: #fff;
+}
+.row-actions :deep(.row-action-secondary) {
+  background: #fff;
+  border-color: #dfe3e8;
+  color: #344050;
+}
+.row-actions :deep(.row-action-secondary:hover) {
+  border-color: #e86f1c;
+  color: #c45f18;
+}
 .status-mark { font-size: 11px; padding: 2px 8px; border-radius: 10px; }
 .status-mark.adopted { background: #e5f4ed; color: #1d9e75; }
 .status-mark.ignored { background: #f3f4f6; color: #9ca3af; }
@@ -613,4 +832,7 @@ onMounted(load)
 .empty-line { font-size: 12px; color: var(--sem-text-sub); padding: 18px 0; }
 .note { margin-top: 12px; padding: 10px 12px; background: #f4f8fd; border-radius: 6px; font-size: 11px; color: #4b5563; line-height: 1.7; }
 .note b { color: var(--sem-primary); }
+.preset-form, .negative-form { display: grid; gap: 10px; font-size: 13px; }
+.preset-form label, .negative-form label { color: var(--sem-text-sub); font-size: 12px; }
+.negative-form p { margin: 0 0 2px; color: var(--sem-text); line-height: 1.6; }
 </style>

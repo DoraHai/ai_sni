@@ -1,1 +1,0 @@
-import{d as e,r as t}from"./index-BOr5b_85.js";function n(){return{tenantId:e(()=>{if(t.tenantId)return t.tenantId;let e=Number(sessionStorage.getItem(`sem_tenant_id`)||0);return e>0?e:null}),session:t}}export{n as t};

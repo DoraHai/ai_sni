@@ -6,6 +6,7 @@ import { fetchDashboardToday, fetchDashboardInsight } from '../../api/dashboard'
 import { session } from '../../store/session'
 import MetricLabel from '../../components/MetricLabel.vue'
 import { ElMessage } from 'element-plus'
+import { DataAnalysis } from '@element-plus/icons-vue'
 
 const router = useRouter()
 
@@ -21,10 +22,52 @@ function todayRange(now = new Date()) {
   const today = isoOf(now)
   return [today, today]
 }
+const quickOptions = [
+  {
+    key: 'today',
+    label: '今日',
+    range: () => {
+      const t = isoOf(new Date())
+      return [t, t]
+    },
+  },
+  {
+    key: 'yesterday',
+    label: '昨日',
+    range: () => {
+      const y = new Date()
+      y.setDate(y.getDate() - 1)
+      const d = isoOf(y)
+      return [d, d]
+    },
+  },
+  {
+    key: 'last7',
+    label: '最近7天',
+    range: () => {
+      const end = new Date()
+      const start = new Date()
+      start.setDate(end.getDate() - 6)
+      return [isoOf(start), isoOf(end)]
+    },
+  },
+  {
+    key: 'last30',
+    label: '最近30天',
+    range: () => {
+      const end = new Date()
+      const start = new Date()
+      start.setDate(end.getDate() - 29)
+      return [isoOf(start), isoOf(end)]
+    },
+  },
+]
 const dateRange = ref(todayRange())
+const activeQuickKey = ref('today')
 const trendChartEl = ref(null)
 let trendChart = null
 let autoRefreshTimer = null
+let lastTodayEmptyNoticeKey = ''
 const AUTO_REFRESH_MS = 5 * 60 * 1000
 const handleResize = () => trendChart?.resize()
 
@@ -45,6 +88,19 @@ function onGenerateReport() {
   router.push('/delivery/report')
 }
 
+function applyQuickRange(opt) {
+  activeQuickKey.value = opt.key
+  dateRange.value = opt.range()
+}
+
+function syncQuickKey() {
+  const matched = quickOptions.find((opt) => {
+    const [s, e] = opt.range()
+    return dateRange.value?.[0] === s && dateRange.value?.[1] === e
+  })
+  activeQuickKey.value = matched ? matched.key : ''
+}
+
 const kpiCards = computed(() => {
   if (!data.value) return []
   const k = data.value.kpi
@@ -60,8 +116,10 @@ const kpiCards = computed(() => {
 
 function deltaClass(card) {
   if (card.change == null) return 'neutral'
-  const up = card.change >= 0
-  return (card.goodWhenDown ? !up : up) ? 'up' : 'down'
+  // 此处颜色表达数值方向，而非业务优劣：上升绿、下降红、持平灰。
+  if (card.change > 0) return 'up'
+  if (card.change < 0) return 'down'
+  return 'neutral'
 }
 
 function deltaText(card) {
@@ -98,7 +156,7 @@ const DEVICE_META = {
 function renderTrend() {
   if (!trendChartEl.value || !data.value) return
   if (!trendChart) trendChart = echarts.init(trendChartEl.value)
-  const trend = data.value.trend_7d
+  const trend = data.value.trend || data.value.trend_7d || []
   trendChart.setOption({
     grid: { left: 56, right: 40, top: 30, bottom: 28 },
     tooltip: { trigger: 'axis' },
@@ -111,15 +169,22 @@ function renderTrend() {
     series: [
       {
         name: '消费', type: 'line', smooth: true, data: trend.map((t) => t.cost),
-        itemStyle: { color: '#185FA5' },
-        areaStyle: { opacity: 0.12 },
+        itemStyle: { color: '#E86F1C' },
+        lineStyle: { width: 3 },
+        areaStyle: { color: 'rgba(232, 111, 28, 0.16)' },
       },
       {
         name: '点击', type: 'line', smooth: true, yAxisIndex: 1, data: trend.map((t) => t.click),
-        itemStyle: { color: '#1D9E75' }, lineStyle: { type: 'dashed' },
+        itemStyle: { color: '#159B78' }, lineStyle: { type: 'dashed', width: 2 },
       },
     ],
   })
+}
+
+function isAllZero(d) {
+  const kpi = d?.kpi
+  if (!kpi) return true
+  return !kpi.cost?.current && !kpi.click?.current && !kpi.impression?.current
 }
 
 async function load() {
@@ -139,6 +204,13 @@ async function load() {
     ])
     data.value = d
     insight.value = ins
+    const noticeKey = dateRange.value?.join(':') || ''
+    if (activeQuickKey.value === 'today' && isAllZero(d) && lastTodayEmptyNoticeKey !== noticeKey) {
+      ElMessage.info('今日数据尚未同步（数据通常在次日凌晨更新），可切换到"昨日"查看最新完整数据')
+      lastTodayEmptyNoticeKey = noticeKey
+    } else if (activeQuickKey.value !== 'today' || !isAllZero(d)) {
+      lastTodayEmptyNoticeKey = ''
+    }
     await nextTick()
     renderTrend()
   } catch (e) {
@@ -153,7 +225,10 @@ async function manualRefresh() {
   if (!error.value) ElMessage.success('看板数据已刷新')
 }
 
-watch(dateRange, load)
+watch(dateRange, () => {
+  syncQuickKey()
+  load()
+})
 // 顶栏切换客户后重新拉数
 watch(TENANT_ID, load)
 
@@ -190,18 +265,31 @@ onBeforeUnmount(() => {
             <el-option label="必应（即将开放）" value="bing" disabled />
           </el-select>
         </div>
-        <el-date-picker
-          v-model="dateRange"
-          type="daterange"
-          value-format="YYYY-MM-DD"
-          start-placeholder="开始日期"
-          end-placeholder="结束日期"
-          range-separator="至"
-          unlink-panels
-          :clearable="false"
-          aria-label="选择看板日期区间"
-          style="width: 268px"
-        />
+        <div class="date-quick-options">
+          <el-date-picker
+            v-model="dateRange"
+            type="daterange"
+            value-format="YYYY-MM-DD"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+            range-separator="至"
+            unlink-panels
+            :clearable="false"
+            aria-label="选择看板日期区间"
+            style="width: 268px"
+          />
+          <div class="quick-btns">
+            <button
+              v-for="opt in quickOptions"
+              :key="opt.key"
+              class="quick-btn"
+              :class="{ active: activeQuickKey === opt.key }"
+              @click="applyQuickRange(opt)"
+            >
+              {{ opt.label }}
+            </button>
+          </div>
+        </div>
         <span
           v-if="data?.freshness?.last_synced_at"
           class="freshness"
@@ -304,7 +392,7 @@ onBeforeUnmount(() => {
       <div class="row-2col">
         <div class="panel">
           <div class="panel-head">
-            <span class="panel-title">消费与点击趋势<span class="panel-sub">近 7 天 · 截至 {{ data.period.end_date }}</span></span>
+            <span class="panel-title">消费与点击趋势<span class="panel-sub">{{ data.period.days }} 天 · {{ data.period.start_date }} 至 {{ data.period.end_date }}</span></span>
           </div>
           <div ref="trendChartEl" style="height: 280px" />
         </div>
@@ -357,7 +445,10 @@ onBeforeUnmount(() => {
       <!-- 计划消费分布（原型 plan-bar-row） -->
       <div class="panel" style="margin-top: 14px">
         <div class="panel-head">
-          <span class="panel-title">计划消费分布<span class="panel-sub">前 6 · 按消费降序</span></span>
+          <span class="panel-title plan-section-title">
+            <span class="section-title-icon" aria-hidden="true"><DataAnalysis /></span>
+            <span>计划消费分布</span><span class="panel-sub">前 6 · 按消费降序</span>
+          </span>
         </div>
         <div v-for="row in data.top_campaigns" :key="row.campaign_name" class="plan-bar-row">
           <div>
@@ -382,6 +473,15 @@ onBeforeUnmount(() => {
 .media-filter { display: flex; align-items: center; gap: 4px; padding: 2px 6px 2px 10px; background: #f3f4f6; border-radius: 6px; }
 .media-label { font-size: 12px; color: #606266; white-space: nowrap; }
 .media-filter :deep(.el-select .el-input__wrapper) { box-shadow: none; background: transparent; padding-left: 4px; }
+.date-quick-options { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.quick-btns { display: flex; align-items: center; gap: 6px; }
+.quick-btn {
+  height: 30px; padding: 0 10px; border: 1px solid var(--sem-border); border-radius: 6px;
+  background: #fff; color: var(--sem-text-sub); font-size: 12px; cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.quick-btn:hover { border-color: var(--sem-primary); color: var(--sem-primary); }
+.quick-btn.active { background: var(--sem-primary); border-color: var(--sem-primary); color: #fff; }
 .page-title { font-size: 20px; font-weight: 600; color: var(--sem-text); }
 .page-desc { font-size: 12px; color: var(--sem-text-sub); margin-top: 4px; }
 .num { font-variant-numeric: tabular-nums; }
@@ -451,8 +551,8 @@ onBeforeUnmount(() => {
   width: 28px; height: 28px; border-radius: 6px; display: flex;
   align-items: center; justify-content: center; font-size: 13px;
 }
-.device-pc { background: #eff4fb; }
-.device-mobile { background: #e5f4ed; }
+.device-pc { background: #fff0e4; box-shadow: inset 0 0 0 1px rgba(232, 111, 28, 0.12); }
+.device-mobile { background: #e5f4ed; box-shadow: inset 0 0 0 1px rgba(29, 158, 117, 0.1); }
 .device-name { font-size: 13px; font-weight: 600; color: var(--sem-text); }
 .device-share { font-size: 11px; color: var(--sem-text-sub); margin-top: 1px; }
 .device-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; font-size: 11px; }
@@ -464,11 +564,18 @@ onBeforeUnmount(() => {
   display: grid; grid-template-columns: 1fr 90px 1fr 56px; gap: 12px;
   padding: 10px 0; align-items: center; font-size: 12px; border-bottom: 1px solid #f3f4f6;
 }
+.plan-section-title { display: inline-flex; align-items: center; }
+.section-title-icon {
+  width: 20px; height: 20px; margin-right: 7px; border-radius: 5px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: #fff0e4; color: #d86a1c;
+}
+.section-title-icon :deep(svg) { width: 13px; height: 13px; }
 .plan-bar-row:last-child { border-bottom: none; }
 .plan-name { color: var(--sem-text); font-weight: 500; }
 .plan-product { font-size: 10px; color: #9ca3af; margin-top: 2px; }
 .plan-bar-bg { height: 8px; background: #f3f4f6; border-radius: 4px; overflow: hidden; }
-.plan-bar-fill { height: 100%; background: linear-gradient(90deg, #185fa5 0%, #3e84c8 100%); border-radius: 4px; }
+.plan-bar-fill { height: 100%; background: linear-gradient(90deg, #e86f1c 0%, #f5a344 100%); border-radius: 4px; }
 .plan-bar-fill.bad { background: linear-gradient(90deg, #e24b4a 0%, #ee7472 100%); }
 .plan-bar-fill.warn { background: linear-gradient(90deg, #ba7517 0%, #dc9a47 100%); }
 .plan-amount { color: var(--sem-text); font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }

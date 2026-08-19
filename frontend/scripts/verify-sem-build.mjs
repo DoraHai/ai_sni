@@ -1,5 +1,5 @@
 import { readdir, readFile, stat } from 'node:fs/promises'
-import { basename, resolve } from 'node:path'
+import { resolve } from 'node:path'
 
 const buildDir = resolve(process.argv[2] || 'dist')
 const assetsDir = resolve(buildDir, 'assets')
@@ -21,10 +21,6 @@ if (!files.length) throw new Error(`No JavaScript assets found in ${assetsDir}`)
 
 const requiredMarkers = [
   '/api/v1/oauth/baidu/authorize',
-  '/api/v1/sem/assets/accounts',
-  '/api/v1/manage/campaign-schedule',
-  '/api/v1/manage/campaign-region',
-  'G-Snipers 获客指挥台',
   '授权新客户账号',
   '已切换到新客户',
 ]
@@ -33,9 +29,6 @@ const forbiddenMarkers = [
   '服务商接入准备中',
   '百度推广授权准备中',
 ]
-const forbiddenMarkerExclusions = new Map([
-  ['图形验证码', /^LoginView-[\w-]+\.js$/],
-])
 
 const foundRequired = new Set()
 const foundForbidden = new Set()
@@ -45,10 +38,7 @@ for (const file of files) {
     if (contents.includes(marker)) foundRequired.add(marker)
   }
   for (const marker of forbiddenMarkers) {
-    const exclusion = forbiddenMarkerExclusions.get(marker)
-    if (contents.includes(marker) && !exclusion?.test(basename(file))) {
-      foundForbidden.add(marker)
-    }
+    if (contents.includes(marker)) foundForbidden.add(marker)
   }
 }
 

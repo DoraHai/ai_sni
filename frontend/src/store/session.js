@@ -10,7 +10,6 @@ const state = reactive({
   user: JSON.parse(localStorage.getItem('sem_user') || sessionStorage.getItem('sem_user') || 'null'),
   tenants: [],
   tenantId: Number(sessionStorage.getItem('sem_tenant_id')) || null,
-  module: 'sem',
 })
 
 export const session = {
@@ -18,7 +17,6 @@ export const session = {
   get user() { return state.user },
   get tenants() { return state.tenants },
   get tenantId() { return state.tenantId },
-  get module() { return state.module },
 
   get isLoggedIn() { return !!state.token },
   get permissions() { return state.user?.permissions || {} },
@@ -50,11 +48,8 @@ export const session = {
     if (user?.tenant_id) this.setTenant(user.tenant_id)
   },
 
-  setTenants(list, module = state.module) {
-    state.module = module
+  setTenants(list) {
     state.tenants = list
-    const stored = Number(sessionStorage.getItem(`${module}_tenant_id`)) || null
-    if (stored && list.some((t) => t.id === stored)) state.tenantId = stored
     if (!state.tenantId || !list.some((t) => t.id === state.tenantId)) {
       this.setTenant(list[0]?.id ?? null)
     }
@@ -62,10 +57,7 @@ export const session = {
 
   setTenant(id) {
     state.tenantId = id
-    if (id) {
-      sessionStorage.setItem(`${state.module}_tenant_id`, String(id))
-      sessionStorage.setItem('sem_tenant_id', String(id)) // legacy consumers
-    }
+    if (id) sessionStorage.setItem('sem_tenant_id', String(id))
   },
 
   logout() {

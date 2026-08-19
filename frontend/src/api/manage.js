@@ -6,10 +6,8 @@ export function fetchAccountBudget({ tenantId }) {
 }
 
 // 写回账户日预算（dry-run 演练时只记台账不真改）。
-export function setAccountBudget({ tenantId, budget, approvalId = null }) {
-  return client.post('/api/v1/manage/account-budget', {
-    tenant_id: tenantId, budget, approval_id: approvalId,
-  })
+export function setAccountBudget({ tenantId, budget }) {
+  return client.post('/api/v1/manage/account-budget', { tenant_id: tenantId, budget })
 }
 
 // 计划列表（含日预算/状态，行内可改预算）。
@@ -20,9 +18,9 @@ export function fetchCampaigns({ tenantId, baiduAccountId }) {
 }
 
 // 写回计划日预算（dry-run 演练时只记台账不真改）。
-export function setCampaignBudget({ tenantId, campaignId, budget, approvalId = null }) {
+export function setCampaignBudget({ tenantId, campaignId, budget }) {
   return client.post('/api/v1/manage/campaign-budget', {
-    tenant_id: tenantId, campaign_id: campaignId, budget, approval_id: approvalId,
+    tenant_id: tenantId, campaign_id: campaignId, budget,
   })
 }
 
@@ -75,9 +73,9 @@ export function setAdgroupPause({ tenantId, adgroupId, pause }) {
 }
 
 // 单元出价写回。
-export function setAdgroupBid({ tenantId, adgroupId, maxPrice, approvalId = null }) {
+export function setAdgroupBid({ tenantId, adgroupId, maxPrice }) {
   return client.post('/api/v1/manage/adgroup-bid', {
-    tenant_id: tenantId, adgroup_id: adgroupId, max_price: maxPrice, approval_id: approvalId,
+    tenant_id: tenantId, adgroup_id: adgroupId, max_price: maxPrice,
   })
 }
 

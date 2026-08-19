@@ -1,1 +1,0 @@
-import{F as e,R as t,m as n,t as r}from"./_plugin-vue_export-helper-C7txtExQ.js";var i={class:`diagnosis-redirect`,"aria-live":`polite`},a=r({__name:`DiagnosisRedirectView`,setup(r){return e(()=>{window.location.replace(`/diagnostic-center/`)}),(e,r)=>(t(),n(`main`,i,`正在进入诊断中心…`))}},[[`__scopeId`,`data-v-78f35a21`]]);export{a as default};

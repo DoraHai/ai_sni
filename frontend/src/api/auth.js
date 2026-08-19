@@ -8,12 +8,8 @@ export function fetchMe() {
   return client.get('/api/v1/auth/me')
 }
 
-export function fetchTenants(module = null) {
-  return client.get('/api/v1/auth/tenants', { params: module ? { module } : {} })
-}
-
-export function createTenant(body) {
-  return client.post('/api/v1/auth/tenants', body)
+export function fetchTenants() {
+  return client.get('/api/v1/auth/tenants')
 }
 
 export function changePassword({ oldPassword, newPassword }) {

@@ -7,6 +7,12 @@ export function fetchPendingAdjustments({ tenantId, days, status }) {
   })
 }
 
+export function fetchBudgetAdjustments({ tenantId, days, status }) {
+  return client.get('/api/v1/adjustment-verify/budget', {
+    params: { tenant_id: tenantId, days: days || undefined, status: status || undefined },
+  })
+}
+
 export function markVerified({ tenantId, dedupKey, verdict, note, reopen }) {
   return client.patch(`/api/v1/adjustment-verify/${encodeURIComponent(dedupKey)}`,
     { verdict, note, reopen: reopen || undefined },

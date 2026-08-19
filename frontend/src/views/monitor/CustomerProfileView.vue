@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { fetchCustomerProfile, updateCustomerProfile } from '../../api/customerProfile'
 import { session } from '../../store/session'
+import CategoryDrilldownModal from '../../components/CategoryDrilldownModal.vue'
 
 const TENANT_ID = computed(() => session.tenantId)
 const canEdit = computed(() => session.canEdit('monitor.profile'))
@@ -15,6 +16,8 @@ const data = ref(null)
 const editing = ref(false)
 const saving = ref(false)
 const eform = reactive({ industry: '', businessDesc: '' })
+const drilldownVisible = ref(false)
+const drilldownCategory = ref('')
 
 const fmtMoney = (v) => (v == null ? '—' : '¥ ' + Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 2 }))
 const fmtInt = (v) => (v == null ? '—' : Number(v).toLocaleString('zh-CN'))
@@ -56,6 +59,12 @@ async function saveEdit() {
   } finally {
     saving.value = false
   }
+}
+
+function openDrilldown(category) {
+  if (!category) return
+  drilldownCategory.value = category
+  drilldownVisible.value = true
 }
 
 watch(TENANT_ID, () => load())
@@ -106,7 +115,15 @@ onMounted(load)
             <div><div class="big">{{ p.structure.adgroups }}</div><div class="big-l">单元</div></div>
           </div>
           <div class="chips">
-            <span v-for="c in p.structure.category_dist" :key="c.category" class="chip">{{ c.label }} {{ c.count }}</span>
+            <button
+              v-for="c in p.structure.category_dist"
+              :key="c.category"
+              type="button"
+              class="chip drill-chip"
+              @click="openDrilldown(c.category)"
+            >
+              {{ c.label }} {{ c.count }}
+            </button>
           </div>
         </div>
 
@@ -179,6 +196,12 @@ onMounted(load)
         <el-button type="primary" :loading="saving" @click="saveEdit">保存</el-button>
       </template>
     </el-dialog>
+
+    <CategoryDrilldownModal
+      v-model:visible="drilldownVisible"
+      :tenant-id="TENANT_ID"
+      :category="drilldownCategory"
+    />
   </div>
 </template>
 
@@ -212,5 +235,7 @@ onMounted(load)
 .big-l { font-size: 11px; color: var(--sem-text-sub); margin-top: 2px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { font-size: 11px; background: #eff4fb; color: #185fa5; padding: 2px 9px; border-radius: 10px; }
+.drill-chip { border: 0; cursor: pointer; font-family: inherit; line-height: 1.6; }
+.drill-chip:hover { background: #dfeefa; }
 .dim { color: #c0c4cc; font-size: 13px; }
 </style>

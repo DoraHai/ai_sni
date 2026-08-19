@@ -1,14 +1,9 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchOperationRecords } from '../../api/operations'
-import {
-  decideWritebackApproval, fetchWritebackApprovals, fetchWritebacks, requestWritebackApproval,
-} from '../../api/writeback'
+import { fetchWritebacks } from '../../api/writeback'
 import { fetchActions } from '../../api/searchTerms'
-import { writebackKeyword } from '../../api/keywords'
-import { setAccountBudget, setAdgroupBid, setCampaignBudget } from '../../api/manage'
 import { session } from '../../store/session'
 
 const router = useRouter()
@@ -21,20 +16,6 @@ const wbSub = ref('bid')
 const WB_STATUS = { success: '已写回', failed: '失败', dry_run: '演练（未真改）' }
 const wbData = ref(null)
 const wbLoading = ref(false)
-const approvalData = ref(null)
-const approvalLoading = ref(false)
-const APPROVAL_ACTIONS = {
-  keyword_bid: '关键词出价',
-  adgroup_bid: '单元出价',
-  campaign_budget: '计划预算',
-  account_budget: '账户预算',
-}
-const APPROVAL_STATUS = {
-  pending: '待审批', approved: '已批准', rejected: '已驳回', consumed: '已执行',
-}
-const approvalDialog = ref(false)
-const approvalSubmitting = ref(false)
-const approvalForm = reactive({ actionType: 'keyword_bid', targetId: '', amount: '', note: '' })
 
 async function loadWb() {
   wbLoading.value = true
@@ -44,88 +25,6 @@ async function loadWb() {
     error.value = e.message
   } finally {
     wbLoading.value = false
-  }
-}
-
-async function loadApprovals() {
-  approvalLoading.value = true
-  try {
-    approvalData.value = await fetchWritebackApprovals({ tenantId: TENANT_ID.value })
-  } catch (e) {
-    error.value = e.message
-  } finally {
-    approvalLoading.value = false
-  }
-}
-
-async function decideApproval(row, decision) {
-  try {
-    const { value } = await ElMessageBox.prompt(
-      decision === 'approved' ? '确认批准这项资金回写？' : '请填写驳回原因',
-      decision === 'approved' ? '异人审批' : '驳回申请',
-      { inputPlaceholder: '审批备注（可选）', confirmButtonText: '确认', cancelButtonText: '取消' },
-    )
-    await decideWritebackApproval(row.id, decision, value || null)
-    ElMessage.success(decision === 'approved' ? '审批已通过' : '申请已驳回')
-    await loadApprovals()
-  } catch (e) {
-    if (e !== 'cancel' && e !== 'close') ElMessage.error(e?.message || '审批失败')
-  }
-}
-
-async function submitApprovalRequest() {
-  const amount = Number(approvalForm.amount)
-  const targetId = Number(approvalForm.targetId)
-  if (!Number.isFinite(amount) || amount <= 0) {
-    ElMessage.error('请输入有效金额')
-    return
-  }
-  let payload
-  if (approvalForm.actionType === 'keyword_bid') payload = { keyword_id: targetId, new_bid: amount }
-  else if (approvalForm.actionType === 'adgroup_bid') payload = { adgroup_id: targetId, new_price: amount }
-  else if (approvalForm.actionType === 'campaign_budget') payload = { campaign_id: targetId, new_budget: amount }
-  else payload = { new_budget: amount }
-  if (approvalForm.actionType !== 'account_budget' && (!Number.isInteger(targetId) || targetId <= 0)) {
-    ElMessage.error('请输入有效对象 ID')
-    return
-  }
-  approvalSubmitting.value = true
-  try {
-    await requestWritebackApproval({
-      tenantId: TENANT_ID.value,
-      actionType: approvalForm.actionType,
-      payload,
-      note: approvalForm.note || null,
-    })
-    approvalDialog.value = false
-    ElMessage.success('资金回写申请已提交，需由另一名用户审批')
-    await loadApprovals()
-  } catch (e) {
-    ElMessage.error(e?.message || '申请提交失败')
-  } finally {
-    approvalSubmitting.value = false
-  }
-}
-
-async function executeApproval(row) {
-  try {
-    await ElMessageBox.confirm('确认按已审批参数执行？审批记录执行后不可重复使用。', '执行资金回写', {
-      type: 'warning', confirmButtonText: '确认执行', cancelButtonText: '取消',
-    })
-    const p = row.payload || {}
-    if (row.action_type === 'keyword_bid') {
-      await writebackKeyword({ keywordId: p.keyword_id, tenantId: row.tenant_id, price: p.new_bid, approvalId: row.id })
-    } else if (row.action_type === 'adgroup_bid') {
-      await setAdgroupBid({ tenantId: row.tenant_id, adgroupId: p.adgroup_id, maxPrice: p.new_price, approvalId: row.id })
-    } else if (row.action_type === 'campaign_budget') {
-      await setCampaignBudget({ tenantId: row.tenant_id, campaignId: p.campaign_id, budget: p.new_budget, approvalId: row.id })
-    } else {
-      await setAccountBudget({ tenantId: row.tenant_id, budget: p.new_budget, approvalId: row.id })
-    }
-    ElMessage.success('执行请求已完成')
-    await loadApprovals()
-  } catch (e) {
-    if (e !== 'cancel' && e !== 'close') ElMessage.error(e?.message || '执行失败')
   }
 }
 
@@ -258,8 +157,7 @@ watch(actType, () => { if (mainView.value === 'writeback' && wbSub.value === 'ac
 
 function loadWbSub() {
   if (wbSub.value === 'bid') loadWb()
-  else if (wbSub.value === 'action') loadActions()
-  else loadApprovals()
+  else loadActions()
 }
 
 // 顶栏切换客户后重新拉当前视图的数
@@ -414,7 +312,6 @@ onMounted(load)
         <div class="view-tabs">
           <div class="view-tab" :class="{ active: wbSub === 'bid' }" @click="wbSub = 'bid'">出价回写</div>
           <div class="view-tab" :class="{ active: wbSub === 'action' }" @click="wbSub = 'action'">动作回写</div>
-          <div class="view-tab" :class="{ active: wbSub === 'approval' }" @click="wbSub = 'approval'">资金审批</div>
         </div>
         <el-select
           v-if="wbSub === 'action'"
@@ -424,7 +321,6 @@ onMounted(load)
         >
           <el-option v-for="t in ACTION_TYPES" :key="t.code" :label="t.label" :value="t.code" />
         </el-select>
-        <el-button v-if="wbSub === 'approval'" type="primary" @click="approvalDialog = true">申请资金回写</el-button>
       </div>
 
       <!-- 出价回写（updateWord 留痕） -->
@@ -481,7 +377,7 @@ onMounted(load)
       </div>
 
       <!-- 动作回写（否词 / 拓词 / 启停，writeback_actions 留痕） -->
-      <div v-else-if="wbSub === 'action'" v-loading="actLoading">
+      <div v-else v-loading="actLoading">
         <el-alert
           type="info"
           :closable="false"
@@ -536,76 +432,7 @@ onMounted(load)
           </el-table>
         </div>
       </div>
-
-      <!-- 高风险资金回写异人审批 -->
-      <div v-else v-loading="approvalLoading">
-        <el-alert
-          type="warning"
-          :closable="false"
-          show-icon
-          style="margin-bottom: 12px"
-          title="关键词/单元出价及计划/账户预算在真实回写前必须由另一名用户审批；审批与具体金额绑定且只能使用一次。当前 dry-run 不会消耗审批。"
-        />
-        <div class="table-panel">
-          <el-table :data="approvalData?.approvals || []" class="kw-table" row-key="id">
-            <el-table-column label="申请时间" width="120">
-              <template #default="{ row }"><span class="num">{{ fmtTime(row.created_at) }}</span></template>
-            </el-table-column>
-            <el-table-column label="资金动作" width="120">
-              <template #default="{ row }">{{ APPROVAL_ACTIONS[row.action_type] || row.action_type }}</template>
-            </el-table-column>
-            <el-table-column label="审批参数" min-width="240">
-              <template #default="{ row }"><code>{{ JSON.stringify(row.payload) }}</code></template>
-            </el-table-column>
-            <el-table-column label="状态" width="100" align="center">
-              <template #default="{ row }">
-                <span class="wb-pill" :class="row.status">{{ APPROVAL_STATUS[row.status] || row.status }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="申请/审批用户" width="130">
-              <template #default="{ row }">#{{ row.requested_by }} / {{ row.approved_by ? ('#' + row.approved_by) : '—' }}</template>
-            </el-table-column>
-            <el-table-column label="备注" min-width="150">
-              <template #default="{ row }">{{ row.decision_note || row.request_note || '—' }}</template>
-            </el-table-column>
-            <el-table-column label="操作" width="150" fixed="right">
-              <template #default="{ row }">
-                <template v-if="row.status === 'pending'">
-                  <el-button size="small" type="success" @click="decideApproval(row, 'approved')">批准</el-button>
-                  <el-button size="small" type="danger" plain @click="decideApproval(row, 'rejected')">驳回</el-button>
-                </template>
-                <el-button v-else-if="row.status === 'approved'" size="small" type="primary" @click="executeApproval(row)">执行</el-button>
-                <span v-else class="dim">已处理</span>
-              </template>
-            </el-table-column>
-            <template #empty><div class="empty-line">当前客户没有资金回写审批申请。</div></template>
-          </el-table>
-        </div>
-      </div>
     </template>
-
-    <el-dialog v-model="approvalDialog" title="申请资金回写" width="480px">
-      <el-form label-width="100px">
-        <el-form-item label="动作类型">
-          <el-select v-model="approvalForm.actionType" style="width: 100%">
-            <el-option v-for="(label, code) in APPROVAL_ACTIONS" :key="code" :label="label" :value="code" />
-          </el-select>
-        </el-form-item>
-        <el-form-item v-if="approvalForm.actionType !== 'account_budget'" label="对象 ID">
-          <el-input v-model="approvalForm.targetId" placeholder="关键词 / 单元 / 计划 ID" />
-        </el-form-item>
-        <el-form-item label="目标金额">
-          <el-input v-model="approvalForm.amount" type="number" min="0.01" step="0.01" />
-        </el-form-item>
-        <el-form-item label="申请说明">
-          <el-input v-model="approvalForm.note" type="textarea" :rows="3" maxlength="1000" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="approvalDialog = false">取消</el-button>
-        <el-button type="primary" :loading="approvalSubmitting" @click="submitApprovalRequest">提交审批</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 

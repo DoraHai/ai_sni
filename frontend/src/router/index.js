@@ -1,5 +1,4 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { fetchMe } from '../api/auth'
 import { session } from '../store/session'
 import { loginUrl } from '../auth/loginRedirect'
 
@@ -13,11 +12,7 @@ const DiagnosisLanding = () => import('../views/landing/DiagnosisLanding.vue')
 const routes = [
   {
     path: '/',
-    redirect: '/deal-sniper/portal',
-  },
-  {
-    path: '/workspace',
-    redirect: '/deal-sniper/portal',
+    redirect: '/monitor/dashboard',
   },
   {
     path: '/growth-sniper',
@@ -52,7 +47,7 @@ const routes = [
   { path: '/deal-sniper/seo/keywords', redirect: '/seo/keywords' },
   { path: '/deal-sniper/seo/tdk', redirect: '/seo/site' },
   { path: '/deal-sniper/seo/dashboard', redirect: '/seo/dashboard' },
-  { path: '/deal-sniper/seo/trends', redirect: '/seo/trends' },
+  { path: '/deal-sniper/seo/trends', redirect: '/seo/dashboard' },
   { path: '/deal-sniper/seo/competitors', redirect: '/seo/competitors' },
   { path: '/deal-sniper/seo/articles', redirect: '/seo/content/articles' },
   { path: '/deal-sniper/seo/rewrites', redirect: '/seo/content/rewrites' },
@@ -75,11 +70,6 @@ const routes = [
     children: [
       { path: '', redirect: '/seo/dashboard' },
       {
-        path: 'sites',
-        component: () => import('../views/seo/SeoSitesView.vue'),
-        meta: { title: '网站管理', workflow: '基础资产', perm: 'seo.assets', bare: true },
-      },
-      {
         path: 'dashboard',
         component: () => import('../views/seo/SeoDashboardView.vue'),
         meta: { title: 'SEO 工作台', workflow: '今日概览', perm: 'seo.dashboard', bare: true, immersive: true },
@@ -88,11 +78,6 @@ const routes = [
         path: 'alerts',
         component: () => import('../views/seo/SeoAlertsView.vue'),
         meta: { title: '异常提醒', workflow: '数据看板', perm: 'seo.alerts', bare: true },
-      },
-      {
-        path: 'brand-assets',
-        component: () => import('../views/seo/SeoBrandAssetsView.vue'),
-        meta: { title: '品牌资产中心', workflow: '基础资产', perm: 'seo.keywords', bare: true },
       },
       {
         path: 'keywords',
@@ -276,11 +261,6 @@ const routes = [
     meta: { title: '分析报告', workflow: '客户交付', perm: 'delivery.report' },
   },
   {
-    path: '/sem/accounts',
-    component: () => import('../views/manage/SemAccountsView.vue'),
-    meta: { title: '推广账号', workflow: 'SEM 资产', perm: 'sem.assets' },
-  },
-  {
     path: '/settings/accounts',
     component: () => import('../views/settings/AccountsRolesView.vue'),
     meta: { title: '账号与权限', workflow: '系统设置', perm: 'settings.accounts' },
@@ -299,7 +279,6 @@ const router = createRouter({
 })
 
 const MENU_ORDER = [
-  ['sem.assets', '/sem/accounts'],
   ['assistant', '/assistant'],
   ['geo.diagnosis', '/geo/diagnosis'],
   ['seo.dashboard', '/seo/dashboard'],
@@ -336,17 +315,7 @@ function permOk(perm) {
   const keys = Array.isArray(perm) ? perm : [perm]
   return keys.some((k) => session.canView(k))
 }
-let permissionRefresh = null
-async function refreshPermissionsOnce() {
-  if (!permissionRefresh) {
-    permissionRefresh = fetchMe()
-      .then((result) => session.refreshUser(result.user))
-      .finally(() => { permissionRefresh = null })
-  }
-  return permissionRefresh
-}
-
-router.beforeEach(async (to) => {
+router.beforeEach((to) => {
   const devBypass = !session.isLoggedIn && import.meta.env.VITE_API_KEY && import.meta.env.DEV
   if (!to.meta.public && !session.isLoggedIn && !devBypass) {
     window.location.assign(loginUrl(to.fullPath))
@@ -354,17 +323,13 @@ router.beforeEach(async (to) => {
   }
   if (devBypass || !session.isLoggedIn) return
   if (!to.meta.public && !permOk(to.meta.perm)) {
-    try { await refreshPermissionsOnce() } catch { /* 401 interceptor handles expiry */ }
-    if (permOk(to.meta.perm)) return
     const dest = firstAllowedPath()
     if (dest && dest !== to.path) return { path: dest }
     if (!dest) return
   }
 })
 router.afterEach((to) => {
-  const productName = to.path.startsWith('/seo')
-    ? 'SEO 工作台'
-    : to.path === '/deal-sniper/portal' ? 'G-Snipers 获客指挥台' : 'SEM 智投'
+  const productName = to.path.startsWith('/seo') ? 'SEO 工作台' : 'SEM 智投平台'
   document.title = to.meta.documentTitle || (to.meta.title ? to.meta.title + ' · ' : '') + productName
 })
 export default router

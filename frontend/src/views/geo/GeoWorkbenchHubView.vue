@@ -1,8 +1,11 @@
 <script setup>
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { staticGeoWorkbenchUrl } from '../../api/geoContent'
+import { useGeoTenant } from '../../composables/useGeoTenant'
 
 const router = useRouter()
+const { tenantId } = useGeoTenant()
 
 const cards = [
   { title: '优化文章', desc: '【主路径】内容任务列表 + 母稿编辑器', path: '/geo/tasks', phase: 'Vue' },
@@ -24,8 +27,18 @@ function go(card) {
   router.push(card.path)
 }
 
+function openStaticEditor() {
+  const tid = tenantId.value || 1
+  window.open(staticGeoWorkbenchUrl('editor.html', tid), '_blank')
+}
+
+function openStaticFull() {
+  const tid = tenantId.value || 1
+  window.open(staticGeoWorkbenchUrl('dashboard.html', tid), '_blank')
+}
+
 const note = computed(() =>
-  '快捷入口。日常请从「优化业务」进主轴：缺口 → 写稿 → 发布 → 本期效果。',
+  '主路径全部在 Vue：任务编辑器 → 可见度/巡检 → 期次对比 → 交付摘要。静态台仅兼容完整流水线后备，日常请优先 Vue。',
 )
 </script>
 
@@ -37,8 +50,9 @@ const note = computed(() =>
         <div class="page-desc">{{ note }}</div>
       </div>
       <div class="header-actions">
-        <el-button type="primary" @click="router.push('/geo/businesses')">优化业务</el-button>
-        <el-button @click="router.push('/geo/tasks')">优化文章</el-button>
+        <el-button type="primary" @click="router.push('/geo/tasks')">优化文章</el-button>
+        <el-button @click="openStaticEditor">静态编辑器（兼容）</el-button>
+        <el-button @click="openStaticFull">兼容：全量静态台</el-button>
       </div>
     </div>
 
@@ -59,39 +73,32 @@ const note = computed(() =>
 </template>
 
 <style scoped>
-/* 页头由 geo-page.css 提供 */
+.geo-hub { padding: 4px 2px 24px; }
+.page-header {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 16px; margin-bottom: 18px; flex-wrap: wrap;
+}
+.page-title { font-size: 20px; font-weight: 700; color: #1e2330; }
+.page-desc { margin-top: 4px; font-size: 13px; color: #6b7280; max-width: 640px; }
+.header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
 }
 .hub-card {
   text-align: left;
-  border: 1px solid #e8edf5;
-  background: linear-gradient(180deg, #fff 0%, #fafbfd 100%);
-  border-radius: 14px;
-  padding: 18px 16px 16px;
+  border: 1px solid #e8e4f5;
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px;
   cursor: pointer;
-  transition: box-shadow 0.18s, border-color 0.18s, transform 0.15s;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: box-shadow .15s, border-color .15s;
 }
 .hub-card:hover {
-  border-color: #93c5fd;
-  box-shadow: 0 8px 24px rgba(24, 95, 165, 0.1);
-  transform: translateY(-1px);
+  border-color: #c4b5fd;
+  box-shadow: 0 4px 14px rgba(124, 58, 237, 0.08);
 }
-.hub-title {
-  font-weight: 700;
-  color: #0f172a;
-  margin-bottom: 8px;
-  font-size: 15px;
-  letter-spacing: -0.01em;
-}
-.hub-desc {
-  font-size: 12px;
-  color: #64748b;
-  margin-bottom: 12px;
-  min-height: 36px;
-  line-height: 1.5;
-}
+.hub-title { font-weight: 700; color: #1e2330; margin-bottom: 6px; }
+.hub-desc { font-size: 12px; color: #6b7280; margin-bottom: 10px; min-height: 32px; }
 </style>

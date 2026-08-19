@@ -1,20 +1,15 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   createGeoContentTask,
   createGeoPrompt,
-  expandGeoPromptCandidates,
   listGeoPrompts,
   listGeoUnits,
   patchGeoPrompt,
-  promoteGeoPromptCandidates,
 } from '../../api/geoContent'
-import NeedHintAlert from '../../components/NeedHintAlert.vue'
-import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
-import { REPORT_GLOSSARY } from '../../utils/geoReportLabels'
 
 const router = useRouter()
 const route = useRoute()
@@ -26,35 +21,10 @@ const items = ref([])
 const units = ref([])
 const status = ref('active')
 const filterUnitId = ref(null)
-const filterBrandMissing = ref(route.query.tag === 'brand_missing')
-const pager = useClientPager(items, { pageSize: 20 })
-const displayItems = computed(() => {
-  let rows = items.value || []
-  if (filterBrandMissing.value) {
-    rows = rows.filter((r) => Array.isArray(r.tags) && r.tags.includes('brand_missing'))
-  }
-  return rows
-})
-// rebind pager source when filter changes — simple: override paged via separate pager
-const filteredPager = useClientPager(displayItems, { pageSize: 20 })
 const createOpen = ref(false)
 const editOpen = ref(false)
-const expandOpen = ref(false)
 const creating = ref(false)
 const saving = ref(false)
-const expanding = ref(false)
-const promoting = ref(false)
-const expandForm = ref({
-  products: '',
-  competitors: '',
-  market: 'cn',
-  max_terms: 40,
-  seed_from_tenant: true,
-})
-const expandItems = ref([])
-const expandMeta = ref(null)
-const selectedExpand = ref([])
-const expandTableRef = ref(null)
 const form = ref({
   question: '',
   priority: 10,
@@ -215,86 +185,13 @@ async function createTask(row) {
   }
 }
 
-async function runExpand() {
-  if (!tenantId.value) return
-  expanding.value = true
-  expandItems.value = []
-  selectedExpand.value = []
-  try {
-    const data = await expandGeoPromptCandidates({
-      tenant_id: tenantId.value,
-      market: expandForm.value.market,
-      max_terms: Number(expandForm.value.max_terms) || 40,
-      seed_from_tenant: !!expandForm.value.seed_from_tenant,
-      products: expandForm.value.products
-        ? expandForm.value.products.split(/[,，\n]/).map((s) => s.trim()).filter(Boolean)
-        : [],
-      competitors: expandForm.value.competitors
-        ? expandForm.value.competitors.split(/[,，\n]/).map((s) => s.trim()).filter(Boolean)
-        : [],
-      persist: true,
-    })
-    expandItems.value = data.items || []
-    expandMeta.value = {
-      total: data.total,
-      new_count: data.new_count,
-      new_vs_last_count: data.new_vs_last_count,
-      calls: data.calls,
-      errors: data.errors || [],
-      seed_hints: data.seed_hints || null,
-    }
-    ElMessage.success(`已生成 ${expandItems.value.length} 条候选`)
-  } catch (e) {
-    ElMessage.error(e.message || '拓词失败')
-  } finally {
-    expanding.value = false
-  }
-}
-
-function onExpandSelection(rows) {
-  selectedExpand.value = rows || []
-}
-
-async function promoteSelected() {
-  if (!selectedExpand.value.length) {
-    ElMessage.warning('请先勾选要入库的候选')
-    return
-  }
-  promoting.value = true
-  try {
-    const items = selectedExpand.value.map((row) => ({
-      question: row.question || row.term || row.text,
-      question_group: row.question_group || row.group || null,
-      market: expandForm.value.market === 'both' ? 'cn' : expandForm.value.market,
-      priority: 10,
-      tags: ['from_expand'],
-      is_brand_probe: !!row.is_brand_probe,
-    })).filter((x) => x.question && String(x.question).length >= 4)
-    const r = await promoteGeoPromptCandidates({
-      tenant_id: tenantId.value,
-      items,
-    })
-    const n = r.created ?? items.length
-    ElMessage.success(`已入库 ${n} 条意图词` + (r.skipped ? `（跳过重复 ${r.skipped}）` : ''))
-    expandOpen.value = false
-    await load()
-  } catch (e) {
-    ElMessage.error(e.message || '入库失败')
-  } finally {
-    promoting.value = false
-  }
-}
-
 function syncUnitFilterFromRoute() {
   const q = route.query.unit_id
   filterUnitId.value = q ? Number(q) : null
   if (filterUnitId.value) form.value.unit_id = filterUnitId.value
 }
 
-watch([tenantId, status, filterUnitId], () => {
-  pager.resetPage()
-  load()
-})
+watch([tenantId, status, filterUnitId], load)
 watch(
   () => route.query.unit_id,
   () => {
@@ -317,31 +214,19 @@ const tagText = (tags) => (Array.isArray(tags) ? tags.join(', ') : '—')
     <div class="page-header">
       <div>
         <div class="page-title">优化意图词</div>
-        <div class="page-desc">
-          巡检与可见度登记的问题清单；挂到优化单元后进入业务切片。探测题不计入品牌提及率。
-        </div>
+        <div class="page-desc">业务 → 单元 → 意图词三级结构 · 探测题不计入品牌提及率</div>
       </div>
       <div class="header-actions">
         <router-link class="el-button" to="/geo/businesses">优化业务</router-link>
-        <router-link class="el-button" to="/geo/visibility">AI 可见度</router-link>
-        <el-button type="success" @click="expandOpen = true">智能推荐</el-button>
         <el-button type="primary" @click="createOpen = true">新建意图词</el-button>
         <el-button @click="load">刷新</el-button>
         <router-link class="el-button" to="/geo/workbench">工作台</router-link>
       </div>
     </div>
 
-    <details class="geo-glossary">
-      <summary>统计口径（点击展开）</summary>
-      <ul>
-        <li v-for="(line, i) in REPORT_GLOSSARY.prompts" :key="i">{{ line }}</li>
-      </ul>
-    </details>
-
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
-    <NeedHintAlert />
 
-    <div class="geo-filter-bar filters">
+    <div class="filters">
       <el-select v-model="status" style="width: 140px">
         <el-option label="活跃" value="active" />
         <el-option label="已归档" value="archived" />
@@ -363,101 +248,45 @@ const tagText = (tags) => (Array.isArray(tags) ? tags.join(', ') : '—')
       </el-select>
     </div>
 
-    <div v-if="!items.length && !loading" class="geo-empty" style="margin-bottom: 12px">
-      <div class="empty-title">暂无优化意图词</div>
-      <div>新建问题，或用「智能推荐」从事实库 / 官网渠道扩词，再挂到优化单元。</div>
-      <div class="empty-actions">
-        <el-button type="primary" size="small" @click="createOpen = true">新建意图词</el-button>
-        <el-button size="small" @click="expandOpen = true">智能推荐</el-button>
-      </div>
-    </div>
+    <el-table :data="items" stripe empty-text="暂无优化意图词">
+      <el-table-column prop="id" label="ID" width="72" />
+      <el-table-column label="问题" min-width="240">
+        <template #default="{ row }">
+          <div class="title">{{ row.question }}</div>
+          <div class="sub">{{ row.question_group || '—' }} · {{ row.market || 'cn' }}</div>
+        </template>
+      </el-table-column>
+      <el-table-column label="优化单元" min-width="120">
+        <template #default="{ row }">{{ unitLabel(row.unit_id) }}</template>
+      </el-table-column>
+      <el-table-column prop="priority" label="优先级" width="80" />
+      <el-table-column label="标签" min-width="120">
+        <template #default="{ row }">{{ tagText(row.tags) }}</template>
+      </el-table-column>
+      <el-table-column label="探测题" width="80">
+        <template #default="{ row }">
+          <el-tag v-if="row.is_brand_probe" size="small" type="warning">是</el-tag>
+          <span v-else class="muted">否</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="260" fixed="right">
+        <template #default="{ row }">
+          <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
+          <el-button type="primary" link @click="createTask(row)">建文章</el-button>
+          <el-button
+            v-if="row.status === 'active'"
+            type="danger"
+            link
+            @click="archive(row)"
+          >归档</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
 
-    <el-alert
-      v-if="filterBrandMissing"
-      type="warning"
-      :closable="true"
-      show-icon
-      class="mb"
-      title="仅显示 brand_missing 意图词：建议立即「生成内容」补母稿后再巡检"
-      @close="filterBrandMissing = false"
-    />
-
-    <div class="geo-table-shell">
-      <el-table :data="filteredPager.pagedItems" stripe empty-text=" ">
-        <el-table-column prop="id" label="ID" width="72" />
-        <el-table-column label="问题" min-width="240">
-          <template #default="{ row }">
-            <div class="title">{{ row.question }}</div>
-            <div class="sub">{{ row.question_group || '—' }} · {{ row.market || 'cn' }}</div>
-          </template>
-        </el-table-column>
-        <el-table-column label="优化单元" min-width="120">
-          <template #default="{ row }">{{ unitLabel(row.unit_id) }}</template>
-        </el-table-column>
-        <el-table-column prop="priority" label="优先级" width="80" />
-        <el-table-column label="标签" min-width="120">
-          <template #default="{ row }">
-            {{ tagText(row.tags) }}
-            <el-tag
-              v-if="Array.isArray(row.tags) && row.tags.includes('brand_missing')"
-              size="small"
-              type="danger"
-              effect="light"
-              style="margin-left: 4px"
-            >
-              缺品牌
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="探测题" width="88">
-          <template #default="{ row }">
-            <el-tooltip content="探测题只计入点名认知率，不计入品牌提及率" placement="top">
-              <el-tag v-if="row.is_brand_probe" size="small" type="warning" effect="light">是</el-tag>
-              <span v-else class="muted">否</span>
-            </el-tooltip>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="280" fixed="right">
-          <template #default="{ row }">
-            <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
-            <el-button
-              type="success"
-              link
-              @click="createTask(row)"
-            >
-              {{
-                Array.isArray(row.tags) && row.tags.includes('brand_missing')
-                  ? '生成内容'
-                  : '建文章'
-              }}
-            </el-button>
-            <el-button
-              v-if="row.status === 'active'"
-              type="danger"
-              link
-              @click="archive(row)"
-            >归档</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <div class="geo-pager">
-        <el-pagination
-          background
-          layout="total, sizes, prev, pager, next"
-          :total="filteredPager.total"
-          :page-size="filteredPager.pageSize"
-          :current-page="filteredPager.page"
-          :page-sizes="[10, 20, 50, 100]"
-          @current-change="filteredPager.onPageChange"
-          @size-change="filteredPager.onSizeChange"
-        />
-      </div>
-    </div>
-
-    <el-dialog v-model="editOpen" title="编辑优化意图词" width="520px" class="geo-form-dialog">
-      <el-form label-width="100px" class="geo-dialog-form">
+    <el-dialog v-model="editOpen" title="编辑优化意图词" width="520px">
+      <el-form label-width="100px">
         <el-form-item label="问题" required>
-          <el-input v-model="editForm.question" type="textarea" :rows="3" placeholder="用户/AI 会问的完整问句" />
+          <el-input v-model="editForm.question" type="textarea" :rows="3" />
         </el-form-item>
         <el-form-item label="优化单元">
           <el-select v-model="editForm.unit_id" clearable filterable style="width: 100%" placeholder="可选">
@@ -488,10 +317,10 @@ const tagText = (tags) => (Array.isArray(tags) ? tags.join(', ') : '—')
       </template>
     </el-dialog>
 
-    <el-dialog v-model="createOpen" title="新建优化意图词" width="520px" class="geo-form-dialog">
-      <el-form label-width="100px" class="geo-dialog-form">
+    <el-dialog v-model="createOpen" title="新建优化意图词" width="520px">
+      <el-form label-width="100px">
         <el-form-item label="问题" required>
-          <el-input v-model="form.question" type="textarea" :rows="3" placeholder="用户/AI 会问的完整问句" />
+          <el-input v-model="form.question" type="textarea" :rows="3" />
         </el-form-item>
         <el-form-item label="优化单元">
           <el-select v-model="form.unit_id" clearable filterable style="width: 100%" placeholder="可选">
@@ -521,82 +350,6 @@ const tagText = (tags) => (Array.isArray(tags) ? tags.join(', ') : '—')
         <el-button type="primary" :loading="creating" @click="submitCreate">创建</el-button>
       </template>
     </el-dialog>
-
-    <el-drawer v-model="expandOpen" title="智能意图词推荐" size="640px" destroy-on-close>
-      <el-form label-position="top" class="mb">
-        <el-form-item label="产品/方案关键词（逗号或换行）">
-          <el-input
-            v-model="expandForm.products"
-            type="textarea"
-            :rows="2"
-            placeholder="例：智能客服, 工单系统"
-          />
-        </el-form-item>
-        <el-form-item label="竞品名（可选）">
-          <el-input v-model="expandForm.competitors" type="textarea" :rows="2" />
-        </el-form-item>
-        <div class="expand-row">
-          <el-form-item label="市场">
-            <el-select v-model="expandForm.market" style="width: 140px">
-              <el-option label="国内 cn" value="cn" />
-              <el-option label="海外 global" value="global" />
-              <el-option label="双边 both" value="both" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="候选上限">
-            <el-input-number v-model="expandForm.max_terms" :min="10" :max="120" />
-          </el-form-item>
-          <el-form-item label="用租户品牌种子">
-            <el-switch v-model="expandForm.seed_from_tenant" />
-          </el-form-item>
-        </div>
-        <el-button type="primary" :loading="expanding" @click="runExpand">生成候选</el-button>
-      </el-form>
-      <div v-if="expandMeta" class="expand-meta mb">
-        共 {{ expandMeta.total ?? expandItems.length }} · 库外新词 {{ expandMeta.new_count ?? '—' }}
-        · 相对上次新增 {{ expandMeta.new_vs_last_count ?? '—' }}
-        <span v-if="(expandMeta.errors || []).length"> · 有 {{ expandMeta.errors.length }} 条源错误</span>
-        <div v-if="expandMeta.seed_hints" class="seed-hints">
-          词根增强：事实 {{ (expandMeta.seed_hints.fact_titles || []).slice(0, 3).join('、') || '—' }}
-          · 官网域 {{ (expandMeta.seed_hints.website_domains || []).join('、') || '—' }}
-        </div>
-      </div>
-      <el-table
-        ref="expandTableRef"
-        :data="expandItems"
-        size="small"
-        max-height="420"
-        empty-text="填写词根后生成候选；勾选后入库"
-        @selection-change="onExpandSelection"
-      >
-        <el-table-column type="selection" width="42" :selectable="(row) => !row.in_bank" />
-        <el-table-column label="候选问题" min-width="220">
-          <template #default="{ row }">
-            <div>{{ row.question || row.term }}</div>
-            <div class="sub">
-              {{ row.question_group || '—' }} · {{ row.market || expandForm.market }}
-              <el-tag v-if="row.is_brand_probe" size="small" type="warning" class="ml-tag">探测题</el-tag>
-              <el-tag v-else size="small" type="success" effect="plain" class="ml-tag">品类可见度</el-tag>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag v-if="row.in_bank" size="small" type="info">已在库</el-tag>
-            <el-tag v-else-if="row.is_new_vs_last" size="small" type="success">相对上次新</el-tag>
-            <el-tag v-else size="small">候选</el-tag>
-          </template>
-        </el-table-column>
-      </el-table>
-      <div class="expand-actions">
-        <el-button
-          type="primary"
-          :loading="promoting"
-          :disabled="!selectedExpand.length"
-          @click="promoteSelected"
-        >确认入库（{{ selectedExpand.length }}）</el-button>
-      </div>
-    </el-drawer>
   </div>
 </template>
 
@@ -612,9 +365,4 @@ const tagText = (tags) => (Array.isArray(tags) ? tags.join(', ') : '—')
 .mb { margin-bottom: 12px; }
 .title { font-weight: 600; }
 .sub, .muted { font-size: 12px; color: #8b93a7; }
-.ml-tag { margin-left: 6px; }
-.expand-row { display: flex; gap: 16px; flex-wrap: wrap; }
-.expand-meta { font-size: 13px; color: #4b5563; }
-.seed-hints { margin-top: 6px; font-size: 12px; color: #6b7280; }
-.expand-actions { margin-top: 14px; display: flex; gap: 8px; }
 </style>

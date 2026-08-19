@@ -61,6 +61,16 @@ const fmtInt = (v) => (v == null ? '—' : Number(v).toLocaleString('zh-CN'))
 const fmtMoney = (v) => (v == null ? '—' : '¥' + Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 2 }))
 const fmtPct = (v) => (v == null ? '—' : Number(v).toFixed(2) + '%')
 const fmtTime = (v) => (v ? v.slice(0, 16).replace('T', ' ') : '—')
+const negDialogVisible = ref(false)
+const negForm = ref({
+  word: '',
+  scope: 'adgroup',
+  matchMode: 'exact',
+  adgroupId: null,
+  adgroupName: '',
+  campaignId: null,
+  campaignName: '',
+})
 
 // C 辅助：未加成关键词 + 有展现 + 零点击 → 疑似可否（烧展现没点击）
 function suspectNegative(row) {
@@ -72,18 +82,37 @@ function dryRunTip(res, okMsg) {
   else ElMessage.success(okMsg)
 }
 
-async function addNeg(row) {
-  if (!row.adgroup_id) return ElMessage.warning('该搜索词无所属单元，无法加否词')
+function addNeg(row) {
+  if (!row.adgroup_id && !row.campaign_id) {
+    return ElMessage.warning('该搜索词无所属计划/单元，无法加否词')
+  }
+  negForm.value = {
+    word: row.query_word,
+    scope: row.adgroup_id ? 'adgroup' : 'campaign',
+    matchMode: 'exact',
+    adgroupId: row.adgroup_id,
+    adgroupName: row.adgroup_name,
+    campaignId: row.campaign_id,
+    campaignName: row.campaign_name,
+  }
+  negDialogVisible.value = true
+}
+
+async function submitNegative() {
+  const f = negForm.value
+  if (f.scope === 'adgroup' && !f.adgroupId) return ElMessage.warning('单元级否词需要单元')
+  if (f.scope === 'campaign' && !f.campaignId) return ElMessage.warning('计划级否词需要计划')
   try {
-    await ElMessageBox.confirm(
-      `将「${row.query_word}」加为单元「${row.adgroup_name || row.adgroup_id}」的精确否定词。\n` +
-        `受 dry-run 保护，演练模式下不真改线上。`,
-      '加否词', { confirmButtonText: '确认加否词', cancelButtonText: '取消', type: 'warning' },
-    )
-  } catch { return }
-  try {
-    const res = await addNegative({ tenantId: TENANT_ID.value, word: row.query_word, adgroupId: row.adgroup_id, matchMode: 'exact' })
+    const res = await addNegative({
+      tenantId: TENANT_ID.value,
+      word: f.word,
+      scope: f.scope,
+      adgroupId: f.scope === 'adgroup' ? f.adgroupId : undefined,
+      campaignId: f.scope === 'campaign' ? f.campaignId : undefined,
+      matchMode: f.matchMode,
+    })
     dryRunTip(res, '已加否词')
+    negDialogVisible.value = false
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || e.message)
   }
@@ -165,8 +194,8 @@ const statCards = computed(() => {
     </div>
 
     <div class="table-panel">
-      <el-table :data="data?.search_terms || []" class="kw-table" row-key="id">
-        <el-table-column label="搜索词" min-width="200">
+      <el-table :data="data?.search_terms || []" class="kw-table" row-key="id" :fit="true">
+        <el-table-column label="搜索词" width="190">
           <template #header>
             <span class="th-help">
               搜索词
@@ -191,44 +220,55 @@ const statCards = computed(() => {
             </el-tooltip>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="100" align="center">
+        <el-table-column label="状态" width="88" align="center">
           <template #default="{ row }">
             <span class="st-pill" :class="row.is_added ? 'added' : 'notadded'">{{ row.status_label }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="计划 / 单元" min-width="150">
+        <el-table-column label="计划 / 单元" width="160">
           <template #default="{ row }">
             <div class="plan-line">{{ row.campaign_name || '—' }}</div>
             <div class="kw-cell-sub">{{ row.adgroup_name || '—' }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="展现" width="90" align="right">
+        <el-table-column label="展现" width="80" align="right">
           <template #default="{ row }"><span class="num">{{ fmtInt(row.impression) }}</span></template>
         </el-table-column>
-        <el-table-column label="点击" width="90" align="right">
+        <el-table-column label="点击" width="70" align="right">
           <template #default="{ row }">
             <span class="num" :class="{ zero: !row.click }">{{ fmtInt(row.click) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="点击率" width="92" align="right">
+        <el-table-column label="点击率" width="84" align="right">
           <template #header>
             <span title="CTR = 点击 ÷ 展现">点击率</span>
           </template>
           <template #default="{ row }"><span class="num">{{ fmtPct(row.ctr) }}</span></template>
         </el-table-column>
-        <el-table-column label="点击成本" width="104" align="right">
+        <el-table-column label="点击成本" width="96" align="right">
           <template #header>
             <span title="CPC = 消费 ÷ 点击">点击成本</span>
           </template>
           <template #default="{ row }"><span class="num">{{ fmtMoney(row.cpc) }}</span></template>
         </el-table-column>
-        <el-table-column label="消费" width="100" align="right">
+        <el-table-column label="消费" width="92" align="right">
           <template #default="{ row }"><span class="num">{{ fmtMoney(row.cost) }}</span></template>
         </el-table-column>
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column label="转化" width="86" align="right">
+          <template #header>
+            <span title="CVR = 转化 ÷ 点击">转化</span>
+          </template>
           <template #default="{ row }">
-            <el-button link type="primary" size="small" :disabled="!row.adgroup_id" @click="addNeg(row)">加否词</el-button>
-            <el-button link type="primary" size="small" :disabled="row.is_added || !row.adgroup_id" @click="expand(row)">转拓词</el-button>
+            <span class="num" :class="{ zero: !row.conversions }">{{ fmtInt(row.conversions) }}</span>
+            <div class="kw-cell-sub">{{ fmtPct(row.cvr) }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" min-width="156">
+          <template #default="{ row }">
+            <div class="search-term-actions">
+              <el-button class="search-action is-negative" size="small" :disabled="!row.adgroup_id && !row.campaign_id" @click="addNeg(row)">加否词</el-button>
+              <el-button class="search-action is-expand" size="small" :disabled="row.is_added || !row.adgroup_id" @click="expand(row)">设为关键词</el-button>
+            </div>
           </template>
         </el-table-column>
         <template #empty>
@@ -248,6 +288,34 @@ const statCards = computed(() => {
         />
       </div>
     </div>
+
+    <el-dialog v-model="negDialogVisible" title="加否词" width="420px">
+      <div class="neg-form">
+        <p>将「{{ negForm.word }}」加为否词</p>
+
+        <label>作用范围</label>
+        <el-radio-group v-model="negForm.scope" class="neg-radio-stack">
+          <el-radio label="adgroup" :disabled="!negForm.adgroupId">
+            单元级（{{ negForm.adgroupName || negForm.adgroupId || '无单元' }}）
+          </el-radio>
+          <el-radio label="campaign" :disabled="!negForm.campaignId">
+            计划级（{{ negForm.campaignName || negForm.campaignId || '无计划' }}）
+          </el-radio>
+        </el-radio-group>
+
+        <label>匹配方式</label>
+        <el-radio-group v-model="negForm.matchMode">
+          <el-radio label="exact">精确否</el-radio>
+          <el-radio label="phrase">短语否</el-radio>
+        </el-radio-group>
+
+        <div class="neg-tip">演练模式下只记录台账，不真实写回百度。</div>
+      </div>
+      <template #footer>
+        <el-button @click="negDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="submitNegative">确认加否词</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -300,6 +368,19 @@ const statCards = computed(() => {
 .susp-pill { font-size: 10px; padding: 1px 6px; border-radius: 3px; background: #fef1e1; color: #ba7517; margin-left: 6px; }
 .op-todo { font-size: 11px; color: #c0c4cc; }
 
+.search-term-actions { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.search-action { height: 26px; margin: 0 !important; padding: 0 8px; border-radius: 5px; font-size: 11px; font-weight: 600; transition: background .16s ease, border-color .16s ease, color .16s ease; }
+.search-action.is-negative { background: #fff; border-color: #f0c998; color: #b86b16; }
+.search-action.is-negative:not(:disabled):hover { background: #fff7ed; border-color: #e7a350; color: #9e5710; }
+.search-action.is-expand { background: #edf5ff; border-color: #b7d4f2; color: #1768ad; }
+.search-action.is-expand:not(:disabled):hover { background: #dfefff; border-color: #79addd; color: #10578f; }
+.search-action:disabled { opacity: .48; }
+
 .empty-line { font-size: 12px; color: #9ca3af; padding: 22px 0; }
 .table-footer { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: #fafbfc; border-top: 1px solid #f3f4f6; font-size: 12px; color: var(--sem-text-sub); }
+.neg-form { display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--sem-text); }
+.neg-form p { margin: 0 0 4px; }
+.neg-form label { font-size: 12px; color: var(--sem-text-sub); }
+.neg-radio-stack { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.neg-tip { margin-top: 4px; color: #ba7517; font-size: 12px; }
 </style>

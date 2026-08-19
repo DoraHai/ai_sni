@@ -1,6 +1,6 @@
 import client from './client'
 
-export function fetchSeoKeywords({ tenantId, q, priority, intent, status = 'active', engine = 'baidu', device = 'desktop', page = 1, pageSize = 50 }) {
+export function fetchSeoKeywords({ tenantId, q, priority, intent, status = 'active', engine = 'baidu', page = 1, pageSize = 50 }) {
   return client.get('/api/v1/seo/keywords', {
     params: {
       tenant_id: tenantId,
@@ -9,7 +9,6 @@ export function fetchSeoKeywords({ tenantId, q, priority, intent, status = 'acti
       intent: intent || undefined,
       status: status || undefined,
       engine,
-      device,
       page,
       page_size: pageSize,
     },
@@ -30,9 +29,9 @@ export function updateSeoKeyword({ keywordId, tenantId, payload }) {
   })
 }
 
-export function fetchSeoKeywordDetail({ keywordId, tenantId, engine = 'baidu', device = 'desktop', days = 90 }) {
+export function fetchSeoKeywordDetail({ keywordId, tenantId, engine = 'baidu', days = 90 }) {
   return client.get(`/api/v1/seo/keywords/${keywordId}`, {
-    params: { tenant_id: tenantId, engine, device, days },
+    params: { tenant_id: tenantId, engine, days },
   })
 }
 
@@ -77,50 +76,8 @@ export function auditSeoSitePage({ pageId, tenantId }) {
   })
 }
 
-export function fetchSeoOverview({ tenantId, siteId, engine = 'baidu', device = 'desktop' }) {
-  return client.get('/api/v1/seo/overview', { params: { tenant_id: tenantId, site_id: siteId || undefined, engine, device } })
-}
-
-export function collectSeoOverviewMetrics(payload) {
-  return client.post('/api/v1/seo/overview/collect-metrics', payload, { timeout: 180000 })
-}
-
-export function crawlSeoSite(payload) {
-  return client.post('/api/v1/seo/site/crawl-runs', payload, { timeout: 300000 })
-}
-
-export function fetchSeoCrawlRuns({ tenantId, siteId, runId, limit = 10 }) {
-  return client.get('/api/v1/seo/site/crawl-runs', {
-    params: { tenant_id: tenantId, site_id: siteId, run_id: runId || undefined, limit },
-  })
-}
-
-export function collectSeoRankSerp(payload) {
-  return client.post('/api/v1/seo/rank-serp/collect', payload, { timeout: 180000 })
-}
-
-export function fetchSeoSerpResults({ tenantId, device = 'desktop', ownershipType, keywordId, limit = 200 }) {
-  return client.get('/api/v1/seo/rank-serp/results', { params: { tenant_id: tenantId, device, ownership_type: ownershipType || undefined, keyword_id: keywordId || undefined, limit } })
-}
-
-export function updateSeoSerpOwnership({ resultId, tenantId, ownershipType, createAsset = true }) {
-  return client.patch(`/api/v1/seo/rank-serp/results/${resultId}`, { tenant_id: tenantId, ownership_type: ownershipType, create_asset: createAsset })
-}
-
-export function fetchSeoBrandAssets({ tenantId }) {
-  return client.get('/api/v1/seo/rank-serp/brand-assets', { params: { tenant_id: tenantId } })
-}
-
-export function fetchSeoBrandProfile({ tenantId }) {
-  return client.get('/api/v1/seo/rank-serp/brand-profile', { params: { tenant_id: tenantId } })
-}
-
-export function updateSeoBrandProfile(payload) {
-  return client.patch('/api/v1/seo/rank-serp/brand-profile', payload)
-}
-
-export function createSeoBrandAsset(payload) {
-  return client.post('/api/v1/seo/rank-serp/brand-assets', payload)
+export function fetchSeoOverview({ tenantId, engine = 'baidu' }) {
+  return client.get('/api/v1/seo/overview', { params: { tenant_id: tenantId, engine } })
 }
 
 export function fetchSeoAlerts({ tenantId, engine = 'baidu' }) {

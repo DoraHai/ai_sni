@@ -21,7 +21,6 @@ import {
   startSocialOAuth,
   verifySocialAccount,
 } from '../../api/geoContent'
-import NeedHintAlert from '../../components/NeedHintAlert.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
 const { tenantId } = useGeoTenant()
@@ -691,7 +690,6 @@ onMounted(load)
     </div>
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
-    <NeedHintAlert />
 
     <!-- 多媒自动推送矩阵 -->
     <section v-if="autoMatrix" class="block auto-overview">
