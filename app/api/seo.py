@@ -2990,6 +2990,11 @@ async def preflight_content_distribution(
             except SeoDistributionError as exc:
                 prepared = None
                 errors.append(str(exc))
+            image_count = (
+                len(BeautifulSoup(prepared["content_html"], "html.parser").find_all("img"))
+                if prepared
+                else 0
+            )
             previous = existing.get(
                 (content.id, connection.id, content.version_count or 1)
             )
@@ -3002,8 +3007,10 @@ async def preflight_content_distribution(
                     errors.append("当前文章版本已存在该平台发布任务")
             if connection.mode == "assisted":
                 warnings.append("需要在平台官方编辑器中人工确认发布")
-            if connection.platform_code == "wechat_official" and "<img" in body.lower():
-                warnings.append("正文含图片；微信可能过滤未上传到公众号素材库的外链图片")
+            if connection.platform_code == "wechat_official" and image_count > 20:
+                errors.append("微信公众号单篇文章最多自动处理20张正文图片")
+            elif connection.platform_code == "wechat_official" and image_count:
+                warnings.append(f"发布时将自动上传并替换 {image_count} 张公众号正文图片")
             if req.action == "publish":
                 warnings.append("正式发布后可能立即公开，请确认内容和平台账号")
             if not errors:
@@ -3023,6 +3030,7 @@ async def preflight_content_distribution(
                     "warnings": warnings,
                     "title_preview": prepared["title"] if prepared else None,
                     "content_chars": len(body),
+                    "image_count": image_count,
                 }
             )
     return {

@@ -208,6 +208,92 @@ def test_wechat_adapter_creates_draft_submits_publish_and_syncs_status(monkeypat
     assert synced.page_url == "https://mp.weixin.qq.com/s/example"
 
 
+def test_wechat_body_images_are_uploaded_deduplicated_and_replaced(monkeypatch: pytest.MonkeyPatch) -> None:
+    uploads: list[dict] = []
+
+    class FakeResponse:
+        status_code = 200
+        content = b"{}"
+
+        def json(self):
+            return {"url": "https://mmbiz.qpic.cn/material/image"}
+
+    class FakeClient:
+        async def post(self, url, **kwargs):
+            uploads.append({"url": url, **kwargs})
+            return FakeResponse()
+
+    async def fake_download(value: str, position: int):
+        assert value == "https://cdn.example.com/article.png"
+        return f"article-{position}.png", b"\x89PNG\r\n\x1a\ncontent", "image/png"
+
+    monkeypatch.setattr(distribution, "_download_wechat_image", fake_download)
+    rewritten, count = asyncio.run(
+        distribution._rewrite_wechat_images(
+            FakeClient(),
+            "access-token",
+            '<p><img src="https://cdn.example.com/article.png"><img data-src="https://cdn.example.com/article.png"></p>',
+        )
+    )
+
+    assert count == 2
+    assert len(uploads) == 1
+    assert uploads[0]["url"].endswith("/cgi-bin/media/uploadimg")
+    assert uploads[0]["params"] == {"access_token": "access-token"}
+    assert uploads[0]["files"]["media"][2] == "image/png"
+    assert rewritten.count('src="https://mmbiz.qpic.cn/material/image"') == 2
+    assert "data-src" not in rewritten
+
+
+def test_wechat_body_images_reject_private_targets_and_excessive_count() -> None:
+    with pytest.raises(distribution.SeoDistributionError, match="内网"):
+        asyncio.run(distribution._ensure_public_image_url("http://127.0.0.1/private.png"))
+
+    content = "<p>" + "".join(
+        f'<img src="https://cdn.example.com/{index}.png">' for index in range(21)
+    ) + "</p>"
+    with pytest.raises(distribution.SeoDistributionError, match="最多自动处理"):
+        asyncio.run(distribution._rewrite_wechat_images(object(), "token", content))
+
+
+def test_wechat_image_download_stream_checks_actual_format_and_size(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeStreamResponse:
+        status_code = 200
+        headers = {"content-length": "12"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def aiter_bytes(self):
+            yield b"not-an-image"
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        def stream(self, *_args, **_kwargs):
+            return FakeStreamResponse()
+
+    async def public_url(value: str) -> str:
+        return value
+
+    monkeypatch.setattr(distribution, "_ensure_public_image_url", public_url)
+    monkeypatch.setattr(distribution.httpx, "AsyncClient", lambda **_kwargs: FakeClient())
+
+    with pytest.raises(distribution.SeoDistributionError, match="JPG/PNG"):
+        asyncio.run(distribution._download_wechat_image("https://cdn.example.com/fake.jpg", 1))
+
+    FakeStreamResponse.headers = {"content-length": str(distribution._WECHAT_IMAGE_MAX_BYTES + 1)}
+    with pytest.raises(distribution.SeoDistributionError, match="1MB"):
+        asyncio.run(distribution._download_wechat_image("https://cdn.example.com/large.jpg", 1))
+
+
 def test_distribution_models_are_tenant_scoped_and_keep_credentials_private() -> None:
     assert SeoDistributionConnection.__tablename__ == "seo_distribution_connections"
     assert SeoContentPublication.__tablename__ == "seo_content_publications"
@@ -258,7 +344,7 @@ def test_distribution_frontend_exposes_guided_publish_flow() -> None:
     view = (root / "frontend/src/views/seo/SeoDistributionView.vue").read_text(encoding="utf-8")
     api = (root / "frontend/src/api/seo.js").read_text(encoding="utf-8")
 
-    for label in ("平台连接", "发布预检", "优先创建草稿", "复制并打开编辑器", "同一文章可保留多个平台链接"):
+    for label in ("平台连接", "发布预检", "优先创建草稿", "复制并打开编辑器", "同一文章可保留多个平台链接", "正在转存"):
         assert label in view
     for function_name in (
         "fetchSeoDistributionConnections",

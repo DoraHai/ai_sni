@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 import jwt
@@ -22,6 +22,8 @@ from app.security.crypto import decrypt, encrypt
 
 
 _WECHAT_TOKEN_CACHE: dict[str, tuple[str, float]] = {}
+_WECHAT_IMAGE_LIMIT = 20
+_WECHAT_IMAGE_MAX_BYTES = 1024 * 1024
 
 
 class SeoDistributionError(RuntimeError):
@@ -223,12 +225,12 @@ def _sanitize_article_html(value: str) -> str:
     for tag in list(soup.find_all(True)):
         if tag.name not in allowed_tags:
             tag.unwrap()
-    allowed_attributes = {"href", "src", "alt", "title"}
+    allowed_attributes = {"href", "src", "data-src", "alt", "title"}
     for tag in soup.find_all(True):
         for attribute in list(tag.attrs):
             if attribute.lower() not in allowed_attributes:
                 del tag.attrs[attribute]
-        for attribute in ("href", "src"):
+        for attribute in ("href", "src", "data-src"):
             target = str(tag.attrs.get(attribute) or "").strip()
             if target and urlparse(target).scheme.lower() not in {"", "http", "https"}:
                 del tag.attrs[attribute]
@@ -350,6 +352,105 @@ async def _wechat_access_token(client: httpx.AsyncClient, credentials: dict[str,
     return token
 
 
+async def _ensure_public_image_url(value: str) -> str:
+    raw = str(value or "").strip()
+    parsed = urlparse(raw)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        raise SeoDistributionError("正文图片必须使用完整的 HTTP/HTTPS 公网地址")
+    if parsed.username or parsed.password:
+        raise SeoDistributionError("正文图片地址不能包含账号或密码")
+    if parsed.hostname.lower() == "localhost":
+        raise SeoDistributionError("正文图片不能指向本机或内网地址")
+    try:
+        literal = ipaddress.ip_address(parsed.hostname)
+    except ValueError:
+        literal = None
+    if literal is not None and not literal.is_global:
+        raise SeoDistributionError("正文图片不能指向本机或内网地址")
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(
+            parsed.hostname,
+            parsed.port or (443 if parsed.scheme.lower() == "https" else 80),
+            type=socket.SOCK_STREAM,
+        )
+    except OSError as exc:
+        raise SeoDistributionError("正文图片域名无法解析") from exc
+    addresses = {item[4][0] for item in infos}
+    if not addresses or any(not ipaddress.ip_address(address).is_global for address in addresses):
+        raise SeoDistributionError("正文图片域名解析到了本机或内网地址")
+    return raw
+
+
+async def _download_wechat_image(value: str, position: int) -> tuple[str, bytes, str]:
+    url = value
+    timeout = httpx.Timeout(15.0, connect=8.0)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+        for _ in range(4):
+            url = await _ensure_public_image_url(url)
+            try:
+                async with client.stream("GET", url, headers={"Accept": "image/png,image/jpeg"}) as response:
+                    if response.status_code in {301, 302, 303, 307, 308}:
+                        location = response.headers.get("location")
+                        if not location:
+                            raise SeoDistributionError(f"第 {position} 张图片重定向地址无效")
+                        url = urljoin(url, location)
+                        continue
+                    if response.status_code >= 400:
+                        raise SeoDistributionError(
+                            f"第 {position} 张图片下载失败（HTTP {response.status_code}）"
+                        )
+                    declared_size = int(response.headers.get("content-length") or 0)
+                    if declared_size > _WECHAT_IMAGE_MAX_BYTES:
+                        raise SeoDistributionError(f"第 {position} 张图片超过微信 1MB 限制")
+                    data = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        data.extend(chunk)
+                        if len(data) > _WECHAT_IMAGE_MAX_BYTES:
+                            raise SeoDistributionError(f"第 {position} 张图片超过微信 1MB 限制")
+                    raw = bytes(data)
+                    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+                        return f"article-{position}.png", raw, "image/png"
+                    if raw.startswith(b"\xff\xd8\xff"):
+                        return f"article-{position}.jpg", raw, "image/jpeg"
+                    raise SeoDistributionError(f"第 {position} 张图片不是微信支持的 JPG/PNG 格式")
+            except httpx.HTTPError as exc:
+                raise SeoDistributionError(f"第 {position} 张图片下载失败") from exc
+    raise SeoDistributionError(f"第 {position} 张图片重定向次数过多")
+
+
+async def _rewrite_wechat_images(
+    client: httpx.AsyncClient,
+    token: str,
+    content_html: str,
+) -> tuple[str, int]:
+    soup = BeautifulSoup(content_html, "html.parser")
+    images = list(soup.find_all("img"))
+    if len(images) > _WECHAT_IMAGE_LIMIT:
+        raise SeoDistributionError(f"单篇文章最多自动处理 {_WECHAT_IMAGE_LIMIT} 张正文图片")
+    uploaded: dict[str, str] = {}
+    for position, tag in enumerate(images, 1):
+        source = str(tag.attrs.get("src") or tag.attrs.get("data-src") or "").strip()
+        if not source:
+            raise SeoDistributionError(f"第 {position} 张图片缺少有效地址")
+        if source not in uploaded:
+            filename, data, content_type = await _download_wechat_image(source, position)
+            try:
+                response = await client.post(
+                    "https://api.weixin.qq.com/cgi-bin/media/uploadimg",
+                    params={"access_token": token},
+                    files={"media": (filename, data, content_type)},
+                )
+            except httpx.HTTPError as exc:
+                raise SeoDistributionError(f"第 {position} 张图片上传微信失败") from exc
+            body = _response_json(response, f"上传第 {position} 张公众号正文图片")
+            uploaded[source] = _safe_remote_page_url(body.get("url")) or ""
+            if not uploaded[source]:
+                raise SeoDistributionError(f"第 {position} 张图片上传后未返回素材地址")
+        tag.attrs["src"] = uploaded[source]
+        tag.attrs.pop("data-src", None)
+    return str(soup), len(images)
+
+
 async def test_connection(
     platform_code: str,
     base_url: str | None,
@@ -411,6 +512,11 @@ async def publish_content(
         try:
             if platform_code == "wechat_official":
                 token = await _wechat_access_token(client, credentials)
+                wechat_content, image_count = await _rewrite_wechat_images(
+                    client,
+                    token,
+                    prepared["content_html"],
+                )
                 response = await client.post(
                     "https://api.weixin.qq.com/cgi-bin/draft/add",
                     params={"access_token": token},
@@ -420,7 +526,7 @@ async def publish_content(
                                 "article_type": "news",
                                 "title": prepared["title"],
                                 "digest": prepared["excerpt"],
-                                "content": prepared["content_html"],
+                                "content": wechat_content,
                                 "thumb_media_id": credentials["thumb_media_id"],
                                 "need_open_comment": 0,
                                 "only_fans_can_comment": 0,
@@ -436,7 +542,7 @@ async def publish_content(
                     return RemotePublishResult(
                         status="draft_created",
                         external_id=media_id,
-                        response_summary={"media_id": media_id},
+                        response_summary={"media_id": media_id, "image_count": image_count},
                     )
                 response = await client.post(
                     "https://api.weixin.qq.com/cgi-bin/freepublish/submit",
@@ -450,7 +556,11 @@ async def publish_content(
                 return RemotePublishResult(
                     status="publishing",
                     external_id=publish_id,
-                    response_summary={"media_id": media_id, "publish_id": publish_id},
+                    response_summary={
+                        "media_id": media_id,
+                        "publish_id": publish_id,
+                        "image_count": image_count,
+                    },
                 )
             endpoint = await ensure_public_endpoint(base_url or "")
             if platform_code == "wordpress":
