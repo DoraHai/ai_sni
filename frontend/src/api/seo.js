@@ -185,6 +185,10 @@ export function preflightSeoDistribution(payload) {
   return client.post('/api/v1/seo/content-distribution/preflight', payload)
 }
 
+export function adaptSeoDistributionContent(payload) {
+  return client.post('/api/v1/seo/content-distribution/adapt', payload, { timeout: 100000 })
+}
+
 export function publishSeoDistribution(payload) {
   return client.post('/api/v1/seo/content-distribution/publish', payload, { timeout: 360000 })
 }

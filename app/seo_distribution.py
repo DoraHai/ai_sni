@@ -7,6 +7,7 @@ import hashlib
 import html
 import ipaddress
 import json
+import re
 import socket
 import time
 from dataclasses import dataclass
@@ -130,8 +131,49 @@ PLATFORM_CATALOG: dict[str, dict[str, Any]] = {
 }
 
 
+PLATFORM_CONTENT_RULES: dict[str, dict[str, Any]] = {
+    "wordpress": {
+        "title_max": 80,
+        "style": "搜索友好、结构清晰，保留完整论证和可扫描的小标题",
+    },
+    "ghost": {
+        "title_max": 80,
+        "style": "专业博客语气，开头明确价值，正文层级清楚并保留完整事实",
+    },
+    "zhihu": {
+        "title_max": 60,
+        "style": "先直接回答核心问题，再展开依据、适用场景和可执行建议",
+    },
+    "csdn": {
+        "title_max": 60,
+        "style": "面向技术读者，突出问题、实现步骤、注意事项和结论",
+    },
+    "juejin": {
+        "title_max": 60,
+        "style": "面向开发者，表达自然克制，强调实践过程、关键判断和复盘",
+    },
+    "jianshu": {
+        "title_max": 60,
+        "style": "阅读节奏自然，段落简洁，保留事实边界和清晰结论",
+    },
+    "wechat_official": {
+        "title_max": 32,
+        "style": "适合公众号阅读，导语简洁，小标题清楚，结尾给出稳健行动建议",
+    },
+}
+
+
 def platform_catalog() -> list[dict[str, Any]]:
-    return [{"code": code, **value} for code, value in PLATFORM_CATALOG.items()]
+    return [
+        {
+            "code": code,
+            **value,
+            "content_rules": PLATFORM_CONTENT_RULES.get(
+                code, {"title_max": 60, "style": "保持原文事实并优化平台可读性"}
+            ),
+        }
+        for code, value in PLATFORM_CATALOG.items()
+    ]
 
 
 def platform_definition(code: str) -> dict[str, Any]:
@@ -139,6 +181,14 @@ def platform_definition(code: str) -> dict[str, Any]:
     if not item:
         raise SeoDistributionError("不支持的分发平台")
     return item
+
+
+def platform_content_rules(code: str) -> dict[str, Any]:
+    platform_definition(code)
+    return PLATFORM_CONTENT_RULES.get(
+        (code or "").strip().lower(),
+        {"title_max": 60, "style": "保持原文事实并优化平台可读性"},
+    )
 
 
 def normalize_base_url(value: str | None) -> str | None:
@@ -216,7 +266,7 @@ def sanitize_article_html(value: str) -> str:
     soup = BeautifulSoup(value, "html.parser")
     blocked_tags = {"script", "style", "iframe", "object", "embed", "form", "input", "button", "link", "meta"}
     allowed_tags = {
-        "p", "h1", "h2", "h3", "h4", "h5", "h6", "a", "img", "ul", "ol", "li",
+        "p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "a", "img", "ul", "ol", "li",
         "strong", "b", "em", "i", "u", "s", "blockquote", "pre", "code", "br", "hr",
         "table", "thead", "tbody", "tr", "th", "td", "figure", "figcaption",
     }
@@ -256,9 +306,9 @@ def prepare_content(title: str, content: str, platform_code: str) -> dict[str, s
         raise SeoDistributionError("文章缺少标题")
     if not clean_content:
         raise SeoDistributionError("文章缺少可发布正文")
-    max_title = 32 if platform_code == "wechat_official" else 80 if platform_code in {"wordpress", "ghost"} else 60
+    max_title = int(platform_content_rules(platform_code)["title_max"])
     adapted_title = clean_title[:max_title]
-    if "<p" in clean_content.lower() or "<h" in clean_content.lower():
+    if re.search(r"<[a-zA-Z][^>]*>", clean_content):
         content_html = sanitize_article_html(clean_content)
         adapted_content = content_html
         plain = BeautifulSoup(content_html, "html.parser").get_text(" ", strip=True)

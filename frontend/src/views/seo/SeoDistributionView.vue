@@ -1,7 +1,8 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  adaptSeoDistributionContent,
   completeSeoManualPublication,
   createSeoDistributionConnection,
   createSeoManualPublication,
@@ -79,17 +80,36 @@ const attemptsLoading = ref(false)
 const attemptPublication = ref(null)
 const attempts = ref([])
 
-const handoffTitle = computed(() => handoffItem.value?.adapted_title || handoffItem.value?.content_title || '')
-const handoffHtml = computed(() => handoffItem.value?.adapted_content || '')
-const handoffPlain = computed(() => {
-  const source = handoffHtml.value
+const variantDialog = ref(false)
+const variantLoading = ref(false)
+const variantAiLoading = ref(false)
+const variantDirty = ref(false)
+const variantEditor = ref(null)
+const variantMeta = ref(null)
+const variantDrafts = reactive({})
+const variantForm = reactive({ title: '', content_html: '', instruction: '' })
+
+function htmlToPlain(source) {
   if (!source) return ''
   if (!/<[a-z][\s\S]*>/i.test(source)) return source
   const document = new DOMParser().parseFromString(source, 'text/html')
   document.body.querySelectorAll('br').forEach(node => node.replaceWith('\n'))
   document.body.querySelectorAll('p,h1,h2,h3,h4,h5,h6,li,blockquote').forEach(node => node.append('\n'))
   return (document.body.textContent || '').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+const handoffTitle = computed(() => handoffItem.value?.adapted_title || handoffItem.value?.content_title || '')
+const handoffHtml = computed(() => handoffItem.value?.adapted_content || '')
+const handoffPlain = computed(() => {
+  return htmlToPlain(handoffHtml.value)
 })
+const variantPlain = computed(() => htmlToPlain(variantForm.content_html))
+const variantKeywordChecks = computed(() => (variantMeta.value?.keyword_checks || []).map(item => ({
+  ...item,
+  in_title: variantForm.title.toLocaleLowerCase().includes(item.keyword.toLocaleLowerCase()),
+  in_content: variantPlain.value.toLocaleLowerCase().includes(item.keyword.toLocaleLowerCase()),
+})))
+const variantMissingKeywords = computed(() => variantKeywordChecks.value.filter(item => !item.in_content))
 
 const statusMeta = {
   pending: ['待处理', 'warning'],
@@ -325,6 +345,7 @@ function openBatch(item = null) {
   batchPreview.value = null
   batchResults.value = []
   batchProgress.value = 0
+  Object.keys(variantDrafts).forEach(key => delete variantDrafts[key])
   batchStep.value = 0
   batchDialog.value = true
 }
@@ -350,12 +371,139 @@ async function runPreflight() {
   }
 }
 
+const variantKey = item => `${item.content_id}:${item.connection_id}`
+
+async function applyVariantResult(result, instruction = '') {
+  variantMeta.value = result
+  Object.assign(variantForm, {
+    title: result.title || '',
+    content_html: result.content_html || result.content || '',
+    instruction,
+  })
+  variantDirty.value = false
+  await nextTick()
+  if (variantEditor.value) variantEditor.value.innerHTML = variantForm.content_html
+}
+
+async function fetchVariant(item, useAi = false) {
+  const result = await adaptSeoDistributionContent({
+    tenant_id: currentTenantId.value,
+    site_id: siteId.value,
+    content_id: item.content_id,
+    connection_id: item.connection_id,
+    use_ai: useAi,
+    instruction: useAi ? variantForm.instruction.trim() || null : null,
+  })
+  await applyVariantResult(result, variantForm.instruction)
+}
+
+async function openVariant(item) {
+  variantDialog.value = true
+  variantMeta.value = null
+  const cached = variantDrafts[variantKey(item)]
+  if (cached) {
+    await applyVariantResult(cached, cached.instruction || '')
+    variantDirty.value = false
+    return
+  }
+  variantLoading.value = true
+  try {
+    await fetchVariant(item, false)
+  } catch (e) {
+    variantDialog.value = false
+    ElMessage.error(e.message)
+  } finally {
+    variantLoading.value = false
+  }
+}
+
+function syncVariantEditor() {
+  variantForm.content_html = variantEditor.value?.innerHTML || ''
+  variantDirty.value = true
+}
+
+function pasteVariantText(event) {
+  event.preventDefault()
+  document.execCommand('insertText', false, event.clipboardData?.getData('text/plain') || '')
+  syncVariantEditor()
+}
+
+async function generateAiVariant() {
+  if (!variantMeta.value) return
+  if (variantDirty.value) {
+    try {
+      await ElMessageBox.confirm('AI重新生成会覆盖当前未保存编辑，确认继续？', '重新生成平台专属稿', { type: 'warning', confirmButtonText: '确认生成', cancelButtonText: '保留当前稿' })
+    } catch { return }
+  }
+  variantAiLoading.value = true
+  try {
+    await fetchVariant(variantMeta.value, true)
+    ElMessage.success('AI平台专属稿已生成，请核对事实和关键词')
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    variantAiLoading.value = false
+  }
+}
+
+function saveVariant() {
+  syncVariantEditor()
+  const titleMax = variantMeta.value?.content_rules?.title_max || 60
+  if (!variantForm.title.trim()) return ElMessage.warning('平台专属标题不能为空')
+  if (variantForm.title.trim().length > titleMax) return ElMessage.warning(`标题最多${titleMax}个字符`)
+  if (!variantPlain.value) return ElMessage.warning('平台专属正文不能为空')
+  if (variantMissingKeywords.value.length) return ElMessage.warning(`请补齐目标关键词：${variantMissingKeywords.value.map(item => item.keyword).join('、')}`)
+  variantDrafts[variantKey(variantMeta.value)] = {
+    ...variantMeta.value,
+    title: variantForm.title.trim(),
+    content: variantForm.content_html,
+    content_html: variantForm.content_html,
+    instruction: variantForm.instruction,
+    keyword_checks: variantKeywordChecks.value,
+    content_chars: variantPlain.value.length,
+  }
+  variantDirty.value = false
+  variantDialog.value = false
+  ElMessage.success('平台专属稿已加入本批发布任务')
+}
+
+async function closeVariant(done) {
+  if (!variantDirty.value) return done()
+  try {
+    await ElMessageBox.confirm('当前平台专属稿尚未保存，确认放弃修改？', '放弃专属稿修改', { type: 'warning', confirmButtonText: '放弃修改', cancelButtonText: '继续编辑' })
+    done()
+  } catch { /* keep editing */ }
+}
+
+function cancelVariant() {
+  closeVariant(() => { variantDialog.value = false })
+}
+
+async function restoreBaseVariant() {
+  if (!variantMeta.value) return
+  if (variantDirty.value) {
+    try {
+      await ElMessageBox.confirm('恢复基础适配会覆盖当前未保存编辑，确认继续？', '恢复基础适配稿', { type: 'warning', confirmButtonText: '确认恢复', cancelButtonText: '继续编辑' })
+    } catch { return }
+  }
+  variantLoading.value = true
+  try {
+    await fetchVariant(variantMeta.value, false)
+    ElMessage.success('已恢复平台基础适配稿')
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    variantLoading.value = false
+  }
+}
+
 async function executeBatch() {
   const rows = (batchPreview.value?.rows || []).filter(item => item.status === 'ready')
   if (!rows.length) return ElMessage.warning('没有可以执行的任务')
   if (batchForm.action === 'publish') {
+    const customized = rows.filter(item => variantDrafts[variantKey(item)]).length
     try {
-      await ElMessageBox.confirm(`即将正式发布 ${rows.length} 个任务，内容可能立即对外公开。确认继续？`, '确认正式发布', { type: 'warning', confirmButtonText: '确认发布', cancelButtonText: '返回检查' })
+      await ElMessageBox.confirm(`即将正式发布 ${rows.length} 个任务，其中 ${customized} 个使用平台专属稿；内容可能立即对外公开。确认继续？`, '确认正式发布', { type: 'warning', confirmButtonText: '确认发布', cancelButtonText: '返回检查' })
     } catch { return }
   }
   batchRunning.value = true
@@ -364,6 +512,7 @@ async function executeBatch() {
   for (let index = 0; index < rows.length; index += 1) {
     const item = rows[index]
     const task = batchResults.value[index]
+    const variant = variantDrafts[variantKey(item)]
     task.run_status = 'running'
     batchCurrent.value = `${item.content_title} · ${item.connection_name}${item.image_count ? ` · 正在转存 ${item.image_count} 张图片` : ''}`
     try {
@@ -374,6 +523,9 @@ async function executeBatch() {
         connection_id: item.connection_id,
         action: batchForm.action,
         confirm: batchForm.action === 'publish',
+        source_version: variant?.source_version,
+        adapted_title: variant?.title,
+        adapted_content: variant?.content_html,
       })
       Object.assign(task, { ok: true, result, run_status: 'succeeded' })
     } catch (e) {
@@ -697,6 +849,49 @@ onMounted(loadSites)
       <template #footer><el-button @click="connectionDialog = false">取消</el-button><el-button type="primary" :loading="connectionSaving" @click="saveConnection">{{ connectionForm.test_after_save && selectedPlatform?.mode === 'api' ? '保存并测试' : '保存连接' }}</el-button></template>
     </el-dialog>
 
+    <el-dialog v-model="variantDialog" title="平台专属稿" width="1080px" :before-close="closeVariant" :close-on-click-modal="!variantDirty" destroy-on-close>
+      <div v-loading="variantLoading" class="variant-workbench">
+        <template v-if="variantMeta">
+          <div class="variant-heading">
+            <span><b>{{ variantMeta.platform_name }} · {{ variantMeta.connection_name }}</b><small>基于内容版本 {{ variantMeta.source_version }} 生成；发布前仍需人工核对事实、链接与排版。</small></span>
+            <el-tag :type="variantMeta.ai_generated ? 'success' : 'info'">{{ variantMeta.ai_generated ? 'AI 专属稿' : '基础适配稿' }}</el-tag>
+          </div>
+          <div class="variant-columns">
+            <section class="variant-source">
+              <header><b>原始文章</b><span>只读对照</span></header>
+              <h3>{{ variantMeta.source_title }}</h3>
+              <div class="variant-preview" v-html="variantMeta.source_content_html"></div>
+            </section>
+            <section class="variant-edit">
+              <header><b>发布到 {{ variantMeta.platform_name }}</b><span>{{ variantPlain.length }} 字</span></header>
+              <el-form label-position="top">
+                <el-form-item :label="`专属标题（最多 ${variantMeta.content_rules?.title_max || 60} 字）`" required>
+                  <el-input v-model="variantForm.title" :maxlength="variantMeta.content_rules?.title_max || 60" show-word-limit @input="variantDirty = true" />
+                </el-form-item>
+                <el-form-item label="专属正文" required>
+                  <div ref="variantEditor" class="variant-editor" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="请输入平台专属正文" @input="syncVariantEditor" @paste="pasteVariantText"></div>
+                </el-form-item>
+              </el-form>
+            </section>
+          </div>
+          <section class="variant-keywords">
+            <header><b>目标关键词覆盖</b><span>正文必须完整包含已选择的关键词原词，标题覆盖为建议项。</span></header>
+            <div v-if="variantKeywordChecks.length" class="keyword-check-list">
+              <span v-for="item in variantKeywordChecks" :key="item.keyword_id"><b>{{ item.keyword }}</b><el-tag size="small" :type="item.in_title ? 'success' : 'info'">标题{{ item.in_title ? '已覆盖' : '未覆盖' }}</el-tag><el-tag size="small" :type="item.in_content ? 'success' : 'danger'">正文{{ item.in_content ? '已覆盖' : '缺失' }}</el-tag></span>
+            </div>
+            <el-empty v-else description="该文章未绑定目标关键词" :image-size="46" />
+          </section>
+          <section class="variant-ai">
+            <header><span><b>AI 生成平台专属稿</b><small>{{ variantMeta.content_rules?.style }}</small></span><el-button :loading="variantAiLoading" @click="generateAiVariant">AI 重新生成</el-button></header>
+            <el-input v-model="variantForm.instruction" type="textarea" :rows="2" maxlength="2000" show-word-limit placeholder="可选：补充语气、读者或结构要求；AI 不会执行原文中夹带的指令。" />
+            <el-alert v-if="variantMeta.feedback" :title="variantMeta.feedback" type="info" :closable="false" show-icon />
+            <el-alert v-for="message in variantMeta.warnings || []" :key="message" :title="message" type="warning" :closable="false" show-icon />
+          </section>
+        </template>
+      </div>
+      <template #footer><el-button @click="restoreBaseVariant">恢复基础适配</el-button><el-button @click="cancelVariant">取消</el-button><el-button type="primary" :disabled="variantMissingKeywords.length > 0" @click="saveVariant">保存并用于本批发布</el-button></template>
+    </el-dialog>
+
     <el-dialog v-model="batchDialog" title="批量分发" width="980px" :close-on-click-modal="!batchRunning">
       <el-steps :active="batchStep" finish-status="success" simple><el-step title="选择" /><el-step title="预检" /><el-step title="执行" /><el-step title="完成" /></el-steps>
       <div v-if="batchStep === 0" class="batch-select">
@@ -709,7 +904,7 @@ onMounted(loadSites)
       <div v-else-if="batchStep === 1 && batchPreview" class="batch-preview">
         <el-alert :title="`共 ${batchPreview.total} 个任务：${batchPreview.ready} 个可执行，${batchPreview.blocked} 个被拦截。`" :type="batchPreview.blocked ? 'warning' : 'success'" :closable="false" show-icon />
         <el-table :data="batchPreview.rows" max-height="420" size="small">
-          <el-table-column prop="content_title" label="文章" min-width="190" show-overflow-tooltip /><el-table-column prop="connection_name" label="平台" width="145" /><el-table-column prop="mode" label="方式" width="100"><template #default="scope">{{ modeName(scope.row.mode) }}</template></el-table-column><el-table-column prop="content_chars" label="字数" width="70" /><el-table-column prop="image_count" label="图片" width="65"><template #default="scope">{{ scope.row.image_count ? `${scope.row.image_count} 张` : '—' }}</template></el-table-column><el-table-column label="预检结果" min-width="260"><template #default="scope"><div class="preflight-result"><el-tag :type="scope.row.status === 'ready' ? 'success' : 'danger'">{{ scope.row.status === 'ready' ? '可执行' : '已拦截' }}</el-tag><span v-for="message in scope.row.errors" :key="`e-${message}`" class="preflight-error">{{ message }}</span><span v-for="message in scope.row.warnings" :key="`w-${message}`" class="preflight-warning">{{ message }}</span></div></template></el-table-column>
+          <el-table-column prop="content_title" label="文章" min-width="190" show-overflow-tooltip /><el-table-column prop="connection_name" label="平台" width="145" /><el-table-column prop="mode" label="方式" width="100"><template #default="scope">{{ modeName(scope.row.mode) }}</template></el-table-column><el-table-column prop="content_chars" label="字数" width="70" /><el-table-column prop="image_count" label="图片" width="65"><template #default="scope">{{ scope.row.image_count ? `${scope.row.image_count} 张` : '—' }}</template></el-table-column><el-table-column label="平台专属稿" width="112"><template #default="scope"><el-button v-if="scope.row.status === 'ready'" link :type="variantDrafts[variantKey(scope.row)] ? 'success' : 'primary'" @click="openVariant(scope.row)">{{ variantDrafts[variantKey(scope.row)] ? '已编辑' : '生成/编辑' }}</el-button><span v-else class="muted-text">不可编辑</span></template></el-table-column><el-table-column label="预检结果" min-width="260"><template #default="scope"><div class="preflight-result"><el-tag :type="scope.row.status === 'ready' ? 'success' : 'danger'">{{ scope.row.status === 'ready' ? '可执行' : '已拦截' }}</el-tag><span v-for="message in scope.row.errors" :key="`e-${message}`" class="preflight-error">{{ message }}</span><span v-for="message in scope.row.warnings" :key="`w-${message}`" class="preflight-warning">{{ message }}</span></div></template></el-table-column>
         </el-table>
       </div>
       <div v-else class="batch-execution">
@@ -787,4 +982,5 @@ onMounted(loadSites)
 .upload-state{margin:0;padding:9px 12px;border-radius:7px;background:#eef4ff;color:#315a9d;font-size:11px}
 .connection-error,.task-error{display:block;margin-top:3px;color:#c2413a!important;white-space:normal!important}.task-toolbar{display:flex;align-items:center;gap:8px}.task-toolbar .el-select{width:145px}.preflight-result{display:grid;align-items:start;gap:4px}.preflight-result .el-tag{width:max-content}.preflight-error{color:#c2413a;font-size:10px}.preflight-warning{color:#a16207;font-size:10px}
 .handoff-workbench{display:grid;gap:14px}.handoff-heading{display:flex;align-items:center;justify-content:space-between}.handoff-heading span,.handoff-heading b,.handoff-heading small{display:block}.handoff-heading small{margin-top:4px;color:#7b8492;font-size:10.5px}.handoff-workbench section{display:grid;gap:10px;padding:14px;border:1px solid #e2e7ee;border-radius:9px;background:#fafbfd}.handoff-workbench section header{display:flex;align-items:center;justify-content:space-between}.handoff-workbench section header b{font-size:12px}.handoff-workbench section header span{color:#8992a0;font-size:10px}.handoff-field{display:grid;grid-template-columns:52px minmax(0,1fr) 110px;align-items:center;gap:8px}.handoff-field label,.handoff-body label{color:#687386;font-size:10.5px}.handoff-body{display:grid;grid-template-columns:minmax(0,1fr) 150px;align-items:end;gap:8px}.handoff-body label{grid-column:1/-1}.handoff-publish-card .el-button{width:max-content}.handoff-complete-card .el-checkbox{height:auto;white-space:normal}@media(max-width:700px){.handoff-field,.handoff-body{grid-template-columns:1fr}.handoff-field label,.handoff-body label{grid-column:1}.handoff-workbench section header{align-items:flex-start;flex-direction:column;gap:3px}}
+.variant-workbench{min-height:220px}.variant-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.variant-heading span,.variant-heading b,.variant-heading small{display:block}.variant-heading small{margin-top:4px;color:#7b8492;font-size:10.5px}.variant-columns{display:grid;grid-template-columns:1fr 1fr;gap:14px}.variant-columns>section,.variant-keywords,.variant-ai{min-width:0;padding:14px;border:1px solid #e1e6ed;border-radius:9px;background:#fafbfd}.variant-columns section>header,.variant-keywords>header,.variant-ai>header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:11px}.variant-columns header b,.variant-keywords header b,.variant-ai header b{font-size:12px}.variant-columns header span,.variant-keywords header span,.variant-ai header small{color:#818b9a;font-size:10px}.variant-source h3{margin:0 0 10px;font-size:15px}.variant-preview,.variant-editor{height:310px;overflow:auto;padding:12px;border:1px solid #dce2ea;border-radius:7px;background:#fff;color:#303846;font-size:12px;line-height:1.75}.variant-preview :deep(img),.variant-editor :deep(img){max-width:100%;height:auto}.variant-editor{outline:none}.variant-editor:focus{border-color:#409eff;box-shadow:0 0 0 1px #409eff}.variant-editor:empty::before{color:#a8abb2;content:attr(data-placeholder)}.variant-keywords,.variant-ai{display:grid;gap:10px;margin-top:14px}.keyword-check-list{display:flex;flex-wrap:wrap;gap:8px}.keyword-check-list>span{display:flex;align-items:center;gap:5px;padding:6px 8px;border-radius:7px;background:#fff}.keyword-check-list b{margin-right:2px;font-size:10.5px}.variant-ai header span,.variant-ai header b,.variant-ai header small{display:block}.variant-ai header small{margin-top:3px}.variant-ai .el-alert+.el-alert{margin-top:6px}@media(max-width:800px){.variant-columns{grid-template-columns:1fr}.variant-preview,.variant-editor{height:260px}.variant-heading{align-items:flex-start;flex-direction:column;gap:8px}}
 </style>

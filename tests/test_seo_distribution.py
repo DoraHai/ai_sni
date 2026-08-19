@@ -2,18 +2,22 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.api.seo import (
+    DistributionAdaptRequest,
     DistributionManualComplete,
     DistributionPreflightRequest,
     DistributionPublishRequest,
     DistributionRetryRequest,
     _distribution_content,
+    adapt_content_distribution,
     complete_manual_publication,
     preflight_content_distribution,
+    publish_content_distribution,
     retry_content_publication,
 )
 from app.security.auth import AuthContext
@@ -21,6 +25,7 @@ from app.models.seo import (
     SeoContentAsset,
     SeoContentPublication,
     SeoDistributionConnection,
+    SeoKeywordAsset,
     SeoPublishAttempt,
 )
 from app import seo_distribution as distribution
@@ -37,6 +42,8 @@ def test_platform_catalog_distinguishes_api_assisted_and_planned_channels() -> N
     assert catalog["wechat_official"]["available"] is True
     assert catalog["wechat_official"]["base_url_required"] is False
     assert "async_status" in catalog["wechat_official"]["capabilities"]
+    assert catalog["wechat_official"]["content_rules"]["title_max"] == 32
+    assert catalog["zhihu"]["content_rules"]["style"]
 
 
 @pytest.mark.parametrize(
@@ -64,8 +71,8 @@ def test_credentials_are_platform_bounded_and_content_is_prepared_safely() -> No
 
     assert credentials == {"username": "writer", "application_password": "secret"}
     assert prepared["title"] == "SEO 指南"
-    assert "&lt;script&gt;" in prepared["content_html"]
     assert "<script>" not in prepared["content_html"]
+    assert "alert(1)" not in prepared["content_html"]
 
     rich = distribution.prepare_content(
         "富文本",
@@ -76,6 +83,15 @@ def test_credentials_are_platform_bounded_and_content_is_prepared_safely() -> No
     assert "onclick" not in rich["content_html"].lower()
     assert "javascript:" not in rich["content_html"].lower()
     assert rich["excerpt"] == "章节 正文 链接"
+
+    div_rich = distribution.prepare_content(
+        "编辑器正文",
+        '<div>第一段</div><div onclick="steal()">第二段<script>alert(1)</script></div>',
+        "wordpress",
+    )
+    assert "script" not in div_rich["content_html"].lower()
+    assert "onclick" not in div_rich["content_html"].lower()
+    assert div_rich["excerpt"] == "第一段 第二段"
 
     svg = distribution.prepare_content(
         "富文本",
@@ -361,6 +377,190 @@ def test_distribution_content_rejects_cross_site_asset() -> None:
     assert getattr(exc.value, "status_code", None) == 404
 
 
+def test_platform_variant_adapts_content_and_reports_keyword_coverage() -> None:
+    content = SeoContentAsset(
+        id=5,
+        tenant_id=1,
+        site_id=8,
+        keyword_id=21,
+        keyword_ids=[21, 22],
+        content_type="article",
+        title="Growth Sniper SEO 内容分发实战指南",
+        draft="<p>Growth Sniper 帮助团队完成 SEO 内容分发，并持续优化关键词排名。</p>",
+        status="drafting",
+        version_count=3,
+    )
+    connection = SeoDistributionConnection(
+        id=9,
+        tenant_id=1,
+        platform_code="zhihu",
+        name="官方知乎",
+        mode="assisted",
+        enabled=True,
+        status="ready",
+    )
+    keywords = [
+        SeoKeywordAsset(id=21, tenant_id=1, site_id=8, keyword="SEO 内容分发", status="tracking"),
+        SeoKeywordAsset(id=22, tenant_id=1, site_id=8, keyword="关键词排名", status="tracking"),
+    ]
+    request = DistributionAdaptRequest(
+        tenant_id=1,
+        site_id=8,
+        content_id=5,
+        connection_id=9,
+    )
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
+        patch("app.api.seo._distribution_connection", new=AsyncMock(return_value=connection)),
+        patch("app.api.seo._content_keywords", new=AsyncMock(return_value=keywords)),
+    ):
+        result = asyncio.run(adapt_content_distribution(request, AsyncMock(), context))
+
+    assert result["platform_name"] == "知乎"
+    assert result["source_version"] == 3
+    assert result["content_rules"]["title_max"] == 60
+    assert result["source_content_html"].startswith("<p>")
+    assert all(item["in_content"] for item in result["keyword_checks"])
+    assert result["ai_generated"] is False
+
+
+def test_ai_platform_variant_retries_missing_keyword_and_sanitizes_html() -> None:
+    content = SeoContentAsset(
+        id=5,
+        tenant_id=1,
+        site_id=8,
+        keyword_id=21,
+        keyword_ids=[21],
+        content_type="article",
+        title="内容分发指南",
+        draft="<p>原始正文包含 SEO 内容分发。</p>",
+        status="drafting",
+        version_count=2,
+    )
+    connection = SeoDistributionConnection(
+        id=9,
+        tenant_id=1,
+        platform_code="zhihu",
+        name="官方知乎",
+        mode="assisted",
+        enabled=True,
+        status="ready",
+    )
+    keyword = SeoKeywordAsset(id=21, tenant_id=1, site_id=8, keyword="SEO 内容分发", status="tracking")
+    request = DistributionAdaptRequest(
+        tenant_id=1,
+        site_id=8,
+        content_id=5,
+        connection_id=9,
+        use_ai=True,
+        instruction="面向内容运营负责人",
+    )
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+    chat_mock = AsyncMock(
+        side_effect=[
+            {"title": "首轮标题", "content": "<p>首轮遗漏关键词</p>", "feedback": "首轮"},
+            {"title": "SEO 内容分发实践", "content": "<p>SEO 内容分发修订稿</p><script>bad()</script>", "feedback": "已修订"},
+        ]
+    )
+
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
+        patch("app.api.seo._distribution_connection", new=AsyncMock(return_value=connection)),
+        patch("app.api.seo._content_keywords", new=AsyncMock(return_value=[keyword])),
+        patch("app.api.seo._tenant", new=AsyncMock(return_value=SimpleNamespace(name="Growth Sniper", industry="SaaS"))),
+        patch("app.api.seo.is_enabled", return_value=True),
+        patch("app.api.seo.chat_json", new=chat_mock),
+    ):
+        result = asyncio.run(adapt_content_distribution(request, AsyncMock(), context))
+
+    assert chat_mock.await_count == 2
+    assert result["ai_generated"] is True
+    assert result["feedback"] == "已修订"
+    assert result["keyword_checks"][0]["in_content"] is True
+    assert "script" not in result["content_html"].lower()
+
+
+def test_custom_variant_rejects_stale_source_and_missing_target_keyword() -> None:
+    content = SeoContentAsset(
+        id=5,
+        tenant_id=1,
+        site_id=8,
+        keyword_id=21,
+        keyword_ids=[21],
+        content_type="article",
+        title="SEO 内容分发",
+        draft="<p>SEO 内容分发正文</p>",
+        status="drafting",
+        version_count=4,
+    )
+    connection = SeoDistributionConnection(
+        id=9,
+        tenant_id=1,
+        platform_code="wordpress",
+        name="品牌官网",
+        mode="api",
+        base_url="https://example.com",
+        enabled=True,
+        status="connected",
+        has_credentials=True,
+    )
+    keyword = SeoKeywordAsset(id=21, tenant_id=1, site_id=8, keyword="SEO 内容分发", status="tracking")
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+
+    stale = DistributionPublishRequest(
+        tenant_id=1,
+        site_id=8,
+        content_id=5,
+        connection_id=9,
+        source_version=3,
+        adapted_title="专属标题",
+        adapted_content="<p>SEO 内容分发专属稿</p>",
+    )
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
+    ):
+        with pytest.raises(Exception) as exc:
+            asyncio.run(publish_content_distribution(stale, AsyncMock(), context))
+    assert getattr(exc.value, "status_code", None) == 409
+    assert "新版本" in str(getattr(exc.value, "detail", ""))
+
+    missing = stale.model_copy(update={"source_version": 4, "adapted_content": "<div>没有目标词的专属正文</div>"})
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
+        patch("app.api.seo._distribution_connection", new=AsyncMock(return_value=connection)),
+        patch("app.api.seo._content_keywords", new=AsyncMock(return_value=[keyword])),
+        patch("app.api.seo.decrypt_credentials", return_value={"username": "u", "application_password": "p"}),
+    ):
+        with pytest.raises(Exception) as exc:
+            asyncio.run(publish_content_distribution(missing, AsyncMock(), context))
+    assert getattr(exc.value, "status_code", None) == 400
+    assert "SEO 内容分发" in str(getattr(exc.value, "detail", ""))
+
+
 def test_preflight_blocks_unconfigured_api_connection() -> None:
     content = SeoContentAsset(
         id=5,
@@ -440,6 +640,8 @@ def test_confirmed_failed_task_retries_same_content_version() -> None:
         publish_mode="draft",
         status="failed",
         source_version=2,
+        adapted_title="知乎专属 SEO 标题",
+        adapted_content="<div>保留的专属正文</div>",
         last_error="上次请求失败",
     )
     content = SeoContentAsset(
@@ -476,22 +678,20 @@ def test_confirmed_failed_task_retries_same_content_version() -> None:
     )
     request = DistributionRetryRequest(tenant_id=1, site_id=8, confirm=True)
 
+    publish_mock = AsyncMock(
+        return_value=distribution.RemotePublishResult(
+            status="draft_created",
+            external_id="post-1",
+            page_url="https://example.com/post-1",
+            response_summary={"http_status": 201},
+        )
+    )
     with (
         patch("app.api.seo._seo_site", new=AsyncMock()),
         patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
         patch("app.api.seo._distribution_connection", new=AsyncMock(return_value=connection)),
         patch("app.api.seo.decrypt_credentials", return_value={"username": "u", "application_password": "p"}),
-        patch(
-            "app.api.seo.publish_content",
-            new=AsyncMock(
-                return_value=distribution.RemotePublishResult(
-                    status="draft_created",
-                    external_id="post-1",
-                    page_url="https://example.com/post-1",
-                    response_summary={"http_status": 201},
-                )
-            ),
-        ),
+        patch("app.api.seo.publish_content", new=publish_mock),
     ):
         result = asyncio.run(retry_content_publication(12, request, session, context))
 
@@ -501,6 +701,9 @@ def test_confirmed_failed_task_retries_same_content_version() -> None:
     assert publication.status == "draft_created"
     assert publication.last_error is None
     assert result["external_id"] == "post-1"
+    prepared = publish_mock.await_args.args[3]
+    assert prepared["title"] == "知乎专属 SEO 标题"
+    assert "保留的专属正文" in prepared["content_html"]
 
 
 def test_manual_handoff_completion_is_site_scoped_and_audited() -> None:
@@ -572,10 +775,11 @@ def test_distribution_frontend_exposes_guided_publish_flow() -> None:
     view = (root / "frontend/src/views/seo/SeoDistributionView.vue").read_text(encoding="utf-8")
     api = (root / "frontend/src/api/seo.js").read_text(encoding="utf-8")
 
-    for label in ("平台连接", "编辑平台连接", "保存并测试", "发布预检", "优先创建草稿", "辅助发布交接台", "复制正文（保留格式）", "打开官方编辑器", "确认后重试", "发布尝试记录", "同一文章可保留多个平台链接", "正在转存"):
+    for label in ("平台连接", "编辑平台连接", "保存并测试", "发布预检", "优先创建草稿", "平台专属稿", "AI 生成平台专属稿", "目标关键词覆盖", "保存并用于本批发布", "辅助发布交接台", "复制正文（保留格式）", "打开官方编辑器", "确认后重试", "发布尝试记录", "同一文章可保留多个平台链接", "正在转存"):
         assert label in view
     for function_name in (
         "fetchSeoDistributionConnections",
+        "adaptSeoDistributionContent",
         "preflightSeoDistribution",
         "publishSeoDistribution",
         "completeSeoManualPublication",
