@@ -14,6 +14,7 @@ const currentTitle = computed(() => route.meta.title || '')
 const currentWorkflow = computed(() => route.meta.workflow || '')
 const bare = computed(() => route.meta.bare) // 门户、诊断等无框页面
 const tenantPopoverOpen = ref(false)
+const currentModuleLabel = 'SEM 智投'
 
 const platformShortcuts = [
   { label: '全域驾驶舱', path: '/deal-sniper/hub/dashboard', icon: '⌂' },
@@ -68,6 +69,7 @@ const ALL_GROUPS = computed(() => [
     { label: '线索管理', path: '/verify/leads', key: 'verify.leads' },
   ] },
   { label: '投放管理', icon: '🎯', children: [
+    { label: '推广账号', path: '/sem/accounts', key: 'sem.assets' },
     { label: '账户与预算', path: '/manage/account', key: 'manage.account' },
     { label: '计划管理', path: '/manage/campaigns', key: 'manage.campaigns' },
     { label: 'oCPC 投放', path: '/manage/ocpc', key: 'manage.ocpc' },
@@ -146,9 +148,14 @@ function tenantTone(id) {
 async function loadTenants() {
   if (!session.isLoggedIn) return
   try {
-    const t = await fetchTenants()
-    session.setTenants(t.tenants)
+    const t = await fetchTenants('sem')
+    session.setTenants(t.tenants, 'sem')
   } catch { /* 401 拦截器已处理 */ }
+}
+
+function switchWorkspace(command) {
+  if (command === 'portal') router.push('/deal-sniper/portal')
+  if (command === 'sem') router.push('/sem/accounts')
 }
 
 // 刷新当前用户（角色权限可能被管理员改过 → 侧边栏/按钮即时更新）
@@ -201,11 +208,11 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
   <el-container v-else style="height: 100vh">
     <el-aside width="220px" class="side">
       <div class="brand">
-        <div class="brand-name">SEM 智投平台</div>
-        <div class="brand-sub">v3.0 · 工作流版</div>
+        <div class="brand-name">G-Snipers 获客指挥台</div>
+        <div class="brand-sub">{{ currentModuleLabel }} · 工作流</div>
       </div>
       <div class="nav-scroll">
-        <div class="nav-section-title">代运营工作流</div>
+        <div class="nav-section-title">{{ currentModuleLabel }}</div>
         <div
           v-for="g in navGroups"
           :key="g.label"
@@ -256,6 +263,19 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
         </el-breadcrumb>
         <div class="topbar-right">
           <template v-if="session.isLoggedIn">
+            <el-dropdown trigger="click" @command="switchWorkspace">
+              <button class="module-trigger" type="button">
+                <span class="module-trigger-dot" />
+                <span>{{ currentModuleLabel }}</span>
+                <span class="module-trigger-caret">▾</span>
+              </button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="portal">统一产品门户</el-dropdown-item>
+                  <el-dropdown-item command="sem" divided>SEM 智投</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
             <el-popover
               v-if="session.tenants.length > 1"
               v-model:visible="tenantPopoverOpen"
@@ -389,6 +409,7 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
 
 .topbar { background: #fff; border-bottom: 1px solid var(--sem-border); display: flex; align-items: center; justify-content: space-between; }
 .topbar-right { display: flex; align-items: center; gap: 12px; }
+.module-trigger{height:30px;padding:0 11px;border:1px solid #dce4ed;border-radius:7px;background:#fff;color:#31465b;display:inline-flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;font-weight:600}.module-trigger:hover{background:#f6f9fc}.module-trigger-dot{width:7px;height:7px;border-radius:50%;background:#2166a6}.module-trigger-caret{color:#8996a5;font-size:10px}
 .tenant-trigger {
   height: 30px;
   max-width: 230px;
