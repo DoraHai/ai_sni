@@ -235,6 +235,11 @@ const routes = [
   },
   { path: '/manage', redirect: '/manage/account' },
   {
+    path: '/sem/accounts',
+    component: () => import('../views/manage/SemAccountsView.vue'),
+    meta: { title: '推广账号', workflow: '投放管理', perm: 'sem.assets' },
+  },
+  {
     path: '/manage/account',
     component: () => import('../views/manage/AccountBudgetView.vue'),
     meta: { title: '账户与预算', workflow: '投放管理', perm: 'manage.account' },
@@ -279,6 +284,7 @@ const router = createRouter({
 })
 
 const MENU_ORDER = [
+  ['sem.assets', '/sem/accounts'],
   ['assistant', '/assistant'],
   ['geo.diagnosis', '/geo/diagnosis'],
   ['seo.dashboard', '/seo/dashboard'],
