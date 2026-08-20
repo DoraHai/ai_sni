@@ -62,9 +62,12 @@ jobs:
           cache-dependency-path: |
             frontend/package-lock.json
             frontend/geo-frontend/package-lock.json
+      - name: Install shared frontend dependencies
+        working-directory: frontend
+        run: npm ci
       - name: Build independent GEO frontend
         working-directory: frontend/geo-frontend
         run: npm ci && npm run build
       - name: Build frontend containing SEO workspace
         working-directory: frontend
-        run: npm ci && npm run build
+        run: npm run build
