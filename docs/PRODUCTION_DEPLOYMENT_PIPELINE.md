@@ -30,7 +30,7 @@ bash install-geo.sh --enable
 ```
 
 在 GitHub Actions 中选择 `Production GEO deployment`，必须从
-`codex/production-seo-geo-baseline` 分支运行并输入 `DEPLOY_GEO`。
+`codex/production-geo` 分支运行并输入 `DEPLOY_GEO`。
 发布包包含 GEO 独立前端和 `geo-service` 运行所需共享 Python 代码，
 但只写入 GEO 的两个发布目录。流程不会运行 Alembic。
 

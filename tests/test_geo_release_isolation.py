@@ -74,7 +74,7 @@ def test_production_geo_deploy_is_scoped_and_does_not_migrate_database():
     assert "migration=not-run" in module
     assert "previous release restored" in module
 
-    assert "codex/production-seo-geo-baseline" in workflow
+    assert "codex/production-geo" in workflow
     assert "DEPLOY_GEO" in workflow
     assert "platform-deploy apply geo" in workflow
     assert "alembic upgrade" not in workflow

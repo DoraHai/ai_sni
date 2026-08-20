@@ -18,7 +18,7 @@ concurrency:
 jobs:
   deploy:
     name: Build and deploy GEO only
-    if: github.ref_name == 'codex/production-seo-geo-baseline'
+    if: github.ref_name == 'codex/production-geo'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
@@ -34,7 +34,7 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          ref: codex/production-seo-geo-baseline
+          ref: codex/production-geo
 
       - uses: actions/setup-node@v4
         with:
