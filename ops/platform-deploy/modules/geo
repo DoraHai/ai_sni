@@ -67,8 +67,10 @@ printf '%s\n' "$commit" > "$frontend_release/RELEASE_COMMIT"
 chown -R sem:sem "$backend_release"
 chmod -R a+rX "$frontend_release"
 
-python_bin="$backend_root/venv/bin/python"
-[[ -x "$python_bin" ]] || fail "GEO virtualenv is missing: $python_bin"
+# geo-service is intentionally isolated at the code and service layers while
+# reusing the production backend's read-only Python dependency environment.
+python_bin='/opt/sem-backend/.venv/bin/python'
+[[ -x "$python_bin" ]] || fail "GEO Python runtime is missing: $python_bin"
 (cd "$backend_release" && "$python_bin" -m compileall -q app)
 
 previous_backend="$(readlink "$backend_root/current" 2>/dev/null || true)"

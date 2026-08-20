@@ -68,8 +68,10 @@ def test_production_geo_deploy_is_scoped_and_does_not_migrate_database():
 
     assert "/opt/geo-service" in module
     assert "/opt/geo-frontend" in module
+    assert "/opt/sem-backend/.venv/bin/python" in module
     assert "systemctl restart geo-service" in module
-    assert "sem-backend" not in module
+    assert "systemctl restart sem-backend" not in module
+    assert "/opt/sem-backend/releases" not in module
     assert "alembic upgrade" not in module
     assert "migration=not-run" in module
     assert "previous release restored" in module
