@@ -60,3 +60,21 @@ def test_static_geo_resolves_logged_in_tenant_context():
     assert "resolveTenantContext" in api
     assert "当前客户" in workbench
     assert "正在识别当前客户" in workbench
+
+
+def test_production_geo_deploy_is_scoped_and_does_not_migrate_database():
+    module = _read("ops/platform-deploy/modules/geo")
+    workflow = _read(".github/workflows/production-geo-deploy.yml")
+
+    assert "/opt/geo-service" in module
+    assert "/opt/geo-frontend" in module
+    assert "systemctl restart geo-service" in module
+    assert "sem-backend" not in module
+    assert "alembic upgrade" not in module
+    assert "migration=not-run" in module
+    assert "previous release restored" in module
+
+    assert "codex/production-seo-geo-baseline" in workflow
+    assert "DEPLOY_GEO" in workflow
+    assert "platform-deploy apply geo" in workflow
+    assert "alembic upgrade" not in workflow
