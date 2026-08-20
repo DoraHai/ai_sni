@@ -2,11 +2,12 @@
 set -euo pipefail
 
 frontend_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-deploy_target="${DEPLOY_TARGET:-root@101.200.193.83}"
+deploy_target="${DEPLOY_TARGET:-sem-deploy@101.200.193.83}"
 deploy_root="${SEM_FRONTEND_ROOT:-/opt/sem-frontend}"
 release_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 release_dir="${deploy_root}/releases/${release_stamp}"
 lock_dir="${deploy_root}/.deploy-lock"
+ssh_options=(-o BatchMode=yes -o StrictHostKeyChecking=yes)
 
 cd "$frontend_root"
 npm run build
@@ -17,24 +18,30 @@ if [[ "${VERIFY_ONLY:-0}" == "1" ]]; then
   exit 0
 fi
 
-if ! ssh "$deploy_target" "mkdir -p '$deploy_root' && mkdir '$lock_dir'"; then
+if ! ssh "${ssh_options[@]}" "$deploy_target" "mkdir -p '$deploy_root' && mkdir '$lock_dir'"; then
   printf '%s\n' "Another SEM frontend deployment is active: $lock_dir" >&2
   exit 1
 fi
 
 release_lock() {
-  ssh "$deploy_target" "rmdir '$lock_dir'" >/dev/null 2>&1 || true
+  ssh "${ssh_options[@]}" "$deploy_target" "rmdir '$lock_dir'" >/dev/null 2>&1 || true
 }
 trap release_lock EXIT
 
 previous_target="$(
-  ssh "$deploy_target" "readlink '${deploy_root}/current' 2>/dev/null || true"
+  ssh "${ssh_options[@]}" "$deploy_target" "readlink '${deploy_root}/current' 2>/dev/null || true"
 )"
 
-ssh "$deploy_target" "mkdir -p '$release_dir' '${deploy_root}/releases'"
-rsync -az --delete dist/ "$deploy_target:${release_dir}/"
+ssh "${ssh_options[@]}" "$deploy_target" "mkdir -p '$release_dir' '${deploy_root}/releases'"
+rsync \
+  -rltz \
+  --delete \
+  --chmod=D0755,F0644 \
+  -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=yes" \
+  dist/ \
+  "$deploy_target:${release_dir}/"
 
-ssh "$deploy_target" \
+ssh "${ssh_options[@]}" "$deploy_target" \
   "set -euo pipefail
    test -s '${release_dir}/index.html'
    grep -Raq '授权新客户账号' '${release_dir}/assets'
@@ -47,9 +54,16 @@ ssh "$deploy_target" \
      echo 'Obsolete OAuth placeholder detected in uploaded release' >&2
      exit 1
    fi
+   if find '${release_dir}' -type d ! -perm -0005 -print -quit | grep -q .; then
+     echo 'SEM release contains a directory nginx cannot read' >&2
+     exit 1
+   fi
+   if find '${release_dir}' -type f ! -perm -0004 -print -quit | grep -q .; then
+     echo 'SEM release contains a file nginx cannot read' >&2
+     exit 1
+   fi
    ln -sfn '${release_dir}' '${deploy_root}/current.next'
    mv -Tf '${deploy_root}/current.next' '${deploy_root}/current'
-   chown -R nginx:nginx '${release_dir}'
    test \"\$(readlink '${deploy_root}/current')\" = '${release_dir}'"
 
 printf '%s\n' "SEM frontend deployed atomically: ${release_stamp}"
