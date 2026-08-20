@@ -26,7 +26,7 @@ const consoleClasses = computed(() => [
 
 const platformShortcuts = [
   { label: '全域驾驶舱', path: '/deal-sniper/hub/dashboard', icon: '⌂' },
-  { label: '平台门户', path: '/deal-sniper/portal', icon: '←' },
+  { label: '统一产品门户', path: '/deal-sniper/portal', icon: '←' },
 ]
 
 // 侧边导航徽章（真数据）：异常提醒 open 数、拓词待处理数
@@ -219,8 +219,8 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
         <div class="brand-mark">
           <span class="brand-logo">S</span>
           <span>
-            <div class="brand-name">SEM 智投平台</div>
-            <div class="brand-sub">v3.0 · 工作流版</div>
+            <div class="brand-name">G-Snipers 获客指挥台</div>
+            <div class="brand-sub">SEM 智投 · 工作流</div>
           </span>
         </div>
       </div>

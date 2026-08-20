@@ -28,7 +28,7 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://test:test@localhost/test
           BAIDU_APP_ID: ci-dummy
-          BAIDU_SECRET_KEY: ci-dummy
+          BAIDU_SECRET_KEY: ci-dummy-secret1
           BAIDU_DEFAULT_USERNAME: ci-dummy
           BAIDU_DEFAULT_UCID: "1"
           BAIDU_SELF_ACCESS_TOKEN: ci-dummy

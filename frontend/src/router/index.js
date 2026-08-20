@@ -12,7 +12,7 @@ const DiagnosisLanding = () => import('../views/landing/DiagnosisLanding.vue')
 const routes = [
   {
     path: '/',
-    redirect: '/monitor/dashboard',
+    redirect: '/deal-sniper/portal',
   },
   {
     path: '/growth-sniper',
