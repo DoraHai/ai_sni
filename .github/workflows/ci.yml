@@ -28,7 +28,7 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://test:test@localhost/test
           BAIDU_APP_ID: ci-dummy
-          BAIDU_SECRET_KEY: ci-dummy
+          BAIDU_SECRET_KEY: ci-dummy-secret1
           BAIDU_DEFAULT_USERNAME: ci-dummy
           BAIDU_DEFAULT_UCID: "1"
           BAIDU_SELF_ACCESS_TOKEN: ci-dummy
@@ -87,18 +87,20 @@ jobs:
         working-directory: frontend
         run: npm ci
 
-      # deploy-sem.sh calls plain `ssh`/`rsync` internally with no -i flag,
-      # so the key has to be loaded into ssh-agent (not just written to
-      # disk) for those bare calls to pick it up automatically.
+      # Load the dedicated, unprivileged SEM deployment key. This key belongs
+      # to sem-deploy and cannot operate the other product modules.
       - name: Set up deploy key
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.SEM_DEPLOY_SSH_KEY }}
 
-      - name: Trust the deploy host key
+      - name: Trust the pinned deploy host key
+        env:
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan -p 22 101.200.193.83 >> ~/.ssh/known_hosts 2>/dev/null
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
       # deploy-sem.sh does build -> verify -> rsync to a new timestamped
       # release dir -> remote re-verification of required/forbidden
@@ -108,5 +110,5 @@ jobs:
       - name: Deploy
         working-directory: frontend
         env:
-          DEPLOY_TARGET: root@101.200.193.83
+          DEPLOY_TARGET: sem-deploy@101.200.193.83
         run: bash scripts/deploy-sem.sh
