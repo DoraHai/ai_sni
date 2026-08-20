@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, codex/production-sem]
   pull_request:
+    branches: [main, codex/production-sem]
 
 jobs:
   pytest:
@@ -36,3 +37,76 @@ jobs:
           CRYPTO_MASTER_KEY_B64: j/QGqbWO8IVw9cCVeAq+u/alTyjLsSQXjROH9uW/3tA=
           ADMIN_API_KEY: ci-admin-key
         run: python -m pytest -q tests
+
+  sem-frontend-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Verify build contract
+        working-directory: frontend
+        run: npm run verify:sem-build
+
+  # Only runs on a real push to the production branch, and only after both
+  # checks above pass. Never runs for pull_request events — a PR must be
+  # merged first. 铁律 1: nothing gets deployed from an untested or
+  # unmerged state; every deploy traces back to a commit on this branch.
+  deploy-sem:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/production-sem'
+    needs: [pytest, sem-frontend-build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      # deploy-sem.sh calls plain `ssh`/`rsync` internally with no -i flag,
+      # so the key has to be loaded into ssh-agent (not just written to
+      # disk) for those bare calls to pick it up automatically.
+      - name: Set up deploy key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SEM_DEPLOY_SSH_KEY }}
+
+      - name: Trust the deploy host key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p 22 101.200.193.83 >> ~/.ssh/known_hosts 2>/dev/null
+
+      # deploy-sem.sh does build -> verify -> rsync to a new timestamped
+      # release dir -> remote re-verification of required/forbidden
+      # markers -> atomic symlink swap -> post-swap confirmation. See the
+      # script itself and CLAUDE.md 铁律 1/6 for what each step guards
+      # against; do not shortcut any of these steps in this workflow.
+      - name: Deploy
+        working-directory: frontend
+        env:
+          DEPLOY_TARGET: root@101.200.193.83
+        run: bash scripts/deploy-sem.sh
