@@ -365,7 +365,7 @@ function scrollTo(key) {
         <section v-if="showInternal" id="mod-today_focus" class="mod">
           <h3>今日执行焦点 <span class="internal-badge">内部</span></h3>
           <div class="num-cards">
-            <div class="num-card"><div class="nc-num">{{ data.operational_focus.pending_suggestions }}</div><div class="nc-label">待审建议</div></div>
+            <div class="num-card work-link" @click="openWorkItem(data.operational_focus.suggestions_path)"><div class="nc-num">{{ data.operational_focus.pending_suggestions }}</div><div class="nc-label">待审建议 →</div></div>
             <div class="num-card warn work-link" @click="openWorkItem(data.operational_focus.queue_path)"><div class="nc-num">{{ data.operational_focus.pending_writebacks }}</div><div class="nc-label">待回写 →</div></div>
             <div class="num-card"><div class="nc-num">{{ data.operational_focus.sync_risks.length }}</div><div class="nc-label">同步风险</div></div>
           </div>
@@ -374,9 +374,10 @@ function scrollTo(key) {
           <div v-if="data.operational_focus.priority_suggestions.length" class="focus-list">
             <button v-for="item in data.operational_focus.priority_suggestions" :key="item.id" class="focus-item" @click="openWorkItem(item.path)">
               <b>{{ item.priority }} · {{ item.type }} · {{ item.keyword || '账户建议' }}</b>
-              <span>{{ item.reason }}</span><em>{{ item.report_date }} · 待审 →</em>
+              <strong>{{ item.impact }}</strong><span>{{ item.reason }}</span><em>{{ item.report_date }} · 查看并处理 →</em>
             </button>
           </div>
+          <button v-if="data.operational_focus.pending_suggestions > data.operational_focus.priority_suggestions.length" class="view-all-work work-link" @click="openWorkItem(data.operational_focus.suggestions_path)">查看全部 {{ data.operational_focus.pending_suggestions }} 条待审建议 →</button>
         </section>
 
         <!-- 模块 6 优化操作 & 后续计划 -->
@@ -438,8 +439,10 @@ function scrollTo(key) {
 .focus-list { display: grid; gap: 7px; margin-top: 12px; }
 .focus-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 14px; padding: 9px 11px; border: 1px solid var(--sem-border); border-radius: 6px; background: #fff; text-align: left; cursor: pointer; }
 .focus-item b { color: var(--sem-text); font-size: 12px; }
+.focus-item strong { grid-column: 1; color: #b15f00; font-size: 11px; }
 .focus-item span { grid-column: 1; color: var(--sem-text-sub); font-size: 11px; }
-.focus-item em { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--sem-primary); font-size: 10px; font-style: normal; }
+.focus-item em { grid-column: 2; grid-row: 1 / span 3; align-self: center; color: var(--sem-primary); font-size: 10px; font-style: normal; }
+.view-all-work { margin-top: 10px; border: 0; background: transparent; color: var(--sem-primary); font-size: 12px; }
 .quick-range-buttons button:hover { border-color: var(--sem-primary); color: var(--sem-primary); }
 .quick-range-buttons button.active { border-color: var(--sem-primary); background: var(--sem-primary); color: #fff; }
 

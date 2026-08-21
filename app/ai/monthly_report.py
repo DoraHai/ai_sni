@@ -36,6 +36,41 @@ from app.models import (
 logger = logging.getLogger(__name__)
 
 KPI_KEYS = ("cost", "click", "impression", "cpc", "ctr")
+REPORT_SUGGESTION_LIMIT = 8
+
+
+def _suggestion_business_score(row: Suggestion) -> float:
+    """Rank pending work by urgency and measurable account impact."""
+    priority_score = {"P0": 600, "P1": 500, "P2": 400, "P3": 300, "P4": 200, "P5": 100}
+    confidence_score = {"high": 40, "mid": 20, "low": 0}
+    signals = row.signals or {}
+    risk_factors = signals.get("risk_factors") or {}
+    cost = max(float(signals.get("cost") or 0), 0)
+    impact_score = min(cost, 250)
+    if risk_factors.get("zero_conversion"):
+        impact_score += 120
+    if risk_factors.get("core_keyword"):
+        impact_score += 80
+    if risk_factors.get("high_cpc"):
+        impact_score += 50
+    if row.suggestion_type == "pause_warn":
+        impact_score += 60
+    return priority_score.get(row.priority, 0) + confidence_score.get(row.confidence, 0) + impact_score
+
+
+def _suggestion_impact(row: Suggestion) -> str:
+    signals = row.signals or {}
+    risk_factors = signals.get("risk_factors") or {}
+    cost = float(signals.get("cost") or 0)
+    if risk_factors.get("zero_conversion") and cost:
+        return f"近 7 天消耗 ¥{cost:,.0f}，暂无转化"
+    if signals.get("avg_rank") is not None:
+        return f"近 7 天平均排名 {float(signals['avg_rank']):.1f}"
+    if signals.get("quality") is not None and int(signals["quality"]) <= 2:
+        return f"质量度 {int(signals['quality'])}，可能推高点击成本"
+    if cost:
+        return f"近 7 天消耗 ¥{cost:,.0f}"
+    return f"近 7 天展现 {int(signals.get('impression') or 0):,}，点击 {int(signals.get('click') or 0):,}"
 
 # 报告模块 key → 中文名（AI 点评按 key 回填；前端 TOC 也用）
 MODULE_LABELS = {
@@ -301,11 +336,16 @@ async def gather_report_data(
             Suggestion.tenant_id == tenant.id, Suggestion.status == "pending"
         )
     )
-    priority_suggestions = list((await session.scalars(
+    pending_suggestion_rows = list((await session.scalars(
         select(Suggestion).where(
             Suggestion.tenant_id == tenant.id, Suggestion.status == "pending"
-        ).order_by(Suggestion.priority, Suggestion.report_date.desc(), Suggestion.id.desc()).limit(8)
+        ).order_by(Suggestion.priority, Suggestion.report_date.desc(), Suggestion.id.desc()).limit(200)
     )).all())
+    priority_suggestions = sorted(
+        pending_suggestion_rows,
+        key=lambda row: (_suggestion_business_score(row), row.report_date, row.id),
+        reverse=True,
+    )[:REPORT_SUGGESTION_LIMIT]
     pending_bid_writebacks = await session.scalar(
         select(func.count()).select_from(BidWriteback).where(
             BidWriteback.tenant_id == tenant.id, BidWriteback.status == "dry_run"
@@ -337,8 +377,12 @@ async def gather_report_data(
     sync_risks = []
     if not active_accounts:
         sync_risks.append({"message": "没有生效的百度推广账户", "path": "/sem/accounts"})
-    if any(account.sync_status == "failed" for account in active_accounts):
-        sync_risks.append({"message": "存在同步失败账户", "path": "/sem/accounts"})
+    failed_accounts = [account for account in active_accounts if account.sync_status == "failed"]
+    for account in failed_accounts[:3]:
+        sync_risks.append({
+            "message": f"账户 {account.baidu_username} 同步失败",
+            "path": f"/sem/accounts?account_id={account.id}",
+        })
     if asset_counts["campaigns"] and not asset_counts["adgroups"]:
         sync_risks.append({"message": "已有计划但单元为空", "path": "/manage/campaigns"})
     if asset_counts["campaigns"] and not asset_counts["keywords"]:
@@ -358,11 +402,17 @@ async def gather_report_data(
                 "type": SUGGESTION_TYPE_LABELS.get(row.suggestion_type, row.suggestion_type),
                 "keyword": row.keyword,
                 "reason": row.reason,
+                "impact": _suggestion_impact(row),
+                "score": round(_suggestion_business_score(row), 2),
                 "report_date": row.report_date.isoformat(),
-                "path": f"/monitor/keywords/{row.keyword_id}" if row.keyword_id else "/optimize/keywords",
+                "path": (
+                    f"/monitor/keywords/{row.keyword_id}?from=report&suggestion_id={row.id}"
+                    if row.keyword_id else f"/optimize/keywords?has_suggestion=true&suggestion_id={row.id}&from=report"
+                ),
             }
             for row in priority_suggestions
         ],
+        "suggestions_path": "/optimize/keywords?has_suggestion=true&from=report",
         "queue_path": "/verify/pending?mode=queue",
     }
 

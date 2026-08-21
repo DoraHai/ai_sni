@@ -343,8 +343,8 @@ const filters = reactive({
   pause: null, // null=全部 false=已启用 true=已暂停
   serving: null, // null=全部 true=当前在投 false=当前未投（暂停或时段不投）
   coefWarning: '',
-  hasSuggestion: null,
-  q: '',
+  hasSuggestion: route.query.has_suggestion === 'true' ? true : null,
+  q: route.query.q ? String(route.query.q) : '',
   sortBy: 'impression',
   order: 'desc',
   page: 1,
@@ -432,13 +432,17 @@ watch(
   () => { filters.page = 1; load() },
 )
 watch(
-  () => route.query.category,
-  (category) => {
+  () => [route.query.category, route.query.has_suggestion, route.query.q],
+  ([category, hasSuggestion, q]) => {
     const next = category && CATEGORY_CODES.has(String(category)) ? String(category) : ''
     if (next && next !== filters.category) {
       filters.category = next
       activeView.value = 'keywords'
     }
+    const suggestionFilter = hasSuggestion === 'true' ? true : null
+    if (suggestionFilter !== filters.hasSuggestion) filters.hasSuggestion = suggestionFilter
+    const keywordQuery = q ? String(q) : ''
+    if (keywordQuery !== filters.q) filters.q = keywordQuery
   },
 )
 let qTimer = null
