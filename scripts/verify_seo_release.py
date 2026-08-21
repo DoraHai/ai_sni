@@ -11,6 +11,9 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    ".github/workflows/ci.yml",
+    ".github/workflows/production-seo-deploy.yml",
+    ".github/workflows/seo-baseline-check.yml",
     "app/api/__init__.py",
     "app/api/customer_modules.py",
     "app/api/seo.py",
@@ -23,7 +26,13 @@ SOURCE_ALLOWED_EXACT = {
     "app/seo_crawler.py",
     "app/seo_distribution.py",
     "app/seo_distribution_import.py",
+    "app/seo_main.py",
+    "app/seo_serp.py",
+    "deploy/seo-service.service",
     "deploy/seo-frontend.nginx.conf",
+    "docs/SEO_PRODUCTION_PIPELINE.md",
+    "frontend/package.json",
+    "frontend/scripts/verify-seo-build.mjs",
     "frontend/src/api/moduleAssets.js",
     "frontend/src/api/seo.js",
     "frontend/seo/index.html",
@@ -42,12 +51,16 @@ SOURCE_ALLOWED_EXACT = {
     "migrations/versions/20260819_0071_login_lockout.py",
     "migrations/versions/20260819_0072_merge_login_seo.py",
     "migrations/versions/20260819_0073_seo_distribution_variants.py",
+    "ops/platform-deploy/install-seo.sh",
+    "ops/platform-deploy/modules/seo",
     "tests/test_module_workspaces.py",
     "tests/test_seo_crawler.py",
     "tests/test_seo_distribution_import.py",
     "tests/test_seo_distribution.py",
     "tests/test_seo_foundation.py",
     "tests/test_seo_release_consistency.py",
+    "tests/test_seo_deploy_isolation.py",
+    "tests/test_seo_serp.py",
     "scripts/verify_seo_release.py",
 }
 SOURCE_ALLOWED_PREFIXES = ("frontend/src/views/seo/",)
