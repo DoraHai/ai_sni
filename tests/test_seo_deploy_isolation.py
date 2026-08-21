@@ -46,6 +46,8 @@ def test_production_workflow_auto_deploys_only_the_exact_production_head() -> No
     assert "push:" in workflow
     assert "codex/production-seo" in workflow
     assert "ref: ${{ github.sha }}" in workflow
+    assert "environment: production\n" in workflow
+    assert "environment: production-seo" not in workflow
     assert workflow.count('git ls-remote origin "refs/heads/$SEO_PRODUCTION_BRANCH"') >= 4
     assert "Refusing stale SEO release" in workflow
     assert "Refusing stale SEO deployment" in workflow

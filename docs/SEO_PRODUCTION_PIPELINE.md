@@ -50,9 +50,11 @@ GitHub Actions:
    run `nginx -t` and reload Nginx.
 5. After rollback rehearsal, run
    `sudo bash ops/platform-deploy/install-seo.sh --enable`.
-6. Configure the `production-seo` GitHub Environment with its restricted SSH
-   secrets. Do not add a separate required-reviewer deployment gate: merge to
-   `codex/production-seo` is the deployment authorization.
+6. Use the existing `production` GitHub Environment with its restricted
+   `DEPLOY_HOST`, `DEPLOY_PORT`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, and
+   `DEPLOY_KNOWN_HOSTS` secrets. Do not add a separate required-reviewer
+   deployment gate: merge to `codex/production-seo` is the deployment
+   authorization.
 
 Do not perform any of these preparation steps from an ordinary code PR.
 
