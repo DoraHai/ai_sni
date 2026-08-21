@@ -11,14 +11,19 @@ import {
   fetchSeoContentPublications,
   fetchSeoDistributionCatalog,
   fetchSeoDistributionConnections,
+  fetchSeoDistributionVariantHistory,
+  fetchSeoDistributionVariants,
   fetchSeoPublicationAttempts,
+  generateSeoDistributionVariants,
   importSeoPublishedLinks,
   preflightSeoDistribution,
   publishSeoDistribution,
+  reviewSeoDistributionVariant,
   retrySeoContentPublication,
   syncSeoContentPublication,
   testSeoDistributionConnection,
   updateSeoDistributionConnection,
+  saveSeoDistributionVariant,
 } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
@@ -32,6 +37,7 @@ const catalog = ref([])
 const connections = ref([])
 const contents = ref([])
 const publications = ref([])
+const variants = ref([])
 const sites = ref([])
 const siteId = ref(null)
 const canEdit = computed(() => !session.isLoggedIn || session.canEdit('seo.content'))
@@ -86,8 +92,15 @@ const variantAiLoading = ref(false)
 const variantDirty = ref(false)
 const variantEditor = ref(null)
 const variantMeta = ref(null)
-const variantDrafts = reactive({})
 const variantForm = reactive({ title: '', content_html: '', instruction: '' })
+const variantSaving = ref(false)
+const variantBatchGenerating = ref(false)
+const variantReviewingId = ref(null)
+const variantStatusFilter = ref('all')
+const variantHistoryDialog = ref(false)
+const variantHistoryLoading = ref(false)
+const variantHistory = ref([])
+const variantHistoryItem = ref(null)
 
 function htmlToPlain(source) {
   if (!source) return ''
@@ -110,6 +123,10 @@ const variantKeywordChecks = computed(() => (variantMeta.value?.keyword_checks |
   in_content: variantPlain.value.toLocaleLowerCase().includes(item.keyword.toLocaleLowerCase()),
 })))
 const variantMissingKeywords = computed(() => variantKeywordChecks.value.filter(item => !item.in_content))
+const latestVariantMap = computed(() => new Map(variants.value.map(item => [`${item.content_id}:${item.connection_id}`, item])))
+const variantFor = item => latestVariantMap.value.get(`${item.content_id}:${item.connection_id}`)
+const filteredVariants = computed(() => variantStatusFilter.value === 'all' ? variants.value : variants.value.filter(item => item.status === variantStatusFilter.value))
+const variantStatusMeta = value => ({ draft: ['草稿', 'info'], pending_review: ['待审核', 'warning'], approved: ['已通过', 'success'], rejected: ['已驳回', 'danger'], stale: ['已过期', 'danger'], published: ['已发布', 'success'] })[value] || [value, 'info']
 
 const statusMeta = {
   pending: ['待处理', 'warning'],
@@ -161,21 +178,24 @@ async function load() {
     error.value = '请先选择或创建 SEO 网站'
     contents.value = []
     publications.value = []
+    variants.value = []
     return
   }
   loading.value = true
   try {
-    const [catalogResult, connectionResult, contentResult, publicationResult] = await Promise.all([
+    const [catalogResult, connectionResult, contentResult, publicationResult, variantResult] = await Promise.all([
       fetchSeoDistributionCatalog(),
       fetchSeoDistributionConnections({ tenantId: currentTenantId.value }),
       fetchSeoContentAssets({ tenantId: currentTenantId.value, siteId: siteId.value }),
       fetchSeoContentPublications({ tenantId: currentTenantId.value, siteId: siteId.value }),
+      fetchSeoDistributionVariants({ tenantId: currentTenantId.value, siteId: siteId.value }),
     ])
     catalog.value = catalogResult.items || []
     connections.value = connectionResult.items || []
     contents.value = contentResult.items || []
     const contentIds = new Set(contents.value.map(item => item.id))
     publications.value = (publicationResult.items || []).filter(item => contentIds.has(item.content_id))
+    variants.value = (variantResult.items || []).filter(item => contentIds.has(item.content_id))
     error.value = ''
   } catch (e) {
     error.value = e.message
@@ -345,7 +365,6 @@ function openBatch(item = null) {
   batchPreview.value = null
   batchResults.value = []
   batchProgress.value = 0
-  Object.keys(variantDrafts).forEach(key => delete variantDrafts[key])
   batchStep.value = 0
   batchDialog.value = true
 }
@@ -400,7 +419,7 @@ async function fetchVariant(item, useAi = false) {
 async function openVariant(item) {
   variantDialog.value = true
   variantMeta.value = null
-  const cached = variantDrafts[variantKey(item)]
+  const cached = variantFor(item)
   if (cached) {
     await applyVariantResult(cached, cached.instruction || '')
     variantDirty.value = false
@@ -446,25 +465,106 @@ async function generateAiVariant() {
   }
 }
 
-function saveVariant() {
+function upsertVariant(saved) {
+  const key = variantKey(saved)
+  variants.value = [saved, ...variants.value.filter(item => variantKey(item) !== key)]
+}
+
+async function saveVariant(status = 'draft') {
   syncVariantEditor()
   const titleMax = variantMeta.value?.content_rules?.title_max || 60
   if (!variantForm.title.trim()) return ElMessage.warning('平台专属标题不能为空')
   if (variantForm.title.trim().length > titleMax) return ElMessage.warning(`标题最多${titleMax}个字符`)
   if (!variantPlain.value) return ElMessage.warning('平台专属正文不能为空')
   if (variantMissingKeywords.value.length) return ElMessage.warning(`请补齐目标关键词：${variantMissingKeywords.value.map(item => item.keyword).join('、')}`)
-  variantDrafts[variantKey(variantMeta.value)] = {
-    ...variantMeta.value,
-    title: variantForm.title.trim(),
-    content: variantForm.content_html,
-    content_html: variantForm.content_html,
-    instruction: variantForm.instruction,
-    keyword_checks: variantKeywordChecks.value,
-    content_chars: variantPlain.value.length,
+  variantSaving.value = true
+  try {
+    const saved = await saveSeoDistributionVariant({
+      tenant_id: currentTenantId.value,
+      site_id: siteId.value,
+      content_id: variantMeta.value.content_id,
+      connection_id: variantMeta.value.connection_id,
+      source_version: variantMeta.value.source_version,
+      title: variantForm.title.trim(),
+      content: variantForm.content_html,
+      status,
+      ai_generated: Boolean(variantMeta.value.ai_generated),
+      instruction: variantForm.instruction.trim() || null,
+      feedback: variantMeta.value.feedback || null,
+    })
+    upsertVariant(saved)
+    variantDirty.value = false
+    variantDialog.value = false
+    ElMessage.success(status === 'pending_review' ? '专属稿已提交审核' : '专属稿草稿已保存')
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    variantSaving.value = false
   }
-  variantDirty.value = false
-  variantDialog.value = false
-  ElMessage.success('平台专属稿已加入本批发布任务')
+}
+
+async function batchGenerateVariants(useAi = false) {
+  const rows = (batchPreview.value?.rows || []).filter(item => item.status === 'ready')
+  if (!rows.length) return ElMessage.warning('没有可生成专属稿的任务')
+  if (useAi) {
+    try {
+      await ElMessageBox.confirm(`将为 ${rows.length} 个任务调用 AI 并直接提交审核，确认继续？`, '批量生成 AI 专属稿', { type: 'warning', confirmButtonText: '确认生成', cancelButtonText: '取消' })
+    } catch { return }
+  }
+  variantBatchGenerating.value = true
+  try {
+    const result = await generateSeoDistributionVariants({
+      tenant_id: currentTenantId.value,
+      site_id: siteId.value,
+      pairs: rows.map(item => ({ content_id: item.content_id, connection_id: item.connection_id })),
+      use_ai: useAi,
+      submit_for_review: useAi,
+    })
+    result.items.filter(item => item.ok).forEach(item => upsertVariant(item.variant))
+    if (result.failed) ElMessage.warning(`已生成 ${result.succeeded}/${result.total} 份；失败项可单独编辑重试`)
+    else ElMessage.success(`已生成 ${result.succeeded} 份${useAi ? '待审核' : '草稿'}`)
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    variantBatchGenerating.value = false
+  }
+}
+
+async function reviewVariant(item, decision) {
+  const action = decision === 'approve' ? '通过' : '驳回'
+  let note = ''
+  try {
+    const result = await ElMessageBox.prompt(`确认${action}“${item.content_title} · ${item.connection_name}”的专属稿？`, `${action}平台专属稿`, { inputPlaceholder: decision === 'reject' ? '请填写驳回原因' : '可填写审核备注', inputValidator: value => decision !== 'reject' || Boolean(String(value || '').trim()) || '驳回时必须填写原因', confirmButtonText: `确认${action}`, cancelButtonText: '取消' })
+    note = result.value || ''
+  } catch { return }
+  variantReviewingId.value = item.id
+  try {
+    const saved = await reviewSeoDistributionVariant({
+      variantId: item.id,
+      payload: { tenant_id: currentTenantId.value, site_id: siteId.value, decision, note: note.trim() || null },
+    })
+    upsertVariant(saved)
+    ElMessage.success(`专属稿已${action}`)
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    variantReviewingId.value = null
+  }
+}
+
+async function showVariantHistory(item) {
+  variantHistoryItem.value = item
+  variantHistory.value = []
+  variantHistoryDialog.value = true
+  variantHistoryLoading.value = true
+  try {
+    const result = await fetchSeoDistributionVariantHistory({ variantId: item.id, tenantId: currentTenantId.value, siteId: siteId.value })
+    variantHistory.value = result.items || []
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    variantHistoryLoading.value = false
+  }
 }
 
 async function closeVariant(done) {
@@ -500,8 +600,13 @@ async function restoreBaseVariant() {
 async function executeBatch() {
   const rows = (batchPreview.value?.rows || []).filter(item => item.status === 'ready')
   if (!rows.length) return ElMessage.warning('没有可以执行的任务')
+  const unreviewed = rows.filter(item => {
+    const variant = variantFor(item)
+    return variant && variant.status !== 'approved' && variant.status !== 'published'
+  })
+  if (unreviewed.length) return ElMessage.warning(`有 ${unreviewed.length} 份专属稿尚未审核通过，请先完成审核或重新选择任务`)
   if (batchForm.action === 'publish') {
-    const customized = rows.filter(item => variantDrafts[variantKey(item)]).length
+    const customized = rows.filter(item => ['approved', 'published'].includes(variantFor(item)?.status)).length
     try {
       await ElMessageBox.confirm(`即将正式发布 ${rows.length} 个任务，其中 ${customized} 个使用平台专属稿；内容可能立即对外公开。确认继续？`, '确认正式发布', { type: 'warning', confirmButtonText: '确认发布', cancelButtonText: '返回检查' })
     } catch { return }
@@ -512,7 +617,7 @@ async function executeBatch() {
   for (let index = 0; index < rows.length; index += 1) {
     const item = rows[index]
     const task = batchResults.value[index]
-    const variant = variantDrafts[variantKey(item)]
+    const variant = variantFor(item)
     task.run_status = 'running'
     batchCurrent.value = `${item.content_title} · ${item.connection_name}${item.image_count ? ` · 正在转存 ${item.image_count} 张图片` : ''}`
     try {
@@ -523,9 +628,7 @@ async function executeBatch() {
         connection_id: item.connection_id,
         action: batchForm.action,
         confirm: batchForm.action === 'publish',
-        source_version: variant?.source_version,
-        adapted_title: variant?.title,
-        adapted_content: variant?.content_html,
+        variant_id: variant?.status === 'approved' ? variant.id : undefined,
       })
       Object.assign(task, { ok: true, result, run_status: 'succeeded' })
     } catch (e) {
@@ -754,6 +857,7 @@ onMounted(loadSites)
 
     <nav class="view-tabs">
       <button :class="{ active: activeTab === 'channels' }" @click="activeTab = 'channels'">平台连接</button>
+      <button :class="{ active: activeTab === 'variants' }" @click="activeTab = 'variants'">专属稿审核 <b v-if="variants.filter(item => item.status === 'pending_review').length">{{ variants.filter(item => item.status === 'pending_review').length }}</b></button>
       <button :class="{ active: activeTab === 'tasks' }" @click="activeTab = 'tasks'">发布任务 <b v-if="activeTasks.length">{{ activeTasks.length }}</b></button>
       <button :class="{ active: activeTab === 'records' }" @click="activeTab = 'records'">发布记录</button>
     </nav>
@@ -790,6 +894,22 @@ onMounted(loadSites)
             <el-button v-else-if="!item.available" disabled>等待接口开放</el-button>
           </footer>
         </article>
+      </section>
+    </template>
+
+    <template v-else-if="activeTab === 'variants'">
+      <section class="table-panel">
+        <header><div><h2>平台专属稿审核</h2><p>每次 AI 生成或人工保存都会形成新修订；原文章更新后旧稿会自动标记为过期。</p></div><div class="task-toolbar"><el-select v-model="variantStatusFilter" size="small"><el-option label="全部状态" value="all" /><el-option label="待审核" value="pending_review" /><el-option label="草稿" value="draft" /><el-option label="已通过" value="approved" /><el-option label="已驳回" value="rejected" /><el-option label="已过期" value="stale" /><el-option label="已发布" value="published" /></el-select><el-button @click="load">刷新</el-button><el-button v-if="canEdit" type="primary" @click="openBatch()">批量生成</el-button></div></header>
+        <el-table :data="filteredVariants" empty-text="暂无已保存的平台专属稿">
+          <el-table-column prop="content_title" label="文章" min-width="220" show-overflow-tooltip />
+          <el-table-column prop="connection_name" label="平台连接" min-width="150"><template #default="scope"><b>{{ scope.row.connection_name }}</b><small class="muted-text">{{ scope.row.platform_name }}</small></template></el-table-column>
+          <el-table-column prop="revision_number" label="修订" width="76"><template #default="scope">v{{ scope.row.revision_number }}</template></el-table-column>
+          <el-table-column label="内容版本" width="110"><template #default="scope">{{ scope.row.source_version }}<span v-if="scope.row.stale" class="invalid"> → {{ scope.row.current_source_version }}</span></template></el-table-column>
+          <el-table-column prop="status" label="状态" width="100"><template #default="scope"><el-tag :type="variantStatusMeta(scope.row.status)[1]">{{ variantStatusMeta(scope.row.status)[0] }}</el-tag></template></el-table-column>
+          <el-table-column label="质量检查" min-width="170"><template #default="scope"><span :class="scope.row.keyword_checks.every(item => item.in_content) ? 'valid' : 'invalid'">关键词 {{ scope.row.keyword_checks.filter(item => item.in_content).length }}/{{ scope.row.keyword_checks.length }}</span><small v-if="scope.row.warnings.length" class="preflight-warning">{{ scope.row.warnings[0] }}</small></template></el-table-column>
+          <el-table-column prop="updated_at" label="更新时间" width="140"><template #default="scope">{{ date(scope.row.updated_at) }}</template></el-table-column>
+          <el-table-column label="操作" width="275" fixed="right"><template #default="scope"><el-button v-if="canEdit" link type="primary" @click="openVariant(scope.row)">{{ scope.row.stale ? '重新生成' : '编辑' }}</el-button><el-button v-if="canEdit && scope.row.status === 'pending_review'" link type="success" :loading="variantReviewingId === scope.row.id" @click="reviewVariant(scope.row, 'approve')">通过</el-button><el-button v-if="canEdit && scope.row.status === 'pending_review'" link type="danger" :loading="variantReviewingId === scope.row.id" @click="reviewVariant(scope.row, 'reject')">驳回</el-button><el-button link @click="showVariantHistory(scope.row)">修订记录</el-button></template></el-table-column>
+        </el-table>
       </section>
     </template>
 
@@ -854,8 +974,9 @@ onMounted(loadSites)
         <template v-if="variantMeta">
           <div class="variant-heading">
             <span><b>{{ variantMeta.platform_name }} · {{ variantMeta.connection_name }}</b><small>基于内容版本 {{ variantMeta.source_version }} 生成；发布前仍需人工核对事实、链接与排版。</small></span>
-            <el-tag :type="variantMeta.ai_generated ? 'success' : 'info'">{{ variantMeta.ai_generated ? 'AI 专属稿' : '基础适配稿' }}</el-tag>
+            <span class="variant-heading-tags"><el-tag v-if="variantMeta.status" :type="variantStatusMeta(variantMeta.status)[1]">{{ variantStatusMeta(variantMeta.status)[0] }} · v{{ variantMeta.revision_number }}</el-tag><el-tag :type="variantMeta.ai_generated ? 'success' : 'info'">{{ variantMeta.ai_generated ? 'AI 专属稿' : '基础适配稿' }}</el-tag></span>
           </div>
+          <el-alert v-if="variantMeta.stale" :title="`原文章已从版本 ${variantMeta.source_version} 更新到 ${variantMeta.current_source_version}，请恢复基础适配或 AI 重新生成后再保存。`" type="error" :closable="false" show-icon />
           <div class="variant-columns">
             <section class="variant-source">
               <header><b>原始文章</b><span>只读对照</span></header>
@@ -889,7 +1010,7 @@ onMounted(loadSites)
           </section>
         </template>
       </div>
-      <template #footer><el-button @click="restoreBaseVariant">恢复基础适配</el-button><el-button @click="cancelVariant">取消</el-button><el-button type="primary" :disabled="variantMissingKeywords.length > 0" @click="saveVariant">保存并用于本批发布</el-button></template>
+      <template #footer><el-button @click="restoreBaseVariant">恢复基础适配</el-button><el-button @click="cancelVariant">取消</el-button><el-button :loading="variantSaving" @click="saveVariant('draft')">保存草稿</el-button><el-button type="primary" :loading="variantSaving" :disabled="variantMissingKeywords.length > 0" @click="saveVariant('pending_review')">提交审核</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="batchDialog" title="批量分发" width="980px" :close-on-click-modal="!batchRunning">
@@ -903,8 +1024,9 @@ onMounted(loadSites)
       </div>
       <div v-else-if="batchStep === 1 && batchPreview" class="batch-preview">
         <el-alert :title="`共 ${batchPreview.total} 个任务：${batchPreview.ready} 个可执行，${batchPreview.blocked} 个被拦截。`" :type="batchPreview.blocked ? 'warning' : 'success'" :closable="false" show-icon />
+        <div class="batch-variant-toolbar"><span>可先批量生成并审核平台专属稿；只有审核通过的专属稿会进入发布任务。</span><el-button :loading="variantBatchGenerating" @click="batchGenerateVariants(false)">批量生成基础稿</el-button><el-button type="primary" plain :loading="variantBatchGenerating" @click="batchGenerateVariants(true)">AI 批量生成并提交审核</el-button></div>
         <el-table :data="batchPreview.rows" max-height="420" size="small">
-          <el-table-column prop="content_title" label="文章" min-width="190" show-overflow-tooltip /><el-table-column prop="connection_name" label="平台" width="145" /><el-table-column prop="mode" label="方式" width="100"><template #default="scope">{{ modeName(scope.row.mode) }}</template></el-table-column><el-table-column prop="content_chars" label="字数" width="70" /><el-table-column prop="image_count" label="图片" width="65"><template #default="scope">{{ scope.row.image_count ? `${scope.row.image_count} 张` : '—' }}</template></el-table-column><el-table-column label="平台专属稿" width="112"><template #default="scope"><el-button v-if="scope.row.status === 'ready'" link :type="variantDrafts[variantKey(scope.row)] ? 'success' : 'primary'" @click="openVariant(scope.row)">{{ variantDrafts[variantKey(scope.row)] ? '已编辑' : '生成/编辑' }}</el-button><span v-else class="muted-text">不可编辑</span></template></el-table-column><el-table-column label="预检结果" min-width="260"><template #default="scope"><div class="preflight-result"><el-tag :type="scope.row.status === 'ready' ? 'success' : 'danger'">{{ scope.row.status === 'ready' ? '可执行' : '已拦截' }}</el-tag><span v-for="message in scope.row.errors" :key="`e-${message}`" class="preflight-error">{{ message }}</span><span v-for="message in scope.row.warnings" :key="`w-${message}`" class="preflight-warning">{{ message }}</span></div></template></el-table-column>
+          <el-table-column prop="content_title" label="文章" min-width="190" show-overflow-tooltip /><el-table-column prop="connection_name" label="平台" width="145" /><el-table-column prop="mode" label="方式" width="100"><template #default="scope">{{ modeName(scope.row.mode) }}</template></el-table-column><el-table-column prop="content_chars" label="字数" width="70" /><el-table-column prop="image_count" label="图片" width="65"><template #default="scope">{{ scope.row.image_count ? `${scope.row.image_count} 张` : '—' }}</template></el-table-column><el-table-column label="平台专属稿" width="210"><template #default="scope"><div v-if="scope.row.status === 'ready'" class="variant-row-actions"><el-tag v-if="variantFor(scope.row)" size="small" :type="variantStatusMeta(variantFor(scope.row).status)[1]">{{ variantStatusMeta(variantFor(scope.row).status)[0] }} · v{{ variantFor(scope.row).revision_number }}</el-tag><el-button link type="primary" @click="openVariant(scope.row)">{{ variantFor(scope.row) ? '编辑' : '生成/编辑' }}</el-button><el-button v-if="variantFor(scope.row)?.status === 'pending_review'" link type="success" :loading="variantReviewingId === variantFor(scope.row).id" @click="reviewVariant(variantFor(scope.row), 'approve')">通过</el-button><el-button v-if="variantFor(scope.row)?.status === 'pending_review'" link type="danger" :loading="variantReviewingId === variantFor(scope.row).id" @click="reviewVariant(variantFor(scope.row), 'reject')">驳回</el-button></div><span v-else class="muted-text">不可编辑</span></template></el-table-column><el-table-column label="预检结果" min-width="260"><template #default="scope"><div class="preflight-result"><el-tag :type="scope.row.status === 'ready' ? 'success' : 'danger'">{{ scope.row.status === 'ready' ? '可执行' : '已拦截' }}</el-tag><span v-for="message in scope.row.errors" :key="`e-${message}`" class="preflight-error">{{ message }}</span><span v-for="message in scope.row.warnings" :key="`w-${message}`" class="preflight-warning">{{ message }}</span></div></template></el-table-column>
         </el-table>
       </div>
       <div v-else class="batch-execution">
@@ -920,6 +1042,20 @@ onMounted(loadSites)
         <el-button v-if="batchStep === 0" type="primary" :loading="batchChecking" @click="runPreflight">下一步：发布预检</el-button>
         <el-button v-if="batchStep === 1" type="primary" :disabled="!batchPreview?.ready" :loading="batchRunning" @click="executeBatch">执行 {{ batchPreview?.ready }} 个任务</el-button>
       </template>
+    </el-dialog>
+
+    <el-dialog v-model="variantHistoryDialog" title="专属稿修订记录" width="880px">
+      <div v-if="variantHistoryItem" class="dialog-intro"><b>{{ variantHistoryItem.content_title }}</b><span>{{ variantHistoryItem.connection_name }} · 每次保存均保留独立修订</span></div>
+      <el-table v-loading="variantHistoryLoading" :data="variantHistory" max-height="460" empty-text="暂无修订记录">
+        <el-table-column prop="revision_number" label="修订" width="72"><template #default="scope">v{{ scope.row.revision_number }}</template></el-table-column>
+        <el-table-column prop="source_version" label="原文版本" width="92" />
+        <el-table-column prop="status" label="状态" width="100"><template #default="scope"><el-tag :type="variantStatusMeta(scope.row.status)[1]">{{ variantStatusMeta(scope.row.status)[0] }}</el-tag></template></el-table-column>
+        <el-table-column prop="title" label="专属标题" min-width="230" show-overflow-tooltip />
+        <el-table-column label="来源" width="95"><template #default="scope">{{ scope.row.ai_generated ? 'AI 生成' : '人工/基础' }}</template></el-table-column>
+        <el-table-column prop="review_note" label="审核备注" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="created_at" label="保存时间" width="145"><template #default="scope">{{ date(scope.row.created_at) }}</template></el-table-column>
+      </el-table>
+      <template #footer><el-button @click="variantHistoryDialog = false">关闭</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="attemptsDialog" title="发布尝试记录" width="760px">
@@ -983,4 +1119,5 @@ onMounted(loadSites)
 .connection-error,.task-error{display:block;margin-top:3px;color:#c2413a!important;white-space:normal!important}.task-toolbar{display:flex;align-items:center;gap:8px}.task-toolbar .el-select{width:145px}.preflight-result{display:grid;align-items:start;gap:4px}.preflight-result .el-tag{width:max-content}.preflight-error{color:#c2413a;font-size:10px}.preflight-warning{color:#a16207;font-size:10px}
 .handoff-workbench{display:grid;gap:14px}.handoff-heading{display:flex;align-items:center;justify-content:space-between}.handoff-heading span,.handoff-heading b,.handoff-heading small{display:block}.handoff-heading small{margin-top:4px;color:#7b8492;font-size:10.5px}.handoff-workbench section{display:grid;gap:10px;padding:14px;border:1px solid #e2e7ee;border-radius:9px;background:#fafbfd}.handoff-workbench section header{display:flex;align-items:center;justify-content:space-between}.handoff-workbench section header b{font-size:12px}.handoff-workbench section header span{color:#8992a0;font-size:10px}.handoff-field{display:grid;grid-template-columns:52px minmax(0,1fr) 110px;align-items:center;gap:8px}.handoff-field label,.handoff-body label{color:#687386;font-size:10.5px}.handoff-body{display:grid;grid-template-columns:minmax(0,1fr) 150px;align-items:end;gap:8px}.handoff-body label{grid-column:1/-1}.handoff-publish-card .el-button{width:max-content}.handoff-complete-card .el-checkbox{height:auto;white-space:normal}@media(max-width:700px){.handoff-field,.handoff-body{grid-template-columns:1fr}.handoff-field label,.handoff-body label{grid-column:1}.handoff-workbench section header{align-items:flex-start;flex-direction:column;gap:3px}}
 .variant-workbench{min-height:220px}.variant-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.variant-heading span,.variant-heading b,.variant-heading small{display:block}.variant-heading small{margin-top:4px;color:#7b8492;font-size:10.5px}.variant-columns{display:grid;grid-template-columns:1fr 1fr;gap:14px}.variant-columns>section,.variant-keywords,.variant-ai{min-width:0;padding:14px;border:1px solid #e1e6ed;border-radius:9px;background:#fafbfd}.variant-columns section>header,.variant-keywords>header,.variant-ai>header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:11px}.variant-columns header b,.variant-keywords header b,.variant-ai header b{font-size:12px}.variant-columns header span,.variant-keywords header span,.variant-ai header small{color:#818b9a;font-size:10px}.variant-source h3{margin:0 0 10px;font-size:15px}.variant-preview,.variant-editor{height:310px;overflow:auto;padding:12px;border:1px solid #dce2ea;border-radius:7px;background:#fff;color:#303846;font-size:12px;line-height:1.75}.variant-preview :deep(img),.variant-editor :deep(img){max-width:100%;height:auto}.variant-editor{outline:none}.variant-editor:focus{border-color:#409eff;box-shadow:0 0 0 1px #409eff}.variant-editor:empty::before{color:#a8abb2;content:attr(data-placeholder)}.variant-keywords,.variant-ai{display:grid;gap:10px;margin-top:14px}.keyword-check-list{display:flex;flex-wrap:wrap;gap:8px}.keyword-check-list>span{display:flex;align-items:center;gap:5px;padding:6px 8px;border-radius:7px;background:#fff}.keyword-check-list b{margin-right:2px;font-size:10.5px}.variant-ai header span,.variant-ai header b,.variant-ai header small{display:block}.variant-ai header small{margin-top:3px}.variant-ai .el-alert+.el-alert{margin-top:6px}@media(max-width:800px){.variant-columns{grid-template-columns:1fr}.variant-preview,.variant-editor{height:260px}.variant-heading{align-items:flex-start;flex-direction:column;gap:8px}}
+.variant-workbench>.el-alert{margin-bottom:14px}.variant-heading-tags{display:flex!important;align-items:center;flex-direction:row;gap:6px}.batch-variant-toolbar{display:flex;align-items:center;gap:8px;margin:10px 0;padding:9px 10px;border-radius:7px;background:#f2f6ff}.batch-variant-toolbar>span{margin-right:auto;color:#61708a;font-size:10.5px}.variant-row-actions{display:flex;align-items:center;flex-wrap:wrap;gap:3px}.table-panel td .muted-text,.table-panel td .preflight-warning{display:block;margin-top:3px}@media(max-width:800px){.batch-variant-toolbar{align-items:stretch;flex-direction:column}.batch-variant-toolbar>span{margin:0}.variant-heading-tags{flex-wrap:wrap}}
 </style>

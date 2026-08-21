@@ -42,6 +42,7 @@ from app.models.seo import SeoCrawlRun, SeoMetricSnapshot, SeoPageSnapshot
 from app.models.seo import (
     SeoContentPublication,
     SeoDistributionConnection,
+    SeoDistributionVariant,
     SeoPublishAttempt,
 )
 from app.security.auth import AuthContext, require_scoped_auth
@@ -2563,6 +2564,41 @@ class DistributionAdaptRequest(BaseModel):
     instruction: str | None = Field(None, max_length=2000)
 
 
+class DistributionVariantPair(BaseModel):
+    content_id: PositiveInt
+    connection_id: PositiveInt
+
+
+class DistributionVariantGenerateRequest(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt | None = None
+    pairs: list[DistributionVariantPair] = Field(min_length=1, max_length=20)
+    use_ai: bool = False
+    instruction: str | None = Field(None, max_length=2000)
+    submit_for_review: bool = False
+
+
+class DistributionVariantSaveRequest(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt | None = None
+    content_id: PositiveInt
+    connection_id: PositiveInt
+    source_version: PositiveInt
+    title: str = Field(min_length=1, max_length=300)
+    content: str = Field(min_length=1, max_length=80000)
+    status: Literal["draft", "pending_review"] = "draft"
+    ai_generated: bool = False
+    instruction: str | None = Field(None, max_length=2000)
+    feedback: str | None = Field(None, max_length=4000)
+
+
+class DistributionVariantReviewRequest(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt | None = None
+    decision: Literal["approve", "reject"]
+    note: str | None = Field(None, max_length=2000)
+
+
 class DistributionPublishRequest(BaseModel):
     tenant_id: PositiveInt
     site_id: PositiveInt | None = None
@@ -2570,6 +2606,7 @@ class DistributionPublishRequest(BaseModel):
     connection_id: PositiveInt
     action: Literal["draft", "publish"] = "draft"
     confirm: bool = False
+    variant_id: PositiveInt | None = None
     source_version: PositiveInt | None = None
     adapted_title: str | None = Field(None, min_length=1, max_length=300)
     adapted_content: str | None = Field(None, min_length=1, max_length=80000)
@@ -2630,6 +2667,7 @@ def _publication_payload(
         "content_id": row.content_asset_id,
         "content_title": content.title if content else None,
         "connection_id": row.connection_id,
+        "variant_id": row.variant_id,
         "connection_name": connection.name if connection else None,
         "platform_code": row.platform_code,
         "platform_name": row.platform_name,
@@ -2762,6 +2800,171 @@ def _distribution_ai_prompt(
         ]
     )
     return system, user
+
+
+async def _latest_distribution_variant(
+    session: AsyncSession,
+    tenant_id: int,
+    content_id: int,
+    connection_id: int,
+    *,
+    lock: bool = False,
+) -> SeoDistributionVariant | None:
+    statement = (
+        select(SeoDistributionVariant)
+        .where(
+            SeoDistributionVariant.tenant_id == tenant_id,
+            SeoDistributionVariant.content_asset_id == content_id,
+            SeoDistributionVariant.connection_id == connection_id,
+        )
+        .order_by(
+            SeoDistributionVariant.revision_number.desc(),
+            SeoDistributionVariant.id.desc(),
+        )
+        .limit(1)
+    )
+    if lock:
+        statement = statement.with_for_update()
+    return await session.scalar(statement)
+
+
+def _distribution_variant_payload(
+    row: SeoDistributionVariant,
+    *,
+    content: SeoContentAsset,
+    connection: SeoDistributionConnection,
+) -> dict[str, Any]:
+    stale = row.status != "published" and row.source_version != (content.version_count or 1)
+    definition = platform_definition(row.platform_code)
+    try:
+        source_html = _prepare_distribution_variant(
+            content.title,
+            content.humanized_content or content.draft or "",
+            row.platform_code,
+        )["content_html"]
+    except SeoDistributionError:
+        source_html = ""
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "content_id": row.content_asset_id,
+        "content_title": content.title,
+        "source_title": content.title,
+        "source_content_html": source_html,
+        "connection_id": row.connection_id,
+        "connection_name": connection.name,
+        "platform_code": row.platform_code,
+        "platform_name": definition["name"],
+        "source_version": row.source_version,
+        "current_source_version": content.version_count or 1,
+        "revision_number": row.revision_number,
+        "status": "stale" if stale else row.status,
+        "stored_status": row.status,
+        "stale": stale,
+        "title": row.title,
+        "excerpt": row.excerpt,
+        "content": row.content,
+        "content_html": row.content,
+        "content_chars": row.content_chars,
+        "content_rules": platform_content_rules(row.platform_code),
+        "keyword_checks": row.keyword_checks or [],
+        "warnings": row.warnings or [],
+        "ai_generated": row.ai_generated,
+        "instruction": row.generation_instruction,
+        "feedback": row.feedback,
+        "review_note": row.review_note,
+        "reviewed_by": row.reviewed_by,
+        "reviewed_at": _iso(row.reviewed_at),
+        "created_by": row.created_by,
+        "created_at": _iso(row.created_at),
+        "updated_at": _iso(row.updated_at),
+    }
+
+
+async def _create_distribution_variant_revision(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    content: SeoContentAsset,
+    connection: SeoDistributionConnection,
+    source_version: int,
+    title: str,
+    body: str,
+    status: str,
+    ai_generated: bool,
+    instruction: str | None,
+    feedback: str | None,
+    created_by: int | None,
+    supplied_warnings: list[str] | None = None,
+) -> SeoDistributionVariant:
+    if source_version != (content.version_count or 1):
+        raise HTTPException(409, "文章已产生新版本，请重新生成平台专属稿")
+    if not connection.enabled:
+        raise HTTPException(409, "平台连接已停用")
+    try:
+        prepared = _prepare_distribution_variant(
+            title, body, connection.platform_code, strict_title=True
+        )
+    except SeoDistributionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    keyword_ids = _selected_keyword_ids(content.keyword_ids, content.keyword_id)
+    keywords = await _content_keywords(
+        session, tenant_id, keyword_ids, content.site_id
+    )
+    checks = _distribution_keyword_checks(prepared, keywords)
+    missing = [item["keyword"] for item in checks if not item["in_content"]]
+    if status == "pending_review" and missing:
+        raise HTTPException(400, f"提交审核前请补齐目标关键词：{'、'.join(missing)}")
+    warnings = [str(item).strip() for item in (supplied_warnings or []) if str(item).strip()]
+    if checks and not checks[0]["in_title"]:
+        warnings.append("主关键词未出现在标题中，审核时请确认")
+    if missing:
+        warnings.append(f"正文缺少目标关键词：{'、'.join(missing)}")
+    warnings = list(dict.fromkeys(warnings))[:20]
+    latest = await _latest_distribution_variant(
+        session,
+        tenant_id,
+        content.id,
+        connection.id,
+        lock=True,
+    )
+    row = SeoDistributionVariant(
+        tenant_id=tenant_id,
+        content_asset_id=content.id,
+        connection_id=connection.id,
+        platform_code=connection.platform_code,
+        source_version=source_version,
+        revision_number=(latest.revision_number + 1) if latest else 1,
+        status=status,
+        title=prepared["title"],
+        excerpt=prepared["excerpt"],
+        content=prepared["content_html"],
+        content_chars=len(prepared["plain_text"]),
+        keyword_checks=checks,
+        warnings=warnings,
+        ai_generated=ai_generated,
+        generation_instruction=(instruction or "").strip() or None,
+        feedback=(feedback or "").strip() or None,
+        created_by=created_by,
+    )
+    session.add(row)
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(409, "平台专属稿刚刚被更新，请刷新后重试") from exc
+    return row
+
+
+async def _mark_distribution_variant_published(
+    session: AsyncSession,
+    publication: SeoContentPublication,
+) -> None:
+    if not publication.variant_id:
+        return
+    variant = await session.get(SeoDistributionVariant, publication.variant_id)
+    if variant and variant.tenant_id == publication.tenant_id:
+        variant.status = "published"
 
 
 def _content_payload(row: SeoContentAsset) -> dict[str, Any]:
@@ -3327,6 +3530,299 @@ async def adapt_content_distribution(
     }
 
 
+@router.get("/content-distribution/variants")
+async def list_distribution_variants(
+    tenant_id: int,
+    site_id: int | None = None,
+    content_id: int | None = None,
+    connection_id: int | None = None,
+    status: str | None = None,
+    latest_only: bool = True,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    await _tenant(session, tenant_id)
+    await _seo_site(session, tenant_id, site_id)
+    conditions = [SeoDistributionVariant.tenant_id == tenant_id]
+    if site_id is not None:
+        conditions.append(
+            SeoDistributionVariant.content_asset_id.in_(
+                select(SeoContentAsset.id).where(
+                    SeoContentAsset.tenant_id == tenant_id,
+                    SeoContentAsset.site_id == site_id,
+                )
+            )
+        )
+    if content_id is not None:
+        conditions.append(SeoDistributionVariant.content_asset_id == content_id)
+    if connection_id is not None:
+        conditions.append(SeoDistributionVariant.connection_id == connection_id)
+    rows = list(
+        await session.scalars(
+            select(SeoDistributionVariant)
+            .where(*conditions)
+            .order_by(
+                SeoDistributionVariant.content_asset_id,
+                SeoDistributionVariant.connection_id,
+                SeoDistributionVariant.revision_number.desc(),
+                SeoDistributionVariant.id.desc(),
+            )
+        )
+    )
+    if latest_only:
+        latest_rows: list[SeoDistributionVariant] = []
+        seen: set[tuple[int, int]] = set()
+        for row in rows:
+            key = (row.content_asset_id, row.connection_id)
+            if key not in seen:
+                seen.add(key)
+                latest_rows.append(row)
+        rows = latest_rows
+    content_ids = {row.content_asset_id for row in rows}
+    connection_ids = {row.connection_id for row in rows}
+    contents = {
+        item.id: item
+        for item in await session.scalars(
+            select(SeoContentAsset).where(SeoContentAsset.id.in_(content_ids))
+        )
+    } if content_ids else {}
+    connections = {
+        item.id: item
+        for item in await session.scalars(
+            select(SeoDistributionConnection).where(
+                SeoDistributionConnection.id.in_(connection_ids)
+            )
+        )
+    } if connection_ids else {}
+    items = [
+        _distribution_variant_payload(
+            row,
+            content=contents[row.content_asset_id],
+            connection=connections[row.connection_id],
+        )
+        for row in rows
+        if row.content_asset_id in contents and row.connection_id in connections
+    ]
+    if status:
+        items = [item for item in items if item["status"] == status]
+    counts: dict[str, int] = defaultdict(int)
+    for item in items:
+        counts[item["status"]] += 1
+    return {"items": items, "total": len(items), "status_counts": dict(counts)}
+
+
+@router.post("/content-distribution/variants")
+async def save_distribution_variant(
+    req: DistributionVariantSaveRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
+    content = await _distribution_content(
+        session, req.tenant_id, req.content_id, req.site_id
+    )
+    connection = await _distribution_connection(
+        session, req.tenant_id, req.connection_id
+    )
+    row = await _create_distribution_variant_revision(
+        session,
+        tenant_id=req.tenant_id,
+        content=content,
+        connection=connection,
+        source_version=req.source_version,
+        title=req.title,
+        body=req.content,
+        status=req.status,
+        ai_generated=req.ai_generated,
+        instruction=req.instruction,
+        feedback=req.feedback,
+        created_by=ctx.user_id,
+    )
+    await session.commit()
+    await session.refresh(row)
+    return _distribution_variant_payload(row, content=content, connection=connection)
+
+
+@router.post("/content-distribution/variants/generate")
+async def generate_distribution_variants(
+    req: DistributionVariantGenerateRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
+    pair_keys = {(item.content_id, item.connection_id) for item in req.pairs}
+    if len(pair_keys) != len(req.pairs):
+        raise HTTPException(400, "文章与平台连接组合不能重复")
+    items: list[dict[str, Any]] = []
+    for pair in req.pairs:
+        try:
+            generated = await adapt_content_distribution(
+                DistributionAdaptRequest(
+                    tenant_id=req.tenant_id,
+                    site_id=req.site_id,
+                    content_id=pair.content_id,
+                    connection_id=pair.connection_id,
+                    use_ai=req.use_ai,
+                    instruction=req.instruction,
+                ),
+                session,
+                ctx,
+            )
+            content = await _distribution_content(
+                session, req.tenant_id, pair.content_id, req.site_id
+            )
+            connection = await _distribution_connection(
+                session, req.tenant_id, pair.connection_id
+            )
+            row = await _create_distribution_variant_revision(
+                session,
+                tenant_id=req.tenant_id,
+                content=content,
+                connection=connection,
+                source_version=generated["source_version"],
+                title=generated["title"],
+                body=generated["content_html"],
+                status="pending_review" if req.submit_for_review else "draft",
+                ai_generated=generated["ai_generated"],
+                instruction=req.instruction,
+                feedback=generated["feedback"],
+                supplied_warnings=generated["warnings"],
+                created_by=ctx.user_id,
+            )
+            await session.commit()
+            await session.refresh(row)
+            items.append(
+                {
+                    "ok": True,
+                    "content_id": pair.content_id,
+                    "connection_id": pair.connection_id,
+                    "variant": _distribution_variant_payload(
+                        row, content=content, connection=connection
+                    ),
+                }
+            )
+        except HTTPException as exc:
+            await session.rollback()
+            items.append(
+                {
+                    "ok": False,
+                    "content_id": pair.content_id,
+                    "connection_id": pair.connection_id,
+                    "error": str(exc.detail),
+                    "status_code": exc.status_code,
+                }
+            )
+    succeeded = sum(1 for item in items if item["ok"])
+    return {
+        "items": items,
+        "total": len(items),
+        "succeeded": succeeded,
+        "failed": len(items) - succeeded,
+    }
+
+
+@router.get("/content-distribution/variants/{variant_id}/history")
+async def distribution_variant_history(
+    variant_id: int,
+    tenant_id: int,
+    site_id: int | None = None,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    await _seo_site(session, tenant_id, site_id)
+    current = await session.get(SeoDistributionVariant, variant_id)
+    if not current or current.tenant_id != tenant_id:
+        raise HTTPException(404, "平台专属稿不存在")
+    content = await _distribution_content(
+        session, tenant_id, current.content_asset_id, site_id
+    )
+    connection = await _distribution_connection(
+        session, tenant_id, current.connection_id
+    )
+    rows = list(
+        await session.scalars(
+            select(SeoDistributionVariant)
+            .where(
+                SeoDistributionVariant.tenant_id == tenant_id,
+                SeoDistributionVariant.content_asset_id == current.content_asset_id,
+                SeoDistributionVariant.connection_id == current.connection_id,
+            )
+            .order_by(
+                SeoDistributionVariant.revision_number.desc(),
+                SeoDistributionVariant.id.desc(),
+            )
+        )
+    )
+    return {
+        "items": [
+            _distribution_variant_payload(row, content=content, connection=connection)
+            for row in rows
+        ],
+        "total": len(rows),
+    }
+
+
+@router.post("/content-distribution/variants/{variant_id}/review")
+async def review_distribution_variant(
+    variant_id: int,
+    req: DistributionVariantReviewRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
+    row = await session.get(SeoDistributionVariant, variant_id)
+    if not row or row.tenant_id != req.tenant_id:
+        raise HTTPException(404, "平台专属稿不存在")
+    content = await _distribution_content(
+        session, req.tenant_id, row.content_asset_id, req.site_id
+    )
+    connection = await _distribution_connection(
+        session, req.tenant_id, row.connection_id
+    )
+    latest = await _latest_distribution_variant(
+        session,
+        req.tenant_id,
+        row.content_asset_id,
+        row.connection_id,
+        lock=True,
+    )
+    if not latest or latest.id != row.id:
+        raise HTTPException(409, "该专属稿已有更新版本，请刷新后审核最新版本")
+    if row.source_version != (content.version_count or 1):
+        raise HTTPException(409, "原文章已更新，该专属稿已过期，请重新生成")
+    if row.status != "pending_review":
+        raise HTTPException(409, "只有待审核的最新专属稿可以审核")
+    if req.decision == "approve":
+        try:
+            prepared = _prepare_distribution_variant(
+                row.title, row.content, connection.platform_code, strict_title=True
+            )
+        except SeoDistributionError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        keyword_ids = _selected_keyword_ids(content.keyword_ids, content.keyword_id)
+        keywords = await _content_keywords(
+            session, req.tenant_id, keyword_ids, req.site_id
+        )
+        checks = _distribution_keyword_checks(prepared, keywords)
+        missing = [item["keyword"] for item in checks if not item["in_content"]]
+        if missing:
+            raise HTTPException(400, f"审核前请补齐目标关键词：{'、'.join(missing)}")
+        row.keyword_checks = checks
+        row.status = "approved"
+    else:
+        row.status = "rejected"
+    row.review_note = (req.note or "").strip() or None
+    row.reviewed_by = ctx.user_id
+    row.reviewed_at = datetime.utcnow()
+    await session.commit()
+    return _distribution_variant_payload(row, content=content, connection=connection)
+
+
 @router.post("/content-distribution/preflight")
 async def preflight_content_distribution(
     req: DistributionPreflightRequest,
@@ -3463,16 +3959,50 @@ async def publish_content_distribution(
         session, req.tenant_id, req.content_id, req.site_id
     )
     source_version = content.version_count or 1
-    if req.source_version is not None and req.source_version != source_version:
+    if (
+        req.variant_id is None
+        and req.source_version is not None
+        and req.source_version != source_version
+    ):
         raise HTTPException(409, "文章已产生新版本，请重新生成平台专属稿并预检")
     connection = await _distribution_connection(session, req.tenant_id, req.connection_id)
     if not connection.enabled:
         raise HTTPException(409, "平台连接已停用")
     if connection.mode == "api" and connection.status != "connected":
         raise HTTPException(409, "请先完成平台连接测试")
-    customized = req.adapted_title is not None or req.adapted_content is not None
-    variant_title = req.adapted_title or content.title
-    variant_body = req.adapted_content or content.humanized_content or content.draft or ""
+    saved_variant: SeoDistributionVariant | None = None
+    if req.variant_id is not None:
+        if req.adapted_title is not None or req.adapted_content is not None:
+            raise HTTPException(400, "使用已审核专属稿时不能同时提交临时改写内容")
+        saved_variant = await session.get(SeoDistributionVariant, req.variant_id)
+        if (
+            not saved_variant
+            or saved_variant.tenant_id != req.tenant_id
+            or saved_variant.content_asset_id != req.content_id
+            or saved_variant.connection_id != req.connection_id
+            or saved_variant.platform_code != connection.platform_code
+        ):
+            raise HTTPException(404, "平台专属稿不存在")
+        latest_variant = await _latest_distribution_variant(
+            session,
+            req.tenant_id,
+            req.content_id,
+            req.connection_id,
+        )
+        if not latest_variant or latest_variant.id != saved_variant.id:
+            raise HTTPException(409, "平台专属稿已有更新版本，请重新预检")
+        if saved_variant.status != "approved":
+            raise HTTPException(409, "平台专属稿尚未审核通过")
+        if saved_variant.source_version != source_version:
+            raise HTTPException(409, "文章已产生新版本，请重新生成平台专属稿并预检")
+    requested_version = saved_variant.source_version if saved_variant else req.source_version
+    if requested_version is not None and requested_version != source_version:
+        raise HTTPException(409, "文章已产生新版本，请重新生成平台专属稿并预检")
+    customized = bool(saved_variant) or req.adapted_title is not None or req.adapted_content is not None
+    variant_title = saved_variant.title if saved_variant else (req.adapted_title or content.title)
+    variant_body = saved_variant.content if saved_variant else (
+        req.adapted_content or content.humanized_content or content.draft or ""
+    )
     try:
         prepared = _prepare_distribution_variant(
             variant_title,
@@ -3525,6 +4055,7 @@ async def publish_content_distribution(
         tenant_id=req.tenant_id,
         content_asset_id=req.content_id,
         connection_id=req.connection_id,
+        variant_id=saved_variant.id if saved_variant else None,
         platform_code=connection.platform_code,
         platform_name=definition["name"],
         publish_mode=connection.mode if connection.mode != "api" else req.action,
@@ -3585,6 +4116,7 @@ async def publish_content_distribution(
         content.published_at = content.published_at or row.published_at
         if remote.page_url and not content.page_url:
             content.page_url = remote.page_url
+        await _mark_distribution_variant_published(session, row)
     attempt.status = "succeeded"
     attempt.response_summary = remote.response_summary
     attempt.completed_at = datetime.utcnow()
@@ -3632,6 +4164,7 @@ async def complete_manual_publication(
     content.published_at = content.published_at or row.published_at
     if not content.page_url:
         content.page_url = page_url
+    await _mark_distribution_variant_published(session, row)
     session.add(
         SeoPublishAttempt(
             tenant_id=req.tenant_id,
@@ -3704,6 +4237,7 @@ async def sync_content_publication(
         content.published_at = content.published_at or row.published_at
         if row.page_url and not content.page_url:
             content.page_url = row.page_url
+        await _mark_distribution_variant_published(session, row)
     await session.commit()
     return _publication_payload(row, content=content, connection=connection)
 
@@ -3804,6 +4338,7 @@ async def retry_content_publication(
         content.published_at = content.published_at or row.published_at
         if row.page_url and not content.page_url:
             content.page_url = row.page_url
+        await _mark_distribution_variant_published(session, row)
     attempt.status = "failed" if remote.status == "failed" else "succeeded"
     attempt.response_summary = remote.response_summary
     attempt.error = remote.error

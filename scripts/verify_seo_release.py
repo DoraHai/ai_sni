@@ -41,6 +41,7 @@ SOURCE_ALLOWED_EXACT = {
     "migrations/versions/20260819_0071_seo_distribution_publishing.py",
     "migrations/versions/20260819_0071_login_lockout.py",
     "migrations/versions/20260819_0072_merge_login_seo.py",
+    "migrations/versions/20260819_0073_seo_distribution_variants.py",
     "tests/test_module_workspaces.py",
     "tests/test_seo_crawler.py",
     "tests/test_seo_distribution_import.py",
