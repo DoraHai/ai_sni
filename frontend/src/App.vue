@@ -15,6 +15,7 @@ const currentTitle = computed(() => route.meta.title || '')
 const currentWorkflow = computed(() => route.meta.workflow || '')
 const bare = computed(() => route.meta.bare) // 门户、诊断等无框页面
 const tenantPopoverOpen = ref(false)
+const bootstrapError = ref('')
 const themeStorageKey = 'sem_console_theme'
 const currentTheme = ref(localStorage.getItem(themeStorageKey) === 'dark' ? 'dark' : 'light')
 const themeLabel = computed(() => (currentTheme.value === 'dark' ? '暗橘' : '亮橘'))
@@ -159,7 +160,10 @@ async function loadTenants() {
   try {
     const t = await fetchTenants()
     session.setTenants(t.tenants)
-  } catch { /* 401 拦截器已处理 */ }
+    bootstrapError.value = ''
+  } catch (error) {
+    if (error.code !== 'AUTH_EXPIRED') bootstrapError.value = `客户列表加载失败：${error.message}`
+  }
 }
 
 // 刷新当前用户（角色权限可能被管理员改过 → 侧边栏/按钮即时更新）
@@ -341,6 +345,7 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
         </div>
       </el-header>
       <el-main class="main">
+        <el-alert v-if="bootstrapError" :title="bootstrapError" type="error" :closable="false" show-icon style="margin:0 18px 12px"><el-button size="small" @click="loadTenants">重试</el-button></el-alert>
         <div v-if="!SEM_WRITEBACK_ENABLED" class="readonly-banner">
           <b>只读演练</b>
           <span>{{ SEM_READ_ONLY_MESSAGE }}</span>

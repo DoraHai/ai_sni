@@ -25,3 +25,7 @@ export function genAiVerdict({ tenantId, dedupKey, force }) {
     timeout: 60000,
   })
 }
+
+export function fetchWritebackQueue(tenantId) {
+  return client.get('/api/v1/writeback/queue', { params: { tenant_id: tenantId } })
+}

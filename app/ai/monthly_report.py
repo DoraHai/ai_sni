@@ -17,13 +17,20 @@ from app.ai.deepseek import DeepSeekError, chat_json, is_enabled
 from app.models import (
     CATEGORY_LABELS,
     AnalysisReport,
+    Adgroup,
     Alert,
+    BaiduAccount,
+    BidWriteback,
+    Campaign,
     Keyword,
     KwReportSnapshot,
     MonthlyReport,
     OperationRecord,
     Suggestion,
+    SearchTermReport,
+    SUGGESTION_TYPE_LABELS,
     Tenant,
+    WritebackAction,
 )
 
 logger = logging.getLogger(__name__)
@@ -288,6 +295,77 @@ async def gather_report_data(
         "ai_suggestions_adopted": int(adopted or 0),
     }
 
+    # ===== 当前执行焦点：把报告从“复盘”连接到今天要处理的工作 =====
+    pending_suggestions = await session.scalar(
+        select(func.count()).select_from(Suggestion).where(
+            Suggestion.tenant_id == tenant.id, Suggestion.status == "pending"
+        )
+    )
+    priority_suggestions = list((await session.scalars(
+        select(Suggestion).where(
+            Suggestion.tenant_id == tenant.id, Suggestion.status == "pending"
+        ).order_by(Suggestion.priority, Suggestion.report_date.desc(), Suggestion.id.desc()).limit(8)
+    )).all())
+    pending_bid_writebacks = await session.scalar(
+        select(func.count()).select_from(BidWriteback).where(
+            BidWriteback.tenant_id == tenant.id, BidWriteback.status == "dry_run"
+        )
+    )
+    pending_actions = await session.scalar(
+        select(func.count()).select_from(WritebackAction).where(
+            WritebackAction.tenant_id == tenant.id, WritebackAction.status == "dry_run"
+        )
+    )
+    failed_actions = await session.scalar(
+        select(func.count()).select_from(WritebackAction).where(
+            WritebackAction.tenant_id == tenant.id, WritebackAction.status == "failed"
+        )
+    )
+    asset_counts = {}
+    for name, model in (
+        ("campaigns", Campaign), ("adgroups", Adgroup), ("keywords", Keyword),
+        ("search_terms", SearchTermReport),
+    ):
+        asset_counts[name] = int(await session.scalar(
+            select(func.count()).select_from(model).where(model.tenant_id == tenant.id)
+        ) or 0)
+    active_accounts = list((await session.scalars(
+        select(BaiduAccount).where(
+            BaiduAccount.tenant_id == tenant.id, BaiduAccount.status == "active"
+        )
+    )).all())
+    sync_risks = []
+    if not active_accounts:
+        sync_risks.append({"message": "没有生效的百度推广账户", "path": "/sem/accounts"})
+    if any(account.sync_status == "failed" for account in active_accounts):
+        sync_risks.append({"message": "存在同步失败账户", "path": "/sem/accounts"})
+    if asset_counts["campaigns"] and not asset_counts["adgroups"]:
+        sync_risks.append({"message": "已有计划但单元为空", "path": "/manage/campaigns"})
+    if asset_counts["campaigns"] and not asset_counts["keywords"]:
+        sync_risks.append({"message": "已有计划但关键词为空", "path": "/optimize/keywords"})
+    if asset_counts["keywords"] and not asset_counts["search_terms"]:
+        sync_risks.append({"message": "已有关键词但搜索词为空", "path": "/optimize/search-terms"})
+    operational_focus = {
+        "pending_suggestions": int(pending_suggestions or 0),
+        "pending_writebacks": int(pending_bid_writebacks or 0) + int(pending_actions or 0),
+        "failed_writebacks": int(failed_actions or 0),
+        "asset_counts": asset_counts,
+        "sync_risks": sync_risks,
+        "priority_suggestions": [
+            {
+                "id": row.id,
+                "priority": row.priority,
+                "type": SUGGESTION_TYPE_LABELS.get(row.suggestion_type, row.suggestion_type),
+                "keyword": row.keyword,
+                "reason": row.reason,
+                "report_date": row.report_date.isoformat(),
+                "path": f"/monitor/keywords/{row.keyword_id}" if row.keyword_id else "/optimize/keywords",
+            }
+            for row in priority_suggestions
+        ],
+        "queue_path": "/verify/pending?mode=queue",
+    }
+
     return {
         "tenant": {"id": tenant.id, "name": tenant.name, "strategy": tenant.strategy},
         "period": {
@@ -304,6 +382,7 @@ async def gather_report_data(
         "device_split": device_split,
         "alerts_review": alerts_review,
         "operations": operations,
+        "operational_focus": operational_focus,
         # 依赖未接入数据源的模块，前端占位（保持原型 11 模块的完整框架）
         "pending_modules": {
             "conversion": "转化数据待 M2 爱番番线索接入",

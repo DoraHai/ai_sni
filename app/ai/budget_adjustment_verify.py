@@ -80,7 +80,16 @@ async def _window_budget_metrics(
     cost_per_day = await _daily_cost(session, tenant_id, start, end, campaign_id)
     usage_pct = round(cost_per_day / budget * 100, 1) if budget else None
     overrun_pct = await _overrun_rate(session, tenant_id, entity_ref, start, end)
+    data_days = await session.scalar(
+        select(func.count(func.distinct(KwReportSnapshot.report_date))).where(
+            KwReportSnapshot.tenant_id == tenant_id,
+            KwReportSnapshot.report_date >= start,
+            KwReportSnapshot.report_date <= end,
+            *([KwReportSnapshot.campaign_id == campaign_id] if campaign_id is not None else []),
+        )
+    )
     return {
+        "days": int(data_days or 0),
         "cost_per_day": cost_per_day,
         "usage_pct": usage_pct,
         "overrun_day_pct": overrun_pct,
@@ -176,6 +185,12 @@ async def list_pending_budget(
             if latest and latest >= action_date
             else None
         )
+        if after is None:
+            sample = {"state": "collecting", "message": "调整后数据尚未同步"}
+        elif after["days"] < 3:
+            sample = {"state": "collecting", "message": f"调整后仅 {after['days']} 天，至少积累 3 天"}
+        else:
+            sample = {"state": "ready", "message": "样本已达到基础验证门槛"}
 
         items.append(
             {
@@ -195,6 +210,7 @@ async def list_pending_budget(
                     "before": before,
                     "after": after,
                     "after_through": latest.isoformat() if latest else None,
+                    "sample": sample,
                 },
                 "review": {
                     "status": review_status,

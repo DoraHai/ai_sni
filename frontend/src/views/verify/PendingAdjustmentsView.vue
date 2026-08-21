@@ -1,16 +1,18 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   fetchBudgetAdjustments,
   fetchPendingAdjustments,
+  fetchWritebackQueue,
   genAiVerdict,
   markVerified,
 } from '../../api/adjustmentVerify'
 import { session } from '../../store/session'
 
 const router = useRouter()
+const route = useRoute()
 const TENANT_ID = computed(() => session.tenantId)
 const canEdit = computed(() => session.canEdit('verify.pending'))
 
@@ -19,7 +21,7 @@ const error = ref('')
 const data = ref(null)
 const days = ref(7)
 const statusFilter = ref('')
-const mode = ref('keyword')
+const mode = ref(route.query.mode === 'queue' ? 'queue' : 'keyword')
 const aiLoading = ref({})
 
 const fmtMoney = (v) => (v == null ? '-' : '¥ ' + Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 2 }))
@@ -45,12 +47,11 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const fetcher = mode.value === 'budget' ? fetchBudgetAdjustments : fetchPendingAdjustments
-    data.value = await fetcher({
-      tenantId: TENANT_ID.value,
-      days: days.value,
-      status: statusFilter.value,
-    })
+    if (mode.value === 'queue') data.value = await fetchWritebackQueue(TENANT_ID.value)
+    else {
+      const fetcher = mode.value === 'budget' ? fetchBudgetAdjustments : fetchPendingAdjustments
+      data.value = await fetcher({ tenantId: TENANT_ID.value, days: days.value, status: statusFilter.value })
+    }
   } catch (e) {
     error.value = e.message
   } finally {
@@ -122,20 +123,32 @@ onMounted(load)
       <el-radio-group v-model="mode" size="small">
         <el-radio-button label="keyword">关键词调价</el-radio-button>
         <el-radio-button label="budget">预算调整</el-radio-button>
+        <el-radio-button label="queue">待回写队列</el-radio-button>
       </el-radio-group>
-      <el-radio-group v-model="days" size="small">
+      <el-radio-group v-if="mode !== 'queue'" v-model="days" size="small">
         <el-radio-button :label="7">近 7 天</el-radio-button>
         <el-radio-button :label="30">近 30 天</el-radio-button>
       </el-radio-group>
-      <el-radio-group v-model="statusFilter" size="small">
+      <el-radio-group v-if="mode !== 'queue'" v-model="statusFilter" size="small">
         <el-radio-button label="">全部</el-radio-button>
         <el-radio-button label="pending">待验证</el-radio-button>
         <el-radio-button label="verified">已验证</el-radio-button>
       </el-radio-group>
-      <span v-if="data" class="summary">
+      <span v-if="data && mode !== 'queue'" class="summary">
         共 {{ data.summary.total }} · 待验证 <b>{{ data.summary.pending }}</b> · 已验证 {{ data.summary.verified }}
       </span>
     </div>
+
+    <el-alert v-if="mode === 'queue'" type="info" :closable="false" title="百度回写尚未开启：演练记录统一归入待回写，不代表已在百度执行。" style="margin-bottom: 12px" />
+    <el-table v-if="mode === 'queue'" :data="data?.items || []" border empty-text="暂无待回写或执行记录">
+      <el-table-column prop="created_at" label="记录时间" min-width="150"><template #default="{row}">{{ fmtTime(row.created_at) }}</template></el-table-column>
+      <el-table-column prop="kind" label="动作" min-width="120" />
+      <el-table-column prop="target" label="对象" min-width="180" />
+      <el-table-column label="建议变化" min-width="130"><template #default="{row}">{{ row.before ?? '—' }} → {{ row.after ?? '—' }}</template></el-table-column>
+      <el-table-column label="状态" width="120"><template #default="{row}"><span class="st" :class="row.stage === 'failed' ? 'v-bad' : row.stage === 'executed' ? 'st-ok' : 'st-pending'">{{ row.stage === 'failed' ? '执行失败' : row.stage === 'executed' ? '百度已执行' : '待回写' }}</span></template></el-table-column>
+      <el-table-column prop="operator" label="记录人" min-width="100" />
+      <el-table-column prop="error" label="失败原因" min-width="160" />
+    </el-table>
 
     <div v-for="it in mode === 'keyword' ? (data?.items || []) : []" :key="it.dedup_key" class="adj-card" :class="{ verified: it.review.status === 'verified' }">
       <div class="adj-head">
@@ -174,6 +187,7 @@ onMounted(load)
           </tr>
         </tbody>
       </table>
+      <div class="sample-state" :class="it.effect.sample?.state">{{ it.effect.sample?.message || '样本状态未知' }}</div>
 
       <div v-if="it.ai.verdict" class="ai" :class="VERDICT_META[it.ai.verdict]?.cls">
         <b>AI 研判：{{ VERDICT_META[it.ai.verdict]?.label }}</b> · {{ it.ai.reason }}
@@ -238,6 +252,7 @@ onMounted(load)
           </tr>
         </tbody>
       </table>
+      <div class="sample-state" :class="it.effect.sample?.state">{{ it.effect.sample?.message || '样本状态未知' }}</div>
 
       <div class="adj-foot">
         <template v-if="it.review.status === 'verified'">
@@ -301,6 +316,8 @@ onMounted(load)
 .dlt.bad { color: #e24b4a; }
 
 .ai { margin-top: 10px; padding: 8px 12px; border-radius: 6px; font-size: 12.5px; line-height: 1.6; background: #f4f8fd; }
+.sample-state { margin-top: 8px; font-size: 11px; color: #8a5a12; }
+.sample-state.ready { color: #1d7a55; }
 .ai.v-ok { background: #f0faf4; }
 .ai.v-bad { background: #fef5f5; }
 .ai.v-watch { background: #fcf8ef; }

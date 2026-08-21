@@ -342,7 +342,8 @@ router.beforeEach((to) => {
   if (devBypass || !session.isLoggedIn) return
   if (!to.meta.public && !permOk(to.meta.perm)) {
     const dest = firstAllowedPath()
-    ElMessage.warning(`当前账号没有“${to.meta.title || '该页面'}”的访问权限，请联系管理员开通。`)
+    const permission = Array.isArray(to.meta.perm) ? to.meta.perm.join(' / ') : to.meta.perm
+    ElMessage.warning(`当前账号没有“${to.meta.title || '该页面'}”权限（需要 ${permission}）。请让管理员在「账号与权限」中为你的角色开通。`)
     if (dest && dest !== to.path) return { path: dest }
     return { path: '/workspace' }
   }
@@ -350,5 +351,8 @@ router.beforeEach((to) => {
 router.afterEach((to) => {
   const productName = to.path.startsWith('/seo') ? 'SEO 工作台' : 'SEM 智投平台'
   document.title = to.meta.documentTitle || (to.meta.title ? to.meta.title + ' · ' : '') + productName
+})
+router.onError((error) => {
+  ElMessage.error(`页面加载失败：${error.message || '请刷新后重试'}`)
 })
 export default router

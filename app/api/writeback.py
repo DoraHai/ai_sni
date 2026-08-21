@@ -17,7 +17,13 @@ from app.baidu.writeback_approval import (
     WritebackApprovalError,
     payload_fingerprint,
 )
-from app.models import WRITEBACK_STATUS_LABELS, BidWriteback, WritebackApproval
+from app.models import (
+    WRITEBACK_ACTION_LABELS,
+    WRITEBACK_STATUS_LABELS,
+    BidWriteback,
+    WritebackAction,
+    WritebackApproval,
+)
 from app.security.auth import AuthContext, require_scoped_auth
 
 logger = logging.getLogger(__name__)
@@ -201,3 +207,55 @@ async def list_writebacks(
         "status_counts": {s: int(n) for s, n in count_rows},
         "writebacks": [wb_to_dict(r) for r in rows],
     }
+
+
+def _queue_stage(status: str, dry_run: bool) -> str:
+    if status == "failed":
+        return "failed"
+    if dry_run or status == "dry_run":
+        return "pending_writeback"
+    return "executed"
+
+
+@router.get("/queue")
+async def list_writeback_queue(
+    tenant_id: int = Query(...),
+    limit: int = Query(200, ge=1, le=500),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """统一审计视图：演练记录是待回写，不冒充百度已执行。"""
+    ctx.ensure_tenant(tenant_id)
+    bids = list((await session.scalars(
+        select(BidWriteback).where(BidWriteback.tenant_id == tenant_id)
+        .order_by(BidWriteback.id.desc()).limit(limit)
+    )).all())
+    actions = list((await session.scalars(
+        select(WritebackAction).where(WritebackAction.tenant_id == tenant_id)
+        .order_by(WritebackAction.id.desc()).limit(limit)
+    )).all())
+    items = [
+        {
+            "key": f"bid:{row.id}", "kind": "关键词调价", "target": row.keyword,
+            "before": float(row.old_bid) if row.old_bid is not None else None,
+            "after": float(row.new_bid), "stage": _queue_stage(row.status, row.dry_run),
+            "operator": row.operator_name, "created_at": row.created_at.isoformat() if row.created_at else None,
+            "error": row.error_msg,
+        }
+        for row in bids
+    ] + [
+        {
+            "key": f"action:{row.id}", "kind": WRITEBACK_ACTION_LABELS.get(row.action_type, row.action_type),
+            "target": row.word, "before": float(row.old_value) if row.old_value is not None else None,
+            "after": float(row.new_value) if row.new_value is not None else None,
+            "stage": _queue_stage(row.status, row.dry_run), "operator": row.operator_name,
+            "created_at": row.created_at.isoformat() if row.created_at else None, "error": row.error_msg,
+        }
+        for row in actions
+    ]
+    items.sort(key=lambda item: item["created_at"] or "", reverse=True)
+    items = items[:limit]
+    counts = {"pending_writeback": 0, "executed": 0, "failed": 0}
+    for item in items:
+        counts[item["stage"]] += 1
+    return {"writeback_enabled": False, "counts": counts, "items": items}

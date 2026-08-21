@@ -69,7 +69,7 @@ def _release_tenant_sync_lock(fh) -> None:
 async def refresh_keyword_workbench_snapshot(
     session, tenant: Tenant, acc: BaiduAccount, target_date
 ) -> dict:
-    """同步关键词工作台所需数据；定时任务和人工刷新共用同一套逻辑。"""
+    """同步 SEM 五层只读资产；定时任务和人工补偿共用同一套逻辑。"""
     lock_fh = _acquire_tenant_sync_lock(tenant.id)
     if lock_fh is None:
         return {"status": "busy", "tenant_id": tenant.id}
@@ -85,6 +85,9 @@ async def refresh_keyword_workbench_snapshot(
         campaigns = await sync_campaigns_for_account(session, acc)
         adgroups = await sync_adgroups_for_account(session, acc)
         keywords = await sync_keywords_for_account(session, acc)
+        search_terms = await sync_search_terms_for_account(
+            session, acc, target_date - timedelta(days=30), target_date
+        )
         strategies = await sync_price_strategies_for_account(session, acc)
         category_counts = await reclassify_keywords(session, tenant)
         acc.last_synced_at = datetime.utcnow()
@@ -102,6 +105,7 @@ async def refresh_keyword_workbench_snapshot(
             "campaigns_synced": campaigns,
             "adgroups_synced": adgroups,
             "keywords_synced": keywords,
+            "search_terms_synced": search_terms,
             "price_strategies_synced": strategies,
             "category_counts": category_counts,
         }

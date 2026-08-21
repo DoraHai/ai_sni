@@ -2,12 +2,13 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { fetchSemAccounts } from '../../api/moduleAssets'
+import { fetchSemAccounts, repairSemAccountAssets } from '../../api/moduleAssets'
 import { currentTenantId } from '../../store/session'
 
 const router = useRouter()
 const loading = ref(false)
 const accounts = ref([])
+const repairingId = ref(null)
 const summary = ref({ total: 0, active: 0, ready: 0, attention: 0 })
 const stateLabels = {
   ready: '数据就绪', partial: '数据不完整', failed: '同步失败', syncing: '同步中',
@@ -30,6 +31,20 @@ async function load() {
     ElMessage.error(error.message)
   } finally {
     loading.value = false
+  }
+}
+
+async function repair(row) {
+  repairingId.value = row.id
+  try {
+    const result = await repairSemAccountAssets(currentTenantId.value, row.id)
+    const synced = result.result || {}
+    ElMessage.success(`补偿同步完成：计划 ${synced.campaigns_synced || 0}、单元 ${synced.adgroups_synced || 0}、关键词 ${synced.keywords_synced || 0}、搜索词 ${synced.search_terms_synced || 0}`)
+    await load()
+  } catch (error) {
+    ElMessage.error(error.message)
+  } finally {
+    repairingId.value = null
   }
 }
 
@@ -64,6 +79,7 @@ onMounted(load)
       <el-table-column label="数据状态" min-width="150"><template #default="{ row }"><b :class="['data-state', row.data_state]">{{ stateLabels[row.data_state] || row.data_state }}</b><small v-if="row.last_sync_error">{{ row.last_sync_error }}</small></template></el-table-column>
       <el-table-column label="已拉取资产" min-width="240"><template #default="{ row }"><span class="counts">计划 {{ row.counts?.campaigns || 0 }} · 单元 {{ row.counts?.adgroups || 0 }} · 关键词 {{ row.counts?.keywords || 0 }} · 搜索词 {{ row.counts?.search_terms || 0 }}</span></template></el-table-column>
       <el-table-column label="最近同步" min-width="150"><template #default="{ row }">{{ fmtTime(row.last_synced_at || row.last_asset_synced_at) }}</template></el-table-column>
+      <el-table-column label="只读补偿" width="120"><template #default="{ row }"><el-button v-if="row.status === 'active' && row.data_state !== 'ready'" link type="primary" :loading="repairingId === row.id" @click="repair(row)">补同步</el-button><span v-else>—</span></template></el-table-column>
     </el-table>
     <el-empty v-if="!loading && !accounts.length" description="尚未授权推广账号" />
   </div>

@@ -43,9 +43,12 @@ client.interceptors.response.use(
     }
     const detail =
       normalizeDetail(error.response?.data?.detail) ||
-      error.message ||
+      (error.code === 'ECONNABORTED' ? '请求超过 30 秒未完成，请检查网络或稍后重试' : error.message) ||
       '网络异常，请稍后重试'
-    return Promise.reject(new Error(detail))
+    const normalized = new Error(detail)
+    normalized.status = error.response?.status
+    normalized.code = error.response?.status === 403 ? 'PERMISSION_DENIED' : error.code === 'ECONNABORTED' ? 'REQUEST_TIMEOUT' : error.code
+    return Promise.reject(normalized)
   },
 )
 

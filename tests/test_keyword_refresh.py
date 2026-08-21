@@ -98,6 +98,10 @@ class KeywordRefreshTests(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=4757),
             ),
             patch(
+                "app.scheduler.sync_search_terms_for_account",
+                new=AsyncMock(return_value=328),
+            ) as search_term_sync,
+            patch(
                 "app.scheduler.sync_price_strategies_for_account",
                 new=AsyncMock(return_value=3),
             ),
@@ -112,6 +116,11 @@ class KeywordRefreshTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["keywords_synced"], 4757)
+        self.assertEqual(result["search_terms_synced"], 328)
+        self.assertEqual(
+            search_term_sync.await_args.args[2:],
+            (date(2026, 6, 28), date(2026, 7, 28)),
+        )
         self.assertEqual(result["date"], "2026-07-28")
         release_lock.assert_called_once_with(lock_handle)
 
