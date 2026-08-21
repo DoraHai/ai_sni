@@ -13,11 +13,16 @@ from app.api.seo import (
     DistributionPreflightRequest,
     DistributionPublishRequest,
     DistributionRetryRequest,
+    DistributionVariantReviewRequest,
+    DistributionVariantSaveRequest,
+    _create_distribution_variant_revision,
     _distribution_content,
+    _distribution_variant_payload,
     adapt_content_distribution,
     complete_manual_publication,
     preflight_content_distribution,
     publish_content_distribution,
+    review_distribution_variant,
     retry_content_publication,
 )
 from app.security.auth import AuthContext
@@ -25,6 +30,7 @@ from app.models.seo import (
     SeoContentAsset,
     SeoContentPublication,
     SeoDistributionConnection,
+    SeoDistributionVariant,
     SeoKeywordAsset,
     SeoPublishAttempt,
 )
@@ -324,10 +330,14 @@ def test_wechat_image_download_stream_checks_actual_format_and_size(monkeypatch:
 
 def test_distribution_models_are_tenant_scoped_and_keep_credentials_private() -> None:
     assert SeoDistributionConnection.__tablename__ == "seo_distribution_connections"
+    assert SeoDistributionVariant.__tablename__ == "seo_distribution_variants"
     assert SeoContentPublication.__tablename__ == "seo_content_publications"
     assert SeoPublishAttempt.__tablename__ == "seo_publish_attempts"
     assert "tenant_id" in SeoDistributionConnection.__table__.columns
     assert "credentials_encrypted" in SeoDistributionConnection.__table__.columns
+    assert "revision_number" in SeoDistributionVariant.__table__.columns
+    assert "keyword_checks" in SeoDistributionVariant.__table__.columns
+    assert "variant_id" in SeoContentPublication.__table__.columns
     assert "page_url" in SeoContentPublication.__table__.columns
     assert "request_summary" in SeoPublishAttempt.__table__.columns
 
@@ -347,10 +357,21 @@ def test_publish_requests_bound_batch_size_and_require_explicit_confirmation_fie
         connection_id=3,
         action="publish",
     )
+    variant = DistributionVariantSaveRequest(
+        tenant_id=1,
+        site_id=8,
+        content_id=1,
+        connection_id=3,
+        source_version=1,
+        title="平台标题",
+        content="<p>平台正文</p>",
+        status="pending_review",
+    )
 
     assert request.content_ids == [1, 2]
     assert request.site_id == 8
     assert publish.confirm is False
+    assert variant.status == "pending_review"
     with pytest.raises(Exception):
         DistributionPreflightRequest(
             tenant_id=1,
@@ -494,6 +515,233 @@ def test_ai_platform_variant_retries_missing_keyword_and_sanitizes_html() -> Non
     assert result["feedback"] == "已修订"
     assert result["keyword_checks"][0]["in_content"] is True
     assert "script" not in result["content_html"].lower()
+
+
+def test_distribution_variant_revision_is_persisted_and_stale_is_computed() -> None:
+    content = SeoContentAsset(
+        id=5,
+        tenant_id=1,
+        site_id=8,
+        keyword_id=21,
+        keyword_ids=[21],
+        content_type="article",
+        title="SEO 内容分发指南",
+        draft="<p>SEO 内容分发原文</p>",
+        status="drafting",
+        version_count=3,
+    )
+    connection = SeoDistributionConnection(
+        id=9,
+        tenant_id=1,
+        platform_code="zhihu",
+        name="官方知乎",
+        mode="assisted",
+        enabled=True,
+        status="ready",
+    )
+    latest = SeoDistributionVariant(
+        id=31,
+        tenant_id=1,
+        content_asset_id=5,
+        connection_id=9,
+        platform_code="zhihu",
+        source_version=3,
+        revision_number=2,
+        status="draft",
+        title="旧稿",
+        content="<p>旧稿</p>",
+        content_chars=2,
+    )
+    keyword = SeoKeywordAsset(id=21, tenant_id=1, site_id=8, keyword="SEO 内容分发", status="active")
+    session = AsyncMock()
+    session.scalar = AsyncMock(return_value=latest)
+    session.add = MagicMock()
+    session.flush = AsyncMock()
+
+    with patch("app.api.seo._content_keywords", new=AsyncMock(return_value=[keyword])):
+        row = asyncio.run(
+            _create_distribution_variant_revision(
+                session,
+                tenant_id=1,
+                content=content,
+                connection=connection,
+                source_version=3,
+                title="SEO 内容分发实践",
+                body="<div>SEO 内容分发正文</div><script>bad()</script>",
+                status="pending_review",
+                ai_generated=True,
+                instruction="面向运营负责人",
+                feedback="已优化",
+                created_by=7,
+            )
+        )
+
+    assert row.revision_number == 3
+    assert row.status == "pending_review"
+    assert row.ai_generated is True
+    assert row.keyword_checks[0]["in_content"] is True
+    assert "script" not in row.content.lower()
+    session.add.assert_called_once_with(row)
+
+    content.version_count = 4
+    payload = _distribution_variant_payload(row, content=content, connection=connection)
+    assert payload["status"] == "stale"
+    assert payload["stored_status"] == "pending_review"
+    assert payload["current_source_version"] == 4
+
+
+def test_distribution_variant_review_approves_only_latest_current_revision() -> None:
+    content = SeoContentAsset(
+        id=5,
+        tenant_id=1,
+        site_id=8,
+        keyword_id=21,
+        keyword_ids=[21],
+        content_type="article",
+        title="SEO 内容分发指南",
+        draft="<p>SEO 内容分发原文</p>",
+        status="drafting",
+        version_count=3,
+    )
+    connection = SeoDistributionConnection(
+        id=9,
+        tenant_id=1,
+        platform_code="zhihu",
+        name="官方知乎",
+        mode="assisted",
+        enabled=True,
+        status="ready",
+    )
+    row = SeoDistributionVariant(
+        id=32,
+        tenant_id=1,
+        content_asset_id=5,
+        connection_id=9,
+        platform_code="zhihu",
+        source_version=3,
+        revision_number=3,
+        status="pending_review",
+        title="SEO 内容分发实践",
+        content="<p>SEO 内容分发正文</p>",
+        content_chars=10,
+    )
+    keyword = SeoKeywordAsset(id=21, tenant_id=1, site_id=8, keyword="SEO 内容分发", status="active")
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=row)
+    session.commit = AsyncMock()
+    context = AuthContext(
+        user_id=7,
+        username="reviewer",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+    request = DistributionVariantReviewRequest(
+        tenant_id=1,
+        site_id=8,
+        decision="approve",
+        note="事实与排版已核对",
+    )
+
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
+        patch("app.api.seo._distribution_connection", new=AsyncMock(return_value=connection)),
+        patch("app.api.seo._latest_distribution_variant", new=AsyncMock(return_value=row)),
+        patch("app.api.seo._content_keywords", new=AsyncMock(return_value=[keyword])),
+    ):
+        result = asyncio.run(review_distribution_variant(32, request, session, context))
+
+    assert result["status"] == "approved"
+    assert row.reviewed_by == 7
+    assert row.review_note == "事实与排版已核对"
+    session.commit.assert_awaited_once()
+
+
+def test_approved_persisted_variant_is_bound_to_publication() -> None:
+    content = SeoContentAsset(
+        id=5,
+        tenant_id=1,
+        site_id=8,
+        keyword_id=21,
+        keyword_ids=[21],
+        content_type="article",
+        title="原始文章",
+        draft="<p>原始正文</p>",
+        status="drafting",
+        version_count=3,
+    )
+    connection = SeoDistributionConnection(
+        id=9,
+        tenant_id=1,
+        platform_code="zhihu",
+        name="官方知乎",
+        mode="assisted",
+        enabled=True,
+        status="ready",
+    )
+    variant = SeoDistributionVariant(
+        id=33,
+        tenant_id=1,
+        content_asset_id=5,
+        connection_id=9,
+        platform_code="zhihu",
+        source_version=3,
+        revision_number=1,
+        status="approved",
+        title="SEO 内容分发专属标题",
+        content="<p>SEO 内容分发专属正文</p>",
+        content_chars=12,
+    )
+    keyword = SeoKeywordAsset(id=21, tenant_id=1, site_id=8, keyword="SEO 内容分发", status="active")
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=variant)
+    session.scalar = AsyncMock(side_effect=[None, None])
+    session.add = MagicMock()
+    session.flush = AsyncMock()
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+    request = DistributionPublishRequest(
+        tenant_id=1,
+        site_id=8,
+        content_id=5,
+        connection_id=9,
+        variant_id=33,
+        action="draft",
+    )
+
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
+        patch("app.api.seo._distribution_connection", new=AsyncMock(return_value=connection)),
+        patch("app.api.seo._latest_distribution_variant", new=AsyncMock(return_value=variant)),
+        patch("app.api.seo._content_keywords", new=AsyncMock(return_value=[keyword])),
+        patch("app.api.seo.decrypt_credentials", return_value={}),
+        patch(
+            "app.api.seo.publish_content",
+            new=AsyncMock(
+                return_value=distribution.RemotePublishResult(
+                    status="manual_required",
+                    response_summary={"handoff_url": "https://zhuanlan.zhihu.com/write"},
+                )
+            ),
+        ),
+    ):
+        result = asyncio.run(publish_content_distribution(request, session, context))
+
+    publication = session.add.call_args_list[0].args[0]
+    assert publication.variant_id == 33
+    assert publication.adapted_title == "SEO 内容分发专属标题"
+    assert "SEO 内容分发专属正文" in publication.adapted_content
+    assert result["variant_id"] == 33
+    assert result["status"] == "manual_required"
 
 
 def test_custom_variant_rejects_stale_source_and_missing_target_keyword() -> None:
@@ -769,17 +1017,29 @@ def test_distribution_migration_backfills_legacy_links_and_is_linear() -> None:
     assert "WHERE page_url IS NOT NULL" in migration
     assert migration.index('op.drop_table("seo_publish_attempts")') < migration.index('op.drop_table("seo_content_publications")')
 
+    variant_migration = (root / "migrations/versions/20260819_0073_seo_distribution_variants.py").read_text(encoding="utf-8")
+    assert 'revision: str = "0073_seo_distribution_variants"' in variant_migration
+    assert 'down_revision: Union[str, None] = "0072_merge_login_seo"' in variant_migration
+    assert '"seo_distribution_variants"' in variant_migration
+    assert '"variant_id"' in variant_migration
+    assert variant_migration.index('op.drop_column("seo_content_publications", "variant_id")') < variant_migration.index('op.drop_table("seo_distribution_variants")')
+
 
 def test_distribution_frontend_exposes_guided_publish_flow() -> None:
     root = Path(__file__).parents[1]
     view = (root / "frontend/src/views/seo/SeoDistributionView.vue").read_text(encoding="utf-8")
     api = (root / "frontend/src/api/seo.js").read_text(encoding="utf-8")
 
-    for label in ("平台连接", "编辑平台连接", "保存并测试", "发布预检", "优先创建草稿", "平台专属稿", "AI 生成平台专属稿", "目标关键词覆盖", "保存并用于本批发布", "辅助发布交接台", "复制正文（保留格式）", "打开官方编辑器", "确认后重试", "发布尝试记录", "同一文章可保留多个平台链接", "正在转存"):
+    for label in ("平台连接", "编辑平台连接", "保存并测试", "发布预检", "优先创建草稿", "平台专属稿", "AI 生成平台专属稿", "目标关键词覆盖", "保存草稿", "提交审核", "专属稿审核", "修订记录", "批量生成基础稿", "AI 批量生成并提交审核", "辅助发布交接台", "复制正文（保留格式）", "打开官方编辑器", "确认后重试", "发布尝试记录", "同一文章可保留多个平台链接", "正在转存"):
         assert label in view
     for function_name in (
         "fetchSeoDistributionConnections",
         "adaptSeoDistributionContent",
+        "fetchSeoDistributionVariants",
+        "saveSeoDistributionVariant",
+        "generateSeoDistributionVariants",
+        "reviewSeoDistributionVariant",
+        "fetchSeoDistributionVariantHistory",
         "preflightSeoDistribution",
         "publishSeoDistribution",
         "completeSeoManualPublication",

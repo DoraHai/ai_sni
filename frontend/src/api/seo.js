@@ -189,6 +189,26 @@ export function adaptSeoDistributionContent(payload) {
   return client.post('/api/v1/seo/content-distribution/adapt', payload, { timeout: 100000 })
 }
 
+export function fetchSeoDistributionVariants({ tenantId, siteId, contentId, connectionId, status, latestOnly = true }) {
+  return client.get('/api/v1/seo/content-distribution/variants', { params: { tenant_id: tenantId, site_id: siteId || undefined, content_id: contentId || undefined, connection_id: connectionId || undefined, status: status || undefined, latest_only: latestOnly } })
+}
+
+export function saveSeoDistributionVariant(payload) {
+  return client.post('/api/v1/seo/content-distribution/variants', payload)
+}
+
+export function generateSeoDistributionVariants(payload) {
+  return client.post('/api/v1/seo/content-distribution/variants/generate', payload, { timeout: 360000 })
+}
+
+export function reviewSeoDistributionVariant({ variantId, payload }) {
+  return client.post(`/api/v1/seo/content-distribution/variants/${variantId}/review`, payload)
+}
+
+export function fetchSeoDistributionVariantHistory({ variantId, tenantId, siteId }) {
+  return client.get(`/api/v1/seo/content-distribution/variants/${variantId}/history`, { params: { tenant_id: tenantId, site_id: siteId || undefined } })
+}
+
 export function publishSeoDistribution(payload) {
   return client.post('/api/v1/seo/content-distribution/publish', payload, { timeout: 360000 })
 }
