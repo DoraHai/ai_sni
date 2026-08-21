@@ -9,6 +9,11 @@ const loading = ref(false)
 const syncing = ref(false)
 const error = ref('')
 const data = ref(null)
+const emptyDiagnosis = computed(() => {
+  if (!data.value || data.value.total) return null
+  if (!data.value.window?.synced_at) return '搜索词尚未同步。该数据来自百度读取，与回写开关无关；请执行近 30 天同步。'
+  return `最近已于 ${fmtTime(data.value.window.synced_at)} 完成读取，但当前窗口或筛选条件下没有搜索词。`
+})
 
 const STATUS_TABS = [
   { code: '', label: '全部' },
@@ -165,6 +170,7 @@ const statCards = computed(() => {
       </div>
       <el-button type="primary" :loading="syncing" @click="runSync">同步搜索词（近 30 天）</el-button>
     </div>
+    <el-alert v-if="emptyDiagnosis" type="warning" :title="emptyDiagnosis" :closable="false" show-icon style="margin-bottom: 12px" />
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 14px" />
 
@@ -266,13 +272,13 @@ const statCards = computed(() => {
         <el-table-column label="操作" min-width="156">
           <template #default="{ row }">
             <div class="search-term-actions">
-              <el-button class="search-action is-negative" size="small" :disabled="!row.adgroup_id && !row.campaign_id" @click="addNeg(row)">加否词</el-button>
-              <el-button class="search-action is-expand" size="small" :disabled="row.is_added || !row.adgroup_id" @click="expand(row)">设为关键词</el-button>
+              <el-button class="search-action is-negative" size="small" :disabled="!row.adgroup_id && !row.campaign_id" @click="addNeg(row)">待回写否词</el-button>
+              <el-button class="search-action is-expand" size="small" :disabled="row.is_added || !row.adgroup_id" @click="expand(row)">待回写关键词</el-button>
             </div>
           </template>
         </el-table-column>
         <template #empty>
-          <div class="empty-line">没有搜索词数据。点右上角「同步搜索词」从百度拉取。</div>
+          <div class="empty-line">{{ emptyDiagnosis || '当前筛选条件下没有搜索词。' }}</div>
         </template>
       </el-table>
       <div class="table-footer">
@@ -289,7 +295,7 @@ const statCards = computed(() => {
       </div>
     </div>
 
-    <el-dialog v-model="negDialogVisible" title="加否词" width="420px">
+    <el-dialog v-model="negDialogVisible" title="加入待回写否词" width="420px">
       <div class="neg-form">
         <p>将「{{ negForm.word }}」加为否词</p>
 
@@ -309,11 +315,11 @@ const statCards = computed(() => {
           <el-radio label="phrase">短语否</el-radio>
         </el-radio-group>
 
-        <div class="neg-tip">演练模式下只记录台账，不真实写回百度。</div>
+        <div class="neg-tip">当前只读演练：仅加入待回写台账，不修改百度账户。</div>
       </div>
       <template #footer>
         <el-button @click="negDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitNegative">确认加否词</el-button>
+        <el-button type="primary" @click="submitNegative">加入待回写</el-button>
       </template>
     </el-dialog>
   </div>

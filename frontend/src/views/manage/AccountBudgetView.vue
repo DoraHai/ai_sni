@@ -47,12 +47,12 @@ async function save() {
     ElMessage.warning(`日预算需在 ¥${min.value} ~ ¥${max.value} 之间`)
     return
   }
-  const dryNote = '当前为演练模式，本次只记台账、不会真改线上账户。'
+  const dryNote = '当前为只读演练模式，本次只加入待回写台账、不会修改百度账户。'
   try {
     await ElMessageBox.confirm(
       `确认把账户日预算从 ${fmtMoney(data.value.budget)} 改为 ¥${v.toFixed(2)}？\n${dryNote}`,
       '确认修改账户日预算',
-      { confirmButtonText: '确认写回', cancelButtonText: '取消', type: 'warning' },
+      { confirmButtonText: '加入待回写', cancelButtonText: '取消', type: 'warning' },
     )
   } catch {
     return // 用户取消
@@ -61,7 +61,7 @@ async function save() {
   try {
     const res = await setAccountBudget({ tenantId: TENANT_ID.value, budget: v })
     if (res.status === 'dry_run') {
-      ElMessage.success(`演练完成：日预算 ${fmtMoney(res.old_budget)} → ${fmtMoney(res.new_budget)}（未真改，已记台账）`)
+      ElMessage.success(`已加入待回写：日预算 ${fmtMoney(res.old_budget)} → ${fmtMoney(res.new_budget)}（百度账户未修改）`)
     } else if (res.status === 'success') {
       ElMessage.success(`已写回：日预算 ${fmtMoney(res.old_budget)} → ${fmtMoney(res.new_budget)}`)
     } else {
@@ -94,11 +94,19 @@ async function save() {
       :closable="false"
       show-icon
       style="margin-bottom: 14px"
-      title="当前为演练模式：修改日预算只记台账、不会真改线上百度账户。"
+      title="当前为只读演练模式：预算建议只加入待回写台账，不会修改百度账户。"
     />
 
     <div v-if="data && data.status === 'error'" class="empty-panel">
-      {{ data.message }}
+      <b>账户预算暂不可用</b>
+      <span>{{ data.message }}</span>
+      <el-button size="small" @click="load">重新读取</el-button>
+    </div>
+
+    <div v-else-if="!loading && !data" class="empty-panel">
+      <b>没有读取到账户预算</b>
+      <span>{{ error || '请确认当前客户已绑定有效的百度推广账户。' }}</span>
+      <el-button size="small" @click="load">重新读取</el-button>
     </div>
 
     <template v-else-if="ok">
@@ -133,7 +141,7 @@ async function save() {
             controls-position="right"
             style="width: 200px"
           />
-          <el-button type="primary" :loading="saving" @click="save">写回日预算</el-button>
+          <el-button type="primary" :loading="saving" @click="save">加入待回写</el-button>
           <span v-if="changeHint" class="change-hint" :class="{ big: changeHint.big }">
             {{ changeHint.pct > 0 ? '+' : '' }}{{ changeHint.pct }}%
             <template v-if="changeHint.big">⚠ 调整幅度较大，请确认</template>
@@ -166,5 +174,6 @@ async function save() {
 .change-hint.big { color: var(--sem-danger); }
 .edit-note { font-size: 11px; color: #9ca3af; margin-top: 10px; }
 
-.empty-panel { background: #fff; border: 1px solid var(--sem-border); border-radius: 8px; padding: 36px; text-align: center; font-size: 13px; color: var(--sem-text-sub); }
+.empty-panel { background: #fff; border: 1px solid var(--sem-border); border-radius: 8px; padding: 36px; text-align: center; font-size: 13px; color: var(--sem-text-sub); display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.empty-panel b { color: var(--sem-text); font-size: 15px; }
 </style>

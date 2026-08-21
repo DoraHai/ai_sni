@@ -12,7 +12,7 @@ const form = reactive({
   budget: '',
   regions: '',
   schedulePreset: 'all',
-  scheduleBlocks: [{ weekDays: [1, 2, 3, 4, 5, 6, 7], startHour: 9, endHour: 22 }],
+  scheduleBlocks: [{ weekDays: [1, 2, 3, 4, 5, 6, 7], startHour: 0, endHour: 24 }],
   devicePreference: '不限',
 })
 

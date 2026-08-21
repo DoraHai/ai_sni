@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { session } from '../store/session'
 import { loginUrl } from '../auth/loginRedirect'
 
@@ -341,8 +342,9 @@ router.beforeEach((to) => {
   if (devBypass || !session.isLoggedIn) return
   if (!to.meta.public && !permOk(to.meta.perm)) {
     const dest = firstAllowedPath()
+    ElMessage.warning(`当前账号没有“${to.meta.title || '该页面'}”的访问权限，请联系管理员开通。`)
     if (dest && dest !== to.path) return { path: dest }
-    if (!dest) return
+    return { path: '/workspace' }
   }
 })
 router.afterEach((to) => {

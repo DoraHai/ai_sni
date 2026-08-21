@@ -217,7 +217,7 @@ onMounted(load)
 .ai-disabled { font-size: 12px; color: #9ca3af; padding: 8px 0 14px; }
 
 .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
-.card { background: #fff; border: 1px solid var(--sem-border); border-radius: 10px; padding: 16px 18px; }
+.card { min-width: 0; background: #fff; border: 1px solid var(--sem-border); border-radius: 10px; padding: 16px 18px; overflow: hidden; }
 .card-h { font-size: 14px; font-weight: 600; color: var(--sem-text); margin-bottom: 12px; display: flex; align-items: baseline; gap: 8px; }
 .card-sub { font-size: 11px; font-weight: 400; color: #9ca3af; }
 .kv { display: flex; justify-content: space-between; align-items: baseline; padding: 5px 0; font-size: 13px; }
@@ -229,8 +229,9 @@ onMounted(load)
 .sub-h { font-size: 11px; color: #9ca3af; margin: 10px 0 4px; }
 .biz { margin-top: 10px; padding-top: 10px; border-top: 1px solid #f3f4f6; font-size: 12px; color: var(--sem-text-sub); line-height: 1.7; }
 
-.big-row { display: flex; justify-content: space-around; text-align: center; margin-bottom: 12px; }
-.big { font-size: 24px; font-weight: 700; color: var(--sem-text); }
+.big-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; text-align: center; margin-bottom: 12px; }
+.big-row > div { min-width: 0; }
+.big { max-width: 100%; font-size: clamp(16px, 1.7vw, 24px); font-weight: 700; color: var(--sem-text); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .big.warn { color: #ba7517; }
 .big-l { font-size: 11px; color: var(--sem-text-sub); margin-top: 2px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -238,4 +239,6 @@ onMounted(load)
 .drill-chip { border: 0; cursor: pointer; font-family: inherit; line-height: 1.6; }
 .drill-chip:hover { background: #dfeefa; }
 .dim { color: #c0c4cc; font-size: 13px; }
+@media (max-width: 1100px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 720px) { .grid { grid-template-columns: minmax(0, 1fr); } }
 </style>

@@ -7,6 +7,7 @@ import { fetchAlerts } from './api/alerts'
 import { fetchCandidates } from './api/expansion'
 import { session } from './store/session'
 import { redirectToLogin } from './auth/loginRedirect'
+import { SEM_READ_ONLY_MESSAGE, SEM_WRITEBACK_ENABLED } from './constants/semCapabilities'
 
 const route = useRoute()
 const router = useRouter()
@@ -64,8 +65,8 @@ const ALL_GROUPS = computed(() => [
     { label: '异常提醒', path: '/monitor/alerts', count: badges.alerts, key: 'monitor.alerts' },
     { label: '客户画像', path: '/monitor/profile', key: 'monitor.profile' },
   ] },
-  { label: '优化执行', icon: '⚡', badge: badges.expand, badgeCls: 'info', children: [
-    { label: '拓词', path: '/optimize/expand', count: badges.expand, key: 'optimize.expand' },
+  { label: '优化建议', icon: '⚡', children: [
+    { label: '拓词建议', path: '/optimize/expand', count: badges.expand, countLabel: '待审', key: 'optimize.expand', hint: '徽章表示待审拓词建议数量，不代表已执行动作' },
     { label: '关键词工作台', path: '/optimize/keywords', key: 'optimize.keywords' },
     { label: '搜索词报告', path: '/optimize/search-terms', key: 'optimize.searchterms' },
     { label: '否词管理', path: '/optimize/negatives', key: 'optimize.negatives' },
@@ -248,7 +249,7 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
               @click="go(c)"
             >
               <span class="wf-sub-dot" />{{ c.label }}
-              <span v-if="c.count" class="wf-sub-num">{{ c.count > 99 ? '99+' : c.count }}</span>
+              <span v-if="c.count" class="wf-sub-num">{{ c.countLabel }} {{ c.count > 99 ? '99+' : c.count }}</span>
             </div>
           </div>
         </div>
@@ -340,6 +341,10 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
         </div>
       </el-header>
       <el-main class="main">
+        <div v-if="!SEM_WRITEBACK_ENABLED" class="readonly-banner">
+          <b>只读演练</b>
+          <span>{{ SEM_READ_ONLY_MESSAGE }}</span>
+        </div>
         <div class="main-inner">
           <router-view />
         </div>
@@ -349,6 +354,8 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
 </template>
 
 <style scoped>
+.readonly-banner { display: flex; align-items: center; gap: 10px; margin: 0 18px 12px; padding: 9px 13px; border: 1px solid #f1c27d; border-radius: 8px; background: #fff8eb; color: #7a4b0b; font-size: 12px; line-height: 1.5; }
+.readonly-banner b { flex: none; padding: 1px 7px; border-radius: 10px; background: #f3b85b; color: #4f2c00; font-size: 11px; }
 /* 侧边栏按原型 v3.0 sidebar 复刻（logo / wf-group / wf-badge / wf-sub-item） */
 .side { background: #fff; border-right: 1px solid var(--sem-border); display: flex; flex-direction: column; }
 .brand { padding: 18px 20px 14px; border-bottom: 1px solid #f3f4f6; }

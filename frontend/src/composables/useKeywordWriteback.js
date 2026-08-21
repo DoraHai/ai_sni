@@ -23,9 +23,9 @@ export function useKeywordWriteback({ tenantId, onSuccess } = {}) {
 
     try {
       await ElMessageBox.confirm(
-        `将把「${keywordText || `关键词 #${keywordId}`}」出价回写为 ¥${Number(price).toFixed(2)}${currentPrice == null ? '' : `（当前 ¥${Number(currentPrice).toFixed(2)}）`}。\n系统受 ±20% 渐进调价硬上限保护，并全程记入回写台账。\n若当前为演练模式，仅记台账、不会真改线上出价。`,
-        '回写出价到百度',
-        { confirmButtonText: '确认回写', cancelButtonText: '取消', type: 'warning' },
+        `将把「${keywordText || `关键词 #${keywordId}`}」的建议出价 ¥${Number(price).toFixed(2)}${currentPrice == null ? '' : `（当前 ¥${Number(currentPrice).toFixed(2)}）`}加入待回写台账。\n当前只读演练，不会修改百度账户；仍会执行 ±20% 渐进调价校验。`,
+        '加入待回写台账',
+        { confirmButtonText: '加入待回写', cancelButtonText: '取消', type: 'warning' },
       )
     } catch {
       return null
@@ -34,7 +34,7 @@ export function useKeywordWriteback({ tenantId, onSuccess } = {}) {
     try {
       const response = await writebackKeyword({ keywordId, tenantId: tenantId.value, price: Number(price) })
       if (response.dry_run) {
-        ElMessage.warning('演练模式：已记入回写台账，未真改线上出价（管理员开启真写后方可生效）')
+        ElMessage.success('已加入待回写台账，百度账户未修改')
         return { response, success: false, dryRun: true }
       }
       if (response.writeback?.status === 'failed') {
