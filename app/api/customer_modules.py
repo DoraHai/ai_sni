@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -271,6 +271,40 @@ async def list_sem_accounts(
         },
         "connect_path": "/onboarding",
     }
+
+
+@router.post(
+    "/api/v1/sem/assets/accounts/{account_id}/repair-sync",
+    dependencies=[Depends(require_scoped_auth)],
+)
+async def repair_sem_account_assets(
+    account_id: int,
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """只读补偿同步：只从百度拉取资产，不执行任何百度写回。"""
+    await ensure_module_access(session, ctx, tenant_id, "sem")
+    if not ctx.can_edit("onboarding"):
+        raise HTTPException(403, "需要首次接入编辑权限才能发起补偿同步")
+    account = await session.get(BaiduAccount, account_id)
+    if account is None or account.tenant_id != tenant_id:
+        raise HTTPException(404, "推广账户不存在")
+    if account.status != "active":
+        raise HTTPException(409, "账户未生效，无法同步")
+    tenant = await session.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(404, "客户不存在")
+
+    # 延迟导入避免 API 路由加载时与 scheduler 形成循环依赖。
+    from app.scheduler import refresh_keyword_workbench_snapshot
+
+    result = await refresh_keyword_workbench_snapshot(
+        session, tenant, account, datetime.now().date()
+    )
+    if result.get("status") == "busy":
+        raise HTTPException(409, "该客户正在同步，请稍后刷新状态")
+    return {"status": "ok", "mode": "read_only_repair", "result": result}
 
 
 class SeoSiteCreate(BaseModel):

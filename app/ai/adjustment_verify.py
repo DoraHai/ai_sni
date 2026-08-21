@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 BEFORE_DAYS = 7  # 调价前对比窗口
 MAX_ITEMS = 200  # 单次最多处理的调价条数（账户改价频繁，全量算效果会慢；超出截断）
+MIN_AFTER_DAYS = 3
 
 
 def _f(v):
@@ -36,6 +37,18 @@ def _parse_num(v):
         return float(str(v).strip())
     except (TypeError, ValueError):
         return None
+
+
+def sample_status(keyword_id: int | None, before: dict | None, after: dict | None) -> dict:
+    if keyword_id is None:
+        return {"state": "unmatched", "message": "未匹配到唯一关键词，暂不能计算效果"}
+    if before is None:
+        return {"state": "missing_before", "message": "缺少调价前快照，暂不能对比"}
+    if after is None:
+        return {"state": "collecting", "message": "调价后数据尚未同步"}
+    if int(after.get("days") or 0) < MIN_AFTER_DAYS:
+        return {"state": "collecting", "message": f"调价后仅 {after.get('days', 0)} 天，至少积累 {MIN_AFTER_DAYS} 天"}
+    return {"state": "ready", "message": "样本已达到基础验证门槛"}
 
 
 async def _resolve_kw_ids(session: AsyncSession, tenant_id: int, names: set[str]) -> dict[str, int]:
@@ -154,7 +167,7 @@ async def list_pending(
             "change_pct": change_pct,
             "direction": direction,
             "over_limit": bool(change_pct is not None and abs(change_pct) > 20),
-            "effect": {"before": before, "after": after, "after_through": latest.isoformat() if latest else None},
+            "effect": {"before": before, "after": after, "after_through": latest.isoformat() if latest else None, "sample": sample_status(kid, before, after)},
             "review": {
                 "status": st,
                 "verdict": rv.verdict if rv else None,

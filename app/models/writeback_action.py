@@ -40,7 +40,7 @@ WRITEBACK_ACTION_LABELS = {
 WB_ACTION_STATUS_LABELS = {
     "success": "已执行",
     "failed": "失败",
-    "dry_run": "演练（未真改）",
+    "dry_run": "待回写（演练记录）",
 }
 MATCH_MODE_LABELS = {"exact": "精确", "phrase": "短语"}
 

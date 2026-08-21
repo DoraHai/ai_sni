@@ -10,6 +10,7 @@ const loading = ref(false)
 const error = ref('')
 const usersData = ref(null)
 const rolesData = ref(null)
+const permissionDenied = computed(() => error.value?.code === 'PERMISSION_DENIED')
 
 const LEVELS = [
   { v: '', l: '无' },
@@ -24,7 +25,7 @@ async function load() {
   try {
     [usersData.value, rolesData.value] = await Promise.all([fetchUsers(), fetchRoles()])
   } catch (e) {
-    error.value = e.message
+    error.value = e
   } finally {
     loading.value = false
   }
@@ -192,7 +193,7 @@ onMounted(load)
       </div>
     </div>
 
-    <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 14px" />
+    <el-alert v-if="error" :title="permissionDenied ? '当前账号不能管理同事和角色' : error.message" :description="permissionDenied ? '需要 settings.accounts 的“可编辑”权限。请联系现有管理员调整角色；这不是数据为空。' : '请重试；若持续失败，请记录当前时间并联系管理员。'" type="error" :closable="false" show-icon style="margin-bottom: 14px"><template #default><el-button size="small" @click="load">重试</el-button></template></el-alert>
 
     <el-tabs v-model="tab">
       <!-- ===== 账号 ===== -->

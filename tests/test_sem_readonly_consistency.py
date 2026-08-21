@@ -17,6 +17,8 @@ def test_account_surfaces_share_all_tenant_baidu_accounts():
     assert '"campaigns": campaign_stats' in account_assets
     assert '"keywords": keyword_stats' in account_assets
     assert '"search_terms": search_term_stats' in account_assets
+    assert '"mode": "read_only_repair"' in account_assets
+    assert "sync_search_terms_for_account" in _read("app/scheduler.py")
 
 
 def test_sem_frontend_labels_write_actions_as_pending_in_readonly_mode():
@@ -55,3 +57,64 @@ def test_sem_p1_experience_guards_are_present():
     assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in profile
     assert "AI 建议值" not in adjustment_log
     assert "调后效果" not in adjustment_log
+
+
+def test_readonly_actions_have_a_unified_auditable_queue():
+    api = _read("app/api/writeback.py")
+    pending = _read("frontend/src/views/verify/PendingAdjustmentsView.vue")
+    labels = _read("app/models/writeback_action.py")
+
+    assert '@router.get("/queue")' in api
+    assert '"pending_writeback"' in api
+    assert '"writeback_enabled": False' in api
+    assert "待回写队列" in pending
+    assert "待回写（演练记录）" in labels
+
+
+def test_permission_failures_are_actionable():
+    client = _read("frontend/src/api/client.js")
+    router = _read("frontend/src/router/index.js")
+    accounts = _read("frontend/src/views/settings/AccountsRolesView.vue")
+
+    assert "PERMISSION_DENIED" in client
+    assert "账号与权限" in router
+    assert "settings.accounts" in accounts
+    assert "这不是数据为空" in accounts
+
+
+def test_refresh_and_timeout_failures_reach_a_visible_terminal_state():
+    client = _read("frontend/src/api/client.js")
+    app = _read("frontend/src/App.vue")
+    router = _read("frontend/src/router/index.js")
+
+    assert "REQUEST_TIMEOUT" in client
+    assert "超过 30 秒" in client
+    assert "bootstrapError" in app and "客户列表加载失败" in app
+    assert "router.onError" in router and "页面加载失败" in router
+
+
+def test_effect_verification_exposes_sample_maturity():
+    keyword = _read("app/ai/adjustment_verify.py")
+    budget = _read("app/ai/budget_adjustment_verify.py")
+    view = _read("frontend/src/views/verify/PendingAdjustmentsView.vue")
+
+    assert "MIN_AFTER_DAYS = 3" in keyword
+    assert '"sample": sample_status' in keyword
+    assert '"sample": sample' in budget
+    assert "样本已达到基础验证门槛" in keyword
+    assert "sample-state" in view
+
+
+def test_report_connects_review_to_today_work():
+    report = _read("app/ai/monthly_report.py")
+    view = _read("frontend/src/views/delivery/MonthlyReportView.vue")
+
+    assert '"operational_focus": operational_focus' in report
+    assert '"pending_writebacks"' in report
+    assert '"sync_risks"' in report
+    assert "今日执行焦点" in view
+    assert "待审建议" in view and "待回写" in view
+    assert '"priority_suggestions"' in report
+    assert '"queue_path": "/verify/pending?mode=queue"' in report
+    assert "openWorkItem" in view and "focus-list" in view
+    assert "route.query.mode === 'queue'" in _read("frontend/src/views/verify/PendingAdjustmentsView.vue")
