@@ -14,6 +14,11 @@ paths outside the reviewed SEO allowlist. Its required jobs are:
 - `SEO / frontend-build`
 - `SEO / migration-validation`
 
+Merging a reviewed pull request into `codex/production-seo` is the production
+authorization for that exact merge commit. The resulting push automatically
+starts `Production SEO deployment`; there is no separate manual dispatch or
+deployment approval step.
+
 Configure these four jobs as required branch checks before enabling releases.
 
 ## Release unit
@@ -45,15 +50,16 @@ GitHub Actions:
    run `nginx -t` and reload Nginx.
 5. After rollback rehearsal, run
    `sudo bash ops/platform-deploy/install-seo.sh --enable`.
-6. Configure the `production-seo` GitHub Environment with required reviewers
-   and its SSH secrets.
+6. Configure the `production-seo` GitHub Environment with its restricted SSH
+   secrets. Do not add a separate required-reviewer deployment gate: merge to
+   `codex/production-seo` is the deployment authorization.
 
 Do not perform any of these preparation steps from an ordinary code PR.
 
-## Deployment approval report
+## Automatic deployment contract
 
-Before anyone triggers `Production SEO deployment`, report and obtain approval
-for all of the following:
+Before merging to `codex/production-seo`, reviewers confirm all of the
+following:
 
 - exact `codex/production-seo` commit and merged PRs;
 - frontend and backend file scope;
@@ -63,8 +69,19 @@ for all of the following:
 - active and previous release identifiers;
 - health checks and rollback commands.
 
-The workflow is manual only. It requires `DEPLOY_SEO`, the full expected commit
-SHA, all verification jobs, and approval in the `production-seo` Environment.
+The workflow is triggered only by a push to `codex/production-seo`. It checks
+out the triggering `github.sha`, reruns the SEO backend tests, SEO frontend build
+and verification, and the single-head Alembic validation, then packages an
+immutable artifact whose manifest records `migration=not-run`.
+
+Deployments are serialized. The workflow checks the remote
+`codex/production-seo` head during verification, before server access, before
+upload, and immediately before apply. If any newer commit exists, the older job
+stops instead of replacing a newer release.
+
+The deploy module validates the immutable SHA and `migration=not-run`, switches
+only the SEO backend and SEO frontend release links, and restarts only
+`seo-service`. Database migrations are never run automatically.
 
 ## Rollback
 

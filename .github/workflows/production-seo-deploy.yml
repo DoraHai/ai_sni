@@ -1,44 +1,45 @@
 name: Production SEO deployment
 
 on:
-  workflow_dispatch:
-    inputs:
-      confirmation:
-        description: Type DEPLOY_SEO after the release scope has been approved
-        required: true
-        type: string
-      expected_sha:
-        description: Full approved commit SHA from codex/production-seo
-        required: true
-        type: string
+  push:
+    branches:
+      - codex/production-seo
 
 permissions:
   contents: read
 
+# Serialize production releases. A newer push may wait for the active release,
+# but every job re-checks the branch head before it can contact the server.
 concurrency:
   group: production-seo-deployment
   cancel-in-progress: false
 
+env:
+  SEO_PRODUCTION_BRANCH: codex/production-seo
+
 jobs:
   verify:
-    name: Verify approved SEO release
-    if: github.ref_name == 'codex/production-seo'
+    name: Verify exact SEO production commit
+    if: github.ref == 'refs/heads/codex/production-seo'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - name: Validate branch, confirmation, and commit
-        env:
-          CONFIRMATION: ${{ inputs.confirmation }}
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
-          ACTUAL_SHA: ${{ github.sha }}
-        run: |
-          test "$CONFIRMATION" = "DEPLOY_SEO"
-          test "$EXPECTED_SHA" = "$ACTUAL_SHA"
-          test "${#EXPECTED_SHA}" -eq 40
-
       - uses: actions/checkout@v4
         with:
-          ref: codex/production-seo
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Require triggering SHA to remain the production head
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          latest="$(git ls-remote origin "refs/heads/$SEO_PRODUCTION_BRANCH" | cut -f1)"
+          test -n "$latest"
+          if [[ "$latest" != "$RELEASE_SHA" ]]; then
+            echo "Refusing stale SEO release: workflow=$RELEASE_SHA production=$latest" >&2
+            exit 1
+          fi
 
       - uses: actions/setup-python@v5
         with:
@@ -53,7 +54,7 @@ jobs:
 
       - run: pip install -r requirements.txt -r requirements-dev.txt
 
-      - name: Verify SEO backend and deployment isolation
+      - name: Re-run SEO backend and deployment isolation tests
         env:
           DATABASE_URL: postgresql+asyncpg://test:test@localhost/test
           BAIDU_APP_ID: ci-dummy
@@ -79,7 +80,7 @@ jobs:
           tests/test_seo_release_consistency.py
           tests/test_seo_serp.py
 
-      - name: Verify reviewed migration head without applying migrations
+      - name: Re-check the reviewed migration head without applying migrations
         env:
           DATABASE_URL: postgresql+asyncpg://test:test@localhost/test
           BAIDU_APP_ID: ci-dummy
@@ -97,14 +98,16 @@ jobs:
 
       - working-directory: frontend
         run: npm ci
-      - name: Build and verify isolated SEO frontend
+
+      - name: Rebuild and verify the isolated SEO frontend
         working-directory: frontend
         run: npm run build:seo && npm run verify:seo-build
 
-      - name: Create isolated SEO release archive
+      - name: Create immutable SEO-only release archive
+        env:
+          RELEASE_SHA: ${{ github.sha }}
         run: |
-          commit="$(git rev-parse HEAD)"
-          test "$commit" = "${{ inputs.expected_sha }}"
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
           release_root="$RUNNER_TEMP/seo-release"
           install -d "$release_root/backend" "$release_root/frontend"
           cp -a app "$release_root/backend/app"
@@ -113,11 +116,11 @@ jobs:
           cp -a frontend/dist-seo/. "$release_root/frontend/"
           {
             echo 'module=seo'
-            echo "commit=$commit"
+            echo "commit=$RELEASE_SHA"
             echo 'migration=not-run'
           } > "$release_root/MANIFEST"
-          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/seo-${commit}.tgz" seo-release
-          sha256sum "$RUNNER_TEMP/seo-${commit}.tgz" > "$RUNNER_TEMP/seo-${commit}.tgz.sha256"
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/seo-${RELEASE_SHA}.tgz" seo-release
+          sha256sum "$RUNNER_TEMP/seo-${RELEASE_SHA}.tgz" > "$RUNNER_TEMP/seo-${RELEASE_SHA}.tgz.sha256"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -129,18 +132,34 @@ jobs:
           retention-days: 3
 
   deploy:
-    name: Deploy SEO only after environment approval
+    name: Deploy current SEO production head
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production-seo
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Stop before server access when this workflow is stale
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          latest="$(git ls-remote origin "refs/heads/$SEO_PRODUCTION_BRANCH" | cut -f1)"
+          test -n "$latest"
+          if [[ "$latest" != "$RELEASE_SHA" ]]; then
+            echo "Refusing stale SEO deployment: workflow=$RELEASE_SHA production=$latest" >&2
+            exit 1
+          fi
+
       - uses: actions/download-artifact@v4
         with:
           name: seo-release-${{ github.sha }}
           path: ${{ runner.temp }}
 
-      - name: Configure restricted SSH identity
+      - name: Configure restricted SEO deployment identity
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
@@ -150,6 +169,13 @@ jobs:
           chmod 600 ~/.ssh/platform-deploy
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
+
+      - name: Re-check production head before archive upload
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          latest="$(git ls-remote origin "refs/heads/$SEO_PRODUCTION_BRANCH" | cut -f1)"
+          test "$latest" = "$RELEASE_SHA"
 
       - name: Upload immutable SEO release archive
         env:
@@ -163,7 +189,14 @@ jobs:
           scp -i ~/.ssh/platform-deploy -P "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$archive" "$DEPLOY_USER@$DEPLOY_HOST:${remote_path}.part"
           ssh -i ~/.ssh/platform-deploy -p "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "mv '${remote_path}.part' '$remote_path'"
 
-      - name: Apply SEO release without database migration
+      - name: Re-check production head before applying release
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          latest="$(git ls-remote origin "refs/heads/$SEO_PRODUCTION_BRANCH" | cut -f1)"
+          test "$latest" = "$RELEASE_SHA"
+
+      - name: Apply SEO frontend and backend without database migration
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
