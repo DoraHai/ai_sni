@@ -40,14 +40,23 @@ def test_seo_deployer_never_restarts_other_modules_or_runs_migrations() -> None:
     assert "/opt/sem-frontend" not in module
 
 
-def test_production_workflow_is_manual_and_seo_scoped() -> None:
+def test_production_workflow_auto_deploys_only_the_exact_production_head() -> None:
     workflow = _read(".github/workflows/production-seo-deploy.yml")
-    assert "workflow_dispatch:" in workflow
+    assert "workflow_dispatch:" not in workflow
+    assert "push:" in workflow
     assert "codex/production-seo" in workflow
+    assert "ref: ${{ github.sha }}" in workflow
+    assert "environment: production\n" in workflow
+    assert "environment: production-seo" not in workflow
+    assert workflow.count('git ls-remote origin "refs/heads/$SEO_PRODUCTION_BRANCH"') >= 4
+    assert "Refusing stale SEO release" in workflow
+    assert "Refusing stale SEO deployment" in workflow
+    assert "cancel-in-progress: false" in workflow
     assert "DEPLOY_SEO" in workflow
     assert "platform-deploy apply seo" in workflow
     assert "migration=not-run" in workflow
     assert "alembic upgrade" not in workflow
+    assert "Apply SEO frontend and backend without database migration" in workflow
     assert "production-sem" not in workflow
     assert "production-geo" not in workflow
 
