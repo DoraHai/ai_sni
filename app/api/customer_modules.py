@@ -332,12 +332,19 @@ def _site_payload(row: SeoSite) -> dict:
     }
 
 
+def _require_seo_asset_permission(ctx: AuthContext, *, edit: bool = False) -> None:
+    allowed = ctx.can_edit("seo.assets") if edit else ctx.can_view("seo.assets")
+    if not allowed:
+        raise HTTPException(403, "当前账号没有 SEO 网站管理权限")
+
+
 @router.get("/api/v1/seo/sites", dependencies=[Depends(require_scoped_auth)])
 async def list_seo_sites(
     tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    _require_seo_asset_permission(ctx)
     await ensure_module_access(session, ctx, tenant_id, "seo")
     rows = list((await session.scalars(select(SeoSite).where(SeoSite.tenant_id == tenant_id).order_by(SeoSite.id))).all())
     return {"sites": [_site_payload(row) for row in rows]}
@@ -349,6 +356,7 @@ async def create_seo_site(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    _require_seo_asset_permission(ctx, edit=True)
     module = await ensure_module_access(session, ctx, req.tenant_id, "seo")
     canonical, default_url = _canonical_domain(req.domain)
     row = SeoSite(
@@ -377,6 +385,7 @@ async def update_seo_site(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    _require_seo_asset_permission(ctx, edit=True)
     await ensure_module_access(session, ctx, tenant_id, "seo")
     row = await session.get(SeoSite, site_id)
     if row is None or row.tenant_id != tenant_id:

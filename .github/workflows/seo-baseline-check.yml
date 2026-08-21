@@ -1,0 +1,136 @@
+name: SEO baseline check
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/production-seo
+  pull_request:
+    branches:
+      - codex/production-seo
+
+permissions:
+  contents: read
+
+jobs:
+  scope-boundary:
+    name: SEO / scope-boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reject non-SEO source changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base="$PR_BASE_SHA"
+          elif [[ -n "$PUSH_BEFORE_SHA" && ! "$PUSH_BEFORE_SHA" =~ ^0+$ ]]; then
+            base="$PUSH_BEFORE_SHA"
+          else
+            base="HEAD^"
+          fi
+          python scripts/verify_seo_release.py source-diff --base "$base" --head HEAD
+
+  backend-tests:
+    name: SEO / backend-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Run SEO regression tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost/test
+          BAIDU_APP_ID: ci-dummy
+          BAIDU_SECRET_KEY: 1234567890abcdef
+          BAIDU_DEFAULT_USERNAME: ci-dummy
+          BAIDU_DEFAULT_UCID: "1"
+          BAIDU_SELF_ACCESS_TOKEN: ci-dummy
+          BAIDU_SELF_TOKEN_EXPIRES_AT: "2099-01-01T00:00:00+00:00"
+          CRYPTO_MASTER_KEY_B64: j/QGqbWO8IVw9cCVeAq+u/alTyjLsSQXjROH9uW/3tA=
+          ADMIN_API_KEY: ci-admin-key
+          PYTHONPATH: .
+          TZ: UTC
+        run: >-
+          pytest -q
+          tests/test_keyword_refresh.py
+          tests/test_module_workspaces.py
+          tests/test_process_lock.py
+          tests/test_seo_crawler.py
+          tests/test_seo_deploy_isolation.py
+          tests/test_seo_distribution.py
+          tests/test_seo_distribution_import.py
+          tests/test_seo_foundation.py
+          tests/test_seo_release_consistency.py
+          tests/test_seo_serp.py
+
+  frontend-build:
+    name: SEO / frontend-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: npm ci
+      - name: Build isolated SEO frontend
+        working-directory: frontend
+        run: npm run build:seo
+      - name: Verify isolated SEO frontend
+        working-directory: frontend
+        run: npm run verify:seo-build
+
+  migration-validation:
+    name: SEO / migration-validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Require the reviewed single Alembic head
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@127.0.0.1:5432/test
+          SEO_MIGRATION_TEST_DATABASE_URL: postgresql+asyncpg://test:test@127.0.0.1:5432/test
+          BAIDU_APP_ID: ci-dummy
+          BAIDU_SECRET_KEY: 1234567890abcdef
+          BAIDU_DEFAULT_USERNAME: ci-dummy
+          BAIDU_DEFAULT_UCID: "1"
+          BAIDU_SELF_ACCESS_TOKEN: ci-dummy
+          BAIDU_SELF_TOKEN_EXPIRES_AT: "2099-01-01T00:00:00+00:00"
+          CRYPTO_MASTER_KEY_B64: j/QGqbWO8IVw9cCVeAq+u/alTyjLsSQXjROH9uW/3tA=
+          ADMIN_API_KEY: ci-admin-key
+        run: |
+          heads="$(python -m alembic heads)"
+          test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
+          printf '%s\n' "$heads" | grep -F '0074_merge_geo_seo_heads (head)'
+          pytest -q tests/test_seo_migration_merge.py
