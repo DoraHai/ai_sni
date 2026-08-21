@@ -36,7 +36,10 @@ client.interceptors.response.use(
     if (error.response?.status === 401 && session.isLoggedIn) {
       session.logout()
       redirectToLogin()
-      return new Promise(() => {}) // 跳转中,挂起后续处理
+      // 必须结束原请求，让各页面 finally 能关闭 loading；跳转由上面统一处理。
+      const expired = new Error('登录已过期，正在返回登录页')
+      expired.code = 'AUTH_EXPIRED'
+      return Promise.reject(expired)
     }
     const detail =
       normalizeDetail(error.response?.data?.detail) ||

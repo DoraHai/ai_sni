@@ -65,7 +65,6 @@ async def oauth_status(
             )
             .where(
                 BaiduAccount.tenant_id == tenant_id,
-                BaiduAccount.auth_mode == "oauth",
             )
             .order_by(BaiduAccount.status, BaiduAccount.baidu_username)
         )
@@ -78,6 +77,7 @@ async def oauth_status(
                 "username": account.baidu_username,
                 "ucid": account.baidu_ucid,
                 "status": account.status,
+                "auth_mode": account.auth_mode,
                 "account_role": account.account_role,
                 "authorization_name": grant.master_name if grant else None,
                 "authorization_type": grant.account_type if grant else None,

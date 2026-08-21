@@ -24,6 +24,13 @@ const loading = ref(false)
 const refreshing = ref(false)
 const error = ref('')
 const data = ref(null)
+const syncDiagnosis = computed(() => {
+  if (!data.value || data.value.total) return null
+  const totals = data.value.totals || {}
+  if (!totals.campaigns) return { type: 'warning', text: '当前客户尚未拉到计划数据。请先到「推广账号」确认账户连接与同步状态。' }
+  if (!totals.adgroups || !totals.keywords) return { type: 'warning', text: `已拉到 ${totals.campaigns || 0} 个计划，但单元或关键词数据不完整。这是读取同步问题，与百度回写是否开启无关。` }
+  return { type: 'info', text: '同步已完成，但当前筛选条件下没有关键词。可清除筛选后重试。' }
+})
 const selection = ref([])
 const suggestionMap = ref({}) // keyword_id -> 该词的 AI 建议（全量 pending，独立于列表分页）
 const suggestionList = ref([]) // AI 建议列表（顶部卡片区渲染）
@@ -535,7 +542,7 @@ async function batchWriteback() {
     await ElMessageBox.confirm(
       `将对 ${items.length} 个关键词回写各自的最终执行价（受 ±20% 渐进调价硬上限保护并记台账）。\n` +
         `若当前为演练模式，仅记台账、不会真改线上出价。`,
-      '批量回写出价到百度',
+      '加入待回写台账',
       { confirmButtonText: `确认回写 ${items.length} 个`, cancelButtonText: '取消', type: 'warning' },
     )
   } catch {
@@ -680,16 +687,18 @@ onBeforeUnmount(() => {
             {{ refreshing ? '同步中…' : '刷新数据' }}
           </button>
           <button class="pbtn" :disabled="exporting" @click="exportCsv">{{ exporting ? '导出中…' : '导出' }}</button>
-          <el-tooltip content="导入/新建属写回类操作，按路线图 M2 实现，当前平台对百度只读" placement="bottom">
+          <el-tooltip content="当前只读演练；导入/新建将在开放回写后执行" placement="bottom">
             <button class="pbtn" disabled>导入关键词</button>
           </el-tooltip>
-          <el-tooltip content="调价写回（updateWord）按路线图 M2 实现，当前平台对百度只读" placement="bottom">
+          <el-tooltip content="当前只读演练；可在词表内把建议加入待回写台账" placement="bottom">
             <button class="pbtn" disabled>批量调价</button>
           </el-tooltip>
         </div>
       </div>
-      <div class="page-desc">{{ headerStats }}</div>
+    <div class="page-desc">{{ headerStats }}</div>
     </div>
+
+    <el-alert v-if="syncDiagnosis" :type="syncDiagnosis.type" :title="syncDiagnosis.text" :closable="false" show-icon style="margin-bottom: 12px" />
 
     <!-- 视图 tabs（原型 view-tabs） -->
     <div class="view-tabs">
@@ -786,7 +795,7 @@ onBeforeUnmount(() => {
         <el-tooltip content="批量启用所选关键词（updateWord 写回，dry-run 保护，演练模式不真改线上）" placement="top">
           <button class="bt-btn" :disabled="!selection.length" @click="batchPause(false)">批量启用</button>
         </el-tooltip>
-        <el-tooltip content="写回类操作按路线图 M2 实现" placement="top">
+        <el-tooltip content="当前只读演练，匹配方式建议仅加入待回写台账" placement="top">
           <button class="bt-btn" disabled>批量加否词</button>
         </el-tooltip>
         <span v-if="selection.length" class="bt-clear" @click="tableRef?.clearSelection()">取消选择</span>
@@ -794,7 +803,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="suggestionPending" class="ai-note">
-      💡 本页含 AI 调价建议（共 <b>{{ suggestionPending }}</b> 条待处理），见下表「AI 建议」列；可「回写出价」一键写回百度（受 ±20% 硬上限保护并记台账，演练模式下不真改线上）。
+      💡 本页含 AI 调价建议（共 <b>{{ suggestionPending }}</b> 条待处理）。当前只读演练，可把建议加入待回写台账，待管理员开放回写后再执行。
     </div>
 
     <div class="table-panel">
@@ -845,7 +854,7 @@ onBeforeUnmount(() => {
         <el-table-column label="价格调整" width="145">
           <template #header>
             价格调整
-            <el-tooltip placement="top" content="最终执行价默认填入 AI 建议价（无建议则为当前出价），可人工调整。「回写出价」回写的就是最终执行价，受 ±20% 硬上限保护并记台账，演练模式下不真改线上。">
+            <el-tooltip placement="top" content="最终执行价默认填入 AI 建议价（无建议则为当前出价），可人工调整并加入待回写台账；当前不会修改百度账户。">
               <span class="dim">ⓘ</span>
             </el-tooltip>
           </template>
@@ -947,7 +956,7 @@ onBeforeUnmount(() => {
         <el-table-column label="操作" min-width="190">
           <template #default="{ row }">
             <div class="op-cell">
-              <button class="op-btn primary" @click="applyWriteback(row)">回写出价</button>
+              <button class="op-btn primary" @click="applyWriteback(row)">加入待回写</button>
               <el-dropdown trigger="click" @command="(command) => openMatchTypeDialog(row, command)">
                 <button class="op-btn" type="button">改匹配 ▾</button>
                 <template #dropdown>

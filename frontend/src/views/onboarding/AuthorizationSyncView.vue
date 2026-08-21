@@ -45,6 +45,7 @@ function formatDate(value) {
 }
 
 function accountRoleLabel(item) {
+  if (item.auth_mode !== 'oauth') return '系统接入账户'
   if (item.account_role === 'subaccount') return '子账户'
   return item.authorization_type === 2 ? '超管账户' : '普通账户'
 }

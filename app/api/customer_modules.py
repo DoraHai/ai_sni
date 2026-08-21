@@ -5,12 +5,22 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
-from app.models import BaiduAccount, GeoProject, SeoSite, Tenant, TenantModule
+from app.models import (
+    Adgroup,
+    BaiduAccount,
+    Campaign,
+    GeoProject,
+    Keyword,
+    SearchTermReport,
+    SeoSite,
+    Tenant,
+    TenantModule,
+)
 from app.module_scope import (
     MODULE_CODES,
     ensure_module_access,
@@ -175,19 +185,90 @@ async def list_sem_accounts(
             )
         ).all()
     )
+    async def asset_stats(model, synced_column) -> dict[int, dict]:
+        result = await session.execute(
+            select(
+                model.baidu_account_id,
+                func.count(),
+                func.max(synced_column),
+            )
+            .where(model.tenant_id == tenant_id)
+            .group_by(model.baidu_account_id)
+        )
+        return {
+            account_id: {"count": int(count or 0), "last_synced_at": synced_at}
+            for account_id, count, synced_at in result.all()
+            if account_id is not None
+        }
+
+    campaign_stats = await asset_stats(Campaign, Campaign.synced_at)
+    adgroup_stats = await asset_stats(Adgroup, Adgroup.synced_at)
+    keyword_stats = await asset_stats(Keyword, Keyword.synced_at)
+    search_term_stats = await asset_stats(SearchTermReport, SearchTermReport.synced_at)
+
+    def account_payload(row: BaiduAccount) -> dict:
+        counts = {
+            "campaigns": campaign_stats.get(row.id, {}).get("count", 0),
+            "adgroups": adgroup_stats.get(row.id, {}).get("count", 0),
+            "keywords": keyword_stats.get(row.id, {}).get("count", 0),
+            "search_terms": search_term_stats.get(row.id, {}).get("count", 0),
+        }
+        if row.status != "active":
+            data_state = "inactive"
+        elif row.sync_status == "failed":
+            data_state = "failed"
+        elif row.sync_status in {"pending", "syncing"}:
+            data_state = row.sync_status
+        elif not row.last_synced_at:
+            data_state = "not_synced"
+        elif counts["campaigns"] and (not counts["adgroups"] or not counts["keywords"]):
+            data_state = "partial"
+        elif not any(counts.values()):
+            data_state = "empty"
+        else:
+            data_state = "ready"
+        latest_asset_sync = max(
+            (
+                item.get("last_synced_at")
+                for item in (
+                    campaign_stats.get(row.id, {}),
+                    adgroup_stats.get(row.id, {}),
+                    keyword_stats.get(row.id, {}),
+                    search_term_stats.get(row.id, {}),
+                )
+                if item.get("last_synced_at") is not None
+            ),
+            default=None,
+        )
+        return {
+            "id": row.id,
+            "platform": "baidu",
+            "account_name": row.baidu_username,
+            "external_account_id": str(row.baidu_ucid),
+            "auth_mode": row.auth_mode,
+            "status": row.status,
+            "sync_status": row.sync_status,
+            "last_synced_at": row.last_synced_at.isoformat() if row.last_synced_at else None,
+            "last_asset_synced_at": latest_asset_sync.isoformat() if latest_asset_sync else None,
+            "last_sync_error": row.last_sync_error,
+            "data_state": data_state,
+            "counts": counts,
+        }
+
+    accounts = [account_payload(row) for row in rows]
     return {
         "accounts": [
-            {
-                "id": row.id,
-                "platform": "baidu",
-                "account_name": row.baidu_username,
-                "external_account_id": str(row.baidu_ucid),
-                "status": row.status,
-                "sync_status": row.sync_status,
-                "last_synced_at": row.last_synced_at.isoformat() if row.last_synced_at else None,
-            }
-            for row in rows
+            account for account in accounts
         ],
+        "summary": {
+            "total": len(accounts),
+            "active": sum(account["status"] == "active" for account in accounts),
+            "ready": sum(account["data_state"] == "ready" for account in accounts),
+            "attention": sum(
+                account["data_state"] in {"failed", "not_synced", "partial", "empty"}
+                for account in accounts
+            ),
+        },
         "connect_path": "/onboarding",
     }
 

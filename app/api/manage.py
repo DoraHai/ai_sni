@@ -363,7 +363,39 @@ async def list_adgroups_manage(
         for a in adgroups
     ]
     rows.sort(key=lambda r: (r["campaign_name"] or "", r["adgroup_name"] or ""))
-    return {"total": len(rows), "adgroups": rows}
+    accounts = (
+        await session.scalars(
+            select(BaiduAccount).where(BaiduAccount.tenant_id == tenant_id)
+        )
+    ).all()
+    return {
+        "total": len(rows),
+        "adgroups": rows,
+        "sync": {
+            "accounts": len(accounts),
+            "active_accounts": sum(account.status == "active" for account in accounts),
+            "status": next(
+                (account.sync_status for account in accounts if account.status == "active"),
+                None,
+            ),
+            "last_synced_at": next(
+                (
+                    account.last_synced_at.isoformat()
+                    for account in accounts
+                    if account.status == "active" and account.last_synced_at
+                ),
+                None,
+            ),
+            "error": next(
+                (
+                    account.last_sync_error
+                    for account in accounts
+                    if account.status == "active" and account.last_sync_error
+                ),
+                None,
+            ),
+        },
+    }
 
 
 class AdgroupPauseReq(BaseModel):

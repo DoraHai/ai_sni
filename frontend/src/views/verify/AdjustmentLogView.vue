@@ -277,7 +277,7 @@ onMounted(load)
       <div>
         <div class="page-title">调价台账</div>
         <div class="page-desc">
-          数据源：百度 getOperationRecord 实时抓取（含百度后台直接操作）· AI 建议 / 采纳 / 调后效果三列待 M2 建议引擎
+          数据源：百度 getOperationRecord 实时抓取（含百度后台直接操作）· 仅展示当前已有真实数据来源的字段
           <template v-if="data?.last_synced_at"> · 同步于 {{ fmtTime(data.last_synced_at) }}</template>
         </div>
       </div>
@@ -373,20 +373,6 @@ onMounted(load)
         </el-table-column>
         <el-table-column label="来源" width="96">
           <template #default="{ row }"><span class="source-pill">{{ row.source }}</span></template>
-        </el-table-column>
-        <el-table-column width="110">
-          <template #header>
-            AI 建议值
-            <el-tooltip placement="top" content="建议引擎 M2 接入后展示"><span class="dim">ⓘ</span></el-tooltip>
-          </template>
-          <template #default><span class="dim">—</span></template>
-        </el-table-column>
-        <el-table-column width="110">
-          <template #header>
-            调后效果
-            <el-tooltip placement="top" content="调价后复核调度 M2 接入后展示"><span class="dim">ⓘ</span></el-tooltip>
-          </template>
-          <template #default><span class="dim">—</span></template>
         </el-table-column>
         <template #empty>
           <div class="empty-line">当前筛选条件下没有操作记录。首次使用请先执行操作记录回灌（admin/sync-operation-records）。</div>

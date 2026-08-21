@@ -9,6 +9,15 @@ const TENANT_ID = computed(() => session.tenantId)
 const loading = ref(false)
 const error = ref('')
 const data = ref(null)
+const emptyDiagnosis = computed(() => {
+  const sync = data.value?.sync
+  if (!data.value || data.value.total) return ''
+  if (!sync?.accounts) return '当前客户没有推广账户记录，请先核对客户与账户归属。'
+  if (!sync.active_accounts) return '推广账户存在，但没有生效授权。'
+  if (sync.status === 'failed') return `最近一次同步失败：${sync.error || '未知错误'}`
+  if (!sync.last_synced_at) return '账户已授权但尚未完成首次同步。'
+  return '账户已完成同步，但未拉到单元数据；请核对百度账户内是否存在单元。'
+})
 const savingId = ref(null)
 
 async function load() {
@@ -107,7 +116,7 @@ async function editBid(row) {
     `单元「${row.adgroup_name}」当前出价 ${fmtMoney(row.max_price)}。\n输入新的单元出价（¥0.01 ~ 999.99，且不超过所属计划日预算）。当前为演练模式，只记台账不真改。`,
     '修改单元出价',
     {
-      confirmButtonText: '确认写回',
+      confirmButtonText: '加入待回写',
       cancelButtonText: '取消',
       inputValue: row.max_price != null ? String(row.max_price) : '',
       inputPattern: /^\d+(\.\d{1,2})?$/,
@@ -211,8 +220,8 @@ async function togglePause(row) {
         </el-table-column>
         <el-table-column label="操作" width="300" align="center">
           <template #default="{ row }">
-            <el-button size="small" :loading="savingId === row.adgroup_id" @click="editBid(row)">改出价</el-button>
-            <el-button size="small" :loading="savingId === row.adgroup_id" @click="openLanding(row)">落地页</el-button>
+            <el-button size="small" :loading="savingId === row.adgroup_id" @click="editBid(row)">出价建议</el-button>
+            <el-button size="small" :loading="savingId === row.adgroup_id" @click="openLanding(row)">落地页建议</el-button>
             <el-button
               size="small"
               :type="isPaused(row) ? 'success' : 'warning'"
@@ -223,7 +232,7 @@ async function togglePause(row) {
           </template>
         </el-table-column>
         <template #empty>
-          <div class="empty-line">暂无单元数据。请先执行单元维度同步。</div>
+          <div class="empty-line">{{ emptyDiagnosis }}</div>
         </template>
       </el-table>
     </div>

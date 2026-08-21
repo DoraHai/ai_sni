@@ -194,11 +194,11 @@ onMounted(load)
         <div class="page-desc">
           现有否词 <b>{{ fmtInt(summary?.total) }}</b> 条 ·
           待审建议 <b class="danger-text">{{ fmtInt(reviewCount) }}</b> 条 ·
-          数据源：百度计划/单元否词（每日同步）+ 自研搜索词扫描 · 添加/删除否词支持单元级写回（dry-run 保护，演练模式不真改线上）
+          数据源：百度计划/单元否词（每日同步）+ 自研搜索词扫描 · 当前操作仅加入待回写台账，不修改百度账户
         </div>
       </div>
       <div class="page-actions">
-        <el-button v-if="session.canEdit('optimize.negatives')" type="primary" @click="openAddNeg()">手动添加否词</el-button>
+        <el-button v-if="session.canEdit('optimize.negatives')" type="primary" @click="openAddNeg()">新增待回写否词</el-button>
       </div>
     </div>
 
@@ -220,11 +220,6 @@ onMounted(load)
         <div class="km-label">自研搜索词扫描</div>
         <div class="km-value">{{ fmtInt(scanData?.total) }}</div>
         <div class="km-meta">来自拓词"建议否定"候选</div>
-      </div>
-      <div class="kpi-mini dim">
-        <div class="km-label">冷门否词</div>
-        <div class="km-value">M2</div>
-        <div class="km-meta">需否词触发数据，百度暂不提供</div>
       </div>
     </div>
 
@@ -397,7 +392,7 @@ onMounted(load)
     <AddToPlanDialog ref="addToPlanDialogRef" :tenant-id="TENANT_ID" @success="load" />
 
     <!-- 添加否词弹框（单元级 updateAdgroup 写回） -->
-    <el-dialog v-model="negDialog.visible" title="添加否词" width="440px">
+    <el-dialog v-model="negDialog.visible" title="新增待回写否词" width="440px">
       <el-form label-width="72px" label-position="left">
         <el-form-item label="否词">
           <el-input v-model="negDialog.word" placeholder="输入否定关键词" />
@@ -419,10 +414,10 @@ onMounted(load)
           </el-radio-group>
         </el-form-item>
       </el-form>
-      <div class="neg-tip">否词加到所选单元（单元级）；受 dry-run 保护，演练模式下不真改线上。</div>
+      <div class="neg-tip">否词建议将加入所选单元的待回写台账；当前不会修改百度账户。</div>
       <template #footer>
         <el-button @click="negDialog.visible = false">取消</el-button>
-        <el-button type="primary" :loading="negDialog.submitting" @click="submitAddNeg">确认添加</el-button>
+        <el-button type="primary" :loading="negDialog.submitting" @click="submitAddNeg">加入待回写</el-button>
       </template>
     </el-dialog>
   </div>

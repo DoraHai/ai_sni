@@ -325,7 +325,7 @@ async function saveRegion() {
     await ElMessageBox.confirm(
       `即将完整覆盖「${form.accountName}」下 ${campaignIds.length} 个计划的投放地域为：${regionPreview}${more}。每个计划会独立写回并记录台账，是否继续？`,
       campaignIds.length > 1 ? '确认批量设置投放地域' : '确认设置投放地域',
-      { confirmButtonText: '确认写回', cancelButtonText: '取消', type: 'warning' },
+      { confirmButtonText: '加入待回写', cancelButtonText: '取消', type: 'warning' },
     )
   } catch { return }
   savingId.value = campaignIds.length > 1 ? 'batch-region' : campaignIds[0]
@@ -371,7 +371,7 @@ async function editBudget(row) {
     `计划「${row.campaign_name}」当前日预算 ${fmtMoney(row.budget)}。\n输入新的日预算（¥${min.value} ~ 不超过账户日预算）。当前为演练模式，只记台账不真改。`,
     '修改计划日预算',
     {
-      confirmButtonText: '确认写回',
+      confirmButtonText: '加入待回写',
       cancelButtonText: '取消',
       inputValue: row.budget != null ? String(row.budget) : '',
       inputPattern: /^\d+(\.\d{1,2})?$/,
@@ -504,9 +504,9 @@ async function togglePause(row) {
         </el-table-column>
         <el-table-column label="操作" width="390" align="center">
           <template #default="{ row }">
-            <el-button size="small" :loading="savingId === row.campaign_id" @click="editBudget(row)">改预算</el-button>
-            <el-button size="small" :loading="savingId === row.campaign_id" @click="openSchedule(row)">投放时段</el-button>
-            <el-button size="small" :loading="savingId === row.campaign_id" @click="openRegion(row)">投放地域</el-button>
+            <el-button size="small" :loading="savingId === row.campaign_id" @click="editBudget(row)">预算建议</el-button>
+            <el-button size="small" :loading="savingId === row.campaign_id" @click="openSchedule(row)">时段建议</el-button>
+            <el-button size="small" :loading="savingId === row.campaign_id" @click="openRegion(row)">地域建议</el-button>
             <el-button
               size="small"
               :type="(row.pause || row.status === 23) ? 'success' : 'warning'"
@@ -649,7 +649,7 @@ async function togglePause(row) {
           type="primary"
           :loading="savingId === regionForm.campaignId || savingId === 'batch-region'"
           @click="saveRegion"
-        >{{ regionForm.campaignIds.length > 1 ? '批量确认写回' : '确认写回' }}</el-button>
+        >{{ regionForm.campaignIds.length > 1 ? '批量加入待回写' : '加入待回写' }}</el-button>
       </template>
     </el-dialog>
   </div>
