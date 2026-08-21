@@ -1,6 +1,7 @@
 import os
 import unittest
 from datetime import date
+from types import SimpleNamespace
 
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 os.environ.setdefault("BAIDU_APP_ID", "test-app")
@@ -17,11 +18,26 @@ os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
 from fastapi import HTTPException
 
-from app.ai.monthly_report import _build_prompt
+from app.ai.monthly_report import _build_prompt, _suggestion_business_score, _suggestion_impact
 from app.api.reports import _rows_from_report, _validate_period
 
 
 class AnalysisReportTests(unittest.TestCase):
+    def test_report_suggestions_rank_material_zero_conversion_risk_first(self):
+        base = {
+            "priority": "P1",
+            "confidence": "mid",
+            "suggestion_type": "lower",
+        }
+        costly = SimpleNamespace(**base, signals={
+            "cost": 800,
+            "risk_factors": {"zero_conversion": True, "high_cpc": True},
+        })
+        ordinary = SimpleNamespace(**base, signals={"cost": 20})
+
+        self.assertGreater(_suggestion_business_score(costly), _suggestion_business_score(ordinary))
+        self.assertEqual(_suggestion_impact(costly), "近 7 天消耗 ¥800，暂无转化")
+
     def test_custom_period_validation(self):
         _validate_period(date(2026, 7, 1), date(2026, 7, 30))
         with self.assertRaises(HTTPException):

@@ -115,6 +115,11 @@ def test_report_connects_review_to_today_work():
     assert "今日执行焦点" in view
     assert "待审建议" in view and "待回写" in view
     assert '"priority_suggestions"' in report
+    assert "_suggestion_business_score" in report
+    assert '"impact": _suggestion_impact(row)' in report
+    assert '"suggestions_path": "/optimize/keywords?has_suggestion=true&from=report"' in report
     assert '"queue_path": "/verify/pending?mode=queue"' in report
-    assert "openWorkItem" in view and "focus-list" in view
+    assert "openWorkItem" in view and "focus-list" in view and "查看全部" in view
+    assert "route.query.has_suggestion === 'true'" in _read("frontend/src/views/optimize/KeywordWorkbenchView.vue")
+    assert "focused-account-row" in _read("frontend/src/views/manage/SemAccountsView.vue")
     assert "route.query.mode === 'queue'" in _read("frontend/src/views/verify/PendingAdjustmentsView.vue")

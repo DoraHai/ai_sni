@@ -1,11 +1,12 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { fetchSemAccounts, repairSemAccountAssets } from '../../api/moduleAssets'
 import { currentTenantId } from '../../store/session'
 
 const router = useRouter()
+const route = useRoute()
 const loading = ref(false)
 const accounts = ref([])
 const repairingId = ref(null)
@@ -15,6 +16,8 @@ const stateLabels = {
   pending: '等待同步', not_synced: '尚未同步', empty: '已同步但无数据', inactive: '授权未生效',
 }
 const attentionAccounts = computed(() => accounts.value.filter((item) => !['ready', 'syncing', 'pending'].includes(item.data_state)))
+const focusedAccountId = computed(() => Number(route.query.account_id) || null)
+const accountRowClass = ({ row }) => row.id === focusedAccountId.value ? 'focused-account-row' : ''
 
 function fmtTime(value) {
   return value ? value.slice(0, 16).replace('T', ' ') : '—'
@@ -72,7 +75,7 @@ onMounted(load)
     <div class="summary-row">
       <span>账户 {{ summary.total }}</span><span>有效 {{ summary.active }}</span><span>数据就绪 {{ summary.ready }}</span><span :class="{ warn: summary.attention }">需关注 {{ summary.attention }}</span>
     </div>
-    <el-table :data="accounts" border>
+    <el-table :data="accounts" border :row-class-name="accountRowClass">
       <el-table-column prop="account_name" label="账号名称" />
       <el-table-column prop="external_account_id" label="账户 ID" />
       <el-table-column label="连接状态" width="110"><template #default="{ row }">{{ row.status === 'active' ? '授权有效' : '未生效' }}</template></el-table-column>
@@ -87,4 +90,5 @@ onMounted(load)
 
 <style scoped>
 .asset-page{padding:24px}header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px}h2{margin:0 0 7px}p{margin:0;color:#6b7280}.summary-row{display:flex;gap:18px;margin:0 0 12px;font-size:12px;color:#667085}.summary-row .warn{color:#b15f00;font-weight:700}.data-state{display:block;color:#287a55}.data-state.partial,.data-state.failed,.data-state.not_synced,.data-state.empty{color:#b15f00}.data-state.inactive{color:#8b95a5}.data-state+small{display:block;margin-top:3px;color:#b42318;font-weight:400}.counts{font-size:12px;color:#485467}
+:deep(.focused-account-row)>td{background:#fff8e6!important}
 </style>
