@@ -52,6 +52,12 @@ def test_production_workflow_is_manual_and_seo_scoped() -> None:
     assert "production-geo" not in workflow
 
 
+def test_shared_ci_defers_production_seo_prs_to_seo_baseline() -> None:
+    workflow = _read(".github/workflows/ci.yml")
+    assert "branches-ignore:" in workflow
+    assert "- codex/production-seo" in workflow
+
+
 def test_frontend_exposes_explicit_seo_build_contract() -> None:
     package = _read("frontend/package.json")
     assert '"build:seo"' in package
