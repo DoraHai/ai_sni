@@ -19,10 +19,49 @@ os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 from fastapi import HTTPException
 
 from app.ai.monthly_report import _build_prompt, _suggestion_business_score, _suggestion_impact
-from app.api.reports import _rows_from_report, _validate_period
+from app.api.reports import _client_report_view, _rows_from_report, _validate_period
 
 
 class AnalysisReportTests(unittest.TestCase):
+    def test_client_view_removes_internal_work_and_keeps_only_evidenced_actions(self):
+        report = {
+            "data": {
+                "period": {"start_date": "2026-08-01", "end_date": "2026-08-07"},
+                "operational_focus": {"pending_suggestions": 9},
+                "alerts_review": {"open": 3},
+                "pending_modules": {"conversion": "内部缺口"},
+                "operations": {"total": 99, "ai_suggestions_adopted": 8},
+                "client_delivery": {
+                    "completed_count": 1,
+                    "ready_effects": 0,
+                    "observing_effects": 1,
+                    "completed_actions": [{
+                        "id": 1,
+                        "object": "关键词A",
+                        "action": "关键词出价",
+                        "old_value": "1.0",
+                        "new_value": "1.1",
+                        "evidence": "百度操作记录",
+                        "effect": {"sample": {"state": "collecting", "message": "效果观察中"}},
+                    }],
+                },
+            },
+            "narrative": {
+                "summary": "内部摘要",
+                "module_comments": {"overview": "公开数据", "alerts": "内部异常", "operations": "内部操作"},
+                "next_period_plan": ["内部待办"],
+            },
+        }
+
+        client = _client_report_view(report)
+        self.assertNotIn("operational_focus", client["data"])
+        self.assertNotIn("alerts_review", client["data"])
+        self.assertNotIn("pending_modules", client["data"])
+        self.assertEqual(client["data"]["operations"]["total"], 1)
+        self.assertEqual(client["narrative"]["module_comments"], {"overview": "公开数据"})
+        self.assertEqual(client["narrative"]["next_period_plan"], [])
+        self.assertIn("百度操作记录确认 1 项", client["narrative"]["summary"])
+
     def test_report_suggestions_rank_material_zero_conversion_risk_first(self):
         base = {
             "priority": "P1",

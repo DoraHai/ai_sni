@@ -5,6 +5,7 @@
 """
 import logging
 import csv
+import copy
 import html
 import io
 from datetime import date
@@ -16,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.monthly_report import get_analysis_report, get_monthly_report
 from app.database import get_session
 from app.models import KwReportSnapshot, Tenant
-from app.security.auth import require_scoped_auth
+from app.security.auth import AuthContext, require_scoped_auth
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,48 @@ def _fmt(v) -> str:
     if isinstance(v, float):
         return str(round(v, 4))
     return str(v)
+
+
+def _client_report_view(report: dict) -> dict:
+    """Build a client-safe view without internal work or synchronization diagnostics."""
+    output = copy.deepcopy(report)
+    data = output["data"]
+    data.pop("operational_focus", None)
+    data.pop("alerts_review", None)
+    data.pop("pending_modules", None)
+    delivery = data.get("client_delivery") or {}
+    data["operations"] = {
+        "total": int(delivery.get("completed_count") or 0),
+        "by_level": {},
+        "over_limit": 0,
+        "ai_suggestions_adopted": 0,
+    }
+    narrative = output.get("narrative")
+    if narrative:
+        narrative["module_comments"] = {
+            key: value
+            for key, value in (narrative.get("module_comments") or {}).items()
+            if key not in {"alerts", "operations"}
+        }
+        period = data["period"]
+        completed = int(delivery.get("completed_count") or 0)
+        ready = int(delivery.get("ready_effects") or 0)
+        observing = int(delivery.get("observing_effects") or 0)
+        narrative["summary"] = (
+            f"本报告覆盖 {period['start_date']} 至 {period['end_date']} 的投放表现。"
+            f"区间内已由百度操作记录确认 {completed} 项优化动作；"
+            f"其中 {ready} 项效果样本已成熟，{observing} 项仍在观察中。"
+        )
+        narrative["next_period_plan"] = []
+    output["view"] = "client"
+    return output
+
+
+def _report_view(report: dict, version: str, ctx: AuthContext) -> dict:
+    if ctx.tenant_id is not None or version == "client":
+        return _client_report_view(report)
+    report["view"] = "internal"
+    return report
 
 
 def _rows_from_report(report: dict) -> list[list[str]]:
@@ -129,6 +172,18 @@ def _rows_from_report(report: dict) -> list[list[str]]:
     ])
     for level, count in (operations.get("by_level") or {}).items():
         rows.append(["优化操作", level, _fmt(count), "", "", "按操作层级统计"])
+    for action in (data.get("client_delivery") or {}).get("completed_actions") or []:
+        effect = action.get("effect") or {}
+        sample = effect.get("sample") or {}
+        effect_note = sample.get("message") or "该动作无需效果窗口"
+        rows.append([
+            "已完成动作",
+            action.get("object"),
+            action.get("action"),
+            action.get("old_value"),
+            action.get("new_value"),
+            f"{action.get('evidence')} · {effect_note}",
+        ])
     plans = narrative.get("next_period_plan") or narrative.get("next_month_plan") or []
     for idx, item in enumerate(plans, 1):
         rows.append(["后续计划", f"计划{idx}", item, "", "", ""])
@@ -161,16 +216,19 @@ async def analysis_report(
     start_date: date = Query(..., description="统计起始日期"),
     end_date: date = Query(..., description="统计截止日期"),
     force: bool = Query(False, description="true=强制重新生成 AI 叙述"),
+    version: str = Query("internal", pattern="^(internal|client)$"),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     """某租户自定义日期区间的投放分析报告。"""
     _validate_period(start_date, end_date)
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
-    return await get_analysis_report(
+    report = await get_analysis_report(
         session, tenant, start_date, end_date, force=force
     )
+    return _report_view(report, version, ctx)
 
 
 @router.get("/analysis/export")
@@ -181,7 +239,9 @@ async def export_analysis_report(
     format: str = Query(
         "csv", pattern="^(csv|xls)$", description="csv 或 xls（Excel 可打开）"
     ),
+    version: str = Query("internal", pattern="^(internal|client)$"),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> Response:
     """导出自定义日期区间报告。"""
     _validate_period(start_date, end_date)
@@ -191,7 +251,7 @@ async def export_analysis_report(
     report = await get_analysis_report(
         session, tenant, start_date, end_date, force=False
     )
-    rows = _rows_from_report(report)
+    rows = _rows_from_report(_report_view(report, version, ctx))
     filename = _download_period_filename(
         tenant_id, start_date, end_date, format
     )
@@ -231,13 +291,16 @@ async def monthly_report(
     year: int = Query(..., ge=2020, le=2100),
     month: int = Query(..., ge=1, le=12),
     force: bool = Query(False, description="true=强制重新生成 AI 叙述（忽略缓存）"),
+    version: str = Query("internal", pattern="^(internal|client)$"),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     """某租户某月的分析报告。数据模块实时聚合；AI 叙述缓存命中直接返回、未配 key 则为 null。"""
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
-    return await get_monthly_report(session, tenant, year, month, force=force)
+    report = await get_monthly_report(session, tenant, year, month, force=force)
+    return _report_view(report, version, ctx)
 
 
 @router.get("/monthly/export")
@@ -246,14 +309,16 @@ async def export_monthly_report(
     year: int = Query(..., ge=2020, le=2100),
     month: int = Query(..., ge=1, le=12),
     format: str = Query("csv", pattern="^(csv|xls)$", description="csv 或 xls（Excel 可打开）"),
+    version: str = Query("internal", pattern="^(internal|client)$"),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> Response:
     """导出月报表格。csv 为标准逗号分隔；xls 为 Excel 可直接打开的 HTML 表格。"""
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
     report = await get_monthly_report(session, tenant, year, month, force=False)
-    rows = _rows_from_report(report)
+    rows = _rows_from_report(_report_view(report, version, ctx))
 
     if format == "xls":
         table_rows = []

@@ -11,7 +11,12 @@ import {
   writebackKeywordBatch,
 } from '../../api/keywords'
 import { setAdgroupBid, setAdgroupLandingUrl } from '../../api/manage'
-import { fetchSuggestions, updateSuggestionStatus } from '../../api/suggestions'
+import {
+  fetchSuggestionAssignees,
+  fetchSuggestions,
+  updateSuggestionStatus,
+  updateSuggestionWorkflow,
+} from '../../api/suggestions'
 import { useKeywordWriteback } from '../../composables/useKeywordWriteback'
 import { session } from '../../store/session'
 import MetricLabel from '../../components/MetricLabel.vue'
@@ -35,6 +40,8 @@ const selection = ref([])
 const suggestionMap = ref({}) // keyword_id -> 该词的 AI 建议（全量 pending，独立于列表分页）
 const suggestionList = ref([]) // AI 建议列表（顶部卡片区渲染）
 const suggestionPending = ref(0)
+const suggestionAssignees = ref([])
+const workflowSavingId = ref(null)
 const finalPrices = reactive({}) // keyword_id -> 最终执行价（可人工调整，默认=AI建议价/当前价），回写的就是它
 const showAdvice = ref(true)
 const tableRef = ref(null)
@@ -382,6 +389,47 @@ async function load() {
   }
 }
 
+async function loadSuggestionAssignees() {
+  if (!TENANT_ID.value) return
+  try {
+    const result = await fetchSuggestionAssignees(TENANT_ID.value)
+    suggestionAssignees.value = result.assignees || []
+  } catch {
+    suggestionAssignees.value = []
+  }
+}
+
+async function saveSuggestionWorkflow(suggestion, field, value) {
+  if (!session.canEdit('optimize.keywords') || workflowSavingId.value) return
+  const payload = {}
+  if (field === 'assignee_id') {
+    if (value == null || value === '') payload.clear_assignee = true
+    else payload.assignee_id = Number(value)
+  } else if (field === 'due_at') {
+    if (!value) payload.clear_due_at = true
+    else payload.due_at = value
+  } else {
+    payload.handling_status = value
+  }
+  workflowSavingId.value = suggestion.id
+  try {
+    const result = await updateSuggestionWorkflow(suggestion.id, payload)
+    const updated = result.suggestion
+    if (updated.status === 'pending') {
+      suggestionMap.value = { ...suggestionMap.value, [updated.keyword_id]: updated }
+      suggestionList.value = suggestionList.value.map((item) => item.id === updated.id ? updated : item)
+    } else {
+      _removeSuggestion(updated.keyword_id)
+    }
+    ElMessage.success('建议协作信息已更新')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || e.message)
+    await load()
+  } finally {
+    workflowSavingId.value = null
+  }
+}
+
 async function refreshData() {
   if (refreshing.value) return
   refreshing.value = true
@@ -648,12 +696,13 @@ const headerStats = computed(() => {
 })
 
 // 顶栏切换客户后重新拉数
-watch(TENANT_ID, () => { filters.page = 1; campaignData.value = null; adgroupData.value = null; activeView.value = 'keywords'; load(); scheduleStickyScrollSync() })
+watch(TENANT_ID, () => { filters.page = 1; campaignData.value = null; adgroupData.value = null; activeView.value = 'keywords'; load(); loadSuggestionAssignees(); scheduleStickyScrollSync() })
 watch(activeView, scheduleStickyScrollSync)
 watch(() => [data.value?.keywords?.length, campaignData.value?.campaigns?.length, adgroupData.value?.adgroups?.length, loading.value], scheduleStickyScrollSync)
 
 onMounted(() => {
   load()
+  loadSuggestionAssignees()
   window.addEventListener('resize', updateStickyScrollVisibility)
   window.addEventListener('scroll', updateStickyScrollVisibility, { passive: true })
   scheduleStickyScrollSync()
@@ -887,7 +936,7 @@ onBeforeUnmount(() => {
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="AI 建议" width="95">
+        <el-table-column label="AI 建议 / 协作" width="145">
           <template #default="{ row }">
             <template v-if="suggestionMap[row.keyword_id]">
               <div class="ai-compact">
@@ -905,8 +954,46 @@ onBeforeUnmount(() => {
                     <div v-if="suggestionRiskNote(suggestionMap[row.keyword_id])" class="ai-risk-line">
                       注意：{{ suggestionRiskNote(suggestionMap[row.keyword_id]) }}
                     </div>
+                    <div class="suggestion-workflow">
+                      <div class="workflow-title">内部协作</div>
+                      <label>负责人</label>
+                      <el-select
+                        :model-value="suggestionMap[row.keyword_id].assignee_id"
+                        clearable
+                        placeholder="未分配"
+                        :disabled="!session.canEdit('optimize.keywords') || workflowSavingId === suggestionMap[row.keyword_id].id"
+                        @change="(value) => saveSuggestionWorkflow(suggestionMap[row.keyword_id], 'assignee_id', value)"
+                      >
+                        <el-option v-for="user in suggestionAssignees" :key="user.id" :label="user.name" :value="user.id" />
+                      </el-select>
+                      <label>处理状态</label>
+                      <el-select
+                        :model-value="suggestionMap[row.keyword_id].handling_status"
+                        :disabled="!session.canEdit('optimize.keywords') || workflowSavingId === suggestionMap[row.keyword_id].id"
+                        @change="(value) => saveSuggestionWorkflow(suggestionMap[row.keyword_id], 'handling_status', value)"
+                      >
+                        <el-option label="待处理" value="todo" />
+                        <el-option label="处理中" value="in_progress" />
+                        <el-option label="待回写" value="waiting_writeback" />
+                        <el-option label="已完成" value="completed" />
+                        <el-option label="已驳回" value="rejected" />
+                      </el-select>
+                      <label>截止时间</label>
+                      <el-date-picker
+                        :model-value="suggestionMap[row.keyword_id].due_at"
+                        type="datetime"
+                        value-format="YYYY-MM-DDTHH:mm:ss"
+                        format="YYYY-MM-DD HH:mm"
+                        clearable
+                        placeholder="未设置"
+                        :disabled="!session.canEdit('optimize.keywords') || workflowSavingId === suggestionMap[row.keyword_id].id"
+                        @change="(value) => saveSuggestionWorkflow(suggestionMap[row.keyword_id], 'due_at', value)"
+                      />
+                      <small>内部状态不代表百度已实际回写；真实动作仍以待回写台账和执行记录为准。</small>
+                    </div>
                   </div>
                 </el-popover>
+                <small class="workflow-compact">{{ suggestionMap[row.keyword_id].assignee_name || '未分配' }} · {{ suggestionMap[row.keyword_id].handling_status_label }}</small>
               </div>
             </template>
             <span v-else class="dim">—</span>
@@ -1543,6 +1630,12 @@ onBeforeUnmount(() => {
 .ai-tag.risk-high { background: #fef0f0; color: #a32d2d; }
 .ai-reason-line { font-size: 12px; color: #5a5e66; line-height: 1.55; }
 .ai-risk-line { margin-top: 5px; font-size: 11px; line-height: 1.45; color: #ba7517; }
+.suggestion-workflow { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 7px; align-items: center; margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--sem-border); }
+.suggestion-workflow .workflow-title { grid-column: 1 / -1; font-weight: 700; color: var(--sem-text); }
+.suggestion-workflow label { color: var(--sem-text-sub); }
+.suggestion-workflow small { grid-column: 1 / -1; color: #8a5a00; line-height: 1.45; }
+.suggestion-workflow :deep(.el-date-editor) { width: 100%; }
+.workflow-compact { display: block; width: 100%; margin-top: 4px; color: #667085; font-size: 10px; line-height: 1.3; }
 /* 操作列 */
 .op-cell { display: flex; flex-wrap: wrap; gap: 5px; }
 .op-btn { padding: 2px 9px; border: 1px solid #dcdfe6; background: #fff; border-radius: 4px; font-size: 12px; color: #606266; cursor: pointer; white-space: nowrap; }

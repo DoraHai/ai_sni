@@ -205,6 +205,16 @@ async def build_one(session: AsyncSession, tenant: Tenant, dedup_key: str) -> di
         select(func.max(KwReportSnapshot.report_date)).where(KwReportSnapshot.tenant_id == tenant.id)
     )
     t_date = rec.opt_time.date()
+    before = await _window_metrics(
+        session, tenant.id, kid, t_date - timedelta(days=BEFORE_DAYS), t_date - timedelta(days=1)
+    )
+    after = await _window_metrics(session, tenant.id, kid, t_date, latest) if latest else None
+    review = await session.scalar(
+        select(AdjustmentReview).where(
+            AdjustmentReview.tenant_id == tenant.id,
+            AdjustmentReview.dedup_key == dedup_key,
+        )
+    )
     return {
         "dedup_key": dedup_key,
         "keyword": rec.opt_obj,
@@ -213,8 +223,16 @@ async def build_one(session: AsyncSession, tenant: Tenant, dedup_key: str) -> di
         "change_pct": change_pct,
         "direction": direction,
         "effect": {
-            "before": await _window_metrics(session, tenant.id, kid, t_date - timedelta(days=BEFORE_DAYS), t_date - timedelta(days=1)),
-            "after": await _window_metrics(session, tenant.id, kid, t_date, latest) if latest else None,
+            "before": before,
+            "after": after,
+            "after_through": latest.isoformat() if latest else None,
+            "sample": sample_status(kid, before, after),
+        },
+        "review": {
+            "status": review.status if review else "pending",
+            "verdict": review.verdict if review else None,
+            "note": review.note if review else None,
+            "verified_at": review.verified_at.isoformat() if review and review.verified_at else None,
         },
     }
 
