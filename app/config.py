@@ -74,6 +74,8 @@ class Settings(BaseSettings):
     seo_rank_scheduler_enabled: bool = True
     seo_rank_scheduler_batch_size: int = 20
     seo_rank_scheduler_use_ai: bool = True
+    seo_rank_scheduler_max_keywords_per_tenant: int = 200
+    seo_rank_scheduler_max_requests_per_run: int = 1000
 
     # Google PageSpeed Insights。仅由后端调用，Key 不得进入前端构建产物。
     pagespeed_api_key: str = ""

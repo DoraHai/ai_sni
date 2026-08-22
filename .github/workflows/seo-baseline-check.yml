@@ -70,6 +70,7 @@ jobs:
           tests/test_seo_distribution_import.py
           tests/test_seo_foundation.py
           tests/test_seo_release_consistency.py
+          tests/test_seo_scheduler.py
           tests/test_seo_serp.py
 
   frontend-build:

@@ -18,12 +18,8 @@ os.environ.setdefault(
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
 from app.baidu.sync import sync_keyword_dimension_reports_for_account
-from app.scheduler import (
-    _SHANGHAI_TZ,
-    _chunks,
-    _local_day_start_utc,
-    refresh_keyword_workbench_snapshot,
-)
+from app.scheduler import refresh_keyword_workbench_snapshot
+from app.seo_ranking_jobs import _SHANGHAI_TZ, _chunks, _local_day_start_utc
 from app.security.auth import _required
 
 
