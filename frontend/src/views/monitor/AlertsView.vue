@@ -15,7 +15,12 @@ const alerts = ref([])
 const openCounts = ref({})
 const statusFilter = ref('open')
 const priorityFilter = ref('')
+const campaignFilter = ref('')
+const typeFilter = ref('')
 const selection = ref([])
+const todayNew = ref(0)
+const groupOptions = ref({ campaigns: [], types: [] })
+let loadGeneration = 0
 
 // 原型 p-badge / alert-card 配色：P0/P1 红、P2 琥珀、P3 蓝、P4 绿、P5 灰
 const PRIORITY_META = {
@@ -43,21 +48,29 @@ const STATUS_TABS = [
 const fmtMetric = (v) => (typeof v === 'number' ? v.toLocaleString('zh-CN') : v)
 
 async function load() {
+  const generation = ++loadGeneration
+  const tenantId = TENANT_ID.value
+  if (!tenantId) return
   loading.value = true
   error.value = ''
   try {
     const data = await fetchAlerts({
-      tenantId: TENANT_ID.value,
+      tenantId,
       status: statusFilter.value,
       priority: priorityFilter.value,
+      campaignId: campaignFilter.value,
+      alertType: typeFilter.value,
     })
+    if (generation !== loadGeneration || tenantId !== TENANT_ID.value) return
     alerts.value = data.alerts
     openCounts.value = data.open_counts
+    todayNew.value = data.today_new || 0
+    groupOptions.value = data.group_options || { campaigns: [], types: [] }
     selection.value = selection.value.filter((id) => data.alerts.some((a) => a.id === id))
   } catch (e) {
-    error.value = e.message
+    if (generation === loadGeneration) error.value = '告警数据加载失败，请稍后重试'
   } finally {
-    loading.value = false
+    if (generation === loadGeneration) loading.value = false
   }
 }
 
@@ -89,11 +102,11 @@ function setStatus(s) {
 
 async function onResolve(row) {
   try {
-    await resolveAlert(row.id)
+    await resolveAlert({ tenantId: TENANT_ID.value, alertId: row.id })
     ElMessage.success('已标记为已处理')
     await load()
   } catch (e) {
-    ElMessage.error(e.message)
+    ElMessage.error('处理失败，请稍后重试')
   }
 }
 
@@ -111,12 +124,17 @@ async function onBatchResolve() {
     selection.value = []
     await load()
   } catch (e) {
-    ElMessage.error(e.message)
+    ElMessage.error('批量处理失败，请稍后重试')
   }
 }
 
 // 顶栏切换客户后重新拉数
-watch(TENANT_ID, load)
+watch(TENANT_ID, () => {
+  selection.value = []
+  campaignFilter.value = ''
+  typeFilter.value = ''
+  load()
+})
 
 onMounted(load)
 </script>
@@ -126,8 +144,18 @@ onMounted(load)
     <div class="page-header">
       <div>
         <div class="page-title">异常提醒</div>
-        <div class="page-desc">规则引擎每日 02:00 自动巡检 · 同词多天触发自动归并</div>
+        <div class="page-desc">规则引擎每日 02:00 自动巡检 · 今日新增 {{ todayNew }} 条 · 同词多天触发自动归并</div>
       </div>
+    </div>
+
+    <div class="group-filter-row">
+      <el-select v-model="campaignFilter" clearable placeholder="按计划批量筛选" style="width: 220px" @change="load">
+        <el-option v-for="item in groupOptions.campaigns" :key="item.id" :label="item.name" :value="item.id" />
+      </el-select>
+      <el-select v-model="typeFilter" clearable placeholder="按告警类型批量筛选" style="width: 220px" @change="load">
+        <el-option v-for="item in groupOptions.types" :key="item" :label="item" :value="item" />
+      </el-select>
+      <span class="group-filter-hint">筛选后可全选当前计划或类型，一次归并处理</span>
     </div>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 14px" />
@@ -225,11 +253,11 @@ onMounted(load)
           </template>
         </div>
       </div>
-      <div v-if="row.status === 'open'" class="ac-foot">
+      <div class="ac-foot">
         <span>检出于 {{ row.detected_at?.slice(0, 16).replace('T', ' ') }}</span>
         <span class="ac-foot-spacer" />
         <button v-if="row.keyword_id" class="row-action" @click="router.push(`/monitor/keywords/${row.keyword_id}?from=alerts`)">查看详情</button>
-        <button v-if="session.canEdit('monitor.alerts')" class="row-action primary" @click="onResolve(row)">标记已处理</button>
+        <button v-if="row.status === 'open' && session.canEdit('monitor.alerts')" class="row-action primary" @click="onResolve(row)">标记已处理</button>
       </div>
     </div>
 
@@ -264,6 +292,8 @@ onMounted(load)
 .view-tab { padding: 6px 14px; border-radius: 5px; font-size: 12px; cursor: pointer; color: var(--sem-text-sub); font-weight: 500; user-select: none; }
 .view-tab:hover { background: #f9fafb; color: var(--sem-primary); }
 .view-tab.active { background: #eff4fb; color: var(--sem-primary); }
+.group-filter-row { display: flex; align-items: center; gap: 10px; margin: -2px 0 12px; flex-wrap: wrap; }
+.group-filter-hint { color: var(--sem-text-sub); font-size: 11px; }
 .bulk-toolbar {
   display: flex;
   align-items: center;

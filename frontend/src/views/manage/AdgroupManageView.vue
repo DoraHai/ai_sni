@@ -19,16 +19,22 @@ const emptyDiagnosis = computed(() => {
   return '账户已完成同步，但未拉到单元数据；请核对百度账户内是否存在单元。'
 })
 const savingId = ref(null)
+let loadGeneration = 0
 
 async function load() {
+  const generation = ++loadGeneration
+  const tenantId = TENANT_ID.value
+  if (!tenantId) return
   loading.value = true
   error.value = ''
   try {
-    data.value = await fetchAdgroups({ tenantId: TENANT_ID.value })
+    const result = await fetchAdgroups({ tenantId })
+    if (generation !== loadGeneration || tenantId !== TENANT_ID.value) return
+    data.value = result
   } catch (e) {
-    error.value = e.message
+    if (generation === loadGeneration) error.value = '单元数据加载失败，请稍后重试'
   } finally {
-    loading.value = false
+    if (generation === loadGeneration) loading.value = false
   }
 }
 
@@ -37,7 +43,7 @@ onMounted(load)
 
 const fmtMoney = (v) => (v == null ? '跟随计划' : '¥' + Number(v).toFixed(2))
 const isPaused = (r) => r.pause || r.status === 23
-const statusLabel = (r) => (isPaused(r) ? '已暂停' : (r.status === 21 ? '投放中' : '—'))
+const statusLabel = (r) => (isPaused(r) ? '已暂停' : (r.status === 21 ? '投放中' : '状态未同步'))
 function landingRows(row) {
   const rows = []
   if (row.mobile_final_url) rows.push({ key: 'mobile', label: '移动端', url: row.mobile_final_url })
@@ -196,7 +202,7 @@ async function togglePause(row) {
         </el-table-column>
         <el-table-column label="状态" width="100" align="center">
           <template #default="{ row }">
-            <span class="status-pill" :class="isPaused(row) ? 'paused' : 'active'">{{ statusLabel(row) }}</span>
+            <span class="status-pill" :class="isPaused(row) ? 'paused' : (row.status === 21 ? 'active' : 'unknown')">{{ statusLabel(row) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="单元出价" width="130" align="right">
@@ -207,7 +213,9 @@ async function togglePause(row) {
             <div v-if="landingRows(row).length" class="url-list">
               <div v-for="item in landingRows(row)" :key="item.key" class="url-line">
                 <span class="url-tag" :class="item.key">{{ item.label }}</span>
-                <span class="url-cell">{{ item.url }}</span>
+                <el-tooltip :content="item.url" placement="top" :show-after="350">
+                  <span class="url-cell">{{ item.url }}</span>
+                </el-tooltip>
               </div>
             </div>
             <div v-else class="url-cell empty">未设置</div>
@@ -218,7 +226,7 @@ async function togglePause(row) {
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="300" align="center">
+        <el-table-column label="操作" width="270" align="center" fixed="right">
           <template #default="{ row }">
             <el-button size="small" :loading="savingId === row.adgroup_id" @click="editBid(row)">出价建议</el-button>
             <el-button size="small" :loading="savingId === row.adgroup_id" @click="openLanding(row)">落地页建议</el-button>
@@ -324,6 +332,7 @@ async function togglePause(row) {
 .status-pill { font-size: 11px; padding: 1px 9px; border-radius: 10px; font-weight: 600; }
 .status-pill.active { background: #e5f4ed; color: var(--sem-success); }
 .status-pill.paused { background: #fef1e1; color: #ba7517; }
+.status-pill.unknown { background: #f3f4f6; color: #6b7280; }
 .empty-line { font-size: 12px; color: #9ca3af; padding: 22px 0; }
 .dialog-context { margin: -4px 0 14px; }
 .form-grid {

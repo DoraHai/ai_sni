@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { changePassword, fetchMe, fetchTenants } from './api/auth'
@@ -32,7 +32,7 @@ const platformShortcuts = [
 ]
 
 // 侧边导航徽章（真数据）：异常提醒 open 数、拓词待处理数
-const badges = reactive({ alerts: 0, expand: 0 })
+const badges = reactive({ alerts: 0, alertsToday: 0, expand: 0 })
 
 async function loadBadges() {
   if (!session.tenantId) return
@@ -44,6 +44,7 @@ async function loadBadges() {
       fetchCandidates({ tenantId: session.tenantId, status: 'pending', page: 1, pageSize: 1 }),
     ])
     badges.alerts = a.total_open ?? 0
+    badges.alertsToday = a.today_new ?? 0
     badges.expand = e.status_counts?.pending ?? 0
   } catch { /* 徽章失败不打扰 */ }
 }
@@ -55,15 +56,15 @@ const ALL_GROUPS = computed(() => [
     { label: 'AI 助手', path: '/assistant', key: 'assistant' },
   ] },
   { label: '诊断中心', icon: '🩺', children: [
-    { label: '网站体检', path: '/diagnostic-center/', key: 'geo.diagnosis', external: true },
+    { label: '网站体检', path: '/geo/diagnosis', key: 'geo.diagnosis' },
   ] },
   { label: '首次接入', icon: '🚀', children: [
     { label: '授权与同步', path: '/onboarding', key: 'onboarding' },
     { label: '智能搭建', path: '/onboarding/builder', key: 'onboarding' },
   ] },
-  { label: '每日盯盘', icon: '📊', badge: badges.alerts, badgeCls: '', children: [
+  { label: '每日盯盘', icon: '📊', badge: badges.alerts, badgeCls: '', hint: `未处理告警 ${badges.alerts} 条，今日新增 ${badges.alertsToday} 条`, children: [
     { label: '数据看板', path: '/monitor/dashboard', key: 'monitor.dashboard' },
-    { label: '异常提醒', path: '/monitor/alerts', count: badges.alerts, key: 'monitor.alerts' },
+    { label: '异常提醒', path: '/monitor/alerts', count: badges.alerts, countLabel: '未处理', key: 'monitor.alerts', hint: `未处理 ${badges.alerts} 条，今日新增 ${badges.alertsToday} 条` },
     { label: '客户画像', path: '/monitor/profile', key: 'monitor.profile' },
   ] },
   { label: '优化建议', icon: '⚡', children: [
@@ -210,10 +211,33 @@ function toggleTheme() {
   localStorage.setItem(themeStorageKey, currentTheme.value)
 }
 
+function closeTenantPopoverOnEscape(event) {
+  if (event.key === 'Escape') tenantPopoverOpen.value = false
+}
+
+function closeTenantPopoverOnOutside(event) {
+  if (!tenantPopoverOpen.value) return
+  const target = event.target
+  if (!(target instanceof Element)) return
+  if (target.closest('.tenant-trigger') || target.closest('.tenant-popover')) return
+  tenantPopoverOpen.value = false
+}
+
 watch(() => session.isLoggedIn, (v) => { if (v) { loadTenants(); loadBadges() } })
 watch(() => session.tenantId, loadBadges)
-watch(() => route.path, syncOpenToRoute)
-onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
+watch(() => route.path, () => {
+  tenantPopoverOpen.value = false
+  syncOpenToRoute()
+})
+onMounted(() => {
+  refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute()
+  document.addEventListener('keydown', closeTenantPopoverOnEscape, true)
+  document.addEventListener('click', closeTenantPopoverOnOutside, true)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', closeTenantPopoverOnEscape, true)
+  document.removeEventListener('click', closeTenantPopoverOnOutside, true)
+})
 </script>
 
 <template>
@@ -237,7 +261,7 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
           class="wf-group"
           :class="{ open: openGroups.has(g.label) }"
         >
-          <div class="wf-trigger" :class="{ current: isCurrentGroup(g) }" @click="toggleGroup(g.label)">
+          <div class="wf-trigger" :class="{ current: isCurrentGroup(g) }" :title="g.hint || ''" @click="toggleGroup(g.label)">
             <span class="wf-icon">{{ g.icon }}</span>
             <span class="wf-name">{{ g.label }}</span>
             <span v-if="g.badge" class="wf-badge" :class="g.badgeCls">{{ g.badge > 99 ? '99+' : g.badge }}</span>
@@ -285,16 +309,30 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
             {{ themeLabel }} · 切换{{ nextThemeLabel }}
           </button>
           <template v-if="session.isLoggedIn">
+            <button
+              v-if="tenantPopoverOpen"
+              class="tenant-popover-backdrop"
+              type="button"
+              aria-label="关闭客户切换"
+              @click="tenantPopoverOpen = false"
+            />
             <el-popover
               v-if="session.tenants.length > 1"
               v-model:visible="tenantPopoverOpen"
               placement="bottom-end"
               :width="286"
-              trigger="click"
+              trigger="manual"
+              :hide-after="0"
+              :persistent="false"
               popper-class="tenant-popover"
             >
               <template #reference>
-                <button class="tenant-trigger" type="button">
+                <button
+                  class="tenant-trigger"
+                  type="button"
+                  @click.stop="tenantPopoverOpen = !tenantPopoverOpen"
+                  @keydown.esc.stop="tenantPopoverOpen = false"
+                >
                   <span class="tenant-trigger-label">当前客户：</span>
                   <span class="tenant-trigger-name">{{ tenantName }}</span>
                   <span class="tenant-trigger-caret">▾</span>
@@ -461,6 +499,16 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
   line-height: 1;
   user-select: none;
 }
+.tenant-popover-backdrop {
+  position: fixed;
+  z-index: 1900;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+.tenant-trigger { position: relative; z-index: 1901; }
 .tenant-trigger:hover { background: #e9edf3; }
 .tenant-trigger-label { color: #6b7280; white-space: nowrap; }
 .tenant-trigger-name {

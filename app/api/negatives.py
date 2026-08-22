@@ -113,6 +113,7 @@ async def list_negative_words(
         }
 
     items: list[dict[str, Any]] = []
+    seen_items: set[tuple] = set()
 
     def add_item(
         word: str,
@@ -124,6 +125,16 @@ async def list_negative_words(
     ) -> None:
         if len(items) >= FLATTEN_CAP:
             return
+        item_key = (
+            scope_key,
+            camp.campaign_id if camp else None,
+            adg.adgroup_id if adg else None,
+            match_key,
+            word.casefold(),
+        )
+        if item_key in seen_items:
+            return
+        seen_items.add(item_key)
         flags = []
         notes = []
         if (

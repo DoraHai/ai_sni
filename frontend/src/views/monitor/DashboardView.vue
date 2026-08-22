@@ -68,12 +68,30 @@ const trendChartEl = ref(null)
 let trendChart = null
 let autoRefreshTimer = null
 let lastTodayEmptyNoticeKey = ''
+let loadVersion = 0
 const AUTO_REFRESH_MS = 5 * 60 * 1000
 const handleResize = () => trendChart?.resize()
 
 const fmtMoney = (v) => (v == null ? '—' : '¥ ' + Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 2 }))
 const fmtInt = (v) => (v == null ? '—' : Number(v).toLocaleString('zh-CN'))
 const fmtPct = (v) => (v == null ? '—' : (v * 100).toFixed(2) + '%')
+const periodDataIncomplete = computed(() => data.value?.freshness?.requested_data_complete === false)
+const connectionAlert = computed(() => {
+  const connection = data.value?.connection
+  if (!connection || connection.state === 'ready') {
+    if (!periodDataIncomplete.value) return null
+    return {
+      type: 'warning',
+      title: `所选区间数据尚未同步完整，最新可用数据截至 ${data.value?.freshness?.latest_report_date || '—'}。缺失日期不计为 0 消费或下降。`,
+    }
+  }
+  const severe = ['not_connected', 'sync_failed'].includes(connection.state)
+  const counts = connection.asset_counts || {}
+  return {
+    type: severe ? 'error' : 'warning',
+    title: `${connection.message}。当前资产：计划 ${counts.campaigns || 0}、单元 ${counts.adgroups || 0}、关键词 ${counts.keywords || 0}、搜索词 ${counts.search_terms || 0}。`,
+  }
+})
 
 // ===== 顶部工具栏：媒体 + 自定义日期区间 =====
 const media = ref('baidu')
@@ -123,6 +141,7 @@ function deltaClass(card) {
 }
 
 function deltaText(card) {
+  if (periodDataIncomplete.value) return '数据未同步'
   if (card.change == null) return '—'
   return (card.change >= 0 ? '↑ ' : '↓ ') + Math.abs(card.change).toFixed(1) + '%'
 }
@@ -188,20 +207,24 @@ function isAllZero(d) {
 }
 
 async function load() {
+  const version = ++loadVersion
+  const tenantId = TENANT_ID.value
+  if (!tenantId) return
   loading.value = true
   error.value = ''
   try {
     const [d, ins] = await Promise.all([
       fetchDashboardToday({
-        tenantId: TENANT_ID.value,
+        tenantId,
         startDate: dateRange.value?.[0],
         endDate: dateRange.value?.[1],
       }),
       fetchDashboardInsight({
-        tenantId: TENANT_ID.value,
+        tenantId,
         targetDate: dateRange.value?.[1],
       }).catch(() => null),
     ])
+    if (version !== loadVersion || tenantId !== TENANT_ID.value) return
     data.value = d
     insight.value = ins
     const noticeKey = dateRange.value?.join(':') || ''
@@ -214,9 +237,12 @@ async function load() {
     await nextTick()
     renderTrend()
   } catch (e) {
-    error.value = e.message
+    if (version !== loadVersion || tenantId !== TENANT_ID.value) return
+    error.value = e.code === 'PERMISSION_DENIED'
+      ? '当前账号无权查看该客户看板'
+      : '看板数据暂时无法加载，请稍后重试'
   } finally {
-    loading.value = false
+    if (version === loadVersion) loading.value = false
   }
 }
 
@@ -306,6 +332,14 @@ onBeforeUnmount(() => {
     </div>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 14px" />
+    <el-alert
+      v-if="connectionAlert"
+      :title="connectionAlert.title"
+      :type="connectionAlert.type"
+      :closable="false"
+      show-icon
+      class="data-state-alert"
+    />
 
     <div v-if="insight?.enabled" class="ai-insight">
       <div class="aii-head">
@@ -469,6 +503,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .page-header { margin-bottom: 14px; display: flex; justify-content: space-between; align-items: flex-end; }
+.data-state-alert { margin-bottom: 14px; }
 .dash-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
 .media-filter { display: flex; align-items: center; gap: 4px; padding: 2px 6px 2px 10px; background: #f3f4f6; border-radius: 6px; }
 .media-label { font-size: 12px; color: #606266; white-space: nowrap; }

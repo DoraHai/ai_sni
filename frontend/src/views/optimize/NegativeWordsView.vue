@@ -19,29 +19,45 @@ const view = ref('review') // review=待审建议 existing=现有否词 rejected
 const addToPlanDialogRef = ref(null)
 
 const filters = reactive({ scope: '', match: '', flag: '', q: '' })
+let loadGeneration = 0
+
+function dedupeCandidatePayload(payload) {
+  const seen = new Set()
+  const candidates = (payload?.candidates || []).filter((item) => {
+    const key = String(item.word || '').trim().toLocaleLowerCase('zh-CN')
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+  return { ...payload, candidates, total: candidates.length }
+}
 
 async function load() {
+  const generation = ++loadGeneration
+  const tenantId = TENANT_ID.value
+  if (!tenantId) return
   loading.value = true
   error.value = ''
   try {
     const [neg, scan, rejected] = await Promise.all([
-      fetchNegativeWords({ tenantId: TENANT_ID.value, ...filters }),
+      fetchNegativeWords({ tenantId, ...filters }),
       fetchCandidates({
-        tenantId: TENANT_ID.value, suggestedCategory: 'negative', status: 'pending',
+        tenantId, suggestedCategory: 'negative', status: 'pending',
         page: 1, pageSize: 200,
       }),
       fetchCandidates({
-        tenantId: TENANT_ID.value, suggestedCategory: 'negative', status: 'ignored',
+        tenantId, suggestedCategory: 'negative', status: 'ignored',
         page: 1, pageSize: 200,
       }),
     ])
+    if (generation !== loadGeneration || tenantId !== TENANT_ID.value) return
     negData.value = neg
-    scanData.value = scan
-    rejectedData.value = rejected
+    scanData.value = dedupeCandidatePayload(scan)
+    rejectedData.value = dedupeCandidatePayload(rejected)
   } catch (e) {
-    error.value = e.message
+    if (generation === loadGeneration) error.value = '否词数据加载失败，请稍后重试'
   } finally {
-    loading.value = false
+    if (generation === loadGeneration) loading.value = false
   }
 }
 
@@ -389,7 +405,7 @@ onMounted(load)
       配额上限按百度账户星级浮动（200-900 条），星级数据待接入；定期清理重复/冷门否词可释放配额。
     </div>
 
-    <AddToPlanDialog ref="addToPlanDialogRef" :tenant-id="TENANT_ID" @success="load" />
+    <AddToPlanDialog v-if="TENANT_ID" ref="addToPlanDialogRef" :tenant-id="TENANT_ID" @success="load" />
 
     <!-- 添加否词弹框（单元级 updateAdgroup 写回） -->
     <el-dialog v-model="negDialog.visible" title="新增待回写否词" width="440px">

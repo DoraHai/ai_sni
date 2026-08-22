@@ -13,6 +13,7 @@ const regenerating = ref(false)
 const exporting = ref('')
 const error = ref('')
 const report = ref(null)
+let loadVersion = 0
 const pad = (n) => String(n).padStart(2, '0')
 const isoOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 function getMonday(d) {
@@ -76,6 +77,14 @@ const fmtChange = (v) => (v == null ? '' : (v >= 0 ? '↑' : '↓') + Math.abs(v
 
 const data = computed(() => report.value?.data || null)
 const narrative = computed(() => report.value?.narrative || null)
+// 前后端发布存在短暂时差时，旧响应缺少新模块也不得让整页崩溃。
+const clientDelivery = computed(() => data.value?.client_delivery || {
+  completed_count: 0, ready_effects: 0, observing_effects: 0, completed_actions: [],
+})
+const operationalFocus = computed(() => data.value?.operational_focus || {
+  pending_suggestions: 0, pending_writebacks: 0, sync_risks: [], priority_suggestions: [],
+  suggestions_path: '/optimize/keywords?has_suggestion=true', queue_path: '/verify/pending',
+})
 
 // AI 叙述里裸写的英文缩写补中文全称（如 CPC → CPC（平均点击成本））。
 // 显示时展开，对历史缓存文案也即时生效；已带（中文）或字母串内的不重复加。
@@ -96,22 +105,31 @@ const openWorkItem = (path) => router.push(path)
 
 async function load(force = false) {
   if (!dateRange.value?.[0] || !dateRange.value?.[1]) return
+  const requestVersion = ++loadVersion
+  const tenantId = TENANT_ID.value
+  if (!tenantId) return
   force ? (regenerating.value = true) : (loading.value = true)
   error.value = ''
   try {
     report.value = await fetchAnalysisReport({
-      tenantId: TENANT_ID.value,
+      tenantId,
       startDate: dateRange.value[0],
       endDate: dateRange.value[1],
       force,
       version: version.value,
     })
+    if (requestVersion !== loadVersion || tenantId !== TENANT_ID.value) return
     if (force) ElMessage.success('AI 报告已重新生成')
   } catch (e) {
-    error.value = e.message
+    if (requestVersion !== loadVersion || tenantId !== TENANT_ID.value) return
+    error.value = e.code === 'PERMISSION_DENIED'
+      ? '当前账号无权查看该客户报告'
+      : '报告暂时无法加载，请稍后重试。看板和验证数据不受影响。'
   } finally {
-    loading.value = false
-    regenerating.value = false
+    if (requestVersion === loadVersion) {
+      loading.value = false
+      regenerating.value = false
+    }
   }
 }
 
@@ -163,13 +181,16 @@ async function exportReport(format) {
     a.click()
     URL.revokeObjectURL(url)
   } catch (e) {
-    ElMessage.error(e.message)
+    ElMessage.error('报告导出失败，请稍后重试')
   } finally {
     exporting.value = ''
   }
 }
 
-watch(TENANT_ID, () => load())
+watch(TENANT_ID, () => {
+  report.value = null
+  load()
+})
 
 onMounted(() => load())
 
@@ -370,20 +391,20 @@ function scrollTo(key) {
         <section v-if="showInternal" id="mod-today_focus" class="mod">
           <h3>今日执行焦点 <span class="internal-badge">内部</span></h3>
           <div class="num-cards">
-            <div class="num-card work-link" @click="openWorkItem(data.operational_focus.suggestions_path)"><div class="nc-num">{{ data.operational_focus.pending_suggestions }}</div><div class="nc-label">待审建议 →</div></div>
-            <div class="num-card warn work-link" @click="openWorkItem(data.operational_focus.queue_path)"><div class="nc-num">{{ data.operational_focus.pending_writebacks }}</div><div class="nc-label">待回写 →</div></div>
-            <div class="num-card"><div class="nc-num">{{ data.operational_focus.sync_risks.length }}</div><div class="nc-label">同步风险</div></div>
+            <div class="num-card work-link" @click="openWorkItem(operationalFocus.suggestions_path)"><div class="nc-num">{{ operationalFocus.pending_suggestions }}</div><div class="nc-label">待审建议 →</div></div>
+            <div class="num-card warn work-link" @click="openWorkItem(operationalFocus.queue_path)"><div class="nc-num">{{ operationalFocus.pending_writebacks }}</div><div class="nc-label">待回写 →</div></div>
+            <div class="num-card"><div class="nc-num">{{ operationalFocus.sync_risks.length }}</div><div class="nc-label">同步风险</div></div>
           </div>
-          <div v-if="data.operational_focus.sync_risks.length" class="op-levels"><button v-for="risk in data.operational_focus.sync_risks" :key="risk.message" class="op-chip work-link" @click="openWorkItem(risk.path)">{{ risk.message }} →</button></div>
+          <div v-if="operationalFocus.sync_risks.length" class="op-levels"><button v-for="risk in operationalFocus.sync_risks" :key="risk.message" class="op-chip work-link" @click="openWorkItem(risk.path)">{{ risk.message }} →</button></div>
           <p v-else class="mod-comment">当前五层只读资产未发现明显断层。</p>
-          <div v-if="data.operational_focus.priority_suggestions.length" class="focus-list">
-            <button v-for="item in data.operational_focus.priority_suggestions" :key="item.id" class="focus-item" @click="openWorkItem(item.path)">
+          <div v-if="operationalFocus.priority_suggestions.length" class="focus-list">
+            <button v-for="item in operationalFocus.priority_suggestions" :key="item.id" class="focus-item" @click="openWorkItem(item.path)">
               <b>{{ item.priority }} · {{ item.type }} · {{ item.keyword || '账户建议' }}</b>
               <strong>{{ item.impact }}</strong><span>{{ item.reason }}</span><em>{{ item.report_date }} · 查看并处理 →</em>
               <small>负责人：{{ item.assignee_name || '未分配' }} · {{ WORK_STATUS_LABELS[item.handling_status] || item.handling_status }} · {{ fmtDeadline(item.due_at) }}</small>
             </button>
           </div>
-          <button v-if="data.operational_focus.pending_suggestions > data.operational_focus.priority_suggestions.length" class="view-all-work work-link" @click="openWorkItem(data.operational_focus.suggestions_path)">查看全部 {{ data.operational_focus.pending_suggestions }} 条待审建议 →</button>
+          <button v-if="operationalFocus.pending_suggestions > operationalFocus.priority_suggestions.length" class="view-all-work work-link" @click="openWorkItem(operationalFocus.suggestions_path)">查看全部 {{ operationalFocus.pending_suggestions }} 条待审建议 →</button>
         </section>
 
         <!-- 模块 6 优化操作 & 后续计划 -->
@@ -395,16 +416,16 @@ function scrollTo(key) {
             <div class="num-card"><div class="nc-num">{{ data.operations.ai_suggestions_adopted }}</div><div class="nc-label">AI 建议采纳</div></div>
           </div>
           <div v-else class="num-cards">
-            <div class="num-card success"><div class="nc-num">{{ data.client_delivery.completed_count }}</div><div class="nc-label">已确认完成</div></div>
-            <div class="num-card success"><div class="nc-num">{{ data.client_delivery.ready_effects }}</div><div class="nc-label">效果可展示</div></div>
-            <div class="num-card"><div class="nc-num">{{ data.client_delivery.observing_effects }}</div><div class="nc-label">效果观察中</div></div>
+            <div class="num-card success"><div class="nc-num">{{ clientDelivery.completed_count }}</div><div class="nc-label">已确认完成</div></div>
+            <div class="num-card success"><div class="nc-num">{{ clientDelivery.ready_effects }}</div><div class="nc-label">效果可展示</div></div>
+            <div class="num-card"><div class="nc-num">{{ clientDelivery.observing_effects }}</div><div class="nc-label">效果观察中</div></div>
           </div>
           <div v-if="showInternal && Object.keys(data.operations.by_level).length" class="op-levels">
             <span v-for="(n, lvl) in data.operations.by_level" :key="lvl" class="op-chip">{{ lvl }} {{ n }}</span>
           </div>
           <p v-if="showInternal && comment('operations')" class="mod-comment">{{ comment('operations') }}</p>
           <div v-if="!showInternal" class="client-actions">
-            <article v-for="action in data.client_delivery.completed_actions" :key="action.id" class="client-action">
+            <article v-for="action in clientDelivery.completed_actions" :key="action.id" class="client-action">
               <div class="client-action-head"><b>{{ action.action }} · {{ action.object }}</b><time>{{ action.time.slice(0, 16).replace('T', ' ') }}</time></div>
               <div class="client-action-evidence">{{ action.evidence }}<template v-if="action.old_value != null || action.new_value != null"> · {{ action.old_value || '—' }} → {{ action.new_value || '—' }}</template></div>
               <div v-if="action.effect?.sample?.state === 'ready'" class="effect-result">
@@ -416,7 +437,7 @@ function scrollTo(key) {
               <div v-else-if="action.effect" class="effect-observing">效果观察中：{{ action.effect.sample?.message }}</div>
               <div v-else class="effect-confirmed">动作已由百度操作记录确认。</div>
             </article>
-            <el-empty v-if="!data.client_delivery.completed_actions.length" description="本区间暂无可确认的已完成优化动作" />
+            <el-empty v-if="!clientDelivery.completed_actions.length" description="本区间暂无可确认的已完成优化动作" />
           </div>
           <div v-if="showInternal && narrative?.next_period_plan?.length" class="plan">
             <div class="plan-title">后续优化计划</div>

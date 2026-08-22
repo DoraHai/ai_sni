@@ -4,24 +4,33 @@ import { fetchOcpcPackages } from '../../api/ocpc'
 import { session } from '../../store/session'
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
+const tenantName = computed(() => session.tenants.find((item) => item.id === TENANT_ID.value)?.name || '当前客户')
 
 const loading = ref(false)
 const error = ref('')
 const data = ref(null)
+let loadVersion = 0
 
 async function load() {
+  const version = ++loadVersion
+  const tenantId = TENANT_ID.value
+  if (!tenantId) return
   loading.value = true
   error.value = ''
   try {
-    data.value = await fetchOcpcPackages({ tenantId: TENANT_ID.value })
+    const result = await fetchOcpcPackages({ tenantId })
+    if (version !== loadVersion || tenantId !== TENANT_ID.value) return
+    data.value = result
   } catch (e) {
-    error.value = e.message
+    if (version === loadVersion && tenantId === TENANT_ID.value) {
+      error.value = '页面数据暂时无法加载，请稍后重试'
+    }
   } finally {
-    loading.value = false
+    if (version === loadVersion) loading.value = false
   }
 }
 
-watch(TENANT_ID, load)
+watch(TENANT_ID, () => { data.value = null; load() })
 onMounted(load)
 
 const fmtMoney = (v) => (v == null ? '—' : '¥' + Number(v).toFixed(2))
@@ -134,7 +143,7 @@ const adequacyBanner = computed(() => {
               </template>
               <span v-else class="dim">未配置转化口径</span>
               <div class="phone-flag" :class="p.covers_phone ? 'ok' : 'warn'">
-                {{ p.covers_phone ? '✓ 已覆盖电话转化（苏尔寿主指标）' : '⚠ 未覆盖电话转化，与苏尔寿电话导向不匹配' }}
+                {{ p.covers_phone ? '✓ 已覆盖电话转化' : `⚠ 未覆盖电话转化，请核对${tenantName}的转化目标` }}
               </div>
             </div>
           </div>
@@ -174,11 +183,11 @@ const adequacyBanner = computed(() => {
       </div>
     </div>
 
-    <!-- 空状态：苏尔寿未开 OCPC 的解释 -->
+    <!-- 空状态：当前客户未开 OCPC 的解释 -->
     <div v-else-if="data && !loading" class="empty-panel">
       <div class="empty-title">当前账户没有任何 oCPC 出价策略</div>
       <div class="empty-text">
-        苏尔寿目前以关键词 CPC 出价投放，未启用 oCPC（目标转化出价）。<br />
+        {{ tenantName }}目前以关键词 CPC 出价投放，未启用 oCPC（目标转化出价）。<br />
         oCPC 让你设「目标转化成本」、由百度算法自动出价，但它<b>靠转化数据喂模型</b>：
         转化量太少模型学不动，效果可能不如手动调价。<br />
         是否值得开，先看上方近 7/30 天的电话转化量够不够。开通与调价能力在后续版本提供。

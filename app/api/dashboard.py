@@ -21,8 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.baidu import BaiduAPIClient, BaiduAPIError
 from app.baidu.services import AccountService
 from app.database import get_session
-from app.models import Alert, BaiduAccount, KwReportSnapshot, Lead, Tenant
-from app.security.auth import require_scoped_auth
+from app.models import (
+    Adgroup, Alert, BaiduAccount, Campaign, Keyword, KwReportSnapshot, Lead,
+    SearchTermReport, Tenant,
+)
+from app.security.auth import AuthContext, require_scoped_auth
 from app.security.crypto import decrypt
 
 logger = logging.getLogger(__name__)
@@ -142,6 +145,7 @@ async def dashboard_today(
     start_date: date | None = Query(None, description="统计起始日期，默认本月 1 日"),
     end_date: date | None = Query(None, description="统计截止日期，默认今天"),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     """看板核心数据：时段 KPI + 环比 + 完整时段趋势 + 设备维度 + 计划分布。
 
@@ -150,6 +154,7 @@ async def dashboard_today(
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
+    ctx.ensure_tenant(tenant_id)
 
     end = end_date or datetime.now(_SHANGHAI_TZ).date()
     start = start_date or end.replace(day=1)
@@ -336,6 +341,54 @@ async def dashboard_today(
         )
     ).one()
 
+    active_accounts = list((await session.scalars(
+        select(BaiduAccount).where(
+            BaiduAccount.tenant_id == tenant_id,
+            BaiduAccount.status == "active",
+        )
+    )).all())
+    asset_counts = {}
+    for key, model in (
+        ("campaigns", Campaign), ("adgroups", Adgroup),
+        ("keywords", Keyword), ("search_terms", SearchTermReport),
+    ):
+        asset_counts[key] = int(await session.scalar(
+            select(func.count()).select_from(model).where(model.tenant_id == tenant_id)
+        ) or 0)
+
+    latest_account_sync = max(
+        (row.last_synced_at for row in active_accounts if row.last_synced_at),
+        default=None,
+    )
+    if not active_accounts:
+        connection_state = "not_connected"
+        connection_message = "当前客户尚未连接百度推广账户"
+    elif any(row.sync_status == "failed" for row in active_accounts):
+        connection_state = "sync_failed"
+        connection_message = "账户已连接，最近一次资产同步失败"
+    elif any(row.sync_status in {"pending", "syncing"} for row in active_accounts):
+        connection_state = "syncing"
+        connection_message = "账户已连接，资产正在同步"
+    elif not latest_account_sync or not any(asset_counts.values()):
+        connection_state = "not_synced"
+        connection_message = "账户已连接，但计划、单元和关键词资产尚未同步"
+    elif asset_counts["campaigns"] and (
+        not asset_counts["adgroups"] or not asset_counts["keywords"]
+    ):
+        connection_state = "partial"
+        connection_message = "账户已连接，资产同步不完整"
+    else:
+        connection_state = "ready"
+        connection_message = "账户已连接，资产数据已同步"
+
+    requested_data_complete = bool(latest_report_date and latest_report_date >= end)
+    if not requested_data_complete:
+        # 缺失的报表日不是 0 消费，禁止计算为下降 100%。
+        for item in kpi_compare.values():
+            item["change_pct"] = None
+        lead_compare["change_pct"] = None
+        cpl_compare["change_pct"] = None
+
     return {
         "tenant": {
             "id": tenant.id,
@@ -371,5 +424,17 @@ async def dashboard_today(
                 else None
             ),
             "sync_interval_minutes": 15,
+            "requested_data_complete": requested_data_complete,
+        },
+        "connection": {
+            "state": connection_state,
+            "message": connection_message,
+            "active_accounts": len(active_accounts),
+            "last_account_synced_at": (
+                latest_account_sync.replace(tzinfo=timezone.utc)
+                .astimezone(_SHANGHAI_TZ).isoformat()
+                if latest_account_sync else None
+            ),
+            "asset_counts": asset_counts,
         },
     }

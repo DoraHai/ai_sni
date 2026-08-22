@@ -153,19 +153,17 @@ const routes = [
   },
   {
     path: '/geo/diagnosis',
-    component: () => import('../views/diagnosis/DiagnosisRedirectView.vue'),
+    component: () => import('../views/diagnosis/DiagnosisCenterView.vue'),
     meta: {
       title: '网站体检',
       documentTitle: '诊断中心｜网站体检',
       workflow: '诊断中心',
       perm: 'geo.diagnosis',
-      bare: true,
     },
   },
   {
     path: '/diagnostic-center',
-    component: () => import('../views/diagnosis/DiagnosisRedirectView.vue'),
-    meta: { title: '诊断中心', perm: 'geo.diagnosis', bare: true },
+    redirect: '/geo/diagnosis',
   },
   {
     path: '/monitor/dashboard',
@@ -271,6 +269,7 @@ const routes = [
     component: () => import('../views/settings/AccountsRolesView.vue'),
     meta: { title: '账号与权限', workflow: '系统设置', perm: 'settings.accounts' },
   },
+  { path: '/settings/users', redirect: '/settings/accounts' },
   {
     path: '/settings/customers',
     component: () => import('../views/settings/CustomerModulesView.vue'),

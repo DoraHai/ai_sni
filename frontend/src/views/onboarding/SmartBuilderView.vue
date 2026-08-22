@@ -127,7 +127,7 @@ function weekdayText(days = []) {
 
 function scheduleBlocksToText(blocks = []) {
   const valid = blocks.filter((block) => block.weekDays?.length && block.startHour < block.endHour)
-  if (!valid.length) return '周一至周日 09:00-22:00'
+  if (!valid.length) return '投放时段未设置'
   return valid
     .map((block) => `${weekdayText(block.weekDays)} ${String(block.startHour).padStart(2, '0')}:00-${String(block.endHour).padStart(2, '0')}:00`)
     .join('、')
@@ -283,10 +283,21 @@ function updateArrayField(target, field, value) {
       <section class="input-panel">
         <div class="panel-title">输入信息</div>
         <el-form label-position="top" class="builder-form">
-          <el-form-item label="落地页链接">
-            <el-input v-model="form.landingUrl" placeholder="https://..." clearable />
+          <el-form-item label="落地页内容" required>
+            <el-radio-group v-model="landingMode" class="landing-mode">
+              <el-radio-button value="url">有落地页链接</el-radio-button>
+              <el-radio-button value="text">没有链接，粘贴文字</el-radio-button>
+            </el-radio-group>
+            <el-input v-if="landingMode === 'url'" v-model="form.landingUrl" placeholder="https://..." clearable />
+            <el-input
+              v-else
+              v-model="form.landingText"
+              type="textarea"
+              :rows="4"
+              placeholder="粘贴图片式落地页中的产品、服务与联系方式等主要文字"
+            />
           </el-form-item>
-          <el-form-item label="业务概述">
+          <el-form-item label="业务概述" required>
             <el-input
               v-model="form.businessSummary"
               type="textarea"
@@ -295,7 +306,7 @@ function updateArrayField(target, field, value) {
             />
           </el-form-item>
           <div class="form-grid">
-            <el-form-item label="投放目的">
+            <el-form-item label="投放目的" required>
               <el-select v-model="form.goal">
                 <el-option label="获取高意向线索" value="获取高意向线索" />
                 <el-option label="电话咨询" value="电话咨询" />
