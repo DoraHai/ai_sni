@@ -10,6 +10,7 @@ from app.api.seo import (
     BrandProfileUpdate,
     ContentCreate,
     KeywordCreate,
+    KeywordImport,
     MetricSnapshotCreate,
     RankSnapshotCreate,
     SeoContentAssistRequest,
@@ -95,14 +96,23 @@ def test_tenant_bound_context_rejects_cross_tenant_write() -> None:
 def test_keyword_and_rank_input_validation() -> None:
     keyword = KeywordCreate(
         tenant_id=1,
+        site_id=9,
         keyword="CRM 系统",
         difficulty=68,
         monthly_volume=1200,
         priority="P0",
     )
     assert keyword.keyword == "CRM 系统"
+    assert keyword.site_id == 9
     with pytest.raises(ValidationError):
-        KeywordCreate(tenant_id=1, keyword="CRM", difficulty=101)
+        KeywordCreate(tenant_id=1, keyword="未关联网站")
+    with pytest.raises(ValidationError):
+        KeywordCreate(tenant_id=1, site_id=9, keyword="CRM", difficulty=101)
+    with pytest.raises(ValidationError):
+        KeywordImport(
+            tenant_id=1,
+            items=[KeywordCreate(tenant_id=1, site_id=9, keyword="CRM")],
+        )
     with pytest.raises(ValidationError):
         RankSnapshotCreate(
             tenant_id=1,

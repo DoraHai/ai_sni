@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.config import get_settings
 from app.database import async_session_factory
@@ -34,10 +34,12 @@ def _limited_batches(values: list[int], batch_size: int, remaining: int) -> list
 
 def _group_keyword_ids_by_site(
     rows: list[tuple[int, int | None]],
-) -> list[tuple[int | None, list[int]]]:
-    """Preserve query order while keeping site-scoped snapshots and SERP rows."""
-    grouped: dict[int | None, list[int]] = {}
+) -> list[tuple[int, list[int]]]:
+    """Group assigned keywords defensively; unassigned rows are never collected."""
+    grouped: dict[int, list[int]] = {}
     for keyword_id, site_id in rows:
+        if site_id is None:
+            continue
         grouped.setdefault(site_id, []).append(keyword_id)
     return list(grouped.items())
 
@@ -78,13 +80,36 @@ async def collect_daily_seo_rankings() -> None:
         "errors": 0,
         "skipped_pairs": 0,
         "capped_tenants": 0,
+        "unassigned_keywords": 0,
     }
     try:
         async with async_session_factory() as session:
+            unassigned_rows = (
+                await session.execute(
+                    select(SeoKeywordAsset.tenant_id, func.count())
+                    .where(
+                        SeoKeywordAsset.status == "active",
+                        SeoKeywordAsset.site_id.is_(None),
+                    )
+                    .group_by(SeoKeywordAsset.tenant_id)
+                    .order_by(SeoKeywordAsset.tenant_id)
+                )
+            ).all()
+            for tenant_id, count in unassigned_rows:
+                unassigned_count = int(count)
+                totals["unassigned_keywords"] += unassigned_count
+                logger.warning(
+                    "[scheduler][SEO] 客户 %s 有 %s 个启用关键词未关联网站，已跳过",
+                    tenant_id,
+                    unassigned_count,
+                )
             tenant_ids = list(
                 await session.scalars(
                     select(SeoKeywordAsset.tenant_id)
-                    .where(SeoKeywordAsset.status == "active")
+                    .where(
+                        SeoKeywordAsset.status == "active",
+                        SeoKeywordAsset.site_id.is_not(None),
+                    )
                     .distinct()
                     .order_by(SeoKeywordAsset.tenant_id)
                 )
@@ -98,6 +123,7 @@ async def collect_daily_seo_rankings() -> None:
                         .where(
                             SeoKeywordAsset.tenant_id == tenant_id,
                             SeoKeywordAsset.status == "active",
+                            SeoKeywordAsset.site_id.is_not(None),
                         )
                         .order_by(SeoKeywordAsset.priority, SeoKeywordAsset.id)
                         .limit(max_keywords + 1)
@@ -109,7 +135,7 @@ async def collect_daily_seo_rankings() -> None:
                     totals["capped_tenants"] += 1
                     selected_rows = selected_rows[:max_keywords]
                 keyword_sites = [
-                    (int(row[0]), int(row[1]) if row[1] is not None else None)
+                    (int(row[0]), int(row[1]))
                     for row in selected_rows
                 ]
                 keyword_ids = [row[0] for row in keyword_sites]

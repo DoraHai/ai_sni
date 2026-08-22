@@ -68,6 +68,7 @@ SOURCE_ALLOWED_EXACT = {
     "tests/test_seo_migration_merge.py",
     "tests/test_seo_release_consistency.py",
     "tests/test_seo_scheduler.py",
+    "tests/test_seo_site_association.py",
     "tests/test_seo_deploy_isolation.py",
     "tests/test_seo_serp.py",
     "scripts/verify_seo_release.py",
