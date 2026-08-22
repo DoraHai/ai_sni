@@ -25,7 +25,7 @@ class SearchTermReport(Base):
     与拓词候选（keyword_candidate）区分：候选只留"未添加"的拓词机会词；本表存**全量**搜索词
     （含已添加），用于搜索词报告页 + 关键词详情触发搜索词下钻 + 加否词/转拓词数据源。
     百度搜索词报告不给触发关键词 ID，只给触发词名称（trigger_keyword=wInfoNameStatus）+
-    计划/单元/匹配维度。每次同步按 (租户) 全量覆盖该窗口快照。
+    计划/单元/匹配维度。每次同步按 (租户 + 百度账户) 全量覆盖该窗口快照。
     """
 
     __tablename__ = "search_term_reports"
@@ -51,6 +51,8 @@ class SearchTermReport(Base):
     cost: Mapped[float | None] = mapped_column(Numeric(12, 2))
     ctr: Mapped[float | None] = mapped_column(Numeric(8, 4))
     cpc: Mapped[float | None] = mapped_column(Numeric(10, 2))
+    conversions: Mapped[int | None] = mapped_column(BigInteger)
+    cvr: Mapped[float | None] = mapped_column(Numeric(8, 4))
 
     window_start: Mapped[date | None] = mapped_column(Date)
     window_end: Mapped[date | None] = mapped_column(Date)

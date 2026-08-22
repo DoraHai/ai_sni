@@ -504,7 +504,8 @@ async def sync_adgroups_for_account(
     campaign_ids = (
         await session.scalars(
             select(Campaign.campaign_id).where(
-                Campaign.tenant_id == baidu_account.tenant_id
+                Campaign.tenant_id == baidu_account.tenant_id,
+                Campaign.baidu_account_id == baidu_account.id,
             )
         )
     ).all()
@@ -674,6 +675,7 @@ async def sync_keywords_for_account(
             )
             .where(
                 KwReportSnapshot.tenant_id == baidu_account.tenant_id,
+                KwReportSnapshot.baidu_account_id == baidu_account.id,
                 KwReportSnapshot.keyword_id.isnot(None),
             )
             .group_by(KwReportSnapshot.keyword_id)
@@ -685,7 +687,8 @@ async def sync_keywords_for_account(
     adgroup_ids = (
         await session.scalars(
             select(Adgroup.adgroup_id).where(
-                Adgroup.tenant_id == baidu_account.tenant_id
+                Adgroup.tenant_id == baidu_account.tenant_id,
+                Adgroup.baidu_account_id == baidu_account.id,
             )
         )
     ).all()
@@ -1121,7 +1124,7 @@ async def sync_search_terms_for_account(
     """搜索词报告全量落库（含已添加词），支持自动分段和空结果保护。
 
     与 sync_query_candidates（只留未添加词转拓词）不同，本表存全量，供搜索词报告页 +
-    关键词详情触发搜索词下钻 + 后续加否词/转拓词。每次成功同步覆盖该租户旧快照；
+    关键词详情触发搜索词下钻 + 后续加否词/转拓词。每次成功同步仅覆盖该账户旧快照；
     百度全部窗口均无数据时保留旧快照。返回写入条数。
     """
     fetched_rows: list[dict[str, Any]] = []
@@ -1142,10 +1145,6 @@ async def sync_search_terms_for_account(
         )
         return 0
 
-    # 仅在全部窗口拉取并合并后存在数据时，才替换全量快照。
-    await session.execute(
-        delete(SearchTermReport).where(SearchTermReport.tenant_id == baidu_account.tenant_id)
-    )
     now = datetime.utcnow()
     records = []
     for row in rows:
@@ -1178,6 +1177,32 @@ async def sync_search_terms_for_account(
                 synced_at=now,
             )
         )
+    if not records:
+        logger.warning("账户 %s 搜索词有效记录为 0，保留本地旧快照", baidu_account.baidu_username)
+        return 0
+
+    existing_count = int(
+        await session.scalar(
+            select(func.count()).select_from(SearchTermReport).where(
+                SearchTermReport.tenant_id == baidu_account.tenant_id,
+                SearchTermReport.baidu_account_id == baidu_account.id,
+            )
+        )
+        or 0
+    )
+    # 百度偶发返回不完整窗口。存量较大时若骤降超过 80%，拒绝覆盖并等待单维度重试。
+    if existing_count >= 20 and len(records) < existing_count * 0.2:
+        raise RuntimeError(
+            f"搜索词同步完整性校验失败：本次 {len(records)} 条，原有 {existing_count} 条"
+        )
+
+    # 仅在全部窗口拉取、合并且通过完整性校验后，替换当前账户快照。
+    await session.execute(
+        delete(SearchTermReport).where(
+            SearchTermReport.tenant_id == baidu_account.tenant_id,
+            SearchTermReport.baidu_account_id == baidu_account.id,
+        )
+    )
     session.add_all(records)
     await session.commit()
     logger.info(

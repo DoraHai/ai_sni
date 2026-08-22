@@ -8,8 +8,9 @@ export const setCustomerModule = (tenantId, moduleCode, body) => (
 )
 
 export const fetchSemAccounts = (tenantId) => client.get('/api/v1/sem/assets/accounts', { params: { tenant_id: tenantId } })
-export const repairSemAccountAssets = (tenantId, accountId) => client.post(
-  `/api/v1/sem/assets/accounts/${accountId}/repair-sync`, null, { params: { tenant_id: tenantId } },
+export const repairSemAccountAssets = (tenantId, accountId, dimension = null) => client.post(
+  `/api/v1/sem/assets/accounts/${accountId}/repair-sync`, null,
+  { params: { tenant_id: tenantId, dimension: dimension || undefined } },
 )
 
 export const fetchSeoSites = (tenantId) => client.get('/api/v1/seo/sites', { params: { tenant_id: tenantId } })

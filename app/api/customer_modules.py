@@ -217,6 +217,8 @@ async def list_sem_accounts(
             data_state = "inactive"
         elif row.sync_status == "failed":
             data_state = "failed"
+        elif row.sync_status == "partial":
+            data_state = "partial"
         elif row.sync_status in {"pending", "syncing"}:
             data_state = row.sync_status
         elif not row.last_synced_at:
@@ -240,6 +242,18 @@ async def list_sem_accounts(
             ),
             default=None,
         )
+        persisted_dimensions = (
+            (row.asset_sync_state or {}).get("dimensions", {})
+            if isinstance(row.asset_sync_state, dict)
+            else {}
+        )
+        dimensions = {}
+        for name in ("campaigns", "adgroups", "keywords", "search_terms"):
+            detail = dict(persisted_dimensions.get(name) or {})
+            detail["count"] = counts[name]
+            if not detail.get("status"):
+                detail["status"] = "success" if counts[name] else "not_synced"
+            dimensions[name] = detail
         return {
             "id": row.id,
             "platform": "baidu",
@@ -253,6 +267,7 @@ async def list_sem_accounts(
             "last_sync_error": row.last_sync_error,
             "data_state": data_state,
             "counts": counts,
+            "dimensions": dimensions,
         }
 
     accounts = [account_payload(row) for row in rows]
@@ -280,6 +295,7 @@ async def list_sem_accounts(
 async def repair_sem_account_assets(
     account_id: int,
     tenant_id: int = Query(...),
+    dimension: str | None = Query(None),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -299,9 +315,16 @@ async def repair_sem_account_assets(
     # 延迟导入避免 API 路由加载时与 scheduler 形成循环依赖。
     from app.scheduler import refresh_keyword_workbench_snapshot
 
-    result = await refresh_keyword_workbench_snapshot(
-        session, tenant, account, datetime.now().date()
-    )
+    try:
+        result = await refresh_keyword_workbench_snapshot(
+            session,
+            tenant,
+            account,
+            datetime.now().date(),
+            dimensions=[dimension] if dimension else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     if result.get("status") == "busy":
         raise HTTPException(409, "该客户正在同步，请稍后刷新状态")
     return {"status": "ok", "mode": "read_only_repair", "result": result}

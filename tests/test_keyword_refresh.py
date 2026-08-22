@@ -140,9 +140,9 @@ class KeywordRefreshTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, {"status": "busy", "tenant_id": 7})
         report_sync.assert_not_awaited()
 
-    async def test_refresh_records_failed_sync_status(self):
+    async def test_refresh_isolates_failed_dimension_and_continues(self):
         tenant = SimpleNamespace(id=7)
-        account = SimpleNamespace(id=12, tenant_id=7)
+        account = SimpleNamespace(id=12, tenant_id=7, asset_sync_state=None)
         session = SimpleNamespace(
             commit=AsyncMock(),
             rollback=AsyncMock(),
@@ -155,14 +155,25 @@ class KeywordRefreshTests(unittest.IsolatedAsyncioTestCase):
                 "app.scheduler.sync_keyword_report_for_account",
                 new=AsyncMock(side_effect=RuntimeError("region batch failed")),
             ),
+            patch(
+                "app.scheduler.sync_campaigns_for_account",
+                new=AsyncMock(return_value=12),
+            ) as campaign_sync,
         ):
-            with self.assertRaisesRegex(RuntimeError, "region batch failed"):
-                await refresh_keyword_workbench_snapshot(
-                    session, tenant, account, date(2026, 7, 31)
-                )
+            result = await refresh_keyword_workbench_snapshot(
+                session,
+                tenant,
+                account,
+                date(2026, 7, 31),
+                dimensions=["reports", "campaigns"],
+            )
 
-        self.assertEqual(account.sync_status, "failed")
-        self.assertEqual(account.last_sync_error, "region batch failed")
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(account.sync_status, "partial")
+        self.assertIn("region batch failed", account.last_sync_error)
+        self.assertEqual(account.asset_sync_state["dimensions"]["reports"]["status"], "failed")
+        self.assertEqual(account.asset_sync_state["dimensions"]["campaigns"]["status"], "success")
+        campaign_sync.assert_awaited_once()
         session.rollback.assert_awaited_once()
     def test_manual_refresh_requires_keyword_edit_permission(self):
         self.assertEqual(
