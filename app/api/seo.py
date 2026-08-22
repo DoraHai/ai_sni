@@ -127,6 +127,65 @@ async def _keyword(
     return row
 
 
+async def _keyword_for_update(
+    session: AsyncSession, keyword_id: int, tenant_id: int
+) -> SeoKeywordAsset:
+    row = await session.scalar(
+        select(SeoKeywordAsset)
+        .where(
+            SeoKeywordAsset.id == keyword_id,
+            SeoKeywordAsset.tenant_id == tenant_id,
+        )
+        .with_for_update()
+    )
+    if not row:
+        raise HTTPException(404, "SEO 关键词不存在")
+    return row
+
+
+async def _keyword_site_move_blockers(
+    session: AsyncSession, keyword_id: int
+) -> dict[str, int]:
+    """Return SEO-owned references that make an implicit site move unsafe."""
+    checks = (
+        (
+            "rank_snapshots",
+            select(func.count())
+            .select_from(SeoRankSnapshot)
+            .where(SeoRankSnapshot.keyword_id == keyword_id),
+        ),
+        (
+            "serp_results",
+            select(func.count())
+            .select_from(SeoSerpResult)
+            .where(SeoSerpResult.keyword_id == keyword_id),
+        ),
+        (
+            "site_pages",
+            select(func.count())
+            .select_from(SeoSitePage)
+            .where(SeoSitePage.target_keyword_id == keyword_id),
+        ),
+        (
+            "content_assets",
+            select(func.count())
+            .select_from(SeoContentAsset)
+            .where(
+                or_(
+                    SeoContentAsset.keyword_id == keyword_id,
+                    SeoContentAsset.keyword_ids.contains([keyword_id]),
+                )
+            ),
+        ),
+    )
+    blockers: dict[str, int] = {}
+    for name, statement in checks:
+        count = int(await session.scalar(statement) or 0)
+        if count:
+            blockers[name] = count
+    return blockers
+
+
 async def _site_page(
     session: AsyncSession, page_id: int, tenant_id: int
 ) -> SeoSitePage:
@@ -214,7 +273,7 @@ def _page_payload(row: SeoSitePage) -> dict[str, Any]:
 
 class KeywordCreate(BaseModel):
     tenant_id: int
-    site_id: int | None = None
+    site_id: int
     keyword: str = Field(min_length=1, max_length=200)
     cluster: str | None = Field(None, max_length=120)
     intent: str | None = Field(None, max_length=24)
@@ -227,6 +286,7 @@ class KeywordCreate(BaseModel):
 
 
 class KeywordUpdate(BaseModel):
+    site_id: int | None = None
     cluster: str | None = Field(None, max_length=120)
     intent: str | None = Field(None, max_length=24)
     monthly_volume: int | None = Field(None, ge=0)
@@ -239,7 +299,7 @@ class KeywordUpdate(BaseModel):
 
 class KeywordImport(BaseModel):
     tenant_id: int
-    site_id: int | None = None
+    site_id: int
     items: list[KeywordCreate] = Field(min_length=1, max_length=500)
 
 
@@ -688,9 +748,10 @@ async def import_seo_keywords(
     ctx.ensure_tenant(req.tenant_id)
     await _tenant(session, req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
-    existing_conditions = [SeoKeywordAsset.tenant_id == req.tenant_id]
-    if req.site_id is not None:
-        existing_conditions.append(SeoKeywordAsset.site_id == req.site_id)
+    existing_conditions = [
+        SeoKeywordAsset.tenant_id == req.tenant_id,
+        SeoKeywordAsset.site_id == req.site_id,
+    ]
     existing = set(
         await session.scalars(
             select(SeoKeywordAsset.keyword).where(*existing_conditions)
@@ -702,6 +763,8 @@ async def import_seo_keywords(
         word = item.keyword.strip()
         if item.tenant_id != req.tenant_id:
             raise HTTPException(400, "导入项 tenant_id 必须一致")
+        if item.site_id != req.site_id:
+            raise HTTPException(400, "导入项 site_id 必须与目标 SEO 网站一致")
         if word in existing:
             skipped.append(word)
             continue
@@ -775,12 +838,32 @@ async def update_seo_keyword(
     req: KeywordUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    row = await _keyword(session, keyword_id, tenant_id)
-    for key, value in req.model_dump(exclude_unset=True).items():
+    row = await _keyword_for_update(session, keyword_id, tenant_id)
+    changes = req.model_dump(exclude_unset=True)
+    if "site_id" in changes:
+        target_site_id = changes["site_id"]
+        if target_site_id is None:
+            raise HTTPException(400, "SEO 关键词必须关联网站")
+        await _seo_site(session, tenant_id, target_site_id)
+        if row.site_id != target_site_id:
+            blockers = await _keyword_site_move_blockers(session, keyword_id)
+            if blockers:
+                summary = "、".join(
+                    f"{name}={count}" for name, count in blockers.items()
+                )
+                raise HTTPException(
+                    409,
+                    f"关键词已有站点关联数据，不能直接迁移网站（{summary}）",
+                )
+    for key, value in changes.items():
         if isinstance(value, str):
             value = value.strip() or None
         setattr(row, key, value)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(409, "目标网站已存在相同关键词") from exc
     await session.refresh(row)
     return _keyword_payload(row)
 
