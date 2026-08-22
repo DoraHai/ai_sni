@@ -1,8 +1,16 @@
 """Add internal ownership workflow to SEM suggestions.
 
 Revision ID: 0074_suggestion_workflow
-Revises: 0073_geo_schema_repair
+Revises: 0074_merge_geo_seo_heads
 Create Date: 2026-08-22
+
+Rebased 2026-08-22: originally chained to 0073_geo_schema_repair, but the
+production database had already moved to 0074_merge_geo_seo_heads (which
+itself merges 0073_geo_schema_repair with 0073_seo_distribution_variants)
+via a separate, independently deployed SEO/GEO release before this
+migration was applied anywhere. Re-pointing down_revision here avoids a
+second, redundant merge migration since 0074_merge_geo_seo_heads already
+is a strict superset ancestor. No DDL in this file changed.
 """
 
 from typing import Sequence, Union
@@ -12,7 +20,7 @@ from alembic import op
 
 
 revision: str = "0074_suggestion_workflow"
-down_revision: Union[str, None] = "0073_geo_schema_repair"
+down_revision: Union[str, None] = "0074_merge_geo_seo_heads"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
