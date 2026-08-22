@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { fetchBaiduOAuthStatus, startBaiduOAuth } from '../../api/baiduOAuth'
 import { fetchTenants } from '../../api/auth'
+import { fetchSemAccounts } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 
 const route = useRoute()
@@ -15,6 +16,7 @@ const loading = ref(false)
 const authorizing = ref(false)
 const loadError = ref('')
 let pollTimer = null
+let loadGeneration = 0
 
 const tenantName = computed(
   () => session.tenants.find((tenant) => tenant.id === session.tenantId)?.name || '当前客户',
@@ -59,6 +61,11 @@ function statusLabel(status) {
 }
 
 function syncStatusLabel(item) {
+  const dataStateLabels = {
+    ready: '资产已同步', partial: '资产同步不完整', empty: '已同步但暂无资产',
+    not_synced: '尚未同步资产', failed: '同步失败', syncing: '正在同步', pending: '等待首次同步',
+  }
+  if (item.data_state && dataStateLabels[item.data_state]) return dataStateLabels[item.data_state]
   return {
     pending: '等待首次同步',
     syncing: '正在同步',
@@ -77,18 +84,35 @@ function scheduleStatusPoll() {
 
 async function loadStatus() {
   if (!session.tenantId) return
+  const generation = ++loadGeneration
+  const tenantId = session.tenantId
   loading.value = true
   loadError.value = ''
   try {
-    const result = await fetchBaiduOAuthStatus(session.tenantId)
-    accounts.value = result.accounts || []
+    const [result, assets] = await Promise.all([
+      fetchBaiduOAuthStatus(tenantId),
+      fetchSemAccounts(tenantId),
+    ])
+    if (generation !== loadGeneration || tenantId !== session.tenantId) return
+    const assetsById = new Map((assets.accounts || []).map((item) => [item.id, item]))
+    accounts.value = (result.accounts || []).map((item) => ({
+      ...item,
+      ...(assetsById.get(item.id) || {}),
+      username: item.username,
+      ucid: item.ucid,
+      authorization_name: item.authorization_name,
+      authorization_type: item.authorization_type,
+      account_role: item.account_role,
+    }))
     configured.value = !!result.configured
     callbackUrl.value = result.callback_url || ''
   } catch (error) {
-    loadError.value = error.message
+    if (generation === loadGeneration) loadError.value = '账户与同步状态加载失败，请稍后重试'
   } finally {
-    loading.value = false
-    scheduleStatusPoll()
+    if (generation === loadGeneration) {
+      loading.value = false
+      scheduleStatusPoll()
+    }
   }
 }
 
@@ -281,6 +305,9 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
                 <span>{{ accountRoleLabel(item) }}</span>
               </div>
               <div class="account-meta">UCID {{ item.ucid }} · 授权主体 {{ item.authorization_name || '—' }}</div>
+              <div v-if="item.counts" class="account-assets">
+                计划 {{ item.counts.campaigns }} · 单元 {{ item.counts.adgroups }} · 关键词 {{ item.counts.keywords }} · 搜索词 {{ item.counts.search_terms }}
+              </div>
             </div>
             <div class="account-sync">
               <small>{{ syncStatusLabel(item) }}</small>
@@ -725,6 +752,7 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.account-assets { margin-top: 4px; color: #65758b; font-size: 10px; }
 
 .account-sync small,
 .account-sync b {

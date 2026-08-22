@@ -25,7 +25,7 @@ const MEM_TYPE_LABEL = { goal: '目标', constraint: '约束', preference: '偏�
 const EXAMPLES = [
   '我想新建一套百度搜索推广计划',
   '这个月哪些词在烧钱但没带来线索？',
-  '苏尔寿本周表现怎么样，帮我总结一下',
+  '当前客户本周表现怎么样，帮我总结一下',
   '线索成本现在多少？哪个计划最划算？',
   '有没有该砍的词或该加的否词？',
 ]
@@ -60,6 +60,7 @@ const drafting = ref(false)
 const memories = ref([])
 const scrollEl = ref(null)
 const retainDays = ref(90)
+let contextVersion = 0
 
 const started = computed(() => messages.value.length > 0)
 const canUseBuilder = computed(() => session.canView('onboarding') || (import.meta.env.DEV && !!import.meta.env.VITE_API_KEY))
@@ -126,7 +127,7 @@ async function generateAssistantDraft(msg) {
     builder.status = 'ready'
   } catch (e) {
     builder.status = 'error'
-    builder.error = e.response?.data?.detail || e.message || '草案生成失败'
+    builder.error = '草案暂时无法生成，请稍后重试'
   } finally {
     drafting.value = false
     await scrollBottom()
@@ -161,14 +162,21 @@ function prepareBuilderHandoff(msg, event) {
 }
 
 async function loadMemories() {
+  const version = contextVersion
+  const tenantId = TENANT_ID.value
   try {
-    memories.value = (await fetchMemories({ tenantId: TENANT_ID.value })).memories || []
+    const result = await fetchMemories({ tenantId })
+    if (version !== contextVersion || tenantId !== TENANT_ID.value) return
+    memories.value = result.memories || []
   } catch { /* 忽略 */ }
 }
 
 async function loadHistory() {
+  const version = contextVersion
+  const tenantId = TENANT_ID.value
   try {
-    const res = await fetchHistory({ tenantId: TENANT_ID.value })
+    const res = await fetchHistory({ tenantId })
+    if (version !== contextVersion || tenantId !== TENANT_ID.value) return
     retainDays.value = res.retain_days || 90
     messages.value = (res.messages || []).map((m) => ({
       role: m.role, content: m.content, suggestions: [], pendingMemories: [],
@@ -203,7 +211,13 @@ async function send(text) {
     await scrollBottom()
     if (assistantMessage.builder?.ready) await generateAssistantDraft(assistantMessage)
   } catch (e) {
-    messages.value.push({ role: 'assistant', content: '出错了：' + (e.response?.data?.detail || e.message), suggestions: [], pendingMemories: [] })
+    const traceId = e.response?.headers?.['x-request-id'] || e.requestId || ''
+    const suffix = traceId ? `（问题编号：${traceId}）` : ''
+    messages.value.push({
+      role: 'assistant',
+      content: `AI 分析暂时不可用，当前客户的看板和历史数据仍可正常查看。请稍后重试${suffix}。`,
+      suggestions: [], pendingMemories: [],
+    })
   } finally {
     sending.value = false
     await scrollBottom()
@@ -287,7 +301,7 @@ async function adopt(action, msg) {
       })
       await scrollBottom()
     } catch (e) {
-      ElMessage.error(e.response?.data?.detail || e.message)
+      ElMessage.error('操作暂时无法记入待回写队列，请稍后重试')
     }
     return
   }
@@ -318,7 +332,7 @@ async function adopt(action, msg) {
     })
     await scrollBottom()
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || e.message)
+    ElMessage.error('记忆暂时无法保存，请稍后重试')
   }
 }
 
@@ -330,7 +344,7 @@ async function confirmMemory(msg, mem, idx) {
     ElMessage.success('已记住')
     loadMemories()
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || e.message)
+    ElMessage.error('记忆暂时无法删除，请稍后重试')
   }
 }
 function dismissMemory(msg, idx) {
@@ -342,12 +356,18 @@ async function removeMemory(m) {
     await deleteMemory({ tenantId: TENANT_ID.value, id: m.id })
     memories.value = memories.value.filter((x) => x.id !== m.id)
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || e.message)
+    ElMessage.error('记忆暂时无法更新，请稍后重试')
   }
 }
 
 // 切换客户：清空当前显示并重载该客户的历史与记忆
-watch(TENANT_ID, () => { messages.value = []; loadMemories(); loadHistory() })
+watch(TENANT_ID, () => {
+  contextVersion += 1
+  messages.value = []
+  memories.value = []
+  loadMemories()
+  loadHistory()
+})
 
 onMounted(() => { loadMemories(); loadHistory() })
 </script>

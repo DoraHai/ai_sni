@@ -225,6 +225,7 @@ async def analysis_report(
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
+    ctx.ensure_tenant(tenant_id)
     report = await get_analysis_report(
         session, tenant, start_date, end_date, force=force
     )
@@ -248,6 +249,7 @@ async def export_analysis_report(
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
+    ctx.ensure_tenant(tenant_id)
     report = await get_analysis_report(
         session, tenant, start_date, end_date, force=False
     )
@@ -299,6 +301,7 @@ async def monthly_report(
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
+    ctx.ensure_tenant(tenant_id)
     report = await get_monthly_report(session, tenant, year, month, force=force)
     return _report_view(report, version, ctx)
 
@@ -317,6 +320,7 @@ async def export_monthly_report(
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
+    ctx.ensure_tenant(tenant_id)
     report = await get_monthly_report(session, tenant, year, month, force=False)
     rows = _rows_from_report(_report_view(report, version, ctx))
 

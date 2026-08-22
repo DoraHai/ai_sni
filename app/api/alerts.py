@@ -4,16 +4,18 @@
 规则引擎产出见 app/rules/，本模块只做查询 + 状态流转 + 手动触发。
 """
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, time, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
 from app.models import Alert, Tenant
 from app.rules import run_rules_for_tenant
-from app.security.auth import require_scoped_auth
+from app.security.auth import AuthContext, require_scoped_auth
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,12 @@ router = APIRouter(
 )
 
 PRIORITY_ORDER = ["P0", "P1", "P2", "P3", "P4", "P5"]
+_SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+
+
+class BatchResolveRequest(BaseModel):
+    tenant_id: int = Field(..., gt=0)
+    alert_ids: list[int] = Field(..., min_length=1, max_length=500)
 
 
 def _alert_to_dict(a: Alert) -> dict:
@@ -53,7 +61,10 @@ async def list_alerts(
         "open", description="open / resolved / merged，传 all 看全部"
     ),
     priority: str | None = Query(None, description="P0~P5，不传看全部"),
+    campaign_id: int | None = Query(None, description="按所属计划筛选"),
+    alert_type: str | None = Query(None, description="按告警类型筛选"),
     limit: int = Query(100, le=500),
+    ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """告警列表 + 按优先级计数。默认只看未处理。
@@ -61,11 +72,16 @@ async def list_alerts(
     同一规则同一关键词多天触发时只有最新一条是 open（旧的被引擎归并为 merged），
     open 告警附带 streak（近期累计触发天数 + 首次日期）。
     """
+    ctx.ensure_tenant(tenant_id)
     cond = [Alert.tenant_id == tenant_id]
     if status and status != "all":
         cond.append(Alert.status == status)
     if priority:
         cond.append(Alert.priority == priority)
+    if campaign_id is not None:
+        cond.append(Alert.campaign_id == campaign_id)
+    if alert_type:
+        cond.append(Alert.title == alert_type)
 
     rows = (
         await session.scalars(
@@ -110,6 +126,27 @@ async def list_alerts(
     counts = {p: 0 for p in PRIORITY_ORDER}
     counts.update({p: int(n) for p, n in count_rows})
 
+    today_start_local = datetime.combine(
+        datetime.now(_SHANGHAI_TZ).date(), time.min, _SHANGHAI_TZ
+    )
+    today_start_utc = today_start_local.astimezone(timezone.utc).replace(tzinfo=None)
+    today_new = int(
+        await session.scalar(
+            select(func.count()).select_from(Alert).where(
+                Alert.tenant_id == tenant_id,
+                Alert.detected_at >= today_start_utc,
+            )
+        )
+        or 0
+    )
+    grouping_rows = (
+        await session.execute(
+            select(Alert.campaign_id, Alert.campaign_name, Alert.title, func.count())
+            .where(Alert.tenant_id == tenant_id, Alert.status == "open")
+            .group_by(Alert.campaign_id, Alert.campaign_name, Alert.title)
+        )
+    ).all()
+
     alerts = []
     for a in rows:
         item = _alert_to_dict(a)
@@ -120,6 +157,21 @@ async def list_alerts(
     return {
         "open_counts": counts,
         "total_open": sum(counts.values()),
+        "today_new": today_new,
+        "group_options": {
+            "campaigns": sorted(
+                [
+                    {"id": campaign_id, "name": campaign_name or str(campaign_id)}
+                    for campaign_id, campaign_name in {
+                        (cid, name)
+                        for cid, name, _title, _count in grouping_rows
+                        if cid is not None
+                    }
+                ],
+                key=lambda item: item["name"],
+            ),
+            "types": sorted({title for _cid, _name, title, _count in grouping_rows}),
+        },
         "alerts": alerts,
     }
 
@@ -127,11 +179,16 @@ async def list_alerts(
 @router.patch("/{alert_id}/resolve")
 async def resolve_alert(
     alert_id: int,
+    tenant_id: int = Query(..., gt=0),
+    ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """标记告警为已处理。"""
+    ctx.ensure_tenant(tenant_id)
+    if not ctx.can_edit("monitor.alerts"):
+        raise HTTPException(403, "当前角色只有查看权限，不能处理告警")
     alert = await session.get(Alert, alert_id)
-    if alert is None:
+    if alert is None or alert.tenant_id != tenant_id:
         raise HTTPException(404, "告警不存在，可能已被删除")
     if alert.status != "resolved":
         alert.status = "resolved"
@@ -140,13 +197,43 @@ async def resolve_alert(
     return {"status": "ok", "alert": _alert_to_dict(alert)}
 
 
+@router.post("/batch-resolve")
+async def batch_resolve_alerts(
+    req: BatchResolveRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """批量标记同一客户的未处理告警，跨客户或不存在的 ID 不处理。"""
+    ctx.ensure_tenant(req.tenant_id)
+    if not ctx.can_edit("monitor.alerts"):
+        raise HTTPException(403, "当前角色只有查看权限，不能批量处理告警")
+    rows = (
+        await session.scalars(
+            select(Alert).where(
+                Alert.tenant_id == req.tenant_id,
+                Alert.id.in_(set(req.alert_ids)),
+                Alert.status == "open",
+            )
+        )
+    ).all()
+    now = datetime.utcnow()
+    for alert in rows:
+        alert.status = "resolved"
+        alert.resolved_at = now
+    if rows:
+        await session.commit()
+    return {"status": "ok", "resolved_count": len(rows)}
+
+
 @router.post("/run")
 async def run_rules(
     tenant_id: int = Query(..., description="本地租户 ID"),
     target_date: date = Query(..., description="目标日期 YYYY-MM-DD"),
+    ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """手动触发规则引擎（正常情况由每日定时任务自动跑）。"""
+    ctx.ensure_tenant(tenant_id)
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
