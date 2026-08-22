@@ -14,7 +14,17 @@ def test_seo_service_mounts_only_seo_routes() -> None:
     assert "app.include_router(seo_router)" in source
     assert "app.main" not in source
     assert "geo_router" not in source
-    assert "start_scheduler" not in source
+    assert "from app.scheduler" not in source
+    assert "start_seo_scheduler" in source
+    assert "shutdown_seo_scheduler" in source
+
+
+def test_seo_scheduler_registers_only_rank_collection() -> None:
+    source = _read("app/seo_scheduler.py")
+    assert 'id="collect_daily_seo_rankings"' in source
+    assert "fetch_today_keyword_report" not in source
+    assert "fetch_yesterday_keyword_report" not in source
+    assert "purge_old_assistant_messages" not in source
 
 
 def test_seo_service_has_dedicated_runtime_and_routes() -> None:
