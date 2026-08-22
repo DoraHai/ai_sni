@@ -26,10 +26,12 @@ from app.models import (
     KwReportSnapshot,
     MonthlyReport,
     OperationRecord,
+    OPT_CONTENT_LABELS,
     Suggestion,
     SearchTermReport,
     SUGGESTION_TYPE_LABELS,
     Tenant,
+    User,
     WritebackAction,
 )
 
@@ -304,7 +306,7 @@ async def gather_report_data(
                 OperationRecord.tenant_id == tenant.id,
                 OperationRecord.opt_time >= start_dt,
                 OperationRecord.opt_time < end_exclusive,
-            )
+            ).order_by(OperationRecord.opt_time.desc(), OperationRecord.id.desc())
         )
     ).all()
     op_by_level: dict[str, int] = {}
@@ -330,6 +332,40 @@ async def gather_report_data(
         "ai_suggestions_adopted": int(adopted or 0),
     }
 
+    # 客户交付只认百度侧操作记录为完成证据；建议采纳和待回写都不进入这里。
+    from app.ai.adjustment_verify import build_one as build_adjustment_effect
+
+    completed_actions = []
+    ready_effects = 0
+    observing_effects = 0
+    for operation in op_rows[:10]:
+        effect = None
+        if operation.opt_level == 5 and operation.opt_content == "bidPriceWord":
+            verified = await build_adjustment_effect(session, tenant, operation.dedup_key)
+            effect = verified.get("effect") if verified else None
+            if effect and effect.get("sample", {}).get("state") == "ready":
+                ready_effects += 1
+            else:
+                observing_effects += 1
+        completed_actions.append({
+            "id": operation.id,
+            "time": operation.opt_time.isoformat(),
+            "level": {5: "关键词", 1: "单元", 2: "计划"}.get(operation.opt_level, "其他"),
+            "action": OPT_CONTENT_LABELS.get(operation.opt_content, operation.opt_content or "账户操作"),
+            "object": operation.opt_obj or "—",
+            "old_value": operation.old_value,
+            "new_value": operation.new_value,
+            "evidence": "百度操作记录",
+            "effect": effect,
+        })
+    client_delivery = {
+        "completed_count": len(op_rows),
+        "shown_count": len(completed_actions),
+        "ready_effects": ready_effects,
+        "observing_effects": observing_effects,
+        "completed_actions": completed_actions,
+    }
+
     # ===== 当前执行焦点：把报告从“复盘”连接到今天要处理的工作 =====
     pending_suggestions = await session.scalar(
         select(func.count()).select_from(Suggestion).where(
@@ -346,6 +382,15 @@ async def gather_report_data(
         key=lambda row: (_suggestion_business_score(row), row.report_date, row.id),
         reverse=True,
     )[:REPORT_SUGGESTION_LIMIT]
+    report_assignee_ids = {row.assignee_id for row in priority_suggestions if row.assignee_id}
+    report_assignee_names = {}
+    if report_assignee_ids:
+        report_users = (await session.scalars(
+            select(User).where(User.id.in_(report_assignee_ids))
+        )).all()
+        report_assignee_names = {
+            user.id: user.display_name or user.username for user in report_users
+        }
     pending_bid_writebacks = await session.scalar(
         select(func.count()).select_from(BidWriteback).where(
             BidWriteback.tenant_id == tenant.id, BidWriteback.status == "dry_run"
@@ -404,6 +449,14 @@ async def gather_report_data(
                 "reason": row.reason,
                 "impact": _suggestion_impact(row),
                 "score": round(_suggestion_business_score(row), 2),
+                "assignee_id": row.assignee_id,
+                "assignee_name": report_assignee_names.get(row.assignee_id) if row.assignee_id else None,
+                "handling_status": (
+                    "completed" if row.status == "adopted"
+                    else "rejected" if row.status == "ignored"
+                    else row.handling_status or "todo"
+                ),
+                "due_at": row.due_at.isoformat() if row.due_at else None,
                 "report_date": row.report_date.isoformat(),
                 "path": (
                     f"/monitor/keywords/{row.keyword_id}?from=report&suggestion_id={row.id}"
@@ -432,6 +485,7 @@ async def gather_report_data(
         "device_split": device_split,
         "alerts_review": alerts_review,
         "operations": operations,
+        "client_delivery": client_delivery,
         "operational_focus": operational_focus,
         # 依赖未接入数据源的模块，前端占位（保持原型 11 模块的完整框架）
         "pending_modules": {

@@ -87,6 +87,8 @@ function withCn(text) {
 
 const comment = (key) => withCn(narrative.value?.module_comments?.[key] || '')
 const aiEnabled = computed(() => report.value?.ai_enabled === true)
+const WORK_STATUS_LABELS = { todo: '待处理', in_progress: '处理中', waiting_writeback: '待回写', completed: '已完成', rejected: '已驳回' }
+const fmtDeadline = (value) => value ? value.slice(0, 16).replace('T', ' ') : '未设置截止时间'
 
 // 内部版才显示的模块（异常处置回顾 / 竞品占位）
 const showInternal = computed(() => version.value === 'internal')
@@ -102,6 +104,7 @@ async function load(force = false) {
       startDate: dateRange.value[0],
       endDate: dateRange.value[1],
       force,
+      version: version.value,
     })
     if (force) ElMessage.success('AI 报告已重新生成')
   } catch (e) {
@@ -113,6 +116,7 @@ async function load(force = false) {
 }
 
 watch(dateRange, () => load())
+watch(version, () => load())
 
 function printReport() {
   window.print()
@@ -144,6 +148,7 @@ async function exportReport(format) {
       startDate: dateRange.value[0],
       endDate: dateRange.value[1],
       format,
+      version: version.value,
     }), {
       headers: session.token
         ? { Authorization: `Bearer ${session.token}` }
@@ -181,8 +186,8 @@ const toc = computed(() => {
   ]
   if (showInternal.value) items.push({ key: 'alerts', label: '异常处置回顾' })
   if (showInternal.value) items.push({ key: 'today_focus', label: '今日执行焦点' })
-  items.push({ key: 'operations', label: '优化操作 & 后续计划' })
-  items.push({ key: 'pending', label: '待接入模块' })
+  items.push({ key: 'operations', label: showInternal.value ? '优化操作 & 后续计划' : '已完成优化与效果' })
+  if (showInternal.value) items.push({ key: 'pending', label: '待接入模块' })
   return items
 })
 
@@ -375,6 +380,7 @@ function scrollTo(key) {
             <button v-for="item in data.operational_focus.priority_suggestions" :key="item.id" class="focus-item" @click="openWorkItem(item.path)">
               <b>{{ item.priority }} · {{ item.type }} · {{ item.keyword || '账户建议' }}</b>
               <strong>{{ item.impact }}</strong><span>{{ item.reason }}</span><em>{{ item.report_date }} · 查看并处理 →</em>
+              <small>负责人：{{ item.assignee_name || '未分配' }} · {{ WORK_STATUS_LABELS[item.handling_status] || item.handling_status }} · {{ fmtDeadline(item.due_at) }}</small>
             </button>
           </div>
           <button v-if="data.operational_focus.pending_suggestions > data.operational_focus.priority_suggestions.length" class="view-all-work work-link" @click="openWorkItem(data.operational_focus.suggestions_path)">查看全部 {{ data.operational_focus.pending_suggestions }} 条待审建议 →</button>
@@ -382,24 +388,44 @@ function scrollTo(key) {
 
         <!-- 模块 6 优化操作 & 后续计划 -->
         <section id="mod-operations" class="mod">
-          <h3>优化操作 & 后续计划</h3>
-          <div class="num-cards">
+          <h3>{{ showInternal ? '优化操作 & 后续计划' : '已完成优化与效果' }}</h3>
+          <div v-if="showInternal" class="num-cards">
             <div class="num-card"><div class="nc-num">{{ data.operations.total }}</div><div class="nc-label">区间操作</div></div>
             <div class="num-card warn"><div class="nc-num">{{ data.operations.over_limit }}</div><div class="nc-label">超 20% 上限</div></div>
             <div class="num-card"><div class="nc-num">{{ data.operations.ai_suggestions_adopted }}</div><div class="nc-label">AI 建议采纳</div></div>
           </div>
-          <div v-if="Object.keys(data.operations.by_level).length" class="op-levels">
+          <div v-else class="num-cards">
+            <div class="num-card success"><div class="nc-num">{{ data.client_delivery.completed_count }}</div><div class="nc-label">已确认完成</div></div>
+            <div class="num-card success"><div class="nc-num">{{ data.client_delivery.ready_effects }}</div><div class="nc-label">效果可展示</div></div>
+            <div class="num-card"><div class="nc-num">{{ data.client_delivery.observing_effects }}</div><div class="nc-label">效果观察中</div></div>
+          </div>
+          <div v-if="showInternal && Object.keys(data.operations.by_level).length" class="op-levels">
             <span v-for="(n, lvl) in data.operations.by_level" :key="lvl" class="op-chip">{{ lvl }} {{ n }}</span>
           </div>
-          <p v-if="comment('operations')" class="mod-comment">{{ comment('operations') }}</p>
-          <div v-if="narrative?.next_period_plan?.length" class="plan">
+          <p v-if="showInternal && comment('operations')" class="mod-comment">{{ comment('operations') }}</p>
+          <div v-if="!showInternal" class="client-actions">
+            <article v-for="action in data.client_delivery.completed_actions" :key="action.id" class="client-action">
+              <div class="client-action-head"><b>{{ action.action }} · {{ action.object }}</b><time>{{ action.time.slice(0, 16).replace('T', ' ') }}</time></div>
+              <div class="client-action-evidence">{{ action.evidence }}<template v-if="action.old_value != null || action.new_value != null"> · {{ action.old_value || '—' }} → {{ action.new_value || '—' }}</template></div>
+              <div v-if="action.effect?.sample?.state === 'ready'" class="effect-result">
+                <span>日均消费 {{ fmtMoney(action.effect.before?.cost_per_day) }} → {{ fmtMoney(action.effect.after?.cost_per_day) }}</span>
+                <span>日均点击 {{ action.effect.before?.click_per_day ?? '—' }} → {{ action.effect.after?.click_per_day ?? '—' }}</span>
+                <span>点击率 {{ fmtPct(action.effect.before?.ctr) }} → {{ fmtPct(action.effect.after?.ctr) }}</span>
+                <span>平均排名 {{ action.effect.before?.avg_rank ?? '—' }} → {{ action.effect.after?.avg_rank ?? '—' }}</span>
+              </div>
+              <div v-else-if="action.effect" class="effect-observing">效果观察中：{{ action.effect.sample?.message }}</div>
+              <div v-else class="effect-confirmed">动作已由百度操作记录确认。</div>
+            </article>
+            <el-empty v-if="!data.client_delivery.completed_actions.length" description="本区间暂无可确认的已完成优化动作" />
+          </div>
+          <div v-if="showInternal && narrative?.next_period_plan?.length" class="plan">
             <div class="plan-title">后续优化计划</div>
             <ol><li v-for="(p, i) in narrative.next_period_plan" :key="i">{{ withCn(p) }}</li></ol>
           </div>
         </section>
 
         <!-- 待接入模块占位 -->
-        <section id="mod-pending" class="mod">
+        <section v-if="showInternal" id="mod-pending" class="mod">
           <h3>待接入模块</h3>
           <div class="pending-grid">
             <div class="pending-card">转化报告（TOP 转化词 / CPL）<span>待 M2 爱番番线索</span></div>
@@ -441,8 +467,17 @@ function scrollTo(key) {
 .focus-item b { color: var(--sem-text); font-size: 12px; }
 .focus-item strong { grid-column: 1; color: #b15f00; font-size: 11px; }
 .focus-item span { grid-column: 1; color: var(--sem-text-sub); font-size: 11px; }
-.focus-item em { grid-column: 2; grid-row: 1 / span 3; align-self: center; color: var(--sem-primary); font-size: 10px; font-style: normal; }
+.focus-item small { grid-column: 1; color: #667085; font-size: 10px; }
+.focus-item em { grid-column: 2; grid-row: 1 / span 4; align-self: center; color: var(--sem-primary); font-size: 10px; font-style: normal; }
 .view-all-work { margin-top: 10px; border: 0; background: transparent; color: var(--sem-primary); font-size: 12px; }
+.client-actions { display: grid; gap: 9px; margin-top: 12px; }
+.client-action { padding: 11px 12px; border: 1px solid var(--sem-border); border-radius: 7px; background: #fff; }
+.client-action-head { display: flex; justify-content: space-between; gap: 12px; color: var(--sem-text); font-size: 12px; }
+.client-action-head time { color: var(--sem-text-sub); font-size: 10px; white-space: nowrap; }
+.client-action-evidence { margin-top: 4px; color: #287a55; font-size: 10px; }
+.effect-result { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 12px; margin-top: 8px; padding: 8px; border-radius: 5px; background: #f0f8f4; color: #315f4b; font-size: 10px; }
+.effect-observing { margin-top: 8px; padding: 7px 8px; border-radius: 5px; background: #fff8e6; color: #8a5a00; font-size: 10px; }
+.effect-confirmed { margin-top: 8px; color: var(--sem-text-sub); font-size: 10px; }
 .quick-range-buttons button:hover { border-color: var(--sem-primary); color: var(--sem-primary); }
 .quick-range-buttons button.active { border-color: var(--sem-primary); background: var(--sem-primary); color: #fff; }
 

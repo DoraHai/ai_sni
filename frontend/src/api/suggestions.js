@@ -13,3 +13,11 @@ export function updateSuggestionStatus(id, status) {
     params: { status },
   })
 }
+
+export function fetchSuggestionAssignees(tenantId) {
+  return client.get('/api/v1/suggestions/assignees', { params: { tenant_id: tenantId } })
+}
+
+export function updateSuggestionWorkflow(id, payload) {
+  return client.patch(`/api/v1/suggestions/${id}/workflow`, payload)
+}

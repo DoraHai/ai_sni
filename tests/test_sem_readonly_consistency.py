@@ -123,3 +123,41 @@ def test_report_connects_review_to_today_work():
     assert "route.query.has_suggestion === 'true'" in _read("frontend/src/views/optimize/KeywordWorkbenchView.vue")
     assert "focused-account-row" in _read("frontend/src/views/manage/SemAccountsView.vue")
     assert "route.query.mode === 'queue'" in _read("frontend/src/views/verify/PendingAdjustmentsView.vue")
+
+
+def test_suggestion_internal_workflow_has_owner_status_and_deadline():
+    model = _read("app/models/suggestion.py")
+    api = _read("app/api/suggestions.py")
+    client = _read("frontend/src/api/suggestions.js")
+    workbench = _read("frontend/src/views/optimize/KeywordWorkbenchView.vue")
+    report = _read("frontend/src/views/delivery/MonthlyReportView.vue")
+    migration = _read("migrations/versions/20260822_0074_suggestion_workflow.py")
+
+    for field in ("handling_status", "assignee_id", "due_at", "workflow_updated_at"):
+        assert field in model and field in migration
+    assert '@router.patch("/{suggestion_id}/workflow")' in api
+    assert 'ctx.ensure_tenant(suggestion.tenant_id)' in api
+    assert '@router.get("/assignees")' in api
+    assert "updateSuggestionWorkflow" in client
+    assert "内部状态不代表百度已实际回写" in workbench
+    assert "负责人：" in report and "fmtDeadline" in report
+
+
+def test_client_report_only_admits_evidenced_completed_actions():
+    report_api = _read("app/api/reports.py")
+    report_data = _read("app/ai/monthly_report.py")
+    report_client = _read("frontend/src/api/reports.js")
+    view = _read("frontend/src/views/delivery/MonthlyReportView.vue")
+    verify = _read("app/ai/adjustment_verify.py")
+
+    assert "def _client_report_view" in report_api
+    assert 'data.pop("operational_focus", None)' in report_api
+    assert 'data.pop("alerts_review", None)' in report_api
+    assert 'data.pop("pending_modules", None)' in report_api
+    assert 'ctx.tenant_id is not None or version == "client"' in report_api
+    assert '"evidence": "百度操作记录"' in report_data
+    assert '"client_delivery": client_delivery' in report_data
+    assert '"sample": sample_status(kid, before, after)' in verify
+    assert "version = 'internal'" in report_client
+    assert "效果观察中" in view and "已完成优化与效果" in view
+    assert '<section v-if="showInternal" id="mod-pending"' in view
