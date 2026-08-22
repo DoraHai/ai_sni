@@ -42,6 +42,14 @@ from app.process_lock import acquire_file_lock, release_file_lock
 from app.rules import run_rules_for_all_tenants
 from app.rules.site_health import run_site_health_for_all_tenants
 from app.suggestions import run_suggestions_for_all_tenants
+from app.sem_asset_sync import (
+    aggregate_sync_status,
+    begin_sync_run,
+    finish_sync_run,
+    normalize_dimensions,
+    safe_sync_error,
+    update_dimension,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,56 +75,130 @@ def _release_tenant_sync_lock(fh) -> None:
 
 
 async def refresh_keyword_workbench_snapshot(
-    session, tenant: Tenant, acc: BaiduAccount, target_date
+    session,
+    tenant: Tenant,
+    acc: BaiduAccount,
+    target_date,
+    dimensions: list[str] | tuple[str, ...] | None = None,
 ) -> dict:
-    """同步 SEM 五层只读资产；定时任务和人工补偿共用同一套逻辑。"""
-    lock_fh = _acquire_tenant_sync_lock(tenant.id)
+    """同步 SEM 只读资产；单维度失败不会阻断其他维度。"""
+    tenant_id = tenant.id
+    account_id = getattr(acc, "id", None)
+    selected = normalize_dimensions(dimensions)
+    lock_fh = _acquire_tenant_sync_lock(tenant_id)
     if lock_fh is None:
-        return {"status": "busy", "tenant_id": tenant.id}
+        return {"status": "busy", "tenant_id": tenant_id}
+    state, run_id = begin_sync_run(getattr(acc, "asset_sync_state", None), selected)
+    results: dict[str, int | dict] = {}
+    failures: dict[str, str] = {}
+    category_counts: dict = {}
     try:
         acc.sync_status = "syncing"
         acc.last_sync_error = None
+        acc.asset_sync_state = state
         if hasattr(session, "commit"):
             await session.commit()
-        report_rows = await sync_keyword_report_for_account(session, acc, target_date)
-        dimension_rows = await sync_keyword_dimension_reports_for_account(
-            session, acc, target_date
-        )
-        campaigns = await sync_campaigns_for_account(session, acc)
-        adgroups = await sync_adgroups_for_account(session, acc)
-        keywords = await sync_keywords_for_account(session, acc)
-        search_terms = await sync_search_terms_for_account(
-            session, acc, target_date - timedelta(days=30), target_date
-        )
-        strategies = await sync_price_strategies_for_account(session, acc)
-        category_counts = await reclassify_keywords(session, tenant)
-        acc.last_synced_at = datetime.utcnow()
-        acc.sync_status = "synced"
-        acc.last_sync_error = None
-        # 生产传 AsyncSession；单元测试可传最小 session stub。
+
+        async def run_dimension(name: str):
+            nonlocal acc, state, tenant
+            state = update_dimension(state, run_id, name, "syncing")
+            acc.asset_sync_state = state
+            if hasattr(session, "commit"):
+                await session.commit()
+            try:
+                if name == "reports":
+                    report_rows = await sync_keyword_report_for_account(session, acc, target_date)
+                    dimension_rows = await sync_keyword_dimension_reports_for_account(
+                        session, acc, target_date
+                    )
+                    value: int | dict = {
+                        "report": report_rows,
+                        "region": int(dimension_rows.get("region", 0)),
+                        "hourly": int(dimension_rows.get("hourly", 0)),
+                    }
+                elif name == "campaigns":
+                    value = await sync_campaigns_for_account(session, acc)
+                elif name == "adgroups":
+                    value = await sync_adgroups_for_account(session, acc)
+                elif name == "keywords":
+                    value = await sync_keywords_for_account(session, acc)
+                elif name == "search_terms":
+                    value = await sync_search_terms_for_account(
+                        session, acc, target_date - timedelta(days=30), target_date
+                    )
+                else:
+                    value = await sync_price_strategies_for_account(session, acc)
+                results[name] = value
+                status = (
+                    "preserved"
+                    if name == "search_terms" and value == 0
+                    else "empty" if value == 0 else "success"
+                )
+                state = update_dimension(state, run_id, name, status, rows=value)
+            except Exception as exc:  # noqa: BLE001
+                if hasattr(session, "rollback"):
+                    await session.rollback()
+                if account_id is not None and hasattr(session, "get"):
+                    acc = await session.get(BaiduAccount, account_id) or acc
+                    tenant = await session.get(Tenant, tenant_id) or tenant
+                message = safe_sync_error(exc)
+                failures[name] = message
+                state = update_dimension(
+                    state, run_id, name, "failed", error=message
+                )
+                logger.error(
+                    "账户 %s 的 %s 维度同步失败: %s",
+                    getattr(acc, "baidu_username", account_id),
+                    name,
+                    message,
+                )
+            acc.asset_sync_state = state
+            if hasattr(session, "commit"):
+                await session.commit()
+
+        for dimension in selected:
+            await run_dimension(dimension)
+
+        if "keywords" in selected and "keywords" not in failures:
+            try:
+                category_counts = await reclassify_keywords(session, tenant)
+            except Exception:  # noqa: BLE001
+                logger.exception("租户 %s 关键词分级重算失败（不影响资产同步状态）", tenant_id)
+
+        state = finish_sync_run(state, run_id)
+        acc.asset_sync_state = state
+        acc.sync_status = aggregate_sync_status(state)
+        acc.last_sync_error = "；".join(
+            f"{name}: {message}" for name, message in failures.items()
+        ) or None
+        if acc.sync_status == "synced":
+            acc.last_synced_at = datetime.utcnow()
         if hasattr(session, "commit"):
             await session.commit()
         return {
-            "status": "ok",
-            "tenant_id": tenant.id,
+            "status": "ok" if not failures else "partial",
+            "tenant_id": tenant_id,
             "date": target_date.isoformat(),
-            "report_rows_written": report_rows,
-            "dimension_rows_written": dimension_rows,
-            "campaigns_synced": campaigns,
-            "adgroups_synced": adgroups,
-            "keywords_synced": keywords,
-            "search_terms_synced": search_terms,
-            "price_strategies_synced": strategies,
+            "selected_dimensions": list(selected),
+            "dimensions": state.get("dimensions", {}),
+            "report_rows_written": (results.get("reports") or {}).get("report", 0),
+            "dimension_rows_written": results.get("reports") or {},
+            "campaigns_synced": results.get("campaigns", 0),
+            "adgroups_synced": results.get("adgroups", 0),
+            "keywords_synced": results.get("keywords", 0),
+            "search_terms_synced": results.get("search_terms", 0),
+            "price_strategies_synced": results.get("price_strategies", 0),
             "category_counts": category_counts,
         }
     except Exception as exc:
         if hasattr(session, "rollback"):
             await session.rollback()
         failed_acc = acc
-        if hasattr(session, "get"):
-            failed_acc = await session.get(BaiduAccount, acc.id) or acc
+        if account_id is not None and hasattr(session, "get"):
+            failed_acc = await session.get(BaiduAccount, account_id) or acc
         failed_acc.sync_status = "failed"
-        failed_acc.last_sync_error = str(exc)[:500]
+        failed_acc.last_sync_error = safe_sync_error(exc)
+        failed_acc.asset_sync_state = finish_sync_run(state, run_id)
         if hasattr(session, "commit"):
             await session.commit()
         raise
