@@ -255,12 +255,12 @@ const knowledgeAnswer = computed(() => ({
   why: ['为什么？', 'AI 更容易引用有明确场景、结果数据和更新时间的事实。'],
   next: [
     '下一步怎么办？',
-    knowledgeGaps.value[0]?.reason || '优先把待审事实核验到 3 条以上再生成文章。',
+    knowledgeGaps.value[0]?.reason || '优先把待核验事实核验到 3 条以上再生成文章。',
   ],
 }))
 const TRUST_LABELS = {
   verified: '已核验',
-  needs_review: '待审',
+  needs_review: '待核验',
   draft: '草稿',
 }
 const STATUS_LABELS = {
@@ -332,7 +332,7 @@ onMounted(load)
     <div class="filters">
       <el-select v-model="trust" clearable placeholder="信任级别" style="width: 168px">
         <el-option label="已核验" value="verified" />
-        <el-option label="待审" value="needs_review" />
+        <el-option label="待核验" value="needs_review" />
         <el-option label="草稿" value="draft" />
       </el-select>
       <el-select v-model="filterBusinessId" clearable filterable placeholder="业务线（含共用）" style="width: 200px">
@@ -442,7 +442,7 @@ onMounted(load)
         </el-form-item>
         <el-form-item label="信任级">
           <el-select v-model="editForm.trust_level" style="width: 100%">
-            <el-option label="待审" value="needs_review" />
+            <el-option label="待核验" value="needs_review" />
             <el-option label="草稿" value="draft" />
           </el-select>
           <div class="field-help">已核验只能通过「核验」填写摘录依据后生效</div>
@@ -484,7 +484,7 @@ onMounted(load)
         </el-form-item>
         <el-form-item label="信任级">
           <el-select v-model="form.trust_level" style="width: 100%">
-            <el-option label="待审" value="needs_review" />
+            <el-option label="待核验" value="needs_review" />
             <el-option label="草稿" value="draft" />
           </el-select>
         </el-form-item>
