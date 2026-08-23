@@ -108,6 +108,7 @@ class PromptPromoteItem(BaseModel):
     tags: list[str] = Field(default_factory=lambda: ["from_expand"])
     demand_note: str | None = None
     is_brand_probe: bool | None = None
+    unit_id: int | None = None
 
 
 class PromptPromoteRequest(BaseModel):
