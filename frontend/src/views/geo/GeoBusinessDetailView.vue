@@ -232,7 +232,7 @@ onMounted(load)
       <div class="kpi">
         <div class="k-label">在产 / 已发</div>
         <div class="k-val">{{ funnel.in_production ?? inProd.length }} / {{ funnel.published ?? published.length }}</div>
-        <div class="k-hint">待审 {{ funnel.review_pending ?? 0 }}</div>
+        <div class="k-hint">待处理 {{ funnel.review_pending ?? 0 }}</div>
       </div>
     </div>
 

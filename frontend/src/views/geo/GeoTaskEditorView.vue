@@ -2293,7 +2293,7 @@ onMounted(load)
           <div v-if="docTab === 'master'" class="doc-draft-banner mb">
             <b>自动生成母稿草案</b>
             — 供内部改稿与结构检查，<b>不能直接当正式发布文</b>。
-            请润色语气、删模板痕迹、核对事实后再审校推送。
+            请润色语气、删模板痕迹、核对事实后再推送。
           </div>
           <div
             v-else-if="isPublishReadyVariant"
@@ -2397,7 +2397,7 @@ onMounted(load)
         <el-card id="step-publish" shadow="never" class="card">
           <template #header>
             <div class="card-head">
-              <span>渠道成稿 · 审校 · 发布</span>
+              <span>渠道成稿 · 内容检查 · 发布</span>
               <el-button size="small" type="primary" :loading="busy === 'variants'" @click="genVariants">
                 AI 生成正式渠道稿
               </el-button>
@@ -2535,7 +2535,7 @@ onMounted(load)
             <router-link class="el-button el-button--small" to="/geo/publishing">管理渠道账号</router-link>
           </div>
           <div class="hint mt">
-            推送前通常需「导出」渠道稿。未审校时按钮可点：接口返回 400 并提示审校要求（也可用上方橙色门禁文案）。
+            推送前通常需「导出」渠道稿，并完成内容检查与事实核验。
           </div>
 
           <el-divider id="step-impact" content-position="left">发布后效果</el-divider>
@@ -2640,7 +2640,7 @@ onMounted(load)
 
           <div class="draft-banner mb">
             当前是 AI 母稿草案，通过检查只代表「结构/证据够用」，
-            <b>还不能直接当正式发布文</b>。请人工润色后再审校推送。
+            <b>还不能直接当正式发布文</b>。请人工润色、核对事实后再推送。
           </div>
 
           <div class="score-block" :class="'tone-' + scoreMeta.tone">
