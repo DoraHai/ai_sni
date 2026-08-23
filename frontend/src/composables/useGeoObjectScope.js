@@ -2,6 +2,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listGeoBusinesses, listGeoPrompts, listGeoUnits } from '../api/geoContent'
 import { useGeoTenant } from './useGeoTenant'
+import { normalizeGeoScope, parseGeoScopeId } from '../utils/geoPrototypeScope'
 
 /** Shared 业务 → 关键词 → AI提问 scope for GEO v2 visibility pages. */
 export function useGeoObjectScope() {
@@ -15,15 +16,15 @@ export function useGeoObjectScope() {
   const loading = ref(false)
 
   const businessId = computed({
-    get: () => (route.query.business_id ? Number(route.query.business_id) : null),
+    get: () => parseGeoScopeId(route.query.business_id),
     set: (v) => patchQuery({ business_id: v, unit_id: undefined, prompt_id: undefined }),
   })
   const unitId = computed({
-    get: () => (route.query.unit_id ? Number(route.query.unit_id) : null),
+    get: () => parseGeoScopeId(route.query.unit_id),
     set: (v) => patchQuery({ unit_id: v, prompt_id: undefined }),
   })
   const promptId = computed({
-    get: () => (route.query.prompt_id ? Number(route.query.prompt_id) : null),
+    get: () => parseGeoScopeId(route.query.prompt_id),
     set: (v) => patchQuery({ prompt_id: v }),
   })
 
@@ -60,6 +61,33 @@ export function useGeoObjectScope() {
     router.replace({ query: next })
   }
 
+  function normalizeRouteScope() {
+    const next = normalizeGeoScope(
+      {
+        businessId: businessId.value,
+        unitId: unitId.value,
+        promptId: promptId.value,
+      },
+      {
+        businesses: businesses.value,
+        units: units.value,
+        prompts: prompts.value,
+      },
+    )
+
+    if (
+      next.businessId === businessId.value &&
+      next.unitId === unitId.value &&
+      next.promptId === promptId.value
+    ) return
+
+    patchQuery({
+      business_id: next.businessId,
+      unit_id: next.unitId,
+      prompt_id: next.promptId,
+    })
+  }
+
   async function load() {
     if (!tenantId.value) {
       businesses.value = []
@@ -77,6 +105,7 @@ export function useGeoObjectScope() {
       businesses.value = b.items || []
       units.value = u.items || []
       prompts.value = p.items || []
+      normalizeRouteScope()
     } catch {
       businesses.value = []
       units.value = []
@@ -87,6 +116,9 @@ export function useGeoObjectScope() {
   }
 
   watch(tenantId, load, { immediate: true })
+  watch([businessId, unitId, promptId], () => {
+    if (!loading.value) normalizeRouteScope()
+  })
 
   return {
     tenantId,
