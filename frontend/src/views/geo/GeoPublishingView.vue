@@ -55,7 +55,7 @@ const PUBLISH_MODES = [
   {
     value: 'auto_publish',
     label: 'auto_publish · 可自动推送（Webhook）',
-    tip: '任务审校通过后，可对已导出渠道稿一键 Webhook 推送',
+    tip: '内容检查通过后，可对已导出渠道稿一键 Webhook 推送',
   },
   {
     value: 'draft_then_manual',
@@ -890,7 +890,7 @@ onMounted(load)
           </el-button>
         </div>
         <div v-else class="hint">
-          用法：优化文章 → 生成渠道稿 → 导出 → 审校通过 → 选本账号「Webhook 推送」
+          用法：优化文章 → 生成渠道稿 → 内容检查 → 选本账号「Webhook 推送」
         </div>
       </el-alert>
 
