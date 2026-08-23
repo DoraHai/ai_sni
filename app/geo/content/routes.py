@@ -2276,6 +2276,20 @@ async def promote_prompt_candidates(
             )
         ).all()
     }
+    unit_ids = {item.unit_id for item in req.items if item.unit_id is not None}
+    if unit_ids:
+        valid_unit_ids = set(
+            (
+                await session.scalars(
+                    select(GeoOptimizationUnit.id).where(
+                        GeoOptimizationUnit.tenant_id == req.tenant_id,
+                        GeoOptimizationUnit.id.in_(unit_ids),
+                    )
+                )
+            ).all()
+        )
+        if valid_unit_ids != unit_ids:
+            raise HTTPException(status_code=400, detail="优化单元不存在")
     created: list[GeoPrompt] = []
     skipped = 0
     for item in req.items:
@@ -2301,6 +2315,7 @@ async def promote_prompt_candidates(
             question_group=q_group,
             market=normalize_market(item.market),
             is_brand_probe=probe,
+            unit_id=item.unit_id,
             created_by=ctx.user_id,
         )
         session.add(row)

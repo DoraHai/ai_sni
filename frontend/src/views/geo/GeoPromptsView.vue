@@ -52,6 +52,7 @@ const promoting = ref(false)
 const expandForm = ref({
   products: '',
   competitors: '',
+  unit_id: null,
   market: 'cn',
   max_terms: 40,
   seed_from_tenant: true,
@@ -279,6 +280,7 @@ async function promoteSelected() {
       priority: 10,
       tags: ['from_expand'],
       is_brand_probe: !!row.is_brand_probe,
+      unit_id: expandForm.value.unit_id || null,
     })).filter((x) => x.question && String(x.question).length >= 4)
     const r = await promoteGeoPromptCandidates({
       tenant_id: tenantId.value,
@@ -293,6 +295,11 @@ async function promoteSelected() {
   } finally {
     promoting.value = false
   }
+}
+
+function openExpand() {
+  expandForm.value.unit_id = filterUnitId.value || null
+  expandOpen.value = true
 }
 
 function syncUnitFilterFromRoute() {
@@ -424,7 +431,7 @@ const analysisRows = computed(() =>
     :loading="loading"
   >
     <template #actions>
-      <button class="gd-btn" @click="expandOpen = true">生成提问</button>
+      <button class="gd-btn" @click="openExpand">生成提问</button>
       <button class="gd-btn" @click="load">刷新</button>
       <button class="gd-btn primary" @click="createOpen = true">+ 新建提问</button>
     </template>
@@ -459,7 +466,7 @@ const analysisRows = computed(() =>
       <div>新建问题，或用「智能推荐」从事实库 / 官网渠道扩词，再挂到优化单元。</div>
       <div class="empty-actions">
         <el-button type="primary" size="small" @click="createOpen = true">新建意图词</el-button>
-        <el-button size="small" @click="expandOpen = true">智能推荐</el-button>
+        <el-button size="small" @click="openExpand">智能推荐</el-button>
       </div>
     </div>
 
@@ -596,6 +603,16 @@ const analysisRows = computed(() =>
 
     <el-drawer v-model="expandOpen" title="智能意图词推荐" size="640px" destroy-on-close>
       <el-form label-position="top" class="mb">
+        <el-form-item label="关联关键词">
+          <el-select v-model="expandForm.unit_id" clearable filterable style="width: 100%" placeholder="选择关键词，入库提问将关联到该关键词">
+            <el-option
+              v-for="u in units"
+              :key="u.id"
+              :label="`${u.name}${u.keyword ? ' · ' + u.keyword : ''}`"
+              :value="u.id"
+            />
+          </el-select>
+        </el-form-item>
         <el-form-item label="产品/方案关键词（逗号或换行）">
           <el-input
             v-model="expandForm.products"
