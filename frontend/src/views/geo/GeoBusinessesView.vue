@@ -62,7 +62,10 @@ const unitOpen = ref(false)
 const saving = ref(false)
 const emptyProfile = () => ({
   product_name: '',
+  website: '',
   summary: '',
+  honors: '',
+  qualifications: '',
   capabilities: '',
   audience: '',
   scenarios: '',
@@ -82,8 +85,12 @@ function profileFromRow(row) {
   const p = row?.profile || {}
   const join = (v) => (Array.isArray(v) ? v.join('，') : v || '')
   return {
+    ...p,
     product_name: p.product_name || '',
+    website: p.website || p.website_url || p.official_url || '',
     summary: p.summary || '',
+    honors: join(p.honors),
+    qualifications: join(p.qualifications),
     capabilities: join(p.capabilities),
     audience: p.audience || '',
     scenarios: join(p.scenarios),
