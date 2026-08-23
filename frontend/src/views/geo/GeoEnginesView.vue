@@ -4,10 +4,14 @@ import { ElMessage } from 'element-plus'
 import {
   fetchMonitoringStance,
   fetchVisibilityPatrolOpsStatus,
+  fetchVisibilityPatrolSettings,
   listGeoTrackingEngines,
   putGeoTrackingEngines,
   putMonitoringStance,
+  putVisibilityPatrolSettings,
 } from '../../api/geoContent'
+import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
+import { engineColor } from '../../utils/geoSnapshotSummary'
 import NeedHintAlert from '../../components/NeedHintAlert.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import {
@@ -25,6 +29,13 @@ const items = ref([])
 const ops = ref(null)
 const stance = ref(null)
 const stanceSaving = ref(false)
+const patrol = ref({
+  enabled: false,
+  window_start_hour: 8,
+  window_end_hour: 22,
+  interval_hours: 24,
+  prompt_limit: 20,
+})
 
 const enabledCount = computed(() => items.value.filter((r) => r.enabled).length)
 const realReadyCount = computed(
@@ -74,10 +85,11 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [data, opsRes, stanceRes] = await Promise.all([
+    const [data, opsRes, stanceRes, patrolRes] = await Promise.all([
       listGeoTrackingEngines(tenantId.value, false),
       fetchVisibilityPatrolOpsStatus(tenantId.value).catch(() => null),
       fetchMonitoringStance(tenantId.value).catch(() => null),
+      fetchVisibilityPatrolSettings(tenantId.value).catch(() => null),
     ])
     items.value = (data.items || []).map((it) => ({
       ...it,
@@ -89,6 +101,15 @@ async function load() {
     }))
     ops.value = opsRes
     stance.value = stanceRes
+    if (patrolRes) {
+      patrol.value = {
+        enabled: !!patrolRes.enabled,
+        window_start_hour: patrolRes.window_start_hour ?? 8,
+        window_end_hour: patrolRes.window_end_hour ?? 22,
+        interval_hours: patrolRes.interval_hours ?? 24,
+        prompt_limit: patrolRes.prompt_limit ?? 20,
+      }
+    }
   } catch (e) {
     error.value = e.message || '加载失败'
     items.value = []
@@ -145,34 +166,102 @@ async function save() {
   }
 }
 
+async function toggleEngine(row) {
+  row.enabled = !row.enabled
+  await save()
+}
+
+async function savePatrol(patch = {}) {
+  if (!tenantId.value) return
+  const next = { ...patrol.value, ...patch }
+  patrol.value = next
+  try {
+    const saved = await putVisibilityPatrolSettings({
+      tenant_id: tenantId.value,
+      enabled: next.enabled,
+      window_start_hour: next.window_start_hour,
+      window_end_hour: next.window_end_hour,
+      interval_hours: next.interval_hours,
+      prompt_limit: next.prompt_limit,
+    })
+    patrol.value = {
+      enabled: !!saved.enabled,
+      window_start_hour: saved.window_start_hour ?? next.window_start_hour,
+      window_end_hour: saved.window_end_hour ?? next.window_end_hour,
+      interval_hours: saved.interval_hours ?? next.interval_hours,
+      prompt_limit: saved.prompt_limit ?? next.prompt_limit,
+    }
+    ElMessage.success('巡检设置已保存')
+  } catch (e) {
+    ElMessage.error(e.message || '保存巡检失败')
+  }
+}
+
 watch(tenantId, load)
 onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="geo-page">
-    <div class="page-header">
-      <div>
-        <div class="page-title">引擎配置</div>
-        <div class="page-desc">
-          控制可见度登记与全自动巡检可用的模型通道；真采样需「兼容接口 + Key」。
+  <GeoWorkbenchPage
+    title="AI 引擎管理"
+    sub="配置要监测的 AI 大模型与巡检采样方式"
+    :loading="loading"
+  >
+    <template #actions>
+      <button class="gd-btn" @click="load">刷新</button>
+      <button class="gd-btn primary" :disabled="saving" @click="save">保存</button>
+    </template>
+    <div class="geo-dash">
+    <div class="geo-eng-grid">
+      <div
+        v-for="row in items"
+        :key="row.engine_key"
+        class="gd-card geo-eng-card"
+        @click="toggleEngine(row)"
+      >
+        <span class="geo-plogo" :style="{ background: engineColor(row.engine_key) }">
+          {{ engineDisplay(row.engine_key).slice(0, 1) }}
+        </span>
+        <div>
+          <b>{{ row.display_name || engineDisplay(row.engine_key) }}</b>
+          <div class="gd-sub" style="margin:0">{{ row.engine_key }}</div>
         </div>
-      </div>
-      <div class="header-actions">
-        <el-button :loading="loading" @click="load">刷新</el-button>
-        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
-        <router-link class="el-button" to="/geo/visibility/patrol">全自动巡检</router-link>
-        <router-link class="el-button" to="/geo/visibility">登记快照</router-link>
-        <router-link class="el-button" to="/geo/ai-settings">AI 配置</router-link>
+        <span class="gd-badge" :class="row.enabled ? 'green' : 'amber'" style="margin-left:auto">
+          {{ row.enabled ? '监测中' : '未开启' }}
+        </span>
       </div>
     </div>
 
-    <details class="geo-glossary">
-      <summary>统计口径（点击展开）</summary>
-      <ul>
-        <li v-for="(line, i) in REPORT_GLOSSARY.engines" :key="i">{{ line }}</li>
-      </ul>
-    </details>
+    <div class="gd-card" style="margin-bottom:16px">
+      <div class="gd-hd"><h3>巡检设置</h3></div>
+      <div class="gd-bd" style="max-width:560px;display:flex;flex-direction:column;gap:14px">
+        <div class="geo-set-row">
+          <span>巡检频率</span>
+          <div class="geo-chips" style="margin:0">
+            <button class="geo-chip" :class="{ active: patrol.interval_hours === 24 }" @click="savePatrol({ interval_hours: 24 })">每日 1 次</button>
+            <button class="geo-chip" :class="{ active: patrol.interval_hours === 6 }" @click="savePatrol({ interval_hours: 6 })">每 6 小时</button>
+            <button class="geo-chip" :class="{ active: patrol.interval_hours === 1 }" @click="savePatrol({ interval_hours: 1 })">每小时</button>
+          </div>
+        </div>
+        <div class="geo-set-row">
+          <span>巡检时间</span>
+          <span class="gd-badge">每日 {{ String(patrol.window_start_hour).padStart(2, '0') }}:00 – {{ String(patrol.window_end_hour).padStart(2, '0') }}:00</span>
+        </div>
+        <div class="geo-set-row">
+          <span>每轮提问上限</span>
+          <span class="gd-badge">{{ patrol.prompt_limit }} 条</span>
+        </div>
+        <div class="geo-set-row">
+          <span>定时巡检</span>
+          <span
+            class="gd-badge"
+            :class="patrol.enabled ? 'green' : 'amber'"
+            style="cursor:pointer"
+            @click="savePatrol({ enabled: !patrol.enabled })"
+          >{{ patrol.enabled ? '已开启' : '未开启' }}</span>
+        </div>
+      </div>
+    </div>
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
     <NeedHintAlert />
@@ -382,7 +471,8 @@ onMounted(load)
         </el-table-column>
       </el-table>
     </section>
-  </div>
+    </div>
+  </GeoWorkbenchPage>
 </template>
 
 <style scoped>

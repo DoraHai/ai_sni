@@ -27,4 +27,7 @@ export default defineConfig({
       },
     },
   },
+  optimizeDeps: {
+    include: ['vue', 'vue-router', 'element-plus', 'element-plus/es/locale/lang/zh-cn'],
+  },
 })

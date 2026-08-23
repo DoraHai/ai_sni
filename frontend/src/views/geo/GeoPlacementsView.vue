@@ -2,7 +2,8 @@
 /**
  * 媒体阵地 CRUD（media-placements）
  */
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createGeoMediaPlacement,
@@ -11,13 +12,52 @@ import {
   patchGeoMediaPlacement,
 } from '../../api/geoContent'
 import { useClientPager } from '../../composables/useClientPager'
+import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
+const router = useRouter()
 const { tenantId } = useGeoTenant()
 const loading = ref(false)
 const error = ref('')
 const items = ref([])
-const pager = useClientPager(items, { pageSize: 20 })
+const qSearch = ref('')
+
+const filteredItems = computed(() => {
+  const q = qSearch.value.trim()
+  let rows = items.value || []
+  if (q) {
+    rows = rows.filter(
+      (r) =>
+        String(r.name || '').includes(q) ||
+        String(r.target_url || '').includes(q) ||
+        String(r.channel_key || '').includes(q),
+    )
+  }
+  return rows
+})
+const pager = useClientPager(filteredItems, { pageSize: 20 })
+
+const kpi = computed(() => {
+  const rows = items.value || []
+  const published = rows.filter((r) => r.status === 'published')
+  const planned = rows.filter((r) => r.status === 'planned' || r.status === 'in_progress')
+  return {
+    high: published.length,
+    cited: published.filter((r) => r.channel_type === 'website' || r.channel_key).length,
+    pending: planned.length,
+    occupy: rows.filter((r) => /竞品|competitor/i.test(`${r.name}${r.authority_note || ''}`)).length,
+  }
+})
+
+function byType(keys) {
+  return (items.value || []).filter((r) => {
+    const blob = `${r.channel_type || ''} ${r.channel_key || ''} ${r.name || ''}`.toLowerCase()
+    return keys.some((k) => blob.includes(k))
+  })
+}
+const siteItems = computed(() => byType(['website', '官网', 'site', 'blog']))
+const thirdItems = computed(() => byType(['zhihu', '知乎', 'media', 'wechat', '公众号', 'news']))
+const wikiItems = computed(() => byType(['baike', '百科', 'wiki', 'docs']))
 const createOpen = ref(false)
 const form = ref({
   name: '',
@@ -110,21 +150,57 @@ onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="geo-pl">
-    <div class="page-header">
-      <div>
-        <div class="page-title">媒体阵地</div>
-        <div class="page-desc">
-          权威信源 / 分发阵地布局（API：media-placements）。空库打开时可能自动种子 CN 蓝图。
-        </div>
-      </div>
-      <div class="header-actions">
-        <el-button type="primary" @click="createOpen = true">新建</el-button>
-        <el-button @click="load">刷新</el-button>
-      </div>
-    </div>
+  <GeoWorkbenchPage
+    title="媒体 / 信源策略"
+    sub="同一套媒体资源可被 SEO / GEO 共用，GEO 更看重权威、可引用和信任链"
+    :loading="loading"
+  >
+    <template #actions>
+      <input v-model="qSearch" class="gd-search" placeholder="搜索媒体 / 信源…" />
+      <button class="gd-btn" @click="router.push('/geo/publishing')">渠道库</button>
+      <button class="gd-btn" @click="load">刷新</button>
+      <button class="gd-btn primary" @click="createOpen = true">+ 新增信源计划</button>
+    </template>
+    <div class="geo-dash geo-pl">
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
+
+    <div class="gd-kpis">
+      <div class="gd-card gd-stat"><div class="label">高权重信源</div><div class="value">{{ kpi.high }}</div><div class="delta hint">已发布阵地</div></div>
+      <div class="gd-card gd-stat"><div class="label">已布局媒体</div><div class="value">{{ kpi.cited }}</div><div class="delta hint">官网/带蓝图 key</div></div>
+      <div class="gd-card gd-stat"><div class="label">待补渠道</div><div class="value">{{ kpi.pending }}</div><div class="delta hint">规划中 / 进行中</div></div>
+      <div class="gd-card gd-stat"><div class="label">竞品占位信源</div><div class="value">{{ kpi.occupy }}</div><div class="delta hint">名称或备注含竞品</div></div>
+    </div>
+
+    <div class="gd-kpis" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+      <div class="gd-card">
+        <div class="gd-hd"><h3>官网可信底座</h3><span class="gd-badge green">必做</span></div>
+        <div class="gd-bd">
+          <ul class="gd-sources">
+            <li v-for="r in siteItems.slice(0, 3)" :key="r.id">{{ r.name }} · {{ r.status }}</li>
+            <li v-if="!siteItems.length" class="gd-sub">还没有官网/博客阵地，建议补 About、FAQ、案例页。</li>
+          </ul>
+        </div>
+      </div>
+      <div class="gd-card">
+        <div class="gd-hd"><h3>高质量第三方</h3><span class="gd-badge blue">拉权威</span></div>
+        <div class="gd-bd">
+          <ul class="gd-sources">
+            <li v-for="r in thirdItems.slice(0, 3)" :key="r.id">{{ r.name }} · {{ r.status }}</li>
+            <li v-if="!thirdItems.length" class="gd-sub">还没有知乎/公众号/媒体计划。</li>
+          </ul>
+        </div>
+      </div>
+      <div class="gd-card">
+        <div class="gd-hd"><h3>百科与资料库</h3><span class="gd-badge amber">纠偏</span></div>
+        <div class="gd-bd">
+          <ul class="gd-sources">
+            <li v-for="r in wikiItems.slice(0, 3)" :key="r.id">{{ r.name }} · {{ r.status }}</li>
+            <li v-if="!wikiItems.length" class="gd-sub">还没有百科/文档类信源。</li>
+          </ul>
+        </div>
+      </div>
+    </div>
 
     <el-table :data="pager.pagedItems" stripe empty-text="暂无阵地" size="small">
       <el-table-column prop="id" label="ID" width="70" />
@@ -197,7 +273,8 @@ onMounted(load)
         <el-button type="primary" @click="submitCreate">创建</el-button>
       </template>
     </el-dialog>
-  </div>
+    </div>
+  </GeoWorkbenchPage>
 </template>
 
 <style scoped>

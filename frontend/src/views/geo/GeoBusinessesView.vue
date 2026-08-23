@@ -7,6 +7,7 @@ import {
   createGeoUnit,
   downloadGeoDailyMetricsCsv,
   listGeoBusinesses,
+  listGeoContentTasks,
   listGeoDailyMetrics,
   listGeoPrompts,
   listGeoUnits,
@@ -15,6 +16,7 @@ import {
   rebuildGeoDailyMetrics,
 } from '../../api/geoContent'
 import GeoBusinessProfileForm from '../../components/GeoBusinessProfileForm.vue'
+import GeoV2Page from '../../components/GeoV2Page.vue'
 import NeedHintAlert from '../../components/NeedHintAlert.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
@@ -36,6 +38,8 @@ const error = ref('')
 const businesses = ref([])
 const units = ref([])
 const prompts = ref([])
+const allPrompts = ref([])
+const allTasks = ref([])
 const promptsLoading = ref(false)
 const selectedBusinessId = ref(null)
 const selectedUnitId = ref(null)
@@ -552,40 +556,145 @@ watch(tenantId, async () => {
   await loadPrompts()
   await loadDaily()
 })
+const bizCards = computed(() =>
+  (businesses.value || [])
+    .filter((b) => b.status !== 'archived')
+    .map((b) => {
+      const kw = (units.value || []).filter((u) => u.business_id === b.id && u.status !== 'archived')
+      const uids = new Set(kw.map((u) => u.id))
+      const ps = (allPrompts.value || []).filter((p) => uids.has(p.unit_id))
+      const gaps = ps.filter((p) => Array.isArray(p.tags) && p.tags.includes('brand_missing'))
+      const arts = (allTasks.value || []).filter(
+        (t) => t.business_id === b.id || uids.has(t.unit_id) || ps.some((p) => p.id === t.prompt_id),
+      )
+      const score = ps.length ? Math.round(((ps.length - gaps.length) / ps.length) * 100) : 0
+      return {
+        id: b.id,
+        name: b.name,
+        score,
+        keywords: kw.map((u) => u.keyword || u.name).filter(Boolean).join('、') || '未绑定关键词',
+        promptCount: ps.length,
+        articleCount: arts.length,
+        reason: gaps.length
+          ? `${gaps.length} 条提问品牌未被推荐；关键词 ${kw.length}、提问 ${ps.length}。`
+          : kw.length
+            ? `关键词 ${kw.length}、提问 ${ps.length}，覆盖较完整。`
+            : '还没有关键词，AI 不知道该推荐哪条业务。',
+        action: gaps.length ? '补内容' : kw.length ? '查看进度' : '绑定关键词',
+      }
+    }),
+)
+
+const bizAnswer = computed(() => {
+  const weak = [...bizCards.value].sort((a, b) => a.score - b.score)[0]
+  return {
+    now: [
+      '我现在怎么样？',
+      weak
+        ? `${weak.name} 覆盖 ${weak.score} 分，${weak.reason}`
+        : '还没有业务线。先新增一条业务。',
+    ],
+    why: ['为什么？', 'AI 回答更容易引用有清晰对象、适用场景和客户证据的业务资料。'],
+    next: [
+      '下一步怎么办？',
+      weak?.action === '绑定关键词'
+        ? '先给业务绑定关键词，再生成 AI 提问。'
+        : '先补缺口提问对应的案例和 GEO 文章。',
+    ],
+  }
+})
+
 onMounted(async () => {
   await loadBusinesses()
   await loadUnits()
   await loadPrompts()
   await loadDaily()
+  if (tenantId.value) {
+    try {
+      const [p, t] = await Promise.all([
+        listGeoPrompts(tenantId.value, { status: 'active' }),
+        listGeoContentTasks(tenantId.value, { limit: 200 }),
+      ])
+      allPrompts.value = p.items || []
+      allTasks.value = t.items || []
+    } catch {
+      allPrompts.value = []
+      allTasks.value = []
+    }
+  }
 })
 </script>
 
 <template>
-  <div v-loading="loading" class="geo-page">
-    <div class="page-header">
-      <div>
-        <div class="page-title">优化业务</div>
-        <div class="page-desc">
-          维护「业务 → 单元 → 意图词」结构。每条业务应填写专属画像，避免内容建议串到租户总品牌。
-        </div>
-      </div>
-      <div class="header-actions">
-        <el-button type="primary" @click="bizOpen = true">新建优化业务</el-button>
-        <el-button :disabled="!selectedBusinessId" @click="unitOpen = true">新建优化单元</el-button>
+  <div v-loading="loading">
+    <GeoV2Page
+      tag="定义优化对象"
+      title="先把业务边界说清楚，AI 才知道应该在哪些场景里推荐你。"
+      desc="按品牌下的业务线管理产品、解决方案、目标客户和核心卖点，确保后续关键词、AI 提问和内容都围绕明确业务展开。"
+      :steps="['新增业务', '补充卖点', '绑定关键词', '查看优化进度']"
+      :answer="bizAnswer"
+    >
+      <template #actions>
+        <el-button type="primary" @click="bizOpen = true">新增业务</el-button>
+        <el-button :disabled="!selectedBusinessId" @click="unitOpen = true">绑定关键词</el-button>
         <el-button
-          type="success"
-          plain
           :disabled="!selectedBusinessId"
           @click="router.push(`/geo/businesses/${selectedBusinessId}`)"
         >
-          业务详情一屏
+          查看优化进度
         </el-button>
-        <router-link class="el-button" to="/geo/onboarding">GEO 开户向导</router-link>
-        <router-link class="el-button is-plain" to="/geo/prompts">优化意图词</router-link>
-        <router-link class="el-button is-plain" to="/geo/visibility">AI 可见度</router-link>
-        <router-link class="el-button is-plain" to="/geo/tasks">优化文章</router-link>
-      </div>
-    </div>
+      </template>
+
+      <section class="gv2-panel">
+        <div class="gv2-panel-head">
+          <div>
+            <span class="gv2-kicker">业务线健康度</span>
+            <h2>当前业务</h2>
+            <p class="sub">分数来自该业务下「已被推荐的提问 / 全部提问」。点卡片选中后可补卖点或绑关键词。</p>
+          </div>
+        </div>
+        <div class="metric-list">
+          <div
+            v-for="c in bizCards"
+            :key="c.id"
+            class="gv2-card gv2-metric"
+            role="button"
+            @click="selectBusiness(businesses.find((b) => b.id === c.id))"
+          >
+            <div>
+              <b>{{ c.name }}</b>
+              <p>{{ c.reason }}</p>
+            </div>
+            <div>
+              <strong>{{ c.score }}</strong>
+              <em>{{ c.action }}</em>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="gv2-panel">
+        <div class="gv2-panel-head">
+          <div>
+            <span class="gv2-kicker">业务与关键词关系</span>
+            <h2>绑定情况</h2>
+          </div>
+        </div>
+        <el-table :data="bizCards" stripe empty-text="还没有业务">
+          <el-table-column prop="name" label="业务" min-width="140" />
+          <el-table-column prop="keywords" label="关键词" min-width="200" />
+          <el-table-column label="AI提问" width="110">
+            <template #default="{ row }">{{ row.promptCount }} 条</template>
+          </el-table-column>
+          <el-table-column label="内容" width="110">
+            <template #default="{ row }">{{ row.articleCount }} 篇</template>
+          </el-table-column>
+          <el-table-column label="操作" width="120">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="router.push(`/geo/businesses/${row.id}`)">查看进度</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </section>
 
     <details class="geo-glossary">
       <summary>统计口径（点击展开）</summary>
@@ -973,6 +1082,7 @@ onMounted(async () => {
         <el-button type="primary" :loading="saving" @click="submitUnit">创建</el-button>
       </template>
     </el-dialog>
+    </GeoV2Page>
   </div>
 </template>
 

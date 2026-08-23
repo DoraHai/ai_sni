@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { backfillAttribution, fetchGeoCitationInsights, formatGeoError } from '../../api/geoContent'
+import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useObservationPeriod } from '../../composables/useObservationPeriod'
 import { session } from '../../store/session'
@@ -16,6 +17,7 @@ import {
   fmtInt,
   fmtPct,
 } from '../../utils/geoReportLabels'
+import { citationHeatFromItems, heatTone } from '../../utils/geoSnapshotSummary'
 
 const router = useRouter()
 const { days: observationDays, start: obsStart, end: obsEnd, label: obsLabel } = useObservationPeriod()
@@ -38,6 +40,7 @@ const citeItems = computed(() => {
   return rows
 })
 const pager = useClientPager(citeItems, { pageSize: 20 })
+const heatMap = computed(() => citationHeatFromItems(data.value?.items || []))
 
 const qualityRows = computed(() => {
   if (!data.value) return []
@@ -108,8 +111,7 @@ function openDomain(row) {
   if (!row) return
   const q = { domain: row.domain }
   if ((row.engines || []).length === 1) q.engine = row.engines[0]
-  router.push({ path: '/geo/visibility', query: q })
-  ElMessage.info(`已跳转可见度；可在快照中筛选含 ${row.domain} 的回答`)
+  router.push({ path: '/geo/visibility/snapshots', query: q })
 }
 
 watch([tenantId, observationDays, obsStart, obsEnd], load)
@@ -118,24 +120,17 @@ onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="geo-page">
-    <div class="page-header">
-      <div>
-        <div class="page-title">AI 引用分析</div>
-        <div class="page-desc">
-          看 AI 回答引用了哪些域名、自有站是否被带到。跟随顶栏观察期（{{ obsLabel }}）。
-        </div>
-      </div>
-      <div class="header-actions">
-        <el-button :loading="loading" @click="load">刷新</el-button>
-        <el-button type="primary" plain :loading="backfilling" @click="runBackfill">
-          回填发布归因
-        </el-button>
-        <el-button :disabled="!citeItems.length" @click="exportCsv">导出 CSV</el-button>
-        <router-link class="el-button" to="/geo/visibility">登记快照</router-link>
-        <router-link class="el-button" to="/geo/evaluation">评价分析</router-link>
-      </div>
-    </div>
+  <GeoWorkbenchPage
+    title="信源分析"
+    :sub="`AI 回答时到底从哪些平台、哪些文章取数引用 · ${obsLabel}`"
+    :loading="loading"
+  >
+    <template #actions>
+      <input v-model="domainQuery" class="gd-search" placeholder="搜索信源 / 文章…" />
+      <button class="gd-btn" :disabled="!citeItems.length" @click="exportCsv">数据导出</button>
+      <button class="gd-btn primary" :disabled="backfilling" @click="runBackfill">回填归因</button>
+    </template>
+    <div class="geo-dash geo-page">
 
     <details class="geo-glossary">
       <summary>统计口径（点击展开）</summary>
@@ -145,6 +140,33 @@ onMounted(load)
     </details>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" show-icon />
+
+    <div v-if="heatMap.engines.length" class="gd-card" style="margin-bottom:16px">
+      <div class="gd-hd">
+        <h3>信源平台 × AI 引擎 引用占比</h3>
+        <span class="more">颜色越深引用越多</span>
+      </div>
+      <div class="gd-bd" style="padding:0;overflow:auto">
+        <table class="gd-heat">
+          <thead>
+            <tr>
+              <th>信源平台</th>
+              <th v-for="e in heatMap.engines" :key="e">{{ engineDisplay(e) }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in heatMap.rows" :key="r.name">
+              <td class="kw">{{ r.name }}</td>
+              <td
+                v-for="(cell, i) in r.cells"
+                :key="i"
+                :style="{ background: heatTone(cell).bg, color: heatTone(cell).fg }"
+              >{{ fmtPct(cell) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
 
     <div v-if="data" class="geo-kpi-grid">
       <div class="geo-kpi">
@@ -257,7 +279,8 @@ onMounted(load)
         </div>
       </section>
     </template>
-  </div>
+    </div>
+  </GeoWorkbenchPage>
 </template>
 
 <style scoped>

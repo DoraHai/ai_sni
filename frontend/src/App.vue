@@ -15,7 +15,7 @@ const currentWorkflow = computed(() => route.meta.workflow || '')
 const bare = computed(() => route.meta.bare) // 登录页等无框页面
 /** 母稿编辑器等宽屏工作台：取消内容区 max-width，吃满主栏 */
 const fluidMain = computed(() =>
-  route.path.startsWith('/geo/tasks/') || route.meta.fluidMain === true,
+  route.path.startsWith('/geo') || route.meta.fluidMain === true,
 )
 const isGeoRoute = computed(() => route.path.startsWith('/geo'))
 const {
@@ -67,36 +67,27 @@ const ALL_GROUPS = computed(() => [
   { label: '诊断中心', icon: '🩺', children: [
     { label: '网站体检', path: '/diagnostic-center/', key: 'geo.diagnosis', external: true },
   ] },
-  // GEO：压成两层——内容 / 监测报表平级 / 配置；AI 动态归情报配置
-  { label: 'GEO 增长', icon: '◈', children: [
-    { label: '内容生产', children: [
-      { label: 'GEO 开户向导', path: '/geo/onboarding', key: 'geo.content' },
-      { label: '优化业务', path: '/geo/businesses', key: 'geo.content' },
-      { label: '优化意图词', path: '/geo/prompts', key: 'geo.content' },
-      { label: '事实库', path: '/geo/facts', key: 'geo.content' },
-      { label: '缺口工作台', path: '/geo/gaps', key: 'geo.content' },
-      { label: '优化文章', path: '/geo/tasks', key: 'geo.content' },
-      { label: '发布渠道', path: '/geo/publishing', key: 'geo.content' },
-      { label: '媒体阵地', path: '/geo/placements', key: 'geo.content' },
+  // GEO 工作台：对齐 dashboard.html + geo-sidebar-v1 截图
+  { label: 'GEO 工作台', icon: 'G', children: [
+    { label: '数据看板', children: [
+      { label: 'GEO 概览', path: '/geo/overview', key: 'geo.content', icon: '▦' },
+      { label: 'AI 可见度', path: '/geo/visibility', key: 'geo.content', icon: '✦' },
     ] },
-    { label: '效果监测', children: [
-      { label: 'GEO 概览', path: '/geo/overview', key: 'geo.content' },
-      { label: 'AI 可见度', path: '/geo/visibility', key: 'geo.content', exact: true },
-      { label: '优化期次', path: '/geo/periods', key: 'geo.content' },
-      { label: '交付摘要', path: '/geo/deliverables', key: 'geo.content' },
-      { label: '更多', children: [
-        { label: '全自动巡检', path: '/geo/visibility/patrol', key: 'geo.content' },
-        { label: 'AI 引用分析', path: '/geo/citations', key: 'geo.content' },
-        { label: '竞品监测', path: '/geo/competitors', key: 'geo.content' },
-        { label: '评价与位置', path: '/geo/evaluation', key: 'geo.content' },
-        { label: '话题覆盖热度', path: '/geo/topic-heat', key: 'geo.content' },
-      ] },
+    { label: '智能监测', children: [
+      { label: '提问监控', path: '/geo/questions', key: 'geo.content', icon: '◌' },
+      { label: '竞品分析', path: '/geo/competitors', key: 'geo.content', icon: '≋' },
+      { label: '信源分析', path: '/geo/citations', key: 'geo.content', icon: '▤' },
     ] },
-    { label: '能力与情报', children: [
-      { label: '引擎配置', path: '/geo/engines', key: 'geo.content' },
-      { label: 'AI 配置', path: '/geo/ai-settings', key: 'geo.content' },
-      { label: '渠道成稿提示词', path: '/geo/channel-polish-prompts', key: 'geo.content' },
-      { label: 'AI 动态与策略', path: '/geo/ai-trends', key: 'geo.content' },
+    { label: '内容与信源', children: [
+      { label: 'GEO 文章', path: '/geo/tasks', key: 'geo.content', icon: 'Aa' },
+      { label: '媒体 / 信源策略', path: '/geo/placements', key: 'geo.content', icon: '⌂' },
+      { label: '分发平台', path: '/geo/publishing', key: 'geo.content', icon: '⇧' },
+      { label: '官网结构优化', path: '/geo/geo-diagnosis', key: 'geo.content', icon: '⌗' },
+    ] },
+    { label: '设置', children: [
+      { label: '品牌信息', path: '/geo/brand', key: 'geo.content', icon: '▰' },
+      { label: '知识库', path: '/geo/knowledge', key: 'geo.content', icon: '▣' },
+      { label: 'AI 引擎管理', path: '/geo/models', key: 'geo.content', icon: '◇' },
     ] },
   ] },
   { label: '首次接入', icon: '🚀', children: [
@@ -180,12 +171,21 @@ function findPathTrail(items, path, trail = []) {
 
 const navGroups = computed(() => {
   const noLogin = !session.isLoggedIn // 本地 dev API Key 模式：全显示
-  return ALL_GROUPS.value
+  let groups = ALL_GROUPS.value
+  if (isGeoRoute.value) {
+    groups = groups.filter((g) => g.label === 'GEO 工作台')
+  }
+  return groups
     .map((g) => ({
       ...g,
       children: filterNavItems(g.children, noLogin),
     }))
     .filter((g) => collectLeafPaths(g.children).length > 0)
+})
+
+const geoNavSections = computed(() => {
+  const g = navGroups.value.find((x) => x.label === 'GEO 工作台')
+  return g?.children || []
 })
 
 // 一级组 + 二级/三级折叠键（如 "GEO 增长/做内容"、"GEO 增长/做内容/内容资产"）
@@ -322,16 +322,33 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
 <template>
   <router-view v-if="bare" />
   <el-container v-else style="height: 100vh">
-    <el-aside width="228px" class="side">
+    <el-aside :width="isGeoRoute ? '216px' : '228px'" class="side" :class="{ 'geo-side': isGeoRoute }">
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">{{ isGeoRoute ? 'G' : 'S' }}</div>
         <div class="brand-copy">
-          <div class="brand-name">{{ isGeoRoute ? 'GEO 增长' : 'SEM 智投平台' }}</div>
-          <div class="brand-sub">{{ isGeoRoute ? tenantName : 'v3.0 · 工作流版' }}</div>
+          <div class="brand-name">{{ isGeoRoute ? 'GEO 工作台' : 'SEM 智投平台' }}</div>
+          <div class="brand-sub">{{ isGeoRoute ? '生成式引擎获客' : 'v3.0 · 工作流版' }}</div>
         </div>
       </div>
       <div class="nav-scroll">
-        <div class="nav-section-title">{{ isGeoRoute ? 'GEO 工作流' : '代运营工作流' }}</div>
+        <template v-if="isGeoRoute">
+          <div v-for="sec in geoNavSections" :key="sec.label">
+            <div class="geo-nav-group">{{ sec.label }}</div>
+            <button
+              v-for="leaf in sec.children || []"
+              :key="leaf.label"
+              type="button"
+              class="geo-nav-item"
+              :class="{ active: isActive(leaf) }"
+              @click="go(leaf)"
+            >
+              <span v-if="leaf.icon" class="geo-nav-ico" aria-hidden="true">{{ leaf.icon }}</span>
+              {{ leaf.label }}
+            </button>
+          </div>
+        </template>
+        <template v-else>
+        <div class="nav-section-title">代运营工作流</div>
         <div
           v-for="g in navGroups"
           :key="g.label"
@@ -415,8 +432,39 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
             </template>
           </div>
         </div>
+        </template>
       </div>
-      <nav class="side-shortcuts" aria-label="跨模块快捷入口">
+      <div v-if="isGeoRoute" class="geo-side-foot">
+        <el-popover
+          v-if="session.tenants.length"
+          v-model:visible="tenantPopoverOpen"
+          placement="top-start"
+          :width="286"
+          trigger="click"
+          popper-class="tenant-popover"
+        >
+          <template #reference>
+            <button type="button" class="geo-tenant">{{ tenantName }} ▾</button>
+          </template>
+          <div class="tenant-panel">
+            <div class="tenant-section-title">切换客户</div>
+            <button
+              v-for="t in session.tenants"
+              :key="'g-'+t.id"
+              class="tenant-option"
+              :class="{ active: t.id === session.tenantId }"
+              type="button"
+              @click="onTenantChange(t.id)"
+            >
+              <span class="tenant-title">{{ t.name }}</span>
+            </button>
+          </div>
+        </el-popover>
+        <button type="button" class="geo-back" @click="router.push('/deal-sniper/hub/dashboard')">⌂ 全域驾驶舱</button>
+        <button type="button" class="geo-back" @click="router.push('/deal-sniper/seo/articles')">S SEO 内容工作台</button>
+        <button type="button" class="geo-back" @click="router.push('/deal-sniper/portal')">← 平台门户</button>
+      </div>
+      <nav v-else class="side-shortcuts" aria-label="跨模块快捷入口">
         <div class="shortcut-group shortcut-group-muted">
           <router-link
             v-for="item in platformShortcuts"
@@ -432,7 +480,7 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
     </el-aside>
 
     <el-container>
-      <el-header class="topbar" height="52px">
+      <el-header v-if="!isGeoRoute" class="topbar" height="52px">
         <div class="crumb-block">
           <div class="crumb-kicker">当前位置</div>
           <el-breadcrumb separator="/">
@@ -526,7 +574,7 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
           <span v-else class="dev-badge">本地 API Key 模式</span>
         </div>
       </el-header>
-      <el-main class="main">
+      <el-main class="main" :class="{ 'geo-main': isGeoRoute }">
         <div class="main-inner" :class="{ fluid: fluidMain }">
           <router-view />
         </div>
@@ -572,6 +620,82 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
   line-height: 1.2;
 }
 .brand-sub { font-size: 11px; color: var(--sem-text-muted); margin-top: 3px; }
+
+.geo-side {
+  background: #fff;
+  border-right: 1px solid #e8eaf0;
+  padding: 16px 10px 0;
+}
+.geo-side .brand {
+  padding: 4px 8px 14px;
+  border-bottom: 0;
+}
+.geo-side .brand-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  font-size: 13px;
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  box-shadow: none;
+}
+.geo-side .brand-name { font-size: 15px; }
+.geo-side .brand-sub { font-size: 10.5px; margin-top: 1px; }
+.geo-side .nav-scroll { padding: 0 0 8px; }
+.geo-nav-group {
+  font-size: 10.5px;
+  color: #9aa1ad;
+  padding: 13px 10px 5px;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+.geo-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  margin: 0;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #5b6270;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+}
+.geo-nav-ico {
+  width: 16px;
+  text-align: center;
+  font-size: 13.5px;
+  flex: none;
+}
+.geo-nav-item:hover,
+.geo-nav-item.active {
+  background: #f5f0ff;
+  color: #7c3aed;
+  font-weight: 600;
+}
+.geo-side-foot {
+  padding: 8px 10px 12px;
+  border-top: 1px solid #e8eaf0;
+}
+.geo-tenant,
+.geo-back {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: #6b7280;
+  font-size: 12px;
+  text-align: left;
+  padding: 8px 10px;
+  cursor: pointer;
+  border-radius: 8px;
+}
+.geo-tenant:hover,
+.geo-back:hover { background: #f5f0ff; color: #7c3aed; }
 .nav-scroll { flex: 1; overflow-y: auto; padding: 12px 0 20px; }
 .nav-section-title {
   padding: 2px 20px 8px;
@@ -874,6 +998,16 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
     radial-gradient(1200px 400px at 0% 0%, rgba(24, 95, 165, 0.05), transparent 55%),
     radial-gradient(900px 360px at 100% 0%, rgba(29, 158, 117, 0.04), transparent 50%),
     var(--sem-bg);
+}
+.geo-main {
+  background: #f6f7fb;
+  padding: 0 !important;
+}
+.geo-main .main-inner,
+.geo-main .main-inner.fluid {
+  padding: 0;
+  max-width: none;
+  min-height: 100%;
 }
 /* 主栏吃满可用宽度，避免大屏右侧大片留白 */
 .main-inner {

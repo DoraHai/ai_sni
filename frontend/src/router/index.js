@@ -56,19 +56,119 @@ const routes = [
     path: '/geo/overview',
     component: () => import('../views/geo/GeoOverviewView.vue'),
     meta: {
-      title: 'GEO 概览',
-      documentTitle: 'GEO 增长｜概览',
-      workflow: 'GEO 增长',
+      title: 'GEO概览',
+      documentTitle: 'GEO 品牌优化｜概览',
+      workflow: 'GEO 品牌优化',
       perm: 'geo.content',
     },
   },
   {
     path: '/geo/visibility',
-    component: () => import('../views/geo/GeoVisibilityView.vue'),
+    component: () => import('../views/geo/GeoVisibilityDashView.vue'),
     meta: {
       title: 'AI 可见度',
-      documentTitle: 'GEO 增长｜可见度',
-      workflow: 'GEO 增长',
+      documentTitle: 'GEO 品牌优化｜AI 可见度',
+      workflow: 'GEO 品牌优化',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/visibility/snapshots',
+    component: () => import('../views/geo/GeoVisibilityView.vue'),
+    meta: {
+      title: '回答快照',
+      documentTitle: 'GEO 品牌优化｜回答快照',
+      workflow: 'GEO 品牌优化',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/keywords',
+    component: () => import('../views/geo/GeoKeywordsView.vue'),
+    meta: {
+      title: '关键词管理',
+      documentTitle: 'GEO 品牌优化｜关键词管理',
+      workflow: 'GEO 品牌优化',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/questions',
+    component: () => import('../views/geo/GeoPromptsView.vue'),
+    meta: {
+      title: 'AI提问管理',
+      documentTitle: 'GEO 品牌优化｜AI提问管理',
+      workflow: 'GEO 品牌优化',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/recommend',
+    component: () => import('../views/geo/GeoRecommendView.vue'),
+    meta: {
+      title: 'AI推荐',
+      documentTitle: 'GEO 品牌优化｜AI推荐',
+      workflow: 'GEO 品牌优化',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/answers',
+    component: () => import('../views/geo/GeoAnswerAnalysisView.vue'),
+    meta: {
+      title: 'AI回答分析',
+      documentTitle: 'GEO 品牌优化｜AI回答分析',
+      workflow: 'GEO 品牌优化',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/knowledge',
+    component: () => import('../views/geo/GeoFactsView.vue'),
+    meta: {
+      title: '知识库',
+      documentTitle: 'GEO 品牌优化｜知识库',
+      workflow: 'GEO 品牌优化',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/brand',
+    component: () => import('../views/geo/GeoBrandSettingsView.vue'),
+    meta: {
+      title: '品牌设置',
+      documentTitle: 'GEO 品牌优化｜品牌设置',
+      workflow: 'GEO 品牌优化',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/permissions',
+    component: () => import('../views/geo/GeoPermissionsView.vue'),
+    meta: {
+      title: '团队权限',
+      documentTitle: 'GEO 品牌优化｜团队权限',
+      workflow: 'GEO 品牌优化',
+      perm: 'settings.accounts',
+    },
+  },
+  {
+    path: '/geo/models',
+    component: () => import('../views/geo/GeoEnginesView.vue'),
+    meta: {
+      title: 'AI模型',
+      documentTitle: 'GEO 品牌优化｜AI模型',
+      workflow: 'GEO 品牌优化',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/geo-diagnosis',
+    component: () => import('../views/geo/GeoOptimizationDiagnosisView.vue'),
+    meta: {
+      title: 'GEO优化诊断',
+      documentTitle: 'GEO 品牌优化｜优化诊断',
+      workflow: 'GEO 品牌优化',
       perm: 'geo.content',
     },
   },
@@ -94,11 +194,15 @@ const routes = [
   },
   {
     path: '/geo/gaps',
+    redirect: '/geo/recommend',
+  },
+  {
+    path: '/geo/gap-workbench',
     component: () => import('../views/geo/GeoGapWorkbenchView.vue'),
     meta: {
       title: '缺口工作台',
-      documentTitle: 'GEO 增长｜缺口工作台',
-      workflow: 'GEO 增长',
+      documentTitle: 'GEO 品牌优化｜缺口工作台',
+      workflow: 'GEO 品牌优化',
       perm: 'geo.content',
     },
   },
@@ -194,13 +298,7 @@ const routes = [
   },
   {
     path: '/geo/workbench',
-    component: () => import('../views/geo/GeoWorkbenchHubView.vue'),
-    meta: {
-      title: '内容工作台',
-      documentTitle: 'GEO 增长｜内容工作台',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
+    redirect: '/geo/overview',
   },
   {
     path: '/geo/tasks',
@@ -254,33 +352,15 @@ const routes = [
   },
   {
     path: '/geo/prompts',
-    component: () => import('../views/geo/GeoPromptsView.vue'),
-    meta: {
-      title: '优化意图词',
-      documentTitle: 'GEO 增长｜优化意图词',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
+    redirect: (to) => ({ path: '/geo/questions', query: to.query }),
   },
   {
     path: '/geo/facts',
-    component: () => import('../views/geo/GeoFactsView.vue'),
-    meta: {
-      title: '事实库',
-      documentTitle: 'GEO 增长｜事实库',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
+    redirect: '/geo/knowledge',
   },
   {
     path: '/geo/engines',
-    component: () => import('../views/geo/GeoEnginesView.vue'),
-    meta: {
-      title: '引擎',
-      documentTitle: 'GEO 增长｜引擎',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
+    redirect: '/geo/models',
   },
   {
     path: '/geo/ai-settings',

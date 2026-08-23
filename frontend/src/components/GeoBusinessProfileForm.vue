@@ -10,6 +10,7 @@ const form = defineModel({ type: Object, required: true })
 
 const fields = [
   { key: 'product_name', label: '品牌/产品名', placeholder: '本条业务对外使用的产品名，不要填租户总品牌（除非就是同一产品）' },
+  { key: 'website', label: '品牌网站', placeholder: 'https:// 官网结构优化会用这个地址扫描' },
   { key: 'summary', label: '产品简介', type: 'textarea', rows: 2, placeholder: '一句话说明卖什么、解决什么问题' },
   { key: 'capabilities', label: '核心能力', type: 'textarea', rows: 2, placeholder: '逗号或换行分隔' },
   { key: 'audience', label: '目标客户', placeholder: '如：中大型企业客服负责人' },
