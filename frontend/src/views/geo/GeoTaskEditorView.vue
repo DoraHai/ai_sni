@@ -1,8 +1,8 @@
 <script setup>
 /**
  * Vue 母稿编辑器 · 第一刀 + 第二刀
- * 一：Brief / 事实 / 生成 / 检查(Score) / AI 审稿
- * 二：渠道稿 / 审校 / 回填 URL / Webhook 推送
+ * 一：Brief / 事实 / 生成 / 检查(Score)
+ * 二：渠道稿 / 回填 URL / Webhook 推送
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -10,17 +10,14 @@ import { ElMessage } from 'element-plus'
 import {
   nextEditorStep,
   pipelineLabel,
-  reviewStatusLabel as reviewStatusText,
   taskStatusLabel,
 } from '../../utils/geoReportLabels'
 import {
-  aiReviewGeoContentTask,
   applyGeoContentPatch,
   applyGeoRetrievedFacts,
   bindGeoTaskFacts,
   checkGeoContentTask,
   createGeoVariants,
-  decideGeoTaskReview,
   exportGeoVariant,
   fetchGeoBriefCatalog,
   generateGeoContentTask,
@@ -38,7 +35,6 @@ import {
   retrieveGeoTaskFacts,
   saveGeoArticle,
   formatGeoError,
-  submitGeoTaskReview,
   suggestGeoTaskBrief,
   fetchChannelBlueprint,
   waitGeoAsyncJob,
@@ -70,7 +66,6 @@ const retrievePreview = ref([])
 const selectedFactIds = ref([])
 const docTab = ref('master')
 const channelPick = ref(['website', 'wechat', 'zhihu'])
-const reviewNote = ref('')
 const publishUrl = ref('')
 const publishNote = ref('')
 const webhookAccountId = ref(null)
@@ -113,13 +108,6 @@ const variantEdit = reactive({
 })
 /** 渠道稿：默认预览 HTML 正稿；源码仅供改写 */
 const variantViewMode = ref('preview') // preview | source
-
-const REVIEW_LABELS = {
-  none: '未提交',
-  pending: '待审',
-  approved: '已通过',
-  rejected: '已驳回',
-}
 
 /** 规则 code → 运营可读名（母稿就绪检查，非正式成稿） */
 const CHECK_LABELS = {
@@ -1045,32 +1033,6 @@ async function runCheck() {
   }
 }
 
-async function runAiReview() {
-  busy.value = 'review'
-  try {
-    const res = await aiReviewGeoContentTask(tenantId.value, taskId.value, {
-      persist: true,
-    })
-    if (res.task) task.value = res.task
-    const rr = task.value?.rule_result || {}
-    checkResult.value = {
-      ...(checkResult.value || {}),
-      ai_review: res.ai_review,
-      checks: rr.checks || checkResult.value?.checks || [],
-      ready: rr.ready,
-      geo_score: rr.geo_score ?? checkResult.value?.geo_score,
-      geo_subscores: rr.geo_subscores || checkResult.value?.geo_subscores,
-      geo_actions: rr.geo_actions || checkResult.value?.geo_actions || [],
-      patches: rr.patches || checkResult.value?.patches || [],
-    }
-    ElMessage.success(res.ai_review?.summary || '审稿完成')
-  } catch (e) {
-    toastError(e, '审稿失败')
-  } finally {
-    busy.value = ''
-  }
-}
-
 async function applyPatch(code) {
   busy.value = 'patch'
   error.value = ''
@@ -1434,47 +1396,10 @@ async function copyCurrentDoc() {
   }
 }
 
-async function submitReview() {
-  busy.value = 'submitRev'
-  try {
-    task.value = await submitGeoTaskReview(
-      tenantId.value,
-      taskId.value,
-      reviewNote.value || null,
-    )
-    ElMessage.success('已提交审校')
-  } catch (e) {
-    toastError(e, '提交审校失败')
-  } finally {
-    busy.value = ''
-  }
-}
-
-async function decideReview(decision) {
-  busy.value = 'decideRev'
-  try {
-    task.value = await decideGeoTaskReview(
-      tenantId.value,
-      taskId.value,
-      decision,
-      reviewNote.value || null,
-    )
-    ElMessage.success(decision === 'approved' ? '已通过审校' : '已驳回')
-  } catch (e) {
-    toastError(e, '审校决策失败')
-  } finally {
-    busy.value = ''
-  }
-}
-
-/** Why publish/push may fail — shown in UI; click still hits API when possible (N2 expects 审校提示). */
+/** Explain missing channel drafts only; review is not a workflow gate for this deployment. */
 const publishGateHint = computed(() => {
   if (docTab.value === 'master') {
     return '请先切换到 website/wechat/zhihu 等渠道页签再回填'
-  }
-  const rs = task.value?.review_status || 'none'
-  if (rs !== 'approved') {
-    return `未通过审校（当前：${rs}），请先提交审校并审批通过后再回填/推送`
   }
   if (!liveChannelCoverage.value.present.includes(normChannelKey(docTab.value))) {
     return `当前渠道 ${docTab.value} 尚无渠道稿，请先生成渠道稿`
@@ -1492,15 +1417,6 @@ async function recordPublication() {
   if (!publishUrl.value.trim().startsWith('http')) {
     ElMessage.warning('请填写 http(s) 发布 URL')
     return
-  }
-  // Soft pre-check: still call API so gate returns 400 + 审校文案（清单 N2）
-  if ((task.value?.review_status || 'none') !== 'approved') {
-    ElMessage({
-      type: 'warning',
-      message: publishGateHint.value || '未通过审校，将请求接口确认门禁',
-      duration: 5000,
-      showClose: true,
-    })
   }
   busy.value = 'publish'
   try {
@@ -1586,14 +1502,6 @@ async function pushWebhook() {
     ElMessage.warning('请选择推送账号（Webhook 或社交 social_api）')
     return
   }
-  if ((task.value?.review_status || 'none') !== 'approved') {
-    ElMessage({
-      type: 'warning',
-      message: publishGateHint.value || '未通过审校',
-      duration: 5000,
-      showClose: true,
-    })
-  }
   busy.value = 'push'
   try {
     const res = await pushGeoVariantWebhook(taskId.value, {
@@ -1622,14 +1530,6 @@ async function pushBatchSelected() {
   if (!pushSelected.value.length) {
     ElMessage.warning('请勾选至少一个就绪渠道')
     return
-  }
-  if ((task.value?.review_status || 'none') !== 'approved') {
-    ElMessage({
-      type: 'warning',
-      message: publishGateHint.value || '未通过审校',
-      duration: 5000,
-      showClose: true,
-    })
   }
   pushBatchBusy.value = true
   try {
@@ -1952,12 +1852,6 @@ const channelOptions = computed(() => {
     { key: 'zhihu', label: '知乎' },
   ]
 })
-const reviewStatusLabel = computed(() => {
-  const s = task.value?.review_status || 'none'
-  return REVIEW_LABELS[s] || s
-})
-const canSubmitReview = computed(() => !!task.value?.can_submit_review && !!task.value?.article)
-const canDecideReview = computed(() => !!task.value?.can_decide_review)
 const webhookAccountsForChannel = computed(() => {
   // Webhook + social_api for auto push; backend validates channel match
   return (channelAccounts.value || []).filter(
@@ -1985,7 +1879,6 @@ onMounted(load)
             {{ task.title }}
             · {{ taskStatusLabel(task.status) }}
             · {{ pipelineLabel(task.pipeline_step) }}
-            · {{ reviewStatusText(task.review_status) }}
           </span>
         </div>
       </div>
@@ -2357,9 +2250,6 @@ onMounted(load)
                 <el-button size="small" :loading="busy === 'check'" @click="runCheck">
                   检查就绪
                 </el-button>
-                <el-button size="small" :loading="busy === 'review'" @click="runAiReview">
-                  AI 审稿
-                </el-button>
               </div>
             </div>
           </template>
@@ -2562,47 +2452,6 @@ onMounted(load)
             </ul>
           </div>
 
-          <el-divider content-position="left">审校</el-divider>
-          <div class="hint mb">
-            状态：{{ reviewStatusLabel }}
-            <template v-if="task.review_note"> · {{ task.review_note }}</template>
-            <template v-if="task.reviewed_at"> · {{ task.reviewed_at }}</template>
-          </div>
-          <el-input
-            v-model="reviewNote"
-            size="small"
-            placeholder="审校备注（可选）"
-            class="mb"
-          />
-          <div class="row-actions">
-            <el-button
-              size="small"
-              :disabled="!canSubmitReview"
-              :loading="busy === 'submitRev'"
-              @click="submitReview"
-            >
-              提交审校
-            </el-button>
-            <el-button
-              size="small"
-              type="success"
-              :disabled="!canDecideReview"
-              :loading="busy === 'decideRev'"
-              @click="decideReview('approved')"
-            >
-              通过
-            </el-button>
-            <el-button
-              size="small"
-              type="danger"
-              :disabled="!canDecideReview"
-              :loading="busy === 'decideRev'"
-              @click="decideReview('rejected')"
-            >
-              驳回
-            </el-button>
-          </div>
-
           <el-divider content-position="left">回填 / 一键推送</el-divider>
           <div v-if="publishGateHint" class="hint mb" style="color: #b45309">
             门禁：{{ publishGateHint }}
@@ -2785,7 +2634,6 @@ onMounted(load)
               </div>
               <div class="row-actions">
                 <el-button size="small" :loading="busy === 'check'" @click="runCheck">检查</el-button>
-                <el-button size="small" :loading="busy === 'review'" @click="runAiReview">审稿</el-button>
               </div>
             </div>
           </template>
