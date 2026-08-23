@@ -48,6 +48,8 @@ const skipPreviewSummary = computed(
 const skipCount = computed(
   () => stance.value?.skip_preview?.enabled_will_skip ?? 0,
 )
+// 私有化交付由运营统一配置连接参数；原型页只暴露引擎开关与巡检策略。
+const showAdvancedConfig = false
 
 function isRealReady(row) {
   return (
@@ -264,9 +266,9 @@ onMounted(load)
     </div>
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
-    <NeedHintAlert />
+    <NeedHintAlert v-if="showAdvancedConfig" />
 
-    <el-card v-if="stance" shadow="never" class="mb stance-card">
+    <el-card v-if="showAdvancedConfig && stance" shadow="never" class="mb stance-card">
       <template #header>
         <div class="stance-head">
           <span>监测商业定位</span>
@@ -346,7 +348,7 @@ onMounted(load)
       </div>
     </el-card>
 
-    <div class="geo-kpi-grid mb">
+    <div v-if="showAdvancedConfig" class="geo-kpi-grid mb">
       <div class="geo-kpi">
         <div class="kpi-label">引擎总数</div>
         <div class="kpi-value">{{ items.length }}</div>
@@ -382,7 +384,7 @@ onMounted(load)
       <div>租户初始化后应自动生成默认引擎；刷新或检查 API / 租户选择。</div>
     </div>
 
-    <section v-else class="geo-panel">
+    <section v-if="showAdvancedConfig && items.length" class="geo-panel">
       <div class="panel-title">通道列表</div>
       <p class="geo-panel-desc">
         切换为「兼容接口真采样」后请填 Base URL、Model 并粘贴 API Key，再保存。
