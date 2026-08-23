@@ -144,13 +144,7 @@ const routes = [
   },
   {
     path: '/geo/permissions',
-    component: () => import('../views/geo/GeoPermissionsView.vue'),
-    meta: {
-      title: '团队权限',
-      documentTitle: 'GEO 品牌优化｜团队权限',
-      workflow: 'GEO 品牌优化',
-      perm: 'settings.accounts',
-    },
+    redirect: '/geo/overview',
   },
   {
     path: '/geo/models',
