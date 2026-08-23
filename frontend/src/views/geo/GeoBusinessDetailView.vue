@@ -46,7 +46,10 @@ const profileOpen = ref(false)
 const savingProfile = ref(false)
 const profileForm = ref({
   product_name: '',
+  website: '',
   summary: '',
+  honors: '',
+  qualifications: '',
   capabilities: '',
   audience: '',
   scenarios: '',
@@ -65,8 +68,12 @@ function joinList(v) {
 function openProfile() {
   const p = biz.value?.profile || {}
   profileForm.value = {
+    ...p,
     product_name: p.product_name || '',
+    website: p.website || p.website_url || p.official_url || '',
     summary: p.summary || '',
+    honors: joinList(p.honors),
+    qualifications: joinList(p.qualifications),
     capabilities: joinList(p.capabilities),
     audience: p.audience || '',
     scenarios: joinList(p.scenarios),
