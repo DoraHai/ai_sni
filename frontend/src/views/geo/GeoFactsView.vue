@@ -1,11 +1,14 @@
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { createGeoFact, listGeoBusinesses, listGeoFacts, patchGeoFact, verifyGeoFact } from '../../api/geoContent'
+import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import NeedHintAlert from '../../components/NeedHintAlert.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
+const router = useRouter()
 const { tenantId } = useGeoTenant()
 const loading = ref(false)
 const error = ref('')
@@ -211,6 +214,50 @@ const FACT_TYPE_LABELS = {
   policy: '政策',
   other: '其他',
 }
+const typeCards = computed(() => [
+  { key: 'product', title: '产品', text: '功能说明、版本差异、适用场景' },
+  { key: 'case', title: '案例', text: '行业、规模、结果数据' },
+  { key: 'metric', title: '指标', text: '可核验的效果与数据' },
+  { key: 'policy', title: '政策 / 边界', text: '承诺、限制与禁用表述' },
+  { key: 'other', title: '官网 / 上传资料', text: '可被内容生成复用的材料' },
+].map((g) => ({
+  ...g,
+  count: items.value.filter((i) => i.fact_type === g.key).length,
+})))
+
+const knowledgeGaps = computed(() => {
+  const cards = typeCards.value
+  const caseN = cards.find((c) => c.key === 'case')?.count || 0
+  const faqish = (cards.find((c) => c.key === 'other')?.count || 0)
+  const out = []
+  if (caseN < 3) {
+    out.push({
+      title: '案例缺口',
+      text: `当前仅 ${caseN} 条案例事实`,
+      reason: '补案例后可支撑选型类提问。',
+    })
+  }
+  if (faqish < 10) {
+    out.push({
+      title: 'FAQ / 资料缺口',
+      text: '价格、版本和替代方案类事实偏少',
+      reason: '这些内容更容易被 AI 摘取为答案。',
+    })
+  }
+  return out
+})
+
+const knowledgeAnswer = computed(() => ({
+  now: [
+    '我现在怎么样？',
+    `知识库 ${items.value.length} 条，已核验 ${items.value.filter((i) => i.trust_level === 'verified').length} 条。`,
+  ],
+  why: ['为什么？', 'AI 更容易引用有明确场景、结果数据和更新时间的事实。'],
+  next: [
+    '下一步怎么办？',
+    knowledgeGaps.value[0]?.reason || '优先把待审事实核验到 3 条以上再生成文章。',
+  ],
+}))
 const TRUST_LABELS = {
   verified: '已核验',
   needs_review: '待审',
@@ -239,21 +286,48 @@ onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="geo-page">
-    <div class="page-header">
-      <div>
-        <div class="page-title">事实库</div>
-        <div class="page-desc">对应静态 sources.html · 方案 B 已迁 Vue</div>
-      </div>
-      <div class="header-actions">
-        <el-button type="primary" @click="createOpen = true">新建事实</el-button>
-        <el-button @click="load">刷新</el-button>
-        <router-link class="el-button" to="/geo/workbench">工作台</router-link>
-      </div>
-    </div>
+  <GeoWorkbenchPage
+    title="知识库"
+    sub="维护品牌事实、案例和 FAQ，供 GEO 文章与 AI 可见度引用"
+    :loading="loading"
+  >
+    <template #actions>
+      <button class="gd-btn" @click="router.push('/geo/tasks')">注入文章生成</button>
+      <button class="gd-btn primary" @click="createOpen = true">+ 上传资料</button>
+    </template>
+    <div class="geo-dash">
 
     <NeedHintAlert />
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
+    <div class="gv2-grid-3" style="margin-bottom: 14px;">
+      <button
+        v-for="c in typeCards"
+        :key="c.key"
+        type="button"
+        class="gv2-card"
+        style="text-align:left;cursor:pointer;"
+        @click="form.fact_type = c.key; createOpen = true"
+      >
+        <b>{{ c.title }}</b>
+        <p>{{ c.text }}</p>
+        <span class="gv2-tag">{{ c.count }} 条</span>
+      </button>
+    </div>
+    <section v-if="knowledgeGaps.length" class="gv2-panel">
+      <div class="gv2-panel-head">
+        <div>
+          <span class="gv2-kicker">素材健康度</span>
+          <h2>下一步补什么</h2>
+        </div>
+      </div>
+      <div class="recommend-list">
+        <div v-for="g in knowledgeGaps" :key="g.title" class="gv2-card">
+          <b>{{ g.title }}</b>
+          <p>{{ g.text }}</p>
+          <p>{{ g.reason }}</p>
+        </div>
+      </div>
+    </section>
 
     <div class="filters">
       <el-select v-model="trust" clearable placeholder="信任级别" style="width: 168px">
@@ -452,7 +526,8 @@ onMounted(load)
         <el-button type="primary" :loading="verifying" @click="submitVerify">确认核验</el-button>
       </template>
     </el-dialog>
-  </div>
+    </div>
+  </GeoWorkbenchPage>
 </template>
 
 <style scoped>

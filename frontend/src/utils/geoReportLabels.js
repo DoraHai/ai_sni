@@ -43,6 +43,12 @@ export const ENGINE_LABEL = {
   deepseek: 'DeepSeek',
   doubao: '豆包',
   kimi: 'Kimi',
+  qwen: '通义千问',
+  tongyi: '通义千问',
+  yuanbao: '腾讯元宝',
+  hunyuan: '腾讯元宝',
+  claude: 'Claude',
+  gemini: 'Gemini',
   perplexity: 'Perplexity',
   other: '其他',
 }

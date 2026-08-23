@@ -21,6 +21,7 @@ import {
   startSocialOAuth,
   verifySocialAccount,
 } from '../../api/geoContent'
+import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import NeedHintAlert from '../../components/NeedHintAlert.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
@@ -673,22 +674,16 @@ onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="geo-page">
-    <div class="page-header">
-      <div>
-        <div class="page-title">发布渠道</div>
-        <div class="page-desc">
-          <strong>可自动推送</strong>：发布模式 = <code>auto_publish</code> 的官网/文档 + Webhook 账号（HTTPS）。
-          微信/知乎等仅支持出稿后<strong>人工发 + 回填 URL</strong>（无官方 OAuth 自动化）。
-        </div>
-      </div>
-      <div class="header-actions">
-        <el-button @click="createChOpen = true">新建渠道</el-button>
-        <el-button type="primary" @click="openCreateAccount()">新建账号</el-button>
-        <el-button @click="load">刷新</el-button>
-        <router-link class="el-button" to="/geo/workbench">工作台</router-link>
-      </div>
-    </div>
+  <GeoWorkbenchPage
+    title="分发平台"
+    sub="在 GEO 工作台维护发布账号，并按 AI 引用价值配置渠道策略"
+    :loading="loading"
+  >
+    <template #actions>
+      <button class="gd-btn" @click="load">刷新连接状态</button>
+      <button class="gd-btn primary" @click="createChOpen = true">+ 添加分发平台</button>
+    </template>
+    <div class="geo-dash geo-page">
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
     <NeedHintAlert />
@@ -1306,7 +1301,8 @@ onMounted(load)
         <el-button type="primary" @click="saveEditAccount">保存</el-button>
       </template>
     </el-dialog>
-  </div>
+    </div>
+  </GeoWorkbenchPage>
 </template>
 
 <style scoped>

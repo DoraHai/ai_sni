@@ -1,13 +1,15 @@
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createGeoContentTask,
   deleteGeoContentTask,
+  fetchGeoContentTaskImpact,
   listGeoContentTasks,
   listGeoPrompts,
 } from '../../api/geoContent'
+import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { pipelineLabel, taskStatusLabel } from '../../utils/geoReportLabels'
 
@@ -18,6 +20,7 @@ const loading = ref(false)
 const error = ref('')
 const items = ref([])
 const statusFilter = ref('')
+const chip = ref('all')
 const q = ref('')
 const createOpen = ref(false)
 const creating = ref(false)
@@ -38,6 +41,64 @@ const statusOptions = [
   { value: 'archived', label: '已归档' },
 ]
 const includeArchived = ref(false)
+const recPrompts = ref([])
+const citeRows = ref([])
+
+const CHIP_STATUS = {
+  all: null,
+  draft: ['draft', 'facts_bound', 'editing', 'generating'],
+  polish: ['needs_fix'],
+  publish: ['ready', 'exported'],
+  published: ['published'],
+}
+
+const chipCounts = computed(() => {
+  const rows = items.value || []
+  const count = (keys) => rows.filter((t) => keys.includes(t.status)).length
+  return {
+    all: rows.length,
+    draft: count(CHIP_STATUS.draft),
+    polish: count(CHIP_STATUS.polish),
+    publish: count(CHIP_STATUS.publish),
+    published: count(CHIP_STATUS.published),
+  }
+})
+
+const tableRows = computed(() => {
+  const keys = CHIP_STATUS[chip.value]
+  let rows = items.value || []
+  if (keys) rows = rows.filter((t) => keys.includes(t.status))
+  const qq = q.value.trim()
+  if (qq) {
+    rows = rows.filter(
+      (t) =>
+        String(t.title || '').includes(qq) ||
+        String(t.prompt_question || '').includes(qq),
+    )
+  }
+  return rows
+})
+
+function friendliness(t) {
+  let s = 38
+  if (t.brief_ready) s += 16
+  const rich = Number(t.strategy_richness || 0)
+  if (rich) s += Math.min(20, rich)
+  if (t.status === 'published') s += 24
+  else if (t.status === 'ready' || t.status === 'exported') s += 16
+  else if (t.status === 'needs_fix') s += 4
+  return Math.min(99, s)
+}
+
+function channelLabel(ch) {
+  return { website: '官网', wechat: '公众号', zhihu: '知乎', media: '媒体' }[ch] || ch
+}
+
+const recommended = computed(() =>
+  recPrompts.value
+    .filter((p) => Array.isArray(p.tags) && p.tags.includes('brand_missing'))
+    .slice(0, 4),
+)
 
 function statusTagType(status) {
   if (status === 'published' || status === 'ready') return 'success'
@@ -56,8 +117,8 @@ async function load() {
   error.value = ''
   try {
     const params = {
-      limit: pageSize.value,
-      offset: (page.value - 1) * pageSize.value,
+      limit: 200,
+      offset: 0,
     }
     if (statusFilter.value) params.status = statusFilter.value
     if (q.value.trim()) params.q = q.value.trim()
@@ -65,6 +126,38 @@ async function load() {
     const data = await listGeoContentTasks(tenantId.value, params)
     items.value = data.items || []
     total.value = Number(data.total ?? items.value.length) || 0
+    try {
+      const pr = await listGeoPrompts(tenantId.value, { status: 'active' })
+      recPrompts.value = pr.items || []
+    } catch {
+      recPrompts.value = []
+    }
+    const published = (items.value || []).filter((t) => t.status === 'published').slice(0, 6)
+    try {
+      const impacts = await Promise.all(
+        published.map((t) =>
+          fetchGeoContentTaskImpact(tenantId.value, t.id, 14).then((imp) => ({
+            title: t.title,
+            cites: Number(imp.cite_hits?.total ?? imp.summary?.cite_hit_total ?? 0),
+            question: recPrompts.value.find((p) => p.id === t.prompt_id)?.question || '—',
+            id: t.id,
+          })).catch(() => ({
+            title: t.title,
+            cites: t.citation_count ?? 0,
+            question: '—',
+            id: t.id,
+          })),
+        ),
+      )
+      citeRows.value = impacts
+    } catch {
+      citeRows.value = published.map((t) => ({
+        title: t.title,
+        cites: 0,
+        question: '—',
+        id: t.id,
+      }))
+    }
   } catch (e) {
     error.value = e.message || '加载失败'
     items.value = []
@@ -128,6 +221,21 @@ function openEditor(row) {
   router.push(`/geo/tasks/${row.id}`)
 }
 
+async function createFromPrompt(prompt) {
+  if (!prompt?.id) return
+  try {
+    const task = await createGeoContentTask({
+      tenant_id: tenantId.value,
+      prompt_id: prompt.id,
+      title: prompt.question,
+    })
+    ElMessage.success(`已创建任务 #${task.id}`)
+    router.push(`/geo/tasks/${task.id}`)
+  } catch (e) {
+    ElMessage.error(e.message || '创建失败')
+  }
+}
+
 async function archiveTask(row) {
   try {
     await ElMessageBox.confirm(`归档任务 #${row.id}？列表默认不再显示。`, '归档', {
@@ -165,93 +273,77 @@ onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="geo-page geo-tasks">
-    <div class="page-header">
-      <div>
-        <div class="page-title">优化文章</div>
-        <div class="page-desc">
-          一篇文章从草稿到发出去。点进去会告诉你现在该做哪一步。
-        </div>
-      </div>
-      <div class="header-actions">
-        <router-link class="el-button" to="/geo/prompts">优化意图词</router-link>
-        <router-link class="el-button" to="/geo/facts">事实库</router-link>
-        <el-button type="primary" @click="openCreate">新建优化文章</el-button>
-        <el-button @click="load">刷新</el-button>
-      </div>
-    </div>
+  <GeoWorkbenchPage
+    title="GEO 文章工作台"
+    sub="围绕用户提问生产可验证、可摘取、可被 AI 引用的内容"
+    :loading="loading"
+    class="geo-tasks"
+  >
+    <template #actions>
+      <button class="gd-btn" @click="router.push('/geo/placements')">信源素材库</button>
+      <button class="gd-btn" @click="load">刷新</button>
+      <button class="gd-btn primary" @click="openCreate">AI 生成 GEO 文章</button>
+    </template>
+    <div class="geo-dash">
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
-
-    <div class="filters">
-      <el-select v-model="statusFilter" style="width: 168px" placeholder="状态">
-        <el-option v-for="o in statusOptions" :key="o.value || 'all'" :label="o.label" :value="o.value" />
-      </el-select>
-      <el-input
-        v-model="q"
-        clearable
-        placeholder="搜索标题 / 阻断原因"
-        style="width: 260px"
-        @keyup.enter="load"
-      />
-      <el-button type="primary" plain @click="load">查询</el-button>
-      <el-checkbox v-model="includeArchived" :disabled="!!statusFilter">含归档</el-checkbox>
+    <div v-if="recommended.length" class="gd-card" style="margin-bottom:16px">
+      <div class="gd-hd">
+        <h3>优先从这些提问写</h3>
+        <button class="gd-btn primary" style="margin-left:auto" @click="createFromPrompt(recommended[0])">立即生成</button>
+      </div>
+      <div class="gd-bd">
+        <div v-for="p in recommended" :key="p.id" style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #e8eaf0">
+          <span>「{{ p.question }}」</span>
+          <el-button link type="primary" @click="createFromPrompt(p)">生成文章</el-button>
+        </div>
+      </div>
     </div>
 
-    <div class="geo-table-shell">
-      <el-table :data="items" stripe empty-text="暂无优化文章" class="task-table">
-        <el-table-column prop="id" label="ID" width="72" />
-        <el-table-column label="标题" min-width="220">
-          <template #default="{ row }">
-            <div class="title-cell">{{ row.title || '—' }}</div>
-            <div class="sub">{{ row.prompt_question || `prompt #${row.prompt_id}` }}</div>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="110">
-          <template #default="{ row }">
-            <el-tag size="small" :type="statusTagType(row.status)" effect="light">
-              {{ taskStatusLabel(row.status) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="做到哪" width="100">
-          <template #default="{ row }">
-            {{ pipelineLabel(row.pipeline_step) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="阻断" min-width="120">
-          <template #default="{ row }">
-            <span v-if="row.blocked_reason" class="blocked">{{ row.blocked_reason }}</span>
-            <span v-else class="muted">—</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="更新" width="170">
-          <template #default="{ row }">{{ row.updated_at || row.created_at || '—' }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
-          <template #default="{ row }">
-            <el-button type="primary" link @click="openEditor(row)">打开</el-button>
-            <el-button
-              v-if="row.status !== 'archived'"
-              type="warning"
-              link
-              @click="archiveTask(row)"
-            >归档</el-button>
-            <el-button type="danger" link @click="hardDeleteTask(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <div class="geo-pager">
-        <el-pagination
-          background
-          layout="total, sizes, prev, pager, next"
-          :total="total"
-          :page-size="pageSize"
-          :current-page="page"
-          :page-sizes="[10, 20, 50, 100]"
-          @current-change="onPageChange"
-          @size-change="onSizeChange"
-        />
+    <div class="geo-chips">
+      <button class="geo-chip" :class="{ active: chip === 'all' }" @click="chip = 'all'">全部 {{ chipCounts.all }}</button>
+      <button class="geo-chip" :class="{ active: chip === 'draft' }" @click="chip = 'draft'">草稿 {{ chipCounts.draft }}</button>
+      <button class="geo-chip" :class="{ active: chip === 'polish' }" @click="chip = 'polish'">待润色 {{ chipCounts.polish }}</button>
+      <button class="geo-chip" :class="{ active: chip === 'publish' }" @click="chip = 'publish'">待发布 {{ chipCounts.publish }}</button>
+      <button class="geo-chip" :class="{ active: chip === 'published' }" @click="chip = 'published'">已发布 {{ chipCounts.published }}</button>
+      <input v-model="q" class="gd-search" placeholder="搜索文章或目标提问" @keyup.enter="load" />
+    </div>
+
+    <div class="gd-card">
+      <div class="gd-bd" style="padding:0">
+        <table>
+          <thead>
+            <tr>
+              <th>文章</th>
+              <th>目标提问</th>
+              <th>发布信源</th>
+              <th>AI 友好度</th>
+              <th>状态</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in tableRows" :key="row.id">
+              <td>
+                <b>{{ row.title || '—' }}</b>
+                <div class="gd-sub" style="margin:0">{{ pipelineLabel(row.pipeline_step) }}</div>
+              </td>
+              <td>{{ row.prompt_question || `提问 #${row.prompt_id}` }}</td>
+              <td>
+                <span v-for="ch in (row.target_channels || [])" :key="ch" class="gd-tag" style="margin-right:4px">{{ channelLabel(ch) }}</span>
+              </td>
+              <td>
+                <span class="geo-ready"><i :style="{ '--ready': friendliness(row) + '%' }" />{{ friendliness(row) }}</span>
+              </td>
+              <td><span class="gd-badge" :class="row.status === 'published' ? 'green' : row.status === 'needs_fix' ? 'amber' : 'blue'">{{ taskStatusLabel(row.status) }}</span></td>
+              <td>
+                <el-button link type="primary" @click="openEditor(row)">在线编辑</el-button>
+                <el-button v-if="row.status !== 'archived'" link @click="archiveTask(row)">归档</el-button>
+              </td>
+            </tr>
+            <tr v-if="!tableRows.length"><td colspan="6" class="gd-sub">暂无优化文章</td></tr>
+          </tbody>
+        </table>
       </div>
     </div>
 
@@ -283,7 +375,8 @@ onMounted(load)
         <el-button type="primary" :loading="creating" @click="submitCreate">创建</el-button>
       </template>
     </el-dialog>
-  </div>
+    </div>
+  </GeoWorkbenchPage>
 </template>
 
 <style scoped>

@@ -415,7 +415,7 @@ def _business_week_actions(
                 "title": f"超 SLA 缺口：{(p.question or '')[:48]}",
                 "detail": f"已 {age} 天未补内容（SLA {sla} 天）",
                 "prompt_id": p.id,
-                "href": "/geo/gaps",
+                "href": "/geo/recommend",
             }
         )
     elif gaps:
@@ -426,7 +426,7 @@ def _business_week_actions(
                 "title": f"待补缺口：{(p.question or '')[:48]}",
                 "detail": "品牌未被提及，可直接建任务",
                 "prompt_id": p.id,
-                "href": "/geo/gaps",
+                "href": "/geo/recommend",
             }
         )
 
