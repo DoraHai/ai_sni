@@ -55,6 +55,20 @@ test('prototype navigation includes evaluation analysis and excludes team permis
   )
 
   assert.deepEqual(sections, ['数据看板', '智能监测', 'GEO 执行', '设置'])
-  assert.ok(items.includes('评价分析'))
+  assert.deepEqual(items, [
+    'GEO 概览',
+    'AI 可见度',
+    '提问监控',
+    '竞品分析',
+    '评价分析',
+    '信源分析',
+    'GEO 文章',
+    '媒体 / 信源策略',
+    '分发平台',
+    '官网结构优化',
+    '品牌信息',
+    '知识库',
+    'AI 引擎管理',
+  ])
   assert.ok(!items.includes('团队权限'))
 })
