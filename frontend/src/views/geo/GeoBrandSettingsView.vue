@@ -6,7 +6,6 @@ import GeoBusinessProfileForm from '../../components/GeoBusinessProfileForm.vue'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import {
   fetchGeoCompetitorInsights,
-  fetchOnboardingReadiness,
   listGeoBusinesses,
   patchGeoBusiness,
 } from '../../api/geoContent'
@@ -19,7 +18,6 @@ const saving = ref(false)
 const error = ref('')
 const businesses = ref([])
 const selectedId = ref(null)
-const readiness = ref(null)
 const profile = ref({})
 
 const tenantName = computed(() => {
@@ -31,7 +29,7 @@ const current = computed(
 )
 const completeness = computed(() => {
   const p = profile.value || {}
-  const keys = ['product_name', 'website', 'summary', 'audience', 'industry', 'banned_claims']
+  const keys = ['product_name', 'website', 'summary', 'industry', 'honors', 'qualifications']
   const hit = keys.filter((k) => String(p[k] || '').trim()).length
   return `${hit}/${keys.length}`
 })
@@ -57,6 +55,8 @@ function emptyProfile() {
     product_name: '',
     website: '',
     summary: '',
+    honors: '',
+    qualifications: '',
     capabilities: '',
     audience: '',
     scenarios: '',
@@ -73,9 +73,12 @@ function profileFromRow(row) {
   const p = row?.profile || {}
   const join = (v) => (Array.isArray(v) ? v.join('，') : v || '')
   return {
+    ...p,
     product_name: p.product_name || row?.name || '',
     website: p.website || p.website_url || p.official_url || '',
     summary: p.summary || row?.description || '',
+    honors: join(p.honors),
+    qualifications: join(p.qualifications),
     capabilities: join(p.capabilities),
     audience: join(p.audience),
     scenarios: join(p.scenarios),
@@ -117,13 +120,11 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [b, r, comps] = await Promise.all([
+    const [b, comps] = await Promise.all([
       listGeoBusinesses(tenantId.value, { status: 'active' }),
-      fetchOnboardingReadiness(tenantId.value).catch(() => null),
       fetchGeoCompetitorInsights(tenantId.value).catch(() => null),
     ])
     businesses.value = b.items || []
-    readiness.value = r
     insightNames.value = (comps?.items || []).map((x) => x.name).filter(Boolean)
     if (!selectedId.value && businesses.value.length) selectedId.value = businesses.value[0].id
     profile.value = profileFromRow(current.value)
@@ -162,12 +163,11 @@ onMounted(load)
 <template>
   <GeoWorkbenchPage
     title="品牌信息"
-    :sub="`维护品牌名称、官网、行业和业务介绍 · 完整度 ${completeness}`"
+    :sub="`维护品牌名称、官网、行业、介绍与资质信息 · 完整度 ${completeness}`"
     :loading="loading"
   >
     <template #actions>
       <span class="gd-badge green">完整度 {{ completeness }}</span>
-      <button class="gd-btn" @click="router.push('/geo/onboarding')">开户向导</button>
       <button class="gd-btn primary" :disabled="saving" @click="save">保存</button>
     </template>
     <div class="geo-dash">
@@ -179,13 +179,13 @@ onMounted(load)
         <div>
           <span class="gv2-kicker">基础配置</span>
           <h2>品牌资料 · {{ tenantName }}</h2>
-          <p class="sub">按业务线维护画像。AI 生成文章时会读取这些字段。</p>
+          <p class="sub">按业务维护品牌资料。荣誉和资质仅作为待佐证资料，不会自动写入内容结论。</p>
         </div>
         <el-select v-model="selectedId" placeholder="选择业务" style="width: 220px">
           <el-option v-for="b in businesses" :key="b.id" :label="b.name" :value="b.id" />
         </el-select>
       </div>
-      <el-empty v-if="!businesses.length" description="还没有业务线，先去业务管理或开户向导创建。">
+      <el-empty v-if="!businesses.length" description="还没有业务线，请先创建业务。">
         <el-button type="primary" @click="router.push('/geo/businesses')">去业务管理</el-button>
       </el-empty>
       <GeoBusinessProfileForm v-else v-model="profile" />
@@ -217,28 +217,6 @@ onMounted(load)
       </div>
     </section>
 
-    <section v-if="readiness?.items?.length" class="gv2-panel">
-      <div class="gv2-panel-head">
-        <div>
-          <span class="gv2-kicker">配置影响</span>
-          <h2>还差什么</h2>
-          <p class="sub">已就绪 {{ readiness.ready_count }}/{{ readiness.total }}</p>
-        </div>
-      </div>
-      <div class="gv2-grid-2">
-        <div
-          v-for="it in readiness.items"
-          :key="it.key"
-          class="gv2-card"
-          role="button"
-          @click="it.href && router.push(it.href)"
-        >
-          <b>{{ it.title }}</b>
-          <p>{{ it.hint }}</p>
-          <span class="gv2-tag" :class="it.ok ? 'good' : 'warn'">{{ it.ok ? '已就绪' : '待补' }}</span>
-        </div>
-      </div>
-    </section>
     </div>
   </GeoWorkbenchPage>
 </template>

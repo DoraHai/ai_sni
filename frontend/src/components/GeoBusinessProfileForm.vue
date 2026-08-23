@@ -1,6 +1,6 @@
 <script setup>
 /**
- * 业务线画像：Brief / 母稿 / 报告统一读取的上下文字段。
+ * 品牌信息页：仅呈现原型定义的品牌资料字段。
  */
 defineProps({
   disabled: { type: Boolean, default: false },
@@ -9,18 +9,12 @@ defineProps({
 const form = defineModel({ type: Object, required: true })
 
 const fields = [
-  { key: 'product_name', label: '品牌/产品名', placeholder: '本条业务对外使用的产品名，不要填租户总品牌（除非就是同一产品）' },
-  { key: 'website', label: '品牌网站', placeholder: 'https:// 官网结构优化会用这个地址扫描' },
-  { key: 'summary', label: '产品简介', type: 'textarea', rows: 2, placeholder: '一句话说明卖什么、解决什么问题' },
-  { key: 'capabilities', label: '核心能力', type: 'textarea', rows: 2, placeholder: '逗号或换行分隔' },
-  { key: 'audience', label: '目标客户', placeholder: '如：中大型企业客服负责人' },
-  { key: 'scenarios', label: '典型场景', type: 'textarea', rows: 2, placeholder: '逗号或换行分隔' },
-  { key: 'geo_scope', label: '地域范围', placeholder: '如：中国大陆 / 华东制造业' },
-  { key: 'industry', label: '行业', placeholder: '如：智能客服 / B2B SaaS' },
-  { key: 'competitors', label: '主要竞品', placeholder: '逗号分隔，如：七鱼, Udesk' },
-  { key: 'recommend_reasons', label: '推荐理由', type: 'textarea', rows: 2, placeholder: '可核验的推荐点，逗号或换行分隔' },
-  { key: 'banned_claims', label: '禁止表述', placeholder: '如：第一名, 保证被 AI 收录' },
-  { key: 'cta', label: 'CTA', placeholder: '如：预约演示 / 下载方案' },
+  { key: 'product_name', label: '品牌名称', placeholder: '填写对外使用的品牌或产品名称' },
+  { key: 'website', label: '官网链接', placeholder: 'https://example.com' },
+  { key: 'industry', label: '所属行业', placeholder: '如：智能客服 / B2B SaaS' },
+  { key: 'summary', label: '品牌简介', type: 'textarea', rows: 3, placeholder: '简要说明品牌、产品和服务内容' },
+  { key: 'honors', label: '品牌荣誉', type: 'textarea', rows: 2, placeholder: '逗号或换行分隔；仅记录可佐证的荣誉' },
+  { key: 'qualifications', label: '资质证书', type: 'textarea', rows: 2, placeholder: '逗号或换行分隔；仅记录可佐证的资质' },
 ]
 </script>
 
