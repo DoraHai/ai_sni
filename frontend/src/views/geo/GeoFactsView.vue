@@ -7,8 +7,10 @@ import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import NeedHintAlert from '../../components/NeedHintAlert.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
+import { getGeoPrototypePageSurface } from '../../utils/geoEditorSurface'
 
 const router = useRouter()
+const prototypeSurface = getGeoPrototypePageSurface()
 const { tenantId } = useGeoTenant()
 const loading = ref(false)
 const error = ref('')
@@ -292,14 +294,13 @@ onMounted(load)
     :loading="loading"
   >
     <template #actions>
-      <button class="gd-btn" @click="router.push('/geo/tasks')">注入文章生成</button>
-      <button class="gd-btn primary" @click="createOpen = true">+ 上传资料</button>
+      <button class="gd-btn primary" @click="createOpen = true">+ 新建事实</button>
     </template>
     <div class="geo-dash">
 
-    <NeedHintAlert />
+    <NeedHintAlert v-if="prototypeSurface.showKnowledgeHealth" />
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
-    <div class="gv2-grid-3" style="margin-bottom: 14px;">
+    <div v-if="prototypeSurface.showKnowledgeHealth" class="gv2-grid-3" style="margin-bottom: 14px;">
       <button
         v-for="c in typeCards"
         :key="c.key"
@@ -313,7 +314,7 @@ onMounted(load)
         <span class="gv2-tag">{{ c.count }} 条</span>
       </button>
     </div>
-    <section v-if="knowledgeGaps.length" class="gv2-panel">
+    <section v-if="prototypeSurface.showKnowledgeHealth && knowledgeGaps.length" class="gv2-panel">
       <div class="gv2-panel-head">
         <div>
           <span class="gv2-kicker">素材健康度</span>
@@ -335,15 +336,15 @@ onMounted(load)
         <el-option label="待核验" value="needs_review" />
         <el-option label="草稿" value="draft" />
       </el-select>
-      <el-select v-model="filterBusinessId" clearable filterable placeholder="业务线（含共用）" style="width: 200px">
+      <el-select v-if="prototypeSurface.showKnowledgeHealth" v-model="filterBusinessId" clearable filterable placeholder="业务线（含共用）" style="width: 200px">
         <el-option v-for="b in businesses" :key="b.id" :label="b.name" :value="b.id" />
       </el-select>
-      <span class="toolbar-hint">生成母稿需 ≥3 条已核验事实</span>
+      <span class="toolbar-hint">母稿会优先使用已核验资料</span>
     </div>
 
     <div class="geo-table-shell">
       <el-table :data="pager.pagedItems" stripe empty-text="暂无事实">
-        <el-table-column prop="id" label="ID" width="72" />
+        <el-table-column v-if="prototypeSurface.showKnowledgeHealth" prop="id" label="ID" width="72" />
         <el-table-column label="标题 / 陈述" min-width="260">
           <template #default="{ row }">
             <div class="title">{{ row.title }}</div>
@@ -377,7 +378,7 @@ onMounted(load)
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column v-if="prototypeSurface.showKnowledgeHealth" label="状态" width="90">
           <template #default="{ row }">{{ statusLabel(row.status) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="200" fixed="right">

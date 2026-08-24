@@ -18,8 +18,10 @@ import {
   fmtPct,
 } from '../../utils/geoReportLabels'
 import { citationHeatFromItems, heatTone } from '../../utils/geoSnapshotSummary'
+import { getGeoPrototypePageSurface } from '../../utils/geoEditorSurface'
 
 const router = useRouter()
+const prototypeSurface = getGeoPrototypePageSurface()
 const { days: observationDays, start: obsStart, end: obsEnd, label: obsLabel } = useObservationPeriod()
 const tenantId = computed(() =>
   session.tenantId || (import.meta.env.DEV && import.meta.env.VITE_API_KEY ? 1 : null),
@@ -127,12 +129,10 @@ onMounted(load)
   >
     <template #actions>
       <input v-model="domainQuery" class="gd-search" placeholder="搜索信源 / 文章…" />
-      <button class="gd-btn" :disabled="!citeItems.length" @click="exportCsv">数据导出</button>
-      <button class="gd-btn primary" :disabled="backfilling" @click="runBackfill">回填归因</button>
     </template>
     <div class="geo-dash geo-page">
 
-    <details class="geo-glossary">
+    <details v-if="prototypeSurface.showCitationRawMetrics" class="geo-glossary">
       <summary>统计口径（点击展开）</summary>
       <ul>
         <li v-for="(line, i) in REPORT_GLOSSARY.citations" :key="i">{{ line }}</li>
@@ -168,7 +168,7 @@ onMounted(load)
       </div>
     </div>
 
-    <div v-if="data" class="geo-kpi-grid">
+    <div v-if="prototypeSurface.showCitationRawMetrics && data" class="geo-kpi-grid">
       <div class="geo-kpi">
         <div class="kpi-label">含引用的快照</div>
         <div class="kpi-value">{{ fmtInt(data.snapshots_with_citations) }}</div>
@@ -195,7 +195,7 @@ onMounted(load)
     </div>
 
     <template v-if="data">
-      <section v-if="qualityRows.length" class="geo-panel">
+      <section v-if="prototypeSurface.showCitationRawMetrics && qualityRows.length" class="geo-panel">
         <div class="panel-title">引用质量分布</div>
         <p class="geo-panel-desc">来自快照标注；未知偏多时请到可见度页补标或「校验引用」。</p>
         <el-table :data="qualityRows" size="small" empty-text="暂无标注">
@@ -207,7 +207,7 @@ onMounted(load)
 
       <section class="geo-panel">
         <div class="panel-title-row">
-          <div class="panel-title">被引域名明细</div>
+          <div class="panel-title">引用来源</div>
         </div>
         <div class="geo-filter-bar">
           <el-input
@@ -216,7 +216,7 @@ onMounted(load)
             placeholder="搜索域名"
             style="width: 200px"
           />
-          <el-checkbox v-model="ownOnly">仅看自有域</el-checkbox>
+          <el-checkbox v-if="prototypeSurface.showCitationRawMetrics" v-model="ownOnly">仅看自有域</el-checkbox>
           <span class="geo-muted">当前 {{ citeItems.length }} 个域名</span>
         </div>
         <el-table
@@ -239,19 +239,19 @@ onMounted(load)
               {{ (row.engines || []).map(engineDisplay).join(' · ') || '—' }}
             </template>
           </el-table-column>
-          <el-table-column label="蓝图渠道" min-width="140" show-overflow-tooltip>
+          <el-table-column v-if="prototypeSurface.showCitationRawMetrics" label="蓝图渠道" min-width="140" show-overflow-tooltip>
             <template #default="{ row }">
               {{ row.blueprint_channel_name || row.blueprint_channel_key || '未匹配' }}
             </template>
           </el-table-column>
-          <el-table-column label="域名归属" width="100">
+          <el-table-column v-if="prototypeSurface.showCitationRawMetrics" label="域名归属" width="100">
             <template #default="{ row }">
               <span :class="row.is_own_domain ? 'geo-tag-own' : 'geo-tag-ext'">
                 {{ row.is_own_domain ? '自有' : '外部' }}
               </span>
             </template>
           </el-table-column>
-          <el-table-column label="" width="88" fixed="right">
+          <el-table-column v-if="prototypeSurface.showCitationRawMetrics" label="" width="88" fixed="right">
             <template #default>
               <el-button link type="primary" size="small">看快照</el-button>
             </template>

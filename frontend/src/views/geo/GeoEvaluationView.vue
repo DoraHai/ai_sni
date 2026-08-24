@@ -19,8 +19,10 @@ import {
   fmtInt,
   labelOf,
 } from '../../utils/geoReportLabels'
+import { getGeoPrototypePageSurface } from '../../utils/geoEditorSurface'
 
 const router = useRouter()
+const prototypeSurface = getGeoPrototypePageSurface()
 const { days: observationDays, start: obsStart, end: obsEnd, label: obsLabel } = useObservationPeriod()
 
 const tenantId = computed(() =>
@@ -130,13 +132,10 @@ onMounted(load)
       </div>
       <div class="header-actions">
         <el-button :loading="loading" @click="load">刷新</el-button>
-        <el-button :disabled="!recentItems.length" @click="exportRecent">导出样本 CSV</el-button>
-        <router-link class="el-button" to="/geo/visibility">登记快照</router-link>
-        <router-link class="el-button" to="/geo/citations">引用分析</router-link>
       </div>
     </div>
 
-    <details class="geo-glossary">
+    <details v-if="prototypeSurface.showEvaluationRawMetrics" class="geo-glossary">
       <summary>统计口径（点击展开）</summary>
       <ul>
         <li v-for="(line, i) in REPORT_GLOSSARY.evaluation" :key="i">{{ line }}</li>
@@ -145,7 +144,7 @@ onMounted(load)
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" show-icon />
 
-    <div v-if="data" class="geo-kpi-grid">
+    <div v-if="prototypeSurface.showEvaluationRawMetrics && data" class="geo-kpi-grid">
       <div v-for="c in kpiCards" :key="c.label" class="geo-kpi">
         <div class="kpi-label">{{ c.label }}</div>
         <div class="kpi-value">{{ c.value }}</div>
@@ -154,7 +153,7 @@ onMounted(load)
     </div>
 
     <div v-if="data" class="geo-split-2">
-      <section class="geo-panel">
+      <section v-if="prototypeSurface.showEvaluationRawMetrics" class="geo-panel">
         <div class="panel-title-row">
           <div class="panel-title">标注分布</div>
           <el-select v-model="dimFilter" size="small" style="width: 140px">
@@ -174,8 +173,8 @@ onMounted(load)
       </section>
 
       <section class="geo-panel">
-        <div class="panel-title">最近样本</div>
-        <p class="geo-panel-desc">点击意图词可跳转可见度页继续补标。</p>
+        <div class="panel-title">待处理信号</div>
+        <p class="geo-panel-desc">按意图词查看近期 AI 回答信号，并回到可见度页处理。</p>
         <el-table
           :data="recentPager.pagedItems"
           size="small"
