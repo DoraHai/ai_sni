@@ -1,7 +1,8 @@
 import asyncio
 from datetime import datetime
 from decimal import Decimal
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -17,6 +18,7 @@ from app.api.seo import (
     SeoContentAssistRequest,
     SitePageImport,
     _keyword_payload,
+    _apply_site_page_audit,
     _metric_payload,
     _missing_content_keywords,
     _number_or_text,
@@ -56,6 +58,28 @@ def test_seo_permissions_are_registered_for_all_roles() -> None:
     assert keys <= MENU_KEYS
     assert all(OPERATOR_PERMS[key] == "edit" for key in keys)
     assert all(CLIENT_PERMS[key] == "view" for key in keys)
+
+
+def test_page_audit_result_updates_title_and_page_health() -> None:
+    row = SimpleNamespace()
+    _apply_site_page_audit(
+        row,
+        {
+            "title": "NORD 页面标题",
+            "description": "页面描述",
+            "score": 90,
+            "snapshot": {"h1": ["主标题"], "canonical": "https://nord.cn/page", "content_units": 500},
+            "checks": [
+                {"code": "indexable", "passed": True},
+                {"code": "description", "passed": False},
+            ],
+        },
+    )
+    assert row.title == "NORD 页面标题"
+    assert row.meta_description == "页面描述"
+    assert row.h1 == "主标题"
+    assert row.issue_codes == ["description"]
+    assert row.status == "needs_fix"
 
 
 @pytest.mark.parametrize(
@@ -418,19 +442,34 @@ def test_all_failed_serp_collection_returns_generic_safe_error() -> None:
             }
         ],
     }
+    session = AsyncMock()
+    session.scalar = AsyncMock(return_value=1)
+    reserve = MagicMock(return_value={"allowed": False, "retry_after_seconds": 3600})
 
     with patch(
         "app.api.seo.collect_rank_serp_for_tenant",
         new=AsyncMock(return_value=failed),
+    ), patch(
+        "app.api.seo._seo_site",
+        new=AsyncMock(return_value=object()),
+    ), patch(
+        "app.api.seo.acquire_file_lock",
+        return_value=object(),
+    ), patch(
+        "app.api.seo.release_file_lock",
+    ), patch(
+        "app.api.seo.reserve_manual_rank_collection",
+        reserve,
     ):
         with pytest.raises(Exception) as exc:
-            asyncio.run(collect_rank_serp(request, AsyncMock(), context))
+            asyncio.run(collect_rank_serp(request, session, context))
 
     assert getattr(exc.value, "status_code", None) == 502
     assert getattr(exc.value, "detail", None) == (
         "本次排名采集全部失败，请稍后重试或联系管理员"
     )
     assert "provider" not in str(getattr(exc.value, "detail", ""))
+    assert reserve.call_args.args[2] == 1
 
 
 @pytest.mark.parametrize("site_id", [None, 0, -1])

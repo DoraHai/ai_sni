@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -8,6 +8,7 @@ import {
   fetchSeoBrandAssets,
   fetchSeoKeywords,
   fetchSeoOverview,
+  fetchSeoRankCollectStatus,
   fetchSeoSerpResults,
   updateSeoSerpOwnership,
 } from '../../api/seo'
@@ -26,6 +27,8 @@ const view = ref('ranking')
 const ownership = ref('')
 const collectDialog = ref(false)
 const collectOutcome = ref(null)
+const collectLimit = ref({ allowed: true, retry_after_seconds: 0, next_allowed_at: null, daily_requests_used: 0, daily_requests_limit: 0 })
+const clock = ref(Date.now())
 const assetDialog = ref(false)
 const result = ref({ items: [], total: 0 })
 const overview = ref({ stats: {} })
@@ -67,8 +70,19 @@ const ranked = computed(() => result.value.items.filter((item) => item.latest_ra
 const avg = computed(() => ranked.value.length
   ? (ranked.value.reduce((sum, item) => sum + item.latest_rank, 0) / ranked.value.length).toFixed(1)
   : '—')
-const requestCount = computed(() => Number(collectForm.max_keywords || 0) * collectForm.devices.length)
+const requestCount = computed(() => Math.min(Number(collectForm.max_keywords || 0), Number(result.value.total || 0)) * collectForm.devices.length)
 const estimatedCost = computed(() => (requestCount.value * 0.04).toFixed(2))
+const cooldownSeconds = computed(() => collectLimit.value.next_allowed_at
+  ? Math.max(0, Math.ceil((new Date(collectLimit.value.next_allowed_at).getTime() - clock.value) / 1000))
+  : Number(collectLimit.value.retry_after_seconds || 0))
+const dailyLimitReached = computed(() => Number(collectLimit.value.daily_requests_limit || 0) > 0 && Number(collectLimit.value.daily_requests_used || 0) >= Number(collectLimit.value.daily_requests_limit))
+const collectAllowed = computed(() => cooldownSeconds.value <= 0 && !dailyLimitReached.value)
+const collectButtonText = computed(() => {
+  if (collecting.value) return '正在采集…'
+  if (cooldownSeconds.value > 0) return `${Math.ceil(cooldownSeconds.value / 60)} 分钟后可更新`
+  if (dailyLimitReached.value) return '今日额度已用完'
+  return '↻ 更新排名'
+})
 
 const fmt = (value) => value == null ? '—' : Number(value).toLocaleString('zh-CN')
 const delta = (item) => !item.rank_delta ? '—' : `${item.rank_delta > 0 ? '↑' : '↓'}${Math.abs(item.rank_delta)}`
@@ -126,9 +140,16 @@ async function loadSites() {
   }
 }
 
+async function loadCollectStatus() {
+  if (!currentTenantId.value || !siteId.value) return
+  try { collectLimit.value = await fetchSeoRankCollectStatus({ tenantId: currentTenantId.value, siteId: siteId.value }) }
+  catch (err) { error.value = err.message }
+}
+
 function openCollect() {
   if (!currentTenantId.value) return ElMessage.warning('请先选择客户')
   if (!siteId.value) return ElMessage.warning('请先选择或创建 SEO 网站')
+  if (!collectAllowed.value) return ElMessage.warning(collectButtonText.value)
   collectDialog.value = true
 }
 
@@ -149,6 +170,7 @@ async function collect() {
       devices: collectForm.devices,
       use_ai: collectForm.use_ai,
     })
+    if (summary.manual_limit) collectLimit.value = summary.manual_limit
     collectDialog.value = false
     const failed = Array.isArray(summary.errors) ? summary.errors.length : 0
     const collectedDevice = collectForm.devices.length === 1 ? collectForm.devices[0] : null
@@ -185,6 +207,7 @@ async function collect() {
       completedAt: new Date().toLocaleString('zh-CN'),
     }
     ElMessage.error(err.message)
+    await loadCollectStatus()
   } finally {
     collecting.value = false
   }
@@ -229,9 +252,12 @@ async function confirmOwnership(item, ownershipType) {
 let timer
 watch(() => filters.q, () => { clearTimeout(timer); timer = setTimeout(load, 260) })
 watch([device, siteId, ownership], load)
+watch(siteId, loadCollectStatus)
 watch([currentTenantId, siteId], () => { collectOutcome.value = null })
 watch(currentTenantId, loadSites)
-onMounted(loadSites)
+let clockTimer
+onMounted(async () => { clockTimer = window.setInterval(() => { clock.value = Date.now() }, 1000); await loadSites(); await loadCollectStatus() })
+onBeforeUnmount(() => window.clearInterval(clockTimer))
 </script>
 
 <template>
@@ -253,7 +279,7 @@ onMounted(loadSites)
         <div class="kw-actions">
           <button class="kw-btn" @click="openAssets">品牌资产</button>
           <button class="kw-btn" @click="exportCsv">⇩ 导出排名</button>
-          <button class="kw-btn primary" @click="openCollect">↻ 更新排名</button>
+          <button class="kw-btn primary" :disabled="!collectAllowed || collecting" @click="openCollect">{{collectButtonText}}</button>
         </div>
       </div>
     </section>
@@ -367,7 +393,7 @@ onMounted(loadSites)
         <label><span>采集关键词数</span><el-input-number v-model="collectForm.max_keywords" :min="1" :max="50" /></label>
         <label><span>采集设备</span><el-checkbox-group v-model="collectForm.devices"><el-checkbox value="desktop">百度 PC</el-checkbox><el-checkbox value="mobile">百度移动</el-checkbox></el-checkbox-group></label>
         <label><span>AI 兜底判断</span><el-switch v-model="collectForm.use_ai" /><small>仅处理 URL、官网域名和平台账号规则无法识别的结果</small></label>
-        <div class="cost-note"><b>预计调用 {{ requestCount }} 次站长之家接口</b><span>按截图中的最高单价 0.04 元/次估算，约 ¥{{ estimatedCost }}；实际以购买套餐为准。</span></div>
+        <div class="cost-note"><b>预计调用 {{ requestCount }} 次站长之家接口</b><span>按截图中的最高单价 0.04 元/次估算，约 ¥{{ estimatedCost }}；实际以购买套餐为准。</span><span>同一网站人工更新后冷却 1 小时；今日已使用 {{collectLimit.daily_requests_used||0}} / {{collectLimit.daily_requests_limit||0}} 次请求。</span></div>
       </div>
       <template #footer><button class="kw-btn" @click="collectDialog = false">取消</button><button class="kw-btn primary" :disabled="collecting" @click="collect">{{ collecting ? '正在采集…' : '确认采集' }}</button></template>
     </el-dialog>

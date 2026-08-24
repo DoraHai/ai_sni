@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     seo_rank_scheduler_use_ai: bool = True
     seo_rank_scheduler_max_keywords_per_tenant: int = 200
     seo_rank_scheduler_max_requests_per_run: int = 1000
+    # 用户手动点击“更新排名”使用独立额度；调度器不走此限制。
+    seo_manual_rank_cooldown_seconds: int = 3600
+    seo_manual_rank_max_requests_per_day: int = 100
 
     # Google PageSpeed Insights。仅由后端调用，Key 不得进入前端构建产物。
     pagespeed_api_key: str = ""

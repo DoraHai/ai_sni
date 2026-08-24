@@ -58,6 +58,11 @@ class ModuleWorkspaceTests(unittest.TestCase):
             seo_paths,
             {"/api/v1/seo/sites", "/api/v1/seo/sites/{site_id}"},
         )
+        delete_routes = [
+            route for route in seo_sites_router.routes
+            if route.path == "/api/v1/seo/sites/{site_id}" and "DELETE" in route.methods
+        ]
+        self.assertEqual(len(delete_routes), 1)
         self.assertTrue(seo_paths.issubset(shared_paths))
         self.assertNotIn("/api/v1/sem/assets/accounts", seo_paths)
         self.assertNotIn("/api/v1/admin/customers", seo_paths)

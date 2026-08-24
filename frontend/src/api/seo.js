@@ -45,10 +45,12 @@ export function createSeoRankSnapshotBatch(payload) {
   return client.post('/api/v1/seo/rank-snapshots/batch', payload)
 }
 
-export function fetchSeoSitePages({ tenantId, q, status, page = 1, pageSize = 50 }) {
+export function fetchSeoSitePages({ tenantId, siteId, pageId, q, status, page = 1, pageSize = 50 }) {
   return client.get('/api/v1/seo/site-pages', {
     params: {
       tenant_id: tenantId,
+      site_id: siteId || undefined,
+      page_id: pageId || undefined,
       q: q || undefined,
       status: status || undefined,
       page,
@@ -100,6 +102,12 @@ export function collectSeoRankSerp(payload) {
   return client.post('/api/v1/seo/rank-serp/collect', payload, { timeout: 180000 })
 }
 
+export function fetchSeoRankCollectStatus({ tenantId, siteId }) {
+  return client.get('/api/v1/seo/rank-serp/collect-status', {
+    params: { tenant_id: tenantId, site_id: siteId },
+  })
+}
+
 export function fetchSeoSerpResults({ tenantId, siteId, device = 'desktop', ownershipType, keywordId, limit = 200 }) {
   return client.get('/api/v1/seo/rank-serp/results', { params: { tenant_id: tenantId, site_id: siteId || undefined, device, ownership_type: ownershipType || undefined, keyword_id: keywordId || undefined, limit } })
 }
@@ -124,8 +132,15 @@ export function createSeoBrandAsset(payload) {
   return client.post('/api/v1/seo/rank-serp/brand-assets', payload)
 }
 
-export function fetchSeoAlerts({ tenantId, engine = 'baidu' }) {
-  return client.get('/api/v1/seo/alerts', { params: { tenant_id: tenantId, engine } })
+export function fetchSeoAlerts({ tenantId, siteId, engine = 'baidu' }) {
+  return client.get('/api/v1/seo/alerts', { params: { tenant_id: tenantId, site_id: siteId || undefined, engine } })
+}
+
+export function auditPendingSeoSitePages({ tenantId, siteId, maxPages = 10 }) {
+  return client.post('/api/v1/seo/site-pages/audit-pending', null, {
+    params: { tenant_id: tenantId, site_id: siteId || undefined, max_pages: maxPages },
+    timeout: 180000,
+  })
 }
 
 export function fetchSeoContentAssets({ tenantId, siteId, status, contentType }) {
@@ -233,16 +248,16 @@ export function assistSeoContent(payload) {
   return client.post('/api/v1/seo/content-ai/assist', payload, { timeout: 100000 })
 }
 
-export function fetchSeoInternalLinks({ tenantId }) {
-  return client.get('/api/v1/seo/internal-links', { params: { tenant_id: tenantId } })
+export function fetchSeoInternalLinks({ tenantId, siteId }) {
+  return client.get('/api/v1/seo/internal-links', { params: { tenant_id: tenantId, site_id: siteId || undefined } })
 }
 
 export function crawlSeoInternalLinks({ tenantId, pageId }) {
   return client.post('/api/v1/seo/internal-links/crawl', null, { params: { tenant_id: tenantId, page_id: pageId }, timeout: 60000 })
 }
 
-export function fetchSeoBacklinks({ tenantId, status }) {
-  return client.get('/api/v1/seo/backlinks', { params: { tenant_id: tenantId, status: status || undefined } })
+export function fetchSeoBacklinks({ tenantId, siteId, status }) {
+  return client.get('/api/v1/seo/backlinks', { params: { tenant_id: tenantId, site_id: siteId || undefined, status: status || undefined } })
 }
 
 export function createSeoBacklink(payload) {

@@ -1,11 +1,17 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { auditSeoSitePage, fetchSeoKeywords, fetchSeoSitePages, importSeoSitePages, updateSeoSitePage } from '../../api/seo'
+import { auditPendingSeoSitePages, auditSeoSitePage, fetchSeoKeywords, fetchSeoSitePages, importSeoSitePages, updateSeoSitePage } from '../../api/seo'
+import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
+
+const route = useRoute()
 
 const loading = ref(false)
 const error = ref('')
+const sites = ref([])
+const siteId = ref(null)
 const result = ref({ items: [], total: 0, stats: {} })
 const filters = reactive({ q: '', status: '' })
 const importOpen = ref(false)
@@ -14,6 +20,7 @@ const importText = ref('')
 const editing = ref(null)
 const saving = ref(false)
 const auditing = ref(new Set())
+const batchAuditing = ref(false)
 const keywordOptions = ref([])
 const editForm = reactive({ page_type: '', target_keyword_id: null, title_suggestion: '', description_suggestion: '', status: 'pending' })
 
@@ -26,14 +33,15 @@ function issueLabel(code) { return {title:'Title',description:'Description',cano
 
 async function load() {
   if (!currentTenantId.value) { error.value = '请先在右上角选择客户'; result.value = {items:[],total:0,stats:{}}; return }
+  if (!siteId.value) { error.value = '请先选择或创建 SEO 网站'; result.value = {items:[],total:0,stats:{}}; return }
   loading.value = true; error.value = ''
-  try { result.value = await fetchSeoSitePages({ tenantId: currentTenantId.value, ...filters, pageSize: 100 }) }
+  try { result.value = await fetchSeoSitePages({ tenantId: currentTenantId.value, siteId: siteId.value, pageId: Number(route.query.page_id) || undefined, ...filters, pageSize: 100 }) }
   catch (e) { error.value = e.message } finally { loading.value = false }
 }
 async function loadKeywordOptions() {
   if (!currentTenantId.value) { keywordOptions.value = []; return }
   try {
-    const response = await fetchSeoKeywords({ tenantId: currentTenantId.value, status: 'active', pageSize: 200 })
+    const response = await fetchSeoKeywords({ tenantId: currentTenantId.value, siteId: siteId.value, status: 'active', pageSize: 200 })
     keywordOptions.value = response.items || []
   } catch { keywordOptions.value = [] }
 }
@@ -42,7 +50,7 @@ async function importPages() {
   if (!urls.length) return ElMessage.warning('请至少填写一个页面 URL')
   saving.value = true
   try {
-    const r = await importSeoSitePages({ tenant_id: currentTenantId.value, urls })
+    const r = await importSeoSitePages({ tenant_id: currentTenantId.value, site_id: siteId.value, urls })
     importOpen.value = false; importText.value = ''
     ElMessage.success(`已导入 ${r.created} 个页面${r.skipped?.length ? `，跳过 ${r.skipped.length} 个` : ''}`)
     await load()
@@ -66,18 +74,44 @@ async function audit(row) {
   catch (e) { ElMessage.error(e.message); await load() }
   finally { const done = new Set(auditing.value); done.delete(row.id); auditing.value = done }
 }
+async function auditPending() {
+  batchAuditing.value = true
+  try {
+    const response = await auditPendingSeoSitePages({ tenantId: currentTenantId.value, siteId: siteId.value, maxPages: 10 })
+    const message = `已补抓 ${response.completed} 个页面${response.failed?.length ? `，失败 ${response.failed.length} 个` : ''}`
+    response.failed?.length ? ElMessage.warning(message) : ElMessage.success(message)
+    await load()
+  } catch (e) { ElMessage.error(e.message) } finally { batchAuditing.value = false }
+}
 let timer
 watch(() => filters.q, () => { clearTimeout(timer); timer = setTimeout(load, 260) })
-watch([() => filters.status, currentTenantId], load)
-watch(currentTenantId, loadKeywordOptions)
-onMounted(() => { load(); loadKeywordOptions() })
+async function loadSites() {
+  if (!currentTenantId.value) { sites.value = []; siteId.value = null; return }
+  try {
+    sites.value = (await fetchSeoSites(currentTenantId.value)).sites || []
+    const requestedSiteId = Number(route.query.site_id) || null
+    const nextSiteId = sites.value.some((site) => site.id === requestedSiteId)
+      ? requestedSiteId
+      : (sites.value.some((site) => site.id === siteId.value) ? siteId.value : (sites.value.find((site) => site.status === 'active')?.id || sites.value[0]?.id || null))
+    if (nextSiteId !== siteId.value) siteId.value = nextSiteId
+    else { await load(); await loadKeywordOptions() }
+  } catch (e) {
+    sites.value = []; siteId.value = null; error.value = e.message
+  }
+}
+watch(() => filters.status, load)
+watch(() => route.query.page_id, load)
+watch(() => route.query.site_id, loadSites)
+watch(siteId, () => { load(); loadKeywordOptions() })
+watch(currentTenantId, loadSites)
+onMounted(loadSites)
 </script>
 
 <template>
   <div class="site-page">
     <section class="site-hero">
       <div><span>SEO / ONSITE OPTIMIZATION</span><h1>站内优化</h1><p>管理页面资产、TDK、H1、Canonical 与索引状态。检测结果保存到页面档案，可用于上线前后复核。</p></div>
-      <button v-if="canEdit" @click="importOpen = true">＋ 导入页面</button>
+      <div class="hero-actions"><el-select v-model="siteId" placeholder="选择 SEO 网站"><el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id"/></el-select><button v-if="canEdit" :disabled="batchAuditing||!siteId" @click="auditPending">{{batchAuditing?'补抓中…':'补抓待检测页面'}}</button><button v-if="canEdit" :disabled="!siteId" @click="importOpen = true">＋ 导入页面</button></div>
     </section>
     <el-alert v-if="error" :title="error" type="warning" :closable="false" show-icon />
     <section class="metrics">
@@ -120,5 +154,6 @@ onMounted(() => { load(); loadKeywordOptions() })
 </template>
 
 <style scoped>
+.hero-actions{display:flex;gap:8px}.hero-actions button:disabled{cursor:wait;opacity:.6}
 .site-page{--ink:#17233d;--teal:#168b83;--line:#e3e8ef;min-height:100%;padding:26px;background:radial-gradient(circle at 78% -16%,rgba(22,139,131,.1),transparent 35%),#f5f8f7;color:var(--ink)}.site-hero{display:flex;align-items:end;justify-content:space-between;gap:28px;padding:27px 30px;border:1px solid #dbe7e4;border-radius:17px;background:#fff;box-shadow:0 16px 45px rgba(29,69,64,.05)}.site-hero>div>span,.site-panel header span{color:var(--teal);font:800 10px ui-monospace,monospace;letter-spacing:.13em}.site-hero h1{margin:9px 0 7px;font:750 34px "Noto Serif SC","Songti SC",serif}.site-hero p{max-width:760px;margin:0;color:#72817e;line-height:1.7}.site-hero button{height:40px;padding:0 18px;border:0;border-radius:9px;background:var(--teal);color:#fff;font-weight:700;cursor:pointer;box-shadow:0 8px 20px rgba(22,139,131,.2)}.el-alert{margin-top:14px}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:15px 0}.metrics article{padding:19px 20px;border:1px solid var(--line);border-radius:13px;background:#fff}.metrics span,.metrics small{display:block;color:#768582;font-size:11px}.metrics strong{display:block;margin:10px 0 5px;font-size:28px}.site-panel{overflow:hidden;border:1px solid var(--line);border-radius:15px;background:#fff}.site-panel>header{display:flex;align-items:end;justify-content:space-between;padding:16px 19px;border-bottom:1px solid #edf1ef}.site-panel h2{margin:4px 0 0;font-size:15px}.site-panel header small{color:#82908d}.filters{display:flex;gap:9px;padding:14px 17px}.filters .el-input{max-width:350px}.filters .el-select{width:140px}.filters>span{align-self:center;margin-left:auto;color:#788683;font-size:11px}.page-title,.page-url{display:block}.page-url{max-width:330px;overflow:hidden;margin-top:4px;color:#5d7f79;text-overflow:ellipsis;white-space:nowrap}.issues{display:flex;gap:4px;flex-wrap:wrap}.issues span{padding:3px 6px;border-radius:5px;background:#fff0e3;color:#a65e24;font-size:10px}.suggestion b,.suggestion small{display:block;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.suggestion small{margin-top:4px;color:#899491}.actions{display:flex;gap:5px}.actions button{padding:5px 7px;border:1px solid #dce5e2;border-radius:6px;background:#fff;color:#52736e;font-size:10.5px;cursor:pointer}.actions button:hover{border-color:#7bb3aa;color:var(--teal)}.actions button:disabled{opacity:.55;cursor:wait}.dialog-tip{margin:-6px 0 15px;color:#75827f;font-size:12px;line-height:1.6}.el-form :deep(.el-select){width:100%}@media(max-width:980px){.metrics{grid-template-columns:repeat(2,1fr)}}@media(max-width:680px){.site-page{padding:14px}.site-hero{align-items:flex-start;flex-direction:column}.metrics{grid-template-columns:1fr 1fr}.filters{flex-wrap:wrap}.filters .el-input{max-width:none;width:100%}.filters>span{margin-left:0}}
 </style>

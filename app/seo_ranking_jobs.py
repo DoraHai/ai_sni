@@ -1,9 +1,7 @@
 """Background jobs owned exclusively by the independent SEO service."""
 
 import logging
-import tempfile
 from datetime import datetime, timezone
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
@@ -12,13 +10,11 @@ from app.config import get_settings
 from app.database import async_session_factory
 from app.models.seo import SeoKeywordAsset, SeoRankSnapshot
 from app.process_lock import acquire_file_lock, release_file_lock
+from app.seo_rank_limits import SEO_RANK_COLLECTION_LOCK_PATH
 
 logger = logging.getLogger(__name__)
 
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
-_SEO_RANK_LOCK_PATH = Path(tempfile.gettempdir()) / "seo_rank_collection.lock"
-
-
 def _chunks(values: list[int], size: int) -> list[list[int]]:
     size = max(1, size)
     return [values[index : index + size] for index in range(0, len(values), size)]
@@ -58,7 +54,7 @@ async def collect_daily_seo_rankings() -> None:
         logger.info("[scheduler][SEO] 自动排名采集已关闭")
         return
 
-    lock_fh = acquire_file_lock(_SEO_RANK_LOCK_PATH)
+    lock_fh = acquire_file_lock(SEO_RANK_COLLECTION_LOCK_PATH)
     if lock_fh is None:
         logger.info("[scheduler][SEO] 另一排名采集任务正在运行，本次跳过")
         return

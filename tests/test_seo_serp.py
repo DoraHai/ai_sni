@@ -10,6 +10,7 @@ from app.seo_serp import (
     canonical_url,
     create_chinaz_client,
     deterministic_match,
+    domain_matches,
     fetch_baidu_top50,
     fetch_baidu_top50_batch,
     parse_top50_response,
@@ -70,6 +71,25 @@ def test_deterministic_match_prefers_exact_content_url() -> None:
     assert result["ownership_type"] == "brand_content"
     assert result["match_method"] == "published_url"
     assert result["confidence"] == 100
+
+
+def test_official_domain_match_ignores_www_and_case() -> None:
+    result = deterministic_match(
+        {
+            "result_url": "https://WWW.NORD.CN/cn/home-cn.jsp",
+            "title": "NORD",
+            "description": "诺德传动",
+        },
+        official_domains={"nord.cn"},
+        content_urls=set(),
+        account_patterns=[],
+        explicit_assets=[],
+    )
+    assert result["ownership_type"] == "official_site"
+    assert result["match_method"] == "site_domain"
+    assert result["confidence"] == 100
+    assert domain_matches("support.nord.cn", "nord.cn") is True
+    assert domain_matches("nord.cn.example.com", "nord.cn") is False
 
 
 def test_shared_platform_domain_is_not_mistaken_for_brand() -> None:

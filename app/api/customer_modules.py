@@ -5,12 +5,27 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
 from app.models import BaiduAccount, GeoProject, SeoSite, Tenant, TenantModule
+from app.models.seo import (
+    SeoBacklink,
+    SeoBrandAsset,
+    SeoCompetitor,
+    SeoCompetitorEvent,
+    SeoContentAsset,
+    SeoCrawlRun,
+    SeoInternalLink,
+    SeoKeywordAsset,
+    SeoMetricSnapshot,
+    SeoPageSnapshot,
+    SeoRankSnapshot,
+    SeoSerpResult,
+    SeoSitePage,
+)
 from app.module_scope import (
     MODULE_CODES,
     ensure_module_access,
@@ -224,6 +239,42 @@ def _require_seo_asset_permission(ctx: AuthContext, *, edit: bool = False) -> No
         raise HTTPException(403, "当前账号没有 SEO 网站管理权限")
 
 
+_SEO_SITE_DEPENDENCIES = (
+    (SeoKeywordAsset, "关键词"),
+    (SeoRankSnapshot, "排名快照"),
+    (SeoSerpResult, "SERP 结果"),
+    (SeoBrandAsset, "品牌资产"),
+    (SeoSitePage, "站内页面"),
+    (SeoContentAsset, "内容资产"),
+    (SeoInternalLink, "内链"),
+    (SeoBacklink, "外链"),
+    (SeoCompetitor, "竞品"),
+    (SeoCompetitorEvent, "竞品动态"),
+    (SeoCrawlRun, "抓取任务"),
+    (SeoPageSnapshot, "页面抓取快照"),
+    (SeoMetricSnapshot, "网站指标快照"),
+)
+
+
+async def _seo_site_delete_blockers(
+    session: AsyncSession, *, tenant_id: int, site_id: int
+) -> dict[str, int]:
+    blockers: dict[str, int] = {}
+    for model, label in _SEO_SITE_DEPENDENCIES:
+        count = int(
+            await session.scalar(
+                select(func.count()).select_from(model).where(
+                    model.tenant_id == tenant_id,
+                    model.site_id == site_id,
+                )
+            )
+            or 0
+        )
+        if count:
+            blockers[label] = count
+    return blockers
+
+
 @seo_sites_router.get("/api/v1/seo/sites", dependencies=[Depends(require_scoped_auth)])
 async def list_seo_sites(
     tenant_id: int = Query(...),
@@ -292,6 +343,33 @@ async def update_seo_site(
         raise HTTPException(409, "该客户已经维护了这个 SEO 网站") from exc
     await session.refresh(row)
     return _site_payload(row)
+
+
+@seo_sites_router.delete("/api/v1/seo/sites/{site_id}", dependencies=[Depends(require_scoped_auth)])
+async def delete_seo_site(
+    site_id: int,
+    tenant_id: int,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Delete only an empty SEO site; populated sites must be archived instead."""
+    _require_seo_asset_permission(ctx, edit=True)
+    await ensure_module_access(session, ctx, tenant_id, "seo")
+    row = await session.get(SeoSite, site_id)
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, "SEO 网站不存在")
+    blockers = await _seo_site_delete_blockers(
+        session, tenant_id=tenant_id, site_id=site_id
+    )
+    if blockers:
+        summary = "、".join(f"{label} {count} 条" for label, count in blockers.items())
+        raise HTTPException(
+            409,
+            f"该网站已有 SEO 数据（{summary}），不能直接删除；请将状态改为归档。",
+        )
+    await session.delete(row)
+    await session.commit()
+    return {"deleted": True, "site_id": site_id}
 
 
 # Keep the shared backend's existing route surface while allowing the
