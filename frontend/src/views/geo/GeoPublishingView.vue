@@ -24,8 +24,10 @@ import {
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import NeedHintAlert from '../../components/NeedHintAlert.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
+import { getGeoPrototypePageSurface } from '../../utils/geoEditorSurface'
 
 const { tenantId } = useGeoTenant()
+const prototypeSurface = getGeoPrototypePageSurface()
 const loading = ref(false)
 const error = ref('')
 const channels = ref([])
@@ -689,7 +691,7 @@ onMounted(load)
     <NeedHintAlert />
 
     <!-- 多媒自动推送矩阵 -->
-    <section v-if="autoMatrix" class="block auto-overview">
+    <section v-if="prototypeSurface.showChannelAutomationConsole && autoMatrix" class="block auto-overview">
       <div class="block-head">
         <h3 class="sec">多媒自动推送矩阵</h3>
         <span class="sec-hint">
@@ -739,7 +741,7 @@ onMounted(load)
     </section>
 
     <!-- 自动化渠道总览 -->
-    <section class="block auto-overview">
+    <section v-if="prototypeSurface.showChannelAutomationConsole" class="block auto-overview">
       <div class="block-head">
         <h3 class="sec">官网 Webhook 卡片</h3>
         <span class="sec-hint">
@@ -794,11 +796,10 @@ onMounted(load)
     <!-- ① 渠道目录 -->
     <section class="block">
       <div class="block-head">
-        <h3 class="sec">① 渠道目录</h3>
-        <span class="sec-hint">主键：<code>渠道 ID</code> · 点「配置」可改发布模式 / 站点 URL</span>
+        <h3 class="sec">分发平台</h3>
+        <span class="sec-hint">维护平台连接状态与分发方式</span>
       </div>
       <el-table :data="channels" stripe empty-text="暂无渠道" class="mb" size="small">
-        <el-table-column prop="id" label="渠道 ID" width="88" />
         <el-table-column prop="channel_type" label="类型" width="120" show-overflow-tooltip />
         <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
         <el-table-column label="发布模式" min-width="160">
@@ -808,7 +809,7 @@ onMounted(load)
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="站点 base_url" min-width="140" show-overflow-tooltip>
+        <el-table-column label="连接地址" min-width="140" show-overflow-tooltip>
           <template #default="{ row }">{{ row.base_url || '—' }}</template>
         </el-table-column>
         <el-table-column label="启用" width="72" align="center">
@@ -818,7 +819,7 @@ onMounted(load)
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="账号数" width="72" align="center">
+        <el-table-column label="连接数" width="72" align="center">
           <template #default="{ row }">
             {{ accounts.filter((a) => a.channel_id === row.id).length }}
           </template>
@@ -836,7 +837,7 @@ onMounted(load)
     </section>
 
     <!-- ② 渠道账号 -->
-    <section class="block">
+    <section v-if="prototypeSurface.showChannelAccountConsole" class="block">
       <div class="block-head">
         <h3 class="sec">② 渠道账号</h3>
         <span class="sec-hint">主键：<code>账号 ID</code> · 按渠道页签管理；auto 渠道请配 Webhook</span>
