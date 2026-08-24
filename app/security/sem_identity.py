@@ -23,6 +23,17 @@ SEM_IDENTITY_BLOCKED_MESSAGE = (
 )
 
 
+def public_sem_identity_state(state: dict[str, Any] | None) -> dict[str, Any] | None:
+    """返回前台安全状态，不暴露内部用于归属判定的 UCID。"""
+    if state is None:
+        return None
+    return {
+        "status": state.get("status"),
+        "code": state.get("code"),
+        "message": state.get("message"),
+    }
+
+
 def filter_identity_safe_active_accounts(
     accounts: Iterable[BaiduAccount],
 ) -> list[BaiduAccount]:
@@ -139,7 +150,5 @@ async def ensure_sem_identity_access(session: AsyncSession, tenant_id: int) -> N
             detail={
                 "code": state["code"],
                 "msg": state["message"],
-                "tenant_id": tenant_id,
-                "ucids": state["ucids"],
             },
         )

@@ -38,20 +38,37 @@ const platformShortcuts = [
 
 // 侧边导航徽章（真数据）：异常提醒 open 数、拓词待处理数
 const badges = reactive({ alerts: 0, alertsToday: 0, expand: 0 })
+let badgeLoadGeneration = 0
+
+function resetBadges() {
+  badges.alerts = 0
+  badges.alertsToday = 0
+  badges.expand = 0
+}
 
 async function loadBadges() {
-  if (!session.tenantId) return
+  const tenantId = Number(session.tenantId) || null
+  const generation = ++badgeLoadGeneration
+  resetBadges()
+  if (!tenantId) return
   const canCall = session.isLoggedIn || import.meta.env.VITE_API_KEY
   if (!canCall) return
+  const tenant = session.tenants.find((item) => item.id === tenantId)
+  // 登录态必须等租户身份数据就绪；隔离客户绝不能再探测业务徽章接口。
+  if (session.isLoggedIn && !tenant) return
+  if (tenant?.sem_identity?.status === 'blocked') return
   try {
     const [a, e] = await Promise.all([
-      fetchAlerts({ tenantId: session.tenantId, status: 'open' }),
-      fetchCandidates({ tenantId: session.tenantId, status: 'pending', page: 1, pageSize: 1 }),
+      fetchAlerts({ tenantId, status: 'open' }),
+      fetchCandidates({ tenantId, status: 'pending', page: 1, pageSize: 1 }),
     ])
+    if (generation !== badgeLoadGeneration || tenantId !== session.tenantId) return
     badges.alerts = a.total_open ?? 0
     badges.alertsToday = a.today_new ?? 0
     badges.expand = e.status_counts?.pending ?? 0
-  } catch { /* 徽章失败不打扰 */ }
+  } catch {
+    if (generation === badgeLoadGeneration && tenantId === session.tenantId) resetBadges()
+  }
 }
 
 // 侧边导航结构（按 v3.0 工作流）：真实可用功能前置，低频/设置后置。
@@ -203,6 +220,7 @@ async function loadTenants() {
   try {
     const t = await fetchTenants()
     session.setTenants(t.tenants)
+    loadBadges()
     bootstrapError.value = ''
   } catch (error) {
     if (error.code !== 'AUTH_EXPIRED') bootstrapError.value = `客户列表加载失败：${error.message}`
@@ -219,6 +237,9 @@ async function refreshMe() {
 }
 
 function onTenantChange(id) {
+  // Vue watch 在下一轮调度才执行，先同步清空，避免旧租户数字残留一帧。
+  badgeLoadGeneration += 1
+  resetBadges()
   session.setTenant(id)
   tenantPopoverOpen.value = false
   // 详情页归属上一个客户,切换后回看板

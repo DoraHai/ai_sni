@@ -117,8 +117,14 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
         )
 
         payload = result["tenants"][0]
-        self.assertEqual(payload["sem_identity"]["status"], "blocked")
-        self.assertEqual(payload["sem_identity"]["code"], SEM_IDENTITY_BLOCKED_CODE)
+        self.assertEqual(
+            payload["sem_identity"],
+            {
+                "status": "blocked",
+                "code": SEM_IDENTITY_BLOCKED_CODE,
+                "message": "推广账户归属冲突，已暂停展示该客户的 SEM 数据，请联系超级管理员处理",
+            },
+        )
         self.assertEqual(payload["sem_accounts"], [])
 
     def test_quarantined_wrong_bindings_stay_blocked_while_owner_recovers(self):
@@ -151,8 +157,13 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
             await ensure_sem_identity_access(session, 7)
 
         self.assertEqual(cm.exception.status_code, 409)
-        self.assertEqual(cm.exception.detail["code"], SEM_IDENTITY_BLOCKED_CODE)
-        self.assertNotIn("tenant_ids", cm.exception.detail)
+        self.assertEqual(
+            cm.exception.detail,
+            {
+                "code": SEM_IDENTITY_BLOCKED_CODE,
+                "msg": "推广账户归属冲突，已暂停展示该客户的 SEM 数据，请联系超级管理员处理",
+            },
+        )
 
     def test_scheduler_excludes_every_active_row_for_cross_tenant_ucid(self):
         conflicted_a = SimpleNamespace(
