@@ -118,6 +118,10 @@ def test_seo_content_and_rank_views_are_site_scoped_and_html_safe() -> None:
     assert 'site_id: siteId.value' in editor
     assert 'site_id: siteId.value' in content
     assert 'site_id: siteId.value' in ranking
+    assert "if (!siteId.value) return ElMessage.warning('请先选择或创建 SEO 网站')" in ranking
+    assert "if (!siteId.value) { ElMessage.warning('请先选择或创建 SEO 网站'); return }" in ranking
+    assert '@click="openCollect"' in ranking
+    assert "site_id: PositiveInt" in backend
     assert "ElMessage.warning(`采集部分完成" in ranking
     assert "Array.isArray(summary.errors)" in ranking
     assert 'siteId:siteId.value' in rewrite

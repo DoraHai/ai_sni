@@ -124,7 +124,15 @@ async function loadSites() {
   }
 }
 
+function openCollect() {
+  if (!currentTenantId.value) return ElMessage.warning('请先选择客户')
+  if (!siteId.value) return ElMessage.warning('请先选择或创建 SEO 网站')
+  collectDialog.value = true
+}
+
 async function collect() {
+  if (!currentTenantId.value) { ElMessage.warning('请先选择客户'); return }
+  if (!siteId.value) { ElMessage.warning('请先选择或创建 SEO 网站'); return }
   if (!collectForm.devices.length) { ElMessage.warning('至少选择一个设备'); return }
   collecting.value = true
   try {
@@ -212,7 +220,7 @@ onMounted(loadSites)
         <div class="kw-actions">
           <button class="kw-btn" @click="openAssets">品牌资产</button>
           <button class="kw-btn" @click="exportCsv">⇩ 导出排名</button>
-          <button class="kw-btn primary" @click="collectDialog = true">↻ 更新排名</button>
+          <button class="kw-btn primary" @click="openCollect">↻ 更新排名</button>
         </div>
       </div>
     </section>

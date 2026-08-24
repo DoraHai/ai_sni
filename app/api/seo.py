@@ -350,7 +350,7 @@ class BrandProfileUpdate(BaseModel):
 
 class SerpCollectRequest(BaseModel):
     tenant_id: int
-    site_id: int | None = None
+    site_id: PositiveInt
     keyword_ids: list[int] | None = Field(None, max_length=50)
     devices: list[Literal["desktop", "mobile"]] = Field(default_factory=lambda: ["desktop"])
     max_keywords: int = Field(20, ge=1, le=50)
