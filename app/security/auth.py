@@ -23,6 +23,7 @@ from app.database import get_session
 from app.models.role import Role
 from app.models.user import User
 from app.security.api_key import resolve_api_key
+from app.security.sem_identity import ensure_sem_identity_access
 
 _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 _bearer = HTTPBearer(auto_error=False)
@@ -30,6 +31,36 @@ _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 JWT_ALG = "HS256"
 _READ_METHODS = ("GET", "HEAD", "OPTIONS")
+
+# 这些路径会读取或操作 SEM 客户数据。客户与模块管理、授权入口和 SEO/GEO 路径故意不在
+# 列表中，确保管理员仍能查看冲突并完成修复，同时不跨模块扩大影响。
+_SEM_IDENTITY_GUARDED_PREFIXES = (
+    "/api/v1/dashboard",
+    "/api/v1/alerts",
+    "/api/v1/customer-profile",
+    "/api/v1/keywords",
+    "/api/v1/structure",
+    "/api/v1/suggestions",
+    "/api/v1/expansion",
+    "/api/v1/search-terms",
+    "/api/v1/negative-words",
+    "/api/v1/operation-records",
+    "/api/v1/adjustment-verify",
+    "/api/v1/leads",
+    "/api/v1/assistant",
+    "/api/v1/reports",
+    "/api/v1/writeback",
+    "/api/v1/manage",
+    "/api/v1/ocpc",
+    "/api/v1/onboarding-builder",
+    "/api/v1/sem/assets/accounts",
+    "/api/v1/admin/fetch-keyword-report",
+    "/api/v1/admin/sync-keywords",
+    "/api/v1/admin/refresh-keyword-workbench",
+    "/api/v1/admin/sync-operation-records",
+    "/api/v1/admin/sync-expansion",
+    "/api/v1/admin/sync-url-words",
+)
 
 
 def hash_password(plain: str) -> str:
@@ -258,6 +289,7 @@ async def require_auth(
 async def require_scoped_auth(
     request: Request,
     ctx: AuthContext = Depends(require_auth),
+    session: AsyncSession = Depends(get_session),
 ) -> AuthContext:
     """业务路由统一鉴权：菜单权限（view/edit）+ 单客户隔离。"""
     keys, need_edit = _required(request.url.path, request.method)
@@ -267,8 +299,20 @@ async def require_scoped_auth(
             verb = "编辑" if need_edit else "访问"
             raise HTTPException(403, f"当前角色无权{verb}此功能")
     tid = request.query_params.get("tenant_id")
-    if tid and tid.lstrip("-").isdigit():
-        ctx.ensure_tenant(int(tid))
+    if not tid:
+        tid = request.path_params.get("tenant_id")
+    if not tid and request.method not in _READ_METHODS:
+        try:
+            payload = await request.json()
+        except (ValueError, RuntimeError):
+            payload = None
+        if isinstance(payload, dict):
+            tid = payload.get("tenant_id")
+    tenant_id = int(tid) if str(tid or "").lstrip("-").isdigit() else None
+    if tenant_id is not None:
+        ctx.ensure_tenant(tenant_id)
+        if request.url.path.startswith(_SEM_IDENTITY_GUARDED_PREFIXES):
+            await ensure_sem_identity_access(session, tenant_id)
     return ctx
 
 

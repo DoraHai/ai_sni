@@ -19,6 +19,12 @@ os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 from app.api.auth import _sem_account_payload, list_tenants
 from app.api.customer_modules import CustomerUpdate, _sem_identity_check, update_customer
 from app.main import init_self_auth_account
+from app.security.sem_identity import (
+    SEM_IDENTITY_BLOCKED_CODE,
+    ensure_sem_identity_access,
+    evaluate_sem_identity_states,
+    filter_identity_safe_active_accounts,
+)
 
 
 class _Rows:
@@ -62,7 +68,9 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
             last_synced_at=datetime(2026, 8, 22, 13, 15),
         )
         session = SimpleNamespace(
-            scalars=AsyncMock(side_effect=[_Rows([tenant]), _Rows([account])])
+            scalars=AsyncMock(
+                side_effect=[_Rows([tenant]), _Rows([account]), _Rows([account])]
+            )
         )
         ctx = SimpleNamespace(tenant_id=7)
 
@@ -73,10 +81,98 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
             result["tenants"][0]["sem_accounts"][0]["username"],
             "苏尔寿化工",
         )
+        self.assertEqual(result["tenants"][0]["sem_identity"]["status"], "ok")
         first_query = str(session.scalars.await_args_list[0].args[0])
         second_query = str(session.scalars.await_args_list[1].args[0])
         self.assertIn("tenants.id", first_query)
         self.assertIn("baidu_accounts.tenant_id", second_query)
+
+    async def test_tenant_switcher_hides_account_context_when_ucid_conflicts(self):
+        tenant = SimpleNamespace(id=7, name="诺德")
+        local = SimpleNamespace(
+            id=8,
+            tenant_id=7,
+            baidu_username="苏尔寿化工",
+            baidu_ucid=80243027,
+            auth_mode="oauth",
+            status="active",
+            sync_status="success",
+            last_synced_at=datetime(2026, 8, 22, 13, 15),
+        )
+        rightful = SimpleNamespace(
+            id=9,
+            tenant_id=9,
+            baidu_username="苏尔寿化工",
+            baidu_ucid=80243027,
+            status="active",
+        )
+        session = SimpleNamespace(
+            scalars=AsyncMock(
+                side_effect=[_Rows([tenant]), _Rows([local]), _Rows([local, rightful])]
+            )
+        )
+
+        result = await list_tenants(
+            module=None, ctx=SimpleNamespace(tenant_id=7), session=session
+        )
+
+        payload = result["tenants"][0]
+        self.assertEqual(payload["sem_identity"]["status"], "blocked")
+        self.assertEqual(payload["sem_identity"]["code"], SEM_IDENTITY_BLOCKED_CODE)
+        self.assertEqual(payload["sem_accounts"], [])
+
+    def test_quarantined_wrong_bindings_stay_blocked_while_owner_recovers(self):
+        wrong = SimpleNamespace(
+            id=8, tenant_id=7, baidu_ucid=80243027, status="identity_conflict"
+        )
+        rightful = SimpleNamespace(
+            id=9, tenant_id=9, baidu_ucid=80243027, status="active"
+        )
+
+        states = evaluate_sem_identity_states(
+            [7, 9], [wrong, rightful], [rightful]
+        )
+
+        self.assertEqual(states[7]["status"], "blocked")
+        self.assertEqual(states[9]["status"], "ok")
+
+    async def test_conflicted_tenant_data_access_fails_closed(self):
+        local = SimpleNamespace(
+            id=8, tenant_id=7, baidu_ucid=80243027, status="active"
+        )
+        other = SimpleNamespace(
+            id=9, tenant_id=9, baidu_ucid=80243027, status="active"
+        )
+        session = SimpleNamespace(
+            scalars=AsyncMock(side_effect=[_Rows([local]), _Rows([local, other])])
+        )
+
+        with self.assertRaises(HTTPException) as cm:
+            await ensure_sem_identity_access(session, 7)
+
+        self.assertEqual(cm.exception.status_code, 409)
+        self.assertEqual(cm.exception.detail["code"], SEM_IDENTITY_BLOCKED_CODE)
+        self.assertNotIn("tenant_ids", cm.exception.detail)
+
+    def test_scheduler_excludes_every_active_row_for_cross_tenant_ucid(self):
+        conflicted_a = SimpleNamespace(
+            id=8, tenant_id=7, baidu_ucid=80243027, status="active"
+        )
+        conflicted_b = SimpleNamespace(
+            id=9, tenant_id=9, baidu_ucid=80243027, status="active"
+        )
+        safe = SimpleNamespace(
+            id=10, tenant_id=11, baidu_ucid=90001, status="active"
+        )
+        inactive = SimpleNamespace(
+            id=11, tenant_id=12, baidu_ucid=90002, status="identity_conflict"
+        )
+
+        result = filter_identity_safe_active_accounts(
+            [conflicted_a, conflicted_b, safe, inactive]
+        )
+
+        self.assertEqual([account.id for account in result], [10])
 
     def test_identity_check_reports_cross_tenant_and_duplicate_rows_once(self):
         tenants = [
@@ -105,6 +201,37 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
 
         self.assertEqual(result["summary"]["warnings"], 1)
         self.assertEqual(result["issues_by_tenant"][3][0]["code"], "primary_ucid_missing")
+
+    def test_identity_check_treats_quarantined_binding_as_resolved_warning(self):
+        tenants = [
+            SimpleNamespace(id=7, baidu_ucid=None),
+            SimpleNamespace(id=9, baidu_ucid=80243027),
+        ]
+        accounts = [
+            SimpleNamespace(
+                id=8,
+                tenant_id=7,
+                baidu_ucid=80243027,
+                auth_mode="oauth",
+                status="identity_conflict",
+            ),
+            SimpleNamespace(
+                id=9,
+                tenant_id=9,
+                baidu_ucid=80243027,
+                auth_mode="oauth",
+                status="active",
+            ),
+        ]
+
+        result = _sem_identity_check(tenants, accounts)
+
+        self.assertEqual(result["summary"]["errors"], 0)
+        self.assertEqual(result["summary"]["warnings"], 1)
+        self.assertEqual(
+            result["issues_by_tenant"][7][0]["code"],
+            "quarantined_account_binding",
+        )
 
     async def test_bound_customer_name_change_requires_confirmation_and_reason(self):
         tenant = SimpleNamespace(id=7, name="苏尔寿", industry=None, business_desc=None)

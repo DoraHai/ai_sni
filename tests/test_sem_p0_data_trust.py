@@ -130,11 +130,22 @@ def test_tenant_account_identity_guards_are_visible_and_race_safe():
     router = _read("frontend/src/router/index.js")
     backend = _read("app/api/customer_modules.py")
     self_auth = _read("app/main.py")
+    identity_guard = _read("app/security/sem_identity.py")
+    auth_guard = _read("app/security/auth.py")
+    client = _read("frontend/src/api/client.js")
 
     assert "SEM 推广账户归属" in customers
     assert "重新检查归属" in customers and "identity_issues" in customers
     assert "推广账户：" in app_shell and "UCID" in app_shell
     assert "sem_accounts" in app_shell and "fmtAccountSync" in app_shell
+    assert "推广账户归属冲突，已暂停展示该客户的 SEM 数据" in app_shell
+    assert "showSemIdentityBlock" in app_shell and "v-if=\"!showSemIdentityBlock\"" in app_shell
+    assert "SEM_ACCOUNT_IDENTITY_CONFLICT" in identity_guard
+    assert "identity_conflict" in identity_guard
+    assert "ensure_sem_identity_access" in auth_guard
+    assert "filter_identity_safe_active_accounts" in _read("app/scheduler.py")
+    assert "filter_identity_safe_active_accounts" in _read("app/baidu/sync.py")
+    assert "error.response?.data?.detail?.code" in client
     assert "identity_locked" in customers and "受控客户更名" in customers
     assert "最终确认" in customers and "name_change_reason" in customers
     assert "confirm_bound_name_change" in backend

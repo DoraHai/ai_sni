@@ -47,7 +47,8 @@ client.interceptors.response.use(
       '网络异常，请稍后重试'
     const normalized = new Error(detail)
     normalized.status = error.response?.status
-    normalized.code = error.response?.status === 403 ? 'PERMISSION_DENIED' : error.code === 'ECONNABORTED' ? 'REQUEST_TIMEOUT' : error.code
+    normalized.code = error.response?.data?.detail?.code
+      || (error.response?.status === 403 ? 'PERMISSION_DENIED' : error.code === 'ECONNABORTED' ? 'REQUEST_TIMEOUT' : error.code)
     return Promise.reject(normalized)
   },
 )

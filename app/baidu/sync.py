@@ -49,6 +49,7 @@ from app.models import (
     Tenant,
 )
 from app.security.crypto import decrypt
+from app.security.sem_identity import filter_identity_safe_active_accounts
 
 logger = logging.getLogger(__name__)
 
@@ -1298,11 +1299,13 @@ async def sync_keyword_report_for_all_active_accounts(
     session: AsyncSession, target_date: date
 ) -> dict[str, int]:
     """拉所有 active baidu_accounts 的目标日报告。返回 {username: 写入条数}。"""
-    accounts = (
-        await session.scalars(
-            select(BaiduAccount).where(BaiduAccount.status == "active")
-        )
-    ).all()
+    accounts = filter_identity_safe_active_accounts(
+        (
+            await session.scalars(
+                select(BaiduAccount).where(BaiduAccount.status == "active")
+            )
+        ).all()
+    )
 
     result: dict[str, int] = {}
     for acc in accounts:
