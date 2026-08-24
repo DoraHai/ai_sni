@@ -22,6 +22,7 @@ from app.security.auth import AuthContext, require_auth, require_scoped_auth
 
 
 router = APIRouter(tags=["客户与模块"])
+seo_sites_router = APIRouter(tags=["SEO 网站"])
 geo_projects_router = APIRouter(tags=["GEO 项目"])
 
 
@@ -223,7 +224,7 @@ def _require_seo_asset_permission(ctx: AuthContext, *, edit: bool = False) -> No
         raise HTTPException(403, "当前账号没有 SEO 网站管理权限")
 
 
-@router.get("/api/v1/seo/sites", dependencies=[Depends(require_scoped_auth)])
+@seo_sites_router.get("/api/v1/seo/sites", dependencies=[Depends(require_scoped_auth)])
 async def list_seo_sites(
     tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -235,7 +236,7 @@ async def list_seo_sites(
     return {"sites": [_site_payload(row) for row in rows]}
 
 
-@router.post("/api/v1/seo/sites", dependencies=[Depends(require_scoped_auth)])
+@seo_sites_router.post("/api/v1/seo/sites", dependencies=[Depends(require_scoped_auth)])
 async def create_seo_site(
     req: SeoSiteCreate,
     ctx: AuthContext = Depends(require_scoped_auth),
@@ -262,7 +263,7 @@ async def create_seo_site(
     return _site_payload(row)
 
 
-@router.patch("/api/v1/seo/sites/{site_id}", dependencies=[Depends(require_scoped_auth)])
+@seo_sites_router.patch("/api/v1/seo/sites/{site_id}", dependencies=[Depends(require_scoped_auth)])
 async def update_seo_site(
     site_id: int,
     tenant_id: int,
@@ -291,6 +292,11 @@ async def update_seo_site(
         raise HTTPException(409, "该客户已经维护了这个 SEO 网站") from exc
     await session.refresh(row)
     return _site_payload(row)
+
+
+# Keep the shared backend's existing route surface while allowing the
+# independent SEO service to mount only SEO website management endpoints.
+router.include_router(seo_sites_router)
 
 
 class GeoProjectCreate(BaseModel):

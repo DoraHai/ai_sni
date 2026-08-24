@@ -10,6 +10,7 @@ from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from app.api.customer_modules import seo_sites_router
 from app.api.seo import router as seo_router
 from app.config import get_settings
 from app.database import engine
@@ -39,6 +40,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(seo_router)
+app.include_router(seo_sites_router)
 
 
 @app.get("/health/seo")
