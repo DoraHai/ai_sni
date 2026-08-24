@@ -43,6 +43,7 @@ import {
   cancelGeoAsyncJob,
 } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
+import { getGeoPrototypeEditorSurface } from '../../utils/geoEditorSurface'
 
 function toastError(e, fallback) {
   const msg = formatGeoError(e, fallback)
@@ -53,6 +54,7 @@ function toastError(e, fallback) {
 const route = useRoute()
 const router = useRouter()
 const { tenantId } = useGeoTenant()
+const editorSurface = getGeoPrototypeEditorSurface()
 const taskId = computed(() => Number(route.params.taskId))
 
 const loading = ref(false)
@@ -825,11 +827,8 @@ function validateBeforeGenerate() {
   }
   const nBound = (task.value?.facts || []).length
   const nSelected = selectedFactIds.value.length
-  if (nBound < 3 && nSelected < 3) {
-    return '生成前至少绑定 3 条事实卡（建议已核验）。请在左侧选择事实并点「保存绑定」'
-  }
-  if (nBound < 3 && nSelected >= 3) {
-    return '已选事实尚未保存绑定，请先点「保存绑定」再生成'
+  if (nBound < 3 && nSelected < 3 && libraryVerifiedCount.value < 3) {
+    return '生成母稿前需要至少 3 条已核验的可信材料，请先到知识库补充并核验资料'
   }
   const verified = (task.value?.facts || []).filter((f) => f.trust_level === 'verified')
   if (verified.length < 3) {
@@ -841,6 +840,13 @@ function validateBeforeGenerate() {
     }
   }
   return null
+}
+
+async function ensurePrototypeMaterials() {
+  if ((task.value?.facts || []).length >= 3) return true
+  if (libraryVerifiedCount.value < 3) return false
+  await bindTopVerified(3)
+  return (task.value?.facts || []).length >= 3
 }
 
 const generateHint = ref('')
@@ -961,6 +967,13 @@ async function cancelActiveJob() {
 async function generate() {
   error.value = ''
   generateHint.value = '正在生成母稿…'
+  if (!(await ensurePrototypeMaterials())) {
+    const msg = '未能关联足够的已核验可信材料，请先到知识库检查资料状态'
+    error.value = msg
+    generateHint.value = msg
+    ElMessage.warning(msg)
+    return
+  }
   const pre = validateBeforeGenerate()
   if (pre) {
     error.value = pre
@@ -1752,10 +1765,18 @@ const checks = computed(() => {
   if (!replaced && (cov.targets.length || cov.present.length)) {
     out.push(liveChannel)
   }
-  return out.map((c) => ({
-    ...c,
-    label: checkLabel(c.code),
-  }))
+  const hiddenCodes = new Set([
+    'facts_bound_min',
+    'sentence_evidence',
+    'channel_variant_ready',
+    'evidence_publishable',
+  ])
+  return out
+    .filter((c) => !hiddenCodes.has(c.code))
+    .map((c) => ({
+      ...c,
+      label: checkLabel(c.code),
+    }))
 })
 const failedChecks = computed(() => checks.value.filter((c) => !c.passed))
 const passedChecks = computed(() => checks.value.filter((c) => c.passed))
@@ -1924,7 +1945,7 @@ onMounted(load)
       </div>
     </div>
 
-    <div v-if="task && nextStep" class="next-step" :class="{ done: nextStep.key === 'impact' }">
+    <div v-if="editorSurface.showProgressHint && task && nextStep" class="next-step" :class="{ done: nextStep.key === 'impact' }">
       <div class="next-copy">
         <div class="next-kicker">当前下一步</div>
         <div class="next-title">{{ nextStep.title }}</div>
@@ -1951,7 +1972,7 @@ onMounted(load)
           <template #header>
             <div class="card-head">
               <button type="button" class="fold-toggle" @click="foldBrief = !foldBrief">
-                {{ foldBrief ? '▸' : '▾' }} 内容策略
+                {{ foldBrief ? '▸' : '▾' }} 基础信息
                 <el-tag v-if="foldBrief && task?.brief_ready" size="small" type="success" effect="plain">已齐</el-tag>
               </button>
               <div v-show="!foldBrief" class="row-actions">
@@ -1959,7 +1980,7 @@ onMounted(load)
                   AI 建议
                 </el-button>
                 <el-button size="small" type="primary" :loading="busy === 'brief'" @click="saveBrief">
-                  保存策略
+                  保存
                 </el-button>
               </div>
             </div>
@@ -2002,9 +2023,10 @@ onMounted(load)
             <el-form-item label="禁用表述">
               <el-input v-model="brief.banned_claims" placeholder="逗号分隔" />
             </el-form-item>
-            <el-form-item label="备注">
+            <el-form-item v-if="editorSurface.briefFields.includes('notes')" label="备注">
               <el-input v-model="brief.notes" />
             </el-form-item>
+            <template v-if="editorSurface.briefFields.includes('ai_question')">
             <el-divider content-position="left">策略（可选）</el-divider>
             <el-form-item label="AI 问题">
               <el-input v-model="brief.ai_question" />
@@ -2055,11 +2077,17 @@ onMounted(load)
             <el-form-item label="必须覆盖">
               <el-input v-model="brief.must_cover" placeholder="逗号分隔，如品牌名、产品线" />
             </el-form-item>
+            </template>
           </el-form>
+          <div class="trusted-materials">
+            <div class="trusted-materials-title">可信材料</div>
+            <div class="hint">母稿会使用知识库中已核验的资料；当前可用 {{ libraryVerifiedCount }} 条。</div>
+            <router-link to="/geo/facts">查看知识库</router-link>
+          </div>
           </div>
         </el-card>
 
-        <el-card id="step-facts" shadow="never" class="card fact-bind-card">
+        <el-card v-if="editorSurface.showFactBinding" id="step-facts" shadow="never" class="card fact-bind-card">
           <template #header>
             <div class="card-head">
               <button type="button" class="fold-toggle" @click="foldFacts = !foldFacts">
@@ -2333,7 +2361,7 @@ onMounted(load)
             请润色语气、删模板痕迹、核对事实后再推送。
           </div>
           <div
-            v-else-if="isPublishReadyVariant"
+            v-else-if="editorSurface.showChannelVariants && isPublishReadyVariant"
             class="channel-quality mb is-good"
           >
             <b>正式渠道稿（HTML 正稿）</b>
@@ -2343,13 +2371,13 @@ onMounted(load)
               · {{ currentVariantMeta.display_name }}
             </span>
           </div>
-          <div v-else class="channel-quality mb is-warn">
+          <div v-else-if="editorSurface.showChannelVariants" class="channel-quality mb is-warn">
             <b>规则裁剪稿（非正式成稿）</b>
             — 未走 AI 时接近母稿结构，不能当正式发布文。
             请点下方「AI 生成正式渠道稿」。
           </div>
 
-          <el-tabs :model-value="docTab" class="mb" @tab-change="onDocTabChange">
+          <el-tabs v-if="editorSurface.showChannelVariants" :model-value="docTab" class="mb" @tab-change="onDocTabChange">
             <el-tab-pane label="母稿草案" name="master" />
             <el-tab-pane
               v-for="v in variants"
@@ -2378,7 +2406,7 @@ onMounted(load)
               草案 v{{ task.article.version_no }} · {{ task.article.created_at || '' }}
               · 正文字数 {{ (article.body_markdown || '').length }}
             </div>
-            <div v-if="sentenceCites.length" class="cite-box mb">
+            <div v-if="editorSurface.showFactBinding && sentenceCites.length" class="cite-box mb">
               <div class="cite-head">
                 <div class="section-title">逐句证据</div>
                 <el-button size="small" :loading="busy === 'save'" @click="reciteEvidence">
@@ -2416,7 +2444,7 @@ onMounted(load)
             </div>
             <div class="hint">重新「生成母稿」会覆盖当前正文</div>
           </template>
-          <template v-else>
+          <template v-else-if="editorSurface.showChannelVariants">
             <div class="hint mb">
               渠道 {{ channelLabel(docTab) }} · 状态 {{ variants.find((v) => v.channel === docTab)?.status || '—' }}
               <span v-if="variants.find((v) => v.channel === docTab)?.stale"> · 母稿已变需重生</span>
@@ -2457,7 +2485,7 @@ onMounted(load)
           </template>
         </el-card>
 
-        <el-card id="step-publish" shadow="never" class="card">
+        <el-card v-if="editorSurface.showChannelVariants" id="step-publish" shadow="never" class="card">
           <template #header>
             <div class="card-head">
               <span>渠道成稿 · 内容检查 · 发布</span>
@@ -2739,7 +2767,7 @@ onMounted(load)
             </div>
           </div>
 
-          <div class="channel-pill mb" :class="liveChannelCoverage.ok ? 'is-ok' : 'is-warn'">
+          <div v-if="editorSurface.showChannelVariants" class="channel-pill mb" :class="liveChannelCoverage.ok ? 'is-ok' : 'is-warn'">
             <span class="pill-mark">{{ liveChannelCoverage.ok ? '✓' : '!' }}</span>
             <div>
               <div class="pill-title">
@@ -2801,7 +2829,7 @@ onMounted(load)
             </ul>
           </div>
 
-          <div v-if="patches.length" class="mt patch-box">
+          <div v-if="editorSurface.showFactBinding && patches.length" class="mt patch-box">
             <div class="sec">一键补结构（写入母稿，仍需人工改）</div>
             <div class="row-actions">
               <el-button
@@ -2824,7 +2852,7 @@ onMounted(load)
               </el-button>
             </div>
           </div>
-          <div v-else-if="failedChecks.length" class="mt patch-box">
+          <div v-else-if="editorSurface.showFactBinding && failedChecks.length" class="mt patch-box">
             <div class="sec">一键补结构</div>
             <div class="hint mb">当前无补丁缓存，请先点上方「检查就绪」生成可插入补丁。</div>
             <el-button size="small" type="warning" plain :loading="busy === 'check'" @click="runCheck">
@@ -2832,7 +2860,7 @@ onMounted(load)
             </el-button>
           </div>
 
-          <div v-if="aiReview" class="mt ai-box">
+          <div v-if="editorSurface.showAiReview && aiReview" class="mt ai-box">
             <div class="sec">
               AI 审阅意见
               <span class="sec-meta">
