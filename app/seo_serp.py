@@ -91,6 +91,25 @@ def url_domain(value: str | None) -> str:
     return (urlparse(normalized).hostname or "").lower().rstrip(".")
 
 
+def _normalized_match_domain(value: str | None) -> str:
+    host = url_domain(value)
+    return host[4:] if host.startswith("www.") else host
+
+
+def domain_matches(candidate: str, official: str) -> bool:
+    """Match an official host and its real subdomains, never suffix lookalikes."""
+    candidate_host = _normalized_match_domain(candidate)
+    official_host = _normalized_match_domain(official)
+    return bool(
+        candidate_host
+        and official_host
+        and (
+            candidate_host == official_host
+            or candidate_host.endswith(f".{official_host}")
+        )
+    )
+
+
 def rank_number(rank_label: Any, fallback: int) -> int:
     raw = str(rank_label or "").strip()
     if "-" in raw:
@@ -315,11 +334,11 @@ def deterministic_match(
         value = str(asset["match_value"] or "").strip()
         if kind == "content_url" and canonical_url(value) == target_url:
             return {"ownership_type": "brand_content", "match_method": "exact_url", "confidence": 100, "matched_asset_id": asset["id"], "is_confirmed": True}
-        if kind == "official_domain" and url_domain(value) == target_domain:
+        if kind == "official_domain" and domain_matches(target_domain, value):
             return {"ownership_type": "official_site", "match_method": "official_domain", "confidence": 100, "matched_asset_id": asset["id"], "is_confirmed": True}
     if target_url in content_urls:
         return {"ownership_type": "brand_content", "match_method": "published_url", "confidence": 100, "matched_asset_id": None, "is_confirmed": True}
-    if target_domain and target_domain in official_domains:
+    if target_domain and any(domain_matches(target_domain, value) for value in official_domains):
         return {"ownership_type": "official_site", "match_method": "site_domain", "confidence": 100, "matched_asset_id": None, "is_confirmed": True}
     haystack = " ".join((target_url, str(item.get("title") or ""), str(item.get("description") or ""))).lower()
     for asset_id, pattern in account_patterns:

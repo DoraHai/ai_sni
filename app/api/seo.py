@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.deepseek import DeepSeekError, chat_json, is_enabled
 from app.database import get_session
+from app.config import get_settings
 from app.geo.audit import GeoAuditError, audit_url, normalize_url, safe_fetch
 from app.geo.chinaz import fetch_chinaz_seo_metrics
 from app.models import (
@@ -47,6 +48,7 @@ from app.models.seo import (
     SeoPublishAttempt,
 )
 from app.security.auth import AuthContext, require_scoped_auth
+from app.process_lock import acquire_file_lock, release_file_lock
 from app.seo_distribution import (
     SeoDistributionError,
     decrypt_credentials,
@@ -71,6 +73,12 @@ from app.seo_serp import (
     url_domain,
 )
 from app.seo_crawler import crawl_site
+from app.seo_rank_limits import (
+    ManualRankLimitError,
+    SEO_RANK_COLLECTION_LOCK_PATH,
+    manual_rank_status,
+    reserve_manual_rank_collection,
+)
 from app.seo_distribution_import import (
     MAX_XLSX_BYTES,
     XlsxImportError,
@@ -352,7 +360,9 @@ class SerpCollectRequest(BaseModel):
     tenant_id: int
     site_id: PositiveInt
     keyword_ids: list[int] | None = Field(None, max_length=50)
-    devices: list[Literal["desktop", "mobile"]] = Field(default_factory=lambda: ["desktop"])
+    devices: list[Literal["desktop", "mobile"]] = Field(
+        default_factory=lambda: ["desktop"], min_length=1
+    )
     max_keywords: int = Field(20, ge=1, le=50)
     use_ai: bool = True
 
@@ -1501,18 +1511,83 @@ async def collect_rank_serp(
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
-    result = await collect_rank_serp_for_tenant(
-        session=session,
-        tenant_id=req.tenant_id,
-        site_id=req.site_id,
-        keyword_ids=req.keyword_ids,
-        devices=req.devices,
-        max_keywords=req.max_keywords,
-        use_ai=req.use_ai,
+    if req.site_id is None:
+        raise HTTPException(400, "排名采集必须选择 SEO 网站")
+    await _seo_site(session, req.tenant_id, req.site_id)
+    settings = get_settings()
+    keyword_conditions = [
+        SeoKeywordAsset.tenant_id == req.tenant_id,
+        SeoKeywordAsset.site_id == req.site_id,
+        SeoKeywordAsset.status == "active",
+    ]
+    if req.keyword_ids:
+        keyword_conditions.append(SeoKeywordAsset.id.in_(set(req.keyword_ids)))
+    eligible_keywords = int(
+        await session.scalar(
+            select(func.count()).select_from(SeoKeywordAsset).where(*keyword_conditions)
+        )
+        or 0
     )
+    selected_keywords = min(eligible_keywords, req.max_keywords)
+    if selected_keywords == 0:
+        raise HTTPException(400, "没有可采集的启用关键词")
+    requested = selected_keywords * len(set(req.devices))
+    collection_lock = acquire_file_lock(SEO_RANK_COLLECTION_LOCK_PATH)
+    if collection_lock is None:
+        raise HTTPException(409, "另一排名采集任务正在运行，请稍后重试")
+    try:
+        try:
+            limit_status = reserve_manual_rank_collection(
+                req.tenant_id,
+                req.site_id,
+                requested,
+                cooldown_seconds=settings.seo_manual_rank_cooldown_seconds,
+                max_requests_per_day=settings.seo_manual_rank_max_requests_per_day,
+            )
+        except ManualRankLimitError as exc:
+            raise HTTPException(
+                429,
+                {"code": exc.code, "message": exc.message, "retry_after_seconds": exc.retry_after},
+                headers={"Retry-After": str(exc.retry_after)},
+            ) from exc
+        result = await collect_rank_serp_for_tenant(
+            session=session,
+            tenant_id=req.tenant_id,
+            site_id=req.site_id,
+            keyword_ids=req.keyword_ids,
+            devices=req.devices,
+            max_keywords=req.max_keywords,
+            use_ai=req.use_ai,
+        )
+    finally:
+        release_file_lock(collection_lock)
     if result["errors"] and result["snapshots"] == 0:
         raise HTTPException(502, "本次排名采集全部失败，请稍后重试或联系管理员")
+    result["manual_limit"] = limit_status
     return result
+
+
+@router.get("/rank-serp/collect-status")
+async def rank_serp_collect_status(
+    tenant_id: int,
+    site_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    await _seo_site(session, tenant_id, site_id)
+    settings = get_settings()
+    try:
+        return manual_rank_status(
+            tenant_id,
+            site_id,
+            cooldown_seconds=settings.seo_manual_rank_cooldown_seconds,
+            max_requests_per_day=settings.seo_manual_rank_max_requests_per_day,
+        )
+    except ManualRankLimitError as exc:
+        raise HTTPException(
+            503,
+            {"code": exc.code, "message": exc.message, "retry_after_seconds": exc.retry_after},
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
 
 
 @router.get("/rank-serp/results")
@@ -1885,6 +1960,7 @@ async def list_seo_crawl_runs(
 async def list_site_pages(
     tenant_id: int,
     site_id: int | None = None,
+    page_id: int | None = None,
     q: str | None = None,
     status: str | None = None,
     page: int = Query(1, ge=1),
@@ -1896,6 +1972,8 @@ async def list_site_pages(
     conditions = [SeoSitePage.tenant_id == tenant_id]
     if site_id is not None:
         conditions.append(SeoSitePage.site_id == site_id)
+    if page_id is not None:
+        conditions.append(SeoSitePage.id == page_id)
     if q:
         term = f"%{q.strip()}%"
         conditions.append(or_(SeoSitePage.url.ilike(term), SeoSitePage.title.ilike(term)))
@@ -2022,6 +2100,70 @@ async def import_site_pages(
     return {"created": created, "skipped": skipped}
 
 
+def _apply_site_page_audit(row: SeoSitePage, result: dict[str, Any]) -> None:
+    snapshot = result.get("snapshot") or {}
+    checks = result.get("checks") or []
+    checks_by_code = {item.get("code"): item for item in checks}
+    failed = [item.get("code") for item in checks if not item.get("passed")]
+    row.title = result.get("title") or None
+    row.meta_description = result.get("description") or None
+    row.h1 = (snapshot.get("h1") or [None])[0]
+    row.canonical = snapshot.get("canonical") or None
+    row.indexable = bool((checks_by_code.get("indexable") or {}).get("passed"))
+    row.http_status = 200
+    row.content_units = snapshot.get("content_units")
+    row.audit_score = result.get("score")
+    row.issue_codes = failed
+    row.status = "healthy" if not failed else "needs_fix"
+    row.last_error = None
+    row.last_checked_at = datetime.utcnow()
+
+
+@router.post("/site-pages/audit-pending")
+async def audit_pending_site_pages(
+    tenant_id: int,
+    site_id: int | None = None,
+    max_pages: int = Query(10, ge=1, le=20),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Audit a bounded pending/title-less batch without requiring one click per row."""
+    await _tenant(session, tenant_id)
+    await _seo_site(session, tenant_id, site_id)
+    conditions = [
+        SeoSitePage.tenant_id == tenant_id,
+        or_(SeoSitePage.status == "pending", SeoSitePage.title.is_(None)),
+    ]
+    if site_id is not None:
+        conditions.append(SeoSitePage.site_id == site_id)
+    rows = list(
+        await session.scalars(
+            select(SeoSitePage).where(*conditions).order_by(SeoSitePage.id).limit(max_pages)
+        )
+    )
+    completed = 0
+    failed: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            result = await audit_url(row.url)
+            _apply_site_page_audit(row, result)
+            completed += 1
+        except GeoAuditError as exc:
+            row.status = "error"
+            row.last_error = str(exc)[:1000]
+            row.last_checked_at = datetime.utcnow()
+            failed.append({"page_id": row.id, "message": str(exc)[:300]})
+    await session.commit()
+    return {
+        "selected": len(rows),
+        "completed": completed,
+        "failed": failed,
+        "remaining": int(
+            await session.scalar(select(func.count()).select_from(SeoSitePage).where(*conditions))
+            or 0
+        ),
+    }
+
+
 @router.patch("/site-pages/{page_id}")
 async def update_site_page(
     page_id: int,
@@ -2059,22 +2201,7 @@ async def audit_site_page(
         await session.commit()
         raise HTTPException(422, str(exc)) from exc
 
-    snapshot = result.get("snapshot") or {}
-    checks = result.get("checks") or []
-    checks_by_code = {item.get("code"): item for item in checks}
-    failed = [item.get("code") for item in checks if not item.get("passed")]
-    row.title = result.get("title") or None
-    row.meta_description = result.get("description") or None
-    row.h1 = (snapshot.get("h1") or [None])[0]
-    row.canonical = snapshot.get("canonical") or None
-    row.indexable = bool((checks_by_code.get("indexable") or {}).get("passed"))
-    row.http_status = 200
-    row.content_units = snapshot.get("content_units")
-    row.audit_score = result.get("score")
-    row.issue_codes = failed
-    row.status = "healthy" if not failed else "needs_fix"
-    row.last_error = None
-    row.last_checked_at = datetime.utcnow()
+    _apply_site_page_audit(row, result)
     await session.commit()
     await session.refresh(row)
     return _page_payload(row)
@@ -2407,14 +2534,25 @@ async def seo_overview(
 @router.get("/alerts")
 async def seo_alerts(
     tenant_id: int,
+    site_id: int | None = None,
     engine: str = Query("baidu"),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     await _tenant(session, tenant_id)
-    keywords = list(await session.scalars(select(SeoKeywordAsset).where(SeoKeywordAsset.tenant_id == tenant_id, SeoKeywordAsset.status == "active")))
-    pages = list(await session.scalars(select(SeoSitePage).where(SeoSitePage.tenant_id == tenant_id)))
-    backlinks = list(await session.scalars(select(SeoBacklink).where(SeoBacklink.tenant_id == tenant_id, SeoBacklink.status == "active")))
-    rank_rows = list(await session.scalars(select(SeoRankSnapshot).where(SeoRankSnapshot.tenant_id == tenant_id, SeoRankSnapshot.engine == engine, SeoRankSnapshot.subject_type == "own").order_by(SeoRankSnapshot.checked_at.desc(), SeoRankSnapshot.id.desc())))
+    await _seo_site(session, tenant_id, site_id)
+    keyword_conditions = [SeoKeywordAsset.tenant_id == tenant_id, SeoKeywordAsset.status == "active"]
+    page_conditions = [SeoSitePage.tenant_id == tenant_id]
+    backlink_conditions = [SeoBacklink.tenant_id == tenant_id, SeoBacklink.status == "active"]
+    rank_conditions = [SeoRankSnapshot.tenant_id == tenant_id, SeoRankSnapshot.engine == engine, SeoRankSnapshot.subject_type == "own"]
+    if site_id is not None:
+        keyword_conditions.append(SeoKeywordAsset.site_id == site_id)
+        page_conditions.append(SeoSitePage.site_id == site_id)
+        backlink_conditions.append(SeoBacklink.site_id == site_id)
+        rank_conditions.append(SeoRankSnapshot.site_id == site_id)
+    keywords = list(await session.scalars(select(SeoKeywordAsset).where(*keyword_conditions)))
+    pages = list(await session.scalars(select(SeoSitePage).where(*page_conditions)))
+    backlinks = list(await session.scalars(select(SeoBacklink).where(*backlink_conditions)))
+    rank_rows = list(await session.scalars(select(SeoRankSnapshot).where(*rank_conditions).order_by(SeoRankSnapshot.checked_at.desc(), SeoRankSnapshot.id.desc())))
     grouped: dict[int, list[SeoRankSnapshot]] = defaultdict(list)
     for row in rank_rows:
         if len(grouped[row.keyword_id]) < 2:
@@ -2424,16 +2562,16 @@ async def seo_alerts(
     for keyword_id, values in grouped.items():
         if len(values) == 2 and values[0].rank and values[1].rank and values[0].rank - values[1].rank >= 3:
             keyword = keyword_map.get(keyword_id)
-            alerts.append({"type": "rank_drop", "severity": "high" if values[0].rank - values[1].rank >= 10 else "medium", "title": f"{keyword.keyword if keyword else keyword_id} 排名下降", "detail": f"从第 {values[1].rank} 位下降到第 {values[0].rank} 位", "object_id": keyword_id, "occurred_at": _iso(values[0].checked_at)})
+            alerts.append({"type": "rank_drop", "severity": "high" if values[0].rank - values[1].rank >= 10 else "medium", "title": f"{keyword.keyword if keyword else keyword_id} 排名下降", "detail": f"从第 {values[1].rank} 位下降到第 {values[0].rank} 位", "evidence": f"最近两次 {engine} 排名为 {values[1].rank}、{values[0].rank}", "action_label": "查看排名历史", "href": f"/seo/keywords/{keyword_id}", "object_id": keyword_id, "site_id": values[0].site_id, "occurred_at": _iso(values[0].checked_at)})
     for item in keywords:
         if not item.landing_page:
-            alerts.append({"type": "missing_landing", "severity": "medium", "title": f"{item.keyword} 缺少承接页面", "detail": "高价值关键词尚未绑定站内页面", "object_id": item.id, "occurred_at": _iso(item.updated_at)})
+            alerts.append({"type": "missing_landing", "severity": "medium", "title": f"{item.keyword} 缺少承接页面", "detail": "高价值关键词尚未绑定站内页面", "evidence": "关键词的目标落地页字段为空", "action_label": "配置承接页面", "href": f"/seo/keywords/{item.id}", "object_id": item.id, "site_id": item.site_id, "occurred_at": _iso(item.updated_at)})
     for item in pages:
         if item.status in {"needs_fix", "error"}:
-            alerts.append({"type": "site_issue", "severity": "high" if item.status == "error" else "medium", "title": "站内页面需要处理", "detail": item.url, "object_id": item.id, "occurred_at": _iso(item.last_checked_at or item.updated_at)})
+            alerts.append({"type": "site_issue", "severity": "high" if item.status == "error" else "medium", "title": "站内页面需要处理", "detail": item.url, "evidence": "、".join(item.issue_codes or []) or item.last_error or "页面检测状态异常", "action_label": "查看页面问题", "href": f"/seo/site?page_id={item.id}&site_id={item.site_id}", "object_id": item.id, "site_id": item.site_id, "occurred_at": _iso(item.last_checked_at or item.updated_at)})
     for item in backlinks:
         if (item.toxic_score or 0) >= 70:
-            alerts.append({"type": "toxic_backlink", "severity": "high", "title": "发现高风险外链", "detail": item.source_domain, "object_id": item.id, "occurred_at": _iso(item.last_seen_at or item.updated_at)})
+            alerts.append({"type": "toxic_backlink", "severity": "high", "title": "发现高风险外链", "detail": item.source_domain, "evidence": f"风险分 {item.toxic_score}", "action_label": "查看外链", "href": f"/seo/links?tab=backlink&backlink_id={item.id}&site_id={item.site_id}", "object_id": item.id, "site_id": item.site_id, "occurred_at": _iso(item.last_seen_at or item.updated_at)})
     alerts.sort(key=lambda item: (item["severity"] != "high", item["occurred_at"] or ""))
     return {"items": alerts, "total": len(alerts), "high": sum(item["severity"] == "high" for item in alerts)}
 
@@ -4615,6 +4753,20 @@ async def crawl_internal_links(tenant_id: int, page_id: int, session: AsyncSessi
     except GeoAuditError as exc:
         raise HTTPException(422, str(exc)) from exc
     soup = BeautifulSoup(document.html, "html.parser")
+    title = soup.title.get_text(" ", strip=True) if soup.title else None
+    description_node = soup.select_one('meta[name="description" i]')
+    h1_node = soup.select_one("h1")
+    canonical_node = soup.select_one('link[rel~="canonical" i]')
+    page.title = title or None
+    page.meta_description = (
+        str(description_node.get("content") or "").strip() or None
+        if description_node
+        else None
+    )
+    page.h1 = (h1_node.get_text(" ", strip=True) or None) if h1_node else None
+    page.canonical = urljoin(document.final_url, str(canonical_node.get("href") or "").strip()) if canonical_node and canonical_node.get("href") else None
+    page.last_error = None
+    page.last_checked_at = datetime.utcnow()
     source_host = urlparse(document.final_url).hostname
     discovered: dict[str, str | None] = {}
     for node in soup.select("a[href]"):
@@ -4637,7 +4789,7 @@ async def crawl_internal_links(tenant_id: int, page_id: int, session: AsyncSessi
         if target.id != page.id:
             session.add(SeoInternalLink(tenant_id=tenant_id, site_id=page.site_id, source_page_id=page.id, target_page_id=target.id, anchor_text=anchor))
     await session.commit()
-    return {"source_page_id": page.id, "discovered": len(discovered)}
+    return {"source_page_id": page.id, "discovered": len(discovered), "title": page.title}
 
 
 # ===== 竞品监控 =====
