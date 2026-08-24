@@ -19,7 +19,10 @@ from app.security.auth import (
     require_auth,
     verify_password,
 )
-from app.security.sem_identity import load_sem_identity_states
+from app.security.sem_identity import (
+    load_sem_identity_states,
+    public_sem_identity_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +178,7 @@ async def list_tenants(
             {
                 "id": tenant.id,
                 "name": tenant.name,
-                "sem_identity": identity_states.get(tenant.id),
+                "sem_identity": public_sem_identity_state(identity_states.get(tenant.id)),
                 "sem_accounts": (
                     []
                     if identity_states.get(tenant.id, {}).get("status") == "blocked"

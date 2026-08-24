@@ -131,6 +131,7 @@ def test_tenant_account_identity_guards_are_visible_and_race_safe():
     backend = _read("app/api/customer_modules.py")
     self_auth = _read("app/main.py")
     identity_guard = _read("app/security/sem_identity.py")
+    auth_api = _read("app/api/auth.py")
     auth_guard = _read("app/security/auth.py")
     client = _read("frontend/src/api/client.js")
 
@@ -142,10 +143,16 @@ def test_tenant_account_identity_guards_are_visible_and_race_safe():
     assert "showSemIdentityBlock" in app_shell and "v-if=\"!showSemIdentityBlock\"" in app_shell
     assert "SEM_ACCOUNT_IDENTITY_CONFLICT" in identity_guard
     assert "identity_conflict" in identity_guard
+    assert "public_sem_identity_state(identity_states.get(tenant.id))" in auth_api
     assert "ensure_sem_identity_access" in auth_guard
     assert "filter_identity_safe_active_accounts" in _read("app/scheduler.py")
     assert "filter_identity_safe_active_accounts" in _read("app/baidu/sync.py")
     assert "error.response?.data?.detail?.code" in client
+    assert "badgeLoadGeneration" in app_shell
+    assert "generation !== badgeLoadGeneration" in app_shell
+    assert "tenant?.sem_identity?.status === 'blocked'" in app_shell
+    assert "badgeLoadGeneration += 1" in app_shell
+    assert "resetBadges()" in app_shell
     assert "identity_locked" in customers and "受控客户更名" in customers
     assert "最终确认" in customers and "name_change_reason" in customers
     assert "confirm_bound_name_change" in backend
