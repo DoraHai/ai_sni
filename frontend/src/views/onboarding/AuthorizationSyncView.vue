@@ -163,8 +163,23 @@ async function handleAuthorizationResult() {
   await router.replace({ path: '/onboarding' })
 }
 
+function applyInitialTenantFromQuery() {
+  // 从"客户与模块"页面点"重新绑定并授权"跳转过来时带的 ?tenant_id=，
+  // 用于在打开这个页面时就切到目标客户，而不是停留在之前选中的客户——
+  // 否则下面"授权新客户账号"会把新账户绑到错误的客户上。
+  // 百度授权回调（?baidu_auth=...）走的是 handleAuthorizationResult 里独立的
+  // tenant_id 处理逻辑，这里跳过，避免互相覆盖。
+  if (route.query.baidu_auth) return
+  const initialTenantId = Number(route.query.tenant_id || 0)
+  if (initialTenantId) {
+    session.setTenant(initialTenantId)
+    router.replace({ path: '/onboarding' })
+  }
+}
+
 watch(currentTenantId, loadStatus)
 onMounted(async () => {
+  applyInitialTenantFromQuery()
   await handleAuthorizationResult()
   await loadStatus()
 })
