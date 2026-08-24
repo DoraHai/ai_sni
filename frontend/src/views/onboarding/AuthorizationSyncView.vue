@@ -89,12 +89,17 @@ async function loadStatus() {
   loading.value = true
   loadError.value = ''
   try {
-    const [result, assets] = await Promise.all([
-      fetchBaiduOAuthStatus(tenantId),
-      fetchSemAccounts(tenantId),
-    ])
+    const result = await fetchBaiduOAuthStatus(tenantId)
     if (generation !== loadGeneration || tenantId !== session.tenantId) return
-    const assetsById = new Map((assets.accounts || []).map((item) => [item.id, item]))
+    let assetsById = new Map()
+    try {
+      const assets = await fetchSemAccounts(tenantId)
+      assetsById = new Map((assets.accounts || []).map((item) => [item.id, item]))
+    } catch {
+      // 归属冲突的客户会被这个接口 409 拦截（符合预期）：只是缺资产维度详情，
+      // 不该拖累下面授权状态本身的展示——否则冲突客户永远打不开这个页面去重新授权。
+    }
+    if (generation !== loadGeneration || tenantId !== session.tenantId) return
     accounts.value = (result.accounts || []).map((item) => ({
       ...item,
       ...(assetsById.get(item.id) || {}),
