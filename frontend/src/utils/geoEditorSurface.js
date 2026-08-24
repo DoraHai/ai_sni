@@ -37,5 +37,6 @@ export function getGeoPrototypePageSurface() {
     showEvaluationRawMetrics: false,
     showCitationRawMetrics: false,
     showKnowledgeHealth: false,
+    showLightweightOperations: false,
   }
 }

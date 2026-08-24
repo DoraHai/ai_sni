@@ -34,5 +34,6 @@ test('prototype competitor and channel pages keep only their primary surfaces', 
     showEvaluationRawMetrics: false,
     showCitationRawMetrics: false,
     showKnowledgeHealth: false,
+    showLightweightOperations: false,
   })
 })

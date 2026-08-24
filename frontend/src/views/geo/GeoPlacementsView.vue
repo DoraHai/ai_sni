@@ -14,8 +14,10 @@ import {
 import { useClientPager } from '../../composables/useClientPager'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
+import { getGeoPrototypePageSurface } from '../../utils/geoEditorSurface'
 
 const router = useRouter()
+const prototypeSurface = getGeoPrototypePageSurface()
 const { tenantId } = useGeoTenant()
 const loading = ref(false)
 const error = ref('')
@@ -157,7 +159,6 @@ onMounted(load)
   >
     <template #actions>
       <input v-model="qSearch" class="gd-search" placeholder="搜索媒体 / 信源…" />
-      <button class="gd-btn" @click="router.push('/geo/publishing')">渠道库</button>
       <button class="gd-btn" @click="load">刷新</button>
       <button class="gd-btn primary" @click="createOpen = true">+ 新增信源计划</button>
     </template>
@@ -165,14 +166,14 @@ onMounted(load)
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
 
-    <div class="gd-kpis">
+    <div v-if="prototypeSurface.showLightweightOperations" class="gd-kpis">
       <div class="gd-card gd-stat"><div class="label">高权重信源</div><div class="value">{{ kpi.high }}</div><div class="delta hint">已发布阵地</div></div>
       <div class="gd-card gd-stat"><div class="label">已布局媒体</div><div class="value">{{ kpi.cited }}</div><div class="delta hint">官网/带蓝图 key</div></div>
       <div class="gd-card gd-stat"><div class="label">待补渠道</div><div class="value">{{ kpi.pending }}</div><div class="delta hint">规划中 / 进行中</div></div>
       <div class="gd-card gd-stat"><div class="label">竞品占位信源</div><div class="value">{{ kpi.occupy }}</div><div class="delta hint">名称或备注含竞品</div></div>
     </div>
 
-    <div class="gd-kpis" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+    <div v-if="prototypeSurface.showLightweightOperations" class="gd-kpis" style="grid-template-columns:repeat(3,minmax(0,1fr))">
       <div class="gd-card">
         <div class="gd-hd"><h3>官网可信底座</h3><span class="gd-badge green">必做</span></div>
         <div class="gd-bd">
@@ -203,12 +204,12 @@ onMounted(load)
     </div>
 
     <el-table :data="pager.pagedItems" stripe empty-text="暂无阵地" size="small">
-      <el-table-column prop="id" label="ID" width="70" />
+      <el-table-column v-if="prototypeSurface.showLightweightOperations" prop="id" label="ID" width="70" />
       <el-table-column prop="name" label="名称" min-width="140" />
       <el-table-column prop="channel_type" label="类型" width="110" />
-      <el-table-column prop="channel_key" label="蓝图 key" width="100" />
+      <el-table-column v-if="prototypeSurface.showLightweightOperations" prop="channel_key" label="蓝图 key" width="100" />
       <el-table-column prop="status" label="状态" width="100" />
-      <el-table-column prop="priority" label="优先级" width="80" />
+      <el-table-column v-if="prototypeSurface.showLightweightOperations" prop="priority" label="优先级" width="80" />
       <el-table-column prop="target_url" label="URL" min-width="160" show-overflow-tooltip />
       <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
@@ -223,7 +224,7 @@ onMounted(load)
             link
             @click="setStatus(row, 'planned')"
           >标为规划中</el-button>
-          <el-button link type="danger" @click="remove(row)">删除</el-button>
+          <el-button v-if="prototypeSurface.showLightweightOperations" link type="danger" @click="remove(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>

@@ -12,8 +12,10 @@ import {
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { pipelineLabel, taskStatusLabel } from '../../utils/geoReportLabels'
+import { getGeoPrototypePageSurface } from '../../utils/geoEditorSurface'
 
 const router = useRouter()
+const prototypeSurface = getGeoPrototypePageSurface()
 const { tenantId } = useGeoTenant()
 
 const loading = ref(false)
@@ -280,14 +282,13 @@ onMounted(load)
     class="geo-tasks"
   >
     <template #actions>
-      <button class="gd-btn" @click="router.push('/geo/placements')">信源素材库</button>
       <button class="gd-btn" @click="load">刷新</button>
       <button class="gd-btn primary" @click="openCreate">AI 生成 GEO 文章</button>
     </template>
     <div class="geo-dash">
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
-    <div v-if="recommended.length" class="gd-card" style="margin-bottom:16px">
+    <div v-if="prototypeSurface.showLightweightOperations && recommended.length" class="gd-card" style="margin-bottom:16px">
       <div class="gd-hd">
         <h3>优先从这些提问写</h3>
         <button class="gd-btn primary" style="margin-left:auto" @click="createFromPrompt(recommended[0])">立即生成</button>
@@ -338,7 +339,7 @@ onMounted(load)
               <td><span class="gd-badge" :class="row.status === 'published' ? 'green' : row.status === 'needs_fix' ? 'amber' : 'blue'">{{ taskStatusLabel(row.status) }}</span></td>
               <td>
                 <el-button link type="primary" @click="openEditor(row)">在线编辑</el-button>
-                <el-button v-if="row.status !== 'archived'" link @click="archiveTask(row)">归档</el-button>
+                <el-button v-if="prototypeSurface.showLightweightOperations && row.status !== 'archived'" link @click="archiveTask(row)">归档</el-button>
               </td>
             </tr>
             <tr v-if="!tableRows.length"><td colspan="6" class="gd-sub">暂无优化文章</td></tr>
