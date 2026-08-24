@@ -17,7 +17,13 @@ os.environ.setdefault("CRYPTO_MASTER_KEY_B64", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
 from app.api.auth import _sem_account_payload, list_tenants
-from app.api.customer_modules import CustomerUpdate, _sem_identity_check, update_customer
+from app.api.customer_modules import (
+    CustomerUpdate,
+    SemAccountArchive,
+    _sem_identity_check,
+    archive_sem_account,
+    update_customer,
+)
 from app.main import init_self_auth_account
 from app.security.sem_identity import (
     SEM_IDENTITY_BLOCKED_CODE,
@@ -308,6 +314,49 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
         self.assertEqual(result, {"status": "ok"})
         self.assertEqual(tenant.name, "新名称")
         session.commit.assert_awaited_once()
+
+    async def test_archive_sem_account_soft_deletes_and_audits(self):
+        account = SimpleNamespace(id=4, tenant_id=4, baidu_ucid=80243027, status="identity_conflict")
+        session = SimpleNamespace(
+            scalar=AsyncMock(return_value=account),
+            commit=AsyncMock(),
+        )
+        ctx = SimpleNamespace(user_id=5, username="admin")
+
+        result = await archive_sem_account(
+            4, 4, SemAccountArchive(reason="账户归属核实为其他客户"), ctx, session,
+        )
+
+        self.assertEqual(result, {"status": "ok"})
+        self.assertEqual(account.status, "archived")
+        session.commit.assert_awaited_once()
+
+    async def test_archive_sem_account_rejects_wrong_tenant(self):
+        account = SimpleNamespace(id=4, tenant_id=4, baidu_ucid=80243027, status="active")
+        session = SimpleNamespace(scalar=AsyncMock(return_value=account), commit=AsyncMock())
+        ctx = SimpleNamespace(user_id=5, username="admin")
+
+        with self.assertRaises(HTTPException) as cm:
+            await archive_sem_account(
+                1, 4, SemAccountArchive(reason="账户归属核实为其他客户"), ctx, session,
+            )
+
+        self.assertEqual(cm.exception.status_code, 404)
+        self.assertEqual(account.status, "active")
+        session.commit.assert_not_awaited()
+
+    async def test_archive_sem_account_rejects_already_archived(self):
+        account = SimpleNamespace(id=4, tenant_id=4, baidu_ucid=80243027, status="archived")
+        session = SimpleNamespace(scalar=AsyncMock(return_value=account), commit=AsyncMock())
+        ctx = SimpleNamespace(user_id=5, username="admin")
+
+        with self.assertRaises(HTTPException) as cm:
+            await archive_sem_account(
+                4, 4, SemAccountArchive(reason="账户归属核实为其他客户"), ctx, session,
+            )
+
+        self.assertEqual(cm.exception.status_code, 409)
+        session.commit.assert_not_awaited()
 
     async def test_self_auth_account_cannot_be_initialized_under_another_customer(self):
         account = SimpleNamespace(tenant_id=3)

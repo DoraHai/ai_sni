@@ -1,7 +1,10 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { createCustomer, fetchCustomers, setCustomerModule, updateCustomer } from '../../api/moduleAssets'
+import { archiveSemAccount, createCustomer, fetchCustomers, setCustomerModule, updateCustomer } from '../../api/moduleAssets'
+
+const router = useRouter()
 
 const loading = ref(false)
 const customers = ref([])
@@ -89,6 +92,40 @@ async function save() {
   } catch (error) { ElMessage.error(error.message) }
 }
 
+async function archiveAccount(row, account) {
+  let reason = ''
+  try {
+    const result = await ElMessageBox.prompt(
+      `即将归档账户绑定“${account.username} · UCID ${account.ucid}”。归档不会删除历史推广数据，`
+      + '只是让该账户不再作为客户当前有效的推广账户。请填写归档原因（例如：账户归属核实为其他客户）。',
+      '归档错误账户绑定',
+      {
+        confirmButtonText: '下一步',
+        cancelButtonText: '取消',
+        inputPlaceholder: '至少填写 4 个字',
+        inputValidator: (value) => String(value || '').trim().length >= 4 || '请填写至少 4 个字的归档原因',
+      },
+    )
+    reason = result.value.trim()
+    await ElMessageBox.confirm(
+      `确认归档“${row.name}”下的账户“${account.username} · UCID ${account.ucid}”？此操作会写入审计日志，且不可在前端撤销。`,
+      '最终确认',
+      { type: 'warning', confirmButtonText: '确认归档', cancelButtonText: '返回检查' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await archiveSemAccount(row.id, account.id, reason)
+    ElMessage.success('账户绑定已归档')
+    await load()
+  } catch (error) { ElMessage.error(error.message) }
+}
+
+function rebindAccount(row) {
+  router.push({ path: '/onboarding', query: { tenant_id: row.id } })
+}
+
 onMounted(load)
 </script>
 
@@ -108,15 +145,23 @@ onMounted(load)
     <el-table :data="customers" border>
       <el-table-column prop="name" label="客户" min-width="180" />
       <el-table-column prop="industry" label="行业" min-width="150" />
-      <el-table-column label="SEM 推广账户归属" min-width="260">
+      <el-table-column label="SEM 推广账户归属" min-width="320">
         <template #default="{ row }">
           <div v-if="row.sem_accounts?.length" class="account-bindings">
             <span v-for="account in row.sem_accounts" :key="account.id">
-              {{ account.username }} · {{ account.ucid }}
-              <small>{{ account.auth_mode === 'oauth' ? 'OAuth' : '自授权' }} · {{ account.status }}</small>
+              <span class="account-label">
+                {{ account.username }} · {{ account.ucid }}
+                <small>{{ account.auth_mode === 'oauth' ? 'OAuth' : '自授权' }} · {{ account.status }}</small>
+              </span>
+              <el-button
+                v-if="account.status !== 'archived'"
+                link type="danger" size="small"
+                @click="archiveAccount(row, account)"
+              >归档</el-button>
             </span>
           </div>
           <span v-else class="unbound">未绑定</span>
+          <el-button link type="primary" size="small" @click="rebindAccount(row)">重新绑定并授权</el-button>
         </template>
       </el-table-column>
       <el-table-column label="归属检查" min-width="230">
@@ -156,5 +201,5 @@ onMounted(load)
 </template>
 
 <style scoped>
-.module-page{padding:24px}.page-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px}.page-head h2{margin:0 0 7px;font-size:24px}.page-head p{margin:0;color:#6b7280}.head-actions{display:flex;gap:8px}.identity-summary{margin-bottom:16px}.account-bindings{display:grid;gap:5px}.account-bindings span{display:flex;justify-content:space-between;gap:10px}.account-bindings small,.unbound{color:#8b95a5}.identity-issues{display:grid;justify-items:start;gap:5px}.identity-issues span{color:#8a4b08;font-size:12px;line-height:1.35}.identity-alert{margin-bottom:16px}
+.module-page{padding:24px}.page-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px}.page-head h2{margin:0 0 7px;font-size:24px}.page-head p{margin:0;color:#6b7280}.head-actions{display:flex;gap:8px}.identity-summary{margin-bottom:16px}.account-bindings{display:grid;gap:5px;margin-bottom:6px}.account-bindings>span{display:flex;justify-content:space-between;align-items:center;gap:10px}.account-label{display:flex;flex-direction:column}.account-bindings small,.unbound{color:#8b95a5}.identity-issues{display:grid;justify-items:start;gap:5px}.identity-issues span{color:#8a4b08;font-size:12px;line-height:1.35}.identity-alert{margin-bottom:16px}
 </style>
