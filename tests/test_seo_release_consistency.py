@@ -122,8 +122,14 @@ def test_seo_content_and_rank_views_are_site_scoped_and_html_safe() -> None:
     assert "if (!siteId.value) { ElMessage.warning('请先选择或创建 SEO 网站'); return }" in ranking
     assert '@click="openCollect"' in ranking
     assert "site_id: PositiveInt" in backend
-    assert "ElMessage.warning(`采集部分完成" in ranking
+    assert "? `采集部分完成" in ranking
     assert "Array.isArray(summary.errors)" in ranking
+    assert "const collectOutcome = ref(null)" in ranking
+    assert 'class="collect-outcome"' in ranking
+    assert "失败请求已记录，本页面不会自动重试" in ranking
+    assert "结果会保留在页面上，避免重复采集" in ranking
+    assert '@click="showCollectedDevice"' in ranking
+    assert "collectOutcome.value = {" in ranking
     assert 'siteId:siteId.value' in rewrite
     assert 'siteId: siteId.value' in distribution
     assert "site_id: siteId || undefined" in api

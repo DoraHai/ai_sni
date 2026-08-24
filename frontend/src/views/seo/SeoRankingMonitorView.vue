@@ -25,6 +25,7 @@ const siteId = ref(null)
 const view = ref('ranking')
 const ownership = ref('')
 const collectDialog = ref(false)
+const collectOutcome = ref(null)
 const assetDialog = ref(false)
 const result = ref({ items: [], total: 0 })
 const overview = ref({ stats: {} })
@@ -71,6 +72,7 @@ const estimatedCost = computed(() => (requestCount.value * 0.04).toFixed(2))
 
 const fmt = (value) => value == null ? '—' : Number(value).toLocaleString('zh-CN')
 const delta = (item) => !item.rank_delta ? '—' : `${item.rank_delta > 0 ? '↑' : '↓'}${Math.abs(item.rank_delta)}`
+const deviceLabel = (value) => value === 'mobile' ? '百度移动' : '百度 PC'
 function spark(item) {
   if (item.latest_rank == null) return ''
   const previous = Math.max(1, item.latest_rank + (item.rank_delta || 0))
@@ -130,6 +132,10 @@ function openCollect() {
   collectDialog.value = true
 }
 
+function showCollectedDevice() {
+  if (collectOutcome.value?.device) device.value = collectOutcome.value.device
+}
+
 async function collect() {
   if (!currentTenantId.value) { ElMessage.warning('请先选择客户'); return }
   if (!siteId.value) { ElMessage.warning('请先选择或创建 SEO 网站'); return }
@@ -145,13 +151,39 @@ async function collect() {
     })
     collectDialog.value = false
     const failed = Array.isArray(summary.errors) ? summary.errors.length : 0
+    const collectedDevice = collectForm.devices.length === 1 ? collectForm.devices[0] : null
+    collectOutcome.value = {
+      status: failed ? 'partial' : 'success',
+      title: failed
+        ? `采集部分完成：${summary.snapshots}/${summary.requests} 个排名快照成功，${failed} 个请求失败`
+        : `采集完成：${summary.snapshots} 个排名快照成功`,
+      requests: Number(summary.requests || 0),
+      snapshots: Number(summary.snapshots || 0),
+      serpResults: Number(summary.serp_results || 0),
+      failed,
+      device: collectedDevice,
+      deviceText: collectForm.devices.map(deviceLabel).join('、'),
+      completedAt: new Date().toLocaleString('zh-CN'),
+    }
     if (failed) {
-      ElMessage.warning(`采集部分完成：${summary.snapshots}/${summary.requests} 个排名快照成功，${failed} 个请求失败`)
+      ElMessage.warning(collectOutcome.value.title)
     } else {
       ElMessage.success(`采集完成：${summary.snapshots} 个排名快照，确认 ${summary.confirmed_brand_results} 条品牌结果`)
     }
     await load()
   } catch (err) {
+    collectDialog.value = false
+    collectOutcome.value = {
+      status: 'failed',
+      title: `采集失败：${err.message}`,
+      requests: requestCount.value,
+      snapshots: 0,
+      serpResults: 0,
+      failed: requestCount.value,
+      device: null,
+      deviceText: collectForm.devices.map(deviceLabel).join('、'),
+      completedAt: new Date().toLocaleString('zh-CN'),
+    }
     ElMessage.error(err.message)
   } finally {
     collecting.value = false
@@ -197,6 +229,7 @@ async function confirmOwnership(item, ownershipType) {
 let timer
 watch(() => filters.q, () => { clearTimeout(timer); timer = setTimeout(load, 260) })
 watch([device, siteId, ownership], load)
+watch([currentTenantId, siteId], () => { collectOutcome.value = null })
 watch(currentTenantId, loadSites)
 onMounted(loadSites)
 </script>
@@ -226,6 +259,31 @@ onMounted(loadSites)
     </section>
 
     <el-alert v-if="error" :title="error" type="warning" :closable="false" />
+
+    <section v-if="collectOutcome" class="collect-outcome" :class="collectOutcome.status" aria-live="polite">
+      <header>
+        <div>
+          <strong>{{ collectOutcome.title }}</strong>
+          <span>完成时间 {{ collectOutcome.completedAt }} · 本次设备 {{ collectOutcome.deviceText || '—' }}</span>
+        </div>
+        <button type="button" aria-label="关闭采集结果" @click="collectOutcome = null">×</button>
+      </header>
+      <div class="collect-outcome-stats">
+        <span><b>{{ collectOutcome.requests }}</b>请求</span>
+        <span><b>{{ collectOutcome.snapshots }}</b>成功快照</span>
+        <span><b>{{ collectOutcome.serpResults }}</b>SERP 结果</span>
+        <span><b>{{ collectOutcome.failed }}</b>失败</span>
+      </div>
+      <footer>
+        <span>{{ collectOutcome.failed ? '失败请求已记录，本页面不会自动重试。' : '本次采集已完成。' }}结果会保留在页面上，避免重复采集。</span>
+        <button
+          v-if="collectOutcome.device && collectOutcome.device !== device"
+          type="button"
+          class="kw-btn small"
+          @click="showCollectedDevice"
+        >查看本次{{ deviceLabel(collectOutcome.device) }}结果</button>
+      </footer>
+    </section>
 
     <section class="kw-metrics">
       <article class="kw-metric" data-mark="K"><span>监控关键词</span><strong>{{ fmt(result.total) }}</strong><small>{{ device === 'desktop' ? '百度 PC' : '百度移动' }}关键词资产</small></article>
@@ -329,5 +387,6 @@ onMounted(loadSites)
 <style>@import url('../../../public/deal-sniper-prototype/seo/assets/keyword-assets-v2.css');</style>
 <style scoped>
 .site-picker{width:240px}
+.collect-outcome{margin:14px 0;padding:16px 18px;border:1px solid #9ed8be;border-radius:12px;background:#f0fbf6;color:#1e5d47}.collect-outcome.partial{border-color:#f0ca78;background:#fff9eb;color:#76540d}.collect-outcome.failed{border-color:#efaaa6;background:#fff3f2;color:#8b302b}.collect-outcome header,.collect-outcome footer{display:flex;align-items:center;justify-content:space-between;gap:18px}.collect-outcome header strong,.collect-outcome header span{display:block}.collect-outcome header span,.collect-outcome footer span{margin-top:4px;font-size:13px;opacity:.8}.collect-outcome header>button{border:0;background:none;color:inherit;font-size:22px;cursor:pointer}.collect-outcome-stats{display:flex;flex-wrap:wrap;gap:12px;margin:14px 0}.collect-outcome-stats span{padding:7px 10px;border-radius:8px;background:rgba(255,255,255,.72);font-size:13px}.collect-outcome-stats b{margin-right:4px;font-size:17px}
 .ranking-prototype{min-height:100%;padding:22px 26px 30px;background:#f5f7fb}.hero-controls{display:flex;flex-direction:column;align-items:flex-end;gap:18px}.device-switch{background:#f2f5fb}.kw-metrics{grid-template-columns:repeat(5,minmax(0,1fr))}.kw-metric.coral{border-top-color:#e66a5f}.monitor-head{align-items:center}.ownership-toolbar{display:flex;align-items:center;justify-content:space-between}.ownership-tabs{flex-wrap:wrap}.kw-name button{padding:0;border:0;background:none;color:#2457d6;font-weight:700;cursor:pointer}.kw-btn.active{border-color:#d9544d;color:#d9544d}.result-cell{max-width:580px}.result-cell a{display:block;color:#1a4fc4;font-weight:700;text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.result-cell small{display:block;max-width:560px;margin-top:5px;color:#8792a8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.review-actions{white-space:nowrap}.review-actions button{border:0;background:none;color:#245fdb;font-weight:700;cursor:pointer;margin-right:10px}.review-actions button.muted{color:#8c96aa}.review-actions span{color:#248a64}.collect-form{display:grid;gap:22px}.collect-form>label{display:grid;grid-template-columns:120px 1fr;align-items:center;gap:12px}.collect-form label>span{font-weight:700;color:#27334a}.collect-form label>small{grid-column:2;color:#8490a5}.cost-note{padding:16px 18px;border:1px solid #dce5f5;border-radius:12px;background:#f6f9ff}.cost-note b,.cost-note span{display:block}.cost-note span{margin-top:6px;color:#77839a}.asset-create{display:grid;grid-template-columns:150px 150px 1fr auto;gap:10px}.asset-list{margin-top:20px;border:1px solid #e3e8f1;border-radius:12px;overflow:hidden}.asset-list>div{display:grid;grid-template-columns:70px 160px 1fr;gap:12px;align-items:center;padding:13px 16px;border-bottom:1px solid #edf0f5}.asset-list>div:last-child{border-bottom:0}.asset-list small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#7b879b}@media(max-width:1280px){.kw-metrics{grid-template-columns:repeat(3,1fr)}.hero-controls{align-items:flex-start}.kw-hero{flex-direction:column}.asset-create{grid-template-columns:1fr 1fr}.result-cell{max-width:360px}}
 </style>
