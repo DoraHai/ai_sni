@@ -155,13 +155,13 @@ onMounted(load)
               </span>
               <el-button
                 v-if="account.status !== 'archived'"
-                link type="danger" size="small"
+                type="danger" plain size="small"
                 @click="archiveAccount(row, account)"
               >归档</el-button>
             </span>
           </div>
           <span v-else class="unbound">未绑定</span>
-          <el-button link type="primary" size="small" @click="rebindAccount(row)">重新绑定并授权</el-button>
+          <el-button type="primary" plain size="small" @click="rebindAccount(row)">重新绑定并授权</el-button>
         </template>
       </el-table-column>
       <el-table-column label="归属检查" min-width="230">
