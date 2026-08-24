@@ -80,7 +80,7 @@ function navigate(path) {
 async function loadContext() {
   if (!session.isLoggedIn) return
   try {
-    const [me, tenants] = await Promise.all([fetchMe(), fetchTenants()])
+    const [me, tenants] = await Promise.all([fetchMe(), fetchTenants('seo')])
     session.refreshUser(me.user)
     session.setTenants(tenants.tenants)
   } catch { /* 登录失效由统一拦截器处理 */ }

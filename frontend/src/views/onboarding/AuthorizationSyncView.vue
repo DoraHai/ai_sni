@@ -141,7 +141,7 @@ async function handleAuthorizationResult() {
       session.setTenant(targetTenantId)
     }
     try {
-      const result = await fetchTenants()
+      const result = await fetchTenants('sem')
       session.setTenants(result.tenants || [])
     } catch { /* 后续 loadStatus 会显示具体错误 */ }
     ElMessage.success(

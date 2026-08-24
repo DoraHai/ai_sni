@@ -64,6 +64,7 @@ export const session = {
   setTenant(id) {
     state.tenantId = id
     if (id) sessionStorage.setItem('sem_tenant_id', String(id))
+    else sessionStorage.removeItem('sem_tenant_id')
   },
 
   logout() {

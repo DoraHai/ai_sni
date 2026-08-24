@@ -14,6 +14,18 @@ const router = useRouter()
 const currentTitle = computed(() => route.meta.title || '')
 const currentWorkflow = computed(() => route.meta.workflow || '')
 const bare = computed(() => route.meta.bare) // 门户、诊断等无框页面
+const tenantModuleScope = computed(() => {
+  if (route.path.startsWith('/seo')) return 'seo'
+  if (route.path.startsWith('/geo')) return 'geo'
+  if (
+    route.path.startsWith('/settings')
+    || route.path.startsWith('/admin')
+    || route.path.startsWith('/deal-sniper')
+    || route.path === '/workspace'
+    || route.path === '/growth-sniper'
+  ) return null
+  return 'sem'
+})
 const showSemAccountContext = computed(() => (
   !route.path.startsWith('/seo')
   && !route.path.startsWith('/geo')
@@ -21,6 +33,7 @@ const showSemAccountContext = computed(() => (
 ))
 const tenantPopoverOpen = ref(false)
 const bootstrapError = ref('')
+let tenantLoadGeneration = 0
 const themeStorageKey = 'sem_console_theme'
 const currentTheme = ref(localStorage.getItem(themeStorageKey) === 'dark' ? 'dark' : 'light')
 const themeLabel = computed(() => (currentTheme.value === 'dark' ? '暗橘' : '亮橘'))
@@ -50,6 +63,7 @@ async function loadBadges() {
   const tenantId = Number(session.tenantId) || null
   const generation = ++badgeLoadGeneration
   resetBadges()
+  if (tenantModuleScope.value !== 'sem') return
   if (!tenantId) return
   const canCall = session.isLoggedIn || import.meta.env.VITE_API_KEY
   if (!canCall) return
@@ -217,8 +231,11 @@ function tenantTone(id) {
 
 async function loadTenants() {
   if (!session.isLoggedIn) return
+  const moduleScope = tenantModuleScope.value
+  const generation = ++tenantLoadGeneration
   try {
-    const t = await fetchTenants()
+    const t = await fetchTenants(moduleScope)
+    if (generation !== tenantLoadGeneration || moduleScope !== tenantModuleScope.value) return
     session.setTenants(t.tenants)
     loadBadges()
     bootstrapError.value = ''
@@ -288,6 +305,7 @@ function closeTenantPopoverOnOutside(event) {
 
 watch(() => session.isLoggedIn, (v) => { if (v) { loadTenants(); loadBadges() } })
 watch(() => session.tenantId, loadBadges)
+watch(tenantModuleScope, loadTenants)
 watch(() => route.path, () => {
   tenantPopoverOpen.value = false
   syncOpenToRoute()

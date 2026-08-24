@@ -532,7 +532,7 @@ async function ensureTenant() {
   if (tenantId.value) return true
   tenantLoading.value = true
   try {
-    const result = await fetchTenants()
+    const result = await fetchTenants('geo')
     session.setTenants(result.tenants || [])
     if (!tenantId.value) {
       error.value = '当前账号还没有可诊断的客户，请先在主平台完成客户配置'
