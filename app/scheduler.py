@@ -50,6 +50,7 @@ from app.sem_asset_sync import (
     safe_sync_error,
     update_dimension,
 )
+from app.security.sem_identity import filter_identity_safe_active_accounts
 
 logger = logging.getLogger(__name__)
 
@@ -231,11 +232,13 @@ async def fetch_yesterday_keyword_report() -> None:
         async with _report_sync_lock:
             result = await sync_keyword_report_for_all_active_accounts(session, yesterday)
 
-        accounts = (
-            await session.scalars(
-                select(BaiduAccount).where(BaiduAccount.status == "active")
-            )
-        ).all()
+        accounts = filter_identity_safe_active_accounts(
+            (
+                await session.scalars(
+                    select(BaiduAccount).where(BaiduAccount.status == "active")
+                )
+            ).all()
+        )
         for acc in accounts:
             try:
                 tenant = await session.get(Tenant, acc.tenant_id)
@@ -288,11 +291,13 @@ async def fetch_today_keyword_report() -> None:
         async with async_session_factory() as session:
             refresh_result = await refresh_expiring_oauth_grants(session)
             logger.info("[scheduler] OAuth Token 刷新结果: %s", refresh_result)
-            accounts = (
-                await session.scalars(
-                    select(BaiduAccount).where(BaiduAccount.status == "active")
-                )
-            ).all()
+            accounts = filter_identity_safe_active_accounts(
+                (
+                    await session.scalars(
+                        select(BaiduAccount).where(BaiduAccount.status == "active")
+                    )
+                ).all()
+            )
             result = {}
             for acc in accounts:
                 tenant = await session.get(Tenant, acc.tenant_id)
@@ -346,11 +351,13 @@ async def sync_search_terms_daily() -> None:
         async with async_session_factory() as session:
             refresh_result = await refresh_expiring_oauth_grants(session)
             logger.info("[scheduler] OAuth Token 刷新结果: %s", refresh_result)
-            accounts = (
-                await session.scalars(
-                    select(BaiduAccount).where(BaiduAccount.status == "active")
-                )
-            ).all()
+            accounts = filter_identity_safe_active_accounts(
+                (
+                    await session.scalars(
+                        select(BaiduAccount).where(BaiduAccount.status == "active")
+                    )
+                ).all()
+            )
             for acc in accounts:
                 try:
                     result[acc.baidu_username] = await sync_search_terms_for_account(

@@ -147,12 +147,22 @@ const tenantName = computed(
   () => session.tenants.find((t) => t.id === session.tenantId)?.name || '—',
 )
 const currentTenant = computed(() => session.tenants.find((t) => t.id === session.tenantId))
+const currentSemIdentity = computed(() => currentTenant.value?.sem_identity || { status: 'unbound' })
+const semIdentityBlocked = computed(() => currentSemIdentity.value.status === 'blocked')
+const showSemIdentityBlock = computed(() => (
+  showSemAccountContext.value
+  && semIdentityBlocked.value
+  && !route.path.startsWith('/settings')
+  && !route.path.startsWith('/onboarding')
+))
 const currentSemAccounts = computed(() => {
+  if (semIdentityBlocked.value) return []
   const rows = currentTenant.value?.sem_accounts || []
   return [...rows].sort((a, b) => Number(b.status === 'active') - Number(a.status === 'active'))
 })
 const primarySemAccount = computed(() => currentSemAccounts.value[0] || null)
 const accountContextTitle = computed(() => {
+  if (semIdentityBlocked.value) return currentSemIdentity.value.message
   if (!primarySemAccount.value) return '当前客户尚未绑定百度推广账户'
   const account = primarySemAccount.value
   const count = currentSemAccounts.value.length
@@ -168,6 +178,7 @@ function fmtAccountSync(value) {
 }
 
 function tenantAccountMeta(tenant) {
+  if (tenant?.sem_identity?.status === 'blocked') return '推广账户归属冲突 · 已暂停数据访问'
   const rows = tenant?.sem_accounts || []
   const account = rows.find((row) => row.status === 'active') || rows[0]
   if (!account) return `未绑定推广账户 · 客户 ID ${tenant.id}`
@@ -402,13 +413,19 @@ onBeforeUnmount(() => {
             <span
               v-if="showSemAccountContext"
               class="account-context"
-              :class="{ empty: !primarySemAccount }"
+              :class="{ empty: !primarySemAccount, conflict: semIdentityBlocked }"
               :title="accountContextTitle"
             >
-              <span class="account-context-main">
+              <span v-if="semIdentityBlocked" class="account-context-main">
+                推广账户：归属冲突
+              </span>
+              <span v-else class="account-context-main">
                 推广账户：{{ primarySemAccount?.username || '未绑定' }}
               </span>
-              <small class="account-context-sync">
+              <small v-if="semIdentityBlocked" class="account-context-sync">
+                已暂停当前客户的 SEM 数据访问
+              </small>
+              <small v-else class="account-context-sync">
                 {{ primarySemAccount ? `UCID ${primarySemAccount.ucid} · ${fmtAccountSync(primarySemAccount.last_synced_at)}` : '请先完成授权与同步' }}
               </small>
             </span>
@@ -428,12 +445,25 @@ onBeforeUnmount(() => {
       </el-header>
       <el-main class="main">
         <el-alert v-if="bootstrapError" :title="bootstrapError" type="error" :closable="false" show-icon style="margin:0 18px 12px"><el-button size="small" @click="loadTenants">重试</el-button></el-alert>
+        <el-alert
+          v-if="showSemIdentityBlock"
+          title="推广账户归属冲突，已暂停展示该客户的 SEM 数据"
+          :description="currentSemIdentity.message || '请联系超级管理员在“客户与模块”中处理账户归属后重试。'"
+          type="error"
+          :closable="false"
+          show-icon
+          class="identity-block-alert"
+        />
         <div v-if="!SEM_WRITEBACK_ENABLED" class="readonly-banner">
           <b>只读演练</b>
           <span>{{ SEM_READ_ONLY_MESSAGE }}</span>
         </div>
         <div class="main-inner">
-          <router-view />
+          <router-view v-if="!showSemIdentityBlock" />
+          <div v-else class="identity-block-panel">
+            <strong>为了避免跨客户数据泄露，本页已安全锁定。</strong>
+            <span>超级管理员可前往“系统设置 → 客户与模块”查看冲突 UCID；处理前不要执行授权、同步或回写。</span>
+          </div>
         </div>
       </el-main>
     </el-container>
@@ -443,6 +473,9 @@ onBeforeUnmount(() => {
 <style scoped>
 .readonly-banner { display: flex; align-items: center; gap: 10px; margin: 0 18px 12px; padding: 9px 13px; border: 1px solid #f1c27d; border-radius: 8px; background: #fff8eb; color: #7a4b0b; font-size: 12px; line-height: 1.5; }
 .readonly-banner b { flex: none; padding: 1px 7px; border-radius: 10px; background: #f3b85b; color: #4f2c00; font-size: 11px; }
+.identity-block-alert { margin: 0 18px 12px; }
+.identity-block-panel { margin: 24px 18px; padding: 24px; display: grid; gap: 8px; border: 1px solid #efb1b1; border-radius: 12px; background: #fff6f6; color: #8f2525; }
+.account-context.conflict { border-color: #ef9a9a; background: #fff1f1; color: #a12626; }
 /* 侧边栏按原型 v3.0 sidebar 复刻（logo / wf-group / wf-badge / wf-sub-item） */
 .side { background: #fff; border-right: 1px solid var(--sem-border); display: flex; flex-direction: column; }
 .brand { padding: 18px 20px 14px; border-bottom: 1px solid #f3f4f6; }

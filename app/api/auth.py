@@ -19,6 +19,7 @@ from app.security.auth import (
     require_auth,
     verify_password,
 )
+from app.security.sem_identity import load_sem_identity_states
 
 logger = logging.getLogger(__name__)
 
@@ -165,13 +166,21 @@ async def list_tenants(
         accounts_by_tenant.setdefault(account.tenant_id, []).append(
             _sem_account_payload(account)
         )
+    identity_states = await load_sem_identity_states(
+        session, tenant_ids, tenant_accounts=accounts
+    )
     return {
         "module": module,
         "tenants": [
             {
                 "id": tenant.id,
                 "name": tenant.name,
-                "sem_accounts": accounts_by_tenant.get(tenant.id, []),
+                "sem_identity": identity_states.get(tenant.id),
+                "sem_accounts": (
+                    []
+                    if identity_states.get(tenant.id, {}).get("status") == "blocked"
+                    else accounts_by_tenant.get(tenant.id, [])
+                ),
             }
             for tenant in tenants
         ],

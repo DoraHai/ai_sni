@@ -76,6 +76,19 @@ def _sem_identity_check(tenants: list[Tenant], accounts: list[BaiduAccount]) -> 
     accounts_by_ucid: dict[int, list[BaiduAccount]] = {}
     accounts_by_tenant_ucid: dict[tuple[int, int], list[BaiduAccount]] = {}
     for account in accounts:
+        status = getattr(account, "status", "active")
+        if status == "identity_conflict":
+            issue = {
+                "code": "quarantined_account_binding",
+                "severity": "warning",
+                "message": f"UCID {account.baidu_ucid} 的历史错误绑定已隔离，等待复核归档",
+                "ucid": str(account.baidu_ucid),
+                "account_ids": [account.id],
+            }
+            all_issues.append(issue)
+            issues_by_tenant.setdefault(account.tenant_id, []).append(issue)
+        if status != "active":
+            continue
         accounts_by_ucid.setdefault(account.baidu_ucid, []).append(account)
         accounts_by_tenant_ucid.setdefault(
             (account.tenant_id, account.baidu_ucid), []
