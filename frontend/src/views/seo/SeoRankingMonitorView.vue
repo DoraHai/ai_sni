@@ -14,6 +14,7 @@ import {
 } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId } from '../../store/session'
+import { formatSeoRankTime } from './seoRankTime'
 
 const router = useRouter()
 const loading = ref(false)
@@ -35,7 +36,7 @@ const overview = ref({ stats: {} })
 const serp = ref({ items: [], total: 0, stats: {}, captured_at: null })
 const assets = ref({ items: [], total: 0 })
 const filters = reactive({ q: '', priority: '', alerts: false })
-const collectForm = reactive({ max_keywords: 20, devices: ['desktop'], use_ai: true })
+const collectForm = reactive({ keyword_ids: [], devices: ['desktop'], use_ai: true })
 const assetForm = reactive({ asset_type: 'content_url', name: '', match_value: '', platform: '' })
 
 const engines = [{ k: 'baidu', n: '百度' }]
@@ -70,7 +71,7 @@ const ranked = computed(() => result.value.items.filter((item) => item.latest_ra
 const avg = computed(() => ranked.value.length
   ? (ranked.value.reduce((sum, item) => sum + item.latest_rank, 0) / ranked.value.length).toFixed(1)
   : '—')
-const requestCount = computed(() => Math.min(Number(collectForm.max_keywords || 0), Number(result.value.total || 0)) * collectForm.devices.length)
+const requestCount = computed(() => collectForm.keyword_ids.length * collectForm.devices.length)
 const estimatedCost = computed(() => (requestCount.value * 0.04).toFixed(2))
 const cooldownSeconds = computed(() => collectLimit.value.next_allowed_at
   ? Math.max(0, Math.ceil((new Date(collectLimit.value.next_allowed_at).getTime() - clock.value) / 1000))
@@ -150,6 +151,9 @@ function openCollect() {
   if (!currentTenantId.value) return ElMessage.warning('请先选择客户')
   if (!siteId.value) return ElMessage.warning('请先选择或创建 SEO 网站')
   if (!collectAllowed.value) return ElMessage.warning(collectButtonText.value)
+  const availableIds = result.value.items.map((item) => item.id)
+  const retainedIds = collectForm.keyword_ids.filter((id) => availableIds.includes(id))
+  collectForm.keyword_ids = retainedIds.length ? retainedIds : availableIds.slice(0, 20)
   collectDialog.value = true
 }
 
@@ -160,13 +164,15 @@ function showCollectedDevice() {
 async function collect() {
   if (!currentTenantId.value) { ElMessage.warning('请先选择客户'); return }
   if (!siteId.value) { ElMessage.warning('请先选择或创建 SEO 网站'); return }
+  if (!collectForm.keyword_ids.length) { ElMessage.warning('至少选择一个关键词'); return }
   if (!collectForm.devices.length) { ElMessage.warning('至少选择一个设备'); return }
   collecting.value = true
   try {
     const summary = await collectSeoRankSerp({
       tenant_id: currentTenantId.value,
       site_id: siteId.value,
-      max_keywords: Number(collectForm.max_keywords),
+      keyword_ids: collectForm.keyword_ids,
+      max_keywords: collectForm.keyword_ids.length,
       devices: collectForm.devices,
       use_ai: collectForm.use_ai,
     })
@@ -185,7 +191,7 @@ async function collect() {
       failed,
       device: collectedDevice,
       deviceText: collectForm.devices.map(deviceLabel).join('、'),
-      completedAt: new Date().toLocaleString('zh-CN'),
+      completedAt: formatSeoRankTime(new Date()),
     }
     if (failed) {
       ElMessage.warning(collectOutcome.value.title)
@@ -204,7 +210,7 @@ async function collect() {
       failed: requestCount.value,
       device: null,
       deviceText: collectForm.devices.map(deviceLabel).join('、'),
-      completedAt: new Date().toLocaleString('zh-CN'),
+      completedAt: formatSeoRankTime(new Date()),
     }
     ElMessage.error(err.message)
     await loadCollectStatus()
@@ -253,7 +259,7 @@ let timer
 watch(() => filters.q, () => { clearTimeout(timer); timer = setTimeout(load, 260) })
 watch([device, siteId, ownership], load)
 watch(siteId, loadCollectStatus)
-watch([currentTenantId, siteId], () => { collectOutcome.value = null })
+watch([currentTenantId, siteId], () => { collectOutcome.value = null; collectForm.keyword_ids = [] })
 watch(currentTenantId, loadSites)
 let clockTimer
 onMounted(async () => { clockTimer = window.setInterval(() => { clock.value = Date.now() }, 1000); await loadSites(); await loadCollectStatus() })
@@ -323,7 +329,7 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
       <header class="kw-card-head monitor-head">
         <div>
           <h3>{{ view === 'ranking' ? '自然排名明细' : '百度前 50 品牌识别' }}</h3>
-          <p>{{ serp.captured_at ? `最近采集 ${new Date(serp.captured_at).toLocaleString('zh-CN')}` : '尚未采集前 50 搜索结果' }} · {{ device === 'desktop' ? 'PC' : '移动' }} · 全国</p>
+          <p>{{ serp.captured_at ? `最近采集 ${formatSeoRankTime(serp.captured_at)}` : '尚未采集前 50 搜索结果' }} · {{ device === 'desktop' ? 'PC' : '移动' }} · 全国</p>
         </div>
         <div class="kw-segment">
           <button :class="{ active: view === 'ranking' }" @click="view = 'ranking'">关键词排名</button>
@@ -390,12 +396,12 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
 
     <el-dialog v-model="collectDialog" title="采集百度前 50 排名" width="520px" destroy-on-close>
       <div class="collect-form">
-        <label><span>采集关键词数</span><el-input-number v-model="collectForm.max_keywords" :min="1" :max="50" /></label>
+        <label><span>采集关键词</span><el-select v-model="collectForm.keyword_ids" multiple filterable collapse-tags collapse-tags-tooltip :multiple-limit="50" placeholder="选择要更新的关键词"><el-option v-for="item in result.items" :key="item.id" :label="`${item.keyword}（ID ${item.id}）`" :value="item.id" /></el-select><small>已选择 {{ collectForm.keyword_ids.length }} 个关键词；只会采集明确勾选的关键词。</small></label>
         <label><span>采集设备</span><el-checkbox-group v-model="collectForm.devices"><el-checkbox value="desktop">百度 PC</el-checkbox><el-checkbox value="mobile">百度移动</el-checkbox></el-checkbox-group></label>
         <label><span>AI 兜底判断</span><el-switch v-model="collectForm.use_ai" /><small>仅处理 URL、官网域名和平台账号规则无法识别的结果</small></label>
         <div class="cost-note"><b>预计调用 {{ requestCount }} 次站长之家接口</b><span>按截图中的最高单价 0.04 元/次估算，约 ¥{{ estimatedCost }}；实际以购买套餐为准。</span><span>同一网站人工更新后冷却 1 小时；今日已使用 {{collectLimit.daily_requests_used||0}} / {{collectLimit.daily_requests_limit||0}} 次请求。</span></div>
       </div>
-      <template #footer><button class="kw-btn" @click="collectDialog = false">取消</button><button class="kw-btn primary" :disabled="collecting" @click="collect">{{ collecting ? '正在采集…' : '确认采集' }}</button></template>
+      <template #footer><button class="kw-btn" @click="collectDialog = false">取消</button><button class="kw-btn primary" :disabled="collecting || !collectForm.keyword_ids.length || !collectForm.devices.length" @click="collect">{{ collecting ? '正在采集…' : '确认采集' }}</button></template>
     </el-dialog>
 
     <el-dialog v-model="assetDialog" title="品牌识别资产" width="760px">
