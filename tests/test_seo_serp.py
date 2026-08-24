@@ -5,13 +5,31 @@ import httpx
 import pytest
 
 from app.seo_serp import (
+    CHINAZ_MAX_CONCURRENCY,
     SerpProviderError,
     canonical_url,
+    create_chinaz_client,
     deterministic_match,
     fetch_baidu_top50,
+    fetch_baidu_top50_batch,
     parse_top50_response,
     rank_number,
 )
+
+
+def _provider_settings() -> object:
+    return type(
+        "Settings",
+        (),
+        {
+            "chinaz_api_enabled": True,
+            "chinaz_baidu_pc_top50_api_key": "secret-api-key",
+            "chinaz_baidu_mobile_top50_api_key": "mobile-key",
+            "chinaz_api_key": "",
+            "chinaz_api_base_url": "https://openapi.chinaz.net/v1/1001",
+            "chinaz_api_timeout_seconds": 8,
+        },
+    )()
 
 
 def test_top50_response_and_rank_label_are_normalized() -> None:
@@ -71,18 +89,7 @@ def test_shared_platform_domain_is_not_mistaken_for_brand() -> None:
 
 
 def test_mobile_provider_uses_official_top50_endpoint() -> None:
-    settings = type(
-        "Settings",
-        (),
-        {
-            "chinaz_api_enabled": True,
-            "chinaz_baidu_pc_top50_api_key": "pc-key",
-            "chinaz_baidu_mobile_top50_api_key": "mobile-key",
-            "chinaz_api_key": "",
-            "chinaz_api_base_url": "https://openapi.chinaz.net/v1/1001",
-            "chinaz_api_timeout_seconds": 8,
-        },
-    )()
+    settings = _provider_settings()
     response = MagicMock()
     response.raise_for_status.return_value = None
     response.json.return_value = {"StateCode": 1, "Result": {"Ranks": []}}
@@ -114,18 +121,7 @@ def test_provider_http_errors_never_expose_request_secrets(
     expected_code: str,
     retryable: bool,
 ) -> None:
-    settings = type(
-        "Settings",
-        (),
-        {
-            "chinaz_api_enabled": True,
-            "chinaz_baidu_pc_top50_api_key": "secret-api-key",
-            "chinaz_baidu_mobile_top50_api_key": "mobile-key",
-            "chinaz_api_key": "",
-            "chinaz_api_base_url": "https://openapi.chinaz.net/v1/1001",
-            "chinaz_api_timeout_seconds": 8,
-        },
-    )()
+    settings = _provider_settings()
     request = httpx.Request(
         "GET",
         "https://openapi.chinaz.net/v1/1001/baidupc_keywordtop50",
@@ -152,18 +148,7 @@ def test_provider_http_errors_never_expose_request_secrets(
 
 
 def test_provider_timeout_is_safe_and_classified() -> None:
-    settings = type(
-        "Settings",
-        (),
-        {
-            "chinaz_api_enabled": True,
-            "chinaz_baidu_pc_top50_api_key": "secret-api-key",
-            "chinaz_baidu_mobile_top50_api_key": "mobile-key",
-            "chinaz_api_key": "",
-            "chinaz_api_base_url": "https://openapi.chinaz.net/v1/1001",
-            "chinaz_api_timeout_seconds": 8,
-        },
-    )()
+    settings = _provider_settings()
     request = httpx.Request("GET", "https://openapi.chinaz.net/private")
     client = AsyncMock()
     client.get.side_effect = httpx.ReadTimeout(
@@ -180,8 +165,100 @@ def test_provider_timeout_is_safe_and_classified() -> None:
 
     assert exc.value.code == "provider_timeout"
     assert exc.value.retryable is True
+    assert exc.value.timeout_phase == "read"
+    assert exc.value.elapsed_ms is not None
     assert "secret-api-key" not in str(exc.value)
     assert "sensitive-keyword" not in str(exc.value)
+
+
+def test_chinaz_client_uses_separate_timeouts_and_bounded_pool() -> None:
+    sentinel = MagicMock()
+    with patch("app.seo_serp.get_settings", return_value=_provider_settings()), patch(
+        "app.seo_serp.httpx.AsyncClient",
+        return_value=sentinel,
+    ) as client_factory:
+        assert create_chinaz_client() is sentinel
+
+    timeout = client_factory.call_args.kwargs["timeout"]
+    limits = client_factory.call_args.kwargs["limits"]
+    assert timeout.connect == 8
+    assert timeout.read == 8
+    assert timeout.write == 8
+    assert timeout.pool == 2
+    assert limits.max_connections == 2
+    assert limits.max_keepalive_connections == 2
+
+
+@pytest.mark.parametrize(
+    ("exception_type", "expected_phase"),
+    [
+        (httpx.ConnectTimeout, "connect"),
+        (httpx.ReadTimeout, "read"),
+        (httpx.WriteTimeout, "write"),
+        (httpx.PoolTimeout, "pool"),
+    ],
+)
+def test_provider_timeout_phase_is_classified_without_retry(
+    exception_type: type[httpx.TimeoutException],
+    expected_phase: str,
+) -> None:
+    request = httpx.Request("GET", "https://openapi.chinaz.net/private")
+    client = AsyncMock()
+    client.get.side_effect = exception_type(
+        "sensitive-keyword secret-api-key",
+        request=request,
+    )
+
+    with patch("app.seo_serp.get_settings", return_value=_provider_settings()), patch(
+        "app.seo_serp.perf_counter",
+        side_effect=[100.0, 100.25],
+    ), pytest.raises(SerpProviderError) as exc:
+        asyncio.run(
+            fetch_baidu_top50(
+                "sensitive-keyword",
+                "desktop",
+                client=client,
+            )
+        )
+
+    assert exc.value.code == "provider_timeout"
+    assert exc.value.timeout_phase == expected_phase
+    assert exc.value.elapsed_ms == 250
+    assert client.get.await_count == 1
+    assert "secret-api-key" not in str(exc.value)
+    assert "sensitive-keyword" not in str(exc.value)
+
+
+def test_provider_batch_reuses_one_client_and_caps_concurrency() -> None:
+    context = AsyncMock()
+    provider_client = object()
+    context.__aenter__.return_value = provider_client
+    active = 0
+    peak = 0
+    seen_clients: list[object] = []
+
+    async def fake_fetch(keyword: str, device: str, *, client: object) -> dict:
+        nonlocal active, peak
+        seen_clients.append(client)
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return {"keyword": keyword, "device": device}
+
+    requests = [(f"keyword-{index}", "desktop") for index in range(5)]
+    with patch("app.seo_serp.create_chinaz_client", return_value=context) as factory, patch(
+        "app.seo_serp.fetch_baidu_top50",
+        side_effect=fake_fetch,
+    ) as fetch:
+        results = asyncio.run(fetch_baidu_top50_batch(requests))
+
+    assert CHINAZ_MAX_CONCURRENCY == 2
+    assert peak == 2
+    assert fetch.await_count == len(requests)
+    assert seen_clients == [provider_client] * len(requests)
+    assert all(error is None for _, error in results)
+    factory.assert_called_once_with()
 
 
 def test_provider_rejection_reason_is_not_returned() -> None:

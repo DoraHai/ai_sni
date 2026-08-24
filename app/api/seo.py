@@ -67,7 +67,7 @@ from app.seo_serp import (
     SerpProviderError,
     canonical_url,
     deterministic_match,
-    fetch_baidu_top50,
+    fetch_baidu_top50_batch,
     url_domain,
 )
 from app.seo_crawler import crawl_site
@@ -1365,26 +1365,22 @@ async def collect_rank_serp_for_tenant(
     if not keywords:
         raise HTTPException(400, "没有可采集的启用关键词")
     context = await _brand_match_context(session, tenant_id, site_id)
-    semaphore = asyncio.Semaphore(3)
-
-    async def fetch_one(
-        keyword: SeoKeywordAsset,
-        device: str,
-    ) -> tuple[
-        SeoKeywordAsset,
-        str,
-        dict[str, Any] | None,
-        SerpProviderError | None,
-    ]:
-        try:
-            async with semaphore:
-                return keyword, device, await fetch_baidu_top50(keyword.keyword, device), None
-        except SerpProviderError as exc:
-            return keyword, device, None, exc
-
-    fetched = await asyncio.gather(
-        *(fetch_one(keyword, device) for keyword in keywords for device in devices)
+    batch_requests = [
+        (keyword, device)
+        for keyword in keywords
+        for device in devices
+    ]
+    batch_results = await fetch_baidu_top50_batch(
+        [(keyword.keyword, device) for keyword, device in batch_requests]
     )
+    fetched = [
+        (keyword, device, result, fetch_error)
+        for (keyword, device), (result, fetch_error) in zip(
+            batch_requests,
+            batch_results,
+            strict=True,
+        )
+    ]
     batch_captured_at = captured_at or datetime.utcnow()
     errors: list[dict[str, Any]] = []
     created = 0
@@ -1402,13 +1398,16 @@ async def collect_rank_serp_for_tenant(
             errors.append(_serp_error_payload(keyword.id, device, provider_error))
             logger.warning(
                 "[SEO][SERP] provider request failed tenant_id=%s site_id=%s "
-                "keyword_id=%s device=%s code=%s status_code=%s",
+                "keyword_id=%s device=%s code=%s status_code=%s "
+                "timeout_phase=%s elapsed_ms=%s",
                 tenant_id,
                 site_id,
                 keyword.id,
                 device,
                 provider_error.code,
                 provider_error.status_code,
+                provider_error.timeout_phase,
+                provider_error.elapsed_ms,
             )
             continue
         prepared: list[dict[str, Any]] = []
