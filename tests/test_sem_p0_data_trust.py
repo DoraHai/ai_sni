@@ -108,6 +108,10 @@ def test_p1_p2_frontend_contracts_are_present():
     router = _read("frontend/src/router/index.js")
     builder = _read("frontend/src/views/onboarding/SmartBuilderView.vue")
     accounts = _read("frontend/src/views/onboarding/AuthorizationSyncView.vue")
+    auth_api = _read("frontend/src/api/auth.js")
+    diagnosis = _read("frontend/src/views/diagnosis/DiagnosisCenterView.vue")
+    seo_shell = _read("frontend/src/views/seo/SeoWorkspaceShell.vue")
+    session_store = _read("frontend/src/store/session.js")
     adgroups = _read("frontend/src/views/manage/AdgroupManageView.vue")
 
     assert "今日新增 {{ todayNew }} 条" in alerts
@@ -120,6 +124,14 @@ def test_p1_p2_frontend_contracts_are_present():
     assert "没有链接，粘贴文字" in builder
     assert 'goal: \'获取高意向线索\'' in builder
     assert "fetchSemAccounts" in accounts and "item.counts.campaigns" in accounts
+    assert "fetchTenants('sem')" in accounts
+    assert "params: module ? { module } : undefined" in auth_api
+    assert "tenantModuleScope" in app and "fetchTenants(moduleScope)" in app
+    assert "watch(tenantModuleScope, loadTenants)" in app
+    assert "tenantModuleScope.value !== 'sem'" in app
+    assert "fetchTenants('seo')" in seo_shell
+    assert "fetchTenants('geo')" in diagnosis
+    assert "sessionStorage.removeItem('sem_tenant_id')" in session_store
     assert 'fixed="right"' in adgroups and "状态未同步" in adgroups
 
 

@@ -8,8 +8,10 @@ export function fetchMe() {
   return client.get('/api/v1/auth/me')
 }
 
-export function fetchTenants() {
-  return client.get('/api/v1/auth/tenants')
+export function fetchTenants(module = null) {
+  return client.get('/api/v1/auth/tenants', {
+    params: module ? { module } : undefined,
+  })
 }
 
 export function fetchModules() {
