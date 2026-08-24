@@ -40,8 +40,10 @@ import {
 } from '../../utils/competitorAlias'
 import { engineDisplay, fmtPct } from '../../utils/geoReportLabels'
 import { heatTone, mentionHeatFromSnapshots } from '../../utils/geoSnapshotSummary'
+import { getGeoPrototypePageSurface } from '../../utils/geoEditorSurface'
 
 const router = useRouter()
+const prototypeSurface = getGeoPrototypePageSurface()
 const { days: observationDays } = useObservationPeriod()
 
 const tenantId = computed(() =>
@@ -880,11 +882,10 @@ onMounted(load)
     <template #actions>
       <button class="gd-btn" @click="load">刷新</button>
       <button class="gd-btn" @click="router.push('/geo/brand')">管理竞品</button>
-      <button class="gd-btn primary" @click="router.push('/geo/visibility/snapshots')">查看快照</button>
     </template>
     <div class="geo-dash geo-page">
 
-    <details class="geo-glossary">
+    <details v-if="prototypeSurface.showCompetitorAdvancedAnalysis" class="geo-glossary">
       <summary>统计口径（点击展开）</summary>
       <ul>
         <li>竞品名来自快照 competitors 字段（人工或 AI 建议）。</li>
@@ -897,6 +898,7 @@ onMounted(load)
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" />
     <SampleCredibilityAlert
+      v-if="prototypeSurface.showCompetitorAdvancedAnalysis"
       :composition="sampleComposition"
       window-label="竞品页与交付摘要同一套样本门槛"
     />
@@ -967,6 +969,7 @@ onMounted(load)
       </div>
     </div>
 
+    <template v-if="prototypeSurface.showCompetitorAdvancedAnalysis">
     <div class="geo-kpi-grid">
       <div class="geo-kpi">
         <div class="kpi-label">竞品数</div>
@@ -1525,6 +1528,7 @@ onMounted(load)
         <el-empty v-else-if="!traceLoading" description="暂无溯源数据" />
       </div>
     </el-drawer>
+    </template>
 
     <el-drawer v-model="historyOpen" title="服务端报告档案" size="420px">
       <div class="mb" style="display:flex;gap:8px;flex-wrap:wrap">

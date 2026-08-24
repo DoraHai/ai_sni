@@ -28,3 +28,11 @@ export function getGeoPrototypeEditorSurface() {
     ],
   }
 }
+
+export function getGeoPrototypePageSurface() {
+  return {
+    showCompetitorAdvancedAnalysis: false,
+    showChannelAutomationConsole: false,
+    showChannelAccountConsole: false,
+  }
+}
