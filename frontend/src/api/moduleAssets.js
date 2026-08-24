@@ -6,6 +6,9 @@ export const updateCustomer = (tenantId, body) => client.patch(`/api/v1/admin/cu
 export const setCustomerModule = (tenantId, moduleCode, body) => (
   client.put(`/api/v1/admin/customers/${tenantId}/modules/${moduleCode}`, body)
 )
+export const archiveSemAccount = (tenantId, accountId, reason) => (
+  client.post(`/api/v1/admin/customers/${tenantId}/sem-accounts/${accountId}/archive`, { reason })
+)
 
 export const fetchSemAccounts = (tenantId) => client.get('/api/v1/sem/assets/accounts', { params: { tenant_id: tenantId } })
 export const repairSemAccountAssets = (tenantId, accountId, dimension = null) => client.post(

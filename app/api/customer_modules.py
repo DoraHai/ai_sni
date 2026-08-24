@@ -178,6 +178,10 @@ class ModuleUpdate(BaseModel):
     expires_at: date | None = None
 
 
+class SemAccountArchive(BaseModel):
+    reason: str = Field(min_length=4, max_length=500)
+
+
 @router.get("/api/v1/admin/customers", dependencies=[Depends(require_customer_admin)])
 async def list_customers(session: AsyncSession = Depends(get_session)) -> dict:
     tenants = list((await session.scalars(select(Tenant).order_by(Tenant.id))).all())
@@ -336,6 +340,52 @@ async def set_customer_module(
     await session.commit()
     await session.refresh(row)
     return {"status": "ok", "module": _module_payload(row)}
+
+
+@router.post(
+    "/api/v1/admin/customers/{tenant_id}/sem-accounts/{account_id}/archive",
+    dependencies=[Depends(require_customer_admin)],
+)
+async def archive_sem_account(
+    tenant_id: int,
+    account_id: int,
+    req: SemAccountArchive,
+    ctx: AuthContext = Depends(require_customer_admin),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """归档一条错误/过期的百度推广账户绑定。
+
+    仅软删除（status -> archived），不物理删除记录：campaigns/keywords/
+    writeback_actions 等历史数据通过外键引用 baidu_accounts，物理删除会破坏
+    审计与结算历史。归档后账户不再出现在客户可见的账户列表和 SEM 归属校验里，
+    但记录本身连同其历史关联数据保留、可追溯。
+    """
+    row = await session.scalar(
+        select(BaiduAccount)
+        .where(BaiduAccount.id == account_id)
+        .with_for_update()
+    )
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, "推广账户不存在")
+    if row.status == "archived":
+        raise HTTPException(409, "该账户绑定已经归档")
+    old_status = row.status
+    old_ucid = row.baidu_ucid
+    reason = req.reason.strip()
+    row.status = "archived"
+    await session.commit()
+    logger.warning(
+        "AUDIT sem_account_archived actor_user_id=%r actor_username=%r "
+        "tenant_id=%r account_id=%r ucid=%r old_status=%r reason=%r",
+        ctx.user_id,
+        ctx.username,
+        tenant_id,
+        account_id,
+        str(old_ucid),
+        old_status,
+        reason,
+    )
+    return {"status": "ok"}
 
 
 @router.get("/api/v1/sem/assets/accounts", dependencies=[Depends(require_scoped_auth)])
