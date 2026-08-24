@@ -118,6 +118,8 @@ def test_seo_content_and_rank_views_are_site_scoped_and_html_safe() -> None:
     assert 'site_id: siteId.value' in editor
     assert 'site_id: siteId.value' in content
     assert 'site_id: siteId.value' in ranking
+    assert "ElMessage.warning(`采集部分完成" in ranking
+    assert "Array.isArray(summary.errors)" in ranking
     assert 'siteId:siteId.value' in rewrite
     assert 'siteId: siteId.value' in distribution
     assert "site_id: siteId || undefined" in api

@@ -13,6 +13,7 @@ from app.api.seo import (
     KeywordImport,
     MetricSnapshotCreate,
     RankSnapshotCreate,
+    SerpCollectRequest,
     SeoContentAssistRequest,
     SitePageImport,
     _keyword_payload,
@@ -20,12 +21,14 @@ from app.api.seo import (
     _missing_content_keywords,
     _number_or_text,
     _provider_metric_status,
+    _serp_error_payload,
     _normalize_brand_homepage,
     _seo_ai_prompt,
     _selected_keyword_ids,
     _sanitize_content_html,
     _validated_seo_assist_result,
     assist_seo_content,
+    collect_rank_serp,
 )
 from app.models.seo import (
     SeoBacklink,
@@ -45,6 +48,7 @@ from app.models.seo import (
 from app.models.tenant import Tenant
 from app.permissions import CLIENT_PERMS, MENU_KEYS, OPERATOR_PERMS
 from app.security.auth import AuthContext, _required
+from app.seo_serp import SerpProviderError
 
 
 def test_seo_permissions_are_registered_for_all_roles() -> None:
@@ -363,6 +367,70 @@ def test_rank_delta_uses_smaller_rank_as_improvement() -> None:
     payload = _keyword_payload(keyword, latest, previous)
     assert payload["latest_rank"] == 4
     assert payload["rank_delta"] == 5
+
+
+def test_serp_collection_error_payload_uses_ids_and_safe_metadata_only() -> None:
+    error = SerpProviderError(
+        "provider_unavailable",
+        "站长之家接口暂时不可用",
+        retryable=True,
+        status_code=503,
+    )
+
+    payload = _serp_error_payload(3, "desktop", error)
+
+    assert payload == {
+        "keyword_id": 3,
+        "device": "desktop",
+        "code": "provider_unavailable",
+        "message": "站长之家接口暂时不可用",
+        "retryable": True,
+        "status_code": 503,
+    }
+    assert "keyword" not in payload
+    assert "url" not in payload
+
+
+def test_all_failed_serp_collection_returns_generic_safe_error() -> None:
+    request = SerpCollectRequest(
+        tenant_id=1,
+        site_id=1,
+        keyword_ids=[3],
+        devices=["desktop"],
+        max_keywords=1,
+        use_ai=False,
+    )
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.keywords": "edit"},
+    )
+    failed = {
+        "snapshots": 0,
+        "errors": [
+            {
+                "keyword_id": 3,
+                "device": "desktop",
+                "code": "provider_unavailable",
+                "message": "站长之家接口暂时不可用",
+            }
+        ],
+    }
+
+    with patch(
+        "app.api.seo.collect_rank_serp_for_tenant",
+        new=AsyncMock(return_value=failed),
+    ):
+        with pytest.raises(Exception) as exc:
+            asyncio.run(collect_rank_serp(request, AsyncMock(), context))
+
+    assert getattr(exc.value, "status_code", None) == 502
+    assert getattr(exc.value, "detail", None) == (
+        "本次排名采集全部失败，请稍后重试或联系管理员"
+    )
+    assert "provider" not in str(getattr(exc.value, "detail", ""))
 
 
 def test_models_use_separate_seo_tables() -> None:

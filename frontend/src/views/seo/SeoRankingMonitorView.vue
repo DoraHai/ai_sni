@@ -136,7 +136,12 @@ async function collect() {
       use_ai: collectForm.use_ai,
     })
     collectDialog.value = false
-    ElMessage.success(`采集完成：${summary.snapshots} 个排名快照，确认 ${summary.confirmed_brand_results} 条品牌结果`)
+    const failed = Array.isArray(summary.errors) ? summary.errors.length : 0
+    if (failed) {
+      ElMessage.warning(`采集部分完成：${summary.snapshots}/${summary.requests} 个排名快照成功，${failed} 个请求失败`)
+    } else {
+      ElMessage.success(`采集完成：${summary.snapshots} 个排名快照，确认 ${summary.confirmed_brand_results} 条品牌结果`)
+    }
     await load()
   } catch (err) {
     ElMessage.error(err.message)

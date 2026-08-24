@@ -12,7 +12,21 @@ from app.config import get_settings
 
 
 class SerpProviderError(RuntimeError):
-    pass
+    """Safe provider failure that never embeds request parameters or secrets."""
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        retryable: bool = False,
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.public_message = message
+        self.retryable = retryable
+        self.status_code = status_code
 
 
 def canonical_url(value: str | None) -> str:
@@ -59,12 +73,29 @@ def rank_number(rank_label: Any, fallback: int) -> int:
 
 
 def parse_top50_response(payload: Any) -> dict[str, Any]:
-    if not isinstance(payload, dict) or int(payload.get("StateCode", -1)) != 1:
-        reason = payload.get("Reason") if isinstance(payload, dict) else "返回格式异常"
-        raise SerpProviderError(str(reason or "站长之家未返回搜索结果"))
+    if not isinstance(payload, dict):
+        raise SerpProviderError(
+            "invalid_response",
+            "站长之家接口返回格式异常",
+        )
+    try:
+        state_code = int(payload.get("StateCode", -1))
+    except (TypeError, ValueError) as exc:
+        raise SerpProviderError(
+            "invalid_response",
+            "站长之家接口返回格式异常",
+        ) from exc
+    if state_code != 1:
+        raise SerpProviderError(
+            "provider_rejected",
+            "站长之家未返回有效搜索结果",
+        )
     result = payload.get("Result")
     if not isinstance(result, dict):
-        raise SerpProviderError("站长之家未返回有效 Result")
+        raise SerpProviderError(
+            "invalid_response",
+            "站长之家接口返回格式异常",
+        )
     ranks = result.get("Ranks") if isinstance(result.get("Ranks"), list) else []
     items: list[dict[str, Any]] = []
     for index, row in enumerate(ranks[:50], start=1):
@@ -94,7 +125,10 @@ def parse_top50_response(payload: Any) -> dict[str, Any]:
 
 async def fetch_baidu_top50(keyword: str, device: str) -> dict[str, Any]:
     if device not in {"desktop", "mobile"}:
-        raise SerpProviderError("设备只支持 desktop 或 mobile")
+        raise SerpProviderError(
+            "invalid_device",
+            "设备只支持 desktop 或 mobile",
+        )
     settings = get_settings()
     key = (
         settings.chinaz_baidu_pc_top50_api_key
@@ -103,7 +137,8 @@ async def fetch_baidu_top50(keyword: str, device: str) -> dict[str, Any]:
     ) or settings.chinaz_api_key
     if not settings.chinaz_api_enabled or not key:
         raise SerpProviderError(
-            "未配置站长之家百度%s前50接口 Key" % ("PC" if device == "desktop" else "移动")
+            "provider_not_configured",
+            "未配置站长之家百度%s前50接口 Key" % ("PC" if device == "desktop" else "移动"),
         )
     path = "baidupc_keywordtop50" if device == "desktop" else "baidumobile_keywordtop50"
     endpoint = f"{settings.chinaz_api_base_url.rstrip('/')}/{path}"
@@ -115,11 +150,70 @@ async def fetch_baidu_top50(keyword: str, device: str) -> dict[str, Any]:
                 timeout=settings.chinaz_api_timeout_seconds,
             )
             response.raise_for_status()
-            return parse_top50_response(response.json())
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise SerpProviderError(
+                    "invalid_response",
+                    "站长之家接口返回格式异常",
+                ) from exc
+            return parse_top50_response(payload)
     except SerpProviderError:
         raise
+    except httpx.TimeoutException as exc:
+        raise SerpProviderError(
+            "provider_timeout",
+            "站长之家前50接口请求超时",
+            retryable=True,
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code
+        if status_code == 429:
+            code, message, retryable = (
+                "provider_rate_limited",
+                "站长之家接口请求受限",
+                False,
+            )
+        elif status_code in {401, 403}:
+            code, message, retryable = (
+                "provider_auth_failed",
+                "站长之家接口认证失败",
+                False,
+            )
+        elif 500 <= status_code < 600:
+            code, message, retryable = (
+                "provider_unavailable",
+                "站长之家接口暂时不可用",
+                True,
+            )
+        elif 400 <= status_code < 500:
+            code, message, retryable = (
+                "provider_request_rejected",
+                "站长之家接口拒绝请求",
+                False,
+            )
+        else:
+            code, message, retryable = (
+                "provider_http_error",
+                "站长之家接口返回 HTTP 错误",
+                False,
+            )
+        raise SerpProviderError(
+            code,
+            message,
+            retryable=retryable,
+            status_code=status_code,
+        ) from exc
+    except httpx.RequestError as exc:
+        raise SerpProviderError(
+            "provider_network_error",
+            "站长之家接口网络连接失败",
+        ) from exc
     except Exception as exc:
-        raise SerpProviderError(f"站长之家前50接口调用失败：{exc}") from exc
+        raise SerpProviderError(
+            "provider_error",
+            "站长之家前50接口调用失败",
+        ) from exc
 
 
 def deterministic_match(

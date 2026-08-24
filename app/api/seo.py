@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Literal
@@ -85,6 +86,7 @@ router = APIRouter(
     tags=["SEO"],
     dependencies=[Depends(require_scoped_auth)],
 )
+logger = logging.getLogger(__name__)
 
 ENGINES = {"baidu", "google", "bing", "360", "sogou"}
 PRIORITIES = {"P0", "P1", "P2", "P3"}
@@ -1310,6 +1312,23 @@ async def _ai_classify_serp(
     return classified
 
 
+def _serp_error_payload(
+    keyword_id: int,
+    device: str,
+    error: SerpProviderError,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "keyword_id": keyword_id,
+        "device": device,
+        "code": error.code,
+        "message": error.public_message,
+        "retryable": error.retryable,
+    }
+    if error.status_code is not None:
+        payload["status_code"] = error.status_code
+    return payload
+
+
 async def collect_rank_serp_for_tenant(
     *,
     session: AsyncSession,
@@ -1348,25 +1367,49 @@ async def collect_rank_serp_for_tenant(
     context = await _brand_match_context(session, tenant_id, site_id)
     semaphore = asyncio.Semaphore(3)
 
-    async def fetch_one(keyword: SeoKeywordAsset, device: str) -> tuple[SeoKeywordAsset, str, dict[str, Any] | None, str | None]:
+    async def fetch_one(
+        keyword: SeoKeywordAsset,
+        device: str,
+    ) -> tuple[
+        SeoKeywordAsset,
+        str,
+        dict[str, Any] | None,
+        SerpProviderError | None,
+    ]:
         try:
             async with semaphore:
                 return keyword, device, await fetch_baidu_top50(keyword.keyword, device), None
         except SerpProviderError as exc:
-            return keyword, device, None, str(exc)
+            return keyword, device, None, exc
 
     fetched = await asyncio.gather(
         *(fetch_one(keyword, device) for keyword in keywords for device in devices)
     )
     batch_captured_at = captured_at or datetime.utcnow()
-    errors: list[dict[str, str]] = []
+    errors: list[dict[str, Any]] = []
     created = 0
     matched = 0
     suspected = 0
     snapshots = 0
+    ai_available = is_enabled()
+    ai_attempted = False
     for keyword, device, result, fetch_error in fetched:
         if fetch_error or result is None:
-            errors.append({"keyword": keyword.keyword, "device": device, "error": fetch_error or "采集失败"})
+            provider_error = fetch_error or SerpProviderError(
+                "provider_error",
+                "站长之家前50接口调用失败",
+            )
+            errors.append(_serp_error_payload(keyword.id, device, provider_error))
+            logger.warning(
+                "[SEO][SERP] provider request failed tenant_id=%s site_id=%s "
+                "keyword_id=%s device=%s code=%s status_code=%s",
+                tenant_id,
+                site_id,
+                keyword.id,
+                device,
+                provider_error.code,
+                provider_error.status_code,
+            )
             continue
         prepared: list[dict[str, Any]] = []
         unresolved: list[dict[str, Any]] = []
@@ -1382,6 +1425,8 @@ async def collect_rank_serp_for_tenant(
             prepared.append(prepared_item)
             if classification["ownership_type"] == "unresolved":
                 unresolved.append(prepared_item)
+        should_use_ai = bool(use_ai and ai_available and unresolved)
+        ai_attempted = ai_attempted or should_use_ai
         ai_results = await _ai_classify_serp(tenant, keyword.keyword, unresolved) if use_ai else {}
         for item in prepared:
             if item["index"] in ai_results:
@@ -1443,7 +1488,10 @@ async def collect_rank_serp_for_tenant(
         "ai_suspected_results": suspected,
         "snapshots": snapshots,
         "errors": errors,
-        "ai_enabled": is_enabled(),
+        "ai_enabled": bool(use_ai and ai_available),
+        "ai_available": ai_available,
+        "ai_requested": use_ai,
+        "ai_attempted": ai_attempted,
     }
 
 
@@ -1464,7 +1512,7 @@ async def collect_rank_serp(
         use_ai=req.use_ai,
     )
     if result["errors"] and result["snapshots"] == 0:
-        raise HTTPException(502, result["errors"][0]["error"])
+        raise HTTPException(502, "本次排名采集全部失败，请稍后重试或联系管理员")
     return result
 
 
