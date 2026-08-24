@@ -433,6 +433,19 @@ def test_all_failed_serp_collection_returns_generic_safe_error() -> None:
     assert "provider" not in str(getattr(exc.value, "detail", ""))
 
 
+@pytest.mark.parametrize("site_id", [None, 0, -1])
+def test_manual_serp_collection_requires_positive_site_id(site_id: int | None) -> None:
+    with pytest.raises(ValidationError):
+        SerpCollectRequest(
+            tenant_id=1,
+            site_id=site_id,
+            keyword_ids=[3],
+            devices=["desktop"],
+            max_keywords=1,
+            use_ai=False,
+        )
+
+
 def test_models_use_separate_seo_tables() -> None:
     assert SeoKeywordAsset.__tablename__ == "seo_keyword_assets"
     assert SeoRankSnapshot.__tablename__ == "seo_rank_snapshots"
