@@ -91,9 +91,6 @@ const ALL_GROUPS = computed(() => [
   { label: '智能助手', icon: '✨', children: [
     { label: 'AI 助手', path: '/assistant', key: 'assistant' },
   ] },
-  { label: '诊断中心', icon: '🩺', children: [
-    { label: '网站体检', path: '/geo/diagnosis', key: 'geo.diagnosis' },
-  ] },
   { label: '首次接入', icon: '🚀', children: [
     { label: '授权与同步', path: '/onboarding', key: 'onboarding' },
     { label: '智能搭建', path: '/onboarding/builder', key: 'onboarding' },
