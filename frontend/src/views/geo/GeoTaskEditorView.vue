@@ -43,6 +43,7 @@ import {
   cancelGeoAsyncJob,
 } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
+import { getGeoPrototypeEditorSurface } from '../../utils/geoEditorSurface'
 
 function toastError(e, fallback) {
   const msg = formatGeoError(e, fallback)
@@ -53,6 +54,7 @@ function toastError(e, fallback) {
 const route = useRoute()
 const router = useRouter()
 const { tenantId } = useGeoTenant()
+const editorSurface = getGeoPrototypeEditorSurface()
 const taskId = computed(() => Number(route.params.taskId))
 
 const loading = ref(false)
@@ -125,6 +127,7 @@ const CHECK_LABELS = {
   evidence_publishable: '可引用证据',
   channel_variant_ready: '渠道稿已生成',
   fabrication_lint: '编造风险扫描',
+  sentence_evidence: '逐句证据',
 }
 const SUBSCORE_LABELS = {
   authority: '权威度',
@@ -243,10 +246,14 @@ function sanitizeDraftHeadings(md) {
   })
 }
 
+function stripCiteAppendix(md) {
+  return String(md || '').replace(/\n+## 逐句证据[\s\S]*$/, '').trimEnd()
+}
+
 function applyArticleFromTask(t) {
   const a = t?.article
   article.title = a?.title || t?.title || ''
-  article.body_markdown = sanitizeDraftHeadings(a?.body_markdown || '')
+  article.body_markdown = sanitizeDraftHeadings(stripCiteAppendix(a?.body_markdown || ''))
 }
 
 /** Lightweight MD→HTML for older variants missing body_html (tables + headings). */
@@ -820,11 +827,8 @@ function validateBeforeGenerate() {
   }
   const nBound = (task.value?.facts || []).length
   const nSelected = selectedFactIds.value.length
-  if (nBound < 3 && nSelected < 3) {
-    return '生成前至少绑定 3 条事实卡（建议已核验）。请在左侧选择事实并点「保存绑定」'
-  }
-  if (nBound < 3 && nSelected >= 3) {
-    return '已选事实尚未保存绑定，请先点「保存绑定」再生成'
+  if (nBound < 3 && nSelected < 3 && libraryVerifiedCount.value < 3) {
+    return '生成母稿前需要至少 3 条已核验的可信材料，请先到知识库补充并核验资料'
   }
   const verified = (task.value?.facts || []).filter((f) => f.trust_level === 'verified')
   if (verified.length < 3) {
@@ -838,8 +842,16 @@ function validateBeforeGenerate() {
   return null
 }
 
+async function ensurePrototypeMaterials() {
+  if ((task.value?.facts || []).length >= 3) return true
+  if (libraryVerifiedCount.value < 3) return false
+  await bindTopVerified(3)
+  return (task.value?.facts || []).length >= 3
+}
+
 const generateHint = ref('')
 const activeJob = ref(null)
+const variantFails = ref([])
 
 function jobStorageKey() {
   return `geo_async_job_${tenantId.value || 0}_${taskId.value || 0}`
@@ -856,6 +868,23 @@ const sentenceCites = computed(
     task.value?.article?.generation_meta?.sentence_citations ||
     [],
 )
+const citeBlocking = computed(() => sentenceCites.value.filter((c) => c.needs_fact))
+const citeOkCount = computed(() => sentenceCites.value.filter((c) => c.cited).length)
+
+function removeCiteSentence(sent) {
+  const body = article.body_markdown || ''
+  const next = body
+    .split('\n')
+    .map((line) => (line.includes(sent.slice(0, 24)) ? '' : line))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+  article.body_markdown = next
+  ElMessage.info('已从正文去掉该句，请保存后重新挂证据')
+}
+
+async function reciteEvidence() {
+  await saveArticleBody()
+}
 
 const jobLive = computed(() =>
   ['pending', 'running'].includes(activeJob.value?.status),
@@ -890,12 +919,12 @@ async function resumeActiveJob() {
   }
 }
 
-async function followJob(jobId) {
+async function followJob(jobId, { maxMs = 12 * 60 * 1000 } = {}) {
   persistJobId(jobId)
   try {
     const job = await waitGeoAsyncJob(tenantId.value, jobId, {
       intervalMs: 2000,
-      maxMs: 180000,
+      maxMs,
       onTick: (j) => {
         activeJob.value = j
         if (j.cancel_requested) {
@@ -907,6 +936,10 @@ async function followJob(jobId) {
       },
     })
     activeJob.value = job
+    if (['pending', 'running'].includes(job.status)) {
+      generateHint.value = `后台任务 #${job.id} 仍在跑，完成后刷新即可看到全部渠道稿`
+      return job
+    }
     if (job.status === 'failed') throw new Error(job.error || '后台任务失败')
     if (job.status === 'cancelled') {
       generateHint.value = '已取消'
@@ -934,6 +967,13 @@ async function cancelActiveJob() {
 async function generate() {
   error.value = ''
   generateHint.value = '正在生成母稿…'
+  if (!(await ensurePrototypeMaterials())) {
+    const msg = '未能关联足够的已核验可信材料，请先到知识库检查资料状态'
+    error.value = msg
+    generateHint.value = msg
+    ElMessage.warning(msg)
+    return
+  }
   const pre = validateBeforeGenerate()
   if (pre) {
     error.value = pre
@@ -1000,7 +1040,7 @@ async function saveArticleBody() {
     const outline = task.value?.article?.outline || {}
     task.value = await saveGeoArticle(tenantId.value, taskId.value, {
       title: article.title.trim(),
-      body_markdown: article.body_markdown,
+      body_markdown: stripCiteAppendix(article.body_markdown),
       outline,
     })
     applyArticleFromTask(task.value)
@@ -1135,15 +1175,23 @@ async function genVariants() {
       if (job.status === 'failed') {
         throw new Error(job.error || '渠道稿后台生成失败')
       }
+      if (['pending', 'running'].includes(job.status)) {
+        ElMessage.info('三路渠道稿还在后台写，完成后请刷新，不要重复点生成')
+        return
+      }
       t = await getGeoContentTask(tenantId.value, taskId.value)
       if (job.result_meta?.variant_polish) {
         t = { ...t, variant_polish: job.result_meta.variant_polish }
       }
     }
     applyTaskPayload(t)
-    if (channelPick.value[0]) {
-      docTab.value = channelPick.value[0]
+    const created = (t.variants || []).map((v) => v.channel)
+    const firstOk = created.find((ch) => channelPick.value.includes(ch)) || created[0]
+    if (firstOk) {
+      docTab.value = firstOk
       applyVariantFromTask()
+    } else {
+      docTab.value = 'master'
     }
     // Backend re-scores after create; pull into checkResult so channel_variant_ready updates
     const rr = t?.rule_result
@@ -1171,8 +1219,9 @@ async function genVariants() {
     const polish = t?.variant_polish || {}
     const llmN = polish.llm ?? 0
     const fbN = polish.fallback ?? 0
-    const rejN = polish.rejected ?? (polish.failed || []).length
-    const failMsg = (polish.failed || [])
+    variantFails.value = polish.failed || []
+    const rejN = polish.rejected ?? variantFails.value.length
+    const failMsg = variantFails.value
       .slice(0, 2)
       .map((f) => `${channelLabel(f.channel)}：${(f.issues || [f.message])[0] || '未过门控'}`)
       .join('；')
@@ -1716,10 +1765,18 @@ const checks = computed(() => {
   if (!replaced && (cov.targets.length || cov.present.length)) {
     out.push(liveChannel)
   }
-  return out.map((c) => ({
-    ...c,
-    label: checkLabel(c.code),
-  }))
+  const hiddenCodes = new Set([
+    'facts_bound_min',
+    'sentence_evidence',
+    'channel_variant_ready',
+    'evidence_publishable',
+  ])
+  return out
+    .filter((c) => !hiddenCodes.has(c.code))
+    .map((c) => ({
+      ...c,
+      label: checkLabel(c.code),
+    }))
 })
 const failedChecks = computed(() => checks.value.filter((c) => !c.passed))
 const passedChecks = computed(() => checks.value.filter((c) => c.passed))
@@ -1752,8 +1809,9 @@ const infoGapOptions = computed(() => {
 })
 const variants = computed(() => task.value?.variants || [])
 const failedVariantItems = computed(() => {
-  const failed = task.value?.variant_polish?.failed
-  return Array.isArray(failed) ? failed : []
+  const fromTask = task.value?.variant_polish?.failed
+  if (Array.isArray(fromTask) && fromTask.length) return fromTask
+  return Array.isArray(variantFails.value) ? variantFails.value : []
 })
 const nextStep = computed(() =>
   nextEditorStep(task.value, {
@@ -1887,7 +1945,7 @@ onMounted(load)
       </div>
     </div>
 
-    <div v-if="task && nextStep" class="next-step" :class="{ done: nextStep.key === 'impact' }">
+    <div v-if="editorSurface.showProgressHint && task && nextStep" class="next-step" :class="{ done: nextStep.key === 'impact' }">
       <div class="next-copy">
         <div class="next-kicker">当前下一步</div>
         <div class="next-title">{{ nextStep.title }}</div>
@@ -1914,7 +1972,7 @@ onMounted(load)
           <template #header>
             <div class="card-head">
               <button type="button" class="fold-toggle" @click="foldBrief = !foldBrief">
-                {{ foldBrief ? '▸' : '▾' }} 内容策略
+                {{ foldBrief ? '▸' : '▾' }} 基础信息
                 <el-tag v-if="foldBrief && task?.brief_ready" size="small" type="success" effect="plain">已齐</el-tag>
               </button>
               <div v-show="!foldBrief" class="row-actions">
@@ -1922,7 +1980,7 @@ onMounted(load)
                   AI 建议
                 </el-button>
                 <el-button size="small" type="primary" :loading="busy === 'brief'" @click="saveBrief">
-                  保存策略
+                  保存
                 </el-button>
               </div>
             </div>
@@ -1965,9 +2023,10 @@ onMounted(load)
             <el-form-item label="禁用表述">
               <el-input v-model="brief.banned_claims" placeholder="逗号分隔" />
             </el-form-item>
-            <el-form-item label="备注">
+            <el-form-item v-if="editorSurface.briefFields.includes('notes')" label="备注">
               <el-input v-model="brief.notes" />
             </el-form-item>
+            <template v-if="editorSurface.briefFields.includes('ai_question')">
             <el-divider content-position="left">策略（可选）</el-divider>
             <el-form-item label="AI 问题">
               <el-input v-model="brief.ai_question" />
@@ -2018,11 +2077,17 @@ onMounted(load)
             <el-form-item label="必须覆盖">
               <el-input v-model="brief.must_cover" placeholder="逗号分隔，如品牌名、产品线" />
             </el-form-item>
+            </template>
           </el-form>
+          <div class="trusted-materials">
+            <div class="trusted-materials-title">可信材料</div>
+            <div class="hint">母稿会使用知识库中已核验的资料；当前可用 {{ libraryVerifiedCount }} 条。</div>
+            <router-link to="/geo/facts">查看知识库</router-link>
+          </div>
           </div>
         </el-card>
 
-        <el-card id="step-facts" shadow="never" class="card fact-bind-card">
+        <el-card v-if="editorSurface.showFactBinding" id="step-facts" shadow="never" class="card fact-bind-card">
           <template #header>
             <div class="card-head">
               <button type="button" class="fold-toggle" @click="foldFacts = !foldFacts">
@@ -2296,7 +2361,7 @@ onMounted(load)
             请润色语气、删模板痕迹、核对事实后再推送。
           </div>
           <div
-            v-else-if="isPublishReadyVariant"
+            v-else-if="editorSurface.showChannelVariants && isPublishReadyVariant"
             class="channel-quality mb is-good"
           >
             <b>正式渠道稿（HTML 正稿）</b>
@@ -2306,13 +2371,13 @@ onMounted(load)
               · {{ currentVariantMeta.display_name }}
             </span>
           </div>
-          <div v-else class="channel-quality mb is-warn">
+          <div v-else-if="editorSurface.showChannelVariants" class="channel-quality mb is-warn">
             <b>规则裁剪稿（非正式成稿）</b>
             — 未走 AI 时接近母稿结构，不能当正式发布文。
             请点下方「AI 生成正式渠道稿」。
           </div>
 
-          <el-tabs :model-value="docTab" class="mb" @tab-change="onDocTabChange">
+          <el-tabs v-if="editorSurface.showChannelVariants" :model-value="docTab" class="mb" @tab-change="onDocTabChange">
             <el-tab-pane label="母稿草案" name="master" />
             <el-tab-pane
               v-for="v in variants"
@@ -2341,19 +2406,45 @@ onMounted(load)
               草案 v{{ task.article.version_no }} · {{ task.article.created_at || '' }}
               · 正文字数 {{ (article.body_markdown || '').length }}
             </div>
-            <div v-if="sentenceCites.length" class="cite-box mb">
-              <div class="section-title">逐句证据</div>
-              <div v-for="(c, i) in sentenceCites" :key="i" class="cite-row">
+            <div v-if="editorSurface.showFactBinding && sentenceCites.length" class="cite-box mb">
+              <div class="cite-head">
+                <div class="section-title">逐句证据</div>
+                <el-button size="small" :loading="busy === 'save'" @click="reciteEvidence">
+                  重新挂证据
+                </el-button>
+              </div>
+              <p class="cite-help">
+                主张句（数字 / 性能 / 案例）必须挂上事实或删改，否则检查就绪过不了。
+                普通叙述可以不挂。改稿或补事实后点「保存正文」或「重新挂证据」。
+              </p>
+              <div class="cite-sum">
+                已挂 {{ citeOkCount }}/{{ sentenceCites.length }}
+                · 主张未挂 {{ citeBlocking.length }}
+              </div>
+              <div v-for="(c, i) in sentenceCites" :key="i" class="cite-row" :class="{ block: c.needs_fact }">
                 <span class="cite-sent">{{ c.sentence }}</span>
                 <el-tag v-if="c.cited" size="small" type="success">
                   #{{ c.fact_id }} {{ c.fact_title }}
                 </el-tag>
-                <el-tag v-else size="small" type="warning">未挂事实</el-tag>
+                <el-tag v-else-if="c.needs_fact" size="small" type="danger">主张未挂</el-tag>
+                <el-tag v-else size="small" type="info">叙述可不挂</el-tag>
+                <el-button
+                  v-if="c.needs_fact"
+                  size="small"
+                  link
+                  type="danger"
+                  @click="removeCiteSentence(c.sentence)"
+                >删这句</el-button>
+                <router-link
+                  v-if="c.needs_fact"
+                  class="cite-link"
+                  to="/geo/facts"
+                >去补事实</router-link>
               </div>
             </div>
             <div class="hint">重新「生成母稿」会覆盖当前正文</div>
           </template>
-          <template v-else>
+          <template v-else-if="editorSurface.showChannelVariants">
             <div class="hint mb">
               渠道 {{ channelLabel(docTab) }} · 状态 {{ variants.find((v) => v.channel === docTab)?.status || '—' }}
               <span v-if="variants.find((v) => v.channel === docTab)?.stale"> · 母稿已变需重生</span>
@@ -2394,7 +2485,7 @@ onMounted(load)
           </template>
         </el-card>
 
-        <el-card id="step-publish" shadow="never" class="card">
+        <el-card v-if="editorSurface.showChannelVariants" id="step-publish" shadow="never" class="card">
           <template #header>
             <div class="card-head">
               <span>渠道成稿 · 内容检查 · 发布</span>
@@ -2404,7 +2495,7 @@ onMounted(load)
             </div>
           </template>
           <div class="hint mb">
-            AI 按渠道写成可直接发布的正式稿（官网/微信/知乎等）；失败才回退规则裁剪。
+            勾选几个就出几个页签。三路并行调模型，大约 1～2 分钟；不过门控也会留非正式稿。
             正式稿可复制发布；关键数字建议发布前扫一眼。
           </div>
           <el-checkbox-group v-model="channelPick" class="mb">
@@ -2424,8 +2515,10 @@ onMounted(load)
             class="mb"
           >
             <template #title>
-              勾选 {{ channelPick.length }} 个渠道，已成稿 {{ variants.length }} 个；
-              {{ failedVariantItems.length }} 个未过门控
+              勾选 {{ channelPick.length }} 个渠道，已出稿 {{ variants.length }} 个
+              <template v-if="failedVariantItems.length">
+                · 其中 {{ failedVariantItems.length }} 个非正式（未过门控，可改后再重试）
+              </template>
             </template>
             <ul class="variant-fail-list">
               <li v-for="f in failedVariantItems" :key="f.channel">
@@ -2674,7 +2767,7 @@ onMounted(load)
             </div>
           </div>
 
-          <div class="channel-pill mb" :class="liveChannelCoverage.ok ? 'is-ok' : 'is-warn'">
+          <div v-if="editorSurface.showChannelVariants" class="channel-pill mb" :class="liveChannelCoverage.ok ? 'is-ok' : 'is-warn'">
             <span class="pill-mark">{{ liveChannelCoverage.ok ? '✓' : '!' }}</span>
             <div>
               <div class="pill-title">
@@ -2736,7 +2829,7 @@ onMounted(load)
             </ul>
           </div>
 
-          <div v-if="patches.length" class="mt patch-box">
+          <div v-if="editorSurface.showFactBinding && patches.length" class="mt patch-box">
             <div class="sec">一键补结构（写入母稿，仍需人工改）</div>
             <div class="row-actions">
               <el-button
@@ -2759,7 +2852,7 @@ onMounted(load)
               </el-button>
             </div>
           </div>
-          <div v-else-if="failedChecks.length" class="mt patch-box">
+          <div v-else-if="editorSurface.showFactBinding && failedChecks.length" class="mt patch-box">
             <div class="sec">一键补结构</div>
             <div class="hint mb">当前无补丁缓存，请先点上方「检查就绪」生成可插入补丁。</div>
             <el-button size="small" type="warning" plain :loading="busy === 'check'" @click="runCheck">
@@ -2767,7 +2860,7 @@ onMounted(load)
             </el-button>
           </div>
 
-          <div v-if="aiReview" class="mt ai-box">
+          <div v-if="editorSurface.showAiReview && aiReview" class="mt ai-box">
             <div class="sec">
               AI 审阅意见
               <span class="sec-meta">
@@ -3338,7 +3431,29 @@ onMounted(load)
   font-size: 12px;
   font-weight: 650;
   color: #1e40af;
-  margin-bottom: 8px;
+  margin-bottom: 0;
+}
+.cite-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.cite-help, .cite-sum {
+  font-size: 12px;
+  color: #1e40af;
+  line-height: 1.45;
+  margin: 0 0 8px;
+}
+.cite-sum { font-weight: 650; }
+.cite-row.block { background: #fff7ed; margin: 0 -8px; padding: 6px 8px; border-radius: 6px; }
+.cite-link { font-size: 12px; color: #1d4ed8; }
+.variant-fail-list {
+  margin: 6px 0 10px;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 .cite-row {
   display: flex;
