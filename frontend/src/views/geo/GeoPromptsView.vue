@@ -18,8 +18,10 @@ import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { POSITION_LABEL, engineDisplay, labelOf } from '../../utils/geoReportLabels'
 import { groupSnapshotsByPrompt, starsFromPriority } from '../../utils/geoSnapshotSummary'
+import { getGeoPrototypePageSurface } from '../../utils/geoEditorSurface'
 
 const router = useRouter()
+const prototypeSurface = getGeoPrototypePageSurface()
 const route = useRoute()
 const { tenantId } = useGeoTenant()
 
@@ -437,7 +439,7 @@ const analysisRows = computed(() =>
     </template>
     <div class="geo-dash">
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
-    <NeedHintAlert />
+    <NeedHintAlert v-if="prototypeSurface.showLightweightOperations" />
 
     <div class="geo-filter-bar filters">
       <el-select v-model="status" style="width: 140px">
@@ -446,6 +448,7 @@ const analysisRows = computed(() =>
         <el-option label="全部" value="" />
       </el-select>
       <el-select
+        v-if="prototypeSurface.showLightweightOperations"
         v-model="filterUnitId"
         clearable
         filterable
@@ -466,12 +469,12 @@ const analysisRows = computed(() =>
       <div>新建问题，或用「智能推荐」从事实库 / 官网渠道扩词，再挂到优化单元。</div>
       <div class="empty-actions">
         <el-button type="primary" size="small" @click="createOpen = true">新建意图词</el-button>
-        <el-button size="small" @click="openExpand">智能推荐</el-button>
+        <el-button v-if="prototypeSurface.showLightweightOperations" size="small" @click="openExpand">智能推荐</el-button>
       </div>
     </div>
 
     <el-alert
-      v-if="filterBrandMissing"
+      v-if="prototypeSurface.showLightweightOperations && filterBrandMissing"
       type="warning"
       :closable="true"
       show-icon
@@ -511,8 +514,8 @@ const analysisRows = computed(() =>
               <td>{{ row.exposure }}</td>
               <td @click.stop>
                 <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
-                <el-button type="success" link @click="createTask(row)">建文章</el-button>
-                <el-button v-if="row.status === 'active'" type="danger" link @click="archive(row)">归档</el-button>
+                <el-button v-if="prototypeSurface.showLightweightOperations" type="success" link @click="createTask(row)">建文章</el-button>
+                <el-button v-if="prototypeSurface.showLightweightOperations && row.status === 'active'" type="danger" link @click="archive(row)">归档</el-button>
               </td>
             </tr>
             <tr v-if="!monitorRows.length"><td colspan="6" class="gd-sub">暂无提问</td></tr>
