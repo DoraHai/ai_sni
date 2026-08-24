@@ -185,7 +185,7 @@ const showSemIdentityBlock = computed(() => (
 ))
 const currentSemAccounts = computed(() => {
   if (semIdentityBlocked.value) return []
-  const rows = currentTenant.value?.sem_accounts || []
+  const rows = (currentTenant.value?.sem_accounts || []).filter((row) => row.status !== 'archived')
   return [...rows].sort((a, b) => Number(b.status === 'active') - Number(a.status === 'active'))
 })
 const primarySemAccount = computed(() => currentSemAccounts.value[0] || null)
@@ -207,7 +207,7 @@ function fmtAccountSync(value) {
 
 function tenantAccountMeta(tenant) {
   if (tenant?.sem_identity?.status === 'blocked') return '推广账户归属冲突 · 已暂停数据访问'
-  const rows = tenant?.sem_accounts || []
+  const rows = (tenant?.sem_accounts || []).filter((row) => row.status !== 'archived')
   const account = rows.find((row) => row.status === 'active') || rows[0]
   if (!account) return `未绑定推广账户 · 客户 ID ${tenant.id}`
   return `${account.username} · UCID ${account.ucid}${rows.length > 1 ? ` · ${rows.length} 个账户` : ''}`
