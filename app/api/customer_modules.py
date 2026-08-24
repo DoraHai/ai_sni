@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime
 from urllib.parse import urlparse
 
@@ -33,6 +34,7 @@ from app.security.auth import AuthContext, require_auth, require_scoped_auth
 
 router = APIRouter(tags=["客户与模块"])
 geo_projects_router = APIRouter(tags=["GEO 项目"])
+logger = logging.getLogger(__name__)
 
 
 async def require_customer_admin(ctx: AuthContext = Depends(require_auth)) -> AuthContext:
@@ -67,6 +69,82 @@ def _module_payload(row: TenantModule) -> dict:
     }
 
 
+def _sem_identity_check(tenants: list[Tenant], accounts: list[BaiduAccount]) -> dict:
+    """只读检查客户与百度账户的结构性归属冲突，不根据显示名称猜测归属。"""
+    issues_by_tenant: dict[int, list[dict]] = {tenant.id: [] for tenant in tenants}
+    all_issues: list[dict] = []
+    accounts_by_ucid: dict[int, list[BaiduAccount]] = {}
+    accounts_by_tenant_ucid: dict[tuple[int, int], list[BaiduAccount]] = {}
+    for account in accounts:
+        accounts_by_ucid.setdefault(account.baidu_ucid, []).append(account)
+        accounts_by_tenant_ucid.setdefault(
+            (account.tenant_id, account.baidu_ucid), []
+        ).append(account)
+
+    for ucid, rows in accounts_by_ucid.items():
+        tenant_ids = sorted({row.tenant_id for row in rows})
+        if len(tenant_ids) <= 1:
+            continue
+        issue = {
+            "code": "ucid_cross_tenant",
+            "severity": "error",
+            "message": f"百度账户 UCID {ucid} 同时绑定了多个客户",
+            "ucid": str(ucid),
+            "tenant_ids": tenant_ids,
+            "account_ids": [row.id for row in rows],
+        }
+        all_issues.append(issue)
+        for tenant_id in tenant_ids:
+            issues_by_tenant.setdefault(tenant_id, []).append(issue)
+
+    for (tenant_id, ucid), rows in accounts_by_tenant_ucid.items():
+        if len(rows) <= 1:
+            continue
+        issue = {
+            "code": "duplicate_account_rows",
+            "severity": "warning",
+            "message": f"UCID {ucid} 在当前客户下存在 {len(rows)} 条账户记录",
+            "ucid": str(ucid),
+            "account_ids": [row.id for row in rows],
+            "auth_modes": sorted({row.auth_mode for row in rows}),
+        }
+        all_issues.append(issue)
+        issues_by_tenant.setdefault(tenant_id, []).append(issue)
+
+    for tenant in tenants:
+        if tenant.baidu_ucid is None:
+            continue
+        if (tenant.id, tenant.baidu_ucid) not in accounts_by_tenant_ucid:
+            issue = {
+                "code": "primary_ucid_missing",
+                "severity": "warning",
+                "message": f"客户主 UCID {tenant.baidu_ucid} 没有对应的推广账户记录",
+                "ucid": str(tenant.baidu_ucid),
+            }
+            all_issues.append(issue)
+            issues_by_tenant[tenant.id].append(issue)
+
+    error_count = sum(
+        issue["severity"] == "error"
+        for issue in all_issues
+    )
+    warning_count = sum(
+        issue["severity"] == "warning"
+        for issue in all_issues
+    )
+    return {
+        "issues_by_tenant": issues_by_tenant,
+        "issues": all_issues,
+        "summary": {
+            "checked_customers": len(tenants),
+            "checked_accounts": len(accounts),
+            "errors": error_count,
+            "warnings": warning_count,
+            "healthy": error_count == 0 and warning_count == 0,
+        },
+    }
+
+
 class CustomerCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     industry: str | None = Field(None, max_length=100)
@@ -78,6 +156,8 @@ class CustomerUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=100)
     industry: str | None = Field(None, max_length=100)
     business_desc: str | None = Field(None, max_length=4000)
+    confirm_bound_name_change: bool = False
+    name_change_reason: str | None = Field(None, max_length=500)
 
 
 class ModuleUpdate(BaseModel):
@@ -89,16 +169,44 @@ class ModuleUpdate(BaseModel):
 async def list_customers(session: AsyncSession = Depends(get_session)) -> dict:
     tenants = list((await session.scalars(select(Tenant).order_by(Tenant.id))).all())
     modules = list((await session.scalars(select(TenantModule).order_by(TenantModule.id))).all())
+    accounts = list((await session.scalars(select(BaiduAccount).order_by(BaiduAccount.id))).all())
+    identity_check = _sem_identity_check(tenants, accounts)
     by_tenant: dict[int, list[dict]] = {}
     for row in modules:
         by_tenant.setdefault(row.tenant_id, []).append(_module_payload(row))
+    accounts_by_tenant: dict[int, list[dict]] = {}
+    for account in accounts:
+        accounts_by_tenant.setdefault(account.tenant_id, []).append(
+            {
+                "id": account.id,
+                "username": account.baidu_username,
+                "ucid": str(account.baidu_ucid),
+                "auth_mode": account.auth_mode,
+                "status": account.status,
+            }
+        )
     return {
+        "identity_summary": identity_check["summary"],
         "customers": [
             {
                 "id": row.id,
                 "name": row.name,
                 "industry": row.industry,
                 "business_desc": row.business_desc,
+                "baidu_ucid": str(row.baidu_ucid) if row.baidu_ucid is not None else None,
+                "sem_accounts": accounts_by_tenant.get(row.id, []),
+                "identity_locked": bool(accounts_by_tenant.get(row.id)),
+                "identity_issues": identity_check["issues_by_tenant"].get(row.id, []),
+                "identity_state": (
+                    "error"
+                    if any(
+                        issue["severity"] == "error"
+                        for issue in identity_check["issues_by_tenant"].get(row.id, [])
+                    )
+                    else "warning"
+                    if identity_check["issues_by_tenant"].get(row.id, [])
+                    else "ok"
+                ),
                 "created_at": row.created_at.isoformat() if row.created_at else None,
                 "modules": by_tenant.get(row.id, []),
             }
@@ -124,19 +232,67 @@ async def create_customer(req: CustomerCreate, session: AsyncSession = Depends(g
     return {"status": "ok", "id": row.id}
 
 
-@router.patch("/api/v1/admin/customers/{tenant_id}", dependencies=[Depends(require_customer_admin)])
+@router.patch("/api/v1/admin/customers/{tenant_id}")
 async def update_customer(
     tenant_id: int,
     req: CustomerUpdate,
+    ctx: AuthContext = Depends(require_customer_admin),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     row = await session.get(Tenant, tenant_id)
     if row is None:
         raise HTTPException(404, "客户不存在")
     values = req.model_dump(exclude_unset=True)
+    confirm_name_change = bool(values.pop("confirm_bound_name_change", False))
+    name_change_reason = str(values.pop("name_change_reason", "") or "").strip()
+    name_change_audit: dict | None = None
+    if "name" in values:
+        new_name = str(values["name"] or "").strip()
+        if not new_name:
+            raise HTTPException(422, "客户名称不能为空")
+        if new_name != row.name:
+            linked_accounts = list(
+                (
+                    await session.scalars(
+                        select(BaiduAccount)
+                        .where(BaiduAccount.tenant_id == tenant_id)
+                        .order_by(BaiduAccount.id)
+                    )
+                ).all()
+            )
+            if linked_accounts and (
+                not confirm_name_change or len(name_change_reason) < 4
+            ):
+                raise HTTPException(
+                    409,
+                    "该客户已绑定百度推广账户。更名必须填写至少 4 个字的原因并完成二次确认；"
+                    "如账户归属错误，请走人工审核的数据迁移流程，不能用更名代替迁移。",
+                )
+            if linked_accounts:
+                name_change_audit = {
+                    "old_name": row.name,
+                    "new_name": new_name,
+                    "reason": name_change_reason,
+                    "account_ids": [account.id for account in linked_accounts],
+                    "account_ucids": [str(account.baidu_ucid) for account in linked_accounts],
+                }
+        values["name"] = new_name
     for key, value in values.items():
         setattr(row, key, value.strip() or None if isinstance(value, str) else value)
     await session.commit()
+    if name_change_audit:
+        logger.warning(
+            "AUDIT customer_bound_name_changed actor_user_id=%r actor_username=%r "
+            "tenant_id=%r old_name=%r new_name=%r reason=%r account_ids=%r account_ucids=%r",
+            ctx.user_id,
+            ctx.username,
+            tenant_id,
+            name_change_audit["old_name"],
+            name_change_audit["new_name"],
+            name_change_audit["reason"],
+            name_change_audit["account_ids"],
+            name_change_audit["account_ucids"],
+        )
     return {"status": "ok"}
 
 

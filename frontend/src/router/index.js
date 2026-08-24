@@ -281,6 +281,13 @@ const routes = [
     component: () => import('../views/workspace/ModuleWorkspaceView.vue'),
     meta: { title: '我的工作台' },
   },
+  { path: '/sem/plans', redirect: '/manage/campaigns' },
+  { path: '/admin/internal', redirect: '/settings/accounts' },
+  {
+    path: '/:pathMatch(.*)*',
+    component: () => import('../views/NotFoundView.vue'),
+    meta: { title: '页面不存在' },
+  },
 ]
 
 const router = createRouter({

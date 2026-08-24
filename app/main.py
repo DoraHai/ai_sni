@@ -182,17 +182,62 @@ async def init_self_auth_account(
 
     幂等：tenant_name 已存在就复用，access_token 重复就更新。
     """
+    tenant_name = tenant_name.strip()
+    if not tenant_name:
+        raise HTTPException(422, "租户名不能为空")
+
+    # 自授权配置只代表一个固定百度账户。先按 UCID 找已有绑定，禁止通过换一个
+    # tenant_name 为同一账户创建第二套客户数据。
+    existing_accounts = list(
+        (
+            await session.scalars(
+                select(BaiduAccount)
+                .where(BaiduAccount.baidu_ucid == settings.baidu_default_ucid)
+                .order_by(BaiduAccount.updated_at.desc(), BaiduAccount.id.desc())
+            )
+        ).all()
+    )
+    existing_tenant_ids = {account.tenant_id for account in existing_accounts}
+    if len(existing_tenant_ids) > 1:
+        raise HTTPException(
+            409,
+            "固定百度账户存在跨客户历史绑定，已停止自授权初始化，请先人工核对归属",
+        )
+    existing_by_ucid = existing_accounts[0] if existing_accounts else None
+    if existing_by_ucid is not None:
+        existing_tenant = await session.get(Tenant, existing_by_ucid.tenant_id)
+        if existing_tenant is None:
+            raise HTTPException(409, "固定百度账户的客户归属已损坏，请先人工核对数据库")
+        if existing_tenant.name != tenant_name:
+            raise HTTPException(
+                409,
+                f"固定百度账户已绑定客户「{existing_tenant.name}」，"
+                "不能再绑定到另一个客户名称。",
+            )
+        tenant = existing_tenant
+    else:
+        tenant_by_ucid = await session.scalar(
+            select(Tenant).where(Tenant.baidu_ucid == settings.baidu_default_ucid)
+        )
+        tenant_by_name = await session.scalar(select(Tenant).where(Tenant.name == tenant_name))
+        if tenant_by_ucid is not None and tenant_by_name is not None and tenant_by_ucid.id != tenant_by_name.id:
+            raise HTTPException(409, "客户名称与百度 UCID 分别指向不同客户，请先人工核对归属")
+        tenant = tenant_by_ucid or tenant_by_name
+
     # 找/建 tenant
-    tenant = await session.scalar(select(Tenant).where(Tenant.name == tenant_name))
     if tenant is None:
-        tenant = Tenant(name=tenant_name)
+        tenant = Tenant(name=tenant_name, baidu_ucid=settings.baidu_default_ucid)
         if monthly_budget is not None:
             tenant.monthly_budget = monthly_budget
         session.add(tenant)
         await session.flush()
+    elif tenant.baidu_ucid is None:
+        tenant.baidu_ucid = settings.baidu_default_ucid
+    elif tenant.baidu_ucid != settings.baidu_default_ucid:
+        raise HTTPException(409, "当前客户已绑定另一个百度账户，不能覆盖其归属")
 
     # 找/建 baidu_account
-    existing = await session.scalar(
+    existing = existing_by_ucid or await session.scalar(
         select(BaiduAccount).where(
             BaiduAccount.tenant_id == tenant.id,
             BaiduAccount.baidu_username == settings.baidu_default_username,
