@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -23,6 +23,7 @@ from app.api.seo import (
     _missing_content_keywords,
     _number_or_text,
     _provider_metric_status,
+    _rank_iso,
     _serp_error_payload,
     _normalize_brand_homepage,
     _seo_ai_prompt,
@@ -393,6 +394,20 @@ def test_rank_delta_uses_smaller_rank_as_improvement() -> None:
     assert payload["rank_delta"] == 5
 
 
+def test_rank_timestamps_are_serialized_as_explicit_utc_instants() -> None:
+    assert _rank_iso(datetime(2026, 8, 24, 16, 57, 3)) == "2026-08-24T16:57:03Z"
+    shanghai_value = datetime(
+        2026,
+        8,
+        25,
+        0,
+        57,
+        3,
+        tzinfo=timezone(timedelta(hours=8)),
+    )
+    assert _rank_iso(shanghai_value) == "2026-08-24T16:57:03Z"
+
+
 def test_serp_collection_error_payload_uses_ids_and_safe_metadata_only() -> None:
     error = SerpProviderError(
         "provider_unavailable",
@@ -446,9 +461,10 @@ def test_all_failed_serp_collection_returns_generic_safe_error() -> None:
     session.scalar = AsyncMock(return_value=1)
     reserve = MagicMock(return_value={"allowed": False, "retry_after_seconds": 3600})
 
+    collector = AsyncMock(return_value=failed)
     with patch(
         "app.api.seo.collect_rank_serp_for_tenant",
-        new=AsyncMock(return_value=failed),
+        new=collector,
     ), patch(
         "app.api.seo._seo_site",
         new=AsyncMock(return_value=object()),
@@ -470,6 +486,8 @@ def test_all_failed_serp_collection_returns_generic_safe_error() -> None:
     )
     assert "provider" not in str(getattr(exc.value, "detail", ""))
     assert reserve.call_args.args[2] == 1
+    assert collector.await_args.kwargs["keyword_ids"] == [3]
+    assert collector.await_args.kwargs["max_keywords"] == 1
 
 
 @pytest.mark.parametrize("site_id", [None, 0, -1])

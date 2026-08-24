@@ -132,6 +132,10 @@ def test_seo_content_and_rank_views_are_site_scoped_and_html_safe() -> None:
     assert "结果会保留在页面上，避免重复采集" in ranking
     assert '@click="showCollectedDevice"' in ranking
     assert "collectOutcome.value = {" in ranking
+    assert 'v-model="collectForm.keyword_ids"' in ranking
+    assert "keyword_ids: collectForm.keyword_ids" in ranking
+    assert "formatSeoRankTime(serp.captured_at)" in ranking
+    assert "timeZone: SEO_TIME_ZONE" in (root / "frontend/src/views/seo/seoRankTime.js").read_text(encoding="utf-8")
     assert 'siteId:siteId.value' in rewrite
     assert 'siteId: siteId.value' in distribution
     assert "site_id: siteId || undefined" in api

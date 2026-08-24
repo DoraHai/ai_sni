@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from urllib.parse import urljoin, urlparse
 
@@ -108,6 +108,19 @@ METRIC_QUALITIES = {"verified", "estimated", "crawled", "imported"}
 
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
+
+
+def _rank_iso(value: datetime | None) -> str | None:
+    """Serialize ranking timestamps as explicit UTC instants.
+
+    Ranking collection stores UTC wall-clock values in timezone-naive columns.
+    Adding the UTC marker at this boundary prevents browsers from treating those
+    values as their own local wall-clock time.
+    """
+    if value is None:
+        return None
+    aware = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+    return aware.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 async def _tenant(session: AsyncSession, tenant_id: int) -> Tenant:
@@ -230,7 +243,7 @@ def _keyword_payload(
         "latest_rank": None if not latest else latest.rank,
         "rank_delta": delta,
         "rank_url": None if not latest else latest.result_url,
-        "rank_checked_at": None if not latest else _iso(latest.checked_at),
+        "rank_checked_at": None if not latest else _rank_iso(latest.checked_at),
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
     }
@@ -249,7 +262,7 @@ def _rank_payload(row: SeoRankSnapshot) -> dict[str, Any]:
         "rank": row.rank,
         "result_url": row.result_url,
         "source": row.source,
-        "checked_at": _iso(row.checked_at),
+        "checked_at": _rank_iso(row.checked_at),
     }
 
 
@@ -966,7 +979,7 @@ def _serp_payload(row: SeoSerpResult, keyword: str | None = None) -> dict[str, A
         "matched_asset_id": row.matched_asset_id,
         "is_confirmed": row.is_confirmed,
         "provider": row.provider,
-        "captured_at": _iso(row.captured_at),
+        "captured_at": _rank_iso(row.captured_at),
     }
 
 
@@ -1648,7 +1661,7 @@ async def list_rank_serp_results(
     return {
         "items": [_serp_payload(row, keyword_map.get(row.keyword_id)) for row in rows],
         "total": len(rows),
-        "captured_at": _iso(latest_at),
+        "captured_at": _rank_iso(latest_at),
         "stats": stats,
     }
 
@@ -2399,7 +2412,7 @@ async def seo_overview(
             "engine": item_engine,
             "collected": collected,
             "total": len(keywords),
-            "last_checked_at": _iso(last_checked),
+            "last_checked_at": _rank_iso(last_checked),
             "status": "ready" if keywords and collected >= len(keywords) else ("partial" if collected else "pending"),
         })
 
@@ -2562,7 +2575,7 @@ async def seo_alerts(
     for keyword_id, values in grouped.items():
         if len(values) == 2 and values[0].rank and values[1].rank and values[0].rank - values[1].rank >= 3:
             keyword = keyword_map.get(keyword_id)
-            alerts.append({"type": "rank_drop", "severity": "high" if values[0].rank - values[1].rank >= 10 else "medium", "title": f"{keyword.keyword if keyword else keyword_id} 排名下降", "detail": f"从第 {values[1].rank} 位下降到第 {values[0].rank} 位", "evidence": f"最近两次 {engine} 排名为 {values[1].rank}、{values[0].rank}", "action_label": "查看排名历史", "href": f"/seo/keywords/{keyword_id}", "object_id": keyword_id, "site_id": values[0].site_id, "occurred_at": _iso(values[0].checked_at)})
+            alerts.append({"type": "rank_drop", "severity": "high" if values[0].rank - values[1].rank >= 10 else "medium", "title": f"{keyword.keyword if keyword else keyword_id} 排名下降", "detail": f"从第 {values[1].rank} 位下降到第 {values[0].rank} 位", "evidence": f"最近两次 {engine} 排名为 {values[1].rank}、{values[0].rank}", "action_label": "查看排名历史", "href": f"/seo/keywords/{keyword_id}", "object_id": keyword_id, "site_id": values[0].site_id, "occurred_at": _rank_iso(values[0].checked_at)})
     for item in keywords:
         if not item.landing_page:
             alerts.append({"type": "missing_landing", "severity": "medium", "title": f"{item.keyword} 缺少承接页面", "detail": "高价值关键词尚未绑定站内页面", "evidence": "关键词的目标落地页字段为空", "action_label": "配置承接页面", "href": f"/seo/keywords/{item.id}", "object_id": item.id, "site_id": item.site_id, "occurred_at": _iso(item.updated_at)})
