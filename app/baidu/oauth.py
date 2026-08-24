@@ -399,19 +399,31 @@ async def persist_authorization(
     linked: list[BaiduAccount] = []
     active_ucids = {account.ucid for account in accounts}
     for account, account_tenant in zip(accounts, linked_tenants, strict=True):
-        oauth_rows = (
+        account_rows = (
             await session.scalars(
                 select(BaiduAccount)
-                .where(
-                    BaiduAccount.baidu_ucid == account.ucid,
-                    BaiduAccount.auth_mode == "oauth",
-                )
+                .where(BaiduAccount.baidu_ucid == account.ucid)
                 .order_by(BaiduAccount.updated_at.desc(), BaiduAccount.id.desc())
             )
         ).all()
-        row = oauth_rows[0] if oauth_rows else None
-        # 旧逻辑可能把同一 UCID 重复绑到多个客户；保留最新一条，其余停用。
-        for duplicate in oauth_rows[1:]:
+        conflicting_tenant_ids = {
+            existing.tenant_id
+            for existing in account_rows
+            if existing.tenant_id != account_tenant.id
+        }
+        if conflicting_tenant_ids:
+            raise BaiduOAuthError(
+                "account_tenant_conflict",
+                "该百度推广账户已归属于其他客户。为避免客户数据串用，"
+                "本次授权已停止，请管理员核对客户与账户归属。",
+            )
+        # 复用最近更新的账户行（无论原来是 OAuth 还是自授权），保留其
+        # baidu_account_id 及现有资产关联，避免授权模式变化产生第二套数据。
+        row = account_rows[0] if account_rows else None
+        # 同一客户内的历史重复账户仅保留当前行，其余停用。
+        for duplicate in account_rows:
+            if duplicate is row:
+                continue
             duplicate.status = "inactive"
         if row is None:
             row = BaiduAccount(

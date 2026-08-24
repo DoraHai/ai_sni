@@ -14,6 +14,11 @@ const router = useRouter()
 const currentTitle = computed(() => route.meta.title || '')
 const currentWorkflow = computed(() => route.meta.workflow || '')
 const bare = computed(() => route.meta.bare) // 门户、诊断等无框页面
+const showSemAccountContext = computed(() => (
+  !route.path.startsWith('/seo')
+  && !route.path.startsWith('/geo')
+  && !route.path.startsWith('/deal-sniper')
+))
 const tenantPopoverOpen = ref(false)
 const bootstrapError = ref('')
 const themeStorageKey = 'sem_console_theme'
@@ -141,7 +146,33 @@ function go(c) {
 const tenantName = computed(
   () => session.tenants.find((t) => t.id === session.tenantId)?.name || '—',
 )
+const currentTenant = computed(() => session.tenants.find((t) => t.id === session.tenantId))
+const currentSemAccounts = computed(() => {
+  const rows = currentTenant.value?.sem_accounts || []
+  return [...rows].sort((a, b) => Number(b.status === 'active') - Number(a.status === 'active'))
+})
+const primarySemAccount = computed(() => currentSemAccounts.value[0] || null)
+const accountContextTitle = computed(() => {
+  if (!primarySemAccount.value) return '当前客户尚未绑定百度推广账户'
+  const account = primarySemAccount.value
+  const count = currentSemAccounts.value.length
+  return `${account.username} · UCID ${account.ucid}${count > 1 ? ` · 共 ${count} 个账户` : ''}`
+})
 const tenantCountLabel = computed(() => `${session.tenants.length} 客户`)
+
+function fmtAccountSync(value) {
+  if (!value) return '尚未同步'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '同步时间未知'
+  return `同步 ${date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}`
+}
+
+function tenantAccountMeta(tenant) {
+  const rows = tenant?.sem_accounts || []
+  const account = rows.find((row) => row.status === 'active') || rows[0]
+  if (!account) return `未绑定推广账户 · 客户 ID ${tenant.id}`
+  return `${account.username} · UCID ${account.ucid}${rows.length > 1 ? ` · ${rows.length} 个账户` : ''}`
+}
 
 function tenantInitials(tenant) {
   const trimmed = String(tenant?.name || '').trim()
@@ -361,13 +392,26 @@ onBeforeUnmount(() => {
                   </span>
                   <span class="tenant-copy">
                     <span class="tenant-title">{{ t.name }}</span>
-                    <span class="tenant-meta">独立账户数据 · 客户 ID {{ t.id }}</span>
+                    <span class="tenant-meta">{{ tenantAccountMeta(t) }}</span>
                   </span>
                   <span v-if="t.id === session.tenantId" class="tenant-check">✓</span>
                 </button>
               </div>
             </el-popover>
             <span v-else class="tenant-static">客户：<b>{{ tenantName }}</b></span>
+            <span
+              v-if="showSemAccountContext"
+              class="account-context"
+              :class="{ empty: !primarySemAccount }"
+              :title="accountContextTitle"
+            >
+              <span class="account-context-main">
+                推广账户：{{ primarySemAccount?.username || '未绑定' }}
+              </span>
+              <small class="account-context-sync">
+                {{ primarySemAccount ? `UCID ${primarySemAccount.ucid} · ${fmtAccountSync(primarySemAccount.last_synced_at)}` : '请先完成授权与同步' }}
+              </small>
+            </span>
             <span class="role-badge">{{ session.user?.role_label }}</span>
             <el-dropdown @command="onUserCommand">
               <span class="user-chip">{{ session.user?.display_name }} ▾</span>
@@ -521,6 +565,24 @@ onBeforeUnmount(() => {
 .tenant-trigger-caret { color: #4b5563; font-size: 11px; line-height: 1; margin-left: 2px; transform: translateY(-1px); }
 .tenant-static { font-size: 12px; color: var(--sem-text-sub); }
 .tenant-static b { color: var(--sem-primary); }
+.account-context {
+  min-width: 0;
+  max-width: 260px;
+  padding-left: 11px;
+  border-left: 1px solid var(--sem-border);
+  display: grid;
+  gap: 2px;
+  line-height: 1.15;
+}
+.account-context-main,
+.account-context-sync {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-context-main { color: var(--sem-text); font-size: 11px; font-weight: 600; }
+.account-context-sync { color: var(--sem-text-sub); font-size: 10px; }
+.account-context.empty .account-context-main { color: #b15f00; }
 .role-badge { font-size: 11px; padding: 3px 9px; border-radius: 10px; font-weight: 500; }
 .role-badge.admin { background: #fef1e1; color: #ba7517; }
 .role-badge.operator { background: #eff4fb; color: #185fa5; }
@@ -845,6 +907,10 @@ onBeforeUnmount(() => {
   padding: 6px 10px;
   border-radius: 999px;
 }
+.sem-console .account-context { border-left-color: var(--sem-dark-border-strong); }
+.sem-console .account-context-main { color: #f0f0f0; }
+.sem-console .account-context-sync { color: #929292; }
+.sem-console .account-context.empty .account-context-main { color: #ffb36f; }
 
 :global(.sem-console .el-breadcrumb__inner),
 :global(.sem-console .el-breadcrumb__separator) {
@@ -1203,6 +1269,15 @@ onBeforeUnmount(() => {
 
 .sem-theme-light .role-badge {
   color: #28705a;
+}
+
+.sem-theme-light .account-context { border-left-color: var(--sem-light-border-strong); }
+.sem-theme-light .account-context-main { color: #343a43; }
+.sem-theme-light .account-context-sync { color: #7e8793; }
+
+@media (max-width: 1200px) {
+  .account-context { max-width: 180px; }
+  .account-context-sync { display: none; }
 }
 
 :global(.sem-theme-light .el-breadcrumb__inner),

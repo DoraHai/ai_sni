@@ -1,5 +1,6 @@
 import os
 import unittest
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -17,6 +18,7 @@ os.environ.setdefault(
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
 from app.baidu.oauth import (
+    BaiduOAuthError,
     OAuthAccount,
     calculate_callback_signature,
     persist_authorization,
@@ -58,6 +60,56 @@ class _OAuthSession:
         for index, row in enumerate(self.added, 100):
             if getattr(row, "id", None) is None:
                 row.id = index
+
+
+class _ConflictingOAuthSession(_OAuthSession):
+    def __init__(self):
+        super().__init__()
+        self.account_tenant = Tenant(id=101, name="account-a", baidu_ucid=2080601)
+        self.conflicting_account = BaiduAccount(
+            id=88,
+            tenant_id=999,
+            baidu_username="account-a",
+            baidu_ucid=2080601,
+            access_token_encrypted="encrypted",
+            expires_at=datetime(2099, 1, 1),
+            auth_mode="oauth",
+            status="active",
+        )
+
+    async def scalar(self, _statement):
+        self._scalar_calls += 1
+        if self._scalar_calls == 1:
+            return self.account_tenant
+        return None
+
+    async def scalars(self, _statement):
+        return _ScalarRows([self.conflicting_account])
+
+
+class _SameTenantSelfAuthSession(_OAuthSession):
+    def __init__(self):
+        super().__init__()
+        self.account_tenant = Tenant(id=101, name="account-a", baidu_ucid=2080601)
+        self.self_account = BaiduAccount(
+            id=88,
+            tenant_id=101,
+            baidu_username="account-a",
+            baidu_ucid=2080601,
+            access_token_encrypted="encrypted",
+            expires_at=datetime(2099, 1, 1),
+            auth_mode="self",
+            status="active",
+        )
+
+    async def scalar(self, _statement):
+        self._scalar_calls += 1
+        if self._scalar_calls == 1:
+            return self.account_tenant
+        return None
+
+    async def scalars(self, _statement):
+        return _ScalarRows([self.self_account])
 
 
 class BaiduOAuthTests(unittest.IsolatedAsyncioTestCase):
@@ -140,6 +192,72 @@ class BaiduOAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("tenant_modules", compiled)
         self.assertIn("sem", params.values())
         self.assertIn(tenants[0].id, params.values())
+
+    async def test_authorization_stops_on_cross_customer_account_binding(self):
+        session = _ConflictingOAuthSession()
+        with self.assertRaises(BaiduOAuthError) as cm:
+            await persist_authorization(
+                session,
+                oauth_user_id=2080601,
+                token_data={
+                    "accessToken": "access-token",
+                    "refreshToken": "refresh-token",
+                    "openId": "open-id",
+                },
+                master={
+                    "master_ucid": 2080601,
+                    "master_name": "account-a",
+                    "account_type": 1,
+                },
+                accounts=[OAuthAccount(ucid=2080601, username="account-a", role="standalone")],
+            )
+
+        self.assertEqual(cm.exception.code, "account_tenant_conflict")
+
+    async def test_authorization_also_stops_on_cross_customer_self_auth_binding(self):
+        session = _ConflictingOAuthSession()
+        session.conflicting_account.auth_mode = "self"
+        with self.assertRaises(BaiduOAuthError) as cm:
+            await persist_authorization(
+                session,
+                oauth_user_id=2080601,
+                token_data={
+                    "accessToken": "access-token",
+                    "refreshToken": "refresh-token",
+                    "openId": "open-id",
+                },
+                master={
+                    "master_ucid": 2080601,
+                    "master_name": "account-a",
+                    "account_type": 1,
+                },
+                accounts=[OAuthAccount(ucid=2080601, username="account-a", role="standalone")],
+            )
+
+        self.assertEqual(cm.exception.code, "account_tenant_conflict")
+
+    async def test_same_customer_self_auth_row_is_upgraded_in_place(self):
+        session = _SameTenantSelfAuthSession()
+        _, linked, _ = await persist_authorization(
+            session,
+            oauth_user_id=2080601,
+            token_data={
+                "accessToken": "access-token",
+                "refreshToken": "refresh-token",
+                "openId": "open-id",
+            },
+            master={
+                "master_ucid": 2080601,
+                "master_name": "account-a",
+                "account_type": 1,
+            },
+            accounts=[OAuthAccount(ucid=2080601, username="account-a", role="standalone")],
+        )
+
+        self.assertIs(linked[0], session.self_account)
+        self.assertEqual(linked[0].id, 88)
+        self.assertEqual(linked[0].auth_mode, "oauth")
+        self.assertEqual(linked[0].status, "active")
 
 
 if __name__ == "__main__":

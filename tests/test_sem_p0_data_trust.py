@@ -123,6 +123,32 @@ def test_p1_p2_frontend_contracts_are_present():
     assert 'fixed="right"' in adgroups and "状态未同步" in adgroups
 
 
+def test_tenant_account_identity_guards_are_visible_and_race_safe():
+    app_shell = _read("frontend/src/App.vue")
+    customers = _read("frontend/src/views/settings/CustomerModulesView.vue")
+    accounts = _read("frontend/src/views/manage/SemAccountsView.vue")
+    router = _read("frontend/src/router/index.js")
+    backend = _read("app/api/customer_modules.py")
+    self_auth = _read("app/main.py")
+
+    assert "SEM 推广账户归属" in customers
+    assert "重新检查归属" in customers and "identity_issues" in customers
+    assert "推广账户：" in app_shell and "UCID" in app_shell
+    assert "sem_accounts" in app_shell and "fmtAccountSync" in app_shell
+    assert "identity_locked" in customers and "受控客户更名" in customers
+    assert "最终确认" in customers and "name_change_reason" in customers
+    assert "confirm_bound_name_change" in backend
+    assert "AUDIT customer_bound_name_changed" in backend
+    assert "不能再绑定到另一个客户名称" in self_auth
+    assert "generation !== loadGeneration" in accounts
+    assert "tenantId !== currentTenantId.value" in accounts
+    assert "正在读取推广账户" in accounts
+    assert "path: '/:pathMatch(.*)*'" in router
+    assert "NotFoundView.vue" in router
+    assert "{ path: '/sem/plans', redirect: '/manage/campaigns' }" in router
+    assert "{ path: '/admin/internal', redirect: '/settings/accounts' }" in router
+
+
 def test_negative_rows_are_deduplicated_before_display():
     backend = _read("app/api/negatives.py")
     frontend = _read("frontend/src/views/optimize/NegativeWordsView.vue")

@@ -11,6 +11,7 @@ const loading = ref(false)
 const accounts = ref([])
 const repairingKey = ref('')
 const summary = ref({ total: 0, active: 0, ready: 0, attention: 0 })
+let loadGeneration = 0
 const stateLabels = {
   ready: '数据就绪', partial: '数据不完整', failed: '同步失败', syncing: '同步中',
   pending: '等待同步', not_synced: '尚未同步', empty: '已同步但无数据', inactive: '授权未生效',
@@ -31,16 +32,28 @@ function fmtTime(value) {
 }
 
 async function load() {
-  if (!currentTenantId.value) return
+  const generation = ++loadGeneration
+  const tenantId = currentTenantId.value
+  if (!tenantId) {
+    accounts.value = []
+    summary.value = { total: 0, active: 0, ready: 0, attention: 0 }
+    loading.value = false
+    return
+  }
   loading.value = true
   try {
-    const result = await fetchSemAccounts(currentTenantId.value)
+    const result = await fetchSemAccounts(tenantId)
+    if (generation !== loadGeneration || tenantId !== currentTenantId.value) return
     accounts.value = result.accounts || []
     summary.value = result.summary || { total: accounts.value.length, active: 0, ready: 0, attention: 0 }
   } catch (error) {
-    ElMessage.error(error.message)
+    if (generation === loadGeneration && tenantId === currentTenantId.value) {
+      accounts.value = []
+      summary.value = { total: 0, active: 0, ready: 0, attention: 0 }
+      ElMessage.error(error.message)
+    }
   } finally {
-    loading.value = false
+    if (generation === loadGeneration) loading.value = false
   }
 }
 
@@ -118,13 +131,13 @@ onMounted(load)
       <el-table-column label="已拉取资产" min-width="240"><template #default="{ row }"><span class="counts">计划 {{ row.counts?.campaigns || 0 }} · 单元 {{ row.counts?.adgroups || 0 }} · 关键词 {{ row.counts?.keywords || 0 }} · 搜索词 {{ row.counts?.search_terms || 0 }}</span></template></el-table-column>
       <el-table-column label="最近同步" min-width="150"><template #default="{ row }">{{ fmtTime(row.last_synced_at || row.last_asset_synced_at) }}</template></el-table-column>
       <el-table-column label="只读同步" width="120"><template #default="{ row }"><el-button v-if="row.status === 'active'" link type="primary" :loading="repairingKey === `${row.id}:all`" :disabled="Boolean(repairingKey) && repairingKey !== `${row.id}:all`" @click="repair(row)">同步全部</el-button><span v-else>—</span></template></el-table-column>
+      <template #empty><div class="account-empty">{{ loading ? '正在读取推广账户…' : '尚未授权推广账号' }}</div></template>
     </el-table>
-    <el-empty v-if="!loading && !accounts.length" description="尚未授权推广账号" />
   </div>
 </template>
 
 <style scoped>
-.asset-page{padding:24px}header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px}h2{margin:0 0 7px}p{margin:0;color:#6b7280}.summary-row{display:flex;gap:18px;margin:0 0 12px;font-size:12px;color:#667085}.summary-row .warn{color:#b15f00;font-weight:700}.data-state{display:block;color:#287a55}.data-state.partial,.data-state.failed,.data-state.not_synced,.data-state.empty{color:#b15f00}.data-state.inactive{color:#8b95a5}.data-state+small{display:block;margin-top:3px;color:#b42318;font-weight:400}.counts{font-size:12px;color:#485467}
+.asset-page{padding:24px}header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px}h2{margin:0 0 7px}p{margin:0;color:#6b7280}.summary-row{display:flex;gap:18px;margin:0 0 12px;font-size:12px;color:#667085}.summary-row .warn{color:#b15f00;font-weight:700}.data-state{display:block;color:#287a55}.data-state.partial,.data-state.failed,.data-state.not_synced,.data-state.empty{color:#b15f00}.data-state.inactive{color:#8b95a5}.data-state+small{display:block;margin-top:3px;color:#b42318;font-weight:400}.counts{font-size:12px;color:#485467}.account-empty{padding:28px;color:#8b95a5}
 .dimension-panel{display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:12px;padding:14px 44px}.dimension-card{padding:12px;border:1px solid #e5e7eb;border-radius:8px;background:#fff}.dimension-card>div{display:flex;justify-content:space-between;color:#344054}.dimension-card>div span,.dimension-state small{font-size:12px;color:#667085}.dimension-state{margin:9px 0 5px;font-size:12px;color:#287a55}.dimension-state.failed,.dimension-state.not_synced,.dimension-state.empty{color:#b15f00}.dimension-state small{margin-left:6px}.dimension-error{margin:0 0 5px;color:#b42318;font-size:12px;overflow-wrap:anywhere}@media(max-width:1100px){.dimension-panel{grid-template-columns:repeat(2,minmax(160px,1fr))}}
 :deep(.focused-account-row)>td{background:#fff8e6!important}
 </style>

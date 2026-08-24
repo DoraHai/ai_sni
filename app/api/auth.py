@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_session
-from app.models import Role, Tenant, TenantModule, User
+from app.models import BaiduAccount, Role, Tenant, TenantModule, User
 from app.permissions import ALL_EDIT
 from app.module_scope import list_module_tenants, module_is_available
 from app.security.auth import (
@@ -23,6 +23,20 @@ from app.security.auth import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/auth", tags=["认证"])
+
+
+def _sem_account_payload(account: BaiduAccount) -> dict:
+    return {
+        "id": account.id,
+        "username": account.baidu_username,
+        "ucid": str(account.baidu_ucid),
+        "auth_mode": account.auth_mode,
+        "status": account.status,
+        "sync_status": account.sync_status,
+        "last_synced_at": (
+            account.last_synced_at.isoformat() if account.last_synced_at else None
+        ),
+    }
 
 
 async def _user_payload(u: User, session: AsyncSession) -> dict:
@@ -132,9 +146,35 @@ async def list_tenants(
         tenants = list(
             (await session.scalars(select(Tenant).where(*cond).order_by(Tenant.id))).all()
         )
+    tenant_ids = [tenant.id for tenant in tenants]
+    accounts = (
+        list(
+            (
+                await session.scalars(
+                    select(BaiduAccount)
+                    .where(BaiduAccount.tenant_id.in_(tenant_ids))
+                    .order_by(BaiduAccount.tenant_id, BaiduAccount.id)
+                )
+            ).all()
+        )
+        if tenant_ids
+        else []
+    )
+    accounts_by_tenant: dict[int, list[dict]] = {}
+    for account in accounts:
+        accounts_by_tenant.setdefault(account.tenant_id, []).append(
+            _sem_account_payload(account)
+        )
     return {
         "module": module,
-        "tenants": [{"id": t.id, "name": t.name} for t in tenants],
+        "tenants": [
+            {
+                "id": tenant.id,
+                "name": tenant.name,
+                "sem_accounts": accounts_by_tenant.get(tenant.id, []),
+            }
+            for tenant in tenants
+        ],
     }
 
 
