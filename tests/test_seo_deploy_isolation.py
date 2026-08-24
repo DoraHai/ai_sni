@@ -11,7 +11,11 @@ def _read(relative: str) -> str:
 def test_seo_service_mounts_only_seo_routes() -> None:
     source = _read("app/seo_main.py")
     assert "from app.api.seo import router as seo_router" in source
+    assert "from app.api.customer_modules import seo_sites_router" in source
     assert "app.include_router(seo_router)" in source
+    assert "app.include_router(seo_sites_router)" in source
+    assert "customer_modules_router" not in source
+    assert "geo_projects_router" not in source
     assert "app.main" not in source
     assert "geo_router" not in source
     assert "from app.scheduler" not in source
