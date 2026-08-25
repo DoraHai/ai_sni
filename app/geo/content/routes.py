@@ -7779,8 +7779,12 @@ async def push_variant_webhook(
     variant = variants.get(channel)
     if variant is None:
         raise HTTPException(400, "请先生成该渠道版本")
-    if variant.status not in {"exported", "published"}:
-        raise HTTPException(400, "请先导出渠道稿，再推送")
+    if variant.status not in {"exported", "published", "draft"}:
+        raise HTTPException(400, "请先生成该渠道稿，再推送")
+    if variant.status == "draft":
+        if not (variant.body_markdown or "").strip():
+            raise HTTPException(400, "渠道稿还是空的，请先生成")
+        variant.status = "exported"
 
     article = await _latest_article(session, task.id)
     rule_input = await _build_rule_input(session, task, article)

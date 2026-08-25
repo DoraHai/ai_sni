@@ -130,8 +130,10 @@ async def list_push_targets(
             reasons.append("发布模式不是 auto_publish（在发布渠道里改为 auto_publish）")
         if variant is None:
             reasons.append(f"无渠道稿（任务里生成并导出 {adapt}）")
-        elif variant.status not in {"exported", "published"}:
+        elif variant.status not in {"exported", "published", "draft"}:
             reasons.append("渠道稿未导出")
+        elif variant.status == "draft" and not (variant.body_markdown or "").strip():
+            reasons.append("渠道稿还是空的")
         if not pushable_accs:
             if ctype in WEB_TYPES:
                 reasons.append("缺少 webhook 账号+凭证")

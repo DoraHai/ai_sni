@@ -34,7 +34,7 @@ export function getGeoPrototypePageSurface() {
   return {
     showCompetitorAdvancedAnalysis: false,
     showChannelAutomationConsole: false,
-    showChannelAccountConsole: false,
+    showChannelAccountConsole: true,
     showEvaluationRawMetrics: false,
     showCitationRawMetrics: false,
     showKnowledgeHealth: false,

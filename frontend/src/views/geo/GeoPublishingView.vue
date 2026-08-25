@@ -698,7 +698,7 @@ onMounted(load)
   <GeoWorkbenchPage
     title="分发平台"
     :show-period="false"
-    sub="在 GEO 工作台维护发布账号，并按 AI 引用价值配置渠道策略"
+    sub="配置渠道与推送账号。官网/文档走 Webhook，微信等走社交账号；未配账号的渠道仍可在文章里手工回填 URL"
     :loading="loading"
   >
     <template #actions>
@@ -847,10 +847,11 @@ onMounted(load)
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" min-width="180">
+        <el-table-column label="操作" min-width="220">
           <template #default="{ row }">
             <div class="geo-act">
               <el-button link type="primary" @click="openEditChannel(row)">配置</el-button>
+              <el-button link type="primary" @click="openCreateAccount(row.id)">账号</el-button>
               <el-button link type="primary" @click="toggleChannel(row)">
                 {{ row.enabled ? '停用' : '启用' }}
               </el-button>
