@@ -25,8 +25,8 @@ export const GEO_WORKBENCH_NAV = [
     label: '内容与信源',
     children: [
       { label: '优化文章', path: '/geo/tasks', key: 'geo.content', icon: 'Aa' },
-      { label: '媒体 / 信源策略', path: '/geo/placements', key: 'geo.content', icon: '⌂' },
-      { label: '分发平台', path: '/geo/publishing', key: 'geo.content', icon: '⇧' },
+      { label: '信源策略', path: '/geo/placements', key: 'geo.content', icon: '⌂' },
+      { label: '分发平台', path: '/geo/publishing', key: 'geo.content', icon: '◎' },
     ],
   },
   {
