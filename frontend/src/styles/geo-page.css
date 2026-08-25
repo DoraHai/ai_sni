@@ -601,10 +601,9 @@
 }
 
 .geo-type-label {
-  font-size: 13px;
-  color: #374151;
-  margin-top: 0;
-  font-weight: 600;
+  font-size: 12px;
+  color: #9ca3af;
+  margin-top: 2px;
 }
 
 .geo-status-cell {
