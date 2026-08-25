@@ -8,6 +8,7 @@ import {
   createGeoPrompt,
   expandGeoPromptCandidates,
   listGeoAnswerSnapshots,
+  listGeoBusinesses,
   listGeoPrompts,
   listGeoUnits,
   patchGeoPrompt,
@@ -32,7 +33,9 @@ const items = ref([])
 const snapshots = ref([])
 const snapByPrompt = ref(new Map())
 const units = ref([])
+const businesses = ref([])
 const status = ref('active')
+const filterBusinessId = ref(null)
 const filterUnitId = ref(null)
 const filterBrandMissing = ref(route.query.tag === 'brand_missing')
 const pager = useClientPager(items, { pageSize: 20 })
@@ -91,13 +94,19 @@ const unitLabel = (id) => {
 async function loadUnits() {
   if (!tenantId.value) {
     units.value = []
+    businesses.value = []
     return
   }
   try {
-    const data = await listGeoUnits(tenantId.value, { status: 'active' })
-    units.value = data.items || []
+    const [u, b] = await Promise.all([
+      listGeoUnits(tenantId.value, { status: 'active' }),
+      listGeoBusinesses(tenantId.value, { status: 'active' }),
+    ])
+    units.value = u.items || []
+    businesses.value = b.items || []
   } catch {
     units.value = []
+    businesses.value = []
   }
 }
 
@@ -110,14 +119,23 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
+    const bizId =
+      filterBusinessId.value && filterBusinessId.value !== 'none'
+        ? Number(filterBusinessId.value)
+        : undefined
     const [data, snaps] = await Promise.all([
       listGeoPrompts(tenantId.value, {
         status: status.value || undefined,
         unit_id: filterUnitId.value || undefined,
+        business_id: filterUnitId.value ? undefined : bizId,
       }),
       listGeoAnswerSnapshots(tenantId.value, { limit: 300 }).catch(() => ({ items: [] })),
     ])
-    items.value = data.items || []
+    let rows = data.items || []
+    if (filterBusinessId.value === 'none') {
+      rows = rows.filter((r) => !r.unit_id)
+    }
+    items.value = rows
     snapshots.value = snaps.items || snaps.snapshots || []
     snapByPrompt.value = groupSnapshotsByPrompt(snapshots.value)
   } catch (e) {
@@ -311,7 +329,7 @@ function syncUnitFilterFromRoute() {
   if (filterUnitId.value) form.value.unit_id = filterUnitId.value
 }
 
-watch([tenantId, status, filterUnitId], () => {
+watch([tenantId, status, filterUnitId, filterBusinessId], () => {
   pager.resetPage()
   monitorPager.resetPage()
   load()
@@ -447,6 +465,21 @@ const analysisRows = computed(() =>
         <el-option label="活跃" value="active" />
         <el-option label="已归档" value="archived" />
         <el-option label="全部" value="" />
+      </el-select>
+      <el-select
+        v-model="filterBusinessId"
+        clearable
+        filterable
+        placeholder="全部业务"
+        style="width: 220px"
+      >
+        <el-option label="未归属业务" value="none" />
+        <el-option
+          v-for="b in businesses"
+          :key="b.id"
+          :label="b.name"
+          :value="b.id"
+        />
       </el-select>
       <el-select
         v-if="prototypeSurface.showLightweightOperations"
