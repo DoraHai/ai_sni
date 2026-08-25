@@ -13,8 +13,19 @@ import {
 } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { useObservationPeriod } from '../../composables/useObservationPeriod'
+import GeoVisibilityNav from '../../components/GeoVisibilityNav.vue'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
-import { engineDisplay, fmtCaptured, fmtPct } from '../../utils/geoReportLabels'
+import { geoSnapshotLink } from '../../utils/geoRoutes'
+import {
+  POSITION_LABEL,
+  SENTIMENT_LABEL,
+  engineDisplay,
+  engineKeyOf,
+  engineLabelOf,
+  fmtCaptured,
+  fmtPct,
+  labelOf,
+} from '../../utils/geoReportLabels'
 import {
   groupSnapshotsByEngine,
   groupSnapshotsByPrompt,
@@ -48,6 +59,8 @@ const ENGINE_COLORS = {
   chatgpt: '#10a37f',
   claude: '#d97706',
   gemini: '#4285f4',
+  perplexity: '#1d4ed8',
+  wenxin: '#2932e1',
 }
 function engineColor(key) {
   const k = String(key || '').toLowerCase()
@@ -83,14 +96,22 @@ const brandNames = computed(() => {
   return [...new Set(names.map((n) => String(n).trim()).filter(Boolean))]
 })
 
-const dashEngines = computed(() =>
-  (patrol.value?.engines || [])
-    .filter((e) => e.enabled)
+const dashEngines = computed(() => {
+  const fromPatrol = (patrol.value?.engines || [])
+    .filter((e) => e.enabled !== false && e.enabled !== 0)
     .map((e) => {
-      const key = e.engine || e.key || e.name
-      return { key, name: engineDisplay(key), color: engineColor(key) }
-    }),
-)
+      const key = engineKeyOf(e)
+      if (!key) return null
+      return { key, name: engineLabelOf(e), color: engineColor(key) }
+    })
+    .filter(Boolean)
+  if (fromPatrol.length) return fromPatrol
+  return groupSnapshotsByEngine(snapshots.value).map((g) => ({
+    key: g.engine,
+    name: engineDisplay(g.engine),
+    color: engineColor(g.engine),
+  }))
+})
 
 const engineCards = computed(() => {
   const grouped = groupSnapshotsByEngine(snapshots.value)
@@ -103,17 +124,21 @@ const engineCards = computed(() => {
         color: engineColor(g.engine),
       }))
   return base.slice(0, 5).map((e) => {
+    const key = String(e.key || '').toLowerCase()
     const g =
-      byKey.get(String(e.key).toLowerCase()) ||
-      grouped.find((x) => String(x.engine).toLowerCase().includes(String(e.key).toLowerCase()))
-    const score = g?.visScore ?? g?.mentionRate ?? null
+      byKey.get(key) ||
+      grouped.find((x) => String(x.engine).toLowerCase().includes(key))
     const rows = engineDaily.value
       .filter((r) => {
         const sk = String(r.scope_key || '')
         const eng = String(r.engine || sk.split('@')[1] || '').toLowerCase()
-        return sk.startsWith('t@') && eng === String(e.key).toLowerCase()
+        return sk.startsWith('t@') && eng === key
       })
       .sort((a, b) => String(a.metric_date).localeCompare(String(b.metric_date)))
+    const latestRate = rows.length
+      ? rows[rows.length - 1].brand_mention_rate
+      : null
+    const score = g?.visScore ?? g?.mentionRate ?? latestRate ?? null
     let delta = null
     if (rows.length >= 2) {
       delta = pctDelta(
@@ -121,7 +146,7 @@ const engineCards = computed(() => {
         rows[0].brand_mention_rate,
       )
     }
-    return { ...e, score, delta, n: g?.n || 0 }
+    return { ...e, score, delta, n: g?.n || rows.length || 0 }
   })
 })
 
@@ -145,6 +170,8 @@ const ringOffset = computed(() => {
   if (p == null) return 314
   return 314 * (1 - p)
 })
+
+const pendingSignals = computed(() => (evaluation.value?.recent || []).slice(0, 8))
 
 const manner = computed(() => mentionManner(snapshots.value))
 
@@ -328,21 +355,50 @@ onMounted(() => {
   >
     <template #actions>
       <button type="button" class="gd-help" @click="helpOpen = true">ⓘ 可见度得分怎么算</button>
-      <select
-        class="gd-search gd-days"
-        :value="observationDays"
-        @change="setObservationDays(Number($event.target.value))"
-      >
-        <option v-for="d in observationAllowedDays" :key="d" :value="d">近 {{ d }} 天</option>
-      </select>
       <button class="gd-btn" @click="router.push('/geo/models')">引擎设置</button>
       <button class="gd-btn primary" :disabled="refreshing" @click="refreshDetect">
         {{ refreshing ? '启动中…' : '🔄 刷新检测' }}
       </button>
     </template>
   <div class="geo-dash">
+    <GeoVisibilityNav />
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" />
+
+    <div v-if="pendingSignals.length" class="gd-card" style="margin-bottom:16px">
+      <div class="gd-hd">
+        <h3>待处理信号</h3>
+        <a class="more" @click="router.push(geoSnapshotLink())">去采集与判断</a>
+      </div>
+      <div class="gd-bd" style="padding:0">
+        <table>
+          <thead>
+            <tr>
+              <th>意图词</th>
+              <th>引擎</th>
+              <th>本品位置</th>
+              <th>情感</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(row, i) in pendingSignals" :key="row.id || i">
+              <td>
+                <button
+                  type="button"
+                  class="linkish"
+                  @click="router.push(geoSnapshotLink({ prompt_id: row.prompt_id }))"
+                >
+                  {{ row.prompt_question || `意图词 #${row.prompt_id}` }}
+                </button>
+              </td>
+              <td>{{ engineDisplay(row.engine) }}</td>
+              <td>{{ labelOf(POSITION_LABEL, row.brand_position) }}</td>
+              <td>{{ labelOf(SENTIMENT_LABEL, row.sentiment) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
 
     <div v-if="promptFocusRows.length" class="gd-card" style="margin-bottom:16px">
       <div class="gd-hd">

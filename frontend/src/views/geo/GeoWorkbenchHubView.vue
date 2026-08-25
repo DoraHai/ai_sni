@@ -14,8 +14,7 @@ const cards = [
   { title: '发布渠道', desc: '渠道目录 · Webhook 账号（公网 HTTPS）', path: '/geo/publishing', phase: 'Vue' },
   { title: '媒体阵地', desc: '权威信源 / 分发阵地 CRUD', path: '/geo/placements', phase: 'Vue' },
   { title: 'GEO 概览', desc: 'KPI · 可见性 vs 认知分列', path: '/geo/overview', phase: 'Vue' },
-  { title: 'AI 可见度', desc: '快照登记与探测', path: '/geo/visibility', phase: 'Vue' },
-  { title: '全自动巡检', desc: '多词×多引擎 · 配额与引擎健康', path: '/geo/visibility/patrol', phase: 'Vue' },
+  { title: 'AI 可见度', desc: '仪表盘与采集判断', path: '/geo/visibility', phase: 'Vue' },
   { title: '期次对比', desc: 'before/after 可见性 Δ', path: '/geo/period-diff', phase: 'Vue' },
   { title: '交付摘要', desc: '周期报告 Markdown / 打印', path: '/geo/deliverables', phase: 'Vue' },
 ]

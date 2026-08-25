@@ -686,7 +686,7 @@ onMounted(async () => {
             <h2>绑定情况</h2>
           </div>
         </div>
-        <el-table :data="bizCards" stripe empty-text="还没有业务">
+        <el-table :data="bizCards" empty-text="还没有业务">
           <el-table-column prop="name" label="业务" min-width="140" />
           <el-table-column prop="keywords" label="关键词" min-width="200" />
           <el-table-column label="AI提问" width="110">

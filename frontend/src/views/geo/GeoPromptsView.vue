@@ -1,4 +1,5 @@
 <script setup>
+import { geoSnapshotLink } from '../../utils/geoRoutes'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -428,7 +429,7 @@ const analysisRows = computed(() =>
 
 <template>
   <GeoWorkbenchPage
-    title="提问监控"
+    title="优化意图词"
     sub="把真实用户会问 AI 的句子管起来，看品牌有没有被提及和推荐"
     :loading="loading"
   >
@@ -505,7 +506,7 @@ const analysisRows = computed(() =>
               v-for="row in monitorPager.pagedItems"
               :key="row.id"
               class="geo-click"
-              @click="router.push({ path: '/geo/visibility', query: { prompt_id: String(row.id) } })"
+              @click="router.push(geoSnapshotLink({ prompt_id: row.id }))"
             >
               <td>「{{ row.question }}」</td>
               <td>{{ row.engine }}</td>
@@ -515,7 +516,7 @@ const analysisRows = computed(() =>
               <td @click.stop>
                 <el-button type="primary" link @click="openEdit(row)">编辑</el-button>
                 <el-button v-if="prototypeSurface.showLightweightOperations" type="success" link @click="createTask(row)">建文章</el-button>
-                <el-button v-if="prototypeSurface.showLightweightOperations && row.status === 'active'" type="danger" link @click="archive(row)">归档</el-button>
+                <el-button v-if="row.status === 'active'" type="danger" link @click="archive(row)">归档</el-button>
               </td>
             </tr>
             <tr v-if="!monitorRows.length"><td colspan="6" class="gd-sub">暂无提问</td></tr>

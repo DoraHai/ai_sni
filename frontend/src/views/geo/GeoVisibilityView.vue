@@ -14,26 +14,42 @@ import {
   probeGeoAnswerSnapshotBatch,
   suggestGeoAnswerSnapshotFields,
   checkGeoAnswerSnapshotCitations,
+  fetchGeoEvaluationInsights,
   fetchVisibilityPatrolOpsStatus,
+  fetchVisibilityPatrolSettings,
+  getVisibilityPatrolRun,
+  listVisibilityPatrolRuns,
+  putVisibilityPatrolSettings,
+  startVisibilityPatrolRun,
 } from '../../api/geoContent'
+import GeoVisibilityNav from '../../components/GeoVisibilityNav.vue'
+import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import SampleCredibilityAlert from '../../components/SampleCredibilityAlert.vue'
+import { useObservationPeriod } from '../../composables/useObservationPeriod'
 import { diagnoseEmptyMonitoring } from '../../utils/geoEmptyReason'
 import { useClientPager } from '../../composables/useClientPager'
 import { session } from '../../store/session'
 import {
   CITATION_ACCURACY_LABEL,
   CITATION_FORMAT_LABEL,
+  PATROL_STATUS_LABEL,
   POSITION_LABEL,
-  REPORT_GLOSSARY,
   SENTIMENT_LABEL,
   downloadCsv,
   engineDisplay,
   fmtCaptured as fmtCapturedShared,
+  fmtInt,
   labelOf,
 } from '../../utils/geoReportLabels'
 
 const route = useRoute()
 const router = useRouter()
+const {
+  days: observationDays,
+  start: obsStart,
+  end: obsEnd,
+  label: obsLabel,
+} = useObservationPeriod()
 
 const tenantId = computed(() =>
   session.tenantId || (import.meta.env.DEV && import.meta.env.VITE_API_KEY ? 1 : null),
@@ -69,6 +85,30 @@ const filterSimulated = ref(
 )
 const sampleComposition = ref(null)
 const patrolOps = ref(null)
+const patrolRuns = ref([])
+const evalData = ref(null)
+const collecting = ref(false)
+const savingSchedule = ref(false)
+const collectForm = ref({
+  prefer_real: true,
+  auto_persist: true,
+  prompt_limit: 20,
+  engine_keys: [],
+  enabled: false,
+  window_start_hour: 7,
+  window_end_hour: 22,
+  interval_hours: 24,
+})
+const intervalOptions = [
+  { value: 1, label: '每 1 小时' },
+  { value: 2, label: '每 2 小时' },
+  { value: 3, label: '每 3 小时' },
+  { value: 4, label: '每 4 小时' },
+  { value: 6, label: '每 6 小时' },
+  { value: 8, label: '每 8 小时' },
+  { value: 12, label: '每 12 小时' },
+  { value: 24, label: '每 24 小时（每天）' },
+]
 const queueMode = computed(() => route.query.queue === 'recheck')
 const emptyReason = computed(() =>
   diagnoseEmptyMonitoring({
@@ -80,6 +120,36 @@ const emptyReason = computed(() =>
     mentionCount: snapshots.value.filter((s) => s.mentions_brand).length,
   }),
 )
+
+const lastRun = computed(() => patrolOps.value?.last_run || patrolRuns.value[0] || null)
+
+const evalKpis = computed(() => {
+  const total = Number(evalData.value?.total || snapshots.value.length || 0)
+  const pos = evalData.value?.position_counts || {}
+  const sent = evalData.value?.sentiment_counts || {}
+  const mentioned = snapshots.value.filter((s) => s.mentions_brand).length
+  const first = Number(pos.first || 0)
+  return [
+    { label: '快照样本', value: fmtInt(total), hint: obsLabel.value },
+    {
+      label: '首位推荐',
+      value: fmtInt(first),
+      hint: total ? `约占 ${Math.round((first / total) * 100)}%` : '采集后自动判断',
+    },
+    { label: '正面评价', value: fmtInt(sent.positive), hint: '对本品情感为正' },
+    {
+      label: '品牌提及',
+      value: fmtInt(mentioned),
+      hint: snapshots.value.length
+        ? `${Math.round((mentioned / snapshots.value.length) * 100)}% 本页样本`
+        : '采集后自动判断',
+    },
+  ]
+})
+
+function runStatusLabel(status) {
+  return labelOf(PATROL_STATUS_LABEL, status, status || '—')
+}
 
 const form = ref({
   prompt_id: null,
@@ -245,6 +315,103 @@ function clearPatrolFilter() {
   })
 }
 
+async function loadCollectMeta() {
+  try {
+    const [ops, settings, runs, insights] = await Promise.all([
+      fetchVisibilityPatrolOpsStatus(tenantId.value).catch(() => null),
+      fetchVisibilityPatrolSettings(tenantId.value).catch(() => null),
+      listVisibilityPatrolRuns(tenantId.value, 8).catch(() => ({ items: [] })),
+      fetchGeoEvaluationInsights(tenantId.value, {
+        date_from: obsStart.value,
+        date_to: obsEnd.value,
+        days: observationDays.value,
+      }).catch(() => null),
+    ])
+    patrolOps.value = ops
+    patrolRuns.value = runs.items || runs.runs || []
+    evalData.value = insights
+    if (settings) {
+      collectForm.value.prefer_real = settings.prefer_real !== false
+      collectForm.value.auto_persist = settings.auto_persist !== false
+      collectForm.value.prompt_limit = settings.prompt_limit || 20
+      collectForm.value.engine_keys = settings.engine_keys || []
+      collectForm.value.enabled = !!settings.enabled
+      collectForm.value.window_start_hour = settings.window_start_hour ?? 7
+      collectForm.value.window_end_hour = settings.window_end_hour ?? 22
+      collectForm.value.interval_hours = settings.interval_hours ?? 24
+    }
+    if (!collectForm.value.engine_keys?.length) {
+      collectForm.value.engine_keys = enabledEngines.value.map((e) => e.engine_key)
+    }
+  } catch {
+    patrolOps.value = null
+  }
+}
+
+async function startCollect() {
+  if (!tenantId.value) return
+  collecting.value = true
+  try {
+    const res = await startVisibilityPatrolRun({
+      tenant_id: tenantId.value,
+      auto_persist: collectForm.value.auto_persist !== false,
+      prefer_real: collectForm.value.prefer_real !== false,
+      prompt_limit: collectForm.value.prompt_limit || 20,
+      engine_keys: collectForm.value.engine_keys?.length ? collectForm.value.engine_keys : null,
+      run_async: true,
+    })
+    const id = res.run?.id
+    ElMessage.success(id ? `采集 #${id} 进行中，完成后会按提及/位置/情感判断可见度` : '采集已启动')
+    if (id) {
+      for (let i = 0; i < 24; i += 1) {
+        await new Promise((r) => setTimeout(r, 2500))
+        const run = await getVisibilityPatrolRun(tenantId.value, id).catch(() => null)
+        const st = String(run?.status || run?.run?.status || '').toLowerCase()
+        if (['succeeded', 'success', 'done', 'completed', 'failed', 'error', 'cancelled'].includes(st)) {
+          if (st === 'failed' || st === 'error') {
+            ElMessage.error(`采集 #${id} 失败：${run?.error || '未知'}`)
+          } else {
+            const sum = run?.summary || {}
+            ElMessage.success(
+              `采集完成：成功 ${sum.ok_cells || sum.cells_ok || 0} · 落库 ${sum.snapshots_created || 0}`,
+            )
+          }
+          break
+        }
+      }
+    }
+    await loadSnapshots()
+    await loadCollectMeta()
+  } catch (e) {
+    ElMessage.error(e.message || '启动失败')
+  } finally {
+    collecting.value = false
+  }
+}
+
+async function saveSchedule() {
+  savingSchedule.value = true
+  try {
+    await putVisibilityPatrolSettings({
+      tenant_id: tenantId.value,
+      enabled: collectForm.value.enabled,
+      window_start_hour: collectForm.value.window_start_hour,
+      window_end_hour: collectForm.value.window_end_hour,
+      interval_hours: collectForm.value.interval_hours,
+      auto_persist: collectForm.value.auto_persist,
+      prefer_real: collectForm.value.prefer_real,
+      prompt_limit: collectForm.value.prompt_limit,
+      engine_keys: collectForm.value.engine_keys?.length ? collectForm.value.engine_keys : null,
+    })
+    ElMessage.success('定时采集已保存')
+    await loadCollectMeta()
+  } catch (e) {
+    ElMessage.error(e.message || '保存失败')
+  } finally {
+    savingSchedule.value = false
+  }
+}
+
 async function reloadAll() {
   if (!tenantId.value) {
     error.value = '请先选择客户或配置本地 API Key'
@@ -256,11 +423,7 @@ async function reloadAll() {
     await loadEngines()
     await loadPrompts()
     await loadSnapshots()
-    try {
-      patrolOps.value = await fetchVisibilityPatrolOpsStatus(tenantId.value)
-    } catch {
-      patrolOps.value = null
-    }
+    await loadCollectMeta()
   } catch (e) {
     error.value = e.message || '加载失败'
   } finally {
@@ -537,54 +700,114 @@ watch(
   },
 )
 watch(tenantId, reloadAll)
+watch([observationDays, obsStart, obsEnd], () => {
+  if (!tenantId.value) return
+  loadCollectMeta().catch(() => {})
+})
 onMounted(reloadAll)
 </script>
 
 <template>
-  <div v-loading="loading" class="geo-vis geo-page">
-    <div class="page-header">
-      <div>
-        <div class="page-title">AI 可见度</div>
-        <div class="page-desc">
-          登记或探测回答快照，标注提及、位置、情感与引用质量——这是下游所有报表的样本源。
-          批量真采样请用
-          <router-link to="/geo/visibility/patrol">全自动巡检</router-link>。
+  <GeoWorkbenchPage
+    title="AI 可见度"
+    :sub="`自动采集 AI 引擎回答，按提及 / 位置 / 情感判断可见度 · ${obsLabel}`"
+    :loading="loading"
+  >
+    <template #actions>
+      <button type="button" class="gd-btn" @click="reloadAll">刷新</button>
+      <button type="button" class="gd-btn" :disabled="!snapshots.length" @click="exportSnapshots">导出 CSV</button>
+      <button type="button" class="gd-btn primary" :disabled="collecting" @click="startCollect">
+        {{ collecting ? '采集中…' : '立即采集并落库' }}
+      </button>
+    </template>
+
+    <div class="geo-dash geo-vis">
+      <GeoVisibilityNav />
+
+      <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" />
+      <el-alert
+        v-if="queueMode"
+        type="info"
+        :closable="false"
+        class="mb"
+        :title="`待复核队列 · ${prompts.length} 条（已发布但无快照，或快照早于最近发布）`"
+      />
+
+      <section id="collect" class="gd-card collect-bar">
+        <div class="collect-copy">
+          <strong>自动采集 AI 引擎回答</strong>
+          <p>
+            按已启用引擎提问并落库，系统根据提及、推荐位置和情感判断可见度。
+            最近一次：
+            <template v-if="lastRun">
+              #{{ lastRun.id }} {{ runStatusLabel(lastRun.status) }}
+              · {{ fmtCaptured(lastRun.finished_at || lastRun.created_at) }}
+            </template>
+            <template v-else>尚未跑过</template>
+          </p>
         </div>
-        <div class="sub-tabs">
-          <router-link class="sub-tab is-active" to="/geo/visibility">登记快照</router-link>
-          <router-link class="sub-tab" to="/geo/visibility/patrol">全自动巡检</router-link>
+        <div class="collect-controls">
+          <el-checkbox v-model="collectForm.prefer_real">优先真采样</el-checkbox>
+          <el-checkbox v-model="collectForm.auto_persist">自动落库</el-checkbox>
+          <el-input-number v-model="collectForm.prompt_limit" :min="1" :max="50" size="small" />
+          <el-select
+            v-model="collectForm.engine_keys"
+            multiple
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="引擎"
+            style="min-width: 180px"
+            size="small"
+          >
+            <el-option
+              v-for="e in enabledEngines"
+              :key="e.engine_key"
+              :label="e.display_name || engineDisplay(e.engine_key)"
+              :value="e.engine_key"
+            />
+          </el-select>
+          <button type="button" class="gd-btn primary" :disabled="collecting" @click="startCollect">
+            {{ collecting ? '采集中…' : '立即采集并落库' }}
+          </button>
+        </div>
+        <details class="collect-schedule">
+          <summary>定时采集（可选）</summary>
+          <div class="schedule-row">
+            <el-switch v-model="collectForm.enabled" active-text="开启定时" />
+            <span>允许 {{ collectForm.window_start_hour }}:00 – {{ collectForm.window_end_hour }}:00</span>
+            <el-input-number v-model="collectForm.window_start_hour" :min="0" :max="23" size="small" />
+            <el-input-number v-model="collectForm.window_end_hour" :min="0" :max="23" size="small" />
+            <el-select v-model="collectForm.interval_hours" size="small" style="width: 160px">
+              <el-option
+                v-for="o in intervalOptions"
+                :key="o.value"
+                :label="o.label"
+                :value="o.value"
+              />
+            </el-select>
+            <el-button size="small" :loading="savingSchedule" @click="saveSchedule">保存定时</el-button>
+          </div>
+          <ul v-if="patrolRuns.length" class="run-list">
+            <li v-for="r in patrolRuns.slice(0, 5)" :key="r.id">
+              #{{ r.id }} {{ runStatusLabel(r.status) }}
+              · {{ r.trigger === 'schedule' ? '定时' : '手动' }}
+              · 成功 {{ r.summary?.ok_cells || r.summary?.cells_ok || 0 }}
+              · 落库 {{ r.summary?.snapshots_created || 0 }}
+            </li>
+          </ul>
+        </details>
+      </section>
+
+      <div class="gd-engine-kpis eval-kpis">
+        <div v-for="c in evalKpis" :key="c.label" class="gd-card gd-stat">
+          <div class="label">{{ c.label }}</div>
+          <div class="value">{{ c.value }}</div>
+          <div class="delta hint">{{ c.hint }}</div>
         </div>
       </div>
-      <div class="header-actions">
-        <el-button type="primary" plain @click="router.push('/geo/visibility/patrol')">
-          全自动巡检
-        </el-button>
-        <el-button @click="reloadAll">刷新</el-button>
-        <el-button :disabled="!snapshots.length" @click="exportSnapshots">导出 CSV</el-button>
-        <router-link class="el-button" to="/geo/citations">引用分析</router-link>
-        <router-link class="el-button" to="/geo/evaluation">评价与位置</router-link>
-        <router-link class="el-button" to="/geo/overview">GEO 概览</router-link>
-      </div>
-    </div>
-
-    <details class="geo-glossary">
-      <summary>统计口径（点击展开）</summary>
-      <ul>
-        <li v-for="(line, i) in REPORT_GLOSSARY.visibility" :key="i">{{ line }}</li>
-      </ul>
-    </details>
-
-    <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" />
-    <el-alert
-      v-if="queueMode"
-      type="info"
-      :closable="false"
-      class="mb"
-      :title="`待复核队列 · ${prompts.length} 条（已发布但无快照，或快照早于最近发布）`"
-    />
 
     <div class="layout">
-      <section class="panel">
+      <section class="panel gd-card">
         <div class="panel-title">登记回答快照</div>
         <p class="hint">
           探测只填草稿不写库；确认标注后再点「保存快照」。列表内可直接改字段。
@@ -714,7 +937,7 @@ onMounted(reloadAll)
         </div>
       </section>
 
-      <section class="panel panel-list">
+      <section class="panel panel-list gd-card">
         <div class="list-toolbar">
           <div class="panel-title" style="margin: 0">快照列表</div>
           <el-select v-model="filterEngine" clearable placeholder="全部引擎" style="width: 140px">
@@ -755,24 +978,26 @@ onMounted(reloadAll)
           <div class="empty-title">
             {{
               filterPatrolRunId
-                ? `巡检 #${filterPatrolRunId} 暂无关联快照`
+                ? `采集 #${filterPatrolRunId} 暂无关联快照`
                 : emptyReason?.title || '暂无回答快照'
             }}
           </div>
           <div>
             {{
               filterPatrolRunId
-                ? '可能是旧巡检未写关联，或当时没勾选自动落库。'
-                : emptyReason?.detail || '左侧登记一条，或去跑巡检批量采样。'
+                ? '可能是旧任务未写关联，或当时没勾选自动落库。'
+                : emptyReason?.detail || '左侧登记一条，或点「立即采集并落库」。'
             }}
           </div>
           <div class="empty-actions">
-            <router-link
-              class="el-button el-button--primary el-button--small"
-              :to="emptyReason?.href || '/geo/visibility/patrol'"
+            <button
+              type="button"
+              class="gd-btn primary"
+              :disabled="collecting"
+              @click="startCollect"
             >
-              {{ emptyReason?.action || '去巡检' }}
-            </router-link>
+              {{ collecting ? '采集中…' : (emptyReason?.action || '立即采集并落库') }}
+            </button>
             <router-link class="el-button el-button--small is-plain" to="/geo/engines">
               检查引擎
             </router-link>
@@ -940,49 +1165,57 @@ onMounted(reloadAll)
         </div>
       </section>
     </div>
-  </div>
+    </div>
+  </GeoWorkbenchPage>
 </template>
 
 <style scoped>
-.geo-vis { padding: 4px 2px 24px; }
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
-  align-items: flex-start;
-}
-.page-title { font-size: 20px; font-weight: 650; color: #1f2937; }
-.page-desc { margin-top: 4px; font-size: 13px; color: #6b7280; max-width: 640px; line-height: 1.5; }
-.page-desc a { color: #7c3aed; text-decoration: none; }
-.page-desc a:hover { text-decoration: underline; }
-.sub-tabs {
-  display: flex;
-  gap: 4px;
-  margin-top: 12px;
-  flex-wrap: wrap;
-}
-.sub-tab {
-  display: inline-flex;
-  align-items: center;
-  padding: 6px 14px;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #6b7280;
-  text-decoration: none;
-  border: 1px solid transparent;
-  background: #f3f4f6;
-}
-.sub-tab:hover { color: #5b21b6; background: #f5f0ff; }
-.sub-tab.is-active {
-  color: #5b21b6;
-  background: #f5f0ff;
-  border-color: #ddd6fe;
-}
-.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.geo-vis { padding: 0 0 8px; }
 .mb { margin-bottom: 14px; }
+.collect-bar {
+  padding: 16px 18px;
+  margin-bottom: 16px;
+}
+.collect-copy strong {
+  display: block;
+  font-size: 14px;
+  color: #1e2330;
+}
+.collect-copy p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.5;
+}
+.collect-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 12px;
+}
+.collect-schedule {
+  margin-top: 12px;
+  font-size: 12px;
+  color: #6b7280;
+}
+.collect-schedule summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.schedule-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
+}
+.run-list {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  line-height: 1.6;
+}
+.eval-kpis { margin-bottom: 16px; }
 .layout {
   display: grid;
   /* 左表单收窄，右列表吃满剩余宽度，避免半宽挤扁表格首字被裁切 */
@@ -992,10 +1225,11 @@ onMounted(reloadAll)
 }
 .panel {
   background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
+  border: 1px solid #e8eaf0;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 8px 24px rgba(16, 24, 40, 0.04);
   padding: 16px 18px;
-  min-width: 0; /* grid 子项允许收缩，配合内部横向滚动 */
+  min-width: 0;
   overflow: hidden;
 }
 .panel-list {

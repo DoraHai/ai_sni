@@ -297,7 +297,7 @@ onMounted(load)
           · 自有域 {{ (visibility.own_domains || citations.own_domains || []).join(', ') || '未配置' }}
         </p>
         <el-button link type="primary" @click="router.push('/geo/visibility')">去可见度</el-button>
-        <el-button link type="primary" @click="router.push('/geo/visibility/patrol')">跑巡检</el-button>
+        <el-button link type="primary" @click="router.push('/geo/visibility/snapshots')">去采集</el-button>
       </section>
 
       <section class="panel">

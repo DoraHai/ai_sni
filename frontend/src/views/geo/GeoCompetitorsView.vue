@@ -1,4 +1,5 @@
 <script setup>
+import { geoSnapshotLink } from '../../utils/geoRoutes'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -939,7 +940,7 @@ onMounted(load)
               v-for="r in leadScenes"
               :key="'lead-'+r.prompt_id"
               class="geo-click"
-              @click="router.push({ path: '/geo/visibility', query: { prompt_id: String(r.prompt_id) } })"
+              @click="router.push(geoSnapshotLink({ prompt_id: r.prompt_id }))"
             >
               <span class="gd-badge green">领先</span>
               {{ r.question }}
@@ -957,7 +958,7 @@ onMounted(load)
               v-for="r in lagScenes"
               :key="'lag-'+r.prompt_id"
               class="geo-click"
-              @click="router.push({ path: '/geo/visibility', query: { prompt_id: String(r.prompt_id) } })"
+              @click="router.push(geoSnapshotLink({ prompt_id: r.prompt_id }))"
             >
               <span class="gd-badge red">落后</span>
               {{ r.question }}
@@ -1006,7 +1007,7 @@ onMounted(load)
         size="small"
         empty-text="暂无可比对快照"
         class="clickable-rows"
-        @row-click="(row) => row.prompt_id && router.push({ path: '/geo/visibility', query: { prompt_id: String(row.prompt_id) } })"
+        @row-click="(row) => row.prompt_id && router.push(geoSnapshotLink({ prompt_id: row.prompt_id }))"
       >
         <el-table-column label="提问" min-width="200">
           <template #default="{ row }">

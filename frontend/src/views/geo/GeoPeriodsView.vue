@@ -188,7 +188,7 @@ onMounted(load)
       </el-form>
     </el-card>
 
-    <el-table :data="items" size="small" stripe @row-click="(r) => openDetail(r.id)">
+    <el-table :data="items" size="small" @row-click="(r) => openDetail(r.id)">
       <el-table-column prop="id" label="ID" width="64" />
       <el-table-column prop="name" label="名称" min-width="160" />
       <el-table-column label="业务" width="120">

@@ -1,4 +1,5 @@
 <script setup>
+import { geoSnapshotLink } from '../../utils/geoRoutes'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -40,6 +41,8 @@ import {
   DAILY_METRIC_COLUMNS,
   REPORT_GLOSSARY,
   engineDisplay,
+  engineKeyOf,
+  engineLabelOf,
   fmtInt,
   fmtPct,
 } from '../../utils/geoReportLabels'
@@ -100,10 +103,13 @@ const ENGINE_COLORS = {
   doubao: '#ff6a00',
   kimi: '#111827',
   qwen: '#615ced',
+  tongyi: '#615ced',
   yuanbao: '#0ea5e9',
   chatgpt: '#10a37f',
   claude: '#d97706',
   gemini: '#4285f4',
+  perplexity: '#1d4ed8',
+  wenxin: '#2932e1',
 }
 function engineColor(key) {
   const k = String(key || '').toLowerCase()
@@ -210,7 +216,7 @@ const summaryCards = computed(() => {
       label: '品牌点名认知率',
       value: fmtPct(probe),
       hint: `仅探测题 · 样本 ${fmtInt(snapProbe)}`,
-      drill: '/geo/visibility/patrol',
+      drill: '/geo/visibility/snapshots',
     },
     {
       label: 'AI 引用次数',
@@ -295,11 +301,11 @@ const sparkPoints = computed(() => {
 
 const engineRanks = computed(() =>
   (patrolOps.value?.engines || [])
-    .filter((e) => e.enabled)
+    .filter((e) => e.enabled !== false && e.enabled !== 0)
     .slice(0, 4)
     .map((e, i) => ({
       rank: String(i + 1),
-      name: engineDisplay(e.engine || e.key || e.name),
+      name: engineLabelOf(e),
       value: (e.sample_mode || '') === 'openai_compat' && e.api_key_configured ? 80 : 45,
     })),
 )
@@ -418,12 +424,10 @@ const overviewAnswer = computed(() => ({
 
 const workbenchLinks = [
   { label: '优化文章', path: '/geo/tasks', desc: '主入口 · 列表 + 混合编辑器', vue: true, primary: true },
-  { label: 'AI 可见度', path: '/geo/visibility', desc: '登记 / 多引擎探测', vue: true, primary: true },
-  { label: '全自动巡检', path: '/geo/visibility/patrol', desc: '多词×多引擎自动探测落库', vue: true, primary: true },
+  { label: 'AI 可见度', path: '/geo/visibility', desc: '仪表盘 + 采集判断', vue: true, primary: true },
   { label: '期次对比', path: '/geo/period-diff', desc: 'before/after 品牌提及 Δ', vue: true, primary: true },
   { label: '交付摘要', path: '/geo/deliverables', desc: '周期报告 Markdown / 打印', vue: true, primary: true },
   { label: '竞品监测', path: '/geo/competitors', desc: '竞品出现、同题对比与日监测', vue: true },
-  { label: '评价与位置', path: '/geo/evaluation', desc: '情感、位置与引用质量', vue: true },
   { label: 'AI 引用分析', path: '/geo/citations', desc: '被引域名与自有域占比', vue: true },
   { label: '优化业务', path: '/geo/businesses', desc: '业务 → 单元 → 意图词', vue: true, primary: true },
   { label: '优化意图词', path: '/geo/prompts', desc: '意图词 · 探测题标记', vue: true },
@@ -601,17 +605,37 @@ async function loadDashboardExtras() {
   engineDaily.value = ed.items || []
 }
 
+function mapEngineChips(list) {
+  return (list || [])
+    .map((e) => {
+      const key = engineKeyOf(e)
+      if (!key) return null
+      return { key, name: engineLabelOf(e), color: engineColor(key) }
+    })
+    .filter(Boolean)
+}
+
 const dashEngines = computed(() => {
-  const list = (patrolOps.value?.engines || []).filter((e) => e.enabled)
-  return list.map((e) => ({
-    key: e.engine || e.key || e.name,
-    name: engineDisplay(e.engine || e.key || e.name),
-    color: engineColor(e.engine || e.key || e.name),
-  }))
+  const fromPatrol = mapEngineChips(
+    (patrolOps.value?.engines || []).filter((e) => e.enabled !== false && e.enabled !== 0),
+  )
+  if (fromPatrol.length) return fromPatrol
+  const fromDaily = [
+    ...new Set(
+      engineDaily.value
+        .filter((r) => String(r.scope_key || '').startsWith('t@'))
+        .map((r) => engineKeyOf(r.engine || String(r.scope_key || '').split('@')[1] || ''))
+        .filter(Boolean),
+    ),
+  ]
+  if (fromDaily.length) return mapEngineChips(fromDaily)
+  const fromSnaps = [...new Set(snapshots.value.map((s) => engineKeyOf(s.engine)).filter(Boolean))]
+  return mapEngineChips(fromSnaps)
 })
 
 const lastPatrolLabel = computed(() => {
-  const t = patrolOps.value?.last_run?.created_at || patrolOps.value?.last_run?.finished_at
+  const run = patrolOps.value?.last_run || patrolOps.value?.last_run
+  const t = run?.created_at || run?.finished_at || run?.started_at
   if (!t) return '尚未巡检'
   return String(t).replace('T', ' ').slice(0, 16)
 })
@@ -958,12 +982,14 @@ onMounted(load)
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" />
 
     <div class="gd-card gd-engines">
-      <span class="gd-sub" style="margin:0">监测引擎：</span>
-      <span v-for="e in dashEngines" :key="e.key" style="display:inline-flex;align-items:center;gap:6px">
-        <i class="gd-dot" :style="{ background: e.color }" />{{ e.name }}
-      </span>
-      <span v-if="!dashEngines.length" class="gd-sub" style="margin:0">尚未开启引擎</span>
-      <span class="gd-sub" style="margin-left:auto">最后巡检：{{ lastPatrolLabel }}</span>
+      <span class="gd-engines-label">监测引擎</span>
+      <div class="gd-engines-list">
+        <span v-for="e in dashEngines" :key="e.key" class="gd-engine-chip">
+          <i class="gd-dot" :style="{ background: e.color }" />{{ e.name }}
+        </span>
+        <span v-if="!dashEngines.length" class="gd-sub" style="margin:0">尚未开启引擎</span>
+      </div>
+      <span class="gd-engines-meta">最后巡检：{{ lastPatrolLabel }}</span>
     </div>
 
     <div class="gd-kpis">
@@ -1078,7 +1104,7 @@ onMounted(load)
                 v-for="(r, i) in promptRows"
                 :key="i"
                 class="geo-click"
-                @click="r.promptId && router.push({ path: '/geo/visibility', query: { prompt_id: String(r.promptId) } })"
+                @click="r.promptId && router.push(geoSnapshotLink({ prompt_id: r.promptId }))"
               >
                 <td>「{{ r.question }}」</td>
                 <td>{{ r.engine }}</td>

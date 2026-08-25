@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { changePassword } from '../api/auth'
 import { session } from '../store/session'
+import GeoObservationPeriod from './GeoObservationPeriod.vue'
 
 defineProps({
   title: { type: String, required: true },
@@ -54,6 +55,7 @@ async function onUserCommand(cmd) {
         <div v-if="sub" class="sub">{{ sub }}</div>
       </div>
       <div class="right">
+        <GeoObservationPeriod />
         <slot name="actions" />
         <el-dropdown v-if="session.isLoggedIn" trigger="click" @command="onUserCommand">
           <button type="button" class="geo-avatar" :title="session.user?.display_name">{{ initials }}</button>

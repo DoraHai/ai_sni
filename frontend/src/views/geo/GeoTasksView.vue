@@ -276,7 +276,7 @@ onMounted(load)
 
 <template>
   <GeoWorkbenchPage
-    title="GEO 文章工作台"
+    title="优化文章"
     sub="围绕用户提问生产可验证、可摘取、可被 AI 引用的内容"
     :loading="loading"
     class="geo-tasks"
