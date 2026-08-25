@@ -105,7 +105,7 @@ onMounted(load)
   <GeoWorkbenchPage
     title="AI 能力配置"
     :show-period="false"
-    sub="租户默认 LLM。选百炼时只用于 DeepSeek 巡检与母稿，不代替 ChatGPT / 豆包 / Kimi"
+    sub="租户默认生成模型。阿里云百炼仅用于 DeepSeek 监测与内容生成，不可作为其他引擎的采样通道"
     :loading="loading"
   >
     <template #actions>
