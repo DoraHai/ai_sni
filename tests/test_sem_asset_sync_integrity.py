@@ -117,12 +117,39 @@ class SemAssetRepairApiTests(unittest.IsolatedAsyncioTestCase):
                 account_id=22,
                 tenant_id=7,
                 dimension="keywords",
+                history_days=None,
                 ctx=ctx,
                 session=session,
             )
 
         self.assertEqual(result["mode"], "read_only_repair")
         self.assertEqual(sync.await_args.kwargs["dimensions"], ["keywords"])
+
+    async def test_history_backfill_forwards_thirty_day_report_window(self):
+        account = SimpleNamespace(id=22, tenant_id=7, status="active")
+        tenant = SimpleNamespace(id=7)
+        session = SimpleNamespace(get=AsyncMock(side_effect=[account, tenant]))
+        ctx = SimpleNamespace(can_edit=lambda permission: permission == "onboarding")
+        sync = AsyncMock(return_value={"status": "ok", "report_rows_written": 120})
+
+        with (
+            patch("app.api.customer_modules.ensure_module_access", new=AsyncMock()),
+            patch("app.api.customer_modules.datetime") as now,
+            patch("app.scheduler.refresh_keyword_workbench_snapshot", new=sync),
+        ):
+            now.now.return_value = __import__("datetime").datetime(2026, 8, 25, 12, 0)
+            result = await repair_sem_account_assets(
+                account_id=22,
+                tenant_id=7,
+                dimension="reports",
+                history_days=30,
+                ctx=ctx,
+                session=session,
+            )
+
+        self.assertEqual(result["mode"], "read_only_repair")
+        self.assertEqual(sync.await_args.kwargs["dimensions"], ["reports"])
+        self.assertEqual(sync.await_args.kwargs["report_start_date"], date(2026, 7, 27))
 
 
 if __name__ == "__main__":

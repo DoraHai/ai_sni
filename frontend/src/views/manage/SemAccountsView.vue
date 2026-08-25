@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchSemAccounts, repairSemAccountAssets } from '../../api/moduleAssets'
 import { currentTenantId } from '../../store/session'
 
@@ -62,15 +62,18 @@ async function load() {
   }
 }
 
-async function repair(row, dimension = null) {
-  const key = `${row.id}:${dimension || 'all'}`
+async function repair(row, dimension = null, historyDays = null) {
+  const key = `${row.id}:${historyDays ? `history-${historyDays}` : (dimension || 'all')}`
   repairingKey.value = key
   try {
     const result = await repairSemAccountAssets(
       currentTenantId.value, row.id, dimension,
+      historyDays,
     )
     const synced = result.result || {}
-    const message = dimension
+    const message = historyDays
+      ? `近 ${historyDays} 天关键词历史已补齐，共写入 ${synced.report_rows_written || 0} 条日报告`
+      : dimension
       ? `${dimensionLabels[dimension]}同步完成`
       : `同步完成：计划 ${synced.campaigns_synced || 0}、单元 ${synced.adgroups_synced || 0}、关键词 ${synced.keywords_synced || 0}、搜索词 ${synced.search_terms_synced || 0}`
     if (synced.status === 'partial') ElMessage.warning('部分维度同步失败，可展开账号后单独重试')
@@ -80,6 +83,19 @@ async function repair(row, dimension = null) {
     ElMessage.error(error.message)
   } finally {
     repairingKey.value = ''
+  }
+}
+
+async function backfillHistory(row) {
+  try {
+    await ElMessageBox.confirm(
+      '将从百度只读拉取近 30 天关键词效果数据，只补充本地报表，不会修改百度账户。是否继续？',
+      '补齐历史数据',
+      { confirmButtonText: '开始补齐', cancelButtonText: '取消', type: 'info' },
+    )
+    await repair(row, 'reports', 30)
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(error.message || '历史数据补齐失败')
   }
 }
 
@@ -135,7 +151,7 @@ onMounted(load)
       <el-table-column label="数据状态" min-width="150"><template #default="{ row }"><b :class="['data-state', row.data_state]">{{ stateLabels[row.data_state] || row.data_state }}</b><small v-if="row.last_sync_error">{{ row.last_sync_error }}</small></template></el-table-column>
       <el-table-column label="已拉取资产" min-width="240"><template #default="{ row }"><span class="counts">计划 {{ row.counts?.campaigns || 0 }} · 单元 {{ row.counts?.adgroups || 0 }} · 关键词 {{ row.counts?.keywords || 0 }} · 搜索词 {{ row.counts?.search_terms || 0 }}</span></template></el-table-column>
       <el-table-column label="最近同步" min-width="150"><template #default="{ row }">{{ fmtTime(row.last_synced_at || row.last_asset_synced_at) }}</template></el-table-column>
-      <el-table-column label="只读同步" width="120"><template #default="{ row }"><el-button v-if="row.status === 'active'" link type="primary" :loading="repairingKey === `${row.id}:all`" :disabled="Boolean(repairingKey) && repairingKey !== `${row.id}:all`" @click="repair(row)">同步全部</el-button><span v-else>—</span></template></el-table-column>
+      <el-table-column label="只读同步" width="180"><template #default="{ row }"><template v-if="row.status === 'active'"><el-button link type="primary" :loading="repairingKey === `${row.id}:all`" :disabled="Boolean(repairingKey) && repairingKey !== `${row.id}:all`" @click="repair(row)">同步全部</el-button><el-button link type="primary" :loading="repairingKey === `${row.id}:history-30`" :disabled="Boolean(repairingKey) && repairingKey !== `${row.id}:history-30`" @click="backfillHistory(row)">补齐近30天</el-button></template><span v-else>—</span></template></el-table-column>
       <template #empty><div class="account-empty">{{ loading ? '正在读取推广账户…' : '尚未授权推广账号' }}</div></template>
     </el-table>
   </div>

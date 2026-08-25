@@ -13,7 +13,7 @@
 import logging
 import tempfile
 from asyncio import Lock, sleep
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -26,6 +26,7 @@ from app.baidu.sync import (
     sync_campaigns_for_account,
     sync_keyword_dimension_reports_for_account,
     sync_keyword_report_for_account,
+    sync_keyword_report_range_for_account,
     sync_keyword_report_for_all_active_accounts,
     sync_region_snapshot,
     sync_search_terms_for_account,
@@ -58,6 +59,7 @@ logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
 _report_sync_lock = Lock()
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+INITIAL_KEYWORD_HISTORY_DAYS = 30
 
 # 多 worker 防双跑：uvicorn --workers 2 时每个 worker 都会执行 startup → 各起一个
 # APScheduler，导致每日任务跑两次（重复调百度 + 重复写）。用文件排他锁，只让抢到锁的
@@ -80,8 +82,9 @@ async def refresh_keyword_workbench_snapshot(
     session,
     tenant: Tenant,
     acc: BaiduAccount,
-    target_date,
+    target_date: date,
     dimensions: list[str] | tuple[str, ...] | None = None,
+    report_start_date: date | None = None,
 ) -> dict:
     """同步 SEM 只读资产；单维度失败不会阻断其他维度。"""
     tenant_id = tenant.id
@@ -109,7 +112,12 @@ async def refresh_keyword_workbench_snapshot(
                 await session.commit()
             try:
                 if name == "reports":
-                    report_rows = await sync_keyword_report_for_account(session, acc, target_date)
+                    report_start = report_start_date or target_date
+                    if report_start > target_date:
+                        raise ValueError("关键词报告开始日期不能晚于结束日期")
+                    report_rows = await sync_keyword_report_range_for_account(
+                        session, acc, report_start, target_date
+                    )
                     dimension_rows = await sync_keyword_dimension_reports_for_account(
                         session, acc, target_date
                     )
@@ -181,6 +189,7 @@ async def refresh_keyword_workbench_snapshot(
             "status": "ok" if not failures else "partial",
             "tenant_id": tenant_id,
             "date": target_date.isoformat(),
+            "report_start_date": (report_start_date or target_date).isoformat(),
             "selected_dimensions": list(selected),
             "dimensions": state.get("dimensions", {}),
             "report_rows_written": (results.get("reports") or {}).get("report", 0),
