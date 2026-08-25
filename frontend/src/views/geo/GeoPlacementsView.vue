@@ -28,10 +28,15 @@ const CHANNEL_OPTIONS = [
   { value: 'encyclopedia', slug: 'encyclopedia', label: '百科', icon: '▣' },
   { value: 'wiki', slug: 'wiki', label: '百科', icon: '▣' },
   { value: 'zhihu', slug: 'community', label: '社区', icon: '◉' },
+  { value: 'community', slug: 'community', label: '社区', icon: '◉' },
   { value: 'community_qa', slug: 'community', label: '社区', icon: '◉' },
   { value: 'wechat', slug: 'wechat', label: '公众号', icon: '▣' },
   { value: 'news', slug: 'news', label: '新闻', icon: '☰' },
   { value: 'industry_media', slug: 'media', label: '行业媒体', icon: '📰' },
+  { value: 'media', slug: 'media', label: '行业媒体', icon: '📰' },
+  { value: 'toutiao', slug: 'toutiao', label: '头条', icon: '☰' },
+  { value: 'baijiahao', slug: 'baijiahao', label: '百家号', icon: '☰' },
+  { value: 'visual_content', slug: 'video', label: '视频', icon: '▶' },
   { value: 'other', slug: 'other', label: '其他', icon: '○' },
 ]
 
@@ -71,6 +76,14 @@ function statusMeta(row) {
     zh: row.status || '—',
     tone: 'muted',
   }
+}
+
+function statusBadge(row) {
+  const tone = statusMeta(row).tone
+  if (tone === 'ok') return 'green'
+  if (tone === 'warn') return 'amber'
+  if (tone === 'info') return 'blue'
+  return ''
 }
 
 const filteredItems = computed(() => {
@@ -212,26 +225,20 @@ onMounted(load)
               <div v-if="row.authority_note" class="note">{{ row.authority_note }}</div>
             </template>
           </el-table-column>
-          <el-table-column label="类型" min-width="160">
+          <el-table-column label="类型" width="120">
             <template #default="{ row }">
               <div class="geo-type-cell">
                 <span class="geo-type-icon">{{ typeMeta(row).icon }}</span>
-                <div class="geo-type-copy">
-                  <div class="geo-type-slug">{{ typeMeta(row).slug }}</div>
-                  <div class="geo-type-label">{{ typeMeta(row).label }}</div>
-                </div>
+                <span class="geo-type-label">{{ typeMeta(row).label }}</span>
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="168">
+          <el-table-column label="状态" width="108">
             <template #default="{ row }">
-              <span class="geo-status-cell">
-                <i class="geo-status-dot" :class="statusMeta(row).tone" />
-                {{ statusMeta(row).en }} {{ statusMeta(row).zh }}
-              </span>
+              <span class="gd-badge" :class="statusBadge(row)">{{ statusMeta(row).zh }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="URL" min-width="180" show-overflow-tooltip>
+          <el-table-column label="URL" min-width="160" show-overflow-tooltip>
             <template #default="{ row }">
               <a
                 v-if="row.target_url"
@@ -243,7 +250,7 @@ onMounted(load)
               <span v-else class="muted">—</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="220" fixed="right">
+          <el-table-column label="操作" width="168" align="right" fixed="right">
             <template #default="{ row }">
               <div class="geo-act">
                 <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
@@ -252,7 +259,7 @@ onMounted(load)
                   link
                   class="act-publish"
                   @click="markPublished(row)"
-                >标记为已发布</el-button>
+                >发布</el-button>
                 <el-button link type="danger" @click="remove(row)">删除</el-button>
               </div>
             </template>
