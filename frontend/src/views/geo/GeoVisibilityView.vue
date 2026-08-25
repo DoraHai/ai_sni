@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createGeoAnswerSnapshot,
-  extractGeoAnswerSnapshotUrls,
   listGeoAnswerSnapshots,
   listGeoPrompts,
   listGeoTrackingEngines,
@@ -12,14 +11,11 @@ import {
   patchGeoAnswerSnapshot,
   probeGeoAnswerSnapshot,
   probeGeoAnswerSnapshotBatch,
-  suggestGeoAnswerSnapshotFields,
-  checkGeoAnswerSnapshotCitations,
   fetchGeoEvaluationInsights,
   fetchVisibilityPatrolOpsStatus,
   fetchVisibilityPatrolSettings,
   getVisibilityPatrolRun,
   listVisibilityPatrolRuns,
-  putVisibilityPatrolSettings,
   startVisibilityPatrolRun,
 } from '../../api/geoContent'
 import GeoVisibilityNav from '../../components/GeoVisibilityNav.vue'
@@ -57,11 +53,6 @@ const tenantId = computed(() =>
 
 const POSITION_OPTIONS = Object.entries(POSITION_LABEL).map(([value, label]) => ({ value, label }))
 const SENTIMENT_OPTIONS = Object.entries(SENTIMENT_LABEL).map(([value, label]) => ({ value, label }))
-const FORMAT_OPTIONS = Object.entries(CITATION_FORMAT_LABEL).map(([value, label]) => ({ value, label }))
-const ACCURACY_OPTIONS = Object.entries(CITATION_ACCURACY_LABEL).map(([value, label]) => ({
-  value,
-  label,
-}))
 
 const loading = ref(false)
 const probing = ref(false)
@@ -88,27 +79,12 @@ const patrolOps = ref(null)
 const patrolRuns = ref([])
 const evalData = ref(null)
 const collecting = ref(false)
-const savingSchedule = ref(false)
 const collectForm = ref({
   prefer_real: true,
   auto_persist: true,
   prompt_limit: 20,
   engine_keys: [],
-  enabled: false,
-  window_start_hour: 7,
-  window_end_hour: 22,
-  interval_hours: 24,
 })
-const intervalOptions = [
-  { value: 1, label: '每 1 小时' },
-  { value: 2, label: '每 2 小时' },
-  { value: 3, label: '每 3 小时' },
-  { value: 4, label: '每 4 小时' },
-  { value: 6, label: '每 6 小时' },
-  { value: 8, label: '每 8 小时' },
-  { value: 12, label: '每 12 小时' },
-  { value: 24, label: '每 24 小时（每天）' },
-]
 const queueMode = computed(() => route.query.queue === 'recheck')
 const emptyReason = computed(() =>
   diagnoseEmptyMonitoring({
@@ -122,6 +98,7 @@ const emptyReason = computed(() =>
 )
 
 const lastRun = computed(() => patrolOps.value?.last_run || patrolRuns.value[0] || null)
+const hasSimulated = computed(() => snapshots.value.some((s) => s.simulated))
 
 const evalKpis = computed(() => {
   const total = Number(evalData.value?.total || snapshots.value.length || 0)
@@ -151,6 +128,7 @@ function runStatusLabel(status) {
   return labelOf(PATROL_STATUS_LABEL, status, status || '—')
 }
 
+const registerOpen = ref(false)
 const form = ref({
   prompt_id: null,
   engine: 'deepseek',
@@ -335,10 +313,6 @@ async function loadCollectMeta() {
       collectForm.value.auto_persist = settings.auto_persist !== false
       collectForm.value.prompt_limit = settings.prompt_limit || 20
       collectForm.value.engine_keys = settings.engine_keys || []
-      collectForm.value.enabled = !!settings.enabled
-      collectForm.value.window_start_hour = settings.window_start_hour ?? 7
-      collectForm.value.window_end_hour = settings.window_end_hour ?? 22
-      collectForm.value.interval_hours = settings.interval_hours ?? 24
     }
     if (!collectForm.value.engine_keys?.length) {
       collectForm.value.engine_keys = enabledEngines.value.map((e) => e.engine_key)
@@ -386,29 +360,6 @@ async function startCollect() {
     ElMessage.error(e.message || '启动失败')
   } finally {
     collecting.value = false
-  }
-}
-
-async function saveSchedule() {
-  savingSchedule.value = true
-  try {
-    await putVisibilityPatrolSettings({
-      tenant_id: tenantId.value,
-      enabled: collectForm.value.enabled,
-      window_start_hour: collectForm.value.window_start_hour,
-      window_end_hour: collectForm.value.window_end_hour,
-      interval_hours: collectForm.value.interval_hours,
-      auto_persist: collectForm.value.auto_persist,
-      prefer_real: collectForm.value.prefer_real,
-      prompt_limit: collectForm.value.prompt_limit,
-      engine_keys: collectForm.value.engine_keys?.length ? collectForm.value.engine_keys : null,
-    })
-    ElMessage.success('定时采集已保存')
-    await loadCollectMeta()
-  } catch (e) {
-    ElMessage.error(e.message || '保存失败')
-  } finally {
-    savingSchedule.value = false
   }
 }
 
@@ -503,69 +454,6 @@ async function onProbeBatch() {
   }
 }
 
-async function onSuggest() {
-  if (!form.value.raw_text.trim()) {
-    ElMessage.warning('请先粘贴或探测回答正文')
-    return
-  }
-  try {
-    const draft = await suggestGeoAnswerSnapshotFields({
-      tenant_id: tenantId.value,
-      raw_text: form.value.raw_text,
-      prompt_id: form.value.prompt_id || null,
-      use_llm: true,
-    })
-    applySuggest(draft)
-    ElMessage.success('已填入标注建议')
-  } catch (e) {
-    error.value = e.message
-  }
-}
-
-async function onExtractUrls() {
-  if (!form.value.raw_text.trim()) {
-    ElMessage.warning('请先粘贴或探测回答正文')
-    return
-  }
-  try {
-    const data = await extractGeoAnswerSnapshotUrls({
-      tenant_id: tenantId.value,
-      raw_text: form.value.raw_text,
-    })
-    form.value.cited_urls = (data.suggested_cited_urls || []).join('\n')
-    ElMessage.success(
-      data.suggested_cited_urls?.length
-        ? `已抽取 ${data.suggested_cited_urls.length} 条 URL`
-        : '正文中未识别到链接',
-    )
-  } catch (e) {
-    error.value = e.message
-  }
-}
-
-async function onCheckCitations() {
-  const urls = form.value.cited_urls.split(/\n+/).map((s) => s.trim()).filter(Boolean)
-  if (!urls.length) {
-    ElMessage.warning('请先填写或抽取引用 URL')
-    return
-  }
-  try {
-    const data = await checkGeoAnswerSnapshotCitations({
-      tenant_id: tenantId.value,
-      cited_urls: urls,
-    })
-    if (data.suggested_citation_accuracy) {
-      form.value.citation_accuracy = data.suggested_citation_accuracy
-    }
-    ElMessage.success(
-      `校验完成：可达 ${data.reachable ?? 0}/${data.checked ?? 0} · 建议准确性 ${data.suggested_citation_accuracy}`,
-    )
-  } catch (e) {
-    error.value = e.message
-    ElMessage.error(e.message || '校验失败')
-  }
-}
-
 async function onSave() {
   if (!form.value.prompt_id) {
     ElMessage.warning('请选择优化意图词')
@@ -599,6 +487,7 @@ async function onSave() {
     form.value.citation_format = 'unknown'
     form.value.citation_accuracy = 'unknown'
     ElMessage.success('快照已保存')
+    registerOpen.value = false
     await loadSnapshots()
   } catch (e) {
     error.value = e.message
@@ -628,18 +517,6 @@ async function patchSnapField(row, patch) {
     ElMessage.error(e.message || '更新失败')
     await loadSnapshots()
   }
-}
-
-function compsText(row) {
-  return Array.isArray(row.competitors) ? row.competitors.join(', ') : ''
-}
-
-async function saveCompetitors(row, text) {
-  const competitors = String(text || '')
-    .split(/[,，]/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-  await patchSnapField(row, { competitors })
 }
 
 async function removeSnapshot(row) {
@@ -689,6 +566,9 @@ async function saveBatchItem(draft) {
   }
 }
 
+watch(registerOpen, (open) => {
+  if (open) batchDrafts.value = []
+})
 watch(filterEngine, () => loadSnapshots())
 watch(
   () => route.query.patrol_run_id,
@@ -710,18 +590,21 @@ onMounted(reloadAll)
 <template>
   <GeoWorkbenchPage
     title="采集与判断"
-    :sub="`自动采集 AI 引擎回答，按提及 / 位置 / 情感判断可见度 · ${obsLabel}`"
+    sub="自动采集 AI 引擎回答，按提及、位置和情感判断可见度"
     :loading="loading"
   >
     <template #actions>
       <button type="button" class="gd-btn" @click="reloadAll">刷新</button>
-      <button type="button" class="gd-btn" :disabled="!snapshots.length" @click="exportSnapshots">导出 CSV</button>
+      <button type="button" class="gd-btn" @click="registerOpen = true">登记快照</button>
+      <button type="button" class="gd-btn" :disabled="!snapshots.length" @click="exportSnapshots">
+        导出 CSV
+      </button>
       <button type="button" class="gd-btn primary" :disabled="collecting" @click="startCollect">
-        {{ collecting ? '采集中…' : '立即采集并落库' }}
+        {{ collecting ? '采集中…' : '立即采集' }}
       </button>
     </template>
 
-    <div class="geo-dash geo-vis">
+    <div class="geo-dash">
       <GeoVisibilityNav />
 
       <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" />
@@ -733,84 +616,33 @@ onMounted(reloadAll)
         :title="`待复核队列 · ${prompts.length} 条（已发布但无快照，或快照早于最近发布）`"
       />
 
-      <section id="collect" class="gd-card collect-bar">
-        <div class="collect-copy">
-          <strong>自动采集 AI 引擎回答</strong>
-          <p>
-            按已启用引擎提问并落库，系统根据提及、推荐位置和情感判断可见度。
-            最近一次：
+      <div class="gd-card mb">
+        <div class="gd-hd">
+          <h3>自动采集</h3>
+          <span class="more">
             <template v-if="lastRun">
-              #{{ lastRun.id }} {{ runStatusLabel(lastRun.status) }}
+              最近 #{{ lastRun.id }} {{ runStatusLabel(lastRun.status) }}
               · {{ fmtCaptured(lastRun.finished_at || lastRun.created_at) }}
             </template>
-            <template v-else>尚未跑过</template>
+            <template v-else>尚未采集</template>
+          </span>
+        </div>
+        <div class="gd-bd collect-bd">
+          <p class="hint">
+            按已启用引擎提问，自动判断提及、位置和情感。定时规则在
+            <router-link to="/geo/models">引擎</router-link>
+            中设置。
           </p>
-        </div>
-        <div class="collect-controls">
-          <el-checkbox v-model="collectForm.prefer_real">优先真采样</el-checkbox>
-          <el-checkbox v-model="collectForm.auto_persist">自动落库</el-checkbox>
-          <el-input-number v-model="collectForm.prompt_limit" :min="1" :max="50" size="small" />
-          <el-select
-            v-model="collectForm.engine_keys"
-            multiple
-            collapse-tags
-            collapse-tags-tooltip
-            placeholder="引擎"
-            style="min-width: 180px"
-            size="small"
-          >
-            <el-option
-              v-for="e in enabledEngines"
-              :key="e.engine_key"
-              :label="e.display_name || engineDisplay(e.engine_key)"
-              :value="e.engine_key"
-            />
-          </el-select>
-          <button type="button" class="gd-btn primary" :disabled="collecting" @click="startCollect">
-            {{ collecting ? '采集中…' : '立即采集并落库' }}
-          </button>
-        </div>
-        <p class="hint" style="margin: 10px 0 0">
-          定时巡检在「引擎」页设置。
-          <router-link to="/geo/models">去引擎页</router-link>
-        </p>
-        <ul v-if="patrolRuns.length" class="run-list">
-          <li v-for="r in patrolRuns.slice(0, 5)" :key="r.id">
-            #{{ r.id }} {{ runStatusLabel(r.status) }}
-            · {{ r.trigger === 'schedule' ? '定时' : '手动' }}
-            · 成功 {{ r.summary?.ok_cells || r.summary?.cells_ok || 0 }}
-            · 落库 {{ r.summary?.snapshots_created || 0 }}
-          </li>
-        </ul>
-      </section>
-
-      <div class="gd-engine-kpis eval-kpis">
-        <div v-for="c in evalKpis" :key="c.label" class="gd-card gd-stat">
-          <div class="label">{{ c.label }}</div>
-          <div class="value">{{ c.value }}</div>
-          <div class="delta hint">{{ c.hint }}</div>
-        </div>
-      </div>
-
-    <div class="layout">
-      <section class="panel gd-card">
-        <div class="panel-title">登记回答快照</div>
-        <p class="hint">
-          探测只填草稿不写库；确认标注后再点「保存快照」。列表内可直接改字段。
-        </p>
-        <el-form label-position="top" @submit.prevent>
-          <el-form-item label="优化意图词">
-            <el-select v-model="form.prompt_id" filterable style="width: 100%">
-              <el-option
-                v-for="p in prompts"
-                :key="p.id"
-                :label="`#${p.id} · ${p.question}`"
-                :value="p.id"
-              />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="引擎">
-            <el-select v-model="form.engine" style="width: 100%">
+          <div class="geo-set-row">
+            <span>采集引擎</span>
+            <el-select
+              v-model="collectForm.engine_keys"
+              multiple
+              collapse-tags
+              collapse-tags-tooltip
+              placeholder="采集引擎"
+              style="width: 320px"
+            >
               <el-option
                 v-for="e in enabledEngines"
                 :key="e.engine_key"
@@ -818,190 +650,94 @@ onMounted(reloadAll)
                 :value="e.engine_key"
               />
             </el-select>
-          </el-form-item>
-          <el-form-item label="回答原文">
-            <el-input v-model="form.raw_text" type="textarea" :rows="7" placeholder="粘贴模型回答…" />
-          </el-form-item>
-          <el-form-item label="观测时间（可选 ISO）">
-            <el-input v-model="form.captured_at" placeholder="留空则用当前时间" />
-          </el-form-item>
-          <el-form-item>
-            <el-checkbox v-model="form.mentions_brand">提及我方品牌</el-checkbox>
-          </el-form-item>
-          <div class="row2">
-            <el-form-item label="本品位置">
-              <el-select v-model="form.brand_position" style="width: 100%">
-                <el-option
-                  v-for="o in POSITION_OPTIONS"
-                  :key="o.value"
-                  :label="o.label"
-                  :value="o.value"
-                />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="情感倾向">
-              <el-select v-model="form.sentiment" style="width: 100%">
-                <el-option
-                  v-for="o in SENTIMENT_OPTIONS"
-                  :key="o.value"
-                  :label="o.label"
-                  :value="o.value"
-                />
-              </el-select>
-            </el-form-item>
           </div>
-          <div class="row2">
-            <el-form-item label="引用格式">
-              <el-select v-model="form.citation_format" style="width: 100%">
-                <el-option
-                  v-for="o in FORMAT_OPTIONS"
-                  :key="o.value"
-                  :label="o.label"
-                  :value="o.value"
-                />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="引用准确性">
-              <el-select v-model="form.citation_accuracy" style="width: 100%">
-                <el-option
-                  v-for="o in ACCURACY_OPTIONS"
-                  :key="o.value"
-                  :label="o.label"
-                  :value="o.value"
-                />
-              </el-select>
-            </el-form-item>
-          </div>
-          <el-form-item label="竞品名（逗号分隔）">
-            <el-input v-model="form.competitors" placeholder="竞品A, 竞品B" />
-          </el-form-item>
-          <el-form-item label="引用 URL（每行一个）">
-            <el-input v-model="form.cited_urls" type="textarea" :rows="3" />
-          </el-form-item>
-          <el-form-item label="备注">
-            <el-input v-model="form.note" />
-          </el-form-item>
-          <div class="actions">
-            <el-button :loading="probing" @click="onProbe">用 AI 探测</el-button>
-            <el-button :loading="batchProbing" type="warning" plain @click="onProbeBatch">
-              多引擎探测
-            </el-button>
-            <el-button @click="onSuggest">AI 标注建议</el-button>
-            <el-button @click="onExtractUrls">抽取 URL</el-button>
-            <el-button @click="onCheckCitations">校验引用</el-button>
-            <el-button type="primary" :loading="saving" @click="onSave">保存快照</el-button>
-          </div>
-          <p class="hint">
-            探测 / 多引擎探测只填草稿；多引擎共用租户 LLM，按引擎人设模拟，非真实各厂 API。
-          </p>
-        </el-form>
-
-        <div v-if="batchDrafts.length" class="batch">
-          <div class="panel-title">多引擎草稿</div>
-          <div v-for="d in batchDrafts" :key="d.engine" class="batch-item">
-            <div class="batch-head">
-              <strong>{{ engineDisplay(d.engine) }}</strong>
-              <span v-if="d.ok && d.simulated" class="tag">模拟</span>
-              <span v-if="!d.ok" class="tag bad">失败</span>
-              <span v-if="d._saved" class="tag ok">已保存</span>
-            </div>
-            <p v-if="d.error" class="err-line">{{ d.error }}</p>
-            <p v-else class="snip">{{ snippet(d.raw_text) }}</p>
-            <div v-if="d.ok" class="actions">
-              <el-button size="small" @click="loadDraftIntoForm(d)">填入表单</el-button>
-              <el-button
-                size="small"
-                type="primary"
-                :disabled="d._saved"
-                :loading="saving"
-                @click="saveBatchItem(d)"
-              >
-                确认保存
-              </el-button>
-            </div>
+          <div class="geo-set-row">
+            <span>每轮提问上限</span>
+            <el-input-number v-model="collectForm.prompt_limit" :min="1" :max="50" />
           </div>
         </div>
-      </section>
+      </div>
 
-      <section class="panel panel-list gd-card">
-        <div class="list-toolbar">
-          <div class="panel-title" style="margin: 0">快照列表</div>
-          <el-select v-model="filterEngine" clearable placeholder="全部引擎" style="width: 140px">
-            <el-option
-              v-for="e in engines"
-              :key="e.engine_key"
-              :label="e.display_name || engineDisplay(e.engine_key)"
-              :value="e.engine_key"
-            />
-          </el-select>
-          <el-button v-if="filterPromptId" @click="clearPromptFilter">清除问题过滤</el-button>
-          <el-button v-if="filterDomain" @click="clearDomainFilter">
-            清除域名 {{ filterDomain }}
-          </el-button>
-          <el-button v-if="filterPatrolRunId" type="warning" plain @click="clearPatrolFilter">
-            清除巡检 #{{ filterPatrolRunId }}
-          </el-button>
-          <el-button size="small" :disabled="!snapshots.length" @click="exportSnapshots">导出</el-button>
+      <div class="gd-engine-kpis mb">
+        <div v-for="c in evalKpis" :key="c.label" class="gd-card gd-stat">
+          <div class="label">{{ c.label }}</div>
+          <div class="value">{{ c.value }}</div>
+          <div class="delta hint">{{ c.hint }}</div>
         </div>
-        <p class="hint">
-          {{ filterPromptId ? `过滤意图词 #${filterPromptId}` : '显示全部快照' }}
+      </div>
+
+      <div class="geo-filter-bar">
+        <el-select v-model="filterEngine" clearable placeholder="全部引擎" style="width: 160px">
+          <el-option
+            v-for="e in engines"
+            :key="e.engine_key"
+            :label="e.display_name || engineDisplay(e.engine_key)"
+            :value="e.engine_key"
+          />
+        </el-select>
+        <button v-if="filterPromptId" type="button" class="gd-btn" @click="clearPromptFilter">
+          清除提问 #{{ filterPromptId }}
+        </button>
+        <button v-if="filterDomain" type="button" class="gd-btn" @click="clearDomainFilter">
+          清除域名 {{ filterDomain }}
+        </button>
+        <button v-if="filterPatrolRunId" type="button" class="gd-btn" @click="clearPatrolFilter">
+          清除巡检 #{{ filterPatrolRunId }}
+        </button>
+        <span class="toolbar-hint">
+          共 {{ snapshots.length }} 条
           <template v-if="filterEngine"> · {{ engineDisplay(filterEngine) }}</template>
-          <template v-if="filterDomain"> · 引用含 {{ filterDomain }}</template>
-          <template v-if="filterPatrolRunId"> · 巡检运行 #{{ filterPatrolRunId }}</template>
-          · 共 {{ snapshots.length }} 条
-          <template v-if="sampleComposition?.label"> · {{ sampleComposition.label }}</template>
-        </p>
-        <SampleCredibilityAlert :composition="sampleComposition" />
-        <el-alert
-          v-if="snapshots.length && emptyReason?.key === 'no_mention'"
-          type="warning"
-          show-icon
-          class="mb"
-          :title="emptyReason.title"
-          :description="emptyReason.detail"
-        />
-        <div v-if="!snapshots.length && !loading" class="geo-empty" style="margin: 8px 0 12px">
-          <div class="empty-title">
-            {{
-              filterPatrolRunId
-                ? `采集 #${filterPatrolRunId} 暂无关联快照`
-                : emptyReason?.title || '暂无回答快照'
-            }}
-          </div>
-          <div>
-            {{
-              filterPatrolRunId
-                ? '可能是旧任务未写关联，或当时没勾选自动落库。'
-                : emptyReason?.detail || '左侧登记一条，或点「立即采集并落库」。'
-            }}
-          </div>
-          <div class="empty-actions">
-            <button
-              type="button"
-              class="gd-btn primary"
-              :disabled="collecting"
-              @click="startCollect"
-            >
-              {{ collecting ? '采集中…' : (emptyReason?.action || '立即采集并落库') }}
-            </button>
-            <router-link class="el-button el-button--small is-plain" to="/geo/engines">
-              检查引擎
-            </router-link>
-            <router-link class="el-button el-button--small is-plain" to="/geo/prompts">
-              管理意图词
-            </router-link>
-          </div>
+        </span>
+      </div>
+
+      <SampleCredibilityAlert :composition="sampleComposition" />
+      <el-alert
+        v-if="snapshots.length && emptyReason?.key === 'no_mention'"
+        type="warning"
+        show-icon
+        class="mb"
+        :title="emptyReason.title"
+        :description="emptyReason.detail"
+      />
+
+      <div v-if="!snapshots.length && !loading" class="geo-empty mb">
+        <div class="empty-title">
+          {{
+            filterPatrolRunId
+              ? `采集 #${filterPatrolRunId} 暂无关联快照`
+              : emptyReason?.title || '暂无回答快照'
+          }}
         </div>
-        <div class="table-wrap">
+        <div>
+          {{
+            filterPatrolRunId
+              ? '可能是旧任务未写关联，或当时没勾选自动落库。'
+              : emptyReason?.detail || '点「立即采集」或「登记快照」。'
+          }}
+        </div>
+        <div class="empty-actions">
+          <button type="button" class="gd-btn primary" :disabled="collecting" @click="startCollect">
+            {{ collecting ? '采集中…' : (emptyReason?.action || '立即采集') }}
+          </button>
+          <router-link class="gd-btn" to="/geo/models">检查引擎</router-link>
+          <router-link class="gd-btn" to="/geo/questions">管理意图词</router-link>
+        </div>
+      </div>
+
+      <div v-if="snapshots.length" class="gd-card">
+        <div class="gd-hd">
+          <h3>快照列表</h3>
+          <span class="more">{{ snapshots.length }} 条</span>
+        </div>
+        <div class="gd-bd" style="padding: 0">
           <el-table
             :data="snapPager.pagedItems"
             size="small"
-            empty-text=" "
             stripe
             class="snap-table"
             style="width: 100%"
           >
-            <el-table-column label="问题 / 摘要" min-width="220" show-overflow-tooltip>
+            <el-table-column label="问题 / 摘要" min-width="240" show-overflow-tooltip>
               <template #default="{ row }">
                 <div class="q-title">{{ row.prompt_question || `#${row.prompt_id}` }}</div>
                 <div class="snip">{{ snippet(row.raw_text, 90) }}</div>
@@ -1010,31 +746,24 @@ onMounted(reloadAll)
             <el-table-column label="引擎" width="100" show-overflow-tooltip>
               <template #default="{ row }">{{ engineDisplay(row.engine) }}</template>
             </el-table-column>
-            <el-table-column label="样本" width="100" align="center">
+            <el-table-column v-if="hasSimulated" label="样本" width="80" align="center">
               <template #default="{ row }">
-                <el-tag
-                  v-if="row.simulated"
-                  size="small"
-                  type="warning"
-                  effect="light"
-                >模拟</el-tag>
-                <el-tag
-                  v-else-if="row.sample_mode === 'openai_compat'"
-                  size="small"
-                  type="success"
-                  effect="light"
-                >真采样</el-tag>
-                <el-tag v-else size="small" type="info" effect="light">人工</el-tag>
+                <span v-if="row.simulated" class="gd-badge amber">模拟</span>
               </template>
             </el-table-column>
-            <el-table-column label="提及本品" width="100" align="center">
+            <el-table-column label="提及" width="108" align="center">
               <template #default="{ row }">
-                <el-button size="small" text type="primary" @click="toggleMention(row)">
-                  {{ row.mentions_brand ? '是' : '否' }}·切换
-                </el-button>
+                <span
+                  class="gd-badge"
+                  :class="row.mentions_brand ? 'green' : 'red'"
+                  style="cursor: pointer"
+                  @click="toggleMention(row)"
+                >
+                  {{ row.mentions_brand ? '已提及' : '未提及' }}
+                </span>
               </template>
             </el-table-column>
-            <el-table-column label="本品位置" width="128" align="center">
+            <el-table-column label="位置" width="128" align="center">
               <template #default="{ row }">
                 <el-select
                   size="small"
@@ -1044,40 +773,6 @@ onMounted(reloadAll)
                 >
                   <el-option
                     v-for="o in POSITION_OPTIONS"
-                    :key="o.value"
-                    :label="o.label"
-                    :value="o.value"
-                  />
-                </el-select>
-              </template>
-            </el-table-column>
-            <el-table-column label="引用格式" width="128" align="center">
-              <template #default="{ row }">
-                <el-select
-                  size="small"
-                  :model-value="row.citation_format || 'unknown'"
-                  style="width: 116px"
-                  @change="(v) => patchSnapField(row, { citation_format: v })"
-                >
-                  <el-option
-                    v-for="o in FORMAT_OPTIONS"
-                    :key="o.value"
-                    :label="o.label"
-                    :value="o.value"
-                  />
-                </el-select>
-              </template>
-            </el-table-column>
-            <el-table-column label="引用准确性" width="118" align="center">
-              <template #default="{ row }">
-                <el-select
-                  size="small"
-                  :model-value="row.citation_accuracy || 'unknown'"
-                  style="width: 106px"
-                  @change="(v) => patchSnapField(row, { citation_accuracy: v })"
-                >
-                  <el-option
-                    v-for="o in ACCURACY_OPTIONS"
                     :key="o.value"
                     :label="o.label"
                     :value="o.value"
@@ -1102,20 +797,10 @@ onMounted(reloadAll)
                 </el-select>
               </template>
             </el-table-column>
-            <el-table-column label="竞品" min-width="140">
-              <template #default="{ row }">
-                <el-input
-                  size="small"
-                  :model-value="compsText(row)"
-                  placeholder="逗号分隔"
-                  @change="(v) => saveCompetitors(row, v)"
-                />
-              </template>
-            </el-table-column>
             <el-table-column label="观测时间" width="108" show-overflow-tooltip>
               <template #default="{ row }">{{ fmtCaptured(row.captured_at) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="72" fixed="right">
+            <el-table-column label="操作" width="88" align="center">
               <template #default="{ row }">
                 <el-button size="small" text type="danger" @click="removeSnapshot(row)">
                   删除
@@ -1124,7 +809,7 @@ onMounted(reloadAll)
             </el-table-column>
           </el-table>
         </div>
-        <div class="geo-pager">
+        <div class="geo-pager" style="padding: 12px 16px">
           <el-pagination
             background
             layout="total, sizes, prev, pager, next"
@@ -1136,7 +821,6 @@ onMounted(reloadAll)
             @size-change="snapPager.onSizeChange"
           />
         </div>
-
         <div v-if="queueMode && prompts.length" class="queue">
           <div class="panel-title">队列快捷</div>
           <button
@@ -1149,97 +833,131 @@ onMounted(reloadAll)
             #{{ p.id }} · {{ p.question }}
           </button>
         </div>
-      </section>
+      </div>
     </div>
-    </div>
+
+    <el-dialog v-model="registerOpen" title="登记快照" width="560px" class="geo-form-dialog">
+      <p class="hint">粘贴或探测回答后保存。列表中可调整提及、位置和情感。</p>
+      <el-form label-width="100px" class="geo-dialog-form" @submit.prevent>
+        <el-form-item label="优化意图词">
+          <el-select v-model="form.prompt_id" filterable style="width: 100%">
+            <el-option
+              v-for="p in prompts"
+              :key="p.id"
+              :label="`#${p.id} · ${p.question}`"
+              :value="p.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="引擎">
+          <el-select v-model="form.engine" style="width: 100%">
+            <el-option
+              v-for="e in enabledEngines"
+              :key="e.engine_key"
+              :label="e.display_name || engineDisplay(e.engine_key)"
+              :value="e.engine_key"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="回答原文">
+          <el-input v-model="form.raw_text" type="textarea" :rows="6" placeholder="粘贴模型回答…" />
+        </el-form-item>
+        <el-form-item label="观测时间">
+          <el-input v-model="form.captured_at" placeholder="可留空，默认当前时间" />
+        </el-form-item>
+        <el-form-item label="提及本品">
+          <el-checkbox v-model="form.mentions_brand">提及我方品牌</el-checkbox>
+        </el-form-item>
+        <el-form-item label="本品位置">
+          <el-select v-model="form.brand_position" style="width: 100%">
+            <el-option
+              v-for="o in POSITION_OPTIONS"
+              :key="o.value"
+              :label="o.label"
+              :value="o.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="情感倾向">
+          <el-select v-model="form.sentiment" style="width: 100%">
+            <el-option
+              v-for="o in SENTIMENT_OPTIONS"
+              :key="o.value"
+              :label="o.label"
+              :value="o.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="竞品">
+          <el-input v-model="form.competitors" placeholder="逗号分隔" />
+        </el-form-item>
+        <el-form-item label="引用 URL">
+          <el-input v-model="form.cited_urls" type="textarea" :rows="2" placeholder="每行一个" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="form.note" />
+        </el-form-item>
+      </el-form>
+      <div v-if="batchDrafts.length" class="batch">
+        <div class="panel-title">多引擎草稿</div>
+        <div v-for="d in batchDrafts" :key="d.engine" class="batch-item">
+          <div class="batch-head">
+            <strong>{{ engineDisplay(d.engine) }}</strong>
+            <span v-if="d.ok && d.simulated" class="tag">模拟</span>
+            <span v-if="!d.ok" class="tag bad">失败</span>
+            <span v-if="d._saved" class="tag ok">已保存</span>
+          </div>
+          <p v-if="d.error" class="err-line">{{ d.error }}</p>
+          <p v-else class="snip">{{ snippet(d.raw_text) }}</p>
+          <div v-if="d.ok" class="actions">
+            <el-button size="small" @click="loadDraftIntoForm(d)">填入表单</el-button>
+            <el-button
+              size="small"
+              type="primary"
+              :disabled="d._saved"
+              :loading="saving"
+              @click="saveBatchItem(d)"
+            >
+              确认保存
+            </el-button>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button :loading="probing" @click="onProbe">探测回答</el-button>
+        <el-button :loading="batchProbing" @click="onProbeBatch">多引擎探测</el-button>
+        <el-button @click="registerOpen = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="onSave">保存快照</el-button>
+      </template>
+    </el-dialog>
   </GeoWorkbenchPage>
 </template>
 
 <style scoped>
-.geo-vis { padding: 0 0 8px; }
-.mb { margin-bottom: 14px; }
-.collect-bar {
-  padding: 16px 18px;
-  margin-bottom: 16px;
+.mb { margin-bottom: 16px; }
+.collect-bd {
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
-.collect-copy strong {
-  display: block;
-  font-size: 14px;
-  color: #1e2330;
+.collect-bd :deep(.geo-set-row > span) {
+  flex: none;
+  white-space: nowrap;
 }
-.collect-copy p {
-  margin: 6px 0 0;
+.snap-table :deep(.gd-badge) {
+  white-space: nowrap;
+}
+.hint {
+  margin: 0 0 8px;
   font-size: 12px;
   color: #6b7280;
   line-height: 1.5;
 }
-.collect-controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-  margin-top: 12px;
-}
-.collect-schedule {
-  margin-top: 12px;
+.toolbar-hint {
+  margin-left: auto;
   font-size: 12px;
   color: #6b7280;
-}
-.collect-schedule summary {
-  cursor: pointer;
-  font-weight: 600;
-}
-.schedule-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-  margin-top: 10px;
-}
-.run-list {
-  margin: 10px 0 0;
-  padding-left: 18px;
-  line-height: 1.6;
-}
-.eval-kpis { margin-bottom: 16px; }
-.layout {
-  display: grid;
-  /* 左表单收窄，右列表吃满剩余宽度，避免半宽挤扁表格首字被裁切 */
-  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
-  gap: 14px;
-  align-items: start;
-}
-.panel {
-  background: #fff;
-  border: 1px solid #e8eaf0;
-  border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 8px 24px rgba(16, 24, 40, 0.04);
-  padding: 16px 18px;
-  min-width: 0;
-  overflow: hidden;
-}
-.panel-list {
-  overflow: visible;
-}
-.panel-title { font-size: 14px; font-weight: 600; color: #374151; margin-bottom: 12px; }
-.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
-.hint { margin: 0 0 8px; font-size: 12px; color: #9ca3af; line-height: 1.5; }
-.list-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
-.table-wrap {
-  width: 100%;
-  max-width: 100%;
-  overflow-x: auto;
-  overflow-y: visible;
-  -webkit-overflow-scrolling: touch;
-  border: 1px solid #f0f0f0;
-  border-radius: 8px;
-}
-.snap-table {
-  min-width: 720px;
-}
-.snap-table :deep(.el-table__cell) {
-  vertical-align: top;
 }
 .q-title {
   font-size: 13px;
@@ -1257,13 +975,16 @@ onMounted(reloadAll)
   word-break: break-word;
   white-space: normal;
 }
-.batch { margin-top: 18px; border-top: 1px solid #e5e7eb; padding-top: 14px; }
+.snap-table :deep(.el-table__cell) { vertical-align: top; }
+.panel-title { font-size: 14px; font-weight: 600; color: #374151; margin-bottom: 12px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.batch { margin-top: 8px; border-top: 1px solid #e5e7eb; padding-top: 14px; }
 .batch-item {
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
+  border: 1px solid #e8eaf0;
+  border-radius: 9px;
   padding: 10px 12px;
   margin-bottom: 8px;
-  background: #f9fafb;
+  background: #f6f7fb;
 }
 .batch-head { display: flex; gap: 8px; align-items: center; }
 .tag {
@@ -1276,26 +997,18 @@ onMounted(reloadAll)
 .tag.bad { background: #fef2f2; color: #b91c1c; }
 .tag.ok { background: #ecfdf5; color: #047857; }
 .err-line { color: #b91c1c; font-size: 12px; margin: 6px 0; }
-.queue { margin-top: 16px; }
+.queue { padding: 0 16px 16px; }
 .queue-item {
   display: block;
   width: 100%;
   text-align: left;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #e8eaf0;
   background: #fff;
-  border-radius: 6px;
+  border-radius: 9px;
   padding: 8px 10px;
   margin-bottom: 6px;
   cursor: pointer;
   font-size: 13px;
 }
-.queue-item:hover { border-color: #93c5fd; background: #eff6ff; }
-@media (max-width: 1100px) {
-  .layout { grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); }
-}
-@media (max-width: 900px) {
-  .layout { grid-template-columns: 1fr; }
-  .row2 { grid-template-columns: 1fr; }
-  .snap-table { min-width: 640px; }
-}
+.queue-item:hover { border-color: #ddd6fe; background: #f5f0ff; }
 </style>
