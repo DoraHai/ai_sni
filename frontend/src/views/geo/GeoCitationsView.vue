@@ -211,56 +211,69 @@ onMounted(load)
         <div class="panel-title-row">
           <div class="panel-title">引用来源</div>
         </div>
-        <div class="geo-filter-bar">
-          <el-input
-            v-model="domainQuery"
-            clearable
-            placeholder="搜索域名"
-            style="width: 200px"
-          />
-          <el-checkbox v-if="prototypeSurface.showCitationRawMetrics" v-model="ownOnly">仅看自有域</el-checkbox>
-          <span class="geo-muted">当前 {{ citeItems.length }} 个域名</span>
-        </div>
-        <el-table
-          v-if="citeItems.length"
-          :data="pager.pagedItems"
-          size="small"
-          stripe
-          class="clickable-rows"
-          @row-click="openDomain"
-        >
-          <el-table-column prop="domain" label="域名" min-width="170" show-overflow-tooltip>
-            <template #default="{ row }">
-              <span class="row-link">{{ row.domain }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="cite_count" label="引用次数" width="96" />
-          <el-table-column prop="prompt_count" label="意图词数" width="96" />
-          <el-table-column label="引擎" min-width="140">
-            <template #default="{ row }">
-              {{ (row.engines || []).map(engineDisplay).join(' · ') || '—' }}
-            </template>
-          </el-table-column>
-          <el-table-column v-if="prototypeSurface.showCitationRawMetrics" label="蓝图渠道" min-width="140" show-overflow-tooltip>
-            <template #default="{ row }">
-              {{ row.blueprint_channel_name || row.blueprint_channel_key || '未匹配' }}
-            </template>
-          </el-table-column>
-          <el-table-column v-if="prototypeSurface.showCitationRawMetrics" label="域名归属" width="100">
-            <template #default="{ row }">
-              <span :class="row.is_own_domain ? 'geo-tag-own' : 'geo-tag-ext'">
-                {{ row.is_own_domain ? '自有' : '外部' }}
-              </span>
-            </template>
-          </el-table-column>
-          <el-table-column v-if="prototypeSurface.showCitationRawMetrics" label="" width="88" fixed="right">
-            <template #default>
-              <el-button link type="primary" size="small">看快照</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
+        <template v-if="citeItems.length">
+          <div class="geo-filter-bar">
+            <el-input
+              v-model="domainQuery"
+              clearable
+              placeholder="搜索域名"
+              style="width: 200px"
+            />
+            <el-checkbox v-if="prototypeSurface.showCitationRawMetrics" v-model="ownOnly">仅看自有域</el-checkbox>
+            <span class="geo-muted">当前 {{ citeItems.length }} 个域名</span>
+          </div>
+          <el-table
+            :data="pager.pagedItems"
+            size="small"
+            stripe
+            class="clickable-rows"
+            @row-click="openDomain"
+          >
+            <el-table-column prop="domain" label="域名" min-width="170" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span class="row-link">{{ row.domain }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="cite_count" label="引用次数" width="96" />
+            <el-table-column prop="prompt_count" label="意图词数" width="96" />
+            <el-table-column label="引擎" min-width="140">
+              <template #default="{ row }">
+                {{ (row.engines || []).map(engineDisplay).join(' · ') || '—' }}
+              </template>
+            </el-table-column>
+            <el-table-column v-if="prototypeSurface.showCitationRawMetrics" label="蓝图渠道" min-width="140" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ row.blueprint_channel_name || row.blueprint_channel_key || '未匹配' }}
+              </template>
+            </el-table-column>
+            <el-table-column v-if="prototypeSurface.showCitationRawMetrics" label="域名归属" width="100">
+              <template #default="{ row }">
+                <span :class="row.is_own_domain ? 'geo-tag-own' : 'geo-tag-ext'">
+                  {{ row.is_own_domain ? '自有' : '外部' }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column v-if="prototypeSurface.showCitationRawMetrics" label="" width="88" fixed="right">
+              <template #default>
+                <el-button link type="primary" size="small">看快照</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div class="geo-pager">
+            <el-pagination
+              background
+              layout="total, sizes, prev, pager, next"
+              :total="pager.total"
+              :page-size="pager.pageSize"
+              :current-page="pager.page"
+              :page-sizes="[10, 20, 50, 100]"
+              @current-change="pager.onPageChange"
+              @size-change="pager.onSizeChange"
+            />
+          </div>
+        </template>
         <GeoEmptyState
-          v-if="!citeItems.length"
+          v-else
           icon="▤"
           title="还没有可聚合的引用"
           desc="请先在「AI 可见度」登记含 URL 的回答，或跑巡检后刷新。"
@@ -270,18 +283,6 @@ onMounted(load)
             <router-link class="el-button" to="/geo/publishing">配置官网渠道</router-link>
           </template>
         </GeoEmptyState>
-        <div v-if="citeItems.length" class="geo-pager">
-          <el-pagination
-            background
-            layout="total, sizes, prev, pager, next"
-            :total="pager.total"
-            :page-size="pager.pageSize"
-            :current-page="pager.page"
-            :page-sizes="[10, 20, 50, 100]"
-            @current-change="pager.onPageChange"
-            @size-change="pager.onSizeChange"
-          />
-        </div>
       </section>
     </template>
     </div>
