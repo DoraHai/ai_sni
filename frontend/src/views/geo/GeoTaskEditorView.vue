@@ -1,8 +1,7 @@
 <script setup>
 /**
- * Vue 母稿编辑器 · 第一刀 + 第二刀
- * 一：Brief / 事实 / 生成 / 检查(Score)
- * 二：渠道稿 / 回填 URL / Webhook 推送
+ * Vue 母稿编辑器
+ * Brief / 母稿 / 渠道稿（勾选生成、预览、复制）/ 检查
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -44,6 +43,7 @@ import {
 } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { getGeoPrototypeEditorSurface } from '../../utils/geoEditorSurface'
+import RichTextMarkdownEditor from '../../components/RichTextMarkdownEditor.vue'
 
 function toastError(e, fallback) {
   const msg = formatGeoError(e, fallback)
@@ -1008,7 +1008,8 @@ async function generate() {
     const msg =
       bodyLen > 0
         ? `母稿已生成（${bodyLen} 字）· 状态 ${st}` +
-          (st === 'needs_fix' ? ' · 请点「检查就绪」并用补丁修齐规则' : '')
+          (st === 'needs_fix' ? ' · 请点「检查就绪」并用补丁修齐规则' : '') +
+          (editorSurface.showChannelVariants ? ' · 可到下方生成渠道稿' : '')
         : `生成返回成功但正文为空 · 状态 ${st}`
     generateHint.value = msg
     if (bodyLen > 0) {
@@ -1789,6 +1790,18 @@ const aiReview = computed(
 const patches = computed(
   () => checkResult.value?.patches || task.value?.rule_result?.patches || [],
 )
+function patchForCheck(code) {
+  return (patches.value || []).find((p) => p.code === code) || null
+}
+async function fixCheck(code) {
+  const patch = patchForCheck(code)
+  if (patch) {
+    await applyPatch(code)
+    return
+  }
+  ElMessage.info('暂无对应补丁，先点「检查就绪」生成可插入内容后再一键修复')
+  await runCheck()
+}
 const boundFacts = computed(() => task.value?.facts || [])
 const boundVerifiedCount = computed(
   () => boundFacts.value.filter((f) => f.trust_level === 'verified').length,
@@ -1808,6 +1821,12 @@ const infoGapOptions = computed(() => {
   return INFO_GAP_FALLBACK
 })
 const variants = computed(() => task.value?.variants || [])
+const hasMasterDraft = computed(
+  () => !!(task.value?.article || String(article.body_markdown || '').trim()),
+)
+const recordedPublications = computed(
+  () => task.value?.publications || impact.value?.publications || [],
+)
 const failedVariantItems = computed(() => {
   const fromTask = task.value?.variant_polish?.failed
   if (Array.isArray(fromTask) && fromTask.length) return fromTask
@@ -1829,6 +1848,32 @@ const nextStep = computed(() =>
 
 const foldBrief = ref(false)
 const foldFacts = ref(false)
+const factQuery = ref('')
+const factTrustFilter = ref('all')
+
+const filteredTrustedFacts = computed(() => {
+  const q = String(factQuery.value || '').trim().toLowerCase()
+  return (allFacts.value || []).filter((f) => {
+    if (factTrustFilter.value === 'verified' && f.trust_level !== 'verified') return false
+    if (factTrustFilter.value === 'needs_review' && f.trust_level !== 'needs_review') return false
+    if (!q) return true
+    const blob = `${f.id} ${f.title || ''} ${f.statement || ''}`.toLowerCase()
+    return blob.includes(q)
+  })
+})
+
+function isFactSelected(id) {
+  const nid = Number(id)
+  return (selectedFactIds.value || []).some((x) => Number(x) === nid)
+}
+
+function toggleFact(id) {
+  const nid = Number(id)
+  if (!Number.isFinite(nid) || nid <= 0) return
+  const cur = (selectedFactIds.value || []).map(Number)
+  if (cur.includes(nid)) selectedFactIds.value = cur.filter((x) => x !== nid)
+  else selectedFactIds.value = [...cur, nid]
+}
 
 function goNextStep() {
   const key = nextStep.value?.key
@@ -1928,20 +1973,21 @@ onMounted(load)
 
 <template>
   <div v-loading="loading" class="editor">
-    <div class="toolbar">
+    <div class="toolbar page-toolbar">
       <div class="left">
-        <el-button text type="primary" @click="router.push('/geo/tasks')">← 任务列表</el-button>
+        <el-button class="back-button" text type="primary" @click="router.push('/geo/tasks')">← 任务列表</el-button>
         <div class="meta">
-          <span class="title">任务 #{{ taskId }}</span>
+          <span class="title">内容编辑工作台</span>
           <span v-if="task" class="sub">
-            {{ task.title }}
-            · {{ taskStatusLabel(task.status) }}
-            · {{ pipelineLabel(task.pipeline_step) }}
+            #{{ taskId }} · {{ task.title }}
           </span>
         </div>
       </div>
       <div class="right">
-        <el-button @click="load">刷新</el-button>
+        <span v-if="task" class="task-state">
+          {{ taskStatusLabel(task.status) }} · {{ pipelineLabel(task.pipeline_step) }}
+        </span>
+        <el-button class="refresh-button" @click="load">刷新</el-button>
       </div>
     </div>
 
@@ -2080,9 +2126,79 @@ onMounted(load)
             </template>
           </el-form>
           <div class="trusted-materials">
-            <div class="trusted-materials-title">可信材料</div>
-            <div class="hint">母稿会使用知识库中已核验的资料；当前可用 {{ libraryVerifiedCount }} 条。</div>
-            <router-link to="/geo/facts">查看知识库</router-link>
+            <div class="trusted-materials-head">
+              <div>
+                <div class="trusted-materials-title">可信材料 · 事实卡</div>
+                <div class="hint">在左侧勾选事实，保存后母稿会引用这些材料。</div>
+              </div>
+              <router-link class="facts-link" to="/geo/facts">管理知识库</router-link>
+            </div>
+            <div class="trusted-status" :class="{ ready: factsBindReady }">
+              已绑 <b>{{ boundFacts.length }}</b>
+              · 已核验 <b>{{ boundVerifiedCount }}</b>/需≥3
+              · 库内 {{ libraryVerifiedCount }}
+            </div>
+            <div class="trusted-filters">
+              <el-input
+                v-model="factQuery"
+                clearable
+                size="small"
+                placeholder="搜索标题 / 内容 / ID"
+                class="trusted-search"
+              />
+              <el-radio-group v-model="factTrustFilter" size="small">
+                <el-radio-button label="all">全部</el-radio-button>
+                <el-radio-button label="verified">已核验</el-radio-button>
+                <el-radio-button label="needs_review">待核验</el-radio-button>
+              </el-radio-group>
+            </div>
+            <div class="fact-picker" role="listbox" aria-label="事实卡列表">
+              <label
+                v-for="f in filteredTrustedFacts"
+                :key="f.id"
+                class="fact-pick-row"
+                :class="{ selected: isFactSelected(f.id) }"
+              >
+                <input
+                  type="checkbox"
+                  class="fact-pick-check"
+                  :checked="isFactSelected(f.id)"
+                  @change="toggleFact(f.id)"
+                >
+                <div class="fact-pick-main">
+                  <div class="fact-pick-top">
+                    <span class="fact-pick-title">{{ f.title || '未命名事实' }}</span>
+                    <span class="fact-pick-trust" :class="f.trust_level || 'unknown'">
+                      {{ trustLabel(f.trust_level) }}
+                    </span>
+                  </div>
+                  <div class="fact-pick-meta">#{{ f.id }}</div>
+                  <div v-if="factSnippet(f, 72)" class="fact-pick-snippet">{{ factSnippet(f, 72) }}</div>
+                </div>
+              </label>
+              <div v-if="!filteredTrustedFacts.length" class="fact-pick-empty">
+                {{ allFacts.length ? '没有匹配的事实卡' : '知识库暂无事实，请先去补充' }}
+              </div>
+            </div>
+            <div class="trusted-actions">
+              <el-button
+                size="default"
+                :disabled="libraryVerifiedCount < 3"
+                :loading="busy === 'facts'"
+                @click="bindTopVerified(3)"
+              >
+                一键绑 3 条已核验
+              </el-button>
+              <el-button
+                size="default"
+                type="primary"
+                :loading="busy === 'facts'"
+                :disabled="!selectedFactIds.length"
+                @click="saveFacts"
+              >
+                保存绑定（{{ selectedFactIds.length }}）
+              </el-button>
+            </div>
           </div>
           </div>
         </el-card>
@@ -2274,8 +2390,11 @@ onMounted(load)
       <div class="col col-main">
         <el-card id="step-doc" shadow="never" class="card">
           <template #header>
-            <div class="card-head">
-              <span>文档</span>
+            <div class="card-head doc-card-head">
+              <div>
+                <div class="doc-heading">内容文档</div>
+                <div class="doc-heading-sub">编辑母稿，再生成各渠道版本</div>
+              </div>
               <div class="row-actions">
                 <el-button
                   v-if="docTab === 'master'"
@@ -2302,14 +2421,6 @@ onMounted(load)
                   @click="saveVariantBody"
                 >
                   保存渠道稿
-                </el-button>
-                <el-button
-                  v-if="docTab !== 'master'"
-                  size="small"
-                  :loading="busy === 'export'"
-                  @click="exportCurrentVariant"
-                >
-                  导出
                 </el-button>
                 <el-button size="small" @click="copyCurrentDoc">复制</el-button>
                 <el-button size="small" :loading="busy === 'check'" @click="runCheck">
@@ -2360,22 +2471,6 @@ onMounted(load)
             — 供内部改稿与结构检查，<b>不能直接当正式发布文</b>。
             请润色语气、删模板痕迹、核对事实后再推送。
           </div>
-          <div
-            v-else-if="editorSurface.showChannelVariants && isPublishReadyVariant"
-            class="channel-quality mb is-good"
-          >
-            <b>正式渠道稿（HTML 正稿）</b>
-            — 下方默认「正稿预览」无 ## / ** 标记；点顶部「复制」粘贴到平台后台。
-            推送前建议快速核对关键数字与来源。
-            <span v-if="currentVariantMeta?.display_name" class="muted">
-              · {{ currentVariantMeta.display_name }}
-            </span>
-          </div>
-          <div v-else-if="editorSurface.showChannelVariants" class="channel-quality mb is-warn">
-            <b>规则裁剪稿（非正式成稿）</b>
-            — 未走 AI 时接近母稿结构，不能当正式发布文。
-            请点下方「AI 生成正式渠道稿」。
-          </div>
 
           <el-tabs v-if="editorSurface.showChannelVariants" :model-value="docTab" class="mb" @tab-change="onDocTabChange">
             <el-tab-pane label="母稿草案" name="master" />
@@ -2388,23 +2483,28 @@ onMounted(load)
           </el-tabs>
 
           <template v-if="docTab === 'master'">
-            <el-form label-width="56px" size="small">
-              <el-form-item label="标题">
-                <el-input v-model="article.title" />
-              </el-form-item>
-              <el-form-item label="正文">
+            <el-form class="doc-form" label-position="top" size="small">
+              <el-form-item label="文章标题" class="title-form-item">
                 <el-input
-                  :key="`master-body-${task?.article?.version_no || 0}-${(article.body_markdown || '').length}`"
+                  v-model="article.title"
+                  class="article-title-input"
+                  size="large"
+                  placeholder="输入一个清晰、可被搜索和引用的标题"
+                />
+              </el-form-item>
+              <el-form-item label="正文内容" class="body-form-item">
+                <RichTextMarkdownEditor
+                  :key="`master-body-${task?.article?.version_no || 0}`"
                   v-model="article.body_markdown"
-                  type="textarea"
-                  :rows="16"
-                  placeholder="Markdown 母稿草案（需人工润色）"
+                  :min-height="520"
+                  placeholder="在这里编辑母稿正文。支持标题、加粗、列表、引用和链接…"
                 />
               </el-form-item>
             </el-form>
-            <div v-if="task.article" class="hint">
-              草案 v{{ task.article.version_no }} · {{ task.article.created_at || '' }}
-              · 正文字数 {{ (article.body_markdown || '').length }}
+            <div v-if="task.article" class="document-meta">
+              <span>草案 v{{ task.article.version_no }}</span>
+              <span>{{ task.article.created_at || '' }}</span>
+              <span>{{ (article.body_markdown || '').replace(/\s/g, '').length }} 字</span>
             </div>
             <div v-if="editorSurface.showFactBinding && sentenceCites.length" class="cite-box mb">
               <div class="cite-head">
@@ -2443,43 +2543,23 @@ onMounted(load)
               </div>
             </div>
             <div class="hint">重新「生成母稿」会覆盖当前正文</div>
+            <div
+              v-if="editorSurface.showChannelVariants && hasMasterDraft"
+              class="channel-next-hint"
+            >
+              母稿就绪后，在下方勾选渠道并生成渠道稿。
+            </div>
           </template>
           <template v-else-if="editorSurface.showChannelVariants">
-            <div class="hint mb">
-              渠道 {{ channelLabel(docTab) }} · 状态 {{ variants.find((v) => v.channel === docTab)?.status || '—' }}
-              <span v-if="variants.find((v) => v.channel === docTab)?.stale"> · 母稿已变需重生</span>
-              <span v-if="currentVariantQualityLabel"> · {{ currentVariantQualityLabel }}</span>
-              <span v-if="currentVariantHasTable"> · 含对比表</span>
-            </div>
             <el-form label-width="56px" size="small">
               <el-form-item label="标题">
                 <el-input v-model="variantEdit.title" />
               </el-form-item>
               <el-form-item label="正文">
-                <div class="variant-body-wrap">
-                  <div class="variant-view-toggle mb">
-                    <el-radio-group v-model="variantViewMode" size="small">
-                      <el-radio-button label="preview">正稿预览（发布样式）</el-radio-button>
-                      <el-radio-button label="source">源码改写（高级）</el-radio-button>
-                    </el-radio-group>
-                    <span class="muted small">复制按钮默认复制 HTML 正稿，不是 ## 标记</span>
-                  </div>
-                  <div
-                    v-if="variantViewMode === 'preview'"
-                    class="variant-html-preview"
-                    v-html="variantEdit.body_html || '<p class=muted>暂无 HTML，请重新「AI 生成正式渠道稿」或点导出</p>'"
-                  />
-                  <el-input
-                    v-else
-                    v-model="variantEdit.body_markdown"
-                    type="textarea"
-                    :rows="16"
-                    placeholder="内部改写用结构化文本；保存后会重新生成 HTML 正稿"
-                  />
-                  <div v-if="variantViewMode === 'source'" class="hint">
-                    改完请点「保存渠道稿」，系统会重算 HTML 表格正稿。
-                  </div>
-                </div>
+                <div
+                  class="variant-html-preview"
+                  v-html="variantEdit.body_html || '<p class=muted>暂无预览，请先生成渠道稿</p>'"
+                />
               </el-form-item>
             </el-form>
           </template>
@@ -2488,231 +2568,80 @@ onMounted(load)
         <el-card v-if="editorSurface.showChannelVariants" id="step-publish" shadow="never" class="card">
           <template #header>
             <div class="card-head">
-              <span>渠道成稿 · 内容检查 · 发布</span>
-              <el-button size="small" type="primary" :loading="busy === 'variants'" @click="genVariants">
-                AI 生成正式渠道稿
+              <span>渠道稿</span>
+              <el-button
+                size="small"
+                type="primary"
+                :loading="busy === 'variants'"
+                :disabled="!hasMasterDraft"
+                @click="genVariants"
+              >
+                生成渠道稿
               </el-button>
             </div>
           </template>
-          <div class="hint mb">
-            勾选几个就出几个页签。三路并行调模型，大约 1～2 分钟；不过门控也会留非正式稿。
-            正式稿可复制发布；关键数字建议发布前扫一眼。
-          </div>
-          <el-checkbox-group v-model="channelPick" class="mb">
+          <el-alert
+            v-if="!hasMasterDraft"
+            type="info"
+            show-icon
+            :closable="false"
+            class="mb"
+            title="请先生成母稿"
+            description="有母稿正文后，才能按官网 / 微信 / 知乎等渠道拆稿。"
+          />
+          <p class="hint mb">勾选渠道后生成，可在上方页签查看和复制。</p>
+          <el-checkbox-group v-model="channelPick">
             <el-checkbox
               v-for="c in channelOptions"
               :key="c.key"
               :label="c.key"
             >
-              {{ c.label }} ({{ c.key }})
+              {{ c.label }}
             </el-checkbox>
           </el-checkbox-group>
+        </el-card>
+
+        <el-card
+          v-if="editorSurface.showChannelVariants"
+          id="step-publish-record"
+          shadow="never"
+          class="card"
+        >
+          <template #header>
+            <div class="card-head">
+              <span>记录发布</span>
+            </div>
+          </template>
+          <p class="hint mb">复制渠道稿到平台后，把已发 URL 填回来。这里不自动推送。</p>
           <el-alert
-            v-if="failedVariantItems.length"
-            type="warning"
-            show-icon
+            v-if="publishGateHint"
+            type="info"
             :closable="false"
+            show-icon
             class="mb"
+            :title="publishGateHint"
+          />
+          <el-input
+            v-model="publishUrl"
+            placeholder="https:// 已发布地址"
+            class="mb"
+          />
+          <el-button
+            type="primary"
+            :loading="busy === 'publish'"
+            :disabled="!!publishGateHint"
+            @click="recordPublication"
           >
-            <template #title>
-              勾选 {{ channelPick.length }} 个渠道，已出稿 {{ variants.length }} 个
-              <template v-if="failedVariantItems.length">
-                · 其中 {{ failedVariantItems.length }} 个非正式（未过门控，可改后再重试）
-              </template>
-            </template>
-            <ul class="variant-fail-list">
-              <li v-for="f in failedVariantItems" :key="f.channel">
-                <b>{{ channelLabel(f.channel) }}</b>
-                ：{{ (f.issues && f.issues[0]) || f.message || '未达完整文章标准' }}
-              </li>
-            </ul>
-            <el-button size="small" :loading="busy === 'variants'" @click="retryFailedVariants">
-              重试失败渠道
-            </el-button>
-          </el-alert>
-
-          <div v-if="channelBlueprint?.channels?.length" class="blueprint-box mb">
-            <div class="blueprint-title">
-              分发推荐（问题组：{{ channelBlueprint.group || '推荐' }}）
-            </div>
-            <ul class="blueprint-list">
-              <li v-for="ch in channelBlueprint.channels.slice(0, 6)" :key="ch.channel_key || ch.id">
-                <b>{{ ch.channel_name || ch.name || ch.channel_key }}</b>
-                <span class="muted"> · {{ ch.priority_band || ch.band || '—' }}</span>
-                <span v-if="ch.placement_status" class="muted"> · 阵地 {{ ch.placement_status }}</span>
-                <div v-if="ch.why || ch.reason" class="muted small">{{ ch.why || ch.reason }}</div>
-              </li>
-            </ul>
-          </div>
-
-          <el-divider content-position="left">回填 / 一键推送</el-divider>
-          <div v-if="publishGateHint" class="hint mb" style="color: #b45309">
-            门禁：{{ publishGateHint }}
-          </div>
-          <el-form label-width="100px" size="small">
-            <el-form-item label="发布 URL">
-              <el-input v-model="publishUrl" placeholder="https://..." />
-            </el-form-item>
-            <el-form-item label="备注">
-              <el-input v-model="publishNote" />
-            </el-form-item>
-            <el-form-item label="推送账号">
-              <el-select
-                v-model="webhookAccountId"
-                clearable
-                style="width: 100%"
-                placeholder="Webhook 或社交 social_api"
-              >
-                <el-option
-                  v-for="a in webhookAccountsForChannel"
-                  :key="a.id"
-                  :label="`${a.display_name} · ${a.auth_type || 'webhook'} (#${a.id})`"
-                  :value="a.id"
-                />
-              </el-select>
-            </el-form-item>
-          </el-form>
-          <div class="row-actions">
-            <el-button
-              size="small"
-              type="primary"
-              :loading="busy === 'publish'"
-              :title="publishGateHint || '回填发布 URL'"
-              @click="recordPublication"
+            记录已发
+          </el-button>
+          <ul v-if="recordedPublications.length" class="hint" style="margin-top: 12px">
+            <li
+              v-for="p in recordedPublications"
+              :key="p.id || p.published_url"
             >
-              回填 URL
-            </el-button>
-            <el-button
-              size="small"
-              :loading="busy === 'push'"
-              :title="publishGateHint || 'Webhook / 社交直发'"
-              @click="pushWebhook"
-            >
-              推送当前渠道
-            </el-button>
-          </div>
-
-          <el-divider content-position="left">多媒自动推送</el-divider>
-          <p class="hint mb">
-            就绪 = auto_publish + 凭证 + 渠道稿已导出。只差配置的项见「发布渠道」矩阵。
-            <el-button link type="primary" size="small" @click="loadPushTargets">刷新目标</el-button>
-          </p>
-          <el-checkbox-group v-if="pushTargets.length" v-model="pushSelected" class="mb">
-            <div v-for="t in pushTargets" :key="`${t.adapt_key}-${t.account_id || t.channel_id}`" class="push-row">
-              <el-checkbox
-                v-if="t.ready"
-                :label="`${t.adapt_key || t.channel_type}:${t.account_id}`"
-              >
-                <b>{{ t.channel_name }}</b>
-                <span class="muted"> · {{ t.channel_type }} · {{ t.push_kind || t.auth_type }}</span>
-              </el-checkbox>
-              <div v-else class="push-blocked">
-                <span class="muted">{{ t.channel_name }}（{{ t.channel_type }}）</span>
-                <span class="blocked"> — {{ (t.block_reasons || []).join('；') }}</span>
-              </div>
-            </div>
-          </el-checkbox-group>
-          <p v-else class="hint mb">暂无自动推送目标，请先在「发布渠道」一键开启多媒包并配置凭证。</p>
-          <div class="row-actions">
-            <el-button
-              size="small"
-              type="primary"
-              :loading="pushBatchBusy"
-              @click="pushBatchSelected"
-            >
-              推送勾选渠道
-            </el-button>
-            <el-button size="small" :loading="pushBatchBusy" @click="pushBatchAllReady">
-              一键推送全部就绪
-            </el-button>
-            <router-link class="el-button el-button--small" to="/geo/publishing">管理渠道账号</router-link>
-          </div>
-          <div class="hint mt">
-            推送前通常需「导出」渠道稿，并完成内容检查与事实核验。
-          </div>
-
-          <el-divider id="step-impact" content-position="left">发布后效果</el-divider>
-          <div v-loading="impactLoading" class="impact-panel">
-            <div class="row-actions mb">
-              <el-select v-model="impactWindowDays" size="small" style="width: 110px" @change="loadImpact">
-                <el-option :value="7" label="±7 天" />
-                <el-option :value="14" label="±14 天" />
-                <el-option :value="30" label="±30 天" />
-              </el-select>
-              <el-button size="small" :loading="impactLoading" @click="loadImpact">刷新</el-button>
-            </div>
-            <template v-if="impact">
-              <div class="hint mb" v-if="!impact.summary?.published_count">
-                尚未回填发布 URL。发布后系统会把引用 URL 反查到本篇，并对比发布前后提及率。
-              </div>
-              <template v-else>
-                <el-alert
-                  v-if="impactInsufficient"
-                  type="warning"
-                  show-icon
-                  :closable="false"
-                  class="mb"
-                  :title="impactActionHint || '数据不足以判断'"
-                  description="任一侧快照不足阈值时不展示变化率。建议提高巡检频率或延长观察期。"
-                />
-                <div class="impact-kpis">
-                  <div class="impact-kpi">
-                    <div class="ik-label">引用命中</div>
-                    <div class="ik-value">{{ impact.cite_hits?.total ?? 0 }}</div>
-                    <div class="ik-hint">快照中匹配本篇 URL</div>
-                  </div>
-                  <div class="impact-kpi">
-                    <div class="ik-label">发布前提及率</div>
-                    <div class="ik-value">
-                      {{
-                        impactInsufficient
-                          ? '—'
-                          : fmtRate(impact.prompt_mention?.before?.mention_rate)
-                      }}
-                    </div>
-                    <div class="ik-hint">
-                      样本 {{ impact.prompt_mention?.before?.snapshot_count ?? 0 }}
-                    </div>
-                  </div>
-                  <div class="impact-kpi">
-                    <div class="ik-label">发布后提及率</div>
-                    <div class="ik-value">
-                      {{
-                        impactInsufficient
-                          ? '—'
-                          : fmtRate(impact.prompt_mention?.after?.mention_rate)
-                      }}
-                    </div>
-                    <div class="ik-hint">
-                      样本 {{ impact.prompt_mention?.after?.snapshot_count ?? 0 }}
-                      <template v-if="!impactInsufficient">
-                        · Δ {{ fmtDelta(impact.prompt_mention?.delta_mention_rate) }}
-                      </template>
-                    </div>
-                  </div>
-                </div>
-                <p v-if="impact.net_effect_vs_control != null && !impactInsufficient" class="hint">
-                  净效应（处理 − 对照）
-                  <b>{{ fmtDelta(impact.net_effect_vs_control) }}</b>
-                  · 置信度 {{ impact.confidence || impact.summary?.confidence || '—' }}
-                </p>
-                <p v-else-if="impact.prompt_mention?.methodology_note" class="hint">
-                  {{ impact.prompt_mention.methodology_note }}
-                </p>
-                <ul v-if="impact.publications?.length" class="impact-pubs">
-                  <li v-for="p in impact.publications" :key="p.id">
-                    <a :href="p.published_url" target="_blank" rel="noopener">{{ p.channel }}</a>
-                    <span class="muted"> · 命中 {{ p.cite_hit_count || 0 }}</span>
-                  </li>
-                </ul>
-                <p class="hint mt">
-                  首次发布 {{ impact.first_published_at || '—' }} ·
-                  对比窗 ±{{ impact.window_days }} 天 · 相关意图词 #{{ impact.prompt_id }}
-                </p>
-              </template>
-            </template>
-            <p v-else class="hint">加载效果数据…</p>
-          </div>
+              {{ channelLabel(p.channel) }} · {{ p.published_url }}
+            </li>
+          </ul>
         </el-card>
       </div>
 
@@ -2767,32 +2696,36 @@ onMounted(load)
             </div>
           </div>
 
-          <div v-if="editorSurface.showChannelVariants" class="channel-pill mb" :class="liveChannelCoverage.ok ? 'is-ok' : 'is-warn'">
-            <span class="pill-mark">{{ liveChannelCoverage.ok ? '✓' : '!' }}</span>
-            <div>
-              <div class="pill-title">
-                {{ liveChannelCoverage.ok ? '渠道稿已齐' : '渠道稿未齐' }}
-              </div>
-              <div class="pill-desc">
-                目标 {{ channelListLabel(liveChannelCoverage.targets) }}
-                · 已有 {{ channelListLabel(liveChannelCoverage.present) }}
-                <template v-if="liveChannelCoverage.missing.length">
-                  · 还缺 {{ channelListLabel(liveChannelCoverage.missing) }}
-                </template>
-              </div>
-            </div>
-          </div>
-
           <div v-if="failedChecks.length" class="sec-row">
             <span class="sec">待补齐 {{ failedChecks.length }}</span>
           </div>
           <ul v-if="failedChecks.length" class="check-list fail-list">
             <li v-for="c in failedChecks" :key="c.code">
               <span class="bad">✗</span>
-              <div>
+              <div class="check-body">
                 <div class="check-title">{{ c.label }}</div>
                 <div class="check-msg">{{ c.message }}</div>
                 <div v-if="c.action" class="check-action">{{ c.action }}</div>
+                <div class="check-fix-row">
+                  <el-button
+                    v-if="patchForCheck(c.code)"
+                    size="small"
+                    type="primary"
+                    :loading="busy === 'patch'"
+                    @click="fixCheck(c.code)"
+                  >
+                    一键修复
+                  </el-button>
+                  <el-button
+                    v-else
+                    size="small"
+                    plain
+                    :loading="busy === 'check' || busy === 'patch'"
+                    @click="fixCheck(c.code)"
+                  >
+                    检查并尝试修复
+                  </el-button>
+                </div>
               </div>
             </li>
           </ul>
@@ -2829,11 +2762,11 @@ onMounted(load)
             </ul>
           </div>
 
-          <div v-if="editorSurface.showFactBinding && patches.length" class="mt patch-box">
+          <div v-if="patches.length" class="mt patch-box">
             <div class="sec">一键补结构（写入母稿，仍需人工改）</div>
             <div class="row-actions">
               <el-button
-                size="small"
+                size="default"
                 type="warning"
                 plain
                 :loading="busy === 'patch'"
@@ -2844,7 +2777,7 @@ onMounted(load)
               <el-button
                 v-for="p in patches"
                 :key="p.code"
-                size="small"
+                size="default"
                 :loading="busy === 'patch'"
                 @click="applyPatch(p.code)"
               >
@@ -2852,10 +2785,10 @@ onMounted(load)
               </el-button>
             </div>
           </div>
-          <div v-else-if="editorSurface.showFactBinding && failedChecks.length" class="mt patch-box">
+          <div v-else-if="failedChecks.length" class="mt patch-box">
             <div class="sec">一键补结构</div>
-            <div class="hint mb">当前无补丁缓存，请先点上方「检查就绪」生成可插入补丁。</div>
-            <el-button size="small" type="warning" plain :loading="busy === 'check'" @click="runCheck">
+            <div class="hint mb">当前无补丁缓存，请先点「检查就绪」生成可插入补丁。</div>
+            <el-button size="default" type="warning" plain :loading="busy === 'check'" @click="runCheck">
               检查就绪并生成补丁
             </el-button>
           </div>
@@ -2886,15 +2819,89 @@ onMounted(load)
 </template>
 
 <style scoped>
-.editor { padding: 4px 2px 28px; max-width: none; width: 100%; }
+.editor {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+  min-height: calc(100vh - 24px);
+  padding: 16px 20px 40px;
+  background:
+    radial-gradient(900px 320px at 12% -8%, rgba(124, 58, 237, 0.07), transparent 60%),
+    radial-gradient(700px 280px at 92% 0%, rgba(99, 102, 241, 0.05), transparent 55%),
+    linear-gradient(180deg, #f5f6fa 0%, #f7f8fb 100%);
+}
 .toolbar {
   display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
-  margin-bottom: 12px; align-items: center;
+  margin-bottom: 14px; align-items: center;
 }
-.left, .right, .row-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.meta { display: flex; flex-direction: column; }
-.title { font-weight: 700; color: #1e2330; }
-.sub { font-size: 13px; color: #64748b; }
+.page-toolbar {
+  min-height: 58px;
+  padding: 10px 14px 10px 10px;
+  border: 1px solid rgba(232, 234, 240, 0.95);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 24px rgba(30, 35, 48, 0.04);
+}
+.left, .right, .row-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.channel-next-hint {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid #ebe4f8;
+  border-radius: 10px;
+  background: #fbf9ff;
+  color: #5b5670;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.channel-next-hint a { color: #6d28d9; font-weight: 600; }
+.meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding-left: 14px;
+  border-left: 1px solid #ebecef;
+}
+.title { font-size: 16px; font-weight: 750; color: #161b26; letter-spacing: -0.02em; line-height: 1.3; }
+.sub {
+  max-width: min(520px, 46vw);
+  overflow: hidden;
+  color: #8a93a3;
+  font-size: 12px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.back-button { font-weight: 600; }
+.task-state {
+  padding: 5px 10px;
+  border: 1px solid #ebe4f8;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #fbf9ff, #f6f2fc);
+  color: #6b5b8a;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.refresh-button { margin-left: 2px; }
+.editor :deep(.el-button) {
+  --el-button-size: 36px;
+  height: 36px;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 650;
+  border-radius: 10px;
+}
+.editor :deep(.el-button--small) {
+  --el-button-size: 32px;
+  height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+.editor :deep(.el-button.is-text) {
+  height: auto;
+  padding: 6px 10px;
+}
 .next-step {
   display: flex;
   justify-content: space-between;
@@ -2937,70 +2944,146 @@ onMounted(load)
 .mt { margin-top: 12px; }
 .grid {
   display: grid;
-  /* 大屏：左 Brief · 中文档 · 右 Score，中间优先吃宽 */
-  grid-template-columns: minmax(280px, 0.85fr) minmax(0, 2.4fr) minmax(300px, 1fr);
-  gap: 14px;
+  grid-template-columns: clamp(300px, 22vw, 340px) minmax(0, 1fr) clamp(320px, 24vw, 360px);
+  gap: 20px;
   align-items: start;
   width: 100%;
 }
 @media (min-width: 1800px) {
   .grid {
-    grid-template-columns: minmax(320px, 0.9fr) minmax(0, 2.6fr) minmax(340px, 1.05fr);
-    gap: 16px;
+    grid-template-columns: 340px minmax(0, 1fr) 360px;
+    gap: 22px;
   }
 }
-@media (max-width: 1280px) {
+@media (max-width: 1320px) {
   .grid {
-    grid-template-columns: minmax(240px, 280px) minmax(0, 1fr) minmax(260px, 300px);
+    grid-template-columns: 300px minmax(0, 1fr);
+  }
+  .col-rail {
+    position: static;
+    grid-column: 1 / -1;
+    max-height: none;
+  }
+  .rail-card {
+    max-height: none;
   }
 }
-@media (max-width: 1100px) {
+@media (max-width: 920px) {
   .grid { grid-template-columns: 1fr; }
-  .col-rail { order: -1; }
+  .col-rail { grid-column: auto; }
   .rail-card {
     position: static;
     max-height: none;
   }
+  .editor { padding: 10px; }
+  .sub { max-width: 60vw; }
 }
-.col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .col-rail {
   position: sticky;
-  top: 12px;
+  top: 14px;
   align-self: start;
   max-height: calc(100vh - 88px);
 }
 .rail-card {
   max-height: calc(100vh - 88px);
   overflow: auto;
-  border: 1px solid #e8e4f5;
-  background: #fcfbff;
+  border: 1px solid #ebe6f5 !important;
+  background: linear-gradient(180deg, #fffeff 0%, #fbfaff 100%) !important;
+  box-shadow: 0 10px 28px rgba(88, 60, 160, 0.05) !important;
 }
 .rail-card :deep(.el-card__header) {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: #fcfbff;
+  background: linear-gradient(180deg, #fffeff, #fbfaff);
+  border-bottom-color: #efeaf8;
 }
 .card {
-  border-radius: 14px;
+  border: 1px solid #e8eaef;
+  border-radius: 16px;
   overflow: hidden;
+  box-shadow: 0 8px 26px rgba(30, 35, 48, 0.045);
+  background: #fff;
 }
 .card :deep(.el-card__header) {
-  padding: 12px 14px;
+  padding: 16px 18px;
+  border-bottom-color: #f0f2f6;
+  background: linear-gradient(180deg, #fcfcfd 0%, #fff 100%);
 }
 .card :deep(.el-card__body) {
-  padding: 14px 14px 16px;
+  padding: 18px 18px 20px;
 }
 .card :deep(.el-form-item) {
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 .card :deep(.el-form-item__label) {
   font-size: 12px !important;
+  color: #647082 !important;
+  font-weight: 650 !important;
+}
+.card :deep(.el-input__wrapper),
+.card :deep(.el-select__wrapper) {
+  border-radius: 9px;
+  box-shadow: 0 0 0 1px #e4e7ee inset;
+}
+.card :deep(.el-input__wrapper:hover),
+.card :deep(.el-select__wrapper:hover) {
+  box-shadow: 0 0 0 1px #cfc6e8 inset;
+}
+.card :deep(.el-input__wrapper.is-focus),
+.card :deep(.el-select__wrapper.is-focused) {
+  box-shadow: 0 0 0 1px #8b5cf6 inset, 0 0 0 3px rgba(124, 58, 237, 0.1) !important;
 }
 .card-head {
-  display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;
+  display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;
   font-weight: 650;
-  color: #0f172a;
+  color: #151a24;
+}
+.doc-card-head { flex-wrap: nowrap; }
+.col-main > .card:first-child {
+  box-shadow: 0 10px 32px rgba(30, 35, 48, 0.05);
+  border-color: #e4e7ef;
+}
+.doc-heading { color: #121826; font-size: 15px; font-weight: 750; letter-spacing: -0.02em; line-height: 1.3; }
+.doc-heading-sub { margin-top: 3px; color: #95a0b0; font-size: 12px; font-weight: 400; }
+.doc-form :deep(.el-form-item__label) {
+  height: auto;
+  margin-bottom: 7px;
+  color: #586274;
+  font-weight: 650;
+  line-height: 1.35;
+}
+.title-form-item { margin-bottom: 18px !important; }
+.body-form-item { margin-bottom: 8px !important; }
+.article-title-input :deep(.el-input__wrapper) {
+  min-height: 48px;
+  padding: 0 16px;
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px #e2e6ee inset;
+  background: #fafbfd;
+}
+.article-title-input :deep(.el-input__wrapper.is-focus) {
+  background: #fff;
+}
+.article-title-input :deep(.el-input__inner) {
+  color: #121826;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.document-meta {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 2px 0 10px;
+  color: #98a1af;
+  font-size: 11px;
+}
+.document-meta span + span::before {
+  margin-right: 8px;
+  color: #d4d8df;
+  content: '·';
 }
 .hint { font-size: 12px; color: #8b93a7; }
 .impact-panel { min-height: 48px; }
@@ -3039,13 +3122,13 @@ onMounted(load)
 .push-blocked { font-size: 12px; line-height: 1.4; }
 .blocked { color: #b45309; }
 .doc-draft-banner {
-  font-size: 12px;
-  line-height: 1.55;
-  color: #9a3412;
-  background: #fff7ed;
-  border: 1px solid #fdba74;
-  border-radius: 8px;
-  padding: 8px 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: #7c4a1e;
+  background: linear-gradient(180deg, #fffaf3, #fff6eb);
+  border: 1px solid #f0d9b5;
+  border-radius: 10px;
+  padding: 10px 14px;
 }
 .channel-quality {
   font-size: 12px;
@@ -3132,47 +3215,47 @@ onMounted(load)
   background: #f8fafc;
   color: #475569;
 }
-.rail-title { font-weight: 700; font-size: 14px; color: #1e2330; line-height: 1.3; }
-.rail-sub { font-size: 11px; color: #8b93a7; margin-top: 2px; }
+.rail-title { font-weight: 750; font-size: 14px; color: #161b26; letter-spacing: -0.01em; line-height: 1.3; }
+.rail-sub { font-size: 11px; color: #8f98a8; margin-top: 3px; }
 .draft-banner {
   font-size: 12px;
   line-height: 1.55;
-  color: #92400e;
-  background: #fffbeb;
-  border: 1px solid #fde68a;
-  border-radius: 8px;
-  padding: 8px 10px;
+  color: #6b4c1f;
+  background: linear-gradient(180deg, #fffaf2, #fff7eb);
+  border: 1px solid #eed9b5;
+  border-radius: 10px;
+  padding: 10px 12px;
 }
 .score-block {
-  border-radius: 10px;
-  padding: 12px;
-  margin-bottom: 12px;
-  background: #f8fafc;
-  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 14px;
+  background: linear-gradient(160deg, #f8f6ff 0%, #f5f7fb 100%);
+  border: 1px solid #ebe4f7;
 }
-.score-block.tone-good { background: #ecfdf5; border-color: #a7f3d0; }
-.score-block.tone-warn { background: #fffbeb; border-color: #fde68a; }
-.score-block.tone-bad { background: #fef2f2; border-color: #fecaca; }
-.score-row { display: flex; gap: 12px; align-items: center; }
-.score-num { min-width: 72px; }
-.score-big { font-size: 32px; font-weight: 750; color: #1e2330; line-height: 1; font-variant-numeric: tabular-nums; }
-.score-den { font-size: 13px; color: #9ca3af; margin-left: 2px; }
+.score-block.tone-good { background: linear-gradient(160deg, #f0fdf7, #f7faf8); border-color: #b7ebd0; }
+.score-block.tone-warn { background: linear-gradient(160deg, #fff9ef, #faf8f4); border-color: #f0d9a0; }
+.score-block.tone-bad { background: linear-gradient(160deg, #fff5f5, #faf7f7); border-color: #f3c4c4; }
+.score-row { display: flex; gap: 14px; align-items: center; }
+.score-num { min-width: 78px; }
+.score-big { font-size: 36px; font-weight: 780; color: #161b26; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; }
+.score-den { font-size: 13px; color: #9aa3b2; margin-left: 2px; }
 .muted-num { color: #cbd5e1; }
-.score-label { font-size: 13px; font-weight: 650; color: #374151; }
-.score-hint { font-size: 11px; color: #6b7280; margin-top: 2px; line-height: 1.4; }
+.score-label { font-size: 13px; font-weight: 700; color: #2f3747; }
+.score-hint { font-size: 11px; color: #748094; margin-top: 3px; line-height: 1.45; }
 .score-bar {
-  height: 6px; border-radius: 999px; background: #e5e7eb; margin-top: 10px; overflow: hidden;
+  height: 7px; border-radius: 999px; background: rgba(15, 23, 42, 0.08); margin-top: 12px; overflow: hidden;
 }
-.score-bar-fill { height: 100%; background: #7c3aed; border-radius: 999px; }
-.tone-good .score-bar-fill { background: #059669; }
-.tone-warn .score-bar-fill { background: #d97706; }
-.tone-bad .score-bar-fill { background: #dc2626; }
-.score-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.score-bar-fill { height: 100%; background: linear-gradient(90deg, #8b5cf6, #7c3aed); border-radius: 999px; }
+.tone-good .score-bar-fill { background: linear-gradient(90deg, #34d399, #059669); }
+.tone-warn .score-bar-fill { background: linear-gradient(90deg, #fbbf24, #d97706); }
+.tone-bad .score-bar-fill { background: linear-gradient(90deg, #f87171, #dc2626); }
+.score-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .score-chip {
-  font-size: 11px; color: #4b5563; background: #fff; border: 1px solid #e5e7eb;
-  border-radius: 999px; padding: 2px 8px; font-variant-numeric: tabular-nums;
+  font-size: 11px; color: #4b5563; background: rgba(255,255,255,0.88); border: 1px solid #e7eaf0;
+  border-radius: 999px; padding: 3px 9px; font-variant-numeric: tabular-nums; font-weight: 600;
 }
-.score-chip.low { color: #b45309; border-color: #fcd34d; background: #fffbeb; }
+.score-chip.low { color: #b45309; border-color: #f5d78a; background: #fff8e8; }
 .channel-pill {
   display: flex; gap: 8px; align-items: flex-start;
   border-radius: 8px; padding: 8px 10px; border: 1px solid #e5e7eb; background: #fff;
@@ -3197,10 +3280,13 @@ onMounted(load)
   color: #6d28d9; font-size: 12px; cursor: pointer; text-align: left;
 }
 .toggle-passed:hover { background: #f3e8ff; }
-.check-list { list-style: none; padding: 0; margin: 0; }
+.check-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
 .check-list li {
-  display: flex; gap: 8px; padding: 8px 0; border-bottom: 1px solid #f3f0fa; font-size: 12px;
+  display: flex; gap: 10px; padding: 10px 11px; border: 1px solid #f0ecf8; border-radius: 10px;
+  background: #fffeff; font-size: 12px;
 }
+.fail-list li { border-color: #f3e0e0; background: #fffbfb; }
+.pass-list li { border-color: #e7f3ec; background: #fbfefc; }
 .check-title { font-weight: 650; color: #1f2937; line-height: 1.35; }
 .check-msg { color: #6b7280; margin-top: 2px; line-height: 1.45; }
 .check-action { color: #7c3aed; margin-top: 3px; line-height: 1.4; font-size: 11px; }
@@ -3233,6 +3319,150 @@ onMounted(load)
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.trusted-materials {
+  margin-top: 6px;
+  padding: 14px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #faf9ff, #f7f8fc);
+  border: 1px solid #ebe7f5;
+}
+.trusted-materials-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.trusted-materials-title {
+  font-size: 13px;
+  font-weight: 750;
+  color: #3f3558;
+}
+.trusted-materials .hint {
+  margin-top: 3px;
+  margin-bottom: 0;
+  line-height: 1.45;
+}
+.facts-link {
+  flex: none;
+  font-size: 12px;
+  font-weight: 650;
+  color: #7c3aed;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.facts-link:hover { text-decoration: underline; }
+.trusted-status {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  color: #9a3412;
+  font-size: 12px;
+}
+.trusted-status.ready {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  color: #047857;
+}
+.trusted-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.trusted-search { width: 100%; }
+.fact-picker {
+  max-height: 280px;
+  overflow: auto;
+  margin-bottom: 10px;
+  padding: 4px;
+  border: 1px solid #e8eaf0;
+  border-radius: 10px;
+  background: #fff;
+}
+.fact-pick-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 0;
+  padding: 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.fact-pick-row + .fact-pick-row { border-top: 1px solid #f1f3f7; }
+.fact-pick-row:hover { background: #f8f7fc; }
+.fact-pick-row.selected {
+  background: #f5f0ff;
+  border-color: #ddd6fe;
+}
+.fact-pick-check {
+  margin-top: 3px;
+  width: 15px;
+  height: 15px;
+  flex: none;
+  accent-color: #7c3aed;
+}
+.fact-pick-main { min-width: 0; flex: 1; }
+.fact-pick-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.fact-pick-title {
+  font-size: 13px;
+  font-weight: 650;
+  color: #1f2937;
+  line-height: 1.35;
+  word-break: break-word;
+}
+.fact-pick-trust {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 650;
+  background: #f1f5f9;
+  color: #64748b;
+}
+.fact-pick-trust.verified { background: #ecfdf5; color: #047857; }
+.fact-pick-trust.needs_review { background: #fff7ed; color: #c2410c; }
+.fact-pick-meta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+.fact-pick-snippet {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.fact-pick-empty {
+  padding: 18px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: #94a3b8;
+}
+.trusted-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.check-body { flex: 1; min-width: 0; }
+.check-fix-row {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 .fact-status {
   margin-bottom: 12px;
