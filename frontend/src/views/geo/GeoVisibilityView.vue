@@ -98,6 +98,12 @@ const emptyReason = computed(() =>
 )
 
 const lastRun = computed(() => patrolOps.value?.last_run || patrolRuns.value[0] || null)
+const patrolScheduleLabel = computed(() => {
+  const s = patrolOps.value?.settings
+  if (!s) return '尚未加载'
+  const on = s.enabled ? '已开启' : '未开启'
+  return `${on} · ${s.window_start_hour ?? 8}–${s.window_end_hour ?? 22} 点 · 间隔 ${s.interval_hours ?? 24} 小时 · 每轮上限 ${s.prompt_limit ?? 20}`
+})
 const hasSimulated = computed(() => snapshots.value.some((s) => s.simulated))
 
 const evalKpis = computed(() => {
@@ -629,9 +635,10 @@ onMounted(reloadAll)
         </div>
         <div class="gd-bd collect-bd">
           <p class="hint">
-            按已启用引擎提问，自动判断提及、位置和情感。定时规则在
-            <router-link to="/geo/models">引擎</router-link>
-            中设置。
+            按已启用引擎提问，自动判断提及、位置和情感。
+            定时巡检（只读）：{{ patrolScheduleLabel }}。
+            改定时请到
+            <router-link to="/geo/models">引擎</router-link>。
           </p>
           <div class="geo-set-row">
             <span>采集引擎</span>
@@ -652,7 +659,7 @@ onMounted(reloadAll)
             </el-select>
           </div>
           <div class="geo-set-row">
-            <span>每轮提问上限</span>
+            <span>本次提问上限</span>
             <el-input-number v-model="collectForm.prompt_limit" :min="1" :max="50" />
           </div>
         </div>
