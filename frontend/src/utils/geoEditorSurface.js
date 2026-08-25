@@ -1,6 +1,6 @@
 /**
- * 母稿编辑页只承载原型中的主流程；复杂的资料关联和渠道编排仍由
- * 后台流程使用，但不作为运营人员的主界面操作项。
+ * 母稿编辑页对齐原型主流程：Brief → 母稿 → 渠道稿 → 检查。
+ * 渠道稿只保留勾选、生成、预览、复制；推送 / 回填 / 效果留给后台页。
  */
 export function getGeoPrototypeEditorSurface() {
   return {
@@ -14,7 +14,7 @@ export function getGeoPrototypeEditorSurface() {
     ],
     showProgressHint: false,
     showFactBinding: false,
-    showChannelVariants: false,
+    showChannelVariants: true,
     showBatchPush: false,
     showImpact: false,
     showAiReview: false,
@@ -23,6 +23,7 @@ export function getGeoPrototypeEditorSurface() {
       'save_brief',
       'generate_master',
       'save_master',
+      'generate_channels',
       'copy',
       'check',
     ],

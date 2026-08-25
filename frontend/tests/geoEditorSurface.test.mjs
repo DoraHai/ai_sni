@@ -18,11 +18,19 @@ test('prototype editor exposes only drafting, quality and publication entry poin
     ],
     showProgressHint: false,
     showFactBinding: false,
-    showChannelVariants: false,
+    showChannelVariants: true,
     showBatchPush: false,
     showImpact: false,
     showAiReview: false,
-    actions: ['suggest_brief', 'save_brief', 'generate_master', 'save_master', 'copy', 'check'],
+    actions: [
+      'suggest_brief',
+      'save_brief',
+      'generate_master',
+      'save_master',
+      'generate_channels',
+      'copy',
+      'check',
+    ],
   })
 })
 
