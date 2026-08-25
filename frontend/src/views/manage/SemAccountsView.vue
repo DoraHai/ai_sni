@@ -44,8 +44,13 @@ async function load() {
   try {
     const result = await fetchSemAccounts(tenantId)
     if (generation !== loadGeneration || tenantId !== currentTenantId.value) return
-    accounts.value = result.accounts || []
-    summary.value = result.summary || { total: accounts.value.length, active: 0, ready: 0, attention: 0 }
+    accounts.value = (result.accounts || []).filter((item) => item.status !== 'archived')
+    summary.value = {
+      total: accounts.value.length,
+      active: accounts.value.filter((item) => item.status === 'active').length,
+      ready: accounts.value.filter((item) => item.data_state === 'ready').length,
+      attention: accounts.value.filter((item) => ['failed', 'not_synced', 'partial', 'empty'].includes(item.data_state)).length,
+    }
   } catch (error) {
     if (generation === loadGeneration && tenantId === currentTenantId.value) {
       accounts.value = []

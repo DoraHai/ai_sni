@@ -102,15 +102,17 @@ async function loadStatus() {
       // 不该拖累下面授权状态本身的展示——否则冲突客户永远打不开这个页面去重新授权。
     }
     if (generation !== loadGeneration || tenantId !== session.tenantId) return
-    accounts.value = (result.accounts || []).map((item) => ({
-      ...item,
-      ...(assetsById.get(item.id) || {}),
-      username: item.username,
-      ucid: item.ucid,
-      authorization_name: item.authorization_name,
-      authorization_type: item.authorization_type,
-      account_role: item.account_role,
-    }))
+    accounts.value = (result.accounts || [])
+      .filter((item) => item.status !== 'archived')
+      .map((item) => ({
+        ...item,
+        ...(assetsById.get(item.id) || {}),
+        username: item.username,
+        ucid: item.ucid,
+        authorization_name: item.authorization_name,
+        authorization_type: item.authorization_type,
+        account_role: item.account_role,
+      }))
     configured.value = !!result.configured
     callbackUrl.value = result.callback_url || ''
   } catch (error) {

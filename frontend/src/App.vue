@@ -18,9 +18,7 @@ const tenantModuleScope = computed(() => {
   if (route.path.startsWith('/seo')) return 'seo'
   if (route.path.startsWith('/geo')) return 'geo'
   if (
-    route.path.startsWith('/settings')
-    || route.path.startsWith('/admin')
-    || route.path.startsWith('/deal-sniper')
+    route.path.startsWith('/deal-sniper')
     || route.path === '/workspace'
     || route.path === '/growth-sniper'
   ) return null
@@ -303,6 +301,7 @@ function closeTenantPopoverOnOutside(event) {
 watch(() => session.isLoggedIn, (v) => { if (v) { loadTenants(); loadBadges() } })
 watch(() => session.tenantId, loadBadges)
 watch(tenantModuleScope, loadTenants)
+watch(() => session.tenantListRevision, loadTenants)
 watch(() => route.path, () => {
   tenantPopoverOpen.value = false
   syncOpenToRoute()

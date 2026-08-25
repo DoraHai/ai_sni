@@ -72,6 +72,7 @@ async def oauth_status(
             )
             .where(
                 BaiduAccount.tenant_id == tenant_id,
+                BaiduAccount.status != "archived",
             )
             .order_by(BaiduAccount.status, BaiduAccount.baidu_username)
         )

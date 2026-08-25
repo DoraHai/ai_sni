@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { createUser, fetchUsers, updateUser } from '../../api/auth'
+import { createUser, fetchTenants, fetchUsers, updateUser } from '../../api/auth'
 import { createRole, deleteRole, fetchRoles, updateRole } from '../../api/roles'
 import { session } from '../../store/session'
 
@@ -10,6 +10,7 @@ const loading = ref(false)
 const error = ref('')
 const usersData = ref(null)
 const rolesData = ref(null)
+const tenantOptions = ref([])
 const permissionDenied = computed(() => error.value?.code === 'PERMISSION_DENIED')
 
 const LEVELS = [
@@ -23,7 +24,14 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    [usersData.value, rolesData.value] = await Promise.all([fetchUsers(), fetchRoles()])
+    const [users, roles, tenants] = await Promise.all([
+      fetchUsers(),
+      fetchRoles(),
+      fetchTenants(),
+    ])
+    usersData.value = users
+    rolesData.value = roles
+    tenantOptions.value = tenants.tenants || []
   } catch (e) {
     error.value = e
   } finally {
@@ -284,7 +292,7 @@ onMounted(load)
         </el-form-item>
         <el-form-item label="限定客户">
           <el-select v-model="uform.tenantId" placeholder="不限=全部客户（可顶栏切换）" clearable style="width: 100%">
-            <el-option v-for="t in session.tenants" :key="t.id" :label="t.name" :value="t.id" />
+            <el-option v-for="t in tenantOptions" :key="t.id" :label="t.name" :value="t.id" />
           </el-select>
         </el-form-item>
       </el-form>

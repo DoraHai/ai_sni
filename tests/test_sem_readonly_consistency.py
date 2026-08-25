@@ -21,6 +21,37 @@ def test_account_surfaces_share_all_tenant_baidu_accounts():
     assert "sync_search_terms_for_account" in _read("app/scheduler.py")
 
 
+def test_sem_business_surfaces_hide_archived_account_history():
+    auth_api = _read("app/api/auth.py")
+    oauth_status = _read("app/api/oauth_baidu.py")
+    account_assets = _read("app/api/customer_modules.py")
+    account_view = _read("frontend/src/views/manage/SemAccountsView.vue")
+    onboarding = _read("frontend/src/views/onboarding/AuthorizationSyncView.vue")
+
+    for source in (auth_api, oauth_status, account_assets):
+        assert 'BaiduAccount.status != "archived"' in source
+    assert "filter((item) => item.status !== 'archived')" in account_view
+    assert "filter((item) => item.status !== 'archived')" in onboarding
+
+
+def test_sem_shell_switcher_keeps_settings_routes_in_sem_scope():
+    app_shell = _read("frontend/src/App.vue")
+    session_store = _read("frontend/src/store/session.js")
+    customer_modules = _read("frontend/src/views/settings/CustomerModulesView.vue")
+    account_roles = _read("frontend/src/views/settings/AccountsRolesView.vue")
+
+    scope_block = app_shell.split("const tenantModuleScope", 1)[1].split(")\nconst showSemAccountContext", 1)[0]
+    assert "route.path.startsWith('/settings')" not in scope_block
+    assert "route.path.startsWith('/admin')" not in scope_block
+    assert "fetchTenants(moduleScope)" in app_shell
+    assert "tenantListRevision" in session_store
+    assert "watch(() => session.tenantListRevision, loadTenants)" in app_shell
+    assert "session.requestTenantReload()" in customer_modules
+    assert "fetchTenants()" in account_roles
+    assert 'v-for="t in tenantOptions"' in account_roles
+    assert 'v-for="t in session.tenants"' not in account_roles
+
+
 def test_sem_frontend_labels_write_actions_as_pending_in_readonly_mode():
     capabilities = _read("frontend/src/constants/semCapabilities.js")
     app_shell = _read("frontend/src/App.vue")
