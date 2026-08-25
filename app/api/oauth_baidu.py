@@ -25,6 +25,7 @@ from app.baidu.oauth import (
 from app.config import get_settings
 from app.database import async_session_factory, get_session
 from app.models import BaiduAccount, BaiduOAuthGrant, Tenant
+from app.module_scope import get_tenant_module
 from app.scheduler import refresh_keyword_workbench_snapshot
 from app.security.auth import AuthContext, require_scoped_auth
 
@@ -38,12 +39,18 @@ _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 class AuthorizationRequest(BaseModel):
     tenant_id: int = Field(..., gt=0)
     return_path: str = Field("/onboarding", max_length=300)
+    bind_to_tenant: bool = False
 
 
 def _ensure_can_bind(ctx: AuthContext, tenant_id: int) -> None:
     ctx.ensure_tenant(tenant_id)
     if not ctx.can_edit("onboarding"):
         raise HTTPException(403, "当前角色只有查看权限，不能绑定百度推广账户。")
+
+
+def _ensure_can_rebind(ctx: AuthContext) -> None:
+    if not ctx.can_edit("settings.customers"):
+        raise HTTPException(403, "只有客户与模块管理员可以重新绑定账户归属。")
 
 
 @router.get("/status")
@@ -114,15 +121,22 @@ async def authorize(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    _ensure_can_bind(ctx, req.tenant_id)
+    if req.bind_to_tenant:
+        ctx.ensure_tenant(req.tenant_id)
+        _ensure_can_rebind(ctx)
+    else:
+        _ensure_can_bind(ctx, req.tenant_id)
     if await session.get(Tenant, req.tenant_id) is None:
         raise HTTPException(404, "客户不存在")
+    # 无论普通接入还是客户定向重绑，都不能给未开通/已停用 SEM 的客户建立推广账户。
+    await get_tenant_module(session, req.tenant_id, "sem")
     try:
         url = await create_authorization_url(
             session,
             tenant_id=req.tenant_id,
             requested_by_user_id=ctx.user_id,
             return_path=req.return_path,
+            bind_to_tenant=req.bind_to_tenant,
         )
     except BaiduOAuthError as exc:
         raise HTTPException(503, exc.message) from exc
@@ -212,6 +226,13 @@ async def callback(
         from app.baidu.oauth import consume_oauth_state
 
         state_row = await consume_oauth_state(session, state)
+        try:
+            await get_tenant_module(session, state_row.tenant_id, "sem")
+        except HTTPException as exc:
+            raise BaiduOAuthError(
+                "sem_module_unavailable",
+                "授权期间目标客户的 SEM 模块已停用，本次绑定已安全终止。",
+            ) from exc
         token_data = await exchange_auth_code(auth_code=authCode, user_id=userId)
         master, oauth_accounts = await fetch_authorized_accounts(
             open_id=str(token_data.get("openId") or ""),
@@ -224,6 +245,7 @@ async def callback(
             token_data=token_data,
             master=master,
             accounts=oauth_accounts,
+            target_tenant_id=(state_row.tenant_id if state_row.bind_to_tenant else None),
         )
         account_ids = [account.id for account in accounts]
         background_tasks.add_task(_initial_sync, account_ids)

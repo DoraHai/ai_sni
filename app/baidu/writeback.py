@@ -8,6 +8,7 @@
 """
 import logging
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,6 +49,7 @@ MAX_BID = 999.99
 # 账户日预算合法区间（文档 0036 updateAccountInfo budget [50, 10000000]）
 MIN_ACCOUNT_BUDGET = 50.0
 MAX_ACCOUNT_BUDGET = 10000000.0
+UNRESOLVED_REAL_STATUSES = {"pending", "reconcile"}
 
 
 class WritebackError(Exception):
@@ -77,6 +79,76 @@ async def _claim_funds_approval(
         )
     except WritebackApprovalError as exc:
         raise WritebackError(str(exc)) from exc
+
+
+async def _persist_funds_intent(
+    session: AsyncSession,
+    record: BidWriteback | WritebackAction,
+    *,
+    dry_run: bool,
+) -> None:
+    """真实资金操作先持久化审批消费和 pending 台账，再调用百度。
+
+    这样即使外部调用后进程退出或最终状态提交失败，审批也不会回到可重复消费状态，
+    pending 台账会明确要求人工对账。演练模式不需要拆分事务。
+    """
+    session.add(record)
+    await session.flush()
+    if not dry_run:
+        await session.commit()
+
+
+async def _relock_funds_account(
+    session: AsyncSession,
+    account: BaiduAccount,
+    record: BidWriteback | WritebackAction,
+) -> None:
+    """intent 提交后重新锁定并复核账户，避免停用账户继续真实回写。"""
+    await session.refresh(account, with_for_update=True)
+    if account.status == "active":
+        return
+    record.status = "failed"
+    record.error_msg = "执行前复核失败：推广账户授权已停用或归属状态已变化"
+    record.executed_at = datetime.utcnow()
+    await session.commit()
+    raise WritebackError(record.error_msg)
+
+
+async def _ensure_no_unresolved_funds_writeback(
+    session: AsyncSession,
+    model: Any,
+    *conditions: Any,
+) -> None:
+    """同一资金对象存在未决真实写回时，禁止再次发起，避免重复扣款或改价。"""
+    unresolved_id = await session.scalar(
+        select(model.id).where(
+            model.dry_run.is_(False),
+            model.status.in_(UNRESOLVED_REAL_STATUSES),
+            *conditions,
+        ).with_for_update()
+    )
+    if unresolved_id is not None:
+        raise WritebackError(
+            f"该对象存在未完成或待人工对账的真实回写记录 #{unresolved_id}，请先完成对账再操作"
+        )
+
+
+def _record_writeback_exception(
+    record: BidWriteback | WritebackAction,
+    error: Exception,
+    *,
+    dry_run: bool,
+) -> None:
+    """网络或未知异常无法证明百度未执行；真实模式必须进入人工对账。"""
+    definitive_api_failure = isinstance(error, BaiduAPIError) and error.code is not None
+    record.status = "failed" if dry_run or definitive_api_failure else "reconcile"
+    if isinstance(error, BaiduAPIError):
+        detail = f"[{error.code}] {error.message}"
+    else:
+        detail = str(error) or error.__class__.__name__
+    prefix = "" if record.status == "failed" else "执行结果未知，需人工对账："
+    record.error_msg = f"{prefix}{detail}"[:2000]
+    record.executed_at = datetime.utcnow()
 
 
 def _validate(old_bid: float | None, new_bid: float) -> float | None:
@@ -135,6 +207,12 @@ async def apply_keyword_writeback(
     )
 
     dry_run = get_settings().baidu_write_dry_run
+    if not dry_run:
+        await _ensure_no_unresolved_funds_writeback(
+            session, BidWriteback,
+            BidWriteback.tenant_id == tenant_id,
+            BidWriteback.keyword_id == keyword_id,
+        )
     await _claim_funds_approval(
         session,
         approval_id=approval_id,
@@ -147,6 +225,7 @@ async def apply_keyword_writeback(
     rec = BidWriteback(
         tenant_id=tenant_id,
         baidu_account_id=acc.id,
+        approval_id=approval_id if not dry_run else None,
         suggestion_id=sug.id if sug else None,
         keyword_id=keyword_id,
         keyword=kw.keyword,
@@ -161,8 +240,22 @@ async def apply_keyword_writeback(
         operator_user_id=operator_user_id,
         operator_name=operator_name,
     )
-    session.add(rec)
-    await session.flush()  # 拿到 id，并先把 pending 记入本事务
+    await _persist_funds_intent(session, rec, dry_run=dry_run)
+    if not dry_run:
+        # intent 提交会释放原行锁；调用百度前重新加锁并按最新本地值复核。
+        await session.refresh(kw, with_for_update=True)
+        await _relock_funds_account(session, acc, rec)
+        await session.refresh(rec, with_for_update=True)
+        old_bid = float(kw.price) if kw.price is not None else None
+        try:
+            rec.change_pct = _validate(old_bid, new_bid)
+            rec.old_bid = old_bid
+        except WritebackError as exc:
+            rec.status = "failed"
+            rec.error_msg = f"执行前复核失败：{exc}"
+            rec.executed_at = datetime.utcnow()
+            await session.commit()
+            raise
 
     try:
         svc = KeywordService(_account_client(acc))
@@ -177,14 +270,10 @@ async def apply_keyword_writeback(
                 sug.status = "adopted"
                 sug.adopted_at = datetime.utcnow()
     except BaiduAPIError as e:
-        rec.status = "failed"
-        rec.error_msg = f"[{e.code}] {e.message}"[:2000]
-        rec.executed_at = datetime.utcnow()
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.warning("回写失败 keyword_id=%s: %s", keyword_id, e)
     except Exception as e:  # 网络/未知错误也落台账，不静默
-        rec.status = "failed"
-        rec.error_msg = str(e)[:2000]
-        rec.executed_at = datetime.utcnow()
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.exception("回写异常 keyword_id=%s", keyword_id)
 
     await session.commit()
@@ -319,7 +408,7 @@ async def apply_negative_writeback_campaign(
         select(Campaign).where(
             Campaign.tenant_id == tenant_id,
             Campaign.campaign_id == campaign_id,
-        )
+        ).with_for_update()
     )
     if camp is None:
         raise WritebackError("计划不在维度表中，请先执行计划维度同步")
@@ -406,7 +495,7 @@ async def apply_add_word_writeback(
         raise WritebackError(f"出价 {price} 超出合法区间 [{MIN_BID}, {MAX_BID}]")
 
     adg = await session.scalar(
-        select(Adgroup).where(Adgroup.tenant_id == tenant_id, Adgroup.adgroup_id == adgroup_id)
+        select(Adgroup).where(Adgroup.tenant_id == tenant_id, Adgroup.adgroup_id == adgroup_id).with_for_update()
     )
     if adg is None:
         raise WritebackError("单元不在维度表中，请先执行单元维度同步")
@@ -457,7 +546,7 @@ async def apply_pause_writeback(
 ) -> WritebackAction:
     """暂停 / 启用关键词（updateWord pause）。dry_run 时拦截不真发。真写成功落地本地 pause。"""
     kw = await session.scalar(
-        select(Keyword).where(Keyword.tenant_id == tenant_id, Keyword.keyword_id == keyword_id)
+        select(Keyword).where(Keyword.tenant_id == tenant_id, Keyword.keyword_id == keyword_id).with_for_update()
     )
     if kw is None:
         raise WritebackError("关键词不在维度表中，请先执行关键词维度同步")
@@ -519,7 +608,7 @@ async def apply_match_type_writeback(
         select(Keyword).where(
             Keyword.tenant_id == tenant_id,
             Keyword.keyword_id == keyword_id,
-        )
+        ).with_for_update()
     )
     if kw is None:
         raise WritebackError("关键词不在维度表中，请先执行关键词维度同步")
@@ -583,7 +672,7 @@ async def apply_remove_negative_writeback(
     if match_mode not in ("exact", "phrase"):
         raise WritebackError("匹配方式只能是 exact / phrase")
     adg = await session.scalar(
-        select(Adgroup).where(Adgroup.tenant_id == tenant_id, Adgroup.adgroup_id == adgroup_id)
+        select(Adgroup).where(Adgroup.tenant_id == tenant_id, Adgroup.adgroup_id == adgroup_id).with_for_update()
     )
     if adg is None:
         raise WritebackError("单元不在维度表中，请先执行单元维度同步")
@@ -683,6 +772,13 @@ async def apply_campaign_budget_writeback(
 
     old_budget = float(camp.budget) if camp.budget is not None else None
     dry_run = get_settings().baidu_write_dry_run
+    if not dry_run:
+        await _ensure_no_unresolved_funds_writeback(
+            session, WritebackAction,
+            WritebackAction.tenant_id == tenant_id,
+            WritebackAction.action_type == "set_campaign_budget",
+            WritebackAction.campaign_id == campaign_id,
+        )
     await _claim_funds_approval(
         session,
         approval_id=approval_id,
@@ -693,14 +789,19 @@ async def apply_campaign_budget_writeback(
     )
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id, action_type="set_campaign_budget",
+        approval_id=approval_id if not dry_run else None,
         word=camp.campaign_name or f"计划#{campaign_id}",
         campaign_id=campaign_id, campaign_name=camp.campaign_name,
         old_value=old_budget, new_value=new_budget,
         dry_run=dry_run, status="pending",
         operator_user_id=operator_user_id, operator_name=operator_name,
     )
-    session.add(rec)
-    await session.flush()
+    await _persist_funds_intent(session, rec, dry_run=dry_run)
+    if not dry_run:
+        await session.refresh(camp, with_for_update=True)
+        await _relock_funds_account(session, acc, rec)
+        await session.refresh(rec, with_for_update=True)
+        rec.old_value = float(camp.budget) if camp.budget is not None else None
     try:
         resp = await CampaignService(_account_client(acc)).update_campaign_budget(
             campaign_id, new_budget
@@ -711,14 +812,10 @@ async def apply_campaign_budget_writeback(
         if not dry_run:
             camp.budget = new_budget
     except BaiduAPIError as e:
-        rec.status = "failed"
-        rec.error_msg = f"[{e.code}] {e.message}"[:2000]
-        rec.executed_at = datetime.utcnow()
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.warning("计划预算写回失败 campaign=%s budget=%s: %s", campaign_id, new_budget, e)
-    except Exception:
-        rec.status = "failed"
-        rec.error_msg = "未知错误"
-        rec.executed_at = datetime.utcnow()
+    except Exception as e:
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.exception("计划预算写回异常 campaign=%s", campaign_id)
 
     await session.commit()
@@ -742,7 +839,7 @@ async def apply_campaign_pause_writeback(
     camp = await session.scalar(
         select(Campaign).where(
             Campaign.tenant_id == tenant_id, Campaign.campaign_id == campaign_id
-        )
+        ).with_for_update()
     )
     if camp is None:
         raise WritebackError("计划不在维度表中，请先执行计划维度同步")
@@ -1086,6 +1183,7 @@ async def apply_adgroup_bid_writeback(
     if adg is None:
         raise WritebackError("单元不在维度表中，请先执行单元维度同步")
     # 单元出价不能超所属计划预算（本地有预算时预校验）
+    camp = None
     if adg.campaign_id is not None:
         camp = await session.scalar(
             select(Campaign).where(
@@ -1100,6 +1198,13 @@ async def apply_adgroup_bid_writeback(
 
     old_price = float(adg.max_price) if adg.max_price is not None else None
     dry_run = get_settings().baidu_write_dry_run
+    if not dry_run:
+        await _ensure_no_unresolved_funds_writeback(
+            session, WritebackAction,
+            WritebackAction.tenant_id == tenant_id,
+            WritebackAction.action_type == "set_adgroup_bid",
+            WritebackAction.adgroup_id == adgroup_id,
+        )
     await _claim_funds_approval(
         session,
         approval_id=approval_id,
@@ -1110,14 +1215,30 @@ async def apply_adgroup_bid_writeback(
     )
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id, action_type="set_adgroup_bid",
+        approval_id=approval_id if not dry_run else None,
         word=adg.adgroup_name or f"单元#{adgroup_id}",
         campaign_id=adg.campaign_id, adgroup_id=adgroup_id, adgroup_name=adg.adgroup_name,
         old_value=old_price, new_value=new_price,
         dry_run=dry_run, status="pending",
         operator_user_id=operator_user_id, operator_name=operator_name,
     )
-    session.add(rec)
-    await session.flush()
+    await _persist_funds_intent(session, rec, dry_run=dry_run)
+    if not dry_run:
+        await session.refresh(adg, with_for_update=True)
+        if camp is not None:
+            await session.refresh(camp, with_for_update=True)
+            if camp.budget is not None and new_price > float(camp.budget):
+                exc = WritebackError(
+                    f"单元出价 {new_price} 不能超过所属计划日预算 {float(camp.budget):.2f}"
+                )
+                rec.status = "failed"
+                rec.error_msg = f"执行前复核失败：{exc}"
+                rec.executed_at = datetime.utcnow()
+                await session.commit()
+                raise exc
+        await _relock_funds_account(session, acc, rec)
+        await session.refresh(rec, with_for_update=True)
+        rec.old_value = float(adg.max_price) if adg.max_price is not None else None
     try:
         resp = await AdgroupService(_account_client(acc)).update_adgroup_fields(
             adgroup_id, max_price=new_price
@@ -1128,14 +1249,10 @@ async def apply_adgroup_bid_writeback(
         if not dry_run:
             adg.max_price = new_price
     except BaiduAPIError as e:
-        rec.status = "failed"
-        rec.error_msg = f"[{e.code}] {e.message}"[:2000]
-        rec.executed_at = datetime.utcnow()
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.warning("单元出价写回失败 adgroup=%s price=%s: %s", adgroup_id, new_price, e)
-    except Exception:
-        rec.status = "failed"
-        rec.error_msg = "未知错误"
-        rec.executed_at = datetime.utcnow()
+    except Exception as e:
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.exception("单元出价写回异常 adgroup=%s", adgroup_id)
 
     await session.commit()
@@ -1178,7 +1295,7 @@ async def apply_adgroup_landing_url_writeback(
     adg = await session.scalar(
         select(Adgroup).where(
             Adgroup.tenant_id == tenant_id, Adgroup.adgroup_id == adgroup_id
-        )
+        ).with_for_update()
     )
     if adg is None:
         raise WritebackError("单元不在维度表中，请先执行单元维度同步")
@@ -1302,6 +1419,12 @@ async def apply_account_budget_writeback(
         logger.warning("账户预算写回：查当前预算失败，old_value 留空", exc_info=True)
 
     dry_run = get_settings().baidu_write_dry_run
+    if not dry_run:
+        await _ensure_no_unresolved_funds_writeback(
+            session, WritebackAction,
+            WritebackAction.tenant_id == tenant_id,
+            WritebackAction.action_type == "set_account_budget",
+        )
     await _claim_funds_approval(
         session,
         approval_id=approval_id,
@@ -1312,12 +1435,16 @@ async def apply_account_budget_writeback(
     )
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id, action_type="set_account_budget",
+        approval_id=approval_id if not dry_run else None,
         word="账户日预算", old_value=old_budget, new_value=new_budget,
         dry_run=dry_run, status="pending",
         operator_user_id=operator_user_id, operator_name=operator_name,
     )
-    session.add(rec)
-    await session.flush()
+    await _persist_funds_intent(session, rec, dry_run=dry_run)
+    if not dry_run:
+        # 账户行作为账户级写操作互斥锁；锁持有到最终状态提交。
+        await _relock_funds_account(session, acc, rec)
+        await session.refresh(rec, with_for_update=True)
     try:
         resp = await AccountService(_account_client(acc)).update_account_budget(
             new_budget, budget_type=1
@@ -1326,14 +1453,10 @@ async def apply_account_budget_writeback(
         rec.baidu_response = str(resp)[:2000]
         rec.executed_at = datetime.utcnow()
     except BaiduAPIError as e:
-        rec.status = "failed"
-        rec.error_msg = f"[{e.code}] {e.message}"[:2000]
-        rec.executed_at = datetime.utcnow()
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.warning("账户预算写回失败 tenant=%s budget=%s: %s", tenant_id, new_budget, e)
-    except Exception:
-        rec.status = "failed"
-        rec.error_msg = "未知错误"
-        rec.executed_at = datetime.utcnow()
+    except Exception as e:
+        _record_writeback_exception(rec, e, dry_run=dry_run)
         logger.exception("账户预算写回异常 tenant=%s", tenant_id)
 
     await session.commit()

@@ -37,7 +37,11 @@ export function useKeywordWriteback({ tenantId, onSuccess } = {}) {
         ElMessage.success('已加入待回写台账，百度账户未修改')
         return { response, success: false, dryRun: true }
       }
-      if (response.writeback?.status === 'failed') {
+      if (['pending', 'reconcile'].includes(response.writeback?.status)) {
+        ElMessage.warning(response.writeback.error_msg || '百度执行结果未知，已转入人工对账')
+        return { response, success: false, reconciliationRequired: true }
+      }
+      if (response.writeback?.status !== 'success') {
         ElMessage.error(response.writeback.error_msg || '回写出价失败')
         return { response, success: false }
       }

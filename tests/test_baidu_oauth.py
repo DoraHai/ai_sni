@@ -1,8 +1,11 @@
 import os
 import unittest
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
+
+from fastapi import HTTPException
 
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 os.environ.setdefault("BAIDU_APP_ID", "test-app")
@@ -25,7 +28,8 @@ from app.baidu.oauth import (
     verify_callback_signature,
 )
 from app.models import BaiduAccount, BaiduOAuthGrant, Tenant
-from app.security.auth import _required
+from app.api.oauth_baidu import AuthorizationRequest, authorize
+from app.security.auth import AuthContext, _required
 
 
 class _ScalarRows:
@@ -112,6 +116,18 @@ class _SameTenantSelfAuthSession(_OAuthSession):
         return _ScalarRows([self.self_account])
 
 
+class _TargetTenantOAuthSession(_OAuthSession):
+    def __init__(self):
+        super().__init__()
+        self.target_tenant = Tenant(id=7, name="待重新绑定客户", baidu_ucid=None)
+
+    async def scalar(self, _statement):
+        self._scalar_calls += 1
+        if self._scalar_calls == 1:
+            return self.target_tenant
+        return None
+
+
 class BaiduOAuthTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.params = {
@@ -142,15 +158,60 @@ class BaiduOAuthTests(unittest.IsolatedAsyncioTestCase):
         tampered = dict(self.params, userId="999")
         self.assertFalse(verify_callback_signature(tampered, signature))
 
-    def test_oauth_write_routes_require_onboarding_edit(self):
+    def test_oauth_authorize_accepts_onboarding_or_customer_admin_at_route_gate(self):
         self.assertEqual(
             _required("/api/v1/oauth/baidu/authorize", "POST"),
-            ({"onboarding"}, True),
+            ({"onboarding", "settings.customers"}, True),
         )
         self.assertEqual(
             _required("/api/v1/oauth/baidu/status", "GET"),
-            ({"onboarding"}, False),
+            ({"onboarding", "settings.customers"}, False),
         )
+
+    async def test_rebind_rejects_customer_without_active_sem_module(self):
+        ctx = AuthContext(
+            user_id=9,
+            username="admin",
+            role_name="管理员",
+            tenant_id=None,
+            permissions={"settings.customers": "edit"},
+        )
+        session = SimpleNamespace(get=AsyncMock(return_value=Tenant(id=7, name="SEO客户")))
+        with patch(
+            "app.api.oauth_baidu.get_tenant_module",
+            AsyncMock(side_effect=HTTPException(403, "当前客户的 SEM 模块未启用或已过期")),
+        ):
+            with self.assertRaises(HTTPException) as cm:
+                await authorize(
+                    AuthorizationRequest(tenant_id=7, bind_to_tenant=True),
+                    ctx=ctx,
+                    session=session,
+                )
+        self.assertEqual(cm.exception.status_code, 403)
+        self.assertIn("SEM 模块未启用", cm.exception.detail)
+
+    def test_customer_admin_rebind_button_is_sem_entitlement_gated(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "frontend/src/views/settings/CustomerModulesView.vue"
+        ).read_text(encoding="utf-8")
+        self.assertIn('v-if="moduleRow(row, \'sem\')?.available"', source)
+        router = (
+            Path(__file__).resolve().parents[1] / "frontend/src/router/index.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("perm: ['onboarding', 'settings.customers']", router)
+
+    def test_callback_rechecks_sem_entitlement_before_token_exchange(self):
+        source = (
+            Path(__file__).resolve().parents[1] / "app/api/oauth_baidu.py"
+        ).read_text(encoding="utf-8")
+        consume_at = source.index("state_row = await consume_oauth_state")
+        entitlement_at = source.index(
+            'await get_tenant_module(session, state_row.tenant_id, "sem")'
+        )
+        exchange_at = source.index("token_data = await exchange_auth_code")
+        self.assertLess(consume_at, entitlement_at)
+        self.assertLess(entitlement_at, exchange_at)
 
     async def test_authorized_account_creates_its_own_tenant(self):
         session = _OAuthSession()
@@ -192,6 +253,58 @@ class BaiduOAuthTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("tenant_modules", compiled)
         self.assertIn("sem", params.values())
         self.assertIn(tenants[0].id, params.values())
+
+    async def test_explicit_rebind_uses_the_oauth_state_target_tenant(self):
+        session = _TargetTenantOAuthSession()
+
+        _, linked, tenants = await persist_authorization(
+            session,
+            oauth_user_id=2080601,
+            token_data={
+                "accessToken": "access-token",
+                "refreshToken": "refresh-token",
+                "openId": "open-id",
+            },
+            master={
+                "master_ucid": 2080601,
+                "master_name": "target-account",
+                "account_type": 1,
+            },
+            accounts=[OAuthAccount(ucid=2080601, username="target-account", role="standalone")],
+            target_tenant_id=7,
+        )
+
+        self.assertEqual(tenants, [session.target_tenant])
+        self.assertEqual(session.target_tenant.baidu_ucid, 2080601)
+        self.assertEqual(linked[0].tenant_id, 7)
+        self.assertFalse(any(isinstance(row, Tenant) for row in session.added))
+
+    async def test_explicit_rebind_rejects_ambiguous_multi_account_authorization(self):
+        session = _TargetTenantOAuthSession()
+
+        with self.assertRaises(BaiduOAuthError) as cm:
+            await persist_authorization(
+                session,
+                oauth_user_id=2080601,
+                token_data={
+                    "accessToken": "access-token",
+                    "refreshToken": "refresh-token",
+                    "openId": "open-id",
+                },
+                master={
+                    "master_ucid": 2080601,
+                    "master_name": "agency-master",
+                    "account_type": 2,
+                },
+                accounts=[
+                    OAuthAccount(ucid=2080601, username="account-a", role="subaccount"),
+                    OAuthAccount(ucid=2080602, username="account-b", role="subaccount"),
+                ],
+                target_tenant_id=7,
+            )
+
+        self.assertEqual(cm.exception.code, "rebind_requires_single_account")
+        self.assertEqual(session._scalar_calls, 0)
 
     async def test_authorization_stops_on_cross_customer_account_binding(self):
         session = _ConflictingOAuthSession()

@@ -59,6 +59,10 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      - name: Test stale chunk recovery
+        working-directory: frontend
+        run: npm run test:chunk-recovery
+
       - name: Verify build contract
         working-directory: frontend
         run: npm run verify:sem-build

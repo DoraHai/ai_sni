@@ -123,7 +123,7 @@ async function archiveAccount(row, account) {
 }
 
 function rebindAccount(row) {
-  router.push({ path: '/onboarding', query: { tenant_id: row.id } })
+  router.push({ path: '/onboarding', query: { tenant_id: row.id, rebind: '1' } })
 }
 
 onMounted(load)
@@ -157,7 +157,10 @@ onMounted(load)
             </span>
           </div>
           <span v-else class="unbound">未绑定</span>
-          <el-button type="primary" plain size="small" @click="rebindAccount(row)">重新绑定并授权</el-button>
+          <el-button
+            v-if="moduleRow(row, 'sem')?.available"
+            type="primary" plain size="small" @click="rebindAccount(row)"
+          >重新绑定并授权</el-button>
         </template>
       </el-table-column>
       <el-table-column label="归属检查" min-width="230">

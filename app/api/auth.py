@@ -142,6 +142,8 @@ async def list_tenants(
 ) -> dict:
     """多客户切换器数据。绑定了单客户的账号只回该客户；否则全部。"""
     if module:
+        if not ctx.can_view(*_MODULE_PERMISSION_KEYS[module]):
+            raise HTTPException(403, "当前账号无权访问该模块的客户列表")
         tenants = await list_module_tenants(session, ctx, module)
     else:
         cond = []
@@ -150,6 +152,9 @@ async def list_tenants(
         tenants = list(
             (await session.scalars(select(Tenant).where(*cond).order_by(Tenant.id))).all()
         )
+    include_sem_context = module == "sem" or (
+        module is None and ctx.can_view("settings.customers")
+    )
     tenant_ids = [tenant.id for tenant in tenants]
     accounts = (
         list(
@@ -161,7 +166,7 @@ async def list_tenants(
                 )
             ).all()
         )
-        if tenant_ids
+        if tenant_ids and include_sem_context
         else []
     )
     accounts_by_tenant: dict[int, list[dict]] = {}
@@ -178,11 +183,17 @@ async def list_tenants(
             {
                 "id": tenant.id,
                 "name": tenant.name,
-                "sem_identity": public_sem_identity_state(identity_states.get(tenant.id)),
-                "sem_accounts": (
-                    []
-                    if identity_states.get(tenant.id, {}).get("status") == "blocked"
-                    else accounts_by_tenant.get(tenant.id, [])
+                **(
+                    {
+                        "sem_identity": public_sem_identity_state(identity_states.get(tenant.id)),
+                        "sem_accounts": (
+                            []
+                            if identity_states.get(tenant.id, {}).get("status") == "blocked"
+                            else accounts_by_tenant.get(tenant.id, [])
+                        ),
+                    }
+                    if include_sem_context
+                    else {}
                 ),
             }
             for tenant in tenants
@@ -191,7 +202,15 @@ async def list_tenants(
 
 
 _MODULE_PERMISSION_KEYS = {
-    "sem": ("sem.assets", "monitor.dashboard", "manage.account"),
+    "sem": (
+        "sem.assets", "assistant", "onboarding",
+        "monitor.dashboard", "monitor.alerts", "monitor.profile",
+        "optimize.expand", "optimize.keywords", "optimize.searchterms",
+        "optimize.negatives", "verify.adjustments", "verify.pending",
+        "verify.leads", "manage.account", "manage.campaigns",
+        "manage.adgroups", "manage.ocpc", "delivery.report",
+        "settings.customers",
+    ),
     "seo": ("seo.assets", "seo.dashboard", "seo.keywords", "seo.content", "seo.site"),
     "geo": ("geo.assets", "geo.content", "geo.diagnosis"),
 }

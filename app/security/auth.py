@@ -217,6 +217,12 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     if p.startswith("/api/v1/onboarding-builder"):
         # 智能搭建默认演练写入，仍归首次接入；真实写入由后端 dry-run 开关兜底。
         return {"onboarding"}, False
+    if p == "/api/v1/oauth/baidu/authorize" and edit:
+        # 普通接入由 onboarding 控制，客户定向重绑由 settings.customers 控制；
+        # 具体是哪一种必须由 endpoint 根据请求体再次做最小权限校验。
+        return {"onboarding", "settings.customers"}, True
+    if p == "/api/v1/oauth/baidu/status" and not edit:
+        return {"onboarding", "settings.customers"}, False
     if p.startswith("/api/v1/oauth/baidu"):
         # 查看授权状态需 view；发起/更新授权需 edit。
         return {"onboarding"}, edit

@@ -392,6 +392,8 @@ async function editBudget(row) {
       ElMessage.success(`演练完成：${fmtMoney(res.old_budget)} → ${fmtMoney(res.new_budget)}（未真改，已记台账）`)
     } else if (res.status === 'success') {
       ElMessage.success(`已写回：${fmtMoney(res.old_budget)} → ${fmtMoney(res.new_budget)}`)
+    } else if (['pending', 'reconcile'].includes(res.status)) {
+      ElMessage.warning(res.error_msg || '百度执行结果未知，已转入人工对账')
     } else {
       ElMessage.error('写回失败：' + (res.error_msg || '未知错误'))
     }

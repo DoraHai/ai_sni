@@ -6,9 +6,10 @@ export function fetchBaiduOAuthStatus(tenantId) {
   })
 }
 
-export function startBaiduOAuth({ tenantId, returnPath = '/onboarding' }) {
+export function startBaiduOAuth({ tenantId, returnPath = '/onboarding', bindToTenant = false }) {
   return client.post('/api/v1/oauth/baidu/authorize', {
     tenant_id: tenantId,
     return_path: returnPath,
+    bind_to_tenant: bindToTenant,
   })
 }

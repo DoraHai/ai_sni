@@ -87,6 +87,7 @@ async def create_authorization_url(
     tenant_id: int,
     requested_by_user_id: int | None,
     return_path: str = "/onboarding",
+    bind_to_tenant: bool = False,
 ) -> str:
     settings = get_settings()
     if not oauth_is_configured():
@@ -103,6 +104,7 @@ async def create_authorization_url(
             tenant_id=tenant_id,
             requested_by_user_id=requested_by_user_id,
             return_path=_safe_return_path(return_path),
+            bind_to_tenant=bind_to_tenant,
             expires_at=now + timedelta(minutes=settings.baidu_oauth_state_ttl_minutes),
         )
     )
@@ -298,11 +300,12 @@ async def persist_authorization(
     token_data: dict[str, Any],
     master: dict[str, Any],
     accounts: list[OAuthAccount],
+    target_tenant_id: int | None = None,
 ) -> tuple[BaiduOAuthGrant, list[BaiduAccount], list[Tenant]]:
-    """保存授权，并确保每个百度推广账户拥有独立客户。
+    """保存授权，并确保每个百度推广账户拥有明确且唯一的客户归属。
 
-    账户归属只按百度 UCID 创建/复用 Tenant，不使用发起授权前选中的客户，
-    避免把新账号误绑到当前客户。
+    普通首次接入按百度 UCID 创建/复用独立客户；管理员显式发起重新绑定时，
+    只允许单账户授权并绑定到 OAuth state 中锁定的目标客户。
     """
     settings = get_settings()
     access_token = str(token_data.get("accessToken") or "")
@@ -318,20 +321,61 @@ async def persist_authorization(
     now = datetime.utcnow()
 
     linked_tenants: list[Tenant] = []
-    for account in accounts:
-        tenant = await session.scalar(
-            select(Tenant).where(Tenant.baidu_ucid == account.ucid)
-        )
-        if tenant is None:
-            tenant = Tenant(
-                name=account.username[:100],
-                baidu_ucid=account.ucid,
-                strategy="lead",
-                brand_terms=[account.username],
+    if target_tenant_id is not None:
+        if len(accounts) != 1:
+            raise BaiduOAuthError(
+                "rebind_requires_single_account",
+                "指定客户重新绑定时只能授权一个百度推广账户，请使用该账户单独完成授权。",
             )
-            session.add(tenant)
-            await session.flush()
-        linked_tenants.append(tenant)
+        target_tenant = await session.scalar(
+            select(Tenant).where(Tenant.id == target_tenant_id).with_for_update()
+        )
+        if target_tenant is None:
+            raise BaiduOAuthError("target_tenant_not_found", "重新绑定的目标客户不存在。")
+        account = accounts[0]
+        existing_owner = await session.scalar(
+            select(Tenant)
+            .where(Tenant.baidu_ucid == account.ucid, Tenant.id != target_tenant_id)
+            .with_for_update()
+        )
+        if existing_owner is not None:
+            raise BaiduOAuthError(
+                "account_tenant_conflict",
+                "该百度推广账户已归属于其他客户。为避免客户数据串用，本次授权已停止。",
+            )
+        active_target_accounts = (
+            await session.scalars(
+                select(BaiduAccount)
+                .where(
+                    BaiduAccount.tenant_id == target_tenant_id,
+                    BaiduAccount.status == "active",
+                    BaiduAccount.baidu_ucid != account.ucid,
+                )
+                .with_for_update()
+            )
+        ).all()
+        if active_target_accounts:
+            raise BaiduOAuthError(
+                "target_tenant_already_bound",
+                "目标客户已有其他生效推广账户，请先由管理员完成归属复核。",
+            )
+        target_tenant.baidu_ucid = account.ucid
+        linked_tenants.append(target_tenant)
+    else:
+        for account in accounts:
+            tenant = await session.scalar(
+                select(Tenant).where(Tenant.baidu_ucid == account.ucid)
+            )
+            if tenant is None:
+                tenant = Tenant(
+                    name=account.username[:100],
+                    baidu_ucid=account.ucid,
+                    strategy="lead",
+                    brand_terms=[account.username],
+                )
+                session.add(tenant)
+                await session.flush()
+            linked_tenants.append(tenant)
 
     if not linked_tenants:
         raise BaiduOAuthError("no_accounts", "百度未返回可授权的推广账户。")
@@ -410,6 +454,10 @@ async def persist_authorization(
             existing.tenant_id
             for existing in account_rows
             if existing.tenant_id != account_tenant.id
+            and (
+                target_tenant_id is None
+                or existing.status in {"active", "reauthorization_required"}
+            )
         }
         if conflicting_tenant_ids:
             raise BaiduOAuthError(
@@ -419,10 +467,13 @@ async def persist_authorization(
             )
         # 复用最近更新的账户行（无论原来是 OAuth 还是自授权），保留其
         # baidu_account_id 及现有资产关联，避免授权模式变化产生第二套数据。
-        row = account_rows[0] if account_rows else None
+        row = next(
+            (existing for existing in account_rows if existing.tenant_id == account_tenant.id),
+            None,
+        )
         # 同一客户内的历史重复账户仅保留当前行，其余停用。
         for duplicate in account_rows:
-            if duplicate is row:
+            if duplicate is row or duplicate.tenant_id != account_tenant.id:
                 continue
             duplicate.status = "inactive"
         if row is None:

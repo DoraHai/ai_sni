@@ -1,5 +1,18 @@
 import unittest
+import inspect
+import os
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+os.environ.setdefault("BAIDU_APP_ID", "test-app")
+os.environ.setdefault("BAIDU_SECRET_KEY", "1234567890abcdefsecret")
+os.environ.setdefault("BAIDU_DEFAULT_USERNAME", "test-user")
+os.environ.setdefault("BAIDU_DEFAULT_UCID", "1")
+os.environ.setdefault("BAIDU_SELF_ACCESS_TOKEN", "test-token")
+os.environ.setdefault("BAIDU_SELF_TOKEN_EXPIRES_AT", "2099-01-01T00:00:00")
+os.environ.setdefault("CRYPTO_MASTER_KEY_B64", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
 from app.baidu.writeback_approval import (
     ACTION_KEYWORD_BID,
@@ -7,6 +20,24 @@ from app.baidu.writeback_approval import (
     claim_approval,
     payload_fingerprint,
 )
+from app.baidu.writeback import (
+    _ensure_no_unresolved_funds_writeback,
+    _record_writeback_exception,
+    apply_account_budget_writeback,
+    apply_adgroup_bid_writeback,
+    apply_campaign_budget_writeback,
+    apply_keyword_writeback,
+    apply_negative_writeback_campaign,
+    apply_remove_negative_writeback,
+    WritebackError,
+)
+from app.models import BidWriteback
+from app.api.writeback import (
+    ReconciliationDecision,
+    _queue_stage,
+    reconcile_writeback,
+)
+from app.security.auth import AuthContext
 
 
 class _Session:
@@ -24,6 +55,107 @@ class _Session:
 
 
 class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
+    def test_unresolved_real_funds_intent_requires_reconciliation(self):
+        self.assertEqual(_queue_stage("pending", False), "reconciliation_required")
+        self.assertEqual(_queue_stage("reconcile", False), "reconciliation_required")
+        self.assertEqual(_queue_stage("unexpected", False), "reconciliation_required")
+
+    def test_unknown_real_funds_result_is_not_marked_failed(self):
+        row = SimpleNamespace(status="pending", error_msg=None, executed_at=None)
+        _record_writeback_exception(row, TimeoutError("timeout"), dry_run=False)
+        self.assertEqual(row.status, "reconcile")
+        self.assertIn("需人工对账", row.error_msg)
+
+    def test_unknown_dry_run_result_can_be_marked_failed(self):
+        row = SimpleNamespace(status="pending", error_msg=None, executed_at=None)
+        _record_writeback_exception(row, TimeoutError("timeout"), dry_run=True)
+        self.assertEqual(row.status, "failed")
+
+    async def test_unresolved_real_funds_record_blocks_duplicate_write(self):
+        session = SimpleNamespace(scalar=AsyncMock(return_value=41))
+        with self.assertRaisesRegex(WritebackError, "先完成对账"):
+            await _ensure_no_unresolved_funds_writeback(
+                session,
+                BidWriteback,
+            )
+        statement = session.scalar.await_args.args[0]
+        self.assertIsNotNone(statement._for_update_arg)
+
+    async def test_different_user_can_close_reconciliation_with_audit(self):
+        row = SimpleNamespace(
+            id=41, tenant_id=3, dry_run=False, status="reconcile",
+            operator_user_id=8, error_msg="执行结果未知：timeout",
+            reconciliation_result=None, reconciliation_note=None,
+            reconciled_by=None, reconciled_at=None,
+        )
+        session = SimpleNamespace(
+            scalar=AsyncMock(return_value=row),
+            commit=AsyncMock(), refresh=AsyncMock(),
+        )
+        ctx = AuthContext(9, "reviewer", "运营", None, {"verify.adjustments": "edit"})
+        result = await reconcile_writeback(
+            "bid", 41,
+            ReconciliationDecision(
+                tenant_id=3,
+                decision="confirmed_not_executed",
+                note="百度后台确认未生效",
+            ),
+            ctx=ctx, session=session,
+        )
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(row.reconciled_by, 9)
+        self.assertIn("原异常", row.reconciliation_note)
+        session.commit.assert_awaited_once()
+        self.assertIsNotNone(session.scalar.await_args.args[0]._for_update_arg)
+
+    async def test_executor_cannot_close_own_reconciliation(self):
+        row = SimpleNamespace(
+            id=41, tenant_id=3, dry_run=False, status="reconcile",
+            operator_user_id=9, error_msg="timeout",
+        )
+        session = SimpleNamespace(scalar=AsyncMock(return_value=row))
+        ctx = AuthContext(9, "executor", "运营", None, {"verify.adjustments": "edit"})
+        with self.assertRaisesRegex(Exception, "不能确认自己的"):
+            await reconcile_writeback(
+                "action", 41,
+                ReconciliationDecision(
+                    tenant_id=3,
+                    decision="confirmed_executed",
+                    note="百度后台确认已生效",
+                ),
+                ctx=ctx, session=session,
+            )
+
+    def test_full_list_negative_writebacks_lock_the_mutated_row(self):
+        campaign_source = inspect.getsource(apply_negative_writeback_campaign)
+        adgroup_source = inspect.getsource(apply_remove_negative_writeback)
+
+        self.assertIn("with_for_update()", campaign_source)
+        self.assertIn("with_for_update()", adgroup_source)
+
+    def test_real_funds_intent_is_committed_before_external_write(self):
+        for function in (
+            apply_keyword_writeback,
+            apply_campaign_budget_writeback,
+            apply_adgroup_bid_writeback,
+            apply_account_budget_writeback,
+        ):
+            with self.subTest(function=function.__name__):
+                source = inspect.getsource(function)
+                persist_at = source.find("_persist_funds_intent")
+                external_at = min(
+                    position
+                    for marker in (
+                        ".update_word_bid(",
+                        ".update_campaign_budget(",
+                        ".update_adgroup_fields(",
+                        ".update_account_budget(",
+                    )
+                    if (position := source.find(marker)) >= 0
+                )
+                self.assertGreaterEqual(persist_at, 0)
+                self.assertLess(persist_at, external_at)
+
     def test_fingerprint_normalizes_money(self):
         left, left_hash = payload_fingerprint(
             ACTION_KEYWORD_BID, {"keyword_id": "7", "new_bid": "1.230"}

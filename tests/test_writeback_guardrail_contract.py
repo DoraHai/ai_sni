@@ -40,6 +40,13 @@ def test_high_risk_writebacks_keep_approval_and_row_lock_contracts():
     for function_name, minimum_local_locks in required.items():
         calls = _call_names(_async_function(tree, function_name))
         assert "_claim_funds_approval" in calls, function_name
+        assert "_ensure_no_unresolved_funds_writeback" in calls, function_name
+        assert "_record_writeback_exception" in calls, function_name
+        source = ast.get_source_segment(
+            (ROOT / "app/baidu/writeback.py").read_text(encoding="utf-8"),
+            _async_function(tree, function_name),
+        )
+        assert "session.refresh(rec, with_for_update=True)" in source, function_name
         assert calls.count("with_for_update") >= minimum_local_locks, function_name
 
     active_account_calls = _call_names(_async_function(tree, "_active_account"))
@@ -68,6 +75,30 @@ def test_backend_and_frontend_keep_approval_id_wiring():
     assert manage_client.count("approval_id: approvalId") == 3
     assert "approval_id: approvalId" in keyword_client
     assert approval_view.count("approvalId: row.id") == 4
+
+    orchestration = (ROOT / "app/baidu/writeback.py").read_text(encoding="utf-8")
+    assert orchestration.count("approval_id=approval_id if not dry_run else None") == 4
+    migration = (
+        ROOT / "migrations/versions/20260825_0076_oauth_rebind_intent.py"
+    ).read_text(encoding="utf-8")
+    assert '"bid_writebacks", sa.Column("approval_id"' in migration
+    assert '"writeback_actions", sa.Column("approval_id"' in migration
+    assert '"bid_writebacks", sa.Column("reconciliation_result"' in migration
+    assert '"writeback_actions", sa.Column("reconciliation_result"' in migration
+
+
+def test_frontend_never_treats_reconciliation_as_success():
+    keyword = (ROOT / "frontend/src/composables/useKeywordWriteback.js").read_text(encoding="utf-8")
+    adgroup = (ROOT / "frontend/src/views/manage/AdgroupManageView.vue").read_text(encoding="utf-8")
+    queue = (ROOT / "frontend/src/views/verify/PendingAdjustmentsView.vue").read_text(encoding="utf-8")
+    router = (ROOT / "frontend/src/router/index.js").read_text(encoding="utf-8")
+    ledger = (ROOT / "frontend/src/views/verify/AdjustmentLogView.vue").read_text(encoding="utf-8")
+    assert "['pending', 'reconcile'].includes(response.writeback?.status)" in keyword
+    assert "response.writeback?.status !== 'success'" in keyword
+    assert "['pending', 'reconcile'].includes(res.status)" in adgroup
+    assert "确认百度已执行" in queue and "确认百度未执行" in queue
+    assert "['verify.pending', 'verify.adjustments']" in router
+    assert "人工对账队列" in ledger
 
 
 def test_real_writeback_claims_approval_but_dry_run_does_not():

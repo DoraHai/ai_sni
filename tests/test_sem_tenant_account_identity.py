@@ -16,7 +16,7 @@ os.environ.setdefault("BAIDU_SELF_TOKEN_EXPIRES_AT", "2099-01-01T00:00:00")
 os.environ.setdefault("CRYPTO_MASTER_KEY_B64", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
-from app.api.auth import _sem_account_payload, list_tenants
+from app.api.auth import _MODULE_PERMISSION_KEYS, _sem_account_payload, list_tenants
 from app.api.customer_modules import (
     CustomerUpdate,
     SemAccountArchive,
@@ -42,6 +42,14 @@ class _Rows:
 
 
 class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
+    def test_all_sem_workflow_roles_can_request_sem_tenant_list(self):
+        sem_keys = set(_MODULE_PERMISSION_KEYS["sem"])
+        for key in (
+            "onboarding", "optimize.keywords", "verify.pending",
+            "manage.adgroups", "delivery.report", "settings.customers",
+        ):
+            self.assertIn(key, sem_keys)
+
     def test_account_context_payload_is_sanitized(self):
         account = SimpleNamespace(
             id=8,
@@ -78,7 +86,7 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
                 side_effect=[_Rows([tenant]), _Rows([account]), _Rows([account])]
             )
         )
-        ctx = SimpleNamespace(tenant_id=7)
+        ctx = SimpleNamespace(tenant_id=7, can_view=lambda *_keys: True)
 
         result = await list_tenants(module=None, ctx=ctx, session=session)
 
@@ -92,6 +100,42 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
         second_query = str(session.scalars.await_args_list[1].args[0])
         self.assertIn("tenants.id", first_query)
         self.assertIn("baidu_accounts.tenant_id", second_query)
+
+    async def test_non_sem_tenant_switcher_does_not_return_sem_identity_or_accounts(self):
+        tenant = SimpleNamespace(id=7, name="SEO 客户")
+        session = SimpleNamespace(scalars=AsyncMock(return_value=_Rows([tenant])))
+
+        result = await list_tenants(
+            module="seo",
+            ctx=SimpleNamespace(tenant_id=7, can_view=lambda *_keys: True),
+            session=session,
+        )
+
+        self.assertEqual(result["tenants"], [{"id": 7, "name": "SEO 客户"}])
+        self.assertEqual(session.scalars.await_count, 1)
+
+    async def test_sem_tenant_switcher_requires_sem_permission(self):
+        with self.assertRaises(HTTPException) as cm:
+            await list_tenants(
+                module="sem",
+                ctx=SimpleNamespace(tenant_id=7, can_view=lambda *_keys: False),
+                session=SimpleNamespace(),
+            )
+
+        self.assertEqual(cm.exception.status_code, 403)
+
+    async def test_global_switcher_hides_sem_context_without_customer_admin_permission(self):
+        tenant = SimpleNamespace(id=7, name="全局客户")
+        session = SimpleNamespace(scalars=AsyncMock(return_value=_Rows([tenant])))
+
+        result = await list_tenants(
+            module=None,
+            ctx=SimpleNamespace(tenant_id=None, can_view=lambda *_keys: False),
+            session=session,
+        )
+
+        self.assertEqual(result["tenants"], [{"id": 7, "name": "全局客户"}])
+        self.assertEqual(session.scalars.await_count, 1)
 
     async def test_tenant_switcher_hides_account_context_when_ucid_conflicts(self):
         tenant = SimpleNamespace(id=7, name="诺德")
@@ -119,7 +163,9 @@ class TestSemTenantAccountIdentity(IsolatedAsyncioTestCase):
         )
 
         result = await list_tenants(
-            module=None, ctx=SimpleNamespace(tenant_id=7), session=session
+            module=None,
+            ctx=SimpleNamespace(tenant_id=7, can_view=lambda *_keys: True),
+            session=session,
         )
 
         payload = result["tenants"][0]
