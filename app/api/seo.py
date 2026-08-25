@@ -12,7 +12,7 @@ from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
-from pydantic import BaseModel, Field, PositiveInt
+from pydantic import BaseModel, Field, PositiveInt, field_validator
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -4825,15 +4825,50 @@ class CompetitorCreate(BaseModel):
 
 
 class CompetitorEventCreate(BaseModel):
-    tenant_id: int
-    site_id: int | None = None
-    competitor_id: int
+    tenant_id: PositiveInt
+    site_id: PositiveInt
+    competitor_id: PositiveInt
     event_type: Literal["content", "backlink"]
-    title: str | None = Field(None, max_length=500)
+    title: str = Field(min_length=1, max_length=500)
     url: str = Field(min_length=1, max_length=2000)
     source_url: str | None = Field(None, max_length=2000)
-    summary: str | None = Field(None, max_length=5000)
+    summary: str = Field(min_length=1, max_length=5000)
     event_at: datetime | None = None
+
+    @field_validator("title", "summary", mode="before")
+    @classmethod
+    def trim_required_text(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def validate_event_url(cls, value: Any) -> str:
+        return _validate_competitor_event_url(value, required=True)
+
+    @field_validator("source_url", mode="before")
+    @classmethod
+    def validate_optional_source_url(cls, value: Any) -> str | None:
+        return _validate_competitor_event_url(value, required=False)
+
+
+def _validate_competitor_event_url(value: Any, *, required: bool) -> str | None:
+    normalized = value.strip() if isinstance(value, str) else ""
+    if not normalized:
+        if required:
+            raise ValueError("请填写页面 URL")
+        return None
+    if any(character.isspace() or ord(character) < 32 for character in normalized):
+        raise ValueError("URL 不能包含空格或控制字符")
+    parsed = urlparse(normalized)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("URL 必须是完整的 http/https 地址")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("URL 不能包含用户名或密码")
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise ValueError("URL 端口无效") from exc
+    return normalized
 
 
 class CompetitorCollectRequest(BaseModel):
