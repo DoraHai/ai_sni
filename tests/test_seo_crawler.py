@@ -1,11 +1,19 @@
 import asyncio
+import ssl
 
+import httpcore
+import httpx
 import pytest
 
 from app.seo_crawler import (
     FetchResult,
     SeoCrawlError,
+    _PINNED_TARGETS,
+    _PinnedNetworkBackend,
+    _ensure_public_host,
+    PinnedAsyncHTTPTransport,
     analyze_html,
+    classify_fetch_error,
     crawl_site,
     fetch_url,
     normalize_crawl_url,
@@ -107,3 +115,246 @@ def test_fetch_url_blocks_loopback_before_network_request() -> None:
     result = asyncio.run(fetch_url("http://127.0.0.1/admin"))
     assert result.status_code is None
     assert result.error_type == "blocked_address"
+
+
+@pytest.mark.parametrize(
+    "exception_type",
+    [
+        httpx.ConnectTimeout,
+        httpx.ReadTimeout,
+        httpx.WriteTimeout,
+        httpx.PoolTimeout,
+    ],
+)
+def test_classify_fetch_error_recognizes_httpx_timeouts_with_empty_messages(
+    exception_type: type[httpx.TimeoutException],
+) -> None:
+    assert classify_fetch_error(exception_type("")) == "timeout"
+
+
+def test_fetch_url_classifies_an_httpx_read_timeout(monkeypatch) -> None:
+    class TimeoutTransport(PinnedAsyncHTTPTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            raise httpx.ReadTimeout("", request=request)
+
+    async def validate(_: str) -> str:
+        return "93.184.216.34"
+
+    async def exercise() -> FetchResult:
+        async with httpx.AsyncClient(transport=TimeoutTransport()) as client:
+            return await fetch_url("https://example.com/", client=client)
+
+    monkeypatch.setattr("app.seo_crawler._ensure_public_host", validate)
+    result = asyncio.run(exercise())
+
+    assert result.status_code is None
+    assert result.error_type == "timeout"
+
+
+def test_fetch_url_revalidates_a_private_redirect(monkeypatch) -> None:
+    class RedirectTransport(PinnedAsyncHTTPTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                302,
+                headers={"Location": "http://127.0.0.1/private"},
+                request=request,
+            )
+
+    checked: list[str] = []
+
+    async def validate(url: str) -> str:
+        checked.append(url)
+        if url.startswith("http://127.0.0.1"):
+            raise SeoCrawlError("Private, local, or reserved addresses are not allowed")
+        return "93.184.216.34"
+
+    monkeypatch.setattr("app.seo_crawler._ensure_public_host", validate)
+
+    async def exercise() -> FetchResult:
+        async with httpx.AsyncClient(
+            transport=RedirectTransport(),
+            follow_redirects=False,
+        ) as client:
+            return await fetch_url("https://example.com/", client=client)
+
+    result = asyncio.run(exercise())
+
+    assert checked == ["https://example.com/", "http://127.0.0.1/private"]
+    assert result.status_code is None
+    assert result.error_type == "blocked_address"
+
+
+def test_pinned_backend_connects_only_to_the_validated_ip() -> None:
+    class RecordingBackend:
+        def __init__(self) -> None:
+            self.hosts: list[str] = []
+
+        async def connect_tcp(self, *, host: str, **_: object) -> object:
+            self.hosts.append(host)
+            return object()
+
+        async def sleep(self, _: float) -> None:
+            return None
+
+    recording = RecordingBackend()
+    backend = _PinnedNetworkBackend(recording)  # type: ignore[arg-type]
+    token = _PINNED_TARGETS.set({("example.com", 443): "93.184.216.34"})
+    try:
+        asyncio.run(backend.connect_tcp("example.com", 443))
+    finally:
+        _PINNED_TARGETS.reset(token)
+    assert recording.hosts == ["93.184.216.34"]
+
+
+def test_pinned_backend_refuses_an_unvalidated_connection() -> None:
+    backend = _PinnedNetworkBackend()
+    with pytest.raises(httpcore.ConnectError, match="not pinned"):
+        asyncio.run(backend.connect_tcp("example.com", 443))
+
+
+def test_dns_rebinding_cannot_change_the_validated_connect_target(monkeypatch) -> None:
+    class RecordingBackend:
+        def __init__(self) -> None:
+            self.hosts: list[str] = []
+
+        async def connect_tcp(self, *, host: str, **_: object) -> object:
+            self.hosts.append(host)
+            return object()
+
+        async def sleep(self, _: float) -> None:
+            return None
+
+    recording = RecordingBackend()
+    backend = _PinnedNetworkBackend(recording)  # type: ignore[arg-type]
+    dns_answer = ["93.184.216.34"]
+    dns_calls = 0
+
+    async def scenario() -> None:
+        nonlocal dns_calls
+
+        async def fake_getaddrinfo(*_: object, **__: object) -> list[tuple[object, ...]]:
+            nonlocal dns_calls
+            dns_calls += 1
+            return [(None, None, None, None, (dns_answer[0], 443))]
+
+        loop = asyncio.get_running_loop()
+        monkeypatch.setattr(loop, "getaddrinfo", fake_getaddrinfo)
+        approved_ip = await _ensure_public_host("https://example.com/")
+        dns_answer[0] = "127.0.0.1"
+        token = _PINNED_TARGETS.set({("example.com", 443): approved_ip})
+        try:
+            await backend.connect_tcp("example.com", 443)
+        finally:
+            _PINNED_TARGETS.reset(token)
+
+    asyncio.run(scenario())
+
+    assert dns_calls == 1
+    assert dns_answer == ["127.0.0.1"]
+    assert recording.hosts == ["93.184.216.34"]
+
+
+def test_concurrent_pinned_targets_do_not_leak_between_contexts() -> None:
+    class RecordingBackend:
+        def __init__(self) -> None:
+            self.hosts: list[str] = []
+
+        async def connect_tcp(self, *, host: str, **_: object) -> object:
+            await asyncio.sleep(0)
+            self.hosts.append(host)
+            return object()
+
+        async def sleep(self, _: float) -> None:
+            return None
+
+    recording = RecordingBackend()
+    backend = _PinnedNetworkBackend(recording)  # type: ignore[arg-type]
+
+    async def connect(logical_host: str, approved_ip: str) -> None:
+        token = _PINNED_TARGETS.set({(logical_host, 443): approved_ip})
+        try:
+            await asyncio.sleep(0)
+            await backend.connect_tcp(logical_host, 443)
+        finally:
+            _PINNED_TARGETS.reset(token)
+
+    async def scenario() -> None:
+        await asyncio.gather(
+            connect("first.example", "93.184.216.34"),
+            connect("second.example", "142.250.72.14"),
+        )
+
+    asyncio.run(scenario())
+
+    assert sorted(recording.hosts) == ["142.250.72.14", "93.184.216.34"]
+
+
+def test_https_pinning_preserves_host_sni_and_certificate_verification() -> None:
+    class RecordingStream(httpcore.AsyncNetworkStream):
+        def __init__(self) -> None:
+            self.response = bytearray(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK"
+            )
+            self.writes: list[bytes] = []
+            self.server_names: list[str | None] = []
+            self.verify_modes: list[ssl.VerifyMode] = []
+            self.check_hostnames: list[bool] = []
+
+        async def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
+            chunk = bytes(self.response[:max_bytes])
+            del self.response[:max_bytes]
+            return chunk
+
+        async def write(self, buffer: bytes, timeout: float | None = None) -> None:
+            self.writes.append(buffer)
+
+        async def start_tls(
+            self,
+            ssl_context: ssl.SSLContext,
+            server_hostname: str | None = None,
+            timeout: float | None = None,
+        ) -> httpcore.AsyncNetworkStream:
+            self.server_names.append(server_hostname)
+            self.verify_modes.append(ssl_context.verify_mode)
+            self.check_hostnames.append(ssl_context.check_hostname)
+            return self
+
+        async def aclose(self) -> None:
+            return None
+
+        def get_extra_info(self, info: str) -> object:
+            return None
+
+    class RecordingBackend:
+        def __init__(self, stream: RecordingStream) -> None:
+            self.stream = stream
+            self.hosts: list[str] = []
+
+        async def connect_tcp(self, *, host: str, **_: object) -> RecordingStream:
+            self.hosts.append(host)
+            return self.stream
+
+        async def sleep(self, _: float) -> None:
+            return None
+
+    stream = RecordingStream()
+    recording = RecordingBackend(stream)
+    transport = PinnedAsyncHTTPTransport()
+    transport._pool._network_backend = _PinnedNetworkBackend(recording)  # type: ignore[arg-type]
+
+    async def scenario() -> httpx.Response:
+        token = _PINNED_TARGETS.set({("example.com", 443): "93.184.216.34"})
+        try:
+            async with httpx.AsyncClient(transport=transport) as client:
+                return await client.get("https://example.com/probe")
+        finally:
+            _PINNED_TARGETS.reset(token)
+
+    response = asyncio.run(scenario())
+
+    assert response.status_code == 200
+    assert recording.hosts == ["93.184.216.34"]
+    assert stream.server_names == ["example.com"]
+    assert stream.verify_modes == [ssl.CERT_REQUIRED]
+    assert stream.check_hostnames == [True]
+    assert b"Host: example.com\r\n" in b"".join(stream.writes)

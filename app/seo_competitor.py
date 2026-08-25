@@ -6,6 +6,8 @@ import asyncio
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
+import math
+import time
 from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import urljoin, urlparse, urlunparse
@@ -20,6 +22,7 @@ from app.seo_crawler import (
     analyze_html,
     fetch_url,
     normalize_crawl_url,
+    pinned_async_client,
 )
 from app.seo_serp import domain_matches
 
@@ -67,10 +70,23 @@ _SKIPPED_SUFFIXES = {
 class CompetitorCollectionError(RuntimeError):
     """Safe failure exposed by the manual collection endpoint."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        error_type: str | None = None,
+        status_code: int | None = None,
+        elapsed_ms: int | None = None,
+        response_status: int = 502,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.public_message = message
+        self.error_type = error_type
+        self.status_code = status_code
+        self.elapsed_ms = elapsed_ms
+        self.response_status = response_status
 
 
 @dataclass(frozen=True)
@@ -96,7 +112,7 @@ def competitor_retry_after(
         return 0
     current = now or datetime.utcnow()
     elapsed = (current - last_checked_at).total_seconds()
-    return max(0, int(COMPETITOR_MANUAL_COOLDOWN_SECONDS - elapsed))
+    return max(0, math.ceil(COMPETITOR_MANUAL_COOLDOWN_SECONDS - elapsed))
 
 
 def _content_url(value: str) -> str:
@@ -141,6 +157,36 @@ def _candidate_urls(home: FetchResult, competitor_domain: str, max_pages: int) -
     return unique
 
 
+def _homepage_error(result: FetchResult) -> CompetitorCollectionError:
+    error_type = result.error_type or "empty_response"
+    if error_type == "timeout":
+        code, message, response_status = "homepage_timeout", "竞品网站响应较慢，请稍后重试", 504
+    elif error_type == "tls_error":
+        code, message, response_status = "homepage_tls_error", "竞品网站安全连接失败，请核对域名或证书配置", 502
+    elif error_type in {"connection_error", "dns_error"}:
+        code, message, response_status = "homepage_connection_error", "竞品网站暂时无法连接，请稍后重试", 502
+    elif error_type == "blocked_address":
+        code, message, response_status = "homepage_blocked_address", "竞品网站地址不符合公网采集要求", 400
+    elif error_type == "http_4xx" and result.status_code in {401, 403, 429}:
+        code, message, response_status = "homepage_access_denied", "竞品网站拒绝自动访问，请使用“记录动态”人工登记", 424
+    elif error_type == "http_4xx":
+        code, message, response_status = "homepage_http_4xx", "竞品网站拒绝了本次访问，请核对竞品域名", 424
+    elif error_type == "http_5xx":
+        code, message, response_status = "homepage_http_5xx", "竞品网站服务暂时异常，请稍后重试", 502
+    elif error_type == "non_html":
+        code, message, response_status = "homepage_unsupported_content", "竞品网站首页未返回可采集的 HTML 内容", 422
+    else:
+        code, message, response_status = "homepage_unavailable", "竞品网站暂时无法访问，请稍后重试", 502
+    return CompetitorCollectionError(
+        code,
+        message,
+        error_type=error_type,
+        status_code=result.status_code,
+        elapsed_ms=result.response_time_ms,
+        response_status=response_status,
+    )
+
+
 async def collect_competitor_content(
     competitor_domain: str,
     *,
@@ -150,13 +196,14 @@ async def collect_competitor_content(
     """Fetch a competitor homepage and a bounded set of same-domain HTML pages."""
     max_pages = max(1, min(int(max_pages), COMPETITOR_MAX_PAGES_PER_RUN))
     homepage = f"https://{competitor_domain.strip().lower().rstrip('.')}/"
+    started = time.perf_counter()
 
     async def run_collection() -> CompetitorContentCollection:
         limits = httpx.Limits(
             max_connections=COMPETITOR_FETCH_CONCURRENCY,
             max_keepalive_connections=COMPETITOR_FETCH_CONCURRENCY,
         )
-        async with httpx.AsyncClient(
+        async with pinned_async_client(
             timeout=COMPETITOR_FETCH_TIMEOUT_SECONDS,
             follow_redirects=False,
             limits=limits,
@@ -169,11 +216,10 @@ async def collect_competitor_content(
                 return await fetcher(candidate, client=client)
 
             home = await fetch(homepage)
+            if (home.error_type or not home.body) and not competitor_domain.startswith("www."):
+                home = await fetch(f"https://www.{competitor_domain.strip().lower().rstrip('.')}/")
             if home.error_type or not home.body:
-                raise CompetitorCollectionError(
-                    "homepage_unavailable",
-                    "竞品网站暂时无法访问，请稍后重试",
-                )
+                raise _homepage_error(home)
             if not domain_matches(urlparse(home.final_url).hostname or "", competitor_domain):
                 raise CompetitorCollectionError(
                     "cross_domain_redirect",
@@ -232,6 +278,9 @@ async def collect_competitor_content(
         raise CompetitorCollectionError(
             "collection_timeout",
             "竞品网站响应较慢，本次采集已在安全时限内停止",
+            error_type="timeout",
+            elapsed_ms=round((time.perf_counter() - started) * 1000),
+            response_status=504,
         ) from exc
 
 
