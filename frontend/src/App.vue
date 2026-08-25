@@ -5,7 +5,6 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { changePassword, fetchMe, fetchTenants } from './api/auth'
 import { fetchAlerts } from './api/alerts'
 import { fetchCandidates } from './api/expansion'
-import GeoObservationPeriod from './components/GeoObservationPeriod.vue'
 import { session } from './store/session'
 import { GEO_WORKBENCH_NAV } from './utils/geoPrototypeNavigation'
 
@@ -21,33 +20,6 @@ const fluidMain = computed(() =>
 const isGeoRoute = computed(() => route.path.startsWith('/geo'))
 const mobileNavOpen = ref(false)
 const isMobile = ref(false)
-
-/** Pages using GeoWorkbenchPage embed observation period in their own topbar */
-const GEO_WORKBENCH_ROOTS = [
-  '/geo/overview',
-  '/geo/visibility',
-  '/geo/questions',
-  '/geo/competitors',
-  '/geo/citations',
-  '/geo/tasks',
-  '/geo/publishing',
-  '/geo/placements',
-  '/geo/brand',
-  '/geo/knowledge',
-  '/geo/models',
-  '/geo/channel-polish-prompts',
-  '/geo/ai-settings',
-  '/geo/geo-diagnosis',
-]
-const usesGeoWorkbenchShell = computed(() => {
-  if (/^\/geo\/tasks\/[^/]+/.test(route.path)) return false
-  return GEO_WORKBENCH_ROOTS.some(
-    (p) => route.path === p || route.path.startsWith(`${p}/`),
-  )
-})
-const showGeoObsInApp = computed(
-  () => isGeoRoute.value && !usesGeoWorkbenchShell.value && !/^\/geo\/tasks\/[^/]+/.test(route.path),
-)
 
 function toggleMobileNav() {
   mobileNavOpen.value = !mobileNavOpen.value
@@ -527,10 +499,6 @@ onUnmounted(() => {
           ☰
         </button>
         <span class="mobile-nav-title">{{ isGeoRoute ? 'GEO 工作台' : (currentTitle || '工作台') }}</span>
-        <GeoObservationPeriod v-if="showGeoObsInApp" />
-      </div>
-      <div v-else-if="showGeoObsInApp" class="geo-obs-app-bar">
-        <GeoObservationPeriod />
       </div>
       <el-header v-if="!isGeoRoute" class="topbar" height="52px">
         <div class="crumb-block">
@@ -716,8 +684,7 @@ onUnmounted(() => {
   padding: 8px 10px 12px;
   border-top: 1px solid #e8eaf0;
 }
-.geo-tenant,
-.geo-back {
+.geo-tenant {
   display: block;
   width: 100%;
   border: 0;
@@ -729,8 +696,7 @@ onUnmounted(() => {
   cursor: pointer;
   border-radius: 8px;
 }
-.geo-tenant:hover,
-.geo-back:hover { background: #f5f0ff; color: #7c3aed; }
+.geo-tenant:hover { background: #f5f0ff; color: #7c3aed; }
 .nav-scroll { flex: 1; overflow-y: auto; padding: 12px 0 20px; }
 .nav-section-title {
   padding: 2px 20px 8px;
@@ -1183,14 +1149,6 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.geo-obs-app-bar {
-  display: flex;
-  justify-content: flex-end;
-  padding: 8px 16px;
-  background: #fff;
-  border-bottom: 1px solid #e8eaf0;
 }
 
 .side-backdrop {
