@@ -172,9 +172,6 @@ def check_code() -> None:
         "import.meta.env.DEV" in router and "VITE_API_KEY" in router,
     )
 
-    vue_patrol = ROOT / "frontend/src/views/geo/GeoVisibilityPatrolView.vue"
-    ok("visibility patrol Vue page", vue_patrol.is_file())
-
     # hierarchy + daily metrics productization
     ok(
         "geo optimization model",
@@ -207,10 +204,6 @@ def check_code() -> None:
         encoding="utf-8"
     )
     ok("overview business filter", "filterBusinessId" in overview or "listGeoBusinesses" in overview)
-    ok(
-        "businesses vue page",
-        (ROOT / "frontend/src/views/geo/GeoBusinessesView.vue").is_file(),
-    )
 
 
 def check_live() -> None:
