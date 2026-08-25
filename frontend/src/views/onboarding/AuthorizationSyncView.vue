@@ -14,6 +14,7 @@ const configured = ref(false)
 const callbackUrl = ref('')
 const loading = ref(false)
 const authorizing = ref(false)
+const bindToTenant = ref(false)
 const loadError = ref('')
 let pollTimer = null
 let loadGeneration = 0
@@ -23,7 +24,8 @@ const tenantName = computed(
 )
 
 const canBind = computed(
-  () => (!session.isLoggedIn && !!import.meta.env.VITE_API_KEY) || session.canEdit('onboarding'),
+  () => (!session.isLoggedIn && !!import.meta.env.VITE_API_KEY)
+    || (bindToTenant.value ? session.canEdit('settings.customers') : session.canEdit('onboarding')),
 )
 
 const activeAccounts = computed(() => accounts.value.filter((item) => item.status === 'active'))
@@ -128,6 +130,7 @@ async function startBaiduAuthorization() {
     const result = await startBaiduOAuth({
       tenantId: session.tenantId,
       returnPath: '/onboarding',
+      bindToTenant: bindToTenant.value,
     })
     window.location.assign(result.authorize_url)
   } catch (error) {
@@ -162,6 +165,11 @@ async function handleAuthorizationResult() {
       oauth_upstream: '百度授权服务暂时不可用，请稍后重试',
       oauth_rejected: '百度未接受本次授权，请重新尝试',
       internal_error: '授权处理失败，请联系管理员查看日志',
+      rebind_requires_single_account: '重新绑定时只能授权一个推广账户，请使用目标账户单独授权',
+      target_tenant_not_found: '重新绑定的目标客户不存在，请返回客户与模块重新操作',
+      target_tenant_already_bound: '目标客户已有其他生效推广账户，请先完成归属复核',
+      account_tenant_conflict: '该推广账户已归属于其他客户，系统已停止本次绑定',
+      sem_module_unavailable: '目标客户的 SEM 模块已停用，本次授权未保存，请返回客户与模块检查',
     }
     ElMessage.error(messages[route.query.code] || '百度授权未完成，请重新尝试')
   }
@@ -177,6 +185,7 @@ function applyInitialTenantFromQuery() {
   if (route.query.baidu_auth) return
   const initialTenantId = Number(route.query.tenant_id || 0)
   if (initialTenantId) {
+    bindToTenant.value = route.query.rebind === '1'
     session.setTenant(initialTenantId)
     router.replace({ path: '/onboarding' })
   }

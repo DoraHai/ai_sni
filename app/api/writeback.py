@@ -5,6 +5,7 @@
 """
 import logging
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -45,6 +46,12 @@ class ApprovalRequest(BaseModel):
 class ApprovalDecision(BaseModel):
     decision: str
     note: str | None = Field(None, max_length=1000)
+
+
+class ReconciliationDecision(BaseModel):
+    tenant_id: int
+    decision: Literal["confirmed_executed", "confirmed_not_executed"]
+    note: str = Field(..., min_length=4, max_length=1000)
 
 
 def approval_to_dict(row: WritebackApproval) -> dict:
@@ -155,6 +162,7 @@ async def decide_writeback_approval(
 def wb_to_dict(r: BidWriteback) -> dict:
     return {
         "id": r.id,
+        "approval_id": r.approval_id,
         "suggestion_id": r.suggestion_id,
         "keyword_id": r.keyword_id,
         "keyword": r.keyword,
@@ -171,13 +179,19 @@ def wb_to_dict(r: BidWriteback) -> dict:
         "operator_name": r.operator_name,
         "created_at": r.created_at.isoformat() if r.created_at else None,
         "executed_at": r.executed_at.isoformat() if r.executed_at else None,
+        "reconciliation_result": r.reconciliation_result,
+        "reconciliation_note": r.reconciliation_note,
+        "reconciled_by": r.reconciled_by,
+        "reconciled_at": r.reconciled_at.isoformat() if r.reconciled_at else None,
     }
 
 
 @router.get("")
 async def list_writebacks(
     tenant_id: int = Query(..., description="本地租户 ID"),
-    status: str | None = Query(None, description="success/failed/dry_run，传 all 或空看全部"),
+    status: str | None = Query(
+        None, description="success/failed/dry_run/pending/reconcile，传 all 或空看全部"
+    ),
     limit: int = Query(200, le=500),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -212,9 +226,67 @@ async def list_writebacks(
 def _queue_stage(status: str, dry_run: bool) -> str:
     if status == "failed":
         return "failed"
+    if not dry_run and status in {"pending", "reconcile"}:
+        return "reconciliation_required"
     if dry_run or status == "dry_run":
         return "pending_writeback"
-    return "executed"
+    if status == "success":
+        return "executed"
+    return "reconciliation_required"
+
+
+@router.post("/queue/{record_type}/{record_id}/reconcile")
+async def reconcile_writeback(
+    record_type: Literal["bid", "action"],
+    record_id: int,
+    req: ReconciliationDecision,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """异人确认真实写回结果；保留原异常与对账说明，解除同对象安全锁。"""
+    if ctx.user_id is None:
+        raise HTTPException(403, "人工对账必须使用实名登录账号")
+    note = req.note.strip()
+    if len(note) < 4:
+        raise HTTPException(400, "请填写至少 4 个字的对账依据")
+    ctx.ensure_tenant(req.tenant_id)
+    model = BidWriteback if record_type == "bid" else WritebackAction
+    row = await session.scalar(
+        select(model)
+        .where(model.id == record_id, model.tenant_id == req.tenant_id)
+        .with_for_update()
+    )
+    if row is None:
+        raise HTTPException(404, "待对账记录不存在")
+    if row.dry_run or row.status not in {"pending", "reconcile"}:
+        raise HTTPException(409, "该记录不是待人工对账的真实写回")
+    if row.operator_user_id is not None and row.operator_user_id == ctx.user_id:
+        raise HTTPException(409, "真实写回执行人不能确认自己的对账结论")
+
+    original_error = row.error_msg
+    row.reconciliation_result = req.decision
+    row.reconciliation_note = (
+        f"{note}\n原异常：{original_error}" if original_error else note
+    )
+    row.reconciled_by = ctx.user_id
+    row.reconciled_at = datetime.utcnow()
+    if req.decision == "confirmed_executed":
+        row.status = "success"
+        row.error_msg = None
+    else:
+        row.status = "failed"
+        row.error_msg = f"人工对账确认未执行：{note}"[:2000]
+    await session.commit()
+    await session.refresh(row)
+    return {
+        "status": row.status,
+        "record_type": record_type,
+        "record_id": row.id,
+        "reconciliation_result": row.reconciliation_result,
+        "reconciliation_note": row.reconciliation_note,
+        "reconciled_by": row.reconciled_by,
+        "reconciled_at": row.reconciled_at.isoformat() if row.reconciled_at else None,
+    }
 
 
 @router.get("/queue")
@@ -237,25 +309,35 @@ async def list_writeback_queue(
     items = [
         {
             "key": f"bid:{row.id}", "kind": "关键词调价", "target": row.keyword,
+            "approval_id": row.approval_id,
             "before": float(row.old_bid) if row.old_bid is not None else None,
             "after": float(row.new_bid), "stage": _queue_stage(row.status, row.dry_run),
             "operator": row.operator_name, "created_at": row.created_at.isoformat() if row.created_at else None,
-            "error": row.error_msg,
+            "error": row.error_msg, "reconciliation_result": row.reconciliation_result,
+            "reconciliation_note": row.reconciliation_note,
         }
         for row in bids
     ] + [
         {
             "key": f"action:{row.id}", "kind": WRITEBACK_ACTION_LABELS.get(row.action_type, row.action_type),
+            "approval_id": row.approval_id,
             "target": row.word, "before": float(row.old_value) if row.old_value is not None else None,
             "after": float(row.new_value) if row.new_value is not None else None,
             "stage": _queue_stage(row.status, row.dry_run), "operator": row.operator_name,
             "created_at": row.created_at.isoformat() if row.created_at else None, "error": row.error_msg,
+            "reconciliation_result": row.reconciliation_result,
+            "reconciliation_note": row.reconciliation_note,
         }
         for row in actions
     ]
     items.sort(key=lambda item: item["created_at"] or "", reverse=True)
     items = items[:limit]
-    counts = {"pending_writeback": 0, "executed": 0, "failed": 0}
+    counts = {
+        "pending_writeback": 0,
+        "reconciliation_required": 0,
+        "executed": 0,
+        "failed": 0,
+    }
     for item in items:
         counts[item["stage"]] += 1
     return {"writeback_enabled": False, "counts": counts, "items": items}

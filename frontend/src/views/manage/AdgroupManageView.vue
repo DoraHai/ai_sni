@@ -140,8 +140,15 @@ async function editBid(row) {
   try {
     const res = await setAdgroupBid({ tenantId: TENANT_ID.value, adgroupId: row.adgroup_id, maxPrice: v })
     const tag = res.dry_run ? '（演练：未真改）' : ''
-    if (res.status === 'failed') ElMessage.error('失败：' + (res.error_msg || '未知错误'))
-    else ElMessage.success(`已写回：${fmtMoney(res.old_price)} → ${fmtMoney(res.new_price)}${tag}`)
+    if (['pending', 'reconcile'].includes(res.status)) {
+      ElMessage.warning(res.error_msg || '百度执行结果未知，已转入人工对账')
+    } else if (res.status === 'dry_run') {
+      ElMessage.success(`已加入待回写：${fmtMoney(res.old_price)} → ${fmtMoney(res.new_price)}（百度账户未修改）`)
+    } else if (res.status === 'success') {
+      ElMessage.success(`已写回：${fmtMoney(res.old_price)} → ${fmtMoney(res.new_price)}${tag}`)
+    } else {
+      ElMessage.error('失败：' + (res.error_msg || '未知错误'))
+    }
     await load()
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || e.message)

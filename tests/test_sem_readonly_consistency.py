@@ -93,6 +93,16 @@ def test_refresh_and_timeout_failures_reach_a_visible_terminal_state():
     assert "router.onError" in router and "页面加载失败" in router
 
 
+def test_stale_dynamic_chunks_recover_once_after_a_release():
+    router = _read("frontend/src/router/index.js")
+    recovery = _read("frontend/src/router/chunkRecovery.js")
+
+    assert "vite:preloadError" in router
+    assert "recoverFromChunkLoadError" in router
+    assert "sessionStorage" in recovery
+    assert "window.location.reload()" in recovery
+
+
 def test_effect_verification_exposes_sample_maturity():
     keyword = _read("app/ai/adjustment_verify.py")
     budget = _read("app/ai/budget_adjustment_verify.py")

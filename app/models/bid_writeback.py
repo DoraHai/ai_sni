@@ -19,6 +19,8 @@ WRITEBACK_STATUS_LABELS = {
     "success": "已写回",
     "failed": "失败",
     "dry_run": "演练（未真改）",
+    "pending": "执行结果待确认",
+    "reconcile": "待人工对账",
 }
 
 
@@ -37,6 +39,9 @@ class BidWriteback(Base):
     baidu_account_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("baidu_accounts.id")
     )
+    approval_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("writeback_approvals.id")
+    )
     suggestion_id: Mapped[int | None] = mapped_column(BigInteger)  # 来源建议；手动回写为 None
 
     keyword_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -50,9 +55,14 @@ class BidWriteback(Base):
     change_pct: Mapped[float | None] = mapped_column(Numeric(6, 2))
 
     dry_run: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    status: Mapped[str] = mapped_column(String(10), nullable=False)  # success/failed/dry_run
+    status: Mapped[str] = mapped_column(String(10), nullable=False)  # success/failed/dry_run/pending/reconcile
     baidu_response: Mapped[str | None] = mapped_column(Text)
     error_msg: Mapped[str | None] = mapped_column(Text)
+
+    reconciliation_result: Mapped[str | None] = mapped_column(String(32))
+    reconciliation_note: Mapped[str | None] = mapped_column(Text)
+    reconciled_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id"))
+    reconciled_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     operator_user_id: Mapped[int | None] = mapped_column(BigInteger)
     operator_name: Mapped[str | None] = mapped_column(String(100))

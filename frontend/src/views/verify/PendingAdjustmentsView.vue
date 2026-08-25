@@ -1,13 +1,14 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   fetchBudgetAdjustments,
   fetchPendingAdjustments,
   fetchWritebackQueue,
   genAiVerdict,
   markVerified,
+  reconcileWriteback,
 } from '../../api/adjustmentVerify'
 import { session } from '../../store/session'
 
@@ -15,13 +16,15 @@ const router = useRouter()
 const route = useRoute()
 const TENANT_ID = computed(() => session.tenantId)
 const canEdit = computed(() => session.canEdit('verify.pending'))
+const canReconcile = computed(() => session.canEdit('verify.adjustments'))
+const canViewPending = computed(() => session.canView('verify.pending'))
 
 const loading = ref(false)
 const error = ref('')
 const data = ref(null)
 const days = ref(7)
 const statusFilter = ref('')
-const mode = ref(route.query.mode === 'queue' ? 'queue' : 'keyword')
+const mode = ref(route.query.mode === 'queue' || !canViewPending.value ? 'queue' : 'keyword')
 const aiLoading = ref({})
 
 const fmtMoney = (v) => (v == null ? '-' : '¥ ' + Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 2 }))
@@ -104,6 +107,45 @@ async function reopen(item) {
   }
 }
 
+async function reconcile(item, decision) {
+  const [recordType, rawId] = String(item.key || '').split(':')
+  const recordId = Number(rawId)
+  if (!['bid', 'action'].includes(recordType) || !recordId) return
+  const executed = decision === 'confirmed_executed'
+  let note = ''
+  try {
+    const result = await ElMessageBox.prompt(
+      executed
+        ? '请先在百度后台核对该动作确实已经生效，再填写核对依据。确认后本记录会标记为已执行。'
+        : '请先在百度后台核对该动作确实未生效，再填写核对依据。确认后可重新发起操作。',
+      executed ? '确认百度已执行' : '确认百度未执行',
+      {
+        type: 'warning',
+        confirmButtonText: executed ? '确认已执行' : '确认未执行',
+        cancelButtonText: '取消',
+        inputPlaceholder: '至少填写 4 个字的核对依据',
+        inputValidator: (value) => String(value || '').trim().length >= 4 || '请填写至少 4 个字',
+      },
+    )
+    note = result.value.trim()
+  } catch {
+    return
+  }
+  try {
+    await reconcileWriteback({
+      tenantId: TENANT_ID.value,
+      recordType,
+      recordId,
+      decision,
+      note,
+    })
+    ElMessage.success(executed ? '已记录：百度确认已执行' : '已记录：百度确认未执行')
+    await load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || e.message)
+  }
+}
+
 watch([TENANT_ID, days, statusFilter, mode], load)
 onMounted(load)
 </script>
@@ -121,8 +163,8 @@ onMounted(load)
 
     <div class="toolbar">
       <el-radio-group v-model="mode" size="small">
-        <el-radio-button label="keyword">关键词调价</el-radio-button>
-        <el-radio-button label="budget">预算调整</el-radio-button>
+        <el-radio-button v-if="canViewPending" label="keyword">关键词调价</el-radio-button>
+        <el-radio-button v-if="canViewPending" label="budget">预算调整</el-radio-button>
         <el-radio-button label="queue">待回写队列</el-radio-button>
       </el-radio-group>
       <el-radio-group v-if="mode !== 'queue'" v-model="days" size="small">
@@ -139,15 +181,24 @@ onMounted(load)
       </span>
     </div>
 
-    <el-alert v-if="mode === 'queue'" type="info" :closable="false" title="百度回写尚未开启：演练记录统一归入待回写，不代表已在百度执行。" style="margin-bottom: 12px" />
+    <el-alert v-if="mode === 'queue'" type="info" :closable="false" title="演练记录归入待回写；真实写回若结果未知会标为待人工对账，不会冒充百度已执行。" style="margin-bottom: 12px" />
     <el-table v-if="mode === 'queue'" :data="data?.items || []" border empty-text="暂无待回写或执行记录">
       <el-table-column prop="created_at" label="记录时间" min-width="150"><template #default="{row}">{{ fmtTime(row.created_at) }}</template></el-table-column>
       <el-table-column prop="kind" label="动作" min-width="120" />
       <el-table-column prop="target" label="对象" min-width="180" />
       <el-table-column label="建议变化" min-width="130"><template #default="{row}">{{ row.before ?? '—' }} → {{ row.after ?? '—' }}</template></el-table-column>
-      <el-table-column label="状态" width="120"><template #default="{row}"><span class="st" :class="row.stage === 'failed' ? 'v-bad' : row.stage === 'executed' ? 'st-ok' : 'st-pending'">{{ row.stage === 'failed' ? '执行失败' : row.stage === 'executed' ? '百度已执行' : '待回写' }}</span></template></el-table-column>
+      <el-table-column label="状态" width="130"><template #default="{row}"><span class="st" :class="row.stage === 'failed' || row.stage === 'reconciliation_required' ? 'v-bad' : row.stage === 'executed' ? 'st-ok' : 'st-pending'">{{ row.stage === 'failed' ? '执行失败' : row.stage === 'reconciliation_required' ? '待人工对账' : row.stage === 'executed' ? '百度已执行' : '待回写' }}</span></template></el-table-column>
       <el-table-column prop="operator" label="记录人" min-width="100" />
       <el-table-column prop="error" label="失败原因" min-width="160" />
+      <el-table-column v-if="canReconcile" label="人工对账" width="190" fixed="right">
+        <template #default="{row}">
+          <template v-if="row.stage === 'reconciliation_required'">
+            <el-button link type="success" @click="reconcile(row, 'confirmed_executed')">确认已执行</el-button>
+            <el-button link type="danger" @click="reconcile(row, 'confirmed_not_executed')">确认未执行</el-button>
+          </template>
+          <span v-else>—</span>
+        </template>
+      </el-table-column>
     </el-table>
 
     <div v-for="it in mode === 'keyword' ? (data?.items || []) : []" :key="it.dedup_key" class="adj-card" :class="{ verified: it.review.status === 'verified' }">

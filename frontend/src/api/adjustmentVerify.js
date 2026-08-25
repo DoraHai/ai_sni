@@ -29,3 +29,11 @@ export function genAiVerdict({ tenantId, dedupKey, force }) {
 export function fetchWritebackQueue(tenantId) {
   return client.get('/api/v1/writeback/queue', { params: { tenant_id: tenantId } })
 }
+
+export function reconcileWriteback({ tenantId, recordType, recordId, decision, note }) {
+  return client.post(`/api/v1/writeback/queue/${recordType}/${recordId}/reconcile`, {
+    tenant_id: tenantId,
+    decision,
+    note,
+  })
+}

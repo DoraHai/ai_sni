@@ -281,6 +281,11 @@ onMounted(load)
           <template v-if="data?.last_synced_at"> · 同步于 {{ fmtTime(data.last_synced_at) }}</template>
         </div>
       </div>
+      <el-button
+        v-if="session.canView('verify.adjustments')"
+        type="warning" plain
+        @click="router.push({ path: '/verify/pending', query: { mode: 'queue' } })"
+      >人工对账队列</el-button>
     </div>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 14px" />

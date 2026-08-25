@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { clearChunkRecoveryMarker, isChunkLoadError, recoverFromChunkLoadError } from './chunkRecovery'
 import { session } from '../store/session'
 import { loginUrl } from '../auth/loginRedirect'
 
@@ -188,7 +189,7 @@ const routes = [
   {
     path: '/onboarding',
     component: () => import('../views/onboarding/AuthorizationSyncView.vue'),
-    meta: { title: '授权与同步', workflow: '首次接入', perm: 'onboarding' },
+    meta: { title: '授权与同步', workflow: '首次接入', perm: ['onboarding', 'settings.customers'] },
   },
   {
     path: '/onboarding/builder',
@@ -225,7 +226,7 @@ const routes = [
   {
     path: '/verify/pending',
     component: () => import('../views/verify/PendingAdjustmentsView.vue'),
-    meta: { title: '待验证调价', workflow: '效果验证', perm: 'verify.pending' },
+    meta: { title: '待验证调价', workflow: '效果验证', perm: ['verify.pending', 'verify.adjustments'] },
   },
   {
     path: '/verify/leads',
@@ -355,10 +356,19 @@ router.beforeEach((to) => {
   }
 })
 router.afterEach((to) => {
+  clearChunkRecoveryMarker()
   const productName = to.path.startsWith('/seo') ? 'SEO 工作台' : 'SEM 智投平台'
   document.title = to.meta.documentTitle || (to.meta.title ? to.meta.title + ' · ' : '') + productName
 })
 router.onError((error) => {
+  if (recoverFromChunkLoadError(error)) return
+  if (isChunkLoadError(error)) {
+    ElMessage.error('系统版本已更新，请手动刷新页面后重试')
+    return
+  }
   ElMessage.error(`页面加载失败：${error.message || '请刷新后重试'}`)
+})
+window.addEventListener('vite:preloadError', (event) => {
+  if (recoverFromChunkLoadError(event.payload)) event.preventDefault()
 })
 export default router
