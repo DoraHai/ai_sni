@@ -601,9 +601,10 @@
 }
 
 .geo-type-label {
-  font-size: 12px;
-  color: #9ca3af;
-  margin-top: 2px;
+  font-size: 13px;
+  color: #374151;
+  margin-top: 0;
+  font-weight: 600;
 }
 
 .geo-status-cell {
@@ -628,9 +629,11 @@
 
 .geo-act {
   display: inline-flex;
-  flex-wrap: wrap;
-  gap: 4px 10px;
+  flex-wrap: nowrap;
+  gap: 2px 8px;
   align-items: center;
+  justify-content: flex-end;
+  white-space: nowrap;
 }
 
 .geo-act .el-button.is-link {
