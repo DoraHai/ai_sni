@@ -147,17 +147,13 @@ onMounted(load)
       <el-table-column prop="industry" label="行业" min-width="150" />
       <el-table-column label="SEM 推广账户归属" min-width="320">
         <template #default="{ row }">
-          <div v-if="row.sem_accounts?.length" class="account-bindings">
-            <span v-for="account in row.sem_accounts" :key="account.id">
+          <div v-if="row.sem_accounts?.some((a) => a.status !== 'archived')" class="account-bindings">
+            <span v-for="account in row.sem_accounts.filter((a) => a.status !== 'archived')" :key="account.id">
               <span class="account-label">
                 {{ account.username }} · {{ account.ucid }}
                 <small>{{ account.auth_mode === 'oauth' ? 'OAuth' : '自授权' }} · {{ account.status }}</small>
               </span>
-              <el-button
-                v-if="account.status !== 'archived'"
-                type="danger" plain size="small"
-                @click="archiveAccount(row, account)"
-              >归档</el-button>
+              <el-button type="danger" plain size="small" @click="archiveAccount(row, account)">归档</el-button>
             </span>
           </div>
           <span v-else class="unbound">未绑定</span>
