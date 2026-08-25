@@ -28,6 +28,7 @@ from app.models import BaiduAccount, BaiduOAuthGrant, Tenant
 from app.module_scope import get_tenant_module
 from app.scheduler import refresh_keyword_workbench_snapshot
 from app.security.auth import AuthContext, require_scoped_auth
+from app.sem_asset_sync import public_sync_error
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,7 @@ async def oauth_status(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
+    await get_tenant_module(session, tenant_id, "sem")
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "客户不存在")
@@ -104,7 +106,7 @@ async def oauth_status(
                     else None
                 ),
                 "sync_status": account.sync_status,
-                "last_sync_error": account.last_sync_error,
+                "last_sync_error": public_sync_error(account.last_sync_error),
             }
         )
     return {

@@ -2,16 +2,26 @@
 set -euo pipefail
 
 frontend_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(git -C "$frontend_root" rev-parse --show-toplevel)"
 deploy_target="${DEPLOY_TARGET:-sem-deploy@101.200.193.83}"
 deploy_root="${SEM_FRONTEND_ROOT:-/opt/sem-frontend}"
 release_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-release_dir="${deploy_root}/releases/${release_stamp}"
+git_commit="$(git -C "$repo_root" rev-parse HEAD)"
+git_short="$(git -C "$repo_root" rev-parse --short=12 HEAD)"
+release_dir="${deploy_root}/releases/${release_stamp}-${git_short}"
 lock_dir="${deploy_root}/.deploy-lock"
 ssh_options=(-o BatchMode=yes -o StrictHostKeyChecking=yes)
 
 cd "$frontend_root"
+if ! git -C "$repo_root" diff --quiet \
+  || ! git -C "$repo_root" diff --cached --quiet \
+  || [[ -n "$(git -C "$repo_root" ls-files --others --exclude-standard)" ]]; then
+  printf '%s\n' "Refusing to deploy from a dirty Git worktree" >&2
+  exit 1
+fi
 npm run build
 npm run verify:sem-build
+printf '%s\n' "$git_commit" > dist/DEPLOYED_GIT_COMMIT
 
 if [[ "${VERIFY_ONLY:-0}" == "1" ]]; then
   printf '%s\n' "SEM frontend build verified; deployment skipped (VERIFY_ONLY=1)"
@@ -44,6 +54,7 @@ rsync \
 ssh "${ssh_options[@]}" "$deploy_target" \
   "set -euo pipefail
    test -s '${release_dir}/index.html'
+   test \"\$(cat '${release_dir}/DEPLOYED_GIT_COMMIT')\" = '${git_commit}'
    grep -Raq '授权新客户账号' '${release_dir}/assets'
    grep -Raq '/api/v1/oauth/baidu/authorize' '${release_dir}/assets'
    if grep -Raq '图形验证码' '${release_dir}/assets'; then
@@ -66,7 +77,7 @@ ssh "${ssh_options[@]}" "$deploy_target" \
    mv -Tf '${deploy_root}/current.next' '${deploy_root}/current'
    test \"\$(readlink '${deploy_root}/current')\" = '${release_dir}'"
 
-printf '%s\n' "SEM frontend deployed atomically: ${release_stamp}"
+printf '%s\n' "SEM frontend deployed atomically: ${release_stamp} (${git_commit})"
 printf '%s\n' "Active release: ${release_dir}"
 if [[ -n "$previous_target" ]]; then
   printf '%s\n' "Previous release: ${previous_target}"

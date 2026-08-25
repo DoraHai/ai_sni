@@ -72,6 +72,7 @@ jobs:
   # merged first. 铁律 1: nothing gets deployed from an untested or
   # unmerged state; every deploy traces back to a commit on this branch.
   deploy-sem:
+    name: Deploy SEM frontend only
     if: github.event_name == 'push' && github.ref == 'refs/heads/codex/production-sem'
     needs: [pytest, sem-frontend-build]
     runs-on: ubuntu-latest
@@ -111,7 +112,7 @@ jobs:
       # markers -> atomic symlink swap -> post-swap confirmation. See the
       # script itself and CLAUDE.md 铁律 1/6 for what each step guards
       # against; do not shortcut any of these steps in this workflow.
-      - name: Deploy
+      - name: Deploy frontend (backend is a separate reviewed release)
         working-directory: frontend
         env:
           DEPLOY_TARGET: sem-deploy@101.200.193.83

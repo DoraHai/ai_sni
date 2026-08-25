@@ -29,6 +29,20 @@ def safe_sync_error(exc: Exception) -> str:
     return (message or exc.__class__.__name__)[:300]
 
 
+def public_sync_error(message: str | None) -> str | None:
+    """Map internal provider diagnostics to stable, non-sensitive user copy."""
+    if not message:
+        return None
+    lowered = str(message).lower()
+    if "89501" in lowered or "not authorized" in lowered or "unauthorized" in lowered:
+        return "当前百度账户无权读取该数据维度，请检查授权范围"
+    if "token" in lowered or "authorization" in lowered or "认证" in lowered:
+        return "百度账户授权已失效或权限不足，请重新授权后再试"
+    if "429" in lowered or "rate" in lowered or "频率" in lowered:
+        return "百度接口访问频率受限，请稍后重试"
+    return "该数据维度同步失败，请稍后重试或联系管理员"
+
+
 def normalize_dimensions(dimensions: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
     if not dimensions:
         return ASSET_SYNC_DIMENSIONS

@@ -35,6 +35,18 @@ const APPROVAL_STATUS = {
 const approvalDialog = ref(false)
 const approvalSubmitting = ref(false)
 const approvalForm = reactive({ actionType: 'keyword_bid', targetId: '', amount: '', note: '' })
+const activeSemAccounts = computed(() => {
+  const tenant = session.tenants.find((row) => row.id === TENANT_ID.value)
+  return (tenant?.sem_accounts || []).filter((row) => row.status === 'active')
+})
+
+watch([TENANT_ID, () => approvalForm.actionType, activeSemAccounts], ([, actionType, accounts]) => {
+  if (actionType !== 'account_budget') return
+  const currentId = Number(approvalForm.targetId)
+  if (!accounts.some((row) => row.id === currentId)) {
+    approvalForm.targetId = accounts[0]?.id ?? ''
+  }
+}, { immediate: true })
 
 async function loadWb() {
   wbLoading.value = true
@@ -84,8 +96,8 @@ async function submitApprovalRequest() {
   if (approvalForm.actionType === 'keyword_bid') payload = { keyword_id: targetId, new_bid: amount }
   else if (approvalForm.actionType === 'adgroup_bid') payload = { adgroup_id: targetId, new_price: amount }
   else if (approvalForm.actionType === 'campaign_budget') payload = { campaign_id: targetId, new_budget: amount }
-  else payload = { new_budget: amount }
-  if (approvalForm.actionType !== 'account_budget' && (!Number.isInteger(targetId) || targetId <= 0)) {
+  else payload = { baidu_account_id: targetId, new_budget: amount }
+  if (!Number.isInteger(targetId) || targetId <= 0) {
     ElMessage.error('请输入有效对象 ID')
     return
   }
@@ -120,7 +132,12 @@ async function executeApproval(row) {
     } else if (row.action_type === 'campaign_budget') {
       await setCampaignBudget({ tenantId: row.tenant_id, campaignId: p.campaign_id, budget: p.new_budget, approvalId: row.id })
     } else {
-      await setAccountBudget({ tenantId: row.tenant_id, budget: p.new_budget, approvalId: row.id })
+      await setAccountBudget({
+        tenantId: row.tenant_id,
+        baiduAccountId: p.baidu_account_id,
+        budget: p.new_budget,
+        approvalId: row.id,
+      })
     }
     ElMessage.success('执行请求已完成')
     await loadApprovals()
@@ -582,8 +599,21 @@ onMounted(load)
             <el-option v-for="(label, code) in APPROVAL_ACTIONS" :key="code" :label="label" :value="code" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="approvalForm.actionType !== 'account_budget'" label="对象 ID">
-          <el-input v-model="approvalForm.targetId" placeholder="关键词 / 单元 / 计划 ID" />
+        <el-form-item :label="approvalForm.actionType === 'account_budget' ? '推广账户' : '对象 ID'">
+          <el-select
+            v-if="approvalForm.actionType === 'account_budget'"
+            v-model="approvalForm.targetId"
+            placeholder="选择推广账户"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="account in activeSemAccounts"
+              :key="account.id"
+              :label="`${account.username} · ${account.ucid}`"
+              :value="account.id"
+            />
+          </el-select>
+          <el-input v-else v-model="approvalForm.targetId" placeholder="关键词 / 单元 / 计划 ID" />
         </el-form-item>
         <el-form-item label="目标金额">
           <el-input v-model="approvalForm.amount" type="number" min="0.01" step="0.01" />

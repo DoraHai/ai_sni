@@ -78,10 +78,15 @@ class TenantIsolationTests(unittest.IsolatedAsyncioTestCase):
         ctx = self._ctx(None, superadmin=True)
         session = object()
         guard = AsyncMock()
+        module_guard = AsyncMock()
 
-        with patch("app.security.auth.ensure_sem_identity_access", guard):
+        with (
+            patch("app.security.auth.ensure_module_access", module_guard),
+            patch("app.security.auth.ensure_sem_identity_access", guard),
+        ):
             await require_scoped_auth(request, ctx, session)
 
+        module_guard.assert_awaited_once_with(session, ctx, 10, "sem")
         guard.assert_awaited_once_with(session, 10)
 
     async def test_customer_identity_admin_page_remains_available_for_repair(self):
@@ -130,7 +135,11 @@ class TenantIsolationTests(unittest.IsolatedAsyncioTestCase):
         app.dependency_overrides[require_auth] = fake_context
         app.dependency_overrides[get_session] = fake_session
         guard = AsyncMock()
-        with patch("app.security.auth.ensure_sem_identity_access", guard):
+        module_guard = AsyncMock()
+        with (
+            patch("app.security.auth.ensure_module_access", module_guard),
+            patch("app.security.auth.ensure_sem_identity_access", guard),
+        ):
             response = TestClient(app).post(
                 "/api/v1/manage/account-budget",
                 json={"tenant_id": 10, "budget": 500},
@@ -138,6 +147,7 @@ class TenantIsolationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200, response.json())
         self.assertEqual(response.json(), {"tenant_id": 10, "budget": 500.0})
+        module_guard.assert_awaited_once()
         guard.assert_awaited_once()
 
 

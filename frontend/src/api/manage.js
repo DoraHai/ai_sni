@@ -1,14 +1,16 @@
 import client from './client'
 
 // 投放管理 · 账户与预算（menu = manage.account）。
-export function fetchAccountBudget({ tenantId }) {
-  return client.get('/api/v1/manage/account-budget', { params: { tenant_id: tenantId } })
+export function fetchAccountBudget({ tenantId, baiduAccountId = null }) {
+  return client.get('/api/v1/manage/account-budget', {
+    params: { tenant_id: tenantId, baidu_account_id: baiduAccountId },
+  })
 }
 
 // 写回账户日预算（dry-run 演练时只记台账不真改）。
-export function setAccountBudget({ tenantId, budget, approvalId = null }) {
+export function setAccountBudget({ tenantId, baiduAccountId = null, budget, approvalId = null }) {
   return client.post('/api/v1/manage/account-budget', {
-    tenant_id: tenantId, budget, approval_id: approvalId,
+    tenant_id: tenantId, baidu_account_id: baiduAccountId, budget, approval_id: approvalId,
   })
 }
 

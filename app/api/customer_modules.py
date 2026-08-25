@@ -30,6 +30,7 @@ from app.module_scope import (
     normalize_module_code,
 )
 from app.security.auth import AuthContext, require_auth, require_scoped_auth
+from app.sem_asset_sync import public_sync_error
 
 
 router = APIRouter(tags=["客户与模块"])
@@ -472,6 +473,8 @@ async def list_sem_accounts(
         dimensions = {}
         for name in ("campaigns", "adgroups", "keywords", "search_terms"):
             detail = dict(persisted_dimensions.get(name) or {})
+            if detail.get("error"):
+                detail["error"] = public_sync_error(detail["error"])
             detail["count"] = counts[name]
             if not detail.get("status"):
                 detail["status"] = "success" if counts[name] else "not_synced"
@@ -486,7 +489,7 @@ async def list_sem_accounts(
             "sync_status": row.sync_status,
             "last_synced_at": row.last_synced_at.isoformat() if row.last_synced_at else None,
             "last_asset_synced_at": latest_asset_sync.isoformat() if latest_asset_sync else None,
-            "last_sync_error": row.last_sync_error,
+            "last_sync_error": public_sync_error(row.last_sync_error),
             "data_state": data_state,
             "counts": counts,
             "dimensions": dimensions,

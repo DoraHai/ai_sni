@@ -1,7 +1,12 @@
 <script setup>
 import { onMounted, ref, computed, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import * as echarts from 'echarts'
+import { init, use } from 'echarts/core'
+import { BarChart, HeatmapChart, LineChart } from 'echarts/charts'
+import {
+  GridComponent, LegendComponent, MarkLineComponent, TooltipComponent,
+} from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
 import { ElMessage } from 'element-plus'
 import { fetchKeywordDetail, updateKeywordCategory } from '../../api/keywords'
 import { resolveAlert } from '../../api/alerts'
@@ -11,6 +16,11 @@ import MetricLabel from '../../components/MetricLabel.vue'
 
 const route = useRoute()
 const router = useRouter()
+use([
+  BarChart, HeatmapChart, LineChart,
+  GridComponent, LegendComponent, MarkLineComponent, TooltipComponent,
+  CanvasRenderer,
+])
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
 
@@ -198,7 +208,7 @@ function deltaText(card) {
 
 function renderRank() {
   if (!rankChartEl.value || !data.value) return
-  if (!rankChart) rankChart = echarts.init(rankChartEl.value)
+  if (!rankChart) rankChart = init(rankChartEl.value)
   const trend = data.value.trend
   rankChart.setOption({
     grid: { left: 44, right: 24, top: 30, bottom: 28 },
@@ -229,7 +239,7 @@ function renderRank() {
 
 function renderTrend() {
   if (!trendChartEl.value || !data.value) return
-  if (!trendChart) trendChart = echarts.init(trendChartEl.value)
+  if (!trendChart) trendChart = init(trendChartEl.value)
   const trend = data.value.trend
   trendChart.setOption({
     grid: { left: 56, right: 40, top: 30, bottom: 28 },
@@ -256,7 +266,7 @@ function renderTrend() {
 
 function renderBid() {
   if (!bidChartEl.value || !data.value || !hasBidTrend.value) return
-  if (!bidChart) bidChart = echarts.init(bidChartEl.value)
+  if (!bidChart) bidChart = init(bidChartEl.value)
   const bt = data.value.bid_trend
   bidChart.setOption({
     grid: { left: 52, right: 24, top: 30, bottom: 28 },
@@ -281,7 +291,7 @@ function renderBid() {
 
 function renderSchedule() {
   if (!scheduleChartEl.value || !data.value?.schedule_analysis) return
-  if (!scheduleChart) scheduleChart = echarts.init(scheduleChartEl.value)
+  if (!scheduleChart) scheduleChart = init(scheduleChartEl.value)
   const rawCells = data.value.schedule_analysis.cells || []
   const metric = scheduleMetric.value
   const metricMeta = SCHEDULE_METRICS[metric]
@@ -367,7 +377,7 @@ function renderSchedule() {
 
 function renderScheduleHourly() {
   if (!scheduleHourChartEl.value || !data.value?.schedule_analysis) return
-  if (!scheduleHourChart) scheduleHourChart = echarts.init(scheduleHourChartEl.value)
+  if (!scheduleHourChart) scheduleHourChart = init(scheduleHourChartEl.value)
   const metric = scheduleMetric.value
   const metricMeta = SCHEDULE_METRICS[metric]
   const hourly = Array.from({ length: 24 }, (_, hour) => ({

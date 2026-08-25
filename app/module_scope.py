@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Tenant, TenantModule
+from app.models import BaiduAccount, Tenant, TenantModule
 if TYPE_CHECKING:
     from app.security.auth import AuthContext
 
@@ -60,11 +60,11 @@ async def ensure_module_access(
     return await get_tenant_module(session, tenant_id, module_code)
 
 
-async def list_module_tenants(
+async def list_active_module_tenants(
     session: AsyncSession,
-    ctx: "AuthContext",
     module_code: str,
 ) -> list[Tenant]:
+    """Return only tenants whose requested workspace is currently usable."""
     code = normalize_module_code(module_code)
     stmt = (
         select(Tenant)
@@ -76,7 +76,32 @@ async def list_module_tenants(
         )
         .order_by(Tenant.id)
     )
-    if ctx.tenant_id is not None:
-        stmt = stmt.where(Tenant.id == ctx.tenant_id)
-    rows = list((await session.scalars(stmt)).all())
-    return rows
+    return list((await session.scalars(stmt)).all())
+
+
+async def list_active_sem_accounts(session: AsyncSession) -> list[BaiduAccount]:
+    """Return active Baidu accounts only for currently entitled SEM tenants."""
+    stmt = (
+        select(BaiduAccount)
+        .join(TenantModule, TenantModule.tenant_id == BaiduAccount.tenant_id)
+        .where(
+            BaiduAccount.status == "active",
+            TenantModule.module_code == "sem",
+            TenantModule.status.in_(ACTIVE_MODULE_STATUSES),
+            or_(TenantModule.expires_at.is_(None), TenantModule.expires_at >= date.today()),
+        )
+        .order_by(BaiduAccount.tenant_id, BaiduAccount.id)
+    )
+    return list((await session.scalars(stmt)).all())
+
+
+async def list_module_tenants(
+    session: AsyncSession,
+    ctx: "AuthContext",
+    module_code: str,
+) -> list[Tenant]:
+    code = normalize_module_code(module_code)
+    rows = await list_active_module_tenants(session, code)
+    if ctx.tenant_id is None:
+        return rows
+    return [tenant for tenant in rows if tenant.id == ctx.tenant_id]

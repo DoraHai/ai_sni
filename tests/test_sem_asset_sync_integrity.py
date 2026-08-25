@@ -19,6 +19,7 @@ from app.api.customer_modules import repair_sem_account_assets
 from app.sem_asset_sync import (
     begin_sync_run,
     normalize_dimensions,
+    public_sync_error,
     safe_sync_error,
     update_dimension,
 )
@@ -43,6 +44,13 @@ class SemAssetSyncStateTests(unittest.TestCase):
         self.assertNotIn("abc123", message)
         self.assertNotIn("hunter2", message)
         self.assertIn("[REDACTED]", message)
+
+    def test_public_sync_error_never_returns_provider_diagnostics(self):
+        raw = "price_strategies: 百度 API 失败 [code=89501]: You are not authorized to access this method"
+        message = public_sync_error(raw)
+        self.assertIn("无权读取", message)
+        self.assertNotIn("89501", message)
+        self.assertNotIn("authorized", message)
 
 
 class SearchTermIntegrityTests(unittest.IsolatedAsyncioTestCase):

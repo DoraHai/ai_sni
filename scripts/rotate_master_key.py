@@ -14,7 +14,7 @@
   NEW_CRYPTO_MASTER_KEY_B64="$NEW_KEY" .venv/bin/python scripts/rotate_master_key.py
   # 3. 脚本输出"轮换完成"后，把 .env 的 CRYPTO_MASTER_KEY_B64 换成 $NEW_KEY，重启：
   #    systemctl restart sem-backend
-  # 4. 验证：curl http://127.0.0.1:8000/api/baidu/account/info 能返回数据 = 新密钥解密正常
+  # 4. 验证：重启后检查 /health，并通过已鉴权的 SEM 页面读取账户状态；禁止恢复匿名账户接口
 
 安全要点：
   - 新密钥经环境变量传入，不进 shell history（外面那行只有变量名）

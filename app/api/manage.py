@@ -32,6 +32,7 @@ from app.baidu.writeback import (
 from app.database import get_session
 from app.models import Adgroup, BaiduAccount, Campaign
 from app.security.auth import AuthContext, require_scoped_auth
+from app.sem_asset_sync import public_sync_error
 
 logger = logging.getLogger(__name__)
 
@@ -51,16 +52,23 @@ async def list_region_options() -> dict:
 @router.get("/account-budget")
 async def get_account_budget(
     tenant_id: int = Query(..., description="本地租户 ID"),
+    baidu_account_id: int | None = Query(None, description="百度账户本地 ID"),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """实时查账户日预算 + 余额/消费。百度调用失败降级返回错误说明，不抛 500。"""
-    acc = await session.scalar(
+    stmt = (
         select(BaiduAccount).where(
             BaiduAccount.tenant_id == tenant_id, BaiduAccount.status == "active"
-        )
+        ).order_by(BaiduAccount.id)
     )
-    if acc is None:
+    if baidu_account_id is not None:
+        stmt = stmt.where(BaiduAccount.id == baidu_account_id)
+    accounts = list((await session.scalars(stmt)).all())
+    if not accounts:
         return {"status": "error", "message": "该租户没有生效的百度账户授权"}
+    if baidu_account_id is None and len(accounts) > 1:
+        raise HTTPException(409, "当前客户有多个推广账户，请先选择要读取的账户")
+    acc = accounts[0]
     try:
         resp = await AccountService(_account_client(acc)).get_account_info(
             ["balance", "cost", "budget", "budgetType"]
@@ -75,6 +83,8 @@ async def get_account_budget(
     budget_type = _to_int(info.get("budgetType"))
     return {
         "status": "ok",
+        "baidu_account_id": acc.id,
+        "baidu_account_name": acc.baidu_username,
         "budget": _to_float(info.get("budget")),
         "budget_type": budget_type,  # 0=不限 1=日预算
         "has_daily_budget": budget_type == 1,
@@ -87,6 +97,7 @@ async def get_account_budget(
 
 class AccountBudgetReq(BaseModel):
     tenant_id: int
+    baidu_account_id: int | None = None
     budget: float
     approval_id: int | None = None
 
@@ -104,6 +115,7 @@ async def set_account_budget(
             session, req.tenant_id, req.budget,
             operator_user_id=ctx.user_id, operator_name=ctx.username,
             approval_id=req.approval_id,
+            baidu_account_id=req.baidu_account_id,
         )
     except WritebackError as e:
         raise HTTPException(400, str(e))
@@ -388,7 +400,7 @@ async def list_adgroups_manage(
             ),
             "error": next(
                 (
-                    account.last_sync_error
+                    public_sync_error(account.last_sync_error)
                     for account in accounts
                     if account.status == "active" and account.last_sync_error
                 ),
