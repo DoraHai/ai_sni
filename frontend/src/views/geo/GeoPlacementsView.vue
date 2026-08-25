@@ -212,8 +212,8 @@ onMounted(load)
       <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
 
       <div class="geo-table-card">
-        <el-table :data="pager.pagedItems" empty-text="暂无信源计划" class="pack-table">
-          <el-table-column label="名称" width="440">
+        <el-table :data="pager.pagedItems" empty-text="暂无信源计划">
+          <el-table-column label="名称" min-width="360">
             <template #default="{ row }">
               <div class="name">{{ row.name }}</div>
               <div v-if="row.authority_note" class="note">{{ row.authority_note }}</div>
@@ -226,7 +226,7 @@ onMounted(load)
               >{{ row.target_url }}</a>
             </template>
           </el-table-column>
-          <el-table-column label="类型" width="148">
+          <el-table-column label="类型" min-width="140">
             <template #default="{ row }">
               <div class="geo-type-cell">
                 <span class="geo-type-icon">{{ typeMeta(row).icon }}</span>
@@ -234,7 +234,7 @@ onMounted(load)
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="100">
+          <el-table-column label="状态" min-width="120">
             <template #default="{ row }">
               <span class="geo-status-cell">
                 <i class="geo-status-dot" :class="statusMeta(row).tone" />
@@ -242,7 +242,7 @@ onMounted(load)
               </span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="168">
+          <el-table-column label="操作" min-width="180">
             <template #default="{ row }">
               <div class="geo-act">
                 <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
@@ -256,7 +256,6 @@ onMounted(load)
               </div>
             </template>
           </el-table-column>
-          <el-table-column min-width="24" class-name="col-fill" />
         </el-table>
         <div class="geo-table-foot">
           <span>共 {{ pager.total }} 条</span>
@@ -343,6 +342,5 @@ onMounted(load)
   color: #374151;
 }
 .geo-status-cell { white-space: nowrap; }
-.note { max-width: 52ch; }
 .mb { margin-bottom: 12px; }
 </style>

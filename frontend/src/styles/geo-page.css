@@ -635,12 +635,6 @@
   white-space: nowrap;
 }
 
-.pack-table :deep(th.col-fill),
-.pack-table :deep(td.col-fill) {
-  border-left: 0;
-  padding: 0 !important;
-}
-
 .geo-act .el-button.is-link {
   padding: 0;
   height: auto;
