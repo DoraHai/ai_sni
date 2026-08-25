@@ -9,7 +9,9 @@ from app.geo.content.probe import (
     ENGINE_PERSONAS,
     SAMPLE_MODE_PERSONA,
     SAMPLE_MODE_REAL,
+    SKIP_DASHSCOPE_OTHER_ENGINE,
     build_probe_system_prompt,
+    dashscope_usable_for_engine,
     resolve_batch_engines,
     resolve_engine_llm,
     run_probe_draft,
@@ -124,6 +126,57 @@ class ProbeBatchHelpersTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(draft["simulated"])
         self.assertEqual(draft["sample_mode"], SAMPLE_MODE_REAL)
 
+    def test_dashscope_only_usable_for_deepseek(self):
+        self.assertTrue(
+            dashscope_usable_for_engine(
+                "deepseek",
+                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                provider="dashscope",
+            )
+        )
+        self.assertFalse(
+            dashscope_usable_for_engine(
+                "chatgpt",
+                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                provider="dashscope",
+            )
+        )
+        self.assertTrue(
+            dashscope_usable_for_engine(
+                "chatgpt",
+                base_url="https://api.openai.com/v1",
+                provider="openai",
+            )
+        )
+
+    def test_resolve_engine_llm_dashscope_tenant_only_deepseek(self):
+        class Row:
+            sample_mode = SAMPLE_MODE_REAL
+            api_key_encrypted = None
+            api_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            model = "deepseek-v3"
+
+        tenant = {
+            "api_key": "tk",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "deepseek-v3",
+            "provider": "dashscope",
+        }
+        blocked, mode, reason = resolve_engine_llm(
+            engine="chatgpt", tenant_llm=tenant, engine_row=Row()
+        )
+        self.assertEqual(blocked, {})
+        self.assertEqual(mode, SAMPLE_MODE_REAL)
+        self.assertEqual(reason, SKIP_DASHSCOPE_OTHER_ENGINE)
+
+        llm, mode, reason = resolve_engine_llm(
+            engine="deepseek", tenant_llm=tenant, engine_row=Row()
+        )
+        self.assertEqual(mode, SAMPLE_MODE_REAL)
+        self.assertEqual(llm["api_key"], "tk")
+        self.assertIn("tenant_fallback", str(llm.get("source") or ""))
+        self.assertIsNone(reason)
+
     def test_resolve_engine_llm_falls_back_without_key(self):
         class Row:
             sample_mode = SAMPLE_MODE_REAL
@@ -135,12 +188,12 @@ class ProbeBatchHelpersTests(unittest.IsolatedAsyncioTestCase):
             "api_key": "tk",
             "base_url": "https://tenant.example/v1",
             "model": "tenant-m",
-            "provider": "dashscope",
+            "provider": "openai",
         }
         llm, mode, reason = resolve_engine_llm(
             engine="chatgpt", tenant_llm=tenant, engine_row=Row()
         )
-        # 引擎未配 Key 时用租户真采样凭证，仍记为真采样，不降级人设。
+        # 非百炼租户凭证仍可回退为真采样。
         self.assertEqual(mode, SAMPLE_MODE_REAL)
         self.assertEqual(llm["api_key"], "tk")
         self.assertIn("tenant_fallback", str(llm.get("source") or ""))

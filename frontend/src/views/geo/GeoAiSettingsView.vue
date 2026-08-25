@@ -97,7 +97,7 @@ onMounted(load)
     <div class="page-header">
       <div>
         <div class="page-title">AI 能力配置</div>
-        <div class="page-desc">对应静态 ai-settings.html · 租户级生成/探测/审稿默认 LLM</div>
+        <div class="page-desc">租户默认 LLM。选百炼时只用于 DeepSeek 巡检与母稿，不代替 ChatGPT / 豆包 / Kimi</div>
       </div>
       <div class="header-actions">
         <el-button :loading="testing" @click="test">测试连通</el-button>

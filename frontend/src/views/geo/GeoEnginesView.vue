@@ -48,19 +48,48 @@ const skipPreviewSummary = computed(
 const skipCount = computed(
   () => stance.value?.skip_preview?.enabled_will_skip ?? 0,
 )
-// 私有化交付由运营统一配置连接参数；原型页只暴露引擎开关与巡检策略。
+// 监测定位 / 通道大表仍收起；每引擎只露出模型、地址、Key。
 const showAdvancedConfig = false
+const BAILIAN_PRESET = {
+  api_base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  model: 'deepseek-v3',
+}
+
+function isDeepseekEngine(key) {
+  return String(key || '').toLowerCase().includes('deepseek')
+}
+
+function isDashscopeUrl(url) {
+  const u = String(url || '').toLowerCase()
+  return u.includes('dashscope') || u.includes('aliyuncs.com')
+}
+
+function dashscopeBlocked(row) {
+  return !!(row && !isDeepseekEngine(row.engine_key) && isDashscopeUrl(row.api_base_url))
+}
+
+function applyBailian(row) {
+  if (!isDeepseekEngine(row.engine_key)) {
+    ElMessage.warning('阿里云百炼只用于 DeepSeek')
+    return
+  }
+  row.sample_mode = 'openai_compat'
+  row.api_base_url = BAILIAN_PRESET.api_base_url
+  row.model = BAILIAN_PRESET.model
+}
 
 function isRealReady(row) {
   return (
     row.enabled &&
     (row.sample_mode || 'mock_persona') === 'openai_compat' &&
-    !!row.api_key_configured
+    !!row.api_key_configured &&
+    !dashscopeBlocked(row)
   )
 }
 
 function readinessLabel(row) {
   if (!row.enabled) return { text: '已停用', type: 'info' }
+  if (dashscopeBlocked(row)) return { text: '百炼仅 DeepSeek', type: 'danger' }
   if ((row.sample_mode || 'mock_persona') === 'mock_persona') {
     return { text: '人设模拟', type: 'warning' }
   }
@@ -136,6 +165,13 @@ async function saveStance(key) {
 
 async function save() {
   if (!tenantId.value) return
+  const blocked = items.value.filter((row) => row.enabled && dashscopeBlocked(row))
+  if (blocked.length) {
+    ElMessage.error(
+      `百炼只调用 DeepSeek：请先关掉或改掉 ${blocked.map((r) => engineDisplay(r.engine_key)).join('、')} 的 dashscope 地址`,
+    )
+    return
+  }
   saving.value = true
   try {
     const payload = items.value.map((it, idx) => ({
@@ -169,7 +205,12 @@ async function save() {
 }
 
 async function toggleEngine(row) {
-  row.enabled = !row.enabled
+  const next = !row.enabled
+  if (next && dashscopeBlocked(row)) {
+    ElMessage.error('百炼只调用 DeepSeek，请先改掉该引擎的 dashscope 地址')
+    return
+  }
+  row.enabled = next
   await save()
 }
 
@@ -206,7 +247,7 @@ onMounted(load)
 <template>
   <GeoWorkbenchPage
     title="AI 引擎管理"
-    sub="配置要监测的 AI 大模型与巡检采样方式"
+    sub="开关监测引擎；真采样请填各厂自己的地址。阿里云百炼只调用 DeepSeek"
     :loading="loading"
   >
     <template #actions>
@@ -231,6 +272,55 @@ onMounted(load)
         <span class="gd-badge" :class="row.enabled ? 'green' : 'amber'" style="margin-left:auto">
           {{ row.enabled ? '监测中' : '未开启' }}
         </span>
+      </div>
+    </div>
+
+    <div class="gd-card" style="margin-bottom:16px">
+      <div class="gd-hd">
+        <h3>模型接入</h3>
+        <span class="gd-sub" style="margin:0">百炼只打 DeepSeek。ChatGPT / 豆包 / Kimi 请填各厂兼容地址，不要填 dashscope。</span>
+      </div>
+      <div class="gd-bd geo-eng-connect">
+        <div v-for="row in items" :key="'cfg-' + row.engine_key" class="geo-eng-connect-row">
+          <div class="geo-eng-connect-name">
+            <b>{{ row.display_name || engineDisplay(row.engine_key) }}</b>
+            <el-tag size="small" :type="readinessLabel(row).type">{{ readinessLabel(row).text }}</el-tag>
+            <el-tag v-if="dashscopeBlocked(row)" size="small" type="danger">百炼不可用于此引擎</el-tag>
+          </div>
+          <el-select v-model="row.sample_mode" size="small" style="width: 140px">
+            <el-option :label="modeLabel('mock_persona')" value="mock_persona" />
+            <el-option :label="modeLabel('openai_compat')" value="openai_compat" />
+          </el-select>
+          <el-input
+            v-model="row.api_base_url"
+            size="small"
+            :disabled="row.sample_mode !== 'openai_compat'"
+            placeholder="Base URL"
+          />
+          <el-input
+            v-model="row.model"
+            size="small"
+            :disabled="row.sample_mode !== 'openai_compat'"
+            placeholder="模型名"
+            style="max-width: 180px"
+          />
+          <el-input
+            v-model="row.api_key"
+            size="small"
+            type="password"
+            show-password
+            :disabled="row.sample_mode !== 'openai_compat'"
+            :placeholder="row.api_key_configured ? '已配置 · 留空保留' : 'API Key'"
+            style="max-width: 220px"
+          />
+          <el-button
+            v-if="isDeepseekEngine(row.engine_key)"
+            size="small"
+            @click="applyBailian(row)"
+          >
+            填入百炼 DeepSeek
+          </el-button>
+        </div>
       </div>
     </div>
 
@@ -509,4 +599,18 @@ onMounted(load)
 }
 .skip-title { font-weight: 650; font-size: 13px; color: #78350f; }
 .skip-hint { font-size: 12px; color: #92400e; margin: 0 0 10px; line-height: 1.45; }
+.geo-eng-connect { display: flex; flex-direction: column; gap: 12px; }
+.geo-eng-connect-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.geo-eng-connect-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 180px;
+}
+.geo-eng-connect-row .el-input { flex: 1; min-width: 160px; }
 </style>
