@@ -709,7 +709,7 @@ onMounted(reloadAll)
 
 <template>
   <GeoWorkbenchPage
-    title="AI 可见度"
+    title="采集与判断"
     :sub="`自动采集 AI 引擎回答，按提及 / 位置 / 情感判断可见度 · ${obsLabel}`"
     :loading="loading"
   >
@@ -770,32 +770,18 @@ onMounted(reloadAll)
             {{ collecting ? '采集中…' : '立即采集并落库' }}
           </button>
         </div>
-        <details class="collect-schedule">
-          <summary>定时采集（可选）</summary>
-          <div class="schedule-row">
-            <el-switch v-model="collectForm.enabled" active-text="开启定时" />
-            <span>允许 {{ collectForm.window_start_hour }}:00 – {{ collectForm.window_end_hour }}:00</span>
-            <el-input-number v-model="collectForm.window_start_hour" :min="0" :max="23" size="small" />
-            <el-input-number v-model="collectForm.window_end_hour" :min="0" :max="23" size="small" />
-            <el-select v-model="collectForm.interval_hours" size="small" style="width: 160px">
-              <el-option
-                v-for="o in intervalOptions"
-                :key="o.value"
-                :label="o.label"
-                :value="o.value"
-              />
-            </el-select>
-            <el-button size="small" :loading="savingSchedule" @click="saveSchedule">保存定时</el-button>
-          </div>
-          <ul v-if="patrolRuns.length" class="run-list">
-            <li v-for="r in patrolRuns.slice(0, 5)" :key="r.id">
-              #{{ r.id }} {{ runStatusLabel(r.status) }}
-              · {{ r.trigger === 'schedule' ? '定时' : '手动' }}
-              · 成功 {{ r.summary?.ok_cells || r.summary?.cells_ok || 0 }}
-              · 落库 {{ r.summary?.snapshots_created || 0 }}
-            </li>
-          </ul>
-        </details>
+        <p class="hint" style="margin: 10px 0 0">
+          定时巡检在「引擎」页设置。
+          <router-link to="/geo/models">去引擎页</router-link>
+        </p>
+        <ul v-if="patrolRuns.length" class="run-list">
+          <li v-for="r in patrolRuns.slice(0, 5)" :key="r.id">
+            #{{ r.id }} {{ runStatusLabel(r.status) }}
+            · {{ r.trigger === 'schedule' ? '定时' : '手动' }}
+            · 成功 {{ r.summary?.ok_cells || r.summary?.cells_ok || 0 }}
+            · 落库 {{ r.summary?.snapshots_created || 0 }}
+          </li>
+        </ul>
       </section>
 
       <div class="gd-engine-kpis eval-kpis">

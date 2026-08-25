@@ -36,13 +36,13 @@ const GEO_WORKBENCH_ROOTS = [
   '/geo/knowledge',
   '/geo/models',
   '/geo/channel-polish-prompts',
+  '/geo/ai-settings',
   '/geo/geo-diagnosis',
 ]
 const usesGeoWorkbenchShell = computed(() => {
-  // Task editor has its own toolbar — not GeoWorkbenchPage
   if (/^\/geo\/tasks\/[^/]+/.test(route.path)) return false
   return GEO_WORKBENCH_ROOTS.some(
-    (p) => route.path === p || (p !== '/geo/visibility' && route.path.startsWith(`${p}/`)),
+    (p) => route.path === p || route.path.startsWith(`${p}/`),
   )
 })
 const showGeoObsInApp = computed(
@@ -504,11 +504,7 @@ onUnmounted(() => {
             </button>
           </div>
         </el-popover>
-        <button
-          type="button"
-          class="geo-back"
-          @click="session.logout(); router.push('/login')"
-        >← 退出</button>
+
       </div>
       <nav v-else class="side-shortcuts" aria-label="跨模块快捷入口">
         <div class="shortcut-group shortcut-group-muted">

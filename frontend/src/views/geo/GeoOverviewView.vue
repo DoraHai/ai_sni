@@ -699,17 +699,28 @@ const positiveDelta = computed(() => {
   return (b - a) * 100
 })
 
+function roundedDelta(v) {
+  if (v == null || Number.isNaN(Number(v))) return null
+  const n = Number(Number(v).toFixed(1))
+  return n === 0 ? 0 : n
+}
 function deltaLabel(v, { pp = false, rank = false } = {}) {
-  if (v == null || Number.isNaN(Number(v)) || Number(v) === 0) return ''
-  const n = Number(v)
+  const n = roundedDelta(v)
+  if (n == null || n === 0) return ''
+  if (rank) {
+    return n > 0
+      ? `▲ 前移 ${n.toFixed(1)}（顺位越小越好）`
+      : `▼ 后移 ${Math.abs(n).toFixed(1)}`
+  }
   const arrow = n < 0 ? '▼ ' : '▲ '
-  if (rank) return `${n > 0 ? '▲ 上升' : '▼ 下降'} ${Math.abs(n).toFixed(1)}`
   if (pp) return `${arrow}${Math.abs(n).toFixed(1)} pp`
   return `${arrow}${Math.abs(n).toFixed(1)}%`
 }
-function deltaTone(v) {
-  if (v == null || Number.isNaN(Number(v)) || Number(v) === 0) return 'hint'
-  return Number(v) < 0 ? 'down' : 'up'
+function deltaTone(v, { rank = false } = {}) {
+  const n = roundedDelta(v)
+  if (n == null || n === 0) return 'hint'
+  if (rank) return n > 0 ? 'up' : 'down'
+  return n < 0 ? 'down' : 'up'
 }
 
 const sovRows = computed(() => shareOfVoiceRows(snapshots.value, '本品牌'))
@@ -961,18 +972,11 @@ onMounted(load)
 
 <template>
   <GeoWorkbenchPage
-    title="概览"
+    title="GEO 概览"
     :sub="`品牌：${tenantName} · 覆盖 ${dashEngines.length} 个模型 · ${obsLabel}`"
     :loading="loading"
   >
     <template #actions>
-      <select
-        class="gd-search gd-days"
-        :value="observationDays"
-        @change="setObservationDays(Number($event.target.value))"
-      >
-        <option v-for="d in observationAllowedDays" :key="d" :value="d">近 {{ d }} 天</option>
-      </select>
       <input v-model="qSearch" class="gd-search" placeholder="搜索提问 / 来源…" />
       <button class="gd-btn" :disabled="exporting" @click="exportCsv">导出报告</button>
       <button class="gd-btn primary" @click="router.push('/geo/questions')">+ 添加监控词</button>
@@ -1010,7 +1014,7 @@ onMounted(load)
       <div class="gd-card gd-stat">
         <div class="label">平均推荐顺位</div>
         <div class="value">{{ avgRank != null ? Number(avgRank).toFixed(1) : '—' }}</div>
-        <div class="delta" :class="avgRankDelta == null ? 'hint' : (avgRankDelta >= 0 ? 'up' : 'down')">
+        <div class="delta" :class="deltaTone(avgRankDelta, { rank: true })">
           {{ deltaLabel(avgRankDelta, { rank: true }) || '首位=1 · 备选=2 · 提及=3' }}
         </div>
       </div>

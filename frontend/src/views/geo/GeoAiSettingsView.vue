@@ -2,6 +2,7 @@
 import { onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { fetchGeoAiSettings, putGeoAiSettings, testGeoAiSettings } from '../../api/geoContent'
+import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import NeedHintAlert from '../../components/NeedHintAlert.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
@@ -88,25 +89,31 @@ async function test() {
   }
 }
 
+function fmtUpdatedAt(v) {
+  if (!v) return '—'
+  const d = new Date(v)
+  if (Number.isNaN(d.getTime())) return String(v).replace('T', ' ').slice(0, 19)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 watch(tenantId, load)
 onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="geo-page">
-    <div class="page-header">
-      <div>
-        <div class="page-title">AI 能力配置</div>
-        <div class="page-desc">租户默认 LLM。选百炼时只用于 DeepSeek 巡检与母稿，不代替 ChatGPT / 豆包 / Kimi</div>
-      </div>
-      <div class="header-actions">
-        <el-button :loading="testing" @click="test">测试连通</el-button>
-        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
-        <el-button @click="load">刷新</el-button>
-        <router-link class="el-button" to="/geo/channel-polish-prompts">渠道成稿提示词</router-link>
-        <router-link class="el-button" to="/geo/workbench">工作台</router-link>
-      </div>
-    </div>
+  <GeoWorkbenchPage
+    title="AI 能力配置"
+    :show-period="false"
+    sub="租户默认 LLM。选百炼时只用于 DeepSeek 巡检与母稿，不代替 ChatGPT / 豆包 / Kimi"
+    :loading="loading"
+  >
+    <template #actions>
+      <button class="gd-btn" :disabled="testing" @click="test">{{ testing ? '测试中…' : '测试连通' }}</button>
+      <button class="gd-btn" @click="load">刷新</button>
+      <button class="gd-btn primary" :disabled="saving" @click="save">保存</button>
+    </template>
+    <div class="geo-dash">
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
     <NeedHintAlert />
@@ -152,10 +159,11 @@ onMounted(load)
         </el-form-item>
       </el-form>
       <div v-if="meta" class="meta-bar">
-        来源：{{ meta.source || '—' }} · 更新于 {{ meta.updated_at || '—' }}
+        来源：{{ meta.source || '—' }} · 更新于 {{ fmtUpdatedAt(meta.updated_at) }}
       </div>
     </div>
-  </div>
+    </div>
+  </GeoWorkbenchPage>
 </template>
 
 <style scoped>

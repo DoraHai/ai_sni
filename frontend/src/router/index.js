@@ -57,8 +57,8 @@ const routes = [
     path: '/geo/overview',
     component: () => import('../views/geo/GeoOverviewView.vue'),
     meta: {
-      title: 'GEO概览',
-      documentTitle: 'GEO 品牌优化｜概览',
+      title: 'GEO 概览',
+      documentTitle: 'GEO 工作台｜概览',
       workflow: 'GEO 品牌优化',
       perm: 'geo.content',
     },
@@ -68,7 +68,7 @@ const routes = [
     component: () => import('../views/geo/GeoVisibilityDashView.vue'),
     meta: {
       title: 'AI 可见度',
-      documentTitle: 'GEO 品牌优化｜AI 可见度',
+      documentTitle: 'GEO 工作台｜AI 可见度',
       workflow: 'GEO 品牌优化',
       perm: 'geo.content',
     },
@@ -78,7 +78,7 @@ const routes = [
     component: () => import('../views/geo/GeoVisibilityView.vue'),
     meta: {
       title: '采集与判断',
-      documentTitle: 'GEO 品牌优化｜采集与判断',
+      documentTitle: 'GEO 工作台｜采集与判断',
       workflow: 'GEO 品牌优化',
       perm: 'geo.content',
     },
@@ -92,7 +92,7 @@ const routes = [
     component: () => import('../views/geo/GeoPromptsView.vue'),
     meta: {
       title: '优化意图词',
-      documentTitle: 'GEO 品牌优化｜优化意图词',
+      documentTitle: 'GEO 工作台｜优化意图词',
       workflow: 'GEO 品牌优化',
       perm: 'geo.content',
     },
@@ -109,8 +109,8 @@ const routes = [
     path: '/geo/knowledge',
     component: () => import('../views/geo/GeoFactsView.vue'),
     meta: {
-      title: '知识库',
-      documentTitle: 'GEO 品牌优化｜知识库',
+      title: '事实库 / 信源',
+      documentTitle: 'GEO 工作台｜事实库 / 信源',
       workflow: 'GEO 品牌优化',
       perm: 'geo.content',
     },
@@ -119,8 +119,8 @@ const routes = [
     path: '/geo/brand',
     component: () => import('../views/geo/GeoBrandSettingsView.vue'),
     meta: {
-      title: '品牌设置',
-      documentTitle: 'GEO 品牌优化｜品牌设置',
+      title: '品牌信息',
+      documentTitle: 'GEO 工作台｜品牌信息',
       workflow: 'GEO 品牌优化',
       perm: 'geo.content',
     },
@@ -133,8 +133,8 @@ const routes = [
     path: '/geo/models',
     component: () => import('../views/geo/GeoEnginesView.vue'),
     meta: {
-      title: 'AI模型',
-      documentTitle: 'GEO 品牌优化｜AI模型',
+      title: '引擎',
+      documentTitle: 'GEO 工作台｜引擎',
       workflow: 'GEO 品牌优化',
       perm: 'geo.content',
     },
@@ -172,7 +172,7 @@ const routes = [
     component: () => import('../views/geo/GeoCitationsView.vue'),
     meta: {
       title: 'AI 引用次数',
-      documentTitle: 'GEO 增长｜AI 引用次数',
+      documentTitle: 'GEO 工作台｜AI 引用次数',
       workflow: 'GEO 增长',
       perm: 'geo.content',
     },
@@ -182,7 +182,7 @@ const routes = [
     component: () => import('../views/geo/GeoCompetitorsView.vue'),
     meta: {
       title: '竞品分析',
-      documentTitle: 'GEO 增长｜竞品分析',
+      documentTitle: 'GEO 工作台｜竞品分析',
       workflow: 'GEO 增长',
       perm: 'geo.content',
     },
@@ -232,7 +232,7 @@ const routes = [
     component: () => import('../views/geo/GeoTasksView.vue'),
     meta: {
       title: '优化文章',
-      documentTitle: 'GEO 增长｜优化文章',
+      documentTitle: 'GEO 工作台｜优化文章',
       workflow: 'GEO 增长',
       perm: 'geo.content',
     },
@@ -242,7 +242,7 @@ const routes = [
     component: () => import('../views/geo/GeoTaskEditorView.vue'),
     meta: {
       title: '内容编辑器',
-      documentTitle: 'GEO 增长｜内容编辑器',
+      documentTitle: 'GEO 工作台｜内容编辑器',
       workflow: 'GEO 增长',
       perm: 'geo.content',
     },
@@ -276,7 +276,7 @@ const routes = [
     component: () => import('../views/geo/GeoAiSettingsView.vue'),
     meta: {
       title: 'AI 能力配置',
-      documentTitle: 'GEO 增长｜AI 配置',
+      documentTitle: 'GEO 工作台｜AI 配置',
       workflow: 'GEO 增长',
       perm: 'geo.content',
     },
@@ -286,7 +286,7 @@ const routes = [
     component: () => import('../views/geo/GeoChannelPolishPromptsView.vue'),
     meta: {
       title: '渠道成稿提示词',
-      documentTitle: 'GEO 增长｜渠道成稿提示词',
+      documentTitle: 'GEO 工作台｜渠道成稿提示词',
       workflow: 'GEO 增长',
       perm: 'geo.content',
     },
@@ -295,8 +295,8 @@ const routes = [
     path: '/geo/publishing',
     component: () => import('../views/geo/GeoPublishingView.vue'),
     meta: {
-      title: '发布渠道',
-      documentTitle: 'GEO 增长｜发布渠道',
+      title: '分发平台',
+      documentTitle: 'GEO 工作台｜分发平台',
       workflow: 'GEO 增长',
       perm: 'geo.content',
     },
@@ -305,8 +305,8 @@ const routes = [
     path: '/geo/placements',
     component: () => import('../views/geo/GeoPlacementsView.vue'),
     meta: {
-      title: '媒体阵地',
-      documentTitle: 'GEO 增长｜媒体阵地',
+      title: '媒体 / 信源策略',
+      documentTitle: 'GEO 工作台｜媒体 / 信源策略',
       workflow: 'GEO 增长',
       perm: 'geo.content',
     },
@@ -510,8 +510,8 @@ router.beforeEach((to) => {
   }
 })
 router.afterEach((to) => {
-  const suffix = to.path.startsWith('/geo') ? 'GEO 增长' : 'SEM 智投平台'
+  const suffix = to.path.startsWith('/geo') ? 'GEO 工作台' : 'SEM 智投平台'
   document.title =
-    to.meta.documentTitle || (to.meta.title ? to.meta.title + ' · ' : '') + suffix
+    to.meta.documentTitle || (to.meta.title ? `${to.meta.title} · ${suffix}` : suffix)
 })
 export default router

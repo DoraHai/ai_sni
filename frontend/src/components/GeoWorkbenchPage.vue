@@ -10,6 +10,7 @@ defineProps({
   title: { type: String, required: true },
   sub: { type: String, default: '' },
   loading: { type: Boolean, default: false },
+  showPeriod: { type: Boolean, default: true },
 })
 
 const router = useRouter()
@@ -55,7 +56,7 @@ async function onUserCommand(cmd) {
         <div v-if="sub" class="sub">{{ sub }}</div>
       </div>
       <div class="right">
-        <GeoObservationPeriod />
+        <GeoObservationPeriod v-if="showPeriod" />
         <slot name="actions" />
         <el-dropdown v-if="session.isLoggedIn" trigger="click" @command="onUserCommand">
           <button type="button" class="geo-avatar" :title="session.user?.display_name">{{ initials }}</button>

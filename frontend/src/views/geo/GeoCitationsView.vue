@@ -125,7 +125,7 @@ onMounted(load)
 
 <template>
   <GeoWorkbenchPage
-    title="信源分析"
+    title="AI 引用次数"
     :sub="`AI 回答时到底从哪些平台、哪些文章取数引用 · ${obsLabel}`"
     :loading="loading"
   >
@@ -222,10 +222,10 @@ onMounted(load)
           <span class="geo-muted">当前 {{ citeItems.length }} 个域名</span>
         </div>
         <el-table
+          v-if="citeItems.length"
           :data="pager.pagedItems"
           size="small"
           stripe
-          empty-text="暂无引用域名"
           class="clickable-rows"
           @row-click="openDomain"
         >
@@ -270,7 +270,7 @@ onMounted(load)
             <router-link class="el-button" to="/geo/publishing">配置官网渠道</router-link>
           </template>
         </GeoEmptyState>
-        <div class="geo-pager">
+        <div v-if="citeItems.length" class="geo-pager">
           <el-pagination
             background
             layout="total, sizes, prev, pager, next"
