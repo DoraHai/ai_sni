@@ -17,7 +17,7 @@ os.environ.setdefault("BAIDU_SELF_TOKEN_EXPIRES_AT", "2099-01-01T00:00:00")
 os.environ.setdefault("CRYPTO_MASTER_KEY_B64", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
-from app.api.seo import CompetitorCollectRequest, CompetitorCreate, router
+from app.api.seo import CompetitorCollectRequest, CompetitorCreate, _competitor_payload, router
 from app.seo_competitor import (
     COMPETITOR_FETCH_CONCURRENCY,
     COMPETITOR_FETCH_TIMEOUT_SECONDS,
@@ -34,11 +34,18 @@ from app.seo_crawler import FetchResult
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _fetch_result(url: str, body: str, *, final_url: str | None = None, error_type: str | None = None) -> FetchResult:
+def _fetch_result(
+    url: str,
+    body: str,
+    *,
+    final_url: str | None = None,
+    error_type: str | None = None,
+    status_code: int | None = None,
+) -> FetchResult:
     return FetchResult(
         requested_url=url,
         final_url=final_url or url,
-        status_code=None if error_type else 200,
+        status_code=status_code if status_code is not None else (None if error_type else 200),
         redirect_chain=[],
         content_type="text/html",
         body=body,
@@ -71,6 +78,26 @@ def test_manual_competitor_collection_cooldown_is_one_hour() -> None:
     assert competitor_retry_after(None, now=now) == 0
     assert competitor_retry_after(now - timedelta(minutes=30), now=now) == 1800
     assert competitor_retry_after(now - timedelta(hours=1), now=now) == 0
+    assert competitor_retry_after(now - timedelta(seconds=3599.5), now=now) == 1
+
+
+def test_competitor_payload_exposes_cooldown_deadline() -> None:
+    checked = datetime.utcnow() - timedelta(minutes=30)
+    payload = _competitor_payload(
+        SimpleNamespace(
+            id=1,
+            tenant_id=1,
+            site_id=1,
+            name="Competitor",
+            domain="example.com",
+            notes=None,
+            status="active",
+            last_checked_at=checked,
+            created_at=checked,
+        )
+    )
+    assert 1790 <= payload["collection_retry_after_seconds"] <= 1800
+    assert payload["next_collection_allowed_at"].endswith("Z")
 
 
 def test_manual_collection_discovers_only_same_domain_html_pages() -> None:
@@ -123,6 +150,66 @@ def test_manual_collection_rejects_cross_domain_homepage_redirect() -> None:
     assert exc.value.code == "cross_domain_redirect"
 
 
+def test_manual_collection_falls_back_to_www_and_classifies_access_denied() -> None:
+    calls = []
+
+    async def fetcher(url: str, *, client=None) -> FetchResult:
+        calls.append(url)
+        if url == "https://example.com/":
+            return _fetch_result(url, "", error_type="tls_error")
+        return _fetch_result(url, "blocked", error_type="http_4xx", status_code=403)
+
+    with pytest.raises(CompetitorCollectionError) as exc:
+        asyncio.run(
+            collect_competitor_content("example.com", max_pages=1, fetcher=fetcher)
+        )
+    assert calls == ["https://example.com/", "https://www.example.com/"]
+    assert exc.value.code == "homepage_access_denied"
+    assert exc.value.error_type == "http_4xx"
+    assert exc.value.status_code == 403
+    assert exc.value.elapsed_ms == 10
+    assert exc.value.response_status == 424
+    assert "记录动态" in exc.value.public_message
+
+
+@pytest.mark.parametrize(
+    ("error_type", "status_code", "expected_code", "expected_response_status"),
+    [
+        ("timeout", None, "homepage_timeout", 504),
+        ("tls_error", None, "homepage_tls_error", 502),
+        ("connection_error", None, "homepage_connection_error", 502),
+        ("dns_error", None, "homepage_connection_error", 502),
+        ("blocked_address", None, "homepage_blocked_address", 400),
+        ("http_4xx", 404, "homepage_http_4xx", 424),
+        ("http_5xx", 503, "homepage_http_5xx", 502),
+        ("non_html", 200, "homepage_unsupported_content", 422),
+    ],
+)
+def test_manual_collection_classifies_safe_homepage_errors(
+    error_type: str,
+    status_code: int | None,
+    expected_code: str,
+    expected_response_status: int,
+) -> None:
+    async def fetcher(url: str, *, client=None) -> FetchResult:
+        return _fetch_result(
+            url,
+            "blocked",
+            error_type=error_type,
+            status_code=status_code,
+        )
+
+    with pytest.raises(CompetitorCollectionError) as exc:
+        asyncio.run(
+            collect_competitor_content("www.example.com", max_pages=1, fetcher=fetcher)
+        )
+    assert exc.value.code == expected_code
+    assert exc.value.error_type == error_type
+    assert exc.value.status_code == status_code
+    assert exc.value.elapsed_ms == 10
+    assert exc.value.response_status == expected_response_status
+
+
 def test_manual_collection_returns_structured_total_timeout(monkeypatch) -> None:
     async def fetcher(url: str, *, client=None) -> FetchResult:
         await asyncio.sleep(0.05)
@@ -134,6 +221,8 @@ def test_manual_collection_returns_structured_total_timeout(monkeypatch) -> None
             collect_competitor_content("example.com", max_pages=1, fetcher=fetcher)
         )
     assert exc.value.code == "collection_timeout"
+    assert exc.value.error_type == "timeout"
+    assert exc.value.response_status == 504
     assert "安全时限" in exc.value.public_message
 
 
@@ -171,8 +260,12 @@ def test_competitor_routes_and_frontend_are_manual_only() -> None:
     assert "不会自动运行" in view
     assert "最近采集尝试" in view
     assert "本次尝试已进入 1 小时冷却" in view
+    assert "本次请求没有重新开始冷却" in view
+    assert "next_collection_allowed_at" in view
+    assert "分钟后可采集" in view
     assert "collectionOutcome.failed" in view
     assert "[SEO][COMPETITOR] manual collection failed" in backend
+    assert "error_type=%s status_code=%s elapsed_ms=%s" in backend
     assert "fetchSeoCompetitorRankings" in view
     assert "site_id: siteId" in api
     assert "competitor" not in scheduler.lower()

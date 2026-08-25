@@ -4843,7 +4843,25 @@ class CompetitorCollectRequest(BaseModel):
 
 
 def _competitor_payload(row: SeoCompetitor) -> dict[str, Any]:
-    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "name": row.name, "domain": row.domain, "notes": row.notes, "status": row.status, "last_checked_at": _rank_iso(row.last_checked_at), "created_at": _iso(row.created_at)}
+    retry_after = competitor_retry_after(row.last_checked_at)
+    next_allowed_at = (
+        row.last_checked_at + timedelta(seconds=COMPETITOR_MANUAL_COOLDOWN_SECONDS)
+        if row.last_checked_at
+        else None
+    )
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "site_id": row.site_id,
+        "name": row.name,
+        "domain": row.domain,
+        "notes": row.notes,
+        "status": row.status,
+        "last_checked_at": _rank_iso(row.last_checked_at),
+        "next_collection_allowed_at": _rank_iso(next_allowed_at),
+        "collection_retry_after_seconds": retry_after,
+        "created_at": _iso(row.created_at),
+    }
 
 
 async def _competitor_scope_conditions(
@@ -5018,7 +5036,7 @@ async def collect_competitor(
             429,
             {
                 "code": "competitor_collection_cooldown",
-                "message": "同一竞品手动采集后需等待 1 小时",
+                "message": "当前仍在冷却，请稍后重试",
                 "retry_after_seconds": retry_after,
             },
             headers={"Retry-After": str(retry_after)},
@@ -5035,14 +5053,18 @@ async def collect_competitor(
     except CompetitorCollectionError as exc:
         logger.warning(
             "[SEO][COMPETITOR] manual collection failed "
-            "competitor_id=%s tenant_id=%s site_id=%s code=%s",
+            "competitor_id=%s tenant_id=%s site_id=%s code=%s "
+            "error_type=%s status_code=%s elapsed_ms=%s",
             competitor.id,
             req.tenant_id,
             req.site_id,
             exc.code,
+            exc.error_type,
+            exc.status_code,
+            exc.elapsed_ms,
         )
         raise HTTPException(
-            502,
+            exc.response_status,
             {"code": exc.code, "message": exc.public_message},
         ) from exc
 

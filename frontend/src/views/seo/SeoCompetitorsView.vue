@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   collectSeoCompetitor,
@@ -11,7 +11,7 @@ import {
 } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
-import { formatSeoRankTime } from './seoRankTime'
+import { formatSeoRankTime, parseSeoRankTime } from './seoRankTime'
 import '../../../public/deal-sniper-prototype/seo/assets/keyword-assets-v2.css'
 
 const loading = ref(false)
@@ -28,6 +28,7 @@ const eventDialog = ref(false)
 const saving = ref(false)
 const collectingId = ref(null)
 const collectionOutcome = ref(null)
+const cooldownClock = ref(Date.now())
 const eventTarget = ref(null)
 const form = reactive({ name: '', domain: '', notes: '' })
 const eventForm = reactive({ event_type: 'content', title: '', url: '', source_url: '', summary: '', event_at: '' })
@@ -52,6 +53,18 @@ function rankHint(value) {
   if (value.state === 'ranked') return '已进入前 50'
   if (value.state === 'outside_top50') return '本批前 50 未发现'
   return '该关键词尚无可用 SERP 批次'
+}
+
+function cooldownSeconds(item) {
+  const nextAllowed = parseSeoRankTime(item.next_collection_allowed_at)
+  if (!nextAllowed) return 0
+  return Math.max(0, Math.ceil((nextAllowed.getTime() - cooldownClock.value) / 1000))
+}
+
+function collectButtonText(item) {
+  if (collectingId.value === item.id) return '采集中…'
+  const remaining = cooldownSeconds(item)
+  return remaining ? `${Math.ceil(remaining / 60)} 分钟后可采集` : '手动采集'
 }
 
 async function load() {
@@ -126,6 +139,15 @@ async function save() {
 }
 
 async function collect(item) {
+  if (cooldownSeconds(item)) {
+    collectionOutcome.value = {
+      competitor: item.name,
+      failed: true,
+      cooldownRejected: true,
+      message: '当前仍在冷却，请稍后重试',
+    }
+    return
+  }
   try {
     await ElMessageBox.confirm(
       `本次最多检查 ${item.name} 的 10 个公开页面；无论成功或失败，本次尝试都会进入 1 小时冷却。`,
@@ -153,12 +175,15 @@ async function collect(item) {
     }
     await load()
   } catch (err) {
+    const message = err.message || '竞品采集失败，请稍后重试'
+    const cooldownRejected = message.includes('仍在冷却')
     collectionOutcome.value = {
       competitor: item.name,
       failed: true,
-      message: err.message || '竞品采集失败，请稍后重试',
+      cooldownRejected,
+      message,
     }
-    ElMessage.error(err.message)
+    ElMessage.error(message)
     await load()
   } finally {
     collectingId.value = null
@@ -196,10 +221,15 @@ async function saveEvent() {
   }
 }
 
+let cooldownTimer
 watch(currentTenantId, loadSites)
 watch(siteId, () => { collectionOutcome.value = null; load() })
 watch(device, load)
-onMounted(loadSites)
+onMounted(() => {
+  loadSites()
+  cooldownTimer = window.setInterval(() => { cooldownClock.value = Date.now() }, 1000)
+})
+onUnmounted(() => window.clearInterval(cooldownTimer))
 </script>
 
 <template>
@@ -229,7 +259,9 @@ onMounted(loadSites)
           ? `${collectionOutcome.competitor} 已建立内容基线：${collectionOutcome.created_events} 个页面`
           : `${collectionOutcome.competitor} 采集完成：发现 ${collectionOutcome.created_events} 个新内容`"
       :description="collectionOutcome.failed
-        ? `${collectionOutcome.message}；本次尝试已进入 1 小时冷却，页面不会自动重试。`
+        ? collectionOutcome.cooldownRejected
+          ? `${collectionOutcome.message}；本次请求没有重新开始冷却，页面不会自动重试。`
+          : `${collectionOutcome.message}；本次尝试已进入 1 小时冷却，页面不会自动重试。`
         : `检查 ${collectionOutcome.checked_pages}/${collectionOutcome.attempted_pages} 个页面；1 小时后可再次手动采集。`"
       :type="collectionOutcome.failed ? 'error' : collectionOutcome.failed_pages ? 'warning' : 'success'"
       show-icon
@@ -248,7 +280,7 @@ onMounted(loadSites)
         <strong>{{ (item.content || 0) + (item.backlink || 0) }}</strong>
         <small>{{ item.last_checked_at ? `最近采集尝试 ${formatSeoRankTime(item.last_checked_at)}` : '尚未手动采集' }}</small>
         <div class="card-actions">
-          <button v-if="canEdit" class="kw-btn small" :disabled="collectingId === item.id" @click="collect(item)">{{ collectingId === item.id ? '采集中…' : '手动采集' }}</button>
+          <button v-if="canEdit" class="kw-btn small" :disabled="collectingId === item.id || cooldownSeconds(item) > 0" @click="collect(item)">{{ collectButtonText(item) }}</button>
           <button v-if="canEdit" class="kw-btn small" @click="openEvent(item)">记录动态</button>
         </div>
       </article>

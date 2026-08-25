@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 import hashlib
 import ipaddress
 import json
@@ -16,6 +17,7 @@ from urllib.robotparser import RobotFileParser
 from xml.etree import ElementTree
 
 import httpx
+import httpcore
 from bs4 import BeautifulSoup
 
 
@@ -27,6 +29,67 @@ FETCH_TIMEOUT_SECONDS = 15.0
 
 class SeoCrawlError(Exception):
     pass
+
+
+_PINNED_TARGETS: ContextVar[dict[tuple[str, int], str]] = ContextVar(
+    "seo_pinned_targets",
+    default={},
+)
+
+
+class _PinnedNetworkBackend(httpcore.AsyncNetworkBackend):
+    """Connect original HTTP origins to IPs already approved by SSRF checks."""
+
+    def __init__(self, backend: httpcore.AsyncNetworkBackend | None = None) -> None:
+        self._backend = backend or httpcore.AnyIOBackend()
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Any = None,
+    ) -> httpcore.AsyncNetworkStream:
+        connect_host = _PINNED_TARGETS.get().get((host.lower().rstrip("."), port))
+        if connect_host is None:
+            raise httpcore.ConnectError("Outbound host was not pinned by the SSRF validator")
+        return await self._backend.connect_tcp(
+            host=connect_host,
+            port=port,
+            timeout=timeout,
+            local_address=local_address,
+            socket_options=socket_options,
+        )
+
+    async def connect_unix_socket(
+        self,
+        path: str,
+        timeout: float | None = None,
+        socket_options: Any = None,
+    ) -> httpcore.AsyncNetworkStream:
+        raise httpcore.ConnectError("Unix sockets are not allowed for SEO HTTP fetching")
+
+    async def sleep(self, seconds: float) -> None:
+        await self._backend.sleep(seconds)
+
+
+class PinnedAsyncHTTPTransport(httpx.AsyncHTTPTransport):
+    """HTTPX transport whose TCP connects require a request-scoped pinned IP."""
+
+    def __init__(self, *, limits: httpx.Limits | None = None) -> None:
+        super().__init__(trust_env=False, limits=limits or httpx.Limits())
+        self._pool._network_backend = _PinnedNetworkBackend()
+
+
+def pinned_async_client(**kwargs: Any) -> httpx.AsyncClient:
+    """Build an HTTP client that cannot perform an unvalidated DNS connection."""
+    limits = kwargs.pop("limits", None)
+    return httpx.AsyncClient(
+        **kwargs,
+        trust_env=False,
+        transport=PinnedAsyncHTTPTransport(limits=limits),
+    )
 
 
 @dataclass
@@ -62,7 +125,7 @@ def normalize_crawl_url(value: str) -> str:
     return urlunparse((parsed.scheme.lower(), netloc, path, "", parsed.query, ""))
 
 
-async def _ensure_public_host(url: str) -> None:
+async def _ensure_public_host(url: str) -> str:
     parsed = urlparse(url)
     host = parsed.hostname
     if not host:
@@ -80,9 +143,12 @@ async def _ensure_public_host(url: str) -> None:
             )
         except socket.gaierror as exc:
             raise SeoCrawlError(f"DNS lookup failed: {host}") from exc
-        addresses = list({ipaddress.ip_address(info[4][0]) for info in infos})
+        addresses = list(
+            dict.fromkeys(ipaddress.ip_address(info[4][0]) for info in infos)
+        )
     if not addresses or any(not address.is_global for address in addresses):
         raise SeoCrawlError("Private, local, or reserved addresses are not allowed")
+    return str(addresses[0])
 
 
 def classify_fetch_error(exc: Exception) -> str:
@@ -111,7 +177,7 @@ async def fetch_url(
     current = requested
     redirects: list[str] = []
     owns_client = client is None
-    http_client = client or httpx.AsyncClient(
+    http_client = client or pinned_async_client(
         timeout=FETCH_TIMEOUT_SECONDS,
         follow_redirects=False,
         headers={
@@ -121,55 +187,64 @@ async def fetch_url(
     )
     started = time.perf_counter()
     try:
+        if not isinstance(getattr(http_client, "_transport", None), PinnedAsyncHTTPTransport):
+            raise SeoCrawlError("SEO HTTP client must use the pinned transport")
         for _ in range(MAX_REDIRECTS + 1):
-            await _ensure_public_host(current)
-            async with http_client.stream("GET", current) as response:
-                if response.status_code in {301, 302, 303, 307, 308}:
-                    location = response.headers.get("location")
-                    if not location:
-                        raise SeoCrawlError("Redirect response has no target")
-                    current = normalize_crawl_url(urljoin(current, location))
-                    redirects.append(current)
-                    continue
-                content_type = response.headers.get("content-type", "").lower()
-                accepted = (
-                    "text/html" in content_type
-                    or (allow_text and "text/plain" in content_type)
-                    or (allow_xml and "xml" in content_type)
-                )
-                chunks: list[bytes] = []
-                size = 0
-                if accepted:
-                    async for chunk in response.aiter_bytes():
-                        size += len(chunk)
-                        if size > MAX_RESPONSE_BYTES:
-                            raise SeoCrawlError("Response exceeds 3MB")
-                        chunks.append(chunk)
-                body = b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
-                elapsed = round((time.perf_counter() - started) * 1000)
-                error_type = None
-                if response.status_code >= 500:
-                    error_type = "http_5xx"
-                elif response.status_code >= 400:
-                    error_type = "http_4xx"
-                elif not accepted:
-                    error_type = "non_html"
-                return FetchResult(
-                    requested_url=requested,
-                    final_url=str(response.url),
-                    status_code=response.status_code,
-                    redirect_chain=redirects,
-                    content_type=content_type or None,
-                    body=body,
-                    content_length=size if accepted else None,
-                    response_time_ms=elapsed,
-                    headers={key.lower(): value for key, value in response.headers.items()},
-                    error_type=error_type,
-                    fetch_error=(
-                        f"HTTP {response.status_code}" if response.status_code >= 400 else
-                        (f"Unsupported content type: {content_type or 'unknown'}" if not accepted else None)
-                    ),
-                )
+            parsed_current = urlparse(current)
+            hostname = (parsed_current.hostname or "").lower().rstrip(".")
+            port = parsed_current.port or (443 if parsed_current.scheme == "https" else 80)
+            approved_ip = await _ensure_public_host(current)
+            token = _PINNED_TARGETS.set({(hostname, port): approved_ip})
+            try:
+                async with http_client.stream("GET", current) as response:
+                    if response.status_code in {301, 302, 303, 307, 308}:
+                        location = response.headers.get("location")
+                        if not location:
+                            raise SeoCrawlError("Redirect response has no target")
+                        current = normalize_crawl_url(urljoin(current, location))
+                        redirects.append(current)
+                        continue
+                    content_type = response.headers.get("content-type", "").lower()
+                    accepted = (
+                        "text/html" in content_type
+                        or (allow_text and "text/plain" in content_type)
+                        or (allow_xml and "xml" in content_type)
+                    )
+                    chunks: list[bytes] = []
+                    size = 0
+                    if accepted:
+                        async for chunk in response.aiter_bytes():
+                            size += len(chunk)
+                            if size > MAX_RESPONSE_BYTES:
+                                raise SeoCrawlError("Response exceeds 3MB")
+                            chunks.append(chunk)
+                    body = b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
+                    elapsed = round((time.perf_counter() - started) * 1000)
+                    error_type = None
+                    if response.status_code >= 500:
+                        error_type = "http_5xx"
+                    elif response.status_code >= 400:
+                        error_type = "http_4xx"
+                    elif not accepted:
+                        error_type = "non_html"
+                    return FetchResult(
+                        requested_url=requested,
+                        final_url=str(response.url),
+                        status_code=response.status_code,
+                        redirect_chain=redirects,
+                        content_type=content_type or None,
+                        body=body,
+                        content_length=size if accepted else None,
+                        response_time_ms=elapsed,
+                        headers={key.lower(): value for key, value in response.headers.items()},
+                        error_type=error_type,
+                        fetch_error=(
+                            f"HTTP {response.status_code}" if response.status_code >= 400 else
+                            (f"Unsupported content type: {content_type or 'unknown'}" if not accepted else None)
+                        ),
+                    )
+            finally:
+                _PINNED_TARGETS.reset(token)
         raise SeoCrawlError("Too many redirects")
     except (SeoCrawlError, httpx.HTTPError) as exc:
         return FetchResult(
@@ -424,7 +499,7 @@ async def crawl_site(
     queued = {item[0] for item in queue}
     visited: set[str] = set()
     snapshots: list[dict[str, Any]] = []
-    async with httpx.AsyncClient(
+    async with pinned_async_client(
         timeout=FETCH_TIMEOUT_SECONDS,
         follow_redirects=False,
         headers={"User-Agent": USER_AGENT, "Accept": "text/html"},

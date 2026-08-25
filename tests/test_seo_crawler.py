@@ -1,10 +1,13 @@
 import asyncio
 
+import httpcore
 import pytest
 
 from app.seo_crawler import (
     FetchResult,
     SeoCrawlError,
+    _PINNED_TARGETS,
+    _PinnedNetworkBackend,
     analyze_html,
     crawl_site,
     fetch_url,
@@ -107,3 +110,31 @@ def test_fetch_url_blocks_loopback_before_network_request() -> None:
     result = asyncio.run(fetch_url("http://127.0.0.1/admin"))
     assert result.status_code is None
     assert result.error_type == "blocked_address"
+
+
+def test_pinned_backend_connects_only_to_the_validated_ip() -> None:
+    class RecordingBackend:
+        def __init__(self) -> None:
+            self.hosts: list[str] = []
+
+        async def connect_tcp(self, *, host: str, **_: object) -> object:
+            self.hosts.append(host)
+            return object()
+
+        async def sleep(self, _: float) -> None:
+            return None
+
+    recording = RecordingBackend()
+    backend = _PinnedNetworkBackend(recording)  # type: ignore[arg-type]
+    token = _PINNED_TARGETS.set({("example.com", 443): "93.184.216.34"})
+    try:
+        asyncio.run(backend.connect_tcp("example.com", 443))
+    finally:
+        _PINNED_TARGETS.reset(token)
+    assert recording.hosts == ["93.184.216.34"]
+
+
+def test_pinned_backend_refuses_an_unvalidated_connection() -> None:
+    backend = _PinnedNetworkBackend()
+    with pytest.raises(httpcore.ConnectError, match="not pinned"):
+        asyncio.run(backend.connect_tcp("example.com", 443))
