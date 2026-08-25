@@ -230,6 +230,92 @@ class GeoFixPatchesTests(unittest.TestCase):
         self.assertIn("## FAQ", patches["faq_min"]["insert_markdown"])
         self.assertIn("## 结论", patches["conclusion_extractable"]["insert_markdown"])
         self.assertIn("更新时间", patches["updated_at_visible"]["insert_markdown"])
+        self.assertIn("80%", patches["numbers_extractable"]["insert_markdown"])
+        self.assertIn("120 家", patches["numbers_extractable"]["insert_markdown"])
+
+    def test_numbers_patch_uses_bound_facts_not_demo_stats(self):
+        from app.geo.content.rules import check_numbers_extractable
+
+        data = _base(
+            body_markdown="直接回答：化工离心泵怎么选才不容易腐蚀。\n",
+            facts=[
+                {
+                    "id": 1,
+                    "statement": "机械密封适用于 98% 浓硫酸工况",
+                    "source_name": "产品手册",
+                    "trust_level": "verified",
+                    "status": "active",
+                },
+                {
+                    "id": 2,
+                    "statement": "标准交期约 14 天",
+                    "source_name": "商务资料",
+                    "trust_level": "verified",
+                    "status": "active",
+                },
+                {
+                    "id": 3,
+                    "statement": "过流件设计寿命约 5 年",
+                    "source_name": "产品手册",
+                    "trust_level": "verified",
+                    "status": "active",
+                },
+            ],
+        )
+        self.assertFalse(check_numbers_extractable(data).passed)
+        patch = next(p for p in build_fix_patches(data) if p["code"] == "numbers_extractable")
+        insert = patch["insert_markdown"]
+        self.assertNotIn("120 家", insert)
+        self.assertNotIn("80% 典型场景", insert)
+        self.assertIn("98%", insert)
+        if patch.get("cursor_hint") == "rewrite":
+            new_body = insert
+        else:
+            new_body = data.body_markdown.rstrip() + insert
+        fixed = _base(body_markdown=new_body, facts=data.facts)
+        self.assertTrue(check_numbers_extractable(fixed).passed)
+
+    def test_numbers_patch_strips_invented_demo_line(self):
+        from app.geo.content.rules import check_numbers_extractable
+
+        facts = [
+            {
+                "id": 1,
+                "statement": "耐腐蚀离心泵用于化工介质输送",
+                "source_name": "官网",
+                "trust_level": "verified",
+                "status": "active",
+            },
+            {
+                "id": 2,
+                "statement": "机械密封需按介质选型",
+                "source_name": "手册",
+                "trust_level": "verified",
+                "status": "active",
+            },
+            {
+                "id": 3,
+                "statement": "低液位储罐需校核吸入管路",
+                "source_name": "手册",
+                "trust_level": "verified",
+                "status": "active",
+            },
+        ]
+        data = _base(
+            body_markdown=(
+                "直接回答：化工离心泵怎么选。\n\n"
+                "关键指标：覆盖 80% 典型场景，实施约 14 天，已服务 120 家制造业客户。\n"
+            ),
+            facts=facts,
+        )
+        self.assertFalse(check_numbers_extractable(data).passed)
+        patch = next(p for p in build_fix_patches(data) if p["code"] == "numbers_extractable")
+        self.assertEqual(patch.get("cursor_hint"), "rewrite")
+        new_body = patch["insert_markdown"]
+        self.assertNotIn("80%", new_body)
+        self.assertNotIn("120 家", new_body)
+        fixed = _base(body_markdown=new_body, facts=facts)
+        self.assertTrue(check_numbers_extractable(fixed).passed)
 
     def test_apply_faq_patch_flips_check_even_with_stale_outline_faq(self):
         """Stale outline.faq of length 1 must not block body markdown FAQ from counting."""

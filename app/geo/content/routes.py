@@ -7129,16 +7129,19 @@ async def apply_patch(
     rule_input = await _build_rule_input(session, task, article)
     patch = next((p for p in build_fix_patches(rule_input) if p["code"] == req.code), None)
     if patch is None:
-        raise HTTPException(400, f"无可用修复补丁: {req.code}（该规则可能已通过，请先点「检查就绪」刷新）")
+        raise HTTPException(400, "没有可自动写入的修改（该项可能已通过，请先点「检查就绪」刷新）")
     insert = str(patch.get("insert_markdown") or "")
     if not insert.strip():
-        raise HTTPException(400, f"补丁 {req.code} 内容为空")
-    if patch.get("cursor_hint") == "prepend":
+        raise HTTPException(400, f"没有可写入的「{req.code}」修改")
+    hint = str(patch.get("cursor_hint") or "append")
+    if hint == "rewrite":
+        new_body = insert.lstrip("\n")
+    elif hint == "prepend":
         new_body = insert.lstrip("\n") + ("\n" + old_body if old_body else "")
     else:
         new_body = (old_body.rstrip() + "\n" + insert.lstrip("\n")) if old_body else insert.lstrip("\n")
     if new_body.strip() == old_body.strip():
-        raise HTTPException(400, f"补丁 {req.code} 未改变正文，请手动编辑或重新检查")
+        raise HTTPException(400, "这次修改没有改变正文，请手工编辑或重新检查")
 
     author_name = req.author_name or article.author_name
     if req.code == "author_visible" and req.author_name:

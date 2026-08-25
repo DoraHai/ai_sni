@@ -1113,7 +1113,7 @@ async function applyPatch(code) {
     }
 
     if (!bodyChanged) {
-      const msg = `补丁 ${code} 返回成功但正文长度未变化（${beforeLen}→${afterLen}）。请硬刷新后重试。`
+      const msg = `「${checkLabel(code)}」写入后正文没有变化（${beforeLen}→${afterLen} 字）。请刷新后再试。`
       error.value = msg
       ElMessage.error(msg)
       return
@@ -1121,20 +1121,24 @@ async function applyPatch(code) {
 
     const target = (res.checks || []).find((c) => c.code === code)
     const effective = res.effective !== false && (target ? target.passed : true)
-    const scorePart =
-      res.geo_score != null ? ` · Score ${res.geo_score}/100` : ''
+    const scorePart = res.geo_score != null ? `就绪分 ${res.geo_score}` : ''
+    const sizePart = `${beforeLen}→${afterLen} 字`
     if (effective) {
       ElMessage.success(
-        `已应用补丁 ${code}（正文 ${beforeLen}→${afterLen} 字${scorePart}，规则已通过）`,
+        `已按「${checkLabel(code)}」改完母稿（${sizePart}）${scorePart ? '，' + scorePart : ''}。`,
       )
     } else {
+      const why = target?.message ? `：${target.message}` : ''
+      const next = target?.action ? target.action : '请按右侧说明改完后再点检查'
       ElMessage.warning(
-        `已写入补丁 ${code}（正文 ${beforeLen}→${afterLen} 字${scorePart}），但该规则仍未通过，请检查插入内容或再点检查`,
+        `已尝试写入「${checkLabel(code)}」（${sizePart}），但这项仍未通过${why}。${next}${
+          scorePart ? ` 目前${scorePart}。` : ''
+        }`,
       )
     }
     error.value = ''
   } catch (e) {
-    toastError(e, '补丁失败')
+    toastError(e, '写入失败')
   } finally {
     busy.value = ''
   }
@@ -1302,7 +1306,7 @@ const currentVariantHasTable = computed(() => {
 async function applyAllPatches() {
   const codes = (patches.value || []).map((p) => p.code).filter(Boolean)
   if (!codes.length) {
-    ElMessage.info('当前没有可一键插入的补丁，请先点「检查就绪」')
+    ElMessage.info('当前没有可自动写入的修改，请先点「检查就绪」')
     return
   }
   busy.value = 'patch'
@@ -1339,12 +1343,12 @@ async function applyAllPatches() {
     checkResult.value = res
     if (res.task) applyTaskPayload(res.task)
     ElMessage.success(
-      `已批量应用 ${applied}/${codes.length} 个补丁 · Score ${res.geo_score ?? '—'} · ${
-        res.ready ? '规则就绪' : '仍有规则未过'
-      }`,
+      `已写入 ${applied}/${codes.length} 项建议修改，${
+        res.ready ? '结构检查已通过' : '仍有项未通过'
+      }${res.geo_score != null ? `，就绪分 ${res.geo_score}` : ''}`,
     )
   } catch (e) {
-    toastError(e, '批量补丁失败')
+    toastError(e, '批量写入失败')
   } finally {
     busy.value = ''
   }
@@ -1799,7 +1803,7 @@ async function fixCheck(code) {
     await applyPatch(code)
     return
   }
-  ElMessage.info('暂无对应补丁，先点「检查就绪」生成可插入内容后再一键修复')
+  ElMessage.info('这项还没有可自动写入的修改。请先点「检查就绪」，或按右侧说明手工改。')
   await runCheck()
 }
 const boundFacts = computed(() => task.value?.facts || [])
