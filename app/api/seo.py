@@ -5033,6 +5033,14 @@ async def collect_competitor(
             max_pages=req.max_pages,
         )
     except CompetitorCollectionError as exc:
+        logger.warning(
+            "[SEO][COMPETITOR] manual collection failed "
+            "competitor_id=%s tenant_id=%s site_id=%s code=%s",
+            competitor.id,
+            req.tenant_id,
+            req.site_id,
+            exc.code,
+        )
         raise HTTPException(
             502,
             {"code": exc.code, "message": exc.public_message},

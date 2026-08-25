@@ -128,7 +128,7 @@ async function save() {
 async function collect(item) {
   try {
     await ElMessageBox.confirm(
-      `本次最多检查 ${item.name} 的 10 个公开页面；同一竞品采集后 1 小时内不能重复操作。`,
+      `本次最多检查 ${item.name} 的 10 个公开页面；无论成功或失败，本次尝试都会进入 1 小时冷却。`,
       '手动采集竞品内容',
       { confirmButtonText: '开始采集', cancelButtonText: '取消', type: 'warning' },
     )
@@ -153,6 +153,11 @@ async function collect(item) {
     }
     await load()
   } catch (err) {
+    collectionOutcome.value = {
+      competitor: item.name,
+      failed: true,
+      message: err.message || '竞品采集失败，请稍后重试',
+    }
     ElMessage.error(err.message)
     await load()
   } finally {
@@ -218,11 +223,15 @@ onMounted(loadSites)
     <el-alert
       v-if="collectionOutcome"
       class="collection-outcome"
-      :title="collectionOutcome.baseline
-        ? `${collectionOutcome.competitor} 已建立内容基线：${collectionOutcome.created_events} 个页面`
-        : `${collectionOutcome.competitor} 采集完成：发现 ${collectionOutcome.created_events} 个新内容`"
-      :description="`检查 ${collectionOutcome.checked_pages}/${collectionOutcome.attempted_pages} 个页面；1 小时后可再次手动采集。`"
-      :type="collectionOutcome.failed_pages ? 'warning' : 'success'"
+      :title="collectionOutcome.failed
+        ? `${collectionOutcome.competitor} 采集失败`
+        : collectionOutcome.baseline
+          ? `${collectionOutcome.competitor} 已建立内容基线：${collectionOutcome.created_events} 个页面`
+          : `${collectionOutcome.competitor} 采集完成：发现 ${collectionOutcome.created_events} 个新内容`"
+      :description="collectionOutcome.failed
+        ? `${collectionOutcome.message}；本次尝试已进入 1 小时冷却，页面不会自动重试。`
+        : `检查 ${collectionOutcome.checked_pages}/${collectionOutcome.attempted_pages} 个页面；1 小时后可再次手动采集。`"
+      :type="collectionOutcome.failed ? 'error' : collectionOutcome.failed_pages ? 'warning' : 'success'"
       show-icon
       closable
       @close="collectionOutcome = null"
@@ -237,7 +246,7 @@ onMounted(loadSites)
       <article v-for="item in visibleCompetitors" :key="item.id" class="kw-domain-card">
         <div class="domain"><span class="favicon">{{ item.name.slice(0, 1) }}</span><div>{{ item.name }}<small>{{ item.domain }}</small></div></div>
         <strong>{{ (item.content || 0) + (item.backlink || 0) }}</strong>
-        <small>{{ item.last_checked_at ? `最近手动采集 ${formatSeoRankTime(item.last_checked_at)}` : '尚未手动采集' }}</small>
+        <small>{{ item.last_checked_at ? `最近采集尝试 ${formatSeoRankTime(item.last_checked_at)}` : '尚未手动采集' }}</small>
         <div class="card-actions">
           <button v-if="canEdit" class="kw-btn small" :disabled="collectingId === item.id" @click="collect(item)">{{ collectingId === item.id ? '采集中…' : '手动采集' }}</button>
           <button v-if="canEdit" class="kw-btn small" @click="openEvent(item)">记录动态</button>
@@ -294,7 +303,7 @@ onMounted(loadSites)
 
     <div class="kw-grid-equal lower">
       <section class="kw-card"><header class="kw-card-head"><div><h3>最大内容缺口</h3><p>本站覆盖不足的高价值搜索入口</p></div></header><div class="kw-card-body"><div class="kw-alert-list"><div v-for="item in highGaps" :key="item.id" class="kw-alert"><span class="mark">{{ item.priority }}</span><div><h4>{{ item.keyword }}</h4><p>{{ item.landing_page ? `当前排名 #${item.latest_rank || '50+'}` : '本站缺少承接页' }}</p></div><time>{{ item.monthly_volume || '—' }}</time></div><div v-if="!highGaps.length" class="kw-empty">暂无明显内容缺口</div></div></div></section>
-      <section class="kw-card"><header class="kw-card-head"><div><h3>采集说明</h3><p>客户主动操作，绝不自动运行</p></div></header><div class="kw-card-body collection-policy"><p>每次最多检查 10 个公开 HTML 页面。</p><p>只保留登记竞品域名及其子域名的数据。</p><p>同一竞品采集后冷却 1 小时，失败也不会自动重试。</p><p>排名对比复用现有 SERP 数据，不额外调用排名接口。</p></div></section>
+      <section class="kw-card"><header class="kw-card-head"><div><h3>采集说明</h3><p>客户主动操作，绝不自动运行</p></div></header><div class="kw-card-body collection-policy"><p>每次最多检查 10 个公开 HTML 页面。</p><p>只保留登记竞品域名及其子域名的数据。</p><p>成功或失败都会冷却 1 小时，页面不会自动重试。</p><p>排名对比复用现有 SERP 数据，不额外调用排名接口。</p></div></section>
     </div>
 
     <el-dialog v-model="dialog" title="添加竞品" width="560px">

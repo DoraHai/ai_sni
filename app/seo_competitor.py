@@ -10,15 +10,25 @@ from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import urljoin, urlparse, urlunparse
 
+import httpx
 from bs4 import BeautifulSoup
 
-from app.seo_crawler import FetchResult, SeoCrawlError, analyze_html, fetch_url, normalize_crawl_url
+from app.seo_crawler import (
+    USER_AGENT,
+    FetchResult,
+    SeoCrawlError,
+    analyze_html,
+    fetch_url,
+    normalize_crawl_url,
+)
 from app.seo_serp import domain_matches
 
 
 COMPETITOR_MANUAL_COOLDOWN_SECONDS = 60 * 60
-COMPETITOR_MAX_PAGES_PER_RUN = 20
-COMPETITOR_FETCH_CONCURRENCY = 2
+COMPETITOR_MAX_PAGES_PER_RUN = 10
+COMPETITOR_FETCH_CONCURRENCY = 5
+COMPETITOR_FETCH_TIMEOUT_SECONDS = 8.0
+COMPETITOR_TOTAL_TIMEOUT_SECONDS = 25.0
 
 _SKIPPED_SUFFIXES = {
     ".7z",
@@ -140,60 +150,89 @@ async def collect_competitor_content(
     """Fetch a competitor homepage and a bounded set of same-domain HTML pages."""
     max_pages = max(1, min(int(max_pages), COMPETITOR_MAX_PAGES_PER_RUN))
     homepage = f"https://{competitor_domain.strip().lower().rstrip('.')}/"
-    home = await fetcher(homepage)
-    if home.error_type or not home.body:
-        raise CompetitorCollectionError(
-            "homepage_unavailable",
-            "竞品网站暂时无法访问，请稍后重试",
-        )
-    if not domain_matches(urlparse(home.final_url).hostname or "", competitor_domain):
-        raise CompetitorCollectionError(
-            "cross_domain_redirect",
-            "竞品网站跳转到了未登记域名，请先核对竞品域名",
-        )
 
-    candidates = _candidate_urls(home, competitor_domain, max_pages)
-    if not candidates:
+    async def run_collection() -> CompetitorContentCollection:
+        limits = httpx.Limits(
+            max_connections=COMPETITOR_FETCH_CONCURRENCY,
+            max_keepalive_connections=COMPETITOR_FETCH_CONCURRENCY,
+        )
+        async with httpx.AsyncClient(
+            timeout=COMPETITOR_FETCH_TIMEOUT_SECONDS,
+            follow_redirects=False,
+            limits=limits,
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept": "text/html,application/xml,text/xml;q=0.9,text/plain;q=0.8",
+            },
+        ) as client:
+            async def fetch(candidate: str) -> FetchResult:
+                return await fetcher(candidate, client=client)
+
+            home = await fetch(homepage)
+            if home.error_type or not home.body:
+                raise CompetitorCollectionError(
+                    "homepage_unavailable",
+                    "竞品网站暂时无法访问，请稍后重试",
+                )
+            if not domain_matches(urlparse(home.final_url).hostname or "", competitor_domain):
+                raise CompetitorCollectionError(
+                    "cross_domain_redirect",
+                    "竞品网站跳转到了未登记域名，请先核对竞品域名",
+                )
+
+            candidates = _candidate_urls(home, competitor_domain, max_pages)
+            if not candidates:
+                raise CompetitorCollectionError(
+                    "no_content_pages",
+                    "竞品网站没有返回可采集的公开页面",
+                )
+
+            semaphore = asyncio.Semaphore(COMPETITOR_FETCH_CONCURRENCY)
+
+            async def inspect(candidate: str) -> CompetitorContentPage | None:
+                result = home if _content_url(home.final_url) == candidate else None
+                if result is None:
+                    async with semaphore:
+                        result = await fetch(candidate)
+                if result.error_type or not result.body:
+                    return None
+                if not domain_matches(urlparse(result.final_url).hostname or "", competitor_domain):
+                    return None
+                analysis = analyze_html(result)
+                return CompetitorContentPage(
+                    url=_content_url(result.final_url),
+                    title=str(analysis.get("title") or "").strip()[:500] or None,
+                )
+
+            inspected = await asyncio.gather(*(inspect(candidate) for candidate in candidates))
+            pages: list[CompetitorContentPage] = []
+            seen_pages: set[str] = set()
+            for page in inspected:
+                if page is None or page.url in seen_pages:
+                    continue
+                seen_pages.add(page.url)
+                pages.append(page)
+            if not pages:
+                raise CompetitorCollectionError(
+                    "collection_failed",
+                    "竞品网站页面采集失败，请稍后重试",
+                )
+            return CompetitorContentCollection(
+                pages=pages,
+                attempted=len(candidates),
+                failed=len(candidates) - len(pages),
+            )
+
+    try:
+        return await asyncio.wait_for(
+            run_collection(),
+            timeout=COMPETITOR_TOTAL_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as exc:
         raise CompetitorCollectionError(
-            "no_content_pages",
-            "竞品网站没有返回可采集的公开页面",
-        )
-
-    semaphore = asyncio.Semaphore(COMPETITOR_FETCH_CONCURRENCY)
-
-    async def inspect(candidate: str) -> CompetitorContentPage | None:
-        result = home if _content_url(home.final_url) == candidate else None
-        if result is None:
-            async with semaphore:
-                result = await fetcher(candidate)
-        if result.error_type or not result.body:
-            return None
-        if not domain_matches(urlparse(result.final_url).hostname or "", competitor_domain):
-            return None
-        analysis = analyze_html(result)
-        return CompetitorContentPage(
-            url=_content_url(result.final_url),
-            title=str(analysis.get("title") or "").strip()[:500] or None,
-        )
-
-    inspected = await asyncio.gather(*(inspect(candidate) for candidate in candidates))
-    pages: list[CompetitorContentPage] = []
-    seen_pages: set[str] = set()
-    for page in inspected:
-        if page is None or page.url in seen_pages:
-            continue
-        seen_pages.add(page.url)
-        pages.append(page)
-    if not pages:
-        raise CompetitorCollectionError(
-            "collection_failed",
-            "竞品网站页面采集失败，请稍后重试",
-        )
-    return CompetitorContentCollection(
-        pages=pages,
-        attempted=len(candidates),
-        failed=len(candidates) - len(pages),
-    )
+            "collection_timeout",
+            "竞品网站响应较慢，本次采集已在安全时限内停止",
+        ) from exc
 
 
 def build_competitor_rank_matrix(
