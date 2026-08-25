@@ -17,7 +17,7 @@ os.environ.setdefault("BAIDU_SELF_TOKEN_EXPIRES_AT", "2099-01-01T00:00:00")
 os.environ.setdefault("CRYPTO_MASTER_KEY_B64", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
-from app.api.seo import CompetitorCollectRequest, CompetitorCreate, _competitor_payload, router
+from app.api.seo import CompetitorCollectRequest, CompetitorCreate, CompetitorEventCreate, _competitor_payload, router
 from app.seo_competitor import (
     COMPETITOR_FETCH_CONCURRENCY,
     COMPETITOR_FETCH_TIMEOUT_SECONDS,
@@ -79,6 +79,54 @@ def test_manual_competitor_collection_cooldown_is_one_hour() -> None:
     assert competitor_retry_after(now - timedelta(minutes=30), now=now) == 1800
     assert competitor_retry_after(now - timedelta(hours=1), now=now) == 0
     assert competitor_retry_after(now - timedelta(seconds=3599.5), now=now) == 1
+
+
+def test_manual_competitor_event_requires_meaningful_content_and_safe_urls() -> None:
+    event = CompetitorEventCreate(
+        tenant_id=1,
+        site_id=1,
+        competitor_id=1,
+        event_type="content",
+        title="  New product page  ",
+        url="  https://example.com/news/product  ",
+        source_url="",
+        summary="  Added a new product introduction.  ",
+    )
+    assert event.title == "New product page"
+    assert event.url == "https://example.com/news/product"
+    assert event.source_url is None
+    assert event.summary == "Added a new product introduction."
+
+    invalid_payloads = [
+        {"title": "", "url": "https://example.com/news", "summary": "Summary"},
+        {"title": "Title", "url": "abc", "summary": "Summary"},
+        {"title": "Title", "url": "javascript:alert(1)", "summary": "Summary"},
+        {"title": "Title", "url": "https://user:secret@example.com/news", "summary": "Summary"},
+        {"title": "Title", "url": "https://example.com/news", "summary": ""},
+        {"title": "Title", "url": "https://example.com/news", "source_url": "abc", "summary": "Summary"},
+    ]
+    for invalid in invalid_payloads:
+        with pytest.raises(ValidationError):
+            CompetitorEventCreate(
+                tenant_id=1,
+                site_id=1,
+                competitor_id=1,
+                event_type="content",
+                **invalid,
+            )
+
+
+def test_manual_competitor_event_requires_site_scope() -> None:
+    with pytest.raises(ValidationError):
+        CompetitorEventCreate(
+            tenant_id=1,
+            site_id=0,
+            competitor_id=1,
+            event_type="content",
+            title="Title",
+            url="https://example.com/news",
+            summary="Summary",
+        )
 
 
 def test_competitor_payload_exposes_cooldown_deadline() -> None:
@@ -266,6 +314,12 @@ def test_competitor_routes_and_frontend_are_manual_only() -> None:
     assert "next_collection_allowed_at" in view
     assert "分钟后可采集" in view
     assert "collectionOutcome.failed" in view
+    assert "人工登记无法自动采集的竞品动态" in view
+    assert "eventFormReady" in view
+    assert "外链所在页面 URL" in view
+    assert "目标页面 URL" in view
+    assert "信息来源 URL" in view
+    assert "请输入完整的 http/https 地址" in view
     assert "[SEO][COMPETITOR] manual collection failed" in backend
     assert "error_type=%s status_code=%s elapsed_ms=%s" in backend
     assert "fetchSeoCompetitorRankings" in view

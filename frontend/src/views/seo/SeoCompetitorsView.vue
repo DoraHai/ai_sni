@@ -25,6 +25,7 @@ const rankingData = ref({ competitors: [], items: [] })
 const tab = ref('ranking')
 const dialog = ref(false)
 const eventDialog = ref(false)
+const eventFormRef = ref(null)
 const saving = ref(false)
 const collectingId = ref(null)
 const collectionOutcome = ref(null)
@@ -32,6 +33,50 @@ const cooldownClock = ref(Date.now())
 const eventTarget = ref(null)
 const form = reactive({ name: '', domain: '', notes: '' })
 const eventForm = reactive({ event_type: 'content', title: '', url: '', source_url: '', summary: '', event_at: '' })
+
+const eventUrlLabels = computed(() => eventForm.event_type === 'backlink'
+  ? { primary: '外链所在页面 URL', secondary: '目标页面 URL' }
+  : { primary: '动态页面 URL', secondary: '信息来源 URL' })
+const eventUrlPlaceholders = computed(() => eventForm.event_type === 'backlink'
+  ? { primary: 'https://example.com/article-with-link', secondary: 'https://target.example.com/page（选填）' }
+  : { primary: 'https://example.com/new-content', secondary: 'https://source.example.com/reference（选填）' })
+
+function validHttpUrl(value) {
+  if (!value || /\s/.test(value)) return false
+  try {
+    const parsed = new URL(value)
+    return ['http:', 'https:'].includes(parsed.protocol) && Boolean(parsed.hostname) && !parsed.username && !parsed.password
+  } catch {
+    return false
+  }
+}
+
+function validateRequiredUrl(_rule, value, callback) {
+  if (!value?.trim()) return callback(new Error(`请填写${eventUrlLabels.value.primary}`))
+  if (!validHttpUrl(value.trim())) return callback(new Error('请输入完整的 http/https 地址'))
+  callback()
+}
+
+function validateOptionalUrl(_rule, value, callback) {
+  if (value?.trim() && !validHttpUrl(value.trim())) return callback(new Error('请输入完整的 http/https 地址'))
+  callback()
+}
+
+const eventRules = {
+  event_type: [{ required: true, message: '请选择动态类型', trigger: 'change' }],
+  title: [{ required: true, whitespace: true, message: '请填写标题', trigger: 'blur' }],
+  url: [{ required: true, validator: validateRequiredUrl, trigger: 'blur' }],
+  source_url: [{ validator: validateOptionalUrl, trigger: 'blur' }],
+  summary: [{ required: true, whitespace: true, message: '请填写摘要', trigger: 'blur' }],
+}
+
+const eventFormReady = computed(() => Boolean(
+  eventForm.event_type
+  && eventForm.title.trim()
+  && eventForm.summary.trim()
+  && validHttpUrl(eventForm.url.trim())
+  && (!eventForm.source_url.trim() || validHttpUrl(eventForm.source_url.trim())),
+))
 
 const canEdit = computed(() => !session.isLoggedIn || session.canEdit('seo.competitors'))
 const visibleCompetitors = computed(() => data.value.items)
@@ -192,11 +237,17 @@ async function collect(item) {
 
 function openEvent(item) {
   eventTarget.value = item
+  Object.assign(eventForm, { event_type: 'content', title: '', url: '', source_url: '', summary: '', event_at: '' })
   eventDialog.value = true
 }
 
 async function saveEvent() {
-  if (!eventForm.url.trim()) return ElMessage.warning('请填写动态页面 URL')
+  if (!eventFormRef.value) return
+  try {
+    await eventFormRef.value.validate()
+  } catch {
+    return
+  }
   saving.value = true
   try {
     await createSeoCompetitorEvent({
@@ -348,19 +399,21 @@ onUnmounted(() => window.clearInterval(cooldownTimer))
     </el-dialog>
 
     <el-dialog v-model="eventDialog" :title="`记录动态 · ${eventTarget?.name || ''}`" width="620px">
-      <el-form label-position="top">
-        <el-form-item label="类型"><el-select v-model="eventForm.event_type"><el-option label="内容" value="content" /><el-option label="外链" value="backlink" /></el-select></el-form-item>
-        <el-form-item label="标题"><el-input v-model="eventForm.title" /></el-form-item>
-        <el-form-item label="动态页面 URL"><el-input v-model="eventForm.url" /></el-form-item>
-        <el-form-item label="来源 URL"><el-input v-model="eventForm.source_url" /></el-form-item>
-        <el-form-item label="摘要"><el-input v-model="eventForm.summary" type="textarea" :rows="3" /></el-form-item>
-        <el-form-item label="发生时间"><el-date-picker v-model="eventForm.event_at" type="datetime" /></el-form-item>
+      <p class="event-form-help">人工登记无法自动采集的竞品动态；带 * 的字段为必填，链接必须使用完整的 http/https 地址。</p>
+      <el-form ref="eventFormRef" :model="eventForm" :rules="eventRules" label-position="top">
+        <el-form-item label="类型" prop="event_type" required><el-select v-model="eventForm.event_type"><el-option label="内容" value="content" /><el-option label="外链" value="backlink" /></el-select></el-form-item>
+        <el-form-item label="标题" prop="title" required><el-input v-model="eventForm.title" placeholder="简要说明本次竞品动态" maxlength="500" show-word-limit /></el-form-item>
+        <el-form-item :label="eventUrlLabels.primary" prop="url" required><el-input v-model="eventForm.url" :placeholder="eventUrlPlaceholders.primary" /></el-form-item>
+        <el-form-item :label="eventUrlLabels.secondary" prop="source_url"><el-input v-model="eventForm.source_url" :placeholder="eventUrlPlaceholders.secondary" /></el-form-item>
+        <el-form-item label="摘要" prop="summary" required><el-input v-model="eventForm.summary" type="textarea" :rows="3" placeholder="记录变化内容、影响或后续建议" maxlength="5000" show-word-limit /></el-form-item>
+        <el-form-item label="发生时间"><el-date-picker v-model="eventForm.event_at" type="datetime" placeholder="选择日期和时间（选填）" /></el-form-item>
       </el-form>
-      <template #footer><el-button @click="eventDialog = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveEvent">保存</el-button></template>
+      <template #footer><el-button @click="eventDialog = false">取消</el-button><el-button type="primary" :loading="saving" :disabled="!eventFormReady" @click="saveEvent">保存</el-button></template>
     </el-dialog>
   </div>
 </template>
 
 <style scoped>
 .competitor-prototype{min-height:100%;padding:22px 26px 30px;background:#f5f7fb}.hero-actions,.head-controls,.card-actions{display:flex;align-items:center;gap:10px}.hero-actions{flex-wrap:wrap;justify-content:flex-end}.site-picker{width:260px}.collection-outcome{margin:14px 0}.kw-competitor-strip{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}.kw-domain-card{min-height:150px}.card-actions{margin-top:12px}.lower{margin-top:15px}.event-list article{padding:14px 17px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #e8eaf0}.event-list b,.event-list small{display:block}.event-list small{margin-top:4px;color:#7b8494}.blue{color:#2853b6!important;background:#edf2ff!important}.competitor-rank small{display:block;margin-top:3px;color:#8993a5;font-size:11px;font-weight:400}.collection-policy{display:grid;gap:10px;color:#59657b}.collection-policy p{margin:0;padding-left:16px;position:relative}.collection-policy p:before{content:'✓';position:absolute;left:0;color:#248a64;font-weight:800}@media(max-width:1100px){.kw-hero{flex-direction:column}.hero-actions{justify-content:flex-start}.head-controls{align-items:flex-start;flex-direction:column}}
+.event-form-help{margin:0 0 16px;color:#667085;line-height:1.6}
 </style>
