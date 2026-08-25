@@ -305,8 +305,8 @@ const routes = [
     path: '/geo/placements',
     component: () => import('../views/geo/GeoPlacementsView.vue'),
     meta: {
-      title: '媒体 / 信源策略',
-      documentTitle: 'GEO 工作台｜媒体 / 信源策略',
+      title: '信源策略',
+      documentTitle: 'GEO 工作台｜信源策略',
       workflow: 'GEO 增长',
       perm: 'geo.content',
     },

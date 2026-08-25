@@ -197,7 +197,7 @@ onMounted(load)
 
 <template>
   <GeoWorkbenchPage
-    title="媒体 / 信源策略"
+    title="信源策略"
     :show-period="false"
     sub="同一套媒体选题可供 SEO / GEO 共用，GEO 圈选高权威、可引用的信任源"
     :loading="loading"

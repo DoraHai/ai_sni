@@ -655,7 +655,7 @@ onUnmounted(() => {
 .geo-side {
   background: #fff;
   border-right: 1px solid #e8eaf0;
-  padding: 16px 10px 0;
+  padding: 16px 8px 0;
 }
 .geo-side .brand {
   padding: 4px 8px 14px;
@@ -682,24 +682,28 @@ onUnmounted(() => {
 .geo-nav-item {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   width: 100%;
   margin: 0;
-  padding: 6px 10px;
+  padding: 7px 8px;
   border: 0;
   border-radius: 8px;
   background: transparent;
   color: #5b6270;
   font-size: 13px;
   font-weight: 500;
-  line-height: 1.35;
+  line-height: 1.3;
   text-align: left;
   cursor: pointer;
+  white-space: nowrap;
 }
 .geo-nav-ico {
-  width: 16px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
   text-align: center;
-  font-size: 13.5px;
+  font-size: 13px;
   flex: none;
 }
 .geo-nav-item:hover,
