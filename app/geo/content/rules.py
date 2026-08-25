@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
@@ -27,9 +27,13 @@ class RuleCheck:
     passed: bool
     message: str
     action: str
+    details: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        if not payload.get("details"):
+            payload.pop("details", None)
+        return payload
 
 
 def _faq_count_in_body(body: str) -> int:
@@ -456,6 +460,31 @@ def check_sentence_evidence(data: RuleInput) -> RuleCheck:
     )
 
 
+def _fabrication_points(issues: list[dict[str, Any]], *, limit: int = 8) -> list[str]:
+    """One line per high-risk hit: original snippet + why it is blocked."""
+    points: list[str] = []
+    seen: set[str] = set()
+    for item in issues or []:
+        if item.get("level") != "高":
+            continue
+        excerpt = re.sub(r"\s+", " ", str(item.get("excerpt") or "")).strip()
+        why = re.sub(r"\s+", " ", str(item.get("detail") or item.get("type") or "")).strip()
+        why = why.replace("`", "")
+        if excerpt:
+            line = f"「{excerpt[:56]}」"
+            if why:
+                line = f"{line} {why}"
+        else:
+            line = why
+        if not line or line in seen:
+            continue
+        seen.add(line)
+        points.append(line)
+        if len(points) >= limit:
+            break
+    return points
+
+
 def check_fabrication_lint(data: RuleInput) -> RuleCheck:
     """Block ready when draft or channel variants invent numbers / cases / placeholders."""
     from app.geo.content.draft_lint import lint_draft, lint_summary
@@ -466,16 +495,24 @@ def check_fabrication_lint(data: RuleInput) -> RuleCheck:
         issues.extend(lint_draft(vb or "", facts=facts))
     summary = lint_summary(issues)
     ok = summary["high"] == 0
-    detail = (
-        f"编造风险 高{summary['high']}/中{summary['medium']}/低{summary['low']}"
-        if summary["total"]
-        else "未发现高风险编造线索"
-    )
+    points = _fabrication_points(issues)
+    if ok:
+        return RuleCheck(
+            code="fabrication_lint",
+            passed=True,
+            message=(
+                f"编造风险 高{summary['high']}/中{summary['medium']}/低{summary['low']}"
+                if summary["total"]
+                else "未发现高风险编造线索"
+            ),
+            action="",
+        )
     return RuleCheck(
         code="fabrication_lint",
-        passed=ok,
-        message=detail if ok else f"存在 {summary['high']} 条无依据数字/性能/案例/占位名",
-        action="" if ok else "删掉事实卡没有的数字、性能指标和案例，或先补核验事实",
+        passed=False,
+        message=f"发现 {summary['high']} 处无依据表述，不能标可发布",
+        action="对照下面原文删改，或把这些数据补成已核验事实卡后再写",
+        details=points,
     )
 
 

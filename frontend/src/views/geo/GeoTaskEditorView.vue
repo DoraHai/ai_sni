@@ -1797,6 +1797,24 @@ const patches = computed(
 function patchForCheck(code) {
   return (patches.value || []).find((p) => p.code === code) || null
 }
+
+function formatLintPoint(issue) {
+  const excerpt = String(issue?.excerpt || '').replace(/\s+/g, ' ').trim()
+  const why = String(issue?.detail || issue?.type || '').replace(/`/g, '').trim()
+  if (excerpt && why) return `「${excerpt.slice(0, 56)}」 ${why}`
+  if (excerpt) return `「${excerpt}」`
+  return why
+}
+
+function checkDetails(c) {
+  if (Array.isArray(c?.details) && c.details.length) return c.details
+  if (c?.code !== 'fabrication_lint') return []
+  const issues = checkResult.value?.lint?.issues || task.value?.rule_result?.lint?.issues || []
+  return (issues || [])
+    .filter((i) => i?.level === '高')
+    .map(formatLintPoint)
+    .filter(Boolean)
+}
 async function fixCheck(code) {
   const patch = patchForCheck(code)
   if (patch) {
@@ -2709,6 +2727,9 @@ onMounted(load)
               <div class="check-body">
                 <div class="check-title">{{ c.label }}</div>
                 <div class="check-msg">{{ c.message }}</div>
+                <ul v-if="checkDetails(c).length" class="issue-points">
+                  <li v-for="(d, i) in checkDetails(c)" :key="i">{{ d }}</li>
+                </ul>
                 <div v-if="c.action" class="check-action">{{ c.action }}</div>
                 <div class="check-fix-row">
                   <el-button
@@ -3285,12 +3306,31 @@ onMounted(load)
 }
 .toggle-passed:hover { background: #f3e8ff; }
 .check-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
-.check-list li {
+.check-list > li {
   display: flex; gap: 10px; padding: 10px 11px; border: 1px solid #f0ecf8; border-radius: 10px;
   background: #fffeff; font-size: 12px;
 }
-.fail-list li { border-color: #f3e0e0; background: #fffbfb; }
-.pass-list li { border-color: #e7f3ec; background: #fbfefc; }
+.issue-points {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.issue-points li {
+  display: block;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px dashed #f0c9c9;
+  border-radius: 8px;
+  background: #fff;
+  color: #9f1239;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.fail-list > li { border-color: #f3e0e0; background: #fffbfb; }
+.pass-list > li { border-color: #e7f3ec; background: #fbfefc; }
 .check-title { font-weight: 650; color: #1f2937; line-height: 1.35; }
 .check-msg { color: #6b7280; margin-top: 2px; line-height: 1.45; }
 .check-action { color: #7c3aed; margin-top: 3px; line-height: 1.4; font-size: 11px; }
