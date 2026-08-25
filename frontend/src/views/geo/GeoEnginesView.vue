@@ -26,6 +26,13 @@ const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
 const items = ref([])
+const editing = ref(null)
+const configOpen = computed({
+  get: () => !!editing.value,
+  set: (open) => {
+    if (!open) editing.value = null
+  },
+})
 const ops = ref(null)
 const stance = ref(null)
 const stanceSaving = ref(false)
@@ -170,7 +177,7 @@ async function save() {
     ElMessage.error(
       `百炼只调用 DeepSeek：请先关掉或改掉 ${blocked.map((r) => engineDisplay(r.engine_key)).join('、')} 的 dashscope 地址`,
     )
-    return
+    return false
   }
   saving.value = true
   try {
@@ -197,21 +204,26 @@ async function save() {
     }))
     ElMessage.success('已保存引擎配置')
     ops.value = await fetchVisibilityPatrolOpsStatus(tenantId.value).catch(() => ops.value)
+    return true
   } catch (e) {
     ElMessage.error(e.message || '保存失败')
+    return false
   } finally {
     saving.value = false
   }
 }
 
-async function toggleEngine(row) {
-  const next = !row.enabled
-  if (next && dashscopeBlocked(row)) {
-    ElMessage.error('百炼只调用 DeepSeek，请先改掉该引擎的 dashscope 地址')
-    return
-  }
-  row.enabled = next
-  await save()
+function openConfig(row) {
+  editing.value = row
+}
+
+function closeConfig() {
+  editing.value = null
+}
+
+async function saveConfig() {
+  const ok = await save()
+  if (ok) closeConfig()
 }
 
 async function savePatrol(patch = {}) {
@@ -256,73 +268,93 @@ onMounted(load)
     </template>
     <div class="geo-dash">
     <div class="geo-eng-grid">
-      <div
+      <button
         v-for="row in items"
         :key="row.engine_key"
+        type="button"
         class="gd-card geo-eng-card"
-        @click="toggleEngine(row)"
+        @click="openConfig(row)"
       >
         <span class="geo-plogo" :style="{ background: engineColor(row.engine_key) }">
           {{ engineDisplay(row.engine_key).slice(0, 1) }}
         </span>
-        <div>
+        <div class="geo-eng-copy">
           <b>{{ row.display_name || engineDisplay(row.engine_key) }}</b>
-          <div class="gd-sub" style="margin:0">{{ row.engine_key }}</div>
+          <div class="gd-sub" style="margin:0">{{ row.engine_key }} · 点击配置</div>
         </div>
-        <span class="gd-badge" :class="row.enabled ? 'green' : 'amber'" style="margin-left:auto">
-          {{ row.enabled ? '监测中' : '未开启' }}
-        </span>
-      </div>
+        <div class="geo-eng-flags">
+          <span class="gd-badge" :class="row.enabled ? 'green' : 'amber'">
+            {{ row.enabled ? '监测中' : '未开启' }}
+          </span>
+          <span class="gd-badge" :class="readinessLabel(row).type === 'success' ? 'green' : readinessLabel(row).type === 'danger' ? 'red' : 'amber'">
+            {{ readinessLabel(row).text }}
+          </span>
+        </div>
+      </button>
     </div>
 
-    <div class="gd-card" style="margin-bottom:16px">
-      <div class="gd-hd">
-        <h3>模型接入</h3>
-        <span class="gd-sub" style="margin:0">百炼只打 DeepSeek。ChatGPT / 豆包 / Kimi 请填各厂兼容地址，不要填 dashscope。</span>
-      </div>
-      <div class="gd-bd geo-eng-connect">
-        <div v-for="row in items" :key="'cfg-' + row.engine_key" class="geo-eng-connect-row">
-          <div class="geo-eng-connect-name">
-            <b>{{ row.display_name || engineDisplay(row.engine_key) }}</b>
-            <el-tag size="small" :type="readinessLabel(row).type">{{ readinessLabel(row).text }}</el-tag>
-            <el-tag v-if="dashscopeBlocked(row)" size="small" type="danger">百炼不可用于此引擎</el-tag>
-          </div>
-          <el-select v-model="row.sample_mode" size="small" style="width: 140px">
+    <el-dialog
+      v-model="configOpen"
+      :title="editing ? `配置 ${editing.display_name || engineDisplay(editing.engine_key)}` : '配置引擎'"
+      width="520px"
+      class="geo-form-dialog"
+      @closed="closeConfig"
+    >
+      <el-form v-if="editing" label-width="96px" label-position="right">
+        <el-form-item label="监测">
+          <el-switch v-model="editing.enabled" />
+        </el-form-item>
+        <el-form-item label="采样">
+          <el-select v-model="editing.sample_mode" style="width: 100%">
             <el-option :label="modeLabel('mock_persona')" value="mock_persona" />
             <el-option :label="modeLabel('openai_compat')" value="openai_compat" />
           </el-select>
+        </el-form-item>
+        <el-form-item label="Base URL">
           <el-input
-            v-model="row.api_base_url"
-            size="small"
-            :disabled="row.sample_mode !== 'openai_compat'"
-            placeholder="Base URL"
+            v-model="editing.api_base_url"
+            :disabled="editing.sample_mode !== 'openai_compat'"
+            placeholder="真采样时必填"
           />
+        </el-form-item>
+        <el-form-item label="模型">
           <el-input
-            v-model="row.model"
-            size="small"
-            :disabled="row.sample_mode !== 'openai_compat'"
-            placeholder="模型名"
-            style="max-width: 180px"
+            v-model="editing.model"
+            :disabled="editing.sample_mode !== 'openai_compat'"
+            placeholder="真采样时必填"
           />
+        </el-form-item>
+        <el-form-item label="API Key">
           <el-input
-            v-model="row.api_key"
-            size="small"
+            v-model="editing.api_key"
             type="password"
             show-password
-            :disabled="row.sample_mode !== 'openai_compat'"
-            :placeholder="row.api_key_configured ? '已配置 · 留空保留' : 'API Key'"
-            style="max-width: 220px"
+            :disabled="editing.sample_mode !== 'openai_compat'"
+            :placeholder="editing.api_key_configured ? '已配置 · 留空保留' : '至少 8 位'"
           />
-          <el-button
-            v-if="isDeepseekEngine(row.engine_key)"
-            size="small"
-            @click="applyBailian(row)"
+          <el-checkbox
+            v-if="editing.api_key_configured && editing.sample_mode === 'openai_compat'"
+            v-model="editing.clear_api_key"
           >
-            填入百炼 DeepSeek
-          </el-button>
-        </div>
-      </div>
-    </div>
+            清除 Key
+          </el-checkbox>
+        </el-form-item>
+        <el-alert
+          v-if="dashscopeBlocked(editing)"
+          type="error"
+          :closable="false"
+          show-icon
+          title="百炼只调用 DeepSeek。请改成该厂自己的地址，或关掉监测。"
+        />
+        <el-form-item v-if="isDeepseekEngine(editing.engine_key)">
+          <el-button @click="applyBailian(editing)">填入百炼 DeepSeek</el-button>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="closeConfig">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="saveConfig">保存</el-button>
+      </template>
+    </el-dialog>
 
     <div class="gd-card" style="margin-bottom:16px">
       <div class="gd-hd"><h3>巡检设置</h3></div>
@@ -599,18 +631,18 @@ onMounted(load)
 }
 .skip-title { font-weight: 650; font-size: 13px; color: #78350f; }
 .skip-hint { font-size: 12px; color: #92400e; margin: 0 0 10px; line-height: 1.45; }
-.geo-eng-connect { display: flex; flex-direction: column; gap: 12px; }
-.geo-eng-connect-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
+.geo-eng-card {
+  text-align: left;
+  width: 100%;
+  font: inherit;
+  color: inherit;
 }
-.geo-eng-connect-name {
+.geo-eng-copy { flex: 1; min-width: 0; }
+.geo-eng-flags {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 180px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  margin-left: auto;
 }
-.geo-eng-connect-row .el-input { flex: 1; min-width: 160px; }
 </style>
