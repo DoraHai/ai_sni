@@ -819,26 +819,26 @@ onMounted(load)
         <h3 class="sec">分发平台</h3>
         <span class="sec-hint">维护平台连接状态与分发方式</span>
       </div>
-      <el-table :data="channels" empty-text="暂无渠道" class="mb ch-table pack-table" size="small">
-        <el-table-column label="类型" width="100">
+      <el-table :data="channels" empty-text="暂无渠道" class="mb ch-table" size="small">
+        <el-table-column label="类型" min-width="110">
           <template #default="{ row }">
             <span class="type-label">{{ typeLabel(row.channel_type) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="名称" width="280">
+        <el-table-column label="名称" min-width="240">
           <template #default="{ row }">
             <div class="name">{{ row.name }}</div>
             <div v-if="row.base_url" class="url">{{ row.base_url }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="发布模式" width="168">
+        <el-table-column label="发布模式" min-width="170">
           <template #default="{ row }">
             <el-tag size="small" :type="modeTagType(row.publish_mode)">
               {{ modeLabel(row.publish_mode) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="160">
+        <el-table-column label="状态" min-width="170">
           <template #default="{ row }">
             <span class="geo-status-cell">
               <i class="geo-status-dot" :class="row.enabled ? 'ok' : 'muted'" />
@@ -847,7 +847,7 @@ onMounted(load)
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="168">
+        <el-table-column label="操作" min-width="180">
           <template #default="{ row }">
             <div class="geo-act">
               <el-button link type="primary" @click="openEditChannel(row)">配置</el-button>
@@ -858,7 +858,6 @@ onMounted(load)
             </div>
           </template>
         </el-table-column>
-        <el-table-column min-width="24" class-name="col-fill" />
       </el-table>
     </section>
 
