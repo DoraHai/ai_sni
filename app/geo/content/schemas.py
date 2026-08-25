@@ -449,6 +449,8 @@ class ChannelPolishPromptsUpdate(BaseModel):
     system_prompt: str | None = Field(None, max_length=50000)
     reset_system: bool = False
     channels: list[ChannelPolishPromptChannelUpdate] = Field(default_factory=list)
+    add_channel_key: str | None = Field(None, max_length=32)
+    remove_channel_key: str | None = Field(None, max_length=32)
 
 
 class CompetitorTraceReportRequest(BaseModel):

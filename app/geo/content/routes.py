@@ -5138,14 +5138,19 @@ async def put_channel_polish_prompts(
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
     channel_payload = [c.model_dump() for c in req.channels]
-    return await upsert_prompts(
-        session,
-        req.tenant_id,
-        system_prompt=req.system_prompt,
-        reset_system=bool(req.reset_system),
-        channels=channel_payload,
-        updated_by=ctx.user_id,
-    )
+    try:
+        return await upsert_prompts(
+            session,
+            req.tenant_id,
+            system_prompt=req.system_prompt,
+            reset_system=bool(req.reset_system),
+            channels=channel_payload,
+            add_channel_key=req.add_channel_key,
+            remove_channel_key=req.remove_channel_key,
+            updated_by=ctx.user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.post("/ai-settings/test")
