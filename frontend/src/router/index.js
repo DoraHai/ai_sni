@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { session } from '../store/session'
+import { GEO_WORKBENCH_START } from '../utils/geoPrototypeNavigation'
 
 // 路由按原型 v3.0 的 6 个工作流划分，未实现的页面挂占位组件。
 // meta.perm = 该页所需菜单权限 key（自定义角色 RBAC）；可为数组=任一可见即可（下钻页）。
@@ -76,51 +77,33 @@ const routes = [
     path: '/geo/visibility/snapshots',
     component: () => import('../views/geo/GeoVisibilityView.vue'),
     meta: {
-      title: '回答快照',
-      documentTitle: 'GEO 品牌优化｜回答快照',
+      title: '采集与判断',
+      documentTitle: 'GEO 品牌优化｜采集与判断',
       workflow: 'GEO 品牌优化',
       perm: 'geo.content',
     },
   },
   {
     path: '/geo/keywords',
-    component: () => import('../views/geo/GeoKeywordsView.vue'),
-    meta: {
-      title: '关键词管理',
-      documentTitle: 'GEO 品牌优化｜关键词管理',
-      workflow: 'GEO 品牌优化',
-      perm: 'geo.content',
-    },
+    redirect: '/geo/questions',
   },
   {
     path: '/geo/questions',
     component: () => import('../views/geo/GeoPromptsView.vue'),
     meta: {
-      title: 'AI提问管理',
-      documentTitle: 'GEO 品牌优化｜AI提问管理',
+      title: '优化意图词',
+      documentTitle: 'GEO 品牌优化｜优化意图词',
       workflow: 'GEO 品牌优化',
       perm: 'geo.content',
     },
   },
   {
     path: '/geo/recommend',
-    component: () => import('../views/geo/GeoRecommendView.vue'),
-    meta: {
-      title: 'AI推荐',
-      documentTitle: 'GEO 品牌优化｜AI推荐',
-      workflow: 'GEO 品牌优化',
-      perm: 'geo.content',
-    },
+    redirect: '/geo/questions',
   },
   {
     path: '/geo/answers',
-    component: () => import('../views/geo/GeoAnswerAnalysisView.vue'),
-    meta: {
-      title: 'AI回答分析',
-      documentTitle: 'GEO 品牌优化｜AI回答分析',
-      workflow: 'GEO 品牌优化',
-      perm: 'geo.content',
-    },
+    redirect: '/geo/visibility',
   },
   {
     path: '/geo/knowledge',
@@ -158,57 +141,31 @@ const routes = [
   },
   {
     path: '/geo/geo-diagnosis',
-    component: () => import('../views/geo/GeoOptimizationDiagnosisView.vue'),
-    meta: {
-      title: 'GEO优化诊断',
-      documentTitle: 'GEO 品牌优化｜优化诊断',
-      workflow: 'GEO 品牌优化',
-      perm: 'geo.content',
-    },
+    redirect: GEO_WORKBENCH_START,
+  },
+  {
+    path: '/geo/visibility/evaluation',
+    redirect: '/geo/visibility/snapshots',
   },
   {
     path: '/geo/visibility/patrol',
-    component: () => import('../views/geo/GeoVisibilityPatrolView.vue'),
-    meta: {
-      title: '全自动巡检',
-      documentTitle: 'GEO 增长｜可见度巡检',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
+    redirect: '/geo/visibility/snapshots',
   },
   {
     path: '/geo/period-diff',
-    component: () => import('../views/geo/GeoPeriodDiffView.vue'),
-    meta: {
-      title: '期次对比',
-      documentTitle: 'GEO 增长｜期次对比',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
+    redirect: '/geo/visibility',
   },
   {
     path: '/geo/gaps',
-    redirect: '/geo/recommend',
+    redirect: '/geo/questions',
   },
   {
     path: '/geo/gap-workbench',
-    component: () => import('../views/geo/GeoGapWorkbenchView.vue'),
-    meta: {
-      title: '缺口工作台',
-      documentTitle: 'GEO 品牌优化｜缺口工作台',
-      workflow: 'GEO 品牌优化',
-      perm: 'geo.content',
-    },
+    redirect: '/geo/questions',
   },
   {
     path: '/geo/periods',
-    component: () => import('../views/geo/GeoPeriodsView.vue'),
-    meta: {
-      title: '优化期次',
-      documentTitle: 'GEO 增长｜优化期次',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
+    redirect: GEO_WORKBENCH_START,
   },
   {
     path: '/geo/citations',
@@ -232,43 +189,19 @@ const routes = [
   },
   {
     path: '/geo/topic-heat',
-    component: () => import('../views/geo/GeoTopicHeatView.vue'),
-    meta: {
-      title: '话题热度',
-      documentTitle: 'GEO 增长｜话题热度',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
+    redirect: '/geo/questions',
   },
   {
     path: '/geo/ai-trends',
-    component: () => import('../views/geo/GeoAiTrendsView.vue'),
-    meta: {
-      title: 'AI 动态',
-      documentTitle: 'GEO 增长｜AI 动态',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
+    redirect: GEO_WORKBENCH_START,
   },
   {
     path: '/geo/evaluation',
-    component: () => import('../views/geo/GeoEvaluationView.vue'),
-    meta: {
-      title: '评价分析',
-      documentTitle: 'GEO 增长｜评价分析',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
+    redirect: '/geo/visibility',
   },
   {
     path: '/geo/deliverables',
-    component: () => import('../views/geo/GeoDeliverablesView.vue'),
-    meta: {
-      title: '交付摘要',
-      documentTitle: 'GEO 增长｜交付摘要',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
+    redirect: GEO_WORKBENCH_START,
   },
   {
     path: '/geo/deliverables/share/:shareToken',
@@ -287,12 +220,12 @@ const routes = [
       const t = to.query.token || to.query.share_token
       return t
         ? { path: `/geo/deliverables/share/${t}` }
-        : { path: '/geo/deliverables' }
+        : { path: GEO_WORKBENCH_START }
     },
   },
   {
     path: '/geo/workbench',
-    redirect: '/geo/overview',
+    redirect: GEO_WORKBENCH_START,
   },
   {
     path: '/geo/tasks',
@@ -316,33 +249,15 @@ const routes = [
   },
   {
     path: '/geo/businesses',
-    component: () => import('../views/geo/GeoBusinessesView.vue'),
-    meta: {
-      title: '优化业务',
-      documentTitle: 'GEO 增长｜优化业务',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
+    redirect: '/geo/brand',
   },
   {
     path: '/geo/businesses/:businessId',
-    component: () => import('../views/geo/GeoBusinessDetailView.vue'),
-    meta: {
-      title: '业务详情',
-      documentTitle: 'GEO 增长｜业务详情',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
+    redirect: '/geo/brand',
   },
   {
     path: '/geo/onboarding',
-    component: () => import('../views/geo/GeoOnboardingView.vue'),
-    meta: {
-      title: 'GEO 开户向导',
-      documentTitle: 'GEO 增长｜开户向导',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
+    redirect: GEO_WORKBENCH_START,
   },
   {
     path: '/geo/prompts',
@@ -531,7 +446,7 @@ const router = createRouter({
 
 const MENU_ORDER = [
   ['assistant', '/assistant'],
-  ['geo.content', '/geo/businesses'],
+  ['geo.content', GEO_WORKBENCH_START],
   ['geo.diagnosis', '/geo/diagnosis'],
   ['monitor.dashboard', '/monitor/dashboard'],
   ['monitor.alerts', '/monitor/alerts'],
@@ -566,7 +481,7 @@ function hasDevApiKey() {
 }
 
 function geoClickStart() {
-  return '/geo/onboarding'
+  return GEO_WORKBENCH_START
 }
 
 router.beforeEach((to) => {

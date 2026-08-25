@@ -5,7 +5,10 @@ import {
   normalizeGeoScope,
   parseGeoScopeId,
 } from '../src/utils/geoPrototypeScope.js'
-import { GEO_WORKBENCH_NAV } from '../src/utils/geoPrototypeNavigation.js'
+import {
+  GEO_WORKBENCH_NAV,
+  GEO_WORKBENCH_START,
+} from '../src/utils/geoPrototypeNavigation.js'
 
 test('invalid scope query values are treated as unset', () => {
   assert.equal(parseGeoScopeId('abc'), null)
@@ -48,27 +51,34 @@ test('scope drops a prompt outside the selected unit', () => {
   })
 })
 
-test('prototype navigation includes evaluation analysis and excludes team permissions', () => {
+test('prototype navigation keeps the contracted workbench and excludes team permissions', () => {
   const sections = GEO_WORKBENCH_NAV.map((group) => group.label)
   const items = GEO_WORKBENCH_NAV.flatMap((group) =>
     group.children.map((item) => item.label),
   )
+  const paths = GEO_WORKBENCH_NAV.flatMap((group) =>
+    group.children.map((item) => item.path),
+  )
 
-  assert.deepEqual(sections, ['数据看板', '智能监测', 'GEO 执行', '设置'])
+  assert.equal(GEO_WORKBENCH_START, '/geo/overview')
+  assert.deepEqual(sections, ['数据看板', '智能监测', '内容与信源', '设置'])
   assert.deepEqual(items, [
     'GEO 概览',
     'AI 可见度',
-    '提问监控',
+    '优化意图词',
     '竞品分析',
-    '评价分析',
-    '信源分析',
-    'GEO 文章',
+    'AI 引用次数',
+    '事实库 / 信源',
+    '优化文章',
     '媒体 / 信源策略',
     '分发平台',
-    '官网结构优化',
     '品牌信息',
-    '知识库',
-    'AI 引擎管理',
+    'AI 能力配置',
+    '渠道成稿提示词',
+    '引擎',
   ])
   assert.ok(!items.includes('团队权限'))
+  assert.ok(!items.includes('评价分析'))
+  assert.ok(!paths.includes('/geo/businesses'))
+  assert.ok(!paths.includes('/geo/evaluation'))
 })
