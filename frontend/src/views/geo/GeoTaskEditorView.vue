@@ -1999,6 +1999,31 @@ const webhookAccountsForChannel = computed(() => {
   )
 })
 
+const currentPushTargets = computed(() => {
+  const ch = String(docTab.value || '')
+  if (!ch || ch === 'master') return []
+  return (pushTargets.value || []).filter(
+    (t) => t.channel_type === ch || t.adapt_key === ch,
+  )
+})
+const currentPushReady = computed(() =>
+  currentPushTargets.value.filter((t) => t.ready && t.account_id),
+)
+const currentPushBlock = computed(
+  () => currentPushTargets.value.find((t) => !t.ready)?.block_reasons || [],
+)
+
+watch(
+  currentPushReady,
+  (rows) => {
+    if (!rows.length) return
+    if (!rows.some((t) => t.account_id === webhookAccountId.value)) {
+      webhookAccountId.value = rows[0].account_id
+    }
+  },
+  { immediate: true },
+)
+
 watch([tenantId, taskId], load)
 onMounted(load)
 </script>
@@ -2644,7 +2669,10 @@ onMounted(load)
               <span>记录发布</span>
             </div>
           </template>
-          <p class="hint mb">复制渠道稿到平台后，把已发 URL 填回来。这里不自动推送。</p>
+          <p class="hint mb">
+            配好分发账号后可一键推送；未配置的渠道仍可复制成稿，再把已发 URL 填回来。
+            <router-link to="/geo/publishing">去配置分发账号</router-link>
+          </p>
           <el-alert
             v-if="publishGateHint"
             type="info"
@@ -2653,19 +2681,53 @@ onMounted(load)
             class="mb"
             :title="publishGateHint"
           />
-          <el-input
-            v-model="publishUrl"
-            placeholder="https:// 已发布地址"
-            class="mb"
-          />
-          <el-button
-            type="primary"
-            :loading="busy === 'publish'"
-            :disabled="!!publishGateHint"
-            @click="recordPublication"
-          >
-            记录已发
-          </el-button>
+          <div v-if="docTab === 'master'" class="hint mb">请先切到上方渠道页签，再推送或回填。</div>
+          <template v-else>
+            <div v-if="currentPushReady.length" class="mb">
+              <div class="hint" style="margin-bottom: 8px">当前渠道可自动推送</div>
+              <el-select
+                v-model="webhookAccountId"
+                placeholder="选择推送账号"
+                style="width: 280px; margin-right: 8px"
+              >
+                <el-option
+                  v-for="t in currentPushReady"
+                  :key="t.account_id"
+                  :label="t.channel_name ? `${t.channel_name} · ${t.account_id}` : `账号 ${t.account_id}`"
+                  :value="t.account_id"
+                />
+              </el-select>
+              <el-button
+                type="primary"
+                :loading="busy === 'push'"
+                :disabled="!!publishGateHint || !webhookAccountId"
+                @click="pushWebhook"
+              >
+                推送到渠道
+              </el-button>
+            </div>
+            <el-alert
+              v-else-if="currentPushBlock.length"
+              type="warning"
+              :closable="false"
+              show-icon
+              class="mb"
+              :title="currentPushBlock.join('；')"
+            />
+            <div class="hint" style="margin-bottom: 8px">或手工回填已发地址</div>
+            <el-input
+              v-model="publishUrl"
+              placeholder="https:// 已发布地址"
+              class="mb"
+            />
+            <el-button
+              :loading="busy === 'publish'"
+              :disabled="!!publishGateHint"
+              @click="recordPublication"
+            >
+              记录已发
+            </el-button>
+          </template>
           <ul v-if="recordedPublications.length" class="hint" style="margin-top: 12px">
             <li
               v-for="p in recordedPublications"

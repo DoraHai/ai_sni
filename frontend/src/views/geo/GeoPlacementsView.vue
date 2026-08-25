@@ -170,7 +170,7 @@ async function submitForm() {
 async function markPublished(row) {
   try {
     await patchGeoMediaPlacement(tenantId.value, row.id, { status: 'published' })
-    ElMessage.success('已标记为已发布')
+    ElMessage.success('计划已标为已发布（不会向该平台发文）')
     await load()
   } catch (e) {
     ElMessage.error(e.message || '更新失败')
@@ -199,7 +199,7 @@ onMounted(load)
   <GeoWorkbenchPage
     title="信源策略"
     :show-period="false"
-    sub="同一套媒体选题可供 SEO / GEO 共用，GEO 圈选高权威、可引用的信任源"
+    sub="投放计划：百科、知乎、榜单等要不要做。这里的「发布」只改计划状态，不会把文章发到这些平台；真发在分发平台和优化文章里"
     :loading="loading"
   >
     <template #actions>
