@@ -222,6 +222,8 @@ def test_manual_collection_returns_structured_total_timeout(monkeypatch) -> None
         )
     assert exc.value.code == "collection_timeout"
     assert exc.value.error_type == "timeout"
+    assert exc.value.elapsed_ms is not None
+    assert exc.value.elapsed_ms >= 1
     assert exc.value.response_status == 504
     assert "安全时限" in exc.value.public_message
 

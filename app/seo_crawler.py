@@ -152,6 +152,10 @@ async def _ensure_public_host(url: str) -> str:
 
 
 def classify_fetch_error(exc: Exception) -> str:
+    if isinstance(exc, httpx.TimeoutException):
+        return "timeout"
+    if isinstance(exc, httpx.TooManyRedirects):
+        return "too_many_redirects"
     text = str(exc).lower()
     if "dns" in text or "name or service" in text:
         return "dns_error"

@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
 import math
+import time
 from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import urljoin, urlparse, urlunparse
@@ -195,6 +196,7 @@ async def collect_competitor_content(
     """Fetch a competitor homepage and a bounded set of same-domain HTML pages."""
     max_pages = max(1, min(int(max_pages), COMPETITOR_MAX_PAGES_PER_RUN))
     homepage = f"https://{competitor_domain.strip().lower().rstrip('.')}/"
+    started = time.perf_counter()
 
     async def run_collection() -> CompetitorContentCollection:
         limits = httpx.Limits(
@@ -277,6 +279,7 @@ async def collect_competitor_content(
             "collection_timeout",
             "竞品网站响应较慢，本次采集已在安全时限内停止",
             error_type="timeout",
+            elapsed_ms=round((time.perf_counter() - started) * 1000),
             response_status=504,
         ) from exc
 
