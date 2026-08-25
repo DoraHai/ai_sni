@@ -19,7 +19,7 @@ python scripts/accept_geo_delivery.py
 
 `pytest` + `accept_geo_m1` 绿即可合 PR。**对外演示 / 内测发版**建议再加 `accept_geo_delivery` 全绿，并勾选 `docs/GEO_DELIVERY_CHECKLIST.md` 手测项。
 
-Vue GEO 入口（权限 `geo.content`）：`/geo/overview`、`/geo/visibility`、`/geo/citations`、`/geo/competitors`、`/geo/evaluation`、`/geo/deliverables`、`/geo/tasks`（P1 任务列表；`/geo/tasks/:id` 混合编辑器）。多引擎探测默认租户 LLM + 人设模拟；引擎可配置 `sample_mode=openai_compat` 真采样，确认后才写快照。
+Vue GEO 入口（权限 `geo.content`）：`/geo/overview`、`/geo/visibility`、`/geo/visibility/snapshots`、`/geo/citations`、`/geo/competitors`、`/geo/tasks`（`/geo/tasks/:id` 内容编辑器）。原 `/geo/evaluation`、`/geo/deliverables` 已下线（分别重定向到采集页 / 概览）。多引擎探测默认租户 LLM + 人设模拟；引擎可配置 `sample_mode=openai_compat` 真采样，确认后才写快照。
 
 ## 建议从哪一步开始验收
 

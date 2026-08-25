@@ -202,13 +202,13 @@ http://127.0.0.1:5173/geo/onboarding
 
 ### B1. 开户就绪
 
-1. 顶栏切到智齿。打开 `/geo/onboarding` 看就绪清单：业务、意图词、已核验事实、引擎应基本为绿。
-2. `/geo/businesses/14`：画像里应能看到智齿客服、禁止「泉衡 / 化工泵 / 第一名」。
-3. `/geo/facts`：上述 5 条业务列是智齿客服，不是租户共用。
+1. 顶栏切到智齿。打开 `/geo/overview` 看 KPI。开户向导页 `/geo/onboarding` 已下线。
+2. `/geo/brand`：维护品牌资料（原 `/geo/businesses/14` 画像页已下线）。
+3. `/geo/knowledge`：事实应归属当前租户（`/geo/facts` 已重定向）。
 
 ### B2. 小规模巡检
 
-1. `/geo/visibility/patrol`
+1. `/geo/visibility/snapshots`（原巡检页已并入采集与判断；定时规则在 `/geo/models`）
 2. 意图词上限 5～8；引擎选已启用且尽量有 Key 的。
 3. 监测定位保持 hybrid。未配 Key 时会出模拟，交付页必须标「含模拟」。
 4. **不要**打开定时巡检。
@@ -265,7 +265,7 @@ https://www.zhichi.com/geo-click-test-udesk-compare
 
 ### B6. 交付摘要
 
-`/geo/deliverables`
+`/geo/overview`（原 `/geo/deliverables` 独立页已下线）
 
 - 观察期与顶栏一致（建议 14 天）。
 - 真采样 / 模拟 / 人工数字要能对上巡检。

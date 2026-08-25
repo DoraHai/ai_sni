@@ -4,7 +4,6 @@ import { GEO_WORKBENCH_START } from '../utils/geoPrototypeNavigation'
 
 // 路由按原型 v3.0 的 6 个工作流划分，未实现的页面挂占位组件。
 // meta.perm = 该页所需菜单权限 key（自定义角色 RBAC）；可为数组=任一可见即可（下钻页）。
-const PlaceholderView = () => import('../views/PlaceholderView.vue')
 const DealSniperShell = () => import('../views/deal/DealSniperShell.vue')
 const GrowthSniperLanding = () => import('../views/landing/GrowthSniperLanding.vue')
 const DiagnosisLanding = () => import('../views/landing/DiagnosisLanding.vue')
@@ -58,8 +57,8 @@ const routes = [
     component: () => import('../views/geo/GeoOverviewView.vue'),
     meta: {
       title: 'GEO 概览',
-      documentTitle: 'GEO 工作台｜概览',
-      workflow: 'GEO 品牌优化',
+      documentTitle: 'GEO 工作台｜GEO 概览',
+      workflow: 'GEO 工作台',
       perm: 'geo.content',
     },
   },
@@ -69,7 +68,7 @@ const routes = [
     meta: {
       title: 'AI 可见度',
       documentTitle: 'GEO 工作台｜AI 可见度',
-      workflow: 'GEO 品牌优化',
+      workflow: 'GEO 工作台',
       perm: 'geo.content',
     },
   },
@@ -79,7 +78,7 @@ const routes = [
     meta: {
       title: '采集与判断',
       documentTitle: 'GEO 工作台｜采集与判断',
-      workflow: 'GEO 品牌优化',
+      workflow: 'GEO 工作台',
       perm: 'geo.content',
     },
   },
@@ -93,7 +92,7 @@ const routes = [
     meta: {
       title: '优化意图词',
       documentTitle: 'GEO 工作台｜优化意图词',
-      workflow: 'GEO 品牌优化',
+      workflow: 'GEO 工作台',
       perm: 'geo.content',
     },
   },
@@ -109,9 +108,9 @@ const routes = [
     path: '/geo/knowledge',
     component: () => import('../views/geo/GeoFactsView.vue'),
     meta: {
-      title: '事实库 / 信源',
-      documentTitle: 'GEO 工作台｜事实库 / 信源',
-      workflow: 'GEO 品牌优化',
+      title: '知识库',
+      documentTitle: 'GEO 工作台｜知识库',
+      workflow: 'GEO 工作台',
       perm: 'geo.content',
     },
   },
@@ -119,9 +118,9 @@ const routes = [
     path: '/geo/brand',
     component: () => import('../views/geo/GeoBrandSettingsView.vue'),
     meta: {
-      title: '品牌信息',
-      documentTitle: 'GEO 工作台｜品牌信息',
-      workflow: 'GEO 品牌优化',
+      title: '品牌资料',
+      documentTitle: 'GEO 工作台｜品牌资料',
+      workflow: 'GEO 工作台',
       perm: 'geo.content',
     },
   },
@@ -135,7 +134,7 @@ const routes = [
     meta: {
       title: '引擎',
       documentTitle: 'GEO 工作台｜引擎',
-      workflow: 'GEO 品牌优化',
+      workflow: 'GEO 工作台',
       perm: 'geo.content',
     },
   },
@@ -173,7 +172,7 @@ const routes = [
     meta: {
       title: 'AI 引用次数',
       documentTitle: 'GEO 工作台｜AI 引用次数',
-      workflow: 'GEO 增长',
+      workflow: 'GEO 工作台',
       perm: 'geo.content',
     },
   },
@@ -183,7 +182,7 @@ const routes = [
     meta: {
       title: '竞品分析',
       documentTitle: 'GEO 工作台｜竞品分析',
-      workflow: 'GEO 增长',
+      workflow: 'GEO 工作台',
       perm: 'geo.content',
     },
   },
@@ -233,7 +232,7 @@ const routes = [
     meta: {
       title: '优化文章',
       documentTitle: 'GEO 工作台｜优化文章',
-      workflow: 'GEO 增长',
+      workflow: 'GEO 工作台',
       perm: 'geo.content',
     },
   },
@@ -243,7 +242,7 @@ const routes = [
     meta: {
       title: '内容编辑器',
       documentTitle: 'GEO 工作台｜内容编辑器',
-      workflow: 'GEO 增长',
+      workflow: 'GEO 工作台',
       perm: 'geo.content',
     },
   },
@@ -276,8 +275,8 @@ const routes = [
     component: () => import('../views/geo/GeoAiSettingsView.vue'),
     meta: {
       title: 'AI 能力配置',
-      documentTitle: 'GEO 工作台｜AI 配置',
-      workflow: 'GEO 增长',
+      documentTitle: 'GEO 工作台｜AI 能力配置',
+      workflow: 'GEO 工作台',
       perm: 'geo.content',
     },
   },
@@ -287,7 +286,7 @@ const routes = [
     meta: {
       title: '渠道成稿提示词',
       documentTitle: 'GEO 工作台｜渠道成稿提示词',
-      workflow: 'GEO 增长',
+      workflow: 'GEO 工作台',
       perm: 'geo.content',
     },
   },
@@ -297,7 +296,7 @@ const routes = [
     meta: {
       title: '分发平台',
       documentTitle: 'GEO 工作台｜分发平台',
-      workflow: 'GEO 增长',
+      workflow: 'GEO 工作台',
       perm: 'geo.content',
     },
   },
@@ -307,7 +306,7 @@ const routes = [
     meta: {
       title: '信源策略',
       documentTitle: 'GEO 工作台｜信源策略',
-      workflow: 'GEO 增长',
+      workflow: 'GEO 工作台',
       perm: 'geo.content',
     },
   },
@@ -476,6 +475,7 @@ function permOk(perm) {
   return keys.some((k) => session.canView(k))
 }
 function hasDevApiKey() {
+  if (!import.meta.env.DEV) return false
   const k = import.meta.env.VITE_API_KEY
   return Boolean(k && String(k).trim() && String(k).trim() !== 'CHANGE_ME')
 }

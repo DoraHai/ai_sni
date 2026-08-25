@@ -549,7 +549,7 @@ onMounted(() => {
             </tbody>
           </table>
           <p class="gd-sub" style="margin:14px 0 0">
-            单引擎得分即该引擎下的加权占比。巡检设置见「AI 引擎管理」。当前页得分 {{ fmtPct(overallScore) }}。
+            单引擎得分即该引擎下的加权占比。巡检设置见「引擎」。当前页得分 {{ fmtPct(overallScore) }}。
           </p>
         </div>
       </div>
