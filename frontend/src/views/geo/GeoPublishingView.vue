@@ -151,6 +151,25 @@ function defaultAuthForChannel(channelId) {
   return 'manual'
 }
 
+const TYPE_LABELS = {
+  website: '官网',
+  docs: '文档',
+  wechat: '公众号',
+  zhihu: '知乎',
+  baijiahao: '百家号',
+  toutiao: '头条',
+  industry_media: '行业媒体',
+}
+
+function typeLabel(t) {
+  const key = String(t || '').toLowerCase()
+  return TYPE_LABELS[key] || t || '—'
+}
+
+function accountCount(row) {
+  return (accounts.value || []).filter((a) => a.channel_id === row.id).length
+}
+
 function modeLabel(mode) {
   const m = PUBLISH_MODES.find((x) => x.value === mode)
   return m ? m.label.split(' · ')[1] || mode : mode || '—'
@@ -800,38 +819,43 @@ onMounted(load)
         <h3 class="sec">分发平台</h3>
         <span class="sec-hint">维护平台连接状态与分发方式</span>
       </div>
-      <el-table :data="channels" empty-text="暂无渠道" class="mb" size="small">
-        <el-table-column prop="channel_type" label="类型" width="120" show-overflow-tooltip />
-        <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
-        <el-table-column label="发布模式" min-width="160">
+      <el-table :data="channels" empty-text="暂无渠道" class="mb ch-table" size="small">
+        <el-table-column label="类型" width="100">
+          <template #default="{ row }">
+            <span class="type-label">{{ typeLabel(row.channel_type) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="名称" min-width="200">
+          <template #default="{ row }">
+            <div class="name">{{ row.name }}</div>
+            <div v-if="row.base_url" class="url">{{ row.base_url }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="发布模式" width="168">
           <template #default="{ row }">
             <el-tag size="small" :type="modeTagType(row.publish_mode)">
               {{ modeLabel(row.publish_mode) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="连接地址" min-width="140" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.base_url || '—' }}</template>
-        </el-table-column>
-        <el-table-column label="启用" width="72" align="center">
+        <el-table-column label="状态" width="148">
           <template #default="{ row }">
-            <el-tag :type="row.enabled ? 'success' : 'info'" size="small">
-              {{ row.enabled ? '是' : '否' }}
-            </el-tag>
+            <span class="geo-status-cell">
+              <i class="geo-status-dot" :class="row.enabled ? 'ok' : 'muted'" />
+              {{ row.enabled ? '已启用' : '已停用' }}
+              · {{ accountCount(row) }} 个连接
+            </span>
           </template>
         </el-table-column>
-        <el-table-column label="连接数" width="72" align="center">
+        <el-table-column label="操作" width="156" align="right">
           <template #default="{ row }">
-            {{ accounts.filter((a) => a.channel_id === row.id).length }}
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="openEditChannel(row)">配置</el-button>
-            <el-button link type="primary" @click="toggleChannel(row)">
-              {{ row.enabled ? '禁用' : '启用' }}
-            </el-button>
-            <el-button link type="danger" @click="removeChannel(row)">删除</el-button>
+            <div class="geo-act">
+              <el-button link type="primary" @click="openEditChannel(row)">配置</el-button>
+              <el-button link type="primary" @click="toggleChannel(row)">
+                {{ row.enabled ? '停用' : '启用' }}
+              </el-button>
+              <el-button link type="danger" @click="removeChannel(row)">删除</el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -1317,6 +1341,11 @@ onMounted(load)
 .page-desc code { background: #f5f0ff; padding: 1px 6px; border-radius: 4px; color: #6d28d9; }
 .header-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .mb { margin-bottom: 14px; }
+.ch-table :deep(th.el-table__cell) { white-space: nowrap; }
+.type-label { white-space: nowrap; font-weight: 600; color: #374151; }
+.name { font-weight: 650; color: #1e2330; }
+.url { margin-top: 3px; font-size: 12px; color: #9ca3af; }
+.geo-status-cell { white-space: nowrap; }
 .block {
   background: #fff;
   border: 1px solid #e8e4f5;
