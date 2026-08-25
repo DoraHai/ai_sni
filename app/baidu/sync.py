@@ -305,34 +305,35 @@ async def sync_keyword_report_range_for_account(
     if not records:
         return 0
 
-    stmt = pg_insert(KwReportSnapshot).values(records)
-    stmt = stmt.on_conflict_do_update(
-        index_elements=["tenant_id", "report_date", "keyword_id", "device"],
-        set_={
-            "baidu_account_id": stmt.excluded.baidu_account_id,
-            "impression": stmt.excluded.impression,
-            "click": stmt.excluded.click,
-            "cost": stmt.excluded.cost,
-            "cpc": stmt.excluded.cpc,
-            "ctr": stmt.excluded.ctr,
-            "avg_rank": stmt.excluded.avg_rank,
-            "conversions": stmt.excluded.conversions,
-            "quality_enum": stmt.excluded.quality_enum,
-            "estimated_click_rate": stmt.excluded.estimated_click_rate,
-            "business_relationship": stmt.excluded.business_relationship,
-            "land_page_experience": stmt.excluded.land_page_experience,
-            "top_pageviews": stmt.excluded.top_pageviews,
-            "top_pclicks": stmt.excluded.top_pclicks,
-            "top_pay": stmt.excluded.top_pay,
-            "top_pv_win_a": stmt.excluded.top_pv_win_a,
-            "top_first_pv_win_a": stmt.excluded.top_first_pv_win_a,
-            "bid_new": stmt.excluded.bid_new,
-            "raw_metrics": stmt.excluded.raw_metrics,
-            "fetched_at": stmt.excluded.fetched_at,
+    await _chunked_upsert(
+        session,
+        KwReportSnapshot,
+        records,
+        "uq_kw_report_tenant_date_kw_device",
+        {"tenant_id", "report_date", "keyword_id", "device"},
+        update_keys={
+            "baidu_account_id",
+            "impression",
+            "click",
+            "cost",
+            "cpc",
+            "ctr",
+            "avg_rank",
+            "conversions",
+            "quality_enum",
+            "estimated_click_rate",
+            "business_relationship",
+            "land_page_experience",
+            "top_pageviews",
+            "top_pclicks",
+            "top_pay",
+            "top_pv_win_a",
+            "top_first_pv_win_a",
+            "bid_new",
+            "raw_metrics",
+            "fetched_at",
         },
     )
-    await session.execute(stmt)
-    await session.commit()
 
     logger.info(
         "账户 %s %s~%s 关键词报告 upsert %d 条",
@@ -494,20 +495,57 @@ def _account_client(baidu_account: BaiduAccount) -> BaiduAPIClient:
     )
 
 
-# asyncpg 单条语句绑定参数上限 32767；按"行数 × 列数"留余量分批
+# asyncpg 单条语句绑定参数上限 32767；按"行数 × 列数"留余量分批。
+# 30000 为宽表、驱动和后续字段扩展预留余量，不能只按固定行数判断。
 UPSERT_CHUNK = 1000
+UPSERT_BIND_PARAM_BUDGET = 30000
+
+
+def _safe_upsert_chunk_size(model, records: list[dict]) -> int:
+    """按实际单行 SQL 参数数计算安全批量，包含 SQLAlchemy 客户端默认值。"""
+    if not records:
+        return 1
+    params_per_row = 0
+    seen_shapes: set[frozenset[str]] = set()
+    for record in records:
+        shape = frozenset(record)
+        if shape in seen_shapes:
+            continue
+        seen_shapes.add(shape)
+        params_per_row = max(
+            params_per_row,
+            len(pg_insert(model).values([record]).compile().params),
+        )
+    if params_per_row <= 0:
+        return 1
+    return max(
+        1,
+        min(UPSERT_CHUNK, UPSERT_BIND_PARAM_BUDGET // params_per_row),
+    )
 
 
 async def _chunked_upsert(
-    session: AsyncSession, model, records: list[dict], constraint: str, skip_keys: set[str]
+    session: AsyncSession,
+    model,
+    records: list[dict],
+    constraint: str,
+    skip_keys: set[str],
+    *,
+    update_keys: set[str] | None = None,
 ) -> None:
     """大批量 upsert 分批执行，避免超 asyncpg 32767 参数上限（生产实测 2026-06-11）。"""
-    for i in range(0, len(records), UPSERT_CHUNK):
-        chunk = records[i : i + UPSERT_CHUNK]
+    chunk_size = _safe_upsert_chunk_size(model, records)
+    for i in range(0, len(records), chunk_size):
+        chunk = records[i : i + chunk_size]
         stmt = pg_insert(model).values(chunk)
+        keys_to_update = update_keys if update_keys is not None else set(chunk[0])
         stmt = stmt.on_conflict_do_update(
             constraint=constraint,
-            set_={k: getattr(stmt.excluded, k) for k in chunk[0] if k not in skip_keys},
+            set_={
+                k: getattr(stmt.excluded, k)
+                for k in keys_to_update
+                if k not in skip_keys
+            },
         )
         await session.execute(stmt)
     await session.commit()
