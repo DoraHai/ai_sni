@@ -77,7 +77,7 @@ function dashscopeBlocked(row) {
 
 function applyBailian(row) {
   if (!isDeepseekEngine(row.engine_key)) {
-    ElMessage.warning('阿里云百炼只用于 DeepSeek')
+    ElMessage.warning('阿里云百炼仅可用于 DeepSeek 监测')
     return
   }
   row.sample_mode = 'openai_compat'
@@ -96,7 +96,7 @@ function isRealReady(row) {
 
 function readinessLabel(row) {
   if (!row.enabled) return { text: '已停用', type: 'info' }
-  if (dashscopeBlocked(row)) return { text: '百炼仅 DeepSeek', type: 'danger' }
+  if (dashscopeBlocked(row)) return { text: '接口不匹配', type: 'danger' }
   if ((row.sample_mode || 'mock_persona') === 'mock_persona') {
     return { text: '人设模拟', type: 'warning' }
   }
@@ -176,7 +176,7 @@ async function save() {
   if (blocked.length) {
     for (const row of blocked) row.enabled = false
     ElMessage.warning(
-      `已关闭 ${blocked.map((r) => engineDisplay(r.engine_key)).join('、')}：百炼只用于 DeepSeek`,
+      `已停用 ${blocked.map((r) => engineDisplay(r.engine_key)).join('、')} 的监测：阿里云百炼仅支持 DeepSeek`,
     )
   }
   saving.value = true
@@ -260,7 +260,7 @@ onMounted(load)
   <GeoWorkbenchPage
     title="引擎"
     :show-period="false"
-    sub="点卡片配置模型。阿里云百炼只调用 DeepSeek"
+    sub="点击卡片配置各引擎接口。阿里云百炼仅用于 DeepSeek 监测"
     :loading="loading"
   >
     <template #actions>
@@ -288,7 +288,7 @@ onMounted(load)
             class="gd-badge"
             :class="row.enabled && dashscopeBlocked(row) ? 'red' : row.enabled ? 'green' : 'amber'"
           >
-            {{ row.enabled && dashscopeBlocked(row) ? '需改配置' : row.enabled ? '监测中' : '未开启' }}
+            {{ row.enabled && dashscopeBlocked(row) ? '待配置专属接口' : row.enabled ? '监测中' : '未开启' }}
           </span>
           <span class="gd-badge" :class="readinessLabel(row).type === 'success' ? 'green' : readinessLabel(row).type === 'danger' ? 'red' : 'amber'">
             {{ readinessLabel(row).text }}
@@ -348,10 +348,10 @@ onMounted(load)
           type="error"
           :closable="false"
           show-icon
-          title="百炼只调用 DeepSeek。请改成该厂自己的地址，或关掉监测。"
+          title="当前接口为阿里云百炼，仅支持 DeepSeek 监测。请填写该引擎的官方兼容接口，或关闭监测。"
         />
         <el-form-item v-if="isDeepseekEngine(editing.engine_key)">
-          <el-button @click="applyBailian(editing)">填入百炼 DeepSeek</el-button>
+          <el-button @click="applyBailian(editing)">使用阿里云百炼</el-button>
         </el-form-item>
       </el-form>
       <template #footer>
