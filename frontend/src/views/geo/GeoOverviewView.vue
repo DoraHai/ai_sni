@@ -57,8 +57,6 @@ const {
   start: obsStart,
   end: obsEnd,
   label: obsLabel,
-  allowedDays: observationAllowedDays,
-  setDays: setObservationDays,
 } = useObservationPeriod()
 
 /** 运维：账号管理权限 或 本地 DEV API Key */
@@ -422,24 +420,7 @@ const overviewAnswer = computed(() => ({
   ],
 }))
 
-const workbenchLinks = [
-  { label: '优化文章', path: '/geo/tasks', desc: '主入口 · 列表 + 混合编辑器', vue: true, primary: true },
-  { label: 'AI 可见度', path: '/geo/visibility', desc: '仪表盘 + 采集判断', vue: true, primary: true },
-  { label: '期次对比', path: '/geo/period-diff', desc: 'before/after 品牌提及 Δ', vue: true, primary: true },
-  { label: '交付摘要', path: '/geo/deliverables', desc: '周期报告 Markdown / 打印', vue: true, primary: true },
-  { label: '竞品监测', path: '/geo/competitors', desc: '竞品出现、同题对比与日监测', vue: true },
-  { label: 'AI 引用分析', path: '/geo/citations', desc: '被引域名与自有域占比', vue: true },
-  { label: '优化业务', path: '/geo/businesses', desc: '业务 → 单元 → 意图词', vue: true, primary: true },
-  { label: '优化意图词', path: '/geo/prompts', desc: '意图词 · 探测题标记', vue: true },
-  { label: '事实库', path: '/geo/facts', desc: 'facts 管理', vue: true },
-  { label: '发布渠道', path: '/geo/publishing', desc: '渠道与 Webhook', vue: true },
-]
-
 const router = useRouter()
-
-function openWorkbench(link) {
-  if (link?.path) router.push(link.path)
-}
 
 async function loadHierarchy() {
   if (!tenantId.value) {
@@ -699,28 +680,20 @@ const positiveDelta = computed(() => {
   return (b - a) * 100
 })
 
-function roundedDelta(v) {
-  if (v == null || Number.isNaN(Number(v))) return null
-  const n = Number(Number(v).toFixed(1))
-  return n === 0 ? 0 : n
-}
-function deltaLabel(v, { pp = false, rank = false } = {}) {
-  const n = roundedDelta(v)
-  if (n == null || n === 0) return ''
+/** KPI 涨跌：正负含义 / 箭头文案 / 颜色一次定完。rank: avgRankDelta=prev-cur，正值=顺位前移=改善。 */
+function kpiDelta(v, { pp = false, rank = false } = {}) {
+  if (v == null || Number.isNaN(Number(v))) return { label: '', tone: 'hint' }
+  const n = Number(v)
+  if (Math.abs(n) < 0.05) return { label: '', tone: 'hint' }
+  const mag = Math.abs(n).toFixed(1)
   if (rank) {
     return n > 0
-      ? `▲ 前移 ${n.toFixed(1)}（顺位越小越好）`
-      : `▼ 后移 ${Math.abs(n).toFixed(1)}`
+      ? { label: `▲ 前移 ${mag}`, tone: 'up' }
+      : { label: `▼ 后移 ${mag}`, tone: 'down' }
   }
-  const arrow = n < 0 ? '▼ ' : '▲ '
-  if (pp) return `${arrow}${Math.abs(n).toFixed(1)} pp`
-  return `${arrow}${Math.abs(n).toFixed(1)}%`
-}
-function deltaTone(v, { rank = false } = {}) {
-  const n = roundedDelta(v)
-  if (n == null || n === 0) return 'hint'
-  if (rank) return n > 0 ? 'up' : 'down'
-  return n < 0 ? 'down' : 'up'
+  const arrow = n < 0 ? '▼' : '▲'
+  const label = pp ? `${arrow} ${mag} pp` : `${arrow} ${mag}%`
+  return { label, tone: n < 0 ? 'down' : 'up' }
 }
 
 const sovRows = computed(() => shareOfVoiceRows(snapshots.value, '本品牌'))
@@ -1000,29 +973,29 @@ onMounted(load)
       <div class="gd-card gd-stat">
         <div class="label">AI 可见度得分</div>
         <div class="value">{{ fmtPct(visScore) }}</div>
-        <div class="delta" :class="deltaTone(visDelta)">
-          {{ deltaLabel(visDelta) || (visScoreFromSnaps ? '加权提及+顺位' : '样本不足，暂用提及率') }}
+        <div class="delta" :class="kpiDelta(visDelta).tone">
+          {{ kpiDelta(visDelta).label || (visScoreFromSnaps ? '加权提及+顺位' : '样本不足，暂用提及率') }}
         </div>
       </div>
       <div class="gd-card gd-stat">
         <div class="label">品牌提及次数</div>
         <div class="value">{{ fmtInt(mentionCount) }}</div>
-        <div class="delta" :class="deltaTone(mentionCountDelta)">
-          {{ deltaLabel(mentionCountDelta) || '观察期内快照' }}
+        <div class="delta" :class="kpiDelta(mentionCountDelta).tone">
+          {{ kpiDelta(mentionCountDelta).label || '观察期内快照' }}
         </div>
       </div>
       <div class="gd-card gd-stat">
         <div class="label">平均推荐顺位</div>
         <div class="value">{{ avgRank != null ? Number(avgRank).toFixed(1) : '—' }}</div>
-        <div class="delta" :class="deltaTone(avgRankDelta, { rank: true })">
-          {{ deltaLabel(avgRankDelta, { rank: true }) || '首位=1 · 备选=2 · 提及=3' }}
+        <div class="delta" :class="kpiDelta(avgRankDelta, { rank: true }).tone">
+          {{ kpiDelta(avgRankDelta, { rank: true }).label || '首位=1 · 备选=2 · 提及=3' }}
         </div>
       </div>
       <div class="gd-card gd-stat">
         <div class="label">正向评价信号</div>
         <div class="value">{{ fmtPct(positiveShare) }}</div>
-        <div class="delta" :class="deltaTone(positiveDelta)">
-          {{ deltaLabel(positiveDelta, { pp: true }) || '已标注情感占比' }}
+        <div class="delta" :class="kpiDelta(positiveDelta, { pp: true }).tone">
+          {{ kpiDelta(positiveDelta, { pp: true }).label || '已标注情感占比' }}
         </div>
       </div>
     </div>
