@@ -14,7 +14,7 @@ const props = defineProps({
 })
 
 const comp = computed(() => props.composition || {})
-const visible = computed(() => Number(comp.value.total || 0) > 0 || comp.value.verdict)
+const visible = computed(() => Number(comp.value.simulated || 0) > 0)
 const realN = computed(() => Number(comp.value.real || 0))
 const simN = computed(() => Number(comp.value.simulated || 0))
 const manN = computed(() => Number(comp.value.manual || 0))
@@ -50,11 +50,8 @@ const alertType = computed(() => {
       </div>
       <div v-if="!compact && reason" class="cred-reason">{{ reason }}</div>
       <div class="cred-rule">
-        模拟样本只用于流程演示和策略预判。客户交付默认只统计真采样。
-        发布影响统一表述为「发布后观察到的相关变化」，不宣称确定因果。
+        当前列表含模拟样本，仅供内部核对，不纳入对外监测口径。
       </div>
-      <el-tag v-if="suitable" size="small" type="success">可对外汇报</el-tag>
-      <el-tag v-else size="small" type="warning">不适合对外汇报</el-tag>
     </template>
   </el-alert>
 </template>
