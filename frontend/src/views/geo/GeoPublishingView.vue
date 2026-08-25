@@ -819,13 +819,13 @@ onMounted(load)
         <h3 class="sec">分发平台</h3>
         <span class="sec-hint">维护平台连接状态与分发方式</span>
       </div>
-      <el-table :data="channels" empty-text="暂无渠道" class="mb ch-table" size="small">
+      <el-table :data="channels" empty-text="暂无渠道" class="mb ch-table pack-table" size="small">
         <el-table-column label="类型" width="100">
           <template #default="{ row }">
             <span class="type-label">{{ typeLabel(row.channel_type) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="名称" min-width="200">
+        <el-table-column label="名称" width="280">
           <template #default="{ row }">
             <div class="name">{{ row.name }}</div>
             <div v-if="row.base_url" class="url">{{ row.base_url }}</div>
@@ -838,7 +838,7 @@ onMounted(load)
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="148">
+        <el-table-column label="状态" width="160">
           <template #default="{ row }">
             <span class="geo-status-cell">
               <i class="geo-status-dot" :class="row.enabled ? 'ok' : 'muted'" />
@@ -847,7 +847,7 @@ onMounted(load)
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="156" align="right">
+        <el-table-column label="操作" width="168">
           <template #default="{ row }">
             <div class="geo-act">
               <el-button link type="primary" @click="openEditChannel(row)">配置</el-button>
@@ -858,6 +858,7 @@ onMounted(load)
             </div>
           </template>
         </el-table-column>
+        <el-table-column min-width="24" class-name="col-fill" />
       </el-table>
     </section>
 
