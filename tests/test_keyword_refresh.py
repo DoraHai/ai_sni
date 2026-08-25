@@ -17,12 +17,105 @@ os.environ.setdefault(
 )
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
-from app.baidu.sync import sync_keyword_dimension_reports_for_account
+from app.baidu.sync import (
+    sync_keyword_dimension_reports_for_account,
+    sync_keyword_report_range_for_account,
+)
 from app.scheduler import refresh_keyword_workbench_snapshot
 from app.security.auth import _required
 
 
 class KeywordRefreshTests(unittest.IsolatedAsyncioTestCase):
+    async def test_keyword_history_range_preserves_each_row_date(self):
+        svc = SimpleNamespace(
+            get_keyword_report=AsyncMock(
+                return_value=[
+                    {"date": "2026-07-01", "wInfoId": 11, "device": 0},
+                    {"date": "2026-07-02", "wInfoId": 12, "device": 1},
+                ]
+            )
+        )
+        session = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock())
+        account = SimpleNamespace(
+            id=5,
+            tenant_id=9,
+            baidu_username="history-account",
+            access_token_encrypted="encrypted",
+        )
+
+        with (
+            patch("app.baidu.sync.BaiduAPIClient"),
+            patch("app.baidu.sync.decrypt", return_value="token"),
+            patch("app.baidu.sync.ReportService", return_value=svc),
+        ):
+            result = await sync_keyword_report_range_for_account(
+                session, account, date(2026, 7, 1), date(2026, 7, 2)
+            )
+
+        self.assertEqual(result, 2)
+        values = session.execute.await_args.args[0].compile().params
+        self.assertIn(date(2026, 7, 1), values.values())
+        self.assertIn(date(2026, 7, 2), values.values())
+        svc.get_keyword_report.assert_awaited_once_with(
+            start_date="2026-07-01", end_date="2026-07-02"
+        )
+
+    async def test_keyword_history_range_fails_closed_when_dates_are_missing(self):
+        svc = SimpleNamespace(
+            get_keyword_report=AsyncMock(
+                return_value=[{"wInfoId": 11, "device": 0}]
+            )
+        )
+        session = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock())
+        account = SimpleNamespace(
+            id=5,
+            tenant_id=9,
+            baidu_username="history-account",
+            access_token_encrypted="encrypted",
+        )
+
+        with (
+            patch("app.baidu.sync.BaiduAPIClient"),
+            patch("app.baidu.sync.decrypt", return_value="token"),
+            patch("app.baidu.sync.ReportService", return_value=svc),
+        ):
+            with self.assertRaisesRegex(ValueError, "缺少有效日期"):
+                await sync_keyword_report_range_for_account(
+                    session, account, date(2026, 7, 1), date(2026, 7, 2)
+                )
+
+        session.execute.assert_not_awaited()
+
+    async def test_keyword_history_range_is_split_into_safe_seven_day_windows(self):
+        svc = SimpleNamespace(get_keyword_report=AsyncMock(return_value=[]))
+        account = SimpleNamespace(
+            id=5,
+            tenant_id=9,
+            baidu_username="history-account",
+            access_token_encrypted="encrypted",
+        )
+
+        with (
+            patch("app.baidu.sync.BaiduAPIClient"),
+            patch("app.baidu.sync.decrypt", return_value="token"),
+            patch("app.baidu.sync.ReportService", return_value=svc),
+        ):
+            result = await sync_keyword_report_range_for_account(
+                object(), account, date(2026, 7, 1), date(2026, 7, 30)
+            )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            [call.kwargs for call in svc.get_keyword_report.await_args_list],
+            [
+                {"start_date": "2026-07-01", "end_date": "2026-07-07"},
+                {"start_date": "2026-07-08", "end_date": "2026-07-14"},
+                {"start_date": "2026-07-15", "end_date": "2026-07-21"},
+                {"start_date": "2026-07-22", "end_date": "2026-07-28"},
+                {"start_date": "2026-07-29", "end_date": "2026-07-30"},
+            ],
+        )
+
     async def test_dimension_reports_use_chunked_upserts(self):
         svc = SimpleNamespace(
             get_keyword_region_report=AsyncMock(
@@ -78,9 +171,9 @@ class KeywordRefreshTests(unittest.IsolatedAsyncioTestCase):
             patch("app.scheduler._acquire_tenant_sync_lock", return_value=lock_handle),
             patch("app.scheduler._release_tenant_sync_lock") as release_lock,
             patch(
-                "app.scheduler.sync_keyword_report_for_account",
+                "app.scheduler.sync_keyword_report_range_for_account",
                 new=AsyncMock(return_value=120),
-            ),
+            ) as report_sync,
             patch(
                 "app.scheduler.sync_keyword_dimension_reports_for_account",
                 new=AsyncMock(return_value={"region": 20, "hourly": 40}),
@@ -122,13 +215,17 @@ class KeywordRefreshTests(unittest.IsolatedAsyncioTestCase):
             (date(2026, 6, 28), date(2026, 7, 28)),
         )
         self.assertEqual(result["date"], "2026-07-28")
+        self.assertEqual(result["report_start_date"], "2026-07-28")
+        report_sync.assert_awaited_once_with(
+            session, account, date(2026, 7, 28), date(2026, 7, 28)
+        )
         release_lock.assert_called_once_with(lock_handle)
 
     async def test_refresh_returns_busy_without_calling_baidu(self):
         report_sync = AsyncMock()
         with (
             patch("app.scheduler._acquire_tenant_sync_lock", return_value=None),
-            patch("app.scheduler.sync_keyword_report_for_account", new=report_sync),
+            patch("app.scheduler.sync_keyword_report_range_for_account", new=report_sync),
         ):
             result = await refresh_keyword_workbench_snapshot(
                 object(),
@@ -152,7 +249,7 @@ class KeywordRefreshTests(unittest.IsolatedAsyncioTestCase):
             patch("app.scheduler._acquire_tenant_sync_lock", return_value=object()),
             patch("app.scheduler._release_tenant_sync_lock"),
             patch(
-                "app.scheduler.sync_keyword_report_for_account",
+                "app.scheduler.sync_keyword_report_range_for_account",
                 new=AsyncMock(side_effect=RuntimeError("region batch failed")),
             ),
             patch(

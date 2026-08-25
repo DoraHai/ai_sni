@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -521,6 +521,7 @@ async def repair_sem_account_assets(
     account_id: int,
     tenant_id: int = Query(...),
     dimension: str | None = Query(None),
+    history_days: int | None = Query(None, ge=2, le=90),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -536,17 +537,25 @@ async def repair_sem_account_assets(
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "客户不存在")
+    if history_days is not None and dimension not in (None, "reports"):
+        raise HTTPException(422, "历史回填仅支持关键词报告维度")
 
     # 延迟导入避免 API 路由加载时与 scheduler 形成循环依赖。
     from app.scheduler import refresh_keyword_workbench_snapshot
 
     try:
+        today = datetime.now().date()
         result = await refresh_keyword_workbench_snapshot(
             session,
             tenant,
             account,
-            datetime.now().date(),
+            today,
             dimensions=[dimension] if dimension else None,
+            report_start_date=(
+                today - timedelta(days=history_days - 1)
+                if history_days is not None
+                else None
+            ),
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc

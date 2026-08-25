@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
@@ -26,7 +26,7 @@ from app.config import get_settings
 from app.database import async_session_factory, get_session
 from app.models import BaiduAccount, BaiduOAuthGrant, Tenant
 from app.module_scope import get_tenant_module
-from app.scheduler import refresh_keyword_workbench_snapshot
+from app.scheduler import INITIAL_KEYWORD_HISTORY_DAYS, refresh_keyword_workbench_snapshot
 from app.security.auth import AuthContext, require_scoped_auth
 from app.sem_asset_sync import public_sync_error
 
@@ -182,11 +182,14 @@ async def _initial_sync(account_ids: list[int]) -> None:
             if tenant is None:
                 continue
             try:
+                today = datetime.now(_SHANGHAI_TZ).date()
                 await refresh_keyword_workbench_snapshot(
                     session,
                     tenant,
                     account,
-                    datetime.now(_SHANGHAI_TZ).date(),
+                    today,
+                    report_start_date=today
+                    - timedelta(days=INITIAL_KEYWORD_HISTORY_DAYS - 1),
                 )
             except Exception:  # noqa: BLE001
                 await session.rollback()

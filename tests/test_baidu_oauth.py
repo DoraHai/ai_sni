@@ -1,6 +1,6 @@
 import os
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -28,7 +28,7 @@ from app.baidu.oauth import (
     verify_callback_signature,
 )
 from app.models import BaiduAccount, BaiduOAuthGrant, Tenant
-from app.api.oauth_baidu import AuthorizationRequest, authorize
+from app.api.oauth_baidu import AuthorizationRequest, _initial_sync, authorize
 from app.security.auth import AuthContext, _required
 
 
@@ -212,6 +212,38 @@ class BaiduOAuthTests(unittest.IsolatedAsyncioTestCase):
         exchange_at = source.index("token_data = await exchange_auth_code")
         self.assertLess(consume_at, entitlement_at)
         self.assertLess(entitlement_at, exchange_at)
+
+    async def test_initial_sync_backfills_thirty_days_of_keyword_history(self):
+        account = SimpleNamespace(id=22, tenant_id=7, status="active")
+        tenant = SimpleNamespace(id=7)
+        session = SimpleNamespace(
+            get=AsyncMock(side_effect=[account, tenant]),
+            rollback=AsyncMock(),
+        )
+
+        class SessionContext:
+            async def __aenter__(self):
+                return session
+
+            async def __aexit__(self, *_args):
+                return False
+
+        refresh = AsyncMock(return_value={"status": "ok"})
+        with (
+            patch("app.api.oauth_baidu.async_session_factory", return_value=SessionContext()),
+            patch("app.api.oauth_baidu.refresh_keyword_workbench_snapshot", new=refresh),
+            patch("app.api.oauth_baidu.datetime") as now,
+        ):
+            now.now.return_value = datetime(2026, 8, 25, 12, 0)
+            await _initial_sync([22])
+
+        refresh.assert_awaited_once_with(
+            session,
+            tenant,
+            account,
+            date(2026, 8, 25),
+            report_start_date=date(2026, 7, 27),
+        )
 
     async def test_authorized_account_creates_its_own_tenant(self):
         session = _OAuthSession()

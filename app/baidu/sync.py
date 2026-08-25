@@ -53,6 +53,7 @@ from app.security.sem_identity import filter_identity_safe_active_accounts
 from app.module_scope import list_active_sem_accounts
 
 logger = logging.getLogger(__name__)
+_KEYWORD_REPORT_MAX_WINDOW_DAYS = 7
 
 
 def _to_int(v: Any) -> int | None:
@@ -222,25 +223,82 @@ async def sync_keyword_report_for_account(
     target_date: date,
 ) -> int:
     """拉某账户某天的关键词报告，upsert 到 kw_report_snapshots。返回写入条数。"""
+    return await sync_keyword_report_range_for_account(
+        session, baidu_account, target_date, target_date
+    )
+
+
+async def sync_keyword_report_range_for_account(
+    session: AsyncSession,
+    baidu_account: BaiduAccount,
+    start_date: date,
+    end_date: date,
+) -> int:
+    """按日粒度拉取一段关键词报告，并保留百度返回的真实报告日期。"""
+    if start_date > end_date:
+        raise ValueError("关键词报告开始日期不能晚于结束日期")
+
     client = BaiduAPIClient(
         username=baidu_account.baidu_username,
         access_token=decrypt(baidu_account.access_token_encrypted),
     )
     svc = ReportService(client)
 
-    iso_date = target_date.isoformat()
-    rows = await svc.get_keyword_report(start_date=iso_date, end_date=iso_date)
+    start_iso = start_date.isoformat()
+    end_iso = end_date.isoformat()
+    rows: list[dict[str, Any]] = []
+    window_start = start_date
+    while window_start <= end_date:
+        window_end = min(
+            window_start + timedelta(days=_KEYWORD_REPORT_MAX_WINDOW_DAYS - 1),
+            end_date,
+        )
+        rows.extend(
+            await svc.get_keyword_report(
+                start_date=window_start.isoformat(),
+                end_date=window_end.isoformat(),
+            )
+        )
+        window_start = window_end + timedelta(days=1)
 
     if not rows:
         logger.info(
-            "账户 %s %s 关键词报告无数据", baidu_account.baidu_username, iso_date
+            "账户 %s %s~%s 关键词报告无数据",
+            baidu_account.baidu_username,
+            start_iso,
+            end_iso,
         )
         return 0
 
-    records = [
-        _row_to_record(r, baidu_account.tenant_id, baidu_account.id, target_date)
-        for r in rows
-    ]
+    records = []
+    missing_date_rows = 0
+    single_day = start_date == end_date
+    for row in rows:
+        parsed = _parse_report_hour(row.get("date"))
+        report_date = (
+            parsed.date()
+            if parsed is not None
+            else (start_date if single_day else None)
+        )
+        if report_date is None or not (start_date <= report_date <= end_date):
+            missing_date_rows += 1
+            continue
+        records.append(
+            _row_to_record(
+                row, baidu_account.tenant_id, baidu_account.id, report_date
+            )
+        )
+
+    if rows and not records and missing_date_rows:
+        raise ValueError("百度历史关键词报告缺少有效日期，已停止回填以避免写错日期")
+    if missing_date_rows:
+        logger.warning(
+            "账户 %s %s~%s 跳过 %d 条日期无效的关键词报告",
+            baidu_account.baidu_username,
+            start_iso,
+            end_iso,
+            missing_date_rows,
+        )
 
     # 跳过没有 keyword_id 的行（upsert 键含 keyword_id，None 会触发约束问题）
     records = [r for r in records if r["keyword_id"] is not None]
@@ -251,6 +309,7 @@ async def sync_keyword_report_for_account(
     stmt = stmt.on_conflict_do_update(
         index_elements=["tenant_id", "report_date", "keyword_id", "device"],
         set_={
+            "baidu_account_id": stmt.excluded.baidu_account_id,
             "impression": stmt.excluded.impression,
             "click": stmt.excluded.click,
             "cost": stmt.excluded.cost,
@@ -276,9 +335,10 @@ async def sync_keyword_report_for_account(
     await session.commit()
 
     logger.info(
-        "账户 %s %s 关键词报告 upsert %d 条",
+        "账户 %s %s~%s 关键词报告 upsert %d 条",
         baidu_account.baidu_username,
-        iso_date,
+        start_iso,
+        end_iso,
         len(records),
     )
     return len(records)
