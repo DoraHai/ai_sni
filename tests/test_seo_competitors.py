@@ -19,7 +19,10 @@ os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
 from app.api.seo import CompetitorCollectRequest, CompetitorCreate, router
 from app.seo_competitor import (
+    COMPETITOR_FETCH_CONCURRENCY,
+    COMPETITOR_FETCH_TIMEOUT_SECONDS,
     COMPETITOR_MANUAL_COOLDOWN_SECONDS,
+    COMPETITOR_TOTAL_TIMEOUT_SECONDS,
     CompetitorCollectionError,
     build_competitor_rank_matrix,
     collect_competitor_content,
@@ -48,14 +51,17 @@ def _fetch_result(url: str, body: str, *, final_url: str | None = None, error_ty
 
 
 def test_manual_competitor_collection_is_site_scoped_and_bounded() -> None:
-    request = CompetitorCollectRequest(tenant_id=1, site_id=9, max_pages=20)
+    request = CompetitorCollectRequest(tenant_id=1, site_id=9, max_pages=10)
     assert request.site_id == 9
-    assert request.max_pages == 20
+    assert request.max_pages == 10
     assert COMPETITOR_MANUAL_COOLDOWN_SECONDS == 3600
+    assert COMPETITOR_FETCH_CONCURRENCY == 5
+    assert COMPETITOR_FETCH_TIMEOUT_SECONDS == 8.0
+    assert COMPETITOR_TOTAL_TIMEOUT_SECONDS == 25.0
     with pytest.raises(ValidationError):
         CompetitorCollectRequest(tenant_id=1, site_id=0, max_pages=10)
     with pytest.raises(ValidationError):
-        CompetitorCollectRequest(tenant_id=1, site_id=9, max_pages=21)
+        CompetitorCollectRequest(tenant_id=1, site_id=9, max_pages=11)
     with pytest.raises(ValidationError):
         CompetitorCreate(tenant_id=1, name="Competitor", domain="example.com")
 
@@ -82,7 +88,10 @@ def test_manual_collection_discovers_only_same_domain_html_pages() -> None:
         "https://www.example.com/news/b": "<html><head><title>News B</title></head><body>B</body></html>",
     }
 
-    async def fetcher(url: str) -> FetchResult:
+    clients = []
+
+    async def fetcher(url: str, *, client=None) -> FetchResult:
+        clients.append(client)
         return _fetch_result(url, bodies[url])
 
     result = asyncio.run(
@@ -90,6 +99,8 @@ def test_manual_collection_discovers_only_same_domain_html_pages() -> None:
     )
     assert result.attempted == 3
     assert result.failed == 0
+    assert clients and all(client is clients[0] for client in clients)
+    assert clients[0] is not None
     assert [(page.url, page.title) for page in result.pages] == [
         ("https://example.com/", "Example"),
         ("https://example.com/news/a", "News A"),
@@ -98,7 +109,7 @@ def test_manual_collection_discovers_only_same_domain_html_pages() -> None:
 
 
 def test_manual_collection_rejects_cross_domain_homepage_redirect() -> None:
-    async def fetcher(url: str) -> FetchResult:
+    async def fetcher(url: str, *, client=None) -> FetchResult:
         return _fetch_result(
             url,
             "<html><title>Wrong site</title></html>",
@@ -110,6 +121,20 @@ def test_manual_collection_rejects_cross_domain_homepage_redirect() -> None:
             collect_competitor_content("example.com", max_pages=1, fetcher=fetcher)
         )
     assert exc.value.code == "cross_domain_redirect"
+
+
+def test_manual_collection_returns_structured_total_timeout(monkeypatch) -> None:
+    async def fetcher(url: str, *, client=None) -> FetchResult:
+        await asyncio.sleep(0.05)
+        return _fetch_result(url, "<html><title>Slow</title></html>")
+
+    monkeypatch.setattr("app.seo_competitor.COMPETITOR_TOTAL_TIMEOUT_SECONDS", 0.01)
+    with pytest.raises(CompetitorCollectionError) as exc:
+        asyncio.run(
+            collect_competitor_content("example.com", max_pages=1, fetcher=fetcher)
+        )
+    assert exc.value.code == "collection_timeout"
+    assert "安全时限" in exc.value.public_message
 
 
 def test_competitor_rank_matrix_uses_latest_scoped_batch_rows() -> None:
@@ -140,9 +165,14 @@ def test_competitor_routes_and_frontend_are_manual_only() -> None:
 
     view = (ROOT / "frontend/src/views/seo/SeoCompetitorsView.vue").read_text(encoding="utf-8")
     api = (ROOT / "frontend/src/api/seo.js").read_text(encoding="utf-8")
+    backend = (ROOT / "app/api/seo.py").read_text(encoding="utf-8")
     scheduler = (ROOT / "app/seo_scheduler.py").read_text(encoding="utf-8")
     assert "手动采集" in view
     assert "不会自动运行" in view
+    assert "最近采集尝试" in view
+    assert "本次尝试已进入 1 小时冷却" in view
+    assert "collectionOutcome.failed" in view
+    assert "[SEO][COMPETITOR] manual collection failed" in backend
     assert "fetchSeoCompetitorRankings" in view
     assert "site_id: siteId" in api
     assert "competitor" not in scheduler.lower()
