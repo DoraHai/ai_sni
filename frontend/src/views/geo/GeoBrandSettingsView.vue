@@ -188,7 +188,8 @@ onMounted(load)
 
 <template>
   <GeoWorkbenchPage
-    title="品牌资料"
+    title="品牌信息"
+    :show-period="false"
     :sub="`维护品牌名称、官网、行业、介绍与资质信息 · 已填写 ${completeness}`"
     :loading="loading"
   >

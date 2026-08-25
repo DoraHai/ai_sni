@@ -133,6 +133,7 @@ onMounted(load)
 <template>
   <GeoWorkbenchPage
     title="渠道成稿提示词"
+    :show-period="false"
     sub="官网 / 微信 / 知乎等渠道稿的系统提示、语气和最低字数。编辑器里「AI 生成正式渠道稿」会读这里。"
     :loading="loading"
   >

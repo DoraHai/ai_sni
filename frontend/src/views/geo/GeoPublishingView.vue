@@ -678,6 +678,7 @@ onMounted(load)
 <template>
   <GeoWorkbenchPage
     title="分发平台"
+    :show-period="false"
     sub="在 GEO 工作台维护发布账号，并按 AI 引用价值配置渠道策略"
     :loading="loading"
   >

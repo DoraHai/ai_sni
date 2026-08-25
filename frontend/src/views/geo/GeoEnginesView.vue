@@ -174,10 +174,10 @@ async function save() {
   if (!tenantId.value) return
   const blocked = items.value.filter((row) => row.enabled && dashscopeBlocked(row))
   if (blocked.length) {
-    ElMessage.error(
-      `百炼只调用 DeepSeek：请先关掉或改掉 ${blocked.map((r) => engineDisplay(r.engine_key)).join('、')} 的 dashscope 地址`,
+    for (const row of blocked) row.enabled = false
+    ElMessage.warning(
+      `已关闭 ${blocked.map((r) => engineDisplay(r.engine_key)).join('、')}：百炼只用于 DeepSeek`,
     )
-    return false
   }
   saving.value = true
   try {
@@ -258,8 +258,9 @@ onMounted(load)
 
 <template>
   <GeoWorkbenchPage
-    title="AI 引擎管理"
-    sub="开关监测引擎；真采样请填各厂自己的地址。阿里云百炼只调用 DeepSeek"
+    title="引擎"
+    :show-period="false"
+    sub="点卡片配置模型。阿里云百炼只调用 DeepSeek"
     :loading="loading"
   >
     <template #actions>
@@ -283,8 +284,11 @@ onMounted(load)
           <div class="gd-sub" style="margin:0">{{ row.engine_key }} · 点击配置</div>
         </div>
         <div class="geo-eng-flags">
-          <span class="gd-badge" :class="row.enabled ? 'green' : 'amber'">
-            {{ row.enabled ? '监测中' : '未开启' }}
+          <span
+            class="gd-badge"
+            :class="row.enabled && dashscopeBlocked(row) ? 'red' : row.enabled ? 'green' : 'amber'"
+          >
+            {{ row.enabled && dashscopeBlocked(row) ? '需改配置' : row.enabled ? '监测中' : '未开启' }}
           </span>
           <span class="gd-badge" :class="readinessLabel(row).type === 'success' ? 'green' : readinessLabel(row).type === 'danger' ? 'red' : 'amber'">
             {{ readinessLabel(row).text }}
@@ -369,11 +373,31 @@ onMounted(load)
         </div>
         <div class="geo-set-row">
           <span>巡检时间</span>
-          <span class="gd-badge">每日 {{ String(patrol.window_start_hour).padStart(2, '0') }}:00 – {{ String(patrol.window_end_hour).padStart(2, '0') }}:00</span>
+          <el-input-number
+            :model-value="patrol.window_start_hour"
+            :min="0"
+            :max="23"
+            size="small"
+            @change="(v) => savePatrol({ window_start_hour: Number(v) })"
+          />
+          <span>至</span>
+          <el-input-number
+            :model-value="patrol.window_end_hour"
+            :min="0"
+            :max="23"
+            size="small"
+            @change="(v) => savePatrol({ window_end_hour: Number(v) })"
+          />
         </div>
         <div class="geo-set-row">
           <span>每轮提问上限</span>
-          <span class="gd-badge">{{ patrol.prompt_limit }} 条</span>
+          <el-input-number
+            :model-value="patrol.prompt_limit"
+            :min="1"
+            :max="50"
+            size="small"
+            @change="(v) => savePatrol({ prompt_limit: Number(v) })"
+          />
         </div>
         <div class="geo-set-row">
           <span>定时巡检</span>

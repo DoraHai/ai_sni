@@ -289,7 +289,8 @@ onMounted(load)
 
 <template>
   <GeoWorkbenchPage
-    title="知识库"
+    title="事实库 / 信源"
+    :show-period="false"
     sub="维护品牌事实、案例和 FAQ，供 GEO 文章与 AI 可见度引用"
     :loading="loading"
   >
