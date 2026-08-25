@@ -264,8 +264,14 @@ export function createSeoBacklink(payload) {
   return client.post('/api/v1/seo/backlinks', payload)
 }
 
-export function fetchSeoCompetitors({ tenantId }) {
-  return client.get('/api/v1/seo/competitors', { params: { tenant_id: tenantId } })
+export function fetchSeoCompetitors({ tenantId, siteId }) {
+  return client.get('/api/v1/seo/competitors', { params: { tenant_id: tenantId, site_id: siteId } })
+}
+
+export function fetchSeoCompetitorRankings({ tenantId, siteId, device = 'desktop' }) {
+  return client.get('/api/v1/seo/competitors/rankings', {
+    params: { tenant_id: tenantId, site_id: siteId, device },
+  })
 }
 
 export function createSeoCompetitor(payload) {
@@ -274,4 +280,12 @@ export function createSeoCompetitor(payload) {
 
 export function createSeoCompetitorEvent(payload) {
   return client.post('/api/v1/seo/competitors/events', payload)
+}
+
+export function collectSeoCompetitor({ competitorId, tenantId, siteId, maxPages = 10 }) {
+  return client.post(`/api/v1/seo/competitors/${competitorId}/collect`, {
+    tenant_id: tenantId,
+    site_id: siteId,
+    max_pages: maxPages,
+  }, { timeout: 180000 })
 }
