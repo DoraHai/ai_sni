@@ -13,7 +13,7 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, Field, PositiveInt
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -73,6 +73,14 @@ from app.seo_serp import (
     url_domain,
 )
 from app.seo_crawler import crawl_site
+from app.seo_competitor import (
+    COMPETITOR_MANUAL_COOLDOWN_SECONDS,
+    COMPETITOR_MAX_PAGES_PER_RUN,
+    CompetitorCollectionError,
+    build_competitor_rank_matrix,
+    collect_competitor_content,
+    competitor_retry_after,
+)
 from app.seo_rank_limits import (
     ManualRankLimitError,
     SEO_RANK_COLLECTION_LOCK_PATH,
@@ -4810,7 +4818,7 @@ async def crawl_internal_links(tenant_id: int, page_id: int, session: AsyncSessi
 
 class CompetitorCreate(BaseModel):
     tenant_id: int
-    site_id: int | None = None
+    site_id: PositiveInt
     name: str = Field(min_length=1, max_length=120)
     domain: str = Field(min_length=1, max_length=255)
     notes: str | None = Field(None, max_length=5000)
@@ -4828,19 +4836,123 @@ class CompetitorEventCreate(BaseModel):
     event_at: datetime | None = None
 
 
+class CompetitorCollectRequest(BaseModel):
+    tenant_id: int
+    site_id: PositiveInt
+    max_pages: int = Field(10, ge=1, le=COMPETITOR_MAX_PAGES_PER_RUN)
+
+
 def _competitor_payload(row: SeoCompetitor) -> dict[str, Any]:
-    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "name": row.name, "domain": row.domain, "notes": row.notes, "status": row.status, "last_checked_at": _iso(row.last_checked_at), "created_at": _iso(row.created_at)}
+    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "name": row.name, "domain": row.domain, "notes": row.notes, "status": row.status, "last_checked_at": _rank_iso(row.last_checked_at), "created_at": _iso(row.created_at)}
+
+
+async def _competitor_scope_conditions(
+    session: AsyncSession,
+    tenant_id: int,
+    site_id: int | None,
+) -> tuple[list[Any], bool]:
+    conditions: list[Any] = [SeoCompetitor.tenant_id == tenant_id]
+    include_unassigned = False
+    if site_id is not None:
+        site_count = int(
+            await session.scalar(
+                select(func.count()).select_from(SeoSite).where(SeoSite.tenant_id == tenant_id)
+            )
+            or 0
+        )
+        include_unassigned = site_count == 1
+        site_condition = SeoCompetitor.site_id == site_id
+        if include_unassigned:
+            site_condition = or_(site_condition, SeoCompetitor.site_id.is_(None))
+        conditions.append(site_condition)
+    return conditions, include_unassigned
+
+
+@router.get("/competitors/rankings")
+async def competitor_rankings(
+    tenant_id: int,
+    site_id: PositiveInt,
+    device: Literal["desktop", "mobile"] = "desktop",
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    await _tenant(session, tenant_id)
+    await _seo_site(session, tenant_id, site_id)
+    competitor_conditions, _ = await _competitor_scope_conditions(session, tenant_id, site_id)
+    competitors = list(
+        await session.scalars(
+            select(SeoCompetitor)
+            .where(*competitor_conditions, SeoCompetitor.status == "active")
+            .order_by(SeoCompetitor.id)
+        )
+    )
+    keywords = list(
+        await session.scalars(
+            select(SeoKeywordAsset)
+            .where(
+                SeoKeywordAsset.tenant_id == tenant_id,
+                SeoKeywordAsset.site_id == site_id,
+                SeoKeywordAsset.status == "active",
+            )
+            .order_by(SeoKeywordAsset.priority, SeoKeywordAsset.id)
+        )
+    )
+    keyword_ids = [row.id for row in keywords]
+    serp_rows: list[SeoSerpResult] = []
+    if keyword_ids:
+        latest = (
+            select(
+                SeoSerpResult.keyword_id.label("keyword_id"),
+                func.max(SeoSerpResult.captured_at).label("captured_at"),
+            )
+            .where(
+                SeoSerpResult.tenant_id == tenant_id,
+                SeoSerpResult.site_id == site_id,
+                SeoSerpResult.engine == "baidu",
+                SeoSerpResult.device == device,
+                SeoSerpResult.keyword_id.in_(keyword_ids),
+            )
+            .group_by(SeoSerpResult.keyword_id)
+            .subquery()
+        )
+        serp_rows = list(
+            await session.scalars(
+                select(SeoSerpResult)
+                .join(
+                    latest,
+                    and_(
+                        SeoSerpResult.keyword_id == latest.c.keyword_id,
+                        SeoSerpResult.captured_at == latest.c.captured_at,
+                    ),
+                )
+                .where(
+                    SeoSerpResult.tenant_id == tenant_id,
+                    SeoSerpResult.site_id == site_id,
+                    SeoSerpResult.engine == "baidu",
+                    SeoSerpResult.device == device,
+                )
+            )
+        )
+    matrix = build_competitor_rank_matrix(keyword_ids, competitors, serp_rows)
+    for item in matrix:
+        item["captured_at"] = _rank_iso(item["captured_at"])
+    return {
+        "device": device,
+        "competitors": [_competitor_payload(row) for row in competitors],
+        "items": matrix,
+    }
 
 
 @router.get("/competitors")
 async def list_competitors(tenant_id: int, site_id: int | None = None, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
     await _tenant(session, tenant_id)
     await _seo_site(session, tenant_id, site_id)
-    competitor_conditions = [SeoCompetitor.tenant_id == tenant_id]
+    competitor_conditions, include_unassigned = await _competitor_scope_conditions(session, tenant_id, site_id)
     event_conditions = [SeoCompetitorEvent.tenant_id == tenant_id]
     if site_id is not None:
-        competitor_conditions.append(SeoCompetitor.site_id == site_id)
-        event_conditions.append(SeoCompetitorEvent.site_id == site_id)
+        event_site_condition = SeoCompetitorEvent.site_id == site_id
+        if include_unassigned:
+            event_site_condition = or_(event_site_condition, SeoCompetitorEvent.site_id.is_(None))
+        event_conditions.append(event_site_condition)
     rows = list(await session.scalars(select(SeoCompetitor).where(*competitor_conditions).order_by(SeoCompetitor.id.desc())))
     events = list(await session.scalars(select(SeoCompetitorEvent).where(*event_conditions).order_by(SeoCompetitorEvent.detected_at.desc())))
     counts = defaultdict(lambda: {"content": 0, "backlink": 0})
@@ -4864,6 +4976,113 @@ async def create_competitor(req: CompetitorCreate, session: AsyncSession = Depen
     except IntegrityError as exc:
         await session.rollback(); raise HTTPException(409, "该竞品域名已存在") from exc
     await session.refresh(row); return _competitor_payload(row)
+
+
+@router.post("/competitors/{competitor_id}/collect")
+async def collect_competitor(
+    competitor_id: int,
+    req: CompetitorCollectRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
+    competitor = await session.scalar(
+        select(SeoCompetitor)
+        .where(
+            SeoCompetitor.id == competitor_id,
+            SeoCompetitor.tenant_id == req.tenant_id,
+        )
+        .with_for_update()
+    )
+    if competitor is None:
+        raise HTTPException(404, "竞品不存在")
+    if competitor.status != "active":
+        raise HTTPException(409, "竞品已停用，不能采集")
+    if competitor.site_id not in {None, req.site_id}:
+        raise HTTPException(400, "竞品不属于当前 SEO 网站")
+    if competitor.site_id is None:
+        site_count = int(
+            await session.scalar(
+                select(func.count()).select_from(SeoSite).where(SeoSite.tenant_id == req.tenant_id)
+            )
+            or 0
+        )
+        if site_count != 1:
+            raise HTTPException(409, "该竞品尚未关联网站，请先重新添加到当前网站")
+
+    now = datetime.utcnow()
+    retry_after = competitor_retry_after(competitor.last_checked_at, now=now)
+    if retry_after:
+        raise HTTPException(
+            429,
+            {
+                "code": "competitor_collection_cooldown",
+                "message": "同一竞品手动采集后需等待 1 小时",
+                "retry_after_seconds": retry_after,
+            },
+            headers={"Retry-After": str(retry_after)},
+        )
+    competitor.site_id = req.site_id
+    competitor.last_checked_at = now
+    await session.commit()
+
+    try:
+        collection = await collect_competitor_content(
+            competitor.domain,
+            max_pages=req.max_pages,
+        )
+    except CompetitorCollectionError as exc:
+        raise HTTPException(
+            502,
+            {"code": exc.code, "message": exc.public_message},
+        ) from exc
+
+    existing_rows = list(
+        await session.scalars(
+            select(SeoCompetitorEvent).where(
+                SeoCompetitorEvent.tenant_id == req.tenant_id,
+                SeoCompetitorEvent.site_id == req.site_id,
+                SeoCompetitorEvent.competitor_id == competitor.id,
+                SeoCompetitorEvent.event_type == "content",
+            )
+        )
+    )
+    known_urls = {row.url for row in existing_rows}
+    baseline = not any(
+        row.summary in {"首次手动采集基线", "手动采集发现的新内容"}
+        for row in existing_rows
+    )
+    created = 0
+    for page in collection.pages:
+        if page.url in known_urls:
+            continue
+        session.add(
+            SeoCompetitorEvent(
+                tenant_id=req.tenant_id,
+                site_id=req.site_id,
+                competitor_id=competitor.id,
+                event_type="content",
+                title=page.title,
+                url=page.url,
+                source_url=f"https://{competitor.domain}/",
+                summary="首次手动采集基线" if baseline else "手动采集发现的新内容",
+            )
+        )
+        known_urls.add(page.url)
+        created += 1
+    await session.commit()
+    return {
+        "competitor_id": competitor.id,
+        "site_id": req.site_id,
+        "baseline": baseline,
+        "checked_pages": len(collection.pages),
+        "attempted_pages": collection.attempted,
+        "failed_pages": collection.failed,
+        "created_events": created,
+        "last_checked_at": _rank_iso(now),
+        "next_allowed_at": _rank_iso(now + timedelta(seconds=COMPETITOR_MANUAL_COOLDOWN_SECONDS)),
+    }
 
 
 @router.post("/competitors/events")
