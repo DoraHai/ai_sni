@@ -38,6 +38,7 @@ from app.baidu.oauth import refresh_expiring_oauth_grants
 from app.classification import reclassify_keywords
 from app.database import async_session_factory
 from app.models import BaiduAccount, Tenant
+from app.module_scope import list_active_module_tenants, list_active_sem_accounts
 from app.process_lock import acquire_file_lock, release_file_lock
 from app.rules import run_rules_for_all_tenants
 from app.rules.site_health import run_site_health_for_all_tenants
@@ -233,11 +234,7 @@ async def fetch_yesterday_keyword_report() -> None:
             result = await sync_keyword_report_for_all_active_accounts(session, yesterday)
 
         accounts = filter_identity_safe_active_accounts(
-            (
-                await session.scalars(
-                    select(BaiduAccount).where(BaiduAccount.status == "active")
-                )
-            ).all()
+            await list_active_sem_accounts(session)
         )
         for acc in accounts:
             try:
@@ -262,7 +259,7 @@ async def fetch_yesterday_keyword_report() -> None:
                 )
             except Exception:  # noqa: BLE001
                 logger.exception("账户 %s 操作记录同步失败", acc.baidu_username)
-        for tenant in (await session.scalars(select(Tenant))).all():
+        for tenant in await list_active_module_tenants(session, "sem"):
             try:
                 await reclassify_keywords(session, tenant)
             except Exception:  # noqa: BLE001
@@ -292,11 +289,7 @@ async def fetch_today_keyword_report() -> None:
             refresh_result = await refresh_expiring_oauth_grants(session)
             logger.info("[scheduler] OAuth Token 刷新结果: %s", refresh_result)
             accounts = filter_identity_safe_active_accounts(
-                (
-                    await session.scalars(
-                        select(BaiduAccount).where(BaiduAccount.status == "active")
-                    )
-                ).all()
+                await list_active_sem_accounts(session)
             )
             result = {}
             for acc in accounts:
@@ -352,11 +345,7 @@ async def sync_search_terms_daily() -> None:
             refresh_result = await refresh_expiring_oauth_grants(session)
             logger.info("[scheduler] OAuth Token 刷新结果: %s", refresh_result)
             accounts = filter_identity_safe_active_accounts(
-                (
-                    await session.scalars(
-                        select(BaiduAccount).where(BaiduAccount.status == "active")
-                    )
-                ).all()
+                await list_active_sem_accounts(session)
             )
             for acc in accounts:
                 try:

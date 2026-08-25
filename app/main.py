@@ -38,8 +38,7 @@ from app.api import (
     search_terms_router,
     seo_router,
 )
-from app.baidu import BaiduAPIClient, BaiduAPIError
-from app.baidu.services import AccountService
+from app.baidu import BaiduAPIError
 from app.baidu.sync import (
     sync_operation_records_for_account,
     sync_adgroups_for_account,
@@ -132,9 +131,10 @@ async def health() -> dict:
     try:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
-    except Exception as e:
+    except Exception:
         db_status = "error"
-        db_error = str(e)
+        logger.exception("健康检查数据库连接失败")
+        db_error = "database_unavailable"
 
     return {
         "service": "sem-backend",
@@ -142,26 +142,6 @@ async def health() -> dict:
         "db": db_status,
         "db_error": db_error,
     }
-
-
-@app.get("/api/baidu/account/info")
-async def baidu_account_info() -> dict:
-    """P0 验证路由：用 env 自授权 token 调一次 getAccountInfo。"""
-    client = BaiduAPIClient(
-        username=settings.baidu_default_username,
-        access_token=settings.baidu_self_access_token,
-    )
-    service = AccountService(client)
-    try:
-        data = await service.get_account_info()
-        return {"status": "ok", "data": data}
-    except BaiduAPIError as e:
-        return {
-            "status": "error",
-            "code": e.code,
-            "message": e.message,
-            "token_invalid": e.is_token_invalid,
-        }
 
 
 # ============================================================

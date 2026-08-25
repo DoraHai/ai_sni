@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
+from app.module_scope import ensure_module_access
 from app.models import (
     CONFIDENCE_LABELS,
     SUGGESTION_TYPE_LABELS,
@@ -22,6 +23,7 @@ from app.models import (
     User,
 )
 from app.security.auth import AuthContext, require_scoped_auth
+from app.security.sem_identity import ensure_sem_identity_access
 from app.suggestions import run_suggestions_for_tenant
 
 logger = logging.getLogger(__name__)
@@ -184,7 +186,8 @@ async def update_workflow(
     suggestion = await session.get(Suggestion, suggestion_id)
     if suggestion is None:
         raise HTTPException(404, "建议不存在，可能已被刷新")
-    ctx.ensure_tenant(suggestion.tenant_id)
+    await ensure_module_access(session, ctx, suggestion.tenant_id, "sem")
+    await ensure_sem_identity_access(session, suggestion.tenant_id)
     if req.handling_status is not None:
         if req.handling_status not in VALID_HANDLING_STATUS:
             raise HTTPException(400, f"无效处理状态，应为 {sorted(VALID_HANDLING_STATUS)}")
@@ -235,7 +238,8 @@ async def update_status(
     s = await session.get(Suggestion, suggestion_id)
     if s is None:
         raise HTTPException(404, "建议不存在，可能已被刷新")
-    ctx.ensure_tenant(s.tenant_id)
+    await ensure_module_access(session, ctx, s.tenant_id, "sem")
+    await ensure_sem_identity_access(session, s.tenant_id)
     s.status = status
     s.adopted_at = datetime.utcnow() if status == "adopted" else None
     if status == "adopted":

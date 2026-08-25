@@ -84,7 +84,10 @@ def normalize_payload(action_type: str, payload: dict[str, Any]) -> dict[str, An
             "new_budget": _positive_money(payload, "new_budget"),
         }
     if action_type == ACTION_ACCOUNT_BUDGET:
-        return {"new_budget": _positive_money(payload, "new_budget")}
+        return {
+            "baidu_account_id": _positive_id(payload, "baidu_account_id"),
+            "new_budget": _positive_money(payload, "new_budget"),
+        }
     raise WritebackApprovalError(f"不支持审批的回写类型：{action_type}")
 
 

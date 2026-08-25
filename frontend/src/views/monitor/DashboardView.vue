@@ -1,7 +1,10 @@
 <script setup>
 import { onMounted, onBeforeUnmount, ref, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import * as echarts from 'echarts'
+import { init, use } from 'echarts/core'
+import { LineChart } from 'echarts/charts'
+import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
 import { fetchDashboardToday, fetchDashboardInsight } from '../../api/dashboard'
 import { session } from '../../store/session'
 import MetricLabel from '../../components/MetricLabel.vue'
@@ -9,6 +12,7 @@ import { ElMessage } from 'element-plus'
 import { DataAnalysis } from '@element-plus/icons-vue'
 
 const router = useRouter()
+use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
 
@@ -174,7 +178,7 @@ const DEVICE_META = {
 
 function renderTrend() {
   if (!trendChartEl.value || !data.value) return
-  if (!trendChart) trendChart = echarts.init(trendChartEl.value)
+  if (!trendChart) trendChart = init(trendChartEl.value)
   const trend = data.value.trend || data.value.trend_7d || []
   trendChart.setOption({
     grid: { left: 56, right: 40, top: 30, bottom: 28 },

@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
+from app.module_scope import ensure_module_access
 from app.baidu.writeback_approval import (
     ALLOWED_ACTIONS,
     WritebackApprovalError,
@@ -26,6 +27,7 @@ from app.models import (
     WritebackApproval,
 )
 from app.security.auth import AuthContext, require_scoped_auth
+from app.security.sem_identity import ensure_sem_identity_access
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +147,8 @@ async def decide_writeback_approval(
     )
     if row is None:
         raise HTTPException(404, "审批记录不存在")
-    ctx.ensure_tenant(row.tenant_id)
+    await ensure_module_access(session, ctx, row.tenant_id, "sem")
+    await ensure_sem_identity_access(session, row.tenant_id)
     if row.status != "pending":
         raise HTTPException(409, "审批记录已处理")
     if req.decision == "approved" and row.requested_by == ctx.user_id:

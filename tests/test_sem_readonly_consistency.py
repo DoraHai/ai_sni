@@ -177,7 +177,8 @@ def test_suggestion_internal_workflow_has_owner_status_and_deadline():
     for field in ("handling_status", "assignee_id", "due_at", "workflow_updated_at"):
         assert field in model and field in migration
     assert '@router.patch("/{suggestion_id}/workflow")' in api
-    assert 'ctx.ensure_tenant(suggestion.tenant_id)' in api
+    assert 'ensure_module_access(session, ctx, suggestion.tenant_id, "sem")' in api
+    assert "ensure_sem_identity_access(session, suggestion.tenant_id)" in api
     assert '@router.get("/assignees")' in api
     assert "updateSuggestionWorkflow" in client
     assert "内部状态不代表百度已实际回写" in workbench

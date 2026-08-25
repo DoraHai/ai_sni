@@ -195,7 +195,7 @@ async def apply_keyword_writeback(
     new_bid = round(float(new_bid), 2)
     change_pct = _validate(old_bid, new_bid)
 
-    acc = await _active_account(session, tenant_id)
+    acc = await _active_account(session, tenant_id, _asset_account_id(kw, "关键词"))
 
     # 关联当下 pending 建议（可选）：用于记录来源 + 真写成功后标采纳
     sug = await session.scalar(
@@ -304,12 +304,31 @@ async def _active_account(
     ]
     if baidu_account_id is not None:
         conditions.append(BaiduAccount.id == baidu_account_id)
-    acc = await session.scalar(select(BaiduAccount).where(*conditions).with_for_update())
+    rows = list(
+        (
+            await session.scalars(
+                select(BaiduAccount)
+                .where(*conditions)
+                .order_by(BaiduAccount.id)
+                .with_for_update()
+            )
+        ).all()
+    )
+    if baidu_account_id is None and len(rows) > 1:
+        raise WritebackError("当前客户有多个生效推广账户，必须明确选择要操作的账户")
+    acc = rows[0] if rows else None
     if acc is None:
         if baidu_account_id is not None:
             raise WritebackError("计划所属的百度账户未授权或已停用，无法回写")
         raise WritebackError("该租户没有生效的百度账户授权，无法回写")
     return acc
+
+
+def _asset_account_id(asset: Any, label: str) -> int:
+    account_id = getattr(asset, "baidu_account_id", None)
+    if account_id is None:
+        raise WritebackError(f"{label}缺少所属百度账户，请先重新同步对应资产")
+    return int(account_id)
 
 
 async def apply_negative_writeback(
@@ -339,7 +358,7 @@ async def apply_negative_writeback(
     )
     if adg is None:
         raise WritebackError("单元不在维度表中，请先执行单元维度同步")
-    acc = await _active_account(session, tenant_id)
+    acc = await _active_account(session, tenant_id, _asset_account_id(adg, "单元"))
 
     field = "exact_negative_words" if match_mode == "exact" else "negative_words"
     current = list(getattr(adg, field) or [])
@@ -412,7 +431,7 @@ async def apply_negative_writeback_campaign(
     )
     if camp is None:
         raise WritebackError("计划不在维度表中，请先执行计划维度同步")
-    acc = await _active_account(session, tenant_id)
+    acc = await _active_account(session, tenant_id, _asset_account_id(camp, "计划"))
 
     field = "exact_negative_words" if match_mode == "exact" else "negative_words"
     current = list(getattr(camp, field) or [])
@@ -499,7 +518,7 @@ async def apply_add_word_writeback(
     )
     if adg is None:
         raise WritebackError("单元不在维度表中，请先执行单元维度同步")
-    acc = await _active_account(session, tenant_id)
+    acc = await _active_account(session, tenant_id, _asset_account_id(adg, "单元"))
 
     dry_run = get_settings().baidu_write_dry_run
     rec = WritebackAction(
@@ -550,7 +569,7 @@ async def apply_pause_writeback(
     )
     if kw is None:
         raise WritebackError("关键词不在维度表中，请先执行关键词维度同步")
-    acc = await _active_account(session, tenant_id)
+    acc = await _active_account(session, tenant_id, _asset_account_id(kw, "关键词"))
 
     dry_run = get_settings().baidu_write_dry_run
     rec = WritebackAction(
@@ -612,7 +631,7 @@ async def apply_match_type_writeback(
     )
     if kw is None:
         raise WritebackError("关键词不在维度表中，请先执行关键词维度同步")
-    acc = await _active_account(session, tenant_id)
+    acc = await _active_account(session, tenant_id, _asset_account_id(kw, "关键词"))
 
     dry_run = get_settings().baidu_write_dry_run
     rec = WritebackAction(
@@ -676,7 +695,7 @@ async def apply_remove_negative_writeback(
     )
     if adg is None:
         raise WritebackError("单元不在维度表中，请先执行单元维度同步")
-    acc = await _active_account(session, tenant_id)
+    acc = await _active_account(session, tenant_id, _asset_account_id(adg, "单元"))
 
     field = "exact_negative_words" if match_mode == "exact" else "negative_words"
     current = list(getattr(adg, field) or [])
@@ -751,7 +770,7 @@ async def apply_campaign_budget_writeback(
     )
     if camp is None:
         raise WritebackError("计划不在维度表中，请先执行计划维度同步")
-    acc = await _active_account(session, tenant_id)
+    acc = await _active_account(session, tenant_id, _asset_account_id(camp, "计划"))
 
     # 计划预算不能超账户日预算：实时查账户预算做上限校验（失败不阻断，交百度兜底）
     try:
@@ -843,7 +862,7 @@ async def apply_campaign_pause_writeback(
     )
     if camp is None:
         raise WritebackError("计划不在维度表中，请先执行计划维度同步")
-    acc = await _active_account(session, tenant_id)
+    acc = await _active_account(session, tenant_id, _asset_account_id(camp, "计划"))
 
     dry_run = get_settings().baidu_write_dry_run
     rec = WritebackAction(
@@ -1120,7 +1139,7 @@ async def apply_adgroup_pause_writeback(
     )
     if adg is None:
         raise WritebackError("单元不在维度表中，请先执行单元维度同步")
-    acc = await _active_account(session, tenant_id)
+    acc = await _active_account(session, tenant_id, _asset_account_id(adg, "单元"))
 
     dry_run = get_settings().baidu_write_dry_run
     rec = WritebackAction(
@@ -1194,7 +1213,7 @@ async def apply_adgroup_bid_writeback(
             raise WritebackError(
                 f"单元出价 {new_price} 不能超过所属计划日预算 {float(camp.budget):.2f}"
             )
-    acc = await _active_account(session, tenant_id)
+    acc = await _active_account(session, tenant_id, _asset_account_id(adg, "单元"))
 
     old_price = float(adg.max_price) if adg.max_price is not None else None
     dry_run = get_settings().baidu_write_dry_run
@@ -1299,7 +1318,7 @@ async def apply_adgroup_landing_url_writeback(
     )
     if adg is None:
         raise WritebackError("单元不在维度表中，请先执行单元维度同步")
-    acc = await _active_account(session, tenant_id)
+    acc = await _active_account(session, tenant_id, _asset_account_id(adg, "单元"))
 
     pc_final_url = _validate_landing_url(pc_final_url, "PC 最终访问网址")
     mobile_final_url = _validate_landing_url(mobile_final_url, "移动最终访问网址")
@@ -1391,6 +1410,7 @@ async def apply_account_budget_writeback(
     operator_user_id: int | None,
     operator_name: str | None,
     approval_id: int | None = None,
+    baidu_account_id: int | None = None,
 ) -> WritebackAction:
     """账户日预算写回（updateAccountInfo budget，文档 0036）。dry_run 时拦截不真发。
 
@@ -1403,7 +1423,7 @@ async def apply_account_budget_writeback(
             f"账户日预算 {new_budget} 超出合法区间 "
             f"[{MIN_ACCOUNT_BUDGET:.0f}, {MAX_ACCOUNT_BUDGET:.0f}]"
         )
-    acc = await _active_account(session, tenant_id)
+    acc = await _active_account(session, tenant_id, baidu_account_id)
 
     # 实时查当前账户预算作旧值快照（失败不阻断写回，old_value 留空）
     old_budget: float | None = None
@@ -1430,7 +1450,7 @@ async def apply_account_budget_writeback(
         approval_id=approval_id,
         tenant_id=tenant_id,
         action_type=ACTION_ACCOUNT_BUDGET,
-        payload={"new_budget": new_budget},
+        payload={"baidu_account_id": acc.id, "new_budget": new_budget},
         operator_user_id=operator_user_id,
     )
     rec = WritebackAction(

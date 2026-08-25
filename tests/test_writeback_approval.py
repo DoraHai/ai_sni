@@ -15,6 +15,7 @@ os.environ.setdefault("CRYPTO_MASTER_KEY_B64", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
 from app.baidu.writeback_approval import (
+    ACTION_ACCOUNT_BUDGET,
     ACTION_KEYWORD_BID,
     WritebackApprovalError,
     claim_approval,
@@ -55,6 +56,15 @@ class _Session:
 
 
 class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
+    def test_account_budget_approval_is_bound_to_account(self):
+        normalized, _ = payload_fingerprint(
+            ACTION_ACCOUNT_BUDGET,
+            {"baidu_account_id": 12, "new_budget": 500},
+        )
+        self.assertEqual(normalized, {"baidu_account_id": 12, "new_budget": 500.0})
+        with self.assertRaisesRegex(WritebackApprovalError, "baidu_account_id"):
+            payload_fingerprint(ACTION_ACCOUNT_BUDGET, {"new_budget": 500})
+
     def test_unresolved_real_funds_intent_requires_reconciliation(self):
         self.assertEqual(_queue_stage("pending", False), "reconciliation_required")
         self.assertEqual(_queue_stage("reconcile", False), "reconciliation_required")

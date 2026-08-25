@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.models import Alert, Tenant
+from app.module_scope import list_active_module_tenants
 from app.rules.ai_anomaly import AIAnomalyRule
 from app.rules.base import Rule
 from app.rules.brand_rank import BrandRankRule
@@ -194,7 +195,7 @@ async def run_rules_for_all_tenants(
     session: AsyncSession, target_date: date
 ) -> dict[str, int]:
     """Evaluate daily rules for all tenants."""
-    tenants = (await session.scalars(select(Tenant))).all()
+    tenants = await list_active_module_tenants(session, "sem")
     result: dict[str, int] = {}
     for tenant in tenants:
         try:

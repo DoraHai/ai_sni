@@ -38,6 +38,15 @@ class ModuleWorkspaceTests(unittest.TestCase):
         self.assertEqual(_required("/api/v1/seo/sites", "POST"), ({"seo.assets"}, True))
         self.assertEqual(_required("/api/v1/geo/projects", "PATCH"), ({"geo.assets"}, True))
 
+    def test_sem_manage_routes_have_explicit_rbac(self):
+        self.assertEqual(_required("/api/v1/manage/account-budget", "GET"), ({"manage.account"}, False))
+        self.assertEqual(_required("/api/v1/manage/account-budget", "POST"), ({"manage.account"}, True))
+        self.assertEqual(_required("/api/v1/manage/adgroups", "PATCH"), ({"manage.adgroups"}, True))
+        self.assertEqual(_required("/api/v1/manage/campaigns", "GET"), ({"manage.campaigns"}, False))
+        self.assertEqual(_required("/api/v1/ocpc", "POST"), ({"manage.ocpc"}, True))
+        self.assertEqual(_required("/api/v1/onboarding-builder/draft", "POST"), ({"onboarding"}, False))
+        self.assertEqual(_required("/api/v1/onboarding-builder/apply", "POST"), ({"onboarding"}, True))
+
     def test_bound_customer_cannot_switch_tenant(self):
         ctx = AuthContext(1, "client", "client", 7, {"seo.assets": "edit"})
         ctx.ensure_tenant(7)
