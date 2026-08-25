@@ -93,6 +93,12 @@ class ChannelPolishPromptsServiceTests(unittest.IsolatedAsyncioTestCase):
         with patch(
             "app.geo.content.channel_polish_prompts._rows_by_key",
             new=AsyncMock(return_value={"__system__": sys_row}),
+        ), patch(
+            "app.geo.content.channel_polish_prompts.enabled_adapt_keys",
+            new=AsyncMock(return_value=[]),
+        ), patch(
+            "app.geo.content.channel_polish_prompts.has_publishing_rows",
+            new=AsyncMock(return_value=False),
         ):
             payload = await get_effective_prompts(session, 9)
         self.assertTrue(payload["is_custom_system"])
@@ -122,6 +128,25 @@ class ChannelPolishPromptsServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(row.min_body_chars)
         self.assertEqual(row.updated_by, 2)
         self.assertEqual(out, {"ok": True})
+
+    async def test_effective_follows_enabled_publishing_channels(self):
+        session = MagicMock()
+        with patch(
+            "app.geo.content.channel_polish_prompts._rows_by_key",
+            new=AsyncMock(return_value={}),
+        ), patch(
+            "app.geo.content.channel_polish_prompts.enabled_adapt_keys",
+            new=AsyncMock(return_value=["wechat", "zhihu"]),
+        ), patch(
+            "app.geo.content.channel_polish_prompts.has_publishing_rows",
+            new=AsyncMock(return_value=True),
+        ):
+            payload = await get_effective_prompts(session, 3)
+        keys = [c["channel_key"] for c in payload["channels"]]
+        self.assertEqual(keys, ["wechat", "zhihu"])
+        avail = {c["channel_key"] for c in payload["available_channels"]}
+        self.assertIn("website", avail)
+        self.assertNotIn("wechat", avail)
 
 
 if __name__ == "__main__":

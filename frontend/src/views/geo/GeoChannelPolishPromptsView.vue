@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   fetchChannelPolishPrompts,
   putChannelPolishPrompts,
@@ -17,6 +17,9 @@ const systemPrompt = ref('')
 const systemDefault = ref('')
 const isCustomSystem = ref(false)
 const channels = ref([])
+const availableChannels = ref([])
+const addOpen = ref(false)
+const addKey = ref('')
 
 const current = computed(
   () => channels.value.find((c) => c.channel_key === activeTab.value) || null,
@@ -36,9 +39,18 @@ function applyPayload(data) {
     is_custom_voice: !!c.is_custom_voice,
     is_custom_min_body_chars: !!c.is_custom_min_body_chars,
   }))
+  availableChannels.value = data.available_channels || []
   if (!channels.value.some((c) => c.channel_key === activeTab.value) && channels.value[0]) {
     activeTab.value = channels.value[0].channel_key
   }
+}
+
+function currentChannelPayload() {
+  return channels.value.map((c) => ({
+    channel_key: c.channel_key,
+    voice_prompt: c.voice_prompt,
+    min_body_chars: Number(c.min_body_chars) || null,
+  }))
 }
 
 async function load() {
@@ -64,11 +76,7 @@ async function save() {
     const data = await putChannelPolishPrompts({
       tenant_id: tenantId.value,
       system_prompt: systemPrompt.value,
-      channels: channels.value.map((c) => ({
-        channel_key: c.channel_key,
-        voice_prompt: c.voice_prompt,
-        min_body_chars: Number(c.min_body_chars) || null,
-      })),
+      channels: currentChannelPayload(),
     })
     applyPayload(data)
     ElMessage.success('已保存渠道成稿提示词')
@@ -126,6 +134,61 @@ function fillChannelDefaults() {
   c.min_body_chars = c.min_body_chars_default
 }
 
+function openAdd() {
+  addKey.value = availableChannels.value[0]?.channel_key || ''
+  addOpen.value = true
+}
+
+async function addChannel() {
+  if (!tenantId.value || !addKey.value) return
+  saving.value = true
+  try {
+    applyPayload(
+      await putChannelPolishPrompts({
+        tenant_id: tenantId.value,
+        channels: currentChannelPayload(),
+        add_channel_key: addKey.value,
+      }),
+    )
+    activeTab.value = addKey.value
+    addOpen.value = false
+    ElMessage.success('已添加渠道，分发平台已同步启用')
+  } catch (e) {
+    ElMessage.error(e.message || '添加失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+async function removeChannel(key) {
+  if (!tenantId.value || !key) return
+  const hit = channels.value.find((c) => c.channel_key === key)
+  try {
+    await ElMessageBox.confirm(
+      `停用「${hit?.display_name || key}」？文章将不再生成该渠道成稿，分发平台对应渠道也会停用。`,
+      '移除渠道',
+      { type: 'warning', confirmButtonText: '停用' },
+    )
+  } catch {
+    return
+  }
+  saving.value = true
+  try {
+    applyPayload(
+      await putChannelPolishPrompts({
+        tenant_id: tenantId.value,
+        channels: currentChannelPayload().filter((c) => c.channel_key !== key),
+        remove_channel_key: key,
+      }),
+    )
+    ElMessage.success('已停用该渠道')
+  } catch (e) {
+    ElMessage.error(e.message || '移除失败')
+  } finally {
+    saving.value = false
+  }
+}
+
 watch(tenantId, load)
 onMounted(load)
 </script>
@@ -177,15 +240,26 @@ onMounted(load)
           <div>
             <span class="gv2-kicker">分渠道</span>
             <h2>语气与字数</h2>
-            <p class="sub">每个平台一篇成稿规范。字数不达标会被整篇驳回，不会存伪正稿。</p>
+            <p class="sub">每个平台一篇成稿规范，与分发平台启用渠道对齐。字数不达标会被整篇驳回。</p>
+          </div>
+          <div class="head-actions">
+            <el-button size="small" :disabled="!availableChannels.length" @click="openAdd">
+              + 添加渠道
+            </el-button>
           </div>
         </div>
-        <el-tabs v-model="activeTab" class="channel-tabs">
+        <el-tabs
+          v-model="activeTab"
+          class="channel-tabs"
+          closable
+          @tab-remove="removeChannel"
+        >
           <el-tab-pane
             v-for="c in channels"
             :key="c.channel_key"
             :name="c.channel_key"
             :label="c.display_name"
+            :closable="channels.length > 1"
           />
         </el-tabs>
         <template v-if="current">
@@ -229,9 +303,33 @@ onMounted(load)
             </el-form-item>
           </el-form>
         </template>
-        <el-empty v-else description="暂无渠道配置，请先刷新或检查后端渠道注册表" />
+        <el-empty v-else description="还没有启用的成稿渠道，点「添加渠道」或先到分发平台启用。">
+          <el-button type="primary" :disabled="!availableChannels.length" @click="openAdd">
+            添加渠道
+          </el-button>
+        </el-empty>
       </section>
     </div>
+
+    <el-dialog v-model="addOpen" title="添加成稿渠道" width="420px">
+      <p class="sub" style="margin-top: 0">
+        添加后会出现在本页标签，并在分发平台启用对应渠道；优化文章生成正式渠道稿时也能勾选。
+      </p>
+      <el-select v-model="addKey" placeholder="选择渠道" style="width: 100%">
+        <el-option
+          v-for="c in availableChannels"
+          :key="c.channel_key"
+          :label="c.display_name"
+          :value="c.channel_key"
+        />
+      </el-select>
+      <template #footer>
+        <el-button @click="addOpen = false">取消</el-button>
+        <el-button type="primary" :disabled="!addKey" :loading="saving" @click="addChannel">
+          添加
+        </el-button>
+      </template>
+    </el-dialog>
   </GeoWorkbenchPage>
 </template>
 
