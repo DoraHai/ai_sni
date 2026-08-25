@@ -94,7 +94,7 @@ class ChannelPolishPromptsServiceTests(unittest.IsolatedAsyncioTestCase):
             "app.geo.content.channel_polish_prompts._rows_by_key",
             new=AsyncMock(return_value={"__system__": sys_row}),
         ), patch(
-            "app.geo.content.channel_polish_prompts.enabled_adapt_keys",
+            "app.geo.content.channel_polish_prompts.enabled_registry_tabs",
             new=AsyncMock(return_value=[]),
         ), patch(
             "app.geo.content.channel_polish_prompts.has_publishing_rows",
@@ -135,8 +135,13 @@ class ChannelPolishPromptsServiceTests(unittest.IsolatedAsyncioTestCase):
             "app.geo.content.channel_polish_prompts._rows_by_key",
             new=AsyncMock(return_value={}),
         ), patch(
-            "app.geo.content.channel_polish_prompts.enabled_adapt_keys",
-            new=AsyncMock(return_value=["wechat", "zhihu"]),
+            "app.geo.content.channel_polish_prompts.enabled_registry_tabs",
+            new=AsyncMock(
+                return_value=[
+                    {"channel_key": "wechat", "display_name": "微信公众号"},
+                    {"channel_key": "zhihu", "display_name": "知乎"},
+                ]
+            ),
         ), patch(
             "app.geo.content.channel_polish_prompts.has_publishing_rows",
             new=AsyncMock(return_value=True),
@@ -146,6 +151,7 @@ class ChannelPolishPromptsServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(keys, ["wechat", "zhihu"])
         avail = {c["channel_key"] for c in payload["available_channels"]}
         self.assertIn("website", avail)
+        self.assertIn("docs", avail)
         self.assertNotIn("wechat", avail)
 
 

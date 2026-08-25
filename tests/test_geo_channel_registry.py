@@ -97,13 +97,12 @@ class GeoChannelRegistryTests(unittest.TestCase):
         options = channel_options_from_registry(rows)
         keys = [o["adapt_key"] for o in options]
         self.assertEqual(keys, ["website", "zhihu"])
-        # docs maps to website — second website-type row is skipped
         rows_docs = rows + [
             {"id": 4, "name": "文档", "channel_type": "docs", "publish_mode": "auto_publish", "enabled": True},
         ]
         self.assertEqual(
-            [o["adapt_key"] for o in channel_options_from_registry(rows_docs)],
-            ["website", "zhihu"],
+            [o["channel_type"] for o in channel_options_from_registry(rows_docs)],
+            ["website", "zhihu", "docs"],
         )
         self.assertEqual(
             filter_channels_by_registry(

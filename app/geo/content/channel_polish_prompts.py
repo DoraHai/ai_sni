@@ -15,7 +15,7 @@ from app.geo.content.channel_polish_defaults import (
     list_default_prompts,
 )
 from app.geo.content.channel_profiles import CHANNEL_PROFILES, SUPPORTED_CHANNELS
-from app.geo.content.channel_registry import profile_key_for_registry_type
+from app.geo.content.channels import CHANNEL_TYPE_LABELS, CHANNEL_TYPE_OPTIONS
 from app.models.geo_channel_polish_prompt import GeoChannelPolishPrompt
 from app.models.geo_publishing_channel import GeoPublishingChannel
 
@@ -50,15 +50,25 @@ async def get_or_create_row(
     return row
 
 
-def _channel_payload(key: str, row: GeoChannelPolishPrompt | None) -> dict[str, Any]:
+def _channel_payload(
+    key: str,
+    row: GeoChannelPolishPrompt | None,
+    *,
+    display_name: str | None = None,
+) -> dict[str, Any]:
     profile = CHANNEL_PROFILES.get(key)
     voice_default = default_voice_for_channel(key)
     min_default = default_min_body_chars(key)
     custom_voice = bool(row and (row.voice_prompt or "").strip())
     custom_min = bool(row and row.min_body_chars is not None)
+    label = (
+        (display_name or "").strip()
+        or CHANNEL_TYPE_LABELS.get(key)
+        or (profile.display_name if profile else key)
+    )
     return {
         "channel_key": key,
-        "display_name": profile.display_name if profile else key,
+        "display_name": label,
         "voice_prompt": (row.voice_prompt or "").strip() if custom_voice else voice_default,
         "voice_default": voice_default,
         "min_body_chars": int(row.min_body_chars) if custom_min else min_default,
@@ -68,22 +78,39 @@ def _channel_payload(key: str, row: GeoChannelPolishPrompt | None) -> dict[str, 
     }
 
 
-async def enabled_adapt_keys(session: AsyncSession, tenant_id: int) -> list[str]:
-    """Adapt keys currently enabled on 分发平台 (website/docs share website)."""
+async def enabled_registry_tabs(session: AsyncSession, tenant_id: int) -> list[dict[str, str]]:
+    """One 语气与字数 tab per enabled 分发平台 type."""
     rows = (
         await session.scalars(
-            select(GeoPublishingChannel).where(
+            select(GeoPublishingChannel)
+            .where(
                 GeoPublishingChannel.tenant_id == tenant_id,
                 GeoPublishingChannel.enabled.is_(True),
             )
+            .order_by(GeoPublishingChannel.sort_order, GeoPublishingChannel.id)
         )
     ).all()
-    keys: list[str] = []
+    tabs: list[dict[str, str]] = []
+    seen: set[str] = set()
     for row in rows:
-        adapt = profile_key_for_registry_type(getattr(row, "channel_type", None))
-        if adapt and adapt in CHANNEL_PROFILES and adapt not in keys:
-            keys.append(adapt)
-    return keys
+        key = str(row.channel_type or "").strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        tabs.append(
+            {
+                "channel_key": key,
+                "display_name": (row.name or "").strip()
+                or CHANNEL_TYPE_LABELS.get(key)
+                or key,
+            }
+        )
+    return tabs
+
+
+async def enabled_adapt_keys(session: AsyncSession, tenant_id: int) -> list[str]:
+    """Enabled 分发平台 types (tab keys). Kept name for older tests/patches."""
+    return [t["channel_key"] for t in await enabled_registry_tabs(session, tenant_id)]
 
 
 async def has_publishing_rows(session: AsyncSession, tenant_id: int) -> bool:
@@ -101,38 +128,34 @@ async def set_adapt_channel_enabled(
     enabled: bool,
     created_by: int | None = None,
 ) -> None:
-    """Enable/create or disable publishing rows that map to this polish tab."""
-    if adapt_key not in CHANNEL_PROFILES:
-        raise ValueError(f"不支持的渠道: {adapt_key}")
+    """Enable/create or disable the matching 分发平台 type (1:1 with polish tabs)."""
+    key = str(adapt_key or "").strip().lower()
+    if key not in CHANNEL_TYPE_OPTIONS:
+        raise ValueError(f"不支持的渠道: {key}")
     rows = list(
         await session.scalars(
             select(GeoPublishingChannel).where(GeoPublishingChannel.tenant_id == tenant_id)
         )
     )
-    matched = [
-        r
-        for r in rows
-        if profile_key_for_registry_type(r.channel_type) == adapt_key
-    ]
+    matched = [r for r in rows if str(r.channel_type or "").strip().lower() == key]
     if enabled:
         if matched:
             for row in matched:
                 row.enabled = True
         else:
-            profile = CHANNEL_PROFILES[adapt_key]
-            auto = adapt_key in {"website", "docs", "wechat", "zhihu", "baijiahao", "toutiao"}
+            auto = key in {"website", "docs", "wechat", "zhihu", "baijiahao", "toutiao"}
             session.add(
                 GeoPublishingChannel(
                     tenant_id=tenant_id,
-                    name=profile.display_name,
-                    channel_type=adapt_key,
+                    name=CHANNEL_TYPE_LABELS.get(key) or key,
+                    channel_type=key,
                     publish_mode="auto_publish" if auto else "manual_only",
                     enabled=True,
                     sort_order=80,
                     created_by=created_by,
                 )
             )
-        await get_or_create_row(session, tenant_id, adapt_key)
+        await get_or_create_row(session, tenant_id, key)
         return
     for row in matched:
         row.enabled = False
@@ -146,15 +169,18 @@ async def get_effective_prompts(session: AsyncSession, tenant_id: int) -> dict[s
         (sys_row.system_prompt or "").strip() if custom_system else DEFAULT_SYSTEM_PROMPT
     )
 
-    keys = await enabled_adapt_keys(session, tenant_id)
-    if not keys and not await has_publishing_rows(session, tenant_id):
-        keys = list(SUPPORTED_CHANNELS)
+    tabs = await enabled_registry_tabs(session, tenant_id)
+    if not tabs and not await has_publishing_rows(session, tenant_id):
+        tabs = [{"channel_key": key, "display_name": CHANNEL_PROFILES[key].display_name} for key in SUPPORTED_CHANNELS]
 
-    channels = [_channel_payload(key, by_key.get(key)) for key in keys]
+    channels = [
+        _channel_payload(t["channel_key"], by_key.get(t["channel_key"]), display_name=t.get("display_name"))
+        for t in tabs
+    ]
     present = {c["channel_key"] for c in channels}
     available = [
-        {"channel_key": key, "display_name": CHANNEL_PROFILES[key].display_name}
-        for key in SUPPORTED_CHANNELS
+        {"channel_key": key, "display_name": CHANNEL_TYPE_LABELS.get(key) or key}
+        for key in CHANNEL_TYPE_OPTIONS
         if key not in present
     ]
 
@@ -225,7 +251,7 @@ async def upsert_prompts(
 
     for item in channels or []:
         key = str(item.get("channel_key") or "").strip()
-        if key not in CHANNEL_PROFILES:
+        if key not in CHANNEL_PROFILES and key not in CHANNEL_TYPE_OPTIONS:
             continue
         row = await get_or_create_row(session, tenant_id, key)
         if item.get("reset"):
