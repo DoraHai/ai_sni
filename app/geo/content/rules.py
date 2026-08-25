@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
@@ -27,9 +27,13 @@ class RuleCheck:
     passed: bool
     message: str
     action: str
+    details: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        if not payload.get("details"):
+            payload.pop("details", None)
+        return payload
 
 
 def _faq_count_in_body(body: str) -> int:
@@ -427,6 +431,60 @@ def check_howto_extractable(data: RuleInput) -> RuleCheck:
     )
 
 
+def check_sentence_evidence(data: RuleInput) -> RuleCheck:
+    """Uncited claim sentences (numbers / performance / cases) block ready."""
+    from app.geo.content.evidence_cite import (
+        build_sentence_citations,
+        citation_verdict,
+        strip_citation_appendix,
+    )
+
+    rows = (data.outline or {}).get("sentence_citations")
+    if not isinstance(rows, list) or not rows:
+        rows = build_sentence_citations(
+            strip_citation_appendix(data.body_markdown or ""), data.facts or []
+        )
+    verdict = citation_verdict(rows)
+    if verdict["ok"]:
+        return RuleCheck(
+            code="sentence_evidence",
+            passed=True,
+            message=f"主张句已闭环（已挂 {verdict['cited']}/{verdict['total']}）",
+            action="",
+        )
+    return RuleCheck(
+        code="sentence_evidence",
+        passed=False,
+        message=f"{verdict['blocking']} 句主张未挂事实，不能就绪",
+        action="删改这些句子，或补核验事实后点「保存正文」/「重新挂证据」",
+    )
+
+
+def _fabrication_points(issues: list[dict[str, Any]], *, limit: int = 8) -> list[str]:
+    """One line per high-risk hit: original snippet + why it is blocked."""
+    points: list[str] = []
+    seen: set[str] = set()
+    for item in issues or []:
+        if item.get("level") != "高":
+            continue
+        excerpt = re.sub(r"\s+", " ", str(item.get("excerpt") or "")).strip()
+        why = re.sub(r"\s+", " ", str(item.get("detail") or item.get("type") or "")).strip()
+        why = why.replace("`", "")
+        if excerpt:
+            line = f"「{excerpt[:56]}」"
+            if why:
+                line = f"{line} {why}"
+        else:
+            line = why
+        if not line or line in seen:
+            continue
+        seen.add(line)
+        points.append(line)
+        if len(points) >= limit:
+            break
+    return points
+
+
 def check_fabrication_lint(data: RuleInput) -> RuleCheck:
     """Block ready when draft or channel variants invent numbers / cases / placeholders."""
     from app.geo.content.draft_lint import lint_draft, lint_summary
@@ -437,16 +495,24 @@ def check_fabrication_lint(data: RuleInput) -> RuleCheck:
         issues.extend(lint_draft(vb or "", facts=facts))
     summary = lint_summary(issues)
     ok = summary["high"] == 0
-    detail = (
-        f"编造风险 高{summary['high']}/中{summary['medium']}/低{summary['low']}"
-        if summary["total"]
-        else "未发现高风险编造线索"
-    )
+    points = _fabrication_points(issues)
+    if ok:
+        return RuleCheck(
+            code="fabrication_lint",
+            passed=True,
+            message=(
+                f"编造风险 高{summary['high']}/中{summary['medium']}/低{summary['low']}"
+                if summary["total"]
+                else "未发现高风险编造线索"
+            ),
+            action="",
+        )
     return RuleCheck(
         code="fabrication_lint",
-        passed=ok,
-        message=detail if ok else f"存在 {summary['high']} 条无依据数字/性能/案例/占位名",
-        action="" if ok else "删掉事实卡没有的数字、性能指标和案例，或先补核验事实",
+        passed=False,
+        message=f"发现 {summary['high']} 处无依据表述，不能标可发布",
+        action="对照下面原文删改，或把这些数据补成已核验事实卡后再写",
+        details=points,
     )
 
 
@@ -466,6 +532,7 @@ def run_checks(data: RuleInput) -> list[RuleCheck]:
         check_author_visible(data),
         check_sources_footer(data),
         check_fabrication_lint(data),
+        check_sentence_evidence(data),
         check_channel_variant_ready(data),
     ]
 

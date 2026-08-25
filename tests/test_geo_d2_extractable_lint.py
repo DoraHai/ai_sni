@@ -138,6 +138,8 @@ class RulesIntegrationTests(unittest.TestCase):
         by_code = {c.code: c for c in run_checks(self._base(body_markdown=body))}
         self.assertFalse(by_code["fabrication_lint"].passed)
         self.assertFalse(is_ready(list(by_code.values()), require_channels=False))
+        points = " ".join(by_code["fabrication_lint"].details or [])
+        self.assertIn("工具A", points)
 
     def test_block_patches_emitted(self):
         patches = {
