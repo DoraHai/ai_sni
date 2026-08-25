@@ -78,13 +78,7 @@ function statusMeta(row) {
   }
 }
 
-function statusBadge(row) {
-  const tone = statusMeta(row).tone
-  if (tone === 'ok') return 'green'
-  if (tone === 'warn') return 'amber'
-  if (tone === 'info') return 'blue'
-  return ''
-}
+
 
 const filteredItems = computed(() => {
   const q = qSearch.value.trim().toLowerCase()
@@ -219,27 +213,10 @@ onMounted(load)
 
       <div class="geo-table-card">
         <el-table :data="pager.pagedItems" empty-text="暂无信源计划">
-          <el-table-column label="名称" min-width="180">
+          <el-table-column label="名称" min-width="280">
             <template #default="{ row }">
               <div class="name">{{ row.name }}</div>
               <div v-if="row.authority_note" class="note">{{ row.authority_note }}</div>
-            </template>
-          </el-table-column>
-          <el-table-column label="类型" width="120">
-            <template #default="{ row }">
-              <div class="geo-type-cell">
-                <span class="geo-type-icon">{{ typeMeta(row).icon }}</span>
-                <span class="geo-type-label">{{ typeMeta(row).label }}</span>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column label="状态" width="108">
-            <template #default="{ row }">
-              <span class="gd-badge" :class="statusBadge(row)">{{ statusMeta(row).zh }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="URL" min-width="160" show-overflow-tooltip>
-            <template #default="{ row }">
               <a
                 v-if="row.target_url"
                 :href="row.target_url"
@@ -247,10 +224,25 @@ onMounted(load)
                 rel="noopener"
                 class="url"
               >{{ row.target_url }}</a>
-              <span v-else class="muted">—</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="168" align="right" fixed="right">
+          <el-table-column label="类型" width="148">
+            <template #default="{ row }">
+              <div class="geo-type-cell">
+                <span class="geo-type-icon">{{ typeMeta(row).icon }}</span>
+                <span class="type-label">{{ typeMeta(row).label }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }">
+              <span class="geo-status-cell">
+                <i class="geo-status-dot" :class="statusMeta(row).tone" />
+                {{ statusMeta(row).zh }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="156" align="right">
             <template #default="{ row }">
               <div class="geo-act">
                 <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
@@ -335,8 +327,20 @@ onMounted(load)
   color: #9ca3af;
   line-height: 1.4;
 }
-.url { color: #6d28d9; text-decoration: none; }
+.url {
+  display: inline-block;
+  margin-top: 4px;
+  color: #6d28d9;
+  text-decoration: none;
+  font-size: 12px;
+}
 .url:hover { text-decoration: underline; }
-.muted { color: #9ca3af; }
+.type-label {
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+.geo-status-cell { white-space: nowrap; }
 .mb { margin-bottom: 12px; }
 </style>
