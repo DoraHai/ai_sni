@@ -270,7 +270,7 @@ curl -fsS https://<公网域名>/geo-health
 
 ## 8. 主站 sem-backend（调度与登录）
 
-定时可见度巡检跑在 **主站 scheduler**（`run_geo_visibility_patrols`，约每小时 :05），**不是** geo-service。
+定时可见度巡检跑在 **GEO scheduler**（`app/geo/content/geo_scheduler.py`，约每小时 :05）。主站 `app.main` 与独立 `geo_main` 都会尝试启动，跨进程锁保证只跑一份。
 
 ```bash
 # 发布/重启主站后

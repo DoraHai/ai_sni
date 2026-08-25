@@ -14,7 +14,8 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8011"
+_CLI_BASE = sys.argv[1] if len(sys.argv) > 1 else ""
+BASE = _CLI_BASE or "http://127.0.0.1:8000"
 API_KEY = sys.argv[2] if len(sys.argv) > 2 else "geo-demo-local-key"
 TENANT_ID = int(sys.argv[3]) if len(sys.argv) > 3 else 1
 
@@ -195,25 +196,65 @@ def check_code() -> None:
     routes = (ROOT / "app/geo/content/routes.py").read_text(encoding="utf-8")
     ok("routes optimization-businesses", "optimization-businesses" in routes)
     ok("routes daily-metrics", "daily-metrics" in routes)
-    sched = (ROOT / "app/scheduler.py").read_text(encoding="utf-8")
+    geo_sched = (ROOT / "app/geo/content/geo_scheduler.py").read_text(encoding="utf-8")
+    geo_main = (ROOT / "app/geo_main.py").read_text(encoding="utf-8")
+    ok(
+        "geo scheduler module",
+        (ROOT / "app/geo/content/geo_scheduler.py").is_file(),
+    )
     ok(
         "scheduler daily metrics nightly",
-        "run_geo_daily_metrics_nightly" in sched or "geo_daily_metrics_nightly" in sched,
+        "run_geo_daily_metrics_nightly" in geo_sched or "geo_daily_metrics_nightly" in geo_sched,
     )
+    ok("geo_main starts geo scheduler", "start_geo_scheduler" in geo_main)
     overview = (ROOT / "frontend/src/views/geo/GeoOverviewView.vue").read_text(
         encoding="utf-8"
     )
     ok("overview business filter", "filterBusinessId" in overview or "listGeoBusinesses" in overview)
 
 
+def _live_candidates() -> list[str]:
+    out: list[str] = []
+    if _CLI_BASE:
+        out.append(_CLI_BASE.rstrip("/"))
+    for b in ("http://127.0.0.1:8000", "http://127.0.0.1:8011"):
+        if b not in out:
+            out.append(b)
+    return out
+
+
+def _pick_live_base() -> str | None:
+    global BASE
+    last_err = ""
+    for candidate in _live_candidates():
+        BASE = candidate
+        code, health = req("GET", "/health/geo")
+        if code == 200:
+            return candidate
+        last_err = health.get("detail") if isinstance(health, dict) else str(health)
+        code2, _ = req("GET", "/api/v1/geo/content-health")
+        if code2 == 200:
+            return candidate
+    print(f"\n[SKIP] live API unreachable (tried {_live_candidates()}): {last_err}")
+    print("       Start app.main on 8000 or geo_main on 8011 to run live checks.\n")
+    return None
+
+
 def check_live() -> None:
-    code, health = req("GET", "/health/geo")
-    if code == 0:
-        print(f"\n[SKIP] live API unreachable at {BASE}: {health.get('detail')}")
-        print("       Start geo_main on 8011 to run live checks.\n")
+    if not _pick_live_base():
         return
 
-    ok("GET /health/geo", code == 200 and health.get("db") == "ok", f"status={code} body={health}")
+    code, health = req("GET", "/health/geo")
+    if code == 404:
+        print("[SKIP] GET /health/geo not mounted on this process (content-health is enough)")
+    else:
+        ok("GET /health/geo", code == 200 and health.get("db") == "ok", f"status={code} body={health}")
+    if code == 200 and isinstance(health, dict) and "geo_scheduler" in health:
+        ok(
+            "health reports geo_scheduler",
+            health.get("geo_scheduler") in ("running", "skipped", "stopped"),
+            f"geo_scheduler={health.get('geo_scheduler')}",
+        )
     code2, ch = req("GET", "/api/v1/geo/content-health")
     ok(
         "GET content-health",

@@ -15,6 +15,11 @@ from app.database import engine
 from app.http_errors import register_infra_handlers
 from app.geo.content.oauth_public import router as geo_oauth_public_router
 from app.geo.routes import router as geo_router
+from app.geo.content.geo_scheduler import (
+    scheduler_status,
+    shutdown_geo_scheduler,
+    start_geo_scheduler,
+)
 from app.security.prod_guard import enforce_production_secrets
 
 settings = get_settings()
@@ -36,7 +41,11 @@ async def _lifespan(_app: FastAPI):
         import logging
 
         logging.getLogger("geo-api").exception("async job recover on startup failed")
-    yield
+    start_geo_scheduler()
+    try:
+        yield
+    finally:
+        shutdown_geo_scheduler()
 
 
 app = FastAPI(title="Growth Sniper GEO API", version="0.1.0", lifespan=_lifespan)
@@ -68,4 +77,5 @@ async def geo_health(response: Response) -> dict:
         "env": settings.app_env,
         "db": db_status,
         "db_error": db_error,
+        "geo_scheduler": scheduler_status(),
     }

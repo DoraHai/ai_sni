@@ -53,6 +53,7 @@ from app.config import get_settings
 from app.database import async_session_factory, engine, get_session
 from app.http_errors import register_infra_handlers
 from app.models import BaiduAccount, Keyword, Tenant
+from app.geo.content.geo_scheduler import scheduler_status
 from app.scheduler import (
     refresh_keyword_workbench_snapshot,
     shutdown_scheduler,
@@ -119,7 +120,16 @@ async def health() -> dict:
         "env": settings.app_env,
         "db": db_status,
         "db_error": db_error,
+        "geo_scheduler": scheduler_status(),
     }
+
+
+@app.get("/health/geo")
+async def geo_health() -> dict:
+    """Same shape as geo_main so local verify can hit :8000."""
+    payload = await health()
+    payload["service"] = "sem-backend"
+    return payload
 
 
 @app.get("/api/baidu/account/info")

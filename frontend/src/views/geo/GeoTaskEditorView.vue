@@ -410,6 +410,12 @@ async function load() {
     loadImpact()
     if (t.target_channels?.length) {
       channelPick.value = [...t.target_channels]
+    } else {
+      const enabled = (publishingChannels.value || [])
+        .filter((c) => c.enabled)
+        .map((c) => c.channel_type || c.adapt_key)
+        .filter(Boolean)
+      if (enabled.length) channelPick.value = [...new Set(enabled)]
     }
     // Never clobber an in-progress AI Brief draft with empty server brief
     applyTaskPayload(t, { skipBrief: briefLocalDraft.value || busy.value === 'suggest' })
