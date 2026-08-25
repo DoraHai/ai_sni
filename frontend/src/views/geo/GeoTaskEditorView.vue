@@ -1972,8 +1972,8 @@ const channelOptions = computed(() => {
     const seen = new Set()
     return opts
       .map((o) => ({
-        key: o.adapt_key || o.channel_type || o.key,
-        label: o.name || o.display_name || o.adapt_key || o.channel_type,
+        key: o.channel_type || o.adapt_key || o.key,
+        label: o.name || o.display_name || o.channel_type || o.adapt_key,
       }))
       .filter((o) => o.key && !seen.has(o.key) && (seen.add(o.key) || true))
   }
