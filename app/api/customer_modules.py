@@ -399,7 +399,10 @@ async def list_sem_accounts(
         (
             await session.scalars(
                 select(BaiduAccount)
-                .where(BaiduAccount.tenant_id == tenant_id)
+                .where(
+                    BaiduAccount.tenant_id == tenant_id,
+                    BaiduAccount.status != "archived",
+                )
                 .order_by(BaiduAccount.id)
             )
         ).all()

@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { archiveSemAccount, createCustomer, fetchCustomers, setCustomerModule, updateCustomer } from '../../api/moduleAssets'
+import { session } from '../../store/session'
 
 const router = useRouter()
 
@@ -89,6 +90,7 @@ async function save() {
     visible.value = false
     ElMessage.success('客户与模块配置已保存')
     await load()
+    session.requestTenantReload()
   } catch (error) { ElMessage.error(error.message) }
 }
 
@@ -119,6 +121,7 @@ async function archiveAccount(row, account) {
     await archiveSemAccount(row.id, account.id, reason)
     ElMessage.success('账户绑定已归档')
     await load()
+    session.requestTenantReload()
   } catch (error) { ElMessage.error(error.message) }
 }
 

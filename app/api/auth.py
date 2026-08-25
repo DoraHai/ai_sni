@@ -161,7 +161,10 @@ async def list_tenants(
             (
                 await session.scalars(
                     select(BaiduAccount)
-                    .where(BaiduAccount.tenant_id.in_(tenant_ids))
+                    .where(
+                        BaiduAccount.tenant_id.in_(tenant_ids),
+                        BaiduAccount.status != "archived",
+                    )
                     .order_by(BaiduAccount.tenant_id, BaiduAccount.id)
                 )
             ).all()
