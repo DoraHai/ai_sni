@@ -64,6 +64,13 @@ function applyBailian(row) {
   row.model = BAILIAN_PRESET.model
 }
 
+function dropBailian(row) {
+  row.api_base_url = ''
+  row.model = ''
+  row.sample_mode = 'mock_persona'
+  ElMessage.success('已清空百炼地址，改为人设模拟。点保存后生效')
+}
+
 function cardBadge(row) {
   if (row.enabled && dashscopeBlocked(row)) return { text: '百炼仅 DeepSeek', cls: 'red' }
   if (row.enabled) return { text: '监测中', cls: 'green' }
@@ -275,8 +282,11 @@ onMounted(load)
             type="error"
             :closable="false"
             show-icon
-            title="当前接口为阿里云百炼，仅支持 DeepSeek 监测。请填写该引擎的官方兼容接口，或关闭监测。"
+            title="当前接口为阿里云百炼，仅支持 DeepSeek 监测。请填写该引擎的官方兼容接口，或改用人设模拟。"
           />
+          <el-form-item v-if="dashscopeBlocked(editing)">
+            <el-button type="warning" @click="dropBailian(editing)">清空百炼地址，改用人设模拟</el-button>
+          </el-form-item>
           <el-form-item v-if="isDeepseekEngine(editing.engine_key)">
             <el-button @click="applyBailian(editing)">使用阿里云百炼</el-button>
           </el-form-item>

@@ -19,10 +19,10 @@
 **范围：**
 
 - 共享 Postgres（与 SEM 同库）
-- 主站 API：`sem-backend`（默认 `127.0.0.1:8000`，只运行 SEM 路由与调度）
-- GEO 独立 API：`geo-service`（`127.0.0.1:8010`，运行 GEO 路由与独立调度）
+- 主站 API：`sem-backend`（默认 `127.0.0.1:8000`，**含 scheduler / 可见度定时巡检**）
+- GEO 独立 API：`geo-service`（`127.0.0.1:8010`，**不**启 SEM 调度）
 - 静态 GEO 前端：`/opt/geo-frontend/current` → 公网 `/deal-sniper/geo/*`
-- SEM 主站 SPA 不包含 GEO 菜单或 GEO Vue 路由
+- Vue 主站 SPA：按主站现有发布流程（**禁止**生产构建写入 `VITE_API_KEY`）
 
 **刻意不在此文档：** 社交 OAuth、代理商 ZIP 交付包、改百度写回红线。
 
@@ -121,7 +121,7 @@ python3 -c "from base64 import b64encode; from os import urandom; print(b64encod
 
 ### 3.3 启动门禁说明
 
-`APP_ENV=prod` 时，`geo_main` 启动会执行 `prod_guard`：
+`APP_ENV=prod` 时，主站与 `geo_main` 启动会执行 `prod_guard`：
 
 - demo / 空 / 占位密钥 → **进程拒绝启动**
 - `JWT_SECRET` 空或与 `ADMIN_API_KEY` 相同 → **拒绝启动**
@@ -250,7 +250,7 @@ npm run deploy
 探活：
 
 ```bash
-curl -fsSI https://<公网域名>/deal-sniper/geo/
+curl -fsSI https://<公网域名>/deal-sniper/geo/dashboard.html
 curl -fsS https://<公网域名>/geo-health
 ```
 
@@ -268,23 +268,23 @@ curl -fsS https://<公网域名>/geo-health
 
 ---
 
-## 8. GEO 独立调度
+## 8. 主站 sem-backend（调度与登录）
 
-定时可见度巡检和每日指标汇总均由 **geo-service 自己的 scheduler** 运行，不依赖主站发布或重启。
+定时可见度巡检跑在 **GEO scheduler**（`app/geo/content/geo_scheduler.py`，约每小时 :05）。主站 `app.main` 与独立 `geo_main` 都会尝试启动，跨进程锁保证只跑一份。
 
 ```bash
-# 发布/重启 GEO 服务后
-systemctl is-active geo-service
-journalctl -u geo-service -n 50 --no-pager | grep -E 'geo-scheduler|prod_guard|started'
+# 发布/重启主站后
+systemctl is-active sem-backend
+journalctl -u sem-backend -n 50 --no-pager | grep -E 'scheduler|prod_guard|启动'
 
-# 确认调度已注册（日志中有 geo-scheduler started）
+# 确认调度已注册（日志中有 geo_visibility_patrols 或「已启动」）
 ```
 
-发布 GEO 时只需重启 `geo-service`；`sem-backend` 不需要发布或重启。
+若仅更新了 geo-service 而未重启主站：巡检 API 可用，但**定时任务仍依赖旧主站进程**——主站代码含巡检调度时需一并发布并重启 `sem-backend`。
 
 **勾选：**
 
-- [ ] `geo-service` active  
+- [ ] `sem-backend` active  
 - [ ] 启动日志无 `prod_guard` 失败  
 - [ ] 调度已启动  
 
@@ -380,7 +380,7 @@ curl -fsS http://127.0.0.1:8010/health/geo
 ```text
 GEO 生产第三步：APP_ENV=prod，密钥已轮换；alembic head；
 geo-service /health/geo db=ok；Nginx 无 API Key 注入；
-geo-service 自己负责可见度定时巡检；静态前端位于 /deal-sniper/geo/*。
+主站 scheduler 负责可见度定时巡检；静态 /deal-sniper/geo + Vue /geo/*。
 ```
 
 ---

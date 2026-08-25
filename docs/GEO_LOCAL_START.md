@@ -41,14 +41,22 @@ alembic upgrade head
 python scripts/seed_geo_demo.py
 ```
 
-## 3. 启动后端（必须用 `app.main`，定时巡检挂在这里）
+## 3. 启动后端
+
+推荐日常用主站（前端代理默认指向它）：
 
 ```powershell
 # 仓库根，加载 .env
 python -c "from dotenv import load_dotenv; load_dotenv(); import uvicorn; uvicorn.run('app.main:app', host='127.0.0.1', port=8000, reload=True)"
 ```
 
-健康检查：
+也可以只起独立 GEO API（不带 SEM 调度）：
+
+```powershell
+python -c "from dotenv import load_dotenv; load_dotenv(); import uvicorn; uvicorn.run('app.geo_main:app', host='127.0.0.1', port=8011, reload=True)"
+```
+
+**定时巡检和日指标**在两个进程里都能挂，用同一把跨进程锁，避免双跑。不要刻意同时起 8000 和 8011 除非你清楚谁抢到了锁。健康检查里的 `geo_scheduler` 为 `running` 表示本进程在打点，`skipped` 表示锁在别的进程。
 
 ```text
 http://127.0.0.1:8000/health/geo

@@ -15,7 +15,11 @@ from app.database import engine
 from app.http_errors import register_infra_handlers
 from app.geo.content.oauth_public import router as geo_oauth_public_router
 from app.geo.routes import router as geo_router
-from app.geo.scheduler import shutdown_geo_scheduler, start_geo_scheduler
+from app.geo.content.geo_scheduler import (
+    scheduler_status,
+    shutdown_geo_scheduler,
+    start_geo_scheduler,
+)
 from app.security.prod_guard import enforce_production_secrets
 
 settings = get_settings()
@@ -25,20 +29,20 @@ settings = get_settings()
 async def _lifespan(_app: FastAPI):
     # Productization must-do: refuse demo keys when APP_ENV=prod|production
     enforce_production_secrets(settings, hard_fail=True)
-    start_geo_scheduler()
     try:
-        try:
-            from app.geo.content.async_jobs import recover_jobs_on_startup
+        from app.geo.content.async_jobs import recover_jobs_on_startup
 
-            stats = await recover_jobs_on_startup(requeue_pending=True)
-            if any(stats.values()):
-                import logging
-
-                logging.getLogger("geo-api").info("async job recover: %s", stats)
-        except Exception:  # noqa: BLE001 — never block API boot
+        stats = await recover_jobs_on_startup(requeue_pending=True)
+        if any(stats.values()):
             import logging
 
-            logging.getLogger("geo-api").exception("async job recover on startup failed")
+            logging.getLogger("geo-api").info("async job recover: %s", stats)
+    except Exception:  # noqa: BLE001 — never block API boot
+        import logging
+
+        logging.getLogger("geo-api").exception("async job recover on startup failed")
+    start_geo_scheduler()
+    try:
         yield
     finally:
         shutdown_geo_scheduler()
@@ -73,4 +77,5 @@ async def geo_health(response: Response) -> dict:
         "env": settings.app_env,
         "db": db_status,
         "db_error": db_error,
+        "geo_scheduler": scheduler_status(),
     }
