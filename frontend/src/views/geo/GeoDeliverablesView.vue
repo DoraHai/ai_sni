@@ -724,9 +724,7 @@ onMounted(async () => {
   margin-bottom: 18px;
 }
 .panel-title { font-size: 15px; font-weight: 650; margin-bottom: 14px; color: #1e293b; }
-@media print {
-  .page-header .header-actions { display: none; }
-  .share-hint {
+.share-hint {
   margin-top: 8px;
   font-size: 12px;
   color: #64748b;
@@ -739,7 +737,9 @@ onMounted(async () => {
   border-radius: 4px;
 }
 .muted { color: #94a3b8; font-size: 12px; }
-.mb { margin-bottom: 12px; }
-.geo-deliv { padding: 0; }
+@media print {
+  .page-header .header-actions { display: none; }
+  .mb { margin-bottom: 12px; }
+  .geo-deliv { padding: 0; }
 }
 </style>

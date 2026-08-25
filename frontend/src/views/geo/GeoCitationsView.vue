@@ -1,8 +1,10 @@
 <script setup>
+import { geoSnapshotLink } from '../../utils/geoRoutes'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { backfillAttribution, fetchGeoCitationInsights, formatGeoError } from '../../api/geoContent'
+import GeoEmptyState from '../../components/GeoEmptyState.vue'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useObservationPeriod } from '../../composables/useObservationPeriod'
@@ -257,14 +259,17 @@ onMounted(load)
             </template>
           </el-table-column>
         </el-table>
-        <div v-if="!citeItems.length" class="geo-empty" style="margin-top: 12px">
-          <div class="empty-title">还没有可聚合的引用</div>
-          <div>请先在「AI 可见度」登记含 URL 的回答，或跑巡检后刷新。</div>
-          <div class="empty-actions">
-            <router-link class="el-button el-button--primary" to="/geo/visibility">去登记</router-link>
+        <GeoEmptyState
+          v-if="!citeItems.length"
+          icon="▤"
+          title="还没有可聚合的引用"
+          desc="请先在「AI 可见度」登记含 URL 的回答，或跑巡检后刷新。"
+        >
+          <template #action>
+            <router-link class="el-button el-button--primary" :to="geoSnapshotLink()">去登记</router-link>
             <router-link class="el-button" to="/geo/publishing">配置官网渠道</router-link>
-          </div>
-        </div>
+          </template>
+        </GeoEmptyState>
         <div class="geo-pager">
           <el-pagination
             background

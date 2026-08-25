@@ -3,11 +3,11 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { fetchGeoTopicHeat } from '../../api/geoContent'
+import GeoEmptyState from '../../components/GeoEmptyState.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { useObservationPeriod } from '../../composables/useObservationPeriod'
-
-const router = useRouter()
+import { geoSnapshotLink } from '../../utils/geoRoutes'
 import {
   HEAT_LABEL,
   REPORT_GLOSSARY,
@@ -17,6 +17,8 @@ import {
   fmtInt,
   labelOf,
 } from '../../utils/geoReportLabels'
+
+const router = useRouter()
 
 const { tenantId } = useGeoTenant()
 const { days, label: obsLabel } = useObservationPeriod()
@@ -80,10 +82,7 @@ function heatType(h) {
 function openTopic(row) {
   if (!row) return
   if (row.prompt_id) {
-    router.push({
-      path: '/geo/visibility',
-      query: { prompt_id: String(row.prompt_id) },
-    })
+    router.push(geoSnapshotLink({ prompt_id: row.prompt_id }))
     return
   }
   if (row.question_group) {
@@ -93,7 +92,7 @@ function openTopic(row) {
     })
     return
   }
-  router.push('/geo/visibility')
+  router.push(geoSnapshotLink())
   ElMessage.info('已打开可见度，可继续筛选相关意图词')
 }
 
@@ -284,14 +283,17 @@ onMounted(load)
           </template>
         </el-table-column>
       </el-table>
-      <div v-if="!items.length" class="geo-empty" style="margin-top: 12px">
-        <div class="empty-title">暂无覆盖数据</div>
-        <div>请先跑巡检或登记可见度快照，再刷新本页。</div>
-        <div class="empty-actions">
-          <router-link class="el-button el-button--primary" to="/geo/visibility/patrol">去巡检</router-link>
-          <router-link class="el-button" to="/geo/visibility">登记快照</router-link>
-        </div>
-      </div>
+      <GeoEmptyState
+        v-if="!items.length"
+        icon="◆"
+        title="暂无覆盖数据"
+        desc="请先跑巡检或登记可见度快照，再刷新本页。"
+      >
+        <template #action>
+          <router-link class="el-button el-button--primary" to="/geo/visibility/snapshots">去采集</router-link>
+          <router-link class="el-button" :to="geoSnapshotLink()">登记快照</router-link>
+        </template>
+      </GeoEmptyState>
       <div class="geo-pager">
         <el-pagination
           background

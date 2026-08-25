@@ -103,6 +103,7 @@ onMounted(load)
         <el-button :loading="testing" @click="test">测试连通</el-button>
         <el-button type="primary" :loading="saving" @click="save">保存</el-button>
         <el-button @click="load">刷新</el-button>
+        <router-link class="el-button" to="/geo/channel-polish-prompts">渠道成稿提示词</router-link>
         <router-link class="el-button" to="/geo/workbench">工作台</router-link>
       </div>
     </div>

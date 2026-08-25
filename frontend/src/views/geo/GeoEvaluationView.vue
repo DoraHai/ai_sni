@@ -1,5 +1,8 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import { geoSnapshotLink } from '../../utils/geoRoutes'
+import GeoEmptyState from '../../components/GeoEmptyState.vue'
+import GeoVisibilityNav from '../../components/GeoVisibilityNav.vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { fetchGeoEvaluationInsights } from '../../api/geoContent'
@@ -96,7 +99,7 @@ async function load() {
 }
 
 function openVisibility(promptId) {
-  router.push({ path: '/geo/visibility', query: promptId ? { prompt_id: String(promptId) } : {} })
+  router.push(geoSnapshotLink(promptId ? { prompt_id: promptId } : {}))
 }
 
 function exportRecent() {
@@ -125,10 +128,12 @@ onMounted(load)
   <div v-loading="loading" class="geo-page">
     <div class="page-header">
       <div>
-        <div class="page-title">评价与位置</div>
+        <div class="page-title">AI 可见度</div>
         <div class="page-desc">
-          汇总回答快照中的本品位置、情感倾向与引用质量。跟随顶栏观察期（{{ obsLabel }}）。
+          登记快照里标过的位置、情感、引用，在这里按观察期汇总。不另采样本。
+          跟随顶栏观察期（{{ obsLabel }}）。
         </div>
+        <GeoVisibilityNav />
       </div>
       <div class="header-actions">
         <el-button :loading="loading" @click="load">刷新</el-button>
@@ -143,6 +148,18 @@ onMounted(load)
     </details>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" show-icon />
+
+    <GeoEmptyState
+      v-if="!loading && !error && !data"
+      icon="◉"
+      title="还没有可分析的快照"
+      desc="先在「登记快照」或「全自动巡检」落库，再看这边的位置、情感、引用分布。"
+    >
+      <template #action>
+        <router-link class="el-button el-button--primary" :to="geoSnapshotLink()">去登记</router-link>
+        <router-link class="el-button" to="/geo/visibility/patrol">去巡检</router-link>
+      </template>
+    </GeoEmptyState>
 
     <div v-if="prototypeSurface.showEvaluationRawMetrics && data" class="geo-kpi-grid">
       <div v-for="c in kpiCards" :key="c.label" class="geo-kpi">
@@ -165,16 +182,19 @@ onMounted(load)
           </el-select>
         </div>
         <p class="geo-panel-desc">快照总数 {{ fmtInt(data.total) }}；「未标注/未知」偏高时优先补标。</p>
+        <div class="geo-table-shell">
         <el-table :data="distRows" size="small" empty-text="暂无分布">
           <el-table-column prop="dim" label="维度" width="110" />
           <el-table-column prop="value" label="取值" min-width="120" />
           <el-table-column prop="count" label="快照数" width="88" />
         </el-table>
+        </div>
       </section>
 
       <section class="geo-panel">
         <div class="panel-title">待处理信号</div>
         <p class="geo-panel-desc">按意图词查看近期 AI 回答信号，并回到可见度页处理。</p>
+        <div class="geo-table-shell">
         <el-table
           :data="recentPager.pagedItems"
           size="small"
@@ -207,13 +227,17 @@ onMounted(load)
             <template #default="{ row }">{{ fmtCaptured(row.captured_at) }}</template>
           </el-table-column>
         </el-table>
-        <div v-if="!recentItems.length" class="geo-empty" style="margin-top: 12px">
-          <div class="empty-title">还没有可分析的快照</div>
-          <div>先在「AI 可见度」登记或巡检落库，再回来看分布。</div>
-          <div class="empty-actions">
-            <router-link class="el-button el-button--primary" to="/geo/visibility">去登记</router-link>
-          </div>
         </div>
+        <GeoEmptyState
+          v-if="!recentItems.length"
+          icon="◌"
+          title="还没有可分析的快照"
+          desc="先在「AI 可见度」登记或巡检落库，再回来看分布。"
+        >
+          <template #action>
+            <router-link class="el-button el-button--primary" :to="geoSnapshotLink()">去登记</router-link>
+          </template>
+        </GeoEmptyState>
         <div class="geo-pager">
           <el-pagination
             background

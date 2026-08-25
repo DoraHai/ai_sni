@@ -40,9 +40,11 @@ export const HEAT_LABEL = {
 
 export const ENGINE_LABEL = {
   chatgpt: 'ChatGPT',
+  openai: 'ChatGPT',
   deepseek: 'DeepSeek',
   doubao: '豆包',
   kimi: 'Kimi',
+  moonshot: 'Kimi',
   qwen: '通义千问',
   tongyi: '通义千问',
   yuanbao: '腾讯元宝',
@@ -50,6 +52,10 @@ export const ENGINE_LABEL = {
   claude: 'Claude',
   gemini: 'Gemini',
   perplexity: 'Perplexity',
+  wenxin: '文心一言',
+  ernie: '文心一言',
+  yiyan: '文心一言',
+  spark: '讯飞星火',
   other: '其他',
 }
 
@@ -373,8 +379,27 @@ export function fmtCaptured(iso) {
   return s.length > 16 ? s.slice(0, 16) : s
 }
 
-export function engineDisplay(key) {
-  return labelOf(ENGINE_LABEL, key, key || '—')
+/** 兼容巡检 ops / 跟踪引擎 / 快照三种字段名 */
+export function engineKeyOf(source) {
+  if (source == null || source === '') return ''
+  if (typeof source === 'string' || typeof source === 'number') return String(source).trim()
+  return String(source.engine_key || source.engine || source.key || source.name || '').trim()
+}
+
+export function engineDisplay(source) {
+  const key = engineKeyOf(source)
+  if (!key) return '—'
+  const lower = key.toLowerCase()
+  return ENGINE_LABEL[lower] || ENGINE_LABEL[key] || key
+}
+
+export function engineLabelOf(source) {
+  if (source && typeof source === 'object') {
+    const named = String(source.display_name || source.name || '').trim()
+    if (named && named !== engineKeyOf(source)) return named
+    if (named && !ENGINE_LABEL[named.toLowerCase()]) return named
+  }
+  return engineDisplay(source)
 }
 
 /** 简单 CSV 导出（UTF-8 BOM，Excel 友好） */

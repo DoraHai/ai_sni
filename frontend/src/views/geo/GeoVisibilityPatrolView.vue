@@ -3,6 +3,7 @@
  * AI 可见度 · 全自动巡检
  * 多优化意图词 × 启用引擎探测；prefer_real 优先 openai_compat；auto_persist 直接落库快照。
  */
+import { geoSnapshotLink } from '../../utils/geoRoutes'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -17,6 +18,7 @@ import {
   putVisibilityPatrolSettings,
   startVisibilityPatrolRun,
 } from '../../api/geoContent'
+import GeoVisibilityNav from '../../components/GeoVisibilityNav.vue'
 import NeedHintAlert from '../../components/NeedHintAlert.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
@@ -370,12 +372,9 @@ onUnmounted(stopPoll)
         <div class="page-desc">
           按「意图词 × 引擎」批量探测并可选自动落库；真采样优先用引擎 Key，否则人设模拟。
           手工单条登记请回
-          <router-link to="/geo/visibility">登记快照</router-link>。
+          <router-link :to="geoSnapshotLink()">登记快照</router-link>。
         </div>
-        <div class="sub-tabs">
-          <router-link class="sub-tab" to="/geo/visibility">登记快照</router-link>
-          <router-link class="sub-tab is-active" to="/geo/visibility/patrol">全自动巡检</router-link>
-        </div>
+        <GeoVisibilityNav />
       </div>
       <div class="header-actions">
         <el-button :loading="loading" @click="load">刷新</el-button>
@@ -723,10 +722,7 @@ onUnmounted(stopPoll)
                 <router-link
                   v-if="row.snapshot_id"
                   class="link"
-                  :to="{
-                    path: '/geo/visibility',
-                    query: { snapshot_id: row.snapshot_id, patrol_run_id: detail.id },
-                  }"
+                  :to="geoSnapshotLink({ snapshot_id: row.snapshot_id, patrol_run_id: detail.id })"
                 >
                   #{{ row.snapshot_id }}
                 </router-link>
@@ -754,7 +750,7 @@ onUnmounted(stopPoll)
           <div v-if="detail.status === 'completed'" class="detail-links">
             <router-link
               class="el-button el-button--small el-button--primary is-plain"
-              :to="{ path: '/geo/visibility', query: { patrol_run_id: detail.id } }"
+              :to="geoSnapshotLink({ patrol_run_id: detail.id })"
             >
               查看本运行快照（{{ detail.snapshot_count ?? detail.snapshot_ids?.length ?? 0 }}）
             </router-link>

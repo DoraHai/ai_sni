@@ -799,7 +799,7 @@ onMounted(load)
         <h3 class="sec">分发平台</h3>
         <span class="sec-hint">维护平台连接状态与分发方式</span>
       </div>
-      <el-table :data="channels" stripe empty-text="暂无渠道" class="mb" size="small">
+      <el-table :data="channels" empty-text="暂无渠道" class="mb" size="small">
         <el-table-column prop="channel_type" label="类型" width="120" show-overflow-tooltip />
         <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
         <el-table-column label="发布模式" min-width="160">
@@ -918,7 +918,7 @@ onMounted(load)
         </el-button>
       </div>
 
-      <el-table :data="filteredAccounts" stripe empty-text="该渠道下暂无账号" size="small">
+      <el-table :data="filteredAccounts" empty-text="该渠道下暂无账号" size="small">
         <el-table-column prop="id" label="账号 ID" width="88" />
         <el-table-column label="所属渠道" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">

@@ -5,6 +5,7 @@ import {
   fetchChannelPolishPrompts,
   putChannelPolishPrompts,
 } from '../../api/geoContent'
+import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
 const { tenantId } = useGeoTenant()
@@ -17,8 +18,8 @@ const systemDefault = ref('')
 const isCustomSystem = ref(false)
 const channels = ref([])
 
-const current = computed(() =>
-  channels.value.find((c) => c.channel_key === activeTab.value) || null,
+const current = computed(
+  () => channels.value.find((c) => c.channel_key === activeTab.value) || null,
 )
 
 function applyPayload(data) {
@@ -82,11 +83,12 @@ async function resetSystem() {
   if (!tenantId.value) return
   saving.value = true
   try {
-    const data = await putChannelPolishPrompts({
-      tenant_id: tenantId.value,
-      reset_system: true,
-    })
-    applyPayload(data)
+    applyPayload(
+      await putChannelPolishPrompts({
+        tenant_id: tenantId.value,
+        reset_system: true,
+      }),
+    )
     ElMessage.success('已恢复系统提示词默认')
   } catch (e) {
     ElMessage.error(e.message || '恢复失败')
@@ -99,11 +101,12 @@ async function resetChannel(key) {
   if (!tenantId.value || !key) return
   saving.value = true
   try {
-    const data = await putChannelPolishPrompts({
-      tenant_id: tenantId.value,
-      channels: [{ channel_key: key, reset: true }],
-    })
-    applyPayload(data)
+    applyPayload(
+      await putChannelPolishPrompts({
+        tenant_id: tenantId.value,
+        channels: [{ channel_key: key, reset: true }],
+      }),
+    )
     ElMessage.success('已恢复该渠道默认提示词')
   } catch (e) {
     ElMessage.error(e.message || '恢复失败')
@@ -128,137 +131,133 @@ onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="geo-page">
-    <div class="page-header">
-      <div>
-        <div class="page-title">渠道成稿提示词</div>
-        <div class="page-desc">
-          按平台差异配置「AI 生成正式渠道稿」的系统提示词与渠道语气；空覆盖则用代码默认。
-        </div>
-      </div>
-      <div class="header-actions">
-        <el-button type="primary" :loading="saving" @click="save">保存全部</el-button>
-        <el-button @click="load">刷新</el-button>
-        <router-link class="el-button" to="/geo/ai-settings">AI 配置</router-link>
-        <router-link class="el-button" to="/geo/tasks">优化文章</router-link>
-      </div>
-    </div>
+  <GeoWorkbenchPage
+    title="渠道成稿提示词"
+    sub="官网 / 微信 / 知乎等渠道稿的系统提示、语气和最低字数。编辑器里「AI 生成正式渠道稿」会读这里。"
+    :loading="loading"
+  >
+    <template #actions>
+      <router-link class="gd-btn" to="/geo/ai-settings">AI 配置</router-link>
+      <router-link class="gd-btn" to="/geo/tasks">优化文章</router-link>
+      <button type="button" class="gd-btn" :disabled="loading" @click="load">刷新</button>
+      <button type="button" class="gd-btn primary" :disabled="saving" @click="save">保存全部</button>
+    </template>
 
-    <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
+    <div class="geo-v2 polish-page">
+      <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
 
-    <el-card shadow="never" class="mb">
-      <template #header>
-        <div class="card-head">
-          <span class="card-title">
-            共享系统提示词
-            <el-tag size="small" :type="isCustomSystem ? 'warning' : 'info'" effect="light" class="tag">
+      <section class="gv2-panel">
+        <div class="gv2-panel-head">
+          <div>
+            <span class="gv2-kicker">共用</span>
+            <h2>系统提示词</h2>
+            <p class="sub">全渠道共用的成稿约束。空则走代码默认；自定义后优先用租户配置。</p>
+          </div>
+          <div class="head-actions">
+            <el-tag size="small" :type="isCustomSystem ? 'warning' : 'info'" effect="light">
               {{ isCustomSystem ? '已自定义' : '使用默认' }}
             </el-tag>
-          </span>
-          <div class="card-actions">
             <el-button size="small" @click="fillSystemDefault">填入默认</el-button>
             <el-button size="small" :disabled="!isCustomSystem" @click="resetSystem">
               恢复默认
             </el-button>
           </div>
         </div>
-      </template>
-      <el-input
-        v-model="systemPrompt"
-        type="textarea"
-        :rows="10"
-        placeholder="全渠道共用的 system prompt（硬门控：完整成文 + GEO 品牌提及）"
-      />
-      <div class="form-hint">空则使用代码默认；自定义后「AI 生成正式渠道稿」优先读租户配置。</div>
-    </el-card>
-
-    <el-card shadow="never">
-      <template #header>
-        <span class="card-title">分渠道语气与字数</span>
-      </template>
-      <el-tabs v-model="activeTab" class="channel-tabs">
-        <el-tab-pane
-          v-for="c in channels"
-          :key="c.channel_key"
-          :name="c.channel_key"
-          :label="c.display_name"
+        <el-input
+          v-model="systemPrompt"
+          type="textarea"
+          :rows="10"
+          placeholder="全渠道共用的 system prompt（硬门控：完整成文 + GEO 品牌提及）"
         />
-      </el-tabs>
+      </section>
 
-      <template v-if="current">
-        <div class="channel-meta mb">
-          <el-tag size="small" :type="current.is_custom_voice ? 'warning' : 'info'" effect="light">
-            语气 {{ current.is_custom_voice ? '已自定义' : '使用默认' }}
-          </el-tag>
-          <el-tag size="small" :type="current.is_custom_min_body_chars ? 'warning' : 'info'" effect="light">
-            字数 {{ current.is_custom_min_body_chars ? '已自定义' : '使用默认' }}
-          </el-tag>
-          <el-button size="small" @click="fillChannelDefaults">填入默认</el-button>
-          <el-button
-            size="small"
-            :disabled="!current.is_custom_voice && !current.is_custom_min_body_chars"
-            @click="resetChannel(current.channel_key)"
-          >
-            恢复该渠道默认
-          </el-button>
+      <section class="gv2-panel">
+        <div class="gv2-panel-head">
+          <div>
+            <span class="gv2-kicker">分渠道</span>
+            <h2>语气与字数</h2>
+            <p class="sub">每个平台一篇成稿规范。字数不达标会被整篇驳回，不会存伪正稿。</p>
+          </div>
         </div>
-        <el-form label-width="110px" class="channel-form">
-          <el-form-item label="最低成稿字数">
-            <el-input-number
-              v-model="current.min_body_chars"
-              :min="100"
-              :max="20000"
-              :step="50"
-            />
-            <span class="form-hint inline">默认 {{ current.min_body_chars_default }}</span>
-          </el-form-item>
-          <el-form-item label="渠道语气">
-            <el-input
-              v-model="current.voice_prompt"
-              type="textarea"
-              :rows="12"
-              :placeholder="`${current.display_name} 成稿语气与结构要求`"
-            />
-          </el-form-item>
-        </el-form>
-      </template>
-    </el-card>
-  </div>
+        <el-tabs v-model="activeTab" class="channel-tabs">
+          <el-tab-pane
+            v-for="c in channels"
+            :key="c.channel_key"
+            :name="c.channel_key"
+            :label="c.display_name"
+          />
+        </el-tabs>
+        <template v-if="current">
+          <div class="channel-meta">
+            <el-tag size="small" :type="current.is_custom_voice ? 'warning' : 'info'" effect="light">
+              语气 {{ current.is_custom_voice ? '已自定义' : '使用默认' }}
+            </el-tag>
+            <el-tag
+              size="small"
+              :type="current.is_custom_min_body_chars ? 'warning' : 'info'"
+              effect="light"
+            >
+              字数 {{ current.is_custom_min_body_chars ? '已自定义' : '使用默认' }}
+            </el-tag>
+            <el-button size="small" @click="fillChannelDefaults">填入默认</el-button>
+            <el-button
+              size="small"
+              :disabled="!current.is_custom_voice && !current.is_custom_min_body_chars"
+              @click="resetChannel(current.channel_key)"
+            >
+              恢复该渠道默认
+            </el-button>
+          </div>
+          <el-form label-width="110px" class="channel-form">
+            <el-form-item label="最低成稿字数">
+              <el-input-number
+                v-model="current.min_body_chars"
+                :min="100"
+                :max="20000"
+                :step="50"
+              />
+              <span class="inline-hint">默认 {{ current.min_body_chars_default }}</span>
+            </el-form-item>
+            <el-form-item label="渠道语气">
+              <el-input
+                v-model="current.voice_prompt"
+                type="textarea"
+                :rows="12"
+                :placeholder="`${current.display_name} 成稿语气与结构要求`"
+              />
+            </el-form-item>
+          </el-form>
+        </template>
+        <el-empty v-else description="暂无渠道配置，请先刷新或检查后端渠道注册表" />
+      </section>
+    </div>
+  </GeoWorkbenchPage>
 </template>
 
 <style scoped>
-.card-head {
+.mb { margin-bottom: 14px; }
+.head-actions {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  width: 100%;
-}
-.card-title {
-  font-weight: 650;
-  color: #0f172a;
-  display: inline-flex;
-  align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
 }
-.card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.tag { vertical-align: middle; }
 .channel-meta {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
   align-items: center;
   padding: 10px 12px;
+  margin-bottom: 14px;
   background: #f8fafc;
   border-radius: 10px;
   border: 1px solid #eef2f7;
 }
-.form-hint.inline {
-  display: inline;
+.inline-hint {
   margin-left: 10px;
-  margin-top: 0;
+  font-size: 12px;
+  color: #64748b;
 }
-.channel-form { max-width: 920px; margin-top: 8px; }
+.channel-form { max-width: 920px; }
 .channel-tabs :deep(.el-tabs__header) { margin-bottom: 14px; }
 </style>

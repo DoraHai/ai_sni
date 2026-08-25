@@ -70,7 +70,7 @@ const engines = computed(() => {
   return (patrol.value?.engines || [])
     .filter((e) => e.enabled)
     .map((e) => ({
-      name: engineDisplay(e.engine || e.key || e.name),
+      name: engineDisplay(e.engine_key || e.engine || e.key || e.name),
       score: '—',
       stars: '☆☆☆☆☆',
       delta: '待采样',

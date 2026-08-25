@@ -1,11 +1,11 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { changePassword, fetchMe, fetchTenants } from './api/auth'
 import { fetchAlerts } from './api/alerts'
 import { fetchCandidates } from './api/expansion'
-import { useObservationPeriod } from './composables/useObservationPeriod'
+import GeoObservationPeriod from './components/GeoObservationPeriod.vue'
 import { session } from './store/session'
 import { GEO_WORKBENCH_NAV } from './utils/geoPrototypeNavigation'
 
@@ -19,12 +19,54 @@ const fluidMain = computed(() =>
   route.path.startsWith('/geo') || route.meta.fluidMain === true,
 )
 const isGeoRoute = computed(() => route.path.startsWith('/geo'))
-const {
-  days: observationDays,
-  label: observationLabel,
-  allowedDays: observationAllowedDays,
-  setDays: setObservationDays,
-} = useObservationPeriod()
+const mobileNavOpen = ref(false)
+const isMobile = ref(false)
+
+/** Pages using GeoWorkbenchPage embed observation period in their own topbar */
+const GEO_WORKBENCH_ROOTS = [
+  '/geo/overview',
+  '/geo/visibility',
+  '/geo/questions',
+  '/geo/competitors',
+  '/geo/citations',
+  '/geo/tasks',
+  '/geo/publishing',
+  '/geo/placements',
+  '/geo/brand',
+  '/geo/knowledge',
+  '/geo/models',
+  '/geo/channel-polish-prompts',
+  '/geo/geo-diagnosis',
+]
+const usesGeoWorkbenchShell = computed(() => {
+  // Task editor has its own toolbar — not GeoWorkbenchPage
+  if (/^\/geo\/tasks\/[^/]+/.test(route.path)) return false
+  return GEO_WORKBENCH_ROOTS.some(
+    (p) => route.path === p || (p !== '/geo/visibility' && route.path.startsWith(`${p}/`)),
+  )
+})
+const showGeoObsInApp = computed(
+  () => isGeoRoute.value && !usesGeoWorkbenchShell.value && !/^\/geo\/tasks\/[^/]+/.test(route.path),
+)
+
+function toggleMobileNav() {
+  mobileNavOpen.value = !mobileNavOpen.value
+}
+
+function closeMobileNav() {
+  mobileNavOpen.value = false
+}
+
+let mobileMq
+function syncMobile() {
+  isMobile.value = mobileMq?.matches ?? false
+  if (!isMobile.value) mobileNavOpen.value = false
+}
+
+const asideWidth = computed(() => {
+  if (isMobile.value) return '0px'
+  return isGeoRoute.value ? '216px' : '228px'
+})
 const tenantPopoverOpen = ref(false)
 
 const roleTone = computed(() => {
@@ -131,8 +173,6 @@ function itemMatchesPath(item, path) {
   if (path === item.path) return true
   if (item.exact) return false
   if (item.path === '/' || item.path === '/onboarding') return false
-  // /geo/visibility 不应高亮 /geo/visibility/patrol
-  if (item.path === '/geo/visibility') return false
   return path.startsWith(item.path + '/')
 }
 
@@ -267,7 +307,7 @@ function onTenantChange(id) {
   tenantPopoverOpen.value = false
   if (route.path.startsWith('/monitor/keywords/')) router.push('/monitor/dashboard')
   else if (route.path.startsWith('/geo/tasks/')) router.push('/geo/tasks')
-  else if (route.path.startsWith('/geo/businesses/')) router.push('/geo/businesses')
+  else if (route.path.startsWith('/geo/businesses/')) router.push('/geo/brand')
 }
 
 async function onUserCommand(cmd) {
@@ -295,14 +335,38 @@ async function onUserCommand(cmd) {
 
 watch(() => session.isLoggedIn, (v) => { if (v) { loadTenants(); loadBadges() } })
 watch(() => session.tenantId, loadBadges)
-watch(() => route.path, syncOpenToRoute)
-onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
+watch(() => route.path, () => {
+  syncOpenToRoute()
+  closeMobileNav()
+})
+onMounted(() => {
+  refreshMe()
+  loadTenants()
+  loadBadges()
+  syncOpenToRoute()
+  mobileMq = window.matchMedia('(max-width: 767px)')
+  syncMobile()
+  mobileMq.addEventListener('change', syncMobile)
+})
+onUnmounted(() => {
+  mobileMq?.removeEventListener('change', syncMobile)
+})
 </script>
 
 <template>
   <router-view v-if="bare" />
   <el-container v-else style="height: 100vh">
-    <el-aside :width="isGeoRoute ? '216px' : '228px'" class="side" :class="{ 'geo-side': isGeoRoute }">
+    <div
+      v-if="isMobile && mobileNavOpen"
+      class="side-backdrop"
+      aria-hidden="true"
+      @click="closeMobileNav"
+    />
+    <el-aside
+      :width="asideWidth"
+      class="side"
+      :class="{ 'geo-side': isGeoRoute, 'side-mobile-open': isMobile && mobileNavOpen }"
+    >
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">{{ isGeoRoute ? 'G' : 'S' }}</div>
         <div class="brand-copy">
@@ -320,7 +384,7 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
               type="button"
               class="geo-nav-item"
               :class="{ active: isActive(leaf) }"
-              @click="go(leaf)"
+              @click="go(leaf); closeMobileNav()"
             >
               <span v-if="leaf.icon" class="geo-nav-ico" aria-hidden="true">{{ leaf.icon }}</span>
               {{ leaf.label }}
@@ -440,9 +504,11 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
             </button>
           </div>
         </el-popover>
-        <button type="button" class="geo-back" @click="router.push('/deal-sniper/hub/dashboard')">⌂ 全域驾驶舱</button>
-        <button type="button" class="geo-back" @click="router.push('/deal-sniper/seo/articles')">S SEO 内容工作台</button>
-        <button type="button" class="geo-back" @click="router.push('/deal-sniper/portal')">← 平台门户</button>
+        <button
+          type="button"
+          class="geo-back"
+          @click="session.logout(); router.push('/login')"
+        >← 退出</button>
       </div>
       <nav v-else class="side-shortcuts" aria-label="跨模块快捷入口">
         <div class="shortcut-group shortcut-group-muted">
@@ -459,7 +525,17 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
       </nav>
     </el-aside>
 
-    <el-container>
+    <el-container class="app-main-col">
+      <div v-if="isMobile" class="mobile-nav-bar">
+        <button type="button" class="mobile-menu-btn" aria-label="打开导航菜单" @click="toggleMobileNav">
+          ☰
+        </button>
+        <span class="mobile-nav-title">{{ isGeoRoute ? 'GEO 工作台' : (currentTitle || '工作台') }}</span>
+        <GeoObservationPeriod v-if="showGeoObsInApp" />
+      </div>
+      <div v-else-if="showGeoObsInApp" class="geo-obs-app-bar">
+        <GeoObservationPeriod />
+      </div>
       <el-header v-if="!isGeoRoute" class="topbar" height="52px">
         <div class="crumb-block">
           <div class="crumb-kicker">当前位置</div>
@@ -469,27 +545,6 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
           </el-breadcrumb>
         </div>
         <div class="topbar-right">
-          <div
-            v-if="isGeoRoute"
-            class="obs-period"
-            title="GEO 报表默认观察期（上海日历日）；全时段指标会在页面单独标注"
-          >
-            <span class="obs-period-label">观察期</span>
-            <el-select
-              :model-value="observationDays"
-              size="small"
-              class="obs-period-select"
-              @change="setObservationDays"
-            >
-              <el-option
-                v-for="d in observationAllowedDays"
-                :key="d"
-                :label="`近 ${d} 天`"
-                :value="d"
-              />
-            </el-select>
-            <span class="obs-period-range">{{ observationLabel }}</span>
-          </div>
           <template v-if="session.tenants.length">
             <el-popover
               v-model:visible="tenantPopoverOpen"
@@ -1089,5 +1144,77 @@ onMounted(() => { refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute() })
   font-size: 15px;
   font-weight: 700;
   justify-self: end;
+}
+
+.app-main-col {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.mobile-nav-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #fff;
+  border-bottom: 1px solid var(--sem-border);
+  flex-wrap: wrap;
+}
+.mobile-menu-btn {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--sem-border);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  flex: none;
+}
+.mobile-menu-btn:hover { background: #f3f6fa; }
+.mobile-nav-title {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--sem-text);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.geo-obs-app-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 16px;
+  background: #fff;
+  border-bottom: 1px solid #e8eaf0;
+}
+
+.side-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+@media (max-width: 767px) {
+  .side {
+    position: fixed !important;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 2001;
+    width: min(280px, 86vw) !important;
+    transform: translateX(-105%);
+    transition: transform 0.2s ease;
+    box-shadow: none;
+  }
+  .side.side-mobile-open {
+    transform: translateX(0);
+    box-shadow: 4px 0 24px rgba(15, 23, 42, 0.14);
+  }
 }
 </style>

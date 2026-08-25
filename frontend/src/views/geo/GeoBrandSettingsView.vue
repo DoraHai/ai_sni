@@ -1,24 +1,27 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import GeoBusinessProfileForm from '../../components/GeoBusinessProfileForm.vue'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import {
+  createGeoBusiness,
   fetchGeoCompetitorInsights,
   listGeoBusinesses,
   patchGeoBusiness,
 } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
-const router = useRouter()
 const { tenantId, session } = useGeoTenant()
 const loading = ref(false)
 const saving = ref(false)
+const creating = ref(false)
+const newBizName = ref('')
 const error = ref('')
 const businesses = ref([])
 const selectedId = ref(null)
 const profile = ref({})
+const insightNames = ref([])
+const newCompetitor = ref('')
 
 const tenantName = computed(() => {
   const hit = (session.tenants || []).find((t) => t.id === tenantId.value)
@@ -27,14 +30,12 @@ const tenantName = computed(() => {
 const current = computed(
   () => businesses.value.find((b) => b.id === selectedId.value) || null,
 )
-const completeness = computed(() => {
+const filledCount = computed(() => {
   const p = profile.value || {}
-  const keys = ['product_name', 'website', 'summary', 'industry', 'honors', 'qualifications']
-  const hit = keys.filter((k) => String(p[k] || '').trim()).length
-  return `${hit}/${keys.length}`
+  return ['product_name', 'website', 'summary', 'industry', 'honors', 'qualifications']
+    .filter((k) => String(p[k] || '').trim()).length
 })
-const insightNames = ref([])
-const newCompetitor = ref('')
+const completeness = computed(() => `${filledCount.value}/6`)
 
 function splitNames(raw) {
   if (Array.isArray(raw)) return raw.map((x) => String(x || '').trim()).filter(Boolean)
@@ -47,7 +48,7 @@ function splitNames(raw) {
 const competitorList = computed(() => splitNames(profile.value.competitors))
 const suggestedCompetitors = computed(() => {
   const have = new Set(competitorList.value.map((n) => n.toLowerCase()))
-  return insightNames.value.filter((n) => n && !have.has(n.toLowerCase())).slice(0, 6)
+  return insightNames.value.filter((n) => n && !have.has(n.toLowerCase())).slice(0, 8)
 })
 
 function emptyProfile() {
@@ -73,6 +74,7 @@ function profileFromRow(row) {
   const p = row?.profile || {}
   const join = (v) => (Array.isArray(v) ? v.join('，') : v || '')
   return {
+    ...emptyProfile(),
     ...p,
     product_name: p.product_name || row?.name || '',
     website: p.website || p.website_url || p.official_url || '',
@@ -156,76 +158,251 @@ async function save() {
   }
 }
 
+async function createBusiness() {
+  const name = String(newBizName.value || '').trim()
+  if (!name) {
+    ElMessage.warning('请填写品牌/业务名称')
+    return
+  }
+  if (!tenantId.value) {
+    ElMessage.warning('请先选择客户')
+    return
+  }
+  creating.value = true
+  try {
+    const row = await createGeoBusiness({ tenant_id: tenantId.value, name })
+    ElMessage.success('已创建')
+    newBizName.value = ''
+    await load()
+    if (row?.id) selectedId.value = row.id
+  } catch (e) {
+    ElMessage.error(e.message || '创建失败')
+  } finally {
+    creating.value = false
+  }
+}
+
 watch(tenantId, load)
 onMounted(load)
 </script>
 
 <template>
   <GeoWorkbenchPage
-    title="品牌信息"
-    :sub="`维护品牌名称、官网、行业、介绍与资质信息 · 完整度 ${completeness}`"
+    title="品牌资料"
+    :sub="`维护品牌名称、官网、行业、介绍与资质信息 · 已填写 ${completeness}`"
     :loading="loading"
   >
     <template #actions>
-      <span class="gd-badge green">完整度 {{ completeness }}</span>
-      <button class="gd-btn primary" :disabled="saving" @click="save">保存</button>
+      <button class="gd-btn" :disabled="loading" @click="load">刷新</button>
+      <button class="gd-btn primary" :disabled="saving || !current" @click="save">保存</button>
     </template>
-    <div class="geo-dash">
 
-    <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
+    <div class="geo-dash brand-page">
+      <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
 
-    <section class="gv2-panel">
-      <div class="gv2-panel-head">
-        <div>
-          <span class="gv2-kicker">基础配置</span>
-          <h2>品牌资料 · {{ tenantName }}</h2>
-          <p class="sub">按业务维护品牌资料。荣誉和资质仅作为待佐证资料，不会自动写入内容结论。</p>
+      <el-empty v-if="!businesses.length" description="还没有品牌资料。先建一条业务线，再填写官网、行业和介绍。">
+        <div class="brand-create">
+          <el-input v-model="newBizName" placeholder="品牌 / 业务名称" style="width: 240px" />
+          <el-button type="primary" :loading="creating" @click="createBusiness">创建</el-button>
         </div>
-        <el-select v-model="selectedId" placeholder="选择业务" style="width: 220px">
-          <el-option v-for="b in businesses" :key="b.id" :label="b.name" :value="b.id" />
-        </el-select>
-      </div>
-      <el-empty v-if="!businesses.length" description="还没有业务线，请先创建业务。">
-        <el-button type="primary" @click="router.push('/geo/businesses')">去业务管理</el-button>
       </el-empty>
-      <GeoBusinessProfileForm v-else v-model="profile" />
-      <div v-if="current" class="gd-card" style="margin-top:16px">
-        <div class="gd-hd"><h3>竞争对手</h3></div>
-        <div class="gd-bd">
-          <p class="gd-sub" style="margin:0 0 12px">列出主要替代品牌，竞品分析会按这些名字归并快照。</p>
-          <div v-for="name in competitorList" :key="name" class="comp-row">
-            <b>{{ name }}</b>
-            <button class="gd-btn" style="margin-left:auto" @click="removeCompetitor(name)">删除</button>
+
+      <template v-else>
+        <section class="brand-block">
+          <div class="block-copy">
+            <h3>当前业务</h3>
+            <p>品牌字段按业务分开维护。客户 {{ tenantName }}</p>
           </div>
-          <div v-if="!competitorList.length" class="gd-sub">还没有竞品，从下方推荐添加或手动输入。</div>
-          <div style="display:flex;gap:8px;margin-top:12px">
-            <input v-model="newCompetitor" class="gd-search" placeholder="输入竞品名称" @keyup.enter="addCompetitor()" />
-            <button class="gd-btn primary" @click="addCompetitor()">+ 新增</button>
+          <div class="biz-controls">
+            <el-select
+              v-model="selectedId"
+              filterable
+              placeholder="选择业务"
+              class="biz-select"
+            >
+              <el-option
+                v-for="b in businesses"
+                :key="b.id"
+                :label="b.name"
+                :value="b.id"
+              />
+            </el-select>
+            <el-input
+              v-model="newBizName"
+              placeholder="再加一条业务"
+              size="small"
+              style="width: 180px"
+              @keyup.enter="createBusiness"
+            />
+            <button type="button" class="gd-btn" :disabled="creating" @click="createBusiness">
+              {{ creating ? '创建中…' : '新建' }}
+            </button>
           </div>
-          <div v-if="suggestedCompetitors.length" style="margin-top:14px">
-            <div class="gd-sub">快照里出现过、尚未加入</div>
-            <div class="geo-chips">
+        </section>
+
+        <section v-if="current" class="brand-block stacked">
+          <div class="editing-line">正在编辑：{{ current.name }}</div>
+          <GeoBusinessProfileForm v-model="profile" />
+        </section>
+
+        <section v-if="current" class="brand-block stacked">
+          <div class="block-copy">
+            <h3>竞争对手</h3>
+            <p>列出主要替代品牌，竞品分析会按这些名字归并快照。</p>
+          </div>
+
+          <div v-if="competitorList.length" class="comp-tags">
+            <span v-for="name in competitorList" :key="name" class="comp-tag">
+              {{ name }}
+              <button type="button" class="comp-x" :title="`删除 ${name}`" @click="removeCompetitor(name)">×</button>
+            </span>
+          </div>
+          <p v-else class="empty-hint">还没有竞品，从下方推荐添加或手动输入。</p>
+
+          <div class="comp-add">
+            <input
+              v-model="newCompetitor"
+              class="comp-input"
+              placeholder="输入竞品名称"
+              @keyup.enter="addCompetitor()"
+            />
+            <button type="button" class="gd-btn primary" @click="addCompetitor()">+ 新增</button>
+          </div>
+
+          <div v-if="suggestedCompetitors.length" class="suggest">
+            <div class="suggest-label">快照里出现过、尚未加入</div>
+            <div class="suggest-chips">
               <button
                 v-for="n in suggestedCompetitors"
                 :key="n"
-                class="geo-chip"
+                type="button"
+                class="suggest-chip"
                 @click="addCompetitor(n)"
               >+ {{ n }}</button>
             </div>
           </div>
-        </div>
-      </div>
-    </section>
-
+        </section>
+      </template>
     </div>
   </GeoWorkbenchPage>
 </template>
+
 <style scoped>
-.comp-row {
+.brand-page { max-width: 880px; }
+.mb { margin-bottom: 14px; }
+.brand-block {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 0;
-  border-bottom: 1px solid #e8eaf0;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+  padding: 18px 20px;
+  background: #fff;
+  border: 1px solid #e8eaf0;
+  border-radius: 14px;
+}
+.brand-block.stacked {
+  display: block;
+}
+.block-copy h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 750;
+  color: #1e2330;
+}
+.block-copy p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #6b7280;
+  line-height: 1.5;
+}
+.biz-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.biz-select { width: min(280px, 70vw); }
+.editing-line {
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: #6b7280;
+}
+.comp-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 4px;
+}
+.comp-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 6px 12px;
+  border-radius: 999px;
+  background: #f5f3ff;
+  color: #5b21b6;
+  font-size: 13px;
+  font-weight: 600;
+}
+.comp-x {
+  border: 0;
+  background: transparent;
+  color: #7c3aed;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.comp-x:hover { color: #b91c1c; }
+.empty-hint {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: #9ca3af;
+}
+.comp-add {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  max-width: 520px;
+}
+.comp-input {
+  flex: 1;
+  min-width: 0;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  font-size: 13px;
+  background: #fff;
+}
+.comp-input:focus {
+  outline: none;
+  border-color: #7c3aed;
+}
+.suggest { margin-top: 16px; }
+.suggest-label {
+  font-size: 12px;
+  color: #9ca3af;
+  margin-bottom: 8px;
+}
+.suggest-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.suggest-chip {
+  border: 1px solid #ede9fe;
+  background: #fff;
+  color: #6d28d9;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.suggest-chip:hover {
+  background: #f5f3ff;
+  border-color: #c4b5fd;
 }
 </style>

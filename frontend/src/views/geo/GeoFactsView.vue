@@ -343,7 +343,7 @@ onMounted(load)
     </div>
 
     <div class="geo-table-shell">
-      <el-table :data="pager.pagedItems" stripe empty-text="暂无事实">
+      <el-table :data="pager.pagedItems" empty-text="暂无事实">
         <el-table-column v-if="prototypeSurface.showKnowledgeHealth" prop="id" label="ID" width="72" />
         <el-table-column label="标题 / 陈述" min-width="260">
           <template #default="{ row }">
