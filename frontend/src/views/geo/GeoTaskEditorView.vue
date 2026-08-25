@@ -1053,7 +1053,7 @@ async function saveArticleBody() {
   }
 }
 
-async function runCheck() {
+async function runCheck({ silent = false } = {}) {
   busy.value = 'check'
   try {
     const res = await checkGeoContentTask(tenantId.value, taskId.value, false)
@@ -1062,13 +1062,18 @@ async function runCheck() {
       task.value = res.task
       applyArticleFromTask(res.task)
     }
-    ElMessage.success(
-      res.ready
-        ? `规则就绪 · Score ${res.geo_score ?? '—'}`
-        : `尚未就绪 · Score ${res.geo_score ?? '—'}`,
-    )
+    if (!silent) {
+      ElMessage.closeAll()
+      if (res.ready) {
+        ElMessage.success(`结构检查已通过，就绪分 ${res.geo_score ?? '—'}`)
+      } else {
+        ElMessage.warning(`尚未就绪，就绪分 ${res.geo_score ?? '—'}。请看右侧待补齐。`)
+      }
+    }
+    return res
   } catch (e) {
     toastError(e, '检查失败')
+    return null
   } finally {
     busy.value = ''
   }
@@ -1821,8 +1826,13 @@ async function fixCheck(code) {
     await applyPatch(code)
     return
   }
-  ElMessage.info('这项还没有可自动写入的修改。请先点「检查就绪」，或按右侧说明手工改。')
-  await runCheck()
+  await runCheck({ silent: true })
+  if (patchForCheck(code)) {
+    await applyPatch(code)
+    return
+  }
+  ElMessage.closeAll()
+  ElMessage.warning('这项需要对照右侧原文手工改，没有可自动写入的修改。')
 }
 const boundFacts = computed(() => task.value?.facts || [])
 const boundVerifiedCount = computed(
