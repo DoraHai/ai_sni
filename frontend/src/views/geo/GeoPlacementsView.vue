@@ -212,8 +212,8 @@ onMounted(load)
       <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
 
       <div class="geo-table-card">
-        <el-table :data="pager.pagedItems" empty-text="暂无信源计划">
-          <el-table-column label="名称" min-width="280">
+        <el-table :data="pager.pagedItems" empty-text="暂无信源计划" class="pack-table">
+          <el-table-column label="名称" width="440">
             <template #default="{ row }">
               <div class="name">{{ row.name }}</div>
               <div v-if="row.authority_note" class="note">{{ row.authority_note }}</div>
@@ -242,7 +242,7 @@ onMounted(load)
               </span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="156" align="right">
+          <el-table-column label="操作" width="168">
             <template #default="{ row }">
               <div class="geo-act">
                 <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
@@ -256,6 +256,7 @@ onMounted(load)
               </div>
             </template>
           </el-table-column>
+          <el-table-column min-width="24" class-name="col-fill" />
         </el-table>
         <div class="geo-table-foot">
           <span>共 {{ pager.total }} 条</span>
@@ -342,5 +343,6 @@ onMounted(load)
   color: #374151;
 }
 .geo-status-cell { white-space: nowrap; }
+.note { max-width: 52ch; }
 .mb { margin-bottom: 12px; }
 </style>

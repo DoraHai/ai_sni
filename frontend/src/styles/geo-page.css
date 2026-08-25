@@ -631,8 +631,14 @@
   flex-wrap: nowrap;
   gap: 2px 8px;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   white-space: nowrap;
+}
+
+.pack-table :deep(th.col-fill),
+.pack-table :deep(td.col-fill) {
+  border-left: 0;
+  padding: 0 !important;
 }
 
 .geo-act .el-button.is-link {
