@@ -30,13 +30,14 @@ def test_geo_service_owns_routes_guard_and_scheduler():
     assert "geo_daily_metrics_nightly" in geo_scheduler
 
 
-def test_sem_frontend_has_no_geo_workbench_menu_or_routes():
+def test_geo_frontend_is_mounted_without_replacing_the_sem_shell():
     app = _read("frontend/src/App.vue")
     router = _read("frontend/src/router/index.js")
     main = _read("frontend/src/main.js")
     assert "GEO 增长" not in app
-    assert "../views/geo/" not in router
-    assert "'/geo/overview'" not in router
+    assert "GeoWorkspaceShell.vue" in router
+    assert "path: '/geo'" in router
+    assert "meta: { bare: true" in router
     assert "./styles/geo-page.css" not in main
 
 

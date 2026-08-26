@@ -38,7 +38,7 @@ test('prototype competitor and channel pages keep only their primary surfaces', 
   assert.deepEqual(getGeoPrototypePageSurface(), {
     showCompetitorAdvancedAnalysis: false,
     showChannelAutomationConsole: false,
-    showChannelAccountConsole: false,
+    showChannelAccountConsole: true,
     showEvaluationRawMetrics: false,
     showCitationRawMetrics: false,
     showKnowledgeHealth: false,

@@ -23,8 +23,8 @@ class EvidenceCiteTests(unittest.TestCase):
         ]
         out, rows = attach_sentence_citations(md, facts)
         self.assertTrue(any(r["cited"] and r["fact_id"] == 11 for r in rows))
-        self.assertIn("逐句证据", out)
-        self.assertIn("#11", out)
+        self.assertEqual(out, md)
+        self.assertEqual(rows[0]["fact_id"], 11)
 
     def test_unmatched_sentence_needs_review(self):
         md = "今天天气很好适合出门散步看花。另一句也跟客服系统毫无关系。"
@@ -39,13 +39,15 @@ class EvidenceCiteTests(unittest.TestCase):
         out, rows = attach_sentence_citations(md, facts)
         self.assertTrue(rows)
         self.assertTrue(any(not r["cited"] for r in rows))
-        self.assertIn("未挂事实", out)
+        self.assertEqual(out, md)
 
     def test_no_facts_leaves_body_untouched(self):
         md = "一段足够长的正文句子不会被改写。"
         out, rows = attach_sentence_citations(md, [])
         self.assertEqual(out, md)
-        self.assertEqual(rows, [])
+        self.assertEqual(len(rows), 1)
+        self.assertFalse(rows[0]["cited"])
+        self.assertFalse(rows[0]["needs_fact"])
 
 
 if __name__ == "__main__":

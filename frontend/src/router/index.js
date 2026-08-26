@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { session } from '../store/session'
 import { loginUrl } from '../auth/loginRedirect'
+import { GEO_WORKBENCH_START } from '../utils/geoPrototypeNavigation'
 
 // 路由按原型 v3.0 的 6 个工作流划分，未实现的页面挂占位组件。
 // meta.perm = 该页所需菜单权限 key（自定义角色 RBAC）；可为数组=任一可见即可（下钻页）。
@@ -62,6 +63,63 @@ const routes = [
     path: '/assistant',
     component: () => import('../views/assistant/AssistantView.vue'),
     meta: { title: 'AI 助手', workflow: '智能助手', perm: 'assistant' },
+  },
+  {
+    path: '/geo',
+    component: () => import('../views/geo/GeoWorkspaceShell.vue'),
+    redirect: GEO_WORKBENCH_START,
+    meta: { bare: true, workflow: 'GEO 工作台', perm: 'geo.content' },
+    children: [
+      { path: 'overview', component: () => import('../views/geo/GeoOverviewView.vue'), meta: { title: 'GEO 概览', documentTitle: 'GEO 工作台｜GEO 概览' } },
+      { path: 'visibility', component: () => import('../views/geo/GeoVisibilityDashView.vue'), meta: { title: 'AI 可见度', documentTitle: 'GEO 工作台｜AI 可见度' } },
+      { path: 'visibility/snapshots', component: () => import('../views/geo/GeoVisibilityView.vue'), meta: { title: '采集与判断', documentTitle: 'GEO 工作台｜采集与判断' } },
+      { path: 'questions', component: () => import('../views/geo/GeoPromptsView.vue'), meta: { title: '优化意图词', documentTitle: 'GEO 工作台｜优化意图词' } },
+      { path: 'knowledge', component: () => import('../views/geo/GeoFactsView.vue'), meta: { title: '知识库', documentTitle: 'GEO 工作台｜知识库' } },
+      { path: 'brand', component: () => import('../views/geo/GeoBrandSettingsView.vue'), meta: { title: '品牌资料', documentTitle: 'GEO 工作台｜品牌资料' } },
+      { path: 'models', component: () => import('../views/geo/GeoEnginesView.vue'), meta: { title: '引擎', documentTitle: 'GEO 工作台｜引擎' } },
+      { path: 'citations', component: () => import('../views/geo/GeoCitationsView.vue'), meta: { title: 'AI 引用次数', documentTitle: 'GEO 工作台｜AI 引用次数' } },
+      { path: 'competitors', component: () => import('../views/geo/GeoCompetitorsView.vue'), meta: { title: '竞品分析', documentTitle: 'GEO 工作台｜竞品分析' } },
+      { path: 'tasks', component: () => import('../views/geo/GeoTasksView.vue'), meta: { title: '优化文章', documentTitle: 'GEO 工作台｜优化文章' } },
+      { path: 'tasks/:taskId', component: () => import('../views/geo/GeoTaskEditorView.vue'), meta: { title: '内容编辑器', documentTitle: 'GEO 工作台｜内容编辑器' } },
+      { path: 'ai-settings', component: () => import('../views/geo/GeoAiSettingsView.vue'), meta: { title: 'AI 能力配置', documentTitle: 'GEO 工作台｜AI 能力配置' } },
+      { path: 'channel-polish-prompts', component: () => import('../views/geo/GeoChannelPolishPromptsView.vue'), meta: { title: '渠道成稿提示词', documentTitle: 'GEO 工作台｜渠道成稿提示词' } },
+      { path: 'publishing', component: () => import('../views/geo/GeoPublishingView.vue'), meta: { title: '分发平台', documentTitle: 'GEO 工作台｜分发平台' } },
+      { path: 'placements', component: () => import('../views/geo/GeoPlacementsView.vue'), meta: { title: '信源策略', documentTitle: 'GEO 工作台｜信源策略' } },
+      { path: 'keywords', redirect: '/geo/questions' },
+      { path: 'recommend', redirect: '/geo/questions' },
+      { path: 'answers', redirect: '/geo/visibility' },
+      { path: 'permissions', redirect: '/geo/overview' },
+      { path: 'geo-diagnosis', redirect: GEO_WORKBENCH_START },
+      { path: 'visibility/evaluation', redirect: '/geo/visibility/snapshots' },
+      { path: 'visibility/patrol', redirect: '/geo/visibility/snapshots' },
+      { path: 'period-diff', redirect: '/geo/visibility' },
+      { path: 'gaps', redirect: '/geo/questions' },
+      { path: 'gap-workbench', redirect: '/geo/questions' },
+      { path: 'periods', redirect: GEO_WORKBENCH_START },
+      { path: 'topic-heat', redirect: '/geo/questions' },
+      { path: 'ai-trends', redirect: GEO_WORKBENCH_START },
+      { path: 'evaluation', redirect: '/geo/visibility' },
+      { path: 'deliverables', redirect: GEO_WORKBENCH_START },
+      { path: 'workbench', redirect: GEO_WORKBENCH_START },
+      { path: 'businesses', redirect: '/geo/brand' },
+      { path: 'businesses/:businessId', redirect: '/geo/brand' },
+      { path: 'onboarding', redirect: GEO_WORKBENCH_START },
+      { path: 'prompts', redirect: (to) => ({ path: '/geo/questions', query: to.query }) },
+      { path: 'facts', redirect: '/geo/knowledge' },
+      { path: 'engines', redirect: '/geo/models' },
+    ],
+  },
+  {
+    path: '/geo/deliverables/share/:shareToken',
+    component: () => import('../views/geo/GeoDeliverableShareView.vue'),
+    meta: { title: '交付摘要分享', documentTitle: 'GEO 交付摘要 · 只读分享', public: true, bare: true },
+  },
+  {
+    path: '/geo/deliverables/share',
+    redirect: (to) => {
+      const token = to.query.token || to.query.share_token
+      return token ? { path: `/geo/deliverables/share/${token}` } : { path: GEO_WORKBENCH_START }
+    },
   },
   {
     path: '/seo',
@@ -334,7 +392,7 @@ router.beforeEach((to) => {
   }
 })
 router.afterEach((to) => {
-  const productName = to.path.startsWith('/seo') ? 'SEO 工作台' : 'SEM 智投平台'
+  const productName = to.path.startsWith('/geo') ? 'GEO 工作台' : (to.path.startsWith('/seo') ? 'SEO 工作台' : 'SEM 智投平台')
   document.title = to.meta.documentTitle || (to.meta.title ? to.meta.title + ' · ' : '') + productName
 })
 export default router

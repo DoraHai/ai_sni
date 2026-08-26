@@ -547,13 +547,13 @@
   .geo-v2 .gv2-grid-2 { grid-template-columns: 1fr; }
 }
 
-.metric-list {
+.geo-v2 .metric-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
 
-.metric-list .gv2-metric {
+.geo-v2 .metric-list .gv2-metric {
   min-height: 84px;
 }
