@@ -18,6 +18,144 @@ MAX_HTML_BYTES = 3 * 1024 * 1024
 MAX_REDIRECTS = 5
 FETCH_TIMEOUT = 18.0
 USER_AGENT = "Mozilla/5.0 (compatible; GrowthSniper-GEO/1.0)"
+RULE_VERSION = "1.1.0"
+
+# Keep the established score contract for callers that aggregate multi-page audits.
+RULE_WEIGHTS = {
+    "https": 8,
+    "title": 8,
+    "description": 5,
+    "canonical": 4,
+    "indexable": 15,
+    "h1": 7,
+    "heading_depth": 5,
+    "substantial": 8,
+    "schema": 8,
+    "entity_schema": 7,
+    "faq": 5,
+    "citations": 7,
+    "freshness": 5,
+    "language": 2,
+    "robots": 3,
+    "llms": 3,
+    "block_definition": 6,
+    "block_numbers": 6,
+    "block_comparison": 5,
+    "block_howto": 5,
+    "block_faq": 3,
+    "ai_crawlers": 6,
+}
+
+RULE_CRITERIA = {
+    "https": "最终访问地址必须使用 HTTPS。",
+    "title": "页面必须有唯一标题，标题长度为 12–70 个字符。",
+    "description": "页面必须有 Meta Description，描述长度为 40–180 个字符。",
+    "canonical": "页面必须声明指向首选地址的 Canonical URL。",
+    "indexable": "页面不得通过 robots meta 声明 noindex。",
+    "h1": "页面必须且只能包含 1 个 H1 主标题。",
+    "heading_depth": "页面至少包含 3 个可识别的 H1–H6 标题节点。",
+    "substantial": "页面可读正文须达到至少 500 个中英文内容单元。",
+    "schema": "页面至少包含 1 种可解析的 JSON-LD Schema 类型。",
+    "entity_schema": "JSON-LD 至少包含 Organization、LocalBusiness、Corporation 或 Brand 之一。",
+    "faq": "页面包含 FAQPage Schema，或至少有 2 个可识别的问答式标题。",
+    "citations": "页面至少包含 2 个指向其他域名的外部证据或来源链接。",
+    "freshness": "页面必须同时提供可识别的作者信息和发布日期/更新时间。",
+    "language": "HTML 根元素必须声明非空的 lang 页面语言。",
+    "robots": "站点根目录的 robots.txt 必须可访问且内容非空。",
+    "llms": "站点根目录的 llms.txt 必须可访问且内容非空。",
+    "block_definition": "正文必须包含可独立摘取的定义性内容。",
+    "block_numbers": "正文必须包含至少 3 项可核验的数字事实。",
+    "block_comparison": "正文必须包含可识别的对比、差异或选型内容。",
+    "block_howto": "正文必须包含可识别的步骤或操作流程。",
+    "block_faq": "正文必须包含 FAQ、常见问题或问答式内容。",
+    "ai_crawlers": "主流 AI 爬虫不得被 robots.txt 整站拦截。",
+}
+
+# Common AI crawler user-agents to audit in robots.txt
+AI_CRAWLER_AGENTS = (
+    "GPTBot",
+    "ChatGPT-User",
+    "ClaudeBot",
+    "anthropic-ai",
+    "Google-Extended",
+    "Bytespider",
+    "CCBot",
+    "PerplexityBot",
+)
+
+
+def parse_robots_ai_agents(robots_text: str) -> dict[str, Any]:
+    """Parse robots.txt for allow/disallow of known AI crawler UAs.
+
+    status: allowed | blocked | unspecified
+    """
+    text = robots_text or ""
+    blocks: list[dict[str, Any]] = []
+    current_uas: list[str] = []
+    current_rules: list[tuple[str, str]] = []
+
+    def flush() -> None:
+        nonlocal current_uas, current_rules
+        if current_uas:
+            blocks.append({"uas": list(current_uas), "rules": list(current_rules)})
+        current_uas = []
+        current_rules = []
+
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line or ":" not in line:
+            continue
+        key, val = line.split(":", 1)
+        key_l = key.strip().lower()
+        val = val.strip()
+        if key_l == "user-agent":
+            if current_rules:
+                flush()
+            elif current_uas and not current_rules:
+                # consecutive User-agent lines share rules later
+                pass
+            current_uas.append(val)
+        elif key_l in {"disallow", "allow"}:
+            if not current_uas:
+                current_uas = ["*"]
+            current_rules.append((key_l, val))
+    flush()
+
+    def status_for(ua: str) -> tuple[str, list[str]]:
+        ua_l = ua.lower()
+        matched: list[tuple[str, str]] = []
+        star: list[tuple[str, str]] = []
+        for block in blocks:
+            uas_l = [u.lower() for u in block["uas"]]
+            if ua_l in uas_l:
+                matched.extend(block["rules"])
+            if "*" in uas_l:
+                star.extend(block["rules"])
+        rules = matched if matched else star
+        disallows = [path for kind, path in rules if kind == "disallow" and path]
+        if any(path.strip() == "/" for path in disallows):
+            return "blocked", disallows
+        if matched:
+            return ("blocked" if disallows else "allowed"), disallows
+        return "unspecified", disallows
+
+    agents = []
+    allowed = blocked = unspecified = 0
+    for ua in AI_CRAWLER_AGENTS:
+        st, disallows = status_for(ua)
+        agents.append({"ua": ua, "status": st, "disallows": disallows[:8]})
+        if st == "allowed":
+            allowed += 1
+        elif st == "blocked":
+            blocked += 1
+        else:
+            unspecified += 1
+    return {
+        "agents": agents,
+        "allowed_count": allowed,
+        "blocked_count": blocked,
+        "unspecified_count": unspecified,
+    }
 
 # Common AI crawler user-agents to audit in robots.txt
 AI_CRAWLER_AGENTS = (
@@ -183,13 +321,18 @@ async def _ensure_public_host(url: str) -> None:
         raise GeoAuditError("禁止诊断本机、内网或保留地址")
 
 
-async def safe_fetch(url: str, *, allow_text: bool = False) -> PageDocument:
+async def safe_fetch(
+    url: str, *, allow_text: bool = False, allow_xml: bool = False
+) -> PageDocument:
     """逐跳校验重定向目标，阻止 SSRF，并限制响应类型和体积。"""
     current = normalize_url(url)
     async with httpx.AsyncClient(
         timeout=FETCH_TIMEOUT,
         follow_redirects=False,
-        headers={"User-Agent": USER_AGENT, "Accept": "text/html,text/plain;q=0.8"},
+        headers={
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xml,text/xml;q=0.9,text/plain;q=0.8",
+        },
     ) as client:
         for _ in range(MAX_REDIRECTS + 1):
             await _ensure_public_host(current)
@@ -206,6 +349,8 @@ async def safe_fetch(url: str, *, allow_text: bool = False) -> PageDocument:
                     content_type = response.headers.get("content-type", "").lower()
                     accepted = "text/html" in content_type or (
                         allow_text and "text/plain" in content_type
+                    ) or (
+                        allow_xml and "xml" in content_type
                     )
                     if not accepted:
                         raise GeoAuditError(f"不支持的页面类型：{content_type or '未知'}")
@@ -278,15 +423,19 @@ def _finding(
     deduction: int,
     automatable: bool = False,
 ) -> dict[str, Any]:
+    weight = RULE_WEIGHTS.get(code, deduction)
     return {
         "code": code,
         "title": title,
+        "criterion": RULE_CRITERIA.get(code, recommendation),
         "category": category,
         "severity": severity,
         "passed": passed,
         "evidence": evidence,
+        "reason": "" if passed else f"未满足“{title}”规则：{evidence}",
         "recommendation": recommendation,
-        "deduction": 0 if passed else deduction,
+        "weight": weight,
+        "deduction": 0 if passed else weight,
         "automatable": automatable,
     }
 
@@ -417,6 +566,7 @@ async def audit_url(url: str) -> dict[str, Any]:
         )
     score = max(0, 100 - sum(item["deduction"] for item in checks))
     return {
+        "rule_version": RULE_VERSION,
         "url": normalize_url(url),
         "final_url": document.final_url,
         "score": score,
@@ -432,6 +582,7 @@ async def audit_url(url: str) -> dict[str, Any]:
             "schema_types": sorted(schema_types),
             "content_units": content_units,
             "external_link_count": len(external_links),
+            "external_links": sorted(external_links)[:100],
             "question_headings": question_headings[:12],
             "robots_url": robots_url,
             "llms_url": llms_url,

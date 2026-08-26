@@ -1,10 +1,15 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAccountBudget, setAccountBudget } from '../../api/manage'
 import { session } from '../../store/session'
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
+const currentTenant = computed(() => session.tenants.find((row) => row.id === TENANT_ID.value))
+const activeAccounts = computed(() => (
+  currentTenant.value?.sem_accounts || []
+).filter((row) => row.status === 'active'))
+const selectedAccountId = ref(null)
 
 const loading = ref(false)
 const error = ref('')
@@ -13,10 +18,15 @@ const saving = ref(false)
 const input = ref(null) // 待写回的预算输入
 
 async function load() {
+  if (!TENANT_ID.value) return
+  if (activeAccounts.value.length > 1 && !selectedAccountId.value) return
   loading.value = true
   error.value = ''
   try {
-    data.value = await fetchAccountBudget({ tenantId: TENANT_ID.value })
+    data.value = await fetchAccountBudget({
+      tenantId: TENANT_ID.value,
+      baiduAccountId: selectedAccountId.value,
+    })
     if (data.value?.status === 'ok') input.value = data.value.budget
   } catch (e) {
     error.value = e.message
@@ -25,8 +35,11 @@ async function load() {
   }
 }
 
-watch(TENANT_ID, load)
-onMounted(load)
+watch([TENANT_ID, activeAccounts], ([, accounts]) => {
+  const currentExists = accounts.some((row) => row.id === selectedAccountId.value)
+  selectedAccountId.value = currentExists ? selectedAccountId.value : (accounts[0]?.id ?? null)
+}, { immediate: true })
+watch([TENANT_ID, selectedAccountId], load, { immediate: true })
 
 const fmtMoney = (v) => (v == null ? '—' : '¥' + Number(v).toFixed(2))
 const min = computed(() => data.value?.min_budget ?? 50)
@@ -47,23 +60,29 @@ async function save() {
     ElMessage.warning(`日预算需在 ¥${min.value} ~ ¥${max.value} 之间`)
     return
   }
-  const dryNote = '当前为演练模式，本次只记台账、不会真改线上账户。'
+  const dryNote = '当前为只读演练模式，本次只加入待回写台账、不会修改百度账户。'
   try {
     await ElMessageBox.confirm(
       `确认把账户日预算从 ${fmtMoney(data.value.budget)} 改为 ¥${v.toFixed(2)}？\n${dryNote}`,
       '确认修改账户日预算',
-      { confirmButtonText: '确认写回', cancelButtonText: '取消', type: 'warning' },
+      { confirmButtonText: '加入待回写', cancelButtonText: '取消', type: 'warning' },
     )
   } catch {
     return // 用户取消
   }
   saving.value = true
   try {
-    const res = await setAccountBudget({ tenantId: TENANT_ID.value, budget: v })
+    const res = await setAccountBudget({
+      tenantId: TENANT_ID.value,
+      baiduAccountId: selectedAccountId.value,
+      budget: v,
+    })
     if (res.status === 'dry_run') {
-      ElMessage.success(`演练完成：日预算 ${fmtMoney(res.old_budget)} → ${fmtMoney(res.new_budget)}（未真改，已记台账）`)
+      ElMessage.success(`已加入待回写：日预算 ${fmtMoney(res.old_budget)} → ${fmtMoney(res.new_budget)}（百度账户未修改）`)
     } else if (res.status === 'success') {
       ElMessage.success(`已写回：日预算 ${fmtMoney(res.old_budget)} → ${fmtMoney(res.new_budget)}`)
+    } else if (['pending', 'reconcile'].includes(res.status)) {
+      ElMessage.warning(res.error_msg || '百度执行结果未知，已转入人工对账')
     } else {
       ElMessage.error('写回失败：' + (res.error_msg || '未知错误'))
     }
@@ -94,11 +113,31 @@ async function save() {
       :closable="false"
       show-icon
       style="margin-bottom: 14px"
-      title="当前为演练模式：修改日预算只记台账、不会真改线上百度账户。"
+      title="当前为只读演练模式：预算建议只加入待回写台账，不会修改百度账户。"
     />
 
+    <div v-if="activeAccounts.length > 1" class="account-selector">
+      <span>推广账户</span>
+      <el-select v-model="selectedAccountId" style="width: 260px">
+        <el-option
+          v-for="account in activeAccounts"
+          :key="account.id"
+          :label="`${account.username} · ${account.ucid}`"
+          :value="account.id"
+        />
+      </el-select>
+    </div>
+
     <div v-if="data && data.status === 'error'" class="empty-panel">
-      {{ data.message }}
+      <b>账户预算暂不可用</b>
+      <span>{{ data.message }}</span>
+      <el-button size="small" @click="load">重新读取</el-button>
+    </div>
+
+    <div v-else-if="!loading && !data" class="empty-panel">
+      <b>没有读取到账户预算</b>
+      <span>{{ error || '请确认当前客户已绑定有效的百度推广账户。' }}</span>
+      <el-button size="small" @click="load">重新读取</el-button>
     </div>
 
     <template v-else-if="ok">
@@ -133,7 +172,7 @@ async function save() {
             controls-position="right"
             style="width: 200px"
           />
-          <el-button type="primary" :loading="saving" @click="save">写回日预算</el-button>
+          <el-button type="primary" :loading="saving" @click="save">加入待回写</el-button>
           <span v-if="changeHint" class="change-hint" :class="{ big: changeHint.big }">
             {{ changeHint.pct > 0 ? '+' : '' }}{{ changeHint.pct }}%
             <template v-if="changeHint.big">⚠ 调整幅度较大，请确认</template>
@@ -149,6 +188,7 @@ async function save() {
 .page-header { margin-bottom: 14px; }
 .page-title { font-size: 20px; font-weight: 600; color: var(--sem-text); }
 .page-desc { font-size: 12px; color: var(--sem-text-sub); margin-top: 4px; }
+.account-selector { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; font-size: 13px; color: var(--sem-text-sub); }
 
 .stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 14px; }
 @media (max-width: 900px) { .stat-grid { grid-template-columns: 1fr; } }
@@ -166,5 +206,6 @@ async function save() {
 .change-hint.big { color: var(--sem-danger); }
 .edit-note { font-size: 11px; color: #9ca3af; margin-top: 10px; }
 
-.empty-panel { background: #fff; border: 1px solid var(--sem-border); border-radius: 8px; padding: 36px; text-align: center; font-size: 13px; color: var(--sem-text-sub); }
+.empty-panel { background: #fff; border: 1px solid var(--sem-border); border-radius: 8px; padding: 36px; text-align: center; font-size: 13px; color: var(--sem-text-sub); display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.empty-panel b { color: var(--sem-text); font-size: 15px; }
 </style>

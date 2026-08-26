@@ -6,6 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "dev:auth": "vite --config vite.auth.config.js",
+    "build:auth": "vite build --config vite.auth.config.js",
+    "verify:auth-build": "node scripts/verify-auth-build.mjs dist-auth",
+    "verify:sem-build": "node scripts/verify-sem-build.mjs dist",
+    "test:chunk-recovery": "node scripts/test-chunk-recovery.mjs",
+    "deploy:sem": "bash scripts/deploy-sem.sh",
+    "deploy:login": "bash scripts/deploy-auth.sh",
     "dev:diagnostic-center": "vite --config vite.diagnostic-center.config.js",
     "build:diagnostic-center": "vite build --config vite.diagnostic-center.config.js",
     "deploy:diagnostic-center": "bash scripts/deploy-diagnostic-center.sh",

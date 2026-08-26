@@ -14,6 +14,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Keyword, KwReportSnapshot, Suggestion, Tenant
+from app.module_scope import list_active_module_tenants
 from app.suggestions.base import KeywordProfile, SuggestionContext
 from app.suggestions.guardrails import apply_guardrails
 from app.suggestions.rules import ALL_RULES
@@ -248,7 +249,7 @@ async def run_suggestions_for_all_tenants(
     session: AsyncSession, window_days: int = WINDOW_DAYS
 ) -> dict[str, int]:
     """对所有租户跑建议引擎（每日同步后调用）。返回 {租户名: 条数}。"""
-    tenants = (await session.scalars(select(Tenant))).all()
+    tenants = await list_active_module_tenants(session, "sem")
     result: dict[str, int] = {}
     for t in tenants:
         try:

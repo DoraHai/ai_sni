@@ -224,9 +224,11 @@ def _requested_report_period(
     user_message: str,
     available_start: date,
     available_end: date,
+    today: date | None = None,
 ) -> RequestedReportPeriod:
-    """从最新问题识别统计区间；未指定时仍使用近 30 天。"""
+    """从最新问题识别统计区间。自然月按现实日期，不用过期数据冒充当前月。"""
     text = re.sub(r"\s+", "", user_message or "")
+    current = today or datetime.now(ZoneInfo("Asia/Shanghai")).date()
 
     explicit_month = re.search(r"(20\d{2})年(1[0-2]|0?[1-9])月?", text)
     if explicit_month:
@@ -238,7 +240,7 @@ def _requested_report_period(
         )
 
     if "上个月" in text or "上月" in text:
-        previous = _shift_months(available_end.replace(day=1), 1)
+        previous = _shift_months(current.replace(day=1), 1)
         return RequestedReportPeriod(
             label="上月",
             start=previous,
@@ -247,11 +249,11 @@ def _requested_report_period(
     if "本月" in text or "这个月" in text:
         return RequestedReportPeriod(
             label="本月",
-            start=available_end.replace(day=1),
-            end=available_end,
+            start=current.replace(day=1),
+            end=current,
         )
     if "去年" in text:
-        year = available_end.year - 1
+        year = current.year - 1
         return RequestedReportPeriod(
             label=f"{year}年",
             start=date(year, 1, 1),
@@ -259,9 +261,9 @@ def _requested_report_period(
         )
     if "今年" in text:
         return RequestedReportPeriod(
-            label=f"{available_end.year}年至今",
-            start=date(available_end.year, 1, 1),
-            end=available_end,
+            label=f"{current.year}年至今",
+            start=date(current.year, 1, 1),
+            end=current,
         )
 
     day_match = re.search(r"(?:近|过去|最近)(\d{1,4})天", text)

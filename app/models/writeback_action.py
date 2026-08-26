@@ -21,10 +21,13 @@ WRITEBACK_ACTION_LABELS = {
     "remove_negative": "删否词",
     "pause": "暂停",
     "enable": "启用",
+    "set_match_type": "改匹配模式",
     "set_account_budget": "改账户日预算",
     "set_campaign_budget": "改计划日预算",
+    "set_campaign_region": "改计划投放地域",
     "campaign_pause": "暂停计划",
     "campaign_enable": "启用计划",
+    "campaign_schedule": "改计划投放时段",
     "adgroup_pause": "暂停单元",
     "adgroup_enable": "启用单元",
     "set_adgroup_bid": "改单元出价",
@@ -37,7 +40,9 @@ WRITEBACK_ACTION_LABELS = {
 WB_ACTION_STATUS_LABELS = {
     "success": "已执行",
     "failed": "失败",
-    "dry_run": "演练（未真改）",
+    "dry_run": "待回写（演练记录）",
+    "pending": "执行结果待确认",
+    "reconcile": "待人工对账",
 }
 MATCH_MODE_LABELS = {"exact": "精确", "phrase": "短语"}
 
@@ -55,8 +60,11 @@ class WritebackAction(Base):
     baidu_account_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("baidu_accounts.id")
     )
+    approval_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("writeback_approvals.id")
+    )
 
-    action_type: Mapped[str] = mapped_column(String(20), nullable=False)  # negative / add_word
+    action_type: Mapped[str] = mapped_column(String(20), nullable=False)  # 见 WRITEBACK_ACTION_LABELS
     word: Mapped[str] = mapped_column(Text, nullable=False)  # 否词 / 拓词（来自搜索词）；预算类写回存对象名
     match_mode: Mapped[str | None] = mapped_column(String(10))  # exact / phrase
     price: Mapped[float | None] = mapped_column(Numeric(10, 2))  # 转拓词出价
@@ -70,9 +78,14 @@ class WritebackAction(Base):
     adgroup_name: Mapped[str | None] = mapped_column(Text)
 
     dry_run: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    status: Mapped[str] = mapped_column(String(10), nullable=False)  # success/failed/dry_run
+    status: Mapped[str] = mapped_column(String(10), nullable=False)  # success/failed/dry_run/pending/reconcile
     baidu_response: Mapped[str | None] = mapped_column(Text)
     error_msg: Mapped[str | None] = mapped_column(Text)
+
+    reconciliation_result: Mapped[str | None] = mapped_column(String(32))
+    reconciliation_note: Mapped[str | None] = mapped_column(Text)
+    reconciled_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id"))
+    reconciled_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     operator_user_id: Mapped[int | None] = mapped_column(BigInteger)
     operator_name: Mapped[str | None] = mapped_column(String(100))

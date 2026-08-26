@@ -1,21 +1,33 @@
 <script setup>
 import { onMounted, ref, computed, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import * as echarts from 'echarts'
+import { init, use } from 'echarts/core'
+import { BarChart, HeatmapChart, LineChart } from 'echarts/charts'
+import {
+  GridComponent, LegendComponent, MarkLineComponent, TooltipComponent,
+} from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
 import { ElMessage } from 'element-plus'
 import { fetchKeywordDetail, updateKeywordCategory } from '../../api/keywords'
 import { resolveAlert } from '../../api/alerts'
+import { useKeywordWriteback } from '../../composables/useKeywordWriteback'
 import { session } from '../../store/session'
 import MetricLabel from '../../components/MetricLabel.vue'
 
 const route = useRoute()
 const router = useRouter()
+use([
+  BarChart, HeatmapChart, LineChart,
+  GridComponent, LegendComponent, MarkLineComponent, TooltipComponent,
+  CanvasRenderer,
+])
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
 
 const loading = ref(false)
 const error = ref('')
 const data = ref(null)
+const editPrice = ref(null)
 // 首次加载不传日期，由后端锚定该词最近有数据的日期；加载后回填到选择器
 const dateRange = ref(null)
 const rankChartEl = ref(null)
@@ -139,6 +151,12 @@ const CATEGORY_OPTIONS = [
 
 const isBrand = computed(() => data.value?.keyword.category?.code === 'brand')
 
+const {
+  applyWriteback,
+  changeMatchType,
+  togglePause,
+} = useKeywordWriteback({ tenantId: TENANT_ID, onSuccess: load })
+
 // 倍数阈值：> 3 橙色提示，> 4 红色预警（业务规则）
 const multiplierClass = computed(() => {
   const m = data.value?.bid_coefficients?.effective?.max_multiplier
@@ -190,7 +208,7 @@ function deltaText(card) {
 
 function renderRank() {
   if (!rankChartEl.value || !data.value) return
-  if (!rankChart) rankChart = echarts.init(rankChartEl.value)
+  if (!rankChart) rankChart = init(rankChartEl.value)
   const trend = data.value.trend
   rankChart.setOption({
     grid: { left: 44, right: 24, top: 30, bottom: 28 },
@@ -221,7 +239,7 @@ function renderRank() {
 
 function renderTrend() {
   if (!trendChartEl.value || !data.value) return
-  if (!trendChart) trendChart = echarts.init(trendChartEl.value)
+  if (!trendChart) trendChart = init(trendChartEl.value)
   const trend = data.value.trend
   trendChart.setOption({
     grid: { left: 56, right: 40, top: 30, bottom: 28 },
@@ -248,7 +266,7 @@ function renderTrend() {
 
 function renderBid() {
   if (!bidChartEl.value || !data.value || !hasBidTrend.value) return
-  if (!bidChart) bidChart = echarts.init(bidChartEl.value)
+  if (!bidChart) bidChart = init(bidChartEl.value)
   const bt = data.value.bid_trend
   bidChart.setOption({
     grid: { left: 52, right: 24, top: 30, bottom: 28 },
@@ -273,7 +291,7 @@ function renderBid() {
 
 function renderSchedule() {
   if (!scheduleChartEl.value || !data.value?.schedule_analysis) return
-  if (!scheduleChart) scheduleChart = echarts.init(scheduleChartEl.value)
+  if (!scheduleChart) scheduleChart = init(scheduleChartEl.value)
   const rawCells = data.value.schedule_analysis.cells || []
   const metric = scheduleMetric.value
   const metricMeta = SCHEDULE_METRICS[metric]
@@ -359,7 +377,7 @@ function renderSchedule() {
 
 function renderScheduleHourly() {
   if (!scheduleHourChartEl.value || !data.value?.schedule_analysis) return
-  if (!scheduleHourChart) scheduleHourChart = echarts.init(scheduleHourChartEl.value)
+  if (!scheduleHourChart) scheduleHourChart = init(scheduleHourChartEl.value)
   const metric = scheduleMetric.value
   const metricMeta = SCHEDULE_METRICS[metric]
   const hourly = Array.from({ length: 24 }, (_, hour) => ({
@@ -450,6 +468,31 @@ async function onResolve(row) {
   }
 }
 
+async function handleWriteback() {
+  if (!data.value) return
+  await applyWriteback(
+    data.value.keyword.keyword_id,
+    editPrice.value,
+    data.value.keyword.keyword,
+    data.value.latest.bid,
+  )
+}
+
+async function handleMatchChange(command) {
+  if (!data.value) return
+  await changeMatchType(
+    data.value.keyword.keyword_id,
+    data.value.keyword.keyword,
+    data.value.keyword.match_type_label || data.value.keyword.match_type,
+    command,
+  )
+}
+
+async function handleTogglePause() {
+  if (!data.value) return
+  await togglePause(data.value.keyword.keyword_id, data.value.keyword.keyword, data.value.keyword.pause)
+}
+
 onMounted(() => {
   load()
   window.addEventListener('resize', () => {
@@ -530,22 +573,39 @@ onMounted(() => {
             · 数据区间 {{ data.keyword.first_date }} ~ {{ data.keyword.last_date }}（有数据 {{ data.keyword.active_days }} 天）
           </div>
         </div>
-        <div class="period-picker">
-          <span class="pp-label">统计区间</span>
-          <el-date-picker
-            v-model="dateRange"
-            type="daterange"
-            value-format="YYYY-MM-DD"
-            range-separator="~"
-            start-placeholder="开始"
-            end-placeholder="结束"
-            :clearable="false"
-            :shortcuts="pickerShortcuts"
-            unlink-panels
-            :prefix-icon="null"
-            style="width: 250px"
-            @change="load"
-          />
+        <div class="head-controls">
+          <div class="detail-actions">
+            <el-input-number v-model="editPrice" :precision="2" :min="0.01" :step="0.01" placeholder="新出价" controls-position="right" />
+            <el-button type="primary" @click="handleWriteback">回写出价</el-button>
+            <el-dropdown trigger="click" @command="handleMatchChange">
+              <el-button>改匹配</el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="exact">精确匹配</el-dropdown-item>
+                  <el-dropdown-item command="phrase">短语匹配</el-dropdown-item>
+                  <el-dropdown-item command="smart">智能匹配</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            <el-button @click="handleTogglePause">{{ data.keyword.pause ? '启用' : '暂停' }}</el-button>
+          </div>
+          <div class="period-picker">
+            <span class="pp-label">统计区间</span>
+            <el-date-picker
+              v-model="dateRange"
+              type="daterange"
+              value-format="YYYY-MM-DD"
+              range-separator="~"
+              start-placeholder="开始"
+              end-placeholder="结束"
+              :clearable="false"
+              :shortcuts="pickerShortcuts"
+              unlink-panels
+              :prefix-icon="null"
+              style="width: 250px"
+              @change="load"
+            />
+          </div>
         </div>
       </div>
 
@@ -897,7 +957,7 @@ onMounted(() => {
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="110" fixed="right">
+          <el-table-column label="操作" width="110">
             <template #default="{ row }">
               <el-button v-if="row.status === 'open'" size="small" type="primary" link @click="onResolve(row)">标记已处理</el-button>
             </template>
@@ -947,6 +1007,9 @@ onMounted(() => {
 <style scoped>
 .head-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; gap: 16px; }
 .page-title { font-size: 18px; font-weight: 700; }
+.head-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.detail-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.detail-actions :deep(.el-input-number) { width: 132px; }
 .period-picker { display: flex; align-items: center; gap: 8px; background: #fff; border: 1px solid var(--sem-border); border-radius: 8px; padding: 5px 10px 5px 12px; flex-shrink: 0; }
 .pp-label { font-size: 12px; color: var(--sem-text-sub); white-space: nowrap; }
 .period-picker :deep(.el-date-editor) { --el-input-border-color: transparent; box-shadow: none !important; }
@@ -1033,6 +1096,8 @@ onMounted(() => {
   .row-2col,
   .analysis-grid { grid-template-columns: 1fr; }
   .schedule-breakdown { grid-template-columns: 1fr; }
+  .head-row { flex-direction: column; }
+  .head-controls { justify-content: flex-start; }
 }
 .card-sub { font-size: 12px; color: var(--sem-text-sub); font-weight: 400; }
 .alert-title { font-weight: 600; font-size: 13px; }

@@ -5,19 +5,17 @@
     拉取当天累计报告，并刷新计划/单元/关键词/出价策略
   - fetch_yesterday_keyword_report：每天 02:00（Asia/Shanghai）
     报告同步 → 关键词维度同步（getWord）→ 5 类分级重算 → 规则引擎
+  - sync_search_terms_daily：每天 03:00（Asia/Shanghai）
+    搜索词报告近 31 天同步，独立于主同步流程
 
 在 main.py 的 startup 事件里调 start_scheduler()。
 """
 import logging
-from asyncio import Lock
-from datetime import datetime, timedelta
-from threading import Lock as ThreadLock
+import tempfile
+from asyncio import Lock, sleep
+from datetime import date, datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
-
-try:
-    import fcntl
-except ModuleNotFoundError:  # Windows has no POSIX file-lock module.
-    fcntl = None
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -28,105 +26,207 @@ from app.baidu.sync import (
     sync_campaigns_for_account,
     sync_keyword_dimension_reports_for_account,
     sync_keyword_report_for_account,
+    sync_keyword_report_range_for_account,
     sync_keyword_report_for_all_active_accounts,
+    sync_region_snapshot,
+    sync_search_terms_for_account,
     sync_keywords_for_account,
     sync_ocpc_packages_for_account,
     sync_operation_records_for_account,
     sync_price_strategies_for_account,
 )
+from app.baidu.oauth import refresh_expiring_oauth_grants
 from app.classification import reclassify_keywords
 from app.database import async_session_factory
 from app.models import BaiduAccount, Tenant
+from app.module_scope import list_active_module_tenants, list_active_sem_accounts
+from app.process_lock import acquire_file_lock, release_file_lock
 from app.rules import run_rules_for_all_tenants
+from app.rules.site_health import run_site_health_for_all_tenants
 from app.suggestions import run_suggestions_for_all_tenants
+from app.sem_asset_sync import (
+    aggregate_sync_status,
+    begin_sync_run,
+    finish_sync_run,
+    normalize_dimensions,
+    safe_sync_error,
+    update_dimension,
+)
+from app.security.sem_identity import filter_identity_safe_active_accounts
 
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
 _report_sync_lock = Lock()
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+INITIAL_KEYWORD_HISTORY_DAYS = 30
 
 # 多 worker 防双跑：uvicorn --workers 2 时每个 worker 都会执行 startup → 各起一个
 # APScheduler，导致每日任务跑两次（重复调百度 + 重复写）。用文件排他锁，只让抢到锁的
 # 那个 worker 启动调度，其余 worker 跳过。锁随进程退出自动释放。
-_SCHEDULER_LOCK_PATH = "/tmp/sem_scheduler.lock"
+_LOCK_DIRECTORY = Path(tempfile.gettempdir())
+_SCHEDULER_LOCK_PATH = _LOCK_DIRECTORY / "sem_scheduler.lock"
 _lock_fh = None
-_windows_scheduler_lock = ThreadLock()
-_windows_tenant_sync_locks: dict[int, ThreadLock] = {}
 
 
 def _acquire_tenant_sync_lock(tenant_id: int):
-    if fcntl is None:
-        lock = _windows_tenant_sync_locks.setdefault(tenant_id, ThreadLock())
-        return lock if lock.acquire(blocking=False) else None
     """跨 worker 的客户级非阻塞锁，避免定时任务和人工刷新重复调用百度。"""
-    fh = open(f"/tmp/sem_tenant_sync_{tenant_id}.lock", "w")
-    try:
-        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        fh.close()
-        return None
-    return fh
+    return acquire_file_lock(_LOCK_DIRECTORY / f"sem_tenant_sync_{tenant_id}.lock")
 
 
 def _release_tenant_sync_lock(fh) -> None:
-    if fh is None:
-        return
-    if fcntl is None:
-        fh.release()
-        return
-    try:
-        fcntl.flock(fh, fcntl.LOCK_UN)
-    finally:
-        fh.close()
+    release_file_lock(fh)
 
 
 async def refresh_keyword_workbench_snapshot(
-    session, tenant: Tenant, acc: BaiduAccount, target_date
+    session,
+    tenant: Tenant,
+    acc: BaiduAccount,
+    target_date: date,
+    dimensions: list[str] | tuple[str, ...] | None = None,
+    report_start_date: date | None = None,
 ) -> dict:
-    """同步关键词工作台所需数据；定时任务和人工刷新共用同一套逻辑。"""
-    lock_fh = _acquire_tenant_sync_lock(tenant.id)
+    """同步 SEM 只读资产；单维度失败不会阻断其他维度。"""
+    tenant_id = tenant.id
+    account_id = getattr(acc, "id", None)
+    selected = normalize_dimensions(dimensions)
+    lock_fh = _acquire_tenant_sync_lock(tenant_id)
     if lock_fh is None:
-        return {"status": "busy", "tenant_id": tenant.id}
+        return {"status": "busy", "tenant_id": tenant_id}
+    state, run_id = begin_sync_run(getattr(acc, "asset_sync_state", None), selected)
+    results: dict[str, int | dict] = {}
+    failures: dict[str, str] = {}
+    category_counts: dict = {}
     try:
-        report_rows = await sync_keyword_report_for_account(session, acc, target_date)
-        dimension_rows = await sync_keyword_dimension_reports_for_account(
-            session, acc, target_date
-        )
-        campaigns = await sync_campaigns_for_account(session, acc)
-        adgroups = await sync_adgroups_for_account(session, acc)
-        keywords = await sync_keywords_for_account(session, acc)
-        strategies = await sync_price_strategies_for_account(session, acc)
-        category_counts = await reclassify_keywords(session, tenant)
+        acc.sync_status = "syncing"
+        acc.last_sync_error = None
+        acc.asset_sync_state = state
+        if hasattr(session, "commit"):
+            await session.commit()
+
+        async def run_dimension(name: str):
+            nonlocal acc, state, tenant
+            state = update_dimension(state, run_id, name, "syncing")
+            acc.asset_sync_state = state
+            if hasattr(session, "commit"):
+                await session.commit()
+            try:
+                if name == "reports":
+                    report_start = report_start_date or target_date
+                    if report_start > target_date:
+                        raise ValueError("关键词报告开始日期不能晚于结束日期")
+                    report_rows = await sync_keyword_report_range_for_account(
+                        session, acc, report_start, target_date
+                    )
+                    dimension_rows = await sync_keyword_dimension_reports_for_account(
+                        session, acc, target_date
+                    )
+                    value: int | dict = {
+                        "report": report_rows,
+                        "region": int(dimension_rows.get("region", 0)),
+                        "hourly": int(dimension_rows.get("hourly", 0)),
+                    }
+                elif name == "campaigns":
+                    value = await sync_campaigns_for_account(session, acc)
+                elif name == "adgroups":
+                    value = await sync_adgroups_for_account(session, acc)
+                elif name == "keywords":
+                    value = await sync_keywords_for_account(session, acc)
+                elif name == "search_terms":
+                    value = await sync_search_terms_for_account(
+                        session, acc, target_date - timedelta(days=30), target_date
+                    )
+                else:
+                    value = await sync_price_strategies_for_account(session, acc)
+                results[name] = value
+                status = (
+                    "preserved"
+                    if name == "search_terms" and value == 0
+                    else "empty" if value == 0 else "success"
+                )
+                state = update_dimension(state, run_id, name, status, rows=value)
+            except Exception as exc:  # noqa: BLE001
+                if hasattr(session, "rollback"):
+                    await session.rollback()
+                if account_id is not None and hasattr(session, "get"):
+                    acc = await session.get(BaiduAccount, account_id) or acc
+                    tenant = await session.get(Tenant, tenant_id) or tenant
+                message = safe_sync_error(exc)
+                failures[name] = message
+                state = update_dimension(
+                    state, run_id, name, "failed", error=message
+                )
+                logger.error(
+                    "账户 %s 的 %s 维度同步失败: %s",
+                    getattr(acc, "baidu_username", account_id),
+                    name,
+                    message,
+                )
+            acc.asset_sync_state = state
+            if hasattr(session, "commit"):
+                await session.commit()
+
+        for dimension in selected:
+            await run_dimension(dimension)
+
+        if "keywords" in selected and "keywords" not in failures:
+            try:
+                category_counts = await reclassify_keywords(session, tenant)
+            except Exception:  # noqa: BLE001
+                logger.exception("租户 %s 关键词分级重算失败（不影响资产同步状态）", tenant_id)
+
+        state = finish_sync_run(state, run_id)
+        acc.asset_sync_state = state
+        acc.sync_status = aggregate_sync_status(state)
+        acc.last_sync_error = "；".join(
+            f"{name}: {message}" for name, message in failures.items()
+        ) or None
+        if acc.sync_status == "synced":
+            acc.last_synced_at = datetime.utcnow()
+        if hasattr(session, "commit"):
+            await session.commit()
         return {
-            "status": "ok",
-            "tenant_id": tenant.id,
+            "status": "ok" if not failures else "partial",
+            "tenant_id": tenant_id,
             "date": target_date.isoformat(),
-            "report_rows_written": report_rows,
-            "dimension_rows_written": dimension_rows,
-            "campaigns_synced": campaigns,
-            "adgroups_synced": adgroups,
-            "keywords_synced": keywords,
-            "price_strategies_synced": strategies,
+            "report_start_date": (report_start_date or target_date).isoformat(),
+            "selected_dimensions": list(selected),
+            "dimensions": state.get("dimensions", {}),
+            "report_rows_written": (results.get("reports") or {}).get("report", 0),
+            "dimension_rows_written": results.get("reports") or {},
+            "campaigns_synced": results.get("campaigns", 0),
+            "adgroups_synced": results.get("adgroups", 0),
+            "keywords_synced": results.get("keywords", 0),
+            "search_terms_synced": results.get("search_terms", 0),
+            "price_strategies_synced": results.get("price_strategies", 0),
             "category_counts": category_counts,
         }
+    except Exception as exc:
+        if hasattr(session, "rollback"):
+            await session.rollback()
+        failed_acc = acc
+        if account_id is not None and hasattr(session, "get"):
+            failed_acc = await session.get(BaiduAccount, account_id) or acc
+        failed_acc.sync_status = "failed"
+        failed_acc.last_sync_error = safe_sync_error(exc)
+        failed_acc.asset_sync_state = finish_sync_run(state, run_id)
+        if hasattr(session, "commit"):
+            await session.commit()
+        raise
     finally:
         _release_tenant_sync_lock(lock_fh)
 
 
 def _acquire_scheduler_lock() -> bool:
     global _lock_fh
-    if fcntl is None:
-        return _windows_scheduler_lock.acquire(blocking=False)
-    try:
-        _lock_fh = open(_SCHEDULER_LOCK_PATH, "w")
-        fcntl.flock(_lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return True
-    except OSError:
-        if _lock_fh is not None:
-            _lock_fh.close()
-            _lock_fh = None
-        return False
+    _lock_fh = acquire_file_lock(_SCHEDULER_LOCK_PATH)
+    return _lock_fh is not None
+
+
+def _release_scheduler_lock() -> None:
+    global _lock_fh
+    release_file_lock(_lock_fh)
+    _lock_fh = None
 
 
 async def fetch_yesterday_keyword_report() -> None:
@@ -137,16 +237,20 @@ async def fetch_yesterday_keyword_report() -> None:
     yesterday = datetime.now(_SHANGHAI_TZ).date() - timedelta(days=1)
     logger.info("[scheduler] 开始拉取 %s 关键词报告", yesterday)
     async with async_session_factory() as session:
+        refresh_result = await refresh_expiring_oauth_grants(session)
+        logger.info("[scheduler] OAuth Token 刷新结果: %s", refresh_result)
         async with _report_sync_lock:
             result = await sync_keyword_report_for_all_active_accounts(session, yesterday)
 
-        accounts = (
-            await session.scalars(
-                select(BaiduAccount).where(BaiduAccount.status == "active")
-            )
-        ).all()
+        accounts = filter_identity_safe_active_accounts(
+            await list_active_sem_accounts(session)
+        )
         for acc in accounts:
             try:
+                tenant = await session.get(Tenant, acc.tenant_id)
+                if tenant is not None:
+                    await sleep(2)
+                    await sync_region_snapshot(session, tenant, acc, yesterday, yesterday)
                 await sync_campaigns_for_account(session, acc)
                 await sync_adgroups_for_account(session, acc)
                 await sync_keywords_for_account(session, acc)
@@ -164,7 +268,7 @@ async def fetch_yesterday_keyword_report() -> None:
                 )
             except Exception:  # noqa: BLE001
                 logger.exception("账户 %s 操作记录同步失败", acc.baidu_username)
-        for tenant in (await session.scalars(select(Tenant))).all():
+        for tenant in await list_active_module_tenants(session, "sem"):
             try:
                 await reclassify_keywords(session, tenant)
             except Exception:  # noqa: BLE001
@@ -191,11 +295,11 @@ async def fetch_today_keyword_report() -> None:
     logger.info("[scheduler] 开始 15 分钟关键词工作台同步 %s", today)
     async with _report_sync_lock:
         async with async_session_factory() as session:
-            accounts = (
-                await session.scalars(
-                    select(BaiduAccount).where(BaiduAccount.status == "active")
-                )
-            ).all()
+            refresh_result = await refresh_expiring_oauth_grants(session)
+            logger.info("[scheduler] OAuth Token 刷新结果: %s", refresh_result)
+            accounts = filter_identity_safe_active_accounts(
+                await list_active_sem_accounts(session)
+            )
             result = {}
             for acc in accounts:
                 tenant = await session.get(Tenant, acc.tenant_id)
@@ -228,112 +332,45 @@ async def purge_old_assistant_messages() -> None:
             logger.exception("[scheduler] 清理助手对话失败")
 
 
-async def run_geo_daily_metrics_nightly() -> None:
-    """Nightly: rebuild daily metrics (tenant/business/unit) for recent snapshot tenants."""
-    from app.geo.content.daily_metrics import nightly_rebuild_recent_tenants
-
-    try:
-        summary = await nightly_rebuild_recent_tenants(lookback_days=2)
-        logger.info("[scheduler] geo daily metrics nightly %s", summary)
-    except Exception:  # noqa: BLE001
-        logger.exception("[scheduler] geo daily metrics nightly failed")
-
-
-async def run_geo_visibility_patrols() -> None:
-    """Hourly: fire enabled tenants whose window + interval allow a run (Asia/Shanghai)."""
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-
-    from app.database import async_session_factory
-    from app.geo.content.patrol import execute_patrol_run, should_run_scheduled_patrol
-    from app.models import GeoVisibilityPatrolRun, GeoVisibilityPatrolSettings
-    from sqlalchemy import select
-
-    from app.config import get_settings
-    from app.geo.content.patrol import count_patrol_runs_today
-
-    now = datetime.now(ZoneInfo("Asia/Shanghai"))
-    day_limit = int(getattr(get_settings(), "geo_patrol_max_runs_per_day", 24) or 24)
-    day_limit = max(1, min(day_limit, 500))
+async def probe_site_health_alerts() -> None:
+    """独立探测落地页可用性，避免拖慢每日报表同步链路。"""
+    today = datetime.now(_SHANGHAI_TZ).date()
+    logger.info("[scheduler] 开始落地页可用性探测 %s", today)
     async with async_session_factory() as session:
-        rows = list(
-            await session.scalars(
-                select(GeoVisibilityPatrolSettings).where(
-                    GeoVisibilityPatrolSettings.enabled.is_(True),
-                )
+        result = await run_site_health_for_all_tenants(session, today)
+    logger.info("[scheduler] %s 落地页可用性探测完成: %s", today, result)
+
+
+async def sync_search_terms_daily() -> None:
+    """每日同步近 31 天搜索词报告，避免分段拉取拖慢 02:00 主同步。"""
+    end_date = datetime.now(_SHANGHAI_TZ).date()
+    start_date = end_date - timedelta(days=30)
+    logger.info(
+        "[scheduler] 开始搜索词报告每日同步 %s~%s", start_date, end_date
+    )
+    result: dict[str, int] = {}
+    async with _report_sync_lock:
+        async with async_session_factory() as session:
+            refresh_result = await refresh_expiring_oauth_grants(session)
+            logger.info("[scheduler] OAuth Token 刷新结果: %s", refresh_result)
+            accounts = filter_identity_safe_active_accounts(
+                await list_active_sem_accounts(session)
             )
-        )
-        for st in rows:
-            start_h = int(getattr(st, "window_start_hour", None) or st.daily_hour or 6)
-            end_h = int(getattr(st, "window_end_hour", None) or st.daily_hour or 22)
-            interval = int(getattr(st, "interval_hours", None) or 24)
-            last_at = getattr(st, "last_scheduled_at", None)
-            if not should_run_scheduled_patrol(
-                now=now,
-                window_start_hour=start_h,
-                window_end_hour=end_h,
-                interval_hours=interval,
-                last_scheduled_at=last_at,
-            ):
-                continue
-            used = await count_patrol_runs_today(session, st.tenant_id)
-            if used >= day_limit:
-                logger.warning(
-                    "[scheduler] skip patrol tenant=%s daily quota %s/%s",
-                    st.tenant_id,
-                    used,
-                    day_limit,
-                )
-                continue
-            # skip if a scheduled run is already in flight
-            inflight = await session.scalar(
-                select(GeoVisibilityPatrolRun.id)
-                .where(
-                    GeoVisibilityPatrolRun.tenant_id == st.tenant_id,
-                    GeoVisibilityPatrolRun.trigger == "schedule",
-                    GeoVisibilityPatrolRun.status.in_(("pending", "running")),
-                )
-                .limit(1)
-            )
-            if inflight:
-                logger.info(
-                    "[scheduler] skip patrol tenant=%s already inflight run=%s",
-                    st.tenant_id,
-                    inflight,
-                )
-                continue
-            run = GeoVisibilityPatrolRun(
-                tenant_id=st.tenant_id,
-                status="pending",
-                trigger="schedule",
-                auto_persist=bool(st.auto_persist),
-                prefer_real=bool(st.prefer_real),
-                prompt_limit=int(st.prompt_limit or 20),
-                engine_keys=st.engine_keys,
-                created_by=None,
-            )
-            session.add(run)
-            # record schedule tick immediately so interval holds even if execute fails mid-way
-            st.last_scheduled_at = datetime.utcnow()
-            await session.commit()
-            await session.refresh(run)
-            rid = run.id
-            try:
-                await execute_patrol_run(session, rid)
-                logger.info(
-                    "[scheduler] geo visibility patrol done tenant=%s run=%s window=%s-%s interval=%sh",
-                    st.tenant_id,
-                    rid,
-                    start_h,
-                    end_h,
-                    interval,
-                )
-            except Exception:  # noqa: BLE001
-                logger.exception(
-                    "[scheduler] geo visibility patrol failed tenant=%s run=%s",
-                    st.tenant_id,
-                    rid,
-                )
+            for acc in accounts:
+                try:
+                    result[acc.baidu_username] = await sync_search_terms_for_account(
+                        session, acc, start_date, end_date
+                    )
+                    logger.info(
+                        "账户 %s 搜索词报告每日同步完成: %d 条",
+                        acc.baidu_username,
+                        result[acc.baidu_username],
+                    )
+                except Exception:  # noqa: BLE001
+                    await session.rollback()
+                    result[acc.baidu_username] = -1
+                    logger.exception("账户 %s 搜索词报告同步失败", acc.baidu_username)
+    logger.info("[scheduler] 搜索词报告每日同步完成: %s", result)
 
 
 def start_scheduler() -> None:
@@ -342,49 +379,51 @@ def start_scheduler() -> None:
             "[scheduler] 未抢到调度锁，本 worker 不启动调度（另一 worker 已在跑，避免双跑）"
         )
         return
-    scheduler.add_job(
-        fetch_today_keyword_report,
-        CronTrigger(minute="*/15"),
-        id="fetch_today_keyword_report",
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-    )
-    scheduler.add_job(
-        fetch_yesterday_keyword_report,
-        CronTrigger(hour=2, minute=0),
-        id="fetch_yesterday_keyword_report",
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-    )
-    scheduler.add_job(
-        purge_old_assistant_messages,
-        CronTrigger(hour=3, minute=30),
-        id="purge_old_assistant_messages",
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-    )
-    # GEO 可见度全自动巡检：每小时检查租户时间段 + 间隔
-    scheduler.add_job(
-        run_geo_visibility_patrols,
-        CronTrigger(minute=5),
-        id="geo_visibility_patrols",
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-    )
-    # GEO 按天指标：每日 0:40 重算近 2 天（租户/业务/单元切片兜底）
-    scheduler.add_job(
-        run_geo_daily_metrics_nightly,
-        CronTrigger(hour=0, minute=40),
-        id="geo_daily_metrics_nightly",
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-    )
-    scheduler.start()
+    try:
+        scheduler.add_job(
+            fetch_today_keyword_report,
+            CronTrigger(minute="*/15"),
+            id="fetch_today_keyword_report",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.add_job(
+            fetch_yesterday_keyword_report,
+            CronTrigger(hour=2, minute=0),
+            id="fetch_yesterday_keyword_report",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.add_job(
+            purge_old_assistant_messages,
+            CronTrigger(hour=3, minute=30),
+            id="purge_old_assistant_messages",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.add_job(
+            sync_search_terms_daily,
+            CronTrigger(hour=3, minute=0),
+            id="sync_search_terms_daily",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.add_job(
+            probe_site_health_alerts,
+            CronTrigger(minute=20),
+            id="probe_site_health_alerts",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.start()
+    except Exception:
+        _release_scheduler_lock()
+        raise
     logger.info("[scheduler] 已启动，下次执行 %s", _next_run())
 
 
@@ -396,5 +435,8 @@ def _next_run() -> str | None:
 
 
 def shutdown_scheduler() -> None:
-    if scheduler.running:
-        scheduler.shutdown(wait=False)
+    try:
+        if scheduler.running:
+            scheduler.shutdown(wait=False)
+    finally:
+        _release_scheduler_lock()

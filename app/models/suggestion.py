@@ -72,6 +72,18 @@ class Suggestion(Base):
     adgroup_id: Mapped[int | None] = mapped_column(BigInteger)
 
     status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+    # 内部协作状态独立于建议结论（status）。不代表百度已经执行或回写成功。
+    handling_status: Mapped[str] = mapped_column(
+        String(24), default="todo", nullable=False, index=True
+    )
+    assignee_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    due_at: Mapped[datetime | None] = mapped_column(DateTime)
+    workflow_updated_by: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="SET NULL")
+    )
+    workflow_updated_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     adopted_at: Mapped[datetime | None] = mapped_column(DateTime)
 

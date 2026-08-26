@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 
 export default defineConfig({
   root: resolve('diagnostic-center'),
+  envDir: resolve('.'),
   base: '/diagnostic-center/',
   publicDir: false,
   plugins: [vue()],

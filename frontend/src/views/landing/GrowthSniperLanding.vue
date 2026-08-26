@@ -1,11 +1,25 @@
 <script setup>
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, reactive, ref } from 'vue'
 
 const assetRoot = import.meta.env.BASE_URL === '/growth-sniper/' ? '/growth-sniper/landing' : '/landing'
 const asset = (name) => `${assetRoot}/${name}`
 const mobileOpen = ref(false)
 const activeSection = ref('diagnosis')
 const diagnosisUrl = ref('')
+const introSlide = ref(0)
+const introPaused = ref(false)
+const introMoving = ref(false)
+const introTarget = ref(1)
+const trialModalOpen = ref(false)
+const trialSubmitting = ref(false)
+const trialError = ref('')
+const trialCountdown = ref(0)
+const trialForm = reactive({
+  name: '',
+  email: '',
+  phone: '',
+  code: '',
+})
 
 const navItems = [
   ['diagnosis', '产品'],
@@ -25,6 +39,15 @@ const channels = [
   { key: 'SEM', title: 'SEM 智能出价', text: 'AI 智能调价，实时转化优化，最大化 ROI', image: asset('channel-sem.png') },
   { key: 'SEO', title: 'SEO 全域优化', text: '全站提权，内容智能优化，排名稳步提升', image: asset('channel-seo.png') },
   { key: 'GEO', title: 'GEO AI 搜索引擎优化', text: '地域精准覆盖，本地流量劫持，线索质量翻倍', image: asset('channel-geo.png') },
+]
+
+const aiPlatforms = [
+  { name: 'DeepSeek', mark: '∿', className: 'deepseek' },
+  { name: '豆包', mark: '豆', className: 'doubao' },
+  { name: 'Kimi', mark: 'K', className: 'kimi' },
+  { name: '通义千问', mark: 'Q', className: 'qwen' },
+  { name: '文心一言', mark: '文', className: 'wenxin' },
+  { name: 'ChatGPT', mark: '◎', className: 'chatgpt' },
 ]
 
 const process = [
@@ -58,32 +81,147 @@ const prices = [
 ]
 
 let observer
+let introTimer
+let trialCountdownTimer
+let touchStartX = 0
+
+function startIntroTimer() {
+  window.clearInterval(introTimer)
+  if (introPaused.value || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  introTimer = window.setInterval(() => {
+    moveIntroTo(introSlide.value + 1)
+  }, 3000)
+}
+
+function moveIntroTo(index) {
+  const target = (index + 2) % 2
+  if (introMoving.value || target === introSlide.value) return
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    introSlide.value = target
+    return
+  }
+  window.clearInterval(introTimer)
+  introTarget.value = target
+  introMoving.value = true
+}
+
+function finishIntroMove() {
+  if (!introMoving.value) return
+  introSlide.value = introTarget.value
+  introMoving.value = false
+  startIntroTimer()
+}
+
+function setIntroSlide(index) {
+  const target = (index + 2) % 2
+  if (target === introSlide.value) {
+    startIntroTimer()
+    return
+  }
+  moveIntroTo(target)
+}
+
+function pauseIntro(paused) {
+  introPaused.value = paused
+  if (paused) window.clearInterval(introTimer)
+  else startIntroTimer()
+}
+
+function handleIntroTouchStart(event) {
+  touchStartX = event.changedTouches[0]?.clientX ?? 0
+}
+
+function handleIntroTouchEnd(event) {
+  const distance = (event.changedTouches[0]?.clientX ?? touchStartX) - touchStartX
+  if (Math.abs(distance) > 45) setIntroSlide(introSlide.value + (distance < 0 ? 1 : -1))
+}
+
 onMounted(() => {
   observer = new IntersectionObserver((entries) => {
     const visible = entries.filter((entry) => entry.isIntersecting)
     if (visible.length) activeSection.value = visible.at(-1).target.id
   }, { rootMargin: '-18% 0px -48%', threshold: 0 })
   document.querySelectorAll('.gs-section[id]').forEach((el) => observer.observe(el))
+  startIntroTimer()
 })
-onUnmounted(() => observer?.disconnect())
+onUnmounted(() => {
+  observer?.disconnect()
+  window.clearInterval(introTimer)
+  window.clearInterval(trialCountdownTimer)
+  document.body.style.overflow = ''
+})
 
 function scrollTo(id) {
   mobileOpen.value = false
   document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
 }
 
+function diagnosisOrigin() {
+  return window.location.hostname === 'gsnipers.snipers.com.cn'
+    ? 'https://sem.snipers.com.cn'
+    : window.location.origin
+}
+
 function goDiagnosis() {
-  const target = new URL('/diagnosis', window.location.origin)
+  const target = new URL('/diagnosis', diagnosisOrigin())
+  if (diagnosisUrl.value.trim()) target.searchParams.set('url', diagnosisUrl.value.trim())
+  window.location.assign(target.href)
+}
+
+function openTrialForm() {
+  mobileOpen.value = false
+  trialError.value = ''
+  trialModalOpen.value = true
+  pauseIntro(true)
+  document.body.style.overflow = 'hidden'
+}
+
+function closeTrialForm() {
+  trialModalOpen.value = false
+  trialError.value = ''
+  document.body.style.overflow = ''
+  pauseIntro(false)
+}
+
+function sendTrialCode() {
+  trialError.value = ''
+  if (!/^1\d{10}$/.test(trialForm.phone)) {
+    trialError.value = '请先输入有效手机号'
+    return
+  }
+  if (trialCountdown.value) return
+  trialCountdown.value = 60
+  window.clearInterval(trialCountdownTimer)
+  trialCountdownTimer = window.setInterval(() => {
+    trialCountdown.value -= 1
+    if (trialCountdown.value <= 0) window.clearInterval(trialCountdownTimer)
+  }, 1000)
+}
+
+function submitTrialForm() {
+  trialError.value = ''
+  if (!trialForm.name.trim()) return void (trialError.value = '请填写您的称呼')
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trialForm.email)) return void (trialError.value = '请填写有效邮箱')
+  if (!/^1\d{10}$/.test(trialForm.phone)) return void (trialError.value = '请填写有效手机号')
+  if (!/^\d{4,6}$/.test(trialForm.code)) return void (trialError.value = '请填写验证码')
+
+  trialSubmitting.value = true
+  window.sessionStorage.setItem('growth-sniper-trial', JSON.stringify({
+    name: trialForm.name.trim(),
+    email: trialForm.email.trim(),
+    phone: trialForm.phone,
+  }))
+  const target = new URL('/diagnosis', diagnosisOrigin())
   if (diagnosisUrl.value.trim()) target.searchParams.set('url', diagnosisUrl.value.trim())
   window.location.assign(target.href)
 }
 </script>
 
 <template>
-  <div class="gs-site" :style="{ '--gs-stone': `url(${asset('stone-network.jpg')})` }">
+  <div class="gs-site" :style="{ '--gs-stone': `url(${asset('stone-network.avif')})` }">
     <header class="site-header">
       <a class="brand" href="#diagnosis" aria-label="获客狙击手 G-Snipers 首页" @click.prevent="scrollTo('diagnosis')">
-        <span class="brand-mark"><img :src="asset('g-snipers-mark.png')" alt="" aria-hidden="true"></span>
+        <span class="brand-mark"><img :src="asset('g-snipers-mark.avif')" alt="" aria-hidden="true" fetchpriority="high" decoding="async"></span>
         <span class="brand-copy"><strong>G-Snipers</strong><em>获客狙击手</em></span>
       </a>
       <nav :class="{ open: mobileOpen }" aria-label="主导航">
@@ -95,17 +233,34 @@ function goDiagnosis() {
           @click.prevent="scrollTo(id)"
         >{{ label }}</a>
       </nav>
-      <button class="header-cta" type="button" @click="goDiagnosis">免费试用</button>
+      <button class="header-cta" type="button" @click="openTrialForm">免费试用</button>
       <button class="menu-button" type="button" aria-label="切换菜单" @click="mobileOpen = !mobileOpen">
         <span /><span /><span />
       </button>
     </header>
 
     <main>
-      <section id="diagnosis" class="diagnostic-teaser diagnostic-first gs-section">
+      <section
+        id="diagnosis"
+        class="intro-carousel gs-section"
+        aria-roledescription="carousel"
+        aria-label="产品核心能力"
+        tabindex="0"
+        @keydown.left.prevent="setIntroSlide(introSlide - 1)"
+        @keydown.right.prevent="setIntroSlide(introSlide + 1)"
+        @touchstart.passive="handleIntroTouchStart"
+        @touchend.passive="handleIntroTouchEnd"
+      >
+        <div class="intro-stage" :class="{ moving: introMoving }" @transitionend.self="finishIntroMove">
+      <section
+        class="intro-slide diagnostic-teaser diagnostic-first gs-section"
+        :style="{ order: introSlide === 0 ? 0 : 1 }"
+        :aria-hidden="introSlide !== 0"
+        :inert="introSlide !== 0"
+      >
         <div class="diagnosis-copy">
           <span class="kicker">免费诊断中心</span>
-          <h2>打开你的专属诊断工作台，<br>看清 SEM / SEO / GEO 全部数据</h2>
+          <h2>你的专属工作台</h2>
           <p>3 分钟接入，AI 自动跑出品牌在搜索广告、自然搜索排名与 AI 搜索引擎中的真实表现。</p>
           <div class="capability-list">
             <span><i>◎</i>精准获客</span>
@@ -114,9 +269,31 @@ function goDiagnosis() {
             <span><i>↗</i>转化提效</span>
           </div>
           <form class="diagnosis-form" @submit.prevent="goDiagnosis">
-            <input v-model="diagnosisUrl" type="url" inputmode="url" placeholder="请输入你的官网地址" aria-label="官网地址">
+            <input
+              v-model="diagnosisUrl"
+              type="url"
+              inputmode="url"
+              placeholder="请输入你的官网地址"
+              aria-label="官网地址"
+              @focus="pauseIntro(true)"
+              @blur="pauseIntro(false)"
+            >
             <button type="submit">开始免费诊断</button>
           </form>
+          <div class="ai-platforms" aria-label="支持诊断的主流 AI 搜索平台">
+            <span class="platform-label">覆盖主流 AI 搜索</span>
+            <div class="platform-list">
+              <span
+                v-for="platform in aiPlatforms"
+                :key="platform.name"
+                class="platform-chip"
+                :class="platform.className"
+              >
+                <i aria-hidden="true">{{ platform.mark }}</i>
+                <b>{{ platform.name }}</b>
+              </span>
+            </div>
+          </div>
           <small>无需安装代码 · 首次诊断免费 · 结果仅您可见</small>
         </div>
         <div class="dashboard-shell" aria-label="Growth Sniper 产品数据看板示意">
@@ -155,7 +332,12 @@ function goDiagnosis() {
         </div>
       </section>
 
-      <section id="overview" class="hero gs-section">
+      <section
+        class="intro-slide hero gs-section"
+        :style="{ order: introSlide === 1 ? 0 : 1 }"
+        :aria-hidden="introSlide !== 1"
+        :inert="introSlide !== 1"
+      >
         <div class="hero-glow" />
         <div class="hero-inner">
           <div class="hero-copy reveal">
@@ -173,7 +355,7 @@ function goDiagnosis() {
             </div>
           </div>
           <div class="hero-visual reveal delay-1" aria-hidden="true">
-            <img :src="asset('hero-target.png')" alt="">
+            <img :src="asset('hero-target.avif')" alt="" loading="lazy" decoding="async">
             <span class="orbit orbit-a" />
             <span class="orbit orbit-b" />
           </div>
@@ -201,6 +383,22 @@ function goDiagnosis() {
           </article>
         </div>
       </section>
+        </div>
+        <button class="intro-arrow prev" type="button" aria-label="上一屏" @click="setIntroSlide(introSlide - 1)">‹</button>
+        <button class="intro-arrow next" type="button" aria-label="下一屏" @click="setIntroSlide(introSlide + 1)">›</button>
+        <div class="intro-pagination" role="tablist" aria-label="选择首屏内容">
+          <button
+            v-for="index in 2"
+            :key="index"
+            type="button"
+            role="tab"
+            :class="{ active: introSlide === index - 1 }"
+            :aria-selected="introSlide === index - 1"
+            :aria-label="`第 ${index} 屏`"
+            @click="setIntroSlide(index - 1)"
+          />
+        </div>
+      </section>
 
       <section id="features" class="pain gs-section">
         <div class="section-heading">
@@ -209,13 +407,16 @@ function goDiagnosis() {
         </div>
         <div class="pain-grid">
           <article v-for="item in painPoints" :key="item.key" class="glass-card pain-card">
-            <div class="warning"><span>!</span><i /></div>
+            <div class="warning">
+              <span>!</span>
+              <img class="warning-logo" :src="asset('g-snipers-mark.avif')" alt="" aria-hidden="true" loading="lazy" decoding="async">
+            </div>
             <h3>{{ item.title }}</h3>
             <p>{{ item.text }}</p>
           </article>
         </div>
         <div class="laser-divider">
-          <span class="mini-target"><img :src="asset('g-snipers-mark.png')" alt="" aria-hidden="true"></span>
+          <span class="mini-target"><img :src="asset('g-snipers-mark.avif')" alt="" aria-hidden="true" loading="lazy" decoding="async"></span>
         </div>
         <div class="section-heading compact">
           <h2>一套系统，打通三条获客通路</h2>
@@ -224,7 +425,7 @@ function goDiagnosis() {
         <div class="channel-grid">
           <article v-for="item in channels" :key="item.key" class="glass-card channel-card">
             <div class="channel-preview">
-              <img :src="item.image" :alt="`${item.title}产品界面`">
+              <img :src="item.image" :alt="`${item.title}产品界面`" loading="lazy" decoding="async">
             </div>
             <div class="channel-copy">
               <div><h3>{{ item.title }}</h3><p>{{ item.text }}</p></div>
@@ -235,7 +436,7 @@ function goDiagnosis() {
 
       <section id="process" class="process gs-section">
         <div class="section-heading">
-          <span class="target-logo"><i /><i /><b /></span>
+          <span class="target-logo"><img :src="asset('g-snipers-mark.avif')" alt="" aria-hidden="true" loading="lazy" decoding="async"></span>
           <h2>全流程自动化获客，精准高效</h2>
           <p>从渠道接入到转化复盘，每一步都由数据驱动</p>
         </div>
@@ -289,19 +490,19 @@ function goDiagnosis() {
       </section>
 
       <section id="contact" class="final-cta gs-section">
-        <span class="target-logo large"><i /><i /><b /></span>
+        <span class="target-logo large"><img :src="asset('g-snipers-mark.avif')" alt="" aria-hidden="true" loading="lazy" decoding="async"></span>
         <small>让每一条线索，都成为增长的动力</small>
         <h2>精准获客，从这一次点击开始</h2>
         <div class="hero-actions">
-          <button class="button primary" type="button" @click="goDiagnosis">开始免费诊断</button>
-          <a class="button ghost" href="mailto:service@g-snipers.com">预约演示 <span>↗</span></a>
+          <button class="button primary" type="button" @click="openTrialForm">开始免费诊断</button>
+          <button class="button ghost" type="button" @click="openTrialForm">预约演示 <span>↗</span></button>
         </div>
       </section>
     </main>
 
     <footer>
       <div class="footer-brand">
-        <span class="brand-mark small"><img :src="asset('g-snipers-mark.png')" alt="" aria-hidden="true"></span>
+        <span class="brand-mark small"><img :src="asset('g-snipers-mark.avif')" alt="" aria-hidden="true" loading="lazy" decoding="async"></span>
         <strong>G-Snipers</strong><span>获客狙击手 · 全域智能获客解决方案</span>
       </div>
       <div class="footer-links">
@@ -313,6 +514,48 @@ function goDiagnosis() {
       </div>
       <div class="footer-meta">隐私政策 · 服务条款 · 联系我们</div>
     </footer>
+
+    <div
+      v-if="trialModalOpen"
+      class="trial-backdrop"
+      role="presentation"
+      @click.self="closeTrialForm"
+      @keydown.esc="closeTrialForm"
+    >
+      <section class="trial-modal" role="dialog" aria-modal="true" aria-labelledby="trial-title">
+        <button class="trial-close" type="button" aria-label="关闭表单" @click="closeTrialForm">×</button>
+        <span class="trial-kicker">FINAL STEP</span>
+        <h2 id="trial-title">还差一步，马上进入你的诊断工作台</h2>
+        <p>留下联系方式，我们将为你开通免费诊断。</p>
+        <form @submit.prevent="submitTrialForm">
+          <label>
+            <span>怎么称呼您</span>
+            <input v-model="trialForm.name" autocomplete="name" placeholder="请输入姓名">
+          </label>
+          <label>
+            <span>邮箱</span>
+            <input v-model="trialForm.email" type="email" autocomplete="email" placeholder="用于接收诊断报告">
+          </label>
+          <label>
+            <span>电话</span>
+            <input v-model="trialForm.phone" inputmode="tel" autocomplete="tel" placeholder="请输入手机号" maxlength="11">
+          </label>
+          <label>
+            <span>验证码</span>
+            <span class="trial-code-row">
+              <input v-model="trialForm.code" inputmode="numeric" placeholder="请输入验证码" maxlength="6">
+              <button type="button" :disabled="trialCountdown > 0" @click="sendTrialCode">
+                {{ trialCountdown ? `${trialCountdown}s 后重试` : '获取验证码' }}
+              </button>
+            </span>
+          </label>
+          <div class="trial-error" aria-live="polite">{{ trialError }}</div>
+          <button class="trial-submit" type="submit" :disabled="trialSubmitting">
+            {{ trialSubmitting ? '正在进入…' : '立即进入诊断中心' }}
+          </button>
+        </form>
+      </section>
+    </div>
   </div>
 </template>
 
@@ -321,6 +564,7 @@ function goDiagnosis() {
 :global(body) { background: #061018; }
 
 .gs-site {
+  --brand-mark-size: 84px;
   --purple: #a84eff;
   --purple-hot: #d970ff;
   --blue: #2da1ff;
@@ -364,7 +608,7 @@ function goDiagnosis() {
   backdrop-filter: blur(20px) saturate(130%);
 }
 .brand { display: flex; align-items: center; gap: 12px; color: white; text-decoration: none; }
-.brand-mark { width: 84px; height: 84px; flex: none; }
+.brand-mark { width: var(--brand-mark-size); height: var(--brand-mark-size); flex: none; }
 .brand-mark img { display: block; width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 0 8px rgba(183,68,255,.55)); }
 .brand-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 0; white-space: nowrap; line-height: 1.05; }
 .brand-copy strong { order: 2; font-size: 20px; letter-spacing: -.3px; background: linear-gradient(90deg, #a84eff, #df71ff); background-clip: text; color: transparent; }
@@ -377,6 +621,85 @@ nav a:after { display: none; }
 .header-cta { justify-self: end; border: 1px solid rgba(255,255,255,.72); border-radius: 999px; padding: 13px 28px; color: #fff; font-size: 15px; cursor: pointer; background: linear-gradient(105deg, #209eff, #7038f4 60%, #dc66eb); box-shadow: 0 0 24px rgba(111, 78, 255, .32), inset 0 1px rgba(255,255,255,.3); transition: .25s; }
 .header-cta:hover { transform: translateY(-2px); box-shadow: 0 0 30px rgba(191, 91, 255, .48); }
 .menu-button { display: none; }
+
+.intro-carousel {
+  position: relative;
+  min-height: 100svh;
+  padding: 0 !important;
+  overflow: hidden;
+  touch-action: pan-y;
+}
+.intro-stage {
+  display: flex;
+  width: 100%;
+  min-height: 100svh;
+  transform: translate3d(0, 0, 0);
+}
+.intro-stage.moving {
+  transform: translate3d(-100%, 0, 0);
+  transition: transform .72s cubic-bezier(.22, .72, .22, 1);
+  will-change: transform;
+}
+.intro-slide {
+  flex: 0 0 100%;
+  width: 100%;
+}
+.intro-arrow {
+  position: absolute;
+  z-index: 12;
+  top: 50%;
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(223, 185, 255, .36);
+  border-radius: 50%;
+  color: #f5eaff;
+  font-size: 34px;
+  line-height: 1;
+  cursor: pointer;
+  background: rgba(7, 16, 25, .66);
+  box-shadow: 0 0 22px rgba(171, 67, 241, .22), inset 0 1px rgba(255,255,255,.08);
+  backdrop-filter: blur(14px);
+  transform: translateY(-50%);
+  transition: border-color .25s, background .25s, box-shadow .25s;
+}
+.intro-arrow:hover {
+  border-color: rgba(224, 149, 255, .8);
+  background: rgba(120, 39, 184, .42);
+  box-shadow: 0 0 28px rgba(189, 76, 255, .42);
+}
+.intro-arrow.prev { left: 24px; }
+.intro-arrow.next { right: 24px; }
+.intro-pagination {
+  position: absolute;
+  z-index: 12;
+  left: 50%;
+  bottom: 24px;
+  display: flex;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 999px;
+  background: rgba(4, 12, 19, .64);
+  backdrop-filter: blur(12px);
+  transform: translateX(-50%);
+}
+.intro-pagination button {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  background: #77818b;
+  transition: width .3s, background .3s, box-shadow .3s;
+}
+.intro-pagination button.active {
+  width: 28px;
+  background: #c15cff;
+  box-shadow: 0 0 12px #b84eff;
+}
 
 .hero {
   min-height: 100svh;
@@ -434,22 +757,19 @@ nav a:after { display: none; }
 .section-heading h2 { margin: 15px 0 12px; font-size: clamp(38px, 4.2vw, 70px); line-height: 1.13; letter-spacing: -.045em; text-shadow: 0 4px 15px #000; }
 .section-heading p { margin: 0; color: #aeb5bc; font-size: 18px; font-weight: 300; }
 .section-heading.compact h2 { font-size: clamp(32px, 3.3vw, 56px); }
-.pain-grid, .channel-grid, .price-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; max-width: 1500px; margin: 65px auto 0; }
-.pain-card { min-height: 230px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 14px; border-color: rgba(222, 147, 255, .7); background: linear-gradient(135deg,rgba(47,60,70,.68),rgba(14,24,32,.82) 56%,rgba(10,18,25,.9)); box-shadow: 0 22px 30px rgba(0,0,0,.48), 0 0 20px rgba(183,73,255,.16), inset 0 1px rgba(255,255,255,.18); }
+.pain-grid, .channel-grid, .price-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px; max-width: 1500px; margin: 65px auto 0; }
+.pain-card { min-width: 0; min-height: 230px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 14px; border-color: rgba(222, 147, 255, .7); background: linear-gradient(135deg,rgba(47,60,70,.68),rgba(14,24,32,.82) 56%,rgba(10,18,25,.9)); box-shadow: 0 22px 30px rgba(0,0,0,.48), 0 0 20px rgba(183,73,255,.16), inset 0 1px rgba(255,255,255,.18); }
 .warning { position: relative; width: 64px; height: 56px; display: grid; place-items: center; color: white; font-size: 28px; font-weight: 800; filter: drop-shadow(0 0 12px #c05aff); }
 .warning:before { content: ""; position: absolute; inset: 2px; clip-path: polygon(50% 0, 100% 100%, 0 100%); background: linear-gradient(#efb0ff, #9a34df); }
 .warning:after { content: ""; position: absolute; inset: 7px; clip-path: polygon(50% 0, 100% 100%, 0 100%); background: #18222b; }
 .warning span { z-index: 1; }
-.warning i { position: absolute; width: 17px; height: 17px; right: -4px; top: -2px; border: 1px solid #ca74ff; border-radius: 50%; box-shadow: 0 0 8px #bd55ff; }
-.warning i:before, .warning i:after { content: ""; position: absolute; background: #ca74ff; }
-.warning i:before { width: 23px; height: 1px; left: -4px; top: 7px; }
-.warning i:after { width: 1px; height: 23px; left: 7px; top: -4px; }
+.warning-logo { position: absolute; z-index: 2; width: 31px; height: 31px; right: -13px; top: -9px; object-fit: contain; filter: drop-shadow(0 0 8px rgba(190, 74, 255, .86)); }
 .pain-card h3 { font-size: 31px; margin: 22px 0 8px; color:#f1efeb; text-shadow:0 2px 1px rgba(0,0,0,.85),0 0 14px rgba(255,255,255,.08); }
 .pain-card p { margin: 0 24px; color: #b8bec5; text-align: center; font-size: 15px; line-height: 1.8; }
 .laser-divider { max-width: 1160px; height: 1px; margin: 82px auto 72px; background: linear-gradient(90deg, transparent, #9852ca 40%, #ecb1ff 50%, #9852ca 60%, transparent); box-shadow: 0 0 10px #b656ff; position: relative; }
-.mini-target { position: absolute; width: 80px; height: 80px; left: 50%; top: 50%; transform: translate(-50%,-50%); }
+.mini-target { position: absolute; width: var(--brand-mark-size); height: var(--brand-mark-size); left: 50%; top: 50%; transform: translate(-50%,-50%); }
 .mini-target img { display: block; width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 0 12px rgba(183,68,255,.72)); }
-.channel-card { overflow: hidden; border-radius: 14px; border-color: rgba(219,125,255,.62); background: linear-gradient(180deg,rgba(21,34,44,.72),rgba(8,17,25,.88)); box-shadow: 0 20px 38px rgba(0,0,0,.4), 0 0 18px rgba(183,73,255,.16), inset 0 1px rgba(255,255,255,.1); }
+.channel-card { min-width: 0; overflow: hidden; border-radius: 14px; border-color: rgba(219,125,255,.62); background: linear-gradient(180deg,rgba(21,34,44,.72),rgba(8,17,25,.88)); box-shadow: 0 20px 38px rgba(0,0,0,.4), 0 0 18px rgba(183,73,255,.16), inset 0 1px rgba(255,255,255,.1); }
 .channel-preview { height: 210px; display: grid; place-items: center; padding: 18px 24px 6px; background: radial-gradient(ellipse at 50% 65%,rgba(108,54,163,.18),transparent 64%); }
 .channel-preview img { display: block; width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 12px 18px rgba(0,0,0,.48)); }
 .channel-copy { min-height: 108px; display: grid; place-items: start center; padding: 10px 22px 24px; text-align: center; }
@@ -472,7 +792,15 @@ nav a:after { display: none; }
 .diagnosis-form input { min-width: 0; border: 0; outline: 0; padding: 0 23px; color: #f0f2f3; font-size: 16px; background: transparent; }
 .diagnosis-form input::placeholder { color: #707c86; }
 .diagnosis-form button { min-width: 190px; border: 0; border-radius: 999px; color: #fff; font-size: 16px; cursor: pointer; background: linear-gradient(100deg,#7126e8,#c342fb 68%,#f09eea); box-shadow: 0 0 22px rgba(190,72,255,.48); }
-.diagnosis-copy > small { display: block; margin: 11px 0 0 20px; color: #76818b; }
+.ai-platforms { max-width: 720px; margin-top: 16px; }
+.platform-label { display: block; margin: 0 0 9px 4px; color: #87929c; font-size: 11px; letter-spacing: 1.2px; }
+.platform-list { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+.platform-chip { min-width: 0; height: 42px; display: flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid rgba(180,195,207,.16); border-radius: 11px; color: #aeb7bf; background: linear-gradient(145deg,rgba(27,43,55,.62),rgba(8,18,26,.72)); box-shadow: inset 0 1px rgba(255,255,255,.045); transition: transform .22s, border-color .22s, color .22s, background .22s; }
+.platform-chip i { width: 23px; height: 23px; display: grid; place-items: center; flex: none; border-radius: 7px; color: var(--platform-color); font-size: 13px; font-style: normal; font-weight: 800; background: color-mix(in srgb,var(--platform-color) 15%,rgba(255,255,255,.03)); box-shadow: 0 0 10px color-mix(in srgb,var(--platform-color) 24%,transparent); }
+.platform-chip b { overflow: hidden; font-size: 10px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.platform-chip:hover { transform: translateY(-2px); border-color: color-mix(in srgb,var(--platform-color) 48%,transparent); color: #eef1f3; background: linear-gradient(145deg,rgba(35,50,63,.78),rgba(11,22,31,.86)); }
+.platform-chip.deepseek { --platform-color: #5b8dff; }.platform-chip.doubao { --platform-color: #8d78ff; }.platform-chip.kimi { --platform-color: #f2f2f2; }.platform-chip.qwen { --platform-color: #7c68ff; }.platform-chip.wenxin { --platform-color: #4a91ff; }.platform-chip.chatgpt { --platform-color: #68d6bc; }
+.diagnosis-copy > small { display: block; margin: 10px 0 0 4px; color: #76818b; }
 .dashboard-shell { position: relative; overflow: hidden; padding: 18px; border: 1px solid rgba(181,197,208,.38); border-radius: 27px; background: linear-gradient(145deg,rgba(14,29,40,.92),rgba(5,13,20,.94)); box-shadow: 0 28px 80px rgba(0,0,0,.52),0 0 45px rgba(126,51,222,.2); transform: perspective(1300px) rotateY(-3deg); }
 .dashboard-top { height: 54px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 0 17px; border-bottom: 1px solid rgba(255,255,255,.07); color: #87929c; font-size: 12px; }
 .dash-brand { color: #fff; font-weight: 700; font-size: 16px; }.dash-dot { display: inline-block; width: 11px; height: 11px; margin-right: 8px; border: 2px solid #c25cff; border-radius: 50%; box-shadow: 0 0 8px #b551ff; }
@@ -492,9 +820,8 @@ nav a:after { display: none; }
 .demo-badge { position:absolute; right:23px; bottom:20px; padding:5px 10px; border-radius:999px; color:#a8b0b6; font-size:9px; background:rgba(3,10,16,.78); }
 
 .process { background: rgba(3,10,16,.28); }
-.target-logo { position: relative; width: 86px; height: 86px; margin: 0 auto 24px; display: grid; place-items: center; border: 2px solid #b84eff; border-radius: 50%; box-shadow: 0 0 22px rgba(191, 76, 255, .55), inset 0 0 18px rgba(191, 76, 255, .20); }
-.target-logo:before, .target-logo i { content:""; position:absolute; border:1px solid #bd54ff; border-radius:50%; }
-.target-logo:before { inset:10px }.target-logo i:nth-child(1){ inset:22px }.target-logo i:nth-child(2){ width:110px; height:1px; border:0; border-top:1px solid #ba51ff; transform:rotate(-42deg) }.target-logo b{ width:12px;height:12px; background:#e9b2ff; transform:rotate(45deg); box-shadow:0 0 12px #d263ff }
+.target-logo { width: var(--brand-mark-size); height: var(--brand-mark-size); margin: 0 auto 24px; display: block; }
+.target-logo img { display: block; width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 0 12px rgba(183,68,255,.72)); }
 .process-grid { max-width: 1500px; margin: 70px auto 90px; display: grid; grid-template-columns: repeat(4, 1fr); }
 .process-step { position: relative; text-align: center; padding: 0 28px; }
 .step-icon { width: 75px; height: 75px; margin: auto; display: grid; place-items: center; font-size: 36px; color: #e9e7e8; text-shadow: 0 3px 5px #000; }
@@ -566,11 +893,87 @@ nav a:after { display: none; }
 .price-card.featured button, .price-card button:hover { border-color: transparent; background: linear-gradient(90deg,#6b2fe9,#d04ffc); box-shadow: 0 0 18px rgba(188,73,255,.45); }
 
 .final-cta { padding-top: 90px !important; padding-bottom: 110px !important; text-align: center; background: rgba(3,10,16,.28); }
-.target-logo.large { width: 102px; height: 102px; }.final-cta small { display: block; color: #858f98; font-size: 14px; letter-spacing: 2px; }
+.target-logo.large { width: var(--brand-mark-size); height: var(--brand-mark-size); }.final-cta small { display: block; color: #858f98; font-size: 14px; letter-spacing: 2px; }
 .final-cta h2 { font-size: clamp(34px, 3.6vw, 58px); margin: 10px 0 0; }.final-cta .hero-actions { justify-content: center; margin-top: 32px; }
 footer { min-height: 92px; display: grid; grid-template-columns: 1.4fr 1.2fr 1fr; align-items: center; gap: 30px; padding: 20px clamp(24px, 6vw, 118px); border-top: 1px solid rgba(184,199,210,.13); background: rgba(5,13,19,.86); color: #7d8790; font-size: 12px; }
-.footer-brand { display: flex; align-items: center; gap: 9px; }.footer-brand strong { color: white; font-size: 15px; }.brand-mark.small { width: 36px; height: 36px; margin-right: 1px; }
+.footer-brand { display: flex; align-items: center; gap: 9px; }.footer-brand strong { color: white; font-size: 15px; }.brand-mark.small { width: var(--brand-mark-size); height: var(--brand-mark-size); margin-right: 1px; }
 .footer-links { display: flex; justify-content: center; gap: 25px; }.footer-links a { color: #818b95; text-decoration: none; }.footer-links a:hover { color: #d7a2f3; }.footer-meta { text-align: right; }
+
+.trial-backdrop {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgba(1, 7, 12, .76);
+  backdrop-filter: blur(15px);
+}
+.trial-modal {
+  position: relative;
+  width: min(660px, 100%);
+  max-height: calc(100svh - 44px);
+  overflow-y: auto;
+  padding: 42px 54px 48px;
+  border: 1px solid rgba(196, 211, 222, .48);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 85% 100%, rgba(138, 42, 236, .18), transparent 42%),
+    linear-gradient(145deg, rgba(29, 44, 56, .98), rgba(8, 19, 28, .99));
+  box-shadow: 0 38px 110px rgba(0,0,0,.72), 0 0 40px rgba(185, 69, 255, .2);
+}
+.trial-close {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  color: #aeb6bd;
+  font-size: 29px;
+  line-height: 1;
+  cursor: pointer;
+  background: transparent;
+}
+.trial-kicker { color: #ce79fa; font-size: 11px; letter-spacing: 2.5px; }
+.trial-modal h2 { margin: 8px 0 7px; font-size: 28px; letter-spacing: -.03em; }
+.trial-modal > p { margin: 0 0 23px; color: #85919a; font-size: 13px; }
+.trial-modal form { display: grid; gap: 14px; }
+.trial-modal label { display: grid; gap: 7px; color: #dce0e2; font-size: 13px; }
+.trial-modal label > input,
+.trial-code-row input {
+  min-width: 0;
+  height: 48px;
+  padding: 0 15px;
+  border: 1px solid #65727c;
+  border-radius: 10px;
+  outline: 0;
+  color: #fff;
+  background: rgba(12, 26, 36, .72);
+}
+.trial-modal input:focus { border-color: #ca62ff; box-shadow: 0 0 0 3px rgba(189, 76, 255, .1); }
+.trial-code-row { display: grid; grid-template-columns: 1fr 145px; gap: 11px; }
+.trial-code-row button {
+  border: 0;
+  border-radius: 10px;
+  color: #fff;
+  cursor: pointer;
+  background: linear-gradient(90deg, #7026dc, #b83eef);
+  box-shadow: 0 0 18px rgba(183, 65, 241, .24);
+}
+.trial-code-row button:disabled { cursor: default; opacity: .55; }
+.trial-error { min-height: 18px; margin-top: -3px; color: #ff9fa8; font-size: 12px; }
+.trial-submit {
+  height: 54px;
+  border: 1px solid rgba(255,255,255,.55);
+  border-radius: 999px;
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+  background: linear-gradient(92deg, #ff9a42, #c344eb 55%, #8b24fa);
+  box-shadow: 0 0 26px rgba(188, 65, 245, .42);
+}
+.trial-submit:disabled { cursor: wait; opacity: .65; }
 
 .reveal { animation: reveal .8s cubic-bezier(.2,.7,.2,1) both; }.delay-1 { animation-delay: .12s }.delay-2 { animation-delay: .25s }
 @keyframes reveal { from { opacity:0; transform:translateY(22px) } to { opacity:1; transform:translateY(0) } }
@@ -632,8 +1035,8 @@ footer { min-height: 92px; display: grid; grid-template-columns: 1.4fr 1.2fr 1fr
   }
   .pain .pain-grid { margin-top: 72px; }
   .pain-card {
+    width: 100%;
     min-height: 230px;
-    aspect-ratio: 1.96 / 1;
     border-width: 1px;
     background:
       linear-gradient(135deg,rgba(72,82,91,.72),rgba(25,34,42,.82) 52%,rgba(12,20,27,.92)),
@@ -646,9 +1049,9 @@ footer { min-height: 92px; display: grid; grid-template-columns: 1.4fr 1.2fr 1fr
   }
   .warning { width: 64px; height: 56px; font-size: 28px; }
   .pain-card h3 { margin: 22px 0 8px; font-size: clamp(29px, 2vw, 43px); font-weight: 650; }
-  .pain-card p { font-size: clamp(14px, 1.05vw, 23px); line-height: 1.8; white-space: nowrap; }
+  .pain-card p { font-size: clamp(14px, 1.05vw, 23px); line-height: 1.8; white-space: normal; overflow-wrap: break-word; }
   .laser-divider { width: 75vw; max-width: 1920px; margin: 88px auto 72px; }
-  .mini-target { width: 78px; height: 78px; }
+  .mini-target { width: var(--brand-mark-size); height: var(--brand-mark-size); }
   .channel-grid { margin-top: 58px; }
   .channel-card {
     aspect-ratio: 1.5 / 1;
@@ -671,7 +1074,7 @@ footer { min-height: 92px; display: grid; grid-template-columns: 1.4fr 1.2fr 1fr
   .channel-preview img { width: 92%; height: 94%; }
   .channel-copy { min-height: 0; place-items: center; padding: 8px 24px 24px; }
   .channel-copy h3 { margin-bottom: 10px; font-size: clamp(23px, 1.8vw, 36px); font-weight: 650; }
-  .channel-copy p { font-size: clamp(13px, 1vw, 21px); line-height: 1.55; white-space: nowrap; }
+  .channel-copy p { font-size: clamp(13px, 1vw, 21px); line-height: 1.55; white-space: normal; overflow-wrap: break-word; }
 
   .diagnostic-first { padding-top: 138px !important; padding-bottom: 48px !important; }
   .diagnosis-copy h2 { margin: 11px 0 14px; font-size: clamp(38px,3.3vw,58px); }
@@ -682,10 +1085,7 @@ footer { min-height: 92px; display: grid; grid-template-columns: 1.4fr 1.2fr 1fr
   .dash-panels > div { min-height: 172px; }
   .trend-panel svg { height: 125px; }
 
-  .target-logo { width: 68px; height: 68px; margin-bottom: 13px; }
-  .target-logo:before { inset: 8px; }
-  .target-logo i:nth-child(1) { inset: 18px; }
-  .target-logo i:nth-child(2) { width: 88px; }
+  .target-logo { width: var(--brand-mark-size); height: var(--brand-mark-size); margin-bottom: 13px; }
   .process-grid { margin: 35px auto 45px; }
   .step-icon { width: 58px; height: 58px; font-size: 29px; }
   .step-line { top: 29px; }
@@ -713,7 +1113,7 @@ footer { min-height: 92px; display: grid; grid-template-columns: 1.4fr 1.2fr 1fr
     padding-top: 60px !important;
     padding-bottom: 65px !important;
   }
-  .target-logo.large { width: 78px; height: 78px; }
+  .target-logo.large { width: var(--brand-mark-size); height: var(--brand-mark-size); }
 }
 
 @media (max-width: 1180px) {
@@ -734,7 +1134,11 @@ footer { min-height: 92px; display: grid; grid-template-columns: 1.4fr 1.2fr 1fr
 }
 
 @media (max-width: 760px) {
-  .site-header { height: 68px; padding: 0 18px; }.site-header .brand-mark { width: 50px; height: 50px; }.brand-copy strong { font-size: 16px; }.brand-copy em { font-size: 18px; }
+  .gs-site { --brand-mark-size: 50px; }
+  .site-header { height: 68px; padding: 0 18px; }.brand-copy strong { font-size: 16px; }.brand-copy em { font-size: 18px; }
+  .intro-arrow { top: auto; bottom: 12px; width: 40px; height: 40px; font-size: 28px; transform: none; }
+  .intro-arrow.prev { left: 14px; }.intro-arrow.next { right: 14px; }
+  .intro-pagination { bottom: 16px; }
   .hero { padding: 68px 18px 55px; min-height: auto; }.hero-inner { min-width: 0; width: 100%; min-height: 650px; align-items: start; padding-top: 95px; }
   .hero-copy { min-width: 0; width: 100%; text-align: center; }.eyebrow { justify-content: center; }.hero h1 { width: 100%; font-size: clamp(51px, 15.5vw, 64px); margin-top: 16px; letter-spacing: -.075em; }
   .hero-copy > p { font-size: 16px; line-height: 1.7; }.mobile-break { display: block; }.hero-actions { justify-content: center; flex-direction: column; gap: 13px; margin-top: 30px; }.button { width: min(100%, 320px); height: 54px; }
@@ -746,16 +1150,26 @@ footer { min-height: 92px; display: grid; grid-template-columns: 1.4fr 1.2fr 1fr
   .laser-divider { margin: 65px auto 58px; }.channel-preview { height: 160px; }.channel-copy h3 { font-size: 20px; }
   .diagnostic-first { padding-top: 110px !important; }.diagnosis-copy h2 { font-size: 37px; }.diagnosis-copy > p { font-size: 15px; }.capability-list { grid-template-columns: 1fr 1fr; }
   .diagnosis-form { grid-template-columns: 1fr; padding: 6px; border-radius: 18px; }.diagnosis-form input { min-height: 52px; }.diagnosis-form button { min-height: 48px; }
+  .ai-platforms { margin-inline: -18px; padding-left: 18px; overflow: hidden; }
+  .platform-label { margin-left: 0; }
+  .platform-list { display: flex; gap: 9px; padding-right: 18px; overflow-x: auto; scrollbar-width: none; }
+  .platform-list::-webkit-scrollbar { display: none; }
+  .platform-chip { min-width: 104px; }
   .dashboard-shell { padding: 10px; border-radius: 18px; }.dashboard-top { display: none; }.dashboard-body { padding: 5px; }
   .dash-stats { grid-template-columns: repeat(2,1fr); }.dash-stats > div { min-height: 84px; }.dash-panels { grid-template-columns: 1fr; }
   .score-panel { display: none; }.channel-summary { grid-template-columns: 1fr; }
   .process-grid { grid-template-columns: 1fr; gap: 44px; margin: 48px auto 70px; }.process-step { padding: 0; }.step-line { width: 1px; height: 32px; top: auto; bottom: -38px; left: 50%; right: auto; }.step-line i { top: 50%; left: -3px; }
   .logo-marquee { margin-inline: -18px; }.price-card { min-height: 0; padding: 34px 28px; }.price-card.featured { transform: none; }.price-card.featured:hover { transform: translateY(-7px); }
   .final-cta { padding-inline: 18px !important; }.final-cta .hero-actions { flex-direction: column; }.footer-links { flex-wrap: wrap; gap: 14px 22px; }.footer-brand { flex-wrap: wrap; }
+  .trial-backdrop { padding: 12px; }
+  .trial-modal { padding: 36px 22px 28px; border-radius: 19px; }
+  .trial-modal h2 { font-size: 23px; line-height: 1.35; }
+  .trial-code-row { grid-template-columns: 1fr 118px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   *, *:before, *:after { animation-duration: .01ms !important; scroll-behavior: auto !important; }
+  .intro-stage.moving { transition: none; }
   .logo-marquee { overflow-x: auto; -webkit-mask-image: none; mask-image: none; }
   .logo-track { animation: none !important; }
   .logo-group[aria-hidden="true"] { display: none; }

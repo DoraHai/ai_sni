@@ -2,7 +2,7 @@ import client from './client'
 
 // 拓词候选（🚫 红线：百度只读，状态标记只落本地库）
 export function fetchCandidates({
-  tenantId, source, status, suggestedCategory, minScore, q, aiRelevance, page, pageSize,
+  tenantId, source, status, suggestedCategory, minScore, q, aiRelevance, sortBy, order, page, pageSize,
 }) {
   return client.get('/api/v1/expansion/candidates', {
     params: {
@@ -13,6 +13,8 @@ export function fetchCandidates({
       min_score: minScore ?? undefined,
       q: q || undefined,
       ai_relevance: aiRelevance || undefined,
+      sort_by: sortBy || undefined,
+      order: order || undefined,
       page,
       page_size: pageSize,
     },
@@ -38,6 +40,40 @@ export function updateCandidateStatus({ tenantId, candidateId, status }) {
 export function addCandidateToPlan({ tenantId, candidateId, adgroupId, price, matchMode = 'phrase' }) {
   return client.post(`/api/v1/expansion/candidates/${candidateId}/add-to-plan`, {
     tenant_id: tenantId, adgroup_id: adgroupId, price, match_mode: matchMode,
+  })
+}
+
+export function batchSetPreset({ tenantId, candidateIds, presetPrice, presetMatchMode }) {
+  return client.post('/api/v1/expansion/candidates/batch-set-preset', {
+    tenant_id: tenantId,
+    candidate_ids: candidateIds,
+    preset_price: presetPrice,
+    preset_match_mode: presetMatchMode,
+  })
+}
+
+export function batchSetCategory({ tenantId, candidateIds, category }) {
+  return client.post('/api/v1/expansion/candidates/batch-set-category', {
+    tenant_id: tenantId,
+    candidate_ids: candidateIds,
+    category,
+  })
+}
+
+export function batchSetStatus({ tenantId, candidateIds, status }) {
+  return client.post('/api/v1/expansion/candidates/batch-status', {
+    tenant_id: tenantId,
+    candidate_ids: candidateIds,
+    status,
+  })
+}
+
+export function batchAddNegative({ tenantId, candidateIds, adgroupId, matchMode }) {
+  return client.post('/api/v1/expansion/candidates/batch-negative', {
+    tenant_id: tenantId,
+    candidate_ids: candidateIds,
+    adgroup_id: adgroupId,
+    match_mode: matchMode,
   })
 }
 

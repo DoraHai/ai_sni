@@ -1,18 +1,71 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { fetchAvailableMonths, fetchMonthlyReport, monthlyReportExportUrl } from '../../api/reports'
+import { useRouter } from 'vue-router'
+import { analysisReportExportUrl, fetchAnalysisReport } from '../../api/reports'
 import { session } from '../../store/session'
 
 const TENANT_ID = computed(() => session.tenantId)
+const router = useRouter()
 
 const loading = ref(false)
 const regenerating = ref(false)
 const exporting = ref('')
 const error = ref('')
 const report = ref(null)
-const months = ref([])
-const sel = reactive({ year: null, month: null })
+let loadVersion = 0
+const pad = (n) => String(n).padStart(2, '0')
+const isoOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+function getMonday(d) {
+  const date = new Date(d)
+  const day = date.getDay() || 7
+  if (day !== 1) date.setDate(date.getDate() - day + 1)
+  return date
+}
+const quickOptions = [
+  {
+    key: 'today',
+    label: '今日',
+    range: () => {
+      const today = new Date()
+      return [isoOf(today), isoOf(today)]
+    },
+  },
+  {
+    key: 'week',
+    label: '本周',
+    range: () => {
+      const monday = getMonday(new Date())
+      const sunday = new Date(monday)
+      sunday.setDate(monday.getDate() + 6)
+      return [isoOf(monday), isoOf(sunday)]
+    },
+  },
+  {
+    key: 'lastWeek',
+    label: '上周',
+    range: () => {
+      const thisMonday = getMonday(new Date())
+      const lastMonday = new Date(thisMonday)
+      lastMonday.setDate(thisMonday.getDate() - 7)
+      const lastSunday = new Date(lastMonday)
+      lastSunday.setDate(lastMonday.getDate() + 6)
+      return [isoOf(lastMonday), isoOf(lastSunday)]
+    },
+  },
+  {
+    key: 'last7',
+    label: '最近7天',
+    range: () => {
+      const end = new Date()
+      const start = new Date()
+      start.setDate(end.getDate() - 6)
+      return [isoOf(start), isoOf(end)]
+    },
+  },
+]
+const activeRangeKey = ref('week')
+const dateRange = ref(quickOptions.find((opt) => opt.key === activeRangeKey.value).range())
 // 绑定单客户的账号（品牌方客户）锁定客户版；无绑定（内部团队）默认内部版可切
 const version = ref(session.user?.tenant_id ? 'client' : 'internal')
 const versionLocked = computed(() => !!session.user?.tenant_id)
@@ -24,6 +77,14 @@ const fmtChange = (v) => (v == null ? '' : (v >= 0 ? '↑' : '↓') + Math.abs(v
 
 const data = computed(() => report.value?.data || null)
 const narrative = computed(() => report.value?.narrative || null)
+// 前后端发布存在短暂时差时，旧响应缺少新模块也不得让整页崩溃。
+const clientDelivery = computed(() => data.value?.client_delivery || {
+  completed_count: 0, ready_effects: 0, observing_effects: 0, completed_actions: [],
+})
+const operationalFocus = computed(() => data.value?.operational_focus || {
+  pending_suggestions: 0, pending_writebacks: 0, sync_risks: [], priority_suggestions: [],
+  suggestions_path: '/optimize/keywords?has_suggestion=true', queue_path: '/verify/pending',
+})
 
 // AI 叙述里裸写的英文缩写补中文全称（如 CPC → CPC（平均点击成本））。
 // 显示时展开，对历史缓存文案也即时生效；已带（中文）或字母串内的不重复加。
@@ -35,50 +96,45 @@ function withCn(text) {
 
 const comment = (key) => withCn(narrative.value?.module_comments?.[key] || '')
 const aiEnabled = computed(() => report.value?.ai_enabled === true)
+const WORK_STATUS_LABELS = { todo: '待处理', in_progress: '处理中', waiting_writeback: '待回写', completed: '已完成', rejected: '已驳回' }
+const fmtDeadline = (value) => value ? value.slice(0, 16).replace('T', ' ') : '未设置截止时间'
 
 // 内部版才显示的模块（异常处置回顾 / 竞品占位）
 const showInternal = computed(() => version.value === 'internal')
-
-async function loadMonths() {
-  try {
-    const r = await fetchAvailableMonths({ tenantId: TENANT_ID.value })
-    months.value = r.months
-    if (!sel.year || !months.value.some((m) => m.year === sel.year && m.month === sel.month)) {
-      sel.year = r.default.year
-      sel.month = r.default.month
-    }
-  } catch (e) {
-    error.value = e.message
-  }
-}
+const openWorkItem = (path) => router.push(path)
 
 async function load(force = false) {
-  if (!sel.year) return
+  if (!dateRange.value?.[0] || !dateRange.value?.[1]) return
+  const requestVersion = ++loadVersion
+  const tenantId = TENANT_ID.value
+  if (!tenantId) return
   force ? (regenerating.value = true) : (loading.value = true)
   error.value = ''
   try {
-    report.value = await fetchMonthlyReport({
-      tenantId: TENANT_ID.value, year: sel.year, month: sel.month, force,
+    report.value = await fetchAnalysisReport({
+      tenantId,
+      startDate: dateRange.value[0],
+      endDate: dateRange.value[1],
+      force,
+      version: version.value,
     })
+    if (requestVersion !== loadVersion || tenantId !== TENANT_ID.value) return
     if (force) ElMessage.success('AI 报告已重新生成')
   } catch (e) {
-    error.value = e.message
+    if (requestVersion !== loadVersion || tenantId !== TENANT_ID.value) return
+    error.value = e.code === 'PERMISSION_DENIED'
+      ? '当前账号无权查看该客户报告'
+      : '报告暂时无法加载，请稍后重试。看板和验证数据不受影响。'
   } finally {
-    loading.value = false
-    regenerating.value = false
+    if (requestVersion === loadVersion) {
+      loading.value = false
+      regenerating.value = false
+    }
   }
 }
 
-// 月份选择器绑定 "year-month" 字符串（一个下拉覆盖跨年）
-const monthKey = computed({
-  get: () => (sel.year ? `${sel.year}-${sel.month}` : ''),
-  set: (v) => {
-    const [y, m] = v.split('-').map(Number)
-    sel.year = y
-    sel.month = m
-  },
-})
-watch(monthKey, () => { if (sel.year) load() })
+watch(dateRange, () => load())
+watch(version, () => load())
 
 function printReport() {
   window.print()
@@ -92,15 +148,25 @@ function handleExportCommand(format) {
   exportReport(format)
 }
 
+function applyQuickRange(opt) {
+  activeRangeKey.value = opt.key
+  dateRange.value = opt.range()
+}
+
+function clearQuickRange() {
+  activeRangeKey.value = ''
+}
+
 async function exportReport(format) {
-  if (!sel.year || exporting.value) return
+  if (!dateRange.value?.[0] || !dateRange.value?.[1] || exporting.value) return
   exporting.value = format
   try {
-    const resp = await fetch(monthlyReportExportUrl({
+    const resp = await fetch(analysisReportExportUrl({
       tenantId: TENANT_ID.value,
-      year: sel.year,
-      month: sel.month,
+      startDate: dateRange.value[0],
+      endDate: dateRange.value[1],
       format,
+      version: version.value,
     }), {
       headers: session.token
         ? { Authorization: `Bearer ${session.token}` }
@@ -111,19 +177,22 @@ async function exportReport(format) {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `monthly_report_${TENANT_ID.value}_${sel.year}_${String(sel.month).padStart(2, '0')}.${format}`
+    a.download = `analysis_report_${TENANT_ID.value}_${dateRange.value[0]}_${dateRange.value[1]}.${format}`
     a.click()
     URL.revokeObjectURL(url)
   } catch (e) {
-    ElMessage.error(e.message)
+    ElMessage.error('报告导出失败，请稍后重试')
   } finally {
     exporting.value = ''
   }
 }
 
-watch(TENANT_ID, async () => { await loadMonths(); load() })
+watch(TENANT_ID, () => {
+  report.value = null
+  load()
+})
 
-onMounted(async () => { await loadMonths(); load() })
+onMounted(() => load())
 
 // 趋势条形最大值（CSS 柱状）
 const trendMax = computed(() => Math.max(1, ...(data.value?.trend || []).map((d) => d.cost)))
@@ -137,8 +206,9 @@ const toc = computed(() => {
     { key: 'device', label: '设备分布' },
   ]
   if (showInternal.value) items.push({ key: 'alerts', label: '异常处置回顾' })
-  items.push({ key: 'operations', label: '优化操作 & 下月计划' })
-  items.push({ key: 'pending', label: '待接入模块' })
+  if (showInternal.value) items.push({ key: 'today_focus', label: '今日执行焦点' })
+  items.push({ key: 'operations', label: showInternal.value ? '优化操作 & 后续计划' : '已完成优化与效果' })
+  if (showInternal.value) items.push({ key: 'pending', label: '待接入模块' })
   return items
 })
 
@@ -152,13 +222,34 @@ function scrollTo(key) {
     <!-- 工具栏（打印时隐藏） -->
     <div class="toolbar no-print">
       <div>
-        <div class="page-title">月度分析报告</div>
-        <div class="page-desc">客户交付 · 按月聚合效果数据 + AI 分析叙述</div>
+        <div class="page-title">投放分析报告</div>
+        <div class="page-desc">客户交付 · 自定义区间效果数据 + AI 分析叙述</div>
       </div>
       <div class="tb-actions">
-        <el-select v-model="monthKey" style="width: 130px">
-          <el-option v-for="m in months" :key="m.year + '-' + m.month" :label="m.label" :value="m.year + '-' + m.month" />
-        </el-select>
+        <div class="quick-range-buttons" aria-label="快捷日期范围">
+          <button
+            v-for="opt in quickOptions"
+            :key="opt.key"
+            :class="{ active: activeRangeKey === opt.key }"
+            type="button"
+            @click="applyQuickRange(opt)"
+          >
+            {{ opt.label }}
+          </button>
+        </div>
+        <el-date-picker
+          v-model="dateRange"
+          type="daterange"
+          value-format="YYYY-MM-DD"
+          start-placeholder="开始日期"
+          end-placeholder="结束日期"
+          range-separator="至"
+          unlink-panels
+          :clearable="false"
+          aria-label="选择报告日期区间"
+          style="width: 268px"
+          @change="clearQuickRange"
+        />
         <el-radio-group v-if="!versionLocked" v-model="version" size="small">
           <el-radio-button label="internal">内部版</el-radio-button>
           <el-radio-button label="client">客户版</el-radio-button>
@@ -171,7 +262,8 @@ function scrollTo(key) {
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item command="csv">CSV 表格</el-dropdown-item>
-              <el-dropdown-item command="xls">Excel 表格</el-dropdown-item>
+              <el-dropdown-item command="xls">Excel 兼容表格</el-dropdown-item>
+              <el-dropdown-item command="xlsx">Excel 文件</el-dropdown-item>
               <el-dropdown-item command="pdf">PDF 文件</el-dropdown-item>
             </el-dropdown-menu>
           </template>
@@ -193,7 +285,7 @@ function scrollTo(key) {
       <div class="report-main">
         <!-- 报告头 -->
         <div class="rm-head">
-          <div class="rm-title">{{ data.tenant.name }} · {{ data.period.year }}年{{ data.period.month }}月 SEM 投放分析报告</div>
+          <div class="rm-title">{{ data.tenant.name }} · SEM 投放分析报告</div>
           <div class="rm-sub">
             统计区间 {{ data.period.start_date }} ~ {{ data.period.end_date }} · 投放 {{ data.period.active_days }}/{{ data.period.days }} 天
             <span v-if="version === 'internal'" class="ver-tag">内部版</span>
@@ -222,12 +314,14 @@ function scrollTo(key) {
               <div class="kpi-label">{{ kc.label }}</div>
               <div class="kpi-value">{{ kc.fmt(data.kpi[kc.k].current) }}</div>
               <div class="kpi-change" :class="(data.kpi[kc.k].change_pct ?? 0) >= 0 ? 'up' : 'down'">
-                {{ fmtChange(data.kpi[kc.k].change_pct) || '环比无数据' }}
+                {{ fmtChange(data.kpi[kc.k].change_pct) || '上期无可比数据' }}
               </div>
             </div>
           </div>
           <div v-if="data.budget.monthly_budget" class="budget-line">
-            月预算 {{ fmtMoney(data.budget.monthly_budget) }} · 耗用 {{ data.budget.usage_pct }}%
+            区间消费 {{ fmtMoney(data.budget.period_cost ?? data.budget.month_cost) }}
+            · 月预算参考 {{ fmtMoney(data.budget.monthly_budget) }}
+            · 比例 {{ data.budget.usage_pct }}%
             <span class="bud-bar"><span class="bud-fill" :style="{ width: Math.min(100, data.budget.usage_pct || 0) + '%' }" /></span>
           </div>
           <!-- 日趋势 CSS 柱 -->
@@ -294,26 +388,65 @@ function scrollTo(key) {
           <p v-if="comment('alerts')" class="mod-comment">{{ comment('alerts') }}</p>
         </section>
 
-        <!-- 模块 6 优化操作 & 下月计划 -->
-        <section id="mod-operations" class="mod">
-          <h3>优化操作 & 下月计划</h3>
+        <section v-if="showInternal" id="mod-today_focus" class="mod">
+          <h3>今日执行焦点 <span class="internal-badge">内部</span></h3>
           <div class="num-cards">
-            <div class="num-card"><div class="nc-num">{{ data.operations.total }}</div><div class="nc-label">本月操作</div></div>
+            <div class="num-card work-link" @click="openWorkItem(operationalFocus.suggestions_path)"><div class="nc-num">{{ operationalFocus.pending_suggestions }}</div><div class="nc-label">待审建议 →</div></div>
+            <div class="num-card warn work-link" @click="openWorkItem(operationalFocus.queue_path)"><div class="nc-num">{{ operationalFocus.pending_writebacks }}</div><div class="nc-label">待回写 →</div></div>
+            <div class="num-card"><div class="nc-num">{{ operationalFocus.sync_risks.length }}</div><div class="nc-label">同步风险</div></div>
+          </div>
+          <div v-if="operationalFocus.sync_risks.length" class="op-levels"><button v-for="risk in operationalFocus.sync_risks" :key="risk.message" class="op-chip work-link" @click="openWorkItem(risk.path)">{{ risk.message }} →</button></div>
+          <p v-else class="mod-comment">当前五层只读资产未发现明显断层。</p>
+          <div v-if="operationalFocus.priority_suggestions.length" class="focus-list">
+            <button v-for="item in operationalFocus.priority_suggestions" :key="item.id" class="focus-item" @click="openWorkItem(item.path)">
+              <b>{{ item.priority }} · {{ item.type }} · {{ item.keyword || '账户建议' }}</b>
+              <strong>{{ item.impact }}</strong><span>{{ item.reason }}</span><em>{{ item.report_date }} · 查看并处理 →</em>
+              <small>负责人：{{ item.assignee_name || '未分配' }} · {{ WORK_STATUS_LABELS[item.handling_status] || item.handling_status }} · {{ fmtDeadline(item.due_at) }}</small>
+            </button>
+          </div>
+          <button v-if="operationalFocus.pending_suggestions > operationalFocus.priority_suggestions.length" class="view-all-work work-link" @click="openWorkItem(operationalFocus.suggestions_path)">查看全部 {{ operationalFocus.pending_suggestions }} 条待审建议 →</button>
+        </section>
+
+        <!-- 模块 6 优化操作 & 后续计划 -->
+        <section id="mod-operations" class="mod">
+          <h3>{{ showInternal ? '优化操作 & 后续计划' : '已完成优化与效果' }}</h3>
+          <div v-if="showInternal" class="num-cards">
+            <div class="num-card"><div class="nc-num">{{ data.operations.total }}</div><div class="nc-label">区间操作</div></div>
             <div class="num-card warn"><div class="nc-num">{{ data.operations.over_limit }}</div><div class="nc-label">超 20% 上限</div></div>
             <div class="num-card"><div class="nc-num">{{ data.operations.ai_suggestions_adopted }}</div><div class="nc-label">AI 建议采纳</div></div>
           </div>
-          <div v-if="Object.keys(data.operations.by_level).length" class="op-levels">
+          <div v-else class="num-cards">
+            <div class="num-card success"><div class="nc-num">{{ clientDelivery.completed_count }}</div><div class="nc-label">已确认完成</div></div>
+            <div class="num-card success"><div class="nc-num">{{ clientDelivery.ready_effects }}</div><div class="nc-label">效果可展示</div></div>
+            <div class="num-card"><div class="nc-num">{{ clientDelivery.observing_effects }}</div><div class="nc-label">效果观察中</div></div>
+          </div>
+          <div v-if="showInternal && Object.keys(data.operations.by_level).length" class="op-levels">
             <span v-for="(n, lvl) in data.operations.by_level" :key="lvl" class="op-chip">{{ lvl }} {{ n }}</span>
           </div>
-          <p v-if="comment('operations')" class="mod-comment">{{ comment('operations') }}</p>
-          <div v-if="narrative?.next_month_plan?.length" class="plan">
-            <div class="plan-title">下月优化计划</div>
-            <ol><li v-for="(p, i) in narrative.next_month_plan" :key="i">{{ withCn(p) }}</li></ol>
+          <p v-if="showInternal && comment('operations')" class="mod-comment">{{ comment('operations') }}</p>
+          <div v-if="!showInternal" class="client-actions">
+            <article v-for="action in clientDelivery.completed_actions" :key="action.id" class="client-action">
+              <div class="client-action-head"><b>{{ action.action }} · {{ action.object }}</b><time>{{ action.time.slice(0, 16).replace('T', ' ') }}</time></div>
+              <div class="client-action-evidence">{{ action.evidence }}<template v-if="action.old_value != null || action.new_value != null"> · {{ action.old_value || '—' }} → {{ action.new_value || '—' }}</template></div>
+              <div v-if="action.effect?.sample?.state === 'ready'" class="effect-result">
+                <span>日均消费 {{ fmtMoney(action.effect.before?.cost_per_day) }} → {{ fmtMoney(action.effect.after?.cost_per_day) }}</span>
+                <span>日均点击 {{ action.effect.before?.click_per_day ?? '—' }} → {{ action.effect.after?.click_per_day ?? '—' }}</span>
+                <span>点击率 {{ fmtPct(action.effect.before?.ctr) }} → {{ fmtPct(action.effect.after?.ctr) }}</span>
+                <span>平均排名 {{ action.effect.before?.avg_rank ?? '—' }} → {{ action.effect.after?.avg_rank ?? '—' }}</span>
+              </div>
+              <div v-else-if="action.effect" class="effect-observing">效果观察中：{{ action.effect.sample?.message }}</div>
+              <div v-else class="effect-confirmed">动作已由百度操作记录确认。</div>
+            </article>
+            <el-empty v-if="!clientDelivery.completed_actions.length" description="本区间暂无可确认的已完成优化动作" />
+          </div>
+          <div v-if="showInternal && narrative?.next_period_plan?.length" class="plan">
+            <div class="plan-title">后续优化计划</div>
+            <ol><li v-for="(p, i) in narrative.next_period_plan" :key="i">{{ withCn(p) }}</li></ol>
           </div>
         </section>
 
         <!-- 待接入模块占位 -->
-        <section id="mod-pending" class="mod">
+        <section v-if="showInternal" id="mod-pending" class="mod">
           <h3>待接入模块</h3>
           <div class="pending-grid">
             <div class="pending-card">转化报告（TOP 转化词 / CPL）<span>待 M2 爱番番线索</span></div>
@@ -336,8 +469,38 @@ function scrollTo(key) {
 .toolbar { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 14px; }
 .page-title { font-size: 20px; font-weight: 600; color: var(--sem-text); }
 .page-desc { font-size: 12px; color: var(--sem-text-sub); margin-top: 4px; }
-.tb-actions { display: flex; gap: 8px; align-items: center; }
+.tb-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
 .dropdown-mark { margin-left: 6px; font-size: 11px; color: #909399; }
+.quick-range-buttons { display: flex; gap: 6px; align-items: center; }
+.quick-range-buttons button {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  background: #fff;
+  color: #606266;
+  cursor: pointer;
+  font-size: 12px;
+}
+.work-link { cursor: pointer; }
+.focus-list { display: grid; gap: 7px; margin-top: 12px; }
+.focus-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 14px; padding: 9px 11px; border: 1px solid var(--sem-border); border-radius: 6px; background: #fff; text-align: left; cursor: pointer; }
+.focus-item b { color: var(--sem-text); font-size: 12px; }
+.focus-item strong { grid-column: 1; color: #b15f00; font-size: 11px; }
+.focus-item span { grid-column: 1; color: var(--sem-text-sub); font-size: 11px; }
+.focus-item small { grid-column: 1; color: #667085; font-size: 10px; }
+.focus-item em { grid-column: 2; grid-row: 1 / span 4; align-self: center; color: var(--sem-primary); font-size: 10px; font-style: normal; }
+.view-all-work { margin-top: 10px; border: 0; background: transparent; color: var(--sem-primary); font-size: 12px; }
+.client-actions { display: grid; gap: 9px; margin-top: 12px; }
+.client-action { padding: 11px 12px; border: 1px solid var(--sem-border); border-radius: 7px; background: #fff; }
+.client-action-head { display: flex; justify-content: space-between; gap: 12px; color: var(--sem-text); font-size: 12px; }
+.client-action-head time { color: var(--sem-text-sub); font-size: 10px; white-space: nowrap; }
+.client-action-evidence { margin-top: 4px; color: #287a55; font-size: 10px; }
+.effect-result { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 12px; margin-top: 8px; padding: 8px; border-radius: 5px; background: #f0f8f4; color: #315f4b; font-size: 10px; }
+.effect-observing { margin-top: 8px; padding: 7px 8px; border-radius: 5px; background: #fff8e6; color: #8a5a00; font-size: 10px; }
+.effect-confirmed { margin-top: 8px; color: var(--sem-text-sub); font-size: 10px; }
+.quick-range-buttons button:hover { border-color: var(--sem-primary); color: var(--sem-primary); }
+.quick-range-buttons button.active { border-color: var(--sem-primary); background: var(--sem-primary); color: #fff; }
 
 .report-layout { display: flex; gap: 16px; align-items: flex-start; }
 .toc { width: 150px; flex-shrink: 0; background: #fff; border: 1px solid var(--sem-border); border-radius: 8px; padding: 12px; position: sticky; top: 12px; }

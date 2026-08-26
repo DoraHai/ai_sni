@@ -10,6 +10,8 @@ const loading = ref(false)
 const error = ref('')
 const usersData = ref(null)
 const rolesData = ref(null)
+const tenantOptions = ref([])
+const permissionDenied = computed(() => error.value?.code === 'PERMISSION_DENIED')
 const tenantDialog = ref(false)
 const savingTenant = ref(false)
 const tform = reactive({
@@ -39,9 +41,10 @@ async function load() {
     ])
     usersData.value = users
     rolesData.value = roles
-    session.setTenants(tenants.tenants || [])
+    tenantOptions.value = tenants.tenants || []
+    session.setTenants(tenantOptions.value)
   } catch (e) {
-    error.value = e.message
+    error.value = e
   } finally {
     loading.value = false
   }
@@ -270,7 +273,7 @@ onMounted(load)
       </div>
     </div>
 
-    <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 14px" />
+    <el-alert v-if="error" :title="permissionDenied ? '当前账号不能管理同事和角色' : error.message" :description="permissionDenied ? '需要 settings.accounts 的“可编辑”权限。请联系现有管理员调整角色；这不是数据为空。' : '请重试；若持续失败，请记录当前时间并联系管理员。'" type="error" :closable="false" show-icon style="margin-bottom: 14px"><template #default><el-button size="small" @click="load">重试</el-button></template></el-alert>
 
     <el-tabs v-model="tab">
       <!-- ===== 账号 ===== -->
@@ -321,7 +324,7 @@ onMounted(load)
             <el-table-column label="最近登录" width="140">
               <template #default="{ row }"><span class="sub">{{ fmtTime(row.last_login_at) }}</span></template>
             </el-table-column>
-            <el-table-column label="操作" width="230" fixed="right">
+            <el-table-column label="操作" width="230">
               <template #default="{ row }">
                 <el-button size="small" @click="openEditUser(row)">编辑</el-button>
                 <el-button
@@ -359,7 +362,7 @@ onMounted(load)
             <el-table-column label="账号数" width="80" align="center">
               <template #default="{ row }">{{ row.user_count }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="170" fixed="right">
+            <el-table-column label="操作" width="170">
               <template #default="{ row }">
                 <el-button size="small" @click="openEditRole(row)">配置权限</el-button>
                 <el-button size="small" type="danger" plain :disabled="row.is_system || row.user_count > 0" @click="removeRole(row)">删除</el-button>
@@ -416,7 +419,7 @@ onMounted(load)
         </el-form-item>
         <el-form-item label="限定客户">
           <el-select v-model="uform.tenantId" placeholder="不限=全部客户（可顶栏切换）" clearable style="width: 100%">
-            <el-option v-for="t in session.tenants" :key="t.id" :label="t.name" :value="t.id" />
+            <el-option v-for="t in tenantOptions" :key="t.id" :label="t.name" :value="t.id" />
           </el-select>
         </el-form-item>
       </el-form>

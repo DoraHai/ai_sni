@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import DECIMAL, Date, DateTime, String, Text, func
+from sqlalchemy import BigInteger, DECIMAL, Date, DateTime, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -13,6 +13,8 @@ class Tenant(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    # 服务商 OAuth 授权的百度推广账户唯一标识；一个推广账户对应一个客户。
+    baidu_ucid: Mapped[int | None] = mapped_column(BigInteger, unique=True)
     strategy: Mapped[str | None] = mapped_column(String(20))
     monthly_budget: Mapped[Decimal | None] = mapped_column(DECIMAL(12, 2))
     contract_start: Mapped[date | None] = mapped_column(Date)

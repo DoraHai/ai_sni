@@ -1,0 +1,2403 @@
+// 数据来源于百度开放平台离线文档快照（2026-06-11 抓取，文档内容更新于2022年），如遇编码对不上或新地区无法找到，需要以百度在线文档实时核对，不要假定这份列表永远准确。
+[
+  {
+    "id": 1000,
+    "name": "北京",
+    "level": "city",
+    "parent_id": null
+  },
+  {
+    "id": 2000,
+    "name": "上海",
+    "level": "city",
+    "parent_id": null
+  },
+  {
+    "id": 3000,
+    "name": "天津",
+    "level": "city",
+    "parent_id": null
+  },
+  {
+    "id": 4000,
+    "name": "广东",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 5000,
+    "name": "福建",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 8000,
+    "name": "海南",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 9000,
+    "name": "安徽",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 10000,
+    "name": "贵州",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 11000,
+    "name": "甘肃",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 12000,
+    "name": "广西",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 13000,
+    "name": "河北",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 14000,
+    "name": "河南",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 15000,
+    "name": "黑龙江",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 16000,
+    "name": "湖北",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 17000,
+    "name": "湖南",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 18000,
+    "name": "吉林",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 19000,
+    "name": "江苏",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 20000,
+    "name": "江西",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 21000,
+    "name": "辽宁",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 22000,
+    "name": "内蒙古",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 23000,
+    "name": "宁夏",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 24000,
+    "name": "青海",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 25000,
+    "name": "山东",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 26000,
+    "name": "山西",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 27000,
+    "name": "陕西",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 28000,
+    "name": "四川",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 29000,
+    "name": "西藏",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 30000,
+    "name": "新疆",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 31000,
+    "name": "云南",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 32000,
+    "name": "浙江",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 33000,
+    "name": "重庆",
+    "level": "city",
+    "parent_id": null
+  },
+  {
+    "id": 34000,
+    "name": "香港",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 35000,
+    "name": "台湾",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 36000,
+    "name": "澳门",
+    "level": "province",
+    "parent_id": null
+  },
+  {
+    "id": 200000,
+    "name": "日本",
+    "level": "special",
+    "parent_id": null
+  },
+  {
+    "id": 300000,
+    "name": "其他国家（除日本外）",
+    "level": "special",
+    "parent_id": null
+  },
+  {
+    "id": 9999999,
+    "name": "全部区域",
+    "level": "special",
+    "parent_id": null
+  },
+  {
+    "id": 4085,
+    "name": "潮州",
+    "level": "city",
+    "parent_id": 4000
+  },
+  {
+    "id": 4116,
+    "name": "东莞",
+    "level": "city",
+    "parent_id": 4000
+  },
+  {
+    "id": 4090,
+    "name": "佛山",
+    "level": "city",
+    "parent_id": 4000
+  },
+  {
+    "id": 4084,
+    "name": "广州",
+    "level": "city",
+    "parent_id": 4000
+  },
+  {
+    "id": 4115,
+    "name": "河源",
+    "level": "city",
+    "parent_id": 4000
+  },
+  {
+    "id": 4117,
+    "name": "惠州",
+    "level": "city",
+    "parent_id": 4000
+  },
+  {
+    "id": 4082,
+    "name": "江门",
+    "level": "city",
+    "parent_id": 4000
+  },
+  {
+    "id": 4083,
+    "name": "揭阳",
+    "level": "city",
+    "parent_id": 4000
+  },
+  {
+    "id": 4086,
+    "name": "茂名",
+    "level": "city",
+    "parent_id": 4000
+  },
+  {
+    "id": 4088,
+    "name": "梅州",
+    "level": "city",
+    "parent_id": 4000
+  },
+  {
+    "id": 4089,
+    "name": "清远",
+    "level": "city",
+    "parent_id": 4000
+  },
+  {
+    "id": 4091,
+    "name": "汕头",
+    "level": "city",
+    "parent_id": 4000
+  },
+  {
+    "id": 4092,
+    "name": "汕尾",
+    "level": "city",
+    "parent_id": 4000
+  },
+  {
+    "id": 4094,
+    "name": "韶关",
+    "level": "city",
+    "parent_id": 4000
+  },
+  {
+    "id": 4093,
+    "name": "深圳",
+    "level": "city",
+    "parent_id": 4000
+  },
+  {
+    "id": 4109,
+    "name": "阳江",
+    "level": "city",
+    "parent_id": 4000
+  },
+  {
+    "id": 4111,
+    "name": "云浮",
+    "level": "city",
+    "parent_id": 4000
+  },
+  {
+    "id": 4110,
+    "name": "湛江",
+    "level": "city",
+    "parent_id": 4000
+  },
+  {
+    "id": 4114,
+    "name": "肇庆",
+    "level": "city",
+    "parent_id": 4000
+  },
+  {
+    "id": 4112,
+    "name": "中山",
+    "level": "city",
+    "parent_id": 4000
+  },
+  {
+    "id": 4113,
+    "name": "珠海",
+    "level": "city",
+    "parent_id": 4000
+  },
+  {
+    "id": 5081,
+    "name": "福州",
+    "level": "city",
+    "parent_id": 5000
+  },
+  {
+    "id": 5050,
+    "name": "龙岩",
+    "level": "city",
+    "parent_id": 5000
+  },
+  {
+    "id": 5049,
+    "name": "南平",
+    "level": "city",
+    "parent_id": 5000
+  },
+  {
+    "id": 5051,
+    "name": "宁德",
+    "level": "city",
+    "parent_id": 5000
+  },
+  {
+    "id": 5048,
+    "name": "莆田",
+    "level": "city",
+    "parent_id": 5000
+  },
+  {
+    "id": 5052,
+    "name": "泉州",
+    "level": "city",
+    "parent_id": 5000
+  },
+  {
+    "id": 5066,
+    "name": "三明",
+    "level": "city",
+    "parent_id": 5000
+  },
+  {
+    "id": 5070,
+    "name": "厦门",
+    "level": "city",
+    "parent_id": 5000
+  },
+  {
+    "id": 5080,
+    "name": "漳州",
+    "level": "city",
+    "parent_id": 5000
+  },
+  {
+    "id": 8493,
+    "name": "白沙黎族自治县",
+    "level": "city",
+    "parent_id": 8000
+  },
+  {
+    "id": 8521,
+    "name": "三沙",
+    "level": "city",
+    "parent_id": 8000
+  },
+  {
+    "id": 8488,
+    "name": "保亭黎族苗族自治县",
+    "level": "city",
+    "parent_id": 8000
+  },
+  {
+    "id": 8492,
+    "name": "昌江黎族自治县",
+    "level": "city",
+    "parent_id": 8000
+  },
+  {
+    "id": 8487,
+    "name": "澄迈县",
+    "level": "city",
+    "parent_id": 8000
+  },
+  {
+    "id": 8303,
+    "name": "儋州",
+    "level": "city",
+    "parent_id": 8000
+  },
+  {
+    "id": 8484,
+    "name": "定安县",
+    "level": "city",
+    "parent_id": 8000
+  },
+  {
+    "id": 8296,
+    "name": "东方",
+    "level": "city",
+    "parent_id": 8000
+  },
+  {
+    "id": 8302,
+    "name": "海口",
+    "level": "city",
+    "parent_id": 8000
+  },
+  {
+    "id": 8490,
+    "name": "乐东黎族自治县",
+    "level": "city",
+    "parent_id": 8000
+  },
+  {
+    "id": 8491,
+    "name": "临高县",
+    "level": "city",
+    "parent_id": 8000
+  },
+  {
+    "id": 8486,
+    "name": "陵水黎族自治县",
+    "level": "city",
+    "parent_id": 8000
+  },
+  {
+    "id": 8297,
+    "name": "琼海",
+    "level": "city",
+    "parent_id": 8000
+  },
+  {
+    "id": 8489,
+    "name": "琼中黎族苗族自治县",
+    "level": "city",
+    "parent_id": 8000
+  },
+  {
+    "id": 8298,
+    "name": "三亚",
+    "level": "city",
+    "parent_id": 8000
+  },
+  {
+    "id": 8485,
+    "name": "屯昌县",
+    "level": "city",
+    "parent_id": 8000
+  },
+  {
+    "id": 8301,
+    "name": "万宁",
+    "level": "city",
+    "parent_id": 8000
+  },
+  {
+    "id": 8299,
+    "name": "文昌",
+    "level": "city",
+    "parent_id": 8000
+  },
+  {
+    "id": 8300,
+    "name": "五指山",
+    "level": "city",
+    "parent_id": 8000
+  },
+  {
+    "id": 9128,
+    "name": "安庆",
+    "level": "city",
+    "parent_id": 9000
+  },
+  {
+    "id": 9141,
+    "name": "蚌埠",
+    "level": "city",
+    "parent_id": 9000
+  },
+  {
+    "id": 9143,
+    "name": "亳州",
+    "level": "city",
+    "parent_id": 9000
+  },
+  {
+    "id": 9130,
+    "name": "池州",
+    "level": "city",
+    "parent_id": 9000
+  },
+  {
+    "id": 9131,
+    "name": "滁州",
+    "level": "city",
+    "parent_id": 9000
+  },
+  {
+    "id": 9140,
+    "name": "阜阳",
+    "level": "city",
+    "parent_id": 9000
+  },
+  {
+    "id": 9142,
+    "name": "合肥",
+    "level": "city",
+    "parent_id": 9000
+  },
+  {
+    "id": 9127,
+    "name": "淮北",
+    "level": "city",
+    "parent_id": 9000
+  },
+  {
+    "id": 9133,
+    "name": "淮南",
+    "level": "city",
+    "parent_id": 9000
+  },
+  {
+    "id": 9132,
+    "name": "黄山",
+    "level": "city",
+    "parent_id": 9000
+  },
+  {
+    "id": 9135,
+    "name": "六安",
+    "level": "city",
+    "parent_id": 9000
+  },
+  {
+    "id": 9134,
+    "name": "马鞍山",
+    "level": "city",
+    "parent_id": 9000
+  },
+  {
+    "id": 9138,
+    "name": "铜陵",
+    "level": "city",
+    "parent_id": 9000
+  },
+  {
+    "id": 9139,
+    "name": "芜湖",
+    "level": "city",
+    "parent_id": 9000
+  },
+  {
+    "id": 9137,
+    "name": "宿州",
+    "level": "city",
+    "parent_id": 9000
+  },
+  {
+    "id": 9136,
+    "name": "宣城",
+    "level": "city",
+    "parent_id": 9000
+  },
+  {
+    "id": 10119,
+    "name": "安顺",
+    "level": "city",
+    "parent_id": 10000
+  },
+  {
+    "id": 10124,
+    "name": "毕节",
+    "level": "city",
+    "parent_id": 10000
+  },
+  {
+    "id": 10118,
+    "name": "贵阳",
+    "level": "city",
+    "parent_id": 10000
+  },
+  {
+    "id": 10120,
+    "name": "六盘水",
+    "level": "city",
+    "parent_id": 10000
+  },
+  {
+    "id": 10122,
+    "name": "黔东南",
+    "level": "city",
+    "parent_id": 10000
+  },
+  {
+    "id": 10121,
+    "name": "黔南",
+    "level": "city",
+    "parent_id": 10000
+  },
+  {
+    "id": 10123,
+    "name": "黔西南",
+    "level": "city",
+    "parent_id": 10000
+  },
+  {
+    "id": 10125,
+    "name": "铜仁",
+    "level": "city",
+    "parent_id": 10000
+  },
+  {
+    "id": 10126,
+    "name": "遵义",
+    "level": "city",
+    "parent_id": 10000
+  },
+  {
+    "id": 11267,
+    "name": "白银",
+    "level": "city",
+    "parent_id": 11000
+  },
+  {
+    "id": 11263,
+    "name": "定西",
+    "level": "city",
+    "parent_id": 11000
+  },
+  {
+    "id": 11477,
+    "name": "甘南",
+    "level": "city",
+    "parent_id": 11000
+  },
+  {
+    "id": 11257,
+    "name": "嘉峪关",
+    "level": "city",
+    "parent_id": 11000
+  },
+  {
+    "id": 11256,
+    "name": "金昌",
+    "level": "city",
+    "parent_id": 11000
+  },
+  {
+    "id": 11255,
+    "name": "酒泉",
+    "level": "city",
+    "parent_id": 11000
+  },
+  {
+    "id": 11258,
+    "name": "兰州",
+    "level": "city",
+    "parent_id": 11000
+  },
+  {
+    "id": 11261,
+    "name": "临夏",
+    "level": "city",
+    "parent_id": 11000
+  },
+  {
+    "id": 11259,
+    "name": "陇南",
+    "level": "city",
+    "parent_id": 11000
+  },
+  {
+    "id": 11260,
+    "name": "平凉",
+    "level": "city",
+    "parent_id": 11000
+  },
+  {
+    "id": 11262,
+    "name": "庆阳",
+    "level": "city",
+    "parent_id": 11000
+  },
+  {
+    "id": 11265,
+    "name": "天水",
+    "level": "city",
+    "parent_id": 11000
+  },
+  {
+    "id": 11264,
+    "name": "武威",
+    "level": "city",
+    "parent_id": 11000
+  },
+  {
+    "id": 11266,
+    "name": "张掖",
+    "level": "city",
+    "parent_id": 11000
+  },
+  {
+    "id": 12108,
+    "name": "百色",
+    "level": "city",
+    "parent_id": 12000
+  },
+  {
+    "id": 12104,
+    "name": "北海",
+    "level": "city",
+    "parent_id": 12000
+  },
+  {
+    "id": 12478,
+    "name": "崇左",
+    "level": "city",
+    "parent_id": 12000
+  },
+  {
+    "id": 12098,
+    "name": "防城港",
+    "level": "city",
+    "parent_id": 12000
+  },
+  {
+    "id": 12096,
+    "name": "贵港",
+    "level": "city",
+    "parent_id": 12000
+  },
+  {
+    "id": 12095,
+    "name": "桂林",
+    "level": "city",
+    "parent_id": 12000
+  },
+  {
+    "id": 12106,
+    "name": "河池",
+    "level": "city",
+    "parent_id": 12000
+  },
+  {
+    "id": 12107,
+    "name": "贺州",
+    "level": "city",
+    "parent_id": 12000
+  },
+  {
+    "id": 12100,
+    "name": "来宾",
+    "level": "city",
+    "parent_id": 12000
+  },
+  {
+    "id": 12101,
+    "name": "柳州",
+    "level": "city",
+    "parent_id": 12000
+  },
+  {
+    "id": 12099,
+    "name": "南宁",
+    "level": "city",
+    "parent_id": 12000
+  },
+  {
+    "id": 12102,
+    "name": "钦州",
+    "level": "city",
+    "parent_id": 12000
+  },
+  {
+    "id": 12103,
+    "name": "梧州",
+    "level": "city",
+    "parent_id": 12000
+  },
+  {
+    "id": 12105,
+    "name": "玉林",
+    "level": "city",
+    "parent_id": 12000
+  },
+  {
+    "id": 13304,
+    "name": "保定",
+    "level": "city",
+    "parent_id": 13000
+  },
+  {
+    "id": 13305,
+    "name": "沧州",
+    "level": "city",
+    "parent_id": 13000
+  },
+  {
+    "id": 13306,
+    "name": "承德",
+    "level": "city",
+    "parent_id": 13000
+  },
+  {
+    "id": 13330,
+    "name": "邯郸",
+    "level": "city",
+    "parent_id": 13000
+  },
+  {
+    "id": 13332,
+    "name": "衡水",
+    "level": "city",
+    "parent_id": 13000
+  },
+  {
+    "id": 13307,
+    "name": "廊坊",
+    "level": "city",
+    "parent_id": 13000
+  },
+  {
+    "id": 13325,
+    "name": "秦皇岛",
+    "level": "city",
+    "parent_id": 13000
+  },
+  {
+    "id": 13327,
+    "name": "石家庄",
+    "level": "city",
+    "parent_id": 13000
+  },
+  {
+    "id": 13329,
+    "name": "唐山",
+    "level": "city",
+    "parent_id": 13000
+  },
+  {
+    "id": 13326,
+    "name": "邢台",
+    "level": "city",
+    "parent_id": 13000
+  },
+  {
+    "id": 13331,
+    "name": "张家口",
+    "level": "city",
+    "parent_id": 13000
+  },
+  {
+    "id": 14309,
+    "name": "安阳",
+    "level": "city",
+    "parent_id": 14000
+  },
+  {
+    "id": 14323,
+    "name": "鹤壁",
+    "level": "city",
+    "parent_id": 14000
+  },
+  {
+    "id": 14476,
+    "name": "济源",
+    "level": "city",
+    "parent_id": 14000
+  },
+  {
+    "id": 14308,
+    "name": "焦作",
+    "level": "city",
+    "parent_id": 14000
+  },
+  {
+    "id": 14310,
+    "name": "开封",
+    "level": "city",
+    "parent_id": 14000
+  },
+  {
+    "id": 14311,
+    "name": "洛阳",
+    "level": "city",
+    "parent_id": 14000
+  },
+  {
+    "id": 14312,
+    "name": "漯河",
+    "level": "city",
+    "parent_id": 14000
+  },
+  {
+    "id": 14315,
+    "name": "南阳",
+    "level": "city",
+    "parent_id": 14000
+  },
+  {
+    "id": 14313,
+    "name": "平顶山",
+    "level": "city",
+    "parent_id": 14000
+  },
+  {
+    "id": 14316,
+    "name": "濮阳",
+    "level": "city",
+    "parent_id": 14000
+  },
+  {
+    "id": 14321,
+    "name": "三门峡",
+    "level": "city",
+    "parent_id": 14000
+  },
+  {
+    "id": 14320,
+    "name": "商丘",
+    "level": "city",
+    "parent_id": 14000
+  },
+  {
+    "id": 14317,
+    "name": "新乡",
+    "level": "city",
+    "parent_id": 14000
+  },
+  {
+    "id": 14318,
+    "name": "信阳",
+    "level": "city",
+    "parent_id": 14000
+  },
+  {
+    "id": 14319,
+    "name": "许昌",
+    "level": "city",
+    "parent_id": 14000
+  },
+  {
+    "id": 14322,
+    "name": "郑州",
+    "level": "city",
+    "parent_id": 14000
+  },
+  {
+    "id": 14324,
+    "name": "周口",
+    "level": "city",
+    "parent_id": 14000
+  },
+  {
+    "id": 14314,
+    "name": "驻马店",
+    "level": "city",
+    "parent_id": 14000
+  },
+  {
+    "id": 15342,
+    "name": "大庆",
+    "level": "city",
+    "parent_id": 15000
+  },
+  {
+    "id": 15343,
+    "name": "大兴安岭",
+    "level": "city",
+    "parent_id": 15000
+  },
+  {
+    "id": 15335,
+    "name": "哈尔滨",
+    "level": "city",
+    "parent_id": 15000
+  },
+  {
+    "id": 15344,
+    "name": "鹤岗",
+    "level": "city",
+    "parent_id": 15000
+  },
+  {
+    "id": 15345,
+    "name": "黑河",
+    "level": "city",
+    "parent_id": 15000
+  },
+  {
+    "id": 15333,
+    "name": "鸡西",
+    "level": "city",
+    "parent_id": 15000
+  },
+  {
+    "id": 15334,
+    "name": "佳木斯",
+    "level": "city",
+    "parent_id": 15000
+  },
+  {
+    "id": 15336,
+    "name": "牡丹江",
+    "level": "city",
+    "parent_id": 15000
+  },
+  {
+    "id": 15338,
+    "name": "七台河",
+    "level": "city",
+    "parent_id": 15000
+  },
+  {
+    "id": 15337,
+    "name": "齐齐哈尔",
+    "level": "city",
+    "parent_id": 15000
+  },
+  {
+    "id": 15340,
+    "name": "双鸭山",
+    "level": "city",
+    "parent_id": 15000
+  },
+  {
+    "id": 15339,
+    "name": "绥化",
+    "level": "city",
+    "parent_id": 15000
+  },
+  {
+    "id": 15341,
+    "name": "伊春",
+    "level": "city",
+    "parent_id": 15000
+  },
+  {
+    "id": 16377,
+    "name": "鄂州",
+    "level": "city",
+    "parent_id": 16000
+  },
+  {
+    "id": 16366,
+    "name": "恩施",
+    "level": "city",
+    "parent_id": 16000
+  },
+  {
+    "id": 16349,
+    "name": "黄冈",
+    "level": "city",
+    "parent_id": 16000
+  },
+  {
+    "id": 16348,
+    "name": "黄石",
+    "level": "city",
+    "parent_id": 16000
+  },
+  {
+    "id": 16346,
+    "name": "荆门",
+    "level": "city",
+    "parent_id": 16000
+  },
+  {
+    "id": 16347,
+    "name": "荆州",
+    "level": "city",
+    "parent_id": 16000
+  },
+  {
+    "id": 16364,
+    "name": "潜江",
+    "level": "city",
+    "parent_id": 16000
+  },
+  {
+    "id": 16368,
+    "name": "神农架",
+    "level": "city",
+    "parent_id": 16000
+  },
+  {
+    "id": 16369,
+    "name": "十堰",
+    "level": "city",
+    "parent_id": 16000
+  },
+  {
+    "id": 16367,
+    "name": "随州",
+    "level": "city",
+    "parent_id": 16000
+  },
+  {
+    "id": 16373,
+    "name": "天门",
+    "level": "city",
+    "parent_id": 16000
+  },
+  {
+    "id": 16371,
+    "name": "武汉",
+    "level": "city",
+    "parent_id": 16000
+  },
+  {
+    "id": 16372,
+    "name": "仙桃",
+    "level": "city",
+    "parent_id": 16000
+  },
+  {
+    "id": 16375,
+    "name": "咸宁",
+    "level": "city",
+    "parent_id": 16000
+  },
+  {
+    "id": 16370,
+    "name": "襄阳",
+    "level": "city",
+    "parent_id": 16000
+  },
+  {
+    "id": 16365,
+    "name": "孝感",
+    "level": "city",
+    "parent_id": 16000
+  },
+  {
+    "id": 16376,
+    "name": "宜昌",
+    "level": "city",
+    "parent_id": 16000
+  },
+  {
+    "id": 17351,
+    "name": "常德",
+    "level": "city",
+    "parent_id": 17000
+  },
+  {
+    "id": 17353,
+    "name": "郴州",
+    "level": "city",
+    "parent_id": 17000
+  },
+  {
+    "id": 17360,
+    "name": "衡阳",
+    "level": "city",
+    "parent_id": 17000
+  },
+  {
+    "id": 17350,
+    "name": "怀化",
+    "level": "city",
+    "parent_id": 17000
+  },
+  {
+    "id": 17354,
+    "name": "娄底",
+    "level": "city",
+    "parent_id": 17000
+  },
+  {
+    "id": 17355,
+    "name": "邵阳",
+    "level": "city",
+    "parent_id": 17000
+  },
+  {
+    "id": 17356,
+    "name": "湘潭",
+    "level": "city",
+    "parent_id": 17000
+  },
+  {
+    "id": 17357,
+    "name": "湘西",
+    "level": "city",
+    "parent_id": 17000
+  },
+  {
+    "id": 17359,
+    "name": "益阳",
+    "level": "city",
+    "parent_id": 17000
+  },
+  {
+    "id": 17362,
+    "name": "永州",
+    "level": "city",
+    "parent_id": 17000
+  },
+  {
+    "id": 17361,
+    "name": "岳阳",
+    "level": "city",
+    "parent_id": 17000
+  },
+  {
+    "id": 17358,
+    "name": "张家界",
+    "level": "city",
+    "parent_id": 17000
+  },
+  {
+    "id": 17352,
+    "name": "长沙",
+    "level": "city",
+    "parent_id": 17000
+  },
+  {
+    "id": 17363,
+    "name": "株洲",
+    "level": "city",
+    "parent_id": 17000
+  },
+  {
+    "id": 18039,
+    "name": "白城",
+    "level": "city",
+    "parent_id": 18000
+  },
+  {
+    "id": 18042,
+    "name": "白山",
+    "level": "city",
+    "parent_id": 18000
+  },
+  {
+    "id": 18038,
+    "name": "吉林",
+    "level": "city",
+    "parent_id": 18000
+  },
+  {
+    "id": 18041,
+    "name": "辽源",
+    "level": "city",
+    "parent_id": 18000
+  },
+  {
+    "id": 18043,
+    "name": "四平",
+    "level": "city",
+    "parent_id": 18000
+  },
+  {
+    "id": 18044,
+    "name": "松原",
+    "level": "city",
+    "parent_id": 18000
+  },
+  {
+    "id": 18045,
+    "name": "通化",
+    "level": "city",
+    "parent_id": 18000
+  },
+  {
+    "id": 18047,
+    "name": "延边",
+    "level": "city",
+    "parent_id": 18000
+  },
+  {
+    "id": 18040,
+    "name": "长春",
+    "level": "city",
+    "parent_id": 18000
+  },
+  {
+    "id": 19054,
+    "name": "常州",
+    "level": "city",
+    "parent_id": 19000
+  },
+  {
+    "id": 19053,
+    "name": "淮安",
+    "level": "city",
+    "parent_id": 19000
+  },
+  {
+    "id": 19057,
+    "name": "连云港",
+    "level": "city",
+    "parent_id": 19000
+  },
+  {
+    "id": 19055,
+    "name": "南京",
+    "level": "city",
+    "parent_id": 19000
+  },
+  {
+    "id": 19056,
+    "name": "南通",
+    "level": "city",
+    "parent_id": 19000
+  },
+  {
+    "id": 19059,
+    "name": "苏州",
+    "level": "city",
+    "parent_id": 19000
+  },
+  {
+    "id": 19061,
+    "name": "泰州",
+    "level": "city",
+    "parent_id": 19000
+  },
+  {
+    "id": 19062,
+    "name": "无锡",
+    "level": "city",
+    "parent_id": 19000
+  },
+  {
+    "id": 19060,
+    "name": "宿迁",
+    "level": "city",
+    "parent_id": 19000
+  },
+  {
+    "id": 19058,
+    "name": "徐州",
+    "level": "city",
+    "parent_id": 19000
+  },
+  {
+    "id": 19063,
+    "name": "盐城",
+    "level": "city",
+    "parent_id": 19000
+  },
+  {
+    "id": 19064,
+    "name": "扬州",
+    "level": "city",
+    "parent_id": 19000
+  },
+  {
+    "id": 19065,
+    "name": "镇江",
+    "level": "city",
+    "parent_id": 19000
+  },
+  {
+    "id": 20078,
+    "name": "抚州",
+    "level": "city",
+    "parent_id": 20000
+  },
+  {
+    "id": 20077,
+    "name": "赣州",
+    "level": "city",
+    "parent_id": 20000
+  },
+  {
+    "id": 20068,
+    "name": "吉安",
+    "level": "city",
+    "parent_id": 20000
+  },
+  {
+    "id": 20069,
+    "name": "景德镇",
+    "level": "city",
+    "parent_id": 20000
+  },
+  {
+    "id": 20067,
+    "name": "九江",
+    "level": "city",
+    "parent_id": 20000
+  },
+  {
+    "id": 20072,
+    "name": "南昌",
+    "level": "city",
+    "parent_id": 20000
+  },
+  {
+    "id": 20071,
+    "name": "萍乡",
+    "level": "city",
+    "parent_id": 20000
+  },
+  {
+    "id": 20074,
+    "name": "上饶",
+    "level": "city",
+    "parent_id": 20000
+  },
+  {
+    "id": 20073,
+    "name": "新余",
+    "level": "city",
+    "parent_id": 20000
+  },
+  {
+    "id": 20075,
+    "name": "宜春",
+    "level": "city",
+    "parent_id": 20000
+  },
+  {
+    "id": 20076,
+    "name": "鹰潭",
+    "level": "city",
+    "parent_id": 20000
+  },
+  {
+    "id": 21151,
+    "name": "鞍山",
+    "level": "city",
+    "parent_id": 21000
+  },
+  {
+    "id": 21145,
+    "name": "本溪",
+    "level": "city",
+    "parent_id": 21000
+  },
+  {
+    "id": 21147,
+    "name": "朝阳",
+    "level": "city",
+    "parent_id": 21000
+  },
+  {
+    "id": 21155,
+    "name": "大连",
+    "level": "city",
+    "parent_id": 21000
+  },
+  {
+    "id": 21144,
+    "name": "丹东",
+    "level": "city",
+    "parent_id": 21000
+  },
+  {
+    "id": 21152,
+    "name": "抚顺",
+    "level": "city",
+    "parent_id": 21000
+  },
+  {
+    "id": 21150,
+    "name": "阜新",
+    "level": "city",
+    "parent_id": 21000
+  },
+  {
+    "id": 21157,
+    "name": "葫芦岛",
+    "level": "city",
+    "parent_id": 21000
+  },
+  {
+    "id": 21146,
+    "name": "锦州",
+    "level": "city",
+    "parent_id": 21000
+  },
+  {
+    "id": 21148,
+    "name": "辽阳",
+    "level": "city",
+    "parent_id": 21000
+  },
+  {
+    "id": 21149,
+    "name": "盘锦",
+    "level": "city",
+    "parent_id": 21000
+  },
+  {
+    "id": 21153,
+    "name": "沈阳",
+    "level": "city",
+    "parent_id": 21000
+  },
+  {
+    "id": 21154,
+    "name": "铁岭",
+    "level": "city",
+    "parent_id": 21000
+  },
+  {
+    "id": 21156,
+    "name": "营口",
+    "level": "city",
+    "parent_id": 21000
+  },
+  {
+    "id": 22159,
+    "name": "阿拉善盟",
+    "level": "city",
+    "parent_id": 22000
+  },
+  {
+    "id": 22162,
+    "name": "巴彦淖尔",
+    "level": "city",
+    "parent_id": 22000
+  },
+  {
+    "id": 22169,
+    "name": "包头",
+    "level": "city",
+    "parent_id": 22000
+  },
+  {
+    "id": 22158,
+    "name": "赤峰",
+    "level": "city",
+    "parent_id": 22000
+  },
+  {
+    "id": 22168,
+    "name": "鄂尔多斯",
+    "level": "city",
+    "parent_id": 22000
+  },
+  {
+    "id": 22167,
+    "name": "呼和浩特",
+    "level": "city",
+    "parent_id": 22000
+  },
+  {
+    "id": 22166,
+    "name": "呼伦贝尔",
+    "level": "city",
+    "parent_id": 22000
+  },
+  {
+    "id": 22161,
+    "name": "通辽",
+    "level": "city",
+    "parent_id": 22000
+  },
+  {
+    "id": 22164,
+    "name": "乌海",
+    "level": "city",
+    "parent_id": 22000
+  },
+  {
+    "id": 22163,
+    "name": "乌兰察布",
+    "level": "city",
+    "parent_id": 22000
+  },
+  {
+    "id": 22165,
+    "name": "锡林郭勒盟",
+    "level": "city",
+    "parent_id": 22000
+  },
+  {
+    "id": 22160,
+    "name": "兴安盟",
+    "level": "city",
+    "parent_id": 22000
+  },
+  {
+    "id": 23170,
+    "name": "固原",
+    "level": "city",
+    "parent_id": 23000
+  },
+  {
+    "id": 23171,
+    "name": "石嘴山",
+    "level": "city",
+    "parent_id": 23000
+  },
+  {
+    "id": 23172,
+    "name": "吴忠",
+    "level": "city",
+    "parent_id": 23000
+  },
+  {
+    "id": 23174,
+    "name": "银川",
+    "level": "city",
+    "parent_id": 23000
+  },
+  {
+    "id": 23173,
+    "name": "中卫",
+    "level": "city",
+    "parent_id": 23000
+  },
+  {
+    "id": 24496,
+    "name": "果洛",
+    "level": "city",
+    "parent_id": 24000
+  },
+  {
+    "id": 24494,
+    "name": "海北",
+    "level": "city",
+    "parent_id": 24000
+  },
+  {
+    "id": 24176,
+    "name": "海东",
+    "level": "city",
+    "parent_id": 24000
+  },
+  {
+    "id": 24479,
+    "name": "海南",
+    "level": "city",
+    "parent_id": 24000
+  },
+  {
+    "id": 24177,
+    "name": "海西",
+    "level": "city",
+    "parent_id": 24000
+  },
+  {
+    "id": 24495,
+    "name": "黄南",
+    "level": "city",
+    "parent_id": 24000
+  },
+  {
+    "id": 24175,
+    "name": "西宁",
+    "level": "city",
+    "parent_id": 24000
+  },
+  {
+    "id": 24178,
+    "name": "玉树",
+    "level": "city",
+    "parent_id": 24000
+  },
+  {
+    "id": 25223,
+    "name": "滨州",
+    "level": "city",
+    "parent_id": 25000
+  },
+  {
+    "id": 25200,
+    "name": "德州",
+    "level": "city",
+    "parent_id": 25000
+  },
+  {
+    "id": 25220,
+    "name": "东营",
+    "level": "city",
+    "parent_id": 25000
+  },
+  {
+    "id": 25222,
+    "name": "菏泽",
+    "level": "city",
+    "parent_id": 25000
+  },
+  {
+    "id": 25196,
+    "name": "济南",
+    "level": "city",
+    "parent_id": 25000
+  },
+  {
+    "id": 25197,
+    "name": "济宁",
+    "level": "city",
+    "parent_id": 25000
+  },
+  {
+    "id": 25199,
+    "name": "聊城",
+    "level": "city",
+    "parent_id": 25000
+  },
+  {
+    "id": 25201,
+    "name": "临沂",
+    "level": "city",
+    "parent_id": 25000
+  },
+  {
+    "id": 25202,
+    "name": "青岛",
+    "level": "city",
+    "parent_id": 25000
+  },
+  {
+    "id": 25203,
+    "name": "日照",
+    "level": "city",
+    "parent_id": 25000
+  },
+  {
+    "id": 25208,
+    "name": "泰安",
+    "level": "city",
+    "parent_id": 25000
+  },
+  {
+    "id": 25218,
+    "name": "威海",
+    "level": "city",
+    "parent_id": 25000
+  },
+  {
+    "id": 25204,
+    "name": "潍坊",
+    "level": "city",
+    "parent_id": 25000
+  },
+  {
+    "id": 25219,
+    "name": "烟台",
+    "level": "city",
+    "parent_id": 25000
+  },
+  {
+    "id": 25221,
+    "name": "枣庄",
+    "level": "city",
+    "parent_id": 25000
+  },
+  {
+    "id": 25207,
+    "name": "淄博",
+    "level": "city",
+    "parent_id": 25000
+  },
+  {
+    "id": 26217,
+    "name": "大同",
+    "level": "city",
+    "parent_id": 26000
+  },
+  {
+    "id": 26205,
+    "name": "晋城",
+    "level": "city",
+    "parent_id": 26000
+  },
+  {
+    "id": 26206,
+    "name": "晋中",
+    "level": "city",
+    "parent_id": 26000
+  },
+  {
+    "id": 26211,
+    "name": "临汾",
+    "level": "city",
+    "parent_id": 26000
+  },
+  {
+    "id": 26210,
+    "name": "吕梁",
+    "level": "city",
+    "parent_id": 26000
+  },
+  {
+    "id": 26213,
+    "name": "朔州",
+    "level": "city",
+    "parent_id": 26000
+  },
+  {
+    "id": 26214,
+    "name": "太原",
+    "level": "city",
+    "parent_id": 26000
+  },
+  {
+    "id": 26212,
+    "name": "忻州",
+    "level": "city",
+    "parent_id": 26000
+  },
+  {
+    "id": 26215,
+    "name": "阳泉",
+    "level": "city",
+    "parent_id": 26000
+  },
+  {
+    "id": 26216,
+    "name": "运城",
+    "level": "city",
+    "parent_id": 26000
+  },
+  {
+    "id": 26209,
+    "name": "长治",
+    "level": "city",
+    "parent_id": 26000
+  },
+  {
+    "id": 27240,
+    "name": "安康",
+    "level": "city",
+    "parent_id": 27000
+  },
+  {
+    "id": 27239,
+    "name": "宝鸡",
+    "level": "city",
+    "parent_id": 27000
+  },
+  {
+    "id": 27248,
+    "name": "汉中",
+    "level": "city",
+    "parent_id": 27000
+  },
+  {
+    "id": 27241,
+    "name": "商洛",
+    "level": "city",
+    "parent_id": 27000
+  },
+  {
+    "id": 27242,
+    "name": "铜川",
+    "level": "city",
+    "parent_id": 27000
+  },
+  {
+    "id": 27243,
+    "name": "渭南",
+    "level": "city",
+    "parent_id": 27000
+  },
+  {
+    "id": 27244,
+    "name": "西安",
+    "level": "city",
+    "parent_id": 27000
+  },
+  {
+    "id": 27245,
+    "name": "咸阳",
+    "level": "city",
+    "parent_id": 27000
+  },
+  {
+    "id": 27246,
+    "name": "延安",
+    "level": "city",
+    "parent_id": 27000
+  },
+  {
+    "id": 27249,
+    "name": "榆林",
+    "level": "city",
+    "parent_id": 27000
+  },
+  {
+    "id": 28252,
+    "name": "阿坝",
+    "level": "city",
+    "parent_id": 28000
+  },
+  {
+    "id": 28247,
+    "name": "巴中",
+    "level": "city",
+    "parent_id": 28000
+  },
+  {
+    "id": 28226,
+    "name": "成都",
+    "level": "city",
+    "parent_id": 28000
+  },
+  {
+    "id": 28250,
+    "name": "达州",
+    "level": "city",
+    "parent_id": 28000
+  },
+  {
+    "id": 28232,
+    "name": "德阳",
+    "level": "city",
+    "parent_id": 28000
+  },
+  {
+    "id": 28236,
+    "name": "甘孜",
+    "level": "city",
+    "parent_id": 28000
+  },
+  {
+    "id": 28224,
+    "name": "广安",
+    "level": "city",
+    "parent_id": 28000
+  },
+  {
+    "id": 28225,
+    "name": "广元",
+    "level": "city",
+    "parent_id": 28000
+  },
+  {
+    "id": 28233,
+    "name": "乐山",
+    "level": "city",
+    "parent_id": 28000
+  },
+  {
+    "id": 28228,
+    "name": "凉山",
+    "level": "city",
+    "parent_id": 28000
+  },
+  {
+    "id": 28234,
+    "name": "泸州",
+    "level": "city",
+    "parent_id": 28000
+  },
+  {
+    "id": 28227,
+    "name": "眉山",
+    "level": "city",
+    "parent_id": 28000
+  },
+  {
+    "id": 28229,
+    "name": "绵阳",
+    "level": "city",
+    "parent_id": 28000
+  },
+  {
+    "id": 28231,
+    "name": "南充",
+    "level": "city",
+    "parent_id": 28000
+  },
+  {
+    "id": 28235,
+    "name": "内江",
+    "level": "city",
+    "parent_id": 28000
+  },
+  {
+    "id": 28230,
+    "name": "攀枝花",
+    "level": "city",
+    "parent_id": 28000
+  },
+  {
+    "id": 28237,
+    "name": "遂宁",
+    "level": "city",
+    "parent_id": 28000
+  },
+  {
+    "id": 28251,
+    "name": "雅安",
+    "level": "city",
+    "parent_id": 28000
+  },
+  {
+    "id": 28254,
+    "name": "宜宾",
+    "level": "city",
+    "parent_id": 28000
+  },
+  {
+    "id": 28238,
+    "name": "资阳",
+    "level": "city",
+    "parent_id": 28000
+  },
+  {
+    "id": 28253,
+    "name": "自贡",
+    "level": "city",
+    "parent_id": 28000
+  },
+  {
+    "id": 29498,
+    "name": "阿里",
+    "level": "city",
+    "parent_id": 29000
+  },
+  {
+    "id": 29480,
+    "name": "昌都",
+    "level": "city",
+    "parent_id": 29000
+  },
+  {
+    "id": 29269,
+    "name": "拉萨",
+    "level": "city",
+    "parent_id": 29000
+  },
+  {
+    "id": 29270,
+    "name": "林芝",
+    "level": "city",
+    "parent_id": 29000
+  },
+  {
+    "id": 29268,
+    "name": "那曲",
+    "level": "city",
+    "parent_id": 29000
+  },
+  {
+    "id": 29271,
+    "name": "日喀则",
+    "level": "city",
+    "parent_id": 29000
+  },
+  {
+    "id": 29497,
+    "name": "山南",
+    "level": "city",
+    "parent_id": 29000
+  },
+  {
+    "id": 30185,
+    "name": "阿克苏",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30499,
+    "name": "阿拉尔",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30182,
+    "name": "阿勒泰",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30191,
+    "name": "巴音郭楞",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30180,
+    "name": "博尔塔拉",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30181,
+    "name": "昌吉",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30179,
+    "name": "哈密",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30195,
+    "name": "和田",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30183,
+    "name": "喀什",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30184,
+    "name": "克拉玛依",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30186,
+    "name": "克孜勒苏柯尔克孜",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30187,
+    "name": "石河子",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30188,
+    "name": "塔城",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30500,
+    "name": "图木舒克",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30522,
+    "name": "北屯",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30523,
+    "name": "双河",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30524,
+    "name": "可克达拉",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30525,
+    "name": "昆玉",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30526,
+    "name": "胡杨河",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30527,
+    "name": "铁门关",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30190,
+    "name": "吐鲁番",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30192,
+    "name": "乌鲁木齐",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30189,
+    "name": "五家渠",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 30193,
+    "name": "伊犁",
+    "level": "city",
+    "parent_id": 30000
+  },
+  {
+    "id": 31289,
+    "name": "保山",
+    "level": "city",
+    "parent_id": 31000
+  },
+  {
+    "id": 31283,
+    "name": "楚雄",
+    "level": "city",
+    "parent_id": 31000
+  },
+  {
+    "id": 31292,
+    "name": "大理",
+    "level": "city",
+    "parent_id": 31000
+  },
+  {
+    "id": 31286,
+    "name": "德宏",
+    "level": "city",
+    "parent_id": 31000
+  },
+  {
+    "id": 31482,
+    "name": "迪庆",
+    "level": "city",
+    "parent_id": 31000
+  },
+  {
+    "id": 31293,
+    "name": "红河",
+    "level": "city",
+    "parent_id": 31000
+  },
+  {
+    "id": 31284,
+    "name": "昆明",
+    "level": "city",
+    "parent_id": 31000
+  },
+  {
+    "id": 31285,
+    "name": "丽江",
+    "level": "city",
+    "parent_id": 31000
+  },
+  {
+    "id": 31287,
+    "name": "临沧",
+    "level": "city",
+    "parent_id": 31000
+  },
+  {
+    "id": 31481,
+    "name": "怒江",
+    "level": "city",
+    "parent_id": 31000
+  },
+  {
+    "id": 31290,
+    "name": "普洱",
+    "level": "city",
+    "parent_id": 31000
+  },
+  {
+    "id": 31288,
+    "name": "曲靖",
+    "level": "city",
+    "parent_id": 31000
+  },
+  {
+    "id": 31291,
+    "name": "文山",
+    "level": "city",
+    "parent_id": 31000
+  },
+  {
+    "id": 31483,
+    "name": "西双版纳",
+    "level": "city",
+    "parent_id": 31000
+  },
+  {
+    "id": 31295,
+    "name": "玉溪",
+    "level": "city",
+    "parent_id": 31000
+  },
+  {
+    "id": 31294,
+    "name": "昭通",
+    "level": "city",
+    "parent_id": 31000
+  },
+  {
+    "id": 32280,
+    "name": "杭州",
+    "level": "city",
+    "parent_id": 32000
+  },
+  {
+    "id": 32282,
+    "name": "湖州",
+    "level": "city",
+    "parent_id": 32000
+  },
+  {
+    "id": 32273,
+    "name": "嘉兴",
+    "level": "city",
+    "parent_id": 32000
+  },
+  {
+    "id": 32272,
+    "name": "金华",
+    "level": "city",
+    "parent_id": 32000
+  },
+  {
+    "id": 32275,
+    "name": "丽水",
+    "level": "city",
+    "parent_id": 32000
+  },
+  {
+    "id": 32276,
+    "name": "宁波",
+    "level": "city",
+    "parent_id": 32000
+  },
+  {
+    "id": 32274,
+    "name": "衢州",
+    "level": "city",
+    "parent_id": 32000
+  },
+  {
+    "id": 32277,
+    "name": "绍兴",
+    "level": "city",
+    "parent_id": 32000
+  },
+  {
+    "id": 32279,
+    "name": "台州",
+    "level": "city",
+    "parent_id": 32000
+  },
+  {
+    "id": 32278,
+    "name": "温州",
+    "level": "city",
+    "parent_id": 32000
+  },
+  {
+    "id": 32281,
+    "name": "舟山",
+    "level": "city",
+    "parent_id": 32000
+  }
+]

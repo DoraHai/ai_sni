@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     baidu_api_base_url: str = "https://api.baidu.com"
     baidu_app_id: str
     baidu_secret_key: str
+    baidu_oauth_base_url: str = "https://u.baidu.com"
+    baidu_oauth_platform_id: str = "4960345965958561794"
+    # 从商业开发者中心「授权链接」中复制 scope 参数。权限变化后需同步更新。
+    baidu_oauth_scope: str = ""
+    # 默认按 APP_BASE_URL 拼接；仅在回调域名与主站不同时覆盖。
+    baidu_oauth_callback_url: str = ""
+    baidu_oauth_state_ttl_minutes: int = 15
 
     # 写回演练开关：True=dry-run，所有写百度的请求只算改动+记台账，绝不真发（开发/验证默认）。
     # 关闭=真写线上出价，必须用户明确批准后才在生产改为 False（红线 feedback-no-baidu-writeback）。
@@ -34,13 +41,29 @@ class Settings(BaseSettings):
         ..., description="admin / dashboard 接口的 API Key，调用方经 X-API-Key 请求头携带"
     )
     # 是否允许 ?key= 传 API Key（URL 会进日志/Referer，生产必须 False）
-    admin_api_key_query_enabled: bool = True
+    # 查询参数会进入浏览器历史、代理与访问日志；默认关闭，仅兼容环境显式开启。
+    admin_api_key_query_enabled: bool = False
     # 若设置，API Key 访问绑定到该租户（ensure_tenant 生效）；None=可跨租户（仅运维）
     admin_api_key_tenant_id: int | None = None
 
     # 登录态 JWT 签名密钥；不配则退化复用 admin_api_key（本地冒烟方便），生产必须单独配
     jwt_secret: str = ""
     jwt_expire_hours: int = 12
+
+    # 登录防护：失败次数在一个时间窗内累计，达到阈值后临时锁定账号。
+    login_max_failed_attempts: int = Field(default=5, ge=3, le=20)
+    login_failure_window_minutes: int = Field(default=15, ge=1, le=1440)
+    login_lockout_minutes: int = Field(default=10, ge=1, le=1440)
+
+    # 逗号分隔，生产环境不得包含通配符。浏览器前端均应走同源 HTTPS。
+    cors_allowed_origins: str = "https://sem.snipers.com.cn"
+
+    def cors_origin_list(self) -> list[str]:
+        return [
+            origin.strip().rstrip("/")
+            for origin in self.cors_allowed_origins.split(",")
+            if origin.strip()
+        ]
 
     # GEO：是否允许同一人提交审校又审批通过（默认禁止）
     geo_allow_self_review: bool = False
@@ -49,6 +72,36 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
+
+    # 站长之家 SEO 数据。仅在 GEO 诊断后端调用，Key 不得进入前端构建产物。
+    # 不同商品可能下发不同 API Key；各项独立 Key 为空时回退到通用 Key。
+    chinaz_api_enabled: bool = True
+    chinaz_api_key: str = ""
+    chinaz_baidu_index_api_key: str = ""
+    chinaz_baidu_pc_keywords_api_key: str = ""
+    chinaz_baidu_mobile_keywords_api_key: str = ""
+    chinaz_baidu_pc_top50_api_key: str = ""
+    chinaz_baidu_mobile_top50_api_key: str = ""
+    chinaz_weight_all_api_key: str = ""
+    chinaz_whois_api_key: str = ""
+    chinaz_api_base_url: str = "https://openapi.chinaz.net/v1/1001"
+    chinaz_api_timeout_seconds: float = 8.0
+    # 每天 02:00 自动采集全部启用 SEO 关键词的百度 PC/移动前 50。
+    seo_rank_scheduler_enabled: bool = True
+    seo_rank_scheduler_batch_size: int = 20
+    seo_rank_scheduler_use_ai: bool = True
+
+    # Google PageSpeed Insights。仅由后端调用，Key 不得进入前端构建产物。
+    pagespeed_api_key: str = ""
+    pagespeed_api_base_url: str = (
+        "https://pagespeedonline.googleapis.com/pagespeedonline/v5/runPagespeed"
+    )
+    pagespeed_api_timeout_seconds: float = 60.0
+
+    # 本地 Lighthouse：大陆服务器无法访问 PageSpeed API 时使用。
+    lighthouse_cli_path: str = "/opt/lighthouse-runner/node_modules/.bin/lighthouse"
+    lighthouse_chrome_path: str = "/usr/bin/chromium-browser"
+    lighthouse_timeout_seconds: float = 90.0
 
     # 阿里云百炼 DashScope（GEO 默认推荐；OpenAI 兼容模式）
     dashscope_api_key: str = ""

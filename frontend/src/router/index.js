@@ -1,5 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { clearChunkRecoveryMarker, isChunkLoadError, recoverFromChunkLoadError } from './chunkRecovery'
 import { session } from '../store/session'
+import { loginUrl } from '../auth/loginRedirect'
 
 // 路由按原型 v3.0 的 6 个工作流划分，未实现的页面挂占位组件。
 // meta.perm = 该页所需菜单权限 key（自定义角色 RBAC）；可为数组=任一可见即可（下钻页）。
@@ -42,6 +45,16 @@ const routes = [
     component: DealSniperShell,
     meta: { title: '产品门户', public: true, bare: true },
   },
+  { path: '/deal-sniper/seo/manage', redirect: '/seo/keywords' },
+  { path: '/deal-sniper/seo/keywords', redirect: '/seo/keywords' },
+  { path: '/deal-sniper/seo/tdk', redirect: '/seo/site' },
+  { path: '/deal-sniper/seo/dashboard', redirect: '/seo/dashboard' },
+  { path: '/deal-sniper/seo/trends', redirect: '/seo/dashboard' },
+  { path: '/deal-sniper/seo/competitors', redirect: '/seo/competitors' },
+  { path: '/deal-sniper/seo/articles', redirect: '/seo/content/articles' },
+  { path: '/deal-sniper/seo/rewrites', redirect: '/seo/content/rewrites' },
+  { path: '/deal-sniper/seo/questions', redirect: '/seo/content/qa' },
+  { path: '/deal-sniper/seo/channels', redirect: '/seo/distribution' },
   {
     path: '/deal-sniper/:section(hub|seo|geo|content)/:page',
     component: DealSniperShell,
@@ -53,295 +66,105 @@ const routes = [
     meta: { title: 'AI 助手', workflow: '智能助手', perm: 'assistant' },
   },
   {
-    path: '/geo/overview',
-    component: () => import('../views/geo/GeoOverviewView.vue'),
-    meta: {
-      title: 'GEO 概览',
-      documentTitle: 'GEO 增长｜概览',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/visibility',
-    component: () => import('../views/geo/GeoVisibilityView.vue'),
-    meta: {
-      title: 'AI 可见度',
-      documentTitle: 'GEO 增长｜可见度',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/visibility/patrol',
-    component: () => import('../views/geo/GeoVisibilityPatrolView.vue'),
-    meta: {
-      title: '全自动巡检',
-      documentTitle: 'GEO 增长｜可见度巡检',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/period-diff',
-    component: () => import('../views/geo/GeoPeriodDiffView.vue'),
-    meta: {
-      title: '期次对比',
-      documentTitle: 'GEO 增长｜期次对比',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/gaps',
-    component: () => import('../views/geo/GeoGapWorkbenchView.vue'),
-    meta: {
-      title: '缺口工作台',
-      documentTitle: 'GEO 增长｜缺口工作台',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/periods',
-    component: () => import('../views/geo/GeoPeriodsView.vue'),
-    meta: {
-      title: '优化期次',
-      documentTitle: 'GEO 增长｜优化期次',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/citations',
-    component: () => import('../views/geo/GeoCitationsView.vue'),
-    meta: {
-      title: 'AI 引用次数',
-      documentTitle: 'GEO 增长｜AI 引用次数',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/competitors',
-    component: () => import('../views/geo/GeoCompetitorsView.vue'),
-    meta: {
-      title: '竞品分析',
-      documentTitle: 'GEO 增长｜竞品分析',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/topic-heat',
-    component: () => import('../views/geo/GeoTopicHeatView.vue'),
-    meta: {
-      title: '话题热度',
-      documentTitle: 'GEO 增长｜话题热度',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/ai-trends',
-    component: () => import('../views/geo/GeoAiTrendsView.vue'),
-    meta: {
-      title: 'AI 动态',
-      documentTitle: 'GEO 增长｜AI 动态',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/evaluation',
-    component: () => import('../views/geo/GeoEvaluationView.vue'),
-    meta: {
-      title: '评价分析',
-      documentTitle: 'GEO 增长｜评价分析',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/deliverables',
-    component: () => import('../views/geo/GeoDeliverablesView.vue'),
-    meta: {
-      title: '交付摘要',
-      documentTitle: 'GEO 增长｜交付摘要',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/deliverables/share/:shareToken',
-    component: () => import('../views/geo/GeoDeliverableShareView.vue'),
-    meta: {
-      title: '交付摘要分享',
-      documentTitle: 'GEO 交付摘要 · 只读分享',
-      public: true,
-      bare: true,
-    },
-  },
-  // 兼容旧 hash 风格外链误写（部分环境会把 # 去掉后落到此路径）
-  {
-    path: '/geo/deliverables/share',
-    redirect: (to) => {
-      const t = to.query.token || to.query.share_token
-      return t
-        ? { path: `/geo/deliverables/share/${t}` }
-        : { path: '/geo/deliverables' }
-    },
-  },
-  {
-    path: '/geo/workbench',
-    component: () => import('../views/geo/GeoWorkbenchHubView.vue'),
-    meta: {
-      title: '内容工作台',
-      documentTitle: 'GEO 增长｜内容工作台',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/tasks',
-    component: () => import('../views/geo/GeoTasksView.vue'),
-    meta: {
-      title: '优化文章',
-      documentTitle: 'GEO 增长｜优化文章',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/tasks/:taskId',
-    component: () => import('../views/geo/GeoTaskEditorView.vue'),
-    meta: {
-      title: '内容编辑器',
-      documentTitle: 'GEO 增长｜内容编辑器',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/businesses',
-    component: () => import('../views/geo/GeoBusinessesView.vue'),
-    meta: {
-      title: '优化业务',
-      documentTitle: 'GEO 增长｜优化业务',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/businesses/:businessId',
-    component: () => import('../views/geo/GeoBusinessDetailView.vue'),
-    meta: {
-      title: '业务详情',
-      documentTitle: 'GEO 增长｜业务详情',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/onboarding',
-    component: () => import('../views/geo/GeoOnboardingView.vue'),
-    meta: {
-      title: 'GEO 开户向导',
-      documentTitle: 'GEO 增长｜开户向导',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/prompts',
-    component: () => import('../views/geo/GeoPromptsView.vue'),
-    meta: {
-      title: '优化意图词',
-      documentTitle: 'GEO 增长｜优化意图词',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/facts',
-    component: () => import('../views/geo/GeoFactsView.vue'),
-    meta: {
-      title: '事实库',
-      documentTitle: 'GEO 增长｜事实库',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/engines',
-    component: () => import('../views/geo/GeoEnginesView.vue'),
-    meta: {
-      title: '引擎',
-      documentTitle: 'GEO 增长｜引擎',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/ai-settings',
-    component: () => import('../views/geo/GeoAiSettingsView.vue'),
-    meta: {
-      title: 'AI 能力配置',
-      documentTitle: 'GEO 增长｜AI 配置',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/channel-polish-prompts',
-    component: () => import('../views/geo/GeoChannelPolishPromptsView.vue'),
-    meta: {
-      title: '渠道成稿提示词',
-      documentTitle: 'GEO 增长｜渠道成稿提示词',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/publishing',
-    component: () => import('../views/geo/GeoPublishingView.vue'),
-    meta: {
-      title: '发布渠道',
-      documentTitle: 'GEO 增长｜发布渠道',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
-  },
-  {
-    path: '/geo/placements',
-    component: () => import('../views/geo/GeoPlacementsView.vue'),
-    meta: {
-      title: '媒体阵地',
-      documentTitle: 'GEO 增长｜媒体阵地',
-      workflow: 'GEO 增长',
-      perm: 'geo.content',
-    },
+    path: '/seo',
+    component: () => import('../views/seo/SeoWorkspaceShell.vue'),
+    meta: { bare: true },
+    children: [
+      { path: '', redirect: '/seo/dashboard' },
+      {
+        path: 'dashboard',
+        component: () => import('../views/seo/SeoDashboardView.vue'),
+        meta: { title: 'SEO 工作台', workflow: '今日概览', perm: 'seo.dashboard', bare: true, immersive: true },
+      },
+      {
+        path: 'alerts',
+        component: () => import('../views/seo/SeoAlertsView.vue'),
+        meta: { title: '异常提醒', workflow: '数据看板', perm: 'seo.alerts', bare: true },
+      },
+      {
+        path: 'keywords',
+        component: () => import('../views/seo/SeoKeywordAssetsView.vue'),
+        meta: { title: '关键词管理', workflow: '关键词资产', perm: 'seo.keywords', bare: true, immersive: true },
+      },
+      {
+        path: 'keywords/:keywordId',
+        component: () => import('../views/seo/SeoKeywordDetailView.vue'),
+        meta: { title: '关键词详情', workflow: '关键词资产', perm: 'seo.keywords', bare: true },
+      },
+      {
+        path: 'rankings',
+        component: () => import('../views/seo/SeoRankingMonitorView.vue'),
+        meta: { title: '排名监控', workflow: '关键词资产', perm: 'seo.keywords', bare: true },
+      },
+      {
+        path: 'trends',
+        component: () => import('../views/seo/SeoTrendsView.vue'),
+        meta: { title: '趋势总览', workflow: '关键词资产', perm: 'seo.keywords', bare: true },
+      },
+      {
+        path: 'site',
+        component: () => import('../views/seo/SeoSiteOptimizationView.vue'),
+        meta: { title: '站内优化', workflow: '站内增长', perm: 'seo.site', bare: true },
+      },
+      {
+        path: 'content',
+        redirect: '/seo/content/articles',
+      },
+      {
+        path: 'content/articles',
+        component: () => import('../views/seo/SeoContentView.vue'),
+        meta: { title: '原创文章', workflow: '内容增长', contentMode: 'article', perm: 'seo.content', bare: true, immersive: true },
+      },
+      {
+        path: 'content/rewrites',
+        component: () => import('../views/seo/SeoRewriteView.vue'),
+        meta: { title: '文章改写', workflow: '内容增长', contentMode: 'rewrite', perm: 'seo.content', bare: true, immersive: true },
+      },
+      {
+        path: 'content/qa',
+        component: () => import('../views/seo/SeoContentView.vue'),
+        meta: { title: '问答运营', workflow: '内容增长', contentMode: 'qa', perm: 'seo.content', bare: true, immersive: true },
+      },
+      {
+        path: 'content/editor',
+        component: () => import('../views/seo/SeoContentEditorView.vue'),
+        meta: { title: '在线编辑器', workflow: '内容增长', perm: 'seo.content', bare: true, immersive: true },
+      },
+      {
+        path: 'content/answer-editor',
+        component: () => import('../views/seo/SeoContentEditorView.vue'),
+        meta: { title: '问答编辑器', workflow: '内容增长', perm: 'seo.content', bare: true, immersive: true },
+      },
+      {
+        path: 'distribution',
+        component: () => import('../views/seo/SeoDistributionView.vue'),
+        meta: { title: '分发平台', workflow: '内容增长', perm: 'seo.content', bare: true },
+      },
+      {
+        path: 'links',
+        component: () => import('../views/seo/SeoLinksView.vue'),
+        meta: { title: '内外链管理', workflow: '站内增长', perm: 'seo.links', bare: true },
+      },
+      {
+        path: 'competitors',
+        component: () => import('../views/seo/SeoCompetitorsView.vue'),
+        meta: { title: '竞品监控', workflow: '竞品市场', perm: 'seo.competitors', bare: true },
+      },
+    ],
   },
   {
     path: '/geo/diagnosis',
-    component: () => import('../views/diagnosis/DiagnosisRedirectView.vue'),
+    component: () => import('../views/diagnosis/DiagnosisCenterView.vue'),
     meta: {
       title: '网站体检',
       documentTitle: '诊断中心｜网站体检',
       workflow: '诊断中心',
       perm: 'geo.diagnosis',
-      bare: true,
     },
   },
   {
     path: '/diagnostic-center',
-    component: () => import('../views/diagnosis/DiagnosisRedirectView.vue'),
-    meta: { title: '诊断中心', perm: 'geo.diagnosis', bare: true },
-  },
-  {
-    path: '/login',
-    component: () => import('../views/LoginView.vue'),
-    meta: { title: '登录', public: true, bare: true },
+    redirect: '/geo/diagnosis',
   },
   {
     path: '/monitor/dashboard',
@@ -366,7 +189,7 @@ const routes = [
   {
     path: '/onboarding',
     component: () => import('../views/onboarding/AuthorizationSyncView.vue'),
-    meta: { title: '授权与同步', workflow: '首次接入', perm: 'onboarding' },
+    meta: { title: '授权与同步', workflow: '首次接入', perm: ['onboarding', 'settings.customers'] },
   },
   {
     path: '/onboarding/builder',
@@ -403,7 +226,7 @@ const routes = [
   {
     path: '/verify/pending',
     component: () => import('../views/verify/PendingAdjustmentsView.vue'),
-    meta: { title: '待验证调价', workflow: '效果验证', perm: 'verify.pending' },
+    meta: { title: '待验证调价', workflow: '效果验证', perm: ['verify.pending', 'verify.adjustments'] },
   },
   {
     path: '/verify/leads',
@@ -411,6 +234,11 @@ const routes = [
     meta: { title: '线索管理', workflow: '效果验证', perm: 'verify.leads' },
   },
   { path: '/manage', redirect: '/manage/account' },
+  {
+    path: '/sem/accounts',
+    component: () => import('../views/manage/SemAccountsView.vue'),
+    meta: { title: '推广账号', workflow: '投放管理', perm: 'sem.assets' },
+  },
   {
     path: '/manage/account',
     component: () => import('../views/manage/AccountBudgetView.vue'),
@@ -442,7 +270,25 @@ const routes = [
     component: () => import('../views/settings/AccountsRolesView.vue'),
     meta: { title: '账号与权限', workflow: '系统设置', perm: 'settings.accounts' },
   },
+  { path: '/settings/users', redirect: '/settings/accounts' },
+  {
+    path: '/settings/customers',
+    component: () => import('../views/settings/CustomerModulesView.vue'),
+    meta: { title: '客户与模块', workflow: '系统设置', perm: 'settings.customers' },
+  },
   { path: '/settings', redirect: '/settings/accounts' },
+  {
+    path: '/workspace',
+    component: () => import('../views/workspace/ModuleWorkspaceView.vue'),
+    meta: { title: '我的工作台' },
+  },
+  { path: '/sem/plans', redirect: '/manage/campaigns' },
+  { path: '/admin/internal', redirect: '/settings/accounts' },
+  {
+    path: '/:pathMatch(.*)*',
+    component: () => import('../views/NotFoundView.vue'),
+    meta: { title: '页面不存在' },
+  },
 ]
 
 const router = createRouter({
@@ -456,9 +302,16 @@ const router = createRouter({
 })
 
 const MENU_ORDER = [
+  ['sem.assets', '/sem/accounts'],
   ['assistant', '/assistant'],
-  ['geo.content', '/geo/businesses'],
   ['geo.diagnosis', '/geo/diagnosis'],
+  ['seo.dashboard', '/seo/dashboard'],
+  ['seo.alerts', '/seo/alerts'],
+  ['seo.keywords', '/seo/keywords'],
+  ['seo.content', '/seo/content'],
+  ['seo.site', '/seo/site'],
+  ['seo.links', '/seo/links'],
+  ['seo.competitors', '/seo/competitors'],
   ['monitor.dashboard', '/monitor/dashboard'],
   ['monitor.alerts', '/monitor/alerts'],
   ['monitor.profile', '/monitor/profile'],
@@ -475,6 +328,7 @@ const MENU_ORDER = [
   ['delivery.report', '/delivery/report'],
   ['onboarding', '/onboarding'],
   ['settings.accounts', '/settings/accounts'],
+  ['settings.customers', '/settings/customers'],
 ]
 
 function firstAllowedPath() {
@@ -486,43 +340,35 @@ function permOk(perm) {
   const keys = Array.isArray(perm) ? perm : [perm]
   return keys.some((k) => session.canView(k))
 }
-function hasDevApiKey() {
-  const k = import.meta.env.VITE_API_KEY
-  return Boolean(k && String(k).trim() && String(k).trim() !== 'CHANGE_ME')
-}
-
-function geoClickStart() {
-  return '/geo/onboarding'
-}
-
 router.beforeEach((to) => {
-  // 配了 VITE_API_KEY：未登录可进业务页（API 走 X-API-Key），不要停在登录页
-  const devBypass = hasDevApiKey() && !session.isLoggedIn
-  if (devBypass && (to.path === '/login' || to.path === '/')) {
-    const redir = typeof to.query.redirect === 'string' ? to.query.redirect : ''
-    if (redir.startsWith('/') && !redir.startsWith('//') && !redir.startsWith('/login')) {
-      return redir
-    }
-    return geoClickStart()
-  }
+  const devBypass = !session.isLoggedIn && import.meta.env.VITE_API_KEY && import.meta.env.DEV
   if (!to.meta.public && !session.isLoggedIn && !devBypass) {
-    return { path: '/login', query: { redirect: to.fullPath } }
-  }
-  if (to.path === '/login' && session.isLoggedIn) {
-    return { path: firstAllowedPath() || geoClickStart() }
+    window.location.assign(loginUrl(to.fullPath))
+    return false
   }
   if (devBypass || !session.isLoggedIn) return
   if (!to.meta.public && !permOk(to.meta.perm)) {
-    // 本地 Key 模式下 token 残缺无菜单权限：仍放行，避免踢回登录
-    if (hasDevApiKey()) return
     const dest = firstAllowedPath()
+    const permission = Array.isArray(to.meta.perm) ? to.meta.perm.join(' / ') : to.meta.perm
+    ElMessage.warning(`当前账号没有“${to.meta.title || '该页面'}”权限（需要 ${permission}）。请让管理员在「账号与权限」中为你的角色开通。`)
     if (dest && dest !== to.path) return { path: dest }
-    if (!dest) return
+    return { path: '/workspace' }
   }
 })
 router.afterEach((to) => {
-  const suffix = to.path.startsWith('/geo') ? 'GEO 增长' : 'SEM 智投平台'
-  document.title =
-    to.meta.documentTitle || (to.meta.title ? to.meta.title + ' · ' : '') + suffix
+  clearChunkRecoveryMarker()
+  const productName = to.path.startsWith('/seo') ? 'SEO 工作台' : 'SEM 智投平台'
+  document.title = to.meta.documentTitle || (to.meta.title ? to.meta.title + ' · ' : '') + productName
+})
+router.onError((error) => {
+  if (recoverFromChunkLoadError(error)) return
+  if (isChunkLoadError(error)) {
+    ElMessage.error('系统版本已更新，请手动刷新页面后重试')
+    return
+  }
+  ElMessage.error(`页面加载失败：${error.message || '请刷新后重试'}`)
+})
+window.addEventListener('vite:preloadError', (event) => {
+  if (recoverFromChunkLoadError(event.payload)) event.preventDefault()
 })
 export default router

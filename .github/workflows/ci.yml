@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, codex/production-sem]
   pull_request:
+    branches: [main, codex/production-sem]
 
 jobs:
   pytest:
@@ -27,7 +28,7 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://test:test@localhost/test
           BAIDU_APP_ID: ci-dummy
-          BAIDU_SECRET_KEY: ci-dummy
+          BAIDU_SECRET_KEY: ci-dummy-secret1
           BAIDU_DEFAULT_USERNAME: ci-dummy
           BAIDU_DEFAULT_UCID: "1"
           BAIDU_SELF_ACCESS_TOKEN: ci-dummy
@@ -36,3 +37,83 @@ jobs:
           CRYPTO_MASTER_KEY_B64: j/QGqbWO8IVw9cCVeAq+u/alTyjLsSQXjROH9uW/3tA=
           ADMIN_API_KEY: ci-admin-key
         run: python -m pytest -q tests
+
+  sem-frontend-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Test stale chunk recovery
+        working-directory: frontend
+        run: npm run test:chunk-recovery
+
+      - name: Verify build contract
+        working-directory: frontend
+        run: npm run verify:sem-build
+
+  # Only runs on a real push to the production branch, and only after both
+  # checks above pass. Never runs for pull_request events — a PR must be
+  # merged first. 铁律 1: nothing gets deployed from an untested or
+  # unmerged state; every deploy traces back to a commit on this branch.
+  deploy-sem:
+    name: Deploy SEM frontend only
+    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/production-sem'
+    needs: [pytest, sem-frontend-build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      # Load the dedicated, unprivileged SEM deployment key. This key belongs
+      # to sem-deploy and cannot operate the other product modules.
+      - name: Set up deploy key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SEM_DEPLOY_SSH_KEY }}
+
+      - name: Trust the pinned deploy host key
+        env:
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      # deploy-sem.sh does build -> verify -> rsync to a new timestamped
+      # release dir -> remote re-verification of required/forbidden
+      # markers -> atomic symlink swap -> post-swap confirmation. See the
+      # script itself and CLAUDE.md 铁律 1/6 for what each step guards
+      # against; do not shortcut any of these steps in this workflow.
+      - name: Deploy frontend (backend is a separate reviewed release)
+        working-directory: frontend
+        env:
+          DEPLOY_TARGET: sem-deploy@101.200.193.83
+        run: bash scripts/deploy-sem.sh

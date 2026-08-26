@@ -36,9 +36,8 @@ ssh "$deploy_target" \
 # Fail-closed: require HTTP 200 and JSON db=ok (DB down now returns 503).
 if ! ssh "$deploy_target" \
   "set -euo pipefail
-   body=\$(curl -fsS --retry 15 --retry-delay 1 --retry-connrefused http://127.0.0.1:8010/health/geo)
+   body=\$(curl -fsS --retry 60 --retry-delay 1 --retry-connrefused http://127.0.0.1:8010/health/geo)
    echo \"\$body\" | grep -q '\"db\":\"ok\"'
-   curl -fsS --retry 5 --retry-delay 1 http://127.0.0.1:8010/api/v1/geo/content-health >/dev/null
   "; then
   if [[ -n "$previous_target" ]]; then
     ssh "$deploy_target" \

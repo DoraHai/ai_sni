@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { addNegativeWord, fetchNegativeWords, removeNegativeWord } from '../../api/negatives'
 import { fetchCandidates, updateCandidateStatus } from '../../api/expansion'
 import { fetchAdgroupList, fetchCampaignList } from '../../api/keywords'
+import AddToPlanDialog from '../../components/AddToPlanDialog.vue'
 import { session } from '../../store/session'
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
@@ -15,31 +16,48 @@ const scanData = ref(null) // 自研扫描待审（拓词"建议否定"候选，
 const rejectedData = ref(null) // 已驳回（同候选，ignored）
 
 const view = ref('review') // review=待审建议 existing=现有否词 rejected=已驳回
+const addToPlanDialogRef = ref(null)
 
 const filters = reactive({ scope: '', match: '', flag: '', q: '' })
+let loadGeneration = 0
+
+function dedupeCandidatePayload(payload) {
+  const seen = new Set()
+  const candidates = (payload?.candidates || []).filter((item) => {
+    const key = String(item.word || '').trim().toLocaleLowerCase('zh-CN')
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+  return { ...payload, candidates, total: candidates.length }
+}
 
 async function load() {
+  const generation = ++loadGeneration
+  const tenantId = TENANT_ID.value
+  if (!tenantId) return
   loading.value = true
   error.value = ''
   try {
     const [neg, scan, rejected] = await Promise.all([
-      fetchNegativeWords({ tenantId: TENANT_ID.value, ...filters }),
+      fetchNegativeWords({ tenantId, ...filters }),
       fetchCandidates({
-        tenantId: TENANT_ID.value, suggestedCategory: 'negative', status: 'pending',
+        tenantId, suggestedCategory: 'negative', status: 'pending',
         page: 1, pageSize: 200,
       }),
       fetchCandidates({
-        tenantId: TENANT_ID.value, suggestedCategory: 'negative', status: 'ignored',
+        tenantId, suggestedCategory: 'negative', status: 'ignored',
         page: 1, pageSize: 200,
       }),
     ])
+    if (generation !== loadGeneration || tenantId !== TENANT_ID.value) return
     negData.value = neg
-    scanData.value = scan
-    rejectedData.value = rejected
+    scanData.value = dedupeCandidatePayload(scan)
+    rejectedData.value = dedupeCandidatePayload(rejected)
   } catch (e) {
-    error.value = e.message
+    if (generation === loadGeneration) error.value = '否词数据加载失败，请稍后重试'
   } finally {
-    loading.value = false
+    if (generation === loadGeneration) loading.value = false
   }
 }
 
@@ -58,6 +76,7 @@ const reviewCount = computed(() =>
 // 待审建议合并行：自研扫描候选在前（可操作），重复/冲突检测在后（写回类禁用）
 const reviewRows = computed(() => {
   const scans = (scanData.value?.candidates || []).map((c) => ({
+    ...c,
     kind: 'scan',
     id: c.id,
     word: c.word,
@@ -66,6 +85,7 @@ const reviewRows = computed(() => {
     scopeText: '待人工定（线下添加时选）',
     matchLabel: '—',
     trigger: c.impression != null ? `${c.impression} 次` : '—',
+    conversions30d: c.conversions_30d,
     basis: [
       c.matched_keyword ? `触发词「${c.matched_keyword}」` : null,
       c.impression != null ? `窗口展现 ${c.impression} / 点击 ${c.click ?? 0}` : null,
@@ -103,6 +123,10 @@ async function setScanStatus(row, status, label) {
   } catch (e) {
     ElMessage.error(e.message)
   }
+}
+
+function openAddToPlan(row) {
+  addToPlanDialogRef.value?.open(row)
 }
 
 const fmtInt = (v) => (v == null ? '—' : Number(v).toLocaleString('zh-CN'))
@@ -186,11 +210,11 @@ onMounted(load)
         <div class="page-desc">
           现有否词 <b>{{ fmtInt(summary?.total) }}</b> 条 ·
           待审建议 <b class="danger-text">{{ fmtInt(reviewCount) }}</b> 条 ·
-          数据源：百度计划/单元否词（每日同步）+ 自研搜索词扫描 · 添加/删除否词支持单元级写回（dry-run 保护，演练模式不真改线上）
+          数据源：百度计划/单元否词（每日同步）+ 自研搜索词扫描 · 当前操作仅加入待回写台账，不修改百度账户
         </div>
       </div>
       <div class="page-actions">
-        <el-button v-if="session.canEdit('optimize.negatives')" type="primary" @click="openAddNeg()">手动添加否词</el-button>
+        <el-button v-if="session.canEdit('optimize.negatives')" type="primary" @click="openAddNeg()">新增待回写否词</el-button>
       </div>
     </div>
 
@@ -213,11 +237,6 @@ onMounted(load)
         <div class="km-value">{{ fmtInt(scanData?.total) }}</div>
         <div class="km-meta">来自拓词"建议否定"候选</div>
       </div>
-      <div class="kpi-mini dim">
-        <div class="km-label">冷门否词</div>
-        <div class="km-value">M2</div>
-        <div class="km-meta">需否词触发数据，百度暂不提供</div>
-      </div>
     </div>
 
     <!-- 视图 tabs -->
@@ -235,34 +254,46 @@ onMounted(load)
 
     <!-- ===== 待审建议 ===== -->
     <div v-if="view === 'review'" class="table-panel">
-      <el-table :data="reviewRows" row-key="id">
-        <el-table-column label="否词建议" min-width="150">
+      <el-table :data="reviewRows" row-key="id" :fit="true">
+        <el-table-column label="否词建议" width="130">
           <template #default="{ row }"><b>{{ row.word }}</b></template>
         </el-table-column>
-        <el-table-column label="建议类型" width="110">
+        <el-table-column label="建议类型" width="90">
           <template #default="{ row }">
             <span class="src-tag" :class="row.typeCls">{{ row.typeLabel }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="作用范围" min-width="170">
+        <el-table-column label="作用范围" width="140">
           <template #default="{ row }">{{ row.scopeText }}</template>
         </el-table-column>
-        <el-table-column label="匹配方式" width="86" align="center">
+        <el-table-column label="匹配方式" width="80" align="center">
           <template #default="{ row }">{{ row.matchLabel }}</template>
         </el-table-column>
-        <el-table-column label="近 30 天触发" width="106" align="right">
+        <el-table-column label="近 30 天触发" width="90" align="right">
           <template #default="{ row }"><span class="num">{{ row.trigger }}</span></template>
         </el-table-column>
-        <el-table-column label="判定依据" min-width="260">
-          <template #default="{ row }"><span class="basis">{{ row.basis }}</span></template>
+        <el-table-column label="近30天转化" width="90" align="right">
+          <template #default="{ row }">
+            <span class="num">{{ row.kind === 'scan' ? fmtInt(row.conversions30d) : '—' }}</span>
+          </template>
         </el-table-column>
-        <el-table-column label="操作" width="190" fixed="right">
+        <el-table-column label="判定依据" width="170">
+          <template #default="{ row }">
+            <el-tooltip :content="row.basis" placement="top" :disabled="!row.basis">
+              <span class="basis basis-compact">{{ row.basis }}</span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" min-width="196">
           <template #default="{ row }">
             <div class="row-actions" v-if="row.kind === 'scan' && session.canEdit('optimize.negatives')">
               <el-tooltip content="选目标单元加成否词（updateAdgroup 写回，dry-run 保护）" placement="top">
-                <el-button size="small" type="primary" plain @click="openAddNeg(row.word)">加否词</el-button>
+                <el-button class="review-action is-negative" size="small" @click="openAddNeg(row.word)">加否词</el-button>
               </el-tooltip>
-              <el-button size="small" @click="setScanStatus(row, 'ignored', '已驳回')">驳回</el-button>
+              <el-tooltip content="打开加入计划弹窗，选单元、出价和匹配方式后设为正式关键词" placement="top">
+                <el-button class="review-action is-expand" size="small" @click="openAddToPlan(row)">设为关键词</el-button>
+              </el-tooltip>
+              <el-button class="review-action is-dismiss" size="small" @click="setScanStatus(row, 'ignored', '已驳回')">驳回</el-button>
             </div>
             <div class="row-actions" v-else-if="session.canEdit('optimize.negatives')">
               <el-tooltip v-if="row.scope === 'adgroup'" :content="row.kind === 'conflict' ? '删除该单元否词解除冲突' : '删除重复的单元否词'" placement="top">
@@ -325,7 +356,7 @@ onMounted(load)
               <span v-else class="dim">—</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="120" fixed="right">
+          <el-table-column label="操作" width="120">
             <template #default="{ row }">
               <el-button
                 v-if="session.canEdit('optimize.negatives') && row.scope === 'adgroup'"
@@ -358,7 +389,7 @@ onMounted(load)
         <el-table-column label="潜力分" width="90" align="right">
           <template #default="{ row }"><span class="num">{{ row.potential_score ?? '—' }}</span></template>
         </el-table-column>
-        <el-table-column label="操作" width="120" fixed="right">
+        <el-table-column label="操作" width="120">
           <template #default="{ row }">
             <el-button v-if="session.canEdit('optimize.negatives')" size="small" text @click="setScanStatus(row, 'pending', '已恢复待审')">恢复待审</el-button>
           </template>
@@ -374,8 +405,10 @@ onMounted(load)
       配额上限按百度账户星级浮动（200-900 条），星级数据待接入；定期清理重复/冷门否词可释放配额。
     </div>
 
+    <AddToPlanDialog v-if="TENANT_ID" ref="addToPlanDialogRef" :tenant-id="TENANT_ID" @success="load" />
+
     <!-- 添加否词弹框（单元级 updateAdgroup 写回） -->
-    <el-dialog v-model="negDialog.visible" title="添加否词" width="440px">
+    <el-dialog v-model="negDialog.visible" title="新增待回写否词" width="440px">
       <el-form label-width="72px" label-position="left">
         <el-form-item label="否词">
           <el-input v-model="negDialog.word" placeholder="输入否定关键词" />
@@ -397,10 +430,10 @@ onMounted(load)
           </el-radio-group>
         </el-form-item>
       </el-form>
-      <div class="neg-tip">否词加到所选单元（单元级）；受 dry-run 保护，演练模式下不真改线上。</div>
+      <div class="neg-tip">否词建议将加入所选单元的待回写台账；当前不会修改百度账户。</div>
       <template #footer>
         <el-button @click="negDialog.visible = false">取消</el-button>
-        <el-button type="primary" :loading="negDialog.submitting" @click="submitAddNeg">确认添加</el-button>
+        <el-button type="primary" :loading="negDialog.submitting" @click="submitAddNeg">加入待回写</el-button>
       </template>
     </el-dialog>
   </div>
@@ -435,6 +468,7 @@ onMounted(load)
 .num { font-variant-numeric: tabular-nums; }
 .dim { color: #c0c4cc; }
 .basis { font-size: 11px; color: var(--sem-text-sub); line-height: 1.5; }
+.basis-compact { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .src-tag { font-size: 11px; padding: 1px 7px; border-radius: 3px; white-space: nowrap; }
 .tag-scan { background: #eff4fb; color: #185fa5; }
@@ -446,6 +480,13 @@ onMounted(load)
 .scope-tag.adgroup { background: #f2ebfb; color: #6b47b5; }
 
 .row-actions { display: flex; gap: 4px; align-items: center; }
+.review-action { height: 26px; margin: 0 !important; padding: 0 9px; border-radius: 5px; font-size: 11px; font-weight: 600; transition: background .16s ease, border-color .16s ease, color .16s ease; }
+.review-action.is-negative { background: #fff; border-color: #f0c998; color: #b86b16; }
+.review-action.is-negative:hover { background: #fff7ed; border-color: #e7a350; color: #9e5710; }
+.review-action.is-expand { background: #edf5ff; border-color: #b7d4f2; color: #1768ad; }
+.review-action.is-expand:hover { background: #dfefff; border-color: #79addd; color: #10578f; }
+.review-action.is-dismiss { background: #fff; border-color: #d8dee8; color: #667085; }
+.review-action.is-dismiss:hover { background: #f8fafc; border-color: #aeb9c9; color: #475467; }
 .note { padding: 10px 12px; background: #fffbf4; border: 1px solid #fed7aa; border-radius: 6px; font-size: 11px; color: #4b5563; line-height: 1.8; }
 .note b { color: #9a3412; }
 .neg-tip { font-size: 12px; color: #ba7517; margin-top: 4px; }

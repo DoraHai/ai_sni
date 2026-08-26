@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -14,6 +15,8 @@ from app.api import (
     assistant_router,
     auth_router,
     customer_profile_router,
+    customer_modules_router,
+    geo_projects_router,
     dashboard_router,
     expansion_router,
     keywords_router,
@@ -21,6 +24,8 @@ from app.api import (
     manage_router,
     negatives_router,
     ocpc_router,
+    baidu_oauth_router,
+    baidu_oauth_callback_router,
     onboarding_builder_router,
     operations_router,
     reports_router,
@@ -31,10 +36,9 @@ from app.api import (
     users_router,
     writeback_router,
     search_terms_router,
-    geo_router,
+    seo_router,
 )
-from app.baidu import BaiduAPIClient, BaiduAPIError
-from app.baidu.services import AccountService
+from app.baidu import BaiduAPIError
 from app.baidu.sync import (
     sync_operation_records_for_account,
     sync_adgroups_for_account,
@@ -60,20 +64,46 @@ from app.scheduler import (
 )
 from app.security.auth import require_scoped_auth
 from app.security.crypto import encrypt
+from app.security.prod_guard import enforce_production_secrets
 
 settings = get_settings()
 logging.basicConfig(level=settings.log_level)
 logger = logging.getLogger("sem-backend")
 
-app = FastAPI(title="SEM 智投平台后端", version="0.3.0")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """生产配置先自检，再启动调度器；退出时保证释放调度资源。"""
+    enforce_production_secrets(settings, hard_fail=True)
+    logger.info(
+        "SEM 后端启动：env=%s base_url=%s default_user=%s",
+        settings.app_env,
+        settings.app_base_url,
+        settings.baidu_default_username,
+    )
+    try:
+        from app.geo.content.async_jobs import recover_jobs_on_startup
+
+        stats = await recover_jobs_on_startup(requeue_pending=True)
+        if any(stats.values()):
+            logger.info("GEO async job recover: %s", stats)
+    except Exception:  # noqa: BLE001
+        logger.exception("GEO async job recover on startup failed")
+    start_scheduler()
+    try:
+        yield
+    finally:
+        shutdown_scheduler()
+
+
+app = FastAPI(title="SEM 智投平台后端", version="0.3.0", lifespan=lifespan)
 register_infra_handlers(app)
 
 # 原型页（file:// 或其他域名）直连接口需要 CORS。API Key 走自定义头/查询参数，不涉及 credentials。
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET", "POST"],
-    allow_headers=["*"],
+    allow_origins=settings.cors_origin_list(),
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_headers=["Accept", "Authorization", "Content-Type", "X-API-Key"],
 )
 app.include_router(dashboard_router)
 app.include_router(alerts_router)
@@ -89,18 +119,19 @@ app.include_router(suggestions_router)
 app.include_router(insights_router)
 app.include_router(reports_router)
 app.include_router(customer_profile_router)
+app.include_router(customer_modules_router)
+app.include_router(geo_projects_router)
 app.include_router(adjustments_verify_router)
 app.include_router(writeback_router)
 app.include_router(search_terms_router)
 app.include_router(leads_router)
 app.include_router(ocpc_router)
+app.include_router(baidu_oauth_router)
+app.include_router(baidu_oauth_callback_router)
 app.include_router(manage_router)
 app.include_router(assistant_router)
 app.include_router(onboarding_builder_router)
-app.include_router(geo_router)
-from app.geo.content.oauth_public import router as geo_oauth_public_router  # noqa: E402
-
-app.include_router(geo_oauth_public_router)
+app.include_router(seo_router)
 
 
 @app.get("/health")
@@ -110,9 +141,10 @@ async def health() -> dict:
     try:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
-    except Exception as e:
+    except Exception:
         db_status = "error"
-        db_error = str(e)
+        logger.exception("健康检查数据库连接失败")
+        db_error = "database_unavailable"
 
     return {
         "service": "sem-backend",
@@ -120,26 +152,6 @@ async def health() -> dict:
         "db": db_status,
         "db_error": db_error,
     }
-
-
-@app.get("/api/baidu/account/info")
-async def baidu_account_info() -> dict:
-    """P0 验证路由：用 env 自授权 token 调一次 getAccountInfo。"""
-    client = BaiduAPIClient(
-        username=settings.baidu_default_username,
-        access_token=settings.baidu_self_access_token,
-    )
-    service = AccountService(client)
-    try:
-        data = await service.get_account_info()
-        return {"status": "ok", "data": data}
-    except BaiduAPIError as e:
-        return {
-            "status": "error",
-            "code": e.code,
-            "message": e.message,
-            "token_invalid": e.is_token_invalid,
-        }
 
 
 # ============================================================
@@ -160,17 +172,62 @@ async def init_self_auth_account(
 
     幂等：tenant_name 已存在就复用，access_token 重复就更新。
     """
+    tenant_name = tenant_name.strip()
+    if not tenant_name:
+        raise HTTPException(422, "租户名不能为空")
+
+    # 自授权配置只代表一个固定百度账户。先按 UCID 找已有绑定，禁止通过换一个
+    # tenant_name 为同一账户创建第二套客户数据。
+    existing_accounts = list(
+        (
+            await session.scalars(
+                select(BaiduAccount)
+                .where(BaiduAccount.baidu_ucid == settings.baidu_default_ucid)
+                .order_by(BaiduAccount.updated_at.desc(), BaiduAccount.id.desc())
+            )
+        ).all()
+    )
+    existing_tenant_ids = {account.tenant_id for account in existing_accounts}
+    if len(existing_tenant_ids) > 1:
+        raise HTTPException(
+            409,
+            "固定百度账户存在跨客户历史绑定，已停止自授权初始化，请先人工核对归属",
+        )
+    existing_by_ucid = existing_accounts[0] if existing_accounts else None
+    if existing_by_ucid is not None:
+        existing_tenant = await session.get(Tenant, existing_by_ucid.tenant_id)
+        if existing_tenant is None:
+            raise HTTPException(409, "固定百度账户的客户归属已损坏，请先人工核对数据库")
+        if existing_tenant.name != tenant_name:
+            raise HTTPException(
+                409,
+                f"固定百度账户已绑定客户「{existing_tenant.name}」，"
+                "不能再绑定到另一个客户名称。",
+            )
+        tenant = existing_tenant
+    else:
+        tenant_by_ucid = await session.scalar(
+            select(Tenant).where(Tenant.baidu_ucid == settings.baidu_default_ucid)
+        )
+        tenant_by_name = await session.scalar(select(Tenant).where(Tenant.name == tenant_name))
+        if tenant_by_ucid is not None and tenant_by_name is not None and tenant_by_ucid.id != tenant_by_name.id:
+            raise HTTPException(409, "客户名称与百度 UCID 分别指向不同客户，请先人工核对归属")
+        tenant = tenant_by_ucid or tenant_by_name
+
     # 找/建 tenant
-    tenant = await session.scalar(select(Tenant).where(Tenant.name == tenant_name))
     if tenant is None:
-        tenant = Tenant(name=tenant_name)
+        tenant = Tenant(name=tenant_name, baidu_ucid=settings.baidu_default_ucid)
         if monthly_budget is not None:
             tenant.monthly_budget = monthly_budget
         session.add(tenant)
         await session.flush()
+    elif tenant.baidu_ucid is None:
+        tenant.baidu_ucid = settings.baidu_default_ucid
+    elif tenant.baidu_ucid != settings.baidu_default_ucid:
+        raise HTTPException(409, "当前客户已绑定另一个百度账户，不能覆盖其归属")
 
     # 找/建 baidu_account
-    existing = await session.scalar(
+    existing = existing_by_ucid or await session.scalar(
         select(BaiduAccount).where(
             BaiduAccount.tenant_id == tenant.id,
             BaiduAccount.baidu_username == settings.baidu_default_username,
@@ -535,36 +592,3 @@ async def sync_url_words(
         "candidates_written": n,
         "urls": details,
     }
-
-
-# ============================================================
-# 应用生命周期
-# ============================================================
-
-
-@app.on_event("startup")
-async def on_startup() -> None:
-    from app.security.prod_guard import enforce_production_secrets
-
-    # Productization must-do: refuse demo keys when APP_ENV=prod|production
-    enforce_production_secrets(settings, hard_fail=True)
-    logger.info(
-        "SEM 后端启动：env=%s base_url=%s default_user=%s",
-        settings.app_env,
-        settings.app_base_url,
-        settings.baidu_default_username,
-    )
-    try:
-        from app.geo.content.async_jobs import recover_jobs_on_startup
-
-        stats = await recover_jobs_on_startup(requeue_pending=True)
-        if any(stats.values()):
-            logger.info("GEO async job recover: %s", stats)
-    except Exception:  # noqa: BLE001
-        logger.exception("GEO async job recover on startup failed")
-    start_scheduler()
-
-
-@app.on_event("shutdown")
-async def on_shutdown() -> None:
-    shutdown_scheduler()

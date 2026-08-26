@@ -1,13 +1,18 @@
 <script setup>
 import { onMounted, onBeforeUnmount, ref, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import * as echarts from 'echarts'
+import { init, use } from 'echarts/core'
+import { LineChart } from 'echarts/charts'
+import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
 import { fetchDashboardToday, fetchDashboardInsight } from '../../api/dashboard'
 import { session } from '../../store/session'
 import MetricLabel from '../../components/MetricLabel.vue'
 import { ElMessage } from 'element-plus'
+import { DataAnalysis } from '@element-plus/icons-vue'
 
 const router = useRouter()
+use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
 
@@ -17,23 +22,82 @@ const data = ref(null)
 const insight = ref(null)
 const pad = (n) => String(n).padStart(2, '0')
 const isoOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-function lastCompleteMonthRange(now = new Date()) {
-  const end = new Date(now.getFullYear(), now.getMonth(), 0)
-  const start = new Date(end.getFullYear(), end.getMonth(), 1)
-  return [isoOf(start), isoOf(end)]
+function todayRange(now = new Date()) {
+  const today = isoOf(now)
+  return [today, today]
 }
-const dateRange = ref(lastCompleteMonthRange())
+const quickOptions = [
+  {
+    key: 'today',
+    label: '今日',
+    range: () => {
+      const t = isoOf(new Date())
+      return [t, t]
+    },
+  },
+  {
+    key: 'yesterday',
+    label: '昨日',
+    range: () => {
+      const y = new Date()
+      y.setDate(y.getDate() - 1)
+      const d = isoOf(y)
+      return [d, d]
+    },
+  },
+  {
+    key: 'last7',
+    label: '最近7天',
+    range: () => {
+      const end = new Date()
+      const start = new Date()
+      start.setDate(end.getDate() - 6)
+      return [isoOf(start), isoOf(end)]
+    },
+  },
+  {
+    key: 'last30',
+    label: '最近30天',
+    range: () => {
+      const end = new Date()
+      const start = new Date()
+      start.setDate(end.getDate() - 29)
+      return [isoOf(start), isoOf(end)]
+    },
+  },
+]
+const dateRange = ref(todayRange())
+const activeQuickKey = ref('today')
 const trendChartEl = ref(null)
 let trendChart = null
 let autoRefreshTimer = null
+let lastTodayEmptyNoticeKey = ''
+let loadVersion = 0
 const AUTO_REFRESH_MS = 5 * 60 * 1000
 const handleResize = () => trendChart?.resize()
 
 const fmtMoney = (v) => (v == null ? '—' : '¥ ' + Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 2 }))
 const fmtInt = (v) => (v == null ? '—' : Number(v).toLocaleString('zh-CN'))
 const fmtPct = (v) => (v == null ? '—' : (v * 100).toFixed(2) + '%')
+const periodDataIncomplete = computed(() => data.value?.freshness?.requested_data_complete === false)
+const connectionAlert = computed(() => {
+  const connection = data.value?.connection
+  if (!connection || connection.state === 'ready') {
+    if (!periodDataIncomplete.value) return null
+    return {
+      type: 'warning',
+      title: `所选区间数据尚未同步完整，最新可用数据截至 ${data.value?.freshness?.latest_report_date || '—'}。缺失日期不计为 0 消费或下降。`,
+    }
+  }
+  const severe = ['not_connected', 'sync_failed'].includes(connection.state)
+  const counts = connection.asset_counts || {}
+  return {
+    type: severe ? 'error' : 'warning',
+    title: `${connection.message}。当前资产：计划 ${counts.campaigns || 0}、单元 ${counts.adgroups || 0}、关键词 ${counts.keywords || 0}、搜索词 ${counts.search_terms || 0}。`,
+  }
+})
 
-// ===== 顶部工具栏：媒体 + 周期 =====
+// ===== 顶部工具栏：媒体 + 自定义日期区间 =====
 const media = ref('baidu')
 function onMediaChange(v) {
   if (v === 'bing') {
@@ -42,36 +106,21 @@ function onMediaChange(v) {
   }
 }
 
-// 默认「上月完整月」
-const selectedPeriod = ref('last_month')
-const periodOptions = computed(() => {
-  const now = new Date()
-  const y = now.getFullYear()
-  const m = now.getMonth() + 1
-  const dd = now.getDate()
-  const ago = (n) => {
-    const t = new Date(now)
-    t.setDate(t.getDate() - n)
-    return isoOf(t)
-  }
-  const lmEnd = new Date(y, m - 1, 0) // 上月最后一天
-  const lmY = lmEnd.getFullYear()
-  const lmM = lmEnd.getMonth() + 1
-  return [
-    { key: 'this_month', label: `本月（${m}月1日 - ${m}月${dd}日）`, range: [`${y}-${pad(m)}-01`, isoOf(now)] },
-    { key: 'last_7', label: '近 7 天', range: [ago(6), isoOf(now)] },
-    { key: 'last_30', label: '近 30 天', range: [ago(29), isoOf(now)] },
-    { key: 'last_month', label: `上月（${lmM}月完整月）`, range: [`${lmY}-${pad(lmM)}-01`, isoOf(lmEnd)] },
-    { key: 'custom', label: '自定义', range: null },
-  ]
-})
-function onPeriodChange(key) {
-  const opt = periodOptions.value.find((o) => o.key === key)
-  if (opt && opt.range) dateRange.value = opt.range // 触发 watch(dateRange, load)
-}
-
 function onGenerateReport() {
   router.push('/delivery/report')
+}
+
+function applyQuickRange(opt) {
+  activeQuickKey.value = opt.key
+  dateRange.value = opt.range()
+}
+
+function syncQuickKey() {
+  const matched = quickOptions.find((opt) => {
+    const [s, e] = opt.range()
+    return dateRange.value?.[0] === s && dateRange.value?.[1] === e
+  })
+  activeQuickKey.value = matched ? matched.key : ''
 }
 
 const kpiCards = computed(() => {
@@ -89,11 +138,14 @@ const kpiCards = computed(() => {
 
 function deltaClass(card) {
   if (card.change == null) return 'neutral'
-  const up = card.change >= 0
-  return (card.goodWhenDown ? !up : up) ? 'up' : 'down'
+  // 此处颜色表达数值方向，而非业务优劣：上升绿、下降红、持平灰。
+  if (card.change > 0) return 'up'
+  if (card.change < 0) return 'down'
+  return 'neutral'
 }
 
 function deltaText(card) {
+  if (periodDataIncomplete.value) return '数据未同步'
   if (card.change == null) return '—'
   return (card.change >= 0 ? '↑ ' : '↓ ') + Math.abs(card.change).toFixed(1) + '%'
 }
@@ -126,8 +178,8 @@ const DEVICE_META = {
 
 function renderTrend() {
   if (!trendChartEl.value || !data.value) return
-  if (!trendChart) trendChart = echarts.init(trendChartEl.value)
-  const trend = data.value.trend_7d
+  if (!trendChart) trendChart = init(trendChartEl.value)
+  const trend = data.value.trend || data.value.trend_7d || []
   trendChart.setOption({
     grid: { left: 56, right: 40, top: 30, bottom: 28 },
     tooltip: { trigger: 'axis' },
@@ -140,80 +192,73 @@ function renderTrend() {
     series: [
       {
         name: '消费', type: 'line', smooth: true, data: trend.map((t) => t.cost),
-        itemStyle: { color: '#185FA5' },
-        areaStyle: { opacity: 0.12 },
+        itemStyle: { color: '#E86F1C' },
+        lineStyle: { width: 3 },
+        areaStyle: { color: 'rgba(232, 111, 28, 0.16)' },
       },
       {
         name: '点击', type: 'line', smooth: true, yAxisIndex: 1, data: trend.map((t) => t.click),
-        itemStyle: { color: '#1D9E75' }, lineStyle: { type: 'dashed' },
+        itemStyle: { color: '#159B78' }, lineStyle: { type: 'dashed', width: 2 },
       },
     ],
   })
 }
 
+function isAllZero(d) {
+  const kpi = d?.kpi
+  if (!kpi) return true
+  return !kpi.cost?.current && !kpi.click?.current && !kpi.impression?.current
+}
+
 async function load() {
-  if (!TENANT_ID.value) {
-    data.value = null
-    insight.value = null
-    error.value = ''
-    loading.value = false
-    return
-  }
+  const version = ++loadVersion
+  const tenantId = TENANT_ID.value
+  if (!tenantId) return
   loading.value = true
   error.value = ''
   try {
     const [d, ins] = await Promise.all([
       fetchDashboardToday({
-        tenantId: TENANT_ID.value,
+        tenantId,
         startDate: dateRange.value?.[0],
         endDate: dateRange.value?.[1],
       }),
-      fetchDashboardInsight({ tenantId: TENANT_ID.value }).catch(() => null),
+      fetchDashboardInsight({
+        tenantId,
+        targetDate: dateRange.value?.[1],
+      }).catch(() => null),
     ])
+    if (version !== loadVersion || tenantId !== TENANT_ID.value) return
     data.value = d
     insight.value = ins
+    const noticeKey = dateRange.value?.join(':') || ''
+    if (activeQuickKey.value === 'today' && isAllZero(d) && lastTodayEmptyNoticeKey !== noticeKey) {
+      ElMessage.info('今日数据尚未同步（数据通常在次日凌晨更新），可切换到"昨日"查看最新完整数据')
+      lastTodayEmptyNoticeKey = noticeKey
+    } else if (activeQuickKey.value !== 'today' || !isAllZero(d)) {
+      lastTodayEmptyNoticeKey = ''
+    }
     await nextTick()
     renderTrend()
   } catch (e) {
-    data.value = null
-    insight.value = null
-    error.value = humanizeDashError(e)
+    if (version !== loadVersion || tenantId !== TENANT_ID.value) return
+    error.value = e.code === 'PERMISSION_DENIED'
+      ? '当前账号无权查看该客户看板'
+      : '看板数据暂时无法加载，请稍后重试'
   } finally {
-    loading.value = false
+    if (version === loadVersion) loading.value = false
   }
 }
-
-function humanizeDashError(e) {
-  const raw = String(e?.message || e || '')
-  const lower = raw.toLowerCase()
-  if (!TENANT_ID.value || /field required|tenant_id/i.test(raw)) {
-    return '请先在右上角选择客户，再查看该客户的投放数据。'
-  }
-  if (/401|unauthorized|未登录|鉴权/i.test(lower) || /401/.test(raw)) {
-    return '登录已失效，请重新登录后再试。'
-  }
-  if (/403|forbidden|权限/i.test(lower)) {
-    return '当前账号没有查看该客户看板的权限。'
-  }
-  if (/network|failed to fetch|timeout|超时/i.test(lower)) {
-    return '网络不稳定或服务暂时不可用，请稍后重试。'
-  }
-  // FastAPI detail arrays often stringify poorly
-  if (/field required/i.test(raw)) {
-    return '请求参数不完整。请确认已选择客户与日期范围后刷新。'
-  }
-  return raw || '加载失败，请稍后重试'
-}
-
-const needsTenant = computed(() => !TENANT_ID.value)
-const showEmpty = computed(() => !loading.value && !data.value && !error.value && !needsTenant.value)
 
 async function manualRefresh() {
   await load()
   if (!error.value) ElMessage.success('看板数据已刷新')
 }
 
-watch(dateRange, load)
+watch(dateRange, () => {
+  syncQuickKey()
+  load()
+})
 // 顶栏切换客户后重新拉数
 watch(TENANT_ID, load)
 
@@ -234,15 +279,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-loading="loading" class="dash-page">
+  <div v-loading="loading">
     <div class="page-header">
       <div>
-        <div class="page-kicker">每日盯盘</div>
         <div class="page-title">数据看板</div>
         <div v-if="data" class="page-desc">
           {{ data.tenant.name }} · {{ data.period.start_date }} ~ {{ data.period.end_date }}（{{ data.period.days }} 天）
         </div>
-        <div v-else class="page-desc">按客户查看投放消费、点击与异常概览</div>
       </div>
       <div class="dash-toolbar">
         <div class="media-filter">
@@ -252,25 +295,31 @@ onBeforeUnmount(() => {
             <el-option label="必应（即将开放）" value="bing" disabled />
           </el-select>
         </div>
-        <el-select
-          v-model="selectedPeriod"
-          :disabled="needsTenant"
-          @change="onPeriodChange"
-          style="width: 190px"
-        >
-          <el-option v-for="o in periodOptions" :key="o.key" :label="o.label" :value="o.key" />
-        </el-select>
-        <el-date-picker
-          v-if="selectedPeriod === 'custom'"
-          v-model="dateRange"
-          type="daterange"
-          value-format="YYYY-MM-DD"
-          start-placeholder="开始日期"
-          end-placeholder="结束日期"
-          :clearable="false"
-          :disabled="needsTenant"
-          style="width: 260px"
-        />
+        <div class="date-quick-options">
+          <el-date-picker
+            v-model="dateRange"
+            type="daterange"
+            value-format="YYYY-MM-DD"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+            range-separator="至"
+            unlink-panels
+            :clearable="false"
+            aria-label="选择看板日期区间"
+            style="width: 268px"
+          />
+          <div class="quick-btns">
+            <button
+              v-for="opt in quickOptions"
+              :key="opt.key"
+              class="quick-btn"
+              :class="{ active: activeQuickKey === opt.key }"
+              @click="applyQuickRange(opt)"
+            >
+              {{ opt.label }}
+            </button>
+          </div>
+        </div>
         <span
           v-if="data?.freshness?.last_synced_at"
           class="freshness"
@@ -281,43 +330,20 @@ onBeforeUnmount(() => {
           · {{ data.freshness.last_synced_at.slice(11, 16) }} 更新
           · 每 {{ data.freshness.sync_interval_minutes }} 分钟
         </span>
-        <el-button
-          :loading="loading"
-          :disabled="needsTenant"
-          aria-label="立即刷新数据看板"
-          @click="manualRefresh"
-        >立即刷新</el-button>
+        <el-button :loading="loading" aria-label="立即刷新数据看板" @click="manualRefresh">立即刷新</el-button>
         <el-button type="primary" @click="onGenerateReport">生成完整报告</el-button>
       </div>
     </div>
 
-    <div v-if="needsTenant" class="product-empty">
-      <div class="empty-visual" aria-hidden="true">客</div>
-      <div class="empty-title">请先选择客户</div>
-      <div class="empty-desc">
-        看板按客户隔离数据。打开右上角「当前客户」选择后，将自动加载投放概览。
-      </div>
-    </div>
-
-    <div v-else-if="error" class="product-empty is-error">
-      <div class="empty-visual" aria-hidden="true">!</div>
-      <div class="empty-title">暂时无法加载看板</div>
-      <div class="empty-desc">{{ error }}</div>
-      <div class="empty-actions">
-        <el-button type="primary" :loading="loading" @click="manualRefresh">重试</el-button>
-        <el-button @click="router.push('/onboarding')">去授权与同步</el-button>
-      </div>
-    </div>
-
-    <div v-else-if="showEmpty" class="product-empty">
-      <div class="empty-visual" aria-hidden="true">📊</div>
-      <div class="empty-title">暂无看板数据</div>
-      <div class="empty-desc">该时段可能尚未同步报表。可调整日期范围，或先完成授权与同步。</div>
-      <div class="empty-actions">
-        <el-button type="primary" :loading="loading" @click="manualRefresh">刷新</el-button>
-        <el-button @click="router.push('/onboarding')">授权与同步</el-button>
-      </div>
-    </div>
+    <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 14px" />
+    <el-alert
+      v-if="connectionAlert"
+      :title="connectionAlert.title"
+      :type="connectionAlert.type"
+      :closable="false"
+      show-icon
+      class="data-state-alert"
+    />
 
     <div v-if="insight?.enabled" class="ai-insight">
       <div class="aii-head">
@@ -404,7 +430,7 @@ onBeforeUnmount(() => {
       <div class="row-2col">
         <div class="panel">
           <div class="panel-head">
-            <span class="panel-title">消费与点击趋势<span class="panel-sub">近 7 天 · 截至 {{ data.period.end_date }}</span></span>
+            <span class="panel-title">消费与点击趋势<span class="panel-sub">{{ data.period.days }} 天 · {{ data.period.start_date }} 至 {{ data.period.end_date }}</span></span>
           </div>
           <div ref="trendChartEl" style="height: 280px" />
         </div>
@@ -457,7 +483,10 @@ onBeforeUnmount(() => {
       <!-- 计划消费分布（原型 plan-bar-row） -->
       <div class="panel" style="margin-top: 14px">
         <div class="panel-head">
-          <span class="panel-title">计划消费分布<span class="panel-sub">前 6 · 按消费降序</span></span>
+          <span class="panel-title plan-section-title">
+            <span class="section-title-icon" aria-hidden="true"><DataAnalysis /></span>
+            <span>计划消费分布</span><span class="panel-sub">前 6 · 按消费降序</span>
+          </span>
         </div>
         <div v-for="row in data.top_campaigns" :key="row.campaign_name" class="plan-bar-row">
           <div>
@@ -477,72 +506,42 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.dash-page { animation: dash-in 0.28s ease; }
-@keyframes dash-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: none; }
-}
-.page-header {
-  margin-bottom: 16px;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-.page-kicker {
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.06em;
-  color: var(--sem-primary);
-  margin-bottom: 2px;
-}
+.page-header { margin-bottom: 14px; display: flex; justify-content: space-between; align-items: flex-end; }
+.data-state-alert { margin-bottom: 14px; }
 .dash-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
-.media-filter {
-  display: flex; align-items: center; gap: 4px;
-  padding: 2px 6px 2px 10px;
-  background: #fff;
-  border: 1px solid var(--sem-border);
-  border-radius: 999px;
-}
+.media-filter { display: flex; align-items: center; gap: 4px; padding: 2px 6px 2px 10px; background: #f3f4f6; border-radius: 6px; }
 .media-label { font-size: 12px; color: #606266; white-space: nowrap; }
 .media-filter :deep(.el-select .el-input__wrapper) { box-shadow: none; background: transparent; padding-left: 4px; }
-.page-title { font-size: 22px; font-weight: 700; color: var(--sem-text); letter-spacing: -0.01em; }
-.page-desc { font-size: 13px; color: var(--sem-text-sub); margin-top: 4px; line-height: 1.45; }
+.date-quick-options { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.quick-btns { display: flex; align-items: center; gap: 6px; }
+.quick-btn {
+  height: 30px; padding: 0 10px; border: 1px solid var(--sem-border); border-radius: 6px;
+  background: #fff; color: var(--sem-text-sub); font-size: 12px; cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.quick-btn:hover { border-color: var(--sem-primary); color: var(--sem-primary); }
+.quick-btn.active { background: var(--sem-primary); border-color: var(--sem-primary); color: #fff; }
+.page-title { font-size: 20px; font-weight: 600; color: var(--sem-text); }
+.page-desc { font-size: 12px; color: var(--sem-text-sub); margin-top: 4px; }
 .num { font-variant-numeric: tabular-nums; }
 
 /* 通用面板（原型 panel） */
-.panel {
-  background: #fff;
-  border: 1px solid var(--sem-border);
-  border-radius: 12px;
-  padding: 16px 18px;
-  box-shadow: var(--sem-shadow-sm);
-}
+.panel { background: #fff; border: 1px solid var(--sem-border); border-radius: 8px; padding: 16px 18px; }
 .panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.panel-title { font-size: 14px; font-weight: 650; color: var(--sem-text); }
+.panel-title { font-size: 14px; font-weight: 600; color: var(--sem-text); }
 .panel-sub { font-size: 11px; color: #9ca3af; margin-left: 8px; font-weight: 400; }
 
-.account-panel {
-  display: flex; gap: 24px; font-size: 13px; align-items: center;
-  margin-bottom: 14px; padding: 14px 18px;
-  background: linear-gradient(90deg, #f8fbff 0%, #fff 40%);
-}
+.account-panel { display: flex; gap: 24px; font-size: 13px; align-items: center; margin-bottom: 14px; padding: 13px 18px; }
 .account-panel .sub { color: var(--sem-text-sub); margin-left: auto; font-size: 12px; }
 
 /* 异常快捷条（原型 alert-strip / alert-card） */
 .alert-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 14px; }
 .alert-card {
-  background: #fff; border: 1px solid var(--sem-border); border-radius: 12px;
+  background: #fff; border: 1px solid var(--sem-border); border-radius: 8px;
   padding: 14px 16px; display: flex; align-items: center; gap: 14px;
-  cursor: pointer; transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
-  box-shadow: var(--sem-shadow-sm);
+  cursor: pointer; transition: all 0.15s;
 }
-.alert-card:hover {
-  border-color: #b7cce4;
-  box-shadow: var(--sem-shadow-md);
-  transform: translateY(-1px);
-}
+.alert-card:hover { border-color: var(--sem-primary); box-shadow: 0 2px 8px rgba(24, 95, 165, 0.06); }
 .alert-card.p0 { border-left: 4px solid var(--sem-danger); background: linear-gradient(90deg, #fef6f6 0%, #fff 30%); }
 .alert-card.p1 { border-left: 4px solid var(--sem-danger); }
 .alert-card.p2 { border-left: 4px solid #ba7517; }
@@ -559,19 +558,7 @@ onBeforeUnmount(() => {
 /* KPI 卡（原型 kpi-card） */
 .kpi-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 14px; }
 @media (max-width: 1280px) { .kpi-grid { grid-template-columns: repeat(3, 1fr); } }
-.kpi-card {
-  background: #fff;
-  border: 1px solid var(--sem-border);
-  border-radius: 12px;
-  padding: 14px 16px;
-  box-shadow: var(--sem-shadow-sm);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
-}
-.kpi-card:hover {
-  border-color: #c9d9ea;
-  box-shadow: var(--sem-shadow-md);
-  transform: translateY(-1px);
-}
+.kpi-card { background: #fff; border: 1px solid var(--sem-border); border-radius: 8px; padding: 14px 16px; }
 .kpi-label { font-size: 11px; color: var(--sem-text-sub); display: flex; align-items: center; gap: 4px; }
 .kpi-tip { font-size: 9px; padding: 1px 6px; background: #f3f4f6; color: var(--sem-text-sub); border-radius: 3px; }
 .kpi-value { font-size: 22px; font-weight: 700; color: var(--sem-text); margin-top: 8px; font-variant-numeric: tabular-nums; }
@@ -597,14 +584,14 @@ onBeforeUnmount(() => {
 
 /* 设备维度（原型 device-card） */
 .device-row { display: flex; flex-direction: column; gap: 10px; }
-.device-card { background: #fafbfc; border-radius: 8px; padding: 12px 14px; border: 1px solid #f0f3f7; }
+.device-card { background: #fafbfc; border-radius: 6px; padding: 12px 14px; }
 .device-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .device-icon {
   width: 28px; height: 28px; border-radius: 6px; display: flex;
   align-items: center; justify-content: center; font-size: 13px;
 }
-.device-pc { background: #eff4fb; }
-.device-mobile { background: #e5f4ed; }
+.device-pc { background: #fff0e4; box-shadow: inset 0 0 0 1px rgba(232, 111, 28, 0.12); }
+.device-mobile { background: #e5f4ed; box-shadow: inset 0 0 0 1px rgba(29, 158, 117, 0.1); }
 .device-name { font-size: 13px; font-weight: 600; color: var(--sem-text); }
 .device-share { font-size: 11px; color: var(--sem-text-sub); margin-top: 1px; }
 .device-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; font-size: 11px; }
@@ -616,26 +603,26 @@ onBeforeUnmount(() => {
   display: grid; grid-template-columns: 1fr 90px 1fr 56px; gap: 12px;
   padding: 10px 0; align-items: center; font-size: 12px; border-bottom: 1px solid #f3f4f6;
 }
+.plan-section-title { display: inline-flex; align-items: center; }
+.section-title-icon {
+  width: 20px; height: 20px; margin-right: 7px; border-radius: 5px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: #fff0e4; color: #d86a1c;
+}
+.section-title-icon :deep(svg) { width: 13px; height: 13px; }
 .plan-bar-row:last-child { border-bottom: none; }
 .plan-name { color: var(--sem-text); font-weight: 500; }
 .plan-product { font-size: 10px; color: #9ca3af; margin-top: 2px; }
 .plan-bar-bg { height: 8px; background: #f3f4f6; border-radius: 4px; overflow: hidden; }
-.plan-bar-fill { height: 100%; background: linear-gradient(90deg, #185fa5 0%, #3e84c8 100%); border-radius: 4px; }
+.plan-bar-fill { height: 100%; background: linear-gradient(90deg, #e86f1c 0%, #f5a344 100%); border-radius: 4px; }
 .plan-bar-fill.bad { background: linear-gradient(90deg, #e24b4a 0%, #ee7472 100%); }
 .plan-bar-fill.warn { background: linear-gradient(90deg, #ba7517 0%, #dc9a47 100%); }
 .plan-amount { color: var(--sem-text); font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
 .plan-pct { color: #9ca3af; text-align: right; font-variant-numeric: tabular-nums; }
-.ai-insight {
-  margin-bottom: 14px;
-  padding: 16px 18px;
-  background: linear-gradient(135deg, #f0f7ff, #f7faff);
-  border: 1px solid #d4e6fb;
-  border-radius: 12px;
-  box-shadow: var(--sem-shadow-sm);
-}
+.ai-insight { margin-bottom: 14px; padding: 14px 18px; background: linear-gradient(135deg, #f0f7ff, #f7faff); border: 1px solid #d4e6fb; border-radius: 10px; }
 .freshness {
   display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
-  padding: 6px 10px; border: 1px solid #dce9e3; border-radius: 999px;
+  padding: 6px 9px; border: 1px solid #dce9e3; border-radius: 999px;
   background: #f4faf7; color: #47705e; font-size: 11px; line-height: 1;
   font-variant-numeric: tabular-nums;
 }

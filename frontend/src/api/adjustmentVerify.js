@@ -7,6 +7,12 @@ export function fetchPendingAdjustments({ tenantId, days, status }) {
   })
 }
 
+export function fetchBudgetAdjustments({ tenantId, days, status }) {
+  return client.get('/api/v1/adjustment-verify/budget', {
+    params: { tenant_id: tenantId, days: days || undefined, status: status || undefined },
+  })
+}
+
 export function markVerified({ tenantId, dedupKey, verdict, note, reopen }) {
   return client.patch(`/api/v1/adjustment-verify/${encodeURIComponent(dedupKey)}`,
     { verdict, note, reopen: reopen || undefined },
@@ -17,5 +23,17 @@ export function genAiVerdict({ tenantId, dedupKey, force }) {
   return client.post(`/api/v1/adjustment-verify/${encodeURIComponent(dedupKey)}/ai`, null, {
     params: { tenant_id: tenantId, force: force || undefined },
     timeout: 60000,
+  })
+}
+
+export function fetchWritebackQueue(tenantId) {
+  return client.get('/api/v1/writeback/queue', { params: { tenant_id: tenantId } })
+}
+
+export function reconcileWriteback({ tenantId, recordType, recordId, decision, note }) {
+  return client.post(`/api/v1/writeback/queue/${recordType}/${recordId}/reconcile`, {
+    tenant_id: tenantId,
+    decision,
+    note,
   })
 }

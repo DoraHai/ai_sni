@@ -27,6 +27,7 @@ class AlertDraft:
     keyword: str | None = None
     campaign_id: int | None = None
     campaign_name: str | None = None
+    entity_ref: str | None = None
     metrics: dict[str, Any] = field(default_factory=dict)
 
 

@@ -5,7 +5,7 @@ APScheduler 和手动触发接口都走这里。
 """
 import hashlib
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import delete, func, select
@@ -39,6 +39,7 @@ from app.models import (
     KeywordCandidate,
     KeywordHourlyReport,
     KeywordRegionReport,
+    KwRegionSnapshot,
     KwReportSnapshot,
     Lead,
     OcpcPackage,
@@ -48,8 +49,11 @@ from app.models import (
     Tenant,
 )
 from app.security.crypto import decrypt
+from app.security.sem_identity import filter_identity_safe_active_accounts
+from app.module_scope import list_active_sem_accounts
 
 logger = logging.getLogger(__name__)
+_KEYWORD_REPORT_MAX_WINDOW_DAYS = 7
 
 
 def _to_int(v: Any) -> int | None:
@@ -201,69 +205,141 @@ def _row_to_hourly_record(
     }
 
 
+def _row_region_date(row: dict[str, Any], fallback: date) -> date:
+    parsed = _parse_report_hour(row.get("date"))
+    return parsed.date() if parsed is not None else fallback
+
+
+def _province_name(row: dict[str, Any]) -> str:
+    province = row.get("provinceName")
+    if province is None or str(province).strip() in ("", "-"):
+        return "未知"
+    return str(province).strip()
+
+
 async def sync_keyword_report_for_account(
     session: AsyncSession,
     baidu_account: BaiduAccount,
     target_date: date,
 ) -> int:
     """拉某账户某天的关键词报告，upsert 到 kw_report_snapshots。返回写入条数。"""
+    return await sync_keyword_report_range_for_account(
+        session, baidu_account, target_date, target_date
+    )
+
+
+async def sync_keyword_report_range_for_account(
+    session: AsyncSession,
+    baidu_account: BaiduAccount,
+    start_date: date,
+    end_date: date,
+) -> int:
+    """按日粒度拉取一段关键词报告，并保留百度返回的真实报告日期。"""
+    if start_date > end_date:
+        raise ValueError("关键词报告开始日期不能晚于结束日期")
+
     client = BaiduAPIClient(
         username=baidu_account.baidu_username,
         access_token=decrypt(baidu_account.access_token_encrypted),
     )
     svc = ReportService(client)
 
-    iso_date = target_date.isoformat()
-    rows = await svc.get_keyword_report(start_date=iso_date, end_date=iso_date)
+    start_iso = start_date.isoformat()
+    end_iso = end_date.isoformat()
+    rows: list[dict[str, Any]] = []
+    window_start = start_date
+    while window_start <= end_date:
+        window_end = min(
+            window_start + timedelta(days=_KEYWORD_REPORT_MAX_WINDOW_DAYS - 1),
+            end_date,
+        )
+        rows.extend(
+            await svc.get_keyword_report(
+                start_date=window_start.isoformat(),
+                end_date=window_end.isoformat(),
+            )
+        )
+        window_start = window_end + timedelta(days=1)
 
     if not rows:
         logger.info(
-            "账户 %s %s 关键词报告无数据", baidu_account.baidu_username, iso_date
+            "账户 %s %s~%s 关键词报告无数据",
+            baidu_account.baidu_username,
+            start_iso,
+            end_iso,
         )
         return 0
 
-    records = [
-        _row_to_record(r, baidu_account.tenant_id, baidu_account.id, target_date)
-        for r in rows
-    ]
+    records = []
+    missing_date_rows = 0
+    single_day = start_date == end_date
+    for row in rows:
+        parsed = _parse_report_hour(row.get("date"))
+        report_date = (
+            parsed.date()
+            if parsed is not None
+            else (start_date if single_day else None)
+        )
+        if report_date is None or not (start_date <= report_date <= end_date):
+            missing_date_rows += 1
+            continue
+        records.append(
+            _row_to_record(
+                row, baidu_account.tenant_id, baidu_account.id, report_date
+            )
+        )
+
+    if rows and not records and missing_date_rows:
+        raise ValueError("百度历史关键词报告缺少有效日期，已停止回填以避免写错日期")
+    if missing_date_rows:
+        logger.warning(
+            "账户 %s %s~%s 跳过 %d 条日期无效的关键词报告",
+            baidu_account.baidu_username,
+            start_iso,
+            end_iso,
+            missing_date_rows,
+        )
 
     # 跳过没有 keyword_id 的行（upsert 键含 keyword_id，None 会触发约束问题）
     records = [r for r in records if r["keyword_id"] is not None]
     if not records:
         return 0
 
-    stmt = pg_insert(KwReportSnapshot).values(records)
-    stmt = stmt.on_conflict_do_update(
-        index_elements=["tenant_id", "report_date", "keyword_id", "device"],
-        set_={
-            "impression": stmt.excluded.impression,
-            "click": stmt.excluded.click,
-            "cost": stmt.excluded.cost,
-            "cpc": stmt.excluded.cpc,
-            "ctr": stmt.excluded.ctr,
-            "avg_rank": stmt.excluded.avg_rank,
-            "conversions": stmt.excluded.conversions,
-            "quality_enum": stmt.excluded.quality_enum,
-            "estimated_click_rate": stmt.excluded.estimated_click_rate,
-            "business_relationship": stmt.excluded.business_relationship,
-            "land_page_experience": stmt.excluded.land_page_experience,
-            "top_pageviews": stmt.excluded.top_pageviews,
-            "top_pclicks": stmt.excluded.top_pclicks,
-            "top_pay": stmt.excluded.top_pay,
-            "top_pv_win_a": stmt.excluded.top_pv_win_a,
-            "top_first_pv_win_a": stmt.excluded.top_first_pv_win_a,
-            "bid_new": stmt.excluded.bid_new,
-            "raw_metrics": stmt.excluded.raw_metrics,
-            "fetched_at": stmt.excluded.fetched_at,
+    await _chunked_upsert(
+        session,
+        KwReportSnapshot,
+        records,
+        "uq_kw_report_tenant_date_kw_device",
+        {"tenant_id", "report_date", "keyword_id", "device"},
+        update_keys={
+            "baidu_account_id",
+            "impression",
+            "click",
+            "cost",
+            "cpc",
+            "ctr",
+            "avg_rank",
+            "conversions",
+            "quality_enum",
+            "estimated_click_rate",
+            "business_relationship",
+            "land_page_experience",
+            "top_pageviews",
+            "top_pclicks",
+            "top_pay",
+            "top_pv_win_a",
+            "top_first_pv_win_a",
+            "bid_new",
+            "raw_metrics",
+            "fetched_at",
         },
     )
-    await session.execute(stmt)
-    await session.commit()
 
     logger.info(
-        "账户 %s %s 关键词报告 upsert %d 条",
+        "账户 %s %s~%s 关键词报告 upsert %d 条",
         baidu_account.baidu_username,
-        iso_date,
+        start_iso,
+        end_iso,
         len(records),
     )
     return len(records)
@@ -288,32 +364,20 @@ async def sync_keyword_dimension_reports_for_account(
         if (rec := _row_to_region_record(row, baidu_account.tenant_id, baidu_account.id, target_date))
     ]
     if region_records:
-        stmt = pg_insert(KeywordRegionReport).values(region_records)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=[
+        await _chunked_upsert(
+            session,
+            KeywordRegionReport,
+            region_records,
+            "uq_kw_region_report_tenant_date_kw_region_device",
+            {
                 "tenant_id",
                 "report_date",
                 "keyword_id",
                 "region_name",
                 "region_level",
                 "device",
-            ],
-            set_={
-                "impression": stmt.excluded.impression,
-                "click": stmt.excluded.click,
-                "cost": stmt.excluded.cost,
-                "cpc": stmt.excluded.cpc,
-                "ctr": stmt.excluded.ctr,
-                "campaign_id": stmt.excluded.campaign_id,
-                "campaign_name": stmt.excluded.campaign_name,
-                "adgroup_id": stmt.excluded.adgroup_id,
-                "adgroup_name": stmt.excluded.adgroup_name,
-                "keyword": stmt.excluded.keyword,
-                "raw_metrics": stmt.excluded.raw_metrics,
-                "fetched_at": stmt.excluded.fetched_at,
             },
         )
-        await session.execute(stmt)
 
     hourly_rows = await svc.get_keyword_hourly_report(start_date=iso_date, end_date=iso_date)
     hourly_records = [
@@ -321,27 +385,14 @@ async def sync_keyword_dimension_reports_for_account(
         if (rec := _row_to_hourly_record(row, baidu_account.tenant_id, baidu_account.id))
     ]
     if hourly_records:
-        stmt = pg_insert(KeywordHourlyReport).values(hourly_records)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["tenant_id", "report_datetime", "keyword_id", "device"],
-            set_={
-                "impression": stmt.excluded.impression,
-                "click": stmt.excluded.click,
-                "cost": stmt.excluded.cost,
-                "cpc": stmt.excluded.cpc,
-                "ctr": stmt.excluded.ctr,
-                "campaign_id": stmt.excluded.campaign_id,
-                "campaign_name": stmt.excluded.campaign_name,
-                "adgroup_id": stmt.excluded.adgroup_id,
-                "adgroup_name": stmt.excluded.adgroup_name,
-                "keyword": stmt.excluded.keyword,
-                "raw_metrics": stmt.excluded.raw_metrics,
-                "fetched_at": stmt.excluded.fetched_at,
-            },
+        await _chunked_upsert(
+            session,
+            KeywordHourlyReport,
+            hourly_records,
+            "uq_kw_hourly_report_tenant_dt_kw_device",
+            {"tenant_id", "report_datetime", "keyword_id", "device"},
         )
-        await session.execute(stmt)
 
-    await session.commit()
     logger.info(
         "账户 %s %s 关键词维度报告 upsert 地域 %d 条、小时 %d 条",
         baidu_account.baidu_username,
@@ -350,6 +401,82 @@ async def sync_keyword_dimension_reports_for_account(
         len(hourly_records),
     )
     return {"region": len(region_records), "hourly": len(hourly_records)}
+
+
+async def sync_region_snapshot(
+    session: AsyncSession,
+    tenant: Tenant | None,
+    baidu_account: BaiduAccount,
+    start_date: date,
+    end_date: date,
+) -> int:
+    """按省汇总关键词报表地域数据，upsert 进 kw_region_snapshots。"""
+    client = BaiduAPIClient(
+        username=baidu_account.baidu_username,
+        access_token=decrypt(baidu_account.access_token_encrypted),
+    )
+    svc = ReportService(client)
+    rows = await svc.get_keyword_province_report(
+        start_date=start_date.isoformat(),
+        end_date=end_date.isoformat(),
+    )
+
+    agg: dict[tuple[int, date, str], dict[str, Any]] = {}
+    fetched_at = datetime.utcnow()
+    for row in rows:
+        province = _province_name(row)
+        report_date = _row_region_date(row, start_date)
+        tenant_id = tenant.id if tenant is not None else baidu_account.tenant_id
+        key = (baidu_account.tenant_id, report_date, province)
+        item = agg.setdefault(
+            key,
+            {
+                "tenant_id": tenant_id,
+                "baidu_account_id": baidu_account.id,
+                "report_date": report_date,
+                "province": province,
+                "cost": 0.0,
+                "click": 0,
+                "impression": 0,
+                "fetched_at": fetched_at,
+            },
+        )
+        item["cost"] += _to_float(row.get("cost")) or 0.0
+        item["click"] += _to_int(row.get("click")) or 0
+        item["impression"] += _to_int(row.get("impression")) or 0
+
+    records = [
+        {**item, "cost": round(float(item["cost"]), 2)}
+        for item in agg.values()
+    ]
+    if records:
+        await _chunked_upsert(
+            session,
+            KwRegionSnapshot,
+            records,
+            "uq_kw_region_snapshot",
+            {"tenant_id", "report_date", "province"},
+        )
+
+    logger.info(
+        "账户 %s %s~%s 省级地域汇总 upsert %d 条",
+        baidu_account.baidu_username,
+        start_date,
+        end_date,
+        len(records),
+    )
+    return len(records)
+
+
+async def sync_keyword_region_snapshots_for_account(
+    session: AsyncSession,
+    baidu_account: BaiduAccount,
+    target_date: date,
+) -> int:
+    """兼容旧调用：同步单日省级地域汇总。"""
+    return await sync_region_snapshot(
+        session, None, baidu_account, target_date, target_date
+    )
 
 
 def _parse_baidu_time(v: Any) -> datetime | None:
@@ -368,20 +495,57 @@ def _account_client(baidu_account: BaiduAccount) -> BaiduAPIClient:
     )
 
 
-# asyncpg 单条语句绑定参数上限 32767；按"行数 × 列数"留余量分批
+# asyncpg 单条语句绑定参数上限 32767；按"行数 × 列数"留余量分批。
+# 30000 为宽表、驱动和后续字段扩展预留余量，不能只按固定行数判断。
 UPSERT_CHUNK = 1000
+UPSERT_BIND_PARAM_BUDGET = 30000
+
+
+def _safe_upsert_chunk_size(model, records: list[dict]) -> int:
+    """按实际单行 SQL 参数数计算安全批量，包含 SQLAlchemy 客户端默认值。"""
+    if not records:
+        return 1
+    params_per_row = 0
+    seen_shapes: set[frozenset[str]] = set()
+    for record in records:
+        shape = frozenset(record)
+        if shape in seen_shapes:
+            continue
+        seen_shapes.add(shape)
+        params_per_row = max(
+            params_per_row,
+            len(pg_insert(model).values([record]).compile().params),
+        )
+    if params_per_row <= 0:
+        return 1
+    return max(
+        1,
+        min(UPSERT_CHUNK, UPSERT_BIND_PARAM_BUDGET // params_per_row),
+    )
 
 
 async def _chunked_upsert(
-    session: AsyncSession, model, records: list[dict], constraint: str, skip_keys: set[str]
+    session: AsyncSession,
+    model,
+    records: list[dict],
+    constraint: str,
+    skip_keys: set[str],
+    *,
+    update_keys: set[str] | None = None,
 ) -> None:
     """大批量 upsert 分批执行，避免超 asyncpg 32767 参数上限（生产实测 2026-06-11）。"""
-    for i in range(0, len(records), UPSERT_CHUNK):
-        chunk = records[i : i + UPSERT_CHUNK]
+    chunk_size = _safe_upsert_chunk_size(model, records)
+    for i in range(0, len(records), chunk_size):
+        chunk = records[i : i + chunk_size]
         stmt = pg_insert(model).values(chunk)
+        keys_to_update = update_keys if update_keys is not None else set(chunk[0])
         stmt = stmt.on_conflict_do_update(
             constraint=constraint,
-            set_={k: getattr(stmt.excluded, k) for k in chunk[0] if k not in skip_keys},
+            set_={
+                k: getattr(stmt.excluded, k)
+                for k in keys_to_update
+                if k not in skip_keys
+            },
         )
         await session.execute(stmt)
     await session.commit()
@@ -412,6 +576,7 @@ async def sync_campaigns_for_account(
                 "status": _to_int(c.get("status")),
                 "equipment_type": _to_int(c.get("equipmentType")),
                 "region_target": c.get("regionTarget"),
+                "geo_location_status": _to_int(c.get("geoLocationStatus")),
                 "schedule": c.get("schedule"),
                 "region_price_factor": c.get("regionPriceFactor"),
                 "schedule_price_factors": c.get("schedulePriceFactors"),
@@ -439,7 +604,8 @@ async def sync_adgroups_for_account(
     campaign_ids = (
         await session.scalars(
             select(Campaign.campaign_id).where(
-                Campaign.tenant_id == baidu_account.tenant_id
+                Campaign.tenant_id == baidu_account.tenant_id,
+                Campaign.baidu_account_id == baidu_account.id,
             )
         )
     ).all()
@@ -609,6 +775,7 @@ async def sync_keywords_for_account(
             )
             .where(
                 KwReportSnapshot.tenant_id == baidu_account.tenant_id,
+                KwReportSnapshot.baidu_account_id == baidu_account.id,
                 KwReportSnapshot.keyword_id.isnot(None),
             )
             .group_by(KwReportSnapshot.keyword_id)
@@ -620,7 +787,8 @@ async def sync_keywords_for_account(
     adgroup_ids = (
         await session.scalars(
             select(Adgroup.adgroup_id).where(
-                Adgroup.tenant_id == baidu_account.tenant_id
+                Adgroup.tenant_id == baidu_account.tenant_id,
+                Adgroup.baidu_account_id == baidu_account.id,
             )
         )
     ).all()
@@ -968,27 +1136,113 @@ async def sync_query_candidates_for_account(
     return len(records)
 
 
+_SEARCH_TERM_REPORT_MAX_WINDOW_DAYS = 31
+
+
+def _search_term_windows(start_date: date, end_date: date) -> list[tuple[date, date]]:
+    """将百度搜索词报告日期范围切成不超过 31 天的闭区间。"""
+    if start_date > end_date:
+        raise ValueError("搜索词报告开始日期不能晚于结束日期")
+
+    windows: list[tuple[date, date]] = []
+    window_start = start_date
+    while window_start <= end_date:
+        window_end = min(
+            window_start + timedelta(days=_SEARCH_TERM_REPORT_MAX_WINDOW_DAYS - 1),
+            end_date,
+        )
+        windows.append((window_start, window_end))
+        window_start = window_end + timedelta(days=1)
+    return windows
+
+
+async def _fetch_search_term_rows(
+    baidu_account: BaiduAccount,
+    start_date: date,
+    end_date: date,
+) -> list[dict[str, Any]]:
+    """拉取一个百度允许的搜索词报告窗口，不写本地库。"""
+    svc = ReportService(_account_client(baidu_account))
+    return await svc.get_search_term_report(start_date.isoformat(), end_date.isoformat())
+
+
+def _merge_search_term_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """合并分段 SUMMARY 报表，使同一搜索词维度在完整窗口中只保留一行。
+
+    每段都是互不重叠的时间区间，不能简单选择消费最高的一段，否则 91 天指标会
+    被低估。展现、点击、消费和转化按段累加；比率指标据合计值重算，名称和状态等
+    非指标字段以较后拉取到的行覆盖。
+    """
+    merged: dict[tuple[str, int | None, int | None], dict[str, Any]] = {}
+    totals: dict[tuple[str, int | None, int | None], dict[str, float]] = {}
+
+    for row in rows:
+        word = (row.get("queryWord") or "").strip()
+        if not word:
+            continue
+        key = (word, _to_int(row.get("campaignId")), _to_int(row.get("adGroupId")))
+        current = merged.get(key)
+        if current is None:
+            current = dict(row)
+            current["queryWord"] = word
+            merged[key] = current
+            totals[key] = {"impression": 0.0, "click": 0.0, "cost": 0.0, "conversions": 0.0}
+        else:
+            # 后面的窗口更新名称、触发词、状态和匹配方式等非累加字段。
+            current.update(row)
+            current["queryWord"] = word
+
+        total = totals[key]
+        total["impression"] += _to_int(row.get("impression")) or 0
+        total["click"] += _to_int(row.get("click")) or 0
+        total["cost"] += _to_float(row.get("cost")) or 0.0
+        total["conversions"] += _to_int(row.get("ocpcConversionsDetail2")) or 0
+
+    for key, row in merged.items():
+        total = totals[key]
+        impression = int(total["impression"])
+        click = int(total["click"])
+        cost = total["cost"]
+        conversions = int(total["conversions"])
+        row["impression"] = impression
+        row["click"] = click
+        row["cost"] = cost
+        row["ocpcConversionsDetail2"] = conversions
+        row["cpc"] = cost / click if click else None
+        row["ctr"] = click * 100 / impression if impression else None
+        row["ocpcConversionsDetail2CVR"] = conversions * 100 / click if click else None
+
+    return list(merged.values())
+
+
 async def sync_search_terms_for_account(
     session: AsyncSession,
     baidu_account: BaiduAccount,
     start_date: date,
     end_date: date,
 ) -> int:
-    """搜索词报告全量落库（含已添加词），窗口快照：每次同步覆盖该租户旧数据。
+    """搜索词报告全量落库（含已添加词），支持自动分段和空结果保护。
 
     与 sync_query_candidates（只留未添加词转拓词）不同，本表存全量，供搜索词报告页 +
-    关键词详情触发搜索词下钻 + 后续加否词/转拓词。返回写入条数。
+    关键词详情触发搜索词下钻 + 后续加否词/转拓词。每次成功同步仅覆盖该账户旧快照；
+    百度全部窗口均无数据时保留旧快照。返回写入条数。
     """
-    svc = ReportService(_account_client(baidu_account))
-    rows = await svc.get_search_term_report(start_date.isoformat(), end_date.isoformat())
+    fetched_rows: list[dict[str, Any]] = []
+    windows = _search_term_windows(start_date, end_date)
+    for window_start, window_end in windows:
+        rows = await _fetch_search_term_rows(baidu_account, window_start, window_end)
+        fetched_rows.extend(rows)
 
-    # 全量快照：先清该租户旧数据，再插新窗口
-    await session.execute(
-        delete(SearchTermReport).where(SearchTermReport.tenant_id == baidu_account.tenant_id)
-    )
+    rows = _merge_search_term_rows(fetched_rows)
+
     if not rows:
-        await session.commit()
-        logger.info("账户 %s 搜索词报告无数据", baidu_account.baidu_username)
+        logger.warning(
+            "账户 %s 搜索词报告 %s~%s 分 %d 段拉取后仍无数据，保留本地旧快照",
+            baidu_account.baidu_username,
+            start_date,
+            end_date,
+            len(windows),
+        )
         return 0
 
     now = datetime.utcnow()
@@ -1015,17 +1269,50 @@ async def sync_search_terms_for_account(
                 cost=_to_float(row.get("cost")),
                 ctr=_to_float(row.get("ctr")),
                 cpc=_to_float(row.get("cpc")),
+                conversions=_to_int(row.get("ocpcConversionsDetail2")),
+                cvr=_to_float(row.get("ocpcConversionsDetail2CVR")),
                 window_start=start_date,
                 window_end=end_date,
                 is_added=(status == 0),
                 synced_at=now,
             )
         )
+    if not records:
+        logger.warning("账户 %s 搜索词有效记录为 0，保留本地旧快照", baidu_account.baidu_username)
+        return 0
+
+    existing_count = int(
+        await session.scalar(
+            select(func.count()).select_from(SearchTermReport).where(
+                SearchTermReport.tenant_id == baidu_account.tenant_id,
+                SearchTermReport.baidu_account_id == baidu_account.id,
+            )
+        )
+        or 0
+    )
+    # 百度偶发返回不完整窗口。存量较大时若骤降超过 80%，拒绝覆盖并等待单维度重试。
+    if existing_count >= 20 and len(records) < existing_count * 0.2:
+        raise RuntimeError(
+            f"搜索词同步完整性校验失败：本次 {len(records)} 条，原有 {existing_count} 条"
+        )
+
+    # 仅在全部窗口拉取、合并且通过完整性校验后，替换当前账户快照。
+    await session.execute(
+        delete(SearchTermReport).where(
+            SearchTermReport.tenant_id == baidu_account.tenant_id,
+            SearchTermReport.baidu_account_id == baidu_account.id,
+        )
+    )
     session.add_all(records)
     await session.commit()
     logger.info(
-        "账户 %s 搜索词报告 %s~%s：落库 %d 条",
-        baidu_account.baidu_username, start_date, end_date, len(records),
+        "账户 %s 搜索词报告 %s~%s（%d 段）：原始 %d 条，合并落库 %d 条",
+        baidu_account.baidu_username,
+        start_date,
+        end_date,
+        len(windows),
+        len(fetched_rows),
+        len(records),
     )
     return len(records)
 
@@ -1111,11 +1398,9 @@ async def sync_keyword_report_for_all_active_accounts(
     session: AsyncSession, target_date: date
 ) -> dict[str, int]:
     """拉所有 active baidu_accounts 的目标日报告。返回 {username: 写入条数}。"""
-    accounts = (
-        await session.scalars(
-            select(BaiduAccount).where(BaiduAccount.status == "active")
-        )
-    ).all()
+    accounts = filter_identity_safe_active_accounts(
+        await list_active_sem_accounts(session)
+    )
 
     result: dict[str, int] = {}
     for acc in accounts:

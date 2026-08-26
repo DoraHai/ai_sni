@@ -10,10 +10,11 @@
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Keyword, KwReportSnapshot, Tenant
+from app.classification import resolve_brand_terms
 from app.rules.base import AlertDraft
 
 RANK_THRESHOLD = Decimal("1.5")
@@ -27,7 +28,7 @@ class BrandRankRule:
     async def evaluate(
         self, session: AsyncSession, tenant: Tenant, target_date: date
     ) -> list[AlertDraft]:
-        # 品牌词过滤条件：有分级数据用分级字段，否则回退字面包含
+        # 人工/自动分级和字面品牌词根取并集，避免告警与工作台品牌筛选口径打架。
         brand_ids = (
             await session.scalars(
                 select(Keyword.keyword_id).where(
@@ -35,13 +36,14 @@ class BrandRankRule:
                 )
             )
         ).all()
-        if brand_ids:
-            brand_cond = KwReportSnapshot.keyword_id.in_(brand_ids)
-        else:
-            brand_term = (tenant.name or "").strip()
-            if not brand_term:
-                return []
-            brand_cond = KwReportSnapshot.keyword.ilike(f"%{brand_term}%")
+        brand_terms = resolve_brand_terms(tenant)
+        brand_parts = [KwReportSnapshot.keyword_id.in_(brand_ids)] if brand_ids else []
+        brand_parts.extend(
+            KwReportSnapshot.keyword.ilike(f"%{term}%") for term in brand_terms
+        )
+        if not brand_parts:
+            return []
+        brand_cond = or_(*brand_parts)
 
         # 同一关键词多设备行：按消费加权平均排名，取消费/点击合计
         rows = (

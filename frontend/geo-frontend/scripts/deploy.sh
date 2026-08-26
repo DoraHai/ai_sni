@@ -15,9 +15,10 @@ rsync -az --delete dist/ "$deploy_target:${release_dir}/"
 
 ssh "$deploy_target" \
   "set -euo pipefail
+   test -f '${release_dir}/index.html'
    test -f '${release_dir}/dashboard.html'
    ln -sfn '${release_dir}' '${deploy_root}/current.next'
    mv -Tf '${deploy_root}/current.next' '${deploy_root}/current'"
 
-curl -fsS "https://sem.snipers.com.cn/deal-sniper/geo/dashboard.html" >/dev/null
+curl -fsS "https://sem.snipers.com.cn/deal-sniper/geo/" >/dev/null
 printf '%s\n' "GEO frontend deployed independently: ${release_stamp}"

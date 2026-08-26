@@ -20,8 +20,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_session
+from app.module_scope import ensure_module_access
 from app.models.role import Role
 from app.models.user import User
+from app.security.api_key import resolve_api_key
+from app.security.sem_identity import ensure_sem_identity_access
 from app.permissions import OPERATOR_PERMS
 
 _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -30,6 +33,36 @@ _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 JWT_ALG = "HS256"
 _READ_METHODS = ("GET", "HEAD", "OPTIONS")
+
+# 这些路径会读取或操作 SEM 客户数据。客户与模块管理、授权入口和 SEO/GEO 路径故意不在
+# 列表中，确保管理员仍能查看冲突并完成修复，同时不跨模块扩大影响。
+_SEM_IDENTITY_GUARDED_PREFIXES = (
+    "/api/v1/dashboard",
+    "/api/v1/alerts",
+    "/api/v1/customer-profile",
+    "/api/v1/keywords",
+    "/api/v1/structure",
+    "/api/v1/suggestions",
+    "/api/v1/expansion",
+    "/api/v1/search-terms",
+    "/api/v1/negative-words",
+    "/api/v1/operation-records",
+    "/api/v1/adjustment-verify",
+    "/api/v1/leads",
+    "/api/v1/assistant",
+    "/api/v1/reports",
+    "/api/v1/writeback",
+    "/api/v1/manage",
+    "/api/v1/ocpc",
+    "/api/v1/onboarding-builder",
+    "/api/v1/sem/assets/accounts",
+    "/api/v1/admin/fetch-keyword-report",
+    "/api/v1/admin/sync-keywords",
+    "/api/v1/admin/refresh-keyword-workbench",
+    "/api/v1/admin/sync-operation-records",
+    "/api/v1/admin/sync-expansion",
+    "/api/v1/admin/sync-url-words",
+)
 
 
 def hash_password(plain: str) -> str:
@@ -93,6 +126,14 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     """返回 (可接受的菜单键集合 或 None=不限菜单, 是否需要 edit)。命中集合满足其一即可。"""
     edit = method not in _READ_METHODS
     p = path
+    if p.startswith("/api/v1/admin/customers"):
+        return {"settings.customers"}, True
+    if p.startswith("/api/v1/sem/assets/accounts"):
+        return {"sem.assets"}, edit
+    if p.startswith("/api/v1/seo/sites"):
+        return {"seo.assets"}, edit
+    if p.startswith("/api/v1/geo/projects"):
+        return {"geo.assets"}, edit
 
     if p.startswith("/api/v1/dashboard"):
         return {"monitor.dashboard"}, edit
@@ -155,6 +196,8 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
         or p.startswith("/api/v1/geo/oauth/social")
         or p.startswith("/api/v1/geo/channel-accounts")
         or p.startswith("/api/v1/geo/ops-alerts")
+        or p.startswith("/api/v1/geo/competitor-reports")
+        or p.startswith("/api/v1/geo/onboarding")
         or p.startswith("/api/v1/geo/weekly-insights")
         or p.startswith("/api/v1/geo/topic-heat")
         or p.startswith("/api/v1/geo/ai-trends")
@@ -174,12 +217,43 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
         return {"geo.content"}, edit
     if p.startswith("/api/v1/geo"):
         return {"geo.diagnosis"}, False
+    if p.startswith("/api/v1/seo/overview"):
+        return {"seo.dashboard"}, edit
+    if p.startswith("/api/v1/seo/alerts"):
+        return {"seo.alerts"}, edit
+    if p.startswith("/api/v1/seo/keywords") or p.startswith("/api/v1/seo/rank"):
+        return {"seo.keywords"}, edit
+    if p.startswith("/api/v1/seo/content"):
+        return {"seo.content"}, edit
+    if p.startswith("/api/v1/seo/site"):
+        return {"seo.site"}, edit
+    if p.startswith("/api/v1/seo/internal-links") or p.startswith("/api/v1/seo/backlinks"):
+        return {"seo.links"}, edit
+    if p.startswith("/api/v1/seo/competitors"):
+        return {"seo.competitors"}, edit
     if p.startswith("/api/v1/onboarding-builder"):
-        # 智能搭建默认演练写入，仍归首次接入；真实写入由后端 dry-run 开关兜底。
-        return {"onboarding"}, False
+        # 生成草案可查看；执行草案即使处于演练模式也会落内部台账，必须有编辑权。
+        return {"onboarding"}, p.endswith("/apply")
+    if p == "/api/v1/oauth/baidu/authorize" and edit:
+        # 普通接入由 onboarding 控制，客户定向重绑由 settings.customers 控制；
+        # 具体是哪一种必须由 endpoint 根据请求体再次做最小权限校验。
+        return {"onboarding", "settings.customers"}, True
+    if p == "/api/v1/oauth/baidu/status" and not edit:
+        return {"onboarding", "settings.customers"}, False
+    if p.startswith("/api/v1/oauth/baidu"):
+        # 查看授权状态需 view；发起/更新授权需 edit。
+        return {"onboarding"}, edit
     if p.startswith("/api/v1/writeback"):
         # 回写台账（只读查询）归效果验证。回写动作本身走 /keywords/{id}/writeback（optimize.keywords edit）
         return {"verify.adjustments"}, edit
+    if p.startswith("/api/v1/manage/account-budget"):
+        return {"manage.account"}, edit
+    if p.startswith("/api/v1/manage/adgroup"):
+        return {"manage.adgroups"}, edit
+    if p.startswith("/api/v1/manage"):
+        return {"manage.campaigns"}, edit
+    if p.startswith("/api/v1/ocpc"):
+        return {"manage.ocpc"}, edit
     if p.startswith("/api/v1/reports"):
         return {"delivery.report"}, edit
     if p.startswith("/api/v1/users") or p.startswith("/api/v1/roles"):
@@ -215,7 +289,7 @@ async def _build_context(user: User, session: AsyncSession) -> AuthContext:
 async def require_auth(
     bearer: HTTPAuthorizationCredentials | None = Security(_bearer),
     header_key: str | None = Security(_api_key_header),
-    key: str | None = Query(None, description="API Key，与 X-API-Key 等价（脚本用）"),
+    key: str | None = Query(None, description="旧版 API Key 查询参数；需服务端显式开启"),
     session: AsyncSession = Depends(get_session),
 ) -> AuthContext:
     # 1) JWT（前端登录态）
@@ -232,18 +306,8 @@ async def require_auth(
         return await _build_context(user, session)
 
     # 2) admin API Key 兜底（curl / 冒烟 / 调度）
-    #    - 优先 X-API-Key 请求头
-    #    - ?key= 仅当 admin_api_key_query_enabled（生产必须关闭，避免进访问日志/Referer）
     settings = get_settings()
-    provided = header_key
-    if key:
-        if settings.admin_api_key_query_enabled:
-            provided = provided or key
-        elif not header_key:
-            raise HTTPException(
-                401,
-                "已禁用 query 传 API Key，请使用 X-API-Key 请求头（生产安全要求）",
-            )
+    provided = resolve_api_key(header_key, key)
     if provided and secrets.compare_digest(provided, settings.admin_api_key):
         # 未绑租户 = 运维超管（curl / 冒烟）。绑了租户则降为该客户运营，不再绕过 RBAC。
         bound = getattr(settings, "admin_api_key_tenant_id", None)
@@ -270,6 +334,7 @@ async def require_auth(
 async def require_scoped_auth(
     request: Request,
     ctx: AuthContext = Depends(require_auth),
+    session: AsyncSession = Depends(get_session),
 ) -> AuthContext:
     """业务路由统一鉴权：菜单权限（view/edit）+ 单客户隔离。"""
     keys, need_edit = _required(request.url.path, request.method)
@@ -279,8 +344,21 @@ async def require_scoped_auth(
             verb = "编辑" if need_edit else "访问"
             raise HTTPException(403, f"当前角色无权{verb}此功能")
     tid = request.query_params.get("tenant_id")
-    if tid and tid.lstrip("-").isdigit():
-        ctx.ensure_tenant(int(tid))
+    if not tid:
+        tid = request.path_params.get("tenant_id")
+    if not tid and request.method not in _READ_METHODS:
+        try:
+            payload = await request.json()
+        except (ValueError, RuntimeError):
+            payload = None
+        if isinstance(payload, dict):
+            tid = payload.get("tenant_id")
+    tenant_id = int(tid) if str(tid or "").lstrip("-").isdigit() else None
+    if tenant_id is not None:
+        ctx.ensure_tenant(tenant_id)
+        if request.url.path.startswith(_SEM_IDENTITY_GUARDED_PREFIXES):
+            await ensure_module_access(session, ctx, tenant_id, "sem")
+            await ensure_sem_identity_access(session, tenant_id)
     return ctx
 
 

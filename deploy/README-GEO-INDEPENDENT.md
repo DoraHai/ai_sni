@@ -11,8 +11,8 @@ application:
 - `/api/v1/geo/*` → `geo-service.service` on `127.0.0.1:8010`
 - `/geo-health` → the GEO service health endpoint
 
-The GEO API process mounts only `app.api.geo`. It does not start the SEM
-scheduler and a GEO release does not restart `sem-backend.service`.
+The GEO API process mounts only `app.geo.routes`, starts its own GEO scheduler,
+and never starts or restarts the SEM scheduler/service.
 
 ## First-time server setup
 
@@ -56,7 +56,7 @@ Creates `/opt/geo-service`, `/opt/geo-frontend`, `/var/log/geo-service`, install
 | `curl -fsS http://127.0.0.1:8010/health/geo` | HTTP **200** and `"db":"ok"` (DB down → **503**) |
 | `curl -fsS http://127.0.0.1:8010/api/v1/geo/content-health` | `{"module":"geo-content","status":"ok"}` (needs auth if locked; public health is `/health/geo`) |
 | `curl -fsS https://<host>/geo-health` | proxies to GEO health |
-| `curl -fsSI https://<host>/deal-sniper/geo/dashboard.html` | 200 |
+| `curl -fsSI https://<host>/deal-sniper/geo/` | 200 |
 | `systemctl is-active sem-backend` | unchanged by GEO deploy |
 
 Rollback API:

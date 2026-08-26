@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.baidu.regions import load_regions
 from app.baidu.services.account import AccountService
 from app.baidu.sync import _account_client, _to_float, _to_int
 from app.baidu.writeback import (
@@ -25,10 +26,13 @@ from app.baidu.writeback import (
     apply_adgroup_pause_writeback,
     apply_campaign_budget_writeback,
     apply_campaign_pause_writeback,
+    apply_campaign_region_writeback,
+    apply_campaign_schedule_writeback,
 )
 from app.database import get_session
 from app.models import Adgroup, BaiduAccount, Campaign
 from app.security.auth import AuthContext, require_scoped_auth
+from app.sem_asset_sync import public_sync_error
 
 logger = logging.getLogger(__name__)
 
@@ -39,19 +43,32 @@ router = APIRouter(
 )
 
 
+@router.get("/region-options")
+async def list_region_options() -> dict:
+    """省市地域下拉选项（只读常量，来自百度官方编码表快照）。"""
+    return {"regions": list(load_regions())}
+
+
 @router.get("/account-budget")
 async def get_account_budget(
     tenant_id: int = Query(..., description="本地租户 ID"),
+    baidu_account_id: int | None = Query(None, description="百度账户本地 ID"),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """实时查账户日预算 + 余额/消费。百度调用失败降级返回错误说明，不抛 500。"""
-    acc = await session.scalar(
+    stmt = (
         select(BaiduAccount).where(
             BaiduAccount.tenant_id == tenant_id, BaiduAccount.status == "active"
-        )
+        ).order_by(BaiduAccount.id)
     )
-    if acc is None:
+    if baidu_account_id is not None:
+        stmt = stmt.where(BaiduAccount.id == baidu_account_id)
+    accounts = list((await session.scalars(stmt)).all())
+    if not accounts:
         return {"status": "error", "message": "该租户没有生效的百度账户授权"}
+    if baidu_account_id is None and len(accounts) > 1:
+        raise HTTPException(409, "当前客户有多个推广账户，请先选择要读取的账户")
+    acc = accounts[0]
     try:
         resp = await AccountService(_account_client(acc)).get_account_info(
             ["balance", "cost", "budget", "budgetType"]
@@ -66,6 +83,8 @@ async def get_account_budget(
     budget_type = _to_int(info.get("budgetType"))
     return {
         "status": "ok",
+        "baidu_account_id": acc.id,
+        "baidu_account_name": acc.baidu_username,
         "budget": _to_float(info.get("budget")),
         "budget_type": budget_type,  # 0=不限 1=日预算
         "has_daily_budget": budget_type == 1,
@@ -78,7 +97,9 @@ async def get_account_budget(
 
 class AccountBudgetReq(BaseModel):
     tenant_id: int
+    baidu_account_id: int | None = None
     budget: float
+    approval_id: int | None = None
 
 
 @router.post("/account-budget")
@@ -93,6 +114,8 @@ async def set_account_budget(
         rec = await apply_account_budget_writeback(
             session, req.tenant_id, req.budget,
             operator_user_id=ctx.user_id, operator_name=ctx.username,
+            approval_id=req.approval_id,
+            baidu_account_id=req.baidu_account_id,
         )
     except WritebackError as e:
         raise HTTPException(400, str(e))
@@ -108,21 +131,37 @@ async def set_account_budget(
 @router.get("/campaigns")
 async def list_campaigns_budget(
     tenant_id: int = Query(..., description="本地租户 ID"),
+    baidu_account_id: int | None = Query(None, description="按百度账户筛选"),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """计划列表（计划管理：日预算/状态，行内可改预算）。数据来自本地维度表。"""
+    conditions = [Campaign.tenant_id == tenant_id]
+    if baidu_account_id is not None:
+        conditions.append(Campaign.baidu_account_id == baidu_account_id)
     camps = (
         await session.scalars(
-            select(Campaign).where(Campaign.tenant_id == tenant_id)
+            select(Campaign).where(*conditions)
         )
     ).all()
+    accounts = (
+        await session.scalars(
+            select(BaiduAccount).where(BaiduAccount.tenant_id == tenant_id)
+        )
+    ).all()
+    account_names = {account.id: account.baidu_username for account in accounts}
     rows = [
         {
             "campaign_id": c.campaign_id,
             "campaign_name": c.campaign_name,
+            "baidu_account_id": c.baidu_account_id,
+            "baidu_account_name": account_names.get(c.baidu_account_id),
             "budget": _to_float(c.budget) if c.budget is not None else None,
             "pause": c.pause,
             "status": c.status,
+            "region_target": c.region_target or [],
+            "region_price_factor": c.region_price_factor or [],
+            "geo_location_status": c.geo_location_status,
+            "schedule_price_factors": c.schedule_price_factors or [],
             "synced_at": c.synced_at.isoformat() if c.synced_at else None,
         }
         for c in camps
@@ -131,6 +170,14 @@ async def list_campaigns_budget(
     return {
         "total": len(rows),
         "campaigns": rows,
+        "accounts": [
+            {
+                "id": account.id,
+                "name": account.baidu_username,
+                "status": account.status,
+            }
+            for account in sorted(accounts, key=lambda item: item.baidu_username or "")
+        ],
         "min_budget": MIN_ACCOUNT_BUDGET,
         "max_budget": MAX_ACCOUNT_BUDGET,
     }
@@ -140,6 +187,7 @@ class CampaignBudgetReq(BaseModel):
     tenant_id: int
     campaign_id: int
     budget: float
+    approval_id: int | None = None
 
 
 @router.post("/campaign-budget")
@@ -154,6 +202,7 @@ async def set_campaign_budget(
         rec = await apply_campaign_budget_writeback(
             session, req.tenant_id, req.campaign_id, req.budget,
             operator_user_id=ctx.user_id, operator_name=ctx.username,
+            approval_id=req.approval_id,
         )
     except WritebackError as e:
         raise HTTPException(400, str(e))
@@ -189,6 +238,104 @@ async def set_campaign_pause(
     except WritebackError as e:
         raise HTTPException(400, str(e))
     return {"status": rec.status, "dry_run": rec.dry_run, "pause": req.pause, "error_msg": rec.error_msg}
+
+
+class CampaignScheduleFactorReq(BaseModel):
+    time_id: int
+    price_factor: float = 1.0
+
+
+class CampaignScheduleReq(BaseModel):
+    tenant_id: int
+    campaign_id: int
+    schedule_price_factors: list[CampaignScheduleFactorReq]
+    pause: bool = False
+
+
+@router.post("/campaign-schedule")
+async def set_campaign_schedule(
+    req: CampaignScheduleReq,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """按模板写回计划投放时段；支持节假日停投模板。"""
+    ctx.ensure_tenant(req.tenant_id)
+    factors = [
+        {"timeId": item.time_id, "priceFactor": item.price_factor}
+        for item in req.schedule_price_factors
+    ]
+    try:
+        rec = await apply_campaign_schedule_writeback(
+            session,
+            req.tenant_id,
+            req.campaign_id,
+            factors,
+            pause=req.pause,
+            operator_user_id=ctx.user_id,
+            operator_name=ctx.username,
+        )
+    except WritebackError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {
+        "status": rec.status,
+        "dry_run": rec.dry_run,
+        "campaign_id": req.campaign_id,
+        "slot_count": len(factors),
+        "pause": req.pause,
+        "error_msg": rec.error_msg,
+    }
+
+
+class CampaignRegionFactorReq(BaseModel):
+    region_id: int
+    price_factor: float
+
+
+class CampaignRegionReq(BaseModel):
+    tenant_id: int
+    campaign_id: int
+    region_target: list[int]
+    region_price_factor: list[CampaignRegionFactorReq] | None = None
+    geo_location_status: int | None = None
+
+
+@router.post("/campaign-region")
+async def set_campaign_region(
+    req: CampaignRegionReq,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """写回计划投放地域及分地域系数。dry-run + 台账保护。"""
+    ctx.ensure_tenant(req.tenant_id)
+    region_price_factor = (
+        [
+            {"regionId": item.region_id, "priceFactor": item.price_factor}
+            for item in req.region_price_factor
+        ]
+        if req.region_price_factor is not None
+        else None
+    )
+    try:
+        rec = await apply_campaign_region_writeback(
+            session,
+            req.tenant_id,
+            req.campaign_id,
+            req.region_target,
+            region_price_factor,
+            req.geo_location_status,
+            operator_user_id=ctx.user_id,
+            operator_name=ctx.username,
+        )
+    except WritebackError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {
+        "status": rec.status,
+        "dry_run": rec.dry_run,
+        "baidu_account_id": rec.baidu_account_id,
+        "campaign_id": req.campaign_id,
+        "region_count": len(req.region_target),
+        "error_msg": rec.error_msg,
+    }
 
 
 # ===== 单元管理（manage.adgroups）：列表 + 启停 + 出价 =====
@@ -228,7 +375,39 @@ async def list_adgroups_manage(
         for a in adgroups
     ]
     rows.sort(key=lambda r: (r["campaign_name"] or "", r["adgroup_name"] or ""))
-    return {"total": len(rows), "adgroups": rows}
+    accounts = (
+        await session.scalars(
+            select(BaiduAccount).where(BaiduAccount.tenant_id == tenant_id)
+        )
+    ).all()
+    return {
+        "total": len(rows),
+        "adgroups": rows,
+        "sync": {
+            "accounts": len(accounts),
+            "active_accounts": sum(account.status == "active" for account in accounts),
+            "status": next(
+                (account.sync_status for account in accounts if account.status == "active"),
+                None,
+            ),
+            "last_synced_at": next(
+                (
+                    account.last_synced_at.isoformat()
+                    for account in accounts
+                    if account.status == "active" and account.last_synced_at
+                ),
+                None,
+            ),
+            "error": next(
+                (
+                    public_sync_error(account.last_sync_error)
+                    for account in accounts
+                    if account.status == "active" and account.last_sync_error
+                ),
+                None,
+            ),
+        },
+    }
 
 
 class AdgroupPauseReq(BaseModel):
@@ -259,6 +438,7 @@ class AdgroupBidReq(BaseModel):
     tenant_id: int
     adgroup_id: int
     max_price: float
+    approval_id: int | None = None
 
 
 @router.post("/adgroup-bid")
@@ -273,6 +453,7 @@ async def set_adgroup_bid(
         rec = await apply_adgroup_bid_writeback(
             session, req.tenant_id, req.adgroup_id, req.max_price,
             operator_user_id=ctx.user_id, operator_name=ctx.username,
+            approval_id=req.approval_id,
         )
     except WritebackError as e:
         raise HTTPException(400, str(e))

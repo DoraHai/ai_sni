@@ -1,33 +1,47 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   batchUpdateCategory,
   fetchAdgroupList,
   fetchCampaignList,
   fetchKeywordList,
-  pauseKeywordBatch,
   refreshKeywordWorkbench,
-  writebackKeyword,
   writebackKeywordBatch,
 } from '../../api/keywords'
 import { setAdgroupBid, setAdgroupLandingUrl } from '../../api/manage'
-import { fetchSuggestions, updateSuggestionStatus } from '../../api/suggestions'
+import {
+  fetchSuggestionAssignees,
+  fetchSuggestions,
+  updateSuggestionStatus,
+  updateSuggestionWorkflow,
+} from '../../api/suggestions'
+import { useKeywordWriteback } from '../../composables/useKeywordWriteback'
 import { session } from '../../store/session'
 import MetricLabel from '../../components/MetricLabel.vue'
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
 
 const router = useRouter()
+const route = useRoute()
 const loading = ref(false)
 const refreshing = ref(false)
 const error = ref('')
 const data = ref(null)
+const syncDiagnosis = computed(() => {
+  if (!data.value || data.value.total) return null
+  const totals = data.value.totals || {}
+  if (!totals.campaigns) return { type: 'warning', text: '当前客户尚未拉到计划数据。请先到「推广账号」确认账户连接与同步状态。' }
+  if (!totals.adgroups || !totals.keywords) return { type: 'warning', text: `已拉到 ${totals.campaigns || 0} 个计划，但单元或关键词数据不完整。这是读取同步问题，与百度回写是否开启无关。` }
+  return { type: 'info', text: '同步已完成，但当前筛选条件下没有关键词。可清除筛选后重试。' }
+})
 const selection = ref([])
 const suggestionMap = ref({}) // keyword_id -> 该词的 AI 建议（全量 pending，独立于列表分页）
 const suggestionList = ref([]) // AI 建议列表（顶部卡片区渲染）
 const suggestionPending = ref(0)
+const suggestionAssignees = ref([])
+const workflowSavingId = ref(null)
 const finalPrices = reactive({}) // keyword_id -> 最终执行价（可人工调整，默认=AI建议价/当前价），回写的就是它
 const showAdvice = ref(true)
 const tableRef = ref(null)
@@ -49,6 +63,12 @@ const activeView = ref('keywords')
 const campaignData = ref(null)
 const adgroupData = ref(null)
 const adgroupCampaignFilter = ref(null)
+
+const {
+  applyWriteback: submitKeywordWriteback,
+  changeMatchType,
+  togglePause: submitKeywordPause,
+} = useKeywordWriteback({ tenantId: TENANT_ID, onSuccess: load })
 
 async function switchView(view) {
   activeView.value = view
@@ -313,6 +333,8 @@ const CATEGORY_CHIPS = [
   { code: 'longtail', label: '长尾精准', color: '#BA7517' },
   { code: 'new', label: '新词', color: '#6B7280' },
 ]
+const CATEGORY_CODES = new Set(CATEGORY_CHIPS.map((c) => c.code).filter(Boolean))
+
 const BATCH_CATEGORY_OPTIONS = [
   { code: 'brand', label: '标记为品牌词' },
   { code: 'focus', label: '标记为重点词' },
@@ -323,13 +345,13 @@ const BATCH_CATEGORY_OPTIONS = [
 ]
 
 const filters = reactive({
-  category: '',
+  category: route.query.category && CATEGORY_CODES.has(String(route.query.category)) ? String(route.query.category) : '',
   campaignId: null,
   pause: null, // null=全部 false=已启用 true=已暂停
   serving: null, // null=全部 true=当前在投 false=当前未投（暂停或时段不投）
   coefWarning: '',
-  hasSuggestion: null,
-  q: '',
+  hasSuggestion: route.query.has_suggestion === 'true' ? true : null,
+  q: route.query.q ? String(route.query.q) : '',
   sortBy: 'impression',
   order: 'desc',
   page: 1,
@@ -364,6 +386,47 @@ async function load() {
     error.value = e.message
   } finally {
     loading.value = false
+  }
+}
+
+async function loadSuggestionAssignees() {
+  if (!TENANT_ID.value) return
+  try {
+    const result = await fetchSuggestionAssignees(TENANT_ID.value)
+    suggestionAssignees.value = result.assignees || []
+  } catch {
+    suggestionAssignees.value = []
+  }
+}
+
+async function saveSuggestionWorkflow(suggestion, field, value) {
+  if (!session.canEdit('optimize.keywords') || workflowSavingId.value) return
+  const payload = {}
+  if (field === 'assignee_id') {
+    if (value == null || value === '') payload.clear_assignee = true
+    else payload.assignee_id = Number(value)
+  } else if (field === 'due_at') {
+    if (!value) payload.clear_due_at = true
+    else payload.due_at = value
+  } else {
+    payload.handling_status = value
+  }
+  workflowSavingId.value = suggestion.id
+  try {
+    const result = await updateSuggestionWorkflow(suggestion.id, payload)
+    const updated = result.suggestion
+    if (updated.status === 'pending') {
+      suggestionMap.value = { ...suggestionMap.value, [updated.keyword_id]: updated }
+      suggestionList.value = suggestionList.value.map((item) => item.id === updated.id ? updated : item)
+    } else {
+      _removeSuggestion(updated.keyword_id)
+    }
+    ElMessage.success('建议协作信息已更新')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || e.message)
+    await load()
+  } finally {
+    workflowSavingId.value = null
   }
 }
 
@@ -415,6 +478,20 @@ function initFinalPrices(rows) {
 watch(
   () => [filters.category, filters.campaignId, filters.pause, filters.serving, filters.coefWarning, filters.hasSuggestion],
   () => { filters.page = 1; load() },
+)
+watch(
+  () => [route.query.category, route.query.has_suggestion, route.query.q],
+  ([category, hasSuggestion, q]) => {
+    const next = category && CATEGORY_CODES.has(String(category)) ? String(category) : ''
+    if (next && next !== filters.category) {
+      filters.category = next
+      activeView.value = 'keywords'
+    }
+    const suggestionFilter = hasSuggestion === 'true' ? true : null
+    if (suggestionFilter !== filters.hasSuggestion) filters.hasSuggestion = suggestionFilter
+    const keywordQuery = q ? String(q) : ''
+    if (keywordQuery !== filters.q) filters.q = keywordQuery
+  },
 )
 let qTimer = null
 watch(() => filters.q, () => {
@@ -473,6 +550,14 @@ function gotoDetail(row) {
   router.push(`/monitor/keywords/${row.keyword_id}?from=workbench`)
 }
 
+function onRowAction(row, command) {
+  if (command === 'pause') togglePause(row)
+  if (command === 'detail') gotoDetail(row)
+  if (command === 'ignore' && suggestionMap.value[row.keyword_id]) {
+    ignoreSuggestion(suggestionMap.value[row.keyword_id])
+  }
+}
+
 function _removeSuggestion(kwId) {
   const m = { ...suggestionMap.value }
   delete m[kwId]
@@ -483,34 +568,17 @@ function _removeSuggestion(kwId) {
 
 // 回写的是「最终执行价」(finalPrices，可人工调整，默认=AI建议价/当前价)，不限于有 AI 建议的词
 async function applyWriteback(row) {
-  const price = finalPrices[row.keyword_id]
-  if (price == null || !(Number(price) > 0)) {
-    ElMessage.warning('请先填写有效的最终执行价')
-    return
-  }
-  try {
-    await ElMessageBox.confirm(
-      `将把「${row.keyword}」出价回写为 ¥${Number(price).toFixed(2)}（当前 ¥${fmtNum(row.price)}）。\n` +
-        `系统受 ±20% 渐进调价硬上限保护，并全程记入回写台账。\n` +
-        `若当前为演练模式，仅记台账、不会真改线上出价。`,
-      '回写出价到百度',
-      { confirmButtonText: '确认回写', cancelButtonText: '取消', type: 'warning' },
-    )
-  } catch {
-    return
-  }
-  try {
-    const res = await writebackKeyword({ keywordId: row.keyword_id, tenantId: TENANT_ID.value, price })
-    if (res.dry_run) {
-      ElMessage.warning('演练模式：已记入回写台账，未真改线上出价（管理员开启真写后方可生效）')
-    } else {
-      _removeSuggestion(row.keyword_id)
-      ElMessage.success(`已回写百度：¥${Number(price).toFixed(2)}`)
-      load()
-    }
-  } catch (e) {
-    ElMessage.error(e.response?.data?.detail || e.message)
-  }
+  const result = await submitKeywordWriteback(
+    row.keyword_id,
+    finalPrices[row.keyword_id],
+    row.keyword,
+    row.price,
+  )
+  if (result?.success) _removeSuggestion(row.keyword_id)
+}
+
+async function openMatchTypeDialog(row, command) {
+  await changeMatchType(row.keyword_id, row.keyword, row.match_type, command)
 }
 
 async function batchWriteback() {
@@ -526,7 +594,7 @@ async function batchWriteback() {
     await ElMessageBox.confirm(
       `将对 ${items.length} 个关键词回写各自的最终执行价（受 ±20% 渐进调价硬上限保护并记台账）。\n` +
         `若当前为演练模式，仅记台账、不会真改线上出价。`,
-      '批量回写出价到百度',
+      '加入待回写台账',
       { confirmButtonText: `确认回写 ${items.length} 个`, cancelButtonText: '取消', type: 'warning' },
     )
   } catch {
@@ -548,6 +616,10 @@ async function batchWriteback() {
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || e.message)
   }
+}
+
+async function togglePause(row) {
+  await submitKeywordPause(row.keyword_id, row.keyword, row.pause)
 }
 
 async function batchPause(pause) {
@@ -624,12 +696,13 @@ const headerStats = computed(() => {
 })
 
 // 顶栏切换客户后重新拉数
-watch(TENANT_ID, () => { filters.page = 1; campaignData.value = null; adgroupData.value = null; activeView.value = 'keywords'; load(); scheduleStickyScrollSync() })
+watch(TENANT_ID, () => { filters.page = 1; campaignData.value = null; adgroupData.value = null; activeView.value = 'keywords'; load(); loadSuggestionAssignees(); scheduleStickyScrollSync() })
 watch(activeView, scheduleStickyScrollSync)
 watch(() => [data.value?.keywords?.length, campaignData.value?.campaigns?.length, adgroupData.value?.adgroups?.length, loading.value], scheduleStickyScrollSync)
 
 onMounted(() => {
   load()
+  loadSuggestionAssignees()
   window.addEventListener('resize', updateStickyScrollVisibility)
   window.addEventListener('scroll', updateStickyScrollVisibility, { passive: true })
   scheduleStickyScrollSync()
@@ -667,16 +740,18 @@ onBeforeUnmount(() => {
             {{ refreshing ? '同步中…' : '刷新数据' }}
           </button>
           <button class="pbtn" :disabled="exporting" @click="exportCsv">{{ exporting ? '导出中…' : '导出' }}</button>
-          <el-tooltip content="导入/新建属写回类操作，按路线图 M2 实现，当前平台对百度只读" placement="bottom">
+          <el-tooltip content="当前只读演练；导入/新建将在开放回写后执行" placement="bottom">
             <button class="pbtn" disabled>导入关键词</button>
           </el-tooltip>
-          <el-tooltip content="调价写回（updateWord）按路线图 M2 实现，当前平台对百度只读" placement="bottom">
+          <el-tooltip content="当前只读演练；可在词表内把建议加入待回写台账" placement="bottom">
             <button class="pbtn" disabled>批量调价</button>
           </el-tooltip>
         </div>
       </div>
-      <div class="page-desc">{{ headerStats }}</div>
+    <div class="page-desc">{{ headerStats }}</div>
     </div>
+
+    <el-alert v-if="syncDiagnosis" :type="syncDiagnosis.type" :title="syncDiagnosis.text" :closable="false" show-icon style="margin-bottom: 12px" />
 
     <!-- 视图 tabs（原型 view-tabs） -->
     <div class="view-tabs">
@@ -773,7 +848,7 @@ onBeforeUnmount(() => {
         <el-tooltip content="批量启用所选关键词（updateWord 写回，dry-run 保护，演练模式不真改线上）" placement="top">
           <button class="bt-btn" :disabled="!selection.length" @click="batchPause(false)">批量启用</button>
         </el-tooltip>
-        <el-tooltip content="写回类操作按路线图 M2 实现" placement="top">
+        <el-tooltip content="当前只读演练，匹配方式建议仅加入待回写台账" placement="top">
           <button class="bt-btn" disabled>批量加否词</button>
         </el-tooltip>
         <span v-if="selection.length" class="bt-clear" @click="tableRef?.clearSelection()">取消选择</span>
@@ -781,7 +856,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="suggestionPending" class="ai-note">
-      💡 本页含 AI 调价建议（共 <b>{{ suggestionPending }}</b> 条待处理），见下表「AI 建议」列；可「回写出价」一键写回百度（受 ±20% 硬上限保护并记台账，演练模式下不真改线上）。
+      💡 本页含 AI 调价建议（共 <b>{{ suggestionPending }}</b> 条待处理）。当前只读演练，可把建议加入待回写台账，待管理员开放回写后再执行。
     </div>
 
     <div class="table-panel">
@@ -791,11 +866,12 @@ onBeforeUnmount(() => {
         :data="data?.keywords || []"
         row-key="keyword_id"
         class="kw-table"
+        :fit="true"
         @selection-change="selection = $event"
         @sort-change="onSortChange"
       >
         <el-table-column type="selection" width="40" reserve-selection />
-        <el-table-column label="关键词" width="172" fixed>
+        <el-table-column label="关键词" width="150">
           <template #default="{ row }">
             <div class="kw-cell-name">
               <span class="kw-name-text" @click="gotoDetail(row)">{{ row.keyword }}</span>
@@ -806,36 +882,47 @@ onBeforeUnmount(() => {
               >{{ row.category.label }}<template v-if="row.category.source === 'manual'">·人工</template></span>
             </div>
             <div class="kw-cell-sub">
-              {{ row.match_type || '—' }}<template v-if="servingDays(row)"> · 已投放 {{ servingDays(row) }} 天</template>
+              <el-dropdown trigger="click" @command="(cmd) => openMatchTypeDialog(row, cmd)">
+                <span class="match-type-trigger">
+                  {{ row.match_type || '—' }}
+                  <span class="match-type-caret">▾</span>
+                </span>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="exact">精确匹配</el-dropdown-item>
+                    <el-dropdown-item command="phrase">短语匹配</el-dropdown-item>
+                    <el-dropdown-item command="smart">智能匹配</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown><template v-if="servingDays(row)"> · 已投放 {{ servingDays(row) }} 天</template>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="所属计划 / 单元" min-width="150">
+        <el-table-column label="所属计划 / 单元" width="160">
           <template #default="{ row }">
             <div class="plan-line">{{ row.campaign_name || '—' }}</div>
             <div class="kw-cell-sub">{{ row.adgroup_name || '—' }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="价格调整" width="190">
+        <el-table-column label="价格调整" width="145">
           <template #header>
             价格调整
-            <el-tooltip placement="top" content="最终执行价默认填入 AI 建议价（无建议则为当前出价），可人工调整。「回写出价」回写的就是最终执行价，受 ±20% 硬上限保护并记台账，演练模式下不真改线上。">
+            <el-tooltip placement="top" content="最终执行价默认填入 AI 建议价（无建议则为当前出价），可人工调整并加入待回写台账；当前不会修改百度账户。">
               <span class="dim">ⓘ</span>
             </el-tooltip>
           </template>
           <template #default="{ row }">
-            <div class="pa-row">
-              <span class="pa-label">当前出价</span>
-              <span class="pa-val">{{ fmtMoney(row.price) }}</span>
+            <div class="price-compact-line">
+              <span>现 {{ fmtMoney(row.price) }}</span>
               <span v-if="row.effective && row.effective.warning !== 'normal'" class="pa-coef" :class="multClass(row.effective.warning)">×{{ row.effective.multiplier }}⚠</span>
-            </div>
-            <div v-if="suggestionMap[row.keyword_id] && suggestionMap[row.keyword_id].suggested_bid != null" class="pa-row">
-              <span class="pa-label">AI 建议价</span>
-              <span class="pa-val ai">{{ fmtMoney(suggestionMap[row.keyword_id].suggested_bid) }}</span>
+              <template v-if="suggestionMap[row.keyword_id] && suggestionMap[row.keyword_id].suggested_bid != null">
+                <span class="price-divider">·</span>
+                <span class="pa-val ai">AI {{ fmtMoney(suggestionMap[row.keyword_id].suggested_bid) }}</span>
               <span class="pa-pct" :class="suggestionMap[row.keyword_id].change_pct >= 0 ? 'up' : 'down'">{{ suggestionMap[row.keyword_id].change_pct > 0 ? '↑' : '↓' }}{{ Math.abs(suggestionMap[row.keyword_id].change_pct) }}%</span>
+              </template>
             </div>
-            <div class="pa-row">
-              <span class="pa-label">最终执行价</span>
+            <div class="price-compact-line final-price-line">
+              <span class="final-price-label">执行</span>
               <el-input-number
                 v-model="finalPrices[row.keyword_id]"
                 :min="0.01"
@@ -849,22 +936,70 @@ onBeforeUnmount(() => {
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="AI 建议" min-width="220">
+        <el-table-column label="AI 建议 / 协作" width="145">
           <template #default="{ row }">
             <template v-if="suggestionMap[row.keyword_id]">
-              <div class="ai-tags">
+              <div class="ai-compact">
                 <span class="ai-tag act">{{ suggestionMap[row.keyword_id].type_label }}</span>
-                <span class="ai-tag" :class="'risk-' + riskOf(suggestionMap[row.keyword_id].confidence).cls">{{ riskOf(suggestionMap[row.keyword_id].confidence).label }}</span>
-              </div>
-              <div class="ai-reason-line">{{ suggestionMap[row.keyword_id].reason }}</div>
-              <div v-if="suggestionRiskNote(suggestionMap[row.keyword_id])" class="ai-risk-line">
-                注意：{{ suggestionRiskNote(suggestionMap[row.keyword_id]) }}
+                <el-popover placement="right-start" :width="280" trigger="click">
+                  <template #reference>
+                    <button class="ai-detail-trigger" type="button">查看</button>
+                  </template>
+                  <div class="ai-popover">
+                    <div class="ai-tags">
+                      <span class="ai-tag act">{{ suggestionMap[row.keyword_id].type_label }}</span>
+                      <span class="ai-tag" :class="'risk-' + riskOf(suggestionMap[row.keyword_id].confidence).cls">{{ riskOf(suggestionMap[row.keyword_id].confidence).label }}</span>
+                    </div>
+                    <div class="ai-reason-line">{{ suggestionMap[row.keyword_id].reason }}</div>
+                    <div v-if="suggestionRiskNote(suggestionMap[row.keyword_id])" class="ai-risk-line">
+                      注意：{{ suggestionRiskNote(suggestionMap[row.keyword_id]) }}
+                    </div>
+                    <div class="suggestion-workflow">
+                      <div class="workflow-title">内部协作</div>
+                      <label>负责人</label>
+                      <el-select
+                        :model-value="suggestionMap[row.keyword_id].assignee_id"
+                        clearable
+                        placeholder="未分配"
+                        :disabled="!session.canEdit('optimize.keywords') || workflowSavingId === suggestionMap[row.keyword_id].id"
+                        @change="(value) => saveSuggestionWorkflow(suggestionMap[row.keyword_id], 'assignee_id', value)"
+                      >
+                        <el-option v-for="user in suggestionAssignees" :key="user.id" :label="user.name" :value="user.id" />
+                      </el-select>
+                      <label>处理状态</label>
+                      <el-select
+                        :model-value="suggestionMap[row.keyword_id].handling_status"
+                        :disabled="!session.canEdit('optimize.keywords') || workflowSavingId === suggestionMap[row.keyword_id].id"
+                        @change="(value) => saveSuggestionWorkflow(suggestionMap[row.keyword_id], 'handling_status', value)"
+                      >
+                        <el-option label="待处理" value="todo" />
+                        <el-option label="处理中" value="in_progress" />
+                        <el-option label="待回写" value="waiting_writeback" />
+                        <el-option label="已完成" value="completed" />
+                        <el-option label="已驳回" value="rejected" />
+                      </el-select>
+                      <label>截止时间</label>
+                      <el-date-picker
+                        :model-value="suggestionMap[row.keyword_id].due_at"
+                        type="datetime"
+                        value-format="YYYY-MM-DDTHH:mm:ss"
+                        format="YYYY-MM-DD HH:mm"
+                        clearable
+                        placeholder="未设置"
+                        :disabled="!session.canEdit('optimize.keywords') || workflowSavingId === suggestionMap[row.keyword_id].id"
+                        @change="(value) => saveSuggestionWorkflow(suggestionMap[row.keyword_id], 'due_at', value)"
+                      />
+                      <small>内部状态不代表百度已实际回写；真实动作仍以待回写台账和执行记录为准。</small>
+                    </div>
+                  </div>
+                </el-popover>
+                <small class="workflow-compact">{{ suggestionMap[row.keyword_id].assignee_name || '未分配' }} · {{ suggestionMap[row.keyword_id].handling_status_label }}</small>
               </div>
             </template>
             <span v-else class="dim">—</span>
           </template>
         </el-table-column>
-        <el-table-column prop="quality" label="质量度" width="88" sortable="custom">
+        <el-table-column prop="quality" label="质量度" width="70" sortable="custom">
           <template #default="{ row }">
             <div v-if="row.quality != null" class="qs-cell">
               <span class="qs-num">{{ row.quality }}</span>
@@ -873,36 +1008,25 @@ onBeforeUnmount(() => {
             <span v-else class="dim">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="点击指标" width="180">
+        <el-table-column label="核心效果" width="150">
           <template #header>
-            点击指标
+            核心效果
             <el-tooltip placement="top" content="近 7 天 · 点击 / 点击率(CTR=点击÷展现) / 点击成本(CPC=消费÷点击)">
               <span class="dim">ⓘ</span>
             </el-tooltip>
           </template>
           <template #default="{ row }">
-            <div class="mg-row"><span class="mg-label mg-label-w">7天点击</span><span class="mg-val num">{{ fmtInt(row.metrics_7d?.click) }}</span></div>
-            <div class="mg-row"><span class="mg-label mg-label-w">点击率（CTR）</span><span class="mg-val num">{{ fmtPct(row.metrics_7d?.ctr) }}</span></div>
-            <div class="mg-row"><span class="mg-label mg-label-w">点击成本（CPC）</span><span class="mg-val num">{{ fmtMoney(row.metrics_7d?.cpc) }}</span></div>
-          </template>
-        </el-table-column>
-        <el-table-column label="转化 / 展现" width="132">
-          <template #header>
-            转化 / 展现
-            <el-tooltip placement="top" content="转化=近7天电话按钮点击量（ocpcConversionsDetail2）；转化成本=消费÷转化；展现为累计展现">
-              <span class="dim">ⓘ</span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">
-            <div class="mg-row">
-              <span class="mg-label">7天转化</span>
-              <span class="mg-val num" :class="{ 'conv-zero': row.metrics_7d?.cost && !row.metrics_7d?.conversions }">{{ fmtInt(row.metrics_7d?.conversions) }}</span>
+            <div class="metric-compact-line">
+              <span>点击 <b class="num">{{ fmtInt(row.metrics_7d?.click) }}</b></span>
+              <span>CTR <b class="num">{{ fmtPct(row.metrics_7d?.ctr) }}</b></span>
             </div>
-            <div class="mg-row"><span class="mg-label">转化成本</span><span class="mg-val num">{{ fmtMoney(row.metrics_7d?.conv_cost) }}</span></div>
-            <div class="mg-row"><span class="mg-label">展现</span><span class="mg-val num">{{ fmtInt(row.total_impression) }}</span></div>
+            <div class="metric-compact-line">
+              <span>CPC <b class="num">{{ fmtMoney(row.metrics_7d?.cpc) }}</b></span>
+              <span>转化 <b class="num" :class="{ 'conv-zero': row.metrics_7d?.cost && !row.metrics_7d?.conversions }">{{ fmtInt(row.metrics_7d?.conversions) }}</b></span>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column label="投放状态" width="124">
+        <el-table-column label="投放状态" width="100">
           <template #header>
             投放状态
             <el-tooltip placement="top" :content="'上行=启用/暂停；下行=当前投放（按 词/单元/计划暂停 + 分时段判定） · 当前时段 ' + (data?.totals?.current_slot || '')">
@@ -910,22 +1034,31 @@ onBeforeUnmount(() => {
             </el-tooltip>
           </template>
           <template #default="{ row }">
-            <div class="mg-row">
+            <div class="status-compact">
               <span v-if="row.pause === true" class="status-pill off"><span class="status-dot" />已暂停</span>
               <span v-else-if="row.pause === false" class="status-pill on"><span class="status-dot" />已启用</span>
               <span v-else class="dim">—</span>
-            </div>
-            <div class="mg-row">
               <span v-if="row.serving?.now" class="status-pill on"><span class="status-dot" />投放中</span>
               <span v-else-if="row.serving" class="status-pill" :class="row.serving.reason === '当前时段不投放' ? 'slot' : 'off'"><span class="status-dot" />{{ row.serving.reason }}</span>
               <span v-else class="dim">—</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="148" fixed="right">
+        <el-table-column label="操作" min-width="190">
           <template #default="{ row }">
             <div class="op-cell">
-              <button class="op-btn primary" @click="applyWriteback(row)">回写出价</button>
+              <button class="op-btn primary" @click="applyWriteback(row)">加入待回写</button>
+              <el-dropdown trigger="click" @command="(command) => openMatchTypeDialog(row, command)">
+                <button class="op-btn" type="button">改匹配 ▾</button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="exact">精确匹配</el-dropdown-item>
+                    <el-dropdown-item command="phrase">短语匹配</el-dropdown-item>
+                    <el-dropdown-item command="smart">智能匹配</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+              <button class="op-btn" @click="togglePause(row)">{{ row.pause ? '启用' : '暂停' }}</button>
               <button v-if="suggestionMap[row.keyword_id]" class="op-btn" @click="ignoreSuggestion(suggestionMap[row.keyword_id])">忽略建议</button>
               <button class="op-btn" @click="gotoDetail(row)">详情</button>
             </div>
@@ -1078,7 +1211,7 @@ onBeforeUnmount(() => {
             <span v-else class="dim">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="88" align="center" fixed="right">
+        <el-table-column label="操作" width="88" align="center">
           <template #default="{ row }">
             <div class="row-actions compact">
               <button class="row-action" @click="openLanding(row)">落地页</button>
@@ -1274,11 +1407,21 @@ onBeforeUnmount(() => {
   background: #fafbfc; font-weight: 500; color: var(--sem-text-sub);
   font-size: 11px; padding: 6px 0; white-space: nowrap;
 }
-.kw-table :deep(td.el-table__cell) { padding: 7px 0; }
+.kw-table :deep(td.el-table__cell) { padding: 5px 0; }
 .kw-table :deep(.el-table__row:hover > td.el-table__cell) { background: #fafbfc; }
 .kw-cell-name { font-weight: 500; cursor: pointer; color: var(--sem-text); }
 .kw-cell-name:hover { color: var(--sem-primary); }
 .kw-cell-sub { font-size: 10px; color: #9ca3af; margin-top: 2px; }
+.match-type-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #667085;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.match-type-trigger:hover { color: var(--sem-primary); }
+.match-type-caret { font-size: 9px; }
 .plan-line { font-size: 12px; }
 .num { font-variant-numeric: tabular-nums; }
 .dim { color: #9ca3af; }
@@ -1448,6 +1591,10 @@ onBeforeUnmount(() => {
 .ai-note b { font-weight: 600; }
 /* 价格调整列 */
 .pa-row { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 1.8; }
+.price-compact-line { display: flex; align-items: center; min-height: 24px; gap: 4px; font-size: 11px; white-space: nowrap; }
+.price-divider { color: #c2c8d0; }
+.final-price-line { margin-top: 2px; }
+.final-price-label { width: 20px; color: #909399; }
 .pa-label { flex: none; width: 60px; color: #909399; white-space: nowrap; }
 .pa-val { color: #1f2937; font-weight: 500; }
 .pa-val.ai { color: #185fa5; }
@@ -1457,15 +1604,25 @@ onBeforeUnmount(() => {
 .pa-coef { font-size: 11px; }
 .pa-coef.warn { color: #e6a23c; }
 .pa-coef.danger { color: #f56c6c; }
-.pa-input { width: 116px; }
+.pa-input { width: 112px; }
 /* 分组指标列（点击指标 / 线索展现 / 投放状态） */
 .mg-row { display: flex; align-items: center; gap: 8px; font-size: 12px; line-height: 1.9; }
 .mg-label { flex: none; width: 52px; color: #909399; white-space: nowrap; }
 .mg-val { color: #1f2937; }
 .mg-val.conv-zero { color: var(--sem-danger); font-weight: 600; }
 .num.lead-has { color: var(--sem-success); font-weight: 600; }
+.metric-compact-line { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 22px; font-size: 11px; color: #7b8490; white-space: nowrap; }
+.metric-compact-line b { color: #2f3945; font-weight: 600; }
+.status-compact { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 /* AI 建议列 */
 .ai-tags { display: flex; gap: 6px; margin-bottom: 4px; }
+.ai-compact { display: inline-flex; align-items: center; gap: 5px; }
+.ai-detail-trigger {
+  padding: 1px 4px; border: 0; background: transparent; color: var(--sem-primary);
+  font-size: 11px; cursor: pointer;
+}
+.ai-detail-trigger:hover { color: #0f4f91; text-decoration: underline; }
+.ai-popover { font-size: 12px; }
 .ai-tag { padding: 1px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
 .ai-tag.act { background: #ecf5ff; color: #185fa5; }
 .ai-tag.risk-low { background: #e1f5ee; color: #0f6e56; }
@@ -1473,6 +1630,12 @@ onBeforeUnmount(() => {
 .ai-tag.risk-high { background: #fef0f0; color: #a32d2d; }
 .ai-reason-line { font-size: 12px; color: #5a5e66; line-height: 1.55; }
 .ai-risk-line { margin-top: 5px; font-size: 11px; line-height: 1.45; color: #ba7517; }
+.suggestion-workflow { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 7px; align-items: center; margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--sem-border); }
+.suggestion-workflow .workflow-title { grid-column: 1 / -1; font-weight: 700; color: var(--sem-text); }
+.suggestion-workflow label { color: var(--sem-text-sub); }
+.suggestion-workflow small { grid-column: 1 / -1; color: #8a5a00; line-height: 1.45; }
+.suggestion-workflow :deep(.el-date-editor) { width: 100%; }
+.workflow-compact { display: block; width: 100%; margin-top: 4px; color: #667085; font-size: 10px; line-height: 1.3; }
 /* 操作列 */
 .op-cell { display: flex; flex-wrap: wrap; gap: 5px; }
 .op-btn { padding: 2px 9px; border: 1px solid #dcdfe6; background: #fff; border-radius: 4px; font-size: 12px; color: #606266; cursor: pointer; white-space: nowrap; }

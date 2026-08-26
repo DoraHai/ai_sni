@@ -307,8 +307,6 @@ def _fact_payload(row: GeoFact) -> dict[str, Any]:
         "updated_at": _iso(row.updated_at),
         "verification": _fact_verification(row),
     }
-
-
 def _fact_verification(row: GeoFact) -> dict[str, Any]:
     meta = row.meta if isinstance(row.meta, dict) else {}
     rec = meta.get("verification") if isinstance(meta.get("verification"), dict) else {}
@@ -2488,8 +2486,6 @@ def _snapshot_payload(row: GeoAnswerSnapshot, *, prompt_question: str | None = N
         "created_by": row.created_by,
         "created_at": _iso(row.created_at),
     }
-
-
 async def _get_snapshot(
     session: AsyncSession, snapshot_id: int, tenant_id: int
 ) -> GeoAnswerSnapshot:
@@ -9504,6 +9500,3 @@ async def get_deliverable_archive(
         "markdown": row.markdown,
         "created_at": _iso(row.created_at),
     }
-
-
-

@@ -10,6 +10,8 @@ const state = reactive({
   user: JSON.parse(localStorage.getItem('sem_user') || sessionStorage.getItem('sem_user') || 'null'),
   tenants: [],
   tenantId: Number(sessionStorage.getItem('sem_tenant_id')) || null,
+  modules: [],
+  tenantListRevision: 0,
 })
 
 export const session = {
@@ -17,6 +19,8 @@ export const session = {
   get user() { return state.user },
   get tenants() { return state.tenants },
   get tenantId() { return state.tenantId },
+  get modules() { return state.modules },
+  get tenantListRevision() { return state.tenantListRevision },
 
   get isLoggedIn() { return !!state.token },
   get permissions() { return state.user?.permissions || {} },
@@ -59,9 +63,18 @@ export const session = {
     this.setTenant(list[0]?.id ?? null)
   },
 
+  setModules(list) {
+    state.modules = list || []
+  },
+
+  requestTenantReload() {
+    state.tenantListRevision += 1
+  },
+
   setTenant(id) {
     state.tenantId = id
     if (id) sessionStorage.setItem('sem_tenant_id', String(id))
+    else sessionStorage.removeItem('sem_tenant_id')
   },
 
   logout() {

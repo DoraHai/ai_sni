@@ -20,6 +20,15 @@ logger = logging.getLogger(__name__)
 NEW_WORD_IMPRESSION_THRESHOLD = 20
 
 
+def resolve_brand_terms(tenant: Tenant) -> list[str]:
+    """返回租户统一的品牌词根，供分级、筛选和告警共用。"""
+    terms = [t.strip() for t in (tenant.brand_terms or []) if t and t.strip()]
+    if not terms and tenant.name and tenant.name.strip():
+        terms = [tenant.name.strip()]
+    # 保序去重，避免配置里大小写或空格不同的重复词根。
+    return list(dict.fromkeys(term.casefold() for term in terms))
+
+
 def classify_one(keyword_text: str, tabs: list | None, total_impression: int, brand_terms: list[str]) -> str:
     text = (keyword_text or "").lower()
     if any(term.lower() in text for term in brand_terms):
@@ -33,9 +42,7 @@ def classify_one(keyword_text: str, tabs: list | None, total_impression: int, br
 
 async def reclassify_keywords(session: AsyncSession, tenant: Tenant) -> dict[str, int]:
     """重算某租户所有 auto 分级关键词。返回各分类条数（含 manual 的现状）。"""
-    brand_terms = [t.strip() for t in (tenant.brand_terms or []) if t and t.strip()]
-    if not brand_terms:
-        brand_terms = [tenant.name.strip()] if tenant.name else []
+    brand_terms = resolve_brand_terms(tenant)
 
     # 累计展现（全期）
     imp_rows = (

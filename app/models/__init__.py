@@ -1,7 +1,9 @@
 from app.models.tenant import Tenant
 from app.models.baidu_account import BaiduAccount
+from app.models.baidu_oauth import BaiduOAuthGrant, BaiduOAuthState
 from app.models.api_audit_log import ApiAuditLog
 from app.models.kw_report_snapshot import KwReportSnapshot
+from app.models.kw_region_snapshot import KwRegionSnapshot
 from app.models.keyword_dimension_report import KeywordHourlyReport, KeywordRegionReport
 from app.models.alert import Alert
 from app.models.keyword import CATEGORY_LABELS, Keyword
@@ -24,6 +26,7 @@ from app.models.writeback_action import (
     WRITEBACK_ACTION_LABELS,
     WritebackAction,
 )
+from app.models.writeback_approval import WritebackApproval
 from app.models.lead import (
     LEAD_INTENT_LABELS,
     LEAD_SOURCE_LABELS,
@@ -37,6 +40,7 @@ from app.models.role import Role
 from app.models.suggestion import CONFIDENCE_LABELS, SUGGESTION_TYPE_LABELS, Suggestion
 from app.models.daily_insight import DailyInsight
 from app.models.monthly_report import MonthlyReport
+from app.models.analysis_report import AnalysisReport
 from app.models.keyword_candidate import (
     CANDIDATE_AI_RECOMMEND_LABELS,
     CANDIDATE_AI_RELEVANCE_LABELS,
@@ -77,6 +81,19 @@ from app.models.geo_content import (
     GeoPublication,
     GeoTaskFact,
 )
+from app.models.seo import (
+    SeoBacklink,
+    SeoCompetitor,
+    SeoCompetitorEvent,
+    SeoBrandAsset,
+    SeoContentAsset,
+    SeoInternalLink,
+    SeoKeywordAsset,
+    SeoRankSnapshot,
+    SeoSerpResult,
+    SeoSitePage,
+)
+from app.models.module_workspace import GeoProject, SeoSite, TenantModule
 
 __all__ = [
     "Suggestion",
@@ -84,6 +101,7 @@ __all__ = [
     "CONFIDENCE_LABELS",
     "DailyInsight",
     "MonthlyReport",
+    "AnalysisReport",
     "User",
     "Role",
     "KeywordCandidate",
@@ -102,6 +120,7 @@ __all__ = [
     "SearchTermReport",
     "QUERY_STATUS_LABELS",
     "WritebackAction",
+    "WritebackApproval",
     "WRITEBACK_ACTION_LABELS",
     "WB_ACTION_STATUS_LABELS",
     "MATCH_MODE_LABELS",
@@ -114,8 +133,11 @@ __all__ = [
     "TRANS_TYPE_LABELS",
     "Tenant",
     "BaiduAccount",
+    "BaiduOAuthGrant",
+    "BaiduOAuthState",
     "ApiAuditLog",
     "KwReportSnapshot",
+    "KwRegionSnapshot",
     "KeywordRegionReport",
     "KeywordHourlyReport",
     "Alert",
@@ -158,4 +180,17 @@ __all__ = [
     "GeoArticleVersion",
     "GeoChannelVariant",
     "GeoPublication",
+    "SeoKeywordAsset",
+    "SeoRankSnapshot",
+    "SeoBrandAsset",
+    "SeoSerpResult",
+    "SeoSitePage",
+    "TenantModule",
+    "SeoSite",
+    "GeoProject",
+    "SeoContentAsset",
+    "SeoInternalLink",
+    "SeoBacklink",
+    "SeoCompetitor",
+    "SeoCompetitorEvent",
 ]

@@ -336,29 +336,31 @@ async def _preheat_expansion_candidates(
             max_num=80,
         )
     except BaiduAPIError as e:
-        result["errors"].append({"source": "planner", "code": e.code, "message": e.message})
-    except Exception as e:
+        logger.warning("智能搭建规划师预热被百度拒绝 tenant=%s code=%s", tenant.id, e.code)
+        result["errors"].append({"source": "planner", "message": "关键词规划数据暂时无法获取"})
+    except Exception:
         await session.rollback()
-        logger.warning("智能搭建规划师预热失败 tenant=%s: %s", tenant.id, e)
-        result["errors"].append({"source": "planner", "message": str(e)})
+        logger.exception("智能搭建规划师预热失败 tenant=%s", tenant.id)
+        result["errors"].append({"source": "planner", "message": "关键词规划数据暂时无法获取"})
 
     if landing_url:
         try:
             url_count, _ = await sync_url_candidates_for_account(session, acc, [landing_url])
             result["url_candidates"] = url_count
         except BaiduAPIError as e:
-            result["errors"].append({"source": "url", "code": e.code, "message": e.message})
-        except Exception as e:
+            logger.warning("智能搭建 URL 拓词被百度拒绝 tenant=%s code=%s", tenant.id, e.code)
+            result["errors"].append({"source": "url", "message": "落地页拓词数据暂时无法获取"})
+        except Exception:
             await session.rollback()
-            logger.warning("智能搭建 URL 拓词预热失败 tenant=%s: %s", tenant.id, e)
-            result["errors"].append({"source": "url", "message": str(e)})
+            logger.exception("智能搭建 URL 拓词预热失败 tenant=%s", tenant.id)
+            result["errors"].append({"source": "url", "message": "落地页拓词数据暂时无法获取"})
 
     try:
         result["ai_eval"] = await evaluate_candidates_for_tenant(session, tenant, limit=50)
-    except Exception as e:
+    except Exception:
         await session.rollback()
-        logger.warning("智能搭建拓词 AI 评估预热失败 tenant=%s: %s", tenant.id, e)
-        result["errors"].append({"source": "ai_eval", "message": str(e)})
+        logger.exception("智能搭建拓词 AI 评估预热失败 tenant=%s", tenant.id)
+        result["errors"].append({"source": "ai_eval", "message": "AI 评估暂时不可用"})
 
     return result
 
@@ -611,6 +613,11 @@ async def apply_draft(
         raise HTTPException(400, "当前客户没有可用的百度授权账户")
 
     dry_run = get_settings().baidu_write_dry_run
+    if not dry_run:
+        raise HTTPException(
+            503,
+            "智能搭建真实执行暂未启用；请保持演练模式，并通过独立审批流程执行投放变更",
+        )
     client = _account_client(account)
     campaign_svc = CampaignService(client)
     adgroup_svc = AdgroupService(client)

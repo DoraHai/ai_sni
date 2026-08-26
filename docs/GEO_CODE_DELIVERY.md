@@ -51,7 +51,7 @@ GEO **共用** 且本次交付中作为依赖保留，**不要求**验收百度�
 
 - `app/database.py`、`app/config.py`、`app/security/**`（鉴权、加密、prod_guard）
 - `app/models/tenant.py`、`user` / `role` 等账号体系
-- 主站 `app/main.py` 中 **挂载 geo_router** 与 **scheduler**（`run_geo_visibility_patrols` 定时巡检 + `run_geo_daily_metrics_nightly` 日汇总兜底）
+- `app/geo_main.py` 独立挂载 GEO 路由并启动 `app/geo/scheduler.py`（定时巡检 + 日汇总）；主站不挂载 GEO 路由或任务
 - Postgres + Alembic 全库迁移链（GEO 表挂在同一 head 上）
 
 ### 2.3 明确非 GEO 交付（可不演示）

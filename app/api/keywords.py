@@ -23,7 +23,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dashboard import DEVICE_LABELS, _change_pct, _derive, _f
-from app.classification import classify_one
+from app.classification import classify_one, resolve_brand_terms
 from app.database import get_session
 from app.models import (
     CATEGORY_LABELS,
@@ -617,7 +617,13 @@ async def list_keywords(
 
     # ===== 查询条件 =====
     cond = [Keyword.tenant_id == tenant_id]
-    if category:
+    if category == "brand":
+        tenant = await session.get(Tenant, tenant_id)
+        brand_terms = resolve_brand_terms(tenant) if tenant else []
+        brand_parts = [Keyword.category == "brand"]
+        brand_parts.extend(Keyword.keyword.ilike(f"%{term}%") for term in brand_terms)
+        cond.append(or_(*brand_parts))
+    elif category:
         cond.append(Keyword.category == category)
     if campaign_id is not None:
         cond.append(Keyword.campaign_id == campaign_id)
@@ -979,9 +985,7 @@ async def batch_update_category(
     brand_terms: list[str] = []
     if req.category == "auto":
         tenant = await session.get(Tenant, req.tenant_id)
-        brand_terms = [
-            t.strip() for t in (tenant.brand_terms or []) if t and t.strip()
-        ] or ([tenant.name.strip()] if tenant.name else [])
+        brand_terms = resolve_brand_terms(tenant)
 
     now = datetime.utcnow()
     for kw in kws:
@@ -1028,9 +1032,7 @@ async def update_keyword_category(
 
     if category == "auto":
         tenant = await session.get(Tenant, tenant_id)
-        brand_terms = [
-            t.strip() for t in (tenant.brand_terms or []) if t and t.strip()
-        ] or ([tenant.name.strip()] if tenant.name else [])
+        brand_terms = resolve_brand_terms(tenant)
         kw.category = classify_one(
             kw.keyword, kw.tabs, kw.total_impression, brand_terms
         )
@@ -1365,11 +1367,13 @@ async def keyword_detail(
 class KeywordWritebackRequest(BaseModel):
     tenant_id: int
     price: float = Field(..., gt=0, description="最终执行价（元）")
+    approval_id: int | None = None
 
 
 class WritebackBatchItem(BaseModel):
     keyword_id: int
     price: float = Field(..., gt=0)
+    approval_id: int | None = None
 
 
 class WritebackBatchRequest(BaseModel):
@@ -1397,6 +1401,7 @@ async def writeback_batch(
             rec = await apply_keyword_writeback(
                 session, req.tenant_id, it.keyword_id, it.price,
                 operator_user_id=ctx.user_id, operator_name=ctx.username,
+                approval_id=it.approval_id,
             )
         except WritebackError as e:
             rejected.append({"keyword_id": it.keyword_id, "reason": str(e)})
@@ -1476,6 +1481,7 @@ async def writeback_one(
         rec = await apply_keyword_writeback(
             session, req.tenant_id, keyword_id, req.price,
             operator_user_id=ctx.user_id, operator_name=ctx.username,
+            approval_id=req.approval_id,
         )
     except WritebackError as e:
         raise HTTPException(400, str(e))

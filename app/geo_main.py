@@ -15,6 +15,8 @@ from app.database import engine
 from app.http_errors import register_infra_handlers
 from app.geo.content.oauth_public import router as geo_oauth_public_router
 from app.geo.routes import router as geo_router
+from app.api.customer_modules import geo_projects_router
+from app.geo.scheduler import shutdown_geo_scheduler, start_geo_scheduler
 from app.security.prod_guard import enforce_production_secrets
 
 settings = get_settings()
@@ -24,6 +26,7 @@ settings = get_settings()
 async def _lifespan(_app: FastAPI):
     # Productization must-do: refuse demo keys when APP_ENV=prod|production
     enforce_production_secrets(settings, hard_fail=True)
+    start_geo_scheduler()
     try:
         from app.geo.content.async_jobs import recover_jobs_on_startup
 
@@ -36,18 +39,22 @@ async def _lifespan(_app: FastAPI):
         import logging
 
         logging.getLogger("geo-api").exception("async job recover on startup failed")
-    yield
+    try:
+        yield
+    finally:
+        shutdown_geo_scheduler()
 
 
 app = FastAPI(title="Growth Sniper GEO API", version="0.1.0", lifespan=_lifespan)
 register_infra_handlers(app)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origin_list(),
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["Accept", "Authorization", "Content-Type", "X-API-Key"],
 )
 app.include_router(geo_router)
+app.include_router(geo_projects_router)
 app.include_router(geo_oauth_public_router)
 
 

@@ -5,6 +5,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     String,
     Text,
     UniqueConstraint,
@@ -40,6 +41,7 @@ class Alert(Base):
     keyword: Mapped[str | None] = mapped_column(Text)
     campaign_id: Mapped[int | None] = mapped_column(BigInteger)
     campaign_name: Mapped[str | None] = mapped_column(Text)
+    entity_ref: Mapped[str | None] = mapped_column(String(100))
 
     # 触发时的关键指标快照（消费/排名/质量度等），前端展示用
     metrics: Mapped[dict | None] = mapped_column(JSONB)
@@ -54,7 +56,26 @@ class Alert(Base):
             "tenant_id",
             "rule_code",
             "keyword_id",
+            "entity_ref",
             "report_date",
-            name="uq_alerts_tenant_rule_kw_date",
+            name="uq_alerts_tenant_rule_kw_entity_date",
+        ),
+        Index(
+            "ux_alerts_keyword_dedup",
+            "tenant_id",
+            "rule_code",
+            "keyword_id",
+            "report_date",
+            unique=True,
+            postgresql_where=keyword_id.isnot(None),
+        ),
+        Index(
+            "ux_alerts_entity_dedup",
+            "tenant_id",
+            "rule_code",
+            "entity_ref",
+            "report_date",
+            unique=True,
+            postgresql_where=entity_ref.isnot(None),
         ),
     )

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, String, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -23,4 +23,7 @@ class User(Base):
     tenant_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("tenants.id"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime)
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_failed_login_at: Mapped[datetime | None] = mapped_column(DateTime)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

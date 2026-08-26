@@ -9,17 +9,32 @@ const TENANT_ID = computed(() => session.tenantId)
 const loading = ref(false)
 const error = ref('')
 const data = ref(null)
+const emptyDiagnosis = computed(() => {
+  const sync = data.value?.sync
+  if (!data.value || data.value.total) return ''
+  if (!sync?.accounts) return '当前客户没有推广账户记录，请先核对客户与账户归属。'
+  if (!sync.active_accounts) return '推广账户存在，但没有生效授权。'
+  if (sync.status === 'failed') return `最近一次同步失败：${sync.error || '未知错误'}`
+  if (!sync.last_synced_at) return '账户已授权但尚未完成首次同步。'
+  return '账户已完成同步，但未拉到单元数据；请核对百度账户内是否存在单元。'
+})
 const savingId = ref(null)
+let loadGeneration = 0
 
 async function load() {
+  const generation = ++loadGeneration
+  const tenantId = TENANT_ID.value
+  if (!tenantId) return
   loading.value = true
   error.value = ''
   try {
-    data.value = await fetchAdgroups({ tenantId: TENANT_ID.value })
+    const result = await fetchAdgroups({ tenantId })
+    if (generation !== loadGeneration || tenantId !== TENANT_ID.value) return
+    data.value = result
   } catch (e) {
-    error.value = e.message
+    if (generation === loadGeneration) error.value = '单元数据加载失败，请稍后重试'
   } finally {
-    loading.value = false
+    if (generation === loadGeneration) loading.value = false
   }
 }
 
@@ -28,7 +43,7 @@ onMounted(load)
 
 const fmtMoney = (v) => (v == null ? '跟随计划' : '¥' + Number(v).toFixed(2))
 const isPaused = (r) => r.pause || r.status === 23
-const statusLabel = (r) => (isPaused(r) ? '已暂停' : (r.status === 21 ? '投放中' : '—'))
+const statusLabel = (r) => (isPaused(r) ? '已暂停' : (r.status === 21 ? '投放中' : '状态未同步'))
 function landingRows(row) {
   const rows = []
   if (row.mobile_final_url) rows.push({ key: 'mobile', label: '移动端', url: row.mobile_final_url })
@@ -107,7 +122,7 @@ async function editBid(row) {
     `单元「${row.adgroup_name}」当前出价 ${fmtMoney(row.max_price)}。\n输入新的单元出价（¥0.01 ~ 999.99，且不超过所属计划日预算）。当前为演练模式，只记台账不真改。`,
     '修改单元出价',
     {
-      confirmButtonText: '确认写回',
+      confirmButtonText: '加入待回写',
       cancelButtonText: '取消',
       inputValue: row.max_price != null ? String(row.max_price) : '',
       inputPattern: /^\d+(\.\d{1,2})?$/,
@@ -125,8 +140,15 @@ async function editBid(row) {
   try {
     const res = await setAdgroupBid({ tenantId: TENANT_ID.value, adgroupId: row.adgroup_id, maxPrice: v })
     const tag = res.dry_run ? '（演练：未真改）' : ''
-    if (res.status === 'failed') ElMessage.error('失败：' + (res.error_msg || '未知错误'))
-    else ElMessage.success(`已写回：${fmtMoney(res.old_price)} → ${fmtMoney(res.new_price)}${tag}`)
+    if (['pending', 'reconcile'].includes(res.status)) {
+      ElMessage.warning(res.error_msg || '百度执行结果未知，已转入人工对账')
+    } else if (res.status === 'dry_run') {
+      ElMessage.success(`已加入待回写：${fmtMoney(res.old_price)} → ${fmtMoney(res.new_price)}（百度账户未修改）`)
+    } else if (res.status === 'success') {
+      ElMessage.success(`已写回：${fmtMoney(res.old_price)} → ${fmtMoney(res.new_price)}${tag}`)
+    } else {
+      ElMessage.error('失败：' + (res.error_msg || '未知错误'))
+    }
     await load()
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || e.message)
@@ -187,7 +209,7 @@ async function togglePause(row) {
         </el-table-column>
         <el-table-column label="状态" width="100" align="center">
           <template #default="{ row }">
-            <span class="status-pill" :class="isPaused(row) ? 'paused' : 'active'">{{ statusLabel(row) }}</span>
+            <span class="status-pill" :class="isPaused(row) ? 'paused' : (row.status === 21 ? 'active' : 'unknown')">{{ statusLabel(row) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="单元出价" width="130" align="right">
@@ -198,7 +220,9 @@ async function togglePause(row) {
             <div v-if="landingRows(row).length" class="url-list">
               <div v-for="item in landingRows(row)" :key="item.key" class="url-line">
                 <span class="url-tag" :class="item.key">{{ item.label }}</span>
-                <span class="url-cell">{{ item.url }}</span>
+                <el-tooltip :content="item.url" placement="top" :show-after="350">
+                  <span class="url-cell">{{ item.url }}</span>
+                </el-tooltip>
               </div>
             </div>
             <div v-else class="url-cell empty">未设置</div>
@@ -209,10 +233,10 @@ async function togglePause(row) {
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="300" align="center">
+        <el-table-column label="操作" width="270" align="center" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" :loading="savingId === row.adgroup_id" @click="editBid(row)">改出价</el-button>
-            <el-button size="small" :loading="savingId === row.adgroup_id" @click="openLanding(row)">落地页</el-button>
+            <el-button size="small" :loading="savingId === row.adgroup_id" @click="editBid(row)">出价建议</el-button>
+            <el-button size="small" :loading="savingId === row.adgroup_id" @click="openLanding(row)">落地页建议</el-button>
             <el-button
               size="small"
               :type="isPaused(row) ? 'success' : 'warning'"
@@ -223,7 +247,7 @@ async function togglePause(row) {
           </template>
         </el-table-column>
         <template #empty>
-          <div class="empty-line">暂无单元数据。请先执行单元维度同步。</div>
+          <div class="empty-line">{{ emptyDiagnosis }}</div>
         </template>
       </el-table>
     </div>
@@ -315,6 +339,7 @@ async function togglePause(row) {
 .status-pill { font-size: 11px; padding: 1px 9px; border-radius: 10px; font-weight: 600; }
 .status-pill.active { background: #e5f4ed; color: var(--sem-success); }
 .status-pill.paused { background: #fef1e1; color: #ba7517; }
+.status-pill.unknown { background: #f3f4f6; color: #6b7280; }
 .empty-line { font-size: 12px; color: #9ca3af; padding: 22px 0; }
 .dialog-context { margin: -4px 0 14px; }
 .form-grid {

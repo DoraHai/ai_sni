@@ -8,9 +8,19 @@
 
 # 菜单注册表：key 唯一，group 用于侧边栏分组，path 是前端路由（settings.accounts 仅 edit 有意义）
 MENUS: list[dict] = [
+    {"key": "sem.assets", "label": "推广账号", "group": "SEM 资产", "path": "/sem/accounts"},
+    {"key": "seo.assets", "label": "网站管理", "group": "SEO 增长", "path": "/seo/sites"},
+    {"key": "geo.assets", "label": "项目管理", "group": "GEO 增长", "path": "/geo/projects"},
     {"key": "assistant", "label": "AI 助手", "group": "智能助手", "path": "/assistant"},
     {"key": "geo.diagnosis", "label": "GEO 诊断", "group": "GEO 增长", "path": "/geo/diagnosis"},
     {"key": "geo.content", "label": "GEO 概览", "group": "GEO 增长", "path": "/geo/overview"},
+    {"key": "seo.dashboard", "label": "排名看板", "group": "SEO 增长", "path": "/seo/dashboard"},
+    {"key": "seo.alerts", "label": "异常提醒", "group": "SEO 增长", "path": "/seo/alerts"},
+    {"key": "seo.keywords", "label": "关键词资产", "group": "SEO 增长", "path": "/seo/keywords"},
+    {"key": "seo.content", "label": "内容创作", "group": "SEO 增长", "path": "/seo/content"},
+    {"key": "seo.site", "label": "站内优化", "group": "SEO 增长", "path": "/seo/site"},
+    {"key": "seo.links", "label": "内外链管理", "group": "SEO 增长", "path": "/seo/links"},
+    {"key": "seo.competitors", "label": "竞品监控", "group": "SEO 增长", "path": "/seo/competitors"},
     {"key": "onboarding", "label": "授权与同步", "group": "首次接入", "path": "/onboarding"},
     {"key": "monitor.dashboard", "label": "数据看板", "group": "每日盯盘", "path": "/monitor/dashboard"},
     {"key": "monitor.alerts", "label": "异常提醒", "group": "每日盯盘", "path": "/monitor/alerts"},
@@ -28,6 +38,7 @@ MENUS: list[dict] = [
     {"key": "manage.ocpc", "label": "oCPC 投放", "group": "投放管理", "path": "/manage/ocpc"},
     {"key": "delivery.report", "label": "分析报告", "group": "客户交付", "path": "/delivery/report"},
     {"key": "settings.accounts", "label": "账号与权限", "group": "系统设置", "path": "/settings/accounts"},
+    {"key": "settings.customers", "label": "客户与模块", "group": "系统设置", "path": "/settings/customers"},
 ]
 
 MENU_KEYS: set[str] = {m["key"] for m in MENUS}
@@ -36,14 +47,26 @@ LEVELS = ("view", "edit")
 # 内置系统角色的种子权限（迁移 0016 seed + 冒烟复用）。is_system=True 不可删。
 ALL_EDIT = {m["key"]: "edit" for m in MENUS}
 # 运营：除「账号与权限」外全部可编辑
-OPERATOR_PERMS = {k: "edit" for k in MENU_KEYS if k != "settings.accounts"}
+OPERATOR_PERMS = {
+    k: "edit" for k in MENU_KEYS if k not in {"settings.accounts", "settings.customers"}
+}
 # 品牌方客户：只读看板 + 画像 + 报告
 CLIENT_PERMS = {
+    "sem.assets": "edit",
+    "seo.assets": "edit",
+    "geo.assets": "edit",
     "monitor.dashboard": "view",
     "monitor.profile": "view",
     "delivery.report": "view",
     "geo.diagnosis": "view",
     "geo.content": "view",
+    "seo.keywords": "view",
+    "seo.site": "view",
+    "seo.dashboard": "view",
+    "seo.alerts": "view",
+    "seo.content": "view",
+    "seo.links": "view",
+    "seo.competitors": "view",
 }
 
 SYSTEM_ROLES = [

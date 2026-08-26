@@ -99,32 +99,81 @@ systemctl status sem-backend
 tail -f /var/log/sem-backend/stdout.log
 ```
 
-## 七、验证
+## 七、分别发布公共登录页与 SEM 主前端
+
+公共登录页已从 SEM SPA 拆出，两者必须分别发布：
+
+```bash
+cd /Users/daisy/workspace/workspace_ai/ai_sni/frontend
+npm run deploy:sem
+
+# 只构建并发布公共登录页，不会改动 SEM：
+npm run deploy:login
+```
+
+本地联调时分别启动两个端口。SEM 未登录时会自动跳转到 5174，并保留原页面地址：
+
+```bash
+npm run dev
+npm run dev:auth
+```
+
+两个脚本都会执行以下保护：
+
+1. 构建并检查各自的发布契约；SEM 包内出现登录页代码时会立即终止；
+2. SEM 上传到 `/opt/sem-frontend/releases/<时间戳>`；
+3. 登录页上传到 `/opt/auth-frontend/releases/<时间戳>`；
+4. 分别通过各自的 `current` 软链接原子切换；
+5. 使用独立发布锁，两个应用互不覆盖。
+
+Nginx 的登录入口和主前端必须使用
+`deploy/sem-frontend-location.nginx.conf` 中的配置，指向
+`/opt/auth-frontend/current` 与 `/opt/sem-frontend/current`。禁止重新改回共享的
+`/opt/sem-frontend/dist`。
+
+## 八、验证
 
 ```bash
 curl https://sem.snipers.com.cn/health
 # 应返回 {"service":"sem-backend","env":"prod","db":"ok",...}
 ```
 
-## 八、第一次跑 OAuth 授权
+## 九、第一次跑服务商 OAuth 授权
 
-1. 在 RDS 里插一条 tenants 记录（苏尔寿）：
+1. 在商业开发者中心打开已生效的服务商应用：
+   - `BAIDU_APP_ID` 填应用 ID；
+   - `BAIDU_SECRET_KEY` 填应用详情中的 SecretKey；
+   - `BAIDU_OAUTH_SCOPE` 填“授权链接”中的 `scope` 参数原值。
+   SecretKey 只能进入服务器环境变量，不得写入前端或提交 Git。
+
+2. 执行迁移并重启后端：
+
+```bash
+cd /opt/sem-backend
+alembic upgrade head
+systemctl restart sem-backend
+```
+
+3. 验证正式回调已公开可达。缺参数时返回 422 属于正常；不能是 Nginx Basic Auth
+   的 401，也不能是路由不存在的 404：
+
+```bash
+curl -i https://sem.snipers.com.cn/api/oauth/baidu/callback
+```
+
+4. 登录 SEM → 首次接入 → 授权与同步 → 选择客户 → 点击“绑定百度推广”。
+   用户在百度官方页同意后，系统会验签、换取 Token、查询普通/超管及子账户、
+   加密入库，并在后台启动首次同步。
+
+5. 查库确认授权主体与推广账户均已建立：
+
 ```sql
-INSERT INTO tenants (name, strategy, monthly_budget)
-VALUES ('苏尔寿', 'lead', 100000.00);
--- 记下返回的 id（应该是 1）
+SELECT id, tenant_id, master_name, account_type, expires_at, status
+FROM baidu_oauth_grants;
+
+SELECT id, tenant_id, baidu_username, baidu_ucid, account_role, expires_at, status
+FROM baidu_accounts
+WHERE auth_mode = 'oauth';
 ```
 
-2. 浏览器访问：
-```
-https://sem.snipers.com.cn/api/oauth/baidu/authorize?tenant_id=1&baidu_username=<苏尔寿的百度推广账户用户名>
-```
-
-3. 跳到百度授权页 → 登录苏尔寿账号 → 同意授权 → 回跳到 callback → 应返回 JSON `{"status":"ok", ...}`
-
-4. 查 DB 确认：
-```sql
-SELECT id, tenant_id, baidu_username, expires_at, status FROM baidu_oauth_tokens;
-```
-
-至此 P0 OAuth 闭环完成。
+访问令牌到期前由15分钟调度自动刷新；刷新令牌失效后页面会提示重新授权。

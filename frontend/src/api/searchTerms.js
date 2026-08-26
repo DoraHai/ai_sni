@@ -24,9 +24,14 @@ export function syncSearchTerms({ tenantId, days = 30 }) {
 }
 
 // 加否词（写回百度，dry-run 保护）。matchMode: exact=精确否 / phrase=短语否
-export function addNegative({ tenantId, word, adgroupId, matchMode = 'exact' }) {
+export function addNegative({ tenantId, word, scope = 'adgroup', adgroupId, campaignId, matchMode = 'exact' }) {
   return client.post('/api/v1/search-terms/negative', {
-    tenant_id: tenantId, word, adgroup_id: adgroupId, match_mode: matchMode,
+    tenant_id: tenantId,
+    word,
+    scope,
+    adgroup_id: adgroupId,
+    campaign_id: campaignId,
+    match_mode: matchMode,
   })
 }
 
