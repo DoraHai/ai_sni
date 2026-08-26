@@ -90,6 +90,16 @@ def collect_production_issues(settings: "Settings") -> list[str]:
     if "*" in {item.strip() for item in cors_origins.split(",")}:
         issues.append("CORS_ALLOWED_ORIGINS must not contain * in production")
 
+    if bool(getattr(settings, "admin_api_key_query_enabled", False)):
+        issues.append(
+            "ADMIN_API_KEY_QUERY_ENABLED must be false in production "
+            "(API keys in URL leak via logs/Referer)"
+        )
+    if bool(getattr(settings, "geo_allow_self_review", False)):
+        issues.append(
+            "GEO_ALLOW_SELF_REVIEW is true — self-approve of content is a delivery risk"
+        )
+
     return issues
 
 

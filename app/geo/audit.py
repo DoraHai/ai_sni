@@ -157,6 +157,92 @@ def parse_robots_ai_agents(robots_text: str) -> dict[str, Any]:
         "unspecified_count": unspecified,
     }
 
+# Common AI crawler user-agents to audit in robots.txt
+AI_CRAWLER_AGENTS = (
+    "GPTBot",
+    "ChatGPT-User",
+    "ClaudeBot",
+    "anthropic-ai",
+    "Google-Extended",
+    "Bytespider",
+    "CCBot",
+    "PerplexityBot",
+)
+
+
+def parse_robots_ai_agents(robots_text: str) -> dict[str, Any]:
+    """Parse robots.txt for allow/disallow of known AI crawler UAs.
+
+    status: allowed | blocked | unspecified
+    """
+    text = robots_text or ""
+    blocks: list[dict[str, Any]] = []
+    current_uas: list[str] = []
+    current_rules: list[tuple[str, str]] = []
+
+    def flush() -> None:
+        nonlocal current_uas, current_rules
+        if current_uas:
+            blocks.append({"uas": list(current_uas), "rules": list(current_rules)})
+        current_uas = []
+        current_rules = []
+
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line or ":" not in line:
+            continue
+        key, val = line.split(":", 1)
+        key_l = key.strip().lower()
+        val = val.strip()
+        if key_l == "user-agent":
+            if current_rules:
+                flush()
+            elif current_uas and not current_rules:
+                # consecutive User-agent lines share rules later
+                pass
+            current_uas.append(val)
+        elif key_l in {"disallow", "allow"}:
+            if not current_uas:
+                current_uas = ["*"]
+            current_rules.append((key_l, val))
+    flush()
+
+    def status_for(ua: str) -> tuple[str, list[str]]:
+        ua_l = ua.lower()
+        matched: list[tuple[str, str]] = []
+        star: list[tuple[str, str]] = []
+        for block in blocks:
+            uas_l = [u.lower() for u in block["uas"]]
+            if ua_l in uas_l:
+                matched.extend(block["rules"])
+            if "*" in uas_l:
+                star.extend(block["rules"])
+        rules = matched if matched else star
+        disallows = [path for kind, path in rules if kind == "disallow" and path]
+        if any(path.strip() == "/" for path in disallows):
+            return "blocked", disallows
+        if matched:
+            return ("blocked" if disallows else "allowed"), disallows
+        return "unspecified", disallows
+
+    agents = []
+    allowed = blocked = unspecified = 0
+    for ua in AI_CRAWLER_AGENTS:
+        st, disallows = status_for(ua)
+        agents.append({"ua": ua, "status": st, "disallows": disallows[:8]})
+        if st == "allowed":
+            allowed += 1
+        elif st == "blocked":
+            blocked += 1
+        else:
+            unspecified += 1
+    return {
+        "agents": agents,
+        "allowed_count": allowed,
+        "blocked_count": blocked,
+        "unspecified_count": unspecified,
+    }
+
 
 class GeoAuditError(Exception):
     pass
@@ -185,6 +271,22 @@ def normalize_url(value: str) -> str:
     return url
 
 
+# Clash / Surge / Mihomo Fake-IP（RFC 2544 基准网段）。本机代理会把公网域名解析到这里。
+_PROXY_FAKE_IP_V4 = ipaddress.ip_network("198.18.0.0/15")
+
+
+def _is_proxy_fake_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return addr.version == 4 and addr in _PROXY_FAKE_IP_V4
+
+
+def _host_is_literal_ip(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
+
+
 async def _ensure_public_host(url: str) -> None:
     parsed = urlparse(url)
     host = parsed.hostname
@@ -192,6 +294,7 @@ async def _ensure_public_host(url: str) -> None:
         raise GeoAuditError("网址缺少主机名")
     if host.lower() == "localhost" or host.lower().endswith((".local", ".internal")):
         raise GeoAuditError("禁止诊断本机或内网地址")
+    literal = _host_is_literal_ip(host)
     try:
         addresses = [ipaddress.ip_address(host)]
     except ValueError:
@@ -204,7 +307,17 @@ async def _ensure_public_host(url: str) -> None:
         except socket.gaierror as exc:
             raise GeoAuditError(f"域名解析失败：{host}") from exc
         addresses = list({ipaddress.ip_address(info[4][0]) for info in infos})
-    if not addresses or any(not address.is_global for address in addresses):
+    if not addresses:
+        raise GeoAuditError("禁止诊断本机、内网或保留地址")
+    # 用户直接填了内网/保留 IP：仍拒绝。
+    if literal and any(not address.is_global for address in addresses):
+        raise GeoAuditError("禁止诊断本机、内网或保留地址")
+    # 公网域名经本机 Fake-IP 代理解析到 198.18.0.0/15：放行（真实流量走代理出网）。
+    if not literal and addresses and all(
+        address.is_global or _is_proxy_fake_ip(address) for address in addresses
+    ):
+        return
+    if any(not address.is_global for address in addresses):
         raise GeoAuditError("禁止诊断本机、内网或保留地址")
 
 

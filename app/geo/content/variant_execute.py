@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Any
 
@@ -125,10 +126,14 @@ async def execute_variants_for_task(
         for f in fact_rows
     ]
 
+    prepared: list[tuple[str, dict[str, Any] | None]] = []
     for channel in channel_list:
         prompts = await resolve_for_channel(session, tenant_id, channel)
+        prepared.append((channel, prompts))
+
+    async def _polish_one(channel: str, prompts: dict[str, Any] | None):
         try:
-            title, body, polish_meta = await adapt_or_polish_for_channel(
+            triple = await adapt_or_polish_for_channel(
                 channel,
                 article.title,
                 article.body_markdown,
@@ -139,31 +144,46 @@ async def execute_variants_for_task(
                 prompts=prompts,
                 facts=fact_dicts,
             )
-        except ArticleQualityError as exc:
-            polish_stats["rejected"] += 1
-            failed.append(
-                {
-                    "channel": channel,
-                    "reason": "article_quality",
-                    "issues": list(exc.issues)[:8],
-                    "message": str(exc),
-                }
-            )
-            continue
-        except GeoContentError as exc:
-            polish_stats["rejected"] += 1
-            failed.append(
-                {
-                    "channel": channel,
-                    "reason": "polish_error",
-                    "issues": [str(exc)],
-                    "message": str(exc),
-                }
-            )
-            continue
+            return channel, triple, None
+        except (ArticleQualityError, GeoContentError) as exc:
+            return channel, None, exc
 
-        if polish_meta.get("fallback"):
+    polished = await asyncio.gather(
+        *[_polish_one(ch, pr) for ch, pr in prepared],
+        return_exceptions=False,
+    )
+
+    for channel, triple, exc in polished:
+        if exc is not None:
+            polish_stats["rejected"] += 1
+            issues = list(getattr(exc, "issues", None) or [str(exc)])
+            failed.append(
+                {
+                    "channel": channel,
+                    "reason": "article_quality"
+                    if isinstance(exc, ArticleQualityError)
+                    else "polish_error",
+                    "issues": issues[:8],
+                    "message": str(exc),
+                }
+            )
+            continue
+        title, body, polish_meta = triple
+
+        if polish_meta.get("quality") == "adapted_draft_not_publishable" or polish_meta.get(
+            "fallback"
+        ):
             polish_stats["fallback"] += 1
+            issues = list(polish_meta.get("quality_issues") or [])
+            if issues:
+                failed.append(
+                    {
+                        "channel": channel,
+                        "reason": "article_quality",
+                        "issues": issues[:8],
+                        "message": "已出非正式渠道稿，未过发布门控",
+                    }
+                )
         else:
             polish_stats["llm"] += 1
 
@@ -256,6 +276,11 @@ async def execute_variants_for_task(
             **prev,
             "ready": ready,
             "checks": [c.to_dict() for c in checks],
+            "variant_polish": {
+                **polish_stats,
+                "failed": failed,
+                "created": created,
+            },
             "variant_channels": [v.channel for v in variants_now],
             "target_channels": list(task.target_channels or []),
             "checked_at": datetime.utcnow().isoformat(),

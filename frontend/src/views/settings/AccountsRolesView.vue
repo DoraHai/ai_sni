@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { createUser, fetchTenants, fetchUsers, updateUser } from '../../api/auth'
+import { createTenant, createUser, fetchTenants, fetchUsers, updateUser } from '../../api/auth'
 import { createRole, deleteRole, fetchRoles, updateRole } from '../../api/roles'
 import { session } from '../../store/session'
 
@@ -12,6 +12,16 @@ const usersData = ref(null)
 const rolesData = ref(null)
 const tenantOptions = ref([])
 const permissionDenied = computed(() => error.value?.code === 'PERMISSION_DENIED')
+const tenantDialog = ref(false)
+const savingTenant = ref(false)
+const tform = reactive({
+  name: '',
+  brandTerms: '',
+  industry: '',
+  adminUsername: '',
+  adminPassword: '',
+  adminDisplayName: '',
+})
 
 const LEVELS = [
   { v: '', l: '无' },
@@ -32,6 +42,7 @@ async function load() {
     usersData.value = users
     rolesData.value = roles
     tenantOptions.value = tenants.tenants || []
+    session.setTenants(tenantOptions.value)
   } catch (e) {
     error.value = e
   } finally {
@@ -53,6 +64,66 @@ const userDialog = ref(false)
 const savingUser = ref(false)
 const editingUserId = ref(null)
 const uform = reactive({ username: '', password: '', displayName: '', roleId: null, tenantId: null })
+
+function openCreateTenant() {
+  Object.assign(tform, {
+    name: '',
+    brandTerms: '',
+    industry: '',
+    adminUsername: '',
+    adminPassword: '',
+    adminDisplayName: '',
+  })
+  tenantDialog.value = true
+}
+
+async function submitTenant() {
+  if (!tform.name.trim()) {
+    ElMessage.warning('客户名称必填')
+    return
+  }
+  if (tform.adminUsername && tform.adminPassword.length < 8) {
+    ElMessage.warning('同时建账号时密码至少 8 位')
+    return
+  }
+  savingTenant.value = true
+  try {
+    const terms = tform.brandTerms
+      .split(/[,，、\s]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    const res = await createTenant({
+      name: tform.name.trim(),
+      brand_terms: terms,
+      industry: tform.industry.trim() || undefined,
+      admin_username: tform.adminUsername.trim() || undefined,
+      admin_password: tform.adminPassword || undefined,
+      admin_display_name: tform.adminDisplayName.trim() || undefined,
+    })
+    const t = await fetchTenants()
+    session.setTenants(t.tenants || [])
+    if (res.tenant?.id) session.setTenant(res.tenant.id)
+    if (res.admin_user) {
+      ElMessage.success(`客户「${res.tenant?.name}」已创建，并建了账号 ${res.admin_user.username}`)
+    } else {
+      ElMessage.success(
+        `客户「${res.tenant?.name}」已创建。这是空客户，业务数据不会从别的客户带过来；请顶栏切过去后走 GEO 开户向导。`,
+      )
+    }
+    tenantDialog.value = false
+    load()
+  } catch (e) {
+    ElMessage.error(e.message || '创建客户失败')
+  } finally {
+    savingTenant.value = false
+  }
+}
+
+function switchToTenant(row) {
+  if (!row?.id) return
+  session.setTenant(row.id)
+  ElMessage.success(`已切换到「${row.name}」`)
+}
 
 function openCreateUser() {
   editingUserId.value = null
@@ -196,6 +267,7 @@ onMounted(load)
         <div class="page-desc">自定义角色 · 权限细到左侧每个菜单（可见 / 可编辑）· 每个账号归属一个角色，可选限定单客户</div>
       </div>
       <div class="page-actions">
+        <el-button v-if="tab === 'accounts'" @click="openCreateTenant">新建客户</el-button>
         <el-button v-if="tab === 'accounts'" type="primary" @click="openCreateUser">新建账号</el-button>
         <el-button v-else type="primary" @click="openCreateRole">新建角色</el-button>
       </div>
@@ -206,6 +278,30 @@ onMounted(load)
     <el-tabs v-model="tab">
       <!-- ===== 账号 ===== -->
       <el-tab-pane label="账号" name="accounts">
+        <div class="table-panel tenant-panel">
+          <div class="panel-kicker">已建客户（{{ session.tenants.length }}）</div>
+          <el-table :data="session.tenants" row-key="id" size="small">
+            <el-table-column prop="id" label="ID" width="72" />
+            <el-table-column prop="name" label="客户名称" min-width="180" />
+            <el-table-column label="当前" width="90">
+              <template #default="{ row }">
+                <el-tag v-if="row.id === session.tenantId" type="success" size="small">使用中</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="140" fixed="right">
+              <template #default="{ row }">
+                <el-button
+                  size="small"
+                  :disabled="row.id === session.tenantId"
+                  @click="switchToTenant(row)"
+                >切到此客户</el-button>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <div class="empty-line">还没有客户，点右上角「新建客户」。</div>
+            </template>
+          </el-table>
+        </div>
         <div class="table-panel">
           <el-table :data="usersData?.users || []" row-key="id">
             <el-table-column label="用户名" min-width="140">
@@ -238,7 +334,11 @@ onMounted(load)
                 >{{ row.is_active ? '停用' : '启用' }}</el-button>
               </template>
             </el-table-column>
-            <template #empty><div class="empty-line">还没有账号，点右上角「新建账号」。</div></template>
+            <template #empty>
+              <div class="empty-line">
+                本地 API Key 模式下可以没有登录账号。新建客户不会自动出现在这张表；要出现一行请在「新建客户」里同时填管理员账号，或点「新建账号」并限定到该客户。
+              </div>
+            </template>
           </el-table>
         </div>
       </el-tab-pane>
@@ -272,6 +372,33 @@ onMounted(load)
         </div>
       </el-tab-pane>
     </el-tabs>
+
+    <el-dialog v-model="tenantDialog" title="新建客户" width="480px">
+      <el-form label-width="96px">
+        <el-form-item label="客户名称" required>
+          <el-input v-model="tform.name" placeholder="如：苏尔寿" />
+        </el-form-item>
+        <el-form-item label="品牌词">
+          <el-input v-model="tform.brandTerms" placeholder="逗号分隔，如：苏尔寿, Sulzer" />
+        </el-form-item>
+        <el-form-item label="行业">
+          <el-input v-model="tform.industry" placeholder="选填" />
+        </el-form-item>
+        <el-form-item label="管理员账号">
+          <el-input v-model="tform.adminUsername" placeholder="选填；填了会同时建绑定该客户的账号" />
+        </el-form-item>
+        <el-form-item v-if="tform.adminUsername" label="初始密码">
+          <el-input v-model="tform.adminPassword" type="password" show-password placeholder="至少 8 位" />
+        </el-form-item>
+        <el-form-item v-if="tform.adminUsername" label="显示名">
+          <el-input v-model="tform.adminDisplayName" placeholder="选填" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="tenantDialog = false">取消</el-button>
+        <el-button type="primary" :loading="savingTenant" @click="submitTenant">创建</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 账号 dialog -->
     <el-dialog v-model="userDialog" :title="editingUserId ? '编辑账号' : '新建账号'" width="460px">
@@ -337,6 +464,8 @@ onMounted(load)
 .page-title { font-size: 20px; font-weight: 600; color: var(--sem-text); }
 .page-desc { font-size: 12px; color: var(--sem-text-sub); margin-top: 4px; }
 .table-panel { background: #fff; border: 1px solid var(--sem-border); border-radius: 8px; overflow: hidden; }
+.tenant-panel { margin-bottom: 14px; }
+.panel-kicker { padding: 10px 14px 0; font-size: 12px; color: var(--sem-text-sub); }
 .sub { font-size: 12px; color: var(--sem-text-sub); }
 .empty-line { font-size: 12px; color: var(--sem-text-sub); padding: 18px 0; }
 .role-pill { font-size: 11px; padding: 2px 9px; border-radius: 10px; background: #eff4fb; color: #185fa5; }

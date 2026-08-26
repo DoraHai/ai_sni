@@ -3,7 +3,10 @@
 Growth Sniper AI 是一个由 FastAPI、PostgreSQL、Vue 3 和 Vite 构建的 SEM + GEO 运营平台。
 
 **使用说明（按模块）**：[`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)
+
 **GEO 详细操作手册**（开户 → 事实核验 → 写稿禁编造 → 竞品溯源 → 交付口径）：[`docs/GEO_OPERATOR_GUIDE.md`](docs/GEO_OPERATOR_GUIDE.md)
+
+**含可测数据的点击链路**（Udesk优地 #12 / 智齿业务 14）：[`docs/GEO_CLICK_TEST_CHAIN.md`](docs/GEO_CLICK_TEST_CHAIN.md)
 
 ## 项目结构
 

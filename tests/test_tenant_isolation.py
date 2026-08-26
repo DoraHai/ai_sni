@@ -22,6 +22,7 @@ os.environ.setdefault("CRYPTO_MASTER_KEY_B64", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
 from app.security.auth import AuthContext, require_scoped_auth
+from app.permissions import OPERATOR_PERMS
 
 
 class _BudgetRequest(BaseModel):
@@ -149,6 +150,21 @@ class TenantIsolationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json(), {"tenant_id": 10, "budget": 500.0})
         module_guard.assert_awaited_once()
         guard.assert_awaited_once()
+
+    def test_bound_api_key_is_not_superadmin(self):
+        ctx = AuthContext(
+            user_id=None,
+            username="api-key",
+            role_name="租户运维密钥",
+            tenant_id=10,
+            permissions=dict(OPERATOR_PERMS),
+            is_superadmin=False,
+        )
+        self.assertFalse(ctx.is_superadmin)
+        self.assertTrue(ctx.can_edit("geo.content"))
+        self.assertFalse(ctx.can_edit("settings.accounts"))
+        with self.assertRaises(HTTPException):
+            ctx.ensure_tenant(11)
 
 
 if __name__ == "__main__":

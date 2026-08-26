@@ -41,9 +41,16 @@ client.interceptors.response.use(
       expired.code = 'AUTH_EXPIRED'
       return Promise.reject(expired)
     }
+    const status = error.response?.status
     const detail =
       normalizeDetail(error.response?.data?.detail) ||
-      (error.code === 'ECONNABORTED' ? '请求超过 30 秒未完成，请检查网络或稍后重试' : error.message) ||
+      (status === 503
+        ? '数据库连不上。请先打开 Docker Desktop 并启动 Postgres，然后刷新。'
+        : status === 500
+          ? '服务内部错误。若刚打开页面就失败，多半是数据库未启动。'
+          : error.code === 'ECONNABORTED'
+            ? '请求超过 30 秒未完成，请检查网络或稍后重试'
+            : error.message) ||
       '网络异常，请稍后重试'
     const normalized = new Error(detail)
     normalized.status = error.response?.status

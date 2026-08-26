@@ -1,0 +1,3 @@
+Defaults:platform-deploy !requiretty
+platform-deploy ALL=(root) NOPASSWD: /usr/local/sbin/platform-deploy status
+platform-deploy ALL=(root) NOPASSWD: /usr/local/sbin/platform-deploy apply *

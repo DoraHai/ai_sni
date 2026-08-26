@@ -4,6 +4,8 @@
 
 菜单级速查见 [`USER_GUIDE.md`](USER_GUIDE.md)。指标公式见 [`GEO_METRIC_DICTIONARY.md`](GEO_METRIC_DICTIONARY.md)。本地端口见 [`LOCAL_GEO_DEMO.md`](LOCAL_GEO_DEMO.md)。
 
+**带现成客户 ID / 事实 / 任务的点击验收链路**见 [`GEO_CLICK_TEST_CHAIN.md`](GEO_CLICK_TEST_CHAIN.md)。
+
 **两条产品线不要混测**：GEO 是 AI 搜/问里的品牌可见度与内容闭环；SEM 是百度搜索广告。同一个客户里可以两套都开，但开户、词库、报告都要分开看。
 
 ---

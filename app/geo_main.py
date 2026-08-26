@@ -12,6 +12,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.database import engine
+from app.http_errors import register_infra_handlers
 from app.geo.content.oauth_public import router as geo_oauth_public_router
 from app.geo.routes import router as geo_router
 from app.api.customer_modules import geo_projects_router
@@ -27,12 +28,25 @@ async def _lifespan(_app: FastAPI):
     enforce_production_secrets(settings, hard_fail=True)
     start_geo_scheduler()
     try:
+        from app.geo.content.async_jobs import recover_jobs_on_startup
+
+        stats = await recover_jobs_on_startup(requeue_pending=True)
+        if any(stats.values()):
+            import logging
+
+            logging.getLogger("geo-api").info("async job recover: %s", stats)
+    except Exception:  # noqa: BLE001 — never block API boot
+        import logging
+
+        logging.getLogger("geo-api").exception("async job recover on startup failed")
+    try:
         yield
     finally:
         shutdown_geo_scheduler()
 
 
 app = FastAPI(title="Growth Sniper GEO API", version="0.1.0", lifespan=_lifespan)
+register_infra_handlers(app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list(),

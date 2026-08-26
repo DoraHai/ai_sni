@@ -54,9 +54,13 @@ export const session = {
 
   setTenants(list) {
     state.tenants = list
-    if (!state.tenantId || !list.some((t) => t.id === state.tenantId)) {
-      this.setTenant(list[0]?.id ?? null)
+    if (state.tenantId && list.some((t) => t.id === state.tenantId)) return
+    const stored = Number(sessionStorage.getItem('sem_tenant_id') || 0)
+    if (stored && list.some((t) => t.id === stored)) {
+      this.setTenant(stored)
+      return
     }
+    this.setTenant(list[0]?.id ?? null)
   },
 
   setModules(list) {

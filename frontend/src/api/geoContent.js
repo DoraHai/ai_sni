@@ -8,6 +8,57 @@ export function fetchGeoContentStats(tenantId) {
   return client.get('/api/v1/geo/content-stats', { params: { tenant_id: tenantId } })
 }
 
+/** 统一品牌提及率（观察期 + 样本构成） */
+export function fetchBrandMentionMetric(tenantId, params = {}) {
+  return client.get('/api/v1/geo/metrics/brand-mention', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
+export function fetchGeoMetricDictionary() {
+  return client.get('/api/v1/geo/metric-dictionary')
+}
+
+export function listCompetitorAliases(tenantId) {
+  return client.get('/api/v1/geo/competitor-aliases', {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function putCompetitorAliases(tenantId, body) {
+  return client.put('/api/v1/geo/competitor-aliases', body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function listDeliverableArchives(tenantId, limit = 30) {
+  return client.get('/api/v1/geo/deliverables/archives', {
+    params: { tenant_id: tenantId, limit },
+  })
+}
+
+export function createDeliverableArchive(tenantId, body) {
+  return client.post('/api/v1/geo/deliverables/archives', body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function getDeliverableArchive(tenantId, archiveId) {
+  return client.get(`/api/v1/geo/deliverables/archives/${archiveId}`, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function getDeliverableByShareToken(shareToken) {
+  return client.get(`/api/v1/geo/deliverables/share/${shareToken}`)
+}
+
+export function fetchGeoWeeklyInsights(tenantId, params = {}) {
+  return client.get('/api/v1/geo/weekly-insights', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
 export function listGeoPrompts(tenantId, statusOrParams, maybeParams) {
   const params =
     statusOrParams && typeof statusOrParams === 'object'
@@ -23,6 +74,30 @@ export function createGeoPrompt(body) {
 export function patchGeoPrompt(tenantId, promptId, body) {
   return client.patch(`/api/v1/geo/prompts/${promptId}`, body, {
     params: { tenant_id: tenantId },
+  })
+}
+
+/** 智能意图词推荐（百度/Google 下拉拓词，不自动入库） */
+export function expandGeoPromptCandidates(body) {
+  return client.post('/api/v1/geo/prompts/expand-candidates', body, { timeout: 120000 })
+}
+
+/** 将拓词候选确认为意图词入库 */
+export function promoteGeoPromptCandidates(body) {
+  return client.post('/api/v1/geo/prompts/promote-candidates', body)
+}
+
+/** 话题热度：意图词/问题组在快照中的提问频次趋势 */
+export function fetchGeoTopicHeat(tenantId, params = {}) {
+  return client.get('/api/v1/geo/topic-heat', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
+/** AI 动态与策略影响建议 */
+export function fetchGeoAiTrends(tenantId, params = {}) {
+  return client.get('/api/v1/geo/ai-trends', {
+    params: { tenant_id: tenantId, ...params },
   })
 }
 
@@ -119,8 +194,8 @@ export function patchGeoFact(tenantId, factId, body) {
   })
 }
 
-export function verifyGeoFact(tenantId, factId) {
-  return client.post(`/api/v1/geo/facts/${factId}/verify`, null, {
+export function verifyGeoFact(tenantId, factId, body = {}) {
+  return client.post(`/api/v1/geo/facts/${factId}/verify`, body, {
     params: { tenant_id: tenantId },
   })
 }
@@ -138,6 +213,16 @@ export function testGeoAiSettings(tenantId) {
     params: { tenant_id: tenantId },
     timeout: 60000,
   })
+}
+
+export function fetchChannelPolishPrompts(tenantId) {
+  return client.get('/api/v1/geo/channel-polish-prompts', {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function putChannelPolishPrompts(body) {
+  return client.put('/api/v1/geo/channel-polish-prompts', body)
 }
 
 export function putGeoTrackingEngines(tenantId, items) {
@@ -232,9 +317,12 @@ export function normalizeStaticGeoPage(page = 'dashboard.html') {
 }
 
 function staticGeoQuery(tenantId, extra = {}) {
-  const qs = new URLSearchParams({ tenant_id: String(tenantId || 1), ...extra })
-  const key = import.meta.env.VITE_API_KEY
-  if (key && key !== 'CHANGE_ME') qs.set('api_key', key)
+  // 产品页禁止把 API Key 放进 URL（历史/Referer/代理日志）。静态壳仅保留 tenant 定位。
+  const tid = Number(tenantId)
+  const qs = new URLSearchParams({
+    tenant_id: String(Number.isFinite(tid) && tid > 0 ? tid : ''),
+    ...extra,
+  })
   if (import.meta.env.DEV) qs.set('api_origin', 'http://127.0.0.1:8011')
   return qs
 }
@@ -287,6 +375,60 @@ export function getGeoContentTask(tenantId, taskId) {
   return client.get(`/api/v1/geo/content-tasks/${taskId}`, { params: { tenant_id: tenantId } })
 }
 
+/** 发布后效果：引用命中 + 意图词发布前后提及率 */
+export function fetchGeoContentTaskImpact(tenantId, taskId, windowDays = 14) {
+  return client.get(`/api/v1/geo/content-tasks/${taskId}/impact`, {
+    params: { tenant_id: tenantId, window_days: windowDays },
+  })
+}
+
+export function fetchGapWorkbench(tenantId, params = {}) {
+  return client.get('/api/v1/geo/gap-workbench', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
+/** 历史快照 publication 归因回填 */
+export function backfillAttribution(tenantId, { limit = 500, onlyEmpty = true } = {}) {
+  return client.post('/api/v1/geo/attribution/backfill', null, {
+    params: {
+      tenant_id: tenantId,
+      limit,
+      only_empty: !!onlyEmpty,
+    },
+    timeout: 120000,
+  })
+}
+
+export function createTasksFromGaps(tenantId, promptIds) {
+  return client.post('/api/v1/geo/gap-workbench/create-tasks', {
+    tenant_id: tenantId,
+    prompt_ids: promptIds,
+  })
+}
+
+export function listOptimizationPeriods(tenantId, params = {}) {
+  return client.get('/api/v1/geo/optimization-periods', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
+export function createOptimizationPeriod(body) {
+  return client.post('/api/v1/geo/optimization-periods', body)
+}
+
+export function getOptimizationPeriod(tenantId, periodId) {
+  return client.get(`/api/v1/geo/optimization-periods/${periodId}`, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function closeOptimizationPeriod(tenantId, periodId) {
+  return client.post(`/api/v1/geo/optimization-periods/${periodId}/close`, null, {
+    params: { tenant_id: tenantId },
+  })
+}
+
 export function createGeoContentTask(body) {
   return client.post('/api/v1/geo/content-tasks', body)
 }
@@ -309,10 +451,83 @@ export function bindGeoTaskFacts(tenantId, taskId, factIds) {
   )
 }
 
-export function generateGeoContentTask(tenantId, taskId) {
+export function generateGeoContentTask(tenantId, taskId, { runAsync = true } = {}) {
   return client.post(`/api/v1/geo/content-tasks/${taskId}/generate`, null, {
+    params: { tenant_id: tenantId, run_async: !!runAsync },
+    timeout: runAsync ? 30000 : 180000,
+  })
+}
+
+export function getGeoAsyncJob(tenantId, jobId) {
+  return client.get(`/api/v1/geo/async-jobs/${jobId}`, {
     params: { tenant_id: tenantId },
-    timeout: 120000,
+  })
+}
+
+export function cancelGeoAsyncJob(tenantId, jobId) {
+  return client.post(`/api/v1/geo/async-jobs/${jobId}/cancel`, null, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function listGeoAsyncJobs(tenantId, params = {}) {
+  return client.get('/api/v1/geo/async-jobs', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
+/** Poll async job until terminal status */
+export async function waitGeoAsyncJob(
+  tenantId,
+  jobId,
+  { intervalMs = 2500, maxMs = 45 * 60 * 1000, onTick } = {},
+) {
+  // Align with backend stale running window (~45min); do not fail UI while job still runs
+  const start = Date.now()
+  while (Date.now() - start < maxMs) {
+    const job = await getGeoAsyncJob(tenantId, jobId)
+    if (typeof onTick === 'function') onTick(job)
+    if (['succeeded', 'failed', 'cancelled'].includes(job.status)) return job
+    await new Promise((r) => setTimeout(r, intervalMs))
+  }
+  // Soft timeout: return last known job so UI can say「转后台继续」
+  try {
+    return await getGeoAsyncJob(tenantId, jobId)
+  } catch {
+    throw new Error('异步任务仍在后台运行，请稍后刷新查看结果')
+  }
+}
+
+export function previewGeoOnboarding(body) {
+  return client.post('/api/v1/geo/onboarding/preview', body, { timeout: 120000 })
+}
+
+export function applyGeoOnboarding(body) {
+  return client.post('/api/v1/geo/onboarding/apply', body, { timeout: 60000 })
+}
+
+export function fetchOnboardingReadiness(tenantId) {
+  return client.get('/api/v1/geo/onboarding/readiness', {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function fetchBusinessDashboard(tenantId, businessId, days = 14) {
+  return client.get(`/api/v1/geo/optimization-businesses/${businessId}/dashboard`, {
+    params: { tenant_id: tenantId, days },
+  })
+}
+
+export function fetchMonitoringStance(tenantId) {
+  return client.get('/api/v1/geo/monitoring-stance', {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function putMonitoringStance(tenantId, stance) {
+  return client.put('/api/v1/geo/monitoring-stance', {
+    tenant_id: tenantId,
+    monitoring_stance: stance,
   })
 }
 
@@ -375,10 +590,20 @@ export function aiReviewGeoContentTask(tenantId, taskId, body = { persist: true 
   })
 }
 
-export function createGeoVariants(tenantId, taskId, channels = ['website', 'wechat', 'zhihu']) {
-  return client.post(`/api/v1/geo/content-tasks/${taskId}/variants`, { channels }, {
-    params: { tenant_id: tenantId },
-  })
+export function createGeoVariants(
+  tenantId,
+  taskId,
+  channels = ['website', 'wechat', 'zhihu'],
+  { useLlm = true, runAsync = true } = {},
+) {
+  return client.post(
+    `/api/v1/geo/content-tasks/${taskId}/variants`,
+    { channels, use_llm: useLlm },
+    {
+      params: { tenant_id: tenantId, run_async: !!runAsync },
+      timeout: runAsync ? 30000 : 180000,
+    },
+  )
 }
 
 export function patchGeoVariant(tenantId, taskId, channel, body) {
@@ -409,9 +634,10 @@ export function fetchTaskPushTargets(tenantId, taskId) {
   })
 }
 
-export function pushGeoVariantBatch(taskId, body) {
+export function pushGeoVariantBatch(taskId, body, { runAsync = true } = {}) {
   return client.post(`/api/v1/geo/content-tasks/${taskId}/push-batch`, body, {
-    timeout: 300000,
+    params: { run_async: !!runAsync },
+    timeout: runAsync ? 30000 : 300000,
   })
 }
 
@@ -573,15 +799,19 @@ export function suggestGeoAnswerSnapshotFields(body) {
   return client.post('/api/v1/geo/answer-snapshots/suggest-fields', body, { timeout: 90000 })
 }
 
+export function checkGeoAnswerSnapshotCitations(body) {
+  return client.post('/api/v1/geo/answer-snapshots/check-citations', body, { timeout: 60000 })
+}
+
 export function listGeoTrackingEngines(tenantId, enabledOnly = false) {
   return client.get('/api/v1/geo/tracking-engines', {
     params: { tenant_id: tenantId, enabled_only: enabledOnly },
   })
 }
 
-export function fetchGeoCitationInsights(tenantId) {
+export function fetchGeoCitationInsights(tenantId, params = {}) {
   return client.get('/api/v1/geo/citation-insights', {
-    params: { tenant_id: tenantId },
+    params: { tenant_id: tenantId, ...params },
   })
 }
 
@@ -591,9 +821,112 @@ export function fetchGeoCompetitorInsights(tenantId) {
   })
 }
 
-export function fetchGeoEvaluationInsights(tenantId) {
-  return client.get('/api/v1/geo/evaluation-insights', {
+export function fetchGeoCompetitorCompare(tenantId) {
+  return client.get('/api/v1/geo/competitor-insights/compare', {
     params: { tenant_id: tenantId },
+  })
+}
+
+export function fetchGeoCompetitorDaily(tenantId, params = {}) {
+  return client.get('/api/v1/geo/competitor-insights/daily', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
+export function fetchGeoCompetitorTrace(tenantId, name) {
+  return client.get('/api/v1/geo/competitor-insights/trace', {
+    params: { tenant_id: tenantId, name },
+  })
+}
+
+export function searchGeoCompetitorWeb(tenantId, name) {
+  return client.post('/api/v1/geo/competitor-insights/web-search', null, {
+    params: { tenant_id: tenantId, name },
+    timeout: 60000,
+  })
+}
+
+export function createGeoCompetitorReport(body) {
+  return client.post('/api/v1/geo/competitor-insights/report', body)
+}
+
+export function listGeoCompetitorReports(tenantId, params = {}) {
+  return client.get('/api/v1/geo/competitor-reports', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
+export function getGeoCompetitorReport(tenantId, reportId) {
+  return client.get(`/api/v1/geo/competitor-reports/${reportId}`, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function saveGeoCompetitorReport(body) {
+  return client.post('/api/v1/geo/competitor-reports', body)
+}
+
+export function patchGeoCompetitorReport(tenantId, reportId, body) {
+  return client.patch(`/api/v1/geo/competitor-reports/${reportId}`, body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function confirmGeoCompetitorReport(tenantId, reportId) {
+  return client.post(`/api/v1/geo/competitor-reports/${reportId}/confirm`, null, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function archiveGeoCompetitorReport(tenantId, reportId) {
+  return client.post(`/api/v1/geo/competitor-reports/${reportId}/archive`, null, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function createTaskFromCompetitorReport(tenantId, reportId) {
+  return client.post(`/api/v1/geo/competitor-reports/${reportId}/create-task`, null, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function restoreGeoCompetitorReport(tenantId, reportId, versionNo) {
+  return client.post(`/api/v1/geo/competitor-reports/${reportId}/restore`, null, {
+    params: { tenant_id: tenantId, version_no: versionNo },
+  })
+}
+
+export async function exportGeoCompetitorReport(tenantId, reportId, format = 'md') {
+  const data = await client.get(`/api/v1/geo/competitor-reports/${reportId}/export`, {
+    params: { tenant_id: tenantId, format },
+    responseType: 'text',
+    transformResponse: [(v) => v],
+  })
+  return typeof data === 'string' ? data : String(data ?? '')
+}
+
+export function auditGeoSitemap(tenantId, websiteUrl) {
+  return client.post('/api/v1/geo/onboarding/sitemap-audit', null, {
+    params: { tenant_id: tenantId, website_url: websiteUrl },
+    timeout: 180000,
+  })
+}
+
+export function createTasksFromSitemapAudit(tenantId, items) {
+  return client.post(
+    '/api/v1/geo/onboarding/sitemap-audit/create-tasks',
+    { items },
+    { params: { tenant_id: tenantId } },
+  )
+}
+
+export function createGeoCompetitorRecTasks(body) {
+  return client.post('/api/v1/geo/competitor-insights/create-tasks', body)
+}
+
+export function fetchGeoEvaluationInsights(tenantId, params = {}) {
+  return client.get('/api/v1/geo/evaluation-insights', {
+    params: { tenant_id: tenantId, ...params },
   })
 }
 

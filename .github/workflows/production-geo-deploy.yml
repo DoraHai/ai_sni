@@ -1,0 +1,123 @@
+name: Production GEO deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type DEPLOY_GEO to publish the approved GEO baseline
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-geo-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and deploy GEO only
+    if: github.ref_name == 'codex/production-geo'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - name: Validate confirmation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          test "$CONFIRMATION" = "DEPLOY_GEO" || {
+            echo "Confirmation must be DEPLOY_GEO" >&2
+            exit 2
+          }
+
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/production-geo
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            frontend/geo-frontend/package-lock.json
+
+      - name: Install shared frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build independent GEO frontend
+        working-directory: frontend/geo-frontend
+        run: npm ci && npm run build
+
+      - name: Create isolated GEO release archive
+        run: |
+          commit="$(git rev-parse HEAD)"
+          release_root="$RUNNER_TEMP/geo-release"
+          install -d "$release_root/backend" "$release_root/frontend"
+          cp -a app "$release_root/backend/app"
+          cp -a migrations "$release_root/backend/migrations"
+          cp requirements.txt alembic.ini "$release_root/backend/"
+          cp -a frontend/geo-frontend/dist/. "$release_root/frontend/"
+          {
+            echo 'module=geo'
+            echo "commit=$commit"
+            echo 'migration=not-run'
+          } > "$release_root/MANIFEST"
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/geo-${commit}.tgz" geo-release
+          echo "GEO_COMMIT=$commit" >> "$GITHUB_ENV"
+          echo "GEO_ARCHIVE=$RUNNER_TEMP/geo-${commit}.tgz" >> "$GITHUB_ENV"
+          echo "GEO_ARCHIVE_SHA256=$(sha256sum "$RUNNER_TEMP/geo-${commit}.tgz" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/platform-deploy
+          chmod 600 ~/.ssh/platform-deploy
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Upload GEO release archive
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          remote_path="/home/platform-deploy/uploads/geo-${GEO_COMMIT}.tgz"
+          scp \
+            -i ~/.ssh/platform-deploy \
+            -P "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$GEO_ARCHIVE" \
+            "$DEPLOY_USER@$DEPLOY_HOST:${remote_path}.part"
+          ssh \
+            -i ~/.ssh/platform-deploy \
+            -p "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "mv '${remote_path}.part' '$remote_path'"
+
+      - name: Apply GEO release without database migration
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          remote_path="/home/platform-deploy/uploads/geo-${GEO_COMMIT}.tgz"
+          ssh \
+            -i ~/.ssh/platform-deploy \
+            -p "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "sudo -n /usr/local/sbin/platform-deploy apply geo '$remote_path' '$GEO_COMMIT' '$GEO_ARCHIVE_SHA256' DEPLOY_GEO"

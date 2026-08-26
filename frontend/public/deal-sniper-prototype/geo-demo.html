@@ -1,16 +1,19 @@
 ﻿<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="UTF-8"><title>GEO 鏈湴鍏ュ彛</title>
 <style>
-  body{font-family:"Segoe UI","PingFang SC",sans-serif;max-width:720px;margin:48px auto;padding:0 16px;color:#1e2330}
+  body{font-family:"Segoe UI","PingFang SC",sans-serif;max-width:760px;margin:48px auto;padding:0 16px;color:#1e2330}
   a{color:#7c3aed} code{background:#f5f0ff;padding:2px 6px;border-radius:4px}
-  li{margin:10px 0}
+  li{margin:10px 0} .warn{color:#b45309}
 </style></head><body>
-<h1>GEO 鏈湴鍏ュ彛</h1>
-<p>绔彛宸查敊寮€锛岃鏀惰棌鏈〉銆?/p>
+<h1>GEO 鏈湴鍏ュ彛锛堝彲浜や粯 Demo锛?/h1>
+<p>绔彛閿欏紑锛涙敹钘忔湰椤点€傞潤鎬侀〉蹇呴』甯?<code>/geo/</code> 鍓嶇紑銆?/p>
 <ul>
-  <li><a href="/geo/dashboard.html?tenant_id=1&api_key=geo-demo-local-key&api_origin=http://127.0.0.1:8011">GEO 鍐呭宸ヤ綔鍙帮紙5176锛?/a></li>
-  <li><a href="http://127.0.0.1:5174/diagnostic-center/">璇婃柇涓績锛?174锛?/a></li>
-  <li>API锛?code>http://127.0.0.1:8011</code></li>
+  <li><strong>Vue 杩愯惀鍙?/strong>锛?a href="http://127.0.0.1:5173/geo/overview">http://127.0.0.1:5173/geo/overview</a>锛堥渶 <code>-WithVue</code>锛?/li>
+  <li><strong>Vue 浠诲姟鍒楄〃</strong>锛?a href="http://127.0.0.1:5173/geo/tasks">/geo/tasks</a></li>
+  <li><strong>静态工作台</strong>：<a href="/geo/dashboard.html?tenant_id=1&api_origin=http://127.0.0.1:8011">/geo/dashboard.html</a>（勿在 URL 放 api_key；请用请求头 X-API-Key）</li>
+  <li class="warn">閿欒鍏ュ彛锛?04锛夛細<code>/dashboard.html</code>锛堟棤 geo 鍓嶇紑锛?/li>
+  <li>GEO API锛?code>http://127.0.0.1:8011</code> 路 涓荤珯 API锛?code>http://127.0.0.1:8000</code></li>
+  <li>璇婃柇涓績锛?a href="http://127.0.0.1:5174/diagnostic-center/">5174</a>锛堝彲閫夛級</li>
 </ul>
-<p>璇存槑瑙佷粨搴?<code>docs/LOCAL_GEO_DEMO.md</code>銆?/p>
+<p>浜や粯娓呭崟锛?code>docs/GEO_DELIVERY_CHECKLIST.md</code> 路 鑱旇皟锛?code>docs/LOCAL_GEO_DEMO.md</code></p>
 </body></html>

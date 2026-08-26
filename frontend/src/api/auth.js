@@ -18,6 +18,10 @@ export function fetchModules() {
   return client.get('/api/v1/auth/modules')
 }
 
+export function createTenant(body) {
+  return client.post('/api/v1/auth/tenants', body)
+}
+
 export function changePassword({ oldPassword, newPassword }) {
   return client.patch('/api/v1/auth/password', {
     old_password: oldPassword,

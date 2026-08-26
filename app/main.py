@@ -55,6 +55,7 @@ from app.baidu.sync import (
 from app.classification import reclassify_keywords
 from app.config import get_settings
 from app.database import async_session_factory, engine, get_session
+from app.http_errors import register_infra_handlers
 from app.models import BaiduAccount, Keyword, Tenant
 from app.scheduler import (
     refresh_keyword_workbench_snapshot,
@@ -79,6 +80,14 @@ async def lifespan(_app: FastAPI):
         settings.app_base_url,
         settings.baidu_default_username,
     )
+    try:
+        from app.geo.content.async_jobs import recover_jobs_on_startup
+
+        stats = await recover_jobs_on_startup(requeue_pending=True)
+        if any(stats.values()):
+            logger.info("GEO async job recover: %s", stats)
+    except Exception:  # noqa: BLE001
+        logger.exception("GEO async job recover on startup failed")
     start_scheduler()
     try:
         yield
@@ -87,6 +96,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="SEM 智投平台后端", version="0.3.0", lifespan=lifespan)
+register_infra_handlers(app)
 
 # 原型页（file:// 或其他域名）直连接口需要 CORS。API Key 走自定义头/查询参数，不涉及 credentials。
 app.add_middleware(

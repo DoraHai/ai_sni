@@ -136,10 +136,12 @@ def test_metric_day_from_captured():
     from datetime import date, datetime
 
     from app.geo.content.daily_metrics import _metric_day_from_captured
+    from app.geo.content.time_windows import shanghai_today
 
     assert _metric_day_from_captured(datetime(2026, 8, 7, 15, 30)).isoformat() == "2026-08-07"
+    assert _metric_day_from_captured(datetime(2026, 8, 7, 20, 30)).isoformat() == "2026-08-08"
     assert _metric_day_from_captured(date(2026, 1, 2)).isoformat() == "2026-01-02"
-    assert _metric_day_from_captured(None) == date.today()
+    assert _metric_day_from_captured(None) == shanghai_today()
 
 
 def test_aggregate_engine_and_prompt_slices():

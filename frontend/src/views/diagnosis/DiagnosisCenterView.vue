@@ -798,9 +798,7 @@ async function bridgeToContent(adviceCode) {
     url.searchParams.set('task_id', String(taskId))
     url.searchParams.set('tenant_id', String(tenantId.value))
     url.searchParams.set('api_origin', import.meta.env.VITE_GEO_API_ORIGIN || 'http://127.0.0.1:8011')
-    if (import.meta.env.VITE_API_KEY) {
-      url.searchParams.set('api_key', import.meta.env.VITE_API_KEY)
-    }
+    // 禁止把 api_key 放进 URL（会进浏览器历史/Referer/代理日志）；静态页应走同源 header 或登录态
 
     const opened = window.open(url.toString(), '_blank')
     if (!opened) {
