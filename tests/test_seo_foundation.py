@@ -1,5 +1,8 @@
-from datetime import datetime
+import asyncio
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -8,16 +11,27 @@ from app.api.seo import (
     BrandProfileUpdate,
     ContentCreate,
     KeywordCreate,
+    KeywordImport,
     MetricSnapshotCreate,
     RankSnapshotCreate,
+    SerpCollectRequest,
     SeoContentAssistRequest,
     SitePageImport,
     _keyword_payload,
+    _apply_site_page_audit,
     _metric_payload,
+    _missing_content_keywords,
     _number_or_text,
     _provider_metric_status,
+    _rank_iso,
+    _serp_error_payload,
     _normalize_brand_homepage,
     _seo_ai_prompt,
+    _selected_keyword_ids,
+    _sanitize_content_html,
+    _validated_seo_assist_result,
+    assist_seo_content,
+    collect_rank_serp,
 )
 from app.models.seo import (
     SeoBacklink,
@@ -37,6 +51,7 @@ from app.models.seo import (
 from app.models.tenant import Tenant
 from app.permissions import CLIENT_PERMS, MENU_KEYS, OPERATOR_PERMS
 from app.security.auth import AuthContext, _required
+from app.seo_serp import SerpProviderError
 
 
 def test_seo_permissions_are_registered_for_all_roles() -> None:
@@ -44,6 +59,28 @@ def test_seo_permissions_are_registered_for_all_roles() -> None:
     assert keys <= MENU_KEYS
     assert all(OPERATOR_PERMS[key] == "edit" for key in keys)
     assert all(CLIENT_PERMS[key] == "view" for key in keys)
+
+
+def test_page_audit_result_updates_title_and_page_health() -> None:
+    row = SimpleNamespace()
+    _apply_site_page_audit(
+        row,
+        {
+            "title": "NORD 页面标题",
+            "description": "页面描述",
+            "score": 90,
+            "snapshot": {"h1": ["主标题"], "canonical": "https://nord.cn/page", "content_units": 500},
+            "checks": [
+                {"code": "indexable", "passed": True},
+                {"code": "description", "passed": False},
+            ],
+        },
+    )
+    assert row.title == "NORD 页面标题"
+    assert row.meta_description == "页面描述"
+    assert row.h1 == "主标题"
+    assert row.issue_codes == ["description"]
+    assert row.status == "needs_fix"
 
 
 @pytest.mark.parametrize(
@@ -88,14 +125,23 @@ def test_tenant_bound_context_rejects_cross_tenant_write() -> None:
 def test_keyword_and_rank_input_validation() -> None:
     keyword = KeywordCreate(
         tenant_id=1,
+        site_id=9,
         keyword="CRM 系统",
         difficulty=68,
         monthly_volume=1200,
         priority="P0",
     )
     assert keyword.keyword == "CRM 系统"
+    assert keyword.site_id == 9
     with pytest.raises(ValidationError):
-        KeywordCreate(tenant_id=1, keyword="CRM", difficulty=101)
+        KeywordCreate(tenant_id=1, keyword="未关联网站")
+    with pytest.raises(ValidationError):
+        KeywordCreate(tenant_id=1, site_id=9, keyword="CRM", difficulty=101)
+    with pytest.raises(ValidationError):
+        KeywordImport(
+            tenant_id=1,
+            items=[KeywordCreate(tenant_id=1, site_id=9, keyword="CRM")],
+        )
     with pytest.raises(ValidationError):
         RankSnapshotCreate(
             tenant_id=1,
@@ -176,6 +222,35 @@ def test_seo_ai_assist_request_and_prompt_are_fact_guarded() -> None:
     assert "语言更自然" in user
 
 
+def test_seo_content_supports_one_to_five_ordered_keywords() -> None:
+    request = SeoContentAssistRequest(
+        tenant_id=1,
+        action="generate",
+        keyword_ids=[11, 12, 13],
+    )
+    tenant = Tenant(id=1, name="测试品牌", industry="工业软件", brand_terms=["测试品牌"])
+    keywords = [
+        SeoKeywordAsset(id=11, tenant_id=1, keyword="测试品牌", priority="P1", status="active", source="manual"),
+        SeoKeywordAsset(id=12, tenant_id=1, keyword="工业软件", priority="P1", status="active", source="manual"),
+        SeoKeywordAsset(id=13, tenant_id=1, keyword="设备管理系统", priority="P2", status="active", source="manual"),
+    ]
+
+    system, user = _seo_ai_prompt(request, tenant, keywords)
+
+    assert "正文必须逐字、自然地包含全部目标关键词" in system
+    assert "主关键词：测试品牌" in user
+    assert "辅助关键词：工业软件、设备管理系统" in user
+    assert _selected_keyword_ids(request.keyword_ids, request.keyword_id) == [11, 12, 13]
+    assert _missing_content_keywords({"content": "测试品牌提供工业软件能力。"}, keywords) == ["设备管理系统"]
+
+
+def test_seo_content_rejects_more_than_five_keywords() -> None:
+    with pytest.raises(ValidationError):
+        SeoContentAssistRequest(tenant_id=1, action="generate", keyword_ids=[1, 2, 3, 4, 5, 6])
+    with pytest.raises(ValidationError):
+        ContentCreate(tenant_id=1, title="多关键词文章", keyword_ids=[1, 2, 3, 4, 5, 6])
+
+
 def test_seo_ai_assist_rejects_oversized_instruction() -> None:
     with pytest.raises(ValidationError):
         SeoContentAssistRequest(
@@ -183,6 +258,99 @@ def test_seo_ai_assist_rejects_oversized_instruction() -> None:
             action="title",
             instruction="x" * 5001,
         )
+
+
+def test_seo_content_html_is_sanitized_before_storage() -> None:
+    cleaned = _sanitize_content_html(
+        '<h2 onclick="steal()">标题</h2><p>正文<script>alert(1)</script>'
+        '<img src="https://example.com/a.png" onerror="steal()"></p>'
+    )
+    assert cleaned is not None
+    assert "onclick" not in cleaned
+    assert "onerror" not in cleaned
+    assert "<script" not in cleaned
+    assert '<img src="https://example.com/a.png"/>' in cleaned
+
+
+@pytest.mark.parametrize(
+    ("action", "result"),
+    [
+        ("generate", {"content": "只有正文"}),
+        ("outline", {"feedback": "没有大纲"}),
+        ("title", {"title": ""}),
+        ("keywords", {"suggestions": []}),
+        ("rewrite", {"feedback": "没有正文"}),
+    ],
+)
+def test_seo_ai_quick_actions_reject_missing_result_fields(
+    action: str, result: dict[str, object]
+) -> None:
+    with pytest.raises(Exception) as exc:
+        _validated_seo_assist_result(action, result)
+    assert getattr(exc.value, "status_code", None) == 502
+
+
+@pytest.mark.parametrize(
+    ("action", "request_values", "ai_result", "expected_key"),
+    [
+        ("outline", {}, {"outline": "一、需求\n二、方案", "feedback": "已生成"}, "outline"),
+        ("title", {}, {"title": "目标词选型指南", "feedback": "已优化"}, "title"),
+        (
+            "keywords",
+            {"draft": "这是一篇围绕目标词展开的文章。"},
+            {"feedback": "覆盖自然", "suggestions": ["补充应用场景"]},
+            "suggestions",
+        ),
+        (
+            "rewrite",
+            {"draft": "需要优化表达的目标词正文。"},
+            {"content": "优化后的目标词正文。", "feedback": "已优化"},
+            "content",
+        ),
+    ],
+)
+def test_seo_ai_quick_actions_return_expected_contract(
+    action: str,
+    request_values: dict[str, str],
+    ai_result: dict[str, object],
+    expected_key: str,
+) -> None:
+    request = SeoContentAssistRequest(
+        tenant_id=1,
+        action=action,
+        keyword_ids=[11],
+        **request_values,
+    )
+    tenant = Tenant(id=1, name="测试品牌")
+    keywords = [
+        SeoKeywordAsset(
+            id=11,
+            tenant_id=1,
+            keyword="目标词",
+            priority="P1",
+            status="active",
+            source="manual",
+        )
+    ]
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+
+    with (
+        patch("app.api.seo._tenant", new=AsyncMock(return_value=tenant)),
+        patch("app.api.seo._content_keywords", new=AsyncMock(return_value=keywords)),
+        patch("app.api.seo.is_enabled", return_value=True),
+        patch("app.api.seo.chat_json", new=AsyncMock(return_value=ai_result)) as chat,
+    ):
+        response = asyncio.run(assist_seo_content(request, AsyncMock(), context))
+
+    assert response["action"] == action
+    assert expected_key in response
+    chat.assert_awaited_once()
 
 
 def test_rank_delta_uses_smaller_rank_as_improvement() -> None:
@@ -224,6 +392,115 @@ def test_rank_delta_uses_smaller_rank_as_improvement() -> None:
     payload = _keyword_payload(keyword, latest, previous)
     assert payload["latest_rank"] == 4
     assert payload["rank_delta"] == 5
+
+
+def test_rank_timestamps_are_serialized_as_explicit_utc_instants() -> None:
+    assert _rank_iso(datetime(2026, 8, 24, 16, 57, 3)) == "2026-08-24T16:57:03Z"
+    shanghai_value = datetime(
+        2026,
+        8,
+        25,
+        0,
+        57,
+        3,
+        tzinfo=timezone(timedelta(hours=8)),
+    )
+    assert _rank_iso(shanghai_value) == "2026-08-24T16:57:03Z"
+
+
+def test_serp_collection_error_payload_uses_ids_and_safe_metadata_only() -> None:
+    error = SerpProviderError(
+        "provider_unavailable",
+        "站长之家接口暂时不可用",
+        retryable=True,
+        status_code=503,
+    )
+
+    payload = _serp_error_payload(3, "desktop", error)
+
+    assert payload == {
+        "keyword_id": 3,
+        "device": "desktop",
+        "code": "provider_unavailable",
+        "message": "站长之家接口暂时不可用",
+        "retryable": True,
+        "status_code": 503,
+    }
+    assert "keyword" not in payload
+    assert "url" not in payload
+
+
+def test_all_failed_serp_collection_returns_generic_safe_error() -> None:
+    request = SerpCollectRequest(
+        tenant_id=1,
+        site_id=1,
+        keyword_ids=[3],
+        devices=["desktop"],
+        max_keywords=1,
+        use_ai=False,
+    )
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.keywords": "edit"},
+    )
+    failed = {
+        "snapshots": 0,
+        "errors": [
+            {
+                "keyword_id": 3,
+                "device": "desktop",
+                "code": "provider_unavailable",
+                "message": "站长之家接口暂时不可用",
+            }
+        ],
+    }
+    session = AsyncMock()
+    session.scalar = AsyncMock(return_value=1)
+    reserve = MagicMock(return_value={"allowed": False, "retry_after_seconds": 3600})
+
+    collector = AsyncMock(return_value=failed)
+    with patch(
+        "app.api.seo.collect_rank_serp_for_tenant",
+        new=collector,
+    ), patch(
+        "app.api.seo._seo_site",
+        new=AsyncMock(return_value=object()),
+    ), patch(
+        "app.api.seo.acquire_file_lock",
+        return_value=object(),
+    ), patch(
+        "app.api.seo.release_file_lock",
+    ), patch(
+        "app.api.seo.reserve_manual_rank_collection",
+        reserve,
+    ):
+        with pytest.raises(Exception) as exc:
+            asyncio.run(collect_rank_serp(request, session, context))
+
+    assert getattr(exc.value, "status_code", None) == 502
+    assert getattr(exc.value, "detail", None) == (
+        "本次排名采集全部失败，请稍后重试或联系管理员"
+    )
+    assert "provider" not in str(getattr(exc.value, "detail", ""))
+    assert reserve.call_args.args[2] == 1
+    assert collector.await_args.kwargs["keyword_ids"] == [3]
+    assert collector.await_args.kwargs["max_keywords"] == 1
+
+
+@pytest.mark.parametrize("site_id", [None, 0, -1])
+def test_manual_serp_collection_requires_positive_site_id(site_id: int | None) -> None:
+    with pytest.raises(ValidationError):
+        SerpCollectRequest(
+            tenant_id=1,
+            site_id=site_id,
+            keyword_ids=[3],
+            devices=["desktop"],
+            max_keywords=1,
+            use_ai=False,
+        )
 
 
 def test_models_use_separate_seo_tables() -> None:

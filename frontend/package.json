@@ -8,6 +8,8 @@
     "build": "vite build",
     "dev:auth": "vite --config vite.auth.config.js",
     "build:auth": "vite build --config vite.auth.config.js",
+    "build:seo": "vite build --config vite.seo.config.js",
+    "verify:seo-build": "node scripts/verify-seo-build.mjs dist-seo",
     "verify:auth-build": "node scripts/verify-auth-build.mjs dist-auth",
     "verify:sem-build": "node scripts/verify-sem-build.mjs dist",
     "test:chunk-recovery": "node scripts/test-chunk-recovery.mjs",

@@ -260,6 +260,60 @@ class SeoDistributionConnection(Base):
     )
 
 
+class SeoDistributionVariant(Base):
+    """Versioned platform-specific copy prepared before a publication task."""
+
+    __tablename__ = "seo_distribution_variants"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id"), nullable=False, index=True
+    )
+    content_asset_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("seo_content_assets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    connection_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("seo_distribution_connections.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    platform_code: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    revision_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="draft")
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    excerpt: Mapped[str | None] = mapped_column(Text)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_chars: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    keyword_checks: Mapped[list | None] = mapped_column(JSONB)
+    warnings: Mapped[list | None] = mapped_column(JSONB)
+    ai_generated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    generation_instruction: Mapped[str | None] = mapped_column(Text)
+    feedback: Mapped[str | None] = mapped_column(Text)
+    review_note: Mapped[str | None] = mapped_column(Text)
+    reviewed_by: Mapped[int | None] = mapped_column(BigInteger)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_by: Mapped[int | None] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "content_asset_id",
+            "connection_id",
+            "revision_number",
+            name="uq_seo_distribution_variant_revision",
+        ),
+    )
+
+
 class SeoContentPublication(Base):
     """One content asset published, drafted, or handed off to one destination."""
 
@@ -278,6 +332,11 @@ class SeoContentPublication(Base):
     connection_id: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey("seo_distribution_connections.id", ondelete="SET NULL"),
+        index=True,
+    )
+    variant_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("seo_distribution_variants.id", ondelete="SET NULL"),
         index=True,
     )
     platform_code: Mapped[str] = mapped_column(String(40), nullable=False)

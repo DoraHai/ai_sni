@@ -1,0 +1,18 @@
+[Unit]
+Description=Growth Sniper SEO API
+After=network.target
+
+[Service]
+Type=simple
+User=sem
+Group=sem
+WorkingDirectory=/opt/seo-service/current
+EnvironmentFile=/opt/sem-backend/.env
+ExecStart=/opt/sem-backend/.venv/bin/uvicorn app.seo_main:app --host 127.0.0.1 --port 8020 --workers 2
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/seo-service/stdout.log
+StandardError=append:/var/log/seo-service/stderr.log
+
+[Install]
+WantedBy=multi-user.target

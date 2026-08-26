@@ -4,20 +4,22 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
-from pydantic import BaseModel, Field, PositiveInt
-from sqlalchemy import delete, func, or_, select
+from pydantic import BaseModel, Field, PositiveInt, field_validator
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.deepseek import DeepSeekError, chat_json, is_enabled
 from app.database import get_session
+from app.config import get_settings
 from app.geo.audit import GeoAuditError, audit_url, normalize_url, safe_fetch
 from app.geo.chinaz import fetch_chinaz_seo_metrics
 from app.models import (
@@ -42,9 +44,11 @@ from app.models.seo import SeoCrawlRun, SeoMetricSnapshot, SeoPageSnapshot
 from app.models.seo import (
     SeoContentPublication,
     SeoDistributionConnection,
+    SeoDistributionVariant,
     SeoPublishAttempt,
 )
 from app.security.auth import AuthContext, require_scoped_auth
+from app.process_lock import acquire_file_lock, release_file_lock
 from app.seo_distribution import (
     SeoDistributionError,
     decrypt_credentials,
@@ -65,10 +69,24 @@ from app.seo_serp import (
     SerpProviderError,
     canonical_url,
     deterministic_match,
-    fetch_baidu_top50,
+    fetch_baidu_top50_batch,
     url_domain,
 )
 from app.seo_crawler import crawl_site
+from app.seo_competitor import (
+    COMPETITOR_MANUAL_COOLDOWN_SECONDS,
+    COMPETITOR_MAX_PAGES_PER_RUN,
+    CompetitorCollectionError,
+    build_competitor_rank_matrix,
+    collect_competitor_content,
+    competitor_retry_after,
+)
+from app.seo_rank_limits import (
+    ManualRankLimitError,
+    SEO_RANK_COLLECTION_LOCK_PATH,
+    manual_rank_status,
+    reserve_manual_rank_collection,
+)
 from app.seo_distribution_import import (
     MAX_XLSX_BYTES,
     XlsxImportError,
@@ -84,6 +102,7 @@ router = APIRouter(
     tags=["SEO"],
     dependencies=[Depends(require_scoped_auth)],
 )
+logger = logging.getLogger(__name__)
 
 ENGINES = {"baidu", "google", "bing", "360", "sogou"}
 PRIORITIES = {"P0", "P1", "P2", "P3"}
@@ -97,6 +116,19 @@ METRIC_QUALITIES = {"verified", "estimated", "crawled", "imported"}
 
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
+
+
+def _rank_iso(value: datetime | None) -> str | None:
+    """Serialize ranking timestamps as explicit UTC instants.
+
+    Ranking collection stores UTC wall-clock values in timezone-naive columns.
+    Adding the UTC marker at this boundary prevents browsers from treating those
+    values as their own local wall-clock time.
+    """
+    if value is None:
+        return None
+    aware = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+    return aware.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 async def _tenant(session: AsyncSession, tenant_id: int) -> Tenant:
@@ -124,6 +156,65 @@ async def _keyword(
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO 关键词不存在")
     return row
+
+
+async def _keyword_for_update(
+    session: AsyncSession, keyword_id: int, tenant_id: int
+) -> SeoKeywordAsset:
+    row = await session.scalar(
+        select(SeoKeywordAsset)
+        .where(
+            SeoKeywordAsset.id == keyword_id,
+            SeoKeywordAsset.tenant_id == tenant_id,
+        )
+        .with_for_update()
+    )
+    if not row:
+        raise HTTPException(404, "SEO 关键词不存在")
+    return row
+
+
+async def _keyword_site_move_blockers(
+    session: AsyncSession, keyword_id: int
+) -> dict[str, int]:
+    """Return SEO-owned references that make an implicit site move unsafe."""
+    checks = (
+        (
+            "rank_snapshots",
+            select(func.count())
+            .select_from(SeoRankSnapshot)
+            .where(SeoRankSnapshot.keyword_id == keyword_id),
+        ),
+        (
+            "serp_results",
+            select(func.count())
+            .select_from(SeoSerpResult)
+            .where(SeoSerpResult.keyword_id == keyword_id),
+        ),
+        (
+            "site_pages",
+            select(func.count())
+            .select_from(SeoSitePage)
+            .where(SeoSitePage.target_keyword_id == keyword_id),
+        ),
+        (
+            "content_assets",
+            select(func.count())
+            .select_from(SeoContentAsset)
+            .where(
+                or_(
+                    SeoContentAsset.keyword_id == keyword_id,
+                    SeoContentAsset.keyword_ids.contains([keyword_id]),
+                )
+            ),
+        ),
+    )
+    blockers: dict[str, int] = {}
+    for name, statement in checks:
+        count = int(await session.scalar(statement) or 0)
+        if count:
+            blockers[name] = count
+    return blockers
 
 
 async def _site_page(
@@ -160,7 +251,7 @@ def _keyword_payload(
         "latest_rank": None if not latest else latest.rank,
         "rank_delta": delta,
         "rank_url": None if not latest else latest.result_url,
-        "rank_checked_at": None if not latest else _iso(latest.checked_at),
+        "rank_checked_at": None if not latest else _rank_iso(latest.checked_at),
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
     }
@@ -179,7 +270,7 @@ def _rank_payload(row: SeoRankSnapshot) -> dict[str, Any]:
         "rank": row.rank,
         "result_url": row.result_url,
         "source": row.source,
-        "checked_at": _iso(row.checked_at),
+        "checked_at": _rank_iso(row.checked_at),
     }
 
 
@@ -213,7 +304,7 @@ def _page_payload(row: SeoSitePage) -> dict[str, Any]:
 
 class KeywordCreate(BaseModel):
     tenant_id: int
-    site_id: int | None = None
+    site_id: int
     keyword: str = Field(min_length=1, max_length=200)
     cluster: str | None = Field(None, max_length=120)
     intent: str | None = Field(None, max_length=24)
@@ -226,6 +317,7 @@ class KeywordCreate(BaseModel):
 
 
 class KeywordUpdate(BaseModel):
+    site_id: int | None = None
     cluster: str | None = Field(None, max_length=120)
     intent: str | None = Field(None, max_length=24)
     monthly_volume: int | None = Field(None, ge=0)
@@ -238,7 +330,7 @@ class KeywordUpdate(BaseModel):
 
 class KeywordImport(BaseModel):
     tenant_id: int
-    site_id: int | None = None
+    site_id: int
     items: list[KeywordCreate] = Field(min_length=1, max_length=500)
 
 
@@ -287,9 +379,11 @@ class BrandProfileUpdate(BaseModel):
 
 class SerpCollectRequest(BaseModel):
     tenant_id: int
-    site_id: int | None = None
+    site_id: PositiveInt
     keyword_ids: list[int] | None = Field(None, max_length=50)
-    devices: list[Literal["desktop", "mobile"]] = Field(default_factory=lambda: ["desktop"])
+    devices: list[Literal["desktop", "mobile"]] = Field(
+        default_factory=lambda: ["desktop"], min_length=1
+    )
     max_keywords: int = Field(20, ge=1, le=50)
     use_ai: bool = True
 
@@ -687,9 +781,10 @@ async def import_seo_keywords(
     ctx.ensure_tenant(req.tenant_id)
     await _tenant(session, req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
-    existing_conditions = [SeoKeywordAsset.tenant_id == req.tenant_id]
-    if req.site_id is not None:
-        existing_conditions.append(SeoKeywordAsset.site_id == req.site_id)
+    existing_conditions = [
+        SeoKeywordAsset.tenant_id == req.tenant_id,
+        SeoKeywordAsset.site_id == req.site_id,
+    ]
     existing = set(
         await session.scalars(
             select(SeoKeywordAsset.keyword).where(*existing_conditions)
@@ -701,6 +796,8 @@ async def import_seo_keywords(
         word = item.keyword.strip()
         if item.tenant_id != req.tenant_id:
             raise HTTPException(400, "导入项 tenant_id 必须一致")
+        if item.site_id != req.site_id:
+            raise HTTPException(400, "导入项 site_id 必须与目标 SEO 网站一致")
         if word in existing:
             skipped.append(word)
             continue
@@ -774,12 +871,32 @@ async def update_seo_keyword(
     req: KeywordUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    row = await _keyword(session, keyword_id, tenant_id)
-    for key, value in req.model_dump(exclude_unset=True).items():
+    row = await _keyword_for_update(session, keyword_id, tenant_id)
+    changes = req.model_dump(exclude_unset=True)
+    if "site_id" in changes:
+        target_site_id = changes["site_id"]
+        if target_site_id is None:
+            raise HTTPException(400, "SEO 关键词必须关联网站")
+        await _seo_site(session, tenant_id, target_site_id)
+        if row.site_id != target_site_id:
+            blockers = await _keyword_site_move_blockers(session, keyword_id)
+            if blockers:
+                summary = "、".join(
+                    f"{name}={count}" for name, count in blockers.items()
+                )
+                raise HTTPException(
+                    409,
+                    f"关键词已有站点关联数据，不能直接迁移网站（{summary}）",
+                )
+    for key, value in changes.items():
         if isinstance(value, str):
             value = value.strip() or None
         setattr(row, key, value)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(409, "目标网站已存在相同关键词") from exc
     await session.refresh(row)
     return _keyword_payload(row)
 
@@ -870,7 +987,7 @@ def _serp_payload(row: SeoSerpResult, keyword: str | None = None) -> dict[str, A
         "matched_asset_id": row.matched_asset_id,
         "is_confirmed": row.is_confirmed,
         "provider": row.provider,
-        "captured_at": _iso(row.captured_at),
+        "captured_at": _rank_iso(row.captured_at),
     }
 
 
@@ -1226,6 +1343,23 @@ async def _ai_classify_serp(
     return classified
 
 
+def _serp_error_payload(
+    keyword_id: int,
+    device: str,
+    error: SerpProviderError,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "keyword_id": keyword_id,
+        "device": device,
+        "code": error.code,
+        "message": error.public_message,
+        "retryable": error.retryable,
+    }
+    if error.status_code is not None:
+        payload["status_code"] = error.status_code
+    return payload
+
+
 async def collect_rank_serp_for_tenant(
     *,
     session: AsyncSession,
@@ -1262,27 +1396,50 @@ async def collect_rank_serp_for_tenant(
     if not keywords:
         raise HTTPException(400, "没有可采集的启用关键词")
     context = await _brand_match_context(session, tenant_id, site_id)
-    semaphore = asyncio.Semaphore(3)
-
-    async def fetch_one(keyword: SeoKeywordAsset, device: str) -> tuple[SeoKeywordAsset, str, dict[str, Any] | None, str | None]:
-        try:
-            async with semaphore:
-                return keyword, device, await fetch_baidu_top50(keyword.keyword, device), None
-        except SerpProviderError as exc:
-            return keyword, device, None, str(exc)
-
-    fetched = await asyncio.gather(
-        *(fetch_one(keyword, device) for keyword in keywords for device in devices)
+    batch_requests = [
+        (keyword, device)
+        for keyword in keywords
+        for device in devices
+    ]
+    batch_results = await fetch_baidu_top50_batch(
+        [(keyword.keyword, device) for keyword, device in batch_requests]
     )
+    fetched = [
+        (keyword, device, result, fetch_error)
+        for (keyword, device), (result, fetch_error) in zip(
+            batch_requests,
+            batch_results,
+            strict=True,
+        )
+    ]
     batch_captured_at = captured_at or datetime.utcnow()
-    errors: list[dict[str, str]] = []
+    errors: list[dict[str, Any]] = []
     created = 0
     matched = 0
     suspected = 0
     snapshots = 0
+    ai_available = is_enabled()
+    ai_attempted = False
     for keyword, device, result, fetch_error in fetched:
         if fetch_error or result is None:
-            errors.append({"keyword": keyword.keyword, "device": device, "error": fetch_error or "采集失败"})
+            provider_error = fetch_error or SerpProviderError(
+                "provider_error",
+                "站长之家前50接口调用失败",
+            )
+            errors.append(_serp_error_payload(keyword.id, device, provider_error))
+            logger.warning(
+                "[SEO][SERP] provider request failed tenant_id=%s site_id=%s "
+                "keyword_id=%s device=%s code=%s status_code=%s "
+                "timeout_phase=%s elapsed_ms=%s",
+                tenant_id,
+                site_id,
+                keyword.id,
+                device,
+                provider_error.code,
+                provider_error.status_code,
+                provider_error.timeout_phase,
+                provider_error.elapsed_ms,
+            )
             continue
         prepared: list[dict[str, Any]] = []
         unresolved: list[dict[str, Any]] = []
@@ -1298,6 +1455,8 @@ async def collect_rank_serp_for_tenant(
             prepared.append(prepared_item)
             if classification["ownership_type"] == "unresolved":
                 unresolved.append(prepared_item)
+        should_use_ai = bool(use_ai and ai_available and unresolved)
+        ai_attempted = ai_attempted or should_use_ai
         ai_results = await _ai_classify_serp(tenant, keyword.keyword, unresolved) if use_ai else {}
         for item in prepared:
             if item["index"] in ai_results:
@@ -1359,7 +1518,10 @@ async def collect_rank_serp_for_tenant(
         "ai_suspected_results": suspected,
         "snapshots": snapshots,
         "errors": errors,
-        "ai_enabled": is_enabled(),
+        "ai_enabled": bool(use_ai and ai_available),
+        "ai_available": ai_available,
+        "ai_requested": use_ai,
+        "ai_attempted": ai_attempted,
     }
 
 
@@ -1370,18 +1532,83 @@ async def collect_rank_serp(
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
-    result = await collect_rank_serp_for_tenant(
-        session=session,
-        tenant_id=req.tenant_id,
-        site_id=req.site_id,
-        keyword_ids=req.keyword_ids,
-        devices=req.devices,
-        max_keywords=req.max_keywords,
-        use_ai=req.use_ai,
+    if req.site_id is None:
+        raise HTTPException(400, "排名采集必须选择 SEO 网站")
+    await _seo_site(session, req.tenant_id, req.site_id)
+    settings = get_settings()
+    keyword_conditions = [
+        SeoKeywordAsset.tenant_id == req.tenant_id,
+        SeoKeywordAsset.site_id == req.site_id,
+        SeoKeywordAsset.status == "active",
+    ]
+    if req.keyword_ids:
+        keyword_conditions.append(SeoKeywordAsset.id.in_(set(req.keyword_ids)))
+    eligible_keywords = int(
+        await session.scalar(
+            select(func.count()).select_from(SeoKeywordAsset).where(*keyword_conditions)
+        )
+        or 0
     )
+    selected_keywords = min(eligible_keywords, req.max_keywords)
+    if selected_keywords == 0:
+        raise HTTPException(400, "没有可采集的启用关键词")
+    requested = selected_keywords * len(set(req.devices))
+    collection_lock = acquire_file_lock(SEO_RANK_COLLECTION_LOCK_PATH)
+    if collection_lock is None:
+        raise HTTPException(409, "另一排名采集任务正在运行，请稍后重试")
+    try:
+        try:
+            limit_status = reserve_manual_rank_collection(
+                req.tenant_id,
+                req.site_id,
+                requested,
+                cooldown_seconds=settings.seo_manual_rank_cooldown_seconds,
+                max_requests_per_day=settings.seo_manual_rank_max_requests_per_day,
+            )
+        except ManualRankLimitError as exc:
+            raise HTTPException(
+                429,
+                {"code": exc.code, "message": exc.message, "retry_after_seconds": exc.retry_after},
+                headers={"Retry-After": str(exc.retry_after)},
+            ) from exc
+        result = await collect_rank_serp_for_tenant(
+            session=session,
+            tenant_id=req.tenant_id,
+            site_id=req.site_id,
+            keyword_ids=req.keyword_ids,
+            devices=req.devices,
+            max_keywords=req.max_keywords,
+            use_ai=req.use_ai,
+        )
+    finally:
+        release_file_lock(collection_lock)
     if result["errors"] and result["snapshots"] == 0:
-        raise HTTPException(502, result["errors"][0]["error"])
+        raise HTTPException(502, "本次排名采集全部失败，请稍后重试或联系管理员")
+    result["manual_limit"] = limit_status
     return result
+
+
+@router.get("/rank-serp/collect-status")
+async def rank_serp_collect_status(
+    tenant_id: int,
+    site_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    await _seo_site(session, tenant_id, site_id)
+    settings = get_settings()
+    try:
+        return manual_rank_status(
+            tenant_id,
+            site_id,
+            cooldown_seconds=settings.seo_manual_rank_cooldown_seconds,
+            max_requests_per_day=settings.seo_manual_rank_max_requests_per_day,
+        )
+    except ManualRankLimitError as exc:
+        raise HTTPException(
+            503,
+            {"code": exc.code, "message": exc.message, "retry_after_seconds": exc.retry_after},
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
 
 
 @router.get("/rank-serp/results")
@@ -1442,7 +1669,7 @@ async def list_rank_serp_results(
     return {
         "items": [_serp_payload(row, keyword_map.get(row.keyword_id)) for row in rows],
         "total": len(rows),
-        "captured_at": _iso(latest_at),
+        "captured_at": _rank_iso(latest_at),
         "stats": stats,
     }
 
@@ -1754,6 +1981,7 @@ async def list_seo_crawl_runs(
 async def list_site_pages(
     tenant_id: int,
     site_id: int | None = None,
+    page_id: int | None = None,
     q: str | None = None,
     status: str | None = None,
     page: int = Query(1, ge=1),
@@ -1765,6 +1993,8 @@ async def list_site_pages(
     conditions = [SeoSitePage.tenant_id == tenant_id]
     if site_id is not None:
         conditions.append(SeoSitePage.site_id == site_id)
+    if page_id is not None:
+        conditions.append(SeoSitePage.id == page_id)
     if q:
         term = f"%{q.strip()}%"
         conditions.append(or_(SeoSitePage.url.ilike(term), SeoSitePage.title.ilike(term)))
@@ -1891,6 +2121,70 @@ async def import_site_pages(
     return {"created": created, "skipped": skipped}
 
 
+def _apply_site_page_audit(row: SeoSitePage, result: dict[str, Any]) -> None:
+    snapshot = result.get("snapshot") or {}
+    checks = result.get("checks") or []
+    checks_by_code = {item.get("code"): item for item in checks}
+    failed = [item.get("code") for item in checks if not item.get("passed")]
+    row.title = result.get("title") or None
+    row.meta_description = result.get("description") or None
+    row.h1 = (snapshot.get("h1") or [None])[0]
+    row.canonical = snapshot.get("canonical") or None
+    row.indexable = bool((checks_by_code.get("indexable") or {}).get("passed"))
+    row.http_status = 200
+    row.content_units = snapshot.get("content_units")
+    row.audit_score = result.get("score")
+    row.issue_codes = failed
+    row.status = "healthy" if not failed else "needs_fix"
+    row.last_error = None
+    row.last_checked_at = datetime.utcnow()
+
+
+@router.post("/site-pages/audit-pending")
+async def audit_pending_site_pages(
+    tenant_id: int,
+    site_id: int | None = None,
+    max_pages: int = Query(10, ge=1, le=20),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Audit a bounded pending/title-less batch without requiring one click per row."""
+    await _tenant(session, tenant_id)
+    await _seo_site(session, tenant_id, site_id)
+    conditions = [
+        SeoSitePage.tenant_id == tenant_id,
+        or_(SeoSitePage.status == "pending", SeoSitePage.title.is_(None)),
+    ]
+    if site_id is not None:
+        conditions.append(SeoSitePage.site_id == site_id)
+    rows = list(
+        await session.scalars(
+            select(SeoSitePage).where(*conditions).order_by(SeoSitePage.id).limit(max_pages)
+        )
+    )
+    completed = 0
+    failed: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            result = await audit_url(row.url)
+            _apply_site_page_audit(row, result)
+            completed += 1
+        except GeoAuditError as exc:
+            row.status = "error"
+            row.last_error = str(exc)[:1000]
+            row.last_checked_at = datetime.utcnow()
+            failed.append({"page_id": row.id, "message": str(exc)[:300]})
+    await session.commit()
+    return {
+        "selected": len(rows),
+        "completed": completed,
+        "failed": failed,
+        "remaining": int(
+            await session.scalar(select(func.count()).select_from(SeoSitePage).where(*conditions))
+            or 0
+        ),
+    }
+
+
 @router.patch("/site-pages/{page_id}")
 async def update_site_page(
     page_id: int,
@@ -1928,22 +2222,7 @@ async def audit_site_page(
         await session.commit()
         raise HTTPException(422, str(exc)) from exc
 
-    snapshot = result.get("snapshot") or {}
-    checks = result.get("checks") or []
-    checks_by_code = {item.get("code"): item for item in checks}
-    failed = [item.get("code") for item in checks if not item.get("passed")]
-    row.title = result.get("title") or None
-    row.meta_description = result.get("description") or None
-    row.h1 = (snapshot.get("h1") or [None])[0]
-    row.canonical = snapshot.get("canonical") or None
-    row.indexable = bool((checks_by_code.get("indexable") or {}).get("passed"))
-    row.http_status = 200
-    row.content_units = snapshot.get("content_units")
-    row.audit_score = result.get("score")
-    row.issue_codes = failed
-    row.status = "healthy" if not failed else "needs_fix"
-    row.last_error = None
-    row.last_checked_at = datetime.utcnow()
+    _apply_site_page_audit(row, result)
     await session.commit()
     await session.refresh(row)
     return _page_payload(row)
@@ -2141,7 +2420,7 @@ async def seo_overview(
             "engine": item_engine,
             "collected": collected,
             "total": len(keywords),
-            "last_checked_at": _iso(last_checked),
+            "last_checked_at": _rank_iso(last_checked),
             "status": "ready" if keywords and collected >= len(keywords) else ("partial" if collected else "pending"),
         })
 
@@ -2276,14 +2555,25 @@ async def seo_overview(
 @router.get("/alerts")
 async def seo_alerts(
     tenant_id: int,
+    site_id: int | None = None,
     engine: str = Query("baidu"),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     await _tenant(session, tenant_id)
-    keywords = list(await session.scalars(select(SeoKeywordAsset).where(SeoKeywordAsset.tenant_id == tenant_id, SeoKeywordAsset.status == "active")))
-    pages = list(await session.scalars(select(SeoSitePage).where(SeoSitePage.tenant_id == tenant_id)))
-    backlinks = list(await session.scalars(select(SeoBacklink).where(SeoBacklink.tenant_id == tenant_id, SeoBacklink.status == "active")))
-    rank_rows = list(await session.scalars(select(SeoRankSnapshot).where(SeoRankSnapshot.tenant_id == tenant_id, SeoRankSnapshot.engine == engine, SeoRankSnapshot.subject_type == "own").order_by(SeoRankSnapshot.checked_at.desc(), SeoRankSnapshot.id.desc())))
+    await _seo_site(session, tenant_id, site_id)
+    keyword_conditions = [SeoKeywordAsset.tenant_id == tenant_id, SeoKeywordAsset.status == "active"]
+    page_conditions = [SeoSitePage.tenant_id == tenant_id]
+    backlink_conditions = [SeoBacklink.tenant_id == tenant_id, SeoBacklink.status == "active"]
+    rank_conditions = [SeoRankSnapshot.tenant_id == tenant_id, SeoRankSnapshot.engine == engine, SeoRankSnapshot.subject_type == "own"]
+    if site_id is not None:
+        keyword_conditions.append(SeoKeywordAsset.site_id == site_id)
+        page_conditions.append(SeoSitePage.site_id == site_id)
+        backlink_conditions.append(SeoBacklink.site_id == site_id)
+        rank_conditions.append(SeoRankSnapshot.site_id == site_id)
+    keywords = list(await session.scalars(select(SeoKeywordAsset).where(*keyword_conditions)))
+    pages = list(await session.scalars(select(SeoSitePage).where(*page_conditions)))
+    backlinks = list(await session.scalars(select(SeoBacklink).where(*backlink_conditions)))
+    rank_rows = list(await session.scalars(select(SeoRankSnapshot).where(*rank_conditions).order_by(SeoRankSnapshot.checked_at.desc(), SeoRankSnapshot.id.desc())))
     grouped: dict[int, list[SeoRankSnapshot]] = defaultdict(list)
     for row in rank_rows:
         if len(grouped[row.keyword_id]) < 2:
@@ -2293,16 +2583,16 @@ async def seo_alerts(
     for keyword_id, values in grouped.items():
         if len(values) == 2 and values[0].rank and values[1].rank and values[0].rank - values[1].rank >= 3:
             keyword = keyword_map.get(keyword_id)
-            alerts.append({"type": "rank_drop", "severity": "high" if values[0].rank - values[1].rank >= 10 else "medium", "title": f"{keyword.keyword if keyword else keyword_id} 排名下降", "detail": f"从第 {values[1].rank} 位下降到第 {values[0].rank} 位", "object_id": keyword_id, "occurred_at": _iso(values[0].checked_at)})
+            alerts.append({"type": "rank_drop", "severity": "high" if values[0].rank - values[1].rank >= 10 else "medium", "title": f"{keyword.keyword if keyword else keyword_id} 排名下降", "detail": f"从第 {values[1].rank} 位下降到第 {values[0].rank} 位", "evidence": f"最近两次 {engine} 排名为 {values[1].rank}、{values[0].rank}", "action_label": "查看排名历史", "href": f"/seo/keywords/{keyword_id}", "object_id": keyword_id, "site_id": values[0].site_id, "occurred_at": _rank_iso(values[0].checked_at)})
     for item in keywords:
         if not item.landing_page:
-            alerts.append({"type": "missing_landing", "severity": "medium", "title": f"{item.keyword} 缺少承接页面", "detail": "高价值关键词尚未绑定站内页面", "object_id": item.id, "occurred_at": _iso(item.updated_at)})
+            alerts.append({"type": "missing_landing", "severity": "medium", "title": f"{item.keyword} 缺少承接页面", "detail": "高价值关键词尚未绑定站内页面", "evidence": "关键词的目标落地页字段为空", "action_label": "配置承接页面", "href": f"/seo/keywords/{item.id}", "object_id": item.id, "site_id": item.site_id, "occurred_at": _iso(item.updated_at)})
     for item in pages:
         if item.status in {"needs_fix", "error"}:
-            alerts.append({"type": "site_issue", "severity": "high" if item.status == "error" else "medium", "title": "站内页面需要处理", "detail": item.url, "object_id": item.id, "occurred_at": _iso(item.last_checked_at or item.updated_at)})
+            alerts.append({"type": "site_issue", "severity": "high" if item.status == "error" else "medium", "title": "站内页面需要处理", "detail": item.url, "evidence": "、".join(item.issue_codes or []) or item.last_error or "页面检测状态异常", "action_label": "查看页面问题", "href": f"/seo/site?page_id={item.id}&site_id={item.site_id}", "object_id": item.id, "site_id": item.site_id, "occurred_at": _iso(item.last_checked_at or item.updated_at)})
     for item in backlinks:
         if (item.toxic_score or 0) >= 70:
-            alerts.append({"type": "toxic_backlink", "severity": "high", "title": "发现高风险外链", "detail": item.source_domain, "object_id": item.id, "occurred_at": _iso(item.last_seen_at or item.updated_at)})
+            alerts.append({"type": "toxic_backlink", "severity": "high", "title": "发现高风险外链", "detail": item.source_domain, "evidence": f"风险分 {item.toxic_score}", "action_label": "查看外链", "href": f"/seo/links?tab=backlink&backlink_id={item.id}&site_id={item.site_id}", "object_id": item.id, "site_id": item.site_id, "occurred_at": _iso(item.last_seen_at or item.updated_at)})
     alerts.sort(key=lambda item: (item["severity"] != "high", item["occurred_at"] or ""))
     return {"items": alerts, "total": len(alerts), "high": sum(item["severity"] == "high" for item in alerts)}
 
@@ -2563,6 +2853,41 @@ class DistributionAdaptRequest(BaseModel):
     instruction: str | None = Field(None, max_length=2000)
 
 
+class DistributionVariantPair(BaseModel):
+    content_id: PositiveInt
+    connection_id: PositiveInt
+
+
+class DistributionVariantGenerateRequest(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt | None = None
+    pairs: list[DistributionVariantPair] = Field(min_length=1, max_length=20)
+    use_ai: bool = False
+    instruction: str | None = Field(None, max_length=2000)
+    submit_for_review: bool = False
+
+
+class DistributionVariantSaveRequest(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt | None = None
+    content_id: PositiveInt
+    connection_id: PositiveInt
+    source_version: PositiveInt
+    title: str = Field(min_length=1, max_length=300)
+    content: str = Field(min_length=1, max_length=80000)
+    status: Literal["draft", "pending_review"] = "draft"
+    ai_generated: bool = False
+    instruction: str | None = Field(None, max_length=2000)
+    feedback: str | None = Field(None, max_length=4000)
+
+
+class DistributionVariantReviewRequest(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt | None = None
+    decision: Literal["approve", "reject"]
+    note: str | None = Field(None, max_length=2000)
+
+
 class DistributionPublishRequest(BaseModel):
     tenant_id: PositiveInt
     site_id: PositiveInt | None = None
@@ -2570,6 +2895,7 @@ class DistributionPublishRequest(BaseModel):
     connection_id: PositiveInt
     action: Literal["draft", "publish"] = "draft"
     confirm: bool = False
+    variant_id: PositiveInt | None = None
     source_version: PositiveInt | None = None
     adapted_title: str | None = Field(None, min_length=1, max_length=300)
     adapted_content: str | None = Field(None, min_length=1, max_length=80000)
@@ -2630,6 +2956,7 @@ def _publication_payload(
         "content_id": row.content_asset_id,
         "content_title": content.title if content else None,
         "connection_id": row.connection_id,
+        "variant_id": row.variant_id,
         "connection_name": connection.name if connection else None,
         "platform_code": row.platform_code,
         "platform_name": row.platform_name,
@@ -2762,6 +3089,171 @@ def _distribution_ai_prompt(
         ]
     )
     return system, user
+
+
+async def _latest_distribution_variant(
+    session: AsyncSession,
+    tenant_id: int,
+    content_id: int,
+    connection_id: int,
+    *,
+    lock: bool = False,
+) -> SeoDistributionVariant | None:
+    statement = (
+        select(SeoDistributionVariant)
+        .where(
+            SeoDistributionVariant.tenant_id == tenant_id,
+            SeoDistributionVariant.content_asset_id == content_id,
+            SeoDistributionVariant.connection_id == connection_id,
+        )
+        .order_by(
+            SeoDistributionVariant.revision_number.desc(),
+            SeoDistributionVariant.id.desc(),
+        )
+        .limit(1)
+    )
+    if lock:
+        statement = statement.with_for_update()
+    return await session.scalar(statement)
+
+
+def _distribution_variant_payload(
+    row: SeoDistributionVariant,
+    *,
+    content: SeoContentAsset,
+    connection: SeoDistributionConnection,
+) -> dict[str, Any]:
+    stale = row.status != "published" and row.source_version != (content.version_count or 1)
+    definition = platform_definition(row.platform_code)
+    try:
+        source_html = _prepare_distribution_variant(
+            content.title,
+            content.humanized_content or content.draft or "",
+            row.platform_code,
+        )["content_html"]
+    except SeoDistributionError:
+        source_html = ""
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "content_id": row.content_asset_id,
+        "content_title": content.title,
+        "source_title": content.title,
+        "source_content_html": source_html,
+        "connection_id": row.connection_id,
+        "connection_name": connection.name,
+        "platform_code": row.platform_code,
+        "platform_name": definition["name"],
+        "source_version": row.source_version,
+        "current_source_version": content.version_count or 1,
+        "revision_number": row.revision_number,
+        "status": "stale" if stale else row.status,
+        "stored_status": row.status,
+        "stale": stale,
+        "title": row.title,
+        "excerpt": row.excerpt,
+        "content": row.content,
+        "content_html": row.content,
+        "content_chars": row.content_chars,
+        "content_rules": platform_content_rules(row.platform_code),
+        "keyword_checks": row.keyword_checks or [],
+        "warnings": row.warnings or [],
+        "ai_generated": row.ai_generated,
+        "instruction": row.generation_instruction,
+        "feedback": row.feedback,
+        "review_note": row.review_note,
+        "reviewed_by": row.reviewed_by,
+        "reviewed_at": _iso(row.reviewed_at),
+        "created_by": row.created_by,
+        "created_at": _iso(row.created_at),
+        "updated_at": _iso(row.updated_at),
+    }
+
+
+async def _create_distribution_variant_revision(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    content: SeoContentAsset,
+    connection: SeoDistributionConnection,
+    source_version: int,
+    title: str,
+    body: str,
+    status: str,
+    ai_generated: bool,
+    instruction: str | None,
+    feedback: str | None,
+    created_by: int | None,
+    supplied_warnings: list[str] | None = None,
+) -> SeoDistributionVariant:
+    if source_version != (content.version_count or 1):
+        raise HTTPException(409, "文章已产生新版本，请重新生成平台专属稿")
+    if not connection.enabled:
+        raise HTTPException(409, "平台连接已停用")
+    try:
+        prepared = _prepare_distribution_variant(
+            title, body, connection.platform_code, strict_title=True
+        )
+    except SeoDistributionError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    keyword_ids = _selected_keyword_ids(content.keyword_ids, content.keyword_id)
+    keywords = await _content_keywords(
+        session, tenant_id, keyword_ids, content.site_id
+    )
+    checks = _distribution_keyword_checks(prepared, keywords)
+    missing = [item["keyword"] for item in checks if not item["in_content"]]
+    if status == "pending_review" and missing:
+        raise HTTPException(400, f"提交审核前请补齐目标关键词：{'、'.join(missing)}")
+    warnings = [str(item).strip() for item in (supplied_warnings or []) if str(item).strip()]
+    if checks and not checks[0]["in_title"]:
+        warnings.append("主关键词未出现在标题中，审核时请确认")
+    if missing:
+        warnings.append(f"正文缺少目标关键词：{'、'.join(missing)}")
+    warnings = list(dict.fromkeys(warnings))[:20]
+    latest = await _latest_distribution_variant(
+        session,
+        tenant_id,
+        content.id,
+        connection.id,
+        lock=True,
+    )
+    row = SeoDistributionVariant(
+        tenant_id=tenant_id,
+        content_asset_id=content.id,
+        connection_id=connection.id,
+        platform_code=connection.platform_code,
+        source_version=source_version,
+        revision_number=(latest.revision_number + 1) if latest else 1,
+        status=status,
+        title=prepared["title"],
+        excerpt=prepared["excerpt"],
+        content=prepared["content_html"],
+        content_chars=len(prepared["plain_text"]),
+        keyword_checks=checks,
+        warnings=warnings,
+        ai_generated=ai_generated,
+        generation_instruction=(instruction or "").strip() or None,
+        feedback=(feedback or "").strip() or None,
+        created_by=created_by,
+    )
+    session.add(row)
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(409, "平台专属稿刚刚被更新，请刷新后重试") from exc
+    return row
+
+
+async def _mark_distribution_variant_published(
+    session: AsyncSession,
+    publication: SeoContentPublication,
+) -> None:
+    if not publication.variant_id:
+        return
+    variant = await session.get(SeoDistributionVariant, publication.variant_id)
+    if variant and variant.tenant_id == publication.tenant_id:
+        variant.status = "published"
 
 
 def _content_payload(row: SeoContentAsset) -> dict[str, Any]:
@@ -3327,6 +3819,299 @@ async def adapt_content_distribution(
     }
 
 
+@router.get("/content-distribution/variants")
+async def list_distribution_variants(
+    tenant_id: int,
+    site_id: int | None = None,
+    content_id: int | None = None,
+    connection_id: int | None = None,
+    status: str | None = None,
+    latest_only: bool = True,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    await _tenant(session, tenant_id)
+    await _seo_site(session, tenant_id, site_id)
+    conditions = [SeoDistributionVariant.tenant_id == tenant_id]
+    if site_id is not None:
+        conditions.append(
+            SeoDistributionVariant.content_asset_id.in_(
+                select(SeoContentAsset.id).where(
+                    SeoContentAsset.tenant_id == tenant_id,
+                    SeoContentAsset.site_id == site_id,
+                )
+            )
+        )
+    if content_id is not None:
+        conditions.append(SeoDistributionVariant.content_asset_id == content_id)
+    if connection_id is not None:
+        conditions.append(SeoDistributionVariant.connection_id == connection_id)
+    rows = list(
+        await session.scalars(
+            select(SeoDistributionVariant)
+            .where(*conditions)
+            .order_by(
+                SeoDistributionVariant.content_asset_id,
+                SeoDistributionVariant.connection_id,
+                SeoDistributionVariant.revision_number.desc(),
+                SeoDistributionVariant.id.desc(),
+            )
+        )
+    )
+    if latest_only:
+        latest_rows: list[SeoDistributionVariant] = []
+        seen: set[tuple[int, int]] = set()
+        for row in rows:
+            key = (row.content_asset_id, row.connection_id)
+            if key not in seen:
+                seen.add(key)
+                latest_rows.append(row)
+        rows = latest_rows
+    content_ids = {row.content_asset_id for row in rows}
+    connection_ids = {row.connection_id for row in rows}
+    contents = {
+        item.id: item
+        for item in await session.scalars(
+            select(SeoContentAsset).where(SeoContentAsset.id.in_(content_ids))
+        )
+    } if content_ids else {}
+    connections = {
+        item.id: item
+        for item in await session.scalars(
+            select(SeoDistributionConnection).where(
+                SeoDistributionConnection.id.in_(connection_ids)
+            )
+        )
+    } if connection_ids else {}
+    items = [
+        _distribution_variant_payload(
+            row,
+            content=contents[row.content_asset_id],
+            connection=connections[row.connection_id],
+        )
+        for row in rows
+        if row.content_asset_id in contents and row.connection_id in connections
+    ]
+    if status:
+        items = [item for item in items if item["status"] == status]
+    counts: dict[str, int] = defaultdict(int)
+    for item in items:
+        counts[item["status"]] += 1
+    return {"items": items, "total": len(items), "status_counts": dict(counts)}
+
+
+@router.post("/content-distribution/variants")
+async def save_distribution_variant(
+    req: DistributionVariantSaveRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
+    content = await _distribution_content(
+        session, req.tenant_id, req.content_id, req.site_id
+    )
+    connection = await _distribution_connection(
+        session, req.tenant_id, req.connection_id
+    )
+    row = await _create_distribution_variant_revision(
+        session,
+        tenant_id=req.tenant_id,
+        content=content,
+        connection=connection,
+        source_version=req.source_version,
+        title=req.title,
+        body=req.content,
+        status=req.status,
+        ai_generated=req.ai_generated,
+        instruction=req.instruction,
+        feedback=req.feedback,
+        created_by=ctx.user_id,
+    )
+    await session.commit()
+    await session.refresh(row)
+    return _distribution_variant_payload(row, content=content, connection=connection)
+
+
+@router.post("/content-distribution/variants/generate")
+async def generate_distribution_variants(
+    req: DistributionVariantGenerateRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
+    pair_keys = {(item.content_id, item.connection_id) for item in req.pairs}
+    if len(pair_keys) != len(req.pairs):
+        raise HTTPException(400, "文章与平台连接组合不能重复")
+    items: list[dict[str, Any]] = []
+    for pair in req.pairs:
+        try:
+            generated = await adapt_content_distribution(
+                DistributionAdaptRequest(
+                    tenant_id=req.tenant_id,
+                    site_id=req.site_id,
+                    content_id=pair.content_id,
+                    connection_id=pair.connection_id,
+                    use_ai=req.use_ai,
+                    instruction=req.instruction,
+                ),
+                session,
+                ctx,
+            )
+            content = await _distribution_content(
+                session, req.tenant_id, pair.content_id, req.site_id
+            )
+            connection = await _distribution_connection(
+                session, req.tenant_id, pair.connection_id
+            )
+            row = await _create_distribution_variant_revision(
+                session,
+                tenant_id=req.tenant_id,
+                content=content,
+                connection=connection,
+                source_version=generated["source_version"],
+                title=generated["title"],
+                body=generated["content_html"],
+                status="pending_review" if req.submit_for_review else "draft",
+                ai_generated=generated["ai_generated"],
+                instruction=req.instruction,
+                feedback=generated["feedback"],
+                supplied_warnings=generated["warnings"],
+                created_by=ctx.user_id,
+            )
+            await session.commit()
+            await session.refresh(row)
+            items.append(
+                {
+                    "ok": True,
+                    "content_id": pair.content_id,
+                    "connection_id": pair.connection_id,
+                    "variant": _distribution_variant_payload(
+                        row, content=content, connection=connection
+                    ),
+                }
+            )
+        except HTTPException as exc:
+            await session.rollback()
+            items.append(
+                {
+                    "ok": False,
+                    "content_id": pair.content_id,
+                    "connection_id": pair.connection_id,
+                    "error": str(exc.detail),
+                    "status_code": exc.status_code,
+                }
+            )
+    succeeded = sum(1 for item in items if item["ok"])
+    return {
+        "items": items,
+        "total": len(items),
+        "succeeded": succeeded,
+        "failed": len(items) - succeeded,
+    }
+
+
+@router.get("/content-distribution/variants/{variant_id}/history")
+async def distribution_variant_history(
+    variant_id: int,
+    tenant_id: int,
+    site_id: int | None = None,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    await _seo_site(session, tenant_id, site_id)
+    current = await session.get(SeoDistributionVariant, variant_id)
+    if not current or current.tenant_id != tenant_id:
+        raise HTTPException(404, "平台专属稿不存在")
+    content = await _distribution_content(
+        session, tenant_id, current.content_asset_id, site_id
+    )
+    connection = await _distribution_connection(
+        session, tenant_id, current.connection_id
+    )
+    rows = list(
+        await session.scalars(
+            select(SeoDistributionVariant)
+            .where(
+                SeoDistributionVariant.tenant_id == tenant_id,
+                SeoDistributionVariant.content_asset_id == current.content_asset_id,
+                SeoDistributionVariant.connection_id == current.connection_id,
+            )
+            .order_by(
+                SeoDistributionVariant.revision_number.desc(),
+                SeoDistributionVariant.id.desc(),
+            )
+        )
+    )
+    return {
+        "items": [
+            _distribution_variant_payload(row, content=content, connection=connection)
+            for row in rows
+        ],
+        "total": len(rows),
+    }
+
+
+@router.post("/content-distribution/variants/{variant_id}/review")
+async def review_distribution_variant(
+    variant_id: int,
+    req: DistributionVariantReviewRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
+    row = await session.get(SeoDistributionVariant, variant_id)
+    if not row or row.tenant_id != req.tenant_id:
+        raise HTTPException(404, "平台专属稿不存在")
+    content = await _distribution_content(
+        session, req.tenant_id, row.content_asset_id, req.site_id
+    )
+    connection = await _distribution_connection(
+        session, req.tenant_id, row.connection_id
+    )
+    latest = await _latest_distribution_variant(
+        session,
+        req.tenant_id,
+        row.content_asset_id,
+        row.connection_id,
+        lock=True,
+    )
+    if not latest or latest.id != row.id:
+        raise HTTPException(409, "该专属稿已有更新版本，请刷新后审核最新版本")
+    if row.source_version != (content.version_count or 1):
+        raise HTTPException(409, "原文章已更新，该专属稿已过期，请重新生成")
+    if row.status != "pending_review":
+        raise HTTPException(409, "只有待审核的最新专属稿可以审核")
+    if req.decision == "approve":
+        try:
+            prepared = _prepare_distribution_variant(
+                row.title, row.content, connection.platform_code, strict_title=True
+            )
+        except SeoDistributionError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        keyword_ids = _selected_keyword_ids(content.keyword_ids, content.keyword_id)
+        keywords = await _content_keywords(
+            session, req.tenant_id, keyword_ids, req.site_id
+        )
+        checks = _distribution_keyword_checks(prepared, keywords)
+        missing = [item["keyword"] for item in checks if not item["in_content"]]
+        if missing:
+            raise HTTPException(400, f"审核前请补齐目标关键词：{'、'.join(missing)}")
+        row.keyword_checks = checks
+        row.status = "approved"
+    else:
+        row.status = "rejected"
+    row.review_note = (req.note or "").strip() or None
+    row.reviewed_by = ctx.user_id
+    row.reviewed_at = datetime.utcnow()
+    await session.commit()
+    return _distribution_variant_payload(row, content=content, connection=connection)
+
+
 @router.post("/content-distribution/preflight")
 async def preflight_content_distribution(
     req: DistributionPreflightRequest,
@@ -3463,16 +4248,50 @@ async def publish_content_distribution(
         session, req.tenant_id, req.content_id, req.site_id
     )
     source_version = content.version_count or 1
-    if req.source_version is not None and req.source_version != source_version:
+    if (
+        req.variant_id is None
+        and req.source_version is not None
+        and req.source_version != source_version
+    ):
         raise HTTPException(409, "文章已产生新版本，请重新生成平台专属稿并预检")
     connection = await _distribution_connection(session, req.tenant_id, req.connection_id)
     if not connection.enabled:
         raise HTTPException(409, "平台连接已停用")
     if connection.mode == "api" and connection.status != "connected":
         raise HTTPException(409, "请先完成平台连接测试")
-    customized = req.adapted_title is not None or req.adapted_content is not None
-    variant_title = req.adapted_title or content.title
-    variant_body = req.adapted_content or content.humanized_content or content.draft or ""
+    saved_variant: SeoDistributionVariant | None = None
+    if req.variant_id is not None:
+        if req.adapted_title is not None or req.adapted_content is not None:
+            raise HTTPException(400, "使用已审核专属稿时不能同时提交临时改写内容")
+        saved_variant = await session.get(SeoDistributionVariant, req.variant_id)
+        if (
+            not saved_variant
+            or saved_variant.tenant_id != req.tenant_id
+            or saved_variant.content_asset_id != req.content_id
+            or saved_variant.connection_id != req.connection_id
+            or saved_variant.platform_code != connection.platform_code
+        ):
+            raise HTTPException(404, "平台专属稿不存在")
+        latest_variant = await _latest_distribution_variant(
+            session,
+            req.tenant_id,
+            req.content_id,
+            req.connection_id,
+        )
+        if not latest_variant or latest_variant.id != saved_variant.id:
+            raise HTTPException(409, "平台专属稿已有更新版本，请重新预检")
+        if saved_variant.status != "approved":
+            raise HTTPException(409, "平台专属稿尚未审核通过")
+        if saved_variant.source_version != source_version:
+            raise HTTPException(409, "文章已产生新版本，请重新生成平台专属稿并预检")
+    requested_version = saved_variant.source_version if saved_variant else req.source_version
+    if requested_version is not None and requested_version != source_version:
+        raise HTTPException(409, "文章已产生新版本，请重新生成平台专属稿并预检")
+    customized = bool(saved_variant) or req.adapted_title is not None or req.adapted_content is not None
+    variant_title = saved_variant.title if saved_variant else (req.adapted_title or content.title)
+    variant_body = saved_variant.content if saved_variant else (
+        req.adapted_content or content.humanized_content or content.draft or ""
+    )
     try:
         prepared = _prepare_distribution_variant(
             variant_title,
@@ -3525,6 +4344,7 @@ async def publish_content_distribution(
         tenant_id=req.tenant_id,
         content_asset_id=req.content_id,
         connection_id=req.connection_id,
+        variant_id=saved_variant.id if saved_variant else None,
         platform_code=connection.platform_code,
         platform_name=definition["name"],
         publish_mode=connection.mode if connection.mode != "api" else req.action,
@@ -3585,6 +4405,7 @@ async def publish_content_distribution(
         content.published_at = content.published_at or row.published_at
         if remote.page_url and not content.page_url:
             content.page_url = remote.page_url
+        await _mark_distribution_variant_published(session, row)
     attempt.status = "succeeded"
     attempt.response_summary = remote.response_summary
     attempt.completed_at = datetime.utcnow()
@@ -3632,6 +4453,7 @@ async def complete_manual_publication(
     content.published_at = content.published_at or row.published_at
     if not content.page_url:
         content.page_url = page_url
+    await _mark_distribution_variant_published(session, row)
     session.add(
         SeoPublishAttempt(
             tenant_id=req.tenant_id,
@@ -3704,6 +4526,7 @@ async def sync_content_publication(
         content.published_at = content.published_at or row.published_at
         if row.page_url and not content.page_url:
             content.page_url = row.page_url
+        await _mark_distribution_variant_published(session, row)
     await session.commit()
     return _publication_payload(row, content=content, connection=connection)
 
@@ -3804,6 +4627,7 @@ async def retry_content_publication(
         content.published_at = content.published_at or row.published_at
         if row.page_url and not content.page_url:
             content.page_url = row.page_url
+        await _mark_distribution_variant_published(session, row)
     attempt.status = "failed" if remote.status == "failed" else "succeeded"
     attempt.response_summary = remote.response_summary
     attempt.error = remote.error
@@ -3950,6 +4774,20 @@ async def crawl_internal_links(tenant_id: int, page_id: int, session: AsyncSessi
     except GeoAuditError as exc:
         raise HTTPException(422, str(exc)) from exc
     soup = BeautifulSoup(document.html, "html.parser")
+    title = soup.title.get_text(" ", strip=True) if soup.title else None
+    description_node = soup.select_one('meta[name="description" i]')
+    h1_node = soup.select_one("h1")
+    canonical_node = soup.select_one('link[rel~="canonical" i]')
+    page.title = title or None
+    page.meta_description = (
+        str(description_node.get("content") or "").strip() or None
+        if description_node
+        else None
+    )
+    page.h1 = (h1_node.get_text(" ", strip=True) or None) if h1_node else None
+    page.canonical = urljoin(document.final_url, str(canonical_node.get("href") or "").strip()) if canonical_node and canonical_node.get("href") else None
+    page.last_error = None
+    page.last_checked_at = datetime.utcnow()
     source_host = urlparse(document.final_url).hostname
     discovered: dict[str, str | None] = {}
     for node in soup.select("a[href]"):
@@ -3972,7 +4810,7 @@ async def crawl_internal_links(tenant_id: int, page_id: int, session: AsyncSessi
         if target.id != page.id:
             session.add(SeoInternalLink(tenant_id=tenant_id, site_id=page.site_id, source_page_id=page.id, target_page_id=target.id, anchor_text=anchor))
     await session.commit()
-    return {"source_page_id": page.id, "discovered": len(discovered)}
+    return {"source_page_id": page.id, "discovered": len(discovered), "title": page.title}
 
 
 # ===== 竞品监控 =====
@@ -3980,37 +4818,194 @@ async def crawl_internal_links(tenant_id: int, page_id: int, session: AsyncSessi
 
 class CompetitorCreate(BaseModel):
     tenant_id: int
-    site_id: int | None = None
+    site_id: PositiveInt
     name: str = Field(min_length=1, max_length=120)
     domain: str = Field(min_length=1, max_length=255)
     notes: str | None = Field(None, max_length=5000)
 
 
 class CompetitorEventCreate(BaseModel):
-    tenant_id: int
-    site_id: int | None = None
-    competitor_id: int
+    tenant_id: PositiveInt
+    site_id: PositiveInt
+    competitor_id: PositiveInt
     event_type: Literal["content", "backlink"]
-    title: str | None = Field(None, max_length=500)
+    title: str = Field(min_length=1, max_length=500)
     url: str = Field(min_length=1, max_length=2000)
     source_url: str | None = Field(None, max_length=2000)
-    summary: str | None = Field(None, max_length=5000)
+    summary: str = Field(min_length=1, max_length=5000)
     event_at: datetime | None = None
+
+    @field_validator("title", "summary", mode="before")
+    @classmethod
+    def trim_required_text(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def validate_event_url(cls, value: Any) -> str:
+        return _validate_competitor_event_url(value, required=True)
+
+    @field_validator("source_url", mode="before")
+    @classmethod
+    def validate_optional_source_url(cls, value: Any) -> str | None:
+        return _validate_competitor_event_url(value, required=False)
+
+
+def _validate_competitor_event_url(value: Any, *, required: bool) -> str | None:
+    normalized = value.strip() if isinstance(value, str) else ""
+    if not normalized:
+        if required:
+            raise ValueError("请填写页面 URL")
+        return None
+    if any(character.isspace() or ord(character) < 32 for character in normalized):
+        raise ValueError("URL 不能包含空格或控制字符")
+    parsed = urlparse(normalized)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("URL 必须是完整的 http/https 地址")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("URL 不能包含用户名或密码")
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise ValueError("URL 端口无效") from exc
+    return normalized
+
+
+class CompetitorCollectRequest(BaseModel):
+    tenant_id: int
+    site_id: PositiveInt
+    max_pages: int = Field(10, ge=1, le=COMPETITOR_MAX_PAGES_PER_RUN)
 
 
 def _competitor_payload(row: SeoCompetitor) -> dict[str, Any]:
-    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "name": row.name, "domain": row.domain, "notes": row.notes, "status": row.status, "last_checked_at": _iso(row.last_checked_at), "created_at": _iso(row.created_at)}
+    retry_after = competitor_retry_after(row.last_checked_at)
+    next_allowed_at = (
+        row.last_checked_at + timedelta(seconds=COMPETITOR_MANUAL_COOLDOWN_SECONDS)
+        if row.last_checked_at
+        else None
+    )
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "site_id": row.site_id,
+        "name": row.name,
+        "domain": row.domain,
+        "notes": row.notes,
+        "status": row.status,
+        "last_checked_at": _rank_iso(row.last_checked_at),
+        "next_collection_allowed_at": _rank_iso(next_allowed_at),
+        "collection_retry_after_seconds": retry_after,
+        "created_at": _iso(row.created_at),
+    }
+
+
+async def _competitor_scope_conditions(
+    session: AsyncSession,
+    tenant_id: int,
+    site_id: int | None,
+) -> tuple[list[Any], bool]:
+    conditions: list[Any] = [SeoCompetitor.tenant_id == tenant_id]
+    include_unassigned = False
+    if site_id is not None:
+        site_count = int(
+            await session.scalar(
+                select(func.count()).select_from(SeoSite).where(SeoSite.tenant_id == tenant_id)
+            )
+            or 0
+        )
+        include_unassigned = site_count == 1
+        site_condition = SeoCompetitor.site_id == site_id
+        if include_unassigned:
+            site_condition = or_(site_condition, SeoCompetitor.site_id.is_(None))
+        conditions.append(site_condition)
+    return conditions, include_unassigned
+
+
+@router.get("/competitors/rankings")
+async def competitor_rankings(
+    tenant_id: int,
+    site_id: PositiveInt,
+    device: Literal["desktop", "mobile"] = "desktop",
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    await _tenant(session, tenant_id)
+    await _seo_site(session, tenant_id, site_id)
+    competitor_conditions, _ = await _competitor_scope_conditions(session, tenant_id, site_id)
+    competitors = list(
+        await session.scalars(
+            select(SeoCompetitor)
+            .where(*competitor_conditions, SeoCompetitor.status == "active")
+            .order_by(SeoCompetitor.id)
+        )
+    )
+    keywords = list(
+        await session.scalars(
+            select(SeoKeywordAsset)
+            .where(
+                SeoKeywordAsset.tenant_id == tenant_id,
+                SeoKeywordAsset.site_id == site_id,
+                SeoKeywordAsset.status == "active",
+            )
+            .order_by(SeoKeywordAsset.priority, SeoKeywordAsset.id)
+        )
+    )
+    keyword_ids = [row.id for row in keywords]
+    serp_rows: list[SeoSerpResult] = []
+    if keyword_ids:
+        latest = (
+            select(
+                SeoSerpResult.keyword_id.label("keyword_id"),
+                func.max(SeoSerpResult.captured_at).label("captured_at"),
+            )
+            .where(
+                SeoSerpResult.tenant_id == tenant_id,
+                SeoSerpResult.site_id == site_id,
+                SeoSerpResult.engine == "baidu",
+                SeoSerpResult.device == device,
+                SeoSerpResult.keyword_id.in_(keyword_ids),
+            )
+            .group_by(SeoSerpResult.keyword_id)
+            .subquery()
+        )
+        serp_rows = list(
+            await session.scalars(
+                select(SeoSerpResult)
+                .join(
+                    latest,
+                    and_(
+                        SeoSerpResult.keyword_id == latest.c.keyword_id,
+                        SeoSerpResult.captured_at == latest.c.captured_at,
+                    ),
+                )
+                .where(
+                    SeoSerpResult.tenant_id == tenant_id,
+                    SeoSerpResult.site_id == site_id,
+                    SeoSerpResult.engine == "baidu",
+                    SeoSerpResult.device == device,
+                )
+            )
+        )
+    matrix = build_competitor_rank_matrix(keyword_ids, competitors, serp_rows)
+    for item in matrix:
+        item["captured_at"] = _rank_iso(item["captured_at"])
+    return {
+        "device": device,
+        "competitors": [_competitor_payload(row) for row in competitors],
+        "items": matrix,
+    }
 
 
 @router.get("/competitors")
 async def list_competitors(tenant_id: int, site_id: int | None = None, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
     await _tenant(session, tenant_id)
     await _seo_site(session, tenant_id, site_id)
-    competitor_conditions = [SeoCompetitor.tenant_id == tenant_id]
+    competitor_conditions, include_unassigned = await _competitor_scope_conditions(session, tenant_id, site_id)
     event_conditions = [SeoCompetitorEvent.tenant_id == tenant_id]
     if site_id is not None:
-        competitor_conditions.append(SeoCompetitor.site_id == site_id)
-        event_conditions.append(SeoCompetitorEvent.site_id == site_id)
+        event_site_condition = SeoCompetitorEvent.site_id == site_id
+        if include_unassigned:
+            event_site_condition = or_(event_site_condition, SeoCompetitorEvent.site_id.is_(None))
+        event_conditions.append(event_site_condition)
     rows = list(await session.scalars(select(SeoCompetitor).where(*competitor_conditions).order_by(SeoCompetitor.id.desc())))
     events = list(await session.scalars(select(SeoCompetitorEvent).where(*event_conditions).order_by(SeoCompetitorEvent.detected_at.desc())))
     counts = defaultdict(lambda: {"content": 0, "backlink": 0})
@@ -4034,6 +5029,125 @@ async def create_competitor(req: CompetitorCreate, session: AsyncSession = Depen
     except IntegrityError as exc:
         await session.rollback(); raise HTTPException(409, "该竞品域名已存在") from exc
     await session.refresh(row); return _competitor_payload(row)
+
+
+@router.post("/competitors/{competitor_id}/collect")
+async def collect_competitor(
+    competitor_id: int,
+    req: CompetitorCollectRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
+    competitor = await session.scalar(
+        select(SeoCompetitor)
+        .where(
+            SeoCompetitor.id == competitor_id,
+            SeoCompetitor.tenant_id == req.tenant_id,
+        )
+        .with_for_update()
+    )
+    if competitor is None:
+        raise HTTPException(404, "竞品不存在")
+    if competitor.status != "active":
+        raise HTTPException(409, "竞品已停用，不能采集")
+    if competitor.site_id not in {None, req.site_id}:
+        raise HTTPException(400, "竞品不属于当前 SEO 网站")
+    if competitor.site_id is None:
+        site_count = int(
+            await session.scalar(
+                select(func.count()).select_from(SeoSite).where(SeoSite.tenant_id == req.tenant_id)
+            )
+            or 0
+        )
+        if site_count != 1:
+            raise HTTPException(409, "该竞品尚未关联网站，请先重新添加到当前网站")
+
+    now = datetime.utcnow()
+    retry_after = competitor_retry_after(competitor.last_checked_at, now=now)
+    if retry_after:
+        raise HTTPException(
+            429,
+            {
+                "code": "competitor_collection_cooldown",
+                "message": "当前仍在冷却，请稍后重试",
+                "retry_after_seconds": retry_after,
+            },
+            headers={"Retry-After": str(retry_after)},
+        )
+    competitor.site_id = req.site_id
+    competitor.last_checked_at = now
+    await session.commit()
+
+    try:
+        collection = await collect_competitor_content(
+            competitor.domain,
+            max_pages=req.max_pages,
+        )
+    except CompetitorCollectionError as exc:
+        logger.warning(
+            "[SEO][COMPETITOR] manual collection failed "
+            "competitor_id=%s tenant_id=%s site_id=%s code=%s "
+            "error_type=%s status_code=%s elapsed_ms=%s",
+            competitor.id,
+            req.tenant_id,
+            req.site_id,
+            exc.code,
+            exc.error_type,
+            exc.status_code,
+            exc.elapsed_ms,
+        )
+        raise HTTPException(
+            exc.response_status,
+            {"code": exc.code, "message": exc.public_message},
+        ) from exc
+
+    existing_rows = list(
+        await session.scalars(
+            select(SeoCompetitorEvent).where(
+                SeoCompetitorEvent.tenant_id == req.tenant_id,
+                SeoCompetitorEvent.site_id == req.site_id,
+                SeoCompetitorEvent.competitor_id == competitor.id,
+                SeoCompetitorEvent.event_type == "content",
+            )
+        )
+    )
+    known_urls = {row.url for row in existing_rows}
+    baseline = not any(
+        row.summary in {"首次手动采集基线", "手动采集发现的新内容"}
+        for row in existing_rows
+    )
+    created = 0
+    for page in collection.pages:
+        if page.url in known_urls:
+            continue
+        session.add(
+            SeoCompetitorEvent(
+                tenant_id=req.tenant_id,
+                site_id=req.site_id,
+                competitor_id=competitor.id,
+                event_type="content",
+                title=page.title,
+                url=page.url,
+                source_url=f"https://{competitor.domain}/",
+                summary="首次手动采集基线" if baseline else "手动采集发现的新内容",
+            )
+        )
+        known_urls.add(page.url)
+        created += 1
+    await session.commit()
+    return {
+        "competitor_id": competitor.id,
+        "site_id": req.site_id,
+        "baseline": baseline,
+        "checked_pages": len(collection.pages),
+        "attempted_pages": collection.attempted,
+        "failed_pages": collection.failed,
+        "created_events": created,
+        "last_checked_at": _rank_iso(now),
+        "next_allowed_at": _rank_iso(now + timedelta(seconds=COMPETITOR_MANUAL_COOLDOWN_SECONDS)),
+    }
 
 
 @router.post("/competitors/events")
