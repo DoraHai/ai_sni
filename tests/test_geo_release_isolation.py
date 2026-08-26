@@ -50,6 +50,21 @@ def test_nginx_keeps_geo_in_the_independent_include():
     assert "127.0.0.1:8010" in geo_routes
 
 
+def test_legacy_portal_geo_entry_redirects_to_independent_frontend():
+    geo_routes = _read("deploy/geo-routes.nginx.conf")
+    installer = _read("ops/platform-deploy/install-geo.sh")
+
+    assert "location = /deal-sniper-prototype/geo/dashboard.html" in geo_routes
+    assert "return 302 /deal-sniper/geo/dashboard.html;" in geo_routes
+    assert "alias /opt/geo-frontend/current/;" in geo_routes
+
+    assert "geo-routes.nginx.conf" in installer
+    assert "nginx -t" in installer
+    assert "systemctl reload nginx" in installer
+    assert "restore_geo_routes" in installer
+    assert "previous routes restored" in installer
+
+
 def test_static_geo_resolves_logged_in_tenant_context():
     api = _read("frontend/public/deal-sniper-prototype/geo/assets/geo-api-v1.js")
     workbench = _read(
