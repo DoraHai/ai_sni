@@ -2948,6 +2948,8 @@ onMounted(load)
   box-sizing: border-box;
   width: 100%;
   max-width: none;
+  min-width: 0;
+  overflow-x: hidden;
   min-height: calc(100vh - 24px);
   padding: 16px 20px 40px;
   background:
@@ -3069,49 +3071,89 @@ onMounted(load)
 .mt { margin-top: 12px; }
 .grid {
   display: grid;
-  grid-template-columns: clamp(300px, 22vw, 340px) minmax(0, 1fr) clamp(320px, 24vw, 360px);
-  gap: 20px;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) minmax(280px, 340px);
+  grid-template-areas: "brief doc rail";
+  gap: 16px;
   align-items: start;
   width: 100%;
+  min-width: 0;
 }
+.col-left { grid-area: brief; }
+.col-main { grid-area: doc; min-width: 0; }
+.col-rail { grid-area: rail; }
 @media (min-width: 1800px) {
   .grid {
-    grid-template-columns: 340px minmax(0, 1fr) 360px;
-    gap: 22px;
+    grid-template-columns: 320px minmax(0, 1fr) 340px;
+    gap: 20px;
   }
 }
-@media (max-width: 1320px) {
+/* 侧栏约 216px：1680 视口时内容区才够三列；笔记本先两列 */
+@media (max-width: 1679px) {
   .grid {
-    grid-template-columns: 300px minmax(0, 1fr);
+    grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+    grid-template-areas:
+      "brief doc"
+      "rail rail";
+    gap: 14px;
   }
   .col-rail {
     position: static;
-    grid-column: 1 / -1;
     max-height: none;
   }
-  .rail-card {
-    max-height: none;
+  .rail-card { max-height: none; }
+}
+@media (max-width: 1099px) {
+  .grid {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "doc"
+      "brief"
+      "rail";
+    gap: 12px;
+  }
+  .editor { padding: 10px 12px 28px; }
+  .page-toolbar {
+    align-items: stretch;
+    min-height: 0;
+    padding: 10px 12px;
+  }
+  .page-toolbar .left,
+  .page-toolbar .right {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .meta { padding-left: 10px; }
+  .sub {
+    max-width: 100%;
+    white-space: normal;
+  }
+  .doc-card-head { flex-wrap: wrap; }
+  .doc-heading-sub { display: none; }
+  .next-step {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .card :deep(.el-card__header),
+  .card :deep(.el-card__body) {
+    padding: 12px 14px;
   }
 }
-@media (max-width: 920px) {
-  .grid { grid-template-columns: 1fr; }
-  .col-rail { grid-column: auto; }
-  .rail-card {
-    position: static;
-    max-height: none;
-  }
-  .editor { padding: 10px; }
-  .sub { max-width: 60vw; }
+@media (max-width: 720px) {
+  .editor { padding: 8px 8px 24px; }
+  .title { font-size: 15px; }
+  .row-actions { width: 100%; }
 }
 .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-.col-rail {
-  position: sticky;
-  top: 14px;
-  align-self: start;
-  max-height: calc(100vh - 88px);
+@media (min-width: 1680px) {
+  .col-rail {
+    position: sticky;
+    top: 14px;
+    align-self: start;
+    max-height: calc(100vh - 88px);
+  }
+  .rail-card { max-height: calc(100vh - 88px); }
 }
 .rail-card {
-  max-height: calc(100vh - 88px);
   overflow: auto;
   border: 1px solid #ebe6f5 !important;
   background: linear-gradient(180deg, #fffeff 0%, #fbfaff 100%) !important;
@@ -3841,4 +3883,11 @@ onMounted(load)
 }
 .cite-row:first-of-type { border-top: 0; padding-top: 0; }
 .cite-sent { flex: 1 1 220px; color: #334155; min-width: 0; }
+@media (max-width: 1099px) {
+  .card :deep(.el-card__header),
+  .card :deep(.el-card__body) {
+    padding: 12px 14px;
+  }
+  .doc-card-head { flex-wrap: wrap; }
+}
 </style>
