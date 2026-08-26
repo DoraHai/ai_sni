@@ -646,10 +646,16 @@ const mentionCount = computed(() => {
 })
 const mentionCountDelta = computed(() => {
   const { prev, cur } = windowSplit.value
-  if (!prev.length || !cur.length) return null
-  const a = prev.filter((s) => s.mentions_brand).length
-  const b = cur.filter((s) => s.mentions_brand).length
-  return pctDelta(b, a)
+  if (prev.length && cur.length) {
+    const a = prev.filter((s) => s.mentions_brand).length
+    const b = cur.filter((s) => s.mentions_brand).length
+    return pctDelta(b, a)
+  }
+  const rows = dailySeries.value || []
+  if (rows.length >= 2) {
+    return pctDelta(rows[rows.length - 1]?.brand_mentions, rows[0]?.brand_mentions)
+  }
+  return null
 })
 
 const avgRank = computed(() => avgRecommendRank(snapshots.value))
@@ -974,7 +980,7 @@ onMounted(load)
         <div class="label">AI 可见度得分</div>
         <div class="value">{{ fmtPct(visScore) }}</div>
         <div class="delta" :class="kpiDelta(visDelta).tone">
-          {{ kpiDelta(visDelta).label || (visScoreFromSnaps ? '加权提及+顺位' : '样本不足，暂用提及率') }}
+          {{ kpiDelta(visDelta).label || (visScoreFromSnaps ? '加权提及+顺位' : '按提及率') }}
         </div>
       </div>
       <div class="gd-card gd-stat">

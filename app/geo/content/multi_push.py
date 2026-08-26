@@ -35,6 +35,18 @@ logger = logging.getLogger(__name__)
 
 WEB_TYPES = frozenset({"website", "docs"})
 AUTO_PUSH_TYPES = WEB_TYPES | SOCIAL_PLATFORMS
+MANUAL_COMPOSE_URLS = {
+    "encyclopedia": "https://baike.baidu.com/",
+    "zhihu": "https://zhuanlan.zhihu.com/write",
+    "wechat": "https://mp.weixin.qq.com/",
+    "baijiahao": "https://baijiahao.baidu.com/",
+    "toutiao": "https://mp.toutiao.com/",
+    "community_qa": "https://zhuanlan.zhihu.com/write",
+    "website": None,
+    "docs": None,
+    "industry_media": None,
+    "visual_content": None,
+}
 
 
 def account_push_kind(auth_type: str | None, channel_type: str) -> str | None:
@@ -93,8 +105,6 @@ async def list_push_targets(
     targets: list[dict[str, Any]] = []
     for ch in channels:
         ctype = str(ch.channel_type or "").lower()
-        if ctype not in AUTO_PUSH_TYPES:
-            continue
         adapt = variant_key_for_channel(ctype)
         variant = var_map.get(adapt) or var_map.get(ctype)
         mode = str(ch.publish_mode or "manual_only")
@@ -113,6 +123,7 @@ async def list_push_targets(
             "publish_mode": mode,
             "variant_status": variant.status if variant else None,
             "has_variant": variant is not None,
+            "compose_url": MANUAL_COMPOSE_URLS.get(ctype),
             "accounts": [
                 {
                     "account_id": a.id,
@@ -124,6 +135,20 @@ async def list_push_targets(
                 for a in accs
             ],
         }
+
+        if ctype not in AUTO_PUSH_TYPES:
+            targets.append(
+                {
+                    **base,
+                    "ready": False,
+                    "copy_only": True,
+                    "push_kind": "manual",
+                    "block_reasons": [],
+                    "account_id": None,
+                    "default_account_id": None,
+                }
+            )
+            continue
 
         reasons: list[str] = []
         if mode != "auto_publish":
@@ -147,6 +172,7 @@ async def list_push_targets(
                 {
                     **base,
                     "ready": False,
+                    "copy_only": True,
                     "block_reasons": reasons,
                     "account_id": None,
                     "default_account_id": None,

@@ -40,6 +40,13 @@ const BAILIAN_PRESET = {
   api_base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
   model: 'deepseek-v3',
 }
+const OFFICIAL_PRESET = {
+  chatgpt: { api_base_url: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+  kimi: { api_base_url: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
+  perplexity: { api_base_url: 'https://api.perplexity.ai', model: 'sonar' },
+  doubao: { api_base_url: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-pro-32k' },
+  deepseek: { api_base_url: 'https://api.deepseek.com', model: 'deepseek-chat' },
+}
 
 function isDeepseekEngine(key) {
   return String(key || '').toLowerCase().includes('deepseek')
@@ -62,6 +69,18 @@ function applyBailian(row) {
   row.sample_mode = 'openai_compat'
   row.api_base_url = BAILIAN_PRESET.api_base_url
   row.model = BAILIAN_PRESET.model
+}
+
+function applyOfficial(row) {
+  const p = OFFICIAL_PRESET[String(row.engine_key || '').toLowerCase()]
+  if (!p) {
+    dropBailian(row)
+    return
+  }
+  row.sample_mode = 'openai_compat'
+  row.api_base_url = p.api_base_url
+  row.model = p.model
+  ElMessage.success('已改为该引擎官方兼容地址，填写对应 API Key 后保存即可真采样')
 }
 
 function dropBailian(row) {
@@ -150,8 +169,7 @@ async function saveConfig() {
   const row = editing.value
   if (!tenantId.value || !row) return
   if (row.enabled && dashscopeBlocked(row)) {
-    ElMessage.error('百炼只调用 DeepSeek：请先关掉监测，或改成该引擎的官方兼容地址')
-    return
+    applyOfficial(row)
   }
   saving.value = true
   try {
@@ -285,7 +303,8 @@ onMounted(load)
             title="当前接口为阿里云百炼，仅支持 DeepSeek 监测。请填写该引擎的官方兼容接口，或改用人设模拟。"
           />
           <el-form-item v-if="dashscopeBlocked(editing)">
-            <el-button type="warning" @click="dropBailian(editing)">清空百炼地址，改用人设模拟</el-button>
+            <el-button type="primary" @click="applyOfficial(editing)">改用官方接口</el-button>
+            <el-button @click="dropBailian(editing)">改用人设模拟</el-button>
           </el-form-item>
           <el-form-item v-if="isDeepseekEngine(editing.engine_key)">
             <el-button @click="applyBailian(editing)">使用阿里云百炼</el-button>
