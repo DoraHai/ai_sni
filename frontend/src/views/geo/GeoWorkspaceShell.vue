@@ -1,42 +1,74 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { GEO_WORKBENCH_NAV } from '../../utils/geoPrototypeNavigation'
 
 const route = useRoute()
 const router = useRouter()
 const mobileOpen = ref(false)
+const railCollapsed = ref(false)
+const railHover = ref(false)
 const pageTitle = computed(() => route.meta.title || 'GEO 工作台')
+const isEditor = computed(() => /^\/geo\/tasks\/[^/]+/.test(route.path))
+const isRail = computed(() => railCollapsed.value && !railHover.value)
 const isActive = (item) => route.path === item.path || route.path.startsWith(`${item.path}/`)
+
+watch(
+  isEditor,
+  (value) => {
+    railCollapsed.value = value
+  },
+  { immediate: true },
+)
 
 function go(path) {
   mobileOpen.value = false
   router.push(path)
 }
+
+function toggleRail() {
+  railCollapsed.value = !railCollapsed.value
+  railHover.value = false
+}
+
+function onEditorFocus(event) {
+  if (event.detail) {
+    railCollapsed.value = true
+    railHover.value = false
+  }
+}
+
+onMounted(() => window.addEventListener('geo-editor-focus', onEditorFocus))
+onBeforeUnmount(() => window.removeEventListener('geo-editor-focus', onEditorFocus))
 </script>
 
 <template>
-  <div class="geo-shell">
+  <div class="geo-shell" :class="{ 'is-rail': isRail }">
     <button class="geo-mobile-toggle" type="button" aria-label="打开 GEO 导航" @click="mobileOpen = true">☰</button>
     <div v-if="mobileOpen" class="geo-mobile-mask" @click="mobileOpen = false" />
-    <aside class="geo-shell-side" :class="{ 'is-open': mobileOpen }">
-      <div class="geo-shell-brand">
+    <aside
+      class="geo-shell-side"
+      :class="{ 'is-open': mobileOpen }"
+      @mouseenter="railCollapsed && (railHover = true)"
+      @mouseleave="railHover = false"
+    >
+      <div class="geo-shell-brand" title="展开或收起导航" @click="toggleRail">
         <span class="geo-shell-logo">G</span>
-        <span><b>GEO 工作台</b><small>生成式引擎获客</small></span>
+        <span class="geo-shell-brand-copy"><b>GEO 工作台</b><small>生成式引擎获客</small></span>
         <button class="geo-mobile-close" type="button" aria-label="关闭 GEO 导航" @click="mobileOpen = false">×</button>
       </div>
       <nav class="geo-shell-nav">
         <section v-for="group in GEO_WORKBENCH_NAV" :key="group.label">
           <h2>{{ group.label }}</h2>
           <button v-for="item in group.children" :key="item.path" type="button" :class="{ active: isActive(item) }" @click="go(item.path)">
-            <span class="geo-shell-item-icon">{{ item.icon }}</span><span>{{ item.label }}</span>
+            <span class="geo-shell-item-icon">{{ item.icon }}</span><span class="geo-shell-item-label">{{ item.label }}</span>
           </button>
         </section>
       </nav>
       <div class="geo-shell-links">
-        <a href="/diagnostic-center/">!　诊断中心</a>
-        <a href="/seo/dashboard">S　SEO 内容工作台</a>
-        <a href="/deal-sniper/portal">←　返回平台门户</a>
+        <a href="/diagnostic-center/"><span class="geo-shell-link-icon">!</span><span class="geo-shell-link-label">诊断中心</span></a>
+        <a href="/seo/dashboard"><span class="geo-shell-link-icon">S</span><span class="geo-shell-link-label">SEO 内容工作台</span></a>
+        <a href="/deal-sniper/portal"><span class="geo-shell-link-icon">←</span><span class="geo-shell-link-label">返回平台门户</span></a>
       </div>
     </aside>
     <main class="geo-shell-main">
@@ -55,7 +87,7 @@ function go(path) {
 <style scoped>
 .geo-shell { min-height: 100vh; display: grid; grid-template-columns: 260px minmax(0, 1fr); background: #f5f7fb; color: #172033; }
 .geo-shell-side { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; background: #fff; border-right: 1px solid #e7ebf2; z-index: 30; }
-.geo-shell-brand { min-height: 88px; display: flex; align-items: center; gap: 12px; padding: 18px 20px; border-bottom: 1px solid #edf0f5; }
+.geo-shell-brand { min-height: 88px; display: flex; align-items: center; gap: 12px; padding: 18px 20px; border-bottom: 1px solid #edf0f5; cursor: pointer; }
 .geo-shell-brand b, .geo-shell-brand small { display: block; }
 .geo-shell-brand b { font-size: 18px; }
 .geo-shell-brand small { margin-top: 4px; color: #8a94a6; }
@@ -68,7 +100,8 @@ function go(path) {
 .geo-shell-nav button.active { background: #f0edff; color: #6d28d9; }
 .geo-shell-item-icon { width: 22px; color: #7b879a; text-align: center; }
 .geo-shell-links { display: grid; gap: 3px; padding: 12px; border-top: 1px solid #edf0f5; }
-.geo-shell-links a { padding: 9px 10px; border-radius: 8px; color: #667085; font-size: 13px; text-decoration: none; }
+.geo-shell-links a { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border-radius: 8px; color: #667085; font-size: 13px; text-decoration: none; }
+.geo-shell-link-icon { width: 18px; flex: none; text-align: center; }
 .geo-shell-links a:hover { background: #f7f8fb; color: #344054; }
 .geo-shell-main { min-width: 0; }
 .geo-shell-header { min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 28px; background: #fff; border-bottom: 1px solid #e7ebf2; }
@@ -79,6 +112,21 @@ function go(path) {
 .geo-shell-status i { width: 8px; height: 8px; border-radius: 50%; background: #20b486; box-shadow: 0 0 0 4px rgba(32, 180, 134, .12); }
 .geo-shell-content { min-width: 0; padding: 20px 26px 36px; }
 .geo-mobile-toggle, .geo-mobile-close { display: none; }
+@media (min-width: 901px) {
+  .geo-shell { transition: grid-template-columns .16s ease; }
+  .geo-shell.is-rail { grid-template-columns: 72px minmax(0, 1fr); }
+  .geo-shell.is-rail .geo-shell-side { overflow: hidden; }
+  .geo-shell.is-rail .geo-shell-brand { justify-content: center; padding-inline: 0; }
+  .geo-shell.is-rail .geo-shell-brand-copy,
+  .geo-shell.is-rail .geo-shell-nav h2,
+  .geo-shell.is-rail .geo-shell-item-label,
+  .geo-shell.is-rail .geo-shell-link-label { display: none; }
+  .geo-shell.is-rail .geo-shell-nav { padding-inline: 8px; }
+  .geo-shell.is-rail .geo-shell-nav button { justify-content: center; padding-inline: 0; }
+  .geo-shell.is-rail .geo-shell-item-icon { width: auto; }
+  .geo-shell.is-rail .geo-shell-links { padding-inline: 8px; }
+  .geo-shell.is-rail .geo-shell-links a { justify-content: center; padding-inline: 0; }
+}
 @media (max-width: 900px) {
   .geo-shell { display: block; }
   .geo-shell-side { position: fixed; left: 0; top: 0; width: min(86vw, 300px); transform: translateX(-102%); transition: transform .2s ease; box-shadow: 16px 0 40px rgba(15, 23, 42, .18); }
