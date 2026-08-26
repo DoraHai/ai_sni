@@ -1,11 +1,26 @@
 <script setup>
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
   placeholder: { type: String, default: '开始撰写正文…' },
-  minHeight: { type: Number, default: 480 },
+  minHeight: { type: Number, default: 280 },
+  maxHeight: { type: [Number, String], default: '' },
   disabled: { type: Boolean, default: false },
+})
+
+const contentStyle = computed(() => {
+  const max = props.maxHeight
+  const maxCss = max == null || max === ''
+    ? undefined
+    : typeof max === 'number'
+      ? `${max}px`
+      : String(max)
+  return {
+    minHeight: `${props.minHeight}px`,
+    maxHeight: maxCss,
+    overflowY: maxCss ? 'auto' : undefined,
+  }
 })
 
 const emit = defineEmits(['update:modelValue'])
@@ -271,7 +286,7 @@ onBeforeUnmount(() => {
       :class="{ empty: !modelValue }"
       :contenteditable="!disabled"
       :data-placeholder="placeholder"
-      :style="{ minHeight: `${minHeight}px` }"
+      :style="contentStyle"
       role="textbox"
       aria-multiline="true"
       @focus="focused = true"
