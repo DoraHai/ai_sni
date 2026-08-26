@@ -5197,6 +5197,7 @@ async def test_ai_settings(
 
 def _engine_payload(row: GeoTrackingEngine) -> dict[str, Any]:
     from app.geo.content.ai_settings import mask_api_key
+    from app.geo.content.engines import sanitize_engine_endpoint
     from app.security.crypto import decrypt
 
     plain = None
@@ -5205,6 +5206,13 @@ def _engine_payload(row: GeoTrackingEngine) -> dict[str, Any]:
             plain = decrypt(row.api_key_encrypted)
         except Exception:  # noqa: BLE001
             plain = None
+    url, model, mode, _changed = sanitize_engine_endpoint(
+        row.engine_key,
+        getattr(row, "api_base_url", None),
+        getattr(row, "model", None),
+        getattr(row, "sample_mode", None) or "mock_persona",
+        has_key=bool(plain),
+    )
     return {
         "id": row.id,
         "tenant_id": row.tenant_id,
@@ -5213,9 +5221,9 @@ def _engine_payload(row: GeoTrackingEngine) -> dict[str, Any]:
         "enabled": bool(row.enabled),
         "note": row.note,
         "sort_order": row.sort_order,
-        "sample_mode": getattr(row, "sample_mode", None) or "mock_persona",
-        "api_base_url": getattr(row, "api_base_url", None),
-        "model": getattr(row, "model", None),
+        "sample_mode": mode,
+        "api_base_url": url,
+        "model": model,
         "api_key_configured": bool(plain),
         "api_key_masked": mask_api_key(plain) if plain else None,
         "created_at": _iso(row.created_at),
@@ -5258,6 +5266,34 @@ async def _ensure_default_engines(
                 .order_by(GeoTrackingEngine.sort_order, GeoTrackingEngine.id)
             )
         )
+    from app.geo.content.engines import sanitize_engine_endpoint
+    from app.security.crypto import decrypt
+
+    dirty = False
+    for r in rows:
+        has_key = False
+        if getattr(r, "api_key_encrypted", None):
+            try:
+                has_key = bool(decrypt(r.api_key_encrypted))
+            except Exception:  # noqa: BLE001
+                has_key = False
+        url, model, mode, changed = sanitize_engine_endpoint(
+            r.engine_key,
+            getattr(r, "api_base_url", None),
+            getattr(r, "model", None),
+            getattr(r, "sample_mode", None),
+            has_key=has_key,
+        )
+        if not changed:
+            continue
+        r.api_base_url = url
+        r.model = model
+        r.sample_mode = mode
+        dirty = True
+    if dirty:
+        await session.commit()
+        for r in rows:
+            await session.refresh(r)
     return rows
 
 
@@ -5312,6 +5348,15 @@ async def put_tracking_engines(
         mode = (item.sample_mode or "mock_persona").strip()
         if mode not in ("mock_persona", "openai_compat"):
             mode = "mock_persona"
+        from app.geo.content.engines import sanitize_engine_endpoint
+
+        url, model, mode, _changed = sanitize_engine_endpoint(
+            item.engine_key,
+            item.api_base_url,
+            item.model,
+            mode,
+            has_key=bool(enc),
+        )
         row = GeoTrackingEngine(
             tenant_id=req.tenant_id,
             engine_key=item.engine_key,
@@ -5320,8 +5365,8 @@ async def put_tracking_engines(
             note=item.note,
             sort_order=int(item.sort_order),
             sample_mode=mode,
-            api_base_url=(item.api_base_url or None),
-            model=(item.model or None),
+            api_base_url=url,
+            model=model,
             api_key_encrypted=enc,
         )
         session.add(row)

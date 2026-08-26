@@ -2016,8 +2016,25 @@ const currentPushReady = computed(() =>
   currentPushTargets.value.filter((t) => t.ready && t.account_id),
 )
 const currentPushBlock = computed(
-  () => currentPushTargets.value.find((t) => !t.ready)?.block_reasons || [],
+  () => currentPushTargets.value.find((t) => !t.ready && !t.copy_only)?.block_reasons || [],
 )
+const COMPOSE_URLS = {
+  encyclopedia: 'https://baike.baidu.com/',
+  zhihu: 'https://zhuanlan.zhihu.com/write',
+  wechat: 'https://mp.weixin.qq.com/',
+  baijiahao: 'https://baijiahao.baidu.com/',
+  toutiao: 'https://mp.toutiao.com/',
+  community_qa: 'https://zhuanlan.zhihu.com/write',
+}
+const composeUrl = computed(() => {
+  const t = currentPushTargets.value.find((x) => x.compose_url)
+  if (t?.compose_url) return t.compose_url
+  return COMPOSE_URLS[docTab.value] || ''
+})
+const canCopyPublish = computed(() => docTab.value && docTab.value !== 'master')
+function openCompose() {
+  if (composeUrl.value) window.open(composeUrl.value, '_blank', 'noopener')
+}
 
 watch(
   currentPushReady,
@@ -2676,7 +2693,8 @@ onMounted(load)
             </div>
           </template>
           <p class="hint mb">
-            配好分发账号后可一键推送；未配置的渠道仍可复制成稿，再把已发 URL 填回来。
+            官网 Webhook / 微信公众号（app_id+secret）/ 已授权社交账号可一键推送。
+            百科、未接账号的知乎等没有开放接口：复制成稿到平台后台发布，再把 URL 填回来。
             <router-link to="/geo/publishing">去配置分发账号</router-link>
           </p>
           <el-alert
@@ -2720,7 +2738,11 @@ onMounted(load)
               class="mb"
               :title="currentPushBlock.join('；')"
             />
-            <div class="hint" style="margin-bottom: 8px">或手工回填已发地址</div>
+            <div class="mb" style="display:flex;gap:8px;flex-wrap:wrap">
+              <el-button :disabled="!canCopyPublish" @click="copyCurrentDoc">复制成稿</el-button>
+              <el-button v-if="composeUrl" @click="openCompose">打开发布页</el-button>
+            </div>
+            <div class="hint" style="margin-bottom: 8px">发布完成后把公网地址填回来</div>
             <el-input
               v-model="publishUrl"
               placeholder="https:// 已发布地址"

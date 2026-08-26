@@ -29,6 +29,11 @@ class ClaimGuardTests(unittest.TestCase):
         bad = invented_stat_claims("市占率达到 48%。", facts)
         self.assertTrue(any("48" in x for x in bad))
 
+    def test_allows_calendar_year(self):
+        facts = [{"title": "简介", "statement": "工业泵制造商"}]
+        bad = invented_stat_claims("公司成立于 2016 年，服务华东市场。", facts)
+        self.assertEqual(bad, [])
+
     def test_blocks_case_and_performance_without_facts(self):
         from app.geo.content.claim_guard import ungrounded_claims
 

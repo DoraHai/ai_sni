@@ -14,6 +14,11 @@ defineProps({
 })
 
 const router = useRouter()
+const tenantHint = computed(() => {
+  if (session.tenantId) return ''
+  if ((session.tenants || []).length) return '请在左侧选择客户后再看数据'
+  return ''
+})
 const initials = computed(() => {
   const name = String(session.user?.display_name || '').trim()
   if (name) return Array.from(name).slice(0, 2).join('')
@@ -53,7 +58,8 @@ async function onUserCommand(cmd) {
     <header class="geo-topbar">
       <div class="geo-topbar-copy">
         <h1>{{ title }}</h1>
-        <div v-if="sub" class="sub">{{ sub }}</div>
+        <div v-if="tenantHint" class="sub">{{ tenantHint }}</div>
+        <div v-else-if="sub" class="sub">{{ sub }}</div>
       </div>
       <div class="right">
         <GeoObservationPeriod v-if="showPeriod" />

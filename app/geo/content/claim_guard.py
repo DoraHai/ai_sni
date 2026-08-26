@@ -60,8 +60,22 @@ def number_token_allowed(val: str, allowed: set[str]) -> bool:
 
 def _fact_blob(facts: list[dict[str, Any]]) -> str:
     return " ".join(
-        f"{f.get('title') or ''} {f.get('statement') or ''}" for f in facts or []
+        f"{f.get('title') or ''} {f.get('statement') or ''} {f.get('source_name') or ''}"
+        for f in facts or []
     )
+
+
+def _is_calendar_token(num: str, unit: str) -> bool:
+    """Years / calendar months are not performance stats."""
+    try:
+        nval = float(str(num).replace(",", ""))
+    except ValueError:
+        return False
+    if unit == "年" and 1900 <= nval <= 2100:
+        return True
+    if unit == "月" and 1 <= nval <= 12:
+        return True
+    return False
 
 
 def numbers_in_text(text: str) -> set[str]:
@@ -121,6 +135,8 @@ def ungrounded_claims(text: str, facts: list[dict[str, Any]]) -> list[dict[str, 
         num = _norm_num(m.group(1))
         compact = norm_stat_token(token)
         if unit not in _STAT_UNITS:
+            continue
+        if _is_calendar_token(num, unit):
             continue
         # Same number+unit, ignoring spaces: 48小时 == 48 小时.
         # Do not treat bare "48" as covering "48%" / "48小时".

@@ -51,7 +51,7 @@ export function pctDelta(cur, prev) {
 
 export function splitByMidpoint(snaps = [], startIso, endIso) {
   const rows = (snaps || []).filter((s) => s?.captured_at)
-  if (rows.length < 4) return { prev: [], cur: [] }
+  if (rows.length < 2) return { prev: [], cur: [] }
   let mid
   if (startIso && endIso) {
     const a = Date.parse(`${startIso}T00:00:00`)
