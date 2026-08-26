@@ -41,6 +41,23 @@ def test_geo_frontend_is_mounted_without_replacing_the_sem_shell():
     assert "./styles/geo-page.css" not in main
 
 
+def test_geo_standalone_keeps_required_form_and_table_styles():
+    entry = _read("frontend/geo-frontend/src/main.js")
+    styles = _read("frontend/geo-frontend/src/standalone.css")
+
+    assert "import './standalone.css'" in entry
+    for selector in (
+        ".el-input__wrapper",
+        ".el-form-item__label",
+        ".el-dialog__header",
+        ".el-table th.el-table__cell",
+        ".mb",
+        ".form-hint",
+        ".form-section-title",
+    ):
+        assert selector in styles
+
+
 def test_nginx_keeps_geo_in_the_independent_include():
     nginx = _read("deploy/nginx.conf")
     geo_routes = _read("deploy/geo-routes.nginx.conf")
