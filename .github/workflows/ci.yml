@@ -4,7 +4,9 @@ on:
   push:
     branches: [main, codex/production-sem]
   pull_request:
-    branches: [main, codex/production-sem]
+    # SEO production PRs run through the isolated SEO baseline workflow.
+    branches-ignore:
+      - codex/production-seo
 
 jobs:
   pytest:

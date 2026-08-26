@@ -1,13 +1,36 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
+import pytest
+
 from app.seo_serp import (
+    CHINAZ_MAX_CONCURRENCY,
+    SerpProviderError,
     canonical_url,
+    create_chinaz_client,
     deterministic_match,
+    domain_matches,
     fetch_baidu_top50,
+    fetch_baidu_top50_batch,
     parse_top50_response,
     rank_number,
 )
+
+
+def _provider_settings() -> object:
+    return type(
+        "Settings",
+        (),
+        {
+            "chinaz_api_enabled": True,
+            "chinaz_baidu_pc_top50_api_key": "secret-api-key",
+            "chinaz_baidu_mobile_top50_api_key": "mobile-key",
+            "chinaz_api_key": "",
+            "chinaz_api_base_url": "https://openapi.chinaz.net/v1/1001",
+            "chinaz_api_timeout_seconds": 8,
+        },
+    )()
 
 
 def test_top50_response_and_rank_label_are_normalized() -> None:
@@ -50,6 +73,25 @@ def test_deterministic_match_prefers_exact_content_url() -> None:
     assert result["confidence"] == 100
 
 
+def test_official_domain_match_ignores_www_and_case() -> None:
+    result = deterministic_match(
+        {
+            "result_url": "https://WWW.NORD.CN/cn/home-cn.jsp",
+            "title": "NORD",
+            "description": "诺德传动",
+        },
+        official_domains={"nord.cn"},
+        content_urls=set(),
+        account_patterns=[],
+        explicit_assets=[],
+    )
+    assert result["ownership_type"] == "official_site"
+    assert result["match_method"] == "site_domain"
+    assert result["confidence"] == 100
+    assert domain_matches("support.nord.cn", "nord.cn") is True
+    assert domain_matches("nord.cn.example.com", "nord.cn") is False
+
+
 def test_shared_platform_domain_is_not_mistaken_for_brand() -> None:
     item = {
         "result_url": "https://zhihu.com/p/not-owned",
@@ -67,18 +109,7 @@ def test_shared_platform_domain_is_not_mistaken_for_brand() -> None:
 
 
 def test_mobile_provider_uses_official_top50_endpoint() -> None:
-    settings = type(
-        "Settings",
-        (),
-        {
-            "chinaz_api_enabled": True,
-            "chinaz_baidu_pc_top50_api_key": "pc-key",
-            "chinaz_baidu_mobile_top50_api_key": "mobile-key",
-            "chinaz_api_key": "",
-            "chinaz_api_base_url": "https://openapi.chinaz.net/v1/1001",
-            "chinaz_api_timeout_seconds": 8,
-        },
-    )()
+    settings = _provider_settings()
     response = MagicMock()
     response.raise_for_status.return_value = None
     response.json.return_value = {"StateCode": 1, "Result": {"Ranks": []}}
@@ -94,3 +125,180 @@ def test_mobile_provider_uses_official_top50_endpoint() -> None:
     assert args[0].endswith("/baidumobile_keywordtop50")
     assert kwargs["params"]["keyword"] == "智能客服"
     assert kwargs["params"]["APIKey"] == "mobile-key"
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_code", "retryable"),
+    [
+        (401, "provider_auth_failed", False),
+        (403, "provider_auth_failed", False),
+        (429, "provider_rate_limited", False),
+        (503, "provider_unavailable", True),
+    ],
+)
+def test_provider_http_errors_never_expose_request_secrets(
+    status_code: int,
+    expected_code: str,
+    retryable: bool,
+) -> None:
+    settings = _provider_settings()
+    request = httpx.Request(
+        "GET",
+        "https://openapi.chinaz.net/v1/1001/baidupc_keywordtop50",
+        params={"keyword": "sensitive-keyword", "APIKey": "secret-api-key"},
+    )
+    response = httpx.Response(status_code, request=request)
+    client = AsyncMock()
+    client.get.return_value = response
+    context = AsyncMock()
+    context.__aenter__.return_value = client
+
+    with patch("app.seo_serp.get_settings", return_value=settings), patch(
+        "app.seo_serp.httpx.AsyncClient", return_value=context
+    ), pytest.raises(SerpProviderError) as exc:
+        asyncio.run(fetch_baidu_top50("sensitive-keyword", "desktop"))
+
+    assert exc.value.code == expected_code
+    assert exc.value.retryable is retryable
+    assert exc.value.status_code == status_code
+    public_error = str(exc.value)
+    assert "secret-api-key" not in public_error
+    assert "sensitive-keyword" not in public_error
+    assert "http" not in public_error.lower()
+
+
+def test_provider_timeout_is_safe_and_classified() -> None:
+    settings = _provider_settings()
+    request = httpx.Request("GET", "https://openapi.chinaz.net/private")
+    client = AsyncMock()
+    client.get.side_effect = httpx.ReadTimeout(
+        "sensitive-keyword secret-api-key",
+        request=request,
+    )
+    context = AsyncMock()
+    context.__aenter__.return_value = client
+
+    with patch("app.seo_serp.get_settings", return_value=settings), patch(
+        "app.seo_serp.httpx.AsyncClient", return_value=context
+    ), pytest.raises(SerpProviderError) as exc:
+        asyncio.run(fetch_baidu_top50("sensitive-keyword", "desktop"))
+
+    assert exc.value.code == "provider_timeout"
+    assert exc.value.retryable is True
+    assert exc.value.timeout_phase == "read"
+    assert exc.value.elapsed_ms is not None
+    assert "secret-api-key" not in str(exc.value)
+    assert "sensitive-keyword" not in str(exc.value)
+
+
+def test_chinaz_client_uses_separate_timeouts_and_bounded_pool() -> None:
+    sentinel = MagicMock()
+    with patch("app.seo_serp.get_settings", return_value=_provider_settings()), patch(
+        "app.seo_serp.httpx.AsyncClient",
+        return_value=sentinel,
+    ) as client_factory:
+        assert create_chinaz_client() is sentinel
+
+    timeout = client_factory.call_args.kwargs["timeout"]
+    limits = client_factory.call_args.kwargs["limits"]
+    assert timeout.connect == 8
+    assert timeout.read == 8
+    assert timeout.write == 8
+    assert timeout.pool == 2
+    assert limits.max_connections == 2
+    assert limits.max_keepalive_connections == 2
+
+
+@pytest.mark.parametrize(
+    ("exception_type", "expected_phase"),
+    [
+        (httpx.ConnectTimeout, "connect"),
+        (httpx.ReadTimeout, "read"),
+        (httpx.WriteTimeout, "write"),
+        (httpx.PoolTimeout, "pool"),
+    ],
+)
+def test_provider_timeout_phase_is_classified_without_retry(
+    exception_type: type[httpx.TimeoutException],
+    expected_phase: str,
+) -> None:
+    request = httpx.Request("GET", "https://openapi.chinaz.net/private")
+    client = AsyncMock()
+    client.get.side_effect = exception_type(
+        "sensitive-keyword secret-api-key",
+        request=request,
+    )
+
+    with patch("app.seo_serp.get_settings", return_value=_provider_settings()), patch(
+        "app.seo_serp.perf_counter",
+        side_effect=[100.0, 100.25],
+    ), pytest.raises(SerpProviderError) as exc:
+        asyncio.run(
+            fetch_baidu_top50(
+                "sensitive-keyword",
+                "desktop",
+                client=client,
+            )
+        )
+
+    assert exc.value.code == "provider_timeout"
+    assert exc.value.timeout_phase == expected_phase
+    assert exc.value.elapsed_ms == 250
+    assert client.get.await_count == 1
+    assert "secret-api-key" not in str(exc.value)
+    assert "sensitive-keyword" not in str(exc.value)
+
+
+def test_provider_batch_reuses_one_client_and_caps_concurrency() -> None:
+    context = AsyncMock()
+    provider_client = object()
+    context.__aenter__.return_value = provider_client
+    active = 0
+    peak = 0
+    seen_clients: list[object] = []
+
+    async def fake_fetch(keyword: str, device: str, *, client: object) -> dict:
+        nonlocal active, peak
+        seen_clients.append(client)
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return {"keyword": keyword, "device": device}
+
+    requests = [(f"keyword-{index}", "desktop") for index in range(5)]
+    with patch("app.seo_serp.create_chinaz_client", return_value=context) as factory, patch(
+        "app.seo_serp.fetch_baidu_top50",
+        side_effect=fake_fetch,
+    ) as fetch:
+        results = asyncio.run(fetch_baidu_top50_batch(requests))
+
+    assert CHINAZ_MAX_CONCURRENCY == 2
+    assert peak == 2
+    assert fetch.await_count == len(requests)
+    assert seen_clients == [provider_client] * len(requests)
+    assert all(error is None for _, error in results)
+    factory.assert_called_once_with()
+
+
+def test_provider_rejection_reason_is_not_returned() -> None:
+    with pytest.raises(SerpProviderError) as exc:
+        parse_top50_response(
+            {
+                "StateCode": 0,
+                "Reason": "sensitive-keyword secret-api-key",
+            }
+        )
+
+    assert exc.value.code == "provider_rejected"
+    assert "secret-api-key" not in str(exc.value)
+    assert "sensitive-keyword" not in str(exc.value)
+
+
+def test_malformed_provider_state_is_classified_safely() -> None:
+    with pytest.raises(SerpProviderError) as exc:
+        parse_top50_response({"StateCode": "sensitive-keyword secret-api-key"})
+
+    assert exc.value.code == "invalid_response"
+    assert "secret-api-key" not in str(exc.value)
+    assert "sensitive-keyword" not in str(exc.value)

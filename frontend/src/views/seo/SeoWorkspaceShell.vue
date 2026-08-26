@@ -10,6 +10,14 @@ const mobileOpen = ref(false)
 
 const groups = [
   {
+    label: '基础资产',
+    index: '00',
+    items: [
+      { label: '网站管理', path: '/seo/sites', perm: 'seo.assets', mark: 'W' },
+      { label: '品牌资产中心', path: '/seo/brand-assets', perm: 'seo.keywords', mark: 'B' },
+    ],
+  },
+  {
     label: '今日概览',
     index: '01',
     items: [
@@ -129,9 +137,9 @@ onMounted(loadContext)
 
       <div class="rail-footer">
         <a href="/monitor/dashboard"><span>SEM</span>搜索广告工作台</a>
-        <a href="/deal-sniper/geo/dashboard.html"><span>GEO</span>生成式搜索工作台</a>
+        <a href="/deal-sniper/geo/dashboard.html#/geo/overview"><span>GEO</span>生成式搜索工作台</a>
         <a href="/diagnostic-center/"><span>DX</span>诊断中心</a>
-        <a class="portal-link" href="/deal-sniper/portal">← 返回平台门户</a>
+        <a class="portal-link" href="https://sem.snipers.com.cn/deal-sniper/portal">← 返回平台门户</a>
       </div>
     </aside>
 

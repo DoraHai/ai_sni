@@ -1,0 +1,210 @@
+name: Production SEO deployment
+
+on:
+  push:
+    branches:
+      - codex/production-seo
+
+permissions:
+  contents: read
+
+# Serialize production releases. A newer push may wait for the active release,
+# but every job re-checks the branch head before it can contact the server.
+concurrency:
+  group: production-seo-deployment
+  cancel-in-progress: false
+
+env:
+  SEO_PRODUCTION_BRANCH: codex/production-seo
+
+jobs:
+  verify:
+    name: Verify exact SEO production commit
+    if: github.ref == 'refs/heads/codex/production-seo'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Require triggering SHA to remain the production head
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          latest="$(git ls-remote origin "refs/heads/$SEO_PRODUCTION_BRANCH" | cut -f1)"
+          test -n "$latest"
+          if [[ "$latest" != "$RELEASE_SHA" ]]; then
+            echo "Refusing stale SEO release: workflow=$RELEASE_SHA production=$latest" >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Re-run SEO backend and deployment isolation tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost/test
+          BAIDU_APP_ID: ci-dummy
+          BAIDU_SECRET_KEY: 1234567890abcdef
+          BAIDU_DEFAULT_USERNAME: ci-dummy
+          BAIDU_DEFAULT_UCID: "1"
+          BAIDU_SELF_ACCESS_TOKEN: ci-dummy
+          BAIDU_SELF_TOKEN_EXPIRES_AT: "2099-01-01T00:00:00+00:00"
+          CRYPTO_MASTER_KEY_B64: j/QGqbWO8IVw9cCVeAq+u/alTyjLsSQXjROH9uW/3tA=
+          ADMIN_API_KEY: ci-admin-key
+          PYTHONPATH: .
+          TZ: UTC
+        run: >-
+          pytest -q
+          tests/test_keyword_refresh.py
+          tests/test_module_workspaces.py
+          tests/test_process_lock.py
+          tests/test_seo_crawler.py
+          tests/test_seo_competitors.py
+          tests/test_seo_deploy_isolation.py
+          tests/test_seo_distribution.py
+          tests/test_seo_distribution_import.py
+          tests/test_seo_foundation.py
+          tests/test_seo_release_consistency.py
+          tests/test_seo_serp.py
+
+      - name: Re-check the reviewed migration head without applying migrations
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost/test
+          BAIDU_APP_ID: ci-dummy
+          BAIDU_SECRET_KEY: 1234567890abcdef
+          BAIDU_DEFAULT_USERNAME: ci-dummy
+          BAIDU_DEFAULT_UCID: "1"
+          BAIDU_SELF_ACCESS_TOKEN: ci-dummy
+          BAIDU_SELF_TOKEN_EXPIRES_AT: "2099-01-01T00:00:00+00:00"
+          CRYPTO_MASTER_KEY_B64: j/QGqbWO8IVw9cCVeAq+u/alTyjLsSQXjROH9uW/3tA=
+          ADMIN_API_KEY: ci-admin-key
+        run: |
+          heads="$(python -m alembic heads)"
+          test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
+          printf '%s\n' "$heads" | grep -F '0074_merge_geo_seo_heads (head)'
+
+      - working-directory: frontend
+        run: npm ci
+
+      - name: Rebuild and verify the isolated SEO frontend
+        working-directory: frontend
+        run: npm run build:seo && npm run verify:seo-build
+
+      - name: Create immutable SEO-only release archive
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          release_root="$RUNNER_TEMP/seo-release"
+          install -d "$release_root/backend" "$release_root/frontend"
+          cp -a app "$release_root/backend/app"
+          cp -a migrations "$release_root/backend/migrations"
+          cp requirements.txt alembic.ini "$release_root/backend/"
+          cp -a frontend/dist-seo/. "$release_root/frontend/"
+          {
+            echo 'module=seo'
+            echo "commit=$RELEASE_SHA"
+            echo 'migration=not-run'
+          } > "$release_root/MANIFEST"
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/seo-${RELEASE_SHA}.tgz" seo-release
+          sha256sum "$RUNNER_TEMP/seo-${RELEASE_SHA}.tgz" > "$RUNNER_TEMP/seo-${RELEASE_SHA}.tgz.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: seo-release-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/seo-${{ github.sha }}.tgz
+            ${{ runner.temp }}/seo-${{ github.sha }}.tgz.sha256
+          if-no-files-found: error
+          retention-days: 3
+
+  deploy:
+    name: Deploy current SEO production head
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Stop before server access when this workflow is stale
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          latest="$(git ls-remote origin "refs/heads/$SEO_PRODUCTION_BRANCH" | cut -f1)"
+          test -n "$latest"
+          if [[ "$latest" != "$RELEASE_SHA" ]]; then
+            echo "Refusing stale SEO deployment: workflow=$RELEASE_SHA production=$latest" >&2
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: seo-release-${{ github.sha }}
+          path: ${{ runner.temp }}
+
+      - name: Configure restricted SEO deployment identity
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/platform-deploy
+          chmod 600 ~/.ssh/platform-deploy
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Re-check production head before archive upload
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          latest="$(git ls-remote origin "refs/heads/$SEO_PRODUCTION_BRANCH" | cut -f1)"
+          test "$latest" = "$RELEASE_SHA"
+
+      - name: Upload immutable SEO release archive
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          SEO_COMMIT: ${{ github.sha }}
+        run: |
+          archive="$RUNNER_TEMP/seo-${SEO_COMMIT}.tgz"
+          remote_path="/home/platform-deploy/uploads/seo-${SEO_COMMIT}.tgz"
+          scp -i ~/.ssh/platform-deploy -P "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$archive" "$DEPLOY_USER@$DEPLOY_HOST:${remote_path}.part"
+          ssh -i ~/.ssh/platform-deploy -p "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "mv '${remote_path}.part' '$remote_path'"
+
+      - name: Re-check production head before applying release
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          latest="$(git ls-remote origin "refs/heads/$SEO_PRODUCTION_BRANCH" | cut -f1)"
+          test "$latest" = "$RELEASE_SHA"
+
+      - name: Apply SEO frontend and backend without database migration
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          SEO_COMMIT: ${{ github.sha }}
+        run: |
+          archive="$RUNNER_TEMP/seo-${SEO_COMMIT}.tgz"
+          archive_sha256="$(sha256sum "$archive" | cut -d' ' -f1)"
+          remote_path="/home/platform-deploy/uploads/seo-${SEO_COMMIT}.tgz"
+          ssh -i ~/.ssh/platform-deploy -p "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "sudo -n /usr/local/sbin/platform-deploy apply seo '$remote_path' '$SEO_COMMIT' '$archive_sha256' DEPLOY_SEO"
