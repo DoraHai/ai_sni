@@ -58,6 +58,16 @@ def test_geo_standalone_keeps_required_form_and_table_styles():
         assert selector in styles
 
 
+def test_geo_standalone_bootstraps_logged_in_tenant_context():
+    app = _read("frontend/geo-frontend/src/App.vue")
+
+    assert "fetchMe" in app
+    assert "fetchTenants" in app
+    assert "session.refreshUser(me.user)" in app
+    assert "session.setTenants(tenants.tenants || [])" in app
+    assert '<router-view v-if="ready" />' in app
+
+
 def test_geo_standalone_editor_uses_immersive_shell():
     shell = _read("frontend/src/views/geo/GeoWorkspaceShell.vue")
 
