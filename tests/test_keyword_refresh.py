@@ -18,9 +18,12 @@ os.environ.setdefault(
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
 from app.baidu.sync import (
+    _chunked_upsert,
+    _safe_upsert_chunk_size,
     sync_keyword_dimension_reports_for_account,
     sync_keyword_report_range_for_account,
 )
+from app.models import KwReportSnapshot
 from app.scheduler import refresh_keyword_workbench_snapshot
 from app.security.auth import _required
 
@@ -59,6 +62,74 @@ class KeywordRefreshTests(unittest.IsolatedAsyncioTestCase):
         svc.get_keyword_report.assert_awaited_once_with(
             start_date="2026-07-01", end_date="2026-07-02"
         )
+
+    async def test_keyword_history_range_uses_chunked_upsert(self):
+        svc = SimpleNamespace(
+            get_keyword_report=AsyncMock(
+                return_value=[
+                    {"date": "2026-07-01", "wInfoId": i, "device": 0}
+                    for i in range(1200)
+                ]
+            )
+        )
+        chunked = AsyncMock()
+        account = SimpleNamespace(
+            id=5,
+            tenant_id=9,
+            baidu_username="large-history-account",
+            access_token_encrypted="encrypted",
+        )
+
+        with (
+            patch("app.baidu.sync.BaiduAPIClient"),
+            patch("app.baidu.sync.decrypt", return_value="token"),
+            patch("app.baidu.sync.ReportService", return_value=svc),
+            patch("app.baidu.sync._chunked_upsert", new=chunked),
+        ):
+            result = await sync_keyword_report_range_for_account(
+                object(), account, date(2026, 7, 1), date(2026, 7, 1)
+            )
+
+        self.assertEqual(result, 1200)
+        chunked.assert_awaited_once()
+        self.assertEqual(len(chunked.await_args.args[2]), 1200)
+        self.assertEqual(
+            chunked.await_args.args[3], "uq_kw_report_tenant_date_kw_device"
+        )
+        self.assertIn("fetched_at", chunked.await_args.kwargs["update_keys"])
+        self.assertNotIn("keyword", chunked.await_args.kwargs["update_keys"])
+
+    async def test_chunked_upsert_respects_bind_parameter_budget(self):
+        records = [
+            {
+                "tenant_id": 9,
+                "report_date": date(2026, 7, 1),
+                "keyword_id": i,
+                "device": 0,
+                "click": i,
+            }
+            for i in range(5)
+        ]
+        session = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock())
+
+        with patch("app.baidu.sync.UPSERT_BIND_PARAM_BUDGET", 16):
+            self.assertEqual(_safe_upsert_chunk_size(KwReportSnapshot, records), 2)
+            await _chunked_upsert(
+                session,
+                KwReportSnapshot,
+                records,
+                "uq_kw_report_tenant_date_kw_device",
+                {"tenant_id", "report_date", "keyword_id", "device"},
+            )
+
+        self.assertEqual(session.execute.await_count, 3)
+        self.assertTrue(
+            all(
+                len(call.args[0].compile().params) <= 16
+                for call in session.execute.await_args_list
+            )
+        )
+        session.commit.assert_awaited_once()
 
     async def test_keyword_history_range_fails_closed_when_dates_are_missing(self):
         svc = SimpleNamespace(
