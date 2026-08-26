@@ -58,6 +58,17 @@ def test_geo_standalone_keeps_required_form_and_table_styles():
         assert selector in styles
 
 
+def test_geo_standalone_editor_uses_immersive_shell():
+    shell = _read("frontend/src/views/geo/GeoWorkspaceShell.vue")
+
+    assert "'is-editor': isEditor" in shell
+    assert ".geo-shell.is-editor .geo-shell-header { display: none; }" in shell
+    assert ".geo-shell.is-editor .geo-shell-content" in shell
+    assert "height: 100vh;" in shell
+    assert "padding: 0;" in shell
+    assert "overflow: hidden;" in shell
+
+
 def test_nginx_keeps_geo_in_the_independent_include():
     nginx = _read("deploy/nginx.conf")
     geo_routes = _read("deploy/geo-routes.nginx.conf")

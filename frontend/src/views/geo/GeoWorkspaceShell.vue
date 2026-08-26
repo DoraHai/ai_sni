@@ -43,7 +43,7 @@ onBeforeUnmount(() => window.removeEventListener('geo-editor-focus', onEditorFoc
 </script>
 
 <template>
-  <div class="geo-shell" :class="{ 'is-rail': isRail }">
+  <div class="geo-shell" :class="{ 'is-rail': isRail, 'is-editor': isEditor }">
     <button class="geo-mobile-toggle" type="button" aria-label="打开 GEO 导航" @click="mobileOpen = true">☰</button>
     <div v-if="mobileOpen" class="geo-mobile-mask" @click="mobileOpen = false" />
     <aside
@@ -115,6 +115,17 @@ onBeforeUnmount(() => window.removeEventListener('geo-editor-focus', onEditorFoc
 @media (min-width: 901px) {
   .geo-shell { transition: grid-template-columns .16s ease; }
   .geo-shell.is-rail { grid-template-columns: 72px minmax(0, 1fr); }
+  .geo-shell.is-editor .geo-shell-main {
+    height: 100vh;
+    overflow: hidden;
+  }
+  .geo-shell.is-editor .geo-shell-header { display: none; }
+  .geo-shell.is-editor .geo-shell-content {
+    height: 100vh;
+    min-height: 0;
+    padding: 0;
+    overflow: hidden;
+  }
   .geo-shell.is-rail .geo-shell-side { overflow: hidden; }
   .geo-shell.is-rail .geo-shell-brand { justify-content: center; padding-inline: 0; }
   .geo-shell.is-rail .geo-shell-brand-copy,
