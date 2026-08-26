@@ -2576,7 +2576,8 @@ onMounted(load)
                 <RichTextMarkdownEditor
                   :key="`master-body-${task?.article?.version_no || 0}`"
                   v-model="article.body_markdown"
-                  :min-height="520"
+                  :min-height="280"
+                  max-height="min(42vh, 420px)"
                   placeholder="在这里编辑母稿正文。支持标题、加粗、列表、引用和链接…"
                 />
               </el-form-item>
@@ -3080,6 +3081,19 @@ onMounted(load)
 }
 .col-left { grid-area: brief; }
 .col-main { grid-area: doc; min-width: 0; }
+.col-main > .card:first-child {
+  max-height: calc(100vh - 108px);
+  display: flex;
+  flex-direction: column;
+}
+.col-main > .card:first-child :deep(.el-card__header) {
+  flex: none;
+}
+.col-main > .card:first-child :deep(.el-card__body) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
 .col-rail { grid-area: rail; }
 @media (min-width: 1800px) {
   .grid {
@@ -3223,6 +3237,9 @@ onMounted(load)
 }
 .title-form-item { margin-bottom: 18px !important; }
 .body-form-item { margin-bottom: 8px !important; }
+.body-form-item :deep(.rich-content) {
+  overscroll-behavior: contain;
+}
 .article-title-input :deep(.el-input__wrapper) {
   min-height: 48px;
   padding: 0 16px;
