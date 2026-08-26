@@ -18,8 +18,23 @@ const fluidMain = computed(() =>
   route.path.startsWith('/geo') || route.meta.fluidMain === true,
 )
 const isGeoRoute = computed(() => route.path.startsWith('/geo'))
+const isGeoEditor = computed(() => /^\/geo\/tasks\/[^/]+/.test(route.path))
+const geoNavCollapsed = ref(false)
+const geoNavHover = ref(false)
 const mobileNavOpen = ref(false)
 const isMobile = ref(false)
+
+watch(
+  isGeoEditor,
+  (v) => {
+    geoNavCollapsed.value = !!v
+  },
+  { immediate: true },
+)
+
+const geoNavRail = computed(
+  () => isGeoRoute.value && geoNavCollapsed.value && !geoNavHover.value && !isMobile.value,
+)
 
 function toggleMobileNav() {
   mobileNavOpen.value = !mobileNavOpen.value
@@ -37,8 +52,20 @@ function syncMobile() {
 
 const asideWidth = computed(() => {
   if (isMobile.value) return '0px'
+  if (geoNavRail.value) return '72px'
   return isGeoRoute.value ? '216px' : '228px'
 })
+
+function onGeoNavEnter() {
+  if (isGeoRoute.value && geoNavCollapsed.value) geoNavHover.value = true
+}
+function onGeoNavLeave() {
+  geoNavHover.value = false
+}
+function toggleGeoNav() {
+  geoNavCollapsed.value = !geoNavCollapsed.value
+  geoNavHover.value = false
+}
 const tenantPopoverOpen = ref(false)
 
 const roleTone = computed(() => {
@@ -311,7 +338,15 @@ watch(() => route.path, () => {
   syncOpenToRoute()
   closeMobileNav()
 })
+function onGeoEditorFocus(ev) {
+  if (ev.detail) {
+    geoNavCollapsed.value = true
+    geoNavHover.value = false
+  }
+}
+
 onMounted(() => {
+  window.addEventListener('geo-editor-focus', onGeoEditorFocus)
   refreshMe()
   loadTenants()
   loadBadges()
@@ -321,6 +356,7 @@ onMounted(() => {
   mobileMq.addEventListener('change', syncMobile)
 })
 onUnmounted(() => {
+  window.removeEventListener('geo-editor-focus', onGeoEditorFocus)
   mobileMq?.removeEventListener('change', syncMobile)
 })
 </script>
@@ -337,9 +373,15 @@ onUnmounted(() => {
     <el-aside
       :width="asideWidth"
       class="side"
-      :class="{ 'geo-side': isGeoRoute, 'side-mobile-open': isMobile && mobileNavOpen }"
+      :class="{
+        'geo-side': isGeoRoute,
+        'geo-side-rail': geoNavRail,
+        'side-mobile-open': isMobile && mobileNavOpen,
+      }"
+      @mouseenter="onGeoNavEnter"
+      @mouseleave="onGeoNavLeave"
     >
-      <div class="brand">
+      <div class="brand" :title="isGeoRoute ? '展开或收起导航' : ''" @click="isGeoRoute && toggleGeoNav()">
         <div class="brand-mark" aria-hidden="true">{{ isGeoRoute ? 'G' : 'S' }}</div>
         <div class="brand-copy">
           <div class="brand-name">{{ isGeoRoute ? 'GEO 工作台' : 'SEM 智投平台' }}</div>
@@ -356,10 +398,11 @@ onUnmounted(() => {
               type="button"
               class="geo-nav-item"
               :class="{ active: isActive(leaf) }"
+              :title="leaf.label"
               @click="go(leaf); closeMobileNav()"
             >
               <span v-if="leaf.icon" class="geo-nav-ico" aria-hidden="true">{{ leaf.icon }}</span>
-              {{ leaf.label }}
+              <span class="geo-nav-label">{{ leaf.label }}</span>
             </button>
           </div>
         </template>
@@ -460,7 +503,7 @@ onUnmounted(() => {
           popper-class="tenant-popover"
         >
           <template #reference>
-            <button type="button" class="geo-tenant">{{ tenantName }} ▾</button>
+            <button type="button" class="geo-tenant" :title="tenantName">{{ geoNavRail ? tenantInitials({ name: tenantName }) : (tenantName + ' ▾') }}</button>
           </template>
           <div class="tenant-panel">
             <div class="tenant-section-title">切换客户</div>
@@ -679,6 +722,30 @@ onUnmounted(() => {
   background: #f5f0ff;
   color: #7c3aed;
   font-weight: 600;
+}
+.geo-side .brand { cursor: pointer; }
+.geo-side-rail {
+  overflow: hidden;
+}
+.geo-side-rail .brand {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+.geo-side-rail .brand-copy,
+.geo-side-rail .geo-nav-group,
+.geo-side-rail .geo-nav-label {
+  display: none;
+}
+.geo-side-rail .geo-nav-item {
+  justify-content: center;
+  padding: 10px 0;
+}
+.geo-side-rail .geo-side-foot { padding: 8px 6px 12px; }
+.geo-side-rail .geo-tenant {
+  text-align: center;
+  padding: 8px 0;
+  font-weight: 650;
 }
 .geo-side-foot {
   padding: 8px 10px 12px;
