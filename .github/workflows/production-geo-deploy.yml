@@ -1,6 +1,9 @@
 name: Production GEO deployment
 
 on:
+  push:
+    branches:
+      - codex/production-geo
   workflow_dispatch:
     inputs:
       confirmation:
@@ -16,25 +19,62 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify:
+    name: Verify GEO baseline
+    if: github.ref_name == 'codex/production-geo'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt pytest
+
+      - name: Run GEO regression tests
+        env:
+          PYTHONPATH: .
+          TZ: UTC
+        run: >-
+          pytest -q
+          tests/test_geo_content_task_create.py
+          tests/test_geo_daily_metrics_slices.py
+          tests/test_geo_ai_sampling.py
+          tests/test_geo_audit.py
+          tests/test_geo_brand_profile.py
+          tests/test_geo_chinaz.py
+          tests/test_geo_content_rules.py
+          tests/test_geo_evidence_cite.py
+          tests/test_geo_pagespeed.py
+          tests/test_geo_release_isolation.py
+          tests/test_geo_site_audit.py
+
   deploy:
     name: Build and deploy GEO only
     if: github.ref_name == 'codex/production-geo'
+    needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
     steps:
       - name: Validate confirmation
         env:
+          EVENT_NAME: ${{ github.event_name }}
           CONFIRMATION: ${{ inputs.confirmation }}
         run: |
-          test "$CONFIRMATION" = "DEPLOY_GEO" || {
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$CONFIRMATION" != "DEPLOY_GEO" ]; then
             echo "Confirmation must be DEPLOY_GEO" >&2
             exit 2
-          }
+          fi
 
       - uses: actions/checkout@v4
         with:
-          ref: codex/production-geo
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-node@v4
         with:
