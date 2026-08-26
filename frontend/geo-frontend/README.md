@@ -8,7 +8,7 @@ This unit builds and deploys GEO without replacing the SEM frontend.
 - Local build output: `dist`
 - Production releases: `/opt/geo-frontend/releases/<timestamp>`
 - Active production release: `/opt/geo-frontend/current`
-- Public entry: `/deal-sniper/geo/#/geo/businesses`
+- Public entry: `/deal-sniper/geo/#/geo/overview`
 - Compatibility entry: `/deal-sniper/geo/dashboard.html`
 
 ## Commands

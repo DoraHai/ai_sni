@@ -1,48 +1,74 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { session } from '../../src/store/session'
+import { GEO_WORKBENCH_START } from '../../src/utils/geoPrototypeNavigation'
 
 const geoMeta = (title, extra = {}) => ({
   title,
-  workflow: 'GEO 增长',
+  workflow: 'GEO 工作台',
   perm: 'geo.content',
   ...extra,
 })
 
 const routes = [
-  { path: '/', redirect: '/geo/businesses' },
-  { path: '/geo', redirect: '/geo/businesses' },
-  { path: '/geo/businesses', component: () => import('../../src/views/geo/GeoBusinessesView.vue'), meta: geoMeta('优化业务') },
-  { path: '/geo/businesses/:businessId', component: () => import('../../src/views/geo/GeoBusinessDetailView.vue'), meta: geoMeta('业务详情') },
-  { path: '/geo/onboarding', component: () => import('../../src/views/geo/GeoOnboardingView.vue'), meta: geoMeta('GEO 开户向导') },
-  { path: '/geo/prompts', component: () => import('../../src/views/geo/GeoPromptsView.vue'), meta: geoMeta('优化意图词') },
-  { path: '/geo/gaps', component: () => import('../../src/views/geo/GeoGapWorkbenchView.vue'), meta: geoMeta('缺口工作台') },
-  { path: '/geo/facts', component: () => import('../../src/views/geo/GeoFactsView.vue'), meta: geoMeta('事实库') },
-  { path: '/geo/tasks', component: () => import('../../src/views/geo/GeoTasksView.vue'), meta: geoMeta('优化文章') },
-  { path: '/geo/tasks/:taskId', component: () => import('../../src/views/geo/GeoTaskEditorView.vue'), meta: geoMeta('内容编辑器', { fluidMain: true }) },
-  { path: '/geo/publishing', component: () => import('../../src/views/geo/GeoPublishingView.vue'), meta: geoMeta('发布渠道') },
-  { path: '/geo/placements', component: () => import('../../src/views/geo/GeoPlacementsView.vue'), meta: geoMeta('媒体阵地') },
-
-  { path: '/geo/overview', component: () => import('../../src/views/geo/GeoOverviewView.vue'), meta: geoMeta('GEO 概览') },
-  { path: '/geo/visibility', component: () => import('../../src/views/geo/GeoVisibilityView.vue'), meta: geoMeta('AI 可见度') },
-  { path: '/geo/visibility/patrol', component: () => import('../../src/views/geo/GeoVisibilityPatrolView.vue'), meta: geoMeta('全自动巡检') },
-  { path: '/geo/periods', component: () => import('../../src/views/geo/GeoPeriodsView.vue'), meta: geoMeta('优化期次') },
-  { path: '/geo/period-diff', component: () => import('../../src/views/geo/GeoPeriodDiffView.vue'), meta: geoMeta('期次对比') },
-  { path: '/geo/citations', component: () => import('../../src/views/geo/GeoCitationsView.vue'), meta: geoMeta('AI 引用分析') },
-  { path: '/geo/competitors', component: () => import('../../src/views/geo/GeoCompetitorsView.vue'), meta: geoMeta('竞品监测') },
-  { path: '/geo/evaluation', component: () => import('../../src/views/geo/GeoEvaluationView.vue'), meta: geoMeta('评价与位置') },
-  { path: '/geo/topic-heat', component: () => import('../../src/views/geo/GeoTopicHeatView.vue'), meta: geoMeta('话题覆盖热度') },
-  { path: '/geo/deliverables', component: () => import('../../src/views/geo/GeoDeliverablesView.vue'), meta: geoMeta('交付摘要') },
+  { path: '/', redirect: GEO_WORKBENCH_START },
+  {
+    path: '/geo',
+    component: () => import('../../src/views/geo/GeoWorkspaceShell.vue'),
+    redirect: GEO_WORKBENCH_START,
+    meta: geoMeta('GEO 工作台', { bare: true }),
+    children: [
+      { path: 'overview', component: () => import('../../src/views/geo/GeoOverviewView.vue'), meta: geoMeta('GEO 概览') },
+      { path: 'visibility', component: () => import('../../src/views/geo/GeoVisibilityDashView.vue'), meta: geoMeta('AI 可见度') },
+      { path: 'visibility/snapshots', component: () => import('../../src/views/geo/GeoVisibilityView.vue'), meta: geoMeta('采集与判断') },
+      { path: 'questions', component: () => import('../../src/views/geo/GeoPromptsView.vue'), meta: geoMeta('优化意图词') },
+      { path: 'knowledge', component: () => import('../../src/views/geo/GeoFactsView.vue'), meta: geoMeta('知识库') },
+      { path: 'brand', component: () => import('../../src/views/geo/GeoBrandSettingsView.vue'), meta: geoMeta('品牌资料') },
+      { path: 'models', component: () => import('../../src/views/geo/GeoEnginesView.vue'), meta: geoMeta('引擎') },
+      { path: 'citations', component: () => import('../../src/views/geo/GeoCitationsView.vue'), meta: geoMeta('AI 引用次数') },
+      { path: 'competitors', component: () => import('../../src/views/geo/GeoCompetitorsView.vue'), meta: geoMeta('竞品分析') },
+      { path: 'tasks', component: () => import('../../src/views/geo/GeoTasksView.vue'), meta: geoMeta('优化文章') },
+      { path: 'tasks/:taskId', component: () => import('../../src/views/geo/GeoTaskEditorView.vue'), meta: geoMeta('内容编辑器', { fluidMain: true }) },
+      { path: 'ai-settings', component: () => import('../../src/views/geo/GeoAiSettingsView.vue'), meta: geoMeta('AI 能力配置') },
+      { path: 'channel-polish-prompts', component: () => import('../../src/views/geo/GeoChannelPolishPromptsView.vue'), meta: geoMeta('渠道成稿提示词') },
+      { path: 'publishing', component: () => import('../../src/views/geo/GeoPublishingView.vue'), meta: geoMeta('分发平台') },
+      { path: 'placements', component: () => import('../../src/views/geo/GeoPlacementsView.vue'), meta: geoMeta('信源策略') },
+      { path: 'keywords', redirect: '/geo/questions' },
+      { path: 'recommend', redirect: '/geo/questions' },
+      { path: 'answers', redirect: '/geo/visibility' },
+      { path: 'permissions', redirect: '/geo/overview' },
+      { path: 'geo-diagnosis', redirect: GEO_WORKBENCH_START },
+      { path: 'visibility/evaluation', redirect: '/geo/visibility/snapshots' },
+      { path: 'visibility/patrol', redirect: '/geo/visibility/snapshots' },
+      { path: 'period-diff', redirect: '/geo/visibility' },
+      { path: 'gaps', redirect: '/geo/questions' },
+      { path: 'gap-workbench', redirect: '/geo/questions' },
+      { path: 'periods', redirect: GEO_WORKBENCH_START },
+      { path: 'topic-heat', redirect: '/geo/questions' },
+      { path: 'ai-trends', redirect: GEO_WORKBENCH_START },
+      { path: 'evaluation', redirect: '/geo/visibility' },
+      { path: 'deliverables', redirect: GEO_WORKBENCH_START },
+      { path: 'workbench', redirect: GEO_WORKBENCH_START },
+      { path: 'businesses', redirect: '/geo/brand' },
+      { path: 'businesses/:businessId', redirect: '/geo/brand' },
+      { path: 'onboarding', redirect: GEO_WORKBENCH_START },
+      { path: 'prompts', redirect: (to) => ({ path: '/geo/questions', query: to.query }) },
+      { path: 'facts', redirect: '/geo/knowledge' },
+      { path: 'engines', redirect: '/geo/models' },
+    ],
+  },
   {
     path: '/geo/deliverables/share/:shareToken',
     component: () => import('../../src/views/geo/GeoDeliverableShareView.vue'),
     meta: geoMeta('交付摘要分享', { public: true, bare: true }),
   },
-
-  { path: '/geo/engines', component: () => import('../../src/views/geo/GeoEnginesView.vue'), meta: geoMeta('引擎配置') },
-  { path: '/geo/ai-settings', component: () => import('../../src/views/geo/GeoAiSettingsView.vue'), meta: geoMeta('AI 配置') },
-  { path: '/geo/channel-polish-prompts', component: () => import('../../src/views/geo/GeoChannelPolishPromptsView.vue'), meta: geoMeta('渠道成稿提示词') },
-  { path: '/geo/ai-trends', component: () => import('../../src/views/geo/GeoAiTrendsView.vue'), meta: geoMeta('AI 动态与策略') },
-  { path: '/:pathMatch(.*)*', redirect: '/geo/businesses' },
+  {
+    path: '/geo/deliverables/share',
+    redirect: (to) => {
+      const token = to.query.token || to.query.share_token
+      return token ? { path: `/geo/deliverables/share/${token}` } : { path: GEO_WORKBENCH_START }
+    },
+  },
+  { path: '/:pathMatch(.*)*', redirect: GEO_WORKBENCH_START },
 ]
 
 const router = createRouter({
