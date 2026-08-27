@@ -951,6 +951,7 @@ onMounted(load)
 
 <template>
   <GeoWorkbenchPage
+    class="geo-overview-page"
     title="GEO 概览"
     :sub="`品牌：${tenantName} · 覆盖 ${dashEngines.length} 个模型 · ${obsLabel}`"
     :loading="loading"
