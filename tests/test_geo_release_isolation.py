@@ -122,7 +122,7 @@ def test_geo_editor_keeps_the_complete_editor_first_interactions():
 
 
 def test_nginx_keeps_geo_in_the_independent_include():
-    nginx = _read("deploy/nginx.conf")
+    nginx = _read("deploy/gsnipers.conf")
     geo_routes = _read("deploy/geo-routes.nginx.conf")
     assert "include /etc/nginx/snippets/geo-routes.conf;" in nginx
     assert "127.0.0.1:8010" not in nginx

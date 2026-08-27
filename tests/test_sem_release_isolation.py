@@ -16,7 +16,7 @@ def test_sem_frontend_deploy_uses_unprivileged_account_and_readable_modes():
     assert "sem-deploy@101.200.193.83" in script
     assert "root@101.200.193.83" not in script
     assert "chown" not in script
-    assert "--chmod=D0755,F0644" in script
+    assert "--chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r" in script
     assert "StrictHostKeyChecking=yes" in script
 
 
