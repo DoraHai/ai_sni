@@ -341,7 +341,6 @@ async def _brand_context_for_prompt(
     tenant: Tenant,
 ) -> tuple[str, list[str]]:
     """Business profile product name wins; do not mix another business brand."""
-    from app.geo.content.brand_geo import brand_names_from_tenant
     from app.geo.content.business_profile import brand_names_for_profile, display_brand
 
     fallback = getattr(tenant, "name", None) or f"租户{getattr(tenant, 'id', None) or prompt.tenant_id}"

@@ -172,6 +172,35 @@ class GeoContentRulesTests(unittest.TestCase):
         self.assertFalse(checks["updated_at_visible"].passed)
 
 
+class GeoTaskBrandContextTests(unittest.IsolatedAsyncioTestCase):
+    async def test_tenant_brand_fallback_is_available_during_task_check(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+
+        settings = {
+            "DATABASE_URL": "postgresql+asyncpg://test:test@localhost/test",
+            "BAIDU_APP_ID": "test",
+            "BAIDU_SECRET_KEY": "test",
+            "BAIDU_DEFAULT_USERNAME": "test",
+            "BAIDU_DEFAULT_UCID": "0",
+            "BAIDU_SELF_ACCESS_TOKEN": "test",
+            "BAIDU_SELF_TOKEN_EXPIRES_AT": "2099-01-01T00:00:00Z",
+            "CRYPTO_MASTER_KEY_B64": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            "ADMIN_API_KEY": "test-admin-key",
+        }
+        with patch.dict("os.environ", settings, clear=False):
+            from app.geo.content.routes import _brand_context_for_prompt
+
+            brand, names = await _brand_context_for_prompt(
+                AsyncMock(),
+                SimpleNamespace(tenant_id=1, unit_id=None, business_id=None),
+                SimpleNamespace(id=1, name="示例品牌", brand_terms=["示例别名"]),
+            )
+
+        self.assertEqual(brand, "示例品牌")
+        self.assertEqual(names, ["示例品牌"])
+
+
 class GeoGenerateDeterministicTests(unittest.TestCase):
     def test_deterministic_has_required_structure(self):
         from app.geo.content.generate_article import deterministic_article, to_markdown
