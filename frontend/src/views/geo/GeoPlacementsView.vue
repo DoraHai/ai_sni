@@ -1,8 +1,8 @@
 <script setup>
 /**
- * 媒体阵地 CRUD（media-placements）
+ * 媒体 / 信源策略：勾选权威阵地，增删查改信源计划。
  */
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createGeoMediaPlacement,
@@ -10,6 +10,7 @@ import {
   listGeoMediaPlacements,
   patchGeoMediaPlacement,
 } from '../../api/geoContent'
+import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
@@ -17,17 +18,83 @@ const { tenantId } = useGeoTenant()
 const loading = ref(false)
 const error = ref('')
 const items = ref([])
-const pager = useClientPager(items, { pageSize: 20 })
-const createOpen = ref(false)
-const form = ref({
-  name: '',
-  channel_type: 'website',
-  channel_key: '',
-  target_url: '',
-  status: 'planned',
-  priority: 0,
-  authority_note: '',
+const qSearch = ref('')
+const dialogOpen = ref(false)
+const saving = ref(false)
+const editing = ref(null)
+
+const CHANNEL_OPTIONS = [
+  { value: 'website', slug: 'website', label: '网站', icon: '⌂' },
+  { value: 'encyclopedia', slug: 'encyclopedia', label: '百科', icon: '▣' },
+  { value: 'wiki', slug: 'wiki', label: '百科', icon: '▣' },
+  { value: 'zhihu', slug: 'community', label: '社区', icon: '◉' },
+  { value: 'community', slug: 'community', label: '社区', icon: '◉' },
+  { value: 'community_qa', slug: 'community', label: '社区', icon: '◉' },
+  { value: 'wechat', slug: 'wechat', label: '公众号', icon: '▣' },
+  { value: 'news', slug: 'news', label: '新闻', icon: '☰' },
+  { value: 'industry_media', slug: 'media', label: '行业媒体', icon: '📰' },
+  { value: 'media', slug: 'media', label: '行业媒体', icon: '📰' },
+  { value: 'toutiao', slug: 'toutiao', label: '头条', icon: '☰' },
+  { value: 'baijiahao', slug: 'baijiahao', label: '百家号', icon: '☰' },
+  { value: 'visual_content', slug: 'video', label: '视频', icon: '▶' },
+  { value: 'other', slug: 'other', label: '其他', icon: '○' },
+]
+
+const STATUS_META = {
+  planned: { en: 'planned', zh: '计划中', tone: 'ok' },
+  in_progress: { en: 'in_progress', zh: '进行中', tone: 'warn' },
+  published: { en: 'published', zh: '已发布', tone: 'info' },
+  archived: { en: 'archived', zh: '已归档', tone: 'muted' },
+}
+
+function emptyForm() {
+  return {
+    name: '',
+    channel_type: 'website',
+    channel_key: '',
+    target_url: '',
+    status: 'planned',
+    priority: 0,
+    authority_note: '',
+  }
+}
+const form = ref(emptyForm())
+
+function typeMeta(row) {
+  const key = String(row.channel_type || row.channel_key || '').toLowerCase()
+  return CHANNEL_OPTIONS.find((c) => c.value === key) || {
+    value: key,
+    slug: key || 'other',
+    label: row.channel_type || '其他',
+    icon: '○',
+  }
+}
+
+function statusMeta(row) {
+  return STATUS_META[row.status] || {
+    en: row.status || '—',
+    zh: row.status || '—',
+    tone: 'muted',
+  }
+}
+
+
+
+const filteredItems = computed(() => {
+  const q = qSearch.value.trim().toLowerCase()
+  let rows = items.value || []
+  if (q) {
+    rows = rows.filter((r) =>
+      `${r.name || ''} ${r.target_url || ''} ${r.channel_type || ''} ${r.channel_key || ''}`
+        .toLowerCase()
+        .includes(q),
+    )
+  }
+  return rows
 })
+const pager = useClientPager(filteredItems, { pageSize: 20 })
+
+watch(qSearch, () => pager.resetPage())
 
 async function load() {
   if (!tenantId.value) {
@@ -48,14 +115,34 @@ async function load() {
   }
 }
 
-async function submitCreate() {
+function openCreate() {
+  editing.value = null
+  form.value = emptyForm()
+  dialogOpen.value = true
+}
+
+function openEdit(row) {
+  editing.value = row
+  form.value = {
+    name: row.name || '',
+    channel_type: row.channel_type || 'website',
+    channel_key: row.channel_key || '',
+    target_url: row.target_url || '',
+    status: row.status || 'planned',
+    priority: Number(row.priority) || 0,
+    authority_note: row.authority_note || '',
+  }
+  dialogOpen.value = true
+}
+
+async function submitForm() {
   if (!form.value.name.trim()) {
     ElMessage.warning('请填写名称')
     return
   }
+  saving.value = true
   try {
-    await createGeoMediaPlacement({
-      tenant_id: tenantId.value,
+    const payload = {
       name: form.value.name.trim(),
       channel_type: form.value.channel_type,
       channel_key: form.value.channel_key.trim() || null,
@@ -63,28 +150,27 @@ async function submitCreate() {
       status: form.value.status,
       priority: Number(form.value.priority) || 0,
       authority_note: form.value.authority_note.trim() || null,
-    })
-    ElMessage.success('已创建阵地')
-    createOpen.value = false
-    form.value = {
-      name: '',
-      channel_type: 'website',
-      channel_key: '',
-      target_url: '',
-      status: 'planned',
-      priority: 0,
-      authority_note: '',
     }
+    if (editing.value) {
+      await patchGeoMediaPlacement(tenantId.value, editing.value.id, payload)
+      ElMessage.success('已保存')
+    } else {
+      await createGeoMediaPlacement({ tenant_id: tenantId.value, ...payload })
+      ElMessage.success('已创建信源计划')
+    }
+    dialogOpen.value = false
     await load()
   } catch (e) {
-    ElMessage.error(e.message || '创建失败')
+    ElMessage.error(e.message || '保存失败')
+  } finally {
+    saving.value = false
   }
 }
 
-async function setStatus(row, status) {
+async function markPublished(row) {
   try {
-    await patchGeoMediaPlacement(tenantId.value, row.id, { status })
-    ElMessage.success('已更新状态')
+    await patchGeoMediaPlacement(tenantId.value, row.id, { status: 'published' })
+    ElMessage.success('计划已标为已发布（不会向该平台发文）')
     await load()
   } catch (e) {
     ElMessage.error(e.message || '更新失败')
@@ -93,7 +179,7 @@ async function setStatus(row, status) {
 
 async function remove(row) {
   try {
-    await ElMessageBox.confirm(`删除阵地「${row.name}」？`, '删除', {
+    await ElMessageBox.confirm(`删除信源「${row.name}」？`, '删除', {
       type: 'warning',
       confirmButtonText: '删除',
     })
@@ -110,103 +196,151 @@ onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="geo-pl">
-    <div class="page-header">
-      <div>
-        <div class="page-title">媒体阵地</div>
-        <div class="page-desc">
-          权威信源 / 分发阵地布局（API：media-placements）。空库打开时可能自动种子 CN 蓝图。
+  <GeoWorkbenchPage
+    title="信源策略"
+    :show-period="false"
+    sub="投放计划：百科、知乎、榜单等要不要做。这里的「发布」只改计划状态，不会把文章发到这些平台；真发在分发平台和优化文章里"
+    :loading="loading"
+  >
+    <template #actions>
+      <input v-model="qSearch" class="gd-search" placeholder="搜索媒体 / 信源…" />
+      <button class="gd-btn" @click="load">刷新</button>
+      <button class="gd-btn primary" @click="openCreate">+ 新增信源计划</button>
+    </template>
+
+    <div class="geo-dash">
+      <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
+
+      <div class="geo-table-card">
+        <el-table :data="pager.pagedItems" empty-text="暂无信源计划">
+          <el-table-column label="名称" min-width="360">
+            <template #default="{ row }">
+              <div class="name">{{ row.name }}</div>
+              <div v-if="row.authority_note" class="note">{{ row.authority_note }}</div>
+              <a
+                v-if="row.target_url"
+                :href="row.target_url"
+                target="_blank"
+                rel="noopener"
+                class="url"
+              >{{ row.target_url }}</a>
+            </template>
+          </el-table-column>
+          <el-table-column label="类型" min-width="140">
+            <template #default="{ row }">
+              <div class="geo-type-cell">
+                <span class="geo-type-icon">{{ typeMeta(row).icon }}</span>
+                <span class="type-label">{{ typeMeta(row).label }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" min-width="120">
+            <template #default="{ row }">
+              <span class="geo-status-cell">
+                <i class="geo-status-dot" :class="statusMeta(row).tone" />
+                {{ statusMeta(row).zh }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" min-width="180">
+            <template #default="{ row }">
+              <div class="geo-act">
+                <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+                <el-button
+                  v-if="row.status !== 'published'"
+                  link
+                  class="act-publish"
+                  @click="markPublished(row)"
+                >发布</el-button>
+                <el-button link type="danger" @click="remove(row)">删除</el-button>
+              </div>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div class="geo-table-foot">
+          <span>共 {{ pager.total }} 条</span>
+          <el-pagination
+            background
+            layout="prev, pager, next"
+            :total="pager.total"
+            :page-size="pager.pageSize"
+            :current-page="pager.page"
+            @current-change="pager.onPageChange"
+          />
         </div>
       </div>
-      <div class="header-actions">
-        <el-button type="primary" @click="createOpen = true">新建</el-button>
-        <el-button @click="load">刷新</el-button>
-      </div>
     </div>
 
-    <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
-
-    <el-table :data="pager.pagedItems" stripe empty-text="暂无阵地" size="small">
-      <el-table-column prop="id" label="ID" width="70" />
-      <el-table-column prop="name" label="名称" min-width="140" />
-      <el-table-column prop="channel_type" label="类型" width="110" />
-      <el-table-column prop="channel_key" label="蓝图 key" width="100" />
-      <el-table-column prop="status" label="状态" width="100" />
-      <el-table-column prop="priority" label="优先级" width="80" />
-      <el-table-column prop="target_url" label="URL" min-width="160" show-overflow-tooltip />
-      <el-table-column label="操作" width="220" fixed="right">
-        <template #default="{ row }">
-          <el-button
-            v-if="row.status !== 'published'"
-            link
-            type="success"
-            @click="setStatus(row, 'published')"
-          >标为已发布</el-button>
-          <el-button
-            v-if="row.status !== 'planned'"
-            link
-            @click="setStatus(row, 'planned')"
-          >标为规划中</el-button>
-          <el-button link type="danger" @click="remove(row)">删除</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
-    <div class="geo-pager">
-      <el-pagination
-        background
-        layout="total, sizes, prev, pager, next"
-        :total="pager.total"
-        :page-size="pager.pageSize"
-        :current-page="pager.page"
-        :page-sizes="[10, 20, 50, 100]"
-        @current-change="pager.onPageChange"
-        @size-change="pager.onSizeChange"
-      />
-    </div>
-
-    <el-dialog v-model="createOpen" title="新建媒体阵地" width="480px">
+    <el-dialog
+      v-model="dialogOpen"
+      :title="editing ? '编辑信源计划' : '新增信源计划'"
+      width="480px"
+    >
       <el-form label-width="96px">
         <el-form-item label="名称" required>
-          <el-input v-model="form.name" />
+          <el-input v-model="form.name" placeholder="如：官网帮助中心 / 知乎机构号" />
         </el-form-item>
         <el-form-item label="类型">
-          <el-input v-model="form.channel_type" placeholder="website / zhihu / ranking …" />
+          <el-select v-model="form.channel_type" style="width: 100%">
+            <el-option
+              v-for="c in CHANNEL_OPTIONS"
+              :key="c.value"
+              :label="`${c.label} · ${c.slug}`"
+              :value="c.value"
+            />
+          </el-select>
         </el-form-item>
         <el-form-item label="蓝图 key">
-          <el-input v-model="form.channel_key" />
+          <el-input v-model="form.channel_key" placeholder="可选" />
         </el-form-item>
         <el-form-item label="目标 URL">
-          <el-input v-model="form.target_url" />
+          <el-input v-model="form.target_url" placeholder="https://" />
         </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="form.status" style="width: 100%">
-            <el-option label="planned" value="planned" />
-            <el-option label="in_progress" value="in_progress" />
-            <el-option label="published" value="published" />
+            <el-option label="计划中" value="planned" />
+            <el-option label="进行中" value="in_progress" />
+            <el-option label="已发布" value="published" />
+            <el-option label="已归档" value="archived" />
           </el-select>
         </el-form-item>
         <el-form-item label="优先级">
-          <el-input-number v-model="form.priority" />
+          <el-input-number v-model="form.priority" :min="0" :max="999" />
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="form.authority_note" type="textarea" :rows="2" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="createOpen = false">取消</el-button>
-        <el-button type="primary" @click="submitCreate">创建</el-button>
+        <el-button @click="dialogOpen = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="submitForm">保存</el-button>
       </template>
     </el-dialog>
-  </div>
+  </GeoWorkbenchPage>
 </template>
 
 <style scoped>
-.geo-pl { padding: 4px 2px 24px; }
-.page-header {
-  display: flex; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
+.name { font-weight: 650; color: #1e2330; }
+.note {
+  margin-top: 3px;
+  font-size: 12px;
+  color: #9ca3af;
+  line-height: 1.4;
 }
-.page-title { font-size: 20px; font-weight: 700; }
-.page-desc { font-size: 13px; color: #6b7280; margin-top: 4px; }
-.header-actions { display: flex; gap: 8px; }
+.url {
+  display: inline-block;
+  margin-top: 4px;
+  color: #6d28d9;
+  text-decoration: none;
+  font-size: 12px;
+}
+.url:hover { text-decoration: underline; }
+.type-label {
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+.geo-status-cell { white-space: nowrap; }
 .mb { margin-bottom: 12px; }
 </style>

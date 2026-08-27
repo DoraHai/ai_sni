@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
@@ -27,9 +27,13 @@ class RuleCheck:
     passed: bool
     message: str
     action: str
+    details: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        if not payload.get("details"):
+            payload.pop("details", None)
+        return payload
 
 
 def _faq_count_in_body(body: str) -> int:
@@ -306,8 +310,8 @@ def check_numbers_extractable(data: RuleInput) -> RuleCheck:
         return RuleCheck(
             code="numbers_extractable",
             passed=False,
-            message=f"正文含事实卡没有的数字：{shown}",
-            action="删掉无依据数字，或先补核验事实卡再写",
+            message=f"正文写了事实卡没有的数字：{shown}",
+            action="删掉这些数字，或把对应数据做成已核验事实卡后再引用",
         )
     if not fact_number_allowlist(data.facts or []):
         return RuleCheck(
@@ -320,9 +324,91 @@ def check_numbers_extractable(data: RuleInput) -> RuleCheck:
     return RuleCheck(
         code="numbers_extractable",
         passed=ok,
-        message="正文含可抽取数字事实" if ok else "事实卡有数字但正文未引用",
-        action="" if ok else "把已核验数字写进正文，不要另编新数字",
+        message="正文含可抽取数字事实" if ok else "事实卡有数字，但正文还没引用",
+        action="" if ok else "把已核验事实卡里的数字写进正文，不要另编新数字",
     )
+
+
+def _fact_number_snippets(facts: list[dict[str, Any]]) -> list[str]:
+    """Quote bound facts that actually contain numbers — never invent demo stats."""
+    from app.geo.content.claim_guard import fact_number_allowlist
+
+    snippets: list[str] = []
+    seen: set[str] = set()
+    for fact in facts or []:
+        if not fact_number_allowlist([fact]):
+            continue
+        bit = str(fact.get("statement") or fact.get("title") or "").strip()
+        if not bit or bit in seen:
+            continue
+        seen.add(bit)
+        src = str(fact.get("source_name") or "").strip()
+        snippets.append(f"- {bit}" + (f"（来源：{src}）" if src else ""))
+        if len(snippets) >= 6:
+            break
+    return snippets
+
+
+def _strip_invented_number_lines(body: str, facts: list[dict[str, Any]]) -> str:
+    """Drop lines whose only stats are not in bound facts (e.g. leftover demo 80%/120 家)."""
+    from app.geo.content.claim_guard import fact_number_allowlist, invented_stat_claims
+
+    invented = invented_stat_claims(body, facts)
+    if not invented:
+        return body
+    allowed = fact_number_allowlist(facts)
+    kept: list[str] = []
+    for line in (body or "").splitlines(keepends=True):
+        raw = line.rstrip("\r\n")
+        if not raw.strip():
+            kept.append(line)
+            continue
+        line_hits = invented_stat_claims(raw, facts)
+        if not line_hits:
+            kept.append(line)
+            continue
+        if any(token in raw for token in allowed if token):
+            kept.append(line)
+            continue
+    return "".join(kept)
+
+
+def _numbers_extractable_patch(data: RuleInput) -> dict[str, Any] | None:
+    """Fix numbers_extractable using bound facts, or by removing invented stats.
+
+    Never insert the old demo line「覆盖 80% / 14 天 / 120 家」unless those
+    numbers actually appear on the task's fact cards.
+    """
+    if check_numbers_extractable(data).passed:
+        return None
+    body = data.body_markdown or ""
+    facts = data.facts or []
+    stripped = _strip_invented_number_lines(body, facts)
+    new_body = stripped
+    snippets = _fact_number_snippets(facts)
+    if snippets:
+        block = "\n## 可核验数据\n\n" + "\n".join(snippets) + "\n"
+        if "可核验数据" not in new_body:
+            new_body = (new_body.rstrip() + "\n" + block) if new_body.strip() else block.lstrip("\n")
+    if new_body.strip() == body.strip():
+        return None
+    stripped_only = stripped.strip() != body.strip()
+    appended_only = new_body.startswith(body.rstrip()) and stripped == body
+    label = "去掉无依据数字" if stripped_only and not snippets else "写入已核验数字"
+    if appended_only:
+        insert = new_body[len(body.rstrip()) :]
+        return {
+            "code": "numbers_extractable",
+            "label": label,
+            "insert_markdown": insert if insert.startswith("\n") else "\n" + insert,
+            "cursor_hint": "append",
+        }
+    return {
+        "code": "numbers_extractable",
+        "label": label,
+        "insert_markdown": new_body,
+        "cursor_hint": "rewrite",
+    }
 
 
 def check_comparison_extractable(data: RuleInput) -> RuleCheck:
@@ -374,6 +460,31 @@ def check_sentence_evidence(data: RuleInput) -> RuleCheck:
     )
 
 
+def _fabrication_points(issues: list[dict[str, Any]], *, limit: int = 8) -> list[str]:
+    """One line per high-risk hit: original snippet + why it is blocked."""
+    points: list[str] = []
+    seen: set[str] = set()
+    for item in issues or []:
+        if item.get("level") != "高":
+            continue
+        excerpt = re.sub(r"\s+", " ", str(item.get("excerpt") or "")).strip()
+        why = re.sub(r"\s+", " ", str(item.get("detail") or item.get("type") or "")).strip()
+        why = why.replace("`", "")
+        if excerpt:
+            line = f"「{excerpt[:56]}」"
+            if why:
+                line = f"{line} {why}"
+        else:
+            line = why
+        if not line or line in seen:
+            continue
+        seen.add(line)
+        points.append(line)
+        if len(points) >= limit:
+            break
+    return points
+
+
 def check_fabrication_lint(data: RuleInput) -> RuleCheck:
     """Block ready when draft or channel variants invent numbers / cases / placeholders."""
     from app.geo.content.draft_lint import lint_draft, lint_summary
@@ -384,16 +495,24 @@ def check_fabrication_lint(data: RuleInput) -> RuleCheck:
         issues.extend(lint_draft(vb or "", facts=facts))
     summary = lint_summary(issues)
     ok = summary["high"] == 0
-    detail = (
-        f"编造风险 高{summary['high']}/中{summary['medium']}/低{summary['low']}"
-        if summary["total"]
-        else "未发现高风险编造线索"
-    )
+    points = _fabrication_points(issues)
+    if ok:
+        return RuleCheck(
+            code="fabrication_lint",
+            passed=True,
+            message=(
+                f"编造风险 高{summary['high']}/中{summary['medium']}/低{summary['low']}"
+                if summary["total"]
+                else "未发现高风险编造线索"
+            ),
+            action="",
+        )
     return RuleCheck(
         code="fabrication_lint",
-        passed=ok,
-        message=detail if ok else f"存在 {summary['high']} 条无依据数字/性能/案例/占位名",
-        action="" if ok else "删掉事实卡没有的数字、性能指标和案例，或先补核验事实",
+        passed=False,
+        message=f"发现 {summary['high']} 处无依据表述，不能标可发布",
+        action="对照下面原文删改，或把这些数据补成已核验事实卡后再写",
+        details=points,
     )
 
 
@@ -482,17 +601,9 @@ def build_fix_patches(data: RuleInput) -> list[dict[str, Any]]:
             }
         )
 
-    if not check_numbers_extractable(data).passed:
-        patches.append(
-            {
-                "code": "numbers_extractable",
-                "label": "插入数字事实",
-                "insert_markdown": (
-                    "\n关键指标：覆盖 80% 典型场景，实施约 14 天，已服务 120 家制造业客户。\n"
-                ),
-                "cursor_hint": "append",
-            }
-        )
+    numbers_patch = _numbers_extractable_patch(data)
+    if numbers_patch:
+        patches.append(numbers_patch)
     if not check_comparison_extractable(data).passed:
         patches.append(
             {

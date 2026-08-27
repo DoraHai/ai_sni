@@ -21,10 +21,13 @@ import {
   startSocialOAuth,
   verifySocialAccount,
 } from '../../api/geoContent'
+import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import NeedHintAlert from '../../components/NeedHintAlert.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
+import { getGeoPrototypePageSurface } from '../../utils/geoEditorSurface'
 
 const { tenantId } = useGeoTenant()
+const prototypeSurface = getGeoPrototypePageSurface()
 const loading = ref(false)
 const error = ref('')
 const channels = ref([])
@@ -54,7 +57,7 @@ const PUBLISH_MODES = [
   {
     value: 'auto_publish',
     label: 'auto_publish · 可自动推送（Webhook）',
-    tip: '任务审校通过后，可对已导出渠道稿一键 Webhook 推送',
+    tip: '内容检查通过后，可对已导出渠道稿一键 Webhook 推送',
   },
   {
     value: 'draft_then_manual',
@@ -146,6 +149,25 @@ function defaultAuthForChannel(channelId) {
   if (typeSupportsSocial(ch?.channel_type)) return 'social_api'
   if (typeSupportsWebhook(ch?.channel_type)) return 'webhook'
   return 'manual'
+}
+
+const TYPE_LABELS = {
+  website: '官网',
+  docs: '文档',
+  wechat: '公众号',
+  zhihu: '知乎',
+  baijiahao: '百家号',
+  toutiao: '头条',
+  industry_media: '行业媒体',
+}
+
+function typeLabel(t) {
+  const key = String(t || '').toLowerCase()
+  return TYPE_LABELS[key] || t || '—'
+}
+
+function accountCount(row) {
+  return (accounts.value || []).filter((a) => a.channel_id === row.id).length
 }
 
 function modeLabel(mode) {
@@ -673,28 +695,23 @@ onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="geo-page">
-    <div class="page-header">
-      <div>
-        <div class="page-title">发布渠道</div>
-        <div class="page-desc">
-          <strong>可自动推送</strong>：发布模式 = <code>auto_publish</code> 的官网/文档 + Webhook 账号（HTTPS）。
-          微信/知乎等仅支持出稿后<strong>人工发 + 回填 URL</strong>（无官方 OAuth 自动化）。
-        </div>
-      </div>
-      <div class="header-actions">
-        <el-button @click="createChOpen = true">新建渠道</el-button>
-        <el-button type="primary" @click="openCreateAccount()">新建账号</el-button>
-        <el-button @click="load">刷新</el-button>
-        <router-link class="el-button" to="/geo/workbench">工作台</router-link>
-      </div>
-    </div>
+  <GeoWorkbenchPage
+    title="分发平台"
+    :show-period="false"
+    sub="配置渠道与推送账号。官网/文档走 Webhook，微信等走社交账号；未配账号的渠道仍可在文章里手工回填 URL"
+    :loading="loading"
+  >
+    <template #actions>
+      <button class="gd-btn" @click="load">刷新连接状态</button>
+      <button class="gd-btn primary" @click="createChOpen = true">+ 添加分发平台</button>
+    </template>
+    <div class="geo-dash geo-page">
 
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
     <NeedHintAlert />
 
     <!-- 多媒自动推送矩阵 -->
-    <section v-if="autoMatrix" class="block auto-overview">
+    <section v-if="prototypeSurface.showChannelAutomationConsole && autoMatrix" class="block auto-overview">
       <div class="block-head">
         <h3 class="sec">多媒自动推送矩阵</h3>
         <span class="sec-hint">
@@ -744,7 +761,7 @@ onMounted(load)
     </section>
 
     <!-- 自动化渠道总览 -->
-    <section class="block auto-overview">
+    <section v-if="prototypeSurface.showChannelAutomationConsole" class="block auto-overview">
       <div class="block-head">
         <h3 class="sec">官网 Webhook 卡片</h3>
         <span class="sec-hint">
@@ -799,49 +816,54 @@ onMounted(load)
     <!-- ① 渠道目录 -->
     <section class="block">
       <div class="block-head">
-        <h3 class="sec">① 渠道目录</h3>
-        <span class="sec-hint">主键：<code>渠道 ID</code> · 点「配置」可改发布模式 / 站点 URL</span>
+        <h3 class="sec">分发平台</h3>
+        <span class="sec-hint">维护平台连接状态与分发方式</span>
       </div>
-      <el-table :data="channels" stripe empty-text="暂无渠道" class="mb" size="small">
-        <el-table-column prop="id" label="渠道 ID" width="88" />
-        <el-table-column prop="channel_type" label="类型" width="120" show-overflow-tooltip />
-        <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
-        <el-table-column label="发布模式" min-width="160">
+      <el-table :data="channels" empty-text="暂无渠道" class="mb ch-table" size="small">
+        <el-table-column label="类型" min-width="110">
+          <template #default="{ row }">
+            <span class="type-label">{{ typeLabel(row.channel_type) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="名称" min-width="240">
+          <template #default="{ row }">
+            <div class="name">{{ row.name }}</div>
+            <div v-if="row.base_url" class="url">{{ row.base_url }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="发布模式" min-width="170">
           <template #default="{ row }">
             <el-tag size="small" :type="modeTagType(row.publish_mode)">
               {{ modeLabel(row.publish_mode) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="站点 base_url" min-width="140" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.base_url || '—' }}</template>
-        </el-table-column>
-        <el-table-column label="启用" width="72" align="center">
+        <el-table-column label="状态" min-width="170">
           <template #default="{ row }">
-            <el-tag :type="row.enabled ? 'success' : 'info'" size="small">
-              {{ row.enabled ? '是' : '否' }}
-            </el-tag>
+            <span class="geo-status-cell">
+              <i class="geo-status-dot" :class="row.enabled ? 'ok' : 'muted'" />
+              {{ row.enabled ? '已启用' : '已停用' }}
+              · {{ accountCount(row) }} 个连接
+            </span>
           </template>
         </el-table-column>
-        <el-table-column label="账号数" width="72" align="center">
+        <el-table-column label="操作" min-width="220">
           <template #default="{ row }">
-            {{ accounts.filter((a) => a.channel_id === row.id).length }}
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="openEditChannel(row)">配置</el-button>
-            <el-button link type="primary" @click="toggleChannel(row)">
-              {{ row.enabled ? '禁用' : '启用' }}
-            </el-button>
-            <el-button link type="danger" @click="removeChannel(row)">删除</el-button>
+            <div class="geo-act">
+              <el-button link type="primary" @click="openEditChannel(row)">配置</el-button>
+              <el-button link type="primary" @click="openCreateAccount(row.id)">账号</el-button>
+              <el-button link type="primary" @click="toggleChannel(row)">
+                {{ row.enabled ? '停用' : '启用' }}
+              </el-button>
+              <el-button link type="danger" @click="removeChannel(row)">删除</el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
     </section>
 
     <!-- ② 渠道账号 -->
-    <section class="block">
+    <section v-if="prototypeSurface.showChannelAccountConsole" class="block">
       <div class="block-head">
         <h3 class="sec">② 渠道账号</h3>
         <span class="sec-hint">主键：<code>账号 ID</code> · 按渠道页签管理；auto 渠道请配 Webhook</span>
@@ -895,7 +917,7 @@ onMounted(load)
           </el-button>
         </div>
         <div v-else class="hint">
-          用法：优化文章 → 生成渠道稿 → 导出 → 审校通过 → 选本账号「Webhook 推送」
+          用法：优化文章 → 生成渠道稿 → 内容检查 → 选本账号「Webhook 推送」
         </div>
       </el-alert>
 
@@ -922,7 +944,7 @@ onMounted(load)
         </el-button>
       </div>
 
-      <el-table :data="filteredAccounts" stripe empty-text="该渠道下暂无账号" size="small">
+      <el-table :data="filteredAccounts" empty-text="该渠道下暂无账号" size="small">
         <el-table-column prop="id" label="账号 ID" width="88" />
         <el-table-column label="所属渠道" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">
@@ -1306,7 +1328,8 @@ onMounted(load)
         <el-button type="primary" @click="saveEditAccount">保存</el-button>
       </template>
     </el-dialog>
-  </div>
+    </div>
+  </GeoWorkbenchPage>
 </template>
 
 <style scoped>
@@ -1319,6 +1342,11 @@ onMounted(load)
 .page-desc code { background: #f5f0ff; padding: 1px 6px; border-radius: 4px; color: #6d28d9; }
 .header-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .mb { margin-bottom: 14px; }
+.ch-table :deep(th.el-table__cell) { white-space: nowrap; }
+.type-label { white-space: nowrap; font-weight: 600; color: #374151; }
+.name { font-weight: 650; color: #1e2330; }
+.url { margin-top: 3px; font-size: 12px; color: #9ca3af; }
+.geo-status-cell { white-space: nowrap; }
 .block {
   background: #fff;
   border: 1px solid #e8e4f5;

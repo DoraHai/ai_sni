@@ -75,9 +75,9 @@ python -m scripts.seed_geo_demo --tenant-id 1 --verify-facts
 
 | # | 步骤 | 期望 | 结果 |
 | --- | --- | --- | --- |
-| V1 | 打开 `/geo/overview` | KPI 有数或 0；可筛优化业务/单元；无白屏 | ☐ 目视 |
-| V1b | `/geo/businesses` | 建业务/单元；重算今日；看租户/业务/单元日表 | ☐ 目视 |
-| V2 | `/geo/workbench` → 优化文章 | 列表可开 | ☐ 目视 |
+| V1 | 打开 `/geo/overview` | KPI 有数或 0；无白屏；查询期只在顶栏出现一次 | ☐ 目视 |
+| V1b | `/geo/brand` | 品牌资料可编辑保存（原 `/geo/businesses` 已下线） | ☐ 目视 |
+| V2 | `/geo/tasks` 优化文章 | 列表可开 | ☐ 目视 |
 | V3 | 新建或打开**空 Brief**任务 → AI 建议 | 行业/受众/意图/类型/CTA 有值 + 成功提示 | ✓ 自动（delivery suggest-brief） |
 | V4 | 保存 Brief | 刷新后仍在 | ✓ 自动（delivery patch brief） |
 | V5 | 召回 / 一键绑 3 条 verified / 保存绑定 | 已绑 ≥3，状态 facts_bound 或可生成 | ✓ 自动（retrieve+bind） |
@@ -88,7 +88,7 @@ python -m scripts.seed_geo_demo --tenant-id 1 --verify-facts
 | V10 | 回填公网 URL（如 https://example.com/…） | 200，publications 有记录 | ☐ 目视（需先 V9） |
 | V11 | Webhook：公网 HTTPS 账号推送 | 成功或明确业务错误（非静默） | ☐ 目视 / 内网 URL 见 N3 |
 | V12 | `/geo/visibility` 登记快照 | 竞品/引用页有聚合变化 | ✓ 自动（m1 snapshot loop） |
-| V13 | `/geo/deliverables` 导出 MD | 可下载/可复制；可筛业务/单元 | ☐ 目视 |
+| V13 | `/geo/overview` 导出报告 | 可下载 CSV（原 `/geo/deliverables` 独立页已下线） | ☐ 目视 |
 
 ### 3.2 静态台路径（兼容）
 
@@ -215,7 +215,7 @@ python scripts/smoke_geo_webhook_push.py
 | 交付报告 | MD + 打印一页 · 可见性/认知/top1 KPI |
 | 编造 lint 门禁 | `GEO_LINT_GATE`（默认 true）· `assert_can_publish` |
 | 阵地推荐 | 任务编辑器「分发推荐」· `channel-blueprint` |
-| 期次对比 Vue | `/geo/period-diff` |
+| 查询期 | 工作台顶栏 `GeoObservationPeriod`（设置页关闭） |
 | 入口收敛 | 概览/工作台主推 Vue；静态标「兼容」 |
 | 增强冒烟 | `scripts/e2e_geo_enhancements.py` |
 

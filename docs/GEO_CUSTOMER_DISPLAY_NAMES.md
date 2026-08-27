@@ -29,4 +29,4 @@
 
 ## 相关页面
 
-- `/geo/businesses` · `/geo/prompts` · `/geo/overview` · `/geo/deliverables` · `/geo/citations`
+- `/geo/brand` · `/geo/questions` · `/geo/overview` · `/geo/citations`（原 `/geo/businesses`、`/geo/deliverables` 已下线）

@@ -108,6 +108,7 @@ class PromptPromoteItem(BaseModel):
     tags: list[str] = Field(default_factory=lambda: ["from_expand"])
     demand_note: str | None = None
     is_brand_probe: bool | None = None
+    unit_id: int | None = None
 
 
 class PromptPromoteRequest(BaseModel):
@@ -448,6 +449,8 @@ class ChannelPolishPromptsUpdate(BaseModel):
     system_prompt: str | None = Field(None, max_length=50000)
     reset_system: bool = False
     channels: list[ChannelPolishPromptChannelUpdate] = Field(default_factory=list)
+    add_channel_key: str | None = Field(None, max_length=32)
+    remove_channel_key: str | None = Field(None, max_length=32)
 
 
 class CompetitorTraceReportRequest(BaseModel):

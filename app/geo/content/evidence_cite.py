@@ -17,7 +17,7 @@ def split_sentences(text: str) -> list[str]:
 
 
 def strip_citation_appendix(markdown: str) -> str:
-    """Remove a previously appended 「逐句证据」 section so re-cite does not stack."""
+    """Remove a previously appended citation section so repeated saves do not stack it."""
     return _APPENDIX.sub("", markdown or "").rstrip()
 
 
@@ -40,7 +40,7 @@ def _sentence_is_claim(sentence: str, facts: list[dict[str, Any]]) -> bool:
 def build_sentence_citations(
     markdown: str, facts: list[dict[str, Any]], *, min_score: float = 0.22
 ) -> list[dict[str, Any]]:
-    """Match sentences to facts. Does not invent facts or rewrite the body."""
+    """Match sentences to facts without inventing facts or rewriting the body."""
     facts = [f for f in facts or [] if f.get("id") is not None]
     body = strip_citation_appendix(markdown)
     rows: list[dict[str, Any]] = []
@@ -55,7 +55,6 @@ def build_sentence_citations(
             score, fact = ranked[0]
             cited = score >= min_score
         is_claim = _sentence_is_claim(sent, facts)
-        needs_fact = (not cited) and is_claim
         rows.append(
             {
                 "sentence": sent[:180],
@@ -65,49 +64,47 @@ def build_sentence_citations(
                 "score": round(score, 3),
                 "cited": cited,
                 "is_claim": is_claim,
-                "needs_fact": needs_fact,
+                "needs_fact": (not cited) and is_claim,
             }
         )
     return rows
 
 
 def format_citation_appendix(rows: list[dict[str, Any]]) -> str:
-    cited_n = sum(1 for r in rows if r.get("cited"))
-    block_n = sum(1 for r in rows if r.get("needs_fact"))
-    lines = [
+    cited_n = sum(1 for r in rows if r["cited"])
+    blocking_n = sum(1 for r in rows if r.get("needs_fact"))
+    appendix = [
         "",
         "## 逐句证据",
         "",
-        f"已挂事实 {cited_n}/{len(rows)} 句；主张未挂 {block_n} 句（须删改或补核验事实）。",
+        f"已挂事实 {cited_n}/{len(rows)} 句；主张未挂 {blocking_n} 句（须删改或补核验事实）。",
         "",
     ]
     for i, r in enumerate(rows, 1):
-        sent = (r.get("sentence") or "")[:80]
-        if r.get("cited"):
-            lines.append(
-                f"{i}. {sent}… → 事实卡 #{r.get('fact_id')}「{r.get('fact_title')}」"
+        if r["cited"]:
+            appendix.append(
+                f"{i}. {r['sentence'][:80]}… → 事实卡 #{r['fact_id']}「{r['fact_title']}」"
                 f"（{r.get('source_name') or '来源未填'}）"
             )
         elif r.get("needs_fact"):
-            lines.append(f"{i}. {sent}… → **主张未挂事实，阻断就绪**")
+            appendix.append(f"{i}. {r['sentence'][:80]}… → **主张未挂事实，阻断就绪**")
         else:
-            lines.append(f"{i}. {sent}… → 叙述句，可不挂")
-    lines.append("")
-    return "\n".join(lines)
+            appendix.append(f"{i}. {r['sentence'][:80]}… → 叙述句，可不挂")
+    appendix.append("")
+    return "\n".join(appendix)
 
 
 def attach_sentence_citations(
     markdown: str, facts: list[dict[str, Any]], *, min_score: float = 0.22
 ) -> tuple[str, list[dict[str, Any]]]:
-    """Return (body without stacked appendix, citation rows)."""
+    """Return a de-duplicated body and its structured citation metadata."""
     body = strip_citation_appendix(markdown)
-    rows = build_sentence_citations(body, facts, min_score=min_score)
-    return body, rows
+    return body, build_sentence_citations(body, facts, min_score=min_score)
 
 
 def citation_verdict(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    blocking = [r for r in rows if r.get("needs_fact")]
-    cited = sum(1 for r in rows if r.get("cited"))
+    blocking = [row for row in rows if row.get("needs_fact")]
+    cited = sum(1 for row in rows if row.get("cited"))
     return {
         "total": len(rows),
         "cited": cited,

@@ -18,6 +18,9 @@ class BusinessProfileTests(unittest.TestCase):
         p = normalize_profile(
             {
                 "product_name": "智齿客服",
+                "website": "https://example.com",
+                "honors": "2025 行业创新奖",
+                "qualifications": "ISO 27001",
                 "capabilities": "多渠道接入, 工单",
                 "banned_claims": ["第一名", "保证收录"],
                 "cta": "预约演示",
@@ -25,6 +28,9 @@ class BusinessProfileTests(unittest.TestCase):
             }
         )
         self.assertEqual(p["product_name"], "智齿客服")
+        self.assertEqual(p["website"], "https://example.com")
+        self.assertEqual(p["honors"], ["2025 行业创新奖"])
+        self.assertEqual(p["qualifications"], ["ISO 27001"])
         self.assertEqual(p["capabilities"], ["多渠道接入", "工单"])
         self.assertEqual(p["banned_claims"], ["第一名", "保证收录"])
         self.assertNotIn("unknown", p)

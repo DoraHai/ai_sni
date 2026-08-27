@@ -98,7 +98,7 @@
 | 能力 | 位置 |
 |------|------|
 | GEO 开户向导 | `POST /onboarding/preview` + `/apply`；`/geo/onboarding` |
-| 业务详情一屏 | `GET /optimization-businesses/{id}/dashboard`；`/geo/businesses/:id` |
+| 业务详情一屏 | `GET /optimization-businesses/{id}/dashboard`；前端页 `/geo/businesses/:id` 已下线，改走 `/geo/brand` |
 | 生成/推送异步 | `geo_async_jobs`；generate/push-batch `run_async`；前端轮询 |
 | 引擎商业定位 | `monitoring_stance`：simulation / hybrid / real_only；引擎页选择器 |
 
@@ -121,7 +121,7 @@
 | 进程重启恢复 | `recover_jobs_on_startup`：running→failed，pending 未过期 requeue |
 | 缺口 SLA | `GEO_GAP_SLA_DAYS`；缺口台字段 + ops 告警 +「超 SLA 建任务」 |
 | 归因回填 | `POST /attribution/backfill`；引用分析页按钮 |
-| 默认主入口 | `geo.content` → `/geo/businesses` |
+| 默认主入口 | `geo.content` → `/geo/overview` |
 
 ## 口径/证明力计划（2026-08-12 已推进）
 

@@ -44,10 +44,38 @@ def _norm_num(raw: str) -> str:
     return raw.replace("％", "%").strip()
 
 
+def norm_stat_token(raw: str) -> str:
+    """Collapse '48 小时' / '48小时' / '48％' into one comparable token."""
+    s = _norm_num(raw).replace(",", "")
+    return re.sub(r"\s+", "", s).lower()
+
+
+def number_token_allowed(val: str, allowed: set[str]) -> bool:
+    nv = norm_stat_token(val)
+    if not nv:
+        return False
+    allowed_n = {norm_stat_token(x) for x in allowed if str(x).strip()}
+    return nv in allowed_n
+
+
 def _fact_blob(facts: list[dict[str, Any]]) -> str:
     return " ".join(
-        f"{f.get('title') or ''} {f.get('statement') or ''}" for f in facts or []
+        f"{f.get('title') or ''} {f.get('statement') or ''} {f.get('source_name') or ''}"
+        for f in facts or []
     )
+
+
+def _is_calendar_token(num: str, unit: str) -> bool:
+    """Years / calendar months are not performance stats."""
+    try:
+        nval = float(str(num).replace(",", ""))
+    except ValueError:
+        return False
+    if unit == "年" and 1900 <= nval <= 2100:
+        return True
+    if unit == "月" and 1 <= nval <= 12:
+        return True
+    return False
 
 
 def numbers_in_text(text: str) -> set[str]:
@@ -56,7 +84,9 @@ def numbers_in_text(text: str) -> set[str]:
         token = _norm_num(m.group(0))
         if token in {"24", "7", "365"} and not m.group(2):
             continue
+        compact = norm_stat_token(token)
         out.add(token)
+        out.add(compact)
         out.add(_norm_num(m.group(1)))
     return out
 
@@ -98,16 +128,22 @@ def ungrounded_claims(text: str, facts: list[dict[str, Any]]) -> list[dict[str, 
         seen.add(key)
         hits.append({"kind": kind, "token": token, "excerpt": excerpt[:80]})
 
+    allowed_n = {norm_stat_token(x) for x in allowed if str(x).strip()}
     for m in _NUM.finditer(body):
         unit = m.group(2) or ""
         token = _norm_num(m.group(0))
         num = _norm_num(m.group(1))
+        compact = norm_stat_token(token)
         if unit not in _STAT_UNITS:
             continue
-        if token in allowed or num in allowed:
+        if _is_calendar_token(num, unit):
+            continue
+        # Same number+unit, ignoring spaces: 48小时 == 48 小时.
+        # Do not treat bare "48" as covering "48%" / "48小时".
+        if compact in allowed_n or (not unit and num in allowed_n):
             continue
         start = max(0, m.start() - 12)
-        _add("number", token, body[start : m.end() + 12].replace("\n", " "))
+        _add("number", compact or token, body[start : m.end() + 12].replace("\n", " "))
 
     for term in _PERF_TERMS:
         if term in body and term not in blob:

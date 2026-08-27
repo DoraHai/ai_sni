@@ -6,7 +6,10 @@ from typing import Any
 
 PROFILE_KEYS = (
     "product_name",
+    "website",
     "summary",
+    "honors",
+    "qualifications",
     "capabilities",
     "audience",
     "scenarios",
@@ -24,7 +27,15 @@ def normalize_profile(raw: dict[str, Any] | None) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for key in PROFILE_KEYS:
         val = data.get(key)
-        if key in {"capabilities", "scenarios", "competitors", "recommend_reasons", "banned_claims"}:
+        if key in {
+            "honors",
+            "qualifications",
+            "capabilities",
+            "scenarios",
+            "competitors",
+            "recommend_reasons",
+            "banned_claims",
+        }:
             if isinstance(val, str):
                 items = [p.strip() for p in val.replace("；", ",").replace("\n", ",").split(",") if p.strip()]
             elif isinstance(val, list):

@@ -79,13 +79,15 @@ def channel_options_from_registry(
     """Build editor options: enabled registry channels with adapt profile info."""
     profiles = {p["key"]: p for p in list_profiles()}
     options: list[dict[str, Any]] = []
-    seen_adapt: set[str] = set()
+    seen_type: set[str] = set()
     for row in rows:
         if not row.get("enabled", True):
             continue
         ctype = str(row.get("channel_type") or "").strip().lower()
+        if not ctype or ctype in seen_type:
+            continue
         adapt = profile_key_for_registry_type(ctype)
-        if not adapt or adapt in seen_adapt:
+        if not adapt:
             continue
         profile = profiles.get(adapt) or (
             get_profile(adapt).to_dict() if get_profile(adapt) else None
@@ -102,7 +104,7 @@ def channel_options_from_registry(
                 "default_selected": bool(profile and profile.get("default_selected")),
             }
         )
-        seen_adapt.add(adapt)
+        seen_type.add(ctype)
     return options
 
 

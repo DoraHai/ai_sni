@@ -1,4 +1,5 @@
 <script setup>
+import { geoSnapshotLink } from '../../utils/geoRoutes'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -13,6 +14,7 @@ import {
   fetchGeoCompetitorDaily,
   fetchGeoCompetitorInsights,
   fetchGeoCompetitorTrace,
+  listGeoAnswerSnapshots,
   getGeoCompetitorReport,
   listCompetitorAliases,
   listGeoBusinesses,
@@ -26,6 +28,7 @@ import {
   saveGeoCompetitorReport,
   searchGeoCompetitorWeb,
 } from '../../api/geoContent'
+import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import SampleCredibilityAlert from '../../components/SampleCredibilityAlert.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useObservationPeriod } from '../../composables/useObservationPeriod'
@@ -36,8 +39,12 @@ import {
   loadAliasMapAsync,
   saveAliasMapAsync,
 } from '../../utils/competitorAlias'
+import { engineDisplay, fmtPct } from '../../utils/geoReportLabels'
+import { heatTone, mentionHeatFromSnapshots } from '../../utils/geoSnapshotSummary'
+import { getGeoPrototypePageSurface } from '../../utils/geoEditorSurface'
 
 const router = useRouter()
+const prototypeSurface = getGeoPrototypePageSurface()
 const { days: observationDays } = useObservationPeriod()
 
 const tenantId = computed(() =>
@@ -55,8 +62,27 @@ const dailyItems = ref([])
 const dailyCompetitors = ref([])
 const dailyNote = ref('')
 const dailyDays = ref(14)
+const heatSnaps = ref([])
 const aliasMap = ref({})
 const displayItems = computed(() => applyAliasMap(rawItems.value, aliasMap.value))
+const heatMap = computed(() => mentionHeatFromSnapshots(heatSnaps.value, '本品牌'))
+const leadScenes = computed(() =>
+  (compareItems.value || [])
+    .filter((r) => r.winner === 'brand')
+    .slice(0, 5),
+)
+const lagScenes = computed(() =>
+  (compareItems.value || [])
+    .filter((r) => r.winner === 'competitor')
+    .slice(0, 5),
+)
+function sceneRank(row, side) {
+  const them = row.top_competitor || '竞品'
+  const btxt = row.brand_mention_rate == null ? '—' : `${Math.round(row.brand_mention_rate * 100)}%`
+  const ctxt = row.top_competitor_rate == null ? '—' : `${Math.round(row.top_competitor_rate * 100)}%`
+  if (side === 'brand') return `你 ${btxt} / ${them} ${ctxt}`
+  return `${them} ${ctxt} / 你 ${btxt}`
+}
 // sync local dailyDays with global observation when possible
 watch(
   observationDays,
@@ -361,16 +387,18 @@ async function load() {
     listCompetitorAliases,
   })
   try {
-    const [data, cmp, daily] = await Promise.all([
+    const [data, cmp, daily, sn] = await Promise.all([
       fetchGeoCompetitorInsights(tenantId.value),
       fetchGeoCompetitorCompare(tenantId.value).catch(() => null),
       fetchGeoCompetitorDaily(tenantId.value, {
         days: dailyDays.value,
         scope_level: 'tenant',
       }).catch(() => null),
+      listGeoAnswerSnapshots(tenantId.value).catch(() => ({ items: [] })),
       loadServerReports(),
       loadReportScopes(),
     ])
+    heatSnaps.value = sn.items || sn.snapshots || []
     rawItems.value = data.items || []
     apiSummary.value = data.summary || null
     compareItems.value = cmp?.items || []
@@ -847,23 +875,18 @@ onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="geo-page">
-    <div class="page-header">
-      <div>
-        <div class="page-title">竞品监测</div>
-        <div class="page-desc">
-          从可见度快照的竞品标注与引用 URL 聚合：看谁常被提到、同题谁领先；溯源后生成可编辑、确认、归档的服务端报告。
-        </div>
-      </div>
-      <div class="header-actions">
-        <el-button :loading="loading" @click="load">刷新</el-button>
-        <router-link class="el-button" to="/geo/visibility">登记快照</router-link>
-        <router-link class="el-button" to="/geo/citations">引用分析</router-link>
-        <router-link class="el-button" to="/geo/evaluation">评价与位置</router-link>
-      </div>
-    </div>
+  <GeoWorkbenchPage
+    title="竞品分析"
+    sub="你与竞品在各 AI 引擎中的推荐度对比"
+    :loading="loading"
+  >
+    <template #actions>
+      <button class="gd-btn" @click="load">刷新</button>
+      <button class="gd-btn" @click="router.push('/geo/brand')">管理竞品</button>
+    </template>
+    <div class="geo-dash geo-page">
 
-    <details class="geo-glossary">
+    <details v-if="prototypeSurface.showCompetitorAdvancedAnalysis" class="geo-glossary">
       <summary>统计口径（点击展开）</summary>
       <ul>
         <li>竞品名来自快照 competitors 字段（人工或 AI 建议）。</li>
@@ -876,10 +899,78 @@ onMounted(load)
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" />
     <SampleCredibilityAlert
+      v-if="prototypeSurface.showCompetitorAdvancedAnalysis"
       :composition="sampleComposition"
       window-label="竞品页与交付摘要同一套样本门槛"
     />
 
+    <div v-if="heatMap.engines.length" class="gd-card" style="margin-bottom:16px">
+      <div class="gd-hd">
+        <h3>品牌 × AI 引擎 推荐度热力图</h3>
+        <span class="more">颜色越深推荐度越高</span>
+      </div>
+      <div class="gd-bd" style="padding:0;overflow:auto">
+        <table class="gd-heat">
+          <thead>
+            <tr>
+              <th>品牌</th>
+              <th v-for="e in heatMap.engines" :key="e">{{ engineDisplay(e) }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in heatMap.rows" :key="r.name" :class="{ 'own-row': r.own }">
+              <td>{{ r.own ? '本品牌' : r.name }}</td>
+              <td
+                v-for="(cell, i) in r.cells"
+                :key="i"
+                :style="{ background: heatTone(cell).bg, color: heatTone(cell).fg }"
+              >{{ fmtPct(cell) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="gd-mid" style="margin-bottom:16px">
+      <div class="gd-card">
+        <div class="gd-hd"><h3>你领先的提问场景</h3></div>
+        <div class="gd-bd">
+          <ul class="gd-sources">
+            <li
+              v-for="r in leadScenes"
+              :key="'lead-'+r.prompt_id"
+              class="geo-click"
+              @click="router.push(geoSnapshotLink({ prompt_id: r.prompt_id }))"
+            >
+              <span class="gd-badge green">领先</span>
+              {{ r.question }}
+              <span class="gd-sub" style="margin-left:auto">{{ sceneRank(r, 'brand') }}</span>
+            </li>
+            <li v-if="!leadScenes.length" class="gd-sub">暂无本品领先的提问</li>
+          </ul>
+        </div>
+      </div>
+      <div class="gd-card">
+        <div class="gd-hd"><h3>竞品领先的提问场景</h3></div>
+        <div class="gd-bd">
+          <ul class="gd-sources">
+            <li
+              v-for="r in lagScenes"
+              :key="'lag-'+r.prompt_id"
+              class="geo-click"
+              @click="router.push(geoSnapshotLink({ prompt_id: r.prompt_id }))"
+            >
+              <span class="gd-badge red">落后</span>
+              {{ r.question }}
+              <span class="gd-sub" style="margin-left:auto">{{ sceneRank(r, 'comp') }}</span>
+            </li>
+            <li v-if="!lagScenes.length" class="gd-sub">暂无竞品领先的提问</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <template v-if="prototypeSurface.showCompetitorAdvancedAnalysis">
     <div class="geo-kpi-grid">
       <div class="geo-kpi">
         <div class="kpi-label">竞品数</div>
@@ -916,7 +1007,7 @@ onMounted(load)
         size="small"
         empty-text="暂无可比对快照"
         class="clickable-rows"
-        @row-click="(row) => row.prompt_id && router.push({ path: '/geo/visibility', query: { prompt_id: String(row.prompt_id) } })"
+        @row-click="(row) => row.prompt_id && router.push(geoSnapshotLink({ prompt_id: row.prompt_id }))"
       >
         <el-table-column label="提问" min-width="200">
           <template #default="{ row }">
@@ -1438,6 +1529,7 @@ onMounted(load)
         <el-empty v-else-if="!traceLoading" description="暂无溯源数据" />
       </div>
     </el-drawer>
+    </template>
 
     <el-drawer v-model="historyOpen" title="服务端报告档案" size="420px">
       <div class="mb" style="display:flex;gap:8px;flex-wrap:wrap">
@@ -1475,7 +1567,8 @@ onMounted(load)
         </div>
       </div>
     </el-drawer>
-  </div>
+    </div>
+  </GeoWorkbenchPage>
 </template>
 
 <style scoped>

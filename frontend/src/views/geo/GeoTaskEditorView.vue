@@ -1,8 +1,7 @@
 <script setup>
 /**
- * Vue 母稿编辑器 · 第一刀 + 第二刀
- * 一：Brief / 事实 / 生成 / 检查(Score) / AI 审稿
- * 二：渠道稿 / 审校 / 回填 URL / Webhook 推送
+ * Vue 母稿编辑器
+ * Brief / 母稿 / 渠道稿（勾选生成、预览、复制）/ 检查
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -10,17 +9,14 @@ import { ElMessage } from 'element-plus'
 import {
   nextEditorStep,
   pipelineLabel,
-  reviewStatusLabel as reviewStatusText,
   taskStatusLabel,
 } from '../../utils/geoReportLabels'
 import {
-  aiReviewGeoContentTask,
   applyGeoContentPatch,
   applyGeoRetrievedFacts,
   bindGeoTaskFacts,
   checkGeoContentTask,
   createGeoVariants,
-  decideGeoTaskReview,
   exportGeoVariant,
   fetchGeoBriefCatalog,
   generateGeoContentTask,
@@ -38,7 +34,6 @@ import {
   retrieveGeoTaskFacts,
   saveGeoArticle,
   formatGeoError,
-  submitGeoTaskReview,
   suggestGeoTaskBrief,
   fetchChannelBlueprint,
   waitGeoAsyncJob,
@@ -47,6 +42,8 @@ import {
   cancelGeoAsyncJob,
 } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
+import { getGeoPrototypeEditorSurface } from '../../utils/geoEditorSurface'
+import RichTextMarkdownEditor from '../../components/RichTextMarkdownEditor.vue'
 
 function toastError(e, fallback) {
   const msg = formatGeoError(e, fallback)
@@ -57,6 +54,7 @@ function toastError(e, fallback) {
 const route = useRoute()
 const router = useRouter()
 const { tenantId } = useGeoTenant()
+const editorSurface = getGeoPrototypeEditorSurface()
 const taskId = computed(() => Number(route.params.taskId))
 
 const loading = ref(false)
@@ -70,7 +68,6 @@ const retrievePreview = ref([])
 const selectedFactIds = ref([])
 const docTab = ref('master')
 const channelPick = ref(['website', 'wechat', 'zhihu'])
-const reviewNote = ref('')
 const publishUrl = ref('')
 const publishNote = ref('')
 const webhookAccountId = ref(null)
@@ -113,13 +110,6 @@ const variantEdit = reactive({
 })
 /** 渠道稿：默认预览 HTML 正稿；源码仅供改写 */
 const variantViewMode = ref('preview') // preview | source
-
-const REVIEW_LABELS = {
-  none: '未提交',
-  pending: '待审',
-  approved: '已通过',
-  rejected: '已驳回',
-}
 
 /** 规则 code → 运营可读名（母稿就绪检查，非正式成稿） */
 const CHECK_LABELS = {
@@ -420,6 +410,12 @@ async function load() {
     loadImpact()
     if (t.target_channels?.length) {
       channelPick.value = [...t.target_channels]
+    } else {
+      const enabled = (publishingChannels.value || [])
+        .filter((c) => c.enabled)
+        .map((c) => c.channel_type || c.adapt_key)
+        .filter(Boolean)
+      if (enabled.length) channelPick.value = [...new Set(enabled)]
     }
     // Never clobber an in-progress AI Brief draft with empty server brief
     applyTaskPayload(t, { skipBrief: briefLocalDraft.value || busy.value === 'suggest' })
@@ -837,11 +833,8 @@ function validateBeforeGenerate() {
   }
   const nBound = (task.value?.facts || []).length
   const nSelected = selectedFactIds.value.length
-  if (nBound < 3 && nSelected < 3) {
-    return '生成前至少绑定 3 条事实卡（建议已核验）。请在左侧选择事实并点「保存绑定」'
-  }
-  if (nBound < 3 && nSelected >= 3) {
-    return '已选事实尚未保存绑定，请先点「保存绑定」再生成'
+  if (nBound < 3 && nSelected < 3 && libraryVerifiedCount.value < 3) {
+    return '生成母稿前需要至少 3 条已核验的可信材料，请先到知识库补充并核验资料'
   }
   const verified = (task.value?.facts || []).filter((f) => f.trust_level === 'verified')
   if (verified.length < 3) {
@@ -853,6 +846,13 @@ function validateBeforeGenerate() {
     }
   }
   return null
+}
+
+async function ensurePrototypeMaterials() {
+  if ((task.value?.facts || []).length >= 3) return true
+  if (libraryVerifiedCount.value < 3) return false
+  await bindTopVerified(3)
+  return (task.value?.facts || []).length >= 3
 }
 
 const generateHint = ref('')
@@ -973,6 +973,13 @@ async function cancelActiveJob() {
 async function generate() {
   error.value = ''
   generateHint.value = '正在生成母稿…'
+  if (!(await ensurePrototypeMaterials())) {
+    const msg = '未能关联足够的已核验可信材料，请先到知识库检查资料状态'
+    error.value = msg
+    generateHint.value = msg
+    ElMessage.warning(msg)
+    return
+  }
   const pre = validateBeforeGenerate()
   if (pre) {
     error.value = pre
@@ -1007,7 +1014,8 @@ async function generate() {
     const msg =
       bodyLen > 0
         ? `母稿已生成（${bodyLen} 字）· 状态 ${st}` +
-          (st === 'needs_fix' ? ' · 请点「检查就绪」并用补丁修齐规则' : '')
+          (st === 'needs_fix' ? ' · 请点「检查就绪」并用补丁修齐规则' : '') +
+          (editorSurface.showChannelVariants ? ' · 可到下方生成渠道稿' : '')
         : `生成返回成功但正文为空 · 状态 ${st}`
     generateHint.value = msg
     if (bodyLen > 0) {
@@ -1029,12 +1037,12 @@ async function generate() {
   }
 }
 
-async function saveArticleBody() {
+async function saveArticleBody({ silent = false } = {}) {
   if (!article.title.trim() || !article.body_markdown.trim()) {
-    ElMessage.warning('标题与正文不能为空')
+    if (!silent) ElMessage.warning('标题与正文不能为空')
     return
   }
-  busy.value = 'save'
+  if (!silent) busy.value = 'save'
   try {
     const outline = task.value?.article?.outline || {}
     task.value = await saveGeoArticle(tenantId.value, taskId.value, {
@@ -1043,15 +1051,16 @@ async function saveArticleBody() {
       outline,
     })
     applyArticleFromTask(task.value)
-    ElMessage.success('母稿已保存')
+    lastSavedAt.value = new Date()
+    if (!silent) ElMessage.success('母稿已保存')
   } catch (e) {
-    toastError(e, '保存失败')
+    if (!silent) toastError(e, '保存失败')
   } finally {
-    busy.value = ''
+    if (!silent) busy.value = ''
   }
 }
 
-async function runCheck() {
+async function runCheck({ silent = false } = {}) {
   busy.value = 'check'
   try {
     const res = await checkGeoContentTask(tenantId.value, taskId.value, false)
@@ -1060,39 +1069,18 @@ async function runCheck() {
       task.value = res.task
       applyArticleFromTask(res.task)
     }
-    ElMessage.success(
-      res.ready
-        ? `规则就绪 · Score ${res.geo_score ?? '—'}`
-        : `尚未就绪 · Score ${res.geo_score ?? '—'}`,
-    )
+    if (!silent) {
+      ElMessage.closeAll()
+      if (res.ready) {
+        ElMessage.success(`结构检查已通过，就绪分 ${res.geo_score ?? '—'}`)
+      } else {
+        ElMessage.warning(`尚未就绪，就绪分 ${res.geo_score ?? '—'}。请看右侧待补齐。`)
+      }
+    }
+    return res
   } catch (e) {
     toastError(e, '检查失败')
-  } finally {
-    busy.value = ''
-  }
-}
-
-async function runAiReview() {
-  busy.value = 'review'
-  try {
-    const res = await aiReviewGeoContentTask(tenantId.value, taskId.value, {
-      persist: true,
-    })
-    if (res.task) task.value = res.task
-    const rr = task.value?.rule_result || {}
-    checkResult.value = {
-      ...(checkResult.value || {}),
-      ai_review: res.ai_review,
-      checks: rr.checks || checkResult.value?.checks || [],
-      ready: rr.ready,
-      geo_score: rr.geo_score ?? checkResult.value?.geo_score,
-      geo_subscores: rr.geo_subscores || checkResult.value?.geo_subscores,
-      geo_actions: rr.geo_actions || checkResult.value?.geo_actions || [],
-      patches: rr.patches || checkResult.value?.patches || [],
-    }
-    ElMessage.success(res.ai_review?.summary || '审稿完成')
-  } catch (e) {
-    toastError(e, '审稿失败')
+    return null
   } finally {
     busy.value = ''
   }
@@ -1137,7 +1125,7 @@ async function applyPatch(code) {
     }
 
     if (!bodyChanged) {
-      const msg = `补丁 ${code} 返回成功但正文长度未变化（${beforeLen}→${afterLen}）。请硬刷新后重试。`
+      const msg = `「${checkLabel(code)}」写入后正文没有变化（${beforeLen}→${afterLen} 字）。请刷新后再试。`
       error.value = msg
       ElMessage.error(msg)
       return
@@ -1145,20 +1133,24 @@ async function applyPatch(code) {
 
     const target = (res.checks || []).find((c) => c.code === code)
     const effective = res.effective !== false && (target ? target.passed : true)
-    const scorePart =
-      res.geo_score != null ? ` · Score ${res.geo_score}/100` : ''
+    const scorePart = res.geo_score != null ? `就绪分 ${res.geo_score}` : ''
+    const sizePart = `${beforeLen}→${afterLen} 字`
     if (effective) {
       ElMessage.success(
-        `已应用补丁 ${code}（正文 ${beforeLen}→${afterLen} 字${scorePart}，规则已通过）`,
+        `已按「${checkLabel(code)}」改完母稿（${sizePart}）${scorePart ? '，' + scorePart : ''}。`,
       )
     } else {
+      const why = target?.message ? `：${target.message}` : ''
+      const next = target?.action ? target.action : '请按右侧说明改完后再点检查'
       ElMessage.warning(
-        `已写入补丁 ${code}（正文 ${beforeLen}→${afterLen} 字${scorePart}），但该规则仍未通过，请检查插入内容或再点检查`,
+        `已尝试写入「${checkLabel(code)}」（${sizePart}），但这项仍未通过${why}。${next}${
+          scorePart ? ` 目前${scorePart}。` : ''
+        }`,
       )
     }
     error.value = ''
   } catch (e) {
-    toastError(e, '补丁失败')
+    toastError(e, '写入失败')
   } finally {
     busy.value = ''
   }
@@ -1326,7 +1318,7 @@ const currentVariantHasTable = computed(() => {
 async function applyAllPatches() {
   const codes = (patches.value || []).map((p) => p.code).filter(Boolean)
   if (!codes.length) {
-    ElMessage.info('当前没有可一键插入的补丁，请先点「检查就绪」')
+    ElMessage.info('当前没有可自动写入的修改，请先点「检查就绪」')
     return
   }
   busy.value = 'patch'
@@ -1363,12 +1355,12 @@ async function applyAllPatches() {
     checkResult.value = res
     if (res.task) applyTaskPayload(res.task)
     ElMessage.success(
-      `已批量应用 ${applied}/${codes.length} 个补丁 · Score ${res.geo_score ?? '—'} · ${
-        res.ready ? '规则就绪' : '仍有规则未过'
-      }`,
+      `已写入 ${applied}/${codes.length} 项建议修改，${
+        res.ready ? '结构检查已通过' : '仍有项未通过'
+      }${res.geo_score != null ? `，就绪分 ${res.geo_score}` : ''}`,
     )
   } catch (e) {
-    toastError(e, '批量补丁失败')
+    toastError(e, '批量写入失败')
   } finally {
     busy.value = ''
   }
@@ -1470,47 +1462,10 @@ async function copyCurrentDoc() {
   }
 }
 
-async function submitReview() {
-  busy.value = 'submitRev'
-  try {
-    task.value = await submitGeoTaskReview(
-      tenantId.value,
-      taskId.value,
-      reviewNote.value || null,
-    )
-    ElMessage.success('已提交审校')
-  } catch (e) {
-    toastError(e, '提交审校失败')
-  } finally {
-    busy.value = ''
-  }
-}
-
-async function decideReview(decision) {
-  busy.value = 'decideRev'
-  try {
-    task.value = await decideGeoTaskReview(
-      tenantId.value,
-      taskId.value,
-      decision,
-      reviewNote.value || null,
-    )
-    ElMessage.success(decision === 'approved' ? '已通过审校' : '已驳回')
-  } catch (e) {
-    toastError(e, '审校决策失败')
-  } finally {
-    busy.value = ''
-  }
-}
-
-/** Why publish/push may fail — shown in UI; click still hits API when possible (N2 expects 审校提示). */
+/** Explain missing channel drafts only; review is not a workflow gate for this deployment. */
 const publishGateHint = computed(() => {
   if (docTab.value === 'master') {
     return '请先切换到 website/wechat/zhihu 等渠道页签再回填'
-  }
-  const rs = task.value?.review_status || 'none'
-  if (rs !== 'approved') {
-    return `未通过审校（当前：${rs}），请先提交审校并审批通过后再回填/推送`
   }
   if (!liveChannelCoverage.value.present.includes(normChannelKey(docTab.value))) {
     return `当前渠道 ${docTab.value} 尚无渠道稿，请先生成渠道稿`
@@ -1528,15 +1483,6 @@ async function recordPublication() {
   if (!publishUrl.value.trim().startsWith('http')) {
     ElMessage.warning('请填写 http(s) 发布 URL')
     return
-  }
-  // Soft pre-check: still call API so gate returns 400 + 审校文案（清单 N2）
-  if ((task.value?.review_status || 'none') !== 'approved') {
-    ElMessage({
-      type: 'warning',
-      message: publishGateHint.value || '未通过审校，将请求接口确认门禁',
-      duration: 5000,
-      showClose: true,
-    })
   }
   busy.value = 'publish'
   try {
@@ -1622,14 +1568,6 @@ async function pushWebhook() {
     ElMessage.warning('请选择推送账号（Webhook 或社交 social_api）')
     return
   }
-  if ((task.value?.review_status || 'none') !== 'approved') {
-    ElMessage({
-      type: 'warning',
-      message: publishGateHint.value || '未通过审校',
-      duration: 5000,
-      showClose: true,
-    })
-  }
   busy.value = 'push'
   try {
     const res = await pushGeoVariantWebhook(taskId.value, {
@@ -1658,14 +1596,6 @@ async function pushBatchSelected() {
   if (!pushSelected.value.length) {
     ElMessage.warning('请勾选至少一个就绪渠道')
     return
-  }
-  if ((task.value?.review_status || 'none') !== 'approved') {
-    ElMessage({
-      type: 'warning',
-      message: publishGateHint.value || '未通过审校',
-      duration: 5000,
-      showClose: true,
-    })
   }
   pushBatchBusy.value = true
   try {
@@ -1852,10 +1782,18 @@ const checks = computed(() => {
   if (!replaced && (cov.targets.length || cov.present.length)) {
     out.push(liveChannel)
   }
-  return out.map((c) => ({
-    ...c,
-    label: checkLabel(c.code),
-  }))
+  const hiddenCodes = new Set([
+    'facts_bound_min',
+    'sentence_evidence',
+    'channel_variant_ready',
+    'evidence_publishable',
+  ])
+  return out
+    .filter((c) => !hiddenCodes.has(c.code))
+    .map((c) => ({
+      ...c,
+      label: checkLabel(c.code),
+    }))
 })
 const failedChecks = computed(() => checks.value.filter((c) => !c.passed))
 const passedChecks = computed(() => checks.value.filter((c) => c.passed))
@@ -1868,6 +1806,41 @@ const aiReview = computed(
 const patches = computed(
   () => checkResult.value?.patches || task.value?.rule_result?.patches || [],
 )
+function patchForCheck(code) {
+  return (patches.value || []).find((p) => p.code === code) || null
+}
+
+function formatLintPoint(issue) {
+  const excerpt = String(issue?.excerpt || '').replace(/\s+/g, ' ').trim()
+  const why = String(issue?.detail || issue?.type || '').replace(/`/g, '').trim()
+  if (excerpt && why) return `「${excerpt.slice(0, 56)}」 ${why}`
+  if (excerpt) return `「${excerpt}」`
+  return why
+}
+
+function checkDetails(c) {
+  if (Array.isArray(c?.details) && c.details.length) return c.details
+  if (c?.code !== 'fabrication_lint') return []
+  const issues = checkResult.value?.lint?.issues || task.value?.rule_result?.lint?.issues || []
+  return (issues || [])
+    .filter((i) => i?.level === '高')
+    .map(formatLintPoint)
+    .filter(Boolean)
+}
+async function fixCheck(code) {
+  const patch = patchForCheck(code)
+  if (patch) {
+    await applyPatch(code)
+    return
+  }
+  await runCheck({ silent: true })
+  if (patchForCheck(code)) {
+    await applyPatch(code)
+    return
+  }
+  ElMessage.closeAll()
+  ElMessage.warning('这项需要对照右侧原文手工改，没有可自动写入的修改。')
+}
 const boundFacts = computed(() => task.value?.facts || [])
 const boundVerifiedCount = computed(
   () => boundFacts.value.filter((f) => f.trust_level === 'verified').length,
@@ -1887,6 +1860,12 @@ const infoGapOptions = computed(() => {
   return INFO_GAP_FALLBACK
 })
 const variants = computed(() => task.value?.variants || [])
+const hasMasterDraft = computed(
+  () => !!(task.value?.article || String(article.body_markdown || '').trim()),
+)
+const recordedPublications = computed(
+  () => task.value?.publications || impact.value?.publications || [],
+)
 const failedVariantItems = computed(() => {
   const fromTask = task.value?.variant_polish?.failed
   if (Array.isArray(fromTask) && fromTask.length) return fromTask
@@ -1908,6 +1887,32 @@ const nextStep = computed(() =>
 
 const foldBrief = ref(false)
 const foldFacts = ref(false)
+const factQuery = ref('')
+const factTrustFilter = ref('all')
+
+const filteredTrustedFacts = computed(() => {
+  const q = String(factQuery.value || '').trim().toLowerCase()
+  return (allFacts.value || []).filter((f) => {
+    if (factTrustFilter.value === 'verified' && f.trust_level !== 'verified') return false
+    if (factTrustFilter.value === 'needs_review' && f.trust_level !== 'needs_review') return false
+    if (!q) return true
+    const blob = `${f.id} ${f.title || ''} ${f.statement || ''}`.toLowerCase()
+    return blob.includes(q)
+  })
+})
+
+function isFactSelected(id) {
+  const nid = Number(id)
+  return (selectedFactIds.value || []).some((x) => Number(x) === nid)
+}
+
+function toggleFact(id) {
+  const nid = Number(id)
+  if (!Number.isFinite(nid) || nid <= 0) return
+  const cur = (selectedFactIds.value || []).map(Number)
+  if (cur.includes(nid)) selectedFactIds.value = cur.filter((x) => x !== nid)
+  else selectedFactIds.value = [...cur, nid]
+}
 
 function goNextStep() {
   const key = nextStep.value?.key
@@ -1974,8 +1979,8 @@ const channelOptions = computed(() => {
     const seen = new Set()
     return opts
       .map((o) => ({
-        key: o.adapt_key || o.channel_type || o.key,
-        label: o.name || o.display_name || o.adapt_key || o.channel_type,
+        key: o.channel_type || o.adapt_key || o.key,
+        label: o.name || o.display_name || o.channel_type || o.adapt_key,
       }))
       .filter((o) => o.key && !seen.has(o.key) && (seen.add(o.key) || true))
   }
@@ -1989,12 +1994,6 @@ const channelOptions = computed(() => {
     { key: 'zhihu', label: '知乎' },
   ]
 })
-const reviewStatusLabel = computed(() => {
-  const s = task.value?.review_status || 'none'
-  return REVIEW_LABELS[s] || s
-})
-const canSubmitReview = computed(() => !!task.value?.can_submit_review && !!task.value?.article)
-const canDecideReview = computed(() => !!task.value?.can_decide_review)
 const webhookAccountsForChannel = computed(() => {
   // Webhook + social_api for auto push; backend validates channel match
   return (channelAccounts.value || []).filter(
@@ -2007,40 +2006,194 @@ const webhookAccountsForChannel = computed(() => {
   )
 })
 
+const currentPushTargets = computed(() => {
+  const ch = String(docTab.value || '')
+  if (!ch || ch === 'master') return []
+  return (pushTargets.value || []).filter(
+    (t) => t.channel_type === ch || t.adapt_key === ch,
+  )
+})
+const currentPushReady = computed(() =>
+  currentPushTargets.value.filter((t) => t.ready && t.account_id),
+)
+const currentPushBlock = computed(
+  () => currentPushTargets.value.find((t) => !t.ready && !t.copy_only)?.block_reasons || [],
+)
+const COMPOSE_URLS = {
+  encyclopedia: 'https://baike.baidu.com/',
+  zhihu: 'https://zhuanlan.zhihu.com/write',
+  wechat: 'https://mp.weixin.qq.com/',
+  baijiahao: 'https://baijiahao.baidu.com/',
+  toutiao: 'https://mp.toutiao.com/',
+  community_qa: 'https://zhuanlan.zhihu.com/write',
+}
+const composeUrl = computed(() => {
+  const t = currentPushTargets.value.find((x) => x.compose_url)
+  if (t?.compose_url) return t.compose_url
+  return COMPOSE_URLS[docTab.value] || ''
+})
+const canCopyPublish = computed(() => docTab.value && docTab.value !== 'master')
+function openCompose() {
+  if (composeUrl.value) window.open(composeUrl.value, '_blank', 'noopener')
+}
+
+watch(
+  currentPushReady,
+  (rows) => {
+    if (!rows.length) return
+    if (!rows.some((t) => t.account_id === webhookAccountId.value)) {
+      webhookAccountId.value = rows[0].account_id
+    }
+  },
+  { immediate: true },
+)
+
+const leftTab = ref('brief')
+const showAdvancedBrief = ref(false)
+const showCheckDrawer = ref(false)
+const focusMode = ref(false)
+const lastSavedAt = ref(null)
+const handledIssueCodes = ref([])
+let autosaveTimer = null
+
+const unifiedStatus = computed(() => {
+  if (busy.value === 'generate') return { key: 'generating', label: '草稿生成中' }
+  if (!hasMasterDraft.value) return { key: 'empty', label: '待生成母稿' }
+  if (failedChecks.value.length) return { key: 'review', label: '待人工审核' }
+  if (checkResult.value && !failedChecks.value.length) {
+    if (['published', 'approved'].includes(String(task.value?.status || ''))) {
+      return { key: 'publishable', label: '可发布' }
+    }
+    return { key: 'passed', label: '检查通过' }
+  }
+  return { key: 'review', label: '待人工审核' }
+})
+
+const saveHint = computed(() => {
+  if (busy.value === 'save') return '保存中…'
+  if (!lastSavedAt.value) return '未自动保存'
+  const d = lastSavedAt.value
+  const pad = (n) => String(n).padStart(2, '0')
+  return `已保存 ${pad(d.getHours())}:${pad(d.getMinutes())}`
+})
+
+const mustIssues = computed(() =>
+  failedChecks.value.filter((c) => !handledIssueCodes.value.includes(c.code)),
+)
+const suggestIssues = computed(() =>
+  (geoActions.value || []).filter((a) => !handledIssueCodes.value.includes(a.code || a.message)),
+)
+
+function isFactCited(id) {
+  return (sentenceCites.value || []).some((c) => Number(c.fact_id) === Number(id))
+}
+
+function locateIssue(item) {
+  const details = checkDetails(item)
+  const needle = String(details[0] || item?.message || item?.excerpt || '').replace(/[「」]/g, '')
+  const excerpt = needle.match(/「([^」]+)」/)?.[1] || needle.slice(0, 32)
+  locateInEditor(excerpt)
+}
+
+function locateInEditor(text) {
+  const root = document.querySelector('.rich-content')
+  const needle = String(text || '').trim().slice(0, 28)
+  if (!root || needle.length < 4) {
+    ElMessage.info('没有可定位的正文片段')
+    return
+  }
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  while (walker.nextNode()) {
+    const node = walker.currentNode
+    const i = node.textContent.indexOf(needle)
+    if (i < 0) continue
+    const range = document.createRange()
+    range.setStart(node, i)
+    range.setEnd(node, Math.min(i + needle.length, node.textContent.length))
+    const sel = window.getSelection()
+    sel.removeAllRanges()
+    sel.addRange(range)
+    node.parentElement?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    return
+  }
+  ElMessage.info('正文中未找到对应片段，请按建议手工修改')
+}
+
+function markHandled(code) {
+  const key = String(code || '')
+  if (!key || handledIssueCodes.value.includes(key)) return
+  handledIssueCodes.value = [...handledIssueCodes.value, key]
+}
+
+function toggleFocus() {
+  focusMode.value = !focusMode.value
+  if (focusMode.value) showCheckDrawer.value = false
+  window.dispatchEvent(new CustomEvent('geo-editor-focus', { detail: focusMode.value }))
+}
+
+function onMoreCommand(cmd) {
+  if (cmd === 'save') return saveArticleBody()
+  if (cmd === 'copy') return copyCurrentDoc()
+  if (cmd === 'check') {
+    showCheckDrawer.value = true
+    return runCheck()
+  }
+  if (cmd === 'variants') return genVariants()
+  if (cmd === 'refresh') return load()
+  if (cmd === 'focus') return toggleFocus()
+}
+
+watch(
+  () => article.body_markdown,
+  () => {
+    if (!hasMasterDraft.value) return
+    clearTimeout(autosaveTimer)
+    autosaveTimer = setTimeout(() => {
+      saveArticleBody({ silent: true })
+    }, 8000)
+  },
+)
+
 watch([tenantId, taskId], load)
 onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="editor">
-    <div class="toolbar">
-      <div class="left">
-        <el-button text type="primary" @click="router.push('/geo/tasks')">← 任务列表</el-button>
-        <div class="meta">
-          <span class="title">任务 #{{ taskId }}</span>
-          <span v-if="task" class="sub">
-            {{ task.title }}
-            · {{ taskStatusLabel(task.status) }}
-            · {{ pipelineLabel(task.pipeline_step) }}
-            · {{ reviewStatusText(task.review_status) }}
-          </span>
-        </div>
+  <div v-loading="loading" class="ed-shell" :class="{ focus: focusMode, 'check-open': showCheckDrawer && !focusMode }">
+    <header class="ed-top">
+      <button type="button" class="ed-back" @click="router.push('/geo/tasks')">← 任务列表</button>
+      <div class="ed-ident">
+        <div class="ed-kicker">#{{ taskId }} · {{ unifiedStatus.label }}</div>
+        <div class="ed-name">{{ article.title || task?.title || '未命名文章' }}</div>
       </div>
-      <div class="right">
-        <el-button @click="load">刷新</el-button>
+      <div class="ed-top-actions">
+        <span class="ed-save">{{ saveHint }}</span>
+        <el-button
+          type="primary"
+          :loading="busy === 'generate'"
+          :disabled="!task"
+          @click="generate"
+        >
+          {{ hasMasterDraft ? '更新母稿' : '生成母稿' }}
+        </el-button>
+        <el-button :class="{ 'is-active': showCheckDrawer }" @click="showCheckDrawer = !showCheckDrawer">
+          检查
+        </el-button>
+        <el-dropdown trigger="click" @command="onMoreCommand">
+          <el-button>更多</el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="save">保存正文</el-dropdown-item>
+              <el-dropdown-item command="copy">复制</el-dropdown-item>
+              <el-dropdown-item command="check">检查就绪</el-dropdown-item>
+              <el-dropdown-item command="variants" :disabled="!hasMasterDraft">生成渠道稿</el-dropdown-item>
+              <el-dropdown-item command="refresh" divided>刷新</el-dropdown-item>
+              <el-dropdown-item command="focus">{{ focusMode ? '退出专注' : '专注模式' }}</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
-    </div>
-
-    <div v-if="task && nextStep" class="next-step" :class="{ done: nextStep.key === 'impact' }">
-      <div class="next-copy">
-        <div class="next-kicker">当前下一步</div>
-        <div class="next-title">{{ nextStep.title }}</div>
-        <div class="next-detail">{{ nextStep.detail }}</div>
-      </div>
-      <el-button type="primary" :loading="!!busy" @click="goNextStep">
-        {{ nextStep.action }}
-      </el-button>
-    </div>
+    </header>
 
     <el-alert
       v-if="error"
@@ -2048,35 +2201,25 @@ onMounted(load)
       :title="error"
       show-icon
       closable
-      class="mb"
+      class="ed-alert"
       @close="error = ''"
     />
-    <div v-if="task" class="grid">
-      <!-- Left: brief + facts -->
-      <aside class="col col-left">
-        <el-card id="step-brief" shadow="never" class="card">
-          <template #header>
-            <div class="card-head">
-              <button type="button" class="fold-toggle" @click="foldBrief = !foldBrief">
-                {{ foldBrief ? '▸' : '▾' }} 内容策略
-                <el-tag v-if="foldBrief && task?.brief_ready" size="small" type="success" effect="plain">已齐</el-tag>
-              </button>
-              <div v-show="!foldBrief" class="row-actions">
-                <el-button size="small" :loading="busy === 'suggest'" @click="suggestBrief">
-                  AI 建议
-                </el-button>
-                <el-button size="small" type="primary" :loading="busy === 'brief'" @click="saveBrief">
-                  保存策略
-                </el-button>
-              </div>
-            </div>
-          </template>
-          <div v-show="!foldBrief">
-          <div v-if="briefSuggestHint" class="hint mb" style="color: #2563eb">
+
+    <div v-if="task" class="ed-body">
+      <aside v-show="!focusMode" class="ed-left">
+        <div class="ed-tabs">
+          <button type="button" :class="{ on: leftTab === 'brief' }" @click="leftTab = 'brief'">内容设定</button>
+          <button type="button" :class="{ on: leftTab === 'facts' }" @click="leftTab = 'facts'">
+            可信材料 {{ selectedFactIds.length ? selectedFactIds.length : '' }}
+          </button>
+        </div>
+
+        <div v-show="leftTab === 'brief'" class="ed-pane">
+          <div v-if="briefSuggestHint" class="ed-hint">
             {{ briefSuggestHint }}
             <span v-if="briefLocalDraft"> · 本地草稿未保存</span>
           </div>
-          <el-form label-width="88px" size="small">
+          <el-form label-position="top" size="small">
             <el-form-item label="行业" required>
               <el-input v-model="brief.industry" />
             </el-form-item>
@@ -2085,382 +2228,113 @@ onMounted(load)
             </el-form-item>
             <el-form-item label="意图" required>
               <el-select v-model="brief.intent" clearable style="width: 100%">
-                <el-option
-                  v-for="it in catalog?.intents || []"
-                  :key="it.key"
-                  :label="it.label"
-                  :value="it.key"
-                />
+                <el-option v-for="it in catalog?.intents || []" :key="it.key" :label="it.label" :value="it.key" />
               </el-select>
             </el-form-item>
             <el-form-item label="内容类型" required>
               <el-select v-model="brief.content_type" clearable style="width: 100%">
-                <el-option
-                  v-for="it in catalog?.content_types || []"
-                  :key="it.key"
-                  :label="it.label"
-                  :value="it.key"
-                />
+                <el-option v-for="it in catalog?.content_types || []" :key="it.key" :label="it.label" :value="it.key" />
               </el-select>
             </el-form-item>
             <el-form-item label="CTA" required>
               <el-input v-model="brief.cta" />
             </el-form-item>
-            <el-form-item label="禁用表述">
-              <el-input v-model="brief.banned_claims" placeholder="逗号分隔" />
-            </el-form-item>
-            <el-form-item label="备注">
-              <el-input v-model="brief.notes" />
-            </el-form-item>
-            <el-divider content-position="left">策略（可选）</el-divider>
-            <el-form-item label="AI 问题">
-              <el-input v-model="brief.ai_question" />
-            </el-form-item>
-            <el-form-item label="不推荐原因">
-              <el-input
-                v-model="brief.not_recommended_reasons"
-                type="textarea"
-                :rows="2"
-                placeholder="AI 目前不推荐你的原因，逗号分隔；母稿须用事实回应"
-              />
-            </el-form-item>
-            <el-form-item>
-              <template #label>
-                <span
-                  title="AI 回答里缺哪些信息维度。勾选后，母稿必须用已绑定事实回应这些缺口，禁止编造补全。"
-                >
-                  信息缺口
-                </span>
+            <button type="button" class="ed-adv" @click="showAdvancedBrief = !showAdvancedBrief">
+              {{ showAdvancedBrief ? '收起高级设置' : '高级设置' }}
+            </button>
+            <template v-if="showAdvancedBrief">
+              <el-form-item label="禁用表述">
+                <el-input v-model="brief.banned_claims" placeholder="逗号分隔" />
+              </el-form-item>
+              <el-form-item v-if="editorSurface.briefFields.includes('notes')" label="备注">
+                <el-input v-model="brief.notes" />
+              </el-form-item>
+              <template v-if="editorSurface.briefFields.includes('ai_question')">
+                <el-form-item label="AI 问题">
+                  <el-input v-model="brief.ai_question" />
+                </el-form-item>
+                <el-form-item label="不推荐原因">
+                  <el-input v-model="brief.not_recommended_reasons" type="textarea" :rows="2" />
+                </el-form-item>
+                <el-form-item label="信息缺口">
+                  <el-select v-model="brief.info_gaps" multiple collapse-tags collapse-tags-tooltip filterable clearable style="width: 100%">
+                    <el-option v-for="g in infoGapOptions" :key="g.key" :label="g.label" :value="g.key" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="推荐场景">
+                  <el-input v-model="brief.recommend_when" />
+                </el-form-item>
+                <el-form-item label="竞品">
+                  <el-input v-model="brief.competitors" />
+                </el-form-item>
+                <el-form-item label="必须覆盖">
+                  <el-input v-model="brief.must_cover" />
+                </el-form-item>
               </template>
-              <el-select
-                v-model="brief.info_gaps"
-                multiple
-                collapse-tags
-                collapse-tags-tooltip
-                filterable
-                clearable
-                placeholder="选择需用事实补齐的缺口（可多选）"
-                style="width: 100%"
-              >
-                <el-option
-                  v-for="g in infoGapOptions"
-                  :key="g.key"
-                  :label="g.label"
-                  :value="g.key"
-                />
-              </el-select>
-              <div class="field-help">
-                指<strong>AI 回答里缺什么</strong>（定位/对比/案例/权威源等）。勾选后生成母稿须用事实回应，不要写英文 key。
-              </div>
-            </el-form-item>
-            <el-form-item label="推荐场景">
-              <el-input v-model="brief.recommend_when" placeholder="在什么场景下可被考虑/推荐" />
-            </el-form-item>
-            <el-form-item label="竞品">
-              <el-input v-model="brief.competitors" placeholder="逗号分隔，对比段会点名" />
-            </el-form-item>
-            <el-form-item label="必须覆盖">
-              <el-input v-model="brief.must_cover" placeholder="逗号分隔，如品牌名、产品线" />
-            </el-form-item>
+            </template>
           </el-form>
+          <div class="ed-left-foot">
+            <el-button size="small" :loading="busy === 'suggest'" @click="suggestBrief">AI 建议</el-button>
+            <el-button size="small" type="primary" :loading="busy === 'brief'" @click="saveBrief">保存设定</el-button>
           </div>
-        </el-card>
+        </div>
 
-        <el-card id="step-facts" shadow="never" class="card fact-bind-card">
-          <template #header>
-            <div class="card-head">
-              <button type="button" class="fold-toggle" @click="foldFacts = !foldFacts">
-                {{ foldFacts ? '▸' : '▾' }} 事实绑定
-                <el-tag
-                  size="small"
-                  :type="factsBindReady ? 'success' : 'warning'"
-                  effect="plain"
-                >
-                  {{ factsBindReady ? '可生成' : '未就绪' }}
-                </el-tag>
-              </button>
-            </div>
-          </template>
-          <div v-show="!foldFacts">
-
-          <div class="fact-status" :class="{ ready: factsBindReady }">
-            <div class="fact-status-row">
-              <span>
-                已绑
-                <strong>{{ boundFacts.length }}</strong>
-                条
-              </span>
-              <span class="dot">·</span>
-              <span>
-                已核验
-                <strong>{{ boundVerifiedCount }}</strong>
-                / 需 ≥3
-              </span>
-            </div>
-            <el-progress
-              :percentage="Math.min(100, Math.round((boundVerifiedCount / 3) * 100))"
-              :stroke-width="8"
-              :status="factsBindReady ? 'success' : undefined"
-              :show-text="false"
-            />
-            <div class="hint fact-status-sub">
-              生成母稿至少绑定 <strong>3 条已核验</strong>事实。库中可选
-              {{ allFacts.length }} 条（已核验 {{ libraryVerifiedCount }}）
-              <span v-if="task?.status"> · {{ taskStatusLabel(task.status) }}</span>
-            </div>
+        <div v-show="leftTab === 'facts'" class="ed-pane">
+          <div class="ed-fact-status" :class="{ ready: factsBindReady }">
+            已绑 {{ boundFacts.length }} · 已核验 {{ boundVerifiedCount }}/需≥3
+            <router-link class="ed-link" to="/geo/knowledge">管理知识库</router-link>
           </div>
-
-          <!-- 已绑定列表 -->
-          <div class="fact-section">
-            <div class="fact-section-label">当前绑定</div>
-            <div v-if="!boundFacts.length" class="fact-empty">
-              尚未绑定事实。可用下方「快速绑定」或从库中多选后保存。
-            </div>
-            <div v-else class="bound-chips">
-              <div v-for="f in boundFacts" :key="f.id" class="bound-chip">
-                <div class="bound-chip-main">
-                  <div class="bound-chip-top">
-                    <el-tag size="small" :type="trustTagType(f.trust_level)" effect="light">
-                      {{ trustLabel(f.trust_level) }}
-                    </el-tag>
-                    <span class="bound-chip-id">#{{ f.id }}</span>
-                    <span class="bound-chip-title" :title="f.title">{{ f.title || '未命名' }}</span>
-                    <button
-                      type="button"
-                      class="bound-chip-x"
-                      title="移除此条"
-                      @click="removeBoundFact(f.id)"
-                    >
-                      ×
-                    </button>
-                  </div>
-                  <div v-if="f.statement" class="bound-chip-stmt" :title="f.statement">
-                    {{ f.statement }}
-                  </div>
-                  <div v-else class="bound-chip-stmt is-empty">这条事实没有正文</div>
-                  <div v-if="f.source_name || f.source_url" class="bound-chip-src">
-                    来源 {{ f.source_name || f.source_url }}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 快速操作 -->
-          <div class="fact-section">
-            <div class="fact-section-label">快速绑定</div>
-            <div class="fact-actions">
-              <el-button
-                size="small"
-                type="success"
-                :loading="busy === 'facts'"
-                :disabled="libraryVerifiedCount < 3"
-                @click="bindTopVerified(3)"
-              >
-                一键绑 3 条已核验
-              </el-button>
-              <el-button size="small" :loading="busy === 'retrieve'" @click="retrieveFacts">
-                按 Brief 召回
-              </el-button>
-              <el-button
-                size="small"
-                :loading="busy === 'apply'"
-                :disabled="!retrievePreview.length"
-                @click="applyRetrieveTop"
-              >
-                绑定召回结果
-              </el-button>
-            </div>
-            <div class="field-help">
-              推荐：有核验事实时点「一键绑 3 条」；或先「按 Brief 召回」再「绑定召回结果」。
-            </div>
-          </div>
-
-          <!-- 手动多选 -->
-          <div class="fact-section">
-            <div class="fact-section-label">从事实库勾选</div>
-            <el-select
-              v-model="selectedFactIds"
-              multiple
-              filterable
-              collapse-tags
-              collapse-tags-tooltip
-              placeholder="搜索标题 / 勾选多条事实卡"
-              style="width: 100%"
+          <el-input v-model="factQuery" clearable size="small" placeholder="搜索材料" class="mb" />
+          <el-radio-group v-model="factTrustFilter" size="small" class="mb">
+            <el-radio-button label="all">全部</el-radio-button>
+            <el-radio-button label="verified">已核验</el-radio-button>
+            <el-radio-button label="needs_review">待核验</el-radio-button>
+          </el-radio-group>
+          <div class="ed-fact-list">
+            <label
+              v-for="f in filteredTrustedFacts"
+              :key="f.id"
+              class="ed-fact"
+              :class="{ selected: isFactSelected(f.id) }"
             >
-              <el-option
-                v-for="f in allFacts"
-                :key="f.id"
-                :label="factOptionLabel(f)"
-                :value="Number(f.id)"
-              >
-                <div class="fact-option">
-                  <el-tag size="small" :type="trustTagType(f.trust_level)" effect="plain">
+              <input type="checkbox" :checked="isFactSelected(f.id)" @change="toggleFact(f.id)">
+              <div class="ed-fact-main">
+                <div class="ed-fact-top">
+                  <span class="ed-fact-title">{{ f.title || '未命名' }}</span>
+                  <span class="ed-pill" :class="f.trust_level === 'verified' ? 'ok' : 'warn'">
                     {{ trustLabel(f.trust_level) }}
-                  </el-tag>
-                  <span class="fact-option-id">#{{ f.id }}</span>
-                  <div class="fact-option-text">
-                    <div class="fact-option-title">{{ f.title || '未命名' }}</div>
-                    <div v-if="factSnippet(f, 48)" class="fact-option-stmt">{{ factSnippet(f, 48) }}</div>
-                  </div>
+                  </span>
                 </div>
-              </el-option>
-            </el-select>
-            <div class="fact-actions fact-actions-end">
-              <el-button
-                size="small"
-                type="primary"
-                :loading="busy === 'facts'"
-                :disabled="!selectedFactIds.length"
-                @click="saveFacts"
-              >
-                保存绑定（{{ selectedFactIds.length }}）
-              </el-button>
-            </div>
-          </div>
-
-          <!-- 召回预览 -->
-          <div v-if="retrievePreview.length" class="fact-section retrieve-box">
-            <div class="fact-section-label">
-              召回候选
-              <span class="hint">{{ retrievePreview.length }} 条 · 已勾入选择框</span>
-            </div>
-            <div
-              v-for="r in retrievePreview"
-              :key="r.fact_id"
-              class="retrieve-row"
-            >
-              <el-tag
-                size="small"
-                :type="trustTagType(r.trust_level)"
-                effect="plain"
-              >
-                {{ trustLabel(r.trust_level) }}
-              </el-tag>
-              <span class="bound-chip-id">#{{ r.fact_id }}</span>
-              <div class="retrieve-text">
-                <span class="retrieve-title">{{ r.title || '—' }}</span>
-                <span v-if="r.statement" class="retrieve-stmt">{{ factSnippet(r, 48) }}</span>
+                <div class="ed-fact-sum">{{ factSnippet(f, 72) || '无摘要' }}</div>
+                <div class="ed-fact-cite">{{ isFactCited(f.id) ? '已引用' : '未引用' }}</div>
               </div>
-              <span v-if="r.score != null" class="retrieve-score">{{ Number(r.score).toFixed(1) }}</span>
+            </label>
+            <div v-if="!filteredTrustedFacts.length" class="ed-empty">
+              {{ allFacts.length ? '没有匹配的材料' : '知识库暂无事实，请先去补充' }}
             </div>
           </div>
+          <div class="ed-left-foot">
+            <el-button
+              type="primary"
+              :loading="busy === 'facts'"
+              :disabled="!selectedFactIds.length"
+              @click="saveFacts"
+            >
+              绑定已选材料（{{ selectedFactIds.length }}）
+            </el-button>
           </div>
-        </el-card>
+        </div>
       </aside>
 
-      <!-- Center: article + publish -->
-      <div class="col col-main">
-        <el-card id="step-doc" shadow="never" class="card">
-          <template #header>
-            <div class="card-head">
-              <span>文档</span>
-              <div class="row-actions">
-                <el-button
-                  v-if="docTab === 'master'"
-                  size="small"
-                  type="primary"
-                  :loading="busy === 'generate'"
-                  @click="generate"
-                >
-                  生成母稿
-                </el-button>
-                <el-button
-                  v-if="docTab === 'master'"
-                  size="small"
-                  :loading="busy === 'save'"
-                  @click="saveArticleBody"
-                >
-                  保存正文
-                </el-button>
-                <el-button
-                  v-if="docTab !== 'master'"
-                  size="small"
-                  type="primary"
-                  :loading="busy === 'saveVar'"
-                  @click="saveVariantBody"
-                >
-                  保存渠道稿
-                </el-button>
-                <el-button
-                  v-if="docTab !== 'master'"
-                  size="small"
-                  :loading="busy === 'export'"
-                  @click="exportCurrentVariant"
-                >
-                  导出
-                </el-button>
-                <el-button size="small" @click="copyCurrentDoc">复制</el-button>
-                <el-button size="small" :loading="busy === 'check'" @click="runCheck">
-                  检查就绪
-                </el-button>
-                <el-button size="small" :loading="busy === 'review'" @click="runAiReview">
-                  AI 审稿
-                </el-button>
-              </div>
-            </div>
-          </template>
-
-          <div v-if="generateHint" class="hint mb" style="color: #2563eb">{{ generateHint }}</div>
-          <el-alert
-            v-if="activeJob && ['pending', 'running'].includes(activeJob.status)"
-            type="info"
-            show-icon
-            class="mb"
-            :closable="false"
-            :title="`后台任务 #${activeJob.id} · ${activeJob.status}`"
-            :description="`${activeJob.cancel_requested ? '已请求取消 · ' : ''}${activeJob.progress_label || '处理中'}${activeJob.progress_pct != null ? ' · ' + activeJob.progress_pct + '%' : ''}。刷新页面不会中断，稍后可继续看结果。`"
+      <main class="ed-center">
+        <div class="ed-doc">
+          <el-tabs
+            v-if="editorSurface.showChannelVariants"
+            :model-value="docTab"
+            class="ed-doc-tabs"
+            @tab-change="onDocTabChange"
           >
-            <el-button
-              size="small"
-              :disabled="!!activeJob.cancel_requested"
-              @click="cancelActiveJob"
-            >取消</el-button>
-          </el-alert>
-          <el-alert
-            v-if="activeJob?.status === 'failed'"
-            type="error"
-            show-icon
-            class="mb"
-            :title="`后台任务 #${activeJob.id} 失败`"
-            :description="activeJob.error || '无错误详情'"
-          >
-            <el-button size="small" type="primary" @click="generate">重试生成</el-button>
-          </el-alert>
-          <el-alert
-            v-if="activeJob?.status === 'cancelled'"
-            type="warning"
-            show-icon
-            class="mb"
-            :closable="false"
-            :title="`后台任务 #${activeJob.id} 已取消`"
-            description="生成已停下，正文未覆盖。可再点「生成母稿」。"
-          />
-
-          <div v-if="docTab === 'master'" class="doc-draft-banner mb">
-            <b>自动生成母稿草案</b>
-            — 供内部改稿与结构检查，<b>不能直接当正式发布文</b>。
-            请润色语气、删模板痕迹、核对事实后再审校推送。
-          </div>
-          <div
-            v-else-if="isPublishReadyVariant"
-            class="channel-quality mb is-good"
-          >
-            <b>正式渠道稿（HTML 正稿）</b>
-            — 下方默认「正稿预览」无 ## / ** 标记；点顶部「复制」粘贴到平台后台。
-            推送前建议快速核对关键数字与来源。
-            <span v-if="currentVariantMeta?.display_name" class="muted">
-              · {{ currentVariantMeta.display_name }}
-            </span>
-          </div>
-          <div v-else class="channel-quality mb is-warn">
-            <b>规则裁剪稿（非正式成稿）</b>
-            — 未走 AI 时接近母稿结构，不能当正式发布文。
-            请点下方「AI 生成正式渠道稿」。
-          </div>
-
-          <el-tabs :model-value="docTab" class="mb" @tab-change="onDocTabChange">
-            <el-tab-pane label="母稿草案" name="master" />
+            <el-tab-pane label="母稿" name="master" />
             <el-tab-pane
               v-for="v in variants"
               :key="v.channel"
@@ -2468,557 +2342,426 @@ onMounted(load)
               :label="`${channelLabel(v.channel)}${v.stale ? ' *' : ''}`"
             />
           </el-tabs>
+          <div class="ed-doc-note">正在编辑：{{ docTab === 'master' ? '母稿' : channelLabel(docTab) }}</div>
+
+          <el-alert
+            v-if="activeJob && ['pending', 'running'].includes(activeJob.status)"
+            type="info"
+            show-icon
+            class="mb"
+            :closable="false"
+            :title="`后台任务 #${activeJob.id} · ${activeJob.status}`"
+          />
+          <div v-if="generateHint" class="ed-hint mb">{{ generateHint }}</div>
 
           <template v-if="docTab === 'master'">
-            <el-form label-width="56px" size="small">
-              <el-form-item label="标题">
-                <el-input v-model="article.title" />
-              </el-form-item>
-              <el-form-item label="正文">
-                <el-input
-                  :key="`master-body-${task?.article?.version_no || 0}-${(article.body_markdown || '').length}`"
-                  v-model="article.body_markdown"
-                  type="textarea"
-                  :rows="16"
-                  placeholder="Markdown 母稿草案（需人工润色）"
-                />
-              </el-form-item>
-            </el-form>
-            <div v-if="task.article" class="hint">
-              草案 v{{ task.article.version_no }} · {{ task.article.created_at || '' }}
-              · 正文字数 {{ (article.body_markdown || '').length }}
-            </div>
-            <div v-if="sentenceCites.length" class="cite-box mb">
-              <div class="cite-head">
-                <div class="section-title">逐句证据</div>
-                <el-button size="small" :loading="busy === 'save'" @click="reciteEvidence">
-                  重新挂证据
-                </el-button>
-              </div>
-              <p class="cite-help">
-                主张句（数字 / 性能 / 案例）必须挂上事实或删改，否则检查就绪过不了。
-                普通叙述可以不挂。改稿或补事实后点「保存正文」或「重新挂证据」。
-              </p>
-              <div class="cite-sum">
-                已挂 {{ citeOkCount }}/{{ sentenceCites.length }}
-                · 主张未挂 {{ citeBlocking.length }}
-              </div>
-              <div v-for="(c, i) in sentenceCites" :key="i" class="cite-row" :class="{ block: c.needs_fact }">
-                <span class="cite-sent">{{ c.sentence }}</span>
-                <el-tag v-if="c.cited" size="small" type="success">
-                  #{{ c.fact_id }} {{ c.fact_title }}
-                </el-tag>
-                <el-tag v-else-if="c.needs_fact" size="small" type="danger">主张未挂</el-tag>
-                <el-tag v-else size="small" type="info">叙述可不挂</el-tag>
-                <el-button
-                  v-if="c.needs_fact"
-                  size="small"
-                  link
-                  type="danger"
-                  @click="removeCiteSentence(c.sentence)"
-                >删这句</el-button>
-                <router-link
-                  v-if="c.needs_fact"
-                  class="cite-link"
-                  to="/geo/facts"
-                >去补事实</router-link>
-              </div>
-            </div>
-            <div class="hint">重新「生成母稿」会覆盖当前正文</div>
-          </template>
-          <template v-else>
-            <div class="hint mb">
-              渠道 {{ channelLabel(docTab) }} · 状态 {{ variants.find((v) => v.channel === docTab)?.status || '—' }}
-              <span v-if="variants.find((v) => v.channel === docTab)?.stale"> · 母稿已变需重生</span>
-              <span v-if="currentVariantQualityLabel"> · {{ currentVariantQualityLabel }}</span>
-              <span v-if="currentVariantHasTable"> · 含对比表</span>
-            </div>
-            <el-form label-width="56px" size="small">
-              <el-form-item label="标题">
-                <el-input v-model="variantEdit.title" />
-              </el-form-item>
-              <el-form-item label="正文">
-                <div class="variant-body-wrap">
-                  <div class="variant-view-toggle mb">
-                    <el-radio-group v-model="variantViewMode" size="small">
-                      <el-radio-button label="preview">正稿预览（发布样式）</el-radio-button>
-                      <el-radio-button label="source">源码改写（高级）</el-radio-button>
-                    </el-radio-group>
-                    <span class="muted small">复制按钮默认复制 HTML 正稿，不是 ## 标记</span>
-                  </div>
-                  <div
-                    v-if="variantViewMode === 'preview'"
-                    class="variant-html-preview"
-                    v-html="variantEdit.body_html || '<p class=muted>暂无 HTML，请重新「AI 生成正式渠道稿」或点导出</p>'"
-                  />
-                  <el-input
-                    v-else
-                    v-model="variantEdit.body_markdown"
-                    type="textarea"
-                    :rows="16"
-                    placeholder="内部改写用结构化文本；保存后会重新生成 HTML 正稿"
-                  />
-                  <div v-if="variantViewMode === 'source'" class="hint">
-                    改完请点「保存渠道稿」，系统会重算 HTML 表格正稿。
-                  </div>
-                </div>
-              </el-form-item>
-            </el-form>
-          </template>
-        </el-card>
-
-        <el-card id="step-publish" shadow="never" class="card">
-          <template #header>
-            <div class="card-head">
-              <span>渠道成稿 · 审校 · 发布</span>
-              <el-button size="small" type="primary" :loading="busy === 'variants'" @click="genVariants">
-                AI 生成正式渠道稿
-              </el-button>
+            <el-input
+              v-model="article.title"
+              class="ed-doc-title"
+              placeholder="文章标题"
+            />
+            <RichTextMarkdownEditor
+              :key="`master-body-${task?.article?.version_no || 0}`"
+              v-model="article.body_markdown"
+              :min-height="320"
+              max-height="min(58vh, 640px)"
+              placeholder="在这里编辑母稿正文…"
+            />
+            <div class="ed-doc-status">
+              <span>{{ (article.body_markdown || '').replace(/\s/g, '').length }} 字</span>
+              <span v-if="task.article">v{{ task.article.version_no }}</span>
+              <span>{{ saveHint }}</span>
             </div>
           </template>
-          <div class="hint mb">
-            勾选几个就出几个页签。三路并行调模型，大约 1～2 分钟；不过门控也会留非正式稿。
-            正式稿可复制发布；关键数字建议发布前扫一眼。
-          </div>
-          <el-checkbox-group v-model="channelPick" class="mb">
-            <el-checkbox
-              v-for="c in channelOptions"
-              :key="c.key"
-              :label="c.key"
-            >
-              {{ c.label }} ({{ c.key }})
-            </el-checkbox>
-          </el-checkbox-group>
-          <el-alert
-            v-if="failedVariantItems.length"
-            type="warning"
-            show-icon
-            :closable="false"
-            class="mb"
-          >
-            <template #title>
-              勾选 {{ channelPick.length }} 个渠道，已出稿 {{ variants.length }} 个
-              <template v-if="failedVariantItems.length">
-                · 其中 {{ failedVariantItems.length }} 个非正式（未过门控，可改后再重试）
-              </template>
-            </template>
-            <ul class="variant-fail-list">
-              <li v-for="f in failedVariantItems" :key="f.channel">
-                <b>{{ channelLabel(f.channel) }}</b>
-                ：{{ (f.issues && f.issues[0]) || f.message || '未达完整文章标准' }}
-              </li>
-            </ul>
-            <el-button size="small" :loading="busy === 'variants'" @click="retryFailedVariants">
-              重试失败渠道
-            </el-button>
-          </el-alert>
-
-          <div v-if="channelBlueprint?.channels?.length" class="blueprint-box mb">
-            <div class="blueprint-title">
-              分发推荐（问题组：{{ channelBlueprint.group || '推荐' }}）
-            </div>
-            <ul class="blueprint-list">
-              <li v-for="ch in channelBlueprint.channels.slice(0, 6)" :key="ch.channel_key || ch.id">
-                <b>{{ ch.channel_name || ch.name || ch.channel_key }}</b>
-                <span class="muted"> · {{ ch.priority_band || ch.band || '—' }}</span>
-                <span v-if="ch.placement_status" class="muted"> · 阵地 {{ ch.placement_status }}</span>
-                <div v-if="ch.why || ch.reason" class="muted small">{{ ch.why || ch.reason }}</div>
-              </li>
-            </ul>
-          </div>
-
-          <el-divider content-position="left">审校</el-divider>
-          <div class="hint mb">
-            状态：{{ reviewStatusLabel }}
-            <template v-if="task.review_note"> · {{ task.review_note }}</template>
-            <template v-if="task.reviewed_at"> · {{ task.reviewed_at }}</template>
-          </div>
-          <el-input
-            v-model="reviewNote"
-            size="small"
-            placeholder="审校备注（可选）"
-            class="mb"
-          />
-          <div class="row-actions">
-            <el-button
-              size="small"
-              :disabled="!canSubmitReview"
-              :loading="busy === 'submitRev'"
-              @click="submitReview"
-            >
-              提交审校
-            </el-button>
-            <el-button
-              size="small"
-              type="success"
-              :disabled="!canDecideReview"
-              :loading="busy === 'decideRev'"
-              @click="decideReview('approved')"
-            >
-              通过
-            </el-button>
-            <el-button
-              size="small"
-              type="danger"
-              :disabled="!canDecideReview"
-              :loading="busy === 'decideRev'"
-              @click="decideReview('rejected')"
-            >
-              驳回
-            </el-button>
-          </div>
-
-          <el-divider content-position="left">回填 / 一键推送</el-divider>
-          <div v-if="publishGateHint" class="hint mb" style="color: #b45309">
-            门禁：{{ publishGateHint }}
-          </div>
-          <el-form label-width="100px" size="small">
-            <el-form-item label="发布 URL">
-              <el-input v-model="publishUrl" placeholder="https://..." />
-            </el-form-item>
-            <el-form-item label="备注">
-              <el-input v-model="publishNote" />
-            </el-form-item>
-            <el-form-item label="推送账号">
-              <el-select
-                v-model="webhookAccountId"
-                clearable
-                style="width: 100%"
-                placeholder="Webhook 或社交 social_api"
-              >
-                <el-option
-                  v-for="a in webhookAccountsForChannel"
-                  :key="a.id"
-                  :label="`${a.display_name} · ${a.auth_type || 'webhook'} (#${a.id})`"
-                  :value="a.id"
-                />
-              </el-select>
-            </el-form-item>
-          </el-form>
-          <div class="row-actions">
-            <el-button
-              size="small"
-              type="primary"
-              :loading="busy === 'publish'"
-              :title="publishGateHint || '回填发布 URL'"
-              @click="recordPublication"
-            >
-              回填 URL
-            </el-button>
-            <el-button
-              size="small"
-              :loading="busy === 'push'"
-              :title="publishGateHint || 'Webhook / 社交直发'"
-              @click="pushWebhook"
-            >
-              推送当前渠道
-            </el-button>
-          </div>
-
-          <el-divider content-position="left">多媒自动推送</el-divider>
-          <p class="hint mb">
-            就绪 = auto_publish + 凭证 + 渠道稿已导出。只差配置的项见「发布渠道」矩阵。
-            <el-button link type="primary" size="small" @click="loadPushTargets">刷新目标</el-button>
-          </p>
-          <el-checkbox-group v-if="pushTargets.length" v-model="pushSelected" class="mb">
-            <div v-for="t in pushTargets" :key="`${t.adapt_key}-${t.account_id || t.channel_id}`" class="push-row">
-              <el-checkbox
-                v-if="t.ready"
-                :label="`${t.adapt_key || t.channel_type}:${t.account_id}`"
-              >
-                <b>{{ t.channel_name }}</b>
-                <span class="muted"> · {{ t.channel_type }} · {{ t.push_kind || t.auth_type }}</span>
-              </el-checkbox>
-              <div v-else class="push-blocked">
-                <span class="muted">{{ t.channel_name }}（{{ t.channel_type }}）</span>
-                <span class="blocked"> — {{ (t.block_reasons || []).join('；') }}</span>
-              </div>
-            </div>
-          </el-checkbox-group>
-          <p v-else class="hint mb">暂无自动推送目标，请先在「发布渠道」一键开启多媒包并配置凭证。</p>
-          <div class="row-actions">
-            <el-button
-              size="small"
-              type="primary"
-              :loading="pushBatchBusy"
-              @click="pushBatchSelected"
-            >
-              推送勾选渠道
-            </el-button>
-            <el-button size="small" :loading="pushBatchBusy" @click="pushBatchAllReady">
-              一键推送全部就绪
-            </el-button>
-            <router-link class="el-button el-button--small" to="/geo/publishing">管理渠道账号</router-link>
-          </div>
-          <div class="hint mt">
-            推送前通常需「导出」渠道稿。未审校时按钮可点：接口返回 400 并提示审校要求（也可用上方橙色门禁文案）。
-          </div>
-
-          <el-divider id="step-impact" content-position="left">发布后效果</el-divider>
-          <div v-loading="impactLoading" class="impact-panel">
-            <div class="row-actions mb">
-              <el-select v-model="impactWindowDays" size="small" style="width: 110px" @change="loadImpact">
-                <el-option :value="7" label="±7 天" />
-                <el-option :value="14" label="±14 天" />
-                <el-option :value="30" label="±30 天" />
-              </el-select>
-              <el-button size="small" :loading="impactLoading" @click="loadImpact">刷新</el-button>
-            </div>
-            <template v-if="impact">
-              <div class="hint mb" v-if="!impact.summary?.published_count">
-                尚未回填发布 URL。发布后系统会把引用 URL 反查到本篇，并对比发布前后提及率。
-              </div>
-              <template v-else>
-                <el-alert
-                  v-if="impactInsufficient"
-                  type="warning"
-                  show-icon
-                  :closable="false"
-                  class="mb"
-                  :title="impactActionHint || '数据不足以判断'"
-                  description="任一侧快照不足阈值时不展示变化率。建议提高巡检频率或延长观察期。"
-                />
-                <div class="impact-kpis">
-                  <div class="impact-kpi">
-                    <div class="ik-label">引用命中</div>
-                    <div class="ik-value">{{ impact.cite_hits?.total ?? 0 }}</div>
-                    <div class="ik-hint">快照中匹配本篇 URL</div>
-                  </div>
-                  <div class="impact-kpi">
-                    <div class="ik-label">发布前提及率</div>
-                    <div class="ik-value">
-                      {{
-                        impactInsufficient
-                          ? '—'
-                          : fmtRate(impact.prompt_mention?.before?.mention_rate)
-                      }}
-                    </div>
-                    <div class="ik-hint">
-                      样本 {{ impact.prompt_mention?.before?.snapshot_count ?? 0 }}
-                    </div>
-                  </div>
-                  <div class="impact-kpi">
-                    <div class="ik-label">发布后提及率</div>
-                    <div class="ik-value">
-                      {{
-                        impactInsufficient
-                          ? '—'
-                          : fmtRate(impact.prompt_mention?.after?.mention_rate)
-                      }}
-                    </div>
-                    <div class="ik-hint">
-                      样本 {{ impact.prompt_mention?.after?.snapshot_count ?? 0 }}
-                      <template v-if="!impactInsufficient">
-                        · Δ {{ fmtDelta(impact.prompt_mention?.delta_mention_rate) }}
-                      </template>
-                    </div>
-                  </div>
-                </div>
-                <p v-if="impact.net_effect_vs_control != null && !impactInsufficient" class="hint">
-                  净效应（处理 − 对照）
-                  <b>{{ fmtDelta(impact.net_effect_vs_control) }}</b>
-                  · 置信度 {{ impact.confidence || impact.summary?.confidence || '—' }}
-                </p>
-                <p v-else-if="impact.prompt_mention?.methodology_note" class="hint">
-                  {{ impact.prompt_mention.methodology_note }}
-                </p>
-                <ul v-if="impact.publications?.length" class="impact-pubs">
-                  <li v-for="p in impact.publications" :key="p.id">
-                    <a :href="p.published_url" target="_blank" rel="noopener">{{ p.channel }}</a>
-                    <span class="muted"> · 命中 {{ p.cite_hit_count || 0 }}</span>
-                  </li>
-                </ul>
-                <p class="hint mt">
-                  首次发布 {{ impact.first_published_at || '—' }} ·
-                  对比窗 ±{{ impact.window_days }} 天 · 相关意图词 #{{ impact.prompt_id }}
-                </p>
-              </template>
-            </template>
-            <p v-else class="hint">加载效果数据…</p>
-          </div>
-        </el-card>
-      </div>
-
-      <!-- Right: draft readiness (not publish-ready copy) -->
-      <aside class="col col-rail">
-        <el-card id="step-check" shadow="never" class="card rail-card">
-          <template #header>
-            <div class="card-head">
-              <div>
-                <div class="rail-title">母稿就绪检查</div>
-                <div class="rail-sub">生成稿体检 · 非正式成稿</div>
-              </div>
-              <div class="row-actions">
-                <el-button size="small" :loading="busy === 'check'" @click="runCheck">检查</el-button>
-                <el-button size="small" :loading="busy === 'review'" @click="runAiReview">审稿</el-button>
-              </div>
+          <template v-else-if="editorSurface.showChannelVariants">
+            <el-input v-model="variantEdit.title" class="ed-doc-title" placeholder="渠道稿标题" />
+            <div class="variant-html-preview" v-html="variantEdit.body_html || '<p class=muted>暂无预览，请先生成渠道稿</p>'" />
+            <div class="ed-doc-status">
+              <el-button size="small" @click="copyCurrentDoc">复制成稿</el-button>
+              <el-button v-if="composeUrl" size="small" @click="openCompose">打开发布页</el-button>
             </div>
           </template>
+        </div>
+      </main>
 
-          <div class="draft-banner mb">
-            当前是 AI 母稿草案，通过检查只代表「结构/证据够用」，
-            <b>还不能直接当正式发布文</b>。请人工润色后再审校推送。
+      <aside v-if="showCheckDrawer && !focusMode" class="ed-check">
+        <div class="ed-check-head">
+          <div>
+            <div class="ed-check-score">就绪度 {{ scoreMeta.score != null ? scoreMeta.headline : '—' }}</div>
+            <div class="ed-check-sub">{{ mustIssues.length }} 项需要处理</div>
           </div>
+          <el-button size="small" :loading="busy === 'check'" @click="runCheck">重新检查</el-button>
+        </div>
 
-          <div class="score-block" :class="'tone-' + scoreMeta.tone">
-            <div class="score-row">
-              <div class="score-num">
-                <template v-if="scoreMeta.score != null">
-                  <span class="score-big">{{ scoreMeta.headline }}</span>
-                  <span class="score-den">/100</span>
-                </template>
-                <template v-else>
-                  <span class="score-big muted-num">—</span>
-                </template>
-              </div>
-              <div class="score-copy">
-                <div class="score-label">GEO 就绪分</div>
-                <div class="score-hint">{{ scoreMeta.subline }}</div>
-              </div>
-            </div>
-            <div v-if="scoreMeta.score != null" class="score-bar">
-              <div class="score-bar-fill" :style="{ width: `${Math.min(100, scoreMeta.score)}%` }" />
-            </div>
-            <div v-if="scoreMeta.chips.length" class="score-chips">
-              <span
-                v-for="chip in scoreMeta.chips"
-                :key="chip.key"
-                class="score-chip"
-                :class="{ low: chip.value < 60 }"
-              >
-                {{ chip.label }} {{ chip.value }}
-              </span>
+        <div v-if="mustIssues.length" class="ed-iss-block">
+          <div class="ed-iss-label must">必须处理</div>
+          <div v-for="c in mustIssues" :key="c.code" class="ed-iss">
+            <div class="ed-iss-title">{{ c.label || c.message }}</div>
+            <div class="ed-iss-msg">{{ c.message }}</div>
+            <div class="ed-iss-acts">
+              <button type="button" @click="locateIssue(c)">定位正文</button>
+              <button type="button" @click="fixCheck(c.code)">查看建议</button>
+              <button type="button" @click="markHandled(c.code)">标记已处理</button>
             </div>
           </div>
+        </div>
 
-          <div class="channel-pill mb" :class="liveChannelCoverage.ok ? 'is-ok' : 'is-warn'">
-            <span class="pill-mark">{{ liveChannelCoverage.ok ? '✓' : '!' }}</span>
-            <div>
-              <div class="pill-title">
-                {{ liveChannelCoverage.ok ? '渠道稿已齐' : '渠道稿未齐' }}
-              </div>
-              <div class="pill-desc">
-                目标 {{ channelListLabel(liveChannelCoverage.targets) }}
-                · 已有 {{ channelListLabel(liveChannelCoverage.present) }}
-                <template v-if="liveChannelCoverage.missing.length">
-                  · 还缺 {{ channelListLabel(liveChannelCoverage.missing) }}
-                </template>
-              </div>
+        <div v-if="suggestIssues.length" class="ed-iss-block">
+          <div class="ed-iss-label warn">建议优化</div>
+          <div v-for="a in suggestIssues" :key="a.code || a.message" class="ed-iss">
+            <div class="ed-iss-title">{{ a.message }}</div>
+            <div v-if="a.action" class="ed-iss-msg">{{ a.action }}</div>
+            <div class="ed-iss-acts">
+              <button type="button" @click="locateIssue(a)">定位正文</button>
+              <button type="button" @click="markHandled(a.code || a.message)">标记已处理</button>
             </div>
           </div>
+        </div>
 
-          <div v-if="failedChecks.length" class="sec-row">
-            <span class="sec">待补齐 {{ failedChecks.length }}</span>
-          </div>
-          <ul v-if="failedChecks.length" class="check-list fail-list">
-            <li v-for="c in failedChecks" :key="c.code">
-              <span class="bad">✗</span>
-              <div>
-                <div class="check-title">{{ c.label }}</div>
-                <div class="check-msg">{{ c.message }}</div>
-                <div v-if="c.action" class="check-action">{{ c.action }}</div>
-              </div>
-            </li>
-          </ul>
-          <div v-else-if="checks.length" class="all-pass mb">结构项已全部通过 · 仍建议人工过目</div>
+        <div v-if="!mustIssues.length && checks.length" class="ed-all-ok">结构项已全部通过，仍建议人工过目</div>
 
-          <button
-            v-if="passedChecks.length"
-            type="button"
-            class="toggle-passed"
-            @click="showPassedChecks = !showPassedChecks"
-          >
-            {{ showPassedChecks ? '收起' : '展开' }}已通过 {{ passedChecks.length }} 项
-          </button>
-          <ul v-if="showPassedChecks && passedChecks.length" class="check-list pass-list">
-            <li v-for="c in passedChecks" :key="c.code">
-              <span class="ok">✓</span>
-              <div>
-                <div class="check-title">{{ c.label }}</div>
-                <div class="check-msg">{{ c.message }}</div>
-              </div>
-            </li>
-          </ul>
-
-          <div v-if="geoActions.length" class="mt">
-            <div class="sec">建议补强</div>
-            <ul class="check-list fail-list">
-              <li v-for="a in geoActions" :key="a.code">
-                <span class="warn">!</span>
-                <div>
-                  <div class="check-title">{{ a.message }}</div>
-                  <div v-if="a.action" class="check-action">{{ a.action }}</div>
-                </div>
-              </li>
-            </ul>
-          </div>
-
-          <div v-if="patches.length" class="mt patch-box">
-            <div class="sec">一键补结构（写入母稿，仍需人工改）</div>
-            <div class="row-actions">
-              <el-button
-                size="small"
-                type="warning"
-                plain
-                :loading="busy === 'patch'"
-                @click="applyAllPatches"
-              >
-                全部应用 ({{ patches.length }})
-              </el-button>
-              <el-button
-                v-for="p in patches"
-                :key="p.code"
-                size="small"
-                :loading="busy === 'patch'"
-                @click="applyPatch(p.code)"
-              >
-                {{ p.label || checkLabel(p.code) }}
-              </el-button>
-            </div>
-          </div>
-          <div v-else-if="failedChecks.length" class="mt patch-box">
-            <div class="sec">一键补结构</div>
-            <div class="hint mb">当前无补丁缓存，请先点上方「检查就绪」生成可插入补丁。</div>
-            <el-button size="small" type="warning" plain :loading="busy === 'check'" @click="runCheck">
-              检查就绪并生成补丁
-            </el-button>
-          </div>
-
-          <div v-if="aiReview" class="mt ai-box">
-            <div class="sec">
-              AI 审阅意见
-              <span class="sec-meta">
-                阻断 {{ aiReview.block_count || 0 }} · 提醒 {{ aiReview.warn_count || 0 }}
-              </span>
-            </div>
-            <div class="ai-summary">{{ aiReview.summary }}</div>
-            <ul class="check-list">
-              <li v-for="(iss, i) in aiReview.issues || []" :key="i">
-                <span class="warn">{{ iss.severity === 'block' ? '阻断' : '提醒' }}</span>
-                <div>
-                  <div class="check-title">{{ iss.category || '意见' }}</div>
-                  <div class="check-msg">{{ iss.message }}</div>
-                  <div v-if="iss.fix_hint" class="check-action">{{ iss.fix_hint }}</div>
-                </div>
-              </li>
-            </ul>
-          </div>
-        </el-card>
+        <button
+          v-if="passedChecks.length"
+          type="button"
+          class="ed-passed-toggle"
+          @click="showPassedChecks = !showPassedChecks"
+        >
+          {{ showPassedChecks ? '收起' : '已通过' }} {{ passedChecks.length }} 项
+        </button>
+        <ul v-if="showPassedChecks && passedChecks.length" class="ed-passed">
+          <li v-for="c in passedChecks" :key="c.code">{{ c.label }}</li>
+        </ul>
       </aside>
     </div>
   </div>
 </template>
 
 <style scoped>
-.editor { padding: 4px 2px 28px; max-width: none; width: 100%; }
+.ed-shell {
+  --ed-blue: #2563eb;
+  --ed-purple: #7c3aed;
+  --ed-green: #059669;
+  --ed-orange: #d97706;
+  --ed-red: #dc2626;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 8px);
+  min-width: 0;
+  overflow: hidden;
+  padding: 10px 12px 12px;
+  background: #f4f5f8;
+  color: #1f2937;
+}
+.ed-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  min-height: 56px;
+  padding: 8px 4px 10px;
+}
+.ed-back {
+  border: 0;
+  background: transparent;
+  color: var(--ed-blue);
+  font-weight: 650;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ed-ident { min-width: 0; flex: 1; }
+.ed-kicker { font-size: 12px; color: #6b7280; }
+.ed-name {
+  font-size: 16px;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ed-top-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.ed-save { font-size: 12px; color: #9ca3af; }
+.ed-top-actions :deep(.el-button--primary) {
+  background: var(--ed-blue);
+  border-color: var(--ed-blue);
+  border-radius: 8px;
+}
+.ed-top-actions :deep(.el-button) { border-radius: 8px; }
+.ed-top-actions .is-active { color: var(--ed-purple); border-color: #ddd6fe; background: #f5f3ff; }
+.ed-alert { margin: 0 0 8px; }
+.ed-body {
+  display: grid;
+  grid-template-columns: 312px minmax(720px, 1fr);
+  gap: 12px;
+  min-height: 0;
+  flex: 1;
+}
+.ed-shell.check-open .ed-body {
+  grid-template-columns: 312px minmax(0, 1fr) 340px;
+}
+.ed-shell.focus .ed-body { grid-template-columns: minmax(0, 1fr); }
+.ed-left, .ed-check, .ed-center, .ed-doc, .ed-pane {
+  min-height: 0;
+}
+.ed-left, .ed-check {
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid #e7e9ee;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.ed-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid #eef0f4;
+  flex: none;
+}
+.ed-tabs button {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  padding: 10px 8px;
+  font-size: 13px;
+  font-weight: 650;
+  color: #6b7280;
+  cursor: pointer;
+}
+.ed-tabs button.on { color: var(--ed-purple); box-shadow: inset 0 -2px 0 var(--ed-purple); }
+.ed-pane {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+}
+.ed-left-foot {
+  display: flex;
+  gap: 8px;
+  padding-top: 10px;
+}
+.ed-adv {
+  border: 0;
+  background: transparent;
+  color: #6b7280;
+  font-size: 12px;
+  padding: 4px 0 10px;
+  cursor: pointer;
+}
+.ed-link { margin-left: 8px; color: var(--ed-blue); font-size: 12px; }
+.ed-fact-status { font-size: 12px; color: #6b7280; margin-bottom: 8px; }
+.ed-fact-status.ready { color: var(--ed-green); }
+.ed-fact-list { display: flex; flex-direction: column; gap: 8px; }
+.ed-fact {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #eef0f4;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.ed-fact.selected { border-color: #ddd6fe; background: #faf8ff; }
+.ed-fact-top { display: flex; justify-content: space-between; gap: 8px; }
+.ed-fact-title { font-weight: 650; font-size: 13px; }
+.ed-fact-sum { font-size: 12px; color: #6b7280; margin-top: 4px; line-height: 1.45; }
+.ed-fact-cite { font-size: 11px; color: #9ca3af; margin-top: 4px; }
+.ed-pill { font-size: 11px; border-radius: 6px; padding: 1px 6px; }
+.ed-pill.ok { color: var(--ed-green); background: #ecfdf5; }
+.ed-pill.warn { color: var(--ed-orange); background: #fffbeb; }
+.ed-empty { font-size: 12px; color: #9ca3af; padding: 16px 0; }
+.ed-center {
+  display: flex;
+  background: #fff;
+  border: 1px solid #e7e9ee;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.ed-doc {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  padding: 8px 0 0;
+}
+.ed-doc-tabs { padding: 0 24px; }
+.ed-doc-note { padding: 0 24px 8px; font-size: 12px; color: #9ca3af; }
+.ed-doc-title :deep(.el-input__wrapper) {
+  box-shadow: none !important;
+  background: transparent;
+  padding: 4px 24px;
+}
+.ed-doc-title :deep(.el-input__inner) {
+  font-size: 22px;
+  font-weight: 750;
+  letter-spacing: -0.03em;
+}
+.ed-doc :deep(.rich-editor) {
+  border: 0;
+  border-radius: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.ed-doc :deep(.rich-toolbar) {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.ed-doc :deep(.rich-content) {
+  max-width: 840px;
+  margin: 0 auto;
+  font-size: 16px;
+  line-height: 1.7;
+}
+.ed-doc-status {
+  display: flex;
+  gap: 12px;
+  padding: 8px 24px;
+  border-top: 1px solid #eef0f4;
+  color: #9ca3af;
+  font-size: 12px;
+  flex: none;
+}
+.ed-check { width: 340px; }
+.ed-check-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  border-bottom: 1px solid #eef0f4;
+}
+.ed-check-score { font-weight: 750; }
+.ed-check-sub { font-size: 12px; color: #6b7280; }
+.ed-iss-block { padding: 10px 12px 0; }
+.ed-iss-label { font-size: 12px; font-weight: 700; margin-bottom: 6px; }
+.ed-iss-label.must { color: var(--ed-red); }
+.ed-iss-label.warn { color: var(--ed-orange); }
+.ed-iss {
+  border: 1px solid #f3f4f6;
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+.ed-iss-title { font-size: 13px; font-weight: 650; }
+.ed-iss-msg { font-size: 12px; color: #6b7280; margin-top: 4px; line-height: 1.45; }
+.ed-iss-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.ed-iss-acts button {
+  border: 0;
+  background: #f3f4f6;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ed-all-ok { margin: 12px; padding: 10px; border-radius: 8px; background: #ecfdf5; color: var(--ed-green); font-size: 13px; }
+.ed-passed-toggle {
+  border: 0;
+  background: transparent;
+  color: #6b7280;
+  font-size: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.ed-passed { margin: 0 12px 12px; padding-left: 18px; font-size: 12px; color: #6b7280; }
+.ed-hint { font-size: 12px; color: var(--ed-blue); line-height: 1.45; }
+.mb { margin-bottom: 10px; }
+@media (max-width: 1280px) {
+  .ed-body,
+  .ed-shell.check-open .ed-body {
+    grid-template-columns: 280px minmax(0, 1fr);
+  }
+  .ed-check { grid-column: 1 / -1; width: auto; max-height: 280px; }
+}
+@media (max-width: 900px) {
+  .ed-body,
+  .ed-shell.check-open .ed-body { grid-template-columns: 1fr; }
+  .ed-left { max-height: 320px; }
+}
+.editor {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  overflow-x: hidden;
+  min-height: calc(100vh - 24px);
+  padding: 16px 20px 40px;
+  background:
+    radial-gradient(900px 320px at 12% -8%, rgba(124, 58, 237, 0.07), transparent 60%),
+    radial-gradient(700px 280px at 92% 0%, rgba(99, 102, 241, 0.05), transparent 55%),
+    linear-gradient(180deg, #f5f6fa 0%, #f7f8fb 100%);
+}
 .toolbar {
   display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
-  margin-bottom: 12px; align-items: center;
+  margin-bottom: 14px; align-items: center;
 }
-.left, .right, .row-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.meta { display: flex; flex-direction: column; }
-.title { font-weight: 700; color: #1e2330; }
-.sub { font-size: 13px; color: #64748b; }
+.page-toolbar {
+  min-height: 58px;
+  padding: 10px 14px 10px 10px;
+  border: 1px solid rgba(232, 234, 240, 0.95);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 24px rgba(30, 35, 48, 0.04);
+}
+.left, .right, .row-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.channel-next-hint {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid #ebe4f8;
+  border-radius: 10px;
+  background: #fbf9ff;
+  color: #5b5670;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.channel-next-hint a { color: #6d28d9; font-weight: 600; }
+.meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding-left: 14px;
+  border-left: 1px solid #ebecef;
+}
+.title { font-size: 16px; font-weight: 750; color: #161b26; letter-spacing: -0.02em; line-height: 1.3; }
+.sub {
+  max-width: min(520px, 46vw);
+  overflow: hidden;
+  color: #8a93a3;
+  font-size: 12px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.back-button { font-weight: 600; }
+.task-state {
+  padding: 5px 10px;
+  border: 1px solid #ebe4f8;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #fbf9ff, #f6f2fc);
+  color: #6b5b8a;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.refresh-button { margin-left: 2px; }
+.editor :deep(.el-button) {
+  --el-button-size: 36px;
+  height: 36px;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 650;
+  border-radius: 10px;
+}
+.editor :deep(.el-button--small) {
+  --el-button-size: 32px;
+  height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+.editor :deep(.el-button.is-text) {
+  height: auto;
+  padding: 6px 10px;
+}
 .next-step {
   display: flex;
   justify-content: space-between;
@@ -3061,70 +2804,202 @@ onMounted(load)
 .mt { margin-top: 12px; }
 .grid {
   display: grid;
-  /* 大屏：左 Brief · 中文档 · 右 Score，中间优先吃宽 */
-  grid-template-columns: minmax(280px, 0.85fr) minmax(0, 2.4fr) minmax(300px, 1fr);
-  gap: 14px;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) minmax(280px, 340px);
+  grid-template-areas: "brief doc rail";
+  gap: 16px;
   align-items: start;
   width: 100%;
+  min-width: 0;
 }
+.col-left { grid-area: brief; }
+.col-main { grid-area: doc; min-width: 0; }
+.col-main > .card:first-child {
+  max-height: calc(100vh - 108px);
+  display: flex;
+  flex-direction: column;
+}
+.col-main > .card:first-child :deep(.el-card__header) {
+  flex: none;
+}
+.col-main > .card:first-child :deep(.el-card__body) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+.col-rail { grid-area: rail; }
 @media (min-width: 1800px) {
   .grid {
-    grid-template-columns: minmax(320px, 0.9fr) minmax(0, 2.6fr) minmax(340px, 1.05fr);
-    gap: 16px;
+    grid-template-columns: 320px minmax(0, 1fr) 340px;
+    gap: 20px;
   }
 }
-@media (max-width: 1280px) {
+/* 侧栏约 216px：1680 视口时内容区才够三列；笔记本先两列 */
+@media (max-width: 1679px) {
   .grid {
-    grid-template-columns: minmax(240px, 280px) minmax(0, 1fr) minmax(260px, 300px);
+    grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+    grid-template-areas:
+      "brief doc"
+      "rail rail";
+    gap: 14px;
   }
-}
-@media (max-width: 1100px) {
-  .grid { grid-template-columns: 1fr; }
-  .col-rail { order: -1; }
-  .rail-card {
+  .col-rail {
     position: static;
     max-height: none;
   }
+  .rail-card { max-height: none; }
 }
-.col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.col-rail {
-  position: sticky;
-  top: 12px;
-  align-self: start;
-  max-height: calc(100vh - 88px);
+@media (max-width: 1099px) {
+  .grid {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "doc"
+      "brief"
+      "rail";
+    gap: 12px;
+  }
+  .editor { padding: 10px 12px 28px; }
+  .page-toolbar {
+    align-items: stretch;
+    min-height: 0;
+    padding: 10px 12px;
+  }
+  .page-toolbar .left,
+  .page-toolbar .right {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .meta { padding-left: 10px; }
+  .sub {
+    max-width: 100%;
+    white-space: normal;
+  }
+  .doc-card-head { flex-wrap: wrap; }
+  .doc-heading-sub { display: none; }
+  .next-step {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .card :deep(.el-card__header),
+  .card :deep(.el-card__body) {
+    padding: 12px 14px;
+  }
+}
+@media (max-width: 720px) {
+  .editor { padding: 8px 8px 24px; }
+  .title { font-size: 15px; }
+  .row-actions { width: 100%; }
+}
+.col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+@media (min-width: 1680px) {
+  .col-rail {
+    position: sticky;
+    top: 14px;
+    align-self: start;
+    max-height: calc(100vh - 88px);
+  }
+  .rail-card { max-height: calc(100vh - 88px); }
 }
 .rail-card {
-  max-height: calc(100vh - 88px);
   overflow: auto;
-  border: 1px solid #e8e4f5;
-  background: #fcfbff;
+  border: 1px solid #ebe6f5 !important;
+  background: linear-gradient(180deg, #fffeff 0%, #fbfaff 100%) !important;
+  box-shadow: 0 10px 28px rgba(88, 60, 160, 0.05) !important;
 }
 .rail-card :deep(.el-card__header) {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: #fcfbff;
+  background: linear-gradient(180deg, #fffeff, #fbfaff);
+  border-bottom-color: #efeaf8;
 }
 .card {
-  border-radius: 14px;
+  border: 1px solid #e8eaef;
+  border-radius: 16px;
   overflow: hidden;
+  box-shadow: 0 8px 26px rgba(30, 35, 48, 0.045);
+  background: #fff;
 }
 .card :deep(.el-card__header) {
-  padding: 12px 14px;
+  padding: 16px 18px;
+  border-bottom-color: #f0f2f6;
+  background: linear-gradient(180deg, #fcfcfd 0%, #fff 100%);
 }
 .card :deep(.el-card__body) {
-  padding: 14px 14px 16px;
+  padding: 18px 18px 20px;
 }
 .card :deep(.el-form-item) {
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 .card :deep(.el-form-item__label) {
   font-size: 12px !important;
+  color: #647082 !important;
+  font-weight: 650 !important;
+}
+.card :deep(.el-input__wrapper),
+.card :deep(.el-select__wrapper) {
+  border-radius: 9px;
+  box-shadow: 0 0 0 1px #e4e7ee inset;
+}
+.card :deep(.el-input__wrapper:hover),
+.card :deep(.el-select__wrapper:hover) {
+  box-shadow: 0 0 0 1px #cfc6e8 inset;
+}
+.card :deep(.el-input__wrapper.is-focus),
+.card :deep(.el-select__wrapper.is-focused) {
+  box-shadow: 0 0 0 1px #8b5cf6 inset, 0 0 0 3px rgba(124, 58, 237, 0.1) !important;
 }
 .card-head {
-  display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;
+  display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;
   font-weight: 650;
-  color: #0f172a;
+  color: #151a24;
+}
+.doc-card-head { flex-wrap: nowrap; }
+.col-main > .card:first-child {
+  box-shadow: 0 10px 32px rgba(30, 35, 48, 0.05);
+  border-color: #e4e7ef;
+}
+.doc-heading { color: #121826; font-size: 15px; font-weight: 750; letter-spacing: -0.02em; line-height: 1.3; }
+.doc-heading-sub { margin-top: 3px; color: #95a0b0; font-size: 12px; font-weight: 400; }
+.doc-form :deep(.el-form-item__label) {
+  height: auto;
+  margin-bottom: 7px;
+  color: #586274;
+  font-weight: 650;
+  line-height: 1.35;
+}
+.title-form-item { margin-bottom: 18px !important; }
+.body-form-item { margin-bottom: 8px !important; }
+.body-form-item :deep(.rich-content) {
+  overscroll-behavior: contain;
+}
+.article-title-input :deep(.el-input__wrapper) {
+  min-height: 48px;
+  padding: 0 16px;
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px #e2e6ee inset;
+  background: #fafbfd;
+}
+.article-title-input :deep(.el-input__wrapper.is-focus) {
+  background: #fff;
+}
+.article-title-input :deep(.el-input__inner) {
+  color: #121826;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.document-meta {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 2px 0 10px;
+  color: #98a1af;
+  font-size: 11px;
+}
+.document-meta span + span::before {
+  margin-right: 8px;
+  color: #d4d8df;
+  content: '·';
 }
 .hint { font-size: 12px; color: #8b93a7; }
 .impact-panel { min-height: 48px; }
@@ -3163,13 +3038,13 @@ onMounted(load)
 .push-blocked { font-size: 12px; line-height: 1.4; }
 .blocked { color: #b45309; }
 .doc-draft-banner {
-  font-size: 12px;
-  line-height: 1.55;
-  color: #9a3412;
-  background: #fff7ed;
-  border: 1px solid #fdba74;
-  border-radius: 8px;
-  padding: 8px 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: #7c4a1e;
+  background: linear-gradient(180deg, #fffaf3, #fff6eb);
+  border: 1px solid #f0d9b5;
+  border-radius: 10px;
+  padding: 10px 14px;
 }
 .channel-quality {
   font-size: 12px;
@@ -3256,47 +3131,47 @@ onMounted(load)
   background: #f8fafc;
   color: #475569;
 }
-.rail-title { font-weight: 700; font-size: 14px; color: #1e2330; line-height: 1.3; }
-.rail-sub { font-size: 11px; color: #8b93a7; margin-top: 2px; }
+.rail-title { font-weight: 750; font-size: 14px; color: #161b26; letter-spacing: -0.01em; line-height: 1.3; }
+.rail-sub { font-size: 11px; color: #8f98a8; margin-top: 3px; }
 .draft-banner {
   font-size: 12px;
   line-height: 1.55;
-  color: #92400e;
-  background: #fffbeb;
-  border: 1px solid #fde68a;
-  border-radius: 8px;
-  padding: 8px 10px;
+  color: #6b4c1f;
+  background: linear-gradient(180deg, #fffaf2, #fff7eb);
+  border: 1px solid #eed9b5;
+  border-radius: 10px;
+  padding: 10px 12px;
 }
 .score-block {
-  border-radius: 10px;
-  padding: 12px;
-  margin-bottom: 12px;
-  background: #f8fafc;
-  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 14px;
+  background: linear-gradient(160deg, #f8f6ff 0%, #f5f7fb 100%);
+  border: 1px solid #ebe4f7;
 }
-.score-block.tone-good { background: #ecfdf5; border-color: #a7f3d0; }
-.score-block.tone-warn { background: #fffbeb; border-color: #fde68a; }
-.score-block.tone-bad { background: #fef2f2; border-color: #fecaca; }
-.score-row { display: flex; gap: 12px; align-items: center; }
-.score-num { min-width: 72px; }
-.score-big { font-size: 32px; font-weight: 750; color: #1e2330; line-height: 1; font-variant-numeric: tabular-nums; }
-.score-den { font-size: 13px; color: #9ca3af; margin-left: 2px; }
+.score-block.tone-good { background: linear-gradient(160deg, #f0fdf7, #f7faf8); border-color: #b7ebd0; }
+.score-block.tone-warn { background: linear-gradient(160deg, #fff9ef, #faf8f4); border-color: #f0d9a0; }
+.score-block.tone-bad { background: linear-gradient(160deg, #fff5f5, #faf7f7); border-color: #f3c4c4; }
+.score-row { display: flex; gap: 14px; align-items: center; }
+.score-num { min-width: 78px; }
+.score-big { font-size: 36px; font-weight: 780; color: #161b26; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; }
+.score-den { font-size: 13px; color: #9aa3b2; margin-left: 2px; }
 .muted-num { color: #cbd5e1; }
-.score-label { font-size: 13px; font-weight: 650; color: #374151; }
-.score-hint { font-size: 11px; color: #6b7280; margin-top: 2px; line-height: 1.4; }
+.score-label { font-size: 13px; font-weight: 700; color: #2f3747; }
+.score-hint { font-size: 11px; color: #748094; margin-top: 3px; line-height: 1.45; }
 .score-bar {
-  height: 6px; border-radius: 999px; background: #e5e7eb; margin-top: 10px; overflow: hidden;
+  height: 7px; border-radius: 999px; background: rgba(15, 23, 42, 0.08); margin-top: 12px; overflow: hidden;
 }
-.score-bar-fill { height: 100%; background: #7c3aed; border-radius: 999px; }
-.tone-good .score-bar-fill { background: #059669; }
-.tone-warn .score-bar-fill { background: #d97706; }
-.tone-bad .score-bar-fill { background: #dc2626; }
-.score-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.score-bar-fill { height: 100%; background: linear-gradient(90deg, #8b5cf6, #7c3aed); border-radius: 999px; }
+.tone-good .score-bar-fill { background: linear-gradient(90deg, #34d399, #059669); }
+.tone-warn .score-bar-fill { background: linear-gradient(90deg, #fbbf24, #d97706); }
+.tone-bad .score-bar-fill { background: linear-gradient(90deg, #f87171, #dc2626); }
+.score-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .score-chip {
-  font-size: 11px; color: #4b5563; background: #fff; border: 1px solid #e5e7eb;
-  border-radius: 999px; padding: 2px 8px; font-variant-numeric: tabular-nums;
+  font-size: 11px; color: #4b5563; background: rgba(255,255,255,0.88); border: 1px solid #e7eaf0;
+  border-radius: 999px; padding: 3px 9px; font-variant-numeric: tabular-nums; font-weight: 600;
 }
-.score-chip.low { color: #b45309; border-color: #fcd34d; background: #fffbeb; }
+.score-chip.low { color: #b45309; border-color: #f5d78a; background: #fff8e8; }
 .channel-pill {
   display: flex; gap: 8px; align-items: flex-start;
   border-radius: 8px; padding: 8px 10px; border: 1px solid #e5e7eb; background: #fff;
@@ -3321,10 +3196,32 @@ onMounted(load)
   color: #6d28d9; font-size: 12px; cursor: pointer; text-align: left;
 }
 .toggle-passed:hover { background: #f3e8ff; }
-.check-list { list-style: none; padding: 0; margin: 0; }
-.check-list li {
-  display: flex; gap: 8px; padding: 8px 0; border-bottom: 1px solid #f3f0fa; font-size: 12px;
+.check-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.check-list > li {
+  display: flex; gap: 10px; padding: 10px 11px; border: 1px solid #f0ecf8; border-radius: 10px;
+  background: #fffeff; font-size: 12px;
 }
+.issue-points {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.issue-points li {
+  display: block;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px dashed #f0c9c9;
+  border-radius: 8px;
+  background: #fff;
+  color: #9f1239;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.fail-list > li { border-color: #f3e0e0; background: #fffbfb; }
+.pass-list > li { border-color: #e7f3ec; background: #fbfefc; }
 .check-title { font-weight: 650; color: #1f2937; line-height: 1.35; }
 .check-msg { color: #6b7280; margin-top: 2px; line-height: 1.45; }
 .check-action { color: #7c3aed; margin-top: 3px; line-height: 1.4; font-size: 11px; }
@@ -3357,6 +3254,150 @@ onMounted(load)
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.trusted-materials {
+  margin-top: 6px;
+  padding: 14px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #faf9ff, #f7f8fc);
+  border: 1px solid #ebe7f5;
+}
+.trusted-materials-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.trusted-materials-title {
+  font-size: 13px;
+  font-weight: 750;
+  color: #3f3558;
+}
+.trusted-materials .hint {
+  margin-top: 3px;
+  margin-bottom: 0;
+  line-height: 1.45;
+}
+.facts-link {
+  flex: none;
+  font-size: 12px;
+  font-weight: 650;
+  color: #7c3aed;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.facts-link:hover { text-decoration: underline; }
+.trusted-status {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  color: #9a3412;
+  font-size: 12px;
+}
+.trusted-status.ready {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  color: #047857;
+}
+.trusted-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.trusted-search { width: 100%; }
+.fact-picker {
+  max-height: 280px;
+  overflow: auto;
+  margin-bottom: 10px;
+  padding: 4px;
+  border: 1px solid #e8eaf0;
+  border-radius: 10px;
+  background: #fff;
+}
+.fact-pick-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 0;
+  padding: 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.fact-pick-row + .fact-pick-row { border-top: 1px solid #f1f3f7; }
+.fact-pick-row:hover { background: #f8f7fc; }
+.fact-pick-row.selected {
+  background: #f5f0ff;
+  border-color: #ddd6fe;
+}
+.fact-pick-check {
+  margin-top: 3px;
+  width: 15px;
+  height: 15px;
+  flex: none;
+  accent-color: #7c3aed;
+}
+.fact-pick-main { min-width: 0; flex: 1; }
+.fact-pick-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.fact-pick-title {
+  font-size: 13px;
+  font-weight: 650;
+  color: #1f2937;
+  line-height: 1.35;
+  word-break: break-word;
+}
+.fact-pick-trust {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 650;
+  background: #f1f5f9;
+  color: #64748b;
+}
+.fact-pick-trust.verified { background: #ecfdf5; color: #047857; }
+.fact-pick-trust.needs_review { background: #fff7ed; color: #c2410c; }
+.fact-pick-meta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+.fact-pick-snippet {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.fact-pick-empty {
+  padding: 18px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: #94a3b8;
+}
+.trusted-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.check-body { flex: 1; min-width: 0; }
+.check-fix-row {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 .fact-status {
   margin-bottom: 12px;
@@ -3591,4 +3632,11 @@ onMounted(load)
 }
 .cite-row:first-of-type { border-top: 0; padding-top: 0; }
 .cite-sent { flex: 1 1 220px; color: #334155; min-width: 0; }
+@media (max-width: 1099px) {
+  .card :deep(.el-card__header),
+  .card :deep(.el-card__body) {
+    padding: 12px 14px;
+  }
+  .doc-card-head { flex-wrap: wrap; }
+}
 </style>

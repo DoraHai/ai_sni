@@ -8,6 +8,9 @@ User=sem
 Group=sem
 WorkingDirectory=/opt/geo-service/current
 EnvironmentFile=/opt/sem-backend/.env
+# GEO-only overrides (for example DASHSCOPE_* / DEEPSEEK_*). The leading '-'
+# keeps existing installations bootable until the dedicated file is created.
+EnvironmentFile=-/opt/geo-service/.env
 ExecStart=/opt/sem-backend/.venv/bin/uvicorn app.geo_main:app --host 127.0.0.1 --port 8010 --workers 2
 Restart=on-failure
 RestartSec=5

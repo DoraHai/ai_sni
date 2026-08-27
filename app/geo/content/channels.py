@@ -13,6 +13,19 @@ CHANNEL_TYPE_OPTIONS = (
     "visual_content",
 )
 
+CHANNEL_TYPE_LABELS = {
+    "website": "官网",
+    "docs": "文档",
+    "wechat": "微信公众号",
+    "zhihu": "知乎",
+    "baijiahao": "百家号",
+    "toutiao": "头条号",
+    "industry_media": "行业媒体",
+    "community_qa": "社区问答",
+    "encyclopedia": "百科",
+    "visual_content": "视频",
+}
+
 PUBLISH_MODE_OPTIONS = ("auto_publish", "draft_then_manual", "manual_only")
 
 # New tenants: multi-media auto-push ready by default (only credentials missing).

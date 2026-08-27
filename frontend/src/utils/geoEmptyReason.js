@@ -24,30 +24,30 @@ export function diagnoseEmptyMonitoring({
   if (!patrolEnabled && Number(snapshotCount) <= 0) {
     return {
       key: 'patrol_off',
-      title: '定时巡检还没打开',
-      detail: '引擎有了，但不会自动跑。打开巡检，或先手动登记一条回答。',
-      action: '去开巡检',
-      href: '/geo/visibility/patrol',
+      title: '定时采集还没打开',
+      detail: '引擎有了，但不会自动跑。打开定时采集，或先点「立即采集并落库」。',
+      action: '去采集',
+      href: '/geo/visibility/snapshots',
       need: 'patrol',
     }
   }
   if (Number(snapshotCount) <= 0 && !lastRunAt) {
     return {
       key: 'not_run',
-      title: '今天还没跑过巡检',
-      detail: '配置齐了，还没有样本。点一次「立即巡检」，或在可见度里手工登记。',
-      action: '去跑巡检',
-      href: '/geo/visibility/patrol',
+      title: '今天还没跑过采集',
+      detail: '配置齐了，还没有样本。点一次「立即采集并落库」，或手工登记一条回答。',
+      action: '去采集',
+      href: '/geo/visibility/snapshots',
       need: 'patrol',
     }
   }
   if (Number(snapshotCount) <= 0 && lastRunAt) {
     return {
       key: 'ran_empty',
-      title: '巡检跑过了，但没有落下回答',
-      detail: '可能没勾选自动落库，或引擎调用失败。打开最近一次巡检看明细。',
-      action: '看巡检记录',
-      href: '/geo/visibility/patrol',
+      title: '采集跑过了，但没有落下回答',
+      detail: '可能没勾选自动落库，或引擎调用失败。打开采集页看最近一次记录。',
+      action: '看采集记录',
+      href: '/geo/visibility/snapshots',
       need: 'patrol',
     }
   }

@@ -10,6 +10,7 @@ from app.geo.content.expand import (
     is_relevant,
     to_question,
 )
+from app.geo.content.schemas import PromptPromoteItem
 from app.security.auth import _required
 
 
@@ -136,6 +137,12 @@ class AuthPathTests(unittest.TestCase):
             _required("/api/v1/geo/prompts/promote-candidates", "POST"),
             ({"geo.content"}, True),
         )
+
+
+class PromoteSchemaTests(unittest.TestCase):
+    def test_promoted_candidate_can_keep_its_keyword_unit(self):
+        item = PromptPromoteItem(question="智能客服系统怎么选？", unit_id=12)
+        self.assertEqual(item.unit_id, 12)
 
 
 if __name__ == "__main__":
