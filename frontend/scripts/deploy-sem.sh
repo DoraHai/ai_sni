@@ -46,7 +46,7 @@ ssh "${ssh_options[@]}" "$deploy_target" "mkdir -p '$release_dir' '${deploy_root
 rsync \
   -rltz \
   --delete \
-  --chmod=D0755,F0644 \
+  --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r \
   -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=yes" \
   dist/ \
   "$deploy_target:${release_dir}/"
