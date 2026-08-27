@@ -40,6 +40,33 @@
   justify-content: flex-end;
 }
 
+/* Keep overview actions on one row on desktop. The title yields space first,
+   and the search field contracts before the controls need to wrap. */
+.geo-overview-page .geo-topbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto;
+}
+.geo-overview-page .geo-topbar-copy {
+  overflow: hidden;
+}
+.geo-overview-page .geo-topbar-copy .sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.geo-overview-page .geo-topbar .right {
+  min-width: 0;
+  margin-left: 0;
+  flex-wrap: nowrap;
+}
+.geo-overview-page .geo-topbar .right > * {
+  flex: 0 0 auto;
+}
+.geo-overview-page .geo-topbar .gd-search {
+  width: clamp(160px, 16vw, 240px);
+  min-width: 0;
+}
+
 .geo-avatar {
   width: 32px;
   height: 32px;
@@ -701,5 +728,7 @@
   }
   .geo-topbar { height: auto; align-items: flex-start; flex-wrap: wrap; padding: 12px 14px; }
   .geo-topbar .right { margin-left: 0; width: 100%; }
+  .geo-overview-page .geo-topbar { display: flex; }
+  .geo-overview-page .geo-topbar .right { flex-wrap: wrap; }
   .geo-content { padding: 16px 14px 28px; }
 }
