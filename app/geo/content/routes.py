@@ -596,11 +596,36 @@ def _fact_dicts(facts: list[GeoFact]) -> list[dict[str, Any]]:
     ]
 
 
+def _refresh_article_citations(
+    article: GeoArticleVersion | None, facts: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    from app.geo.content.evidence_cite import (
+        build_sentence_citations,
+        strip_citation_appendix,
+    )
+
+    if article is None:
+        return []
+    body = strip_citation_appendix(article.body_markdown or "")
+    if article.body_markdown != body:
+        article.body_markdown = body
+    cites = build_sentence_citations(body, facts)
+    outline = dict(article.outline or {})
+    outline["sentence_citations"] = cites
+    article.outline = outline
+    meta = dict(article.generation_meta or {})
+    meta["sentence_citations"] = cites
+    article.generation_meta = meta
+    return cites
+
+
 async def _build_rule_input(
     session: AsyncSession, task: GeoContentTask, article: GeoArticleVersion | None
 ) -> RuleInput:
     prompt = await _get_prompt(session, task.prompt_id, task.tenant_id)
     facts = await _task_facts(session, task.id)
+    fact_dicts = _fact_dicts(facts)
+    _refresh_article_citations(article, fact_dicts)
     variants = await _variants(session, task.id)
     tenant = await session.get(Tenant, task.tenant_id)
     default_author = tenant.name if tenant else None
@@ -609,7 +634,7 @@ async def _build_rule_input(
         title=(article.title if article else task.title) or "",
         body_markdown=article.body_markdown if article else "",
         outline=(article.outline if article else {}) or {},
-        facts=_fact_dicts(facts),
+        facts=fact_dicts,
         target_channels=list(task.target_channels or []),
         variants=[v.channel for v in variants],
         author_name=article.author_name if article else None,
@@ -685,6 +710,7 @@ async def _evaluate_and_store_rules(
         "checked_at": datetime.utcnow().isoformat(),
         "variant_channels": list(rule_input.variants or []),
         "target_channels": list(rule_input.target_channels or []),
+        "variant_polish": prev_rr.get("variant_polish"),
     }
     if ready:
         task.status = "ready"
@@ -738,6 +764,9 @@ async def _task_payload(
         "strategy_richness": strategy_richness(brief),
         **review_payload(task),
         "rule_result": task.rule_result,
+        "variant_polish": (task.rule_result or {}).get("variant_polish")
+        if isinstance(task.rule_result, dict)
+        else None,
         "ready_at": _iso(task.ready_at),
         "created_at": _iso(task.created_at),
         "updated_at": _iso(task.updated_at),
@@ -6991,17 +7020,26 @@ async def save_article(
     task = await _get_task(session, task_id, tenant_id)
     latest = await _latest_article(session, task.id)
     version_no = (latest.version_no + 1) if latest else 1
+    from app.geo.content.evidence_cite import strip_citation_appendix
+
+    body = strip_citation_appendix(req.body_markdown)
+    outline = dict(req.outline or (latest.outline if latest else {}) or {})
     article = GeoArticleVersion(
         task_id=task.id,
         version_no=version_no,
         kind="master",
         title=req.title.strip(),
-        body_markdown=req.body_markdown,
-        outline=req.outline or (latest.outline if latest else {}),
+        body_markdown=body,
+        outline=outline,
         author_name=(latest.author_name if latest else None),
-        generation_meta={"source": "manual_edit", "from_version": latest.version_no if latest else None},
+        generation_meta={
+            "source": "manual_edit",
+            "from_version": latest.version_no if latest else None,
+        },
         created_by=ctx.user_id,
     )
+    facts = await _task_facts(session, task.id)
+    _refresh_article_citations(article, _fact_dicts(facts))
     session.add(article)
     task.title = req.title.strip()
     invalidate_review(task)
