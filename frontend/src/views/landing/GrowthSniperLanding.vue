@@ -158,7 +158,7 @@ function scrollTo(id) {
 
 function diagnosisOrigin() {
   return window.location.hostname === 'gsnipers.snipers.com.cn'
-    ? 'https://sem.snipers.com.cn'
+    ? 'https://gsniper.snipers.com.cn'
     : window.location.origin
 }
 

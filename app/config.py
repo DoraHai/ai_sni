@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     app_env: str = "dev"
     app_host: str = "0.0.0.0"
     app_port: int = 8000
-    app_base_url: str = "https://sem.snipers.com.cn"
+    app_base_url: str = "https://gsniper.snipers.com.cn"
 
     database_url: str = Field(..., description="SQLAlchemy async URL，需用 postgresql+asyncpg 方言")
 
@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     login_lockout_minutes: int = Field(default=10, ge=1, le=1440)
 
     # 逗号分隔，生产环境不得包含通配符。浏览器前端均应走同源 HTTPS。
-    cors_allowed_origins: str = "https://sem.snipers.com.cn"
+    cors_allowed_origins: str = "https://gsniper.snipers.com.cn"
 
     def cors_origin_list(self) -> list[str]:
         return [

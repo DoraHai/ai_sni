@@ -139,7 +139,7 @@ onMounted(loadContext)
         <a href="/monitor/dashboard"><span>SEM</span>搜索广告工作台</a>
         <a href="/deal-sniper/geo/dashboard.html#/geo/overview"><span>GEO</span>生成式搜索工作台</a>
         <a href="/diagnostic-center/"><span>DX</span>诊断中心</a>
-        <a class="portal-link" href="https://sem.snipers.com.cn/deal-sniper/portal">← 返回平台门户</a>
+        <a class="portal-link" href="https://gsniper.snipers.com.cn/deal-sniper/portal">← 返回平台门户</a>
       </div>
     </aside>
 
