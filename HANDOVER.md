@@ -4,7 +4,7 @@
 >
 > 整理日期：2026-08-13
 >
-> 生产域名：<https://sem.snipers.com.cn>
+> 生产主域名：<https://gsnipers.snipers.com.cn>（`sem.snipers.com.cn` 仅保留兼容跳转）
 
 ## 1. 接手人先看这里
 
@@ -295,10 +295,10 @@ SEM 主后端仍位于 `/opt/sem-backend`，变更前先保留代码和数据库
 ### 9.5 发布后检查
 
 ```bash
-curl -fsS https://sem.snipers.com.cn/health
-curl -fsS https://sem.snipers.com.cn/geo-health
-curl -fsSI https://sem.snipers.com.cn/login
-curl -fsSI https://sem.snipers.com.cn/onboarding
+curl -fsS https://gsnipers.snipers.com.cn/health
+curl -fsS https://gsnipers.snipers.com.cn/geo-health
+curl -fsSI https://gsnipers.snipers.com.cn/login
+curl -fsSI https://gsnipers.snipers.com.cn/onboarding
 ```
 
 同时检查：

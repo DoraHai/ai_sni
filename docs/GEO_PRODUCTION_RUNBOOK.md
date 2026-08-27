@@ -94,7 +94,7 @@ sudo chmod 600 "/var/backups/sem/env_${STAMP}.bak"
 | 变量 | 要求 |
 | --- | --- |
 | `APP_ENV` | `prod` 或 `production` |
-| `APP_BASE_URL` | 公网 HTTPS，如 `https://sem.snipers.com.cn`（**禁止** localhost） |
+| `APP_BASE_URL` | 公网 HTTPS，如 `https://gsnipers.snipers.com.cn`（**禁止** localhost） |
 | `ADMIN_API_KEY` | 强随机；**禁止** `geo-demo-local-key` / `CHANGE_ME` |
 | `JWT_SECRET` | 强随机，且 **≠** `ADMIN_API_KEY` |
 | `CRYPTO_MASTER_KEY_B64` | 标准 Base64，解码后 **恰好 32 字节** |

@@ -19,7 +19,7 @@ and never starts or restarts the SEM scheduler/service.
 1. Install `deploy/geo-service.service` in `/etc/systemd/system/`.
 2. Create `/var/log/geo-service` owned by `sem:sem`.
 3. Include `deploy/geo-routes.nginx.conf` inside the HTTPS
-   `server_name sem.snipers.com.cn` block, before the general `/api/` and `/`
+   `server_name gsnipers.snipers.com.cn` block, before the CMS `/api` and website `/`
    locations.
 4. Run `nginx -t`, reload Nginx, then enable `geo-service`.
 
