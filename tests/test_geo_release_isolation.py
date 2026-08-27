@@ -109,14 +109,16 @@ def test_geo_standalone_uses_compact_colleague_shell_without_outer_header():
     assert "padding: 0;" in shell
 
 
-def test_geo_editor_keeps_the_colleague_three_column_workbench():
+def test_geo_editor_keeps_the_complete_editor_first_interactions():
     editor = _read("frontend/src/views/geo/GeoTaskEditorView.vue")
 
-    assert "内容编辑工作台" in editor
-    assert "基础信息" in editor
-    assert "可信材料 · 事实卡" in editor
-    assert "内容文档" in editor
-    assert "母稿就绪检查" in editor
+    assert 'class="ed-shell"' in editor
+    assert "const leftTab = ref('brief')" in editor
+    assert "const showCheckDrawer = ref(false)" in editor
+    assert "const focusMode = ref(false)" in editor
+    assert "saveArticleBody({ silent: true })" in editor
+    assert "可信材料" in editor
+    assert "标记已处理" in editor
 
 
 def test_nginx_keeps_geo_in_the_independent_include():
