@@ -20,5 +20,5 @@ ssh "$deploy_target" \
    ln -sfn '${release_dir}' '${deploy_root}/current.next'
    mv -Tf '${deploy_root}/current.next' '${deploy_root}/current'"
 
-curl -fsS "https://gsniper.snipers.com.cn/deal-sniper/geo/" >/dev/null
+curl -fsS "https://gsnipers.snipers.com.cn/deal-sniper/geo/" >/dev/null
 printf '%s\n' "GEO frontend deployed independently: ${release_stamp}"

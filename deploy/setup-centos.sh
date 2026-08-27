@@ -36,5 +36,5 @@ echo
 echo "==> 环境就绪。下一步："
 echo "  1) scp 代码到 /opt/sem-backend"
 echo "  2) sudo -u sem bash 进 sem 用户，建 venv 装依赖"
-echo "  3) certbot certonly --webroot -w /var/www/letsencrypt -d gsniper.snipers.com.cn 签证书"
+echo "  3) 安装 deploy/gsnipers.conf；该域名已有证书，不要覆盖现有证书"
 echo "  4) systemctl enable --now sem-backend"

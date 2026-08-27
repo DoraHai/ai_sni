@@ -85,7 +85,7 @@ def collect_production_issues(settings: "Settings") -> list[str]:
             "ADMIN_API_KEY_QUERY_ENABLED must be false in production; use X-API-Key header"
         )
     cors_origins = str(
-        getattr(settings, "cors_allowed_origins", "https://gsniper.snipers.com.cn") or ""
+        getattr(settings, "cors_allowed_origins", "https://gsnipers.snipers.com.cn") or ""
     )
     if "*" in {item.strip() for item in cors_origins.split(",")}:
         issues.append("CORS_ALLOWED_ORIGINS must not contain * in production")

@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 MAX_WORDS_PER_URL = 30
 FETCH_TIMEOUT = 15.0
 MAX_CONTENT_BYTES = 2 * 1024 * 1024  # 2MB 上限，防大文件拖死
-UA = "Mozilla/5.0 (compatible; SEM-Platform/1.0; +https://gsniper.snipers.com.cn)"
+UA = "Mozilla/5.0 (compatible; SEM-Platform/1.0; +https://gsnipers.snipers.com.cn)"
 
 # getPvSearch 的 keywordName 上限 40 字节（中文 2 字节）→ 中文词最长 20 字
 MAX_WORD_CHARS = 20

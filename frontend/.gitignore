@@ -13,6 +13,7 @@ dist
 dist-website
 dist-diagnostic-center
 dist-auth
+dist-seo
 dist-ssr
 *.local
 .env

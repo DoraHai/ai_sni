@@ -2,7 +2,7 @@
 
 ## 前置条件
 - ECS 公网 IP：101.200.193.83
-- 主域名 `gsniper.snipers.com.cn` 已 A 记录到该 IP；旧域名 `sem.snipers.com.cn` 仅用于迁移跳转
+- 主域名 `gsnipers.snipers.com.cn` 已 A 记录到该 IP，并承载官网/CMS；旧域名 `sem.snipers.com.cn` 仅用于迁移跳转
 - RDS PostgreSQL 已建好账号 `sem_app` / 库 `sem_prod`，白名单加了 ECS 内网 IP `172.24.244.28`
 - 本地代码在 `/Users/daisy/workspace/workspace_ai/ai_sni/`
 
@@ -41,8 +41,8 @@ vim .env
 ```
 
 填好这几个值：
-- `APP_BASE_URL=https://gsniper.snipers.com.cn`
-- `CORS_ALLOWED_ORIGINS=https://gsniper.snipers.com.cn`（迁移兼容期可临时追加 `https://sem.snipers.com.cn`）
+- `APP_BASE_URL=https://gsnipers.snipers.com.cn`
+- `CORS_ALLOWED_ORIGINS=https://gsnipers.snipers.com.cn`（迁移兼容期可临时追加 `https://sem.snipers.com.cn`）
 - `DATABASE_URL=postgresql+asyncpg://sem_app:<密码>@<RDS 内网地址>:5432/sem_prod`
 - `BAIDU_CLIENT_SECRET=<百度应用密钥>`
 - `CRYPTO_MASTER_KEY_B64=<本地生成的 32 字节 base64>`
@@ -74,16 +74,14 @@ exit  # 退出 sem 用户
 ## 五、配 Nginx + HTTPS
 
 ```bash
-# root 用户：首次签发新域名证书时，先启用只含 HTTP 的临时站点。
-mkdir -p /var/www/letsencrypt
-cp /opt/sem-backend/deploy/gsniper-http-bootstrap.conf /etc/nginx/conf.d/gsniper-bootstrap.conf
-nginx -t && systemctl enable --now nginx
+# root 用户：gsnipers 已有官网、CMS 和 HTTPS 证书，先备份现有配置。
+backup_dir=/etc/nginx/backups/domain-cutover-$(date +%Y%m%d%H%M%S)
+mkdir -p "$backup_dir"
+cp -a /etc/nginx/conf.d/gsnipers.conf /etc/nginx/conf.d/sem.conf "$backup_dir"/
 
-# 签发新域名证书，再原子替换为正式配置。
-certbot certonly --webroot -w /var/www/letsencrypt \
-  -d gsniper.snipers.com.cn -m kouhaixia0322@gmail.com --agree-tos -n
+# 安装统一域名配置与旧域名兼容跳转；校验通过后才能 reload。
+cp /opt/sem-backend/deploy/gsnipers.conf /etc/nginx/conf.d/gsnipers.conf
 cp /opt/sem-backend/deploy/nginx.conf /etc/nginx/conf.d/sem.conf
-rm /etc/nginx/conf.d/gsniper-bootstrap.conf
 nginx -t && systemctl reload nginx
 
 # 证书自动续期已经被 certbot 注册成 systemd timer，确认下
@@ -137,7 +135,7 @@ Nginx 的登录入口和主前端必须使用
 ## 八、验证
 
 ```bash
-curl https://gsniper.snipers.com.cn/health
+curl https://gsnipers.snipers.com.cn/health
 # 应返回 {"service":"sem-backend","env":"prod","db":"ok",...}
 ```
 
@@ -161,7 +159,7 @@ systemctl restart sem-backend
    的 401，也不能是路由不存在的 404：
 
 ```bash
-curl -i https://gsniper.snipers.com.cn/api/oauth/baidu/callback
+curl -i https://gsnipers.snipers.com.cn/api/oauth/baidu/callback
 ```
 
 4. 登录 SEM → 首次接入 → 授权与同步 → 选择客户 → 点击“绑定百度推广”。
