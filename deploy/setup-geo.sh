@@ -7,6 +7,7 @@ GEO_API_ROOT="${GEO_API_ROOT:-/opt/geo-service}"
 GEO_FE_ROOT="${GEO_FE_ROOT:-/opt/geo-frontend}"
 GEO_LOG_DIR="${GEO_LOG_DIR:-/var/log/geo-service}"
 SEM_USER="${SEM_USER:-sem}"
+GEO_ENV_FILE="${GEO_ENV_FILE:-${GEO_API_ROOT}/.env}"
 UNIT_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/geo-service.service"
 
 if [[ "$(id -u)" -ne 0 ]]; then
@@ -26,6 +27,22 @@ mkdir -p \
 
 chown -R "${SEM_USER}:${SEM_USER}" "${GEO_API_ROOT}" "${GEO_FE_ROOT}" "${GEO_LOG_DIR}"
 
+if [[ -L "$GEO_ENV_FILE" ]]; then
+  echo "Refusing symlink GEO env file: $GEO_ENV_FILE" >&2
+  exit 1
+fi
+if [[ -e "$GEO_ENV_FILE" && ! -f "$GEO_ENV_FILE" ]]; then
+  echo "GEO env path is not a regular file: $GEO_ENV_FILE" >&2
+  exit 1
+fi
+if [[ ! -e "$GEO_ENV_FILE" ]]; then
+  install -o root -g "$SEM_USER" -m 0640 /dev/null "$GEO_ENV_FILE"
+  echo "Created GEO-only environment file: $GEO_ENV_FILE"
+else
+  chown root:"$SEM_USER" "$GEO_ENV_FILE"
+  chmod 0640 "$GEO_ENV_FILE"
+fi
+
 if [[ -f "$UNIT_SRC" ]]; then
   install -m 0644 "$UNIT_SRC" /etc/systemd/system/geo-service.service
   systemctl daemon-reload
@@ -39,10 +56,11 @@ cat <<EOF
 GEO host bootstrap done.
 
 Next:
-  1) Ensure /opt/sem-backend/.env has DATABASE_URL + CRYPTO_MASTER_KEY_B64 + ADMIN_API_KEY
-  2) Include deploy/geo-routes.nginx.conf inside HTTPS server block (before catch-all /api/)
-  3) nginx -t && systemctl reload nginx
-  4) Deploy API:  scripts/deploy_geo_api.sh
-  5) Deploy FE:   cd frontend/geo-frontend && npm run deploy
-  6) Accept:      curl -fsS http://127.0.0.1:8010/health/geo | grep '\"db\":\"ok\"'
+  1) Keep shared DATABASE_URL + auth/crypto settings in /opt/sem-backend/.env
+  2) Put GEO-only DASHSCOPE_* or DEEPSEEK_* values in ${GEO_ENV_FILE}
+  3) Include deploy/geo-routes.nginx.conf inside HTTPS server block (before catch-all /api/)
+  4) nginx -t && systemctl reload nginx
+  5) Deploy API:  scripts/deploy_geo_api.sh
+  6) Deploy FE:   cd frontend/geo-frontend && npm run deploy
+  7) Accept:      curl -fsS http://127.0.0.1:8010/health/geo | grep '\"db\":\"ok\"'
 EOF

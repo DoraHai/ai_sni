@@ -494,7 +494,6 @@ async def _execute_push_batch(session: AsyncSession, job: GeoAsyncJob) -> dict[s
     from app.geo.content.connectors.social import SocialError
     from app.geo.content.connectors.webhook import WebhookConnectorError
     from app.geo.content.multi_push import execute_single_push, list_push_targets
-    from app.geo.content.review import assert_review_approved
     from app.models import (
         GeoArticleVersion,
         GeoChannelAccount,
@@ -507,8 +506,6 @@ async def _execute_push_batch(session: AsyncSession, job: GeoAsyncJob) -> dict[s
     task = await session.get(GeoContentTask, job.ref_id)
     if task is None or task.tenant_id != job.tenant_id:
         raise ValueError("内容任务不存在")
-
-    assert_review_approved(task)
 
     variants = list(
         await session.scalars(

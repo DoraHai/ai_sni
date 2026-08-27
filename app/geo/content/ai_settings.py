@@ -16,7 +16,7 @@ PROVIDER_PRESETS: dict[str, dict[str, str]] = {
         "label": "阿里云百炼（DashScope）",
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "model": "deepseek-v3",
-        "hint": "控制台创建 API Key；OpenAI 兼容模式调用 DeepSeek / 通义等模型",
+        "hint": "控制台创建 API Key；仅用于 DeepSeek 巡检与母稿，不代替 ChatGPT / 豆包 / Kimi",
     },
     "deepseek": {
         "label": "DeepSeek 官方",

@@ -744,7 +744,7 @@ def build_readiness_items(
             prompt_count > 0,
             "意图词",
             f"已建 {prompt_count} 条" if prompt_count else "没有意图词就无法巡检和写稿",
-            "/geo/prompts",
+            "/geo/questions",
         ),
         _check(
             "facts",
@@ -755,7 +755,7 @@ def build_readiness_items(
                 if fact_count
                 else "生成母稿至少需要 3 条已核验事实"
             ),
-            "/geo/facts",
+            "/geo/knowledge",
         ),
         _check(
             "engines",

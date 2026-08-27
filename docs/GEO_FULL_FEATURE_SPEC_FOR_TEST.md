@@ -55,24 +55,23 @@ Pass B：清空/重启 8011 后再跑一遍同样脚本（验证可重复性）�
 
 | 路径 | 展示名 / 功能 |
 | --- | --- |
-| `/geo/overview` | GEO 概览 KPI：优化文章、**品牌提及率**、**品牌点名认知率**、**AI 引用次数**；可筛 **优化业务/单元** |
-| `/geo/workbench` | 工作台枢纽（主推 Vue） |
-| `/geo/tasks` | **优化文章**（原内容任务）列表 |
-| `/geo/tasks/:taskId` | **主编辑器**：Brief / 事实 / 生成 / 补丁 / 渠道 / 审校 / 回填 / Webhook / 分发推荐 |
-| `/geo/businesses` | **优化业务 → 优化单元（关键词）** 三级管理 + 按天汇总切片 |
-| `/geo/prompts` | **优化意图词**（原机会词）；可挂 `unit_id`；`question_group` / `is_brand_probe` |
-| `/geo/facts` | 事实库；核验 |
-| `/geo/engines` | **引擎**；`sample_mode`（mock_persona / openai_compat） |
-| `/geo/ai-settings` | 租户 LLM（百炼/DeepSeek 等） |
-| `/geo/publishing` | 发布渠道 + Webhook 账号 CRUD |
-| `/geo/visibility` | 回答快照登记 / 探测 / 多引擎草稿 |
-| `/geo/visibility/patrol` | **全自动巡检**（参数、定时、历史、ops 告警；落库后自动 rebuild 日指标） |
-| `/geo/period-diff` | **期次对比** before/after Δ（品牌提及率 / 点名认知） |
-| `/geo/citations` | **AI 引用次数**（域名聚合；需说明统计口径） |
-| `/geo/competitors` | 竞品分析 |
-| `/geo/evaluation` | 情感 / 位置 |
-| `/geo/deliverables` | 交付摘要：周期 + **业务/单元切片** + 按天序列 + MD 下载 + 打印 |
-| `/geo/diagnosis` 或 diagnostic-center | 网站体检 → 可桥接建优化文章 |
+| `/geo/overview` | **GEO 概览** KPI：可见度、提及、顺位、情感 |
+| `/geo/visibility` | **AI 可见度** |
+| `/geo/visibility/snapshots` | **采集与判断**（立即采集 / 登记快照；定时规则在「引擎」） |
+| `/geo/tasks` | **优化文章** 列表 |
+| `/geo/tasks/:taskId` | **内容编辑器**：Brief / 事实 / 生成 / 补丁 / 渠道 / 审校 / 回填 / Webhook |
+| `/geo/brand` | **品牌资料**（原 `/geo/businesses` 重定向至此） |
+| `/geo/questions` | **优化意图词**（`/geo/prompts` 重定向） |
+| `/geo/knowledge` | **知识库**（`/geo/facts` 重定向） |
+| `/geo/models` | **引擎** + 巡检设置写入口（`/geo/engines` 重定向） |
+| `/geo/ai-settings` | **AI 能力配置** |
+| `/geo/publishing` | **分发平台** |
+| `/geo/placements` | **信源策略** |
+| `/geo/citations` | **AI 引用次数** |
+| `/geo/competitors` | **竞品分析** |
+| `/geo/channel-polish-prompts` | **渠道成稿提示词** |
+| `/geo/deliverables/share/:token` | 只读交付摘要分享（独立列表页已下线，`/geo/deliverables` → 概览） |
+| `/geo/diagnosis` 或 diagnostic-center | 网站体检 |
 
 **静态兼容台**（:5176）：`/geo/dashboard.html`、`editor.html` 等；日常主路径是 Vue。
 
@@ -127,8 +126,8 @@ Pass B：清空/重启 8011 后再跑一遍同样脚本（验证可重复性）�
 | 落库 | 写 `geo_answer_snapshots`，更新 brand mention tags |
 | 落库后 | **自动 rebuild** 当日 `geo_daily_metrics`（租户/业务/单元） |
 | 定时 | `enabled` + **时间段** `window_start/end_hour` + **间隔** `interval_hours` |
-| 调度 | GEO service scheduler 每小时 :05（`run_geo_visibility_patrols`） |
-| 日汇总兜底 | GEO service scheduler **00:40** `run_geo_daily_metrics_nightly`（近 2 天） |
+| 调度 | GEO scheduler 每小时 :05（`app/geo/content/geo_scheduler.py`，主站或 geo_main） |
+| 日汇总兜底 | 同一 scheduler **00:40** `run_geo_daily_metrics_nightly`（近 2 天） |
 | 配额 | `GEO_PATROL_MAX_RUNS_PER_DAY`（默认 24）→ 429；`MAX_CELLS_PER_RUN` 截断 |
 | 运营 | `GET /visibility-patrol/ops-status`（配额/引擎健康/告警） |
 

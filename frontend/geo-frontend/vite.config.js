@@ -7,6 +7,9 @@ export default defineConfig({
   base: '/deal-sniper/geo/',
   publicDir: false,
   plugins: [vue()],
+  resolve: {
+    dedupe: ['vue', 'vue-router', 'element-plus'],
+  },
   build: {
     outDir: resolve(import.meta.dirname, 'dist'),
     emptyOutDir: true,

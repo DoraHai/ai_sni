@@ -23,6 +23,43 @@ ENGINE_PERSONAS: dict[str, str] = {
 
 SAMPLE_MODE_PERSONA = "mock_persona"
 SAMPLE_MODE_REAL = "openai_compat"
+DASHSCOPE_MARKERS = ("dashscope", "aliyuncs.com")
+SKIP_DASHSCOPE_OTHER_ENGINE = "skipped:dashscope_only_for_deepseek"
+
+
+def is_deepseek_engine(engine: str | None) -> bool:
+    return "deepseek" in str(engine or "").lower()
+
+
+def is_dashscope_endpoint(*, base_url: str = "", provider: str = "", source: str = "") -> bool:
+    blob = f"{provider} {source} {base_url}".lower()
+    return any(marker in blob for marker in DASHSCOPE_MARKERS)
+
+
+def dashscope_usable_for_engine(
+    engine: str,
+    *,
+    base_url: str = "",
+    provider: str = "",
+    source: str = "",
+) -> bool:
+    """百炼（DashScope）只允许打 DeepSeek，不能冒充 ChatGPT / 豆包 / Kimi。"""
+    if not is_dashscope_endpoint(base_url=base_url, provider=provider, source=source):
+        return True
+    return is_deepseek_engine(engine)
+
+
+def tenant_llm_for_engine(engine: str, tenant_llm: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not tenant_llm:
+        return None
+    if not dashscope_usable_for_engine(
+        engine,
+        base_url=str(tenant_llm.get("base_url") or ""),
+        provider=str(tenant_llm.get("provider") or ""),
+        source=str(tenant_llm.get("source") or ""),
+    ):
+        return None
+    return tenant_llm
 
 
 def engine_persona(engine: str) -> str:
@@ -71,6 +108,7 @@ def resolve_engine_llm(
 
     Returns (llm_dict, sample_mode, fallback_reason).
     Prefer per-engine openai_compat when key is present; otherwise tenant LLM + persona.
+    DashScope/百炼 credentials only apply to the DeepSeek engine.
 
     monitoring_stance (W3):
       real_only — 无真 Key 时不降级 persona，返回空 llm + skip reason
@@ -81,15 +119,19 @@ def resolve_engine_llm(
     mode = SAMPLE_MODE_PERSONA
     if engine_row is not None:
         mode = (getattr(engine_row, "sample_mode", None) or SAMPLE_MODE_PERSONA).strip()
+    usable_tenant = tenant_llm_for_engine(engine, tenant_llm)
 
     if stance == "simulation":
-        if not tenant_llm:
-            return {}, SAMPLE_MODE_PERSONA, "simulation 定位：无租户 LLM"
-        return tenant_llm, SAMPLE_MODE_PERSONA, "simulation 定位：强制人设模拟"
+        if not usable_tenant:
+            return {}, SAMPLE_MODE_PERSONA, "simulation 定位：无可用租户 LLM"
+        return usable_tenant, SAMPLE_MODE_PERSONA, "simulation 定位：强制人设模拟"
 
     if mode == SAMPLE_MODE_REAL and engine_row is not None:
         from app.security.crypto import decrypt
 
+        row_base = (getattr(engine_row, "api_base_url", None) or "").strip().rstrip("/")
+        if row_base and not dashscope_usable_for_engine(engine, base_url=row_base):
+            return {}, SAMPLE_MODE_REAL, SKIP_DASHSCOPE_OTHER_ENGINE
         raw_key = None
         enc = getattr(engine_row, "api_key_encrypted", None)
         if enc:
@@ -98,20 +140,21 @@ def resolve_engine_llm(
             except Exception:  # noqa: BLE001
                 raw_key = None
         if raw_key:
-            base = (getattr(engine_row, "api_base_url", None) or "").strip().rstrip("/")
             model = (getattr(engine_row, "model", None) or "").strip()
-            if not base or not model:
+            if not row_base or not model:
                 if stance == "real_only":
                     return {}, SAMPLE_MODE_REAL, "skipped:real_only_missing_base_or_model"
+                if not usable_tenant:
+                    return {}, SAMPLE_MODE_PERSONA, "openai_compat 缺少 base_url 或 model"
                 return (
-                    tenant_llm or {},
+                    usable_tenant,
                     SAMPLE_MODE_PERSONA,
                     "openai_compat 缺少 base_url 或 model，已回退人设模拟",
                 )
             return (
                 {
                     "api_key": raw_key,
-                    "base_url": base,
+                    "base_url": row_base,
                     "model": model,
                     "provider": f"engine:{engine}",
                     "source": "engine_openai_compat",
@@ -120,16 +163,18 @@ def resolve_engine_llm(
                 None,
             )
         # Real mode without per-engine key
-        if tenant_llm and tenant_llm.get("api_key") and stance != "real_only":
+        if usable_tenant and usable_tenant.get("api_key") and stance != "real_only":
             return (
                 {
-                    **tenant_llm,
-                    "provider": tenant_llm.get("provider") or "dashscope",
+                    **usable_tenant,
+                    "provider": usable_tenant.get("provider") or "dashscope",
                     "source": f"tenant_fallback:{engine}",
                 },
                 SAMPLE_MODE_REAL,
                 None,
             )
+        if tenant_llm and tenant_llm.get("api_key") and usable_tenant is None:
+            return {}, SAMPLE_MODE_REAL, SKIP_DASHSCOPE_OTHER_ENGINE
         if stance == "real_only":
             return {}, SAMPLE_MODE_REAL, "skipped:real_only_no_engine_key"
         return {}, SAMPLE_MODE_PERSONA, "openai_compat 未配置引擎 Key 且无租户 LLM"
@@ -137,9 +182,11 @@ def resolve_engine_llm(
     if stance == "real_only" and mode != SAMPLE_MODE_REAL:
         return {}, SAMPLE_MODE_REAL, "skipped:real_only_persona_engine_disabled"
 
-    if not tenant_llm:
+    if not usable_tenant:
+        if tenant_llm:
+            return {}, SAMPLE_MODE_PERSONA, SKIP_DASHSCOPE_OTHER_ENGINE
         return {}, SAMPLE_MODE_PERSONA, "无租户/环境 LLM 凭证"
-    return tenant_llm, SAMPLE_MODE_PERSONA, None
+    return usable_tenant, SAMPLE_MODE_PERSONA, None
 
 
 async def run_probe_draft(

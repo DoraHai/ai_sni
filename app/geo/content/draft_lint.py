@@ -30,7 +30,9 @@ def _known_number_tokens(facts: list[dict[str, Any]]) -> set[str]:
             r"\d[\d,\.]*\s*(?:%|％|万|亿|倍|元|美元|港币|HK\$|\$|人|家|天|小时|分钟)?",
             blob,
         ):
-            known.add(m.group(0).strip())
+            raw = m.group(0).strip()
+            known.add(raw)
+            known.add(re.sub(r"\s+", "", raw))
     return known
 
 
@@ -93,14 +95,24 @@ def lint_draft(
                 }
             )
 
+    from app.geo.content.claim_guard import fact_number_allowlist, number_token_allowed
+
     known_values = _known_number_tokens(facts or [])
+    allowed = fact_number_allowlist(facts or [])
     for m in _NUMBER_IN_LINE.finditer(body):
-        seg, val = m.group(0), m.group(1)
-        if any(val in v or v in val for v in known_values):
+        val = m.group(1)
+        if number_token_allowed(val, allowed) or number_token_allowed(val, known_values):
             continue
-        if "待确认" in seg or "待补" in seg:
+        start = max(0, m.start(1) - 18)
+        end = min(len(body), m.end(1) + 18)
+        excerpt = body[start:end].replace("\n", " ").strip()
+        if "待确认" in excerpt or "待补" in excerpt:
             continue
-        if any(i.get("code") == "unverified_number" and val in (i.get("detail") or "") for i in issues):
+        compact = re.sub(r"\s+", "", str(val or ""))
+        if any(
+            i.get("code") == "unverified_number" and compact in re.sub(r"\s+", "", i.get("detail") or "")
+            for i in issues
+        ):
             continue
         issues.append(
             {
@@ -108,7 +120,7 @@ def lint_draft(
                 "code": "unverified_number",
                 "type": "未核实数字",
                 "detail": f"`{val}` 不在绑定事实卡里且未标注待确认",
-                "excerpt": seg.strip()[:90],
+                "excerpt": excerpt[:90],
             }
         )
 

@@ -16,6 +16,7 @@ from app.geo.content.channel_profiles import get_profile
 from app.geo.content.channel_registry import (
     enabled_types_from_rows,
     filter_channels_by_registry,
+    profile_key_for_registry_type,
     registry_row_dicts,
 )
 from app.geo.content.variants import GeoContentError, build_adapt_meta, normalize_channels
@@ -82,10 +83,24 @@ async def execute_variants_for_task(
     )
     registry_rows = registry_row_dicts(ch_rows)
     enabled_types = enabled_types_from_rows(registry_rows)
+    raw_picks = list(channels or task.target_channels or [])
     channel_list = filter_channels_by_registry(
-        normalize_channels(channels or list(task.target_channels or [])),
+        normalize_channels(raw_picks),
         enabled_types=enabled_types or None,
     )
+    # Keep 分发平台 types (docs / industry_media / …) instead of collapsing to adapt keys.
+    if enabled_types:
+        picked: list[str] = []
+        for item in raw_picks:
+            key = str(item or "").strip().lower()
+            if key in enabled_types and key not in picked:
+                picked.append(key)
+            elif key:
+                for ctype in enabled_types:
+                    if profile_key_for_registry_type(ctype) == key and ctype not in picked:
+                        picked.append(ctype)
+        if picked:
+            channel_list = picked
     if not channel_list:
         raise ValueError("没有可用的启用发布渠道，请先在「发布渠道」配置中启用")
 

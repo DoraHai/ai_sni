@@ -70,6 +70,14 @@ class DraftLintTests(unittest.TestCase):
         issues = lint_draft("覆盖 80% 场景，适合多数团队。", facts=facts)
         self.assertFalse(any(i["code"] == "unverified_number" for i in issues))
 
+    def test_fact_hours_match_body_without_space(self):
+        facts = [{"statement": "华东 48 小时到场，备件标准库存 90 天。", "title": "服务半径"}]
+        issues = lint_draft(
+            "选择离心泵时，华东地区提供48小时到场服务，备件库存90天。",
+            facts=facts,
+        )
+        self.assertFalse(any(i["code"] == "unverified_number" for i in issues))
+
     def test_suspicious_year(self):
         issues = lint_draft("报告发布于 2020 年", year=2026)
         self.assertTrue(any(i["code"] == "suspicious_year" for i in issues))
@@ -138,6 +146,8 @@ class RulesIntegrationTests(unittest.TestCase):
         by_code = {c.code: c for c in run_checks(self._base(body_markdown=body))}
         self.assertFalse(by_code["fabrication_lint"].passed)
         self.assertFalse(is_ready(list(by_code.values()), require_channels=False))
+        points = " ".join(by_code["fabrication_lint"].details or [])
+        self.assertIn("工具A", points)
 
     def test_block_patches_emitted(self):
         patches = {

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.geo.content.probe import (
     SAMPLE_MODE_REAL,
+    dashscope_usable_for_engine,
     resolve_batch_engines,
     resolve_engine_llm,
     run_probe_draft,
@@ -480,7 +481,12 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
                                 engine_row=engine_row,
                                 monitoring_stance=stance,
                             )
-                        elif tenant_llm and tenant_llm.get("api_key"):
+                        elif tenant_llm and tenant_llm.get("api_key") and dashscope_usable_for_engine(
+                            engine,
+                            base_url=str(tenant_llm.get("base_url") or ""),
+                            provider=str(tenant_llm.get("provider") or ""),
+                            source=str(tenant_llm.get("source") or ""),
+                        ):
                             llm = {
                                 **tenant_llm,
                                 "provider": tenant_llm.get("provider") or "dashscope",

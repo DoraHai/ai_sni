@@ -6,6 +6,7 @@
   --geo-muted: #77849a;
   --geo-line: #e4eaf2;
   --geo-canvas: #f3f6fa;
+  --sem-font: "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
 }
 
 html,
@@ -19,6 +20,9 @@ body,
 
 body {
   background: var(--geo-canvas);
+  font-family: var(--sem-font);
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 button {
@@ -310,4 +314,227 @@ button {
     padding-left: 20px;
     padding-right: 20px;
   }
+}
+
+/* GEO standalone form and data-surface polish. These rules intentionally live
+   in the independent entry instead of the shared SEM stylesheet. */
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  border-radius: 10px !important;
+  box-shadow: 0 0 0 1px var(--sem-border) inset !important;
+  transition: box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.el-input__wrapper:hover,
+.el-select__wrapper:hover {
+  box-shadow: 0 0 0 1px #c5d0de inset !important;
+}
+
+.el-input__wrapper.is-focus,
+.el-select__wrapper.is-focused,
+.el-textarea__inner:focus {
+  box-shadow:
+    0 0 0 1px var(--el-color-primary) inset,
+    0 0 0 3px rgba(24, 95, 165, 0.12) !important;
+}
+
+.el-textarea__inner {
+  padding: 10px 12px;
+  border-radius: 10px;
+  line-height: 1.55;
+}
+
+.el-input__inner,
+.el-select__placeholder,
+.el-select__selected-item {
+  font-size: 13px;
+}
+
+.el-form-item {
+  margin-bottom: 16px;
+}
+
+.el-form-item__label {
+  color: #475569 !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  line-height: 1.4 !important;
+}
+
+.el-form-item.is-required:not(.is-no-asterisk) > .el-form-item__label::before {
+  margin-right: 3px;
+  color: #e24b4a !important;
+}
+
+.el-form--label-top .el-form-item__label {
+  margin-bottom: 6px !important;
+  padding: 0 !important;
+}
+
+.el-button {
+  border-radius: 9px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.el-button--primary {
+  box-shadow: 0 1px 2px rgba(24, 95, 165, 0.18);
+}
+
+.el-button--primary:hover {
+  box-shadow: 0 2px 8px rgba(24, 95, 165, 0.22);
+}
+
+.el-card {
+  overflow: hidden;
+  border-color: #e8edf5 !important;
+  border-radius: 14px !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04) !important;
+}
+
+.el-card__header {
+  padding: 14px 18px !important;
+  color: #1e293b;
+  font-weight: 650;
+  background: linear-gradient(180deg, #fcfdff 0%, #fff 100%);
+  border-bottom-color: #eef2f7 !important;
+}
+
+.el-card__body {
+  padding: 16px 18px 18px !important;
+}
+
+.el-dialog {
+  overflow: hidden;
+  border-radius: 16px !important;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.16) !important;
+}
+
+.el-dialog__header {
+  margin-right: 0 !important;
+  padding: 18px 22px 12px !important;
+  background: linear-gradient(180deg, #fafcff 0%, #fff 100%);
+  border-bottom: 1px solid #eef2f7;
+}
+
+.el-dialog__title {
+  color: #0f172a !important;
+  font-size: 16px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.01em;
+}
+
+.el-dialog__body {
+  padding: 18px 22px 8px !important;
+}
+
+.el-dialog__footer {
+  padding: 12px 22px 18px !important;
+  background: #fafbfc;
+  border-top: 1px solid #eef2f7;
+}
+
+.el-dialog__footer .el-button + .el-button {
+  margin-left: 10px;
+}
+
+.el-overlay-dialog {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.el-table {
+  --el-table-border-color: #eef2f7;
+  --el-table-header-bg-color: #f8fafc;
+  --el-table-row-hover-bg-color: #f5f9ff;
+
+  overflow: hidden;
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+.el-table th.el-table__cell {
+  color: #64748b !important;
+  font-size: 12px !important;
+  font-weight: 650 !important;
+  letter-spacing: 0.02em;
+}
+
+.el-table td.el-table__cell {
+  color: #1f2937;
+}
+
+.el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell {
+  background: #fafbfc;
+}
+
+.el-pagination.is-background .el-pager li,
+.el-pagination.is-background .btn-prev,
+.el-pagination.is-background .btn-next {
+  border-radius: 8px;
+}
+
+.el-pagination.is-background .el-pager li {
+  font-weight: 600;
+}
+
+.el-tag {
+  border: none;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.el-tag--plain {
+  border: 1px solid currentColor;
+}
+
+.el-alert {
+  border-radius: 12px !important;
+}
+
+.el-alert--error.is-light {
+  background: #fff8f8;
+  border: 1px solid #f0c9c9;
+}
+
+.el-switch.is-checked .el-switch__core {
+  background-color: var(--el-color-primary);
+}
+
+.el-divider__text {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 650;
+  background: transparent;
+}
+
+.mb {
+  margin-bottom: 14px;
+}
+
+.mt {
+  margin-top: 12px;
+}
+
+.form-hint {
+  margin-top: 4px;
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.form-section-title {
+  margin: 4px 0 12px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }

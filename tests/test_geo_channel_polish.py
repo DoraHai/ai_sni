@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from app.geo.content.channel_polish import (
+    ArticleQualityError,
     adapt_or_polish_for_channel,
     strip_draft_markers,
 )
@@ -92,6 +94,35 @@ class ChannelPolishTests(unittest.TestCase):
         self.assertEqual(meta.get("engine"), "deterministic_v1")
         self.assertNotIn("草案提示", out)
         self.assertIn("直接答案", out)
+
+    def test_quality_failure_keeps_non_publishable_channel_draft(self):
+        body = (
+            "# 标题\n\n"
+            "> **草案提示**：内部草案\n\n"
+            "直接答案段落足够长。\n\n"
+            "## 定义与背景\n\n定义段说明产品边界。\n"
+        )
+
+        async def _run():
+            with patch(
+                "app.geo.content.channel_polish.polish_for_channel",
+                new=AsyncMock(side_effect=ArticleQualityError(["正文长度不足"])),
+            ):
+                return await adapt_or_polish_for_channel(
+                    "website",
+                    "数据中心服务能力对比",
+                    body,
+                    {"direct_answer": "直接答案段落足够长。"},
+                    llm={"api_key": "test-only"},
+                    use_llm=True,
+                )
+
+        _title, out, meta = asyncio.run(_run())
+        self.assertTrue(meta.get("fallback"))
+        self.assertFalse(meta.get("publishable", True))
+        self.assertEqual(meta.get("quality"), "adapted_draft_not_publishable")
+        self.assertEqual(meta.get("quality_issues"), ["正文长度不足"])
+        self.assertNotIn("草案提示", out)
 
 
 if __name__ == "__main__":

@@ -84,12 +84,22 @@ DEFAULT_MIN_BODY_CHARS: dict[str, int] = {
 def default_voice_for_channel(channel: str) -> str:
     if channel in DEFAULT_VOICE_BY_CHANNEL:
         return DEFAULT_VOICE_BY_CHANNEL[channel]
-    profile = CHANNEL_PROFILES.get(channel)
+    from app.geo.content.channel_registry import profile_key_for_registry_type
+
+    adapt = profile_key_for_registry_type(channel) or channel
+    if adapt in DEFAULT_VOICE_BY_CHANNEL:
+        return DEFAULT_VOICE_BY_CHANNEL[adapt]
+    profile = CHANNEL_PROFILES.get(adapt) or CHANNEL_PROFILES.get(channel)
     return profile.goal if profile else ""
 
 
 def default_min_body_chars(channel: str) -> int:
-    return int(DEFAULT_MIN_BODY_CHARS.get(channel, 800))
+    if channel in DEFAULT_MIN_BODY_CHARS:
+        return int(DEFAULT_MIN_BODY_CHARS[channel])
+    from app.geo.content.channel_registry import profile_key_for_registry_type
+
+    adapt = profile_key_for_registry_type(channel) or channel
+    return int(DEFAULT_MIN_BODY_CHARS.get(adapt, 800))
 
 
 def list_default_prompts() -> dict[str, Any]:

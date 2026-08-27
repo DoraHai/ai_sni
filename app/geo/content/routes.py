@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import delete, func, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
@@ -415,7 +415,7 @@ def _business_week_actions(
                 "title": f"超 SLA 缺口：{(p.question or '')[:48]}",
                 "detail": f"已 {age} 天未补内容（SLA {sla} 天）",
                 "prompt_id": p.id,
-                "href": "/geo/gaps",
+                "href": "/geo/recommend",
             }
         )
     elif gaps:
@@ -426,7 +426,7 @@ def _business_week_actions(
                 "title": f"待补缺口：{(p.question or '')[:48]}",
                 "detail": "品牌未被提及，可直接建任务",
                 "prompt_id": p.id,
-                "href": "/geo/gaps",
+                "href": "/geo/recommend",
             }
         )
 
@@ -2305,6 +2305,20 @@ async def promote_prompt_candidates(
             )
         ).all()
     }
+    unit_ids = {item.unit_id for item in req.items if item.unit_id is not None}
+    if unit_ids:
+        valid_unit_ids = set(
+            (
+                await session.scalars(
+                    select(GeoOptimizationUnit.id).where(
+                        GeoOptimizationUnit.tenant_id == req.tenant_id,
+                        GeoOptimizationUnit.id.in_(unit_ids),
+                    )
+                )
+            ).all()
+        )
+        if valid_unit_ids != unit_ids:
+            raise HTTPException(status_code=400, detail="优化单元不存在")
     created: list[GeoPrompt] = []
     skipped = 0
     for item in req.items:
@@ -2330,6 +2344,7 @@ async def promote_prompt_candidates(
             question_group=q_group,
             market=normalize_market(item.market),
             is_brand_probe=probe,
+            unit_id=item.unit_id,
             created_by=ctx.user_id,
         )
         session.add(row)
@@ -2486,6 +2501,7 @@ def _snapshot_payload(row: GeoAnswerSnapshot, *, prompt_question: str | None = N
         "created_by": row.created_by,
         "created_at": _iso(row.created_at),
     }
+
 async def _get_snapshot(
     session: AsyncSession, snapshot_id: int, tenant_id: int
 ) -> GeoAnswerSnapshot:
@@ -5151,14 +5167,19 @@ async def put_channel_polish_prompts(
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
     channel_payload = [c.model_dump() for c in req.channels]
-    return await upsert_prompts(
-        session,
-        req.tenant_id,
-        system_prompt=req.system_prompt,
-        reset_system=bool(req.reset_system),
-        channels=channel_payload,
-        updated_by=ctx.user_id,
-    )
+    try:
+        return await upsert_prompts(
+            session,
+            req.tenant_id,
+            system_prompt=req.system_prompt,
+            reset_system=bool(req.reset_system),
+            channels=channel_payload,
+            add_channel_key=req.add_channel_key,
+            remove_channel_key=req.remove_channel_key,
+            updated_by=ctx.user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.post("/ai-settings/test")
@@ -5205,6 +5226,7 @@ async def test_ai_settings(
 
 def _engine_payload(row: GeoTrackingEngine) -> dict[str, Any]:
     from app.geo.content.ai_settings import mask_api_key
+    from app.geo.content.engines import sanitize_engine_endpoint
     from app.security.crypto import decrypt
 
     plain = None
@@ -5213,6 +5235,13 @@ def _engine_payload(row: GeoTrackingEngine) -> dict[str, Any]:
             plain = decrypt(row.api_key_encrypted)
         except Exception:  # noqa: BLE001
             plain = None
+    url, model, mode, _changed = sanitize_engine_endpoint(
+        row.engine_key,
+        getattr(row, "api_base_url", None),
+        getattr(row, "model", None),
+        getattr(row, "sample_mode", None) or "mock_persona",
+        has_key=bool(plain),
+    )
     return {
         "id": row.id,
         "tenant_id": row.tenant_id,
@@ -5221,9 +5250,9 @@ def _engine_payload(row: GeoTrackingEngine) -> dict[str, Any]:
         "enabled": bool(row.enabled),
         "note": row.note,
         "sort_order": row.sort_order,
-        "sample_mode": getattr(row, "sample_mode", None) or "mock_persona",
-        "api_base_url": getattr(row, "api_base_url", None),
-        "model": getattr(row, "model", None),
+        "sample_mode": mode,
+        "api_base_url": url,
+        "model": model,
         "api_key_configured": bool(plain),
         "api_key_masked": mask_api_key(plain) if plain else None,
         "created_at": _iso(row.created_at),
@@ -5266,6 +5295,34 @@ async def _ensure_default_engines(
                 .order_by(GeoTrackingEngine.sort_order, GeoTrackingEngine.id)
             )
         )
+    from app.geo.content.engines import sanitize_engine_endpoint
+    from app.security.crypto import decrypt
+
+    dirty = False
+    for r in rows:
+        has_key = False
+        if getattr(r, "api_key_encrypted", None):
+            try:
+                has_key = bool(decrypt(r.api_key_encrypted))
+            except Exception:  # noqa: BLE001
+                has_key = False
+        url, model, mode, changed = sanitize_engine_endpoint(
+            r.engine_key,
+            getattr(r, "api_base_url", None),
+            getattr(r, "model", None),
+            getattr(r, "sample_mode", None),
+            has_key=has_key,
+        )
+        if not changed:
+            continue
+        r.api_base_url = url
+        r.model = model
+        r.sample_mode = mode
+        dirty = True
+    if dirty:
+        await session.commit()
+        for r in rows:
+            await session.refresh(r)
     return rows
 
 
@@ -5320,6 +5377,15 @@ async def put_tracking_engines(
         mode = (item.sample_mode or "mock_persona").strip()
         if mode not in ("mock_persona", "openai_compat"):
             mode = "mock_persona"
+        from app.geo.content.engines import sanitize_engine_endpoint
+
+        url, model, mode, _changed = sanitize_engine_endpoint(
+            item.engine_key,
+            item.api_base_url,
+            item.model,
+            mode,
+            has_key=bool(enc),
+        )
         row = GeoTrackingEngine(
             tenant_id=req.tenant_id,
             engine_key=item.engine_key,
@@ -5328,8 +5394,8 @@ async def put_tracking_engines(
             note=item.note,
             sort_order=int(item.sort_order),
             sample_mode=mode,
-            api_base_url=(item.api_base_url or None),
-            model=(item.model or None),
+            api_base_url=url,
+            model=model,
             api_key_encrypted=enc,
         )
         session.add(row)
@@ -6296,15 +6362,26 @@ async def create_task(
         brief=normalize_brief(req.brief) if req.brief else {},
     )
     session.add(task)
-    await session.flush()
-    prompt.last_task_id = task.id
-    if req.fact_ids:
-        await _bind_facts(session, task, req.fact_ids)
-    else:
-        await _sync_task_pipeline(session, task)
-    await session.commit()
-    await session.refresh(task)
-    return await _task_payload(session, task, detail=True)
+    try:
+        await session.flush()
+        prompt.last_task_id = task.id
+        if req.fact_ids:
+            await _bind_facts(session, task, req.fact_ids)
+        else:
+            await _sync_task_pipeline(session, task)
+        await session.commit()
+        await session.refresh(task)
+        return await _task_payload(session, task, detail=True)
+    except ProgrammingError as exc:
+        await session.rollback()
+        blob = str(getattr(exc, "orig", None) or exc)
+        if "geo_facts" in blob and "business_id" in blob:
+            raise HTTPException(
+                500,
+                "数据库缺 geo_facts.business_id，无法创建优化文章。"
+                "请在服务器执行 alembic upgrade head（0073 修复迁移）。",
+            ) from exc
+        raise HTTPException(500, f"创建优化文章失败：{blob[:240]}") from exc
 
 
 @router.post("/content-tasks/from-diagnosis")
@@ -7110,16 +7187,19 @@ async def apply_patch(
     rule_input = await _build_rule_input(session, task, article)
     patch = next((p for p in build_fix_patches(rule_input) if p["code"] == req.code), None)
     if patch is None:
-        raise HTTPException(400, f"无可用修复补丁: {req.code}（该规则可能已通过，请先点「检查就绪」刷新）")
+        raise HTTPException(400, "没有可自动写入的修改（该项可能已通过，请先点「检查就绪」刷新）")
     insert = str(patch.get("insert_markdown") or "")
     if not insert.strip():
-        raise HTTPException(400, f"补丁 {req.code} 内容为空")
-    if patch.get("cursor_hint") == "prepend":
+        raise HTTPException(400, f"没有可写入的「{req.code}」修改")
+    hint = str(patch.get("cursor_hint") or "append")
+    if hint == "rewrite":
+        new_body = insert.lstrip("\n")
+    elif hint == "prepend":
         new_body = insert.lstrip("\n") + ("\n" + old_body if old_body else "")
     else:
         new_body = (old_body.rstrip() + "\n" + insert.lstrip("\n")) if old_body else insert.lstrip("\n")
     if new_body.strip() == old_body.strip():
-        raise HTTPException(400, f"补丁 {req.code} 未改变正文，请手动编辑或重新检查")
+        raise HTTPException(400, "这次修改没有改变正文，请手工编辑或重新检查")
 
     author_name = req.author_name or article.author_name
     if req.code == "author_visible" and req.author_name:
@@ -7782,8 +7862,12 @@ async def push_variant_webhook(
     variant = variants.get(channel)
     if variant is None:
         raise HTTPException(400, "请先生成该渠道版本")
-    if variant.status not in {"exported", "published"}:
-        raise HTTPException(400, "请先导出渠道稿，再推送")
+    if variant.status not in {"exported", "published", "draft"}:
+        raise HTTPException(400, "请先生成该渠道稿，再推送")
+    if variant.status == "draft":
+        if not (variant.body_markdown or "").strip():
+            raise HTTPException(400, "渠道稿还是空的，请先生成")
+        variant.status = "exported"
 
     article = await _latest_article(session, task.id)
     rule_input = await _build_rule_input(session, task, article)

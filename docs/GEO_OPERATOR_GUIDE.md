@@ -4,8 +4,6 @@
 
 菜单级速查见 [`USER_GUIDE.md`](USER_GUIDE.md)。指标公式见 [`GEO_METRIC_DICTIONARY.md`](GEO_METRIC_DICTIONARY.md)。本地端口见 [`LOCAL_GEO_DEMO.md`](LOCAL_GEO_DEMO.md)。
 
-**带现成客户 ID / 事实 / 任务的点击验收链路**见 [`GEO_CLICK_TEST_CHAIN.md`](GEO_CLICK_TEST_CHAIN.md)。
-
 **两条产品线不要混测**：GEO 是 AI 搜/问里的品牌可见度与内容闭环；SEM 是百度搜索广告。同一个客户里可以两套都开，但开户、词库、报告都要分开看。
 
 ---
@@ -28,7 +26,7 @@ GEO 闭环只有四件事：
 推荐入口：
 
 ```text
-http://127.0.0.1:5173/geo/onboarding
+http://127.0.0.1:5173/geo/overview
 ```
 
 前提：前端 `:5173`、主站 API `:8000`（或 GEO API `:8011`）已启动，本地带 `VITE_API_KEY=geo-demo-local-key`。
@@ -47,7 +45,7 @@ http://127.0.0.1:5173/geo/onboarding
 
 ## 3. 新客户开户（约 15 分钟）
 
-路径：`/geo/onboarding`
+路径：`/geo/overview`（开户向导 `/geo/onboarding` 已下线；品牌资料改在 `/geo/brand`）
 
 ### 3.1 填官网，先预览
 
@@ -293,9 +291,9 @@ Score 是结构分，不是发布许可。结构齐、事实空，照样不能�
 
 ## 8. 交付与对外口径
 
-路径：`/geo/deliverables`
+路径：`/geo/overview`（导出报告）。独立交付摘要页 `/geo/deliverables` 已下线，只读分享仍为 `/geo/deliverables/share/:token`。
 
-对外只看这一页的包装，不要从竞品表、单题快照截 100% 给客户。
+对外只看包装后的口径，不要从竞品表、单题快照截 100% 给客户。
 
 必须同时交代：
 
@@ -327,7 +325,7 @@ Score 是结构分，不是发布许可。结构齐、事实空，照样不能�
 
 ## 10. 点击验收清单（Udesk优地）
 
-1. 打开 `http://127.0.0.1:5173/geo/onboarding`，顶栏切到 **Udesk优地**。
+1. 打开 `http://127.0.0.1:5173/geo/overview`，顶栏切到 **Udesk优地**。
 2. 事实库：#40～#45 应挂在 Udesk 业务，不是租户共用。点核验必须填摘录和定位。
 3. 打开任务（如 #12）：若只绑了 3 条泛化官网事实，正文里却有识别率/案例/具体数字，点「检查就绪」应**不通过**，Score ≤ 59，渠道稿不能标可发布。
 4. 补 3 条带数字或案例的已核验事实（或删掉稿里的编造）后再生成，逐句证据应能挂上对应事实卡。

@@ -387,7 +387,9 @@ async def polish_for_channel(
     Enforces full_article_v2 hard gate. After up to 2 rewrite retries, any remaining
     quality issue raises ArticleQualityError (no soft-pass).
     """
-    profile = get_profile(channel)
+    from app.geo.content.channel_registry import profile_key_for_registry_type
+
+    profile = get_profile(channel) or get_profile(profile_key_for_registry_type(channel) or "")
     if profile is None:
         raise GeoContentError(f"不支持的渠道: {channel}")
 
@@ -574,7 +576,8 @@ async def adapt_or_polish_for_channel(
 ) -> tuple[str, str, dict[str, Any]]:
     """Prefer LLM formal channel polish with hard quality gate.
 
-    ArticleQualityError always propagates (no silent fallback to pseudo-publishable draft).
+    ArticleQualityError is preserved as a non-publishable channel draft so every
+    selected channel remains visible without being mislabelled as publish-ready.
     Other polish failures fall back to deterministic adapt, clearly marked not publishable.
     """
     outline = outline or {}
