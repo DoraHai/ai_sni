@@ -5,9 +5,140 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#185fa5" />
     <title>GEO 增长</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      }
+
+      html,
+      body,
+      #app {
+        width: 100%;
+        min-width: 1120px;
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        background: #f3f6fa;
+      }
+
+      .geo-boot {
+        position: relative;
+        isolation: isolate;
+        display: grid;
+        place-items: center;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        color: #172033;
+        background:
+          radial-gradient(circle at 50% 42%, rgba(40, 116, 187, 0.10), transparent 28%),
+          linear-gradient(145deg, #f7f9fc 0%, #eef4fa 100%);
+      }
+
+      .geo-boot::before {
+        position: absolute;
+        z-index: -1;
+        width: 430px;
+        height: 430px;
+        border: 1px solid rgba(24, 95, 165, 0.08);
+        border-radius: 50%;
+        box-shadow:
+          0 0 0 74px rgba(24, 95, 165, 0.035),
+          0 0 0 148px rgba(24, 95, 165, 0.018);
+        content: "";
+      }
+
+      .geo-boot__panel {
+        display: grid;
+        justify-items: center;
+        min-width: 260px;
+        padding: 34px 46px 30px;
+        border: 1px solid rgba(210, 222, 236, 0.86);
+        border-radius: 22px;
+        background: rgba(255, 255, 255, 0.82);
+        box-shadow: 0 24px 70px rgba(37, 62, 91, 0.10);
+        backdrop-filter: blur(18px);
+      }
+
+      .geo-boot__mark {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: 54px;
+        height: 54px;
+        border-radius: 17px;
+        color: #fff;
+        background: linear-gradient(145deg, #2874bb, #12518d);
+        box-shadow: 0 12px 28px rgba(24, 95, 165, 0.26);
+        font-size: 23px;
+        font-weight: 750;
+      }
+
+      .geo-boot__mark::after {
+        position: absolute;
+        inset: -8px;
+        border: 1px solid rgba(24, 95, 165, 0.22);
+        border-top-color: #2874bb;
+        border-radius: 21px;
+        content: "";
+        animation: geo-boot-spin 1.15s linear infinite;
+      }
+
+      .geo-boot__title {
+        margin-top: 20px;
+        font-size: 18px;
+        font-weight: 750;
+        letter-spacing: -0.02em;
+      }
+
+      .geo-boot__status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 8px;
+        color: #77849a;
+        font-size: 12px;
+      }
+
+      .geo-boot__pulse {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #2482c9;
+        box-shadow: 0 0 0 0 rgba(36, 130, 201, 0.28);
+        animation: geo-boot-pulse 1.4s ease-out infinite;
+      }
+
+      @keyframes geo-boot-spin {
+        to { transform: rotate(360deg); }
+      }
+
+      @keyframes geo-boot-pulse {
+        70% { box-shadow: 0 0 0 7px rgba(36, 130, 201, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(36, 130, 201, 0); }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .geo-boot__mark::after,
+        .geo-boot__pulse {
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <div class="geo-boot" role="status" aria-live="polite" aria-label="GEO 工作台加载中">
+        <div class="geo-boot__panel">
+          <div class="geo-boot__mark" aria-hidden="true">G</div>
+          <div class="geo-boot__title">GEO 增长</div>
+          <div class="geo-boot__status"><span class="geo-boot__pulse"></span>正在载入客户工作区</div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
