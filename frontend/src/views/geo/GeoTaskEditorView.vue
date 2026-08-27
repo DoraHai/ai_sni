@@ -1037,12 +1037,12 @@ async function generate() {
   }
 }
 
-async function saveArticleBody({ silent = false } = {}) {
+async function saveArticleBody() {
   if (!article.title.trim() || !article.body_markdown.trim()) {
-    if (!silent) ElMessage.warning('标题与正文不能为空')
+    ElMessage.warning('标题与正文不能为空')
     return
   }
-  if (!silent) busy.value = 'save'
+  busy.value = 'save'
   try {
     const outline = task.value?.article?.outline || {}
     task.value = await saveGeoArticle(tenantId.value, taskId.value, {
@@ -1051,12 +1051,11 @@ async function saveArticleBody({ silent = false } = {}) {
       outline,
     })
     applyArticleFromTask(task.value)
-    lastSavedAt.value = new Date()
-    if (!silent) ElMessage.success('母稿已保存')
+    ElMessage.success('母稿已保存')
   } catch (e) {
-    if (!silent) toastError(e, '保存失败')
+    toastError(e, '保存失败')
   } finally {
-    if (!silent) busy.value = ''
+    busy.value = ''
   }
 }
 
@@ -2048,152 +2047,40 @@ watch(
   { immediate: true },
 )
 
-const leftTab = ref('brief')
-const showAdvancedBrief = ref(false)
-const showCheckDrawer = ref(false)
-const focusMode = ref(false)
-const lastSavedAt = ref(null)
-const handledIssueCodes = ref([])
-let autosaveTimer = null
-
-const unifiedStatus = computed(() => {
-  if (busy.value === 'generate') return { key: 'generating', label: '草稿生成中' }
-  if (!hasMasterDraft.value) return { key: 'empty', label: '待生成母稿' }
-  if (failedChecks.value.length) return { key: 'review', label: '待人工审核' }
-  if (checkResult.value && !failedChecks.value.length) {
-    if (['published', 'approved'].includes(String(task.value?.status || ''))) {
-      return { key: 'publishable', label: '可发布' }
-    }
-    return { key: 'passed', label: '检查通过' }
-  }
-  return { key: 'review', label: '待人工审核' }
-})
-
-const saveHint = computed(() => {
-  if (busy.value === 'save') return '保存中…'
-  if (!lastSavedAt.value) return '未自动保存'
-  const d = lastSavedAt.value
-  const pad = (n) => String(n).padStart(2, '0')
-  return `已保存 ${pad(d.getHours())}:${pad(d.getMinutes())}`
-})
-
-const mustIssues = computed(() =>
-  failedChecks.value.filter((c) => !handledIssueCodes.value.includes(c.code)),
-)
-const suggestIssues = computed(() =>
-  (geoActions.value || []).filter((a) => !handledIssueCodes.value.includes(a.code || a.message)),
-)
-
-function isFactCited(id) {
-  return (sentenceCites.value || []).some((c) => Number(c.fact_id) === Number(id))
-}
-
-function locateIssue(item) {
-  const details = checkDetails(item)
-  const needle = String(details[0] || item?.message || item?.excerpt || '').replace(/[「」]/g, '')
-  const excerpt = needle.match(/「([^」]+)」/)?.[1] || needle.slice(0, 32)
-  locateInEditor(excerpt)
-}
-
-function locateInEditor(text) {
-  const root = document.querySelector('.rich-content')
-  const needle = String(text || '').trim().slice(0, 28)
-  if (!root || needle.length < 4) {
-    ElMessage.info('没有可定位的正文片段')
-    return
-  }
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
-  while (walker.nextNode()) {
-    const node = walker.currentNode
-    const i = node.textContent.indexOf(needle)
-    if (i < 0) continue
-    const range = document.createRange()
-    range.setStart(node, i)
-    range.setEnd(node, Math.min(i + needle.length, node.textContent.length))
-    const sel = window.getSelection()
-    sel.removeAllRanges()
-    sel.addRange(range)
-    node.parentElement?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    return
-  }
-  ElMessage.info('正文中未找到对应片段，请按建议手工修改')
-}
-
-function markHandled(code) {
-  const key = String(code || '')
-  if (!key || handledIssueCodes.value.includes(key)) return
-  handledIssueCodes.value = [...handledIssueCodes.value, key]
-}
-
-function toggleFocus() {
-  focusMode.value = !focusMode.value
-  if (focusMode.value) showCheckDrawer.value = false
-  window.dispatchEvent(new CustomEvent('geo-editor-focus', { detail: focusMode.value }))
-}
-
-function onMoreCommand(cmd) {
-  if (cmd === 'save') return saveArticleBody()
-  if (cmd === 'copy') return copyCurrentDoc()
-  if (cmd === 'check') {
-    showCheckDrawer.value = true
-    return runCheck()
-  }
-  if (cmd === 'variants') return genVariants()
-  if (cmd === 'refresh') return load()
-  if (cmd === 'focus') return toggleFocus()
-}
-
-watch(
-  () => article.body_markdown,
-  () => {
-    if (!hasMasterDraft.value) return
-    clearTimeout(autosaveTimer)
-    autosaveTimer = setTimeout(() => {
-      saveArticleBody({ silent: true })
-    }, 8000)
-  },
-)
-
 watch([tenantId, taskId], load)
 onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="ed-shell" :class="{ focus: focusMode, 'check-open': showCheckDrawer && !focusMode }">
-    <header class="ed-top">
-      <button type="button" class="ed-back" @click="router.push('/geo/tasks')">← 任务列表</button>
-      <div class="ed-ident">
-        <div class="ed-kicker">#{{ taskId }} · {{ unifiedStatus.label }}</div>
-        <div class="ed-name">{{ article.title || task?.title || '未命名文章' }}</div>
+  <div v-loading="loading" class="editor">
+    <div class="toolbar page-toolbar">
+      <div class="left">
+        <el-button class="back-button" text type="primary" @click="router.push('/geo/tasks')">← 任务列表</el-button>
+        <div class="meta">
+          <span class="title">内容编辑工作台</span>
+          <span v-if="task" class="sub">
+            #{{ taskId }} · {{ task.title }}
+          </span>
+        </div>
       </div>
-      <div class="ed-top-actions">
-        <span class="ed-save">{{ saveHint }}</span>
-        <el-button
-          type="primary"
-          :loading="busy === 'generate'"
-          :disabled="!task"
-          @click="generate"
-        >
-          {{ hasMasterDraft ? '更新母稿' : '生成母稿' }}
-        </el-button>
-        <el-button :class="{ 'is-active': showCheckDrawer }" @click="showCheckDrawer = !showCheckDrawer">
-          检查
-        </el-button>
-        <el-dropdown trigger="click" @command="onMoreCommand">
-          <el-button>更多</el-button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="save">保存正文</el-dropdown-item>
-              <el-dropdown-item command="copy">复制</el-dropdown-item>
-              <el-dropdown-item command="check">检查就绪</el-dropdown-item>
-              <el-dropdown-item command="variants" :disabled="!hasMasterDraft">生成渠道稿</el-dropdown-item>
-              <el-dropdown-item command="refresh" divided>刷新</el-dropdown-item>
-              <el-dropdown-item command="focus">{{ focusMode ? '退出专注' : '专注模式' }}</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
+      <div class="right">
+        <span v-if="task" class="task-state">
+          {{ taskStatusLabel(task.status) }} · {{ pipelineLabel(task.pipeline_step) }}
+        </span>
+        <el-button class="refresh-button" @click="load">刷新</el-button>
       </div>
-    </header>
+    </div>
+
+    <div v-if="editorSurface.showProgressHint && task && nextStep" class="next-step" :class="{ done: nextStep.key === 'impact' }">
+      <div class="next-copy">
+        <div class="next-kicker">当前下一步</div>
+        <div class="next-title">{{ nextStep.title }}</div>
+        <div class="next-detail">{{ nextStep.detail }}</div>
+      </div>
+      <el-button type="primary" :loading="!!busy" @click="goNextStep">
+        {{ nextStep.action }}
+      </el-button>
+    </div>
 
     <el-alert
       v-if="error"
@@ -2201,25 +2088,35 @@ onMounted(load)
       :title="error"
       show-icon
       closable
-      class="ed-alert"
+      class="mb"
       @close="error = ''"
     />
-
-    <div v-if="task" class="ed-body">
-      <aside v-show="!focusMode" class="ed-left">
-        <div class="ed-tabs">
-          <button type="button" :class="{ on: leftTab === 'brief' }" @click="leftTab = 'brief'">内容设定</button>
-          <button type="button" :class="{ on: leftTab === 'facts' }" @click="leftTab = 'facts'">
-            可信材料 {{ selectedFactIds.length ? selectedFactIds.length : '' }}
-          </button>
-        </div>
-
-        <div v-show="leftTab === 'brief'" class="ed-pane">
-          <div v-if="briefSuggestHint" class="ed-hint">
+    <div v-if="task" class="grid">
+      <!-- Left: brief + facts -->
+      <aside class="col col-left">
+        <el-card id="step-brief" shadow="never" class="card">
+          <template #header>
+            <div class="card-head">
+              <button type="button" class="fold-toggle" @click="foldBrief = !foldBrief">
+                {{ foldBrief ? '▸' : '▾' }} 基础信息
+                <el-tag v-if="foldBrief && task?.brief_ready" size="small" type="success" effect="plain">已齐</el-tag>
+              </button>
+              <div v-show="!foldBrief" class="row-actions">
+                <el-button size="small" :loading="busy === 'suggest'" @click="suggestBrief">
+                  AI 建议
+                </el-button>
+                <el-button size="small" type="primary" :loading="busy === 'brief'" @click="saveBrief">
+                  保存
+                </el-button>
+              </div>
+            </div>
+          </template>
+          <div v-show="!foldBrief">
+          <div v-if="briefSuggestHint" class="hint mb" style="color: #2563eb">
             {{ briefSuggestHint }}
             <span v-if="briefLocalDraft"> · 本地草稿未保存</span>
           </div>
-          <el-form label-position="top" size="small">
+          <el-form label-width="88px" size="small">
             <el-form-item label="行业" required>
               <el-input v-model="brief.industry" />
             </el-form-item>
@@ -2228,122 +2125,392 @@ onMounted(load)
             </el-form-item>
             <el-form-item label="意图" required>
               <el-select v-model="brief.intent" clearable style="width: 100%">
-                <el-option v-for="it in catalog?.intents || []" :key="it.key" :label="it.label" :value="it.key" />
+                <el-option
+                  v-for="it in catalog?.intents || []"
+                  :key="it.key"
+                  :label="it.label"
+                  :value="it.key"
+                />
               </el-select>
             </el-form-item>
             <el-form-item label="内容类型" required>
               <el-select v-model="brief.content_type" clearable style="width: 100%">
-                <el-option v-for="it in catalog?.content_types || []" :key="it.key" :label="it.label" :value="it.key" />
+                <el-option
+                  v-for="it in catalog?.content_types || []"
+                  :key="it.key"
+                  :label="it.label"
+                  :value="it.key"
+                />
               </el-select>
             </el-form-item>
             <el-form-item label="CTA" required>
               <el-input v-model="brief.cta" />
             </el-form-item>
-            <button type="button" class="ed-adv" @click="showAdvancedBrief = !showAdvancedBrief">
-              {{ showAdvancedBrief ? '收起高级设置' : '高级设置' }}
-            </button>
-            <template v-if="showAdvancedBrief">
-              <el-form-item label="禁用表述">
-                <el-input v-model="brief.banned_claims" placeholder="逗号分隔" />
-              </el-form-item>
-              <el-form-item v-if="editorSurface.briefFields.includes('notes')" label="备注">
-                <el-input v-model="brief.notes" />
-              </el-form-item>
-              <template v-if="editorSurface.briefFields.includes('ai_question')">
-                <el-form-item label="AI 问题">
-                  <el-input v-model="brief.ai_question" />
-                </el-form-item>
-                <el-form-item label="不推荐原因">
-                  <el-input v-model="brief.not_recommended_reasons" type="textarea" :rows="2" />
-                </el-form-item>
-                <el-form-item label="信息缺口">
-                  <el-select v-model="brief.info_gaps" multiple collapse-tags collapse-tags-tooltip filterable clearable style="width: 100%">
-                    <el-option v-for="g in infoGapOptions" :key="g.key" :label="g.label" :value="g.key" />
-                  </el-select>
-                </el-form-item>
-                <el-form-item label="推荐场景">
-                  <el-input v-model="brief.recommend_when" />
-                </el-form-item>
-                <el-form-item label="竞品">
-                  <el-input v-model="brief.competitors" />
-                </el-form-item>
-                <el-form-item label="必须覆盖">
-                  <el-input v-model="brief.must_cover" />
-                </el-form-item>
+            <el-form-item label="禁用表述">
+              <el-input v-model="brief.banned_claims" placeholder="逗号分隔" />
+            </el-form-item>
+            <el-form-item v-if="editorSurface.briefFields.includes('notes')" label="备注">
+              <el-input v-model="brief.notes" />
+            </el-form-item>
+            <template v-if="editorSurface.briefFields.includes('ai_question')">
+            <el-divider content-position="left">策略（可选）</el-divider>
+            <el-form-item label="AI 问题">
+              <el-input v-model="brief.ai_question" />
+            </el-form-item>
+            <el-form-item label="不推荐原因">
+              <el-input
+                v-model="brief.not_recommended_reasons"
+                type="textarea"
+                :rows="2"
+                placeholder="AI 目前不推荐你的原因，逗号分隔；母稿须用事实回应"
+              />
+            </el-form-item>
+            <el-form-item>
+              <template #label>
+                <span
+                  title="AI 回答里缺哪些信息维度。勾选后，母稿必须用已绑定事实回应这些缺口，禁止编造补全。"
+                >
+                  信息缺口
+                </span>
               </template>
+              <el-select
+                v-model="brief.info_gaps"
+                multiple
+                collapse-tags
+                collapse-tags-tooltip
+                filterable
+                clearable
+                placeholder="选择需用事实补齐的缺口（可多选）"
+                style="width: 100%"
+              >
+                <el-option
+                  v-for="g in infoGapOptions"
+                  :key="g.key"
+                  :label="g.label"
+                  :value="g.key"
+                />
+              </el-select>
+              <div class="field-help">
+                指<strong>AI 回答里缺什么</strong>（定位/对比/案例/权威源等）。勾选后生成母稿须用事实回应，不要写英文 key。
+              </div>
+            </el-form-item>
+            <el-form-item label="推荐场景">
+              <el-input v-model="brief.recommend_when" placeholder="在什么场景下可被考虑/推荐" />
+            </el-form-item>
+            <el-form-item label="竞品">
+              <el-input v-model="brief.competitors" placeholder="逗号分隔，对比段会点名" />
+            </el-form-item>
+            <el-form-item label="必须覆盖">
+              <el-input v-model="brief.must_cover" placeholder="逗号分隔，如品牌名、产品线" />
+            </el-form-item>
             </template>
           </el-form>
-          <div class="ed-left-foot">
-            <el-button size="small" :loading="busy === 'suggest'" @click="suggestBrief">AI 建议</el-button>
-            <el-button size="small" type="primary" :loading="busy === 'brief'" @click="saveBrief">保存设定</el-button>
-          </div>
-        </div>
-
-        <div v-show="leftTab === 'facts'" class="ed-pane">
-          <div class="ed-fact-status" :class="{ ready: factsBindReady }">
-            已绑 {{ boundFacts.length }} · 已核验 {{ boundVerifiedCount }}/需≥3
-            <router-link class="ed-link" to="/geo/knowledge">管理知识库</router-link>
-          </div>
-          <el-input v-model="factQuery" clearable size="small" placeholder="搜索材料" class="mb" />
-          <el-radio-group v-model="factTrustFilter" size="small" class="mb">
-            <el-radio-button label="all">全部</el-radio-button>
-            <el-radio-button label="verified">已核验</el-radio-button>
-            <el-radio-button label="needs_review">待核验</el-radio-button>
-          </el-radio-group>
-          <div class="ed-fact-list">
-            <label
-              v-for="f in filteredTrustedFacts"
-              :key="f.id"
-              class="ed-fact"
-              :class="{ selected: isFactSelected(f.id) }"
-            >
-              <input type="checkbox" :checked="isFactSelected(f.id)" @change="toggleFact(f.id)">
-              <div class="ed-fact-main">
-                <div class="ed-fact-top">
-                  <span class="ed-fact-title">{{ f.title || '未命名' }}</span>
-                  <span class="ed-pill" :class="f.trust_level === 'verified' ? 'ok' : 'warn'">
-                    {{ trustLabel(f.trust_level) }}
-                  </span>
-                </div>
-                <div class="ed-fact-sum">{{ factSnippet(f, 72) || '无摘要' }}</div>
-                <div class="ed-fact-cite">{{ isFactCited(f.id) ? '已引用' : '未引用' }}</div>
+          <div class="trusted-materials">
+            <div class="trusted-materials-head">
+              <div>
+                <div class="trusted-materials-title">可信材料 · 事实卡</div>
+                <div class="hint">在左侧勾选事实，保存后母稿会引用这些材料。</div>
               </div>
-            </label>
-            <div v-if="!filteredTrustedFacts.length" class="ed-empty">
-              {{ allFacts.length ? '没有匹配的材料' : '知识库暂无事实，请先去补充' }}
+              <router-link class="facts-link" to="/geo/facts">管理知识库</router-link>
+            </div>
+            <div class="trusted-status" :class="{ ready: factsBindReady }">
+              已绑 <b>{{ boundFacts.length }}</b>
+              · 已核验 <b>{{ boundVerifiedCount }}</b>/需≥3
+              · 库内 {{ libraryVerifiedCount }}
+            </div>
+            <div class="trusted-filters">
+              <el-input
+                v-model="factQuery"
+                clearable
+                size="small"
+                placeholder="搜索标题 / 内容 / ID"
+                class="trusted-search"
+              />
+              <el-radio-group v-model="factTrustFilter" size="small">
+                <el-radio-button label="all">全部</el-radio-button>
+                <el-radio-button label="verified">已核验</el-radio-button>
+                <el-radio-button label="needs_review">待核验</el-radio-button>
+              </el-radio-group>
+            </div>
+            <div class="fact-picker" role="listbox" aria-label="事实卡列表">
+              <label
+                v-for="f in filteredTrustedFacts"
+                :key="f.id"
+                class="fact-pick-row"
+                :class="{ selected: isFactSelected(f.id) }"
+              >
+                <input
+                  type="checkbox"
+                  class="fact-pick-check"
+                  :checked="isFactSelected(f.id)"
+                  @change="toggleFact(f.id)"
+                >
+                <div class="fact-pick-main">
+                  <div class="fact-pick-top">
+                    <span class="fact-pick-title">{{ f.title || '未命名事实' }}</span>
+                    <span class="fact-pick-trust" :class="f.trust_level || 'unknown'">
+                      {{ trustLabel(f.trust_level) }}
+                    </span>
+                  </div>
+                  <div class="fact-pick-meta">#{{ f.id }}</div>
+                  <div v-if="factSnippet(f, 72)" class="fact-pick-snippet">{{ factSnippet(f, 72) }}</div>
+                </div>
+              </label>
+              <div v-if="!filteredTrustedFacts.length" class="fact-pick-empty">
+                {{ allFacts.length ? '没有匹配的事实卡' : '知识库暂无事实，请先去补充' }}
+              </div>
+            </div>
+            <div class="trusted-actions">
+              <el-button
+                size="default"
+                :disabled="libraryVerifiedCount < 3"
+                :loading="busy === 'facts'"
+                @click="bindTopVerified(3)"
+              >
+                一键绑 3 条已核验
+              </el-button>
+              <el-button
+                size="default"
+                type="primary"
+                :loading="busy === 'facts'"
+                :disabled="!selectedFactIds.length"
+                @click="saveFacts"
+              >
+                保存绑定（{{ selectedFactIds.length }}）
+              </el-button>
             </div>
           </div>
-          <div class="ed-left-foot">
-            <el-button
-              type="primary"
-              :loading="busy === 'facts'"
-              :disabled="!selectedFactIds.length"
-              @click="saveFacts"
-            >
-              绑定已选材料（{{ selectedFactIds.length }}）
-            </el-button>
           </div>
-        </div>
+        </el-card>
+
+        <el-card v-if="editorSurface.showFactBinding" id="step-facts" shadow="never" class="card fact-bind-card">
+          <template #header>
+            <div class="card-head">
+              <button type="button" class="fold-toggle" @click="foldFacts = !foldFacts">
+                {{ foldFacts ? '▸' : '▾' }} 事实绑定
+                <el-tag
+                  size="small"
+                  :type="factsBindReady ? 'success' : 'warning'"
+                  effect="plain"
+                >
+                  {{ factsBindReady ? '可生成' : '未就绪' }}
+                </el-tag>
+              </button>
+            </div>
+          </template>
+          <div v-show="!foldFacts">
+
+          <div class="fact-status" :class="{ ready: factsBindReady }">
+            <div class="fact-status-row">
+              <span>
+                已绑
+                <strong>{{ boundFacts.length }}</strong>
+                条
+              </span>
+              <span class="dot">·</span>
+              <span>
+                已核验
+                <strong>{{ boundVerifiedCount }}</strong>
+                / 需 ≥3
+              </span>
+            </div>
+            <el-progress
+              :percentage="Math.min(100, Math.round((boundVerifiedCount / 3) * 100))"
+              :stroke-width="8"
+              :status="factsBindReady ? 'success' : undefined"
+              :show-text="false"
+            />
+            <div class="hint fact-status-sub">
+              生成母稿至少绑定 <strong>3 条已核验</strong>事实。库中可选
+              {{ allFacts.length }} 条（已核验 {{ libraryVerifiedCount }}）
+              <span v-if="task?.status"> · {{ taskStatusLabel(task.status) }}</span>
+            </div>
+          </div>
+
+          <!-- 已绑定列表 -->
+          <div class="fact-section">
+            <div class="fact-section-label">当前绑定</div>
+            <div v-if="!boundFacts.length" class="fact-empty">
+              尚未绑定事实。可用下方「快速绑定」或从库中多选后保存。
+            </div>
+            <div v-else class="bound-chips">
+              <div v-for="f in boundFacts" :key="f.id" class="bound-chip">
+                <div class="bound-chip-main">
+                  <div class="bound-chip-top">
+                    <el-tag size="small" :type="trustTagType(f.trust_level)" effect="light">
+                      {{ trustLabel(f.trust_level) }}
+                    </el-tag>
+                    <span class="bound-chip-id">#{{ f.id }}</span>
+                    <span class="bound-chip-title" :title="f.title">{{ f.title || '未命名' }}</span>
+                    <button
+                      type="button"
+                      class="bound-chip-x"
+                      title="移除此条"
+                      @click="removeBoundFact(f.id)"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <div v-if="f.statement" class="bound-chip-stmt" :title="f.statement">
+                    {{ f.statement }}
+                  </div>
+                  <div v-else class="bound-chip-stmt is-empty">这条事实没有正文</div>
+                  <div v-if="f.source_name || f.source_url" class="bound-chip-src">
+                    来源 {{ f.source_name || f.source_url }}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 快速操作 -->
+          <div class="fact-section">
+            <div class="fact-section-label">快速绑定</div>
+            <div class="fact-actions">
+              <el-button
+                size="small"
+                type="success"
+                :loading="busy === 'facts'"
+                :disabled="libraryVerifiedCount < 3"
+                @click="bindTopVerified(3)"
+              >
+                一键绑 3 条已核验
+              </el-button>
+              <el-button size="small" :loading="busy === 'retrieve'" @click="retrieveFacts">
+                按 Brief 召回
+              </el-button>
+              <el-button
+                size="small"
+                :loading="busy === 'apply'"
+                :disabled="!retrievePreview.length"
+                @click="applyRetrieveTop"
+              >
+                绑定召回结果
+              </el-button>
+            </div>
+            <div class="field-help">
+              推荐：有核验事实时点「一键绑 3 条」；或先「按 Brief 召回」再「绑定召回结果」。
+            </div>
+          </div>
+
+          <!-- 手动多选 -->
+          <div class="fact-section">
+            <div class="fact-section-label">从事实库勾选</div>
+            <el-select
+              v-model="selectedFactIds"
+              multiple
+              filterable
+              collapse-tags
+              collapse-tags-tooltip
+              placeholder="搜索标题 / 勾选多条事实卡"
+              style="width: 100%"
+            >
+              <el-option
+                v-for="f in allFacts"
+                :key="f.id"
+                :label="factOptionLabel(f)"
+                :value="Number(f.id)"
+              >
+                <div class="fact-option">
+                  <el-tag size="small" :type="trustTagType(f.trust_level)" effect="plain">
+                    {{ trustLabel(f.trust_level) }}
+                  </el-tag>
+                  <span class="fact-option-id">#{{ f.id }}</span>
+                  <div class="fact-option-text">
+                    <div class="fact-option-title">{{ f.title || '未命名' }}</div>
+                    <div v-if="factSnippet(f, 48)" class="fact-option-stmt">{{ factSnippet(f, 48) }}</div>
+                  </div>
+                </div>
+              </el-option>
+            </el-select>
+            <div class="fact-actions fact-actions-end">
+              <el-button
+                size="small"
+                type="primary"
+                :loading="busy === 'facts'"
+                :disabled="!selectedFactIds.length"
+                @click="saveFacts"
+              >
+                保存绑定（{{ selectedFactIds.length }}）
+              </el-button>
+            </div>
+          </div>
+
+          <!-- 召回预览 -->
+          <div v-if="retrievePreview.length" class="fact-section retrieve-box">
+            <div class="fact-section-label">
+              召回候选
+              <span class="hint">{{ retrievePreview.length }} 条 · 已勾入选择框</span>
+            </div>
+            <div
+              v-for="r in retrievePreview"
+              :key="r.fact_id"
+              class="retrieve-row"
+            >
+              <el-tag
+                size="small"
+                :type="trustTagType(r.trust_level)"
+                effect="plain"
+              >
+                {{ trustLabel(r.trust_level) }}
+              </el-tag>
+              <span class="bound-chip-id">#{{ r.fact_id }}</span>
+              <div class="retrieve-text">
+                <span class="retrieve-title">{{ r.title || '—' }}</span>
+                <span v-if="r.statement" class="retrieve-stmt">{{ factSnippet(r, 48) }}</span>
+              </div>
+              <span v-if="r.score != null" class="retrieve-score">{{ Number(r.score).toFixed(1) }}</span>
+            </div>
+          </div>
+          </div>
+        </el-card>
       </aside>
 
-      <main class="ed-center">
-        <div class="ed-doc">
-          <el-tabs
-            v-if="editorSurface.showChannelVariants"
-            :model-value="docTab"
-            class="ed-doc-tabs"
-            @tab-change="onDocTabChange"
-          >
-            <el-tab-pane label="母稿" name="master" />
-            <el-tab-pane
-              v-for="v in variants"
-              :key="v.channel"
-              :name="v.channel"
-              :label="`${channelLabel(v.channel)}${v.stale ? ' *' : ''}`"
-            />
-          </el-tabs>
-          <div class="ed-doc-note">正在编辑：{{ docTab === 'master' ? '母稿' : channelLabel(docTab) }}</div>
+      <!-- Center: article + publish -->
+      <div class="col col-main">
+        <el-card id="step-doc" shadow="never" class="card">
+          <template #header>
+            <div class="card-head doc-card-head">
+              <div>
+                <div class="doc-heading">内容文档</div>
+                <div class="doc-heading-sub">编辑母稿，再生成各渠道版本</div>
+              </div>
+              <div class="row-actions">
+                <el-button
+                  v-if="docTab === 'master'"
+                  size="small"
+                  type="primary"
+                  :loading="busy === 'generate'"
+                  @click="generate"
+                >
+                  生成母稿
+                </el-button>
+                <el-button
+                  v-if="docTab === 'master'"
+                  size="small"
+                  :loading="busy === 'save'"
+                  @click="saveArticleBody"
+                >
+                  保存正文
+                </el-button>
+                <el-button
+                  v-if="docTab !== 'master'"
+                  size="small"
+                  type="primary"
+                  :loading="busy === 'saveVar'"
+                  @click="saveVariantBody"
+                >
+                  保存渠道稿
+                </el-button>
+                <el-button size="small" @click="copyCurrentDoc">复制</el-button>
+                <el-button size="small" :loading="busy === 'check'" @click="runCheck">
+                  检查就绪
+                </el-button>
+              </div>
+            </div>
+          </template>
 
+          <div v-if="generateHint" class="hint mb" style="color: #2563eb">{{ generateHint }}</div>
           <el-alert
             v-if="activeJob && ['pending', 'running'].includes(activeJob.status)"
             type="info"
@@ -2351,332 +2518,433 @@ onMounted(load)
             class="mb"
             :closable="false"
             :title="`后台任务 #${activeJob.id} · ${activeJob.status}`"
+            :description="`${activeJob.cancel_requested ? '已请求取消 · ' : ''}${activeJob.progress_label || '处理中'}${activeJob.progress_pct != null ? ' · ' + activeJob.progress_pct + '%' : ''}。刷新页面不会中断，稍后可继续看结果。`"
+          >
+            <el-button
+              size="small"
+              :disabled="!!activeJob.cancel_requested"
+              @click="cancelActiveJob"
+            >取消</el-button>
+          </el-alert>
+          <el-alert
+            v-if="activeJob?.status === 'failed'"
+            type="error"
+            show-icon
+            class="mb"
+            :title="`后台任务 #${activeJob.id} 失败`"
+            :description="activeJob.error || '无错误详情'"
+          >
+            <el-button size="small" type="primary" @click="generate">重试生成</el-button>
+          </el-alert>
+          <el-alert
+            v-if="activeJob?.status === 'cancelled'"
+            type="warning"
+            show-icon
+            class="mb"
+            :closable="false"
+            :title="`后台任务 #${activeJob.id} 已取消`"
+            description="生成已停下，正文未覆盖。可再点「生成母稿」。"
           />
-          <div v-if="generateHint" class="ed-hint mb">{{ generateHint }}</div>
+
+          <div v-if="docTab === 'master'" class="doc-draft-banner mb">
+            <b>自动生成母稿草案</b>
+            — 供内部改稿与结构检查，<b>不能直接当正式发布文</b>。
+            请润色语气、删模板痕迹、核对事实后再推送。
+          </div>
+
+          <el-tabs v-if="editorSurface.showChannelVariants" :model-value="docTab" class="mb" @tab-change="onDocTabChange">
+            <el-tab-pane label="母稿草案" name="master" />
+            <el-tab-pane
+              v-for="v in variants"
+              :key="v.channel"
+              :name="v.channel"
+              :label="`${channelLabel(v.channel)}${v.stale ? ' *' : ''}`"
+            />
+          </el-tabs>
 
           <template v-if="docTab === 'master'">
-            <el-input
-              v-model="article.title"
-              class="ed-doc-title"
-              placeholder="文章标题"
-            />
-            <RichTextMarkdownEditor
-              :key="`master-body-${task?.article?.version_no || 0}`"
-              v-model="article.body_markdown"
-              :min-height="320"
-              max-height="min(58vh, 640px)"
-              placeholder="在这里编辑母稿正文…"
-            />
-            <div class="ed-doc-status">
+            <el-form class="doc-form" label-position="top" size="small">
+              <el-form-item label="文章标题" class="title-form-item">
+                <el-input
+                  v-model="article.title"
+                  class="article-title-input"
+                  size="large"
+                  placeholder="输入一个清晰、可被搜索和引用的标题"
+                />
+              </el-form-item>
+              <el-form-item label="正文内容" class="body-form-item">
+                <RichTextMarkdownEditor
+                  :key="`master-body-${task?.article?.version_no || 0}`"
+                  v-model="article.body_markdown"
+                  :min-height="280"
+                  max-height="min(42vh, 420px)"
+                  placeholder="在这里编辑母稿正文。支持标题、加粗、列表、引用和链接…"
+                />
+              </el-form-item>
+            </el-form>
+            <div v-if="task.article" class="document-meta">
+              <span>草案 v{{ task.article.version_no }}</span>
+              <span>{{ task.article.created_at || '' }}</span>
               <span>{{ (article.body_markdown || '').replace(/\s/g, '').length }} 字</span>
-              <span v-if="task.article">v{{ task.article.version_no }}</span>
-              <span>{{ saveHint }}</span>
+            </div>
+            <div v-if="editorSurface.showFactBinding && sentenceCites.length" class="cite-box mb">
+              <div class="cite-head">
+                <div class="section-title">逐句证据</div>
+                <el-button size="small" :loading="busy === 'save'" @click="reciteEvidence">
+                  重新挂证据
+                </el-button>
+              </div>
+              <p class="cite-help">
+                主张句（数字 / 性能 / 案例）必须挂上事实或删改，否则检查就绪过不了。
+                普通叙述可以不挂。改稿或补事实后点「保存正文」或「重新挂证据」。
+              </p>
+              <div class="cite-sum">
+                已挂 {{ citeOkCount }}/{{ sentenceCites.length }}
+                · 主张未挂 {{ citeBlocking.length }}
+              </div>
+              <div v-for="(c, i) in sentenceCites" :key="i" class="cite-row" :class="{ block: c.needs_fact }">
+                <span class="cite-sent">{{ c.sentence }}</span>
+                <el-tag v-if="c.cited" size="small" type="success">
+                  #{{ c.fact_id }} {{ c.fact_title }}
+                </el-tag>
+                <el-tag v-else-if="c.needs_fact" size="small" type="danger">主张未挂</el-tag>
+                <el-tag v-else size="small" type="info">叙述可不挂</el-tag>
+                <el-button
+                  v-if="c.needs_fact"
+                  size="small"
+                  link
+                  type="danger"
+                  @click="removeCiteSentence(c.sentence)"
+                >删这句</el-button>
+                <router-link
+                  v-if="c.needs_fact"
+                  class="cite-link"
+                  to="/geo/facts"
+                >去补事实</router-link>
+              </div>
+            </div>
+            <div class="hint">重新「生成母稿」会覆盖当前正文</div>
+            <div
+              v-if="editorSurface.showChannelVariants && hasMasterDraft"
+              class="channel-next-hint"
+            >
+              母稿就绪后，在下方勾选渠道并生成渠道稿。
             </div>
           </template>
           <template v-else-if="editorSurface.showChannelVariants">
-            <el-input v-model="variantEdit.title" class="ed-doc-title" placeholder="渠道稿标题" />
-            <div class="variant-html-preview" v-html="variantEdit.body_html || '<p class=muted>暂无预览，请先生成渠道稿</p>'" />
-            <div class="ed-doc-status">
-              <el-button size="small" @click="copyCurrentDoc">复制成稿</el-button>
-              <el-button v-if="composeUrl" size="small" @click="openCompose">打开发布页</el-button>
+            <el-form label-width="56px" size="small">
+              <el-form-item label="标题">
+                <el-input v-model="variantEdit.title" />
+              </el-form-item>
+              <el-form-item label="正文">
+                <div
+                  class="variant-html-preview"
+                  v-html="variantEdit.body_html || '<p class=muted>暂无预览，请先生成渠道稿</p>'"
+                />
+              </el-form-item>
+            </el-form>
+          </template>
+        </el-card>
+
+        <el-card v-if="editorSurface.showChannelVariants" id="step-publish" shadow="never" class="card">
+          <template #header>
+            <div class="card-head">
+              <span>渠道稿</span>
+              <el-button
+                size="small"
+                type="primary"
+                :loading="busy === 'variants'"
+                :disabled="!hasMasterDraft"
+                @click="genVariants"
+              >
+                生成渠道稿
+              </el-button>
             </div>
           </template>
-        </div>
-      </main>
+          <el-alert
+            v-if="!hasMasterDraft"
+            type="info"
+            show-icon
+            :closable="false"
+            class="mb"
+            title="请先生成母稿"
+            description="有母稿正文后，才能按官网 / 微信 / 知乎等渠道拆稿。"
+          />
+          <p class="hint mb">勾选渠道后生成，可在上方页签查看和复制。</p>
+          <el-checkbox-group v-model="channelPick">
+            <el-checkbox
+              v-for="c in channelOptions"
+              :key="c.key"
+              :label="c.key"
+            >
+              {{ c.label }}
+            </el-checkbox>
+          </el-checkbox-group>
+        </el-card>
 
-      <aside v-if="showCheckDrawer && !focusMode" class="ed-check">
-        <div class="ed-check-head">
-          <div>
-            <div class="ed-check-score">就绪度 {{ scoreMeta.score != null ? scoreMeta.headline : '—' }}</div>
-            <div class="ed-check-sub">{{ mustIssues.length }} 项需要处理</div>
-          </div>
-          <el-button size="small" :loading="busy === 'check'" @click="runCheck">重新检查</el-button>
-        </div>
-
-        <div v-if="mustIssues.length" class="ed-iss-block">
-          <div class="ed-iss-label must">必须处理</div>
-          <div v-for="c in mustIssues" :key="c.code" class="ed-iss">
-            <div class="ed-iss-title">{{ c.label || c.message }}</div>
-            <div class="ed-iss-msg">{{ c.message }}</div>
-            <div class="ed-iss-acts">
-              <button type="button" @click="locateIssue(c)">定位正文</button>
-              <button type="button" @click="fixCheck(c.code)">查看建议</button>
-              <button type="button" @click="markHandled(c.code)">标记已处理</button>
-            </div>
-          </div>
-        </div>
-
-        <div v-if="suggestIssues.length" class="ed-iss-block">
-          <div class="ed-iss-label warn">建议优化</div>
-          <div v-for="a in suggestIssues" :key="a.code || a.message" class="ed-iss">
-            <div class="ed-iss-title">{{ a.message }}</div>
-            <div v-if="a.action" class="ed-iss-msg">{{ a.action }}</div>
-            <div class="ed-iss-acts">
-              <button type="button" @click="locateIssue(a)">定位正文</button>
-              <button type="button" @click="markHandled(a.code || a.message)">标记已处理</button>
-            </div>
-          </div>
-        </div>
-
-        <div v-if="!mustIssues.length && checks.length" class="ed-all-ok">结构项已全部通过，仍建议人工过目</div>
-
-        <button
-          v-if="passedChecks.length"
-          type="button"
-          class="ed-passed-toggle"
-          @click="showPassedChecks = !showPassedChecks"
+        <el-card
+          v-if="editorSurface.showChannelVariants"
+          id="step-publish-record"
+          shadow="never"
+          class="card"
         >
-          {{ showPassedChecks ? '收起' : '已通过' }} {{ passedChecks.length }} 项
-        </button>
-        <ul v-if="showPassedChecks && passedChecks.length" class="ed-passed">
-          <li v-for="c in passedChecks" :key="c.code">{{ c.label }}</li>
-        </ul>
+          <template #header>
+            <div class="card-head">
+              <span>记录发布</span>
+            </div>
+          </template>
+          <p class="hint mb">
+            官网 Webhook / 微信公众号（app_id+secret）/ 已授权社交账号可一键推送。
+            百科、未接账号的知乎等没有开放接口：复制成稿到平台后台发布，再把 URL 填回来。
+            <router-link to="/geo/publishing">去配置分发账号</router-link>
+          </p>
+          <el-alert
+            v-if="publishGateHint"
+            type="info"
+            :closable="false"
+            show-icon
+            class="mb"
+            :title="publishGateHint"
+          />
+          <div v-if="docTab === 'master'" class="hint mb">请先切到上方渠道页签，再推送或回填。</div>
+          <template v-else>
+            <div v-if="currentPushReady.length" class="mb">
+              <div class="hint" style="margin-bottom: 8px">当前渠道可自动推送</div>
+              <el-select
+                v-model="webhookAccountId"
+                placeholder="选择推送账号"
+                style="width: 280px; margin-right: 8px"
+              >
+                <el-option
+                  v-for="t in currentPushReady"
+                  :key="t.account_id"
+                  :label="t.channel_name ? `${t.channel_name} · ${t.account_id}` : `账号 ${t.account_id}`"
+                  :value="t.account_id"
+                />
+              </el-select>
+              <el-button
+                type="primary"
+                :loading="busy === 'push'"
+                :disabled="!!publishGateHint || !webhookAccountId"
+                @click="pushWebhook"
+              >
+                推送到渠道
+              </el-button>
+            </div>
+            <el-alert
+              v-else-if="currentPushBlock.length"
+              type="warning"
+              :closable="false"
+              show-icon
+              class="mb"
+              :title="currentPushBlock.join('；')"
+            />
+            <div class="mb" style="display:flex;gap:8px;flex-wrap:wrap">
+              <el-button :disabled="!canCopyPublish" @click="copyCurrentDoc">复制成稿</el-button>
+              <el-button v-if="composeUrl" @click="openCompose">打开发布页</el-button>
+            </div>
+            <div class="hint" style="margin-bottom: 8px">发布完成后把公网地址填回来</div>
+            <el-input
+              v-model="publishUrl"
+              placeholder="https:// 已发布地址"
+              class="mb"
+            />
+            <el-button
+              :loading="busy === 'publish'"
+              :disabled="!!publishGateHint"
+              @click="recordPublication"
+            >
+              记录已发
+            </el-button>
+          </template>
+          <ul v-if="recordedPublications.length" class="hint" style="margin-top: 12px">
+            <li
+              v-for="p in recordedPublications"
+              :key="p.id || p.published_url"
+            >
+              {{ channelLabel(p.channel) }} · {{ p.published_url }}
+            </li>
+          </ul>
+        </el-card>
+      </div>
+
+      <!-- Right: draft readiness (not publish-ready copy) -->
+      <aside class="col col-rail">
+        <el-card id="step-check" shadow="never" class="card rail-card">
+          <template #header>
+            <div class="card-head">
+              <div>
+                <div class="rail-title">母稿就绪检查</div>
+                <div class="rail-sub">生成稿体检 · 非正式成稿</div>
+              </div>
+              <div class="row-actions">
+                <el-button size="small" :loading="busy === 'check'" @click="runCheck">检查</el-button>
+              </div>
+            </div>
+          </template>
+
+          <div class="draft-banner mb">
+            当前是 AI 母稿草案，通过检查只代表「结构/证据够用」，
+            <b>还不能直接当正式发布文</b>。请人工润色、核对事实后再推送。
+          </div>
+
+          <div class="score-block" :class="'tone-' + scoreMeta.tone">
+            <div class="score-row">
+              <div class="score-num">
+                <template v-if="scoreMeta.score != null">
+                  <span class="score-big">{{ scoreMeta.headline }}</span>
+                  <span class="score-den">/100</span>
+                </template>
+                <template v-else>
+                  <span class="score-big muted-num">—</span>
+                </template>
+              </div>
+              <div class="score-copy">
+                <div class="score-label">GEO 就绪分</div>
+                <div class="score-hint">{{ scoreMeta.subline }}</div>
+              </div>
+            </div>
+            <div v-if="scoreMeta.score != null" class="score-bar">
+              <div class="score-bar-fill" :style="{ width: `${Math.min(100, scoreMeta.score)}%` }" />
+            </div>
+            <div v-if="scoreMeta.chips.length" class="score-chips">
+              <span
+                v-for="chip in scoreMeta.chips"
+                :key="chip.key"
+                class="score-chip"
+                :class="{ low: chip.value < 60 }"
+              >
+                {{ chip.label }} {{ chip.value }}
+              </span>
+            </div>
+          </div>
+
+          <div v-if="failedChecks.length" class="sec-row">
+            <span class="sec">待补齐 {{ failedChecks.length }}</span>
+          </div>
+          <ul v-if="failedChecks.length" class="check-list fail-list">
+            <li v-for="c in failedChecks" :key="c.code">
+              <span class="bad">✗</span>
+              <div class="check-body">
+                <div class="check-title">{{ c.label }}</div>
+                <div class="check-msg">{{ c.message }}</div>
+                <ul v-if="checkDetails(c).length" class="issue-points">
+                  <li v-for="(d, i) in checkDetails(c)" :key="i">{{ d }}</li>
+                </ul>
+                <div v-if="c.action" class="check-action">{{ c.action }}</div>
+                <div class="check-fix-row">
+                  <el-button
+                    v-if="patchForCheck(c.code)"
+                    size="small"
+                    type="primary"
+                    :loading="busy === 'patch'"
+                    @click="fixCheck(c.code)"
+                  >
+                    一键修复
+                  </el-button>
+                  <el-button
+                    v-else
+                    size="small"
+                    plain
+                    :loading="busy === 'check' || busy === 'patch'"
+                    @click="fixCheck(c.code)"
+                  >
+                    检查并尝试修复
+                  </el-button>
+                </div>
+              </div>
+            </li>
+          </ul>
+          <div v-else-if="checks.length" class="all-pass mb">结构项已全部通过 · 仍建议人工过目</div>
+
+          <button
+            v-if="passedChecks.length"
+            type="button"
+            class="toggle-passed"
+            @click="showPassedChecks = !showPassedChecks"
+          >
+            {{ showPassedChecks ? '收起' : '展开' }}已通过 {{ passedChecks.length }} 项
+          </button>
+          <ul v-if="showPassedChecks && passedChecks.length" class="check-list pass-list">
+            <li v-for="c in passedChecks" :key="c.code">
+              <span class="ok">✓</span>
+              <div>
+                <div class="check-title">{{ c.label }}</div>
+                <div class="check-msg">{{ c.message }}</div>
+              </div>
+            </li>
+          </ul>
+
+          <div v-if="geoActions.length" class="mt">
+            <div class="sec">建议补强</div>
+            <ul class="check-list fail-list">
+              <li v-for="a in geoActions" :key="a.code">
+                <span class="warn">!</span>
+                <div>
+                  <div class="check-title">{{ a.message }}</div>
+                  <div v-if="a.action" class="check-action">{{ a.action }}</div>
+                </div>
+              </li>
+            </ul>
+          </div>
+
+          <div v-if="patches.length" class="mt patch-box">
+            <div class="sec">一键补结构（写入母稿，仍需人工改）</div>
+            <div class="row-actions">
+              <el-button
+                size="default"
+                type="warning"
+                plain
+                :loading="busy === 'patch'"
+                @click="applyAllPatches"
+              >
+                全部应用 ({{ patches.length }})
+              </el-button>
+              <el-button
+                v-for="p in patches"
+                :key="p.code"
+                size="default"
+                :loading="busy === 'patch'"
+                @click="applyPatch(p.code)"
+              >
+                {{ p.label || checkLabel(p.code) }}
+              </el-button>
+            </div>
+          </div>
+          <div v-else-if="failedChecks.length" class="mt patch-box">
+            <div class="sec">一键补结构</div>
+            <div class="hint mb">当前无补丁缓存，请先点「检查就绪」生成可插入补丁。</div>
+            <el-button size="default" type="warning" plain :loading="busy === 'check'" @click="runCheck">
+              检查就绪并生成补丁
+            </el-button>
+          </div>
+
+          <div v-if="editorSurface.showAiReview && aiReview" class="mt ai-box">
+            <div class="sec">
+              AI 审阅意见
+              <span class="sec-meta">
+                阻断 {{ aiReview.block_count || 0 }} · 提醒 {{ aiReview.warn_count || 0 }}
+              </span>
+            </div>
+            <div class="ai-summary">{{ aiReview.summary }}</div>
+            <ul class="check-list">
+              <li v-for="(iss, i) in aiReview.issues || []" :key="i">
+                <span class="warn">{{ iss.severity === 'block' ? '阻断' : '提醒' }}</span>
+                <div>
+                  <div class="check-title">{{ iss.category || '意见' }}</div>
+                  <div class="check-msg">{{ iss.message }}</div>
+                  <div v-if="iss.fix_hint" class="check-action">{{ iss.fix_hint }}</div>
+                </div>
+              </li>
+            </ul>
+          </div>
+        </el-card>
       </aside>
     </div>
   </div>
 </template>
 
 <style scoped>
-.ed-shell {
-  --ed-blue: #2563eb;
-  --ed-purple: #7c3aed;
-  --ed-green: #059669;
-  --ed-orange: #d97706;
-  --ed-red: #dc2626;
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  height: calc(100vh - 8px);
-  min-width: 0;
-  overflow: hidden;
-  padding: 10px 12px 12px;
-  background: #f4f5f8;
-  color: #1f2937;
-}
-.ed-top {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex: none;
-  min-height: 56px;
-  padding: 8px 4px 10px;
-}
-.ed-back {
-  border: 0;
-  background: transparent;
-  color: var(--ed-blue);
-  font-weight: 650;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.ed-ident { min-width: 0; flex: 1; }
-.ed-kicker { font-size: 12px; color: #6b7280; }
-.ed-name {
-  font-size: 16px;
-  font-weight: 750;
-  letter-spacing: -0.02em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ed-top-actions { display: flex; align-items: center; gap: 8px; flex: none; }
-.ed-save { font-size: 12px; color: #9ca3af; }
-.ed-top-actions :deep(.el-button--primary) {
-  background: var(--ed-blue);
-  border-color: var(--ed-blue);
-  border-radius: 8px;
-}
-.ed-top-actions :deep(.el-button) { border-radius: 8px; }
-.ed-top-actions .is-active { color: var(--ed-purple); border-color: #ddd6fe; background: #f5f3ff; }
-.ed-alert { margin: 0 0 8px; }
-.ed-body {
-  display: grid;
-  grid-template-columns: 312px minmax(720px, 1fr);
-  gap: 12px;
-  min-height: 0;
-  flex: 1;
-}
-.ed-shell.check-open .ed-body {
-  grid-template-columns: 312px minmax(0, 1fr) 340px;
-}
-.ed-shell.focus .ed-body { grid-template-columns: minmax(0, 1fr); }
-.ed-left, .ed-check, .ed-center, .ed-doc, .ed-pane {
-  min-height: 0;
-}
-.ed-left, .ed-check {
-  display: flex;
-  flex-direction: column;
-  background: #fff;
-  border: 1px solid #e7e9ee;
-  border-radius: 12px;
-  overflow: hidden;
-}
-.ed-tabs {
-  display: flex;
-  gap: 0;
-  border-bottom: 1px solid #eef0f4;
-  flex: none;
-}
-.ed-tabs button {
-  flex: 1;
-  border: 0;
-  background: transparent;
-  padding: 10px 8px;
-  font-size: 13px;
-  font-weight: 650;
-  color: #6b7280;
-  cursor: pointer;
-}
-.ed-tabs button.on { color: var(--ed-purple); box-shadow: inset 0 -2px 0 var(--ed-purple); }
-.ed-pane {
-  flex: 1;
-  overflow: auto;
-  padding: 12px;
-}
-.ed-left-foot {
-  display: flex;
-  gap: 8px;
-  padding-top: 10px;
-}
-.ed-adv {
-  border: 0;
-  background: transparent;
-  color: #6b7280;
-  font-size: 12px;
-  padding: 4px 0 10px;
-  cursor: pointer;
-}
-.ed-link { margin-left: 8px; color: var(--ed-blue); font-size: 12px; }
-.ed-fact-status { font-size: 12px; color: #6b7280; margin-bottom: 8px; }
-.ed-fact-status.ready { color: var(--ed-green); }
-.ed-fact-list { display: flex; flex-direction: column; gap: 8px; }
-.ed-fact {
-  display: flex;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid #eef0f4;
-  border-radius: 8px;
-  cursor: pointer;
-}
-.ed-fact.selected { border-color: #ddd6fe; background: #faf8ff; }
-.ed-fact-top { display: flex; justify-content: space-between; gap: 8px; }
-.ed-fact-title { font-weight: 650; font-size: 13px; }
-.ed-fact-sum { font-size: 12px; color: #6b7280; margin-top: 4px; line-height: 1.45; }
-.ed-fact-cite { font-size: 11px; color: #9ca3af; margin-top: 4px; }
-.ed-pill { font-size: 11px; border-radius: 6px; padding: 1px 6px; }
-.ed-pill.ok { color: var(--ed-green); background: #ecfdf5; }
-.ed-pill.warn { color: var(--ed-orange); background: #fffbeb; }
-.ed-empty { font-size: 12px; color: #9ca3af; padding: 16px 0; }
-.ed-center {
-  display: flex;
-  background: #fff;
-  border: 1px solid #e7e9ee;
-  border-radius: 12px;
-  overflow: hidden;
-}
-.ed-doc {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-  padding: 8px 0 0;
-}
-.ed-doc-tabs { padding: 0 24px; }
-.ed-doc-note { padding: 0 24px 8px; font-size: 12px; color: #9ca3af; }
-.ed-doc-title :deep(.el-input__wrapper) {
-  box-shadow: none !important;
-  background: transparent;
-  padding: 4px 24px;
-}
-.ed-doc-title :deep(.el-input__inner) {
-  font-size: 22px;
-  font-weight: 750;
-  letter-spacing: -0.03em;
-}
-.ed-doc :deep(.rich-editor) {
-  border: 0;
-  border-radius: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-.ed-doc :deep(.rich-toolbar) {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-}
-.ed-doc :deep(.rich-content) {
-  max-width: 840px;
-  margin: 0 auto;
-  font-size: 16px;
-  line-height: 1.7;
-}
-.ed-doc-status {
-  display: flex;
-  gap: 12px;
-  padding: 8px 24px;
-  border-top: 1px solid #eef0f4;
-  color: #9ca3af;
-  font-size: 12px;
-  flex: none;
-}
-.ed-check { width: 340px; }
-.ed-check-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px;
-  border-bottom: 1px solid #eef0f4;
-}
-.ed-check-score { font-weight: 750; }
-.ed-check-sub { font-size: 12px; color: #6b7280; }
-.ed-iss-block { padding: 10px 12px 0; }
-.ed-iss-label { font-size: 12px; font-weight: 700; margin-bottom: 6px; }
-.ed-iss-label.must { color: var(--ed-red); }
-.ed-iss-label.warn { color: var(--ed-orange); }
-.ed-iss {
-  border: 1px solid #f3f4f6;
-  border-radius: 8px;
-  padding: 10px;
-  margin-bottom: 8px;
-}
-.ed-iss-title { font-size: 13px; font-weight: 650; }
-.ed-iss-msg { font-size: 12px; color: #6b7280; margin-top: 4px; line-height: 1.45; }
-.ed-iss-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-.ed-iss-acts button {
-  border: 0;
-  background: #f3f4f6;
-  border-radius: 6px;
-  padding: 4px 8px;
-  font-size: 12px;
-  cursor: pointer;
-}
-.ed-all-ok { margin: 12px; padding: 10px; border-radius: 8px; background: #ecfdf5; color: var(--ed-green); font-size: 13px; }
-.ed-passed-toggle {
-  border: 0;
-  background: transparent;
-  color: #6b7280;
-  font-size: 12px;
-  padding: 10px 12px;
-  cursor: pointer;
-  text-align: left;
-}
-.ed-passed { margin: 0 12px 12px; padding-left: 18px; font-size: 12px; color: #6b7280; }
-.ed-hint { font-size: 12px; color: var(--ed-blue); line-height: 1.45; }
-.mb { margin-bottom: 10px; }
-@media (max-width: 1280px) {
-  .ed-body,
-  .ed-shell.check-open .ed-body {
-    grid-template-columns: 280px minmax(0, 1fr);
-  }
-  .ed-check { grid-column: 1 / -1; width: auto; max-height: 280px; }
-}
-@media (max-width: 900px) {
-  .ed-body,
-  .ed-shell.check-open .ed-body { grid-template-columns: 1fr; }
-  .ed-left { max-height: 320px; }
-}
 .editor {
   box-sizing: border-box;
   width: 100%;

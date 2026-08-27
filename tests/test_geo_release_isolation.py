@@ -87,15 +87,24 @@ def test_geo_standalone_bootstraps_logged_in_tenant_context():
     assert '<router-view v-if="ready" />' in app
 
 
-def test_geo_standalone_editor_uses_immersive_shell():
+def test_geo_standalone_uses_compact_colleague_shell_without_outer_header():
     shell = _read("frontend/src/views/geo/GeoWorkspaceShell.vue")
 
-    assert "'is-editor': isEditor" in shell
-    assert ".geo-shell.is-editor .geo-shell-header { display: none; }" in shell
-    assert ".geo-shell.is-editor .geo-shell-content" in shell
-    assert "height: 100vh;" in shell
+    assert "grid-template-columns: 216px minmax(0, 1fr);" in shell
+    assert "geo-shell-header" not in shell
+    assert "railCollapsed" not in shell
+    assert "session.setTenant(id)" in shell
     assert "padding: 0;" in shell
-    assert "overflow: hidden;" in shell
+
+
+def test_geo_editor_keeps_the_colleague_three_column_workbench():
+    editor = _read("frontend/src/views/geo/GeoTaskEditorView.vue")
+
+    assert "内容编辑工作台" in editor
+    assert "基础信息" in editor
+    assert "可信材料 · 事实卡" in editor
+    assert "内容文档" in editor
+    assert "母稿就绪检查" in editor
 
 
 def test_nginx_keeps_geo_in_the_independent_include():
