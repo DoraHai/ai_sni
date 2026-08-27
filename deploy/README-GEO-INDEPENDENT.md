@@ -46,7 +46,18 @@ sudo bash deploy/setup-geo.sh
 ```
 
 Creates `/opt/geo-service`, `/opt/geo-frontend`, `/var/log/geo-service`, installs
-`geo-service.service` and enables it (does not start until first deploy + `.env`).
+`geo-service.service` and enables it. It also creates `/opt/geo-service/.env`
+as `root:sem` mode `0640` without overwriting an existing file.
+
+The GEO service loads environment files in this order:
+
+1. `/opt/sem-backend/.env` for shared database, authentication, and encryption
+   settings required by the platform.
+2. `/opt/geo-service/.env` for GEO-only overrides such as `DASHSCOPE_*` or
+   `DEEPSEEK_*`.
+
+Copy variable names from `deploy/geo-service.env.example`; never copy a real
+API key into Git. Restart only `geo-service` after changing the GEO override.
 
 ## Production acceptance checklist
 

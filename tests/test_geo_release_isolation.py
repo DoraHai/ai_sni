@@ -30,6 +30,25 @@ def test_geo_service_owns_routes_guard_and_scheduler():
     assert "geo_daily_metrics_nightly" in geo_scheduler
 
 
+def test_geo_service_has_a_dedicated_optional_secret_override():
+    unit = _read("deploy/geo-service.service")
+    setup = _read("deploy/setup-geo.sh")
+    example = _read("deploy/geo-service.env.example")
+
+    shared = "EnvironmentFile=/opt/sem-backend/.env"
+    dedicated = "EnvironmentFile=-/opt/geo-service/.env"
+    assert shared in unit
+    assert dedicated in unit
+    assert unit.index(shared) < unit.index(dedicated)
+    assert 'install -o root -g "$SEM_USER" -m 0640 /dev/null "$GEO_ENV_FILE"' in setup
+    assert "Refusing symlink GEO env file" in setup
+    assert 'chown root:"$SEM_USER" "$GEO_ENV_FILE"' in setup
+    assert 'chmod 0640 "$GEO_ENV_FILE"' in setup
+    assert "DASHSCOPE_API_KEY=" in example
+    assert "DEEPSEEK_API_KEY=" in example
+    assert "geo-demo-local-key" not in example
+
+
 def test_geo_frontend_is_mounted_without_replacing_the_sem_shell():
     app = _read("frontend/src/App.vue")
     router = _read("frontend/src/router/index.js")
