@@ -530,6 +530,38 @@ async def polish_for_channel(
     return out_title, out_body, meta
 
 
+def unpublished_adapt_fallback(
+    channel: str,
+    title: str,
+    body_md: str,
+    outline: dict[str, Any] | None,
+    issues: list[str],
+) -> tuple[str, str, dict[str, Any]]:
+    """Keep a tab for every selected channel; never mark it publish_ready."""
+    from app.geo.content.variants import adapt_for_channel
+
+    cleaned = strip_draft_markers(body_md)
+    t, b = adapt_for_channel(channel, title, cleaned, outline or {})
+    b, fin = _finalize_publish_body(
+        channel, b, quality="adapted_draft_not_publishable"
+    )
+    return (
+        t,
+        b,
+        {
+            "polish": "quality_fallback",
+            "engine": "deterministic_v1",
+            "quality": "adapted_draft_not_publishable",
+            "publishable": False,
+            "fallback": True,
+            "hard_gate": True,
+            "article_standard": "full_article_v2",
+            "quality_issues": list(issues or [])[:8],
+            **fin,
+        },
+    )
+
+
 async def adapt_or_polish_for_channel(
     channel: str,
     title: str,
@@ -544,7 +576,8 @@ async def adapt_or_polish_for_channel(
 ) -> tuple[str, str, dict[str, Any]]:
     """Prefer LLM formal channel polish with hard quality gate.
 
-    ArticleQualityError always propagates (no silent fallback to pseudo-publishable draft).
+    ArticleQualityError is preserved as a non-publishable channel draft so every
+    selected channel remains visible without being mislabelled as publish-ready.
     Other polish failures fall back to deterministic adapt, clearly marked not publishable.
     """
     outline = outline or {}
@@ -560,9 +593,11 @@ async def adapt_or_polish_for_channel(
                 prompts=prompts,
                 facts=facts,
             )
-        except ArticleQualityError:
-            # 硬拦截：不把不合格稿伪装成正稿
-            raise
+        except ArticleQualityError as exc:
+            t, b, meta = unpublished_adapt_fallback(
+                channel, title, body_md, outline, list(exc.issues)
+            )
+            return t, b, meta
         except GeoContentError:
             pass
 
