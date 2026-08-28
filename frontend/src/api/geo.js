@@ -1,5 +1,9 @@
 import client from './client'
 
+export function fetchGeoTenants() {
+  return client.get('/api/v1/geo/tenants')
+}
+
 export function runGeoAudit({ tenantId, url, scope = 'single' }) {
   return client.post('/api/v1/geo/audits', { tenant_id: tenantId, url, scope }, {
     timeout: scope === 'site' ? 120000 : 45000,

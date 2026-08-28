@@ -92,10 +92,21 @@ def test_geo_standalone_keeps_required_form_and_table_styles():
 
 def test_geo_standalone_bootstraps_logged_in_tenant_context():
     app = _read("frontend/geo-frontend/src/App.vue")
+    api = _read("frontend/src/api/geo.js")
+    routes = _read("app/geo/routes.py")
+    scope = _read("app/geo/tenant_scope.py")
+    auth = _read("app/security/auth.py")
 
     assert "fetchMe" in app
-    assert "fetchTenants" in app
-    assert "fetchTenants('geo')" in app
+    assert "fetchGeoTenants" in app
+    assert "fetchTenants" not in app
+    assert "client.get('/api/v1/geo/tenants')" in api
+    assert '@router.get("/tenants")' in routes
+    assert 'module_code == "geo"' in scope
+    assert '("active", "trial")' in scope
+    assert "expires_at >= current_date" in scope
+    assert 'p == "/api/v1/geo/tenants"' in auth
+    assert '{"geo.assets", "geo.content", "geo.diagnosis"}' in auth
     assert "session.refreshUser(me.user)" in app
     assert "session.setTenants(tenants.tenants || [])" in app
     assert '<router-view v-if="ready" />' in app
