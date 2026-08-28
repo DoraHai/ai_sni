@@ -53,5 +53,15 @@ if (!javascript.includes(portalUrl)) {
 if (javascript.includes('https://sem.snipers.com.cn/deal-sniper/portal')) {
   throw new Error('SEO build still contains the retired portal URL')
 }
+for (const marker of [
+  '/api/v1/seo/rank-serp/providers',
+  '/api/v1/seo/traffic/gsc/collect',
+  'DataForSEO',
+  '接入 Google Search Console',
+]) {
+  if (!javascript.includes(marker)) {
+    throw new Error(`SEO build is missing the multi-engine/traffic marker: ${marker}`)
+  }
+}
 
 console.log(`SEO build verified: ${files.length} files`)
