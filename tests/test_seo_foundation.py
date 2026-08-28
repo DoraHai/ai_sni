@@ -140,6 +140,27 @@ def test_tdk_suggestions_include_keyword_and_brand_without_claims() -> None:
     assert len(description) <= 160
 
 
+def test_tdk_suggestions_preserve_manual_product_entities() -> None:
+    page = SimpleNamespace(
+        h1="操作手册",
+        title=(
+            "使用手册 - 适合 NORDAC 变频器及软启动器的操作软件及参数设置软件"
+            "（NORDCON）(BU0000) | NORD"
+        ),
+        url="https://www.nord.cn/cn/service/documentation/manuals/details/bu0000.jsp",
+        page_type=None,
+    )
+    title, description = _page_tdk_suggestions(page, None, "诺德")
+    assert title == "操作手册｜NORDAC NORDCON BU0000｜NORD"
+    assert "NORDAC" in description
+    assert "NORDCON" in description
+    assert "BU0000" in description
+    assert "整理页面重点内容" not in description
+    assert "查看相关信息" not in description
+    assert len(title) <= 60
+    assert len(description) <= 160
+
+
 def test_site_page_workflow_statuses_are_validated() -> None:
     for status in ("proposed", "approved", "implemented", "verified"):
         assert SitePageUpdate(status=status).status == status

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
@@ -2263,6 +2264,43 @@ def _page_topic(row: SeoSitePage) -> str:
     return path[:80] or "网站首页"
 
 
+def _page_title_entities(value: str) -> list[str]:
+    """Return stable product/model tokens already present in the page title."""
+    entities: list[str] = []
+    for match in re.findall(r"(?<![A-Za-z0-9])[A-Z][A-Z0-9-]{2,}(?![A-Za-z0-9])", value):
+        if match.casefold() not in {item.casefold() for item in entities}:
+            entities.append(match)
+    return entities
+
+
+def _page_source_title(row: SeoSitePage) -> str:
+    return " ".join(str(row.title or "").split()).strip()
+
+
+def _page_brand_label(source_title: str, brand_name: str) -> str:
+    parts = [item.strip() for item in re.split(r"[|｜]", source_title) if item.strip()]
+    suffix = parts[-1] if len(parts) > 1 else ""
+    if suffix and len(suffix) <= 24 and re.search(r"[A-Za-z]", suffix):
+        return suffix
+    return " ".join(str(brand_name or "").split()).strip()
+
+
+def _compact_tdk_title(primary: str, entities: list[str], brand: str) -> str:
+    suffix_parts: list[str] = []
+    entity_part = " ".join(
+        item for item in entities if item.casefold() not in primary.casefold()
+        and item.casefold() != brand.casefold()
+    )
+    if entity_part:
+        suffix_parts.append(entity_part)
+    if brand and brand.casefold() not in primary.casefold():
+        suffix_parts.append(brand)
+    suffix = "｜".join(suffix_parts)
+    max_primary = 60 - len(suffix) - (1 if suffix else 0)
+    compact_primary = primary[:max(max_primary, 1)].rstrip("｜ -—")
+    return "｜".join(item for item in (compact_primary, suffix) if item)[:60].rstrip("｜")
+
+
 def _page_tdk_suggestions(
     row: SeoSitePage,
     keyword: SeoKeywordAsset | None,
@@ -2271,24 +2309,25 @@ def _page_tdk_suggestions(
     """Build editable, claim-safe TDK suggestions without an external AI account."""
     topic = _page_topic(row)
     primary = " ".join(str(keyword.keyword if keyword else topic).split()).strip()
-    title_parts = [primary]
-    if topic.casefold() != primary.casefold() and primary.casefold() not in topic.casefold():
-        title_parts.append(topic)
-    if brand_name and brand_name.casefold() not in "｜".join(title_parts).casefold():
-        title_parts.append(brand_name.strip())
-    title = "｜".join(item for item in title_parts if item)[:60].rstrip("｜")
+    source_title = _page_source_title(row)
+    brand = _page_brand_label(source_title, brand_name)
+    entities = _page_title_entities(source_title)
+    title = _compact_tdk_title(primary, entities, brand)
     page_type = str(row.page_type or "").strip()
-    action = {
-        "首页": "了解品牌、产品与服务信息",
-        "homepage": "了解品牌、产品与服务信息",
-        "产品页": "查看产品特点、规格与适用场景",
-        "解决方案": "查看相关方案、适用场景与实施要点",
-        "案例": "查看项目背景、实施过程与结果说明",
-        "文章": "阅读相关知识、常见问题与实践要点",
-    }.get(page_type, "查看相关信息、适用场景与详细说明")
-    description = f"{action}，围绕{primary}整理页面重点内容。"
-    if brand_name:
-        description += f"访问{brand_name}获取更多信息。"
+    core_title = re.split(r"\s*[|｜]\s*", source_title, maxsplit=1)[0].strip()
+    subject = core_title if len(core_title) >= 6 else "、".join([primary, *entities[:4]])
+    if any(marker in source_title for marker in ("手册", "说明书", "文档")):
+        description = f"查阅{subject}，了解相关操作、参数设置与适用信息。"
+    elif page_type in {"产品页", "product"}:
+        description = f"了解{subject}，查看产品特点、规格与适用场景。"
+    elif page_type in {"解决方案", "solution"}:
+        description = f"了解{subject}，查看方案适用场景与实施要点。"
+    elif page_type in {"案例", "case"}:
+        description = f"了解{subject}，查看项目背景、实施过程与结果说明。"
+    elif page_type in {"文章", "article"}:
+        description = f"阅读{subject}，了解相关知识、常见问题与实践要点。"
+    else:
+        description = f"了解{subject}，查看页面提供的具体内容与适用信息。"
     return title, description[:160]
 
 
