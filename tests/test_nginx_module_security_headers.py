@@ -72,3 +72,30 @@ def test_seo_locations_keep_security_headers_with_cache_headers():
         _location_block(config, "location = /seo/index.html")
     )
     _assert_same_origin_frame_policy(_location_block(config, "location /seo/"))
+
+
+def test_seo_security_fix_preserves_production_alias_and_rewrite_layout():
+    config = _read("deploy/seo-frontend.nginx.conf")
+    assets = _location_block(config, "location ^~ /seo/assets/")
+    index = _location_block(config, "location = /seo/index.html")
+    spa = _location_block(config, "location /seo/")
+
+    assert "alias /opt/seo-frontend/current/assets/;" in assets
+    assert "alias /opt/seo-frontend/current/index.html;" in index
+    assert "rewrite ^ /seo/index.html last;" in spa
+    assert "root /opt/seo-frontend/current;" not in config
+    assert "try_files $uri" not in config
+
+
+def test_geo_security_fix_preserves_release_alias_and_route_rewrite_layout():
+    config = _read("deploy/geo-routes.nginx.conf")
+    assets = _location_block(config, "location ^~ /deal-sniper/geo/assets/")
+    app = _location_block(config, "location ^~ /deal-sniper/geo/ {")
+
+    assert "alias /opt/geo-frontend/current/assets/;" in assets
+    assert "alias /opt/geo-frontend/current/;" in app
+    assert (
+        "rewrite ^/deal-sniper/geo/([a-z0-9-]+)$ "
+        "/deal-sniper/geo/$1.html last;"
+    ) in app
+    assert "index dashboard.html;" in app
