@@ -97,7 +97,7 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0076_oauth_rebind_intent (head)'
+          printf '%s\n' "$heads" | grep -F '0074_merge_geo_seo_heads (head)'
 
       - working-directory: frontend
         run: npm ci

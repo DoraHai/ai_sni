@@ -59,12 +59,9 @@ const javascript = (
       .map((file) => readFile(resolve(root, file), 'utf8')),
   )
 ).join('\n')
-const portalUrl = '/deal-sniper/portal'
+const portalUrl = 'https://gsnipers.snipers.com.cn/deal-sniper/portal'
 if (!javascript.includes(portalUrl)) {
-  throw new Error(`SEO build does not contain the same-origin portal URL: ${portalUrl}`)
-}
-if (javascript.includes('https://gsnipers.snipers.com.cn/deal-sniper/portal')) {
-  throw new Error('SEO build must keep the portal URL same-origin')
+  throw new Error(`SEO build does not contain the production portal URL: ${portalUrl}`)
 }
 if (javascript.includes('https://sem.snipers.com.cn/deal-sniper/portal')) {
   throw new Error('SEO build still contains the retired portal URL')
