@@ -2,10 +2,30 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).parents[1]
+BASELINE_HEADERS = (
+    'add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;',
+    'add_header X-Content-Type-Options "nosniff" always;',
+    'add_header Referrer-Policy "strict-origin-when-cross-origin" always;',
+    'add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;',
+)
 
 
 def _read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
+
+
+def _location_block(config: str, marker: str) -> str:
+    start = config.index(marker)
+    brace = config.index("{", start)
+    depth = 0
+    for index in range(brace, len(config)):
+        if config[index] == "{":
+            depth += 1
+        elif config[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return config[start : index + 1]
+    raise AssertionError(f"unterminated nginx location: {marker}")
 
 
 def test_seo_service_mounts_only_seo_routes() -> None:
@@ -43,6 +63,24 @@ def test_seo_service_has_dedicated_runtime_and_routes() -> None:
     assert "alias /opt/seo-frontend/current/index.html;" in nginx
     assert "rewrite ^ /seo/index.html last;" in nginx
     assert "root /opt/seo-frontend/current;" not in nginx
+
+
+def test_seo_cache_locations_repeat_security_headers() -> None:
+    config = _read("deploy/seo-frontend.nginx.conf")
+    for marker in (
+        "location ^~ /seo/assets/",
+        "location = /seo/index.html",
+        "location /seo/",
+    ):
+        block = _location_block(config, marker)
+        for header in BASELINE_HEADERS:
+            assert header in block
+
+    for marker in ("location = /seo/index.html", "location /seo/"):
+        block = _location_block(config, marker)
+        assert 'add_header X-Frame-Options "SAMEORIGIN" always;' in block
+        assert "frame-ancestors 'self'" in block
+        assert 'add_header X-Frame-Options "DENY"' not in block
 
 
 def test_seo_deployer_never_restarts_other_modules_or_runs_migrations() -> None:
