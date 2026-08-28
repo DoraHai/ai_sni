@@ -23,11 +23,16 @@ const requiredMarkers = [
   '/api/v1/oauth/baidu/authorize',
   '授权新客户账号',
   '已切换到新客户',
+  '/deal-sniper/portal',
+  '/deal-sniper-prototype/index.html',
+  'gsnipers.snipers.com.cn',
 ]
 const forbiddenMarkers = [
   '图形验证码',
   '服务商接入准备中',
   '百度推广授权准备中',
+  'https://gsniper.snipers.com.cn',
+  'https://sem.snipers.com.cn',
 ]
 
 const foundRequired = new Set()
