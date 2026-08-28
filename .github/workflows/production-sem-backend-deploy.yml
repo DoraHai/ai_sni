@@ -1,0 +1,281 @@
+name: Production SEM backend deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type DEPLOY_SEM_BACKEND to deploy the approved SEM backend
+        required: true
+        type: string
+      release_sha:
+        description: Full SHA currently at codex/production-sem-backend HEAD
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-sem-backend-deployment
+  cancel-in-progress: false
+
+env:
+  RELEASE_BRANCH: codex/production-sem-backend
+
+jobs:
+  verify:
+    name: Verify and package exact SEM backend commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Validate manual release inputs
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          if [[ "$WORKFLOW_REF" != "refs/heads/main" ]]; then
+            echo "SEM backend deployment workflow must be dispatched from main" >&2
+            exit 2
+          fi
+          if [[ "$CONFIRMATION" != "DEPLOY_SEM_BACKEND" ]]; then
+            echo "Confirmation must be DEPLOY_SEM_BACKEND" >&2
+            exit 2
+          fi
+          if [[ ! "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "release_sha must be a full 40-character lowercase Git SHA" >&2
+            exit 2
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+
+      - name: Require release SHA to be current SEM backend production HEAD
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          latest="$(git ls-remote origin "refs/heads/$RELEASE_BRANCH" | cut -f1)"
+          test -n "$latest"
+          if [[ "$latest" != "$RELEASE_SHA" ]]; then
+            echo "Refusing stale SEM backend release: requested=$RELEASE_SHA production=$latest" >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install backend test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run SEM backend and deployment isolation tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost/test
+          BAIDU_APP_ID: ci-dummy
+          BAIDU_SECRET_KEY: 1234567890abcdef
+          BAIDU_DEFAULT_USERNAME: ci-dummy
+          BAIDU_DEFAULT_UCID: "1"
+          BAIDU_SELF_ACCESS_TOKEN: ci-dummy
+          BAIDU_SELF_TOKEN_EXPIRES_AT: "2099-01-01T00:00:00+00:00"
+          CRYPTO_MASTER_KEY_B64: j/QGqbWO8IVw9cCVeAq+u/alTyjLsSQXjROH9uW/3tA=
+          ADMIN_API_KEY: ci-admin-key
+          PYTHONPATH: .
+          TZ: UTC
+        run: >-
+          pytest -q
+          tests/test_baidu_oauth.py
+          tests/test_prod_guard.py
+          tests/test_sem_p0_data_trust.py
+          tests/test_sem_readonly_consistency.py
+          tests/test_sem_release_isolation.py
+          tests/test_sem_strict_audit_fixes.py
+          tests/test_sem_tenant_account_identity.py
+          tests/test_tenant_isolation.py
+          tests/test_writeback_approval.py
+          tests/test_writeback_guardrail_contract.py
+
+      - name: Verify production and writeback safety contracts
+        run: |
+          grep -Fq 'enforce_production_secrets' app/main.py
+          test "$(grep -c 'with_for_update' app/baidu/writeback.py)" -ge 9
+          grep -Eq '_claim_funds_approval|claim_approval' app/baidu/writeback.py
+          grep -Fq 'admin_api_key_query_enabled: bool = False' app/config.py
+          grep -Fq 'failed_login_attempts' app/api/auth.py
+          grep -Fq 'locked_until' app/api/auth.py
+
+      - name: Create immutable SEM backend archive
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          test -z "$(git status --porcelain)"
+
+          release_root="$RUNNER_TEMP/sem-release"
+          archive="$RUNNER_TEMP/sem-${RELEASE_SHA}.tgz"
+          install -d "$release_root/backend"
+
+          if git ls-tree -r "$RELEASE_SHA" -- app migrations requirements.txt alembic.ini | grep -q '^120000 '; then
+            echo "SEM archive source must not contain symbolic links" >&2
+            exit 1
+          fi
+          git archive --format=tar "$RELEASE_SHA" -- app migrations requirements.txt alembic.ini \
+            | tar -xf - -C "$release_root/backend"
+
+          {
+            echo 'module=sem'
+            echo "commit=$RELEASE_SHA"
+            echo 'migration=not-run'
+          } > "$release_root/MANIFEST"
+
+          if find "$release_root" \
+            \( -name .env -o -name .venv -o -name .git -o -name __pycache__ \
+               -o -name .pytest_cache -o -name '*.pyc' -o -name '*.db' \
+               -o -name '*.sqlite' -o -name '*.sqlite3' \) \
+            -print -quit | grep -q .; then
+            echo "SEM archive contains a forbidden local, cache, or database file" >&2
+            exit 1
+          fi
+          test -z "$(find "$release_root" -type l -print -quit)"
+
+          source_epoch="$(git show -s --format=%ct "$RELEASE_SHA")"
+          tar --sort=name --mtime="@$source_epoch" --owner=0 --group=0 --numeric-owner \
+            -C "$RUNNER_TEMP" -cf - sem-release | gzip -n > "$archive"
+
+          if tar -tvzf "$archive" | awk '$1 ~ /^[lh]/ { found=1 } END { exit(found ? 0 : 1) }'; then
+            echo "SEM archive must not contain symbolic or hard links" >&2
+            exit 1
+          fi
+          while IFS= read -r member; do
+            [[ "$member" == sem-release/* ]] || {
+              echo "Archive member outside sem-release: $member" >&2
+              exit 1
+            }
+            case "/$member/" in
+              */../*) echo "Archive contains parent traversal: $member" >&2; exit 1 ;;
+            esac
+          done < <(tar -tzf "$archive")
+
+          tar -xOf "$archive" sem-release/MANIFEST | grep -Fxq 'module=sem'
+          tar -xOf "$archive" sem-release/MANIFEST | grep -Fxq "commit=$RELEASE_SHA"
+          tar -xOf "$archive" sem-release/MANIFEST | grep -Fxq 'migration=not-run'
+          test -n "$(tar -tzf "$archive" | grep -Fx 'sem-release/backend/app/main.py')"
+          test -n "$(tar -tzf "$archive" | grep -Fx 'sem-release/backend/alembic.ini')"
+
+          (
+            cd "$RUNNER_TEMP"
+            sha256sum "sem-${RELEASE_SHA}.tgz" > "sem-${RELEASE_SHA}.tgz.sha256"
+          )
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sem-backend-release-${{ inputs.release_sha }}
+          path: |
+            ${{ runner.temp }}/sem-${{ inputs.release_sha }}.tgz
+            ${{ runner.temp }}/sem-${{ inputs.release_sha }}.tgz.sha256
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    name: Deploy current SEM backend production head
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sem-backend-release-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}
+
+      - name: Verify downloaded immutable archive
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          cd "$RUNNER_TEMP"
+          sha256sum -c "sem-${RELEASE_SHA}.tgz.sha256"
+          tar -xOf "sem-${RELEASE_SHA}.tgz" sem-release/MANIFEST | grep -Fxq 'module=sem'
+          tar -xOf "sem-${RELEASE_SHA}.tgz" sem-release/MANIFEST | grep -Fxq "commit=$RELEASE_SHA"
+          tar -xOf "sem-${RELEASE_SHA}.tgz" sem-release/MANIFEST | grep -Fxq 'migration=not-run'
+
+      - name: Configure restricted platform-deploy identity
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/platform-deploy
+          chmod 600 ~/.ssh/platform-deploy
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Re-check SEM backend production HEAD and upload immutable archive
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          latest="$(git ls-remote origin "refs/heads/$RELEASE_BRANCH" | cut -f1)"
+          test -n "$latest"
+          if [[ "$latest" != "$RELEASE_SHA" ]]; then
+            echo "Refusing stale SEM backend upload: requested=$RELEASE_SHA production=$latest" >&2
+            exit 1
+          fi
+          test "$DEPLOY_USER" = "platform-deploy"
+          [[ "$DEPLOY_PORT" =~ ^[0-9]+$ ]]
+          archive="$RUNNER_TEMP/sem-${RELEASE_SHA}.tgz"
+          remote_path="/home/platform-deploy/uploads/sem-${RELEASE_SHA}.tgz"
+          scp \
+            -i ~/.ssh/platform-deploy \
+            -P "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$archive" \
+            "$DEPLOY_USER@$DEPLOY_HOST:${remote_path}.part"
+          ssh \
+            -i ~/.ssh/platform-deploy \
+            -p "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "mv '${remote_path}.part' '$remote_path'"
+
+      - name: Re-check SEM backend production HEAD and apply without database migration
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          latest="$(git ls-remote origin "refs/heads/$RELEASE_BRANCH" | cut -f1)"
+          test -n "$latest"
+          if [[ "$latest" != "$RELEASE_SHA" ]]; then
+            echo "Refusing stale SEM backend apply: requested=$RELEASE_SHA production=$latest" >&2
+            exit 1
+          fi
+          archive="$RUNNER_TEMP/sem-${RELEASE_SHA}.tgz"
+          archive_sha256="$(sha256sum "$archive" | cut -d' ' -f1)"
+          remote_path="/home/platform-deploy/uploads/sem-${RELEASE_SHA}.tgz"
+          ssh \
+            -i ~/.ssh/platform-deploy \
+            -p "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "sudo -n /usr/local/sbin/platform-deploy apply sem '$remote_path' '$RELEASE_SHA' '$archive_sha256' DEPLOY_SEM"
