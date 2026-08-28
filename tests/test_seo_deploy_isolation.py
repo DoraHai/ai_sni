@@ -39,6 +39,10 @@ def test_seo_service_has_dedicated_runtime_and_routes() -> None:
     assert "/opt/seo-service/current" in service
     assert "location ^~ /api/v1/seo/" in nginx
     assert "127.0.0.1:8020" in nginx
+    assert "alias /opt/seo-frontend/current/assets/;" in nginx
+    assert "alias /opt/seo-frontend/current/index.html;" in nginx
+    assert "rewrite ^ /seo/index.html last;" in nginx
+    assert "root /opt/seo-frontend/current;" not in nginx
 
 
 def test_seo_deployer_never_restarts_other_modules_or_runs_migrations() -> None:

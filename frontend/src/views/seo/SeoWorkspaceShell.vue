@@ -95,8 +95,17 @@ async function loadContext() {
 }
 
 function onTenantChange(value) {
+  if (!value || value === session.tenantId) return
+  sessionStorage.removeItem('seo_pending_rewrite_source')
+  sessionStorage.removeItem('seo_pending_rewrite_options')
   session.setTenant(value)
-  if (route.path.startsWith('/seo/keywords/')) router.push('/seo/keywords')
+  if (route.path.startsWith('/seo/keywords/')) {
+    router.replace('/seo/keywords')
+  } else if (route.path === '/seo/content/editor') {
+    router.replace(route.query.type === 'rewrite' ? '/seo/content/rewrites' : '/seo/content/articles')
+  } else if (route.path === '/seo/content/answer-editor') {
+    router.replace('/seo/content/qa')
+  }
 }
 
 watch(() => route.path, () => { mobileOpen.value = false })
