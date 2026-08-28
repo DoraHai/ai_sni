@@ -49,6 +49,12 @@ def test_geo_service_has_a_dedicated_optional_secret_override():
     assert "geo-demo-local-key" not in example
 
 
+def test_geo_release_keeps_query_api_keys_disabled_by_default():
+    config = _read("app/config.py")
+
+    assert "admin_api_key_query_enabled: bool = False" in config
+
+
 def test_geo_frontend_is_mounted_without_replacing_the_sem_shell():
     app = _read("frontend/src/App.vue")
     router = _read("frontend/src/router/index.js")

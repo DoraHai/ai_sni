@@ -40,8 +40,8 @@ class Settings(BaseSettings):
     admin_api_key: str = Field(
         ..., description="admin / dashboard 接口的 API Key，调用方经 X-API-Key 请求头携带"
     )
-    # 是否允许 ?key= 传 API Key（URL 会进日志/Referer，生产必须 False）
-    admin_api_key_query_enabled: bool = True
+    # 查询参数会进入浏览器历史、代理与访问日志；默认关闭，仅兼容环境显式开启。
+    admin_api_key_query_enabled: bool = False
     # 若设置，API Key 访问绑定到该租户（ensure_tenant 生效）；None=可跨租户（仅运维）
     admin_api_key_tenant_id: int | None = None
 
