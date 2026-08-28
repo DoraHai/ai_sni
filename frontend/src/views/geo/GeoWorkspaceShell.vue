@@ -1,6 +1,8 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { changePassword } from '../../api/auth'
 import { session } from '../../store/session'
 import { GEO_WORKBENCH_NAV } from '../../utils/geoPrototypeNavigation'
 
@@ -13,6 +15,19 @@ const tenantName = computed(() => {
   if (session.tenantId) return `客户 #${session.tenantId}`
   return '未选择客户'
 })
+const hasGeoTenant = computed(() => (
+  session.tenants.some((item) => item.id === session.tenantId)
+))
+const accountName = computed(() => (
+  session.user?.display_name || session.user?.username || '本地运维'
+))
+const accountMeta = computed(() => {
+  const username = session.user?.username
+  const role = session.user?.role_label || 'GEO 用户'
+  return username && username !== accountName.value ? `${username} · ${role}` : role
+})
+const initials = computed(() => Array.from(String(accountName.value)).slice(0, 2).join(''))
+const pageTitle = computed(() => route.meta.title || 'GEO 工作台')
 const isActive = (item) => route.path === item.path || route.path.startsWith(`${item.path}/`)
 
 function go(path) {
@@ -25,6 +40,33 @@ function onTenantChange(event) {
   if (!id || id === session.tenantId) return
   session.setTenant(id)
   if (route.path.startsWith('/geo/tasks/')) router.push('/geo/tasks')
+}
+
+async function onUserCommand(cmd) {
+  if (cmd === 'logout') {
+    session.logout()
+    router.push('/login')
+    return
+  }
+  if (cmd !== 'password') return
+  let oldP
+  let newP
+  try {
+    ;({ value: oldP } = await ElMessageBox.prompt('请输入原密码', '修改密码', { inputType: 'password' }))
+    ;({ value: newP } = await ElMessageBox.prompt('请输入新密码（至少 8 位）', '修改密码', {
+      inputType: 'password',
+      inputPattern: /^.{8,}$/,
+      inputErrorMessage: '至少 8 位',
+    }))
+  } catch {
+    return
+  }
+  try {
+    await changePassword({ oldPassword: oldP, newPassword: newP })
+    ElMessage.success('密码已修改')
+  } catch (e) {
+    ElMessage.error(e.message)
+  }
 }
 </script>
 
@@ -58,19 +100,54 @@ function onTenantChange(event) {
         <a href="/seo/dashboard"><span>S</span><span>SEO 内容工作台</span></a>
         <a href="/deal-sniper/portal"><span>←</span><span>返回平台门户</span></a>
       </div>
-      <div class="geo-shell-tenant">
-        <select
-          v-if="session.tenants.length"
-          :value="session.tenantId || ''"
-          aria-label="切换客户"
-          @change="onTenantChange"
-        >
-          <option v-for="tenant in session.tenants" :key="tenant.id" :value="tenant.id">{{ tenant.name }}</option>
-        </select>
-        <span v-else>{{ tenantName }}</span>
-      </div>
     </aside>
     <main class="geo-shell-main">
+      <header class="geo-accountbar">
+        <div class="geo-accountbar-context">
+          <span>GEO 增长</span>
+          <b>/</b>
+          <strong>{{ pageTitle }}</strong>
+        </div>
+        <div class="geo-accountbar-controls">
+          <label class="geo-tenant-switcher">
+            <span>当前客户</span>
+            <select
+              v-if="session.tenants.length"
+              :value="session.tenantId || ''"
+              aria-label="切换客户"
+              @change="onTenantChange"
+            >
+              <option v-for="tenant in session.tenants" :key="tenant.id" :value="tenant.id">{{ tenant.name }}</option>
+            </select>
+            <strong v-else>{{ tenantName }}</strong>
+          </label>
+          <div
+            class="geo-module-state"
+            :class="{ 'is-empty': !hasGeoTenant }"
+            title="仅展示已开通且在有效期内的 GEO 客户"
+          >
+            <i />
+            <span>{{ hasGeoTenant ? 'GEO 已开通' : '待选择 GEO 客户' }}</span>
+          </div>
+          <div class="geo-account-state">
+            <span class="geo-account-state-label">登录账号</span>
+            <span class="geo-account-state-copy">
+              <strong>{{ accountName }}</strong>
+              <small>{{ accountMeta }}</small>
+            </span>
+          </div>
+          <el-dropdown v-if="session.isLoggedIn" trigger="click" @command="onUserCommand">
+            <button type="button" class="geo-account-avatar" :title="accountName">{{ initials }}</button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="password">修改密码</el-dropdown-item>
+                <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <div v-else class="geo-account-avatar" title="本地 Key">{{ initials }}</div>
+        </div>
+      </header>
       <div class="geo-shell-content"><router-view /></div>
     </main>
   </div>
@@ -201,33 +278,139 @@ function onTenantChange(event) {
   background: #f5f0ff;
   color: #7c3aed;
 }
-.geo-shell-tenant {
-  padding: 8px 10px 12px;
-  border-top: 1px solid #e8eaf0;
-  color: #6b7280;
-  font-size: 12px;
-}
-.geo-shell-tenant select {
-  width: 100%;
-  padding: 7px 8px;
-  border: 0;
-  border-radius: 8px;
-  outline: 0;
-  background: transparent;
-  color: #6b7280;
-  font: inherit;
-  cursor: pointer;
-}
-.geo-shell-tenant select:hover {
-  background: #f5f0ff;
-  color: #7c3aed;
-}
 .geo-shell-main,
 .geo-shell-content {
   min-width: 0;
   min-height: 100vh;
 }
+.geo-shell-main {
+  display: flex;
+  flex-direction: column;
+}
+.geo-accountbar {
+  position: sticky;
+  top: 0;
+  z-index: 18;
+  min-height: 68px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 10px 24px;
+  border-bottom: 1px solid #e7e9f0;
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 1px 0 rgba(15, 23, 42, .02);
+  backdrop-filter: blur(14px);
+}
+.geo-accountbar-context {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #9aa1ad;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.geo-accountbar-context b { color: #d5d8e0; font-weight: 500; }
+.geo-accountbar-context strong {
+  overflow: hidden;
+  color: #3f4654;
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+}
+.geo-accountbar-controls {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.geo-tenant-switcher {
+  height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 13px;
+  border: 1px solid #e1e4ec;
+  border-radius: 11px;
+  background: #fff;
+  color: #8a92a3;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.geo-tenant-switcher select {
+  min-width: 136px;
+  max-width: 210px;
+  padding: 7px 28px 7px 8px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #443453;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.geo-tenant-switcher strong { color: #6b7280; font-size: 12px; }
+.geo-module-state {
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 11px;
+  border: 1px solid #d9eee2;
+  border-radius: 999px;
+  background: #f4fbf7;
+  color: #25815a;
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.geo-module-state i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #35b979;
+  box-shadow: 0 0 0 4px rgba(53, 185, 121, .12);
+}
+.geo-module-state.is-empty {
+  border-color: #e5e7eb;
+  background: #f8f9fb;
+  color: #7c8493;
+}
+.geo-module-state.is-empty i {
+  background: #a8afbb;
+  box-shadow: 0 0 0 4px rgba(168, 175, 187, .12);
+}
+.geo-account-state {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding-left: 12px;
+  border-left: 1px solid #e5e7ed;
+}
+.geo-account-state-label { color: #9aa1ad; font-size: 10.5px; white-space: nowrap; }
+.geo-account-state-copy { min-width: 0; }
+.geo-account-state-copy strong,
+.geo-account-state-copy small { display: block; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.geo-account-state-copy strong { color: #353b48; font-size: 12px; font-weight: 700; }
+.geo-account-state-copy small { margin-top: 2px; color: #98a0af; font-size: 9.5px; }
+.geo-account-avatar {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+  box-shadow: 0 5px 14px rgba(109, 40, 217, .2);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
 .geo-shell-content {
+  flex: 1;
   padding: 0;
 }
 .geo-mobile-toggle,
@@ -279,5 +462,18 @@ function onTenantChange(event) {
     color: #667085;
     font-size: 24px;
   }
+  .geo-accountbar {
+    min-height: 64px;
+    padding: 10px 12px 10px 58px;
+  }
+  .geo-accountbar-context,
+  .geo-module-state,
+  .geo-account-state { display: none; }
+  .geo-accountbar-controls { width: 100%; }
+  .geo-tenant-switcher { min-width: 0; flex: 1; }
+  .geo-tenant-switcher select { min-width: 0; width: 100%; }
+}
+@media (max-width: 560px) {
+  .geo-tenant-switcher > span { display: none; }
 }
 </style>
