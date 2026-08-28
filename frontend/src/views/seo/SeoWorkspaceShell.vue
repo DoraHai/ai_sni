@@ -88,7 +88,7 @@ function navigate(path) {
 async function loadContext() {
   if (!session.isLoggedIn) return
   try {
-    const [me, tenants] = await Promise.all([fetchMe(), fetchTenants()])
+    const [me, tenants] = await Promise.all([fetchMe(), fetchTenants('seo')])
     session.refreshUser(me.user)
     session.setTenants(tenants.tenants)
   } catch { /* 登录失效由统一拦截器处理 */ }
@@ -148,7 +148,7 @@ onMounted(loadContext)
         <a href="/monitor/dashboard"><span>SEM</span>搜索广告工作台</a>
         <a href="/deal-sniper/geo/dashboard.html#/geo/overview"><span>GEO</span>生成式搜索工作台</a>
         <a href="/diagnostic-center/"><span>DX</span>诊断中心</a>
-        <a class="portal-link" href="https://sem.snipers.com.cn/deal-sniper/portal">← 返回平台门户</a>
+        <a class="portal-link" href="https://gsnipers.snipers.com.cn/deal-sniper/portal">← 返回平台门户</a>
       </div>
     </aside>
 
