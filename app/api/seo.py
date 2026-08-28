@@ -11,7 +11,7 @@ from typing import Any, Literal
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field, PositiveInt, field_validator
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -47,6 +47,7 @@ from app.models.seo import (
     SeoDistributionVariant,
     SeoPublishAttempt,
 )
+from app.module_scope import ensure_module_access
 from app.security.auth import AuthContext, require_scoped_auth
 from app.process_lock import acquire_file_lock, release_file_lock
 from app.seo_distribution import (
@@ -97,10 +98,37 @@ from app.seo_distribution_import import (
     parse_publication_xlsx,
 )
 
+
+async def require_seo_module_access(
+    request: Request,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> AuthContext:
+    """Require an active, non-expired SEO entitlement for tenant-bound routes."""
+    tenant_value = request.query_params.get("tenant_id")
+    if not tenant_value:
+        tenant_value = request.path_params.get("tenant_id")
+    if not tenant_value and request.method not in {"GET", "HEAD", "OPTIONS"}:
+        try:
+            payload = await request.json()
+        except (ValueError, RuntimeError):
+            payload = None
+        if isinstance(payload, dict):
+            tenant_value = payload.get("tenant_id")
+    tenant_id = (
+        int(tenant_value)
+        if str(tenant_value or "").lstrip("-").isdigit()
+        else None
+    )
+    if tenant_id is not None:
+        await ensure_module_access(session, ctx, tenant_id, "seo")
+    return ctx
+
+
 router = APIRouter(
     prefix="/api/v1/seo",
     tags=["SEO"],
-    dependencies=[Depends(require_scoped_auth)],
+    dependencies=[Depends(require_seo_module_access)],
 )
 logger = logging.getLogger(__name__)
 
