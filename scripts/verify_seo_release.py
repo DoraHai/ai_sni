@@ -11,6 +11,7 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    ".env.example",
     ".github/workflows/ci.yml",
     ".github/workflows/production-seo-deploy.yml",
     ".github/workflows/seo-baseline-check.yml",
@@ -24,6 +25,7 @@ SOURCE_ALLOWED_EXACT = {
     "app/models/seo.py",
     "app/module_scope.py",
     "app/permissions.py",
+    "app/security/auth.py",
     "app/seo_crawler.py",
     "app/seo_competitor.py",
     "app/seo_distribution.py",
@@ -33,6 +35,7 @@ SOURCE_ALLOWED_EXACT = {
     "app/seo_ranking_jobs.py",
     "app/seo_scheduler.py",
     "app/seo_serp.py",
+    "app/seo_traffic.py",
     "app/scheduler.py",
     "deploy/seo-service.service",
     "deploy/seo-frontend.nginx.conf",
@@ -75,6 +78,7 @@ SOURCE_ALLOWED_EXACT = {
     "tests/test_seo_site_association.py",
     "tests/test_seo_deploy_isolation.py",
     "tests/test_seo_serp.py",
+    "tests/test_seo_traffic.py",
     "scripts/verify_seo_release.py",
 }
 SOURCE_ALLOWED_PREFIXES = ("frontend/src/views/seo/",)

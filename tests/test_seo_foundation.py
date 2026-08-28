@@ -117,6 +117,8 @@ def test_page_audit_result_updates_title_and_page_health() -> None:
         ("/api/v1/seo/site-pages/1/audit", "POST", "seo.site", True),
         ("/api/v1/seo/site/crawl-runs", "POST", "seo.site", True),
         ("/api/v1/seo/overview", "GET", "seo.dashboard", False),
+        ("/api/v1/seo/traffic/gsc", "GET", "seo.dashboard", False),
+        ("/api/v1/seo/traffic/gsc", "PUT", "seo.dashboard", True),
         ("/api/v1/seo/alerts", "GET", "seo.alerts", False),
         ("/api/v1/seo/content-assets", "POST", "seo.content", True),
         ("/api/v1/seo/internal-links", "GET", "seo.links", False),

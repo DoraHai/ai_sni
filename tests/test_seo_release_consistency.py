@@ -14,7 +14,7 @@ def _write(root: Path, relative: str, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def test_source_allowlist_rejects_auth_and_other_modules() -> None:
+def test_source_allowlist_accepts_required_shared_guards_and_rejects_other_modules() -> None:
     assert source_path_allowed("app/api/seo.py")
     assert source_path_allowed("app/seo_distribution_import.py")
     assert source_path_allowed("app/seo_distribution.py")
@@ -31,7 +31,7 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed("deploy/seo-frontend.nginx.conf")
     assert source_path_allowed("frontend/src/views/seo/SeoDashboardView.vue")
     assert source_path_allowed("app/api/customer_modules.py")
-    assert not source_path_allowed("app/security/auth.py")
+    assert source_path_allowed("app/security/auth.py")
     assert not source_path_allowed("app/api/geo.py")
     assert not source_path_allowed("app/baidu/writeback.py")
     assert not source_path_allowed("app/api/auth.py")
@@ -82,7 +82,8 @@ def test_seo_shell_filters_entitled_tenants_and_clears_cross_tenant_drafts() -> 
     ).read_text(encoding="utf-8")
 
     assert "client.get('/api/v1/auth/tenants', { params: { module: 'seo' } })" in shell
-    assert "https://gsnipers.snipers.com.cn/deal-sniper/portal" in shell
+    assert 'href="/deal-sniper/portal"' in shell
+    assert "https://gsnipers.snipers.com.cn/deal-sniper/portal" not in shell
     assert "https://sem.snipers.com.cn/deal-sniper/portal" not in shell
     assert "sessionStorage.removeItem('seo_pending_rewrite_source')" in shell
     assert "sessionStorage.removeItem('seo_pending_rewrite_options')" in shell
@@ -127,6 +128,9 @@ def test_original_content_brief_supports_bounded_multi_keywords() -> None:
     assert source_path_allowed("migrations/versions/20260819_0073_seo_distribution_variants.py")
     assert source_path_allowed("migrations/versions/20260819_0073_geo_schema_repair.py")
     assert source_path_allowed("migrations/versions/20260822_0074_merge_geo_seo_heads.py")
+    assert source_path_allowed("app/seo_traffic.py")
+    assert source_path_allowed("tests/test_seo_traffic.py")
+    assert source_path_allowed("app/security/auth.py")
 
 
 def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:
