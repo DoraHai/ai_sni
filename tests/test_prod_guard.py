@@ -50,9 +50,83 @@ class ProdGuardTests(unittest.TestCase):
             admin_api_key="real-admin-key-long-enough",
             jwt_secret="other-jwt-secret-long-enough",
             crypto_master_key_b64=key,
-            app_base_url="https://sem.example.com",
+            app_base_url="https://gsnipers.snipers.com.cn",
         )
         self.assertEqual(collect_production_issues(s), [])
+
+    def test_production_rejects_noncanonical_or_insecure_app_base_url(self):
+        key = base64.b64encode(b"3" * 32).decode()
+        common = dict(
+            app_env="prod",
+            admin_api_key="real-admin-key-long-enough",
+            jwt_secret="other-jwt-secret-long-enough",
+            crypto_master_key_b64=key,
+        )
+        for app_base_url in (
+            "http://gsnipers.snipers.com.cn",
+            "https://gsniper.snipers.com.cn",
+            "https://sem.snipers.com.cn",
+            "https://gsnipers.snipers.com.cn/unexpected",
+        ):
+            with self.subTest(app_base_url=app_base_url):
+                issues = collect_production_issues(
+                    SimpleNamespace(**common, app_base_url=app_base_url)
+                )
+                self.assertTrue(any("APP_BASE_URL" in issue for issue in issues))
+
+    def test_production_validates_cors_origins_and_oauth_callback(self):
+        key = base64.b64encode(b"4" * 32).decode()
+        common = dict(
+            app_env="prod",
+            admin_api_key="real-admin-key-long-enough",
+            jwt_secret="other-jwt-secret-long-enough",
+            crypto_master_key_b64=key,
+            app_base_url="https://gsnipers.snipers.com.cn",
+        )
+        ok = SimpleNamespace(
+            **common,
+            cors_allowed_origins=(
+                "https://gsnipers.snipers.com.cn,https://sem.snipers.com.cn"
+            ),
+            baidu_oauth_callback_url=(
+                "https://gsnipers.snipers.com.cn/api/oauth/baidu/callback"
+            ),
+        )
+        self.assertEqual(collect_production_issues(ok), [])
+
+        bad = SimpleNamespace(
+            **common,
+            cors_allowed_origins="http://evil.example",
+            baidu_oauth_callback_url="https://evil.example/callback?next=1",
+        )
+        issues = collect_production_issues(bad)
+        self.assertTrue(any("CORS_ALLOWED_ORIGINS" in issue for issue in issues))
+        self.assertTrue(any("BAIDU_OAUTH_CALLBACK_URL" in issue for issue in issues))
+
+        malformed = SimpleNamespace(
+            **common,
+            baidu_oauth_callback_url="https://[invalid/callback",
+        )
+        malformed_issues = collect_production_issues(malformed)
+        self.assertIn(
+            "BAIDU_OAUTH_CALLBACK_URL is not a valid URL",
+            malformed_issues,
+        )
+
+    def test_api_key_query_guard_reports_once(self):
+        key = base64.b64encode(b"5" * 32).decode()
+        issues = collect_production_issues(
+            SimpleNamespace(
+                app_env="prod",
+                admin_api_key="real-admin-key-long-enough",
+                jwt_secret="other-jwt-secret-long-enough",
+                crypto_master_key_b64=key,
+                app_base_url="https://gsnipers.snipers.com.cn",
+                admin_api_key_query_enabled=True,
+            )
+        )
+        matches = [issue for issue in issues if "ADMIN_API_KEY_QUERY_ENABLED" in issue]
+        self.assertEqual(len(matches), 1)
 
     def test_dev_skips(self):
         s = SimpleNamespace(
