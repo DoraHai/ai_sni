@@ -28,3 +28,16 @@ def test_sem_ci_uses_pinned_host_key_and_dedicated_secret():
     assert "ssh-keyscan" not in workflow
     assert "DEPLOY_TARGET: sem-deploy@101.200.193.83" in workflow
     assert "environment: production" in workflow
+
+
+def test_sem_release_requires_the_favicon_referenced_by_index():
+    index = _read("frontend/index.html")
+    build_guard = _read("frontend/scripts/verify-sem-build.mjs")
+    deploy_script = _read("frontend/scripts/deploy-sem.sh")
+    favicon = ROOT / "frontend/public/favicon-v2.png"
+
+    assert 'href="/favicon-v2.png"' in index
+    assert favicon.is_file()
+    assert favicon.stat().st_size > 0
+    assert "resolve(buildDir, 'favicon-v2.png')" in build_guard
+    assert "test -s '${release_dir}/favicon-v2.png'" in deploy_script
