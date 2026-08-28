@@ -9,6 +9,7 @@ import {
   fetchSeoKeywords,
   fetchSeoOverview,
   fetchSeoRankCollectStatus,
+  fetchSeoRankProviders,
   fetchSeoSerpResults,
   updateSeoSerpOwnership,
 } from '../../api/seo'
@@ -29,6 +30,7 @@ const ownership = ref('')
 const collectDialog = ref(false)
 const collectOutcome = ref(null)
 const collectLimit = ref({ allowed: true, retry_after_seconds: 0, next_allowed_at: null, daily_requests_used: 0, daily_requests_limit: 0 })
+const providers = ref({})
 const clock = ref(Date.now())
 const assetDialog = ref(false)
 const result = ref({ items: [], total: 0 })
@@ -39,7 +41,8 @@ const filters = reactive({ q: '', priority: '', alerts: false })
 const collectForm = reactive({ keyword_ids: [], devices: ['desktop'], use_ai: true })
 const assetForm = reactive({ asset_type: 'content_url', name: '', match_value: '', platform: '' })
 
-const engines = [{ k: 'baidu', n: '百度' }]
+const engines = [{ k: 'baidu', n: '百度' }, { k: 'google', n: 'Google' }, { k: 'bing', n: 'Bing' }]
+const engineName = computed(() => engines.find((item) => item.k === engine.value)?.n || engine.value)
 const ownershipTabs = [
   { k: '', n: '全部结果' },
   { k: 'official_site', n: '官网' },
@@ -87,7 +90,7 @@ const collectButtonText = computed(() => {
 
 const fmt = (value) => value == null ? '—' : Number(value).toLocaleString('zh-CN')
 const delta = (item) => !item.rank_delta ? '—' : `${item.rank_delta > 0 ? '↑' : '↓'}${Math.abs(item.rank_delta)}`
-const deviceLabel = (value) => value === 'mobile' ? '百度移动' : '百度 PC'
+const deviceLabel = (value) => `${engineName.value} ${value === 'mobile' ? '移动' : 'PC'}`
 function spark(item) {
   if (item.latest_rank == null) return ''
   const previous = Math.max(1, item.latest_rank + (item.rank_delta || 0))
@@ -99,7 +102,7 @@ function exportCsv() {
   const blob = new Blob(['\ufeff' + data.map((line) => line.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' })
   const anchor = document.createElement('a')
   anchor.href = URL.createObjectURL(blob)
-  anchor.download = `SEO排名-百度-${device.value}.csv`
+  anchor.download = `SEO排名-${engineName.value}-${device.value}.csv`
   anchor.click()
   URL.revokeObjectURL(anchor.href)
 }
@@ -113,7 +116,7 @@ async function load() {
     ;[result.value, overview.value, serp.value] = await Promise.all([
       fetchSeoKeywords({ ...common, q: filters.q, pageSize: 200 }),
       fetchSeoOverview(common),
-      fetchSeoSerpResults({ tenantId: currentTenantId.value, siteId: siteId.value, device: device.value, ownershipType: ownership.value, limit: 500 }),
+      fetchSeoSerpResults({ tenantId: currentTenantId.value, siteId: siteId.value, engine: engine.value, device: device.value, ownershipType: ownership.value, limit: 500 }),
     ])
     error.value = ''
   } catch (err) {
@@ -147,9 +150,16 @@ async function loadCollectStatus() {
   catch (err) { error.value = err.message }
 }
 
+async function loadProviders() {
+  if (!currentTenantId.value || !siteId.value) return
+  try { providers.value = await fetchSeoRankProviders({ tenantId: currentTenantId.value, siteId: siteId.value }) }
+  catch (err) { error.value = err.message }
+}
+
 function openCollect() {
   if (!currentTenantId.value) return ElMessage.warning('请先选择客户')
   if (!siteId.value) return ElMessage.warning('请先选择或创建 SEO 网站')
+  if (!providers.value[engine.value]?.configured) return ElMessage.warning(`${engineName.value} 排名服务尚未配置`)
   if (!collectAllowed.value) return ElMessage.warning(collectButtonText.value)
   const availableIds = result.value.items.map((item) => item.id)
   const retainedIds = collectForm.keyword_ids.filter((id) => availableIds.includes(id))
@@ -171,6 +181,7 @@ async function collect() {
     const summary = await collectSeoRankSerp({
       tenant_id: currentTenantId.value,
       site_id: siteId.value,
+      engine: engine.value,
       keyword_ids: collectForm.keyword_ids,
       max_keywords: collectForm.keyword_ids.length,
       devices: collectForm.devices,
@@ -257,12 +268,13 @@ async function confirmOwnership(item, ownershipType) {
 
 let timer
 watch(() => filters.q, () => { clearTimeout(timer); timer = setTimeout(load, 260) })
-watch([device, siteId, ownership], load)
+watch([engine, device, siteId, ownership], load)
 watch(siteId, loadCollectStatus)
+watch(siteId, loadProviders)
 watch([currentTenantId, siteId], () => { collectOutcome.value = null; collectForm.keyword_ids = [] })
 watch(currentTenantId, loadSites)
 let clockTimer
-onMounted(async () => { clockTimer = window.setInterval(() => { clock.value = Date.now() }, 1000); await loadSites(); await loadCollectStatus() })
+onMounted(async () => { clockTimer = window.setInterval(() => { clock.value = Date.now() }, 1000); await loadSites(); await Promise.all([loadCollectStatus(), loadProviders()]) })
 onBeforeUnmount(() => window.clearInterval(clockTimer))
 </script>
 
@@ -272,15 +284,18 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
       <div>
         <div class="kw-kicker">Ranking monitor</div>
         <h2>排名监控</h2>
-        <p>查看百度前 50 名结果，区分官网、已确认品牌推文与 AI 疑似内容。</p>
+        <p>查看百度、Google 与 Bing 的真实搜索结果，区分官网、品牌推文与 AI 疑似内容。</p>
       </div>
       <div class="hero-controls">
         <el-select v-model="siteId" class="site-picker" placeholder="选择 SEO 网站">
           <el-option v-for="site in sites" :key="site.id" :label="site.name || site.canonical_domain" :value="site.id" />
         </el-select>
+        <el-select v-model="engine" class="site-picker" placeholder="选择搜索引擎">
+          <el-option v-for="item in engines" :key="item.k" :label="`${item.n}${providers[item.k]?.configured ? '' : '（未配置）'}`" :value="item.k" />
+        </el-select>
         <div class="kw-segment device-switch">
-          <button :class="{ active: device === 'desktop' }" @click="device = 'desktop'">百度 PC</button>
-          <button :class="{ active: device === 'mobile' }" @click="device = 'mobile'">百度移动</button>
+          <button :class="{ active: device === 'desktop' }" @click="device = 'desktop'">{{ engineName }} PC</button>
+          <button :class="{ active: device === 'mobile' }" @click="device = 'mobile'">{{ engineName }} 移动</button>
         </div>
         <div class="kw-actions">
           <button class="kw-btn" @click="openAssets">品牌资产</button>
@@ -318,7 +333,7 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
     </section>
 
     <section class="kw-metrics">
-      <article class="kw-metric" data-mark="K"><span>监控关键词</span><strong>{{ fmt(result.total) }}</strong><small>{{ device === 'desktop' ? '百度 PC' : '百度移动' }}关键词资产</small></article>
+      <article class="kw-metric" data-mark="K"><span>监控关键词</span><strong>{{ fmt(result.total) }}</strong><small>{{ deviceLabel(device) }}关键词资产</small></article>
       <article class="kw-metric" data-mark="R"><span>平均自然排名</span><strong>{{ avg }}</strong><small class="up">确认归属结果 · 越小越好</small></article>
       <article class="kw-metric" data-mark="官"><span>官网结果</span><strong>{{ fmt(serp.stats?.official_site || 0) }}</strong><small>官网域名与站内页面</small></article>
       <article class="kw-metric" data-mark="文"><span>品牌推文</span><strong>{{ fmt(serp.stats?.brand_content || 0) }}</strong><small class="up">URL / 账号规则确认</small></article>
@@ -328,7 +343,7 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
     <section class="kw-card">
       <header class="kw-card-head monitor-head">
         <div>
-          <h3>{{ view === 'ranking' ? '自然排名明细' : '百度前 50 品牌识别' }}</h3>
+          <h3>{{ view === 'ranking' ? '自然排名明细' : `${engineName} 搜索结果品牌识别` }}</h3>
           <p>{{ serp.captured_at ? `最近采集 ${formatSeoRankTime(serp.captured_at)}` : '尚未采集前 50 搜索结果' }} · {{ device === 'desktop' ? 'PC' : '移动' }} · 全国</p>
         </div>
         <div class="kw-segment">
@@ -358,7 +373,7 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
                 <td><span class="kw-pill" :class="row.latest_rank == null ? 'gray' : row.rank_delta < 0 ? 'red' : 'green'">{{ row.latest_rank == null ? '50名外' : row.rank_delta < 0 ? '排名波动' : '已覆盖' }}</span></td>
                 <td><button class="kw-btn small" @click="router.push(`/seo/keywords/${row.id}`)">查看历史 →</button></td>
               </tr>
-              <tr v-if="!rows.length"><td colspan="7"><div class="kw-empty"><b>暂无排名数据</b>点击“更新排名”采集百度前 50 结果</div></td></tr>
+              <tr v-if="!rows.length"><td colspan="7"><div class="kw-empty"><b>暂无排名数据</b>点击“更新排名”采集 {{ engineName }} 搜索结果</div></td></tr>
             </tbody>
           </table>
         </div>
@@ -394,12 +409,12 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
       </template>
     </section>
 
-    <el-dialog v-model="collectDialog" title="采集百度前 50 排名" width="520px" destroy-on-close>
+    <el-dialog v-model="collectDialog" :title="`采集 ${engineName} 实时排名`" width="520px" destroy-on-close>
       <div class="collect-form">
         <label><span>采集关键词</span><el-select v-model="collectForm.keyword_ids" multiple filterable collapse-tags collapse-tags-tooltip :multiple-limit="50" placeholder="选择要更新的关键词"><el-option v-for="item in result.items" :key="item.id" :label="`${item.keyword}（ID ${item.id}）`" :value="item.id" /></el-select><small>已选择 {{ collectForm.keyword_ids.length }} 个关键词；只会采集明确勾选的关键词。</small></label>
-        <label><span>采集设备</span><el-checkbox-group v-model="collectForm.devices"><el-checkbox value="desktop">百度 PC</el-checkbox><el-checkbox value="mobile">百度移动</el-checkbox></el-checkbox-group></label>
+        <label><span>采集设备</span><el-checkbox-group v-model="collectForm.devices"><el-checkbox value="desktop">{{ engineName }} PC</el-checkbox><el-checkbox value="mobile">{{ engineName }} 移动</el-checkbox></el-checkbox-group></label>
         <label><span>AI 兜底判断</span><el-switch v-model="collectForm.use_ai" /><small>仅处理 URL、官网域名和平台账号规则无法识别的结果</small></label>
-        <div class="cost-note"><b>预计调用 {{ requestCount }} 次站长之家接口</b><span>按截图中的最高单价 0.04 元/次估算，约 ¥{{ estimatedCost }}；实际以购买套餐为准。</span><span>同一网站人工更新后冷却 1 小时；今日已使用 {{collectLimit.daily_requests_used||0}} / {{collectLimit.daily_requests_limit||0}} 次请求。</span></div>
+        <div class="cost-note"><b>预计调用 {{ requestCount }} 次{{ engine === 'baidu' ? '站长之家' : 'DataForSEO' }}实时接口</b><span v-if="engine === 'baidu'">按最高单价 0.04 元/次估算，约 ¥{{ estimatedCost }}；实际以购买套餐为准。</span><span>同一网站人工更新后冷却 1 小时；今日已使用 {{collectLimit.daily_requests_used||0}} / {{collectLimit.daily_requests_limit||0}} 次请求。</span></div>
       </div>
       <template #footer><button class="kw-btn" @click="collectDialog = false">取消</button><button class="kw-btn primary" :disabled="collecting || !collectForm.keyword_ids.length || !collectForm.devices.length" @click="collect">{{ collecting ? '正在采集…' : '确认采集' }}</button></template>
     </el-dialog>
