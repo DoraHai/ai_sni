@@ -76,6 +76,10 @@ def test_seo_frontend_deployer_cannot_touch_backend_services_or_migrations() -> 
     assert "systemctl" not in installer
     assert "/etc/nginx" not in installer
     assert "/opt/seo-service" not in installer
+    attributes = _read(".gitattributes")
+    assert "/ops/platform-deploy/install-seo-frontend.sh text eol=lf" in attributes
+    assert "/ops/platform-deploy/modules/seo text eol=lf" in attributes
+    assert "/ops/platform-deploy/modules/seo-frontend text eol=lf" in attributes
 
 
 def test_frontend_only_workflow_isolated_and_full_workflow_path_scoped() -> None:

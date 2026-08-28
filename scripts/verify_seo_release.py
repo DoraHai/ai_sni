@@ -11,6 +11,7 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    ".gitattributes",
     ".github/workflows/ci.yml",
     ".github/workflows/production-seo-deploy.yml",
     ".github/workflows/production-seo-frontend-deploy.yml",
