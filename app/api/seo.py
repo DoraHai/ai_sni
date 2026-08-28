@@ -2265,6 +2265,7 @@ async def seo_overview(
     site_id: int | None = None,
     engine: str = Query("baidu"),
     device: Literal["desktop", "mobile"] = "desktop",
+    days: int = Query(30, ge=1, le=366),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     await _tenant(session, tenant_id)
@@ -2283,7 +2284,8 @@ async def seo_overview(
     contents = list(await session.scalars(select(SeoContentAsset).where(*scope(SeoContentAsset))))
     backlinks = list(await session.scalars(select(SeoBacklink).where(*scope(SeoBacklink))))
     competitors = list(await session.scalars(select(SeoCompetitor).where(*scope(SeoCompetitor, SeoCompetitor.status == "active"))))
-    since = datetime.utcnow() - timedelta(days=30)
+    trend_since = datetime.utcnow() - timedelta(days=days)
+    new_keyword_since = datetime.utcnow() - timedelta(days=30)
     keyword_ids = [item.id for item in keywords]
     rank_conditions = scope(
         SeoRankSnapshot,
@@ -2322,7 +2324,7 @@ async def seo_overview(
         recent_ranks = list(
             await session.scalars(
                 select(SeoRankSnapshot)
-                .where(*rank_conditions, SeoRankSnapshot.checked_at >= since)
+                .where(*rank_conditions, SeoRankSnapshot.checked_at >= trend_since)
                 .order_by(SeoRankSnapshot.checked_at, SeoRankSnapshot.id)
             )
         )
@@ -2339,7 +2341,7 @@ async def seo_overview(
                 )
                 .label("position"),
             )
-            .where(*rank_conditions, SeoRankSnapshot.checked_at < since)
+            .where(*rank_conditions, SeoRankSnapshot.checked_at < trend_since)
             .subquery()
         )
         baseline_ranks = list(
@@ -2554,7 +2556,10 @@ async def seo_overview(
             "falls": falls,
             "top10_rate": round(top10 / max(len(ranked), 1) * 100, 1),
             "rank_anomalies": rank_anomalies,
-            "new_keywords_30d": sum(bool(item.created_at and item.created_at >= since) for item in keywords),
+            "new_keywords_30d": sum(
+                bool(item.created_at and item.created_at >= new_keyword_since)
+                for item in keywords
+            ),
             "pages": len(pages),
             "healthy_pages": sum(item.status == "healthy" for item in pages),
             "pages_needing_fix": sum(item.status in {"needs_fix", "error"} for item in pages),

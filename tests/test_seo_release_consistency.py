@@ -70,6 +70,26 @@ def test_seo_shell_filters_entitled_tenants_and_clears_cross_tenant_drafts() -> 
     assert "router.replace('/seo/content/qa')" in shell
 
 
+def test_trends_are_scoped_by_site_and_selected_time_range() -> None:
+    root = Path(__file__).parents[1]
+    trends = (root / "frontend/src/views/seo/SeoTrendsView.vue").read_text(
+        encoding="utf-8"
+    )
+    api = (root / "frontend/src/api/seo.js").read_text(encoding="utf-8")
+    backend = (root / "app/api/seo.py").read_text(encoding="utf-8")
+
+    assert "fetchSeoSites(currentTenantId.value)" in trends
+    assert "siteId:siteId.value" in trends
+    assert "days:range.value" in trends
+    assert "watch([engine,range,siteId],load)" in trends
+    assert "watch(currentTenantId,changeTenant)" in trends
+    assert "siteId.value=null;overview.value={stats:{},trend:[]};keywords.value=[]" in trends
+    assert "site_id: siteId || undefined" in api
+    assert "days = 30" in api
+    assert "days: int = Query(30, ge=1, le=366)" in backend
+    assert "SeoRankSnapshot.checked_at >= trend_since" in backend
+
+
 def test_rewrite_ui_connects_source_ai_save_and_publish_steps() -> None:
     frontend = Path(__file__).parents[1] / "frontend/src/views/seo"
     rewrite = (frontend / "SeoRewriteView.vue").read_text(encoding="utf-8")
