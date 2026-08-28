@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { assistSeoContent, createSeoContentAsset, fetchSeoContentAssets, fetchSeoKeywords, updateSeoContentAsset } from '../../api/seo'
+import { assistSeoContent, createSeoContentAsset, fetchSeoContentAssets, fetchSeoKeywords, fetchSeoSitePages, updateSeoContentAsset } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 
@@ -95,6 +95,20 @@ async function load() {
       if(editor.value)editor.value.innerHTML=form.draft
       saveState.value='已载入任务'
     }
+  } catch (e) { ElMessage.warning(e.message) }
+}
+
+async function loadSourcePageBrief() {
+  const sourcePageId = Number(route.query.source_page_id)
+  if (!sourcePageId || assetId.value || !siteId.value) return
+  try {
+    const response = await fetchSeoSitePages({ tenantId: currentTenantId.value, siteId: siteId.value, pageId: sourcePageId, pageSize: 1 })
+    const page = response.items?.[0]
+    if (!page) return
+    if (!form.title) form.title = page.title_suggestion || page.title || ''
+    if (!form.keyword_ids.length && page.target_keyword_id) form.keyword_ids = [page.target_keyword_id]
+    prompt.value = `本内容任务来自站内页面优化：${page.url}。需要处理的问题：${(page.issue_codes || []).join('、') || '补充页面内容'}。建议 Title：${page.title_suggestion || '待完善'}；建议 Description：${page.description_suggestion || '待完善'}。请围绕已选关键词生成与该页面匹配、可供人工审核的内容。`
+    saveState.value = '已关联站内优化任务'
   } catch (e) { ElMessage.warning(e.message) }
 }
 
@@ -320,6 +334,7 @@ onMounted(async () => {
   if (route.query.keyword_id) form.keyword_ids = [Number(route.query.keyword_id)].filter(Number.isFinite)
   const pending = loadPendingRewrite()
   try { await loadSites() } catch (e) { ElMessage.error(e.message) }
+  await loadSourcePageBrief()
   if (mode.value === 'rewrite' && pending?.autoGenerate && sourceText.value) {
     const generated = await assist('rewrite')
     if (generated) await save('drafting', { quiet: true })
