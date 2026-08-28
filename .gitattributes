@@ -1,0 +1,3 @@
+/ops/platform-deploy/install-seo-frontend.sh text eol=lf
+/ops/platform-deploy/modules/seo text eol=lf
+/ops/platform-deploy/modules/seo-frontend text eol=lf

@@ -11,6 +11,12 @@ commit="${2:-}"
 archive_sha256="${3:-}"
 confirmation="${4:-}"
 
+if [[ "$confirmation" == "DEPLOY_SEO_FRONTEND" ]]; then
+  frontend_entry='/etc/platform-deploy/modules/seo-frontend'
+  [[ -x "$frontend_entry" ]] || fail 'SEO frontend deploy entry is not configured'
+  exec "$frontend_entry" "$@"
+fi
+
 [[ "$confirmation" == "DEPLOY_SEO" ]] || fail 'confirmation must be DEPLOY_SEO'
 [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail 'commit must be a full lowercase SHA'
 [[ "$archive_sha256" =~ ^[0-9a-f]{64}$ ]] || fail 'archive sha256 is invalid'

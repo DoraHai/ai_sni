@@ -15,6 +15,7 @@ def _write(root: Path, relative: str, content: str) -> None:
 
 
 def test_source_allowlist_rejects_auth_and_other_modules() -> None:
+    assert source_path_allowed(".gitattributes")
     assert source_path_allowed("app/api/seo.py")
     assert source_path_allowed("app/seo_distribution_import.py")
     assert source_path_allowed("app/seo_distribution.py")
@@ -29,6 +30,9 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed("tests/test_seo_scheduler.py")
     assert source_path_allowed("tests/test_seo_rank_limits.py")
     assert source_path_allowed("deploy/seo-frontend.nginx.conf")
+    assert source_path_allowed(".github/workflows/production-seo-frontend-deploy.yml")
+    assert source_path_allowed("ops/platform-deploy/install-seo-frontend.sh")
+    assert source_path_allowed("ops/platform-deploy/modules/seo-frontend")
     assert source_path_allowed("frontend/src/views/seo/SeoDashboardView.vue")
     assert source_path_allowed("app/api/customer_modules.py")
     assert not source_path_allowed("app/security/auth.py")

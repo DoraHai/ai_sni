@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - codex/production-seo
+    paths:
+      - app/**
+      - migrations/**
+      - requirements.txt
+      - requirements-dev.txt
+      - alembic.ini
+      - deploy/seo-service.service
 
 permissions:
   contents: read

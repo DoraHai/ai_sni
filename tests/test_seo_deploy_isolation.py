@@ -58,6 +58,53 @@ def test_seo_deployer_never_restarts_other_modules_or_runs_migrations() -> None:
     assert "/opt/sem-frontend" not in module
 
 
+def test_seo_frontend_deployer_cannot_touch_backend_services_or_migrations() -> None:
+    dispatcher = _read("ops/platform-deploy/modules/seo")
+    module = _read("ops/platform-deploy/modules/seo-frontend")
+    installer = _read("ops/platform-deploy/install-seo-frontend.sh")
+    assert "DEPLOY_SEO_FRONTEND" in dispatcher
+    assert "exec \"$frontend_entry\" \"$@\"" in dispatcher
+    assert "frontend_root='/opt/seo-frontend'" in module
+    assert "backend=not-included" in module
+    assert "migration=not-run" in module
+    assert "service_restart=not-run" in module
+    assert "systemctl" not in module
+    assert "alembic" not in module.lower()
+    assert "/opt/seo-service" not in module
+    assert "/etc/nginx" not in module
+    assert "nginx -s" not in module
+    assert "systemctl" not in installer
+    assert "/etc/nginx" not in installer
+    assert "/opt/seo-service" not in installer
+    attributes = _read(".gitattributes")
+    assert "/ops/platform-deploy/install-seo-frontend.sh text eol=lf" in attributes
+    assert "/ops/platform-deploy/modules/seo text eol=lf" in attributes
+    assert "/ops/platform-deploy/modules/seo-frontend text eol=lf" in attributes
+
+
+def test_frontend_only_workflow_isolated_and_full_workflow_path_scoped() -> None:
+    frontend = _read(".github/workflows/production-seo-frontend-deploy.yml")
+    full = _read(".github/workflows/production-seo-deploy.yml")
+    assert "DEPLOY_SEO_FRONTEND" in frontend
+    assert "platform-deploy apply seo" in frontend
+    assert "backend=not-included" in frontend
+    assert "service_restart=not-run" in frontend
+    assert "alembic upgrade" not in frontend.lower()
+    assert "python -m alembic" not in frontend.lower()
+    assert "systemctl" not in frontend
+    assert "nginx" not in frontend.lower()
+    assert "frontend/**" in frontend
+    assert "app/**" not in frontend
+    assert "migrations/**" not in frontend
+    assert "frontend_only=false" in frontend
+    assert "deploy/seo-service\\.service" in frontend
+    assert "- app/**" in full
+    assert "- migrations/**" in full
+    assert "- frontend/**" not in full
+    assert "production-seo-deployment" in frontend
+    assert "production-seo-deployment" in full
+
+
 def test_production_workflow_auto_deploys_only_the_exact_production_head() -> None:
     workflow = _read(".github/workflows/production-seo-deploy.yml")
     assert "workflow_dispatch:" not in workflow
