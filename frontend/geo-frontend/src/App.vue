@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { fetchMe, fetchTenants } from '../../src/api/auth'
+import { fetchMe } from '../../src/api/auth'
+import { fetchGeoTenants } from '../../src/api/geo'
 import { session } from '../../src/store/session'
 
 const ready = ref(!session.isLoggedIn)
@@ -12,7 +13,7 @@ async function bootstrapSession() {
   }
 
   try {
-    const [me, tenants] = await Promise.all([fetchMe(), fetchTenants('geo')])
+    const [me, tenants] = await Promise.all([fetchMe(), fetchGeoTenants()])
     session.refreshUser(me.user)
     session.setTenants(tenants.tenants || [])
   } finally {
