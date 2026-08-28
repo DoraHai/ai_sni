@@ -12,7 +12,7 @@ async function bootstrapSession() {
   }
 
   try {
-    const [me, tenants] = await Promise.all([fetchMe(), fetchTenants()])
+    const [me, tenants] = await Promise.all([fetchMe(), fetchTenants('geo')])
     session.refreshUser(me.user)
     session.setTenants(tenants.tenants || [])
   } finally {

@@ -94,6 +94,7 @@ def test_geo_standalone_bootstraps_logged_in_tenant_context():
 
     assert "fetchMe" in app
     assert "fetchTenants" in app
+    assert "fetchTenants('geo')" in app
     assert "session.refreshUser(me.user)" in app
     assert "session.setTenants(tenants.tenants || [])" in app
     assert '<router-view v-if="ready" />' in app
