@@ -55,6 +55,20 @@ def test_standalone_seo_entry_does_not_import_shared_application() -> None:
         assert forbidden not in router
 
 
+def test_seo_shell_uses_dedicated_tenant_scope_and_remounts_on_switch() -> None:
+    root = Path(__file__).parents[1]
+    shell = (root / "frontend/src/views/seo/SeoWorkspaceShell.vue").read_text(encoding="utf-8")
+    api = (root / "frontend/src/api/seo.js").read_text(encoding="utf-8")
+
+    assert "fetchTenants('seo')" not in shell
+    assert "fetchSeoTenants()" in shell
+    assert "class=\"seo-topbar\"" in shell
+    assert "class=\"seo-page-banner\"" in shell
+    assert ':key="tenantViewKey"' in shell
+    assert "session.tenantId" in shell
+    assert "client.get('/api/v1/seo/tenants')" in api
+
+
 def test_rewrite_ui_connects_source_ai_save_and_publish_steps() -> None:
     frontend = Path(__file__).parents[1] / "frontend/src/views/seo"
     rewrite = (frontend / "SeoRewriteView.vue").read_text(encoding="utf-8")

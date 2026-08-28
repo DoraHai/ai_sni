@@ -1,5 +1,9 @@
 import client from './client'
 
+export function fetchSeoTenants() {
+  return client.get('/api/v1/seo/tenants')
+}
+
 export function fetchSeoKeywords({ tenantId, siteId, q, priority, intent, status = 'active', engine = 'baidu', device = 'desktop', page = 1, pageSize = 50 }) {
   return client.get('/api/v1/seo/keywords', {
     params: {

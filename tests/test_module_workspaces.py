@@ -1,5 +1,8 @@
 import os
 import unittest
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 os.environ.setdefault("BAIDU_APP_ID", "test-app")
@@ -22,6 +25,7 @@ from app.api.customer_modules import (
 from app.models import GeoProject, SeoSite, TenantModule
 from app.module_scope import normalize_module_code
 from app.permissions import CLIENT_PERMS, OPERATOR_PERMS
+from app.api.seo import SEO_TENANT_PERMISSION_KEYS, get_seo_tenants, router as seo_router
 from app.security.auth import AuthContext, _required
 
 
@@ -86,6 +90,26 @@ class ModuleWorkspaceTests(unittest.TestCase):
         ctx.ensure_tenant(7)
         with self.assertRaises(HTTPException):
             ctx.ensure_tenant(8)
+
+    def test_seo_service_has_dedicated_entitled_tenant_route(self):
+        self.assertIn("/api/v1/seo/tenants", {route.path for route in seo_router.routes})
+        ctx = AuthContext(1, "operator", "operator", 7, {"seo.dashboard": "view"})
+        db_session = object()
+        lookup = AsyncMock(return_value=[SimpleNamespace(id=7, name="SEO 客户")])
+
+        with patch("app.api.seo.list_module_tenants", lookup):
+            result = asyncio.run(get_seo_tenants(ctx=ctx, session=db_session))
+
+        self.assertEqual(result, {"tenants": [{"id": 7, "name": "SEO 客户"}]})
+        lookup.assert_awaited_once_with(db_session, ctx, "seo")
+
+    def test_seo_tenant_route_requires_any_seo_permission(self):
+        self.assertIn("seo.assets", SEO_TENANT_PERMISSION_KEYS)
+        self.assertIn("seo.content", SEO_TENANT_PERMISSION_KEYS)
+        ctx = AuthContext(1, "sem-only", "operator", None, {"monitor.dashboard": "view"})
+        with self.assertRaises(HTTPException) as raised:
+            asyncio.run(get_seo_tenants(ctx=ctx, session=object()))
+        self.assertEqual(raised.exception.status_code, 403)
 
     def test_domain_normalization(self):
         self.assertEqual(_canonical_domain("https://www.Example.com/path")[0], "example.com")

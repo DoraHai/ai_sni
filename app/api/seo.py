@@ -47,6 +47,7 @@ from app.models.seo import (
     SeoDistributionVariant,
     SeoPublishAttempt,
 )
+from app.module_scope import list_module_tenants
 from app.security.auth import AuthContext, require_scoped_auth
 from app.process_lock import acquire_file_lock, release_file_lock
 from app.seo_distribution import (
@@ -112,6 +113,28 @@ BRAND_ASSET_TYPES = {"official_domain", "content_url", "platform_account"}
 OWNERSHIP_TYPES = {"official_site", "brand_content", "ai_suspected", "unrelated", "unresolved"}
 METRIC_STATUSES = {"available", "not_configured", "pending", "failed", "stale"}
 METRIC_QUALITIES = {"verified", "estimated", "crawled", "imported"}
+SEO_TENANT_PERMISSION_KEYS = (
+    "seo.assets",
+    "seo.dashboard",
+    "seo.alerts",
+    "seo.keywords",
+    "seo.content",
+    "seo.site",
+    "seo.links",
+    "seo.competitors",
+)
+
+
+@router.get("/tenants")
+async def get_seo_tenants(
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Return only customers with a currently usable SEO entitlement."""
+    if not ctx.can_view(*SEO_TENANT_PERMISSION_KEYS):
+        raise HTTPException(403, "当前账号无权访问 SEO 客户列表")
+    tenants = await list_module_tenants(session, ctx, "seo")
+    return {"tenants": [{"id": tenant.id, "name": tenant.name} for tenant in tenants]}
 
 
 def _iso(value: datetime | None) -> str | None:
