@@ -37,9 +37,14 @@ if (!shellFile) {
   throw new Error('SEO workspace shell is missing from the build manifest')
 }
 const shellJavascript = await readFile(resolve(root, shellFile), 'utf8')
+const hasInlineTenantScope = /params:\{module:[`'"]seo[`'"]\}/.test(shellJavascript)
+const hasHelperTenantScope = (
+  /params:[A-Za-z_$][\w$]*\?\{module:[A-Za-z_$][\w$]*\}/.test(shellJavascript)
+  && /\([`'"]seo[`'"]\)/.test(shellJavascript)
+)
 if (
   !shellJavascript.includes('/api/v1/auth/tenants')
-  || !/params:\{module:[`'"]seo[`'"]\}/.test(shellJavascript)
+  || !(hasInlineTenantScope || hasHelperTenantScope)
 ) {
   throw new Error('SEO workspace tenant request is not filtered by module=seo')
 }

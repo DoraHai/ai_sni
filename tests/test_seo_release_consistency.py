@@ -81,7 +81,7 @@ def test_seo_shell_filters_entitled_tenants_and_clears_cross_tenant_drafts() -> 
         / "frontend/src/views/seo/SeoWorkspaceShell.vue"
     ).read_text(encoding="utf-8")
 
-    assert "client.get('/api/v1/auth/tenants', { params: { module: 'seo' } })" in shell
+    assert "fetchTenants('seo')" in shell
     assert 'href="/deal-sniper/portal"' in shell
     assert "https://gsnipers.snipers.com.cn/deal-sniper/portal" not in shell
     assert "https://sem.snipers.com.cn/deal-sniper/portal" not in shell

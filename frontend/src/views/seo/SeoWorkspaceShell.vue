@@ -1,8 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { fetchMe } from '../../api/auth'
-import client from '../../api/client'
+import { fetchMe, fetchTenants } from '../../api/auth'
 import { session } from '../../store/session'
 
 const route = useRoute()
@@ -89,10 +88,7 @@ function navigate(path) {
 async function loadContext() {
   if (!session.isLoggedIn) return
   try {
-    const [me, tenants] = await Promise.all([
-      fetchMe(),
-      client.get('/api/v1/auth/tenants', { params: { module: 'seo' } }),
-    ])
+    const [me, tenants] = await Promise.all([fetchMe(), fetchTenants('seo')])
     session.refreshUser(me.user)
     session.setTenants(tenants.tenants)
   } catch { /* 登录失效由统一拦截器处理 */ }
