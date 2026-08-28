@@ -75,6 +75,7 @@ def test_production_workflow_auto_deploys_only_the_exact_production_head() -> No
     assert "migration=not-run" in workflow
     assert "alembic upgrade" not in workflow
     assert "Apply SEO frontend and backend without database migration" in workflow
+    assert "tests/test_seo_scheduler.py" in workflow
     assert "production-sem" not in workflow
     assert "production-geo" not in workflow
 
