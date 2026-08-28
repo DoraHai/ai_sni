@@ -1,5 +1,6 @@
 """Safety checks for the restricted SEM frontend deployment boundary."""
 
+import json
 from pathlib import Path
 
 
@@ -42,6 +43,28 @@ def test_sem_ci_uses_pinned_host_key_and_dedicated_secret():
     assert "ssh-keyscan" not in workflow
     assert "DEPLOY_TARGET: sem-deploy@101.200.193.83" in workflow
     assert "environment: production" in workflow
+    assert "npm audit --omit=dev --audit-level=high" in workflow
+
+
+def test_sem_frontend_dependencies_meet_security_floors():
+    package = json.loads(_read("frontend/package.json"))
+    lock = json.loads(_read("frontend/package-lock.json"))
+
+    assert package["dependencies"]["axios"] == "^1.18.0"
+    floors = {
+        "axios": (1, 18, 0),
+        "form-data": (4, 0, 6),
+        "postcss": (8, 5, 26),
+        "nanoid": (3, 3, 18),
+    }
+    locked_packages = lock["packages"]
+    for dependency, floor in floors.items():
+        version = locked_packages[f"node_modules/{dependency}"]["version"]
+        numeric_version = tuple(int(part) for part in version.split(".")[:3])
+        assert numeric_version >= floor, (
+            f"{dependency} {version} is below the audited security floor "
+            f"{'.'.join(str(part) for part in floor)}"
+        )
 
 
 def test_canonical_domain_and_portal_routes_are_release_contracts():
@@ -74,14 +97,25 @@ def test_sem_nginx_security_headers_cover_api_spa_and_portal_iframe():
     for header in baseline:
         assert header in server_headers
 
-    prototype = _nginx_location_block(nginx, "location ^~ /deal-sniper-prototype/")
-    sem_routes = _nginx_location_block(
-        nginx,
-        "location ~ ^/(deal-sniper|diagnosis)(/|$)",
+    explicit_header_locations = (
+        _nginx_location_block(nginx, "location ^~ /assets/"),
+        _nginx_location_block(nginx, "location ^~ /deal-sniper-prototype/"),
+        _nginx_location_block(nginx, "location = /sem-index.html"),
+        _nginx_location_block(
+            nginx,
+            "location ~ ^/(assistant|onboarding|monitor|optimize|verify|manage|delivery|settings|workspace|sem)(/|$)",
+        ),
+        _nginx_location_block(
+            nginx,
+            "location ~ ^/(deal-sniper|diagnosis)(/|$)",
+        ),
     )
-    for header in baseline:
-        assert header in prototype
-        assert header in sem_routes
+    for location in explicit_header_locations:
+        for header in baseline:
+            assert header in location
+
+    prototype = explicit_header_locations[1]
+    sem_routes = explicit_header_locations[-1]
     assert 'add_header X-Frame-Options "SAMEORIGIN" always;' in prototype
     assert "frame-ancestors 'self'" in prototype
     assert 'add_header X-Frame-Options "DENY" always;' in sem_routes
