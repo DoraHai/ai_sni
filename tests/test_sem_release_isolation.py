@@ -88,6 +88,7 @@ def test_sem_release_requires_the_favicon_referenced_by_index():
     index = _read("frontend/index.html")
     build_guard = _read("frontend/scripts/verify-sem-build.mjs")
     deploy_script = _read("frontend/scripts/deploy-sem.sh")
+    nginx = _read("deploy/gsnipers.conf")
     favicon = ROOT / "frontend/public/favicon-v2.png"
 
     assert 'href="/favicon-v2.png"' in index
@@ -95,6 +96,9 @@ def test_sem_release_requires_the_favicon_referenced_by_index():
     assert favicon.stat().st_size > 0
     assert "resolve(buildDir, 'favicon-v2.png')" in build_guard
     assert "test -s '${release_dir}/favicon-v2.png'" in deploy_script
+    favicon_location = _nginx_location_block(nginx, "location = /favicon-v2.png")
+    assert "alias /opt/sem-frontend/current/favicon-v2.png;" in favicon_location
+    assert 'add_header X-Content-Type-Options "nosniff" always;' in favicon_location
 
 
 def test_sem_nginx_security_headers_cover_api_spa_and_portal_iframe():
