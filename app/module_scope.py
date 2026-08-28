@@ -60,6 +60,25 @@ async def ensure_module_access(
     return await get_tenant_module(session, tenant_id, module_code)
 
 
+async def list_active_module_tenants(
+    session: AsyncSession,
+    module_code: str,
+) -> list[Tenant]:
+    """Return tenants whose requested workspace is active and not expired."""
+    code = normalize_module_code(module_code)
+    stmt = (
+        select(Tenant)
+        .join(TenantModule, TenantModule.tenant_id == Tenant.id)
+        .where(
+            TenantModule.module_code == code,
+            TenantModule.status.in_(ACTIVE_MODULE_STATUSES),
+            or_(TenantModule.expires_at.is_(None), TenantModule.expires_at >= date.today()),
+        )
+        .order_by(Tenant.id)
+    )
+    return list((await session.scalars(stmt)).all())
+
+
 async def list_module_tenants(
     session: AsyncSession,
     ctx: "AuthContext",
