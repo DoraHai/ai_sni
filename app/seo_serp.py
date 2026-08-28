@@ -1,4 +1,4 @@
-"""百度自然搜索前 50 结果采集与确定性品牌归属匹配。"""
+"""多搜索引擎自然排名采集与确定性品牌归属匹配。"""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from app.config import get_settings
 
 CHINAZ_MAX_CONCURRENCY = 2
 CHINAZ_MAX_CONNECTIONS = 2
+DATAFORSEO_ENGINES = {"google", "bing"}
 
 
 class SerpProviderError(RuntimeError):
@@ -316,6 +317,125 @@ async def fetch_baidu_top50_batch(
         return await asyncio.gather(
             *(fetch_one(keyword, device) for keyword, device in requests)
         )
+
+
+def dataforseo_status() -> dict[str, Any]:
+    settings = get_settings()
+    configured = bool(
+        settings.seo_dataforseo_login.strip()
+        and settings.seo_dataforseo_password.strip()
+    )
+    return {
+        "configured": configured,
+        "engines": sorted(DATAFORSEO_ENGINES),
+        "provider": "dataforseo_live",
+    }
+
+
+def parse_dataforseo_response(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict) or not isinstance(payload.get("tasks"), list):
+        raise SerpProviderError("invalid_response", "多搜索引擎接口返回格式异常")
+    task = payload["tasks"][0] if payload["tasks"] else None
+    if not isinstance(task, dict):
+        raise SerpProviderError("invalid_response", "多搜索引擎接口未返回采集任务")
+    try:
+        status_code = int(task.get("status_code", 0))
+    except (TypeError, ValueError) as exc:
+        raise SerpProviderError("invalid_response", "多搜索引擎接口返回格式异常") from exc
+    if status_code != 20000:
+        raise SerpProviderError(
+            "provider_rejected",
+            "多搜索引擎接口未返回有效搜索结果",
+            retryable=status_code in {40601, 40602, 50000},
+        )
+    results = task.get("result") if isinstance(task.get("result"), list) else []
+    result = results[0] if results and isinstance(results[0], dict) else {}
+    rows = result.get("items") if isinstance(result.get("items"), list) else []
+    items: list[dict[str, Any]] = []
+    for index, row in enumerate(rows, start=1):
+        if not isinstance(row, dict) or row.get("type") != "organic":
+            continue
+        result_url = str(row.get("url") or "").strip()
+        if not result_url:
+            continue
+        try:
+            rank = int(row.get("rank_group") or row.get("rank_absolute") or index)
+        except (TypeError, ValueError):
+            rank = index
+        items.append({
+            "rank": rank,
+            "rank_label": str(rank),
+            "title": str(row.get("title") or "").strip(),
+            "description": str(row.get("description") or "").strip(),
+            "result_url": result_url,
+            "domain": str(row.get("domain") or url_domain(result_url)).lower().rstrip("."),
+        })
+    items.sort(key=lambda item: item["rank"])
+    return {
+        "site_count": result.get("se_results_count"),
+        "captured_at": datetime.now(timezone.utc).replace(tzinfo=None),
+        "items": items[:100],
+    }
+
+
+async def fetch_dataforseo_serp(
+    engine: str,
+    keyword: str,
+    device: str,
+    *,
+    client: httpx.AsyncClient,
+) -> dict[str, Any]:
+    if engine not in DATAFORSEO_ENGINES:
+        raise SerpProviderError("unsupported_engine", "该搜索引擎暂不支持自动采集")
+    if device not in {"desktop", "mobile"}:
+        raise SerpProviderError("invalid_device", "设备只支持 desktop 或 mobile")
+    settings = get_settings()
+    if not dataforseo_status()["configured"]:
+        raise SerpProviderError("provider_not_configured", "未配置 Google/Bing 实时排名服务")
+    endpoint = (
+        f"{settings.seo_dataforseo_base_url.rstrip('/')}/serp/{engine}/organic/live/regular"
+    )
+    try:
+        response = await client.post(
+            endpoint,
+            auth=(settings.seo_dataforseo_login, settings.seo_dataforseo_password),
+            json=[{
+                "keyword": keyword,
+                "location_code": settings.seo_dataforseo_location_code,
+                "language_code": settings.seo_dataforseo_language_code,
+                "device": device,
+                "depth": 100,
+            }],
+        )
+        response.raise_for_status()
+        return parse_dataforseo_response(response.json())
+    except SerpProviderError:
+        raise
+    except httpx.TimeoutException as exc:
+        raise SerpProviderError("provider_timeout", "多搜索引擎接口请求超时", retryable=True) from exc
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        message = "多搜索引擎接口认证失败" if status in {401, 403} else "多搜索引擎接口返回 HTTP 错误"
+        raise SerpProviderError("provider_auth_failed" if status in {401, 403} else "provider_http_error", message, retryable=status >= 500, status_code=status) from exc
+    except (httpx.RequestError, ValueError) as exc:
+        raise SerpProviderError("provider_network_error", "多搜索引擎接口调用失败", retryable=True) from exc
+
+
+async def fetch_dataforseo_serp_batch(
+    engine: str,
+    requests: list[tuple[str, str]],
+) -> list[tuple[dict[str, Any] | None, SerpProviderError | None]]:
+    settings = get_settings()
+    timeout = max(1.0, float(settings.seo_dataforseo_timeout_seconds))
+    semaphore = asyncio.Semaphore(2)
+    async with httpx.AsyncClient(timeout=timeout, limits=httpx.Limits(max_connections=2)) as client:
+        async def fetch_one(keyword: str, device: str):
+            try:
+                async with semaphore:
+                    return await fetch_dataforseo_serp(engine, keyword, device, client=client), None
+            except SerpProviderError as exc:
+                return None, exc
+        return await asyncio.gather(*(fetch_one(keyword, device) for keyword, device in requests))
 
 
 def deterministic_match(

@@ -80,8 +80,8 @@ export function auditSeoSitePage({ pageId, tenantId }) {
   })
 }
 
-export function fetchSeoOverview({ tenantId, siteId, engine = 'baidu', device = 'desktop' }) {
-  return client.get('/api/v1/seo/overview', { params: { tenant_id: tenantId, site_id: siteId || undefined, engine, device } })
+export function fetchSeoOverview({ tenantId, siteId, engine = 'baidu', device = 'desktop', days = 30 }) {
+  return client.get('/api/v1/seo/overview', { params: { tenant_id: tenantId, site_id: siteId || undefined, engine, device, days } })
 }
 
 export function collectSeoOverviewMetrics(payload) {
@@ -108,8 +108,30 @@ export function fetchSeoRankCollectStatus({ tenantId, siteId }) {
   })
 }
 
-export function fetchSeoSerpResults({ tenantId, siteId, device = 'desktop', ownershipType, keywordId, limit = 200 }) {
-  return client.get('/api/v1/seo/rank-serp/results', { params: { tenant_id: tenantId, site_id: siteId || undefined, device, ownership_type: ownershipType || undefined, keyword_id: keywordId || undefined, limit } })
+export function fetchSeoRankProviders({ tenantId, siteId }) {
+  return client.get('/api/v1/seo/rank-serp/providers', {
+    params: { tenant_id: tenantId, site_id: siteId },
+  })
+}
+
+export function fetchSeoSerpResults({ tenantId, siteId, engine = 'baidu', device = 'desktop', ownershipType, keywordId, limit = 200 }) {
+  return client.get('/api/v1/seo/rank-serp/results', { params: { tenant_id: tenantId, site_id: siteId || undefined, engine, device, ownership_type: ownershipType || undefined, keyword_id: keywordId || undefined, limit } })
+}
+
+export function fetchSeoGscConnection({ tenantId, siteId }) {
+  return client.get('/api/v1/seo/traffic/gsc', { params: { tenant_id: tenantId, site_id: siteId } })
+}
+
+export function updateSeoGscConnection(payload) {
+  return client.put('/api/v1/seo/traffic/gsc', payload)
+}
+
+export function testSeoGscConnection(payload) {
+  return client.post('/api/v1/seo/traffic/gsc/test', payload, { timeout: 60000 })
+}
+
+export function collectSeoGscTraffic(payload) {
+  return client.post('/api/v1/seo/traffic/gsc/collect', payload, { timeout: 60000 })
 }
 
 export function updateSeoSerpOwnership({ resultId, tenantId, siteId, ownershipType, createAsset = true }) {

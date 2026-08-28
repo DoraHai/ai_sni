@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
+from starlette.requests import Request
 
 from app.api.seo import (
     BrandProfileUpdate,
@@ -24,6 +25,7 @@ from app.api.seo import (
     _number_or_text,
     _provider_metric_status,
     _rank_iso,
+    require_seo_module_access,
     _serp_error_payload,
     _normalize_brand_homepage,
     _seo_ai_prompt,
@@ -52,6 +54,28 @@ from app.models.tenant import Tenant
 from app.permissions import CLIENT_PERMS, MENU_KEYS, OPERATOR_PERMS
 from app.security.auth import AuthContext, _required
 from app.seo_serp import SerpProviderError
+
+
+def _request(
+    method: str,
+    path: str,
+    *,
+    query_string: bytes = b"",
+    body: bytes = b"",
+) -> Request:
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    return Request(
+        {
+            "type": "http",
+            "method": method,
+            "path": path,
+            "query_string": query_string,
+            "headers": [(b"content-type", b"application/json")],
+        },
+        receive,
+    )
 
 
 def test_seo_permissions_are_registered_for_all_roles() -> None:
@@ -93,6 +117,8 @@ def test_page_audit_result_updates_title_and_page_health() -> None:
         ("/api/v1/seo/site-pages/1/audit", "POST", "seo.site", True),
         ("/api/v1/seo/site/crawl-runs", "POST", "seo.site", True),
         ("/api/v1/seo/overview", "GET", "seo.dashboard", False),
+        ("/api/v1/seo/traffic/gsc", "GET", "seo.dashboard", False),
+        ("/api/v1/seo/traffic/gsc", "PUT", "seo.dashboard", True),
         ("/api/v1/seo/alerts", "GET", "seo.alerts", False),
         ("/api/v1/seo/content-assets", "POST", "seo.content", True),
         ("/api/v1/seo/internal-links", "GET", "seo.links", False),
@@ -120,6 +146,29 @@ def test_tenant_bound_context_rejects_cross_tenant_write() -> None:
     with pytest.raises(Exception) as exc:
         context.ensure_tenant(13)
     assert getattr(exc.value, "status_code", None) == 403
+
+
+@pytest.mark.parametrize(
+    "http_request",
+    [
+        _request("GET", "/api/v1/seo/keywords", query_string=b"tenant_id=12"),
+        _request("POST", "/api/v1/seo/keywords", body=b'{"tenant_id":12}'),
+    ],
+)
+def test_seo_routes_require_active_module_for_tenant(http_request: Request) -> None:
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=12,
+        permissions={"seo.keywords": "edit"},
+    )
+    session = object()
+    with patch("app.api.seo.ensure_module_access", new=AsyncMock()) as guard:
+        result = asyncio.run(require_seo_module_access(http_request, context, session))
+
+    assert result is context
+    guard.assert_awaited_once_with(session, context, 12, "seo")
 
 
 def test_keyword_and_rank_input_validation() -> None:
@@ -501,6 +550,13 @@ def test_manual_serp_collection_requires_positive_site_id(site_id: int | None) -
             max_keywords=1,
             use_ai=False,
         )
+
+
+def test_serp_collection_accepts_only_implemented_automatic_engines() -> None:
+    assert SerpCollectRequest(tenant_id=1, site_id=1, engine="google").engine == "google"
+    assert SerpCollectRequest(tenant_id=1, site_id=1, engine="bing").engine == "bing"
+    with pytest.raises(ValidationError):
+        SerpCollectRequest(tenant_id=1, site_id=1, engine="sogou")
 
 
 def test_models_use_separate_seo_tables() -> None:
