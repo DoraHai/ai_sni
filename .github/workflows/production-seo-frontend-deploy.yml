@@ -217,6 +217,22 @@ jobs:
             esac
           done
           test -n "$bundles"
+          mapfile -t linked_assets < <(
+            grep -Eho 'seo-[A-Za-z0-9_-]+\.(js|css)' $bundles |
+              sed 's#^#/seo/assets/#' |
+              sort -u
+          )
+          test "${#linked_assets[@]}" -gt 0
+          for asset in "${linked_assets[@]}"; do
+            asset_headers="$RUNNER_TEMP/linked-asset-$(printf '%s' "$asset" | sha256sum | cut -c1-12).headers"
+            asset_body="$RUNNER_TEMP/linked-asset-$(printf '%s' "$asset" | sha256sum | cut -c1-12).body"
+            curl -fsS -D "$asset_headers" -o "$asset_body" "https://gsnipers.snipers.com.cn${asset}"
+            grep -Eqi '^x-content-type-options:[[:space:]]*nosniff' "$asset_headers"
+            grep -Eqi '^cache-control:.*immutable' "$asset_headers"
+            case "$asset" in
+              *.js) bundles="$bundles $asset_body" ;;
+            esac
+          done
           grep -Fq -- '/deal-sniper/portal' $bundles
           if grep -Fq -- 'https://gsnipers.snipers.com.cn/deal-sniper/portal' $bundles; then
             echo 'Absolute production portal link remains in deployed assets' >&2
