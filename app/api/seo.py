@@ -68,10 +68,13 @@ from app.seo_distribution import (
 from app.seo_serp import (
     SerpProviderError,
     canonical_url,
+    dataforseo_status,
     deterministic_match,
     fetch_baidu_top50_batch,
+    fetch_dataforseo_serp_batch,
     url_domain,
 )
+from app.seo_traffic import GscError, gsc_status, query_gsc_traffic, validate_property
 from app.seo_crawler import crawl_site
 from app.seo_competitor import (
     COMPETITOR_MANUAL_COOLDOWN_SECONDS,
@@ -380,6 +383,7 @@ class BrandProfileUpdate(BaseModel):
 class SerpCollectRequest(BaseModel):
     tenant_id: int
     site_id: PositiveInt
+    engine: Literal["baidu", "google", "bing"] = "baidu"
     keyword_ids: list[int] | None = Field(None, max_length=50)
     devices: list[Literal["desktop", "mobile"]] = Field(
         default_factory=lambda: ["desktop"], min_length=1
@@ -438,6 +442,19 @@ class MetricSnapshotCreate(BaseModel):
 class OverviewMetricCollectRequest(BaseModel):
     tenant_id: int
     site_id: int
+
+
+class GscConnectionUpdate(BaseModel):
+    tenant_id: int
+    site_id: PositiveInt
+    property_url: str = Field(min_length=3, max_length=2000)
+    enabled: bool = True
+
+
+class GscCollectRequest(BaseModel):
+    tenant_id: int
+    site_id: PositiveInt
+    days: int = Field(28, ge=1, le=90)
 
 
 def _metric_payload(row: SeoMetricSnapshot, *, include_raw: bool = False) -> dict[str, Any]:
@@ -518,6 +535,107 @@ async def _latest_site_metrics(
     for row in rows:
         latest.setdefault((row.metric_type, row.dimension, row.source), row)
     return latest
+
+
+def _gsc_site_config(site: SeoSite) -> dict[str, Any]:
+    settings = site.site_settings if isinstance(site.site_settings, dict) else {}
+    value = settings.get("google_search_console")
+    return value if isinstance(value, dict) else {}
+
+
+@router.get("/traffic/gsc")
+async def get_gsc_connection(
+    tenant_id: int,
+    site_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    site = await _seo_site(session, tenant_id, site_id)
+    config = _gsc_site_config(site)
+    return {
+        **gsc_status(),
+        "enabled": bool(config.get("enabled", False)),
+        "property_url": config.get("property_url"),
+    }
+
+
+@router.put("/traffic/gsc")
+async def update_gsc_connection(
+    req: GscConnectionUpdate,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    site = await _seo_site(session, req.tenant_id, req.site_id)
+    try:
+        property_url = validate_property(req.property_url, site.canonical_domain)
+    except GscError as exc:
+        raise HTTPException(422, exc.public_message) from exc
+    site_settings = dict(site.site_settings or {})
+    site_settings["google_search_console"] = {
+        "property_url": property_url,
+        "enabled": req.enabled,
+    }
+    site.site_settings = site_settings
+    await session.commit()
+    return {**gsc_status(), "enabled": req.enabled, "property_url": property_url}
+
+
+@router.post("/traffic/gsc/test")
+async def test_gsc_connection(
+    req: GscCollectRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    site = await _seo_site(session, req.tenant_id, req.site_id)
+    config = _gsc_site_config(site)
+    if not config.get("enabled") or not config.get("property_url"):
+        raise HTTPException(409, "当前网站尚未启用 Google Search Console")
+    try:
+        result = await query_gsc_traffic(str(config["property_url"]), days=min(req.days, 3))
+    except GscError as exc:
+        raise HTTPException(502, exc.public_message) from exc
+    return {"status": "ok", "provider": "google_search_console", "sample": result}
+
+
+@router.post("/traffic/gsc/collect")
+async def collect_gsc_traffic(
+    req: GscCollectRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    site = await _seo_site(session, req.tenant_id, req.site_id)
+    config = _gsc_site_config(site)
+    if not config.get("enabled") or not config.get("property_url"):
+        raise HTTPException(409, "当前网站尚未启用 Google Search Console")
+    try:
+        result = await query_gsc_traffic(str(config["property_url"]), days=req.days)
+    except GscError as exc:
+        raise HTTPException(502, exc.public_message) from exc
+    observed_at = datetime.utcnow()
+    values = (
+        ("gsc_clicks", result["clicks"], "clicks"),
+        ("gsc_impressions", result["impressions"], "impressions"),
+        ("gsc_ctr", result["ctr"], "ratio"),
+        ("gsc_position", result["position"], "position"),
+    )
+    for metric_type, numeric_value, unit in values:
+        session.add(SeoMetricSnapshot(
+            tenant_id=req.tenant_id,
+            site_id=req.site_id,
+            metric_type=metric_type,
+            dimension=f"last_{req.days}_days",
+            numeric_value=numeric_value,
+            unit=unit,
+            source="google_search_console",
+            data_quality="verified",
+            status="available",
+            raw_payload=result,
+            observed_at=observed_at,
+        ))
+    await session.commit()
+    return {"status": "ok", "provider": "google_search_console", **result}
 
 
 def _provider_metric_status(value: dict[str, Any]) -> Literal[
@@ -1368,10 +1486,11 @@ async def collect_rank_serp_for_tenant(
     keyword_ids: list[int] | None = None,
     devices: list[Literal["desktop", "mobile"]] | None = None,
     max_keywords: int | None = None,
+    engine: Literal["baidu", "google", "bing"] = "baidu",
     use_ai: bool = True,
     captured_at: datetime | None = None,
 ) -> dict[str, Any]:
-    """采集一个客户的百度前 50；供人工刷新与每日定时任务共用。"""
+    """采集一个客户的真实 SERP；供人工刷新与每日定时任务共用。"""
     tenant = await _tenant(session, tenant_id)
     await _seo_site(session, tenant_id, site_id)
     devices = list(dict.fromkeys(devices or ["desktop"]))
@@ -1401,9 +1520,13 @@ async def collect_rank_serp_for_tenant(
         for keyword in keywords
         for device in devices
     ]
-    batch_results = await fetch_baidu_top50_batch(
-        [(keyword.keyword, device) for keyword, device in batch_requests]
-    )
+    provider_requests = [(keyword.keyword, device) for keyword, device in batch_requests]
+    if engine == "baidu":
+        batch_results = await fetch_baidu_top50_batch(provider_requests)
+        source = "chinaz_top50"
+    else:
+        batch_results = await fetch_dataforseo_serp_batch(engine, provider_requests)
+        source = "dataforseo_live"
     fetched = [
         (keyword, device, result, fetch_error)
         for (keyword, device), (result, fetch_error) in zip(
@@ -1424,7 +1547,7 @@ async def collect_rank_serp_for_tenant(
         if fetch_error or result is None:
             provider_error = fetch_error or SerpProviderError(
                 "provider_error",
-                "站长之家前50接口调用失败",
+                "搜索引擎排名接口调用失败",
             )
             errors.append(_serp_error_payload(keyword.id, device, provider_error))
             logger.warning(
@@ -1465,7 +1588,7 @@ async def collect_rank_serp_for_tenant(
                 tenant_id=tenant_id,
                 site_id=site_id,
                 keyword_id=keyword.id,
-                engine="baidu",
+                engine=engine,
                 device=device,
                 region="全国",
                 rank=item["rank"],
@@ -1496,14 +1619,14 @@ async def collect_rank_serp_for_tenant(
                 tenant_id=tenant_id,
                 site_id=site_id,
                 keyword_id=keyword.id,
-                engine="baidu",
+                engine=engine,
                 device=device,
                 region="全国",
                 domain=best["domain"] if best else None,
                 subject_type="own",
                 rank=best["rank"] if best else None,
                 result_url=best["result_url"] if best else None,
-                source="chinaz_top50",
+                source=source,
                 checked_at=batch_captured_at,
             )
         )
@@ -1512,6 +1635,8 @@ async def collect_rank_serp_for_tenant(
     return {
         "keywords": len(keywords),
         "devices": devices,
+        "engine": engine,
+        "source": source,
         "requests": len(keywords) * len(devices),
         "serp_results": created,
         "confirmed_brand_results": matched,
@@ -1578,6 +1703,7 @@ async def collect_rank_serp(
             keyword_ids=req.keyword_ids,
             devices=req.devices,
             max_keywords=req.max_keywords,
+            engine=req.engine,
             use_ai=req.use_ai,
         )
     finally:
@@ -1611,10 +1737,36 @@ async def rank_serp_collect_status(
         ) from exc
 
 
+@router.get("/rank-serp/providers")
+async def rank_serp_providers(
+    tenant_id: int,
+    site_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    await _seo_site(session, tenant_id, site_id)
+    settings = get_settings()
+    external = dataforseo_status()
+    return {
+        "baidu": {
+            "configured": bool(settings.chinaz_api_enabled and (
+                settings.chinaz_baidu_pc_top50_api_key
+                or settings.chinaz_baidu_mobile_top50_api_key
+                or settings.chinaz_api_key
+            )),
+            "provider": "chinaz_top50",
+        },
+        "google": dict(external),
+        "bing": dict(external),
+        "360": {"configured": False, "provider": None, "reason": "暂无稳定自动采集接口"},
+        "sogou": {"configured": False, "provider": None, "reason": "暂无稳定自动采集接口"},
+    }
+
+
 @router.get("/rank-serp/results")
 async def list_rank_serp_results(
     tenant_id: int,
     site_id: int | None = None,
+    engine: Literal["baidu", "google", "bing"] = "baidu",
     device: Literal["desktop", "mobile"] = "desktop",
     ownership_type: str | None = None,
     keyword_id: int | None = None,
@@ -1623,7 +1775,11 @@ async def list_rank_serp_results(
 ) -> dict[str, Any]:
     await _tenant(session, tenant_id)
     await _seo_site(session, tenant_id, site_id)
-    base_conditions = [SeoSerpResult.tenant_id == tenant_id, SeoSerpResult.device == device]
+    base_conditions = [
+        SeoSerpResult.tenant_id == tenant_id,
+        SeoSerpResult.engine == engine,
+        SeoSerpResult.device == device,
+    ]
     if site_id is not None:
         base_conditions.append(SeoSerpResult.site_id == site_id)
     conditions = list(base_conditions)

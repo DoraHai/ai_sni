@@ -31,11 +31,49 @@ for (const forbidden of [
   }
 }
 
+const shellKey = Object.keys(manifest).find((key) => key.endsWith('/SeoWorkspaceShell.vue'))
+const shellFile = shellKey ? manifest[shellKey]?.file : null
+if (!shellFile) {
+  throw new Error('SEO workspace shell is missing from the build manifest')
+}
+const shellJavascript = await readFile(resolve(root, shellFile), 'utf8')
+if (
+  !shellJavascript.includes('/api/v1/auth/tenants')
+  || !/params:\{module:[`'"]seo[`'"]\}/.test(shellJavascript)
+) {
+  throw new Error('SEO workspace tenant request is not filtered by module=seo')
+}
+
 const files = await filesUnder(root)
 for (const file of files) {
   if (file === 'index.html' || file === '.vite/manifest.json') continue
   if (!file.startsWith('assets/seo-')) {
     throw new Error(`Unexpected non-SEO build asset: ${file}`)
+  }
+}
+
+const javascript = (
+  await Promise.all(
+    files
+      .filter((file) => file.endsWith('.js'))
+      .map((file) => readFile(resolve(root, file), 'utf8')),
+  )
+).join('\n')
+const portalUrl = 'https://gsnipers.snipers.com.cn/deal-sniper/portal'
+if (!javascript.includes(portalUrl)) {
+  throw new Error(`SEO build does not contain the current portal URL: ${portalUrl}`)
+}
+if (javascript.includes('https://sem.snipers.com.cn/deal-sniper/portal')) {
+  throw new Error('SEO build still contains the retired portal URL')
+}
+for (const marker of [
+  '/api/v1/seo/rank-serp/providers',
+  '/api/v1/seo/traffic/gsc/collect',
+  'DataForSEO',
+  '接入 Google Search Console',
+]) {
+  if (!javascript.includes(marker)) {
+    throw new Error(`SEO build is missing the multi-engine/traffic marker: ${marker}`)
   }
 }
 
