@@ -29,10 +29,13 @@ def test_sem_backend_release_is_manual_only() -> None:
 
 def test_sem_backend_release_rejects_stale_production_heads() -> None:
     workflow = _workflow()
-    assert "SEM_PRODUCTION_BRANCH: codex/production-sem" in workflow
+    assert "RELEASE_BRANCH: codex/production-sem-backend" in workflow
+    assert "SEM_PRODUCTION_BRANCH" not in workflow
+    assert re.search(r"codex/production-sem(?!-backend)", workflow) is None
+    assert "currently at codex/production-sem-backend HEAD" in workflow
     assert (
         workflow.count(
-            'git ls-remote origin "refs/heads/$SEM_PRODUCTION_BRANCH"'
+            'git ls-remote origin "refs/heads/$RELEASE_BRANCH"'
         )
         >= 3
     )

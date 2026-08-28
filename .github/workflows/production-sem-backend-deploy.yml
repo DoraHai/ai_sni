@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       release_sha:
-        description: Full SHA currently at codex/production-sem HEAD
+        description: Full SHA currently at codex/production-sem-backend HEAD
         required: true
         type: string
 
@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  SEM_PRODUCTION_BRANCH: codex/production-sem
+  RELEASE_BRANCH: codex/production-sem-backend
 
 jobs:
   verify:
@@ -52,12 +52,12 @@ jobs:
           ref: ${{ inputs.release_sha }}
           fetch-depth: 0
 
-      - name: Require release SHA to be current production-sem HEAD
+      - name: Require release SHA to be current SEM backend production HEAD
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
-          latest="$(git ls-remote origin "refs/heads/$SEM_PRODUCTION_BRANCH" | cut -f1)"
+          latest="$(git ls-remote origin "refs/heads/$RELEASE_BRANCH" | cut -f1)"
           test -n "$latest"
           if [[ "$latest" != "$RELEASE_SHA" ]]; then
             echo "Refusing stale SEM backend release: requested=$RELEASE_SHA production=$latest" >&2
@@ -221,14 +221,14 @@ jobs:
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
-      - name: Re-check production-sem HEAD and upload immutable archive
+      - name: Re-check SEM backend production HEAD and upload immutable archive
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
-          latest="$(git ls-remote origin "refs/heads/$SEM_PRODUCTION_BRANCH" | cut -f1)"
+          latest="$(git ls-remote origin "refs/heads/$RELEASE_BRANCH" | cut -f1)"
           test -n "$latest"
           if [[ "$latest" != "$RELEASE_SHA" ]]; then
             echo "Refusing stale SEM backend upload: requested=$RELEASE_SHA production=$latest" >&2
@@ -255,14 +255,14 @@ jobs:
             "$DEPLOY_USER@$DEPLOY_HOST" \
             "mv '${remote_path}.part' '$remote_path'"
 
-      - name: Re-check production-sem HEAD and apply without database migration
+      - name: Re-check SEM backend production HEAD and apply without database migration
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
-          latest="$(git ls-remote origin "refs/heads/$SEM_PRODUCTION_BRANCH" | cut -f1)"
+          latest="$(git ls-remote origin "refs/heads/$RELEASE_BRANCH" | cut -f1)"
           test -n "$latest"
           if [[ "$latest" != "$RELEASE_SHA" ]]; then
             echo "Refusing stale SEM backend apply: requested=$RELEASE_SHA production=$latest" >&2
