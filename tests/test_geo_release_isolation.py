@@ -65,9 +65,9 @@ def test_geo_overview_desktop_actions_stay_on_one_row():
     dashboard_css = _read("frontend/src/styles/geo-dashboard.css")
 
     assert 'class="geo-overview-page"' in overview
-    assert ".geo-overview-page .geo-topbar" in dashboard_css
+    assert ".geo-overview-page .geo-page-banner" in dashboard_css
     assert "grid-template-columns: minmax(180px, 1fr) auto" in dashboard_css
-    assert ".geo-overview-page .geo-topbar .right" in dashboard_css
+    assert ".geo-overview-page .geo-page-banner .right" in dashboard_css
     assert "flex-wrap: nowrap" in dashboard_css
     assert "width: clamp(160px, 16vw, 240px)" in dashboard_css
 
@@ -77,6 +77,7 @@ def test_geo_standalone_keeps_required_form_and_table_styles():
     styles = _read("frontend/geo-frontend/src/standalone.css")
 
     assert "import './standalone.css'" in entry
+    assert "min-width: 1120px" not in styles
     for selector in (
         ".el-input__wrapper",
         ".el-form-item__label",
@@ -94,19 +95,27 @@ def test_geo_standalone_bootstraps_logged_in_tenant_context():
 
     assert "fetchMe" in app
     assert "fetchTenants" in app
+    assert "fetchTenants('geo')" in app
     assert "session.refreshUser(me.user)" in app
     assert "session.setTenants(tenants.tenants || [])" in app
     assert '<router-view v-if="ready" />' in app
 
 
-def test_geo_standalone_uses_compact_colleague_shell_without_outer_header():
+def test_geo_standalone_uses_shared_customer_and_account_header():
     shell = _read("frontend/src/views/geo/GeoWorkspaceShell.vue")
+    page = _read("frontend/src/components/GeoWorkbenchPage.vue")
 
     assert "grid-template-columns: 216px minmax(0, 1fr);" in shell
-    assert "geo-shell-header" not in shell
+    assert 'class="geo-accountbar"' in shell
+    assert 'class="geo-tenant-switcher"' in shell
+    assert "当前客户" in shell
+    assert "GEO 已开通" in shell
+    assert "待选择 GEO 客户" in shell
+    assert "登录账号" in shell
+    assert 'class="geo-page-banner"' in page
+    assert "GEO WORKSPACE" in page
     assert "railCollapsed" not in shell
     assert "session.setTenant(id)" in shell
-    assert "padding: 0;" in shell
 
 
 def test_geo_editor_keeps_the_complete_editor_first_interactions():
