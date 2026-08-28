@@ -170,6 +170,12 @@ def test_seo_content_and_rank_views_are_site_scoped_and_html_safe() -> None:
     assert 'v-model="collectForm.keyword_ids"' in ranking
     assert "keyword_ids: collectForm.keyword_ids" in ranking
     assert "formatSeoRankTime(serp.captured_at)" in ranking
+    assert "openKeywordDetail(row.id)" in ranking
+    assert "query: { engine: engine.value, device: device.value }" in ranking
+    keyword_detail = (root / "frontend/src/views/seo/SeoKeywordDetailView.vue").read_text(encoding="utf-8")
+    assert "{k:'360',n:'360'}" in keyword_detail
+    assert "{k:'sogou',n:'搜狗'}" in keyword_detail
+    assert "device:device.value" in keyword_detail
     assert "timeZone: SEO_TIME_ZONE" in (root / "frontend/src/views/seo/seoRankTime.js").read_text(encoding="utf-8")
     assert 'siteId:siteId.value' in rewrite
     assert 'siteId: siteId.value' in distribution

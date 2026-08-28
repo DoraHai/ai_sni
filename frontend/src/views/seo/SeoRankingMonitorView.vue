@@ -97,6 +97,9 @@ const collectButtonText = computed(() => {
 const fmt = (value) => value == null ? '—' : Number(value).toLocaleString('zh-CN')
 const delta = (item) => !item.rank_delta ? '—' : `${item.rank_delta > 0 ? '↑' : '↓'}${Math.abs(item.rank_delta)}`
 const deviceLabel = (value) => `${engineName.value} ${value === 'mobile' ? '移动' : 'PC'}`
+function openKeywordDetail(keywordId) {
+  router.push({ path: `/seo/keywords/${keywordId}`, query: { engine: engine.value, device: device.value } })
+}
 function spark(item) {
   if (item.latest_rank == null) return ''
   const previous = Math.max(1, item.latest_rank + (item.rank_delta || 0))
@@ -404,13 +407,13 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
             <thead><tr><th>关键词</th><th>优先级</th><th>当前排名</th><th>周期趋势</th><th>排名网址</th><th>状态</th><th>详情</th></tr></thead>
             <tbody>
               <tr v-for="row in rows" :key="row.id">
-                <td class="keyword-cell"><span class="kw-name"><button @click="router.push(`/seo/keywords/${row.id}`)">{{ row.keyword }}</button></span><small class="kw-sub">{{ row.cluster || '未归类' }}</small></td>
+                <td class="keyword-cell"><span class="kw-name"><button @click="openKeywordDetail(row.id)">{{ row.keyword }}</button></span><small class="kw-sub">{{ row.cluster || '未归类' }}</small></td>
                 <td><span class="kw-priority" :class="row.priority.toLowerCase()">{{ row.priority }}</span></td>
                 <td><span class="kw-rank"><strong>{{ row.latest_rank || '50+' }}</strong><i :class="row.rank_delta > 0 ? 'up' : row.rank_delta < 0 ? 'down' : ''">{{ delta(row) }}</i></span></td>
                 <td><svg v-if="spark(row)" width="92" height="28" viewBox="0 0 92 28"><polyline :points="spark(row)" fill="none" :stroke="row.rank_delta >= 0 ? '#248a64' : '#d9544d'" stroke-width="2" /></svg><span v-else>—</span></td>
                 <td><div class="kw-link">{{ row.rank_url || '前 50 暂无已确认品牌结果' }}</div></td>
                 <td><span class="kw-pill" :class="row.latest_rank == null ? 'gray' : row.rank_delta < 0 ? 'red' : 'green'">{{ row.latest_rank == null ? '50名外' : row.rank_delta < 0 ? '排名波动' : '已覆盖' }}</span></td>
-                <td><button class="kw-btn small" @click="router.push(`/seo/keywords/${row.id}`)">查看历史 →</button></td>
+                <td><button class="kw-btn small" @click="openKeywordDetail(row.id)">查看历史 →</button></td>
               </tr>
               <tr v-if="!rows.length"><td colspan="7"><div class="kw-empty"><b>暂无排名数据</b>{{providerConfigured ? `点击“更新排名”采集 ${engineName} 搜索结果` : `通过“导入实测排名”录入 ${engineName} 真人测试结果`}}</div></td></tr>
             </tbody>
