@@ -166,6 +166,22 @@ def test_site_page_workflow_statuses_are_validated() -> None:
         assert SitePageUpdate(status=status).status == status
 
 
+def test_manual_rank_snapshot_normalizes_browser_utc_timestamp() -> None:
+    snapshot = RankSnapshotCreate(
+        tenant_id=1,
+        site_id=1,
+        keyword_id=2,
+        engine="sogou",
+        device="desktop",
+        rank=2,
+        result_url="https://www.nord.cn/cn/home-cn.jsp",
+        checked_at="2026-08-28T11:17:00.000Z",
+        source="manual_import",
+    )
+    assert snapshot.checked_at == datetime(2026, 8, 28, 11, 17)
+    assert snapshot.checked_at.tzinfo is None
+
+
 @pytest.mark.parametrize(
     ("path", "method", "permission", "needs_edit"),
     [
