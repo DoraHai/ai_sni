@@ -1,19 +1,20 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { auditPendingSeoSitePages, auditSeoSitePage, fetchSeoKeywords, fetchSeoSitePages, importSeoSitePages, updateSeoSitePage } from '../../api/seo'
+import { auditPendingSeoSitePages, auditSeoSitePage, fetchSeoKeywords, fetchSeoSitePages, generateSeoSitePageSuggestions, importSeoSitePages, updateSeoSitePage } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 
 const route = useRoute()
+const router = useRouter()
 
 const loading = ref(false)
 const error = ref('')
 const sites = ref([])
 const siteId = ref(null)
 const result = ref({ items: [], total: 0, stats: {} })
-const filters = reactive({ q: '', status: '' })
+const filters = reactive({ q: '', status: '', issueCode: '' })
 const importOpen = ref(false)
 const editOpen = ref(false)
 const importText = ref('')
@@ -21,14 +22,16 @@ const editing = ref(null)
 const saving = ref(false)
 const auditing = ref(new Set())
 const batchAuditing = ref(false)
+const generating = ref(false)
+const selectedRows = ref([])
 const keywordOptions = ref([])
 const editForm = reactive({ page_type: '', target_keyword_id: null, title_suggestion: '', description_suggestion: '', status: 'pending' })
 
 const canEdit = computed(() => !session.isLoggedIn || session.canEdit('seo.site'))
 const stats = computed(() => result.value.stats || {})
 function fmt(value) { return value == null ? '—' : Number(value).toLocaleString('zh-CN') }
-function statusLabel(value) { return {pending:'待检测',healthy:'健康',needs_fix:'需优化',error:'检测失败'}[value] || value }
-function statusType(value) { return {pending:'info',healthy:'success',needs_fix:'warning',error:'danger'}[value] || 'info' }
+function statusLabel(value) { return {pending:'待检测',healthy:'健康',needs_fix:'需优化',proposed:'待确认',approved:'已确认',implemented:'待复检',verified:'已复检',error:'检测失败'}[value] || value }
+function statusType(value) { return {pending:'info',healthy:'success',needs_fix:'warning',proposed:'warning',approved:'primary',implemented:'primary',verified:'success',error:'danger'}[value] || 'info' }
 function issueLabel(code) { return {title:'Title',description:'Description',canonical:'Canonical',h1:'H1',indexable:'索引',heading_depth:'标题结构',substantial:'内容量',schema:'Schema'}[code] || code }
 
 async function load() {
@@ -83,6 +86,28 @@ async function auditPending() {
     await load()
   } catch (e) { ElMessage.error(e.message) } finally { batchAuditing.value = false }
 }
+async function generateSuggestions() {
+  const pageIds = selectedRows.value.length ? selectedRows.value.map((row) => row.id) : result.value.items.map((row) => row.id)
+  if (!pageIds.length) return ElMessage.warning('当前没有可生成建议的页面')
+  generating.value = true
+  try {
+    const response = await generateSeoSitePageSuggestions({ tenant_id: currentTenantId.value, site_id: siteId.value, page_ids: pageIds })
+    ElMessage.success(`已生成 ${response.generated} 个页面的 TDK 建议${response.skipped ? `，跳过 ${response.skipped} 个已有建议` : ''}`)
+    await load()
+  } catch (e) { ElMessage.error(e.message) } finally { generating.value = false }
+}
+function csvCell(value) { return `"${String(value ?? '').replace(/"/g, '""')}"` }
+function exportHandoff() {
+  const rows = selectedRows.value.length ? selectedRows.value : result.value.items
+  if (!rows.length) return ElMessage.warning('当前没有可导出的页面')
+  const headers = ['页面ID','URL','页面类型','目标关键词ID','问题','当前Title','建议Title','当前Description','建议Description','状态','复检时间']
+  const body = rows.map((row) => [row.id,row.url,row.page_type,row.target_keyword_id,(row.issue_codes||[]).join('|'),row.title,row.title_suggestion,row.meta_description,row.description_suggestion,statusLabel(row.status),row.last_checked_at])
+  const blob = new Blob(['\ufeff' + [headers,...body].map((line) => line.map(csvCell).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' })
+  const anchor = document.createElement('a'); anchor.href = URL.createObjectURL(blob); anchor.download = `SEO站内优化交接-${siteId.value}.csv`; anchor.click(); URL.revokeObjectURL(anchor.href)
+}
+function createContentTask(row) {
+  router.push({ path: '/seo/content/editor', query: { site_id: siteId.value, keyword_id: row.target_keyword_id || undefined, source_page_id: row.id } })
+}
 let timer
 watch(() => filters.q, () => { clearTimeout(timer); timer = setTimeout(load, 260) })
 async function loadSites() {
@@ -99,7 +124,7 @@ async function loadSites() {
     sites.value = []; siteId.value = null; error.value = e.message
   }
 }
-watch(() => filters.status, load)
+watch(() => [filters.status, filters.issueCode], load)
 watch(() => route.query.page_id, load)
 watch(() => route.query.site_id, loadSites)
 watch(siteId, () => { load(); loadKeywordOptions() })
@@ -111,7 +136,7 @@ onMounted(loadSites)
   <div class="site-page">
     <section class="site-hero">
       <div><span>SEO / ONSITE OPTIMIZATION</span><h1>站内优化</h1><p>管理页面资产、TDK、H1、Canonical 与索引状态。检测结果保存到页面档案，可用于上线前后复核。</p></div>
-      <div class="hero-actions"><el-select v-model="siteId" placeholder="选择 SEO 网站"><el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id"/></el-select><button v-if="canEdit" :disabled="batchAuditing||!siteId" @click="auditPending">{{batchAuditing?'补抓中…':'补抓待检测页面'}}</button><button v-if="canEdit" :disabled="!siteId" @click="importOpen = true">＋ 导入页面</button></div>
+      <div class="hero-actions"><el-select v-model="siteId" placeholder="选择 SEO 网站"><el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id"/></el-select><button v-if="canEdit" :disabled="generating||!siteId" @click="generateSuggestions">{{generating?'生成中…':'生成 TDK 建议'}}</button><button :disabled="!siteId" class="secondary" @click="exportHandoff">导出交接单</button><button v-if="canEdit" :disabled="batchAuditing||!siteId" @click="auditPending">{{batchAuditing?'补抓中…':'补抓待检测页面'}}</button><button v-if="canEdit" :disabled="!siteId" @click="importOpen = true">＋ 导入页面</button></div>
     </section>
     <el-alert v-if="error" :title="error" type="warning" :closable="false" show-icon />
     <section class="metrics">
@@ -122,15 +147,17 @@ onMounted(loadSites)
     </section>
     <section class="site-panel">
       <header><div><span>01 / PAGE INVENTORY</span><h2>页面资产与 TDK</h2></div><small>检测使用网站公开页面，不会修改客户网站代码</small></header>
-      <div class="filters"><el-input v-model="filters.q" clearable placeholder="搜索 URL 或页面标题" /><el-select v-model="filters.status" clearable placeholder="全部状态"><el-option label="待检测" value="pending" /><el-option label="健康" value="healthy" /><el-option label="需优化" value="needs_fix" /><el-option label="检测失败" value="error" /></el-select><span>{{ result.total }} 个页面</span></div>
-      <el-table v-loading="loading" :data="result.items" empty-text="尚未导入站内页面">
+      <div class="filters"><el-input v-model="filters.q" clearable placeholder="搜索 URL 或页面标题" /><el-select v-model="filters.issueCode" clearable placeholder="全部问题"><el-option v-for="item in [{v:'title',n:'Title'},{v:'description',n:'Description'},{v:'h1',n:'H1'},{v:'canonical',n:'Canonical'},{v:'indexable',n:'索引'},{v:'schema',n:'Schema'}]" :key="item.v" :label="item.n" :value="item.v" /></el-select><el-select v-model="filters.status" clearable placeholder="全部状态"><el-option v-for="item in [{v:'pending',n:'待检测'},{v:'needs_fix',n:'需优化'},{v:'proposed',n:'待确认'},{v:'approved',n:'已确认'},{v:'implemented',n:'待复检'},{v:'verified',n:'已复检'},{v:'healthy',n:'健康'},{v:'error',n:'检测失败'}]" :key="item.v" :label="item.n" :value="item.v" /></el-select><span>{{ result.total }} 个页面 · 已选 {{ selectedRows.length }} 个</span></div>
+      <el-table v-loading="loading" :data="result.items" empty-text="尚未导入站内页面" @selection-change="selectedRows = $event">
+        <el-table-column type="selection" width="44" />
         <el-table-column label="页面 / URL" min-width="280"><template #default="{row}"><b class="page-title">{{ row.title || '未读取页面标题' }}</b><small class="page-url">{{ row.url }}</small></template></el-table-column>
         <el-table-column label="目标关键词" width="120"><template #default="{row}">{{ row.target_keyword_id ? `#${row.target_keyword_id}` : '待绑定' }}</template></el-table-column>
         <el-table-column label="健康度" width="100"><template #default="{row}"><strong>{{ row.audit_score ?? '—' }}</strong></template></el-table-column>
         <el-table-column label="检测问题" min-width="210"><template #default="{row}"><div class="issues"><span v-for="code in (row.issue_codes || []).slice(0,4)" :key="code">{{ issueLabel(code) }}</span><small v-if="!(row.issue_codes || []).length">—</small></div></template></el-table-column>
-        <el-table-column label="Title / Description 建议" min-width="220"><template #default="{row}"><div class="suggestion"><b>{{ row.title_suggestion || '尚未记录 Title 建议' }}</b><small>{{ row.description_suggestion || '尚未记录 Description 建议' }}</small></div></template></el-table-column>
+        <el-table-column label="当前 TDK" min-width="220"><template #default="{row}"><div class="suggestion current"><b>{{ row.title || '缺少 Title' }}</b><small>{{ row.meta_description || '缺少 Description' }}</small></div></template></el-table-column>
+        <el-table-column label="建议 TDK" min-width="240"><template #default="{row}"><div class="suggestion"><b>{{ row.title_suggestion || '尚未生成 Title 建议' }}</b><small>{{ row.description_suggestion || '尚未生成 Description 建议' }}</small></div></template></el-table-column>
         <el-table-column label="状态" width="100"><template #default="{row}"><el-tag :type="statusType(row.status)" effect="light">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="150" fixed="right"><template #default="{row}"><div class="actions"><button v-if="canEdit" :disabled="auditing.has(row.id)" @click="audit(row)">{{ auditing.has(row.id) ? '检测中…' : '检测' }}</button><button v-if="canEdit" @click="openEdit(row)">优化记录</button></div></template></el-table-column>
+        <el-table-column label="操作" width="215" fixed="right"><template #default="{row}"><div class="actions"><button v-if="canEdit" :disabled="auditing.has(row.id)" @click="audit(row)">{{ auditing.has(row.id) ? '检测中…' : (row.status==='implemented'?'复检':'检测') }}</button><button v-if="canEdit" @click="openEdit(row)">优化记录</button><button @click="createContentTask(row)">内容任务</button></div></template></el-table-column>
       </el-table>
     </section>
 
@@ -146,7 +173,7 @@ onMounted(loadSites)
         <el-form-item label="目标关键词"><el-select v-model="editForm.target_keyword_id" clearable filterable placeholder="选择该页面主攻关键词"><el-option v-for="item in keywordOptions" :key="item.id" :label="item.keyword" :value="item.id" /></el-select></el-form-item>
         <el-form-item label="建议 Title"><el-input v-model="editForm.title_suggestion" maxlength="300" show-word-limit /></el-form-item>
         <el-form-item label="建议 Description"><el-input v-model="editForm.description_suggestion" type="textarea" :rows="4" maxlength="1000" show-word-limit /></el-form-item>
-        <el-form-item label="处理状态"><el-select v-model="editForm.status"><el-option label="待检测" value="pending" /><el-option label="健康" value="healthy" /><el-option label="需优化" value="needs_fix" /><el-option label="检测失败" value="error" /></el-select></el-form-item>
+        <el-form-item label="处理状态"><el-select v-model="editForm.status"><el-option label="待检测" value="pending" /><el-option label="需优化" value="needs_fix" /><el-option label="待确认" value="proposed" /><el-option label="已确认" value="approved" /><el-option label="已实施，待复检" value="implemented" /><el-option label="已复检" value="verified" /><el-option label="健康" value="healthy" /><el-option label="检测失败" value="error" /></el-select></el-form-item>
       </el-form>
       <template #footer><el-button @click="editOpen=false">取消</el-button><el-button type="primary" :loading="saving" @click="saveEdit">保存记录</el-button></template>
     </el-dialog>
@@ -154,6 +181,6 @@ onMounted(loadSites)
 </template>
 
 <style scoped>
-.hero-actions{display:flex;gap:8px}.hero-actions button:disabled{cursor:wait;opacity:.6}
+.hero-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}.hero-actions button:disabled{cursor:wait;opacity:.6}.hero-actions button.secondary{border:1px solid #b9d4cf;background:#fff;color:var(--teal);box-shadow:none}
 .site-page{--ink:#17233d;--teal:#168b83;--line:#e3e8ef;min-height:100%;padding:26px;background:radial-gradient(circle at 78% -16%,rgba(22,139,131,.1),transparent 35%),#f5f8f7;color:var(--ink)}.site-hero{display:flex;align-items:end;justify-content:space-between;gap:28px;padding:27px 30px;border:1px solid #dbe7e4;border-radius:17px;background:#fff;box-shadow:0 16px 45px rgba(29,69,64,.05)}.site-hero>div>span,.site-panel header span{color:var(--teal);font:800 10px ui-monospace,monospace;letter-spacing:.13em}.site-hero h1{margin:9px 0 7px;font:750 34px "Noto Serif SC","Songti SC",serif}.site-hero p{max-width:760px;margin:0;color:#72817e;line-height:1.7}.site-hero button{height:40px;padding:0 18px;border:0;border-radius:9px;background:var(--teal);color:#fff;font-weight:700;cursor:pointer;box-shadow:0 8px 20px rgba(22,139,131,.2)}.el-alert{margin-top:14px}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:15px 0}.metrics article{padding:19px 20px;border:1px solid var(--line);border-radius:13px;background:#fff}.metrics span,.metrics small{display:block;color:#768582;font-size:11px}.metrics strong{display:block;margin:10px 0 5px;font-size:28px}.site-panel{overflow:hidden;border:1px solid var(--line);border-radius:15px;background:#fff}.site-panel>header{display:flex;align-items:end;justify-content:space-between;padding:16px 19px;border-bottom:1px solid #edf1ef}.site-panel h2{margin:4px 0 0;font-size:15px}.site-panel header small{color:#82908d}.filters{display:flex;gap:9px;padding:14px 17px}.filters .el-input{max-width:350px}.filters .el-select{width:140px}.filters>span{align-self:center;margin-left:auto;color:#788683;font-size:11px}.page-title,.page-url{display:block}.page-url{max-width:330px;overflow:hidden;margin-top:4px;color:#5d7f79;text-overflow:ellipsis;white-space:nowrap}.issues{display:flex;gap:4px;flex-wrap:wrap}.issues span{padding:3px 6px;border-radius:5px;background:#fff0e3;color:#a65e24;font-size:10px}.suggestion b,.suggestion small{display:block;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.suggestion small{margin-top:4px;color:#899491}.actions{display:flex;gap:5px}.actions button{padding:5px 7px;border:1px solid #dce5e2;border-radius:6px;background:#fff;color:#52736e;font-size:10.5px;cursor:pointer}.actions button:hover{border-color:#7bb3aa;color:var(--teal)}.actions button:disabled{opacity:.55;cursor:wait}.dialog-tip{margin:-6px 0 15px;color:#75827f;font-size:12px;line-height:1.6}.el-form :deep(.el-select){width:100%}@media(max-width:980px){.metrics{grid-template-columns:repeat(2,1fr)}}@media(max-width:680px){.site-page{padding:14px}.site-hero{align-items:flex-start;flex-direction:column}.metrics{grid-template-columns:1fr 1fr}.filters{flex-wrap:wrap}.filters .el-input{max-width:none;width:100%}.filters>span{margin-left:0}}
 </style>

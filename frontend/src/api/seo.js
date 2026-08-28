@@ -45,7 +45,7 @@ export function createSeoRankSnapshotBatch(payload) {
   return client.post('/api/v1/seo/rank-snapshots/batch', payload)
 }
 
-export function fetchSeoSitePages({ tenantId, siteId, pageId, q, status, page = 1, pageSize = 50 }) {
+export function fetchSeoSitePages({ tenantId, siteId, pageId, q, status, issueCode, page = 1, pageSize = 50 }) {
   return client.get('/api/v1/seo/site-pages', {
     params: {
       tenant_id: tenantId,
@@ -53,10 +53,15 @@ export function fetchSeoSitePages({ tenantId, siteId, pageId, q, status, page = 
       page_id: pageId || undefined,
       q: q || undefined,
       status: status || undefined,
+      issue_code: issueCode || undefined,
       page,
       page_size: pageSize,
     },
   })
+}
+
+export function generateSeoSitePageSuggestions(payload) {
+  return client.post('/api/v1/seo/site-pages/suggestions/generate', payload)
 }
 
 export function createSeoSitePage(payload) {
@@ -152,6 +157,12 @@ export function updateSeoBrandProfile(payload) {
 
 export function createSeoBrandAsset(payload) {
   return client.post('/api/v1/seo/rank-serp/brand-assets', payload)
+}
+
+export function updateSeoBrandAsset({ assetId, tenantId, payload }) {
+  return client.patch(`/api/v1/seo/rank-serp/brand-assets/${assetId}`, payload, {
+    params: { tenant_id: tenantId },
+  })
 }
 
 export function fetchSeoAlerts({ tenantId, siteId, engine = 'baidu' }) {
