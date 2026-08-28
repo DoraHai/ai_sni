@@ -55,6 +55,21 @@ def test_standalone_seo_entry_does_not_import_shared_application() -> None:
         assert forbidden not in router
 
 
+def test_seo_shell_filters_entitled_tenants_and_clears_cross_tenant_drafts() -> None:
+    shell = (
+        Path(__file__).parents[1]
+        / "frontend/src/views/seo/SeoWorkspaceShell.vue"
+    ).read_text(encoding="utf-8")
+
+    assert "fetchTenants('seo')" in shell
+    assert "https://gsnipers.snipers.com.cn/deal-sniper/portal" in shell
+    assert "https://sem.snipers.com.cn/deal-sniper/portal" not in shell
+    assert "sessionStorage.removeItem('seo_pending_rewrite_source')" in shell
+    assert "sessionStorage.removeItem('seo_pending_rewrite_options')" in shell
+    assert "router.replace('/seo/keywords')" in shell
+    assert "router.replace('/seo/content/qa')" in shell
+
+
 def test_rewrite_ui_connects_source_ai_save_and_publish_steps() -> None:
     frontend = Path(__file__).parents[1] / "frontend/src/views/seo"
     rewrite = (frontend / "SeoRewriteView.vue").read_text(encoding="utf-8")

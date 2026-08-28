@@ -39,4 +39,19 @@ for (const file of files) {
   }
 }
 
+const javascript = (
+  await Promise.all(
+    files
+      .filter((file) => file.endsWith('.js'))
+      .map((file) => readFile(resolve(root, file), 'utf8')),
+  )
+).join('\n')
+const portalUrl = 'https://gsnipers.snipers.com.cn/deal-sniper/portal'
+if (!javascript.includes(portalUrl)) {
+  throw new Error(`SEO build does not contain the current portal URL: ${portalUrl}`)
+}
+if (javascript.includes('https://sem.snipers.com.cn/deal-sniper/portal')) {
+  throw new Error('SEO build still contains the retired portal URL')
+}
+
 console.log(`SEO build verified: ${files.length} files`)
