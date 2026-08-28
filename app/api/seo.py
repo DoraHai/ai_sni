@@ -389,6 +389,14 @@ class RankSnapshotCreate(BaseModel):
     checked_at: datetime = Field(default_factory=datetime.utcnow)
     source: str = Field("manual", min_length=1, max_length=32)
 
+    @field_validator("checked_at")
+    @classmethod
+    def normalize_checked_at(cls, value: datetime) -> datetime:
+        """Store browser ISO instants in the database's naive UTC column."""
+        if value.tzinfo is None:
+            return value
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+
 
 class RankSnapshotBatch(BaseModel):
     tenant_id: int
