@@ -300,23 +300,37 @@ async def fetch_today_keyword_report() -> None:
             accounts = filter_identity_safe_active_accounts(
                 await list_active_sem_accounts(session)
             )
-            result = {}
-            for acc in accounts:
-                tenant = await session.get(Tenant, acc.tenant_id)
-                if tenant is None:
-                    result[acc.baidu_username] = {"status": "missing_tenant"}
-                    continue
+            # A failed dimension sync can roll back the shared session. SQLAlchemy
+            # expires every ORM object on rollback, including accounts that have
+            # not been processed yet. Keep only scalar identities across account
+            # iterations and reload each account in the active async context.
+            account_refs = [
+                (acc.id, acc.tenant_id, acc.baidu_username) for acc in accounts
+            ]
+        result = {}
+        for account_id, tenant_id, username in account_refs:
+            async with async_session_factory() as session:
                 try:
-                    result[acc.baidu_username] = await refresh_keyword_workbench_snapshot(
+                    acc = await session.get(BaiduAccount, account_id)
+                    tenant = await session.get(Tenant, tenant_id)
+                    if acc is None:
+                        result[username] = {"status": "missing_account"}
+                        continue
+                    if tenant is None:
+                        result[username] = {"status": "missing_tenant"}
+                        continue
+                    result[username] = await refresh_keyword_workbench_snapshot(
                         session, tenant, acc, today
                     )
                 except Exception as exc:  # noqa: BLE001
+                    await session.rollback()
+                    message = safe_sync_error(exc)
                     logger.exception(
-                        "账户 %s 的 15 分钟同步失败: %s", acc.baidu_username, exc
+                        "账户 %s 的 15 分钟同步失败: %s", username, message
                     )
-                    result[acc.baidu_username] = {
+                    result[username] = {
                         "status": "error",
-                        "message": str(exc),
+                        "message": message,
                     }
     logger.info("[scheduler] %s 关键词工作台同步完成: %s", today, result)
 
