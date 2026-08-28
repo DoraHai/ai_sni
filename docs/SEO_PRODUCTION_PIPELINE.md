@@ -15,9 +15,11 @@ paths outside the reviewed SEO allowlist. Its required jobs are:
 - `SEO / migration-validation`
 
 Merging a reviewed pull request into `codex/production-seo` is the production
-authorization for that exact merge commit. The resulting push automatically
-starts `Production SEO deployment`; there is no separate manual dispatch or
-deployment approval step.
+authorization for that exact merge commit. A frontend-only push starts
+`Production SEO frontend deployment`. A push containing backend or migration
+paths starts the full `Production SEO deployment`. Both workflows share one
+concurrency group and fail closed if the triggering commit is no longer the
+production head.
 
 Configure these four jobs as required branch checks before enabling releases.
 
@@ -27,6 +29,12 @@ The release writes only these versioned locations:
 
 - `/opt/seo-service/releases/<release>` and `/opt/seo-service/current`
 - `/opt/seo-frontend/releases/<release>` and `/opt/seo-frontend/current`
+
+The frontend-only release contains no backend directory, records
+`backend=not-included`, `migration=not-run`, and `service_restart=not-run`, and
+atomically switches only `/opt/seo-frontend/current`. It does not execute
+`systemctl`, touch Nginx configuration, or invoke Alembic. The full release is
+reserved for reviewed backend or migration-path changes.
 
 It restarts only `seo-service`. It must not restart or write into SEM, GEO,
 Diagnostic Center, authentication, or website release units. The backend
@@ -46,11 +54,15 @@ GitHub Actions:
 2. Install the generic restricted `/usr/local/sbin/platform-deploy` helper.
 3. Run `sudo bash ops/platform-deploy/install-seo.sh` to install the SEO entry
    in the locked state.
-4. Include the SEO Nginx locations before the general `/api/` location, then
+4. After reviewing the frontend-only dispatcher and module, run
+   `sudo bash ops/platform-deploy/install-seo-frontend.sh`. This updates only
+   the restricted SEO deploy entry and does not reload Nginx, reload systemd,
+   or restart a service.
+5. Include the SEO Nginx locations before the general `/api/` location, then
    run `nginx -t` and reload Nginx.
-5. After rollback rehearsal, run
+6. After rollback rehearsal, run
    `sudo bash ops/platform-deploy/install-seo.sh --enable`.
-6. Use the existing `production` GitHub Environment with its restricted
+7. Use the existing `production` GitHub Environment with its restricted
    `DEPLOY_HOST`, `DEPLOY_PORT`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, and
    `DEPLOY_KNOWN_HOSTS` secrets. Do not add a separate required-reviewer
    deployment gate: merge to `codex/production-seo` is the deployment
@@ -71,7 +83,7 @@ following:
 - active and previous release identifiers;
 - health checks and rollback commands.
 
-The workflow is triggered only by a push to `codex/production-seo`. It checks
+The workflows are triggered only by a push to `codex/production-seo`. They check
 out the triggering `github.sha`, reruns the SEO backend tests, SEO frontend build
 and verification, and the single-head Alembic validation, then packages an
 immutable artifact whose manifest records `migration=not-run`.
@@ -81,9 +93,12 @@ Deployments are serialized. The workflow checks the remote
 upload, and immediately before apply. If any newer commit exists, the older job
 stops instead of replacing a newer release.
 
-The deploy module validates the immutable SHA and `migration=not-run`, switches
-only the SEO backend and SEO frontend release links, and restarts only
-`seo-service`. Database migrations are never run automatically.
+The frontend release workflow validates the immutable SHA and explicit
+isolation manifest, rejects backend content, switches only the SEO frontend
+link, and verifies `/seo/`, its static assets, the same-origin portal link, and
+security headers. The full deploy module validates `migration=not-run`, switches both
+SEO release links, and restarts only `seo-service`. Database migrations are
+never run automatically.
 
 ## Rollback
 

@@ -13,6 +13,7 @@ from pathlib import Path
 SOURCE_ALLOWED_EXACT = {
     ".github/workflows/ci.yml",
     ".github/workflows/production-seo-deploy.yml",
+    ".github/workflows/production-seo-frontend-deploy.yml",
     ".github/workflows/seo-baseline-check.yml",
     "app/api/__init__.py",
     "app/api/customer_modules.py",
@@ -60,7 +61,9 @@ SOURCE_ALLOWED_EXACT = {
     "migrations/versions/20260819_0073_geo_schema_repair.py",
     "migrations/versions/20260822_0074_merge_geo_seo_heads.py",
     "ops/platform-deploy/install-seo.sh",
+    "ops/platform-deploy/install-seo-frontend.sh",
     "ops/platform-deploy/modules/seo",
+    "ops/platform-deploy/modules/seo-frontend",
     "tests/test_module_workspaces.py",
     "tests/test_keyword_refresh.py",
     "tests/test_seo_crawler.py",
