@@ -103,6 +103,8 @@ def test_frontend_only_workflow_isolated_and_full_workflow_path_scoped() -> None
     assert "- frontend/**" not in full
     assert "production-seo-deployment" in frontend
     assert "production-seo-deployment" in full
+    assert "linked_assets" in frontend
+    assert "grep -Eho 'seo-[A-Za-z0-9_-]+\\.(js|css)'" in frontend
 
 
 def test_production_workflow_auto_deploys_only_the_exact_production_head() -> None:
