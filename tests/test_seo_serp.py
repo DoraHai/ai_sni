@@ -13,9 +13,42 @@ from app.seo_serp import (
     domain_matches,
     fetch_baidu_top50,
     fetch_baidu_top50_batch,
+    parse_dataforseo_response,
     parse_top50_response,
     rank_number,
 )
+
+
+def test_parse_dataforseo_response_keeps_only_organic_results() -> None:
+    parsed = parse_dataforseo_response({
+        "tasks": [{
+            "status_code": 20000,
+            "result": [{
+                "se_results_count": 99,
+                "items": [
+                    {"type": "paid", "rank_group": 1, "url": "https://ads.example/"},
+                    {"type": "organic", "rank_group": 2, "title": "官网", "description": "说明", "url": "https://example.com/page", "domain": "example.com"},
+                ],
+            }],
+        }],
+    })
+
+    assert parsed["site_count"] == 99
+    assert parsed["items"] == [{
+        "rank": 2,
+        "rank_label": "2",
+        "title": "官网",
+        "description": "说明",
+        "result_url": "https://example.com/page",
+        "domain": "example.com",
+    }]
+
+
+def test_parse_dataforseo_response_rejects_failed_task_without_leaking_message() -> None:
+    with pytest.raises(SerpProviderError) as exc:
+        parse_dataforseo_response({"tasks": [{"status_code": 40100, "status_message": "secret details"}]})
+    assert exc.value.code == "provider_rejected"
+    assert "secret" not in exc.value.public_message
 
 
 def _provider_settings() -> object:

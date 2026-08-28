@@ -80,6 +80,19 @@ class Settings(BaseSettings):
     seo_manual_rank_cooldown_seconds: int = 3600
     seo_manual_rank_max_requests_per_day: int = 100
 
+    # SEO multi-engine live SERP. Credentials are server-only and never stored per site.
+    seo_dataforseo_login: str = ""
+    seo_dataforseo_password: str = ""
+    seo_dataforseo_base_url: str = "https://api.dataforseo.com/v3"
+    seo_dataforseo_location_code: int = 2156
+    seo_dataforseo_language_code: str = "zh_CN"
+    seo_dataforseo_timeout_seconds: float = 30.0
+
+    # Google Search Console service-account JSON, base64 encoded. Individual sites only
+    # store their non-secret Search Console property URL in seo_sites.site_settings.
+    seo_gsc_service_account_json_b64: str = ""
+    seo_gsc_timeout_seconds: float = 30.0
+
     # Google PageSpeed Insights。仅由后端调用，Key 不得进入前端构建产物。
     pagespeed_api_key: str = ""
     pagespeed_api_base_url: str = (

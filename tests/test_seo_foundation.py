@@ -550,6 +550,13 @@ def test_manual_serp_collection_requires_positive_site_id(site_id: int | None) -
         )
 
 
+def test_serp_collection_accepts_only_implemented_automatic_engines() -> None:
+    assert SerpCollectRequest(tenant_id=1, site_id=1, engine="google").engine == "google"
+    assert SerpCollectRequest(tenant_id=1, site_id=1, engine="bing").engine == "bing"
+    with pytest.raises(ValidationError):
+        SerpCollectRequest(tenant_id=1, site_id=1, engine="sogou")
+
+
 def test_models_use_separate_seo_tables() -> None:
     assert SeoKeywordAsset.__tablename__ == "seo_keyword_assets"
     assert SeoRankSnapshot.__tablename__ == "seo_rank_snapshots"
