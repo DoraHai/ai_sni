@@ -31,6 +31,19 @@ for (const forbidden of [
   }
 }
 
+const shellKey = Object.keys(manifest).find((key) => key.endsWith('/SeoWorkspaceShell.vue'))
+const shellFile = shellKey ? manifest[shellKey]?.file : null
+if (!shellFile) {
+  throw new Error('SEO workspace shell is missing from the build manifest')
+}
+const shellJavascript = await readFile(resolve(root, shellFile), 'utf8')
+if (
+  !shellJavascript.includes('/api/v1/auth/tenants')
+  || !/params:\{module:[`'"]seo[`'"]\}/.test(shellJavascript)
+) {
+  throw new Error('SEO workspace tenant request is not filtered by module=seo')
+}
+
 const files = await filesUnder(root)
 for (const file of files) {
   if (file === 'index.html' || file === '.vite/manifest.json') continue
