@@ -18,6 +18,7 @@ from app.api.seo import (
     SerpCollectRequest,
     SeoContentAssistRequest,
     SitePageImport,
+    SitePageUpdate,
     _keyword_payload,
     _apply_site_page_audit,
     _metric_payload,
@@ -28,6 +29,7 @@ from app.api.seo import (
     require_seo_module_access,
     _serp_error_payload,
     _normalize_brand_homepage,
+    _page_tdk_suggestions,
     _seo_ai_prompt,
     _selected_keyword_ids,
     _sanitize_content_html,
@@ -105,6 +107,42 @@ def test_page_audit_result_updates_title_and_page_health() -> None:
     assert row.h1 == "主标题"
     assert row.issue_codes == ["description"]
     assert row.status == "needs_fix"
+
+
+def test_implemented_page_becomes_verified_only_after_clean_reaudit() -> None:
+    row = SimpleNamespace(status="implemented")
+    _apply_site_page_audit(
+        row,
+        {
+            "title": "已上线标题",
+            "description": "已上线描述",
+            "score": 100,
+            "snapshot": {"h1": ["主标题"], "canonical": "https://example.com/page", "content_units": 800},
+            "checks": [{"code": "indexable", "passed": True}],
+        },
+    )
+    assert row.status == "verified"
+
+
+def test_tdk_suggestions_include_keyword_and_brand_without_claims() -> None:
+    page = SimpleNamespace(
+        h1="工业齿轮箱选型",
+        title="产品页",
+        url="https://example.com/products/gearbox",
+        page_type="产品页",
+    )
+    keyword = SimpleNamespace(keyword="工业齿轮箱")
+    title, description = _page_tdk_suggestions(page, keyword, "NORD")
+    assert "工业齿轮箱" in title
+    assert "NORD" in title
+    assert "查看产品特点" in description
+    assert len(title) <= 60
+    assert len(description) <= 160
+
+
+def test_site_page_workflow_statuses_are_validated() -> None:
+    for status in ("proposed", "approved", "implemented", "verified"):
+        assert SitePageUpdate(status=status).status == status
 
 
 @pytest.mark.parametrize(

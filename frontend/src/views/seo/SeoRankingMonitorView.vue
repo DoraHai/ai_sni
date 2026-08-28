@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   collectSeoRankSerp,
+  createSeoRankSnapshotBatch,
   createSeoBrandAsset,
   fetchSeoBrandAssets,
   fetchSeoKeywords,
@@ -11,6 +12,7 @@ import {
   fetchSeoRankCollectStatus,
   fetchSeoRankProviders,
   fetchSeoSerpResults,
+  updateSeoBrandAsset,
   updateSeoSerpOwnership,
 } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
@@ -28,6 +30,9 @@ const siteId = ref(null)
 const view = ref('ranking')
 const ownership = ref('')
 const collectDialog = ref(false)
+const manualDialog = ref(false)
+const manualImporting = ref(false)
+const manualText = ref('')
 const collectOutcome = ref(null)
 const collectLimit = ref({ allowed: true, retry_after_seconds: 0, next_allowed_at: null, daily_requests_used: 0, daily_requests_limit: 0 })
 const providers = ref({})
@@ -41,8 +46,9 @@ const filters = reactive({ q: '', priority: '', alerts: false })
 const collectForm = reactive({ keyword_ids: [], devices: ['desktop'], use_ai: true })
 const assetForm = reactive({ asset_type: 'content_url', name: '', match_value: '', platform: '' })
 
-const engines = [{ k: 'baidu', n: '百度' }, { k: 'google', n: 'Google' }, { k: 'bing', n: 'Bing' }]
+const engines = [{ k: 'baidu', n: '百度' }, { k: 'google', n: 'Google' }, { k: 'bing', n: 'Bing' }, { k: '360', n: '360' }, { k: 'sogou', n: '搜狗' }]
 const engineName = computed(() => engines.find((item) => item.k === engine.value)?.n || engine.value)
+const providerConfigured = computed(() => Boolean(providers.value[engine.value]?.configured))
 const ownershipTabs = [
   { k: '', n: '全部结果' },
   { k: 'official_site', n: '官网' },
@@ -256,6 +262,38 @@ async function addAsset() {
     ElMessage.error(err.message)
   }
 }
+
+async function importManualRanks() {
+  const keywordByName = new Map(result.value.items.map((item) => [item.keyword.trim().toLowerCase(), item]))
+  const keywordById = new Map(result.value.items.map((item) => [String(item.id), item]))
+  const lines = manualText.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  const items = []
+  const errors = []
+  lines.forEach((line, index) => {
+    const cells = line.split(/\t|,/).map((cell) => cell.trim())
+    const keyword = keywordById.get(cells[0]) || keywordByName.get((cells[0] || '').toLowerCase())
+    const rank = Number(cells[1])
+    const rowDevice = cells[2] || device.value
+    if (!keyword) errors.push(`第 ${index + 1} 行关键词不存在`)
+    else if (!Number.isInteger(rank) || rank < 1 || rank > 100) errors.push(`第 ${index + 1} 行排名应为 1–100`)
+    else if (!['desktop','mobile'].includes(rowDevice)) errors.push(`第 ${index + 1} 行设备应为 desktop 或 mobile`)
+    else items.push({ tenant_id: currentTenantId.value, site_id: siteId.value, keyword_id: keyword.id, engine: engine.value, device: rowDevice, region: '全国', rank, result_url: cells[3] || null, checked_at: new Date().toISOString(), source: 'manual_import' })
+  })
+  if (errors.length) return ElMessage.warning(errors.slice(0, 3).join('；'))
+  if (!items.length) return ElMessage.warning('请粘贴至少一行真实排名数据')
+  manualImporting.value = true
+  try {
+    await createSeoRankSnapshotBatch({ tenant_id: currentTenantId.value, items })
+    manualDialog.value = false; manualText.value = ''; ElMessage.success(`已导入 ${items.length} 条 ${engineName.value} 真实排名快照`); await load()
+  } catch (err) { ElMessage.error(err.message) } finally { manualImporting.value = false }
+}
+async function toggleAsset(item) {
+  try {
+    await updateSeoBrandAsset({ assetId: item.id, tenantId: currentTenantId.value, payload: { status: item.status === 'active' ? 'archived' : 'active' } })
+    assets.value = await fetchSeoBrandAssets({ tenantId: currentTenantId.value, siteId: siteId.value })
+    ElMessage.success(item.status === 'active' ? '品牌资产已归档' : '品牌资产已启用')
+  } catch (err) { ElMessage.error(err.message) }
+}
 async function confirmOwnership(item, ownershipType) {
   try {
     await updateSeoSerpOwnership({ resultId: item.id, tenantId: currentTenantId.value, siteId: siteId.value, ownershipType })
@@ -284,14 +322,14 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
       <div>
         <div class="kw-kicker">Ranking monitor</div>
         <h2>排名监控</h2>
-        <p>查看百度、Google 与 Bing 的真实搜索结果，区分官网、品牌推文与 AI 疑似内容。</p>
+        <p>统一查看百度、Google、Bing、360 与搜狗排名；自动接口未配置时可导入真人实测数据。</p>
       </div>
       <div class="hero-controls">
         <el-select v-model="siteId" class="site-picker" placeholder="选择 SEO 网站">
           <el-option v-for="site in sites" :key="site.id" :label="site.name || site.canonical_domain" :value="site.id" />
         </el-select>
         <el-select v-model="engine" class="site-picker" placeholder="选择搜索引擎">
-          <el-option v-for="item in engines" :key="item.k" :label="`${item.n}${providers[item.k]?.configured ? '' : '（未配置）'}`" :value="item.k" />
+          <el-option v-for="item in engines" :key="item.k" :label="`${item.n}${providers[item.k]?.configured ? '' : '（可人工导入）'}`" :value="item.k" />
         </el-select>
         <div class="kw-segment device-switch">
           <button :class="{ active: device === 'desktop' }" @click="device = 'desktop'">{{ engineName }} PC</button>
@@ -299,8 +337,9 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
         </div>
         <div class="kw-actions">
           <button class="kw-btn" @click="openAssets">品牌资产</button>
+          <button class="kw-btn" @click="manualDialog = true">导入实测排名</button>
           <button class="kw-btn" @click="exportCsv">⇩ 导出排名</button>
-          <button class="kw-btn primary" :disabled="!collectAllowed || collecting" @click="openCollect">{{collectButtonText}}</button>
+          <button class="kw-btn primary" :disabled="!collectAllowed || collecting || !providerConfigured" @click="openCollect">{{providerConfigured ? collectButtonText : '自动采集未配置'}}</button>
         </div>
       </div>
     </section>
@@ -373,7 +412,7 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
                 <td><span class="kw-pill" :class="row.latest_rank == null ? 'gray' : row.rank_delta < 0 ? 'red' : 'green'">{{ row.latest_rank == null ? '50名外' : row.rank_delta < 0 ? '排名波动' : '已覆盖' }}</span></td>
                 <td><button class="kw-btn small" @click="router.push(`/seo/keywords/${row.id}`)">查看历史 →</button></td>
               </tr>
-              <tr v-if="!rows.length"><td colspan="7"><div class="kw-empty"><b>暂无排名数据</b>点击“更新排名”采集 {{ engineName }} 搜索结果</div></td></tr>
+              <tr v-if="!rows.length"><td colspan="7"><div class="kw-empty"><b>暂无排名数据</b>{{providerConfigured ? `点击“更新排名”采集 ${engineName} 搜索结果` : `通过“导入实测排名”录入 ${engineName} 真人测试结果`}}</div></td></tr>
             </tbody>
           </table>
         </div>
@@ -419,14 +458,21 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
       <template #footer><button class="kw-btn" @click="collectDialog = false">取消</button><button class="kw-btn primary" :disabled="collecting || !collectForm.keyword_ids.length || !collectForm.devices.length" @click="collect">{{ collecting ? '正在采集…' : '确认采集' }}</button></template>
     </el-dialog>
 
+    <el-dialog v-model="manualDialog" :title="`导入 ${engineName} 真人实测排名`" width="620px">
+      <p class="import-tip">每行格式：关键词或关键词ID、排名、设备、结果URL。支持逗号或制表符；设备填写 desktop 或 mobile，结果URL可留空。</p>
+      <el-input v-model="manualText" type="textarea" :rows="10" placeholder="工业齿轮箱,8,desktop,https://example.com/product&#10;1024,12,mobile,https://example.com/mobile" />
+      <template #footer><button class="kw-btn" @click="manualDialog=false">取消</button><button class="kw-btn primary" :disabled="manualImporting" @click="importManualRanks">{{manualImporting?'导入中…':'确认导入'}}</button></template>
+    </el-dialog>
+
     <el-dialog v-model="assetDialog" title="品牌识别资产" width="760px">
       <div class="asset-create">
         <el-select v-model="assetForm.asset_type"><el-option label="官网域名" value="official_domain" /><el-option label="品牌推文 URL" value="content_url" /><el-option label="平台账号特征" value="platform_account" /></el-select>
         <el-input v-model="assetForm.name" placeholder="资产名称" />
         <el-input v-model="assetForm.match_value" :placeholder="assetForm.asset_type === 'official_domain' ? 'example.com' : assetForm.asset_type === 'content_url' ? 'https://...' : '账号名或账号ID'" />
+        <el-input v-model="assetForm.platform" placeholder="平台（可选）" />
         <button class="kw-btn primary" @click="addAsset">添加</button>
       </div>
-      <div class="asset-list"><div v-for="item in assets.items" :key="item.id"><span class="kw-pill blue">{{ item.asset_type === 'official_domain' ? '官网' : item.asset_type === 'content_url' ? '推文' : '账号' }}</span><b>{{ item.name }}</b><small>{{ item.match_value }}</small></div><div v-if="!assets.items.length" class="kw-empty">尚未登记品牌识别资产</div></div>
+      <div class="asset-list"><div v-for="item in assets.items" :key="item.id"><span class="kw-pill" :class="item.status==='active'?'blue':'gray'">{{ item.asset_type === 'official_domain' ? '官网' : item.asset_type === 'content_url' ? '推文' : '账号' }}</span><b>{{ item.name }}<small>{{ item.platform || '未指定平台' }}</small></b><small>{{ item.match_value }}</small><button class="kw-btn small" @click="toggleAsset(item)">{{item.status==='active'?'归档':'启用'}}</button></div><div v-if="!assets.items.length" class="kw-empty">尚未登记品牌识别资产</div></div>
     </el-dialog>
   </div>
 </template>
@@ -435,5 +481,5 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
 <style scoped>
 .site-picker{width:240px}
 .collect-outcome{margin:14px 0;padding:16px 18px;border:1px solid #9ed8be;border-radius:12px;background:#f0fbf6;color:#1e5d47}.collect-outcome.partial{border-color:#f0ca78;background:#fff9eb;color:#76540d}.collect-outcome.failed{border-color:#efaaa6;background:#fff3f2;color:#8b302b}.collect-outcome header,.collect-outcome footer{display:flex;align-items:center;justify-content:space-between;gap:18px}.collect-outcome header strong,.collect-outcome header span{display:block}.collect-outcome header span,.collect-outcome footer span{margin-top:4px;font-size:13px;opacity:.8}.collect-outcome header>button{border:0;background:none;color:inherit;font-size:22px;cursor:pointer}.collect-outcome-stats{display:flex;flex-wrap:wrap;gap:12px;margin:14px 0}.collect-outcome-stats span{padding:7px 10px;border-radius:8px;background:rgba(255,255,255,.72);font-size:13px}.collect-outcome-stats b{margin-right:4px;font-size:17px}
-.ranking-prototype{min-height:100%;padding:22px 26px 30px;background:#f5f7fb}.hero-controls{display:flex;flex-direction:column;align-items:flex-end;gap:18px}.device-switch{background:#f2f5fb}.kw-metrics{grid-template-columns:repeat(5,minmax(0,1fr))}.kw-metric.coral{border-top-color:#e66a5f}.monitor-head{align-items:center}.ownership-toolbar{display:flex;align-items:center;justify-content:space-between}.ownership-tabs{flex-wrap:wrap}.kw-name button{padding:0;border:0;background:none;color:#2457d6;font-weight:700;cursor:pointer}.kw-btn.active{border-color:#d9544d;color:#d9544d}.result-cell{max-width:580px}.result-cell a{display:block;color:#1a4fc4;font-weight:700;text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.result-cell small{display:block;max-width:560px;margin-top:5px;color:#8792a8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.review-actions{white-space:nowrap}.review-actions button{border:0;background:none;color:#245fdb;font-weight:700;cursor:pointer;margin-right:10px}.review-actions button.muted{color:#8c96aa}.review-actions span{color:#248a64}.collect-form{display:grid;gap:22px}.collect-form>label{display:grid;grid-template-columns:120px 1fr;align-items:center;gap:12px}.collect-form label>span{font-weight:700;color:#27334a}.collect-form label>small{grid-column:2;color:#8490a5}.cost-note{padding:16px 18px;border:1px solid #dce5f5;border-radius:12px;background:#f6f9ff}.cost-note b,.cost-note span{display:block}.cost-note span{margin-top:6px;color:#77839a}.asset-create{display:grid;grid-template-columns:150px 150px 1fr auto;gap:10px}.asset-list{margin-top:20px;border:1px solid #e3e8f1;border-radius:12px;overflow:hidden}.asset-list>div{display:grid;grid-template-columns:70px 160px 1fr;gap:12px;align-items:center;padding:13px 16px;border-bottom:1px solid #edf0f5}.asset-list>div:last-child{border-bottom:0}.asset-list small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#7b879b}@media(max-width:1280px){.kw-metrics{grid-template-columns:repeat(3,1fr)}.hero-controls{align-items:flex-start}.kw-hero{flex-direction:column}.asset-create{grid-template-columns:1fr 1fr}.result-cell{max-width:360px}}
+.ranking-prototype{min-height:100%;padding:22px 26px 30px;background:#f5f7fb}.hero-controls{display:flex;flex-direction:column;align-items:flex-end;gap:18px}.device-switch{background:#f2f5fb}.kw-metrics{grid-template-columns:repeat(5,minmax(0,1fr))}.kw-metric.coral{border-top-color:#e66a5f}.monitor-head{align-items:center}.ownership-toolbar{display:flex;align-items:center;justify-content:space-between}.ownership-tabs{flex-wrap:wrap}.kw-name button{padding:0;border:0;background:none;color:#2457d6;font-weight:700;cursor:pointer}.kw-btn.active{border-color:#d9544d;color:#d9544d}.result-cell{max-width:580px}.result-cell a{display:block;color:#1a4fc4;font-weight:700;text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.result-cell small{display:block;max-width:560px;margin-top:5px;color:#8792a8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.review-actions{white-space:nowrap}.review-actions button{border:0;background:none;color:#245fdb;font-weight:700;cursor:pointer;margin-right:10px}.review-actions button.muted{color:#8c96aa}.review-actions span{color:#248a64}.collect-form{display:grid;gap:22px}.collect-form>label{display:grid;grid-template-columns:120px 1fr;align-items:center;gap:12px}.collect-form label>span{font-weight:700;color:#27334a}.collect-form label>small{grid-column:2;color:#8490a5}.cost-note{padding:16px 18px;border:1px solid #dce5f5;border-radius:12px;background:#f6f9ff}.cost-note b,.cost-note span{display:block}.cost-note span{margin-top:6px;color:#77839a}.asset-create{display:grid;grid-template-columns:140px 150px minmax(220px,1fr) 150px auto;gap:10px}.asset-list{margin-top:20px;border:1px solid #e3e8f1;border-radius:12px;overflow:hidden}.asset-list>div{display:grid;grid-template-columns:70px 180px minmax(220px,1fr) auto;gap:12px;align-items:center;padding:13px 16px;border-bottom:1px solid #edf0f5}.asset-list>div:last-child{border-bottom:0}.asset-list b small{display:block;margin-top:3px;font-weight:400}.asset-list small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#7b879b}.import-tip{margin:0 0 12px;color:#6f7d91;font-size:13px;line-height:1.6}@media(max-width:1280px){.kw-metrics{grid-template-columns:repeat(3,1fr)}.hero-controls{align-items:flex-start}.kw-hero{flex-direction:column}.asset-create{grid-template-columns:1fr 1fr}.result-cell{max-width:360px}}
 </style>

@@ -138,7 +138,16 @@ logger = logging.getLogger(__name__)
 ENGINES = {"baidu", "google", "bing", "360", "sogou"}
 PRIORITIES = {"P0", "P1", "P2", "P3"}
 KEYWORD_STATUSES = {"active", "paused", "archived"}
-PAGE_STATUSES = {"pending", "healthy", "needs_fix", "error"}
+PAGE_STATUSES = {
+    "pending",
+    "healthy",
+    "needs_fix",
+    "proposed",
+    "approved",
+    "implemented",
+    "verified",
+    "error",
+}
 BRAND_ASSET_TYPES = {"official_domain", "content_url", "platform_account"}
 OWNERSHIP_TYPES = {"official_site", "brand_content", "ai_suspected", "unrelated", "unresolved"}
 METRIC_STATUSES = {"available", "not_configured", "pending", "failed", "stale"}
@@ -448,7 +457,23 @@ class SitePageUpdate(BaseModel):
     target_keyword_id: int | None = None
     title_suggestion: str | None = Field(None, max_length=300)
     description_suggestion: str | None = Field(None, max_length=1000)
-    status: Literal["pending", "healthy", "needs_fix", "error"] | None = None
+    status: Literal[
+        "pending",
+        "healthy",
+        "needs_fix",
+        "proposed",
+        "approved",
+        "implemented",
+        "verified",
+        "error",
+    ] | None = None
+
+
+class SitePageSuggestionRequest(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt
+    page_ids: list[PositiveInt] | None = Field(None, max_length=200)
+    overwrite: bool = False
 
 
 class MetricSnapshotCreate(BaseModel):
@@ -1794,7 +1819,7 @@ async def rank_serp_providers(
 async def list_rank_serp_results(
     tenant_id: int,
     site_id: int | None = None,
-    engine: Literal["baidu", "google", "bing"] = "baidu",
+    engine: Literal["baidu", "google", "bing", "360", "sogou"] = "baidu",
     device: Literal["desktop", "mobile"] = "desktop",
     ownership_type: str | None = None,
     keyword_id: int | None = None,
@@ -2168,6 +2193,7 @@ async def list_site_pages(
     page_id: int | None = None,
     q: str | None = None,
     status: str | None = None,
+    issue_code: str | None = Query(None, max_length=64),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     session: AsyncSession = Depends(get_session),
@@ -2186,6 +2212,8 @@ async def list_site_pages(
         if status not in PAGE_STATUSES:
             raise HTTPException(400, "页面状态无效")
         conditions.append(SeoSitePage.status == status)
+    if issue_code:
+        conditions.append(SeoSitePage.issue_codes.contains([issue_code.strip()]))
     total = await session.scalar(select(func.count()).select_from(SeoSitePage).where(*conditions))
     rows = list(
         await session.scalars(
@@ -2207,9 +2235,16 @@ async def list_site_pages(
         "page_size": page_size,
         "stats": {
             "total": len(all_rows),
-            "healthy": sum(row.status == "healthy" for row in all_rows),
-            "needs_fix": sum(row.status == "needs_fix" for row in all_rows),
+            "healthy": sum(row.status in {"healthy", "verified"} for row in all_rows),
+            "needs_fix": sum(
+                row.status in {"needs_fix", "proposed", "approved", "implemented"}
+                for row in all_rows
+            ),
             "unchecked": sum(row.status == "pending" for row in all_rows),
+            "proposed": sum(row.status == "proposed" for row in all_rows),
+            "approved": sum(row.status == "approved" for row in all_rows),
+            "implemented": sum(row.status == "implemented" for row in all_rows),
+            "verified": sum(row.status == "verified" for row in all_rows),
             "average_score": round(
                 sum(row.audit_score or 0 for row in all_rows if row.audit_score is not None)
                 / max(sum(row.audit_score is not None for row in all_rows), 1),
@@ -2217,6 +2252,94 @@ async def list_site_pages(
             ),
         },
     }
+
+
+def _page_topic(row: SeoSitePage) -> str:
+    for value in (row.h1, row.title):
+        normalized = " ".join(str(value or "").split()).strip()
+        if normalized:
+            return normalized[:80]
+    path = urlparse(row.url).path.strip("/").replace("-", " ").replace("_", " ")
+    return path[:80] or "网站首页"
+
+
+def _page_tdk_suggestions(
+    row: SeoSitePage,
+    keyword: SeoKeywordAsset | None,
+    brand_name: str,
+) -> tuple[str, str]:
+    """Build editable, claim-safe TDK suggestions without an external AI account."""
+    topic = _page_topic(row)
+    primary = " ".join(str(keyword.keyword if keyword else topic).split()).strip()
+    title_parts = [primary]
+    if topic.casefold() != primary.casefold() and primary.casefold() not in topic.casefold():
+        title_parts.append(topic)
+    if brand_name and brand_name.casefold() not in "｜".join(title_parts).casefold():
+        title_parts.append(brand_name.strip())
+    title = "｜".join(item for item in title_parts if item)[:60].rstrip("｜")
+    page_type = str(row.page_type or "").strip()
+    action = {
+        "首页": "了解品牌、产品与服务信息",
+        "homepage": "了解品牌、产品与服务信息",
+        "产品页": "查看产品特点、规格与适用场景",
+        "解决方案": "查看相关方案、适用场景与实施要点",
+        "案例": "查看项目背景、实施过程与结果说明",
+        "文章": "阅读相关知识、常见问题与实践要点",
+    }.get(page_type, "查看相关信息、适用场景与详细说明")
+    description = f"{action}，围绕{primary}整理页面重点内容。"
+    if brand_name:
+        description += f"访问{brand_name}获取更多信息。"
+    return title, description[:160]
+
+
+@router.post("/site-pages/suggestions/generate")
+async def generate_site_page_suggestions(
+    req: SitePageSuggestionRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    tenant = await _tenant(session, req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
+    conditions = [
+        SeoSitePage.tenant_id == req.tenant_id,
+        SeoSitePage.site_id == req.site_id,
+        SeoSitePage.status.in_({"pending", "needs_fix", "proposed"}),
+    ]
+    if req.page_ids:
+        conditions.append(SeoSitePage.id.in_(set(req.page_ids)))
+    rows = list(
+        await session.scalars(
+            select(SeoSitePage).where(*conditions).order_by(SeoSitePage.id).limit(200)
+        )
+    )
+    keyword_ids = {row.target_keyword_id for row in rows if row.target_keyword_id}
+    keywords = list(
+        await session.scalars(
+            select(SeoKeywordAsset).where(
+                SeoKeywordAsset.tenant_id == req.tenant_id,
+                SeoKeywordAsset.id.in_(keyword_ids),
+            )
+        )
+    ) if keyword_ids else []
+    keyword_map = {row.id: row for row in keywords}
+    generated = 0
+    skipped = 0
+    for row in rows:
+        if not req.overwrite and row.title_suggestion and row.description_suggestion:
+            skipped += 1
+            continue
+        title, description = _page_tdk_suggestions(
+            row, keyword_map.get(row.target_keyword_id), tenant.name
+        )
+        if req.overwrite or not row.title_suggestion:
+            row.title_suggestion = title
+        if req.overwrite or not row.description_suggestion:
+            row.description_suggestion = description
+        row.status = "proposed"
+        generated += 1
+    await session.commit()
+    return {"selected": len(rows), "generated": generated, "skipped": skipped}
 
 
 async def _validate_target_keyword(
@@ -2306,6 +2429,7 @@ async def import_site_pages(
 
 
 def _apply_site_page_audit(row: SeoSitePage, result: dict[str, Any]) -> None:
+    previous_status = getattr(row, "status", None)
     snapshot = result.get("snapshot") or {}
     checks = result.get("checks") or []
     checks_by_code = {item.get("code"): item for item in checks}
@@ -2319,7 +2443,12 @@ def _apply_site_page_audit(row: SeoSitePage, result: dict[str, Any]) -> None:
     row.content_units = snapshot.get("content_units")
     row.audit_score = result.get("score")
     row.issue_codes = failed
-    row.status = "healthy" if not failed else "needs_fix"
+    if not failed:
+        row.status = "verified" if previous_status in {"implemented", "verified"} else "healthy"
+    elif previous_status in {"proposed", "approved"}:
+        row.status = previous_status
+    else:
+        row.status = "needs_fix"
     row.last_error = None
     row.last_checked_at = datetime.utcnow()
 
