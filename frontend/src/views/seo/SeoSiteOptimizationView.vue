@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import { auditPendingSeoSitePages, auditSeoSitePage, fetchSeoKeywords, fetchSeoSitePages, generateSeoSitePageSuggestions, importSeoSitePages, updateSeoSitePage } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
+import { formatSeoCsvTime } from './seoRankTime'
 
 const route = useRoute()
 const router = useRouter()
@@ -100,8 +101,8 @@ function csvCell(value) { return `"${String(value ?? '').replace(/"/g, '""')}"` 
 function exportHandoff() {
   const rows = selectedRows.value.length ? selectedRows.value : result.value.items
   if (!rows.length) return ElMessage.warning('当前没有可导出的页面')
-  const headers = ['页面ID','URL','页面类型','目标关键词ID','问题','当前Title','建议Title','当前Description','建议Description','状态','复检时间']
-  const body = rows.map((row) => [row.id,row.url,row.page_type,row.target_keyword_id,(row.issue_codes||[]).join('|'),row.title,row.title_suggestion,row.meta_description,row.description_suggestion,statusLabel(row.status),row.last_checked_at])
+  const headers = ['页面ID','URL','页面类型','目标关键词ID','问题','当前Title','建议Title','当前Description','建议Description','状态','最近检测时间']
+  const body = rows.map((row) => [row.id,row.url,row.page_type,row.target_keyword_id,(row.issue_codes||[]).join('|'),row.title,row.title_suggestion,row.meta_description,row.description_suggestion,statusLabel(row.status),formatSeoCsvTime(row.last_checked_at)])
   const blob = new Blob(['\ufeff' + [headers,...body].map((line) => line.map(csvCell).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' })
   const anchor = document.createElement('a'); anchor.href = URL.createObjectURL(blob); anchor.download = `SEO站内优化交接-${siteId.value}.csv`; anchor.click(); URL.revokeObjectURL(anchor.href)
 }
