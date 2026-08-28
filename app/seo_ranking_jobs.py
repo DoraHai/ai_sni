@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from app.config import get_settings
 from app.database import async_session_factory
 from app.models.seo import SeoKeywordAsset, SeoRankSnapshot
+from app.module_scope import list_active_module_tenants
 from app.process_lock import acquire_file_lock, release_file_lock
 from app.seo_rank_limits import SEO_RANK_COLLECTION_LOCK_PATH
 
@@ -80,10 +81,18 @@ async def collect_daily_seo_rankings() -> None:
     }
     try:
         async with async_session_factory() as session:
+            entitled_tenant_ids = [
+                tenant.id
+                for tenant in await list_active_module_tenants(session, "seo")
+            ]
+            if not entitled_tenant_ids:
+                logger.info("[scheduler][SEO] 没有已开通且有效的 SEO 客户，本次跳过")
+                return
             unassigned_rows = (
                 await session.execute(
                     select(SeoKeywordAsset.tenant_id, func.count())
                     .where(
+                        SeoKeywordAsset.tenant_id.in_(entitled_tenant_ids),
                         SeoKeywordAsset.status == "active",
                         SeoKeywordAsset.site_id.is_(None),
                     )
@@ -103,6 +112,7 @@ async def collect_daily_seo_rankings() -> None:
                 await session.scalars(
                     select(SeoKeywordAsset.tenant_id)
                     .where(
+                        SeoKeywordAsset.tenant_id.in_(entitled_tenant_ids),
                         SeoKeywordAsset.status == "active",
                         SeoKeywordAsset.site_id.is_not(None),
                     )

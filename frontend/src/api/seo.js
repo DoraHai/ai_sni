@@ -80,8 +80,8 @@ export function auditSeoSitePage({ pageId, tenantId }) {
   })
 }
 
-export function fetchSeoOverview({ tenantId, siteId, engine = 'baidu', device = 'desktop' }) {
-  return client.get('/api/v1/seo/overview', { params: { tenant_id: tenantId, site_id: siteId || undefined, engine, device } })
+export function fetchSeoOverview({ tenantId, siteId, engine = 'baidu', device = 'desktop', days = 30 }) {
+  return client.get('/api/v1/seo/overview', { params: { tenant_id: tenantId, site_id: siteId || undefined, engine, device, days } })
 }
 
 export function collectSeoOverviewMetrics(payload) {

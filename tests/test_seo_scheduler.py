@@ -86,6 +86,10 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
             patch("app.seo_ranking_jobs.get_settings", return_value=settings),
             patch("app.seo_ranking_jobs.acquire_file_lock", return_value=object()),
             patch(
+                "app.seo_ranking_jobs.list_active_module_tenants",
+                new=AsyncMock(return_value=[SimpleNamespace(id=1)]),
+            ),
+            patch(
                 "app.seo_ranking_jobs.async_session_factory",
                 return_value=SessionContext(),
             ),
@@ -99,6 +103,41 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
             1,
             2,
         )
+
+    async def test_collection_skips_keyword_queries_without_entitled_seo_tenants(self):
+        settings = SimpleNamespace(
+            seo_rank_scheduler_enabled=True,
+            seo_rank_scheduler_max_keywords_per_tenant=200,
+            seo_rank_scheduler_max_requests_per_run=1000,
+            seo_rank_scheduler_batch_size=20,
+            seo_rank_scheduler_use_ai=False,
+        )
+        session = SimpleNamespace(execute=AsyncMock(), scalars=AsyncMock())
+
+        class SessionContext:
+            async def __aenter__(self):
+                return session
+
+            async def __aexit__(self, *_args):
+                return False
+
+        with (
+            patch("app.seo_ranking_jobs.get_settings", return_value=settings),
+            patch("app.seo_ranking_jobs.acquire_file_lock", return_value=object()),
+            patch(
+                "app.seo_ranking_jobs.list_active_module_tenants",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch(
+                "app.seo_ranking_jobs.async_session_factory",
+                return_value=SessionContext(),
+            ),
+            patch("app.seo_ranking_jobs.release_file_lock"),
+        ):
+            await collect_daily_seo_rankings()
+
+        session.execute.assert_not_awaited()
+        session.scalars.assert_not_awaited()
 
     def test_scheduler_lock_contention_does_not_register_or_start(self):
         with (
