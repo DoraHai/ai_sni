@@ -54,6 +54,7 @@ rsync \
 ssh "${ssh_options[@]}" "$deploy_target" \
   "set -euo pipefail
    test -s '${release_dir}/index.html'
+   test -s '${release_dir}/favicon-v2.png'
    test \"\$(cat '${release_dir}/DEPLOYED_GIT_COMMIT')\" = '${git_commit}'
    grep -Raq '授权新客户账号' '${release_dir}/assets'
    grep -Raq '/api/v1/oauth/baidu/authorize' '${release_dir}/assets'
