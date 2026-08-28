@@ -84,6 +84,19 @@ def test_canonical_domain_and_portal_routes_are_release_contracts():
     assert "https://gsnipers.snipers.com.cn/deal-sniper/portal" not in seo_shell
 
 
+def test_sem_release_requires_the_favicon_referenced_by_index():
+    index = _read("frontend/index.html")
+    build_guard = _read("frontend/scripts/verify-sem-build.mjs")
+    deploy_script = _read("frontend/scripts/deploy-sem.sh")
+    favicon = ROOT / "frontend/public/favicon-v2.png"
+
+    assert 'href="/favicon-v2.png"' in index
+    assert favicon.is_file()
+    assert favicon.stat().st_size > 0
+    assert "resolve(buildDir, 'favicon-v2.png')" in build_guard
+    assert "test -s '${release_dir}/favicon-v2.png'" in deploy_script
+
+
 def test_sem_nginx_security_headers_cover_api_spa_and_portal_iframe():
     nginx = _read("deploy/gsnipers.conf")
     https_server = nginx[nginx.index("listen 443 ssl http2;") :]

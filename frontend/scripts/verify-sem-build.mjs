@@ -16,6 +16,10 @@ async function collectJavaScriptFiles(directory) {
 }
 
 await stat(resolve(buildDir, 'index.html'))
+const favicon = await stat(resolve(buildDir, 'favicon-v2.png'))
+if (!favicon.isFile() || favicon.size === 0) {
+  throw new Error(`SEM favicon is missing or empty in ${buildDir}`)
+}
 const files = await collectJavaScriptFiles(assetsDir)
 if (!files.length) throw new Error(`No JavaScript assets found in ${assetsDir}`)
 
