@@ -36,6 +36,7 @@ from app.api.seo import (
     _validated_seo_assist_result,
     assist_seo_content,
     collect_rank_serp,
+    get_seo_keyword,
 )
 from app.models.seo import (
     SeoBacklink,
@@ -180,6 +181,79 @@ def test_manual_rank_snapshot_normalizes_browser_utc_timestamp() -> None:
     )
     assert snapshot.checked_at == datetime(2026, 8, 28, 11, 17)
     assert snapshot.checked_at.tzinfo is None
+
+
+def test_keyword_history_query_is_engine_device_and_tenant_scoped() -> None:
+    keyword = SimpleNamespace(
+        id=2,
+        tenant_id=1,
+        site_id=1,
+        keyword="诺德减速机官网",
+        cluster=None,
+        intent=None,
+        monthly_volume=None,
+        difficulty=None,
+        priority="P1",
+        landing_page="https://www.nord.cn/cn/home-cn.jsp",
+        status="active",
+        source="manual",
+        notes=None,
+        created_at=None,
+        updated_at=None,
+    )
+    snapshot = SimpleNamespace(
+        id=10,
+        tenant_id=1,
+        site_id=1,
+        keyword_id=2,
+        engine="sogou",
+        device="desktop",
+        region="全国",
+        domain=None,
+        subject_type="own",
+        rank=2,
+        result_url="https://www.nord.cn/cn/home-cn.jsp",
+        source="manual_import",
+        checked_at=datetime.utcnow(),
+    )
+    session = SimpleNamespace(
+        get=AsyncMock(return_value=keyword),
+        scalars=AsyncMock(return_value=[snapshot]),
+    )
+    result = asyncio.run(
+        get_seo_keyword(
+            keyword_id=2,
+            tenant_id=1,
+            engine="sogou",
+            device="desktop",
+            days=90,
+            session=session,
+        )
+    )
+    statement = session.scalars.await_args.args[0]
+    sql = str(statement)
+    assert "seo_rank_snapshots.tenant_id" in sql
+    assert "seo_rank_snapshots.keyword_id" in sql
+    assert "seo_rank_snapshots.engine" in sql
+    assert "seo_rank_snapshots.device" in sql
+    assert result["engine"] == "sogou"
+    assert result["keyword"]["latest_rank"] == 2
+    assert result["rank_history"] == [
+        {
+            "id": 10,
+            "site_id": 1,
+            "keyword_id": 2,
+            "engine": "sogou",
+            "device": "desktop",
+            "region": "全国",
+            "domain": None,
+            "subject_type": "own",
+            "rank": 2,
+            "result_url": "https://www.nord.cn/cn/home-cn.jsp",
+            "source": "manual_import",
+            "checked_at": result["rank_history"][0]["checked_at"],
+        }
+    ]
 
 
 @pytest.mark.parametrize(

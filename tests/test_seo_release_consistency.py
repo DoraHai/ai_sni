@@ -181,6 +181,15 @@ def test_seo_content_and_rank_views_are_site_scoped_and_html_safe() -> None:
     assert "{k:'360',n:'360'}" in keyword_detail
     assert "{k:'sogou',n:'搜狗'}" in keyword_detail
     assert "device:device.value" in keyword_detail
+    assert "const engine=computed(()=>" in keyword_detail
+    assert "const device=computed(()=>" in keyword_detail
+    assert "setRankContext(item.k,device)" in keyword_detail
+    assert "setRankContext(engine,'mobile')" in keyword_detail
+    assert "manual_import:'人工导入'" in keyword_detail
+    assert "当前引擎和设备暂无记录" in keyword_detail
+    assert 'query:{engine,device}' in keyword_detail
+    assert 'rankEngines.has(String(route.query.engine))' in ranking
+    assert "route.query.device === 'mobile'" in ranking
     assert "timeZone: SEO_TIME_ZONE" in (root / "frontend/src/views/seo/seoRankTime.js").read_text(encoding="utf-8")
     assert 'siteId:siteId.value' in rewrite
     assert 'siteId: siteId.value' in distribution
