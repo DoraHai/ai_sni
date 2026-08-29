@@ -346,7 +346,9 @@ def _rank_payload(row: SeoRankSnapshot) -> dict[str, Any]:
     }
 
 
-def _page_payload(row: SeoSitePage) -> dict[str, Any]:
+def _page_payload(
+    row: SeoSitePage, *, content_task_id: int | None = None
+) -> dict[str, Any]:
     return {
         "id": row.id,
         "tenant_id": row.tenant_id,
@@ -366,6 +368,7 @@ def _page_payload(row: SeoSitePage) -> dict[str, Any]:
         "issue_codes": row.issue_codes or [],
         "title_suggestion": row.title_suggestion,
         "description_suggestion": row.description_suggestion,
+        "content_task_id": content_task_id,
         "status": row.status,
         "last_error": row.last_error,
         "last_checked_at": _iso(row.last_checked_at),
@@ -408,7 +411,7 @@ class KeywordImport(BaseModel):
 
 class RankSnapshotCreate(BaseModel):
     tenant_id: int
-    site_id: int | None = None
+    site_id: PositiveInt
     keyword_id: int
     engine: Literal["baidu", "google", "bing", "360", "sogou"]
     device: Literal["desktop", "mobile"] = "desktop"
@@ -478,7 +481,7 @@ class SerpOwnershipUpdate(BaseModel):
 
 class SitePageCreate(BaseModel):
     tenant_id: int
-    site_id: int | None = None
+    site_id: PositiveInt
     url: str = Field(min_length=1, max_length=2000)
     page_type: str | None = Field(None, max_length=32)
     target_keyword_id: int | None = None
@@ -488,7 +491,7 @@ class SitePageCreate(BaseModel):
 
 class SitePageImport(BaseModel):
     tenant_id: int
-    site_id: int | None = None
+    site_id: PositiveInt
     urls: list[str] = Field(min_length=1, max_length=500)
 
 
@@ -1121,7 +1124,7 @@ async def create_rank_snapshot(
     ctx.ensure_tenant(req.tenant_id)
     keyword = await _keyword(session, req.keyword_id, req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
-    if req.site_id is not None and keyword.site_id not in {None, req.site_id}:
+    if keyword.site_id != req.site_id:
         raise HTTPException(400, "Rank snapshot site does not match the keyword site")
     row = SeoRankSnapshot(**req.model_dump())
     session.add(row)
@@ -1137,7 +1140,7 @@ async def create_rank_snapshots_batch(
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
-    site_ids = {item.site_id for item in req.items if item.site_id is not None}
+    site_ids = {item.site_id for item in req.items}
     for site_id in site_ids:
         await _seo_site(session, req.tenant_id, site_id)
     ids = {item.keyword_id for item in req.items}
@@ -1155,7 +1158,7 @@ async def create_rank_snapshots_batch(
         if item.tenant_id != req.tenant_id:
             raise HTTPException(400, "排名快照 tenant_id 必须一致")
         keyword = await _keyword(session, item.keyword_id, req.tenant_id)
-        if item.site_id is not None and keyword.site_id not in {None, item.site_id}:
+        if keyword.site_id != item.site_id:
             raise HTTPException(400, "Rank snapshot site does not match the keyword site")
         session.add(SeoRankSnapshot(**item.model_dump()))
     await session.commit()
@@ -2362,12 +2365,31 @@ async def list_site_pages(
             .limit(page_size)
         )
     )
+    content_task_by_page: dict[int, int] = {}
+    if rows:
+        content_links = await session.execute(
+            select(SeoContentAsset.source_page_id, SeoContentAsset.id).where(
+                SeoContentAsset.tenant_id == tenant_id,
+                SeoContentAsset.source_page_id.in_([row.id for row in rows]),
+            )
+        )
+        content_task_by_page = {
+            int(source_page_id): int(content_id)
+            for source_page_id, content_id in content_links
+            if source_page_id is not None
+        }
     all_conditions = [SeoSitePage.tenant_id == tenant_id]
     if site_id is not None:
         all_conditions.append(SeoSitePage.site_id == site_id)
     all_rows = list(await session.scalars(select(SeoSitePage).where(*all_conditions)))
     return {
-        "items": [_page_payload(row) for row in rows],
+        "items": [
+            _page_payload(
+                row,
+                content_task_id=content_task_by_page.get(row.id),
+            )
+            for row in rows
+        ],
         "total": int(total or 0),
         "page": page,
         "page_size": page_size,
@@ -2523,7 +2545,7 @@ async def _validate_target_keyword(
 ) -> None:
     if keyword_id is not None:
         keyword = await _keyword(session, keyword_id, tenant_id)
-        if site_id is not None and keyword.site_id not in {None, site_id}:
+        if site_id is not None and keyword.site_id != site_id:
             raise HTTPException(400, "Target keyword site does not match the page site")
 
 
@@ -3177,11 +3199,17 @@ async def _content_keywords(
     tenant_id: int,
     keyword_ids: list[int],
     site_id: int | None = None,
+    *,
+    require_exact_site: bool = False,
 ) -> list[SeoKeywordAsset]:
     rows: list[SeoKeywordAsset] = []
     for keyword_id in keyword_ids:
         row = await _keyword(session, keyword_id, tenant_id)
-        if site_id is not None and row.site_id not in {None, site_id}:
+        if site_id is not None and (
+            row.site_id != site_id
+            if require_exact_site
+            else row.site_id not in {None, site_id}
+        ):
             raise HTTPException(400, "目标关键词与内容所属站点不一致")
         rows.append(row)
     return rows
@@ -3275,7 +3303,8 @@ async def assist_seo_content(
 
 class ContentCreate(BaseModel):
     tenant_id: int
-    site_id: int | None = None
+    site_id: PositiveInt
+    source_page_id: PositiveInt | None = None
     title: str = Field(min_length=1, max_length=300)
     keyword_id: int | None = None
     keyword_ids: list[PositiveInt] | None = Field(None, max_length=5)
@@ -3752,16 +3781,18 @@ async def _mark_distribution_variant_published(
 
 def _content_payload(row: SeoContentAsset) -> dict[str, Any]:
     keyword_ids = row.keyword_ids or ([row.keyword_id] if row.keyword_id else [])
-    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "keyword_id": row.keyword_id, "keyword_ids": keyword_ids, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "created_at": _database_iso(row.created_at), "updated_at": _database_iso(row.updated_at)}
+    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "source_page_id": row.source_page_id, "keyword_id": row.keyword_id, "keyword_ids": keyword_ids, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "created_at": _database_iso(row.created_at), "updated_at": _database_iso(row.updated_at)}
 
 
 @router.get("/content-assets")
-async def list_content_assets(tenant_id: int, site_id: int | None = None, status: str | None = None, content_type: str | None = None, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+async def list_content_assets(tenant_id: int, site_id: int | None = None, source_page_id: PositiveInt | None = None, status: str | None = None, content_type: str | None = None, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
     await _tenant(session, tenant_id)
     await _seo_site(session, tenant_id, site_id)
     conditions = [SeoContentAsset.tenant_id == tenant_id]
     if site_id is not None:
         conditions.append(SeoContentAsset.site_id == site_id)
+    if source_page_id is not None:
+        conditions.append(SeoContentAsset.source_page_id == source_page_id)
     if status:
         conditions.append(SeoContentAsset.status == status)
     if content_type:
@@ -3775,8 +3806,27 @@ async def create_content_asset(req: ContentCreate, session: AsyncSession = Depen
     ctx.ensure_tenant(req.tenant_id)
     await _tenant(session, req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
+    if req.source_page_id is not None:
+        source_page = await _site_page(session, req.source_page_id, req.tenant_id)
+        if source_page.site_id != req.site_id:
+            raise HTTPException(400, "来源页面与内容所属站点不一致")
+        existing_content_id = await session.scalar(
+            select(SeoContentAsset.id).where(
+                SeoContentAsset.tenant_id == req.tenant_id,
+                SeoContentAsset.site_id == req.site_id,
+                SeoContentAsset.source_page_id == req.source_page_id,
+            )
+        )
+        if existing_content_id is not None:
+            raise HTTPException(409, "该站内页面已经关联内容任务")
     keyword_ids = _selected_keyword_ids(req.keyword_ids, req.keyword_id)
-    await _content_keywords(session, req.tenant_id, keyword_ids, req.site_id)
+    await _content_keywords(
+        session,
+        req.tenant_id,
+        keyword_ids,
+        req.site_id,
+        require_exact_site=True,
+    )
     values = req.model_dump()
     values["draft"] = _sanitize_content_html(values.get("draft"))
     values["humanized_content"] = _sanitize_content_html(values.get("humanized_content"))
@@ -3784,7 +3834,12 @@ async def create_content_asset(req: ContentCreate, session: AsyncSession = Depen
     values["keyword_id"] = keyword_ids[0] if keyword_ids else None
     row = SeoContentAsset(**values, created_by=ctx.user_id)
     session.add(row)
-    await session.commit(); await session.refresh(row)
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(409, "该站内页面已经关联内容任务") from exc
+    await session.refresh(row)
     return _content_payload(row)
 
 
@@ -5186,7 +5241,13 @@ async def update_content_asset(content_id: int, tenant_id: int, req: ContentUpda
             keyword_ids = _selected_keyword_ids(values.get("keyword_ids") or [], None)
         else:
             keyword_ids = _selected_keyword_ids(None, values.get("keyword_id"))
-        await _content_keywords(session, tenant_id, keyword_ids, row.site_id)
+        await _content_keywords(
+            session,
+            tenant_id,
+            keyword_ids,
+            row.site_id,
+            require_exact_site=row.site_id is not None,
+        )
         values["keyword_ids"] = keyword_ids or None
         values["keyword_id"] = keyword_ids[0] if keyword_ids else None
     for key, value in values.items():
@@ -5200,7 +5261,7 @@ async def update_content_asset(content_id: int, tenant_id: int, req: ContentUpda
 
 class BacklinkCreate(BaseModel):
     tenant_id: int
-    site_id: int | None = None
+    site_id: PositiveInt
     source_url: str = Field(min_length=1, max_length=2000)
     target_url: str = Field(min_length=1, max_length=2000)
     anchor_text: str | None = Field(None, max_length=1000)

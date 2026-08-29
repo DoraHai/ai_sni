@@ -28,7 +28,7 @@ def test_geo_repair_is_preserved_byte_for_byte() -> None:
     assert hashlib.sha256(GEO_REPAIR.read_bytes()).hexdigest() == EXPECTED_GEO_REPAIR_SHA256
 
 
-def test_merge_revision_is_noop_and_only_head() -> None:
+def test_merge_revision_is_noop_and_source_page_revision_is_only_head() -> None:
     source = MERGE_REVISION.read_text(encoding="utf-8")
     tree = ast.parse(source)
     functions = {
@@ -43,12 +43,14 @@ def test_merge_revision_is_noop_and_only_head() -> None:
     )
 
     script = ScriptDirectory.from_config(_config())
-    assert script.get_heads() == ["0074_merge_geo_seo_heads"]
+    assert script.get_heads() == ["0075_seo_content_source_page"]
     merge = script.get_revision("0074_merge_geo_seo_heads")
     assert set(merge._normalized_down_revisions) == {
         "0073_geo_schema_repair",
         "0073_seo_distribution_variants",
     }
+    source_page = script.get_revision("0075_seo_content_source_page")
+    assert source_page.down_revision == "0074_merge_geo_seo_heads"
 
 
 def test_upgrade_plan_from_production_geo_head_skips_geo_and_runs_seo() -> None:
@@ -59,6 +61,7 @@ def test_upgrade_plan_from_production_geo_head_skips_geo_and_runs_seo() -> None:
     assert revisions == [
         "0073_seo_distribution_variants",
         "0074_merge_geo_seo_heads",
+        "0075_seo_content_source_page",
     ]
 
 
@@ -88,7 +91,7 @@ def test_postgres_upgrade_from_geo_head_creates_seo_variant_schema(monkeypatch) 
 
     command.upgrade(config, "head")
 
-    async def schema_snapshot() -> tuple[str, set[str], set[str]]:
+    async def schema_snapshot() -> tuple[str, set[str], set[str], set[str], set[str]]:
         engine = create_async_engine(async_url)
         async with engine.connect() as connection:
             value = await connection.execute(text("SELECT version_num FROM alembic_version"))
@@ -110,16 +113,53 @@ def test_postgres_upgrade_from_geo_head_creates_seo_variant_schema(monkeypatch) 
                     index["name"]
                     for index in inspector.get_indexes("seo_content_publications")
                 }
-                return variant_indexes, publication_indexes
+                content_columns = {
+                    column["name"]
+                    for column in inspector.get_columns("seo_content_assets")
+                }
+                assert "source_page_id" in content_columns
+                content_indexes = {
+                    index["name"]
+                    for index in inspector.get_indexes("seo_content_assets")
+                }
+                content_unique_constraints = {
+                    constraint["name"]
+                    for constraint in inspector.get_unique_constraints(
+                        "seo_content_assets"
+                    )
+                }
+                return (
+                    variant_indexes,
+                    publication_indexes,
+                    content_indexes,
+                    content_unique_constraints,
+                )
 
-            variant_indexes, publication_indexes = await connection.run_sync(inspect_schema)
+            (
+                variant_indexes,
+                publication_indexes,
+                content_indexes,
+                content_unique_constraints,
+            ) = await connection.run_sync(inspect_schema)
         await engine.dispose()
-        return current, variant_indexes, publication_indexes
+        return (
+            current,
+            variant_indexes,
+            publication_indexes,
+            content_indexes,
+            content_unique_constraints,
+        )
 
-    after, variant_indexes, publication_indexes = asyncio.run(schema_snapshot())
+    (
+        after,
+        variant_indexes,
+        publication_indexes,
+        content_indexes,
+        content_unique_constraints,
+    ) = asyncio.run(schema_snapshot())
     get_settings.cache_clear()
 
-    assert after == "0074_merge_geo_seo_heads"
+    assert after == "0075_seo_content_source_page"
     assert {
         "ix_seo_distribution_variants_tenant_id",
         "ix_seo_distribution_variants_content_asset_id",
@@ -128,3 +168,5 @@ def test_postgres_upgrade_from_geo_head_creates_seo_variant_schema(monkeypatch) 
         "ix_seo_distribution_variant_status",
     }.issubset(variant_indexes)
     assert "ix_seo_content_publications_variant_id" in publication_indexes
+    assert "ix_seo_content_assets_source_page_id" in content_indexes
+    assert "uq_seo_content_asset_source_page" in content_unique_constraints

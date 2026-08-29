@@ -176,8 +176,8 @@ export function auditPendingSeoSitePages({ tenantId, siteId, maxPages = 10 }) {
   })
 }
 
-export function fetchSeoContentAssets({ tenantId, siteId, status, contentType }) {
-  return client.get('/api/v1/seo/content-assets', { params: { tenant_id: tenantId, site_id: siteId || undefined, status: status || undefined, content_type: contentType || undefined } })
+export function fetchSeoContentAssets({ tenantId, siteId, sourcePageId, status, contentType }) {
+  return client.get('/api/v1/seo/content-assets', { params: { tenant_id: tenantId, site_id: siteId || undefined, source_page_id: sourcePageId || undefined, status: status || undefined, content_type: contentType || undefined } })
 }
 
 export function createSeoContentAsset(payload) {

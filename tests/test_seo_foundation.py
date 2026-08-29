@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from starlette.requests import Request
 
 from app.api.seo import (
+    BacklinkCreate,
     BrandProfileUpdate,
     ContentCreate,
     KeywordCreate,
@@ -18,11 +19,13 @@ from app.api.seo import (
     SerpCollectRequest,
     SeoContentAssistRequest,
     SitePageImport,
+    SitePageCreate,
     SitePageUpdate,
     _keyword_payload,
     _database_iso,
     _iso,
     _apply_site_page_audit,
+    _content_keywords,
     _metric_payload,
     _missing_content_keywords,
     _number_or_text,
@@ -35,9 +38,12 @@ from app.api.seo import (
     _seo_ai_prompt,
     _selected_keyword_ids,
     _sanitize_content_html,
+    _validate_target_keyword,
     _validated_seo_assist_result,
     assist_seo_content,
     collect_rank_serp,
+    create_content_asset,
+    create_rank_snapshot,
     get_seo_keyword,
 )
 from app.models.seo import (
@@ -344,6 +350,7 @@ def test_keyword_and_rank_input_validation() -> None:
     with pytest.raises(ValidationError):
         RankSnapshotCreate(
             tenant_id=1,
+            site_id=1,
             keyword_id=2,
             engine="baidu",
             rank=101,
@@ -352,7 +359,142 @@ def test_keyword_and_rank_input_validation() -> None:
 
 def test_site_page_import_requires_at_least_one_url() -> None:
     with pytest.raises(ValidationError):
-        SitePageImport(tenant_id=1, urls=[])
+        SitePageImport(tenant_id=1, site_id=1, urls=[])
+
+
+@pytest.mark.parametrize(
+    ("model", "payload"),
+    [
+        (RankSnapshotCreate, {"tenant_id": 1, "keyword_id": 2, "engine": "baidu"}),
+        (SitePageCreate, {"tenant_id": 1, "url": "https://example.com"}),
+        (SitePageImport, {"tenant_id": 1, "urls": ["https://example.com"]}),
+        (ContentCreate, {"tenant_id": 1, "title": "SEO 内容任务"}),
+        (
+            BacklinkCreate,
+            {
+                "tenant_id": 1,
+                "source_url": "https://ref.example.com/page",
+                "target_url": "https://example.com/page",
+            },
+        ),
+    ],
+)
+def test_new_site_scoped_writes_require_a_positive_site_id(model, payload) -> None:
+    with pytest.raises(ValidationError):
+        model(**payload)
+
+
+def test_content_source_page_relation_is_unique_per_site() -> None:
+    request = ContentCreate(
+        tenant_id=1,
+        site_id=9,
+        source_page_id=231,
+        title="页面 231 内容任务",
+    )
+    assert request.source_page_id == 231
+    constraints = {item.name for item in SeoContentAsset.__table__.constraints}
+    assert "uq_seo_content_asset_source_page" in constraints
+
+
+def test_content_source_page_must_belong_to_the_selected_site() -> None:
+    request = ContentCreate(
+        tenant_id=1,
+        site_id=9,
+        source_page_id=231,
+        title="页面 231 内容任务",
+    )
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+    session = AsyncMock()
+    source_page = SimpleNamespace(id=231, tenant_id=1, site_id=8)
+    with (
+        patch("app.api.seo._tenant", new=AsyncMock()),
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._site_page", new=AsyncMock(return_value=source_page)),
+    ):
+        with pytest.raises(Exception) as exc:
+            asyncio.run(create_content_asset(request, session, context))
+    assert getattr(exc.value, "status_code", None) == 400
+    session.commit.assert_not_awaited()
+
+
+def test_content_source_page_cannot_create_a_duplicate_task() -> None:
+    request = ContentCreate(
+        tenant_id=1,
+        site_id=9,
+        source_page_id=231,
+        title="页面 231 内容任务",
+    )
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+    session = AsyncMock()
+    session.scalar = AsyncMock(return_value=88)
+    source_page = SimpleNamespace(id=231, tenant_id=1, site_id=9)
+    with (
+        patch("app.api.seo._tenant", new=AsyncMock()),
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._site_page", new=AsyncMock(return_value=source_page)),
+    ):
+        with pytest.raises(Exception) as exc:
+            asyncio.run(create_content_asset(request, session, context))
+    assert getattr(exc.value, "status_code", None) == 409
+    session.commit.assert_not_awaited()
+
+
+def test_new_rank_snapshot_rejects_a_keyword_without_the_same_site() -> None:
+    request = RankSnapshotCreate(
+        tenant_id=1,
+        site_id=9,
+        keyword_id=2,
+        engine="baidu",
+    )
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.keywords": "edit"},
+    )
+    keyword = SimpleNamespace(id=2, tenant_id=1, site_id=None)
+    session = AsyncMock()
+    with (
+        patch("app.api.seo._keyword", new=AsyncMock(return_value=keyword)),
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+    ):
+        with pytest.raises(Exception) as exc:
+            asyncio.run(create_rank_snapshot(request, session, context))
+    assert getattr(exc.value, "status_code", None) == 400
+    session.commit.assert_not_awaited()
+
+
+def test_new_page_and_content_keyword_links_require_the_exact_site() -> None:
+    keyword = SimpleNamespace(id=2, tenant_id=1, site_id=None)
+    session = AsyncMock()
+    with patch("app.api.seo._keyword", new=AsyncMock(return_value=keyword)):
+        with pytest.raises(Exception) as page_exc:
+            asyncio.run(_validate_target_keyword(session, 1, 2, 9))
+        with pytest.raises(Exception) as content_exc:
+            asyncio.run(
+                _content_keywords(
+                    session,
+                    1,
+                    [2],
+                    9,
+                    require_exact_site=True,
+                )
+            )
+    assert getattr(page_exc.value, "status_code", None) == 400
+    assert getattr(content_exc.value, "status_code", None) == 400
 
 
 def test_brand_profile_normalizes_homepage_and_domain() -> None:
@@ -372,6 +514,7 @@ def test_brand_profile_normalizes_homepage_and_domain() -> None:
 def test_content_workflow_accepts_dedicated_modes(content_type: str) -> None:
     item = ContentCreate(
         tenant_id=1,
+        site_id=1,
         title="SEO 内容任务",
         content_type=content_type,
         humanized_content="人工审核后的定稿",
@@ -386,6 +529,7 @@ def test_content_workflow_accepts_dedicated_modes(content_type: str) -> None:
 def test_rewrite_workflow_fields_are_validated() -> None:
     item = ContentCreate(
         tenant_id=1,
+        site_id=1,
         title="旧文章改写",
         content_type="rewrite",
         source_text="客户提供的原始正文",
@@ -399,6 +543,7 @@ def test_rewrite_workflow_fields_are_validated() -> None:
     with pytest.raises(ValidationError):
         ContentCreate(
             tenant_id=1,
+            site_id=1,
             title="无效进度",
             content_type="rewrite",
             rewrite_progress=101,
@@ -447,7 +592,7 @@ def test_seo_content_rejects_more_than_five_keywords() -> None:
     with pytest.raises(ValidationError):
         SeoContentAssistRequest(tenant_id=1, action="generate", keyword_ids=[1, 2, 3, 4, 5, 6])
     with pytest.raises(ValidationError):
-        ContentCreate(tenant_id=1, title="多关键词文章", keyword_ids=[1, 2, 3, 4, 5, 6])
+        ContentCreate(tenant_id=1, site_id=1, title="多关键词文章", keyword_ids=[1, 2, 3, 4, 5, 6])
 
 
 def test_seo_ai_assist_rejects_oversized_instruction() -> None:

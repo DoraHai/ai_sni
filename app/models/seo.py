@@ -205,6 +205,11 @@ class SeoContentAsset(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     tenant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tenants.id"), nullable=False, index=True)
     site_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("seo_sites.id", ondelete="SET NULL"), index=True)
+    source_page_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("seo_site_pages.id", ondelete="SET NULL"),
+        index=True,
+    )
     keyword_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("seo_keyword_assets.id", ondelete="SET NULL"))
     keyword_ids: Mapped[list | None] = mapped_column(JSONB)
     content_type: Mapped[str] = mapped_column(String(32), nullable=False, default="article")
@@ -224,6 +229,15 @@ class SeoContentAsset(Base):
     created_by: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "site_id",
+            "source_page_id",
+            name="uq_seo_content_asset_source_page",
+        ),
+    )
 
 
 class SeoDistributionConnection(Base):
