@@ -67,7 +67,8 @@ def test_background_sem_work_is_entitlement_scoped():
     sync = _read("app/baidu/sync.py")
     rules = _read("app/rules/engine.py") + _read("app/rules/site_health.py")
     suggestions = _read("app/suggestions/engine.py")
-    assert scheduler.count("list_active_sem_accounts") >= 4
+    assert "await list_active_sem_accounts(session)" in scheduler
+    assert scheduler.count("await _scheduled_account_refs(session)") >= 3
     assert "list_active_sem_accounts" in sync
     assert rules.count("list_active_module_tenants") >= 2
     assert "list_active_module_tenants" in suggestions

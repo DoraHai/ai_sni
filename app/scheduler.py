@@ -27,7 +27,6 @@ from app.baidu.sync import (
     sync_keyword_dimension_reports_for_account,
     sync_keyword_report_for_account,
     sync_keyword_report_range_for_account,
-    sync_keyword_report_for_all_active_accounts,
     sync_region_snapshot,
     sync_search_terms_for_account,
     sync_keywords_for_account,
@@ -39,7 +38,11 @@ from app.baidu.oauth import refresh_expiring_oauth_grants
 from app.classification import reclassify_keywords
 from app.database import async_session_factory
 from app.models import BaiduAccount, Tenant
-from app.module_scope import list_active_module_tenants, list_active_sem_accounts
+from app.module_scope import (
+    get_tenant_module,
+    list_active_module_tenants,
+    list_active_sem_accounts,
+)
 from app.process_lock import acquire_file_lock, release_file_lock
 from app.rules import run_rules_for_all_tenants
 from app.rules.site_health import run_site_health_for_all_tenants
@@ -52,7 +55,10 @@ from app.sem_asset_sync import (
     safe_sync_error,
     update_dimension,
 )
-from app.security.sem_identity import filter_identity_safe_active_accounts
+from app.security.sem_identity import (
+    ensure_sem_identity_access,
+    filter_identity_safe_active_accounts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -229,6 +235,41 @@ def _release_scheduler_lock() -> None:
     _lock_fh = None
 
 
+def _account_refs(accounts: list[BaiduAccount]) -> list[tuple[int, int, str]]:
+    """Detach stable scalar identities before the listing session is closed."""
+    return [
+        (account.id, account.tenant_id, account.baidu_username)
+        for account in accounts
+    ]
+
+
+async def _scheduled_account_refs(session) -> list[tuple[int, int, str]]:
+    return _account_refs(
+        filter_identity_safe_active_accounts(
+            await list_active_sem_accounts(session)
+        )
+    )
+
+
+async def _reload_scheduled_account(
+    session,
+    account_id: int,
+    expected_tenant_id: int,
+) -> tuple[BaiduAccount | None, Tenant | None, str | None]:
+    """Reload and revalidate an account immediately before scheduled work."""
+    account = await session.get(BaiduAccount, account_id)
+    if account is None:
+        return None, None, "missing_account"
+    if account.status != "active" or account.tenant_id != expected_tenant_id:
+        return None, None, "account_changed"
+    await get_tenant_module(session, expected_tenant_id, "sem")
+    await ensure_sem_identity_access(session, expected_tenant_id)
+    tenant = await session.get(Tenant, expected_tenant_id)
+    if tenant is None:
+        return None, None, "missing_tenant"
+    return account, tenant, None
+
+
 async def fetch_yesterday_keyword_report() -> None:
     """每天凌晨 2 点跑：报告 → 关键词维度 → 分级 → 规则引擎。
 
@@ -236,29 +277,67 @@ async def fetch_yesterday_keyword_report() -> None:
     """
     yesterday = datetime.now(_SHANGHAI_TZ).date() - timedelta(days=1)
     logger.info("[scheduler] 开始拉取 %s 关键词报告", yesterday)
-    async with async_session_factory() as session:
-        refresh_result = await refresh_expiring_oauth_grants(session)
-        logger.info("[scheduler] OAuth Token 刷新结果: %s", refresh_result)
-        async with _report_sync_lock:
-            result = await sync_keyword_report_for_all_active_accounts(session, yesterday)
+    result: dict[str, int] = {}
+    async with _report_sync_lock:
+        async with async_session_factory() as session:
+            refresh_result = await refresh_expiring_oauth_grants(session)
+            logger.info("[scheduler] OAuth Token 刷新结果: %s", refresh_result)
+            account_refs = await _scheduled_account_refs(session)
 
-        accounts = filter_identity_safe_active_accounts(
-            await list_active_sem_accounts(session)
-        )
-        for acc in accounts:
+        for account_id, tenant_id, username in account_refs:
             try:
-                tenant = await session.get(Tenant, acc.tenant_id)
-                if tenant is not None:
-                    await sleep(2)
-                    await sync_region_snapshot(session, tenant, acc, yesterday, yesterday)
+                async with async_session_factory() as session:
+                    acc, _tenant, skipped = await _reload_scheduled_account(
+                        session, account_id, tenant_id
+                    )
+                    if skipped is not None or acc is None:
+                        result[username] = -1
+                        continue
+                    report_rows = await sync_keyword_report_for_account(
+                        session, acc, yesterday
+                    )
+                    await sync_keyword_dimension_reports_for_account(
+                        session, acc, yesterday
+                    )
+                    result[username] = report_rows
+            except Exception as exc:  # noqa: BLE001
+                result[username] = -1
+                logger.exception(
+                    "账户 %s 拉 %s 报告失败: %s",
+                    username,
+                    yesterday,
+                    safe_sync_error(exc),
+                )
+
+    for account_id, tenant_id, username in account_refs:
+        try:
+            async with async_session_factory() as session:
+                acc, tenant, skipped = await _reload_scheduled_account(
+                    session, account_id, tenant_id
+                )
+                if skipped is not None or acc is None or tenant is None:
+                    continue
+                await sleep(2)
+                await sync_region_snapshot(session, tenant, acc, yesterday, yesterday)
                 await sync_campaigns_for_account(session, acc)
                 await sync_adgroups_for_account(session, acc)
                 await sync_keywords_for_account(session, acc)
                 await sync_price_strategies_for_account(session, acc)
                 await sync_ocpc_packages_for_account(session, acc)
-            except Exception:  # noqa: BLE001
-                logger.exception("账户 %s 层级/关键词维度同步失败", acc.baidu_username)
-            try:
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "账户 %s 层级/关键词维度同步失败: %s",
+                username,
+                safe_sync_error(exc),
+            )
+
+        try:
+            async with async_session_factory() as session:
+                acc, _tenant, skipped = await _reload_scheduled_account(
+                    session, account_id, tenant_id
+                )
+                if skipped is not None or acc is None:
+                    continue
                 # 操作记录增量：3 天重叠窗口防漏（dedup_key 幂等，重复拉不重复入库）
                 await sync_operation_records_for_account(
                     session,
@@ -266,20 +345,41 @@ async def fetch_yesterday_keyword_report() -> None:
                     datetime.now(_SHANGHAI_TZ).date() - timedelta(days=3),
                     datetime.now(_SHANGHAI_TZ).date(),
                 )
-            except Exception:  # noqa: BLE001
-                logger.exception("账户 %s 操作记录同步失败", acc.baidu_username)
-        for tenant in await list_active_module_tenants(session, "sem"):
-            try:
-                await reclassify_keywords(session, tenant)
-            except Exception:  # noqa: BLE001
-                logger.exception("租户 %s 分级重算失败", tenant.name)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "账户 %s 操作记录同步失败: %s",
+                username,
+                safe_sync_error(exc),
+            )
 
-        alerts = await run_rules_for_all_tenants(session, yesterday)
+    async with async_session_factory() as session:
+        tenant_refs = [
+            (tenant.id, tenant.name)
+            for tenant in await list_active_module_tenants(session, "sem")
+        ]
+    for tenant_id, tenant_name in tenant_refs:
         try:
+            async with async_session_factory() as session:
+                await get_tenant_module(session, tenant_id, "sem")
+                await ensure_sem_identity_access(session, tenant_id)
+                tenant = await session.get(Tenant, tenant_id)
+                if tenant is not None:
+                    await reclassify_keywords(session, tenant)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "租户 %s 分级重算失败: %s",
+                tenant_name,
+                safe_sync_error(exc),
+            )
+
+    async with async_session_factory() as session:
+        alerts = await run_rules_for_all_tenants(session, yesterday)
+    try:
+        async with async_session_factory() as session:
             suggestions = await run_suggestions_for_all_tenants(session)
-        except Exception:  # noqa: BLE001
-            logger.exception("[scheduler] 建议引擎执行失败（不阻断其余）")
-            suggestions = {}
+    except Exception:  # noqa: BLE001
+        logger.exception("[scheduler] 建议引擎执行失败（不阻断其余）")
+        suggestions = {}
     logger.info(
         "[scheduler] %s 完成: 报告 %s，告警 %s，建议 %s",
         yesterday,
@@ -297,41 +397,35 @@ async def fetch_today_keyword_report() -> None:
         async with async_session_factory() as session:
             refresh_result = await refresh_expiring_oauth_grants(session)
             logger.info("[scheduler] OAuth Token 刷新结果: %s", refresh_result)
-            accounts = filter_identity_safe_active_accounts(
-                await list_active_sem_accounts(session)
-            )
             # A failed dimension sync can roll back the shared session. SQLAlchemy
             # expires every ORM object on rollback, including accounts that have
             # not been processed yet. Keep only scalar identities across account
             # iterations and reload each account in the active async context.
-            account_refs = [
-                (acc.id, acc.tenant_id, acc.baidu_username) for acc in accounts
-            ]
+            account_refs = await _scheduled_account_refs(session)
         result = {}
         for account_id, tenant_id, username in account_refs:
-            async with async_session_factory() as session:
-                try:
-                    acc = await session.get(BaiduAccount, account_id)
-                    tenant = await session.get(Tenant, tenant_id)
-                    if acc is None:
-                        result[username] = {"status": "missing_account"}
-                        continue
-                    if tenant is None:
-                        result[username] = {"status": "missing_tenant"}
+            try:
+                async with async_session_factory() as session:
+                    acc, tenant, skipped = await _reload_scheduled_account(
+                        session, account_id, tenant_id
+                    )
+                    if skipped is not None or acc is None or tenant is None:
+                        result[username] = {"status": skipped or "account_unavailable"}
                         continue
                     result[username] = await refresh_keyword_workbench_snapshot(
                         session, tenant, acc, today
                     )
-                except Exception as exc:  # noqa: BLE001
-                    await session.rollback()
-                    message = safe_sync_error(exc)
-                    logger.exception(
-                        "账户 %s 的 15 分钟同步失败: %s", username, message
-                    )
-                    result[username] = {
-                        "status": "error",
-                        "message": message,
-                    }
+            except Exception as exc:  # noqa: BLE001
+                # The per-account context owns transaction cleanup. Catch outside
+                # it so a rollback/close failure cannot abort later accounts.
+                message = safe_sync_error(exc)
+                logger.exception(
+                    "账户 %s 的 15 分钟同步失败: %s", username, message
+                )
+                result[username] = {
+                    "status": "error",
+                    "message": message,
+                }
     logger.info("[scheduler] %s 关键词工作台同步完成: %s", today, result)
 
 
@@ -367,23 +461,31 @@ async def sync_search_terms_daily() -> None:
         async with async_session_factory() as session:
             refresh_result = await refresh_expiring_oauth_grants(session)
             logger.info("[scheduler] OAuth Token 刷新结果: %s", refresh_result)
-            accounts = filter_identity_safe_active_accounts(
-                await list_active_sem_accounts(session)
-            )
-            for acc in accounts:
-                try:
-                    result[acc.baidu_username] = await sync_search_terms_for_account(
+            account_refs = await _scheduled_account_refs(session)
+        for account_id, tenant_id, username in account_refs:
+            try:
+                async with async_session_factory() as session:
+                    acc, _tenant, skipped = await _reload_scheduled_account(
+                        session, account_id, tenant_id
+                    )
+                    if skipped is not None or acc is None:
+                        result[username] = -1
+                        continue
+                    result[username] = await sync_search_terms_for_account(
                         session, acc, start_date, end_date
                     )
                     logger.info(
                         "账户 %s 搜索词报告每日同步完成: %d 条",
-                        acc.baidu_username,
-                        result[acc.baidu_username],
+                        username,
+                        result[username],
                     )
-                except Exception:  # noqa: BLE001
-                    await session.rollback()
-                    result[acc.baidu_username] = -1
-                    logger.exception("账户 %s 搜索词报告同步失败", acc.baidu_username)
+            except Exception as exc:  # noqa: BLE001
+                result[username] = -1
+                logger.exception(
+                    "账户 %s 搜索词报告同步失败: %s",
+                    username,
+                    safe_sync_error(exc),
+                )
     logger.info("[scheduler] 搜索词报告每日同步完成: %s", result)
 
 
