@@ -8,6 +8,7 @@ import { fetchCandidates } from './api/expansion'
 import { session } from './store/session'
 import { redirectToLogin } from './auth/loginRedirect'
 import { SEM_READ_ONLY_MESSAGE, SEM_WRITEBACK_ENABLED } from './constants/semCapabilities'
+import { parseUtcTimestamp } from './utils/dateTime'
 
 const route = useRoute()
 const router = useRouter()
@@ -198,8 +199,8 @@ const tenantCountLabel = computed(() => `${session.tenants.length} 客户`)
 
 function fmtAccountSync(value) {
   if (!value) return '尚未同步'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '同步时间未知'
+  const date = parseUtcTimestamp(value)
+  if (!date) return '同步时间未知'
   return `同步 ${date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}`
 }
 
