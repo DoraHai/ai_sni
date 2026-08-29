@@ -39,7 +39,11 @@ from app.baidu.oauth import refresh_expiring_oauth_grants
 from app.classification import reclassify_keywords
 from app.database import async_session_factory
 from app.models import BaiduAccount, Tenant
-from app.module_scope import list_active_module_tenants, list_active_sem_accounts
+from app.module_scope import (
+    get_tenant_module,
+    list_active_module_tenants,
+    list_active_sem_accounts,
+)
 from app.process_lock import acquire_file_lock, release_file_lock
 from app.rules import run_rules_for_all_tenants
 from app.rules.site_health import run_site_health_for_all_tenants
@@ -52,7 +56,10 @@ from app.sem_asset_sync import (
     safe_sync_error,
     update_dimension,
 )
-from app.security.sem_identity import filter_identity_safe_active_accounts
+from app.security.sem_identity import (
+    ensure_sem_identity_access,
+    filter_identity_safe_active_accounts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -312,10 +319,19 @@ async def fetch_today_keyword_report() -> None:
             try:
                 async with async_session_factory() as session:
                     acc = await session.get(BaiduAccount, account_id)
-                    tenant = await session.get(Tenant, tenant_id)
                     if acc is None:
                         result[username] = {"status": "missing_account"}
                         continue
+                    # The account can be disabled, rebound, lose SEM entitlement,
+                    # or become identity-conflicted after the initial snapshot.
+                    # Revalidate inside the account-owned session before any
+                    # provider call or local asset write.
+                    if acc.status != "active" or acc.tenant_id != tenant_id:
+                        result[username] = {"status": "account_changed"}
+                        continue
+                    await get_tenant_module(session, tenant_id, "sem")
+                    await ensure_sem_identity_access(session, tenant_id)
+                    tenant = await session.get(Tenant, tenant_id)
                     if tenant is None:
                         result[username] = {"status": "missing_tenant"}
                         continue
