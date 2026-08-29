@@ -696,6 +696,7 @@ def test_all_failed_serp_collection_returns_generic_safe_error() -> None:
     assert settle.await_args.args[4] == 0
     assert collector.await_args.kwargs["keyword_ids"] == [3]
     assert collector.await_args.kwargs["max_keywords"] == 1
+    assert collector.await_args.kwargs["commit"] is False
 
 
 def test_partial_serp_collection_charges_only_successful_provider_requests() -> None:
@@ -729,9 +730,10 @@ def test_partial_serp_collection_charges_only_successful_provider_requests() -> 
             "daily_requests_used": 1,
         }
     )
+    collector = AsyncMock(return_value=collected)
     with patch(
         "app.api.seo.collect_rank_serp_for_tenant",
-        new=AsyncMock(return_value=collected),
+        new=collector,
     ), patch(
         "app.api.seo._seo_site",
         new=AsyncMock(return_value=object()),
@@ -750,6 +752,7 @@ def test_partial_serp_collection_charges_only_successful_provider_requests() -> 
         result = asyncio.run(collect_rank_serp(request, session, context))
 
     assert settle.await_args.args[4] == 1
+    assert collector.await_args.kwargs["commit"] is False
     assert result["manual_limit"]["daily_requests_used"] == 1
 
 

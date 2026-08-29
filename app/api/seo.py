@@ -1565,6 +1565,7 @@ async def collect_rank_serp_for_tenant(
     engine: Literal["baidu", "google", "bing"] = "baidu",
     use_ai: bool = True,
     captured_at: datetime | None = None,
+    commit: bool = True,
 ) -> dict[str, Any]:
     """采集一个客户的真实 SERP；供人工刷新与每日定时任务共用。"""
     tenant = await _tenant(session, tenant_id)
@@ -1707,7 +1708,10 @@ async def collect_rank_serp_for_tenant(
             )
         )
         snapshots += 1
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     return {
         "keywords": len(keywords),
         "devices": devices,
@@ -1783,6 +1787,7 @@ async def collect_rank_serp(
                 max_keywords=req.max_keywords,
                 engine=req.engine,
                 use_ai=req.use_ai,
+                commit=False,
             )
         except Exception:
             await session.rollback()

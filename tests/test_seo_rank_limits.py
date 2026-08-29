@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -157,6 +158,82 @@ def test_manual_collection_status_reopens_after_cooldown() -> None:
     )
     assert status["allowed"] is True
     assert status["daily_requests_used"] == 2
+
+
+def test_manual_collection_status_lazily_imports_legacy_state(tmp_path) -> None:
+    row = _row()
+    session = _session(row)
+    legacy_path = tmp_path / "seo_manual_rank_limits.json"
+    legacy_path.write_text(
+        json.dumps(
+            {
+                "1:2": {
+                    "daily_date": "2026-08-24",
+                    "daily_requests": 4,
+                    "last_attempt_at": "2026-08-24T06:00:00+00:00",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    status = asyncio.run(
+        manual_rank_status(
+            session,
+            1,
+            2,
+            cooldown_seconds=3600,
+            max_requests_per_day=5,
+            now=datetime(2026, 8, 24, 6, 30, tzinfo=timezone.utc),
+            legacy_state_path=legacy_path,
+        )
+    )
+
+    assert status["daily_requests_used"] == 4
+    assert status["retry_after_seconds"] == 1800
+    assert _limit_state(row) == {
+        "daily_date": "2026-08-24",
+        "daily_requests": 4,
+        "last_attempt_at": "2026-08-24T06:00:00+00:00",
+    }
+    assert session.scalar.await_count == 2
+    session.commit.assert_awaited_once()
+
+
+def test_manual_collection_persists_legacy_state_when_request_is_rejected(tmp_path) -> None:
+    row = _row()
+    session = _session(row)
+    legacy_path = tmp_path / "seo_manual_rank_limits.json"
+    legacy_path.write_text(
+        json.dumps(
+            {
+                "1:2": {
+                    "daily_date": "2026-08-24",
+                    "daily_requests": 5,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ManualRankLimitError) as exc:
+        asyncio.run(
+            reserve_manual_rank_collection(
+                session,
+                1,
+                2,
+                1,
+                cooldown_seconds=1,
+                max_requests_per_day=5,
+                now=datetime(2026, 8, 24, 6, 30, tzinfo=timezone.utc),
+                legacy_state_path=legacy_path,
+            )
+        )
+
+    assert exc.value.code == "daily_request_limit"
+    assert _limit_state(row)["daily_requests"] == 5
+    session.commit.assert_awaited_once()
+    session.rollback.assert_not_awaited()
 
 
 def test_manual_collection_enforces_daily_success_budget() -> None:

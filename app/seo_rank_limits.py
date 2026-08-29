@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import tempfile
@@ -13,10 +14,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.module_workspace import SeoSite
+from app.process_lock import acquire_file_lock, release_file_lock
 
 
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 _STATE_KEY = "manual_rank_collection_limit"
+_LEGACY_STATE_PATH = Path(tempfile.gettempdir()) / "seo_manual_rank_limits.json"
 MANUAL_RANK_RESERVATION_TTL_SECONDS = 10 * 60
 SEO_RANK_COLLECTION_LOCK_PATH = Path(tempfile.gettempdir()) / "seo_rank_collection.lock"
 
@@ -76,6 +79,62 @@ def _store_state(site: SeoSite, state: dict) -> None:
     site.site_settings = settings
 
 
+def _legacy_state(
+    tenant_id: int,
+    site_id: int,
+    *,
+    state_path: Path,
+) -> dict:
+    if not state_path.exists():
+        return {}
+    lock_handle = acquire_file_lock(state_path.with_suffix(f"{state_path.suffix}.lock"))
+    if lock_handle is None:
+        raise ManualRankLimitError(
+            "collection_busy",
+            "另一排名采集请求正在处理，请稍后重试",
+            5,
+        )
+    try:
+        try:
+            value = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ManualRankLimitError(
+                "limit_state_unavailable",
+                "排名采集限流状态不可用，请联系管理员",
+                60,
+            ) from exc
+        if not isinstance(value, dict):
+            raise ManualRankLimitError(
+                "limit_state_unavailable",
+                "排名采集限流状态不可用，请联系管理员",
+                60,
+            )
+        entry = value.get(f"{tenant_id}:{site_id}")
+        if not isinstance(entry, dict):
+            return {}
+        return {
+            key: entry[key]
+            for key in ("daily_date", "daily_requests", "last_attempt_at")
+            if key in entry
+        }
+    finally:
+        release_file_lock(lock_handle)
+
+
+def _state_with_legacy(
+    site: SeoSite,
+    tenant_id: int,
+    site_id: int,
+    *,
+    legacy_state_path: Path,
+) -> tuple[dict, bool]:
+    state = _state(site)
+    if state:
+        return state, False
+    legacy = _legacy_state(tenant_id, site_id, state_path=legacy_state_path)
+    return legacy, bool(legacy)
+
+
 def _active_reservation_retry_after(state: dict, now: datetime) -> int:
     expires_at = _aware_utc(state.get("reservation_expires_at"))
     if not state.get("reservation_token") or expires_at is None or expires_at <= now:
@@ -116,7 +175,7 @@ async def _site(
 ) -> SeoSite:
     statement = select(SeoSite).where(SeoSite.id == site_id, SeoSite.tenant_id == tenant_id)
     if for_update:
-        statement = statement.with_for_update()
+        statement = statement.with_for_update().execution_options(populate_existing=True)
     site = await session.scalar(statement)
     if site is None:
         raise ManualRankLimitError(
@@ -135,11 +194,26 @@ async def manual_rank_status(
     cooldown_seconds: int,
     max_requests_per_day: int,
     now: datetime | None = None,
+    legacy_state_path: Path | None = None,
 ) -> dict:
     current = now or _utc_now()
     site = await _site(session, tenant_id, site_id, for_update=False)
+    state = _state(site)
+    if not state:
+        legacy = _legacy_state(
+            tenant_id,
+            site_id,
+            state_path=legacy_state_path or _LEGACY_STATE_PATH,
+        )
+        if legacy:
+            site = await _site(session, tenant_id, site_id, for_update=True)
+            state = _state(site)
+            if not state:
+                state = legacy
+                _store_state(site, state)
+                await session.commit()
     return _payload(
-        _state(site),
+        state,
         now=current,
         cooldown_seconds=max(1, cooldown_seconds),
         max_requests_per_day=max(1, max_requests_per_day),
@@ -155,6 +229,7 @@ async def reserve_manual_rank_collection(
     cooldown_seconds: int,
     max_requests_per_day: int,
     now: datetime | None = None,
+    legacy_state_path: Path | None = None,
 ) -> ManualRankReservation:
     current = now or _utc_now()
     current_day = _local_day(current).isoformat()
@@ -162,7 +237,12 @@ async def reserve_manual_rank_collection(
     daily_limit = max(1, max_requests_per_day)
     requested = max(1, int(request_count))
     site = await _site(session, tenant_id, site_id, for_update=True)
-    state = _state(site)
+    state, imported = _state_with_legacy(
+        site,
+        tenant_id,
+        site_id,
+        legacy_state_path=legacy_state_path or _LEGACY_STATE_PATH,
+    )
     active_retry = _active_reservation_retry_after(state, current)
     if active_retry:
         await session.rollback()
@@ -184,7 +264,11 @@ async def reserve_manual_rank_collection(
         max_requests_per_day=daily_limit,
     )
     if status["retry_after_seconds"]:
-        await session.rollback()
+        if imported:
+            _store_state(site, state)
+            await session.commit()
+        else:
+            await session.rollback()
         raise ManualRankLimitError(
             "collection_cooldown",
             f"排名刚刚更新过，请在 {status['retry_after_seconds']} 秒后再试",
@@ -194,7 +278,11 @@ async def reserve_manual_rank_collection(
         local_now = current.astimezone(_SHANGHAI_TZ)
         tomorrow = (local_now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
         retry_after = max(1, int((tomorrow - local_now).total_seconds()))
-        await session.rollback()
+        if imported:
+            _store_state(site, state)
+            await session.commit()
+        else:
+            await session.rollback()
         raise ManualRankLimitError(
             "daily_request_limit",
             "今日人工排名采集额度已用完，请明日再试",
