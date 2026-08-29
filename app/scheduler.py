@@ -309,8 +309,8 @@ async def fetch_today_keyword_report() -> None:
             ]
         result = {}
         for account_id, tenant_id, username in account_refs:
-            async with async_session_factory() as session:
-                try:
+            try:
+                async with async_session_factory() as session:
                     acc = await session.get(BaiduAccount, account_id)
                     tenant = await session.get(Tenant, tenant_id)
                     if acc is None:
@@ -322,16 +322,17 @@ async def fetch_today_keyword_report() -> None:
                     result[username] = await refresh_keyword_workbench_snapshot(
                         session, tenant, acc, today
                     )
-                except Exception as exc:  # noqa: BLE001
-                    await session.rollback()
-                    message = safe_sync_error(exc)
-                    logger.exception(
-                        "账户 %s 的 15 分钟同步失败: %s", username, message
-                    )
-                    result[username] = {
-                        "status": "error",
-                        "message": message,
-                    }
+            except Exception as exc:  # noqa: BLE001
+                # The per-account context owns transaction cleanup. Catch outside
+                # it so a rollback/close failure cannot abort later accounts.
+                message = safe_sync_error(exc)
+                logger.exception(
+                    "账户 %s 的 15 分钟同步失败: %s", username, message
+                )
+                result[username] = {
+                    "status": "error",
+                    "message": message,
+                }
     logger.info("[scheduler] %s 关键词工作台同步完成: %s", today, result)
 
 
