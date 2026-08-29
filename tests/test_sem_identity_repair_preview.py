@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
@@ -48,6 +48,28 @@ class _Rows:
 
     def all(self):
         return self._rows
+
+
+def _request(receive=None):
+    async def connected_receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    return Request(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "https",
+            "path": "/",
+            "raw_path": b"/",
+            "query_string": b"",
+            "headers": [],
+            "client": ("test", 1),
+            "server": ("test", 443),
+        },
+        receive or connected_receive,
+    )
 
 
 def _tenant(tenant_id, name, baidu_ucid=None):
@@ -122,7 +144,7 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
 
         response = Response()
         result = await list_sem_identity_repair_candidates(
-            response=response, session=session
+            request=_request(), response=response, session=session
         )
 
         self.assertEqual(result["summary"]["candidate_groups"], 1)
@@ -209,6 +231,7 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
 
         with self.assertRaises(HTTPException) as caught:
             await preview_sem_identity_repair(
+                request=_request(),
                 response=Response(),
                 source_tenant_id=1,
                 target_tenant_id=2,
@@ -253,6 +276,7 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         ):
             response = Response()
             result = await preview_sem_identity_repair(
+                request=_request(),
                 response=response,
                 source_tenant_id=1,
                 target_tenant_id=2,
@@ -309,6 +333,41 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
                 await _run_sem_identity_repair_diagnostic(slow_operation)
 
         self.assertEqual(caught.exception.status_code, 503)
+        await asyncio.wait_for(slots.acquire(), timeout=0.01)
+        slots.release()
+
+    async def test_client_disconnect_cancels_operation_and_releases_slot(self):
+        slots = asyncio.BoundedSemaphore(1)
+        messages = asyncio.Queue()
+        started = asyncio.Event()
+        cleaned = asyncio.Event()
+
+        async def operation():
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleaned.set()
+
+        with (
+            patch("app.api.customer_modules._sem_identity_repair_slots", slots),
+            patch(
+                "app.api.customer_modules.SEM_IDENTITY_REPAIR_DISCONNECT_POLL_SECONDS",
+                0.001,
+            ),
+        ):
+            diagnostic = asyncio.create_task(
+                _run_sem_identity_repair_diagnostic(
+                    operation, request=_request(messages.get)
+                )
+            )
+            await asyncio.wait_for(started.wait(), timeout=0.1)
+            await messages.put({"type": "http.disconnect"})
+            with self.assertRaises(HTTPException) as caught:
+                await asyncio.wait_for(diagnostic, timeout=0.1)
+
+        self.assertEqual(caught.exception.status_code, 499)
+        self.assertTrue(cleaned.is_set())
         await asyncio.wait_for(slots.acquire(), timeout=0.01)
         slots.release()
 

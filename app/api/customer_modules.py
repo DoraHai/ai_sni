@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import date, datetime, timedelta
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, literal, select, text, union_all
 from sqlalchemy.exc import IntegrityError
@@ -96,6 +96,7 @@ SEM_IDENTITY_REPAIR_TABLES: tuple[tuple[str, str], ...] = (
 SEM_IDENTITY_REPAIR_MAX_CONCURRENCY = 2
 SEM_IDENTITY_REPAIR_QUEUE_TIMEOUT_SECONDS = 1.0
 SEM_IDENTITY_REPAIR_REQUEST_TIMEOUT_SECONDS = 20.0
+SEM_IDENTITY_REPAIR_DISCONNECT_POLL_SECONDS = 0.05
 _sem_identity_repair_slots = asyncio.BoundedSemaphore(
     SEM_IDENTITY_REPAIR_MAX_CONCURRENCY
 )
@@ -330,27 +331,66 @@ async def _get_sem_identity_snapshot_session() -> AsyncIterator[AsyncSession]:
 
 async def _run_sem_identity_repair_diagnostic(
     operation: Callable[[], Awaitable[dict]],
+    request: Request | None = None,
 ) -> dict:
     """Bound expensive admin diagnostics independently from the shared DB pool."""
-    acquired = False
     try:
         await asyncio.wait_for(
             _sem_identity_repair_slots.acquire(),
             timeout=SEM_IDENTITY_REPAIR_QUEUE_TIMEOUT_SECONDS,
         )
-        acquired = True
     except TimeoutError as exc:
         raise HTTPException(429, "SEM 客户诊断正在运行，请稍后重试") from exc
 
+    operation_task = None
+    disconnect_task = None
+    disconnect_stop = asyncio.Event()
+    tasks: set[asyncio.Task] = set()
     try:
-        return await asyncio.wait_for(
-            operation(), timeout=SEM_IDENTITY_REPAIR_REQUEST_TIMEOUT_SECONDS
+        operation_task = asyncio.create_task(operation())
+        tasks.add(operation_task)
+        if request is not None:
+            disconnect_task = asyncio.create_task(
+                _wait_for_sem_identity_client_disconnect(request, disconnect_stop)
+            )
+            tasks.add(disconnect_task)
+        done, _pending = await asyncio.wait(
+            tasks,
+            timeout=SEM_IDENTITY_REPAIR_REQUEST_TIMEOUT_SECONDS,
+            return_when=asyncio.FIRST_COMPLETED,
         )
-    except TimeoutError as exc:
-        raise HTTPException(503, "SEM 客户诊断超时，请缩小范围或稍后重试") from exc
+        if operation_task in done:
+            try:
+                return await operation_task
+            except TimeoutError as exc:
+                raise HTTPException(
+                    503, "SEM 客户诊断超时，请缩小范围或稍后重试"
+                ) from exc
+        if disconnect_task is not None and disconnect_task in done:
+            await disconnect_task
+            raise HTTPException(499, "客户端已断开，SEM 客户诊断已取消")
+        raise HTTPException(503, "SEM 客户诊断超时，请缩小范围或稍后重试")
     finally:
-        if acquired:
-            _sem_identity_repair_slots.release()
+        disconnect_stop.set()
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        _sem_identity_repair_slots.release()
+
+
+async def _wait_for_sem_identity_client_disconnect(
+    request: Request, stop: asyncio.Event
+) -> None:
+    while not stop.is_set():
+        if await request.is_disconnected():
+            return
+        try:
+            await asyncio.wait_for(
+                stop.wait(), timeout=SEM_IDENTITY_REPAIR_DISCONNECT_POLL_SECONDS
+            )
+        except TimeoutError:
+            pass
 
 
 def _set_sem_identity_repair_no_store(response: Response) -> None:
@@ -781,12 +821,13 @@ async def _list_sem_identity_repair_candidates(session: AsyncSession) -> dict:
     dependencies=[Depends(require_customer_admin)],
 )
 async def list_sem_identity_repair_candidates(
+    request: Request,
     response: Response,
     session: AsyncSession = Depends(_get_sem_identity_snapshot_session),
 ) -> dict:
     _set_sem_identity_repair_no_store(response)
     return await _run_sem_identity_repair_diagnostic(
-        lambda: _list_sem_identity_repair_candidates(session)
+        lambda: _list_sem_identity_repair_candidates(session), request=request
     )
 
 
@@ -851,6 +892,7 @@ async def _preview_sem_identity_repair(
     dependencies=[Depends(require_customer_admin)],
 )
 async def preview_sem_identity_repair(
+    request: Request,
     response: Response,
     source_tenant_id: int = Query(..., gt=0),
     target_tenant_id: int = Query(..., gt=0),
@@ -860,7 +902,8 @@ async def preview_sem_identity_repair(
     return await _run_sem_identity_repair_diagnostic(
         lambda: _preview_sem_identity_repair(
             source_tenant_id, target_tenant_id, session
-        )
+        ),
+        request=request,
     )
 
 
