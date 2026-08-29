@@ -28,11 +28,33 @@ const repairPreview = ref(null)
 const repairForm = reactive({ source_tenant_id: null, target_tenant_id: null })
 const moduleLabels = { sem: 'SEM', seo: 'SEO', geo: 'GEO' }
 const editingCustomer = computed(() => customers.value.find((row) => row.id === editingId.value))
+const repairCandidateCustomers = computed(() => {
+  const seen = new Set()
+  return (repairCandidates.value.groups || []).flatMap((group) => group.customers || []).filter((row) => {
+    if (seen.has(row.tenant_id)) return false
+    seen.add(row.tenant_id)
+    return true
+  })
+})
+const repairTargetCustomers = computed(() => {
+  const sourceId = repairForm.source_tenant_id
+  if (!sourceId) return []
+  const group = (repairCandidates.value.groups || []).find((item) => (
+    (item.customers || []).some((row) => row.tenant_id === sourceId)
+  ))
+  return (group?.customers || []).filter((row) => row.tenant_id !== sourceId)
+})
 const canPreviewRepair = computed(() => (
   repairForm.source_tenant_id
   && repairForm.target_tenant_id
   && repairForm.source_tenant_id !== repairForm.target_tenant_id
+  && repairTargetCustomers.value.some((row) => row.tenant_id === repairForm.target_tenant_id)
 ))
+
+function selectRepairSource() {
+  repairForm.target_tenant_id = null
+  repairPreview.value = null
+}
 
 function moduleRow(row, code) {
   return row.modules?.find((item) => item.module_code === code)
@@ -279,13 +301,13 @@ onMounted(load)
         </section>
         <el-form inline class="repair-form">
           <el-form-item label="来源客户（拟迁出）">
-            <el-select v-model="repairForm.source_tenant_id" filterable placeholder="选择可能误建的客户" style="width:260px">
-              <el-option v-for="row in customers" :key="row.id" :label="`${row.name} (#${row.id})`" :value="row.id" />
+            <el-select v-model="repairForm.source_tenant_id" filterable placeholder="选择可能误建的客户" style="width:260px" @change="selectRepairSource">
+              <el-option v-for="row in repairCandidateCustomers" :key="row.tenant_id" :label="`${row.name} (#${row.tenant_id})`" :value="row.tenant_id" />
             </el-select>
           </el-form-item>
           <el-form-item label="保留客户（正确主档）">
-            <el-select v-model="repairForm.target_tenant_id" filterable placeholder="选择拟保留客户" style="width:260px">
-              <el-option v-for="row in customers" :key="row.id" :label="`${row.name} (#${row.id})`" :value="row.id" />
+            <el-select v-model="repairForm.target_tenant_id" filterable :disabled="!repairForm.source_tenant_id" placeholder="选择同一候选组中的拟保留客户" style="width:260px">
+              <el-option v-for="row in repairTargetCustomers" :key="row.tenant_id" :label="`${row.name} (#${row.tenant_id})`" :value="row.tenant_id" />
             </el-select>
           </el-form-item>
           <el-button type="primary" plain :disabled="!canPreviewRepair" @click="runRepairPreview">生成只读预演</el-button>

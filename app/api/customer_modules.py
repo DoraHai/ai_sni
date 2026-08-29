@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 from app.database import Base, get_session
 from app.models import (
@@ -291,6 +292,20 @@ def _sem_identity_candidate_tenant_ids(
     return eligible
 
 
+def _sem_identity_account_select():
+    """Load only non-secret account identity fields used by admin diagnostics."""
+    return select(BaiduAccount).options(
+        load_only(
+            BaiduAccount.id,
+            BaiduAccount.tenant_id,
+            BaiduAccount.baidu_username,
+            BaiduAccount.baidu_ucid,
+            BaiduAccount.auth_mode,
+            BaiduAccount.status,
+        )
+    )
+
+
 async def _sem_identity_repair_row_counts(
     session: AsyncSession, tenant_ids: tuple[int, int]
 ) -> dict[int, dict[str, int]]:
@@ -542,7 +557,13 @@ class SemAccountArchive(BaseModel):
 async def list_customers(session: AsyncSession = Depends(get_session)) -> dict:
     tenants = list((await session.scalars(select(Tenant).order_by(Tenant.id))).all())
     modules = list((await session.scalars(select(TenantModule).order_by(TenantModule.id))).all())
-    accounts = list((await session.scalars(select(BaiduAccount).order_by(BaiduAccount.id))).all())
+    accounts = list(
+        (
+            await session.scalars(
+                _sem_identity_account_select().order_by(BaiduAccount.id)
+            )
+        ).all()
+    )
     identity_check = _sem_identity_check(tenants, accounts)
     by_tenant: dict[int, list[dict]] = {}
     for row in modules:
@@ -601,7 +622,11 @@ async def list_sem_identity_repair_candidates(
         (await session.scalars(select(TenantModule).order_by(TenantModule.id))).all()
     )
     accounts = list(
-        (await session.scalars(select(BaiduAccount).order_by(BaiduAccount.id))).all()
+        (
+            await session.scalars(
+                _sem_identity_account_select().order_by(BaiduAccount.id)
+            )
+        ).all()
     )
     oauth_grant_tenant_ids = {
         int(tenant_id)
@@ -653,15 +678,37 @@ async def preview_sem_identity_repair(
     if source is None or target is None:
         raise HTTPException(404, "来源客户或保留客户不存在")
     tenant_ids = (source_tenant_id, target_tenant_id)
+    modules = list(
+        (
+            await session.scalars(
+                select(TenantModule).where(TenantModule.tenant_id.in_(tenant_ids))
+            )
+        ).all()
+    )
     accounts = list(
         (
             await session.scalars(
-                select(BaiduAccount)
+                _sem_identity_account_select()
                 .where(BaiduAccount.tenant_id.in_(tenant_ids))
                 .order_by(BaiduAccount.id)
             )
         ).all()
     )
+    oauth_grant_tenant_ids = {
+        int(tenant_id)
+        for tenant_id in (
+            await session.scalars(
+                select(BaiduOAuthGrant.tenant_id)
+                .where(BaiduOAuthGrant.tenant_id.in_(tenant_ids))
+                .distinct()
+            )
+        ).all()
+    }
+    eligible_tenant_ids = _sem_identity_candidate_tenant_ids(
+        [source, target], modules, accounts, oauth_grant_tenant_ids
+    )
+    if not set(tenant_ids).issubset(eligible_tenant_ids):
+        raise HTTPException(400, "只允许预演具有明确 SEM 资格或账户证据的客户")
     row_counts = await _sem_identity_repair_row_counts(session, tenant_ids)
     return _sem_identity_repair_preview_payload(
         source, target, accounts, row_counts

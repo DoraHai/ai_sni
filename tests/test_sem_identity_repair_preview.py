@@ -3,7 +3,9 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
+
+from fastapi import HTTPException
 
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 os.environ.setdefault("BAIDU_APP_ID", "test-app")
@@ -21,9 +23,11 @@ from app.api.customer_modules import (
     SEM_IDENTITY_REPAIR_TABLES,
     _normalized_customer_name,
     _sem_duplicate_candidate_groups,
+    _sem_identity_account_select,
     _sem_identity_candidate_tenant_ids,
     _sem_identity_repair_preview_payload,
     list_sem_identity_repair_candidates,
+    preview_sem_identity_repair,
     router as customer_modules_router,
 )
 from app.database import Base
@@ -115,6 +119,9 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         self.assertEqual(result["safety"]["writes_performed"], 0)
         self.assertFalse(result["safety"]["execution_endpoint_available"])
         self.assertNotIn("token", str(result).lower())
+        account_query = str(session.scalars.await_args_list[2].args[0]).lower()
+        self.assertNotIn("access_token_encrypted", account_query)
+        self.assertNotIn("refresh_token_encrypted", account_query)
         session.commit.assert_not_awaited()
         session.flush.assert_not_awaited()
         session.delete.assert_not_awaited()
@@ -153,6 +160,76 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         self.assertEqual(eligible, {3, 4})
         self.assertEqual(len(groups), 1)
         self.assertEqual(groups[0]["normalized_name"], "sem 客户")
+
+    def test_account_identity_query_does_not_select_encrypted_credentials(self):
+        query = str(_sem_identity_account_select()).lower()
+
+        self.assertIn("baidu_accounts.baidu_ucid", query)
+        self.assertIn("baidu_accounts.auth_mode", query)
+        self.assertNotIn("access_token_encrypted", query)
+        self.assertNotIn("refresh_token_encrypted", query)
+
+    async def test_preview_endpoint_rejects_customer_without_sem_evidence(self):
+        source = _tenant(1, "同名客户")
+        target = _tenant(2, "同名客户")
+        sem_module = SimpleNamespace(
+            tenant_id=1,
+            module_code="sem",
+            status="active",
+            expires_at=None,
+        )
+        session = SimpleNamespace(
+            get=AsyncMock(side_effect=[source, target]),
+            scalars=AsyncMock(
+                side_effect=[_Rows([sem_module]), _Rows([]), _Rows([])]
+            ),
+            execute=AsyncMock(),
+        )
+
+        with self.assertRaises(HTTPException) as caught:
+            await preview_sem_identity_repair(1, 2, session=session)
+
+        self.assertEqual(caught.exception.status_code, 400)
+        self.assertIn("SEM", caught.exception.detail)
+        session.execute.assert_not_awaited()
+
+    async def test_preview_endpoint_accepts_two_sem_evidence_customers_read_only(self):
+        source = _tenant(1, "同名客户")
+        target = _tenant(2, "同名客户")
+        sem_module = SimpleNamespace(
+            tenant_id=1,
+            module_code="sem",
+            status="active",
+            expires_at=None,
+        )
+        target_account = _account(20, 2, 80243027)
+        session = SimpleNamespace(
+            get=AsyncMock(side_effect=[source, target]),
+            scalars=AsyncMock(
+                side_effect=[
+                    _Rows([sem_module]),
+                    _Rows([target_account]),
+                    _Rows([]),
+                ]
+            ),
+            commit=AsyncMock(),
+            flush=AsyncMock(),
+            delete=AsyncMock(),
+        )
+
+        with patch(
+            "app.api.customer_modules._sem_identity_repair_row_counts",
+            new=AsyncMock(return_value={1: {}, 2: {"baidu_accounts": 1}}),
+        ):
+            result = await preview_sem_identity_repair(1, 2, session=session)
+
+        self.assertTrue(result["safety"]["read_only"])
+        account_query = str(session.scalars.await_args_list[1].args[0]).lower()
+        self.assertNotIn("access_token_encrypted", account_query)
+        self.assertNotIn("refresh_token_encrypted", account_query)
+        session.commit.assert_not_awaited()
+        session.flush.assert_not_awaited()
+        session.delete.assert_not_awaited()
 
     def test_preview_blocks_conflicting_ucid_and_two_sided_history(self):
         source = _tenant(1, "老虎新材料", 1001)
@@ -344,6 +421,10 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         self.assertIn("禁止直接迁移身份记录", view_source)
         self.assertIn("preserve_audit_provenance_manual_review", view_source)
         self.assertIn("保留原始审计归属", view_source)
+        self.assertIn('v-for="row in repairCandidateCustomers"', view_source)
+        self.assertIn('v-for="row in repairTargetCustomers"', view_source)
+        self.assertNotIn('v-for="row in customers"', view_source)
+        self.assertIn("repairTargetCustomers.value.some", view_source)
 
     def test_backend_exposes_no_identity_repair_mutation_route(self):
         repair_routes = [
