@@ -14,6 +14,8 @@ from app.api.seo import (
     BacklinkCreate,
     BrandProfileUpdate,
     ContentCreate,
+    ContentReviewDecision,
+    ContentReviewSubmit,
     ContentUpdate,
     KeywordCreate,
     KeywordImport,
@@ -48,8 +50,10 @@ from app.api.seo import (
     collect_rank_serp,
     create_content_asset,
     create_rank_snapshot,
+    decide_content_review,
     get_seo_keyword,
     list_site_pages,
+    submit_content_review,
     update_content_asset,
 )
 from app.models.seo import (
@@ -502,12 +506,13 @@ def test_existing_content_task_can_be_bound_to_a_source_page() -> None:
         status="drafting",
     )
     row.id = 88
+    context = AuthContext(user_id=7, username="operator", role_name="运营", tenant_id=1, permissions={"seo.content": "edit"})
     session = AsyncMock()
     session.get = AsyncMock(return_value=row)
     session.scalar = AsyncMock(return_value=None)
     source_page = SimpleNamespace(id=231, tenant_id=1, site_id=9)
     with patch("app.api.seo._site_page", new=AsyncMock(return_value=source_page)):
-        result = asyncio.run(update_content_asset(88, 1, request, session))
+        result = asyncio.run(update_content_asset(88, 1, request, session, context))
     assert row.source_page_id == 231
     assert result["source_page_id"] == 231
     session.commit.assert_awaited_once()
@@ -523,12 +528,105 @@ def test_published_content_cannot_be_newly_bound_to_a_source_page() -> None:
         status="published",
     )
     row.id = 88
+    context = AuthContext(user_id=7, username="operator", role_name="运营", tenant_id=1, permissions={"seo.content": "edit"})
     session = AsyncMock()
     session.get = AsyncMock(return_value=row)
     with pytest.raises(Exception) as exc:
-        asyncio.run(update_content_asset(88, 1, request, session))
+        asyncio.run(update_content_asset(88, 1, request, session, context))
     assert getattr(exc.value, "status_code", None) == 409
     session.commit.assert_not_awaited()
+
+
+def test_content_review_submit_approve_and_reject_state_machine() -> None:
+    context = AuthContext(user_id=7, username="reviewer", role_name="运营", tenant_id=1, permissions={"seo.content": "edit"})
+    row = SeoContentAsset(
+        tenant_id=1,
+        site_id=9,
+        title="待审核内容",
+        keyword_id=6,
+        keyword_ids=[6, 7],
+        draft="<p>审核正文</p>",
+        content_type="article",
+        status="drafting",
+    )
+    row.id = 88
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=row)
+
+    submitted = asyncio.run(
+        submit_content_review(88, 1, ContentReviewSubmit(), session, context)
+    )
+    assert submitted["status"] == "review"
+    assert submitted["review_submitted_by"] == 7
+    assert submitted["review_submitted_at"].endswith("Z")
+    assert row.review_submitted_at is not None
+
+    approved = asyncio.run(
+        decide_content_review(
+            88,
+            1,
+            ContentReviewDecision(decision="approve", note="质量通过"),
+            session,
+            context,
+        )
+    )
+    assert approved["status"] == "ready"
+    assert approved["review_note"] == "质量通过"
+    assert approved["reviewed_by"] == 7
+    assert approved["reviewed_at"].endswith("Z")
+
+    row.status = "review"
+    rejected = asyncio.run(
+        decide_content_review(
+            88,
+            1,
+            ContentReviewDecision(decision="reject", note="补充参数来源"),
+            session,
+            context,
+        )
+    )
+    assert rejected["status"] == "drafting"
+    assert rejected["review_note"] == "补充参数来源"
+
+
+def test_content_review_reject_requires_note_and_generic_patch_cannot_bypass_review() -> None:
+    context = AuthContext(user_id=7, username="reviewer", role_name="运营", tenant_id=1, permissions={"seo.content": "edit"})
+    row = SeoContentAsset(
+        tenant_id=1,
+        site_id=9,
+        title="待审核内容",
+        keyword_id=6,
+        draft="<p>审核正文</p>",
+        content_type="article",
+        status="review",
+    )
+    row.id = 88
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=row)
+
+    with pytest.raises(Exception) as reject_exc:
+        asyncio.run(
+            decide_content_review(
+                88,
+                1,
+                ContentReviewDecision(decision="reject"),
+                session,
+                context,
+            )
+        )
+    assert getattr(reject_exc.value, "status_code", None) == 400
+
+    with pytest.raises(Exception) as patch_exc:
+        asyncio.run(
+            update_content_asset(
+                88,
+                1,
+                ContentUpdate(status="ready"),
+                session,
+                context,
+            )
+        )
+    assert getattr(patch_exc.value, "status_code", None) == 409
 
 
 def test_content_create_does_not_mask_unrelated_integrity_errors() -> None:

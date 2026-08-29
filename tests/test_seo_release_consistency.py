@@ -159,6 +159,7 @@ def test_original_content_brief_supports_bounded_multi_keywords() -> None:
     assert source_path_allowed("migrations/versions/20260829_0075_seo_content_source_page.py")
     assert source_path_allowed("migrations/versions/20260829_0077_merge_sem_seo_heads.py")
     assert source_path_allowed("migrations/versions/20260829_0078_seo_site_data_repairs.py")
+    assert source_path_allowed("migrations/versions/20260829_0079_seo_content_review_workflow.py")
 
 
 def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:

@@ -3019,7 +3019,7 @@ async def seo_overview(
         item.status != "pending" and not item.meta_description for item in pages
     )
     unchecked_pages = sum(item.status == "pending" for item in pages)
-    active_content = sum(item.status in {"planned", "drafting", "review"} for item in contents)
+    active_content = sum(item.status in {"planned", "drafting", "review", "ready"} for item in contents)
     latest_metrics = await _latest_site_metrics(session, tenant_id, site_id) if site_id is not None else {}
 
     def metric(metric_type: str, dimension: str = "total", source: str = "chinaz") -> dict[str, Any]:
@@ -3124,7 +3124,7 @@ async def seo_overview(
             "pages": len(pages),
             "healthy_pages": sum(item.status == "healthy" for item in pages),
             "pages_needing_fix": sum(item.status in {"needs_fix", "error"} for item in pages),
-            "content_active": sum(item.status in {"planned", "drafting", "review"} for item in contents),
+            "content_active": sum(item.status in {"planned", "drafting", "review", "ready"} for item in contents),
             "content_published": sum(item.status == "published" for item in contents),
             "backlinks": sum(item.status == "active" for item in backlinks),
             "competitors": len(competitors),
@@ -3395,7 +3395,7 @@ class ContentCreate(BaseModel):
     originality_score: int | None = Field(None, ge=0, le=100)
     target_platforms: list[str] | None = Field(None, max_length=20)
     version_count: int = Field(1, ge=1)
-    status: Literal["planned", "drafting", "review", "published", "archived"] = "planned"
+    status: Literal["planned", "drafting", "review", "ready", "published", "archived"] = "planned"
     page_url: str | None = Field(None, max_length=2000)
     author: str | None = Field(None, max_length=120)
     published_at: datetime | None = None
@@ -3415,7 +3415,7 @@ class ContentUpdate(BaseModel):
     originality_score: int | None = Field(None, ge=0, le=100)
     target_platforms: list[str] | None = Field(None, max_length=20)
     version_count: int | None = Field(None, ge=1)
-    status: Literal["planned", "drafting", "review", "published", "archived"] | None = None
+    status: Literal["planned", "drafting", "review", "ready", "published", "archived"] | None = None
     page_url: str | None = Field(None, max_length=2000)
     author: str | None = Field(None, max_length=120)
     published_at: datetime | None = None
@@ -3428,6 +3428,15 @@ class DistributionConnectionCreate(BaseModel):
     base_url: str | None = Field(None, max_length=2000)
     credentials: dict[str, str] | None = None
     enabled: bool = True
+
+
+class ContentReviewSubmit(BaseModel):
+    note: str | None = Field(None, max_length=2000)
+
+
+class ContentReviewDecision(BaseModel):
+    decision: Literal["approve", "reject"]
+    note: str | None = Field(None, max_length=2000)
 
 
 class DistributionConnectionUpdate(BaseModel):
@@ -3602,6 +3611,11 @@ async def _distribution_content(
     ):
         raise HTTPException(404, "内容资产不存在")
     return row
+
+
+def _require_content_ready(content: SeoContentAsset) -> None:
+    if content.status != "ready":
+        raise HTTPException(409, "内容主稿尚未审核通过，不能进入发布流程")
 
 
 def _prepare_distribution_variant(
@@ -3860,7 +3874,7 @@ async def _mark_distribution_variant_published(
 
 def _content_payload(row: SeoContentAsset) -> dict[str, Any]:
     keyword_ids = row.keyword_ids or ([row.keyword_id] if row.keyword_id else [])
-    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "source_page_id": row.source_page_id, "keyword_id": row.keyword_id, "keyword_ids": keyword_ids, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "created_at": _database_iso(row.created_at), "updated_at": _database_iso(row.updated_at)}
+    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "source_page_id": row.source_page_id, "keyword_id": row.keyword_id, "keyword_ids": keyword_ids, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "review_submitted_by": row.review_submitted_by, "review_submitted_at": _iso(row.review_submitted_at), "review_note": row.review_note, "reviewed_by": row.reviewed_by, "reviewed_at": _iso(row.reviewed_at), "created_at": _database_iso(row.created_at), "updated_at": _database_iso(row.updated_at)}
 
 
 async def _content_task_for_source_page(
@@ -3903,6 +3917,8 @@ async def create_content_asset(req: ContentCreate, session: AsyncSession = Depen
     ctx.ensure_tenant(req.tenant_id)
     await _tenant(session, req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
+    if req.status not in {"planned", "drafting"}:
+        raise HTTPException(409, "新内容只能保存为草稿；请通过审核接口推进状态")
     if req.source_page_id is not None:
         if req.status not in LINKABLE_CONTENT_STATUSES:
             raise HTTPException(409, "只有计划中或草稿状态的内容任务可以关联来源页面")
@@ -4322,6 +4338,7 @@ async def create_manual_publication(
     content = await _distribution_content(
         session, req.tenant_id, req.content_id, req.site_id
     )
+    _require_content_ready(content)
     try:
         page_url, host = normalize_publication_url(req.page_url)
     except ValueError as exc:
@@ -4807,6 +4824,8 @@ async def preflight_content_distribution(
         for connection in connections:
             errors: list[str] = []
             warnings: list[str] = []
+            if content.status != "ready":
+                errors.append("内容主稿尚未审核通过")
             body = content.humanized_content or content.draft or ""
             if not connection.enabled:
                 errors.append("平台连接已停用")
@@ -4901,6 +4920,7 @@ async def publish_content_distribution(
     content = await _distribution_content(
         session, req.tenant_id, req.content_id, req.site_id
     )
+    _require_content_ready(content)
     source_version = content.version_count or 1
     if (
         req.variant_id is None
@@ -5331,13 +5351,89 @@ async def list_publish_attempts(
     }
 
 
+@router.post("/content-assets/{content_id}/submit-review")
+async def submit_content_review(
+    content_id: int,
+    tenant_id: int,
+    req: ContentReviewSubmit,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    row = await session.get(SeoContentAsset, content_id, with_for_update=True)
+    if not row or row.tenant_id != tenant_id:
+        raise HTTPException(404, "SEO 内容资产不存在")
+    if row.status not in {"planned", "drafting"}:
+        raise HTTPException(409, "只有草稿可以提交审核")
+    keyword_ids = _selected_keyword_ids(row.keyword_ids, row.keyword_id)
+    if not keyword_ids:
+        raise HTTPException(400, "提交审核前请至少绑定 1 个目标关键词")
+    if not str(row.humanized_content or row.draft or "").strip():
+        raise HTTPException(400, "提交审核前请填写正文")
+    row.status = "review"
+    row.review_submitted_by = ctx.user_id
+    row.review_submitted_at = datetime.utcnow()
+    row.review_note = (req.note or "").strip() or None
+    row.reviewed_by = None
+    row.reviewed_at = None
+    await session.commit()
+    await session.refresh(row)
+    return _content_payload(row)
+
+
+@router.post("/content-assets/{content_id}/review")
+async def decide_content_review(
+    content_id: int,
+    tenant_id: int,
+    req: ContentReviewDecision,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    row = await session.get(SeoContentAsset, content_id, with_for_update=True)
+    if not row or row.tenant_id != tenant_id:
+        raise HTTPException(404, "SEO 内容资产不存在")
+    if row.status != "review":
+        raise HTTPException(409, "只有待审核内容可以审核")
+    note = (req.note or "").strip()
+    if req.decision == "reject" and not note:
+        raise HTTPException(400, "退回时必须填写修改意见")
+    row.status = "ready" if req.decision == "approve" else "drafting"
+    row.review_note = note or None
+    row.reviewed_by = ctx.user_id
+    row.reviewed_at = datetime.utcnow()
+    await session.commit()
+    await session.refresh(row)
+    return _content_payload(row)
+
+
 @router.patch("/content-assets/{content_id}")
-async def update_content_asset(content_id: int, tenant_id: int, req: ContentUpdate, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+async def update_content_asset(
+    content_id: int,
+    tenant_id: int,
+    req: ContentUpdate,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
     row = await session.get(SeoContentAsset, content_id)
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO 内容资产不存在")
     row_site_id = row.site_id
     values = req.model_dump(exclude_unset=True)
+    requested_status = values.get("status")
+    if requested_status in {"review", "ready", "published"} and requested_status != row.status:
+        raise HTTPException(409, "请通过提交审核、审核或发布流程推进内容状态")
+    content_fields = {
+        "source_page_id", "title", "keyword_id", "keyword_ids", "content_type",
+        "outline", "draft", "humanized_content", "source_text", "rewrite_progress",
+        "originality_score", "target_platforms", "version_count", "page_url", "author",
+        "published_at",
+    }
+    if row.status in {"review", "ready"} and content_fields.intersection(values):
+        raise HTTPException(409, "待审核或待发布内容不能直接编辑；请先由审核人退回")
+    if row.status in {"review", "ready"} and requested_status != row.status:
+        raise HTTPException(409, "请通过审核流程变更待审核或待发布状态")
     if "draft" in values:
         values["draft"] = _sanitize_content_html(values.get("draft"))
     if "humanized_content" in values:
