@@ -97,6 +97,27 @@ def test_manual_competitor_event_requires_meaningful_content_and_safe_urls() -> 
     assert event.source_url is None
     assert event.summary == "Added a new product introduction."
 
+    timed_event = CompetitorEventCreate(
+        tenant_id=1,
+        site_id=1,
+        competitor_id=1,
+        event_type="content",
+        title="Timed event",
+        url="https://example.com/news/timed",
+        summary="Timezone normalization",
+        event_at="2026-08-25T00:30:00+08:00",
+    )
+    assert timed_event.event_at == datetime(2026, 8, 24, 16, 30)
+
+    local_event = timed_event.model_copy(update={"event_at": None})
+    local_event = CompetitorEventCreate(
+        **{
+            **local_event.model_dump(),
+            "event_at": "2026-08-25T00:30:00",
+        }
+    )
+    assert local_event.event_at == datetime(2026, 8, 24, 16, 30)
+
     invalid_payloads = [
         {"title": "", "url": "https://example.com/news", "summary": "Summary"},
         {"title": "Title", "url": "abc", "summary": "Summary"},
@@ -146,6 +167,7 @@ def test_competitor_payload_exposes_cooldown_deadline() -> None:
     )
     assert 1790 <= payload["collection_retry_after_seconds"] <= 1800
     assert payload["next_collection_allowed_at"].endswith("Z")
+    assert payload["created_at"].endswith("+08:00")
 
 
 def test_manual_collection_discovers_only_same_domain_html_pages() -> None:
@@ -196,6 +218,7 @@ def test_manual_collection_rejects_cross_domain_homepage_redirect() -> None:
             collect_competitor_content("example.com", max_pages=1, fetcher=fetcher)
         )
     assert exc.value.code == "cross_domain_redirect"
+    assert exc.value.elapsed_ms is not None
 
 
 def test_manual_collection_falls_back_to_www_and_classifies_access_denied() -> None:
@@ -256,6 +279,9 @@ def test_manual_collection_classifies_safe_homepage_errors(
     assert exc.value.status_code == status_code
     assert exc.value.elapsed_ms == 10
     assert exc.value.response_status == expected_response_status
+    assert exc.value.timeout_phase == (
+        "homepage_primary" if error_type == "timeout" else None
+    )
 
 
 def test_manual_collection_returns_structured_total_timeout(monkeypatch) -> None:
@@ -273,6 +299,7 @@ def test_manual_collection_returns_structured_total_timeout(monkeypatch) -> None
     assert exc.value.elapsed_ms is not None
     assert exc.value.elapsed_ms >= 1
     assert exc.value.response_status == 504
+    assert exc.value.timeout_phase == "collection_total"
     assert "安全时限" in exc.value.public_message
 
 
@@ -321,7 +348,7 @@ def test_competitor_routes_and_frontend_are_manual_only() -> None:
     assert "信息来源 URL" in view
     assert "请输入完整的 http/https 地址" in view
     assert "[SEO][COMPETITOR] manual collection failed" in backend
-    assert "error_type=%s status_code=%s elapsed_ms=%s" in backend
+    assert "error_type=%s status_code=%s timeout_phase=%s elapsed_ms=%s" in backend
     assert "fetchSeoCompetitorRankings" in view
     assert "site_id: siteId" in api
     assert "competitor" not in scheduler.lower()
