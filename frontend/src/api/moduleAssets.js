@@ -1,12 +1,13 @@
 import client from './client'
 
 export const fetchCustomers = () => client.get('/api/v1/admin/customers')
-export const fetchSemIdentityRepairCandidates = () => (
-  client.get('/api/v1/admin/customers/sem-identity-repair/candidates')
+export const fetchSemIdentityRepairCandidates = (signal) => (
+  client.get('/api/v1/admin/customers/sem-identity-repair/candidates', { signal })
 )
-export const fetchSemIdentityRepairPreview = (sourceTenantId, targetTenantId) => (
+export const fetchSemIdentityRepairPreview = (sourceTenantId, targetTenantId, signal) => (
   client.get('/api/v1/admin/customers/sem-identity-repair/preview', {
     params: { source_tenant_id: sourceTenantId, target_tenant_id: targetTenantId },
+    signal,
   })
 )
 export const createCustomer = (body) => client.post('/api/v1/admin/customers', body)

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import unicodedata
 from collections import Counter, defaultdict
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import date, datetime, timedelta
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, literal, select, text, union_all
 from sqlalchemy.exc import IntegrityError
@@ -91,6 +92,12 @@ SEM_IDENTITY_REPAIR_TABLES: tuple[tuple[str, str], ...] = (
     ("bid_writebacks", "writeback_audit"),
     ("writeback_actions", "writeback_audit"),
     ("writeback_approvals", "writeback_audit"),
+)
+SEM_IDENTITY_REPAIR_MAX_CONCURRENCY = 2
+SEM_IDENTITY_REPAIR_QUEUE_TIMEOUT_SECONDS = 1.0
+SEM_IDENTITY_REPAIR_REQUEST_TIMEOUT_SECONDS = 20.0
+_sem_identity_repair_slots = asyncio.BoundedSemaphore(
+    SEM_IDENTITY_REPAIR_MAX_CONCURRENCY
 )
 
 
@@ -319,6 +326,36 @@ async def _get_sem_identity_snapshot_session() -> AsyncIterator[AsyncSession]:
     """Use a fresh session so authentication queries cannot precede SET TRANSACTION."""
     async with async_session_factory() as session:
         yield session
+
+
+async def _run_sem_identity_repair_diagnostic(
+    operation: Callable[[], Awaitable[dict]],
+) -> dict:
+    """Bound expensive admin diagnostics independently from the shared DB pool."""
+    acquired = False
+    try:
+        await asyncio.wait_for(
+            _sem_identity_repair_slots.acquire(),
+            timeout=SEM_IDENTITY_REPAIR_QUEUE_TIMEOUT_SECONDS,
+        )
+        acquired = True
+    except TimeoutError as exc:
+        raise HTTPException(429, "SEM 客户诊断正在运行，请稍后重试") from exc
+
+    try:
+        return await asyncio.wait_for(
+            operation(), timeout=SEM_IDENTITY_REPAIR_REQUEST_TIMEOUT_SECONDS
+        )
+    except TimeoutError as exc:
+        raise HTTPException(503, "SEM 客户诊断超时，请缩小范围或稍后重试") from exc
+    finally:
+        if acquired:
+            _sem_identity_repair_slots.release()
+
+
+def _set_sem_identity_repair_no_store(response: Response) -> None:
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
 
 
 async def _sem_identity_repair_row_counts(
@@ -688,13 +725,7 @@ async def list_customers(session: AsyncSession = Depends(get_session)) -> dict:
     }
 
 
-@router.get(
-    "/api/v1/admin/customers/sem-identity-repair/candidates",
-    dependencies=[Depends(require_customer_admin)],
-)
-async def list_sem_identity_repair_candidates(
-    session: AsyncSession = Depends(_get_sem_identity_snapshot_session),
-) -> dict:
+async def _list_sem_identity_repair_candidates(session: AsyncSession) -> dict:
     """Report conservative duplicate-customer candidates without changing data."""
     await _start_sem_identity_read_transaction(session)
     tenants = list((await session.scalars(select(Tenant).order_by(Tenant.id))).all())
@@ -746,13 +777,23 @@ async def list_sem_identity_repair_candidates(
 
 
 @router.get(
-    "/api/v1/admin/customers/sem-identity-repair/preview",
+    "/api/v1/admin/customers/sem-identity-repair/candidates",
     dependencies=[Depends(require_customer_admin)],
 )
-async def preview_sem_identity_repair(
-    source_tenant_id: int = Query(..., gt=0),
-    target_tenant_id: int = Query(..., gt=0),
+async def list_sem_identity_repair_candidates(
+    response: Response,
     session: AsyncSession = Depends(_get_sem_identity_snapshot_session),
+) -> dict:
+    _set_sem_identity_repair_no_store(response)
+    return await _run_sem_identity_repair_diagnostic(
+        lambda: _list_sem_identity_repair_candidates(session)
+    )
+
+
+async def _preview_sem_identity_repair(
+    source_tenant_id: int,
+    target_tenant_id: int,
+    session: AsyncSession,
 ) -> dict:
     """Preview SEM ownership reassignment; no write or execution route exists."""
     if source_tenant_id == target_tenant_id:
@@ -802,6 +843,24 @@ async def preview_sem_identity_repair(
         accounts,
         row_counts,
         active_oauth_grant_tenant_ids=oauth_grant_tenant_ids,
+    )
+
+
+@router.get(
+    "/api/v1/admin/customers/sem-identity-repair/preview",
+    dependencies=[Depends(require_customer_admin)],
+)
+async def preview_sem_identity_repair(
+    response: Response,
+    source_tenant_id: int = Query(..., gt=0),
+    target_tenant_id: int = Query(..., gt=0),
+    session: AsyncSession = Depends(_get_sem_identity_snapshot_session),
+) -> dict:
+    _set_sem_identity_repair_no_store(response)
+    return await _run_sem_identity_repair_diagnostic(
+        lambda: _preview_sem_identity_repair(
+            source_tenant_id, target_tenant_id, session
+        )
     )
 
 

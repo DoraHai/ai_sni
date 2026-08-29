@@ -12,6 +12,7 @@ import {
   updateCustomer,
 } from '../../api/moduleAssets'
 import { session } from '../../store/session'
+import { createRequestController } from './semIdentityRepairRequests'
 
 const router = useRouter()
 
@@ -30,6 +31,8 @@ const repairPreview = ref(null)
 const repairForm = reactive({ source_tenant_id: null, target_tenant_id: null })
 const repairCandidateRequestId = ref(0)
 const repairPreviewRequestId = ref(0)
+const repairCandidateRequests = createRequestController()
+const repairPreviewRequests = createRequestController()
 const moduleLabels = { sem: 'SEM', seo: 'SEO', geo: 'GEO' }
 const editingCustomer = computed(() => customers.value.find((row) => row.id === editingId.value))
 const repairCandidateCustomers = computed(() => {
@@ -58,6 +61,7 @@ const canPreviewRepair = computed(() => (
 
 function invalidateRepairPreview() {
   repairPreviewRequestId.value += 1
+  repairPreviewRequests.cancel()
   repairPreview.value = null
   repairLoading.value = false
 }
@@ -73,6 +77,7 @@ function selectRepairTarget() {
 
 function closeRepairPreview() {
   repairCandidateRequestId.value += 1
+  repairCandidateRequests.cancel()
   invalidateRepairPreview()
 }
 
@@ -191,11 +196,12 @@ function rebindAccount(row) {
 
 async function loadRepairCandidates() {
   const requestId = ++repairCandidateRequestId.value
+  const controller = repairCandidateRequests.start()
   repairCandidateStatus.value = 'loading'
   repairCandidateError.value = ''
   repairLoading.value = true
   try {
-    const result = await fetchSemIdentityRepairCandidates()
+    const result = await fetchSemIdentityRepairCandidates(controller.signal)
     if (requestId === repairCandidateRequestId.value && repairVisible.value) {
       repairCandidates.value = result
       repairCandidateStatus.value = 'success'
@@ -207,7 +213,10 @@ async function loadRepairCandidates() {
       ElMessage.error(repairCandidateError.value)
     }
   } finally {
-    if (requestId === repairCandidateRequestId.value) repairLoading.value = false
+    if (requestId === repairCandidateRequestId.value) {
+      repairLoading.value = false
+      repairCandidateRequests.finish(controller)
+    }
   }
 }
 
@@ -226,10 +235,11 @@ async function runRepairPreview() {
   const sourceTenantId = repairForm.source_tenant_id
   const targetTenantId = repairForm.target_tenant_id
   const requestId = ++repairPreviewRequestId.value
+  const controller = repairPreviewRequests.start()
   repairLoading.value = true
   repairPreview.value = null
   try {
-    const result = await fetchSemIdentityRepairPreview(sourceTenantId, targetTenantId)
+    const result = await fetchSemIdentityRepairPreview(sourceTenantId, targetTenantId, controller.signal)
     if (
       requestId === repairPreviewRequestId.value
       && sourceTenantId === repairForm.source_tenant_id
@@ -241,7 +251,10 @@ async function runRepairPreview() {
   } catch (error) {
     if (requestId === repairPreviewRequestId.value) ElMessage.error(error.message)
   } finally {
-    if (requestId === repairPreviewRequestId.value) repairLoading.value = false
+    if (requestId === repairPreviewRequestId.value) {
+      repairLoading.value = false
+      repairPreviewRequests.finish(controller)
+    }
   }
 }
 

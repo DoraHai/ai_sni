@@ -1,3 +1,4 @@
+import asyncio
 import os
 from datetime import datetime
 from pathlib import Path
@@ -5,7 +6,8 @@ from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException, Response
+from fastapi.testclient import TestClient
 
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 os.environ.setdefault("BAIDU_APP_ID", "test-app")
@@ -22,13 +24,16 @@ os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 from app.api.customer_modules import (
     SEM_IDENTITY_REPAIR_TABLES,
     _normalized_customer_name,
+    _get_sem_identity_snapshot_session,
     _sem_duplicate_candidate_groups,
     _sem_identity_account_select,
     _sem_identity_candidate_tenant_ids,
     _sem_identity_repair_row_counts,
     _sem_identity_repair_preview_payload,
+    _run_sem_identity_repair_diagnostic,
     list_sem_identity_repair_candidates,
     preview_sem_identity_repair,
+    require_customer_admin,
     router as customer_modules_router,
 )
 from app.database import Base
@@ -115,11 +120,16 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
             delete=AsyncMock(),
         )
 
-        result = await list_sem_identity_repair_candidates(session=session)
+        response = Response()
+        result = await list_sem_identity_repair_candidates(
+            response=response, session=session
+        )
 
         self.assertEqual(result["summary"]["candidate_groups"], 1)
         self.assertEqual(result["safety"]["writes_performed"], 0)
         self.assertFalse(result["safety"]["execution_endpoint_available"])
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(response.headers["pragma"], "no-cache")
         self.assertNotIn("token", str(result).lower())
         account_query = str(session.scalars.await_args_list[2].args[0]).lower()
         self.assertNotIn("access_token_encrypted", account_query)
@@ -198,7 +208,12 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         )
 
         with self.assertRaises(HTTPException) as caught:
-            await preview_sem_identity_repair(1, 2, session=session)
+            await preview_sem_identity_repair(
+                response=Response(),
+                source_tenant_id=1,
+                target_tenant_id=2,
+                session=session,
+            )
 
         self.assertEqual(caught.exception.status_code, 400)
         self.assertIn("SEM", caught.exception.detail)
@@ -236,9 +251,17 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
             "app.api.customer_modules._sem_identity_repair_row_counts",
             new=AsyncMock(return_value={1: {}, 2: {"baidu_accounts": 1}}),
         ):
-            result = await preview_sem_identity_repair(1, 2, session=session)
+            response = Response()
+            result = await preview_sem_identity_repair(
+                response=response,
+                source_tenant_id=1,
+                target_tenant_id=2,
+                session=session,
+            )
 
         self.assertTrue(result["safety"]["read_only"])
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(response.headers["pragma"], "no-cache")
         account_query = str(session.scalars.await_args_list[1].args[0]).lower()
         self.assertNotIn("access_token_encrypted", account_query)
         self.assertNotIn("refresh_token_encrypted", account_query)
@@ -249,6 +272,68 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         session.commit.assert_not_awaited()
         session.flush.assert_not_awaited()
         session.delete.assert_not_awaited()
+
+    async def test_diagnostic_rejects_when_concurrency_queue_is_full(self):
+        operation = AsyncMock(return_value={"unexpected": True})
+        with (
+            patch(
+                "app.api.customer_modules._sem_identity_repair_slots",
+                asyncio.Semaphore(0),
+            ),
+            patch(
+                "app.api.customer_modules.SEM_IDENTITY_REPAIR_QUEUE_TIMEOUT_SECONDS",
+                0.001,
+            ),
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                await _run_sem_identity_repair_diagnostic(operation)
+
+        self.assertEqual(caught.exception.status_code, 429)
+        operation.assert_not_awaited()
+
+    async def test_diagnostic_total_timeout_releases_concurrency_slot(self):
+        slots = asyncio.BoundedSemaphore(1)
+
+        async def slow_operation():
+            await asyncio.sleep(0.05)
+            return {"unexpected": True}
+
+        with (
+            patch("app.api.customer_modules._sem_identity_repair_slots", slots),
+            patch(
+                "app.api.customer_modules.SEM_IDENTITY_REPAIR_REQUEST_TIMEOUT_SECONDS",
+                0.001,
+            ),
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                await _run_sem_identity_repair_diagnostic(slow_operation)
+
+        self.assertEqual(caught.exception.status_code, 503)
+        await asyncio.wait_for(slots.acquire(), timeout=0.01)
+        slots.release()
+
+    def test_candidate_http_response_is_not_cacheable(self):
+        app = FastAPI()
+        app.include_router(customer_modules_router)
+        app.dependency_overrides[require_customer_admin] = lambda: object()
+
+        async def fake_snapshot_session():
+            yield object()
+
+        app.dependency_overrides[
+            _get_sem_identity_snapshot_session
+        ] = fake_snapshot_session
+        with patch(
+            "app.api.customer_modules._run_sem_identity_repair_diagnostic",
+            new=AsyncMock(return_value={"mode": "read_only_detection"}),
+        ):
+            response = TestClient(app).get(
+                "/api/v1/admin/customers/sem-identity-repair/candidates"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(response.headers["pragma"], "no-cache")
 
     async def test_row_counts_use_one_statement_and_fill_missing_tables_with_zero(self):
         session = SimpleNamespace(
@@ -630,6 +715,14 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         self.assertIn("repairCandidateStatus === 'success'", view_source)
         self.assertIn('@click="loadRepairCandidates"', view_source)
         self.assertNotIn('v-if="!repairCandidates.groups?.length"', view_source)
+        self.assertIn("createRequestController", view_source)
+        self.assertIn("repairCandidateRequests.cancel()", view_source)
+        self.assertIn("repairPreviewRequests.cancel()", view_source)
+        self.assertIn("repairCandidateRequests.finish(controller)", view_source)
+        self.assertIn("repairPreviewRequests.finish(controller)", view_source)
+        self.assertIn("controller.signal", view_source)
+        self.assertIn("{ signal }", api_source)
+        self.assertIn("signal,", api_source)
         self.assertIn("repairPreviewRequestId.value", view_source)
         self.assertIn("sourceTenantId === repairForm.source_tenant_id", view_source)
         self.assertIn("targetTenantId === repairForm.target_tenant_id", view_source)
