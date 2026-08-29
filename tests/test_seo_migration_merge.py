@@ -15,7 +15,13 @@ from sqlalchemy.ext.asyncio import create_async_engine
 ROOT = Path(__file__).parents[1]
 GEO_REPAIR = ROOT / "migrations/versions/20260819_0073_geo_schema_repair.py"
 MERGE_REVISION = ROOT / "migrations/versions/20260822_0074_merge_geo_seo_heads.py"
+SEM_SEO_MERGE_REVISION = ROOT / "migrations/versions/20260829_0077_merge_sem_seo_heads.py"
 EXPECTED_GEO_REPAIR_SHA256 = "4e785eefd6bcc7a6f1158ff38b19769cb5ee2ffafa433e9f616f30c85ac533ba"
+CANONICAL_SEM_MIGRATION_SHA256 = {
+    "20260822_0074_suggestion_workflow.py": "c082bfbab80ad2db03e11d00c0855bdbd2167ee3418259433b2caddc9d18addc",
+    "20260822_0075_sem_asset_sync_state.py": "cd54e173d6d09ee3ac6d7a081297a5e38658206daa3eafdfa2e5b8d57a9490e1",
+    "20260825_0076_oauth_rebind_intent.py": "3fc37d229ce841e7c3192ecd923edd257a7e810d8561aa66def5d7f1f06154d9",
+}
 
 
 def _config() -> Config:
@@ -24,13 +30,22 @@ def _config() -> Config:
     return config
 
 
-def test_geo_repair_is_preserved_byte_for_byte() -> None:
-    assert hashlib.sha256(GEO_REPAIR.read_bytes()).hexdigest() == EXPECTED_GEO_REPAIR_SHA256
+def test_geo_repair_is_preserved_across_platform_line_endings() -> None:
+    normalized = GEO_REPAIR.read_bytes().replace(b"\r\n", b"\n")
+    assert hashlib.sha256(normalized).hexdigest() == EXPECTED_GEO_REPAIR_SHA256
+    attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+    assert "/migrations/versions/20260819_0073_geo_schema_repair.py text eol=lf" in attributes
 
 
-def test_merge_revision_is_noop_and_only_head() -> None:
-    source = MERGE_REVISION.read_text(encoding="utf-8")
-    tree = ast.parse(source)
+def test_imported_sem_migrations_match_the_canonical_production_history() -> None:
+    versions = ROOT / "migrations/versions"
+    for filename, expected in CANONICAL_SEM_MIGRATION_SHA256.items():
+        normalized = (versions / filename).read_bytes().replace(b"\r\n", b"\n")
+        assert hashlib.sha256(normalized).hexdigest() == expected
+
+
+def _assert_noop_revision(path: Path) -> None:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     functions = {
         node.name: node
         for node in tree.body
@@ -42,23 +57,34 @@ def test_merge_revision_is_noop_and_only_head() -> None:
         for name in ("upgrade", "downgrade")
     )
 
+
+def test_merge_revisions_are_noop_and_sem_seo_merge_is_only_head() -> None:
+    _assert_noop_revision(MERGE_REVISION)
+    _assert_noop_revision(SEM_SEO_MERGE_REVISION)
+
     script = ScriptDirectory.from_config(_config())
-    assert script.get_heads() == ["0074_merge_geo_seo_heads"]
+    assert script.get_heads() == ["0077_merge_sem_seo_heads"]
     merge = script.get_revision("0074_merge_geo_seo_heads")
     assert set(merge._normalized_down_revisions) == {
         "0073_geo_schema_repair",
         "0073_seo_distribution_variants",
     }
+    source_page = script.get_revision("0075_seo_content_source_page")
+    assert source_page.down_revision == "0074_merge_geo_seo_heads"
+    sem_seo_merge = script.get_revision("0077_merge_sem_seo_heads")
+    assert set(sem_seo_merge._normalized_down_revisions) == {
+        "0076_oauth_rebind_intent",
+        "0075_seo_content_source_page",
+    }
 
 
-def test_upgrade_plan_from_production_geo_head_skips_geo_and_runs_seo() -> None:
+def test_upgrade_plan_from_production_sem_head_runs_only_seo_branch() -> None:
     script = ScriptDirectory.from_config(_config())
-    steps = script._upgrade_revs("head", "0073_geo_schema_repair")
+    steps = script._upgrade_revs("head", "0076_oauth_rebind_intent")
     revisions = [step.revision.revision for step in steps]
-    assert "0073_geo_schema_repair" not in revisions
     assert revisions == [
-        "0073_seo_distribution_variants",
-        "0074_merge_geo_seo_heads",
+        "0075_seo_content_source_page",
+        "0077_merge_sem_seo_heads",
     ]
 
 
@@ -66,14 +92,14 @@ def test_upgrade_plan_from_production_geo_head_skips_geo_and_runs_seo() -> None:
     not os.getenv("SEO_MIGRATION_TEST_DATABASE_URL"),
     reason="requires an isolated PostgreSQL migration database",
 )
-def test_postgres_upgrade_from_geo_head_creates_seo_variant_schema(monkeypatch) -> None:
+def test_postgres_upgrade_from_sem_head_applies_only_pending_seo_branch(monkeypatch) -> None:
     async_url = os.environ["SEO_MIGRATION_TEST_DATABASE_URL"]
     monkeypatch.setenv("DATABASE_URL", async_url)
     from app.config import get_settings
 
     get_settings.cache_clear()
     config = _config()
-    command.upgrade(config, "0073_geo_schema_repair")
+    command.upgrade(config, "0076_oauth_rebind_intent")
 
     async def version() -> str:
         engine = create_async_engine(async_url)
@@ -84,11 +110,11 @@ def test_postgres_upgrade_from_geo_head_creates_seo_variant_schema(monkeypatch) 
         return current
 
     before = asyncio.run(version())
-    assert before == "0073_geo_schema_repair"
+    assert before == "0076_oauth_rebind_intent"
 
     command.upgrade(config, "head")
 
-    async def schema_snapshot() -> tuple[str, set[str], set[str]]:
+    async def schema_snapshot() -> tuple[str, set[str], set[str], set[str], set[str]]:
         engine = create_async_engine(async_url)
         async with engine.connect() as connection:
             value = await connection.execute(text("SELECT version_num FROM alembic_version"))
@@ -110,16 +136,53 @@ def test_postgres_upgrade_from_geo_head_creates_seo_variant_schema(monkeypatch) 
                     index["name"]
                     for index in inspector.get_indexes("seo_content_publications")
                 }
-                return variant_indexes, publication_indexes
+                content_columns = {
+                    column["name"]
+                    for column in inspector.get_columns("seo_content_assets")
+                }
+                assert "source_page_id" in content_columns
+                content_indexes = {
+                    index["name"]
+                    for index in inspector.get_indexes("seo_content_assets")
+                }
+                content_unique_constraints = {
+                    constraint["name"]
+                    for constraint in inspector.get_unique_constraints(
+                        "seo_content_assets"
+                    )
+                }
+                return (
+                    variant_indexes,
+                    publication_indexes,
+                    content_indexes,
+                    content_unique_constraints,
+                )
 
-            variant_indexes, publication_indexes = await connection.run_sync(inspect_schema)
+            (
+                variant_indexes,
+                publication_indexes,
+                content_indexes,
+                content_unique_constraints,
+            ) = await connection.run_sync(inspect_schema)
         await engine.dispose()
-        return current, variant_indexes, publication_indexes
+        return (
+            current,
+            variant_indexes,
+            publication_indexes,
+            content_indexes,
+            content_unique_constraints,
+        )
 
-    after, variant_indexes, publication_indexes = asyncio.run(schema_snapshot())
+    (
+        after,
+        variant_indexes,
+        publication_indexes,
+        content_indexes,
+        content_unique_constraints,
+    ) = asyncio.run(schema_snapshot())
     get_settings.cache_clear()
 
-    assert after == "0074_merge_geo_seo_heads"
+    assert after == "0077_merge_sem_seo_heads"
     assert {
         "ix_seo_distribution_variants_tenant_id",
         "ix_seo_distribution_variants_content_asset_id",
@@ -128,3 +191,5 @@ def test_postgres_upgrade_from_geo_head_creates_seo_variant_schema(monkeypatch) 
         "ix_seo_distribution_variant_status",
     }.issubset(variant_indexes)
     assert "ix_seo_content_publications_variant_id" in publication_indexes
+    assert "ix_seo_content_assets_source_page_id" in content_indexes
+    assert "uq_seo_content_asset_source_page" in content_unique_constraints

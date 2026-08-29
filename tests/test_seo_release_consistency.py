@@ -43,6 +43,17 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert not source_path_allowed("frontend/src/views/LoginView.vue")
 
 
+def test_seo_workflows_run_site_association_and_traffic_regressions() -> None:
+    root = Path(__file__).parents[1]
+    for relative in (
+        ".github/workflows/seo-baseline-check.yml",
+        ".github/workflows/production-seo-deploy.yml",
+    ):
+        workflow = (root / relative).read_text(encoding="utf-8")
+        assert "tests/test_seo_site_association.py" in workflow
+        assert "tests/test_seo_traffic.py" in workflow
+
+
 def test_standalone_seo_entry_does_not_import_shared_application() -> None:
     frontend = Path(__file__).parents[1] / "frontend"
     entry = (frontend / "src/seo-main.js").read_text(encoding="utf-8")
@@ -51,6 +62,16 @@ def test_standalone_seo_entry_does_not_import_shared_application() -> None:
 
     assert "./App.vue" not in entry
     assert "./router" not in entry
+    assert "import ElementPlus from 'element-plus'" not in entry
+    assert "elementComponents" in entry
+    assert "provideGlobalConfig({ locale: zhCn }, app, true)" in entry
+    used_element_components = {
+        "El" + "".join(part.capitalize() for part in tag.split("-"))
+        for view in (frontend / "src/views/seo").glob("*.vue")
+        for tag in re.findall(r"<el-([a-z0-9-]+)", view.read_text(encoding="utf-8"))
+    }
+    registered_element_components = set(re.findall(r"\bEl[A-Z][A-Za-z]+", entry))
+    assert used_element_components <= registered_element_components
     assert "base: '/seo/'" in config
     view_imports = re.findall(r"import\('([^']+)'\)", router)
     assert view_imports
@@ -132,6 +153,11 @@ def test_original_content_brief_supports_bounded_multi_keywords() -> None:
     assert source_path_allowed("migrations/versions/20260819_0073_seo_distribution_variants.py")
     assert source_path_allowed("migrations/versions/20260819_0073_geo_schema_repair.py")
     assert source_path_allowed("migrations/versions/20260822_0074_merge_geo_seo_heads.py")
+    assert source_path_allowed("migrations/versions/20260822_0074_suggestion_workflow.py")
+    assert source_path_allowed("migrations/versions/20260822_0075_sem_asset_sync_state.py")
+    assert source_path_allowed("migrations/versions/20260825_0076_oauth_rebind_intent.py")
+    assert source_path_allowed("migrations/versions/20260829_0075_seo_content_source_page.py")
+    assert source_path_allowed("migrations/versions/20260829_0077_merge_sem_seo_heads.py")
 
 
 def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:

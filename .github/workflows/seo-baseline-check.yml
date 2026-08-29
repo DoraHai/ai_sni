@@ -74,6 +74,8 @@ jobs:
           tests/test_seo_release_consistency.py
           tests/test_seo_scheduler.py
           tests/test_seo_serp.py
+          tests/test_seo_site_association.py
+          tests/test_seo_traffic.py
 
   frontend-build:
     name: SEO / frontend-build
@@ -135,5 +137,5 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0074_merge_geo_seo_heads (head)'
+          printf '%s\n' "$heads" | grep -F '0077_merge_sem_seo_heads (head)'
           pytest -q tests/test_seo_migration_merge.py

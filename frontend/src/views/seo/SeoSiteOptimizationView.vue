@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { auditPendingSeoSitePages, auditSeoSitePage, fetchSeoKeywords, fetchSeoSitePages, generateSeoSitePageSuggestions, importSeoSitePages, updateSeoSitePage } from '../../api/seo'
+import { auditPendingSeoSitePages, auditSeoSitePage, fetchSeoContentAssets, fetchSeoKeywords, fetchSeoSitePages, generateSeoSitePageSuggestions, importSeoSitePages, updateSeoContentAsset, updateSeoSitePage } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { formatSeoCsvTime } from './seoRankTime'
@@ -25,11 +25,19 @@ const auditing = ref(new Set())
 const batchAuditing = ref(false)
 const generating = ref(false)
 const selectedRows = ref([])
+const page = ref(1)
+const pageSize = ref(50)
 const keywordOptions = ref([])
+const linkDialogOpen = ref(false)
+const linkPage = ref(null)
+const linkCandidates = ref([])
+const selectedContentId = ref(null)
+const linkingContent = ref(false)
 const editForm = reactive({ page_type: '', target_keyword_id: null, title_suggestion: '', description_suggestion: '', status: 'pending' })
 
 const canEdit = computed(() => !session.isLoggedIn || session.canEdit('seo.site'))
 const stats = computed(() => result.value.stats || {})
+const actionScopeLabel = computed(() => selectedRows.value.length ? `已选 ${selectedRows.value.length} 条` : `当前页 ${result.value.items.length} 条`)
 function fmt(value) { return value == null ? '—' : Number(value).toLocaleString('zh-CN') }
 function statusLabel(value) { return {pending:'待检测',healthy:'健康',needs_fix:'需优化',proposed:'待确认',approved:'已确认',implemented:'待复检',verified:'已复检',error:'检测失败'}[value] || value }
 function statusType(value) { return {pending:'info',healthy:'success',needs_fix:'warning',proposed:'warning',approved:'primary',implemented:'primary',verified:'success',error:'danger'}[value] || 'info' }
@@ -39,7 +47,13 @@ async function load() {
   if (!currentTenantId.value) { error.value = '请先在右上角选择客户'; result.value = {items:[],total:0,stats:{}}; return }
   if (!siteId.value) { error.value = '请先选择或创建 SEO 网站'; result.value = {items:[],total:0,stats:{}}; return }
   loading.value = true; error.value = ''
-  try { result.value = await fetchSeoSitePages({ tenantId: currentTenantId.value, siteId: siteId.value, pageId: Number(route.query.page_id) || undefined, ...filters, pageSize: 100 }) }
+  try {
+    const response = await fetchSeoSitePages({ tenantId: currentTenantId.value, siteId: siteId.value, pageId: Number(route.query.page_id) || undefined, ...filters, page: page.value, pageSize: pageSize.value })
+    const lastPage = Math.max(1, Math.ceil((response.total || 0) / pageSize.value))
+    if (page.value > lastPage) { page.value = lastPage; return await load() }
+    result.value = response
+    selectedRows.value = []
+  }
   catch (e) { error.value = e.message } finally { loading.value = false }
 }
 async function loadKeywordOptions() {
@@ -106,11 +120,38 @@ function exportHandoff() {
   const blob = new Blob(['\ufeff' + [headers,...body].map((line) => line.map(csvCell).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' })
   const anchor = document.createElement('a'); anchor.href = URL.createObjectURL(blob); anchor.download = `SEO站内优化交接-${siteId.value}.csv`; anchor.click(); URL.revokeObjectURL(anchor.href)
 }
-function createContentTask(row) {
+async function createContentTask(row) {
+  if (row.content_task_id) return router.push({ path: '/seo/content/editor', query: { site_id: siteId.value, id: row.content_task_id, source_page_id: row.id } })
+  try {
+    const response = await fetchSeoContentAssets({ tenantId: currentTenantId.value, siteId: siteId.value })
+    const candidates = (response.items || []).filter((item) => !item.source_page_id)
+    if (!candidates.length) return openNewContentTask(row)
+    linkPage.value = row
+    linkCandidates.value = candidates
+    selectedContentId.value = null
+    linkDialogOpen.value = true
+  } catch (e) { ElMessage.error(e.message) }
+}
+function openNewContentTask(row = linkPage.value) {
+  if (!row) return
+  linkDialogOpen.value = false
   router.push({ path: '/seo/content/editor', query: { site_id: siteId.value, keyword_id: row.target_keyword_id || undefined, source_page_id: row.id } })
 }
+async function linkExistingContentTask() {
+  if (!linkPage.value || !selectedContentId.value) return ElMessage.warning('请选择需要关联的现有内容任务')
+  linkingContent.value = true
+  try {
+    await updateSeoContentAsset({ contentId: selectedContentId.value, tenantId: currentTenantId.value, payload: { source_page_id: linkPage.value.id } })
+    const linkedPageId = linkPage.value.id
+    const linkedContentId = selectedContentId.value
+    linkDialogOpen.value = false
+    ElMessage.success('现有内容任务已关联来源页面')
+    await load()
+    router.push({ path: '/seo/content/editor', query: { site_id: siteId.value, id: linkedContentId, source_page_id: linkedPageId } })
+  } catch (e) { ElMessage.error(e.message) } finally { linkingContent.value = false }
+}
 let timer
-watch(() => filters.q, () => { clearTimeout(timer); timer = setTimeout(load, 260) })
+watch(() => filters.q, () => { clearTimeout(timer); timer = setTimeout(() => { page.value = 1; load() }, 260) })
 async function loadSites() {
   if (!currentTenantId.value) { sites.value = []; siteId.value = null; return }
   try {
@@ -125,10 +166,10 @@ async function loadSites() {
     sites.value = []; siteId.value = null; error.value = e.message
   }
 }
-watch(() => [filters.status, filters.issueCode], load)
-watch(() => route.query.page_id, load)
+watch(() => [filters.status, filters.issueCode], () => { page.value = 1; load() })
+watch(() => route.query.page_id, () => { page.value = 1; load() })
 watch(() => route.query.site_id, loadSites)
-watch(siteId, () => { load(); loadKeywordOptions() })
+watch(siteId, () => { page.value = 1; load(); loadKeywordOptions() })
 watch(currentTenantId, loadSites)
 onMounted(loadSites)
 </script>
@@ -137,7 +178,7 @@ onMounted(loadSites)
   <div class="site-page">
     <section class="site-hero">
       <div><span>SEO / ONSITE OPTIMIZATION</span><h1>站内优化</h1><p>管理页面资产、TDK、H1、Canonical 与索引状态。检测结果保存到页面档案，可用于上线前后复核。</p></div>
-      <div class="hero-actions"><el-select v-model="siteId" placeholder="选择 SEO 网站"><el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id"/></el-select><button v-if="canEdit" :disabled="generating||!siteId" @click="generateSuggestions">{{generating?'生成中…':'生成 TDK 建议'}}</button><button :disabled="!siteId" class="secondary" @click="exportHandoff">导出交接单</button><button v-if="canEdit" :disabled="batchAuditing||!siteId" @click="auditPending">{{batchAuditing?'补抓中…':'补抓待检测页面'}}</button><button v-if="canEdit" :disabled="!siteId" @click="importOpen = true">＋ 导入页面</button></div>
+      <div class="hero-actions"><el-select v-model="siteId" placeholder="选择 SEO 网站"><el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id"/></el-select><button v-if="canEdit" :disabled="generating||!siteId" :title="`作用范围：${actionScopeLabel}`" @click="generateSuggestions">{{generating?'生成中…':`生成 TDK（${actionScopeLabel}）`}}</button><button :disabled="!siteId" class="secondary" :title="`作用范围：${actionScopeLabel}`" @click="exportHandoff">导出交接单（{{ actionScopeLabel }}）</button><button v-if="canEdit" :disabled="batchAuditing||!siteId" @click="auditPending">{{batchAuditing?'补抓中…':'补抓待检测页面'}}</button><button v-if="canEdit" :disabled="!siteId" @click="importOpen = true">＋ 导入页面</button></div>
     </section>
     <el-alert v-if="error" :title="error" type="warning" :closable="false" show-icon />
     <section class="metrics">
@@ -158,14 +199,23 @@ onMounted(loadSites)
         <el-table-column label="当前 TDK" min-width="220"><template #default="{row}"><div class="suggestion current"><b>{{ row.title || '缺少 Title' }}</b><small>{{ row.meta_description || '缺少 Description' }}</small></div></template></el-table-column>
         <el-table-column label="建议 TDK" min-width="240"><template #default="{row}"><div class="suggestion"><b>{{ row.title_suggestion || '尚未生成 Title 建议' }}</b><small>{{ row.description_suggestion || '尚未生成 Description 建议' }}</small></div></template></el-table-column>
         <el-table-column label="状态" width="100"><template #default="{row}"><el-tag :type="statusType(row.status)" effect="light">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="215" fixed="right"><template #default="{row}"><div class="actions"><button v-if="canEdit" :disabled="auditing.has(row.id)" @click="audit(row)">{{ auditing.has(row.id) ? '检测中…' : (row.status==='implemented'?'复检':'检测') }}</button><button v-if="canEdit" @click="openEdit(row)">优化记录</button><button @click="createContentTask(row)">内容任务</button></div></template></el-table-column>
+        <el-table-column label="操作" width="230" fixed="right"><template #default="{row}"><div class="actions"><button v-if="canEdit" :disabled="auditing.has(row.id)" @click="audit(row)">{{ auditing.has(row.id) ? '检测中…' : (row.status==='implemented'?'复检':'检测') }}</button><button v-if="canEdit" @click="openEdit(row)">优化记录</button><button @click="createContentTask(row)">{{ row.content_task_id ? '查看内容任务' : '创建内容任务' }}</button></div></template></el-table-column>
       </el-table>
+      <div class="pagination"><span>批量生成和导出默认仅作用于当前页；勾选后仅作用于已选记录。</span><el-pagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[25,50,100]" :total="result.total" layout="total, sizes, prev, pager, next, jumper" @current-change="load" @size-change="page = 1; load()" /></div>
     </section>
 
     <el-dialog v-model="importOpen" title="导入站内页面" width="600px">
       <p class="dialog-tip">每行一个公开页面 URL。导入后可逐页运行真实检测；系统不会自动修改客户网站。</p>
       <el-input v-model="importText" type="textarea" :rows="9" placeholder="https://example.com/&#10;https://example.com/products" />
       <template #footer><el-button @click="importOpen=false">取消</el-button><el-button type="primary" :loading="saving" @click="importPages">导入页面</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="linkDialogOpen" title="创建或关联内容任务" width="560px">
+      <p class="dialog-tip">该页面尚未关联内容任务。可选择一个现有未关联草稿，或创建新任务。</p>
+      <el-select v-model="selectedContentId" filterable clearable placeholder="选择现有未关联内容任务">
+        <el-option v-for="item in linkCandidates" :key="item.id" :label="`${item.title}（#${item.id}）`" :value="item.id" />
+      </el-select>
+      <template #footer><el-button @click="openNewContentTask()">创建新任务</el-button><el-button type="primary" :loading="linkingContent" @click="linkExistingContentTask">关联并打开</el-button></template>
     </el-dialog>
     <el-dialog v-model="editOpen" title="页面优化记录" width="680px">
       <p class="dialog-tip">{{ editing?.url }}</p>
@@ -182,6 +232,7 @@ onMounted(loadSites)
 </template>
 
 <style scoped>
+.pagination{padding:14px 17px;display:flex;align-items:center;justify-content:space-between;gap:16px;border-top:1px solid #edf1ef}.pagination>span{color:#788683;font-size:11px}
 .hero-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}.hero-actions button:disabled{cursor:wait;opacity:.6}.hero-actions button.secondary{border:1px solid #b9d4cf;background:#fff;color:var(--teal);box-shadow:none}
-.site-page{--ink:#17233d;--teal:#168b83;--line:#e3e8ef;min-height:100%;padding:26px;background:radial-gradient(circle at 78% -16%,rgba(22,139,131,.1),transparent 35%),#f5f8f7;color:var(--ink)}.site-hero{display:flex;align-items:end;justify-content:space-between;gap:28px;padding:27px 30px;border:1px solid #dbe7e4;border-radius:17px;background:#fff;box-shadow:0 16px 45px rgba(29,69,64,.05)}.site-hero>div>span,.site-panel header span{color:var(--teal);font:800 10px ui-monospace,monospace;letter-spacing:.13em}.site-hero h1{margin:9px 0 7px;font:750 34px "Noto Serif SC","Songti SC",serif}.site-hero p{max-width:760px;margin:0;color:#72817e;line-height:1.7}.site-hero button{height:40px;padding:0 18px;border:0;border-radius:9px;background:var(--teal);color:#fff;font-weight:700;cursor:pointer;box-shadow:0 8px 20px rgba(22,139,131,.2)}.el-alert{margin-top:14px}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:15px 0}.metrics article{padding:19px 20px;border:1px solid var(--line);border-radius:13px;background:#fff}.metrics span,.metrics small{display:block;color:#768582;font-size:11px}.metrics strong{display:block;margin:10px 0 5px;font-size:28px}.site-panel{overflow:hidden;border:1px solid var(--line);border-radius:15px;background:#fff}.site-panel>header{display:flex;align-items:end;justify-content:space-between;padding:16px 19px;border-bottom:1px solid #edf1ef}.site-panel h2{margin:4px 0 0;font-size:15px}.site-panel header small{color:#82908d}.filters{display:flex;gap:9px;padding:14px 17px}.filters .el-input{max-width:350px}.filters .el-select{width:140px}.filters>span{align-self:center;margin-left:auto;color:#788683;font-size:11px}.page-title,.page-url{display:block}.page-url{max-width:330px;overflow:hidden;margin-top:4px;color:#5d7f79;text-overflow:ellipsis;white-space:nowrap}.issues{display:flex;gap:4px;flex-wrap:wrap}.issues span{padding:3px 6px;border-radius:5px;background:#fff0e3;color:#a65e24;font-size:10px}.suggestion b,.suggestion small{display:block;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.suggestion small{margin-top:4px;color:#899491}.actions{display:flex;gap:5px}.actions button{padding:5px 7px;border:1px solid #dce5e2;border-radius:6px;background:#fff;color:#52736e;font-size:10.5px;cursor:pointer}.actions button:hover{border-color:#7bb3aa;color:var(--teal)}.actions button:disabled{opacity:.55;cursor:wait}.dialog-tip{margin:-6px 0 15px;color:#75827f;font-size:12px;line-height:1.6}.el-form :deep(.el-select){width:100%}@media(max-width:980px){.metrics{grid-template-columns:repeat(2,1fr)}}@media(max-width:680px){.site-page{padding:14px}.site-hero{align-items:flex-start;flex-direction:column}.metrics{grid-template-columns:1fr 1fr}.filters{flex-wrap:wrap}.filters .el-input{max-width:none;width:100%}.filters>span{margin-left:0}}
+.site-page{--ink:#17233d;--teal:#168b83;--line:#e3e8ef;min-height:100%;padding:26px;background:radial-gradient(circle at 78% -16%,rgba(22,139,131,.1),transparent 35%),#f5f8f7;color:var(--ink)}.site-hero{display:flex;align-items:end;justify-content:space-between;gap:28px;padding:27px 30px;border:1px solid #dbe7e4;border-radius:17px;background:#fff;box-shadow:0 16px 45px rgba(29,69,64,.05)}.site-hero>div>span,.site-panel header span{color:var(--teal);font:800 10px ui-monospace,monospace;letter-spacing:.13em}.site-hero h1{margin:9px 0 7px;font:750 34px "Noto Serif SC","Songti SC",serif}.site-hero p{max-width:760px;margin:0;color:#72817e;line-height:1.7}.site-hero button{height:40px;padding:0 18px;border:0;border-radius:9px;background:var(--teal);color:#fff;font-weight:700;cursor:pointer;box-shadow:0 8px 20px rgba(22,139,131,.2)}.el-alert{margin-top:14px}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:15px 0}.metrics article{padding:19px 20px;border:1px solid var(--line);border-radius:13px;background:#fff}.metrics span,.metrics small{display:block;color:#768582;font-size:11px}.metrics strong{display:block;margin:10px 0 5px;font-size:28px}.site-panel{overflow:hidden;border:1px solid var(--line);border-radius:15px;background:#fff}.site-panel>header{display:flex;align-items:end;justify-content:space-between;padding:16px 19px;border-bottom:1px solid #edf1ef}.site-panel h2{margin:4px 0 0;font-size:15px}.site-panel header small{color:#82908d}.filters{display:flex;gap:9px;padding:14px 17px}.filters .el-input{max-width:350px}.filters .el-select{width:140px}.filters>span{align-self:center;margin-left:auto;color:#788683;font-size:11px}.page-title,.page-url{display:block}.page-url{max-width:330px;overflow:hidden;margin-top:4px;color:#5d7f79;text-overflow:ellipsis;white-space:nowrap}.issues{display:flex;gap:4px;flex-wrap:wrap}.issues span{padding:3px 6px;border-radius:5px;background:#fff0e3;color:#a65e24;font-size:10px}.suggestion b,.suggestion small{display:block;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.suggestion small{margin-top:4px;color:#899491}.actions{display:flex;gap:5px}.actions button{padding:5px 7px;border:1px solid #dce5e2;border-radius:6px;background:#fff;color:#52736e;font-size:10.5px;cursor:pointer}.actions button:hover{border-color:#7bb3aa;color:var(--teal)}.actions button:disabled{opacity:.55;cursor:wait}.dialog-tip{margin:-6px 0 15px;color:#75827f;font-size:12px;line-height:1.6}.el-form :deep(.el-select){width:100%}@media(max-width:980px){.metrics{grid-template-columns:repeat(2,1fr)}.pagination{align-items:flex-start;flex-direction:column}}@media(max-width:680px){.site-page{padding:14px}.site-hero{align-items:flex-start;flex-direction:column}.metrics{grid-template-columns:1fr 1fr}.filters{flex-wrap:wrap}.filters .el-input{max-width:none;width:100%}.filters>span{margin-left:0}.pagination{overflow-x:auto}}
 </style>
