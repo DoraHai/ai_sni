@@ -99,9 +99,11 @@ SEM 后端发布：
 - 除非任务是经审核的 Nginx 发布，不修改或 reload Nginx；
 - 不手动修改 `/opt/*/releases` 或 `current`，任何门禁失败都应立即停止并汇报。
 
-当前状态：PR #117 已合入 `main`，SEM 后端手动发布流程已经建立；生产 `sem-backend` 与
-`codex/production-sem-backend` 均为 `43b6123bcead2f3183f1c562ff0168d21f25ddda`，不需要因流程
-建立而重复运行 workflow 或重新部署。
+历史状态：PR #117 合入 `main` 时，SEM 后端手动发布流程已经建立；当时生产
+`sem-backend` 与 `codex/production-sem-backend` 均为
+`43b6123bcead2f3183f1c562ff0168d21f25ddda`。该 SHA 只是历史快照，不得作为当前生产事实；
+每次发布或回滚前必须重新核对远程生产分支、`/health` 的 `release_commit`、
+服务器 `RELEASE_COMMIT` 和 `MANIFEST`。
 
 ## 3. 系统结构
 
@@ -360,8 +362,10 @@ GEO API 发布失败会尝试自动恢复上一条 `current` 并仅重启 `geo-s
 前端和 GEO API 均使用版本目录。确认目标版本后，将对应 `current` 链接原子指回上一
 版本；API 回滚后重启对应 systemd 服务。不要删除当前版本后再回滚。
 
-SEM 主后端仍位于 `/opt/sem-backend`，变更前先保留代码和数据库备份。涉及数据库结构
-时，必须按迁移恢复方案处理，不能只回滚代码。
+SEM 主后端位于 `/opt/sem-backend`，只能通过受控的 `platform-deploy apply sem` 创建新
+release 并原子切换 `current`。发布失败由服务器端恢复上一个 `current` 并仅重启
+`sem-backend`；禁止逐文件覆盖或手动改链接。涉及数据库结构时，必须按独立迁移和恢复
+方案处理，不能只回滚代码；普通 SEM 发布仍必须记录 `migration=not-run`。
 
 ### 9.6 发布后检查
 
