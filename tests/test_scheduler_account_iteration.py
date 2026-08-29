@@ -22,13 +22,16 @@ from app.scheduler import fetch_today_keyword_report
 
 
 class _SessionContext:
-    def __init__(self, session):
+    def __init__(self, session, exit_error=None):
         self.session = session
+        self.exit_error = exit_error
 
     async def __aenter__(self):
         return self.session
 
     async def __aexit__(self, exc_type, exc, tb):
+        if self.exit_error is not None:
+            raise self.exit_error
         return False
 
 
@@ -111,7 +114,6 @@ class SchedulerAccountIterationTests(unittest.IsolatedAsyncioTestCase):
 
         session = SimpleNamespace(
             get=AsyncMock(side_effect=get),
-            rollback=AsyncMock(),
         )
         sync = AsyncMock(return_value={"status": "ok"})
 
@@ -139,7 +141,57 @@ class SchedulerAccountIterationTests(unittest.IsolatedAsyncioTestCase):
 
         sync.assert_awaited_once()
         self.assertEqual(sync.await_args.args[2].id, 12)
-        session.rollback.assert_awaited_once()
+        self.assertEqual(session_factory.call_count, 3)
+
+    async def test_session_cleanup_failure_does_not_abort_next_account(self):
+        listed = [_Account(11, 101, "broken"), _Account(12, 102, "healthy")]
+        sessions = [
+            SimpleNamespace(),
+            SimpleNamespace(
+                get=AsyncMock(side_effect=RuntimeError("account reload failed"))
+            ),
+            SimpleNamespace(
+                get=AsyncMock(
+                    side_effect=[
+                        SimpleNamespace(
+                            id=12,
+                            tenant_id=102,
+                            baidu_username="healthy",
+                        ),
+                        SimpleNamespace(id=102),
+                    ]
+                )
+            ),
+        ]
+        contexts = [
+            _SessionContext(sessions[0]),
+            _SessionContext(sessions[1], RuntimeError("rollback failed")),
+            _SessionContext(sessions[2]),
+        ]
+        session_factory = unittest.mock.Mock(side_effect=contexts)
+        sync = AsyncMock(return_value={"status": "ok"})
+
+        with (
+            patch("app.scheduler._report_sync_lock", new=asyncio.Lock()),
+            patch("app.scheduler.async_session_factory", new=session_factory),
+            patch(
+                "app.scheduler.refresh_expiring_oauth_grants",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
+                "app.scheduler.list_active_sem_accounts",
+                new=AsyncMock(return_value=listed),
+            ),
+            patch(
+                "app.scheduler.filter_identity_safe_active_accounts",
+                side_effect=lambda rows: rows,
+            ),
+            patch("app.scheduler.refresh_keyword_workbench_snapshot", new=sync),
+        ):
+            await fetch_today_keyword_report()
+
+        sync.assert_awaited_once()
+        self.assertEqual(sync.await_args.args[2].id, 12)
         self.assertEqual(session_factory.call_count, 3)
 
 
