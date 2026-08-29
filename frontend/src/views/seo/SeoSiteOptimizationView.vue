@@ -41,7 +41,20 @@ const actionScopeLabel = computed(() => selectedRows.value.length ? `已选 ${se
 function fmt(value) { return value == null ? '—' : Number(value).toLocaleString('zh-CN') }
 function statusLabel(value) { return {pending:'待检测',healthy:'健康',needs_fix:'需优化',proposed:'待确认',approved:'已确认',implemented:'待复检',verified:'已复检',error:'检测失败'}[value] || value }
 function statusType(value) { return {pending:'info',healthy:'success',needs_fix:'warning',proposed:'warning',approved:'primary',implemented:'primary',verified:'success',error:'danger'}[value] || 'info' }
-function issueLabel(code) { return {title:'Title',description:'Description',canonical:'Canonical',h1:'H1',indexable:'索引',heading_depth:'标题结构',substantial:'内容量',schema:'Schema'}[code] || code }
+function issueLabel(code) { return {
+  title:'Title 需优化',title_missing:'缺少 Title',title_too_long:'Title 过长',
+  description:'Description 需优化',description_missing:'缺少 Description',
+  canonical:'Canonical 需优化',h1:'H1 需优化',h1_missing:'缺少 H1',h1_multiple:'H1 过多',
+  indexable:'索引设置',noindex:'禁止索引',robots_blocked:'Robots 拦截',
+  heading_depth:'标题结构',substantial:'内容量不足',thin_content:'内容过少',
+  schema:'缺少 Schema',entity_schema:'缺少实体 Schema',schema_invalid:'Schema 无效',
+  faq:'缺少 FAQ',citations:'缺少引用',freshness:'缺少更新信息',
+  block_definition:'缺少定义块',block_numbers:'缺少数字事实',block_comparison:'缺少对比块',block_howto:'缺少操作步骤',block_faq:'缺少 FAQ 块',
+  NO_DEFINITION:'缺少定义块',NO_NUMBERS:'缺少数字事实',NO_COMPARISON:'缺少对比块',NO_HOWTO:'缺少操作步骤',NO_FAQ:'缺少 FAQ 块',
+  image_alt_missing:'图片缺少 Alt',language:'语言未声明',html_lang_missing:'缺少 HTML lang',
+  https:'HTTPS 异常',robots:'Robots 不可用',ai_crawlers:'AI 爬虫受限',llms:'缺少 llms.txt',http_4xx:'HTTP 4xx',http_5xx:'HTTP 5xx',empty_response:'页面无响应',
+  non_html:'非 HTML 响应',timeout:'请求超时',too_many_redirects:'重定向过多',dns_error:'DNS 解析失败',tls_error:'TLS 连接失败',blocked_address:'地址被安全策略拦截',connection_error:'连接失败'
+}[code] || '其他检测问题' }
 
 async function load() {
   if (!currentTenantId.value) { error.value = '请先在右上角选择客户'; result.value = {items:[],total:0,stats:{}}; return }
@@ -124,7 +137,7 @@ async function createContentTask(row) {
   if (row.content_task_id) return router.push({ path: '/seo/content/editor', query: { site_id: siteId.value, id: row.content_task_id, source_page_id: row.id } })
   try {
     const response = await fetchSeoContentAssets({ tenantId: currentTenantId.value, siteId: siteId.value })
-    const candidates = (response.items || []).filter((item) => !item.source_page_id)
+    const candidates = (response.items || []).filter((item) => !item.source_page_id && ['planned', 'drafting'].includes(item.status))
     if (!candidates.length) return openNewContentTask(row)
     linkPage.value = row
     linkCandidates.value = candidates
@@ -189,7 +202,7 @@ onMounted(loadSites)
     </section>
     <section class="site-panel">
       <header><div><span>01 / PAGE INVENTORY</span><h2>页面资产与 TDK</h2></div><small>检测使用网站公开页面，不会修改客户网站代码</small></header>
-      <div class="filters"><el-input v-model="filters.q" clearable placeholder="搜索 URL 或页面标题" /><el-select v-model="filters.issueCode" clearable placeholder="全部问题"><el-option v-for="item in [{v:'title',n:'Title'},{v:'description',n:'Description'},{v:'h1',n:'H1'},{v:'canonical',n:'Canonical'},{v:'indexable',n:'索引'},{v:'schema',n:'Schema'}]" :key="item.v" :label="item.n" :value="item.v" /></el-select><el-select v-model="filters.status" clearable placeholder="全部状态"><el-option v-for="item in [{v:'pending',n:'待检测'},{v:'needs_fix',n:'需优化'},{v:'proposed',n:'待确认'},{v:'approved',n:'已确认'},{v:'implemented',n:'待复检'},{v:'verified',n:'已复检'},{v:'healthy',n:'健康'},{v:'error',n:'检测失败'}]" :key="item.v" :label="item.n" :value="item.v" /></el-select><span>{{ result.total }} 个页面 · 已选 {{ selectedRows.length }} 个</span></div>
+      <div class="filters"><el-input v-model="filters.q" clearable placeholder="搜索 URL 或页面标题" /><el-select v-model="filters.issueCode" clearable placeholder="全部问题"><el-option v-for="item in [{v:'title',n:'Title'},{v:'description',n:'Description'},{v:'h1',n:'H1'},{v:'canonical',n:'Canonical'},{v:'indexable',n:'索引'},{v:'schema',n:'Schema'},{v:'content',n:'内容质量'},{v:'image',n:'图片'},{v:'language',n:'语言'},{v:'crawl',n:'抓取/可访问性'}]" :key="item.v" :label="item.n" :value="item.v" /></el-select><el-select v-model="filters.status" clearable placeholder="全部状态"><el-option v-for="item in [{v:'pending',n:'待检测'},{v:'needs_fix',n:'需优化'},{v:'proposed',n:'待确认'},{v:'approved',n:'已确认'},{v:'implemented',n:'待复检'},{v:'verified',n:'已复检'},{v:'healthy',n:'健康'},{v:'error',n:'检测失败'}]" :key="item.v" :label="item.n" :value="item.v" /></el-select><span>{{ result.total }} 个页面 · 已选 {{ selectedRows.length }} 个</span></div>
       <el-table v-loading="loading" :data="result.items" empty-text="尚未导入站内页面" @selection-change="selectedRows = $event">
         <el-table-column type="selection" width="44" />
         <el-table-column label="页面 / URL" min-width="280"><template #default="{row}"><b class="page-title">{{ row.title || '未读取页面标题' }}</b><small class="page-url">{{ row.url }}</small></template></el-table-column>

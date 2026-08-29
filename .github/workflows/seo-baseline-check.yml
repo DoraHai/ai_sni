@@ -137,5 +137,5 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0077_merge_sem_seo_heads (head)'
+          printf '%s\n' "$heads" | grep -F '0078_seo_site_data_repairs (head)'
           pytest -q tests/test_seo_migration_merge.py

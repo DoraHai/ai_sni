@@ -16,6 +16,7 @@ ROOT = Path(__file__).parents[1]
 GEO_REPAIR = ROOT / "migrations/versions/20260819_0073_geo_schema_repair.py"
 MERGE_REVISION = ROOT / "migrations/versions/20260822_0074_merge_geo_seo_heads.py"
 SEM_SEO_MERGE_REVISION = ROOT / "migrations/versions/20260829_0077_merge_sem_seo_heads.py"
+SITE_DATA_REPAIR_REVISION = ROOT / "migrations/versions/20260829_0078_seo_site_data_repairs.py"
 EXPECTED_GEO_REPAIR_SHA256 = "4e785eefd6bcc7a6f1158ff38b19769cb5ee2ffafa433e9f616f30c85ac533ba"
 CANONICAL_SEM_MIGRATION_SHA256 = {
     "20260822_0074_suggestion_workflow.py": "c082bfbab80ad2db03e11d00c0855bdbd2167ee3418259433b2caddc9d18addc",
@@ -63,7 +64,7 @@ def test_merge_revisions_are_noop_and_sem_seo_merge_is_only_head() -> None:
     _assert_noop_revision(SEM_SEO_MERGE_REVISION)
 
     script = ScriptDirectory.from_config(_config())
-    assert script.get_heads() == ["0077_merge_sem_seo_heads"]
+    assert script.get_heads() == ["0078_seo_site_data_repairs"]
     merge = script.get_revision("0074_merge_geo_seo_heads")
     assert set(merge._normalized_down_revisions) == {
         "0073_geo_schema_repair",
@@ -76,6 +77,8 @@ def test_merge_revisions_are_noop_and_sem_seo_merge_is_only_head() -> None:
         "0076_oauth_rebind_intent",
         "0075_seo_content_source_page",
     }
+    site_data_repair = script.get_revision("0078_seo_site_data_repairs")
+    assert site_data_repair.down_revision == "0077_merge_sem_seo_heads"
 
 
 def test_upgrade_plan_from_production_sem_head_runs_only_seo_branch() -> None:
@@ -85,7 +88,24 @@ def test_upgrade_plan_from_production_sem_head_runs_only_seo_branch() -> None:
     assert revisions == [
         "0075_seo_content_source_page",
         "0077_merge_sem_seo_heads",
+        "0078_seo_site_data_repairs",
     ]
+
+
+def test_site_data_repair_is_tenant_scoped_and_page_231_is_fail_closed() -> None:
+    source = SITE_DATA_REPAIR_REVISION.read_text(encoding="utf-8")
+    assert source.count("snapshot.tenant_id = keyword.tenant_id") == 1
+    assert source.count("result.tenant_id = keyword.tenant_id") == 1
+    assert source.count("site.tenant_id = keyword.tenant_id") == 2
+    assert "content.id = 3" in source
+    assert "content.tenant_id = 1" in source
+    assert "content.site_id = 1" in source
+    assert "content.status = 'drafting'" in source
+    assert "page.id = 231" in source
+    assert "page.tenant_id = content.tenant_id" in source
+    assert "page.site_id = content.site_id" in source
+    assert "linked.source_page_id = 231" in source
+    assert "NORDAC NORDCON BU0000" in source
 
 
 @pytest.mark.skipif(
@@ -182,7 +202,7 @@ def test_postgres_upgrade_from_sem_head_applies_only_pending_seo_branch(monkeypa
     ) = asyncio.run(schema_snapshot())
     get_settings.cache_clear()
 
-    assert after == "0077_merge_sem_seo_heads"
+    assert after == "0078_seo_site_data_repairs"
     assert {
         "ix_seo_distribution_variants_tenant_id",
         "ix_seo_distribution_variants_content_asset_id",
