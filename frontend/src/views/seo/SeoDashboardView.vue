@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import { collectSeoGscTraffic, collectSeoOverviewMetrics, crawlSeoSite, createSeoKeyword, fetchSeoGscConnection, fetchSeoOverview, testSeoGscConnection, updateSeoGscConnection } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
+import { currentSeoSiteId as siteId } from './seoSiteContext'
 import './seo-suite.css'
 
 const router = useRouter()
@@ -15,7 +16,6 @@ const crawling = ref(false)
 const error = ref('')
 const engine = ref('baidu')
 const sites = ref([])
-const siteId = ref(null)
 const search = ref('')
 const addDialog = ref(false)
 const gscDialog = ref(false)

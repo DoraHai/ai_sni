@@ -5,9 +5,10 @@ import { useRoute } from 'vue-router'
 import { createSeoBacklink,crawlSeoInternalLinks,fetchSeoBacklinks,fetchSeoInternalLinks } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId,session } from '../../store/session'
+import { currentSeoSiteId as siteId } from './seoSiteContext'
 import './seo-suite.css'
 const route=useRoute()
-const tab=ref(route.query.tab==='backlink'?'backlink':'internal'),loading=ref(false),error=ref(''),sites=ref([]),siteId=ref(null),graph=ref({nodes:[],edges:[],stats:{}}),backlinks=ref({items:[],stats:{}}),dialog=ref(false),saving=ref(false),crawling=ref(null)
+const tab=ref(route.query.tab==='backlink'?'backlink':'internal'),loading=ref(false),error=ref(''),sites=ref([]),graph=ref({nodes:[],edges:[],stats:{}}),backlinks=ref({items:[],stats:{}}),dialog=ref(false),saving=ref(false),crawling=ref(null)
 const form=reactive({source_url:'',target_url:'',anchor_text:'',authority_score:null,toxic_score:null,status:'active'});const canEdit=computed(()=>!session.isLoggedIn||session.canEdit('seo.links'))
 async function load(){if(!currentTenantId.value){error.value='请先选择客户';return}if(!siteId.value){error.value='请先选择或创建 SEO 网站';return}loading.value=true;try{[graph.value,backlinks.value]=await Promise.all([fetchSeoInternalLinks({tenantId:currentTenantId.value,siteId:siteId.value}),fetchSeoBacklinks({tenantId:currentTenantId.value,siteId:siteId.value})]);error.value=''}catch(e){error.value=e.message}finally{loading.value=false}}
 async function crawl(node){crawling.value=node.id;try{const r=await crawlSeoInternalLinks({tenantId:currentTenantId.value,pageId:node.id});ElMessage.success(`已发现 ${r.discovered} 个站内链接`);await load()}catch(e){ElMessage.error(e.message)}finally{crawling.value=null}}

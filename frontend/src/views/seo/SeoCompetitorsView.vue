@@ -12,12 +12,12 @@ import {
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { formatSeoRankTime, parseSeoRankTime } from './seoRankTime'
+import { currentSeoSiteId as siteId } from './seoSiteContext'
 import '../../../public/deal-sniper-prototype/seo/assets/keyword-assets-v2.css'
 
 const loading = ref(false)
 const error = ref('')
 const sites = ref([])
-const siteId = ref(null)
 const device = ref('desktop')
 const data = ref({ items: [], events: [] })
 const keywords = ref([])

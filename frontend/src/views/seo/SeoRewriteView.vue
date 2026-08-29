@@ -5,9 +5,10 @@ import { ElMessage } from 'element-plus'
 import { fetchSeoContentAssets,fetchSeoKeywords } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId,session } from '../../store/session'
+import { currentSeoSiteId as siteId } from './seoSiteContext'
 
 const router=useRouter(),loading=ref(false),error=ref(''),assets=ref([]),keywords=ref([]),query=ref(''),tab=ref('all'),sourceVisible=ref(false),sourceMode=ref('library'),selectedSourceId=ref(null),sourceText=ref(''),sourceOrigin=ref('原创文章列表'),rewriteStrength=ref('深度改写（推荐）'),targetKeywords=ref('')
-const sites=ref([]),siteId=ref(null)
+const sites=ref([])
 const canEdit=computed(()=>!session.isLoggedIn||session.canEdit('seo.content'))
 const rewrites=computed(()=>assets.value.filter(item=>item.content_type==='rewrite'))
 const originalArticles=computed(()=>assets.value.filter(item=>['article','guide','landing','comparison','faq'].includes(item.content_type)&&(item.humanized_content||item.draft)))

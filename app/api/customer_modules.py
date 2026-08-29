@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta, timezone
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -221,6 +221,9 @@ class SeoSiteUpdate(BaseModel):
 
 
 def _site_payload(row: SeoSite) -> dict:
+    created_at = row.created_at
+    if created_at is not None and created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone(timedelta(hours=8)))
     return {
         "id": row.id,
         "tenant_id": row.tenant_id,
@@ -229,7 +232,7 @@ def _site_payload(row: SeoSite) -> dict:
         "canonical_domain": row.canonical_domain,
         "default_url": row.default_url,
         "status": row.status,
-        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "created_at": created_at.isoformat() if created_at else None,
     }
 
 
@@ -275,10 +278,10 @@ async def _seo_site_delete_blockers(
     return blockers
 
 
-@seo_sites_router.get("/api/v1/seo/sites", dependencies=[Depends(require_scoped_auth)])
+@seo_sites_router.get("/api/v1/seo/sites", dependencies=[Depends(require_auth)])
 async def list_seo_sites(
     tenant_id: int = Query(...),
-    ctx: AuthContext = Depends(require_scoped_auth),
+    ctx: AuthContext = Depends(require_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     _require_seo_asset_permission(ctx)
@@ -287,10 +290,10 @@ async def list_seo_sites(
     return {"sites": [_site_payload(row) for row in rows]}
 
 
-@seo_sites_router.post("/api/v1/seo/sites", dependencies=[Depends(require_scoped_auth)])
+@seo_sites_router.post("/api/v1/seo/sites", dependencies=[Depends(require_auth)])
 async def create_seo_site(
     req: SeoSiteCreate,
-    ctx: AuthContext = Depends(require_scoped_auth),
+    ctx: AuthContext = Depends(require_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     _require_seo_asset_permission(ctx, edit=True)
@@ -314,12 +317,12 @@ async def create_seo_site(
     return _site_payload(row)
 
 
-@seo_sites_router.patch("/api/v1/seo/sites/{site_id}", dependencies=[Depends(require_scoped_auth)])
+@seo_sites_router.patch("/api/v1/seo/sites/{site_id}", dependencies=[Depends(require_auth)])
 async def update_seo_site(
     site_id: int,
     tenant_id: int,
     req: SeoSiteUpdate,
-    ctx: AuthContext = Depends(require_scoped_auth),
+    ctx: AuthContext = Depends(require_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     _require_seo_asset_permission(ctx, edit=True)
@@ -345,11 +348,11 @@ async def update_seo_site(
     return _site_payload(row)
 
 
-@seo_sites_router.delete("/api/v1/seo/sites/{site_id}", dependencies=[Depends(require_scoped_auth)])
+@seo_sites_router.delete("/api/v1/seo/sites/{site_id}", dependencies=[Depends(require_auth)])
 async def delete_seo_site(
     site_id: int,
     tenant_id: int,
-    ctx: AuthContext = Depends(require_scoped_auth),
+    ctx: AuthContext = Depends(require_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Delete only an empty SEO site; populated sites must be archived instead."""

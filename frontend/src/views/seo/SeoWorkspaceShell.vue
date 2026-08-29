@@ -4,10 +4,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { fetchMe } from '../../api/auth'
 import client from '../../api/client'
 import { session } from '../../store/session'
+import { clearSeoSiteId, currentSeoSiteId } from './seoSiteContext'
 
 const route = useRoute()
 const router = useRouter()
 const mobileOpen = ref(false)
+if (session.tenantId && Number(route.query.site_id) > 0) {
+  currentSeoSiteId.value = Number(route.query.site_id)
+}
 
 const groups = [
   {
@@ -83,7 +87,7 @@ function active(path) {
 
 function navigate(path) {
   mobileOpen.value = false
-  router.push(path)
+  router.push({ path, query: currentSeoSiteId.value ? { site_id: currentSeoSiteId.value } : {} })
 }
 
 async function loadContext() {
@@ -98,21 +102,45 @@ async function loadContext() {
   } catch { /* 登录失效由统一拦截器处理 */ }
 }
 
-function onTenantChange(value) {
+async function onTenantChange(value) {
   if (!value || value === session.tenantId) return
+  clearSeoSiteId()
   sessionStorage.removeItem('seo_pending_rewrite_source')
   sessionStorage.removeItem('seo_pending_rewrite_options')
-  session.setTenant(value)
+  const query = { ...route.query }
+  delete query.site_id
   if (route.path.startsWith('/seo/keywords/')) {
-    router.replace('/seo/keywords')
+    await router.replace('/seo/keywords')
   } else if (route.path === '/seo/content/editor') {
-    router.replace(route.query.type === 'rewrite' ? '/seo/content/rewrites' : '/seo/content/articles')
+    await router.replace(route.query.type === 'rewrite' ? '/seo/content/rewrites' : '/seo/content/articles')
   } else if (route.path === '/seo/content/answer-editor') {
-    router.replace('/seo/content/qa')
+    await router.replace('/seo/content/qa')
+  } else {
+    await router.replace({ path: route.path, query })
   }
+  session.setTenant(value)
 }
 
 watch(() => route.path, () => { mobileOpen.value = false })
+watch(() => session.tenantId, (tenantId) => {
+  const requestedSiteId = Number(route.query.site_id) || null
+  if (tenantId && requestedSiteId) currentSeoSiteId.value = requestedSiteId
+})
+watch(() => route.query.site_id, (value) => {
+  const requestedSiteId = Number(value) || null
+  if (session.tenantId && requestedSiteId && requestedSiteId !== currentSeoSiteId.value) {
+    currentSeoSiteId.value = requestedSiteId
+  }
+})
+watch(currentSeoSiteId, (siteId) => {
+  if (!session.tenantId && !siteId) return
+  const routeSiteId = Number(route.query.site_id) || null
+  if (siteId === routeSiteId) return
+  const query = { ...route.query }
+  if (siteId) query.site_id = String(siteId)
+  else delete query.site_id
+  router.replace({ query })
+}, { immediate: true })
 onMounted(loadContext)
 </script>
 

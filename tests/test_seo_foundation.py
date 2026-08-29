@@ -21,6 +21,7 @@ from app.api.seo import (
     SitePageUpdate,
     _keyword_payload,
     _database_iso,
+    _iso,
     _apply_site_page_audit,
     _metric_payload,
     _missing_content_keywords,
@@ -612,6 +613,20 @@ def test_database_timestamps_are_serialized_with_an_explicit_timezone() -> None:
     )
 
 
+def test_application_timestamps_are_serialized_as_explicit_utc_instants() -> None:
+    assert _iso(datetime(2026, 8, 24, 16, 57, 3)) == "2026-08-24T16:57:03Z"
+    shanghai_value = datetime(
+        2026,
+        8,
+        25,
+        0,
+        57,
+        3,
+        tzinfo=timezone(timedelta(hours=8)),
+    )
+    assert _iso(shanghai_value) == "2026-08-24T16:57:03Z"
+
+
 def test_serp_collection_error_payload_uses_ids_and_safe_metadata_only() -> None:
     error = SerpProviderError(
         "provider_unavailable",
@@ -856,6 +871,8 @@ def test_metric_snapshot_contract_preserves_source_and_availability() -> None:
     assert payload["numeric_value"] == 128.0
     assert payload["data_quality"] == "estimated"
     assert payload["status"] == "available"
+    assert payload["observed_at"] == "2026-08-18T10:00:00Z"
+    assert payload["collected_at"] == "2026-08-18T10:00:00+08:00"
 
 
 def test_provider_metric_mapping_distinguishes_zero_from_missing() -> None:
