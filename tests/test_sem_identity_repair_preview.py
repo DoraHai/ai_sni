@@ -25,6 +25,7 @@ from app.api.customer_modules import (
     _sem_duplicate_candidate_groups,
     _sem_identity_account_select,
     _sem_identity_candidate_tenant_ids,
+    _sem_identity_repair_row_counts,
     _sem_identity_repair_preview_payload,
     list_sem_identity_repair_candidates,
     preview_sem_identity_repair,
@@ -231,6 +232,28 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         session.flush.assert_not_awaited()
         session.delete.assert_not_awaited()
 
+    async def test_row_counts_use_one_statement_and_fill_missing_tables_with_zero(self):
+        session = SimpleNamespace(
+            execute=AsyncMock(
+                return_value=_Rows(
+                    [
+                        (1, 12, "keywords"),
+                        (2, 3, "campaigns"),
+                    ]
+                )
+            )
+        )
+
+        result = await _sem_identity_repair_row_counts(session, (1, 2))
+
+        self.assertEqual(session.execute.await_count, 1)
+        query = str(session.execute.await_args.args[0]).upper()
+        self.assertIn("UNION ALL", query)
+        self.assertEqual(result[1]["keywords"], 12)
+        self.assertEqual(result[2]["campaigns"], 3)
+        self.assertEqual(result[1]["campaigns"], 0)
+        self.assertEqual(result[2]["keywords"], 0)
+
     def test_preview_blocks_conflicting_ucid_and_two_sided_history(self):
         source = _tenant(1, "老虎新材料", 1001)
         target = _tenant(2, " 老虎新材料 ", 2002)
@@ -381,6 +404,63 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         self.assertFalse(result["safety"]["execution_endpoint_available"])
         self.assertIn("separate_database_change_approval", result["required_reviews"])
 
+    def test_populated_source_and_empty_target_blocks_reversed_direction(self):
+        source = _tenant(1, "诺德", 80243027)
+        target = _tenant(2, "诺德", None)
+        accounts = [_account(10, 1, 80243027)]
+
+        result = _sem_identity_repair_preview_payload(
+            source,
+            target,
+            accounts,
+            {1: {"baidu_accounts": 1, "keywords": 500}, 2: {}},
+        )
+
+        self.assertIn(
+            "target_customer_has_no_sem_footprint",
+            {item["code"] for item in result["blockers"]},
+        )
+
+    def test_identity_only_target_warns_that_direction_needs_confirmation(self):
+        source = _tenant(1, "诺德", 80243027)
+        target = _tenant(2, "诺德", 80243027)
+        accounts = [_account(10, 1, 80243027), _account(20, 2, 80243027, status="archived")]
+
+        result = _sem_identity_repair_preview_payload(
+            source,
+            target,
+            accounts,
+            {
+                1: {"baidu_accounts": 1, "keywords": 500},
+                2: {"baidu_accounts": 1},
+            },
+        )
+
+        self.assertIn(
+            "target_customer_has_identity_only",
+            {item["code"] for item in result["warnings"]},
+        )
+
+    def test_ephemeral_oauth_state_does_not_make_empty_target_established(self):
+        source = _tenant(1, "诺德", 80243027)
+        target = _tenant(2, "诺德", None)
+        accounts = [_account(10, 1, 80243027)]
+
+        result = _sem_identity_repair_preview_payload(
+            source,
+            target,
+            accounts,
+            {
+                1: {"baidu_accounts": 1, "keywords": 500},
+                2: {"baidu_oauth_states": 1},
+            },
+        )
+
+        self.assertIn(
+            "target_customer_has_no_sem_footprint",
+            {item["code"] for item in result["blockers"]},
+        )
+
     def test_table_allowlist_is_sem_only_and_every_table_exists(self):
         table_names = {name for name, _category in SEM_IDENTITY_REPAIR_TABLES}
         tenant_scoped_tables = {
@@ -425,6 +505,12 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         self.assertIn('v-for="row in repairTargetCustomers"', view_source)
         self.assertNotIn('v-for="row in customers"', view_source)
         self.assertIn("repairTargetCustomers.value.some", view_source)
+        self.assertIn('@change="selectRepairTarget"', view_source)
+        self.assertIn(':loading="repairLoading"', view_source)
+        self.assertIn("repairPreviewRequestId.value", view_source)
+        self.assertIn("sourceTenantId === repairForm.source_tenant_id", view_source)
+        self.assertIn("targetTenantId === repairForm.target_tenant_id", view_source)
+        self.assertIn('@closed="closeRepairPreview"', view_source)
 
     def test_backend_exposes_no_identity_repair_mutation_route(self):
         repair_routes = [

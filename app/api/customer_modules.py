@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, literal, select, union_all
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
@@ -309,17 +309,22 @@ def _sem_identity_account_select():
 async def _sem_identity_repair_row_counts(
     session: AsyncSession, tenant_ids: tuple[int, int]
 ) -> dict[int, dict[str, int]]:
-    counts = {tenant_id: {} for tenant_id in tenant_ids}
+    counts = {
+        tenant_id: {table_name: 0 for table_name, _category in SEM_IDENTITY_REPAIR_TABLES}
+        for tenant_id in tenant_ids
+    }
+    count_statements = []
     for table_name, _category in SEM_IDENTITY_REPAIR_TABLES:
         table = Base.metadata.tables[table_name]
-        result = await session.execute(
+        count_statements.append(
             select(table.c.tenant_id, func.count())
+            .add_columns(literal(table_name).label("table_name"))
             .where(table.c.tenant_id.in_(tenant_ids))
             .group_by(table.c.tenant_id)
         )
-        by_tenant = {int(tenant_id): int(count or 0) for tenant_id, count in result.all()}
-        for tenant_id in tenant_ids:
-            counts[tenant_id][table_name] = by_tenant.get(tenant_id, 0)
+    result = await session.execute(union_all(*count_statements))
+    for tenant_id, count, table_name in result.all():
+        counts[int(tenant_id)][str(table_name)] = int(count or 0)
     return counts
 
 
@@ -415,10 +420,15 @@ def _sem_identity_repair_preview_payload(
         for table_name, category in SEM_IDENTITY_REPAIR_TABLES
         if category in {"assets", "history", "workflow", "writeback_audit"}
     )
-    source_identity = sum(
-        source_counts.get(table_name, 0)
-        for table_name, category in SEM_IDENTITY_REPAIR_TABLES
-        if category == "identity"
+    source_identity = (
+        int(source.baidu_ucid is not None)
+        + len(source_accounts)
+        + source_counts.get("baidu_oauth_grants", 0)
+    )
+    target_identity = (
+        int(target.baidu_ucid is not None)
+        + len(target_accounts)
+        + target_counts.get("baidu_oauth_grants", 0)
     )
     source_writeback_audit = sum(
         source_counts.get(table_name, 0)
@@ -449,14 +459,28 @@ def _sem_identity_repair_preview_payload(
                 "message": "两个客户均有 SEM 历史数据，需逐表处理唯一约束和冲突记录。",
             }
         )
-    elif source_history == 0 and source_identity == 0:
+    elif source_history and target_identity == 0:
+        blockers.append(
+            {
+                "code": "target_customer_has_no_sem_footprint",
+                "message": "来源客户有 SEM 历史，但拟保留客户没有 SEM 历史或身份记录，可能选反了迁移方向。",
+            }
+        )
+    elif source_history:
+        warnings.append(
+            {
+                "code": "target_customer_has_identity_only",
+                "message": "拟保留客户只有 SEM 身份记录、没有历史数据，必须确认它确实是正确主档。",
+            }
+        )
+    elif source_identity == 0:
         warnings.append(
             {
                 "code": "source_customer_has_no_sem_history",
                 "message": "来源客户没有核心 SEM 历史数据，可能是授权误建的空壳客户。",
             }
         )
-    elif source_history == 0:
+    else:
         warnings.append(
             {
                 "code": "source_customer_has_identity_only",

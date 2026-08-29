@@ -26,6 +26,8 @@ const repairLoading = ref(false)
 const repairCandidates = ref({ groups: [], summary: {} })
 const repairPreview = ref(null)
 const repairForm = reactive({ source_tenant_id: null, target_tenant_id: null })
+const repairCandidateRequestId = ref(0)
+const repairPreviewRequestId = ref(0)
 const moduleLabels = { sem: 'SEM', seo: 'SEO', geo: 'GEO' }
 const editingCustomer = computed(() => customers.value.find((row) => row.id === editingId.value))
 const repairCandidateCustomers = computed(() => {
@@ -49,11 +51,27 @@ const canPreviewRepair = computed(() => (
   && repairForm.target_tenant_id
   && repairForm.source_tenant_id !== repairForm.target_tenant_id
   && repairTargetCustomers.value.some((row) => row.tenant_id === repairForm.target_tenant_id)
+  && !repairLoading.value
 ))
+
+function invalidateRepairPreview() {
+  repairPreviewRequestId.value += 1
+  repairPreview.value = null
+  repairLoading.value = false
+}
 
 function selectRepairSource() {
   repairForm.target_tenant_id = null
-  repairPreview.value = null
+  invalidateRepairPreview()
+}
+
+function selectRepairTarget() {
+  invalidateRepairPreview()
+}
+
+function closeRepairPreview() {
+  repairCandidateRequestId.value += 1
+  invalidateRepairPreview()
 }
 
 function moduleRow(row, code) {
@@ -171,31 +189,44 @@ function rebindAccount(row) {
 
 async function openRepairPreview() {
   repairVisible.value = true
-  repairPreview.value = null
+  invalidateRepairPreview()
+  repairCandidates.value = { groups: [], summary: {} }
   Object.assign(repairForm, { source_tenant_id: null, target_tenant_id: null })
+  const requestId = ++repairCandidateRequestId.value
   repairLoading.value = true
   try {
-    repairCandidates.value = await fetchSemIdentityRepairCandidates()
+    const result = await fetchSemIdentityRepairCandidates()
+    if (requestId === repairCandidateRequestId.value && repairVisible.value) {
+      repairCandidates.value = result
+    }
   } catch (error) {
-    ElMessage.error(error.message)
+    if (requestId === repairCandidateRequestId.value) ElMessage.error(error.message)
   } finally {
-    repairLoading.value = false
+    if (requestId === repairCandidateRequestId.value) repairLoading.value = false
   }
 }
 
 async function runRepairPreview() {
   if (!canPreviewRepair.value) return ElMessage.warning('请选择两个不同的客户')
+  const sourceTenantId = repairForm.source_tenant_id
+  const targetTenantId = repairForm.target_tenant_id
+  const requestId = ++repairPreviewRequestId.value
   repairLoading.value = true
   repairPreview.value = null
   try {
-    repairPreview.value = await fetchSemIdentityRepairPreview(
-      repairForm.source_tenant_id,
-      repairForm.target_tenant_id,
-    )
+    const result = await fetchSemIdentityRepairPreview(sourceTenantId, targetTenantId)
+    if (
+      requestId === repairPreviewRequestId.value
+      && sourceTenantId === repairForm.source_tenant_id
+      && targetTenantId === repairForm.target_tenant_id
+      && repairVisible.value
+    ) {
+      repairPreview.value = result
+    }
   } catch (error) {
-    ElMessage.error(error.message)
+    if (requestId === repairPreviewRequestId.value) ElMessage.error(error.message)
   } finally {
-    repairLoading.value = false
+    if (requestId === repairPreviewRequestId.value) repairLoading.value = false
   }
 }
 
@@ -283,7 +314,7 @@ onMounted(load)
       </el-form>
       <template #footer><el-button @click="visible=false">取消</el-button><el-button type="primary" @click="save">保存</el-button></template>
     </el-dialog>
-    <el-dialog v-model="repairVisible" title="SEM 重复客户只读检测与修复预演" width="900px">
+    <el-dialog v-model="repairVisible" title="SEM 重复客户只读检测与修复预演" width="900px" @closed="closeRepairPreview">
       <div v-loading="repairLoading" class="repair-preview">
         <el-alert
           title="这里只读取并对比数据，不会合并客户、迁移记录、删除数据或执行数据库迁移。预演结果不能直接执行。"
@@ -306,11 +337,11 @@ onMounted(load)
             </el-select>
           </el-form-item>
           <el-form-item label="保留客户（正确主档）">
-            <el-select v-model="repairForm.target_tenant_id" filterable :disabled="!repairForm.source_tenant_id" placeholder="选择同一候选组中的拟保留客户" style="width:260px">
+            <el-select v-model="repairForm.target_tenant_id" filterable :disabled="!repairForm.source_tenant_id" placeholder="选择同一候选组中的拟保留客户" style="width:260px" @change="selectRepairTarget">
               <el-option v-for="row in repairTargetCustomers" :key="row.tenant_id" :label="`${row.name} (#${row.tenant_id})`" :value="row.tenant_id" />
             </el-select>
           </el-form-item>
-          <el-button type="primary" plain :disabled="!canPreviewRepair" @click="runRepairPreview">生成只读预演</el-button>
+          <el-button type="primary" plain :loading="repairLoading" :disabled="!canPreviewRepair" @click="runRepairPreview">生成只读预演</el-button>
         </el-form>
         <template v-if="repairPreview">
           <el-alert
