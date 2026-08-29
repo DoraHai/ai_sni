@@ -102,19 +102,23 @@ async function loadContext() {
   } catch { /* 登录失效由统一拦截器处理 */ }
 }
 
-function onTenantChange(value) {
+async function onTenantChange(value) {
   if (!value || value === session.tenantId) return
   clearSeoSiteId()
   sessionStorage.removeItem('seo_pending_rewrite_source')
   sessionStorage.removeItem('seo_pending_rewrite_options')
-  session.setTenant(value)
+  const query = { ...route.query }
+  delete query.site_id
   if (route.path.startsWith('/seo/keywords/')) {
-    router.replace('/seo/keywords')
+    await router.replace('/seo/keywords')
   } else if (route.path === '/seo/content/editor') {
-    router.replace(route.query.type === 'rewrite' ? '/seo/content/rewrites' : '/seo/content/articles')
+    await router.replace(route.query.type === 'rewrite' ? '/seo/content/rewrites' : '/seo/content/articles')
   } else if (route.path === '/seo/content/answer-editor') {
-    router.replace('/seo/content/qa')
+    await router.replace('/seo/content/qa')
+  } else {
+    await router.replace({ path: route.path, query })
   }
+  session.setTenant(value)
 }
 
 watch(() => route.path, () => { mobileOpen.value = false })
