@@ -91,6 +91,7 @@ from app.seo_rank_limits import (
     SEO_RANK_COLLECTION_LOCK_PATH,
     manual_rank_status,
     reserve_manual_rank_collection,
+    settle_manual_rank_collection,
 )
 from app.seo_distribution_import import (
     MAX_XLSX_BYTES,
@@ -186,6 +187,19 @@ async def _seo_site(
         return None
     row = await session.get(SeoSite, site_id)
     if not row or row.tenant_id != tenant_id:
+        raise HTTPException(404, "SEO site does not exist for this tenant")
+    return row
+
+
+async def _seo_site_for_update(
+    session: AsyncSession, tenant_id: int, site_id: int
+) -> SeoSite:
+    row = await session.scalar(
+        select(SeoSite)
+        .where(SeoSite.id == site_id, SeoSite.tenant_id == tenant_id)
+        .with_for_update()
+    )
+    if row is None:
         raise HTTPException(404, "SEO site does not exist for this tenant")
     return row
 
@@ -627,7 +641,7 @@ async def update_gsc_connection(
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
-    site = await _seo_site(session, req.tenant_id, req.site_id)
+    site = await _seo_site_for_update(session, req.tenant_id, req.site_id)
     try:
         property_url = validate_property(req.property_url, site.canonical_domain)
     except GscError as exc:
@@ -1551,6 +1565,7 @@ async def collect_rank_serp_for_tenant(
     engine: Literal["baidu", "google", "bing"] = "baidu",
     use_ai: bool = True,
     captured_at: datetime | None = None,
+    commit: bool = True,
 ) -> dict[str, Any]:
     """采集一个客户的真实 SERP；供人工刷新与每日定时任务共用。"""
     tenant = await _tenant(session, tenant_id)
@@ -1693,7 +1708,10 @@ async def collect_rank_serp_for_tenant(
             )
         )
         snapshots += 1
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     return {
         "keywords": len(keywords),
         "devices": devices,
@@ -1745,7 +1763,8 @@ async def collect_rank_serp(
         raise HTTPException(409, "另一排名采集任务正在运行，请稍后重试")
     try:
         try:
-            limit_status = reserve_manual_rank_collection(
+            reservation = await reserve_manual_rank_collection(
+                session,
                 req.tenant_id,
                 req.site_id,
                 requested,
@@ -1758,16 +1777,53 @@ async def collect_rank_serp(
                 {"code": exc.code, "message": exc.message, "retry_after_seconds": exc.retry_after},
                 headers={"Retry-After": str(exc.retry_after)},
             ) from exc
-        result = await collect_rank_serp_for_tenant(
-            session=session,
-            tenant_id=req.tenant_id,
-            site_id=req.site_id,
-            keyword_ids=req.keyword_ids,
-            devices=req.devices,
-            max_keywords=req.max_keywords,
-            engine=req.engine,
-            use_ai=req.use_ai,
-        )
+        try:
+            result = await collect_rank_serp_for_tenant(
+                session=session,
+                tenant_id=req.tenant_id,
+                site_id=req.site_id,
+                keyword_ids=req.keyword_ids,
+                devices=req.devices,
+                max_keywords=req.max_keywords,
+                engine=req.engine,
+                use_ai=req.use_ai,
+                commit=False,
+            )
+        except Exception:
+            await session.rollback()
+            try:
+                await settle_manual_rank_collection(
+                    session,
+                    req.tenant_id,
+                    req.site_id,
+                    reservation,
+                    0,
+                    cooldown_seconds=settings.seo_manual_rank_cooldown_seconds,
+                    max_requests_per_day=settings.seo_manual_rank_max_requests_per_day,
+                )
+            except ManualRankLimitError:
+                logger.exception(
+                    "[SEO][SERP] failed to release quota reservation tenant_id=%s site_id=%s",
+                    req.tenant_id,
+                    req.site_id,
+                )
+            raise
+        try:
+            limit_status = await settle_manual_rank_collection(
+                session,
+                req.tenant_id,
+                req.site_id,
+                reservation,
+                result["snapshots"],
+                cooldown_seconds=settings.seo_manual_rank_cooldown_seconds,
+                max_requests_per_day=settings.seo_manual_rank_max_requests_per_day,
+            )
+        except ManualRankLimitError as exc:
+            raise HTTPException(
+                503,
+                {"code": exc.code, "message": exc.message, "retry_after_seconds": exc.retry_after},
+                headers={"Retry-After": str(exc.retry_after)},
+            ) from exc
     finally:
         release_file_lock(collection_lock)
     if result["errors"] and result["snapshots"] == 0:
@@ -1785,7 +1841,8 @@ async def rank_serp_collect_status(
     await _seo_site(session, tenant_id, site_id)
     settings = get_settings()
     try:
-        return manual_rank_status(
+        return await manual_rank_status(
+            session,
             tenant_id,
             site_id,
             cooldown_seconds=settings.seo_manual_rank_cooldown_seconds,
