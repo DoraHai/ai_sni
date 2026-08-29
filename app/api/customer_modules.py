@@ -93,12 +93,14 @@ SEM_IDENTITY_REPAIR_TABLES: tuple[tuple[str, str], ...] = (
     ("writeback_actions", "writeback_audit"),
     ("writeback_approvals", "writeback_audit"),
 )
-SEM_IDENTITY_REPAIR_MAX_CONCURRENCY = 2
+# sem-backend.service runs two Uvicorn workers. This semaphore is process-local,
+# so one slot per worker keeps the production-wide diagnostic ceiling at two.
+SEM_IDENTITY_REPAIR_MAX_CONCURRENCY_PER_WORKER = 1
 SEM_IDENTITY_REPAIR_QUEUE_TIMEOUT_SECONDS = 1.0
 SEM_IDENTITY_REPAIR_REQUEST_TIMEOUT_SECONDS = 20.0
 SEM_IDENTITY_REPAIR_DISCONNECT_POLL_SECONDS = 0.05
 _sem_identity_repair_slots = asyncio.BoundedSemaphore(
-    SEM_IDENTITY_REPAIR_MAX_CONCURRENCY
+    SEM_IDENTITY_REPAIR_MAX_CONCURRENCY_PER_WORKER
 )
 
 
@@ -375,8 +377,20 @@ async def _run_sem_identity_repair_diagnostic(
         for task in tasks:
             if not task.done():
                 task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        _sem_identity_repair_slots.release()
+        cleanup = asyncio.gather(*tasks, return_exceptions=True)
+        cancelled_during_cleanup = False
+        try:
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    # A second cancellation must not interrupt child cleanup or
+                    # permanently consume this worker's only diagnostic slot.
+                    cancelled_during_cleanup = True
+        finally:
+            _sem_identity_repair_slots.release()
+        if cancelled_during_cleanup:
+            raise asyncio.CancelledError
 
 
 async def _wait_for_sem_identity_client_disconnect(

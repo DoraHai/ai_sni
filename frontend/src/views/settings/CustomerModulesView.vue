@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -80,6 +80,8 @@ function closeRepairPreview() {
   repairCandidateRequests.cancel()
   invalidateRepairPreview()
 }
+
+onBeforeUnmount(closeRepairPreview)
 
 function moduleRow(row, code) {
   return row.modules?.find((item) => item.module_code === code)

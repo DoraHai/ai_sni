@@ -371,6 +371,46 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         await asyncio.wait_for(slots.acquire(), timeout=0.01)
         slots.release()
 
+    async def test_repeated_cancellation_during_cleanup_does_not_leak_slot(self):
+        slots = asyncio.BoundedSemaphore(1)
+        started = asyncio.Event()
+        cleanup_started = asyncio.Event()
+        allow_cleanup = asyncio.Event()
+
+        async def operation():
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleanup_started.set()
+                await allow_cleanup.wait()
+
+        with patch("app.api.customer_modules._sem_identity_repair_slots", slots):
+            diagnostic = asyncio.create_task(
+                _run_sem_identity_repair_diagnostic(operation)
+            )
+            await asyncio.wait_for(started.wait(), timeout=0.1)
+            diagnostic.cancel()
+            await asyncio.wait_for(cleanup_started.wait(), timeout=0.1)
+            diagnostic.cancel()
+            await asyncio.sleep(0)
+            allow_cleanup.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(diagnostic, timeout=0.1)
+
+        await asyncio.wait_for(slots.acquire(), timeout=0.01)
+        slots.release()
+
+    def test_production_worker_topology_keeps_global_diagnostic_limit_at_two(self):
+        service = (ROOT / "deploy/sem-backend.service").read_text(encoding="utf-8")
+        source = (ROOT / "app/api/customer_modules.py").read_text(encoding="utf-8")
+
+        self.assertIn("--workers 2", service)
+        self.assertIn(
+            "SEM_IDENTITY_REPAIR_MAX_CONCURRENCY_PER_WORKER = 1",
+            source,
+        )
+
     def test_candidate_http_response_is_not_cacheable(self):
         app = FastAPI()
         app.include_router(customer_modules_router)
@@ -777,6 +817,7 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         self.assertIn("createRequestController", view_source)
         self.assertIn("repairCandidateRequests.cancel()", view_source)
         self.assertIn("repairPreviewRequests.cancel()", view_source)
+        self.assertIn("onBeforeUnmount(closeRepairPreview)", view_source)
         self.assertIn("repairCandidateRequests.finish(controller)", view_source)
         self.assertIn("repairPreviewRequests.finish(controller)", view_source)
         self.assertIn("controller.signal", view_source)
