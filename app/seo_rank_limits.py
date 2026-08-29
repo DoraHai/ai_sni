@@ -173,9 +173,13 @@ async def _site(
     *,
     for_update: bool,
 ) -> SeoSite:
-    statement = select(SeoSite).where(SeoSite.id == site_id, SeoSite.tenant_id == tenant_id)
+    statement = (
+        select(SeoSite)
+        .where(SeoSite.id == site_id, SeoSite.tenant_id == tenant_id)
+        .execution_options(populate_existing=True)
+    )
     if for_update:
-        statement = statement.with_for_update().execution_options(populate_existing=True)
+        statement = statement.with_for_update()
     site = await session.scalar(statement)
     if site is None:
         raise ManualRankLimitError(
@@ -309,6 +313,29 @@ async def reserve_manual_rank_collection(
             max_requests_per_day=daily_limit,
         ),
     )
+
+
+async def renew_manual_rank_collection(
+    session: AsyncSession,
+    tenant_id: int,
+    site_id: int,
+    reservation: ManualRankReservation,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Extend an active reservation without changing cooldown or daily usage."""
+    current = now or _utc_now()
+    site = await _site(session, tenant_id, site_id, for_update=True)
+    state = _state(site)
+    if state.get("reservation_token") != reservation.token:
+        await session.rollback()
+        return False
+    state["reservation_expires_at"] = _naive_utc(
+        current + timedelta(seconds=MANUAL_RANK_RESERVATION_TTL_SECONDS)
+    ).isoformat()
+    _store_state(site, state)
+    await session.commit()
+    return True
 
 
 async def settle_manual_rank_collection(

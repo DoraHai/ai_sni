@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.deepseek import DeepSeekError, chat_json, is_enabled
-from app.database import get_session
+from app.database import async_session_factory, get_session
 from app.config import get_settings
 from app.geo.audit import GeoAuditError, audit_url, normalize_url, safe_fetch
 from app.geo.chinaz import fetch_chinaz_seo_metrics
@@ -87,9 +87,12 @@ from app.seo_competitor import (
     competitor_retry_after,
 )
 from app.seo_rank_limits import (
+    MANUAL_RANK_RESERVATION_TTL_SECONDS,
     ManualRankLimitError,
+    ManualRankReservation,
     SEO_RANK_COLLECTION_LOCK_PATH,
     manual_rank_status,
+    renew_manual_rank_collection,
     reserve_manual_rank_collection,
     settle_manual_rank_collection,
 )
@@ -171,6 +174,15 @@ def _rank_iso(value: datetime | None) -> str | None:
         return None
     aware = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
     return aware.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _database_iso(value: datetime | None) -> str | None:
+    """Serialize database-generated wall-clock timestamps with an explicit zone."""
+    if value is None:
+        return None
+    database_timezone = timezone(timedelta(hours=8))
+    aware = value.replace(tzinfo=database_timezone) if value.tzinfo is None else value
+    return aware.isoformat()
 
 
 async def _tenant(session: AsyncSession, tenant_id: int) -> Tenant:
@@ -326,6 +338,7 @@ def _rank_payload(row: SeoRankSnapshot) -> dict[str, Any]:
         "result_url": row.result_url,
         "source": row.source,
         "checked_at": _rank_iso(row.checked_at),
+        "created_at": _database_iso(getattr(row, "created_at", None)),
     }
 
 
@@ -1182,6 +1195,7 @@ def _serp_payload(row: SeoSerpResult, keyword: str | None = None) -> dict[str, A
         "is_confirmed": row.is_confirmed,
         "provider": row.provider,
         "captured_at": _rank_iso(row.captured_at),
+        "created_at": _database_iso(getattr(row, "created_at", None)),
     }
 
 
@@ -1730,6 +1744,47 @@ async def collect_rank_serp_for_tenant(
     }
 
 
+async def _maintain_rank_reservation(
+    tenant_id: int,
+    site_id: int,
+    reservation: ManualRankReservation,
+    stop: asyncio.Event,
+) -> None:
+    interval = max(1, MANUAL_RANK_RESERVATION_TTL_SECONDS // 3)
+    delay = interval
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=delay)
+            return
+        except TimeoutError:
+            pass
+        try:
+            async with async_session_factory() as heartbeat_session:
+                renewed = await renew_manual_rank_collection(
+                    heartbeat_session,
+                    tenant_id,
+                    site_id,
+                    reservation,
+                )
+            if not renewed:
+                logger.warning(
+                    "[SEO][SERP] quota reservation heartbeat lost "
+                    "tenant_id=%s site_id=%s",
+                    tenant_id,
+                    site_id,
+                )
+                return
+            delay = interval
+        except Exception:
+            logger.exception(
+                "[SEO][SERP] quota reservation heartbeat failed "
+                "tenant_id=%s site_id=%s",
+                tenant_id,
+                site_id,
+            )
+            delay = min(30, max(1, interval // 4))
+
+
 @router.post("/rank-serp/collect")
 async def collect_rank_serp(
     req: SerpCollectRequest,
@@ -1777,18 +1832,31 @@ async def collect_rank_serp(
                 {"code": exc.code, "message": exc.message, "retry_after_seconds": exc.retry_after},
                 headers={"Retry-After": str(exc.retry_after)},
             ) from exc
-        try:
-            result = await collect_rank_serp_for_tenant(
-                session=session,
-                tenant_id=req.tenant_id,
-                site_id=req.site_id,
-                keyword_ids=req.keyword_ids,
-                devices=req.devices,
-                max_keywords=req.max_keywords,
-                engine=req.engine,
-                use_ai=req.use_ai,
-                commit=False,
+        heartbeat_stop = asyncio.Event()
+        heartbeat_task = asyncio.create_task(
+            _maintain_rank_reservation(
+                req.tenant_id,
+                req.site_id,
+                reservation,
+                heartbeat_stop,
             )
+        )
+        try:
+            try:
+                result = await collect_rank_serp_for_tenant(
+                    session=session,
+                    tenant_id=req.tenant_id,
+                    site_id=req.site_id,
+                    keyword_ids=req.keyword_ids,
+                    devices=req.devices,
+                    max_keywords=req.max_keywords,
+                    engine=req.engine,
+                    use_ai=req.use_ai,
+                    commit=False,
+                )
+            finally:
+                heartbeat_stop.set()
+                await heartbeat_task
         except Exception:
             await session.rollback()
             try:
@@ -5272,6 +5340,15 @@ class CompetitorEventCreate(BaseModel):
     def validate_optional_source_url(cls, value: Any) -> str | None:
         return _validate_competitor_event_url(value, required=False)
 
+    @field_validator("event_at")
+    @classmethod
+    def normalize_event_at(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone(timedelta(hours=8)))
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+
 
 def _validate_competitor_event_url(value: Any, *, required: bool) -> str | None:
     normalized = value.strip() if isinstance(value, str) else ""
@@ -5317,7 +5394,7 @@ def _competitor_payload(row: SeoCompetitor) -> dict[str, Any]:
         "last_checked_at": _rank_iso(row.last_checked_at),
         "next_collection_allowed_at": _rank_iso(next_allowed_at),
         "collection_retry_after_seconds": retry_after,
-        "created_at": _iso(row.created_at),
+        "created_at": _database_iso(row.created_at),
     }
 
 
@@ -5433,7 +5510,7 @@ async def list_competitors(tenant_id: int, site_id: int | None = None, session: 
     counts = defaultdict(lambda: {"content": 0, "backlink": 0})
     for event in events:
         counts[event.competitor_id][event.event_type] += 1
-    return {"items": [{**_competitor_payload(row), **counts[row.id]} for row in rows], "events": [{"id": event.id, "competitor_id": event.competitor_id, "event_type": event.event_type, "title": event.title, "url": event.url, "source_url": event.source_url, "summary": event.summary, "event_at": _iso(event.event_at), "detected_at": _iso(event.detected_at)} for event in events[:100]]}
+    return {"items": [{**_competitor_payload(row), **counts[row.id]} for row in rows], "events": [{"id": event.id, "competitor_id": event.competitor_id, "event_type": event.event_type, "title": event.title, "url": event.url, "source_url": event.source_url, "summary": event.summary, "event_at": _rank_iso(event.event_at), "detected_at": _database_iso(event.detected_at)} for event in events[:100]]}
 
 
 @router.post("/competitors")
@@ -5511,13 +5588,14 @@ async def collect_competitor(
         logger.warning(
             "[SEO][COMPETITOR] manual collection failed "
             "competitor_id=%s tenant_id=%s site_id=%s code=%s "
-            "error_type=%s status_code=%s elapsed_ms=%s",
+            "error_type=%s status_code=%s timeout_phase=%s elapsed_ms=%s",
             competitor.id,
             req.tenant_id,
             req.site_id,
             exc.code,
             exc.error_type,
             exc.status_code,
+            exc.timeout_phase,
             exc.elapsed_ms,
         )
         raise HTTPException(
@@ -5588,4 +5666,4 @@ async def create_competitor_event(req: CompetitorEventCreate, session: AsyncSess
     except IntegrityError as exc:
         await session.rollback(); raise HTTPException(409, "该竞品动态已存在") from exc
     await session.refresh(row)
-    return {"id": row.id, "event_type": row.event_type, "url": row.url, "detected_at": _iso(row.detected_at)}
+    return {"id": row.id, "event_type": row.event_type, "url": row.url, "detected_at": _database_iso(row.detected_at)}

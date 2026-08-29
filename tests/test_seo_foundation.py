@@ -20,6 +20,7 @@ from app.api.seo import (
     SitePageImport,
     SitePageUpdate,
     _keyword_payload,
+    _database_iso,
     _apply_site_page_audit,
     _metric_payload,
     _missing_content_keywords,
@@ -252,6 +253,7 @@ def test_keyword_history_query_is_engine_device_and_tenant_scoped() -> None:
             "result_url": "https://www.nord.cn/cn/home-cn.jsp",
             "source": "manual_import",
             "checked_at": result["rank_history"][0]["checked_at"],
+            "created_at": None,
         }
     ]
 
@@ -602,6 +604,12 @@ def test_rank_timestamps_are_serialized_as_explicit_utc_instants() -> None:
         tzinfo=timezone(timedelta(hours=8)),
     )
     assert _rank_iso(shanghai_value) == "2026-08-24T16:57:03Z"
+
+
+def test_database_timestamps_are_serialized_with_an_explicit_timezone() -> None:
+    assert _database_iso(datetime(2026, 8, 24, 16, 57, 3)) == (
+        "2026-08-24T16:57:03+08:00"
+    )
 
 
 def test_serp_collection_error_payload_uses_ids_and_safe_metadata_only() -> None:

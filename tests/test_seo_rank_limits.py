@@ -9,6 +9,7 @@ import pytest
 from app.seo_rank_limits import (
     ManualRankLimitError,
     manual_rank_status,
+    renew_manual_rank_collection,
     reserve_manual_rank_collection,
     settle_manual_rank_collection,
 )
@@ -136,6 +137,55 @@ def test_manual_collection_system_failure_does_not_charge_daily_quota() -> None:
     assert status["retry_after_seconds"] == 50
 
 
+def test_manual_collection_heartbeat_renews_active_reservation() -> None:
+    row = _row()
+    session = _session(row)
+    now = datetime(2026, 8, 24, 6, 0, tzinfo=timezone.utc)
+    reservation = asyncio.run(
+        reserve_manual_rank_collection(
+            session,
+            1,
+            2,
+            1,
+            cooldown_seconds=60,
+            max_requests_per_day=5,
+            now=now,
+        )
+    )
+
+    renewed = asyncio.run(
+        renew_manual_rank_collection(
+            session,
+            1,
+            2,
+            reservation,
+            now=now + timedelta(minutes=5),
+        )
+    )
+
+    assert renewed is True
+    assert _limit_state(row)["reservation_expires_at"] == "2026-08-24T06:15:00"
+    assert _limit_state(row)["daily_requests"] == 0
+
+
+def test_manual_collection_heartbeat_rejects_lost_reservation() -> None:
+    row = _row()
+    row.site_settings = {
+        "manual_rank_collection_limit": {
+            "reservation_token": "another-worker",
+        }
+    }
+    session = _session(row)
+    reservation = SimpleNamespace(token="original", requested=1, status={})
+
+    renewed = asyncio.run(
+        renew_manual_rank_collection(session, 1, 2, reservation)
+    )
+
+    assert renewed is False
+    session.rollback.assert_awaited_once()
+
+
 def test_manual_collection_status_reopens_after_cooldown() -> None:
     row = _row()
     row.site_settings = {
@@ -158,6 +208,8 @@ def test_manual_collection_status_reopens_after_cooldown() -> None:
     )
     assert status["allowed"] is True
     assert status["daily_requests_used"] == 2
+    statement = session.scalar.await_args.args[0]
+    assert statement.get_execution_options()["populate_existing"] is True
 
 
 def test_manual_collection_status_lazily_imports_legacy_state(tmp_path) -> None:
