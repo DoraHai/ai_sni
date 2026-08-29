@@ -10,6 +10,7 @@
     "build:auth": "vite build --config vite.auth.config.js",
     "verify:auth-build": "node scripts/verify-auth-build.mjs dist-auth",
     "verify:sem-build": "node scripts/verify-sem-build.mjs dist",
+    "test:sem-date-time": "node scripts/test-sem-date-time.mjs",
     "test:chunk-recovery": "node scripts/test-chunk-recovery.mjs",
     "test:sem-identity-repair-requests": "node scripts/test-sem-identity-repair-requests.mjs",
     "deploy:sem": "bash scripts/deploy-sem.sh",

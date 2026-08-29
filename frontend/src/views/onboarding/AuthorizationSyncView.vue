@@ -6,6 +6,7 @@ import { fetchBaiduOAuthStatus, startBaiduOAuth } from '../../api/baiduOAuth'
 import { fetchTenants } from '../../api/auth'
 import { fetchSemAccounts } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
+import { parseUtcTimestamp } from '../../utils/dateTime'
 
 const route = useRoute()
 const router = useRouter()
@@ -37,8 +38,8 @@ const readinessLabel = computed(() => {
 
 function formatDate(value) {
   if (!value) return '尚未同步'
-  const date = new Date(value.endsWith?.('Z') ? value : `${value}Z`)
-  if (Number.isNaN(date.getTime())) return value
+  const date = parseUtcTimestamp(value)
+  if (!date) return value
   return new Intl.DateTimeFormat('zh-CN', {
     month: '2-digit',
     day: '2-digit',
