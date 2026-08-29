@@ -1,9 +1,11 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Integer,
@@ -81,6 +83,34 @@ class SeoRankSnapshot(Base):
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
     checked_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class SeoManualRankLimit(Base):
+    """Persistent daily quota and in-flight reservation for manual rank collection."""
+
+    __tablename__ = "seo_manual_rank_limits"
+
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True
+    )
+    site_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("seo_sites.id", ondelete="CASCADE"), primary_key=True
+    )
+    daily_date: Mapped[date] = mapped_column(Date, nullable=False)
+    daily_requests: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime)
+    reservation_token: Mapped[str | None] = mapped_column(String(36))
+    reserved_requests: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reservation_expires_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("daily_requests >= 0", name="ck_seo_manual_rank_daily_nonnegative"),
+        CheckConstraint("reserved_requests >= 0", name="ck_seo_manual_rank_reserved_nonnegative"),
+    )
 
 
 class SeoBrandAsset(Base):

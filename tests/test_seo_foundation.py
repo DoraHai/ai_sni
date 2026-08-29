@@ -48,6 +48,7 @@ from app.models.seo import (
     SeoInternalLink,
     SeoKeywordAsset,
     SeoMetricSnapshot,
+    SeoManualRankLimit,
     SeoPageSnapshot,
     SeoRankSnapshot,
     SeoSerpResult,
@@ -655,7 +656,15 @@ def test_all_failed_serp_collection_returns_generic_safe_error() -> None:
     }
     session = AsyncMock()
     session.scalar = AsyncMock(return_value=1)
-    reserve = MagicMock(return_value={"allowed": False, "retry_after_seconds": 3600})
+    reservation = SimpleNamespace(token="reservation-1", requested=1, status={})
+    reserve = AsyncMock(return_value=reservation)
+    settle = AsyncMock(
+        return_value={
+            "allowed": False,
+            "retry_after_seconds": 3600,
+            "daily_requests_used": 0,
+        }
+    )
 
     collector = AsyncMock(return_value=failed)
     with patch(
@@ -672,6 +681,9 @@ def test_all_failed_serp_collection_returns_generic_safe_error() -> None:
     ), patch(
         "app.api.seo.reserve_manual_rank_collection",
         reserve,
+    ), patch(
+        "app.api.seo.settle_manual_rank_collection",
+        settle,
     ):
         with pytest.raises(Exception) as exc:
             asyncio.run(collect_rank_serp(request, session, context))
@@ -681,9 +693,65 @@ def test_all_failed_serp_collection_returns_generic_safe_error() -> None:
         "本次排名采集全部失败，请稍后重试或联系管理员"
     )
     assert "provider" not in str(getattr(exc.value, "detail", ""))
-    assert reserve.call_args.args[2] == 1
+    assert reserve.await_args.args[3] == 1
+    assert settle.await_args.args[4] == 0
     assert collector.await_args.kwargs["keyword_ids"] == [3]
     assert collector.await_args.kwargs["max_keywords"] == 1
+
+
+def test_partial_serp_collection_charges_only_successful_provider_requests() -> None:
+    request = SerpCollectRequest(
+        tenant_id=1,
+        site_id=1,
+        keyword_ids=[3, 4],
+        devices=["desktop"],
+        max_keywords=2,
+        use_ai=False,
+    )
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.keywords": "edit"},
+    )
+    collected = {
+        "snapshots": 1,
+        "errors": [{"keyword_id": 4, "device": "desktop", "code": "provider_timeout"}],
+    }
+    session = AsyncMock()
+    session.scalar = AsyncMock(return_value=2)
+    reservation = SimpleNamespace(token="reservation-2", requested=2, status={})
+    reserve = AsyncMock(return_value=reservation)
+    settle = AsyncMock(
+        return_value={
+            "allowed": False,
+            "retry_after_seconds": 3600,
+            "daily_requests_used": 1,
+        }
+    )
+    with patch(
+        "app.api.seo.collect_rank_serp_for_tenant",
+        new=AsyncMock(return_value=collected),
+    ), patch(
+        "app.api.seo._seo_site",
+        new=AsyncMock(return_value=object()),
+    ), patch(
+        "app.api.seo.acquire_file_lock",
+        return_value=object(),
+    ), patch(
+        "app.api.seo.release_file_lock",
+    ), patch(
+        "app.api.seo.reserve_manual_rank_collection",
+        reserve,
+    ), patch(
+        "app.api.seo.settle_manual_rank_collection",
+        settle,
+    ):
+        result = asyncio.run(collect_rank_serp(request, session, context))
+
+    assert settle.await_args.args[4] == 1
+    assert result["manual_limit"]["daily_requests_used"] == 1
 
 
 @pytest.mark.parametrize("site_id", [None, 0, -1])
@@ -709,6 +777,7 @@ def test_serp_collection_accepts_only_implemented_automatic_engines() -> None:
 def test_models_use_separate_seo_tables() -> None:
     assert SeoKeywordAsset.__tablename__ == "seo_keyword_assets"
     assert SeoRankSnapshot.__tablename__ == "seo_rank_snapshots"
+    assert SeoManualRankLimit.__tablename__ == "seo_manual_rank_limits"
     assert SeoBrandAsset.__tablename__ == "seo_brand_assets"
     assert SeoSerpResult.__tablename__ == "seo_serp_results"
     assert SeoSitePage.__tablename__ == "seo_site_pages"
