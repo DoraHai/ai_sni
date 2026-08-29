@@ -158,6 +158,7 @@ def test_original_content_brief_supports_bounded_multi_keywords() -> None:
     assert source_path_allowed("migrations/versions/20260825_0076_oauth_rebind_intent.py")
     assert source_path_allowed("migrations/versions/20260829_0075_seo_content_source_page.py")
     assert source_path_allowed("migrations/versions/20260829_0077_merge_sem_seo_heads.py")
+    assert source_path_allowed("migrations/versions/20260829_0078_seo_site_data_repairs.py")
 
 
 def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:
@@ -222,6 +223,19 @@ def test_seo_content_and_rank_views_are_site_scoped_and_html_safe() -> None:
     assert "site_id: siteId || undefined" in api
     assert "func.row_number()" in backend
     assert "all_ranks = list" not in backend
+
+
+def test_site_optimization_normalizes_issue_codes_and_only_links_drafts() -> None:
+    view = (
+        Path(__file__).parents[1]
+        / "frontend/src/views/seo/SeoSiteOptimizationView.vue"
+    ).read_text(encoding="utf-8")
+
+    assert "title_missing:'缺少 Title'" in view
+    assert "NO_DEFINITION:'缺少定义块'" in view
+    assert "}[code] || '其他检测问题'" in view
+    assert "['planned', 'drafting'].includes(item.status)" in view
+    assert "{v:'content',n:'内容质量'}" in view
 
 
 def test_release_diff_allows_only_seo_assets_and_hash_token_changes(tmp_path: Path) -> None:

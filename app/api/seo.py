@@ -153,6 +153,51 @@ PAGE_STATUSES = {
     "verified",
     "error",
 }
+LINKABLE_CONTENT_STATUSES = {"planned", "drafting"}
+PAGE_ISSUE_FILTER_CODES = {
+    "title": {"title", "title_missing", "title_too_long"},
+    "description": {"description", "description_missing"},
+    "h1": {"h1", "h1_missing", "h1_multiple"},
+    "canonical": {"canonical"},
+    "indexable": {"indexable", "noindex", "robots_blocked"},
+    "schema": {"schema", "entity_schema", "schema_invalid"},
+    "content": {
+        "heading_depth",
+        "substantial",
+        "thin_content",
+        "faq",
+        "citations",
+        "freshness",
+        "block_definition",
+        "block_numbers",
+        "block_comparison",
+        "block_howto",
+        "block_faq",
+        "NO_DEFINITION",
+        "NO_NUMBERS",
+        "NO_COMPARISON",
+        "NO_HOWTO",
+        "NO_FAQ",
+    },
+    "image": {"image_alt_missing"},
+    "language": {"language", "html_lang_missing"},
+    "crawl": {
+        "https",
+        "robots",
+        "ai_crawlers",
+        "llms",
+        "http_4xx",
+        "http_5xx",
+        "empty_response",
+        "non_html",
+        "timeout",
+        "too_many_redirects",
+        "dns_error",
+        "tls_error",
+        "blocked_address",
+        "connection_error",
+    },
+}
 BRAND_ASSET_TYPES = {"official_domain", "content_url", "platform_account"}
 OWNERSHIP_TYPES = {"official_site", "brand_content", "ai_suspected", "unrelated", "unresolved"}
 METRIC_STATUSES = {"available", "not_configured", "pending", "failed", "stale"}
@@ -187,6 +232,15 @@ def _database_iso(value: datetime | None) -> str | None:
     database_timezone = timezone(timedelta(hours=8))
     aware = value.replace(tzinfo=database_timezone) if value.tzinfo is None else value
     return aware.isoformat()
+
+
+def _page_issue_filter_condition(issue_code: str):
+    """Match one UI issue category across crawler and single-page audit codes."""
+    normalized = issue_code.strip()
+    aliases = PAGE_ISSUE_FILTER_CODES.get(normalized, {normalized})
+    return or_(
+        *(SeoSitePage.issue_codes.contains([alias]) for alias in sorted(aliases))
+    )
 
 
 async def _tenant(session: AsyncSession, tenant_id: int) -> Tenant:
@@ -2354,7 +2408,7 @@ async def list_site_pages(
             raise HTTPException(400, "页面状态无效")
         conditions.append(SeoSitePage.status == status)
     if issue_code:
-        conditions.append(SeoSitePage.issue_codes.contains([issue_code.strip()]))
+        conditions.append(_page_issue_filter_condition(issue_code))
     total = await session.scalar(select(func.count()).select_from(SeoSitePage).where(*conditions))
     rows = list(
         await session.scalars(
@@ -3850,6 +3904,8 @@ async def create_content_asset(req: ContentCreate, session: AsyncSession = Depen
     await _tenant(session, req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
     if req.source_page_id is not None:
+        if req.status not in LINKABLE_CONTENT_STATUSES:
+            raise HTTPException(409, "只有计划中或草稿状态的内容任务可以关联来源页面")
         source_page = await _site_page(session, req.source_page_id, req.tenant_id)
         if source_page.site_id != req.site_id:
             raise HTTPException(400, "来源页面与内容所属站点不一致")
@@ -5288,6 +5344,10 @@ async def update_content_asset(content_id: int, tenant_id: int, req: ContentUpda
         values["humanized_content"] = _sanitize_content_html(values.get("humanized_content"))
     requested_source_page_id = values.get("source_page_id")
     if requested_source_page_id is not None:
+        is_new_link = requested_source_page_id != row.source_page_id
+        effective_status = values.get("status", row.status)
+        if is_new_link and effective_status not in LINKABLE_CONTENT_STATUSES:
+            raise HTTPException(409, "只有计划中或草稿状态的内容任务可以关联来源页面")
         if row_site_id is None:
             raise HTTPException(400, "内容任务没有有效站点，无法关联来源页面")
         source_page = await _site_page(session, requested_source_page_id, tenant_id)

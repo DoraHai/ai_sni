@@ -38,6 +38,7 @@ from app.api.seo import (
     _serp_error_payload,
     _normalize_brand_homepage,
     _page_tdk_suggestions,
+    _page_issue_filter_condition,
     _seo_ai_prompt,
     _selected_keyword_ids,
     _sanitize_content_html,
@@ -401,6 +402,15 @@ def test_content_source_page_relation_is_unique_per_site() -> None:
     assert "uq_seo_content_asset_source_page" in constraints
 
 
+def test_page_issue_filter_expands_crawler_and_audit_aliases() -> None:
+    condition = _page_issue_filter_condition("title")
+    aliases = {clause.right.value[0] for clause in condition.clauses}
+    assert aliases == {"title", "title_missing", "title_too_long"}
+
+    raw_condition = _page_issue_filter_condition("future_issue")
+    assert raw_condition.right.value == ["future_issue"]
+
+
 def test_content_source_page_must_belong_to_the_selected_site() -> None:
     request = ContentCreate(
         tenant_id=1,
@@ -456,6 +466,32 @@ def test_content_source_page_cannot_create_a_duplicate_task() -> None:
     session.commit.assert_not_awaited()
 
 
+def test_published_content_cannot_be_created_with_a_source_page() -> None:
+    request = ContentCreate(
+        tenant_id=1,
+        site_id=9,
+        source_page_id=231,
+        title="已发布内容",
+        status="published",
+    )
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+    session = AsyncMock()
+    with (
+        patch("app.api.seo._tenant", new=AsyncMock()),
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+    ):
+        with pytest.raises(Exception) as exc:
+            asyncio.run(create_content_asset(request, session, context))
+    assert getattr(exc.value, "status_code", None) == 409
+    session.commit.assert_not_awaited()
+
+
 def test_existing_content_task_can_be_bound_to_a_source_page() -> None:
     request = ContentUpdate(source_page_id=231)
     row = SeoContentAsset(
@@ -475,6 +511,24 @@ def test_existing_content_task_can_be_bound_to_a_source_page() -> None:
     assert row.source_page_id == 231
     assert result["source_page_id"] == 231
     session.commit.assert_awaited_once()
+
+
+def test_published_content_cannot_be_newly_bound_to_a_source_page() -> None:
+    request = ContentUpdate(source_page_id=231)
+    row = SeoContentAsset(
+        tenant_id=1,
+        site_id=9,
+        title="已发布内容",
+        content_type="article",
+        status="published",
+    )
+    row.id = 88
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=row)
+    with pytest.raises(Exception) as exc:
+        asyncio.run(update_content_asset(88, 1, request, session))
+    assert getattr(exc.value, "status_code", None) == 409
+    session.commit.assert_not_awaited()
 
 
 def test_content_create_does_not_mask_unrelated_integrity_errors() -> None:
