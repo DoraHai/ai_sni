@@ -18,7 +18,11 @@ os.environ.setdefault(
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
 from app.models import BaiduAccount, Tenant
-from app.scheduler import fetch_today_keyword_report
+from app.scheduler import (
+    fetch_today_keyword_report,
+    fetch_yesterday_keyword_report,
+    sync_search_terms_daily,
+)
 
 
 class _SessionContext:
@@ -107,6 +111,109 @@ class SchedulerAccountIterationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(sync_calls, [(101, 11), (102, 12)])
         self.assertEqual(session_factory.call_count, 3)
+    async def test_search_term_failure_does_not_abort_next_account(self):
+        refs = [(11, 101, "broken"), (12, 102, "healthy")]
+        accounts = [
+            SimpleNamespace(id=11, tenant_id=101, baidu_username="broken"),
+            SimpleNamespace(id=12, tenant_id=102, baidu_username="healthy"),
+        ]
+        sessions = [SimpleNamespace() for _ in range(3)]
+        session_factory = unittest.mock.Mock(
+            side_effect=[
+                _SessionContext(sessions[0]),
+                _SessionContext(sessions[1], RuntimeError("rollback failed")),
+                _SessionContext(sessions[2]),
+            ]
+        )
+        reload_account = AsyncMock(
+            side_effect=[
+                (accounts[0], SimpleNamespace(id=101), None),
+                (accounts[1], SimpleNamespace(id=102), None),
+            ]
+        )
+        sync = AsyncMock(side_effect=[RuntimeError("provider failed"), 7])
+
+        with (
+            patch("app.scheduler._report_sync_lock", new=asyncio.Lock()),
+            patch("app.scheduler.async_session_factory", new=session_factory),
+            patch(
+                "app.scheduler.refresh_expiring_oauth_grants",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
+                "app.scheduler._scheduled_account_refs",
+                new=AsyncMock(return_value=refs),
+            ),
+            patch("app.scheduler._reload_scheduled_account", new=reload_account),
+            patch("app.scheduler.sync_search_terms_for_account", new=sync),
+        ):
+            await sync_search_terms_daily()
+
+        self.assertEqual(sync.await_count, 2)
+        self.assertEqual(sync.await_args_list[1].args[1].id, 12)
+        self.assertEqual(session_factory.call_count, 3)
+
+    async def test_yesterday_report_failure_does_not_abort_later_account_or_phases(self):
+        refs = [(11, 101, "broken"), (12, 102, "healthy")]
+        accounts = {
+            11: SimpleNamespace(id=11, tenant_id=101, baidu_username="broken"),
+            12: SimpleNamespace(id=12, tenant_id=102, baidu_username="healthy"),
+        }
+
+        async def reload_account(_session, account_id, tenant_id):
+            return accounts[account_id], SimpleNamespace(id=tenant_id), None
+
+        session_factory = unittest.mock.Mock(
+            side_effect=lambda: _SessionContext(SimpleNamespace())
+        )
+        report_sync = AsyncMock(side_effect=[RuntimeError("db failed"), 5])
+        dimension_sync = AsyncMock(return_value={"region": 0, "hourly": 0})
+        operation_sync = AsyncMock(return_value=0)
+
+        with (
+            patch("app.scheduler._report_sync_lock", new=asyncio.Lock()),
+            patch("app.scheduler.async_session_factory", new=session_factory),
+            patch(
+                "app.scheduler.refresh_expiring_oauth_grants",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
+                "app.scheduler._scheduled_account_refs",
+                new=AsyncMock(return_value=refs),
+            ),
+            patch("app.scheduler._reload_scheduled_account", new=reload_account),
+            patch("app.scheduler.sync_keyword_report_for_account", new=report_sync),
+            patch(
+                "app.scheduler.sync_keyword_dimension_reports_for_account",
+                new=dimension_sync,
+            ),
+            patch("app.scheduler.sync_region_snapshot", new=AsyncMock(return_value=0)),
+            patch("app.scheduler.sync_campaigns_for_account", new=AsyncMock(return_value=0)),
+            patch("app.scheduler.sync_adgroups_for_account", new=AsyncMock(return_value=0)),
+            patch("app.scheduler.sync_keywords_for_account", new=AsyncMock(return_value=0)),
+            patch("app.scheduler.sync_price_strategies_for_account", new=AsyncMock(return_value=0)),
+            patch("app.scheduler.sync_ocpc_packages_for_account", new=AsyncMock(return_value=0)),
+            patch("app.scheduler.sync_operation_records_for_account", new=operation_sync),
+            patch("app.scheduler.sleep", new=AsyncMock()),
+            patch(
+                "app.scheduler.list_active_module_tenants",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch(
+                "app.scheduler.run_rules_for_all_tenants",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
+                "app.scheduler.run_suggestions_for_all_tenants",
+                new=AsyncMock(return_value={}),
+            ),
+        ):
+            await fetch_yesterday_keyword_report()
+
+        self.assertEqual(report_sync.await_count, 2)
+        self.assertEqual(report_sync.await_args_list[1].args[1].id, 12)
+        dimension_sync.assert_awaited_once()
+        self.assertEqual(operation_sync.await_count, 2)
 
     async def test_one_account_reload_failure_does_not_abort_next_account(self):
         listed = [_Account(11, 101, "broken"), _Account(12, 102, "healthy")]
