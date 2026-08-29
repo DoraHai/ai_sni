@@ -124,9 +124,13 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         account_query = str(session.scalars.await_args_list[2].args[0]).lower()
         self.assertNotIn("access_token_encrypted", account_query)
         self.assertNotIn("refresh_token_encrypted", account_query)
-        transaction_query = str(session.execute.await_args.args[0]).upper()
+        self.assertEqual(session.execute.await_count, 2)
+        transaction_query = str(session.execute.await_args_list[0].args[0]).upper()
         self.assertIn("REPEATABLE READ", transaction_query)
         self.assertIn("READ ONLY", transaction_query)
+        timeout_query = str(session.execute.await_args_list[1].args[0]).upper()
+        self.assertIn("SET LOCAL STATEMENT_TIMEOUT", timeout_query)
+        self.assertIn("15S", timeout_query)
         grant_query = str(session.scalars.await_args_list[3].args[0]).lower()
         self.assertIn("baidu_oauth_grants.status", grant_query)
         session.commit.assert_not_awaited()
@@ -198,9 +202,9 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
 
         self.assertEqual(caught.exception.status_code, 400)
         self.assertIn("SEM", caught.exception.detail)
-        self.assertEqual(session.execute.await_count, 1)
+        self.assertEqual(session.execute.await_count, 2)
         self.assertIn(
-            "REPEATABLE READ", str(session.execute.await_args.args[0]).upper()
+            "REPEATABLE READ", str(session.execute.await_args_list[0].args[0]).upper()
         )
 
     async def test_preview_endpoint_accepts_two_sem_evidence_customers_read_only(self):
@@ -238,7 +242,10 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         account_query = str(session.scalars.await_args_list[1].args[0]).lower()
         self.assertNotIn("access_token_encrypted", account_query)
         self.assertNotIn("refresh_token_encrypted", account_query)
-        self.assertEqual(session.execute.await_count, 1)
+        self.assertEqual(session.execute.await_count, 2)
+        self.assertIn(
+            "STATEMENT_TIMEOUT", str(session.execute.await_args_list[1].args[0]).upper()
+        )
         session.commit.assert_not_awaited()
         session.flush.assert_not_awaited()
         session.delete.assert_not_awaited()
@@ -260,6 +267,9 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         self.assertEqual(session.execute.await_count, 1)
         query = str(session.execute.await_args.args[0]).upper()
         self.assertIn("UNION ALL", query)
+        oauth_state_branch = query.split("BAIDU_OAUTH_STATES", 1)[1].split("UNION ALL", 1)[0]
+        self.assertIn("CONSUMED_AT IS NULL", oauth_state_branch)
+        self.assertIn("EXPIRES_AT > NOW()", oauth_state_branch)
         self.assertEqual(result[1]["keywords"], 12)
         self.assertEqual(result[2]["campaigns"], 3)
         self.assertEqual(result[1]["campaigns"], 0)
@@ -484,6 +494,28 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
             {item["code"] for item in result["blockers"]},
         )
 
+    def test_pending_oauth_state_blocks_repair_until_authorization_finishes(self):
+        source = _tenant(1, "诺德", 80243027)
+        target = _tenant(2, "诺德", 80243027)
+
+        result = _sem_identity_repair_preview_payload(
+            source,
+            target,
+            [],
+            {1: {"baidu_oauth_states": 1}, 2: {}},
+        )
+
+        self.assertIn(
+            "pending_oauth_authorization",
+            {item["code"] for item in result["blockers"]},
+        )
+        self.assertTrue(
+            all(
+                operation["proposed_action"] == "blocked_no_reassignment"
+                for operation in result["proposed_operations"]
+            )
+        )
+
     def test_non_active_accounts_do_not_establish_target_identity(self):
         for status in (
             "inactive",
@@ -594,6 +626,10 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         self.assertIn("repairTargetCustomers.value.some", view_source)
         self.assertIn('@change="selectRepairTarget"', view_source)
         self.assertIn(':loading="repairLoading"', view_source)
+        self.assertIn("repairCandidateStatus.value = 'error'", view_source)
+        self.assertIn("repairCandidateStatus === 'success'", view_source)
+        self.assertIn('@click="loadRepairCandidates"', view_source)
+        self.assertNotIn('v-if="!repairCandidates.groups?.length"', view_source)
         self.assertIn("repairPreviewRequestId.value", view_source)
         self.assertIn("sourceTenantId === repairForm.source_tenant_id", view_source)
         self.assertIn("targetTenantId === repairForm.target_tenant_id", view_source)

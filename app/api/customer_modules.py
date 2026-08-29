@@ -312,6 +312,7 @@ async def _start_sem_identity_read_transaction(session: AsyncSession) -> None:
     await session.execute(
         text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
     )
+    await session.execute(text("SET LOCAL statement_timeout = '15s'"))
 
 
 async def _get_sem_identity_snapshot_session() -> AsyncIterator[AsyncSession]:
@@ -330,12 +331,21 @@ async def _sem_identity_repair_row_counts(
     count_statements = []
     for table_name, _category in SEM_IDENTITY_REPAIR_TABLES:
         table = Base.metadata.tables[table_name]
-        count_statements.append(
+        statement = (
             select(table.c.tenant_id, func.count())
             .add_columns(literal(table_name).label("table_name"))
             .where(table.c.tenant_id.in_(tenant_ids))
             .group_by(table.c.tenant_id)
         )
+        if table_name == "baidu_oauth_states":
+            # OAuth state is short-lived replay protection, not durable customer
+            # identity. Historical consumed/expired rows must not make this
+            # diagnostic scan grow without bound.
+            statement = statement.where(
+                table.c.consumed_at.is_(None),
+                table.c.expires_at > func.now(),
+            )
+        count_statements.append(statement)
     result = await session.execute(union_all(*count_statements))
     for tenant_id, count, table_name in result.all():
         counts[int(tenant_id)][str(table_name)] = int(count or 0)
@@ -467,6 +477,15 @@ def _sem_identity_repair_preview_payload(
         for table_name, category in SEM_IDENTITY_REPAIR_TABLES
         if category == "writeback_audit"
     )
+    if source_counts.get("baidu_oauth_states", 0) or target_counts.get(
+        "baidu_oauth_states", 0
+    ):
+        blockers.append(
+            {
+                "code": "pending_oauth_authorization",
+                "message": "来源或目标客户仍有未完成的 OAuth 授权请求，必须等待授权完成或过期后重新预演。",
+            }
+        )
     if (
         source_counts.get("baidu_oauth_grants", 0)
         and target_counts.get("baidu_oauth_grants", 0)

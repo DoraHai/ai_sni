@@ -24,6 +24,8 @@ const form = reactive({ name: '', industry: '', business_desc: '', modules: ['se
 const repairVisible = ref(false)
 const repairLoading = ref(false)
 const repairCandidates = ref({ groups: [], summary: {} })
+const repairCandidateStatus = ref('idle')
+const repairCandidateError = ref('')
 const repairPreview = ref(null)
 const repairForm = reactive({ source_tenant_id: null, target_tenant_id: null })
 const repairCandidateRequestId = ref(0)
@@ -187,23 +189,36 @@ function rebindAccount(row) {
   router.push({ path: '/onboarding', query: { tenant_id: row.id, rebind: '1' } })
 }
 
-async function openRepairPreview() {
-  repairVisible.value = true
-  invalidateRepairPreview()
-  repairCandidates.value = { groups: [], summary: {} }
-  Object.assign(repairForm, { source_tenant_id: null, target_tenant_id: null })
+async function loadRepairCandidates() {
   const requestId = ++repairCandidateRequestId.value
+  repairCandidateStatus.value = 'loading'
+  repairCandidateError.value = ''
   repairLoading.value = true
   try {
     const result = await fetchSemIdentityRepairCandidates()
     if (requestId === repairCandidateRequestId.value && repairVisible.value) {
       repairCandidates.value = result
+      repairCandidateStatus.value = 'success'
     }
   } catch (error) {
-    if (requestId === repairCandidateRequestId.value) ElMessage.error(error.message)
+    if (requestId === repairCandidateRequestId.value && repairVisible.value) {
+      repairCandidateStatus.value = 'error'
+      repairCandidateError.value = error.message || '候选客户检查失败'
+      ElMessage.error(repairCandidateError.value)
+    }
   } finally {
     if (requestId === repairCandidateRequestId.value) repairLoading.value = false
   }
+}
+
+async function openRepairPreview() {
+  repairVisible.value = true
+  invalidateRepairPreview()
+  repairCandidates.value = { groups: [], summary: {} }
+  repairCandidateStatus.value = 'idle'
+  repairCandidateError.value = ''
+  Object.assign(repairForm, { source_tenant_id: null, target_tenant_id: null })
+  await loadRepairCandidates()
 }
 
 async function runRepairPreview() {
@@ -330,7 +345,16 @@ onMounted(load)
         />
         <section class="repair-candidates">
           <h4>同名候选</h4>
-          <p v-if="!repairCandidates.groups?.length">当前没有发现规范化名称完全相同的客户组。</p>
+          <el-alert
+            v-if="repairCandidateStatus === 'error'"
+            :title="repairCandidateError"
+            type="error"
+            :closable="false"
+            show-icon
+          >
+            <template #default><el-button size="small" @click="loadRepairCandidates">重新检查</el-button></template>
+          </el-alert>
+          <p v-else-if="repairCandidateStatus === 'success' && !repairCandidates.groups?.length">当前没有发现规范化名称完全相同的客户组。</p>
           <div v-for="group in repairCandidates.groups" :key="group.normalized_name" class="candidate-group">
             <b>{{ group.customers.map((item) => `${item.name} (#${item.tenant_id})`).join(' / ') }}</b>
             <small>仅按名称发现候选，不代表可以合并；必须人工确认真实客户和账户归属。</small>
