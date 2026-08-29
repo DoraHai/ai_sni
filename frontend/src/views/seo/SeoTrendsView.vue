@@ -3,8 +3,9 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { fetchSeoKeywords, fetchSeoOverview } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId } from '../../store/session'
+import { currentSeoSiteId as siteId } from './seoSiteContext'
 
-const loading=ref(false),error=ref(''),range=ref(30),engine=ref('baidu'),sites=ref([]),siteId=ref(null),overview=ref({stats:{},trend:[]}),keywords=ref([])
+const loading=ref(false),error=ref(''),range=ref(30),engine=ref('baidu'),sites=ref([]),overview=ref({stats:{},trend:[]}),keywords=ref([])
 const stats=computed(()=>overview.value.stats||{})
 const ranked=computed(()=>keywords.value.filter(item=>item.latest_rank!=null))
 const buckets=computed(()=>[

@@ -4,10 +4,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { fetchMe } from '../../api/auth'
 import client from '../../api/client'
 import { session } from '../../store/session'
+import { clearSeoSiteId, currentSeoSiteId } from './seoSiteContext'
 
 const route = useRoute()
 const router = useRouter()
 const mobileOpen = ref(false)
+if (session.tenantId && Number(route.query.site_id) > 0) {
+  currentSeoSiteId.value = Number(route.query.site_id)
+}
 
 const groups = [
   {
@@ -83,7 +87,7 @@ function active(path) {
 
 function navigate(path) {
   mobileOpen.value = false
-  router.push(path)
+  router.push({ path, query: currentSeoSiteId.value ? { site_id: currentSeoSiteId.value } : {} })
 }
 
 async function loadContext() {
@@ -100,6 +104,7 @@ async function loadContext() {
 
 function onTenantChange(value) {
   if (!value || value === session.tenantId) return
+  clearSeoSiteId()
   sessionStorage.removeItem('seo_pending_rewrite_source')
   sessionStorage.removeItem('seo_pending_rewrite_options')
   session.setTenant(value)
@@ -113,6 +118,25 @@ function onTenantChange(value) {
 }
 
 watch(() => route.path, () => { mobileOpen.value = false })
+watch(() => session.tenantId, (tenantId) => {
+  const requestedSiteId = Number(route.query.site_id) || null
+  if (tenantId && requestedSiteId) currentSeoSiteId.value = requestedSiteId
+})
+watch(() => route.query.site_id, (value) => {
+  const requestedSiteId = Number(value) || null
+  if (session.tenantId && requestedSiteId && requestedSiteId !== currentSeoSiteId.value) {
+    currentSeoSiteId.value = requestedSiteId
+  }
+})
+watch(currentSeoSiteId, (siteId) => {
+  if (!session.tenantId && !siteId) return
+  const routeSiteId = Number(route.query.site_id) || null
+  if (siteId === routeSiteId) return
+  const query = { ...route.query }
+  if (siteId) query.site_id = String(siteId)
+  else delete query.site_id
+  router.replace({ query })
+}, { immediate: true })
 onMounted(loadContext)
 </script>
 

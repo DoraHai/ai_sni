@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import { createSeoContentAsset, fetchSeoContentAssets, fetchSeoKeywords, updateSeoContentAsset } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
+import { currentSeoSiteId as siteId } from './seoSiteContext'
 import './seo-suite.css'
 
 const route = useRoute()
@@ -23,7 +24,6 @@ const editing = ref(null)
 const allItems = ref([])
 const keywords = ref([])
 const sites = ref([])
-const siteId = ref(null)
 const mode = computed(() => route.meta.contentMode || 'article')
 
 const definitions = {

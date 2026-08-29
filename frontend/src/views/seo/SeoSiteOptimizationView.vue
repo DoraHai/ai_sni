@@ -6,6 +6,7 @@ import { auditPendingSeoSitePages, auditSeoSitePage, fetchSeoKeywords, fetchSeoS
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { formatSeoCsvTime } from './seoRankTime'
+import { currentSeoSiteId as siteId } from './seoSiteContext'
 
 const route = useRoute()
 const router = useRouter()
@@ -13,7 +14,6 @@ const router = useRouter()
 const loading = ref(false)
 const error = ref('')
 const sites = ref([])
-const siteId = ref(null)
 const result = ref({ items: [], total: 0, stats: {} })
 const filters = reactive({ q: '', status: '', issueCode: '' })
 const importOpen = ref(false)

@@ -18,6 +18,7 @@ import {
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId } from '../../store/session'
 import { formatSeoRankTime } from './seoRankTime'
+import { currentSeoSiteId as siteId } from './seoSiteContext'
 
 const route = useRoute()
 const router = useRouter()
@@ -28,7 +29,6 @@ const rankEngines = new Set(['baidu', 'google', 'bing', '360', 'sogou'])
 const engine = ref(rankEngines.has(String(route.query.engine)) ? String(route.query.engine) : 'baidu')
 const device = ref(route.query.device === 'mobile' ? 'mobile' : 'desktop')
 const sites = ref([])
-const siteId = ref(null)
 const view = ref('ranking')
 const ownership = ref('')
 const collectDialog = ref(false)

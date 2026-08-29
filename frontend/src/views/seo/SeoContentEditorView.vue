@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import { assistSeoContent, createSeoContentAsset, fetchSeoContentAssets, fetchSeoKeywords, fetchSeoSitePages, updateSeoContentAsset } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
+import { currentSeoSiteId as siteId } from './seoSiteContext'
 
 const route = useRoute()
 const router = useRouter()
@@ -16,7 +17,7 @@ const aiMessage = ref('')
 const aiBusy = ref('')
 const keywords = ref([])
 const sites = ref([])
-const siteId = ref(Number(route.query.site_id) || null)
+if (Number(route.query.site_id) > 0) siteId.value = Number(route.query.site_id)
 const engine = ref('百度')
 const sourceText = ref('')
 const publishVisible = ref(false)

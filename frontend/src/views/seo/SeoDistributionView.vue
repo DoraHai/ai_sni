@@ -27,6 +27,7 @@ import {
 } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
+import { currentSeoSiteId as siteId } from './seoSiteContext'
 
 const loading = ref(false)
 const error = ref('')
@@ -39,7 +40,6 @@ const contents = ref([])
 const publications = ref([])
 const variants = ref([])
 const sites = ref([])
-const siteId = ref(null)
 const canEdit = computed(() => !session.isLoggedIn || session.canEdit('seo.content'))
 
 const importInput = ref(null)

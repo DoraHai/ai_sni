@@ -1,5 +1,7 @@
 import os
 import unittest
+from datetime import datetime
+from types import SimpleNamespace
 
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 os.environ.setdefault("BAIDU_APP_ID", "test-app")
@@ -16,13 +18,14 @@ from fastapi import HTTPException
 from app.api.customer_modules import (
     _canonical_domain,
     _require_seo_asset_permission,
+    _site_payload,
     router as customer_modules_router,
     seo_sites_router,
 )
 from app.models import GeoProject, SeoSite, TenantModule
 from app.module_scope import normalize_module_code
 from app.permissions import CLIENT_PERMS, OPERATOR_PERMS
-from app.security.auth import AuthContext
+from app.security.auth import AuthContext, require_auth, require_scoped_auth
 
 
 class ModuleWorkspaceTests(unittest.TestCase):
@@ -67,6 +70,12 @@ class ModuleWorkspaceTests(unittest.TestCase):
         self.assertNotIn("/api/v1/sem/assets/accounts", seo_paths)
         self.assertNotIn("/api/v1/admin/customers", seo_paths)
 
+    def test_seo_site_routes_use_local_asset_permission_instead_of_site_permission(self):
+        for route in seo_sites_router.routes:
+            dependencies = [dependency.dependency for dependency in route.dependencies]
+            self.assertIn(require_auth, dependencies)
+            self.assertNotIn(require_scoped_auth, dependencies)
+
     def test_bound_customer_cannot_switch_tenant(self):
         ctx = AuthContext(1, "client", "client", 7, {"seo.assets": "edit"})
         ctx.ensure_tenant(7)
@@ -78,6 +87,21 @@ class ModuleWorkspaceTests(unittest.TestCase):
         self.assertEqual(normalize_module_code("SEO"), "seo")
         with self.assertRaises(HTTPException):
             normalize_module_code("diagnosis")
+
+    def test_seo_site_created_at_has_an_explicit_database_timezone(self):
+        payload = _site_payload(
+            SimpleNamespace(
+                id=1,
+                tenant_id=7,
+                name="Example",
+                domain="example.com",
+                canonical_domain="example.com",
+                default_url="https://example.com",
+                status="active",
+                created_at=datetime(2026, 8, 29, 10, 0),
+            )
+        )
+        self.assertEqual(payload["created_at"], "2026-08-29T10:00:00+08:00")
 
 
 if __name__ == "__main__":

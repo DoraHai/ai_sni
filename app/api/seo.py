@@ -160,7 +160,11 @@ METRIC_QUALITIES = {"verified", "estimated", "crawled", "imported"}
 
 
 def _iso(value: datetime | None) -> str | None:
-    return value.isoformat() if value else None
+    """Serialize application-owned timestamps as explicit UTC instants."""
+    if value is None:
+        return None
+    aware = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+    return aware.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _rank_iso(value: datetime | None) -> str | None:
@@ -319,8 +323,8 @@ def _keyword_payload(
         "rank_delta": delta,
         "rank_url": None if not latest else latest.result_url,
         "rank_checked_at": None if not latest else _rank_iso(latest.checked_at),
-        "created_at": _iso(row.created_at),
-        "updated_at": _iso(row.updated_at),
+        "created_at": _database_iso(row.created_at),
+        "updated_at": _database_iso(row.updated_at),
     }
 
 
@@ -365,8 +369,8 @@ def _page_payload(row: SeoSitePage) -> dict[str, Any]:
         "status": row.status,
         "last_error": row.last_error,
         "last_checked_at": _iso(row.last_checked_at),
-        "created_at": _iso(row.created_at),
-        "updated_at": _iso(row.updated_at),
+        "created_at": _database_iso(row.created_at),
+        "updated_at": _database_iso(row.updated_at),
     }
 
 
@@ -561,7 +565,7 @@ def _metric_payload(row: SeoMetricSnapshot, *, include_raw: bool = False) -> dic
         "status": row.status,
         "error_message": row.error_message,
         "observed_at": _iso(row.observed_at),
-        "collected_at": _iso(row.collected_at),
+        "collected_at": _database_iso(row.collected_at),
     }
     if include_raw:
         payload["raw_payload"] = row.raw_payload
@@ -1168,8 +1172,8 @@ def _brand_asset_payload(row: SeoBrandAsset) -> dict[str, Any]:
         "match_value": row.match_value,
         "platform": row.platform,
         "status": row.status,
-        "created_at": _iso(row.created_at),
-        "updated_at": _iso(row.updated_at),
+        "created_at": _database_iso(row.created_at),
+        "updated_at": _database_iso(row.updated_at),
     }
 
 
@@ -2161,7 +2165,7 @@ def _page_snapshot_payload(row: SeoPageSnapshot) -> dict[str, Any]:
         "images_missing_alt_count": row.images_missing_alt_count,
         "hreflang_tags": row.hreflang_tags or [],
         "issue_codes": row.issue_codes or [],
-        "fetched_at": _iso(row.fetched_at),
+        "fetched_at": _database_iso(row.fetched_at),
     }
 
 
@@ -3076,13 +3080,13 @@ async def seo_alerts(
             alerts.append({"type": "rank_drop", "severity": "high" if values[0].rank - values[1].rank >= 10 else "medium", "title": f"{keyword.keyword if keyword else keyword_id} 排名下降", "detail": f"从第 {values[1].rank} 位下降到第 {values[0].rank} 位", "evidence": f"最近两次 {engine} 排名为 {values[1].rank}、{values[0].rank}", "action_label": "查看排名历史", "href": f"/seo/keywords/{keyword_id}", "object_id": keyword_id, "site_id": values[0].site_id, "occurred_at": _rank_iso(values[0].checked_at)})
     for item in keywords:
         if not item.landing_page:
-            alerts.append({"type": "missing_landing", "severity": "medium", "title": f"{item.keyword} 缺少承接页面", "detail": "高价值关键词尚未绑定站内页面", "evidence": "关键词的目标落地页字段为空", "action_label": "配置承接页面", "href": f"/seo/keywords/{item.id}", "object_id": item.id, "site_id": item.site_id, "occurred_at": _iso(item.updated_at)})
+            alerts.append({"type": "missing_landing", "severity": "medium", "title": f"{item.keyword} 缺少承接页面", "detail": "高价值关键词尚未绑定站内页面", "evidence": "关键词的目标落地页字段为空", "action_label": "配置承接页面", "href": f"/seo/keywords/{item.id}", "object_id": item.id, "site_id": item.site_id, "occurred_at": _database_iso(item.updated_at)})
     for item in pages:
         if item.status in {"needs_fix", "error"}:
-            alerts.append({"type": "site_issue", "severity": "high" if item.status == "error" else "medium", "title": "站内页面需要处理", "detail": item.url, "evidence": "、".join(item.issue_codes or []) or item.last_error or "页面检测状态异常", "action_label": "查看页面问题", "href": f"/seo/site?page_id={item.id}&site_id={item.site_id}", "object_id": item.id, "site_id": item.site_id, "occurred_at": _iso(item.last_checked_at or item.updated_at)})
+            alerts.append({"type": "site_issue", "severity": "high" if item.status == "error" else "medium", "title": "站内页面需要处理", "detail": item.url, "evidence": "、".join(item.issue_codes or []) or item.last_error or "页面检测状态异常", "action_label": "查看页面问题", "href": f"/seo/site?page_id={item.id}&site_id={item.site_id}", "object_id": item.id, "site_id": item.site_id, "occurred_at": _iso(item.last_checked_at) if item.last_checked_at else _database_iso(item.updated_at)})
     for item in backlinks:
         if (item.toxic_score or 0) >= 70:
-            alerts.append({"type": "toxic_backlink", "severity": "high", "title": "发现高风险外链", "detail": item.source_domain, "evidence": f"风险分 {item.toxic_score}", "action_label": "查看外链", "href": f"/seo/links?tab=backlink&backlink_id={item.id}&site_id={item.site_id}", "object_id": item.id, "site_id": item.site_id, "occurred_at": _iso(item.last_seen_at or item.updated_at)})
+            alerts.append({"type": "toxic_backlink", "severity": "high", "title": "发现高风险外链", "detail": item.source_domain, "evidence": f"风险分 {item.toxic_score}", "action_label": "查看外链", "href": f"/seo/links?tab=backlink&backlink_id={item.id}&site_id={item.site_id}", "object_id": item.id, "site_id": item.site_id, "occurred_at": _iso(item.last_seen_at) if item.last_seen_at else _database_iso(item.updated_at)})
     alerts.sort(key=lambda item: (item["severity"] != "high", item["occurred_at"] or ""))
     return {"items": alerts, "total": len(alerts), "high": sum(item["severity"] == "high" for item in alerts)}
 
@@ -3429,8 +3433,8 @@ def _connection_payload(row: SeoDistributionConnection) -> dict[str, Any]:
         "status": row.status,
         "last_error": row.last_error,
         "last_tested_at": _iso(row.last_tested_at),
-        "created_at": _iso(row.created_at),
-        "updated_at": _iso(row.updated_at),
+        "created_at": _database_iso(row.created_at),
+        "updated_at": _database_iso(row.updated_at),
     }
 
 
@@ -3462,8 +3466,8 @@ def _publication_payload(
         "last_error": row.last_error,
         "published_at": _iso(row.published_at),
         "last_synced_at": _iso(row.last_synced_at),
-        "created_at": _iso(row.created_at),
-        "updated_at": _iso(row.updated_at),
+        "created_at": _database_iso(row.created_at),
+        "updated_at": _database_iso(row.updated_at),
     }
 
 
@@ -3655,8 +3659,8 @@ def _distribution_variant_payload(
         "reviewed_by": row.reviewed_by,
         "reviewed_at": _iso(row.reviewed_at),
         "created_by": row.created_by,
-        "created_at": _iso(row.created_at),
-        "updated_at": _iso(row.updated_at),
+        "created_at": _database_iso(row.created_at),
+        "updated_at": _database_iso(row.updated_at),
     }
 
 
@@ -3748,7 +3752,7 @@ async def _mark_distribution_variant_published(
 
 def _content_payload(row: SeoContentAsset) -> dict[str, Any]:
     keyword_ids = row.keyword_ids or ([row.keyword_id] if row.keyword_id else [])
-    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "keyword_id": row.keyword_id, "keyword_ids": keyword_ids, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "created_at": _iso(row.created_at), "updated_at": _iso(row.updated_at)}
+    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "keyword_id": row.keyword_id, "keyword_ids": keyword_ids, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "created_at": _database_iso(row.created_at), "updated_at": _database_iso(row.updated_at)}
 
 
 @router.get("/content-assets")
@@ -5159,7 +5163,7 @@ async def list_publish_attempts(
                 "request_summary": item.request_summary,
                 "response_summary": item.response_summary,
                 "error": item.error,
-                "started_at": _iso(item.started_at),
+                "started_at": _database_iso(item.started_at),
                 "completed_at": _iso(item.completed_at),
             }
             for item in attempts
