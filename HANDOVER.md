@@ -27,6 +27,7 @@
 - SSH remote：`git@github-dorahai:DoraHai/ai_sni.git`
 - 当前开发基线：远程最新 `main`
 - 历史交接基线：`codex/handoff-sem-20260813`（仅用于追溯 2026-08-13 状态）
+- 历史基线来源：`integrate-geo-origin-main-20260808`（仅用于追溯早期 GEO 集成过程）
 - 不要使用未同步的本地旧 `main`，也不要强推覆盖远程 `main`。
 
 推荐工作流：
@@ -68,7 +69,8 @@ SEM 前端发布：
 
 1. 只选择已合入 `main` 且属于 SEM 前端的审核提交；
 2. 通过独立同步 PR 合入 `codex/production-sem`；
-3. 合并后由现有 SEM 前端 workflow 自动部署，不手工拼接 release；
+3. 合并后由现有 SEM 前端 workflow 通过仓库发布脚本自动部署，不手工拼接 release；发布门禁
+   必须继续校验 OAuth 页面存在，并拒绝包含公共登录页的错误 SEM 构建；
 4. 不重跑旧 workflow，避免旧提交回退线上版本；
 5. 发布后验收 SEM 页面和实际静态资源版本。
 
@@ -331,7 +333,8 @@ npm run deploy:login
 
 只把已合入 `main` 的 SEM 前端审核提交通过独立同步 PR 合入 `codex/production-sem`。合并后由
 现有 SEM 前端 workflow 自动发布到 `/opt/sem-frontend/releases/<时间戳>`。不要直接运行旧发布
-任务或重跑旧 workflow；发布后核对页面和实际静态资源版本。
+任务或重跑旧 workflow。自动发布必须保留 OAuth 页面存在性校验，并拒绝包含公共登录页的错误
+SEM 构建；发布后核对页面和实际静态资源版本。
 
 ### 9.3 SEM 后端
 
