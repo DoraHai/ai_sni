@@ -74,6 +74,8 @@ jobs:
           tests/test_seo_release_consistency.py
           tests/test_seo_scheduler.py
           tests/test_seo_serp.py
+          tests/test_seo_site_association.py
+          tests/test_seo_traffic.py
 
   frontend-build:
     name: SEO / frontend-build

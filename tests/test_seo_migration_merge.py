@@ -24,8 +24,11 @@ def _config() -> Config:
     return config
 
 
-def test_geo_repair_is_preserved_byte_for_byte() -> None:
-    assert hashlib.sha256(GEO_REPAIR.read_bytes()).hexdigest() == EXPECTED_GEO_REPAIR_SHA256
+def test_geo_repair_is_preserved_across_platform_line_endings() -> None:
+    normalized = GEO_REPAIR.read_bytes().replace(b"\r\n", b"\n")
+    assert hashlib.sha256(normalized).hexdigest() == EXPECTED_GEO_REPAIR_SHA256
+    attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+    assert "/migrations/versions/20260819_0073_geo_schema_repair.py text eol=lf" in attributes
 
 
 def test_merge_revision_is_noop_and_source_page_revision_is_only_head() -> None:
