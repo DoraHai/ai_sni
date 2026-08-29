@@ -57,6 +57,7 @@ from app.config import get_settings
 from app.database import async_session_factory, engine, get_session
 from app.http_errors import register_infra_handlers
 from app.models import BaiduAccount, Keyword, Tenant
+from app.release import read_release_commit
 from app.scheduler import (
     refresh_keyword_workbench_snapshot,
     shutdown_scheduler,
@@ -148,6 +149,7 @@ async def health() -> dict:
 
     return {
         "service": "sem-backend",
+        "release_commit": read_release_commit(),
         "env": settings.app_env,
         "db": db_status,
         "db_error": db_error,
