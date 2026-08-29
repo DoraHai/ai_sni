@@ -336,6 +336,14 @@ def _sem_identity_repair_preview_payload(
                 "message": "两个客户的主 UCID 或生效推广账户 UCID 证据不一致，禁止自动合并。",
             }
         )
+    duplicate_active_ucids = source_active_ucids & target_active_ucids
+    if duplicate_active_ucids:
+        blockers.append(
+            {
+                "code": "duplicate_active_account_bindings",
+                "message": "两个客户存在相同 UCID 的生效推广账户，必须先确认保留记录并归档重复绑定。",
+            }
+        )
 
     source_history = sum(
         source_counts.get(table_name, 0)
@@ -347,6 +355,21 @@ def _sem_identity_repair_preview_payload(
         for table_name, category in SEM_IDENTITY_REPAIR_TABLES
         if category in {"assets", "history", "workflow", "writeback_audit"}
     )
+    source_identity = sum(
+        source_counts.get(table_name, 0)
+        for table_name, category in SEM_IDENTITY_REPAIR_TABLES
+        if category == "identity"
+    )
+    if (
+        source_counts.get("baidu_oauth_grants", 0)
+        and target_counts.get("baidu_oauth_grants", 0)
+    ):
+        blockers.append(
+            {
+                "code": "both_customers_have_oauth_grants",
+                "message": "两个客户均有 OAuth 授权主记录，必须人工确定保留授权并处理账户引用。",
+            }
+        )
     if source_history and target_history:
         blockers.append(
             {
@@ -354,11 +377,18 @@ def _sem_identity_repair_preview_payload(
                 "message": "两个客户均有 SEM 历史数据，需逐表处理唯一约束和冲突记录。",
             }
         )
-    elif source_history == 0:
+    elif source_history == 0 and source_identity == 0:
         warnings.append(
             {
                 "code": "source_customer_has_no_sem_history",
                 "message": "来源客户没有核心 SEM 历史数据，可能是授权误建的空壳客户。",
+            }
+        )
+    elif source_history == 0:
+        warnings.append(
+            {
+                "code": "source_customer_has_identity_only",
+                "message": "来源客户没有核心 SEM 历史，但仍有账户或授权身份记录，不能按空壳客户处理。",
             }
         )
 
@@ -368,7 +398,11 @@ def _sem_identity_repair_preview_payload(
             "category": category,
             "source_rows": source_counts.get(table_name, 0),
             "target_rows": target_counts.get(table_name, 0),
-            "proposed_action": "review_then_reassign_tenant_id",
+            "proposed_action": (
+                "manual_identity_resolution_required"
+                if category == "identity"
+                else "review_then_reassign_tenant_id"
+            ),
         }
         for table_name, category in SEM_IDENTITY_REPAIR_TABLES
         if source_counts.get(table_name, 0) or target_counts.get(table_name, 0)

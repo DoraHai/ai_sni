@@ -322,7 +322,13 @@ onMounted(load)
             <el-table-column prop="category" label="类别" width="140" />
             <el-table-column prop="source_rows" label="来源行数" width="100" />
             <el-table-column prop="target_rows" label="目标行数" width="100" />
-            <el-table-column label="预演动作" min-width="210"><template #default>审核唯一约束后再迁移 tenant_id</template></el-table-column>
+            <el-table-column label="预演动作" min-width="250">
+              <template #default="{ row }">
+                {{ row.proposed_action === 'manual_identity_resolution_required'
+                  ? '人工决定保留/归档，禁止直接迁移身份记录'
+                  : '审核唯一约束后再迁移 tenant_id' }}
+              </template>
+            </el-table-column>
           </el-table>
           <p class="repair-safety">migration={{ repairPreview.safety.migration }} · writes={{ repairPreview.safety.writes_performed }} · execution_endpoint={{ repairPreview.safety.execution_endpoint_available ? 'enabled' : 'disabled' }}</p>
         </template>

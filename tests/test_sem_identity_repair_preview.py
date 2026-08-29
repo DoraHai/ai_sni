@@ -139,6 +139,63 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
             {item["code"] for item in result["blockers"]},
         )
 
+    def test_preview_blocks_duplicate_active_account_bindings(self):
+        source = _tenant(1, "诺德", 1001)
+        target = _tenant(2, "诺德", 1001)
+        accounts = [_account(10, 1, 1001), _account(20, 2, 1001)]
+        row_counts = {
+            1: {"baidu_accounts": 1},
+            2: {"baidu_accounts": 1},
+        }
+
+        result = _sem_identity_repair_preview_payload(
+            source, target, accounts, row_counts
+        )
+
+        self.assertIn(
+            "duplicate_active_account_bindings",
+            {item["code"] for item in result["blockers"]},
+        )
+        self.assertIn(
+            "source_customer_has_identity_only",
+            {item["code"] for item in result["warnings"]},
+        )
+        self.assertNotIn(
+            "source_customer_has_no_sem_history",
+            {item["code"] for item in result["warnings"]},
+        )
+        account_operation = next(
+            item for item in result["proposed_operations"]
+            if item["table"] == "baidu_accounts"
+        )
+        self.assertEqual(
+            account_operation["proposed_action"],
+            "manual_identity_resolution_required",
+        )
+
+    def test_preview_blocks_two_sided_oauth_grants(self):
+        source = _tenant(1, "诺德", None)
+        target = _tenant(2, "诺德", None)
+        row_counts = {
+            1: {"baidu_oauth_grants": 1},
+            2: {"baidu_oauth_grants": 1},
+        }
+
+        result = _sem_identity_repair_preview_payload(source, target, [], row_counts)
+
+        self.assertIn(
+            "both_customers_have_oauth_grants",
+            {item["code"] for item in result["blockers"]},
+        )
+        grant_operation = next(
+            item for item in result["proposed_operations"]
+            if item["table"] == "baidu_oauth_grants"
+        )
+        self.assertEqual(
+            grant_operation["proposed_action"],
+            "manual_identity_resolution_required",
+        )
+
     def test_empty_source_is_only_a_warning_not_an_automatic_merge_decision(self):
         source = _tenant(1, "诺德", None)
         target = _tenant(2, "诺德", 80243027)
@@ -188,6 +245,8 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         self.assertIn("execution_endpoint", view_source)
         self.assertIn("repairPreview.source.accounts", view_source)
         self.assertIn("repairPreview.target.accounts", view_source)
+        self.assertIn("manual_identity_resolution_required", view_source)
+        self.assertIn("禁止直接迁移身份记录", view_source)
 
     def test_backend_exposes_no_identity_repair_mutation_route(self):
         repair_routes = [
