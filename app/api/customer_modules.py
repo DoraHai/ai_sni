@@ -3,17 +3,18 @@ from __future__ import annotations
 import logging
 import unicodedata
 from collections import Counter, defaultdict
+from collections.abc import AsyncIterator
 from datetime import date, datetime, timedelta
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, literal, select, union_all
+from sqlalchemy import func, literal, select, text, union_all
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
-from app.database import Base, get_session
+from app.database import Base, async_session_factory, get_session
 from app.models import (
     Adgroup,
     BaiduAccount,
@@ -306,6 +307,19 @@ def _sem_identity_account_select():
     )
 
 
+async def _start_sem_identity_read_transaction(session: AsyncSession) -> None:
+    """Make every statement in one diagnostic request share a read-only snapshot."""
+    await session.execute(
+        text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+    )
+
+
+async def _get_sem_identity_snapshot_session() -> AsyncIterator[AsyncSession]:
+    """Use a fresh session so authentication queries cannot precede SET TRANSACTION."""
+    async with async_session_factory() as session:
+        yield session
+
+
 async def _sem_identity_repair_row_counts(
     session: AsyncSession, tenant_ids: tuple[int, int]
 ) -> dict[int, dict[str, int]]:
@@ -333,6 +347,7 @@ def _sem_identity_repair_preview_payload(
     target: Tenant,
     accounts: list[BaiduAccount],
     row_counts: dict[int, dict[str, int]],
+    active_oauth_grant_tenant_ids: set[int] | None = None,
 ) -> dict:
     """Build a fail-closed preview. This function never decides or executes a merge."""
     accounts_by_tenant: dict[int, list[BaiduAccount]] = defaultdict(list)
@@ -343,11 +358,18 @@ def _sem_identity_repair_preview_payload(
     target_counts = row_counts.get(target.id, {})
     source_accounts = accounts_by_tenant.get(source.id, [])
     target_accounts = accounts_by_tenant.get(target.id, [])
+    active_oauth_grant_tenant_ids = active_oauth_grant_tenant_ids or set()
+    source_active_accounts = [
+        account for account in source_accounts if account.status == "active"
+    ]
+    target_active_accounts = [
+        account for account in target_accounts if account.status == "active"
+    ]
     source_active_ucids = {
-        account.baidu_ucid for account in source_accounts if account.status == "active"
+        account.baidu_ucid for account in source_active_accounts
     }
     target_active_ucids = {
-        account.baidu_ucid for account in target_accounts if account.status == "active"
+        account.baidu_ucid for account in target_active_accounts
     }
     source_active_ucid_counts = Counter(
         account.baidu_ucid
@@ -368,6 +390,16 @@ def _sem_identity_repair_preview_payload(
 
     blockers: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
+    if any(
+        account.status == "identity_conflict"
+        for account in source_accounts + target_accounts
+    ):
+        blockers.append(
+            {
+                "code": "quarantined_account_binding",
+                "message": "来源或目标客户存在已隔离的错误账户绑定，必须先完成归属复核。",
+            }
+        )
     if _normalized_customer_name(source.name) != _normalized_customer_name(target.name):
         blockers.append(
             {
@@ -422,13 +454,13 @@ def _sem_identity_repair_preview_payload(
     )
     source_identity = (
         int(source.baidu_ucid is not None)
-        + len(source_accounts)
-        + source_counts.get("baidu_oauth_grants", 0)
+        + len(source_active_accounts)
+        + int(source.id in active_oauth_grant_tenant_ids)
     )
     target_identity = (
         int(target.baidu_ucid is not None)
-        + len(target_accounts)
-        + target_counts.get("baidu_oauth_grants", 0)
+        + len(target_active_accounts)
+        + int(target.id in active_oauth_grant_tenant_ids)
     )
     source_writeback_audit = sum(
         source_counts.get(table_name, 0)
@@ -495,7 +527,11 @@ def _sem_identity_repair_preview_payload(
             "source_rows": source_counts.get(table_name, 0),
             "target_rows": target_counts.get(table_name, 0),
             "proposed_action": (
-                "manual_identity_resolution_required"
+                "blocked_preserve_audit_provenance"
+                if blockers and category == "writeback_audit"
+                else "blocked_no_reassignment"
+                if blockers
+                else "manual_identity_resolution_required"
                 if category == "identity"
                 else "preserve_audit_provenance_manual_review"
                 if category == "writeback_audit"
@@ -638,9 +674,10 @@ async def list_customers(session: AsyncSession = Depends(get_session)) -> dict:
     dependencies=[Depends(require_customer_admin)],
 )
 async def list_sem_identity_repair_candidates(
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(_get_sem_identity_snapshot_session),
 ) -> dict:
     """Report conservative duplicate-customer candidates without changing data."""
+    await _start_sem_identity_read_transaction(session)
     tenants = list((await session.scalars(select(Tenant).order_by(Tenant.id))).all())
     modules = list(
         (await session.scalars(select(TenantModule).order_by(TenantModule.id))).all()
@@ -655,7 +692,11 @@ async def list_sem_identity_repair_candidates(
     oauth_grant_tenant_ids = {
         int(tenant_id)
         for tenant_id in (
-            await session.scalars(select(BaiduOAuthGrant.tenant_id).distinct())
+            await session.scalars(
+                select(BaiduOAuthGrant.tenant_id)
+                .where(BaiduOAuthGrant.status == "active")
+                .distinct()
+            )
         ).all()
     }
     eligible_tenant_ids = _sem_identity_candidate_tenant_ids(
@@ -692,11 +733,12 @@ async def list_sem_identity_repair_candidates(
 async def preview_sem_identity_repair(
     source_tenant_id: int = Query(..., gt=0),
     target_tenant_id: int = Query(..., gt=0),
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(_get_sem_identity_snapshot_session),
 ) -> dict:
     """Preview SEM ownership reassignment; no write or execution route exists."""
     if source_tenant_id == target_tenant_id:
         raise HTTPException(400, "来源客户和保留客户不能相同")
+    await _start_sem_identity_read_transaction(session)
     source = await session.get(Tenant, source_tenant_id)
     target = await session.get(Tenant, target_tenant_id)
     if source is None or target is None:
@@ -724,6 +766,7 @@ async def preview_sem_identity_repair(
             await session.scalars(
                 select(BaiduOAuthGrant.tenant_id)
                 .where(BaiduOAuthGrant.tenant_id.in_(tenant_ids))
+                .where(BaiduOAuthGrant.status == "active")
                 .distinct()
             )
         ).all()
@@ -735,7 +778,11 @@ async def preview_sem_identity_repair(
         raise HTTPException(400, "只允许预演具有明确 SEM 资格或账户证据的客户")
     row_counts = await _sem_identity_repair_row_counts(session, tenant_ids)
     return _sem_identity_repair_preview_payload(
-        source, target, accounts, row_counts
+        source,
+        target,
+        accounts,
+        row_counts,
+        active_oauth_grant_tenant_ids=oauth_grant_tenant_ids,
     )
 
 

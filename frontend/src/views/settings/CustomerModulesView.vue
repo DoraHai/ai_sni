@@ -231,6 +231,12 @@ async function runRepairPreview() {
 }
 
 function repairActionLabel(row) {
+  if (row.proposed_action === 'blocked_no_reassignment') {
+    return '存在阻断项，不提出迁移或归属调整'
+  }
+  if (row.proposed_action === 'blocked_preserve_audit_provenance') {
+    return '存在阻断项，保留原始审计归属'
+  }
   if (row.proposed_action === 'manual_identity_resolution_required') {
     return '人工决定保留/归档，禁止直接迁移身份记录'
   }

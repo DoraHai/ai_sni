@@ -101,6 +101,7 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
             expires_at=None,
         )
         session = SimpleNamespace(
+            execute=AsyncMock(),
             scalars=AsyncMock(
                 side_effect=[
                     _Rows(tenants),
@@ -123,6 +124,11 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         account_query = str(session.scalars.await_args_list[2].args[0]).lower()
         self.assertNotIn("access_token_encrypted", account_query)
         self.assertNotIn("refresh_token_encrypted", account_query)
+        transaction_query = str(session.execute.await_args.args[0]).upper()
+        self.assertIn("REPEATABLE READ", transaction_query)
+        self.assertIn("READ ONLY", transaction_query)
+        grant_query = str(session.scalars.await_args_list[3].args[0]).lower()
+        self.assertIn("baidu_oauth_grants.status", grant_query)
         session.commit.assert_not_awaited()
         session.flush.assert_not_awaited()
         session.delete.assert_not_awaited()
@@ -192,7 +198,10 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
 
         self.assertEqual(caught.exception.status_code, 400)
         self.assertIn("SEM", caught.exception.detail)
-        session.execute.assert_not_awaited()
+        self.assertEqual(session.execute.await_count, 1)
+        self.assertIn(
+            "REPEATABLE READ", str(session.execute.await_args.args[0]).upper()
+        )
 
     async def test_preview_endpoint_accepts_two_sem_evidence_customers_read_only(self):
         source = _tenant(1, "同名客户")
@@ -213,6 +222,7 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
                     _Rows([]),
                 ]
             ),
+            execute=AsyncMock(),
             commit=AsyncMock(),
             flush=AsyncMock(),
             delete=AsyncMock(),
@@ -228,6 +238,7 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         account_query = str(session.scalars.await_args_list[1].args[0]).lower()
         self.assertNotIn("access_token_encrypted", account_query)
         self.assertNotIn("refresh_token_encrypted", account_query)
+        self.assertEqual(session.execute.await_count, 1)
         session.commit.assert_not_awaited()
         session.flush.assert_not_awaited()
         session.delete.assert_not_awaited()
@@ -274,6 +285,12 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         self.assertEqual(result["safety"]["writes_performed"], 0)
         self.assertEqual(result["safety"]["migration"], "not-run")
         self.assertNotIn("must-not-leak", str(result))
+        self.assertTrue(
+            all(
+                item["proposed_action"].startswith("blocked_")
+                for item in result["proposed_operations"]
+            )
+        )
 
     def test_preview_blocks_active_account_against_other_customer_primary_ucid(self):
         source = _tenant(1, "诺德", None)
@@ -320,7 +337,7 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             account_operation["proposed_action"],
-            "manual_identity_resolution_required",
+            "blocked_no_reassignment",
         )
 
     def test_preview_blocks_duplicate_active_accounts_within_source(self):
@@ -348,7 +365,13 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
             2: {"baidu_oauth_grants": 1},
         }
 
-        result = _sem_identity_repair_preview_payload(source, target, [], row_counts)
+        result = _sem_identity_repair_preview_payload(
+            source,
+            target,
+            [],
+            row_counts,
+            active_oauth_grant_tenant_ids={1, 2},
+        )
 
         self.assertIn(
             "both_customers_have_oauth_grants",
@@ -360,7 +383,7 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             grant_operation["proposed_action"],
-            "manual_identity_resolution_required",
+            "blocked_no_reassignment",
         )
 
     def test_preview_blocks_and_preserves_writeback_audit_provenance(self):
@@ -385,7 +408,7 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         self.assertTrue(
             all(
                 item["proposed_action"]
-                == "preserve_audit_provenance_manual_review"
+                == "blocked_preserve_audit_provenance"
                 for item in audit_operations
             )
         )
@@ -461,6 +484,70 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
             {item["code"] for item in result["blockers"]},
         )
 
+    def test_non_active_accounts_do_not_establish_target_identity(self):
+        for status in (
+            "inactive",
+            "archived",
+            "identity_conflict",
+            "reauthorization_required",
+        ):
+            with self.subTest(status=status):
+                source = _tenant(1, "诺德", 80243027)
+                target = _tenant(2, "诺德", None)
+                accounts = [
+                    _account(10, 1, 80243027),
+                    _account(20, 2, 80243027, status=status),
+                ]
+
+                result = _sem_identity_repair_preview_payload(
+                    source,
+                    target,
+                    accounts,
+                    {
+                        1: {"baidu_accounts": 1, "keywords": 500},
+                        2: {"baidu_accounts": 1},
+                    },
+                )
+
+                self.assertIn(
+                    "target_customer_has_no_sem_footprint",
+                    {item["code"] for item in result["blockers"]},
+                )
+                if status == "identity_conflict":
+                    self.assertIn(
+                        "quarantined_account_binding",
+                        {item["code"] for item in result["blockers"]},
+                    )
+
+    def test_only_active_oauth_grant_establishes_target_identity(self):
+        source = _tenant(1, "诺德", 80243027)
+        target = _tenant(2, "诺德", None)
+        accounts = [_account(10, 1, 80243027)]
+        row_counts = {
+            1: {"baidu_accounts": 1, "keywords": 500},
+            2: {"baidu_oauth_grants": 1},
+        }
+
+        inactive_result = _sem_identity_repair_preview_payload(
+            source, target, accounts, row_counts
+        )
+        active_result = _sem_identity_repair_preview_payload(
+            source,
+            target,
+            accounts,
+            row_counts,
+            active_oauth_grant_tenant_ids={2},
+        )
+
+        self.assertIn(
+            "target_customer_has_no_sem_footprint",
+            {item["code"] for item in inactive_result["blockers"]},
+        )
+        self.assertIn(
+            "target_customer_has_identity_only",
+            {item["code"] for item in active_result["warnings"]},
+        )
+
     def test_table_allowlist_is_sem_only_and_every_table_exists(self):
         table_names = {name for name, _category in SEM_IDENTITY_REPAIR_TABLES}
         tenant_scoped_tables = {
@@ -511,6 +598,8 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         self.assertIn("sourceTenantId === repairForm.source_tenant_id", view_source)
         self.assertIn("targetTenantId === repairForm.target_tenant_id", view_source)
         self.assertIn('@closed="closeRepairPreview"', view_source)
+        self.assertIn("blocked_no_reassignment", view_source)
+        self.assertIn("存在阻断项，不提出迁移或归属调整", view_source)
 
     def test_backend_exposes_no_identity_repair_mutation_route(self):
         repair_routes = [
@@ -521,3 +610,13 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
 
         self.assertEqual(len(repair_routes), 2)
         self.assertTrue(all(route.methods == {"GET"} for route in repair_routes))
+        self.assertTrue(
+            all(
+                any(
+                    dependency.call.__name__
+                    == "_get_sem_identity_snapshot_session"
+                    for dependency in route.dependant.dependencies
+                )
+                for route in repair_routes
+            )
+        )
