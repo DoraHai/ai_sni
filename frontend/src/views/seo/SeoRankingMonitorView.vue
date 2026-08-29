@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   collectSeoRankSerp,
@@ -19,12 +19,14 @@ import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId } from '../../store/session'
 import { formatSeoRankTime } from './seoRankTime'
 
+const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
 const collecting = ref(false)
 const error = ref('')
-const engine = ref('baidu')
-const device = ref('desktop')
+const rankEngines = new Set(['baidu', 'google', 'bing', '360', 'sogou'])
+const engine = ref(rankEngines.has(String(route.query.engine)) ? String(route.query.engine) : 'baidu')
+const device = ref(route.query.device === 'mobile' ? 'mobile' : 'desktop')
 const sites = ref([])
 const siteId = ref(null)
 const view = ref('ranking')
