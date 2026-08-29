@@ -11,6 +11,7 @@
     "verify:auth-build": "node scripts/verify-auth-build.mjs dist-auth",
     "verify:sem-build": "node scripts/verify-sem-build.mjs dist",
     "test:chunk-recovery": "node scripts/test-chunk-recovery.mjs",
+    "test:sem-identity-repair-requests": "node scripts/test-sem-identity-repair-requests.mjs",
     "deploy:sem": "bash scripts/deploy-sem.sh",
     "deploy:login": "bash scripts/deploy-auth.sh",
     "dev:diagnostic-center": "vite --config vite.diagnostic-center.config.js",

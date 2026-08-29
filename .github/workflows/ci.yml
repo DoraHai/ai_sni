@@ -63,6 +63,10 @@ jobs:
         working-directory: frontend
         run: npm run test:chunk-recovery
 
+      - name: Test SEM identity repair request cancellation
+        working-directory: frontend
+        run: npm run test:sem-identity-repair-requests
+
       - name: Verify build contract
         working-directory: frontend
         run: npm run verify:sem-build
