@@ -21,6 +21,7 @@ from app.api.customer_modules import (
     SEM_IDENTITY_REPAIR_TABLES,
     _normalized_customer_name,
     _sem_duplicate_candidate_groups,
+    _sem_identity_candidate_tenant_ids,
     _sem_identity_repair_preview_payload,
     list_sem_identity_repair_candidates,
     router as customer_modules_router,
@@ -87,8 +88,22 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
     async def test_candidate_endpoint_is_read_only_and_does_not_leak_credentials(self):
         tenants = [_tenant(1, "诺德"), _tenant(2, " 诺德 ")]
         account = _account(10, 2, 80243027)
+        sem_module = SimpleNamespace(
+            id=1,
+            tenant_id=1,
+            module_code="sem",
+            status="active",
+            expires_at=None,
+        )
         session = SimpleNamespace(
-            scalars=AsyncMock(side_effect=[_Rows(tenants), _Rows([account])]),
+            scalars=AsyncMock(
+                side_effect=[
+                    _Rows(tenants),
+                    _Rows([sem_module]),
+                    _Rows([account]),
+                    _Rows([]),
+                ]
+            ),
             commit=AsyncMock(),
             flush=AsyncMock(),
             delete=AsyncMock(),
@@ -103,6 +118,41 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         session.commit.assert_not_awaited()
         session.flush.assert_not_awaited()
         session.delete.assert_not_awaited()
+
+    def test_candidate_filter_excludes_non_sem_same_name_customers(self):
+        tenants = [
+            _tenant(1, "SEO 客户"),
+            _tenant(2, "SEO 客户"),
+            _tenant(3, "SEM 客户"),
+            _tenant(4, "SEM 客户"),
+        ]
+        modules = [
+            SimpleNamespace(
+                tenant_id=1,
+                module_code="seo",
+                status="active",
+                expires_at=None,
+            ),
+            SimpleNamespace(
+                tenant_id=3,
+                module_code="sem",
+                status="active",
+                expires_at=None,
+            ),
+        ]
+        accounts = [_account(10, 4, 80243027)]
+
+        eligible = _sem_identity_candidate_tenant_ids(
+            tenants, modules, accounts, set()
+        )
+        groups = _sem_duplicate_candidate_groups(
+            [tenant for tenant in tenants if tenant.id in eligible],
+            accounts,
+        )
+
+        self.assertEqual(eligible, {3, 4})
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["normalized_name"], "sem 客户")
 
     def test_preview_blocks_conflicting_ucid_and_two_sided_history(self):
         source = _tenant(1, "老虎新材料", 1001)
@@ -171,6 +221,23 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         self.assertEqual(
             account_operation["proposed_action"],
             "manual_identity_resolution_required",
+        )
+
+    def test_preview_blocks_duplicate_active_accounts_within_source(self):
+        source = _tenant(1, "诺德", 1001)
+        target = _tenant(2, "诺德", None)
+        accounts = [_account(10, 1, 1001), _account(11, 1, 1001)]
+
+        result = _sem_identity_repair_preview_payload(
+            source,
+            target,
+            accounts,
+            {1: {"baidu_accounts": 2}, 2: {}},
+        )
+
+        self.assertIn(
+            "duplicate_active_accounts_within_customer",
+            {item["code"] for item in result["blockers"]},
         )
 
     def test_preview_blocks_two_sided_oauth_grants(self):

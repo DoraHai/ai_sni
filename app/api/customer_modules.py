@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import unicodedata
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 from urllib.parse import urlparse
 
@@ -16,6 +16,7 @@ from app.database import Base, get_session
 from app.models import (
     Adgroup,
     BaiduAccount,
+    BaiduOAuthGrant,
     Campaign,
     GeoProject,
     Keyword,
@@ -270,6 +271,26 @@ def _sem_duplicate_candidate_groups(
     return result
 
 
+def _sem_identity_candidate_tenant_ids(
+    tenants: list[Tenant],
+    modules: list[TenantModule],
+    accounts: list[BaiduAccount],
+    oauth_grant_tenant_ids: set[int],
+) -> set[int]:
+    """Limit duplicate-name detection to customers with explicit SEM evidence."""
+    eligible = {
+        tenant.id for tenant in tenants if tenant.baidu_ucid is not None
+    }
+    eligible.update(
+        row.tenant_id
+        for row in modules
+        if row.module_code == "sem" and module_is_available(row)
+    )
+    eligible.update(account.tenant_id for account in accounts)
+    eligible.update(oauth_grant_tenant_ids)
+    return eligible
+
+
 async def _sem_identity_repair_row_counts(
     session: AsyncSession, tenant_ids: tuple[int, int]
 ) -> dict[int, dict[str, int]]:
@@ -308,6 +329,16 @@ def _sem_identity_repair_preview_payload(
     target_active_ucids = {
         account.baidu_ucid for account in target_accounts if account.status == "active"
     }
+    source_active_ucid_counts = Counter(
+        account.baidu_ucid
+        for account in source_accounts
+        if account.status == "active"
+    )
+    target_active_ucid_counts = Counter(
+        account.baidu_ucid
+        for account in target_accounts
+        if account.status == "active"
+    )
     source_ucid_evidence = set(source_active_ucids)
     target_ucid_evidence = set(target_active_ucids)
     if source.baidu_ucid is not None:
@@ -341,6 +372,21 @@ def _sem_identity_repair_preview_payload(
             {
                 "code": "duplicate_active_account_bindings",
                 "message": "两个客户存在相同 UCID 的生效推广账户，必须先确认保留记录并归档重复绑定。",
+            }
+        )
+    duplicate_within_customer = {
+        "source": sorted(
+            ucid for ucid, count in source_active_ucid_counts.items() if count > 1
+        ),
+        "target": sorted(
+            ucid for ucid, count in target_active_ucid_counts.items() if count > 1
+        ),
+    }
+    if duplicate_within_customer["source"] or duplicate_within_customer["target"]:
+        blockers.append(
+            {
+                "code": "duplicate_active_accounts_within_customer",
+                "message": "来源或目标客户内部存在相同 UCID 的重复生效账户，必须先归档重复记录。",
             }
         )
 
@@ -551,15 +597,33 @@ async def list_sem_identity_repair_candidates(
 ) -> dict:
     """Report conservative duplicate-customer candidates without changing data."""
     tenants = list((await session.scalars(select(Tenant).order_by(Tenant.id))).all())
+    modules = list(
+        (await session.scalars(select(TenantModule).order_by(TenantModule.id))).all()
+    )
     accounts = list(
         (await session.scalars(select(BaiduAccount).order_by(BaiduAccount.id))).all()
     )
-    groups = _sem_duplicate_candidate_groups(tenants, accounts)
+    oauth_grant_tenant_ids = {
+        int(tenant_id)
+        for tenant_id in (
+            await session.scalars(select(BaiduOAuthGrant.tenant_id).distinct())
+        ).all()
+    }
+    eligible_tenant_ids = _sem_identity_candidate_tenant_ids(
+        tenants, modules, accounts, oauth_grant_tenant_ids
+    )
+    eligible_tenants = [
+        tenant for tenant in tenants if tenant.id in eligible_tenant_ids
+    ]
+    eligible_accounts = [
+        account for account in accounts if account.tenant_id in eligible_tenant_ids
+    ]
+    groups = _sem_duplicate_candidate_groups(eligible_tenants, eligible_accounts)
     return {
         "mode": "read_only_detection",
         "groups": groups,
         "summary": {
-            "checked_customers": len(tenants),
+            "checked_customers": len(eligible_tenants),
             "candidate_groups": len(groups),
             "candidate_customers": sum(len(group["customers"]) for group in groups),
         },
