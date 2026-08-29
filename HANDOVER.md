@@ -1,6 +1,6 @@
 # Growth Sniper / SEM 平台开发交接手册
 
-> 交接基线：`codex/handoff-sem-20260813`
+> 历史交接基线：`codex/handoff-sem-20260813`；当前开发从最新 `main` 建分支，见 2.1 节
 >
 > 整理日期：2026-08-13
 >
@@ -14,7 +14,7 @@
 
 接手第一周建议按下面顺序操作：
 
-1. 从交接分支克隆并完成本地启动，不要直接在 `main` 开发；
+1. 拉取最新 `main`，从它创建独立功能分支并完成本地启动，不要直接在 `main` 开发；
 2. 使用测试租户验证登录、客户切换和权限菜单；
 3. 在测试账号上跑一遍百度服务商 OAuth，不接触客户真实密码；
 4. 执行完整后端测试和三套前端构建；
@@ -25,21 +25,85 @@
 
 - GitHub：`DoraHai/ai_sni`
 - SSH remote：`git@github-dorahai:DoraHai/ai_sni.git`
-- 推荐接手基线：`codex/handoff-sem-20260813`
-- 基线来源：`integrate-geo-origin-main-20260808`
-- 本地 `main` 曾长期分叉，不应作为新开发起点，也不要强推覆盖远程 `main`。
+- 当前开发基线：远程最新 `main`
+- 历史交接基线：`codex/handoff-sem-20260813`（仅用于追溯 2026-08-13 状态）
+- 历史基线来源：`integrate-geo-origin-main-20260808`（仅用于追溯早期 GEO 集成过程）
+- 不要使用未同步的本地旧 `main`，也不要强推覆盖远程 `main`。
 
 推荐工作流：
 
 ```bash
 git clone git@github-dorahai:DoraHai/ai_sni.git
 cd ai_sni
-git switch codex/handoff-sem-20260813
-git pull --ff-only
-git switch -c feature/<任务名>
+git fetch origin --prune
+git switch main
+git pull --ff-only origin main
+git switch -c codex/sem-<任务名>
 ```
 
 提交前至少执行第 8 节的验证。通过 Pull Request 合并，不直接向生产基线强推。
+
+### 2.1 当前权威 SEM 分支与发布流程（2026-08-28）
+
+本节覆盖本文档中更早形成的 SEM 分支和发布说明；旧快照只用于理解历史，不能作为当前
+生产操作依据。
+
+分支职责：
+
+- `main`：所有审核通过的代码最终合入这里，但不得把 main 的全部内容整体部署到 SEM 生产。
+- `codex/production-sem`：只用于 SEM 前端生产发布。审核后的 SEM 前端提交通过独立同步 PR
+  合入；合并会触发现有 SEM 前端自动部署。该分支不得用于发布 SEM 后端。
+- `codex/production-sem-backend`：只用于 SEM 后端生产发布基线。2026-08-28 建立时的精确基线为
+  `43b6123bcead2f3183f1c562ff0168d21f25ddda`，与当时生产 `sem-backend` 一致。更新该分支不会
+  自动部署；禁止强推、直接覆盖或混入未经审核的 GEO、SEO、诊断中心和门户改动。
+
+日常 SEM 开发：
+
+1. 从最新 `main` 创建独立分支 `codex/sem-<task-name>`；
+2. 只修改任务必需的 SEM 文件，不顺手修改其他模块；除非任务明确授权，不修改
+   `app/baidu/**`；
+3. 不提交 `.env`、密钥、数据库文件、构建缓存或本地文件；
+4. 完成本地测试和审核后，通过 PR 合入 `main`。
+
+SEM 前端发布：
+
+1. 只选择已合入 `main` 且属于 SEM 前端的审核提交；
+2. 通过独立同步 PR 合入 `codex/production-sem`；
+3. 合并后由现有 SEM 前端 workflow 通过仓库发布脚本自动部署，不手工拼接 release；发布门禁
+   必须继续校验 OAuth 页面存在，并拒绝包含公共登录页的错误 SEM 构建；
+4. 不重跑旧 workflow，避免旧提交回退线上版本；
+5. 发布后验收 SEM 页面和实际静态资源版本。
+
+SEM 后端发布：
+
+1. 后端功能 PR 先合入 `main`；
+2. 再创建独立同步 PR，把审核后的 SEM 后端提交同步到
+   `codex/production-sem-backend`，禁止未经审核直接 push 或强推；
+3. 确认远程后端生产分支的完整 40 位 SHA；
+4. 从 `main` 手动运行 GitHub Actions 的 `Production SEM backend deployment`；
+5. 输入 `release_sha=<后端生产分支完整 SHA>` 和
+   `confirmation=DEPLOY_SEM_BACKEND`，完成 `production` environment 审批；
+6. workflow 必须在开始、上传前和 apply 前通过三次后端生产分支 stale HEAD 检查；
+7. workflow 只能调用 `platform-deploy apply sem`。服务器端负责建立新 release、原子切换
+   `current`、只重启 `sem-backend`、检查内部 `/health` 和 `db=ok`，失败时恢复旧 current；
+8. 发布后确认 `sem-backend` active、公开 `/health` 返回 200、`db=ok`、`RELEASE_COMMIT`
+   等于目标 SHA，并确认 MANIFEST 记录 `migration=not-run`。
+
+数据库和跨模块红线：
+
+- 普通 SEM 前端或后端发布不得执行 `alembic upgrade`、`downgrade` 或 `stamp`，也不得把迁移
+  隐藏在后端自动部署中；
+- 确需 Schema 变更时，先只读检查生产 revision 和实际 Schema，单独汇报表、字段、索引、
+  约束、回填、兼容性、回滚风险，得到明确授权后再走独立受控流程；
+- 后端 workflow 不部署 SEM 前端、GEO、SEO、诊断中心、门户或 Nginx，也不重启其他服务；
+- 除非任务是经审核的 Nginx 发布，不修改或 reload Nginx；
+- 不手动修改 `/opt/*/releases` 或 `current`，任何门禁失败都应立即停止并汇报。
+
+历史状态：PR #117 合入 `main` 时，SEM 后端手动发布流程已经建立；当时生产
+`sem-backend` 与 `codex/production-sem-backend` 均为
+`43b6123bcead2f3183f1c562ff0168d21f25ddda`。该 SHA 只是历史快照，不得作为当前生产事实；
+每次发布或回滚前必须重新核对远程生产分支、`/health` 的 `release_commit`、
+服务器 `RELEASE_COMMIT` 和 `MANIFEST`。
 
 ## 3. 系统结构
 
@@ -176,9 +240,13 @@ SEM 主调度器在 `app/scheduler.py`：
 
 ## 7. 数据库迁移
 
-所有模块共享同一个 PostgreSQL。迁移是高风险操作，不属于普通前端发布步骤。
+所有模块共享同一个 PostgreSQL。迁移是高风险操作，不属于普通 SEM 前端或后端发布步骤，
+也不得由 SEM 自动发布 workflow 执行。普通发布固定记录 `migration=not-run`。
 
-发布前：
+只有功能确定需要 Schema 变更并获得负责人明确授权后，才能进入独立迁移流程。授权前先只读
+检查生产 revision 和实际 Schema，并单独汇报表、字段、索引、约束、数据回填、兼容性和回滚风险。
+
+经授权的独立迁移流程在执行前才检查：
 
 ```bash
 alembic heads
@@ -265,15 +333,20 @@ npm run deploy:login
 
 ### 9.2 SEM 主前端
 
-```bash
-cd frontend
-npm run deploy:sem
-```
+只把已合入 `main` 的 SEM 前端审核提交通过独立同步 PR 合入 `codex/production-sem`。合并后由
+现有 SEM 前端 workflow 自动发布到 `/opt/sem-frontend/releases/<时间戳>`。不要直接运行旧发布
+任务或重跑旧 workflow。自动发布必须保留 OAuth 页面存在性校验，并拒绝包含公共登录页的错误
+SEM 构建；发布后核对页面和实际静态资源版本。
 
-独立发布到 `/opt/sem-frontend/releases/<时间戳>`。脚本会校验 OAuth 页面存在，并拒绝
-包含登录页的错误构建。
+### 9.3 SEM 后端
 
-### 9.3 GEO
+只把已合入 `main` 的 SEM 后端审核提交通过独立同步 PR 合入
+`codex/production-sem-backend`。确认完整 SHA 后，从 `main` 手动运行
+`Production SEM backend deployment`，输入该 SHA 和 `DEPLOY_SEM_BACKEND`，并通过生产环境审批。
+workflow 不执行 Alembic，只调用受限的 `platform-deploy apply sem`；不要手工修改 release 或
+`current`。
+
+### 9.4 GEO
 
 详见 `deploy/README-GEO-INDEPENDENT.md` 和 `docs/GEO_PRODUCTION_RUNBOOK.md`。
 
@@ -284,15 +357,17 @@ cd frontend/geo-frontend && npm run deploy
 
 GEO API 发布失败会尝试自动恢复上一条 `current` 并仅重启 `geo-service`。
 
-### 9.4 回滚
+### 9.5 回滚
 
 前端和 GEO API 均使用版本目录。确认目标版本后，将对应 `current` 链接原子指回上一
 版本；API 回滚后重启对应 systemd 服务。不要删除当前版本后再回滚。
 
-SEM 主后端仍位于 `/opt/sem-backend`，变更前先保留代码和数据库备份。涉及数据库结构
-时，必须按迁移恢复方案处理，不能只回滚代码。
+SEM 主后端位于 `/opt/sem-backend`，只能通过受控的 `platform-deploy apply sem` 创建新
+release 并原子切换 `current`。发布失败由服务器端恢复上一个 `current` 并仅重启
+`sem-backend`；禁止逐文件覆盖或手动改链接。涉及数据库结构时，必须按独立迁移和恢复
+方案处理，不能只回滚代码；普通 SEM 发布仍必须记录 `migration=not-run`。
 
-### 9.5 发布后检查
+### 9.6 发布后检查
 
 ```bash
 curl -fsS https://gsnipers.snipers.com.cn/health
