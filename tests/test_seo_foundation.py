@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -6,12 +7,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
 from starlette.requests import Request
 
 from app.api.seo import (
     BacklinkCreate,
     BrandProfileUpdate,
     ContentCreate,
+    ContentUpdate,
     KeywordCreate,
     KeywordImport,
     MetricSnapshotCreate,
@@ -45,6 +48,8 @@ from app.api.seo import (
     create_content_asset,
     create_rank_snapshot,
     get_seo_keyword,
+    list_site_pages,
+    update_content_asset,
 )
 from app.models.seo import (
     SeoBacklink,
@@ -449,6 +454,64 @@ def test_content_source_page_cannot_create_a_duplicate_task() -> None:
             asyncio.run(create_content_asset(request, session, context))
     assert getattr(exc.value, "status_code", None) == 409
     session.commit.assert_not_awaited()
+
+
+def test_existing_content_task_can_be_bound_to_a_source_page() -> None:
+    request = ContentUpdate(source_page_id=231)
+    row = SeoContentAsset(
+        tenant_id=1,
+        site_id=9,
+        title="【验收勿发布】页面 231 内容任务",
+        content_type="article",
+        status="drafting",
+    )
+    row.id = 88
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=row)
+    session.scalar = AsyncMock(return_value=None)
+    source_page = SimpleNamespace(id=231, tenant_id=1, site_id=9)
+    with patch("app.api.seo._site_page", new=AsyncMock(return_value=source_page)):
+        result = asyncio.run(update_content_asset(88, 1, request, session))
+    assert row.source_page_id == 231
+    assert result["source_page_id"] == 231
+    session.commit.assert_awaited_once()
+
+
+def test_content_create_does_not_mask_unrelated_integrity_errors() -> None:
+    request = ContentCreate(
+        tenant_id=1,
+        site_id=9,
+        source_page_id=231,
+        title="页面 231 内容任务",
+    )
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.scalar = AsyncMock(side_effect=[None, None])
+    session.commit = AsyncMock(
+        side_effect=IntegrityError("insert", {}, Exception("unrelated constraint"))
+    )
+    source_page = SimpleNamespace(id=231, tenant_id=1, site_id=9)
+    with (
+        patch("app.api.seo._tenant", new=AsyncMock()),
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._site_page", new=AsyncMock(return_value=source_page)),
+    ):
+        with pytest.raises(IntegrityError):
+            asyncio.run(create_content_asset(request, session, context))
+    session.rollback.assert_awaited_once()
+
+
+def test_site_page_stats_are_aggregated_in_the_database() -> None:
+    source = inspect.getsource(list_site_pages)
+    assert "func.avg(SeoSitePage.audit_score)" in source
+    assert "all_rows" not in source
 
 
 def test_new_rank_snapshot_rejects_a_keyword_without_the_same_site() -> None:

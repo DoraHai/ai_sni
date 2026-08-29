@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { auditPendingSeoSitePages, auditSeoSitePage, fetchSeoKeywords, fetchSeoSitePages, generateSeoSitePageSuggestions, importSeoSitePages, updateSeoSitePage } from '../../api/seo'
+import { auditPendingSeoSitePages, auditSeoSitePage, fetchSeoContentAssets, fetchSeoKeywords, fetchSeoSitePages, generateSeoSitePageSuggestions, importSeoSitePages, updateSeoContentAsset, updateSeoSitePage } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { formatSeoCsvTime } from './seoRankTime'
@@ -28,6 +28,11 @@ const selectedRows = ref([])
 const page = ref(1)
 const pageSize = ref(50)
 const keywordOptions = ref([])
+const linkDialogOpen = ref(false)
+const linkPage = ref(null)
+const linkCandidates = ref([])
+const selectedContentId = ref(null)
+const linkingContent = ref(false)
 const editForm = reactive({ page_type: '', target_keyword_id: null, title_suggestion: '', description_suggestion: '', status: 'pending' })
 
 const canEdit = computed(() => !session.isLoggedIn || session.canEdit('seo.site'))
@@ -115,8 +120,35 @@ function exportHandoff() {
   const blob = new Blob(['\ufeff' + [headers,...body].map((line) => line.map(csvCell).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' })
   const anchor = document.createElement('a'); anchor.href = URL.createObjectURL(blob); anchor.download = `SEO站内优化交接-${siteId.value}.csv`; anchor.click(); URL.revokeObjectURL(anchor.href)
 }
-function createContentTask(row) {
-  router.push({ path: '/seo/content/editor', query: { site_id: siteId.value, id: row.content_task_id || undefined, keyword_id: row.target_keyword_id || undefined, source_page_id: row.id } })
+async function createContentTask(row) {
+  if (row.content_task_id) return router.push({ path: '/seo/content/editor', query: { site_id: siteId.value, id: row.content_task_id, source_page_id: row.id } })
+  try {
+    const response = await fetchSeoContentAssets({ tenantId: currentTenantId.value, siteId: siteId.value })
+    const candidates = (response.items || []).filter((item) => !item.source_page_id)
+    if (!candidates.length) return openNewContentTask(row)
+    linkPage.value = row
+    linkCandidates.value = candidates
+    selectedContentId.value = null
+    linkDialogOpen.value = true
+  } catch (e) { ElMessage.error(e.message) }
+}
+function openNewContentTask(row = linkPage.value) {
+  if (!row) return
+  linkDialogOpen.value = false
+  router.push({ path: '/seo/content/editor', query: { site_id: siteId.value, keyword_id: row.target_keyword_id || undefined, source_page_id: row.id } })
+}
+async function linkExistingContentTask() {
+  if (!linkPage.value || !selectedContentId.value) return ElMessage.warning('请选择需要关联的现有内容任务')
+  linkingContent.value = true
+  try {
+    await updateSeoContentAsset({ contentId: selectedContentId.value, tenantId: currentTenantId.value, payload: { source_page_id: linkPage.value.id } })
+    const linkedPageId = linkPage.value.id
+    const linkedContentId = selectedContentId.value
+    linkDialogOpen.value = false
+    ElMessage.success('现有内容任务已关联来源页面')
+    await load()
+    router.push({ path: '/seo/content/editor', query: { site_id: siteId.value, id: linkedContentId, source_page_id: linkedPageId } })
+  } catch (e) { ElMessage.error(e.message) } finally { linkingContent.value = false }
 }
 let timer
 watch(() => filters.q, () => { clearTimeout(timer); timer = setTimeout(() => { page.value = 1; load() }, 260) })
@@ -176,6 +208,14 @@ onMounted(loadSites)
       <p class="dialog-tip">每行一个公开页面 URL。导入后可逐页运行真实检测；系统不会自动修改客户网站。</p>
       <el-input v-model="importText" type="textarea" :rows="9" placeholder="https://example.com/&#10;https://example.com/products" />
       <template #footer><el-button @click="importOpen=false">取消</el-button><el-button type="primary" :loading="saving" @click="importPages">导入页面</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="linkDialogOpen" title="创建或关联内容任务" width="560px">
+      <p class="dialog-tip">该页面尚未关联内容任务。可选择一个现有未关联草稿，或创建新任务。</p>
+      <el-select v-model="selectedContentId" filterable clearable placeholder="选择现有未关联内容任务">
+        <el-option v-for="item in linkCandidates" :key="item.id" :label="`${item.title}（#${item.id}）`" :value="item.id" />
+      </el-select>
+      <template #footer><el-button @click="openNewContentTask()">创建新任务</el-button><el-button type="primary" :loading="linkingContent" @click="linkExistingContentTask">关联并打开</el-button></template>
     </el-dialog>
     <el-dialog v-model="editOpen" title="页面优化记录" width="680px">
       <p class="dialog-tip">{{ editing?.url }}</p>

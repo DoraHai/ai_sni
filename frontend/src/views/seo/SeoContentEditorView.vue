@@ -94,7 +94,7 @@ async function load() {
       Object.assign(publishForm,{page_url:item.page_url||'',target_platforms:[...(item.target_platforms||[])]})
       publishedAt.value=item.published_at||null
       sourceText.value=item.source_text||''
-      sourcePageId.value=item.source_page_id||null
+      sourcePageId.value=item.source_page_id||sourcePageId.value||null
       assetVersion.value=item.version_count||1
       await nextTick()
       if(editor.value)editor.value.innerHTML=form.draft
@@ -281,7 +281,7 @@ async function save(status = 'drafting', options = {}) {
       published_at: options.publishedAt ?? publishedAt.value,
     }
     if(assetId.value){
-      const {tenant_id,site_id,source_page_id,...values}=payload
+      const {tenant_id,site_id,...values}=payload
       await updateSeoContentAsset({contentId:assetId.value,tenantId:currentTenantId.value,payload:values})
     }else{
       const created=await createSeoContentAsset(payload)

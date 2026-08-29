@@ -2381,7 +2381,38 @@ async def list_site_pages(
     all_conditions = [SeoSitePage.tenant_id == tenant_id]
     if site_id is not None:
         all_conditions.append(SeoSitePage.site_id == site_id)
-    all_rows = list(await session.scalars(select(SeoSitePage).where(*all_conditions)))
+    stats_row = (
+        await session.execute(
+            select(
+                func.count(SeoSitePage.id),
+                func.count(SeoSitePage.id).filter(
+                    SeoSitePage.status.in_(("healthy", "verified"))
+                ),
+                func.count(SeoSitePage.id).filter(
+                    SeoSitePage.status.in_(
+                        ("needs_fix", "proposed", "approved", "implemented")
+                    )
+                ),
+                func.count(SeoSitePage.id).filter(SeoSitePage.status == "pending"),
+                func.count(SeoSitePage.id).filter(SeoSitePage.status == "proposed"),
+                func.count(SeoSitePage.id).filter(SeoSitePage.status == "approved"),
+                func.count(SeoSitePage.id).filter(SeoSitePage.status == "implemented"),
+                func.count(SeoSitePage.id).filter(SeoSitePage.status == "verified"),
+                func.avg(SeoSitePage.audit_score),
+            ).where(*all_conditions)
+        )
+    ).one()
+    (
+        stats_total,
+        stats_healthy,
+        stats_needs_fix,
+        stats_unchecked,
+        stats_proposed,
+        stats_approved,
+        stats_implemented,
+        stats_verified,
+        average_score,
+    ) = stats_row
     return {
         "items": [
             _page_payload(
@@ -2394,22 +2425,15 @@ async def list_site_pages(
         "page": page,
         "page_size": page_size,
         "stats": {
-            "total": len(all_rows),
-            "healthy": sum(row.status in {"healthy", "verified"} for row in all_rows),
-            "needs_fix": sum(
-                row.status in {"needs_fix", "proposed", "approved", "implemented"}
-                for row in all_rows
-            ),
-            "unchecked": sum(row.status == "pending" for row in all_rows),
-            "proposed": sum(row.status == "proposed" for row in all_rows),
-            "approved": sum(row.status == "approved" for row in all_rows),
-            "implemented": sum(row.status == "implemented" for row in all_rows),
-            "verified": sum(row.status == "verified" for row in all_rows),
-            "average_score": round(
-                sum(row.audit_score or 0 for row in all_rows if row.audit_score is not None)
-                / max(sum(row.audit_score is not None for row in all_rows), 1),
-                1,
-            ),
+            "total": int(stats_total or 0),
+            "healthy": int(stats_healthy or 0),
+            "needs_fix": int(stats_needs_fix or 0),
+            "unchecked": int(stats_unchecked or 0),
+            "proposed": int(stats_proposed or 0),
+            "approved": int(stats_approved or 0),
+            "implemented": int(stats_implemented or 0),
+            "verified": int(stats_verified or 0),
+            "average_score": round(float(average_score or 0), 1),
         },
     }
 
@@ -3324,6 +3348,7 @@ class ContentCreate(BaseModel):
 
 
 class ContentUpdate(BaseModel):
+    source_page_id: PositiveInt | None = None
     title: str | None = Field(None, min_length=1, max_length=300)
     keyword_id: int | None = None
     keyword_ids: list[PositiveInt] | None = Field(None, max_length=5)
@@ -3784,6 +3809,24 @@ def _content_payload(row: SeoContentAsset) -> dict[str, Any]:
     return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "source_page_id": row.source_page_id, "keyword_id": row.keyword_id, "keyword_ids": keyword_ids, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "created_at": _database_iso(row.created_at), "updated_at": _database_iso(row.updated_at)}
 
 
+async def _content_task_for_source_page(
+    session: AsyncSession,
+    tenant_id: int,
+    site_id: int,
+    source_page_id: int,
+    *,
+    exclude_content_id: int | None = None,
+) -> int | None:
+    conditions = [
+        SeoContentAsset.tenant_id == tenant_id,
+        SeoContentAsset.site_id == site_id,
+        SeoContentAsset.source_page_id == source_page_id,
+    ]
+    if exclude_content_id is not None:
+        conditions.append(SeoContentAsset.id != exclude_content_id)
+    return await session.scalar(select(SeoContentAsset.id).where(*conditions).limit(1))
+
+
 @router.get("/content-assets")
 async def list_content_assets(tenant_id: int, site_id: int | None = None, source_page_id: PositiveInt | None = None, status: str | None = None, content_type: str | None = None, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
     await _tenant(session, tenant_id)
@@ -3810,12 +3853,11 @@ async def create_content_asset(req: ContentCreate, session: AsyncSession = Depen
         source_page = await _site_page(session, req.source_page_id, req.tenant_id)
         if source_page.site_id != req.site_id:
             raise HTTPException(400, "来源页面与内容所属站点不一致")
-        existing_content_id = await session.scalar(
-            select(SeoContentAsset.id).where(
-                SeoContentAsset.tenant_id == req.tenant_id,
-                SeoContentAsset.site_id == req.site_id,
-                SeoContentAsset.source_page_id == req.source_page_id,
-            )
+        existing_content_id = await _content_task_for_source_page(
+            session,
+            req.tenant_id,
+            req.site_id,
+            req.source_page_id,
         )
         if existing_content_id is not None:
             raise HTTPException(409, "该站内页面已经关联内容任务")
@@ -3838,7 +3880,14 @@ async def create_content_asset(req: ContentCreate, session: AsyncSession = Depen
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
-        raise HTTPException(409, "该站内页面已经关联内容任务") from exc
+        if req.source_page_id is not None and await _content_task_for_source_page(
+            session,
+            req.tenant_id,
+            req.site_id,
+            req.source_page_id,
+        ) is not None:
+            raise HTTPException(409, "该站内页面已经关联内容任务") from exc
+        raise
     await session.refresh(row)
     return _content_payload(row)
 
@@ -5231,11 +5280,28 @@ async def update_content_asset(content_id: int, tenant_id: int, req: ContentUpda
     row = await session.get(SeoContentAsset, content_id)
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO 内容资产不存在")
+    row_site_id = row.site_id
     values = req.model_dump(exclude_unset=True)
     if "draft" in values:
         values["draft"] = _sanitize_content_html(values.get("draft"))
     if "humanized_content" in values:
         values["humanized_content"] = _sanitize_content_html(values.get("humanized_content"))
+    requested_source_page_id = values.get("source_page_id")
+    if requested_source_page_id is not None:
+        if row_site_id is None:
+            raise HTTPException(400, "内容任务没有有效站点，无法关联来源页面")
+        source_page = await _site_page(session, requested_source_page_id, tenant_id)
+        if source_page.site_id != row_site_id:
+            raise HTTPException(400, "来源页面与内容所属站点不一致")
+        existing_content_id = await _content_task_for_source_page(
+            session,
+            tenant_id,
+            row_site_id,
+            requested_source_page_id,
+            exclude_content_id=row.id,
+        )
+        if existing_content_id is not None:
+            raise HTTPException(409, "该站内页面已经关联其他内容任务")
     if "keyword_ids" in values or "keyword_id" in values:
         if "keyword_ids" in values:
             keyword_ids = _selected_keyword_ids(values.get("keyword_ids") or [], None)
@@ -5245,14 +5311,32 @@ async def update_content_asset(content_id: int, tenant_id: int, req: ContentUpda
             session,
             tenant_id,
             keyword_ids,
-            row.site_id,
-            require_exact_site=row.site_id is not None,
+            row_site_id,
+            require_exact_site=row_site_id is not None,
         )
         values["keyword_ids"] = keyword_ids or None
         values["keyword_id"] = keyword_ids[0] if keyword_ids else None
     for key, value in values.items():
         setattr(row, key, value.strip() or None if isinstance(value, str) else value)
-    await session.commit(); await session.refresh(row)
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        if (
+            requested_source_page_id is not None
+            and row_site_id is not None
+            and await _content_task_for_source_page(
+                session,
+                tenant_id,
+                row_site_id,
+                requested_source_page_id,
+                exclude_content_id=content_id,
+            )
+            is not None
+        ):
+            raise HTTPException(409, "该站内页面已经关联其他内容任务") from exc
+        raise
+    await session.refresh(row)
     return _content_payload(row)
 
 
