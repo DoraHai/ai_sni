@@ -2,7 +2,15 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { archiveSemAccount, createCustomer, fetchCustomers, setCustomerModule, updateCustomer } from '../../api/moduleAssets'
+import {
+  archiveSemAccount,
+  createCustomer,
+  fetchCustomers,
+  fetchSemIdentityRepairCandidates,
+  fetchSemIdentityRepairPreview,
+  setCustomerModule,
+  updateCustomer,
+} from '../../api/moduleAssets'
 import { session } from '../../store/session'
 
 const router = useRouter()
@@ -13,8 +21,18 @@ const identitySummary = ref({ checked_customers: 0, checked_accounts: 0, errors:
 const visible = ref(false)
 const editingId = ref(null)
 const form = reactive({ name: '', industry: '', business_desc: '', modules: ['sem'] })
+const repairVisible = ref(false)
+const repairLoading = ref(false)
+const repairCandidates = ref({ groups: [], summary: {} })
+const repairPreview = ref(null)
+const repairForm = reactive({ source_tenant_id: null, target_tenant_id: null })
 const moduleLabels = { sem: 'SEM', seo: 'SEO', geo: 'GEO' }
 const editingCustomer = computed(() => customers.value.find((row) => row.id === editingId.value))
+const canPreviewRepair = computed(() => (
+  repairForm.source_tenant_id
+  && repairForm.target_tenant_id
+  && repairForm.source_tenant_id !== repairForm.target_tenant_id
+))
 
 function moduleRow(row, code) {
   return row.modules?.find((item) => item.module_code === code)
@@ -129,6 +147,36 @@ function rebindAccount(row) {
   router.push({ path: '/onboarding', query: { tenant_id: row.id, rebind: '1' } })
 }
 
+async function openRepairPreview() {
+  repairVisible.value = true
+  repairPreview.value = null
+  Object.assign(repairForm, { source_tenant_id: null, target_tenant_id: null })
+  repairLoading.value = true
+  try {
+    repairCandidates.value = await fetchSemIdentityRepairCandidates()
+  } catch (error) {
+    ElMessage.error(error.message)
+  } finally {
+    repairLoading.value = false
+  }
+}
+
+async function runRepairPreview() {
+  if (!canPreviewRepair.value) return ElMessage.warning('请选择两个不同的客户')
+  repairLoading.value = true
+  repairPreview.value = null
+  try {
+    repairPreview.value = await fetchSemIdentityRepairPreview(
+      repairForm.source_tenant_id,
+      repairForm.target_tenant_id,
+    )
+  } catch (error) {
+    ElMessage.error(error.message)
+  } finally {
+    repairLoading.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -136,7 +184,11 @@ onMounted(load)
   <div class="module-page" v-loading="loading">
     <header class="page-head">
       <div><h2>客户与模块</h2><p>平台级客户主档仅由超级管理员维护；模块内只显示已开通该模块的客户。</p></div>
-      <div class="head-actions"><el-button @click="load">重新检查归属</el-button><el-button type="primary" @click="openCreate">新建客户</el-button></div>
+      <div class="head-actions">
+        <el-button @click="load">重新检查归属</el-button>
+        <el-button type="warning" plain @click="openRepairPreview">重复客户只读预演</el-button>
+        <el-button type="primary" @click="openCreate">新建客户</el-button>
+      </div>
     </header>
     <el-alert
       :type="identitySummary.healthy ? 'success' : identitySummary.errors ? 'error' : 'warning'"
@@ -199,9 +251,67 @@ onMounted(load)
       </el-form>
       <template #footer><el-button @click="visible=false">取消</el-button><el-button type="primary" @click="save">保存</el-button></template>
     </el-dialog>
+    <el-dialog v-model="repairVisible" title="SEM 重复客户只读检测与修复预演" width="900px">
+      <div v-loading="repairLoading" class="repair-preview">
+        <el-alert
+          title="这里只读取并对比数据，不会合并客户、迁移记录、删除数据或执行数据库迁移。预演结果不能直接执行。"
+          type="warning"
+          :closable="false"
+          show-icon
+        />
+        <section class="repair-candidates">
+          <h4>同名候选</h4>
+          <p v-if="!repairCandidates.groups?.length">当前没有发现规范化名称完全相同的客户组。</p>
+          <div v-for="group in repairCandidates.groups" :key="group.normalized_name" class="candidate-group">
+            <b>{{ group.customers.map((item) => `${item.name} (#${item.tenant_id})`).join(' / ') }}</b>
+            <small>仅按名称发现候选，不代表可以合并；必须人工确认真实客户和账户归属。</small>
+          </div>
+        </section>
+        <el-form inline class="repair-form">
+          <el-form-item label="来源客户（拟迁出）">
+            <el-select v-model="repairForm.source_tenant_id" filterable placeholder="选择可能误建的客户" style="width:260px">
+              <el-option v-for="row in customers" :key="row.id" :label="`${row.name} (#${row.id})`" :value="row.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="保留客户（正确主档）">
+            <el-select v-model="repairForm.target_tenant_id" filterable placeholder="选择拟保留客户" style="width:260px">
+              <el-option v-for="row in customers" :key="row.id" :label="`${row.name} (#${row.id})`" :value="row.id" />
+            </el-select>
+          </el-form-item>
+          <el-button type="primary" plain :disabled="!canPreviewRepair" @click="runRepairPreview">生成只读预演</el-button>
+        </el-form>
+        <template v-if="repairPreview">
+          <el-alert
+            :type="repairPreview.blockers?.length ? 'error' : 'warning'"
+            :title="repairPreview.blockers?.length ? `发现 ${repairPreview.blockers.length} 个阻断项，禁止合并` : '未发现结构性阻断，但仍须数据库专项审核和备份后才能处理'"
+            :closable="false"
+            show-icon
+          />
+          <div class="repair-columns">
+            <section><h4>来源客户</h4><b>{{ repairPreview.source.name }} (#{{ repairPreview.source.tenant_id }})</b><span>UCID {{ repairPreview.source.baidu_ucid || '未设置' }}</span></section>
+            <section><h4>保留客户</h4><b>{{ repairPreview.target.name }} (#{{ repairPreview.target.tenant_id }})</b><span>UCID {{ repairPreview.target.baidu_ucid || '未设置' }}</span></section>
+          </div>
+          <ul v-if="repairPreview.blockers?.length" class="repair-issues blockers">
+            <li v-for="item in repairPreview.blockers" :key="item.code"><b>{{ item.code }}</b>：{{ item.message }}</li>
+          </ul>
+          <ul v-if="repairPreview.warnings?.length" class="repair-issues">
+            <li v-for="item in repairPreview.warnings" :key="item.code"><b>{{ item.code }}</b>：{{ item.message }}</li>
+          </ul>
+          <el-table :data="repairPreview.proposed_operations" border max-height="330">
+            <el-table-column prop="table" label="SEM 表" min-width="210" />
+            <el-table-column prop="category" label="类别" width="140" />
+            <el-table-column prop="source_rows" label="来源行数" width="100" />
+            <el-table-column prop="target_rows" label="目标行数" width="100" />
+            <el-table-column label="预演动作" min-width="210"><template #default>审核唯一约束后再迁移 tenant_id</template></el-table-column>
+          </el-table>
+          <p class="repair-safety">migration={{ repairPreview.safety.migration }} · writes={{ repairPreview.safety.writes_performed }} · execution_endpoint={{ repairPreview.safety.execution_endpoint_available ? 'enabled' : 'disabled' }}</p>
+        </template>
+      </div>
+      <template #footer><el-button @click="repairVisible=false">关闭</el-button></template>
+    </el-dialog>
   </div>
 </template>
 
 <style scoped>
-.module-page{padding:24px}.page-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px}.page-head h2{margin:0 0 7px;font-size:24px}.page-head p{margin:0;color:#6b7280}.head-actions{display:flex;gap:8px}.identity-summary{margin-bottom:16px}.account-bindings{display:grid;gap:5px;margin-bottom:6px}.account-bindings>span{display:flex;justify-content:space-between;align-items:center;gap:10px}.account-label{display:flex;flex-direction:column}.account-bindings small,.unbound{color:#8b95a5}.identity-issues{display:grid;justify-items:start;gap:5px}.identity-issues span{color:#8a4b08;font-size:12px;line-height:1.35}.identity-alert{margin-bottom:16px}
+.module-page{padding:24px}.page-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px}.page-head h2{margin:0 0 7px;font-size:24px}.page-head p{margin:0;color:#6b7280}.head-actions{display:flex;gap:8px}.identity-summary{margin-bottom:16px}.account-bindings{display:grid;gap:5px;margin-bottom:6px}.account-bindings>span{display:flex;justify-content:space-between;align-items:center;gap:10px}.account-label{display:flex;flex-direction:column}.account-bindings small,.unbound{color:#8b95a5}.identity-issues{display:grid;justify-items:start;gap:5px}.identity-issues span{color:#8a4b08;font-size:12px;line-height:1.35}.identity-alert{margin-bottom:16px}.repair-preview{display:grid;gap:16px}.repair-candidates h4,.repair-columns h4{margin:0 0 6px}.repair-candidates p{margin:0;color:#6b7280}.candidate-group{display:grid;gap:3px;padding:10px 12px;margin-top:8px;border:1px solid #e5e7eb;border-radius:8px}.candidate-group small{color:#8b5e16}.repair-form{padding:14px;background:#f8fafc;border-radius:8px}.repair-columns{display:grid;grid-template-columns:1fr 1fr;gap:12px}.repair-columns section{display:grid;gap:4px;padding:12px;border:1px solid #e5e7eb;border-radius:8px}.repair-columns span,.repair-safety{color:#6b7280}.repair-issues{margin:0;padding-left:22px;color:#8a4b08}.repair-issues.blockers{color:#b42318}.repair-safety{margin:0;font-family:monospace;font-size:12px}
 </style>

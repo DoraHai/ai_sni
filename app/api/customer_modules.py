@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import unicodedata
+from collections import defaultdict
 from datetime import date, datetime, timedelta
 from urllib.parse import urlparse
 
@@ -10,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_session
+from app.database import Base, get_session
 from app.models import (
     Adgroup,
     BaiduAccount,
@@ -52,6 +54,42 @@ router = APIRouter(tags=["客户与模块"])
 seo_sites_router = APIRouter(tags=["SEO 网站"])
 geo_projects_router = APIRouter(tags=["GEO 项目"])
 logger = logging.getLogger(__name__)
+
+
+# Explicit allow-list for read-only SEM identity repair previews. Shared tenant
+# metadata and every SEO/GEO table are deliberately excluded: this endpoint is
+# diagnostic only and must never imply that cross-module data can be moved as
+# part of a SEM repair.
+SEM_IDENTITY_REPAIR_TABLES: tuple[tuple[str, str], ...] = (
+    ("baidu_accounts", "identity"),
+    ("baidu_oauth_grants", "identity"),
+    ("baidu_oauth_states", "identity"),
+    ("campaigns", "assets"),
+    ("adgroups", "assets"),
+    ("keywords", "assets"),
+    ("price_strategies", "assets"),
+    ("ocpc_packages", "assets"),
+    ("kw_report_snapshots", "history"),
+    ("kw_region_snapshots", "history"),
+    ("keyword_region_reports", "history"),
+    ("keyword_hourly_reports", "history"),
+    ("search_term_reports", "history"),
+    ("operation_records", "history"),
+    ("keyword_candidates", "workflow"),
+    ("suggestions", "workflow"),
+    ("alerts", "workflow"),
+    ("daily_insights", "workflow"),
+    ("monthly_reports", "workflow"),
+    ("analysis_reports", "workflow"),
+    ("assistant_messages", "workflow"),
+    ("tenant_memories", "workflow"),
+    ("leads", "workflow"),
+    ("adjustment_reviews", "writeback_audit"),
+    ("bid_writebacks", "writeback_audit"),
+    ("writeback_actions", "writeback_audit"),
+    ("writeback_approvals", "writeback_audit"),
+    ("api_audit_logs", "audit"),
+)
 
 
 async def require_customer_admin(ctx: AuthContext = Depends(require_auth)) -> AuthContext:
@@ -175,6 +213,209 @@ def _sem_identity_check(tenants: list[Tenant], accounts: list[BaiduAccount]) -> 
     }
 
 
+def _normalized_customer_name(value: str) -> str:
+    """Normalize only casing and whitespace; do not guess brand equivalence."""
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return " ".join(normalized.split())
+
+
+def _sem_duplicate_candidate_groups(
+    tenants: list[Tenant], accounts: list[BaiduAccount]
+) -> list[dict]:
+    """Find exact normalized-name duplicates without inferring an owner."""
+    grouped: dict[str, list[Tenant]] = defaultdict(list)
+    accounts_by_tenant: dict[int, list[BaiduAccount]] = defaultdict(list)
+    for tenant in tenants:
+        key = _normalized_customer_name(tenant.name)
+        if key:
+            grouped[key].append(tenant)
+    for account in accounts:
+        accounts_by_tenant[account.tenant_id].append(account)
+
+    result: list[dict] = []
+    for normalized_name, rows in sorted(grouped.items()):
+        if len(rows) < 2:
+            continue
+        candidates = []
+        for tenant in sorted(rows, key=lambda item: item.id):
+            tenant_accounts = accounts_by_tenant.get(tenant.id, [])
+            candidates.append(
+                {
+                    "tenant_id": tenant.id,
+                    "name": tenant.name,
+                    "baidu_ucid": (
+                        str(tenant.baidu_ucid) if tenant.baidu_ucid is not None else None
+                    ),
+                    "created_at": (
+                        tenant.created_at.isoformat()
+                        if getattr(tenant, "created_at", None)
+                        else None
+                    ),
+                    "account_count": len(tenant_accounts),
+                    "active_account_ucids": sorted(
+                        {
+                            str(account.baidu_ucid)
+                            for account in tenant_accounts
+                            if account.status == "active"
+                        }
+                    ),
+                }
+            )
+        result.append(
+            {
+                "normalized_name": normalized_name,
+                "reason": "same_normalized_customer_name",
+                "customers": candidates,
+            }
+        )
+    return result
+
+
+async def _sem_identity_repair_row_counts(
+    session: AsyncSession, tenant_ids: tuple[int, int]
+) -> dict[int, dict[str, int]]:
+    counts = {tenant_id: {} for tenant_id in tenant_ids}
+    for table_name, _category in SEM_IDENTITY_REPAIR_TABLES:
+        table = Base.metadata.tables[table_name]
+        result = await session.execute(
+            select(table.c.tenant_id, func.count())
+            .where(table.c.tenant_id.in_(tenant_ids))
+            .group_by(table.c.tenant_id)
+        )
+        by_tenant = {int(tenant_id): int(count or 0) for tenant_id, count in result.all()}
+        for tenant_id in tenant_ids:
+            counts[tenant_id][table_name] = by_tenant.get(tenant_id, 0)
+    return counts
+
+
+def _sem_identity_repair_preview_payload(
+    source: Tenant,
+    target: Tenant,
+    accounts: list[BaiduAccount],
+    row_counts: dict[int, dict[str, int]],
+) -> dict:
+    """Build a fail-closed preview. This function never decides or executes a merge."""
+    accounts_by_tenant: dict[int, list[BaiduAccount]] = defaultdict(list)
+    for account in accounts:
+        accounts_by_tenant[account.tenant_id].append(account)
+
+    source_counts = row_counts.get(source.id, {})
+    target_counts = row_counts.get(target.id, {})
+    source_accounts = accounts_by_tenant.get(source.id, [])
+    target_accounts = accounts_by_tenant.get(target.id, [])
+    source_active_ucids = {
+        account.baidu_ucid for account in source_accounts if account.status == "active"
+    }
+    target_active_ucids = {
+        account.baidu_ucid for account in target_accounts if account.status == "active"
+    }
+
+    blockers: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    if _normalized_customer_name(source.name) != _normalized_customer_name(target.name):
+        blockers.append(
+            {
+                "code": "customer_names_differ",
+                "message": "两个客户名称不一致，不能按重复客户进行预演。",
+            }
+        )
+    if (
+        source.baidu_ucid is not None
+        and target.baidu_ucid is not None
+        and source.baidu_ucid != target.baidu_ucid
+    ):
+        blockers.append(
+            {
+                "code": "primary_ucids_differ",
+                "message": "两个客户的主 UCID 不同，必须先人工确认真实归属。",
+            }
+        )
+    if source_active_ucids and target_active_ucids and source_active_ucids != target_active_ucids:
+        blockers.append(
+            {
+                "code": "active_account_ucids_differ",
+                "message": "两个客户存在不同的生效推广账户，禁止自动合并。",
+            }
+        )
+
+    source_history = sum(
+        source_counts.get(table_name, 0)
+        for table_name, category in SEM_IDENTITY_REPAIR_TABLES
+        if category in {"assets", "history", "workflow", "writeback_audit"}
+    )
+    target_history = sum(
+        target_counts.get(table_name, 0)
+        for table_name, category in SEM_IDENTITY_REPAIR_TABLES
+        if category in {"assets", "history", "workflow", "writeback_audit"}
+    )
+    if source_history and target_history:
+        blockers.append(
+            {
+                "code": "both_customers_have_sem_history",
+                "message": "两个客户均有 SEM 历史数据，需逐表处理唯一约束和冲突记录。",
+            }
+        )
+    elif source_history == 0:
+        warnings.append(
+            {
+                "code": "source_customer_has_no_sem_history",
+                "message": "来源客户没有核心 SEM 历史数据，可能是授权误建的空壳客户。",
+            }
+        )
+
+    operations = [
+        {
+            "table": table_name,
+            "category": category,
+            "source_rows": source_counts.get(table_name, 0),
+            "target_rows": target_counts.get(table_name, 0),
+            "proposed_action": "review_then_reassign_tenant_id",
+        }
+        for table_name, category in SEM_IDENTITY_REPAIR_TABLES
+        if source_counts.get(table_name, 0) or target_counts.get(table_name, 0)
+    ]
+
+    def tenant_payload(tenant: Tenant, tenant_accounts: list[BaiduAccount], counts: dict) -> dict:
+        return {
+            "tenant_id": tenant.id,
+            "name": tenant.name,
+            "baidu_ucid": str(tenant.baidu_ucid) if tenant.baidu_ucid is not None else None,
+            "accounts": [
+                {
+                    "id": account.id,
+                    "username": account.baidu_username,
+                    "ucid": str(account.baidu_ucid),
+                    "status": account.status,
+                    "auth_mode": account.auth_mode,
+                }
+                for account in tenant_accounts
+            ],
+            "row_counts": counts,
+        }
+
+    return {
+        "mode": "read_only_preview",
+        "source": tenant_payload(source, source_accounts, source_counts),
+        "target": tenant_payload(target, target_accounts, target_counts),
+        "blockers": blockers,
+        "warnings": warnings,
+        "proposed_operations": operations,
+        "excluded_scope": ["tenant_modules", "users", "seo_*", "geo_*"],
+        "required_reviews": [
+            "customer_identity_owner_confirmation",
+            "unique_constraint_and_foreign_key_review",
+            "database_backup_and_rollback_plan",
+            "separate_database_change_approval",
+        ],
+        "safety": {
+            "read_only": True,
+            "writes_performed": 0,
+            "execution_endpoint_available": False,
+            "migration": "not-run",
+        },
+    }
+
+
 class CustomerCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     industry: str | None = Field(None, max_length=100)
@@ -247,6 +488,68 @@ async def list_customers(session: AsyncSession = Depends(get_session)) -> dict:
             for row in tenants
         ]
     }
+
+
+@router.get(
+    "/api/v1/admin/customers/sem-identity-repair/candidates",
+    dependencies=[Depends(require_customer_admin)],
+)
+async def list_sem_identity_repair_candidates(
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Report conservative duplicate-customer candidates without changing data."""
+    tenants = list((await session.scalars(select(Tenant).order_by(Tenant.id))).all())
+    accounts = list(
+        (await session.scalars(select(BaiduAccount).order_by(BaiduAccount.id))).all()
+    )
+    groups = _sem_duplicate_candidate_groups(tenants, accounts)
+    return {
+        "mode": "read_only_detection",
+        "groups": groups,
+        "summary": {
+            "checked_customers": len(tenants),
+            "candidate_groups": len(groups),
+            "candidate_customers": sum(len(group["customers"]) for group in groups),
+        },
+        "safety": {
+            "read_only": True,
+            "writes_performed": 0,
+            "execution_endpoint_available": False,
+            "migration": "not-run",
+        },
+    }
+
+
+@router.get(
+    "/api/v1/admin/customers/sem-identity-repair/preview",
+    dependencies=[Depends(require_customer_admin)],
+)
+async def preview_sem_identity_repair(
+    source_tenant_id: int = Query(..., gt=0),
+    target_tenant_id: int = Query(..., gt=0),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Preview SEM ownership reassignment; no write or execution route exists."""
+    if source_tenant_id == target_tenant_id:
+        raise HTTPException(400, "来源客户和保留客户不能相同")
+    source = await session.get(Tenant, source_tenant_id)
+    target = await session.get(Tenant, target_tenant_id)
+    if source is None or target is None:
+        raise HTTPException(404, "来源客户或保留客户不存在")
+    tenant_ids = (source_tenant_id, target_tenant_id)
+    accounts = list(
+        (
+            await session.scalars(
+                select(BaiduAccount)
+                .where(BaiduAccount.tenant_id.in_(tenant_ids))
+                .order_by(BaiduAccount.id)
+            )
+        ).all()
+    )
+    row_counts = await _sem_identity_repair_row_counts(session, tenant_ids)
+    return _sem_identity_repair_preview_payload(
+        source, target, accounts, row_counts
+    )
 
 
 @router.post("/api/v1/admin/customers", dependencies=[Depends(require_customer_admin)])
