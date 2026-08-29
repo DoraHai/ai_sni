@@ -1,4 +1,4 @@
-"""Persistent limits for user-triggered SEO rank collection."""
+"""Database-backed limits for user-triggered SEO rank collection."""
 
 from __future__ import annotations
 
@@ -10,13 +10,13 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.seo import SeoManualRankLimit
+from app.models.module_workspace import SeoSite
 
 
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+_STATE_KEY = "manual_rank_collection_limit"
 MANUAL_RANK_RESERVATION_TTL_SECONDS = 10 * 60
 SEO_RANK_COLLECTION_LOCK_PATH = Path(tempfile.gettempdir()) / "seo_rank_collection.lock"
 
@@ -48,7 +48,12 @@ def _naive_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-def _aware_utc(value: datetime | None) -> datetime | None:
+def _aware_utc(value: datetime | str | None) -> datetime | None:
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return None
     if value is None:
         return None
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
@@ -58,26 +63,39 @@ def _local_day(now: datetime) -> date:
     return now.astimezone(_SHANGHAI_TZ).date()
 
 
-def _active_reservation_retry_after(row: SeoManualRankLimit, now: datetime) -> int:
-    expires_at = _aware_utc(row.reservation_expires_at)
-    if not row.reservation_token or expires_at is None or expires_at <= now:
+def _state(site: SeoSite | None) -> dict:
+    if site is None or not isinstance(site.site_settings, dict):
+        return {}
+    value = site.site_settings.get(_STATE_KEY)
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _store_state(site: SeoSite, state: dict) -> None:
+    settings = dict(site.site_settings or {})
+    settings[_STATE_KEY] = state
+    site.site_settings = settings
+
+
+def _active_reservation_retry_after(state: dict, now: datetime) -> int:
+    expires_at = _aware_utc(state.get("reservation_expires_at"))
+    if not state.get("reservation_token") or expires_at is None or expires_at <= now:
         return 0
     return max(1, int((expires_at - now).total_seconds() + 0.999))
 
 
 def _payload(
-    row: SeoManualRankLimit | None,
+    state: dict,
     *,
     now: datetime,
     cooldown_seconds: int,
     max_requests_per_day: int,
 ) -> dict:
-    current_day = _local_day(now)
-    used = int(row.daily_requests or 0) if row and row.daily_date == current_day else 0
-    last_attempt = _aware_utc(row.last_attempt_at) if row else None
+    current_day = _local_day(now).isoformat()
+    used = int(state.get("daily_requests") or 0) if state.get("daily_date") == current_day else 0
+    last_attempt = _aware_utc(state.get("last_attempt_at"))
     next_allowed = last_attempt + timedelta(seconds=cooldown_seconds) if last_attempt else now
     cooldown_retry = max(0, int((next_allowed - now).total_seconds() + 0.999))
-    reservation_retry = _active_reservation_retry_after(row, now) if row else 0
+    reservation_retry = _active_reservation_retry_after(state, now)
     retry_after = max(cooldown_retry, reservation_retry)
     return {
         "allowed": retry_after == 0 and used < max_requests_per_day,
@@ -89,39 +107,24 @@ def _payload(
     }
 
 
-async def _locked_row(
+async def _site(
     session: AsyncSession,
     tenant_id: int,
     site_id: int,
     *,
-    current_day: date,
-) -> SeoManualRankLimit:
-    await session.execute(
-        pg_insert(SeoManualRankLimit)
-        .values(
-            tenant_id=tenant_id,
-            site_id=site_id,
-            daily_date=current_day,
-            daily_requests=0,
-            reserved_requests=0,
-        )
-        .on_conflict_do_nothing(index_elements=["tenant_id", "site_id"])
-    )
-    row = await session.scalar(
-        select(SeoManualRankLimit)
-        .where(
-            SeoManualRankLimit.tenant_id == tenant_id,
-            SeoManualRankLimit.site_id == site_id,
-        )
-        .with_for_update()
-    )
-    if row is None:
+    for_update: bool,
+) -> SeoSite:
+    statement = select(SeoSite).where(SeoSite.id == site_id, SeoSite.tenant_id == tenant_id)
+    if for_update:
+        statement = statement.with_for_update()
+    site = await session.scalar(statement)
+    if site is None:
         raise ManualRankLimitError(
             "limit_state_unavailable",
             "排名采集限流状态不可用，请联系管理员",
             60,
         )
-    return row
+    return site
 
 
 async def manual_rank_status(
@@ -134,14 +137,9 @@ async def manual_rank_status(
     now: datetime | None = None,
 ) -> dict:
     current = now or _utc_now()
-    row = await session.scalar(
-        select(SeoManualRankLimit).where(
-            SeoManualRankLimit.tenant_id == tenant_id,
-            SeoManualRankLimit.site_id == site_id,
-        )
-    )
+    site = await _site(session, tenant_id, site_id, for_update=False)
     return _payload(
-        row,
+        _state(site),
         now=current,
         cooldown_seconds=max(1, cooldown_seconds),
         max_requests_per_day=max(1, max_requests_per_day),
@@ -159,12 +157,13 @@ async def reserve_manual_rank_collection(
     now: datetime | None = None,
 ) -> ManualRankReservation:
     current = now or _utc_now()
-    current_day = _local_day(current)
+    current_day = _local_day(current).isoformat()
     cooldown = max(1, cooldown_seconds)
     daily_limit = max(1, max_requests_per_day)
     requested = max(1, int(request_count))
-    row = await _locked_row(session, tenant_id, site_id, current_day=current_day)
-    active_retry = _active_reservation_retry_after(row, current)
+    site = await _site(session, tenant_id, site_id, for_update=True)
+    state = _state(site)
+    active_retry = _active_reservation_retry_after(state, current)
     if active_retry:
         await session.rollback()
         raise ManualRankLimitError(
@@ -172,15 +171,14 @@ async def reserve_manual_rank_collection(
             "另一排名采集请求正在处理，请稍后重试",
             active_retry,
         )
-    if row.reservation_token:
-        row.reservation_token = None
-        row.reserved_requests = 0
-        row.reservation_expires_at = None
-    if row.daily_date != current_day:
-        row.daily_date = current_day
-        row.daily_requests = 0
+    state.pop("reservation_token", None)
+    state.pop("reserved_requests", None)
+    state.pop("reservation_expires_at", None)
+    if state.get("daily_date") != current_day:
+        state["daily_date"] = current_day
+        state["daily_requests"] = 0
     status = _payload(
-        row,
+        state,
         now=current,
         cooldown_seconds=cooldown,
         max_requests_per_day=daily_limit,
@@ -203,18 +201,21 @@ async def reserve_manual_rank_collection(
             retry_after,
         )
     token = str(uuid4())
-    row.last_attempt_at = _naive_utc(current)
-    row.reservation_token = token
-    row.reserved_requests = requested
-    row.reservation_expires_at = _naive_utc(
-        current + timedelta(seconds=MANUAL_RANK_RESERVATION_TTL_SECONDS)
+    state.update(
+        last_attempt_at=_naive_utc(current).isoformat(),
+        reservation_token=token,
+        reserved_requests=requested,
+        reservation_expires_at=_naive_utc(
+            current + timedelta(seconds=MANUAL_RANK_RESERVATION_TTL_SECONDS)
+        ).isoformat(),
     )
+    _store_state(site, state)
     await session.commit()
     return ManualRankReservation(
         token=token,
         requested=requested,
         status=_payload(
-            row,
+            state,
             now=current,
             cooldown_seconds=cooldown,
             max_requests_per_day=daily_limit,
@@ -234,15 +235,9 @@ async def settle_manual_rank_collection(
     now: datetime | None = None,
 ) -> dict:
     current = now or _utc_now()
-    row = await session.scalar(
-        select(SeoManualRankLimit)
-        .where(
-            SeoManualRankLimit.tenant_id == tenant_id,
-            SeoManualRankLimit.site_id == site_id,
-        )
-        .with_for_update()
-    )
-    if row is None or row.reservation_token != reservation.token:
+    site = await _site(session, tenant_id, site_id, for_update=True)
+    state = _state(site)
+    if state.get("reservation_token") != reservation.token:
         await session.rollback()
         raise ManualRankLimitError(
             "limit_reservation_lost",
@@ -250,13 +245,14 @@ async def settle_manual_rank_collection(
             60,
         )
     charged = min(reservation.requested, max(0, int(successful_requests)))
-    row.daily_requests = int(row.daily_requests or 0) + charged
-    row.reservation_token = None
-    row.reserved_requests = 0
-    row.reservation_expires_at = None
+    state["daily_requests"] = int(state.get("daily_requests") or 0) + charged
+    state.pop("reservation_token", None)
+    state.pop("reserved_requests", None)
+    state.pop("reservation_expires_at", None)
+    _store_state(site, state)
     await session.commit()
     return _payload(
-        row,
+        state,
         now=current,
         cooldown_seconds=max(1, cooldown_seconds),
         max_requests_per_day=max(1, max_requests_per_day),

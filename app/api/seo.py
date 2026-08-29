@@ -191,6 +191,19 @@ async def _seo_site(
     return row
 
 
+async def _seo_site_for_update(
+    session: AsyncSession, tenant_id: int, site_id: int
+) -> SeoSite:
+    row = await session.scalar(
+        select(SeoSite)
+        .where(SeoSite.id == site_id, SeoSite.tenant_id == tenant_id)
+        .with_for_update()
+    )
+    if row is None:
+        raise HTTPException(404, "SEO site does not exist for this tenant")
+    return row
+
+
 async def _keyword(
     session: AsyncSession, keyword_id: int, tenant_id: int
 ) -> SeoKeywordAsset:
@@ -628,7 +641,7 @@ async def update_gsc_connection(
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
-    site = await _seo_site(session, req.tenant_id, req.site_id)
+    site = await _seo_site_for_update(session, req.tenant_id, req.site_id)
     try:
         property_url = validate_property(req.property_url, site.canonical_domain)
     except GscError as exc:

@@ -1,5 +1,5 @@
 import asyncio
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -16,14 +16,13 @@ from app.seo_rank_limits import (
 def _row() -> SimpleNamespace:
     return SimpleNamespace(
         tenant_id=1,
-        site_id=2,
-        daily_date=date(2026, 8, 24),
-        daily_requests=0,
-        last_attempt_at=None,
-        reservation_token=None,
-        reserved_requests=0,
-        reservation_expires_at=None,
+        id=2,
+        site_settings={},
     )
+
+
+def _limit_state(row: SimpleNamespace) -> dict:
+    return row.site_settings["manual_rank_collection_limit"]
 
 
 def _session(row: SimpleNamespace) -> SimpleNamespace:
@@ -53,6 +52,7 @@ def test_manual_collection_reservation_enforces_cooldown_and_busy_state() -> Non
     assert reservation.requested == 3
     assert reservation.status["collection_in_progress"] is True
     assert reservation.status["daily_requests_used"] == 0
+    assert _limit_state(row)["reserved_requests"] == 3
     session.commit.assert_awaited_once()
 
     with pytest.raises(ManualRankLimitError) as exc:
@@ -97,9 +97,9 @@ def test_manual_collection_charges_only_successful_requests() -> None:
             now=now + timedelta(seconds=10),
         )
     )
-    assert row.daily_requests == 2
-    assert row.reservation_token is None
-    assert row.reserved_requests == 0
+    assert _limit_state(row)["daily_requests"] == 2
+    assert "reservation_token" not in _limit_state(row)
+    assert "reserved_requests" not in _limit_state(row)
     assert status["daily_requests_used"] == 2
 
 
@@ -130,15 +130,20 @@ def test_manual_collection_system_failure_does_not_charge_daily_quota() -> None:
             now=now + timedelta(seconds=10),
         )
     )
-    assert row.daily_requests == 0
+    assert _limit_state(row)["daily_requests"] == 0
     assert status["daily_requests_used"] == 0
     assert status["retry_after_seconds"] == 50
 
 
 def test_manual_collection_status_reopens_after_cooldown() -> None:
     row = _row()
-    row.daily_requests = 2
-    row.last_attempt_at = datetime(2026, 8, 24, 6, 0)
+    row.site_settings = {
+        "manual_rank_collection_limit": {
+            "daily_date": "2026-08-24",
+            "daily_requests": 2,
+            "last_attempt_at": "2026-08-24T06:00:00",
+        }
+    }
     session = _session(row)
     status = asyncio.run(
         manual_rank_status(
@@ -156,7 +161,12 @@ def test_manual_collection_status_reopens_after_cooldown() -> None:
 
 def test_manual_collection_enforces_daily_success_budget() -> None:
     row = _row()
-    row.daily_requests = 4
+    row.site_settings = {
+        "manual_rank_collection_limit": {
+            "daily_date": "2026-08-24",
+            "daily_requests": 4,
+        }
+    }
     session = _session(row)
     now = datetime(2026, 8, 24, 6, 0, tzinfo=timezone.utc)
     with pytest.raises(ManualRankLimitError) as exc:

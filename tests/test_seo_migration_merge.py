@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import create_async_engine
 ROOT = Path(__file__).parents[1]
 GEO_REPAIR = ROOT / "migrations/versions/20260819_0073_geo_schema_repair.py"
 MERGE_REVISION = ROOT / "migrations/versions/20260822_0074_merge_geo_seo_heads.py"
-RANK_QUOTA_REVISION = ROOT / "migrations/versions/20260829_0075_seo_rank_quota_state.py"
 EXPECTED_GEO_REPAIR_SHA256 = "4e785eefd6bcc7a6f1158ff38b19769cb5ee2ffafa433e9f616f30c85ac533ba"
 
 
@@ -44,14 +43,12 @@ def test_merge_revision_is_noop_and_only_head() -> None:
     )
 
     script = ScriptDirectory.from_config(_config())
-    assert script.get_heads() == ["0075_seo_rank_quota_state"]
+    assert script.get_heads() == ["0074_merge_geo_seo_heads"]
     merge = script.get_revision("0074_merge_geo_seo_heads")
     assert set(merge._normalized_down_revisions) == {
         "0073_geo_schema_repair",
         "0073_seo_distribution_variants",
     }
-    quota = script.get_revision("0075_seo_rank_quota_state")
-    assert quota.down_revision == "0074_merge_geo_seo_heads"
 
 
 def test_upgrade_plan_from_production_geo_head_skips_geo_and_runs_seo() -> None:
@@ -62,7 +59,6 @@ def test_upgrade_plan_from_production_geo_head_skips_geo_and_runs_seo() -> None:
     assert revisions == [
         "0073_seo_distribution_variants",
         "0074_merge_geo_seo_heads",
-        "0075_seo_rank_quota_state",
     ]
 
 
@@ -123,7 +119,7 @@ def test_postgres_upgrade_from_geo_head_creates_seo_variant_schema(monkeypatch) 
     after, variant_indexes, publication_indexes = asyncio.run(schema_snapshot())
     get_settings.cache_clear()
 
-    assert after == "0075_seo_rank_quota_state"
+    assert after == "0074_merge_geo_seo_heads"
     assert {
         "ix_seo_distribution_variants_tenant_id",
         "ix_seo_distribution_variants_content_asset_id",

@@ -48,7 +48,6 @@ from app.models.seo import (
     SeoInternalLink,
     SeoKeywordAsset,
     SeoMetricSnapshot,
-    SeoManualRankLimit,
     SeoPageSnapshot,
     SeoRankSnapshot,
     SeoSerpResult,
@@ -777,7 +776,6 @@ def test_serp_collection_accepts_only_implemented_automatic_engines() -> None:
 def test_models_use_separate_seo_tables() -> None:
     assert SeoKeywordAsset.__tablename__ == "seo_keyword_assets"
     assert SeoRankSnapshot.__tablename__ == "seo_rank_snapshots"
-    assert SeoManualRankLimit.__tablename__ == "seo_manual_rank_limits"
     assert SeoBrandAsset.__tablename__ == "seo_brand_assets"
     assert SeoSerpResult.__tablename__ == "seo_serp_results"
     assert SeoSitePage.__tablename__ == "seo_site_pages"
