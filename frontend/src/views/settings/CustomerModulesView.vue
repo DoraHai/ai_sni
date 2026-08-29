@@ -177,6 +177,16 @@ async function runRepairPreview() {
   }
 }
 
+function repairActionLabel(row) {
+  if (row.proposed_action === 'manual_identity_resolution_required') {
+    return '人工决定保留/归档，禁止直接迁移身份记录'
+  }
+  if (row.proposed_action === 'preserve_audit_provenance_manual_review') {
+    return '保留原始审计归属，制定专项处理方案'
+  }
+  return '审核唯一约束后再迁移 tenant_id'
+}
+
 onMounted(load)
 </script>
 
@@ -324,9 +334,7 @@ onMounted(load)
             <el-table-column prop="target_rows" label="目标行数" width="100" />
             <el-table-column label="预演动作" min-width="250">
               <template #default="{ row }">
-                {{ row.proposed_action === 'manual_identity_resolution_required'
-                  ? '人工决定保留/归档，禁止直接迁移身份记录'
-                  : '审核唯一约束后再迁移 tenant_id' }}
+                {{ repairActionLabel(row) }}
               </template>
             </el-table-column>
           </el-table>

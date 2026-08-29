@@ -196,6 +196,33 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
             "manual_identity_resolution_required",
         )
 
+    def test_preview_blocks_and_preserves_writeback_audit_provenance(self):
+        source = _tenant(1, "诺德", None)
+        target = _tenant(2, "诺德", None)
+        row_counts = {
+            1: {"bid_writebacks": 2, "writeback_approvals": 1},
+            2: {},
+        }
+
+        result = _sem_identity_repair_preview_payload(source, target, [], row_counts)
+
+        self.assertIn(
+            "source_has_writeback_audit_history",
+            {item["code"] for item in result["blockers"]},
+        )
+        audit_operations = [
+            item for item in result["proposed_operations"]
+            if item["category"] == "writeback_audit"
+        ]
+        self.assertTrue(audit_operations)
+        self.assertTrue(
+            all(
+                item["proposed_action"]
+                == "preserve_audit_provenance_manual_review"
+                for item in audit_operations
+            )
+        )
+
     def test_empty_source_is_only_a_warning_not_an_automatic_merge_decision(self):
         source = _tenant(1, "诺德", None)
         target = _tenant(2, "诺德", 80243027)
@@ -219,13 +246,14 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
             name
             for name in tenant_scoped_tables
             if name.startswith(("seo_", "geo_"))
-            or name in {"tenant_modules", "users"}
+            or name in {"tenant_modules", "users", "api_audit_logs"}
         }
 
         self.assertTrue(table_names)
         self.assertTrue(table_names.issubset(Base.metadata.tables.keys()))
         self.assertNotIn("tenant_modules", table_names)
         self.assertNotIn("users", table_names)
+        self.assertNotIn("api_audit_logs", table_names)
         self.assertFalse(any(name.startswith(("seo_", "geo_")) for name in table_names))
         self.assertEqual(tenant_scoped_tables, table_names | explicitly_non_sem)
 
@@ -247,6 +275,8 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         self.assertIn("repairPreview.target.accounts", view_source)
         self.assertIn("manual_identity_resolution_required", view_source)
         self.assertIn("禁止直接迁移身份记录", view_source)
+        self.assertIn("preserve_audit_provenance_manual_review", view_source)
+        self.assertIn("保留原始审计归属", view_source)
 
     def test_backend_exposes_no_identity_repair_mutation_route(self):
         repair_routes = [

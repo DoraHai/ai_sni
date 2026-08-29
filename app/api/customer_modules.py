@@ -88,7 +88,6 @@ SEM_IDENTITY_REPAIR_TABLES: tuple[tuple[str, str], ...] = (
     ("bid_writebacks", "writeback_audit"),
     ("writeback_actions", "writeback_audit"),
     ("writeback_approvals", "writeback_audit"),
-    ("api_audit_logs", "audit"),
 )
 
 
@@ -360,6 +359,11 @@ def _sem_identity_repair_preview_payload(
         for table_name, category in SEM_IDENTITY_REPAIR_TABLES
         if category == "identity"
     )
+    source_writeback_audit = sum(
+        source_counts.get(table_name, 0)
+        for table_name, category in SEM_IDENTITY_REPAIR_TABLES
+        if category == "writeback_audit"
+    )
     if (
         source_counts.get("baidu_oauth_grants", 0)
         and target_counts.get("baidu_oauth_grants", 0)
@@ -368,6 +372,13 @@ def _sem_identity_repair_preview_payload(
             {
                 "code": "both_customers_have_oauth_grants",
                 "message": "两个客户均有 OAuth 授权主记录，必须人工确定保留授权并处理账户引用。",
+            }
+        )
+    if source_writeback_audit:
+        blockers.append(
+            {
+                "code": "source_has_writeback_audit_history",
+                "message": "来源客户存在写回或审批审计记录，必须保留原始归属并制定专项处理方案。",
             }
         )
     if source_history and target_history:
@@ -401,6 +412,8 @@ def _sem_identity_repair_preview_payload(
             "proposed_action": (
                 "manual_identity_resolution_required"
                 if category == "identity"
+                else "preserve_audit_provenance_manual_review"
+                if category == "writeback_audit"
                 else "review_then_reassign_tenant_id"
             ),
         }
@@ -433,7 +446,13 @@ def _sem_identity_repair_preview_payload(
         "blockers": blockers,
         "warnings": warnings,
         "proposed_operations": operations,
-        "excluded_scope": ["tenant_modules", "users", "seo_*", "geo_*"],
+        "excluded_scope": [
+            "tenant_modules",
+            "users",
+            "api_audit_logs",
+            "seo_*",
+            "geo_*",
+        ],
         "required_reviews": [
             "customer_identity_owner_confirmation",
             "unique_constraint_and_foreign_key_review",
