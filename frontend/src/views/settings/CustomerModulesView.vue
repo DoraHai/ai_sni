@@ -288,8 +288,28 @@ onMounted(load)
             show-icon
           />
           <div class="repair-columns">
-            <section><h4>来源客户</h4><b>{{ repairPreview.source.name }} (#{{ repairPreview.source.tenant_id }})</b><span>UCID {{ repairPreview.source.baidu_ucid || '未设置' }}</span></section>
-            <section><h4>保留客户</h4><b>{{ repairPreview.target.name }} (#{{ repairPreview.target.tenant_id }})</b><span>UCID {{ repairPreview.target.baidu_ucid || '未设置' }}</span></section>
+            <section>
+              <h4>来源客户</h4>
+              <b>{{ repairPreview.source.name }} (#{{ repairPreview.source.tenant_id }})</b>
+              <span>客户主 UCID {{ repairPreview.source.baidu_ucid || '未设置' }}</span>
+              <div class="repair-accounts">
+                <small v-if="!repairPreview.source.accounts?.length">没有推广账户记录</small>
+                <span v-for="account in repairPreview.source.accounts" :key="account.id">
+                  {{ account.username }} · UCID {{ account.ucid }} · {{ account.status }} / {{ account.auth_mode }}
+                </span>
+              </div>
+            </section>
+            <section>
+              <h4>保留客户</h4>
+              <b>{{ repairPreview.target.name }} (#{{ repairPreview.target.tenant_id }})</b>
+              <span>客户主 UCID {{ repairPreview.target.baidu_ucid || '未设置' }}</span>
+              <div class="repair-accounts">
+                <small v-if="!repairPreview.target.accounts?.length">没有推广账户记录</small>
+                <span v-for="account in repairPreview.target.accounts" :key="account.id">
+                  {{ account.username }} · UCID {{ account.ucid }} · {{ account.status }} / {{ account.auth_mode }}
+                </span>
+              </div>
+            </section>
           </div>
           <ul v-if="repairPreview.blockers?.length" class="repair-issues blockers">
             <li v-for="item in repairPreview.blockers" :key="item.code"><b>{{ item.code }}</b>：{{ item.message }}</li>
@@ -313,5 +333,5 @@ onMounted(load)
 </template>
 
 <style scoped>
-.module-page{padding:24px}.page-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px}.page-head h2{margin:0 0 7px;font-size:24px}.page-head p{margin:0;color:#6b7280}.head-actions{display:flex;gap:8px}.identity-summary{margin-bottom:16px}.account-bindings{display:grid;gap:5px;margin-bottom:6px}.account-bindings>span{display:flex;justify-content:space-between;align-items:center;gap:10px}.account-label{display:flex;flex-direction:column}.account-bindings small,.unbound{color:#8b95a5}.identity-issues{display:grid;justify-items:start;gap:5px}.identity-issues span{color:#8a4b08;font-size:12px;line-height:1.35}.identity-alert{margin-bottom:16px}.repair-preview{display:grid;gap:16px}.repair-candidates h4,.repair-columns h4{margin:0 0 6px}.repair-candidates p{margin:0;color:#6b7280}.candidate-group{display:grid;gap:3px;padding:10px 12px;margin-top:8px;border:1px solid #e5e7eb;border-radius:8px}.candidate-group small{color:#8b5e16}.repair-form{padding:14px;background:#f8fafc;border-radius:8px}.repair-columns{display:grid;grid-template-columns:1fr 1fr;gap:12px}.repair-columns section{display:grid;gap:4px;padding:12px;border:1px solid #e5e7eb;border-radius:8px}.repair-columns span,.repair-safety{color:#6b7280}.repair-issues{margin:0;padding-left:22px;color:#8a4b08}.repair-issues.blockers{color:#b42318}.repair-safety{margin:0;font-family:monospace;font-size:12px}
+.module-page{padding:24px}.page-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px}.page-head h2{margin:0 0 7px;font-size:24px}.page-head p{margin:0;color:#6b7280}.head-actions{display:flex;gap:8px}.identity-summary{margin-bottom:16px}.account-bindings{display:grid;gap:5px;margin-bottom:6px}.account-bindings>span{display:flex;justify-content:space-between;align-items:center;gap:10px}.account-label{display:flex;flex-direction:column}.account-bindings small,.unbound{color:#8b95a5}.identity-issues{display:grid;justify-items:start;gap:5px}.identity-issues span{color:#8a4b08;font-size:12px;line-height:1.35}.identity-alert{margin-bottom:16px}.repair-preview{display:grid;gap:16px}.repair-candidates h4,.repair-columns h4{margin:0 0 6px}.repair-candidates p{margin:0;color:#6b7280}.candidate-group{display:grid;gap:3px;padding:10px 12px;margin-top:8px;border:1px solid #e5e7eb;border-radius:8px}.candidate-group small{color:#8b5e16}.repair-form{padding:14px;background:#f8fafc;border-radius:8px}.repair-columns{display:grid;grid-template-columns:1fr 1fr;gap:12px}.repair-columns section{display:grid;gap:4px;padding:12px;border:1px solid #e5e7eb;border-radius:8px}.repair-columns span,.repair-safety{color:#6b7280}.repair-accounts{display:grid;gap:3px;margin-top:6px;padding-top:7px;border-top:1px dashed #d8dee8}.repair-accounts span{font-size:12px;color:#374151}.repair-accounts small{color:#8b95a5}.repair-issues{margin:0;padding-left:22px;color:#8a4b08}.repair-issues.blockers{color:#b42318}.repair-safety{margin:0;font-family:monospace;font-size:12px}
 </style>

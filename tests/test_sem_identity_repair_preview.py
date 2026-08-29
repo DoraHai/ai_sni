@@ -118,13 +118,26 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         )
 
         blocker_codes = {item["code"] for item in result["blockers"]}
-        self.assertIn("primary_ucids_differ", blocker_codes)
-        self.assertIn("active_account_ucids_differ", blocker_codes)
+        self.assertIn("ucid_evidence_conflict", blocker_codes)
         self.assertIn("both_customers_have_sem_history", blocker_codes)
         self.assertTrue(result["safety"]["read_only"])
         self.assertEqual(result["safety"]["writes_performed"], 0)
         self.assertEqual(result["safety"]["migration"], "not-run")
         self.assertNotIn("must-not-leak", str(result))
+
+    def test_preview_blocks_active_account_against_other_customer_primary_ucid(self):
+        source = _tenant(1, "诺德", None)
+        target = _tenant(2, "诺德", 2002)
+        accounts = [_account(10, 1, 1001)]
+
+        result = _sem_identity_repair_preview_payload(
+            source, target, accounts, {1: {}, 2: {}}
+        )
+
+        self.assertIn(
+            "ucid_evidence_conflict",
+            {item["code"] for item in result["blockers"]},
+        )
 
     def test_empty_source_is_only_a_warning_not_an_automatic_merge_decision(self):
         source = _tenant(1, "诺德", None)
@@ -142,12 +155,22 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
 
     def test_table_allowlist_is_sem_only_and_every_table_exists(self):
         table_names = {name for name, _category in SEM_IDENTITY_REPAIR_TABLES}
+        tenant_scoped_tables = {
+            name for name, table in Base.metadata.tables.items() if "tenant_id" in table.c
+        }
+        explicitly_non_sem = {
+            name
+            for name in tenant_scoped_tables
+            if name.startswith(("seo_", "geo_"))
+            or name in {"tenant_modules", "users"}
+        }
 
         self.assertTrue(table_names)
         self.assertTrue(table_names.issubset(Base.metadata.tables.keys()))
         self.assertNotIn("tenant_modules", table_names)
         self.assertNotIn("users", table_names)
         self.assertFalse(any(name.startswith(("seo_", "geo_")) for name in table_names))
+        self.assertEqual(tenant_scoped_tables, table_names | explicitly_non_sem)
 
     def test_frontend_contract_exposes_only_read_only_get_calls(self):
         api_source = (ROOT / "frontend/src/api/moduleAssets.js").read_text(
@@ -163,6 +186,8 @@ class TestSemIdentityRepairPreview(IsolatedAsyncioTestCase):
         self.assertNotIn("executeSemIdentityRepair", api_source)
         self.assertIn("不会合并客户、迁移记录、删除数据或执行数据库迁移", view_source)
         self.assertIn("execution_endpoint", view_source)
+        self.assertIn("repairPreview.source.accounts", view_source)
+        self.assertIn("repairPreview.target.accounts", view_source)
 
     def test_backend_exposes_no_identity_repair_mutation_route(self):
         repair_routes = [

@@ -309,6 +309,12 @@ def _sem_identity_repair_preview_payload(
     target_active_ucids = {
         account.baidu_ucid for account in target_accounts if account.status == "active"
     }
+    source_ucid_evidence = set(source_active_ucids)
+    target_ucid_evidence = set(target_active_ucids)
+    if source.baidu_ucid is not None:
+        source_ucid_evidence.add(source.baidu_ucid)
+    if target.baidu_ucid is not None:
+        target_ucid_evidence.add(target.baidu_ucid)
 
     blockers: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
@@ -320,21 +326,14 @@ def _sem_identity_repair_preview_payload(
             }
         )
     if (
-        source.baidu_ucid is not None
-        and target.baidu_ucid is not None
-        and source.baidu_ucid != target.baidu_ucid
+        source_ucid_evidence
+        and target_ucid_evidence
+        and source_ucid_evidence != target_ucid_evidence
     ):
         blockers.append(
             {
-                "code": "primary_ucids_differ",
-                "message": "两个客户的主 UCID 不同，必须先人工确认真实归属。",
-            }
-        )
-    if source_active_ucids and target_active_ucids and source_active_ucids != target_active_ucids:
-        blockers.append(
-            {
-                "code": "active_account_ucids_differ",
-                "message": "两个客户存在不同的生效推广账户，禁止自动合并。",
+                "code": "ucid_evidence_conflict",
+                "message": "两个客户的主 UCID 或生效推广账户 UCID 证据不一致，禁止自动合并。",
             }
         )
 
