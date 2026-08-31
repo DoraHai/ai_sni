@@ -37,6 +37,7 @@ const editForm = reactive({ page_type: '', target_keyword_id: null, title_sugges
 
 const canEdit = computed(() => !session.isLoggedIn || session.canEdit('seo.site'))
 const stats = computed(() => result.value.stats || {})
+const emptyStateText = computed(() => Number(stats.value.total || 0) > 0 ? '没有符合当前筛选条件的页面' : '尚未导入站内页面')
 const actionScopeLabel = computed(() => selectedRows.value.length ? `已选 ${selectedRows.value.length} 条` : `当前页 ${result.value.items.length} 条`)
 function fmt(value) { return value == null ? '—' : Number(value).toLocaleString('zh-CN') }
 function statusLabel(value) { return {pending:'待检测',healthy:'健康',needs_fix:'需优化',proposed:'待确认',approved:'已确认',implemented:'待复检',verified:'已复检',error:'检测失败'}[value] || value }
@@ -203,7 +204,7 @@ onMounted(loadSites)
     <section class="site-panel">
       <header><div><span>01 / PAGE INVENTORY</span><h2>页面资产与 TDK</h2></div><small>检测使用网站公开页面，不会修改客户网站代码</small></header>
       <div class="filters"><el-input v-model="filters.q" clearable placeholder="搜索 URL 或页面标题" /><el-select v-model="filters.issueCode" clearable placeholder="全部问题"><el-option v-for="item in [{v:'title',n:'Title'},{v:'description',n:'Description'},{v:'h1',n:'H1'},{v:'canonical',n:'Canonical'},{v:'indexable',n:'索引'},{v:'schema',n:'Schema'},{v:'content',n:'内容质量'},{v:'image',n:'图片'},{v:'language',n:'语言'},{v:'crawl',n:'抓取/可访问性'}]" :key="item.v" :label="item.n" :value="item.v" /></el-select><el-select v-model="filters.status" clearable placeholder="全部状态"><el-option v-for="item in [{v:'pending',n:'待检测'},{v:'needs_fix',n:'需优化'},{v:'proposed',n:'待确认'},{v:'approved',n:'已确认'},{v:'implemented',n:'待复检'},{v:'verified',n:'已复检'},{v:'healthy',n:'健康'},{v:'error',n:'检测失败'}]" :key="item.v" :label="item.n" :value="item.v" /></el-select><span>{{ result.total }} 个页面 · 已选 {{ selectedRows.length }} 个</span></div>
-      <el-table v-loading="loading" :data="result.items" empty-text="尚未导入站内页面" @selection-change="selectedRows = $event">
+      <el-table v-loading="loading" :data="result.items" :empty-text="emptyStateText" @selection-change="selectedRows = $event">
         <el-table-column type="selection" width="44" />
         <el-table-column label="页面 / URL" min-width="280"><template #default="{row}"><b class="page-title">{{ row.title || '未读取页面标题' }}</b><small class="page-url">{{ row.url }}</small></template></el-table-column>
         <el-table-column label="目标关键词" width="120"><template #default="{row}">{{ row.target_keyword_id ? `#${row.target_keyword_id}` : '待绑定' }}</template></el-table-column>
