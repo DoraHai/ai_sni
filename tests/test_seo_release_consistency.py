@@ -81,6 +81,13 @@ def test_standalone_seo_entry_does_not_import_shared_application() -> None:
         assert forbidden not in router
 
 
+def test_seo_dashboard_title_is_not_duplicated() -> None:
+    root = Path(__file__).parents[1]
+    standalone_router = (root / "frontend/src/seo-router.js").read_text(encoding="utf-8")
+
+    assert "to.meta.title === productName" in standalone_router
+
+
 def test_trends_are_scoped_by_site_and_selected_time_range() -> None:
     root = Path(__file__).parents[1]
     trends = (root / "frontend/src/views/seo/SeoTrendsView.vue").read_text(
