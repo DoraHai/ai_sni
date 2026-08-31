@@ -81,6 +81,18 @@ def test_sem_frontend_keeps_element_plus_out_of_the_initial_bundle():
     assert "initialJavaScriptBudget = 500 * 1024" in build_guard
 
 
+def test_sem_compatibility_routes_enter_the_real_dashboard():
+    router = _read("frontend/src/router/index.js")
+    diagnosis = _read("frontend/src/views/diagnosis/DiagnosisCenterView.vue")
+
+    assert "path: '/sem',\n    redirect: '/monitor/dashboard'" in router
+    assert (
+        "path: '/deal-sniper/sem/dashboard',\n"
+        "    redirect: '/monitor/dashboard'"
+    ) in router
+    assert 'href="/deal-sniper/sem/dashboard"' in diagnosis
+
+
 def test_canonical_domain_and_portal_routes_are_release_contracts():
     nginx = _read("deploy/gsnipers.conf")
     build_guard = _read("frontend/scripts/verify-sem-build.mjs")
