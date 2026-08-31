@@ -10,6 +10,7 @@ import { currentSeoSiteId as siteId } from './seoSiteContext'
 const route = useRoute()
 const router = useRouter()
 const editor = ref(null)
+const editorComposing = ref(false)
 const saving = ref(false)
 const saveState = ref('尚未保存')
 const prompt = ref('')
@@ -121,7 +122,22 @@ async function loadSourcePageBrief() {
   } catch (e) { ElMessage.warning(e.message) }
 }
 
+function showSuccess(message) {
+  ElMessage({ type: 'success', message, duration: 3500, showClose: true })
+}
+
+function startEditorComposition() {
+  editorComposing.value = true
+  saveState.value = '中文输入中…'
+}
+
+function finishEditorComposition() {
+  editorComposing.value = false
+  syncDraft()
+}
+
 function syncDraft() {
+  if (editorComposing.value) return
   form.draft = editor.value?.innerHTML || ''
   saveState.value = '编辑中…'
 }
@@ -256,6 +272,7 @@ async function assist(action) {
 
 async function save(status = 'drafting', options = {}) {
   if (workflowLocked.value) return ElMessage.warning('待审核或待发布内容不能直接编辑，请先退回修改')
+  if (editorComposing.value) return ElMessage.warning('中文输入尚未完成，请选定文字后再保存')
   syncDraft()
   if (!currentTenantId.value) return ElMessage.warning('请先选择客户')
   if (!siteId.value) return ElMessage.warning('请先选择或创建 SEO 网站')
@@ -299,7 +316,7 @@ async function save(status = 'drafting', options = {}) {
     }
     assetStatus.value = status
     saveState.value = status === 'published' ? '已发布' : '刚刚已保存'
-    if (!options.quiet) ElMessage.success(status === 'published' ? '文章发布记录已保存' : '文章草稿已保存')
+    if (!options.quiet) showSuccess(status === 'published' ? '文章发布记录已保存' : '文章草稿已保存')
     return true
   } catch (e) { ElMessage.error(e.message) } finally { saving.value = false }
 }
@@ -313,7 +330,7 @@ async function submitReview() {
     await submitSeoContentReview({ contentId: assetId.value, tenantId: currentTenantId.value })
     assetStatus.value = 'review'
     saveState.value = '已提交审核'
-    ElMessage.success('文章已提交审核')
+    showSuccess('文章已提交审核')
     router.push(backPath.value)
   } catch (e) { ElMessage.error(e.message) } finally { saving.value = false }
 }
@@ -378,7 +395,7 @@ onMounted(async () => {
     <header class="editor-topbar">
       <button class="editor-back" type="button" @click="router.push(backPath)">← 返回{{ mode==='rewrite'?'文章改写':mode==='qa'?'问答运营':'原创文章' }}</button>
       <div><h1>{{ pageTitle }}</h1><p>{{ mode==='rewrite'?'基于导入原文 · 深度改写':mode==='qa'?'搜索问答 · 新建回答':`${selectedTemplate.name} · 新建内容` }}</p></div>
-      <div class="editor-top-actions"><span>{{ saveState }}</span><button v-if="sourcePageId" type="button" @click="router.push(sourcePageRoute)">返回来源页面</button><button v-if="['planned','drafting'].includes(assetStatus)" type="button" @click="save('drafting')">保存草稿</button><button v-if="['planned','drafting'].includes(assetStatus)" type="button" :disabled="saving" @click="submitReview">提交审核</button><button v-if="assetStatus==='ready'" class="primary" type="button" @click="router.push('/seo/distribution')">进入发布流程</button><b>{{ String(session.user?.name || session.user?.username || 'DZ').slice(0, 2).toUpperCase() }}</b></div>
+      <div class="editor-top-actions"><span>{{ saveState }}</span><button v-if="sourcePageId" type="button" @click="router.push(sourcePageRoute)">返回来源页面</button><button v-if="['planned','drafting'].includes(assetStatus)" type="button" :disabled="saving || editorComposing" @click="save('drafting')">保存草稿</button><button v-if="['planned','drafting'].includes(assetStatus)" type="button" :disabled="saving || editorComposing" @click="submitReview">提交审核</button><button v-if="assetStatus==='ready'" class="primary" type="button" @click="router.push('/seo/distribution')">进入发布流程</button><b>{{ String(session.user?.name || session.user?.username || 'DZ').slice(0, 2).toUpperCase() }}</b></div>
     </header>
 
     <main class="editor-workspace">
@@ -392,7 +409,7 @@ onMounted(async () => {
       <section class="editor-center">
         <div class="document-frame">
           <div class="editor-toolbar"><button type="button" title="标题 2" @click="command('formatBlock', 'h2')">H2</button><button type="button" title="标题 3" @click="command('formatBlock', 'h3')">H3</button><i /><button type="button" title="加粗" @click="command('bold')">B</button><button type="button" title="斜体" @click="command('italic')">I</button><button type="button" title="无序列表" @click="command('insertUnorderedList')">•</button><button type="button" title="有序列表" @click="command('insertOrderedList')">1.</button></div>
-          <div class="document-scroll"><input v-model="form.title" class="document-title" :readonly="workflowLocked" :placeholder="mode==='qa'?'输入问题标题':'输入文章标题'"><div ref="editor" class="article-editor" :contenteditable="!workflowLocked" :data-placeholder="mode==='qa'?'从这里开始撰写回答…':'从这里开始撰写正文…'" @input="syncDraft" /></div>
+          <div class="document-scroll"><input v-model="form.title" class="document-title" :readonly="workflowLocked" :placeholder="mode==='qa'?'输入问题标题':'输入文章标题'"><div ref="editor" class="article-editor" :contenteditable="!workflowLocked" :data-placeholder="mode==='qa'?'从这里开始撰写回答…':'从这里开始撰写正文…'" @compositionstart="startEditorComposition" @compositionend="finishEditorComposition" @input="syncDraft" @blur="syncDraft" /></div>
           <footer class="document-status"><span>{{ wordCount.toLocaleString() }} 字</span><span>{{ engine }}</span><span :title="keywordSummary">{{ keywordNames.length }} 个目标词</span><span>{{ saveState }}</span></footer>
         </div>
       </section>
