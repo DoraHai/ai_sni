@@ -2,6 +2,7 @@ import ast
 import asyncio
 import hashlib
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -85,6 +86,13 @@ def test_merge_revisions_are_noop_and_sem_seo_merge_is_only_head() -> None:
     assert content_review.down_revision == "0078_seo_site_data_repairs"
     content_review_history = script.get_revision("0080_seo_content_review_history")
     assert content_review_history.down_revision == "0079_seo_content_review_workflow"
+
+
+def test_seo_health_required_revision_matches_alembic_head() -> None:
+    source = (ROOT / "app/seo_main.py").read_text(encoding="utf-8")
+    match = re.search(r'SEO_REQUIRED_SCHEMA_REVISION = "([^"]+)"', source)
+    assert match is not None
+    assert ScriptDirectory.from_config(_config()).get_heads() == [match.group(1)]
 
 
 def test_upgrade_plan_from_production_sem_head_runs_only_seo_branch() -> None:

@@ -97,8 +97,11 @@ The frontend release workflow validates the immutable SHA and explicit
 isolation manifest, rejects backend content, switches only the SEO frontend
 link, and verifies `/seo/`, its static assets, the same-origin portal link, and
 security headers. The full deploy module validates `migration=not-run`, switches both
-SEO release links, and restarts only `seo-service`. Database migrations are
-never run automatically.
+SEO release links, and restarts only `seo-service`. `/health/seo` compares the
+database Alembic revision with the revision required by the release. A mismatch
+returns HTTP 503, so the restricted deployer restores the previous release.
+Database migrations are never run automatically; a reviewed migration must be
+applied separately before retrying a release that requires it.
 
 ## Rollback
 

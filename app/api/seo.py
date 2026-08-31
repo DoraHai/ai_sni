@@ -4098,6 +4098,8 @@ async def import_published_links(
                 errors.append("内容标题未匹配到当前客户的内容资产")
         elif not errors:
             errors.append("内容资产ID和内容标题至少填写一项")
+        if asset is not None and asset.status not in {"ready", "published"}:
+            errors.append("内容尚未审核通过，仅待发布或已发布内容可以登记发布链接")
         try:
             page_url, host = normalize_publication_url(source.get("page_url"))
         except ValueError as exc:

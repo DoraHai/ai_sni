@@ -208,7 +208,7 @@ jobs:
           latest="$(git ls-remote origin "refs/heads/$SEO_PRODUCTION_BRANCH" | cut -f1)"
           test "$latest" = "$RELEASE_SHA"
 
-      - name: Apply SEO frontend and backend without database migration
+      - name: Apply schema-compatible SEO release without running database migration
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}

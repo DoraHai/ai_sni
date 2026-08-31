@@ -1,4 +1,10 @@
+import asyncio
 from pathlib import Path
+from unittest.mock import patch
+
+from fastapi import Response
+
+from app import seo_main
 
 
 ROOT = Path(__file__).parents[1]
@@ -6,6 +12,41 @@ ROOT = Path(__file__).parents[1]
 
 def _read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
+
+
+class _HealthResult:
+    def __init__(self, revisions: list[str]):
+        self.revisions = revisions
+
+    def scalars(self):
+        return self.revisions
+
+
+class _HealthConnection:
+    def __init__(self, revisions: list[str]):
+        self.revisions = revisions
+
+    async def execute(self, statement):
+        return _HealthResult(self.revisions if "alembic_version" in str(statement) else [])
+
+
+class _HealthContext:
+    def __init__(self, revisions: list[str]):
+        self.connection = _HealthConnection(revisions)
+
+    async def __aenter__(self):
+        return self.connection
+
+    async def __aexit__(self, *_args):
+        return None
+
+
+class _HealthEngine:
+    def __init__(self, revisions: list[str]):
+        self.revisions = revisions
+
+    def connect(self):
+        return _HealthContext(self.revisions)
 
 
 def test_seo_service_mounts_only_seo_routes() -> None:
@@ -21,6 +62,36 @@ def test_seo_service_mounts_only_seo_routes() -> None:
     assert "from app.scheduler" not in source
     assert "start_seo_scheduler" in source
     assert "shutdown_seo_scheduler" in source
+    assert 'SEO_REQUIRED_SCHEMA_REVISION = "0080_seo_content_review_history"' in source
+    assert "SELECT version_num FROM alembic_version ORDER BY version_num" in source
+    assert 'schema_status = "error"' in source
+    assert "response.status_code = 503" in source
+
+
+def test_seo_health_accepts_only_the_required_database_revision() -> None:
+    response = Response()
+    with patch.object(
+        seo_main,
+        "engine",
+        _HealthEngine([seo_main.SEO_REQUIRED_SCHEMA_REVISION]),
+    ):
+        result = asyncio.run(seo_main.seo_health(response))
+
+    assert response.status_code == 200
+    assert result["db"] == "ok"
+    assert result["schema"] == "ok"
+    assert result["schema_revision"] == seo_main.SEO_REQUIRED_SCHEMA_REVISION
+
+
+def test_seo_health_fails_closed_when_database_revision_is_stale() -> None:
+    response = Response()
+    with patch.object(seo_main, "engine", _HealthEngine(["0079_seo_content_review_workflow"])):
+        result = asyncio.run(seo_main.seo_health(response))
+
+    assert response.status_code == 503
+    assert result["db"] == "error"
+    assert result["schema"] == "error"
+    assert "expected 0080_seo_content_review_history" in result["db_error"]
 
 
 def test_seo_scheduler_registers_only_rank_collection() -> None:
@@ -123,7 +194,7 @@ def test_production_workflow_auto_deploys_only_the_exact_production_head() -> No
     assert "platform-deploy apply seo" in workflow
     assert "migration=not-run" in workflow
     assert "alembic upgrade" not in workflow
-    assert "Apply SEO frontend and backend without database migration" in workflow
+    assert "Apply schema-compatible SEO release without running database migration" in workflow
     assert "tests/test_seo_scheduler.py" in workflow
     assert "production-sem" not in workflow
     assert "production-geo" not in workflow
