@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { analysisReportExportUrl, fetchAnalysisReport } from '../../api/reports'
 import { session } from '../../store/session'
+import { formatUtcTimestamp } from '../../utils/dateTime'
 
 const TENANT_ID = computed(() => session.tenantId)
 const router = useRouter()
@@ -457,7 +458,7 @@ function scrollTo(key) {
         </section>
 
         <div class="rm-foot">
-          <span v-if="report.generated_at">AI 叙述生成于 {{ report.generated_at.slice(0, 16).replace('T', ' ') }} · 模型 deepseek-chat</span>
+          <span v-if="report.generated_at">AI 叙述生成于 {{ formatUtcTimestamp(report.generated_at) }} · 模型 deepseek-chat</span>
           <span v-else>仅数据模块（未生成 AI 叙述）</span>
         </div>
       </div>

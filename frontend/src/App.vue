@@ -115,6 +115,7 @@ const ALL_GROUPS = computed(() => [
     { label: '推广账号', path: '/sem/accounts', key: 'sem.assets' },
     { label: '账户与预算', path: '/manage/account', key: 'manage.account' },
     { label: '计划管理', path: '/manage/campaigns', key: 'manage.campaigns' },
+    { label: '单元管理', path: '/manage/adgroups', key: 'manage.adgroups' },
     { label: 'oCPC 投放', path: '/manage/ocpc', key: 'manage.ocpc' },
   ] },
   { label: '客户交付', icon: '📨', children: [
