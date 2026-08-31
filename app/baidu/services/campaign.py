@@ -63,6 +63,8 @@ class CampaignService:
         try:
             resp = await self._call_get(use_fields)
         except BaiduAPIError as e:
+            if not e.is_invalid_request_field:
+                raise
             stripped = [f for f in use_fields if f not in PROBE_FIELDS]
             if stripped == use_fields:
                 raise

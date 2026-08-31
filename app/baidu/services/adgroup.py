@@ -55,27 +55,41 @@ class AdgroupService:
     ) -> list[dict[str, Any]]:
         """按计划 ID 批量拉单元，自动分批。
 
-        首批若因试探字段被拒，剔除后重试并对后续批次沿用剔除后的字段表。
+        试探字段被明确拒绝时剔除后重试。单个已删除计划不能拖垮整批：
+        对“Campaign id not exist”批次做有限二分，隔离并跳过失效 ID。
         """
         use_fields = list(fields or ADGROUP_SYNC_FIELDS)
         adgroups: list[dict[str, Any]] = []
-        for i in range(0, len(campaign_ids), GET_ADGROUP_BATCH):
-            batch = campaign_ids[i : i + GET_ADGROUP_BATCH]
+
+        async def fetch_batch(batch: list[int]) -> list[dict[str, Any]]:
+            nonlocal use_fields
             try:
                 resp = await self._call_get(use_fields, batch)
             except BaiduAPIError as e:
-                stripped = [f for f in use_fields if f not in PROBE_FIELDS]
-                if stripped == use_fields:
+                if e.is_invalid_request_field:
+                    stripped = [f for f in use_fields if f not in PROBE_FIELDS]
+                    if stripped == use_fields:
+                        raise
+                    logger.warning(
+                        "getAdgroup 含试探字段被拒（code=%s msg=%s），剔除 %s 重试",
+                        e.code, e.message, PROBE_FIELDS & set(use_fields),
+                    )
+                    use_fields = stripped
+                    return await fetch_batch(batch)
+                if not e.is_missing_entity("campaign"):
                     raise
-                logger.warning(
-                    "getAdgroup 含试探字段被拒（code=%s msg=%s），剔除 %s 重试",
-                    e.code, e.message, PROBE_FIELDS & set(use_fields),
-                )
-                use_fields = stripped
-                resp = await self._call_get(use_fields, batch)
+                if len(batch) == 1:
+                    logger.warning("getAdgroup 跳过百度侧不存在的计划 id=%s", batch[0])
+                    return []
+                midpoint = len(batch) // 2
+                return await fetch_batch(batch[:midpoint]) + await fetch_batch(batch[midpoint:])
             data = resp.get("data") or []
-            if isinstance(data, list):
-                adgroups.extend(data)
+            return data if isinstance(data, list) else []
+
+        for i in range(0, len(campaign_ids), GET_ADGROUP_BATCH):
+            # 同一 ID 无需重复请求；dict 保留原始顺序。
+            batch = list(dict.fromkeys(campaign_ids[i : i + GET_ADGROUP_BATCH]))
+            adgroups.extend(await fetch_batch(batch))
         return adgroups
 
     async def _call_get(
