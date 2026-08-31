@@ -80,9 +80,11 @@ def test_sem_backend_workflow_never_executes_database_or_other_module_deploys() 
 def test_sem_backend_release_reruns_recent_high_risk_regressions() -> None:
     workflow = _workflow()
     for suite in (
+        "tests/test_baidu_asset_fetch_isolation.py",
         "tests/test_keyword_refresh.py",
         "tests/test_scheduler_account_iteration.py",
         "tests/test_sem_identity_repair_preview.py",
+        "tests/test_sem_asset_sync_integrity.py",
         "tests/test_sem_public_http_security.py",
         "tests/test_campaign_region_management.py",
         "tests/test_campaign_schedule_management.py",

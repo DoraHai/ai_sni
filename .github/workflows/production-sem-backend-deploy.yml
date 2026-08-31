@@ -89,6 +89,7 @@ jobs:
           TZ: UTC
         run: >-
           pytest -q
+          tests/test_baidu_asset_fetch_isolation.py
           tests/test_baidu_oauth.py
           tests/test_campaign_region_management.py
           tests/test_campaign_schedule_management.py
@@ -96,6 +97,7 @@ jobs:
           tests/test_prod_guard.py
           tests/test_scheduler_account_iteration.py
           tests/test_sem_identity_repair_preview.py
+          tests/test_sem_asset_sync_integrity.py
           tests/test_sem_p0_data_trust.py
           tests/test_sem_public_http_security.py
           tests/test_sem_readonly_consistency.py
