@@ -4,18 +4,18 @@ import { fetchMe } from '../../src/api/auth'
 import { fetchGeoTenants } from '../../src/api/geo'
 import { session } from '../../src/store/session'
 
-const ready = ref(!session.isLoggedIn)
+const ready = ref(false)
 
 async function bootstrapSession() {
-  if (!session.isLoggedIn) {
-    ready.value = true
-    return
-  }
-
   try {
-    const [me, tenants] = await Promise.all([fetchMe(), fetchGeoTenants()])
-    session.refreshUser(me.user)
+    const [me, tenants] = await Promise.all([
+      session.isLoggedIn ? fetchMe() : Promise.resolve(null),
+      fetchGeoTenants(),
+    ])
+    if (me?.user) session.refreshUser(me.user)
     session.setTenants(tenants.tenants || [])
+  } catch {
+    session.setTenants(session.tenants || [])
   } finally {
     ready.value = true
   }

@@ -14,7 +14,7 @@ from app.ai.deepseek import is_enabled as ai_enabled
 from app.database import get_session
 from app.geo.audit import GeoAuditError, audit_url
 from app.geo.generate import ai_advice, generate_json_ld, generate_llms_text
-from app.geo.tenant_scope import list_geo_tenants
+from app.geo.tenant_scope import list_geo_tenants_for_auth
 from app.geo.verify import (
     append_evidence,
     apply_verdict_to_status,
@@ -38,7 +38,7 @@ async def get_geo_tenants(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Customer switcher data, limited to currently enabled GEO tenants."""
-    tenants = await list_geo_tenants(session, tenant_id=ctx.tenant_id)
+    tenants = await list_geo_tenants_for_auth(session, bound_tenant_id=ctx.tenant_id)
     return {"tenants": [{"id": tenant.id, "name": tenant.name} for tenant in tenants]}
 
 

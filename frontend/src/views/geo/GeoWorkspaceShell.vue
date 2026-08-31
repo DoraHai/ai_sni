@@ -112,14 +112,13 @@ async function onUserCommand(cmd) {
           <label class="geo-tenant-switcher">
             <span>当前客户</span>
             <select
-              v-if="session.tenants.length"
               :value="session.tenantId || ''"
               aria-label="切换客户"
               @change="onTenantChange"
             >
+              <option value="" disabled>{{ session.tenants.length ? tenantName : '选择客户' }}</option>
               <option v-for="tenant in session.tenants" :key="tenant.id" :value="tenant.id">{{ tenant.name }}</option>
             </select>
-            <strong v-else>{{ tenantName }}</strong>
           </label>
           <div
             class="geo-module-state"

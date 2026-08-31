@@ -51,3 +51,15 @@ async def list_geo_tenants(
 ) -> list[Tenant]:
     """Return only tenants whose GEO module is currently usable."""
     return list((await session.scalars(geo_tenant_query(tenant_id=tenant_id))).all())
+
+
+async def list_geo_tenants_for_auth(
+    session: AsyncSession,
+    *,
+    bound_tenant_id: int | None,
+) -> list[Tenant]:
+    """Switcher list: unbound accounts see every enabled GEO tenant; bound accounts see only themselves."""
+    tenants = await list_geo_tenants(session)
+    if bound_tenant_id is None:
+        return tenants
+    return [tenant for tenant in tenants if tenant.id == bound_tenant_id]
