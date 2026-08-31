@@ -17,7 +17,7 @@ defineProps({
 const router = useRouter()
 const tenantHint = computed(() => {
   if (session.tenantId) return ''
-  if ((session.tenants || []).length) return '请在左侧选择客户后再看数据'
+  if ((session.tenants || []).length) return '请在顶部选择客户后再看数据'
   return ''
 })
 const initials = computed(() => {
