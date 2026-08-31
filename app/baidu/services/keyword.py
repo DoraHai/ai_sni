@@ -131,12 +131,16 @@ class KeywordService:
     async def get_words_by_adgroup_ids(
         self, adgroup_ids: list[int], fields: list[str] | None = None
     ) -> list[dict[str, Any]]:
-        """按单元 ID 全量枚举关键词（getWord, idType=5），零展现词也能拿到。"""
+        """按单元 ID 全量枚举关键词（getWord, idType=5），零展现词也能拿到。
+
+        已删除单元导致整批返回“Adgroup id not exist”时，由 ``_get_word_batch``
+        二分隔离并跳过失效 ID，仍返回同批其他有效单元的关键词。
+        """
         words: list[dict[str, Any]] = []
         for i in range(0, len(adgroup_ids), GET_WORD_ADGROUP_BATCH):
             words.extend(
                 await self._get_word_batch(
-                    adgroup_ids[i : i + GET_WORD_ADGROUP_BATCH],
+                    list(dict.fromkeys(adgroup_ids[i : i + GET_WORD_ADGROUP_BATCH])),
                     fields or WORD_SYNC_FIELDS,
                     id_type=5,
                 )
@@ -147,7 +151,7 @@ class KeywordService:
         self, ids: list[int], fields: list[str], id_type: int
     ) -> list[dict[str, Any]]:
         remaining = list(ids)
-        for _ in range(10):  # 每轮剔除报错的不存在 ID，防御性上限
+        while remaining:
             if not remaining:
                 return []
             try:
@@ -164,6 +168,17 @@ class KeywordService:
                 data = resp.get("data") or []
                 return data if isinstance(data, list) else []
             except BaiduAPIError as e:
+                missing_asset = (
+                    e.is_missing_entity("adgroup")
+                    if id_type == 5
+                    else (
+                        e.is_missing_entity("winfoid")
+                        or e.is_missing_entity("keyword")
+                        or e.is_missing_entity("word")
+                    )
+                )
+                if not missing_asset:
+                    raise
                 failures = (e.raw.get("header") or {}).get("failures") or []
                 bad = {
                     int(m)
@@ -171,9 +186,18 @@ class KeywordService:
                     for m in re.findall(r"\d{6,}", str(f.get("message", "")))
                 }
                 bad &= set(remaining)
-                if not bad:
-                    raise  # 不是"ID 不存在"类错误，原样抛出
-                logger.info("getWord 剔除已删除关键词 %d 个后重试", len(bad))
-                remaining = [i for i in remaining if i not in bad]
-        logger.warning("getWord 重试次数耗尽，跳过剩余 %d 个 ID", len(remaining))
+                if bad:
+                    logger.info("getWord 剔除已删除资产 %d 个后重试", len(bad))
+                    remaining = [i for i in remaining if i not in bad]
+                    continue
+                if id_type != 5:
+                    raise  # 关键词不存在错误未携带可安全剔除的具体 ID
+                if len(remaining) == 1:
+                    logger.warning("getWord 跳过百度侧不存在的单元 id=%s", remaining[0])
+                    return []
+                midpoint = len(remaining) // 2
+                return (
+                    await self._get_word_batch(remaining[:midpoint], fields, id_type)
+                    + await self._get_word_batch(remaining[midpoint:], fields, id_type)
+                )
         return []

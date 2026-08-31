@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 # token 相关的错误码（文档 0003 第 5 节）。命中这些码意味着需要重新授权或续期。
 TOKEN_ERROR_CODES = {89403, 89405, 89406, 894061, 894062, 894063, 894064, 89407}
 
+# 百度搜索推广接口在请求字段不受支持时返回此错误码。服务层只应在这个
+# 明确错误上移除试探字段，不能把权限、资产不存在等错误误判成字段兼容问题。
+INVALID_REQUEST_FIELD_CODE = 9011519
+
 # 写方法名兜底识别（百度写接口动词前缀）。调用方应显式传 is_write=True；
 # 这层前缀匹配是双保险，防止将来有人新增写调用忘了传标志而把真请求漏给百度。
 _WRITE_METHOD_PREFIXES = (
@@ -52,6 +56,24 @@ class BaiduAPIError(Exception):
     @property
     def is_token_invalid(self) -> bool:
         return self.code in TOKEN_ERROR_CODES
+
+    @property
+    def is_invalid_request_field(self) -> bool:
+        """当前错误是否明确表示请求字段不受支持。"""
+        return str(self.code) == str(INVALID_REQUEST_FIELD_CODE)
+
+    def is_missing_entity(self, entity: str) -> bool:
+        """当前错误是否明确表示指定类型的百度资产不存在。"""
+        message = self.message.casefold()
+        entity_name = entity.casefold()
+        missing_markers = (
+            "not exist",
+            "does not exist",
+            "not found",
+            "不存在",
+            "已删除",
+        )
+        return entity_name in message and any(marker in message for marker in missing_markers)
 
 
 class BaiduAPIClient:
