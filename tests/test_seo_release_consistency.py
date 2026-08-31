@@ -186,6 +186,21 @@ def test_content_review_ui_supports_rejected_draft_resubmission_and_audit_detail
     assert '"review_history"' in backend
 
 
+def test_content_review_ui_preserves_approval_notes_and_ime_commits() -> None:
+    root = Path(__file__).parents[1]
+    content = (root / "frontend/src/views/seo/SeoContentView.vue").read_text(encoding="utf-8")
+    editor = (root / "frontend/src/views/seo/SeoContentEditorView.vue").read_text(encoding="utf-8")
+
+    assert "inputPlaceholder: '填写审核结论（选填）'" in content
+    assert "decision: 'approve', note" in content
+    assert "duration: 3500, showClose: true" in content
+    assert '@compositionstart="startEditorComposition"' in editor
+    assert '@compositionend="finishEditorComposition"' in editor
+    assert '@blur="syncDraft"' in editor
+    assert "if (editorComposing.value) return ElMessage.warning('中文输入尚未完成，请选定文字后再保存')" in editor
+    assert ':disabled="saving || editorComposing"' in editor
+
+
 def test_rewrite_library_keeps_original_source_types_when_content_api_is_paginated() -> None:
     root = Path(__file__).parents[1]
     content = (root / "frontend/src/views/seo/SeoRewriteView.vue").read_text(encoding="utf-8")

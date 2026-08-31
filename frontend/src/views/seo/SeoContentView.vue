@@ -131,6 +131,10 @@ const actorName = (value, name) => name || (value ? `用户 #${value}` : '系统
 const reviewActionName = (value) => ({ submit: '提交审核', approve: '审核通过', reject: '退回修改' })[value] || value
 const isComposing = computed(() => composingFields.value.size > 0)
 
+function showSuccess(message) {
+  ElMessage({ type: 'success', message, duration: 3500, showClose: true })
+}
+
 function startComposition(field) {
   const next = new Set(composingFields.value)
   next.add(field)
@@ -242,8 +246,8 @@ async function save({ submit = false } = {}) {
       : await createSeoContentAsset({ tenant_id: currentTenantId.value, site_id: siteId.value, ...payload })
     if (submit) {
       await submitSeoContentReview({ contentId: saved.id, tenantId: currentTenantId.value, note: submitNote.value.trim() || null })
-      ElMessage.success('内容已保存并提交审核')
-    } else ElMessage.success('内容资产已保存')
+      showSuccess('内容已保存并提交审核')
+    } else showSuccess('内容资产已保存')
     dialog.value = false
     await load()
   } catch (e) { ElMessage.error(e.message) } finally { saving.value = false }
@@ -258,9 +262,10 @@ async function copyContent(row) {
 
 async function approveReview(row) {
   try {
-    await ElMessageBox.confirm('审核通过后内容将进入“待发布”，确认继续？', '审核通过', { type: 'warning', confirmButtonText: '确认通过', cancelButtonText: '取消' })
-    await decideSeoContentReview({ contentId: row.id, tenantId: currentTenantId.value, decision: 'approve' })
-    ElMessage.success('审核已通过，内容进入待发布')
+    const result = await ElMessageBox.prompt('审核通过后内容将进入“待发布”。可填写审核结论，留空也可以继续。', '审核通过', { type: 'warning', inputType: 'textarea', inputPlaceholder: '填写审核结论（选填）', confirmButtonText: '确认通过', cancelButtonText: '取消' })
+    const note = String(result.value || '').trim() || null
+    await decideSeoContentReview({ contentId: row.id, tenantId: currentTenantId.value, decision: 'approve', note })
+    showSuccess('审核已通过，内容进入待发布')
     await load()
   } catch (e) {
     if (e !== 'cancel' && e !== 'close') ElMessage.error(e.message || String(e))
@@ -271,7 +276,7 @@ async function rejectReview(row) {
   try {
     const result = await ElMessageBox.prompt('请填写需要修改的内容，退回后任务将恢复为草稿。', '退回修改', { inputType: 'textarea', inputValidator: (value) => String(value || '').trim() ? true : '退回时必须填写修改意见', confirmButtonText: '确认退回', cancelButtonText: '取消' })
     await decideSeoContentReview({ contentId: row.id, tenantId: currentTenantId.value, decision: 'reject', note: result.value.trim() })
-    ElMessage.success('内容已退回修改')
+    showSuccess('内容已退回修改')
     await load()
   } catch (e) {
     if (e !== 'cancel' && e !== 'close') ElMessage.error(e.message || String(e))
