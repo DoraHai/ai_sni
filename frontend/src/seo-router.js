@@ -138,7 +138,10 @@ router.beforeEach((to) => {
 })
 
 router.afterEach((to) => {
-  document.title = `${to.meta.title ? `${to.meta.title} · ` : ''}SEO 工作台`
+  const productName = 'SEO 工作台'
+  document.title = !to.meta.title || to.meta.title === productName
+    ? productName
+    : `${to.meta.title} · ${productName}`
 })
 
 export default router
