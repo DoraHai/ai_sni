@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { createUser, fetchTenants, fetchUsers, updateUser } from '../../api/auth'
 import { createRole, deleteRole, fetchRoles, updateRole } from '../../api/roles'
 import { session } from '../../store/session'
+import { formatUtcTimestamp } from '../../utils/dateTime'
 
 const tab = ref('accounts')
 const loading = ref(false)
@@ -46,7 +47,7 @@ const menuGroups = computed(() => {
   for (const m of menus.value) (g[m.group] ||= []).push(m)
   return Object.entries(g).map(([group, items]) => ({ group, items }))
 })
-const fmtTime = (v) => (v ? v.slice(0, 16).replace('T', ' ') : '从未登录')
+const fmtTime = (v) => formatUtcTimestamp(v, { fallback: '从未登录' })
 
 // ===== 账号 =====
 const userDialog = ref(false)

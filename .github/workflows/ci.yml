@@ -67,6 +67,10 @@ jobs:
         working-directory: frontend
         run: npm run test:sem-identity-repair-requests
 
+      - name: Test SEM date and UI contracts
+        working-directory: frontend
+        run: npm run test:sem-date-time && npm run test:sem-ui-contracts
+
       - name: Verify build contract
         working-directory: frontend
         run: npm run verify:sem-build

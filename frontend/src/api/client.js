@@ -43,7 +43,11 @@ client.interceptors.response.use(
     }
     const detail =
       normalizeDetail(error.response?.data?.detail) ||
-      (error.code === 'ECONNABORTED' ? '请求超过 30 秒未完成，请检查网络或稍后重试' : error.message) ||
+      (error.response?.status >= 500
+        ? '服务暂时不可用，请稍后重试；若持续失败，请记录当前时间并联系管理员'
+        : error.code === 'ECONNABORTED'
+          ? '请求超过 30 秒未完成，请检查网络或稍后重试'
+          : error.message) ||
       '网络异常，请稍后重试'
     const normalized = new Error(detail)
     normalized.status = error.response?.status

@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchSemAccounts, repairSemAccountAssets } from '../../api/moduleAssets'
 import { currentTenantId } from '../../store/session'
+import { formatUtcTimestamp } from '../../utils/dateTime'
 
 const router = useRouter()
 const route = useRoute()
@@ -28,7 +29,7 @@ const focusedAccountId = computed(() => Number(route.query.account_id) || null)
 const accountRowClass = ({ row }) => row.id === focusedAccountId.value ? 'focused-account-row' : ''
 
 function fmtTime(value) {
-  return value ? value.slice(0, 16).replace('T', ' ') : '—'
+  return formatUtcTimestamp(value)
 }
 
 async function load() {

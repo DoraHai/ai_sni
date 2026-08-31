@@ -16,6 +16,7 @@ import {
 import { fetchAdgroupList, fetchCampaignList } from '../../api/keywords'
 import AddToPlanDialog from '../../components/AddToPlanDialog.vue'
 import { session } from '../../store/session'
+import { formatLocalDate, formatUtcTimestamp } from '../../utils/dateTime'
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
 
@@ -292,7 +293,7 @@ async function exportCsv() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `expansion_${new Date().toISOString().slice(0, 10)}.csv`
+    a.download = `expansion_${formatLocalDate()}.csv`
     a.click()
     URL.revokeObjectURL(url)
   } catch (e) {
@@ -304,7 +305,7 @@ async function exportCsv() {
 
 const fmtInt = (v) => (v == null ? '—' : Number(v).toLocaleString('zh-CN'))
 const fmtMoney = (v) => (v == null ? '—' : '¥ ' + Number(v).toFixed(2))
-const fmtTime = (v) => (v ? v.slice(5, 16).replace('T', ' ') : '—')
+const fmtTime = (v) => formatUtcTimestamp(v, { short: true })
 
 const pendingCount = (code) => data.value?.source_pending_counts?.[code] ?? 0
 const catClass = computed(() => ({
