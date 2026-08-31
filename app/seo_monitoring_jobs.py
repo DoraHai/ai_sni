@@ -11,6 +11,7 @@ from sqlalchemy import or_, select
 
 from app.config import get_settings
 from app.database import async_session_factory
+from app.module_scope import list_active_module_tenants
 from app.models import SeoBacklink, SeoCompetitor, SeoCompetitorEvent
 from app.models.seo import SeoCrawlRun
 from app.seo_competitor import CompetitorCollectionError, collect_competitor_content
@@ -35,10 +36,16 @@ async def collect_scheduled_competitors() -> dict[str, int]:
     settings = get_settings()
     cutoff = datetime.utcnow() - timedelta(hours=20)
     async with async_session_factory() as session:
+        entitled_tenant_ids = [
+            tenant.id for tenant in await list_active_module_tenants(session, "seo")
+        ]
+        if not entitled_tenant_ids:
+            return {"checked": 0, "created": 0, "failed": 0}
         rows = list(
             await session.scalars(
                 select(SeoCompetitor)
                 .where(
+                    SeoCompetitor.tenant_id.in_(entitled_tenant_ids),
                     SeoCompetitor.status == "active",
                     SeoCompetitor.site_id.is_not(None),
                     or_(SeoCompetitor.last_checked_at.is_(None), SeoCompetitor.last_checked_at < cutoff),
@@ -103,10 +110,16 @@ async def verify_scheduled_backlinks() -> dict[str, int]:
     settings = get_settings()
     cutoff = datetime.utcnow() - timedelta(hours=20)
     async with async_session_factory() as session:
+        entitled_tenant_ids = [
+            tenant.id for tenant in await list_active_module_tenants(session, "seo")
+        ]
+        if not entitled_tenant_ids:
+            return {"checked": 0, "found": 0, "lost": 0, "failed": 0}
         rows = list(
             await session.scalars(
                 select(SeoBacklink)
                 .where(
+                    SeoBacklink.tenant_id.in_(entitled_tenant_ids),
                     SeoBacklink.status.in_(["active", "lost"]),
                     or_(SeoBacklink.last_checked_at.is_(None), SeoBacklink.last_checked_at < cutoff),
                 )

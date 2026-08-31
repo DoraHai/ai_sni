@@ -90,12 +90,14 @@ jobs:
           tests/test_seo_distribution.py
           tests/test_seo_distribution_import.py
           tests/test_seo_foundation.py
+          tests/test_seo_monitoring_jobs.py
           tests/test_seo_rank_limits.py
           tests/test_seo_release_consistency.py
           tests/test_seo_scheduler.py
           tests/test_seo_serp.py
           tests/test_seo_site_association.py
           tests/test_seo_traffic.py
+          tests/test_urlwords.py
 
       - name: Re-check the reviewed migration head without applying migrations
         env:

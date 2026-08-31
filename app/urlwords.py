@@ -8,16 +8,15 @@ import logging
 import re
 from urllib.parse import urlparse
 
-import httpx
 import jieba.analyse
 from bs4 import BeautifulSoup
+
+from app.seo_crawler import SeoCrawlError, fetch_url
 
 logger = logging.getLogger(__name__)
 
 MAX_WORDS_PER_URL = 30
-FETCH_TIMEOUT = 15.0
 MAX_CONTENT_BYTES = 2 * 1024 * 1024  # 2MB 上限，防大文件拖死
-UA = "Mozilla/5.0 (compatible; SEM-Platform/1.0; +https://sem.snipers.com.cn)"
 
 # getPvSearch 的 keywordName 上限 40 字节（中文 2 字节）→ 中文词最长 20 字
 MAX_WORD_CHARS = 20
@@ -65,15 +64,19 @@ async def fetch_page_text(url: str) -> tuple[str, str]:
     """抓页面，返回 (title, 正文文本)。script/style/导航类标签剔除。"""
     url = validate_url(url)
     try:
-        async with httpx.AsyncClient(
-            timeout=FETCH_TIMEOUT, follow_redirects=True, headers={"User-Agent": UA}
-        ) as http:
-            resp = await http.get(url)
-    except httpx.HTTPError as e:
-        raise UrlFetchError(f"抓取失败 {url}: {e}") from e
-    if resp.status_code != 200:
-        raise UrlFetchError(f"抓取失败 {url}: HTTP {resp.status_code}")
-    content = resp.content[:MAX_CONTENT_BYTES]
+        result = await fetch_url(url)
+    except SeoCrawlError as exc:
+        raise UrlFetchError(f"抓取失败 {url}: {exc}") from exc
+    if result.error_type:
+        detail = result.fetch_error or result.error_type
+        raise UrlFetchError(f"抓取失败 {url}: {detail}")
+    if result.status_code != 200:
+        raise UrlFetchError(f"抓取失败 {url}: HTTP {result.status_code}")
+    # The shared crawler already enforces a 3 MiB network limit. Preserve this
+    # feature's stricter 2 MiB parsing budget without splitting UTF-8 text.
+    content = result.body.encode("utf-8")[:MAX_CONTENT_BYTES].decode(
+        "utf-8", errors="ignore"
+    )
 
     soup = BeautifulSoup(content, "html.parser")
     for tag in soup(["script", "style", "noscript", "nav", "footer", "header", "iframe"]):
