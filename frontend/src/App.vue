@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { changePassword, fetchMe, fetchTenants } from './api/auth'
 import { fetchAlerts } from './api/alerts'
 import { fetchCandidates } from './api/expansion'
@@ -319,8 +320,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <router-view v-if="bare" />
-  <el-container v-else :class="consoleClasses" style="height: 100vh">
+  <el-config-provider :locale="zhCn">
+    <router-view v-if="bare" />
+    <el-container v-else :class="consoleClasses" style="height: 100vh">
     <el-aside width="220px" class="side">
       <div class="brand">
         <div class="brand-mark">
@@ -503,7 +505,8 @@ onBeforeUnmount(() => {
         </div>
       </el-main>
     </el-container>
-  </el-container>
+    </el-container>
+  </el-config-provider>
 </template>
 
 <style scoped>
