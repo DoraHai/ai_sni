@@ -54,6 +54,20 @@ def test_seo_workflows_run_site_association_and_traffic_regressions() -> None:
         assert "tests/test_seo_traffic.py" in workflow
 
 
+def test_seo_baseline_uses_authoritative_production_history_not_main() -> None:
+    root = Path(__file__).parents[1]
+    workflow = (root / ".github/workflows/seo-baseline-check.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'expected_branch="codex/production-seo"' in workflow
+    assert 'test "$PR_BASE_REF" = "$expected_branch"' in workflow
+    assert 'test "$REF_NAME" = "$expected_branch"' in workflow
+    assert 'git merge-base --is-ancestor "$PUSH_BEFORE_SHA" HEAD' in workflow
+    assert "origin/main" not in workflow
+    assert "git fetch --no-tags origin main" not in workflow
+
+
 def test_standalone_seo_entry_does_not_import_shared_application() -> None:
     frontend = Path(__file__).parents[1] / "frontend"
     entry = (frontend / "src/seo-main.js").read_text(encoding="utf-8")
@@ -223,14 +237,15 @@ def test_seo_workflows_require_the_current_reviewed_migration_head() -> None:
     assert "0078_seo_site_data_repairs (head)" not in production
 
 
-def test_seo_release_and_deploy_require_main_lineage() -> None:
+def test_seo_release_and_deploy_use_production_branch_authority() -> None:
     root = Path(__file__).parents[1]
     baseline = (root / ".github/workflows/seo-baseline-check.yml").read_text(encoding="utf-8")
     production = (root / ".github/workflows/production-seo-deploy.yml").read_text(encoding="utf-8")
 
-    marker = "git merge-base --is-ancestor origin/main HEAD"
-    assert marker in baseline
-    assert marker in production
+    assert 'expected_branch="codex/production-seo"' in baseline
+    assert 'test "$REF_NAME" = "$SEO_PRODUCTION_BRANCH"' in production
+    assert "origin/main" not in baseline
+    assert "origin/main" not in production
 
 
 def test_seo_content_and_rank_views_are_site_scoped_and_html_safe() -> None:
