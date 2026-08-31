@@ -53,7 +53,9 @@ from app.api.seo import (
     create_content_asset,
     create_rank_snapshot,
     decide_content_review,
+    get_content_review_history,
     get_seo_keyword,
+    list_content_assets,
     list_site_pages,
     submit_content_review,
     update_content_asset,
@@ -64,6 +66,7 @@ from app.models.seo import (
     SeoCompetitor,
     SeoCompetitorEvent,
     SeoContentAsset,
+    SeoContentReviewEvent,
     SeoCrawlRun,
     SeoInternalLink,
     SeoKeywordAsset,
@@ -629,6 +632,136 @@ def test_content_version_is_server_incremented_and_stale_updates_are_rejected() 
         )
     assert getattr(stale_exc.value, "status_code", None) == 409
     assert row.title == "修订稿"
+
+
+def test_published_content_cannot_be_downgraded_or_edited_by_generic_patch() -> None:
+    context = AuthContext(user_id=7, username="operator", role_name="运营", tenant_id=1, permissions={"seo.content": "edit"})
+    row = SeoContentAsset(
+        id=88,
+        tenant_id=1,
+        site_id=9,
+        title="已发布稿",
+        content_type="article",
+        status="published",
+        version_count=3,
+    )
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=row)
+
+    with pytest.raises(Exception) as status_exc:
+        asyncio.run(
+            update_content_asset(
+                88,
+                1,
+                ContentUpdate(status="drafting", version_count=3),
+                session,
+                context,
+            )
+        )
+    with pytest.raises(Exception) as content_exc:
+        asyncio.run(
+            update_content_asset(
+                88,
+                1,
+                ContentUpdate(title="绕过审核的修改", status="published", version_count=3),
+                session,
+                context,
+            )
+        )
+
+    assert getattr(status_exc.value, "status_code", None) == 409
+    assert getattr(content_exc.value, "status_code", None) == 409
+    assert row.status == "published"
+    assert row.title == "已发布稿"
+    session.commit.assert_not_awaited()
+
+
+def test_content_list_is_paginated_and_reports_history_counts_without_loading_events() -> None:
+    row = SeoContentAsset(
+        id=88,
+        tenant_id=1,
+        site_id=9,
+        title="分页内容",
+        content_type="article",
+        status="drafting",
+        version_count=1,
+    )
+    result_rows = lambda values: SimpleNamespace(all=lambda: values)
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        side_effect=[
+            result_rows([("drafting", 2), ("ready", 1)]),
+            result_rows([(88, 4)]),
+        ]
+    )
+    session.scalar = AsyncMock(return_value=3)
+    session.scalars = AsyncMock(return_value=[row])
+
+    with (
+        patch("app.api.seo._tenant", new=AsyncMock()),
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+    ):
+        result = asyncio.run(
+            list_content_assets(
+                tenant_id=1,
+                site_id=9,
+                content_types="article,guide",
+                page=2,
+                page_size=2,
+                session=session,
+            )
+        )
+
+    assert result["total"] == 3
+    assert result["page"] == 2
+    assert result["page_size"] == 2
+    assert result["status_counts"] == {"drafting": 2, "ready": 1}
+    assert result["items"][0]["review_history_count"] == 4
+    assert result["items"][0]["review_history"] == []
+    assert session.scalars.await_count == 1
+
+
+def test_content_review_history_is_loaded_from_its_tenant_scoped_endpoint() -> None:
+    row = SeoContentAsset(
+        id=88,
+        tenant_id=1,
+        site_id=9,
+        title="审核历史",
+        content_type="article",
+        status="ready",
+    )
+    event = SeoContentReviewEvent(
+        id=7,
+        tenant_id=1,
+        site_id=9,
+        content_asset_id=88,
+        action="approve",
+        from_status="review",
+        to_status="ready",
+        actor_id=None,
+        created_at=datetime(2026, 8, 31, 16, 0, 0),
+    )
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=row)
+    session.scalars = AsyncMock(return_value=[event])
+
+    result = asyncio.run(get_content_review_history(88, 1, session))
+
+    assert result["total"] == 1
+    assert result["items"][0]["action"] == "approve"
+    assert result["items"][0]["created_at"].endswith("+08:00")
+
+
+def test_content_review_history_rejects_cross_tenant_access() -> None:
+    row = SeoContentAsset(id=88, tenant_id=2, site_id=9, title="其他客户内容", content_type="article")
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=row)
+
+    with pytest.raises(Exception) as exc:
+        asyncio.run(get_content_review_history(88, 1, session))
+
+    assert getattr(exc.value, "status_code", None) == 404
+    session.scalars.assert_not_awaited()
 
 
 def test_content_create_version_is_server_owned() -> None:

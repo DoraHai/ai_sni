@@ -20,6 +20,7 @@ from app.seo_scheduler import shutdown_seo_scheduler, start_seo_scheduler
 
 settings = get_settings()
 enforce_production_secrets(settings, hard_fail=True)
+SEO_REQUIRED_SCHEMA_REVISION = "0080_seo_content_review_history"
 
 
 @asynccontextmanager
@@ -45,12 +46,30 @@ app.include_router(seo_sites_router)
 
 @app.get("/health/seo")
 async def seo_health(response: Response) -> dict:
-    """Return HTTP 503 when the shared database is unreachable."""
+    """Fail closed when the database is unreachable or its schema is incompatible."""
     db_status = "ok"
     db_error: str | None = None
+    schema_status = "unknown"
+    schema_revision: str | None = None
     try:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
+            revisions = list(
+                (
+                    await conn.execute(
+                        text("SELECT version_num FROM alembic_version ORDER BY version_num")
+                    )
+                ).scalars()
+            )
+            schema_revision = ",".join(revisions) or None
+            if revisions != [SEO_REQUIRED_SCHEMA_REVISION]:
+                schema_status = "error"
+                raise RuntimeError(
+                    "SEO database schema mismatch: "
+                    f"expected {SEO_REQUIRED_SCHEMA_REVISION}, "
+                    f"found {schema_revision or 'none'}"
+                )
+            schema_status = "ok"
     except Exception as exc:  # noqa: BLE001 - health must report infra failure
         db_status = "error"
         db_error = str(exc)
@@ -60,4 +79,7 @@ async def seo_health(response: Response) -> dict:
         "env": settings.app_env,
         "db": db_status,
         "db_error": db_error,
+        "schema": schema_status,
+        "schema_revision": schema_revision,
+        "required_schema_revision": SEO_REQUIRED_SCHEMA_REVISION,
     }

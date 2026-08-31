@@ -3,6 +3,21 @@
 The SEO production branch is `codex/production-seo`. Feature work must use
 `codex/seo-<task-name>` and enter the production branch through a pull request.
 
+## Branch lineage policy
+
+`main` is the only development trunk. SEO feature branches must start from an
+approved `main` commit. `codex/production-seo` is a release branch only: it may
+receive reviewed SEO promotion PRs, but must not become an independent
+development line again.
+
+Both the SEO baseline and production deployment workflows require the release
+commit to descend from `origin/main`. A missing merge-base or a release branch
+that does not contain the approved main lineage fails before deployment.
+
+The 2026-08-31 convergence uses an explicit no-content history bridge followed
+by a separately reviewed SEO semantic-sync commit. Do not repeat an unrelated
+history merge or replace shared SEM/GEO files with an older SEO tree.
+
 ## Required checks
 
 `SEO baseline check` runs for every pull request targeting the SEO production
@@ -97,8 +112,11 @@ The frontend release workflow validates the immutable SHA and explicit
 isolation manifest, rejects backend content, switches only the SEO frontend
 link, and verifies `/seo/`, its static assets, the same-origin portal link, and
 security headers. The full deploy module validates `migration=not-run`, switches both
-SEO release links, and restarts only `seo-service`. Database migrations are
-never run automatically.
+SEO release links, and restarts only `seo-service`. `/health/seo` compares the
+database Alembic revision with the revision required by the release. A mismatch
+returns HTTP 503, so the restricted deployer restores the previous release.
+Database migrations are never run automatically; a reviewed migration must be
+applied separately before retrying a release that requires it.
 
 ## Rollback
 

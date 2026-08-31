@@ -34,6 +34,7 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed("ops/platform-deploy/install-seo-frontend.sh")
     assert source_path_allowed("ops/platform-deploy/modules/seo-frontend")
     assert source_path_allowed("frontend/src/views/seo/SeoDashboardView.vue")
+    assert source_path_allowed("frontend/package-lock.json")
     assert source_path_allowed("app/api/customer_modules.py")
     assert not source_path_allowed("app/security/auth.py")
     assert not source_path_allowed("app/api/geo.py")
@@ -179,8 +180,18 @@ def test_content_review_ui_supports_rejected_draft_resubmission_and_audit_detail
     assert ":disabled=\"isComposing\"" in content
     assert '"review_submitted_by_name"' in backend
     assert '"reviewed_by_name"' in backend
-    assert "row.review_history?.length" in content
+    assert "row.review_history_count" in content
+    assert "fetchSeoContentReviewHistory" in content
+    assert '@toggle="loadReviewHistory(row, $event)"' in content
     assert '"review_history"' in backend
+
+
+def test_rewrite_library_keeps_original_source_types_when_content_api_is_paginated() -> None:
+    root = Path(__file__).parents[1]
+    content = (root / "frontend/src/views/seo/SeoRewriteView.vue").read_text(encoding="utf-8")
+
+    assert "contentTypes:'rewrite,article,guide,landing,comparison,faq'" in content
+    assert "pageSize:200" in content
 
 
 def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:
@@ -204,6 +215,16 @@ def test_seo_workflows_require_the_current_reviewed_migration_head() -> None:
     assert expected in production
     assert "0078_seo_site_data_repairs (head)" not in baseline
     assert "0078_seo_site_data_repairs (head)" not in production
+
+
+def test_seo_release_and_deploy_require_main_lineage() -> None:
+    root = Path(__file__).parents[1]
+    baseline = (root / ".github/workflows/seo-baseline-check.yml").read_text(encoding="utf-8")
+    production = (root / ".github/workflows/production-seo-deploy.yml").read_text(encoding="utf-8")
+
+    marker = "git merge-base --is-ancestor origin/main HEAD"
+    assert marker in baseline
+    assert marker in production
 
 
 def test_seo_content_and_rank_views_are_site_scoped_and_html_safe() -> None:

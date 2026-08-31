@@ -20,6 +20,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Require the SEO release to descend from main
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor origin/main HEAD
       - name: Reject non-SEO source changes
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -90,6 +94,9 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - working-directory: frontend
         run: npm ci
+      - name: Audit frontend dependencies
+        working-directory: frontend
+        run: npm audit --audit-level=high
       - name: Build isolated SEO frontend
         working-directory: frontend
         run: npm run build:seo

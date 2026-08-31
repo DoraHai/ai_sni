@@ -86,7 +86,7 @@ async function load() {
   try {
     const [wordResult,contentResult] = await Promise.all([
       fetchSeoKeywords({ tenantId: currentTenantId.value, siteId: siteId.value, pageSize: 200 }),
-      assetId.value ? fetchSeoContentAssets({ tenantId: currentTenantId.value, siteId: siteId.value }) : Promise.resolve({items:[]}),
+      assetId.value ? fetchSeoContentAssets({ tenantId: currentTenantId.value, siteId: siteId.value, contentId: assetId.value, pageSize: 1 }) : Promise.resolve({items:[]}),
     ])
     keywords.value = wordResult.items
     if (assetId.value) {

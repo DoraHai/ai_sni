@@ -137,7 +137,7 @@ function exportHandoff() {
 async function createContentTask(row) {
   if (row.content_task_id) return router.push({ path: '/seo/content/editor', query: { site_id: siteId.value, id: row.content_task_id, source_page_id: row.id } })
   try {
-    const response = await fetchSeoContentAssets({ tenantId: currentTenantId.value, siteId: siteId.value })
+    const response = await fetchSeoContentAssets({ tenantId: currentTenantId.value, siteId: siteId.value, status: 'planned,drafting', pageSize: 200 })
     const candidates = (response.items || []).filter((item) => !item.source_page_id && ['planned', 'drafting'].includes(item.status))
     if (!candidates.length) return openNewContentTask(row)
     linkPage.value = row

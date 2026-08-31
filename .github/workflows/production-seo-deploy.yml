@@ -48,6 +48,11 @@ jobs:
             exit 1
           fi
 
+      - name: Require the production release to descend from main
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor origin/main HEAD
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -110,6 +115,10 @@ jobs:
 
       - working-directory: frontend
         run: npm ci
+
+      - name: Audit frontend dependencies
+        working-directory: frontend
+        run: npm audit --audit-level=high
 
       - name: Rebuild and verify the isolated SEO frontend
         working-directory: frontend
@@ -208,7 +217,7 @@ jobs:
           latest="$(git ls-remote origin "refs/heads/$SEO_PRODUCTION_BRANCH" | cut -f1)"
           test "$latest" = "$RELEASE_SHA"
 
-      - name: Apply SEO frontend and backend without database migration
+      - name: Apply schema-compatible SEO release without running database migration
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
