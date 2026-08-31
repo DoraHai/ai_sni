@@ -162,6 +162,24 @@ def test_original_content_brief_supports_bounded_multi_keywords() -> None:
     assert source_path_allowed("migrations/versions/20260829_0079_seo_content_review_workflow.py")
 
 
+def test_content_review_ui_supports_rejected_draft_resubmission_and_audit_details() -> None:
+    root = Path(__file__).parents[1]
+    content = (root / "frontend/src/views/seo/SeoContentView.vue").read_text(encoding="utf-8")
+    backend = (root / "app/api/seo.py").read_text(encoding="utf-8")
+
+    assert "submitSeoContentReview" in content
+    assert "保存并提交审核" in content
+    assert "提交审核说明（选填）" in content
+    assert "任务 #{{ row.id }}" in content
+    assert "timeZone: 'Asia/Shanghai'" in content
+    assert "review_submitted_by_name" in content
+    assert "reviewed_by_name" in content
+    assert "@compositionstart" in content
+    assert ":disabled=\"isComposing\"" in content
+    assert '"review_submitted_by_name"' in backend
+    assert '"reviewed_by_name"' in backend
+
+
 def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:
     root = Path(__file__).parents[1]
     login = (root / "migrations/versions/20260819_0071_login_lockout.py").read_text(encoding="utf-8")

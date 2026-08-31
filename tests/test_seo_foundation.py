@@ -31,6 +31,7 @@ from app.api.seo import (
     _iso,
     _apply_site_page_audit,
     _content_keywords,
+    _content_payload,
     _metric_payload,
     _missing_content_keywords,
     _number_or_text,
@@ -587,6 +588,24 @@ def test_content_review_submit_approve_and_reject_state_machine() -> None:
     )
     assert rejected["status"] == "drafting"
     assert rejected["review_note"] == "补充参数来源"
+
+
+def test_content_payload_includes_review_actor_names() -> None:
+    row = SeoContentAsset(
+        tenant_id=1,
+        site_id=9,
+        title="审核留痕内容",
+        content_type="article",
+        status="ready",
+        review_submitted_by=7,
+        reviewed_by=8,
+    )
+    row.id = 88
+
+    payload = _content_payload(row, {7: "提交运营", 8: "审核管理员"})
+
+    assert payload["review_submitted_by_name"] == "提交运营"
+    assert payload["reviewed_by_name"] == "审核管理员"
 
 
 def test_content_review_reject_requires_note_and_generic_patch_cannot_bypass_review() -> None:

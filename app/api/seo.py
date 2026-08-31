@@ -35,6 +35,7 @@ from app.models import (
     SeoSerpResult,
     SeoSitePage,
     Tenant,
+    User,
     GeoChannelVariant,
     GeoContentTask,
     GeoMediaPlacement,
@@ -3872,9 +3873,34 @@ async def _mark_distribution_variant_published(
         variant.status = "published"
 
 
-def _content_payload(row: SeoContentAsset) -> dict[str, Any]:
+def _content_payload(
+    row: SeoContentAsset,
+    user_names: dict[int, str] | None = None,
+) -> dict[str, Any]:
     keyword_ids = row.keyword_ids or ([row.keyword_id] if row.keyword_id else [])
-    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "source_page_id": row.source_page_id, "keyword_id": row.keyword_id, "keyword_ids": keyword_ids, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "review_submitted_by": row.review_submitted_by, "review_submitted_at": _iso(row.review_submitted_at), "review_note": row.review_note, "reviewed_by": row.reviewed_by, "reviewed_at": _iso(row.reviewed_at), "created_at": _database_iso(row.created_at), "updated_at": _database_iso(row.updated_at)}
+    names = user_names or {}
+    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "source_page_id": row.source_page_id, "keyword_id": row.keyword_id, "keyword_ids": keyword_ids, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "review_submitted_by": row.review_submitted_by, "review_submitted_by_name": names.get(row.review_submitted_by), "review_submitted_at": _iso(row.review_submitted_at), "review_note": row.review_note, "reviewed_by": row.reviewed_by, "reviewed_by_name": names.get(row.reviewed_by), "reviewed_at": _iso(row.reviewed_at), "created_at": _database_iso(row.created_at), "updated_at": _database_iso(row.updated_at)}
+
+
+async def _content_review_user_names(
+    session: AsyncSession,
+    rows: list[SeoContentAsset],
+) -> dict[int, str]:
+    user_ids = {
+        user_id
+        for row in rows
+        for user_id in (row.review_submitted_by, row.reviewed_by)
+        if user_id is not None
+    }
+    if not user_ids:
+        return {}
+    result = await session.execute(
+        select(User.id, User.display_name, User.username).where(User.id.in_(user_ids))
+    )
+    return {
+        int(user_id): str(display_name or username)
+        for user_id, display_name, username in result.all()
+    }
 
 
 async def _content_task_for_source_page(
@@ -3909,7 +3935,8 @@ async def list_content_assets(tenant_id: int, site_id: int | None = None, source
     if content_type:
         conditions.append(SeoContentAsset.content_type == content_type)
     rows = list(await session.scalars(select(SeoContentAsset).where(*conditions).order_by(SeoContentAsset.updated_at.desc(), SeoContentAsset.id.desc())))
-    return {"items": [_content_payload(row) for row in rows], "total": len(rows)}
+    user_names = await _content_review_user_names(session, rows)
+    return {"items": [_content_payload(row, user_names) for row in rows], "total": len(rows)}
 
 
 @router.post("/content-assets")
