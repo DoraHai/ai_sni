@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { createSeoContentAsset, decideSeoContentReview, fetchSeoContentAssets, fetchSeoKeywords, updateSeoContentAsset } from '../../api/seo'
+import { createSeoContentAsset, decideSeoContentReview, fetchSeoContentAssets, fetchSeoKeywords, submitSeoContentReview, updateSeoContentAsset } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
@@ -21,6 +21,8 @@ const selectedTemplate = ref('guide')
 const sourceVisible = ref(false)
 const sourceText = ref('')
 const editing = ref(null)
+const submitNote = ref('')
+const composingFields = ref(new Set())
 const allItems = ref([])
 const keywords = ref([])
 const sites = ref([])
@@ -128,7 +130,23 @@ const formatTime = (value) => {
   if (!value) return '—'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '—'
-  return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(date).replace('/', '-')
+  return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(date)
+}
+const actorName = (value, name) => name || (value ? `用户 #${value}` : '系统运维')
+const isComposing = computed(() => composingFields.value.size > 0)
+
+function startComposition(field) {
+  const next = new Set(composingFields.value)
+  next.add(field)
+  composingFields.value = next
+}
+
+function finishComposition(field, event) {
+  if (Object.prototype.hasOwnProperty.call(form, field)) form[field] = event?.target?.value ?? form[field]
+  else if (field === 'submit_note') submitNote.value = event?.target?.value ?? submitNote.value
+  const next = new Set(composingFields.value)
+  next.delete(field)
+  composingFields.value = next
 }
 
 async function load() {
@@ -166,6 +184,8 @@ async function loadSites() {
 
 function open(row = null, preset = null) {
   editing.value = row
+  submitNote.value = ''
+  composingFields.value = new Set()
   Object.assign(form, {
     title: row?.title || '',
     keyword_ids: [...(row?.keyword_ids?.length ? row.keyword_ids : row?.keyword_id ? [row.keyword_id] : [])],
@@ -204,16 +224,21 @@ function startRewrite() {
   router.push({ path: '/seo/content/editor', query: { type: 'rewrite', new: '1', source: 'imported', site_id: siteId.value } })
 }
 
-async function save() {
+async function save({ submit = false } = {}) {
   if (!form.title.trim()) return ElMessage.warning('请填写内容标题')
   if (mode.value === 'article' && !form.keyword_ids.length) return ElMessage.warning('原创文章请至少选择 1 个目标关键词')
+  if (isComposing.value) return ElMessage.warning('中文输入尚未完成，请选定文字后再保存')
   saving.value = true
   try {
     const payload = { ...form, keyword_id: form.keyword_ids[0] || null, outline: form.outline || null, draft: form.draft || null, humanized_content: form.humanized_content || null, page_url: form.page_url || null, author: form.author || null, published_at: form.status === 'published' ? new Date().toISOString() : null }
-    if (editing.value) await updateSeoContentAsset({ contentId: editing.value.id, tenantId: currentTenantId.value, payload })
-    else await createSeoContentAsset({ tenant_id: currentTenantId.value, site_id: siteId.value, ...payload })
+    const saved = editing.value
+      ? await updateSeoContentAsset({ contentId: editing.value.id, tenantId: currentTenantId.value, payload })
+      : await createSeoContentAsset({ tenant_id: currentTenantId.value, site_id: siteId.value, ...payload })
+    if (submit) {
+      await submitSeoContentReview({ contentId: saved.id, tenantId: currentTenantId.value, note: submitNote.value.trim() || null })
+      ElMessage.success('内容已保存并提交审核')
+    } else ElMessage.success('内容资产已保存')
     dialog.value = false
-    ElMessage.success('内容资产已保存')
     await load()
   } catch (e) { ElMessage.error(e.message) } finally { saving.value = false }
 }
@@ -309,8 +334,10 @@ onMounted(loadSites)
               <tr v-for="row in items" :key="row.id">
                 <td class="article-cell">
                   <strong>{{ row.title }}</strong>
-                  <small>{{ typeName(row.content_type) }}<template v-if="wordCount(row)"> · {{ wordCount(row).toLocaleString() }} 字</template><template v-if="row.author"> · 负责人 {{ row.author }}</template></small>
-                  <small v-if="row.review_note && row.status === 'drafting'" class="review-note">退回意见：{{ row.review_note }}</small>
+                  <small>任务 #{{ row.id }} · {{ typeName(row.content_type) }}<template v-if="wordCount(row)"> · {{ wordCount(row).toLocaleString() }} 字</template><template v-if="row.author"> · 负责人 {{ row.author }}</template></small>
+                  <small v-if="row.review_submitted_at">提交：{{ formatTime(row.review_submitted_at) }} · {{ actorName(row.review_submitted_by, row.review_submitted_by_name) }}</small>
+                  <small v-if="row.reviewed_at">审核：{{ formatTime(row.reviewed_at) }} · {{ actorName(row.reviewed_by, row.reviewed_by_name) }}</small>
+                  <small v-if="row.review_note" class="review-note">{{ row.status === 'drafting' ? '退回意见' : '审核备注' }}：{{ row.review_note }}</small>
                 </td>
                 <td><template v-if="keywordsFor(row).length"><span v-for="keyword in keywordsFor(row)" :key="keyword" class="keyword-tag">{{ keyword }}</span></template><span v-else class="muted-text">待绑定</span></td>
                 <td>
@@ -319,9 +346,10 @@ onMounted(loadSites)
                 </td>
                 <td><span class="status-pill" :class="`status-${row.status}`">{{ statusName(row.status) }}</span></td>
                 <td><span v-if="platformFor(row)" class="platform-tag">{{ platformFor(row) }}</span><span v-else class="muted-tag">未选择</span></td>
-                <td class="time-cell">{{ formatTime(row.updated_at || row.created_at) }}</td>
+                <td class="time-cell">更新：{{ formatTime(row.updated_at || row.created_at) }}</td>
                 <td><div class="row-actions">
                   <button v-if="canEdit && ['planned', 'drafting'].includes(row.status)" type="button" @click="open(row)">继续编辑</button>
+                  <button v-if="canEdit && ['planned', 'drafting'].includes(row.status)" type="button" @click="open(row)">提交审核</button>
                   <button v-if="canEdit && row.status === 'review'" type="button" @click="approveReview(row)">审核通过</button>
                   <button v-if="canEdit && row.status === 'review'" type="button" @click="rejectReview(row)">退回修改</button>
                   <button v-if="canEdit && row.status === 'ready'" type="button" @click="router.push('/seo/distribution')">进入发布</button>
@@ -354,17 +382,18 @@ onMounted(loadSites)
 
     <el-dialog v-model="dialog" :title="editing ? `编辑${config.title}` : config.button" width="820px">
       <el-form label-position="top" class="suite-form">
-        <el-form-item label="标题 / 问题" class="full"><el-input v-model="form.title" /></el-form-item>
+        <el-form-item label="标题 / 问题" class="full"><el-input v-model="form.title" @compositionstart="startComposition('title')" @compositionend="finishComposition('title', $event)" /></el-form-item>
         <el-form-item label="目标关键词（1–5个）"><el-select v-model="form.keyword_ids" multiple collapse-tags collapse-tags-tooltip :multiple-limit="5" clearable filterable placeholder="第一个为主关键词"><el-option v-for="item in keywords" :key="item.id" :label="item.keyword" :value="item.id" /></el-select><small class="form-guidance">建议：1 个品牌词 + 1–2 个产品词、应用词或行业词。</small></el-form-item>
         <el-form-item label="内容类型"><el-select v-model="form.content_type"><el-option v-for="item in config.types" :key="item" :label="typeName(item)" :value="item" /></el-select></el-form-item>
         <el-form-item label="负责人"><el-input v-model="form.author" /></el-form-item>
         <el-form-item label="状态"><el-input :model-value="statusName(form.status)" disabled /><small class="form-guidance">状态只能通过提交审核、审核或发布流程变更。</small></el-form-item>
-        <el-form-item :label="mode === 'qa' ? '回答结构 / 要点' : '内容大纲'" class="full"><el-input v-model="form.outline" type="textarea" :rows="4" /></el-form-item>
-        <el-form-item :label="mode === 'rewrite' ? '原文 / 初稿' : '初始草稿'" class="full"><el-input v-model="form.draft" type="textarea" :rows="6" /></el-form-item>
-        <el-form-item :label="mode === 'rewrite' ? '人工化改写稿' : '审核定稿'" class="full"><el-input v-model="form.humanized_content" type="textarea" :rows="6" /></el-form-item>
+        <el-form-item :label="mode === 'qa' ? '回答结构 / 要点' : '内容大纲'" class="full"><el-input v-model="form.outline" type="textarea" :rows="4" @compositionstart="startComposition('outline')" @compositionend="finishComposition('outline', $event)" /></el-form-item>
+        <el-form-item :label="mode === 'rewrite' ? '原文 / 初稿' : '初始草稿'" class="full"><el-input v-model="form.draft" type="textarea" :rows="6" @compositionstart="startComposition('draft')" @compositionend="finishComposition('draft', $event)" /></el-form-item>
+        <el-form-item :label="mode === 'rewrite' ? '人工化改写稿' : '审核定稿'" class="full"><el-input v-model="form.humanized_content" type="textarea" :rows="6" @compositionstart="startComposition('humanized_content')" @compositionend="finishComposition('humanized_content', $event)" /></el-form-item>
+        <el-form-item v-if="['planned', 'drafting'].includes(form.status)" label="提交审核说明（选填）" class="full"><el-input v-model="submitNote" type="textarea" :rows="2" placeholder="填写本次提交需要审核人关注的内容" @compositionstart="startComposition('submit_note')" @compositionend="finishComposition('submit_note', $event)" /></el-form-item>
         <el-form-item label="发布页面" class="full"><el-input v-model="form.page_url" placeholder="https://" /></el-form-item>
       </el-form>
-      <template #footer><el-button @click="dialog = false">取消</el-button><el-button type="primary" :loading="saving" @click="save">保存</el-button></template>
+      <template #footer><span v-if="editing" class="dialog-task-id">任务 #{{ editing.id }}</span><el-button @click="dialog = false">取消</el-button><el-button :loading="saving" :disabled="isComposing" @click="save()">保存</el-button><el-button v-if="['planned', 'drafting'].includes(form.status)" type="primary" :loading="saving" :disabled="isComposing" @click="save({ submit: true })">保存并提交审核</el-button></template>
     </el-dialog>
   </div>
 </template>
@@ -372,6 +401,7 @@ onMounted(loadSites)
 <style scoped>
 .content-site-picker{width:220px}
 .form-guidance{display:block;margin-top:6px;color:#8a919e;font-size:10px;line-height:1.5}
+.dialog-task-id{margin-right:auto;color:#6b7280;font-size:12px}
 .content-prototype{min-height:100vh;background:#f4f6f9;color:#1e2330;font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",Roboto,sans-serif}.content-page-head{min-height:68px;padding:0 28px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e8eaf0;background:#fff}.content-page-head h1{margin:0;font-size:17px;line-height:1.35}.content-page-head p{margin:1px 0 0;color:#6b7280;font-size:12px}.page-actions,.task-search{display:flex;align-items:center;gap:12px}.ghost-action,.primary-action{height:auto;padding:8px 14px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer}.ghost-action{border:1px solid #e8eaf0;background:#fff;color:#1e2330}.primary-action{border:1px solid #2563eb;background:#2563eb;color:#fff;box-shadow:none}.user-avatar{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:#2563eb;color:#fff;font-size:12px;font-weight:700}.content-body{padding:20px 24px 28px}.content-manifesto{min-height:138px;margin-bottom:16px;display:grid;grid-template-columns:minmax(0,1.5fr) minmax(420px,1fr);overflow:hidden;border-radius:8px;background:#202838;color:#fff;box-shadow:0 12px 30px rgba(28,37,54,.13)}.manifesto-copy{padding:24px 26px;border-right:1px solid rgba(255,255,255,.1)}.manifesto-copy>span{color:#9ec0ff;font-size:11px;font-weight:750;letter-spacing:.08em;text-transform:uppercase}.manifesto-copy h2{margin:8px 0 6px;max-width:720px;font-size:21px;line-height:1.35;letter-spacing:0}.manifesto-copy p{max-width:720px;margin:0;color:#b9c1cf;font-size:13px;line-height:1.5}.manifesto-tags{margin-top:15px;display:flex;flex-wrap:wrap;gap:7px}.manifesto-tags b{padding:4px 8px;border:1px solid rgba(255,255,255,.12);border-radius:5px;background:rgba(255,255,255,.05);color:#d8deea;font-size:11px;font-weight:500}.content-steps{margin:0;padding:20px 20px 20px 12px;display:grid;grid-template-columns:repeat(4,1fr);align-items:center;list-style:none}.content-steps li{position:relative;min-width:0;padding:8px 9px}.content-steps li:not(:last-child)::after{content:"";position:absolute;top:22px;right:-3px;width:12px;height:1px;background:rgba(255,255,255,.25)}.content-steps i{width:24px;height:24px;margin-bottom:8px;border-radius:50%;display:grid;place-items:center;background:#9ec0ff;color:#182237;font-size:11px;font-style:normal;font-weight:800}.content-steps strong,.content-steps small{display:block}.content-steps strong{margin-bottom:5px;font-size:12px}.content-steps small{color:#aab3c2;font-size:10.5px;line-height:1.45}.content-task-card{overflow:hidden;border:1px solid #dfe3ea;border-radius:8px;background:#fff}.task-toolbar{min-height:58px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid #e5e7eb}.task-tabs{display:flex;align-items:center;gap:10px}.task-tabs h2{margin:0 10px 0 0;font-size:14px}.task-tabs button{height:auto;padding:6px 10px;border:1px solid #e0e4eb;border-radius:6px;background:#fff;color:#697180;font-size:11px;cursor:pointer}.task-tabs button.active{border-color:#9bb9f6;background:#f0f5ff;color:#1d4ed8;font-weight:700}.task-tabs button span{margin-left:3px}.task-search input{width:230px;height:auto;padding:8px 12px;border:1px solid #e8eaf0;border-radius:9px;outline:none;background:#f6f7fb;color:#1e2330;font-size:13px}.task-search input:focus{border-color:#9bb9f6;background:#fff}.task-search .primary-action{height:auto;white-space:nowrap}.content-table-wrap{overflow-x:auto}.content-table{width:100%;border-collapse:collapse;table-layout:auto;font-size:13px}.content-table th{padding:12px 14px;border-bottom:1px solid #e8eaf0;color:#6b7280;font-size:12px;font-weight:600;text-align:left}.content-table td{padding:12px 14px;border-bottom:1px solid #e8eaf0;color:#1e2330;font-size:13px;vertical-align:middle}.content-table tbody tr:last-child td{border-bottom:0}.content-table tbody tr:hover{background:#f6f7fb}.content-table th:nth-child(1){width:auto}.content-table th:nth-child(2){width:auto}.content-table th:nth-child(3){width:auto}.content-table th:nth-child(4){width:auto}.content-table th:nth-child(5){width:auto}.content-table th:nth-child(6){width:auto}.content-table th:nth-child(7){width:auto}.article-cell{min-width:320px}.article-cell strong,.article-cell small{display:block}.article-cell strong{max-width:520px;margin-bottom:4px;overflow:hidden;color:#222938;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.article-cell small{margin-top:0;color:#8a919e;font-size:11px}.keyword-tag,.platform-tag,.muted-tag{display:inline-block;margin:2px 5px 2px 0;padding:3px 7px;border-radius:5px;background:#f0f2f6;color:#626c7b;font-size:10.5px}.platform-tag{background:#e9f7ef;color:#137f4a}.muted-tag{color:#626c7b}.muted-text{color:#8a919e;font-size:11px}.quality-score{display:inline-flex;align-items:center;gap:6px;color:#5e6675;font-size:11px}.quality-score i{width:48px;height:5px;overflow:hidden;border-radius:4px;background:#e9ecf1}.quality-score b{height:100%;display:block;background:#16a34a}.quality-score span{color:#5e6675}.status-pill{display:inline-flex;padding:3px 9px;border-radius:999px;font-size:12px;font-weight:600}.status-planned,.status-drafting{background:#fdf2e0;color:#d97706}.status-review{background:#eff4ff;color:#2563eb}.status-published{background:#e7f7ee;color:#16a34a}.status-archived{background:#f0f1f5;color:#6b7280}.time-cell{white-space:nowrap}.row-actions{display:flex;align-items:center;gap:6px;white-space:nowrap}.row-actions button,.row-actions a{padding:5px 7px;border:0;background:transparent;color:#2563eb;font-size:11.5px;font-weight:700;text-decoration:none;cursor:pointer}.row-actions button:hover,.row-actions a:hover{background:#eff4ff}.table-empty{height:150px!important;color:#8a919e!important;text-align:center}.prototype-overlay{position:fixed;z-index:12000;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(19,27,41,.48);backdrop-filter:blur(2px)}.prototype-dialog{display:flex;width:min(780px,94vw);max-height:88vh;flex-direction:column;overflow:hidden;border-radius:8px;background:#fff;box-shadow:0 26px 70px rgba(17,24,39,.28)}.prototype-dialog>header{display:flex;align-items:flex-start;gap:12px;padding:17px 20px;border-bottom:1px solid #e5e8ed}.prototype-dialog>header h2{margin:0 0 3px;font-size:16px}.prototype-dialog>header p{margin:0;color:#7a8290;font-size:11px}.prototype-dialog>header button{display:grid;width:30px;height:30px;margin-left:auto;place-items:center;border:1px solid #e0e4e9;border-radius:6px;background:#fff;color:#68717e;font-size:18px;cursor:pointer}.prototype-dialog-body{padding:18px 20px;overflow:auto}.prototype-dialog footer{display:flex;justify-content:flex-end;gap:8px;padding:13px 20px;border-top:1px solid #e5e8ed;background:#fafbfc;box-shadow:0 -10px 24px rgba(15,23,42,.06)}.template-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.template-grid button{position:relative;min-height:92px;padding:12px;border:1px solid #dfe3e8;border-radius:7px;background:#fff;text-align:left;cursor:pointer}.template-grid button:hover{border-color:#adc3ef;background:#fff}.template-grid button.selected{border-color:#4c7fe4;background:#fff;box-shadow:0 0 0 2px #edf3ff inset}.template-grid button i{position:absolute;top:10px;right:10px;width:15px;height:15px;border:1px solid #cbd1da;border-radius:50%}.template-grid button.selected i{border:4px solid #2563eb}.template-grid strong,.template-grid small{display:block}.template-grid strong{margin-bottom:5px;font-size:12px}.template-grid small{color:#7d8592;font-size:10px;line-height:1.45}.source-label{display:block;margin-bottom:6px;color:#596272;font-size:11px;font-weight:700}.source-import{width:100%;min-height:160px;padding:10px;border:1px solid #dfe3e9;border-radius:6px;outline:none;resize:vertical}.source-options{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}.source-options label{color:#697180;font-size:11px}.source-options select{width:100%;margin-top:6px;padding:8px;border:1px solid #dfe3e9;border-radius:6px;background:#fff}.suite-error{margin:0 0 16px}.suite-form{display:grid;grid-template-columns:1fr 1fr;gap:0 15px}.suite-form .full{grid-column:1/-1}.suite-form :deep(.el-select){width:100%}
 @media(max-width:1200px){.content-manifesto{grid-template-columns:1fr}.content-steps{min-height:150px;border-top:1px solid #374155;border-left:0}.content-table{min-width:1120px}.task-toolbar{align-items:flex-start;flex-direction:column;padding-top:14px;padding-bottom:14px}}
 @media(max-width:700px){.content-page-head{height:auto;padding:16px;align-items:flex-start;gap:15px}.content-page-head p{max-width:300px}.page-actions .ghost-action{display:none}.content-body{padding:14px}.manifesto-copy{padding:24px 20px}.manifesto-copy h2{font-size:20px}.content-steps{grid-template-columns:repeat(2,1fr);gap:22px;padding:22px}.content-steps li::after{display:none}.task-tabs{flex-wrap:wrap}.task-tabs h2{width:100%}.task-search{width:100%}.task-search input{min-width:0;flex:1}.template-grid{grid-template-columns:1fr}.suite-form{grid-template-columns:1fr}.suite-form .full{grid-column:auto}}
