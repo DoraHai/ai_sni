@@ -9,6 +9,28 @@ on:
       - codex/production-seo
 
 jobs:
+  sem-logrotate-config:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install logrotate parser
+        run: |
+          if ! command -v logrotate >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends -y logrotate
+          fi
+
+      - name: Parse SEM backend logrotate policy without changing logs
+        run: |
+          sudo install -o root -g root -m 0644 \
+            deploy/sem-backend.logrotate "$RUNNER_TEMP/sem-backend.logrotate"
+          sudo logrotate --debug --state /dev/null \
+            "$RUNNER_TEMP/sem-backend.logrotate"
+
   pytest:
     runs-on: ubuntu-latest
     timeout-minutes: 20
