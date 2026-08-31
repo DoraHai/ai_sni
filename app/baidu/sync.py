@@ -30,7 +30,7 @@ from app.expansion import (
     score_query_candidate,
     suggest_category,
 )
-from app.urlwords import UrlFetchError, extract_words, fetch_page_text
+from app.sem_urlwords import UrlFetchError, extract_words, fetch_page_text
 from app.models import (
     Adgroup,
     BaiduAccount,
