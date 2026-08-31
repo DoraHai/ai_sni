@@ -118,6 +118,41 @@ class KeywordFetchIsolationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(raised.exception, error)
         self.assertEqual(len(client.calls), 1)
 
+    async def test_word_substring_does_not_turn_password_error_into_missing_keyword(self):
+        error = BaiduAPIError(
+            89501,
+            "password 101001 not found",
+            raw={"header": {"failures": [{"message": "password 101001 not found"}]}},
+        )
+        client = FakeClient(lambda *_args: error)
+
+        with self.assertRaises(BaiduAPIError) as raised:
+            await KeywordService(client).get_words_by_ids([101001])
+
+        self.assertIs(raised.exception, error)
+
+    async def test_only_ids_from_missing_asset_failures_are_removed(self):
+        def handler(_service, _method, body):
+            if 202002 in body["ids"]:
+                return BaiduAPIError(
+                    90180000259,
+                    "winfoid 202002 not exists",
+                    raw={
+                        "header": {
+                            "failures": [
+                                {"message": "winfoid 202002 not exists"},
+                                {"message": "request 101001 not found"},
+                            ]
+                        }
+                    },
+                )
+            return {"data": [{"keywordId": value} for value in body["ids"]]}
+
+        client = FakeClient(handler)
+        result = await KeywordService(client).get_words_by_ids([101001, 202002])
+
+        self.assertEqual(result, [{"keywordId": 101001}])
+
 
 class CampaignProbeFieldTests(unittest.IsolatedAsyncioTestCase):
     async def test_unrelated_error_is_not_retried_without_probe_field(self):

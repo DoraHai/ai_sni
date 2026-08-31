@@ -168,23 +168,28 @@ class KeywordService:
                 data = resp.get("data") or []
                 return data if isinstance(data, list) else []
             except BaiduAPIError as e:
-                missing_asset = (
-                    e.is_missing_entity("adgroup")
-                    if id_type == 5
-                    else (
-                        e.is_missing_entity("winfoid")
-                        or e.is_missing_entity("keyword")
-                        or e.is_missing_entity("word")
-                    )
+                missing_entities = (
+                    ("adgroup",) if id_type == 5 else ("winfoid", "keyword")
+                )
+                missing_asset = any(
+                    e.is_missing_entity(entity) for entity in missing_entities
                 )
                 if not missing_asset:
                     raise
                 failures = (e.raw.get("header") or {}).get("failures") or []
-                bad = {
-                    int(m)
-                    for f in failures
-                    for m in re.findall(r"\d{6,}", str(f.get("message", "")))
-                }
+                bad: set[int] = set()
+                for failure in failures:
+                    failure_message = str(failure.get("message", ""))
+                    failure_error = BaiduAPIError(None, failure_message)
+                    if not any(
+                        failure_error.is_missing_entity(entity)
+                        for entity in missing_entities
+                    ):
+                        continue
+                    bad.update(
+                        int(value)
+                        for value in re.findall(r"\d{6,}", failure_message)
+                    )
                 bad &= set(remaining)
                 if bad:
                     logger.info("getWord 剔除已删除资产 %d 个后重试", len(bad))

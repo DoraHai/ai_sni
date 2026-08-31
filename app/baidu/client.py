@@ -17,6 +17,7 @@
   header.status == 0 表示成功；非 0 失败，failures[0] 给出具体错误码与文案
 """
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -73,7 +74,10 @@ class BaiduAPIError(Exception):
             "不存在",
             "已删除",
         )
-        return entity_name in message and any(marker in message for marker in missing_markers)
+        entity_pattern = rf"(?<![a-z0-9_]){re.escape(entity_name)}(?![a-z0-9_])"
+        return bool(re.search(entity_pattern, message)) and any(
+            marker in message for marker in missing_markers
+        )
 
 
 class BaiduAPIClient:
