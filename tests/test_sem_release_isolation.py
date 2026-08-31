@@ -67,6 +67,20 @@ def test_sem_frontend_dependencies_meet_security_floors():
         )
 
 
+def test_sem_frontend_keeps_element_plus_out_of_the_initial_bundle():
+    package = json.loads(_read("frontend/package.json"))
+    main = _read("frontend/src/main.js")
+    vite_config = _read("frontend/vite.config.js")
+    build_guard = _read("frontend/scripts/verify-sem-build.mjs")
+
+    assert "unplugin-vue-components" in package["devDependencies"]
+    assert "ElementPlusResolver" in vite_config
+    assert "Components({" in vite_config
+    assert "app.use(ElementPlus" not in main
+    assert "use(ElementPlus" not in main
+    assert "initialJavaScriptBudget = 500 * 1024" in build_guard
+
+
 def test_canonical_domain_and_portal_routes_are_release_contracts():
     nginx = _read("deploy/gsnipers.conf")
     build_guard = _read("frontend/scripts/verify-sem-build.mjs")
