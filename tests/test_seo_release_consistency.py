@@ -216,6 +216,16 @@ def test_seo_workflows_require_the_current_reviewed_migration_head() -> None:
     assert "0078_seo_site_data_repairs (head)" not in production
 
 
+def test_seo_release_and_deploy_require_main_lineage() -> None:
+    root = Path(__file__).parents[1]
+    baseline = (root / ".github/workflows/seo-baseline-check.yml").read_text(encoding="utf-8")
+    production = (root / ".github/workflows/production-seo-deploy.yml").read_text(encoding="utf-8")
+
+    marker = "git merge-base --is-ancestor origin/main HEAD"
+    assert marker in baseline
+    assert marker in production
+
+
 def test_seo_content_and_rank_views_are_site_scoped_and_html_safe() -> None:
     root = Path(__file__).parents[1]
     api = (root / "frontend/src/api/seo.js").read_text(encoding="utf-8")

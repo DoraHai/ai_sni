@@ -3,6 +3,21 @@
 The SEO production branch is `codex/production-seo`. Feature work must use
 `codex/seo-<task-name>` and enter the production branch through a pull request.
 
+## Branch lineage policy
+
+`main` is the only development trunk. SEO feature branches must start from an
+approved `main` commit. `codex/production-seo` is a release branch only: it may
+receive reviewed SEO promotion PRs, but must not become an independent
+development line again.
+
+Both the SEO baseline and production deployment workflows require the release
+commit to descend from `origin/main`. A missing merge-base or a release branch
+that does not contain the approved main lineage fails before deployment.
+
+The 2026-08-31 convergence uses an explicit no-content history bridge followed
+by a separately reviewed SEO semantic-sync commit. Do not repeat an unrelated
+history merge or replace shared SEM/GEO files with an older SEO tree.
+
 ## Required checks
 
 `SEO baseline check` runs for every pull request targeting the SEO production

@@ -20,6 +20,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Require the SEO release to descend from main
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor origin/main HEAD
       - name: Reject non-SEO source changes
         env:
           EVENT_NAME: ${{ github.event_name }}
