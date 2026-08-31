@@ -81,6 +81,36 @@ def test_sem_frontend_keeps_element_plus_out_of_the_initial_bundle():
     assert "initialJavaScriptBudget = 500 * 1024" in build_guard
 
 
+def test_sem_entry_and_diagnostic_navigation_use_real_dashboard_route():
+    router = _read("frontend/src/router/index.js")
+    diagnosis = _read("frontend/src/views/diagnosis/DiagnosisCenterView.vue")
+    build_guard = _read("frontend/scripts/verify-sem-build.mjs")
+
+    assert "path: '/sem',\n    redirect: '/monitor/dashboard'" in router
+    assert 'href="/monitor/dashboard"><span>¥</span>去 SEM 模块</a>' in diagnosis
+    assert "/deal-sniper/sem/dashboard" not in diagnosis
+    assert "'/deal-sniper/sem/dashboard'" in build_guard
+
+
+def test_sem_backend_logs_have_bounded_rotation_without_service_restart():
+    service = _read("deploy/sem-backend.service")
+    rotation = _read("deploy/sem-backend.logrotate")
+
+    assert "StandardOutput=append:/var/log/sem-backend/stdout.log" in service
+    assert "StandardError=append:/var/log/sem-backend/stderr.log" in service
+    assert "/var/log/sem-backend/stdout.log" in rotation
+    assert "/var/log/sem-backend/stderr.log" in rotation
+    assert "daily" in rotation
+    assert "rotate 14" in rotation
+    assert "maxsize 50M" in rotation
+    assert "copytruncate" in rotation
+    assert "compress" in rotation
+    assert "su root root" in rotation
+    assert "su sem sem" not in rotation
+    assert "systemctl" not in rotation
+    assert "postrotate" not in rotation
+
+
 def test_canonical_domain_and_portal_routes_are_release_contracts():
     nginx = _read("deploy/gsnipers.conf")
     build_guard = _read("frontend/scripts/verify-sem-build.mjs")
