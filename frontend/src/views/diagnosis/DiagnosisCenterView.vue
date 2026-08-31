@@ -1029,7 +1029,7 @@ onMounted(async () => {
       </button>
 
       <div class="sidebar-spacer" />
-      <a class="sidebar-item module-link" href="/monitor/dashboard"><span>¥</span>去 SEM 模块</a>
+      <a class="sidebar-item module-link" href="/deal-sniper/sem/dashboard"><span>¥</span>去 SEM 模块</a>
       <a class="sidebar-item module-link" href="/deal-sniper/seo/dashboard"><span>⌕</span>去 SEO 模块</a>
       <a class="sidebar-item module-link" href="/deal-sniper/geo/dashboard"><span>✦</span>去 GEO 模块</a>
       <div class="sidebar-bottom">

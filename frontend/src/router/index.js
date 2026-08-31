@@ -21,6 +21,10 @@ const routes = [
     redirect: '/monitor/dashboard',
   },
   {
+    path: '/deal-sniper/sem/dashboard',
+    redirect: '/monitor/dashboard',
+  },
+  {
     path: '/growth-sniper',
     component: GrowthSniperLanding,
     meta: {

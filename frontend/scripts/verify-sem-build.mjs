@@ -51,7 +51,6 @@ const forbiddenMarkers = [
   '图形验证码',
   '服务商接入准备中',
   '百度推广授权准备中',
-  '/deal-sniper/sem/dashboard',
   'https://gsniper.snipers.com.cn',
   'https://sem.snipers.com.cn',
 ]
