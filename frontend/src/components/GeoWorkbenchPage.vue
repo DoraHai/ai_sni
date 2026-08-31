@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { session } from '../store/session'
 import GeoObservationPeriod from './GeoObservationPeriod.vue'
+import GeoPrototypePageHeader from './GeoPrototypePageHeader.vue'
 
 defineProps({
   title: { type: String, required: true },
@@ -12,25 +13,19 @@ defineProps({
 
 const tenantHint = computed(() => {
   if (session.tenantId) return ''
-  if ((session.tenants || []).length) return '请先在顶部选择客户后再查看数据'
+  if ((session.tenants || []).length) return '请在顶部选择客户后再看数据'
   return ''
 })
 </script>
 
 <template>
   <div class="geo-wb" v-loading="loading">
-    <header class="geo-page-banner">
-      <div class="geo-page-banner-copy">
-        <span class="geo-page-banner-kicker">GEO WORKSPACE</span>
-        <h1>{{ title }}</h1>
-        <div v-if="tenantHint" class="sub">{{ tenantHint }}</div>
-        <div v-else-if="sub" class="sub">{{ sub }}</div>
-      </div>
-      <div class="right">
+    <GeoPrototypePageHeader :title="title" :sub="tenantHint || sub">
+      <template #actions>
         <GeoObservationPeriod v-if="showPeriod" />
         <slot name="actions" />
-      </div>
-    </header>
+      </template>
+    </GeoPrototypePageHeader>
     <div class="geo-content">
       <slot />
     </div>

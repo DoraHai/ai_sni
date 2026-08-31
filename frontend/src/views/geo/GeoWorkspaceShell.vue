@@ -28,6 +28,7 @@ const accountMeta = computed(() => {
 })
 const initials = computed(() => Array.from(String(accountName.value)).slice(0, 2).join(''))
 const pageTitle = computed(() => route.meta.title || 'GEO 工作台')
+const isEditor = computed(() => /^\/geo\/tasks\/[^/]+/.test(route.path))
 const isActive = (item) => route.path === item.path || route.path.startsWith(`${item.path}/`)
 
 function go(path) {
@@ -109,7 +110,7 @@ async function onUserCommand(cmd) {
           <strong>{{ pageTitle }}</strong>
         </div>
         <div class="geo-accountbar-controls">
-          <label class="geo-tenant-switcher">
+          <label v-if="isEditor" class="geo-tenant-switcher">
             <span>当前客户</span>
             <select
               :value="session.tenantId || ''"

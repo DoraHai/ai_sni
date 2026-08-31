@@ -28,11 +28,14 @@ def test_switcher_lists_enabled_geo_tenants_and_scopes_bound_accounts():
 def test_geo_topbar_keeps_one_customer_select():
     shell = _read("frontend/src/views/geo/GeoWorkspaceShell.vue")
     page = _read("frontend/src/components/GeoWorkbenchPage.vue")
+    header = _read("frontend/src/components/GeoPrototypePageHeader.vue")
     app = _read("frontend/geo-frontend/src/App.vue")
 
-    assert 'class="geo-tenant-switcher"' in shell
-    assert "当前客户" in shell
-    assert 'v-if="session.tenants.length"' not in shell
+    assert "GeoPrototypePageHeader" in page
+    assert 'class="geo-tenant-switcher"' in header
+    assert "当前客户" in header
+    assert 'v-if="session.tenants.length"' not in header
+    assert 'v-if="isEditor"' in shell
     assert "geo-tenant-switcher" not in page
     assert "fetchGeoTenants()" in app
     assert "session.isLoggedIn ? fetchMe() : Promise.resolve(null)" in app

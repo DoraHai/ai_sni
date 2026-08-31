@@ -72,7 +72,7 @@ def test_geo_overview_desktop_actions_stay_on_one_row():
 
     assert 'class="geo-overview-page"' in overview
     assert ".geo-overview-page .geo-page-banner" in dashboard_css
-    assert "grid-template-columns: minmax(180px, 1fr) auto" in dashboard_css
+    assert "grid-template-columns: minmax(180px, 1fr) auto auto" in dashboard_css
     assert ".geo-overview-page .geo-page-banner .right" in dashboard_css
     assert "flex-wrap: nowrap" in dashboard_css
     assert "width: clamp(160px, 16vw, 240px)" in dashboard_css
@@ -132,8 +132,11 @@ def test_geo_standalone_uses_shared_customer_and_account_header():
     assert "GEO 已开通" in shell
     assert "待选择 GEO 客户" in shell
     assert "登录账号" in shell
-    assert 'class="geo-page-banner"' in page
-    assert "GEO WORKSPACE" in page
+    assert "GeoPrototypePageHeader" in page
+    header = _read("frontend/src/components/GeoPrototypePageHeader.vue")
+    assert 'class="geo-page-banner"' in header
+    assert "GEO WORKSPACE" in header
+    assert 'class="geo-tenant-switcher"' in header
     assert "railCollapsed" not in shell
     assert "session.setTenant(id)" in shell
     assert 'v-if="session.tenants.length"' not in shell

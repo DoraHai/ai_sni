@@ -60,11 +60,40 @@
   justify-content: flex-end;
 }
 
+.geo-tenant-switcher {
+  height: 36px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 12px;
+  border: 1px solid #7c3aed;
+  border-radius: 10px;
+  background: #fff;
+  color: #8a92a3;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.geo-tenant-switcher select {
+  min-width: 136px;
+  max-width: 220px;
+  padding: 6px 24px 6px 4px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #443453;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 /* Keep overview actions on one row on desktop. The title yields space first,
    and the search field contracts before the controls need to wrap. */
 .geo-overview-page .geo-page-banner {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
 }
 .geo-overview-page .geo-page-banner-copy {
   overflow: hidden;
