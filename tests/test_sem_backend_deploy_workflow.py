@@ -84,8 +84,8 @@ def test_sem_backend_release_reruns_recent_high_risk_regressions() -> None:
         "tests/test_scheduler_account_iteration.py",
         "tests/test_sem_identity_repair_preview.py",
         "tests/test_sem_public_http_security.py",
-        "tests/test_campaign_region.py",
-        "tests/test_campaign_schedule.py",
+        "tests/test_campaign_region_management.py",
+        "tests/test_campaign_schedule_management.py",
     ):
         assert suite in workflow
 

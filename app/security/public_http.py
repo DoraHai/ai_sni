@@ -140,6 +140,7 @@ async def fetch_public_url(
     max_response_bytes: int,
     headers: dict[str, str] | None = None,
     read_body: bool = True,
+    _transport: httpx.AsyncBaseTransport | None = None,
 ) -> PublicHttpResponse:
     """Fetch a public URL while pinning DNS and validating every redirect hop."""
     requested = normalize_public_url(url)
@@ -150,7 +151,7 @@ async def fetch_public_url(
         follow_redirects=False,
         headers=headers,
         trust_env=False,
-        transport=_PinnedAsyncHTTPTransport(),
+        transport=_transport or _PinnedAsyncHTTPTransport(),
     ) as client:
         for _ in range(MAX_REDIRECTS + 1):
             parsed = urlparse(current)

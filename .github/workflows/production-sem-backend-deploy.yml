@@ -90,8 +90,8 @@ jobs:
         run: >-
           pytest -q
           tests/test_baidu_oauth.py
-          tests/test_campaign_region.py
-          tests/test_campaign_schedule.py
+          tests/test_campaign_region_management.py
+          tests/test_campaign_schedule_management.py
           tests/test_keyword_refresh.py
           tests/test_prod_guard.py
           tests/test_scheduler_account_iteration.py

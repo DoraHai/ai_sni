@@ -25,7 +25,7 @@ from app.config import get_settings
 from app.database import get_session
 from app.models import BaiduAccount, KeywordCandidate, Tenant, WritebackAction
 from app.security.auth import AuthContext, require_scoped_auth
-from app.urlwords import UrlFetchError, extract_words, fetch_page_text
+from app.sem_urlwords import UrlFetchError, extract_words, fetch_page_text
 
 router = APIRouter(
     prefix="/api/v1/onboarding-builder",
