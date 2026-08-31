@@ -1,0 +1,244 @@
+name: Production SEO frontend deployment
+
+on:
+  push:
+    branches:
+      - codex/production-seo
+    paths:
+      - frontend/**
+      - .github/workflows/production-seo-frontend-deploy.yml
+      - ops/platform-deploy/install-seo-frontend.sh
+      - ops/platform-deploy/modules/seo
+      - ops/platform-deploy/modules/seo-frontend
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-seo-deployment
+  cancel-in-progress: false
+
+env:
+  SEO_PRODUCTION_BRANCH: codex/production-seo
+
+jobs:
+  classify:
+    name: Classify SEO frontend-only production change
+    runs-on: ubuntu-latest
+    outputs:
+      frontend_only: ${{ steps.scope.outputs.frontend_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Reject frontend deployment for backend release paths
+        id: scope
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          test -n "$BEFORE_SHA"
+          git diff --name-only "$BEFORE_SHA..$RELEASE_SHA" > "$RUNNER_TEMP/changed-paths.txt"
+          cat "$RUNNER_TEMP/changed-paths.txt"
+          if grep -Eq '^(app/|migrations/|requirements[^/]*\.txt$|alembic\.ini$|deploy/seo-service\.service$)' "$RUNNER_TEMP/changed-paths.txt"; then
+            echo 'frontend_only=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'frontend_only=true' >> "$GITHUB_OUTPUT"
+          fi
+
+  verify:
+    name: Verify exact SEO frontend production commit
+    needs: classify
+    if: needs.classify.outputs.frontend_only == 'true' && github.ref == 'refs/heads/codex/production-seo'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Require triggering SHA to remain the production head
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          latest="$(git ls-remote origin "refs/heads/$SEO_PRODUCTION_BRANCH" | cut -f1)"
+          test -n "$latest"
+          if [[ "$latest" != "$RELEASE_SHA" ]]; then
+            echo "Refusing stale SEO frontend release: workflow=$RELEASE_SHA production=$latest" >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - working-directory: frontend
+        run: npm ci
+
+      - name: Build and verify the isolated SEO frontend
+        working-directory: frontend
+        run: npm run build:seo && npm run verify:seo-build
+
+      - name: Create immutable frontend-only release archive
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          release_root="$RUNNER_TEMP/seo-frontend-release"
+          install -d "$release_root/frontend"
+          cp -a frontend/dist-seo/. "$release_root/frontend/"
+          {
+            echo 'module=seo-frontend'
+            echo "commit=$RELEASE_SHA"
+            echo 'backend=not-included'
+            echo 'migration=not-run'
+            echo 'service_restart=not-run'
+          } > "$release_root/MANIFEST"
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/seo-frontend-${RELEASE_SHA}.tgz" seo-frontend-release
+          sha256sum "$RUNNER_TEMP/seo-frontend-${RELEASE_SHA}.tgz" > "$RUNNER_TEMP/seo-frontend-${RELEASE_SHA}.tgz.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: seo-frontend-release-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/seo-frontend-${{ github.sha }}.tgz
+            ${{ runner.temp }}/seo-frontend-${{ github.sha }}.tgz.sha256
+          if-no-files-found: error
+          retention-days: 3
+
+  deploy:
+    name: Deploy current SEO frontend production head
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Stop before server access when this workflow is stale
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          latest="$(git ls-remote origin "refs/heads/$SEO_PRODUCTION_BRANCH" | cut -f1)"
+          test -n "$latest"
+          if [[ "$latest" != "$RELEASE_SHA" ]]; then
+            echo "Refusing stale SEO frontend deployment: workflow=$RELEASE_SHA production=$latest" >&2
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: seo-frontend-release-${{ github.sha }}
+          path: ${{ runner.temp }}
+
+      - name: Configure restricted SEO deployment identity
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/platform-deploy
+          chmod 600 ~/.ssh/platform-deploy
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Re-check production head before archive upload
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          latest="$(git ls-remote origin "refs/heads/$SEO_PRODUCTION_BRANCH" | cut -f1)"
+          test "$latest" = "$RELEASE_SHA"
+
+      - name: Upload immutable SEO frontend release archive
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          SEO_COMMIT: ${{ github.sha }}
+        run: |
+          archive="$RUNNER_TEMP/seo-frontend-${SEO_COMMIT}.tgz"
+          remote_path="/home/platform-deploy/uploads/seo-frontend-${SEO_COMMIT}.tgz"
+          scp -i ~/.ssh/platform-deploy -P "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$archive" "$DEPLOY_USER@$DEPLOY_HOST:${remote_path}.part"
+          ssh -i ~/.ssh/platform-deploy -p "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "mv '${remote_path}.part' '$remote_path'"
+
+      - name: Re-check production head before applying release
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          latest="$(git ls-remote origin "refs/heads/$SEO_PRODUCTION_BRANCH" | cut -f1)"
+          test "$latest" = "$RELEASE_SHA"
+
+      - name: Apply SEO frontend without backend, migration, or service restart
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          SEO_COMMIT: ${{ github.sha }}
+        run: |
+          archive="$RUNNER_TEMP/seo-frontend-${SEO_COMMIT}.tgz"
+          archive_sha256="$(sha256sum "$archive" | cut -d' ' -f1)"
+          remote_path="/home/platform-deploy/uploads/seo-frontend-${SEO_COMMIT}.tgz"
+          ssh -i ~/.ssh/platform-deploy -p "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "sudo -n /usr/local/sbin/platform-deploy apply seo '$remote_path' '$SEO_COMMIT' '$archive_sha256' DEPLOY_SEO_FRONTEND"
+
+      - name: Verify SEO page, portal, assets, and security headers
+        env:
+          SEO_COMMIT: ${{ github.sha }}
+        run: |
+          index="$RUNNER_TEMP/seo-index.html"
+          headers="$RUNNER_TEMP/seo-headers.txt"
+          portal_headers="$RUNNER_TEMP/portal-headers.txt"
+          curl -fsS -H 'Cache-Control: no-cache' -D "$headers" -o "$index" "https://gsnipers.snipers.com.cn/seo/?release=${SEO_COMMIT}"
+          grep -Eqi '^strict-transport-security:.*max-age=' "$headers"
+          grep -Eqi '^x-content-type-options:[[:space:]]*nosniff' "$headers"
+          grep -Eqi '^referrer-policy:' "$headers"
+          grep -Eqi '^permissions-policy:' "$headers"
+          grep -Eqi '^x-frame-options:' "$headers"
+          grep -Eqi '^content-security-policy:' "$headers"
+          mapfile -t assets < <(grep -Eo "/seo/assets/[^\"[:space:]>]+" "$index" | sort -u)
+          test "${#assets[@]}" -gt 0
+          bundles=''
+          for asset in "${assets[@]}"; do
+            asset_headers="$RUNNER_TEMP/asset-$(printf '%s' "$asset" | sha256sum | cut -c1-12).headers"
+            asset_body="$RUNNER_TEMP/asset-$(printf '%s' "$asset" | sha256sum | cut -c1-12).body"
+            curl -fsS -D "$asset_headers" -o "$asset_body" "https://gsnipers.snipers.com.cn${asset}"
+            grep -Eqi '^x-content-type-options:[[:space:]]*nosniff' "$asset_headers"
+            grep -Eqi '^cache-control:.*immutable' "$asset_headers"
+            case "$asset" in
+              *.js) bundles="$bundles $asset_body" ;;
+            esac
+          done
+          test -n "$bundles"
+          mapfile -t linked_assets < <(
+            grep -Eho 'seo-[A-Za-z0-9_-]+\.(js|css)' $bundles |
+              sed 's#^#/seo/assets/#' |
+              sort -u
+          )
+          test "${#linked_assets[@]}" -gt 0
+          for asset in "${linked_assets[@]}"; do
+            asset_headers="$RUNNER_TEMP/linked-asset-$(printf '%s' "$asset" | sha256sum | cut -c1-12).headers"
+            asset_body="$RUNNER_TEMP/linked-asset-$(printf '%s' "$asset" | sha256sum | cut -c1-12).body"
+            curl -fsS -D "$asset_headers" -o "$asset_body" "https://gsnipers.snipers.com.cn${asset}"
+            grep -Eqi '^x-content-type-options:[[:space:]]*nosniff' "$asset_headers"
+            grep -Eqi '^cache-control:.*immutable' "$asset_headers"
+            case "$asset" in
+              *.js) bundles="$bundles $asset_body" ;;
+            esac
+          done
+          grep -Fq -- '/deal-sniper/portal' $bundles
+          if grep -Fq -- 'https://gsnipers.snipers.com.cn/deal-sniper/portal' $bundles; then
+            echo 'Absolute production portal link remains in deployed assets' >&2
+            exit 1
+          fi
+          curl -fsS -H 'Cache-Control: no-cache' -D "$portal_headers" -o /dev/null 'https://gsnipers.snipers.com.cn/deal-sniper/portal'
+          grep -Eqi '^strict-transport-security:.*max-age=' "$portal_headers"
+          grep -Eqi '^x-content-type-options:[[:space:]]*nosniff' "$portal_headers"
+          grep -Eqi '^content-security-policy:' "$portal_headers"

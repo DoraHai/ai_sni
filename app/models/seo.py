@@ -6,6 +6,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     SmallInteger,
@@ -205,6 +206,11 @@ class SeoContentAsset(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     tenant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tenants.id"), nullable=False, index=True)
     site_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("seo_sites.id", ondelete="SET NULL"), index=True)
+    source_page_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("seo_site_pages.id", ondelete="SET NULL"),
+        index=True,
+    )
     keyword_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("seo_keyword_assets.id", ondelete="SET NULL"))
     keyword_ids: Mapped[list | None] = mapped_column(JSONB)
     content_type: Mapped[str] = mapped_column(String(32), nullable=False, default="article")
@@ -221,9 +227,58 @@ class SeoContentAsset(Base):
     page_url: Mapped[str | None] = mapped_column(Text)
     author: Mapped[str | None] = mapped_column(String(120))
     published_at: Mapped[datetime | None] = mapped_column(DateTime)
+    review_submitted_by: Mapped[int | None] = mapped_column(BigInteger)
+    review_submitted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    review_note: Mapped[str | None] = mapped_column(Text)
+    reviewed_by: Mapped[int | None] = mapped_column(BigInteger)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_by: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "site_id",
+            "source_page_id",
+            name="uq_seo_content_asset_source_page",
+        ),
+    )
+
+
+class SeoContentReviewEvent(Base):
+    """Append-only audit trail for SEO content review transitions."""
+
+    __tablename__ = "seo_content_review_events"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    site_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("seo_sites.id", ondelete="SET NULL"), index=True
+    )
+    content_asset_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("seo_content_assets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    action: Mapped[str] = mapped_column(String(24), nullable=False)
+    from_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    to_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    actor_id: Mapped[int | None] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index(
+            "ix_seo_content_review_events_tenant_asset_created",
+            "tenant_id",
+            "content_asset_id",
+            "created_at",
+        ),
+    )
 
 
 class SeoDistributionConnection(Base):

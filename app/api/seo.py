@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
@@ -18,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.deepseek import DeepSeekError, chat_json, is_enabled
-from app.database import get_session
+from app.database import async_session_factory, get_session
 from app.config import get_settings
 from app.geo.audit import GeoAuditError, audit_url, normalize_url, safe_fetch
 from app.geo.chinaz import fetch_chinaz_seo_metrics
@@ -28,12 +29,14 @@ from app.models import (
     SeoCompetitor,
     SeoCompetitorEvent,
     SeoContentAsset,
+    SeoContentReviewEvent,
     SeoInternalLink,
     SeoKeywordAsset,
     SeoRankSnapshot,
     SeoSerpResult,
     SeoSitePage,
     Tenant,
+    User,
     GeoChannelVariant,
     GeoContentTask,
     GeoMediaPlacement,
@@ -86,10 +89,14 @@ from app.seo_competitor import (
     competitor_retry_after,
 )
 from app.seo_rank_limits import (
+    MANUAL_RANK_RESERVATION_TTL_SECONDS,
     ManualRankLimitError,
+    ManualRankReservation,
     SEO_RANK_COLLECTION_LOCK_PATH,
     manual_rank_status,
+    renew_manual_rank_collection,
     reserve_manual_rank_collection,
+    settle_manual_rank_collection,
 )
 from app.seo_distribution_import import (
     MAX_XLSX_BYTES,
@@ -148,6 +155,51 @@ PAGE_STATUSES = {
     "verified",
     "error",
 }
+LINKABLE_CONTENT_STATUSES = {"planned", "drafting"}
+PAGE_ISSUE_FILTER_CODES = {
+    "title": {"title", "title_missing", "title_too_long"},
+    "description": {"description", "description_missing"},
+    "h1": {"h1", "h1_missing", "h1_multiple"},
+    "canonical": {"canonical"},
+    "indexable": {"indexable", "noindex", "robots_blocked"},
+    "schema": {"schema", "entity_schema", "schema_invalid"},
+    "content": {
+        "heading_depth",
+        "substantial",
+        "thin_content",
+        "faq",
+        "citations",
+        "freshness",
+        "block_definition",
+        "block_numbers",
+        "block_comparison",
+        "block_howto",
+        "block_faq",
+        "NO_DEFINITION",
+        "NO_NUMBERS",
+        "NO_COMPARISON",
+        "NO_HOWTO",
+        "NO_FAQ",
+    },
+    "image": {"image_alt_missing"},
+    "language": {"language", "html_lang_missing"},
+    "crawl": {
+        "https",
+        "robots",
+        "ai_crawlers",
+        "llms",
+        "http_4xx",
+        "http_5xx",
+        "empty_response",
+        "non_html",
+        "timeout",
+        "too_many_redirects",
+        "dns_error",
+        "tls_error",
+        "blocked_address",
+        "connection_error",
+    },
+}
 BRAND_ASSET_TYPES = {"official_domain", "content_url", "platform_account"}
 OWNERSHIP_TYPES = {"official_site", "brand_content", "ai_suspected", "unrelated", "unresolved"}
 METRIC_STATUSES = {"available", "not_configured", "pending", "failed", "stale"}
@@ -155,7 +207,11 @@ METRIC_QUALITIES = {"verified", "estimated", "crawled", "imported"}
 
 
 def _iso(value: datetime | None) -> str | None:
-    return value.isoformat() if value else None
+    """Serialize application-owned timestamps as explicit UTC instants."""
+    if value is None:
+        return None
+    aware = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+    return aware.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _rank_iso(value: datetime | None) -> str | None:
@@ -169,6 +225,24 @@ def _rank_iso(value: datetime | None) -> str | None:
         return None
     aware = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
     return aware.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _database_iso(value: datetime | None) -> str | None:
+    """Serialize database-generated wall-clock timestamps with an explicit zone."""
+    if value is None:
+        return None
+    database_timezone = timezone(timedelta(hours=8))
+    aware = value.replace(tzinfo=database_timezone) if value.tzinfo is None else value
+    return aware.isoformat()
+
+
+def _page_issue_filter_condition(issue_code: str):
+    """Match one UI issue category across crawler and single-page audit codes."""
+    normalized = issue_code.strip()
+    aliases = PAGE_ISSUE_FILTER_CODES.get(normalized, {normalized})
+    return or_(
+        *(SeoSitePage.issue_codes.contains([alias]) for alias in sorted(aliases))
+    )
 
 
 async def _tenant(session: AsyncSession, tenant_id: int) -> Tenant:
@@ -185,6 +259,19 @@ async def _seo_site(
         return None
     row = await session.get(SeoSite, site_id)
     if not row or row.tenant_id != tenant_id:
+        raise HTTPException(404, "SEO site does not exist for this tenant")
+    return row
+
+
+async def _seo_site_for_update(
+    session: AsyncSession, tenant_id: int, site_id: int
+) -> SeoSite:
+    row = await session.scalar(
+        select(SeoSite)
+        .where(SeoSite.id == site_id, SeoSite.tenant_id == tenant_id)
+        .with_for_update()
+    )
+    if row is None:
         raise HTTPException(404, "SEO site does not exist for this tenant")
     return row
 
@@ -292,8 +379,8 @@ def _keyword_payload(
         "rank_delta": delta,
         "rank_url": None if not latest else latest.result_url,
         "rank_checked_at": None if not latest else _rank_iso(latest.checked_at),
-        "created_at": _iso(row.created_at),
-        "updated_at": _iso(row.updated_at),
+        "created_at": _database_iso(row.created_at),
+        "updated_at": _database_iso(row.updated_at),
     }
 
 
@@ -311,10 +398,13 @@ def _rank_payload(row: SeoRankSnapshot) -> dict[str, Any]:
         "result_url": row.result_url,
         "source": row.source,
         "checked_at": _rank_iso(row.checked_at),
+        "created_at": _database_iso(getattr(row, "created_at", None)),
     }
 
 
-def _page_payload(row: SeoSitePage) -> dict[str, Any]:
+def _page_payload(
+    row: SeoSitePage, *, content_task_id: int | None = None
+) -> dict[str, Any]:
     return {
         "id": row.id,
         "tenant_id": row.tenant_id,
@@ -334,11 +424,12 @@ def _page_payload(row: SeoSitePage) -> dict[str, Any]:
         "issue_codes": row.issue_codes or [],
         "title_suggestion": row.title_suggestion,
         "description_suggestion": row.description_suggestion,
+        "content_task_id": content_task_id,
         "status": row.status,
         "last_error": row.last_error,
         "last_checked_at": _iso(row.last_checked_at),
-        "created_at": _iso(row.created_at),
-        "updated_at": _iso(row.updated_at),
+        "created_at": _database_iso(row.created_at),
+        "updated_at": _database_iso(row.updated_at),
     }
 
 
@@ -376,7 +467,7 @@ class KeywordImport(BaseModel):
 
 class RankSnapshotCreate(BaseModel):
     tenant_id: int
-    site_id: int | None = None
+    site_id: PositiveInt
     keyword_id: int
     engine: Literal["baidu", "google", "bing", "360", "sogou"]
     device: Literal["desktop", "mobile"] = "desktop"
@@ -387,6 +478,14 @@ class RankSnapshotCreate(BaseModel):
     result_url: str | None = Field(None, max_length=2000)
     checked_at: datetime = Field(default_factory=datetime.utcnow)
     source: str = Field("manual", min_length=1, max_length=32)
+
+    @field_validator("checked_at")
+    @classmethod
+    def normalize_checked_at(cls, value: datetime) -> datetime:
+        """Store browser ISO instants in the database's naive UTC column."""
+        if value.tzinfo is None:
+            return value
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 class RankSnapshotBatch(BaseModel):
@@ -438,7 +537,7 @@ class SerpOwnershipUpdate(BaseModel):
 
 class SitePageCreate(BaseModel):
     tenant_id: int
-    site_id: int | None = None
+    site_id: PositiveInt
     url: str = Field(min_length=1, max_length=2000)
     page_type: str | None = Field(None, max_length=32)
     target_keyword_id: int | None = None
@@ -448,7 +547,7 @@ class SitePageCreate(BaseModel):
 
 class SitePageImport(BaseModel):
     tenant_id: int
-    site_id: int | None = None
+    site_id: PositiveInt
     urls: list[str] = Field(min_length=1, max_length=500)
 
 
@@ -525,7 +624,7 @@ def _metric_payload(row: SeoMetricSnapshot, *, include_raw: bool = False) -> dic
         "status": row.status,
         "error_message": row.error_message,
         "observed_at": _iso(row.observed_at),
-        "collected_at": _iso(row.collected_at),
+        "collected_at": _database_iso(row.collected_at),
     }
     if include_raw:
         payload["raw_payload"] = row.raw_payload
@@ -618,7 +717,7 @@ async def update_gsc_connection(
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
-    site = await _seo_site(session, req.tenant_id, req.site_id)
+    site = await _seo_site_for_update(session, req.tenant_id, req.site_id)
     try:
         property_url = validate_property(req.property_url, site.canonical_domain)
     except GscError as exc:
@@ -1081,7 +1180,7 @@ async def create_rank_snapshot(
     ctx.ensure_tenant(req.tenant_id)
     keyword = await _keyword(session, req.keyword_id, req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
-    if req.site_id is not None and keyword.site_id not in {None, req.site_id}:
+    if keyword.site_id != req.site_id:
         raise HTTPException(400, "Rank snapshot site does not match the keyword site")
     row = SeoRankSnapshot(**req.model_dump())
     session.add(row)
@@ -1097,7 +1196,7 @@ async def create_rank_snapshots_batch(
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
-    site_ids = {item.site_id for item in req.items if item.site_id is not None}
+    site_ids = {item.site_id for item in req.items}
     for site_id in site_ids:
         await _seo_site(session, req.tenant_id, site_id)
     ids = {item.keyword_id for item in req.items}
@@ -1115,7 +1214,7 @@ async def create_rank_snapshots_batch(
         if item.tenant_id != req.tenant_id:
             raise HTTPException(400, "排名快照 tenant_id 必须一致")
         keyword = await _keyword(session, item.keyword_id, req.tenant_id)
-        if item.site_id is not None and keyword.site_id not in {None, item.site_id}:
+        if keyword.site_id != item.site_id:
             raise HTTPException(400, "Rank snapshot site does not match the keyword site")
         session.add(SeoRankSnapshot(**item.model_dump()))
     await session.commit()
@@ -1132,8 +1231,8 @@ def _brand_asset_payload(row: SeoBrandAsset) -> dict[str, Any]:
         "match_value": row.match_value,
         "platform": row.platform,
         "status": row.status,
-        "created_at": _iso(row.created_at),
-        "updated_at": _iso(row.updated_at),
+        "created_at": _database_iso(row.created_at),
+        "updated_at": _database_iso(row.updated_at),
     }
 
 
@@ -1159,6 +1258,7 @@ def _serp_payload(row: SeoSerpResult, keyword: str | None = None) -> dict[str, A
         "is_confirmed": row.is_confirmed,
         "provider": row.provider,
         "captured_at": _rank_iso(row.captured_at),
+        "created_at": _database_iso(getattr(row, "created_at", None)),
     }
 
 
@@ -1542,6 +1642,7 @@ async def collect_rank_serp_for_tenant(
     engine: Literal["baidu", "google", "bing"] = "baidu",
     use_ai: bool = True,
     captured_at: datetime | None = None,
+    commit: bool = True,
 ) -> dict[str, Any]:
     """采集一个客户的真实 SERP；供人工刷新与每日定时任务共用。"""
     tenant = await _tenant(session, tenant_id)
@@ -1684,7 +1785,10 @@ async def collect_rank_serp_for_tenant(
             )
         )
         snapshots += 1
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     return {
         "keywords": len(keywords),
         "devices": devices,
@@ -1701,6 +1805,47 @@ async def collect_rank_serp_for_tenant(
         "ai_requested": use_ai,
         "ai_attempted": ai_attempted,
     }
+
+
+async def _maintain_rank_reservation(
+    tenant_id: int,
+    site_id: int,
+    reservation: ManualRankReservation,
+    stop: asyncio.Event,
+) -> None:
+    interval = max(1, MANUAL_RANK_RESERVATION_TTL_SECONDS // 3)
+    delay = interval
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=delay)
+            return
+        except TimeoutError:
+            pass
+        try:
+            async with async_session_factory() as heartbeat_session:
+                renewed = await renew_manual_rank_collection(
+                    heartbeat_session,
+                    tenant_id,
+                    site_id,
+                    reservation,
+                )
+            if not renewed:
+                logger.warning(
+                    "[SEO][SERP] quota reservation heartbeat lost "
+                    "tenant_id=%s site_id=%s",
+                    tenant_id,
+                    site_id,
+                )
+                return
+            delay = interval
+        except Exception:
+            logger.exception(
+                "[SEO][SERP] quota reservation heartbeat failed "
+                "tenant_id=%s site_id=%s",
+                tenant_id,
+                site_id,
+            )
+            delay = min(30, max(1, interval // 4))
 
 
 @router.post("/rank-serp/collect")
@@ -1736,7 +1881,8 @@ async def collect_rank_serp(
         raise HTTPException(409, "另一排名采集任务正在运行，请稍后重试")
     try:
         try:
-            limit_status = reserve_manual_rank_collection(
+            reservation = await reserve_manual_rank_collection(
+                session,
                 req.tenant_id,
                 req.site_id,
                 requested,
@@ -1749,16 +1895,66 @@ async def collect_rank_serp(
                 {"code": exc.code, "message": exc.message, "retry_after_seconds": exc.retry_after},
                 headers={"Retry-After": str(exc.retry_after)},
             ) from exc
-        result = await collect_rank_serp_for_tenant(
-            session=session,
-            tenant_id=req.tenant_id,
-            site_id=req.site_id,
-            keyword_ids=req.keyword_ids,
-            devices=req.devices,
-            max_keywords=req.max_keywords,
-            engine=req.engine,
-            use_ai=req.use_ai,
+        heartbeat_stop = asyncio.Event()
+        heartbeat_task = asyncio.create_task(
+            _maintain_rank_reservation(
+                req.tenant_id,
+                req.site_id,
+                reservation,
+                heartbeat_stop,
+            )
         )
+        try:
+            try:
+                result = await collect_rank_serp_for_tenant(
+                    session=session,
+                    tenant_id=req.tenant_id,
+                    site_id=req.site_id,
+                    keyword_ids=req.keyword_ids,
+                    devices=req.devices,
+                    max_keywords=req.max_keywords,
+                    engine=req.engine,
+                    use_ai=req.use_ai,
+                    commit=False,
+                )
+            finally:
+                heartbeat_stop.set()
+                await heartbeat_task
+        except Exception:
+            await session.rollback()
+            try:
+                await settle_manual_rank_collection(
+                    session,
+                    req.tenant_id,
+                    req.site_id,
+                    reservation,
+                    0,
+                    cooldown_seconds=settings.seo_manual_rank_cooldown_seconds,
+                    max_requests_per_day=settings.seo_manual_rank_max_requests_per_day,
+                )
+            except ManualRankLimitError:
+                logger.exception(
+                    "[SEO][SERP] failed to release quota reservation tenant_id=%s site_id=%s",
+                    req.tenant_id,
+                    req.site_id,
+                )
+            raise
+        try:
+            limit_status = await settle_manual_rank_collection(
+                session,
+                req.tenant_id,
+                req.site_id,
+                reservation,
+                result["snapshots"],
+                cooldown_seconds=settings.seo_manual_rank_cooldown_seconds,
+                max_requests_per_day=settings.seo_manual_rank_max_requests_per_day,
+            )
+        except ManualRankLimitError as exc:
+            raise HTTPException(
+                503,
+                {"code": exc.code, "message": exc.message, "retry_after_seconds": exc.retry_after},
+                headers={"Retry-After": str(exc.retry_after)},
+            ) from exc
     finally:
         release_file_lock(collection_lock)
     if result["errors"] and result["snapshots"] == 0:
@@ -1776,7 +1972,8 @@ async def rank_serp_collect_status(
     await _seo_site(session, tenant_id, site_id)
     settings = get_settings()
     try:
-        return manual_rank_status(
+        return await manual_rank_status(
+            session,
             tenant_id,
             site_id,
             cooldown_seconds=settings.seo_manual_rank_cooldown_seconds,
@@ -2027,7 +2224,7 @@ def _page_snapshot_payload(row: SeoPageSnapshot) -> dict[str, Any]:
         "images_missing_alt_count": row.images_missing_alt_count,
         "hreflang_tags": row.hreflang_tags or [],
         "issue_codes": row.issue_codes or [],
-        "fetched_at": _iso(row.fetched_at),
+        "fetched_at": _database_iso(row.fetched_at),
     }
 
 
@@ -2110,7 +2307,11 @@ async def create_seo_crawl_run(
             page.content_units = item.get("word_count")
             page.issue_codes = item.get("issue_codes") or []
             page.audit_score = max(0, 100 - len(page.issue_codes) * 10)
-            page.status = "error" if item.get("error_type") else ("healthy" if not page.issue_codes else "needs_fix")
+            page.status = _site_page_status_after_audit(
+                page.status,
+                page.issue_codes,
+                has_error=bool(item.get("error_type")),
+            )
             page.last_error = item.get("fetch_error")
             page.last_checked_at = datetime.utcnow()
 
@@ -2213,7 +2414,7 @@ async def list_site_pages(
             raise HTTPException(400, "页面状态无效")
         conditions.append(SeoSitePage.status == status)
     if issue_code:
-        conditions.append(SeoSitePage.issue_codes.contains([issue_code.strip()]))
+        conditions.append(_page_issue_filter_condition(issue_code))
     total = await session.scalar(select(func.count()).select_from(SeoSitePage).where(*conditions))
     rows = list(
         await session.scalars(
@@ -2224,32 +2425,75 @@ async def list_site_pages(
             .limit(page_size)
         )
     )
+    content_task_by_page: dict[int, int] = {}
+    if rows:
+        content_links = await session.execute(
+            select(SeoContentAsset.source_page_id, SeoContentAsset.id).where(
+                SeoContentAsset.tenant_id == tenant_id,
+                SeoContentAsset.source_page_id.in_([row.id for row in rows]),
+            )
+        )
+        content_task_by_page = {
+            int(source_page_id): int(content_id)
+            for source_page_id, content_id in content_links
+            if source_page_id is not None
+        }
     all_conditions = [SeoSitePage.tenant_id == tenant_id]
     if site_id is not None:
         all_conditions.append(SeoSitePage.site_id == site_id)
-    all_rows = list(await session.scalars(select(SeoSitePage).where(*all_conditions)))
+    stats_row = (
+        await session.execute(
+            select(
+                func.count(SeoSitePage.id),
+                func.count(SeoSitePage.id).filter(
+                    SeoSitePage.status.in_(("healthy", "verified"))
+                ),
+                func.count(SeoSitePage.id).filter(
+                    SeoSitePage.status.in_(
+                        ("needs_fix", "proposed", "approved", "implemented")
+                    )
+                ),
+                func.count(SeoSitePage.id).filter(SeoSitePage.status == "pending"),
+                func.count(SeoSitePage.id).filter(SeoSitePage.status == "proposed"),
+                func.count(SeoSitePage.id).filter(SeoSitePage.status == "approved"),
+                func.count(SeoSitePage.id).filter(SeoSitePage.status == "implemented"),
+                func.count(SeoSitePage.id).filter(SeoSitePage.status == "verified"),
+                func.avg(SeoSitePage.audit_score),
+            ).where(*all_conditions)
+        )
+    ).one()
+    (
+        stats_total,
+        stats_healthy,
+        stats_needs_fix,
+        stats_unchecked,
+        stats_proposed,
+        stats_approved,
+        stats_implemented,
+        stats_verified,
+        average_score,
+    ) = stats_row
     return {
-        "items": [_page_payload(row) for row in rows],
+        "items": [
+            _page_payload(
+                row,
+                content_task_id=content_task_by_page.get(row.id),
+            )
+            for row in rows
+        ],
         "total": int(total or 0),
         "page": page,
         "page_size": page_size,
         "stats": {
-            "total": len(all_rows),
-            "healthy": sum(row.status in {"healthy", "verified"} for row in all_rows),
-            "needs_fix": sum(
-                row.status in {"needs_fix", "proposed", "approved", "implemented"}
-                for row in all_rows
-            ),
-            "unchecked": sum(row.status == "pending" for row in all_rows),
-            "proposed": sum(row.status == "proposed" for row in all_rows),
-            "approved": sum(row.status == "approved" for row in all_rows),
-            "implemented": sum(row.status == "implemented" for row in all_rows),
-            "verified": sum(row.status == "verified" for row in all_rows),
-            "average_score": round(
-                sum(row.audit_score or 0 for row in all_rows if row.audit_score is not None)
-                / max(sum(row.audit_score is not None for row in all_rows), 1),
-                1,
-            ),
+            "total": int(stats_total or 0),
+            "healthy": int(stats_healthy or 0),
+            "needs_fix": int(stats_needs_fix or 0),
+            "unchecked": int(stats_unchecked or 0),
+            "proposed": int(stats_proposed or 0),
+            "approved": int(stats_approved or 0),
+            "implemented": int(stats_implemented or 0),
+            "verified": int(stats_verified or 0),
+            "average_score": round(float(average_score or 0), 1),
         },
     }
 
@@ -2263,6 +2507,43 @@ def _page_topic(row: SeoSitePage) -> str:
     return path[:80] or "网站首页"
 
 
+def _page_title_entities(value: str) -> list[str]:
+    """Return stable product/model tokens already present in the page title."""
+    entities: list[str] = []
+    for match in re.findall(r"(?<![A-Za-z0-9])[A-Z][A-Z0-9-]{2,}(?![A-Za-z0-9])", value):
+        if match.casefold() not in {item.casefold() for item in entities}:
+            entities.append(match)
+    return entities
+
+
+def _page_source_title(row: SeoSitePage) -> str:
+    return " ".join(str(row.title or "").split()).strip()
+
+
+def _page_brand_label(source_title: str, brand_name: str) -> str:
+    parts = [item.strip() for item in re.split(r"[|｜]", source_title) if item.strip()]
+    suffix = parts[-1] if len(parts) > 1 else ""
+    if suffix and len(suffix) <= 24 and re.search(r"[A-Za-z]", suffix):
+        return suffix
+    return " ".join(str(brand_name or "").split()).strip()
+
+
+def _compact_tdk_title(primary: str, entities: list[str], brand: str) -> str:
+    suffix_parts: list[str] = []
+    entity_part = " ".join(
+        item for item in entities if item.casefold() not in primary.casefold()
+        and item.casefold() != brand.casefold()
+    )
+    if entity_part:
+        suffix_parts.append(entity_part)
+    if brand and brand.casefold() not in primary.casefold():
+        suffix_parts.append(brand)
+    suffix = "｜".join(suffix_parts)
+    max_primary = 60 - len(suffix) - (1 if suffix else 0)
+    compact_primary = primary[:max(max_primary, 1)].rstrip("｜ -—")
+    return "｜".join(item for item in (compact_primary, suffix) if item)[:60].rstrip("｜")
+
+
 def _page_tdk_suggestions(
     row: SeoSitePage,
     keyword: SeoKeywordAsset | None,
@@ -2271,24 +2552,25 @@ def _page_tdk_suggestions(
     """Build editable, claim-safe TDK suggestions without an external AI account."""
     topic = _page_topic(row)
     primary = " ".join(str(keyword.keyword if keyword else topic).split()).strip()
-    title_parts = [primary]
-    if topic.casefold() != primary.casefold() and primary.casefold() not in topic.casefold():
-        title_parts.append(topic)
-    if brand_name and brand_name.casefold() not in "｜".join(title_parts).casefold():
-        title_parts.append(brand_name.strip())
-    title = "｜".join(item for item in title_parts if item)[:60].rstrip("｜")
+    source_title = _page_source_title(row)
+    brand = _page_brand_label(source_title, brand_name)
+    entities = _page_title_entities(source_title)
+    title = _compact_tdk_title(primary, entities, brand)
     page_type = str(row.page_type or "").strip()
-    action = {
-        "首页": "了解品牌、产品与服务信息",
-        "homepage": "了解品牌、产品与服务信息",
-        "产品页": "查看产品特点、规格与适用场景",
-        "解决方案": "查看相关方案、适用场景与实施要点",
-        "案例": "查看项目背景、实施过程与结果说明",
-        "文章": "阅读相关知识、常见问题与实践要点",
-    }.get(page_type, "查看相关信息、适用场景与详细说明")
-    description = f"{action}，围绕{primary}整理页面重点内容。"
-    if brand_name:
-        description += f"访问{brand_name}获取更多信息。"
+    core_title = re.split(r"\s*[|｜]\s*", source_title, maxsplit=1)[0].strip()
+    subject = core_title if len(core_title) >= 6 else "、".join([primary, *entities[:4]])
+    if any(marker in source_title for marker in ("手册", "说明书", "文档")):
+        description = f"查阅{subject}，了解相关操作、参数设置与适用信息。"
+    elif page_type in {"产品页", "product"}:
+        description = f"了解{subject}，查看产品特点、规格与适用场景。"
+    elif page_type in {"解决方案", "solution"}:
+        description = f"了解{subject}，查看方案适用场景与实施要点。"
+    elif page_type in {"案例", "case"}:
+        description = f"了解{subject}，查看项目背景、实施过程与结果说明。"
+    elif page_type in {"文章", "article"}:
+        description = f"阅读{subject}，了解相关知识、常见问题与实践要点。"
+    else:
+        description = f"了解{subject}，查看页面提供的具体内容与适用信息。"
     return title, description[:160]
 
 
@@ -2347,7 +2629,7 @@ async def _validate_target_keyword(
 ) -> None:
     if keyword_id is not None:
         keyword = await _keyword(session, keyword_id, tenant_id)
-        if site_id is not None and keyword.site_id not in {None, site_id}:
+        if site_id is not None and keyword.site_id != site_id:
             raise HTTPException(400, "Target keyword site does not match the page site")
 
 
@@ -2428,6 +2710,22 @@ async def import_site_pages(
     return {"created": created, "skipped": skipped}
 
 
+def _site_page_status_after_audit(
+    previous_status: str | None,
+    issue_codes: list[str] | None,
+    *,
+    has_error: bool = False,
+) -> str:
+    """Keep human TDK workflow state while refreshing technical audit facts."""
+    if previous_status in {"proposed", "approved"}:
+        return previous_status
+    if has_error:
+        return "error"
+    if not issue_codes:
+        return "verified" if previous_status in {"implemented", "verified"} else "healthy"
+    return "needs_fix"
+
+
 def _apply_site_page_audit(row: SeoSitePage, result: dict[str, Any]) -> None:
     previous_status = getattr(row, "status", None)
     snapshot = result.get("snapshot") or {}
@@ -2443,12 +2741,7 @@ def _apply_site_page_audit(row: SeoSitePage, result: dict[str, Any]) -> None:
     row.content_units = snapshot.get("content_units")
     row.audit_score = result.get("score")
     row.issue_codes = failed
-    if not failed:
-        row.status = "verified" if previous_status in {"implemented", "verified"} else "healthy"
-    elif previous_status in {"proposed", "approved"}:
-        row.status = previous_status
-    else:
-        row.status = "needs_fix"
+    row.status = _site_page_status_after_audit(previous_status, failed)
     row.last_error = None
     row.last_checked_at = datetime.utcnow()
 
@@ -2743,7 +3036,7 @@ async def seo_overview(
         item.status != "pending" and not item.meta_description for item in pages
     )
     unchecked_pages = sum(item.status == "pending" for item in pages)
-    active_content = sum(item.status in {"planned", "drafting", "review"} for item in contents)
+    active_content = sum(item.status in {"planned", "drafting", "review", "ready"} for item in contents)
     latest_metrics = await _latest_site_metrics(session, tenant_id, site_id) if site_id is not None else {}
 
     def metric(metric_type: str, dimension: str = "total", source: str = "chinaz") -> dict[str, Any]:
@@ -2848,7 +3141,7 @@ async def seo_overview(
             "pages": len(pages),
             "healthy_pages": sum(item.status == "healthy" for item in pages),
             "pages_needing_fix": sum(item.status in {"needs_fix", "error"} for item in pages),
-            "content_active": sum(item.status in {"planned", "drafting", "review"} for item in contents),
+            "content_active": sum(item.status in {"planned", "drafting", "review", "ready"} for item in contents),
             "content_published": sum(item.status == "published" for item in contents),
             "backlinks": sum(item.status == "active" for item in backlinks),
             "competitors": len(competitors),
@@ -2904,13 +3197,13 @@ async def seo_alerts(
             alerts.append({"type": "rank_drop", "severity": "high" if values[0].rank - values[1].rank >= 10 else "medium", "title": f"{keyword.keyword if keyword else keyword_id} 排名下降", "detail": f"从第 {values[1].rank} 位下降到第 {values[0].rank} 位", "evidence": f"最近两次 {engine} 排名为 {values[1].rank}、{values[0].rank}", "action_label": "查看排名历史", "href": f"/seo/keywords/{keyword_id}", "object_id": keyword_id, "site_id": values[0].site_id, "occurred_at": _rank_iso(values[0].checked_at)})
     for item in keywords:
         if not item.landing_page:
-            alerts.append({"type": "missing_landing", "severity": "medium", "title": f"{item.keyword} 缺少承接页面", "detail": "高价值关键词尚未绑定站内页面", "evidence": "关键词的目标落地页字段为空", "action_label": "配置承接页面", "href": f"/seo/keywords/{item.id}", "object_id": item.id, "site_id": item.site_id, "occurred_at": _iso(item.updated_at)})
+            alerts.append({"type": "missing_landing", "severity": "medium", "title": f"{item.keyword} 缺少承接页面", "detail": "高价值关键词尚未绑定站内页面", "evidence": "关键词的目标落地页字段为空", "action_label": "配置承接页面", "href": f"/seo/keywords/{item.id}", "object_id": item.id, "site_id": item.site_id, "occurred_at": _database_iso(item.updated_at)})
     for item in pages:
         if item.status in {"needs_fix", "error"}:
-            alerts.append({"type": "site_issue", "severity": "high" if item.status == "error" else "medium", "title": "站内页面需要处理", "detail": item.url, "evidence": "、".join(item.issue_codes or []) or item.last_error or "页面检测状态异常", "action_label": "查看页面问题", "href": f"/seo/site?page_id={item.id}&site_id={item.site_id}", "object_id": item.id, "site_id": item.site_id, "occurred_at": _iso(item.last_checked_at or item.updated_at)})
+            alerts.append({"type": "site_issue", "severity": "high" if item.status == "error" else "medium", "title": "站内页面需要处理", "detail": item.url, "evidence": "、".join(item.issue_codes or []) or item.last_error or "页面检测状态异常", "action_label": "查看页面问题", "href": f"/seo/site?page_id={item.id}&site_id={item.site_id}", "object_id": item.id, "site_id": item.site_id, "occurred_at": _iso(item.last_checked_at) if item.last_checked_at else _database_iso(item.updated_at)})
     for item in backlinks:
         if (item.toxic_score or 0) >= 70:
-            alerts.append({"type": "toxic_backlink", "severity": "high", "title": "发现高风险外链", "detail": item.source_domain, "evidence": f"风险分 {item.toxic_score}", "action_label": "查看外链", "href": f"/seo/links?tab=backlink&backlink_id={item.id}&site_id={item.site_id}", "object_id": item.id, "site_id": item.site_id, "occurred_at": _iso(item.last_seen_at or item.updated_at)})
+            alerts.append({"type": "toxic_backlink", "severity": "high", "title": "发现高风险外链", "detail": item.source_domain, "evidence": f"风险分 {item.toxic_score}", "action_label": "查看外链", "href": f"/seo/links?tab=backlink&backlink_id={item.id}&site_id={item.site_id}", "object_id": item.id, "site_id": item.site_id, "occurred_at": _iso(item.last_seen_at) if item.last_seen_at else _database_iso(item.updated_at)})
     alerts.sort(key=lambda item: (item["severity"] != "high", item["occurred_at"] or ""))
     return {"items": alerts, "total": len(alerts), "high": sum(item["severity"] == "high" for item in alerts)}
 
@@ -3001,11 +3294,17 @@ async def _content_keywords(
     tenant_id: int,
     keyword_ids: list[int],
     site_id: int | None = None,
+    *,
+    require_exact_site: bool = False,
 ) -> list[SeoKeywordAsset]:
     rows: list[SeoKeywordAsset] = []
     for keyword_id in keyword_ids:
         row = await _keyword(session, keyword_id, tenant_id)
-        if site_id is not None and row.site_id not in {None, site_id}:
+        if site_id is not None and (
+            row.site_id != site_id
+            if require_exact_site
+            else row.site_id not in {None, site_id}
+        ):
             raise HTTPException(400, "目标关键词与内容所属站点不一致")
         rows.append(row)
     return rows
@@ -3099,7 +3398,8 @@ async def assist_seo_content(
 
 class ContentCreate(BaseModel):
     tenant_id: int
-    site_id: int | None = None
+    site_id: PositiveInt
+    source_page_id: PositiveInt | None = None
     title: str = Field(min_length=1, max_length=300)
     keyword_id: int | None = None
     keyword_ids: list[PositiveInt] | None = Field(None, max_length=5)
@@ -3111,14 +3411,14 @@ class ContentCreate(BaseModel):
     rewrite_progress: int | None = Field(None, ge=0, le=100)
     originality_score: int | None = Field(None, ge=0, le=100)
     target_platforms: list[str] | None = Field(None, max_length=20)
-    version_count: int = Field(1, ge=1)
-    status: Literal["planned", "drafting", "review", "published", "archived"] = "planned"
+    status: Literal["planned", "drafting", "review", "ready", "published", "archived"] = "planned"
     page_url: str | None = Field(None, max_length=2000)
     author: str | None = Field(None, max_length=120)
     published_at: datetime | None = None
 
 
 class ContentUpdate(BaseModel):
+    source_page_id: PositiveInt | None = None
     title: str | None = Field(None, min_length=1, max_length=300)
     keyword_id: int | None = None
     keyword_ids: list[PositiveInt] | None = Field(None, max_length=5)
@@ -3130,8 +3430,12 @@ class ContentUpdate(BaseModel):
     rewrite_progress: int | None = Field(None, ge=0, le=100)
     originality_score: int | None = Field(None, ge=0, le=100)
     target_platforms: list[str] | None = Field(None, max_length=20)
-    version_count: int | None = Field(None, ge=1)
-    status: Literal["planned", "drafting", "review", "published", "archived"] | None = None
+    version_count: int | None = Field(
+        None,
+        ge=1,
+        description="Expected current version used for optimistic concurrency control.",
+    )
+    status: Literal["planned", "drafting", "review", "ready", "published", "archived"] | None = None
     page_url: str | None = Field(None, max_length=2000)
     author: str | None = Field(None, max_length=120)
     published_at: datetime | None = None
@@ -3144,6 +3448,15 @@ class DistributionConnectionCreate(BaseModel):
     base_url: str | None = Field(None, max_length=2000)
     credentials: dict[str, str] | None = None
     enabled: bool = True
+
+
+class ContentReviewSubmit(BaseModel):
+    note: str | None = Field(None, max_length=2000)
+
+
+class ContentReviewDecision(BaseModel):
+    decision: Literal["approve", "reject"]
+    note: str | None = Field(None, max_length=2000)
 
 
 class DistributionConnectionUpdate(BaseModel):
@@ -3257,8 +3570,8 @@ def _connection_payload(row: SeoDistributionConnection) -> dict[str, Any]:
         "status": row.status,
         "last_error": row.last_error,
         "last_tested_at": _iso(row.last_tested_at),
-        "created_at": _iso(row.created_at),
-        "updated_at": _iso(row.updated_at),
+        "created_at": _database_iso(row.created_at),
+        "updated_at": _database_iso(row.updated_at),
     }
 
 
@@ -3290,8 +3603,8 @@ def _publication_payload(
         "last_error": row.last_error,
         "published_at": _iso(row.published_at),
         "last_synced_at": _iso(row.last_synced_at),
-        "created_at": _iso(row.created_at),
-        "updated_at": _iso(row.updated_at),
+        "created_at": _database_iso(row.created_at),
+        "updated_at": _database_iso(row.updated_at),
     }
 
 
@@ -3318,6 +3631,11 @@ async def _distribution_content(
     ):
         raise HTTPException(404, "内容资产不存在")
     return row
+
+
+def _require_content_ready(content: SeoContentAsset) -> None:
+    if content.status not in {"ready", "published"}:
+        raise HTTPException(409, "内容主稿尚未审核通过，不能进入发布流程")
 
 
 def _prepare_distribution_variant(
@@ -3483,8 +3801,8 @@ def _distribution_variant_payload(
         "reviewed_by": row.reviewed_by,
         "reviewed_at": _iso(row.reviewed_at),
         "created_by": row.created_by,
-        "created_at": _iso(row.created_at),
-        "updated_at": _iso(row.updated_at),
+        "created_at": _database_iso(row.created_at),
+        "updated_at": _database_iso(row.updated_at),
     }
 
 
@@ -3574,24 +3892,201 @@ async def _mark_distribution_variant_published(
         variant.status = "published"
 
 
-def _content_payload(row: SeoContentAsset) -> dict[str, Any]:
+def _content_payload(
+    row: SeoContentAsset,
+    user_names: dict[int, str] | None = None,
+    review_history: list[SeoContentReviewEvent] | None = None,
+    review_history_count: int | None = None,
+) -> dict[str, Any]:
     keyword_ids = row.keyword_ids or ([row.keyword_id] if row.keyword_id else [])
-    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "keyword_id": row.keyword_id, "keyword_ids": keyword_ids, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "created_at": _iso(row.created_at), "updated_at": _iso(row.updated_at)}
+    names = user_names or {}
+    history = review_history or []
+    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "source_page_id": row.source_page_id, "keyword_id": row.keyword_id, "keyword_ids": keyword_ids, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "review_submitted_by": row.review_submitted_by, "review_submitted_by_name": names.get(row.review_submitted_by), "review_submitted_at": _iso(row.review_submitted_at), "review_note": row.review_note, "reviewed_by": row.reviewed_by, "reviewed_by_name": names.get(row.reviewed_by), "reviewed_at": _iso(row.reviewed_at), "review_history_count": len(history) if review_history_count is None else review_history_count, "review_history": [_review_event_payload(event, names) for event in history], "created_at": _database_iso(row.created_at), "updated_at": _database_iso(row.updated_at)}
+
+
+def _review_event_payload(
+    event: SeoContentReviewEvent,
+    user_names: dict[int, str] | None = None,
+) -> dict[str, Any]:
+    names = user_names or {}
+    return {
+        "id": event.id,
+        "action": event.action,
+        "from_status": event.from_status,
+        "to_status": event.to_status,
+        "note": event.note,
+        "actor_id": event.actor_id,
+        "actor_name": names.get(event.actor_id),
+        "created_at": _database_iso(event.created_at),
+    }
+
+
+async def _content_review_user_names(
+    session: AsyncSession,
+    rows: list[SeoContentAsset],
+    events: list[SeoContentReviewEvent] | None = None,
+) -> dict[int, str]:
+    user_ids = {
+        user_id
+        for row in rows
+        for user_id in (row.review_submitted_by, row.reviewed_by)
+        if user_id is not None
+    }
+    user_ids.update(event.actor_id for event in (events or []) if event.actor_id is not None)
+    if not user_ids:
+        return {}
+    result = await session.execute(
+        select(User.id, User.display_name, User.username).where(User.id.in_(user_ids))
+    )
+    return {
+        int(user_id): str(display_name or username)
+        for user_id, display_name, username in result.all()
+    }
+
+
+async def _content_task_for_source_page(
+    session: AsyncSession,
+    tenant_id: int,
+    site_id: int,
+    source_page_id: int,
+    *,
+    exclude_content_id: int | None = None,
+) -> int | None:
+    conditions = [
+        SeoContentAsset.tenant_id == tenant_id,
+        SeoContentAsset.site_id == site_id,
+        SeoContentAsset.source_page_id == source_page_id,
+    ]
+    if exclude_content_id is not None:
+        conditions.append(SeoContentAsset.id != exclude_content_id)
+    return await session.scalar(select(SeoContentAsset.id).where(*conditions).limit(1))
 
 
 @router.get("/content-assets")
-async def list_content_assets(tenant_id: int, site_id: int | None = None, status: str | None = None, content_type: str | None = None, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+async def list_content_assets(
+    tenant_id: int,
+    site_id: int | None = None,
+    content_id: PositiveInt | None = None,
+    source_page_id: PositiveInt | None = None,
+    status: str | None = None,
+    content_type: str | None = None,
+    content_types: str | None = None,
+    q: str | None = Query(None, max_length=200),
+    page: PositiveInt = 1,
+    page_size: int = Query(50, ge=1, le=200),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
     await _tenant(session, tenant_id)
     await _seo_site(session, tenant_id, site_id)
-    conditions = [SeoContentAsset.tenant_id == tenant_id]
+    base_conditions = [SeoContentAsset.tenant_id == tenant_id]
     if site_id is not None:
-        conditions.append(SeoContentAsset.site_id == site_id)
+        base_conditions.append(SeoContentAsset.site_id == site_id)
+    if content_id is not None:
+        base_conditions.append(SeoContentAsset.id == content_id)
+    if source_page_id is not None:
+        base_conditions.append(SeoContentAsset.source_page_id == source_page_id)
+    requested_types = [
+        value.strip()
+        for value in (content_types or content_type or "").split(",")
+        if value.strip()
+    ][:20]
+    if requested_types:
+        base_conditions.append(SeoContentAsset.content_type.in_(requested_types))
+    status_rows = await session.execute(
+        select(SeoContentAsset.status, func.count())
+        .where(*base_conditions)
+        .group_by(SeoContentAsset.status)
+    )
+    status_counts = {str(value): int(count) for value, count in status_rows.all()}
+    conditions = list(base_conditions)
     if status:
-        conditions.append(SeoContentAsset.status == status)
-    if content_type:
-        conditions.append(SeoContentAsset.content_type == content_type)
-    rows = list(await session.scalars(select(SeoContentAsset).where(*conditions).order_by(SeoContentAsset.updated_at.desc(), SeoContentAsset.id.desc())))
-    return {"items": [_content_payload(row) for row in rows], "total": len(rows)}
+        requested_statuses = [value.strip() for value in status.split(",") if value.strip()][:20]
+        if requested_statuses:
+            conditions.append(SeoContentAsset.status.in_(requested_statuses))
+    # FastAPI resolves Query defaults for HTTP requests, while direct service-level
+    # calls (including tests and internal reuse) may still receive the Query object.
+    needle = q.strip() if isinstance(q, str) else ""
+    if needle:
+        pattern = f"%{needle}%"
+        keyword_ids = list(
+            await session.scalars(
+                select(SeoKeywordAsset.id)
+                .where(
+                    SeoKeywordAsset.tenant_id == tenant_id,
+                    SeoKeywordAsset.keyword.ilike(pattern),
+                    *([SeoKeywordAsset.site_id == site_id] if site_id is not None else []),
+                )
+                .limit(100)
+            )
+        )
+        matches = [SeoContentAsset.title.ilike(pattern)]
+        if keyword_ids:
+            matches.append(SeoContentAsset.keyword_id.in_(keyword_ids))
+            matches.extend(SeoContentAsset.keyword_ids.contains([keyword_id]) for keyword_id in keyword_ids)
+        conditions.append(or_(*matches))
+    total = int(
+        await session.scalar(
+            select(func.count()).select_from(SeoContentAsset).where(*conditions)
+        )
+        or 0
+    )
+    rows = list(
+        await session.scalars(
+            select(SeoContentAsset)
+            .where(*conditions)
+            .order_by(SeoContentAsset.updated_at.desc(), SeoContentAsset.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    )
+    event_counts: dict[int, int] = {}
+    if rows:
+        count_rows = await session.execute(
+            select(SeoContentReviewEvent.content_asset_id, func.count())
+            .where(
+                SeoContentReviewEvent.tenant_id == tenant_id,
+                SeoContentReviewEvent.content_asset_id.in_([row.id for row in rows]),
+            )
+            .group_by(SeoContentReviewEvent.content_asset_id)
+        )
+        event_counts = {int(content_asset_id): int(count) for content_asset_id, count in count_rows.all()}
+    user_names = await _content_review_user_names(session, rows)
+    return {
+        "items": [
+            _content_payload(row, user_names, review_history_count=event_counts.get(row.id, 0))
+            for row in rows
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "status_counts": status_counts,
+    }
+
+
+@router.get("/content-assets/{content_id}/review-history")
+async def get_content_review_history(
+    content_id: PositiveInt,
+    tenant_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    row = await session.get(SeoContentAsset, content_id)
+    if not row or row.tenant_id != tenant_id:
+        raise HTTPException(404, "SEO 内容资产不存在")
+    events = list(
+        await session.scalars(
+            select(SeoContentReviewEvent)
+            .where(
+                SeoContentReviewEvent.tenant_id == tenant_id,
+                SeoContentReviewEvent.content_asset_id == content_id,
+            )
+            .order_by(SeoContentReviewEvent.created_at.asc(), SeoContentReviewEvent.id.asc())
+        )
+    )
+    user_names = await _content_review_user_names(session, [row], events)
+    return {
+        "items": [_review_event_payload(event, user_names) for event in events],
+        "total": len(events),
+    }
 
 
 @router.post("/content-assets")
@@ -3599,8 +4094,30 @@ async def create_content_asset(req: ContentCreate, session: AsyncSession = Depen
     ctx.ensure_tenant(req.tenant_id)
     await _tenant(session, req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
+    if req.status not in {"planned", "drafting"}:
+        raise HTTPException(409, "新内容只能保存为草稿；请通过审核接口推进状态")
+    if req.source_page_id is not None:
+        if req.status not in LINKABLE_CONTENT_STATUSES:
+            raise HTTPException(409, "只有计划中或草稿状态的内容任务可以关联来源页面")
+        source_page = await _site_page(session, req.source_page_id, req.tenant_id)
+        if source_page.site_id != req.site_id:
+            raise HTTPException(400, "来源页面与内容所属站点不一致")
+        existing_content_id = await _content_task_for_source_page(
+            session,
+            req.tenant_id,
+            req.site_id,
+            req.source_page_id,
+        )
+        if existing_content_id is not None:
+            raise HTTPException(409, "该站内页面已经关联内容任务")
     keyword_ids = _selected_keyword_ids(req.keyword_ids, req.keyword_id)
-    await _content_keywords(session, req.tenant_id, keyword_ids, req.site_id)
+    await _content_keywords(
+        session,
+        req.tenant_id,
+        keyword_ids,
+        req.site_id,
+        require_exact_site=True,
+    )
     values = req.model_dump()
     values["draft"] = _sanitize_content_html(values.get("draft"))
     values["humanized_content"] = _sanitize_content_html(values.get("humanized_content"))
@@ -3608,7 +4125,19 @@ async def create_content_asset(req: ContentCreate, session: AsyncSession = Depen
     values["keyword_id"] = keyword_ids[0] if keyword_ids else None
     row = SeoContentAsset(**values, created_by=ctx.user_id)
     session.add(row)
-    await session.commit(); await session.refresh(row)
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        if req.source_page_id is not None and await _content_task_for_source_page(
+            session,
+            req.tenant_id,
+            req.site_id,
+            req.source_page_id,
+        ) is not None:
+            raise HTTPException(409, "该站内页面已经关联内容任务") from exc
+        raise
+    await session.refresh(row)
     return _content_payload(row)
 
 
@@ -3685,6 +4214,8 @@ async def import_published_links(
                 errors.append("内容标题未匹配到当前客户的内容资产")
         elif not errors:
             errors.append("内容资产ID和内容标题至少填写一项")
+        if asset is not None and asset.status not in {"ready", "published"}:
+            errors.append("内容尚未审核通过，仅待发布或已发布内容可以登记发布链接")
         try:
             page_url, host = normalize_publication_url(source.get("page_url"))
         except ValueError as exc:
@@ -3986,6 +4517,7 @@ async def create_manual_publication(
     content = await _distribution_content(
         session, req.tenant_id, req.content_id, req.site_id
     )
+    _require_content_ready(content)
     try:
         page_url, host = normalize_publication_url(req.page_url)
     except ValueError as exc:
@@ -4471,6 +5003,8 @@ async def preflight_content_distribution(
         for connection in connections:
             errors: list[str] = []
             warnings: list[str] = []
+            if content.status not in {"ready", "published"}:
+                errors.append("内容主稿尚未审核通过")
             body = content.humanized_content or content.draft or ""
             if not connection.enabled:
                 errors.append("平台连接已停用")
@@ -4565,6 +5099,7 @@ async def publish_content_distribution(
     content = await _distribution_content(
         session, req.tenant_id, req.content_id, req.site_id
     )
+    _require_content_ready(content)
     source_version = content.version_count or 1
     if (
         req.variant_id is None
@@ -4987,7 +5522,7 @@ async def list_publish_attempts(
                 "request_summary": item.request_summary,
                 "response_summary": item.response_summary,
                 "error": item.error,
-                "started_at": _iso(item.started_at),
+                "started_at": _database_iso(item.started_at),
                 "completed_at": _iso(item.completed_at),
             }
             for item in attempts
@@ -4995,27 +5530,190 @@ async def list_publish_attempts(
     }
 
 
-@router.patch("/content-assets/{content_id}")
-async def update_content_asset(content_id: int, tenant_id: int, req: ContentUpdate, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
-    row = await session.get(SeoContentAsset, content_id)
+@router.post("/content-assets/{content_id}/submit-review")
+async def submit_content_review(
+    content_id: int,
+    tenant_id: int,
+    req: ContentReviewSubmit,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    row = await session.get(SeoContentAsset, content_id, with_for_update=True)
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO 内容资产不存在")
+    if row.status not in {"planned", "drafting"}:
+        raise HTTPException(409, "只有草稿可以提交审核")
+    keyword_ids = _selected_keyword_ids(row.keyword_ids, row.keyword_id)
+    if not keyword_ids:
+        raise HTTPException(400, "提交审核前请至少绑定 1 个目标关键词")
+    if not str(row.humanized_content or row.draft or "").strip():
+        raise HTTPException(400, "提交审核前请填写正文")
+    previous_status = row.status
+    note = (req.note or "").strip() or None
+    row.status = "review"
+    row.review_submitted_by = ctx.user_id
+    row.review_submitted_at = datetime.utcnow()
+    row.review_note = note
+    row.reviewed_by = None
+    row.reviewed_at = None
+    session.add(SeoContentReviewEvent(
+        tenant_id=row.tenant_id,
+        site_id=row.site_id,
+        content_asset_id=row.id,
+        action="submit",
+        from_status=previous_status,
+        to_status="review",
+        note=note,
+        actor_id=ctx.user_id,
+    ))
+    await session.commit()
+    await session.refresh(row)
+    return _content_payload(row)
+
+
+@router.post("/content-assets/{content_id}/review")
+async def decide_content_review(
+    content_id: int,
+    tenant_id: int,
+    req: ContentReviewDecision,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    row = await session.get(SeoContentAsset, content_id, with_for_update=True)
+    if not row or row.tenant_id != tenant_id:
+        raise HTTPException(404, "SEO 内容资产不存在")
+    if row.status != "review":
+        raise HTTPException(409, "只有待审核内容可以审核")
+    note = (req.note or "").strip()
+    if req.decision == "reject" and not note:
+        raise HTTPException(400, "退回时必须填写修改意见")
+    previous_status = row.status
+    target_status = "ready" if req.decision == "approve" else "drafting"
+    row.status = target_status
+    row.review_note = note or None
+    row.reviewed_by = ctx.user_id
+    row.reviewed_at = datetime.utcnow()
+    session.add(SeoContentReviewEvent(
+        tenant_id=row.tenant_id,
+        site_id=row.site_id,
+        content_asset_id=row.id,
+        action=req.decision,
+        from_status=previous_status,
+        to_status=target_status,
+        note=note or None,
+        actor_id=ctx.user_id,
+    ))
+    await session.commit()
+    await session.refresh(row)
+    return _content_payload(row)
+
+
+@router.patch("/content-assets/{content_id}")
+async def update_content_asset(
+    content_id: int,
+    tenant_id: int,
+    req: ContentUpdate,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    row = await session.get(SeoContentAsset, content_id, with_for_update=True)
+    if not row or row.tenant_id != tenant_id:
+        raise HTTPException(404, "SEO 内容资产不存在")
+    row_site_id = row.site_id
     values = req.model_dump(exclude_unset=True)
+    expected_version = values.pop("version_count", None)
+    if expected_version is not None and expected_version != (row.version_count or 1):
+        raise HTTPException(409, "内容已被其他操作更新，请刷新后重试")
+    requested_status = values.get("status")
+    if requested_status in {"review", "ready", "published"} and requested_status != row.status:
+        raise HTTPException(409, "请通过提交审核、审核或发布流程推进内容状态")
+    content_fields = {
+        "source_page_id", "title", "keyword_id", "keyword_ids", "content_type",
+        "outline", "draft", "humanized_content", "source_text", "rewrite_progress",
+        "originality_score", "target_platforms", "page_url", "author",
+        "published_at",
+    }
+    protected_statuses = {"review", "ready", "published"}
+    if row.status in protected_statuses and content_fields.intersection(values):
+        raise HTTPException(409, "待审核、待发布或已发布内容不能直接编辑")
+    if row.status in protected_statuses and requested_status != row.status:
+        raise HTTPException(409, "请通过审核或发布流程变更受控内容状态")
     if "draft" in values:
         values["draft"] = _sanitize_content_html(values.get("draft"))
     if "humanized_content" in values:
         values["humanized_content"] = _sanitize_content_html(values.get("humanized_content"))
+    requested_source_page_id = values.get("source_page_id")
+    if requested_source_page_id is not None:
+        is_new_link = requested_source_page_id != row.source_page_id
+        effective_status = values.get("status", row.status)
+        if is_new_link and effective_status not in LINKABLE_CONTENT_STATUSES:
+            raise HTTPException(409, "只有计划中或草稿状态的内容任务可以关联来源页面")
+        if row_site_id is None:
+            raise HTTPException(400, "内容任务没有有效站点，无法关联来源页面")
+        source_page = await _site_page(session, requested_source_page_id, tenant_id)
+        if source_page.site_id != row_site_id:
+            raise HTTPException(400, "来源页面与内容所属站点不一致")
+        existing_content_id = await _content_task_for_source_page(
+            session,
+            tenant_id,
+            row_site_id,
+            requested_source_page_id,
+            exclude_content_id=row.id,
+        )
+        if existing_content_id is not None:
+            raise HTTPException(409, "该站内页面已经关联其他内容任务")
     if "keyword_ids" in values or "keyword_id" in values:
         if "keyword_ids" in values:
             keyword_ids = _selected_keyword_ids(values.get("keyword_ids") or [], None)
         else:
             keyword_ids = _selected_keyword_ids(None, values.get("keyword_id"))
-        await _content_keywords(session, tenant_id, keyword_ids, row.site_id)
+        await _content_keywords(
+            session,
+            tenant_id,
+            keyword_ids,
+            row_site_id,
+            require_exact_site=row_site_id is not None,
+        )
         values["keyword_ids"] = keyword_ids or None
         values["keyword_id"] = keyword_ids[0] if keyword_ids else None
-    for key, value in values.items():
-        setattr(row, key, value.strip() or None if isinstance(value, str) else value)
-    await session.commit(); await session.refresh(row)
+    normalized_values = {
+        key: (value.strip() or None if isinstance(value, str) else value)
+        for key, value in values.items()
+    }
+    revision_fields = {
+        "title", "keyword_id", "keyword_ids", "content_type", "outline", "draft",
+        "humanized_content", "source_text",
+    }
+    revision_changed = any(
+        key in normalized_values and getattr(row, key) != normalized_values[key]
+        for key in revision_fields
+    )
+    for key, value in normalized_values.items():
+        setattr(row, key, value)
+    if revision_changed:
+        row.version_count = (row.version_count or 1) + 1
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        if (
+            requested_source_page_id is not None
+            and row_site_id is not None
+            and await _content_task_for_source_page(
+                session,
+                tenant_id,
+                row_site_id,
+                requested_source_page_id,
+                exclude_content_id=content_id,
+            )
+            is not None
+        ):
+            raise HTTPException(409, "该站内页面已经关联其他内容任务") from exc
+        raise
+    await session.refresh(row)
     return _content_payload(row)
 
 
@@ -5024,7 +5722,7 @@ async def update_content_asset(content_id: int, tenant_id: int, req: ContentUpda
 
 class BacklinkCreate(BaseModel):
     tenant_id: int
-    site_id: int | None = None
+    site_id: PositiveInt
     source_url: str = Field(min_length=1, max_length=2000)
     target_url: str = Field(min_length=1, max_length=2000)
     anchor_text: str | None = Field(None, max_length=1000)
@@ -5168,6 +5866,15 @@ class CompetitorEventCreate(BaseModel):
     def validate_optional_source_url(cls, value: Any) -> str | None:
         return _validate_competitor_event_url(value, required=False)
 
+    @field_validator("event_at")
+    @classmethod
+    def normalize_event_at(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone(timedelta(hours=8)))
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+
 
 def _validate_competitor_event_url(value: Any, *, required: bool) -> str | None:
     normalized = value.strip() if isinstance(value, str) else ""
@@ -5213,7 +5920,7 @@ def _competitor_payload(row: SeoCompetitor) -> dict[str, Any]:
         "last_checked_at": _rank_iso(row.last_checked_at),
         "next_collection_allowed_at": _rank_iso(next_allowed_at),
         "collection_retry_after_seconds": retry_after,
-        "created_at": _iso(row.created_at),
+        "created_at": _database_iso(row.created_at),
     }
 
 
@@ -5329,7 +6036,7 @@ async def list_competitors(tenant_id: int, site_id: int | None = None, session: 
     counts = defaultdict(lambda: {"content": 0, "backlink": 0})
     for event in events:
         counts[event.competitor_id][event.event_type] += 1
-    return {"items": [{**_competitor_payload(row), **counts[row.id]} for row in rows], "events": [{"id": event.id, "competitor_id": event.competitor_id, "event_type": event.event_type, "title": event.title, "url": event.url, "source_url": event.source_url, "summary": event.summary, "event_at": _iso(event.event_at), "detected_at": _iso(event.detected_at)} for event in events[:100]]}
+    return {"items": [{**_competitor_payload(row), **counts[row.id]} for row in rows], "events": [{"id": event.id, "competitor_id": event.competitor_id, "event_type": event.event_type, "title": event.title, "url": event.url, "source_url": event.source_url, "summary": event.summary, "event_at": _rank_iso(event.event_at), "detected_at": _database_iso(event.detected_at)} for event in events[:100]]}
 
 
 @router.post("/competitors")
@@ -5407,13 +6114,14 @@ async def collect_competitor(
         logger.warning(
             "[SEO][COMPETITOR] manual collection failed "
             "competitor_id=%s tenant_id=%s site_id=%s code=%s "
-            "error_type=%s status_code=%s elapsed_ms=%s",
+            "error_type=%s status_code=%s timeout_phase=%s elapsed_ms=%s",
             competitor.id,
             req.tenant_id,
             req.site_id,
             exc.code,
             exc.error_type,
             exc.status_code,
+            exc.timeout_phase,
             exc.elapsed_ms,
         )
         raise HTTPException(
@@ -5484,4 +6192,4 @@ async def create_competitor_event(req: CompetitorEventCreate, session: AsyncSess
     except IntegrityError as exc:
         await session.rollback(); raise HTTPException(409, "该竞品动态已存在") from exc
     await session.refresh(row)
-    return {"id": row.id, "event_type": row.event_type, "url": row.url, "detected_at": _iso(row.detected_at)}
+    return {"id": row.id, "event_type": row.event_type, "url": row.url, "detected_at": _database_iso(row.detected_at)}
