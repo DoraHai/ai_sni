@@ -30,6 +30,7 @@ from app.api.seo import (
     _database_iso,
     _iso,
     _apply_site_page_audit,
+    _site_page_status_after_audit,
     _content_keywords,
     _content_payload,
     _metric_payload,
@@ -142,6 +143,13 @@ def test_implemented_page_becomes_verified_only_after_clean_reaudit() -> None:
         },
     )
     assert row.status == "verified"
+
+
+def test_full_crawl_preserves_tdk_workflow_status() -> None:
+    assert _site_page_status_after_audit("proposed", ["title"]) == "proposed"
+    assert _site_page_status_after_audit("approved", [], has_error=True) == "approved"
+    assert _site_page_status_after_audit("implemented", []) == "verified"
+    assert _site_page_status_after_audit("implemented", ["description"]) == "needs_fix"
 
 
 def test_tdk_suggestions_include_keyword_and_brand_without_claims() -> None:
@@ -509,6 +517,7 @@ def test_existing_content_task_can_be_bound_to_a_source_page() -> None:
     row.id = 88
     context = AuthContext(user_id=7, username="operator", role_name="运营", tenant_id=1, permissions={"seo.content": "edit"})
     session = AsyncMock()
+    session.add = MagicMock()
     session.get = AsyncMock(return_value=row)
     session.scalar = AsyncMock(return_value=None)
     source_page = SimpleNamespace(id=231, tenant_id=1, site_id=9)
@@ -552,6 +561,7 @@ def test_content_review_submit_approve_and_reject_state_machine() -> None:
     )
     row.id = 88
     session = AsyncMock()
+    session.add = MagicMock()
     session.get = AsyncMock(return_value=row)
 
     submitted = asyncio.run(
@@ -588,6 +598,41 @@ def test_content_review_submit_approve_and_reject_state_machine() -> None:
     )
     assert rejected["status"] == "drafting"
     assert rejected["review_note"] == "补充参数来源"
+    assert [event.action for event in session.add.call_args_list for event in event.args] == [
+        "submit", "approve", "reject"
+    ]
+
+
+def test_content_version_is_server_incremented_and_stale_updates_are_rejected() -> None:
+    context = AuthContext(user_id=7, username="operator", role_name="运营", tenant_id=1, permissions={"seo.content": "edit"})
+    row = SeoContentAsset(
+        tenant_id=1,
+        site_id=9,
+        title="初稿",
+        content_type="article",
+        status="drafting",
+        version_count=1,
+    )
+    row.id = 88
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=row)
+
+    saved = asyncio.run(
+        update_content_asset(88, 1, ContentUpdate(title="修订稿", version_count=1), session, context)
+    )
+    assert saved["version_count"] == 2
+    assert row.title == "修订稿"
+
+    with pytest.raises(Exception) as stale_exc:
+        asyncio.run(
+            update_content_asset(88, 1, ContentUpdate(title="过期覆盖", version_count=1), session, context)
+        )
+    assert getattr(stale_exc.value, "status_code", None) == 409
+    assert row.title == "修订稿"
+
+
+def test_content_create_version_is_server_owned() -> None:
+    assert "version_count" not in ContentCreate.model_fields
 
 
 def test_content_payload_includes_review_actor_names() -> None:

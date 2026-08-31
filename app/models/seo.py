@@ -6,6 +6,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     SmallInteger,
@@ -241,6 +242,41 @@ class SeoContentAsset(Base):
             "site_id",
             "source_page_id",
             name="uq_seo_content_asset_source_page",
+        ),
+    )
+
+
+class SeoContentReviewEvent(Base):
+    """Append-only audit trail for SEO content review transitions."""
+
+    __tablename__ = "seo_content_review_events"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    site_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("seo_sites.id", ondelete="SET NULL"), index=True
+    )
+    content_asset_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("seo_content_assets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    action: Mapped[str] = mapped_column(String(24), nullable=False)
+    from_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    to_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    actor_id: Mapped[int | None] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index(
+            "ix_seo_content_review_events_tenant_asset_created",
+            "tenant_id",
+            "content_asset_id",
+            "created_at",
         ),
     )
 
