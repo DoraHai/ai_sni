@@ -1,19 +1,26 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  createGeoAnswerSnapshot,
+  deleteGeoAnswerSnapshot,
   fetchGeoEvaluationInsights,
   fetchVisibilityPatrolOpsStatus,
   getVisibilityPatrolRun,
   listGeoAnswerSnapshots,
   listGeoBusinesses,
   listGeoDailyMetrics,
+  listGeoPrompts,
+  listGeoTrackingEngines,
+  patchGeoAnswerSnapshot,
+  probeGeoAnswerSnapshot,
+  extractGeoAnswerSnapshotUrls,
+  checkGeoAnswerSnapshotCitations,
   startVisibilityPatrolRun,
 } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { useObservationPeriod } from '../../composables/useObservationPeriod'
-import GeoVisibilityNav from '../../components/GeoVisibilityNav.vue'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { geoSnapshotLink } from '../../utils/geoRoutes'
 import {
@@ -79,6 +86,24 @@ const evaluation = ref(null)
 const patrol = ref(null)
 const businesses = ref([])
 const engineDaily = ref([])
+const prompts = ref([])
+const trackingEngines = ref([])
+const savingSnapshot = ref(false)
+const probingSnapshot = ref('')
+const extractedUrls = ref([])
+const snapshotForm = ref({
+  prompt_id: null,
+  engine: 'deepseek',
+  raw_text: '',
+  mentions_brand: false,
+  brand_position: 'unknown',
+  sentiment: 'unknown',
+})
+
+const enabledSnapshotEngines = computed(() => {
+  const enabled = trackingEngines.value.filter((engine) => engine.enabled)
+  return enabled.length ? enabled : trackingEngines.value
+})
 
 const tenantName = computed(() => {
   const hit = (session.tenants || []).find((t) => t.id === tenantId.value)
@@ -201,6 +226,62 @@ const sample = computed(() => {
   return rows.find((s) => s.mentions_brand) || rows[0] || null
 })
 
+function clipText(s, n = 88) {
+  const t = String(s || '').replace(/\s+/g, ' ').trim()
+  if (!t) return ''
+  return t.length > n ? `${t.slice(0, n)}…` : t
+}
+
+const sampleRankItems = computed(() => {
+  const s = sample.value
+  if (!s) return []
+  const brand = brandNames.value[0] || '本品牌'
+  const excerpt = clipText(s.raw_text)
+  const items = []
+  const ownRank =
+    s.brand_position === 'first'
+      ? 1
+      : s.brand_position === 'alternative'
+        ? 2
+        : s.brand_position === 'mentioned'
+          ? 3
+          : s.mentions_brand
+            ? 2
+            : null
+  if (ownRank != null) {
+    items.push({
+      rank: ownRank,
+      name: brand,
+      kind: 'own',
+      badge: rankLabel(s.brand_position),
+      excerpt,
+    })
+  }
+  let next = ownRank === 1 ? 2 : 1
+  for (const name of (s.competitors || []).map((c) => String(c || '').trim()).filter(Boolean).slice(0, 3)) {
+    if (ownRank === next) next += 1
+    items.push({
+      rank: next,
+      name,
+      kind: 'comp',
+      badge: `竞品 · 顺位 ${next}`,
+      excerpt: '',
+    })
+    next += 1
+  }
+  items.sort((a, b) => a.rank - b.rank)
+  if (!items.length && excerpt) {
+    items.push({
+      rank: null,
+      name: '',
+      kind: 'text',
+      badge: rankLabel(s.brand_position),
+      excerpt,
+    })
+  }
+  return items
+})
+
 const sampleParts = computed(() =>
   highlightParts(sample.value?.raw_text || '', brandNames.value),
 )
@@ -271,7 +352,7 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [sn, ev, po, biz, ed] = await Promise.all([
+    const [sn, ev, po, biz, ed, promptData, engineData] = await Promise.all([
       listGeoAnswerSnapshots(tenantId.value).catch(() => ({ items: [] })),
       fetchGeoEvaluationInsights(tenantId.value, {
         date_from: obsStart.value,
@@ -285,6 +366,8 @@ async function load() {
         date_to: obsEnd.value,
         include_engines: true,
       }).catch(() => ({ items: [] })),
+      listGeoPrompts(tenantId.value, { status: 'active' }).catch(() => ({ items: [] })),
+      listGeoTrackingEngines(tenantId.value).catch(() => ({ items: [] })),
     ])
     const items = sn.items || sn.snapshots || []
     const lo = Date.parse(`${obsStart.value}T00:00:00`)
@@ -298,10 +381,141 @@ async function load() {
     patrol.value = po
     businesses.value = biz.items || []
     engineDaily.value = ed.items || []
+    prompts.value = promptData.items || []
+    trackingEngines.value = engineData.items || []
+    if (!snapshotForm.value.prompt_id && prompts.value.length) {
+      snapshotForm.value.prompt_id = prompts.value[0].id
+    }
+    if (!enabledSnapshotEngines.value.some((engine) => engine.engine_key === snapshotForm.value.engine)) {
+      snapshotForm.value.engine = enabledSnapshotEngines.value[0]?.engine_key || 'deepseek'
+    }
   } catch (e) {
     error.value = e.message || '加载失败'
   } finally {
     loading.value = false
+  }
+}
+
+async function probeSnapshot() {
+  if (!snapshotForm.value.prompt_id || !snapshotForm.value.engine) {
+    ElMessage.warning('请先选择提问和引擎')
+    return
+  }
+  probingSnapshot.value = 'probe'
+  try {
+    const draft = await probeGeoAnswerSnapshot({
+      tenant_id: tenantId.value,
+      prompt_id: snapshotForm.value.prompt_id,
+      engine: snapshotForm.value.engine,
+    })
+    snapshotForm.value.raw_text = draft.raw_text || snapshotForm.value.raw_text
+    if (draft.mentions_brand != null) snapshotForm.value.mentions_brand = !!draft.mentions_brand
+    if (draft.brand_position) snapshotForm.value.brand_position = draft.brand_position
+    if (draft.sentiment) snapshotForm.value.sentiment = draft.sentiment
+    ElMessage.success('已填入探测回答，确认后可保存快照')
+  } catch (e) {
+    ElMessage.error(e.message || '探测失败')
+  } finally {
+    probingSnapshot.value = ''
+  }
+}
+
+async function extractSnapshotUrls() {
+  const raw = snapshotForm.value.raw_text.trim()
+  if (!raw) {
+    ElMessage.warning('请先填写或探测回答原文')
+    return
+  }
+  probingSnapshot.value = 'extract'
+  try {
+    const result = await extractGeoAnswerSnapshotUrls({
+      tenant_id: tenantId.value,
+      raw_text: raw,
+    })
+    extractedUrls.value = result.suggested_cited_urls || []
+    ElMessage.success(extractedUrls.value.length ? `提取到 ${extractedUrls.value.length} 个 URL` : '未提取到 URL')
+  } catch (e) {
+    ElMessage.error(e.message || '提取 URL 失败')
+  } finally {
+    probingSnapshot.value = ''
+  }
+}
+
+async function checkSnapshotCitations() {
+  if (!extractedUrls.value.length) {
+    await extractSnapshotUrls()
+  }
+  if (!extractedUrls.value.length) return
+  probingSnapshot.value = 'cite'
+  try {
+    const result = await checkGeoAnswerSnapshotCitations({
+      tenant_id: tenantId.value,
+      cited_urls: extractedUrls.value,
+      apply: false,
+    })
+    const n = result.items?.length ?? result.checked ?? extractedUrls.value.length
+    ElMessage.success(`已检查 ${n} 条引用`)
+  } catch (e) {
+    ElMessage.error(e.message || '检查引用失败')
+  } finally {
+    probingSnapshot.value = ''
+  }
+}
+
+async function saveSnapshot() {
+  if (!snapshotForm.value.prompt_id) {
+    ElMessage.warning('请选择优化意图词')
+    return
+  }
+  if (!snapshotForm.value.raw_text.trim()) {
+    ElMessage.warning('请填写回答原文')
+    return
+  }
+  savingSnapshot.value = true
+  try {
+    await createGeoAnswerSnapshot({
+      tenant_id: tenantId.value,
+      prompt_id: snapshotForm.value.prompt_id,
+      engine: snapshotForm.value.engine,
+      raw_text: snapshotForm.value.raw_text.trim(),
+      mentions_brand: snapshotForm.value.mentions_brand,
+      brand_position: snapshotForm.value.brand_position,
+      sentiment: snapshotForm.value.sentiment,
+    })
+    snapshotForm.value.raw_text = ''
+    snapshotForm.value.mentions_brand = false
+    snapshotForm.value.brand_position = 'unknown'
+    snapshotForm.value.sentiment = 'unknown'
+    ElMessage.success('快照已保存')
+    await load()
+  } catch (e) {
+    ElMessage.error(e.message || '保存失败')
+  } finally {
+    savingSnapshot.value = false
+  }
+}
+
+async function updateSnapshot(row, patch) {
+  try {
+    await patchGeoAnswerSnapshot(tenantId.value, row.id, patch)
+    Object.assign(row, patch)
+  } catch (e) {
+    ElMessage.error(e.message || '更新失败')
+    await load()
+  }
+}
+
+async function removeSnapshot(row) {
+  try {
+    await ElMessageBox.confirm(`删除快照 #${row.id}？不可恢复。`, '删除快照', {
+      type: 'warning',
+      confirmButtonText: '删除',
+    })
+    await deleteGeoAnswerSnapshot(tenantId.value, row.id)
+    ElMessage.success('已删除')
+    await load()
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close') ElMessage.error(e.message || '删除失败')
   }
 }
 
@@ -339,10 +553,6 @@ async function refreshDetect() {
 watch(tenantId, load)
 watch([observationDays, obsStart, obsEnd], load)
 onMounted(() => {
-  if (route.query.domain) {
-    router.replace({ path: '/geo/visibility/snapshots', query: { ...route.query } })
-    return
-  }
   load()
 })
 </script>
@@ -361,64 +571,7 @@ onMounted(() => {
       </button>
     </template>
   <div class="geo-dash">
-    <GeoVisibilityNav />
-
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" />
-
-    <div v-if="pendingSignals.length" class="gd-card" style="margin-bottom:16px">
-      <div class="gd-hd">
-        <h3>待处理信号</h3>
-        <a class="more" @click="router.push(geoSnapshotLink())">去采集与判断</a>
-      </div>
-      <div class="gd-bd" style="padding:0">
-        <table>
-          <thead>
-            <tr>
-              <th>意图词</th>
-              <th>引擎</th>
-              <th>本品位置</th>
-              <th>情感</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(row, i) in pendingSignals" :key="row.id || i">
-              <td>
-                <button
-                  type="button"
-                  class="linkish"
-                  @click="router.push(geoSnapshotLink({ prompt_id: row.prompt_id }))"
-                >
-                  {{ row.prompt_question || `意图词 #${row.prompt_id}` }}
-                </button>
-              </td>
-              <td>{{ engineDisplay(row.engine) }}</td>
-              <td>{{ labelOf(POSITION_LABEL, row.brand_position) }}</td>
-              <td>{{ labelOf(SENTIMENT_LABEL, row.sentiment) }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <div v-if="promptFocusRows.length" class="gd-card" style="margin-bottom:16px">
-      <div class="gd-hd">
-        <h3>该提问各引擎表现</h3>
-        <span class="more">{{ promptFocusRows[0]?.question }}</span>
-      </div>
-      <div class="gd-bd" style="padding:0">
-        <table>
-          <thead><tr><th>引擎</th><th>是否提及</th><th>顺位</th><th>检测时间</th></tr></thead>
-          <tbody>
-            <tr v-for="(r, i) in promptFocusRows" :key="i">
-              <td>{{ r.engine }}</td>
-              <td><span class="gd-badge" :class="r.tone">{{ r.badge }}</span></td>
-              <td>{{ r.rank }}</td>
-              <td>{{ fmtCaptured(r.at) }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
 
     <div class="gd-engine-kpis">
       <div v-for="e in engineCards" :key="e.key" class="gd-card gd-stat">
@@ -500,26 +653,164 @@ onMounted(() => {
         <span v-if="sample" class="more">{{ engineDisplay(sample.engine) }} · 「{{ sample.prompt_question || '提问' }}」</span>
       </div>
       <div class="gd-bd">
-        <div v-if="sample" class="gd-sample">
-          <template v-for="(part, i) in sampleParts" :key="i">
-            <mark v-if="part.hit">{{ part.text }}</mark>
-            <template v-else>{{ part.text }}</template>
-          </template>
+        <div v-if="sampleRankItems.length" class="gd-sample-ranks">
+          <div
+            v-for="(item, i) in sampleRankItems"
+            :key="i"
+            class="gd-rank-row"
+            :class="item.kind"
+          >
+            <span v-if="item.rank" class="gd-rank-no">{{ item.rank }}</span>
+            <div class="gd-rank-body">
+              <p v-if="item.kind === 'text'" class="gd-sample">
+                <template v-for="(part, pi) in sampleParts" :key="pi">
+                  <mark v-if="part.hit">{{ part.text }}</mark>
+                  <template v-else>{{ part.text }}</template>
+                </template>
+                <span class="gd-badge">{{ item.badge }}</span>
+              </p>
+              <p v-else>
+                <b>{{ item.name }}</b>
+                <template v-if="item.excerpt"> — {{ item.excerpt }}</template>
+                <span class="gd-badge" :class="item.kind === 'own' ? 'green' : ''">{{ item.badge }}</span>
+              </p>
+            </div>
+          </div>
         </div>
         <div v-else class="gd-sub">暂无带正文的回答快照。点「刷新检测」跑一轮巡检。</div>
         <div v-if="sample" class="gd-sample-meta">
           <span v-if="sampleCite" class="gd-badge blue">引用来源：{{ sampleCite }}</span>
-          <span class="gd-badge green">{{ rankLabel(sample.brand_position) }}</span>
-          <span
-            v-for="(c, i) in (sample.competitors || []).slice(0, 3)"
-            :key="c + i"
-            class="gd-badge"
-          >竞品 · {{ c }}</span>
           <span v-if="sample.sentiment && sample.sentiment !== 'unknown'" class="gd-badge">情感：{{ sample.sentiment === 'positive' ? '正面' : sample.sentiment === 'negative' ? '负面' : '中性' }}</span>
           <span class="gd-badge">检测时间：{{ fmtCaptured(sample.captured_at) }}</span>
         </div>
       </div>
     </div>
+
+    <div v-if="pendingSignals.length" class="gd-card" style="margin-bottom:16px">
+      <div class="gd-hd">
+        <h3>待处理信号</h3>
+        <a class="more" @click="router.push(geoSnapshotLink())">去采集与判断</a>
+      </div>
+      <div class="gd-bd" style="padding:0">
+        <table>
+          <thead>
+            <tr>
+              <th>意图词</th>
+              <th>引擎</th>
+              <th>本品位置</th>
+              <th>情感</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(row, i) in pendingSignals" :key="row.id || i">
+              <td>
+                <button
+                  type="button"
+                  class="linkish"
+                  @click="router.push(geoSnapshotLink({ prompt_id: row.prompt_id }))"
+                >
+                  {{ row.prompt_question || `意图词 #${row.prompt_id}` }}
+                </button>
+              </td>
+              <td>{{ engineDisplay(row.engine) }}</td>
+              <td>{{ labelOf(POSITION_LABEL, row.brand_position) }}</td>
+              <td>{{ labelOf(SENTIMENT_LABEL, row.sentiment) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div v-if="promptFocusRows.length" class="gd-card" style="margin-bottom:16px">
+      <div class="gd-hd">
+        <h3>该提问各引擎表现</h3>
+        <span class="more">{{ promptFocusRows[0]?.question }}</span>
+      </div>
+      <div class="gd-bd" style="padding:0">
+        <table>
+          <thead><tr><th>引擎</th><th>是否提及</th><th>顺位</th><th>检测时间</th></tr></thead>
+          <tbody>
+            <tr v-for="(r, i) in promptFocusRows" :key="i">
+              <td>{{ r.engine }}</td>
+              <td><span class="gd-badge" :class="r.tone">{{ r.badge }}</span></td>
+              <td>{{ r.rank }}</td>
+              <td>{{ fmtCaptured(r.at) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <details class="gd-card snapshot-ops">
+      <summary class="gd-hd">
+        <h3>登记回答快照</h3>
+        <span class="more">手工补录 · 与上方分析共用同一快照状态</span>
+      </summary>
+      <div class="gd-bd snapshot-form">
+        <el-select v-model="snapshotForm.prompt_id" filterable placeholder="选择优化意图词">
+          <el-option v-for="prompt in prompts" :key="prompt.id" :label="prompt.question" :value="prompt.id" />
+        </el-select>
+        <el-select v-model="snapshotForm.engine" placeholder="选择引擎">
+          <el-option
+            v-for="engine in enabledSnapshotEngines"
+            :key="engine.engine_key"
+            :label="engine.display_name || engineDisplay(engine.engine_key)"
+            :value="engine.engine_key"
+          />
+        </el-select>
+        <el-input v-model="snapshotForm.raw_text" type="textarea" :rows="4" placeholder="回答原文" />
+        <div class="snapshot-flags">
+          <button class="gd-btn" type="button" :disabled="!!probingSnapshot" @click="probeSnapshot">
+            {{ probingSnapshot === 'probe' ? '探测中…' : '探测回答' }}
+          </button>
+          <button class="gd-btn" type="button" :disabled="!!probingSnapshot" @click="extractSnapshotUrls">
+            {{ probingSnapshot === 'extract' ? '提取中…' : '提取 URL' }}
+          </button>
+          <button class="gd-btn" type="button" :disabled="!!probingSnapshot" @click="checkSnapshotCitations">
+            {{ probingSnapshot === 'cite' ? '检查中…' : '检查引用' }}
+          </button>
+        </div>
+        <div class="snapshot-flags">
+          <el-checkbox v-model="snapshotForm.mentions_brand">提及本品</el-checkbox>
+          <el-select v-model="snapshotForm.brand_position" style="width:140px">
+            <el-option v-for="(label, value) in POSITION_LABEL" :key="value" :label="label" :value="value" />
+          </el-select>
+          <el-select v-model="snapshotForm.sentiment" style="width:130px">
+            <el-option v-for="(label, value) in SENTIMENT_LABEL" :key="value" :label="label" :value="value" />
+          </el-select>
+          <button class="gd-btn primary" type="button" :disabled="savingSnapshot" @click="saveSnapshot">
+            {{ savingSnapshot ? '保存中…' : '保存快照' }}
+          </button>
+        </div>
+      </div>
+      <div class="gd-hd snapshot-list-hd">
+        <h3>快照列表</h3>
+        <span class="more">{{ snapshots.length }} 条</span>
+      </div>
+      <div class="gd-bd" style="padding:0">
+        <el-table :data="snapshots.slice(0, 20)" size="small" empty-text="暂无回答快照">
+          <el-table-column label="关联提问" min-width="220" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.prompt_question || (row.prompt_id ? `#${row.prompt_id}` : '—') }}</template>
+          </el-table-column>
+          <el-table-column label="回答原文" min-width="260" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.raw_text || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="引擎" width="110">
+            <template #default="{ row }">{{ row.engine ? engineDisplay(row.engine) : '—' }}</template>
+          </el-table-column>
+          <el-table-column label="提及" width="88" align="center">
+            <template #default="{ row }">
+              <el-switch :model-value="!!row.mentions_brand" @change="(value) => updateSnapshot(row, { mentions_brand: value })" />
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="72" align="center" fixed="right" class-name="snap-ops-col">
+            <template #default="{ row }">
+              <button type="button" class="snap-del" @click="removeSnapshot(row)">删除</button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </details>
 
     <div v-if="helpOpen" class="gd-modal-mask" @click.self="helpOpen = false">
       <div class="gd-modal">
@@ -557,3 +848,73 @@ onMounted(() => {
   </div>
   </GeoWorkbenchPage>
 </template>
+
+<style scoped>
+.snapshot-ops { margin-bottom: 16px; }
+.snapshot-ops > summary { cursor: pointer; list-style: none; }
+.snapshot-ops > summary::-webkit-details-marker { display: none; }
+.snapshot-list-hd { border-top: 1px solid var(--el-border-color-lighter, #eef0f5); }
+.snapshot-form { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(160px, 220px); gap: 12px; }
+.snapshot-form :deep(.el-textarea),
+.snapshot-flags { grid-column: 1 / -1; }
+.snapshot-flags { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.snapshot-ops :deep(.snap-ops-col .cell) {
+  overflow: visible;
+  padding-left: 8px;
+  padding-right: 12px;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+.snap-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: #ef4444;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.snap-del:hover { background: #fef2f2; color: #b91c1c; }
+.gd-sample-ranks { display: grid; gap: 10px; }
+.gd-rank-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--el-border-color-lighter, #eef0f5);
+  border-radius: 10px;
+  background: var(--el-bg-color-page, #f8fafc);
+}
+.gd-rank-row.own { background: #f5f3ff; border-color: #ddd6fe; }
+.gd-rank-row.text {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.gd-rank-no {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: #eef0f5;
+  font-size: 12px;
+  font-weight: 800;
+}
+.gd-rank-body {
+  flex: 1;
+  min-width: 0;
+}
+.gd-rank-body p { margin: 0; font-size: 13.5px; line-height: 1.7; overflow-wrap: anywhere; }
+.gd-rank-body .gd-badge { margin-left: 8px; }
+</style>

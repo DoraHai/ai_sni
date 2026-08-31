@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GEO · AI 品牌优化平台新原型</title>
+<link rel="stylesheet" href="assets/geo-prototype-v2.css">
+</head>
+<body>
+<div class="app-shell">
+  <aside class="side-nav" aria-label="GEO 产品导航">
+    <div class="brand-lockup">
+      <div class="brand-mark">G</div>
+      <div>
+        <strong>GEO 品牌优化</strong>
+        <span>AI Brand Optimization</span>
+      </div>
+    </div>
+
+    <nav id="prototypeNav">
+      <button class="nav-leaf nav-solo active" data-page="overview"><span>01</span>GEO概览</button>
+
+      <section class="nav-section open">
+        <button class="nav-parent" type="button">优化管理<i>›</i></button>
+        <div class="nav-children">
+          <button class="nav-leaf" data-page="business"><span>02</span>业务管理</button>
+          <button class="nav-leaf" data-page="keywords"><span>03</span>关键词管理</button>
+          <button class="nav-leaf" data-page="questions"><span>04</span>AI提问管理</button>
+          <button class="nav-leaf" data-page="recommend"><span>05</span>AI推荐</button>
+        </div>
+      </section>
+
+      <section class="nav-section open">
+        <button class="nav-parent" type="button">AI可见性<i>›</i></button>
+        <div class="nav-children">
+          <button class="nav-leaf" data-page="visibility"><span>06</span>AI品牌画像</button>
+          <button class="nav-leaf" data-page="questionAnalysis"><span>07</span>AI回答分析</button>
+          <button class="nav-leaf" data-page="diagnosis"><span>08</span>GEO优化诊断</button>
+        </div>
+      </section>
+
+      <section class="nav-section open">
+        <button class="nav-parent" type="button">内容中心<i>›</i></button>
+        <div class="nav-children">
+          <button class="nav-leaf" data-page="knowledge"><span>13</span>知识库</button>
+          <button class="nav-leaf" data-page="articles"><span>14</span>GEO文章</button>
+        </div>
+      </section>
+
+      <section class="nav-section open">
+        <button class="nav-parent" type="button">设置<i>›</i></button>
+        <div class="nav-children">
+          <button class="nav-leaf" data-page="brandSettings"><span>15</span>品牌设置</button>
+          <button class="nav-leaf" data-page="models"><span>16</span>AI模型</button>
+          <button class="nav-leaf" data-page="permissions"><span>17</span>团队权限</button>
+        </div>
+      </section>
+    </nav>
+  </aside>
+
+  <main class="workspace">
+    <header class="workspace-top">
+      <div>
+        <span class="product-kicker">AI 品牌优化平台</span>
+        <strong id="topPageName">GEO概览</strong>
+      </div>
+      <div class="top-actions">
+        <button class="ghost-icon" aria-label="搜索">⌕</button>
+        <button class="ghost-icon" aria-label="通知">◦</button>
+        <button>↓ 导出经营简报</button>
+        <button class="primary">↓ 查看本周建议</button>
+        <button class="user-pill" aria-label="当前用户">DZ</button>
+      </div>
+    </header>
+
+    <section class="object-switcher" id="objectSwitcher" aria-label="AI可见性对象切换器">
+      <div>
+        <label>业务</label>
+        <select>
+          <option>CRM</option>
+          <option>智能客服</option>
+          <option>数据分析平台</option>
+        </select>
+      </div>
+      <div>
+        <label>关键词</label>
+        <select>
+          <option>CRM软件</option>
+          <option>客户管理系统</option>
+          <option>销售自动化</option>
+        </select>
+      </div>
+      <div>
+        <label>AI提问</label>
+        <select>
+          <option>CRM软件哪个好？</option>
+          <option>中小企业怎么选CRM？</option>
+          <option>免费CRM适合销售团队吗？</option>
+        </select>
+      </div>
+      <p>当前页面会随业务、关键词和 AI 提问联动刷新。</p>
+    </section>
+
+    <section class="brand-context" id="brandContext" aria-label="品牌级上下文">
+      <div>
+        <label>品牌</label>
+        <button>SearchPilot</button>
+      </div>
+      <div>
+        <label>时间</label>
+        <button>近30天</button>
+      </div>
+      <div>
+        <label>业务</label>
+        <button>全部业务</button>
+      </div>
+    </section>
+
+    <section class="hero-card" id="heroCard">
+      <div class="hero-copy">
+        <span id="heroTag">发现机会</span>
+        <h1 id="heroTitle"></h1>
+        <p id="heroDesc"></p>
+        <div class="hero-tags" id="heroTags"></div>
+        <div class="hero-actions" id="heroActions"></div>
+      </div>
+      <div class="hero-steps" id="heroSteps"></div>
+    </section>
+
+    <section class="answer-row" id="answerRow"></section>
+
+    <section class="page-body" id="pageBody"></section>
+
+    <section class="design-note" id="designNote"></section>
+  </main>
+</div>
+
+<script src="assets/geo-prototype-v2.js"></script>
+</body>
+</html>

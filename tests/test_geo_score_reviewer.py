@@ -10,6 +10,7 @@ from app.geo.content.ai_reviewer import (
     run_ai_review,
     _normalize_issues,
 )
+from app.geo.content import geo_score as geo_score_module
 from app.geo.content.geo_score import compute_geo_score, score_blocks_ready
 from app.geo.content.rules import RuleInput
 from app.security.auth import _required
@@ -139,6 +140,22 @@ class GeoScoreTests(unittest.TestCase):
         self.assertIn("40", msg)
         ok2, _ = score_blocks_ready({"geo_score": 10}, threshold=60, gate_enabled=False)
         self.assertTrue(ok2)
+
+    def test_channel_draft_gate_always_requires_a_passing_score(self):
+        self.assertTrue(hasattr(geo_score_module, "channel_draft_score_gate"))
+        gate = geo_score_module.channel_draft_score_gate
+
+        ok, msg = gate({}, threshold=60)
+        self.assertFalse(ok)
+        self.assertIn("先完成 GEO 评分", msg)
+
+        ok, msg = gate({"geo_score": 59}, threshold=60)
+        self.assertFalse(ok)
+        self.assertIn("当前 59 分", msg)
+
+        ok, msg = gate({"geo_score": 60}, threshold=60)
+        self.assertTrue(ok)
+        self.assertEqual(msg, "")
 
 
 class AiReviewerTests(unittest.IsolatedAsyncioTestCase):

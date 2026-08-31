@@ -65,6 +65,12 @@ _OPENING_MIN_CHARS = 120
 _MAX_QUALITY_RETRIES = 2  # total LLM attempts = 1 + retries
 
 
+def target_body_chars(min_chars: int) -> int:
+    """Ask for headroom so a near-threshold response does not fail the final gate."""
+    minimum = max(100, min(int(min_chars or 0), 20000))
+    return min(20000, minimum + max(180, (minimum * 15 + 99) // 100))
+
+
 def strip_draft_markers(md: str) -> str:
     """Remove draft banners / internal fact-card IDs so channel copy is outward-facing."""
     text = md or ""
@@ -202,7 +208,8 @@ def assess_article_quality(
     if len(long_paras) < _MIN_LONG_PARAS:
         issues.append(
             f"完整论述段落不足（{len(long_paras)}/{_MIN_LONG_PARAS}）："
-            "每个小标题下至少两段完整叙述（每段约≥100字）"
+            f"现在 {len(long_paras)} 段，需要 {_MIN_LONG_PARAS} 段连贯叙述"
+            f"（每段约≥{_LONG_PARA_PURE_CHARS}字，列表和表格不计入）"
         )
 
     # headings vs expansion density
@@ -400,6 +407,7 @@ async def polish_for_channel(
         raise GeoContentError("未配置可用 LLM，无法渠道润色")
 
     system, voice, min_chars = _resolve_prompt_bundle(profile.key, prompts)
+    target_chars = target_body_chars(min_chars)
     base_user: dict[str, Any] = {
         "channel": profile.key,
         "channel_name": profile.display_name,
@@ -407,6 +415,7 @@ async def polish_for_channel(
         "title_max": profile.title_max,
         "faq_limit": profile.faq_limit,
         "min_body_chars": min_chars,
+        "target_body_chars": target_chars,
         "brand": brand or "",
         "master_title": title,
         "direct_answer": outline.get("direct_answer") or "",
@@ -419,6 +428,7 @@ async def polish_for_channel(
             "min_long_paragraphs": _MIN_LONG_PARAS,
             "long_paragraph_min_chars": _LONG_PARA_PURE_CHARS,
             "min_chars": min_chars,
+            "target_chars": target_chars,
             "opening_paragraph_min_chars": _OPENING_MIN_CHARS,
             "min_headings": 2,
             "no_bold_bullet_outline": True,
@@ -431,6 +441,7 @@ async def polish_for_channel(
         "facts": (facts or [])[:12],
         "delivery_note": (
             "写成可直接发表的完整文章；系统会严格门控，提纲体/过短/缺表一律驳回。"
+            f"去空白后的正文必须至少写到 {target_chars} 字，不能只贴近最低门槛 {min_chars} 字。"
             "禁止加粗短句罗列；每节至少两段完整叙述。"
             "只使用 facts 里的陈述；禁止编造数字、识别率、满意度、并发、成功案例、头部客户。"
             "事实卡没有的数据就不要写，不要补行业常见值。"
@@ -477,6 +488,7 @@ async def polish_for_channel(
                 f"{brand_fix}"
                 f"开篇直接答案≥{_OPENING_MIN_CHARS}字；"
                 f"至少 {_MIN_LONG_PARAS} 个完整论述段（每段≥{_LONG_PARA_PURE_CHARS}字）；"
+                f"去空白正文必须至少 {target_chars} 字（门槛为 {min_chars} 字）；"
                 "至少 2 个中文小标题；去掉连续加粗短句；"
                 "有对比必须 GFM 表且表后解读；文末结论与可执行建议。"
                 "仍只返回 JSON {title, body_markdown}。"
@@ -536,6 +548,10 @@ def unpublished_adapt_fallback(
     body_md: str,
     outline: dict[str, Any] | None,
     issues: list[str],
+    *,
+    brand: str | None = None,
+    prompts: dict[str, Any] | None = None,
+    facts: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str, dict[str, Any]]:
     """Keep a tab for every selected channel; never mark it publish_ready."""
     from app.geo.content.variants import adapt_for_channel
@@ -545,6 +561,14 @@ def unpublished_adapt_fallback(
     b, fin = _finalize_publish_body(
         channel, b, quality="adapted_draft_not_publishable"
     )
+    _system, _voice, min_chars = _resolve_prompt_bundle(channel, prompts)
+    visible_issues = assess_article_quality(
+        b,
+        min_chars=min_chars,
+        channel=channel,
+        brand=brand,
+        facts=facts,
+    )
     return (
         t,
         b,
@@ -552,11 +576,13 @@ def unpublished_adapt_fallback(
             "polish": "quality_fallback",
             "engine": "deterministic_v1",
             "quality": "adapted_draft_not_publishable",
+            "assemble": "full_master",
             "publishable": False,
             "fallback": True,
             "hard_gate": True,
             "article_standard": "full_article_v2",
-            "quality_issues": list(issues or [])[:8],
+            "quality_issues": visible_issues[:8],
+            "rejected_candidate_issues": list(issues or [])[:8],
             **fin,
         },
     )
@@ -594,7 +620,14 @@ async def adapt_or_polish_for_channel(
             )
         except ArticleQualityError as exc:
             t, b, meta = unpublished_adapt_fallback(
-                channel, title, body_md, outline, list(exc.issues)
+                channel,
+                title,
+                body_md,
+                outline,
+                list(exc.issues),
+                brand=brand,
+                prompts=prompts,
+                facts=facts,
             )
             return t, b, meta
         except GeoContentError:
@@ -612,6 +645,7 @@ async def adapt_or_polish_for_channel(
             "polish": "none",
             "engine": "deterministic_v1",
             "quality": "adapted_draft_not_publishable",
+            "assemble": "full_master",
             "fallback": True,
             "hard_gate": True,
             "article_standard": "full_article_v2",

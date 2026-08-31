@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GEO · AI 可见度</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand"><div class="logo">G</div><div>GEO 模块<small>生成式引擎优化</small></div></div>
+    <div class="nav-group">数据看板</div>
+    <a class="nav-item" href="dashboard.html"><span class="ico">📊</span> 概览</a>
+    <a class="nav-item active" href="visibility.html"><span class="ico">✨</span> AI 可见度</a>
+    <div class="nav-group">智能监测</div>
+    <a class="nav-item" href="prompts.html"><span class="ico">💬</span> 提问监控</a>
+    <a class="nav-item" href="competitors.html"><span class="ico">⚔️</span> 竞品分析</a>
+    <a class="nav-item" href="evaluation.html"><span class="ico">😊</span> 评价分析</a>
+    <a class="nav-item" href="sources.html"><span class="ico">📚</span> 信源分析</a>
+    <div class="nav-group">GEO 执行</div>
+    <a class="nav-item" href="articles.html"><span class="ico">✍️</span> GEO 文章</a>
+    <a class="nav-item" href="media.html"><span class="ico">🏛️</span> 媒体 / 信源策略</a>
+    <a class="nav-item" href="channels.html"><span class="ico">⇧</span> 分发平台（共享）</a>
+    <div class="nav-group">设置</div>
+    <a class="nav-item" href="engines.html"><span class="ico">🤖</span> AI 引擎管理</a>
+    <div class="spacer"></div>
+    <a class="nav-item" href="../content/audit.html"><span class="ico">🛠️</span> 诊断中心</a>
+    <a class="back-link" href="../hub/dashboard.html">⌂ 全域驾驶舱</a>
+    <a class="back-link" style="border-top:none;padding-top:0;" href="../index.html">← 平台门户</a>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div><h1>AI 可见度 <i class="info-i" data-help="help-vis">i</i></h1><div class="sub">你的品牌在各大国产 AI 引擎中的曝光表现</div></div>
+      <div class="right">
+        <span class="help-link" data-help="help-vis">ⓘ 可见度得分怎么算</span>
+        <button class="btn">引擎设置</button>
+        <button class="btn primary">🔄 刷新检测</button>
+        <div class="avatar">DZ</div>
+      </div>
+    </div>
+
+    <div class="content">
+      <!-- Engine cards -->
+      <div class="grid cols-5" style="margin-bottom:16px; grid-template-columns:repeat(5,1fr); display:grid; gap:16px;">
+        <div class="card stat"><div class="label"><span class="dot" style="background:#4d6bfe"></span> DeepSeek</div><div class="value">48.2%</div><div class="delta up">▲ 7.1%</div></div>
+        <div class="card stat"><div class="label"><span class="dot" style="background:#ff6a00"></span> 豆包</div><div class="value">41.5%</div><div class="delta up">▲ 4.3%</div></div>
+        <div class="card stat"><div class="label"><span class="dot" style="background:#111827"></span> Kimi</div><div class="value">35.1%</div><div class="delta up">▲ 2.0%</div></div>
+        <div class="card stat"><div class="label"><span class="dot" style="background:#615ced"></span> 通义千问</div><div class="value">33.7%</div><div class="delta down">▼ 1.4%</div></div>
+        <div class="card stat"><div class="label"><span class="dot" style="background:#0ea5e9"></span> 腾讯元宝</div><div class="value">28.4%</div><div class="delta up">▲ 1.1%</div></div>
+      </div>
+
+      <div class="grid cols-3" style="margin-bottom:16px;">
+        <!-- Sentiment -->
+        <div class="card">
+          <div class="hd"><h3>情感倾向</h3></div>
+          <div class="bd" style="display:flex; align-items:center; gap:20px;">
+            <svg class="score-ring" viewBox="0 0 120 120">
+              <circle cx="60" cy="60" r="50" fill="none" stroke="#eef0f5" stroke-width="12"/>
+              <circle cx="60" cy="60" r="50" fill="none" stroke="#16a34a" stroke-width="12" stroke-linecap="round"
+                stroke-dasharray="314" stroke-dashoffset="75" transform="rotate(-90 60 60)"/>
+              <text x="60" y="58" text-anchor="middle" font-size="24" font-weight="700" fill="#1e2330">76%</text>
+              <text x="60" y="78" text-anchor="middle" font-size="11" fill="#6b7280">正面</text>
+            </svg>
+            <div style="flex:1;">
+              <div class="row between" style="margin-bottom:8px;"><span class="badge green">正面</span><b>76%</b></div>
+              <div class="row between" style="margin-bottom:8px;"><span class="badge gray">中性</span><b>19%</b></div>
+              <div class="row between"><span class="badge red">负面</span><b>5%</b></div>
+            </div>
+          </div>
+        </div>
+        <!-- Mention type -->
+        <div class="card" style="grid-column: span 2;">
+          <div class="hd"><h3>品牌被提及的方式</h3><span class="more">最近 30 天</span></div>
+          <div class="bd">
+            <div class="grid cols-3" style="gap:14px;">
+              <div><div class="subtle">作为首选推荐</div><div class="value" style="font-size:22px;">38%</div><div class="bar green"><span style="width:38%"></span></div></div>
+              <div><div class="subtle">作为备选之一</div><div class="value" style="font-size:22px;">47%</div><div class="bar"><span style="width:47%"></span></div></div>
+              <div><div class="subtle">仅顺带提及</div><div class="value" style="font-size:22px;">15%</div><div class="bar amber"><span style="width:15%"></span></div></div>
+            </div>
+            <p class="subtle" style="margin-top:16px;">💡 在「智能客服」类提问中 62% 被列为首选；「数据分析」类仅 12%，建议加强该方向内容。</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sample answer -->
+      <div class="card">
+        <div class="hd"><h3>AI 回答示例 · 实时抓取</h3><span class="more">DeepSeek · 「推荐几款智能客服系统」</span></div>
+        <div class="bd">
+          <div style="background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:18px; font-size:13.5px; line-height:1.85;">
+            <p style="margin:0 0 10px;">以下是几款值得推荐的智能客服系统：</p>
+            <p style="margin:0 0 8px;">1. <mark style="background:#ddd6fe; font-weight:600;">SearchPilot</mark> — 主打 AI 驱动的多渠道客服，支持工单自动分配与知识库问答，适合中大型团队。<span class="badge green" style="margin-left:6px;">本品牌 · 顺位 1</span></p>
+            <p style="margin:0 0 8px;">2. 竞品 A — 老牌客服软件，集成度高……<span class="badge gray" style="margin-left:6px;">竞品 · 顺位 2</span></p>
+            <p style="margin:0;">3. 竞品 B — 性价比方案，适合初创团队……<span class="badge gray" style="margin-left:6px;">竞品 · 顺位 3</span></p>
+          </div>
+          <div class="row" style="margin-top:12px; gap:10px;">
+            <span class="badge blue">引用来源：官网 /product/chat</span>
+            <span class="badge green">情感：正面</span>
+            <span class="badge gray">检测时间：2026-06-26 08:00</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="modal-mask" id="help-vis">
+  <div class="modal">
+    <div class="mhd"><h3>AI 可见度得分怎么算</h3><span class="x">×</span></div>
+    <div class="mbd">
+      <p class="subtle" style="margin:0 0 16px;">可见度得分 = 在你的监控提问集里，AI 主动提及/推荐你品牌的<b>加权占比</b>。分越高，代表越多用户向 AI 提问时会"看见"你。</p>
+      <div class="flow" style="margin-bottom:20px;">
+        <div class="step"><span class="n">1</span><b>取监控提问集</b><span class="subtle">来自「提问监控」</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><span class="n">2</span><b>问各引擎多轮</b><span class="subtle">5 个国产大模型 · 取均值</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><span class="n">3</span><b>统计提及与位次</b><span class="subtle">是否提及 + 推荐第几位</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><span class="n">4</span><b>加权汇总得分</b><span class="subtle">位次越靠前权重越高</span></div>
+      </div>
+      <table>
+        <thead><tr><th>构成因子</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>提及率</td><td class="muted">回答中出现你品牌的提问占比</td></tr>
+          <tr><td>推荐顺位</td><td class="muted">被列为第 1 位权重 &gt; 第 2、3 位，越靠前得分越高</td></tr>
+          <tr><td>引擎覆盖</td><td class="muted">在越多引擎被看见，整体得分越高</td></tr>
+        </tbody>
+      </table>
+      <p class="subtle" style="margin:14px 0 0;">⚙️ 单引擎得分即该引擎下的可见度占比；总分为各引擎加权平均。巡检设置见 <a class="badge" style="background:#f5f0ff;color:#7c3aed;" href="engines.html">AI 引擎管理</a>。</p>
+    </div>
+  </div>
+</div>
+<script src="assets/geo-sidebar-v1.js?rev=geo-nav-v10"></script>
+<script src="../shared/prototype-runtime-v2.js?rev=interactions-v9"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

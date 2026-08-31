@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class PromptCreate(BaseModel):
@@ -125,7 +125,7 @@ class FactCreate(BaseModel):
     source_url: str | None = None
     observed_at: date | None = None
     expires_at: date | None = None
-    trust_level: Literal["verified", "needs_review", "draft"] = "needs_review"
+    trust_level: Literal["verified", "needs_review", "draft"] = "verified"
     author_name: str | None = Field(None, max_length=100)
     business_id: int | None = None
     meta: dict[str, Any] | None = None
@@ -162,6 +162,25 @@ class TaskCreate(BaseModel):
     )
     fact_ids: list[int] = Field(default_factory=list)
     brief: dict[str, Any] | None = None
+
+
+class ArticleImportPreviewUrlRequest(BaseModel):
+    tenant_id: int
+    url: str = Field(..., min_length=8, max_length=2000)
+
+
+class ArticleImportCreateTaskRequest(BaseModel):
+    tenant_id: int
+    prompt_id: int
+    title: str = Field(..., min_length=1, max_length=300)
+    body_markdown: str = Field(..., min_length=1, max_length=500_000)
+    source_type: Literal["paste", "file", "url"]
+    source_url: str | None = Field(None, max_length=2000)
+    target_channels: list[str] = Field(
+        default_factory=lambda: ["website", "wechat", "zhihu"],
+        min_length=1,
+        max_length=20,
+    )
 
 
 class ContentBrief(BaseModel):
@@ -213,6 +232,18 @@ class ArticleUpdate(BaseModel):
     title: str = Field(..., min_length=1)
     body_markdown: str = Field(..., min_length=1)
     outline: dict[str, Any] | None = None
+
+
+class ArticleOptimizeRequest(BaseModel):
+    tenant_id: int
+    scope: Literal["all", "section"] = "all"
+    section: str | None = Field(None, min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def require_section_for_section_scope(self) -> "ArticleOptimizeRequest":
+        if self.scope == "section" and not (self.section or "").strip():
+            raise ValueError("section scope requires a section heading")
+        return self
 
 
 class VariantsCreate(BaseModel):
@@ -620,6 +651,14 @@ PublishingMode = Literal["auto_publish", "draft_then_manual", "manual_only"]
 ChannelAuthType = Literal["manual", "api_key", "oauth2", "webhook", "social_api"]
 
 
+class GeoChannelProfile(BaseModel):
+    category: Literal["owned", "content", "news", "backlink"]
+    source_role: str = Field(..., min_length=1, max_length=100)
+    citation_potential: Literal["high", "medium", "low"]
+    geo_strategy: str = Field(..., min_length=1, max_length=2000)
+    adapted_engines: list[str] = Field(default_factory=list, max_length=20)
+
+
 class PublishingChannelCreate(BaseModel):
     tenant_id: int
     name: str = Field(..., min_length=1, max_length=200)
@@ -627,6 +666,7 @@ class PublishingChannelCreate(BaseModel):
     publish_mode: PublishingMode = "manual_only"
     base_url: str | None = Field(None, max_length=2000)
     content_rules: dict[str, Any] | None = None
+    geo_profile: GeoChannelProfile | None = None
     enabled: bool = True
     sort_order: int = 0
 
@@ -637,6 +677,7 @@ class PublishingChannelUpdate(BaseModel):
     publish_mode: PublishingMode | None = None
     base_url: str | None = Field(None, max_length=2000)
     content_rules: dict[str, Any] | None = None
+    geo_profile: GeoChannelProfile | None = None
     enabled: bool | None = None
     sort_order: int | None = None
 

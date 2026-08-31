@@ -14,7 +14,7 @@ from app.geo.content.variants import GeoContentError
 
 
 class GeoEvidenceTests(unittest.TestCase):
-    def test_eligible_facts_require_verified_source_and_freshness(self):
+    def test_eligible_facts_require_source_and_freshness(self):
         today = date(2026, 8, 2)
         facts = [
             {"id": 1, "trust_level": "verified", "source_name": "产品文档", "status": "active", "expires_at": today + timedelta(days=1)},
@@ -22,18 +22,18 @@ class GeoEvidenceTests(unittest.TestCase):
             {"id": 3, "trust_level": "verified", "source_name": "", "status": "active", "expires_at": today + timedelta(days=1)},
             {"id": 4, "trust_level": "verified", "source_name": "旧资料", "status": "active", "expires_at": today - timedelta(days=1)},
         ]
-        self.assertEqual([fact["id"] for fact in eligible_facts(facts, today=today)], [1])
+        self.assertEqual([fact["id"] for fact in eligible_facts(facts, today=today)], [1, 2])
 
     def test_evidence_issues_reports_the_publish_blockers(self):
         today = date(2026, 8, 2)
         issues = evidence_issues(
             [
-                {"id": 2, "trust_level": "draft", "source_name": "案例", "status": "active", "expires_at": None},
+                {"id": 2, "trust_level": "draft", "source_name": "", "status": "active", "expires_at": None},
                 {"id": 4, "trust_level": "verified", "source_name": "旧资料", "status": "archived", "expires_at": today},
             ],
             today=today,
         )
-        self.assertEqual(issues[2], ["not_verified"])
+        self.assertEqual(issues[2], ["missing_source"])
         self.assertEqual(issues[4], ["not_active", "expired"])
 
     def test_prepare_facts_for_generation_meta(self):
@@ -44,13 +44,13 @@ class GeoEvidenceTests(unittest.TestCase):
             {"id": 3, "trust_level": "verified", "source_name": "c", "status": "active", "expires_at": today - timedelta(days=1)},
         ]
         eligible, meta = prepare_facts_for_generation(facts, today=today, min_eligible=3)
-        self.assertEqual([f["id"] for f in eligible], [1])
+        self.assertEqual([f["id"] for f in eligible], [1, 2])
         self.assertFalse(meta["ok"])
-        self.assertEqual(meta["eligible_count"], 1)
-        self.assertEqual(len(meta["excluded"]), 2)
+        self.assertEqual(meta["eligible_count"], 2)
+        self.assertEqual(len(meta["excluded"]), 1)
         msg = generation_evidence_error_message(meta)
         self.assertIn("可发布证据", msg)
-        self.assertIn("#2", msg)
+        self.assertIn("#3", msg)
 
 
 class GenerateEvidenceGateTests(unittest.IsolatedAsyncioTestCase):

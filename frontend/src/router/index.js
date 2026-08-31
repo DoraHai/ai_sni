@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { session } from '../store/session'
-import { GEO_WORKBENCH_START } from '../utils/geoPrototypeNavigation'
+import { GEO_WORKBENCH_START } from '../utils/geoPrototypeContract'
 
 // 路由按原型 v3.0 的 6 个工作流划分，未实现的页面挂占位组件。
 // meta.perm = 该页所需菜单权限 key（自定义角色 RBAC）；可为数组=任一可见即可（下钻页）。
@@ -74,42 +74,46 @@ const routes = [
   },
   {
     path: '/geo/visibility/snapshots',
-    component: () => import('../views/geo/GeoVisibilityView.vue'),
-    meta: {
-      title: '采集与判断',
-      documentTitle: 'GEO 工作台｜采集与判断',
-      workflow: 'GEO 工作台',
-      perm: 'geo.content',
-    },
+    redirect: (to) => ({ path: '/geo/visibility', query: to.query }),
+  },
+  {
+    path: '/geo/units',
+    redirect: (to) => ({
+      path: '/geo/prompts',
+      query: { ...to.query, layer: to.query.layer || 'keyword' },
+    }),
   },
   {
     path: '/geo/keywords',
-    redirect: '/geo/questions',
+    redirect: (to) => ({
+      path: '/geo/prompts',
+      query: { ...to.query, layer: to.query.layer || 'keyword' },
+    }),
   },
   {
-    path: '/geo/questions',
-    component: () => import('../views/geo/GeoPromptsView.vue'),
+    path: '/geo/prompts',
+    component: () => import('../views/geo/GeoAskManageView.vue'),
     meta: {
-      title: '优化意图词',
-      documentTitle: 'GEO 工作台｜优化意图词',
+      title: '提问监控',
+      documentTitle: 'GEO 工作台｜提问监控',
       workflow: 'GEO 工作台',
       perm: 'geo.content',
     },
   },
   {
     path: '/geo/recommend',
-    redirect: '/geo/questions',
+    redirect: (to) => ({ path: '/geo/prompts', query: to.query }),
   },
   {
     path: '/geo/answers',
-    redirect: '/geo/visibility',
+    redirect: (to) => ({ path: '/geo/visibility', query: to.query }),
   },
   {
-    path: '/geo/knowledge',
-    component: () => import('../views/geo/GeoFactsView.vue'),
+    path: '/geo/sources',
+    component: () => import('../views/geo/GeoCitationsView.vue'),
     meta: {
-      title: '知识库',
-      documentTitle: 'GEO 工作台｜知识库',
+      title: '信源分析',
+      documentTitle: 'GEO 工作台｜信源分析',
       workflow: 'GEO 工作台',
       perm: 'geo.content',
     },
@@ -118,63 +122,57 @@ const routes = [
     path: '/geo/brand',
     component: () => import('../views/geo/GeoBrandSettingsView.vue'),
     meta: {
-      title: '品牌资料',
-      documentTitle: 'GEO 工作台｜品牌资料',
+      title: '品牌信息',
+      documentTitle: 'GEO 工作台｜品牌信息',
       workflow: 'GEO 工作台',
       perm: 'geo.content',
     },
   },
   {
     path: '/geo/permissions',
-    redirect: '/geo/overview',
+    redirect: (to) => ({ path: '/geo/overview', query: to.query }),
   },
   {
-    path: '/geo/models',
+    path: '/geo/engines',
     component: () => import('../views/geo/GeoEnginesView.vue'),
     meta: {
-      title: '引擎',
-      documentTitle: 'GEO 工作台｜引擎',
+      title: 'AI 引擎管理',
+      documentTitle: 'GEO 工作台｜AI 引擎管理',
       workflow: 'GEO 工作台',
       perm: 'geo.content',
     },
   },
   {
     path: '/geo/geo-diagnosis',
-    redirect: GEO_WORKBENCH_START,
+    redirect: (to) => ({ path: GEO_WORKBENCH_START, query: to.query }),
   },
   {
     path: '/geo/visibility/evaluation',
-    redirect: '/geo/visibility/snapshots',
+    redirect: (to) => ({ path: '/geo/evaluation', query: to.query }),
   },
   {
     path: '/geo/visibility/patrol',
-    redirect: '/geo/visibility/snapshots',
+    redirect: (to) => ({ path: '/geo/visibility/snapshots', query: to.query }),
   },
   {
     path: '/geo/period-diff',
-    redirect: '/geo/visibility',
+    redirect: (to) => ({ path: '/geo/visibility', query: to.query }),
   },
   {
     path: '/geo/gaps',
-    redirect: '/geo/questions',
+    redirect: (to) => ({ path: '/geo/prompts', query: to.query }),
   },
   {
     path: '/geo/gap-workbench',
-    redirect: '/geo/questions',
+    redirect: (to) => ({ path: '/geo/prompts', query: to.query }),
   },
   {
     path: '/geo/periods',
-    redirect: GEO_WORKBENCH_START,
+    redirect: (to) => ({ path: GEO_WORKBENCH_START, query: to.query }),
   },
   {
     path: '/geo/citations',
-    component: () => import('../views/geo/GeoCitationsView.vue'),
-    meta: {
-      title: 'AI 引用次数',
-      documentTitle: 'GEO 工作台｜AI 引用次数',
-      workflow: 'GEO 工作台',
-      perm: 'geo.content',
-    },
+    redirect: (to) => ({ path: '/geo/sources', query: to.query }),
   },
   {
     path: '/geo/competitors',
@@ -188,19 +186,25 @@ const routes = [
   },
   {
     path: '/geo/topic-heat',
-    redirect: '/geo/questions',
+    redirect: (to) => ({ path: '/geo/prompts', query: to.query }),
   },
   {
     path: '/geo/ai-trends',
-    redirect: GEO_WORKBENCH_START,
+    redirect: (to) => ({ path: GEO_WORKBENCH_START, query: to.query }),
   },
   {
     path: '/geo/evaluation',
-    redirect: '/geo/visibility',
+    component: () => import('../views/geo/GeoEvaluationView.vue'),
+    meta: {
+      title: '评价分析',
+      documentTitle: 'GEO 工作台｜评价分析',
+      workflow: 'GEO 工作台',
+      perm: 'geo.content',
+    },
   },
   {
     path: '/geo/deliverables',
-    redirect: GEO_WORKBENCH_START,
+    redirect: (to) => ({ path: GEO_WORKBENCH_START, query: to.query }),
   },
   {
     path: '/geo/deliverables/share/:shareToken',
@@ -218,67 +222,110 @@ const routes = [
     redirect: (to) => {
       const t = to.query.token || to.query.share_token
       return t
-        ? { path: `/geo/deliverables/share/${t}` }
-        : { path: GEO_WORKBENCH_START }
+        ? { path: `/geo/deliverables/share/${t}`, query: to.query }
+        : { path: GEO_WORKBENCH_START, query: to.query }
     },
   },
   {
     path: '/geo/workbench',
-    redirect: GEO_WORKBENCH_START,
+    redirect: (to) => ({ path: GEO_WORKBENCH_START, query: to.query }),
   },
   {
-    path: '/geo/tasks',
+    path: '/geo/articles',
     component: () => import('../views/geo/GeoTasksView.vue'),
     meta: {
-      title: '优化文章',
-      documentTitle: 'GEO 工作台｜优化文章',
+      title: 'GEO 文章',
+      documentTitle: 'GEO 工作台｜GEO 文章',
+      workflow: 'GEO 工作台',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/import',
+    component: () => import('../views/geo/GeoArticleImportView.vue'),
+    meta: {
+      title: '导入已有文章',
+      documentTitle: 'GEO 工作台｜导入已有文章',
+      workflow: 'GEO 工作台',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/articles/:taskId/distribution',
+    component: () => import('../views/geo/GeoDistributionView.vue'),
+    meta: {
+      title: '分发记录',
+      documentTitle: 'GEO 工作台｜分发记录',
+      workflow: 'GEO 工作台',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/articles/:taskId',
+    component: () => import('../views/geo/GeoTaskEditorView.vue'),
+    meta: {
+      title: '在线编辑器',
+      documentTitle: 'GEO 工作台｜在线编辑器',
+      workflow: 'GEO 工作台',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/structure',
+    component: () => import('../views/geo/GeoStructureView.vue'),
+    meta: {
+      title: '官网结构优化',
+      documentTitle: 'GEO 工作台｜官网结构优化',
+      workflow: 'GEO 工作台',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/tickets',
+    component: () => import('../views/geo/GeoTicketsView.vue'),
+    meta: {
+      title: '验收工单',
+      documentTitle: 'GEO 工作台｜验收工单',
       workflow: 'GEO 工作台',
       perm: 'geo.content',
     },
   },
   {
     path: '/geo/tasks/:taskId',
-    component: () => import('../views/geo/GeoTaskEditorView.vue'),
+    redirect: (to) => ({
+      path: `/geo/articles/${to.params.taskId}`,
+      query: to.query,
+    }),
+  },
+  {
+    path: '/geo/tasks',
+    redirect: (to) => ({ path: '/geo/articles', query: to.query }),
+  },
+  {
+    path: '/geo/questions',
+    redirect: (to) => ({ path: '/geo/prompts', query: to.query }),
+  },
+  {
+    path: '/geo/knowledge',
+    component: () => import('../views/geo/GeoFactsView.vue'),
     meta: {
-      title: '内容编辑器',
-      documentTitle: 'GEO 工作台｜内容编辑器',
+      title: '知识库',
+      documentTitle: 'GEO 工作台｜知识库',
       workflow: 'GEO 工作台',
       perm: 'geo.content',
     },
   },
   {
-    path: '/geo/businesses',
-    redirect: '/geo/brand',
+    path: '/geo/models',
+    redirect: (to) => ({ path: '/geo/engines', query: to.query }),
   },
   {
-    path: '/geo/businesses/:businessId',
-    redirect: '/geo/brand',
+    path: '/geo/placements',
+    redirect: (to) => ({ path: '/geo/media', query: to.query }),
   },
   {
-    path: '/geo/onboarding',
-    redirect: GEO_WORKBENCH_START,
-  },
-  {
-    path: '/geo/prompts',
-    redirect: (to) => ({ path: '/geo/questions', query: to.query }),
-  },
-  {
-    path: '/geo/facts',
-    redirect: '/geo/knowledge',
-  },
-  {
-    path: '/geo/engines',
-    redirect: '/geo/models',
-  },
-  {
-    path: '/geo/ai-settings',
-    component: () => import('../views/geo/GeoAiSettingsView.vue'),
-    meta: {
-      title: 'AI 能力配置',
-      documentTitle: 'GEO 工作台｜AI 能力配置',
-      workflow: 'GEO 工作台',
-      perm: 'geo.content',
-    },
+    path: '/geo/publishing',
+    redirect: (to) => ({ path: '/geo/channels', query: to.query }),
   },
   {
     path: '/geo/channel-polish-prompts',
@@ -291,8 +338,44 @@ const routes = [
     },
   },
   {
-    path: '/geo/publishing',
-    component: () => import('../views/geo/GeoPublishingView.vue'),
+    path: '/geo/businesses',
+    redirect: (to) => ({
+      path: '/geo/prompts',
+      query: { ...to.query, layer: to.query.layer || 'business' },
+    }),
+  },
+  {
+    path: '/geo/businesses/:businessId',
+    redirect: (to) => ({
+      path: '/geo/prompts',
+      query: { ...to.query, layer: 'keyword', business_id: to.params.businessId },
+    }),
+  },
+  {
+    path: '/geo/onboarding',
+    redirect: (to) => ({ path: GEO_WORKBENCH_START, query: to.query }),
+  },
+  {
+    path: '/geo/facts',
+    redirect: (to) => ({ path: '/geo/knowledge', query: to.query }),
+  },
+  {
+    path: '/geo/ai-settings',
+    component: () => import('../views/geo/GeoAiSettingsView.vue'),
+    meta: {
+      title: 'AI 能力配置',
+      documentTitle: 'GEO 工作台｜AI 能力配置',
+      workflow: 'GEO 工作台',
+      perm: 'geo.content',
+    },
+  },
+  {
+    path: '/geo/publishing-channels',
+    redirect: (to) => ({ path: '/geo/channels', query: to.query }),
+  },
+  {
+    path: '/geo/channels',
+    component: () => import('../views/geo/GeoChannelsView.vue'),
     meta: {
       title: '分发平台',
       documentTitle: 'GEO 工作台｜分发平台',
@@ -301,11 +384,11 @@ const routes = [
     },
   },
   {
-    path: '/geo/placements',
+    path: '/geo/media',
     component: () => import('../views/geo/GeoPlacementsView.vue'),
     meta: {
-      title: '信源策略',
-      documentTitle: 'GEO 工作台｜信源策略',
+      title: '媒体 / 信源策略',
+      documentTitle: 'GEO 工作台｜媒体 / 信源策略',
       workflow: 'GEO 工作台',
       perm: 'geo.content',
     },

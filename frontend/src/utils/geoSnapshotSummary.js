@@ -187,6 +187,7 @@ export function summarizeSnapshots(snaps = []) {
     topCompetitorCount: topComp?.[1] || 0,
     latestText: latest?.raw_text || '',
     latestEngine: latest?.engine || '',
+    latestAt: latest?.captured_at || '',
   }
 }
 

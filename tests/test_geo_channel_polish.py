@@ -8,10 +8,17 @@ import unittest
 from app.geo.content.channel_polish import (
     adapt_or_polish_for_channel,
     strip_draft_markers,
+    target_body_chars,
+    unpublished_adapt_fallback,
 )
 
 
 class ChannelPolishTests(unittest.TestCase):
+    def test_target_body_chars_reserves_length_above_the_gate(self):
+        self.assertEqual(target_body_chars(100), 280)
+        self.assertEqual(target_body_chars(1100), 1280)
+        self.assertEqual(target_body_chars(1400), 1610)
+
     def test_strip_draft_markers(self):
         md = (
             "# 标题\n\n"
@@ -90,8 +97,28 @@ class ChannelPolishTests(unittest.TestCase):
         self.assertLessEqual(len(title), 40)
         self.assertTrue(meta.get("fallback"))
         self.assertEqual(meta.get("engine"), "deterministic_v1")
+        self.assertEqual(meta.get("assemble"), "full_master")
         self.assertNotIn("草案提示", out)
         self.assertIn("直接答案", out)
+        self.assertIn("定义与背景", out)
+
+    def test_fallback_gate_issues_only_describe_the_saved_body(self):
+        body = (
+            "# 离心机选型\n\n"
+            "实验室离心机需要结合介质特性与设备参数评估。\n\n"
+            "## 结论与建议\n\n应联系技术团队确认具体工况。\n"
+        )
+        _title, out, meta = unpublished_adapt_fallback(
+            "website",
+            "实验室离心机选型",
+            body,
+            {},
+            ["无依据表述：数字「6个」"],
+        )
+
+        self.assertNotIn("6个", out)
+        self.assertNotIn("6个", " ".join(meta.get("quality_issues") or []))
+        self.assertIn("6个", " ".join(meta.get("rejected_candidate_issues") or []))
 
 
 if __name__ == "__main__":

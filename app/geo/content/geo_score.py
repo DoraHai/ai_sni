@@ -443,3 +443,22 @@ def score_blocks_ready(
     if sc >= threshold:
         return True, ""
     return False, f"GEO Score {sc} < 阈值 {threshold}"
+
+
+def channel_draft_score_gate(
+    score_payload: dict[str, Any] | None,
+    *,
+    threshold: int = 60,
+) -> tuple[bool, str]:
+    """Channel drafts always require an explicitly stored passing master score."""
+    payload = score_payload if isinstance(score_payload, dict) else {}
+    raw = payload.get("geo_score")
+    if raw is None:
+        return False, "请先完成 GEO 评分，再生成渠道稿"
+    try:
+        score = int(raw)
+    except (TypeError, ValueError):
+        return False, "请先完成 GEO 评分，再生成渠道稿"
+    if score < threshold:
+        return False, f"GEO 评分需达到 {threshold} 分，当前 {score} 分"
+    return True, ""

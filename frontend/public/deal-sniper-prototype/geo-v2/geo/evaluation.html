@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GEO · 评价分析</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .scope-note { display:flex; align-items:flex-start; gap:10px; margin-bottom:16px; padding:12px 14px; border:1px solid #dde7f2; border-left:3px solid #0d9488; border-radius:8px; background:#f4fbfa; color:#586677; font-size:12px; line-height:1.65; }
+  .scope-note b { color:#1f2937; }
+  .signal-grid { display:grid; grid-template-columns:1.1fr .9fr; gap:16px; margin-bottom:16px; }
+  .signal-list { display:grid; gap:10px; padding:16px; }
+  .signal-item { display:grid; grid-template-columns:34px minmax(0,1fr) auto; gap:10px; align-items:center; padding:11px; border:1px solid #e5eaf0; border-radius:7px; background:#fff; }
+  .signal-mark { width:34px; height:34px; display:grid; place-items:center; border-radius:7px; background:#f0fdfa; color:#0d9488; font-size:11px; font-weight:800; }
+  .signal-item b { display:block; color:#253044; font-size:12.5px; }
+  .signal-item span { display:block; margin-top:2px; color:#8992a3; font-size:10.5px; }
+  .action-stack { display:grid; gap:9px; padding:16px; }
+  .action-card { padding:11px 12px; border:1px solid #e4e8ef; border-radius:7px; background:#fafbfc; }
+  .action-card b { display:block; color:#273244; font-size:12.5px; }
+  .action-card span { display:block; margin-top:3px; color:#7b8492; font-size:10.5px; }
+  @media(max-width:980px){ .signal-grid{grid-template-columns:1fr}.grid.cols-4,.grid.cols-3{grid-template-columns:1fr 1fr} }
+  @media(max-width:720px){ .layout{display:block}.sidebar{display:none}.content{padding:12px}.topbar{align-items:flex-start;flex-wrap:wrap;padding:12px 14px}.topbar .right{display:none}.grid.cols-4,.grid.cols-3{grid-template-columns:1fr}.signal-item{grid-template-columns:34px minmax(0,1fr)}.signal-item .badge{grid-column:2} }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand"><div class="logo">G</div><div>GEO 模块<small>生成式引擎优化</small></div></div>
+    <div class="nav-group">数据看板</div>
+    <a class="nav-item" href="dashboard.html"><span class="ico">📊</span> 概览</a>
+    <a class="nav-item" href="visibility.html"><span class="ico">✨</span> AI 可见度</a>
+    <div class="nav-group">智能监测</div>
+    <a class="nav-item" href="prompts.html"><span class="ico">💬</span> 提问监控</a>
+    <a class="nav-item" href="competitors.html"><span class="ico">⚔️</span> 竞品分析</a>
+    <a class="nav-item active" href="evaluation.html"><span class="ico">😊</span> 评价分析</a>
+    <a class="nav-item" href="sources.html"><span class="ico">📚</span> 信源分析</a>
+    <div class="nav-group">GEO 执行</div>
+    <a class="nav-item" href="articles.html"><span class="ico">✍️</span> GEO 文章</a>
+    <a class="nav-item" href="media.html"><span class="ico">🏛️</span> 媒体 / 信源策略</a>
+    <a class="nav-item" href="channels.html"><span class="ico">⇧</span> 分发平台（共享）</a>
+    <div class="nav-group">设置</div>
+    <a class="nav-item" href="engines.html"><span class="ico">🤖</span> AI 引擎管理</a>
+    <div class="spacer"></div>
+    <a class="nav-item" href="../content/audit.html"><span class="ico">🛠️</span> 诊断中心</a>
+    <a class="back-link" href="../hub/dashboard.html">⌂ 全域驾驶舱</a>
+    <a class="back-link" style="border-top:none;padding-top:0;" href="../index.html">← 平台门户</a>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div><h1>评价分析</h1><div class="sub">AI 提及品牌时的评价信号诊断，只用于发现事实偏差与信源缺口</div></div>
+      <div class="right">
+        <button class="btn">数据导出</button>
+        <div class="avatar">DZ</div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="scope-note"><b>展示边界：</b><span>评价分析只作为诊断信号，用来判断 AI 回答是否存在事实偏差或来源不稳。系统不承诺删除、压制或直接改写第三方负面评价，后续动作回到事实澄清内容和可信信源建设。</span></div>
+
+      <div class="grid cols-4" style="margin-bottom:16px;">
+        <div class="card stat"><div class="label">正向信号</div><div class="value" style="color:var(--good)">76%</div><div class="delta down">▼ 2%</div></div>
+        <div class="card stat"><div class="label">中性信号</div><div class="value">19%</div><div class="delta up">▲ 1%</div></div>
+        <div class="card stat"><div class="label">待核验评价</div><div class="value" style="color:var(--warn)">5%</div><div class="delta up">▲ 1%</div></div>
+        <a class="card stat" href="knowledge.html" style="color:inherit;"><div class="label">需补事实材料</div><div class="value" style="color:var(--warn)">8</div><div class="subtle">条 →</div></a>
+      </div>
+
+      <div class="signal-grid">
+        <div class="card">
+          <div class="hd"><h3>诊断信号处理队列</h3><span class="more">只生成纠偏建议，不承诺直接处理第三方评价</span></div>
+          <div class="signal-list">
+            <div class="signal-item"><span class="signal-mark">01</span><div><b>Kimi 引用了来源不明差评</b><span>建议补充官网事实页 + 行业媒体案例稿，让 AI 有更可靠来源可引用</span></div><span class="badge amber">补充可信来源</span></div>
+            <div class="signal-item"><span class="signal-mark">02</span><div><b>DeepSeek 对售后响应时效描述不一致</b><span>录入客服 SLA 佐证材料，生成事实澄清文章</span></div><span class="badge blue">写内容</span></div>
+            <div class="signal-item"><span class="signal-mark">03</span><div><b>元宝回答缺少产品版本边界</b><span>更新品牌事实卡和 FAQ，避免 AI 混淆不同套餐</span></div><span class="badge green">可执行</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="hd"><h3>推荐动作</h3></div>
+          <div class="action-stack">
+            <a class="action-card" href="articles.html"><b>生成事实澄清文章</b><span>把可靠数据和佐证材料转成可引用内容</span></a>
+            <a class="action-card" href="media.html"><b>补充可信信源</b><span>行业媒体、官网事实页、知乎专业回答保持口径一致</span></a>
+            <a class="action-card" href="knowledge.html"><b>更新知识库</b><span>把常见误解和标准回答沉淀为品牌事实</span></a>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid cols-3" style="margin-bottom:16px;">
+        <div class="card" style="grid-column: span 2;">
+          <div class="hd"><h3>评价信号趋势</h3><span class="more">最近 30 天 ▾</span></div>
+          <div class="bd">
+            <svg viewBox="0 0 720 200" width="100%" height="200">
+              <g stroke="#eef0f5"><line x1="0" y1="40" x2="720" y2="40"/><line x1="0" y1="100" x2="720" y2="100"/><line x1="0" y1="160" x2="720" y2="160"/></g>
+              <polyline points="0,70 120,66 240,72 360,60 480,64 600,58 720,62" fill="none" stroke="#16a34a" stroke-width="2.5"/>
+              <polyline points="0,180 120,178 240,176 360,175 480,170 600,168 720,164" fill="none" stroke="#dc2626" stroke-width="2.5"/>
+            </svg>
+            <div class="legend" style="margin-top:10px;"><span><i style="background:#16a34a"></i>正向信号</span><span><i style="background:#dc2626"></i>待核验评价</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="hd"><h3>各引擎信号对比</h3></div>
+          <div class="bd">
+            <div style="display:flex; flex-direction:column; gap:12px;">
+              <div><div class="row between"><span>DeepSeek</span><b>82% 正向信号</b></div><div class="bar green"><span style="width:82%"></span></div></div>
+              <div><div class="row between"><span>豆包</span><b>79% 正向信号</b></div><div class="bar green"><span style="width:79%"></span></div></div>
+              <div><div class="row between"><span>通义千问</span><b>74% 正向信号</b></div><div class="bar"><span style="width:74%"></span></div></div>
+              <div><div class="row between"><span>元宝</span><b>71% 正向信号</b></div><div class="bar"><span style="width:71%"></span></div></div>
+              <div><div class="row between"><span>Kimi</span><b>66% 正向信号</b></div><div class="bar amber"><span style="width:66%"></span></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="hd"><h3>各提问的评价信号明细</h3>
+          <div class="row" style="margin-left:auto; gap:8px;"><span class="tag">全部</span><span class="tag">正向</span><span class="tag">中性</span><span class="tag">待核验</span></div>
+        </div>
+        <div class="bd" style="padding:0;">
+          <table>
+            <thead><tr><th>用户意图</th><th>关联优化单元</th><th>信号</th><th>正向数</th><th>待核验</th><th></th></tr></thead>
+            <tbody>
+              <tr><td class="kw">智能客服系统怎么选</td><td class="muted">智能客服</td><td><span class="badge green">正向</span></td><td>16</td><td>0</td><td class="muted">检测记录 →</td></tr>
+              <tr><td class="kw">免费 CRM 软件推荐</td><td class="muted">CRM</td><td><span class="badge green">正向</span></td><td>15</td><td>1</td><td class="muted">检测记录 →</td></tr>
+              <tr><td class="kw">数据分析平台好用吗</td><td class="muted">数据分析</td><td><span class="badge amber">中性</span></td><td>9</td><td>2</td><td class="muted">检测记录 →</td></tr>
+              <tr><td class="kw">SearchPilot 这家公司怎么样</td><td class="muted">品牌词</td><td><span class="badge amber">待核验</span></td><td>6</td><td>4</td><td class="muted">生成事实稿 →</td></tr>
+              <tr><td class="kw">在线表单工具评测</td><td class="muted">表单工具</td><td><span class="badge green">正向</span></td><td>20</td><td>0</td><td class="muted">检测记录 →</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="assets/geo-sidebar-v1.js?rev=geo-nav-v10"></script>
+<script src="../shared/prototype-runtime-v2.js?rev=interactions-v9"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

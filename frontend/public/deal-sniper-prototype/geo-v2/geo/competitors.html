@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GEO · 竞品分析</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand"><div class="logo">G</div><div>GEO 模块<small>生成式引擎优化</small></div></div>
+    <div class="nav-group">数据看板</div>
+    <a class="nav-item" href="dashboard.html"><span class="ico">📊</span> 概览</a>
+    <a class="nav-item" href="visibility.html"><span class="ico">✨</span> AI 可见度</a>
+    <div class="nav-group">智能监测</div>
+    <a class="nav-item" href="prompts.html"><span class="ico">💬</span> 提问监控</a>
+    <a class="nav-item active" href="competitors.html"><span class="ico">⚔️</span> 竞品分析</a>
+    <a class="nav-item" href="evaluation.html"><span class="ico">😊</span> 评价分析</a>
+    <a class="nav-item" href="sources.html"><span class="ico">📚</span> 信源分析</a>
+    <div class="nav-group">GEO 执行</div>
+    <a class="nav-item" href="articles.html"><span class="ico">✍️</span> GEO 文章</a>
+    <a class="nav-item" href="media.html"><span class="ico">🏛️</span> 媒体 / 信源策略</a>
+    <a class="nav-item" href="channels.html"><span class="ico">⇧</span> 分发平台（共享）</a>
+    <div class="nav-group">设置</div>
+    <a class="nav-item" href="engines.html"><span class="ico">🤖</span> AI 引擎管理</a>
+    <div class="spacer"></div>
+    <a class="nav-item" href="../content/audit.html"><span class="ico">🛠️</span> 诊断中心</a>
+    <a class="back-link" href="../hub/dashboard.html">⌂ 全域驾驶舱</a>
+    <a class="back-link" style="border-top:none;padding-top:0;" href="../index.html">← 平台门户</a>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div><h1>竞品分析</h1><div class="sub">你与竞品在各 AI 引擎中的推荐度对比</div></div>
+      <div class="right">
+        <button class="btn">管理竞品</button>
+        <button class="btn">数据导出</button>
+        <div class="avatar">DZ</div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="grid cols-4" style="margin-bottom:16px;">
+        <div class="card stat"><div class="label">本品牌 SOV</div><div class="value">42.8%</div><div class="delta up">▲ 6.5%</div></div>
+        <div class="card stat"><div class="label">行业排名</div><div class="value">第 1</div><div class="delta up">▲ 超过竞品 A</div></div>
+        <div class="card stat"><div class="label">监测竞品数</div><div class="value">8</div><div class="subtle">个</div></div>
+        <div class="card stat"><div class="label">领先提问场景</div><div class="value">14<span class="muted" style="font-size:14px;">/26</span></div><div class="subtle">个</div></div>
+      </div>
+
+      <!-- 品牌 × 引擎 推荐度热力图 -->
+      <div class="card" style="margin-bottom:16px;">
+        <div class="hd"><h3>品牌 × AI 引擎 推荐度热力图</h3><span class="more">颜色越深推荐度越高</span></div>
+        <div class="bd" style="padding:0; overflow:auto;">
+          <table>
+            <thead><tr>
+              <th>品牌</th>
+              <th style="text-align:center;">DeepSeek</th><th style="text-align:center;">豆包</th>
+              <th style="text-align:center;">Kimi</th><th style="text-align:center;">通义千问</th><th style="text-align:center;">腾讯元宝</th>
+            </tr></thead>
+            <tbody>
+              <tr style="background:var(--accent-soft);"><td><b>本品牌 SearchPilot</b></td>
+                <td style="text-align:center;background:#7c3aed;color:#fff">65%</td><td style="text-align:center;background:#9a6ef0;color:#fff">58%</td>
+                <td style="text-align:center;background:#a78bfa;color:#fff">54%</td><td style="text-align:center;background:#c4b5fd">31%</td><td style="text-align:center;background:#8b5cf6;color:#fff">66%</td></tr>
+              <tr><td>竞品 A</td>
+                <td style="text-align:center;background:#c4b5fd">31%</td><td style="text-align:center;background:#a78bfa;color:#fff">48%</td>
+                <td style="text-align:center;background:#b9a3fb">35%</td><td style="text-align:center;background:#9a6ef0;color:#fff">59%</td><td style="text-align:center;background:#ddd6fe">25%</td></tr>
+              <tr><td>竞品 B</td>
+                <td style="text-align:center;background:#ede9fe">12%</td><td style="text-align:center;background:#ddd6fe">22%</td>
+                <td style="text-align:center;background:#c4b5fd">29%</td><td style="text-align:center;background:#ede9fe">9%</td><td style="text-align:center;background:#ddd6fe">21%</td></tr>
+              <tr><td>竞品 C</td>
+                <td style="text-align:center;background:#f5f3ff">6%</td><td style="text-align:center;background:#ede9fe">11%</td>
+                <td style="text-align:center;background:#ede9fe">12%</td><td style="text-align:center;background:#ddd6fe">17%</td><td style="text-align:center;background:#f5f3ff">7%</td></tr>
+              <tr><td>竞品 D</td>
+                <td style="text-align:center;background:#f5f3ff">3%</td><td style="text-align:center;background:#f5f3ff">5%</td>
+                <td style="text-align:center;background:#ede9fe">9%</td><td style="text-align:center;background:#f5f3ff">4%</td><td style="text-align:center;background:#ede9fe">10%</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="grid cols-2">
+        <div class="card">
+          <div class="hd"><h3>✅ 你领先的提问场景</h3></div>
+          <div class="bd">
+            <ul class="checks">
+              <li><span class="badge green">领先</span> 智能客服系统推荐 <span class="muted" style="margin-left:auto;">你 #1 / 竞品A #3</span></li>
+              <li><span class="badge green">领先</span> 客服外包系统选择 <span class="muted" style="margin-left:auto;">你 #1 / 竞品A #4</span></li>
+              <li><span class="badge green">领先</span> 在线表单工具对比 <span class="muted" style="margin-left:auto;">你 #2 / 竞品A 未提及</span></li>
+            </ul>
+          </div>
+        </div>
+        <div class="card">
+          <div class="hd"><h3>⚠️ 竞品领先的提问场景</h3></div>
+          <div class="bd">
+            <ul class="checks">
+              <li><span class="badge red">落后</span> 数据分析平台 <span class="muted" style="margin-left:auto;">竞品A #1 / 你未提及</span></li>
+              <li><span class="badge red">落后</span> 中小团队协作软件 <span class="muted" style="margin-left:auto;">竞品A #1 / 你未提及</span></li>
+              <li><span class="badge amber">追赶</span> 免费 CRM 软件 <span class="muted" style="margin-left:auto;">竞品A #1 / 你 #2</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="assets/geo-sidebar-v1.js?rev=geo-nav-v10"></script>
+<script src="../shared/prototype-runtime-v2.js?rev=interactions-v9"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

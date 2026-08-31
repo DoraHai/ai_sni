@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GEO · 文章工作台</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/geo-content-v1.css?rev=geo-article-create-v2">
+</head>
+<body class="geo-content-page" data-geo-page="articles">
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand"><div class="logo">G</div><div>GEO 模块<small>生成式引擎优化</small></div></div>
+    <div class="nav-group">数据看板</div>
+    <a class="nav-item" href="dashboard.html"><span class="ico">▦</span> 概览</a>
+    <a class="nav-item" href="visibility.html"><span class="ico">✦</span> AI 可见度</a>
+    <div class="nav-group">智能监测</div>
+    <a class="nav-item" href="prompts.html"><span class="ico">◌</span> 提问监控</a>
+    <a class="nav-item" href="competitors.html"><span class="ico">≋</span> 竞品分析</a>
+    <a class="nav-item" href="evaluation.html"><span class="ico">◉</span> 评价分析</a>
+    <a class="nav-item" href="sources.html"><span class="ico">▤</span> 信源分析</a>
+    <div class="nav-group">GEO 执行</div>
+    <a class="nav-item active" href="articles.html"><span class="ico">Aa</span> GEO 文章</a>
+    <a class="nav-item" href="media.html"><span class="ico">⌂</span> 媒体 / 信源策略</a>
+    <a class="nav-item" href="channels.html"><span class="ico">⇧</span> 分发平台（共享）</a>
+    <div class="nav-group">设置</div>
+    <a class="nav-item" href="engines.html"><span class="ico">◇</span> AI 引擎管理</a>
+    <div class="spacer"></div>
+    <a class="nav-item" href="../content/audit.html"><span class="ico">!</span> 诊断中心</a>
+    <a class="nav-item" href="../seo/articles.html"><span class="ico">S</span> 对比 SEO 文章</a>
+    <a class="back-link" href="../hub/dashboard.html">⌂ 全域驾驶舱</a>
+    <a class="back-link" style="border-top:none;padding-top:0;" href="../index.html">← 平台门户</a>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <h1>GEO 文章工作台</h1>
+        <div class="sub">从零生产或导入已有内容，统一进行 GEO 检测、优化与发布</div>
+      </div>
+      <div class="right">
+        <a class="btn" href="media.html">信源素材库</a>
+        <button class="btn primary" data-geo-action="open-create-article" data-target="geo-content">＋ 创建 GEO 文章</button>
+        <div class="avatar">DZ</div>
+      </div>
+    </header>
+
+    <div class="content">
+      <div class="scope-note" id="boundFactNote" hidden style="display:none;align-items:flex-start;gap:10px;margin-bottom:16px;padding:12px 14px;border:1px solid #dde7f2;border-left:3px solid #0d9488;border-radius:8px;background:#f4fbfa;color:#586677;font-size:12px;line-height:1.65;"></div>
+      <section class="geo-intro">
+        <div class="geo-intro-copy">
+          <span class="geo-kicker">Citation-ready Content</span>
+          <h2>GEO 写作的核心不是“多写”，而是让事实更容易被 AI 找到、理解和引用</h2>
+          <p>无论从目标问题生成新文章，还是导入已有内容，系统都会结合品牌资料、知识库与可信信源，完成 GEO 检测、内容补强和版本化优化。</p>
+          <div class="geo-principles"><span>独家信息</span><span>事实可核验</span><span>明确来源</span><span>定义 / 对比 / FAQ</span><span>不堆关键词</span></div>
+        </div>
+        <div class="geo-flow" aria-label="GEO 内容工作流">
+          <div class="geo-flow-step"><span class="geo-flow-no">1</span><b>选择文章起点</b><small>AI 新建或导入已有内容</small></div>
+          <div class="geo-flow-step"><span class="geo-flow-no">2</span><b>关联目标问题</b><small>明确文章需要回答什么</small></div>
+          <div class="geo-flow-step"><span class="geo-flow-no">3</span><b>GEO 检测与优化</b><small>补强结构、事实与可信信源</small></div>
+          <div class="geo-flow-step"><span class="geo-flow-no">4</span><b>版本管理与发布</b><small>保留原稿并持续优化</small></div>
+        </div>
+      </section>
+
+      <section class="geo-workbench">
+        <div class="geo-workbench-bar">
+          <h3>内容任务</h3>
+          <button class="geo-filter active" data-geo-filter="全部" data-target="geo-content">全部 19</button>
+          <button class="geo-filter" data-geo-filter="草稿" data-target="geo-content">草稿 5</button>
+          <button class="geo-filter" data-geo-filter="待润色" data-target="geo-content">待润色 4</button>
+          <button class="geo-filter" data-geo-filter="待发布" data-target="geo-content">待发布 3</button>
+          <button class="geo-filter" data-geo-filter="已发布" data-target="geo-content">已发布 7</button>
+          <input class="search" id="geoArticleSearch" placeholder="搜索文章或目标提问">
+        </div>
+        <div style="overflow:auto;">
+          <table class="geo-list-table">
+            <thead><tr><th>文章</th><th>目标提问</th><th>适配引擎</th><th><span class="geo-help-label">AI 友好度<span class="geo-help-tip" title="AI 友好度表示内容是否容易被 AI 识别、理解、信任和引用。分数由事实来源、结构化问答、作者/更新时间、结论可摘取、外部信源一致性构成。">?</span></span></th><th>状态</th><th>发布信源</th><th>操作</th></tr></thead>
+            <tbody>
+              <tr data-geo-status="待润色">
+                <td class="geo-title-cell"><strong>企业数据分析平台怎么选？一套可验证的决策框架</strong><small><span class="geo-origin-tag manual">手动导入</span> · 2,460 字 · V2</small></td>
+                <td><span class="prompt-pill">“数据分析平台哪个好用？”</span></td>
+                <td><div class="engine-tags"><span>DeepSeek</span><span>Kimi</span><span>通义</span></div></td>
+                <td><span class="readiness"><i style="--ready:76%"></i>76</span></td>
+                <td><span class="badge amber">待润色</span></td>
+                <td><div class="source-tags"><span>官网</span><span>技术刊物</span></div></td>
+                <td><div class="geo-actions"><a class="geo-text-action" href="editor.html?id=data-platform">在线编辑</a></div></td>
+              </tr>
+              <tr data-geo-status="待发布">
+                <td class="geo-title-cell"><strong>智能客服系统价格由什么决定？2026 企业预算说明</strong><small><span class="geo-origin-tag ai">AI生成</span> · 1,680 字 · V4</small></td>
+                <td><span class="prompt-pill">“智能客服系统一般多少钱？”</span></td>
+                <td><div class="engine-tags"><span>豆包</span><span>元宝</span><span>DeepSeek</span></div></td>
+                <td><span class="readiness"><i style="--ready:88%"></i>88</span></td>
+                <td><span class="badge blue">待发布</span></td>
+                <td><div class="source-tags"><span class="ready">官网</span><span>知乎</span></div></td>
+                <td><div class="geo-actions"><a class="geo-text-action" href="editor.html?id=price&publish=1">检查并发布</a></div></td>
+              </tr>
+              <tr data-geo-status="草稿">
+                <td class="geo-title-cell"><strong>SearchPilot 是什么？品牌事实与产品能力说明</strong><small><span class="geo-origin-tag ai">AI生成</span> · 860 字 · V1 · 缺 2 项事实</small></td>
+                <td><span class="prompt-pill">“SearchPilot 是做什么的？”</span></td>
+                <td><div class="engine-tags"><span>通义</span><span>豆包</span></div></td>
+                <td><span class="readiness"><i style="--ready:61%"></i>61</span></td>
+                <td><span class="badge gray">草稿</span></td>
+                <td><div class="source-tags"><span>官网 About</span><span>百科</span></div></td>
+                <td><div class="geo-actions"><a class="geo-text-action" href="editor.html?id=brand-fact">在线编辑</a></div></td>
+              </tr>
+              <tr data-geo-status="已发布">
+                <td class="geo-title-cell"><strong>企业表单工具对比：从数据安全到流程自动化</strong><small><span class="geo-origin-tag web">官网导入</span> · 2,180 字 · V3 · 引用事实已过期</small></td>
+                <td><span class="prompt-pill">“企业表单工具怎么选？”</span></td>
+                <td><div class="engine-tags"><span>Kimi</span><span>DeepSeek</span></div></td>
+                <td><span class="readiness"><i style="--ready:91%"></i>91</span></td>
+                <td><span class="badge green">已发布</span> <span class="badge amber">待复查</span></td>
+                <td><div class="source-tags"><span class="ready">官网</span><span class="ready">知乎</span><span class="ready">公众号</span></div></td>
+                <td><div class="geo-actions"><a class="geo-text-action" href="editor.html?id=form-tools">查看文章</a><button class="geo-text-action" data-geo-action="distribution" data-target="geo-content">分发记录</button></div></td>
+              </tr>
+              <tr data-geo-status="已发布">
+                <td class="geo-title-cell"><strong>2026 企业 AI 客服实践报告：效率、成本与风险</strong><small><span class="geo-origin-tag file">文档导入</span> · 3,420 字 · V3 · 引用事实已过期</small></td>
+                <td><span class="prompt-pill">“AI 客服真的能降本吗？”</span></td>
+                <td><div class="engine-tags"><span>Kimi</span><span>DeepSeek</span><span>豆包</span></div></td>
+                <td><span class="readiness"><i style="--ready:94%"></i>94</span></td>
+                <td><span class="badge green">已发布</span> <span class="badge amber">待复查</span></td>
+                <td><div class="source-tags"><span class="ready">行业媒体</span><span class="ready">官网</span></div></td>
+                <td><div class="geo-actions"><a class="geo-text-action" href="editor.html?id=report">查看文章</a><button class="geo-text-action" data-geo-action="distribution" data-target="geo-content">引用回流</button></div></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script src="assets/geo-content-v1.js?rev=geo-article-create-v2"></script>
+<script src="assets/geo-sidebar-v1.js?rev=geo-nav-v10"></script>
+<script src="../shared/prototype-runtime-v2.js?rev=interactions-v10"></script>
+<script src="assets/app.js"></script>
+<script>
+(function () {
+  var factId = new URLSearchParams(window.location.search).get('fact');
+  if (!factId) return;
+  var pending = null;
+  try { pending = JSON.parse(localStorage.getItem('growthEngine.geo.pendingFact.v1')); } catch (error) {}
+  var statement = pending && pending.id === factId ? pending.statement : '';
+  var note = document.getElementById('boundFactNote');
+  if (note) {
+    note.hidden = false;
+    note.style.display = 'flex';
+    note.innerHTML = '<b style="color:#1f2937;">已绑定事实：</b><span>' +
+      (statement ? statement : '已从知识库带入一条事实。') +
+      ' 生成文章时将直接引用该表述。</span>';
+  }
+})();
+</script>
+</body>
+</html>

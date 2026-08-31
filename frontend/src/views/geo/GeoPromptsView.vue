@@ -7,6 +7,7 @@ import {
   createGeoContentTask,
   createGeoPrompt,
   expandGeoPromptCandidates,
+  importGeoPromptsCsv,
   listGeoAnswerSnapshots,
   listGeoBusinesses,
   listGeoPrompts,
@@ -55,6 +56,8 @@ const creating = ref(false)
 const saving = ref(false)
 const expanding = ref(false)
 const promoting = ref(false)
+const importingCsv = ref(false)
+const csvInput = ref(null)
 const expandForm = ref({
   products: '',
   competitors: '',
@@ -323,6 +326,25 @@ function openExpand() {
   expandOpen.value = true
 }
 
+async function importPromptCsv(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file || !tenantId.value) return
+  importingCsv.value = true
+  try {
+    const result = await importGeoPromptsCsv(tenantId.value, file)
+    const count = Number(result.count ?? result.items?.length ?? 0)
+    const errors = result.errors || []
+    ElMessage.success(`CSV 导入完成：${count} 条`)
+    if (errors.length) ElMessage.warning(`另有 ${errors.length} 条未导入，请检查 CSV 格式`)
+    await load()
+  } catch (e) {
+    ElMessage.error(e.message || 'CSV 导入失败')
+  } finally {
+    importingCsv.value = false
+  }
+}
+
 function syncUnitFilterFromRoute() {
   const q = route.query.unit_id
   filterUnitId.value = q ? Number(q) : null
@@ -452,13 +474,32 @@ const analysisRows = computed(() =>
     :loading="loading"
   >
     <template #actions>
-      <button class="gd-btn" @click="openExpand">生成提问</button>
+      <router-link class="gd-btn" to="/geo/brand">品牌资料</router-link>
+      <button class="gd-btn" @click="openExpand">拉取候选</button>
       <button class="gd-btn" @click="load">刷新</button>
       <button class="gd-btn primary" @click="createOpen = true">+ 新建提问</button>
     </template>
     <div class="geo-dash">
     <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
     <NeedHintAlert v-if="prototypeSurface.showLightweightOperations" />
+
+    <section class="gd-card opportunity-first">
+      <div class="gd-hd">
+        <h3>机会池操作</h3>
+        <router-link class="more" to="/geo/prompts">业务 / 关键词 / AI 提问管理</router-link>
+      </div>
+      <div class="gd-bd opportunity-actions">
+        <button class="gd-btn primary" type="button" @click="openExpand">拉取候选</button>
+        <button class="gd-btn" type="button" :disabled="!selectedExpand.length || promoting" @click="promoteSelected">
+          入库勾选项<span v-if="selectedExpand.length"> ({{ selectedExpand.length }})</span>
+        </button>
+        <button class="gd-btn" type="button" :disabled="importingCsv" @click="csvInput?.click()">
+          {{ importingCsv ? '导入中…' : 'CSV 导入' }}
+        </button>
+        <input ref="csvInput" type="file" accept=".csv,text/csv" hidden @change="importPromptCsv" />
+        <span class="gd-sub" style="margin:0">候选拉取与入库共用当前机会池状态。</span>
+      </div>
+    </section>
 
     <div class="geo-filter-bar filters">
       <el-select v-model="status" style="width: 140px">
@@ -482,7 +523,6 @@ const analysisRows = computed(() =>
         />
       </el-select>
       <el-select
-        v-if="prototypeSurface.showLightweightOperations"
         v-model="filterUnitId"
         clearable
         filterable
@@ -496,6 +536,7 @@ const analysisRows = computed(() =>
           :value="u.id"
         />
       </el-select>
+      <router-link class="gd-btn" to="/geo/units">管理单元</router-link>
     </div>
 
     <div v-if="!items.length && !loading" class="geo-empty" style="margin-bottom: 12px">
@@ -519,7 +560,7 @@ const analysisRows = computed(() =>
 
     <div class="gd-card">
       <div class="gd-hd">
-        <h3>监控提问</h3>
+        <h3>机会列表</h3>
         <span class="more">{{ monitorRows.length }} 条</span>
       </div>
       <div class="gd-bd" style="padding:0">
@@ -649,6 +690,10 @@ const analysisRows = computed(() =>
               :value="u.id"
             />
           </el-select>
+          <p class="muted" style="margin:6px 0 0">
+            没有可选词？
+            <router-link to="/geo/units">去优化单元新建</router-link>
+          </p>
         </el-form-item>
         <el-form-item label="产品/方案关键词（逗号或换行）">
           <el-input
@@ -728,6 +773,8 @@ const analysisRows = computed(() =>
 </template>
 
 <style scoped>
+.opportunity-first { margin-bottom: 16px; }
+.opportunity-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .geo-page { padding: 4px 2px 24px; }
 .page-header {
   display: flex; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap;

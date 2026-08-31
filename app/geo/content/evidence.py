@@ -23,8 +23,8 @@ def _coerce_expiry(value: Any) -> date | None:
 def evidence_issues(facts: list[dict[str, Any]], *, today: date | None = None) -> dict[int, list[str]]:
     """Return per-fact blockers for publishable evidence.
 
-    Missing ``status`` is treated as active (legacy rows). ``trust_level`` must be
-    ``verified`` for publishable use; drafts / needs_review are blocked.
+    Missing ``status`` is treated as active (legacy rows). Active facts with a
+    source are eligible; archived / missing source / expired remain blocked.
     """
     reference_date = today or date.today()
     result: dict[int, list[str]] = {}
@@ -36,8 +36,6 @@ def evidence_issues(facts: list[dict[str, Any]], *, today: date | None = None) -
         status = fact.get("status") or "active"
         if status != "active":
             issues.append("not_active")
-        if fact.get("trust_level") != "verified":
-            issues.append("not_verified")
         if not str(fact.get("source_name") or "").strip():
             issues.append("missing_source")
         expires_at = _coerce_expiry(fact.get("expires_at"))
@@ -64,8 +62,6 @@ def summarize_evidence_blockers(
     reasons: list[str] = []
     if any("expired" in v for v in issues.values()):
         reasons.append("过期")
-    if any("not_verified" in v for v in issues.values()):
-        reasons.append("未核验")
     if any("missing_source" in v for v in issues.values()):
         reasons.append("缺来源")
     if any("not_active" in v for v in issues.values()):
@@ -74,13 +70,12 @@ def summarize_evidence_blockers(
     return (
         False,
         f"可发布证据 {len(eligible)}/{min_eligible}（{reason_text}）",
-        "请核验事实、补来源，并移除或更新已过期事实后再生成/发布",
+        "请补来源，并移除或更新已过期事实后再生成/发布",
     )
 
 
 ISSUE_LABELS = {
     "not_active": "已归档",
-    "not_verified": "未核验",
     "missing_source": "缺来源",
     "expired": "已过期",
 }

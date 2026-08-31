@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GEO · 分发平台</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="../seo/assets/seo-content-v1.css?rev=geo-channels-v2">
+<link rel="stylesheet" href="assets/geo-content-v1.css?rev=geo-content-v6">
+<link rel="stylesheet" href="assets/geo-channels-v1.css?rev=geo-channels-v1">
+</head>
+<body class="seo-content-page geo-content-page geo-channels-page" data-content-page="channels" data-geo-page="channels">
+<div class="layout">
+  <aside class="sidebar"></aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <h1>分发平台</h1>
+        <div class="sub">在 GEO 工作台维护发布账号，并按 AI 引用价值配置渠道策略</div>
+      </div>
+      <div class="right">
+        <button class="btn" data-article-action="refresh-channels" data-target="seo-content">刷新连接状态</button>
+        <button class="btn primary" data-article-action="add-channel" data-target="seo-content">+ 添加分发平台</button>
+        <div class="avatar">DZ</div>
+      </div>
+    </header>
+
+    <div class="content">
+      <section class="geo-channel-context">
+        <div><span class="geo-channel-kicker">Shared Accounts · GEO Strategy</span><h2>账号与 SEO 共用，发布策略按 GEO 独立配置</h2><p>同一平台账号无需重复授权；GEO 侧重点是信源权重、内容原创性、事实可核验性和被 AI 摘取的可能性。</p></div>
+        <div class="geo-channel-signals"><span><b>4</b> 推荐信源</span><span><b>2</b> 待补权威作者</span><span><b>96.4%</b> 发布成功率</span></div>
+      </section>
+
+      <section class="channel-summary" aria-label="分发平台概览">
+        <div><span>已接入平台</span><strong id="connectedCount">10 / 12</strong><small>账号授权与 SEO 共用</small></div>
+        <div><span>GEO 推荐渠道</span><strong>4</strong><small>官网、知乎、公众号、行业媒体</small></div>
+        <div><span>本月 GEO 发布</span><strong>31</strong><small>技术长文 12 · 事实卡 19</small></div>
+        <div><span>产生 AI 引用</span><strong>126</strong><small>近 30 天新增 34 次</small></div>
+      </section>
+
+      <div class="channel-toolbar">
+        <button class="filter-chip active" data-channel-filter="全部" data-target="seo-content">全部平台</button>
+        <button class="filter-chip" data-channel-filter="自有渠道" data-target="seo-content">自有渠道</button>
+        <button class="filter-chip" data-channel-filter="内容平台" data-target="seo-content">内容平台</button>
+        <button class="filter-chip" data-channel-filter="新闻媒体" data-target="seo-content">新闻媒体</button>
+        <button class="filter-chip" data-channel-filter="外链渠道" data-target="seo-content">外链渠道</button>
+        <button class="filter-chip" data-channel-filter="未连接" data-target="seo-content">待接入</button>
+        <input class="search" id="channelSearch" placeholder="搜索平台或账号">
+      </div>
+
+      <div class="channel-section-title"><h2>平台账号与授权</h2><span>此处修改会同步到 SEO 文章与 GEO 文章的发布列表</span></div>
+      <section class="channel-grid" id="channelGrid" aria-live="polite"></section>
+
+      <section class="rules-panel geo-rules-panel">
+        <div class="hd"><h3>GEO 发布与信源策略</h3><span>优先选择具备稳定抓取、明确作者和可核验事实的平台</span></div>
+        <div style="overflow:auto;">
+          <table>
+            <thead><tr><th>平台</th><th>信源角色</th><th>AI 引用潜力</th><th>内容策略</th><th>适配引擎</th><th>当前状态</th></tr></thead>
+            <tbody>
+              <tr><td class="kw">官网 CMS</td><td>品牌事实底座</td><td><span class="geo-source-level high">高</span></td><td>原创首发、Schema、清晰更新时间</td><td>全模型</td><td><span class="badge green">优先发布</span></td></tr>
+              <tr><td class="kw">知乎</td><td>专业解释与对比</td><td><span class="geo-source-level high">高</span></td><td>问答结构、作者资历、外部信源</td><td>DeepSeek / Kimi</td><td><span class="badge green">策略完整</span></td></tr>
+              <tr><td class="kw">微信公众号</td><td>品牌自有信源</td><td><span class="geo-source-level medium">中</span></td><td>独家案例、调研数据、原始观点</td><td>豆包 / 元宝</td><td><span class="badge amber">补充作者</span></td></tr>
+              <tr><td class="kw">百家号</td><td>搜索与内容覆盖</td><td><span class="geo-source-level medium">中</span></td><td>差异化标题、完整事实引用</td><td>文心 / 豆包</td><td><span class="badge green">已配置</span></td></tr>
+              <tr><td class="kw">行业媒体</td><td>第三方权威背书</td><td><span class="geo-source-level high">高</span></td><td>技术深稿、专家署名、独家数据</td><td>全模型</td><td><span class="badge blue">建议接入</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<div class="seo-overlay" id="channelOverlay" role="dialog" aria-modal="true" aria-labelledby="channelDialogTitle">
+  <div class="seo-dialog">
+    <div class="seo-dialog-head">
+      <div><h2 id="channelDialogTitle">添加分发平台</h2><p>账号与 SEO 共用，GEO 发布时会叠加信源适配规则</p></div>
+      <button class="dialog-close" data-article-action="close-overlay" data-target="seo-content" aria-label="关闭">×</button>
+    </div>
+    <div class="seo-dialog-body">
+      <form id="channelForm" class="form-grid">
+        <input type="hidden" id="channelId">
+        <div class="form-field"><label for="channelName">平台名称 *</label><input id="channelName" required placeholder="例如：行业技术媒体"></div>
+        <div class="form-field"><label for="channelType">平台类型 *</label><select id="channelType"><option>自有渠道</option><option>内容平台</option><option>新闻媒体</option><option>外链渠道</option><option>行业媒体</option></select></div>
+        <div class="form-field"><label for="channelAccount">发布账号 *</label><input id="channelAccount" required placeholder="账号名称或 App ID"></div>
+        <div class="form-field"><label for="channelAuth">授权方式</label><select id="channelAuth"><option>OAuth 2.0</option><option>API Key</option><option>账号授权</option><option>人工代发</option></select></div>
+        <div class="form-field full"><label for="channelEndpoint">接口 / 主页地址</label><input id="channelEndpoint" placeholder="https:// 或 API Endpoint"></div>
+        <div class="form-field"><label for="channelReview">默认审核</label><select id="channelReview"><option>内容负责人审核</option><option>品牌负责人审核</option><option>平台审核</option><option>媒体编辑审核</option><option>允许自动发布</option></select></div>
+        <div class="form-field"><label for="channelFormat">正文格式</label><select id="channelFormat"><option>HTML</option><option>富文本</option><option>Markdown</option><option>人工适配</option></select></div>
+        <div class="form-field full"><label>发布能力</label><div class="row" style="flex-wrap:wrap;"><label class="check-line"><input type="checkbox" name="capability" value="原创"> 原创文章</label><label class="check-line"><input type="checkbox" name="capability" value="文章改写"> 文章改写</label><label class="check-line"><input type="checkbox" name="capability" value="定时发布"> 定时发布</label><label class="check-line"><input type="checkbox" name="capability" value="数据回流"> 数据回流</label><label class="check-line"><input type="checkbox" name="capability" value="媒体投稿"> 媒体投稿</label><label class="check-line"><input type="checkbox" name="capability" value="外链发布"> 外链发布</label></div></div>
+      </form>
+      <div class="ai-message" id="connectionTestResult" style="display:none;"></div>
+    </div>
+    <div class="seo-dialog-foot">
+      <button class="btn" data-article-action="test-connection" data-target="seo-content">测试连接</button>
+      <button class="btn" data-article-action="close-overlay" data-target="seo-content">取消</button>
+      <button class="btn primary" data-article-action="save-channel" data-target="seo-content">保存平台</button>
+    </div>
+  </div>
+</div>
+
+<script src="../seo/assets/seo-content-v1.js?rev=manual-publish-v3"></script>
+<script src="assets/geo-sidebar-v1.js?rev=geo-nav-v10"></script>
+<script src="../shared/prototype-runtime-v2.js?rev=interactions-v9"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

@@ -13,6 +13,7 @@ from app.geo.content.ai_settings import resolve_llm_credentials
 from app.geo.content.channel_polish import ArticleQualityError, adapt_or_polish_for_channel
 from app.geo.content.channel_polish_prompts import resolve_for_channel
 from app.geo.content.channel_profiles import get_profile
+from app.geo.content.current_draft import article_fingerprint, score_matches_current_article
 from app.geo.content.channel_registry import (
     enabled_types_from_rows,
     filter_channels_by_registry,
@@ -38,18 +39,21 @@ async def _latest_article(
     return await session.scalar(
         select(GeoArticleVersion)
         .where(GeoArticleVersion.task_id == task_id)
-        .order_by(GeoArticleVersion.version_no.desc(), GeoArticleVersion.id.desc())
+        .order_by(GeoArticleVersion.id.desc())
         .limit(1)
     )
 
 
 async def _list_variants(
-    session: AsyncSession, task_id: int
+    session: AsyncSession, task_id: int, article_id: int | None = None
 ) -> list[GeoChannelVariant]:
+    clauses = [GeoChannelVariant.task_id == task_id]
+    if article_id is not None:
+        clauses.append(GeoChannelVariant.article_version_id == article_id)
     return list(
         await session.scalars(
             select(GeoChannelVariant)
-            .where(GeoChannelVariant.task_id == task_id)
+            .where(*clauses)
             .order_by(GeoChannelVariant.id.asc())
         )
     )
@@ -62,6 +66,7 @@ async def execute_variants_for_task(
     tenant_id: int,
     channels: list[str] | None,
     use_llm: bool = True,
+    expected_fingerprint: str | None = None,
 ) -> dict[str, Any]:
     """Generate/overwrite channel variants for a task. Commits at end.
 
@@ -73,6 +78,21 @@ async def execute_variants_for_task(
     article = await _latest_article(session, task.id)
     if article is None:
         raise ValueError("请先生成或保存母稿")
+    start_fingerprint = article_fingerprint(article)
+    if expected_fingerprint and expected_fingerprint != start_fingerprint:
+        raise ValueError("当前母稿已变化，请重新进行 GEO 评分后再生成渠道稿")
+    if not score_matches_current_article(task.rule_result, article):
+        raise ValueError("当前母稿已变化，请重新进行 GEO 评分后再生成渠道稿")
+    from app.config import get_settings
+    from app.geo.content.geo_score import channel_draft_score_gate
+
+    settings = get_settings()
+    score_ok, score_message = channel_draft_score_gate(
+        task.rule_result if isinstance(task.rule_result, dict) else {},
+        threshold=int(getattr(settings, "geo_score_threshold", 60) or 60),
+    )
+    if not score_ok:
+        raise ValueError(score_message)
 
     ch_rows = list(
         await session.scalars(
@@ -115,7 +135,10 @@ async def execute_variants_for_task(
     if use_llm:
         llm = await resolve_llm_credentials(session, tenant_id)
 
-    existing = {v.channel: v for v in await _list_variants(session, task.id)}
+    existing = {
+        v.channel: v
+        for v in await _list_variants(session, task.id, article_id=article.id)
+    }
     created: list[str] = []
     failed: list[dict[str, Any]] = []
     polish_stats = {"llm": 0, "fallback": 0, "rejected": 0}
@@ -167,6 +190,10 @@ async def execute_variants_for_task(
         *[_polish_one(ch, pr) for ch, pr in prepared],
         return_exceptions=False,
     )
+
+    await session.refresh(article, attribute_names=["title", "body_markdown"])
+    if article_fingerprint(article) != start_fingerprint:
+        raise ValueError("渠道稿生成期间母稿已变化，本次结果已丢弃；请重新评分后再生成")
 
     for channel, triple, exc in polished:
         if exc is not None:
@@ -266,7 +293,7 @@ async def execute_variants_for_task(
         from app.geo.content.rules import RuleInput, is_ready, run_checks
         from app.models import GeoPrompt
 
-        variants_now = await _list_variants(session, task.id)
+        variants_now = await _list_variants(session, task.id, article_id=article.id)
         prompt_q = ""
         if task.prompt_id:
             p = await session.get(GeoPrompt, task.prompt_id)

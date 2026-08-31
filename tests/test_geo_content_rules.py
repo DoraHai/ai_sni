@@ -206,8 +206,8 @@ class GeoVariantsTests(unittest.TestCase):
             body,
             {"direct_answer": "直接答案段落足够长。", "updated_at": "2026-07-28"},
         )
-        self.assertLessEqual(len(title), 40)
         self.assertIn("直接答案", out)
+        self.assertIn("定义段", out)
 
 
 class GeoFixPatchesTests(unittest.TestCase):

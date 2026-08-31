@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import re
+from copy import deepcopy
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -19,12 +22,24 @@ from app.geo.content.bridge import (
     editor_path,
 )
 from app.geo.content.gate import PublishGateError, assert_can_publish
+from app.geo.content.current_draft import (
+    article_fingerprint as _article_fingerprint,
+    can_overwrite_current_draft as _can_overwrite_current_draft,
+    invalidate_current_draft as _invalidate_current_draft,
+    overwrite_current_article as _overwrite_current_article,
+    score_matches_current_article as _score_matches_current_article,
+)
 from app.geo.content.generate_article import (
     generate_master_article,
     outline_from_payload,
     to_markdown,
 )
 from app.geo.content.imports import import_facts_csv, import_prompts_csv
+from app.geo.content.article_import import (
+    ArticleImportError,
+    preview_file_document,
+    preview_url_document,
+)
 from app.geo.content.pipeline import blocked_reason_from_checks, sync_pipeline_fields
 from app.geo.content.rules import RuleInput, build_fix_patches, is_ready, run_checks
 from app.geo.content.channel_profiles import get_profile, list_profiles
@@ -77,6 +92,7 @@ from app.geo.content.schemas import (
     AnswerSnapshotUpdate,
     ApplyPatchRequest,
     ArticleUpdate,
+    ArticleOptimizeRequest,
     ChannelAccountCreate,
     ChannelAccountUpdate,
     FactCreate,
@@ -102,6 +118,8 @@ from app.geo.content.schemas import (
     PromptUpdate,
     PublicationCreate,
     AiReviewRequest,
+    ArticleImportCreateTaskRequest,
+    ArticleImportPreviewUrlRequest,
     RetrieveFactsApplyRequest,
     RetrieveFactsRequest,
     ReviewDecision,
@@ -343,8 +361,8 @@ async def _brand_context_for_prompt(
     tenant: Tenant,
 ) -> tuple[str, list[str]]:
     """Business profile product name wins; do not mix another business brand."""
-    from app.geo.content.brand_geo import brand_names_from_tenant
     from app.geo.content.business_profile import brand_names_for_profile, display_brand
+    from app.geo.content.prompt_taxonomy import brand_names_from_tenant
 
     fallback = getattr(tenant, "name", None) or f"租户{getattr(tenant, 'id', None) or prompt.tenant_id}"
     biz = None
@@ -514,15 +532,239 @@ async def _latest_article(
     return await session.scalar(
         select(GeoArticleVersion)
         .where(GeoArticleVersion.task_id == task_id)
-        .order_by(GeoArticleVersion.version_no.desc(), GeoArticleVersion.id.desc())
+        .order_by(GeoArticleVersion.id.desc())
         .limit(1)
     )
 
 
+def _article_version_payload(article: GeoArticleVersion) -> dict[str, Any]:
+    return {
+        "id": article.id,
+        "task_id": article.task_id,
+        "version_no": article.version_no,
+        "kind": article.kind,
+        "title": article.title,
+        "body_markdown": article.body_markdown,
+        "outline": article.outline or {},
+        "author_name": article.author_name,
+        "generation_meta": article.generation_meta or {},
+        "created_by": article.created_by,
+        "created_at": _iso(article.created_at),
+    }
+
+
+async def _clear_current_variants(
+    session: AsyncSession, *, task_id: int, article_id: int | None
+) -> None:
+    if article_id is None:
+        return
+    await session.execute(
+        delete(GeoChannelVariant).where(
+            GeoChannelVariant.task_id == task_id,
+            GeoChannelVariant.article_version_id == article_id,
+        )
+    )
+
+
+def _assert_current_draft_editable(task: GeoContentTask) -> None:
+    if not _can_overwrite_current_draft(task):
+        raise HTTPException(409, "该任务已有正式发布记录，不能覆盖母稿；请复制为新任务后再修改")
+
+
+def _variant_job_matches_current_article(job: Any, article: Any) -> bool:
+    meta = getattr(job, "request_meta", None)
+    expected = meta.get("article_fingerprint") if isinstance(meta, dict) else None
+    return bool(expected) and str(expected) == _article_fingerprint(article)
+
+
+def _apply_rule_patch_text(body_markdown: str, patch: dict[str, Any]) -> str:
+    """Apply the same cursor semantics used by the single-rule patch endpoint."""
+    old_body = body_markdown or ""
+    insert = str(patch.get("insert_markdown") or "")
+    if not insert.strip():
+        return old_body
+    hint = str(patch.get("cursor_hint") or "append")
+    if hint == "rewrite":
+        return insert.lstrip("\n")
+    if hint == "prepend":
+        return insert.lstrip("\n") + ("\n" + old_body if old_body else "")
+    return (old_body.rstrip() + "\n" + insert.lstrip("\n")) if old_body else insert.lstrip("\n")
+
+
+_MARKDOWN_SECTION_HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
+
+
+def _markdown_section_bounds(body_markdown: str, section: str) -> tuple[int, int]:
+    wanted = str(section or "").strip().lower()
+    for match in _MARKDOWN_SECTION_HEADING.finditer(body_markdown or ""):
+        heading = match.group(2).strip().rstrip("#").strip().lower()
+        if heading != wanted:
+            continue
+        level = len(match.group(1))
+        end = len(body_markdown)
+        for candidate in _MARKDOWN_SECTION_HEADING.finditer(body_markdown, match.end()):
+            if len(candidate.group(1)) <= level:
+                end = candidate.start()
+                break
+        return match.start(), end
+    raise ValueError("Selected Markdown section was not found")
+
+
+def _outline_after_rule_patches(outline: dict[str, Any] | None, codes: list[str]) -> dict[str, Any]:
+    """Discard stale structural hints that would otherwise mask fresh body checks."""
+    result = deepcopy(outline or {}) if isinstance(outline, dict) else {}
+    if "faq_min" in codes:
+        result.pop("faq", None)
+    for code, drop_type in (
+        ("definition", "definition"),
+        ("conclusion_extractable", "conclusion"),
+    ):
+        if code in codes and isinstance(result.get("sections"), list):
+            result["sections"] = [
+                item
+                for item in result["sections"]
+                if not (isinstance(item, dict) and item.get("type") == drop_type)
+            ]
+    return result
+
+
+def _deterministic_rule_optimize(
+    rule_input: RuleInput, *, scope: str, section: str | None = None
+) -> dict[str, Any]:
+    """Apply available rule patches without any AI call or fabricated success."""
+    original_body = rule_input.body_markdown or ""
+    if scope == "section":
+        start, end = _markdown_section_bounds(original_body, section or "")
+        target_body = original_body[start:end]
+        working_input = replace(rule_input, body_markdown=target_body, outline={})
+    elif scope == "all":
+        start = end = None
+        working_input = replace(rule_input, body_markdown=original_body)
+    else:
+        raise ValueError("scope must be all or section")
+
+    applied_codes: list[str] = []
+    attempted_codes: set[str] = set()
+    for _ in range(20):
+        patches = [
+            patch
+            for patch in build_fix_patches(working_input)
+            if patch.get("code") not in attempted_codes
+        ]
+        if not patches:
+            break
+        patches.sort(key=lambda patch: 0 if patch.get("cursor_hint") == "rewrite" else 1)
+        patch = patches[0]
+        code = str(patch.get("code") or "")
+        attempted_codes.add(code)
+        new_target = _apply_rule_patch_text(working_input.body_markdown, patch)
+        if new_target.strip() == (working_input.body_markdown or "").strip():
+            continue
+        working_input = replace(working_input, body_markdown=new_target)
+        applied_codes.append(code)
+
+    if not applied_codes:
+        raise ValueError("当前正文没有可自动套用的规则补丁，请用「AI 优化建议」或手动改稿")
+    if scope == "section":
+        body_markdown = original_body[:start] + working_input.body_markdown + original_body[end:]
+    else:
+        body_markdown = working_input.body_markdown
+    return {
+        "body_markdown": body_markdown,
+        "applied_codes": applied_codes,
+        "scope": scope,
+        "section": section if scope == "section" else None,
+        "source": "deterministic_rule_optimize",
+    }
+
+
+async def _ai_rewrite_optimize(
+    rule_input: RuleInput,
+    *,
+    scope: str,
+    section: str | None,
+    brand: str,
+    question: str,
+    llm: dict[str, Any],
+    chat_json,
+) -> dict[str, Any]:
+    """Rewrite existing markdown with the tenant LLM; never invent facts."""
+    from app.geo.content.claim_guard import format_ungrounded, ungrounded_claims
+
+    original_body = rule_input.body_markdown or ""
+    if scope == "section":
+        start, end = _markdown_section_bounds(original_body, section or "")
+        target_body = original_body[start:end]
+    elif scope == "all":
+        start, end = 0, len(original_body)
+        target_body = original_body
+    else:
+        raise ValueError("scope must be all or section")
+
+    facts = [
+        {
+            "id": item.get("id"),
+            "statement": item.get("statement"),
+            "source_name": item.get("source_name"),
+        }
+        for item in (rule_input.facts or [])[:12]
+        if isinstance(item, dict)
+    ]
+    system = (
+        "你是 GEO 母稿编辑。只根据给定事实改写 Markdown，禁止编造数字、案例、排名或新事实。"
+        "保持原有标题层级，提升可摘取性：直接回答、定义、对比、FAQ、结论。"
+        "返回 JSON：{\"body_markdown\":\"改写后的 Markdown\"}。"
+    )
+    data = await chat_json(
+        system,
+        json.dumps(
+            {
+                "brand": brand,
+                "question": question,
+                "facts": facts,
+                "scope": scope,
+                "section": section,
+                "body_markdown": target_body[:8000],
+            },
+            ensure_ascii=False,
+        ),
+        timeout=90.0,
+        api_key=llm.get("api_key"),
+        base_url=llm.get("base_url"),
+        model=llm.get("model"),
+    )
+    if not isinstance(data, dict):
+        raise ValueError("AI 优化返回格式无效")
+    new_target = str(data.get("body_markdown") or "").strip()
+    if not new_target:
+        raise ValueError("AI 优化未返回正文")
+    if new_target == target_body.strip():
+        raise ValueError("AI 优化未改动正文")
+    if not new_target.endswith("\n"):
+        new_target += "\n"
+    body_markdown = original_body[:start] + new_target + original_body[end:]
+    invented = ungrounded_claims(body_markdown, rule_input.facts or [])
+    if invented:
+        raise ValueError("AI 优化写入了事实卡没有的内容：" + format_ungrounded(invented))
+    return {
+        "body_markdown": body_markdown,
+        "applied_codes": ["ai_rewrite"],
+        "scope": scope,
+        "section": section if scope == "section" else None,
+        "source": "ai_rewrite_optimize",
+    }
+
+
 async def _variants(session: AsyncSession, task_id: int) -> list[GeoChannelVariant]:
+    article = await _latest_article(session, task_id)
+    if article is None:
+        return []
     result = await session.scalars(
         select(GeoChannelVariant)
-        .where(GeoChannelVariant.task_id == task_id)
+        .where(
+            GeoChannelVariant.task_id == task_id,
+            GeoChannelVariant.article_version_id == article.id,
+        )
         .order_by(GeoChannelVariant.id.asc())
     )
     return list(result)
@@ -713,6 +955,7 @@ async def _evaluate_and_store_rules(
         "variant_channels": list(rule_input.variants or []),
         "target_channels": list(rule_input.target_channels or []),
         "variant_polish": prev_rr.get("variant_polish"),
+        "article_fingerprint": _article_fingerprint(article) if article else None,
     }
     if ready:
         task.status = "ready"
@@ -735,6 +978,7 @@ async def _evaluate_and_store_rules(
         "geo_score_threshold": int(getattr(settings, "geo_score_threshold", 60) or 60),
         "variant_channels": list(rule_input.variants or []),
         "target_channels": list(rule_input.target_channels or []),
+        "article_fingerprint": _article_fingerprint(article) if article else None,
     }
 
 
@@ -856,7 +1100,13 @@ async def _latest_variant_polish(session: AsyncSession, task: GeoContentTask) ->
         .order_by(GeoAsyncJob.id.desc())
         .limit(1)
     )
-    if job is None or not job.result_meta:
+    article = await _latest_article(session, task.id)
+    if (
+        job is None
+        or article is None
+        or not job.result_meta
+        or not _variant_job_matches_current_article(job, article)
+    ):
         return None
     polish = job.result_meta.get("variant_polish")
     return polish if isinstance(polish, dict) else None
@@ -950,7 +1200,12 @@ async def get_publishing_channel_options(
 # ---------- 优化业务 / 单元（三级结构）----------
 
 
-def _business_payload(row: GeoOptimizationBusiness, *, unit_count: int | None = None) -> dict[str, Any]:
+def _business_payload(
+    row: GeoOptimizationBusiness,
+    *,
+    unit_count: int | None = None,
+    prompt_count: int | None = None,
+) -> dict[str, Any]:
     from app.geo.content.business_profile import normalize_profile
 
     return {
@@ -962,6 +1217,7 @@ def _business_payload(row: GeoOptimizationBusiness, *, unit_count: int | None = 
         "status": row.status,
         "sort_order": row.sort_order,
         "unit_count": unit_count,
+        "prompt_count": prompt_count,
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
     }
@@ -993,21 +1249,47 @@ async def list_optimization_businesses(
     """优化业务列表。"""
     ctx.ensure_tenant(tenant_id)
     stmt = select(GeoOptimizationBusiness).where(GeoOptimizationBusiness.tenant_id == tenant_id)
-    if status:
+    if status and status != "all":
         stmt = stmt.where(GeoOptimizationBusiness.status == status)
     stmt = stmt.order_by(GeoOptimizationBusiness.sort_order.asc(), GeoOptimizationBusiness.id.desc())
     rows = list(await session.scalars(stmt))
-    items = []
-    for r in rows:
-        cnt = await session.scalar(
-            select(func.count())
-            .select_from(GeoOptimizationUnit)
-            .where(
-                GeoOptimizationUnit.business_id == r.id,
+    if not rows:
+        return {"items": []}
+    biz_ids = [r.id for r in rows]
+    unit_pairs = list(
+        await session.execute(
+            select(GeoOptimizationUnit.id, GeoOptimizationUnit.business_id).where(
                 GeoOptimizationUnit.tenant_id == tenant_id,
+                GeoOptimizationUnit.business_id.in_(biz_ids),
             )
         )
-        items.append(_business_payload(r, unit_count=int(cnt or 0)))
+    )
+    units_by_biz: dict[int, list[int]] = {}
+    all_unit_ids: list[int] = []
+    for uid, bid in unit_pairs:
+        units_by_biz.setdefault(int(bid), []).append(int(uid))
+        all_unit_ids.append(int(uid))
+    prompt_by_unit: dict[int, int] = {}
+    if all_unit_ids:
+        prompt_rows = await session.execute(
+            select(GeoPrompt.unit_id, func.count())
+            .where(
+                GeoPrompt.tenant_id == tenant_id,
+                GeoPrompt.unit_id.in_(all_unit_ids),
+            )
+            .group_by(GeoPrompt.unit_id)
+        )
+        prompt_by_unit = {int(uid): int(cnt or 0) for uid, cnt in prompt_rows if uid is not None}
+    items = []
+    for r in rows:
+        uids = units_by_biz.get(r.id, [])
+        items.append(
+            _business_payload(
+                r,
+                unit_count=len(uids),
+                prompt_count=sum(prompt_by_unit.get(uid, 0) for uid in uids),
+            )
+        )
     return {"items": items}
 
 
@@ -1042,7 +1324,7 @@ async def create_optimization_business(
     session.add(row)
     await session.commit()
     await session.refresh(row)
-    return _business_payload(row, unit_count=0)
+    return _business_payload(row, unit_count=0, prompt_count=0)
 
 
 @router.patch("/optimization-businesses/{business_id}")
@@ -1091,7 +1373,7 @@ async def list_optimization_units(
     stmt = select(GeoOptimizationUnit).where(GeoOptimizationUnit.tenant_id == tenant_id)
     if business_id is not None:
         stmt = stmt.where(GeoOptimizationUnit.business_id == business_id)
-    if status:
+    if status and status != "all":
         stmt = stmt.where(GeoOptimizationUnit.status == status)
     stmt = stmt.order_by(GeoOptimizationUnit.sort_order.asc(), GeoOptimizationUnit.id.desc())
     rows = list(await session.scalars(stmt))
@@ -5414,6 +5696,9 @@ async def put_tracking_engines(
 
 
 def _channel_payload(row: GeoPublishingChannel) -> dict:
+    from app.geo.content.channel_strategy import merge_geo_profile
+
+    rules = merge_geo_profile(row.content_rules, None, None, channel_type=row.channel_type)
     return {
         "id": row.id,
         "tenant_id": row.tenant_id,
@@ -5421,7 +5706,8 @@ def _channel_payload(row: GeoPublishingChannel) -> dict:
         "channel_type": row.channel_type,
         "publish_mode": row.publish_mode,
         "base_url": row.base_url,
-        "content_rules": row.content_rules,
+        "content_rules": rules,
+        "geo_profile": rules.get("geo_profile"),
         "enabled": row.enabled,
         "sort_order": row.sort_order,
         "created_at": _iso(row.created_at),
@@ -5603,13 +5889,17 @@ async def create_publishing_channel(
 ) -> dict:
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
+    from app.geo.content.channel_strategy import merge_geo_profile
+
+    profile = req.geo_profile.model_dump() if req.geo_profile else None
+    rules = merge_geo_profile(None, req.content_rules, profile, channel_type=req.channel_type)
     row = GeoPublishingChannel(
         tenant_id=req.tenant_id,
         name=req.name.strip(),
         channel_type=req.channel_type,
         publish_mode=req.publish_mode,
         base_url=req.base_url,
-        content_rules=req.content_rules,
+        content_rules=rules or None,
         enabled=req.enabled,
         sort_order=req.sort_order,
         created_by=ctx.user_id,
@@ -5652,10 +5942,22 @@ async def update_publishing_channel(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     row = await _get_publishing_channel(session, channel_id, tenant_id)
-    for field in ("channel_type", "publish_mode", "base_url", "content_rules", "enabled", "sort_order"):
-        value = getattr(req, field)
-        if value is not None:
-            setattr(row, field, value)
+    from app.geo.content.channel_strategy import merge_geo_profile
+
+    data = req.model_dump(exclude_unset=True)
+    if "geo_profile" in data or "content_rules" in data:
+        profile = req.geo_profile.model_dump() if req.geo_profile is not None else None
+        row.content_rules = merge_geo_profile(
+            row.content_rules,
+            req.content_rules,
+            profile,
+            channel_type=req.channel_type or row.channel_type,
+        )
+        data.pop("geo_profile", None)
+        data.pop("content_rules", None)
+    for field in ("channel_type", "publish_mode", "base_url", "enabled", "sort_order"):
+        if field in data and data[field] is not None:
+            setattr(row, field, data[field])
     if req.name is not None:
         row.name = req.name.strip()
     await session.commit()
@@ -6121,8 +6423,6 @@ async def create_fact(
 ) -> dict:
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
-    if req.trust_level == "verified":
-        raise HTTPException(400, "不能直接创建为已核验，请先保存再走核验并填写依据")
     _validate_fact_source(req.source_name, req.trust_level)
     row = GeoFact(
         tenant_id=req.tenant_id,
@@ -6158,8 +6458,6 @@ async def update_fact(
     data = req.model_dump(exclude_unset=True)
     trust = data.get("trust_level", row.trust_level)
     source_name = data.get("source_name", row.source_name)
-    if data.get("trust_level") == "verified" and row.trust_level != "verified":
-        raise HTTPException(400, "请走「核验」并填写摘录依据与定位，不能直接改为已核验")
     _validate_fact_source(source_name or "", trust)
     for key, value in data.items():
         if isinstance(value, str) and key in {"title", "statement", "source_name"}:
@@ -6251,6 +6549,93 @@ async def import_facts_file(
     return result
 
 
+@router.post("/content-imports/preview-file")
+async def preview_article_import_file(
+    tenant_id: int = Query(...),
+    file: UploadFile = File(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Extract a supported upload so the operator can edit it before import."""
+    ctx.ensure_tenant(tenant_id)
+    await _ensure_tenant_exists(session, tenant_id)
+    raw = await file.read()
+    if len(raw) > 10 * 1024 * 1024:
+        raise HTTPException(413, "导入文件不能超过 10 MiB")
+    try:
+        return preview_file_document(filename=file.filename or "", raw=raw)
+    except ArticleImportError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/content-imports/preview-url")
+async def preview_article_import_url(
+    req: ArticleImportPreviewUrlRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Fetch a URL and extract an editable article preview."""
+    ctx.ensure_tenant(req.tenant_id)
+    await _ensure_tenant_exists(session, req.tenant_id)
+    try:
+        return await preview_url_document(req.url)
+    except ArticleImportError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/content-imports/create-task")
+async def create_task_from_article_import(
+    req: ArticleImportCreateTaskRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Persist an operator-confirmed import as a task with its first master draft."""
+    ctx.ensure_tenant(req.tenant_id)
+    await _ensure_tenant_exists(session, req.tenant_id)
+    prompt = await _get_prompt(session, req.prompt_id, req.tenant_id)
+    business_id = await _resolve_task_business_id(session, prompt)
+    period_id = await _resolve_active_period_id(
+        session, tenant_id=req.tenant_id, business_id=business_id
+    )
+    title = req.title.strip()
+    task = GeoContentTask(
+        tenant_id=req.tenant_id,
+        prompt_id=prompt.id,
+        business_id=business_id,
+        period_id=period_id,
+        title=title,
+        status="editing",
+        target_channels=normalize_channels(req.target_channels),
+        owner_user_id=ctx.user_id,
+        pipeline_step="draft",
+        brief={},
+    )
+    session.add(task)
+    await session.flush()
+    article = GeoArticleVersion(
+        task_id=task.id,
+        version_no=1,
+        kind="master",
+        title=title,
+        body_markdown=req.body_markdown.strip(),
+        outline={},
+        generation_meta={
+            "source": "article_import",
+            "source_type": req.source_type,
+            "source_url": (req.source_url or "").strip() or None,
+        },
+        created_by=ctx.user_id,
+    )
+    session.add(article)
+    await session.flush()
+    invalidate_review(task)
+    await _sync_task_pipeline(session, task)
+    await _evaluate_and_store_rules(session, task, article, require_channels=False)
+    await session.commit()
+    await session.refresh(task)
+    return await _task_payload(session, task, detail=True)
+
+
 # ---------- content tasks ----------
 
 
@@ -6280,6 +6665,24 @@ async def import_prompts_csv_file(
     }
 
 
+async def _publication_summary(session: AsyncSession, task_ids: list[int]) -> dict[int, dict]:
+    from app.geo.content.channel_strategy import fold_publication_rows
+
+    if not task_ids:
+        return {}
+    rows = await session.execute(
+        select(
+            GeoChannelVariant.task_id,
+            GeoPublication.channel,
+            func.count(GeoPublication.id),
+        )
+        .join(GeoPublication, GeoPublication.variant_id == GeoChannelVariant.id)
+        .where(GeoChannelVariant.task_id.in_(task_ids))
+        .group_by(GeoChannelVariant.task_id, GeoPublication.channel)
+    )
+    return fold_publication_rows(list(rows))
+
+
 @router.get("/content-tasks")
 async def list_tasks(
     tenant_id: int = Query(...),
@@ -6289,15 +6692,25 @@ async def list_tasks(
     owner_user_id: int | None = Query(None),
     from_diagnosis: bool | None = Query(None),
     include_archived: bool = Query(False, description="默认不列出 archived"),
+    workbench_tab: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
+    from app.geo.content.channel_strategy import (
+        WORKBENCH_TAB_STATUSES,
+        task_engine_keys,
+        task_geo_score,
+    )
+
     filters = [GeoContentTask.tenant_id == tenant_id]
+    tab_statuses = WORKBENCH_TAB_STATUSES.get(workbench_tab or "")
     if status:
         filters.append(GeoContentTask.status == status)
+    elif tab_statuses:
+        filters.append(GeoContentTask.status.in_(tab_statuses))
     elif not include_archived:
         filters.append(GeoContentTask.status != "archived")
     if pipeline_step:
@@ -6328,11 +6741,30 @@ async def list_tasks(
     )
     rows = list(await session.scalars(stmt))
     items = [await _task_payload(session, r, detail=False) for r in rows]
+    pub_sum = await _publication_summary(session, [r.id for r in rows])
+    for item in items:
+        summary = pub_sum.get(item["id"], {"channels": [], "count": 0})
+        item["geo_score"] = task_geo_score(item.get("rule_result"))
+        item["engine_keys"] = task_engine_keys(item.get("brief"), item.get("rule_result"))
+        item["publication_channels"] = summary["channels"]
+        item["publication_count"] = summary["count"]
+    count_rows = await session.execute(
+        select(GeoContentTask.status, func.count())
+        .where(GeoContentTask.tenant_id == tenant_id, GeoContentTask.status != "archived")
+        .group_by(GeoContentTask.status)
+    )
+    by_status = {str(status_key): int(cnt or 0) for status_key, cnt in count_rows}
+    tab_counts = {
+        key: sum(by_status.get(st, 0) for st in statuses)
+        for key, statuses in WORKBENCH_TAB_STATUSES.items()
+    }
     return {
         "items": items,
         "total": total,
         "limit": limit,
         "offset": offset,
+        "status_counts": by_status,
+        "workbench_counts": {"all": sum(by_status.values()), **tab_counts},
     }
 
 
@@ -7000,6 +7432,92 @@ async def update_task_facts(
     return await _task_payload(session, task, detail=True)
 
 
+@router.post("/content-tasks/{task_id}/optimize")
+async def optimize_article(
+    task_id: int,
+    req: ArticleOptimizeRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Create a new article version: rule patches first, tenant LLM rewrite if none apply."""
+    ctx.ensure_tenant(req.tenant_id)
+    task = await _get_task(session, task_id, req.tenant_id)
+    _assert_current_draft_editable(task)
+    article = await _latest_article(session, task.id)
+    if article is None:
+        raise HTTPException(400, "请先生成或保存母稿")
+    rule_input = await _build_rule_input(session, task, article)
+    try:
+        optimized = _deterministic_rule_optimize(
+            rule_input,
+            scope=req.scope,
+            section=req.section,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if "没有可自动套用" not in message:
+            raise HTTPException(400, message) from exc
+        from app.geo.content.ai_settings import resolve_llm_credentials
+
+        llm = await resolve_llm_credentials(session, req.tenant_id)
+        if not llm:
+            raise HTTPException(
+                503,
+                "当前正文没有可自动套用的规则补丁，且未配置 AI 能力：请到「AI 能力配置」填写 API Key",
+            ) from exc
+        from app.ai.deepseek import DeepSeekError, chat_json
+
+        prompt = await _get_prompt(session, task.prompt_id, req.tenant_id)
+        tenant = await _ensure_tenant_exists(session, req.tenant_id)
+        brand, _ = await _brand_context_for_task(session, task, tenant)
+        try:
+            optimized = await _ai_rewrite_optimize(
+                rule_input,
+                scope=req.scope,
+                section=req.section,
+                brand=brand,
+                question=prompt.question,
+                llm=llm,
+                chat_json=chat_json,
+            )
+        except DeepSeekError as llm_exc:
+            raise HTTPException(502, str(llm_exc)) from llm_exc
+        except ValueError as llm_exc:
+            raise HTTPException(400, str(llm_exc)) from llm_exc
+
+    article_id = article.id
+    await _clear_current_variants(session, task_id=task.id, article_id=article.id)
+    _overwrite_current_article(
+        article,
+        title=article.title,
+        body_markdown=optimized["body_markdown"],
+        outline=_outline_after_rule_patches(article.outline, optimized["applied_codes"]),
+        author_name=article.author_name,
+        generation_meta={
+            "source": optimized.get("source") or "deterministic_rule_optimize",
+            "scope": optimized["scope"],
+            "section": optimized["section"],
+            "patch_codes": optimized["applied_codes"],
+        },
+        created_by=ctx.user_id,
+    )
+    _invalidate_current_draft(task)
+    await session.flush()
+    evaluation = await _evaluate_and_store_rules(
+        session, task, article, require_channels=False
+    )
+    await session.commit()
+    await session.refresh(task)
+    await session.refresh(article)
+    return {
+        "article_id": article_id,
+        "applied_codes": optimized["applied_codes"],
+        "task": await _task_payload(session, task, detail=True),
+        "article": _article_version_payload(article),
+        "evaluation": evaluation,
+    }
+
+
 @router.put("/content-tasks/{task_id}/article")
 async def save_article(
     task_id: int,
@@ -7011,36 +7529,57 @@ async def save_article(
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
     latest = await _latest_article(session, task.id)
-    version_no = (latest.version_no + 1) if latest else 1
     from app.geo.content.evidence_cite import strip_citation_appendix
 
     body = strip_citation_appendix(req.body_markdown)
     outline = dict(req.outline or (latest.outline if latest else {}) or {})
-    article = GeoArticleVersion(
-        task_id=task.id,
-        version_no=version_no,
-        kind="master",
-        title=req.title.strip(),
-        body_markdown=body,
-        outline=outline,
-        author_name=(latest.author_name if latest else None),
-        generation_meta={
-            "source": "manual_edit",
-            "from_version": latest.version_no if latest else None,
-        },
-        created_by=ctx.user_id,
+    title = req.title.strip()
+    changed = bool(
+        latest is None
+        or latest.title != title
+        or latest.body_markdown != body
+        or dict(latest.outline or {}) != outline
     )
-    facts = await _task_facts(session, task.id)
-    _refresh_article_citations(article, _fact_dicts(facts))
-    session.add(article)
+    if changed:
+        _assert_current_draft_editable(task)
+    if latest is None:
+        article = GeoArticleVersion(
+            task_id=task.id,
+            version_no=1,
+            kind="master",
+            title=title,
+            body_markdown=body,
+            outline=outline,
+            generation_meta={"source": "manual_edit"},
+            created_by=ctx.user_id,
+        )
+        session.add(article)
+    else:
+        article = latest
+        if changed:
+            await _clear_current_variants(session, task_id=task.id, article_id=article.id)
+            _overwrite_current_article(
+                article,
+                title=title,
+                body_markdown=body,
+                outline=outline,
+                generation_meta={"source": "manual_edit"},
+                created_by=ctx.user_id,
+                author_name=article.author_name,
+            )
+    if changed:
+        facts = await _task_facts(session, task.id)
+        _refresh_article_citations(article, _fact_dicts(facts))
+        _invalidate_current_draft(task)
     task.title = req.title.strip()
-    invalidate_review(task)
-    if task.status in {"draft", "facts_bound", "generating", "failed"}:
+    if not changed and task.status in {"draft", "facts_bound", "generating", "failed"}:
         task.status = "editing"
     await _sync_task_pipeline(session, task)
     await session.commit()
     await session.refresh(task)
-    return await _task_payload(session, task, detail=True)
+    payload = await _task_payload(session, task, detail=True)
+    payload["article_changed"] = changed
+    return payload
 
 
 @router.post("/content-tasks/{task_id}/check")
@@ -7112,6 +7651,7 @@ async def ai_review_task(
         rr = task.rule_result if isinstance(task.rule_result, dict) else {}
         rr = dict(rr)
         rr["ai_review"] = review
+        rr["article_fingerprint"] = _article_fingerprint(article)
         task.rule_result = rr
         await session.commit()
         await session.refresh(task)
@@ -7172,6 +7712,7 @@ async def apply_patch(
 
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
+    _assert_current_draft_editable(task)
     article = await _latest_article(session, task.id)
     if article is None:
         raise HTTPException(400, "请先生成或保存母稿")
@@ -7210,11 +7751,9 @@ async def apply_patch(
             if not (isinstance(s, dict) and s.get("type") == drop_type)
         ]
 
-    version_no = article.version_no + 1
-    new_article = GeoArticleVersion(
-        task_id=task.id,
-        version_no=version_no,
-        kind="master",
+    await _clear_current_variants(session, task_id=task.id, article_id=article.id)
+    _overwrite_current_article(
+        article,
         title=article.title,
         body_markdown=new_body,
         outline=outline,
@@ -7227,12 +7766,10 @@ async def apply_patch(
         },
         created_by=ctx.user_id,
     )
-    session.add(new_article)
-    task.status = "editing"
-    invalidate_review(task)
+    _invalidate_current_draft(task)
     await session.flush()
 
-    rule_input = await _build_rule_input(session, task, new_article)
+    rule_input = await _build_rule_input(session, task, article)
     checks = run_checks(rule_input)
     check_dicts = [c.to_dict() for c in checks]
     ready = is_ready(checks, require_channels=False)
@@ -7288,6 +7825,7 @@ async def apply_patch(
             "body_len_after": len(new_body),
         },
         "checked_at": datetime.utcnow().isoformat(),
+        "article_fingerprint": _article_fingerprint(article),
     }
     task.status = "ready" if ready else "needs_fix"
     await _sync_task_pipeline(session, task, checks=check_dicts)
@@ -7330,6 +7868,7 @@ async def generate_task_article(
         background_tasks = BackgroundTasks()
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
+    _assert_current_draft_editable(task)
     tenant = await _ensure_tenant_exists(session, tenant_id)
     prompt = await _get_prompt(session, task.prompt_id, tenant_id)
     facts = await _task_facts(session, task.id)
@@ -7408,28 +7947,40 @@ async def generate_task_article(
         outline = dict(outline or {})
         outline["sentence_citations"] = cites
         latest = await _latest_article(session, task.id)
-        version_no = (latest.version_no + 1) if latest else 1
         evidence_meta = payload.get("_evidence") or evidence_preview
-        article = GeoArticleVersion(
-            task_id=task.id,
-            version_no=version_no,
-            kind="master",
-            title=payload["title"],
-            body_markdown=body,
-            outline=outline,
-            generation_meta={
-                "source": payload.get("_source"),
-                "used_fact_ids": payload.get("used_fact_ids"),
-                "evidence": evidence_meta,
-                "brief": payload.get("_brief") or brief_norm,
-                "sentence_citations": cites,
-            },
-            created_by=ctx.user_id,
-        )
-        session.add(article)
+        generation_meta = {
+            "source": payload.get("_source"),
+            "used_fact_ids": payload.get("used_fact_ids"),
+            "evidence": evidence_meta,
+            "brief": payload.get("_brief") or brief_norm,
+            "sentence_citations": cites,
+        }
+        if latest is None:
+            article = GeoArticleVersion(
+                task_id=task.id,
+                version_no=1,
+                kind="master",
+                title=payload["title"],
+                body_markdown=body,
+                outline=outline,
+                generation_meta=generation_meta,
+                created_by=ctx.user_id,
+            )
+            session.add(article)
+        else:
+            article = latest
+            await _clear_current_variants(session, task_id=task.id, article_id=article.id)
+            _overwrite_current_article(
+                article,
+                title=payload["title"],
+                body_markdown=body,
+                outline=outline,
+                generation_meta=generation_meta,
+                created_by=ctx.user_id,
+                author_name=article.author_name,
+            )
         task.title = payload["title"]
-        task.status = "editing"
-        invalidate_review(task)
+        _invalidate_current_draft(task)
         await session.commit()
     except GeoContentError as exc:
         task.status = "failed"
@@ -7485,6 +8036,18 @@ async def create_variants(
     article = await _latest_article(session, task.id)
     if article is None:
         raise HTTPException(400, "请先生成或保存母稿")
+    if not _score_matches_current_article(task.rule_result, article):
+        raise HTTPException(400, "当前母稿已变化，请重新进行 GEO 评分后再生成渠道稿")
+    from app.config import get_settings
+    from app.geo.content.geo_score import channel_draft_score_gate
+
+    settings = get_settings()
+    score_ok, score_message = channel_draft_score_gate(
+        task.rule_result if isinstance(task.rule_result, dict) else {},
+        threshold=int(getattr(settings, "geo_score_threshold", 60) or 60),
+    )
+    if not score_ok:
+        raise HTTPException(400, score_message)
     await _ensure_default_publishing_channels(session, tenant_id)
 
     channels = normalize_channels(req.channels or list(task.target_channels or []))
@@ -7505,6 +8068,7 @@ async def create_variants(
             request_meta={
                 "channels": channels,
                 "use_llm": bool(req.use_llm),
+                "article_fingerprint": _article_fingerprint(article),
             },
             created_by=ctx.user_id,
         )
@@ -7528,6 +8092,7 @@ async def create_variants(
             tenant_id=tenant_id,
             channels=channels,
             use_llm=bool(req.use_llm),
+            expected_fingerprint=_article_fingerprint(article),
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -7767,6 +8332,21 @@ async def _write_publication(
     await _sync_task_pipeline(session, task)
 
 
+def _publication_state_for_mode(mode: str | None) -> dict[str, Any]:
+    """Only a real publish may advance task and variant to published."""
+    if str(mode or "").lower() == "publish":
+        return {
+            "publication_status": "published",
+            "variant_status": "published",
+            "task_published": True,
+        }
+    return {
+        "publication_status": "draft",
+        "variant_status": "draft",
+        "task_published": False,
+    }
+
+
 @router.post("/content-tasks/{task_id}/publications")
 async def record_publication(
     task_id: int,
@@ -7903,7 +8483,8 @@ async def push_variant_webhook(
 
     remote_url = (req.published_url or "").strip() or remote.get("remote_url")
     publication_created = False
-    if req.create_publication and remote_url:
+    delivery_state = _publication_state_for_mode(req.mode)
+    if req.create_publication and delivery_state["task_published"] and remote_url:
         if not str(remote_url).startswith(("http://", "https://")):
             raise HTTPException(400, "发布 URL 无效")
         await _write_publication(
@@ -8060,7 +8641,8 @@ async def push_variant_batch(
             )
             remote_url = remote.get("remote_url")
             publication_created = False
-            if req.create_publication and remote_url and str(remote_url).startswith(
+            delivery_state = _publication_state_for_mode(req.mode)
+            if req.create_publication and delivery_state["task_published"] and remote_url and str(remote_url).startswith(
                 ("http://", "https://")
             ):
                 await _write_publication(

@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GEO · 信源分析</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand"><div class="logo">G</div><div>GEO 模块<small>生成式引擎优化</small></div></div>
+    <div class="nav-group">数据看板</div>
+    <a class="nav-item" href="dashboard.html"><span class="ico">📊</span> 概览</a>
+    <a class="nav-item" href="visibility.html"><span class="ico">✨</span> AI 可见度</a>
+    <div class="nav-group">智能监测</div>
+    <a class="nav-item" href="prompts.html"><span class="ico">💬</span> 提问监控</a>
+    <a class="nav-item" href="competitors.html"><span class="ico">⚔️</span> 竞品分析</a>
+    <a class="nav-item" href="evaluation.html"><span class="ico">😊</span> 评价分析</a>
+    <a class="nav-item active" href="sources.html"><span class="ico">📚</span> 信源分析</a>
+    <div class="nav-group">GEO 执行</div>
+    <a class="nav-item" href="articles.html"><span class="ico">✍️</span> GEO 文章</a>
+    <a class="nav-item" href="media.html"><span class="ico">🏛️</span> 媒体 / 信源策略</a>
+    <a class="nav-item" href="channels.html"><span class="ico">⇧</span> 分发平台（共享）</a>
+    <div class="nav-group">设置</div>
+    <a class="nav-item" href="engines.html"><span class="ico">🤖</span> AI 引擎管理</a>
+    <div class="spacer"></div>
+    <a class="nav-item" href="../content/audit.html"><span class="ico">🛠️</span> 诊断中心</a>
+    <a class="back-link" href="../hub/dashboard.html">⌂ 全域驾驶舱</a>
+    <a class="back-link" style="border-top:none;padding-top:0;" href="../index.html">← 平台门户</a>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div><h1>信源分析</h1><div class="sub">AI 回答时到底从哪些平台、哪些文章取数引用</div></div>
+      <div class="right">
+        <input class="search" placeholder="搜索信源 / 文章…">
+        <button class="btn">数据导出</button>
+        <div class="avatar">DZ</div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="grid cols-4" style="margin-bottom:16px;">
+        <div class="card stat"><div class="label">已识别信源平台</div><div class="value">36</div><div class="subtle">个</div></div>
+        <div class="card stat"><div class="label">最常被引平台</div><div class="value" style="font-size:20px;">百度百科</div><div class="delta up">▲ 占比 14%</div></div>
+        <div class="card stat"><div class="label">本品牌内容占比</div><div class="value">8.2%</div><div class="delta up">▲ 1.1%</div></div>
+        <div class="card stat"><div class="label">高价值待铺信源</div><div class="value" style="color:var(--warn)">5</div><div class="subtle">建议布局</div></div>
+      </div>
+
+      <!-- 信源 × 引擎 热力图 -->
+      <div class="card" style="margin-bottom:16px;">
+        <div class="hd"><h3>信源平台 × AI 引擎 引用占比</h3><span class="more">颜色越深引用越多</span></div>
+        <div class="bd" style="padding:0; overflow:auto;">
+          <table>
+            <thead><tr>
+              <th>信源平台</th>
+              <th style="text-align:center;">DeepSeek</th><th style="text-align:center;">豆包</th>
+              <th style="text-align:center;">Kimi</th><th style="text-align:center;">通义千问</th><th style="text-align:center;">腾讯元宝</th>
+            </tr></thead>
+            <tbody>
+              <tr><td class="kw">百度百科</td>
+                <td style="text-align:center;background:#c7d2fe">22%</td><td style="text-align:center;background:#a5b4fc;color:#fff">31%</td>
+                <td style="text-align:center;background:#e0e7ff">12%</td><td style="text-align:center;background:#c7d2fe">24%</td><td style="text-align:center;background:#eef2ff">8%</td></tr>
+              <tr><td class="kw">知乎</td>
+                <td style="text-align:center;background:#a5b4fc;color:#fff">28%</td><td style="text-align:center;background:#e0e7ff">11%</td>
+                <td style="text-align:center;background:#c7d2fe">19%</td><td style="text-align:center;background:#eef2ff">7%</td><td style="text-align:center;background:#e0e7ff">14%</td></tr>
+              <tr><td class="kw">微信公众号</td>
+                <td style="text-align:center;background:#e0e7ff">9%</td><td style="text-align:center;background:#c7d2fe">18%</td>
+                <td style="text-align:center;background:#eef2ff">5%</td><td style="text-align:center;background:#e0e7ff">13%</td><td style="text-align:center;background:#c7d2fe">21%</td></tr>
+              <tr><td class="kw">权威媒体（新闻源）</td>
+                <td style="text-align:center;background:#c7d2fe">17%</td><td style="text-align:center;background:#e0e7ff">10%</td>
+                <td style="text-align:center;background:#a5b4fc;color:#fff">26%</td><td style="text-align:center;background:#c7d2fe">20%</td><td style="text-align:center;background:#e0e7ff">12%</td></tr>
+              <tr><td class="kw">行业垂直站</td>
+                <td style="text-align:center;background:#eef2ff">6%</td><td style="text-align:center;background:#e0e7ff">9%</td>
+                <td style="text-align:center;background:#e0e7ff">11%</td><td style="text-align:center;background:#c7d2fe">16%</td><td style="text-align:center;background:#eef2ff">7%</td></tr>
+              <tr><td class="kw">本品牌官网/博客</td>
+                <td style="text-align:center;background:#eef2ff">8%</td><td style="text-align:center;background:#eef2ff">6%</td>
+                <td style="text-align:center;background:#eef2ff">4%</td><td style="text-align:center;background:#eef2ff">7%</td><td style="text-align:center;background:#eef2ff">9%</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="grid cols-2">
+        <!-- 被引用最多的具体文章 -->
+        <div class="card">
+          <div class="hd"><h3>被 AI 引用最多的文章</h3><span class="more">全部引擎</span></div>
+          <div class="bd" style="padding:0;">
+            <table>
+              <thead><tr><th>文章</th><th>信源</th><th>引用次数</th><th>归属</th></tr></thead>
+              <tbody>
+                <tr><td class="kw">智能客服系统选型完全指南</td><td class="muted">知乎</td><td>100</td><td><span class="badge gray">第三方</span></td></tr>
+                <tr><td class="kw">2026 数据分析工具横评</td><td class="muted">36氪</td><td>96</td><td><span class="badge amber">竞品</span></td></tr>
+                <tr><td class="kw">CRM 软件怎么选</td><td class="muted">百度百科</td><td>91</td><td><span class="badge gray">第三方</span></td></tr>
+                <tr><td class="kw">SearchPilot 产品介绍</td><td class="muted">官网</td><td>84</td><td><span class="badge green">本品牌</span></td></tr>
+                <tr><td class="kw">企业表单工具对比评测</td><td class="muted">公众号</td><td>82</td><td><span class="badge green">本品牌</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <!-- 信源布局建议 -->
+        <div class="card">
+          <div class="hd"><h3>💡 信源布局建议</h3><span class="badge blue">AI 生成</span></div>
+          <div class="bd">
+            <ul class="checks">
+              <li><span class="badge red">缺口</span> 百度百科未收录本品牌词条 <span class="muted" style="margin-left:auto;">DeepSeek/豆包/通义高引用源</span></li>
+              <li><span class="badge red">缺口</span> 知乎缺少品牌相关高赞回答 <span class="muted" style="margin-left:auto;">DeepSeek 第一大源</span></li>
+              <li><span class="badge amber">薄弱</span> 权威媒体仅 3 篇，Kimi 偏好此类 <a class="muted" href="media.html" style="margin-left:auto;">去信源策略 →</a></li>
+    <a class="nav-item" href="channels.html"><span class="ico">⇧</span> 分发平台（共享）</a>
+              <li><span class="badge green">良好</span> 公众号内容已被元宝高频引用 <span class="muted" style="margin-left:auto;">保持</span></li>
+            </ul>
+            <p class="subtle" style="margin-top:12px;">结论：优先补「百度百科 + 知乎」，可同时拉升 DeepSeek/豆包/通义三个引擎的可见度。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="assets/geo-sidebar-v1.js?rev=geo-nav-v10"></script>
+<script src="../shared/prototype-runtime-v2.js?rev=interactions-v9"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

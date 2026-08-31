@@ -1132,7 +1132,7 @@ onMounted(load)
       </div>
     </section>
 
-    <section class="panel">
+    <section class="panel prototype-evidence">
       <div class="panel-title">竞品提及聚合</div>
       <el-table
         :data="pager.pagedItems"
@@ -1149,10 +1149,10 @@ onMounted(load)
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="mention_count" label="出现" width="72" />
+        <el-table-column prop="mention_count" label="出现次数" width="96" />
         <el-table-column prop="source_count" label="来源" width="72" />
         <el-table-column prop="platform_count" label="平台" width="72" />
-        <el-table-column prop="prompt_count" label="提问" width="72" />
+        <el-table-column prop="prompt_count" label="关联提问" width="96" />
         <el-table-column label="引擎" min-width="120">
           <template #default="{ row }">
             <template v-if="(row.engines || []).length">
@@ -1572,6 +1572,8 @@ onMounted(load)
 </template>
 
 <style scoped>
+.geo-page { display: flex; flex-direction: column; }
+.prototype-evidence { order: -1; margin-bottom: 16px; }
 .clickable-rows :deep(tbody tr) { cursor: pointer; }
 .row-link { color: #185fa5; font-weight: 600; }
 .geo-comp { padding: 4px 2px 24px; }

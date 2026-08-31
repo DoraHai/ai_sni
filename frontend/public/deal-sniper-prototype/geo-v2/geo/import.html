@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GEO · 导入已有文章</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/geo-content-v1.css?rev=geo-import-v1">
+</head>
+<body class="geo-content-page geo-import-page" data-geo-page="import">
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <main class="main">
+    <header class="topbar geo-import-topbar">
+      <a class="geo-editor-back" href="articles.html">‹ 返回文章工作台</a>
+      <div>
+        <h1>导入已有文章</h1>
+        <div class="sub">导入现有文章或母稿，系统将进行 GEO 检测并给出优化建议。</div>
+      </div>
+    </header>
+
+    <div class="geo-import-content">
+      <div class="geo-import-flow" aria-label="已有文章优化流程">
+        <span class="active" id="geoImportFlowOne">1&nbsp; 导入文章</span><i></i><span id="geoImportFlowTwo">2&nbsp; 关联目标问题</span><i></i><span id="geoImportFlowThree">3&nbsp; 首次 GEO 检测</span>
+      </div>
+
+      <section class="geo-import-card" id="geoImportStage">
+        <div class="geo-import-card-head">
+          <div><span class="geo-panel-eyebrow">已有内容 GEO 改造</span><h2>选择导入方式</h2><p>当前推荐直接粘贴文章；文档与 URL 导入作为扩展能力保留。</p></div>
+          <span class="geo-import-source-badge">V1 · 原始稿</span>
+        </div>
+
+        <div class="geo-import-methods" role="tablist" aria-label="文章导入方式">
+          <button class="active" data-geo-action="select-import-method" data-method="paste"><b>粘贴文章</b><small>推荐 · 立即可用</small></button>
+          <button data-geo-action="select-import-method" data-method="file"><b>上传文档</b><small>Word / PDF / TXT</small></button>
+          <button data-geo-action="select-import-method" data-method="url"><b>URL 导入</b><small>官网文章链接</small></button>
+        </div>
+
+        <div class="geo-import-panel active" data-import-panel="paste">
+          <label class="geo-import-label" for="geoImportTitle">文章标题 <small>选填，AI 可根据正文识别</small></label>
+          <input class="geo-import-title-input" id="geoImportTitle" placeholder="输入文章标题，或留空由 AI 自动识别">
+          <label class="geo-import-label" for="geoImportBody">文章正文</label>
+          <div class="geo-import-editor" id="geoImportBody" contenteditable="true" data-placeholder="粘贴需要进行 GEO 优化的文章内容……" aria-label="文章正文"></div>
+          <div class="geo-import-editor-meta"><span>支持粘贴富文本 / 普通文本</span><span id="geoImportWordCount">0 字</span></div>
+        </div>
+
+        <div class="geo-import-panel" data-import-panel="file">
+          <div class="geo-import-placeholder-panel"><div class="geo-import-placeholder-icon">⇧</div><h3>上传 Word / PDF / TXT</h3><p>后续将支持自动解析标题与正文，并直接进入 GEO 编辑流程。</p><button class="btn" data-geo-action="future-import-feature" data-target="geo-content">选择文档</button><span>即将支持</span></div>
+        </div>
+
+        <div class="geo-import-panel" data-import-panel="url">
+          <div class="geo-import-url-box"><label class="geo-import-label">文章 URL</label><div><input placeholder="https://example.com/article"><button class="btn" data-geo-action="future-import-feature" data-target="geo-content">识别文章</button></div><p>后续将支持抓取标题、正文、发布时间与原始来源。</p><span>扩展能力 · 即将支持</span></div>
+        </div>
+
+        <div class="geo-import-card-foot"><a class="btn" href="articles.html">取消</a><button class="btn primary" id="geoAnalyzeImportButton" data-geo-action="analyze-imported-article" data-target="geo-content">识别文章并继续 <span>→</span></button></div>
+      </section>
+
+      <section class="geo-import-card geo-question-match-card" id="geoQuestionMatchStage" hidden>
+        <div class="geo-import-card-head">
+          <div><span class="geo-panel-eyebrow">AI 已完成内容识别</span><h2>关联目标问题</h2><p>这篇文章主要希望覆盖哪个 GEO 用户问题？</p></div>
+          <div class="geo-import-analysis"><b id="geoImportedTitlePreview">已识别文章</b><small id="geoImportedMetaPreview">待分析</small></div>
+        </div>
+        <div class="geo-question-match-body">
+          <h3>推荐目标问题</h3>
+          <label class="geo-question-option selected"><input type="radio" name="geo-import-question" value="机器人外壳粘接胶怎么选？" checked><span><b>机器人外壳粘接胶怎么选？</b><small>匹配度 94% · 来自提问监控</small></span><em>推荐</em></label>
+          <label class="geo-question-option"><input type="radio" name="geo-import-question" value="机器人外壳用胶还是螺丝固定？"><span><b>机器人外壳用胶还是螺丝固定？</b><small>匹配度 86% · 相关问题</small></span></label>
+          <label class="geo-question-option"><input type="radio" name="geo-import-question" value="3M VHB适合机器人外壳吗？"><span><b>3M VHB适合机器人外壳吗？</b><small>匹配度 79% · 品牌相关问题</small></span></label>
+          <button class="geo-manual-question-toggle" data-geo-action="toggle-manual-question" data-target="geo-content">＋ 手动输入目标问题</button>
+          <input class="geo-manual-question-input" id="geoManualImportQuestion" placeholder="输入希望文章覆盖的 GEO 用户问题" hidden>
+        </div>
+        <div class="geo-import-detection-note"><span>✦</span><p><b>进入编辑器后将立即进行首次 GEO 检测</b><small>分析 AI 可引用性、问题覆盖度、事实支撑、来源可信度、内容结构、品牌推荐价值与搜索可见性。</small></p></div>
+        <div class="geo-import-card-foot"><button class="btn" data-geo-action="back-to-import" data-target="geo-content">上一步</button><button class="btn primary" data-geo-action="enter-import-editor" data-target="geo-content">进入编辑器并检测 <span>→</span></button></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script src="assets/geo-content-v1.js?rev=geo-import-v1"></script>
+<script src="assets/geo-sidebar-v1.js?rev=geo-nav-v10"></script>
+<script src="../shared/prototype-runtime-v2.js?rev=interactions-v10"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

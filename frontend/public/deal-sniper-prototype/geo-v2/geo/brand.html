@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GEO · 品牌信息</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .form-row { display:flex; gap:20px; align-items:flex-start; margin-bottom:20px; }
+  .form-row .lbl { width:110px; text-align:right; padding-top:9px; font-size:13px; color:var(--text); flex:none; }
+  .form-row .lbl .req { color:var(--bad); margin-right:3px; }
+  .field { flex:1; max-width:760px; }
+  .inpwrap { position:relative; }
+  .inp { width:100%; background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:9px 12px; font-size:13px; color:var(--text); }
+  textarea.inp { resize:vertical; min-height:96px; line-height:1.7; }
+  .inp:focus { outline:none; border-color:var(--accent); }
+  .counter { position:absolute; right:12px; top:11px; color:#c4c8d2; font-size:12px; pointer-events:none; }
+  textarea + .counter { top:auto; bottom:10px; }
+  .hint { font-size:12px; color:var(--muted); margin-top:6px; }
+  .logo-up { width:88px; height:88px; border:1px solid var(--border); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:30px; font-weight:800; color:#fff; background:linear-gradient(135deg,var(--accent),var(--accent-2)); cursor:pointer; position:relative; }
+  .logo-up .re { position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,.45); color:#fff; font-size:11px; text-align:center; padding:2px 0; border-radius:0 0 10px 10px; }
+  .select { width:100%; background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:9px 12px; font-size:13px; color:var(--text); display:flex; align-items:center; cursor:pointer; }
+  .select .car { margin-left:auto; color:var(--muted); }
+  .reco { background:var(--accent-soft); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:16px; }
+  .reco-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px; }
+  .reco-card { background:#fff; border:1px solid var(--border); border-radius:10px; padding:12px; display:flex; align-items:center; gap:10px; }
+  .comp-row { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px 14px; display:flex; align-items:center; gap:12px; margin-bottom:10px; }
+  .savebar { position:sticky; bottom:0; background:linear-gradient(transparent,var(--bg) 45%); padding:18px 0 4px; text-align:center; }
+  @media(max-width:720px){
+    .layout{display:block}.sidebar{display:none}.content{padding:12px}
+    .topbar{align-items:flex-start;flex-wrap:wrap;padding:12px 14px}
+    .form-row{flex-direction:column;gap:8px}
+    .form-row .lbl{width:auto;text-align:left;padding-top:0}
+    .reco-grid{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar"></aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div><h1>品牌信息</h1><div class="sub">维护品牌名称、官网、行业和业务介绍，供 GEO 文章与 AI 可见度引用</div></div>
+      <div class="right">
+        <span class="badge green">完整度 85%</span>
+        <div class="avatar">DZ</div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="card">
+        <div class="bd" style="max-width:940px;">
+
+          <div class="form-row">
+            <div class="lbl"><span class="req">*</span>品牌名称</div>
+            <div class="field"><div class="inpwrap"><input class="inp" value="SearchPilot 智能搜索增长平台" maxlength="30"><span class="counter">20/30</span></div></div>
+          </div>
+
+          <div class="form-row">
+            <div class="lbl">品牌网站</div>
+            <div class="field">
+              <div class="inpwrap"><input class="inp" id="brandWebsite" value="https://www.growthengine.cn" maxlength="100"><span class="counter">27/100</span></div>
+              <div class="hint">官网结构优化会使用此地址扫描，无需在结构页单独填写。</div>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="lbl">品牌图片</div>
+            <div class="field">
+              <div class="logo-up">S<span class="re">更换</span></div>
+              <div class="hint">选填，建议 88×88 或正方形，不超过 2MB；未上传时显示品牌名称首字。</div>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="lbl">品牌行业</div>
+            <div class="field"><div class="select">企业服务 &gt; SaaS / 增长工具<span class="car">▾</span></div></div>
+          </div>
+
+          <div class="form-row">
+            <div class="lbl"><span class="req">*</span>品牌业务介绍</div>
+            <div class="field">
+              <div class="inpwrap"><textarea class="inp" maxlength="2048">SearchPilot 是一款面向中小团队的一站式搜索与 AI 可见度增长平台，提供 SEM、SEO、GEO 三端能力：监控关键词排名与网站收录，监测品牌在 DeepSeek、豆包等国产大模型中的曝光与引用，并支持 SEO 文章、GEO 文章、信源策略与效果追踪，已服务 1,200+ 企业。</textarea><span class="counter">154/2048</span></div>
+              <div class="hint">这段会被 AI 重点引用，建议含「一句话定义 + 关键事实」。</div>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="lbl">品牌荣誉</div>
+            <div class="field"><div class="inpwrap"><textarea class="inp" maxlength="2048">国家高新技术企业 · 2025 SaaS 增长工具 Top 50 · 36氪「年度营销科技新锐」</textarea><span class="counter">38/2048</span></div><div class="hint">描述品牌获得的荣誉、奖项等。</div></div>
+          </div>
+
+          <div class="form-row">
+            <div class="lbl">品牌资质</div>
+            <div class="field"><div class="inpwrap"><textarea class="inp" maxlength="2048" placeholder="描述品牌持有的资质、认证等"></textarea><span class="counter">0/2048</span></div></div>
+          </div>
+
+          <hr style="border:none;border-top:1px solid var(--border);margin:24px 0;">
+
+          <div class="form-row">
+            <div class="lbl"><span class="req">*</span>竞争对手</div>
+            <div class="field">
+              <button class="btn" data-help="addCompetitor">+ 新增竞争对手</button>
+              <div class="hint" style="margin-bottom:14px;">列出主要竞争对手，或受众可能作为替代选项的其他品牌，最多 15 个。</div>
+
+              <div class="reco">
+                <div class="row between"><b>智能推荐</b><span class="more">收起 ▴</span></div>
+                <div class="subtle" style="margin-top:4px;">识别与当前品牌高度相关的竞品线索</div>
+                <div class="reco-grid">
+                  <div class="reco-card"><span class="plogo" style="background:#7c3aed">扑</span><div><b>扑兔 AI</b><div><span class="badge red" style="font-size:11px;">核心竞品</span></div></div><span class="badge green" style="margin-left:auto;">✓ 已添加</span></div>
+                  <div class="reco-card"><span class="plogo" style="background:#0ea5e9">搜</span><div><b>搜极星</b><div><span class="badge red" style="font-size:11px;">核心竞品</span></div></div><span class="badge green" style="margin-left:auto;">✓ 已添加</span></div>
+                  <div class="reco-card"><span class="plogo" style="background:#16a34a">小</span><div><b>小裂变·GEO</b><div><span class="badge blue" style="font-size:11px;">潜在竞品</span></div></div><span class="badge blue" style="margin-left:auto;">+ 添加</span></div>
+                  <div class="reco-card"><span class="plogo" style="background:#ea580c">S</span><div><b>Similarweb</b><div><span class="badge blue" style="font-size:11px;">潜在竞品</span></div></div><span class="badge blue" style="margin-left:auto;">+ 添加</span></div>
+                </div>
+              </div>
+
+              <div class="comp-row"><span class="plogo" style="background:#7c3aed">扑</span><b>扑兔 AI</b><span class="subtle">puff-ai.com</span><div class="row" style="margin-left:auto;gap:12px;"><span class="badge blue">编辑</span><span class="badge gray">删除</span></div></div>
+              <div class="comp-row"><span class="plogo" style="background:#0ea5e9">搜</span><b>搜极星</b><span class="subtle">soujixing.com</span><div class="row" style="margin-left:auto;gap:12px;"><span class="badge blue">编辑</span><span class="badge gray">删除</span></div></div>
+              <div class="comp-row"><span class="plogo" style="background:#2563eb">海</span><b>海薪科技 GEO</b><span class="subtle">—</span><div class="row" style="margin-left:auto;gap:12px;"><span class="badge blue">编辑</span><span class="badge gray">删除</span></div></div>
+              <div class="comp-row"><span class="plogo" style="background:#ea580c">Se</span><b>Semrush</b><span class="subtle">semrush.com</span><div class="row" style="margin-left:auto;gap:12px;"><span class="badge blue">编辑</span><span class="badge gray">删除</span></div></div>
+            </div>
+          </div>
+
+          <div class="savebar"><a class="btn primary" href="#" id="brandSave" data-target="geo-brand" style="padding:9px 28px;">保存信息</a></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="addCompetitor">
+  <div class="modal" style="max-width:520px;">
+    <div class="mhd"><h3>新增竞争对手</h3><span class="x">×</span></div>
+    <div class="mbd">
+      <div class="form-row"><div class="lbl"><span class="req">*</span>品牌名称</div><div class="field"><div class="inpwrap"><input class="inp" placeholder="请填写品牌名称" maxlength="30"><span class="counter">0/30</span></div></div></div>
+      <div class="form-row"><div class="lbl">品牌网站</div><div class="field"><div class="inpwrap"><input class="inp" placeholder="例如 competitor.com" maxlength="100"><span class="counter">0/100</span></div></div></div>
+      <div class="form-row"><div class="lbl">品牌 logo</div><div class="field"><div class="logo-up" style="background:var(--bg);color:var(--muted);font-size:22px;border-style:dashed;">+<span style="position:absolute;bottom:8px;font-size:11px;">上传图片</span></div></div></div>
+      <div class="row" style="justify-content:flex-end;gap:10px;margin-top:8px;">
+        <button class="btn" type="button">取消</button>
+        <button class="btn primary" type="button">确定</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="assets/geo-sidebar-v1.js?rev=geo-nav-v10"></script>
+<script src="../shared/prototype-runtime-v2.js?rev=interactions-v9"></script>
+<script src="assets/app.js"></script>
+<script>
+(function () {
+  var BRAND_KEY = 'growthEngine.geo.brand.v1';
+  var website = document.getElementById('brandWebsite');
+  try {
+    var saved = JSON.parse(localStorage.getItem(BRAND_KEY));
+    if (saved && saved.website && website) website.value = saved.website;
+  } catch (error) {}
+
+  document.addEventListener('click', function (event) {
+    var closer = event.target.closest('#addCompetitor .btn');
+    if (closer) {
+      var mask = closer.closest('.modal-mask');
+      if (mask) mask.classList.remove('show');
+    }
+    if (event.target.closest('#brandSave')) {
+      event.preventDefault();
+      var value = website ? website.value.trim() : '';
+      try { localStorage.setItem(BRAND_KEY, JSON.stringify({ website: value })); } catch (error) {}
+      if (window.geToast) window.geToast(value ? '品牌信息已保存，结构扫描将使用 ' + value : '品牌信息已保存');
+    }
+  });
+})();
+</script>
+</body>
+</html>

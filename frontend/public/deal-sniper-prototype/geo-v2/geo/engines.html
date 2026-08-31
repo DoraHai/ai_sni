@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GEO · AI 引擎管理</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand"><div class="logo">G</div><div>GEO 模块<small>生成式引擎优化</small></div></div>
+    <div class="nav-group">数据看板</div>
+    <a class="nav-item" href="dashboard.html"><span class="ico">📊</span> 概览</a>
+    <a class="nav-item" href="visibility.html"><span class="ico">✨</span> AI 可见度</a>
+    <div class="nav-group">智能监测</div>
+    <a class="nav-item" href="prompts.html"><span class="ico">💬</span> 提问监控</a>
+    <a class="nav-item" href="competitors.html"><span class="ico">⚔️</span> 竞品分析</a>
+    <a class="nav-item" href="evaluation.html"><span class="ico">😊</span> 评价分析</a>
+    <a class="nav-item" href="sources.html"><span class="ico">📚</span> 信源分析</a>
+    <div class="nav-group">GEO 执行</div>
+    <a class="nav-item" href="articles.html"><span class="ico">✍️</span> GEO 文章</a>
+    <a class="nav-item" href="media.html"><span class="ico">🏛️</span> 媒体 / 信源策略</a>
+    <a class="nav-item" href="channels.html"><span class="ico">⇧</span> 分发平台（共享）</a>
+    <div class="nav-group">设置</div>
+    <a class="nav-item active" href="engines.html"><span class="ico">🤖</span> AI 引擎管理</a>
+    <div class="spacer"></div>
+    <a class="nav-item" href="../content/audit.html"><span class="ico">🛠️</span> 诊断中心</a>
+    <a class="back-link" href="../hub/dashboard.html">⌂ 全域驾驶舱</a>
+    <a class="back-link" style="border-top:none;padding-top:0;" href="../index.html">← 平台门户</a>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div><h1>AI 引擎管理</h1><div class="sub">配置要监测的 AI 大模型与巡检频率</div></div>
+      <div class="right">
+        <button class="btn primary">+ 接入引擎</button>
+        <div class="avatar">DZ</div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="grid cols-3" style="gap:16px;">
+        <div class="card"><div class="bd" style="display:flex;align-items:center;gap:12px;"><span class="plogo" style="background:#4d6bfe">D</span><div><b>DeepSeek</b><div class="subtle">深度求索</div></div><span class="badge green" style="margin-left:auto;">监测中</span></div></div>
+        <div class="card"><div class="bd" style="display:flex;align-items:center;gap:12px;"><span class="plogo" style="background:#ff6a00">豆</span><div><b>豆包</b><div class="subtle">字节跳动</div></div><span class="badge green" style="margin-left:auto;">监测中</span></div></div>
+        <div class="card"><div class="bd" style="display:flex;align-items:center;gap:12px;"><span class="plogo" style="background:#111827">K</span><div><b>Kimi</b><div class="subtle">月之暗面</div></div><span class="badge green" style="margin-left:auto;">监测中</span></div></div>
+        <div class="card"><div class="bd" style="display:flex;align-items:center;gap:12px;"><span class="plogo" style="background:#615ced">通</span><div><b>通义千问</b><div class="subtle">阿里巴巴</div></div><span class="badge green" style="margin-left:auto;">监测中</span></div></div>
+        <div class="card"><div class="bd" style="display:flex;align-items:center;gap:12px;"><span class="plogo" style="background:#0ea5e9">元</span><div><b>腾讯元宝</b><div class="subtle">腾讯</div></div><span class="badge green" style="margin-left:auto;">监测中</span></div></div>
+        <div class="card"><div class="bd" style="display:flex;align-items:center;gap:12px;"><span class="plogo" style="background:#2932E1">文</span><div><b>文心一言</b><div class="subtle">百度</div></div><span class="badge amber" style="margin-left:auto;">未开启</span></div></div>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <div class="hd"><h3>巡检设置</h3></div>
+        <div class="bd" style="display:flex; flex-direction:column; gap:16px; max-width:520px;">
+          <div class="row between"><span>巡检频率</span><div class="row" style="gap:8px;"><span class="badge blue">每日 1 次</span><span class="badge gray">每 6 小时</span><span class="badge gray">实时</span></div></div>
+          <div class="row between"><span>巡检时间</span><span class="badge gray">每日 08:00</span></div>
+          <div class="row between"><span>每提问检测轮数</span><span class="badge gray">3 轮取均值（降低随机性）</span></div>
+          <div class="row between"><span>异常自动告警</span><span class="badge green">已开启 · 异常提醒推送</span></div>
+        </div>
+      </div>
+
+      <p class="subtle" style="margin-top:14px;">💡 国产大模型回答有随机性，平台默认每个提问检测多轮取均值，让推荐度/排名数据更稳定可信。</p>
+    </div>
+  </div>
+</div>
+<script src="assets/geo-sidebar-v1.js?rev=geo-nav-v10"></script>
+<script src="../shared/prototype-runtime-v2.js?rev=interactions-v9"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

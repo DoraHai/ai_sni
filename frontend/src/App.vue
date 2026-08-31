@@ -515,7 +515,14 @@ onUnmounted(() => {
               type="button"
               @click="onTenantChange(t.id)"
             >
-              <span class="tenant-title">{{ t.name }}</span>
+              <span class="tenant-avatar" :class="'tone-' + tenantTone(t.id)">
+                {{ tenantInitials(t) }}
+              </span>
+              <span class="tenant-copy">
+                <span class="tenant-title">{{ t.name }}</span>
+                <span class="tenant-meta">独立账户数据 · 客户 ID {{ t.id }}</span>
+              </span>
+              <span v-if="t.id === session.tenantId" class="tenant-check">✓</span>
             </button>
           </div>
         </el-popover>

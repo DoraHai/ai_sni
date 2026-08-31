@@ -4,8 +4,8 @@
   display: flex;
   flex-direction: column;
   min-height: 100%;
-  background: #f6f7fb;
-  color: #1e2330;
+  background: var(--geo-bg, #f6f7fb);
+  color: var(--geo-text, #1e2330);
 }
 
 .geo-topbar {
@@ -113,7 +113,9 @@
 .geo-eng-card:hover { border-color: #ddd6fe; }
 
 .geo-content {
-  padding: 24px 28px 32px;
+  width: min(100%, var(--geo-content-width, 1440px));
+  margin: 0 auto;
+  padding: 22px 28px 40px;
   min-width: 0;
 }
 

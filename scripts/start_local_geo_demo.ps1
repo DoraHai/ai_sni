@@ -4,12 +4,14 @@
 #   powershell -ExecutionPolicy Bypass -File scripts/start_local_geo_demo.ps1 -WithVue
 #   powershell -ExecutionPolicy Bypass -File scripts/start_local_geo_demo.ps1 -WithVue -WithDiagnosticCenter
 #   powershell -ExecutionPolicy Bypass -File scripts/start_local_geo_demo.ps1 -WithVue -SeedDemo
+#   powershell -ExecutionPolicy Bypass -File scripts/start_local_geo_demo.ps1 -WithVue -GeoScanProxy http://127.0.0.1:7897
 
 param(
   [switch]$WithVue,
   [switch]$WithDiagnosticCenter,
   [switch]$SeedDemo,
-  [switch]$WithMainApi
+  [switch]$WithMainApi,
+  [string]$GeoScanProxy = $env:GEO_SCAN_PROXY
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,13 +53,22 @@ function Ensure-GeoDemoHtml {
 
 Ensure-GeoDemoHtml
 
+# 外网官网在部分网络环境下需要走本地代理。显式传入或设置 GEO_SCAN_PROXY，
+# 启动的 API 子进程会继承该配置；未提供时保持直连，不改变生产环境行为。
+if ($GeoScanProxy) {
+  $env:GEO_SCAN_PROXY = $GeoScanProxy
+  $env:HTTP_PROXY = $GeoScanProxy
+  $env:HTTPS_PROXY = $GeoScanProxy
+  Write-Host "GEO scan proxy: $GeoScanProxy"
+}
+
 # Main API (Vue vite proxy default → 8000)
 if ($WithMainApi -or $WithVue) {
   if (-not (Test-Port 8000)) {
     Write-Host "Starting main API on :8000 ..."
     Start-Process -FilePath $VenvPython -ArgumentList @(
       "-m","uvicorn","app.main:app","--host","127.0.0.1","--port","8000"
-    ) -WorkingDirectory $Root -WindowStyle Minimized
+    ) -WorkingDirectory $Root -WindowStyle Hidden
     Start-Sleep -Seconds 3
   } else {
     Write-Host "Main API already on :8000"
@@ -68,7 +79,7 @@ if (-not (Test-Port 8011)) {
   Write-Host "Starting GEO API on :8011 ..."
   Start-Process -FilePath $VenvPython -ArgumentList @(
     "-m","uvicorn","app.geo_main:app","--host","127.0.0.1","--port","8011"
-  ) -WorkingDirectory $Root -WindowStyle Minimized
+  ) -WorkingDirectory $Root -WindowStyle Hidden
   Start-Sleep -Seconds 3
 } else {
   Write-Host "GEO API already on :8011"
@@ -78,7 +89,7 @@ if (-not (Test-Port 5176)) {
   Write-Host "Starting GEO static on :5176 ..."
   Start-Process -FilePath $VenvPython -ArgumentList @(
     "-m","http.server","5176","--bind","127.0.0.1"
-  ) -WorkingDirectory $GeoStatic -WindowStyle Minimized
+  ) -WorkingDirectory $GeoStatic -WindowStyle Hidden
   Start-Sleep -Seconds 1
 } else {
   Write-Host "GEO static already on :5176"
@@ -87,7 +98,7 @@ if (-not (Test-Port 5176)) {
 if ($WithVue) {
   if (-not (Test-Port 5173)) {
     Write-Host "Starting Vue (vite) on :5173 ..."
-    Start-Process -FilePath "npm" -ArgumentList @("run","dev") -WorkingDirectory $Frontend -WindowStyle Minimized
+    Start-Process -FilePath "npm" -ArgumentList @("run","dev") -WorkingDirectory $Frontend -WindowStyle Hidden
     Start-Sleep -Seconds 4
   } else {
     Write-Host "Vue already on :5173"
@@ -97,7 +108,7 @@ if ($WithVue) {
 if ($WithDiagnosticCenter) {
   if (-not (Test-Port 5174)) {
     Write-Host "Starting diagnostic-center on :5174 ..."
-    Start-Process -FilePath "npm" -ArgumentList @("run","dev:diagnostic-center") -WorkingDirectory $Frontend -WindowStyle Minimized
+    Start-Process -FilePath "npm" -ArgumentList @("run","dev:diagnostic-center") -WorkingDirectory $Frontend -WindowStyle Hidden
   } else {
     Write-Host "diagnostic-center already on :5174"
   }

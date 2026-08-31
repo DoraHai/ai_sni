@@ -11,6 +11,16 @@ _NUM = re.compile(
 
 _STAT_UNITS = {"%", "％", "个", "人", "名", "家", "秒", "分钟", "小时", "天", "日", "万", "亿", "倍"}
 
+_STRUCTURAL_COUNT = re.compile(
+    r"(问题|要点|方面|步骤|部分|章节|维度|条件|建议|原因|场景|条目)"
+)
+
+_TERM_FAMILIES: tuple[tuple[str, ...], ...] = (
+    ("成功案例", "客户案例", "落地案例", "应用案例", "标杆项目"),
+    ("头部客户", "标杆客户", "合作客户"),
+    ("响应时间", "平均响应", "查询时间", "到场"),
+)
+
 _PERF_TERMS = (
     "识别率",
     "准确率",
@@ -24,6 +34,7 @@ _PERF_TERMS = (
     "响应时间",
     "平均响应",
     "秒级响应",
+    "查询时间",
     "毫秒",
 )
 
@@ -56,6 +67,26 @@ def number_token_allowed(val: str, allowed: set[str]) -> bool:
         return False
     allowed_n = {norm_stat_token(x) for x in allowed if str(x).strip()}
     return nv in allowed_n
+
+
+def _term_grounded(term: str, blob: str) -> bool:
+    if not term:
+        return False
+    if term in blob:
+        return True
+    for family in _TERM_FAMILIES:
+        if term in family and any(alias in blob for alias in family):
+            return True
+    return False
+
+
+def _is_structural_count(body: str, match: re.Match) -> bool:
+    """'8个要点 / 3个问题' is outline language, not a publishable stat."""
+    unit = match.group(2) or ""
+    if unit != "个":
+        return False
+    after = (body[match.end() : match.end() + 16] or "").lstrip()
+    return bool(_STRUCTURAL_COUNT.search(after))
 
 
 def _fact_blob(facts: list[dict[str, Any]]) -> str:
@@ -138,6 +169,8 @@ def ungrounded_claims(text: str, facts: list[dict[str, Any]]) -> list[dict[str, 
             continue
         if _is_calendar_token(num, unit):
             continue
+        if _is_structural_count(body, m):
+            continue
         # Same number+unit, ignoring spaces: 48小时 == 48 小时.
         # Do not treat bare "48" as covering "48%" / "48小时".
         if compact in allowed_n or (not unit and num in allowed_n):
@@ -146,11 +179,11 @@ def ungrounded_claims(text: str, facts: list[dict[str, Any]]) -> list[dict[str, 
         _add("number", compact or token, body[start : m.end() + 12].replace("\n", " "))
 
     for term in _PERF_TERMS:
-        if term in body and term not in blob:
+        if term in body and not _term_grounded(term, blob):
             _add("performance", term, term)
 
     for term in _CASE_TERMS:
-        if term in body and term not in blob:
+        if term in body and not _term_grounded(term, blob):
             _add("case", term, term)
 
     return hits

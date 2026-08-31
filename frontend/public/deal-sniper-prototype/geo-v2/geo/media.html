@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GEO · 媒体 / 信源策略</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand"><div class="logo">G</div><div>GEO 模块<small>生成式引擎优化</small></div></div>
+    <div class="nav-group">数据看板</div>
+    <a class="nav-item" href="dashboard.html"><span class="ico">📊</span> 概览</a>
+    <a class="nav-item" href="visibility.html"><span class="ico">✨</span> AI 可见度</a>
+    <div class="nav-group">智能监测</div>
+    <a class="nav-item" href="prompts.html"><span class="ico">💬</span> 提问监控</a>
+    <a class="nav-item" href="competitors.html"><span class="ico">⚔️</span> 竞品分析</a>
+    <a class="nav-item" href="evaluation.html"><span class="ico">😊</span> 评价分析</a>
+    <a class="nav-item" href="sources.html"><span class="ico">📚</span> 信源分析</a>
+    <div class="nav-group">GEO 执行</div>
+    <a class="nav-item" href="articles.html"><span class="ico">✍️</span> GEO 文章</a>
+    <a class="nav-item active" href="media.html"><span class="ico">🏛️</span> 媒体 / 信源策略</a>
+    <a class="nav-item" href="channels.html"><span class="ico">⇧</span> 分发平台（共享）</a>
+    <div class="nav-group">设置</div>
+    <a class="nav-item" href="engines.html"><span class="ico">🤖</span> AI 引擎管理</a>
+    <div class="spacer"></div>
+    <a class="nav-item" href="../content/audit.html"><span class="ico">🛠️</span> 诊断中心</a>
+    <a class="back-link" href="../hub/dashboard.html">⌂ 全域驾驶舱</a>
+    <a class="back-link" style="border-top:none;padding-top:0;" href="../index.html">← 平台门户</a>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div><h1>媒体 / 信源策略</h1><div class="sub">同一套媒体资源可被 SEO / GEO 共用，但 GEO 更看重权威、可引用和信任链</div></div>
+      <div class="right">
+        <input class="search" placeholder="搜索媒体 / 信源…">
+        <button class="btn">渠道库</button>
+        <button class="btn primary">+ 新增信源计划</button>
+        <div class="avatar">DZ</div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="grid cols-4" style="margin-bottom:16px;">
+        <div class="card stat"><div class="label">高权重信源</div><div class="value">18</div><div class="delta up">▲ 本月 +4</div></div>
+        <div class="card stat"><div class="label">AI 已引用媒体</div><div class="value">12</div><div class="delta up">Kimi 引用最多</div></div>
+        <div class="card stat"><div class="label">待补渠道</div><div class="value">7</div><div class="delta down">百科 / 知乎优先</div></div>
+        <div class="card stat"><div class="label">竞品占位信源</div><div class="value">5</div><div class="delta down">需替换叙事</div></div>
+      </div>
+
+      <div class="grid cols-3" style="margin-bottom:16px;">
+        <div class="card">
+          <div class="hd"><h3>官网可信底座</h3><span class="badge green">必做</span></div>
+          <div class="bd">
+            <ul class="checks">
+              <li>About 页面补品牌事实卡与更新时间</li>
+              <li>产品页增加结构化 FAQ 与适用场景</li>
+              <li>客户案例页补行业、规模、效果数据</li>
+            </ul>
+          </div>
+        </div>
+        <div class="card">
+          <div class="hd"><h3>高质量第三方</h3><span class="badge blue">拉权威</span></div>
+          <div class="bd">
+            <ul class="checks">
+              <li>行业媒体发布观点稿和案例稿</li>
+              <li>技术刊物发布方法论长文</li>
+              <li>知乎高质量回答覆盖对比类问题</li>
+            </ul>
+          </div>
+        </div>
+        <div class="card">
+          <div class="hd"><h3>百科与资料库</h3><span class="badge amber">纠偏</span></div>
+          <div class="bd">
+            <ul class="checks">
+              <li>补品牌词条、产品定义和核心事实</li>
+              <li>同步白皮书、帮助文档和公开报告</li>
+              <li>对错误引用来源做替代内容覆盖</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div class="hd"><h3>信源优先级矩阵</h3><span class="more">按 AI 引用偏好排序</span></div>
+        <div class="bd" style="padding:0;">
+          <table>
+            <thead><tr><th>信源</th><th>适合解决的问题</th><th>偏好 AI 引擎</th><th>当前状态</th><th>下一步动作</th></tr></thead>
+            <tbody>
+              <tr><td class="kw">官网 About / 产品页</td><td>品牌事实、产品定义、官网可信度</td><td>通义 / DeepSeek</td><td><span class="badge amber">结构不足</span></td><td>补事实卡、FAQ、更新时间</td></tr>
+              <tr><td class="kw">行业媒体</td><td>权威背书、品牌声量、竞品替代叙事</td><td>Kimi / 豆包</td><td><span class="badge amber">仅 3 篇</span></td><td>发布案例稿和观点稿</td></tr>
+              <tr><td class="kw">知乎 / 问答社区</td><td>推荐类、对比类、真实使用口碑</td><td>DeepSeek / 豆包</td><td><span class="badge red">缺高赞回答</span></td><td>铺设专业回答和第三方评价</td></tr>
+              <tr><td class="kw">百科 / 资料库</td><td>品牌基础事实、行业定义、纠错</td><td>豆包 / 通义</td><td><span class="badge red">未收录</span></td><td>建立词条和引用来源</td></tr>
+              <tr><td class="kw">技术刊物 / 白皮书</td><td>专业可信、深度观点、方法论引用</td><td>Kimi / DeepSeek</td><td><span class="badge green">可复用</span></td><td>拆成系列长文</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="grid cols-2">
+        <div class="card">
+          <div class="hd"><h3>发布计划</h3><a class="more" href="articles.html">匹配 GEO 文章 →</a></div>
+          <div class="bd">
+            <ul class="checks">
+              <li><span class="badge blue">本周</span> 数据分析平台选型长文发布官网 + 技术刊物</li>
+              <li><span class="badge amber">下周</span> 智能客服价格 FAQ 同步知乎与百科资料</li>
+              <li><span class="badge green">本月</span> 行业媒体发布 3 篇案例稿，覆盖 Kimi 偏好源</li>
+              <li><span class="badge gray">持续</span> 监测竞品占位来源并补替代内容</li>
+            </ul>
+          </div>
+        </div>
+        <div class="card">
+          <div class="hd"><h3>引用效果回流</h3><span class="badge blue">30 天观察</span></div>
+          <div class="bd">
+            <ul class="checks">
+              <li>行业媒体稿被 Kimi 引用 <b style="margin-left:auto;" class="rank-up">+7 次</b></li>
+              <li>官网事实卡纠正成立时间错误 <b style="margin-left:auto;" class="rank-up">已修正</b></li>
+              <li>知乎回答带来推荐类提及 <b style="margin-left:auto;" class="rank-up">顺位 #3</b></li>
+              <li>百科未收录仍影响豆包回答 <b style="margin-left:auto;" class="rank-down">待处理</b></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="assets/geo-sidebar-v1.js?rev=geo-nav-v10"></script>
+<script src="../shared/prototype-runtime-v2.js?rev=interactions-v9"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

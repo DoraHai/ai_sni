@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GEO · 文章在线编辑</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/geo-content-v1.css?rev=geo-editor-v7">
+</head>
+<body class="geo-content-page geo-editor-page" data-geo-page="editor">
+<div class="layout">
+  <aside class="sidebar"></aside>
+
+  <main class="main">
+    <header class="topbar geo-compose-topbar">
+      <a class="geo-editor-back" href="articles.html">‹ 返回</a>
+      <div class="geo-title-stack">
+        <div class="geo-title-row">
+          <input class="geo-editor-title-input" id="geoDocumentTitle" value="机器人外壳粘接胶怎么选？3M系列性价比外壳粘接方案详解" aria-label="文章标题">
+        </div>
+        <div class="sub geo-article-flow" id="geoEditorSub">
+          <span class="geo-flow-state done" id="geoFlowCreate">✓ 创建文章任务</span><i>→</i><span class="geo-flow-state active" id="geoFlowBrief">确定创作要求</span><i>→</i><span class="geo-flow-state" id="geoFlowDraft">生成母稿 V1</span><i class="geo-post-draft" hidden>→</i><span class="geo-flow-state geo-post-draft" id="geoFlowOptimize" hidden>GEO 优化</span><i class="geo-post-draft" hidden>→</i><span class="geo-flow-state geo-post-draft" id="geoFlowPublish" hidden>发布</span>
+          <em id="geoFlowSummary">品牌与知识库资料已就绪</em>
+        </div>
+      </div>
+      <div class="right">
+        <button class="btn" data-geo-action="copy-manual-content" data-target="geo-content">复制内容</button>
+        <button class="btn" data-geo-action="manual-publish" data-target="geo-content">手动发布</button>
+        <button class="btn" data-geo-action="publish" data-target="geo-content">自动发布</button>
+        <button class="btn primary" data-geo-action="save" data-target="geo-content">保存</button>
+      </div>
+    </header>
+
+    <div class="geo-editor-workspace geo-compose-workspace">
+      <aside class="geo-editor-side geo-score-sidebar" aria-label="GEO 智能辅助区">
+        <div class="geo-score-tabs" role="tablist" aria-label="GEO 优化面板">
+          <button class="active" data-geo-tab="brief" data-target="geo-content">创作要求</button>
+          <button class="is-disabled" aria-disabled="true" title="生成母稿后即可进行 GEO 评分" data-geo-tab="score" data-target="geo-content">GEO评分</button>
+          <button class="is-disabled" aria-disabled="true" title="生成母稿后即可查看优化建议" data-geo-tab="suggestions" data-target="geo-content">优化建议</button>
+          <button data-geo-tab="sources" data-target="geo-content">参考资料</button>
+        </div>
+        <div class="geo-tab-panel" data-geo-panel="score">
+          <section class="geo-score-card">
+            <div class="geo-score-card-head">
+              <h3>GEO内容评分</h3>
+              <span id="geoScoreLabel">良好</span>
+            </div>
+            <div class="geo-score-ring-summary">
+              <div class="geo-score-ring" style="--score:85%">
+                <strong id="citationScore">85</strong>
+                <span>分 · 良好</span>
+              </div>
+              <div class="geo-score-copy">
+                <b>可以发布</b>
+                <small>仍有 <strong class="geo-inline-number">3 项</strong>内容可能影响 AI 引用或品牌推荐。</small>
+                <div class="geo-score-meter" aria-label="GEO内容评分 85%">
+                  <span style="width:85%"></span>
+                </div>
+              </div>
+            </div>
+            <div class="geo-score-delta" id="geoScoreDelta" hidden><span>V1&nbsp; 85分</span><i>→</i><b>V2&nbsp; 93分</b><em>↑ 8</em></div>
+            <div class="geo-score-highlights">
+              <div><b>3</b><span>可摘取块</span></div>
+              <div><b>8</b><span>事实项</span></div>
+              <div><b>3</b><span>可信来源</span></div>
+            </div>
+          </section>
+          <section class="geo-score-detail">
+            <div class="geo-section-heading"><h3>评分明细</h3><small>点击低分项查看问题</small></div>
+            <button class="geo-metric-row"><span>可读性</span><i><em style="width:88%"></em></i><b>88</b></button>
+            <button class="geo-metric-row"><span>内容结构</span><i><em style="width:86%"></em></i><b>86</b></button>
+            <button class="geo-metric-row issue" data-geo-open-suggestion="extract"><span>可摘取性</span><i><em style="width:76%"></em></i><b>76</b><small>2个问题</small></button>
+            <button class="geo-metric-row issue" data-geo-open-suggestion="evidence"><span>事实支撑</span><i><em style="width:68%"></em></i><b id="trustScore">68</b><small>1个问题</small></button>
+            <button class="geo-metric-row"><span>来源可信度</span><i><em style="width:84%"></em></i><b>84</b></button>
+            <button class="geo-metric-row issue" data-geo-open-suggestion="brand"><span>品牌推荐度</span><i><em style="width:82%"></em></i><b>82</b><small>1个问题</small></button>
+            <button class="geo-metric-row"><span>问题覆盖度</span><i><em style="width:90%"></em></i><b>90</b></button>
+            <button class="geo-metric-row"><span>搜索可见性</span><i><em style="width:84%"></em></i><b>84</b></button>
+          </section>
+        </div>
+        <div class="geo-tab-panel" data-geo-panel="suggestions">
+          <section class="geo-side-section geo-suggestion-panel">
+            <div class="geo-section-heading"><div><h3>优化建议 <span class="geo-count-badge">3</span></h3><small>基于当前 V1 评分生成</small></div><button class="geo-mini-primary" data-geo-action="ai-optimize-all" data-target="geo-content">一键优化全部</button></div>
+            <div class="geo-issue-list">
+              <article class="geo-issue-card" data-suggestion-id="evidence"><div class="geo-issue-head"><span class="amber">事实支撑</span><em>影响较高</em></div><h4>缺少事实支撑</h4><blockquote>“3M VHB胶带是机器人外壳粘接的性价比之选”</blockquote><p>当前缺少可信来源支撑。建议补充产品技术资料或第三方依据。</p><button data-geo-action="ai-evidence" data-target="geo-content"><span>✦</span> AI 优化此处</button></article>
+              <article class="geo-issue-card" data-suggestion-id="brand"><div class="geo-issue-head"><span class="blue">品牌推荐</span><em>建议优化</em></div><h4>推荐理由不够明确</h4><p>AI 很难提取“为什么推荐 3M”。建议补充适用场景、核心优势、与传统方案差异和选择条件。</p><button data-geo-action="ai-brand-reason" data-target="geo-content"><span>✦</span> AI 优化此处</button></article>
+              <article class="geo-issue-card" data-suggestion-id="extract"><div class="geo-issue-head"><span class="teal">可摘取性</span><em>可提升 4 分</em></div><h4>首段缺少直接答案</h4><p>建议在前 80 字给出选型条件与方案边界，便于 AI 直接引用。</p><button data-geo-action="ai-definition" data-target="geo-content"><span>✦</span> AI 优化此处</button></article>
+            </div>
+            <div class="geo-ai-message" id="geoAssistantMessage">AI 优化会创建新版本，不会覆盖当前内容。</div>
+          </section>
+        </div>
+        <div class="geo-tab-panel active" data-geo-panel="brief">
+          <section class="geo-side-section geo-brief-panel">
+            <div class="geo-panel-eyebrow">我告诉 AI 要写什么</div>
+            <h3>确定创作要求</h3>
+            <p class="geo-panel-intro">这里是本篇创作要求的唯一编辑入口。</p>
+            <label class="geo-field-label" for="geoCoreQuestion">目标 AI 提问</label>
+            <select class="geo-question-select" id="geoCoreQuestion" aria-label="选择已维护的 AI 提问">
+              <option value="机器人外壳粘接胶怎么选？" selected>机器人外壳粘接胶怎么选？</option>
+              <option value="机器人外壳用胶还是螺丝固定？">机器人外壳用胶还是螺丝固定？</option>
+              <option value="3M VHB 适合机器人外壳吗？">3M VHB 适合机器人外壳吗？</option>
+              <option value="机器人外壳粘接如何兼顾密封和防震？">机器人外壳粘接如何兼顾密封和防震？</option>
+              <option value="机器人外壳粘接量产前需要验证什么？">机器人外壳粘接量产前需要验证什么？</option>
+            </select>
+            <p class="geo-question-helper">选择本文希望重点覆盖并提升 AI 可见性的提问。</p>
+            <label class="geo-field-label" for="geoRecommendProduct">重点推荐 <small>选填</small></label>
+            <input class="geo-recommend-input" id="geoRecommendProduct" value="3M VHB 胶带" placeholder="输入希望本文重点推荐的品牌、产品或解决方案">
+            <label class="geo-field-label" for="geoBriefRequirement">补充要求</label>
+            <textarea class="geo-brief-textarea" id="geoBriefRequirement" placeholder="例如：强调外观完整性、密封、防震和安装效率……">强调外观完整性、密封、防震和安装效率，与传统螺丝、卡扣等机械锁固方案进行比较，不要写成明显广告软文。</textarea>
+            <div class="geo-auto-context"><div><span>✦</span><b>已自动应用品牌信息</b></div><p>3M｜工业粘接解决方案｜B2B｜中国市场</p><a href="brand.html">查看品牌资料 →</a></div>
+            <button class="geo-regenerate" id="geoRegenerateButton" data-geo-action="regenerate-draft" data-target="geo-content" hidden>重新生成母稿</button>
+            <small class="geo-version-note" id="geoRegenerateNote" hidden>重新生成将创建新的文章版本，不会覆盖当前版本。</small>
+          </section>
+        </div>
+        <div class="geo-tab-panel" data-geo-panel="sources">
+          <section class="geo-side-section geo-sources-panel">
+            <div class="geo-sources-summary"><div><span>✓</span><b>本篇已匹配 5 条参考资料</b></div><small>系统基于问题与推荐产品自动匹配</small></div>
+            <div class="geo-source-group"><h4>品牌资料 <span>1</span></h4><article><i>✓</i><div><b>3M 品牌介绍</b><small>品牌资料 · 用于正文</small></div><button>查看原文</button></article></div>
+            <div class="geo-source-group"><h4>产品资料 <span>2</span></h4><article data-geo-trusted-source><i>✓</i><div><b>3M VHB 产品说明</b><small>产品手册 · 用于正文</small></div><button>查看原文</button></article><article><i>✓</i><div><b>机器人外壳粘接解决方案</b><small>知识库 · 用于正文</small></div><button>查看原文</button></article></div>
+            <div class="geo-source-group"><h4>外部可信来源 <span>2</span></h4><article data-geo-trusted-source><i>✓</i><div><b>工业粘接技术资料</b><small>行业资料 · 用于正文</small></div><button>查看原文</button></article><article data-geo-trusted-source><i>✓</i><div><b>第三方装配工艺研究</b><small>专业资料 · 作为事实依据</small></div><button>查看原文</button></article></div>
+            <button class="geo-add-source" data-geo-action="add-evidence" data-target="geo-content">＋ 添加参考资料</button>
+            <p class="geo-source-hint">AI 生成和优化文章时，将优先依据这些资料，降低事实错误和无来源内容。</p>
+          </section>
+        </div>
+      </aside>
+
+      <section class="geo-editor-center geo-compose-center" aria-label="GEO 文章编辑器">
+        <div class="geo-generation-stage" id="geoGenerationStage">
+          <div class="geo-generation-card">
+            <div class="geo-generation-hero">
+              <div class="geo-ai-orb" aria-hidden="true"><span>✦</span></div>
+              <span class="geo-kicker">AI 对本篇文章任务的理解结果</span>
+              <h1 id="geoGenerationTitle">母稿生成准备完成</h1>
+              <p id="geoGenerationSubtitle">AI 已理解本篇创作任务，并完成品牌信息、知识库、可信来源及目标问题匹配。</p>
+            </div>
+            <div class="geo-generation-body" id="geoGenerationReady">
+              <section class="geo-task-summary">
+                <div class="geo-task-summary-head"><div><span>创作任务摘要</span><small>以下内容来自左侧「创作要求」</small></div><button data-geo-switch-tab="brief">修改创作要求</button></div>
+                <div class="geo-task-summary-grid">
+                  <div class="wide"><label>目标 AI 提问</label><b id="geoSummaryQuestion">机器人外壳粘接胶怎么选？</b></div>
+                  <div class="wide"><label>重点推荐</label><b id="geoSummaryRecommend">3M VHB 胶带</b></div>
+                  <div class="wide"><label>创作要求</label><p id="geoSummaryRequirement">突出外观完整性、密封、防震和安装效率，并与传统机械锁固方案进行比较，避免过度营销。</p></div>
+                </div>
+              </section>
+              <section class="geo-generation-section geo-ready-section"><label>系统已准备 <small>点击查看 AI 将使用的内容</small></label><div class="geo-ready-tags"><button data-geo-ready-action="brand">✓ 品牌资料</button><button data-geo-ready-action="knowledge">✓ 知识库</button><button id="geoProductMaterialTag" data-geo-ready-action="product">✓ 产品资料 2</button><button data-geo-ready-action="sources">✓ 可信来源 3</button><button data-geo-ready-action="questions">✓ 目标问题 5</button></div></section>
+              <div class="geo-generation-result-hint">预计约 2,000 字 <i>·</i> 覆盖 5 个目标问题 <i>·</i> 使用 3 个可信来源</div>
+              <div class="geo-generation-actions geo-generation-actions-primary"><div><span>✦</span><small>基于品牌信息、知识库、可信来源、GEO目标问题与本篇要求创作</small></div><button class="geo-generate-primary" data-geo-action="generate-draft" data-target="geo-content"><span>✦</span> AI 生成母稿 <i>→</i></button></div>
+            </div>
+            <div class="geo-generation-progress" id="geoGenerationProgress" hidden>
+              <div class="geo-progress-header"><span class="geo-progress-spinner">✦</span><div><b>正在生成母稿……</b><small>系统正在依据已确认的创作要求组织内容</small></div><em id="geoProgressPercent">0%</em></div>
+              <div class="geo-draft-progress-bar"><span id="geoDraftProgressBar"></span></div>
+              <ol class="geo-generation-steps">
+                <li class="active">正在整理目标问题</li>
+                <li>正在读取可信资料</li>
+                <li>正在组织文章结构</li>
+                <li>正在生成正文</li>
+                <li>正在进行初步 GEO 检查</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+        <div class="geo-editing-stage" id="geoEditingStage" hidden>
+          <div class="geo-version-bar">
+            <div><span class="geo-live-dot"></span><b id="geoCurrentVersionLabel">母稿 V1</b><small id="geoVersionMeta">AI 初稿 · 约 2,036 字 · 覆盖 5 个目标问题 · 引用 3 个可信来源</small></div>
+            <div class="geo-version-switcher"><span>版本</span><button class="selected" data-geo-version="1">V1 <small>85分</small></button><i>→</i><button data-geo-version="2">V2 <small>93分</small></button><i>→</i><button data-geo-version="3">V3</button><button class="geo-history-btn" data-geo-action="version-history" data-target="geo-content">⌄</button></div>
+          </div>
+        <div class="geo-cover-panel" aria-label="封面图">
+          <span>封面图</span>
+          <button class="geo-cover-upload" data-geo-action="add-evidence" data-target="geo-content">+<small>上传图片</small></button>
+          <div class="geo-cover-thumb"><span>3M</span></div>
+        </div>
+        <div class="geo-document geo-compose-document">
+          <div class="geo-toolbar geo-compose-toolbar" role="toolbar" aria-label="文本格式">
+            <button class="geo-tool" title="撤销" data-geo-command="undo" data-target="geo-content"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14H5v-4"/><path d="M5 10a7 7 0 1 1 2 5"/></svg></button>
+            <button class="geo-tool" title="重做" data-geo-command="redo" data-target="geo-content"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14h4v-4"/><path d="M19 10a7 7 0 1 0-2 5"/></svg></button>
+            <span class="geo-tool-sep"></span>
+            <label class="geo-block-wrap">
+              <select class="geo-block-select" id="geoBlockType" aria-label="块类型">
+                <option value="" selected>块类型</option>
+                <option value="p">正文</option>
+                <option value="h2">二级标题</option>
+                <option value="h3">三级标题</option>
+                <option value="blockquote">引用块</option>
+              </select>
+            </label>
+            <button class="geo-tool" title="粗体" data-geo-command="bold" data-target="geo-content"><b>B</b></button>
+            <button class="geo-tool" title="斜体" data-geo-command="italic" data-target="geo-content"><i>I</i></button>
+            <button class="geo-tool" title="下划线" data-geo-command="underline" data-target="geo-content"><span class="geo-tool-u">U</span></button>
+            <button class="geo-tool" title="无序列表" data-geo-command="insertUnorderedList" data-target="geo-content"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="6" cy="7" r="1.2" fill="currentColor"/><circle cx="6" cy="12" r="1.2" fill="currentColor"/><circle cx="6" cy="17" r="1.2" fill="currentColor"/><path d="M10 7h10M10 12h10M10 17h10"/></svg></button>
+            <button class="geo-tool" title="有序列表" data-geo-command="insertOrderedList" data-target="geo-content"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 7h10M10 12h10M10 17h10"/><path d="M5 6.2v3M5 6.2H3.8M4.2 9.2h1.6M3.8 15.2h2.2L3.8 18h2.4" stroke-linejoin="round"/></svg></button>
+            <button class="geo-tool" title="插入表格" data-geo-action="insert-table" data-target="geo-content"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="5" width="16" height="14" rx="1.5"/><path d="M4 10h16M4 15h16M10 5v14M16 5v14"/></svg></button>
+            <button class="geo-tool" title="插入图片" data-geo-action="add-evidence" data-target="geo-content"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.4"/><path d="M8 16l3.2-3.2a1 1 0 0 1 1.3 0L20 17"/></svg></button>
+            <button class="geo-tool geo-tool-md" title="Markdown" data-geo-action="toggle-markdown" data-target="geo-content">Md</button>
+          </div>
+          <div class="geo-document-scroll">
+            <article class="geo-article-editor" id="geoArticleEditor" contenteditable="true">
+              <p>从舞台表演人形机器人、工厂自动化工业机械手，到微创医疗辅助机器人、深空探测特种机器人，各类智能机器人现已渗透各行各业，成为智能制造、智能服务领域的核心设备。一台机器人能否稳定长效运行，外壳拼接粘接工艺是核心关键点。螺丝、卡扣等传统装配方式易造成壳体应力开裂、外观缝隙明显，而高性能胶粘剂能够兼顾结构强度、外观完整性与内部元器件防护。</p>
+              <p>市面上粘接产品品类繁杂，如何挑选适配机器人外壳、成本可控、性能达标的粘接材料？本文结合3M成熟配套粘接产品，分场景拆解高性价比粘接方案，覆盖常规塑料壳体、硅胶仿真外壳两大主流需求。</p>
+              <h2>3M粘接方案：兼顾外壳外观密封性与内部元器件防护</h2>
+              <p>机器人外壳不只是装饰外观件，更是隔绝水汽、粉尘、缓冲震动，保护内部电路板、电机等精密零件的防护屏障。对比传统机械锁固工艺，胶粘工艺应力分布均匀，可减轻整机自重，还能轻松完成异种材质无缝拼接，适配各类异形曲面壳体装配。</p>
+              <h2>1. 3M VHB胶带：通用外壳粘接性价比之选</h2>
+              <p>3M VHB胶带是机器人外壳粘接的性价比之选，也是3M针对机器人外壳粘接的推荐方案。可以实现粘接、密封、减震三合一的整体解决方案，适配机器人外壳粘接应用的核心需求。该系列胶带能够将不同材质的面板牢固粘接，同时避免钻孔带来的结构损伤。</p>
+              <h3>核心优势：</h3>
+              <p>全丙烯酸闭孔泡棉结构，兼具高强度与高韧性；耐候、耐老化表现稳定，适合机器人长期在复杂环境中工作；胶粘连接实现无缝外观，让机器人看起来更美观智能。</p>
+              <h2>2. 硅胶仿真外壳：柔性材料粘接方案</h2>
+              <p>对于服务机器人、陪伴机器人等柔性仿真外壳，需要同时考虑触感、耐弯折和长期粘接稳定性。建议优先验证材料表面能、涂层兼容性和实际弯折频次，再确定底涂与胶带组合。</p>
+            </article>
+            <textarea class="geo-markdown-editor" id="geoMarkdownEditor" hidden aria-label="Markdown 编辑"></textarea>
+          </div>
+          <footer class="geo-document-status">
+            <span id="geoWordCount">1,268 字</span><span>事实 8 项</span><span id="sourceCount">信源 3 个</span><span>可摘取块 3 个</span><span id="geoVersion">版本 V1</span>
+          </footer>
+        </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<div class="geo-overlay" id="geoPreviewOverlay" role="dialog" aria-modal="true" aria-labelledby="geoPreviewTitle">
+  <div class="geo-dialog wide">
+    <div class="geo-dialog-head"><div><h2 id="geoPreviewTitle">GEO 文章预览</h2><p>包含作者、更新时间、事实来源和结构化正文</p></div><button class="geo-dialog-close" data-geo-action="close-overlay" data-target="geo-content" aria-label="关闭">×</button></div>
+    <div class="geo-dialog-body"><div class="geo-preview-paper" id="geoPreviewPaper"></div></div>
+    <div class="geo-dialog-foot"><button class="btn" data-geo-action="close-overlay" data-target="geo-content">返回编辑</button><button class="btn primary" data-geo-action="preview-publish" data-target="geo-content">选择信源并发布</button></div>
+  </div>
+</div>
+
+<div class="geo-overlay" id="geoPublishOverlay" role="dialog" aria-modal="true" aria-labelledby="geoPublishTitle">
+  <div class="geo-dialog wide">
+    <div class="geo-dialog-head"><div><h2 id="geoPublishTitle">自动发布</h2><p>选择已对接信源，系统按平台规范提交；未对接渠道请改用「手动发布」并回填网址</p></div><button class="geo-dialog-close" data-geo-action="close-overlay" data-target="geo-content" aria-label="关闭">×</button></div>
+    <div class="geo-dialog-body">
+      <div id="geoPublishSelection">
+        <div class="geo-publish-mode-guide">
+          <span><b>已对接平台</b> 可直接勾选并提交</span>
+          <span><b>未对接平台</b> 关闭此弹层，使用「手动发布」回填公开网址</span>
+        </div>
+        <div class="geo-publish-platforms" id="geoPublishPlatforms"></div>
+        <div class="geo-publish-options">
+          <div class="geo-option-panel"><h4>发布时间</h4><label class="geo-option-line"><input type="radio" name="geo-publish-time" checked> 审核后立即发布</label><label class="geo-option-line"><input type="radio" name="geo-publish-time"> 定时发布 <input class="geo-input" type="datetime-local" style="width:180px;margin-left:auto;"></label></div>
+          <div class="geo-option-panel"><h4>GEO 适配规则</h4><label class="geo-option-line"><input type="checkbox" checked> 保留作者、更新时间和事实来源</label><label class="geo-option-line"><input type="checkbox" checked> 自动生成平台摘要与引用块</label><label class="geo-option-line"><input type="checkbox" checked> 官网首发并标注 canonical</label></div>
+        </div>
+      </div>
+      <div class="geo-publish-progress" id="geoPublishProgress"><div class="geo-ai-message success" style="margin:0 0 12px;">正在按信源权重与平台规范生成发布版本。</div><div id="geoProgressRows"></div></div>
+    </div>
+    <div class="geo-dialog-foot"><a class="btn" href="channels.html">维护共享平台</a><button class="btn" data-geo-action="close-overlay" data-target="geo-content">取消</button><button class="btn primary" id="geoConfirmPublish" data-geo-action="confirm-publish" data-target="geo-content">发布到已选信源</button></div>
+  </div>
+</div>
+
+<div class="geo-overlay" id="geoManualPublishOverlay" role="dialog" aria-modal="true" aria-labelledby="geoManualPublishTitle">
+  <div class="geo-dialog geo-manual-publish-dialog">
+    <div class="geo-dialog-head"><div><h2 id="geoManualPublishTitle">手动发布</h2><p>复制内容到平台发布后，回填公开网址。系统只记录结果，不会触发自动发布</p></div><button class="geo-dialog-close" data-geo-action="close-manual-publish" data-target="geo-content" aria-label="关闭">×</button></div>
+    <div class="geo-dialog-body">
+      <div class="manual-publish-steps" aria-label="手动发布步骤">
+        <span><b>1</b><em>复制文章内容</em></span>
+        <span><b>2</b><em>前往平台发布</em></span>
+        <span><b>3</b><em>回填公开链接</em></span>
+      </div>
+      <div class="manual-copy-row">
+        <div><strong id="geoManualPublishPlatform">目标平台</strong><small id="geoManualPublishAccount">发布账号</small></div>
+        <button class="btn" data-geo-action="copy-manual-content" data-target="geo-content">复制文章内容</button>
+      </div>
+      <div class="manual-link-field">
+        <label for="geoManualChannelSelect">发布平台 *</label>
+        <select id="geoManualChannelSelect" class="geo-select"></select>
+        <small>选择实际发布的平台，保存时会一并记录回填网址。</small>
+      </div>
+      <div class="manual-link-field manual-media-field" id="geoManualMediaField" style="display:none;">
+        <label for="geoManualMediaPlatform">发布媒体平台 *</label>
+        <input id="geoManualMediaPlatform" list="geoManualMediaOptions" placeholder="选择或输入新闻媒体平台，例如：腾讯新闻、网易新闻、36氪">
+        <datalist id="geoManualMediaOptions"></datalist>
+        <small>可从常见新闻平台中选择；列表没有时直接输入，保存后会加入候选。</small>
+      </div>
+      <div class="manual-link-field">
+        <label for="geoManualPublishUrl">发布链接 *</label>
+        <input id="geoManualPublishUrl" type="url" inputmode="url" placeholder="https://请输入实际发布后的文章网址">
+        <small>发布完成后粘贴公开网址，系统将用它追踪抓取、AI 引用与信源表现。</small>
+        <p id="geoManualPublishSaved" class="manual-saved-note" style="display:none;"></p>
+      </div>
+    </div>
+    <div class="geo-dialog-foot"><button class="btn danger-quiet" id="geoRemoveManualPublish" data-geo-action="remove-manual-publish" data-target="geo-content" style="display:none;">移除回填</button><button class="btn" data-geo-action="close-manual-publish" data-target="geo-content">取消</button><button class="btn primary" data-geo-action="save-manual-publish" data-target="geo-content">保存发布链接</button></div>
+  </div>
+</div>
+
+<script src="assets/geo-facts-v1.js?rev=facts-v1"></script>
+<script src="assets/geo-content-v1.js?rev=geo-editor-v7"></script>
+<script src="assets/geo-sidebar-v1.js?rev=geo-nav-v10"></script>
+<script src="../shared/prototype-runtime-v2.js?rev=interactions-v9"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

@@ -135,41 +135,61 @@ def rewrite_short_form(
 def rewrite_wechat_form(
     body_md: str, outline: dict[str, Any] | None = None, *, profile: ChannelProfile
 ) -> str:
-    """公众号：比知乎略长，保留定义与结论，来源改文末说明。"""
+    """公众号成稿：保留母稿全文，来源改为文末参考说明。"""
+    return assemble_channel_article(body_md, outline, profile=profile)
+
+
+def _strip_leading_h1(body: str) -> str:
+    return re.sub(r"^#\s+[^\n]+\n+", "", (body or "").lstrip(), count=1)
+
+
+def _replace_faq_section(body: str, limit: int) -> str:
+    trimmed = _extract_faq_block(body, limit=limit)
+    if not trimmed:
+        return body
+    if re.search(r"(?im)^##\s*常见问题", body):
+        trimmed = trimmed.replace("## FAQ", "## 常见问题", 1)
+    replaced, n = re.subn(
+        r"(?is)##\s*(?:FAQ|常见问题)\s*\n.*?(?=\n##\s|\Z)",
+        trimmed.rstrip() + "\n\n",
+        body,
+        count=1,
+    )
+    return replaced if n else body
+
+
+def assemble_channel_article(
+    body_md: str,
+    outline: dict[str, Any] | None = None,
+    *,
+    profile: ChannelProfile,
+) -> str:
+    """把母稿装配成可复制的渠道成稿（全文，不是抽三段提纲）。"""
     outline = outline or {}
-    parts: list[str] = []
+    body = _strip_leading_h1(body_md or "").strip()
     direct = _direct_answer(body_md, outline)
     if direct:
-        parts.extend([direct, ""])
+        head = body[:360]
+        if direct not in head:
+            body = f"{direct}\n\n{body}".strip()
 
-    definition = _extract_section(body_md, r"定义|是什么|简介")
-    if definition:
-        parts.extend(definition.splitlines()[:12])
-        parts.append("")
+    if profile.faq_limit:
+        body = _replace_faq_section(body, profile.faq_limit)
 
-    # keep a short middle section if present
-    compare = _extract_section(body_md, r"对比|怎么选|选型|适用场景")
-    if compare:
-        lines = compare.splitlines()
-        parts.extend(lines[:10])
-        parts.append("")
-
-    faq = _extract_faq_block(body_md, limit=profile.faq_limit)
-    if faq:
-        parts.append(faq)
-
-    conclusion = _extract_section(body_md, r"结论|总结|一句话结论")
-    if conclusion:
-        parts.append(conclusion)
-
-    src = _sources_block(body_md, wechat_style=True)
-    if src:
-        parts.append(src)
+    if profile.mode == "wechat" or profile.key == "wechat":
+        body = re.sub(r"(?is)##\s*来源\s*\n.*?(?=\n##\s|\Z)", "", body).strip()
+        src = _sources_block(body_md, wechat_style=True)
+        if src:
+            body = f"{body.rstrip()}\n\n{src.strip()}".strip()
+    elif profile.keep_sources and "## 来源" not in body and "## 参考说明" not in body:
+        src = _sources_block(body_md, wechat_style=False)
+        if src:
+            body = f"{body.rstrip()}\n\n{src.strip()}".strip()
 
     updated = _updated_line(body_md, outline)
-    if updated:
-        parts.append(updated)
-    return "\n".join(parts).strip() + "\n"
+    if updated and "更新时间" not in body:
+        body = f"{body.rstrip()}\n\n{updated}".strip()
+    return body.strip() + "\n"
 
 
 def adapt_for_channel(
@@ -179,12 +199,13 @@ def adapt_for_channel(
     if profile is None:
         raise GeoContentError(f"不支持的渠道: {channel}")
     outline = outline or {}
-    if profile.mode == "full":
-        out_title = shorten_title(title, profile.title_max)
-        return out_title, body_md
     out_title = shorten_title(title, profile.title_max)
-    if profile.mode == "wechat":
-        return out_title, rewrite_wechat_form(body_md, outline, profile=profile)
+    if profile.mode == "full":
+        body = (body_md or "").strip()
+        return out_title, body + ("\n" if body else "")
+    # 公众号 / 知乎等「必须渠道」出全文成稿；信息流短渠道仍压缩。
+    if profile.mode == "wechat" or profile.keep_definition:
+        return out_title, assemble_channel_article(body_md, outline, profile=profile)
     return out_title, rewrite_short_form(body_md, outline, profile=profile)
 
 
@@ -205,7 +226,7 @@ def build_adapt_meta(
             dropped.append("definition")
         if profile.faq_limit < 8:
             dropped.append(f"faq_trimmed_to_{profile.faq_limit}")
-        if profile.mode == "short":
+        if profile.mode == "short" and not profile.keep_definition:
             dropped.append("long_body_sections")
         if profile.key == "wechat":
             dropped.append("clickable_external_links")

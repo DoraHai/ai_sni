@@ -50,6 +50,17 @@ python scripts/seed_geo_demo.py
 python -c "from dotenv import load_dotenv; load_dotenv(); import uvicorn; uvicorn.run('app.main:app', host='127.0.0.1', port=8000, reload=True)"
 ```
 
+如果本地网络访问外部官网需要代理，请在启动 API 前显式提供代理地址；扫描和 sitemap 请求会继承该设置：
+
+```powershell
+$env:GEO_SCAN_PROXY = 'http://127.0.0.1:7897'
+$env:HTTP_PROXY = $env:GEO_SCAN_PROXY
+$env:HTTPS_PROXY = $env:GEO_SCAN_PROXY
+python -c "from dotenv import load_dotenv; load_dotenv(); import uvicorn; uvicorn.run('app.main:app', host='127.0.0.1', port=8000, reload=True)"
+```
+
+使用 `scripts/start_local_geo_demo.ps1` 时可直接传入 `-GeoScanProxy http://127.0.0.1:7897`；不传则保持直连。
+
 也可以只起独立 GEO API（不带 SEM 调度）：
 
 ```powershell
@@ -90,7 +101,7 @@ npm run dev
 | GEO 概览 | `/geo/overview` |
 | AI 可见度 | `/geo/visibility` |
 | 采集与判断 | `/geo/visibility/snapshots` |
-| 优化意图词 | `/geo/questions` |
+| AI 提问管理（提问监控） | `/geo/questions` |
 | 竞品分析 | `/geo/competitors` |
 | AI 引用次数 | `/geo/citations` |
 | 知识库 | `/geo/knowledge` |
@@ -103,7 +114,7 @@ npm run dev
 | 渠道成稿提示词 | `/geo/channel-polish-prompts` |
 | 引擎（含巡检定时写入口） | `/geo/models` |
 
-旧入口仍保留重定向，例如 `/geo/businesses` → `/geo/brand`，`/geo/deliverables` → `/geo/overview`，`/geo/engines` → `/geo/models`。只读分享仍是 `/geo/deliverables/share/:token`。
+旧入口仍保留重定向，例如 `/geo/businesses` → `/geo/brand`，`/geo/units` 与 `/geo/keywords` → `/geo/questions?layer=keyword`，`/geo/deliverables` → `/geo/overview`，`/geo/engines` → `/geo/models`。只读分享仍是 `/geo/deliverables/share/:token`。
 
 ## 7. 机器验收
 

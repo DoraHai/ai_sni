@@ -79,7 +79,7 @@ client.interceptors.response.use(
       (status === 503
         ? '数据库连不上。请先打开 Docker Desktop 并启动 Postgres，然后刷新。'
         : status === 500
-          ? '服务内部错误。若刚打开页面就失败，多半是数据库未启动。'
+          ? '服务出错，请稍后重试'
           : error.message ||
             '网络异常，请稍后重试')
     return Promise.reject(new Error(detail))

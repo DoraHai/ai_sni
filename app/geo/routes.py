@@ -21,7 +21,13 @@ from app.geo.verify import (
     materialize_ticket_specs,
     ticket_public_dict,
 )
-from app.models import GeoActionTicket, GeoAuditRun, GeoMediaPlacement, Tenant
+from app.models import (
+    GeoActionTicket,
+    GeoAuditRun,
+    GeoMediaPlacement,
+    GeoOptimizationBusiness,
+    Tenant,
+)
 from app.security.auth import AuthContext, require_scoped_auth
 
 router = APIRouter(
@@ -278,6 +284,150 @@ async def create_assets(
     await session.commit()
     await session.refresh(run)
     return _payload(run)
+
+
+def _business_website(row: GeoOptimizationBusiness | None) -> str:
+    if row is None:
+        return ""
+    profile = row.profile or {}
+    return str(
+        profile.get("website") or profile.get("website_url") or profile.get("official_url") or ""
+    ).strip()
+
+
+def _norm_site(url: str) -> str:
+    return url.strip().rstrip("/").lower()
+
+
+def pick_business_for_website(
+    rows: list[GeoOptimizationBusiness],
+    website_url: str | None,
+) -> GeoOptimizationBusiness | None:
+    """Prefer the business whose brand website matches the scan URL."""
+    if not rows:
+        return None
+    want = _norm_site(website_url or "")
+    if want:
+        for row in rows:
+            got = _norm_site(_business_website(row))
+            if got and got == want:
+                return row
+    for row in rows:
+        if _business_website(row):
+            return row
+    return rows[0]
+
+
+def _brand_from_business(row: GeoOptimizationBusiness | None) -> dict[str, str]:
+    profile = (row.profile if row else None) or {}
+    name = str(profile.get("product_name") or (row.name if row else "") or "").strip()
+    website = str(
+        profile.get("website") or profile.get("website_url") or profile.get("official_url") or ""
+    ).strip()
+    summary = str(profile.get("summary") or (row.description if row else "") or "").strip()
+    return {"name": name, "website": website, "summary": summary}
+
+
+def _structure_payload(run: GeoAuditRun) -> dict[str, Any]:
+    snap = run.snapshot or {}
+    report = dict(snap.get("structure") or snap)
+    report["audit_id"] = run.id
+    report["scanned_at"] = run.created_at.isoformat() if run.created_at else None
+    report["website"] = report.get("website") or run.url
+    return report
+
+
+@router.get("/structure-scan/latest")
+async def latest_structure_scan(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    rows = (
+        await session.scalars(
+            select(GeoAuditRun)
+            .where(GeoAuditRun.tenant_id == tenant_id)
+            .order_by(GeoAuditRun.created_at.desc(), GeoAuditRun.id.desc())
+            .limit(30)
+        )
+    ).all()
+    run = next(
+        (r for r in rows if (r.snapshot or {}).get("kind") == "website_structure"),
+        None,
+    )
+    return {"report": _structure_payload(run) if run else None}
+
+
+@router.post("/structure-scan")
+async def run_structure_scan(
+    tenant_id: int = Query(...),
+    website_url: str | None = Query(None),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    tenant = await session.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(404, "客户不存在")
+    rows = list(
+        await session.scalars(
+            select(GeoOptimizationBusiness)
+            .where(
+                GeoOptimizationBusiness.tenant_id == tenant_id,
+                GeoOptimizationBusiness.status == "active",
+            )
+            .order_by(GeoOptimizationBusiness.sort_order.asc(), GeoOptimizationBusiness.id.asc())
+        )
+    )
+    biz = pick_business_for_website(rows, website_url)
+    brand_info = _brand_from_business(biz)
+    site = (website_url or brand_info["website"] or "").strip()
+    if not site:
+        raise HTTPException(400, "请先在品牌信息中填写官网")
+    from app.geo.structure_scan import scan_website
+    from app.urlwords import UrlFetchError, validate_url
+
+    try:
+        site = validate_url(site)
+    except UrlFetchError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    brand = brand_info["name"] or (tenant.name if tenant else "")
+    try:
+        report = await scan_website(site, brand=brand, summary=brand_info["summary"])
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"扫描失败：{exc}") from exc
+    findings = [
+        {
+            "code": f"structure_{i}",
+            "title": item.get("title"),
+            "passed": False,
+            "severity": "high" if item.get("pri") == "P1" else "medium",
+            "recommendation": item.get("detail"),
+        }
+        for i, item in enumerate(report.get("issues") or [])
+    ]
+    run = GeoAuditRun(
+        tenant_id=tenant_id,
+        url=site,
+        final_url=site,
+        status="completed",
+        score=report.get("score"),
+        page_title="官网结构扫描",
+        page_description=report.get("insight"),
+        snapshot=report,
+        findings=findings,
+        json_ld=generate_json_ld(
+            tenant_name=brand or site,
+            url=site,
+            title=brand or "官网",
+            description=brand_info["summary"],
+        ),
+    )
+    session.add(run)
+    await session.commit()
+    await session.refresh(run)
+    return _structure_payload(run)
 
 
 @router.post("/audits/{audit_id}/tickets")

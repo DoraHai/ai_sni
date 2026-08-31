@@ -46,6 +46,33 @@ class ClaimGuardTests(unittest.TestCase):
         self.assertIn("performance", kinds)
         self.assertIn("case", kinds)
 
+    def test_skips_structural_count_like_eight_points(self):
+        from app.geo.content.claim_guard import ungrounded_claims
+
+        facts = [{"title": "服务半径", "statement": "华东 48 小时到场"}]
+        hits = ungrounded_claims("本文分 8个要点说明选型，并回答 6个常见问题。", facts)
+        self.assertFalse(any(h["kind"] == "number" for h in hits))
+
+    def test_allows_case_alias_and_query_time_family(self):
+        from app.geo.content.claim_guard import ungrounded_claims
+
+        facts = [
+            {"title": "客户案例", "statement": "制药客户案例，华东 48 小时到场。"},
+        ]
+        hits = ungrounded_claims(
+            "官网整理成功案例，并公示查询时间。",
+            facts,
+        )
+        self.assertEqual(hits, [])
+
+    def test_does_not_treat_72_hours_as_48_hours(self):
+        from app.geo.content.claim_guard import ungrounded_claims
+
+        facts = [{"title": "服务半径", "statement": "华东 48 小时到场"}]
+        hits = ungrounded_claims("承诺 72小时应急响应。", facts)
+        tokens = {h["token"] for h in hits}
+        self.assertTrue(any("72" in t for t in tokens))
+
 
 if __name__ == "__main__":
     unittest.main()

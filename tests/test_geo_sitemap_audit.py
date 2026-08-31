@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import unittest
 
-from app.geo.sitemap_audit import classify_path, skip_reason, _parse_sitemap_locs
+from app.geo.sitemap_audit import (
+    classify_path,
+    collect_robots_sitemaps,
+    skip_reason,
+    _parse_sitemap_locs,
+)
 
 
 class SitemapAuditTests(unittest.TestCase):
@@ -19,7 +24,25 @@ class SitemapAuditTests(unittest.TestCase):
     def test_skip_api_paths(self):
         self.assertIsNotNone(skip_reason("https://www.udesk.cn/api/v1/users"))
         self.assertIsNotNone(skip_reason("https://www.udesk.cn/openapi.json"))
+        self.assertIsNotNone(skip_reason("https://www.udesk.cn/apiv2/intro/"))
+        self.assertIsNotNone(skip_reason("https://www.udesk.cn/apiv2/tickets"))
+        self.assertIsNotNone(skip_reason("https://www.udesk.cn/thirdparty/cc_force_api/"))
         self.assertIsNone(skip_reason("https://www.udesk.cn/product"))
+
+    def test_robots_sitemaps_keep_listed_order(self):
+        text = """User-agent: *
+Sitemap: https://www.udesk.cn/sitemap.xml
+Sitemap: https://www.udesk.cn/landing/sitemap.xml
+Sitemap: https://www.udesk.cn/doc/sitemap.xml
+"""
+        self.assertEqual(
+            collect_robots_sitemaps(text),
+            [
+                "https://www.udesk.cn/sitemap.xml",
+                "https://www.udesk.cn/landing/sitemap.xml",
+                "https://www.udesk.cn/doc/sitemap.xml",
+            ],
+        )
 
     def test_parse_locs(self):
         xml = """<?xml version="1.0"?>

@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GEO · 知识库</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .scope-note { display:flex; align-items:flex-start; gap:10px; margin-bottom:16px; padding:12px 14px; border:1px solid #dde7f2; border-left:3px solid #0d9488; border-radius:8px; background:#f4fbfa; color:#586677; font-size:12px; line-height:1.65; }
+  .scope-note b { color:#1f2937; flex:none; white-space:nowrap; }
+  .scope-note span { min-width:0; }
+  .kb-tab { font-size:11px; padding:2px 8px; border-radius:6px; background:var(--bg); color:var(--muted); border:1px solid var(--border); cursor:pointer; user-select:none; }
+  .kb-filters { display:grid; gap:10px; padding:14px 18px 4px; border-bottom:1px solid var(--border); }
+  .kb-filter-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; width:100%; }
+  .kb-filter-row .subtle { width:36px; flex:none; }
+  .kb-filter-row .tag { cursor:pointer; flex:none; }
+  .content, .card { min-width:0; }
+  .kb-table-wrap { overflow:auto; -webkit-overflow-scrolling:touch; max-width:100%; }
+  .kb-list { width:100%; table-layout:fixed; }
+  .kb-list th, .kb-list td { vertical-align:middle; }
+  .kb-list th:nth-child(1), .kb-list td:nth-child(1) { width:42%; }
+  .kb-list th:nth-child(2), .kb-list td:nth-child(2),
+  .kb-list th:nth-child(3), .kb-list td:nth-child(3) { width:12%; }
+  .kb-list th:nth-child(4), .kb-list td:nth-child(4) { width:14%; }
+  .kb-list th:nth-child(5), .kb-list td:nth-child(5) { width:10%; }
+  .kb-list th:nth-child(6), .kb-list td:nth-child(6) { width:88px; white-space:nowrap; }
+  .kb-list td.kw { white-space:normal; }
+  .kb-list tr { cursor:pointer; }
+  .kb-list tr.is-open { background:var(--accent-soft); }
+  .kb-gen { color:var(--accent); font-size:12px; font-weight:700; white-space:nowrap; }
+  .kb-gen:hover { text-decoration:underline; }
+  .kb-drawer-grid { display:grid; gap:12px; }
+  .kb-field b { display:block; color:#7a8393; font-size:11px; font-weight:650; margin-bottom:4px; }
+  .kb-field span, .kb-field p { margin:0; color:#273244; font-size:13px; line-height:1.65; }
+  .kb-intents { display:flex; flex-wrap:wrap; gap:6px; }
+  .kb-article { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; align-items:center; padding:11px; border:1px solid #e5eaf0; border-radius:7px; background:#fff; }
+  .kb-article b { display:block; color:#253044; font-size:12.5px; }
+  .kb-article span { display:block; margin-top:2px; color:#8992a3; font-size:10.5px; }
+  .kb-empty { padding:28px 18px; text-align:center; color:var(--muted); font-size:13px; }
+  @media(max-width:720px){
+    .layout{display:block}.sidebar{display:none}.content{padding:12px}
+    .topbar{height:auto;align-items:flex-start;flex-wrap:wrap;padding:12px 14px}
+    .topbar .right{display:flex;margin-left:0;width:100%}
+    .topbar .search{width:100%}
+    .topbar .avatar{display:none}
+    .scope-note{display:block}
+    .scope-note b{display:inline;margin-right:4px}
+    .card .hd{flex-wrap:wrap}
+    .card .hd .row{margin-left:0;width:100%}
+    .kb-filter-row .subtle{width:auto}
+    .kb-list{min-width:860px}
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand"><div class="logo">G</div><div>GEO 模块<small>生成式引擎优化</small></div></div>
+    <div class="nav-group">数据看板</div>
+    <a class="nav-item" href="dashboard.html"><span class="ico">📊</span> 概览</a>
+    <a class="nav-item" href="visibility.html"><span class="ico">✨</span> AI 可见度</a>
+    <div class="nav-group">智能监测</div>
+    <a class="nav-item" href="prompts.html"><span class="ico">💬</span> 提问监控</a>
+    <a class="nav-item" href="competitors.html"><span class="ico">⚔️</span> 竞品分析</a>
+    <a class="nav-item" href="evaluation.html"><span class="ico">😊</span> 评价分析</a>
+    <a class="nav-item" href="sources.html"><span class="ico">📚</span> 信源分析</a>
+    <div class="nav-group">内容与信源</div>
+    <a class="nav-item" href="articles.html"><span class="ico">✍️</span> GEO 文章</a>
+    <a class="nav-item" href="media.html"><span class="ico">🏛️</span> 媒体 / 信源策略</a>
+    <a class="nav-item" href="channels.html"><span class="ico">⇧</span> 分发平台（共享）</a>
+    <div class="nav-group">设置</div>
+    <a class="nav-item" href="brand.html"><span class="ico">▰</span> 品牌信息</a>
+    <a class="nav-item active" href="knowledge.html"><span class="ico">▣</span> 知识库</a>
+    <a class="nav-item" href="engines.html"><span class="ico">🤖</span> AI 引擎管理</a>
+    <div class="spacer"></div>
+    <a class="back-link" href="../hub/dashboard.html">⌂ 全域驾驶舱</a>
+    <a class="back-link" style="border-top:none;padding-top:0;" href="../seo/articles.html">S SEO 内容工作台</a>
+    <a class="back-link" style="border-top:none;padding-top:0;" href="../index.html">← 平台门户</a>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div><h1>知识库</h1><div class="sub">存放可被 AI 直接引用的品牌事实，供 GEO 文章绑定，并用于纠偏事实偏差</div></div>
+      <div class="right">
+        <input class="search" id="kbSearch" placeholder="搜索事实 / 意图 / 来源…">
+        <a class="btn primary" href="#" id="kbAddFact">+ 新增事实</a>
+        <div class="avatar">DZ</div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="scope-note"><b>用途边界：</b><span>知识库只收「能被 AI 直接引用」的可验证事实，上游来自意图关键词，下游供给 GEO 文章。它不是文档管理器；当 AI 回答出现事实偏差时，用这里的权威材料纠偏，而不是改第三方评价。</span></div>
+
+      <div class="card">
+        <div class="hd">
+          <h3 id="kbTitle">事实列表</h3>
+          <div class="row" style="margin-left:auto; gap:8px;">
+            <span class="kb-tab chip-on" data-kb-tab="facts">事实列表</span>
+            <span class="kb-tab" data-kb-tab="gaps">事实空缺</span>
+          </div>
+        </div>
+
+        <div id="factsPanel">
+          <div class="kb-filters">
+            <div class="kb-filter-row" data-filter-group="biz">
+              <span class="subtle">业务</span>
+              <span class="tag chip-on" data-value="">全部</span>
+              <span class="tag" data-value="智能客服">智能客服</span>
+              <span class="tag" data-value="CRM">CRM</span>
+              <span class="tag" data-value="表单工具">表单工具</span>
+              <span class="tag" data-value="数据分析">数据分析</span>
+              <span class="tag" data-value="品牌">品牌</span>
+            </div>
+            <div class="kb-filter-row" data-filter-group="type">
+              <span class="subtle">类型</span>
+              <span class="tag chip-on" data-value="">全部</span>
+              <span class="tag" data-value="产品规格">产品规格</span>
+              <span class="tag" data-value="案例数据">案例数据</span>
+              <span class="tag" data-value="能力资质">能力资质</span>
+              <span class="tag" data-value="解决方案">解决方案</span>
+              <span class="tag" data-value="误解澄清">误解澄清</span>
+            </div>
+          </div>
+          <div class="kb-table-wrap">
+            <table class="kb-list">
+              <thead>
+                <tr>
+                  <th>事实陈述</th>
+                  <th>类型</th>
+                  <th>所属业务</th>
+                  <th>可信等级</th>
+                  <th>引用文章</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="factBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="gapsPanel" hidden>
+          <div class="bd" style="padding:12px 18px 8px;">
+            <p class="subtle" style="margin:0;">这些意图已经出现在提问监控或意图中心，但知识库里没有任何可引用事实，GEO 文章无法绑定证据。</p>
+          </div>
+          <div class="kb-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>意图关键词</th>
+                  <th>发现来源</th>
+                  <th>月搜索 / 提问量</th>
+                  <th>缺口</th>
+                  <th>建议补的事实类型</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="kw">适合中小团队的协作软件</td>
+                  <td class="muted">意图中心</td>
+                  <td>5,400</td>
+                  <td><span class="badge red">无支撑事实</span></td>
+                  <td class="muted">产品规格 / 案例数据</td>
+                </tr>
+                <tr>
+                  <td class="kw">CRM 软件哪个好</td>
+                  <td class="muted">意图中心</td>
+                  <td>12,400</td>
+                  <td><span class="badge red">无支撑事实</span></td>
+                  <td class="muted">解决方案 / 误解澄清</td>
+                </tr>
+                <tr>
+                  <td class="kw">企业获客系统</td>
+                  <td class="muted">意图中心</td>
+                  <td>4,900</td>
+                  <td><span class="badge red">无支撑事实</span></td>
+                  <td class="muted">产品规格 / 解决方案</td>
+                </tr>
+                <tr>
+                  <td class="kw">免费数据分析工具推荐</td>
+                  <td class="muted">提问监控</td>
+                  <td>3,160</td>
+                  <td><span class="badge red">无支撑事实</span></td>
+                  <td class="muted">产品规格 / 误解澄清</td>
+                </tr>
+                <tr>
+                  <td class="kw">在线表单和 Excel 怎么选</td>
+                  <td class="muted">提问监控</td>
+                  <td>2,740</td>
+                  <td><span class="badge red">无支撑事实</span></td>
+                  <td class="muted">解决方案 / 案例数据</td>
+                </tr>
+                <tr>
+                  <td class="kw">智能客服支持多语言吗</td>
+                  <td class="muted">评价分析</td>
+                  <td class="muted">AI 高频问法</td>
+                  <td><span class="badge red">无支撑事实</span></td>
+                  <td class="muted">产品规格</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="assets/geo-sidebar-v1.js?rev=geo-nav-v10"></script>
+<script src="../shared/prototype-runtime-v2.js?rev=interactions-v9"></script>
+<script src="assets/geo-facts-v1.js?rev=facts-v1"></script>
+<script src="assets/app.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var FACT_STORAGE = 'growthEngine.geo.pendingFact.v1';
+  var FACTS = window.GEOFacts.list();
+
+  var filters = { biz: '', type: '' };
+  var openId = '';
+  var activeDrawer = null;
+  var createMask = null;
+
+  function escapeHtml(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function trustBadge(trust) {
+    if (trust === '官网可查') return '<span class="badge green">官网可查</span>';
+    if (trust === '第三方可查') return '<span class="badge blue">第三方可查</span>';
+    return '<span class="badge gray">仅内部</span>';
+  }
+
+  function findFact(id) {
+    for (var i = 0; i < FACTS.length; i++) if (FACTS[i].id === id) return FACTS[i];
+    return null;
+  }
+
+  function today() {
+    var d = new Date();
+    var m = d.getMonth() + 1;
+    var day = d.getDate();
+    return d.getFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (day < 10 ? '0' : '') + day;
+  }
+
+  function persistCustomFacts() {
+    if (window.GEOFacts) window.GEOFacts.saveCustom(FACTS.filter(function (fact) { return fact.custom; }));
+  }
+
+  function fieldValue(root, name) {
+    var el = root.querySelector('[name="' + name + '"]');
+    return el ? String(el.value || '').trim() : '';
+  }
+
+  function closeCreate() {
+    if (!createMask) return;
+    var mask = createMask;
+    createMask = null;
+    mask.classList.remove('show');
+    setTimeout(function () { if (mask.parentNode) mask.remove(); }, 180);
+  }
+
+  function openCreateFact(event) {
+    if (event) event.preventDefault();
+    closeCreate();
+    closeFactDrawer();
+    var mask = document.createElement('div');
+    mask.className = 'ge2-mask';
+    mask.innerHTML =
+      '<section class="ge2-dialog" role="dialog" aria-modal="true" aria-label="新增事实">' +
+        '<header class="ge2-dialog-head"><div><h2>新增事实</h2><p>录入一条能被 AI 直接引用的可验证事实</p></div>' +
+        '<button class="ge2-close" type="button" aria-label="关闭">×</button></header>' +
+        '<div class="ge2-dialog-body">' +
+          '<div class="ge2-context">知识库不是文档库。请写成一句可被摘取的事实陈述，并标明证据来源。</div>' +
+          '<div class="ge2-form-grid">' +
+            '<div class="ge2-field full"><label>事实陈述 <em>*</em></label><textarea name="statement" data-required="true" placeholder="例如：智能客服标准版按坐席计费，年费 9,800 元起，不含实施服务。"></textarea></div>' +
+            '<div class="ge2-field"><label>类型 <em>*</em></label><select name="type"><option>产品规格</option><option>案例数据</option><option>能力资质</option><option>解决方案</option><option>误解澄清</option></select></div>' +
+            '<div class="ge2-field"><label>所属业务 <em>*</em></label><select name="biz"><option>智能客服</option><option>CRM</option><option>表单工具</option><option>数据分析</option><option>品牌</option></select></div>' +
+            '<div class="ge2-field full"><label>证据来源 <em>*</em></label><input name="source" data-required="true" placeholder="官网 URL 或文档名，例如 https://example.com/pricing"></div>' +
+            '<div class="ge2-field"><label>可信等级 <em>*</em></label><select name="trust"><option>官网可查</option><option>第三方可查</option><option>仅内部</option></select></div>' +
+            '<div class="ge2-field full"><label>覆盖的意图关键词</label><input name="intents" placeholder="多个意图用逗号分隔，例如：智能客服系统价格, 智能客服怎么选"></div>' +
+          '</div>' +
+        '</div>' +
+        '<footer class="ge2-dialog-foot">' +
+          '<button class="ge2-button" type="button">取消</button>' +
+          '<button class="ge2-button primary" type="button" id="kbSaveFact">保存事实</button>' +
+        '</footer>' +
+      '</section>';
+    document.body.appendChild(mask);
+    createMask = mask;
+    requestAnimationFrame(function () { mask.classList.add('show'); });
+    var body = mask.querySelector('.ge2-dialog-body');
+    mask.querySelector('.ge2-close').addEventListener('click', closeCreate);
+    mask.querySelector('.ge2-dialog-foot .ge2-button').addEventListener('click', closeCreate);
+    mask.addEventListener('click', function (e) { if (e.target === mask) closeCreate(); });
+    mask.querySelector('#kbSaveFact').addEventListener('click', function () {
+      var statement = fieldValue(body, 'statement');
+      var source = fieldValue(body, 'source');
+      body.querySelectorAll('[data-required="true"]').forEach(function (input) {
+        input.classList.toggle('invalid', !String(input.value || '').trim());
+      });
+      if (!statement || !source) {
+        if (window.geToast) window.geToast('请填写事实陈述和证据来源');
+        return;
+      }
+      var intents = fieldValue(body, 'intents').split(/[,，]/).map(function (item) { return item.trim(); }).filter(Boolean);
+      var fact = {
+        id: 'custom-' + Date.now(),
+        custom: true,
+        statement: statement,
+        type: fieldValue(body, 'type') || '产品规格',
+        biz: fieldValue(body, 'biz') || '品牌',
+        source: source,
+        trust: fieldValue(body, 'trust') || '官网可查',
+        reviewed: today(),
+        intents: intents,
+        articles: []
+      };
+      FACTS.unshift(fact);
+      persistCustomFacts();
+      closeCreate();
+      setTab('facts');
+      setFilter('biz', '');
+      setFilter('type', '');
+      if (window.geToast) window.geToast('事实已加入知识库');
+    });
+    var first = mask.querySelector('textarea[name="statement"]');
+    if (first) first.focus();
+  }
+
+  function savePendingFact(fact) {
+    try {
+      localStorage.setItem(FACT_STORAGE, JSON.stringify({
+        id: fact.id,
+        statement: fact.statement,
+        type: fact.type,
+        biz: fact.biz,
+        source: fact.source,
+        trust: fact.trust,
+        status: fact.status
+      }));
+    } catch (error) {}
+  }
+
+  function articleNeedsReview(fact, article) {
+    return fact.status === '已过期' && article.status === '已发布';
+  }
+
+  function filteredFacts() {
+    var q = (document.getElementById('kbSearch').value || '').trim().toLowerCase();
+    return FACTS.filter(function (fact) {
+      if (filters.biz && fact.biz !== filters.biz) return false;
+      if (filters.type && fact.type !== filters.type) return false;
+      if (!q) return true;
+      var blob = [fact.statement, fact.type, fact.biz, fact.source, fact.trust].concat(fact.intents).join(' ').toLowerCase();
+      return blob.indexOf(q) >= 0;
+    });
+  }
+
+  function renderFacts() {
+    var tbody = document.getElementById('factBody');
+    var rows = filteredFacts();
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="kb-empty">没有符合筛选的事实</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(function (fact) {
+      var cited = fact.articles.length;
+      return '<tr data-id="' + escapeHtml(fact.id) + '"' + (openId === fact.id ? ' class="is-open"' : '') + '>' +
+        '<td class="kw">' + escapeHtml(fact.statement) + '</td>' +
+        '<td><span class="badge gray">' + escapeHtml(fact.type) + '</span></td>' +
+        '<td class="muted">' + escapeHtml(fact.biz) + '</td>' +
+        '<td>' + trustBadge(fact.trust) + '</td>' +
+        '<td>' + (cited ? cited + ' 篇' : '<span class="muted">0</span>') + '</td>' +
+        '<td><a class="kb-gen" href="articles.html?fact=' + encodeURIComponent(fact.id) + '">生成文章</a></td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  function setTab(tab) {
+    document.getElementById('factsPanel').hidden = tab !== 'facts';
+    document.getElementById('gapsPanel').hidden = tab !== 'gaps';
+    document.getElementById('kbTitle').textContent = tab === 'gaps' ? '事实空缺' : '事实列表';
+    document.querySelectorAll('.kb-tab').forEach(function (el) {
+      el.classList.toggle('chip-on', el.getAttribute('data-kb-tab') === tab);
+    });
+  }
+
+  function setFilter(group, value) {
+    filters[group] = value;
+    document.querySelectorAll('[data-filter-group="' + group + '"] .tag').forEach(function (tag) {
+      tag.classList.toggle('chip-on', (tag.getAttribute('data-value') || '') === value);
+    });
+    renderFacts();
+  }
+
+  function closeFactDrawer() {
+    if (!activeDrawer) return;
+    var mask = activeDrawer;
+    activeDrawer = null;
+    openId = '';
+    mask.classList.remove('show');
+    setTimeout(function () { if (mask.parentNode) mask.remove(); }, 180);
+    document.querySelectorAll('.kb-list tr.is-open').forEach(function (row) { row.classList.remove('is-open'); });
+  }
+
+  function openFactDrawer(fact) {
+    closeFactDrawer();
+    openId = fact.id;
+    var intents = fact.intents.map(function (item) {
+      return '<span class="tag">' + escapeHtml(item) + '</span>';
+    }).join('');
+    var articles = fact.articles.length
+      ? fact.articles.map(function (article) {
+          var review = articleNeedsReview(fact, article)
+            ? '<span class="badge amber">待复查</span>'
+            : '<span class="badge ' + (article.status === '已发布' ? 'green' : article.status === '草稿' ? 'gray' : 'blue') + '">' + escapeHtml(article.status) + '</span>';
+          return '<a class="kb-article" href="' + escapeHtml(article.href) + '"><div><b>' + escapeHtml(article.title) + '</b><span>' +
+            (articleNeedsReview(fact, article) ? '引用事实已过期，发布口径需复查' : '已绑定该事实') +
+            '</span></div>' + review + '</a>';
+        }).join('')
+      : '<p class="subtle" style="margin:0;">尚未被任何 GEO 文章引用。</p>';
+    var expiredNote = fact.status === '已过期'
+      ? '<div class="scope-note" style="margin:0 0 4px;"><b>需复查：</b><span>该事实已过期。引用它的已发布文章会标记为待复查，请先更新证据再继续引用。</span></div>'
+      : '';
+
+    var mask = document.createElement('div');
+    mask.className = 'ge2-drawer-mask';
+    mask.innerHTML =
+      '<aside class="ge2-drawer" role="dialog" aria-modal="true" aria-label="事实详情">' +
+        '<header class="ge2-drawer-head"><div><h2>事实详情</h2><p>' + escapeHtml(fact.biz) + ' · ' + escapeHtml(fact.type) + '</p></div>' +
+        '<button class="ge2-close" type="button" aria-label="关闭">×</button></header>' +
+        '<div class="ge2-drawer-body"><div class="kb-drawer-grid">' +
+          expiredNote +
+          '<div class="kb-field"><b>事实陈述</b><p>' + escapeHtml(fact.statement) + '</p></div>' +
+          '<div class="kb-field"><b>证据来源</b><span>' + escapeHtml(fact.source) + '</span></div>' +
+          '<div class="kb-field"><b>可信等级</b><div>' + trustBadge(fact.trust) + '</div></div>' +
+          '<div class="kb-field"><b>更新日期</b><span>' + escapeHtml(fact.reviewed) + '</span></div>' +
+          '<div class="kb-field"><b>覆盖的意图关键词</b><div class="kb-intents">' + intents + '</div></div>' +
+          '<div class="kb-field"><b>引用该事实的文章 · ' + fact.articles.length + '</b><div class="kb-drawer-grid">' + articles + '</div></div>' +
+        '</div></div>' +
+        '<footer class="ge2-drawer-foot">' +
+          '<button class="ge2-button" type="button">关闭</button>' +
+          '<a class="ge2-button primary kb-gen" href="articles.html?fact=' + encodeURIComponent(fact.id) + '">生成文章</a>' +
+        '</footer>' +
+      '</aside>';
+    document.body.appendChild(mask);
+    activeDrawer = mask;
+    requestAnimationFrame(function () { mask.classList.add('show'); });
+    mask.querySelector('.ge2-close').addEventListener('click', closeFactDrawer);
+    mask.querySelector('.ge2-drawer-foot .ge2-button').addEventListener('click', closeFactDrawer);
+    mask.addEventListener('click', function (event) { if (event.target === mask) closeFactDrawer(); });
+    mask.querySelectorAll('a.kb-gen').forEach(function (link) {
+      link.addEventListener('click', function () { savePendingFact(fact); });
+    });
+    renderFacts();
+  }
+
+  var params = new URLSearchParams(window.location.search);
+  renderFacts();
+  if (params.get('tab') === 'gaps') setTab('gaps');
+
+  document.querySelectorAll('.kb-tab').forEach(function (tab) {
+    tab.addEventListener('click', function () { setTab(tab.getAttribute('data-kb-tab')); });
+  });
+
+  document.querySelectorAll('.kb-filter-row').forEach(function (row) {
+    var group = row.getAttribute('data-filter-group');
+    row.querySelectorAll('.tag').forEach(function (tag) {
+      tag.addEventListener('click', function () {
+        setFilter(group, tag.getAttribute('data-value') || '');
+      });
+    });
+  });
+
+  document.getElementById('kbSearch').addEventListener('input', renderFacts);
+  document.getElementById('kbAddFact').addEventListener('click', openCreateFact);
+
+  document.getElementById('factBody').addEventListener('click', function (event) {
+    var gen = event.target.closest('.kb-gen');
+    if (gen) {
+      var row = gen.closest('tr');
+      var fact = row ? findFact(row.getAttribute('data-id')) : null;
+      if (fact) savePendingFact(fact);
+      return;
+    }
+    var tr = event.target.closest('tr[data-id]');
+    if (!tr) return;
+    var clicked = findFact(tr.getAttribute('data-id'));
+    if (clicked) openFactDrawer(clicked);
+  });
+
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape') return;
+    if (createMask) closeCreate();
+    else closeFactDrawer();
+  });
+});
+</script>
+</body>
+</html>

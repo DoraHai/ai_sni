@@ -696,14 +696,16 @@ onMounted(load)
 
 <template>
   <GeoWorkbenchPage
-    title="分发平台"
+    title="发布渠道"
     :show-period="false"
-    sub="配置渠道与推送账号。官网/文档走 Webhook，微信等走社交账号；未配账号的渠道仍可在文章里手工回填 URL"
+    sub="管理内容目标渠道、发布方式和服务端账号状态"
     :loading="loading"
   >
     <template #actions>
-      <button class="gd-btn" @click="load">刷新连接状态</button>
-      <button class="gd-btn primary" @click="createChOpen = true">+ 添加分发平台</button>
+      <button class="gd-btn" @click="load">刷新</button>
+      <button class="gd-btn primary" @click="createChOpen = true">创建渠道</button>
+      <button class="gd-btn" @click="openCreateAccount()">添加渠道账号</button>
+      <router-link class="gd-btn" to="/geo/channel-polish-prompts">渠道成稿提示词</router-link>
     </template>
     <div class="geo-dash geo-page">
 
@@ -816,8 +818,8 @@ onMounted(load)
     <!-- ① 渠道目录 -->
     <section class="block">
       <div class="block-head">
-        <h3 class="sec">分发平台</h3>
-        <span class="sec-hint">维护平台连接状态与分发方式</span>
+        <h3 class="sec">已配置渠道</h3>
+        <span class="sec-hint">名称 · 类型 · 发布方式 · 账号状态</span>
       </div>
       <el-table :data="channels" empty-text="暂无渠道" class="mb ch-table" size="small">
         <el-table-column label="类型" min-width="110">
@@ -831,7 +833,7 @@ onMounted(load)
             <div v-if="row.base_url" class="url">{{ row.base_url }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="发布模式" min-width="170">
+        <el-table-column label="发布方式" min-width="170">
           <template #default="{ row }">
             <el-tag size="small" :type="modeTagType(row.publish_mode)">
               {{ modeLabel(row.publish_mode) }}

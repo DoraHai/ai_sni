@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import GeoAsyncJob, GeoContentTask
@@ -356,12 +356,26 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
     from app.geo.content.brief import brief_ready, normalize_brief
     from app.geo.content.evidence import prepare_facts_for_generation
     from app.geo.content.generate_article import generate_master_article, outline_from_payload, to_markdown
-    from app.geo.content.review import invalidate_review
-    from app.models import GeoArticleVersion, GeoFact, GeoPrompt, GeoTaskFact, Tenant
+    from app.geo.content.current_draft import (
+        invalidate_current_draft,
+        overwrite_current_article,
+    )
+    from app.models import (
+        GeoArticleVersion,
+        GeoChannelVariant,
+        GeoFact,
+        GeoPrompt,
+        GeoTaskFact,
+        Tenant,
+    )
 
     task = await session.get(GeoContentTask, job.ref_id)
     if task is None or task.tenant_id != job.tenant_id:
         raise ValueError("内容任务不存在")
+    from app.geo.content.current_draft import can_overwrite_current_draft
+
+    if not can_overwrite_current_draft(task):
+        raise ValueError("该任务已有正式发布记录，不能覆盖母稿；请复制为新任务后再修改")
     tenant = await session.get(Tenant, job.tenant_id)
     prompt = await session.get(GeoPrompt, task.prompt_id)
     if tenant is None or prompt is None:
@@ -438,36 +452,53 @@ async def _execute_generate(session: AsyncSession, job: GeoAsyncJob) -> dict[str
     latest = await session.scalar(
         select(GeoArticleVersion)
         .where(GeoArticleVersion.task_id == task.id)
-        .order_by(GeoArticleVersion.version_no.desc())
+        .order_by(GeoArticleVersion.id.desc())
         .limit(1)
     )
-    version_no = (latest.version_no + 1) if latest else 1
-    article = GeoArticleVersion(
-        task_id=task.id,
-        version_no=version_no,
-        kind="master",
-        title=payload["title"],
-        body_markdown=body,
-        outline=outline,
-        generation_meta={
-            "source": payload.get("_source"),
-            "used_fact_ids": payload.get("used_fact_ids"),
-            "evidence": payload.get("_evidence") or evidence_preview,
-            "brief": payload.get("_brief") or brief_norm,
-            "async_job_id": job.id,
-            "sentence_citations": cites,
-        },
-        created_by=job.created_by,
-    )
-    session.add(article)
+    generation_meta = {
+        "source": payload.get("_source"),
+        "used_fact_ids": payload.get("used_fact_ids"),
+        "evidence": payload.get("_evidence") or evidence_preview,
+        "brief": payload.get("_brief") or brief_norm,
+        "async_job_id": job.id,
+        "sentence_citations": cites,
+    }
+    if latest is None:
+        article = GeoArticleVersion(
+            task_id=task.id,
+            version_no=1,
+            kind="master",
+            title=payload["title"],
+            body_markdown=body,
+            outline=outline,
+            generation_meta=generation_meta,
+            created_by=job.created_by,
+        )
+        session.add(article)
+    else:
+        article = latest
+        await session.execute(
+            delete(GeoChannelVariant).where(
+                GeoChannelVariant.task_id == task.id,
+                GeoChannelVariant.article_version_id == article.id,
+            )
+        )
+        overwrite_current_article(
+            article,
+            title=payload["title"],
+            body_markdown=body,
+            outline=outline,
+            generation_meta=generation_meta,
+            created_by=job.created_by,
+            author_name=article.author_name,
+        )
     task.title = payload["title"]
-    task.status = "editing"
-    invalidate_review(task)
+    invalidate_current_draft(task)
     await session.commit()
     return {
         "task_id": task.id,
         "article_id": article.id,
-        "version_no": version_no,
+        "version_no": 1,
         "title": article.title,
     }
 
@@ -480,20 +511,27 @@ async def _execute_variants(session: AsyncSession, job: GeoAsyncJob) -> dict[str
     use_llm = bool(meta.get("use_llm", True))
     if not job.ref_id:
         raise ValueError("缺少 task_id")
-    return await execute_variants_for_task(
+    await set_job_progress(session, job, message="正在改写渠道成稿", pct=30)
+    result = await execute_variants_for_task(
         session,
         task_id=int(job.ref_id),
         tenant_id=job.tenant_id,
         channels=list(channels) if channels else None,
         use_llm=use_llm,
+        expected_fingerprint=str(meta.get("article_fingerprint") or "") or None,
     )
+    await set_job_progress(session, job, message="正在整理可复制正文", pct=90)
+    return result
 
 
 async def _execute_push_batch(session: AsyncSession, job: GeoAsyncJob) -> dict[str, Any]:
     """Run multi-channel push using same connectors as sync endpoint."""
     from app.geo.content.connectors.social import SocialError
     from app.geo.content.connectors.webhook import WebhookConnectorError
+    from app.geo.content.current_draft import score_matches_current_article
+    from app.geo.content.gate import assert_can_publish
     from app.geo.content.multi_push import execute_single_push, list_push_targets
+    from app.geo.content.routes import _build_rule_input, _write_publication
     from app.models import (
         GeoArticleVersion,
         GeoChannelAccount,
@@ -516,9 +554,15 @@ async def _execute_push_batch(session: AsyncSession, job: GeoAsyncJob) -> dict[s
     article = await session.scalar(
         select(GeoArticleVersion)
         .where(GeoArticleVersion.task_id == task.id)
-        .order_by(GeoArticleVersion.version_no.desc())
+        .order_by(GeoArticleVersion.id.desc())
         .limit(1)
     )
+    if article is None or not score_matches_current_article(task.rule_result, article):
+        raise ValueError("当前母稿已变化，请重新进行 GEO 评分后再推送")
+    try:
+        assert_can_publish(await _build_rule_input(session, task, article), task=task)
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
 
     targets_all = await list_push_targets(
         session, tenant_id=job.tenant_id, task=task, variants=variants
@@ -553,6 +597,8 @@ async def _execute_push_batch(session: AsyncSession, job: GeoAsyncJob) -> dict[s
     results: list[dict[str, Any]] = []
     ok_n = fail_n = 0
     for t in ready:
+        if cancel_requested(job):
+            raise ValueError("已取消")
         channel_key = str(t.get("adapt_key") or t.get("channel_type") or "").lower()
         variant = var_map.get(channel_key)
         account = await session.get(GeoChannelAccount, int(t["account_id"]))
@@ -580,21 +626,18 @@ async def _execute_push_batch(session: AsyncSession, job: GeoAsyncJob) -> dict[s
             )
             remote_url = remote.get("remote_url")
             publication_created = False
-            if create_pub and remote_url and str(remote_url).startswith(
+            if mode == "publish" and create_pub and remote_url and str(remote_url).startswith(
                 ("http://", "https://")
             ):
-                pub = GeoPublication(
-                    variant_id=variant.id,
+                await _write_publication(
+                    session,
+                    task=task,
+                    variant=variant,
                     channel=channel_key,
-                    publish_mode="auto_publish",
                     published_url=str(remote_url),
-                    published_at=datetime.utcnow(),
-                    status="published",
                     note=meta.get("note") or f"async batch {remote.get('connector')}",
+                    publish_mode="auto_publish",
                 )
-                session.add(pub)
-                variant.status = "published"
-                task.status = "published"
                 publication_created = True
             results.append(
                 {**remote, "ok": True, "publication_created": publication_created}

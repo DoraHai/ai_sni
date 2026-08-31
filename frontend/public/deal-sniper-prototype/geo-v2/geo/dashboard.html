@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GEO · 概览</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand"><div class="logo">G</div><div>GEO 模块<small>生成式引擎优化</small></div></div>
+    <div class="nav-group">数据看板</div>
+    <a class="nav-item active" href="dashboard.html"><span class="ico">📊</span> 概览</a>
+    <a class="nav-item" href="visibility.html"><span class="ico">✨</span> AI 可见度</a>
+    <div class="nav-group">智能监测</div>
+    <a class="nav-item" href="prompts.html"><span class="ico">💬</span> 提问监控</a>
+    <a class="nav-item" href="competitors.html"><span class="ico">⚔️</span> 竞品分析</a>
+    <a class="nav-item" href="evaluation.html"><span class="ico">😊</span> 评价分析</a>
+    <a class="nav-item" href="sources.html"><span class="ico">📚</span> 信源分析</a>
+    <div class="nav-group">GEO 执行</div>
+    <a class="nav-item" href="articles.html"><span class="ico">✍️</span> GEO 文章</a>
+    <a class="nav-item" href="media.html"><span class="ico">🏛️</span> 媒体 / 信源策略</a>
+    <a class="nav-item" href="channels.html"><span class="ico">⇧</span> 分发平台（共享）</a>
+    <div class="nav-group">设置</div>
+    <a class="nav-item" href="engines.html"><span class="ico">🤖</span> AI 引擎管理</a>
+    <div class="spacer"></div>
+    <a class="nav-item" href="../content/audit.html"><span class="ico">🛠️</span> 诊断中心</a>
+    <a class="back-link" href="../hub/dashboard.html">⌂ 全域驾驶舱</a>
+    <a class="back-link" style="border-top:none;padding-top:0;" href="../index.html">← 平台门户</a>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div><h1>概览</h1><div class="sub">品牌：SearchPilot · 覆盖 5 个国产大模型 · 最近 30 天</div></div>
+      <div class="right">
+        <input class="search" placeholder="搜索提问 / 来源…">
+        <button class="btn">导出报告</button>
+        <button class="btn primary">+ 添加监控词</button>
+        <div class="avatar">DZ</div>
+      </div>
+    </div>
+
+    <div class="content">
+      <!-- 引擎状态条 -->
+      <div class="card" style="margin-bottom:16px;">
+        <div class="bd" style="display:flex; align-items:center; gap:22px; padding:14px 18px; flex-wrap:wrap;">
+          <span class="subtle">监测引擎：</span>
+          <span class="row" style="gap:6px;"><span class="dot" style="background:#4d6bfe"></span> DeepSeek</span>
+          <span class="row" style="gap:6px;"><span class="dot" style="background:#ff6a00"></span> 豆包</span>
+          <span class="row" style="gap:6px;"><span class="dot" style="background:#111827"></span> Kimi</span>
+          <span class="row" style="gap:6px;"><span class="dot" style="background:#615ced"></span> 通义千问</span>
+          <span class="row" style="gap:6px;"><span class="dot" style="background:#0ea5e9"></span> 腾讯元宝</span>
+          <span class="subtle" style="margin-left:auto;">最后巡检：2026-06-26 08:00</span>
+        </div>
+      </div>
+
+      <div class="grid cols-4" style="margin-bottom:16px;">
+        <div class="card stat"><div class="label">AI 可见度得分</div><div class="value">42.8%</div><div class="delta up">▲ 6.5%</div></div>
+        <div class="card stat"><div class="label">品牌提及次数</div><div class="value">1,860</div><div class="delta up">▲ 18.2%</div></div>
+        <div class="card stat"><div class="label">平均推荐顺位</div><div class="value">2.4</div><div class="delta up">▲ 上升 0.7</div></div>
+        <div class="card stat"><div class="label">正向评价信号</div><div class="value">76%</div><div class="delta down">▼ 2%</div></div>
+      </div>
+
+      <div class="grid cols-3" style="margin-bottom:16px;">
+        <!-- Visibility by engine -->
+        <div class="card" style="grid-column: span 2;">
+          <div class="hd"><h3>各 AI 引擎可见度趋势</h3><span class="more">最近 30 天 ▾</span></div>
+          <div class="bd">
+            <svg viewBox="0 0 720 230" width="100%" height="230">
+              <g stroke="#eef0f5"><line x1="0" y1="40" x2="720" y2="40"/><line x1="0" y1="100" x2="720" y2="100"/><line x1="0" y1="160" x2="720" y2="160"/></g>
+              <polyline points="0,150 120,140 240,120 360,110 480,90 600,78 720,62" fill="none" stroke="#4d6bfe" stroke-width="2.5"/>
+              <polyline points="0,170 120,165 240,160 360,150 480,148 600,140 720,132" fill="none" stroke="#ff6a00" stroke-width="2.5"/>
+              <polyline points="0,180 120,178 240,170 360,168 480,158 600,155 720,148" fill="none" stroke="#111827" stroke-width="2.5"/>
+              <polyline points="0,192 120,188 240,186 360,180 480,178 600,174 720,166" fill="none" stroke="#615ced" stroke-width="2.5"/>
+              <polyline points="0,200 120,196 240,194 360,190 480,186 600,182 720,178" fill="none" stroke="#0ea5e9" stroke-width="2.5"/>
+            </svg>
+            <div class="legend" style="margin-top:10px;">
+              <span><i style="background:#4d6bfe"></i>DeepSeek</span>
+              <span><i style="background:#ff6a00"></i>豆包</span>
+              <span><i style="background:#111827"></i>Kimi</span>
+              <span><i style="background:#615ced"></i>通义千问</span>
+              <span><i style="background:#0ea5e9"></i>腾讯元宝</span>
+            </div>
+          </div>
+        </div>
+        <!-- Share of voice -->
+        <div class="card">
+          <div class="hd"><h3>AI 声量占比 (SOV)</h3></div>
+          <div class="bd">
+            <div style="display:flex; flex-direction:column; gap:14px;">
+              <div><div class="row between"><span><b>本品牌</b></span><b>42.8%</b></div><div class="bar"><span style="width:43%"></span></div></div>
+              <div><div class="row between"><span>竞品 A</span><b>31.2%</b></div><div class="bar amber"><span style="width:31%"></span></div></div>
+              <div><div class="row between"><span>竞品 B</span><b>18.4%</b></div><div class="bar amber"><span style="width:18%"></span></div></div>
+              <div><div class="row between"><span>其他</span><b>7.6%</b></div><div class="bar red"><span style="width:8%"></span></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid cols-2">
+        <div class="card">
+          <div class="hd"><h3>高曝光提问 (Prompt)</h3><a class="more" href="prompts.html">查看全部</a></div>
+          <div class="bd" style="padding:0;">
+            <table>
+              <thead><tr><th>用户提问</th><th>引擎</th><th>是否提及</th><th>顺位</th></tr></thead>
+              <tbody>
+                <tr><td>「有哪些好用的智能客服系统？」</td><td>DeepSeek</td><td><span class="badge green">已提及</span></td><td>1</td></tr>
+                <tr><td>「免费的 CRM 软件推荐」</td><td>豆包</td><td><span class="badge green">已提及</span></td><td>2</td></tr>
+                <tr><td>「企业表单工具对比」</td><td>通义千问</td><td><span class="badge green">已提及</span></td><td>3</td></tr>
+                <tr><td>「数据分析平台哪个好」</td><td>Kimi</td><td><span class="badge red">未提及</span></td><td>—</td></tr>
+                <tr><td>「适合中小团队的协作软件」</td><td>腾讯元宝</td><td><span class="badge amber">竞品提及</span></td><td>—</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <div class="hd"><h3>AI 引用的内容来源</h3><span class="badge blue">提升引用率</span></div>
+          <div class="bd">
+            <ul class="checks">
+              <li><span class="tag">官网</span> /product/chat 被引用 142 次 <b style="margin-left:auto;" class="rank-up">▲</b></li>
+              <li><span class="tag">博客</span> /blog/crm-guide 被引用 98 次 <b style="margin-left:auto;" class="rank-up">▲</b></li>
+              <li><span class="tag">知乎</span> 第三方回答被引用 76 次 <b style="margin-left:auto;" class="muted">—</b></li>
+              <li><span class="tag">百科</span> 行业百科条目 41 次 <b style="margin-left:auto;" class="rank-down">▼</b></li>
+              <li><span class="tag">公众号</span> 行业测评文 33 次 <b style="margin-left:auto;" class="rank-up">▲</b></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="assets/geo-sidebar-v1.js?rev=geo-nav-v10"></script>
+<script src="../shared/prototype-runtime-v2.js?rev=interactions-v9"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

@@ -71,6 +71,16 @@ export function createGeoPrompt(body) {
   return client.post('/api/v1/geo/prompts', body)
 }
 
+/** Import prompt rows in one server-validated CSV batch. */
+export function importGeoPromptsCsv(tenantId, file) {
+  const form = new FormData()
+  form.append('file', file)
+  return client.post('/api/v1/geo/prompts/import-csv', form, {
+    params: { tenant_id: tenantId },
+    timeout: 120000,
+  })
+}
+
 export function patchGeoPrompt(tenantId, promptId, body) {
   return client.patch(`/api/v1/geo/prompts/${promptId}`, body, {
     params: { tenant_id: tenantId },
@@ -186,6 +196,16 @@ export function listGeoFacts(tenantId, params = {}) {
 
 export function createGeoFact(body) {
   return client.post('/api/v1/geo/facts', body)
+}
+
+/** Import fact rows in one server-validated CSV batch. */
+export function importGeoFactsCsv(tenantId, file) {
+  const form = new FormData()
+  form.append('file', file)
+  return client.post('/api/v1/geo/facts/import', form, {
+    params: { tenant_id: tenantId },
+    timeout: 120000,
+  })
 }
 
 export function patchGeoFact(tenantId, factId, body) {
@@ -375,6 +395,10 @@ export function getGeoContentTask(tenantId, taskId) {
   return client.get(`/api/v1/geo/content-tasks/${taskId}`, { params: { tenant_id: tenantId } })
 }
 
+export function optimizeGeoArticle(taskId, body) {
+  return client.post(`/api/v1/geo/content-tasks/${taskId}/optimize`, body)
+}
+
 /** 发布后效果：引用命中 + 意图词发布前后提及率 */
 export function fetchGeoContentTaskImpact(tenantId, taskId, windowDays = 14) {
   return client.get(`/api/v1/geo/content-tasks/${taskId}/impact`, {
@@ -431,6 +455,30 @@ export function closeOptimizationPeriod(tenantId, periodId) {
 
 export function createGeoContentTask(body) {
   return client.post('/api/v1/geo/content-tasks', body)
+}
+
+/** Preview an uploaded article before associating it with a GEO question. */
+export function previewGeoArticleImportFile(tenantId, file) {
+  const form = new FormData()
+  form.append('file', file)
+  return client.post('/api/v1/geo/content-imports/preview-file', form, {
+    params: { tenant_id: tenantId },
+    timeout: 120000,
+  })
+}
+
+/** Fetch and normalize an existing article URL before importing it. */
+export function previewGeoArticleImportUrl(tenantId, url) {
+  return client.post(
+    '/api/v1/geo/content-imports/preview-url',
+    { tenant_id: tenantId, url },
+    { timeout: 120000 },
+  )
+}
+
+/** Create a content task from an already-authored article. */
+export function createGeoArticleImportTask(payload) {
+  return client.post('/api/v1/geo/content-imports/create-task', payload)
 }
 
 /** hard=false archive; hard=true physical delete (cascade article/variants) */

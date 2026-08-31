@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { changePassword } from '../api/auth'
 import { session } from '../store/session'
 import GeoObservationPeriod from './GeoObservationPeriod.vue'
+import GeoPrototypePageHeader from './GeoPrototypePageHeader.vue'
 
 defineProps({
   title: { type: String, required: true },
@@ -55,13 +56,8 @@ async function onUserCommand(cmd) {
 
 <template>
   <div class="geo-wb" v-loading="loading">
-    <header class="geo-topbar">
-      <div class="geo-topbar-copy">
-        <h1>{{ title }}</h1>
-        <div v-if="tenantHint" class="sub">{{ tenantHint }}</div>
-        <div v-else-if="sub" class="sub">{{ sub }}</div>
-      </div>
-      <div class="right">
+    <GeoPrototypePageHeader :title="title" :sub="tenantHint || sub">
+      <template #actions>
         <GeoObservationPeriod v-if="showPeriod" />
         <slot name="actions" />
         <el-dropdown v-if="session.isLoggedIn" trigger="click" @command="onUserCommand">
@@ -74,8 +70,8 @@ async function onUserCommand(cmd) {
           </template>
         </el-dropdown>
         <div v-else class="geo-avatar" title="本地 Key">{{ initials }}</div>
-      </div>
-    </header>
+      </template>
+    </GeoPrototypePageHeader>
     <div class="geo-content">
       <slot />
     </div>

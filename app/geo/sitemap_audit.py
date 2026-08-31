@@ -13,7 +13,7 @@ from app.urlwords import UA, UrlFetchError, validate_url
 _MAX_URLS = 60
 _TIMEOUT = 12.0
 _SKIP_PATH = re.compile(
-    r"/api(/|$)|/openapi|/swagger|/graphql|\.json($|\?)|/v\d+(/|$)|/rpc|/internal|/webhook",
+    r"/api(?:v\d+)?(?:/|$)|_api(?:/|$)|/openapi|/swagger|/graphql|\.json(?:$|\?)|/v\d+(?:/|$)|/rpc|/internal|/webhook",
     re.I,
 )
 
@@ -30,6 +30,8 @@ _TYPE_RULES: list[tuple[str, re.Pattern[str]]] = [
 def skip_reason(url: str) -> str | None:
     """Machine/API/intranet URLs should not enter page-type diagnosis."""
     path = urlparse(url).path or ""
+    if path.lower().endswith((".xml", ".xml.gz")):
+        return "站点地图 XML，不计入 HTML 页面诊断"
     if _SKIP_PATH.search(path):
         return "接口/文档 API 路径，不计入页面类型"
     try:
@@ -52,6 +54,17 @@ def classify_path(url: str) -> str:
     return "other"
 
 
+def collect_robots_sitemaps(robots_text: str) -> list[str]:
+    """Keep robots.txt Sitemap: order (do not reverse)."""
+    out: list[str] = []
+    for line in robots_text.splitlines():
+        if line.lower().startswith("sitemap:"):
+            loc = line.split(":", 1)[1].strip()
+            if loc and loc not in out:
+                out.append(loc)
+    return out
+
+
 def _parse_sitemap_locs(xml_text: str) -> list[str]:
     locs = re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", xml_text or "", flags=re.I)
     return [u.strip() for u in locs if u.strip().startswith("http")]
@@ -64,22 +77,27 @@ async def _fetch_text(url: str) -> str:
         return r.text[:400_000]
 
 
-async def discover_sitemap_urls(site_url: str) -> tuple[str | None, list[str]]:
+async def discover_sitemap_urls(
+    site_url: str,
+    *,
+    limit: int = _MAX_URLS,
+    skip_unusable: bool = False,
+) -> tuple[str | None, list[str]]:
     root = validate_url(site_url.strip())
     parsed = urlparse(root)
     origin = f"{parsed.scheme}://{parsed.netloc}"
-    candidates = [urljoin(origin, "/sitemap.xml"), urljoin(origin, "/sitemap_index.xml")]
+    default_sitemaps = [urljoin(origin, "/sitemap.xml"), urljoin(origin, "/sitemap_index.xml")]
+    robots_sitemaps: list[str] = []
     robots_url = urljoin(origin, "/robots.txt")
     try:
-        robots = await _fetch_text(robots_url)
-        for line in robots.splitlines():
-            if line.lower().startswith("sitemap:"):
-                candidates.insert(0, line.split(":", 1)[1].strip())
+        robots_sitemaps = collect_robots_sitemaps(await _fetch_text(robots_url))
     except Exception:  # noqa: BLE001
         pass
+    candidates = robots_sitemaps + [u for u in default_sitemaps if u not in robots_sitemaps]
 
     seen: list[str] = []
     source = None
+    child_cap = 12 if skip_unusable else 6
     for sm in candidates:
         if not sm:
             continue
@@ -94,22 +112,26 @@ async def discover_sitemap_urls(site_url: str) -> tuple[str | None, list[str]]:
         # sitemap index → fetch first few children
         if "sitemapindex" in xml.lower() or any(x.endswith(".xml") for x in locs[:3]):
             child_locs: list[str] = []
-            for child in locs[:6]:
+            for child in locs[:child_cap]:
                 try:
                     child_locs.extend(_parse_sitemap_locs(await _fetch_text(child)))
                 except Exception:  # noqa: BLE001
                     continue
             locs = child_locs or locs
         for u in locs:
+            if skip_unusable and skip_reason(u):
+                continue
             if u not in seen:
                 seen.append(u)
-            if len(seen) >= _MAX_URLS:
+            if len(seen) >= limit:
                 break
-        if seen:
+        if len(seen) >= limit:
+            break
+        if seen and not skip_unusable:
             break
     if not seen:
         seen = [origin + "/"]
-    return source, seen[:_MAX_URLS]
+    return source, seen[:limit]
 
 
 async def audit_sitemap(site_url: str) -> dict[str, Any]:

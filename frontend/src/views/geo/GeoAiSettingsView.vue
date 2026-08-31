@@ -109,6 +109,7 @@ onMounted(load)
     :loading="loading"
   >
     <template #actions>
+      <router-link class="gd-btn" to="/geo/engines">监测引擎</router-link>
       <button class="gd-btn" :disabled="testing" @click="test">{{ testing ? '测试中…' : '测试连通' }}</button>
       <button class="gd-btn" @click="load">刷新</button>
       <button class="gd-btn primary" :disabled="saving" @click="save">保存</button>
@@ -119,28 +120,18 @@ onMounted(load)
     <NeedHintAlert />
 
     <div class="geo-form-panel">
-      <div class="form-section-title">模型与密钥</div>
+      <div class="form-section-title">接入配置</div>
       <el-form label-width="120px" label-position="right">
-        <el-form-item label="启用">
-          <el-switch v-model="form.enabled" />
-          <span class="form-hint inline">关闭后渠道润色/母稿生成将无法调用 LLM</span>
-        </el-form-item>
         <el-form-item label="服务商">
           <el-select v-model="form.provider" style="width: 100%">
             <el-option label="阿里云百炼 DashScope" value="dashscope" />
             <el-option label="DeepSeek" value="deepseek" />
           </el-select>
         </el-form-item>
-        <el-form-item label="应用预设">
-          <div class="switch-row">
-            <el-switch v-model="form.apply_preset" />
-            <span class="form-hint inline">保存时写入该服务商默认 Base / Model</span>
-          </div>
-        </el-form-item>
         <el-form-item label="Base URL">
           <el-input v-model="form.base_url" placeholder="OpenAI 兼容接口地址" />
         </el-form-item>
-        <el-form-item label="Model">
+        <el-form-item label="模型">
           <el-input v-model="form.model" placeholder="如 deepseek-chat / qwen-plus" />
         </el-form-item>
         <el-form-item label="API Key">
@@ -153,6 +144,16 @@ onMounted(load)
           <el-checkbox v-if="meta?.api_key_configured" v-model="form.clear_api_key" class="mt-check">
             清除已保存的 Key
           </el-checkbox>
+        </el-form-item>
+        <el-form-item label="启用">
+          <el-switch v-model="form.enabled" />
+          <span class="form-hint inline">关闭后渠道润色/母稿生成将无法调用 LLM</span>
+        </el-form-item>
+        <el-form-item label="应用预设">
+          <div class="switch-row">
+            <el-switch v-model="form.apply_preset" />
+            <span class="form-hint inline">保存时写入该服务商默认 Base / Model</span>
+          </div>
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="form.note" type="textarea" :rows="2" placeholder="可选：用途说明" />

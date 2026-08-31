@@ -187,6 +187,23 @@ async function saveConfig() {
   }
 }
 
+async function saveTable() {
+  if (!tenantId.value) return
+  saving.value = true
+  try {
+    const data = await putGeoTrackingEngines(
+      tenantId.value,
+      items.value.map((it, idx) => enginePayload(it, idx)),
+    )
+    items.value = hydrateItems(data.items)
+    ElMessage.success('已保存租户监测引擎')
+  } catch (e) {
+    ElMessage.error(e.message || '保存失败')
+  } finally {
+    saving.value = false
+  }
+}
+
 async function savePatrol(patch = {}) {
   if (!tenantId.value) return
   const next = { ...patrol.value, ...patch }
@@ -219,35 +236,137 @@ onMounted(load)
 
 <template>
   <GeoWorkbenchPage
-    title="引擎"
+    title="AI 引擎管理"
     :show-period="false"
-    sub="点击卡片配置各引擎接口。阿里云百炼仅用于 DeepSeek 监测"
+    sub="配置要监测的 AI 大模型与巡检频率"
     :loading="loading"
   >
     <template #actions>
-      <button class="gd-btn" @click="load">刷新</button>
+      <router-link class="gd-btn" to="/geo/ai-settings">AI 能力配置</router-link>
+      <button class="gd-btn" type="button" @click="load">刷新</button>
+      <button class="gd-btn primary" type="button" :disabled="saving" @click="saveTable">保存</button>
     </template>
     <div class="geo-dash">
-      <div class="geo-eng-grid">
-        <button
-          v-for="row in items"
-          :key="row.engine_key"
-          type="button"
-          class="gd-card geo-eng-card"
-          @click="openConfig(row)"
-        >
-          <span class="geo-plogo" :style="{ background: engineColor(row.engine_key) }">
-            {{ engineDisplay(row.engine_key).slice(0, 1) }}
-          </span>
-          <div class="geo-eng-copy">
-            <b>{{ row.display_name || engineDisplay(row.engine_key) }}</b>
-            <div class="gd-sub" style="margin:0">{{ row.engine_key }} · 点击配置</div>
+      <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
+
+      <section class="gd-card mb">
+        <div class="gd-hd">
+          <h3>租户监测引擎</h3>
+          <span class="more">启用后可用于可见度快照与巡检</span>
+        </div>
+        <div class="gd-bd" style="padding:0">
+          <el-table :data="items" empty-text="暂无引擎" size="small">
+            <el-table-column label="启用" width="80">
+              <template #default="{ row }">
+                <el-switch v-model="row.enabled" size="small" />
+              </template>
+            </el-table-column>
+            <el-table-column label="引擎 key" min-width="120">
+              <template #default="{ row }">
+                <span class="muted">{{ row.engine_key }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="展示名" min-width="160">
+              <template #default="{ row }">
+                <el-input v-model="row.display_name" size="small" />
+              </template>
+            </el-table-column>
+            <el-table-column label="排序" width="110">
+              <template #default="{ row }">
+                <el-input-number v-model="row.sort_order" size="small" :min="0" :max="9999" controls-position="right" />
+              </template>
+            </el-table-column>
+            <el-table-column label="备注" min-width="180">
+              <template #default="{ row }">
+                <el-input v-model="row.note" size="small" />
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="100" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openConfig(row)">高级</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </section>
+
+      <details class="adv mb">
+        <summary>高级设置</summary>
+        <div class="adv-body">
+          <p class="hint">引擎接口配置与巡检调度。点表格「高级」可单独配置真采样 Base URL / Key。</p>
+          <div class="geo-eng-grid">
+            <button
+              v-for="row in items"
+              :key="row.engine_key"
+              type="button"
+              class="gd-card geo-eng-card"
+              @click="openConfig(row)"
+            >
+              <span class="geo-plogo" :style="{ background: engineColor(row.engine_key) }">
+                {{ engineDisplay(row.engine_key).slice(0, 1) }}
+              </span>
+              <div class="geo-eng-copy">
+                <b>{{ row.display_name || engineDisplay(row.engine_key) }}</b>
+                <div class="gd-sub" style="margin:0">{{ row.engine_key }} · 点击配置接口</div>
+              </div>
+              <div class="geo-eng-flags">
+                <span class="gd-badge" :class="cardBadge(row).cls">{{ cardBadge(row).text }}</span>
+              </div>
+            </button>
           </div>
-          <div class="geo-eng-flags">
-            <span class="gd-badge" :class="cardBadge(row).cls">{{ cardBadge(row).text }}</span>
+
+          <div class="gd-card" style="margin-top:16px">
+            <div class="gd-hd"><h3>巡检设置</h3></div>
+            <div class="gd-bd" style="max-width:560px;display:flex;flex-direction:column;gap:14px">
+              <div class="geo-set-row">
+                <span>巡检频率</span>
+                <div class="geo-chips" style="margin:0">
+                  <button class="geo-chip" :class="{ active: patrol.interval_hours === 24 }" type="button" @click="savePatrol({ interval_hours: 24 })">每日 1 次</button>
+                  <button class="geo-chip" :class="{ active: patrol.interval_hours === 6 }" type="button" @click="savePatrol({ interval_hours: 6 })">每 6 小时</button>
+                  <button class="geo-chip" :class="{ active: patrol.interval_hours === 1 }" type="button" @click="savePatrol({ interval_hours: 1 })">每小时</button>
+                </div>
+              </div>
+              <div class="geo-set-row">
+                <span>巡检时间</span>
+                <el-input-number
+                  :model-value="patrol.window_start_hour"
+                  :min="0"
+                  :max="23"
+                  size="small"
+                  @change="(v) => savePatrol({ window_start_hour: Number(v) })"
+                />
+                <span>至</span>
+                <el-input-number
+                  :model-value="patrol.window_end_hour"
+                  :min="0"
+                  :max="23"
+                  size="small"
+                  @change="(v) => savePatrol({ window_end_hour: Number(v) })"
+                />
+              </div>
+              <div class="geo-set-row">
+                <span>每轮提问上限</span>
+                <el-input-number
+                  :model-value="patrol.prompt_limit"
+                  :min="1"
+                  :max="50"
+                  size="small"
+                  @change="(v) => savePatrol({ prompt_limit: Number(v) })"
+                />
+              </div>
+              <div class="geo-set-row">
+                <span>定时巡检</span>
+                <span
+                  class="gd-badge"
+                  :class="patrol.enabled ? 'green' : 'amber'"
+                  style="cursor:pointer"
+                  @click="savePatrol({ enabled: !patrol.enabled })"
+                >{{ patrol.enabled ? '已开启' : '未开启' }}</span>
+              </div>
+            </div>
           </div>
-        </button>
-      </div>
+        </div>
+      </details>
 
       <el-dialog
         v-model="configOpen"
@@ -315,70 +434,26 @@ onMounted(load)
           <el-button type="primary" :loading="saving" @click="saveConfig">保存</el-button>
         </template>
       </el-dialog>
-
-      <div class="gd-card" style="margin-bottom:16px">
-        <div class="gd-hd"><h3>巡检设置</h3></div>
-        <div class="gd-bd" style="max-width:560px;display:flex;flex-direction:column;gap:14px">
-          <div class="geo-set-row">
-            <span>巡检频率</span>
-            <div class="geo-chips" style="margin:0">
-              <button class="geo-chip" :class="{ active: patrol.interval_hours === 24 }" @click="savePatrol({ interval_hours: 24 })">每日 1 次</button>
-              <button class="geo-chip" :class="{ active: patrol.interval_hours === 6 }" @click="savePatrol({ interval_hours: 6 })">每 6 小时</button>
-              <button class="geo-chip" :class="{ active: patrol.interval_hours === 1 }" @click="savePatrol({ interval_hours: 1 })">每小时</button>
-            </div>
-          </div>
-          <div class="geo-set-row">
-            <span>巡检时间</span>
-            <el-input-number
-              :model-value="patrol.window_start_hour"
-              :min="0"
-              :max="23"
-              size="small"
-              @change="(v) => savePatrol({ window_start_hour: Number(v) })"
-            />
-            <span>至</span>
-            <el-input-number
-              :model-value="patrol.window_end_hour"
-              :min="0"
-              :max="23"
-              size="small"
-              @change="(v) => savePatrol({ window_end_hour: Number(v) })"
-            />
-          </div>
-          <div class="geo-set-row">
-            <span>每轮提问上限</span>
-            <el-input-number
-              :model-value="patrol.prompt_limit"
-              :min="1"
-              :max="50"
-              size="small"
-              @change="(v) => savePatrol({ prompt_limit: Number(v) })"
-            />
-          </div>
-          <div class="geo-set-row">
-            <span>定时巡检</span>
-            <span
-              class="gd-badge"
-              :class="patrol.enabled ? 'green' : 'amber'"
-              style="cursor:pointer"
-              @click="savePatrol({ enabled: !patrol.enabled })"
-            >{{ patrol.enabled ? '已开启' : '未开启' }}</span>
-          </div>
-        </div>
-      </div>
-
-      <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
-
-      <div v-if="!items.length && !loading" class="geo-empty mb">
-        <div class="empty-title">暂无引擎</div>
-        <div>租户初始化后应自动生成默认引擎；刷新或检查 API / 租户选择。</div>
-      </div>
     </div>
   </GeoWorkbenchPage>
 </template>
 
 <style scoped>
 .mb { margin-bottom: 12px; }
+.muted { color: #6b7280; }
+.adv {
+  background: #fff;
+  border: 1px solid #eef0f4;
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+.adv summary {
+  cursor: pointer;
+  font-weight: 650;
+  color: #374151;
+}
+.adv-body { margin-top: 12px; }
+.hint { font-size: 12px; color: #6b7280; margin: 0 0 12px; }
 .geo-eng-card {
   text-align: left;
   width: 100%;

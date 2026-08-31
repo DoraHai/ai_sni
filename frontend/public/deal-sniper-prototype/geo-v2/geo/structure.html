@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GEO · 官网结构优化</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/geo-content-v1.css?rev=geo-content-v19">
+<style>
+  .st-intro { grid-template-columns: minmax(0, 1.5fr) minmax(420px, 1fr); min-height: 138px; }
+  .st-intro .geo-intro-copy { padding: 22px 24px; }
+  .st-intro h2 { max-width: none; margin: 6px 0 6px; font-size: 20px; }
+  .st-intro p { max-width: 640px; }
+  .st-intro .geo-principles { margin-top: 12px; }
+  .st-flow { display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items:center; gap:0; padding:18px 18px 18px 8px; background:transparent; border-top:0; }
+  .st-flow .geo-flow-step { position:relative; min-width:0; padding:8px 10px; background:transparent; }
+  .st-flow .geo-flow-step:not(:last-child)::after { position:absolute; top:20px; right:-2px; width:12px; height:1px; background:rgba(255,255,255,.25); content:""; }
+  .st-flow .geo-flow-step b { margin:0 0 4px; white-space:nowrap; }
+  .st-flow .geo-flow-step small { white-space:nowrap; }
+  .st-flow .geo-flow-no { margin-bottom:8px; }
+  .st-summary { display:flex; align-items:center; gap:22px; flex-wrap:wrap; padding:14px 18px; margin-bottom:16px; }
+  .st-summary .item { display:grid; gap:2px; min-width:0; }
+  .st-summary .item span { color:var(--muted); font-size:11px; }
+  .st-summary .item b { font-size:13px; font-weight:700; }
+  .st-summary .item a { color:var(--accent); }
+  .st-summary .item small { color:var(--muted); font-size:11px; }
+  .st-summary .item small a { font-weight:650; }
+  .st-summary .ops { margin-left:auto; display:flex; gap:8px; }
+  .st-health { display:grid; grid-template-columns: 220px minmax(0,1fr); gap:0; }
+  .st-health-score { padding:22px 20px; border-right:1px solid var(--border); }
+  .st-health-score .num { font-size:36px; font-weight:800; letter-spacing:-.03em; line-height:1.1; }
+  .st-health-score .num span { margin-left:4px; color:var(--muted); font-size:16px; font-weight:700; }
+  .st-callouts { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .st-callout { display:block; padding:18px 16px; border-right:1px solid var(--border); color:inherit; }
+  .st-callout:last-child { border-right:0; }
+  .st-callout:hover { background:var(--bg); }
+  .st-callout em { display:block; margin-bottom:8px; color:var(--muted); font-size:11px; font-style:normal; }
+  .st-callout .row { margin-bottom:8px; font-size:12.5px; }
+  .st-insight { padding:12px 18px 16px; border-top:1px solid var(--border); color:var(--muted); font-size:12.5px; line-height:1.7; }
+  .st-how { position:relative; margin-left:auto; }
+  .st-how-btn { border:0; background:none; color:var(--accent); font:inherit; font-size:12px; font-weight:650; cursor:pointer; }
+  .st-pop { position:absolute; top:28px; right:0; z-index:30; width:min(380px,82vw); padding:14px 15px; color:#3c4658; text-align:left; border:1px solid var(--border); border-radius:10px; background:#fff; box-shadow:var(--shadow); }
+  .st-pop[hidden] { display:none; }
+  .st-pop p { margin:0 0 10px; font-size:12px; line-height:1.65; }
+  .st-pop .dim { display:flex; justify-content:space-between; gap:12px; padding:6px 0; border-top:1px solid #edf0f5; font-size:12px; }
+  .st-pop .dim:first-of-type { border-top:0; }
+  .st-pop small { display:block; margin-top:8px; color:var(--muted); font-size:11px; line-height:1.6; }
+  .st-cover { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; padding:16px 18px; }
+  .st-cover-item { display:block; padding:12px; border:1px solid var(--border); border-radius:10px; background:#fff; color:inherit; min-height:108px; }
+  .st-cover-item:hover { border-color:var(--accent); }
+  .st-cover-item small { display:block; margin-top:2px; color:var(--muted); font-size:11px; }
+  .st-cover-item b { display:block; margin:8px 0 6px; font-size:14px; }
+  .st-issue { display:grid; grid-template-columns: 42px minmax(0,1fr) auto; gap:12px; padding:16px 0; border-bottom:1px solid var(--border); }
+  .st-issue:last-child { border-bottom:0; }
+  .st-pri { width:42px; height:24px; display:grid; place-items:center; border-radius:6px; font-size:11px; font-weight:800; }
+  .st-pri.p1 { background:#fdeaea; color:var(--bad); }
+  .st-pri.p2 { background:#fdf2e0; color:var(--warn); }
+  .st-issue h4 { margin:0 0 6px; font-size:13.5px; }
+  .st-issue p { margin:0 0 8px; color:var(--muted); font-size:12.5px; line-height:1.65; }
+  .st-pages { font-size:12px; color:#4b5563; }
+  .st-pages code { margin-right:6px; font-size:11px; }
+  .st-compare { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .st-tree { padding:14px; border:1px dashed var(--border); border-radius:10px; background:var(--bg); font-size:12.5px; line-height:1.8; }
+  .st-tree .weak { color:var(--muted); }
+  .st-tree b { color:var(--accent); }
+  .st-code { display:none; margin-top:12px; border:1px solid var(--border); border-radius:10px; overflow:hidden; background:#1e2330; }
+  .st-code.open { display:block; }
+  .st-code pre { margin:0; padding:16px; color:#e8edf5; font-size:12px; line-height:1.6; overflow:auto; max-height:280px; }
+  .st-code-bar { display:flex; justify-content:flex-end; gap:8px; padding:8px 10px; background:#161a24; }
+  .st-code-bar .btn { background:#fff; }
+  .st-fields { display:grid; gap:8px; }
+  .st-field { display:grid; grid-template-columns:88px 1fr; gap:10px; padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:#fff; font-size:12.5px; }
+  .st-field span { color:var(--muted); }
+  .st-field small { display:block; margin-top:2px; color:var(--muted); font-size:11px; }
+  .st-drawer-sec { margin-bottom:16px; }
+  .st-drawer-sec h4 { margin:0 0 8px; color:#7a8393; font-size:11px; font-weight:700; letter-spacing:.02em; }
+  .st-drawer-sec p { margin:0; line-height:1.7; font-size:12.5px; }
+  .st-kv { display:grid; gap:6px; font-size:12.5px; }
+  .st-kv div { display:flex; gap:8px; }
+  .st-kv span { color:var(--muted); width:72px; flex:none; }
+  .st-struct { display:flex; flex-wrap:wrap; gap:6px; }
+  .st-improves { display:flex; flex-wrap:wrap; gap:6px; }
+  .st-rel-summary { display:flex; align-items:flex-start; gap:16px; padding:14px 18px; border-bottom:1px solid var(--border); }
+  .st-rel-summary .pct { font-size:22px; font-weight:800; letter-spacing:-.03em; line-height:1.1; }
+  .st-rel-summary .pct span { margin-left:2px; color:var(--muted); font-size:12px; font-weight:700; }
+  .st-rel-summary p { margin:6px 0 0; color:var(--muted); font-size:12.5px; line-height:1.65; }
+  .st-rel-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padding:16px 18px; }
+  .st-rel-card { display:flex; flex-direction:column; min-width:0; padding:14px 16px; border:1px solid var(--border); border-radius:10px; background:#fff; color:inherit; text-align:left; cursor:pointer; }
+  .st-rel-card:hover { border-color:var(--accent); }
+  .st-rel-card h4 { margin:0 0 10px; font-size:13.5px; }
+  .st-rel-expr { margin:0 0 10px; font-size:13px; line-height:1.6; }
+  .st-rel-expr b { font-weight:750; }
+  .st-rel-expr em { color:var(--muted); font-style:normal; }
+  .st-rel-card p { margin:8px 0 0; color:var(--muted); font-size:12.5px; line-height:1.65; }
+  .st-rel-tech { display:block; margin-top:8px; color:#9aa3ad; font-size:11px; }
+  .st-rel-card .btn { margin-top:12px; align-self:flex-start; }
+  .badge.conflict { color:#6d28d9; background:#f3e8ff; }
+  .st-scan { position:fixed; inset:0; z-index:13000; display:none; align-items:center; justify-content:center; background:rgba(17,24,39,.45); }
+  .st-scan.open { display:flex; }
+  .st-scan .box { width:min(420px,92vw); padding:22px; border-radius:12px; background:#fff; box-shadow:var(--shadow); }
+  .st-scan .bar { height:8px; margin:14px 0 8px; border-radius:99px; background:#eef0f5; overflow:hidden; }
+  .st-scan .bar i { display:block; height:100%; width:0; background:var(--accent); transition:width .35s; }
+  @media(max-width:1100px){ .st-intro{grid-template-columns:1fr;min-height:0}.st-intro .geo-intro-copy{border-right:0;border-bottom:1px solid rgba(255,255,255,.1)}.st-health,.st-cover,.st-callouts,.st-rel-grid{grid-template-columns:1fr}.st-callout,.st-health-score{border-right:0;border-bottom:1px solid var(--border)}.st-summary .ops{margin-left:0;width:100%} }
+  @media(max-width:720px){ .st-flow{grid-template-columns:repeat(2,minmax(0,1fr));padding:12px}.st-flow .geo-flow-step:not(:last-child)::after{display:none}.st-flow .geo-flow-step b,.st-flow .geo-flow-step small{white-space:normal}.st-issue{grid-template-columns:42px 1fr} }
+</style>
+</head>
+<body class="geo-content-page">
+<div class="layout">
+  <aside class="sidebar"></aside>
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <h1>官网结构优化</h1>
+        <div class="sub">让机器更清楚地识别品牌、产品、服务和问答实体，并生成可交给开发实施的修改建议</div>
+      </div>
+      <div class="right">
+        <div class="avatar">DZ</div>
+      </div>
+    </header>
+
+    <div class="content">
+      <section class="geo-intro st-intro">
+        <div class="geo-intro-copy">
+          <span class="geo-kicker">AI-READABLE WEBSITE</span>
+          <h2>让官网不只是“给人看”，也让 AI 更容易读懂。</h2>
+          <p>扫描品牌、产品、FAQ 等实体，检查 Schema / JSON-LD 是否完整，并生成可交给开发实施的代码建议。</p>
+          <div class="geo-principles"><span>实体识别</span><span>Schema.org</span><span>JSON-LD</span><span>代码建议</span></div>
+        </div>
+        <div class="geo-flow st-flow" aria-label="官网结构优化工作流">
+          <div class="geo-flow-step"><span class="geo-flow-no">1</span><b>扫描结构</b><small>页面与已有标注</small></div>
+          <div class="geo-flow-step"><span class="geo-flow-no">2</span><b>找缺失</b><small>品牌、产品、FAQ</small></div>
+          <div class="geo-flow-step"><span class="geo-flow-no">3</span><b>给建议</b><small>Schema 代码</small></div>
+          <div class="geo-flow-step"><span class="geo-flow-no">4</span><b>验证结果</b><small>复扫检查上线</small></div>
+        </div>
+      </section>
+
+      <div class="card st-summary">
+        <div class="item"><span>官网</span><b><a id="stSiteLink" href="https://www.growthengine.cn" target="_blank" rel="noopener">https://www.growthengine.cn</a></b><small>来自 <a href="brand.html">品牌信息</a></small></div>
+        <div class="item"><span>最近扫描</span><b id="stScanTime">2026-08-22 18:30</b></div>
+        <div class="item"><span>扫描页面</span><b>286</b></div>
+        <div class="item"><span>结构化页面</span><b>194</b></div>
+        <div class="ops">
+          <a class="btn" href="#" id="stRescan">重新扫描</a>
+          <a class="btn" href="#" id="stSettings">扫描设置</a>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div class="hd">
+          <h3>AI 可解析结构</h3>
+          <div class="row st-how" style="gap:10px;">
+            <span class="badge amber">需要优化</span>
+            <button type="button" class="st-how-btn" id="stScoreHow" data-target="geo-structure" aria-expanded="false">评分怎么算？</button>
+            <div class="st-pop" id="stScorePop" hidden>
+              <p>这是产品内部的「机器可解析结构完整度」评分，用于衡量官网是否把品牌、产品、服务和内容关系表达清楚。不是 Google、Schema.org 或任何 AI 平台的官方评分。</p>
+              <div class="dim"><span>核心实体覆盖度 · 40%</span><b>72</b></div>
+              <div class="dim"><span>页面类型结构覆盖度 · 30%</span><b>64</b></div>
+              <div class="dim"><span>关键字段完整度 · 20%</span><b>81</b></div>
+              <div class="dim"><span>实体关系完整度 · 10%</span><b>46</b></div>
+              <small>四个维度加权后得到综合评分 68 / 100。主界面不展示计算公式。</small>
+            </div>
+          </div>
+        </div>
+        <div class="st-health">
+          <div class="st-health-score">
+            <div class="subtle">综合评分</div>
+            <div class="num">68<span>/ 100</span></div>
+          </div>
+          <div class="st-callouts">
+            <a class="st-callout" href="#" data-st-jump="品牌页面"><em>覆盖较好</em><div class="row between"><span>品牌 / 组织</span><b>92%</b></div><div class="bar green"><span style="width:92%"></span></div></a>
+            <a class="st-callout" href="#" data-st-jump="产品"><em>需要提升</em><div class="row between"><span>产品 / 服务</span><b>58%</b></div><div class="bar amber"><span style="width:58%"></span></div></a>
+            <a class="st-callout" href="#" data-st-jump="FAQ"><em>明显缺口</em><div class="row between"><span>FAQ</span><b>21%</b></div><div class="bar red"><span style="width:21%"></span></div></a>
+          </div>
+        </div>
+        <div class="st-insight">官网已经建立基础品牌和文章结构，但产品、服务及 FAQ 的结构化表达仍不完整，机器需要更多依赖页面正文推断实体关系。</div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div class="hd"><h3>当前官网已经建立哪些结构化信息？</h3><span class="more">业务名称 + Schema.org 类型</span></div>
+        <div class="st-cover">
+          <a class="st-cover-item" href="#" data-st-filter="品牌页面"><span class="subtle">品牌 / 企业</span><small>Organization</small><b>已覆盖</b><span class="badge green">正常</span></a>
+          <a class="st-cover-item" href="#" data-st-filter="品牌页面"><span class="subtle">官网</span><small>WebSite</small><b>已覆盖</b><span class="badge green">正常</span></a>
+          <a class="st-cover-item" href="#" data-st-filter="产品"><span class="subtle">产品</span><small>Product</small><b>7 / 12 页面</b><span class="badge amber">可增强</span></a>
+          <a class="st-cover-item" href="#" data-st-filter="服务"><span class="subtle">服务</span><small>Service</small><b>3 / 8 页面</b><span class="badge amber">可增强</span></a>
+          <a class="st-cover-item" href="#" data-st-filter="文章"><span class="subtle">文章</span><small>Article</small><b>26 / 31 页面</b><span class="badge amber">可增强</span></a>
+          <a class="st-cover-item" href="#" data-st-filter="FAQ"><span class="subtle">FAQ</span><small>FAQPage</small><b>0 / 4 页面</b><span class="badge red">缺失</span></a>
+          <a class="st-cover-item" href="#" data-st-filter="全部"><span class="subtle">导航结构</span><small>BreadcrumbList</small><b>82%</b><span class="badge green">正常</span></a>
+          <a class="st-cover-item" href="#" data-st-filter="文章"><span class="subtle">作者</span><small>Person</small><b>35%</b><span class="badge amber">可增强</span></a>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div class="hd"><h3>最值得先处理的问题</h3><span class="more">按对机器理解核心业务内容的影响排序</span></div>
+        <div class="bd" style="padding-top:4px;padding-bottom:8px;">
+          <div class="st-issue">
+            <span class="st-pri p1">P1</span>
+            <div>
+              <h4>5 个核心产品页面缺少 Product Schema</h4>
+              <p>页面已经包含产品介绍，但缺少标准化产品实体表达，机器需要更多依赖正文判断产品名称、品牌归属和产品属性。</p>
+              <div class="st-pages"><code>/product/crm</code><code>/product/mes</code><code>/product/erp</code><span class="muted">+2</span></div>
+            </div>
+            <a class="btn" href="#" data-st-jump="产品">查看涉及页面</a>
+          </div>
+          <div class="st-issue">
+            <span class="st-pri p1">P1</span>
+            <div>
+              <h4>4 个 FAQ 页面缺少 FAQPage</h4>
+              <p>页面已有明确问答内容，但没有通过结构化数据明确表达 Question → Answer 关系。</p>
+              <div class="st-pages">涉及 4 个页面</div>
+            </div>
+            <a class="btn" href="#" data-st-jump="FAQ">查看涉及页面</a>
+          </div>
+          <div class="st-issue">
+            <span class="st-pri p2">P2</span>
+            <div>
+              <h4>Organization 信息可增强</h4>
+              <p>缺少 sameAs、logo、contactPoint。官网品牌实体与外部官方账号、Logo、联系方式之间的结构关系不够完整。</p>
+              <div class="st-pages">建议补齐官方账号、标识和联系方式</div>
+            </div>
+            <a class="btn" href="#" data-st-open="about">查看建议</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;" id="stPageCard">
+        <div class="hd">
+          <h3>哪些页面需要优化？</h3>
+        </div>
+        <div class="bd" style="padding:12px 18px 0;">
+          <div class="row" style="gap:8px;margin-bottom:10px;" id="stTypeFilters">
+            <span class="tag chip-on" data-st-type="全部">全部</span>
+            <span class="tag" data-st-type="产品">产品</span>
+            <span class="tag" data-st-type="服务">服务</span>
+            <span class="tag" data-st-type="文章">文章</span>
+            <span class="tag" data-st-type="FAQ">FAQ</span>
+            <span class="tag" data-st-type="品牌页面">品牌页面</span>
+          </div>
+          <div class="row" style="gap:8px;" id="stStatusFilters">
+            <span class="tag chip-on" data-st-status="全部">全部状态</span>
+            <span class="tag" data-st-status="正常">正常</span>
+            <span class="tag" data-st-status="可增强">可增强</span>
+            <span class="tag" data-st-status="缺失">缺失</span>
+            <span class="tag" data-st-status="错误">错误</span>
+            <span class="tag" data-st-status="冲突">冲突</span>
+          </div>
+        </div>
+        <div class="bd" style="padding:0;">
+          <table>
+            <thead><tr><th>页面</th><th>页面类型</th><th>当前结构</th><th>结构状态</th><th>主要问题</th><th>优先级</th><th>操作</th></tr></thead>
+            <tbody id="stPageBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;" id="stRelCard">
+        <div class="hd">
+          <h3>官网内容关系完整度</h3>
+          <span class="more">检查官网是否已经清晰表达品牌、产品、官方渠道、文章和作者之间的重要关系</span>
+        </div>
+        <div class="st-rel-summary">
+          <div>
+            <div class="subtle">完整度</div>
+            <div class="pct">62<span>%</span></div>
+          </div>
+          <div>
+            <span class="badge amber">需要增强</span>
+            <p>品牌与产品关系已经比较清晰，但官方渠道关联、文章作者和文章与产品之间的关系仍然不完整。</p>
+          </div>
+        </div>
+        <div class="st-rel-grid">
+          <div class="st-rel-card" data-st-rel="product" role="button" tabindex="0">
+            <div class="row between"><h4>品牌与产品</h4><span class="badge green">已建立</span></div>
+            <div class="st-rel-expr"><b>SearchPilot</b> <em>→</em> <b>CRM软件</b></div>
+            <p>官网已经能够明确表达 CRM软件属于 SearchPilot 品牌。</p>
+            <small class="st-rel-tech">技术说明：Organization / Brand / Product</small>
+            <a class="btn" href="#" data-st-rel="product">查看详情</a>
+          </div>
+          <div class="st-rel-card" data-st-rel="channels" role="button" tabindex="0">
+            <div class="row between"><h4>品牌与官方渠道</h4><span class="badge amber">可增强</span></div>
+            <div class="st-rel-expr"><b>SearchPilot</b> <em>→</em> LinkedIn · 知乎 · 公众号 · 百科</div>
+            <p>部分官方渠道尚未通过结构化数据与品牌主体建立明确关联。</p>
+            <small class="st-rel-tech">技术说明：Organization.sameAs</small>
+            <a class="btn" href="#" data-st-rel="channels">查看缺失渠道</a>
+          </div>
+          <div class="st-rel-card" data-st-rel="author" role="button" tabindex="0">
+            <div class="row between"><h4>文章与作者</h4><span class="badge amber">覆盖 35%</span></div>
+            <div class="st-rel-expr"><b>31 篇文章</b> <em>→</em> <b>11 篇已明确作者</b></div>
+            <p>大量文章没有明确作者身份，不利于机器识别内容来源与责任主体。</p>
+            <small class="st-rel-tech">技术说明：Article.author → Person</small>
+            <a class="btn" href="#" data-st-rel="author">查看未覆盖文章</a>
+          </div>
+          <div class="st-rel-card" data-st-rel="about" role="button" tabindex="0">
+            <div class="row between"><h4>文章与产品</h4><span class="badge red">缺失</span></div>
+            <div class="st-rel-expr"><b>CRM 相关文章</b> <em>→</em> <b>CRM软件</b></div>
+            <p>部分文章虽然正文中介绍 CRM 软件，但没有通过结构化信息明确表达“文章主要介绍哪个产品”。</p>
+            <small class="st-rel-tech">技术说明：可使用 Article.about / mentions 等 Schema.org 属性，按页面实际情况选择</small>
+            <a class="btn" href="#" data-st-rel="about">查看建议</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="scope-note" style="margin-top:16px;"><b>使用边界：</b><span>结构化数据可以为搜索引擎和机器系统提供更明确的实体、属性和关系表达，是提升官网机器可解析性的重要基础。AI 是否最终提及、推荐或引用品牌，还会受到内容质量、权威性、第三方信源、页面可访问性和信息时效性等因素影响。本页评分不是 Google、Schema.org 或任何 AI 平台的官方评分，也不承诺添加 JSON-LD 一定提升 AI 排名或保证被引用。</span></div>
+    </div>
+  </main>
+</div>
+
+<div class="st-scan" id="stScanMask">
+  <div class="box">
+    <b>正在扫描官网结构</b>
+    <p class="subtle" style="margin:6px 0 0;">识别页面、已有结构化数据与可补充的实体关系</p>
+    <div class="bar"><i id="stScanBar"></i></div>
+    <div class="subtle" id="stScanMsg">连接官网…</div>
+  </div>
+</div>
+
+<script src="assets/geo-sidebar-v1.js?rev=geo-nav-v10"></script>
+<script src="../shared/prototype-runtime-v2.js?rev=interactions-v9"></script>
+<script src="assets/app.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var BRAND_KEY = 'growthEngine.geo.brand.v1';
+  var DEFAULT_SITE = 'https://www.growthengine.cn';
+
+  function getBrandSite() {
+    try {
+      var saved = JSON.parse(localStorage.getItem(BRAND_KEY));
+      if (saved && saved.website) return String(saved.website).trim();
+    } catch (error) {}
+    return DEFAULT_SITE;
+  }
+
+  function bindBrandSite() {
+    var site = getBrandSite();
+    var link = document.getElementById('stSiteLink');
+    if (!link) return site;
+    if (site) {
+      link.href = site;
+      link.textContent = site;
+      link.target = '_blank';
+      link.rel = 'noopener';
+    } else {
+      link.href = 'brand.html';
+      link.textContent = '未填写品牌网站';
+      link.removeAttribute('target');
+      link.removeAttribute('rel');
+    }
+    return site;
+  }
+
+  bindBrandSite();
+
+  function siteUrl(path) {
+    return (getBrandSite() || DEFAULT_SITE).replace(/\/$/, '') + path;
+  }
+
+  var pages = [
+    { id: 'crm', name: 'CRM 产品页', url: '/product/crm', type: '产品', schema: 'Organization', status: '缺失', issue: '缺少 Product', pri: 'P1',
+      title: 'CRM客户管理系统', brand: 'SearchPilot', product: 'CRM软件', biz: 'CRM',
+      detected: [['品牌', 'SearchPilot'], ['产品', 'CRM软件'], ['业务', 'CRM'], ['页面标题', 'CRM客户管理系统']],
+      structures: [['Organization', true], ['BreadcrumbList', true], ['Product', false]],
+      problem: '缺少 Product Schema。页面虽然已经包含产品名称、产品介绍和品牌信息，但没有通过 Product Schema 明确表达产品实体及其属性关系。',
+      suggest: 'Product + Brand',
+      improves: ['产品实体表达', '品牌归属关系', '产品分类表达', '页面结构完整度'],
+      jsonld: function () {
+        return { '@context': 'https://schema.org', '@type': 'Product', name: 'CRM软件', brand: { '@type': 'Brand', name: 'SearchPilot' }, description: '面向中小团队的 CRM，支持线索分配、工单协同与数据分析。', category: 'CRM', url: siteUrl('/product/crm') };
+      },
+      fields: [
+        { key: 'name', value: 'CRM软件', source: '页面 H1' },
+        { key: 'brand', value: 'SearchPilot', source: '品牌设置' },
+        { key: 'description', value: '面向中小团队的 CRM，支持线索分配、工单协同与数据分析。', source: 'Meta Description' },
+        { key: 'category', value: 'CRM', source: '页面内容识别' },
+        { key: 'url', value: '/product/crm', source: '当前 URL' }
+      ] },
+    { id: 'mes', name: 'MES 产品页', url: '/product/mes', type: '产品', schema: 'Organization', status: '缺失', issue: '缺少 Product', pri: 'P1',
+      title: 'MES 生产执行系统', brand: 'SearchPilot', product: 'MES', biz: '制造执行',
+      detected: [['品牌', 'SearchPilot'], ['产品', 'MES'], ['页面标题', 'MES 生产执行系统']],
+      structures: [['Organization', true], ['Product', false]],
+      problem: '缺少 Product Schema。页面已有产品介绍，但没有通过标准化产品实体表达名称、品牌归属和产品分类。',
+      suggest: 'Product',
+      improves: ['产品实体表达', '品牌归属关系'],
+      jsonld: function () {
+        return { '@context': 'https://schema.org', '@type': 'Product', name: 'MES', brand: { '@type': 'Brand', name: 'SearchPilot' }, description: '面向工厂现场的生产执行系统。', category: 'MES', url: siteUrl('/product/mes') };
+      },
+      fields: [
+        { key: 'name', value: 'MES', source: '页面 H1' },
+        { key: 'brand', value: 'SearchPilot', source: '品牌设置' },
+        { key: 'description', value: '面向工厂现场的生产执行系统。', source: 'Meta Description' },
+        { key: 'category', value: 'MES', source: '页面内容识别' },
+        { key: 'url', value: '/product/mes', source: '当前 URL' }
+      ] },
+    { id: 'erp', name: 'ERP 产品页', url: '/product/erp', type: '产品', schema: 'Organization', status: '缺失', issue: '缺少 Product', pri: 'P1',
+      title: 'ERP 管理系统', brand: 'SearchPilot', product: 'ERP', biz: '企业资源',
+      detected: [['品牌', 'SearchPilot'], ['产品', 'ERP'], ['页面标题', 'ERP 管理系统']],
+      structures: [['Organization', true], ['Product', false]],
+      problem: '缺少 Product Schema。产品属性散落在正文中，没有通过 Product 明确产品实体。',
+      suggest: 'Product',
+      improves: ['产品实体表达', '产品分类表达'],
+      jsonld: function () {
+        return { '@context': 'https://schema.org', '@type': 'Product', name: 'ERP', brand: { '@type': 'Brand', name: 'SearchPilot' }, description: '覆盖财务、供应链与进销存的 ERP。', category: 'ERP', url: siteUrl('/product/erp') };
+      },
+      fields: [
+        { key: 'name', value: 'ERP', source: '页面 H1' },
+        { key: 'brand', value: 'SearchPilot', source: '品牌设置' },
+        { key: 'description', value: '覆盖财务、供应链与进销存的 ERP。', source: 'Meta Description' },
+        { key: 'category', value: 'ERP', source: '页面内容识别' },
+        { key: 'url', value: '/product/erp', source: '当前 URL' }
+      ] },
+    { id: 'faq', name: 'FAQ', url: '/faq', type: 'FAQ', schema: '无', status: '缺失', issue: '缺少 FAQPage', pri: 'P1',
+      title: '常见问题', brand: 'SearchPilot',
+      detected: [['品牌', 'SearchPilot'], ['问答', '12 组'], ['页面标题', '常见问题']],
+      structures: [['FAQPage', false]],
+      problem: '缺少 FAQPage 结构，页面中的问题与答案关系没有通过标准化结构明确表达。',
+      suggest: 'FAQPage',
+      improves: ['问题—答案关系', '问答实体表达'],
+      jsonld: function () {
+        return { '@context': 'https://schema.org', '@type': 'FAQPage', mainEntity: [
+          { '@type': 'Question', name: 'SearchPilot CRM 适合哪些团队？', acceptedAnswer: { '@type': 'Answer', text: '适合 10–200 人、需要线索分配与工单协同的中小团队。' } },
+          { '@type': 'Question', name: '是否支持私有化部署？', acceptedAnswer: { '@type': 'Answer', text: '支持公有云与私有化部署，数据可留在客户指定环境。' } }
+        ] };
+      },
+      fields: [
+        { key: 'name', value: 'SearchPilot CRM 适合哪些团队？', source: '页面 H2 / 问答标题' },
+        { key: 'acceptedAnswer', value: '适合 10–200 人的中小团队。', source: '页面对应答案正文' },
+        { key: 'url', value: '/faq', source: '当前 URL' }
+      ] },
+    { id: 'about', name: '关于我们', url: '/about', type: '品牌页面', schema: 'Organization', status: '可增强', issue: '缺少 sameAs', pri: 'P2',
+      title: '关于 SearchPilot', brand: 'SearchPilot',
+      detected: [['品牌', 'SearchPilot'], ['页面标题', '关于 SearchPilot']],
+      structures: [['Organization', true], ['WebSite', true]],
+      problem: '已有 Organization，但缺少 sameAs、logo、contactPoint。品牌实体与外部官方账号、标识和联系方式之间的结构关系不够完整。',
+      suggest: '补全 Organization 字段',
+      improves: ['官方账号关系', '品牌标识', '联系方式'],
+      jsonld: function () {
+        return { '@context': 'https://schema.org', '@type': 'Organization', name: 'SearchPilot', url: siteUrl('/'), logo: siteUrl('/logo.png'), sameAs: ['https://www.linkedin.com/company/searchpilot', 'https://www.zhihu.com/org/searchpilot'], contactPoint: [{ '@type': 'ContactPoint', contactType: 'customer support', email: 'hello@searchpilot.com' }] };
+      },
+      fields: [
+        { key: 'name', value: 'SearchPilot', source: '品牌设置' },
+        { key: 'url', value: '/', source: '当前 URL' },
+        { key: 'logo', value: '/logo.png', source: '品牌设置 / 站点图标' },
+        { key: 'sameAs', value: 'LinkedIn、知乎', source: '品牌信息中的官方账号' },
+        { key: 'contactPoint', value: 'hello@searchpilot.com', source: '关于我们页联系方式' }
+      ] },
+    { id: 'blog', name: '文章详情', url: '/blog/crm-selection', type: '文章', schema: 'Article', status: '可增强', issue: '缺少 author', pri: 'P2',
+      title: 'CRM 怎么选', brand: 'SearchPilot',
+      detected: [['文章', 'CRM 怎么选'], ['品牌', 'SearchPilot'], ['页面标题', 'CRM 怎么选']],
+      structures: [['Article', true], ['Person', false]],
+      problem: '已有 Article，但缺少 author。文章有作者署名，作者实体尚未通过 Person 明确表达。',
+      suggest: 'Article + author / Person',
+      improves: ['作者实体', '内容来源关系'],
+      jsonld: function () {
+        return { '@context': 'https://schema.org', '@type': 'Article', headline: 'CRM 怎么选', author: { '@type': 'Person', name: 'Daisy' }, datePublished: '2026-06-12', publisher: { '@type': 'Organization', name: 'SearchPilot' }, url: siteUrl('/blog/crm-selection') };
+      },
+      fields: [
+        { key: 'headline', value: 'CRM 怎么选', source: '页面 H1' },
+        { key: 'author', value: 'Daisy', source: '页面作者署名' },
+        { key: 'datePublished', value: '2026-06-12', source: '页面发布时间' },
+        { key: 'url', value: '/blog/crm-selection', source: '当前 URL' }
+      ] },
+    { id: 'service', name: '实施服务', url: '/services/impl', type: '服务', schema: 'Organization', status: '缺失', issue: '缺少 Service', pri: 'P2',
+      title: '实施部署服务', brand: 'SearchPilot',
+      detected: [['服务', '实施部署'], ['品牌', 'SearchPilot'], ['页面标题', '实施部署服务']],
+      structures: [['Organization', true], ['Service', false]],
+      problem: '缺少 Service Schema。服务页目前只有 Organization，服务名称、提供方和与产品的关系没有通过 Service 明确表达。',
+      suggest: 'Service',
+      improves: ['服务实体表达', '服务提供方关系'],
+      jsonld: function () {
+        return { '@context': 'https://schema.org', '@type': 'Service', name: '实施部署服务', provider: { '@type': 'Organization', name: 'SearchPilot' }, serviceType: '实施与部署', url: siteUrl('/services/impl') };
+      },
+      fields: [
+        { key: 'name', value: '实施部署服务', source: '页面 H1' },
+        { key: 'provider', value: 'SearchPilot', source: '品牌设置' },
+        { key: 'serviceType', value: '实施与部署', source: '页面内容识别' },
+        { key: 'url', value: '/services/impl', source: '当前 URL' }
+      ] },
+    { id: 'price', name: 'CRM 价格页', url: '/product/crm/pricing', type: '产品', schema: 'Product', status: '错误', issue: 'price 格式错误', pri: 'P2',
+      title: 'CRM 价格', brand: 'SearchPilot', product: 'CRM软件',
+      detected: [['产品', 'CRM软件'], ['页面标题', 'CRM 价格']],
+      structures: [['Product', true], ['Offer', true]],
+      problem: '标注错误：JSON-LD 中 price 不是合法的 Offer.price 格式，机器无法稳定读取价格属性。',
+      suggest: 'Product + Offer',
+      improves: ['价格字段合法性', 'Offer 结构完整度'],
+      jsonld: function () {
+        return { '@context': 'https://schema.org', '@type': 'Product', name: 'CRM软件', brand: { '@type': 'Brand', name: 'SearchPilot' }, url: siteUrl('/product/crm/pricing'), offers: { '@type': 'Offer', price: '1299', priceCurrency: 'CNY' } };
+      },
+      fields: [
+        { key: 'name', value: 'CRM软件', source: '页面 H1' },
+        { key: 'brand', value: 'SearchPilot', source: '品牌设置' },
+        { key: 'price', value: '1299', source: '页面价格模块' },
+        { key: 'priceCurrency', value: 'CNY', source: '页面价格模块' },
+        { key: 'url', value: '/product/crm/pricing', source: '当前 URL' }
+      ] },
+    { id: 'suite', name: '产品套件页', url: '/product/suite', type: '产品', schema: 'Product, Product', status: '冲突', issue: '两套 Product 数据矛盾', pri: 'P2',
+      title: '产品套件', brand: 'SearchPilot', product: 'SearchPilot 套件',
+      detected: [['产品', 'SearchPilot 套件'], ['页面标题', '产品套件']],
+      structures: [['Product', true], ['Product', true]],
+      problem: '冲突：同一页面存在两套互相矛盾的 Product 数据，产品名称与品牌归属不一致。',
+      suggest: '保留一套 Product',
+      improves: ['消除冲突标注', '产品实体一致性'],
+      jsonld: function () {
+        return { '@context': 'https://schema.org', '@type': 'Product', name: 'SearchPilot 套件', brand: { '@type': 'Brand', name: 'SearchPilot' }, description: '包含 CRM、MES 与数据分析的产品套件。', category: '套件', url: siteUrl('/product/suite') };
+      },
+      fields: [
+        { key: 'name', value: 'SearchPilot 套件', source: '页面 H1' },
+        { key: 'brand', value: 'SearchPilot', source: '品牌设置' },
+        { key: 'description', value: '包含 CRM、MES 与数据分析的产品套件。', source: '页面摘要' },
+        { key: 'url', value: '/product/suite', source: '当前 URL' }
+      ] },
+    { id: 'home', name: '首页', url: '/', type: '品牌页面', schema: 'Organization, WebSite', status: '正常', issue: '—', pri: 'P3',
+      title: 'SearchPilot', brand: 'SearchPilot',
+      detected: [['品牌', 'SearchPilot'], ['页面标题', 'SearchPilot']],
+      structures: [['Organization', true], ['WebSite', true]],
+      problem: 'Schema 有效，字段完整，并与页面内容一致。',
+      suggest: '维持现有结构',
+      improves: ['保持品牌入口'],
+      jsonld: function () {
+        return { '@context': 'https://schema.org', '@type': 'WebSite', name: 'SearchPilot', url: siteUrl('/'), publisher: { '@type': 'Organization', name: 'SearchPilot' } };
+      },
+      fields: [
+        { key: 'name', value: 'SearchPilot', source: '品牌设置' },
+        { key: 'url', value: '/', source: '当前 URL' }
+      ] }
+  ];
+
+  var typeFilter = '全部';
+  var statusFilter = '全部';
+  var activeDrawer = null;
+
+  function escapeHtml(value) {
+    return String(value == null ? '' : value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function statusBadge(status) {
+    if (status === '正常') return '<span class="badge green">正常</span>';
+    if (status === '缺失' || status === '错误') return '<span class="badge red">' + status + '</span>';
+    if (status === '冲突') return '<span class="badge conflict">冲突</span>';
+    return '<span class="badge amber">可增强</span>';
+  }
+
+  function renderPages() {
+    var rows = pages.filter(function (page) {
+      if (typeFilter !== '全部' && page.type !== typeFilter) return false;
+      if (statusFilter !== '全部' && page.status !== statusFilter) return false;
+      return true;
+    });
+    document.getElementById('stPageBody').innerHTML = rows.map(function (page) {
+      return '<tr data-st-id="' + page.id + '"><td class="kw">' + escapeHtml(page.name) + '<div class="subtle">' + escapeHtml(page.url) + '</div></td><td>' + escapeHtml(page.type) + '</td><td class="muted">' + escapeHtml(page.schema) + '</td><td>' + statusBadge(page.status) + '</td><td>' + escapeHtml(page.issue) + '</td><td>' + escapeHtml(page.pri) + '</td><td><a href="#" data-st-open="' + page.id + '">查看</a></td></tr>';
+    }).join('') || '<tr><td colspan="7" class="subtle" style="padding:22px;text-align:center;">没有符合筛选的页面</td></tr>';
+  }
+
+  function closeDrawer() {
+    if (!activeDrawer) return;
+    var mask = activeDrawer;
+    activeDrawer = null;
+    mask.classList.remove('show');
+    setTimeout(function () { if (mask.parentNode) mask.remove(); }, 180);
+  }
+
+  function codeText(page) {
+    return '<script type="application/ld+json">\n' + JSON.stringify(page.jsonld(), null, 2) + '\n</scr' + 'ipt>';
+  }
+
+  function openDrawer(id) {
+    var page = pages.filter(function (item) { return item.id === id; })[0];
+    if (!page) return;
+    closeDrawer();
+    var detected = (page.detected || []).map(function (row) {
+      return '<div><span>' + escapeHtml(row[0]) + '</span><b>' + escapeHtml(row[1]) + '</b></div>';
+    }).join('');
+    var structures = (page.structures || []).map(function (row) {
+      return '<span class="badge ' + (row[1] ? 'green' : 'red') + '">' + escapeHtml(row[0]) + ' ' + (row[1] ? '✓' : '×') + '</span>';
+    }).join('');
+    var improves = (page.improves || []).map(function (item) {
+      return '<span class="tag">' + escapeHtml(item) + '</span>';
+    }).join('');
+    var fields = (page.fields || []).map(function (item) {
+      return '<div class="st-field"><b>' + escapeHtml(item.key) + '</b><div>' + escapeHtml(item.value) + '<small>来源：' + escapeHtml(item.source) + '</small></div></div>';
+    }).join('');
+    var mask = document.createElement('div');
+    mask.className = 'ge2-drawer-mask';
+    mask.innerHTML =
+      '<aside class="ge2-drawer" role="dialog" aria-modal="true" style="width:min(520px,94vw);">' +
+        '<header class="ge2-drawer-head"><div><h2>' + escapeHtml(page.name) + '</h2><p>' + escapeHtml(page.url) + '</p></div><button class="ge2-close" type="button">×</button></header>' +
+        '<div class="ge2-drawer-body">' +
+          '<div class="st-kv" style="margin-bottom:16px;"><div><span>页面类型</span><b>' + escapeHtml(page.type) + '</b></div><div><span>状态</span><b>' + statusBadge(page.status) + '</b></div><div><span>优先级</span><b>' + escapeHtml(page.pri) + '</b></div></div>' +
+          '<div class="st-drawer-sec"><h4>当前识别内容</h4><div class="st-kv">' + detected + '</div></div>' +
+          '<div class="st-drawer-sec"><h4>当前结构化数据</h4><div class="st-struct">' + structures + '</div></div>' +
+          '<div class="st-drawer-sec"><h4>发现的问题</h4><p>' + escapeHtml(page.problem) + '</p></div>' +
+          '<div class="st-drawer-sec"><h4>建议结构</h4><span class="badge blue">' + escapeHtml(page.suggest) + '</span></div>' +
+          '<div class="st-drawer-sec"><h4>预计改善</h4><div class="st-improves">' + improves + '</div></div>' +
+          '<div class="st-code" id="stDrawerCodePage"><div class="st-code-bar"><a class="btn" href="#" data-st-copy="1">复制 JSON-LD</a></div><pre></pre></div>' +
+          '<div class="st-drawer-sec" id="stDrawerFieldsPage" hidden><h4>字段来源</h4><div class="st-fields">' + fields + '</div></div>' +
+        '</div>' +
+        '<footer class="ge2-drawer-foot"><button class="ge2-button" type="button" data-st-code="1">查看建议代码</button><button class="ge2-button" type="button" data-st-ai="1">AI 生成 JSON-LD</button><button class="ge2-button primary" type="button" data-st-task="1">创建开发任务</button></footer>' +
+      '</aside>';
+    document.body.appendChild(mask);
+    activeDrawer = mask;
+        var pre = mask.querySelector('#stDrawerCodePage pre');
+    pre.textContent = codeText(page);
+    requestAnimationFrame(function () { mask.classList.add('show'); });
+    mask.querySelector('.ge2-close').addEventListener('click', closeDrawer);
+    mask.addEventListener('click', function (event) { if (event.target === mask) closeDrawer(); });
+    mask.querySelector('[data-st-code]').addEventListener('click', function () {
+          mask.querySelector('#stDrawerCodePage').classList.add('open');
+    });
+    mask.querySelector('[data-st-ai]').addEventListener('click', function () {
+          mask.querySelector('#stDrawerCodePage').classList.add('open');
+          mask.querySelector('#stDrawerFieldsPage').hidden = false;
+      if (window.geToast) window.geToast('已按页面 H1、品牌设置和 Meta 生成 JSON-LD');
+    });
+    mask.querySelector('[data-st-task]').addEventListener('click', function () {
+      if (window.geToast) window.geToast('已创建开发任务：' + page.name + ' · ' + page.suggest);
+    });
+    mask.querySelector('[data-st-copy]').addEventListener('click', function (event) {
+      event.preventDefault();
+      var text = pre.textContent;
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text);
+      if (window.geToast) window.geToast('JSON-LD 已复制');
+    });
+  }
+
+  var relations = {
+    product: {
+      title: '品牌与产品',
+      status: '已建立',
+      sub: '检查品牌主体与产品之间是否已经建立明确归属',
+      body:
+        '<div class="st-kv" style="margin-bottom:14px;"><div><span>当前品牌</span><b>SearchPilot</b></div><div><span>关联产品</span><b>CRM软件</b></div><div><span>状态</span><b><span class="badge green">已建立</span></b></div></div>' +
+        '<div class="st-drawer-sec"><h4>业务判断</h4><p>官网已经能够明确表达 CRM软件属于 SearchPilot 品牌。</p></div>' +
+        '<div class="st-drawer-sec"><h4>建议结构</h4><span class="badge blue">Product + Brand</span></div>',
+      jsonld: function () {
+        return { '@context': 'https://schema.org', '@type': 'Product', name: 'CRM软件', brand: { '@type': 'Brand', name: 'SearchPilot' }, url: siteUrl('/product/crm') };
+      },
+      fields: [
+        { key: 'name', value: 'CRM软件', source: '产品页 H1' },
+        { key: 'brand', value: 'SearchPilot', source: '品牌设置' },
+        { key: 'url', value: '/product/crm', source: '当前 URL' }
+      ]
+    },
+    channels: {
+      title: '品牌与官方渠道',
+      status: '可增强',
+      sub: '检查品牌主体与外部官方账号之间的关联',
+      body:
+        '<div class="st-kv" style="margin-bottom:14px;"><div><span>当前品牌</span><b>SearchPilot</b></div><div><span>状态</span><b><span class="badge amber">可增强</span></b></div></div>' +
+        '<div class="st-drawer-sec"><h4>已关联</h4><p>LinkedIn、知乎</p></div>' +
+        '<div class="st-drawer-sec"><h4>未明确关联</h4><p>公众号、百科</p></div>' +
+        '<div class="st-drawer-sec"><h4>建议</h4><p>补充 Organization.sameAs，把尚未关联的官方渠道写入品牌主体。</p></div>',
+      jsonld: function () {
+        return { '@context': 'https://schema.org', '@type': 'Organization', name: 'SearchPilot', url: siteUrl('/'), sameAs: ['https://www.linkedin.com/company/searchpilot', 'https://www.zhihu.com/org/searchpilot', 'https://mp.weixin.qq.com/searchpilot', 'https://baike.baidu.com/item/SearchPilot'] };
+      },
+      fields: [
+        { key: 'name', value: 'SearchPilot', source: '品牌设置' },
+        { key: 'url', value: '/', source: '品牌网站' },
+        { key: 'sameAs', value: 'LinkedIn、知乎、公众号、百科', source: '品牌信息中的官方账号' }
+      ]
+    },
+    author: {
+      title: '文章与作者',
+      status: '可增强',
+      sub: '31 篇文章中 11 篇已明确作者，覆盖率 35%',
+      body:
+        '<div class="st-kv" style="margin-bottom:14px;"><div><span>文章总量</span><b>31</b></div><div><span>已明确作者</span><b>11</b></div><div><span>覆盖率</span><b>35%</b></div><div><span>状态</span><b><span class="badge amber">可增强</span></b></div></div>' +
+        '<div class="st-drawer-sec"><h4>未覆盖示例</h4><p>/blog/crm-selection<br>/blog/mes-checklist<br>/blog/erp-budget</p></div>' +
+        '<div class="st-drawer-sec"><h4>建议</h4><p>为文章补充 author，并使用 Person 明确作者身份。</p></div>',
+      jsonld: function () {
+        return { '@context': 'https://schema.org', '@type': 'Article', headline: 'CRM 怎么选', author: { '@type': 'Person', name: 'Daisy' }, url: siteUrl('/blog/crm-selection') };
+      },
+      fields: [
+        { key: 'headline', value: 'CRM 怎么选', source: '页面 H1' },
+        { key: 'author', value: 'Daisy', source: '页面作者署名' },
+        { key: 'url', value: '/blog/crm-selection', source: '当前 URL' }
+      ]
+    },
+    about: {
+      title: '文章与产品',
+      status: '缺失',
+      sub: '检查文章是否明确表达主要介绍哪个产品',
+      body:
+        '<div class="st-kv" style="margin-bottom:14px;"><div><span>相关文章</span><b>CRM 相关文章</b></div><div><span>目标产品</span><b>CRM软件</b></div><div><span>状态</span><b><span class="badge red">缺失</span></b></div></div>' +
+        '<div class="st-drawer-sec"><h4>业务判断</h4><p>部分文章虽然正文中介绍 CRM 软件，但没有通过结构化信息明确表达“文章主要介绍哪个产品”。</p></div>' +
+        '<div class="st-drawer-sec"><h4>建议</h4><p>可按页面实际情况使用 Article.about 或 mentions，指向已有的 Product 实体。不要使用未在 Schema.org 中定义的属性。</p></div>',
+      jsonld: function () {
+        return { '@context': 'https://schema.org', '@type': 'Article', headline: 'CRM 怎么选', about: { '@type': 'Product', name: 'CRM软件', brand: { '@type': 'Brand', name: 'SearchPilot' } }, url: siteUrl('/blog/crm-selection') };
+      },
+      fields: [
+        { key: 'headline', value: 'CRM 怎么选', source: '页面 H1' },
+        { key: 'about', value: 'CRM软件', source: '正文主题识别' },
+        { key: 'url', value: '/blog/crm-selection', source: '当前 URL' }
+      ]
+    }
+  };
+
+  function openRelDrawer(id) {
+    var rel = relations[id];
+    if (!rel) return;
+    closeDrawer();
+    var fields = (rel.fields || []).map(function (item) {
+      return '<div class="st-field"><b>' + escapeHtml(item.key) + '</b><div>' + escapeHtml(item.value) + '<small>来源：' + escapeHtml(item.source) + '</small></div></div>';
+    }).join('');
+    var mask = document.createElement('div');
+    mask.className = 'ge2-drawer-mask';
+    mask.innerHTML =
+      '<aside class="ge2-drawer" role="dialog" aria-modal="true" style="width:min(520px,94vw);">' +
+        '<header class="ge2-drawer-head"><div><h2>' + escapeHtml(rel.title) + '</h2><p>' + escapeHtml(rel.sub) + '</p></div><button class="ge2-close" type="button">×</button></header>' +
+        '<div class="ge2-drawer-body">' + rel.body +
+          '<div class="st-code" id="stDrawerCodeRelation"><div class="st-code-bar"><a class="btn" href="#" data-st-copy="1">复制 JSON-LD</a></div><pre></pre></div>' +
+          '<div class="st-drawer-sec" id="stDrawerFieldsRelation" hidden><h4>字段来源</h4><div class="st-fields">' + fields + '</div></div>' +
+        '</div>' +
+        '<footer class="ge2-drawer-foot"><button class="ge2-button" type="button" data-st-code="1">查看建议代码</button><button class="ge2-button primary" type="button" data-st-ai="1">AI 生成 JSON-LD</button></footer>' +
+      '</aside>';
+    document.body.appendChild(mask);
+    activeDrawer = mask;
+        var pre = mask.querySelector('#stDrawerCodeRelation pre');
+    pre.textContent = '<script type="application/ld+json">\n' + JSON.stringify(rel.jsonld(), null, 2) + '\n</scr' + 'ipt>';
+    requestAnimationFrame(function () { mask.classList.add('show'); });
+    mask.querySelector('.ge2-close').addEventListener('click', closeDrawer);
+    mask.addEventListener('click', function (event) { if (event.target === mask) closeDrawer(); });
+    mask.querySelector('[data-st-code]').addEventListener('click', function () {
+          mask.querySelector('#stDrawerCodeRelation').classList.add('open');
+    });
+    mask.querySelector('[data-st-ai]').addEventListener('click', function () {
+          mask.querySelector('#stDrawerCodeRelation').classList.add('open');
+          mask.querySelector('#stDrawerFieldsRelation').hidden = false;
+      if (window.geToast) window.geToast('已按品牌设置和页面内容生成 JSON-LD');
+    });
+    mask.querySelector('[data-st-copy]').addEventListener('click', function (event) {
+      event.preventDefault();
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(pre.textContent);
+      if (window.geToast) window.geToast('JSON-LD 已复制');
+    });
+  }
+
+  function runScan() {
+    var site = bindBrandSite();
+    if (!site) {
+      if (window.geToast) window.geToast('请先在品牌信息中填写品牌网站');
+      return;
+    }
+    var mask = document.getElementById('stScanMask');
+    var bar = document.getElementById('stScanBar');
+    var msg = document.getElementById('stScanMsg');
+    var steps = ['连接 ' + site + '…', '读取页面与已有结构化数据…', '识别品牌、产品、FAQ 实体…', '生成可实施的修改建议…'];
+    var i = 0;
+    mask.classList.add('open');
+    bar.style.width = '8%';
+    var timer = setInterval(function () {
+      i += 1;
+      bar.style.width = Math.min(100, 8 + i * 24) + '%';
+      if (steps[i]) msg.textContent = steps[i];
+      if (i >= 4) {
+        clearInterval(timer);
+        setTimeout(function () {
+          mask.classList.remove('open');
+          document.getElementById('stScanTime').textContent = '2026-08-22 19:12';
+          if (window.geToast) window.geToast('扫描完成：结构完整度 68 / 100，优先处理 5 项');
+        }, 420);
+      }
+    }, 520);
+  }
+
+  renderPages();
+
+  document.querySelectorAll('#stRescan').forEach(function (btn) {
+    btn.addEventListener('click', function (event) { event.preventDefault(); runScan(); });
+  });
+  document.getElementById('stSettings').addEventListener('click', function (event) {
+    event.preventDefault();
+    var site = bindBrandSite();
+    if (window.geToast) {
+      window.geToast(site
+        ? '扫描地址来自品牌信息：' + site + ' · 全站 286 页'
+        : '未找到品牌网站，请先到品牌信息中填写');
+    }
+  });
+  function jumpToPages(type) {
+    typeFilter = type || '全部';
+    statusFilter = '全部';
+    document.querySelectorAll('#stTypeFilters .tag').forEach(function (tag) {
+      tag.classList.toggle('chip-on', tag.getAttribute('data-st-type') === typeFilter);
+    });
+    document.querySelectorAll('#stStatusFilters .tag').forEach(function (tag) {
+      tag.classList.toggle('chip-on', tag.getAttribute('data-st-status') === '全部');
+    });
+    renderPages();
+    document.getElementById('stPageCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  document.querySelectorAll('[data-st-filter]').forEach(function (el) {
+    el.addEventListener('click', function (event) {
+      event.preventDefault();
+      jumpToPages(el.getAttribute('data-st-filter'));
+    });
+  });
+  document.querySelectorAll('#stTypeFilters .tag').forEach(function (tag) {
+    tag.addEventListener('click', function () {
+      typeFilter = tag.getAttribute('data-st-type');
+      document.querySelectorAll('#stTypeFilters .tag').forEach(function (item) { item.classList.remove('chip-on'); });
+      tag.classList.add('chip-on');
+      renderPages();
+    });
+  });
+  document.querySelectorAll('#stStatusFilters .tag').forEach(function (tag) {
+    tag.addEventListener('click', function () {
+      statusFilter = tag.getAttribute('data-st-status');
+      document.querySelectorAll('#stStatusFilters .tag').forEach(function (item) { item.classList.remove('chip-on'); });
+      tag.classList.add('chip-on');
+      renderPages();
+    });
+  });
+  document.addEventListener('click', function (event) {
+    var open = event.target.closest('[data-st-open]');
+    if (open) {
+      event.preventDefault();
+      openDrawer(open.getAttribute('data-st-open'));
+      return;
+    }
+    var rel = event.target.closest('[data-st-rel]');
+    if (rel) {
+      event.preventDefault();
+      openRelDrawer(rel.getAttribute('data-st-rel'));
+      return;
+    }
+    var jump = event.target.closest('[data-st-jump]');
+    if (jump) {
+      event.preventDefault();
+      jumpToPages(jump.getAttribute('data-st-jump'));
+    }
+  });
+  var howBtn = document.getElementById('stScoreHow');
+  var howPop = document.getElementById('stScorePop');
+  howBtn.addEventListener('click', function (event) {
+    event.stopPropagation();
+    var open = howPop.hidden;
+    howPop.hidden = !open;
+    howBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  document.addEventListener('click', function (event) {
+    if (!event.target.closest('.st-how')) {
+      howPop.hidden = true;
+      howBtn.setAttribute('aria-expanded', 'false');
+    }
+  });
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') {
+      closeDrawer();
+      howPop.hidden = true;
+    }
+  });
+});
+</script>
+</body>
+</html>

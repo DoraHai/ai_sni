@@ -3,17 +3,24 @@
  * Vue 母稿编辑器
  * Brief / 母稿 / 渠道稿（勾选生成、预览、复制）/ 检查
  */
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, h, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   nextEditorStep,
   pipelineLabel,
   taskStatusLabel,
+  checkLabel,
 } from '../../utils/geoReportLabels'
+import {
+  explainGateIssue,
+  filterGateIssuesForBody,
+  formatGateFailRows,
+} from '../../utils/geoGateIssue'
 import {
   applyGeoContentPatch,
   applyGeoRetrievedFacts,
+  aiReviewGeoContentTask,
   bindGeoTaskFacts,
   checkGeoContentTask,
   createGeoVariants,
@@ -25,6 +32,8 @@ import {
   listGeoChannelAccounts,
   listGeoFacts,
   listGeoPublishingChannels,
+  lintGeoContentTask,
+  optimizeGeoArticle,
   patchGeoContentTask,
   patchGeoVariant,
   publishGeoVariant,
@@ -42,20 +51,46 @@ import {
   cancelGeoAsyncJob,
 } from '../../api/geoContent'
 import { useGeoTenant } from '../../composables/useGeoTenant'
-import { getGeoPrototypeEditorSurface } from '../../utils/geoEditorSurface'
+import {
+  getGeoChannelDraftGate,
+  getGeoPrototypeEditorSurface,
+} from '../../utils/geoEditorSurface'
 import RichTextMarkdownEditor from '../../components/RichTextMarkdownEditor.vue'
-
-function toastError(e, fallback) {
-  const msg = formatGeoError(e, fallback)
-  ElMessage({ type: 'error', message: msg, duration: 6000, showClose: true })
-  return msg
-}
 
 const route = useRoute()
 const router = useRouter()
 const { tenantId } = useGeoTenant()
 const editorSurface = getGeoPrototypeEditorSurface()
 const taskId = computed(() => Number(route.params.taskId))
+
+function toastError(e, fallback) {
+  const msg = formatGeoError(e, fallback)
+  const aiMissing = /未配置 AI|AI 能力配置|填写 API Key/.test(msg)
+  ElMessage({
+    type: 'error',
+    message: aiMissing
+      ? h('span', [
+          msg,
+          ' ',
+          h(
+            'a',
+            {
+              href: '/geo/ai-settings',
+              style: 'color:#5b5ce2;font-weight:700',
+              onClick: (ev) => {
+                ev.preventDefault()
+                router.push('/geo/ai-settings')
+              },
+            },
+            '去配置',
+          ),
+        ])
+      : msg,
+    duration: aiMissing ? 8000 : 6000,
+    showClose: true,
+  })
+  return msg
+}
 
 const loading = ref(false)
 const busy = ref('')
@@ -64,6 +99,7 @@ const task = ref(null)
 const allFacts = ref([])
 const catalog = ref(null)
 const checkResult = ref(null)
+const sectionHeading = ref('')
 const retrievePreview = ref([])
 const selectedFactIds = ref([])
 const docTab = ref('master')
@@ -102,6 +138,14 @@ const article = reactive({
   title: '',
   body_markdown: '',
 })
+const scoredDraftSnapshot = ref('')
+
+function currentDraftSnapshot() {
+  return `${article.title}\n${article.body_markdown}`
+}
+const scoreIsCurrent = computed(
+  () => !!scoredDraftSnapshot.value && scoredDraftSnapshot.value === currentDraftSnapshot(),
+)
 
 const variantEdit = reactive({
   title: '',
@@ -110,34 +154,37 @@ const variantEdit = reactive({
 })
 /** 渠道稿：默认预览 HTML 正稿；源码仅供改写 */
 const variantViewMode = ref('preview') // preview | source
-
-/** 规则 code → 运营可读名（母稿就绪检查，非正式成稿） */
-const CHECK_LABELS = {
-  direct_answer: '开篇直接答',
-  definition: '定义段',
-  faq_min: 'FAQ 问答',
-  conclusion_extractable: '可抽取结论',
-  numbers_extractable: '可抽取数据',
-  comparison_extractable: '可抽取对比',
-  howto_extractable: '可抽取步骤',
-  updated_at_visible: '更新日期可见',
-  author_visible: '作者信息可见',
-  sources_footer: '信源页脚',
-  facts_bound_min: '事实绑定数量',
-  evidence_publishable: '可引用证据',
-  channel_variant_ready: '渠道稿已生成',
-  fabrication_lint: '编造风险扫描',
-  sentence_evidence: '逐句证据',
-}
 const SUBSCORE_LABELS = {
-  authority: '权威度',
-  structure: '结构',
+  structure: '内容结构',
+  extractability: '可摘取性',
+  evidence_use: '事实支撑',
+  authority: '来源可信度',
+  brand_mention: '品牌推荐度',
+  gap_coverage: '问题覆盖度',
   comparison: '对比覆盖',
-  evidence_use: '证据引用',
-  gap_coverage: '缺口覆盖',
-  extractability: '可抽取性',
-  brand_mention: '品牌提及',
 }
+const SCORE_METRIC_ORDER = [
+  'structure',
+  'extractability',
+  'evidence_use',
+  'authority',
+  'brand_mention',
+  'gap_coverage',
+  'comparison',
+]
+const GENERATION_STEPS = [
+  { minPct: 0, label: '正在整理目标问题' },
+  { minPct: 15, label: '正在读取可信资料' },
+  { minPct: 30, label: '正在组织文章结构' },
+  { minPct: 45, label: '正在生成正文' },
+  { minPct: 80, label: '正在进行初步 GEO 检查' },
+]
+const VARIANT_STEPS = [
+  { minPct: 0, label: '正在读取母稿' },
+  { minPct: 25, label: '正在改写渠道成稿' },
+  { minPct: 70, label: '正在做渠道门控检查' },
+  { minPct: 90, label: '正在整理可复制正文' },
+]
 
 /** 信息缺口：AI 回答里缺什么、母稿必须用事实补什么（禁止编造） */
 const INFO_GAP_FALLBACK = [
@@ -162,9 +209,6 @@ const CHANNEL_CN = {
 }
 const showPassedChecks = ref(false)
 
-function checkLabel(code) {
-  return CHECK_LABELS[code] || String(code || '').replace(/_/g, ' ')
-}
 function channelLabel(key) {
   const k = String(key || '').toLowerCase()
   return CHANNEL_CN[k] || key || '—'
@@ -390,12 +434,17 @@ async function load() {
     if (!catalog.value) {
       catalog.value = await fetchGeoBriefCatalog()
     }
-    const [t, factsRes, chRes, accRes] = await Promise.all([
+    const [t, factsRes, chRes] = await Promise.all([
       getGeoContentTask(tenantId.value, taskId.value),
       listGeoFacts(tenantId.value, { status: 'active' }),
       listGeoPublishingChannels(tenantId.value, false),
-      listGeoChannelAccounts(tenantId.value),
     ])
+    let accRes = { items: [] }
+    try {
+      accRes = await listGeoChannelAccounts(tenantId.value)
+    } catch {
+      accRes = { items: [] }
+    }
     // Stale load: a newer load or AI suggest already owns the form
     if (gen !== loadGeneration) return
     const bid = t.business_id
@@ -419,6 +468,9 @@ async function load() {
     }
     // Never clobber an in-progress AI Brief draft with empty server brief
     applyTaskPayload(t, { skipBrief: briefLocalDraft.value || busy.value === 'suggest' })
+    scoredDraftSnapshot.value = t?.rule_result?.article_fingerprint ? currentDraftSnapshot() : ''
+    if (hasMasterDraft.value && !generatingMaster.value) leftTab.value = 'score'
+    else if (!hasMasterDraft.value) leftTab.value = 'brief'
     await loadPushTargets()
     if (
       (t.status === 'facts_bound' || (t.pipeline_step && t.pipeline_step !== 'opportunity')) &&
@@ -650,11 +702,11 @@ async function saveFacts() {
 /** Unblock B3: bind first N verified active facts without relying on retrieve. */
 async function bindTopVerified(n = 3) {
   const verified = (allFacts.value || [])
-    .filter((f) => f.trust_level === 'verified' && (f.status === 'active' || !f.status))
+    .filter((f) => f.status === 'active' || !f.status)
     .map((f) => Number(f.id))
     .filter((id) => Number.isFinite(id) && id > 0)
   if (verified.length < n) {
-    const msg = `库中 verified 事实不足 ${n} 条（当前 ${verified.length}），请先在事实库核验`
+    const msg = `库中事实不足 ${n} 条（当前 ${verified.length}），请先在知识库补充`
     error.value = msg
     ElMessage.warning(msg)
     return
@@ -746,7 +798,7 @@ async function retrieveFacts() {
         error.value = msg
       } else {
         const msg =
-          '召回无候选：库中也无可用事实。请先在事实库创建/核验至少 3 条。' +
+          '召回无候选：库中也无可用事实。请先在知识库补充至少 3 条。' +
           (meta.tokens ? `（分词：${(meta.tokens || []).slice(0, 8).join('、')}）` : '')
         ElMessage.warning(msg)
         error.value = msg
@@ -783,7 +835,7 @@ async function applyRetrieveTop() {
   if (!ids.length) {
     // last resort: verified from library
     ids = (allFacts.value || [])
-      .filter((f) => f.trust_level === 'verified')
+      .filter((f) => f.status === 'active' || !f.status)
       .slice(0, 8)
       .map((f) => Number(f.id))
       .filter(Boolean)
@@ -834,16 +886,7 @@ function validateBeforeGenerate() {
   const nBound = (task.value?.facts || []).length
   const nSelected = selectedFactIds.value.length
   if (nBound < 3 && nSelected < 3 && libraryVerifiedCount.value < 3) {
-    return '生成母稿前需要至少 3 条已核验的可信材料，请先到知识库补充并核验资料'
-  }
-  const verified = (task.value?.facts || []).filter((f) => f.trust_level === 'verified')
-  if (verified.length < 3) {
-    // soft warning path: still allow API to enforce exact rule (eligible may differ)
-    // but surface if clearly short on verified
-    const anyUnverified = (task.value?.facts || []).some((f) => f.trust_level !== 'verified')
-    if (anyUnverified || verified.length === 0) {
-      return null // let API return precise evidence error
-    }
+    return '生成母稿前需要至少 3 条可信材料，请先到知识库补充资料'
   }
   return null
 }
@@ -895,6 +938,59 @@ async function reciteEvidence() {
 const jobLive = computed(() =>
   ['pending', 'running'].includes(activeJob.value?.status),
 )
+const generatingMaster = computed(
+  () =>
+    busy.value === 'generate' ||
+    (jobLive.value && activeJob.value?.kind === 'generate_article'),
+)
+const generatingVariants = computed(
+  () =>
+    busy.value === 'variants' ||
+    (jobLive.value && activeJob.value?.kind === 'create_variants'),
+)
+function jobBar(steps, fallbackLabel) {
+  const job = activeJob.value
+  const raw = job?.progress_pct
+  const parsed = Number(raw)
+  const hasPct = raw != null && raw !== '' && Number.isFinite(parsed)
+  const pct = hasPct ? Math.max(0, Math.min(100, Math.round(parsed))) : 0
+  let activeIdx = 0
+  if (hasPct) {
+    for (let i = 0; i < steps.length; i++) {
+      if (pct >= steps[i].minPct) activeIdx = i
+    }
+  }
+  return {
+    pct,
+    hasPct,
+    indeterminate: !hasPct,
+    label: job?.progress_label || fallbackLabel,
+    activeIdx,
+    steps: steps.map((step, i) => ({
+      ...step,
+      state: i < activeIdx ? 'done' : i === activeIdx ? 'active' : '',
+    })),
+  }
+}
+const generationProgress = computed(() =>
+  jobBar(GENERATION_STEPS, generatingMaster.value ? '正在生成母稿……' : ''),
+)
+const variantProgress = computed(() => {
+  const channels = (channelPick.value || []).map(channelLabel).filter(Boolean)
+  const fallback = channels.length
+    ? `正在改写 ${channels.join('、')}`
+    : '正在把母稿改写成可发布渠道稿'
+  return jobBar(VARIANT_STEPS, fallback)
+})
+const liveJobCard = computed(() => {
+  if (generatingMaster.value) {
+    return { title: '正在生成母稿……', ...generationProgress.value }
+  }
+  if (generatingVariants.value) {
+    return { title: '正在生成渠道成稿……', ...variantProgress.value }
+  }
+  return null
+})
 
 async function resumeActiveJob() {
   if (!tenantId.value || !taskId.value) return
@@ -974,7 +1070,7 @@ async function generate() {
   error.value = ''
   generateHint.value = '正在生成母稿…'
   if (!(await ensurePrototypeMaterials())) {
-    const msg = '未能关联足够的已核验可信材料，请先到知识库检查资料状态'
+    const msg = '未能关联足够的可信材料，请先到知识库检查资料'
     error.value = msg
     generateHint.value = msg
     ElMessage.warning(msg)
@@ -987,6 +1083,8 @@ async function generate() {
     ElMessage({ type: 'error', message: pre, duration: 6000, showClose: true })
     return
   }
+  scoredDraftSnapshot.value = ''
+  checkResult.value = null
   busy.value = 'generate'
   try {
     await patchGeoContentTask(tenantId.value, taskId.value, { brief: briefPayload() })
@@ -998,7 +1096,6 @@ async function generate() {
     if (gen?.async && gen?.job?.id) {
       activeJob.value = gen.job
       persistJobId(gen.job.id)
-      ElMessage.info(`生成任务 #${gen.job.id} 排队中，可刷新页面稍后再看`)
       const job = await followJob(gen.job.id)
       if (job?.status === 'failed') {
         throw new Error(job.error || '后台生成失败')
@@ -1008,6 +1105,7 @@ async function generate() {
     }
     applyTaskPayload(payload)
     docTab.value = 'master'
+    if ((article.body_markdown || '').trim()) leftTab.value = 'score'
     const bodyLen = (article.body_markdown || '').length
     const st = payload?.status || task.value?.status || '—'
     error.value = ''
@@ -1015,7 +1113,7 @@ async function generate() {
       bodyLen > 0
         ? `母稿已生成（${bodyLen} 字）· 状态 ${st}` +
           (st === 'needs_fix' ? ' · 请点「检查就绪」并用补丁修齐规则' : '') +
-          (editorSurface.showChannelVariants ? ' · 可到下方生成渠道稿' : '')
+          (editorSurface.showChannelVariants ? ' · 请先完成 GEO 评分' : '')
         : `生成返回成功但正文为空 · 状态 ${st}`
     generateHint.value = msg
     if (bodyLen > 0) {
@@ -1040,23 +1138,139 @@ async function generate() {
 async function saveArticleBody({ silent = false } = {}) {
   if (!article.title.trim() || !article.body_markdown.trim()) {
     if (!silent) ElMessage.warning('标题与正文不能为空')
-    return
+    return false
   }
   if (!silent) busy.value = 'save'
   try {
     const outline = task.value?.article?.outline || {}
-    task.value = await saveGeoArticle(tenantId.value, taskId.value, {
+    const savedTask = await saveGeoArticle(tenantId.value, taskId.value, {
       title: article.title.trim(),
       body_markdown: stripCiteAppendix(article.body_markdown),
       outline,
     })
+    const articleChanged = savedTask?.article_changed !== false
+    task.value = savedTask
     applyArticleFromTask(task.value)
+    if (articleChanged) {
+      checkResult.value = null
+      scoredDraftSnapshot.value = ''
+      docTab.value = 'master'
+    }
     lastSavedAt.value = new Date()
     if (!silent) ElMessage.success('母稿已保存')
+    return true
   } catch (e) {
     if (!silent) toastError(e, '保存失败')
+    return false
   } finally {
     if (!silent) busy.value = ''
+  }
+}
+
+async function runGeoScore({ silent = false } = {}) {
+  busy.value = 'score'
+  error.value = ''
+  try {
+    const saved = await saveArticleBody({ silent: true })
+    if (!saved) {
+      const msg = '保存正文失败，无法进行 GEO 评分'
+      if (!silent) {
+        error.value = msg
+        ElMessage.error(msg)
+      }
+      return null
+    }
+    const res = await checkGeoContentTask(tenantId.value, taskId.value, false)
+    const lintResult = await lintGeoContentTask(tenantId.value, taskId.value)
+    checkResult.value = {
+      ...res,
+      lint: lintResult?.lint || res.lint,
+      blocks: lintResult?.blocks || res.blocks,
+    }
+    if (res.task) {
+      task.value = res.task
+      applyArticleFromTask(res.task)
+    }
+    scoredDraftSnapshot.value = currentDraftSnapshot()
+    leftTab.value = 'score'
+    if (!silent) ElMessage.success(`GEO 评分已更新：${res.geo_score ?? '—'} 分`)
+    return checkResult.value
+  } catch (e) {
+    if (!silent) error.value = toastError(e, 'GEO 评分失败')
+    return null
+  } finally {
+    busy.value = ''
+  }
+}
+
+async function runAiReview() {
+  busy.value = 'ai-review'
+  error.value = ''
+  try {
+    const saved = await saveArticleBody({ silent: true })
+    if (!saved) {
+      ElMessage.error('保存当前正文失败，无法生成优化建议')
+      return null
+    }
+    const res = await aiReviewGeoContentTask(tenantId.value, taskId.value, { persist: true })
+    checkResult.value = {
+      ...(checkResult.value || {}),
+      ai_review: res.ai_review,
+    }
+    if (res.task) {
+      task.value = res.task
+      applyArticleFromTask(res.task)
+    }
+    scoredDraftSnapshot.value = currentDraftSnapshot()
+    leftTab.value = 'suggestions'
+    ElMessage.success('AI 优化建议已更新')
+    return res.ai_review
+  } catch (e) {
+    error.value = toastError(e, '获取 AI 优化建议失败')
+    return null
+  } finally {
+    busy.value = ''
+  }
+}
+
+async function runOptimize(scope) {
+  if (!hasMasterDraft.value) {
+    ElMessage.warning('请先生成或保存母稿')
+    return null
+  }
+  const body = {
+    tenant_id: tenantId.value,
+    scope,
+  }
+  if (scope === 'section') {
+    const section = sectionHeading.value.trim()
+    if (!section) {
+      ElMessage.warning('请填写要优化的段落标题')
+      return null
+    }
+    body.section = section
+  }
+  busy.value = `optimize-${scope}`
+  error.value = ''
+  try {
+    const saved = await saveArticleBody({ silent: true })
+    if (!saved) {
+      ElMessage.error('保存正文失败，无法优化')
+      return null
+    }
+    const res = await optimizeGeoArticle(taskId.value, body)
+    if (res?.task) applyTaskPayload(res.task)
+    checkResult.value = res.evaluation
+    scoredDraftSnapshot.value = res?.evaluation?.geo_score != null ? currentDraftSnapshot() : ''
+    leftTab.value = 'suggestions'
+    const codes = (res.applied_codes || []).join('、') || '无新增补丁'
+    ElMessage.success(codes === 'ai_rewrite' ? '已用 AI 改写当前母稿' : `已更新当前母稿：${codes}`)
+    return res
+  } catch (e) {
+    error.value = toastError(e, '优化失败')
+    return null
+  } finally {
+    busy.value = ''
   }
 }
 
@@ -1069,12 +1283,14 @@ async function runCheck({ silent = false } = {}) {
       task.value = res.task
       applyArticleFromTask(res.task)
     }
+    scoredDraftSnapshot.value = res?.geo_score != null ? currentDraftSnapshot() : ''
     if (!silent) {
       ElMessage.closeAll()
+      leftTab.value = 'suggestions'
       if (res.ready) {
         ElMessage.success(`结构检查已通过，就绪分 ${res.geo_score ?? '—'}`)
       } else {
-        ElMessage.warning(`尚未就绪，就绪分 ${res.geo_score ?? '—'}。请看右侧待补齐。`)
+        ElMessage.warning(`尚未就绪，就绪分 ${res.geo_score ?? '—'}。请看左侧「优化建议」。`)
       }
     }
     return res
@@ -1123,6 +1339,7 @@ async function applyPatch(code) {
       geo_actions: res.geo_actions || [],
       ai_review: checkResult.value?.ai_review,
     }
+    scoredDraftSnapshot.value = res?.geo_score != null ? currentDraftSnapshot() : ''
 
     if (!bodyChanged) {
       const msg = `「${checkLabel(code)}」写入后正文没有变化（${beforeLen}→${afterLen} 字）。请刷新后再试。`
@@ -1173,8 +1390,16 @@ async function retryFailedVariants() {
 }
 
 async function genVariants() {
+  if (!channelDraftGate.value.allowed) {
+    ElMessage.warning(channelDraftGate.value.reason)
+    return
+  }
   if (!channelPick.value.length) {
     ElMessage.warning('请至少勾选一个渠道')
+    return
+  }
+  if (jobLive.value && activeJob.value?.kind === 'create_variants') {
+    ElMessage.info('成稿还在生成，请稍候')
     return
   }
   busy.value = 'variants'
@@ -1186,7 +1411,6 @@ async function genVariants() {
     if (t?.async && t?.job?.id) {
       activeJob.value = t.job
       persistJobId(t.job.id)
-      ElMessage.info(`渠道稿任务 #${t.job.id} 排队中…`)
       const job = await followJob(t.job.id)
       if (job?.status === 'cancelled') return
       if (job.status === 'failed') {
@@ -1238,9 +1462,8 @@ async function genVariants() {
     const fbN = polish.fallback ?? 0
     variantFails.value = polish.failed || []
     const rejN = polish.rejected ?? variantFails.value.length
-    const failMsg = variantFails.value
-      .slice(0, 2)
-      .map((f) => `${channelLabel(f.channel)}：${(f.issues || [f.message])[0] || '未过门控'}`)
+    const failMsg = formatGateFailRows(variantFails.value, channelLabel, 2)
+      .rows.map((r) => `${r.channel}：${r.title}`)
       .join('；')
     if (llmN && !fbN && !rejN) {
       ElMessage.success(
@@ -1248,19 +1471,19 @@ async function genVariants() {
       )
     } else if (llmN && (fbN || rejN)) {
       ElMessage.warning(
-        `过门控 ${llmN} 路；规则裁剪 ${fbN}；硬拦 ${rejN}。${failMsg ? ' ' + failMsg : ''} 请对失败渠道重试。`,
+        `过门控 ${llmN} 路；母稿成稿 ${fbN}；硬拦 ${rejN}。${failMsg ? ' ' + failMsg : ''} 失败渠道可再点生成成稿。`,
       )
     } else if (rejN && !llmN) {
       ElMessage.error(
         `全部未过完整文章硬门控，未保存伪正稿。${failMsg || '请加长母稿后重生成。'}`,
       )
     } else {
-      ElMessage.warning(
-        `仅规则裁剪稿，未过发布门控。请配置 AI 后重生成；提纲体/过短会被拦截。`,
+      ElMessage.success(
+        '已按母稿写出渠道成稿，可复制。配好 AI 后再生成，会按官网 / 微信 / 知乎分开润色。',
       )
     }
   } catch (e) {
-    toastError(e, '生成渠道稿失败（未过完整文章门控则不会保存伪正稿）')
+    toastError(e, '生成成稿失败')
   } finally {
     busy.value = ''
   }
@@ -1288,7 +1511,7 @@ const currentVariantQualityLabel = computed(() => {
   if (!m) return null
   if (m.quality === 'publish_ready_with_warnings') {
     const n = (m.quality_issues || []).length
-    return `未过硬门控（遗留 ${n} 项问题）· 请重新「AI 生成正式渠道稿」`
+    return `未过硬门控（遗留 ${n} 项问题）· 请重新「生成成稿」`
   }
   if (isPublishReadyVariant.value) {
     const table = m?.has_table ? ' · 含表格' : ''
@@ -1302,10 +1525,12 @@ const currentVariantQualityLabel = computed(() => {
     m?.quality === 'adapted_draft_not_publishable' ||
     m?.quality === 'adapted_publish_html'
   ) {
-    return '规则裁剪稿 · 未过发布门控 · 请点「AI 生成正式渠道稿」'
+    return m?.assemble === 'full_master'
+      ? '已出渠道成稿（按母稿改写）· 未过 AI 门控，可再生成分渠道润色'
+      : '规则裁剪稿 · 未过发布门控 · 请点「生成成稿」'
   }
   if (Array.isArray(m.quality_issues) && m.quality_issues.length) {
-    return `未过门控：${m.quality_issues[0]}`
+    return `未过门控：${explainGateIssue(m.quality_issues[0]).title}`
   }
   return null
 })
@@ -1412,6 +1637,11 @@ async function exportCurrentVariant() {
   } finally {
     busy.value = ''
   }
+}
+
+function goDistribution(mode) {
+  if (!taskId.value) return
+  router.push({ path: `/geo/articles/${taskId.value}/distribution`, query: { mode } })
 }
 
 async function copyCurrentDoc() {
@@ -1623,6 +1853,11 @@ async function pushBatchSelected() {
       if (job.status === 'failed') {
         throw new Error(job.error || '后台推送失败')
       }
+      if (job.status === 'cancelled') {
+        ElMessage.info('推送已取消')
+        await loadPushTargets()
+        return
+      }
       res = {
         ok_count: job.result_meta?.ok_count ?? 0,
         fail_count: job.result_meta?.fail_count ?? 0,
@@ -1715,7 +1950,8 @@ watch(
 )
 
 const scoreMeta = computed(() => {
-  const s = checkResult.value?.geo_score ?? task.value?.rule_result?.geo_score
+  const storedScore = checkResult.value?.geo_score ?? task.value?.rule_result?.geo_score
+  const s = scoreIsCurrent.value ? storedScore : null
   const subs = checkResult.value?.geo_subscores || task.value?.rule_result?.geo_subscores || {}
   const chips = Object.keys(subs).map((k) => ({
     key: k,
@@ -1756,6 +1992,7 @@ const scoreLine = computed(() => {
  * variants so generated tabs never leave a stale「缺少 website, wechat, zhihu」.
  */
 const checks = computed(() => {
+  if (!scoreIsCurrent.value) return []
   const base = [
     ...(checkResult.value?.checks || task.value?.rule_result?.checks || []),
   ]
@@ -1769,7 +2006,7 @@ const checks = computed(() => {
     message: liveMsg,
     action: cov.ok
       ? ''
-      : '在中间栏勾选渠道 →「生成所选渠道稿」→ 再点检查',
+      : '在中间栏点「生成成稿」→ 再点检查',
   }
   let replaced = false
   const out = base.map((c) => {
@@ -1798,13 +2035,19 @@ const checks = computed(() => {
 const failedChecks = computed(() => checks.value.filter((c) => !c.passed))
 const passedChecks = computed(() => checks.value.filter((c) => c.passed))
 const geoActions = computed(
-  () => checkResult.value?.geo_actions || task.value?.rule_result?.geo_actions || [],
+  () => scoreIsCurrent.value
+    ? checkResult.value?.geo_actions || task.value?.rule_result?.geo_actions || []
+    : [],
 )
 const aiReview = computed(
-  () => checkResult.value?.ai_review || task.value?.rule_result?.ai_review || null,
+  () => scoreIsCurrent.value
+    ? checkResult.value?.ai_review || task.value?.rule_result?.ai_review || null
+    : null,
 )
 const patches = computed(
-  () => checkResult.value?.patches || task.value?.rule_result?.patches || [],
+  () => scoreIsCurrent.value
+    ? checkResult.value?.patches || task.value?.rule_result?.patches || []
+    : [],
 )
 function patchForCheck(code) {
   return (patches.value || []).find((p) => p.code === code) || null
@@ -1842,16 +2085,11 @@ async function fixCheck(code) {
   ElMessage.warning('这项需要对照右侧原文手工改，没有可自动写入的修改。')
 }
 const boundFacts = computed(() => task.value?.facts || [])
-const boundVerifiedCount = computed(
-  () => boundFacts.value.filter((f) => f.trust_level === 'verified').length,
-)
-const factsBindReady = computed(
-  () => boundFacts.value.length >= 3 && boundVerifiedCount.value >= 3,
-)
+const factsBindReady = computed(() => boundFacts.value.length >= 3)
 const libraryVerifiedCount = computed(
   () =>
     (allFacts.value || []).filter(
-      (f) => f.trust_level === 'verified' && (f.status === 'active' || !f.status),
+      (f) => f.status === 'active' || !f.status,
     ).length,
 )
 const infoGapOptions = computed(() => {
@@ -1859,18 +2097,38 @@ const infoGapOptions = computed(() => {
   if (Array.isArray(fromCat) && fromCat.length) return fromCat
   return INFO_GAP_FALLBACK
 })
-const variants = computed(() => task.value?.variants || [])
+const variants = computed(() => scoreIsCurrent.value ? task.value?.variants || [] : [])
 const hasMasterDraft = computed(
   () => !!(task.value?.article || String(article.body_markdown || '').trim()),
+)
+const channelDraftGate = computed(() =>
+  getGeoChannelDraftGate({
+    hasMasterDraft: hasMasterDraft.value,
+    geoScore: checkResult.value?.geo_score ?? task.value?.rule_result?.geo_score,
+    scoreIsCurrent: scoreIsCurrent.value,
+  }),
 )
 const recordedPublications = computed(
   () => task.value?.publications || impact.value?.publications || [],
 )
 const failedVariantItems = computed(() => {
   const fromTask = task.value?.variant_polish?.failed
-  if (Array.isArray(fromTask) && fromTask.length) return fromTask
-  return Array.isArray(variantFails.value) ? variantFails.value : []
+  const raw = Array.isArray(fromTask) && fromTask.length
+    ? fromTask
+    : Array.isArray(variantFails.value)
+      ? variantFails.value
+      : []
+  return raw
+    .map((failure) => {
+      const variant = variants.value.find((item) => item.channel === failure.channel)
+      const original = Array.isArray(failure.issues) ? failure.issues : []
+      const issues = filterGateIssuesForBody(original, variant?.body_markdown || '')
+      if (original.length && !issues.length) return null
+      return { ...failure, issues }
+    })
+    .filter(Boolean)
 })
+const gateFailView = computed(() => formatGateFailRows(failedVariantItems.value, channelLabel))
 const nextStep = computed(() =>
   nextEditorStep(task.value, {
     boundFacts: boundFacts.value,
@@ -1888,13 +2146,10 @@ const nextStep = computed(() =>
 const foldBrief = ref(false)
 const foldFacts = ref(false)
 const factQuery = ref('')
-const factTrustFilter = ref('all')
 
 const filteredTrustedFacts = computed(() => {
   const q = String(factQuery.value || '').trim().toLowerCase()
   return (allFacts.value || []).filter((f) => {
-    if (factTrustFilter.value === 'verified' && f.trust_level !== 'verified') return false
-    if (factTrustFilter.value === 'needs_review' && f.trust_level !== 'needs_review') return false
     if (!q) return true
     const blob = `${f.id} ${f.title || ''} ${f.statement || ''}`.toLowerCase()
     return blob.includes(q)
@@ -1934,26 +2189,15 @@ function goNextStep() {
   if (id) document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
-function trustTagType(level) {
-  if (level === 'verified') return 'success'
-  if (level === 'needs_review') return 'warning'
-  return 'info'
-}
-function trustLabel(level) {
-  if (level === 'verified') return '已核验'
-  if (level === 'needs_review') return '待核验'
-  return level || '未知'
-}
 function factSnippet(f, max = 72) {
   const stmt = String(f?.statement || '').replace(/\s+/g, ' ').trim()
   if (!stmt) return ''
   return stmt.length > max ? `${stmt.slice(0, max)}…` : stmt
 }
 function factOptionLabel(f) {
-  const t = trustLabel(f.trust_level)
   const title = f.title || '未命名事实'
   const snippet = factSnippet(f, 40)
-  return snippet ? `#${f.id} · ${t} · ${title} — ${snippet}` : `#${f.id} · ${t} · ${title}`
+  return snippet ? `#${f.id} · ${title} — ${snippet}` : `#${f.id} · ${title}`
 }
 async function removeBoundFact(id) {
   const nid = Number(id)
@@ -2052,6 +2296,7 @@ const leftTab = ref('brief')
 const showAdvancedBrief = ref(false)
 const showCheckDrawer = ref(false)
 const focusMode = ref(false)
+const showChannelPick = ref(true)
 const lastSavedAt = ref(null)
 const handledIssueCodes = ref([])
 let autosaveTimer = null
@@ -2083,6 +2328,136 @@ const mustIssues = computed(() =>
 const suggestIssues = computed(() =>
   (geoActions.value || []).filter((a) => !handledIssueCodes.value.includes(a.code || a.message)),
 )
+
+const briefFilled = computed(
+  () =>
+    !!(brief.industry && brief.audience && brief.intent && brief.content_type && brief.cta),
+)
+const bodyWordCount = computed(() =>
+  String(article.body_markdown || '').replace(/\s/g, '').length,
+)
+const extractableBlockCount = computed(() => {
+  const md = String(article.body_markdown || '')
+  return (md.match(/^#{2,3}\s/gm) || []).length
+})
+const trustedSourceCount = computed(() => {
+  const names = new Set()
+  for (const fact of boundFacts.value || []) {
+    const key = String(fact.source_url || fact.source_name || '').trim().toLowerCase()
+    if (key) names.add(key)
+  }
+  return names.size
+})
+const scoreHighlights = computed(() => [
+  { value: extractableBlockCount.value, label: '可摘取块' },
+  { value: boundFacts.value.length, label: '事实项' },
+  { value: trustedSourceCount.value, label: '可信来源' },
+])
+const scoreGrade = computed(() => {
+  const s = scoreMeta.value.score
+  const pending = mustIssues.value.length
+  if (s == null) {
+    return {
+      badge: '未评分',
+      caption: '尚未检查',
+      headline: '尚未检查',
+      hint: '生成母稿后点「检查就绪」查看真实 GEO 评分',
+    }
+  }
+  if (s >= 80) {
+    return {
+      badge: '优秀',
+      caption: '分 · 优秀',
+      headline: pending ? '接近可发布' : '可以发布',
+      hint: pending ? `仍有 ${pending} 项需要处理` : '结构项已通过，仍建议人工过目',
+    }
+  }
+  if (s >= 60) {
+    return {
+      badge: '良好',
+      caption: '分 · 良好',
+      headline: '可继续优化',
+      hint: pending ? `仍有 ${pending} 项可能影响 AI 引用` : scoreMeta.value.subline,
+    }
+  }
+  return {
+    badge: '待优化',
+    caption: '分 · 待优化',
+    headline: '尚未达到发布建议',
+    hint: pending ? `${pending} 项需要处理` : scoreMeta.value.subline,
+  }
+})
+const scoreMetrics = computed(() => {
+  const subs =
+    checkResult.value?.geo_subscores || task.value?.rule_result?.geo_subscores || {}
+  const actions = geoActions.value || []
+  return SCORE_METRIC_ORDER.filter((key) => subs[key] != null).map((key) => {
+    const value = Math.round((subs[key] || 0) * 100)
+    const issues = actions.filter((a) => String(a.code || '').includes(key))
+    return {
+      key,
+      label: SUBSCORE_LABELS[key] || key,
+      value,
+      issue: issues.length > 0,
+      issueCount: issues.length,
+    }
+  })
+})
+const editorFlow = computed(() => {
+  const hasDraft = hasMasterDraft.value
+  const generating = generatingMaster.value
+  const scored = scoreMeta.value.score != null
+  const published = ['published', 'approved'].includes(String(task.value?.status || ''))
+  return [
+    { key: 'create', label: '创建文章任务', state: 'done' },
+    {
+      key: 'brief',
+      label: '确定创作要求',
+      state: briefFilled.value ? 'done' : 'active',
+    },
+    {
+      key: 'draft',
+      label: '生成母稿 V1',
+      state: hasDraft ? 'done' : generating || briefFilled.value ? 'active' : '',
+    },
+    {
+      key: 'optimize',
+      label: 'GEO 优化',
+      hidden: !hasDraft,
+      state: scored ? 'done' : 'active',
+    },
+    {
+      key: 'publish',
+      label: '发布',
+      hidden: !hasDraft,
+      state: published ? 'done' : scored ? 'active' : '',
+    },
+  ]
+})
+const showGenerationStage = computed(
+  () => !hasMasterDraft.value || generatingMaster.value,
+)
+const generationSummary = computed(() => ({
+  question:
+    task.value?.prompt_question ||
+    brief.ai_question ||
+    article.title ||
+    task.value?.title ||
+    '—',
+  recommend: brief.cta || brief.industry || '—',
+  requirement:
+    [brief.notes, brief.must_cover, brief.banned_claims && `禁用：${brief.banned_claims}`]
+      .filter(Boolean)
+      .join('；') || '尚未填写补充要求',
+}))
+const versionMetaLine = computed(() => {
+  const parts = [
+    `${bodyWordCount.value} 字`,
+    boundFacts.value.length ? `已绑 ${boundFacts.value.length} 条事实` : '',
+    trustedSourceCount.value ? `可信来源 ${trustedSourceCount.value}` : '',
+  ].filter(Boolean)
+  return parts.join(' · ')
+})
 
 function isFactCited(id) {
   return (sentenceCites.value || []).some((c) => Number(c.fact_id) === Number(id))
@@ -2131,22 +2506,72 @@ function toggleFocus() {
   window.dispatchEvent(new CustomEvent('geo-editor-focus', { detail: focusMode.value }))
 }
 
+function openLeftTab(tab) {
+  if ((tab === 'score' || tab === 'suggestions' || tab === 'channels') && !hasMasterDraft.value) {
+    ElMessage.info(
+      tab === 'score'
+        ? '生成母稿后即可进行 GEO 评分'
+        : tab === 'channels'
+          ? '生成母稿并完成 GEO 评分后即可选择渠道稿'
+          : '生成母稿后即可查看优化建议',
+    )
+    return
+  }
+  leftTab.value = tab
+}
+
 function onMoreCommand(cmd) {
   if (cmd === 'save') return saveArticleBody()
   if (cmd === 'copy') return copyCurrentDoc()
+  if (cmd === 'publish-manual') return goDistribution('manual')
+  if (cmd === 'publish-auto') return goDistribution('auto')
   if (cmd === 'check') {
-    showCheckDrawer.value = true
+    leftTab.value = hasMasterDraft.value ? 'suggestions' : 'brief'
     return runCheck()
   }
+  if (cmd === 'suggest') return suggestBrief()
+  if (cmd === 'brief') return saveBrief()
+  if (cmd === 'generate') return generate()
   if (cmd === 'variants') return genVariants()
   if (cmd === 'refresh') return load()
   if (cmd === 'focus') return toggleFocus()
 }
 
+const enabledChannelOptions = computed(() => {
+  const rows = (publishingChannels.value || []).filter((c) => c.enabled !== false)
+  if (rows.length) {
+    const seen = new Set()
+    return rows.map((c) => ({
+      key: c.channel_type || c.adapt_key,
+      label: c.display_name || channelLabel(c.channel_type || c.adapt_key),
+    })).filter((c) => c.key && !seen.has(c.key) && (seen.add(c.key) || true))
+  }
+  return [
+    { key: 'website', label: '官网' },
+    { key: 'wechat', label: '公众号' },
+    { key: 'zhihu', label: '知乎' },
+  ]
+})
+
+function toggleChannelPick(key) {
+  const k = String(key || '')
+  if (!k) return
+  const cur = [...(channelPick.value || [])]
+  const i = cur.indexOf(k)
+  if (i >= 0) cur.splice(i, 1)
+  else cur.push(k)
+  channelPick.value = cur
+}
+
 watch(
-  () => article.body_markdown,
+  () => [article.title, article.body_markdown],
   () => {
     if (!hasMasterDraft.value) return
+    if (scoredDraftSnapshot.value && !scoreIsCurrent.value) {
+      scoredDraftSnapshot.value = ''
+      checkResult.value = null
+      docTab.value = 'master'
+    }
     clearTimeout(autosaveTimer)
     autosaveTimer = setTimeout(() => {
       saveArticleBody({ silent: true })
@@ -2159,59 +2584,245 @@ onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="ed-shell" :class="{ focus: focusMode, 'check-open': showCheckDrawer && !focusMode }">
+  <div v-loading="loading" class="ed-shell" aria-label="在线编辑器" :class="{ focus: focusMode, 'check-open': showCheckDrawer && !focusMode }">
     <header class="ed-top">
-      <button type="button" class="ed-back" @click="router.push('/geo/tasks')">← 任务列表</button>
+      <button type="button" class="ed-back" @click="router.push('/geo/articles')">← GEO 文章</button>
       <div class="ed-ident">
-        <div class="ed-kicker">#{{ taskId }} · {{ unifiedStatus.label }}</div>
-        <div class="ed-name">{{ article.title || task?.title || '未命名文章' }}</div>
+        <el-input
+          v-model="article.title"
+          class="ed-title-input"
+          placeholder="文章标题"
+        />
+        <div class="ed-flow" aria-label="文章工作流">
+          <template v-for="(step, idx) in editorFlow" :key="step.key">
+            <template v-if="!step.hidden">
+              <i v-if="idx">→</i>
+              <span class="ed-flow-state" :class="step.state">
+                {{ step.state === 'done' ? '✓ ' : '' }}{{ step.label }}
+              </span>
+            </template>
+          </template>
+          <em>{{ unifiedStatus.label }}</em>
+        </div>
       </div>
       <div class="ed-top-actions">
-        <span class="ed-save">{{ saveHint }}</span>
+        <el-button :disabled="!hasMasterDraft" @click="copyCurrentDoc">复制内容</el-button>
         <el-button
-          type="primary"
-          :loading="busy === 'generate'"
-          :disabled="!task"
-          @click="generate"
+          :loading="busy === 'score'"
+          :disabled="!hasMasterDraft"
+          @click="runGeoScore"
         >
-          {{ hasMasterDraft ? '更新母稿' : '生成母稿' }}
+          GEO评分
         </el-button>
-        <el-button :class="{ 'is-active': showCheckDrawer }" @click="showCheckDrawer = !showCheckDrawer">
-          检查
+        <el-button
+          :loading="busy === 'save'"
+          :disabled="!task || !hasMasterDraft"
+          @click="saveArticleBody"
+        >
+          保存
+        </el-button>
+        <el-button
+          v-if="hasMasterDraft && editorSurface.showChannelVariants"
+          type="primary"
+          @click="openLeftTab('channels')"
+        >
+          选择渠道稿
         </el-button>
         <el-dropdown trigger="click" @command="onMoreCommand">
           <el-button>更多</el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="save">保存正文</el-dropdown-item>
+              <el-dropdown-item :disabled="!task" command="publish-manual">手动发布</el-dropdown-item>
+              <el-dropdown-item :disabled="!task" command="publish-auto">自动发布</el-dropdown-item>
+              <el-dropdown-item divided />
+              <el-dropdown-item v-if="hasMasterDraft" command="generate">更新母稿</el-dropdown-item>
+              <el-dropdown-item command="suggest">AI 建议 Brief</el-dropdown-item>
+              <el-dropdown-item command="brief">保存 Brief</el-dropdown-item>
               <el-dropdown-item command="copy">复制</el-dropdown-item>
-              <el-dropdown-item command="check">检查就绪</el-dropdown-item>
-              <el-dropdown-item command="variants" :disabled="!hasMasterDraft">生成渠道稿</el-dropdown-item>
+              <el-dropdown-item
+                v-if="!editorSurface.showAiReview"
+                command="check"
+              >规则清单 / 编造风险</el-dropdown-item>
               <el-dropdown-item command="refresh" divided>刷新</el-dropdown-item>
               <el-dropdown-item command="focus">{{ focusMode ? '退出专注' : '专注模式' }}</el-dropdown-item>
+              <el-dropdown-item divided>
+                <router-link class="ed-dd-link" to="/geo/ai-settings">AI 能力配置</router-link>
+              </el-dropdown-item>
+              <el-dropdown-item>
+                <router-link class="ed-dd-link" to="/geo/channel-polish-prompts">渠道成稿提示词</router-link>
+              </el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
       </div>
     </header>
 
-    <el-alert
-      v-if="error"
-      type="error"
-      :title="error"
-      show-icon
-      closable
-      class="ed-alert"
-      @close="error = ''"
-    />
-
     <div v-if="task" class="ed-body">
       <aside v-show="!focusMode" class="ed-left">
         <div class="ed-tabs">
-          <button type="button" :class="{ on: leftTab === 'brief' }" @click="leftTab = 'brief'">内容设定</button>
-          <button type="button" :class="{ on: leftTab === 'facts' }" @click="leftTab = 'facts'">
-            可信材料 {{ selectedFactIds.length ? selectedFactIds.length : '' }}
+          <button type="button" :class="{ on: leftTab === 'brief' }" @click="openLeftTab('brief')">创作要求</button>
+          <button
+            type="button"
+            :class="{ on: leftTab === 'score', disabled: !hasMasterDraft }"
+            @click="openLeftTab('score')"
+          >
+            GEO评分
           </button>
+          <button
+            type="button"
+            :class="{ on: leftTab === 'suggestions', disabled: !hasMasterDraft }"
+            @click="openLeftTab('suggestions')"
+          >
+            优化建议
+          </button>
+          <button
+            v-if="editorSurface.showChannelVariants"
+            type="button"
+            :class="{ on: leftTab === 'channels', disabled: !hasMasterDraft }"
+            @click="openLeftTab('channels')"
+          >
+            渠道稿
+          </button>
+          <button
+            v-if="editorSurface.showFactBinding"
+            type="button"
+            :class="{ on: leftTab === 'facts' }"
+            @click="openLeftTab('facts')"
+          >
+            参考资料
+          </button>
+        </div>
+
+        <div v-show="leftTab === 'score'" class="ed-pane ed-score-pane">
+          <section class="ed-score-card">
+            <div class="ed-score-card-head">
+              <h3>GEO内容评分</h3>
+              <span>{{ scoreGrade.badge }}</span>
+            </div>
+            <div class="ed-score-ring-summary">
+              <div
+                class="ed-score-ring"
+                :style="{ '--score': `${scoreMeta.score != null ? scoreMeta.score : 0}%` }"
+              >
+                <strong>{{ scoreMeta.score != null ? scoreMeta.headline : '—' }}</strong>
+                <span>{{ scoreMeta.score != null ? scoreGrade.caption : '尚未检查' }}</span>
+              </div>
+              <div class="ed-score-copy">
+                <b>{{ scoreGrade.headline }}</b>
+                <small>{{ scoreGrade.hint }}</small>
+                <div v-if="scoreMeta.score != null" class="ed-score-meter">
+                  <span :style="{ width: `${scoreMeta.score}%` }" />
+                </div>
+              </div>
+            </div>
+            <div class="ed-score-highlights">
+              <div v-for="item in scoreHighlights" :key="item.label">
+                <b>{{ item.value }}</b>
+                <span>{{ item.label }}</span>
+              </div>
+            </div>
+          </section>
+          <section class="ed-score-detail">
+            <div class="ed-score-heading">
+              <div>
+                <h3>评分明细</h3>
+                <small>{{ scoreMetrics.length ? '仅展示检查返回的分项' : '评分后显示分项' }}</small>
+              </div>
+              <button type="button" class="ed-mini-primary" :disabled="busy === 'score'" @click="runGeoScore">
+                {{ busy === 'score' ? '评分中…' : '重新评分' }}
+              </button>
+            </div>
+            <button
+              v-for="row in scoreMetrics"
+              :key="row.key"
+              type="button"
+              class="ed-metric-row"
+              :class="{ issue: row.issue }"
+              @click="row.issue && openLeftTab('suggestions')"
+            >
+              <span>{{ row.label }}</span>
+              <i><em :style="{ width: `${row.value}%` }" /></i>
+              <b>{{ row.value }}</b>
+              <small v-if="row.issueCount">{{ row.issueCount }}个问题</small>
+            </button>
+            <p v-if="!scoreMetrics.length" class="ed-empty">点「GEO评分」后显示真实分项，不会使用示例分数。</p>
+          </section>
+        </div>
+
+        <div v-show="leftTab === 'suggestions'" class="ed-pane ed-suggest-pane">
+          <div class="ed-suggestion-heading">
+            <div>
+              <h3>优化建议 <span v-if="mustIssues.length + suggestIssues.length" class="ed-count-badge">{{ mustIssues.length + suggestIssues.length }}</span></h3>
+              <small>基于最近一次检查，不会覆盖当前正文</small>
+            </div>
+          </div>
+          <div class="ed-suggestion-actions">
+            <button type="button" class="ed-suggestion-primary" :disabled="busy === 'ai-review'" @click="runAiReview">
+              {{ busy === 'ai-review' ? '生成中…' : 'AI 优化建议' }}
+            </button>
+            <button type="button" class="ed-mini ed-suggestion-secondary" :disabled="busy === 'score'" @click="runGeoScore">
+              {{ busy === 'score' ? '评分中…' : '重新评分' }}
+            </button>
+            <button type="button" class="ed-mini ed-suggestion-secondary" :disabled="busy === 'optimize-all'" @click="runOptimize('all')">
+              {{ busy === 'optimize-all' ? '优化中…' : '一键优化全部' }}
+            </button>
+          </div>
+          <div class="ed-section-optimize">
+            <el-input v-model="sectionHeading" placeholder="分段标题，如 Introduction" size="small" />
+            <button type="button" class="ed-mini ed-section-optimize-action" :disabled="busy === 'optimize-section'" @click="runOptimize('section')">
+              {{ busy === 'optimize-section' ? '优化中…' : '分段优化' }}
+            </button>
+          </div>
+          <article v-for="c in mustIssues" :key="c.code" class="ed-issue-card">
+            <div class="ed-issue-head"><span class="amber">必须处理</span></div>
+            <h4>{{ c.label || c.message }}</h4>
+            <p>{{ c.message }}</p>
+            <div class="ed-iss-acts">
+              <button type="button" @click="locateIssue(c)">定位正文</button>
+              <button type="button" @click="fixCheck(c.code)">查看建议</button>
+              <button type="button" @click="markHandled(c.code)">标记已处理</button>
+            </div>
+          </article>
+          <article v-for="a in suggestIssues" :key="a.code || a.message" class="ed-issue-card">
+            <div class="ed-issue-head"><span class="blue">建议优化</span></div>
+            <h4>{{ a.message }}</h4>
+            <p v-if="a.action">{{ a.action }}</p>
+            <div class="ed-iss-acts">
+              <button type="button" @click="locateIssue(a)">定位正文</button>
+              <button type="button" @click="markHandled(a.code || a.message)">标记已处理</button>
+            </div>
+          </article>
+          <section v-if="aiReview" class="ed-ai-review">
+            <div class="ed-score-heading">
+              <div>
+                <h3>AI 审阅建议</h3>
+                <small>{{ aiReview.summary || '已保存到本任务的优化建议中' }}</small>
+              </div>
+            </div>
+            <article v-for="issue in aiReview.issues || []" :key="`${issue.category}-${issue.quote}-${issue.message}`" class="ed-issue-card">
+              <div class="ed-issue-head"><span class="blue">{{ issue.severity || '建议' }}</span></div>
+              <h4>{{ issue.message || issue.category || '待优化项' }}</h4>
+              <p v-if="issue.fix_hint">{{ issue.fix_hint }}</p>
+              <div v-if="issue.quote" class="ed-iss-acts">
+                <button type="button" @click="locateIssue({ message: issue.quote })">定位正文</button>
+              </div>
+            </article>
+          </section>
+          <div v-if="!mustIssues.length && checks.length" class="ed-all-ok">结构项已全部通过，仍建议人工过目</div>
+          <p v-if="!mustIssues.length && !suggestIssues.length && !checks.length" class="ed-empty">生成母稿后点「检查就绪」，这里会列出真实待改项。</p>
+          <section v-if="boundFacts.length" class="ed-bound-facts">
+            <div class="ed-score-heading">
+              <div>
+                <h3>已绑定事实</h3>
+                <small>门控按原文核对，数字不一致会拦</small>
+              </div>
+              <button type="button" class="ed-mini" @click="openLeftTab('facts')">管理</button>
+            </div>
+            <article v-for="f in boundFacts" :key="f.id" class="ed-bound-fact">
+              <b>{{ f.title || '未命名' }}</b>
+              <p>{{ factSnippet(f, 96) || '无摘要' }}</p>
+            </article>
+          </section>
         </div>
 
         <div v-show="leftTab === 'brief'" class="ed-pane">
@@ -2279,17 +2890,12 @@ onMounted(load)
           </div>
         </div>
 
-        <div v-show="leftTab === 'facts'" class="ed-pane">
+        <div v-if="editorSurface.showFactBinding" v-show="leftTab === 'facts'" class="ed-pane">
           <div class="ed-fact-status" :class="{ ready: factsBindReady }">
-            已绑 {{ boundFacts.length }} · 已核验 {{ boundVerifiedCount }}/需≥3
+            事实绑定 · 已绑 {{ boundFacts.length }} / 需≥3
             <router-link class="ed-link" to="/geo/knowledge">管理知识库</router-link>
           </div>
           <el-input v-model="factQuery" clearable size="small" placeholder="搜索材料" class="mb" />
-          <el-radio-group v-model="factTrustFilter" size="small" class="mb">
-            <el-radio-button label="all">全部</el-radio-button>
-            <el-radio-button label="verified">已核验</el-radio-button>
-            <el-radio-button label="needs_review">待核验</el-radio-button>
-          </el-radio-group>
           <div class="ed-fact-list">
             <label
               v-for="f in filteredTrustedFacts"
@@ -2301,9 +2907,6 @@ onMounted(load)
               <div class="ed-fact-main">
                 <div class="ed-fact-top">
                   <span class="ed-fact-title">{{ f.title || '未命名' }}</span>
-                  <span class="ed-pill" :class="f.trust_level === 'verified' ? 'ok' : 'warn'">
-                    {{ trustLabel(f.trust_level) }}
-                  </span>
                 </div>
                 <div class="ed-fact-sum">{{ factSnippet(f, 72) || '无摘要' }}</div>
                 <div class="ed-fact-cite">{{ isFactCited(f.id) ? '已引用' : '未引用' }}</div>
@@ -2320,14 +2923,146 @@ onMounted(load)
               :disabled="!selectedFactIds.length"
               @click="saveFacts"
             >
-              绑定已选材料（{{ selectedFactIds.length }}）
+              绑定事实（{{ selectedFactIds.length }}）
             </el-button>
+          </div>
+        </div>
+
+        <div
+          v-if="editorSurface.showChannelVariants"
+          v-show="leftTab === 'channels'"
+          class="ed-pane"
+        >
+          <div class="ed-fact-status">渠道适配（发布渠道注册表）</div>
+          <div class="ed-hint">
+            {{ channelDraftGate.allowed ? 'GEO 评分已通过；勾选后生成受控派生稿。' : channelDraftGate.reason }}
+          </div>
+          <div class="ed-channel-pick">
+            <label
+              v-for="opt in enabledChannelOptions"
+              :key="opt.key"
+              class="ed-fact"
+              :class="{ selected: channelPick.includes(opt.key) }"
+            >
+              <input
+                type="checkbox"
+                :checked="channelPick.includes(opt.key)"
+                @change="toggleChannelPick(opt.key)"
+              >
+              <span class="ed-fact-title">{{ opt.label }}</span>
+            </label>
+          </div>
+          <div class="ed-left-foot">
+            <el-button
+              type="primary"
+              :loading="busy === 'variants'"
+              :disabled="!channelDraftGate.allowed || !channelPick.length"
+              :title="channelDraftGate.reason"
+              @click="genVariants"
+            >
+              生成所选渠道稿
+            </el-button>
+            <el-button :disabled="docTab === 'master'" @click="copyCurrentDoc">复制当前渠道稿</el-button>
           </div>
         </div>
       </aside>
 
       <main class="ed-center">
-        <div class="ed-doc">
+        <div v-if="showGenerationStage" class="ed-gen-stage">
+          <div class="ed-gen-card">
+            <div class="ed-gen-hero">
+              <div class="ed-gen-orb" aria-hidden="true">✦</div>
+              <span class="ed-kicker">AI 对本篇文章任务的理解结果</span>
+              <h1>{{ generatingMaster ? '正在生成母稿……' : '母稿生成准备完成' }}</h1>
+              <p>
+                {{
+                  generatingMaster
+                    ? (generationProgress.label || '系统正在依据已确认的创作要求组织内容')
+                    : '已读取本篇创作要求、绑定事实与知识库资料。确认无误后即可生成母稿。'
+                }}
+              </p>
+            </div>
+            <div v-if="!generatingMaster" class="ed-gen-body">
+              <section class="ed-task-summary">
+                <div class="ed-task-summary-head">
+                  <div>
+                    <span>创作任务摘要</span>
+                    <small>以下内容来自左侧「创作要求」</small>
+                  </div>
+                  <button type="button" @click="openLeftTab('brief')">修改创作要求</button>
+                </div>
+                <div class="ed-task-summary-grid">
+                  <div class="wide">
+                    <label>目标问题</label>
+                    <b>{{ generationSummary.question }}</b>
+                  </div>
+                  <div class="wide">
+                    <label>重点推荐</label>
+                    <b>{{ generationSummary.recommend }}</b>
+                  </div>
+                  <div class="wide">
+                    <label>创作要求</label>
+                    <p>{{ generationSummary.requirement }}</p>
+                  </div>
+                </div>
+              </section>
+              <section class="ed-ready-section">
+                <label>系统已准备</label>
+                <div class="ed-ready-tags">
+                  <span :class="{ ok: libraryVerifiedCount > 0 }">{{ libraryVerifiedCount > 0 ? '✓' : '·' }} 知识库 {{ libraryVerifiedCount }}</span>
+                  <span :class="{ ok: boundFacts.length >= 3 }">{{ boundFacts.length >= 3 ? '✓' : '·' }} 事实绑定 {{ boundFacts.length }}/3</span>
+                  <span :class="{ ok: trustedSourceCount > 0 }">{{ trustedSourceCount > 0 ? '✓' : '·' }} 可信来源 {{ trustedSourceCount }}</span>
+                  <span :class="{ ok: briefFilled }">{{ briefFilled ? '✓' : '·' }} 创作要求</span>
+                </div>
+              </section>
+              <div class="ed-gen-actions">
+                <div>
+                  <span>✦</span>
+                  <small>基于已绑定事实、知识库与本篇创作要求生成母稿</small>
+                </div>
+                <el-button
+                  type="primary"
+                  :loading="busy === 'generate'"
+                  :disabled="!task"
+                  @click="generate"
+                >
+                  ✦ AI 生成母稿
+                </el-button>
+              </div>
+            </div>
+            <div v-else class="ed-gen-progress">
+              <div class="ed-progress-header">
+                <span class="ed-progress-spinner">✦</span>
+                <div>
+                  <b>正在生成母稿……</b>
+                  <small>{{ generationProgress.label || '系统正在依据已确认的创作要求组织内容' }}</small>
+                </div>
+                <em>{{ generationProgress.hasPct ? `${generationProgress.pct}%` : '排队中' }}</em>
+              </div>
+              <div class="ed-draft-progress-bar">
+                <span :style="{ width: `${generationProgress.pct}%` }" />
+              </div>
+              <ol class="ed-generation-steps">
+                <li
+                  v-for="step in generationProgress.steps"
+                  :key="step.label"
+                  :class="step.state"
+                >
+                  {{ step.label }}
+                </li>
+              </ol>
+              <el-button
+                v-if="jobLive && activeJob?.kind === 'generate_article'"
+                size="small"
+                @click="cancelActiveJob"
+              >
+                取消生成
+              </el-button>
+            </div>
+          </div>
+        </div>
+
+        <div v-else class="ed-doc">
           <el-tabs
             v-if="editorSurface.showChannelVariants"
             :model-value="docTab"
@@ -2339,29 +3074,64 @@ onMounted(load)
               v-for="v in variants"
               :key="v.channel"
               :name="v.channel"
-              :label="`${channelLabel(v.channel)}${v.stale ? ' *' : ''}`"
+              :label="channelLabel(v.channel)"
             />
           </el-tabs>
-          <div class="ed-doc-note">正在编辑：{{ docTab === 'master' ? '母稿' : channelLabel(docTab) }}</div>
+          <div class="ed-doc-note">
+            <button
+              v-if="editorSurface.showChannelVariants"
+              type="button"
+              class="ed-adv"
+              @click="() => { leftTab = 'channels'; showChannelPick = true }"
+            >渠道适配</button>
+            <span
+              v-if="docTab !== 'master' && currentVariantQualityLabel"
+              class="ed-pill"
+              :class="isPublishReadyVariant ? 'ok' : 'warn'"
+            >{{ currentVariantQualityLabel }}</span>
+          </div>
 
-          <el-alert
-            v-if="activeJob && ['pending', 'running'].includes(activeJob.status)"
-            type="info"
-            show-icon
-            class="mb"
-            :closable="false"
-            :title="`后台任务 #${activeJob.id} · ${activeJob.status}`"
-          />
-          <div v-if="generateHint" class="ed-hint mb">{{ generateHint }}</div>
+          <div v-if="liveJobCard" class="ed-job-progress">
+            <div class="ed-progress-header">
+              <span class="ed-progress-spinner">✦</span>
+              <div>
+                <b>{{ liveJobCard.title }}</b>
+                <small>{{ liveJobCard.label }}</small>
+              </div>
+              <em>{{ liveJobCard.hasPct ? `${liveJobCard.pct}%` : '进行中' }}</em>
+            </div>
+            <div class="ed-draft-progress-bar" :class="{ 'is-indeterminate': liveJobCard.indeterminate }">
+              <span :style="{ width: `${liveJobCard.hasPct ? liveJobCard.pct : 32}%` }" />
+            </div>
+            <ol class="ed-generation-steps">
+              <li
+                v-for="step in liveJobCard.steps"
+                :key="step.label"
+                :class="step.state"
+              >
+                {{ step.label }}
+              </li>
+            </ol>
+            <button
+              v-if="jobLive"
+              type="button"
+              class="ed-job-cancel"
+              @click="cancelActiveJob"
+            >
+              取消生成
+            </button>
+          </div>
 
+          <div class="ed-version-bar">
+            <div>
+              <span class="ed-live-dot" />
+              <b>母稿</b>
+              <small>{{ versionMetaLine }}</small>
+            </div>
+          </div>
           <template v-if="docTab === 'master'">
-            <el-input
-              v-model="article.title"
-              class="ed-doc-title"
-              placeholder="文章标题"
-            />
             <RichTextMarkdownEditor
-              :key="`master-body-${task?.article?.version_no || 0}`"
+              key="master-body"
               v-model="article.body_markdown"
               :min-height="320"
               max-height="min(58vh, 640px)"
@@ -2369,18 +3139,30 @@ onMounted(load)
             />
             <div class="ed-doc-status">
               <span>{{ (article.body_markdown || '').replace(/\s/g, '').length }} 字</span>
-              <span v-if="task.article">v{{ task.article.version_no }}</span>
               <span>{{ saveHint }}</span>
             </div>
           </template>
           <template v-else-if="editorSurface.showChannelVariants">
             <el-input v-model="variantEdit.title" class="ed-doc-title" placeholder="渠道稿标题" />
-            <div class="variant-html-preview" v-html="variantEdit.body_html || '<p class=muted>暂无预览，请先生成渠道稿</p>'" />
+            <div class="variant-html-preview" v-html="variantEdit.body_html || '<p class=muted>暂无预览，请先生成成稿</p>'" />
             <div class="ed-doc-status">
               <el-button size="small" @click="copyCurrentDoc">复制成稿</el-button>
               <el-button v-if="composeUrl" size="small" @click="openCompose">打开发布页</el-button>
             </div>
           </template>
+          <div v-if="!liveJobCard && gateFailView.rows.length" class="ed-gate-banner">
+            <b>这些渠道未过完整文章门控</b>
+            <ul class="ed-gate-list">
+              <li v-for="row in gateFailView.rows" :key="row.key">
+                <b>{{ row.channel }}</b>
+                <span>{{ row.title }}</span>
+                <span v-if="row.hint" class="ed-gate-hint">{{ row.hint }}</span>
+              </li>
+            </ul>
+            <p v-if="gateFailView.extra" class="ed-gate-more">另有 {{ gateFailView.extra }} 个渠道未列出</p>
+            <p v-if="boundFacts.length" class="ed-gate-facts">对照左侧「优化建议」里的已绑定事实：数字必须和卡片原文一致。</p>
+          </div>
+          <div v-else-if="generateHint && !generatingMaster" class="ed-hint mb">{{ generateHint }}</div>
         </div>
       </main>
 
@@ -2433,15 +3215,24 @@ onMounted(load)
         </ul>
       </aside>
     </div>
+    <el-alert
+      v-if="error"
+      type="error"
+      :title="error"
+      show-icon
+      closable
+      class="ed-alert"
+      @close="error = ''"
+    />
   </div>
 </template>
 
 <style scoped>
 .ed-shell {
-  --ed-blue: #2563eb;
-  --ed-purple: #7c3aed;
-  --ed-green: #059669;
-  --ed-orange: #d97706;
+  --ed-blue: #246bfd;
+  --ed-purple: #5b57d6;
+  --ed-green: #168566;
+  --ed-orange: #c88719;
   --ed-red: #dc2626;
   box-sizing: border-box;
   display: flex;
@@ -2449,25 +3240,31 @@ onMounted(load)
   height: calc(100vh - 8px);
   min-width: 0;
   overflow: hidden;
-  padding: 10px 12px 12px;
-  background: #f4f5f8;
+  padding: 0 0 12px;
+  background: #f3f5f7;
   color: #1f2937;
 }
 .ed-top {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   flex: none;
-  min-height: 56px;
-  padding: 8px 4px 10px;
+  min-height: 74px;
+  padding: 10px 20px;
+  border-bottom: 1px solid #e7eaee;
+  background: #fff;
 }
 .ed-back {
   border: 0;
   background: transparent;
-  color: var(--ed-blue);
+  padding: 0 14px 0 0;
+  border-right: 1px solid #e6e9ed;
+  color: #68717d;
+  font-size: 14px;
   font-weight: 650;
   cursor: pointer;
   white-space: nowrap;
+  align-self: stretch;
 }
 .ed-ident { min-width: 0; flex: 1; }
 .ed-kicker { font-size: 12px; color: #6b7280; }
@@ -2479,25 +3276,133 @@ onMounted(load)
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.ed-title-input { max-width: 760px; }
+.ed-title-input :deep(.el-input__wrapper) {
+  box-shadow: none !important;
+  background: transparent;
+  padding: 0;
+}
+.ed-title-input :deep(.el-input__inner) {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #26313d;
+}
+.ed-sub { margin-top: 2px; font-size: 12px; color: #9ca3af; }
+.ed-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: #a1a8b1;
+  white-space: nowrap;
+}
+.ed-flow i { font-style: normal; color: #c7ccd3; }
+.ed-flow em {
+  margin-left: 5px;
+  padding-left: 12px;
+  color: #8b95a1;
+  border-left: 1px solid #e1e5ea;
+  font-style: normal;
+}
+.ed-flow-state { font-weight: 650; }
+.ed-flow-state.active { color: var(--ed-blue); }
+.ed-flow-state.done { color: #458573; }
+.ed-channel-pick { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.ed-hint { font-size: 12px; color: #6b7280; line-height: 1.45; margin-bottom: 8px; }
+.ed-dd-link { color: inherit; text-decoration: none; }
 .ed-top-actions { display: flex; align-items: center; gap: 8px; flex: none; }
-.ed-save { font-size: 12px; color: #9ca3af; }
+.ed-top-actions :deep(.el-button) {
+  height: 38px;
+  min-height: 38px;
+  padding: 0 16px;
+  border-radius: 8px;
+  border-color: #dfe5ec;
+  color: #2d3744;
+  background: #fff;
+  font-size: 13px;
+}
 .ed-top-actions :deep(.el-button--primary) {
   background: var(--ed-blue);
   border-color: var(--ed-blue);
-  border-radius: 8px;
+  color: #fff;
 }
-.ed-top-actions :deep(.el-button) { border-radius: 8px; }
-.ed-top-actions .is-active { color: var(--ed-purple); border-color: #ddd6fe; background: #f5f3ff; }
-.ed-alert { margin: 0 0 8px; }
+.ed-alert { flex: none; margin: 8px 16px 0; }
+.ed-gate-banner {
+  flex: none;
+  margin: 12px 16px 12px;
+  padding: 12px 14px;
+  border: 1px solid #f3e0c2;
+  border-radius: 10px;
+  background: #fff8ed;
+}
+.ed-gate-banner > b { display: block; color: #8a5a12; font-size: 13px; }
+.ed-gate-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ed-gate-list li {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 2px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #7c2d12;
+}
+.ed-gate-list b { font-weight: 700; }
+.ed-gate-hint {
+  grid-column: 2;
+  font-size: 12px;
+  font-weight: 400;
+  color: #9a3412;
+  opacity: 0.85;
+}
+.ed-gate-more {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #9a3412;
+}
+.ed-gate-facts {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #9a3412;
+}
+.ed-job-progress {
+  margin: 0 16px 12px;
+  padding: 16px 18px 14px;
+  border: 1px solid #e0e6ee;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(34, 55, 88, 0.05);
+}
+.ed-job-cancel {
+  margin-top: 4px;
+  border: 0;
+  background: transparent;
+  color: #68717d;
+  font-size: 12px;
+  cursor: pointer;
+}
 .ed-body {
   display: grid;
-  grid-template-columns: 312px minmax(720px, 1fr);
-  gap: 12px;
+  grid-template-columns: 344px minmax(0, 1fr);
+  gap: 0;
   min-height: 0;
   flex: 1;
+  margin: 0 12px;
+  border: 1px solid #e7eaee;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
 }
 .ed-shell.check-open .ed-body {
-  grid-template-columns: 312px minmax(0, 1fr) 340px;
+  grid-template-columns: 344px minmax(0, 1fr) 320px;
 }
 .ed-shell.focus .ed-body { grid-template-columns: minmax(0, 1fr); }
 .ed-left, .ed-check, .ed-center, .ed-doc, .ed-pane {
@@ -2507,27 +3412,41 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   background: #fff;
-  border: 1px solid #e7e9ee;
-  border-radius: 12px;
+  border: 0;
+  border-radius: 0;
   overflow: hidden;
 }
+.ed-left { border-right: 1px solid #e7eaee; }
 .ed-tabs {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(58px, 1fr));
+  position: sticky;
+  top: 0;
+  z-index: 4;
   gap: 0;
-  border-bottom: 1px solid #eef0f4;
+  border-bottom: 1px solid #e8ebef;
+  background: #fff;
   flex: none;
 }
 .ed-tabs button {
-  flex: 1;
+  min-width: 0;
+  min-height: 48px;
   border: 0;
+  border-bottom: 2px solid transparent;
   background: transparent;
-  padding: 10px 8px;
-  font-size: 13px;
-  font-weight: 650;
-  color: #6b7280;
+  padding: 0 3px;
+  font-size: 12px;
+  font-weight: 750;
+  color: #697380;
   cursor: pointer;
+  white-space: nowrap;
 }
-.ed-tabs button.on { color: var(--ed-purple); box-shadow: inset 0 -2px 0 var(--ed-purple); }
+.ed-tabs button.on {
+  color: var(--ed-blue);
+  border-bottom-color: var(--ed-blue);
+  box-shadow: none;
+}
+.ed-tabs button.disabled { color: #bcc2ca; }
 .ed-pane {
   flex: 1;
   overflow: auto;
@@ -2569,20 +3488,413 @@ onMounted(load)
 .ed-empty { font-size: 12px; color: #9ca3af; padding: 16px 0; }
 .ed-center {
   display: flex;
-  background: #fff;
-  border: 1px solid #e7e9ee;
-  border-radius: 12px;
+  background: #f5f6f8;
+  border: 0;
+  border-radius: 0;
   overflow: hidden;
+}
+.ed-gen-stage {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 16px 18px 28px;
+  background: #f5f6f8;
+}
+.ed-gen-card {
+  width: min(780px, 100%);
+  overflow: hidden;
+  border: 1px solid #e0e6ee;
+  border-radius: 13px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(34, 55, 88, 0.06);
+}
+.ed-gen-hero {
+  position: relative;
+  padding: 24px 32px 20px 88px;
+  overflow: hidden;
+  border-bottom: 1px solid #e9edf2;
+  background: linear-gradient(110deg, #f8fbff 0%, #fff 58%, #f5f9ff 100%);
+}
+.ed-gen-orb {
+  position: absolute;
+  left: 28px;
+  top: 26px;
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  color: #fff;
+  border-radius: 14px;
+  background: var(--ed-blue);
+  box-shadow: 0 8px 20px rgba(36, 107, 253, 0.2);
+}
+.ed-gen-hero h1 {
+  margin: 4px 0 6px;
+  color: #1f2b3b;
+  font-size: 19px;
+  letter-spacing: -0.02em;
+}
+.ed-gen-hero p {
+  margin: 0;
+  color: #7d8793;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.ed-gen-body { padding: 20px 32px 26px; }
+.ed-task-summary-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.ed-task-summary-head span { display: block; font-size: 13px; font-weight: 750; color: #2f3a48; }
+.ed-task-summary-head small { color: #8d96a1; font-size: 11px; }
+.ed-task-summary-head button {
+  border: 0;
+  background: transparent;
+  color: var(--ed-blue);
+  font-size: 12px;
+  cursor: pointer;
+}
+.ed-task-summary-grid { display: grid; gap: 12px; }
+.ed-task-summary-grid label {
+  display: block;
+  margin-bottom: 4px;
+  color: #87919d;
+  font-size: 11px;
+  font-weight: 700;
+}
+.ed-task-summary-grid b, .ed-task-summary-grid p {
+  margin: 0;
+  color: #273342;
+  font-size: 13px;
+  line-height: 1.55;
+  font-weight: 650;
+}
+.ed-ready-section { margin: 16px 0 12px; padding-top: 14px; border-top: 1px solid #eef1f4; }
+.ed-ready-section label {
+  display: block;
+  margin-bottom: 8px;
+  color: #87919d;
+  font-size: 11px;
+  font-weight: 700;
+}
+.ed-ready-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+.ed-ready-tags span {
+  padding: 6px 10px;
+  border: 1px solid #e7ebf0;
+  border-radius: 999px;
+  background: #fafbfc;
+  color: #8a94a0;
+  font-size: 12px;
+}
+.ed-ready-tags span.ok { color: #2b7a68; border-color: #cde8df; background: #f3faf7; }
+.ed-gen-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid #e9edf2;
+}
+.ed-gen-actions > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: #84909d;
+}
+.ed-gen-actions small { font-size: 11px; }
+.ed-gen-progress { padding: 24px 32px 30px; }
+.ed-progress-header { display: flex; align-items: center; gap: 12px; }
+.ed-progress-spinner {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: none;
+  place-items: center;
+  color: #fff;
+  border-radius: 11px;
+  background: var(--ed-blue);
+  animation: edPulse 1.2s ease-in-out infinite;
+}
+.ed-progress-header > div { min-width: 0; flex: 1; }
+.ed-progress-header b, .ed-progress-header small { display: block; }
+.ed-progress-header b { color: #2f3a48; font-size: 14px; }
+.ed-progress-header small { margin-top: 3px; color: #8d96a1; font-size: 11px; }
+.ed-progress-header em { color: var(--ed-blue); font-size: 12px; font-style: normal; font-weight: 800; }
+.ed-draft-progress-bar {
+  height: 6px;
+  margin: 17px 0 19px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #edf1f5;
+}
+.ed-draft-progress-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #1a64ed, #35a2ff);
+  transition: width 0.34s ease;
+}
+.ed-draft-progress-bar.is-indeterminate span {
+  width: 32% !important;
+  animation: edBarSlide 1.15s ease-in-out infinite;
+}
+@keyframes edBarSlide {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(280%); }
+}
+.ed-generation-steps {
+  display: grid;
+  gap: 0;
+  margin: 0 0 16px;
+  padding: 0;
+  list-style: none;
+}
+.ed-generation-steps li {
+  position: relative;
+  min-height: 36px;
+  padding: 3px 0 10px 28px;
+  color: #a0a8b2;
+  border-left: 1px solid #e1e6ec;
+  font-size: 12px;
+}
+.ed-generation-steps li:last-child { border-left-color: transparent; }
+.ed-generation-steps li::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  top: 4px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid #cbd2db;
+  border-radius: 50%;
+  background: #fff;
+}
+.ed-generation-steps li.active { color: #285fbe; font-weight: 750; }
+.ed-generation-steps li.active::before {
+  border-color: var(--ed-blue);
+  background: var(--ed-blue);
+  box-shadow: 0 0 0 4px #e7efff;
+}
+.ed-generation-steps li.done { color: #4d776e; }
+.ed-generation-steps li.done::before {
+  content: "✓";
+  display: grid;
+  width: 14px;
+  height: 14px;
+  left: -7px;
+  top: 1px;
+  place-items: center;
+  color: #fff;
+  border: 0;
+  background: #2b9c7d;
+  font-size: 8px;
+}
+@keyframes edPulse {
+  50% { transform: scale(0.92); box-shadow: 0 5px 14px rgba(36, 107, 253, 0.16); }
+}
+.ed-score-pane { padding-top: 14px; }
+.ed-score-card, .ed-score-detail {
+  margin-bottom: 14px;
+  padding: 16px;
+  border: 1px solid #e4e8ec;
+  border-radius: 10px;
+}
+.ed-score-card-head, .ed-score-ring-summary, .ed-score-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ed-score-card-head h3, .ed-score-heading h3 { margin: 0; font-size: 14px; color: #2d3744; }
+.ed-score-card-head span {
+  padding: 3px 8px;
+  color: #108875;
+  border: 1px solid #b9e5dd;
+  border-radius: 999px;
+  background: #eefaf7;
+  font-size: 11px;
+  font-weight: 800;
+}
+.ed-score-ring-summary { margin-top: 16px; align-items: center; }
+.ed-score-ring {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 112px;
+  height: 112px;
+  flex: none;
+  padding-top: 8px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at center, #fff 0 56%, transparent 57%),
+    conic-gradient(from -90deg, #14c9bd 0 var(--score), #2474ff var(--score) 88%, #eef2f6 88% 100%);
+}
+.ed-score-ring strong {
+  position: relative;
+  z-index: 1;
+  color: #15977f;
+  font-size: 26px;
+  font-weight: 900;
+  line-height: 1;
+}
+.ed-score-ring span {
+  position: relative;
+  z-index: 1;
+  margin-top: 4px;
+  color: #8b95a1;
+  font-size: 11px;
+  font-weight: 700;
+}
+.ed-score-copy { min-width: 0; flex: 1; }
+.ed-score-copy b { display: block; margin-bottom: 5px; color: #2f3946; font-size: 14px; }
+.ed-score-copy small { color: #7f8995; font-size: 12px; line-height: 1.5; }
+.ed-score-meter {
+  height: 8px;
+  margin: 12px 0 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #eef2f6;
+}
+.ed-score-meter span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #13c9ba, #2474ff);
+}
+.ed-score-highlights {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 14px;
+}
+.ed-score-highlights div {
+  padding: 9px 8px;
+  border: 1px solid #edf0f4;
+  border-radius: 8px;
+  background: #fafbfc;
+  text-align: center;
+}
+.ed-score-highlights b { display: block; color: #303946; font-size: 17px; }
+.ed-score-highlights span { color: #8b95a1; font-size: 11px; }
+.ed-score-heading, .ed-suggestion-heading { margin-bottom: 8px; }
+.ed-score-heading small, .ed-suggestion-heading small { color: #9aa2ad; font-size: 11px; }
+.ed-suggestion-heading h3 { margin: 0; color: #2d3744; font-size: 14px; }
+.ed-suggestion-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+.ed-suggestion-actions button {
+  min-width: 0;
+  height: 34px;
+  white-space: nowrap;
+}
+.ed-suggestion-primary {
+  grid-column: 1 / -1;
+  border: 0;
+  border-radius: 7px;
+  background: var(--ed-blue);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.ed-suggestion-primary:disabled { opacity: 0.65; cursor: wait; }
+.ed-suggestion-secondary { width: 100%; padding: 0 6px; }
+.ed-section-optimize { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
+.ed-section-optimize :deep(.el-input) { min-width: 0; flex: 1; }
+.ed-section-optimize-action { flex: none; height: 32px; white-space: nowrap; }
+.ed-ai-review { margin-top: 12px; }
+.ed-count-badge {
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 4px;
+  place-items: center;
+  color: #fff;
+  border-radius: 9px;
+  background: #ef8f32;
+  font-size: 10px;
+}
+.ed-metric-row {
+  position: relative;
+  display: grid;
+  width: 100%;
+  grid-template-columns: 82px 1fr 28px;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 7px 0;
+  color: #54606e;
+  border: 0;
+  border-bottom: 1px solid #f0f2f5;
+  background: #fff;
+  font-size: 12px;
+  text-align: left;
+}
+.ed-metric-row.issue { cursor: pointer; }
+.ed-metric-row > i { height: 5px; overflow: hidden; border-radius: 99px; background: #edf1f5; }
+.ed-metric-row > i em { display: block; height: 100%; border-radius: inherit; background: #5e91ee; }
+.ed-metric-row.issue > i em { background: #e6a13c; }
+.ed-metric-row b { color: #34404d; text-align: right; }
+.ed-metric-row > small {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  color: #d38b24;
+  font-size: 10px;
+  background: #fff;
+}
+.ed-version-bar {
+  display: flex;
+  min-height: 40px;
+  margin: 0 16px 8px;
+  padding: 0 12px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #e2e7ed;
+  border-radius: 8px;
+  background: #fff;
+}
+.ed-version-bar > div { display: flex; align-items: center; gap: 7px; }
+.ed-version-bar b { color: #3d4856; font-size: 12px; }
+.ed-version-bar small { color: #9aa2ad; font-size: 11px; }
+.ed-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #27a77e;
+  box-shadow: 0 0 0 3px #e3f5ee;
 }
 .ed-doc {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-width: 0;
-  padding: 8px 0 0;
+  padding: 12px 0 0;
+  background: #f5f6f8;
 }
-.ed-doc-tabs { padding: 0 24px; }
-.ed-doc-note { padding: 0 24px 8px; font-size: 12px; color: #9ca3af; }
+.ed-doc-tabs { padding: 0 16px; background: #fff; border-bottom: 1px solid #eef0f4; }
+.ed-doc-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 0;
+  font-size: 12px;
+  color: #9ca3af;
+}
 .ed-doc-title :deep(.el-input__wrapper) {
   box-shadow: none !important;
   background: transparent;
@@ -2594,8 +3906,10 @@ onMounted(load)
   letter-spacing: -0.03em;
 }
 .ed-doc :deep(.rich-editor) {
-  border: 0;
-  border-radius: 0;
+  margin: 0 16px 0;
+  border: 1px solid #e2e7ed;
+  border-radius: 10px;
+  background: #fff;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -2631,6 +3945,57 @@ onMounted(load)
 }
 .ed-check-score { font-weight: 750; }
 .ed-check-sub { font-size: 12px; color: #6b7280; }
+.ed-mini-primary {
+  padding: 6px 10px;
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  background: var(--ed-blue);
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.ed-mini-primary:disabled { opacity: 0.65; cursor: wait; }
+.ed-mini {
+  border: 0;
+  background: #f3f4f6;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ed-bound-facts {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #eef0f4;
+}
+.ed-bound-fact {
+  margin-bottom: 8px;
+  padding: 10px 11px;
+  border: 1px solid #e8edf3;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.ed-bound-fact b { display: block; font-size: 12px; color: #323d4a; }
+.ed-bound-fact p { margin: 4px 0 0; font-size: 12px; line-height: 1.5; color: #68717d; }
+.ed-issue-card {
+  margin-bottom: 10px;
+  padding: 13px;
+  border: 1px solid #e1e6ed;
+  border-radius: 9px;
+  background: #fff;
+}
+.ed-issue-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ed-issue-head span {
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 750;
+}
+.ed-issue-head span.amber { color: #a3640d; background: #fff3dc; }
+.ed-issue-head span.blue { color: #2d67c8; background: #edf4ff; }
+.ed-issue-card h4 { margin: 10px 0 5px; color: #323d4a; font-size: 13px; }
+.ed-issue-card p { margin: 0 0 9px; color: #737e8b; font-size: 12px; line-height: 1.55; }
 .ed-iss-block { padding: 10px 12px 0; }
 .ed-iss-label { font-size: 12px; font-weight: 700; margin-bottom: 6px; }
 .ed-iss-label.must { color: var(--ed-red); }
@@ -2652,7 +4017,7 @@ onMounted(load)
   font-size: 12px;
   cursor: pointer;
 }
-.ed-all-ok { margin: 12px; padding: 10px; border-radius: 8px; background: #ecfdf5; color: var(--ed-green); font-size: 13px; }
+.ed-all-ok { margin: 8px 0; padding: 10px; border-radius: 8px; background: #ecfdf5; color: var(--ed-green); font-size: 13px; }
 .ed-passed-toggle {
   border: 0;
   background: transparent;
@@ -2668,9 +4033,10 @@ onMounted(load)
 @media (max-width: 1280px) {
   .ed-body,
   .ed-shell.check-open .ed-body {
-    grid-template-columns: 280px minmax(0, 1fr);
+    grid-template-columns: 300px minmax(0, 1fr);
   }
   .ed-check { grid-column: 1 / -1; width: auto; max-height: 280px; }
+  .ed-flow em { display: none; }
 }
 @media (max-width: 900px) {
   .ed-body,
