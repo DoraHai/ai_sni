@@ -5,12 +5,30 @@ frontend_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 repo_root="$(git -C "$frontend_root" rev-parse --show-toplevel)"
 deploy_target="${DEPLOY_TARGET:-sem-deploy@101.200.193.83}"
 deploy_root="${SEM_FRONTEND_ROOT:-/opt/sem-frontend}"
+release_branch="${SEM_RELEASE_BRANCH:-codex/production-sem}"
 release_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 git_commit="$(git -C "$repo_root" rev-parse HEAD)"
 git_short="$(git -C "$repo_root" rev-parse --short=12 HEAD)"
 release_dir="${deploy_root}/releases/${release_stamp}-${git_short}"
 lock_dir="${deploy_root}/.deploy-lock"
 ssh_options=(-o BatchMode=yes -o StrictHostKeyChecking=yes)
+
+verify_release_head() {
+  local latest
+  latest="$(
+    git -C "$repo_root" ls-remote origin "refs/heads/$release_branch" \
+      | cut -f1
+  )"
+  if [[ -z "$latest" ]]; then
+    printf '%s\n' "Cannot resolve SEM frontend production branch: $release_branch" >&2
+    return 1
+  fi
+  if [[ "$latest" != "$git_commit" ]]; then
+    printf '%s\n' \
+      "Refusing stale SEM frontend release: requested=$git_commit production=$latest" >&2
+    return 1
+  fi
+}
 
 cd "$frontend_root"
 if ! git -C "$repo_root" diff --quiet \
@@ -27,6 +45,10 @@ if [[ "${VERIFY_ONLY:-0}" == "1" ]]; then
   printf '%s\n' "SEM frontend build verified; deployment skipped (VERIFY_ONLY=1)"
   exit 0
 fi
+
+# Recheck after the build so a queued or rerun workflow cannot publish an old
+# production-branch commit after that branch has advanced.
+verify_release_head
 
 if ! ssh "${ssh_options[@]}" "$deploy_target" "mkdir -p '$deploy_root' && mkdir '$lock_dir'"; then
   printf '%s\n' "Another SEM frontend deployment is active: $lock_dir" >&2
@@ -50,6 +72,10 @@ rsync \
   -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=yes" \
   dist/ \
   "$deploy_target:${release_dir}/"
+
+# Recheck immediately before the remote validation and atomic symlink switch.
+# If the branch advanced during upload, leave current untouched and fail closed.
+verify_release_head
 
 ssh "${ssh_options[@]}" "$deploy_target" \
   "set -euo pipefail

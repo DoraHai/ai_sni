@@ -86,8 +86,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
+    concurrency:
+      group: production-sem-frontend-deployment
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+
+      - name: Require current SEM frontend production head
+        env:
+          RELEASE_BRANCH: codex/production-sem
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          latest="$(git ls-remote origin "refs/heads/$RELEASE_BRANCH" | cut -f1)"
+          test -n "$latest"
+          if [[ "$latest" != "$RELEASE_SHA" ]]; then
+            echo "Refusing stale SEM frontend release: requested=$RELEASE_SHA production=$latest" >&2
+            exit 1
+          fi
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -124,4 +140,5 @@ jobs:
         working-directory: frontend
         env:
           DEPLOY_TARGET: sem-deploy@101.200.193.83
+          SEM_RELEASE_BRANCH: codex/production-sem
         run: bash scripts/deploy-sem.sh
