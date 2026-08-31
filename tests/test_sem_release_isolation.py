@@ -31,6 +31,24 @@ def test_sem_ci_uses_pinned_host_key_and_dedicated_secret():
     assert "environment: production" in workflow
 
 
+def test_sem_frontend_release_rejects_stale_production_heads():
+    workflow = _read(".github/workflows/ci.yml")
+    script = _read("frontend/scripts/deploy-sem.sh")
+
+    assert "group: production-sem-frontend-deployment" in workflow
+    assert "cancel-in-progress: false" in workflow
+    assert "Require current SEM frontend production head" in workflow
+    assert "RELEASE_BRANCH: codex/production-sem" in workflow
+    assert 'git ls-remote origin "refs/heads/$RELEASE_BRANCH"' in workflow
+    assert "Refusing stale SEM frontend release" in workflow
+
+    assert "SEM_RELEASE_BRANCH:-codex/production-sem" in script
+    assert "verify_release_head()" in script
+    assert 'ls-remote origin "refs/heads/$release_branch"' in script
+    deployment = script[script.index('if [[ "${VERIFY_ONLY:-0}" == "1" ]]') :]
+    assert deployment.count("verify_release_head") == 2
+
+
 def test_sem_frontend_keeps_element_plus_out_of_the_initial_bundle():
     package = json.loads(_read("frontend/package.json"))
     main = _read("frontend/src/main.js")
