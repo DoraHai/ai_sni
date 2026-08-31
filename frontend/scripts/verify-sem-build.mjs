@@ -15,13 +15,29 @@ async function collectJavaScriptFiles(directory) {
   return files
 }
 
-await stat(resolve(buildDir, 'index.html'))
+const indexPath = resolve(buildDir, 'index.html')
+await stat(indexPath)
+const indexHtml = await readFile(indexPath, 'utf8')
 const favicon = await stat(resolve(buildDir, 'favicon-v2.png'))
 if (!favicon.isFile() || favicon.size === 0) {
   throw new Error(`SEM favicon is missing or empty in ${buildDir}`)
 }
 const files = await collectJavaScriptFiles(assetsDir)
 if (!files.length) throw new Error(`No JavaScript assets found in ${assetsDir}`)
+
+const initialJavaScriptUrls = [...indexHtml.matchAll(/(?:src|href)="([^"]+\.js)"/g)]
+  .map((match) => match[1])
+const initialJavaScriptFiles = [...new Set(initialJavaScriptUrls)]
+  .map((url) => resolve(buildDir, url.replace(/^\//, '')))
+const initialJavaScriptBytes = (
+  await Promise.all(initialJavaScriptFiles.map(async (file) => (await stat(file)).size))
+).reduce((total, size) => total + size, 0)
+const initialJavaScriptBudget = 500 * 1024
+if (initialJavaScriptBytes > initialJavaScriptBudget) {
+  throw new Error(
+    `SEM initial JavaScript is ${initialJavaScriptBytes} bytes; budget is ${initialJavaScriptBudget} bytes`,
+  )
+}
 
 const requiredMarkers = [
   '/api/v1/oauth/baidu/authorize',
@@ -59,4 +75,7 @@ if (missing.length || foundForbidden.size) {
   throw new Error(`SEM build contract failed (${details.join('; ')})`)
 }
 
-console.log(`SEM build contract passed (${files.length} JavaScript assets checked)`)
+console.log(
+  `SEM build contract passed (${files.length} JavaScript assets checked; `
+  + `${initialJavaScriptBytes} initial JavaScript bytes)`,
+)
