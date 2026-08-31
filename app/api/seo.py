@@ -12,7 +12,7 @@ from typing import Any, Literal
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field, PositiveInt, field_validator
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -98,6 +98,11 @@ from app.seo_rank_limits import (
     reserve_manual_rank_collection,
     settle_manual_rank_collection,
 )
+from app.seo_usage_limits import (
+    SeoUsageLimitError,
+    charge_seo_usage,
+    refund_seo_usage,
+)
 from app.seo_distribution_import import (
     MAX_XLSX_BYTES,
     XlsxImportError,
@@ -133,6 +138,36 @@ async def require_seo_module_access(
     if tenant_id is not None:
         await ensure_module_access(session, ctx, tenant_id, "seo")
     return ctx
+
+
+async def _limited_seo_chat_json(
+    session: AsyncSession,
+    tenant_id: int,
+    system: str,
+    user: str,
+    *,
+    timeout: float,
+) -> dict[str, Any]:
+    settings = get_settings()
+    try:
+        await charge_seo_usage(
+            session,
+            tenant_id,
+            "ai_requests",
+            1,
+            settings.seo_ai_max_requests_per_tenant_per_day,
+        )
+    except SeoUsageLimitError as exc:
+        raise HTTPException(
+            429,
+            f"SEO AI 当日调用已达上限（{exc.used}/{exc.limit}）",
+            headers={"Retry-After": "3600"},
+        ) from exc
+    try:
+        return await chat_json(system, user, timeout=timeout)
+    except Exception:
+        await refund_seo_usage(session, tenant_id, "ai_requests", 1)
+        raise
 
 
 router = APIRouter(
@@ -1625,6 +1660,7 @@ def _serp_error_payload(
         "code": error.code,
         "message": error.public_message,
         "retryable": error.retryable,
+        "attempts": error.attempts,
     }
     if error.status_code is not None:
         payload["status_code"] = error.status_code
@@ -1707,7 +1743,7 @@ async def collect_rank_serp_for_tenant(
             logger.warning(
                 "[SEO][SERP] provider request failed tenant_id=%s site_id=%s "
                 "keyword_id=%s device=%s code=%s status_code=%s "
-                "timeout_phase=%s elapsed_ms=%s",
+                "timeout_phase=%s elapsed_ms=%s attempts=%s",
                 tenant_id,
                 site_id,
                 keyword.id,
@@ -1716,6 +1752,7 @@ async def collect_rank_serp_for_tenant(
                 provider_error.status_code,
                 provider_error.timeout_phase,
                 provider_error.elapsed_ms,
+                provider_error.attempts,
             )
             continue
         prepared: list[dict[str, Any]] = []
@@ -2231,6 +2268,7 @@ def _page_snapshot_payload(row: SeoPageSnapshot) -> dict[str, Any]:
 @router.post("/site/crawl-runs")
 async def create_seo_crawl_run(
     req: SeoCrawlRequest,
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
@@ -2242,16 +2280,31 @@ async def create_seo_crawl_run(
         select(SeoCrawlRun).where(
             SeoCrawlRun.tenant_id == req.tenant_id,
             SeoCrawlRun.site_id == req.site_id,
-            SeoCrawlRun.status == "running",
+            SeoCrawlRun.status.in_(["queued", "running"]),
         )
     )
     if active is not None:
         raise HTTPException(409, "This SEO site already has a crawl in progress")
+    settings = get_settings()
+    try:
+        await charge_seo_usage(
+            session,
+            req.tenant_id,
+            "crawl_urls",
+            req.max_urls,
+            settings.seo_manual_crawl_max_urls_per_tenant_per_day,
+        )
+    except SeoUsageLimitError as exc:
+        raise HTTPException(
+            429,
+            f"当日网站扫描额度已达上限（{exc.used}/{exc.limit} URL）",
+            headers={"Retry-After": "3600"},
+        ) from exc
     seed_url = site.default_url or f"https://{site.canonical_domain}"
     run = SeoCrawlRun(
         tenant_id=req.tenant_id,
         site_id=req.site_id,
-        status="running",
+        status="queued",
         seed_url=seed_url,
         max_urls=req.max_urls,
         created_by=ctx.user_id,
@@ -2260,87 +2313,133 @@ async def create_seo_crawl_run(
     session.add(run)
     await session.commit()
     await session.refresh(run)
-    run_id = run.id
+    background_tasks.add_task(
+        _execute_seo_crawl_run,
+        run.id,
+        req.tenant_id,
+        req.site_id,
+        seed_url,
+        req.max_urls,
+        req.max_depth,
+        list(req.seed_urls),
+        ctx.user_id,
+    )
+    return {"run": _crawl_run_payload(run), "snapshots": []}
+
+
+async def _execute_seo_crawl_run(
+    run_id: int,
+    tenant_id: int,
+    site_id: int,
+    seed_url: str,
+    max_urls: int,
+    max_depth: int,
+    seed_urls: list[str],
+    created_by: int | None,
+) -> None:
+    """Execute a persisted crawl after the initiating HTTP response has returned."""
+    async with async_session_factory() as session:
+        run = await session.get(SeoCrawlRun, run_id)
+        if run is None or run.tenant_id != tenant_id or run.site_id != site_id:
+            return
+        run.status = "running"
+        run.started_at = datetime.utcnow()
+        await session.commit()
     try:
         result = await crawl_site(
             seed_url,
-            max_urls=req.max_urls,
-            max_depth=req.max_depth,
-            extra_seeds=req.seed_urls,
+            max_urls=max_urls,
+            max_depth=max_depth,
+            extra_seeds=seed_urls,
         )
-        snapshot_values = result.get("snapshots") or []
-        existing_pages = {
-            row.url: row
-            for row in list(
-                await session.scalars(
-                    select(SeoSitePage).where(
-                        SeoSitePage.tenant_id == req.tenant_id,
-                        SeoSitePage.site_id == req.site_id,
+        actual_usage = max(1, min(max_urls, len(result.get("snapshots") or [])))
+        async with async_session_factory() as session:
+            run = await session.get(SeoCrawlRun, run_id)
+            if run is None:
+                return
+            snapshot_values = result.get("snapshots") or []
+            existing_pages = {
+                row.url: row
+                for row in list(
+                    await session.scalars(
+                        select(SeoSitePage).where(
+                            SeoSitePage.tenant_id == tenant_id,
+                            SeoSitePage.site_id == site_id,
+                        )
                     )
                 )
-            )
-        }
-        for item in snapshot_values:
-            snapshot = SeoPageSnapshot(
-                tenant_id=req.tenant_id,
-                site_id=req.site_id,
-                crawl_run_id=run.id,
-                **item,
-            )
-            session.add(snapshot)
-            page = existing_pages.get(item["url"])
-            if page is None:
-                page = SeoSitePage(
-                    tenant_id=req.tenant_id,
-                    site_id=req.site_id,
-                    url=item["url"],
-                    created_by=ctx.user_id,
+            }
+            for item in snapshot_values:
+                snapshot = SeoPageSnapshot(
+                    tenant_id=tenant_id,
+                    site_id=site_id,
+                    crawl_run_id=run.id,
+                    **item,
                 )
-                session.add(page)
-                existing_pages[item["url"]] = page
-            page.title = item.get("title")
-            page.meta_description = item.get("meta_description")
-            page.h1 = (item.get("h1_texts") or [None])[0]
-            page.canonical = item.get("canonical_url")
-            page.indexable = item.get("indexable")
-            page.http_status = item.get("status_code")
-            page.content_units = item.get("word_count")
-            page.issue_codes = item.get("issue_codes") or []
-            page.audit_score = max(0, 100 - len(page.issue_codes) * 10)
-            page.status = _site_page_status_after_audit(
-                page.status,
-                page.issue_codes,
-                has_error=bool(item.get("error_type")),
-            )
-            page.last_error = item.get("fetch_error")
-            page.last_checked_at = datetime.utcnow()
+                session.add(snapshot)
+                page = existing_pages.get(item["url"])
+                if page is None:
+                    page = SeoSitePage(
+                        tenant_id=tenant_id,
+                        site_id=site_id,
+                        url=item["url"],
+                        created_by=created_by,
+                    )
+                    session.add(page)
+                    existing_pages[item["url"]] = page
+                page.title = item.get("title")
+                page.meta_description = item.get("meta_description")
+                page.h1 = (item.get("h1_texts") or [None])[0]
+                page.canonical = item.get("canonical_url")
+                page.indexable = item.get("indexable")
+                page.http_status = item.get("status_code")
+                page.content_units = item.get("word_count")
+                page.issue_codes = item.get("issue_codes") or []
+                page.audit_score = max(0, 100 - len(page.issue_codes) * 10)
+                page.status = _site_page_status_after_audit(
+                    page.status,
+                    page.issue_codes,
+                    has_error=bool(item.get("error_type")),
+                )
+                page.last_error = item.get("fetch_error")
+                page.last_checked_at = datetime.utcnow()
 
-        fetched = sum(item.get("status_code") is not None and not item.get("error_type") for item in snapshot_values)
-        blocked = sum(item.get("error_type") == "robots_blocked" for item in snapshot_values)
-        failed = sum(bool(item.get("error_type")) and item.get("error_type") != "robots_blocked" for item in snapshot_values)
-        run.discovered_count = int(result.get("discovered") or len(snapshot_values))
-        run.fetched_count = fetched
-        run.failed_count = failed
-        run.blocked_count = blocked
-        run.issue_count = sum(len(item.get("issue_codes") or []) for item in snapshot_values)
-        run.status = "failed" if not fetched and failed else ("partial" if failed or blocked else "completed")
-        run.completed_at = datetime.utcnow()
-        run.error_summary = None
-        await session.commit()
-        await session.refresh(run)
-    except Exception as exc:
-        await session.rollback()
-        run = await session.get(SeoCrawlRun, run_id)
-        if run is not None:
-            run.status = "failed"
-            run.error_summary = str(exc)[:2000]
+            fetched = sum(item.get("status_code") is not None and not item.get("error_type") for item in snapshot_values)
+            blocked = sum(item.get("error_type") == "robots_blocked" for item in snapshot_values)
+            failed = sum(bool(item.get("error_type")) and item.get("error_type") != "robots_blocked" for item in snapshot_values)
+            run.discovered_count = int(result.get("discovered") or len(snapshot_values))
+            run.fetched_count = fetched
+            run.failed_count = failed
+            run.blocked_count = blocked
+            run.issue_count = sum(len(item.get("issue_codes") or []) for item in snapshot_values)
+            run.status = "failed" if not fetched and failed else ("partial" if failed or blocked else "completed")
             run.completed_at = datetime.utcnow()
+            run.error_summary = None
             await session.commit()
-        raise HTTPException(502, f"SEO crawl failed: {str(exc)[:300]}") from exc
-    return {
-        "run": _crawl_run_payload(run),
-        "snapshots": snapshot_values[:100],
-    }
+        if actual_usage < max_urls:
+            try:
+                async with async_session_factory() as session:
+                    await refund_seo_usage(
+                        session, tenant_id, "crawl_urls", max_urls - actual_usage
+                    )
+            except Exception:
+                logger.exception(
+                    "[SEO][crawl] failed to settle unused quota run_id=%s", run_id
+                )
+    except Exception as exc:
+        logger.exception("[SEO][crawl] background crawl failed run_id=%s", run_id)
+        async with async_session_factory() as session:
+            run = await session.get(SeoCrawlRun, run_id)
+            if run is not None:
+                run.status = "failed"
+                run.error_summary = str(exc)[:2000]
+                run.completed_at = datetime.utcnow()
+                await session.commit()
+        try:
+            async with async_session_factory() as session:
+                await refund_seo_usage(session, tenant_id, "crawl_urls", max_urls)
+        except Exception:
+            logger.exception("[SEO][crawl] failed to refund quota run_id=%s", run_id)
 
 
 @router.get("/site/crawl-runs")
@@ -3372,7 +3471,10 @@ async def assist_seo_content(
     system, user = _seo_ai_prompt(req, tenant, keywords)
     try:
         result = _validated_seo_assist_result(
-            req.action, await chat_json(system, user, timeout=90.0)
+            req.action,
+            await _limited_seo_chat_json(
+                session, req.tenant_id, system, user, timeout=90.0
+            ),
         )
         missing = _missing_content_keywords(result, keywords) if req.action in {"generate", "rewrite"} else []
         if missing and result.get("content"):
@@ -3385,7 +3487,10 @@ async def assist_seo_content(
                 ]
             )
             result = _validated_seo_assist_result(
-                req.action, await chat_json(system, correction, timeout=90.0)
+                req.action,
+                await _limited_seo_chat_json(
+                    session, req.tenant_id, system, correction, timeout=90.0
+                ),
             )
             missing = _missing_content_keywords(result, keywords)
         if missing:
@@ -4604,7 +4709,9 @@ async def adapt_content_distribution(
         )
         try:
             result = _validated_distribution_ai_result(
-                await chat_json(system, user, timeout=90.0)
+                await _limited_seo_chat_json(
+                    session, req.tenant_id, system, user, timeout=90.0
+                )
             )
             prepared = _prepare_distribution_variant(
                 result["title"], result["content"], connection.platform_code
@@ -4621,7 +4728,9 @@ async def adapt_content_distribution(
                     ]
                 )
                 result = _validated_distribution_ai_result(
-                    await chat_json(system, correction, timeout=90.0)
+                    await _limited_seo_chat_json(
+                        session, req.tenant_id, system, correction, timeout=90.0
+                    )
                 )
                 prepared = _prepare_distribution_variant(
                     result["title"], result["content"], connection.platform_code
@@ -5240,6 +5349,10 @@ async def publish_content_distribution(
             req.action,
         )
     except SeoDistributionError as exc:
+        partial = exc.partial_result
+        if partial is not None:
+            row.external_id = partial.external_id or row.external_id
+            attempt.response_summary = partial.response_summary
         row.status = "failed"
         row.last_error = str(exc)
         attempt.status = "failed"
@@ -5459,8 +5572,17 @@ async def retry_content_publication(
             credentials,
             prepared,
             action,
+            existing_external_id=(
+                row.external_id
+                if connection.platform_code == "wechat_official" and action == "publish"
+                else None
+            ),
         )
     except SeoDistributionError as exc:
+        partial = exc.partial_result
+        if partial is not None:
+            row.external_id = partial.external_id or row.external_id
+            attempt.response_summary = partial.response_summary
         row.status = "failed"
         row.last_error = str(exc)
         attempt.status = "failed"
@@ -5734,7 +5856,7 @@ class BacklinkCreate(BaseModel):
 
 
 def _backlink_payload(row: SeoBacklink) -> dict[str, Any]:
-    return {"id": row.id, "site_id": row.site_id, "source_url": row.source_url, "target_url": row.target_url, "source_domain": row.source_domain, "anchor_text": row.anchor_text, "authority_score": row.authority_score, "toxic_score": row.toxic_score, "status": row.status, "first_seen_at": _iso(row.first_seen_at), "last_seen_at": _iso(row.last_seen_at)}
+    return {"id": row.id, "site_id": row.site_id, "source_url": row.source_url, "target_url": row.target_url, "source_domain": row.source_domain, "anchor_text": row.anchor_text, "authority_score": row.authority_score, "toxic_score": row.toxic_score, "status": row.status, "first_seen_at": _iso(row.first_seen_at), "last_seen_at": _iso(row.last_seen_at), "last_checked_at": _iso(row.last_checked_at), "missing_checks": row.missing_checks or 0}
 
 
 @router.get("/backlinks")

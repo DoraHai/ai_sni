@@ -94,7 +94,7 @@ export function collectSeoOverviewMetrics(payload) {
 }
 
 export function crawlSeoSite(payload) {
-  return client.post('/api/v1/seo/site/crawl-runs', payload, { timeout: 300000 })
+  return client.post('/api/v1/seo/site/crawl-runs', payload, { timeout: 30000 })
 }
 
 export function fetchSeoCrawlRuns({ tenantId, siteId, runId, limit = 10 }) {

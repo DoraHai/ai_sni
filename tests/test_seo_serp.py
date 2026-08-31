@@ -5,6 +5,7 @@ import httpx
 import pytest
 
 from app.seo_serp import (
+    CHINAZ_MAX_ATTEMPTS,
     CHINAZ_MAX_CONCURRENCY,
     SerpProviderError,
     canonical_url,
@@ -165,7 +166,7 @@ def test_mobile_provider_uses_official_top50_endpoint() -> None:
     [
         (401, "provider_auth_failed", False),
         (403, "provider_auth_failed", False),
-        (429, "provider_rate_limited", False),
+        (429, "provider_rate_limited", True),
         (503, "provider_unavailable", True),
     ],
 )
@@ -251,7 +252,7 @@ def test_chinaz_client_uses_separate_timeouts_and_bounded_pool() -> None:
         (httpx.PoolTimeout, "pool"),
     ],
 )
-def test_provider_timeout_phase_is_classified_without_retry(
+def test_provider_timeout_phase_is_classified_after_bounded_retries(
     exception_type: type[httpx.TimeoutException],
     expected_phase: str,
 ) -> None:
@@ -263,9 +264,8 @@ def test_provider_timeout_phase_is_classified_without_retry(
     )
 
     with patch("app.seo_serp.get_settings", return_value=_provider_settings()), patch(
-        "app.seo_serp.perf_counter",
-        side_effect=[100.0, 100.25],
-    ), pytest.raises(SerpProviderError) as exc:
+        "app.seo_serp.asyncio.sleep", new=AsyncMock()
+    ) as sleep_mock, pytest.raises(SerpProviderError) as exc:
         asyncio.run(
             fetch_baidu_top50(
                 "sensitive-keyword",
@@ -276,10 +276,45 @@ def test_provider_timeout_phase_is_classified_without_retry(
 
     assert exc.value.code == "provider_timeout"
     assert exc.value.timeout_phase == expected_phase
-    assert exc.value.elapsed_ms == 250
-    assert client.get.await_count == 1
+    assert exc.value.elapsed_ms is not None
+    assert client.get.await_count == CHINAZ_MAX_ATTEMPTS
+    assert sleep_mock.await_count == CHINAZ_MAX_ATTEMPTS - 1
     assert "secret-api-key" not in str(exc.value)
     assert "sensitive-keyword" not in str(exc.value)
+
+
+def test_provider_transient_failure_recovers_on_retry() -> None:
+    request = httpx.Request("GET", "https://openapi.chinaz.net/private")
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"StateCode": 1, "Result": {"Ranks": []}}
+    client = AsyncMock()
+    client.get.side_effect = [httpx.ConnectTimeout("temporary", request=request), response]
+
+    with patch("app.seo_serp.get_settings", return_value=_provider_settings()), patch(
+        "app.seo_serp.asyncio.sleep", new=AsyncMock()
+    ) as sleep_mock:
+        result = asyncio.run(fetch_baidu_top50("safe-keyword", "desktop", client=client))
+
+    assert result["items"] == []
+    assert client.get.await_count == 2
+    sleep_mock.assert_awaited_once()
+
+
+def test_provider_rate_limit_honors_retry_after() -> None:
+    request = httpx.Request("GET", "https://openapi.chinaz.net/private")
+    response = httpx.Response(429, request=request, headers={"Retry-After": "2"})
+    client = AsyncMock()
+    client.get.return_value = response
+
+    with patch("app.seo_serp.get_settings", return_value=_provider_settings()), patch(
+        "app.seo_serp.asyncio.sleep", new=AsyncMock()
+    ) as sleep_mock, pytest.raises(SerpProviderError) as exc:
+        asyncio.run(fetch_baidu_top50("safe-keyword", "desktop", client=client))
+
+    assert exc.value.code == "provider_rate_limited"
+    assert exc.value.attempts == CHINAZ_MAX_ATTEMPTS
+    assert all(call.args[0] >= 2 for call in sleep_mock.await_args_list)
 
 
 def test_provider_batch_reuses_one_client_and_caps_concurrency() -> None:

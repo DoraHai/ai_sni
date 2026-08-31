@@ -6,9 +6,15 @@ from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from app.process_lock import acquire_file_lock, release_file_lock
 from app.seo_ranking_jobs import collect_daily_seo_rankings
+from app.seo_monitoring_jobs import (
+    collect_scheduled_competitors,
+    fail_stale_crawl_runs,
+    verify_scheduled_backlinks,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +47,33 @@ def _start_seo_scheduler() -> None:
         max_instances=1,
         coalesce=True,
         misfire_grace_time=3600,
+    )
+    seo_scheduler.add_job(
+        collect_scheduled_competitors,
+        CronTrigger(hour=3, minute=0),
+        id="collect_scheduled_seo_competitors",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
+    )
+    seo_scheduler.add_job(
+        verify_scheduled_backlinks,
+        CronTrigger(hour=4, minute=0),
+        id="verify_scheduled_seo_backlinks",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
+    )
+    seo_scheduler.add_job(
+        fail_stale_crawl_runs,
+        IntervalTrigger(minutes=15),
+        id="fail_stale_seo_crawl_runs",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=900,
     )
     seo_scheduler.start()
     logger.info("[scheduler][SEO] 独立调度器已启动")

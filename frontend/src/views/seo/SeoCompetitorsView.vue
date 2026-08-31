@@ -289,7 +289,7 @@ onUnmounted(() => window.clearInterval(cooldownTimer))
       <div>
         <div class="kw-kicker">Competitive landscape</div>
         <h2>竞品表现</h2>
-        <p>复用已采集的百度前 50 数据对比竞品排名，并由用户手动采集竞品公开内容。</p>
+        <p>复用已采集的百度前 50 数据对比竞品排名，每日自动监控竞品公开内容，也可手动立即采集。</p>
       </div>
       <div class="hero-actions">
         <el-select v-model="siteId" class="site-picker" placeholder="选择 SEO 网站">
@@ -341,7 +341,7 @@ onUnmounted(() => window.clearInterval(cooldownTimer))
       <header class="kw-card-head">
         <div>
           <h3>{{ tab === 'ranking' ? '核心词排名对标' : '竞品内容 / 外链动态' }}</h3>
-          <p>{{ tab === 'ranking' ? `百度${device === 'desktop' ? '桌面端' : '移动端'} · 全国 · 每个关键词最近一次有效 SERP` : '手动采集和人工记录，不会自动运行' }}</p>
+          <p>{{ tab === 'ranking' ? `百度${device === 'desktop' ? '桌面端' : '移动端'} · 全国 · 每个关键词最近一次有效 SERP` : '每日自动采集，并保留手动采集和人工记录入口' }}</p>
         </div>
         <div class="head-controls">
           <div v-if="tab === 'ranking'" class="kw-segment">
@@ -380,7 +380,7 @@ onUnmounted(() => window.clearInterval(cooldownTimer))
           <span class="kw-pill" :class="event.event_type === 'backlink' ? 'orange' : 'blue'">{{ event.event_type === 'backlink' ? '外链记录' : '内容页面' }}</span>
           <div><b>{{ event.title || event.url }}</b><small>{{ event.summary || event.source_url || event.url }}</small></div>
         </article>
-        <div v-if="!data.events.length" class="kw-empty">暂无竞品动态；可先对竞品执行一次手动采集建立基线。</div>
+        <div v-if="!data.events.length" class="kw-empty">暂无竞品动态；系统会每日自动建立基线，也可手动立即采集。</div>
       </div>
     </section>
 

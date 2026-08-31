@@ -149,15 +149,23 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
         add_job.assert_not_called()
         scheduler_start.assert_not_called()
 
-    def test_scheduler_registers_only_daily_rank_job(self):
+    def test_scheduler_registers_bounded_daily_seo_jobs(self):
         with (
             patch("app.seo_scheduler._acquire_scheduler_lock", return_value=True),
             patch("app.seo_scheduler.seo_scheduler.add_job") as add_job,
             patch("app.seo_scheduler.seo_scheduler.start") as scheduler_start,
         ):
             start_seo_scheduler()
-        add_job.assert_called_once()
-        self.assertEqual(add_job.call_args.kwargs["id"], "collect_daily_seo_rankings")
+        self.assertEqual(add_job.call_count, 4)
+        self.assertEqual(
+            {call.kwargs["id"] for call in add_job.call_args_list},
+            {
+                "collect_daily_seo_rankings",
+                "collect_scheduled_seo_competitors",
+                "verify_scheduled_seo_backlinks",
+                "fail_stale_seo_crawl_runs",
+            },
+        )
         scheduler_start.assert_called_once_with()
 
     def test_start_failure_releases_owner_lock(self):

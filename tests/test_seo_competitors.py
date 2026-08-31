@@ -324,7 +324,7 @@ def test_competitor_rank_matrix_uses_latest_scoped_batch_rows() -> None:
     assert matrix[1]["rankings"]["7"]["state"] == "not_collected"
 
 
-def test_competitor_routes_and_frontend_are_manual_only() -> None:
+def test_competitor_routes_and_frontend_expose_manual_and_scheduled_collection() -> None:
     paths = {route.path for route in router.routes}
     assert "/api/v1/seo/competitors/rankings" in paths
     assert "/api/v1/seo/competitors/{competitor_id}/collect" in paths
@@ -334,7 +334,7 @@ def test_competitor_routes_and_frontend_are_manual_only() -> None:
     backend = (ROOT / "app/api/seo.py").read_text(encoding="utf-8")
     scheduler = (ROOT / "app/seo_scheduler.py").read_text(encoding="utf-8")
     assert "手动采集" in view
-    assert "不会自动运行" in view
+    assert "每日自动采集" in view
     assert "最近采集尝试" in view
     assert "本次尝试已进入 1 小时冷却" in view
     assert "本次请求没有重新开始冷却" in view
@@ -351,4 +351,5 @@ def test_competitor_routes_and_frontend_are_manual_only() -> None:
     assert "error_type=%s status_code=%s timeout_phase=%s elapsed_ms=%s" in backend
     assert "fetchSeoCompetitorRankings" in view
     assert "site_id: siteId" in api
-    assert "competitor" not in scheduler.lower()
+    assert "collect_scheduled_seo_competitors" in scheduler
+    assert "verify_scheduled_seo_backlinks" in scheduler

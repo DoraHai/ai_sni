@@ -92,6 +92,9 @@ jobs:
           tests/test_seo_serp.py
           tests/test_seo_site_association.py
           tests/test_seo_traffic.py
+          tests/test_seo_monitoring_jobs.py
+          tests/test_seo_usage_limits.py
+          tests/test_urlwords.py
 
   frontend-build:
     name: SEO / frontend-build
@@ -156,5 +159,5 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0080_seo_content_review_history (head)'
+          printf '%s\n' "$heads" | grep -F '0081_seo_monitor_cascade (head)'
           pytest -q tests/test_seo_migration_merge.py

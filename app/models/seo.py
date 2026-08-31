@@ -28,7 +28,7 @@ class SeoKeywordAsset(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     tenant_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("tenants.id"), nullable=False, index=True
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
     )
     site_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("seo_sites.id", ondelete="SET NULL"), index=True
@@ -61,7 +61,7 @@ class SeoRankSnapshot(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     tenant_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("tenants.id"), nullable=False, index=True
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
     )
     site_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("seo_sites.id", ondelete="SET NULL"), index=True
@@ -91,7 +91,7 @@ class SeoBrandAsset(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     tenant_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("tenants.id"), nullable=False, index=True
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
     )
     site_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("seo_sites.id", ondelete="SET NULL"), index=True
@@ -121,7 +121,7 @@ class SeoSerpResult(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     tenant_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("tenants.id"), nullable=False, index=True
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
     )
     site_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("seo_sites.id", ondelete="SET NULL"), index=True
@@ -162,7 +162,7 @@ class SeoSitePage(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     tenant_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("tenants.id"), nullable=False, index=True
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
     )
     site_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("seo_sites.id", ondelete="SET NULL"), index=True
@@ -204,7 +204,7 @@ class SeoContentAsset(Base):
     __tablename__ = "seo_content_assets"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tenants.id"), nullable=False, index=True)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     site_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("seo_sites.id", ondelete="SET NULL"), index=True)
     source_page_id: Mapped[int | None] = mapped_column(
         BigInteger,
@@ -288,7 +288,7 @@ class SeoDistributionConnection(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     tenant_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("tenants.id"), nullable=False, index=True
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
     )
     platform_code: Mapped[str] = mapped_column(String(40), nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -322,7 +322,7 @@ class SeoDistributionVariant(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     tenant_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("tenants.id"), nullable=False, index=True
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
     )
     content_asset_id: Mapped[int] = mapped_column(
         BigInteger,
@@ -376,7 +376,7 @@ class SeoContentPublication(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     tenant_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("tenants.id"), nullable=False, index=True
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
     )
     content_asset_id: Mapped[int] = mapped_column(
         BigInteger,
@@ -432,7 +432,7 @@ class SeoPublishAttempt(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     tenant_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("tenants.id"), nullable=False, index=True
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
     )
     publication_id: Mapped[int] = mapped_column(
         BigInteger,
@@ -456,7 +456,7 @@ class SeoInternalLink(Base):
     __tablename__ = "seo_internal_links"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tenants.id"), nullable=False, index=True)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     site_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("seo_sites.id", ondelete="SET NULL"), index=True)
     source_page_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("seo_site_pages.id", ondelete="CASCADE"), nullable=False)
     target_page_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("seo_site_pages.id", ondelete="CASCADE"), nullable=False)
@@ -474,7 +474,7 @@ class SeoBacklink(Base):
     __tablename__ = "seo_backlinks"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tenants.id"), nullable=False, index=True)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     site_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("seo_sites.id", ondelete="SET NULL"), index=True)
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
     target_url: Mapped[str] = mapped_column(Text, nullable=False)
@@ -485,6 +485,8 @@ class SeoBacklink(Base):
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="active")
     first_seen_at: Mapped[datetime | None] = mapped_column(DateTime)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    missing_checks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -499,7 +501,7 @@ class SeoCompetitor(Base):
     __tablename__ = "seo_competitors"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tenants.id"), nullable=False, index=True)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     site_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("seo_sites.id", ondelete="SET NULL"), index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     domain: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -518,7 +520,7 @@ class SeoCompetitorEvent(Base):
     __tablename__ = "seo_competitor_events"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tenants.id"), nullable=False, index=True)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     site_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("seo_sites.id", ondelete="SET NULL"), index=True)
     competitor_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("seo_competitors.id", ondelete="CASCADE"), nullable=False, index=True)
     event_type: Mapped[str] = mapped_column(String(24), nullable=False)

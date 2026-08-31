@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { collectSeoGscTraffic, collectSeoOverviewMetrics, crawlSeoSite, createSeoKeyword, fetchSeoGscConnection, fetchSeoOverview, testSeoGscConnection, updateSeoGscConnection } from '../../api/seo'
+import { collectSeoGscTraffic, collectSeoOverviewMetrics, crawlSeoSite, createSeoKeyword, fetchSeoCrawlRuns, fetchSeoGscConnection, fetchSeoOverview, testSeoGscConnection, updateSeoGscConnection } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
@@ -133,7 +133,20 @@ async function startCrawl() {
   crawling.value = true
   try {
     const result = await crawlSeoSite({ tenant_id: currentTenantId.value, site_id: siteId.value, max_urls: 50, max_depth: 3 })
-    ElMessage.success(`网站扫描完成，共抓取 ${result.run?.fetched_count || 0} 个页面`)
+    let run = result.run
+    for (let attempt = 0; run && ['queued', 'running'].includes(run.status) && attempt < 150; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 2000))
+      const progress = await fetchSeoCrawlRuns({
+        tenantId: currentTenantId.value,
+        siteId: siteId.value,
+        runId: run.id,
+        limit: 1,
+      })
+      run = progress.runs?.[0] || run
+    }
+    if (run?.status === 'failed') throw new Error(run.error_summary || '网站扫描失败')
+    if (['queued', 'running'].includes(run?.status)) throw new Error('网站扫描仍在后台执行，请稍后刷新查看')
+    ElMessage.success(`网站扫描完成，共抓取 ${run?.fetched_count || 0} 个页面`)
     await load()
   } catch (e) { ElMessage.error(e.message) }
   finally { crawling.value = false }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 import hashlib
 import ipaddress
@@ -151,6 +152,24 @@ async def _ensure_public_host(url: str) -> str:
     return str(addresses[0])
 
 
+@asynccontextmanager
+async def pin_public_target(url: str):
+    """Pin one validated HTTP origin to the exact public IP that was checked."""
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme not in {"http", "https"} or not hostname:
+        raise SeoCrawlError("Invalid HTTP/HTTPS URL")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    approved_ip = await _ensure_public_host(url)
+    targets = dict(_PINNED_TARGETS.get())
+    targets[(hostname, port)] = approved_ip
+    token = _PINNED_TARGETS.set(targets)
+    try:
+        yield approved_ip
+    finally:
+        _PINNED_TARGETS.reset(token)
+
+
 def classify_fetch_error(exc: Exception) -> str:
     if isinstance(exc, httpx.TimeoutException):
         return "timeout"
@@ -197,9 +216,7 @@ async def fetch_url(
             parsed_current = urlparse(current)
             hostname = (parsed_current.hostname or "").lower().rstrip(".")
             port = parsed_current.port or (443 if parsed_current.scheme == "https" else 80)
-            approved_ip = await _ensure_public_host(current)
-            token = _PINNED_TARGETS.set({(hostname, port): approved_ip})
-            try:
+            async with pin_public_target(current):
                 async with http_client.stream("GET", current) as response:
                     if response.status_code in {301, 302, 303, 307, 308}:
                         location = response.headers.get("location")
@@ -247,8 +264,6 @@ async def fetch_url(
                             (f"Unsupported content type: {content_type or 'unknown'}" if not accepted else None)
                         ),
                     )
-            finally:
-                _PINNED_TARGETS.reset(token)
         raise SeoCrawlError("Too many redirects")
     except (SeoCrawlError, httpx.HTTPError) as exc:
         return FetchResult(

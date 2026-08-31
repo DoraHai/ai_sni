@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any
@@ -15,6 +16,8 @@ from app.config import get_settings
 
 CHINAZ_MAX_CONCURRENCY = 2
 CHINAZ_MAX_CONNECTIONS = 2
+CHINAZ_MAX_ATTEMPTS = 3
+CHINAZ_RETRY_BASE_SECONDS = 0.25
 DATAFORSEO_ENGINES = {"google", "bing"}
 
 
@@ -30,6 +33,8 @@ class SerpProviderError(RuntimeError):
         status_code: int | None = None,
         timeout_phase: str | None = None,
         elapsed_ms: int | None = None,
+        attempts: int = 1,
+        retry_after_seconds: float | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -38,6 +43,8 @@ class SerpProviderError(RuntimeError):
         self.status_code = status_code
         self.timeout_phase = timeout_phase
         self.elapsed_ms = elapsed_ms
+        self.attempts = attempts
+        self.retry_after_seconds = retry_after_seconds
 
 
 def create_chinaz_client() -> httpx.AsyncClient:
@@ -205,7 +212,7 @@ async def fetch_baidu_top50(
         )
     path = "baidupc_keywordtop50" if device == "desktop" else "baidumobile_keywordtop50"
     endpoint = f"{settings.chinaz_api_base_url.rstrip('/')}/{path}"
-    started_at = perf_counter()
+    operation_started_at = perf_counter()
 
     async def request(provider_client: httpx.AsyncClient) -> dict[str, Any]:
         response = await provider_client.get(
@@ -222,80 +229,108 @@ async def fetch_baidu_top50(
             ) from exc
         return parse_top50_response(payload)
 
-    try:
-        if client is not None:
-            return await request(client)
-        async with create_chinaz_client() as owned_client:
-            return await request(owned_client)
-    except SerpProviderError as exc:
-        if exc.elapsed_ms is None:
-            exc.elapsed_ms = max(0, round((perf_counter() - started_at) * 1000))
-        raise
-    except httpx.TimeoutException as exc:
-        raise SerpProviderError(
-            "provider_timeout",
-            "站长之家前50接口请求超时",
-            retryable=True,
-            timeout_phase=_timeout_phase(exc),
-            elapsed_ms=max(0, round((perf_counter() - started_at) * 1000)),
-        ) from exc
-    except httpx.HTTPStatusError as exc:
-        status_code = exc.response.status_code
-        if status_code == 429:
-            code, message, retryable = (
-                "provider_rate_limited",
-                "站长之家接口请求受限",
-                False,
-            )
-        elif status_code in {401, 403}:
-            code, message, retryable = (
-                "provider_auth_failed",
-                "站长之家接口认证失败",
-                False,
-            )
-        elif 500 <= status_code < 600:
-            code, message, retryable = (
-                "provider_unavailable",
-                "站长之家接口暂时不可用",
-                True,
-            )
-        elif 400 <= status_code < 500:
-            code, message, retryable = (
-                "provider_request_rejected",
-                "站长之家接口拒绝请求",
-                False,
-            )
-        else:
-            code, message, retryable = (
-                "provider_http_error",
-                "站长之家接口返回 HTTP 错误",
-                False,
-            )
-        raise SerpProviderError(
-            code,
-            message,
-            retryable=retryable,
-            status_code=status_code,
-            elapsed_ms=max(0, round((perf_counter() - started_at) * 1000)),
-        ) from exc
-    except httpx.RequestError as exc:
-        raise SerpProviderError(
-            "provider_network_error",
-            "站长之家接口网络连接失败",
-            elapsed_ms=max(0, round((perf_counter() - started_at) * 1000)),
-        ) from exc
-    except Exception as exc:
-        raise SerpProviderError(
-            "provider_error",
-            "站长之家前50接口调用失败",
-            elapsed_ms=max(0, round((perf_counter() - started_at) * 1000)),
-        ) from exc
+    async def request_once(provider_client: httpx.AsyncClient) -> dict[str, Any]:
+        started_at = perf_counter()
+        try:
+            return await request(provider_client)
+        except SerpProviderError as exc:
+            if exc.elapsed_ms is None:
+                exc.elapsed_ms = max(0, round((perf_counter() - started_at) * 1000))
+            raise
+        except httpx.TimeoutException as exc:
+            raise SerpProviderError(
+                "provider_timeout",
+                "站长之家前50接口请求超时",
+                retryable=True,
+                timeout_phase=_timeout_phase(exc),
+                elapsed_ms=max(0, round((perf_counter() - started_at) * 1000)),
+            ) from exc
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            retry_after_seconds = None
+            if status_code == 429:
+                retry_after_raw = exc.response.headers.get("retry-after", "")
+                try:
+                    retry_after_seconds = min(60.0, max(0.0, float(retry_after_raw)))
+                except ValueError:
+                    retry_after_seconds = None
+                code, message, retryable = (
+                    "provider_rate_limited",
+                    "站长之家接口请求受限",
+                    True,
+                )
+            elif status_code in {401, 403}:
+                code, message, retryable = (
+                    "provider_auth_failed",
+                    "站长之家接口认证失败",
+                    False,
+                )
+            elif 500 <= status_code < 600:
+                code, message, retryable = (
+                    "provider_unavailable",
+                    "站长之家接口暂时不可用",
+                    True,
+                )
+            elif 400 <= status_code < 500:
+                code, message, retryable = (
+                    "provider_request_rejected",
+                    "站长之家接口拒绝请求",
+                    False,
+                )
+            else:
+                code, message, retryable = (
+                    "provider_http_error",
+                    "站长之家接口返回 HTTP 错误",
+                    False,
+                )
+            raise SerpProviderError(
+                code,
+                message,
+                retryable=retryable,
+                status_code=status_code,
+                elapsed_ms=max(0, round((perf_counter() - started_at) * 1000)),
+                retry_after_seconds=retry_after_seconds,
+            ) from exc
+        except httpx.RequestError as exc:
+            raise SerpProviderError(
+                "provider_network_error",
+                "站长之家接口网络连接失败",
+                retryable=True,
+                elapsed_ms=max(0, round((perf_counter() - started_at) * 1000)),
+            ) from exc
+        except Exception as exc:
+            raise SerpProviderError(
+                "provider_error",
+                "站长之家前50接口调用失败",
+                elapsed_ms=max(0, round((perf_counter() - started_at) * 1000)),
+            ) from exc
+
+    async def request_with_retry(provider_client: httpx.AsyncClient) -> dict[str, Any]:
+        for attempt in range(1, CHINAZ_MAX_ATTEMPTS + 1):
+            try:
+                return await request_once(provider_client)
+            except SerpProviderError as exc:
+                if not exc.retryable or attempt >= CHINAZ_MAX_ATTEMPTS:
+                    exc.attempts = attempt
+                    exc.elapsed_ms = max(
+                        0, round((perf_counter() - operation_started_at) * 1000)
+                    )
+                    raise
+                backoff = CHINAZ_RETRY_BASE_SECONDS * (2 ** (attempt - 1))
+                jitter = random.uniform(0, CHINAZ_RETRY_BASE_SECONDS)
+                await asyncio.sleep(max(backoff + jitter, exc.retry_after_seconds or 0))
+        raise AssertionError("unreachable")
+
+    if client is not None:
+        return await request_with_retry(client)
+    async with create_chinaz_client() as owned_client:
+        return await request_with_retry(owned_client)
 
 
 async def fetch_baidu_top50_batch(
     requests: list[tuple[str, str]],
 ) -> list[tuple[dict[str, Any] | None, SerpProviderError | None]]:
-    """Fetch a bounded batch with one shared connection pool and no retries."""
+    """Fetch a bounded batch with one shared pool and bounded transient retries."""
     semaphore = asyncio.Semaphore(CHINAZ_MAX_CONCURRENCY)
 
     async with create_chinaz_client() as provider_client:

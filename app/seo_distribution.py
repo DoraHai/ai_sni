@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import html
 import ipaddress
 import json
 import re
-import socket
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -20,6 +18,7 @@ import jwt
 from bs4 import BeautifulSoup
 
 from app.security.crypto import decrypt, encrypt
+from app.seo_crawler import SeoCrawlError, pin_public_target, pinned_async_client
 
 
 _WECHAT_TOKEN_CACHE: dict[str, tuple[str, float]] = {}
@@ -28,7 +27,14 @@ _WECHAT_IMAGE_MAX_BYTES = 1024 * 1024
 
 
 class SeoDistributionError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        partial_result: "RemotePublishResult | None" = None,
+    ) -> None:
+        super().__init__(message)
+        self.partial_result = partial_result
 
 
 PLATFORM_CATALOG: dict[str, dict[str, Any]] = {
@@ -215,20 +221,11 @@ async def ensure_public_endpoint(value: str) -> str:
     normalized = normalize_base_url(value)
     if not normalized:
         raise SeoDistributionError("API 平台必须填写站点地址")
-    parsed = urlparse(normalized)
     try:
-        infos = await asyncio.get_running_loop().getaddrinfo(
-            parsed.hostname,
-            parsed.port or 443,
-            type=socket.SOCK_STREAM,
-        )
-    except OSError as exc:
+        async with pin_public_target(normalized):
+            pass
+    except SeoCrawlError as exc:
         raise SeoDistributionError("平台域名无法解析") from exc
-    addresses = {item[4][0] for item in infos}
-    if not addresses:
-        raise SeoDistributionError("平台域名没有可用公网地址")
-    if any(not ipaddress.ip_address(address).is_global for address in addresses):
-        raise SeoDistributionError("平台域名解析到了本机或内网地址")
     return normalized
 
 
@@ -418,51 +415,49 @@ async def _ensure_public_image_url(value: str) -> str:
     if literal is not None and not literal.is_global:
         raise SeoDistributionError("正文图片不能指向本机或内网地址")
     try:
-        infos = await asyncio.get_running_loop().getaddrinfo(
-            parsed.hostname,
-            parsed.port or (443 if parsed.scheme.lower() == "https" else 80),
-            type=socket.SOCK_STREAM,
-        )
-    except OSError as exc:
+        async with pin_public_target(raw):
+            pass
+    except SeoCrawlError as exc:
         raise SeoDistributionError("正文图片域名无法解析") from exc
-    addresses = {item[4][0] for item in infos}
-    if not addresses or any(not ipaddress.ip_address(address).is_global for address in addresses):
-        raise SeoDistributionError("正文图片域名解析到了本机或内网地址")
     return raw
 
 
 async def _download_wechat_image(value: str, position: int) -> tuple[str, bytes, str]:
     url = value
     timeout = httpx.Timeout(15.0, connect=8.0)
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+    async with pinned_async_client(timeout=timeout, follow_redirects=False) as client:
         for _ in range(4):
             url = await _ensure_public_image_url(url)
             try:
-                async with client.stream("GET", url, headers={"Accept": "image/png,image/jpeg"}) as response:
-                    if response.status_code in {301, 302, 303, 307, 308}:
-                        location = response.headers.get("location")
-                        if not location:
-                            raise SeoDistributionError(f"第 {position} 张图片重定向地址无效")
-                        url = urljoin(url, location)
-                        continue
-                    if response.status_code >= 400:
-                        raise SeoDistributionError(
-                            f"第 {position} 张图片下载失败（HTTP {response.status_code}）"
-                        )
-                    declared_size = int(response.headers.get("content-length") or 0)
-                    if declared_size > _WECHAT_IMAGE_MAX_BYTES:
-                        raise SeoDistributionError(f"第 {position} 张图片超过微信 1MB 限制")
-                    data = bytearray()
-                    async for chunk in response.aiter_bytes():
-                        data.extend(chunk)
-                        if len(data) > _WECHAT_IMAGE_MAX_BYTES:
+                async with pin_public_target(url):
+                    response_context = client.stream(
+                        "GET", url, headers={"Accept": "image/png,image/jpeg"}
+                    )
+                    async with response_context as response:
+                        if response.status_code in {301, 302, 303, 307, 308}:
+                            location = response.headers.get("location")
+                            if not location:
+                                raise SeoDistributionError(f"第 {position} 张图片重定向地址无效")
+                            url = urljoin(url, location)
+                            continue
+                        if response.status_code >= 400:
+                            raise SeoDistributionError(
+                                f"第 {position} 张图片下载失败（HTTP {response.status_code}）"
+                            )
+                        declared_size = int(response.headers.get("content-length") or 0)
+                        if declared_size > _WECHAT_IMAGE_MAX_BYTES:
                             raise SeoDistributionError(f"第 {position} 张图片超过微信 1MB 限制")
-                    raw = bytes(data)
-                    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
-                        return f"article-{position}.png", raw, "image/png"
-                    if raw.startswith(b"\xff\xd8\xff"):
-                        return f"article-{position}.jpg", raw, "image/jpeg"
-                    raise SeoDistributionError(f"第 {position} 张图片不是微信支持的 JPG/PNG 格式")
+                        data = bytearray()
+                        async for chunk in response.aiter_bytes():
+                            data.extend(chunk)
+                            if len(data) > _WECHAT_IMAGE_MAX_BYTES:
+                                raise SeoDistributionError(f"第 {position} 张图片超过微信 1MB 限制")
+                        raw = bytes(data)
+                        if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+                            return f"article-{position}.png", raw, "image/png"
+                        if raw.startswith(b"\xff\xd8\xff"):
+                            return f"article-{position}.jpg", raw, "image/jpeg"
+                        raise SeoDistributionError(f"第 {position} 张图片不是微信支持的 JPG/PNG 格式")
             except httpx.HTTPError as exc:
                 raise SeoDistributionError(f"第 {position} 张图片下载失败") from exc
     raise SeoDistributionError(f"第 {position} 张图片重定向次数过多")
@@ -512,25 +507,27 @@ async def test_connection(
     if not definition.get("available"):
         raise SeoDistributionError("该平台尚未开放连接，请使用人工登记")
     timeout = httpx.Timeout(15.0, connect=8.0)
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+    client_factory = httpx.AsyncClient if platform_code == "wechat_official" else pinned_async_client
+    async with client_factory(timeout=timeout, follow_redirects=False) as client:
         try:
             if platform_code == "wechat_official":
                 await _wechat_access_token(client, credentials)
                 return {"status": "connected", "message": "微信公众号授权验证通过"}
             endpoint = await ensure_public_endpoint(base_url or "")
-            if platform_code == "wordpress":
-                response = await client.get(
-                    f"{endpoint}/wp-json/wp/v2/users/me",
-                    params={"context": "edit"},
-                    auth=(credentials["username"], credentials["application_password"]),
-                )
-            elif platform_code == "ghost":
-                response = await client.get(
-                    f"{endpoint}/ghost/api/admin/site/",
-                    headers={"Authorization": f"Ghost {_ghost_token(credentials['admin_api_key'])}"},
-                )
-            else:
-                raise SeoDistributionError("该平台连接器尚未实现")
+            async with pin_public_target(endpoint):
+                if platform_code == "wordpress":
+                    response = await client.get(
+                        f"{endpoint}/wp-json/wp/v2/users/me",
+                        params={"context": "edit"},
+                        auth=(credentials["username"], credentials["application_password"]),
+                    )
+                elif platform_code == "ghost":
+                    response = await client.get(
+                        f"{endpoint}/ghost/api/admin/site/",
+                        headers={"Authorization": f"Ghost {_ghost_token(credentials['admin_api_key'])}"},
+                    )
+                else:
+                    raise SeoDistributionError("该平台连接器尚未实现")
         except httpx.HTTPError as exc:
             raise SeoDistributionError("连接平台失败，请检查地址、网络和授权信息") from exc
     if response.status_code >= 400:
@@ -544,6 +541,7 @@ async def publish_content(
     credentials: dict[str, str],
     prepared: dict[str, str],
     action: str,
+    existing_external_id: str | None = None,
 ) -> RemotePublishResult:
     definition = platform_definition(platform_code)
     if definition["mode"] == "assisted":
@@ -558,51 +556,69 @@ async def publish_content(
         raise SeoDistributionError("该平台尚未开放 API 发布")
     target_status = "draft" if action == "draft" else "publish"
     timeout = httpx.Timeout(25.0, connect=8.0)
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+    client_factory = httpx.AsyncClient if platform_code == "wechat_official" else pinned_async_client
+    async with client_factory(timeout=timeout, follow_redirects=False) as client:
         try:
             if platform_code == "wechat_official":
                 token = await _wechat_access_token(client, credentials)
-                wechat_content, image_count = await _rewrite_wechat_images(
-                    client,
-                    token,
-                    prepared["content_html"],
-                )
-                response = await client.post(
-                    "https://api.weixin.qq.com/cgi-bin/draft/add",
-                    params={"access_token": token},
-                    json={
-                        "articles": [
-                            {
-                                "article_type": "news",
-                                "title": prepared["title"],
-                                "digest": prepared["excerpt"],
-                                "content": wechat_content,
-                                "thumb_media_id": credentials["thumb_media_id"],
-                                "need_open_comment": 0,
-                                "only_fans_can_comment": 0,
-                            }
-                        ]
-                    },
-                )
-                draft = _response_json(response, "创建微信公众号草稿")
-                media_id = str(draft.get("media_id") or "")
+                media_id = str(existing_external_id or "")
+                image_count = 0
                 if not media_id:
-                    raise SeoDistributionError("微信公众号未返回草稿素材 ID")
+                    wechat_content, image_count = await _rewrite_wechat_images(
+                        client,
+                        token,
+                        prepared["content_html"],
+                    )
+                    response = await client.post(
+                        "https://api.weixin.qq.com/cgi-bin/draft/add",
+                        params={"access_token": token},
+                        json={
+                            "articles": [
+                                {
+                                    "article_type": "news",
+                                    "title": prepared["title"],
+                                    "digest": prepared["excerpt"],
+                                    "content": wechat_content,
+                                    "thumb_media_id": credentials["thumb_media_id"],
+                                    "need_open_comment": 0,
+                                    "only_fans_can_comment": 0,
+                                }
+                            ]
+                        },
+                    )
+                    draft = _response_json(response, "创建微信公众号草稿")
+                    media_id = str(draft.get("media_id") or "")
+                    if not media_id:
+                        raise SeoDistributionError("微信公众号未返回草稿素材 ID")
                 if action == "draft":
                     return RemotePublishResult(
                         status="draft_created",
                         external_id=media_id,
                         response_summary={"media_id": media_id, "image_count": image_count},
                     )
-                response = await client.post(
-                    "https://api.weixin.qq.com/cgi-bin/freepublish/submit",
-                    params={"access_token": token},
-                    json={"media_id": media_id},
-                )
-                submitted = _response_json(response, "提交微信公众号发布")
-                publish_id = str(submitted.get("publish_id") or "")
-                if not publish_id:
-                    raise SeoDistributionError("微信公众号未返回发布任务 ID")
+                try:
+                    response = await client.post(
+                        "https://api.weixin.qq.com/cgi-bin/freepublish/submit",
+                        params={"access_token": token},
+                        json={"media_id": media_id},
+                    )
+                    submitted = _response_json(response, "提交微信公众号发布")
+                    publish_id = str(submitted.get("publish_id") or "")
+                    if not publish_id:
+                        raise SeoDistributionError("微信公众号未返回发布任务 ID")
+                except (httpx.HTTPError, SeoDistributionError) as exc:
+                    raise SeoDistributionError(
+                        "微信草稿已创建，但提交发布失败；重试将复用已有草稿",
+                        partial_result=RemotePublishResult(
+                            status="draft_created",
+                            external_id=media_id,
+                            response_summary={
+                                "media_id": media_id,
+                                "image_count": image_count,
+                                "submit_failed": True,
+                            },
+                        ),
+                    ) from exc
                 return RemotePublishResult(
                     status="publishing",
                     external_id=publish_id,
@@ -613,42 +629,45 @@ async def publish_content(
                     },
                 )
             endpoint = await ensure_public_endpoint(base_url or "")
-            if platform_code == "wordpress":
-                response = await client.post(
-                    f"{endpoint}/wp-json/wp/v2/posts",
-                    auth=(credentials["username"], credentials["application_password"]),
-                    json={
-                        "title": prepared["title"],
-                        "content": prepared["content_html"],
-                        "excerpt": prepared["excerpt"],
-                        "status": target_status,
-                    },
-                )
-                body = response.json() if response.content else {}
-                external_id = str(body.get("id") or "") or None
-                page_url = _safe_remote_page_url(body.get("link"))
-            elif platform_code == "ghost":
-                response = await client.post(
-                    f"{endpoint}/ghost/api/admin/posts/",
-                    params={"source": "html"},
-                    headers={"Authorization": f"Ghost {_ghost_token(credentials['admin_api_key'])}"},
-                    json={
-                        "posts": [
-                            {
-                                "title": prepared["title"],
-                                "html": prepared["content_html"],
-                                "custom_excerpt": prepared["excerpt"],
-                                "status": "draft" if action == "draft" else "published",
-                            }
-                        ]
-                    },
-                )
-                body = response.json() if response.content else {}
-                post = (body.get("posts") or [{}])[0]
-                external_id = str(post.get("id") or "") or None
-                page_url = _safe_remote_page_url(post.get("url"))
-            else:
-                raise SeoDistributionError("该平台连接器尚未实现")
+            async with pin_public_target(endpoint):
+                if platform_code == "wordpress":
+                    response = await client.post(
+                        f"{endpoint}/wp-json/wp/v2/posts",
+                        auth=(credentials["username"], credentials["application_password"]),
+                        json={
+                            "title": prepared["title"],
+                            "content": prepared["content_html"],
+                            "excerpt": prepared["excerpt"],
+                            "status": target_status,
+                        },
+                    )
+                    body = response.json() if response.content else {}
+                    external_id = str(body.get("id") or "") or None
+                    page_url = _safe_remote_page_url(body.get("link"))
+                elif platform_code == "ghost":
+                    response = await client.post(
+                        f"{endpoint}/ghost/api/admin/posts/",
+                        params={"source": "html"},
+                        headers={"Authorization": f"Ghost {_ghost_token(credentials['admin_api_key'])}"},
+                        json={
+                            "posts": [
+                                {
+                                    "title": prepared["title"],
+                                    "html": prepared["content_html"],
+                                    "custom_excerpt": prepared["excerpt"],
+                                    "status": "draft" if action == "draft" else "published",
+                                }
+                            ]
+                        },
+                    )
+                    body = response.json() if response.content else {}
+                    post = (body.get("posts") or [{}])[0]
+                    external_id = str(post.get("id") or "") or None
+                    page_url = _safe_remote_page_url(post.get("url"))
+                else:
+                    raise SeoDistributionError("该平台连接器尚未实现")
+        except SeoDistributionError:
+            raise
         except (httpx.HTTPError, ValueError) as exc:
             raise SeoDistributionError("平台发布请求失败，请稍后重试并先检查平台后台") from exc
     if response.status_code >= 400:

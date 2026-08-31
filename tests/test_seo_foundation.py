@@ -1098,9 +1098,10 @@ def test_seo_ai_quick_actions_return_expected_contract(
 
     with (
         patch("app.api.seo._tenant", new=AsyncMock(return_value=tenant)),
-        patch("app.api.seo._content_keywords", new=AsyncMock(return_value=keywords)),
-        patch("app.api.seo.is_enabled", return_value=True),
-        patch("app.api.seo.chat_json", new=AsyncMock(return_value=ai_result)) as chat,
+            patch("app.api.seo._content_keywords", new=AsyncMock(return_value=keywords)),
+            patch("app.api.seo.is_enabled", return_value=True),
+            patch("app.api.seo.charge_seo_usage", new=AsyncMock()),
+            patch("app.api.seo.chat_json", new=AsyncMock(return_value=ai_result)) as chat,
     ):
         response = asyncio.run(assist_seo_content(request, AsyncMock(), context))
 
@@ -1200,6 +1201,7 @@ def test_serp_collection_error_payload_uses_ids_and_safe_metadata_only() -> None
         "code": "provider_unavailable",
         "message": "站长之家接口暂时不可用",
         "retryable": True,
+        "attempts": 1,
         "status_code": 503,
     }
     assert "keyword" not in payload

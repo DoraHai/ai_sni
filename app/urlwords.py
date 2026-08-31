@@ -32,6 +32,13 @@ STOPWORDS = {
     "方案", "了解", "更多", "查看", "详情", "新闻", "动态", "版权", "所有",
 }
 
+ENGLISH_STOPWORDS = {
+    "about", "account", "blog", "company", "contact", "copyright", "details",
+    "follow", "footer", "header", "help", "home", "learn", "login", "menu",
+    "more", "news", "privacy", "read", "search", "service", "services", "shop",
+    "sign", "sitemap", "support", "terms", "view", "website", "welcome",
+}
+
 
 class UrlFetchError(Exception):
     pass
@@ -89,7 +96,7 @@ def _acceptable(word: str) -> bool:
     w = word.strip()
     if not (2 <= len(w) <= MAX_WORD_CHARS):
         return False
-    if w in STOPWORDS:
+    if w in STOPWORDS or w.lower() in ENGLISH_STOPWORDS:
         return False
     if w.isdigit():
         return False

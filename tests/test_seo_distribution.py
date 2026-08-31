@@ -168,8 +168,12 @@ def test_wordpress_adapter_uses_official_post_endpoint(monkeypatch: pytest.Monke
     async def public_endpoint(value: str) -> str:
         return value
 
+    async def public_host(_value: str) -> str:
+        return "93.184.216.34"
+
     monkeypatch.setattr(distribution, "ensure_public_endpoint", public_endpoint)
-    monkeypatch.setattr(distribution.httpx, "AsyncClient", lambda **_kwargs: FakeClient())
+    monkeypatch.setattr("app.seo_crawler._ensure_public_host", public_host)
+    monkeypatch.setattr(distribution, "pinned_async_client", lambda **_kwargs: FakeClient())
 
     result = asyncio.run(
         distribution.publish_content(
@@ -254,6 +258,70 @@ def test_wechat_adapter_creates_draft_submits_publish_and_syncs_status(monkeypat
     assert synced.page_url == "https://mp.weixin.qq.com/s/example"
 
 
+def test_wechat_submit_failure_returns_reusable_draft_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    submit_attempts = 0
+
+    class FakeResponse:
+        status_code = 200
+        content = b"{}"
+
+        def __init__(self, body):
+            self.body = body
+
+        def json(self):
+            return self.body
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, **_kwargs):
+            nonlocal submit_attempts
+            calls.append(url)
+            if url.endswith("/stable_token"):
+                return FakeResponse({"access_token": "token", "expires_in": 7200})
+            if url.endswith("/draft/add"):
+                return FakeResponse({"media_id": "preserved-draft"})
+            if url.endswith("/freepublish/submit"):
+                submit_attempts += 1
+                if submit_attempts == 1:
+                    raise distribution.httpx.ReadTimeout("ambiguous submit")
+                return FakeResponse({"publish_id": "publish-job"})
+            raise AssertionError(url)
+
+    monkeypatch.setattr(distribution.httpx, "AsyncClient", lambda **_kwargs: FakeClient())
+    distribution._WECHAT_TOKEN_CACHE.clear()
+    credentials = {"app_id": "appid", "app_secret": "secret", "thumb_media_id": "cover"}
+    prepared = distribution.prepare_content("微信公众号 SEO 标题", "正文", "wechat_official")
+
+    with pytest.raises(distribution.SeoDistributionError) as exc:
+        asyncio.run(
+            distribution.publish_content(
+                "wechat_official", None, credentials, prepared, "publish"
+            )
+        )
+
+    assert exc.value.partial_result is not None
+    assert exc.value.partial_result.external_id == "preserved-draft"
+    retried = asyncio.run(
+        distribution.publish_content(
+            "wechat_official",
+            None,
+            credentials,
+            prepared,
+            "publish",
+            existing_external_id="preserved-draft",
+        )
+    )
+    assert retried.external_id == "publish-job"
+    assert sum(url.endswith("/draft/add") for url in calls) == 1
+    assert sum(url.endswith("/freepublish/submit") for url in calls) == 2
+
+
 def test_wechat_body_images_are_uploaded_deduplicated_and_replaced(monkeypatch: pytest.MonkeyPatch) -> None:
     uploads: list[dict] = []
 
@@ -329,8 +397,12 @@ def test_wechat_image_download_stream_checks_actual_format_and_size(monkeypatch:
     async def public_url(value: str) -> str:
         return value
 
+    async def public_host(_value: str) -> str:
+        return "93.184.216.34"
+
     monkeypatch.setattr(distribution, "_ensure_public_image_url", public_url)
-    monkeypatch.setattr(distribution.httpx, "AsyncClient", lambda **_kwargs: FakeClient())
+    monkeypatch.setattr("app.seo_crawler._ensure_public_host", public_host)
+    monkeypatch.setattr(distribution, "pinned_async_client", lambda **_kwargs: FakeClient())
 
     with pytest.raises(distribution.SeoDistributionError, match="JPG/PNG"):
         asyncio.run(distribution._download_wechat_image("https://cdn.example.com/fake.jpg", 1))
@@ -516,9 +588,10 @@ def test_ai_platform_variant_retries_missing_keyword_and_sanitizes_html() -> Non
         patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
         patch("app.api.seo._distribution_connection", new=AsyncMock(return_value=connection)),
         patch("app.api.seo._content_keywords", new=AsyncMock(return_value=[keyword])),
-        patch("app.api.seo._tenant", new=AsyncMock(return_value=SimpleNamespace(name="Growth Sniper", industry="SaaS"))),
-        patch("app.api.seo.is_enabled", return_value=True),
-        patch("app.api.seo.chat_json", new=chat_mock),
+            patch("app.api.seo._tenant", new=AsyncMock(return_value=SimpleNamespace(name="Growth Sniper", industry="SaaS"))),
+            patch("app.api.seo.is_enabled", return_value=True),
+            patch("app.api.seo.charge_seo_usage", new=AsyncMock()),
+            patch("app.api.seo.chat_json", new=chat_mock),
     ):
         result = asyncio.run(adapt_content_distribution(request, AsyncMock(), context))
 
