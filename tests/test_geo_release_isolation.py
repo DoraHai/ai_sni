@@ -102,6 +102,8 @@ def test_geo_standalone_bootstraps_logged_in_tenant_context():
     assert "fetchTenants" not in app
     assert "client.get('/api/v1/geo/tenants')" in api
     assert '@router.get("/tenants")' in routes
+    assert "list_geo_tenants_for_auth" in routes
+    assert "list_geo_tenants_for_auth" in scope
     assert 'module_code == "geo"' in scope
     assert '("active", "trial")' in scope
     assert "expires_at >= current_date" in scope
@@ -109,6 +111,7 @@ def test_geo_standalone_bootstraps_logged_in_tenant_context():
     assert '{"geo.assets", "geo.content", "geo.diagnosis"}' in auth
     assert "session.refreshUser(me.user)" in app
     assert "session.setTenants(tenants.tenants || [])" in app
+    assert "fetchGeoTenants()" in app
     assert '<router-view v-if="ready" />' in app
 
 
@@ -127,6 +130,8 @@ def test_geo_standalone_uses_shared_customer_and_account_header():
     assert "GEO WORKSPACE" in page
     assert "railCollapsed" not in shell
     assert "session.setTenant(id)" in shell
+    assert 'v-if="session.tenants.length"' not in shell
+    assert "geo-tenant-switcher" not in page
 
 
 def test_geo_editor_keeps_the_complete_editor_first_interactions():
