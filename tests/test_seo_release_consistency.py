@@ -268,6 +268,20 @@ def test_site_optimization_normalizes_issue_codes_and_only_links_drafts() -> Non
     assert "{v:'content',n:'内容质量'}" in view
 
 
+def test_site_optimization_has_success_feedback_and_contextual_empty_state() -> None:
+    view = (
+        Path(__file__).parents[1]
+        / "frontend/src/views/seo/SeoSiteOptimizationView.vue"
+    ).read_text(encoding="utf-8")
+
+    assert "页面优化记录已保存" in view
+    assert "个页面的 TDK 建议" in view
+    assert "const emptyStateText = computed" in view
+    assert "Number(stats.value.total || 0) > 0" in view
+    assert "没有符合当前筛选条件的页面" in view
+    assert ':empty-text="emptyStateText"' in view
+
+
 def test_release_diff_allows_only_seo_assets_and_hash_token_changes(tmp_path: Path) -> None:
     base, candidate = tmp_path / "base", tmp_path / "candidate"
     _write(base, "index.html", "<script src='/assets/index-old.js'></script>")
