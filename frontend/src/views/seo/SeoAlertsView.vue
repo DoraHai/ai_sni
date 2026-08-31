@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { fetchSeoAlerts } from '../../api/seo'
 import { currentTenantId } from '../../store/session'
+import { currentSeoSiteId as siteId } from './seoSiteContext'
 import './seo-suite.css'
 
 const router = useRouter()
@@ -12,7 +13,6 @@ const error = ref('')
 const engine = ref('baidu')
 const severity = ref('')
 const sites = ref([])
-const siteId = ref(null)
 const selected = ref(null)
 const drawerOpen = ref(false)
 const data = ref({ items: [], total: 0, high: 0 })

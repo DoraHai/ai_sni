@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+  printf 'seo-frontend-deploy: %s\n' "$*" >&2
+  exit 64
+}
+
+archive="${1:-}"
+commit="${2:-}"
+archive_sha256="${3:-}"
+confirmation="${4:-}"
+
+[[ "$confirmation" == "DEPLOY_SEO_FRONTEND" ]] || fail 'confirmation must be DEPLOY_SEO_FRONTEND'
+[[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail 'commit must be a full lowercase SHA'
+[[ "$archive_sha256" =~ ^[0-9a-f]{64}$ ]] || fail 'archive sha256 is invalid'
+[[ "$archive" == "/home/platform-deploy/uploads/seo-frontend-${commit}.tgz" ]] || fail 'unexpected archive path'
+[[ -f "$archive" && ! -L "$archive" ]] || fail 'archive is missing or is a symlink'
+[[ "$(stat -c '%U' "$archive")" == "platform-deploy" ]] || fail 'archive owner must be platform-deploy'
+[[ "$(stat -c '%s' "$archive")" -le 104857600 ]] || fail 'archive exceeds 100 MiB'
+printf '%s  %s\n' "$archive_sha256" "$archive" | sha256sum -c - >/dev/null
+
+if tar -tvzf "$archive" | awk '$1 ~ /^[lh]/ { found=1 } END { exit(found ? 0 : 1) }'; then
+  fail 'archive must not contain symbolic or hard links'
+fi
+
+member=''
+while IFS= read -r member; do
+  [[ "$member" == seo-frontend-release/* ]] || fail "archive member outside seo-frontend-release: $member"
+  case "/$member/" in
+    */../*) fail "archive contains parent traversal: $member" ;;
+  esac
+done < <(tar -tzf "$archive")
+
+stage_root="$(mktemp -d /opt/platform-deploy-seo-frontend.XXXXXX)"
+cleanup() {
+  case "$stage_root" in
+    /opt/platform-deploy-seo-frontend.*) rm -rf -- "$stage_root" ;;
+  esac
+}
+trap cleanup EXIT
+
+tar -xzf "$archive" -C "$stage_root" --no-same-owner --no-same-permissions
+payload="$stage_root/seo-frontend-release"
+frontend="$payload/frontend"
+
+[[ -f "$payload/MANIFEST" ]] || fail 'MANIFEST is missing'
+grep -Fxq 'module=seo-frontend' "$payload/MANIFEST" || fail 'manifest module mismatch'
+grep -Fxq "commit=$commit" "$payload/MANIFEST" || fail 'manifest commit mismatch'
+grep -Fxq 'backend=not-included' "$payload/MANIFEST" || fail 'backend policy mismatch'
+grep -Fxq 'migration=not-run' "$payload/MANIFEST" || fail 'migration policy mismatch'
+grep -Fxq 'service_restart=not-run' "$payload/MANIFEST" || fail 'service restart policy mismatch'
+[[ -f "$frontend/index.html" ]] || fail 'SEO frontend index is missing'
+[[ ! -e "$payload/backend" ]] || fail 'backend content is forbidden'
+grep -RFl --include='*.js' -- '/deal-sniper/portal' "$frontend" >/dev/null || fail 'same-origin portal link is missing'
+if grep -RFq --include='*.js' -- 'https://gsnipers.snipers.com.cn/deal-sniper/portal' "$frontend"; then
+  fail 'absolute production portal link is forbidden'
+fi
+if grep -RFq --include='*.js' -- 'https://sem.snipers.com.cn/deal-sniper/portal' "$frontend"; then
+  fail 'legacy portal link is forbidden'
+fi
+
+frontend_root='/opt/seo-frontend'
+release_id="$(date -u +%Y%m%dT%H%M%SZ)-${commit:0:12}-frontend"
+frontend_release="$frontend_root/releases/$release_id"
+previous_frontend="$(readlink "$frontend_root/current" 2>/dev/null || true)"
+
+[[ "$previous_frontend" == "$frontend_root"/releases/* ]] || fail 'current frontend release link is invalid'
+[[ -d "$previous_frontend" ]] || fail 'current frontend release target is missing'
+[[ ! -e "$frontend_release" ]] || fail 'frontend release already exists'
+
+install -d -o root -g root -m 755 "$frontend_release"
+cp -a "$frontend/." "$frontend_release/"
+printf '%s\n' "$commit" > "$frontend_release/RELEASE_COMMIT"
+chmod -R a+rX "$frontend_release"
+
+rollback() {
+  ln -sfn "$previous_frontend" "$frontend_root/current.next"
+  mv -Tf "$frontend_root/current.next" "$frontend_root/current"
+}
+
+if ! (
+  set -e
+  ln -sfn "$frontend_release" "$frontend_root/current.next"
+  mv -Tf "$frontend_root/current.next" "$frontend_root/current"
+  [[ "$(readlink "$frontend_root/current")" == "$frontend_release" ]]
+); then
+  rollback
+  fail 'SEO frontend release switch failed; previous frontend restored'
+fi
+
+if ! curl -fsS --retry 15 --retry-delay 1 --retry-connrefused \
+  -H 'Cache-Control: no-cache' \
+  "https://gsnipers.snipers.com.cn/seo/?release=${commit}" >/dev/null; then
+  rollback
+  fail 'SEO frontend health request failed; previous frontend restored'
+fi
+
+printf 'module=seo-frontend\n'
+printf 'commit=%s\n' "$commit"
+printf 'previous_frontend_release=%s\n' "$previous_frontend"
+printf 'frontend_release=%s\n' "$frontend_release"
+printf 'backend=not-included\n'
+printf 'migration=not-run\n'
+printf 'service_restart=not-run\n'

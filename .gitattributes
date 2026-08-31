@@ -1,0 +1,4 @@
+/ops/platform-deploy/install-seo-frontend.sh text eol=lf
+/ops/platform-deploy/modules/seo text eol=lf
+/ops/platform-deploy/modules/seo-frontend text eol=lf
+/migrations/versions/20260819_0073_geo_schema_repair.py text eol=lf

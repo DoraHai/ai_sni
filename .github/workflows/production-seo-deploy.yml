@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - codex/production-seo
+    paths:
+      - app/**
+      - migrations/**
+      - requirements.txt
+      - requirements-dev.txt
+      - alembic.ini
+      - deploy/seo-service.service
 
 permissions:
   contents: read
@@ -40,6 +47,11 @@ jobs:
             echo "Refusing stale SEO release: workflow=$RELEASE_SHA production=$latest" >&2
             exit 1
           fi
+
+      - name: Require the production release to descend from main
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor origin/main HEAD
 
       - uses: actions/setup-python@v5
         with:
@@ -78,9 +90,11 @@ jobs:
           tests/test_seo_distribution.py
           tests/test_seo_distribution_import.py
           tests/test_seo_foundation.py
+          tests/test_seo_rank_limits.py
           tests/test_seo_release_consistency.py
           tests/test_seo_scheduler.py
           tests/test_seo_serp.py
+          tests/test_seo_site_association.py
           tests/test_seo_traffic.py
 
       - name: Re-check the reviewed migration head without applying migrations
@@ -97,7 +111,7 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0076_oauth_rebind_intent (head)'
+          printf '%s\n' "$heads" | grep -F '0080_seo_content_review_history (head)'
 
       - working-directory: frontend
         run: npm ci
@@ -199,7 +213,7 @@ jobs:
           latest="$(git ls-remote origin "refs/heads/$SEO_PRODUCTION_BRANCH" | cut -f1)"
           test "$latest" = "$RELEASE_SHA"
 
-      - name: Apply SEO frontend and backend without database migration
+      - name: Apply schema-compatible SEO release without running database migration
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}

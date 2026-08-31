@@ -5,10 +5,11 @@ import { ElMessage } from 'element-plus'
 import { createSeoKeyword,fetchSeoKeywords,importSeoKeywords,updateSeoKeyword } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId,session } from '../../store/session'
+import { currentSeoSiteId as siteId } from './seoSiteContext'
 
 const route=useRoute(),router=useRouter()
 const loading=ref(false),saving=ref(false),error=ref(''),result=ref({items:[],total:0,stats:{}})
-const sites=ref([]),siteId=ref(null)
+const sites=ref([])
 const dialog=ref(false),importOpen=ref(false),editing=ref(null),importText=ref(''),segment=ref('all')
 const query=ref(String(route.query.q||''))
 const form=reactive({site_id:null,keyword:'',cluster:'',intent:'',monthly_volume:null,difficulty:null,priority:'P2',landing_page:'',status:'active',notes:''})

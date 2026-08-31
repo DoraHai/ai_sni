@@ -27,6 +27,7 @@ import {
 } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
+import { currentSeoSiteId as siteId } from './seoSiteContext'
 
 const loading = ref(false)
 const error = ref('')
@@ -39,7 +40,6 @@ const contents = ref([])
 const publications = ref([])
 const variants = ref([])
 const sites = ref([])
-const siteId = ref(null)
 const canEdit = computed(() => !session.isLoggedIn || session.canEdit('seo.content'))
 
 const importInput = ref(null)
@@ -186,7 +186,7 @@ async function load() {
     const [catalogResult, connectionResult, contentResult, publicationResult, variantResult] = await Promise.all([
       fetchSeoDistributionCatalog(),
       fetchSeoDistributionConnections({ tenantId: currentTenantId.value }),
-      fetchSeoContentAssets({ tenantId: currentTenantId.value, siteId: siteId.value }),
+      fetchSeoContentAssets({ tenantId: currentTenantId.value, siteId: siteId.value, pageSize: 200 }),
       fetchSeoContentPublications({ tenantId: currentTenantId.value, siteId: siteId.value }),
       fetchSeoDistributionVariants({ tenantId: currentTenantId.value, siteId: siteId.value }),
     ])

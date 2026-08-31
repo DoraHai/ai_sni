@@ -77,6 +77,7 @@ class CompetitorCollectionError(RuntimeError):
         *,
         error_type: str | None = None,
         status_code: int | None = None,
+        timeout_phase: str | None = None,
         elapsed_ms: int | None = None,
         response_status: int = 502,
     ) -> None:
@@ -85,6 +86,7 @@ class CompetitorCollectionError(RuntimeError):
         self.public_message = message
         self.error_type = error_type
         self.status_code = status_code
+        self.timeout_phase = timeout_phase
         self.elapsed_ms = elapsed_ms
         self.response_status = response_status
 
@@ -157,7 +159,11 @@ def _candidate_urls(home: FetchResult, competitor_domain: str, max_pages: int) -
     return unique
 
 
-def _homepage_error(result: FetchResult) -> CompetitorCollectionError:
+def _homepage_error(
+    result: FetchResult,
+    *,
+    timeout_phase: str | None = None,
+) -> CompetitorCollectionError:
     error_type = result.error_type or "empty_response"
     if error_type == "timeout":
         code, message, response_status = "homepage_timeout", "竞品网站响应较慢，请稍后重试", 504
@@ -182,6 +188,7 @@ def _homepage_error(result: FetchResult) -> CompetitorCollectionError:
         message,
         error_type=error_type,
         status_code=result.status_code,
+        timeout_phase=timeout_phase if error_type == "timeout" else None,
         elapsed_ms=result.response_time_ms,
         response_status=response_status,
     )
@@ -216,10 +223,12 @@ async def collect_competitor_content(
                 return await fetcher(candidate, client=client)
 
             home = await fetch(homepage)
+            homepage_phase = "homepage_primary"
             if (home.error_type or not home.body) and not competitor_domain.startswith("www."):
                 home = await fetch(f"https://www.{competitor_domain.strip().lower().rstrip('.')}/")
+                homepage_phase = "homepage_www_fallback"
             if home.error_type or not home.body:
-                raise _homepage_error(home)
+                raise _homepage_error(home, timeout_phase=homepage_phase)
             if not domain_matches(urlparse(home.final_url).hostname or "", competitor_domain):
                 raise CompetitorCollectionError(
                     "cross_domain_redirect",
@@ -274,11 +283,16 @@ async def collect_competitor_content(
             run_collection(),
             timeout=COMPETITOR_TOTAL_TIMEOUT_SECONDS,
         )
+    except CompetitorCollectionError as exc:
+        if exc.elapsed_ms is None:
+            exc.elapsed_ms = round((time.perf_counter() - started) * 1000)
+        raise
     except TimeoutError as exc:
         raise CompetitorCollectionError(
             "collection_timeout",
             "竞品网站响应较慢，本次采集已在安全时限内停止",
             error_type="timeout",
+            timeout_phase="collection_total",
             elapsed_ms=round((time.perf_counter() - started) * 1000),
             response_status=504,
         ) from exc

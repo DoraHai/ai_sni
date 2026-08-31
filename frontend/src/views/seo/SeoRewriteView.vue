@@ -5,9 +5,10 @@ import { ElMessage } from 'element-plus'
 import { fetchSeoContentAssets,fetchSeoKeywords } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId,session } from '../../store/session'
+import { currentSeoSiteId as siteId } from './seoSiteContext'
 
 const router=useRouter(),loading=ref(false),error=ref(''),assets=ref([]),keywords=ref([]),query=ref(''),tab=ref('all'),sourceVisible=ref(false),sourceMode=ref('library'),selectedSourceId=ref(null),sourceText=ref(''),sourceOrigin=ref('原创文章列表'),rewriteStrength=ref('深度改写（推荐）'),targetKeywords=ref('')
-const sites=ref([]),siteId=ref(null)
+const sites=ref([])
 const canEdit=computed(()=>!session.isLoggedIn||session.canEdit('seo.content'))
 const rewrites=computed(()=>assets.value.filter(item=>item.content_type==='rewrite'))
 const originalArticles=computed(()=>assets.value.filter(item=>['article','guide','landing','comparison','faq'].includes(item.content_type)&&(item.humanized_content||item.draft)))
@@ -20,19 +21,20 @@ const tabs=computed(()=>[
   {key:'all',label:'全部',count:rewrites.value.length},
   {key:'planned',label:'待改写',count:rewrites.value.filter(i=>i.status==='planned').length},
   {key:'drafting',label:'改写中',count:rewrites.value.filter(i=>i.status==='drafting').length},
-  {key:'review',label:'待发布',count:rewrites.value.filter(i=>i.status==='review').length},
+  {key:'review',label:'待审核',count:rewrites.value.filter(i=>i.status==='review').length},
+  {key:'ready',label:'待发布',count:rewrites.value.filter(i=>i.status==='ready').length},
   {key:'published',label:'已发布',count:rewrites.value.filter(i=>i.status==='published').length},
 ])
 const rows=computed(()=>{const needle=query.value.trim().toLowerCase();return rewrites.value.filter(item=>(tab.value==='all'||item.status===tab.value)&&(!needle||item.title.toLowerCase().includes(needle)||(item.source_text||'').toLowerCase().includes(needle)||(keywordMap.value.get(item.keyword_id)?.keyword||'').toLowerCase().includes(needle)))})
-const statusLabel=value=>({planned:'待改写',drafting:'改写中',review:'待发布',published:'已发布',archived:'已归档'})[value]||value
-const statusClass=value=>({planned:'gray',drafting:'amber',review:'blue',published:'green'})[value]||'gray'
+const statusLabel=value=>({planned:'待改写',drafting:'改写中',review:'待审核',ready:'待发布',published:'已发布',archived:'已归档'})[value]||value
+const statusClass=value=>({planned:'gray',drafting:'amber',review:'amber',ready:'blue',published:'green'})[value]||'gray'
 const date=value=>value?new Date(value).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'—'
 const plain=value=>String(value||'').replace(/<[^>]+>/g,'').replace(/\s+/g,' ').trim()
 const sourceTitle=item=>{const text=plain(item.source_text);return text?`原文：${text.slice(0,30)}${text.length>30?'…':''}`:`改写稿：${item.title}`}
 const sourceMeta=item=>item.source_text?`已导入原文 · ${plain(item.source_text).length.toLocaleString()} 字`:`尚未保存原文 · ${plain(item.draft).length.toLocaleString()} 字`
 const targetPlatforms=item=>{if(item.target_platforms?.length)return item.target_platforms;if(!item.page_url)return[];try{return[new URL(item.page_url).hostname]}catch{return[item.page_url]}}
 const actionLabel=item=>item.status==='planned'?'开始改写':item.status==='drafting'?'继续编辑':item.status==='review'?'检查并发布':item.status==='published'?'查看版本':'查看'
-async function load(){if(!currentTenantId.value){error.value='请先选择客户';assets.value=[];return}if(!siteId.value){error.value='请先选择或创建 SEO 网站';assets.value=[];return}loading.value=true;try{const [content,words]=await Promise.all([fetchSeoContentAssets({tenantId:currentTenantId.value,siteId:siteId.value}),fetchSeoKeywords({tenantId:currentTenantId.value,siteId:siteId.value,status:'',pageSize:200})]);assets.value=content.items;keywords.value=words.items;error.value=''}catch(e){error.value=e.message}finally{loading.value=false}}
+async function load(){if(!currentTenantId.value){error.value='请先选择客户';assets.value=[];return}if(!siteId.value){error.value='请先选择或创建 SEO 网站';assets.value=[];return}loading.value=true;try{const [content,words]=await Promise.all([fetchSeoContentAssets({tenantId:currentTenantId.value,siteId:siteId.value,contentTypes:'rewrite,article,guide,landing,comparison,faq',pageSize:200}),fetchSeoKeywords({tenantId:currentTenantId.value,siteId:siteId.value,status:'',pageSize:200})]);assets.value=content.items;keywords.value=words.items;error.value=''}catch(e){error.value=e.message}finally{loading.value=false}}
 async function loadSites(){if(!currentTenantId.value){sites.value=[];siteId.value=null;return load()}try{sites.value=(await fetchSeoSites(currentTenantId.value)).sites||[];const selected=sites.value.some(item=>item.id===siteId.value)?siteId.value:(sites.value.find(item=>item.status==='active')?.id||sites.value[0]?.id||null);if(selected!==siteId.value)siteId.value=selected;else await load()}catch(e){error.value=e.message}}
 function sourceContent(item){return String(item?.humanized_content||item?.draft||'').replace(/<br\s*\/?>/gi,'\n').replace(/<\/p>/gi,'\n\n').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').trim()}
 function importSource(){sourceMode.value=originalArticles.value.length?'library':'paste';selectedSourceId.value=null;sourceText.value='';sourceOrigin.value=sourceMode.value==='library'?'原创文章列表':'直接粘贴';rewriteStrength.value='深度改写（推荐）';targetKeywords.value='';sourceVisible.value=true}

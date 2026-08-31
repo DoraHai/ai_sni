@@ -17,3 +17,17 @@ export function formatSeoRankTime(value) {
     hour12: false,
   })
 }
+
+export function formatSeoCsvTime(value) {
+  const parsed = parseSeoRankTime(value)
+  if (!parsed) return ''
+  const values = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: SEO_TIME_ZONE,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false,
+    }).formatToParts(parsed).map(({ type, value: part }) => [type, part]),
+  )
+  return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}:${values.second}+08:00`
+}

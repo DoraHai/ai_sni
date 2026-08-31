@@ -18,6 +18,7 @@ from app.api.seo import (
     _create_distribution_variant_revision,
     _distribution_content,
     _distribution_variant_payload,
+    _require_content_ready,
     adapt_content_distribution,
     complete_manual_publication,
     preflight_content_distribution,
@@ -35,6 +36,17 @@ from app.models.seo import (
     SeoPublishAttempt,
 )
 from app import seo_distribution as distribution
+
+
+def test_distribution_requires_an_approved_main_content_asset() -> None:
+    draft = SeoContentAsset(tenant_id=1, site_id=1, title="草稿", content_type="article", status="drafting")
+    with pytest.raises(Exception) as exc:
+        _require_content_ready(draft)
+    assert getattr(exc.value, "status_code", None) == 409
+    ready = SeoContentAsset(tenant_id=1, site_id=1, title="已审核", content_type="article", status="ready")
+    _require_content_ready(ready)
+    published = SeoContentAsset(tenant_id=1, site_id=1, title="已发布一次", content_type="article", status="published")
+    _require_content_ready(published)
 
 
 def test_platform_catalog_distinguishes_api_assisted_and_planned_channels() -> None:
@@ -668,7 +680,7 @@ def test_approved_persisted_variant_is_bound_to_publication() -> None:
         content_type="article",
         title="原始文章",
         draft="<p>原始正文</p>",
-        status="drafting",
+        status="ready",
         version_count=3,
     )
     connection = SeoDistributionConnection(
@@ -754,7 +766,7 @@ def test_custom_variant_rejects_stale_source_and_missing_target_keyword() -> Non
         content_type="article",
         title="SEO 内容分发",
         draft="<p>SEO 内容分发正文</p>",
-        status="drafting",
+        status="ready",
         version_count=4,
     )
     connection = SeoDistributionConnection(
@@ -857,6 +869,56 @@ def test_preflight_blocks_unconfigured_api_connection() -> None:
     assert result["blocked"] == 1
     assert "API 平台尚未通过连接测试" in result["rows"][0]["errors"]
     assert "API 平台尚未配置授权信息" in result["rows"][0]["errors"]
+
+
+def test_preflight_allows_published_content_to_continue_to_another_platform() -> None:
+    content = SeoContentAsset(
+        id=5,
+        tenant_id=1,
+        site_id=8,
+        content_type="article",
+        title="已发布主稿",
+        draft="<p>正文内容</p>",
+        status="published",
+        version_count=1,
+    )
+    connection = SeoDistributionConnection(
+        id=10,
+        tenant_id=1,
+        platform_code="zhihu",
+        name="官方知乎",
+        mode="assisted",
+        enabled=True,
+        status="ready",
+        has_credentials=False,
+    )
+    session = AsyncMock()
+    session.scalars = AsyncMock(return_value=[])
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+    request = DistributionPreflightRequest(
+        tenant_id=1,
+        site_id=8,
+        content_ids=[5],
+        connection_ids=[10],
+        action="publish",
+    )
+
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
+        patch("app.api.seo._distribution_connection", new=AsyncMock(return_value=connection)),
+    ):
+        result = asyncio.run(preflight_content_distribution(request, session, context))
+
+    assert result["ready"] == 1
+    assert result["blocked"] == 0
+    assert "内容主稿尚未审核通过" not in result["rows"][0]["errors"]
 
 
 def test_failed_publication_retry_requires_explicit_platform_confirmation() -> None:

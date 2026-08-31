@@ -20,6 +20,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Require the SEO release to descend from main
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor origin/main HEAD
       - name: Reject non-SEO source changes
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -70,9 +74,12 @@ jobs:
           tests/test_seo_distribution.py
           tests/test_seo_distribution_import.py
           tests/test_seo_foundation.py
+          tests/test_seo_rank_limits.py
           tests/test_seo_release_consistency.py
           tests/test_seo_scheduler.py
           tests/test_seo_serp.py
+          tests/test_seo_site_association.py
+          tests/test_seo_traffic.py
 
   frontend-build:
     name: SEO / frontend-build
@@ -134,5 +141,5 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0076_oauth_rebind_intent (head)'
+          printf '%s\n' "$heads" | grep -F '0080_seo_content_review_history (head)'
           pytest -q tests/test_seo_migration_merge.py

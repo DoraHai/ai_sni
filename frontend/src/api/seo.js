@@ -176,8 +176,12 @@ export function auditPendingSeoSitePages({ tenantId, siteId, maxPages = 10 }) {
   })
 }
 
-export function fetchSeoContentAssets({ tenantId, siteId, status, contentType }) {
-  return client.get('/api/v1/seo/content-assets', { params: { tenant_id: tenantId, site_id: siteId || undefined, status: status || undefined, content_type: contentType || undefined } })
+export function fetchSeoContentAssets({ tenantId, siteId, contentId, sourcePageId, status, contentType, contentTypes, query, page = 1, pageSize = 50 }) {
+  return client.get('/api/v1/seo/content-assets', { params: { tenant_id: tenantId, site_id: siteId || undefined, content_id: contentId || undefined, source_page_id: sourcePageId || undefined, status: status || undefined, content_type: contentType || undefined, content_types: contentTypes || undefined, q: query || undefined, page, page_size: pageSize } })
+}
+
+export function fetchSeoContentReviewHistory({ contentId, tenantId }) {
+  return client.get(`/api/v1/seo/content-assets/${contentId}/review-history`, { params: { tenant_id: tenantId } })
 }
 
 export function createSeoContentAsset(payload) {
@@ -186,6 +190,14 @@ export function createSeoContentAsset(payload) {
 
 export function updateSeoContentAsset({ contentId, tenantId, payload }) {
   return client.patch(`/api/v1/seo/content-assets/${contentId}`, payload, { params: { tenant_id: tenantId } })
+}
+
+export function submitSeoContentReview({ contentId, tenantId, note = null }) {
+  return client.post(`/api/v1/seo/content-assets/${contentId}/submit-review`, { note }, { params: { tenant_id: tenantId } })
+}
+
+export function decideSeoContentReview({ contentId, tenantId, decision, note = null }) {
+  return client.post(`/api/v1/seo/content-assets/${contentId}/review`, { decision, note }, { params: { tenant_id: tenantId } })
 }
 
 export function importSeoPublishedLinks({ tenantId, file, dryRun = true }) {
