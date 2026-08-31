@@ -160,6 +160,7 @@ def test_original_content_brief_supports_bounded_multi_keywords() -> None:
     assert source_path_allowed("migrations/versions/20260829_0077_merge_sem_seo_heads.py")
     assert source_path_allowed("migrations/versions/20260829_0078_seo_site_data_repairs.py")
     assert source_path_allowed("migrations/versions/20260829_0079_seo_content_review_workflow.py")
+    assert source_path_allowed("migrations/versions/20260831_0080_seo_content_review_history.py")
 
 
 def test_content_review_ui_supports_rejected_draft_resubmission_and_audit_details() -> None:
@@ -178,6 +179,8 @@ def test_content_review_ui_supports_rejected_draft_resubmission_and_audit_detail
     assert ":disabled=\"isComposing\"" in content
     assert '"review_submitted_by_name"' in backend
     assert '"reviewed_by_name"' in backend
+    assert "row.review_history?.length" in content
+    assert '"review_history"' in backend
 
 
 def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:
@@ -194,7 +197,7 @@ def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:
 
 def test_seo_workflows_require_the_current_reviewed_migration_head() -> None:
     root = Path(__file__).parents[1]
-    expected = "0079_seo_content_review_workflow (head)"
+    expected = "0080_seo_content_review_history (head)"
     baseline = (root / ".github/workflows/seo-baseline-check.yml").read_text(encoding="utf-8")
     production = (root / ".github/workflows/production-seo-deploy.yml").read_text(encoding="utf-8")
     assert expected in baseline

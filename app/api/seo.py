@@ -29,6 +29,7 @@ from app.models import (
     SeoCompetitor,
     SeoCompetitorEvent,
     SeoContentAsset,
+    SeoContentReviewEvent,
     SeoInternalLink,
     SeoKeywordAsset,
     SeoRankSnapshot,
@@ -2306,7 +2307,11 @@ async def create_seo_crawl_run(
             page.content_units = item.get("word_count")
             page.issue_codes = item.get("issue_codes") or []
             page.audit_score = max(0, 100 - len(page.issue_codes) * 10)
-            page.status = "error" if item.get("error_type") else ("healthy" if not page.issue_codes else "needs_fix")
+            page.status = _site_page_status_after_audit(
+                page.status,
+                page.issue_codes,
+                has_error=bool(item.get("error_type")),
+            )
             page.last_error = item.get("fetch_error")
             page.last_checked_at = datetime.utcnow()
 
@@ -2705,6 +2710,22 @@ async def import_site_pages(
     return {"created": created, "skipped": skipped}
 
 
+def _site_page_status_after_audit(
+    previous_status: str | None,
+    issue_codes: list[str] | None,
+    *,
+    has_error: bool = False,
+) -> str:
+    """Keep human TDK workflow state while refreshing technical audit facts."""
+    if previous_status in {"proposed", "approved"}:
+        return previous_status
+    if has_error:
+        return "error"
+    if not issue_codes:
+        return "verified" if previous_status in {"implemented", "verified"} else "healthy"
+    return "needs_fix"
+
+
 def _apply_site_page_audit(row: SeoSitePage, result: dict[str, Any]) -> None:
     previous_status = getattr(row, "status", None)
     snapshot = result.get("snapshot") or {}
@@ -2720,12 +2741,7 @@ def _apply_site_page_audit(row: SeoSitePage, result: dict[str, Any]) -> None:
     row.content_units = snapshot.get("content_units")
     row.audit_score = result.get("score")
     row.issue_codes = failed
-    if not failed:
-        row.status = "verified" if previous_status in {"implemented", "verified"} else "healthy"
-    elif previous_status in {"proposed", "approved"}:
-        row.status = previous_status
-    else:
-        row.status = "needs_fix"
+    row.status = _site_page_status_after_audit(previous_status, failed)
     row.last_error = None
     row.last_checked_at = datetime.utcnow()
 
@@ -3395,7 +3411,6 @@ class ContentCreate(BaseModel):
     rewrite_progress: int | None = Field(None, ge=0, le=100)
     originality_score: int | None = Field(None, ge=0, le=100)
     target_platforms: list[str] | None = Field(None, max_length=20)
-    version_count: int = Field(1, ge=1)
     status: Literal["planned", "drafting", "review", "ready", "published", "archived"] = "planned"
     page_url: str | None = Field(None, max_length=2000)
     author: str | None = Field(None, max_length=120)
@@ -3415,7 +3430,11 @@ class ContentUpdate(BaseModel):
     rewrite_progress: int | None = Field(None, ge=0, le=100)
     originality_score: int | None = Field(None, ge=0, le=100)
     target_platforms: list[str] | None = Field(None, max_length=20)
-    version_count: int | None = Field(None, ge=1)
+    version_count: int | None = Field(
+        None,
+        ge=1,
+        description="Expected current version used for optimistic concurrency control.",
+    )
     status: Literal["planned", "drafting", "review", "ready", "published", "archived"] | None = None
     page_url: str | None = Field(None, max_length=2000)
     author: str | None = Field(None, max_length=120)
@@ -3615,7 +3634,7 @@ async def _distribution_content(
 
 
 def _require_content_ready(content: SeoContentAsset) -> None:
-    if content.status != "ready":
+    if content.status not in {"ready", "published"}:
         raise HTTPException(409, "内容主稿尚未审核通过，不能进入发布流程")
 
 
@@ -3876,15 +3895,18 @@ async def _mark_distribution_variant_published(
 def _content_payload(
     row: SeoContentAsset,
     user_names: dict[int, str] | None = None,
+    review_history: list[SeoContentReviewEvent] | None = None,
 ) -> dict[str, Any]:
     keyword_ids = row.keyword_ids or ([row.keyword_id] if row.keyword_id else [])
     names = user_names or {}
-    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "source_page_id": row.source_page_id, "keyword_id": row.keyword_id, "keyword_ids": keyword_ids, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "review_submitted_by": row.review_submitted_by, "review_submitted_by_name": names.get(row.review_submitted_by), "review_submitted_at": _iso(row.review_submitted_at), "review_note": row.review_note, "reviewed_by": row.reviewed_by, "reviewed_by_name": names.get(row.reviewed_by), "reviewed_at": _iso(row.reviewed_at), "created_at": _database_iso(row.created_at), "updated_at": _database_iso(row.updated_at)}
+    history = review_history or []
+    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "source_page_id": row.source_page_id, "keyword_id": row.keyword_id, "keyword_ids": keyword_ids, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "review_submitted_by": row.review_submitted_by, "review_submitted_by_name": names.get(row.review_submitted_by), "review_submitted_at": _iso(row.review_submitted_at), "review_note": row.review_note, "reviewed_by": row.reviewed_by, "reviewed_by_name": names.get(row.reviewed_by), "reviewed_at": _iso(row.reviewed_at), "review_history": [{"id": event.id, "action": event.action, "from_status": event.from_status, "to_status": event.to_status, "note": event.note, "actor_id": event.actor_id, "actor_name": names.get(event.actor_id), "created_at": _database_iso(event.created_at)} for event in history], "created_at": _database_iso(row.created_at), "updated_at": _database_iso(row.updated_at)}
 
 
 async def _content_review_user_names(
     session: AsyncSession,
     rows: list[SeoContentAsset],
+    events: list[SeoContentReviewEvent] | None = None,
 ) -> dict[int, str]:
     user_ids = {
         user_id
@@ -3892,6 +3914,7 @@ async def _content_review_user_names(
         for user_id in (row.review_submitted_by, row.reviewed_by)
         if user_id is not None
     }
+    user_ids.update(event.actor_id for event in (events or []) if event.actor_id is not None)
     if not user_ids:
         return {}
     result = await session.execute(
@@ -3935,8 +3958,19 @@ async def list_content_assets(tenant_id: int, site_id: int | None = None, source
     if content_type:
         conditions.append(SeoContentAsset.content_type == content_type)
     rows = list(await session.scalars(select(SeoContentAsset).where(*conditions).order_by(SeoContentAsset.updated_at.desc(), SeoContentAsset.id.desc())))
-    user_names = await _content_review_user_names(session, rows)
-    return {"items": [_content_payload(row, user_names) for row in rows], "total": len(rows)}
+    events = list(await session.scalars(
+        select(SeoContentReviewEvent)
+        .where(
+            SeoContentReviewEvent.tenant_id == tenant_id,
+            SeoContentReviewEvent.content_asset_id.in_([row.id for row in rows]),
+        )
+        .order_by(SeoContentReviewEvent.created_at.asc(), SeoContentReviewEvent.id.asc())
+    )) if rows else []
+    events_by_content: dict[int, list[SeoContentReviewEvent]] = defaultdict(list)
+    for event in events:
+        events_by_content[event.content_asset_id].append(event)
+    user_names = await _content_review_user_names(session, rows, events)
+    return {"items": [_content_payload(row, user_names, events_by_content[row.id]) for row in rows], "total": len(rows)}
 
 
 @router.post("/content-assets")
@@ -5397,12 +5431,24 @@ async def submit_content_review(
         raise HTTPException(400, "提交审核前请至少绑定 1 个目标关键词")
     if not str(row.humanized_content or row.draft or "").strip():
         raise HTTPException(400, "提交审核前请填写正文")
+    previous_status = row.status
+    note = (req.note or "").strip() or None
     row.status = "review"
     row.review_submitted_by = ctx.user_id
     row.review_submitted_at = datetime.utcnow()
-    row.review_note = (req.note or "").strip() or None
+    row.review_note = note
     row.reviewed_by = None
     row.reviewed_at = None
+    session.add(SeoContentReviewEvent(
+        tenant_id=row.tenant_id,
+        site_id=row.site_id,
+        content_asset_id=row.id,
+        action="submit",
+        from_status=previous_status,
+        to_status="review",
+        note=note,
+        actor_id=ctx.user_id,
+    ))
     await session.commit()
     await session.refresh(row)
     return _content_payload(row)
@@ -5425,10 +5471,22 @@ async def decide_content_review(
     note = (req.note or "").strip()
     if req.decision == "reject" and not note:
         raise HTTPException(400, "退回时必须填写修改意见")
-    row.status = "ready" if req.decision == "approve" else "drafting"
+    previous_status = row.status
+    target_status = "ready" if req.decision == "approve" else "drafting"
+    row.status = target_status
     row.review_note = note or None
     row.reviewed_by = ctx.user_id
     row.reviewed_at = datetime.utcnow()
+    session.add(SeoContentReviewEvent(
+        tenant_id=row.tenant_id,
+        site_id=row.site_id,
+        content_asset_id=row.id,
+        action=req.decision,
+        from_status=previous_status,
+        to_status=target_status,
+        note=note or None,
+        actor_id=ctx.user_id,
+    ))
     await session.commit()
     await session.refresh(row)
     return _content_payload(row)
@@ -5443,18 +5501,21 @@ async def update_content_asset(
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
     ctx.ensure_tenant(tenant_id)
-    row = await session.get(SeoContentAsset, content_id)
+    row = await session.get(SeoContentAsset, content_id, with_for_update=True)
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "SEO 内容资产不存在")
     row_site_id = row.site_id
     values = req.model_dump(exclude_unset=True)
+    expected_version = values.pop("version_count", None)
+    if expected_version is not None and expected_version != (row.version_count or 1):
+        raise HTTPException(409, "内容已被其他操作更新，请刷新后重试")
     requested_status = values.get("status")
     if requested_status in {"review", "ready", "published"} and requested_status != row.status:
         raise HTTPException(409, "请通过提交审核、审核或发布流程推进内容状态")
     content_fields = {
         "source_page_id", "title", "keyword_id", "keyword_ids", "content_type",
         "outline", "draft", "humanized_content", "source_text", "rewrite_progress",
-        "originality_score", "target_platforms", "version_count", "page_url", "author",
+        "originality_score", "target_platforms", "page_url", "author",
         "published_at",
     }
     if row.status in {"review", "ready"} and content_fields.intersection(values):
@@ -5499,8 +5560,22 @@ async def update_content_asset(
         )
         values["keyword_ids"] = keyword_ids or None
         values["keyword_id"] = keyword_ids[0] if keyword_ids else None
-    for key, value in values.items():
-        setattr(row, key, value.strip() or None if isinstance(value, str) else value)
+    normalized_values = {
+        key: (value.strip() or None if isinstance(value, str) else value)
+        for key, value in values.items()
+    }
+    revision_fields = {
+        "title", "keyword_id", "keyword_ids", "content_type", "outline", "draft",
+        "humanized_content", "source_text",
+    }
+    revision_changed = any(
+        key in normalized_values and getattr(row, key) != normalized_values[key]
+        for key in revision_fields
+    )
+    for key, value in normalized_values.items():
+        setattr(row, key, value)
+    if revision_changed:
+        row.version_count = (row.version_count or 1) + 1
     try:
         await session.commit()
     except IntegrityError as exc:

@@ -241,7 +241,6 @@ async function assist(action) {
       form.draft = html
       await nextTick()
       if (editor.value) editor.value.innerHTML = html
-      if (mode.value === 'rewrite') assetVersion.value += 1
       saveState.value = 'AI 结果待保存'
     }
     const suggestions = Array.isArray(result.suggestions) ? result.suggestions.join('；') : ''
@@ -281,7 +280,6 @@ async function save(status = 'drafting', options = {}) {
       rewrite_progress: mode.value === 'rewrite' ? (form.draft ? 100 : 0) : null,
       originality_score: null,
       target_platforms: options.targetPlatforms ?? publishForm.target_platforms,
-      version_count: assetVersion.value,
       status,
       page_url: (options.pageUrl ?? publishForm.page_url) || null,
       author: form.author || null,
@@ -289,10 +287,13 @@ async function save(status = 'drafting', options = {}) {
     }
     if(assetId.value){
       const {tenant_id,site_id,...values}=payload
-      await updateSeoContentAsset({contentId:assetId.value,tenantId:currentTenantId.value,payload:values})
+      values.version_count = assetVersion.value
+      const saved = await updateSeoContentAsset({contentId:assetId.value,tenantId:currentTenantId.value,payload:values})
+      assetVersion.value = saved.version_count || assetVersion.value
     }else{
       const created=await createSeoContentAsset(payload)
       assetId.value=created.id
+      assetVersion.value=created.version_count||1
       sourcePageId.value=created.source_page_id||null
       await router.replace({ query: { ...route.query, id: created.id, source_page_id: created.source_page_id || undefined } })
     }

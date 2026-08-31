@@ -45,6 +45,8 @@ def test_distribution_requires_an_approved_main_content_asset() -> None:
     assert getattr(exc.value, "status_code", None) == 409
     ready = SeoContentAsset(tenant_id=1, site_id=1, title="已审核", content_type="article", status="ready")
     _require_content_ready(ready)
+    published = SeoContentAsset(tenant_id=1, site_id=1, title="已发布一次", content_type="article", status="published")
+    _require_content_ready(published)
 
 
 def test_platform_catalog_distinguishes_api_assisted_and_planned_channels() -> None:

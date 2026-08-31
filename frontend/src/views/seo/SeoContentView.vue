@@ -133,6 +133,7 @@ const formatTime = (value) => {
   return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(date)
 }
 const actorName = (value, name) => name || (value ? `用户 #${value}` : '系统运维')
+const reviewActionName = (value) => ({ submit: '提交审核', approve: '审核通过', reject: '退回修改' })[value] || value
 const isComposing = computed(() => composingFields.value.size > 0)
 
 function startComposition(field) {
@@ -232,7 +233,7 @@ async function save({ submit = false } = {}) {
   try {
     const payload = { ...form, keyword_id: form.keyword_ids[0] || null, outline: form.outline || null, draft: form.draft || null, humanized_content: form.humanized_content || null, page_url: form.page_url || null, author: form.author || null, published_at: form.status === 'published' ? new Date().toISOString() : null }
     const saved = editing.value
-      ? await updateSeoContentAsset({ contentId: editing.value.id, tenantId: currentTenantId.value, payload })
+      ? await updateSeoContentAsset({ contentId: editing.value.id, tenantId: currentTenantId.value, payload: { ...payload, version_count: editing.value.version_count } })
       : await createSeoContentAsset({ tenant_id: currentTenantId.value, site_id: siteId.value, ...payload })
     if (submit) {
       await submitSeoContentReview({ contentId: saved.id, tenantId: currentTenantId.value, note: submitNote.value.trim() || null })
@@ -338,6 +339,12 @@ onMounted(loadSites)
                   <small v-if="row.review_submitted_at">提交：{{ formatTime(row.review_submitted_at) }} · {{ actorName(row.review_submitted_by, row.review_submitted_by_name) }}</small>
                   <small v-if="row.reviewed_at">审核：{{ formatTime(row.reviewed_at) }} · {{ actorName(row.reviewed_by, row.reviewed_by_name) }}</small>
                   <small v-if="row.review_note" class="review-note">{{ row.status === 'drafting' ? '退回意见' : '审核备注' }}：{{ row.review_note }}</small>
+                  <details v-if="row.review_history?.length" class="review-history">
+                    <summary>审核记录（{{ row.review_history.length }}）</summary>
+                    <small v-for="event in row.review_history" :key="event.id">
+                      {{ reviewActionName(event.action) }} · {{ actorName(event.actor_id, event.actor_name) }} · {{ formatTime(event.created_at) }}<template v-if="event.note"> · {{ event.note }}</template>
+                    </small>
+                  </details>
                 </td>
                 <td><template v-if="keywordsFor(row).length"><span v-for="keyword in keywordsFor(row)" :key="keyword" class="keyword-tag">{{ keyword }}</span></template><span v-else class="muted-text">待绑定</span></td>
                 <td>
@@ -406,4 +413,5 @@ onMounted(loadSites)
 @media(max-width:1200px){.content-manifesto{grid-template-columns:1fr}.content-steps{min-height:150px;border-top:1px solid #374155;border-left:0}.content-table{min-width:1120px}.task-toolbar{align-items:flex-start;flex-direction:column;padding-top:14px;padding-bottom:14px}}
 @media(max-width:700px){.content-page-head{height:auto;padding:16px;align-items:flex-start;gap:15px}.content-page-head p{max-width:300px}.page-actions .ghost-action{display:none}.content-body{padding:14px}.manifesto-copy{padding:24px 20px}.manifesto-copy h2{font-size:20px}.content-steps{grid-template-columns:repeat(2,1fr);gap:22px;padding:22px}.content-steps li::after{display:none}.task-tabs{flex-wrap:wrap}.task-tabs h2{width:100%}.task-search{width:100%}.task-search input{min-width:0;flex:1}.template-grid{grid-template-columns:1fr}.suite-form{grid-template-columns:1fr}.suite-form .full{grid-column:auto}}
 .status-review{background:#fff7e6;color:#b76e00}.status-ready{background:#eff4ff;color:#2563eb}
+.review-history{margin-top:4px;color:#667085;font-size:11px}.review-history summary{cursor:pointer}.review-history small{padding:2px 0 0 10px}
 </style>

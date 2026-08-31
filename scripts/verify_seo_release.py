@@ -68,6 +68,7 @@ SOURCE_ALLOWED_EXACT = {
     "migrations/versions/20260829_0077_merge_sem_seo_heads.py",
     "migrations/versions/20260829_0078_seo_site_data_repairs.py",
     "migrations/versions/20260829_0079_seo_content_review_workflow.py",
+    "migrations/versions/20260831_0080_seo_content_review_history.py",
     "ops/platform-deploy/install-seo.sh",
     "ops/platform-deploy/install-seo-frontend.sh",
     "ops/platform-deploy/modules/seo",
