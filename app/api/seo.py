@@ -4885,7 +4885,7 @@ async def preflight_content_distribution(
         for connection in connections:
             errors: list[str] = []
             warnings: list[str] = []
-            if content.status != "ready":
+            if content.status not in {"ready", "published"}:
                 errors.append("内容主稿尚未审核通过")
             body = content.humanized_content or content.draft or ""
             if not connection.enabled:
