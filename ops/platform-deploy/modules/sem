@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+  printf 'sem-deploy: %s\n' "$*" >&2
+  exit 64
+}
+
+archive="${1:-}"
+commit="${2:-}"
+archive_sha256="${3:-}"
+confirmation="${4:-}"
+
+[[ "$confirmation" == "DEPLOY_SEM" ]] || fail 'confirmation must be DEPLOY_SEM'
+[[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail 'commit must be a full lowercase SHA'
+[[ "$archive_sha256" =~ ^[0-9a-f]{64}$ ]] || fail 'archive sha256 is invalid'
+[[ "$archive" == "/home/platform-deploy/uploads/sem-${commit}.tgz" ]] || fail 'unexpected archive path'
+[[ -f "$archive" && ! -L "$archive" ]] || fail 'archive is missing or is a symlink'
+[[ "$(stat -c '%U' "$archive")" == "platform-deploy" ]] || fail 'archive owner must be platform-deploy'
+[[ "$(stat -c '%s' "$archive")" -le 524288000 ]] || fail 'archive exceeds 500 MiB'
+printf '%s  %s\n' "$archive_sha256" "$archive" | sha256sum -c - >/dev/null
+
+if tar -tvzf "$archive" | awk '$1 ~ /^[lh]/ { found=1 } END { exit(found ? 0 : 1) }'; then
+  fail 'archive must not contain symbolic or hard links'
+fi
+
+member=''
+while IFS= read -r member; do
+  [[ "$member" == sem-release/* ]] || fail "archive member outside sem-release: $member"
+  case "/$member/" in
+    */../*) fail "archive contains parent traversal: $member" ;;
+  esac
+done < <(tar -tzf "$archive")
+
+stage_root="$(mktemp -d /opt/platform-deploy-sem.XXXXXX)"
+cleanup() {
+  case "$stage_root" in
+    /opt/platform-deploy-sem.*) rm -rf -- "$stage_root" ;;
+  esac
+}
+trap cleanup EXIT
+
+tar -xzf "$archive" -C "$stage_root" --no-same-owner --no-same-permissions
+payload="$stage_root/sem-release"
+
+[[ -f "$payload/MANIFEST" && ! -L "$payload/MANIFEST" ]] || fail 'MANIFEST is missing or is a symlink'
+grep -Fxq 'module=sem' "$payload/MANIFEST" || fail 'manifest module mismatch'
+grep -Fxq "commit=$commit" "$payload/MANIFEST" || fail 'manifest commit mismatch'
+grep -Fxq 'migration=not-run' "$payload/MANIFEST" || fail 'migration policy mismatch'
+[[ -f "$payload/backend/app/main.py" ]] || fail 'SEM API entry is missing'
+[[ -f "$payload/backend/alembic.ini" ]] || fail 'Alembic configuration is missing'
+[[ ! -e "$payload/backend/.env" ]] || fail '.env must not be included in a release'
+[[ ! -e "$payload/backend/.venv" ]] || fail '.venv must not be included in a release'
+
+backend_root='/opt/sem-backend'
+release_id="sem-${commit:0:12}-$(date -u +%Y%m%dT%H%M%SZ)"
+backend_release="$backend_root/releases/$release_id"
+
+[[ ! -e "$backend_release" ]] || fail 'release already exists'
+install -d -o root -g root -m 755 "$backend_release"
+cp -a "$payload/backend/." "$backend_release/"
+chown -R sem:sem "$backend_release"
+
+# Persist the already-validated release identity outside the application-owned
+# files. Root ownership and read-only modes prevent sem-backend from rewriting
+# its own deployment provenance.
+install -o root -g root -m 0444 "$payload/MANIFEST" "$backend_release/MANIFEST"
+printf '%s\n' "$commit" > "$backend_release/RELEASE_COMMIT"
+chown root:root "$backend_release/RELEASE_COMMIT"
+chmod 0444 "$backend_release/RELEASE_COMMIT"
+
+grep -Fxq 'module=sem' "$backend_release/MANIFEST" || fail 'persisted manifest module mismatch'
+grep -Fxq "commit=$commit" "$backend_release/MANIFEST" || fail 'persisted manifest commit mismatch'
+grep -Fxq 'migration=not-run' "$backend_release/MANIFEST" || fail 'persisted migration policy mismatch'
+[[ "$(cat "$backend_release/RELEASE_COMMIT")" == "$commit" ]] || fail 'persisted release commit mismatch'
+
+python_bin="$backend_root/.venv/bin/python"
+[[ -x "$python_bin" ]] || fail "SEM Python runtime is missing: $python_bin"
+(cd "$backend_release" && "$python_bin" -m compileall -q app)
+
+# The service may read the release tree, but it must not replace root-level
+# provenance files by unlinking them from an application-owned directory.
+chown root:root "$backend_release"
+chmod 0555 "$backend_release"
+
+previous_backend="$(readlink "$backend_root/current" 2>/dev/null || true)"
+
+rollback() {
+  if [[ -n "$previous_backend" ]]; then
+    ln -sfn "$previous_backend" "$backend_root/current.next"
+    mv -Tf "$backend_root/current.next" "$backend_root/current"
+    systemctl restart sem-backend
+  else
+    rm -f "$backend_root/current"
+    systemctl stop sem-backend || true
+  fi
+}
+
+if ! (
+  set -e
+  ln -sfn "$backend_release" "$backend_root/current.next"
+  mv -Tf "$backend_root/current.next" "$backend_root/current"
+  systemctl restart sem-backend
+); then
+  rollback
+  fail 'SEM release switch failed; previous release restored'
+fi
+
+health_body=''
+if ! health_body="$(curl -fsS --retry 60 --retry-delay 1 --retry-connrefused http://127.0.0.1:8000/health)"; then
+  rollback
+  fail 'SEM health request failed; previous release restored'
+fi
+if ! grep -Eq '"db"[[:space:]]*:[[:space:]]*"ok"' <<<"$health_body"; then
+  rollback
+  fail 'SEM database health is not ok; previous release restored'
+fi
+if ! grep -Eq "\"release_commit\"[[:space:]]*:[[:space:]]*\"$commit\"" <<<"$health_body"; then
+  rollback
+  fail 'SEM health release commit mismatch; previous release restored'
+fi
+
+printf 'module=sem\n'
+printf 'commit=%s\n' "$commit"
+printf 'backend_release=%s\n' "$backend_release"
+printf 'migration=not-run\n'
