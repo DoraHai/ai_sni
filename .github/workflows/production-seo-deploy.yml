@@ -116,6 +116,10 @@ jobs:
       - working-directory: frontend
         run: npm ci
 
+      - name: Audit frontend dependencies
+        working-directory: frontend
+        run: npm audit --audit-level=high
+
       - name: Rebuild and verify the isolated SEO frontend
         working-directory: frontend
         run: npm run build:seo && npm run verify:seo-build

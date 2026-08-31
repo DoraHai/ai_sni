@@ -40,6 +40,7 @@ SOURCE_ALLOWED_EXACT = {
     "deploy/seo-frontend.nginx.conf",
     "docs/SEO_PRODUCTION_PIPELINE.md",
     "frontend/package.json",
+    "frontend/package-lock.json",
     "frontend/scripts/verify-seo-build.mjs",
     "frontend/src/api/moduleAssets.js",
     "frontend/src/api/seo.js",
