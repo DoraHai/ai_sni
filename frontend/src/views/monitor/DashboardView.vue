@@ -10,6 +10,7 @@ import { session } from '../../store/session'
 import MetricLabel from '../../components/MetricLabel.vue'
 import { ElMessage } from 'element-plus'
 import { DataAnalysis } from '@element-plus/icons-vue'
+import { formatUtcTimestamp } from '../../utils/dateTime'
 
 const router = useRouter()
 use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
@@ -327,7 +328,7 @@ onBeforeUnmount(() => {
         >
           <i class="freshness-dot" aria-hidden="true"></i>
           数据截至 {{ data.freshness.latest_report_date?.slice(5) || '—' }}
-          · {{ data.freshness.last_synced_at.slice(11, 16) }} 更新
+          · {{ formatUtcTimestamp(data.freshness.last_synced_at, { short: true }) }} 更新
           · 每 {{ data.freshness.sync_interval_minutes }} 分钟
         </span>
         <el-button :loading="loading" aria-label="立即刷新数据看板" @click="manualRefresh">立即刷新</el-button>

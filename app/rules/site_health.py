@@ -5,7 +5,6 @@ import logging
 import time
 from datetime import date
 
-import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +12,7 @@ from app.models import Adgroup, Tenant
 from app.module_scope import list_active_module_tenants
 from app.rules.base import AlertDraft
 from app.rules.engine import _upsert_entity_alerts, merge_duplicate_alerts
+from app.security.public_http import fetch_public_url
 
 logger = logging.getLogger(__name__)
 
@@ -55,20 +55,22 @@ class SiteHealthRule:
         async def probe(url: str) -> tuple[str, dict]:
             async with semaphore:
                 try:
-                    async with httpx.AsyncClient(
-                        timeout=TIMEOUT_SECONDS, follow_redirects=True
-                    ) as client:
-                        started = time.monotonic()
-                        resp = await client.get(url)
-                        elapsed_ms = int((time.monotonic() - started) * 1000)
-                        return url, {
-                            "ok": resp.status_code < 400,
-                            "status_code": resp.status_code,
-                            "elapsed_ms": elapsed_ms,
-                            "error": None,
-                            "url": url,
-                        }
-                except Exception as exc:  # noqa: BLE001
+                    started = time.monotonic()
+                    resp = await fetch_public_url(
+                        url,
+                        timeout=TIMEOUT_SECONDS,
+                        max_response_bytes=0,
+                        read_body=False,
+                    )
+                    elapsed_ms = int((time.monotonic() - started) * 1000)
+                    return url, {
+                        "ok": resp.status_code < 400,
+                        "status_code": resp.status_code,
+                        "elapsed_ms": elapsed_ms,
+                        "error": None,
+                        "url": url,
+                    }
+                except Exception as exc:  # noqa: BLE001 - one bad landing page must not abort the batch
                     return url, {
                         "ok": False,
                         "status_code": None,

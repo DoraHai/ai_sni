@@ -10,6 +10,7 @@ import { fetchActions } from '../../api/searchTerms'
 import { writebackKeyword } from '../../api/keywords'
 import { setAccountBudget, setAdgroupBid, setCampaignBudget } from '../../api/manage'
 import { session } from '../../store/session'
+import { formatLocalDate, formatUtcTimestamp } from '../../utils/dateTime'
 
 const router = useRouter()
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
@@ -210,15 +211,19 @@ const filters = reactive({
 
 function periodRange() {
   const today = new Date()
-  const iso = (d) => d.toISOString().slice(0, 10)
+  const daysAgo = (days) => {
+    const value = new Date(today)
+    value.setDate(value.getDate() - days)
+    return value
+  }
   if (filters.period === 'month') {
-    return { startDate: iso(new Date(today.getFullYear(), today.getMonth(), 1)), endDate: iso(today) }
+    return { startDate: formatLocalDate(new Date(today.getFullYear(), today.getMonth(), 1)), endDate: formatLocalDate(today) }
   }
   if (filters.period === '7d') {
-    return { startDate: iso(new Date(today - 6 * 86400000)), endDate: iso(today) }
+    return { startDate: formatLocalDate(daysAgo(6)), endDate: formatLocalDate(today) }
   }
   if (filters.period === '30d') {
-    return { startDate: iso(new Date(today - 29 * 86400000)), endDate: iso(today) }
+    return { startDate: formatLocalDate(daysAgo(29)), endDate: formatLocalDate(today) }
   }
   return {}
 }
@@ -247,7 +252,9 @@ watch(() => filters.q, () => {
 watch(() => [filters.page, filters.pageSize], load)
 
 const fmtInt = (v) => (v == null ? '—' : Number(v).toLocaleString('zh-CN'))
+// 百度 optTime 和数据库 server_default 时间按业务本地时间返回；只有同步时间是裸 UTC。
 const fmtTime = (v) => (v ? v.slice(5, 16).replace('T', ' ') : '—')
+const fmtSyncTime = (v) => formatUtcTimestamp(v, { short: true })
 
 const statCards = computed(() => {
   const s = data.value?.summary
@@ -295,7 +302,7 @@ onMounted(load)
         <div class="page-title">调价台账</div>
         <div class="page-desc">
           数据源：百度 getOperationRecord 实时抓取（含百度后台直接操作）· 仅展示当前已有真实数据来源的字段
-          <template v-if="data?.last_synced_at"> · 同步于 {{ fmtTime(data.last_synced_at) }}</template>
+          <template v-if="data?.last_synced_at"> · 同步于 {{ fmtSyncTime(data.last_synced_at) }}</template>
         </div>
       </div>
       <el-button

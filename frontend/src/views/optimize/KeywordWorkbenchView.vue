@@ -20,6 +20,7 @@ import {
 import { useKeywordWriteback } from '../../composables/useKeywordWriteback'
 import { session } from '../../store/session'
 import MetricLabel from '../../components/MetricLabel.vue'
+import { formatLocalDate, formatUtcTimestamp } from '../../utils/dateTime'
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
 
@@ -307,7 +308,7 @@ async function exportCsv() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `keywords_${new Date().toISOString().slice(0, 10)}.csv`
+    a.download = `keywords_${formatLocalDate()}.csv`
     a.click()
     URL.revokeObjectURL(url)
   } catch (e) {
@@ -686,7 +687,7 @@ const headerStats = computed(() => {
   const t = data.value.totals
   const win = data.value.metrics_window
   const synced = t.last_synced_at
-    ? ` · 数据更新于 ${t.last_synced_at.slice(5, 16).replace('T', ' ')}`
+    ? ` · 数据更新于 ${formatUtcTimestamp(t.last_synced_at, { short: true })}`
     : ''
   const serving = t.serving_now != null
     ? ` · 当前在投 ${fmtInt(t.serving_now)}（${t.current_slot}）`
