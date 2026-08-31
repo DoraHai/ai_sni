@@ -48,10 +48,10 @@ jobs:
             exit 1
           fi
 
-      - name: Require the production release to descend from main
-        run: |
-          git fetch --no-tags origin main
-          git merge-base --is-ancestor origin/main HEAD
+      - name: Require the authoritative SEO production branch
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: test "$REF_NAME" = "$SEO_PRODUCTION_BRANCH"
 
       - uses: actions/setup-python@v5
         with:
