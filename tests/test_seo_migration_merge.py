@@ -17,6 +17,7 @@ GEO_REPAIR = ROOT / "migrations/versions/20260819_0073_geo_schema_repair.py"
 MERGE_REVISION = ROOT / "migrations/versions/20260822_0074_merge_geo_seo_heads.py"
 SEM_SEO_MERGE_REVISION = ROOT / "migrations/versions/20260829_0077_merge_sem_seo_heads.py"
 SITE_DATA_REPAIR_REVISION = ROOT / "migrations/versions/20260829_0078_seo_site_data_repairs.py"
+CONTENT_REVIEW_REVISION = ROOT / "migrations/versions/20260829_0079_seo_content_review_workflow.py"
 EXPECTED_GEO_REPAIR_SHA256 = "4e785eefd6bcc7a6f1158ff38b19769cb5ee2ffafa433e9f616f30c85ac533ba"
 CANONICAL_SEM_MIGRATION_SHA256 = {
     "20260822_0074_suggestion_workflow.py": "c082bfbab80ad2db03e11d00c0855bdbd2167ee3418259433b2caddc9d18addc",
@@ -64,7 +65,7 @@ def test_merge_revisions_are_noop_and_sem_seo_merge_is_only_head() -> None:
     _assert_noop_revision(SEM_SEO_MERGE_REVISION)
 
     script = ScriptDirectory.from_config(_config())
-    assert script.get_heads() == ["0078_seo_site_data_repairs"]
+    assert script.get_heads() == ["0079_seo_content_review_workflow"]
     merge = script.get_revision("0074_merge_geo_seo_heads")
     assert set(merge._normalized_down_revisions) == {
         "0073_geo_schema_repair",
@@ -79,6 +80,8 @@ def test_merge_revisions_are_noop_and_sem_seo_merge_is_only_head() -> None:
     }
     site_data_repair = script.get_revision("0078_seo_site_data_repairs")
     assert site_data_repair.down_revision == "0077_merge_sem_seo_heads"
+    content_review = script.get_revision("0079_seo_content_review_workflow")
+    assert content_review.down_revision == "0078_seo_site_data_repairs"
 
 
 def test_upgrade_plan_from_production_sem_head_runs_only_seo_branch() -> None:
@@ -89,6 +92,7 @@ def test_upgrade_plan_from_production_sem_head_runs_only_seo_branch() -> None:
         "0075_seo_content_source_page",
         "0077_merge_sem_seo_heads",
         "0078_seo_site_data_repairs",
+        "0079_seo_content_review_workflow",
     ]
 
 
@@ -161,6 +165,13 @@ def test_postgres_upgrade_from_sem_head_applies_only_pending_seo_branch(monkeypa
                     for column in inspector.get_columns("seo_content_assets")
                 }
                 assert "source_page_id" in content_columns
+                assert {
+                    "review_submitted_by",
+                    "review_submitted_at",
+                    "review_note",
+                    "reviewed_by",
+                    "reviewed_at",
+                }.issubset(content_columns)
                 content_indexes = {
                     index["name"]
                     for index in inspector.get_indexes("seo_content_assets")
@@ -202,7 +213,7 @@ def test_postgres_upgrade_from_sem_head_applies_only_pending_seo_branch(monkeypa
     ) = asyncio.run(schema_snapshot())
     get_settings.cache_clear()
 
-    assert after == "0078_seo_site_data_repairs"
+    assert after == "0079_seo_content_review_workflow"
     assert {
         "ix_seo_distribution_variants_tenant_id",
         "ix_seo_distribution_variants_content_asset_id",
@@ -212,4 +223,5 @@ def test_postgres_upgrade_from_sem_head_applies_only_pending_seo_branch(monkeypa
     }.issubset(variant_indexes)
     assert "ix_seo_content_publications_variant_id" in publication_indexes
     assert "ix_seo_content_assets_source_page_id" in content_indexes
+    assert "ix_seo_content_assets_tenant_review" in content_indexes
     assert "uq_seo_content_asset_source_page" in content_unique_constraints

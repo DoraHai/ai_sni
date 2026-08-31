@@ -188,6 +188,14 @@ export function updateSeoContentAsset({ contentId, tenantId, payload }) {
   return client.patch(`/api/v1/seo/content-assets/${contentId}`, payload, { params: { tenant_id: tenantId } })
 }
 
+export function submitSeoContentReview({ contentId, tenantId, note = null }) {
+  return client.post(`/api/v1/seo/content-assets/${contentId}/submit-review`, { note }, { params: { tenant_id: tenantId } })
+}
+
+export function decideSeoContentReview({ contentId, tenantId, decision, note = null }) {
+  return client.post(`/api/v1/seo/content-assets/${contentId}/review`, { decision, note }, { params: { tenant_id: tenantId } })
+}
+
 export function importSeoPublishedLinks({ tenantId, file, dryRun = true }) {
   const form = new FormData()
   form.append('file', file)

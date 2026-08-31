@@ -159,6 +159,7 @@ def test_original_content_brief_supports_bounded_multi_keywords() -> None:
     assert source_path_allowed("migrations/versions/20260829_0075_seo_content_source_page.py")
     assert source_path_allowed("migrations/versions/20260829_0077_merge_sem_seo_heads.py")
     assert source_path_allowed("migrations/versions/20260829_0078_seo_site_data_repairs.py")
+    assert source_path_allowed("migrations/versions/20260829_0079_seo_content_review_workflow.py")
 
 
 def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:
@@ -171,6 +172,17 @@ def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:
     assert 'revision: str = "0072_merge_login_seo"' in merge
     assert '"0071_login_lockout"' in merge
     assert '"0071_seo_distribution"' in merge
+
+
+def test_seo_workflows_require_the_current_reviewed_migration_head() -> None:
+    root = Path(__file__).parents[1]
+    expected = "0079_seo_content_review_workflow (head)"
+    baseline = (root / ".github/workflows/seo-baseline-check.yml").read_text(encoding="utf-8")
+    production = (root / ".github/workflows/production-seo-deploy.yml").read_text(encoding="utf-8")
+    assert expected in baseline
+    assert expected in production
+    assert "0078_seo_site_data_repairs (head)" not in baseline
+    assert "0078_seo_site_data_repairs (head)" not in production
 
 
 def test_seo_content_and_rank_views_are_site_scoped_and_html_safe() -> None:

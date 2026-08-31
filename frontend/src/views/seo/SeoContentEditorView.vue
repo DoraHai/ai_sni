@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { assistSeoContent, createSeoContentAsset, fetchSeoContentAssets, fetchSeoKeywords, fetchSeoSitePages, updateSeoContentAsset } from '../../api/seo'
+import { assistSeoContent, createSeoContentAsset, fetchSeoContentAssets, fetchSeoKeywords, fetchSeoSitePages, submitSeoContentReview, updateSeoContentAsset } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
@@ -27,6 +27,8 @@ const assetId = ref(Number(route.query.id) || null)
 const sourcePageId = ref(Number(route.query.source_page_id) || null)
 const sourcePage = ref(null)
 const assetVersion = ref(1)
+const assetStatus = ref('planned')
+const workflowLocked = computed(() => ['review', 'ready', 'published'].includes(assetStatus.value))
 const mode = computed(() => route.query.type === 'rewrite' ? 'rewrite' : route.query.type === 'qa' ? 'qa' : 'original')
 const pageTitle = computed(() => mode.value === 'rewrite' ? '文章改写编辑' : mode.value === 'qa' ? '问答编辑器' : '原创文章编辑')
 const backPath = computed(() => mode.value === 'rewrite' ? '/seo/content/rewrites' : mode.value === 'qa' ? '/seo/content/qa' : '/seo/content/articles')
@@ -96,9 +98,10 @@ async function load() {
       sourceText.value=item.source_text||''
       sourcePageId.value=item.source_page_id||sourcePageId.value||null
       assetVersion.value=item.version_count||1
+      assetStatus.value=item.status||'planned'
       await nextTick()
       if(editor.value)editor.value.innerHTML=form.draft
-      saveState.value='已载入任务'
+      saveState.value = item.status === 'review' ? '待审核（只读）' : item.status === 'ready' ? '待发布（只读）' : item.status === 'published' ? '已发布（只读）' : '已载入任务'
     }
   } catch (e) { ElMessage.warning(e.message) }
 }
@@ -124,12 +127,14 @@ function syncDraft() {
 }
 
 function command(name, value = null) {
+  if (workflowLocked.value) return ElMessage.warning('当前任务处于只读流程状态')
   editor.value?.focus()
   document.execCommand(name, false, value)
   syncDraft()
 }
 
 function insertOutline() {
+  if (workflowLocked.value) return ElMessage.warning('当前任务处于只读流程状态')
   const html = selectedTemplate.value.outline.split('\n').map((line) => `<h2>${line}</h2><p><br></p>`).join('')
   form.draft = html
   nextTick(() => { if (editor.value) editor.value.innerHTML = html })
@@ -212,6 +217,7 @@ function buildAssistPayload(action, draftText) {
 }
 
 async function assist(action) {
+  if (workflowLocked.value) return ElMessage.warning('待审核或待发布内容不能调用 AI 修改')
   if (!currentTenantId.value) return ElMessage.warning('请先选择客户')
   if (!siteId.value) return ElMessage.warning('请先选择或创建 SEO 网站')
   if (['generate','outline','title','keywords'].includes(action) && !form.keyword_ids.length) return ElMessage.warning('请至少选择 1 个目标关键词')
@@ -250,6 +256,7 @@ async function assist(action) {
 }
 
 async function save(status = 'drafting', options = {}) {
+  if (workflowLocked.value) return ElMessage.warning('待审核或待发布内容不能直接编辑，请先退回修改')
   syncDraft()
   if (!currentTenantId.value) return ElMessage.warning('请先选择客户')
   if (!siteId.value) return ElMessage.warning('请先选择或创建 SEO 网站')
@@ -289,10 +296,24 @@ async function save(status = 'drafting', options = {}) {
       sourcePageId.value=created.source_page_id||null
       await router.replace({ query: { ...route.query, id: created.id, source_page_id: created.source_page_id || undefined } })
     }
-    saveState.value = status === 'published' ? '已发布' : status === 'review' ? '已提交审核' : '刚刚已保存'
-    if (!options.quiet) ElMessage.success(status === 'published' ? '文章发布记录已保存' : status === 'review' ? '文章已提交审核' : '文章草稿已保存')
-    if (status === 'review') router.push(backPath.value)
+    assetStatus.value = status
+    saveState.value = status === 'published' ? '已发布' : '刚刚已保存'
+    if (!options.quiet) ElMessage.success(status === 'published' ? '文章发布记录已保存' : '文章草稿已保存')
     return true
+  } catch (e) { ElMessage.error(e.message) } finally { saving.value = false }
+}
+
+async function submitReview() {
+  if (!['planned', 'drafting'].includes(assetStatus.value)) return ElMessage.warning('当前状态不能重复提交审核')
+  const saved = await save('drafting', { quiet: true })
+  if (!saved || !assetId.value) return
+  saving.value = true
+  try {
+    await submitSeoContentReview({ contentId: assetId.value, tenantId: currentTenantId.value })
+    assetStatus.value = 'review'
+    saveState.value = '已提交审核'
+    ElMessage.success('文章已提交审核')
+    router.push(backPath.value)
   } catch (e) { ElMessage.error(e.message) } finally { saving.value = false }
 }
 
@@ -356,7 +377,7 @@ onMounted(async () => {
     <header class="editor-topbar">
       <button class="editor-back" type="button" @click="router.push(backPath)">← 返回{{ mode==='rewrite'?'文章改写':mode==='qa'?'问答运营':'原创文章' }}</button>
       <div><h1>{{ pageTitle }}</h1><p>{{ mode==='rewrite'?'基于导入原文 · 深度改写':mode==='qa'?'搜索问答 · 新建回答':`${selectedTemplate.name} · 新建内容` }}</p></div>
-      <div class="editor-top-actions"><span>{{ saveState }}</span><button v-if="sourcePageId" type="button" @click="router.push(sourcePageRoute)">返回来源页面</button><button type="button" @click="save('drafting')">保存草稿</button><button type="button" :disabled="saving" @click="save('review')">提交审核</button><button v-if="mode==='rewrite'" class="primary" type="button" :disabled="saving||!!aiBusy" @click="openPublish">发布</button><b>{{ String(session.user?.name || session.user?.username || 'DZ').slice(0, 2).toUpperCase() }}</b></div>
+      <div class="editor-top-actions"><span>{{ saveState }}</span><button v-if="sourcePageId" type="button" @click="router.push(sourcePageRoute)">返回来源页面</button><button v-if="['planned','drafting'].includes(assetStatus)" type="button" @click="save('drafting')">保存草稿</button><button v-if="['planned','drafting'].includes(assetStatus)" type="button" :disabled="saving" @click="submitReview">提交审核</button><button v-if="assetStatus==='ready'" class="primary" type="button" @click="router.push('/seo/distribution')">进入发布流程</button><b>{{ String(session.user?.name || session.user?.username || 'DZ').slice(0, 2).toUpperCase() }}</b></div>
     </header>
 
     <main class="editor-workspace">
@@ -370,7 +391,7 @@ onMounted(async () => {
       <section class="editor-center">
         <div class="document-frame">
           <div class="editor-toolbar"><button type="button" title="标题 2" @click="command('formatBlock', 'h2')">H2</button><button type="button" title="标题 3" @click="command('formatBlock', 'h3')">H3</button><i /><button type="button" title="加粗" @click="command('bold')">B</button><button type="button" title="斜体" @click="command('italic')">I</button><button type="button" title="无序列表" @click="command('insertUnorderedList')">•</button><button type="button" title="有序列表" @click="command('insertOrderedList')">1.</button></div>
-          <div class="document-scroll"><input v-model="form.title" class="document-title" :placeholder="mode==='qa'?'输入问题标题':'输入文章标题'"><div ref="editor" class="article-editor" contenteditable="true" :data-placeholder="mode==='qa'?'从这里开始撰写回答…':'从这里开始撰写正文…'" @input="syncDraft" /></div>
+          <div class="document-scroll"><input v-model="form.title" class="document-title" :readonly="workflowLocked" :placeholder="mode==='qa'?'输入问题标题':'输入文章标题'"><div ref="editor" class="article-editor" :contenteditable="!workflowLocked" :data-placeholder="mode==='qa'?'从这里开始撰写回答…':'从这里开始撰写正文…'" @input="syncDraft" /></div>
           <footer class="document-status"><span>{{ wordCount.toLocaleString() }} 字</span><span>{{ engine }}</span><span :title="keywordSummary">{{ keywordNames.length }} 个目标词</span><span>{{ saveState }}</span></footer>
         </div>
       </section>

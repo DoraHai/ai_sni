@@ -18,6 +18,7 @@ from app.api.seo import (
     _create_distribution_variant_revision,
     _distribution_content,
     _distribution_variant_payload,
+    _require_content_ready,
     adapt_content_distribution,
     complete_manual_publication,
     preflight_content_distribution,
@@ -35,6 +36,15 @@ from app.models.seo import (
     SeoPublishAttempt,
 )
 from app import seo_distribution as distribution
+
+
+def test_distribution_requires_an_approved_main_content_asset() -> None:
+    draft = SeoContentAsset(tenant_id=1, site_id=1, title="草稿", content_type="article", status="drafting")
+    with pytest.raises(Exception) as exc:
+        _require_content_ready(draft)
+    assert getattr(exc.value, "status_code", None) == 409
+    ready = SeoContentAsset(tenant_id=1, site_id=1, title="已审核", content_type="article", status="ready")
+    _require_content_ready(ready)
 
 
 def test_platform_catalog_distinguishes_api_assisted_and_planned_channels() -> None:
@@ -668,7 +678,7 @@ def test_approved_persisted_variant_is_bound_to_publication() -> None:
         content_type="article",
         title="原始文章",
         draft="<p>原始正文</p>",
-        status="drafting",
+        status="ready",
         version_count=3,
     )
     connection = SeoDistributionConnection(
@@ -754,7 +764,7 @@ def test_custom_variant_rejects_stale_source_and_missing_target_keyword() -> Non
         content_type="article",
         title="SEO 内容分发",
         draft="<p>SEO 内容分发正文</p>",
-        status="drafting",
+        status="ready",
         version_count=4,
     )
     connection = SeoDistributionConnection(

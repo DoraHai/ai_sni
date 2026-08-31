@@ -21,12 +21,13 @@ const tabs=computed(()=>[
   {key:'all',label:'全部',count:rewrites.value.length},
   {key:'planned',label:'待改写',count:rewrites.value.filter(i=>i.status==='planned').length},
   {key:'drafting',label:'改写中',count:rewrites.value.filter(i=>i.status==='drafting').length},
-  {key:'review',label:'待发布',count:rewrites.value.filter(i=>i.status==='review').length},
+  {key:'review',label:'待审核',count:rewrites.value.filter(i=>i.status==='review').length},
+  {key:'ready',label:'待发布',count:rewrites.value.filter(i=>i.status==='ready').length},
   {key:'published',label:'已发布',count:rewrites.value.filter(i=>i.status==='published').length},
 ])
 const rows=computed(()=>{const needle=query.value.trim().toLowerCase();return rewrites.value.filter(item=>(tab.value==='all'||item.status===tab.value)&&(!needle||item.title.toLowerCase().includes(needle)||(item.source_text||'').toLowerCase().includes(needle)||(keywordMap.value.get(item.keyword_id)?.keyword||'').toLowerCase().includes(needle)))})
-const statusLabel=value=>({planned:'待改写',drafting:'改写中',review:'待发布',published:'已发布',archived:'已归档'})[value]||value
-const statusClass=value=>({planned:'gray',drafting:'amber',review:'blue',published:'green'})[value]||'gray'
+const statusLabel=value=>({planned:'待改写',drafting:'改写中',review:'待审核',ready:'待发布',published:'已发布',archived:'已归档'})[value]||value
+const statusClass=value=>({planned:'gray',drafting:'amber',review:'amber',ready:'blue',published:'green'})[value]||'gray'
 const date=value=>value?new Date(value).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'—'
 const plain=value=>String(value||'').replace(/<[^>]+>/g,'').replace(/\s+/g,' ').trim()
 const sourceTitle=item=>{const text=plain(item.source_text);return text?`原文：${text.slice(0,30)}${text.length>30?'…':''}`:`改写稿：${item.title}`}
