@@ -186,7 +186,7 @@ async function load() {
     const [catalogResult, connectionResult, contentResult, publicationResult, variantResult] = await Promise.all([
       fetchSeoDistributionCatalog(),
       fetchSeoDistributionConnections({ tenantId: currentTenantId.value }),
-      fetchSeoContentAssets({ tenantId: currentTenantId.value, siteId: siteId.value }),
+      fetchSeoContentAssets({ tenantId: currentTenantId.value, siteId: siteId.value, pageSize: 200 }),
       fetchSeoContentPublications({ tenantId: currentTenantId.value, siteId: siteId.value }),
       fetchSeoDistributionVariants({ tenantId: currentTenantId.value, siteId: siteId.value }),
     ])

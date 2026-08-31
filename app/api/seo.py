@@ -3896,11 +3896,29 @@ def _content_payload(
     row: SeoContentAsset,
     user_names: dict[int, str] | None = None,
     review_history: list[SeoContentReviewEvent] | None = None,
+    review_history_count: int | None = None,
 ) -> dict[str, Any]:
     keyword_ids = row.keyword_ids or ([row.keyword_id] if row.keyword_id else [])
     names = user_names or {}
     history = review_history or []
-    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "source_page_id": row.source_page_id, "keyword_id": row.keyword_id, "keyword_ids": keyword_ids, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "review_submitted_by": row.review_submitted_by, "review_submitted_by_name": names.get(row.review_submitted_by), "review_submitted_at": _iso(row.review_submitted_at), "review_note": row.review_note, "reviewed_by": row.reviewed_by, "reviewed_by_name": names.get(row.reviewed_by), "reviewed_at": _iso(row.reviewed_at), "review_history": [{"id": event.id, "action": event.action, "from_status": event.from_status, "to_status": event.to_status, "note": event.note, "actor_id": event.actor_id, "actor_name": names.get(event.actor_id), "created_at": _database_iso(event.created_at)} for event in history], "created_at": _database_iso(row.created_at), "updated_at": _database_iso(row.updated_at)}
+    return {"id": row.id, "tenant_id": row.tenant_id, "site_id": row.site_id, "source_page_id": row.source_page_id, "keyword_id": row.keyword_id, "keyword_ids": keyword_ids, "content_type": row.content_type, "title": row.title, "outline": row.outline, "draft": row.draft, "humanized_content": row.humanized_content, "source_text": row.source_text, "rewrite_progress": row.rewrite_progress, "originality_score": row.originality_score, "target_platforms": row.target_platforms or [], "version_count": row.version_count or 1, "status": row.status, "page_url": row.page_url, "author": row.author, "published_at": _iso(row.published_at), "review_submitted_by": row.review_submitted_by, "review_submitted_by_name": names.get(row.review_submitted_by), "review_submitted_at": _iso(row.review_submitted_at), "review_note": row.review_note, "reviewed_by": row.reviewed_by, "reviewed_by_name": names.get(row.reviewed_by), "reviewed_at": _iso(row.reviewed_at), "review_history_count": len(history) if review_history_count is None else review_history_count, "review_history": [_review_event_payload(event, names) for event in history], "created_at": _database_iso(row.created_at), "updated_at": _database_iso(row.updated_at)}
+
+
+def _review_event_payload(
+    event: SeoContentReviewEvent,
+    user_names: dict[int, str] | None = None,
+) -> dict[str, Any]:
+    names = user_names or {}
+    return {
+        "id": event.id,
+        "action": event.action,
+        "from_status": event.from_status,
+        "to_status": event.to_status,
+        "note": event.note,
+        "actor_id": event.actor_id,
+        "actor_name": names.get(event.actor_id),
+        "created_at": _database_iso(event.created_at),
+    }
 
 
 async def _content_review_user_names(
@@ -3945,32 +3963,130 @@ async def _content_task_for_source_page(
 
 
 @router.get("/content-assets")
-async def list_content_assets(tenant_id: int, site_id: int | None = None, source_page_id: PositiveInt | None = None, status: str | None = None, content_type: str | None = None, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+async def list_content_assets(
+    tenant_id: int,
+    site_id: int | None = None,
+    content_id: PositiveInt | None = None,
+    source_page_id: PositiveInt | None = None,
+    status: str | None = None,
+    content_type: str | None = None,
+    content_types: str | None = None,
+    q: str | None = Query(None, max_length=200),
+    page: PositiveInt = 1,
+    page_size: int = Query(50, ge=1, le=200),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
     await _tenant(session, tenant_id)
     await _seo_site(session, tenant_id, site_id)
-    conditions = [SeoContentAsset.tenant_id == tenant_id]
+    base_conditions = [SeoContentAsset.tenant_id == tenant_id]
     if site_id is not None:
-        conditions.append(SeoContentAsset.site_id == site_id)
+        base_conditions.append(SeoContentAsset.site_id == site_id)
+    if content_id is not None:
+        base_conditions.append(SeoContentAsset.id == content_id)
     if source_page_id is not None:
-        conditions.append(SeoContentAsset.source_page_id == source_page_id)
+        base_conditions.append(SeoContentAsset.source_page_id == source_page_id)
+    requested_types = [
+        value.strip()
+        for value in (content_types or content_type or "").split(",")
+        if value.strip()
+    ][:20]
+    if requested_types:
+        base_conditions.append(SeoContentAsset.content_type.in_(requested_types))
+    status_rows = await session.execute(
+        select(SeoContentAsset.status, func.count())
+        .where(*base_conditions)
+        .group_by(SeoContentAsset.status)
+    )
+    status_counts = {str(value): int(count) for value, count in status_rows.all()}
+    conditions = list(base_conditions)
     if status:
-        conditions.append(SeoContentAsset.status == status)
-    if content_type:
-        conditions.append(SeoContentAsset.content_type == content_type)
-    rows = list(await session.scalars(select(SeoContentAsset).where(*conditions).order_by(SeoContentAsset.updated_at.desc(), SeoContentAsset.id.desc())))
-    events = list(await session.scalars(
-        select(SeoContentReviewEvent)
-        .where(
-            SeoContentReviewEvent.tenant_id == tenant_id,
-            SeoContentReviewEvent.content_asset_id.in_([row.id for row in rows]),
+        requested_statuses = [value.strip() for value in status.split(",") if value.strip()][:20]
+        if requested_statuses:
+            conditions.append(SeoContentAsset.status.in_(requested_statuses))
+    # FastAPI resolves Query defaults for HTTP requests, while direct service-level
+    # calls (including tests and internal reuse) may still receive the Query object.
+    needle = q.strip() if isinstance(q, str) else ""
+    if needle:
+        pattern = f"%{needle}%"
+        keyword_ids = list(
+            await session.scalars(
+                select(SeoKeywordAsset.id)
+                .where(
+                    SeoKeywordAsset.tenant_id == tenant_id,
+                    SeoKeywordAsset.keyword.ilike(pattern),
+                    *([SeoKeywordAsset.site_id == site_id] if site_id is not None else []),
+                )
+                .limit(100)
+            )
         )
-        .order_by(SeoContentReviewEvent.created_at.asc(), SeoContentReviewEvent.id.asc())
-    )) if rows else []
-    events_by_content: dict[int, list[SeoContentReviewEvent]] = defaultdict(list)
-    for event in events:
-        events_by_content[event.content_asset_id].append(event)
-    user_names = await _content_review_user_names(session, rows, events)
-    return {"items": [_content_payload(row, user_names, events_by_content[row.id]) for row in rows], "total": len(rows)}
+        matches = [SeoContentAsset.title.ilike(pattern)]
+        if keyword_ids:
+            matches.append(SeoContentAsset.keyword_id.in_(keyword_ids))
+            matches.extend(SeoContentAsset.keyword_ids.contains([keyword_id]) for keyword_id in keyword_ids)
+        conditions.append(or_(*matches))
+    total = int(
+        await session.scalar(
+            select(func.count()).select_from(SeoContentAsset).where(*conditions)
+        )
+        or 0
+    )
+    rows = list(
+        await session.scalars(
+            select(SeoContentAsset)
+            .where(*conditions)
+            .order_by(SeoContentAsset.updated_at.desc(), SeoContentAsset.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    )
+    event_counts: dict[int, int] = {}
+    if rows:
+        count_rows = await session.execute(
+            select(SeoContentReviewEvent.content_asset_id, func.count())
+            .where(
+                SeoContentReviewEvent.tenant_id == tenant_id,
+                SeoContentReviewEvent.content_asset_id.in_([row.id for row in rows]),
+            )
+            .group_by(SeoContentReviewEvent.content_asset_id)
+        )
+        event_counts = {int(content_asset_id): int(count) for content_asset_id, count in count_rows.all()}
+    user_names = await _content_review_user_names(session, rows)
+    return {
+        "items": [
+            _content_payload(row, user_names, review_history_count=event_counts.get(row.id, 0))
+            for row in rows
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "status_counts": status_counts,
+    }
+
+
+@router.get("/content-assets/{content_id}/review-history")
+async def get_content_review_history(
+    content_id: PositiveInt,
+    tenant_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    row = await session.get(SeoContentAsset, content_id)
+    if not row or row.tenant_id != tenant_id:
+        raise HTTPException(404, "SEO 内容资产不存在")
+    events = list(
+        await session.scalars(
+            select(SeoContentReviewEvent)
+            .where(
+                SeoContentReviewEvent.tenant_id == tenant_id,
+                SeoContentReviewEvent.content_asset_id == content_id,
+            )
+            .order_by(SeoContentReviewEvent.created_at.asc(), SeoContentReviewEvent.id.asc())
+        )
+    )
+    user_names = await _content_review_user_names(session, [row], events)
+    return {
+        "items": [_review_event_payload(event, user_names) for event in events],
+        "total": len(events),
+    }
 
 
 @router.post("/content-assets")
@@ -5520,10 +5636,11 @@ async def update_content_asset(
         "originality_score", "target_platforms", "page_url", "author",
         "published_at",
     }
-    if row.status in {"review", "ready"} and content_fields.intersection(values):
-        raise HTTPException(409, "待审核或待发布内容不能直接编辑；请先由审核人退回")
-    if row.status in {"review", "ready"} and requested_status != row.status:
-        raise HTTPException(409, "请通过审核流程变更待审核或待发布状态")
+    protected_statuses = {"review", "ready", "published"}
+    if row.status in protected_statuses and content_fields.intersection(values):
+        raise HTTPException(409, "待审核、待发布或已发布内容不能直接编辑")
+    if row.status in protected_statuses and requested_status != row.status:
+        raise HTTPException(409, "请通过审核或发布流程变更受控内容状态")
     if "draft" in values:
         values["draft"] = _sanitize_content_html(values.get("draft"))
     if "humanized_content" in values:

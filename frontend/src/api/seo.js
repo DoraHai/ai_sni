@@ -176,8 +176,12 @@ export function auditPendingSeoSitePages({ tenantId, siteId, maxPages = 10 }) {
   })
 }
 
-export function fetchSeoContentAssets({ tenantId, siteId, sourcePageId, status, contentType }) {
-  return client.get('/api/v1/seo/content-assets', { params: { tenant_id: tenantId, site_id: siteId || undefined, source_page_id: sourcePageId || undefined, status: status || undefined, content_type: contentType || undefined } })
+export function fetchSeoContentAssets({ tenantId, siteId, contentId, sourcePageId, status, contentType, contentTypes, query, page = 1, pageSize = 50 }) {
+  return client.get('/api/v1/seo/content-assets', { params: { tenant_id: tenantId, site_id: siteId || undefined, content_id: contentId || undefined, source_page_id: sourcePageId || undefined, status: status || undefined, content_type: contentType || undefined, content_types: contentTypes || undefined, q: query || undefined, page, page_size: pageSize } })
+}
+
+export function fetchSeoContentReviewHistory({ contentId, tenantId }) {
+  return client.get(`/api/v1/seo/content-assets/${contentId}/review-history`, { params: { tenant_id: tenantId } })
 }
 
 export function createSeoContentAsset(payload) {

@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { createSeoContentAsset, decideSeoContentReview, fetchSeoContentAssets, fetchSeoKeywords, submitSeoContentReview, updateSeoContentAsset } from '../../api/seo'
+import { createSeoContentAsset, decideSeoContentReview, fetchSeoContentAssets, fetchSeoContentReviewHistory, fetchSeoKeywords, submitSeoContentReview, updateSeoContentAsset } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
@@ -26,6 +26,10 @@ const composingFields = ref(new Set())
 const allItems = ref([])
 const keywords = ref([])
 const sites = ref([])
+const page = ref(1)
+const pageSize = 20
+const total = ref(0)
+const statusCounts = ref({})
 const mode = computed(() => route.meta.contentMode || 'article')
 
 const definitions = {
@@ -76,22 +80,13 @@ const initials = computed(() => {
 })
 const baseItems = computed(() => allItems.value.filter((item) => config.value.types.includes(item.content_type)))
 const tabs = computed(() => [
-  { key: 'all', label: '全部', count: baseItems.value.length },
-  { key: 'draft', label: '草稿', count: baseItems.value.filter((item) => ['planned', 'drafting'].includes(item.status)).length },
-  { key: 'review', label: '待审核', count: baseItems.value.filter((item) => item.status === 'review').length },
-  { key: 'ready', label: '待发布', count: baseItems.value.filter((item) => item.status === 'ready').length },
-  { key: 'published', label: '已发布', count: baseItems.value.filter((item) => item.status === 'published').length },
+  { key: 'all', label: '全部', count: Object.values(statusCounts.value).reduce((sum, value) => sum + Number(value || 0), 0) },
+  { key: 'draft', label: '草稿', count: Number(statusCounts.value.planned || 0) + Number(statusCounts.value.drafting || 0) },
+  { key: 'review', label: '待审核', count: Number(statusCounts.value.review || 0) },
+  { key: 'ready', label: '待发布', count: Number(statusCounts.value.ready || 0) },
+  { key: 'published', label: '已发布', count: Number(statusCounts.value.published || 0) },
 ])
-const items = computed(() => {
-  const needle = query.value.trim().toLowerCase()
-  return baseItems.value.filter((item) => {
-    const statusMatch = activeStatus.value === 'all'
-      || (activeStatus.value === 'draft' && ['planned', 'drafting'].includes(item.status))
-      || item.status === activeStatus.value
-    const keywordText = keywordsFor(item).join(' ')
-    return statusMatch && (!needle || item.title.toLowerCase().includes(needle) || keywordText.toLowerCase().includes(needle))
-  })
-})
+const items = computed(() => baseItems.value)
 
 const templates = [
   { id: 'guide', name: '完整选型指南', description: '定义、场景、选型维度、FAQ · 2,500 字' },
@@ -156,10 +151,20 @@ async function load() {
   loading.value = true
   try {
     const [contentResult, keywordResult] = await Promise.all([
-      fetchSeoContentAssets({ tenantId: currentTenantId.value, siteId: siteId.value }),
+      fetchSeoContentAssets({
+        tenantId: currentTenantId.value,
+        siteId: siteId.value,
+        contentTypes: config.value.types.join(','),
+        status: activeStatus.value === 'draft' ? 'planned,drafting' : activeStatus.value === 'all' ? null : activeStatus.value,
+        query: query.value.trim(),
+        page: page.value,
+        pageSize,
+      }),
       fetchSeoKeywords({ tenantId: currentTenantId.value, siteId: siteId.value, pageSize: 200 }),
     ])
     allItems.value = contentResult.items
+    total.value = Number(contentResult.total || 0)
+    statusCounts.value = contentResult.status_counts || {}
     keywords.value = keywordResult.items
     error.value = ''
   } catch (e) { error.value = e.message } finally { loading.value = false }
@@ -273,7 +278,29 @@ async function rejectReview(row) {
   }
 }
 
-watch([siteId, mode], () => { activeStatus.value = 'all'; query.value = ''; load() })
+async function loadReviewHistory(row, event) {
+  if (!event.target.open || row.review_history_loaded || row.review_history_loading) return
+  row.review_history_loading = true
+  try {
+    const result = await fetchSeoContentReviewHistory({ contentId: row.id, tenantId: currentTenantId.value })
+    row.review_history = result.items || []
+    row.review_history_count = Number(result.total || 0)
+    row.review_history_loaded = true
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    row.review_history_loading = false
+  }
+}
+
+let loadTimer
+function scheduleLoad(delay = 0) {
+  clearTimeout(loadTimer)
+  loadTimer = setTimeout(() => { page.value = 1; load() }, delay)
+}
+watch([siteId, mode], () => { activeStatus.value = 'all'; query.value = ''; scheduleLoad() })
+watch(activeStatus, () => scheduleLoad())
+watch(query, () => scheduleLoad(260))
 watch(currentTenantId, loadSites)
 onMounted(loadSites)
 </script>
@@ -339,8 +366,9 @@ onMounted(loadSites)
                   <small v-if="row.review_submitted_at">提交：{{ formatTime(row.review_submitted_at) }} · {{ actorName(row.review_submitted_by, row.review_submitted_by_name) }}</small>
                   <small v-if="row.reviewed_at">审核：{{ formatTime(row.reviewed_at) }} · {{ actorName(row.reviewed_by, row.reviewed_by_name) }}</small>
                   <small v-if="row.review_note" class="review-note">{{ row.status === 'drafting' ? '退回意见' : '审核备注' }}：{{ row.review_note }}</small>
-                  <details v-if="row.review_history?.length" class="review-history">
-                    <summary>审核记录（{{ row.review_history.length }}）</summary>
+                  <details v-if="row.review_history_count" class="review-history" @toggle="loadReviewHistory(row, $event)">
+                    <summary>审核记录（{{ row.review_history_count }}）</summary>
+                    <small v-if="row.review_history_loading">加载中…</small>
                     <small v-for="event in row.review_history" :key="event.id">
                       {{ reviewActionName(event.action) }} · {{ actorName(event.actor_id, event.actor_name) }} · {{ formatTime(event.created_at) }}<template v-if="event.note"> · {{ event.note }}</template>
                     </small>
@@ -368,6 +396,9 @@ onMounted(loadSites)
               <tr v-if="!items.length"><td class="table-empty" colspan="7">{{ query ? '没有匹配的内容任务' : `暂无${config.title}任务` }}</td></tr>
             </tbody>
           </table>
+        </div>
+        <div v-if="total > pageSize" class="content-pagination">
+          <el-pagination v-model:current-page="page" :page-size="pageSize" :total="total" layout="prev, pager, next, total" @current-change="load" />
         </div>
       </section>
     </main>
@@ -414,4 +445,5 @@ onMounted(loadSites)
 @media(max-width:700px){.content-page-head{height:auto;padding:16px;align-items:flex-start;gap:15px}.content-page-head p{max-width:300px}.page-actions .ghost-action{display:none}.content-body{padding:14px}.manifesto-copy{padding:24px 20px}.manifesto-copy h2{font-size:20px}.content-steps{grid-template-columns:repeat(2,1fr);gap:22px;padding:22px}.content-steps li::after{display:none}.task-tabs{flex-wrap:wrap}.task-tabs h2{width:100%}.task-search{width:100%}.task-search input{min-width:0;flex:1}.template-grid{grid-template-columns:1fr}.suite-form{grid-template-columns:1fr}.suite-form .full{grid-column:auto}}
 .status-review{background:#fff7e6;color:#b76e00}.status-ready{background:#eff4ff;color:#2563eb}
 .review-history{margin-top:4px;color:#667085;font-size:11px}.review-history summary{cursor:pointer}.review-history small{padding:2px 0 0 10px}
+.content-pagination{padding:12px 14px;display:flex;justify-content:flex-end;border-top:1px solid #e8eaf0}
 </style>
