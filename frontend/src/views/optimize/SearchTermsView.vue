@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { addNegative, expandKeyword, fetchSearchTerms, syncSearchTerms } from '../../api/searchTerms'
 import { session } from '../../store/session'
+import { formatUtcTimestamp } from '../../utils/dateTime'
 
 const TENANT_ID = computed(() => session.tenantId)
 const loading = ref(false)
@@ -65,7 +66,7 @@ onMounted(load)
 const fmtInt = (v) => (v == null ? '—' : Number(v).toLocaleString('zh-CN'))
 const fmtMoney = (v) => (v == null ? '—' : '¥' + Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 2 }))
 const fmtPct = (v) => (v == null ? '—' : Number(v).toFixed(2) + '%')
-const fmtTime = (v) => (v ? v.slice(0, 16).replace('T', ' ') : '—')
+const fmtTime = (v) => formatUtcTimestamp(v)
 const negDialogVisible = ref(false)
 const negForm = ref({
   word: '',

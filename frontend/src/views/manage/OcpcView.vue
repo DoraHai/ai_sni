@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { fetchOcpcPackages } from '../../api/ocpc'
 import { session } from '../../store/session'
+import { formatUtcTimestamp } from '../../utils/dateTime'
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
 const tenantName = computed(() => session.tenants.find((item) => item.id === TENANT_ID.value)?.name || '当前客户')
@@ -179,7 +180,7 @@ const adequacyBanner = computed(() => {
             </div>
           </div>
         </div>
-        <div class="pkg-foot">同步于 {{ p.synced_at ? p.synced_at.slice(0, 16).replace('T', ' ') : '—' }}</div>
+        <div class="pkg-foot">同步于 {{ formatUtcTimestamp(p.synced_at) }}</div>
       </div>
     </div>
 

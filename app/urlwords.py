@@ -3,14 +3,14 @@
 首期只爬给定页面文本（原型推荐档），子链接 1-2 层二期再说。
 单 URL 最多产出 30 个候选词（原型口径）。
 """
-import ipaddress
 import logging
 import re
-from urllib.parse import urlparse
 
 import httpx
 import jieba.analyse
 from bs4 import BeautifulSoup
+
+from app.security.public_http import PublicHttpError, fetch_public_url, normalize_public_url
 
 logger = logging.getLogger(__name__)
 
@@ -38,35 +38,32 @@ class UrlFetchError(Exception):
 
 
 def validate_url(url: str) -> str:
-    """只允许 http/https 公网地址（基础 SSRF 防护）。返回规范化 URL。"""
-    url = url.strip()
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https") or not parsed.hostname:
-        raise UrlFetchError(f"非法 URL（只支持 http/https）: {url}")
-    host = parsed.hostname
+    """Validate URL syntax and literal addresses before the async DNS check."""
+    value = url.strip()
     try:
-        ip = ipaddress.ip_address(host)
-        if not ip.is_global:
-            raise UrlFetchError(f"禁止访问内网地址: {url}")
-    except ValueError:
-        if host in ("localhost",) or host.endswith(".local") or host.endswith(".internal"):
-            raise UrlFetchError(f"禁止访问内网地址: {url}")
-    return url
+        normalize_public_url(value)
+    except PublicHttpError as exc:
+        raise UrlFetchError(str(exc)) from exc
+    # Preserve the historical return contract for GEO callers that only use this
+    # synchronous preflight. fetch_public_url performs canonicalization itself.
+    return value
 
 
 async def fetch_page_text(url: str) -> tuple[str, str]:
     """抓页面，返回 (title, 正文文本)。script/style/导航类标签剔除。"""
     url = validate_url(url)
     try:
-        async with httpx.AsyncClient(
-            timeout=FETCH_TIMEOUT, follow_redirects=True, headers={"User-Agent": UA}
-        ) as http:
-            resp = await http.get(url)
-    except httpx.HTTPError as e:
+        resp = await fetch_public_url(
+            url,
+            timeout=FETCH_TIMEOUT,
+            max_response_bytes=MAX_CONTENT_BYTES,
+            headers={"User-Agent": UA},
+        )
+    except (PublicHttpError, httpx.HTTPError) as e:
         raise UrlFetchError(f"抓取失败 {url}: {e}") from e
     if resp.status_code != 200:
         raise UrlFetchError(f"抓取失败 {url}: HTTP {resp.status_code}")
-    content = resp.content[:MAX_CONTENT_BYTES]
+    content = resp.body
 
     soup = BeautifulSoup(content, "html.parser")
     for tag in soup(["script", "style", "noscript", "nav", "footer", "header", "iframe"]):

@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { createTenant, createUser, fetchTenants, fetchUsers, updateUser } from '../../api/auth'
 import { createRole, deleteRole, fetchRoles, updateRole } from '../../api/roles'
 import { session } from '../../store/session'
+import { formatUtcTimestamp } from '../../utils/dateTime'
 
 const tab = ref('accounts')
 const loading = ref(false)
@@ -42,7 +43,6 @@ async function load() {
     usersData.value = users
     rolesData.value = roles
     tenantOptions.value = tenants.tenants || []
-    session.setTenants(tenantOptions.value)
   } catch (e) {
     error.value = e
   } finally {
@@ -57,7 +57,7 @@ const menuGroups = computed(() => {
   for (const m of menus.value) (g[m.group] ||= []).push(m)
   return Object.entries(g).map(([group, items]) => ({ group, items }))
 })
-const fmtTime = (v) => (v ? v.slice(0, 16).replace('T', ' ') : '从未登录')
+const fmtTime = (v) => formatUtcTimestamp(v, { fallback: '从未登录' })
 
 // ===== 账号 =====
 const userDialog = ref(false)
@@ -100,29 +100,21 @@ async function submitTenant() {
       admin_password: tform.adminPassword || undefined,
       admin_display_name: tform.adminDisplayName.trim() || undefined,
     })
-    const t = await fetchTenants()
-    session.setTenants(t.tenants || [])
-    if (res.tenant?.id) session.setTenant(res.tenant.id)
+    session.requestTenantReload()
     if (res.admin_user) {
       ElMessage.success(`客户「${res.tenant?.name}」已创建，并建了账号 ${res.admin_user.username}`)
     } else {
       ElMessage.success(
-        `客户「${res.tenant?.name}」已创建。这是空客户，业务数据不会从别的客户带过来；请顶栏切过去后走 GEO 开户向导。`,
+        `客户「${res.tenant?.name}」已创建。这是空客户，业务数据不会从别的客户带过来；请先在“客户与模块”中开通所需模块。`,
       )
     }
     tenantDialog.value = false
-    load()
+    await load()
   } catch (e) {
     ElMessage.error(e.message || '创建客户失败')
   } finally {
     savingTenant.value = false
   }
-}
-
-function switchToTenant(row) {
-  if (!row?.id) return
-  session.setTenant(row.id)
-  ElMessage.success(`已切换到「${row.name}」`)
 }
 
 function openCreateUser() {
@@ -279,22 +271,13 @@ onMounted(load)
       <!-- ===== 账号 ===== -->
       <el-tab-pane label="账号" name="accounts">
         <div class="table-panel tenant-panel">
-          <div class="panel-kicker">已建客户（{{ session.tenants.length }}）</div>
-          <el-table :data="session.tenants" row-key="id" size="small">
+          <div class="panel-kicker">已建客户（{{ tenantOptions.length }}）</div>
+          <el-table :data="tenantOptions" row-key="id" size="small">
             <el-table-column prop="id" label="ID" width="72" />
             <el-table-column prop="name" label="客户名称" min-width="180" />
             <el-table-column label="当前" width="90">
               <template #default="{ row }">
                 <el-tag v-if="row.id === session.tenantId" type="success" size="small">使用中</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="140" fixed="right">
-              <template #default="{ row }">
-                <el-button
-                  size="small"
-                  :disabled="row.id === session.tenantId"
-                  @click="switchToTenant(row)"
-                >切到此客户</el-button>
               </template>
             </el-table-column>
             <template #empty>
