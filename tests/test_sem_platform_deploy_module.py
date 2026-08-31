@@ -18,7 +18,23 @@ def _read(path: Path) -> str:
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash is unavailable")
 @pytest.mark.parametrize("path", [MODULE_PATH, INSTALLER_PATH])
 def test_sem_platform_scripts_are_valid_bash(path: Path) -> None:
-    subprocess.run(["bash", "-n", str(path)], check=True)
+    relative_path = path.relative_to(ROOT).as_posix()
+    indexed_script = subprocess.run(
+        ["git", "show", f":{relative_path}"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    ).stdout
+
+    assert b"\r\n" not in indexed_script
+    subprocess.run(["bash", "-n"], input=indexed_script, check=True)
+
+
+def test_sem_platform_scripts_are_exported_with_lf() -> None:
+    attributes = _read(ROOT / ".gitattributes").splitlines()
+
+    assert "/ops/platform-deploy/install-sem.sh text eol=lf" in attributes
+    assert "/ops/platform-deploy/modules/sem text eol=lf" in attributes
 
 
 def test_sem_module_validates_archive_identity_and_migration_policy() -> None:
