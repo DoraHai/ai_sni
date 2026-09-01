@@ -33,6 +33,7 @@ from app.api.seo import (
     _site_page_status_after_audit,
     _content_keywords,
     _content_payload,
+    _fetch_internal_link_document,
     _metric_payload,
     _missing_content_keywords,
     _number_or_text,
@@ -78,6 +79,7 @@ from app.models.seo import (
     SeoSitePage,
 )
 from app.models.tenant import Tenant
+from app.geo.audit import GeoAuditError, PageDocument
 from app.permissions import CLIENT_PERMS, MENU_KEYS, OPERATOR_PERMS
 from app.security.auth import AuthContext, _required
 from app.seo_serp import SerpProviderError
@@ -1110,6 +1112,123 @@ def test_seo_ai_quick_actions_return_expected_contract(
     assert response["action"] == action
     assert expected_key in response
     chat.assert_awaited_once()
+
+
+def test_seo_ai_repairs_incomplete_result_once_without_double_charging() -> None:
+    request = SeoContentAssistRequest(
+        tenant_id=1,
+        action="generate",
+        keyword_ids=[11],
+    )
+    tenant = Tenant(id=1, name="测试品牌")
+    keywords = [
+        SeoKeywordAsset(
+            id=11,
+            tenant_id=1,
+            keyword="目标词",
+            priority="P1",
+            status="active",
+            source="manual",
+        )
+    ]
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+    repaired = {
+        "title": "目标词指南",
+        "outline": "一、概述",
+        "content": "这是自然包含目标词的正文。",
+    }
+
+    with (
+        patch("app.api.seo._tenant", new=AsyncMock(return_value=tenant)),
+        patch("app.api.seo._content_keywords", new=AsyncMock(return_value=keywords)),
+        patch("app.api.seo.is_enabled", return_value=True),
+        patch("app.api.seo.charge_seo_usage", new=AsyncMock()) as charge,
+        patch("app.api.seo.refund_seo_usage", new=AsyncMock()) as refund,
+        patch(
+            "app.api.seo.chat_json",
+            new=AsyncMock(side_effect=[{"content": "不完整"}, repaired]),
+        ) as chat,
+    ):
+        response = asyncio.run(assist_seo_content(request, AsyncMock(), context))
+
+    assert response["title"] == "目标词指南"
+    assert chat.await_count == 2
+    charge.assert_awaited_once()
+    refund.assert_not_awaited()
+    assert "必须返回的 JSON 字段" in chat.await_args_list[1].args[1]
+
+
+def test_internal_link_fetch_retries_transient_error() -> None:
+    document = PageDocument(
+        requested_url="https://example.com",
+        final_url="https://example.com",
+        html="<html><title>标题</title></html>",
+        content_type="text/html",
+    )
+    with (
+        patch(
+            "app.api.seo.safe_fetch",
+            new=AsyncMock(
+                side_effect=[GeoAuditError("网站连接失败：timeout"), document]
+            ),
+        ) as fetch,
+        patch("app.api.seo.asyncio.sleep", new=AsyncMock()) as sleep,
+    ):
+        result = asyncio.run(_fetch_internal_link_document(document.requested_url))
+
+    assert result is document
+    assert fetch.await_count == 2
+    sleep.assert_awaited_once_with(0.25)
+
+
+def test_internal_link_fetch_retries_first_empty_title_response() -> None:
+    empty = PageDocument(
+        requested_url="https://example.com",
+        final_url="https://example.com",
+        html="<html><body>暂无标题</body></html>",
+        content_type="text/html",
+    )
+    titled = PageDocument(
+        requested_url=empty.requested_url,
+        final_url=empty.final_url,
+        html="<html><title>第二次抓取成功</title></html>",
+        content_type="text/html",
+    )
+    with (
+        patch("app.api.seo.safe_fetch", new=AsyncMock(side_effect=[empty, titled])) as fetch,
+        patch("app.api.seo.asyncio.sleep", new=AsyncMock()) as sleep,
+    ):
+        result = asyncio.run(_fetch_internal_link_document(empty.requested_url))
+
+    assert result is titled
+    assert fetch.await_count == 2
+    sleep.assert_awaited_once_with(0.25)
+
+
+def test_internal_link_fetch_does_not_retry_permanent_error() -> None:
+    with (
+        patch(
+            "app.api.seo.safe_fetch",
+            new=AsyncMock(side_effect=GeoAuditError("禁止诊断本机、内网或保留地址")),
+        ) as fetch,
+        patch("app.api.seo.asyncio.sleep", new=AsyncMock()) as sleep,
+        pytest.raises(GeoAuditError),
+    ):
+        asyncio.run(_fetch_internal_link_document("https://example.com"))
+
+    fetch.assert_awaited_once()
+    sleep.assert_not_awaited()
+
+
+def test_crawl_run_defaults_to_queued_without_changing_automation_default() -> None:
+    assert SeoCrawlRun.__table__.c.status.default.arg == "queued"
+    assert SeoAutomationRun.__table__.c.status.default.arg == "running"
 
 
 def test_rank_delta_uses_smaller_rank_as_improvement() -> None:

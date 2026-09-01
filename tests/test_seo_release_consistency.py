@@ -213,6 +213,7 @@ def test_original_content_brief_supports_bounded_multi_keywords() -> None:
     assert source_path_allowed("migrations/versions/20260831_0081_seo_monitor_tenant_cascade.py")
     assert source_path_allowed("migrations/versions/20260901_0082_seo_automation_runs.py")
     assert source_path_allowed("migrations/versions/20260901_0083_seo_manual_rerun.py")
+    assert source_path_allowed("migrations/versions/20260901_0084_seo_crawl_queued_status.py")
 
 
 def test_content_review_ui_supports_rejected_draft_resubmission_and_audit_details() -> None:
@@ -274,7 +275,7 @@ def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:
 
 def test_seo_workflows_require_the_current_reviewed_migration_head() -> None:
     root = Path(__file__).parents[1]
-    expected = "0083_seo_manual_rerun (head)"
+    expected = "0084_seo_crawl_queued_status (head)"
     baseline = (root / ".github/workflows/seo-baseline-check.yml").read_text(encoding="utf-8")
     production = (root / ".github/workflows/production-seo-deploy.yml").read_text(encoding="utf-8")
     assert expected in baseline
