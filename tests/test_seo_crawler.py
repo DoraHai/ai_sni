@@ -111,6 +111,36 @@ def test_crawl_site_uses_robots_sitemap_and_internal_links() -> None:
     assert result["robots_status"] == 200
 
 
+def test_crawl_site_deduplicates_seed_also_listed_in_sitemap() -> None:
+    pages = {
+        "https://example.com/robots.txt": _result(
+            "https://example.com/robots.txt",
+            "User-agent: *\nAllow: /\nSitemap: https://example.com/sitemap.xml",
+            "text/plain",
+        ),
+        "https://example.com/sitemap.xml": _result(
+            "https://example.com/sitemap.xml",
+            '<urlset><url><loc>https://example.com/</loc></url></urlset>',
+            "application/xml",
+        ),
+        "https://example.com/": _result(
+            "https://example.com/",
+            "<html><head><title>Home</title></head><body><h1>Home</h1></body></html>",
+        ),
+    }
+    fetch_counts: dict[str, int] = {}
+
+    async def fake_fetch(url: str, **_: object) -> FetchResult:
+        fetch_counts[url] = fetch_counts.get(url, 0) + 1
+        return pages[url]
+
+    result = asyncio.run(crawl_site("https://example.com", max_urls=3, fetcher=fake_fetch))
+
+    assert [item["url"] for item in result["snapshots"]] == ["https://example.com/"]
+    assert result["snapshots"][0]["discovery_source"] == "seed"
+    assert fetch_counts["https://example.com/"] == 1
+
+
 def test_fetch_url_blocks_loopback_before_network_request() -> None:
     result = asyncio.run(fetch_url("http://127.0.0.1/admin"))
     assert result.status_code is None
