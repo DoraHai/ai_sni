@@ -105,6 +105,9 @@ class KeywordCandidate(Base):
     # AI 建议首次出价 + 理由（迁移 0022，加入计划时作默认出价 + 小字依据；新词无效果数据，依据指导价/竞争度/搜索量）
     ai_suggested_bid: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
     ai_bid_reason: Mapped[str | None] = mapped_column(Text)
+    # 批量预设字段由历史迁移 0060 创建；这里只恢复被旧前端快照覆盖掉的 ORM 映射。
+    preset_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    preset_match_mode: Mapped[str | None] = mapped_column(String(10))  # exact / phrase / smart
 
     raw: Mapped[dict | None] = mapped_column(JSONB)  # 百度原始行兜底
     synced_at: Mapped[datetime | None] = mapped_column(DateTime)

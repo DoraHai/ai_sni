@@ -44,7 +44,7 @@ WB_ACTION_STATUS_LABELS = {
     "pending": "执行结果待确认",
     "reconcile": "待人工对账",
 }
-MATCH_MODE_LABELS = {"exact": "精确", "phrase": "短语"}
+MATCH_MODE_LABELS = {"exact": "精确", "phrase": "短语", "smart": "智能匹配"}
 
 
 class WritebackAction(Base):
@@ -66,7 +66,7 @@ class WritebackAction(Base):
 
     action_type: Mapped[str] = mapped_column(String(20), nullable=False)  # 见 WRITEBACK_ACTION_LABELS
     word: Mapped[str] = mapped_column(Text, nullable=False)  # 否词 / 拓词（来自搜索词）；预算类写回存对象名
-    match_mode: Mapped[str | None] = mapped_column(String(10))  # exact / phrase
+    match_mode: Mapped[str | None] = mapped_column(String(10))  # exact / phrase / smart
     price: Mapped[float | None] = mapped_column(Numeric(10, 2))  # 转拓词出价
     # 通用数值前后快照（账户日预算/将来计划预算等数值类写回用：old→new）
     old_value: Mapped[float | None] = mapped_column(Numeric(12, 2))

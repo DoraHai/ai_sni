@@ -5,6 +5,7 @@
 """
 import logging
 from datetime import date, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -195,7 +196,7 @@ class ExpandRequest(BaseModel):
     word: str
     adgroup_id: int
     price: float
-    match_mode: str = "phrase"
+    match_mode: Literal["exact", "phrase", "smart"] = "phrase"
 
 
 @router.post("/negative")
@@ -213,6 +214,8 @@ async def add_negative(
         )
     except WritebackError as e:
         raise HTTPException(400, str(e))
+    if rec.status == "failed":
+        raise HTTPException(502, "百度否词写回失败，已记录失败台账，请稍后重试")
     return {"status": "ok", "dry_run": rec.dry_run, "action": _action_dict(rec)}
 
 
@@ -232,6 +235,8 @@ async def expand_to_keyword(
         )
     except WritebackError as e:
         raise HTTPException(400, str(e))
+    if rec.status == "failed":
+        raise HTTPException(502, "百度关键词写回失败，已记录失败台账，请稍后重试")
     return {"status": "ok", "dry_run": rec.dry_run, "action": _action_dict(rec)}
 
 
