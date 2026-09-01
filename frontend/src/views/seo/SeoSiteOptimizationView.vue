@@ -102,12 +102,14 @@ async function saveEdit() {
   } catch (e) { ElMessage.error(e.message) } finally { saving.value = false }
 }
 async function audit(row) {
+  if (batchAuditing.value || auditing.value.has(row.id)) return ElMessage.warning('页面检测正在进行，请勿重复提交')
   const next = new Set(auditing.value); next.add(row.id); auditing.value = next
   try { await auditSeoSitePage({ pageId: row.id, tenantId: currentTenantId.value }); ElMessage.success('页面检测完成'); await load() }
   catch (e) { ElMessage.error(e.message); await load() }
   finally { const done = new Set(auditing.value); done.delete(row.id); auditing.value = done }
 }
 async function auditPending() {
+  if (batchAuditing.value || auditing.value.size > 0) return ElMessage.warning('页面检测正在进行，请勿重复提交')
   batchAuditing.value = true
   try {
     if (selectedRows.value.length) {
