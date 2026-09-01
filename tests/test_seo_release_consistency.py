@@ -339,6 +339,9 @@ def test_seo_content_and_rank_views_are_site_scoped_and_html_safe() -> None:
     assert "data.value?.diagnoses||[]" in keyword_detail
     assert 'optimizationTask.value.id' in keyword_detail
     assert "查看优化任务" in keyword_detail
+    alerts = (root / "frontend/src/views/seo/SeoAlertsView.vue").read_text(encoding="utf-8")
+    assert "item.device||''" in alerts
+    assert "item.region||''" in alerts
     assert "当前引擎和设备暂无记录" in keyword_detail
     assert 'query:{engine,device}' in keyword_detail
     assert 'rankEngines.has(String(route.query.engine))' in ranking

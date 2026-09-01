@@ -259,6 +259,7 @@ def test_keyword_history_query_is_engine_device_and_tenant_scoped() -> None:
             tenant_id=1,
             engine="sogou",
             device="desktop",
+            region="全国",
             days=90,
             session=session,
         )
@@ -269,6 +270,7 @@ def test_keyword_history_query_is_engine_device_and_tenant_scoped() -> None:
     assert "seo_rank_snapshots.keyword_id" in sql
     assert "seo_rank_snapshots.engine" in sql
     assert "seo_rank_snapshots.device" in sql
+    assert "seo_rank_snapshots.region" in sql
     assert result["engine"] == "sogou"
     assert result["keyword"]["latest_rank"] == 2
     assert result["rank_history"] == [

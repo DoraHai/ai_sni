@@ -23,7 +23,13 @@ logger = logging.getLogger(__name__)
 AUTO_RANK_DROP_AUTHOR = "SEO 自动优化建议"
 AUTO_RANK_DROP_TITLE_PREFIX = "【自动建议·勿发布】"
 ACTIVE_CONTENT_STATUSES = {"planned", "drafting", "review", "ready"}
-ENGINE_LABELS = {"baidu": "百度", "google": "Google", "bing": "Bing"}
+ENGINE_LABELS = {
+    "baidu": "百度",
+    "google": "Google",
+    "bing": "Bing",
+    "360": "360",
+    "sogou": "搜狗",
+}
 DEVICE_LABELS = {"desktop": "PC", "mobile": "移动端"}
 
 
@@ -53,9 +59,9 @@ def _rank_drop_candidates(
     trigger_snapshot_ids: set[int],
     threshold: int,
 ) -> list[RankDropCandidate]:
-    grouped: dict[tuple[int, str, str], list[SeoRankSnapshot]] = defaultdict(list)
+    grouped: dict[tuple[int, str, str, str], list[SeoRankSnapshot]] = defaultdict(list)
     for row in sorted(rows, key=lambda value: (value.checked_at, value.id), reverse=True):
-        grouped[(int(row.keyword_id), row.engine, row.device)].append(row)
+        grouped[(int(row.keyword_id), row.engine, row.device, row.region)].append(row)
 
     candidates: list[RankDropCandidate] = []
     for values in grouped.values():
@@ -82,7 +88,7 @@ def _suggestion_outline(
         [
             "自动触发依据（勿直接发布）",
             f"- 目标关键词：{keyword.keyword}",
-            f"- 监测口径：{engine} / {device}",
+            f"- 监测口径：{engine} / {device} / {latest.region}",
             f"- 排名变化：{_rank_label(candidate.previous.rank)} → {_rank_label(latest.rank)}，下降 {candidate.decline} 位",
             f"- 当前承接页：{landing}",
             "",
@@ -141,6 +147,7 @@ async def create_rank_drop_content_tasks(
                     SeoRankSnapshot.keyword_id,
                     SeoRankSnapshot.engine,
                     SeoRankSnapshot.device,
+                    SeoRankSnapshot.region,
                 ),
                 order_by=(
                     SeoRankSnapshot.checked_at.desc(),
@@ -246,6 +253,7 @@ async def create_rank_drop_content_tasks(
             source_text=(
                 f"rank_snapshot_id={candidate.latest.id}; "
                 f"engine={candidate.latest.engine}; device={candidate.latest.device}; "
+                f"region={candidate.latest.region}; "
                 f"previous_rank={candidate.previous.rank}; latest_rank={candidate.latest.rank}"
             ),
             author=AUTO_RANK_DROP_AUTHOR,

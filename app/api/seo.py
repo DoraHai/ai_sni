@@ -9,7 +9,7 @@ import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, Response, UploadFile
@@ -1163,6 +1163,7 @@ async def get_seo_keyword(
     tenant_id: int,
     engine: str = Query("baidu"),
     device: Literal["desktop", "mobile"] = "desktop",
+    region: str = Query("全国", min_length=1, max_length=80),
     days: int = Query(90, ge=1, le=366),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -1176,6 +1177,7 @@ async def get_seo_keyword(
                 SeoRankSnapshot.keyword_id == keyword_id,
                 SeoRankSnapshot.engine == engine,
                 SeoRankSnapshot.device == device,
+                SeoRankSnapshot.region == region,
                 SeoRankSnapshot.checked_at >= since,
             )
             .order_by(SeoRankSnapshot.checked_at.asc(), SeoRankSnapshot.id.asc())
@@ -1254,6 +1256,7 @@ async def get_seo_keyword(
         "rank_history": [_rank_payload(rank) for rank in own],
         "competitor_history": competitors,
         "engine": engine,
+        "region": region,
         "optimization_task": _content_payload(content_task) if content_task else None,
         "diagnoses": diagnoses,
     }
@@ -3506,9 +3509,9 @@ async def seo_alerts(
     backlinks = list(await session.scalars(select(SeoBacklink).where(*backlink_conditions)))
     contents = list(await session.scalars(select(SeoContentAsset).where(*content_conditions)))
     rank_rows = list(await session.scalars(select(SeoRankSnapshot).where(*rank_conditions).order_by(SeoRankSnapshot.checked_at.desc(), SeoRankSnapshot.id.desc())))
-    grouped: dict[tuple[int, str], list[SeoRankSnapshot]] = defaultdict(list)
+    grouped: dict[tuple[int, str, str], list[SeoRankSnapshot]] = defaultdict(list)
     for row in rank_rows:
-        key = (int(row.keyword_id), row.device)
+        key = (int(row.keyword_id), row.device, row.region)
         if len(grouped[key]) < 2:
             grouped[key].append(row)
     alerts: list[dict[str, Any]] = []
@@ -3519,7 +3522,7 @@ async def seo_alerts(
         for keyword_id in _content_asset_keyword_ids(content)
     }
     threshold = max(1, get_settings().seo_rank_drop_task_threshold)
-    for (keyword_id, device), values in grouped.items():
+    for (keyword_id, device, region), values in grouped.items():
         decline = (
             _effective_rank_for_drop(values[0].rank)
             - _effective_rank_for_drop(values[1].rank)
@@ -3529,7 +3532,7 @@ async def seo_alerts(
         if decline >= threshold:
             keyword = keyword_map.get(keyword_id)
             content = content_by_keyword.get(keyword_id)
-            alerts.append({"type": "rank_drop", "severity": "high" if decline >= 10 else "medium", "title": f"{keyword.keyword if keyword else keyword_id} 排名下降", "detail": f"从{_rank_position_label(values[1].rank)}下降到{_rank_position_label(values[0].rank)}", "evidence": f"最近两次 {engine}/{device} 排名下降 {decline} 位", "action_label": "查看优化任务" if content else "查看关键词诊断", "href": f"/seo/content/editor?id={content.id}&site_id={content.site_id}" if content else f"/seo/keywords/{keyword_id}?engine={engine}&device={device}", "object_id": keyword_id, "content_task_id": content.id if content else None, "site_id": values[0].site_id, "occurred_at": _rank_iso(values[0].checked_at)})
+            alerts.append({"type": "rank_drop", "severity": "high" if decline >= 10 else "medium", "title": f"{keyword.keyword if keyword else keyword_id} 排名下降", "detail": f"从{_rank_position_label(values[1].rank)}下降到{_rank_position_label(values[0].rank)}", "evidence": f"最近两次 {engine}/{device}/{region} 排名下降 {decline} 位", "action_label": "查看优化任务" if content else "查看关键词诊断", "href": f"/seo/content/editor?id={content.id}&site_id={content.site_id}" if content else f"/seo/keywords/{keyword_id}?engine={engine}&device={device}&region={quote(region)}", "object_id": keyword_id, "content_task_id": content.id if content else None, "device": device, "region": region, "site_id": values[0].site_id, "occurred_at": _rank_iso(values[0].checked_at)})
     for item in keywords:
         if not item.landing_page:
             alerts.append({"type": "missing_landing", "severity": "medium", "title": f"{item.keyword} 缺少承接页面", "detail": "高价值关键词尚未绑定站内页面", "evidence": "关键词的目标落地页字段为空", "action_label": "配置承接页面", "href": f"/seo/keywords/{item.id}", "object_id": item.id, "site_id": item.site_id, "occurred_at": _database_iso(item.updated_at)})

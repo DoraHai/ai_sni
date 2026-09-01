@@ -14,7 +14,13 @@ from app.seo_rank_optimization import (
 )
 
 
-def _rank(snapshot_id: int, rank: int | None, checked_at: datetime) -> SeoRankSnapshot:
+def _rank(
+    snapshot_id: int,
+    rank: int | None,
+    checked_at: datetime,
+    *,
+    region: str = "全国",
+) -> SeoRankSnapshot:
     return SeoRankSnapshot(
         id=snapshot_id,
         tenant_id=1,
@@ -22,7 +28,7 @@ def _rank(snapshot_id: int, rank: int | None, checked_at: datetime) -> SeoRankSn
         keyword_id=2,
         engine="google",
         device="desktop",
-        region="全国",
+        region=region,
         subject_type="own",
         rank=rank,
         source="dataforseo",
@@ -53,6 +59,19 @@ def test_rank_drop_candidates_treat_missing_latest_as_outside_top_100() -> None:
         threshold=3,
     )
     assert candidates[0].decline == 93
+
+
+def test_rank_drop_candidates_do_not_compare_different_regions() -> None:
+    now = datetime(2026, 9, 1, 12, 0, 0)
+    candidates = _rank_drop_candidates(
+        [
+            _rank(10, 8, now - timedelta(days=1), region="全国"),
+            _rank(11, 18, now, region="上海"),
+        ],
+        trigger_snapshot_ids={11},
+        threshold=3,
+    )
+    assert candidates == []
 
 
 class _FakeSession:
