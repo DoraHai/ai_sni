@@ -1,10 +1,27 @@
 import ast
 import asyncio
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from app.baidu.writeback import _claim_funds_approval
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
+os.environ.setdefault("BAIDU_APP_ID", "test-app")
+os.environ.setdefault("BAIDU_SECRET_KEY", "1234567890abcdefsecret")
+os.environ.setdefault("BAIDU_DEFAULT_USERNAME", "test-user")
+os.environ.setdefault("BAIDU_DEFAULT_UCID", "1")
+os.environ.setdefault("BAIDU_SELF_ACCESS_TOKEN", "test-token")
+os.environ.setdefault("BAIDU_SELF_TOKEN_EXPIRES_AT", "2099-01-01T00:00:00")
+os.environ.setdefault(
+    "CRYPTO_MASTER_KEY_B64", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+)
+os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
+
+from app.baidu.writeback import (
+    _active_account,
+    _claim_funds_approval,
+    _preflight_active_account,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,7 +47,8 @@ def _call_names(node: ast.AST) -> list[str]:
 
 
 def test_high_risk_writebacks_keep_approval_and_row_lock_contracts():
-    tree = ast.parse((ROOT / "app/baidu/writeback.py").read_text(encoding="utf-8"))
+    module_source = (ROOT / "app/baidu/writeback.py").read_text(encoding="utf-8")
+    tree = ast.parse(module_source)
     required = {
         "apply_keyword_writeback": 2,
         "apply_campaign_budget_writeback": 1,
@@ -42,21 +60,85 @@ def test_high_risk_writebacks_keep_approval_and_row_lock_contracts():
         assert "_claim_funds_approval" in calls, function_name
         assert "_ensure_no_unresolved_funds_writeback" in calls, function_name
         assert "_record_writeback_exception" in calls, function_name
-        source = ast.get_source_segment(
-            (ROOT / "app/baidu/writeback.py").read_text(encoding="utf-8"),
-            _async_function(tree, function_name),
+        function_source = ast.get_source_segment(
+            module_source, _async_function(tree, function_name)
         )
-        assert "session.refresh(rec, with_for_update=True)" in source, function_name
+        assert (
+            "session.refresh(rec, with_for_update=True)" in function_source
+        ), function_name
         assert calls.count("with_for_update") >= minimum_local_locks, function_name
 
-    active_account_calls = _call_names(_async_function(tree, "_active_account"))
-    assert "with_for_update" in active_account_calls
+    active_account_source = ast.get_source_segment(
+        module_source, _async_function(tree, "_active_account")
+    )
+    assert "_load_active_account" in active_account_source
+    assert "lock=True" in active_account_source
     for function_name in (
         "apply_campaign_schedule_writeback",
         "apply_campaign_region_writeback",
         "apply_adgroup_pause_writeback",
     ):
         assert "with_for_update" in _call_names(_async_function(tree, function_name))
+
+
+def test_budget_preflight_reads_finish_before_funds_rows_are_locked():
+    source = (ROOT / "app/baidu/writeback.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    account_loader_source = ast.get_source_segment(
+        source, _async_function(tree, "_load_active_account")
+    )
+    assert "if lock:" in account_loader_source
+    assert "query = query.with_for_update()" in account_loader_source
+
+    preflight_source = ast.get_source_segment(
+        source, _async_function(tree, "_preflight_active_account")
+    )
+    assert "_load_active_account" in preflight_source
+    assert "lock=False" in preflight_source
+    assert source.count("_preflight_active_account(") == 3
+
+    campaign_source = ast.get_source_segment(
+        source, _async_function(tree, "apply_campaign_budget_writeback")
+    )
+    campaign_preflight = campaign_source.index(".get_account_info(")
+    campaign_lock = campaign_source.index("execution_options(populate_existing=True)")
+    campaign_guard = campaign_source.index("_ensure_no_unresolved_funds_writeback")
+    assert "_preflight_active_account" in campaign_source[:campaign_preflight]
+    assert campaign_preflight < campaign_lock < campaign_guard
+    assert "_active_account" in campaign_source[campaign_lock:]
+    assert "execution_options(populate_existing=True)" in campaign_source
+    assert "locked_account_id != preflight_account_id" in campaign_source
+
+    account_source = ast.get_source_segment(
+        source, _async_function(tree, "apply_account_budget_writeback")
+    )
+    account_preflight = account_source.index(".get_account_info(")
+    account_lock = account_source.index("_active_account(", account_preflight)
+    account_guard = account_source.index("_ensure_no_unresolved_funds_writeback")
+    assert "_preflight_active_account" in account_source[:account_preflight]
+    assert account_preflight < account_lock < account_guard
+    assert "acc.id != preflight_account_id" in account_source
+
+
+def test_active_account_preflight_query_omits_row_lock_until_requested():
+    account = SimpleNamespace(id=17)
+    unlocked_session = SimpleNamespace(
+        scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [account]))
+    )
+    locked_session = SimpleNamespace(
+        scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [account]))
+    )
+
+    unlocked = asyncio.run(_preflight_active_account(unlocked_session, 7, 17))
+    locked = asyncio.run(_active_account(locked_session, 7, 17))
+
+    assert unlocked is account
+    assert locked is account
+    unlocked_query = str(unlocked_session.scalars.await_args.args[0]).upper()
+    locked_query = str(locked_session.scalars.await_args.args[0]).upper()
+    assert "FOR UPDATE" not in unlocked_query
+    assert "FOR UPDATE" in locked_query
 
 
 def test_backend_and_frontend_keep_approval_id_wiring():
