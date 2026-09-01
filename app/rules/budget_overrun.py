@@ -30,15 +30,27 @@ class BudgetOverrunRule:
     async def _account_alerts(
         self, session: AsyncSession, tenant: Tenant, target_date: date
     ) -> list[AlertDraft]:
-        tenant_daily_cost = (
-            await session.scalar(
-                select(func.coalesce(func.sum(KwReportSnapshot.cost), 0)).where(
+        cost_rows = (
+            await session.execute(
+                select(
+                    KwReportSnapshot.baidu_account_id,
+                    func.coalesce(func.sum(KwReportSnapshot.cost), 0),
+                )
+                .where(
                     KwReportSnapshot.tenant_id == tenant.id,
                     KwReportSnapshot.report_date == target_date,
                 )
+                .group_by(KwReportSnapshot.baidu_account_id)
             )
+        ).all()
+        cost_by_account = {
+            int(account_id): float(cost or 0)
+            for account_id, cost in cost_rows
+            if account_id is not None
+        }
+        unattributed_cost = sum(
+            float(cost or 0) for account_id, cost in cost_rows if account_id is None
         )
-        cost = float(tenant_daily_cost or 0)
         accounts = (
             await session.scalars(
                 select(BaiduAccount).where(
@@ -47,8 +59,22 @@ class BudgetOverrunRule:
                 )
             )
         ).all()
+        if unattributed_cost and len(accounts) == 1:
+            only_account_id = accounts[0].id
+            cost_by_account[only_account_id] = (
+                cost_by_account.get(only_account_id, 0.0) + unattributed_cost
+            )
+        elif unattributed_cost:
+            logger.warning(
+                "忽略无法归属账户的预算告警消费 tenant=%s date=%s cost=%s accounts=%s",
+                tenant.id,
+                target_date,
+                unattributed_cost,
+                len(accounts),
+            )
         drafts: list[AlertDraft] = []
         for acc in accounts:
+            cost = cost_by_account.get(acc.id, 0.0)
             try:
                 resp = await AccountService(_account_client(acc)).get_account_info(
                     ["budget", "budgetType"]
@@ -86,6 +112,7 @@ class BudgetOverrunRule:
                             "cost": cost,
                             "usage_pct": usage_pct,
                             "cost_source": "kw_report_snapshots",
+                            "cost_baidu_account_id": acc.id,
                             "budget_as_of": "当前实时值，非历史快照",
                         },
                     )

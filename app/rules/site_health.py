@@ -4,6 +4,7 @@ import hashlib
 import logging
 import time
 from datetime import date
+from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,10 +20,23 @@ logger = logging.getLogger(__name__)
 TIMEOUT_SECONDS = 10
 SLOW_THRESHOLD_MS = 3000
 MAX_CONCURRENT_PROBES = 10
+EXCLUDED_PROBE_HOST_SUFFIXES = ("aisite.wejianzhan.com",)
 
 
 def _url_entity_ref(url: str) -> str:
     return f"url:{hashlib.sha1(url.encode('utf-8')).hexdigest()[:24]}"
+
+
+def _is_excluded_probe_url(url: str) -> bool:
+    """Return whether a provider-hosted page is outside the customer's control."""
+    try:
+        host = (urlsplit(url).hostname or "").rstrip(".").lower()
+    except ValueError:
+        return False
+    return any(
+        host == suffix or host.endswith(f".{suffix}")
+        for suffix in EXCLUDED_PROBE_HOST_SUFFIXES
+    )
 
 
 class SiteHealthRule:
@@ -44,7 +58,11 @@ class SiteHealthRule:
         url_to_adgroups: dict[str, list[Adgroup]] = {}
         for adgroup in adgroups:
             for url in (adgroup.pc_final_url, adgroup.mobile_final_url):
-                if url and url.startswith(("http://", "https://")):
+                if (
+                    url
+                    and url.startswith(("http://", "https://"))
+                    and not _is_excluded_probe_url(url)
+                ):
                     url_to_adgroups.setdefault(url, []).append(adgroup)
 
         if not url_to_adgroups:
