@@ -6,6 +6,7 @@ import { auditPendingSeoSitePages, auditSeoSitePage, fetchSeoContentAssets, fetc
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { formatSeoCsvTime } from './seoRankTime'
+import { runSeoBatch } from './seoBatchOperations'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
 
 const route = useRoute()
@@ -109,11 +110,25 @@ async function audit(row) {
 async function auditPending() {
   batchAuditing.value = true
   try {
+    if (selectedRows.value.length) {
+      const rows = [...selectedRows.value]
+      const ids = new Set(rows.slice(0, 50).map((row) => row.id))
+      auditing.value = new Set([...auditing.value, ...ids])
+      const response = await runSeoBatch(
+        rows,
+        (row) => auditSeoSitePage({ pageId: row.id, tenantId: currentTenantId.value }),
+        { concurrency: 3, limit: 50 },
+      )
+      const message = `批量检测完成：成功 ${response.completed.length}，失败 ${response.failed.length}，跳过 ${response.skipped.length}`
+      response.failed.length || response.skipped.length ? ElMessage.warning(message) : ElMessage.success(message)
+      await load()
+      return
+    }
     const response = await auditPendingSeoSitePages({ tenantId: currentTenantId.value, siteId: siteId.value, maxPages: 10 })
     const message = `已补抓 ${response.completed} 个页面${response.failed?.length ? `，失败 ${response.failed.length} 个` : ''}`
     response.failed?.length ? ElMessage.warning(message) : ElMessage.success(message)
     await load()
-  } catch (e) { ElMessage.error(e.message) } finally { batchAuditing.value = false }
+  } catch (e) { ElMessage.error(e.message) } finally { batchAuditing.value = false; auditing.value = new Set() }
 }
 async function generateSuggestions() {
   const pageIds = selectedRows.value.length ? selectedRows.value.map((row) => row.id) : result.value.items.map((row) => row.id)
@@ -192,7 +207,7 @@ onMounted(loadSites)
   <div class="site-page">
     <section class="site-hero">
       <div><span>SEO / ONSITE OPTIMIZATION</span><h1>站内优化</h1><p>管理页面资产、TDK、H1、Canonical 与索引状态。检测结果保存到页面档案，可用于上线前后复核。</p></div>
-      <div class="hero-actions"><el-select v-model="siteId" placeholder="选择 SEO 网站"><el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id"/></el-select><button v-if="canEdit" :disabled="generating||!siteId" :title="`作用范围：${actionScopeLabel}`" @click="generateSuggestions">{{generating?'生成中…':`生成 TDK（${actionScopeLabel}）`}}</button><button :disabled="!siteId" class="secondary" :title="`作用范围：${actionScopeLabel}`" @click="exportHandoff">导出交接单（{{ actionScopeLabel }}）</button><button v-if="canEdit" :disabled="batchAuditing||!siteId" @click="auditPending">{{batchAuditing?'补抓中…':'补抓待检测页面'}}</button><button v-if="canEdit" :disabled="!siteId" @click="importOpen = true">＋ 导入页面</button></div>
+      <div class="hero-actions"><el-select v-model="siteId" placeholder="选择 SEO 网站"><el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id"/></el-select><button v-if="canEdit" :disabled="generating||batchAuditing||!siteId" :title="`作用范围：${actionScopeLabel}`" @click="generateSuggestions">{{generating?'生成中…':`生成 TDK（${actionScopeLabel}）`}}</button><button :disabled="batchAuditing||!siteId" class="secondary" :title="`作用范围：${actionScopeLabel}`" @click="exportHandoff">导出交接单（{{ actionScopeLabel }}）</button><button v-if="canEdit" :disabled="batchAuditing||auditing.size>0||!siteId" :title="selectedRows.length ? '最多处理已选的前 50 个页面' : '补抓最多 10 个待检测页面'" @click="auditPending">{{batchAuditing?'检测中…':(selectedRows.length?`批量检测（已选 ${selectedRows.length}）`:'补抓待检测页面')}}</button><button v-if="canEdit" :disabled="batchAuditing||!siteId" @click="importOpen = true">＋ 导入页面</button></div>
     </section>
     <el-alert v-if="error" :title="error" type="warning" :closable="false" show-icon />
     <section class="metrics">
@@ -213,9 +228,9 @@ onMounted(loadSites)
         <el-table-column label="当前 TDK" min-width="220"><template #default="{row}"><div class="suggestion current"><b>{{ row.title || '缺少 Title' }}</b><small>{{ row.meta_description || '缺少 Description' }}</small></div></template></el-table-column>
         <el-table-column label="建议 TDK" min-width="240"><template #default="{row}"><div class="suggestion"><b>{{ row.title_suggestion || '尚未生成 Title 建议' }}</b><small>{{ row.description_suggestion || '尚未生成 Description 建议' }}</small></div></template></el-table-column>
         <el-table-column label="状态" width="100"><template #default="{row}"><el-tag :type="statusType(row.status)" effect="light">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="230" fixed="right"><template #default="{row}"><div class="actions"><button v-if="canEdit" :disabled="auditing.has(row.id)" @click="audit(row)">{{ auditing.has(row.id) ? '检测中…' : (row.status==='implemented'?'复检':'检测') }}</button><button v-if="canEdit" @click="openEdit(row)">优化记录</button><button @click="createContentTask(row)">{{ row.content_task_id ? '查看内容任务' : '创建内容任务' }}</button></div></template></el-table-column>
+        <el-table-column label="操作" width="230" fixed="right"><template #default="{row}"><div class="actions"><button v-if="canEdit" :disabled="batchAuditing||auditing.has(row.id)" @click="audit(row)">{{ auditing.has(row.id) ? '检测中…' : (row.status==='implemented'?'复检':'检测') }}</button><button v-if="canEdit" :disabled="batchAuditing" @click="openEdit(row)">优化记录</button><button :disabled="batchAuditing" @click="createContentTask(row)">{{ row.content_task_id ? '查看内容任务' : '创建内容任务' }}</button></div></template></el-table-column>
       </el-table>
-      <div class="pagination"><span>批量生成和导出默认仅作用于当前页；勾选后仅作用于已选记录。</span><el-pagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[25,50,100]" :total="result.total" layout="total, sizes, prev, pager, next, jumper" @current-change="load" @size-change="page = 1; load()" /></div>
+      <div class="pagination"><span>批量生成和导出默认作用于当前页；批量检测需先勾选，单次最多 50 条。未勾选时仅补抓待检测页面。</span><el-pagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[25,50,100]" :total="result.total" layout="total, sizes, prev, pager, next, jumper" @current-change="load" @size-change="page = 1; load()" /></div>
     </section>
 
     <el-dialog v-model="importOpen" title="导入站内页面" width="600px">
