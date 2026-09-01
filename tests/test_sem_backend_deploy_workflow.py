@@ -79,17 +79,22 @@ def test_sem_backend_workflow_never_executes_database_or_other_module_deploys() 
 
 def test_sem_backend_release_reruns_recent_high_risk_regressions() -> None:
     workflow = _workflow()
+    test_step = workflow[
+        workflow.index("- name: Run SEM backend and deployment isolation tests") :
+        workflow.index("- name: Verify production and writeback safety contracts")
+    ]
     for suite in (
         "tests/test_baidu_asset_fetch_isolation.py",
         "tests/test_keyword_refresh.py",
         "tests/test_scheduler_account_iteration.py",
+        "tests/test_sem_expansion_hardening.py",
         "tests/test_sem_identity_repair_preview.py",
         "tests/test_sem_asset_sync_integrity.py",
         "tests/test_sem_public_http_security.py",
         "tests/test_campaign_region_management.py",
         "tests/test_campaign_schedule_management.py",
     ):
-        assert suite in workflow
+        assert test_step.count(suite) == 1
 
 
 def test_sem_backend_release_uses_restricted_serialized_environment() -> None:
