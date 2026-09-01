@@ -10,13 +10,17 @@ from datetime import date, datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.deepseek import is_enabled as ai_enabled
 from app.ai.expansion_eval import evaluate_candidates_for_tenant
-from app.baidu.writeback import WritebackError, apply_add_word_writeback
+from app.baidu.writeback import (
+    WritebackError,
+    apply_add_word_writeback,
+    apply_negative_batch_writeback,
+)
 from app.database import get_session
 from app.models import (
     CANDIDATE_AI_RECOMMEND_LABELS,
@@ -56,6 +60,8 @@ def _candidate_payload(c: KeywordCandidate) -> dict[str, Any]:
         "recommend_price_mobile": (
             float(c.recommend_price_mobile) if c.recommend_price_mobile is not None else None
         ),
+        "preset_price": float(c.preset_price) if c.preset_price is not None else None,
+        "preset_match_mode": c.preset_match_mode,
         "show_reasons": c.show_reasons or [],
         "impression": c.impression,
         "click": c.click,
@@ -224,6 +230,140 @@ async def update_candidate_status(
     return {"status": "ok", "id": cand.id, "candidate_status": cand.status}
 
 
+class CandidateBatchRequest(BaseModel):
+    tenant_id: int
+    candidate_ids: list[int] = Field(min_length=1, max_length=200)
+
+
+class BatchSetPresetRequest(CandidateBatchRequest):
+    preset_price: float | None = Field(default=None, ge=0.01, le=999.99)
+    preset_match_mode: Literal["exact", "phrase", "smart"] | None = None
+
+
+class BatchSetCategoryRequest(CandidateBatchRequest):
+    category: Literal["brand", "focus", "normal", "longtail", "observe", "negative"]
+
+
+class BatchStatusRequest(CandidateBatchRequest):
+    status: Literal["ignored", "pending"]
+
+
+class BatchNegativeRequest(CandidateBatchRequest):
+    adgroup_id: int
+    match_mode: Literal["exact", "phrase"] = "phrase"
+
+
+async def _candidate_batch_rows(
+    session: AsyncSession,
+    tenant_id: int,
+    candidate_ids: list[int],
+) -> list[KeywordCandidate]:
+    unique_ids = list(dict.fromkeys(candidate_ids))
+    rows = (
+        await session.scalars(
+            select(KeywordCandidate).where(
+                KeywordCandidate.tenant_id == tenant_id,
+                KeywordCandidate.id.in_(unique_ids),
+            )
+        )
+    ).all()
+    if len(rows) != len(unique_ids):
+        raise HTTPException(404, "部分候选词不存在")
+    return rows
+
+
+@router.post("/candidates/batch-set-preset")
+async def batch_set_preset(
+    req: BatchSetPresetRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """批量设置候选词的预设出价/匹配方式，供加入计划时默认填充。"""
+    ctx.ensure_tenant(req.tenant_id)
+    if req.preset_price is None and req.preset_match_mode is None:
+        raise HTTPException(400, "预设出价和匹配方式至少填写一项")
+    rows = await _candidate_batch_rows(session, req.tenant_id, req.candidate_ids)
+    for cand in rows:
+        if req.preset_price is not None:
+            cand.preset_price = req.preset_price
+        if req.preset_match_mode is not None:
+            cand.preset_match_mode = req.preset_match_mode
+    await session.commit()
+    return {"status": "ok", "updated": len(rows)}
+
+
+@router.post("/candidates/batch-set-category")
+async def batch_set_category(
+    req: BatchSetCategoryRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """批量设置建议分类（核心关键词圈选 = 批量设为 focus）。"""
+    ctx.ensure_tenant(req.tenant_id)
+    rows = await _candidate_batch_rows(session, req.tenant_id, req.candidate_ids)
+    for cand in rows:
+        cand.suggested_category = req.category
+    await session.commit()
+    return {"status": "ok", "updated": len(rows)}
+
+
+@router.post("/candidates/batch-status")
+async def batch_set_status(
+    req: BatchStatusRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """批量标记已处理（忽略）或批量恢复。"""
+    ctx.ensure_tenant(req.tenant_id)
+    rows = await _candidate_batch_rows(session, req.tenant_id, req.candidate_ids)
+    now = datetime.utcnow()
+    for cand in rows:
+        cand.status = req.status
+        cand.status_updated_at = now
+    await session.commit()
+    return {"status": "ok", "updated": len(rows)}
+
+
+@router.post("/candidates/batch-negative")
+async def batch_add_negative(
+    req: BatchNegativeRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """批量把候选词加为指定单元的否词，逐条返回台账结果。"""
+    ctx.ensure_tenant(req.tenant_id)
+    rows = await _candidate_batch_rows(session, req.tenant_id, req.candidate_ids)
+    try:
+        writeback_results = await apply_negative_batch_writeback(
+            session,
+            req.tenant_id,
+            [cand.word for cand in rows],
+            req.adgroup_id,
+            match_mode=req.match_mode,
+            operator_user_id=ctx.user_id,
+            operator_name=ctx.username,
+        )
+    except WritebackError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    results = []
+    for cand, writeback_result in zip(rows, writeback_results, strict=True):
+        if writeback_result.status == "success":
+            cand.status = "ignored"
+            cand.status_updated_at = datetime.utcnow()
+        result = {
+            "candidate_id": cand.id,
+            "word": cand.word,
+            "status": writeback_result.status,
+            "no_op": writeback_result.no_op,
+        }
+        if writeback_result.error_msg:
+            result["error"] = writeback_result.error_msg
+        results.append(result)
+    await session.commit()
+    return {"status": "ok", "results": results}
+
+
 class AddToPlanRequest(BaseModel):
     tenant_id: int
     adgroup_id: int
@@ -255,6 +395,8 @@ async def add_candidate_to_plan(
         )
     except WritebackError as e:
         raise HTTPException(400, str(e))
+    if rec.status == "failed":
+        raise HTTPException(502, "百度关键词写回失败，已记录失败台账，请稍后重试")
     if rec.status == "success":  # 真写成功才标已采纳；演练保持 pending
         cand.status = "adopted"
         cand.status_updated_at = datetime.utcnow()

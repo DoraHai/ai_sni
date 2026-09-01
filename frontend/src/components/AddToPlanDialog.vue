@@ -65,8 +65,12 @@ async function submit() {
       price: Number(dialog.price),
       matchMode: dialog.matchMode,
     })
+    if (res.writeback_status === 'failed') {
+      throw new Error('百度关键词写回失败，已记录失败台账，请稍后重试')
+    }
     if (res.dry_run) ElMessage.warning('演练模式：已记入台账，未真改线上（候选保留待处理）')
-    else ElMessage.success(`「${word.value}」已加入计划`)
+    else if (res.writeback_status === 'success') ElMessage.success(`「${word.value}」已加入计划`)
+    else throw new Error(`关键词写回状态异常：${res.writeback_status || 'unknown'}`)
     dialog.visible = false
     emit('success', res)
   } catch (e) {

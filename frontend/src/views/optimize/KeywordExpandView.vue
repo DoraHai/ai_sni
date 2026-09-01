@@ -13,7 +13,7 @@ import {
   syncUrlWords,
   updateCandidateStatus,
 } from '../../api/expansion'
-import { fetchAdgroupList, fetchCampaignList } from '../../api/keywords'
+import { fetchAdgroupList } from '../../api/keywords'
 import AddToPlanDialog from '../../components/AddToPlanDialog.vue'
 import { session } from '../../store/session'
 import { formatLocalDate, formatUtcTimestamp } from '../../utils/dateTime'
@@ -34,6 +34,7 @@ const SOURCES = [
   { code: 'url', name: 'URL 爬取', icon: '🌐', cls: 'src-c-url', desc: '输入官网或产品页 URL，自研提词 + 百度流量回查', enabled: true },
   { code: 'cold', name: '冷门词识别', icon: '❄', cls: 'src-c-cold', desc: '低搜索量高意图 / 低展现有点击，自动识别归入', enabled: true },
 ]
+const MATCH_MODE_LABELS = { exact: '精确', phrase: '短语', smart: '智能匹配' }
 
 const filters = reactive({
   source: '',
@@ -261,8 +262,14 @@ async function submitNegative() {
       matchMode: negativeForm.value.matchMode,
     })
     const failCount = (res.results || []).filter((r) => r.status === 'failed').length
-    if (failCount) ElMessage.warning(`已处理，其中 ${failCount} 个失败（可能是重复否词）`)
-    else ElMessage.success('批量加否词成功')
+    const dryRunCount = (res.results || []).filter((r) => r.status === 'dry_run').length
+    if (failCount) {
+      ElMessage.warning(`已处理，其中 ${failCount} 个失败${dryRunCount ? `，${dryRunCount} 个仅记入演练台账` : ''}`)
+    } else if (dryRunCount) {
+      ElMessage.warning(`演练模式：${dryRunCount} 个候选已记入台账，未修改百度账户`)
+    } else {
+      ElMessage.success('批量加否词成功')
+    }
     negativeDialogVisible.value = false
     load()
   } catch (e) {
@@ -273,12 +280,6 @@ async function submitNegative() {
 async function openAddToPlan(row) {
   addToPlanDialogRef.value?.open(row)
 }
-
-const planDialog = reactive({ visible: false, row: null, campaignId: null, adgroupId: null, matchMode: 'phrase', price: null, submitting: false })
-const planCampaigns = ref([])
-const planAdgroups = ref([])
-function onPlanCampaign() {}
-function submitAddToPlan() {}
 
 async function exportCsv() {
   exporting.value = true
@@ -542,7 +543,7 @@ onMounted(load)
           <template #default="{ row }">
             <div class="preset-cell">
               <span v-if="row.preset_price || row.preset_match_mode" class="preset-tag">
-                ¥{{ row.preset_price ?? '-' }} / {{ row.preset_match_mode === 'exact' ? '精确' : row.preset_match_mode === 'phrase' ? '短语' : '-' }}
+                ¥{{ row.preset_price ?? '-' }} / {{ MATCH_MODE_LABELS[row.preset_match_mode] || row.preset_match_mode || '-' }}
               </span>
               <span v-else class="dim">—</span>
               <el-button
@@ -614,44 +615,6 @@ onMounted(load)
 
     <AddToPlanDialog ref="addToPlanDialogRef" :tenant-id="TENANT_ID" @success="load" />
 
-    <!-- 加入计划：候选词无所属单元，需选目标计划→单元 + 匹配 + 出价 -->
-    <el-dialog v-model="planDialog.visible" title="加入计划" width="440px">
-      <div v-if="planDialog.row" class="plan-form">
-        <div class="pf-word">候选词：<b>{{ planDialog.row.word }}</b></div>
-        <el-form label-width="72px" label-position="left">
-          <el-form-item label="计划">
-            <el-select v-model="planDialog.campaignId" placeholder="选择计划" style="width: 100%" @change="onPlanCampaign">
-              <el-option v-for="c in planCampaigns" :key="c.campaign_id" :label="c.campaign_name" :value="c.campaign_id" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="单元">
-            <el-select v-model="planDialog.adgroupId" placeholder="先选计划" style="width: 100%" :disabled="!planDialog.campaignId">
-              <el-option v-for="a in planAdgroups" :key="a.adgroup_id" :label="a.adgroup_name" :value="a.adgroup_id" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="匹配方式">
-            <el-radio-group v-model="planDialog.matchMode">
-              <el-radio label="phrase">短语</el-radio>
-              <el-radio label="exact">精确</el-radio>
-              <el-radio label="smart">智能匹配</el-radio>
-            </el-radio-group>
-          </el-form-item>
-          <el-form-item label="出价">
-            <el-input-number v-model="planDialog.price" :min="0.01" :max="999.99" :step="0.1" :precision="2" />
-            <span v-if="planDialog.row.recommend_price_pc" class="pf-hint">指导价 ¥{{ planDialog.row.recommend_price_pc }}</span>
-          </el-form-item>
-          <div v-if="planDialog.row.ai_bid_reason" class="pf-ai">
-            💡 AI 建议 <b>¥{{ planDialog.row.ai_suggested_bid }}</b>：{{ planDialog.row.ai_bid_reason }}
-          </div>
-        </el-form>
-        <div class="pf-tip">受 ±20% 区间校验并记台账；演练模式下不真改线上。</div>
-      </div>
-      <template #footer>
-        <el-button @click="planDialog.visible = false">取消</el-button>
-        <el-button type="primary" :loading="planDialog.submitting" @click="submitAddToPlan">确认加入</el-button>
-      </template>
-    </el-dialog>
-
     <el-dialog v-model="presetDialogVisible" title="设置预设出价/匹配方式" width="400px">
       <div class="preset-form">
         <label>预设出价（元）</label>
@@ -666,6 +629,7 @@ onMounted(load)
         <el-select v-model="presetForm.matchMode" placeholder="不选则不更新" clearable style="width: 100%">
           <el-option label="精确" value="exact" />
           <el-option label="短语" value="phrase" />
+          <el-option label="智能匹配" value="smart" />
         </el-select>
       </div>
       <template #footer>
@@ -705,12 +669,6 @@ onMounted(load)
 .page-title { font-size: 20px; font-weight: 600; color: var(--sem-text); }
 .page-desc { font-size: 12px; color: var(--sem-text-sub); margin-top: 4px; }
 .page-actions { display: flex; gap: 8px; }
-
-.plan-form { font-size: 13px; }
-.pf-word { margin-bottom: 12px; color: var(--sem-text); }
-.pf-hint { margin-left: 10px; font-size: 12px; color: #9ca3af; }
-.pf-ai { font-size: 12px; color: var(--sem-primary); background: #eff4fb; border-radius: 4px; padding: 6px 10px; margin: 2px 0 4px; line-height: 1.5; }
-.pf-tip { font-size: 12px; color: #ba7517; margin-top: 4px; }
 
 .source-tabs { display: flex; gap: 12px; margin-bottom: 14px; }
 .src-card { flex: 1; background: #fff; border: 1px solid var(--sem-border); border-radius: 8px; padding: 14px 16px; cursor: pointer; transition: all 0.15s; position: relative; }
