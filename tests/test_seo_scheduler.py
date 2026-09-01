@@ -1,6 +1,7 @@
 import os
 import unittest
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -26,9 +27,15 @@ from app.seo_ranking_jobs import (
     collect_daily_seo_rankings,
 )
 from app.seo_scheduler import shutdown_seo_scheduler, start_seo_scheduler
+from app.config import Settings
 
 
 class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
+    def test_daily_rank_collection_is_opt_in(self):
+        self.assertIs(Settings.model_fields["seo_rank_scheduler_enabled"].default, False)
+        env_example = (Path(__file__).parents[1] / ".env.example").read_text(encoding="utf-8")
+        self.assertIn("SEO_RANK_SCHEDULER_ENABLED=false", env_example)
+
     def test_request_budget_truncates_batches(self):
         self.assertEqual(_limited_batches([1, 2, 3, 4, 5], 2, 3), [[1, 2], [3]])
         self.assertEqual(_limited_batches([1, 2], 2, 0), [])

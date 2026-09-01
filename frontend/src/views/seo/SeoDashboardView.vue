@@ -37,7 +37,7 @@ const engines = [
   { k: 'google', n: 'Google', color: '#8b5cf6' },
 ]
 const automationJobs = [
-  { key: 'ranking', label: '排名采集', schedule: '每日 02:00' },
+  { key: 'ranking', label: '排名采集', schedule: '待验收后启用（计划每日 02:00）' },
   { key: 'competitor', label: '竞品巡检', schedule: '每日 03:00' },
   { key: 'backlink', label: '外链巡检', schedule: '每日 04:00' },
 ]

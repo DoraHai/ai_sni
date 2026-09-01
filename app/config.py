@@ -41,7 +41,7 @@ class Settings(BaseSettings):
         ..., description="admin / dashboard 接口的 API Key，调用方经 X-API-Key 请求头携带"
     )
     # 是否允许 ?key= 传 API Key（URL 会进日志/Referer，生产必须 False）
-    admin_api_key_query_enabled: bool = True
+    admin_api_key_query_enabled: bool = False
     # 若设置，API Key 访问绑定到该租户（ensure_tenant 生效）；None=可跨租户（仅运维）
     admin_api_key_tenant_id: int | None = None
 
@@ -71,7 +71,8 @@ class Settings(BaseSettings):
     chinaz_api_base_url: str = "https://openapi.chinaz.net/v1/1001"
     chinaz_api_timeout_seconds: float = 8.0
     # 每天 02:00 自动采集全部启用 SEO 关键词的 PC/移动自然排名。
-    seo_rank_scheduler_enabled: bool = True
+    # 默认关闭；只有在小批量真人验收通过后，才允许由生产环境显式开启。
+    seo_rank_scheduler_enabled: bool = False
     seo_rank_scheduler_engines: str = "baidu,google,bing"
     seo_rank_scheduler_batch_size: int = 20
     seo_rank_scheduler_use_ai: bool = True

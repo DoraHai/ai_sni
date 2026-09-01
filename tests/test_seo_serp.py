@@ -498,7 +498,11 @@ def test_provider_batch_reuses_one_client_and_caps_concurrency() -> None:
         active -= 1
         return {"keyword": keyword, "device": device}
 
-    requests = [(f"keyword-{index}", "desktop") for index in range(5)]
+    requests = [
+        (f"keyword-{index}", device)
+        for index in range(8)
+        for device in ("desktop", "mobile")
+    ]
     with patch("app.seo_serp.create_chinaz_client", return_value=context) as factory, patch(
         "app.seo_serp.fetch_baidu_top50",
         side_effect=fake_fetch,
@@ -510,6 +514,7 @@ def test_provider_batch_reuses_one_client_and_caps_concurrency() -> None:
     assert CHINAZ_MAX_CONCURRENCY == 1
     assert peak == 1
     assert fetch.await_count == len(requests)
+    assert len(results) == 16
     assert sleep_mock.await_count == len(requests) - 1
     assert all(call.args[0] == 1 for call in sleep_mock.await_args_list)
     assert seen_clients == [provider_client] * len(requests)
