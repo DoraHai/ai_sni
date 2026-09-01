@@ -98,6 +98,7 @@ defineExpose({ open })
           <el-radio-group v-model="dialog.matchMode">
             <el-radio label="phrase">短语</el-radio>
             <el-radio label="exact">精确</el-radio>
+            <el-radio label="smart">智能匹配</el-radio>
           </el-radio-group>
         </el-form-item>
         <el-form-item label="出价">
