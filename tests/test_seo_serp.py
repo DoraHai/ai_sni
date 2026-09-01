@@ -308,6 +308,7 @@ def test_mobile_provider_uses_official_top50_endpoint() -> None:
     [
         (401, "provider_auth_failed", False),
         (403, "provider_auth_failed", False),
+        (436, "provider_rate_limited", True),
         (429, "provider_rate_limited", True),
         (503, "provider_unavailable", True),
     ],
@@ -331,6 +332,8 @@ def test_provider_http_errors_never_expose_request_secrets(
 
     with patch("app.seo_serp.get_settings", return_value=settings), patch(
         "app.seo_serp.httpx.AsyncClient", return_value=context
+    ), patch(
+        "app.seo_serp.asyncio.sleep", new=AsyncMock()
     ), pytest.raises(SerpProviderError) as exc:
         asyncio.run(fetch_baidu_top50("sensitive-keyword", "desktop"))
 
@@ -381,8 +384,8 @@ def test_chinaz_client_uses_separate_timeouts_and_bounded_pool() -> None:
     assert timeout.read == 8
     assert timeout.write == 8
     assert timeout.pool == 2
-    assert limits.max_connections == 2
-    assert limits.max_keepalive_connections == 2
+    assert limits.max_connections == 1
+    assert limits.max_keepalive_connections == 1
 
 
 @pytest.mark.parametrize(
@@ -459,6 +462,26 @@ def test_provider_rate_limit_honors_retry_after() -> None:
     assert all(call.args[0] >= 2 for call in sleep_mock.await_args_list)
 
 
+def test_provider_436_uses_safe_default_backoff_and_recovers() -> None:
+    request = httpx.Request("GET", "https://openapi.chinaz.net/private")
+    limited = httpx.Response(436, request=request)
+    success = MagicMock()
+    success.raise_for_status.return_value = None
+    success.json.return_value = {"StateCode": 1, "Result": {"Ranks": []}}
+    client = AsyncMock()
+    client.get.side_effect = [limited, success]
+
+    with patch("app.seo_serp.get_settings", return_value=_provider_settings()), patch(
+        "app.seo_serp.asyncio.sleep", new=AsyncMock()
+    ) as sleep_mock:
+        result = asyncio.run(fetch_baidu_top50("safe-keyword", "desktop", client=client))
+
+    assert result["items"] == []
+    assert client.get.await_count == 2
+    sleep_mock.assert_awaited_once()
+    assert sleep_mock.await_args.args[0] >= 5
+
+
 def test_provider_batch_reuses_one_client_and_caps_concurrency() -> None:
     context = AsyncMock()
     provider_client = object()
@@ -472,7 +495,6 @@ def test_provider_batch_reuses_one_client_and_caps_concurrency() -> None:
         seen_clients.append(client)
         active += 1
         peak = max(peak, active)
-        await asyncio.sleep(0.01)
         active -= 1
         return {"keyword": keyword, "device": device}
 
@@ -480,12 +502,16 @@ def test_provider_batch_reuses_one_client_and_caps_concurrency() -> None:
     with patch("app.seo_serp.create_chinaz_client", return_value=context) as factory, patch(
         "app.seo_serp.fetch_baidu_top50",
         side_effect=fake_fetch,
-    ) as fetch:
+    ) as fetch, patch(
+        "app.seo_serp.asyncio.sleep", new=AsyncMock()
+    ) as sleep_mock:
         results = asyncio.run(fetch_baidu_top50_batch(requests))
 
-    assert CHINAZ_MAX_CONCURRENCY == 2
-    assert peak == 2
+    assert CHINAZ_MAX_CONCURRENCY == 1
+    assert peak == 1
     assert fetch.await_count == len(requests)
+    assert sleep_mock.await_count == len(requests) - 1
+    assert all(call.args[0] == 1 for call in sleep_mock.await_args_list)
     assert seen_clients == [provider_client] * len(requests)
     assert all(error is None for _, error in results)
     factory.assert_called_once_with()

@@ -14,10 +14,12 @@ import httpx
 from app.config import get_settings
 
 
-CHINAZ_MAX_CONCURRENCY = 2
-CHINAZ_MAX_CONNECTIONS = 2
+CHINAZ_MAX_CONCURRENCY = 1
+CHINAZ_MAX_CONNECTIONS = 1
 CHINAZ_MAX_ATTEMPTS = 3
 CHINAZ_RETRY_BASE_SECONDS = 0.25
+CHINAZ_BATCH_REQUEST_INTERVAL_SECONDS = 1.0
+CHINAZ_RATE_LIMIT_RETRY_SECONDS = 5.0
 DATAFORSEO_ENGINES = {"google", "bing"}
 DATAFORSEO_MAX_CONCURRENCY = 2
 DATAFORSEO_MAX_ATTEMPTS = 3
@@ -269,12 +271,14 @@ async def fetch_baidu_top50(
         except httpx.HTTPStatusError as exc:
             status_code = exc.response.status_code
             retry_after_seconds = None
-            if status_code == 429:
+            if status_code in {429, 436}:
                 retry_after_raw = exc.response.headers.get("retry-after", "")
                 try:
                     retry_after_seconds = min(60.0, max(0.0, float(retry_after_raw)))
                 except ValueError:
                     retry_after_seconds = None
+                if retry_after_seconds is None:
+                    retry_after_seconds = CHINAZ_RATE_LIMIT_RETRY_SECONDS
                 code, message, retryable = (
                     "provider_rate_limited",
                     "站长之家接口请求受限",
@@ -351,28 +355,23 @@ async def fetch_baidu_top50(
 async def fetch_baidu_top50_batch(
     requests: list[tuple[str, str]],
 ) -> list[tuple[dict[str, Any] | None, SerpProviderError | None]]:
-    """Fetch a bounded batch with one shared pool and bounded transient retries."""
-    semaphore = asyncio.Semaphore(CHINAZ_MAX_CONCURRENCY)
+    """Fetch a provider-safe serial batch with pacing and bounded retries."""
+    results: list[tuple[dict[str, Any] | None, SerpProviderError | None]] = []
 
     async with create_chinaz_client() as provider_client:
-        async def fetch_one(
-            keyword: str,
-            device: str,
-        ) -> tuple[dict[str, Any] | None, SerpProviderError | None]:
+        for index, (keyword, device) in enumerate(requests):
+            if index:
+                await asyncio.sleep(CHINAZ_BATCH_REQUEST_INTERVAL_SECONDS)
             try:
-                async with semaphore:
-                    result = await fetch_baidu_top50(
-                        keyword,
-                        device,
-                        client=provider_client,
-                    )
-                return result, None
+                result = await fetch_baidu_top50(
+                    keyword,
+                    device,
+                    client=provider_client,
+                )
+                results.append((result, None))
             except SerpProviderError as exc:
-                return None, exc
-
-        return await asyncio.gather(
-            *(fetch_one(keyword, device) for keyword, device in requests)
-        )
+                results.append((None, exc))
+    return results
 
 
 def dataforseo_status() -> dict[str, Any]:
