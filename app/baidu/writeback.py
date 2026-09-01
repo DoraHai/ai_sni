@@ -293,12 +293,10 @@ _VALID_MATCH_COMBOS = {
 }
 
 
-async def _load_active_account(
+async def _active_account(
     session: AsyncSession,
     tenant_id: int,
     baidu_account_id: int | None = None,
-    *,
-    lock: bool,
 ) -> BaiduAccount:
     conditions = [
         BaiduAccount.tenant_id == tenant_id,
@@ -306,10 +304,16 @@ async def _load_active_account(
     ]
     if baidu_account_id is not None:
         conditions.append(BaiduAccount.id == baidu_account_id)
-    query = select(BaiduAccount).where(*conditions).order_by(BaiduAccount.id)
-    if lock:
-        query = query.with_for_update()
-    rows = list((await session.scalars(query)).all())
+    rows = list(
+        (
+            await session.scalars(
+                select(BaiduAccount)
+                .where(*conditions)
+                .order_by(BaiduAccount.id)
+                .with_for_update()
+            )
+        ).all()
+    )
     if baidu_account_id is None and len(rows) > 1:
         raise WritebackError("当前客户有多个生效推广账户，必须明确选择要操作的账户")
     acc = rows[0] if rows else None
@@ -318,28 +322,6 @@ async def _load_active_account(
             raise WritebackError("计划所属的百度账户未授权或已停用，无法回写")
         raise WritebackError("该租户没有生效的百度账户授权，无法回写")
     return acc
-
-
-async def _active_account(
-    session: AsyncSession,
-    tenant_id: int,
-    baidu_account_id: int | None = None,
-) -> BaiduAccount:
-    """读取并锁定资金写回账户；普通写回不得绕过该锁。"""
-    return await _load_active_account(
-        session, tenant_id, baidu_account_id, lock=True
-    )
-
-
-async def _preflight_active_account(
-    session: AsyncSession,
-    tenant_id: int,
-    baidu_account_id: int | None = None,
-) -> BaiduAccount:
-    """预算外部预读取专用快照；预读取结束后必须调用 `_active_account`。"""
-    return await _load_active_account(
-        session, tenant_id, baidu_account_id, lock=False
-    )
 
 
 def _asset_account_id(asset: Any, label: str) -> int:
@@ -781,18 +763,14 @@ async def apply_campaign_budget_writeback(
             f"计划日预算 {new_budget} 超出合法区间 "
             f"[{MIN_ACCOUNT_BUDGET:.0f}, {MAX_ACCOUNT_BUDGET:.0f}]"
         )
-    campaign_query = select(Campaign).where(
-        Campaign.tenant_id == tenant_id, Campaign.campaign_id == campaign_id
+    camp = await session.scalar(
+        select(Campaign).where(
+            Campaign.tenant_id == tenant_id, Campaign.campaign_id == campaign_id
+        ).with_for_update()
     )
-    camp = await session.scalar(campaign_query)
     if camp is None:
         raise WritebackError("计划不在维度表中，请先执行计划维度同步")
-    acc = await _preflight_active_account(
-        session,
-        tenant_id,
-        _asset_account_id(camp, "计划"),
-    )
-    preflight_account_id = acc.id
+    acc = await _active_account(session, tenant_id, _asset_account_id(camp, "计划"))
 
     # 计划预算不能超账户日预算：实时查账户预算做上限校验（失败不阻断，交百度兜底）
     try:
@@ -810,18 +788,6 @@ async def apply_campaign_budget_writeback(
         raise
     except Exception:  # noqa: BLE001  查账户预算失败不挡写回
         logger.warning("计划预算写回：查账户预算失败，跳过上限预校验", exc_info=True)
-
-    # 外部预读取完成后再进入资金操作的串行化区间，避免百度接口慢时长期
-    # 占用计划/账户行锁。加锁后重新读取并复核归属，防止预读取期间资产变化。
-    camp = await session.scalar(
-        campaign_query.execution_options(populate_existing=True).with_for_update()
-    )
-    if camp is None:
-        raise WritebackError("计划不在维度表中，请先执行计划维度同步")
-    locked_account_id = _asset_account_id(camp, "计划")
-    if locked_account_id != preflight_account_id:
-        raise WritebackError("计划所属推广账户已变化，请重试")
-    acc = await _active_account(session, tenant_id, locked_account_id)
 
     old_budget = float(camp.budget) if camp.budget is not None else None
     dry_run = get_settings().baidu_write_dry_run
@@ -1457,8 +1423,7 @@ async def apply_account_budget_writeback(
             f"账户日预算 {new_budget} 超出合法区间 "
             f"[{MIN_ACCOUNT_BUDGET:.0f}, {MAX_ACCOUNT_BUDGET:.0f}]"
         )
-    acc = await _preflight_active_account(session, tenant_id, baidu_account_id)
-    preflight_account_id = acc.id
+    acc = await _active_account(session, tenant_id, baidu_account_id)
 
     # 实时查当前账户预算作旧值快照（失败不阻断写回，old_value 留空）
     old_budget: float | None = None
@@ -1472,12 +1437,6 @@ async def apply_account_budget_writeback(
         old_budget = round(float(b), 2) if b is not None else None
     except Exception:  # noqa: BLE001  查旧值失败不该挡住写回
         logger.warning("账户预算写回：查当前预算失败，old_value 留空", exc_info=True)
-
-    # 只在外部预读取完成后锁定账户。使用原调用选择条件重新查询，既保留
-    # 多账户歧义保护，也能发现预读取期间账户被停用或归属发生变化。
-    acc = await _active_account(session, tenant_id, baidu_account_id)
-    if acc.id != preflight_account_id:
-        raise WritebackError("推广账户状态已变化，请重试")
 
     dry_run = get_settings().baidu_write_dry_run
     if not dry_run:
