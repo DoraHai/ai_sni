@@ -25,6 +25,11 @@ from app.geo.content.generate_article import (
     to_markdown,
 )
 from app.geo.content.imports import import_facts_csv, import_prompts_csv
+from app.geo.content.article_import import (
+    ArticleImportError,
+    preview_file_document,
+    preview_url_document,
+)
 from app.geo.content.pipeline import blocked_reason_from_checks, sync_pipeline_fields
 from app.geo.content.rules import RuleInput, build_fix_patches, is_ready, run_checks
 from app.geo.content.channel_profiles import get_profile, list_profiles
@@ -76,6 +81,8 @@ from app.geo.content.schemas import (
     AnswerSnapshotCitationCheckRequest,
     AnswerSnapshotUpdate,
     ApplyPatchRequest,
+    ArticleImportCreateTaskRequest,
+    ArticleImportPreviewUrlRequest,
     ArticleUpdate,
     ChannelAccountCreate,
     ChannelAccountUpdate,
@@ -6245,6 +6252,93 @@ async def import_facts_file(
     )
     await session.commit()
     return result
+
+
+@router.post("/content-imports/preview-file")
+async def preview_article_import_file(
+    tenant_id: int = Query(...),
+    file: UploadFile = File(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Extract a supported upload so the operator can edit it before import."""
+    ctx.ensure_tenant(tenant_id)
+    await _ensure_tenant_exists(session, tenant_id)
+    raw = await file.read()
+    if len(raw) > 10 * 1024 * 1024:
+        raise HTTPException(413, "导入文件不能超过 10 MiB")
+    try:
+        return preview_file_document(filename=file.filename or "", raw=raw)
+    except ArticleImportError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/content-imports/preview-url")
+async def preview_article_import_url(
+    req: ArticleImportPreviewUrlRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Fetch a URL and extract an editable article preview."""
+    ctx.ensure_tenant(req.tenant_id)
+    await _ensure_tenant_exists(session, req.tenant_id)
+    try:
+        return await preview_url_document(req.url)
+    except ArticleImportError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/content-imports/create-task")
+async def create_task_from_article_import(
+    req: ArticleImportCreateTaskRequest,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Persist an operator-confirmed import as a task with its first master draft."""
+    ctx.ensure_tenant(req.tenant_id)
+    await _ensure_tenant_exists(session, req.tenant_id)
+    prompt = await _get_prompt(session, req.prompt_id, req.tenant_id)
+    business_id = await _resolve_task_business_id(session, prompt)
+    period_id = await _resolve_active_period_id(
+        session, tenant_id=req.tenant_id, business_id=business_id
+    )
+    title = req.title.strip()
+    task = GeoContentTask(
+        tenant_id=req.tenant_id,
+        prompt_id=prompt.id,
+        business_id=business_id,
+        period_id=period_id,
+        title=title,
+        status="editing",
+        target_channels=normalize_channels(req.target_channels),
+        owner_user_id=ctx.user_id,
+        pipeline_step="draft",
+        brief={},
+    )
+    session.add(task)
+    await session.flush()
+    article = GeoArticleVersion(
+        task_id=task.id,
+        version_no=1,
+        kind="master",
+        title=title,
+        body_markdown=req.body_markdown.strip(),
+        outline={},
+        generation_meta={
+            "source": "article_import",
+            "source_type": req.source_type,
+            "source_url": (req.source_url or "").strip() or None,
+        },
+        created_by=ctx.user_id,
+    )
+    session.add(article)
+    await session.flush()
+    invalidate_review(task)
+    await _sync_task_pipeline(session, task)
+    await _evaluate_and_store_rules(session, task, article, require_channels=False)
+    await session.commit()
+    await session.refresh(task)
+    return await _task_payload(session, task, detail=True)
 
 
 # ---------- content tasks ----------

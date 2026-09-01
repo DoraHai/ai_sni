@@ -98,6 +98,8 @@ def test_geo_standalone_keeps_required_form_and_table_styles():
 def test_geo_standalone_bootstraps_logged_in_tenant_context():
     app = _read("frontend/geo-frontend/src/App.vue")
     api = _read("frontend/src/api/geo.js")
+    content_api = _read("frontend/src/api/geoContent.js")
+    geo_router = _read("frontend/geo-frontend/src/router.js")
     routes = _read("app/geo/routes.py")
     scope = _read("app/geo/tenant_scope.py")
     auth = _read("app/security/auth.py")
@@ -109,6 +111,13 @@ def test_geo_standalone_bootstraps_logged_in_tenant_context():
     assert '@router.get("/tenants")' in routes
     assert '@router.get("/structure-scan/latest")' in routes
     assert '@router.post("/structure-scan")' in routes
+    assert "client.post('/api/v1/geo/content-imports/preview-file'" in content_api
+    assert "client.post('/api/v1/geo/content-imports/create-task'" in content_api
+    assert "patchGeoActionTicket" in api
+    assert "GeoArticleImportView.vue" in geo_router
+    assert "GeoTicketsView.vue" in geo_router
+    assert "GeoEvaluationView.vue" in geo_router
+    assert "{ path: 'evaluation', component:" in geo_router
     assert "list_geo_tenants_for_auth" in routes
     assert "list_geo_tenants_for_auth" in scope
     assert 'module_code == "geo"' in scope

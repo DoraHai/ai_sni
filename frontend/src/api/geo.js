@@ -122,3 +122,29 @@ export function createGeoActionTicket(tenantId, body) {
     params: { tenant_id: tenantId },
   })
 }
+
+export function patchGeoActionTicket(tenantId, ticketId, body) {
+  return client.patch(`/api/v1/geo/action-tickets/${ticketId}`, body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function verifyGeoActionTicket(tenantId, ticketId, recrawl = true) {
+  return client.post(`/api/v1/geo/action-tickets/${ticketId}/verify`, null, {
+    params: { tenant_id: tenantId, recrawl: !!recrawl },
+    timeout: 90000,
+  })
+}
+
+export function materializeGeoAuditTickets(tenantId, auditId, replaceOpen = false) {
+  return client.post(`/api/v1/geo/audits/${auditId}/tickets`, null, {
+    params: { tenant_id: tenantId, replace_open: !!replaceOpen },
+  })
+}
+
+export function verifyGeoAuditTickets(tenantId, auditId, recrawl = true) {
+  return client.post(`/api/v1/geo/audits/${auditId}/verify`, null, {
+    params: { tenant_id: tenantId, recrawl: !!recrawl },
+    timeout: 120000,
+  })
+}

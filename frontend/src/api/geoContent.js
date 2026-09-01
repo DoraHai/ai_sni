@@ -457,6 +457,30 @@ export function createGeoContentTask(body) {
   return client.post('/api/v1/geo/content-tasks', body)
 }
 
+/** Preview an uploaded article before associating it with a GEO question. */
+export function previewGeoArticleImportFile(tenantId, file) {
+  const form = new FormData()
+  form.append('file', file)
+  return client.post('/api/v1/geo/content-imports/preview-file', form, {
+    params: { tenant_id: tenantId },
+    timeout: 120000,
+  })
+}
+
+/** Fetch and normalize an existing article URL before importing it. */
+export function previewGeoArticleImportUrl(tenantId, url) {
+  return client.post(
+    '/api/v1/geo/content-imports/preview-url',
+    { tenant_id: tenantId, url },
+    { timeout: 120000 },
+  )
+}
+
+/** Create a content task from an already-authored article. */
+export function createGeoArticleImportTask(payload) {
+  return client.post('/api/v1/geo/content-imports/create-task', payload)
+}
+
 /** hard=false archive; hard=true physical delete (cascade article/variants) */
 export function deleteGeoContentTask(tenantId, taskId, hard = false) {
   return client.delete(`/api/v1/geo/content-tasks/${taskId}`, {

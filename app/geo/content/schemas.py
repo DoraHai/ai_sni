@@ -164,6 +164,25 @@ class TaskCreate(BaseModel):
     brief: dict[str, Any] | None = None
 
 
+class ArticleImportPreviewUrlRequest(BaseModel):
+    tenant_id: int
+    url: str = Field(..., min_length=8, max_length=2000)
+
+
+class ArticleImportCreateTaskRequest(BaseModel):
+    tenant_id: int
+    prompt_id: int
+    title: str = Field(..., min_length=1, max_length=300)
+    body_markdown: str = Field(..., min_length=1, max_length=500_000)
+    source_type: Literal["paste", "file", "url"]
+    source_url: str | None = Field(None, max_length=2000)
+    target_channels: list[str] = Field(
+        default_factory=lambda: ["website", "wechat", "zhihu"],
+        min_length=1,
+        max_length=20,
+    )
+
+
 class ContentBrief(BaseModel):
     industry: str | None = Field(None, max_length=100)
     audience: str | None = Field(None, max_length=120)
