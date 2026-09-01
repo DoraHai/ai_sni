@@ -48,6 +48,7 @@ class AdgroupService:
             "addAdgroup",
             {"adgroupTypes": [adgroup]},
             is_write=True,
+            write_scope="adgroup_create",
         )
 
     async def get_adgroups_by_campaign_ids(
@@ -123,7 +124,8 @@ class AdgroupService:
         if exact_negative_words is not None:
             adgroup["exactNegativeWords"] = exact_negative_words
         return await self._client.call(
-            "AdgroupService", "updateAdgroup", {"adgroupTypes": [adgroup]}, is_write=True
+            "AdgroupService", "updateAdgroup", {"adgroupTypes": [adgroup]},
+            is_write=True, write_scope="adgroup_negative_words",
         )
 
     async def update_adgroup_fields(
@@ -161,6 +163,25 @@ class AdgroupService:
             adgroup["pcTrackTemplate"] = pc_track_template
         if mobile_track_template is not None:
             adgroup["mobileTrackTemplate"] = mobile_track_template
+        scope_categories = {
+            "adgroup_bid" if max_price is not None else None,
+            "adgroup_pause" if pause is not None else None,
+            "adgroup_landing_url" if any(
+                value is not None
+                for value in (
+                    pc_final_url,
+                    mobile_final_url,
+                    pc_track_param,
+                    mobile_track_param,
+                    pc_track_template,
+                    mobile_track_template,
+                )
+            ) else None,
+        } - {None}
+        if len(scope_categories) != 1:
+            raise ValueError("update_adgroup_fields 每次只能更新一种动作类别")
+        write_scope = scope_categories.pop()
         return await self._client.call(
-            "AdgroupService", "updateAdgroup", {"adgroupTypes": [adgroup]}, is_write=True
+            "AdgroupService", "updateAdgroup", {"adgroupTypes": [adgroup]},
+            is_write=True, write_scope=write_scope,
         )
