@@ -1,85 +1,100 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { changePassword } from '../../api/auth'
 import { session } from '../../store/session'
 import { GEO_WORKBENCH_NAV } from '../../utils/geoPrototypeNavigation'
 
 const route = useRoute()
 const router = useRouter()
 const mobileOpen = ref(false)
+const tenantPopoverOpen = ref(false)
+const geoNavCollapsed = ref(false)
+const geoNavHover = ref(false)
+const isMobile = ref(false)
+const isEditor = computed(() => /^\/geo\/tasks\/[^/]+/.test(route.path))
+const geoNavRail = computed(() => geoNavCollapsed.value && !geoNavHover.value && !isMobile.value)
 const tenantName = computed(() => {
   const tenant = session.tenants.find((item) => item.id === session.tenantId)
   if (tenant?.name) return tenant.name
   if (session.tenantId) return `客户 #${session.tenantId}`
   return '未选择客户'
 })
-const hasGeoTenant = computed(() => (
-  session.tenants.some((item) => item.id === session.tenantId)
-))
-const accountName = computed(() => (
-  session.user?.display_name || session.user?.username || '本地运维'
-))
-const accountMeta = computed(() => {
-  const username = session.user?.username
-  const role = session.user?.role_label || 'GEO 用户'
-  return username && username !== accountName.value ? `${username} · ${role}` : role
-})
-const initials = computed(() => Array.from(String(accountName.value)).slice(0, 2).join(''))
-const pageTitle = computed(() => route.meta.title || 'GEO 工作台')
-const isEditor = computed(() => /^\/geo\/tasks\/[^/]+/.test(route.path))
 const isActive = (item) => route.path === item.path || route.path.startsWith(`${item.path}/`)
+
+watch(isEditor, (v) => { geoNavCollapsed.value = !!v }, { immediate: true })
 
 function go(path) {
   mobileOpen.value = false
   router.push(path)
 }
 
-function onTenantChange(event) {
-  const id = Number(event.target.value)
+function onTenantPick(id) {
+  tenantPopoverOpen.value = false
   if (!id || id === session.tenantId) return
   session.setTenant(id)
   if (route.path.startsWith('/geo/tasks/')) router.push('/geo/tasks')
 }
 
-async function onUserCommand(cmd) {
-  if (cmd === 'logout') {
-    session.logout()
-    router.push('/login')
-    return
-  }
-  if (cmd !== 'password') return
-  let oldP
-  let newP
-  try {
-    ;({ value: oldP } = await ElMessageBox.prompt('请输入原密码', '修改密码', { inputType: 'password' }))
-    ;({ value: newP } = await ElMessageBox.prompt('请输入新密码（至少 8 位）', '修改密码', {
-      inputType: 'password',
-      inputPattern: /^.{8,}$/,
-      inputErrorMessage: '至少 8 位',
-    }))
-  } catch {
-    return
-  }
-  try {
-    await changePassword({ oldPassword: oldP, newPassword: newP })
-    ElMessage.success('密码已修改')
-  } catch (e) {
-    ElMessage.error(e.message)
+function tenantInitials(tenant) {
+  const trimmed = String(tenant?.name || '').trim()
+  if (!trimmed) return '—'
+  const ascii = trimmed.match(/[A-Za-z]+/g)?.join('')
+  if (ascii && /^[A-Za-z0-9_-]/.test(trimmed)) return ascii.slice(0, 2).toUpperCase()
+  return Array.from(trimmed).slice(0, 2).join('')
+}
+
+function tenantTone(id) {
+  return ['blue', 'green', 'amber', 'violet', 'red'][Math.abs(Number(id) || 0) % 5]
+}
+
+function onGeoNavEnter() {
+  if (geoNavCollapsed.value) geoNavHover.value = true
+}
+function onGeoNavLeave() { geoNavHover.value = false }
+function toggleGeoNav() {
+  geoNavCollapsed.value = !geoNavCollapsed.value
+  geoNavHover.value = false
+}
+
+function onGeoEditorFocus(ev) {
+  if (ev.detail) {
+    geoNavCollapsed.value = true
+    geoNavHover.value = false
   }
 }
+
+let mobileMq
+function syncMobile() {
+  isMobile.value = mobileMq?.matches ?? false
+  if (!isMobile.value) mobileOpen.value = false
+}
+
+onMounted(() => {
+  window.addEventListener('geo-editor-focus', onGeoEditorFocus)
+  mobileMq = window.matchMedia('(max-width: 767px)')
+  syncMobile()
+  mobileMq.addEventListener('change', syncMobile)
+})
+onUnmounted(() => {
+  window.removeEventListener('geo-editor-focus', onGeoEditorFocus)
+  mobileMq?.removeEventListener('change', syncMobile)
+})
 </script>
 
 <template>
-  <div class="geo-shell">
+  <div class="geo-shell" :class="{ 'is-rail': geoNavRail }">
     <button class="geo-mobile-toggle" type="button" aria-label="打开 GEO 导航" @click="mobileOpen = true">☰</button>
     <div v-if="mobileOpen" class="geo-mobile-mask" @click="mobileOpen = false" />
-    <aside class="geo-shell-side" :class="{ 'is-open': mobileOpen }">
-      <div class="geo-shell-brand">
+    <aside
+      class="geo-shell-side"
+      :class="{ 'is-open': mobileOpen, 'is-rail': geoNavRail }"
+      @mouseenter="onGeoNavEnter"
+      @mouseleave="onGeoNavLeave"
+    >
+      <div class="geo-shell-brand" title="展开或收起导航" @click="toggleGeoNav">
         <span class="geo-shell-logo">G</span>
         <span class="geo-shell-brand-copy"><b>GEO 工作台</b><small>生成式引擎获客</small></span>
-        <button class="geo-mobile-close" type="button" aria-label="关闭 GEO 导航" @click="mobileOpen = false">×</button>
+        <button class="geo-mobile-close" type="button" aria-label="关闭 GEO 导航" @click.stop="mobileOpen = false">×</button>
       </div>
       <nav class="geo-shell-nav">
         <section v-for="group in GEO_WORKBENCH_NAV" :key="group.label">
@@ -89,65 +104,51 @@ async function onUserCommand(cmd) {
             :key="item.path"
             type="button"
             :class="{ active: isActive(item) }"
+            :title="item.label"
             @click="go(item.path)"
           >
             <span class="geo-shell-item-icon">{{ item.icon }}</span>
-            <span>{{ item.label }}</span>
+            <span class="geo-nav-label">{{ item.label }}</span>
           </button>
         </section>
       </nav>
-      <div class="geo-shell-links">
-        <a href="/diagnostic-center/"><span>!</span><span>诊断中心</span></a>
-        <a href="/seo/dashboard"><span>S</span><span>SEO 内容工作台</span></a>
-        <a href="/deal-sniper/portal"><span>←</span><span>返回平台门户</span></a>
+      <div class="geo-side-foot">
+        <el-popover
+          v-if="session.tenants.length"
+          v-model:visible="tenantPopoverOpen"
+          placement="top-start"
+          :width="286"
+          trigger="click"
+          popper-class="tenant-popover"
+        >
+          <template #reference>
+            <button type="button" class="geo-tenant" :title="tenantName">
+              {{ geoNavRail ? tenantInitials({ name: tenantName }) : (tenantName + ' ▾') }}
+            </button>
+          </template>
+          <div class="tenant-panel">
+            <div class="tenant-section-title">切换客户</div>
+            <button
+              v-for="t in session.tenants"
+              :key="'g-'+t.id"
+              class="tenant-option"
+              :class="{ active: t.id === session.tenantId }"
+              type="button"
+              @click="onTenantPick(t.id)"
+            >
+              <span class="tenant-avatar" :class="'tone-' + tenantTone(t.id)">{{ tenantInitials(t) }}</span>
+              <span class="tenant-copy">
+                <span class="tenant-title">{{ t.name }}</span>
+                <span class="tenant-meta">独立账户数据 · 客户 ID {{ t.id }}</span>
+              </span>
+              <span v-if="t.id === session.tenantId" class="tenant-check">✓</span>
+            </button>
+          </div>
+        </el-popover>
+        <button v-else type="button" class="geo-tenant" disabled>选择客户</button>
       </div>
     </aside>
     <main class="geo-shell-main">
-      <header class="geo-accountbar">
-        <div class="geo-accountbar-context">
-          <span>GEO 增长</span>
-          <b>/</b>
-          <strong>{{ pageTitle }}</strong>
-        </div>
-        <div class="geo-accountbar-controls">
-          <label v-if="isEditor" class="geo-tenant-switcher">
-            <span>当前客户</span>
-            <select
-              :value="session.tenantId || ''"
-              aria-label="切换客户"
-              @change="onTenantChange"
-            >
-              <option value="" disabled>{{ session.tenants.length ? tenantName : '选择客户' }}</option>
-              <option v-for="tenant in session.tenants" :key="tenant.id" :value="tenant.id">{{ tenant.name }}</option>
-            </select>
-          </label>
-          <div
-            class="geo-module-state"
-            :class="{ 'is-empty': !hasGeoTenant }"
-            title="仅展示已开通且在有效期内的 GEO 客户"
-          >
-            <i />
-            <span>{{ hasGeoTenant ? 'GEO 已开通' : '待选择 GEO 客户' }}</span>
-          </div>
-          <div class="geo-account-state">
-            <span class="geo-account-state-label">登录账号</span>
-            <span class="geo-account-state-copy">
-              <strong>{{ accountName }}</strong>
-              <small>{{ accountMeta }}</small>
-            </span>
-          </div>
-          <el-dropdown v-if="session.isLoggedIn" trigger="click" @command="onUserCommand">
-            <button type="button" class="geo-account-avatar" :title="accountName">{{ initials }}</button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="password">修改密码</el-dropdown-item>
-                <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-          <div v-else class="geo-account-avatar" title="本地 Key">{{ initials }}</div>
-        </div>
-      </header>
       <div class="geo-shell-content"><router-view /></div>
     </main>
   </div>
@@ -164,55 +165,43 @@ async function onUserCommand(cmd) {
   background: #f6f7fb;
   color: #172033;
 }
+.geo-shell.is-rail { grid-template-columns: 72px minmax(0, 1fr); }
 .geo-shell-side {
   position: sticky;
   top: 0;
   z-index: 30;
-  height: 100vh;
   display: flex;
   flex-direction: column;
-  padding: 16px 8px 0;
+  height: 100vh;
   background: #fff;
   border-right: 1px solid #e8eaf0;
+  padding: 16px 8px 0;
 }
 .geo-shell-brand {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 4px 8px 14px;
+  cursor: pointer;
 }
 .geo-shell-logo {
   width: 28px;
   height: 28px;
+  border-radius: 7px;
   display: grid;
   place-items: center;
   flex: none;
-  border-radius: 7px;
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
   color: #fff;
   font-size: 13px;
-  font-weight: 750;
-  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  font-weight: 800;
 }
-.geo-shell-brand-copy b,
-.geo-shell-brand-copy small {
-  display: block;
-}
-.geo-shell-brand-copy b {
-  color: #172033;
-  font-size: 15px;
-  line-height: 1.2;
-}
-.geo-shell-brand-copy small {
-  margin-top: 1px;
-  color: #8a94a6;
-  font-size: 10.5px;
-}
-.geo-shell-nav {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 0 0 8px;
-}
+.geo-shell-brand-copy { min-width: 0; display: grid; }
+.geo-shell-brand-copy b { font-size: 15px; line-height: 1.2; }
+.geo-shell-brand-copy small { color: #9aa1ad; font-size: 10.5px; }
+.geo-mobile-close,
+.geo-mobile-toggle { display: none; }
+.geo-shell-nav { flex: 1; overflow: auto; padding-bottom: 8px; }
 .geo-shell-nav h2 {
   margin: 0;
   padding: 13px 10px 5px;
@@ -222,20 +211,18 @@ async function onUserCommand(cmd) {
   letter-spacing: .06em;
 }
 .geo-shell-nav button {
-  width: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
   margin: 0;
   padding: 7px 8px;
   border: 0;
   border-radius: 8px;
   background: transparent;
   color: #5b6270;
-  font: inherit;
   font-size: 13px;
   font-weight: 500;
-  line-height: 1.3;
   text-align: left;
   cursor: pointer;
   white-space: nowrap;
@@ -254,226 +241,126 @@ async function onUserCommand(cmd) {
   flex: none;
   font-size: 13px;
 }
-.geo-shell-links {
-  display: grid;
-  gap: 1px;
-  padding: 8px 2px;
+.geo-side-foot {
+  padding: 8px 10px 12px;
   border-top: 1px solid #e8eaf0;
 }
-.geo-shell-links a {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 8px;
+.geo-tenant {
+  display: block;
+  width: 100%;
+  border: 0;
   border-radius: 8px;
+  background: transparent;
   color: #6b7280;
   font-size: 12px;
-  text-decoration: none;
-}
-.geo-shell-links a span:first-child {
-  width: 18px;
-  text-align: center;
-}
-.geo-shell-links a:hover {
-  background: #f5f0ff;
-  color: #7c3aed;
-}
-.geo-shell-main,
-.geo-shell-content {
-  min-width: 0;
-  min-height: 100vh;
-}
-.geo-shell-main {
-  display: flex;
-  flex-direction: column;
-}
-.geo-accountbar {
-  position: sticky;
-  top: 0;
-  z-index: 18;
-  min-height: 68px;
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  padding: 10px 24px;
-  border-bottom: 1px solid #e7e9f0;
-  background: rgba(255, 255, 255, .94);
-  box-shadow: 0 1px 0 rgba(15, 23, 42, .02);
-  backdrop-filter: blur(14px);
-}
-.geo-accountbar-context {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  color: #9aa1ad;
-  font-size: 12px;
-  white-space: nowrap;
-}
-.geo-accountbar-context b { color: #d5d8e0; font-weight: 500; }
-.geo-accountbar-context strong {
-  overflow: hidden;
-  color: #3f4654;
-  font-size: 13px;
-  font-weight: 650;
-  text-overflow: ellipsis;
-}
-.geo-accountbar-controls {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.geo-tenant-switcher {
-  height: 42px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 8px 0 13px;
-  border: 1px solid #e1e4ec;
-  border-radius: 11px;
-  background: #fff;
-  color: #8a92a3;
-  font-size: 11px;
-  white-space: nowrap;
-}
-.geo-tenant-switcher select {
-  min-width: 136px;
-  max-width: 210px;
-  padding: 7px 28px 7px 8px;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: #443453;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 700;
+  text-align: left;
+  padding: 8px 10px;
   cursor: pointer;
 }
-.geo-tenant-switcher strong { color: #6b7280; font-size: 12px; }
-.geo-module-state {
-  height: 34px;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0 11px;
-  border: 1px solid #d9eee2;
-  border-radius: 999px;
-  background: #f4fbf7;
-  color: #25815a;
-  font-size: 11px;
-  font-weight: 650;
-  white-space: nowrap;
-}
-.geo-module-state i {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #35b979;
-  box-shadow: 0 0 0 4px rgba(53, 185, 121, .12);
-}
-.geo-module-state.is-empty {
-  border-color: #e5e7eb;
-  background: #f8f9fb;
-  color: #7c8493;
-}
-.geo-module-state.is-empty i {
-  background: #a8afbb;
-  box-shadow: 0 0 0 4px rgba(168, 175, 187, .12);
-}
-.geo-account-state {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding-left: 12px;
-  border-left: 1px solid #e5e7ed;
-}
-.geo-account-state-label { color: #9aa1ad; font-size: 10.5px; white-space: nowrap; }
-.geo-account-state-copy { min-width: 0; }
-.geo-account-state-copy strong,
-.geo-account-state-copy small { display: block; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.geo-account-state-copy strong { color: #353b48; font-size: 12px; font-weight: 700; }
-.geo-account-state-copy small { margin-top: 2px; color: #98a0af; font-size: 9.5px; }
-.geo-account-avatar {
-  width: 34px;
-  height: 34px;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #8b5cf6, #6d28d9);
-  box-shadow: 0 5px 14px rgba(109, 40, 217, .2);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 750;
-  cursor: pointer;
-}
-.geo-shell-content {
-  flex: 1;
-  padding: 0;
-}
-.geo-mobile-toggle,
-.geo-mobile-close {
-  display: none;
-}
-@media (max-width: 900px) {
-  .geo-shell {
+.geo-tenant:hover { background: #f5f0ff; color: #7c3aed; }
+.geo-shell-side.is-rail { overflow: hidden; }
+.geo-shell-side.is-rail .geo-shell-brand { justify-content: center; padding-left: 0; padding-right: 0; }
+.geo-shell-side.is-rail .geo-shell-brand-copy,
+.geo-shell-side.is-rail .geo-shell-nav h2,
+.geo-shell-side.is-rail .geo-nav-label { display: none; }
+.geo-shell-side.is-rail .geo-shell-nav button { justify-content: center; padding: 10px 0; }
+.geo-shell-side.is-rail .geo-side-foot { padding: 8px 6px 12px; }
+.geo-shell-side.is-rail .geo-tenant { text-align: center; padding: 8px 0; font-weight: 650; }
+.geo-shell-main { min-width: 0; }
+.geo-shell-content { min-height: 100vh; }
+.geo-mobile-mask { display: none; }
+@media (max-width: 767px) {
+  .geo-shell,
+  .geo-shell.is-rail { grid-template-columns: 1fr; }
+  .geo-mobile-toggle {
+    display: inline-flex;
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    z-index: 40;
+    width: 36px;
+    height: 36px;
+    border: 1px solid #e8eaf0;
+    border-radius: 8px;
+    background: #fff;
+  }
+  .geo-mobile-close { display: inline-flex; margin-left: auto; border: 0; background: transparent; font-size: 22px; }
+  .geo-mobile-mask {
     display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 45;
+    background: rgba(15, 23, 42, .35);
   }
   .geo-shell-side {
     position: fixed;
     left: 0;
     top: 0;
-    width: min(86vw, 260px);
-    transform: translateX(-102%);
-    transition: transform .2s ease;
-    box-shadow: 16px 0 40px rgba(15, 23, 42, .18);
+    z-index: 50;
+    width: min(86vw, 280px);
+    transform: translateX(-110%);
+    transition: transform .18s ease;
   }
-  .geo-shell-side.is-open {
-    transform: translateX(0);
-  }
-  .geo-mobile-mask {
-    position: fixed;
-    inset: 0;
-    z-index: 20;
-    background: rgba(15, 23, 42, .38);
-  }
-  .geo-mobile-toggle {
-    position: fixed;
-    left: 12px;
-    top: 12px;
-    z-index: 15;
-    width: 36px;
-    height: 36px;
-    display: grid;
-    place-items: center;
-    border: 1px solid #e3e8f0;
-    border-radius: 9px;
-    background: #fff;
-    color: #475467;
-    font-size: 18px;
-  }
-  .geo-mobile-close {
-    display: block;
-    margin-left: auto;
-    border: 0;
-    background: transparent;
-    color: #667085;
-    font-size: 24px;
-  }
-  .geo-accountbar {
-    min-height: 64px;
-    padding: 10px 12px 10px 58px;
-  }
-  .geo-accountbar-context,
-  .geo-module-state,
-  .geo-account-state { display: none; }
-  .geo-accountbar-controls { width: 100%; }
-  .geo-tenant-switcher { min-width: 0; flex: 1; }
-  .geo-tenant-switcher select { min-width: 0; width: 100%; }
+  .geo-shell-side.is-open { transform: none; }
 }
-@media (max-width: 560px) {
-  .geo-tenant-switcher > span { display: none; }
+</style>
+<style>
+.tenant-popover.el-popper {
+  padding: 0;
+  border: 1px solid #e5ebf2;
+  border-radius: 8px;
+  box-shadow: 0 16px 38px rgba(15, 23, 42, 0.13);
+  overflow: hidden;
 }
+.tenant-panel { padding: 13px 8px 10px; background: #fff; }
+.tenant-section-title {
+  margin: 0 0 6px;
+  padding: 0 9px;
+  color: #9aa6b5;
+  font-size: 11px;
+  font-weight: 700;
+}
+.tenant-option {
+  width: 100%;
+  min-height: 44px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  text-align: left;
+  cursor: pointer;
+  color: #1f2937;
+}
+.tenant-option:hover { background: #f6f9fd; }
+.tenant-option.active { background: #edf4ff; }
+.tenant-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+.tenant-avatar.tone-blue { background: #2069b4; }
+.tenant-avatar.tone-green { background: #26a77a; }
+.tenant-avatar.tone-amber { background: #ca8321; }
+.tenant-avatar.tone-violet { background: #7657c8; }
+.tenant-avatar.tone-red { background: #e55353; }
+.tenant-copy { min-width: 0; display: grid; gap: 2px; }
+.tenant-title {
+  font-size: 13px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tenant-meta { color: #8a94a3; font-size: 11px; }
+.tenant-check { color: #7c3aed; font-weight: 700; }
 </style>

@@ -297,14 +297,29 @@ const sparkPoints = computed(() => {
     .join(' ')
 })
 
+const engineLatestRate = computed(() => {
+  const rows = engineDaily.value.filter((r) => String(r.scope_key || '').startsWith('t@'))
+  const latest = new Map()
+  for (const r of rows) {
+    const key = r.engine || String(r.scope_key || '').split('@')[1] || ''
+    if (!key) continue
+    const date = String(r.metric_date || '')
+    const prev = latest.get(key)
+    if (!prev || date > prev.date) {
+      latest.set(key, { date, rate: Number(r.brand_mention_rate) || 0 })
+    }
+  }
+  return latest
+})
+
 const engineRanks = computed(() =>
-  (patrolOps.value?.engines || [])
-    .filter((e) => e.enabled !== false && e.enabled !== 0)
+  [...engineLatestRate.value.entries()]
+    .sort((a, b) => b[1].rate - a[1].rate)
     .slice(0, 4)
-    .map((e, i) => ({
+    .map(([key, item], i) => ({
       rank: String(i + 1),
-      name: engineLabelOf(e),
-      value: (e.sample_mode || '') === 'openai_compat' && e.api_key_configured ? 80 : 45,
+      name: engineDisplay(key),
+      value: Math.round(item.rate * 100),
     })),
 )
 
@@ -951,19 +966,46 @@ onMounted(load)
 
 <template>
   <GeoWorkbenchPage
-    class="geo-overview-page"
     title="GEO 概览"
     :sub="`品牌：${tenantName} · 覆盖 ${dashEngines.length} 个模型 · ${obsLabel}`"
     :loading="loading"
   >
     <template #actions>
       <input v-model="qSearch" class="gd-search" placeholder="搜索提问 / 来源…" />
-      <button class="gd-btn" :disabled="exporting" @click="exportCsv">导出报告</button>
       <button class="gd-btn primary" @click="router.push('/geo/questions')">+ 添加监控词</button>
     </template>
   <div class="geo-dash">
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" />
+
+    <section class="gd-card prototype-period">
+      <div class="gd-hd">
+        <h3>可见度期次对比</h3>
+        <span class="more">{{ obsLabel }}</span>
+      </div>
+      <div class="gd-bd prototype-period-row">
+        <label>开始日期 <input type="date" :value="obsStart" readonly /></label>
+        <label>结束日期 <input type="date" :value="obsEnd" readonly /></label>
+        <button class="gd-btn primary" type="button" @click="loadDashboardExtras">计算 Δ</button>
+        <span class="gd-sub" style="margin:0">对比值使用当前全局观察期，不另造日期口径。</span>
+      </div>
+    </section>
+
+    <section class="gd-card prototype-path">
+      <div class="gd-hd"><h3>Demo 最短路径</h3><span class="more">5 步完成首次闭环</span></div>
+      <div class="gd-bd prototype-steps">
+        <button type="button" @click="router.push('/geo/knowledge')"><b>1</b><span>导入事实</span></button>
+        <button type="button" @click="router.push('/geo/questions')"><b>2</b><span>准备提问</span></button>
+        <button type="button" @click="router.push('/geo/visibility')"><b>3</b><span>登记快照</span></button>
+        <button type="button" @click="router.push('/geo/evaluation')"><b>4</b><span>查看评价</span></button>
+        <button type="button" @click="router.push('/geo/tasks')"><b>5</b><span>优化内容</span></button>
+      </div>
+    </section>
+
+    <div class="prototype-export">
+      <span class="gd-sub" style="margin:0">当前报告导出</span>
+      <button class="gd-btn" :disabled="exporting" @click="exportCsv">导出报告</button>
+    </div>
 
     <div class="gd-card gd-engines">
       <span class="gd-engines-label">监测引擎</span>
@@ -1057,7 +1099,13 @@ onMounted(load)
           </svg>
           <div v-else class="gd-sub">观察期内暂无按引擎日指标。开启巡检后会出现趋势。</div>
           <div class="gd-legend">
-            <span v-for="s in engineTrend" :key="'lg-'+s.key"><i :style="{ background: s.color }" />{{ s.name }}</span>
+            <span v-for="s in engineTrend" :key="'lg-'+s.key">
+              <i :style="{ background: s.color }" />{{ s.name }}
+              <template v-if="engineLatestRate.get(s.key)"> {{ Math.round(engineLatestRate.get(s.key).rate * 100) }}%</template>
+            </span>
+            <template v-if="!engineTrend.length">
+              <span v-for="r in engineRanks" :key="'rk-'+r.name">{{ r.rank }}. {{ r.name }} {{ r.value }}%</span>
+            </template>
           </div>
         </div>
       </div>
@@ -1120,6 +1168,16 @@ onMounted(load)
   </GeoWorkbenchPage>
 </template>
 <style scoped>
+.prototype-period,
+.prototype-path { margin-bottom: 16px; }
+.prototype-period-row,
+.prototype-export,
+.prototype-steps { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.prototype-period-row label { display: flex; align-items: center; gap: 8px; color: #475569; font-size: 13px; }
+.prototype-period-row input { border: 1px solid #d8dde8; border-radius: 8px; padding: 7px 10px; color: #334155; background: #f8fafc; }
+.prototype-steps button { border: 1px solid #e2e8f0; background: #fff; border-radius: 10px; padding: 10px 14px; display: inline-flex; gap: 8px; align-items: center; color: #334155; cursor: pointer; }
+.prototype-steps b { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 999px; background: #4f46e5; color: #fff; }
+.prototype-export { justify-content: flex-end; margin: -4px 0 16px; }
 .health {
   margin-left: 8px;
   font-size: 12px;

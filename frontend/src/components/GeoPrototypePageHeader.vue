@@ -15,15 +15,13 @@ function onTenantChange(event) {
   if (!id || id === session.tenantId) return
   session.setTenant(id)
   if (route.path.startsWith('/geo/tasks/')) router.push('/geo/tasks')
-  else if (route.path.startsWith('/geo/articles/')) router.push('/geo/articles')
   else if (route.path.startsWith('/geo/businesses/')) router.push('/geo/brand')
 }
 </script>
 
 <template>
-  <header class="geo-page-banner">
-    <div class="geo-page-banner-copy">
-      <span class="geo-page-banner-kicker">GEO WORKSPACE</span>
+  <header class="geo-topbar">
+    <div class="geo-topbar-copy">
       <h1>{{ title }}</h1>
       <div v-if="sub" class="sub">{{ sub }}</div>
       <slot />

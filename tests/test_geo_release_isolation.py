@@ -66,16 +66,15 @@ def test_geo_frontend_is_mounted_without_replacing_the_sem_shell():
     assert "./styles/geo-page.css" not in main
 
 
-def test_geo_overview_desktop_actions_stay_on_one_row():
+def test_geo_overview_desktop_keeps_prototype_workbench_actions():
     overview = _read("frontend/src/views/geo/GeoOverviewView.vue")
     dashboard_css = _read("frontend/src/styles/geo-dashboard.css")
 
-    assert 'class="geo-overview-page"' in overview
-    assert ".geo-overview-page .geo-page-banner" in dashboard_css
-    assert "grid-template-columns: minmax(180px, 1fr) auto auto" in dashboard_css
-    assert ".geo-overview-page .geo-page-banner .right" in dashboard_css
-    assert "flex-wrap: nowrap" in dashboard_css
-    assert "width: clamp(160px, 16vw, 240px)" in dashboard_css
+    assert "Demo 最短路径" in overview
+    assert "可见度期次对比" in overview
+    assert 'class="gd-search"' in overview
+    assert ".geo-topbar" in dashboard_css
+    assert ".geo-tenant-switcher" in dashboard_css
 
 
 def test_geo_standalone_keeps_required_form_and_table_styles():
@@ -124,22 +123,23 @@ def test_geo_standalone_bootstraps_logged_in_tenant_context():
 def test_geo_standalone_uses_shared_customer_and_account_header():
     shell = _read("frontend/src/views/geo/GeoWorkspaceShell.vue")
     page = _read("frontend/src/components/GeoWorkbenchPage.vue")
+    header = _read("frontend/src/components/GeoPrototypePageHeader.vue")
+    nav = _read("frontend/src/utils/geoPrototypeNavigation.js")
 
     assert "grid-template-columns: 216px minmax(0, 1fr);" in shell
-    assert 'class="geo-accountbar"' in shell
-    assert 'class="geo-tenant-switcher"' in shell
-    assert "当前客户" in shell
-    assert "GEO 已开通" in shell
-    assert "待选择 GEO 客户" in shell
-    assert "登录账号" in shell
+    assert 'class="geo-side-foot"' in shell
+    assert 'class="geo-tenant"' in shell
+    assert "geo-editor-focus" in shell
+    assert "is-rail" in shell
+    assert "/seo/dashboard" not in shell
+    assert "提问监控" in nav
+    assert "GEO 文章" in nav
+    assert "官网结构优化" in nav
     assert "GeoPrototypePageHeader" in page
-    header = _read("frontend/src/components/GeoPrototypePageHeader.vue")
-    assert 'class="geo-page-banner"' in header
-    assert "GEO WORKSPACE" in header
+    assert 'class="geo-topbar"' in header
     assert 'class="geo-tenant-switcher"' in header
-    assert "railCollapsed" not in shell
+    assert "当前客户" in header
     assert "session.setTenant(id)" in shell
-    assert 'v-if="session.tenants.length"' not in shell
     assert "geo-tenant-switcher" not in page
 
 

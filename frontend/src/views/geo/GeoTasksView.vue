@@ -5,160 +5,84 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createGeoContentTask,
   deleteGeoContentTask,
-  fetchGeoContentTaskImpact,
   listGeoContentTasks,
   listGeoPrompts,
 } from '../../api/geoContent'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
-import { pipelineLabel, taskStatusLabel } from '../../utils/geoReportLabels'
-import { getGeoPrototypePageSurface } from '../../utils/geoEditorSurface'
+import { engineDisplay, taskStatusLabel } from '../../utils/geoReportLabels'
 
 const router = useRouter()
-const prototypeSurface = getGeoPrototypePageSurface()
 const { tenantId } = useGeoTenant()
+
+const CHANNEL_CN = {
+  website: '官网', wechat: '微信', zhihu: '知乎', baijiahao: '百家号',
+  toutiao: '头条', docs: '文档', industry_media: '行业媒体',
+}
 
 const loading = ref(false)
 const error = ref('')
 const items = ref([])
-const statusFilter = ref('')
-const chip = ref('all')
+const workbenchTab = ref('')
 const q = ref('')
 const createOpen = ref(false)
+const createMode = ref('prompt')
 const creating = ref(false)
 const prompts = ref([])
 const form = ref({ prompt_id: null, title: '', target_channels: ['website', 'wechat', 'zhihu'] })
 const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
+const workbenchCounts = ref({ all: 0, draft: 0, polish: 0, ready: 0, published: 0 })
 
-const statusOptions = [
-  { value: '', label: '全部（不含归档）' },
-  { value: 'draft', label: '草稿' },
-  { value: 'facts_bound', label: '已绑事实' },
-  { value: 'editing', label: '编辑中' },
-  { value: 'needs_fix', label: '待修补' },
-  { value: 'ready', label: '就绪' },
-  { value: 'published', label: '已发布' },
-  { value: 'archived', label: '已归档' },
-]
-const includeArchived = ref(false)
-const recPrompts = ref([])
-const citeRows = ref([])
-
-const CHIP_STATUS = {
-  all: null,
-  draft: ['draft', 'facts_bound', 'editing', 'generating'],
-  polish: ['needs_fix'],
-  publish: ['ready', 'exported'],
-  published: ['published'],
-}
-
-const chipCounts = computed(() => {
-  const rows = items.value || []
-  const count = (keys) => rows.filter((t) => keys.includes(t.status)).length
-  return {
-    all: rows.length,
-    draft: count(CHIP_STATUS.draft),
-    polish: count(CHIP_STATUS.polish),
-    publish: count(CHIP_STATUS.publish),
-    published: count(CHIP_STATUS.published),
-  }
-})
-
-const tableRows = computed(() => {
-  const keys = CHIP_STATUS[chip.value]
-  let rows = items.value || []
-  if (keys) rows = rows.filter((t) => keys.includes(t.status))
-  const qq = q.value.trim()
-  if (qq) {
-    rows = rows.filter(
-      (t) =>
-        String(t.title || '').includes(qq) ||
-        String(t.prompt_question || '').includes(qq),
-    )
-  }
-  return rows
-})
-
-function friendliness(t) {
-  let s = 38
-  if (t.brief_ready) s += 16
-  const rich = Number(t.strategy_richness || 0)
-  if (rich) s += Math.min(20, rich)
-  if (t.status === 'published') s += 24
-  else if (t.status === 'ready' || t.status === 'exported') s += 16
-  else if (t.status === 'needs_fix') s += 4
-  return Math.min(99, s)
-}
-
-function channelLabel(ch) {
-  return { website: '官网', wechat: '公众号', zhihu: '知乎', media: '媒体' }[ch] || ch
-}
-
-const recommended = computed(() =>
-  recPrompts.value
-    .filter((p) => Array.isArray(p.tags) && p.tags.includes('brand_missing'))
-    .slice(0, 4),
-)
+const tabs = computed(() => [
+  { value: '', label: '全部', count: workbenchCounts.value.all },
+  { value: 'draft', label: '草稿', count: workbenchCounts.value.draft },
+  { value: 'polish', label: '待润色', count: workbenchCounts.value.polish },
+  { value: 'ready', label: '待发布', count: workbenchCounts.value.ready },
+  { value: 'published', label: '已发布', count: workbenchCounts.value.published },
+])
 
 function statusTagType(status) {
   if (status === 'published' || status === 'ready') return 'success'
   if (status === 'needs_fix' || status === 'failed') return 'danger'
-  if (status === 'archived') return 'info'
   return ''
+}
+
+function enginesText(row) {
+  const keys = row.engine_keys || []
+  if (!keys.length) return '—'
+  return keys.map((key) => engineDisplay(key)).join(' / ')
+}
+
+function pubsText(row) {
+  const channels = row.publication_channels || []
+  if (!channels.length) return '—'
+  return channels.map((key) => CHANNEL_CN[key] || key).join('、')
 }
 
 async function load() {
   if (!tenantId.value) {
     error.value = '请先选择客户或配置本地 API Key'
     items.value = []
+    total.value = 0
     return
   }
   loading.value = true
   error.value = ''
   try {
     const params = {
-      limit: 200,
-      offset: 0,
+      limit: pageSize.value,
+      offset: (page.value - 1) * pageSize.value,
     }
-    if (statusFilter.value) params.status = statusFilter.value
+    if (workbenchTab.value) params.workbench_tab = workbenchTab.value
     if (q.value.trim()) params.q = q.value.trim()
-    if (includeArchived.value && !statusFilter.value) params.include_archived = true
     const data = await listGeoContentTasks(tenantId.value, params)
     items.value = data.items || []
     total.value = Number(data.total ?? items.value.length) || 0
-    try {
-      const pr = await listGeoPrompts(tenantId.value, { status: 'active' })
-      recPrompts.value = pr.items || []
-    } catch {
-      recPrompts.value = []
-    }
-    const published = (items.value || []).filter((t) => t.status === 'published').slice(0, 6)
-    try {
-      const impacts = await Promise.all(
-        published.map((t) =>
-          fetchGeoContentTaskImpact(tenantId.value, t.id, 14).then((imp) => ({
-            title: t.title,
-            cites: Number(imp.cite_hits?.total ?? imp.summary?.cite_hit_total ?? 0),
-            question: recPrompts.value.find((p) => p.id === t.prompt_id)?.question || '—',
-            id: t.id,
-          })).catch(() => ({
-            title: t.title,
-            cites: t.citation_count ?? 0,
-            question: '—',
-            id: t.id,
-          })),
-        ),
-      )
-      citeRows.value = impacts
-    } catch {
-      citeRows.value = published.map((t) => ({
-        title: t.title,
-        cites: 0,
-        question: '—',
-        id: t.id,
-      }))
+    workbenchCounts.value = {
+      all: 0, draft: 0, polish: 0, ready: 0, published: 0,
+      ...(data.workbench_counts || {}),
     }
   } catch (e) {
     error.value = e.message || '加载失败'
@@ -180,8 +104,15 @@ function onSizeChange(s) {
   load()
 }
 
+function setTab(value) {
+  workbenchTab.value = value
+  page.value = 1
+  load()
+}
+
 async function openCreate() {
   if (!tenantId.value) return
+  createMode.value = 'prompt'
   createOpen.value = true
   try {
     const data = await listGeoPrompts(tenantId.value, { status: 'active' })
@@ -190,13 +121,18 @@ async function openCreate() {
       form.value.prompt_id = prompts.value[0].id
     }
   } catch (e) {
-    ElMessage.error(e.message || '加载优化意图词失败')
+    ElMessage.error(e.message || '加载目标问题失败')
   }
 }
 
 async function submitCreate() {
+  if (createMode.value === 'import') {
+    createOpen.value = false
+    router.push('/geo/import')
+    return
+  }
   if (!form.value.prompt_id) {
-    ElMessage.warning('请选择优化意图词')
+    ElMessage.warning('请选择目标提问')
     return
   }
   creating.value = true
@@ -223,19 +159,18 @@ function openEditor(row) {
   router.push(`/geo/tasks/${row.id}`)
 }
 
-async function createFromPrompt(prompt) {
-  if (!prompt?.id) return
-  try {
-    const task = await createGeoContentTask({
-      tenant_id: tenantId.value,
-      prompt_id: prompt.id,
-      title: prompt.question,
-    })
-    ElMessage.success(`已创建任务 #${task.id}`)
-    router.push(`/geo/tasks/${task.id}`)
-  } catch (e) {
-    ElMessage.error(e.message || '创建失败')
-  }
+function openDistribution(row) {
+  router.push(`/geo/tasks/${row.id}/distribution`)
+}
+
+function openCitations(row) {
+  router.push({ path: '/geo/citations', query: { task_id: String(row.id) } })
+}
+
+function handleRowAction(row, command) {
+  if (command === 'distribution') return openDistribution(row)
+  if (command === 'citations') return openCitations(row)
+  if (command === 'archive') return archiveTask(row)
 }
 
 async function archiveTask(row) {
@@ -252,22 +187,7 @@ async function archiveTask(row) {
   }
 }
 
-async function hardDeleteTask(row) {
-  try {
-    await ElMessageBox.confirm(
-      `物理删除任务 #${row.id}（级联删除母稿/渠道稿，不可恢复）？`,
-      '删除',
-      { type: 'error', confirmButtonText: '删除' },
-    )
-    await deleteGeoContentTask(tenantId.value, row.id, true)
-    ElMessage.success('已删除')
-    await load()
-  } catch (e) {
-    if (e !== 'cancel' && e !== 'close') ElMessage.error(e.message || '删除失败')
-  }
-}
-
-watch([tenantId, statusFilter, includeArchived], () => {
+watch(tenantId, () => {
   page.value = 1
   load()
 })
@@ -276,114 +196,197 @@ onMounted(load)
 
 <template>
   <GeoWorkbenchPage
-    title="优化文章"
-    sub="围绕用户提问生产可验证、可摘取、可被 AI 引用的内容"
+    title="GEO 文章工作台"
+    sub="从零生产或导入已有内容，统一进行 GEO 检测、优化与发布"
     :loading="loading"
     class="geo-tasks"
   >
     <template #actions>
-      <button class="gd-btn" @click="load">刷新</button>
-      <button class="gd-btn primary" @click="openCreate">AI 生成 GEO 文章</button>
+      <router-link class="gd-btn" to="/geo/placements">信源素材库</router-link>
+      <button class="gd-btn primary" type="button" @click="openCreate">＋ 创建 GEO 文章</button>
     </template>
-    <div class="geo-dash">
 
-    <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
-    <div v-if="prototypeSurface.showLightweightOperations && recommended.length" class="gd-card" style="margin-bottom:16px">
-      <div class="gd-hd">
-        <h3>优先从这些提问写</h3>
-        <button class="gd-btn primary" style="margin-left:auto" @click="createFromPrompt(recommended[0])">立即生成</button>
-      </div>
-      <div class="gd-bd">
-        <div v-for="p in recommended" :key="p.id" style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #e8eaf0">
-          <span>「{{ p.question }}」</span>
-          <el-button link type="primary" @click="createFromPrompt(p)">生成文章</el-button>
+    <div class="geo-dash">
+      <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
+
+      <section class="geo-intro mb">
+        <div>
+          <span class="kicker">Citation-ready Content</span>
+          <h2>GEO 写作的核心不是“多写”，而是让事实更容易被 AI 找到、理解和引用</h2>
+          <p>无论从目标问题生成新文章，还是导入已有内容，系统都会结合品牌资料、知识库与可信信源，完成 GEO 检测、内容补强和持续优化。</p>
+          <div class="geo-principles">
+            <span>独家信息</span><span>事实可核验</span><span>明确来源</span><span>定义 / 对比 / FAQ</span><span>不堆关键词</span>
+          </div>
+        </div>
+        <div class="geo-flow" aria-label="GEO 内容工作流">
+          <div class="geo-flow-step"><span class="geo-flow-no">1</span><b>选择文章起点</b><small>AI 新建或导入已有内容</small></div>
+          <div class="geo-flow-step"><span class="geo-flow-no">2</span><b>关联目标问题</b><small>明确文章需要回答什么</small></div>
+          <div class="geo-flow-step"><span class="geo-flow-no">3</span><b>GEO 检测与优化</b><small>补强结构、事实与可信信源</small></div>
+          <div class="geo-flow-step"><span class="geo-flow-no">4</span><b>发布与回流</b><small>分发成稿并跟进引用表现</small></div>
+        </div>
+      </section>
+
+      <div class="gd-card">
+        <div class="gd-hd workbench-bar">
+          <h3>内容任务</h3>
+          <button
+            v-for="tab in tabs"
+            :key="tab.value || 'all'"
+            class="geo-filter"
+            :class="{ active: workbenchTab === tab.value }"
+            type="button"
+            @click="setTab(tab.value)"
+          >
+            {{ tab.label }} {{ tab.count }}
+          </button>
+          <input
+            v-model="q"
+            class="gd-search"
+            placeholder="搜索文章或目标提问"
+            @keyup.enter="() => { page = 1; load() }"
+          />
+        </div>
+        <div class="gd-bd" style="padding:0">
+          <el-table :data="items" empty-text="暂无任务 · 可创建 GEO 文章或导入已有文章" class="task-table">
+            <el-table-column label="文章" min-width="240">
+              <template #default="{ row }">
+                <div class="title-cell">{{ row.title || '—' }}</div>
+                <div class="sub">#{{ row.id }}</div>
+              </template>
+            </el-table-column>
+            <el-table-column label="目标提问" min-width="200">
+              <template #default="{ row }">{{ row.prompt_question || `提问 #${row.prompt_id}` }}</template>
+            </el-table-column>
+            <el-table-column label="适配引擎" min-width="140">
+              <template #default="{ row }">{{ enginesText(row) }}</template>
+            </el-table-column>
+            <el-table-column label="AI 友好度" width="110">
+              <template #default="{ row }">{{ row.geo_score == null ? '—' : row.geo_score }}</template>
+            </el-table-column>
+            <el-table-column label="状态" width="110">
+              <template #default="{ row }">
+                <el-tag size="small" :type="statusTagType(row.status)" effect="light">
+                  {{ taskStatusLabel(row.status) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="发布信源" min-width="140">
+              <template #default="{ row }">{{ pubsText(row) }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="140" fixed="right">
+              <template #default="{ row }">
+                <div class="task-actions">
+                  <el-button type="primary" link @click="openEditor(row)">打开</el-button>
+                  <el-dropdown placement="bottom-end" @command="(command) => handleRowAction(row, command)">
+                    <el-button link>更多</el-button>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item command="distribution">分发记录</el-dropdown-item>
+                        <el-dropdown-item command="citations">引用回流</el-dropdown-item>
+                        <el-dropdown-item v-if="row.status !== 'archived'" command="archive" divided>归档</el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
+                </div>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div class="geo-pager">
+            <el-pagination
+              background
+              layout="total, sizes, prev, pager, next"
+              :total="total"
+              :page-size="pageSize"
+              :current-page="page"
+              :page-sizes="[10, 20, 50, 100]"
+              @current-change="onPageChange"
+              @size-change="onSizeChange"
+            />
+          </div>
         </div>
       </div>
-    </div>
 
-    <div class="geo-chips">
-      <button class="geo-chip" :class="{ active: chip === 'all' }" @click="chip = 'all'">全部 {{ chipCounts.all }}</button>
-      <button class="geo-chip" :class="{ active: chip === 'draft' }" @click="chip = 'draft'">草稿 {{ chipCounts.draft }}</button>
-      <button class="geo-chip" :class="{ active: chip === 'polish' }" @click="chip = 'polish'">待润色 {{ chipCounts.polish }}</button>
-      <button class="geo-chip" :class="{ active: chip === 'publish' }" @click="chip = 'publish'">待发布 {{ chipCounts.publish }}</button>
-      <button class="geo-chip" :class="{ active: chip === 'published' }" @click="chip = 'published'">已发布 {{ chipCounts.published }}</button>
-      <input v-model="q" class="gd-search" placeholder="搜索文章或目标提问" @keyup.enter="load" />
-    </div>
-
-    <div class="gd-card">
-      <div class="gd-bd" style="padding:0">
-        <table>
-          <thead>
-            <tr>
-              <th>文章</th>
-              <th>目标提问</th>
-              <th>发布信源</th>
-              <th>AI 友好度</th>
-              <th>状态</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in tableRows" :key="row.id">
-              <td>
-                <b>{{ row.title || '—' }}</b>
-                <div class="gd-sub" style="margin:0">{{ pipelineLabel(row.pipeline_step) }}</div>
-              </td>
-              <td>{{ row.prompt_question || `提问 #${row.prompt_id}` }}</td>
-              <td>
-                <span v-for="ch in (row.target_channels || [])" :key="ch" class="gd-tag" style="margin-right:4px">{{ channelLabel(ch) }}</span>
-              </td>
-              <td>
-                <span class="geo-ready"><i :style="{ '--ready': friendliness(row) + '%' }" />{{ friendliness(row) }}</span>
-              </td>
-              <td><span class="gd-badge" :class="row.status === 'published' ? 'green' : row.status === 'needs_fix' ? 'amber' : 'blue'">{{ taskStatusLabel(row.status) }}</span></td>
-              <td>
-                <el-button link type="primary" @click="openEditor(row)">在线编辑</el-button>
-                <el-button v-if="prototypeSurface.showLightweightOperations && row.status !== 'archived'" link @click="archiveTask(row)">归档</el-button>
-              </td>
-            </tr>
-            <tr v-if="!tableRows.length"><td colspan="6" class="gd-sub">暂无优化文章</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <el-dialog v-model="createOpen" title="新建优化文章" width="500px" class="geo-form-dialog">
-      <el-form label-width="100px" class="geo-dialog-form">
-        <el-form-item label="优化意图词" required>
-          <el-select v-model="form.prompt_id" filterable style="width: 100%" placeholder="选择优化意图词">
-            <el-option
-              v-for="p in prompts"
-              :key="p.id"
-              :label="`#${p.id} ${p.question}`"
-              :value="p.id"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="标题">
-          <el-input v-model="form.title" placeholder="默认用意图词问题" />
-        </el-form-item>
-        <el-form-item label="目标渠道">
-          <el-select v-model="form.target_channels" multiple style="width: 100%" collapse-tags>
-            <el-option label="官网" value="website" />
-            <el-option label="微信" value="wechat" />
-            <el-option label="知乎" value="zhihu" />
-          </el-select>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="createOpen = false">取消</el-button>
-        <el-button type="primary" :loading="creating" @click="submitCreate">创建</el-button>
-      </template>
-    </el-dialog>
+      <el-dialog v-model="createOpen" title="创建 GEO 文章" width="520px" class="geo-form-dialog">
+        <el-form label-width="108px" class="geo-dialog-form">
+          <el-form-item label="创建方式">
+            <el-radio-group v-model="createMode">
+              <el-radio label="prompt">从目标提问创建</el-radio>
+              <el-radio label="import">导入已有文章</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <template v-if="createMode === 'prompt'">
+            <el-form-item label="目标提问" required>
+              <el-select v-model="form.prompt_id" filterable style="width: 100%" placeholder="选择目标提问">
+                <el-option
+                  v-for="p in prompts"
+                  :key="p.id"
+                  :label="`#${p.id} ${p.question}`"
+                  :value="p.id"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="标题">
+              <el-input v-model="form.title" placeholder="默认用提问原文" />
+            </el-form-item>
+          </template>
+        </el-form>
+        <template #footer>
+          <el-button @click="createOpen = false">取消</el-button>
+          <el-button type="primary" :loading="creating" @click="submitCreate">
+            {{ createMode === 'import' ? '去导入' : '创建' }}
+          </el-button>
+        </template>
+      </el-dialog>
     </div>
   </GeoWorkbenchPage>
 </template>
 
 <style scoped>
 .title-cell { font-weight: 650; color: #0f172a; }
-.sub { font-size: 12px; color: #94a3b8; margin-top: 3px; line-height: 1.4; }
-.blocked { color: #b45309; font-size: 12px; }
-.muted { color: #9ca3af; }
+.sub { font-size: 12px; color: #94a3b8; margin-top: 3px; }
+.mb { margin-bottom: 12px; }
+.kicker { color: #5b5ce2; font-size: 12px; font-weight: 800; letter-spacing: .04em; }
+.geo-intro {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(440px, .85fr);
+  gap: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid #2d3d48;
+  border-radius: 12px;
+  background: #1f2b34;
+}
+.geo-intro > div:first-child { padding: 28px 34px; }
+.kicker { color: #62d5cf; }
+.geo-intro h2 { max-width: 900px; margin: 12px 0; color: #f8fafc; font-size: 22px; line-height: 1.45; }
+.geo-intro p { max-width: 980px; margin: 0; color: #b7c3cc; font-size: 13px; line-height: 1.7; }
+.geo-principles { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.geo-principles span { padding: 5px 9px; border: 1px solid #40515c; border-radius: 7px; background: #293843; color: #cbd6dd; font-size: 11px; font-weight: 650; }
+.geo-flow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: stretch; border-left: 1px solid #33434e; }
+.geo-flow-step { display: grid; grid-template-columns: 30px minmax(0, 1fr); column-gap: 9px; align-content: center; padding: 20px 24px; border-bottom: 1px solid #33434e; }
+.geo-flow-step:nth-child(odd) { border-right: 1px solid #33434e; }
+.geo-flow-step:nth-last-child(-n + 2) { border-bottom: 0; }
+.geo-flow-no { grid-row: span 2; display: grid; width: 30px; height: 30px; place-items: center; border-radius: 50%; background: #62d5cf; color: #17323a; font-size: 12px; font-weight: 850; }
+.geo-flow b { display: block; color: #f8fafc; font-size: 13px; }
+.geo-flow small { margin-top: 4px; color: #9cafba; font-size: 11px; line-height: 1.45; }
+.workbench-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.workbench-bar h3 { margin-right: 8px; }
+.geo-filter {
+  border: 1px solid #e7e9ef;
+  background: #fff;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.geo-filter.active { background: #eef0ff; border-color: #c9ccf5; color: #4338ca; font-weight: 700; }
+.gd-search { margin-left: auto; min-width: 220px; }
 .task-table { width: 100%; }
+.task-actions { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.geo-pager { display: flex; justify-content: flex-end; padding: 12px 14px; }
+@media (max-width: 900px) {
+  .geo-intro { grid-template-columns: 1fr; }
+  .geo-flow { border-top: 1px solid #33434e; border-left: 0; }
+  .gd-search { margin-left: 0; width: 100%; }
+}
 </style>

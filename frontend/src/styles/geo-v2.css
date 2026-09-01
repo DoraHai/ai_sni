@@ -1,5 +1,17 @@
 /* GEO prototype-v2 visual language, scoped to .geo-v2 */
 
+/* Workbench tokens — scoped to .geo-wb so SEM/SEO pages are unchanged */
+.geo-wb {
+  --geo-bg: #f6f7fb;
+  --geo-surface: #ffffff;
+  --geo-text: #16181d;
+  --geo-muted: #7a8393;
+  --geo-line: #e7e9ef;
+  --geo-primary: #5b5ce2;
+  --geo-radius: 12px;
+  --geo-content-width: 1440px;
+}
+
 .geo-v2 {
   --gv2-ink: #10172a;
   --gv2-muted: #667085;
@@ -547,13 +559,13 @@
   .geo-v2 .gv2-grid-2 { grid-template-columns: 1fr; }
 }
 
-.geo-v2 .metric-list {
+.metric-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
 
-.geo-v2 .metric-list .gv2-metric {
+.metric-list .gv2-metric {
   min-height: 84px;
 }

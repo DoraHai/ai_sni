@@ -80,6 +80,25 @@ export const PIPELINE_LABEL = {
   publish: '发布',
 }
 
+/** 母稿就绪检查 code → 运营可读名 */
+export const CHECK_LABEL = {
+  direct_answer: '开篇直接答',
+  definition: '定义段',
+  faq_min: 'FAQ 问答',
+  conclusion_extractable: '可抽取结论',
+  numbers_extractable: '可抽取数据',
+  comparison_extractable: '可抽取对比',
+  howto_extractable: '可抽取步骤',
+  updated_at_visible: '更新日期可见',
+  author_visible: '作者信息可见',
+  sources_footer: '信源页脚',
+  facts_bound_min: '事实绑定数量',
+  evidence_publishable: '可引用证据',
+  channel_variant_ready: '渠道稿已生成',
+  fabrication_lint: '编造风险扫描',
+  sentence_evidence: '逐句证据',
+}
+
 export const REVIEW_STATUS_LABEL = {
   none: '未提交审校',
   pending: '待审校',
@@ -95,6 +114,26 @@ export function pipelineLabel(step) {
   return PIPELINE_LABEL[step] || step || '—'
 }
 
+export function checkLabel(code) {
+  const key = String(code || '').trim()
+  if (!key) return '—'
+  return CHECK_LABEL[key] || key.replace(/_/g, ' ')
+}
+
+/** 列表「门禁」列：把 blocked_reason 英文码拆成可读标签 */
+export function blockedGateItems(raw, limit = 3) {
+  const codes = String(raw || '')
+    .split(/[,，;；]/)
+    .map((x) => x.trim())
+    .filter(Boolean)
+  const items = codes.map((code) => ({ code, label: checkLabel(code) }))
+  return {
+    items: items.slice(0, limit),
+    extra: Math.max(0, items.length - limit),
+    title: items.map((i) => i.label).join('、'),
+  }
+}
+
 export function reviewStatusLabel(status) {
   return REVIEW_STATUS_LABEL[status] || status || '—'
 }
@@ -104,7 +143,6 @@ export function reviewStatusLabel(status) {
  */
 export function nextEditorStep(task, extras = {}) {
   const facts = extras.boundFacts || task?.facts || []
-  const verified = facts.filter((f) => f.trust_level === 'verified').length
   const hasArticle = extras.hasArticle ?? !!(task?.article)
   const variants = extras.variants || task?.variants || []
   const pubs = extras.publications || task?.publications || []
@@ -130,11 +168,11 @@ export function nextEditorStep(task, extras = {}) {
       action: '去保存策略',
     }
   }
-  if (facts.length < 3 || verified < 3) {
+  if (facts.length < 3) {
     return {
       key: 'facts',
-      title: '绑上至少 3 条已核验事实',
-      detail: `现在已核验 ${verified} / 共 ${facts.length} 条。没有事实，生成会空转或编造。`,
+      title: '绑上至少 3 条事实',
+      detail: `现在已绑 ${facts.length} 条。没有事实，生成会空转或编造。`,
       action: '去绑事实',
     }
   }
@@ -154,12 +192,18 @@ export function nextEditorStep(task, extras = {}) {
       action: '去检查',
     }
   }
-  if (!variants.length) {
+  const readyN =
+    extras.publishReadyCount ??
+    variants.filter((v) => (v?.adapt_meta?.quality || '') === 'publish_ready').length
+  if (!variants.length || readyN === 0) {
+    const hasClips = variants.length > 0
     return {
       key: 'variants',
-      title: '生成渠道稿',
-      detail: '母稿好了，按官网 / 微信 / 知乎拆一版再发。',
-      action: '生成渠道稿',
+      title: hasClips ? '把渠道稿写成成稿' : '生成成稿',
+      detail: hasClips
+        ? '页签里还是母稿改写，用 AI 按官网 / 微信 / 知乎各写一版可复制成稿。'
+        : '母稿好了，按官网 / 微信 / 知乎各出一版可复制成稿。',
+      action: '生成成稿',
     }
   }
   if (review === 'none') {

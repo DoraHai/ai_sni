@@ -22,6 +22,20 @@ import {
 import { citationHeatFromItems, heatTone } from '../../utils/geoSnapshotSummary'
 import { getGeoPrototypePageSurface } from '../../utils/geoEditorSurface'
 
+/** 蓝图 P0/P1 渠道：用于「高价值待铺」缺口，不编造全国引用数字。 */
+const HIGH_VALUE_CHANNELS = [
+  { key: 'official', name: '官网', why: '事实口径来源' },
+  { key: 'baike', name: '百度百科 / 搜狗百科', why: '实体消歧地基' },
+  { key: 'ranking', name: '榜单/品牌库站', why: '「有哪些/哪个好」高杠杆' },
+  { key: 'wechat', name: '微信公众号 / 腾讯新闻', why: '腾讯元宝常见来源' },
+  { key: 'toutiao', name: '今日头条号', why: '豆包系常见来源' },
+  { key: 'zhihu', name: '知乎', why: '承接哪个好/怎么选' },
+  { key: 'tech', name: 'CSDN / 博客园', why: '技术 B2B 高权重' },
+  { key: 'quark', name: '夸克 / 神马搜索', why: '千问常见来源' },
+]
+const OWN_HEAT_NAME = '本品牌官网/博客'
+const ARTICLE_PREVIEW = 5
+
 const router = useRouter()
 const prototypeSurface = getGeoPrototypePageSurface()
 const { days: observationDays, start: obsStart, end: obsEnd, label: obsLabel } = useObservationPeriod()
@@ -35,16 +49,26 @@ const error = ref('')
 const data = ref(null)
 const ownOnly = ref(false)
 const domainQuery = ref('')
+const showAllArticles = ref(false)
 
 const citeItems = computed(() => {
   let rows = data.value?.items || []
   if (ownOnly.value) rows = rows.filter((r) => r.is_own_domain)
   const q = domainQuery.value.trim().toLowerCase()
-  if (q) rows = rows.filter((r) => String(r.domain || '').toLowerCase().includes(q))
+  if (q) rows = rows.filter((r) => rowMatchesQuery(r, q))
   return rows
 })
 const pager = useClientPager(citeItems, { pageSize: 20 })
-const heatMap = computed(() => citationHeatFromItems(data.value?.items || []))
+
+const heatMap = computed(() => {
+  const mapped = (data.value?.items || []).map((it) =>
+    it.is_own_domain ? { ...it, blueprint_channel_name: OWN_HEAT_NAME } : it,
+  )
+  const heat = citationHeatFromItems(mapped)
+  const own = heat.rows.filter((r) => r.name === OWN_HEAT_NAME)
+  const rest = heat.rows.filter((r) => r.name !== OWN_HEAT_NAME)
+  return { ...heat, rows: [...rest, ...own] }
+})
 
 const qualityRows = computed(() => {
   if (!data.value) return []
@@ -53,6 +77,138 @@ const qualityRows = computed(() => {
     ...countsToRows(data.value.accuracy_counts, CITATION_ACCURACY_LABEL, '引用准确性'),
   ]
 })
+
+const platformStats = computed(() => {
+  const map = new Map()
+  for (const it of data.value?.items || []) {
+    const name = it.is_own_domain ? OWN_HEAT_NAME : (it.blueprint_channel_name || it.domain)
+    const cur = map.get(name) || { name, cite_count: 0 }
+    cur.cite_count += Number(it.cite_count || 0)
+    map.set(name, cur)
+  }
+  const rows = [...map.values()].sort((a, b) => b.cite_count - a.cite_count)
+  const total = rows.reduce((a, r) => a + r.cite_count, 0)
+  return { rows, total }
+})
+
+const topPlatform = computed(() => platformStats.value.rows[0] || null)
+const topShare = computed(() => {
+  const { total } = platformStats.value
+  if (!topPlatform.value || !total) return null
+  return topPlatform.value.cite_count / total
+})
+
+const citedKeys = computed(() => {
+  const keys = new Set()
+  for (const it of data.value?.items || []) {
+    if (it.blueprint_channel_key) keys.add(it.blueprint_channel_key)
+    if (it.is_own_domain) keys.add('official')
+  }
+  return keys
+})
+
+const pendingChannels = computed(() => {
+  if (!(data.value?.items || []).length) return []
+  return HIGH_VALUE_CHANNELS.filter((ch) => !citedKeys.value.has(ch.key))
+})
+
+const articleRows = computed(() =>
+  [...citeItems.value]
+    .sort((a, b) => Number(b.cite_count || 0) - Number(a.cite_count || 0))
+    .map((row) => ({
+      ...row,
+      title: articleLabel(row),
+      url: (row.sample_urls || [])[0] || '',
+      source: row.is_own_domain
+        ? '官网'
+        : (row.blueprint_channel_name || row.domain || '—'),
+      owner: row.is_own_domain ? '本品牌' : '第三方',
+    })),
+)
+
+const visibleArticles = computed(() =>
+  showAllArticles.value ? articleRows.value : articleRows.value.slice(0, ARTICLE_PREVIEW),
+)
+
+const layoutAdvice = computed(() => {
+  const items = data.value?.items || []
+  if (!items.length) return { rows: [], conclusion: '' }
+  const rows = []
+  for (const ch of pendingChannels.value.slice(0, 3)) {
+    rows.push({
+      tone: 'red',
+      tag: '缺口',
+      text: `${ch.name}尚未被引用`,
+      extra: ch.why,
+    })
+  }
+  const ownRate = data.value?.own_domain_cite_rate
+  if (ownRate != null && ownRate < 0.1) {
+    rows.push({
+      tone: 'amber',
+      tag: '薄弱',
+      text: `本品牌内容占比 ${fmtPct(ownRate)}`,
+      extra: '去信源策略 →',
+      to: '/geo/placements',
+    })
+  }
+  const good = HIGH_VALUE_CHANNELS.filter((ch) => citedKeys.value.has(ch.key) && ch.key !== 'official')
+    .map((ch) => {
+      const n = items
+        .filter((it) => it.blueprint_channel_key === ch.key)
+        .reduce((a, it) => a + Number(it.cite_count || 0), 0)
+      return { ...ch, n }
+    })
+    .filter((ch) => ch.n > 0)
+    .sort((a, b) => b.n - a.n)
+    .slice(0, 2)
+  for (const ch of good) {
+    rows.push({
+      tone: 'green',
+      tag: '良好',
+      text: `${ch.name}已被引用 ${fmtInt(ch.n)} 次`,
+      extra: '保持',
+    })
+  }
+  const gapNames = pendingChannels.value.slice(0, 2).map((ch) => ch.name)
+  let conclusion = ''
+  if (gapNames.length) conclusion = `建议：优先补「${gapNames.join(' + ')}」。`
+  else if (ownRate != null && ownRate < 0.1) conclusion = '建议：优先提升本品牌内容被引占比。'
+  else conclusion = '高价值渠道已有引用，继续保持。'
+  return { rows: rows.slice(0, 5), conclusion }
+})
+
+function rowMatchesQuery(row, q) {
+  const hay = [
+    row.domain,
+    row.blueprint_channel_name,
+    row.blueprint_channel_key,
+    row.sample_prompt_question,
+    ...(row.sample_urls || []),
+  ]
+    .join(' ')
+    .toLowerCase()
+  return hay.includes(q)
+}
+
+function articleLabel(row) {
+  const url = (row.sample_urls || [])[0]
+  if (url) {
+    try {
+      const u = new URL(url)
+      const path = decodeURIComponent(u.pathname || '').replace(/\/+$/, '')
+      const parts = path.split('/').filter(Boolean)
+      const last = parts[parts.length - 1] || ''
+      if (last && !/^\d+$/.test(last) && last.length > 2) {
+        return last.replace(/[-_]+/g, ' ')
+      }
+      return u.hostname.replace(/^www\./, '') + (path || '')
+    } catch {
+      return url
+    }
+  }
+  return row.sample_prompt_question || row.domain
+}
 
 async function load() {
   if (!tenantId.value) {
@@ -68,6 +224,7 @@ async function load() {
       days: observationDays.value,
     })
     pager.resetPage()
+    showAllArticles.value = false
   } catch (e) {
     error.value = e.message || '加载失败'
     data.value = null
@@ -85,10 +242,11 @@ function exportCsv() {
     r.is_own_domain ? '是' : '否',
     r.prompt_count ?? '',
     r.latest_captured_at || '',
+    (r.sample_urls || [])[0] || '',
   ])
   downloadCsv(
     `geo-citations-${tenantId.value}.csv`,
-    ['域名', '引用次数', '引擎', '蓝图渠道', '自有域', '关联意图词数', '最近观测'],
+    ['域名', '引用次数', '引擎', '蓝图渠道', '自有域', '关联意图词数', '最近观测', '样例 URL'],
     rows,
   )
   ElMessage.success('已导出当前筛选结果')
@@ -125,12 +283,13 @@ onMounted(load)
 
 <template>
   <GeoWorkbenchPage
-    title="AI 引用次数"
+    title="信源分析"
     :sub="`AI 回答时到底从哪些平台、哪些文章取数引用 · ${obsLabel}`"
     :loading="loading"
   >
     <template #actions>
       <input v-model="domainQuery" class="gd-search" placeholder="搜索信源 / 文章…" />
+      <button class="gd-btn" type="button" :disabled="!citeItems.length" @click="exportCsv">数据导出</button>
     </template>
     <div class="geo-dash geo-page">
 
@@ -142,6 +301,39 @@ onMounted(load)
     </details>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" show-icon />
+
+    <div v-if="data" class="gd-kpis">
+      <div class="gd-card gd-stat">
+        <div class="label">已识别信源平台</div>
+        <div class="value">{{ fmtInt(data.distinct_cited_domains) }}</div>
+        <div class="delta hint">个</div>
+      </div>
+      <div class="gd-card gd-stat">
+        <div class="label">最常被引平台</div>
+        <div class="value value-platform">{{ topPlatform?.name || '—' }}</div>
+        <div class="delta hint">{{ topShare != null ? `占比 ${fmtPct(topShare)}` : '暂无引用' }}</div>
+      </div>
+      <div class="gd-card gd-stat">
+        <div class="label">本品牌内容占比</div>
+        <div class="value">{{ fmtPct(data.own_domain_cite_rate) }}</div>
+        <div class="delta hint">
+          {{
+            !(data.own_domains || []).length
+              ? '未配置官网渠道'
+              : data.own_domain_cite_rate == null
+                ? '暂无引用'
+                : '含引用快照中命中自有域'
+          }}
+        </div>
+      </div>
+      <div class="gd-card gd-stat">
+        <div class="label">高价值待铺信源</div>
+        <div class="value" :style="pendingChannels.length ? { color: 'var(--gd-warn)' } : {}">
+          {{ (data.items || []).length ? fmtInt(pendingChannels.length) : '—' }}
+        </div>
+        <div class="delta hint">建议布局</div>
+      </div>
+    </div>
 
     <div v-if="heatMap.engines.length" class="gd-card" style="margin-bottom:16px">
       <div class="gd-hd">
@@ -157,7 +349,7 @@ onMounted(load)
             </tr>
           </thead>
           <tbody>
-            <tr v-for="r in heatMap.rows" :key="r.name">
+            <tr v-for="r in heatMap.rows" :key="r.name" :class="{ 'own-row': r.name === OWN_HEAT_NAME }">
               <td class="kw">{{ r.name }}</td>
               <td
                 v-for="(cell, i) in r.cells"
@@ -207,18 +399,96 @@ onMounted(load)
         </el-table>
       </section>
 
-      <section class="geo-panel">
-        <div class="panel-title-row">
-          <div class="panel-title">引用来源</div>
+      <div v-if="(data.items || []).length" class="gd-bottom">
+        <div class="gd-card">
+          <div class="gd-hd">
+            <h3>被 AI 引用最多的文章</h3>
+            <span
+              class="more"
+              :class="{ 'is-action': articleRows.length > ARTICLE_PREVIEW }"
+              @click="articleRows.length > ARTICLE_PREVIEW && (showAllArticles = !showAllArticles)"
+            >{{ showAllArticles ? '收起' : '全部引擎' }}</span>
+          </div>
+          <div class="gd-bd" style="padding:0;overflow:auto">
+            <table v-if="visibleArticles.length">
+              <thead>
+                <tr>
+                  <th>文章</th>
+                  <th>信源</th>
+                  <th>引用次数</th>
+                  <th>归属</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="row in visibleArticles"
+                  :key="row.domain"
+                  class="click-row"
+                  @click="openDomain(row)"
+                >
+                  <td class="kw">
+                    <a
+                      v-if="row.url"
+                      :href="row.url"
+                      target="_blank"
+                      rel="noopener"
+                      class="article-link"
+                      :title="row.url"
+                      @click.stop
+                    >{{ row.title }}</a>
+                    <span v-else>{{ row.title }}</span>
+                  </td>
+                  <td class="muted">{{ row.source }}</td>
+                  <td>{{ fmtInt(row.cite_count) }}</td>
+                  <td>
+                    <span class="gd-badge" :class="row.owner === '本品牌' ? 'green' : ''">{{ row.owner }}</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-else class="gd-sub" style="padding:18px">无匹配文章</p>
+          </div>
         </div>
+
+        <div class="gd-card">
+          <div class="gd-hd">
+            <h3>💡 信源布局建议</h3>
+            <span class="gd-badge blue">根据引用数据</span>
+          </div>
+          <div class="gd-bd">
+            <ul v-if="layoutAdvice.rows.length" class="gd-sources">
+              <li v-for="(s, i) in layoutAdvice.rows" :key="i">
+                <span class="gd-badge" :class="s.tone">{{ s.tag }}</span>
+                <span>{{ s.text }}</span>
+                <router-link v-if="s.to" class="gd-sub extra" :to="s.to">{{ s.extra }}</router-link>
+                <span v-else class="gd-sub extra">{{ s.extra }}</span>
+              </li>
+            </ul>
+            <p v-else class="gd-sub" style="margin:0">暂无布局建议</p>
+            <p v-if="layoutAdvice.conclusion" class="gd-sub advice-foot">{{ layoutAdvice.conclusion }}</p>
+          </div>
+        </div>
+      </div>
+
+      <GeoEmptyState
+        v-else
+        icon="▤"
+        title="还没有可聚合的引用"
+        desc="请先在「AI 可见度」登记含 URL 的回答，或跑巡检后刷新。"
+      >
+        <template #action>
+          <router-link class="el-button el-button--primary" :to="geoSnapshotLink()">去登记</router-link>
+          <router-link class="el-button" to="/geo/placements">去信源策略</router-link>
+          <button class="el-button" type="button" :disabled="backfilling" @click="runBackfill">
+            {{ backfilling ? '回填中…' : '归因回填' }}
+          </button>
+        </template>
+      </GeoEmptyState>
+
+      <details class="domain-details">
+        <summary>域名明细</summary>
         <template v-if="citeItems.length">
           <div class="geo-filter-bar">
-            <el-input
-              v-model="domainQuery"
-              clearable
-              placeholder="搜索域名"
-              style="width: 200px"
-            />
             <el-checkbox v-if="prototypeSurface.showCitationRawMetrics" v-model="ownOnly">仅看自有域</el-checkbox>
             <span class="geo-muted">当前 {{ citeItems.length }} 个域名</span>
           </div>
@@ -234,11 +504,16 @@ onMounted(load)
                 <span class="row-link">{{ row.domain }}</span>
               </template>
             </el-table-column>
-            <el-table-column prop="cite_count" label="引用次数" width="96" />
+            <el-table-column prop="cite_count" label="出现次数" width="96" />
             <el-table-column prop="prompt_count" label="意图词数" width="96" />
             <el-table-column label="引擎" min-width="140">
               <template #default="{ row }">
                 {{ (row.engines || []).map(engineDisplay).join(' · ') || '—' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="样例 URL" min-width="190" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ (row.sample_urls || [])[0] || '—' }}
               </template>
             </el-table-column>
             <el-table-column v-if="prototypeSurface.showCitationRawMetrics" label="蓝图渠道" min-width="140" show-overflow-tooltip>
@@ -251,11 +526,6 @@ onMounted(load)
                 <span :class="row.is_own_domain ? 'geo-tag-own' : 'geo-tag-ext'">
                   {{ row.is_own_domain ? '自有' : '外部' }}
                 </span>
-              </template>
-            </el-table-column>
-            <el-table-column v-if="prototypeSurface.showCitationRawMetrics" label="" width="88" fixed="right">
-              <template #default>
-                <el-button link type="primary" size="small">看快照</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -272,25 +542,44 @@ onMounted(load)
             />
           </div>
         </template>
-        <GeoEmptyState
-          v-else
-          icon="▤"
-          title="还没有可聚合的引用"
-          desc="请先在「AI 可见度」登记含 URL 的回答，或跑巡检后刷新。"
-        >
-          <template #action>
-            <router-link class="el-button el-button--primary" :to="geoSnapshotLink()">去登记</router-link>
-            <router-link class="el-button" to="/geo/publishing">配置官网渠道</router-link>
-          </template>
-        </GeoEmptyState>
-      </section>
+        <p v-else class="gd-sub">当前筛选下没有域名</p>
+      </details>
     </template>
     </div>
   </GeoWorkbenchPage>
 </template>
 
 <style scoped>
+.geo-page { display: flex; flex-direction: column; }
 .mb { margin-bottom: 14px; }
-.clickable-rows :deep(tbody tr) { cursor: pointer; }
+.clickable-rows :deep(tbody tr),
+.click-row { cursor: pointer; }
 .row-link { color: #185fa5; font-weight: 600; }
+.kw { font-weight: 600; }
+.muted { color: var(--gd-muted); }
+.value-platform { font-size: 20px; line-height: 1.25; word-break: break-word; }
+.article-link { color: inherit; text-decoration: none; }
+.article-link:hover { color: var(--gd-accent); }
+.more.is-action { cursor: pointer; }
+.gd-sources .extra { margin-left: auto; flex: none; }
+.advice-foot {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  background: var(--gd-bg);
+  border-radius: 8px;
+}
+.domain-details {
+  margin-top: 16px;
+  background: #fff;
+  border: 1px solid var(--gd-border);
+  border-radius: 12px;
+  padding: 12px 16px;
+}
+.domain-details summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gd-muted);
+}
+.domain-details .geo-filter-bar { margin: 12px 0; }
 </style>
