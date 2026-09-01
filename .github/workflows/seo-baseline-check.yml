@@ -81,6 +81,7 @@ jobs:
           tests/test_module_workspaces.py
           tests/test_process_lock.py
           tests/test_seo_crawler.py
+          tests/test_seo_automation_runs.py
           tests/test_seo_competitors.py
           tests/test_seo_deploy_isolation.py
           tests/test_seo_distribution.py
@@ -159,5 +160,5 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0081_seo_monitor_cascade (head)'
+          printf '%s\n' "$heads" | grep -F '0082_seo_automation_runs (head)'
           pytest -q tests/test_seo_migration_merge.py

@@ -11,6 +11,7 @@ from app.database import async_session_factory
 from app.models.seo import SeoKeywordAsset, SeoRankSnapshot
 from app.module_scope import list_active_module_tenants
 from app.process_lock import acquire_file_lock, release_file_lock
+from app.seo_automation_runs import finish_automation_run, start_automation_run
 from app.seo_rank_limits import SEO_RANK_COLLECTION_LOCK_PATH
 
 logger = logging.getLogger(__name__)
@@ -147,57 +148,109 @@ async def collect_daily_seo_rankings() -> None:
                 keyword_ids = [row[0] for row in keyword_sites]
                 totals["tenants"] += 1
                 totals["keywords"] += len(keyword_ids)
-                completed_rows = (
-                    await session.execute(
-                        select(SeoRankSnapshot.keyword_id, SeoRankSnapshot.device).where(
-                            SeoRankSnapshot.tenant_id == tenant_id,
-                            SeoRankSnapshot.engine == "baidu",
-                            SeoRankSnapshot.source == "chinaz_top50",
-                            SeoRankSnapshot.checked_at >= day_start_utc,
-                            SeoRankSnapshot.keyword_id.in_(keyword_ids),
+                planned_count = len(keyword_ids) * 2
+                run_id = await start_automation_run(
+                    tenant_id=int(tenant_id),
+                    job_type="ranking",
+                    planned_count=planned_count,
+                )
+                tenant_success = tenant_failed = tenant_skipped = 0
+                tenant_errors: list[str] = []
+                try:
+                    completed_rows = (
+                        await session.execute(
+                            select(SeoRankSnapshot.keyword_id, SeoRankSnapshot.device).where(
+                                SeoRankSnapshot.tenant_id == tenant_id,
+                                SeoRankSnapshot.engine == "baidu",
+                                SeoRankSnapshot.source == "chinaz_top50",
+                                SeoRankSnapshot.checked_at >= day_start_utc,
+                                SeoRankSnapshot.keyword_id.in_(keyword_ids),
+                            )
                         )
-                    )
-                ).all()
-                completed = {(int(row[0]), row[1]) for row in completed_rows}
+                    ).all()
+                    completed = {(int(row[0]), row[1]) for row in completed_rows}
 
-                for device in ("desktop", "mobile"):
-                    pending_rows = [
-                        (keyword_id, site_id)
-                        for keyword_id, site_id in keyword_sites
-                        if (keyword_id, device) not in completed
-                    ]
-                    totals["skipped_pairs"] += len(keyword_ids) - len(pending_rows)
-                    for site_id, pending_ids in _group_keyword_ids_by_site(pending_rows):
-                        remaining = max_requests - totals["requests"]
-                        for keyword_batch in _limited_batches(
-                            pending_ids, batch_size, remaining
-                        ):
-                            totals["requests"] += len(keyword_batch)
-                            try:
-                                result = await collect_rank_serp_for_tenant(
-                                    session=session,
-                                    tenant_id=tenant_id,
-                                    site_id=site_id,
-                                    keyword_ids=keyword_batch,
-                                    devices=[device],
-                                    max_keywords=None,
-                                    use_ai=settings.seo_rank_scheduler_use_ai,
-                                    captured_at=batch_captured_at,
+                    for device in ("desktop", "mobile"):
+                        pending_rows = [
+                            (keyword_id, site_id)
+                            for keyword_id, site_id in keyword_sites
+                            if (keyword_id, device) not in completed
+                        ]
+                        already_completed = len(keyword_ids) - len(pending_rows)
+                        totals["skipped_pairs"] += already_completed
+                        tenant_skipped += already_completed
+                        attempted = 0
+                        for site_id, pending_ids in _group_keyword_ids_by_site(pending_rows):
+                            remaining = max_requests - totals["requests"]
+                            for keyword_batch in _limited_batches(
+                                pending_ids, batch_size, remaining
+                            ):
+                                attempted += len(keyword_batch)
+                                totals["requests"] += len(keyword_batch)
+                                try:
+                                    result = await collect_rank_serp_for_tenant(
+                                        session=session,
+                                        tenant_id=tenant_id,
+                                        site_id=site_id,
+                                        keyword_ids=keyword_batch,
+                                        devices=[device],
+                                        max_keywords=None,
+                                        use_ai=settings.seo_rank_scheduler_use_ai,
+                                        captured_at=batch_captured_at,
+                                    )
+                                except Exception as exc:  # noqa: BLE001
+                                    await session.rollback()
+                                    totals["errors"] += len(keyword_batch)
+                                    tenant_failed += len(keyword_batch)
+                                    tenant_errors.append(
+                                        f"{device}:{type(exc).__name__}"
+                                    )
+                                    logger.exception(
+                                        "[scheduler][SEO] 客户 %s 站点 %s 的 %s 批次采集失败（关键词 %s 个）",
+                                        tenant_id,
+                                        site_id,
+                                        device,
+                                        len(keyword_batch),
+                                    )
+                                    continue
+                                result_errors = len(result["errors"])
+                                tenant_failed += result_errors
+                                tenant_success += max(0, len(keyword_batch) - result_errors)
+                                tenant_errors.extend(
+                                    f"{device}:{item.get('code', 'provider_error')}"
+                                    for item in result["errors"][:5]
                                 )
-                            except Exception:  # noqa: BLE001
-                                await session.rollback()
-                                totals["errors"] += len(keyword_batch)
-                                logger.exception(
-                                    "[scheduler][SEO] 客户 %s 站点 %s 的 %s 批次采集失败（关键词 %s 个）",
-                                    tenant_id,
-                                    site_id,
-                                    device,
-                                    len(keyword_batch),
-                                )
-                                continue
-                            totals["snapshots"] += result["snapshots"]
-                            totals["serp_results"] += result["serp_results"]
-                            totals["errors"] += len(result["errors"])
+                                totals["snapshots"] += result["snapshots"]
+                                totals["serp_results"] += result["serp_results"]
+                                totals["errors"] += result_errors
+                        budget_skipped = len(pending_rows) - attempted
+                        tenant_skipped += budget_skipped
+                        totals["skipped_pairs"] += budget_skipped
+                except Exception as exc:  # noqa: BLE001
+                    await session.rollback()
+                    remaining_pairs = max(
+                        0,
+                        planned_count
+                        - tenant_success
+                        - tenant_failed
+                        - tenant_skipped,
+                    )
+                    tenant_failed += remaining_pairs
+                    totals["errors"] += remaining_pairs
+                    tenant_errors.append(f"run:{type(exc).__name__}")
+                    logger.exception(
+                        "[scheduler][SEO] 客户 %s 的排名自动化运行失败",
+                        tenant_id,
+                    )
+                finally:
+                    await finish_automation_run(
+                        run_id,
+                        planned_count=planned_count,
+                        success_count=tenant_success,
+                        failed_count=tenant_failed,
+                        skipped_count=tenant_skipped,
+                        error_summary="; ".join(tenant_errors[:10]),
+                    )
         logger.info("[scheduler][SEO] 每日百度前 50 排名采集完成: %s", totals)
     finally:
         release_file_lock(lock_fh)

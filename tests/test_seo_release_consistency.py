@@ -22,6 +22,7 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed("app/seo_ranking_jobs.py")
     assert source_path_allowed("app/seo_rank_limits.py")
     assert source_path_allowed("app/seo_scheduler.py")
+    assert source_path_allowed("app/seo_automation_runs.py")
     assert source_path_allowed("app/config.py")
     assert source_path_allowed("app/scheduler.py")
     assert source_path_allowed("tests/test_seo_distribution_import.py")
@@ -100,6 +101,25 @@ def test_seo_dashboard_title_is_not_duplicated() -> None:
     standalone_router = (root / "frontend/src/seo-router.js").read_text(encoding="utf-8")
 
     assert "to.meta.title === productName" in standalone_router
+
+
+def test_seo_dashboard_shows_tenant_automation_run_status() -> None:
+    root = Path(__file__).parents[1]
+    dashboard = (root / "frontend/src/views/seo/SeoDashboardView.vue").read_text(
+        encoding="utf-8"
+    )
+    api = (root / "frontend/src/api/seo.js").read_text(encoding="utf-8")
+
+    assert "fetchSeoAutomationRuns" in dashboard
+    assert "await fetchSeoAutomationRuns({ tenantId: currentTenantId.value" in dashboard
+    assert "siteId:" not in dashboard.split("fetchSeoAutomationRuns({", 1)[1].split("})", 1)[0]
+    assert "自动化运行状态" in dashboard
+    assert "排名采集" in dashboard
+    assert "竞品巡检" in dashboard
+    assert "外链巡检" in dashboard
+    assert "运行超时" in dashboard
+    assert "timeZone: 'Asia/Shanghai'" in dashboard
+    assert "'/api/v1/seo/automation-runs'" in api
 
 
 def test_trends_are_scoped_by_site_and_selected_time_range() -> None:
@@ -184,6 +204,7 @@ def test_original_content_brief_supports_bounded_multi_keywords() -> None:
     assert source_path_allowed("migrations/versions/20260829_0079_seo_content_review_workflow.py")
     assert source_path_allowed("migrations/versions/20260831_0080_seo_content_review_history.py")
     assert source_path_allowed("migrations/versions/20260831_0081_seo_monitor_tenant_cascade.py")
+    assert source_path_allowed("migrations/versions/20260901_0082_seo_automation_runs.py")
 
 
 def test_content_review_ui_supports_rejected_draft_resubmission_and_audit_details() -> None:
@@ -245,7 +266,7 @@ def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:
 
 def test_seo_workflows_require_the_current_reviewed_migration_head() -> None:
     root = Path(__file__).parents[1]
-    expected = "0081_seo_monitor_cascade (head)"
+    expected = "0082_seo_automation_runs (head)"
     baseline = (root / ".github/workflows/seo-baseline-check.yml").read_text(encoding="utf-8")
     production = (root / ".github/workflows/production-seo-deploy.yml").read_text(encoding="utf-8")
     assert expected in baseline

@@ -534,6 +534,40 @@ class SeoCompetitorEvent(Base):
     __table_args__ = (UniqueConstraint("tenant_id", "site_id", "competitor_id", "event_type", "url", name="uq_seo_competitor_site_event"),)
 
 
+class SeoAutomationRun(Base):
+    """Tenant-scoped summary for one scheduled or manually triggered SEO job."""
+
+    __tablename__ = "seo_automation_runs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    site_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("seo_sites.id", ondelete="SET NULL"), index=True
+    )
+    job_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    trigger_type: Mapped[str] = mapped_column(String(16), nullable=False, default="scheduled")
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="running", index=True)
+    planned_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_summary: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index(
+            "ix_seo_automation_runs_tenant_job_started",
+            "tenant_id",
+            "job_type",
+            "started_at",
+        ),
+    )
+
+
 class SeoCrawlRun(Base):
     """One bounded crawl execution for an SEO site."""
 

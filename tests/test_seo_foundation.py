@@ -62,6 +62,7 @@ from app.api.seo import (
 )
 from app.models.seo import (
     SeoBacklink,
+    SeoAutomationRun,
     SeoBrandAsset,
     SeoCompetitor,
     SeoCompetitorEvent,
@@ -1367,6 +1368,7 @@ def test_models_use_separate_seo_tables() -> None:
     assert SeoContentAsset.__tablename__ == "seo_content_assets"
     assert SeoInternalLink.__tablename__ == "seo_internal_links"
     assert SeoBacklink.__tablename__ == "seo_backlinks"
+    assert SeoAutomationRun.__tablename__ == "seo_automation_runs"
     assert SeoCompetitor.__tablename__ == "seo_competitors"
     assert SeoCompetitorEvent.__tablename__ == "seo_competitor_events"
     assert SeoCrawlRun.__tablename__ == "seo_crawl_runs"
