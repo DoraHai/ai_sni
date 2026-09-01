@@ -74,7 +74,7 @@ export function batchAddNegative({ tenantId, candidateIds, adgroupId, matchMode 
     candidate_ids: candidateIds,
     adgroup_id: adgroupId,
     match_mode: matchMode,
-  })
+  }, { timeout: 60000 })
 }
 
 // 手动触发同步（规划师逐种子词调用 + 搜索词报告，可能要 10-30 秒）
