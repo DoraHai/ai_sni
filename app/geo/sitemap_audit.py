@@ -13,7 +13,7 @@ from app.urlwords import UA, UrlFetchError, validate_url
 _MAX_URLS = 60
 _TIMEOUT = 12.0
 _SKIP_PATH = re.compile(
-    r"/api(/|$)|/openapi|/swagger|/graphql|\.json($|\?)|/v\d+(/|$)|/rpc|/internal|/webhook",
+    r"/api(?:v\d+)?(?:/|$)|_api(?:/|$)|/openapi|/swagger|/graphql|\.json(?:$|\?)|/v\d+(?:/|$)|/rpc|/internal|/webhook",
     re.I,
 )
 
@@ -30,6 +30,8 @@ _TYPE_RULES: list[tuple[str, re.Pattern[str]]] = [
 def skip_reason(url: str) -> str | None:
     """Machine/API/intranet URLs should not enter page-type diagnosis."""
     path = urlparse(url).path or ""
+    if path.lower().endswith((".xml", ".xml.gz")):
+        return "站点地图 XML，不计入 HTML 页面诊断"
     if _SKIP_PATH.search(path):
         return "接口/文档 API 路径，不计入页面类型"
     try:

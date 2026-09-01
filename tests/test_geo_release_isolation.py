@@ -107,6 +107,8 @@ def test_geo_standalone_bootstraps_logged_in_tenant_context():
     assert "fetchTenants" not in app
     assert "client.get('/api/v1/geo/tenants')" in api
     assert '@router.get("/tenants")' in routes
+    assert '@router.get("/structure-scan/latest")' in routes
+    assert '@router.post("/structure-scan")' in routes
     assert "list_geo_tenants_for_auth" in routes
     assert "list_geo_tenants_for_auth" in scope
     assert 'module_code == "geo"' in scope
