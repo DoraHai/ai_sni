@@ -18,4 +18,5 @@ class CreativeService:
             "addCreative",
             {"creativeTypes": [creative]},
             is_write=True,
+            write_scope="creative_create",
         )

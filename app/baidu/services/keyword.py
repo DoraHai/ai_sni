@@ -58,7 +58,8 @@ class KeywordService:
         """
         body = {"keywordTypes": [{"keywordId": keyword_id, "price": round(float(price), 2)}]}
         return await self._client.call(
-            "KeywordService", "updateWord", body, is_write=True
+            "KeywordService", "updateWord", body, is_write=True,
+            write_scope="keyword_bid",
         )
 
     async def update_word_pause(
@@ -70,7 +71,8 @@ class KeywordService:
         """
         body = {"keywordTypes": [{"keywordId": keyword_id, "pause": bool(pause)}]}
         return await self._client.call(
-            "KeywordService", "updateWord", body, is_write=True
+            "KeywordService", "updateWord", body, is_write=True,
+            write_scope="keyword_pause",
         )
 
     async def add_word(
@@ -94,7 +96,8 @@ class KeywordService:
             ]
         }
         return await self._client.call(
-            "KeywordService", "addWord", body, is_write=True
+            "KeywordService", "addWord", body, is_write=True,
+            write_scope="keyword_create",
         )
 
     async def get_keyword_by_adgroup_id(

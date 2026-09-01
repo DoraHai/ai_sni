@@ -5,12 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.models.writeback_approval import WritebackApproval
 
 
@@ -26,6 +27,7 @@ ALLOWED_ACTIONS = frozenset(
         ACTION_ACCOUNT_BUDGET,
     }
 )
+WRITEBACK_CONFIRMATION = "CONFIRM_BAIDU_WRITEBACK"
 
 
 class WritebackApprovalError(ValueError):
@@ -114,7 +116,7 @@ async def claim_approval(
     if operator_user_id is None:
         raise WritebackApprovalError("真实资金回写必须使用实名登录账号，不能使用 API Key")
     if approval_id is None:
-        raise WritebackApprovalError("真实资金回写需要先提交并通过异人审批")
+        raise WritebackApprovalError("真实资金回写需要先创建并确认一次性执行记录")
     normalized, fingerprint = payload_fingerprint(action_type, payload)
     approval = await session.scalar(
         select(WritebackApproval)
@@ -129,8 +131,24 @@ async def claim_approval(
         raise WritebackApprovalError("执行参数与审批参数不一致，请重新申请审批")
     if approval.payload != normalized:
         raise WritebackApprovalError("审批参数校验失败，请重新申请审批")
-    if approval.approved_by is None or approval.approved_by == operator_user_id:
-        raise WritebackApprovalError("审批人与执行人必须是不同用户")
+    created_at = approval.created_at
+    if created_at is None:
+        raise WritebackApprovalError("确认记录缺少创建时间，请重新创建确认")
+    now = datetime.now(created_at.tzinfo) if created_at.tzinfo else datetime.utcnow()
+    settings = get_settings()
+    if settings.baidu_legacy_split_confirmation_enabled:
+        raise WritebackApprovalError("旧确认协议兼容期间禁止真实资金回写")
+    expires_at = created_at + timedelta(
+        minutes=settings.baidu_write_confirmation_ttl_minutes
+    )
+    if now > expires_at:
+        raise WritebackApprovalError("确认记录已过期，请重新创建确认")
+    same_operator = (
+        approval.approved_by == operator_user_id
+        and approval.requested_by == operator_user_id
+    )
+    if not same_operator:
+        raise WritebackApprovalError("确认记录必须由当前实名操作员本人创建并确认")
     approval.status = "consumed"
     approval.consumed_by = operator_user_id
     approval.consumed_at = datetime.utcnow()

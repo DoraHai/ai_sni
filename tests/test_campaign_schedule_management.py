@@ -68,6 +68,7 @@ def test_campaign_service_writes_only_schedule_fields():
             "schedulePriceFactors": [{"timeId": 109, "priceFactor": 1.0}],
         }]},
         is_write=True,
+        write_scope="campaign_schedule",
     )
 
 

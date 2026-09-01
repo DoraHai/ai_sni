@@ -13,12 +13,13 @@ export function fetchWritebackApprovals({ tenantId, status = null, limit = 100 }
   })
 }
 
-export function requestWritebackApproval({ tenantId, actionType, payload, note = null }) {
+export function requestWritebackApproval({ tenantId, actionType, payload, note = null, confirmation }) {
   return client.post('/api/v1/writeback/approvals', {
     tenant_id: tenantId,
     action_type: actionType,
     payload,
     note,
+    confirmation,
   })
 }
 
