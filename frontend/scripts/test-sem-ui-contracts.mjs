@@ -30,4 +30,15 @@ const client = await source('src/api/client.js')
 assert.doesNotMatch(client, /Docker Desktop|数据库未启动/)
 assert.match(client, /服务暂时不可用/)
 
+const addToPlan = await source('src/components/AddToPlanDialog.vue')
+assert.match(addToPlan, /<el-radio label="smart">智能匹配<\/el-radio>/)
+assert.match(addToPlan, /matchMode: row\?\.preset_match_mode \|\| 'phrase'/)
+assert.match(addToPlan, /matchMode: dialog\.matchMode/)
+
+const keywordExpand = await source('src/views/optimize/KeywordExpandView.vue')
+assert.match(keywordExpand, /<el-radio label="smart">智能匹配<\/el-radio>/)
+
+const expansionApi = await source('src/api/expansion.js')
+assert.match(expansionApi, /match_mode: matchMode/)
+
 console.log('SEM UI contracts passed')
