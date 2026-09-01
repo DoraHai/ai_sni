@@ -159,7 +159,9 @@ onUnmounted(() => {
 <style src="../../styles/geo-dashboard.css"></style>
 <style scoped>
 .geo-shell {
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   display: grid;
   grid-template-columns: 216px minmax(0, 1fr);
   background: #f6f7fb;
@@ -266,8 +268,12 @@ onUnmounted(() => {
 .geo-shell-side.is-rail .geo-shell-nav button { justify-content: center; padding: 10px 0; }
 .geo-shell-side.is-rail .geo-side-foot { padding: 8px 6px 12px; }
 .geo-shell-side.is-rail .geo-tenant { text-align: center; padding: 8px 0; font-weight: 650; }
-.geo-shell-main { min-width: 0; }
-.geo-shell-content { min-height: 100vh; }
+.geo-shell-main {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+.geo-shell-content { min-height: 100%; }
 .geo-mobile-mask { display: none; }
 @media (max-width: 767px) {
   .geo-shell,

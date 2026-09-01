@@ -83,6 +83,11 @@ def test_geo_standalone_keeps_required_form_and_table_styles():
 
     assert "import './standalone.css'" in entry
     assert "min-width: 1120px" not in styles
+    assert ".geo-shell-main" in styles
+    assert "overflow: auto" in styles
+    shell = _read("frontend/src/views/geo/GeoWorkspaceShell.vue")
+    assert ".geo-shell-main" in shell
+    assert "overflow: auto" in shell
     for selector in (
         ".el-input__wrapper",
         ".el-form-item__label",

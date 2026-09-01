@@ -18,6 +18,21 @@ body,
   overflow: hidden;
 }
 
+#app {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#app > * {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+#app > *:not(.geo-shell) {
+  overflow: auto;
+}
+
 body {
   background: var(--geo-canvas);
   font-family: var(--sem-font);
@@ -288,6 +303,18 @@ button {
   border-radius: 50%;
   background: #2ca577;
   box-shadow: 0 0 0 4px rgba(44, 165, 119, 0.12);
+}
+
+.geo-shell {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.geo-shell-main {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
 }
 
 .geo-main {
