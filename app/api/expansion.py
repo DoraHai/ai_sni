@@ -7,7 +7,7 @@ import csv
 import io
 import logging
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
@@ -228,7 +228,7 @@ class AddToPlanRequest(BaseModel):
     tenant_id: int
     adgroup_id: int
     price: float
-    match_mode: str = "phrase"  # exact / phrase
+    match_mode: Literal["exact", "phrase", "smart"] = "phrase"
 
 
 @router.post("/candidates/{candidate_id}/add-to-plan")

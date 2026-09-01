@@ -288,7 +288,7 @@ async def apply_keyword_writeback(
 
 # 匹配方式 → 百度 addWord (matchType, phraseType)（文档 0064/0068 核对）：
 # 精确=1+1、短语=2+1、智能=2+3。两者必须配合传，否则百度按默认细分匹配处理。
-_MATCH_BY_MODE = {"exact": (1, 1), "phrase": (2, 1)}
+_MATCH_BY_MODE = {"exact": (1, 1), "phrase": (2, 1), "smart": (2, 3)}
 _VALID_MATCH_COMBOS = {
     (1, 1): "精确匹配",
     (2, 1): "短语匹配",
@@ -531,15 +531,15 @@ async def apply_add_word_writeback(
     operator_user_id: int | None,
     operator_name: str | None,
 ) -> WritebackAction:
-    """把搜索词加成正式关键词（addWord）到指定单元。match_mode: exact/phrase。
+    """把搜索词加成正式关键词（addWord）到指定单元。match_mode: exact/phrase/smart。
 
     出价受合法区间校验。dry_run 时拦截不真发。
     """
     word = (word or "").strip()
     if not word:
         raise WritebackError("关键词不能为空")
-    if match_mode not in ("exact", "phrase"):
-        raise WritebackError("匹配方式只能是 exact / phrase")
+    if match_mode not in _MATCH_BY_MODE:
+        raise WritebackError("匹配方式只能是 exact / phrase / smart")
     price = round(float(price), 2)
     if price < MIN_BID or price > MAX_BID:
         raise WritebackError(f"出价 {price} 超出合法区间 [{MIN_BID}, {MAX_BID}]")
