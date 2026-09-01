@@ -16,6 +16,7 @@ def _write(root: Path, relative: str, content: str) -> None:
 
 def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed(".gitattributes")
+    assert source_path_allowed("HANDOVER.md")
     assert source_path_allowed("app/api/seo.py")
     assert source_path_allowed("app/seo_distribution_import.py")
     assert source_path_allowed("app/seo_distribution.py")
