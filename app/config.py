@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     seo_rank_scheduler_use_ai: bool = True
     seo_rank_scheduler_max_keywords_per_tenant: int = 200
     seo_rank_scheduler_max_requests_per_run: int = 1000
+    # 排名下降达到阈值时，只生成“计划中”优化任务，不调 AI、不发布。
+    seo_rank_drop_tasks_enabled: bool = True
+    seo_rank_drop_task_threshold: int = 3
     # Google/Bing 是付费请求，再加一层独立的全局硬上限。
     seo_dataforseo_scheduler_max_requests_per_run: int = 200
     # 用户手动点击“更新排名”使用独立额度；调度器不走此限制。

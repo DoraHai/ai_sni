@@ -336,6 +336,9 @@ def test_seo_content_and_rank_views_are_site_scoped_and_html_safe() -> None:
     assert "setRankContext(item.k,device)" in keyword_detail
     assert "setRankContext(engine,'mobile')" in keyword_detail
     assert "manual_import:'人工导入'" in keyword_detail
+    assert "data.value?.diagnoses||[]" in keyword_detail
+    assert 'optimizationTask.value.id' in keyword_detail
+    assert "查看优化任务" in keyword_detail
     assert "当前引擎和设备暂无记录" in keyword_detail
     assert 'query:{engine,device}' in keyword_detail
     assert 'rankEngines.has(String(route.query.engine))' in ranking
