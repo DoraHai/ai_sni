@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from app.models.seo import SeoContentAsset, SeoKeywordAsset, SeoRankSnapshot
 from app.seo_rank_optimization import (
@@ -11,6 +11,7 @@ from app.seo_rank_optimization import (
     AUTO_RANK_DROP_TITLE_PREFIX,
     _rank_drop_candidates,
     create_rank_drop_content_tasks,
+    create_rank_drop_content_tasks_safely,
 )
 
 
@@ -74,6 +75,20 @@ def test_rank_drop_candidates_do_not_compare_different_regions() -> None:
     assert candidates == []
 
 
+def test_rank_drop_candidates_ignore_improvement_and_subthreshold_change() -> None:
+    now = datetime(2026, 9, 1, 12, 0, 0)
+    assert _rank_drop_candidates(
+        [_rank(10, 12, now - timedelta(days=1)), _rank(11, 8, now)],
+        trigger_snapshot_ids={11},
+        threshold=3,
+    ) == []
+    assert _rank_drop_candidates(
+        [_rank(20, 12, now - timedelta(days=1)), _rank(21, 14, now)],
+        trigger_snapshot_ids={21},
+        threshold=3,
+    ) == []
+
+
 class _FakeSession:
     def __init__(self, scalar_results: list[list[object]]) -> None:
         self.scalar_results = iter(scalar_results)
@@ -91,6 +106,41 @@ class _FakeSession:
 
     async def flush(self) -> None:
         return None
+
+
+class _NestedTransaction:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, _exc_type, _exc, _traceback):
+        return False
+
+
+class _SafeSession:
+    def begin_nested(self):
+        return _NestedTransaction()
+
+
+def test_recommendation_failure_is_reported_without_escaping_outer_write() -> None:
+    session = _SafeSession()
+    with patch(
+        "app.seo_rank_optimization.create_rank_drop_content_tasks",
+        new=AsyncMock(side_effect=RuntimeError("recommendation failed")),
+    ):
+        result = asyncio.run(
+            create_rank_drop_content_tasks_safely(
+                session,
+                tenant_id=1,
+                site_id=9,
+                trigger_snapshot_ids={11},
+            )
+        )
+    assert result == {
+        "created": 0,
+        "task_ids": [],
+        "skipped_existing": 0,
+        "error": "optimization_task_generation_failed",
+    }
 
 
 def test_material_drop_creates_review_only_task_without_ai_or_publish() -> None:
