@@ -166,12 +166,17 @@ async def sync_search_terms(
 def _action_dict(r: WritebackAction) -> dict:
     return {
         "id": r.id,
+        "baidu_account_id": r.baidu_account_id,
         "action_type": r.action_type,
         "action_label": WRITEBACK_ACTION_LABELS.get(r.action_type, r.action_type),
         "word": r.word,
         "match_mode": r.match_mode,
         "match_label": MATCH_MODE_LABELS.get(r.match_mode, r.match_mode),
         "price": float(r.price) if r.price is not None else None,
+        "old_value": float(r.old_value) if r.old_value is not None else None,
+        "new_value": float(r.new_value) if r.new_value is not None else None,
+        "execution_mode": "dry_run" if r.dry_run else "live",
+        "execution_mode_label": "演练（未修改百度）" if r.dry_run else "真实执行",
         "campaign_name": r.campaign_name,
         "adgroup_id": r.adgroup_id,
         "adgroup_name": r.adgroup_name,
