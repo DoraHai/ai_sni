@@ -298,6 +298,7 @@ def test_keyword_history_query_is_engine_device_and_tenant_scoped() -> None:
         ("/api/v1/seo/site-pages/1/audit", "POST", "seo.site", True),
         ("/api/v1/seo/site/crawl-runs", "POST", "seo.site", True),
         ("/api/v1/seo/overview", "GET", "seo.dashboard", False),
+        ("/api/v1/seo/overview/automation-runs/trigger", "POST", "seo.dashboard", True),
         ("/api/v1/seo/alerts", "GET", "seo.alerts", False),
         ("/api/v1/seo/content-assets", "POST", "seo.content", True),
         ("/api/v1/seo/internal-links", "GET", "seo.links", False),

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
+
+from sqlalchemy import select, update
 
 from app.database import async_session_factory
 from app.models.seo import SeoAutomationRun
@@ -10,6 +12,28 @@ from app.models.seo import SeoAutomationRun
 
 SEO_AUTOMATION_JOB_TYPES = {"ranking", "competitor", "backlink"}
 SEO_AUTOMATION_TRIGGER_TYPES = {"scheduled", "manual"}
+
+
+async def active_manual_automation_site_ids(
+    *,
+    tenant_id: int,
+    job_type: str,
+) -> set[int]:
+    """Return exact sites with a recent queued/running operator-triggered job."""
+    if job_type not in SEO_AUTOMATION_JOB_TYPES:
+        raise ValueError(f"Unsupported SEO automation job type: {job_type}")
+    async with async_session_factory() as session:
+        values = await session.scalars(
+            select(SeoAutomationRun.site_id).where(
+                SeoAutomationRun.tenant_id == tenant_id,
+                SeoAutomationRun.job_type == job_type,
+                SeoAutomationRun.trigger_type == "manual",
+                SeoAutomationRun.status.in_(["queued", "running"]),
+                SeoAutomationRun.site_id.is_not(None),
+                SeoAutomationRun.started_at >= datetime.utcnow() - timedelta(hours=2),
+            )
+        )
+        return {int(site_id) for site_id in values if site_id is not None}
 
 
 def automation_run_status(*, success_count: int, failed_count: int) -> str:
@@ -46,6 +70,22 @@ async def start_automation_run(
         await session.commit()
         await session.refresh(row)
         return int(row.id)
+
+
+async def mark_automation_run_running(run_id: int) -> bool:
+    async with async_session_factory() as session:
+        result = await session.execute(
+            update(SeoAutomationRun)
+            .where(
+                SeoAutomationRun.id == run_id,
+                SeoAutomationRun.status == "queued",
+                SeoAutomationRun.trigger_type == "manual",
+                SeoAutomationRun.site_id.is_not(None),
+            )
+            .values(status="running", started_at=datetime.utcnow())
+        )
+        await session.commit()
+        return result.rowcount == 1
 
 
 async def finish_automation_run(

@@ -15,7 +15,11 @@ from app.database import async_session_factory
 from app.module_scope import list_active_module_tenants
 from app.models import SeoBacklink, SeoCompetitor, SeoCompetitorEvent
 from app.models.seo import SeoCrawlRun
-from app.seo_automation_runs import finish_automation_run, start_automation_run
+from app.seo_automation_runs import (
+    active_manual_automation_site_ids,
+    finish_automation_run,
+    start_automation_run,
+)
 from app.seo_competitor import CompetitorCollectionError, collect_competitor_content
 from app.seo_crawler import fetch_url
 from app.seo_serp import canonical_url
@@ -66,9 +70,32 @@ async def collect_scheduled_competitors() -> dict[str, int]:
             job_type="competitor",
             planned_count=len(candidates),
         )
+        try:
+            blocked_site_ids = await active_manual_automation_site_ids(
+                tenant_id=tenant_id,
+                job_type="competitor",
+            )
+        except Exception as exc:  # noqa: BLE001
+            failed += len(candidates)
+            logger.exception(
+                "[SEO][COMPETITOR][scheduled] manual-run coordination failed tenant=%s",
+                tenant_id,
+            )
+            await finish_automation_run(
+                run_id,
+                planned_count=len(candidates),
+                success_count=0,
+                failed_count=len(candidates),
+                skipped_count=0,
+                error_summary=f"coordination:{type(exc).__name__}",
+            )
+            continue
         tenant_success = tenant_failed = tenant_skipped = 0
         errors: list[str] = []
         for candidate in candidates:
+            if candidate.site_id in blocked_site_ids:
+                tenant_skipped += 1
+                continue
             checked += 1
             try:
                 collection = await collect_competitor_content(candidate.domain)
@@ -170,9 +197,32 @@ async def verify_scheduled_backlinks() -> dict[str, int]:
             job_type="backlink",
             planned_count=len(candidates),
         )
+        try:
+            blocked_site_ids = await active_manual_automation_site_ids(
+                tenant_id=tenant_id,
+                job_type="backlink",
+            )
+        except Exception as exc:  # noqa: BLE001
+            failed += len(candidates)
+            logger.exception(
+                "[SEO][BACKLINK][scheduled] manual-run coordination failed tenant=%s",
+                tenant_id,
+            )
+            await finish_automation_run(
+                run_id,
+                planned_count=len(candidates),
+                success_count=0,
+                failed_count=len(candidates),
+                skipped_count=0,
+                error_summary=f"coordination:{type(exc).__name__}",
+            )
+            continue
         tenant_success = tenant_failed = tenant_skipped = 0
         errors: list[str] = []
         for candidate in candidates:
+            if candidate.site_id in blocked_site_ids:
+                tenant_skipped += 1
+                continue
             try:
                 result = await fetch_url(candidate.source_url)
                 if result.error_type or not result.body:

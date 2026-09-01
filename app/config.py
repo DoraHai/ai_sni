@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     # 用户手动点击“更新排名”使用独立额度；调度器不走此限制。
     seo_manual_rank_cooldown_seconds: int = 3600
     seo_manual_rank_max_requests_per_day: int = 100
+    seo_manual_automation_cooldown_seconds: int = 3600
     seo_manual_crawl_max_urls_per_tenant_per_day: int = 500
     seo_ai_max_requests_per_tenant_per_day: int = 100
     seo_competitor_scheduler_max_per_run: int = 50

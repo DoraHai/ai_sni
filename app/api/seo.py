@@ -99,6 +99,11 @@ from app.seo_rank_limits import (
     reserve_manual_rank_collection,
     settle_manual_rank_collection,
 )
+from app.seo_manual_automation import (
+    ManualAutomationError,
+    execute_manual_automation_run,
+    reserve_manual_automation_run,
+)
 from app.seo_usage_limits import (
     SeoUsageLimitError,
     charge_seo_usage,
@@ -630,6 +635,12 @@ class MetricSnapshotCreate(BaseModel):
 class OverviewMetricCollectRequest(BaseModel):
     tenant_id: int
     site_id: int
+
+
+class ManualAutomationTriggerRequest(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt
+    job_type: Literal["ranking", "competitor", "backlink"]
 
 
 class GscConnectionUpdate(BaseModel):
@@ -2225,7 +2236,7 @@ def _crawl_run_payload(row: SeoCrawlRun) -> dict[str, Any]:
 
 def _automation_run_payload(row: SeoAutomationRun) -> dict[str, Any]:
     stale = (
-        row.status == "running"
+        row.status in {"queued", "running"}
         and row.started_at is not None
         and row.started_at < datetime.utcnow() - timedelta(hours=2)
     )
@@ -2242,6 +2253,7 @@ def _automation_run_payload(row: SeoAutomationRun) -> dict[str, Any]:
         "failed_count": row.failed_count or 0,
         "skipped_count": row.skipped_count or 0,
         "error_summary": row.error_summary,
+        "requested_by": row.requested_by,
         "started_at": _iso(row.started_at),
         "completed_at": _iso(row.completed_at),
     }
@@ -2524,7 +2536,12 @@ async def list_seo_automation_runs(
         await _seo_site(session, tenant_id, site_id)
     conditions = [SeoAutomationRun.tenant_id == tenant_id]
     if site_id is not None:
-        conditions.append(SeoAutomationRun.site_id == site_id)
+        # Scheduled summaries are currently tenant-wide (site_id=NULL), while
+        # operator-triggered reruns are exact-site. Never include another site's
+        # manual run in the selected site's dashboard.
+        conditions.append(
+            or_(SeoAutomationRun.site_id == site_id, SeoAutomationRun.site_id.is_(None))
+        )
     if job_type is not None:
         conditions.append(SeoAutomationRun.job_type == job_type)
     rows = list(
@@ -2540,6 +2557,33 @@ async def list_seo_automation_runs(
     for item in items:
         latest_by_job.setdefault(str(item["job_type"]), item)
     return {"items": items, "latest_by_job": latest_by_job}
+
+
+@router.post("/overview/automation-runs/trigger", status_code=202)
+async def trigger_seo_automation_run(
+    req: ManualAutomationTriggerRequest,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    """Queue one bounded rerun for the selected site; never runs AI or publishing."""
+    ctx.ensure_tenant(req.tenant_id)
+    try:
+        row = await reserve_manual_automation_run(
+            session,
+            tenant_id=req.tenant_id,
+            site_id=req.site_id,
+            job_type=req.job_type,
+            requested_by=ctx.user_id,
+        )
+    except ManualAutomationError as exc:
+        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
+        raise HTTPException(exc.status_code, exc.message, headers=headers) from exc
+    background_tasks.add_task(execute_manual_automation_run, int(row.id))
+    return {
+        "message": "任务已进入后台队列",
+        "run": _automation_run_payload(row),
+    }
 
 
 @router.get("/site-pages")

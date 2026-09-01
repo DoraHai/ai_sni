@@ -21,8 +21,10 @@ os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
 from app.api.seo import _automation_run_payload, list_seo_automation_runs
 from app.seo_automation_runs import (
+    active_manual_automation_site_ids,
     automation_run_status,
     finish_automation_run,
+    mark_automation_run_running,
     start_automation_run,
 )
 
@@ -51,6 +53,7 @@ def _row(**overrides: object) -> SimpleNamespace:
         "failed_count": 0,
         "skipped_count": 1,
         "error_summary": None,
+        "requested_by": None,
         "started_at": datetime.utcnow() - timedelta(minutes=5),
         "completed_at": datetime.utcnow(),
     }
@@ -62,6 +65,24 @@ def test_automation_status_distinguishes_completed_partial_and_failed() -> None:
     assert automation_run_status(success_count=3, failed_count=0) == "completed"
     assert automation_run_status(success_count=3, failed_count=1) == "partial"
     assert automation_run_status(success_count=0, failed_count=1) == "failed"
+
+
+def test_active_manual_site_lookup_is_tenant_and_job_scoped() -> None:
+    session = SimpleNamespace(scalars=AsyncMock(return_value=[3, None, 5]))
+    with patch(
+        "app.seo_automation_runs.async_session_factory",
+        return_value=_SessionContext(session),
+    ):
+        site_ids = asyncio.run(
+            active_manual_automation_site_ids(tenant_id=7, job_type="backlink")
+        )
+
+    statement = session.scalars.await_args.args[0]
+    sql = str(statement)
+    assert "seo_automation_runs.tenant_id" in sql
+    assert "seo_automation_runs.job_type" in sql
+    assert "seo_automation_runs.trigger_type" in sql
+    assert site_ids == {3, 5}
 
 
 def test_start_automation_run_persists_a_tenant_scoped_summary() -> None:
@@ -116,6 +137,25 @@ def test_finish_automation_run_caps_errors_and_marks_partial() -> None:
     session.commit.assert_awaited_once_with()
 
 
+def test_mark_automation_run_running_claims_queued_row_atomically() -> None:
+    session = SimpleNamespace(
+        execute=AsyncMock(return_value=SimpleNamespace(rowcount=1)),
+        commit=AsyncMock(),
+    )
+    with patch(
+        "app.seo_automation_runs.async_session_factory",
+        return_value=_SessionContext(session),
+    ):
+        claimed = asyncio.run(mark_automation_run_running(9))
+
+    statement = session.execute.await_args.args[0]
+    assert "seo_automation_runs.status" in str(statement)
+    assert "seo_automation_runs.trigger_type" in str(statement)
+    assert "seo_automation_runs.site_id IS NOT NULL" in str(statement)
+    assert claimed is True
+    session.commit.assert_awaited_once_with()
+
+
 def test_payload_marks_old_running_jobs_as_stale() -> None:
     payload = _automation_run_payload(
         _row(
@@ -127,6 +167,18 @@ def test_payload_marks_old_running_jobs_as_stale() -> None:
 
     assert payload["stale"] is True
     assert payload["started_at"].endswith("Z")
+
+
+def test_payload_marks_old_queued_jobs_as_stale() -> None:
+    payload = _automation_run_payload(
+        _row(
+            status="queued",
+            started_at=datetime.utcnow() - timedelta(hours=3),
+            completed_at=None,
+        )
+    )
+
+    assert payload["stale"] is True
 
 
 def test_list_automation_runs_is_tenant_scoped_and_returns_latest_by_job() -> None:
@@ -151,3 +203,32 @@ def test_list_automation_runs_is_tenant_scoped_and_returns_latest_by_job() -> No
     assert statement.compile().params["tenant_id_1"] == 7
     assert result["items"][0]["id"] == 9
     assert result["latest_by_job"]["ranking"]["id"] == 9
+
+
+def test_list_automation_runs_includes_tenant_schedule_but_excludes_other_site_manual_runs() -> None:
+    row = _row(site_id=3, trigger_type="manual", requested_by=11)
+    session = SimpleNamespace(
+        get=AsyncMock(
+            side_effect=[
+                SimpleNamespace(id=7),
+                SimpleNamespace(id=3, tenant_id=7),
+            ]
+        ),
+        scalars=AsyncMock(return_value=[row]),
+    )
+
+    result = asyncio.run(
+        list_seo_automation_runs(
+            tenant_id=7,
+            site_id=3,
+            job_type=None,
+            limit=30,
+            session=session,
+        )
+    )
+
+    statement = session.scalars.await_args.args[0]
+    sql = str(statement)
+    assert "seo_automation_runs.site_id" in sql
+    assert "seo_automation_runs.site_id IS NULL" in sql
+    assert result["items"][0]["requested_by"] == 11
