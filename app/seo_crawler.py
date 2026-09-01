@@ -507,16 +507,21 @@ async def crawl_site(
         pending_sitemaps.extend(children[:5])
 
     queue: list[tuple[str, int, str]] = [(seed, 0, "seed")]
-    for raw in [*(extra_seeds or []), *discovered_from_sitemap]:
+    queued = {seed}
+    for raw, source in [
+        *((value, "manual") for value in (extra_seeds or [])),
+        *((value, "sitemap") for value in discovered_from_sitemap),
+    ]:
         try:
             url = normalize_crawl_url(raw)
         except SeoCrawlError:
             continue
-        if (urlparse(url).hostname or "").lower() == allowed_host:
-            queue.append((url, 0, "sitemap" if raw in discovered_from_sitemap else "manual"))
+        if (urlparse(url).hostname or "").lower() == allowed_host and url not in queued:
+            queued.add(url)
+            queue.append((url, 0, source))
 
-    queued = {item[0] for item in queue}
     visited: set[str] = set()
+    snapshot_urls: set[str] = set()
     snapshots: list[dict[str, Any]] = []
     async with pinned_async_client(
         timeout=FETCH_TIMEOUT_SECONDS,
@@ -544,6 +549,11 @@ async def crawl_site(
             processed = await asyncio.gather(*(process(item) for item in batch))
             for (url, depth, source), snapshot in processed:
                 visited.add(url)
+                snapshot_url = snapshot.get("url")
+                if snapshot_url in snapshot_urls:
+                    continue
+                if snapshot_url:
+                    snapshot_urls.add(snapshot_url)
                 snapshot["discovery_source"] = source
                 snapshot["click_depth"] = depth
                 snapshots.append(snapshot)
