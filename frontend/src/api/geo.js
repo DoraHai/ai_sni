@@ -99,3 +99,26 @@ export function createGeoTaskFromDiagnosis({ tenantId, auditId, adviceCode }) {
     advice_code: adviceCode || null,
   })
 }
+
+export function fetchLatestGeoStructureScan(tenantId) {
+  return client.get('/api/v1/geo/structure-scan/latest', { params: { tenant_id: tenantId } })
+}
+
+export function runGeoStructureScan(tenantId, websiteUrl) {
+  return client.post('/api/v1/geo/structure-scan', null, {
+    params: { tenant_id: tenantId, website_url: websiteUrl || undefined },
+    timeout: 120000,
+  })
+}
+
+export function listGeoActionTickets(tenantId, params = {}) {
+  return client.get('/api/v1/geo/action-tickets', {
+    params: { tenant_id: tenantId, ...params },
+  })
+}
+
+export function createGeoActionTicket(tenantId, body) {
+  return client.post('/api/v1/geo/action-tickets', body, {
+    params: { tenant_id: tenantId },
+  })
+}

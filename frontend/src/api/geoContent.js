@@ -71,6 +71,16 @@ export function createGeoPrompt(body) {
   return client.post('/api/v1/geo/prompts', body)
 }
 
+/** Import prompt rows in one server-validated CSV batch. */
+export function importGeoPromptsCsv(tenantId, file) {
+  const form = new FormData()
+  form.append('file', file)
+  return client.post('/api/v1/geo/prompts/import-csv', form, {
+    params: { tenant_id: tenantId },
+    timeout: 120000,
+  })
+}
+
 export function patchGeoPrompt(tenantId, promptId, body) {
   return client.patch(`/api/v1/geo/prompts/${promptId}`, body, {
     params: { tenant_id: tenantId },
@@ -186,6 +196,16 @@ export function listGeoFacts(tenantId, params = {}) {
 
 export function createGeoFact(body) {
   return client.post('/api/v1/geo/facts', body)
+}
+
+/** Import fact rows in one server-validated CSV batch. */
+export function importGeoFactsCsv(tenantId, file) {
+  const form = new FormData()
+  form.append('file', file)
+  return client.post('/api/v1/geo/facts/import', form, {
+    params: { tenant_id: tenantId },
+    timeout: 120000,
+  })
 }
 
 export function patchGeoFact(tenantId, factId, body) {
@@ -375,6 +395,10 @@ export function getGeoContentTask(tenantId, taskId) {
   return client.get(`/api/v1/geo/content-tasks/${taskId}`, { params: { tenant_id: tenantId } })
 }
 
+export function optimizeGeoArticle(taskId, body) {
+  return client.post(`/api/v1/geo/content-tasks/${taskId}/optimize`, body)
+}
+
 /** 发布后效果：引用命中 + 意图词发布前后提及率 */
 export function fetchGeoContentTaskImpact(tenantId, taskId, windowDays = 14) {
   return client.get(`/api/v1/geo/content-tasks/${taskId}/impact`, {
@@ -474,6 +498,25 @@ export function listGeoAsyncJobs(tenantId, params = {}) {
   return client.get('/api/v1/geo/async-jobs', {
     params: { tenant_id: tenantId, ...params },
   })
+}
+
+export async function waitGeoAsyncJob(
+  tenantId,
+  jobId,
+  { intervalMs = 2500, maxMs = 45 * 60 * 1000, onTick } = {},
+) {
+  const start = Date.now()
+  while (Date.now() - start < maxMs) {
+    const job = await getGeoAsyncJob(tenantId, jobId)
+    if (typeof onTick === 'function') onTick(job)
+    if (['succeeded', 'failed', 'cancelled'].includes(job.status)) return job
+    await new Promise((r) => setTimeout(r, intervalMs))
+  }
+  try {
+    return await getGeoAsyncJob(tenantId, jobId)
+  } catch {
+    throw new Error('异步任务仍在后台运行，请稍后刷新查看结果')
+  }
 }
 
 /** Poll async job until terminal status */
