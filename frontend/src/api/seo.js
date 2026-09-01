@@ -89,10 +89,14 @@ export function fetchSeoOverview({ tenantId, siteId, engine = 'baidu', device = 
   return client.get('/api/v1/seo/overview', { params: { tenant_id: tenantId, site_id: siteId || undefined, engine, device, days } })
 }
 
-export function fetchSeoAutomationRuns({ tenantId, jobType, limit = 30 }) {
+export function fetchSeoAutomationRuns({ tenantId, siteId, jobType, limit = 30 }) {
   return client.get('/api/v1/seo/automation-runs', {
-    params: { tenant_id: tenantId, job_type: jobType || undefined, limit },
+    params: { tenant_id: tenantId, site_id: siteId || undefined, job_type: jobType || undefined, limit },
   })
+}
+
+export function triggerSeoAutomationRun(payload) {
+  return client.post('/api/v1/seo/overview/automation-runs/trigger', payload, { timeout: 30000 })
 }
 
 export function collectSeoOverviewMetrics(payload) {
