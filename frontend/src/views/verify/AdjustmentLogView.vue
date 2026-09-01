@@ -168,6 +168,9 @@ const ACTION_TYPES = [
   { code: 'remove_negative', label: '删否词' },
   { code: 'pause', label: '暂停' },
   { code: 'enable', label: '启用' },
+  { code: 'set_account_budget', label: '账户预算' },
+  { code: 'set_campaign_budget', label: '计划预算' },
+  { code: 'set_adgroup_bid', label: '单元出价' },
 ]
 const actType = ref('')
 const actData = ref(null)
@@ -194,6 +197,32 @@ const actCounts = computed(() => {
 })
 
 const fmtMoney = (v) => (v == null ? '—' : '¥' + Number(v).toFixed(2))
+const MONEY_ACTIONS = new Set(['set_account_budget', 'set_campaign_budget', 'set_adgroup_bid'])
+
+function actionChangeText(row) {
+  if (row.old_value == null && row.new_value == null) return ''
+  if (MONEY_ACTIONS.has(row.action_type)) {
+    return `${fmtMoney(row.old_value)} → ${fmtMoney(row.new_value)}`
+  }
+  return `${row.old_value ?? '—'} → ${row.new_value ?? '—'}`
+}
+
+function actionAccountLabel(row) {
+  const tenant = session.tenants.find((item) => item.id === TENANT_ID.value)
+  const account = (tenant?.sem_accounts || []).find(
+    (item) => Number(item.id) === Number(row.baidu_account_id),
+  )
+  return account?.username || (row.baidu_account_id ? `账户 #${row.baidu_account_id}` : '—')
+}
+
+function actionResultNote(row) {
+  if (row.error_msg) return row.error_msg
+  if (row.dry_run) return '仅记录台账，未修改百度账户'
+  if (row.status === 'success') return '百度执行成功'
+  if (row.status === 'pending') return '执行结果待确认'
+  if (row.status === 'reconcile') return '需要人工对账'
+  return '—'
+}
 
 // 关键词级记录解析到唯一 keyword_id 时可跳详情页（带溯源参数）
 function gotoKeyword(row) {
@@ -526,31 +555,33 @@ onMounted(load)
                 <span class="act-pill" :class="row.action_type">{{ row.action_label }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="词 / 对象" min-width="190">
+            <el-table-column label="词 / 对象" min-width="220">
               <template #default="{ row }">
                 <div class="kw-cell-name">{{ row.word || '—' }}</div>
                 <div class="kw-cell-sub">
-                  {{ row.campaign_name || '—' }}<template v-if="row.adgroup_name"> / {{ row.adgroup_name }}</template>
+                  {{ actionAccountLabel(row) }}<template v-if="row.campaign_name"> / {{ row.campaign_name }}</template><template v-if="row.adgroup_name"> / {{ row.adgroup_name }}</template>
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="匹配 / 出价" min-width="140">
+            <el-table-column label="匹配 / 变更" min-width="170">
               <template #default="{ row }">
                 <span v-if="row.match_label" class="content-pill lv-5">{{ row.match_label }}</span>
                 <span v-if="row.price != null" class="change-text" style="margin-left: 6px">{{ fmtMoney(row.price) }}</span>
-                <span v-if="!row.match_label && row.price == null" class="dim">—</span>
+                <span v-if="actionChangeText(row)" class="change-text">{{ actionChangeText(row) }}</span>
+                <span v-if="!row.match_label && row.price == null && !actionChangeText(row)" class="dim">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="状态" width="120" align="center">
+            <el-table-column label="状态" width="150" align="center">
               <template #default="{ row }">
                 <span class="wb-pill" :class="row.status">{{ row.status_label || WB_STATUS[row.status] || row.status }}</span>
+                <div class="kw-cell-sub">{{ row.execution_mode_label || (row.dry_run ? '演练（未修改百度）' : '真实执行') }}</div>
               </template>
             </el-table-column>
             <el-table-column label="操作人" width="110">
               <template #default="{ row }">{{ row.operator_name || '—' }}</template>
             </el-table-column>
             <el-table-column label="说明" min-width="160">
-              <template #default="{ row }"><span class="kw-cell-sub">{{ row.error_msg || '—' }}</span></template>
+              <template #default="{ row }"><span class="kw-cell-sub">{{ actionResultNote(row) }}</span></template>
             </el-table-column>
             <template #empty>
               <div class="empty-line">还没有动作回写记录。去「搜索词报告」加否词 / 转拓词，或「关键词工作台」批量启停即可在此留痕。</div>
