@@ -323,7 +323,7 @@ async def _load_active_account(
     settings = get_settings()
     if not settings.baidu_write_dry_run:
         try:
-            allowed = settings.baidu_live_write_allowed(tenant_id, acc.id)
+            allowed = settings.baidu_live_write_identity_allowed(tenant_id, acc.id)
         except (TypeError, ValueError) as exc:
             raise WritebackError("百度真实回写白名单配置无效，已拒绝请求") from exc
         if not allowed:

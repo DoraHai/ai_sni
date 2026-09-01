@@ -11,7 +11,7 @@ import logging
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-from app.config import parse_positive_id_csv
+from app.config import parse_positive_id_csv, parse_write_scope_csv
 
 if TYPE_CHECKING:
     from app.config import Settings
@@ -183,6 +183,24 @@ def collect_production_issues(settings: "Settings") -> list[str]:
                     issues.append(
                         f"{label} must contain at least one ID when BAIDU_WRITE_DRY_RUN=false"
                     )
+        try:
+            allowed_scopes = parse_write_scope_csv(
+                str(getattr(settings, "baidu_live_write_scopes", "") or ""),
+                label="BAIDU_LIVE_WRITE_SCOPES",
+            )
+        except ValueError as exc:
+            issues.append(str(exc))
+        else:
+            if not allowed_scopes:
+                issues.append(
+                    "BAIDU_LIVE_WRITE_SCOPES must contain at least one action "
+                    "when BAIDU_WRITE_DRY_RUN=false"
+                )
+        if bool(getattr(settings, "baidu_legacy_split_confirmation_enabled", True)):
+            issues.append(
+                "BAIDU_LEGACY_SPLIT_CONFIRMATION_ENABLED must be false when "
+                "BAIDU_WRITE_DRY_RUN=false"
+            )
 
     return issues
 

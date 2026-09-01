@@ -3,7 +3,7 @@ import inspect
 import os
 from datetime import datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 os.environ.setdefault("BAIDU_APP_ID", "test-app")
@@ -58,6 +58,13 @@ class _Session:
         self.flushed = True
 
 
+def _live_confirmation_settings(*, legacy: bool = False):
+    return SimpleNamespace(
+        baidu_write_confirmation_ttl_minutes=15,
+        baidu_legacy_split_confirmation_enabled=legacy,
+    )
+
+
 class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
     async def test_single_operator_confirmation_is_created_ready_to_execute(self):
         class Session:
@@ -87,6 +94,57 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["approval"]["requested_by"], 9)
         self.assertEqual(result["approval"]["approved_by"], 9)
         session.commit.assert_awaited_once()
+
+    async def test_legacy_frontend_can_create_pending_during_dry_run_rollout(self):
+        class Session:
+            def __init__(self):
+                self.row = None
+                self.commit = AsyncMock()
+
+            def add(self, row):
+                self.row = row
+
+            async def refresh(self, row):
+                row.id = 42
+
+        session = Session()
+        ctx = AuthContext(9, "operator", "运营", 3, {"verify.adjustments": "edit"})
+        with patch(
+            "app.api.writeback.get_settings",
+            return_value=SimpleNamespace(baidu_legacy_split_confirmation_enabled=True),
+        ):
+            result = await request_writeback_approval(
+                ApprovalRequest(
+                    tenant_id=3,
+                    action_type=ACTION_KEYWORD_BID,
+                    payload={"keyword_id": 7, "new_bid": 1.23},
+                ),
+                ctx=ctx,
+                session=session,
+            )
+        self.assertEqual(result["approval"]["status"], "pending")
+        self.assertIsNone(result["approval"]["approved_by"])
+
+    async def test_missing_confirmation_is_rejected_after_compatibility_window(self):
+        ctx = AuthContext(9, "operator", "运营", 3, {"verify.adjustments": "edit"})
+        with (
+            patch(
+                "app.api.writeback.get_settings",
+                return_value=SimpleNamespace(
+                    baidu_legacy_split_confirmation_enabled=False
+                ),
+            ),
+            self.assertRaisesRegex(Exception, "CONFIRM_BAIDU_WRITEBACK"),
+        ):
+            await request_writeback_approval(
+                ApprovalRequest(
+                    tenant_id=3,
+                    action_type=ACTION_KEYWORD_BID,
+                    payload={"keyword_id": 7, "new_bid": 1.23},
+                ),
+                ctx=ctx,
+                session=SimpleNamespace(),
+            )
 
     async def test_single_operator_confirmation_rejects_wrong_phrase(self):
         ctx = AuthContext(9, "operator", "运营", 3, {"verify.adjustments": "edit"})
@@ -254,15 +312,39 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
             consumed_by=None,
             consumed_at=None,
         )
-        with self.assertRaisesRegex(WritebackApprovalError, "当前实名操作员本人"):
+        with (
+            patch(
+                "app.baidu.writeback_approval.get_settings",
+                return_value=_live_confirmation_settings(),
+            ),
+            self.assertRaisesRegex(WritebackApprovalError, "当前实名操作员本人"),
+        ):
             await claim_approval(
-                _Session(row),
-                approval_id=1,
-                tenant_id=3,
-                action_type=ACTION_KEYWORD_BID,
-                payload=payload,
-                operator_user_id=8,
+                _Session(row), approval_id=1, tenant_id=3,
+                action_type=ACTION_KEYWORD_BID, payload=payload, operator_user_id=8,
             )
+
+    async def test_legacy_split_confirmation_cannot_be_consumed_during_rollout(self):
+        payload, fingerprint = payload_fingerprint(
+            ACTION_KEYWORD_BID, {"keyword_id": 7, "new_bid": 1.23}
+        )
+        row = SimpleNamespace(
+            tenant_id=3, status="approved", action_type=ACTION_KEYWORD_BID,
+            payload_hash=fingerprint, payload=payload, approved_by=8, requested_by=9,
+            created_at=datetime.utcnow(), consumed_by=None, consumed_at=None,
+        )
+        with (
+            patch(
+                "app.baidu.writeback_approval.get_settings",
+                return_value=_live_confirmation_settings(legacy=True),
+            ),
+            self.assertRaisesRegex(WritebackApprovalError, "兼容期间"),
+        ):
+            await claim_approval(
+                _Session(row), approval_id=1, tenant_id=3,
+                action_type=ACTION_KEYWORD_BID, payload=payload, operator_user_id=9,
+            )
+        self.assertEqual(row.status, "approved")
 
     async def test_claim_consumes_matching_approval_once(self):
         payload, fingerprint = payload_fingerprint(
@@ -281,14 +363,18 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
             consumed_at=None,
         )
         session = _Session(row)
-        await claim_approval(
-            session,
-            approval_id=1,
-            tenant_id=3,
-            action_type=ACTION_KEYWORD_BID,
-            payload=payload,
-            operator_user_id=9,
-        )
+        with patch(
+            "app.baidu.writeback_approval.get_settings",
+            return_value=_live_confirmation_settings(),
+        ):
+            await claim_approval(
+                session,
+                approval_id=1,
+                tenant_id=3,
+                action_type=ACTION_KEYWORD_BID,
+                payload=payload,
+                operator_user_id=9,
+            )
         self.assertEqual(row.status, "consumed")
         self.assertEqual(row.consumed_by, 9)
         self.assertTrue(session.flushed)
@@ -336,14 +422,16 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
             consumed_by=None,
             consumed_at=None,
         )
-        with self.assertRaisesRegex(WritebackApprovalError, "已过期"):
+        with (
+            patch(
+                "app.baidu.writeback_approval.get_settings",
+                return_value=_live_confirmation_settings(),
+            ),
+            self.assertRaisesRegex(WritebackApprovalError, "已过期"),
+        ):
             await claim_approval(
-                _Session(row),
-                approval_id=1,
-                tenant_id=3,
-                action_type=ACTION_KEYWORD_BID,
-                payload=payload,
-                operator_user_id=9,
+                _Session(row), approval_id=1, tenant_id=3,
+                action_type=ACTION_KEYWORD_BID, payload=payload, operator_user_id=9,
             )
 
 

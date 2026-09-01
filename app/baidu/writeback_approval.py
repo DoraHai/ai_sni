@@ -135,15 +135,19 @@ async def claim_approval(
     if created_at is None:
         raise WritebackApprovalError("确认记录缺少创建时间，请重新创建确认")
     now = datetime.now(created_at.tzinfo) if created_at.tzinfo else datetime.utcnow()
+    settings = get_settings()
+    if settings.baidu_legacy_split_confirmation_enabled:
+        raise WritebackApprovalError("旧确认协议兼容期间禁止真实资金回写")
     expires_at = created_at + timedelta(
-        minutes=get_settings().baidu_write_confirmation_ttl_minutes
+        minutes=settings.baidu_write_confirmation_ttl_minutes
     )
     if now > expires_at:
         raise WritebackApprovalError("确认记录已过期，请重新创建确认")
-    if (
-        approval.approved_by != operator_user_id
-        or approval.requested_by != operator_user_id
-    ):
+    same_operator = (
+        approval.approved_by == operator_user_id
+        and approval.requested_by == operator_user_id
+    )
+    if not same_operator:
         raise WritebackApprovalError("确认记录必须由当前实名操作员本人创建并确认")
     approval.status = "consumed"
     approval.consumed_by = operator_user_id

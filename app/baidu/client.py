@@ -118,6 +118,7 @@ class BaiduAPIClient:
         body: dict[str, Any] | None = None,
         *,
         is_write: bool = False,
+        write_scope: str | None = None,
     ) -> dict[str, Any]:
         url = f"{self._base_url}/json/sms/service/{service}/{method}"
         payload = {
@@ -139,10 +140,17 @@ class BaiduAPIClient:
             )
             return {"_dry_run": True, "data": []}
         if is_write_request:
+            if bool(
+                getattr(settings, "baidu_legacy_split_confirmation_enabled", True)
+            ):
+                raise BaiduLiveWriteBlockedError(
+                    "旧回写确认协议兼容期间禁止真实回写"
+                )
             try:
                 allowed = settings.baidu_live_write_allowed(
                     self._tenant_id,
                     self._baidu_account_id,
+                    write_scope,
                 )
             except (TypeError, ValueError) as exc:
                 raise BaiduLiveWriteBlockedError(
@@ -150,7 +158,7 @@ class BaiduAPIClient:
                 ) from exc
             if not allowed:
                 raise BaiduLiveWriteBlockedError(
-                    "当前客户或推广账户不在百度真实回写白名单中，已拒绝请求"
+                    "当前客户、推广账户或动作不在百度真实回写白名单中，已拒绝请求"
                 )
 
         async with httpx.AsyncClient(timeout=self._timeout) as http:

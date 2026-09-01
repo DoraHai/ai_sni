@@ -39,6 +39,15 @@ const approvalSubmitting = ref(false)
 const approvalForm = reactive({
   actionType: 'keyword_bid', targetId: '', amount: '', note: '', confirmation: '',
 })
+
+function resetApprovalConfirmation() {
+  approvalForm.confirmation = ''
+}
+
+function openApprovalDialog() {
+  resetApprovalConfirmation()
+  approvalDialog.value = true
+}
 const activeSemAccounts = computed(() => {
   const tenant = session.tenants.find((row) => row.id === TENANT_ID.value)
   return (tenant?.sem_accounts || []).filter((row) => row.status === 'active')
@@ -444,7 +453,7 @@ onMounted(load)
         >
           <el-option v-for="t in ACTION_TYPES" :key="t.code" :label="t.label" :value="t.code" />
         </el-select>
-        <el-button v-if="wbSub === 'approval'" type="primary" @click="approvalDialog = true">创建资金回写确认</el-button>
+        <el-button v-if="wbSub === 'approval'" type="primary" @click="openApprovalDialog">创建资金回写确认</el-button>
       </div>
 
       <!-- 出价回写（updateWord 留痕） -->
@@ -604,7 +613,7 @@ onMounted(load)
       </div>
     </template>
 
-    <el-dialog v-model="approvalDialog" title="创建资金回写确认" width="480px">
+    <el-dialog v-model="approvalDialog" title="创建资金回写确认" width="480px" @closed="resetApprovalConfirmation">
       <el-form label-width="100px">
         <el-form-item label="动作类型">
           <el-select v-model="approvalForm.actionType" style="width: 100%">

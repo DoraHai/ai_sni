@@ -141,12 +141,16 @@ class ProdGuardTests(unittest.TestCase):
         issues = collect_production_issues(SimpleNamespace(**common))
         self.assertTrue(any("BAIDU_LIVE_WRITE_TENANT_IDS" in item for item in issues))
         self.assertTrue(any("BAIDU_LIVE_WRITE_ACCOUNT_IDS" in item for item in issues))
+        self.assertTrue(any("BAIDU_LIVE_WRITE_SCOPES" in item for item in issues))
+        self.assertTrue(any("BAIDU_LEGACY_SPLIT_CONFIRMATION_ENABLED" in item for item in issues))
 
         invalid = collect_production_issues(
             SimpleNamespace(
                 **common,
                 baidu_live_write_tenant_ids="3,not-an-id",
                 baidu_live_write_account_ids="17",
+                baidu_live_write_scopes="keyword_bid",
+                baidu_legacy_split_confirmation_enabled=False,
             )
         )
         self.assertTrue(any("positive integers" in item for item in invalid))
@@ -156,6 +160,8 @@ class ProdGuardTests(unittest.TestCase):
                 **common,
                 baidu_live_write_tenant_ids="3",
                 baidu_live_write_account_ids="17",
+                baidu_live_write_scopes="keyword_bid",
+                baidu_legacy_split_confirmation_enabled=False,
             )
         )
         self.assertEqual(allowed, [])
