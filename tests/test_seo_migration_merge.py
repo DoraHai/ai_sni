@@ -23,6 +23,7 @@ CONTENT_REVIEW_HISTORY_REVISION = ROOT / "migrations/versions/20260831_0080_seo_
 SEO_MONITOR_CASCADE_REVISION = ROOT / "migrations/versions/20260831_0081_seo_monitor_tenant_cascade.py"
 SEO_AUTOMATION_RUNS_REVISION = ROOT / "migrations/versions/20260901_0082_seo_automation_runs.py"
 SEO_MANUAL_RERUN_REVISION = ROOT / "migrations/versions/20260901_0083_seo_manual_rerun.py"
+SEO_CRAWL_QUEUED_REVISION = ROOT / "migrations/versions/20260901_0084_seo_crawl_queued_status.py"
 EXPECTED_GEO_REPAIR_SHA256 = "4e785eefd6bcc7a6f1158ff38b19769cb5ee2ffafa433e9f616f30c85ac533ba"
 CANONICAL_SEM_MIGRATION_SHA256 = {
     "20260822_0074_suggestion_workflow.py": "c082bfbab80ad2db03e11d00c0855bdbd2167ee3418259433b2caddc9d18addc",
@@ -70,7 +71,7 @@ def test_merge_revisions_are_noop_and_sem_seo_merge_is_only_head() -> None:
     _assert_noop_revision(SEM_SEO_MERGE_REVISION)
 
     script = ScriptDirectory.from_config(_config())
-    assert script.get_heads() == ["0083_seo_manual_rerun"]
+    assert script.get_heads() == ["0084_seo_crawl_queued_status"]
     merge = script.get_revision("0074_merge_geo_seo_heads")
     assert set(merge._normalized_down_revisions) == {
         "0073_geo_schema_repair",
@@ -95,6 +96,8 @@ def test_merge_revisions_are_noop_and_sem_seo_merge_is_only_head() -> None:
     assert automation_runs.down_revision == "0081_seo_monitor_cascade"
     manual_rerun = script.get_revision("0083_seo_manual_rerun")
     assert manual_rerun.down_revision == "0082_seo_automation_runs"
+    crawl_queued = script.get_revision("0084_seo_crawl_queued_status")
+    assert crawl_queued.down_revision == "0083_seo_manual_rerun"
 
 
 def test_seo_health_required_revision_matches_alembic_head() -> None:
@@ -102,6 +105,13 @@ def test_seo_health_required_revision_matches_alembic_head() -> None:
     match = re.search(r'SEO_REQUIRED_SCHEMA_REVISION = "([^"]+)"', source)
     assert match is not None
     assert ScriptDirectory.from_config(_config()).get_heads() == [match.group(1)]
+
+
+def test_crawl_status_migration_allows_queued_and_has_safe_downgrade() -> None:
+    source = SEO_CRAWL_QUEUED_REVISION.read_text(encoding="utf-8")
+    assert "status IN ('queued','running','completed','partial','failed')" in source
+    assert "WHERE status = 'queued'" in source
+    assert "SET status = 'failed'" in source
 
 
 def test_upgrade_plan_from_production_sem_head_runs_only_seo_branch() -> None:
@@ -117,6 +127,7 @@ def test_upgrade_plan_from_production_sem_head_runs_only_seo_branch() -> None:
         "0081_seo_monitor_cascade",
         "0082_seo_automation_runs",
         "0083_seo_manual_rerun",
+        "0084_seo_crawl_queued_status",
     ]
 
 
@@ -198,6 +209,13 @@ def test_postgres_upgrade_from_sem_head_applies_only_pending_seo_branch(monkeypa
                 }
                 assert "ix_seo_automation_runs_tenant_job_started" in automation_indexes
                 assert "ix_seo_automation_runs_requested_by" in automation_indexes
+                crawl_checks = inspector.get_check_constraints("seo_crawl_runs")
+                crawl_status_check = next(
+                    constraint
+                    for constraint in crawl_checks
+                    if constraint["name"] == "ck_seo_crawl_run_status"
+                )
+                assert "queued" in crawl_status_check["sqltext"]
                 automation_foreign_keys = inspector.get_foreign_keys(
                     "seo_automation_runs"
                 )
@@ -293,7 +311,7 @@ def test_postgres_upgrade_from_sem_head_applies_only_pending_seo_branch(monkeypa
     ) = asyncio.run(schema_snapshot())
     get_settings.cache_clear()
 
-    assert after == "0083_seo_manual_rerun"
+    assert after == "0084_seo_crawl_queued_status"
     assert {
         "ix_seo_distribution_variants_tenant_id",
         "ix_seo_distribution_variants_content_asset_id",

@@ -583,7 +583,7 @@ class SeoCrawlRun(Base):
     site_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("seo_sites.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    status: Mapped[str] = mapped_column(String(24), nullable=False, default="running", index=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="queued", index=True)
     seed_url: Mapped[str] = mapped_column(Text, nullable=False)
     max_urls: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
     discovered_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

@@ -80,6 +80,7 @@ SOURCE_ALLOWED_EXACT = {
     "migrations/versions/20260831_0081_seo_monitor_tenant_cascade.py",
     "migrations/versions/20260901_0082_seo_automation_runs.py",
     "migrations/versions/20260901_0083_seo_manual_rerun.py",
+    "migrations/versions/20260901_0084_seo_crawl_queued_status.py",
     "ops/platform-deploy/install-seo.sh",
     "ops/platform-deploy/install-seo-frontend.sh",
     "ops/platform-deploy/modules/seo",

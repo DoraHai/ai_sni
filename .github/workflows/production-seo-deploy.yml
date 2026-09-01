@@ -115,7 +115,7 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0083_seo_manual_rerun (head)'
+          printf '%s\n' "$heads" | grep -F '0084_seo_crawl_queued_status (head)'
 
       - working-directory: frontend
         run: npm ci

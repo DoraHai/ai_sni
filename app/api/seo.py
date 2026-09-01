@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.deepseek import DeepSeekError, chat_json, is_enabled
 from app.database import async_session_factory, get_session
 from app.config import get_settings
-from app.geo.audit import GeoAuditError, audit_url, normalize_url, safe_fetch
+from app.geo.audit import GeoAuditError, PageDocument, audit_url, normalize_url, safe_fetch
 from app.geo.chinaz import fetch_chinaz_seo_metrics
 from app.models import (
     SeoBacklink,
@@ -153,26 +153,29 @@ async def _limited_seo_chat_json(
     user: str,
     *,
     timeout: float,
+    charge_usage: bool = True,
 ) -> dict[str, Any]:
-    settings = get_settings()
-    try:
-        await charge_seo_usage(
-            session,
-            tenant_id,
-            "ai_requests",
-            1,
-            settings.seo_ai_max_requests_per_tenant_per_day,
-        )
-    except SeoUsageLimitError as exc:
-        raise HTTPException(
-            429,
-            f"SEO AI 当日调用已达上限（{exc.used}/{exc.limit}）",
-            headers={"Retry-After": "3600"},
-        ) from exc
+    if charge_usage:
+        settings = get_settings()
+        try:
+            await charge_seo_usage(
+                session,
+                tenant_id,
+                "ai_requests",
+                1,
+                settings.seo_ai_max_requests_per_tenant_per_day,
+            )
+        except SeoUsageLimitError as exc:
+            raise HTTPException(
+                429,
+                f"SEO AI 当日调用已达上限（{exc.used}/{exc.limit}）",
+                headers={"Retry-After": "3600"},
+            ) from exc
     try:
         return await chat_json(system, user, timeout=timeout)
     except Exception:
-        await refund_seo_usage(session, tenant_id, "ai_requests", 1)
+        if charge_usage:
+            await refund_seo_usage(session, tenant_id, "ai_requests", 1)
         raise
 
 
@@ -3546,6 +3549,31 @@ def _validated_seo_assist_result(action: str, result: Any) -> dict[str, Any]:
     return result
 
 
+def _seo_assist_repair_prompt(
+    user: str,
+    action: str,
+    result: Any,
+    *,
+    reason: str,
+) -> str:
+    expected = {
+        "generate": "title、outline、content",
+        "outline": "outline",
+        "title": "title",
+        "keywords": "feedback 或 suggestions",
+        "rewrite": "content",
+    }[action]
+    return "\n".join(
+        [
+            user,
+            "上一轮结果不符合输出契约，请仅修复结果，不得编造事实。",
+            f"修复原因：{reason}",
+            f"必须返回的 JSON 字段：{expected}",
+            "上一轮结果：" + json.dumps(result, ensure_ascii=False),
+        ]
+    )
+
+
 def _sanitize_content_html(value: str | None) -> str | None:
     if value is None or "<" not in value:
         return value
@@ -3570,29 +3598,47 @@ async def assist_seo_content(
         raise HTTPException(503, "DeepSeek 尚未配置")
     system, user = _seo_ai_prompt(req, tenant, keywords)
     try:
-        result = _validated_seo_assist_result(
-            req.action,
-            await _limited_seo_chat_json(
-                session, req.tenant_id, system, user, timeout=90.0
-            ),
+        raw_result = await _limited_seo_chat_json(
+            session, req.tenant_id, system, user, timeout=90.0
         )
-        missing = _missing_content_keywords(result, keywords) if req.action in {"generate", "rewrite"} else []
-        if missing and result.get("content"):
-            correction = "\n".join(
-                [
-                    user,
-                    "首轮结果没有完整覆盖目标关键词。请在不编造事实、不堆砌关键词的前提下修订结果，仍返回相同 JSON 字段。",
-                    f"必须补齐的原词：{'、'.join(missing)}",
-                    "首轮结果：" + json.dumps(result, ensure_ascii=False),
-                ]
+        repair_reason: str | None = None
+        try:
+            result = _validated_seo_assist_result(req.action, raw_result)
+        except HTTPException as exc:
+            if exc.status_code != 502:
+                raise
+            result = None
+            repair_reason = str(exc.detail)
+        missing = (
+            _missing_content_keywords(result, keywords)
+            if result is not None and req.action in {"generate", "rewrite"}
+            else []
+        )
+        if missing:
+            repair_reason = f"未完整覆盖目标关键词：{'、'.join(missing)}"
+        if repair_reason:
+            correction = _seo_assist_repair_prompt(
+                user,
+                req.action,
+                raw_result,
+                reason=repair_reason,
             )
             result = _validated_seo_assist_result(
                 req.action,
                 await _limited_seo_chat_json(
-                    session, req.tenant_id, system, correction, timeout=90.0
+                    session,
+                    req.tenant_id,
+                    system,
+                    correction,
+                    timeout=90.0,
+                    charge_usage=False,
                 ),
             )
-            missing = _missing_content_keywords(result, keywords)
+            missing = (
+                _missing_content_keywords(result, keywords)
+                if req.action in {"generate", "rewrite"}
+                else []
+            )
         if missing:
             raise HTTPException(502, f"AI 未完整覆盖目标关键词：{'、'.join(missing)}，请调整要求后重试")
     except DeepSeekError as exc:
@@ -6004,11 +6050,51 @@ async def internal_link_graph(tenant_id: int, site_id: int | None = None, sessio
     return {"nodes": nodes, "edges": [{"id": edge.id, "source": edge.source_page_id, "target": edge.target_page_id, "anchor_text": edge.anchor_text} for edge in edges], "stats": {"pages": len(nodes), "links": len(edges), "orphans": sum(node["orphan"] for node in nodes)}}
 
 
+SEO_INTERNAL_LINK_FETCH_ATTEMPTS = 3
+SEO_INTERNAL_LINK_FETCH_BACKOFF_SECONDS = (0.25, 0.75)
+SEO_INTERNAL_LINK_RETRYABLE_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
+
+
+def _retryable_internal_link_fetch_error(exc: GeoAuditError) -> bool:
+    message = str(exc)
+    if message.startswith(("网站连接失败", "域名解析失败")):
+        return True
+    match = re.search(r"HTTP\s+(\d{3})", message)
+    return bool(
+        match
+        and int(match.group(1)) in SEO_INTERNAL_LINK_RETRYABLE_STATUS_CODES
+    )
+
+
+async def _fetch_internal_link_document(url: str) -> PageDocument:
+    """Retry transient page fetches and one suspicious empty-title response."""
+    last_error: GeoAuditError | None = None
+    for attempt in range(SEO_INTERNAL_LINK_FETCH_ATTEMPTS):
+        try:
+            document = await safe_fetch(url)
+        except GeoAuditError as exc:
+            last_error = exc
+            if (
+                attempt >= SEO_INTERNAL_LINK_FETCH_ATTEMPTS - 1
+                or not _retryable_internal_link_fetch_error(exc)
+            ):
+                raise
+        else:
+            soup = BeautifulSoup(document.html, "html.parser")
+            title = soup.title.get_text(" ", strip=True) if soup.title else ""
+            if title or attempt > 0:
+                return document
+        await asyncio.sleep(SEO_INTERNAL_LINK_FETCH_BACKOFF_SECONDS[attempt])
+    if last_error is not None:
+        raise last_error
+    raise GeoAuditError("页面标题抓取失败")
+
+
 @router.post("/internal-links/crawl")
 async def crawl_internal_links(tenant_id: int, page_id: int, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
     page = await _site_page(session, page_id, tenant_id)
     try:
-        document = await safe_fetch(page.url)
+        document = await _fetch_internal_link_document(page.url)
     except GeoAuditError as exc:
         raise HTTPException(422, str(exc)) from exc
     soup = BeautifulSoup(document.html, "html.parser")
