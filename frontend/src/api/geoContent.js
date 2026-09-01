@@ -500,25 +500,6 @@ export function listGeoAsyncJobs(tenantId, params = {}) {
   })
 }
 
-export async function waitGeoAsyncJob(
-  tenantId,
-  jobId,
-  { intervalMs = 2500, maxMs = 45 * 60 * 1000, onTick } = {},
-) {
-  const start = Date.now()
-  while (Date.now() - start < maxMs) {
-    const job = await getGeoAsyncJob(tenantId, jobId)
-    if (typeof onTick === 'function') onTick(job)
-    if (['succeeded', 'failed', 'cancelled'].includes(job.status)) return job
-    await new Promise((r) => setTimeout(r, intervalMs))
-  }
-  try {
-    return await getGeoAsyncJob(tenantId, jobId)
-  } catch {
-    throw new Error('异步任务仍在后台运行，请稍后刷新查看结果')
-  }
-}
-
 /** Poll async job until terminal status */
 export async function waitGeoAsyncJob(
   tenantId,
