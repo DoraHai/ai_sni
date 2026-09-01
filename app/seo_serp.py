@@ -19,6 +19,9 @@ CHINAZ_MAX_CONNECTIONS = 2
 CHINAZ_MAX_ATTEMPTS = 3
 CHINAZ_RETRY_BASE_SECONDS = 0.25
 DATAFORSEO_ENGINES = {"google", "bing"}
+DATAFORSEO_MAX_CONCURRENCY = 2
+DATAFORSEO_MAX_ATTEMPTS = 3
+DATAFORSEO_RETRY_BASE_SECONDS = 0.5
 
 
 class SerpProviderError(RuntimeError):
@@ -59,6 +62,24 @@ def create_chinaz_client() -> httpx.AsyncClient:
     limits = httpx.Limits(
         max_connections=CHINAZ_MAX_CONNECTIONS,
         max_keepalive_connections=CHINAZ_MAX_CONNECTIONS,
+    )
+    return httpx.AsyncClient(timeout=timeout, limits=limits)
+
+
+def create_dataforseo_client() -> httpx.AsyncClient:
+    """Create one bounded client for a complete paid DataForSEO batch."""
+    timeout_seconds = max(
+        1.0, float(get_settings().seo_dataforseo_timeout_seconds)
+    )
+    timeout = httpx.Timeout(
+        timeout_seconds,
+        connect=timeout_seconds,
+        pool=min(2.0, timeout_seconds),
+        write=timeout_seconds,
+    )
+    limits = httpx.Limits(
+        max_connections=DATAFORSEO_MAX_CONCURRENCY,
+        max_keepalive_connections=DATAFORSEO_MAX_CONCURRENCY,
     )
     return httpx.AsyncClient(timeout=timeout, limits=limits)
 
@@ -367,9 +388,43 @@ def dataforseo_status() -> dict[str, Any]:
     }
 
 
+def _dataforseo_error(status_code: int) -> SerpProviderError:
+    """Classify documented DataForSEO internal codes without leaking messages."""
+    if status_code == 40100:
+        return SerpProviderError(
+            "provider_auth_failed", "多搜索引擎接口认证失败"
+        )
+    if status_code in {40202, 40209}:
+        return SerpProviderError(
+            "provider_rate_limited",
+            "多搜索引擎接口请求受限",
+            retryable=True,
+        )
+    if status_code in {40200, 40203, 40210}:
+        return SerpProviderError(
+            "provider_quota_exceeded", "多搜索引擎接口额度不可用"
+        )
+    retryable = status_code in {40101, 40103, 40601, 40602} or (
+        50000 <= status_code < 50500 and status_code != 50100
+    )
+    return SerpProviderError(
+        "provider_unavailable" if retryable else "provider_rejected",
+        "多搜索引擎接口暂时不可用"
+        if retryable
+        else "多搜索引擎接口未返回有效搜索结果",
+        retryable=retryable,
+    )
+
+
 def parse_dataforseo_response(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict) or not isinstance(payload.get("tasks"), list):
         raise SerpProviderError("invalid_response", "多搜索引擎接口返回格式异常")
+    try:
+        response_status = int(payload.get("status_code", 20000))
+    except (TypeError, ValueError) as exc:
+        raise SerpProviderError("invalid_response", "多搜索引擎接口返回格式异常") from exc
+    if response_status != 20000:
+        raise _dataforseo_error(response_status)
     task = payload["tasks"][0] if payload["tasks"] else None
     if not isinstance(task, dict):
         raise SerpProviderError("invalid_response", "多搜索引擎接口未返回采集任务")
@@ -377,12 +432,14 @@ def parse_dataforseo_response(payload: Any) -> dict[str, Any]:
         status_code = int(task.get("status_code", 0))
     except (TypeError, ValueError) as exc:
         raise SerpProviderError("invalid_response", "多搜索引擎接口返回格式异常") from exc
+    if status_code == 40102:
+        return {
+            "site_count": 0,
+            "captured_at": datetime.now(timezone.utc).replace(tzinfo=None),
+            "items": [],
+        }
     if status_code != 20000:
-        raise SerpProviderError(
-            "provider_rejected",
-            "多搜索引擎接口未返回有效搜索结果",
-            retryable=status_code in {40601, 40602, 50000},
-        )
+        raise _dataforseo_error(status_code)
     results = task.get("result") if isinstance(task.get("result"), list) else []
     result = results[0] if results and isinstance(results[0], dict) else {}
     rows = result.get("items") if isinstance(result.get("items"), list) else []
@@ -430,40 +487,114 @@ async def fetch_dataforseo_serp(
     endpoint = (
         f"{settings.seo_dataforseo_base_url.rstrip('/')}/serp/{engine}/organic/live/regular"
     )
-    try:
-        response = await client.post(
-            endpoint,
-            auth=(settings.seo_dataforseo_login, settings.seo_dataforseo_password),
-            json=[{
-                "keyword": keyword,
-                "location_code": settings.seo_dataforseo_location_code,
-                "language_code": settings.seo_dataforseo_language_code,
-                "device": device,
-                "depth": 100,
-            }],
-        )
-        response.raise_for_status()
-        return parse_dataforseo_response(response.json())
-    except SerpProviderError:
-        raise
-    except httpx.TimeoutException as exc:
-        raise SerpProviderError("provider_timeout", "多搜索引擎接口请求超时", retryable=True) from exc
-    except httpx.HTTPStatusError as exc:
-        status = exc.response.status_code
-        message = "多搜索引擎接口认证失败" if status in {401, 403} else "多搜索引擎接口返回 HTTP 错误"
-        raise SerpProviderError("provider_auth_failed" if status in {401, 403} else "provider_http_error", message, retryable=status >= 500, status_code=status) from exc
-    except (httpx.RequestError, ValueError) as exc:
-        raise SerpProviderError("provider_network_error", "多搜索引擎接口调用失败", retryable=True) from exc
+    operation_started_at = perf_counter()
+
+    async def request_once() -> dict[str, Any]:
+        started_at = perf_counter()
+        try:
+            response = await client.post(
+                endpoint,
+                auth=(settings.seo_dataforseo_login, settings.seo_dataforseo_password),
+                json=[{
+                    "keyword": keyword,
+                    "location_code": settings.seo_dataforseo_location_code,
+                    "language_code": settings.seo_dataforseo_language_code,
+                    "device": device,
+                    "depth": 100,
+                }],
+            )
+            response.raise_for_status()
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise SerpProviderError(
+                    "invalid_response", "多搜索引擎接口返回格式异常"
+                ) from exc
+            return parse_dataforseo_response(payload)
+        except SerpProviderError as exc:
+            if exc.elapsed_ms is None:
+                exc.elapsed_ms = max(0, round((perf_counter() - started_at) * 1000))
+            raise
+        except httpx.TimeoutException as exc:
+            raise SerpProviderError(
+                "provider_timeout",
+                "多搜索引擎接口请求超时",
+                retryable=True,
+                timeout_phase=_timeout_phase(exc),
+                elapsed_ms=max(0, round((perf_counter() - started_at) * 1000)),
+            ) from exc
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            retry_after_seconds = None
+            if status == 429:
+                retry_after_raw = exc.response.headers.get("retry-after", "")
+                try:
+                    retry_after_seconds = min(60.0, max(0.0, float(retry_after_raw)))
+                except ValueError:
+                    retry_after_seconds = None
+                code, message, retryable = (
+                    "provider_rate_limited", "多搜索引擎接口请求受限", True
+                )
+            elif status in {401, 403}:
+                code, message, retryable = (
+                    "provider_auth_failed", "多搜索引擎接口认证失败", False
+                )
+            elif 500 <= status < 600:
+                code, message, retryable = (
+                    "provider_unavailable", "多搜索引擎接口暂时不可用", True
+                )
+            elif 400 <= status < 500:
+                code, message, retryable = (
+                    "provider_request_rejected", "多搜索引擎接口拒绝请求", False
+                )
+            else:
+                code, message, retryable = (
+                    "provider_http_error", "多搜索引擎接口返回 HTTP 错误", False
+                )
+            raise SerpProviderError(
+                code,
+                message,
+                retryable=retryable,
+                status_code=status,
+                elapsed_ms=max(0, round((perf_counter() - started_at) * 1000)),
+                retry_after_seconds=retry_after_seconds,
+            ) from exc
+        except httpx.RequestError as exc:
+            raise SerpProviderError(
+                "provider_network_error",
+                "多搜索引擎接口网络连接失败",
+                retryable=True,
+                elapsed_ms=max(0, round((perf_counter() - started_at) * 1000)),
+            ) from exc
+        except Exception as exc:
+            raise SerpProviderError(
+                "provider_error",
+                "多搜索引擎接口调用失败",
+                elapsed_ms=max(0, round((perf_counter() - started_at) * 1000)),
+            ) from exc
+
+    for attempt in range(1, DATAFORSEO_MAX_ATTEMPTS + 1):
+        try:
+            return await request_once()
+        except SerpProviderError as exc:
+            if not exc.retryable or attempt >= DATAFORSEO_MAX_ATTEMPTS:
+                exc.attempts = attempt
+                exc.elapsed_ms = max(
+                    0, round((perf_counter() - operation_started_at) * 1000)
+                )
+                raise
+            backoff = DATAFORSEO_RETRY_BASE_SECONDS * (2 ** (attempt - 1))
+            jitter = random.uniform(0, DATAFORSEO_RETRY_BASE_SECONDS)
+            await asyncio.sleep(max(backoff + jitter, exc.retry_after_seconds or 0))
+    raise AssertionError("unreachable")
 
 
 async def fetch_dataforseo_serp_batch(
     engine: str,
     requests: list[tuple[str, str]],
 ) -> list[tuple[dict[str, Any] | None, SerpProviderError | None]]:
-    settings = get_settings()
-    timeout = max(1.0, float(settings.seo_dataforseo_timeout_seconds))
-    semaphore = asyncio.Semaphore(2)
-    async with httpx.AsyncClient(timeout=timeout, limits=httpx.Limits(max_connections=2)) as client:
+    semaphore = asyncio.Semaphore(DATAFORSEO_MAX_CONCURRENCY)
+    async with create_dataforseo_client() as client:
         async def fetch_one(keyword: str, device: str):
             try:
                 async with semaphore:

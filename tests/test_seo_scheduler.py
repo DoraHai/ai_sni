@@ -22,6 +22,7 @@ from app.seo_ranking_jobs import (
     _group_keyword_ids_by_site,
     _limited_batches,
     _local_day_start_utc,
+    _scheduled_rank_engines,
     collect_daily_seo_rankings,
 )
 from app.seo_scheduler import shutdown_seo_scheduler, start_seo_scheduler
@@ -43,6 +44,19 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             _local_day_start_utc(local_now),
             datetime(2026, 8, 21, 16, 0),
+        )
+
+    def test_scheduled_engines_require_dataforseo_credentials(self):
+        settings = SimpleNamespace(
+            seo_rank_scheduler_engines="baidu,google,bing,unknown,google"
+        )
+        self.assertEqual(
+            _scheduled_rank_engines(settings, dataforseo_configured=False),
+            ["baidu"],
+        )
+        self.assertEqual(
+            _scheduled_rank_engines(settings, dataforseo_configured=True),
+            ["baidu", "google", "bing"],
         )
 
     async def test_disabled_collection_does_not_take_run_lock(self):
@@ -207,6 +221,89 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
             71,
             planned_count=2,
             success_count=2,
+            failed_count=0,
+            skipped_count=0,
+            error_summary="",
+        )
+
+    async def test_configured_google_and_bing_join_daily_collection(self):
+        settings = SimpleNamespace(
+            seo_rank_scheduler_enabled=True,
+            seo_rank_scheduler_engines="baidu,google,bing",
+            seo_rank_scheduler_max_keywords_per_tenant=200,
+            seo_rank_scheduler_max_requests_per_run=1000,
+            seo_dataforseo_scheduler_max_requests_per_run=200,
+            seo_rank_scheduler_batch_size=20,
+            seo_rank_scheduler_use_ai=False,
+        )
+        session = SimpleNamespace(
+            execute=AsyncMock(
+                side_effect=[
+                    SimpleNamespace(all=lambda: []),
+                    SimpleNamespace(all=lambda: [(101, 3)]),
+                    SimpleNamespace(all=lambda: []),
+                ]
+            ),
+            scalars=AsyncMock(return_value=[7]),
+            rollback=AsyncMock(),
+        )
+
+        class SessionContext:
+            async def __aenter__(self):
+                return session
+
+            async def __aexit__(self, *_args):
+                return False
+
+        collect_batch = AsyncMock(
+            return_value={"snapshots": 1, "serp_results": 1, "errors": []}
+        )
+        finish_run = AsyncMock()
+        with (
+            patch("app.seo_ranking_jobs.get_settings", return_value=settings),
+            patch(
+                "app.seo_ranking_jobs.dataforseo_status",
+                return_value={"configured": True},
+            ),
+            patch("app.seo_ranking_jobs.acquire_file_lock", return_value=object()),
+            patch(
+                "app.seo_ranking_jobs.list_active_module_tenants",
+                new=AsyncMock(return_value=[SimpleNamespace(id=7)]),
+            ),
+            patch(
+                "app.seo_ranking_jobs.async_session_factory",
+                return_value=SessionContext(),
+            ),
+            patch(
+                "app.api.seo.collect_rank_serp_for_tenant",
+                new=collect_batch,
+            ),
+            patch(
+                "app.seo_ranking_jobs.start_automation_run",
+                new=AsyncMock(return_value=72),
+            ) as start_run,
+            patch(
+                "app.seo_ranking_jobs.finish_automation_run",
+                new=finish_run,
+            ),
+            patch("app.seo_ranking_jobs.release_file_lock"),
+        ):
+            await collect_daily_seo_rankings()
+
+        self.assertEqual(collect_batch.await_count, 6)
+        self.assertEqual(
+            [call.kwargs["engine"] for call in collect_batch.await_args_list],
+            ["baidu", "baidu", "google", "google", "bing", "bing"],
+        )
+        start_run.assert_awaited_once_with(
+            tenant_id=7,
+            job_type="ranking",
+            planned_count=6,
+        )
+        finish_run.assert_awaited_once_with(
+            72,
+            planned_count=6,
+            success_count=6,
             failed_count=0,
             skipped_count=0,
             error_summary="",
