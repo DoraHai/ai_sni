@@ -34,11 +34,28 @@ const addToPlan = await source('src/components/AddToPlanDialog.vue')
 assert.match(addToPlan, /<el-radio label="smart">智能匹配<\/el-radio>/)
 assert.match(addToPlan, /matchMode: row\?\.preset_match_mode \|\| 'phrase'/)
 assert.match(addToPlan, /matchMode: dialog\.matchMode/)
+assert.match(addToPlan, /res\.writeback_status === 'failed'/)
+assert.match(addToPlan, /res\.writeback_status === 'success'/)
 
 const keywordExpand = await source('src/views/optimize/KeywordExpandView.vue')
-assert.match(keywordExpand, /<el-radio label="smart">智能匹配<\/el-radio>/)
+assert.match(keywordExpand, /smart: '智能匹配'/)
+assert.match(keywordExpand, /<el-option label="智能匹配" value="smart" \/>/)
+assert.doesNotMatch(keywordExpand, /planDialog = reactive/)
+assert.doesNotMatch(keywordExpand, /function submitAddToPlan/)
 
 const expansionApi = await source('src/api/expansion.js')
 assert.match(expansionApi, /match_mode: matchMode/)
+for (const route of [
+  'batch-set-preset',
+  'batch-set-category',
+  'batch-status',
+  'batch-negative',
+]) {
+  assert.match(expansionApi, new RegExp(`/api/v1/expansion/candidates/${route}`))
+}
+assert.match(
+  expansionApi,
+  /batch-negative'[\s\S]*?\}, \{ timeout: 60000 \}\)/,
+)
 
 console.log('SEM UI contracts passed')

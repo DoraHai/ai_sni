@@ -7,6 +7,7 @@
 红线见 memory feedback-no-baidu-writeback：功能要做，但验证阶段绝不改乱线上真实出价。
 """
 import logging
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -54,6 +55,17 @@ UNRESOLVED_REAL_STATUSES = {"pending", "reconcile"}
 
 class WritebackError(Exception):
     """回写前校验失败（业务拒绝，不调百度）。"""
+
+
+@dataclass
+class NegativeBatchWritebackResult:
+    """批量否词的逐请求结果；同词多来源候选共享同一结果对象。"""
+
+    word: str
+    status: str
+    error_msg: str | None = None
+    no_op: bool = False
+    record: WritebackAction | None = None
 
 
 async def _claim_funds_approval(
@@ -435,6 +447,145 @@ async def apply_negative_writeback(
     await session.commit()
     await session.refresh(rec)
     return rec
+
+
+async def apply_negative_batch_writeback(
+    session: AsyncSession,
+    tenant_id: int,
+    words: list[str],
+    adgroup_id: int,
+    *,
+    match_mode: str,
+    operator_user_id: int | None,
+    operator_name: str | None,
+) -> list[NegativeBatchWritebackResult]:
+    """一次更新单元的完整否词列表，并为每个请求词记录独立台账。
+
+    百度 updateAdgroup 本身是全量覆盖接口；批量操作必须在同一把行锁内
+    合并词表后只调用一次，避免浏览器超时后服务端继续串行写入。
+    本函数不提交事务，由 API 在更新候选词状态后一次性提交。
+    """
+    normalized_words = [(word or "").strip() for word in words]
+    if not normalized_words or any(not word for word in normalized_words):
+        raise WritebackError("否词不能为空")
+    if match_mode not in ("exact", "phrase"):
+        raise WritebackError("匹配方式只能是 exact（精确否）/ phrase（短语否）")
+
+    adg = await session.scalar(
+        select(Adgroup)
+        .where(Adgroup.tenant_id == tenant_id, Adgroup.adgroup_id == adgroup_id)
+        .with_for_update()
+    )
+    if adg is None:
+        raise WritebackError("单元不在维度表中，请先执行单元维度同步")
+    acc = await _active_account(session, tenant_id, _asset_account_id(adg, "单元"))
+
+    field = "exact_negative_words" if match_mode == "exact" else "negative_words"
+    current = list(getattr(adg, field) or [])
+    current_words = set(current)
+    new_words: list[str] = []
+    dry_run = get_settings().baidu_write_dry_run
+    results: list[NegativeBatchWritebackResult] = []
+    results_by_word: dict[str, NegativeBatchWritebackResult] = {}
+    pending_results: list[NegativeBatchWritebackResult] = []
+
+    for word in normalized_words:
+        existing_result = results_by_word.get(word)
+        if existing_result is not None:
+            results.append(existing_result)
+            continue
+        if word in current_words:
+            result = NegativeBatchWritebackResult(
+                word=word,
+                status="success",
+                no_op=True,
+            )
+            results_by_word[word] = result
+            results.append(result)
+            continue
+
+        rec = WritebackAction(
+            tenant_id=tenant_id,
+            baidu_account_id=acc.id,
+            action_type="negative",
+            word=word,
+            match_mode=match_mode,
+            campaign_id=adg.campaign_id,
+            adgroup_id=adgroup_id,
+            adgroup_name=adg.adgroup_name,
+            dry_run=dry_run,
+            status="pending",
+            operator_user_id=operator_user_id,
+            operator_name=operator_name,
+        )
+        session.add(rec)
+        new_words.append(word)
+        result = NegativeBatchWritebackResult(
+            word=word,
+            status="pending",
+            record=rec,
+        )
+        results_by_word[word] = result
+        pending_results.append(result)
+        results.append(result)
+
+    await session.flush()
+    if pending_results:
+        try:
+            kwargs = (
+                {"exact_negative_words": current + new_words}
+                if match_mode == "exact"
+                else {"negative_words": current + new_words}
+            )
+            resp = await AdgroupService(_account_client(acc)).update_negative_words(
+                adgroup_id, **kwargs
+            )
+            status = "dry_run" if dry_run else "success"
+            executed_at = datetime.utcnow()
+            response_text = str(resp)[:2000]
+            for result in pending_results:
+                rec = result.record
+                assert rec is not None
+                rec.status = status
+                rec.baidu_response = response_text
+                rec.executed_at = executed_at
+                result.status = status
+            if not dry_run:
+                setattr(adg, field, current + new_words)
+        except BaiduAPIError as exc:
+            error_msg = f"[{exc.code}] {exc.message}"[:2000]
+            executed_at = datetime.utcnow()
+            for result in pending_results:
+                rec = result.record
+                assert rec is not None
+                rec.status = "failed"
+                rec.error_msg = error_msg
+                rec.executed_at = executed_at
+                result.status = "failed"
+                result.error_msg = error_msg
+            logger.warning(
+                "批量加否词失败 adgroup=%s count=%s: %s",
+                adgroup_id,
+                len(pending_results),
+                exc,
+            )
+        except Exception:
+            executed_at = datetime.utcnow()
+            for result in pending_results:
+                rec = result.record
+                assert rec is not None
+                rec.status = "failed"
+                rec.error_msg = "未知错误"
+                rec.executed_at = executed_at
+                result.status = "failed"
+                result.error_msg = "未知错误"
+            logger.exception(
+                "批量加否词异常 adgroup=%s count=%s",
+                adgroup_id,
+                len(pending_results),
+            )
+
+    return results
 
 
 async def apply_negative_writeback_campaign(

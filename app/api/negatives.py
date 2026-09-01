@@ -8,7 +8,7 @@
   - 冷门否词：需要否词触发数据，百度不提供（被否词挡掉的查询不进搜索词报告）→ M2 占位
 "自研搜索词扫描"= 拓词里 suggested_category='negative' 的候选，前端直接调 expansion 接口。
 """
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -222,7 +222,7 @@ class NegativeRequest(BaseModel):
     tenant_id: int
     word: str
     adgroup_id: int
-    match_mode: str = "exact"  # exact=精确否 / phrase=短语否
+    match_mode: Literal["exact", "phrase"] = "exact"
 
 
 @router.post("/add")
@@ -240,6 +240,8 @@ async def add_negative(
         )
     except WritebackError as e:
         raise HTTPException(400, str(e))
+    if rec.status == "failed":
+        raise HTTPException(502, "百度否词写回失败，已记录失败台账，请稍后重试")
     return {"status": "ok", "dry_run": rec.dry_run, "writeback_status": rec.status}
 
 
@@ -258,4 +260,6 @@ async def remove_negative(
         )
     except WritebackError as e:
         raise HTTPException(400, str(e))
+    if rec.status == "failed":
+        raise HTTPException(502, "百度否词删除失败，已记录失败台账，请稍后重试")
     return {"status": "ok", "dry_run": rec.dry_run, "writeback_status": rec.status}
