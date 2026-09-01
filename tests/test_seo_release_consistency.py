@@ -375,6 +375,18 @@ def test_site_optimization_has_success_feedback_and_contextual_empty_state() -> 
     assert ':empty-text="emptyStateText"' in view
 
 
+def test_seo_batch_handlers_reject_reentry() -> None:
+    root = Path(__file__).parents[1]
+    site = (root / "frontend/src/views/seo/SeoSiteOptimizationView.vue").read_text(encoding="utf-8")
+    links = (root / "frontend/src/views/seo/SeoLinksView.vue").read_text(encoding="utf-8")
+
+    assert "if (batchAuditing.value || auditing.value.has(row.id))" in site
+    assert "if (batchAuditing.value || auditing.value.size > 0)" in site
+    assert links.count("if(batchCrawling.value||crawling.value!==null)") == 2
+    assert "页面检测正在进行，请勿重复提交" in site
+    assert "内链抓取正在进行，请勿重复提交" in links
+
+
 def test_release_diff_allows_only_seo_assets_and_hash_token_changes(tmp_path: Path) -> None:
     base, candidate = tmp_path / "base", tmp_path / "candidate"
     _write(base, "index.html", "<script src='/assets/index-old.js'></script>")
