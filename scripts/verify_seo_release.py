@@ -49,6 +49,7 @@ SOURCE_ALLOWED_EXACT = {
     "frontend/package-lock.json",
     "frontend/.gitignore",
     "frontend/scripts/verify-seo-build.mjs",
+    "frontend/tests/seoBatchOperations.test.mjs",
     "frontend/src/api/moduleAssets.js",
     "frontend/src/api/seo.js",
     "frontend/seo/index.html",
