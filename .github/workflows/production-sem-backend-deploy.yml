@@ -90,6 +90,7 @@ jobs:
         run: >-
           pytest -q
           tests/test_baidu_asset_fetch_isolation.py
+          tests/test_baidu_live_write_guard.py
           tests/test_baidu_oauth.py
           tests/test_campaign_region_management.py
           tests/test_campaign_schedule_management.py

@@ -8,7 +8,7 @@ from app.database import Base
 
 
 class WritebackApproval(Base):
-    """高风险资金回写的异人审批，参数指纹防止审批后偷换目标值。"""
+    """高风险资金回写的一次性确认，参数指纹防止确认后偷换目标值。"""
 
     __tablename__ = "writeback_approvals"
     __table_args__ = (

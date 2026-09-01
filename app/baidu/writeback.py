@@ -13,7 +13,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.baidu.client import BaiduAPIError
+from app.baidu.client import BaiduAPIError, BaiduLiveWriteBlockedError
 from app.baidu.regions import ALL_REGIONS_ID, region_ids
 from app.baidu.services.account import AccountService
 from app.baidu.services.adgroup import AdgroupService
@@ -65,7 +65,7 @@ async def _claim_funds_approval(
     payload: dict,
     operator_user_id: int | None,
 ) -> None:
-    """演练不消耗审批；真实资金回写必须消费匹配的异人审批。"""
+    """演练不消耗确认；真实资金回写必须消费本人绑定参数的一次性确认。"""
     if get_settings().baidu_write_dry_run:
         return
     try:
@@ -140,7 +140,10 @@ def _record_writeback_exception(
     dry_run: bool,
 ) -> None:
     """网络或未知异常无法证明百度未执行；真实模式必须进入人工对账。"""
-    definitive_api_failure = isinstance(error, BaiduAPIError) and error.code is not None
+    definitive_api_failure = (
+        isinstance(error, BaiduLiveWriteBlockedError)
+        or (isinstance(error, BaiduAPIError) and error.code is not None)
+    )
     record.status = "failed" if dry_run or definitive_api_failure else "reconcile"
     if isinstance(error, BaiduAPIError):
         detail = f"[{error.code}] {error.message}"
@@ -317,6 +320,16 @@ async def _load_active_account(
         if baidu_account_id is not None:
             raise WritebackError("计划所属的百度账户未授权或已停用，无法回写")
         raise WritebackError("该租户没有生效的百度账户授权，无法回写")
+    settings = get_settings()
+    if not settings.baidu_write_dry_run:
+        try:
+            allowed = settings.baidu_live_write_allowed(tenant_id, acc.id)
+        except (TypeError, ValueError) as exc:
+            raise WritebackError("百度真实回写白名单配置无效，已拒绝请求") from exc
+        if not allowed:
+            raise WritebackError(
+                "当前客户或推广账户不在百度真实回写白名单中，已拒绝请求"
+            )
     return acc
 
 

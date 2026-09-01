@@ -16,6 +16,7 @@ from app.database import get_session
 from app.module_scope import ensure_module_access
 from app.baidu.writeback_approval import (
     ALLOWED_ACTIONS,
+    WRITEBACK_CONFIRMATION,
     WritebackApprovalError,
     payload_fingerprint,
 )
@@ -43,6 +44,7 @@ class ApprovalRequest(BaseModel):
     action_type: str
     payload: dict
     note: str | None = Field(None, max_length=1000)
+    confirmation: str
 
 
 class ApprovalDecision(BaseModel):
@@ -80,10 +82,12 @@ async def request_writeback_approval(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """申请高风险资金回写；审批参数会被规范化并绑定指纹。"""
+    """创建本人高风险资金回写确认；参数会被规范化并绑定指纹。"""
     ctx.ensure_tenant(req.tenant_id)
     if ctx.user_id is None:
-        raise HTTPException(403, "审批申请必须使用实名登录账号")
+        raise HTTPException(403, "资金回写确认必须使用实名登录账号")
+    if req.confirmation != WRITEBACK_CONFIRMATION:
+        raise HTTPException(400, f"confirmation 必须精确等于 {WRITEBACK_CONFIRMATION}")
     if req.action_type not in ALLOWED_ACTIONS:
         raise HTTPException(400, "该动作不属于需要资金审批的回写类型")
     try:
@@ -95,9 +99,12 @@ async def request_writeback_approval(
         action_type=req.action_type,
         payload=normalized,
         payload_hash=fingerprint,
-        status="pending",
+        status="approved",
         request_note=req.note,
         requested_by=ctx.user_id,
+        approved_by=ctx.user_id,
+        decision_note="本人二次确认",
+        decided_at=datetime.utcnow(),
     )
     session.add(row)
     await session.commit()
@@ -135,9 +142,9 @@ async def decide_writeback_approval(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """审批或驳回；批准时强制审批人与申请人不同。"""
+    """处理历史待确认记录；只能由原实名操作员本人确认或取消。"""
     if ctx.user_id is None:
-        raise HTTPException(403, "审批操作必须使用实名登录账号")
+        raise HTTPException(403, "确认操作必须使用实名登录账号")
     if req.decision not in {"approved", "rejected"}:
         raise HTTPException(400, "decision 仅支持 approved / rejected")
     row = await session.scalar(
@@ -151,8 +158,8 @@ async def decide_writeback_approval(
     await ensure_sem_identity_access(session, row.tenant_id)
     if row.status != "pending":
         raise HTTPException(409, "审批记录已处理")
-    if req.decision == "approved" and row.requested_by == ctx.user_id:
-        raise HTTPException(409, "申请人不能审批自己的资金回写")
+    if row.requested_by != ctx.user_id:
+        raise HTTPException(409, "资金回写只能由创建确认的实名操作员本人处理")
     row.status = req.decision
     row.approved_by = ctx.user_id if req.decision == "approved" else None
     row.decision_note = req.note

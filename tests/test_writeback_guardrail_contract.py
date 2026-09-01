@@ -141,6 +141,23 @@ def test_active_account_preflight_query_omits_row_lock_until_requested():
     assert "FOR UPDATE" in locked_query
 
 
+def test_live_write_scope_is_checked_in_orchestration_and_http_client():
+    orchestration = (ROOT / "app/baidu/writeback.py").read_text(encoding="utf-8")
+    client = (ROOT / "app/baidu/client.py").read_text(encoding="utf-8")
+    account_client = (ROOT / "app/baidu/sync.py").read_text(encoding="utf-8")
+
+    loader = ast.get_source_segment(
+        orchestration,
+        _async_function(ast.parse(orchestration), "_load_active_account"),
+    )
+    assert "baidu_live_write_allowed(tenant_id, acc.id)" in loader
+    assert "if not settings.baidu_write_dry_run" in loader
+    assert "is_write_request" in client
+    assert "settings.baidu_live_write_allowed(" in client
+    assert "tenant_id=baidu_account.tenant_id" in account_client
+    assert "baidu_account_id=baidu_account.id" in account_client
+
+
 def test_backend_and_frontend_keep_approval_id_wiring():
     manage_api = (ROOT / "app/api/manage.py").read_text(encoding="utf-8")
     keyword_api = (ROOT / "app/api/keywords.py").read_text(encoding="utf-8")
@@ -157,6 +174,13 @@ def test_backend_and_frontend_keep_approval_id_wiring():
     assert manage_client.count("approval_id: approvalId") == 3
     assert "approval_id: approvalId" in keyword_client
     assert approval_view.count("approvalId: row.id") == 4
+    assert "CONFIRM_BAIDU_WRITEBACK" in approval_view
+    assert "confirmation: approvalForm.confirmation" in approval_view
+
+    approval_api = (ROOT / "app/api/writeback.py").read_text(encoding="utf-8")
+    assert "req.confirmation != WRITEBACK_CONFIRMATION" in approval_api
+    assert 'status="approved"' in approval_api
+    assert "approved_by=ctx.user_id" in approval_api
 
     orchestration = (ROOT / "app/baidu/writeback.py").read_text(encoding="utf-8")
     assert orchestration.count("approval_id=approval_id if not dry_run else None") == 4

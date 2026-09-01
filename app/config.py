@@ -4,6 +4,21 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def parse_positive_id_csv(value: str, *, label: str) -> frozenset[int]:
+    """Parse a comma-separated positive-ID allowlist and fail closed on typos."""
+    ids: set[int] = set()
+    for raw in str(value or "").split(","):
+        item = raw.strip()
+        if not item:
+            continue
+        if not item.isascii() or not item.isdecimal() or int(item) <= 0:
+            raise ValueError(
+                f"{label} must contain only comma-separated positive integers"
+            )
+        ids.add(int(item))
+    return frozenset(ids)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
 
@@ -28,6 +43,27 @@ class Settings(BaseSettings):
     # 写回演练开关：True=dry-run，所有写百度的请求只算改动+记台账，绝不真发（开发/验证默认）。
     # 关闭=真写线上出价，必须用户明确批准后才在生产改为 False（红线 feedback-no-baidu-writeback）。
     baidu_write_dry_run: bool = True
+    # 真写必须同时命中租户和本地百度账户双白名单。空值表示拒绝全部真实写请求。
+    baidu_live_write_tenant_ids: str = ""
+    baidu_live_write_account_ids: str = ""
+    baidu_write_confirmation_ttl_minutes: int = Field(default=15, ge=1, le=120)
+
+    def baidu_live_write_allowed(
+        self,
+        tenant_id: int | None,
+        account_id: int | None,
+    ) -> bool:
+        if tenant_id is None or account_id is None:
+            return False
+        tenant_ids = parse_positive_id_csv(
+            self.baidu_live_write_tenant_ids,
+            label="BAIDU_LIVE_WRITE_TENANT_IDS",
+        )
+        account_ids = parse_positive_id_csv(
+            self.baidu_live_write_account_ids,
+            label="BAIDU_LIVE_WRITE_ACCOUNT_IDS",
+        )
+        return int(tenant_id) in tenant_ids and int(account_id) in account_ids
 
     # P0 自授权：苏尔寿单租户硬编码进 env。P1 多租户后改为从 baidu_accounts 表读。
     baidu_default_username: str

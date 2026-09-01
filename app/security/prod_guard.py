@@ -11,6 +11,8 @@ import logging
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
+from app.config import parse_positive_id_csv
+
 if TYPE_CHECKING:
     from app.config import Settings
 
@@ -163,6 +165,24 @@ def collect_production_issues(settings: "Settings") -> list[str]:
         issues.append(
             "GEO_ALLOW_SELF_REVIEW is true — self-approve of content is a delivery risk"
         )
+
+    if not bool(getattr(settings, "baidu_write_dry_run", True)):
+        for attr, label in (
+            ("baidu_live_write_tenant_ids", "BAIDU_LIVE_WRITE_TENANT_IDS"),
+            ("baidu_live_write_account_ids", "BAIDU_LIVE_WRITE_ACCOUNT_IDS"),
+        ):
+            try:
+                allowed_ids = parse_positive_id_csv(
+                    str(getattr(settings, attr, "") or ""),
+                    label=label,
+                )
+            except ValueError as exc:
+                issues.append(str(exc))
+            else:
+                if not allowed_ids:
+                    issues.append(
+                        f"{label} must contain at least one ID when BAIDU_WRITE_DRY_RUN=false"
+                    )
 
     return issues
 

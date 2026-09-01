@@ -31,11 +31,14 @@ const APPROVAL_ACTIONS = {
   account_budget: '账户预算',
 }
 const APPROVAL_STATUS = {
-  pending: '待审批', approved: '已批准', rejected: '已驳回', consumed: '已执行',
+  pending: '待确认', approved: '已确认', rejected: '已取消', consumed: '已执行',
 }
+const WRITEBACK_CONFIRMATION = 'CONFIRM_BAIDU_WRITEBACK'
 const approvalDialog = ref(false)
 const approvalSubmitting = ref(false)
-const approvalForm = reactive({ actionType: 'keyword_bid', targetId: '', amount: '', note: '' })
+const approvalForm = reactive({
+  actionType: 'keyword_bid', targetId: '', amount: '', note: '', confirmation: '',
+})
 const activeSemAccounts = computed(() => {
   const tenant = session.tenants.find((row) => row.id === TENANT_ID.value)
   return (tenant?.sem_accounts || []).filter((row) => row.status === 'active')
@@ -74,15 +77,15 @@ async function loadApprovals() {
 async function decideApproval(row, decision) {
   try {
     const { value } = await ElMessageBox.prompt(
-      decision === 'approved' ? '确认批准这项资金回写？' : '请填写驳回原因',
-      decision === 'approved' ? '异人审批' : '驳回申请',
-      { inputPlaceholder: '审批备注（可选）', confirmButtonText: '确认', cancelButtonText: '取消' },
+      decision === 'approved' ? '确认这项资金回写？' : '请填写取消原因',
+      decision === 'approved' ? '本人确认' : '取消确认',
+      { inputPlaceholder: '确认备注（可选）', confirmButtonText: '确认', cancelButtonText: '返回' },
     )
     await decideWritebackApproval(row.id, decision, value || null)
-    ElMessage.success(decision === 'approved' ? '审批已通过' : '申请已驳回')
+    ElMessage.success(decision === 'approved' ? '资金回写已确认' : '资金回写已取消')
     await loadApprovals()
   } catch (e) {
-    if (e !== 'cancel' && e !== 'close') ElMessage.error(e?.message || '审批失败')
+    if (e !== 'cancel' && e !== 'close') ElMessage.error(e?.message || '确认失败')
   }
 }
 
@@ -109,9 +112,11 @@ async function submitApprovalRequest() {
       actionType: approvalForm.actionType,
       payload,
       note: approvalForm.note || null,
+      confirmation: approvalForm.confirmation,
     })
     approvalDialog.value = false
-    ElMessage.success('资金回写申请已提交，需由另一名用户审批')
+    approvalForm.confirmation = ''
+    ElMessage.success('资金回写确认已创建，可按绑定参数执行一次')
     await loadApprovals()
   } catch (e) {
     ElMessage.error(e?.message || '申请提交失败')
@@ -122,7 +127,7 @@ async function submitApprovalRequest() {
 
 async function executeApproval(row) {
   try {
-    await ElMessageBox.confirm('确认按已审批参数执行？审批记录执行后不可重复使用。', '执行资金回写', {
+    await ElMessageBox.confirm('确认按已绑定参数执行？确认记录执行后不可重复使用。', '执行资金回写', {
       type: 'warning', confirmButtonText: '确认执行', cancelButtonText: '取消',
     })
     const p = row.payload || {}
@@ -429,7 +434,7 @@ onMounted(load)
         <div class="view-tabs">
           <div class="view-tab" :class="{ active: wbSub === 'bid' }" @click="wbSub = 'bid'">出价回写</div>
           <div class="view-tab" :class="{ active: wbSub === 'action' }" @click="wbSub = 'action'">动作回写</div>
-          <div class="view-tab" :class="{ active: wbSub === 'approval' }" @click="wbSub = 'approval'">资金审批</div>
+          <div class="view-tab" :class="{ active: wbSub === 'approval' }" @click="wbSub = 'approval'">资金确认</div>
         </div>
         <el-select
           v-if="wbSub === 'action'"
@@ -439,7 +444,7 @@ onMounted(load)
         >
           <el-option v-for="t in ACTION_TYPES" :key="t.code" :label="t.label" :value="t.code" />
         </el-select>
-        <el-button v-if="wbSub === 'approval'" type="primary" @click="approvalDialog = true">申请资金回写</el-button>
+        <el-button v-if="wbSub === 'approval'" type="primary" @click="approvalDialog = true">创建资金回写确认</el-button>
       </div>
 
       <!-- 出价回写（updateWord 留痕） -->
@@ -552,14 +557,14 @@ onMounted(load)
         </div>
       </div>
 
-      <!-- 高风险资金回写异人审批 -->
+      <!-- 高风险资金回写本人二次确认 -->
       <div v-else v-loading="approvalLoading">
         <el-alert
           type="warning"
           :closable="false"
           show-icon
           style="margin-bottom: 12px"
-          title="关键词/单元出价及计划/账户预算在真实回写前必须由另一名用户审批；审批与具体金额绑定且只能使用一次。当前 dry-run 不会消耗审批。"
+          title="关键词/单元出价及计划/账户预算在真实回写前必须由实名操作员本人二次确认；确认与具体金额绑定且只能使用一次。当前 dry-run 不会消耗确认。"
         />
         <div class="table-panel">
           <el-table :data="approvalData?.approvals || []" class="kw-table" row-key="id">
@@ -569,7 +574,7 @@ onMounted(load)
             <el-table-column label="资金动作" width="120">
               <template #default="{ row }">{{ APPROVAL_ACTIONS[row.action_type] || row.action_type }}</template>
             </el-table-column>
-            <el-table-column label="审批参数" min-width="240">
+            <el-table-column label="确认参数" min-width="240">
               <template #default="{ row }"><code>{{ JSON.stringify(row.payload) }}</code></template>
             </el-table-column>
             <el-table-column label="状态" width="100" align="center">
@@ -577,8 +582,8 @@ onMounted(load)
                 <span class="wb-pill" :class="row.status">{{ APPROVAL_STATUS[row.status] || row.status }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="申请/审批用户" width="130">
-              <template #default="{ row }">#{{ row.requested_by }} / {{ row.approved_by ? ('#' + row.approved_by) : '—' }}</template>
+            <el-table-column label="操作用户" width="110">
+              <template #default="{ row }">#{{ row.requested_by }}</template>
             </el-table-column>
             <el-table-column label="备注" min-width="150">
               <template #default="{ row }">{{ row.decision_note || row.request_note || '—' }}</template>
@@ -586,20 +591,20 @@ onMounted(load)
             <el-table-column label="操作" width="150" fixed="right">
               <template #default="{ row }">
                 <template v-if="row.status === 'pending'">
-                  <el-button size="small" type="success" @click="decideApproval(row, 'approved')">批准</el-button>
-                  <el-button size="small" type="danger" plain @click="decideApproval(row, 'rejected')">驳回</el-button>
+                  <el-button size="small" type="success" @click="decideApproval(row, 'approved')">确认</el-button>
+                  <el-button size="small" type="danger" plain @click="decideApproval(row, 'rejected')">取消</el-button>
                 </template>
                 <el-button v-else-if="row.status === 'approved'" size="small" type="primary" @click="executeApproval(row)">执行</el-button>
                 <span v-else class="dim">已处理</span>
               </template>
             </el-table-column>
-            <template #empty><div class="empty-line">当前客户没有资金回写审批申请。</div></template>
+            <template #empty><div class="empty-line">当前客户没有资金回写确认记录。</div></template>
           </el-table>
         </div>
       </div>
     </template>
 
-    <el-dialog v-model="approvalDialog" title="申请资金回写" width="480px">
+    <el-dialog v-model="approvalDialog" title="创建资金回写确认" width="480px">
       <el-form label-width="100px">
         <el-form-item label="动作类型">
           <el-select v-model="approvalForm.actionType" style="width: 100%">
@@ -625,13 +630,25 @@ onMounted(load)
         <el-form-item label="目标金额">
           <el-input v-model="approvalForm.amount" type="number" min="0.01" step="0.01" />
         </el-form-item>
-        <el-form-item label="申请说明">
+        <el-form-item label="操作说明">
           <el-input v-model="approvalForm.note" type="textarea" :rows="3" maxlength="1000" />
+        </el-form-item>
+        <el-form-item label="二次确认">
+          <el-input
+            v-model="approvalForm.confirmation"
+            :placeholder="`请输入 ${WRITEBACK_CONFIRMATION}`"
+            autocomplete="off"
+          />
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="approvalDialog = false">取消</el-button>
-        <el-button type="primary" :loading="approvalSubmitting" @click="submitApprovalRequest">提交审批</el-button>
+        <el-button
+          type="primary"
+          :loading="approvalSubmitting"
+          :disabled="approvalForm.confirmation !== WRITEBACK_CONFIRMATION"
+          @click="submitApprovalRequest"
+        >创建确认</el-button>
       </template>
     </el-dialog>
   </div>

@@ -80,6 +80,10 @@ class BaiduAPIError(Exception):
         )
 
 
+class BaiduLiveWriteBlockedError(RuntimeError):
+    """A real Baidu write was rejected by the tenant/account allowlist."""
+
+
 class BaiduAPIClient:
     """无状态客户端：一次调用一个 HTTP 连接（httpx.AsyncClient 上下文）。
 
@@ -89,12 +93,22 @@ class BaiduAPIClient:
                                  {"accountFields": ["userId", "balance"]})
     """
 
-    def __init__(self, username: str, access_token: str, timeout: float = 30.0):
+    def __init__(
+        self,
+        username: str,
+        access_token: str,
+        timeout: float = 30.0,
+        *,
+        tenant_id: int | None = None,
+        baidu_account_id: int | None = None,
+    ):
         if not username or not access_token:
             raise ValueError("BaiduAPIClient 必须提供 username 和 access_token")
         self._username = username
         self._access_token = access_token
         self._timeout = timeout
+        self._tenant_id = tenant_id
+        self._baidu_account_id = baidu_account_id
         self._base_url = get_settings().baidu_api_base_url.rstrip("/")
 
     async def call(
@@ -116,12 +130,28 @@ class BaiduAPIClient:
 
         # dry-run 安全网：任何写请求（显式 is_write 或方法名像写）在演练开关开启时
         # 一律不发 HTTP，直接返回模拟成功体。保证开发/验证阶段绝无写请求落到百度线上。
-        if (is_write or _looks_like_write(method)) and get_settings().baidu_write_dry_run:
+        settings = get_settings()
+        is_write_request = is_write or _looks_like_write(method)
+        if is_write_request and settings.baidu_write_dry_run:
             logger.warning(
                 "[DRY-RUN] 拦截写请求 service=%s method=%s body=%s（未发送，仅记台账）",
                 service, method, body,
             )
             return {"_dry_run": True, "data": []}
+        if is_write_request:
+            try:
+                allowed = settings.baidu_live_write_allowed(
+                    self._tenant_id,
+                    self._baidu_account_id,
+                )
+            except (TypeError, ValueError) as exc:
+                raise BaiduLiveWriteBlockedError(
+                    "百度真实回写白名单配置无效，已拒绝请求"
+                ) from exc
+            if not allowed:
+                raise BaiduLiveWriteBlockedError(
+                    "当前客户或推广账户不在百度真实回写白名单中，已拒绝请求"
+                )
 
         async with httpx.AsyncClient(timeout=self._timeout) as http:
             resp = await http.post(

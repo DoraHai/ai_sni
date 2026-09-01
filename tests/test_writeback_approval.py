@@ -1,6 +1,7 @@
 import unittest
 import inspect
 import os
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -34,9 +35,11 @@ from app.baidu.writeback import (
 )
 from app.models import BidWriteback
 from app.api.writeback import (
+    ApprovalRequest,
     ReconciliationDecision,
     _queue_stage,
     reconcile_writeback,
+    request_writeback_approval,
 )
 from app.security.auth import AuthContext
 
@@ -56,6 +59,49 @@ class _Session:
 
 
 class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
+    async def test_single_operator_confirmation_is_created_ready_to_execute(self):
+        class Session:
+            def __init__(self):
+                self.row = None
+                self.commit = AsyncMock()
+
+            def add(self, row):
+                self.row = row
+
+            async def refresh(self, row):
+                row.id = 41
+
+        session = Session()
+        ctx = AuthContext(9, "operator", "运营", 3, {"verify.adjustments": "edit"})
+        result = await request_writeback_approval(
+            ApprovalRequest(
+                tenant_id=3,
+                action_type=ACTION_KEYWORD_BID,
+                payload={"keyword_id": 7, "new_bid": 1.23},
+                confirmation="CONFIRM_BAIDU_WRITEBACK",
+            ),
+            ctx=ctx,
+            session=session,
+        )
+        self.assertEqual(result["approval"]["status"], "approved")
+        self.assertEqual(result["approval"]["requested_by"], 9)
+        self.assertEqual(result["approval"]["approved_by"], 9)
+        session.commit.assert_awaited_once()
+
+    async def test_single_operator_confirmation_rejects_wrong_phrase(self):
+        ctx = AuthContext(9, "operator", "运营", 3, {"verify.adjustments": "edit"})
+        with self.assertRaisesRegex(Exception, "CONFIRM_BAIDU_WRITEBACK"):
+            await request_writeback_approval(
+                ApprovalRequest(
+                    tenant_id=3,
+                    action_type=ACTION_KEYWORD_BID,
+                    payload={"keyword_id": 7, "new_bid": 1.23},
+                    confirmation="confirm",
+                ),
+                ctx=ctx,
+                session=SimpleNamespace(),
+            )
+
     def test_account_budget_approval_is_bound_to_account(self):
         normalized, _ = payload_fingerprint(
             ACTION_ACCOUNT_BUDGET,
@@ -192,7 +238,7 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(WritebackApprovalError):
                     payload_fingerprint(ACTION_KEYWORD_BID, payload)
 
-    async def test_claim_requires_different_approver_and_executor(self):
+    async def test_claim_rejects_confirmation_owned_by_another_operator(self):
         payload, fingerprint = payload_fingerprint(
             ACTION_KEYWORD_BID, {"keyword_id": 7, "new_bid": 1.23}
         )
@@ -203,17 +249,19 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
             payload_hash=fingerprint,
             payload=payload,
             approved_by=9,
+            requested_by=9,
+            created_at=datetime.utcnow(),
             consumed_by=None,
             consumed_at=None,
         )
-        with self.assertRaisesRegex(WritebackApprovalError, "必须是不同用户"):
+        with self.assertRaisesRegex(WritebackApprovalError, "当前实名操作员本人"):
             await claim_approval(
                 _Session(row),
                 approval_id=1,
                 tenant_id=3,
                 action_type=ACTION_KEYWORD_BID,
                 payload=payload,
-                operator_user_id=9,
+                operator_user_id=8,
             )
 
     async def test_claim_consumes_matching_approval_once(self):
@@ -226,7 +274,9 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
             action_type=ACTION_KEYWORD_BID,
             payload_hash=fingerprint,
             payload=payload,
-            approved_by=8,
+            approved_by=9,
+            requested_by=9,
+            created_at=datetime.utcnow(),
             consumed_by=None,
             consumed_at=None,
         )
@@ -255,6 +305,8 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
             payload_hash=fingerprint,
             payload=payload,
             approved_by=8,
+            requested_by=8,
+            created_at=datetime.utcnow(),
             consumed_by=None,
             consumed_at=None,
         )
@@ -265,6 +317,32 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
                 tenant_id=3,
                 action_type=ACTION_KEYWORD_BID,
                 payload={"keyword_id": 7, "new_bid": 1.24},
+                operator_user_id=9,
+            )
+
+    async def test_claim_rejects_expired_confirmation(self):
+        payload, fingerprint = payload_fingerprint(
+            ACTION_KEYWORD_BID, {"keyword_id": 7, "new_bid": 1.23}
+        )
+        row = SimpleNamespace(
+            tenant_id=3,
+            status="approved",
+            action_type=ACTION_KEYWORD_BID,
+            payload_hash=fingerprint,
+            payload=payload,
+            approved_by=9,
+            requested_by=9,
+            created_at=datetime.utcnow() - timedelta(minutes=16),
+            consumed_by=None,
+            consumed_at=None,
+        )
+        with self.assertRaisesRegex(WritebackApprovalError, "已过期"):
+            await claim_approval(
+                _Session(row),
+                approval_id=1,
+                tenant_id=3,
+                action_type=ACTION_KEYWORD_BID,
+                payload=payload,
                 operator_user_id=9,
             )
 
