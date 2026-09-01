@@ -9,7 +9,7 @@ import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, Response, UploadFile
@@ -79,6 +79,7 @@ from app.seo_serp import (
     fetch_dataforseo_serp_batch,
     url_domain,
 )
+from app.seo_rank_optimization import create_rank_drop_content_tasks_safely
 from app.seo_traffic import GscError, gsc_status, query_gsc_traffic, validate_property
 from app.seo_crawler import crawl_site
 from app.seo_competitor import (
@@ -395,6 +396,19 @@ async def _site_page(
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "站内页面不存在")
     return row
+
+
+def _effective_rank_for_drop(value: int | None) -> int:
+    return int(value) if value is not None else 101
+
+
+def _rank_position_label(value: int | None) -> str:
+    return f"第 {value} 位" if value is not None else "前 100 之外"
+
+
+def _content_asset_keyword_ids(row: SeoContentAsset) -> set[int]:
+    values = row.keyword_ids or ([row.keyword_id] if row.keyword_id else [])
+    return {int(value) for value in values if value is not None}
 
 
 def _keyword_payload(
@@ -1149,6 +1163,7 @@ async def get_seo_keyword(
     tenant_id: int,
     engine: str = Query("baidu"),
     device: Literal["desktop", "mobile"] = "desktop",
+    region: str = Query("全国", min_length=1, max_length=80),
     days: int = Query(90, ge=1, le=366),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -1162,6 +1177,7 @@ async def get_seo_keyword(
                 SeoRankSnapshot.keyword_id == keyword_id,
                 SeoRankSnapshot.engine == engine,
                 SeoRankSnapshot.device == device,
+                SeoRankSnapshot.region == region,
                 SeoRankSnapshot.checked_at >= since,
             )
             .order_by(SeoRankSnapshot.checked_at.asc(), SeoRankSnapshot.id.asc())
@@ -1172,15 +1188,77 @@ async def get_seo_keyword(
     for rank in ranks:
         if rank.subject_type == "competitor":
             competitors[rank.domain or "未命名竞品"].append(_rank_payload(rank))
+    active_contents = list(
+        await session.scalars(
+            select(SeoContentAsset).where(
+                SeoContentAsset.tenant_id == tenant_id,
+                SeoContentAsset.site_id == row.site_id,
+                SeoContentAsset.status.in_(["planned", "drafting", "review", "ready"]),
+            )
+        )
+    )
+    content_task = next(
+        (
+            content
+            for content in active_contents
+            if keyword_id in _content_asset_keyword_ids(content)
+        ),
+        None,
+    )
+    latest = own[-1] if own else None
+    previous = own[-2] if len(own) > 1 else None
+    diagnoses: list[dict[str, Any]] = []
+    if latest is not None and previous is not None and previous.rank is not None:
+        decline = _effective_rank_for_drop(latest.rank) - _effective_rank_for_drop(
+            previous.rank
+        )
+        if decline >= max(1, get_settings().seo_rank_drop_task_threshold):
+            diagnoses.append(
+                {
+                    "type": "rank_drop",
+                    "title": "排名下降优化任务已关联"
+                    if content_task
+                    else "排名下降需要创建优化任务",
+                    "detail": (
+                        f"最近两次 {engine}/{device} 排名由 "
+                        f"{_rank_position_label(previous.rank)} 变为 "
+                        f"{_rank_position_label(latest.rank)}，下降 {decline} 位。"
+                    ),
+                    "priority": "P1" if decline >= 10 else "P2",
+                    "content_task_id": content_task.id if content_task else None,
+                }
+            )
+    if not row.landing_page:
+        diagnoses.append(
+            {
+                "type": "missing_landing",
+                "title": "补充关键词承接页",
+                "detail": "当前关键词尚未绑定承接页，建议先确认优化页面。",
+                "priority": "P1",
+                "content_task_id": content_task.id if content_task else None,
+            }
+        )
+    diagnoses.append(
+        {
+            "type": "internal_links",
+            "title": "核对相关内链与主题覆盖",
+            "detail": "从相关站内页面补充自然内链，并人工检查标题、H1 和正文是否匹配搜索意图。",
+            "priority": "P2",
+            "content_task_id": content_task.id if content_task else None,
+        }
+    )
     return {
         "keyword": _keyword_payload(
             row,
-            own[-1] if own else None,
-            own[-2] if len(own) > 1 else None,
+            latest,
+            previous,
         ),
         "rank_history": [_rank_payload(rank) for rank in own],
         "competitor_history": competitors,
         "engine": engine,
+        "region": region,
+        "optimization_task": _content_payload(content_task) if content_task else None,
+        "diagnoses": diagnoses,
     }
 
 
@@ -1234,9 +1312,16 @@ async def create_rank_snapshot(
         raise HTTPException(400, "Rank snapshot site does not match the keyword site")
     row = SeoRankSnapshot(**req.model_dump())
     session.add(row)
+    await session.flush()
+    optimization = await create_rank_drop_content_tasks_safely(
+        session,
+        tenant_id=req.tenant_id,
+        site_id=req.site_id,
+        trigger_snapshot_ids={int(row.id)},
+    )
     await session.commit()
     await session.refresh(row)
-    return _rank_payload(row)
+    return {**_rank_payload(row), "optimization": optimization}
 
 
 @router.post("/rank-snapshots/batch")
@@ -1260,15 +1345,37 @@ async def create_rank_snapshots_batch(
     )
     if found != ids:
         raise HTTPException(400, "批次包含不存在或不属于当前客户的关键词")
+    rows: list[SeoRankSnapshot] = []
     for item in req.items:
         if item.tenant_id != req.tenant_id:
             raise HTTPException(400, "排名快照 tenant_id 必须一致")
         keyword = await _keyword(session, item.keyword_id, req.tenant_id)
         if keyword.site_id != item.site_id:
             raise HTTPException(400, "Rank snapshot site does not match the keyword site")
-        session.add(SeoRankSnapshot(**item.model_dump()))
+        row = SeoRankSnapshot(**item.model_dump())
+        session.add(row)
+        rows.append(row)
+    await session.flush()
+    optimization = {"created": 0, "task_ids": [], "skipped_existing": 0}
+    for site_id in sorted(site_ids):
+        site_snapshot_ids = {
+            int(row.id) for row in rows if row.site_id == site_id
+        }
+        result = await create_rank_drop_content_tasks_safely(
+            session,
+            tenant_id=req.tenant_id,
+            site_id=site_id,
+            trigger_snapshot_ids=site_snapshot_ids,
+        )
+        optimization["created"] += int(result.get("created", 0))
+        optimization["task_ids"].extend(result.get("task_ids", []))
+        optimization["skipped_existing"] += int(
+            result.get("skipped_existing", 0)
+        )
+        if result.get("error"):
+            optimization["error"] = result["error"]
     await session.commit()
-    return {"created": len(req.items)}
+    return {"created": len(req.items), "optimization": optimization}
 
 
 def _brand_asset_payload(row: SeoBrandAsset) -> dict[str, Any]:
@@ -1746,6 +1853,7 @@ async def collect_rank_serp_for_tenant(
     matched = 0
     suspected = 0
     snapshots = 0
+    snapshot_rows: list[SeoRankSnapshot] = []
     ai_available = is_enabled()
     ai_attempted = False
     for keyword, device, result, fetch_error in fetched:
@@ -1820,27 +1928,34 @@ async def collect_rank_serp_for_tenant(
             item for item in prepared if item["ownership_type"] in {"official_site", "brand_content"}
         ]
         best = min(confirmed, key=lambda item: item["rank"]) if confirmed else None
-        session.add(
-            SeoRankSnapshot(
-                tenant_id=tenant_id,
-                site_id=site_id,
-                keyword_id=keyword.id,
-                engine=engine,
-                device=device,
-                region="全国",
-                domain=best["domain"] if best else None,
-                subject_type="own",
-                rank=best["rank"] if best else None,
-                result_url=best["result_url"] if best else None,
-                source=source,
-                checked_at=batch_captured_at,
-            )
+        snapshot_row = SeoRankSnapshot(
+            tenant_id=tenant_id,
+            site_id=site_id,
+            keyword_id=keyword.id,
+            engine=engine,
+            device=device,
+            region="全国",
+            domain=best["domain"] if best else None,
+            subject_type="own",
+            rank=best["rank"] if best else None,
+            result_url=best["result_url"] if best else None,
+            source=source,
+            checked_at=batch_captured_at,
         )
+        session.add(snapshot_row)
+        snapshot_rows.append(snapshot_row)
         snapshots += 1
+    await session.flush()
+    optimization = {"created": 0, "task_ids": [], "skipped_existing": 0}
+    if site_id is not None and snapshot_rows:
+        optimization = await create_rank_drop_content_tasks_safely(
+            session,
+            tenant_id=tenant_id,
+            site_id=site_id,
+            trigger_snapshot_ids={int(row.id) for row in snapshot_rows},
+        )
     if commit:
         await session.commit()
-    else:
-        await session.flush()
     return {
         "keywords": len(keywords),
         "devices": devices,
@@ -1851,6 +1966,7 @@ async def collect_rank_serp_for_tenant(
         "confirmed_brand_results": matched,
         "ai_suspected_results": suspected,
         "snapshots": snapshots,
+        "optimization": optimization,
         "errors": errors,
         "ai_enabled": bool(use_ai and ai_available),
         "ai_available": ai_available,
@@ -3377,26 +3493,46 @@ async def seo_alerts(
     keyword_conditions = [SeoKeywordAsset.tenant_id == tenant_id, SeoKeywordAsset.status == "active"]
     page_conditions = [SeoSitePage.tenant_id == tenant_id]
     backlink_conditions = [SeoBacklink.tenant_id == tenant_id, SeoBacklink.status == "active"]
+    content_conditions = [
+        SeoContentAsset.tenant_id == tenant_id,
+        SeoContentAsset.status.in_(["planned", "drafting", "review", "ready"]),
+    ]
     rank_conditions = [SeoRankSnapshot.tenant_id == tenant_id, SeoRankSnapshot.engine == engine, SeoRankSnapshot.subject_type == "own"]
     if site_id is not None:
         keyword_conditions.append(SeoKeywordAsset.site_id == site_id)
         page_conditions.append(SeoSitePage.site_id == site_id)
         backlink_conditions.append(SeoBacklink.site_id == site_id)
+        content_conditions.append(SeoContentAsset.site_id == site_id)
         rank_conditions.append(SeoRankSnapshot.site_id == site_id)
     keywords = list(await session.scalars(select(SeoKeywordAsset).where(*keyword_conditions)))
     pages = list(await session.scalars(select(SeoSitePage).where(*page_conditions)))
     backlinks = list(await session.scalars(select(SeoBacklink).where(*backlink_conditions)))
+    contents = list(await session.scalars(select(SeoContentAsset).where(*content_conditions)))
     rank_rows = list(await session.scalars(select(SeoRankSnapshot).where(*rank_conditions).order_by(SeoRankSnapshot.checked_at.desc(), SeoRankSnapshot.id.desc())))
-    grouped: dict[int, list[SeoRankSnapshot]] = defaultdict(list)
+    grouped: dict[tuple[int, str, str], list[SeoRankSnapshot]] = defaultdict(list)
     for row in rank_rows:
-        if len(grouped[row.keyword_id]) < 2:
-            grouped[row.keyword_id].append(row)
+        key = (int(row.keyword_id), row.device, row.region)
+        if len(grouped[key]) < 2:
+            grouped[key].append(row)
     alerts: list[dict[str, Any]] = []
     keyword_map = {item.id: item for item in keywords}
-    for keyword_id, values in grouped.items():
-        if len(values) == 2 and values[0].rank and values[1].rank and values[0].rank - values[1].rank >= 3:
+    content_by_keyword = {
+        keyword_id: content
+        for content in contents
+        for keyword_id in _content_asset_keyword_ids(content)
+    }
+    threshold = max(1, get_settings().seo_rank_drop_task_threshold)
+    for (keyword_id, device, region), values in grouped.items():
+        decline = (
+            _effective_rank_for_drop(values[0].rank)
+            - _effective_rank_for_drop(values[1].rank)
+            if len(values) == 2 and values[1].rank is not None
+            else 0
+        )
+        if decline >= threshold:
             keyword = keyword_map.get(keyword_id)
-            alerts.append({"type": "rank_drop", "severity": "high" if values[0].rank - values[1].rank >= 10 else "medium", "title": f"{keyword.keyword if keyword else keyword_id} 排名下降", "detail": f"从第 {values[1].rank} 位下降到第 {values[0].rank} 位", "evidence": f"最近两次 {engine} 排名为 {values[1].rank}、{values[0].rank}", "action_label": "查看排名历史", "href": f"/seo/keywords/{keyword_id}", "object_id": keyword_id, "site_id": values[0].site_id, "occurred_at": _rank_iso(values[0].checked_at)})
+            content = content_by_keyword.get(keyword_id)
+            alerts.append({"type": "rank_drop", "severity": "high" if decline >= 10 else "medium", "title": f"{keyword.keyword if keyword else keyword_id} 排名下降", "detail": f"从{_rank_position_label(values[1].rank)}下降到{_rank_position_label(values[0].rank)}", "evidence": f"最近两次 {engine}/{device}/{region} 排名下降 {decline} 位", "action_label": "查看优化任务" if content else "查看关键词诊断", "href": f"/seo/content/editor?id={content.id}&site_id={content.site_id}" if content else f"/seo/keywords/{keyword_id}?engine={engine}&device={device}&region={quote(region)}", "object_id": keyword_id, "content_task_id": content.id if content else None, "device": device, "region": region, "site_id": values[0].site_id, "occurred_at": _rank_iso(values[0].checked_at)})
     for item in keywords:
         if not item.landing_page:
             alerts.append({"type": "missing_landing", "severity": "medium", "title": f"{item.keyword} 缺少承接页面", "detail": "高价值关键词尚未绑定站内页面", "evidence": "关键词的目标落地页字段为空", "action_label": "配置承接页面", "href": f"/seo/keywords/{item.id}", "object_id": item.id, "site_id": item.site_id, "occurred_at": _database_iso(item.updated_at)})

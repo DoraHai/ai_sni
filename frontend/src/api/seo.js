@@ -31,9 +31,9 @@ export function updateSeoKeyword({ keywordId, tenantId, payload }) {
   })
 }
 
-export function fetchSeoKeywordDetail({ keywordId, tenantId, engine = 'baidu', device = 'desktop', days = 90 }) {
+export function fetchSeoKeywordDetail({ keywordId, tenantId, engine = 'baidu', device = 'desktop', region = '全国', days = 90 }) {
   return client.get(`/api/v1/seo/keywords/${keywordId}`, {
-    params: { tenant_id: tenantId, engine, device, days },
+    params: { tenant_id: tenantId, engine, device, region, days },
   })
 }
 
