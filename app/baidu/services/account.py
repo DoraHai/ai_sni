@@ -39,4 +39,5 @@ class AccountService:
             "updateAccountInfo",
             {"accountInfo": {"budget": budget, "budgetType": budget_type}},
             is_write=True,
+            write_scope="account_budget",
         )

@@ -492,6 +492,8 @@ def _account_client(baidu_account: BaiduAccount) -> BaiduAPIClient:
     return BaiduAPIClient(
         username=baidu_account.baidu_username,
         access_token=decrypt(baidu_account.access_token_encrypted),
+        tenant_id=baidu_account.tenant_id,
+        baidu_account_id=baidu_account.id,
     )
 
 

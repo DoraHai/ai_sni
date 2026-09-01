@@ -98,6 +98,7 @@ def test_campaign_service_writes_only_region_fields():
             ]
         },
         is_write=True,
+        write_scope="campaign_region",
     )
 
 

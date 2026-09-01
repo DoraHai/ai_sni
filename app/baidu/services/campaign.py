@@ -50,6 +50,7 @@ class CampaignService:
             "addCampaign",
             {"campaignTypes": [campaign], "adType": 0},
             is_write=True,
+            write_scope="campaign_create",
         )
 
     async def get_all_campaigns(
@@ -101,6 +102,7 @@ class CampaignService:
             "updateCampaign",
             {"campaignTypes": [{"campaignId": campaign_id, "budget": budget}]},
             is_write=True,
+            write_scope="campaign_budget",
         )
 
     async def update_campaign_pause(
@@ -115,6 +117,7 @@ class CampaignService:
             "updateCampaign",
             {"campaignTypes": [{"campaignId": campaign_id, "pause": pause}]},
             is_write=True,
+            write_scope="campaign_pause",
         )
 
     async def update_campaign_schedule(
@@ -136,6 +139,7 @@ class CampaignService:
             "updateCampaign",
             {"campaignTypes": [campaign]},
             is_write=True,
+            write_scope="campaign_schedule",
         )
 
     async def update_campaign_region(
@@ -164,6 +168,7 @@ class CampaignService:
             "updateCampaign",
             {"campaignTypes": [campaign]},
             is_write=True,
+            write_scope="campaign_region",
         )
 
     async def update_campaign_negative_words(
@@ -189,6 +194,7 @@ class CampaignService:
                 "updateCampaignNegativeWordsSync",
                 body,
                 is_write=True,
+                write_scope="campaign_negative_words",
             )
         except BaiduAPIError:
             return await self._client.call(
@@ -196,4 +202,5 @@ class CampaignService:
                 "updateCampaign",
                 {"campaignTypes": [body]},
                 is_write=True,
+                write_scope="campaign_negative_words",
             )
