@@ -308,7 +308,7 @@ def test_mobile_provider_uses_official_top50_endpoint() -> None:
     [
         (401, "provider_auth_failed", False),
         (403, "provider_auth_failed", False),
-        (436, "provider_rate_limited", True),
+        (436, "provider_quota_unavailable", False),
         (429, "provider_rate_limited", True),
         (503, "provider_unavailable", True),
     ],
@@ -462,24 +462,22 @@ def test_provider_rate_limit_honors_retry_after() -> None:
     assert all(call.args[0] >= 2 for call in sleep_mock.await_args_list)
 
 
-def test_provider_436_uses_safe_default_backoff_and_recovers() -> None:
+def test_provider_436_is_not_retried() -> None:
     request = httpx.Request("GET", "https://openapi.chinaz.net/private")
     limited = httpx.Response(436, request=request)
-    success = MagicMock()
-    success.raise_for_status.return_value = None
-    success.json.return_value = {"StateCode": 1, "Result": {"Ranks": []}}
     client = AsyncMock()
-    client.get.side_effect = [limited, success]
+    client.get.return_value = limited
 
     with patch("app.seo_serp.get_settings", return_value=_provider_settings()), patch(
         "app.seo_serp.asyncio.sleep", new=AsyncMock()
-    ) as sleep_mock:
-        result = asyncio.run(fetch_baidu_top50("safe-keyword", "desktop", client=client))
+    ) as sleep_mock, pytest.raises(SerpProviderError) as exc:
+        asyncio.run(fetch_baidu_top50("safe-keyword", "desktop", client=client))
 
-    assert result["items"] == []
-    assert client.get.await_count == 2
-    sleep_mock.assert_awaited_once()
-    assert sleep_mock.await_args.args[0] >= 5
+    assert exc.value.code == "provider_quota_unavailable"
+    assert exc.value.status_code == 436
+    assert exc.value.retryable is False
+    assert client.get.await_count == 1
+    sleep_mock.assert_not_awaited()
 
 
 def test_provider_batch_reuses_one_client_and_caps_concurrency() -> None:

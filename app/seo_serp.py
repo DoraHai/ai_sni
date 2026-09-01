@@ -271,7 +271,7 @@ async def fetch_baidu_top50(
         except httpx.HTTPStatusError as exc:
             status_code = exc.response.status_code
             retry_after_seconds = None
-            if status_code in {429, 436}:
+            if status_code == 429:
                 retry_after_raw = exc.response.headers.get("retry-after", "")
                 try:
                     retry_after_seconds = min(60.0, max(0.0, float(retry_after_raw)))
@@ -283,6 +283,12 @@ async def fetch_baidu_top50(
                     "provider_rate_limited",
                     "站长之家接口请求受限",
                     True,
+                )
+            elif status_code == 436:
+                code, message, retryable = (
+                    "provider_quota_unavailable",
+                    "站长之家接口额度或凭据不可用",
+                    False,
                 )
             elif status_code in {401, 403}:
                 code, message, retryable = (
