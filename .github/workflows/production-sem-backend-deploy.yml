@@ -97,6 +97,7 @@ jobs:
           tests/test_keyword_refresh.py
           tests/test_prod_guard.py
           tests/test_scheduler_account_iteration.py
+          tests/test_sem_expansion_hardening.py
           tests/test_sem_identity_repair_preview.py
           tests/test_sem_asset_sync_integrity.py
           tests/test_sem_p0_data_trust.py
