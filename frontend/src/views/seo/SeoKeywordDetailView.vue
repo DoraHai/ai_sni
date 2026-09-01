@@ -10,7 +10,7 @@ const engineKeys=new Set(engines.map(item=>item.k))
 const engine=computed(()=>engineKeys.has(String(route.query.engine))?String(route.query.engine):'baidu')
 const device=computed(()=>route.query.device==='mobile'?'mobile':'desktop')
 const detail=computed(()=>data.value?.keyword||{}),history=computed(()=>data.value?.rank_history||[]),fmt=v=>v==null?'—':Number(v).toLocaleString('zh-CN')
-const sourceLabels={manual_import:'人工导入',manual:'人工录入',chinaz_top50:'站长之家 Top50',dataforseo:'DataForSEO',gsc:'Google Search Console'}
+const sourceLabels={manual_import:'人工导入',manual:'人工录入',chinaz_top50:'站长之家 Top50',dataforseo:'DataForSEO',dataforseo_live:'DataForSEO 实时排名',gsc:'Google Search Console'}
 const deviceLabels={desktop:'PC',mobile:'移动端'}
 const points=computed(()=>{const rows=history.value.filter(i=>i.rank!=null);if(!rows.length)return'';const max=Math.max(50,...rows.map(i=>i.rank));return rows.map((i,n)=>`${38+n*(706/Math.max(rows.length-1,1))},${16+(i.rank-1)/(max-1)*206}`).join(' ')})
 const latest=computed(()=>history.value.filter(i=>i.rank!=null).at(-1)),previous=computed(()=>history.value.filter(i=>i.rank!=null).at(-2)),delta=computed(()=>latest.value&&previous.value?previous.value.rank-latest.value.rank:null)

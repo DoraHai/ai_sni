@@ -7,6 +7,8 @@ import pytest
 from app.seo_serp import (
     CHINAZ_MAX_ATTEMPTS,
     CHINAZ_MAX_CONCURRENCY,
+    DATAFORSEO_MAX_ATTEMPTS,
+    DATAFORSEO_MAX_CONCURRENCY,
     SerpProviderError,
     canonical_url,
     create_chinaz_client,
@@ -14,10 +16,27 @@ from app.seo_serp import (
     domain_matches,
     fetch_baidu_top50,
     fetch_baidu_top50_batch,
+    fetch_dataforseo_serp,
+    fetch_dataforseo_serp_batch,
     parse_dataforseo_response,
     parse_top50_response,
     rank_number,
 )
+
+
+def _dataforseo_settings() -> object:
+    return type(
+        "Settings",
+        (),
+        {
+            "seo_dataforseo_login": "provider-login",
+            "seo_dataforseo_password": "provider-password",
+            "seo_dataforseo_base_url": "https://api.dataforseo.com/v3",
+            "seo_dataforseo_location_code": 2156,
+            "seo_dataforseo_language_code": "zh_CN",
+            "seo_dataforseo_timeout_seconds": 8,
+        },
+    )()
 
 
 def test_parse_dataforseo_response_keeps_only_organic_results() -> None:
@@ -48,8 +67,131 @@ def test_parse_dataforseo_response_keeps_only_organic_results() -> None:
 def test_parse_dataforseo_response_rejects_failed_task_without_leaking_message() -> None:
     with pytest.raises(SerpProviderError) as exc:
         parse_dataforseo_response({"tasks": [{"status_code": 40100, "status_message": "secret details"}]})
-    assert exc.value.code == "provider_rejected"
+    assert exc.value.code == "provider_auth_failed"
     assert "secret" not in exc.value.public_message
+
+
+def test_parse_dataforseo_response_rejects_failed_top_level_status() -> None:
+    with pytest.raises(SerpProviderError) as exc:
+        parse_dataforseo_response({"status_code": 50000, "tasks": []})
+    assert exc.value.code == "provider_unavailable"
+    assert exc.value.retryable is True
+
+
+def test_parse_dataforseo_no_results_is_a_valid_empty_observation() -> None:
+    result = parse_dataforseo_response(
+        {"status_code": 20000, "tasks": [{"status_code": 40102}]}
+    )
+    assert result["site_count"] == 0
+    assert result["items"] == []
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_code", "retryable"),
+    [
+        (40100, "provider_auth_failed", False),
+        (40101, "provider_unavailable", True),
+        (40103, "provider_unavailable", True),
+        (40202, "provider_rate_limited", True),
+        (40210, "provider_quota_exceeded", False),
+        (40501, "provider_rejected", False),
+        (50301, "provider_unavailable", True),
+        (50100, "provider_rejected", False),
+    ],
+)
+def test_dataforseo_internal_statuses_are_classified(
+    status_code: int, expected_code: str, retryable: bool
+) -> None:
+    with pytest.raises(SerpProviderError) as exc:
+        parse_dataforseo_response(
+            {"status_code": 20000, "tasks": [{"status_code": status_code}]}
+        )
+    assert exc.value.code == expected_code
+    assert exc.value.retryable is retryable
+
+
+def test_dataforseo_transient_failure_recovers_on_retry() -> None:
+    request = httpx.Request("POST", "https://api.dataforseo.com/v3/private")
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "status_code": 20000,
+        "tasks": [{"status_code": 20000, "result": [{"items": []}]}],
+    }
+    client = AsyncMock()
+    client.post.side_effect = [
+        httpx.ConnectTimeout("temporary provider failure", request=request),
+        response,
+    ]
+
+    with patch("app.seo_serp.get_settings", return_value=_dataforseo_settings()), patch(
+        "app.seo_serp.asyncio.sleep", new=AsyncMock()
+    ) as sleep_mock:
+        result = asyncio.run(
+            fetch_dataforseo_serp("google", "safe-keyword", "desktop", client=client)
+        )
+
+    assert result["items"] == []
+    assert client.post.await_count == 2
+    sleep_mock.assert_awaited_once()
+
+
+def test_dataforseo_auth_failure_is_not_retried_or_leaked() -> None:
+    request = httpx.Request("POST", "https://api.dataforseo.com/v3/private")
+    response = httpx.Response(401, request=request)
+    client = AsyncMock()
+    client.post.return_value = response
+
+    with patch("app.seo_serp.get_settings", return_value=_dataforseo_settings()), patch(
+        "app.seo_serp.asyncio.sleep", new=AsyncMock()
+    ) as sleep_mock, pytest.raises(SerpProviderError) as exc:
+        asyncio.run(
+            fetch_dataforseo_serp("bing", "sensitive-keyword", "mobile", client=client)
+        )
+
+    assert exc.value.code == "provider_auth_failed"
+    assert exc.value.attempts == 1
+    assert client.post.await_count == 1
+    sleep_mock.assert_not_awaited()
+    assert "provider-password" not in str(exc.value)
+    assert "sensitive-keyword" not in str(exc.value)
+
+
+def test_dataforseo_batch_reuses_client_and_caps_concurrency() -> None:
+    context = AsyncMock()
+    provider_client = object()
+    context.__aenter__.return_value = provider_client
+    active = 0
+    peak = 0
+    seen_clients: list[object] = []
+
+    async def fake_fetch(
+        engine: str, keyword: str, device: str, *, client: object
+    ) -> dict:
+        nonlocal active, peak
+        assert engine == "google"
+        seen_clients.append(client)
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return {"keyword": keyword, "device": device}
+
+    requests = [(f"keyword-{index}", "desktop") for index in range(5)]
+    with patch(
+        "app.seo_serp.create_dataforseo_client", return_value=context
+    ) as factory, patch(
+        "app.seo_serp.fetch_dataforseo_serp", side_effect=fake_fetch
+    ) as fetch:
+        results = asyncio.run(fetch_dataforseo_serp_batch("google", requests))
+
+    assert DATAFORSEO_MAX_ATTEMPTS == 3
+    assert DATAFORSEO_MAX_CONCURRENCY == 2
+    assert peak == 2
+    assert fetch.await_count == len(requests)
+    assert seen_clients == [provider_client] * len(requests)
+    assert all(error is None for _, error in results)
+    factory.assert_called_once_with()
 
 
 def _provider_settings() -> object:
