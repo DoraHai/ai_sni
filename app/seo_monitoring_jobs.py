@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from datetime import datetime, timedelta
 from urllib.parse import urljoin
 
@@ -14,6 +15,7 @@ from app.database import async_session_factory
 from app.module_scope import list_active_module_tenants
 from app.models import SeoBacklink, SeoCompetitor, SeoCompetitorEvent
 from app.models.seo import SeoCrawlRun
+from app.seo_automation_runs import finish_automation_run, start_automation_run
 from app.seo_competitor import CompetitorCollectionError, collect_competitor_content
 from app.seo_crawler import fetch_url
 from app.seo_serp import canonical_url
@@ -55,54 +57,85 @@ async def collect_scheduled_competitors() -> dict[str, int]:
             )
         )
     checked = created = failed = 0
+    by_tenant: dict[int, list[SeoCompetitor]] = defaultdict(list)
     for candidate in rows:
-        checked += 1
-        try:
-            collection = await collect_competitor_content(candidate.domain)
-            async with async_session_factory() as session:
-                row = await session.get(SeoCompetitor, candidate.id)
-                if row is None or row.status != "active" or row.site_id is None:
-                    continue
-                existing = list(
-                    await session.scalars(
-                        select(SeoCompetitorEvent).where(
-                            SeoCompetitorEvent.tenant_id == row.tenant_id,
-                            SeoCompetitorEvent.site_id == row.site_id,
-                            SeoCompetitorEvent.competitor_id == row.id,
-                            SeoCompetitorEvent.event_type == "content",
-                        )
-                    )
-                )
-                known = {item.url for item in existing}
-                baseline = not existing
-                for page in collection.pages:
-                    if page.url in known:
+        by_tenant[int(candidate.tenant_id)].append(candidate)
+    for tenant_id, candidates in by_tenant.items():
+        run_id = await start_automation_run(
+            tenant_id=tenant_id,
+            job_type="competitor",
+            planned_count=len(candidates),
+        )
+        tenant_success = tenant_failed = tenant_skipped = 0
+        errors: list[str] = []
+        for candidate in candidates:
+            checked += 1
+            try:
+                collection = await collect_competitor_content(candidate.domain)
+                async with async_session_factory() as session:
+                    row = await session.get(SeoCompetitor, candidate.id)
+                    if row is None or row.status != "active" or row.site_id is None:
+                        tenant_skipped += 1
                         continue
-                    session.add(
-                        SeoCompetitorEvent(
-                            tenant_id=row.tenant_id,
-                            site_id=row.site_id,
-                            competitor_id=row.id,
-                            event_type="content",
-                            title=page.title,
-                            url=page.url,
-                            source_url=f"https://{row.domain}/",
-                            summary="首次自动采集基线" if baseline else "自动采集发现的新内容",
+                    existing = list(
+                        await session.scalars(
+                            select(SeoCompetitorEvent).where(
+                                SeoCompetitorEvent.tenant_id == row.tenant_id,
+                                SeoCompetitorEvent.site_id == row.site_id,
+                                SeoCompetitorEvent.competitor_id == row.id,
+                                SeoCompetitorEvent.event_type == "content",
+                            )
                         )
                     )
-                    known.add(page.url)
-                    created += 1
-                row.last_checked_at = datetime.utcnow()
-                await session.commit()
-        except CompetitorCollectionError as exc:
-            failed += 1
-            logger.warning(
-                "[SEO][COMPETITOR][scheduled] id=%s code=%s timeout_phase=%s elapsed_ms=%s",
-                candidate.id,
-                exc.code,
-                exc.timeout_phase,
-                exc.elapsed_ms,
-            )
+                    known = {item.url for item in existing}
+                    baseline = not existing
+                    for page in collection.pages:
+                        if page.url in known:
+                            continue
+                        session.add(
+                            SeoCompetitorEvent(
+                                tenant_id=row.tenant_id,
+                                site_id=row.site_id,
+                                competitor_id=row.id,
+                                event_type="content",
+                                title=page.title,
+                                url=page.url,
+                                source_url=f"https://{row.domain}/",
+                                summary="首次自动采集基线" if baseline else "自动采集发现的新内容",
+                            )
+                        )
+                        known.add(page.url)
+                        created += 1
+                    row.last_checked_at = datetime.utcnow()
+                    await session.commit()
+                tenant_success += 1
+            except CompetitorCollectionError as exc:
+                failed += 1
+                tenant_failed += 1
+                errors.append(f"{candidate.id}:{exc.code}")
+                logger.warning(
+                    "[SEO][COMPETITOR][scheduled] id=%s code=%s timeout_phase=%s elapsed_ms=%s",
+                    candidate.id,
+                    exc.code,
+                    exc.timeout_phase,
+                    exc.elapsed_ms,
+                )
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                tenant_failed += 1
+                errors.append(f"{candidate.id}:{type(exc).__name__}")
+                logger.exception(
+                    "[SEO][COMPETITOR][scheduled] unexpected failure id=%s",
+                    candidate.id,
+                )
+        await finish_automation_run(
+            run_id,
+            planned_count=len(candidates),
+            success_count=tenant_success,
+            failed_count=tenant_failed,
+            skipped_count=tenant_skipped,
+            error_summary="; ".join(errors),
+        )
     return {"checked": checked, "created": created, "failed": failed}
 
 
@@ -128,29 +161,61 @@ async def verify_scheduled_backlinks() -> dict[str, int]:
             )
         )
     checked = found = lost = failed = 0
+    by_tenant: dict[int, list[SeoBacklink]] = defaultdict(list)
     for candidate in rows:
-        result = await fetch_url(candidate.source_url)
-        if result.error_type or not result.body:
-            failed += 1
-            continue
-        checked += 1
-        present = backlink_present(result.body, result.final_url, candidate.target_url)
-        async with async_session_factory() as session:
-            row = await session.get(SeoBacklink, candidate.id)
-            if row is None:
-                continue
-            row.last_checked_at = datetime.utcnow()
-            if present:
-                row.status = "active"
-                row.last_seen_at = row.last_checked_at
-                row.missing_checks = 0
-                found += 1
-            else:
-                row.missing_checks = (row.missing_checks or 0) + 1
-                if row.missing_checks >= 2:
-                    row.status = "lost"
-                    lost += 1
-            await session.commit()
+        by_tenant[int(candidate.tenant_id)].append(candidate)
+    for tenant_id, candidates in by_tenant.items():
+        run_id = await start_automation_run(
+            tenant_id=tenant_id,
+            job_type="backlink",
+            planned_count=len(candidates),
+        )
+        tenant_success = tenant_failed = tenant_skipped = 0
+        errors: list[str] = []
+        for candidate in candidates:
+            try:
+                result = await fetch_url(candidate.source_url)
+                if result.error_type or not result.body:
+                    failed += 1
+                    tenant_failed += 1
+                    errors.append(f"{candidate.id}:{result.error_type or 'empty_response'}")
+                    continue
+                checked += 1
+                present = backlink_present(result.body, result.final_url, candidate.target_url)
+                async with async_session_factory() as session:
+                    row = await session.get(SeoBacklink, candidate.id)
+                    if row is None:
+                        tenant_skipped += 1
+                        continue
+                    row.last_checked_at = datetime.utcnow()
+                    if present:
+                        row.status = "active"
+                        row.last_seen_at = row.last_checked_at
+                        row.missing_checks = 0
+                        found += 1
+                    else:
+                        row.missing_checks = (row.missing_checks or 0) + 1
+                        if row.missing_checks >= 2:
+                            row.status = "lost"
+                            lost += 1
+                    await session.commit()
+                tenant_success += 1
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                tenant_failed += 1
+                errors.append(f"{candidate.id}:{type(exc).__name__}")
+                logger.exception(
+                    "[SEO][BACKLINK][scheduled] unexpected failure id=%s",
+                    candidate.id,
+                )
+        await finish_automation_run(
+            run_id,
+            planned_count=len(candidates),
+            success_count=tenant_success,
+            failed_count=tenant_failed,
+            skipped_count=tenant_skipped,
+            error_summary="; ".join(errors),
+        )
     return {"checked": checked, "found": found, "lost": lost, "failed": failed}
 
 

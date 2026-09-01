@@ -139,6 +139,79 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
         session.execute.assert_not_awaited()
         session.scalars.assert_not_awaited()
 
+    async def test_ranking_collection_persists_a_tenant_run_summary(self):
+        settings = SimpleNamespace(
+            seo_rank_scheduler_enabled=True,
+            seo_rank_scheduler_max_keywords_per_tenant=200,
+            seo_rank_scheduler_max_requests_per_run=1000,
+            seo_rank_scheduler_batch_size=20,
+            seo_rank_scheduler_use_ai=False,
+        )
+        session = SimpleNamespace(
+            execute=AsyncMock(
+                side_effect=[
+                    SimpleNamespace(all=lambda: []),
+                    SimpleNamespace(all=lambda: [(101, 3)]),
+                    SimpleNamespace(all=lambda: []),
+                ]
+            ),
+            scalars=AsyncMock(return_value=[7]),
+            rollback=AsyncMock(),
+        )
+
+        class SessionContext:
+            async def __aenter__(self):
+                return session
+
+            async def __aexit__(self, *_args):
+                return False
+
+        collect_batch = AsyncMock(
+            return_value={"snapshots": 1, "serp_results": 1, "errors": []}
+        )
+        finish_run = AsyncMock()
+        with (
+            patch("app.seo_ranking_jobs.get_settings", return_value=settings),
+            patch("app.seo_ranking_jobs.acquire_file_lock", return_value=object()),
+            patch(
+                "app.seo_ranking_jobs.list_active_module_tenants",
+                new=AsyncMock(return_value=[SimpleNamespace(id=7)]),
+            ),
+            patch(
+                "app.seo_ranking_jobs.async_session_factory",
+                return_value=SessionContext(),
+            ),
+            patch(
+                "app.api.seo.collect_rank_serp_for_tenant",
+                new=collect_batch,
+            ),
+            patch(
+                "app.seo_ranking_jobs.start_automation_run",
+                new=AsyncMock(return_value=71),
+            ) as start_run,
+            patch(
+                "app.seo_ranking_jobs.finish_automation_run",
+                new=finish_run,
+            ),
+            patch("app.seo_ranking_jobs.release_file_lock"),
+        ):
+            await collect_daily_seo_rankings()
+
+        self.assertEqual(collect_batch.await_count, 2)
+        start_run.assert_awaited_once_with(
+            tenant_id=7,
+            job_type="ranking",
+            planned_count=2,
+        )
+        finish_run.assert_awaited_once_with(
+            71,
+            planned_count=2,
+            success_count=2,
+            failed_count=0,
+            skipped_count=0,
+            error_summary="",
+        )
+
     def test_scheduler_lock_contention_does_not_register_or_start(self):
         with (
             patch("app.seo_scheduler._acquire_scheduler_lock", return_value=False),

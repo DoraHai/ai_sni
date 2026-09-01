@@ -25,6 +25,7 @@ from app.geo.audit import GeoAuditError, audit_url, normalize_url, safe_fetch
 from app.geo.chinaz import fetch_chinaz_seo_metrics
 from app.models import (
     SeoBacklink,
+    SeoAutomationRun,
     SeoBrandAsset,
     SeoCompetitor,
     SeoCompetitorEvent,
@@ -2222,6 +2223,30 @@ def _crawl_run_payload(row: SeoCrawlRun) -> dict[str, Any]:
     }
 
 
+def _automation_run_payload(row: SeoAutomationRun) -> dict[str, Any]:
+    stale = (
+        row.status == "running"
+        and row.started_at is not None
+        and row.started_at < datetime.utcnow() - timedelta(hours=2)
+    )
+    return {
+        "id": row.id,
+        "tenant_id": row.tenant_id,
+        "site_id": row.site_id,
+        "job_type": row.job_type,
+        "trigger_type": row.trigger_type,
+        "status": row.status,
+        "stale": stale,
+        "planned_count": row.planned_count or 0,
+        "success_count": row.success_count or 0,
+        "failed_count": row.failed_count or 0,
+        "skipped_count": row.skipped_count or 0,
+        "error_summary": row.error_summary,
+        "started_at": _iso(row.started_at),
+        "completed_at": _iso(row.completed_at),
+    }
+
+
 def _page_snapshot_payload(row: SeoPageSnapshot) -> dict[str, Any]:
     return {
         "id": row.id,
@@ -2484,6 +2509,37 @@ async def list_seo_crawl_runs(
         "runs": [_crawl_run_payload(row) for row in runs],
         "snapshots": [_page_snapshot_payload(row) for row in snapshots],
     }
+
+
+@router.get("/automation-runs")
+async def list_seo_automation_runs(
+    tenant_id: int,
+    site_id: int | None = None,
+    job_type: Literal["ranking", "competitor", "backlink"] | None = None,
+    limit: int = Query(30, ge=1, le=100),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    await _tenant(session, tenant_id)
+    if site_id is not None:
+        await _seo_site(session, tenant_id, site_id)
+    conditions = [SeoAutomationRun.tenant_id == tenant_id]
+    if site_id is not None:
+        conditions.append(SeoAutomationRun.site_id == site_id)
+    if job_type is not None:
+        conditions.append(SeoAutomationRun.job_type == job_type)
+    rows = list(
+        await session.scalars(
+            select(SeoAutomationRun)
+            .where(*conditions)
+            .order_by(SeoAutomationRun.started_at.desc(), SeoAutomationRun.id.desc())
+            .limit(limit)
+        )
+    )
+    latest_by_job: dict[str, dict[str, Any]] = {}
+    items = [_automation_run_payload(row) for row in rows]
+    for item in items:
+        latest_by_job.setdefault(str(item["job_type"]), item)
+    return {"items": items, "latest_by_job": latest_by_job}
 
 
 @router.get("/site-pages")
