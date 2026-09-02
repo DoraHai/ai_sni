@@ -41,6 +41,8 @@ const automationJobs = [
   { key: 'competitor', label: '竞品巡检', schedule: '每日 03:00' },
   { key: 'backlink', label: '外链巡检', schedule: '每日 04:00' },
 ]
+const CRAWL_MAX_URLS_PER_RUN = 200
+const CRAWL_DISCOVERY_HEADROOM = 10
 const stats = computed(() => data.value.stats || {})
 const tasks = computed(() => data.value.tasks || [])
 const metrics = computed(() => data.value.metrics || {})
@@ -217,15 +219,41 @@ async function collectMetrics() {
 
 async function startCrawl() {
   if (!siteId.value) return ElMessage.warning('请先选择或创建 SEO 网站')
+  const requestedTenantId = currentTenantId.value
+  const requestedSiteId = siteId.value
+  const knownPages = Number(stats.value.pages || 0)
+  const maxUrls = Math.min(
+    CRAWL_MAX_URLS_PER_RUN,
+    Math.max(50, knownPages + CRAWL_DISCOVERY_HEADROOM),
+  )
+  const scopeMessage = knownPages >= CRAWL_MAX_URLS_PER_RUN
+    ? `本次最多扫描 ${maxUrls} 个页面，并优先处理最久未检查的已知页面；其余页面将在后续扫描中轮换覆盖。`
+    : `本次最多扫描 ${maxUrls} 个页面，优先覆盖 ${knownPages} 个已知页面，并预留新页面发现空间。`
+  try {
+    await ElMessageBox.confirm(
+      `${scopeMessage} 扫描只读取公开页面，不会修改客户网站。确定继续？`,
+      '网站技术扫描确认',
+      { confirmButtonText: '开始扫描', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch { return }
+  if (currentTenantId.value !== requestedTenantId || siteId.value !== requestedSiteId) {
+    return ElMessage.warning('客户或网站已切换，请重新确认扫描范围')
+  }
   crawling.value = true
   try {
-    const result = await crawlSeoSite({ tenant_id: currentTenantId.value, site_id: siteId.value, max_urls: 50, max_depth: 3 })
+    const result = await crawlSeoSite({
+      tenant_id: requestedTenantId,
+      site_id: requestedSiteId,
+      max_urls: maxUrls,
+      max_depth: 3,
+      include_known_pages: true,
+    })
     let run = result.run
-    for (let attempt = 0; run && ['queued', 'running'].includes(run.status) && attempt < 150; attempt += 1) {
+    for (let attempt = 0; run && ['queued', 'running'].includes(run.status) && attempt < 300; attempt += 1) {
       await new Promise((resolve) => window.setTimeout(resolve, 2000))
       const progress = await fetchSeoCrawlRuns({
-        tenantId: currentTenantId.value,
-        siteId: siteId.value,
+        tenantId: requestedTenantId,
+        siteId: requestedSiteId,
         runId: run.id,
         limit: 1,
       })
