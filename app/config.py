@@ -77,9 +77,12 @@ class Settings(BaseSettings):
     chinaz_api_base_url: str = "https://openapi.chinaz.net/v1/1001"
     chinaz_api_timeout_seconds: float = 8.0
     chinaz_domain_keyword_max_pages: int = 10
-    # 每天 02:00 自动采集全部启用 SEO 关键词的 PC/移动自然排名。
+    # 每天按上海时间检查一次，引擎可配置独立的间隔天数。
     seo_rank_scheduler_enabled: bool = True
     seo_rank_scheduler_engines: str = "baidu,google,bing"
+    seo_rank_scheduler_engine_interval_days: str = ""
+    seo_rank_scheduler_hour: int = 2
+    seo_rank_scheduler_minute: int = 0
     seo_rank_scheduler_batch_size: int = 20
     seo_rank_scheduler_use_ai: bool = True
     seo_rank_scheduler_max_keywords_per_tenant: int = 200

@@ -1,7 +1,7 @@
 """Background jobs owned exclusively by the independent SEO service."""
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
@@ -26,6 +26,7 @@ _ENGINE_SOURCES = {
     "google": {"dataforseo_live"},
     "bing": {"dataforseo_live"},
 }
+_CADENCE_EPOCH = date(1970, 1, 1)
 
 
 def _scheduled_rank_engines(
@@ -58,6 +59,42 @@ def _scheduled_rank_engines(
             if engine in {"google", "bing"}
             else bool(chinaz_status.get(engine, {}).get("configured"))
         )
+    ]
+
+
+def _engine_interval_days(settings: object) -> dict[str, int]:
+    """Parse optional ``engine:days`` entries; malformed values stay daily."""
+    raw = str(
+        getattr(settings, "seo_rank_scheduler_engine_interval_days", "") or ""
+    )
+    intervals: dict[str, int] = {}
+    for entry in raw.split(","):
+        engine, separator, days_raw = entry.strip().lower().partition(":")
+        if separator != ":" or engine not in _SUPPORTED_SCHEDULED_ENGINES:
+            continue
+        try:
+            days = int(days_raw)
+        except ValueError:
+            continue
+        if 1 <= days <= 30:
+            intervals[engine] = days
+    return intervals
+
+
+def _engines_due_today(
+    engines: list[str],
+    settings: object,
+    *,
+    now: datetime | None = None,
+) -> list[str]:
+    """Return engines due on a stable Shanghai-calendar cadence."""
+    local_day = (now or datetime.now(_SHANGHAI_TZ)).astimezone(_SHANGHAI_TZ).date()
+    elapsed_days = (local_day - _CADENCE_EPOCH).days
+    intervals = _engine_interval_days(settings)
+    return [
+        engine
+        for engine in engines
+        if elapsed_days % intervals.get(engine, 1) == 0
     ]
 
 
@@ -94,7 +131,7 @@ def _local_day_start_utc(now: datetime | None = None) -> datetime:
 
 
 async def collect_daily_seo_rankings() -> None:
-    """Collect configured daily desktop/mobile rankings within hard limits."""
+    """Collect due desktop/mobile rankings within configured per-engine cadence."""
     settings = get_settings()
     if not settings.seo_rank_scheduler_enabled:
         logger.info("[scheduler][SEO] 自动排名采集已关闭")
@@ -133,6 +170,16 @@ async def collect_daily_seo_rankings() -> None:
         )
     if not engines:
         logger.info("[scheduler][SEO] 没有已配置且可用的自动排名引擎，本次跳过")
+        release_file_lock(lock_fh)
+        return
+    configured_engines = engines
+    engines = _engines_due_today(engines, settings)
+    if not engines:
+        logger.info(
+            "[scheduler][SEO] 今日无到期引擎，已按周期跳过 configured=%s intervals=%s",
+            configured_engines,
+            _engine_interval_days(settings),
+        )
         release_file_lock(lock_fh)
         return
     batch_captured_at = datetime.utcnow()
