@@ -118,6 +118,7 @@ async def _upsert_keyword_alerts(session: AsyncSession, records: list[dict]) -> 
         index_elements=["tenant_id", "rule_code", "keyword_id", "report_date"],
         index_where=Alert.keyword_id.isnot(None),
         set_={
+            "priority": stmt.excluded.priority,
             "title": stmt.excluded.title,
             "message": stmt.excluded.message,
             "campaign_id": stmt.excluded.campaign_id,
@@ -136,6 +137,7 @@ async def _upsert_entity_alerts(session: AsyncSession, records: list[dict]) -> N
         index_elements=["tenant_id", "rule_code", "entity_ref", "report_date"],
         index_where=Alert.entity_ref.isnot(None),
         set_={
+            "priority": stmt.excluded.priority,
             "title": stmt.excluded.title,
             "message": stmt.excluded.message,
             "campaign_id": stmt.excluded.campaign_id,

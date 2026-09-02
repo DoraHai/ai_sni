@@ -204,13 +204,25 @@ def _bid_coefficients(
     else:
         mobile_min = mobile_max = 1.0
 
+    # 整层未配置时按 1.0 计算；但已配时段而当前时段未投放时，
+    # current_factor 保持 None，不能误报为正在投放。
+    effective_schedule_factor = current_factor if sched else 1.0
+    effective_region_factors = region_factors or [1.0]
     effective = None
-    if current_factor is not None and region_factors:
+    if effective_schedule_factor is not None:
         cur_min = round(
-            base_price * current_factor * min(region_factors) * mobile_min, 2
+            base_price
+            * effective_schedule_factor
+            * min(effective_region_factors)
+            * mobile_min,
+            2,
         )
         cur_max = round(
-            base_price * current_factor * max(region_factors) * ranking_cap * mobile_max,
+            base_price
+            * effective_schedule_factor
+            * max(effective_region_factors)
+            * ranking_cap
+            * mobile_max,
             2,
         )
         effective = {
@@ -218,7 +230,11 @@ def _bid_coefficients(
             "current_max": cur_max,
             # 业务阈值：倍数 > 3 橙色提示，> 4 红色预警（原型规则）
             "max_multiplier": round(
-                current_factor * max(region_factors) * ranking_cap * mobile_max, 2
+                effective_schedule_factor
+                * max(effective_region_factors)
+                * ranking_cap
+                * mobile_max,
+                2,
             ),
         }
 
@@ -966,8 +982,10 @@ class BatchCategoryRequest(BaseModel):
 async def batch_update_category(
     req: BatchCategoryRequest,
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict:
     """批量改分级（工作台勾选批量操作）。语义与单个接口一致：manual 标记 / auto 恢复重算。"""
+    ctx.ensure_tenant(req.tenant_id)
     if req.category != "auto" and req.category not in CATEGORY_LABELS:
         raise HTTPException(400, f"分级只能是 {'/'.join(CATEGORY_LABELS)} 或 auto")
 
