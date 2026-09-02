@@ -12,6 +12,7 @@
     "verify:sem-build": "node scripts/verify-sem-build.mjs dist",
     "test:sem-date-time": "node scripts/test-sem-date-time.mjs",
     "test:sem-ui-contracts": "node scripts/test-sem-ui-contracts.mjs",
+    "test:sem-action-ledger": "node scripts/test-sem-action-ledger.mjs",
     "test:chunk-recovery": "node scripts/test-chunk-recovery.mjs",
     "test:sem-identity-repair-requests": "node scripts/test-sem-identity-repair-requests.mjs",
     "deploy:sem": "bash scripts/deploy-sem.sh",
