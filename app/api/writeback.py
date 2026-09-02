@@ -41,6 +41,22 @@ router = APIRouter(
 )
 
 
+def _signed_writeback_change_pct(row: BidWriteback) -> float | None:
+    """Normalize historical absolute percentages from the actual bid direction."""
+    if row.change_pct is None:
+        return None
+    value = abs(float(row.change_pct))
+    if row.old_bid is None or row.new_bid is None:
+        return float(row.change_pct)
+    old_bid = float(row.old_bid)
+    new_bid = float(row.new_bid)
+    if new_bid < old_bid:
+        return -value
+    if new_bid > old_bid:
+        return value
+    return 0.0
+
+
 @router.get("/mode")
 async def get_writeback_mode(
     tenant_id: int = Query(...),
@@ -245,7 +261,7 @@ def wb_to_dict(r: BidWriteback) -> dict:
         "adgroup_id": r.adgroup_id,
         "old_bid": float(r.old_bid) if r.old_bid is not None else None,
         "new_bid": float(r.new_bid),
-        "change_pct": float(r.change_pct) if r.change_pct is not None else None,
+        "change_pct": _signed_writeback_change_pct(r),
         "dry_run": r.dry_run,
         "status": r.status,
         "status_label": WRITEBACK_STATUS_LABELS.get(r.status, r.status),
