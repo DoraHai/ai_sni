@@ -41,8 +41,8 @@ def _start_seo_scheduler() -> None:
         logger.info("[scheduler][SEO] 未抢到调度锁，本 worker 不启动 SEO 调度")
         return
     settings = get_settings()
-    rank_hour = min(23, max(0, int(settings.seo_rank_scheduler_hour)))
-    rank_minute = min(59, max(0, int(settings.seo_rank_scheduler_minute)))
+    rank_hour = int(settings.seo_rank_scheduler_hour)
+    rank_minute = int(settings.seo_rank_scheduler_minute)
     seo_scheduler.add_job(
         collect_daily_seo_rankings,
         CronTrigger(hour=rank_hour, minute=rank_minute),

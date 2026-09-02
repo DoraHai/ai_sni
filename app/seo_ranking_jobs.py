@@ -1,14 +1,15 @@
 """Background jobs owned exclusively by the independent SEO service."""
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import TypeVar
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 
-from app.config import get_settings
+from app.config import get_settings, parse_seo_rank_engine_intervals
 from app.database import async_session_factory
-from app.models.seo import SeoKeywordAsset, SeoRankSnapshot
+from app.models.seo import SeoKeywordAsset, SeoMetricSnapshot, SeoRankSnapshot
 from app.module_scope import list_active_module_tenants
 from app.process_lock import acquire_file_lock, release_file_lock
 from app.seo_automation_runs import finish_automation_run, start_automation_run
@@ -16,6 +17,8 @@ from app.seo_rank_limits import SEO_RANK_COLLECTION_LOCK_PATH
 from app.seo_serp import chinaz_rank_status, dataforseo_status
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 _SUPPORTED_SCHEDULED_ENGINES = ("baidu", "sogou", "360", "google", "bing")
@@ -26,7 +29,11 @@ _ENGINE_SOURCES = {
     "google": {"dataforseo_live"},
     "bing": {"dataforseo_live"},
 }
-_CADENCE_EPOCH = date(1970, 1, 1)
+_SUPPLIER_ACTION_REQUIRED_CODES = {
+    "provider_quota_exceeded",
+    "provider_ip_rejected",
+    "provider_auth_failed",
+}
 
 
 def _scheduled_rank_engines(
@@ -63,39 +70,157 @@ def _scheduled_rank_engines(
 
 
 def _engine_interval_days(settings: object) -> dict[str, int]:
-    """Parse optional ``engine:days`` entries; malformed values stay daily."""
-    raw = str(
-        getattr(settings, "seo_rank_scheduler_engine_interval_days", "") or ""
+    return parse_seo_rank_engine_intervals(
+        getattr(settings, "seo_rank_scheduler_engine_interval_days", "")
     )
-    intervals: dict[str, int] = {}
-    for entry in raw.split(","):
-        engine, separator, days_raw = entry.strip().lower().partition(":")
-        if separator != ":" or engine not in _SUPPORTED_SCHEDULED_ENGINES:
-            continue
-        try:
-            days = int(days_raw)
-        except ValueError:
-            continue
-        if 1 <= days <= 30:
-            intervals[engine] = days
-    return intervals
 
 
-def _engines_due_today(
-    engines: list[str],
-    settings: object,
+def _collection_due(
+    last_success_at: datetime | None,
+    interval_days: int,
+    now_utc: datetime,
+) -> bool:
+    """Retry daily after failure; a successful observation starts the cadence."""
+    if last_success_at is None:
+        return True
+    if last_success_at.tzinfo is not None:
+        last_success_at = last_success_at.astimezone(timezone.utc).replace(tzinfo=None)
+    if now_utc.tzinfo is not None:
+        now_utc = now_utc.astimezone(timezone.utc).replace(tzinfo=None)
+    return last_success_at <= now_utc - timedelta(days=max(1, interval_days))
+
+
+async def _latest_successful_collections(
+    session,
     *,
-    now: datetime | None = None,
-) -> list[str]:
-    """Return engines due on a stable Shanghai-calendar cadence."""
-    local_day = (now or datetime.now(_SHANGHAI_TZ)).astimezone(_SHANGHAI_TZ).date()
-    elapsed_days = (local_day - _CADENCE_EPOCH).days
-    intervals = _engine_interval_days(settings)
-    return [
-        engine
-        for engine in engines
-        if elapsed_days % intervals.get(engine, 1) == 0
-    ]
+    tenant_id: int,
+    site_ids: set[int],
+    engines: set[str],
+) -> dict[tuple[int, str, str], datetime]:
+    """Load persistent provider success markers for non-daily engines."""
+    latest: dict[tuple[int, str, str], datetime] = {}
+    if not site_ids or not engines:
+        return latest
+    latest_health = (
+        select(
+            SeoMetricSnapshot.site_id.label("site_id"),
+            SeoMetricSnapshot.dimension.label("dimension"),
+            func.max(SeoMetricSnapshot.observed_at).label("observed_at"),
+        )
+        .where(
+            SeoMetricSnapshot.tenant_id == tenant_id,
+            SeoMetricSnapshot.site_id.in_(site_ids),
+            SeoMetricSnapshot.metric_type == "rank_provider_health",
+            SeoMetricSnapshot.source == "chinaz",
+        )
+        .group_by(SeoMetricSnapshot.site_id, SeoMetricSnapshot.dimension)
+        .subquery()
+    )
+    health_rows = (
+        await session.execute(
+            select(
+                SeoMetricSnapshot.site_id,
+                SeoMetricSnapshot.dimension,
+                SeoMetricSnapshot.status,
+                SeoMetricSnapshot.observed_at,
+            )
+            .join(
+                latest_health,
+                and_(
+                    SeoMetricSnapshot.site_id == latest_health.c.site_id,
+                    SeoMetricSnapshot.dimension == latest_health.c.dimension,
+                    SeoMetricSnapshot.observed_at == latest_health.c.observed_at,
+                ),
+            )
+            .where(
+                SeoMetricSnapshot.tenant_id == tenant_id,
+                SeoMetricSnapshot.site_id.in_(site_ids),
+                SeoMetricSnapshot.metric_type == "rank_provider_health",
+                SeoMetricSnapshot.source == "chinaz",
+            )
+        )
+    ).all()
+    for site_id, dimension, status, observed_at in health_rows:
+        engine, separator, device = str(dimension).partition(":")
+        if (
+            status == "available"
+            and separator
+            and engine in engines
+            and device in {"desktop", "mobile"}
+        ):
+            latest[(int(site_id), engine, device)] = observed_at
+
+    snapshot_engines = engines.intersection({"google", "bing"})
+    if not snapshot_engines:
+        return latest
+    automatic_sources = set().union(
+        *(_ENGINE_SOURCES[engine] for engine in snapshot_engines)
+    )
+    snapshot_rows = (
+        await session.execute(
+            select(
+                SeoRankSnapshot.site_id,
+                SeoRankSnapshot.engine,
+                SeoRankSnapshot.device,
+                func.max(SeoRankSnapshot.checked_at),
+            )
+            .where(
+                SeoRankSnapshot.tenant_id == tenant_id,
+                SeoRankSnapshot.site_id.in_(site_ids),
+                SeoRankSnapshot.engine.in_(snapshot_engines),
+                SeoRankSnapshot.source.in_(automatic_sources),
+            )
+            .group_by(
+                SeoRankSnapshot.site_id,
+                SeoRankSnapshot.engine,
+                SeoRankSnapshot.device,
+            )
+        )
+    ).all()
+    for site_id, engine, device, checked_at in snapshot_rows:
+        key = (int(site_id), engine, device)
+        if checked_at is not None and (
+            key not in latest or checked_at > latest[key]
+        ):
+            latest[key] = checked_at
+    return latest
+
+
+def _scheduled_health_summary(
+    *,
+    incomplete: bool,
+    successful_observations: int,
+    errors: list[dict],
+) -> dict[str, object]:
+    """Preserve the first actionable provider error in the final run marker."""
+    if not incomplete:
+        return {
+            "status": "available",
+            "text_value": "scheduler_complete",
+            "code": None,
+            "status_code": None,
+            "error_message": None,
+        }
+    first = next(
+        (
+            error for error in errors
+            if error.get("code") in _SUPPLIER_ACTION_REQUIRED_CODES
+        ),
+        errors[0] if errors else None,
+    ) or {
+        "code": "scheduler_budget_exhausted",
+        "message": "定时采集预算已用完，将在下一日继续",
+    }
+    code = str(first.get("code") or "scheduler_incomplete")
+    return {
+        "status": "partial" if successful_observations > 0 else "failed",
+        "text_value": code,
+        "code": code,
+        "status_code": first.get("status_code"),
+        "error_message": str(
+            first.get("message") or "定时采集未完成，将在下一日重试"
+        ),
+    }
 
 
 def _chunks(values: list[int], size: int) -> list[list[int]]:
@@ -121,6 +246,23 @@ def _group_keyword_ids_by_site(
             continue
         grouped.setdefault(site_id, []).append(keyword_id)
     return list(grouped.items())
+
+
+def _rotate_daily(
+    values: list[_T],
+    now_utc: datetime,
+    *,
+    salt: int = 0,
+) -> list[_T]:
+    """Rotate constrained work daily so fixed ordering cannot starve later items."""
+    if len(values) < 2:
+        return list(values)
+    instant = now_utc
+    if instant.tzinfo is None:
+        instant = instant.replace(tzinfo=timezone.utc)
+    local_ordinal = instant.astimezone(_SHANGHAI_TZ).date().toordinal()
+    offset = (local_ordinal + salt) % len(values)
+    return [*values[offset:], *values[:offset]]
 
 
 def _local_day_start_utc(now: datetime | None = None) -> datetime:
@@ -172,18 +314,9 @@ async def collect_daily_seo_rankings() -> None:
         logger.info("[scheduler][SEO] 没有已配置且可用的自动排名引擎，本次跳过")
         release_file_lock(lock_fh)
         return
-    configured_engines = engines
-    engines = _engines_due_today(engines, settings)
-    if not engines:
-        logger.info(
-            "[scheduler][SEO] 今日无到期引擎，已按周期跳过 configured=%s intervals=%s",
-            configured_engines,
-            _engine_interval_days(settings),
-        )
-        release_file_lock(lock_fh)
-        return
     batch_captured_at = datetime.utcnow()
     day_start_utc = _local_day_start_utc()
+    engine_intervals = _engine_interval_days(settings)
     totals = {
         "tenants": 0,
         "keywords": 0,
@@ -237,6 +370,11 @@ async def collect_daily_seo_rankings() -> None:
                     .order_by(SeoKeywordAsset.tenant_id)
                 )
             )
+            if max_requests < len(tenant_ids):
+                tenant_ids = _rotate_daily(tenant_ids, batch_captured_at)
+            per_tenant_request_budget = max(
+                1, max_requests // max(1, len(tenant_ids))
+            )
             for tenant_id in tenant_ids:
                 if totals["requests"] >= max_requests:
                     break
@@ -262,17 +400,63 @@ async def collect_daily_seo_rankings() -> None:
                     for row in selected_rows
                 ]
                 keyword_ids = [row[0] for row in keyword_sites]
+                site_ids = {row[1] for row in keyword_sites}
+                non_daily_engines = {
+                    engine for engine in engines
+                    if engine_intervals.get(engine, 1) > 1
+                }
+                latest_success = await _latest_successful_collections(
+                    session,
+                    tenant_id=int(tenant_id),
+                    site_ids=site_ids,
+                    engines=non_daily_engines,
+                )
+                due_pairs = {
+                    (site_id, engine, device)
+                    for site_id in site_ids
+                    for engine in engines
+                    for device in ("desktop", "mobile")
+                    if _collection_due(
+                        latest_success.get((site_id, engine, device)),
+                        engine_intervals.get(engine, 1),
+                        batch_captured_at,
+                    )
+                }
+                planned_count = sum(
+                    (site_id, engine, device) in due_pairs
+                    for _keyword_id, site_id in keyword_sites
+                    for engine in engines
+                    for device in ("desktop", "mobile")
+                )
+                if planned_count == 0:
+                    logger.info(
+                        "[scheduler][SEO] 客户 %s 今日无到期排名采集项",
+                        tenant_id,
+                    )
+                    continue
+                per_pair_request_budget = max(
+                    1, per_tenant_request_budget // len(due_pairs)
+                )
                 totals["tenants"] += 1
                 totals["keywords"] += len(keyword_ids)
-                planned_count = len(keyword_ids) * 2 * len(engines)
                 run_id = await start_automation_run(
                     tenant_id=int(tenant_id),
                     job_type="ranking",
                     planned_count=planned_count,
                 )
                 tenant_success = tenant_failed = tenant_skipped = 0
+                tenant_provider_requests = 0
                 tenant_errors: list[str] = []
                 try:
+                    snapshot_scan_start = min(
+                        day_start_utc,
+                        batch_captured_at - timedelta(
+                            days=max(
+                                [engine_intervals.get(engine, 1) for engine in engines]
+                                or [1]
+                            )
+                        ),
+                    )
                     completed_rows = (
                         await session.execute(
                             select(
@@ -280,10 +464,11 @@ async def collect_daily_seo_rankings() -> None:
                                 SeoRankSnapshot.engine,
                                 SeoRankSnapshot.device,
                                 SeoRankSnapshot.source,
+                                SeoRankSnapshot.checked_at,
                             ).where(
                                 SeoRankSnapshot.tenant_id == tenant_id,
                                 SeoRankSnapshot.engine.in_(engines),
-                                SeoRankSnapshot.checked_at >= day_start_utc,
+                                SeoRankSnapshot.checked_at >= snapshot_scan_start,
                                 SeoRankSnapshot.keyword_id.in_(keyword_ids),
                             )
                         )
@@ -291,78 +476,210 @@ async def collect_daily_seo_rankings() -> None:
                     completed = {
                         (int(row[0]), row[1], row[2])
                         for row in completed_rows
-                        if row[3] in _ENGINE_SOURCES.get(row[1], set())
+                        if (
+                            row[3] in _ENGINE_SOURCES.get(row[1], set())
+                            and row[4] >= (
+                                day_start_utc
+                                if engine_intervals.get(row[1], 1) <= 1
+                                else batch_captured_at - timedelta(
+                                    days=engine_intervals.get(row[1], 1)
+                                )
+                            )
+                        )
                     }
 
-                    for engine in engines:
-                        for device in ("desktop", "mobile"):
-                            pending_rows = [
-                                (keyword_id, site_id)
-                                for keyword_id, site_id in keyword_sites
-                                if (keyword_id, engine, device) not in completed
-                            ]
-                            already_completed = len(keyword_ids) - len(pending_rows)
-                            totals["skipped_pairs"] += already_completed
-                            tenant_skipped += already_completed
-                            attempted = 0
-                            for site_id, pending_ids in _group_keyword_ids_by_site(pending_rows):
-                                remaining = max_requests - totals["requests"]
+                    scheduled_units = [
+                        (site_id, engine, device)
+                        for engine in engines
+                        for device in ("desktop", "mobile")
+                        for site_id in sorted(site_ids)
+                        if (site_id, engine, device) in due_pairs
+                    ]
+                    if per_tenant_request_budget < planned_count:
+                        scheduled_units = _rotate_daily(
+                            scheduled_units,
+                            batch_captured_at,
+                            salt=int(tenant_id),
+                        )
+                    for site_id, engine, device in scheduled_units:
+                        eligible_ids = [
+                            keyword_id
+                            for keyword_id, keyword_site_id in keyword_sites
+                            if keyword_site_id == site_id
+                        ]
+                        pending_ids = [
+                            keyword_id
+                            for keyword_id in eligible_ids
+                            if (keyword_id, engine, device) not in completed
+                        ]
+                        already_completed = len(eligible_ids) - len(pending_ids)
+                        totals["skipped_pairs"] += already_completed
+                        tenant_skipped += already_completed
+                        if per_pair_request_budget < len(pending_ids):
+                            pending_ids = _rotate_daily(
+                                pending_ids,
+                                batch_captured_at,
+                                salt=(
+                                    int(tenant_id)
+                                    + site_id
+                                    + engines.index(engine)
+                                    + (1 if device == "mobile" else 0)
+                                ),
+                            )
+                        attempted = 0
+                        pair_provider_requests = 0
+                        site_attempted = 0
+                        site_incomplete = False
+                        site_successful_observations = 0
+                        site_errors: list[dict] = []
+                        for candidate_batch in _chunks(pending_ids, batch_size):
+                            remaining = min(
+                                max_requests - totals["requests"],
+                                per_tenant_request_budget - tenant_provider_requests,
+                                per_pair_request_budget - pair_provider_requests,
+                            )
+                            if engine in {"google", "bing"}:
+                                remaining = min(
+                                    remaining,
+                                    max_dataforseo_requests
+                                    - totals["dataforseo_requests"],
+                                )
+                            if remaining <= 0:
+                                site_incomplete = True
+                                break
+                            keyword_batch = candidate_batch[:remaining]
+                            attempted += len(keyword_batch)
+                            site_attempted += len(keyword_batch)
+                            try:
+                                result = await collect_rank_serp_for_tenant(
+                                    session=session,
+                                    tenant_id=tenant_id,
+                                    site_id=site_id,
+                                    keyword_ids=keyword_batch,
+                                    devices=[device],
+                                    max_keywords=None,
+                                    engine=engine,
+                                    use_ai=settings.seo_rank_scheduler_use_ai,
+                                    captured_at=batch_captured_at,
+                                    provider_request_budget=remaining,
+                                )
+                            except Exception as exc:  # noqa: BLE001
+                                await session.rollback()
+                                # The collector can fail after the provider has already
+                                # accepted requests but before it returns exact usage.
+                                # Conservatively reserve the full allowance passed to
+                                # this batch so later work can never exceed a hard cap.
+                                totals["requests"] += remaining
+                                tenant_provider_requests += remaining
+                                pair_provider_requests += remaining
                                 if engine in {"google", "bing"}:
-                                    remaining = min(
-                                        remaining,
-                                        max_dataforseo_requests
-                                        - totals["dataforseo_requests"],
-                                    )
-                                for keyword_batch in _limited_batches(
-                                    pending_ids, batch_size, remaining
-                                ):
-                                    attempted += len(keyword_batch)
-                                    totals["requests"] += len(keyword_batch)
-                                    if engine in {"google", "bing"}:
-                                        totals["dataforseo_requests"] += len(keyword_batch)
-                                    try:
-                                        result = await collect_rank_serp_for_tenant(
-                                            session=session,
-                                            tenant_id=tenant_id,
-                                            site_id=site_id,
-                                            keyword_ids=keyword_batch,
-                                            devices=[device],
-                                            max_keywords=None,
-                                            engine=engine,
-                                            use_ai=settings.seo_rank_scheduler_use_ai,
-                                            captured_at=batch_captured_at,
-                                        )
-                                    except Exception as exc:  # noqa: BLE001
-                                        await session.rollback()
-                                        totals["errors"] += len(keyword_batch)
-                                        tenant_failed += len(keyword_batch)
-                                        tenant_errors.append(
-                                            f"{engine}/{device}:{type(exc).__name__}"
-                                        )
-                                        logger.exception(
-                                            "[scheduler][SEO] 客户 %s 站点 %s 的 %s/%s 批次采集失败（关键词 %s 个）",
-                                            tenant_id,
-                                            site_id,
-                                            engine,
-                                            device,
-                                            len(keyword_batch),
-                                        )
-                                        continue
-                                    result_errors = len(result["errors"])
-                                    tenant_failed += result_errors
-                                    tenant_success += max(
-                                        0, len(keyword_batch) - result_errors
-                                    )
-                                    tenant_errors.extend(
-                                        f"{engine}/{device}:{item.get('code', 'provider_error')}"
-                                        for item in result["errors"][:5]
-                                    )
-                                    totals["snapshots"] += result["snapshots"]
-                                    totals["serp_results"] += result["serp_results"]
-                                    totals["errors"] += result_errors
-                            budget_skipped = len(pending_rows) - attempted
-                            tenant_skipped += budget_skipped
-                            totals["skipped_pairs"] += budget_skipped
+                                    totals["dataforseo_requests"] += remaining
+                                totals["errors"] += len(keyword_batch)
+                                tenant_failed += len(keyword_batch)
+                                site_incomplete = True
+                                site_errors.append({
+                                    "code": "scheduler_batch_error",
+                                    "message": "定时采集批次执行失败，将在下一日重试",
+                                })
+                                tenant_errors.append(
+                                    f"{engine}/{device}:{type(exc).__name__}"
+                                )
+                                logger.exception(
+                                    "[scheduler][SEO] 客户 %s 站点 %s 的 %s/%s 批次采集失败（关键词 %s 个）",
+                                    tenant_id,
+                                    site_id,
+                                    engine,
+                                    device,
+                                    len(keyword_batch),
+                                )
+                                continue
+                            reported_requests = result.get("provider_requests")
+                            if reported_requests is None:
+                                reported_requests = result.get(
+                                    "requests", len(keyword_batch)
+                                )
+                            provider_requests = max(0, int(reported_requests))
+                            totals["requests"] += provider_requests
+                            tenant_provider_requests += provider_requests
+                            pair_provider_requests += provider_requests
+                            if engine in {"google", "bing"}:
+                                totals["dataforseo_requests"] += provider_requests
+                            skipped_errors = sum(
+                                item.get("code") in {
+                                    "keyword_not_found",
+                                    "provider_budget_exhausted",
+                                }
+                                for item in result["errors"]
+                            )
+                            result_errors = len(result["errors"]) - skipped_errors
+                            keyword_fallbacks = sum(
+                                item.get("code") == "keyword_not_found"
+                                for item in result["errors"]
+                            )
+                            site_successful_observations += (
+                                len(keyword_batch)
+                                - len(result["errors"])
+                                + keyword_fallbacks
+                            )
+                            hard_errors = [
+                                item for item in result["errors"]
+                                if item.get("code") != "keyword_not_found"
+                            ]
+                            if hard_errors:
+                                site_incomplete = True
+                                site_errors.extend(hard_errors)
+                            tenant_failed += result_errors
+                            tenant_skipped += skipped_errors
+                            tenant_success += max(
+                                0,
+                                len(keyword_batch)
+                                - result_errors
+                                - skipped_errors,
+                            )
+                            tenant_errors.extend(
+                                f"{engine}/{device}:{item.get('code', 'provider_error')}"
+                                for item in result["errors"][:5]
+                            )
+                            totals["snapshots"] += result["snapshots"]
+                            totals["serp_results"] += result["serp_results"]
+                            totals["errors"] += result_errors
+                            totals["skipped_pairs"] += skipped_errors
+                        if site_attempted < len(pending_ids):
+                            site_incomplete = True
+                        if (
+                            engine in {"baidu", "sogou", "360"}
+                            and engine_intervals.get(engine, 1) > 1
+                            and pending_ids
+                        ):
+                            health = _scheduled_health_summary(
+                                incomplete=site_incomplete,
+                                successful_observations=site_successful_observations,
+                                errors=site_errors,
+                            )
+                            session.add(SeoMetricSnapshot(
+                                tenant_id=tenant_id,
+                                site_id=site_id,
+                                metric_type="rank_provider_health",
+                                dimension=f"{engine}:{device}",
+                                text_value=str(health["text_value"]),
+                                source="chinaz",
+                                data_quality="verified",
+                                status=str(health["status"]),
+                                error_message=health["error_message"],
+                                raw_payload={
+                                    "scheduler_summary": True,
+                                    "code": health["code"],
+                                    "status_code": health["status_code"],
+                                    "attempted_keywords": site_attempted,
+                                    "planned_keywords": len(pending_ids),
+                                    "provider_requests": pair_provider_requests,
+                                },
+                                observed_at=datetime.utcnow(),
+                            ))
+                            await session.commit()
+                        budget_skipped = len(pending_ids) - attempted
+                        tenant_skipped += budget_skipped
+                        totals["skipped_pairs"] += budget_skipped
                 except Exception as exc:  # noqa: BLE001
                     await session.rollback()
                     remaining_pairs = max(

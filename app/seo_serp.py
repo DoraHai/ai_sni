@@ -6,6 +6,8 @@ import asyncio
 import random
 import re
 import unicodedata
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any
@@ -55,6 +57,40 @@ class SerpProviderError(RuntimeError):
         self.elapsed_ms = elapsed_ms
         self.attempts = attempts
         self.retry_after_seconds = retry_after_seconds
+
+
+SerpBatchItem = tuple[dict[str, Any] | None, SerpProviderError | None]
+
+
+@dataclass(frozen=True)
+class SerpBatchResult(Sequence[SerpBatchItem]):
+    """Sequence-compatible provider result with exact outbound-call accounting."""
+
+    items: list[SerpBatchItem]
+    provider_requests: int
+
+    def __getitem__(self, index):
+        return self.items[index]
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+    def __iter__(self) -> Iterator[SerpBatchItem]:
+        return iter(self.items)
+
+
+@dataclass
+class ProviderRequestCounter:
+    limit: int | None = None
+    used: int = 0
+
+    def consume(self) -> None:
+        if self.limit is not None and self.used >= max(0, self.limit):
+            raise SerpProviderError(
+                "provider_budget_exhausted",
+                "本次自动采集的供应商请求预算已用完",
+            )
+        self.used += 1
 
 
 def _remember_chinaz_health(
@@ -520,11 +556,14 @@ async def _chinaz_get_json(
     endpoint: str,
     params: dict[str, Any],
     client: httpx.AsyncClient,
+    request_counter: ProviderRequestCounter | None = None,
 ) -> dict[str, Any]:
     operation_started_at = perf_counter()
     for attempt in range(1, CHINAZ_MAX_ATTEMPTS + 1):
         started_at = perf_counter()
         try:
+            if request_counter is not None:
+                request_counter.consume()
             response = await client.get(endpoint, params=params)
             response.raise_for_status()
             payload = response.json()
@@ -640,12 +679,15 @@ async def fetch_chinaz_domestic_rank_batch(
     engine: str,
     domain: str,
     requests: list[tuple[str, str]],
-) -> list[tuple[dict[str, Any] | None, SerpProviderError | None]]:
+    *,
+    max_provider_requests: int | None = None,
+) -> SerpBatchResult:
     """Collect Baidu/360 direct rankings or match Sogou/360 domain keyword lists."""
     settings = get_settings()
     if engine not in CHINAZ_DOMESTIC_ENGINES:
         error = SerpProviderError("unsupported_engine", "该搜索引擎暂不支持站长之家自动采集")
-        return [(None, error) for _ in requests]
+        return SerpBatchResult([(None, error) for _ in requests], 0)
+    request_counter = ProviderRequestCounter(max_provider_requests)
     async with create_chinaz_client() as client:
         direct_requests: list[tuple[int, str, str, str, str]] = []
         grouped_lists: dict[str, list[tuple[int, str]]] = {}
@@ -674,6 +716,7 @@ async def fetch_chinaz_domestic_rank_batch(
                     endpoint=endpoint,
                     params={"domain": domain, "keyword": keyword, "APIKey": key, "ChinazVer": "1.0"},
                     client=client,
+                    request_counter=request_counter,
                 )
                 parsed = parse_domain_ranking_response(payload)
                 _remember_chinaz_health(engine, device)
@@ -695,6 +738,7 @@ async def fetch_chinaz_domestic_rank_batch(
                         endpoint=endpoint,
                         params={"domain": domain, "page": page, "APIKey": key, "ChinazVer": "1.0"},
                         client=client,
+                        request_counter=request_counter,
                     )
                     parsed_page = parse_domain_keyword_response(payload)
                     for item in parsed_page["items"]:
@@ -724,7 +768,10 @@ async def fetch_chinaz_domestic_rank_batch(
                 for index, _keyword in indexed_keywords:
                     aligned[index] = (None, exc)
     fallback = SerpProviderError("provider_error", "站长之家排名采集未完成")
-    return [item if item is not None else (None, fallback) for item in aligned]
+    return SerpBatchResult(
+        [item if item is not None else (None, fallback) for item in aligned],
+        request_counter.used,
+    )
 
 
 def dataforseo_status() -> dict[str, Any]:
@@ -828,6 +875,7 @@ async def fetch_dataforseo_serp(
     device: str,
     *,
     client: httpx.AsyncClient,
+    request_counter: ProviderRequestCounter | None = None,
 ) -> dict[str, Any]:
     if engine not in DATAFORSEO_ENGINES:
         raise SerpProviderError("unsupported_engine", "该搜索引擎暂不支持自动采集")
@@ -844,6 +892,8 @@ async def fetch_dataforseo_serp(
     async def request_once() -> dict[str, Any]:
         started_at = perf_counter()
         try:
+            if request_counter is not None:
+                request_counter.consume()
             response = await client.post(
                 endpoint,
                 auth=(settings.seo_dataforseo_login, settings.seo_dataforseo_password),
@@ -944,16 +994,28 @@ async def fetch_dataforseo_serp(
 async def fetch_dataforseo_serp_batch(
     engine: str,
     requests: list[tuple[str, str]],
-) -> list[tuple[dict[str, Any] | None, SerpProviderError | None]]:
+    *,
+    max_provider_requests: int | None = None,
+) -> SerpBatchResult:
     semaphore = asyncio.Semaphore(DATAFORSEO_MAX_CONCURRENCY)
+    request_counter = ProviderRequestCounter(max_provider_requests)
     async with create_dataforseo_client() as client:
         async def fetch_one(keyword: str, device: str):
             try:
                 async with semaphore:
-                    return await fetch_dataforseo_serp(engine, keyword, device, client=client), None
+                    return await fetch_dataforseo_serp(
+                        engine,
+                        keyword,
+                        device,
+                        client=client,
+                        request_counter=request_counter,
+                    ), None
             except SerpProviderError as exc:
                 return None, exc
-        return await asyncio.gather(*(fetch_one(keyword, device) for keyword, device in requests))
+        items = await asyncio.gather(
+            *(fetch_one(keyword, device) for keyword, device in requests)
+        )
+        return SerpBatchResult(items, request_counter.used)
 
 
 def deterministic_match(

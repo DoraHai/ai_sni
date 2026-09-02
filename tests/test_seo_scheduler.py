@@ -17,13 +17,17 @@ os.environ.setdefault(
 )
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
+from app.config import Settings
 from app.seo_ranking_jobs import (
     _SHANGHAI_TZ,
+    _collection_due,
     _engine_interval_days,
-    _engines_due_today,
     _group_keyword_ids_by_site,
+    _latest_successful_collections,
     _limited_batches,
     _local_day_start_utc,
+    _rotate_daily,
+    _scheduled_health_summary,
     _scheduled_rank_engines,
     collect_daily_seo_rankings,
 )
@@ -31,6 +35,17 @@ from app.seo_scheduler import shutdown_seo_scheduler, start_seo_scheduler
 
 
 class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
+    def test_default_rank_schedule_enables_domestic_cadence(self):
+        defaults = Settings.model_fields
+        self.assertEqual(
+            defaults["seo_rank_scheduler_engines"].default,
+            "baidu,sogou,360,google,bing",
+        )
+        self.assertEqual(
+            defaults["seo_rank_scheduler_engine_interval_days"].default,
+            "baidu:1,sogou:2,360:2",
+        )
+
     def test_request_budget_truncates_batches(self):
         self.assertEqual(_limited_batches([1, 2, 3, 4, 5], 2, 3), [[1, 2], [3]])
         self.assertEqual(_limited_batches([1, 2], 2, 0), [])
@@ -48,6 +63,19 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
             datetime(2026, 8, 21, 16, 0),
         )
 
+    def test_constrained_work_rotates_across_shanghai_days(self):
+        values = ["baidu", "sogou", "360"]
+        first_items = {
+            _rotate_daily(
+                values,
+                datetime(2026, 9, day, 2, 0),
+                salt=7,
+            )[0]
+            for day in (1, 2, 3)
+        }
+        self.assertEqual(first_items, set(values))
+        self.assertEqual(set(_rotate_daily(values, datetime(2026, 9, 1))), set(values))
+
     def test_scheduled_engines_require_dataforseo_credentials(self):
         settings = SimpleNamespace(
             seo_rank_scheduler_engines="baidu,google,bing,unknown,google"
@@ -61,7 +89,7 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
             ["baidu", "google", "bing"],
         )
 
-    def test_engine_cadence_supports_daily_and_every_two_days(self):
+    def test_engine_cadence_uses_last_success_and_retries_after_failure(self):
         settings = SimpleNamespace(
             seo_rank_scheduler_engine_interval_days="baidu:1,sogou:2,360:2"
         )
@@ -69,38 +97,153 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
             _engine_interval_days(settings),
             {"baidu": 1, "sogou": 2, "360": 2},
         )
-        self.assertEqual(
-            _engines_due_today(
-                ["baidu", "sogou", "360"],
-                settings,
-                now=datetime(2026, 9, 2, 2, 0, tzinfo=_SHANGHAI_TZ),
-            ),
-            ["baidu", "sogou", "360"],
+        last_success = datetime(2026, 9, 1, 18, 0)
+        self.assertFalse(
+            _collection_due(last_success, 2, datetime(2026, 9, 3, 17, 59))
         )
-        self.assertEqual(
-            _engines_due_today(
-                ["baidu", "sogou", "360"],
-                settings,
-                now=datetime(2026, 9, 3, 2, 0, tzinfo=_SHANGHAI_TZ),
-            ),
-            ["baidu"],
+        self.assertTrue(
+            _collection_due(last_success, 2, datetime(2026, 9, 3, 18, 0))
+        )
+        self.assertTrue(_collection_due(None, 2, datetime(2026, 9, 2, 18, 0)))
+
+    def test_invalid_engine_cadence_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "cadence"):
+            _engine_interval_days(SimpleNamespace(
+                seo_rank_scheduler_engine_interval_days="sogou:not-a-number"
+            ))
+
+    async def test_latest_domestic_success_uses_available_health_only(self):
+        health_at = datetime(2026, 9, 1, 4, 0)
+        session = SimpleNamespace(execute=AsyncMock(return_value=
+            SimpleNamespace(all=lambda: [
+                (3, "sogou:desktop", "available", health_at)
+            ])))
+        latest = await _latest_successful_collections(
+            session,
+            tenant_id=7,
+            site_ids={3},
+            engines={"sogou"},
+        )
+        self.assertEqual(latest[(3, "sogou", "desktop")], health_at)
+        self.assertEqual(session.execute.await_count, 1)
+        statement = str(session.execute.await_args.args[0])
+        self.assertIn("seo_metric_snapshots.site_id IN", statement)
+        self.assertIn("seo_metric_snapshots.metric_type =", statement)
+        self.assertIn("seo_metric_snapshots.source =", statement)
+
+    def test_scheduled_health_preserves_supplier_failure(self):
+        health = _scheduled_health_summary(
+            incomplete=True,
+            successful_observations=0,
+            errors=[{
+                "code": "provider_quota_exceeded",
+                "status_code": 436,
+                "message": "站长之家接口额度不足",
+            }],
+        )
+        self.assertEqual(health["status"], "failed")
+        self.assertEqual(health["code"], "provider_quota_exceeded")
+        self.assertEqual(health["status_code"], 436)
+        self.assertEqual(health["error_message"], "站长之家接口额度不足")
+
+    def test_scheduled_health_keeps_supplier_code_for_partial_run(self):
+        health = _scheduled_health_summary(
+            incomplete=True,
+            successful_observations=2,
+            errors=[{
+                "code": "provider_ip_rejected",
+                "status_code": 437,
+                "message": "生产出口 IP 未加入白名单",
+            }],
+        )
+        self.assertEqual(health["status"], "partial")
+        self.assertEqual(health["code"], "provider_ip_rejected")
+        self.assertEqual(health["status_code"], 437)
+
+    def test_scheduled_health_prioritizes_supplier_error_over_timeout(self):
+        health = _scheduled_health_summary(
+            incomplete=True,
+            successful_observations=1,
+            errors=[
+                {"code": "provider_timeout", "message": "请求超时"},
+                {
+                    "code": "provider_quota_exceeded",
+                    "status_code": 436,
+                    "message": "接口额度不足",
+                },
+            ],
+        )
+        self.assertEqual(health["status"], "partial")
+        self.assertEqual(health["code"], "provider_quota_exceeded")
+        self.assertEqual(health["status_code"], 436)
+
+    def test_scheduled_health_marks_complete_run_available(self):
+        health = _scheduled_health_summary(
+            incomplete=False,
+            successful_observations=3,
+            errors=[],
+        )
+        self.assertEqual(health["status"], "available")
+        self.assertIsNone(health["code"])
+
+    async def test_recent_success_skips_non_daily_engine_in_full_job(self):
+        settings = SimpleNamespace(
+            seo_rank_scheduler_enabled=True,
+            seo_rank_scheduler_engines="sogou",
+            seo_rank_scheduler_engine_interval_days="sogou:2",
+            seo_rank_scheduler_max_keywords_per_tenant=200,
+            seo_rank_scheduler_max_requests_per_run=1000,
+            seo_rank_scheduler_batch_size=20,
+            seo_rank_scheduler_use_ai=False,
+        )
+        recent = datetime.utcnow()
+        session = SimpleNamespace(
+            execute=AsyncMock(side_effect=[
+                SimpleNamespace(all=lambda: []),
+                SimpleNamespace(all=lambda: [(101, 3)]),
+                SimpleNamespace(all=lambda: [
+                    (3, "sogou:desktop", "available", recent),
+                    (3, "sogou:mobile", "available", recent),
+                ]),
+            ]),
+            scalars=AsyncMock(return_value=[7]),
         )
 
-    def test_invalid_engine_cadence_falls_back_to_daily(self):
-        settings = SimpleNamespace(
-            seo_rank_scheduler_engine_interval_days=(
-                "baidu:0,sogou:not-a-number,360:31,unknown:2"
-            )
-        )
-        self.assertEqual(_engine_interval_days(settings), {})
-        self.assertEqual(
-            _engines_due_today(
-                ["baidu", "sogou", "360"],
-                settings,
-                now=datetime(2026, 9, 3, 2, 0, tzinfo=_SHANGHAI_TZ),
+        class SessionContext:
+            async def __aenter__(self):
+                return session
+
+            async def __aexit__(self, *_args):
+                return False
+
+        with (
+            patch("app.seo_ranking_jobs.get_settings", return_value=settings),
+            patch("app.seo_ranking_jobs.chinaz_rank_status", return_value={
+                "sogou": {"configured": True}
+            }),
+            patch("app.seo_ranking_jobs.acquire_file_lock", return_value=object()),
+            patch(
+                "app.seo_ranking_jobs.list_active_module_tenants",
+                new=AsyncMock(return_value=[SimpleNamespace(id=7)]),
             ),
-            ["baidu", "sogou", "360"],
-        )
+            patch(
+                "app.seo_ranking_jobs.async_session_factory",
+                return_value=SessionContext(),
+            ),
+            patch(
+                "app.api.seo.collect_rank_serp_for_tenant",
+                new=AsyncMock(),
+            ) as collector,
+            patch(
+                "app.seo_ranking_jobs.start_automation_run",
+                new=AsyncMock(),
+            ) as start_run,
+            patch("app.seo_ranking_jobs.release_file_lock"),
+        ):
+            await collect_daily_seo_rankings()
+
+        collector.assert_not_awaited()
+        start_run.assert_not_awaited()
 
     async def test_disabled_collection_does_not_take_run_lock(self):
         settings = SimpleNamespace(seo_rank_scheduler_enabled=False)
@@ -270,6 +413,77 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
             failed_count=0,
             skipped_count=0,
             error_summary="",
+        )
+
+    async def test_unexpected_batch_failure_conservatively_exhausts_hard_budget(self):
+        settings = SimpleNamespace(
+            seo_rank_scheduler_enabled=True,
+            seo_rank_scheduler_engines="baidu",
+            seo_rank_scheduler_max_keywords_per_tenant=200,
+            seo_rank_scheduler_max_requests_per_run=1,
+            seo_rank_scheduler_batch_size=20,
+            seo_rank_scheduler_use_ai=False,
+        )
+        session = SimpleNamespace(
+            execute=AsyncMock(side_effect=[
+                SimpleNamespace(all=lambda: []),
+                SimpleNamespace(all=lambda: [(101, 3)]),
+                SimpleNamespace(all=lambda: []),
+            ]),
+            scalars=AsyncMock(return_value=[7]),
+            rollback=AsyncMock(),
+        )
+
+        class SessionContext:
+            async def __aenter__(self):
+                return session
+
+            async def __aexit__(self, *_args):
+                return False
+
+        collector = AsyncMock(side_effect=RuntimeError("post-provider failure"))
+        finish_run = AsyncMock()
+        with (
+            patch("app.seo_ranking_jobs.get_settings", return_value=settings),
+            patch(
+                "app.seo_ranking_jobs.chinaz_rank_status",
+                return_value={"baidu": {"configured": True}},
+            ),
+            patch("app.seo_ranking_jobs.acquire_file_lock", return_value=object()),
+            patch(
+                "app.seo_ranking_jobs.list_active_module_tenants",
+                new=AsyncMock(return_value=[SimpleNamespace(id=7)]),
+            ),
+            patch(
+                "app.seo_ranking_jobs.async_session_factory",
+                return_value=SessionContext(),
+            ),
+            patch(
+                "app.api.seo.collect_rank_serp_for_tenant",
+                new=collector,
+            ),
+            patch(
+                "app.seo_ranking_jobs.start_automation_run",
+                new=AsyncMock(return_value=73),
+            ),
+            patch(
+                "app.seo_ranking_jobs.finish_automation_run",
+                new=finish_run,
+            ),
+            patch("app.seo_ranking_jobs.release_file_lock"),
+        ):
+            await collect_daily_seo_rankings()
+
+        self.assertEqual(collector.await_count, 1)
+        self.assertEqual(collector.await_args.kwargs["provider_request_budget"], 1)
+        attempted_device = collector.await_args.kwargs["devices"][0]
+        finish_run.assert_awaited_once_with(
+            73,
+            planned_count=2,
+            success_count=0,
+            failed_count=1,
+            skipped_count=1,
+            error_summary=f"baidu/{attempted_device}:RuntimeError",
         )
 
     async def test_configured_google_and_bing_join_daily_collection(self):

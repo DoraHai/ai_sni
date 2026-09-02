@@ -38,7 +38,9 @@ from app.api.seo import (
     _missing_content_keywords,
     _number_or_text,
     _provider_metric_status,
+    _preferred_provider_error,
     _rank_iso,
+    _rank_provider_display_status,
     require_seo_module_access,
     _serp_error_payload,
     _normalize_brand_homepage,
@@ -1309,6 +1311,42 @@ def test_stale_automatic_rank_is_not_exposed_as_current_rank() -> None:
     assert payload["rank_source"] == "chinaz_rank"
 
 
+def test_rank_freshness_covers_configured_two_day_collection_cadence() -> None:
+    checked_at = datetime.utcnow() - timedelta(hours=50)
+    keyword = SeoKeywordAsset(
+        id=1,
+        tenant_id=2,
+        keyword="SEO 服务",
+        priority="P1",
+        status="active",
+        source="manual",
+        created_at=checked_at,
+        updated_at=checked_at,
+    )
+    latest = SeoRankSnapshot(
+        id=11,
+        tenant_id=2,
+        keyword_id=1,
+        engine="sogou",
+        device="desktop",
+        region="全国",
+        subject_type="own",
+        rank=4,
+        source="chinaz_domain_keywords",
+        checked_at=checked_at,
+    )
+    with patch(
+        "app.api.seo.get_settings",
+        return_value=SimpleNamespace(
+            seo_rank_snapshot_stale_hours=36,
+            seo_rank_scheduler_engine_interval_days="sogou:2",
+        ),
+    ):
+        payload = _keyword_payload(keyword, latest)
+    assert payload["latest_rank"] == 4
+    assert payload["rank_is_stale"] is False
+
+
 def test_rank_timestamps_are_serialized_as_explicit_utc_instants() -> None:
     assert _rank_iso(datetime(2026, 8, 24, 16, 57, 3)) == "2026-08-24T16:57:03Z"
     shanghai_value = datetime(
@@ -1661,3 +1699,33 @@ def test_provider_metric_mapping_distinguishes_zero_from_missing() -> None:
     assert _number_or_text(0) == (0.0, None)
     assert _number_or_text("1,280") == (1280.0, None)
     assert _number_or_text("10-20") == (None, "10-20")
+
+
+def test_rank_provider_display_prioritizes_supplier_errors() -> None:
+    assert _rank_provider_display_status("available", None) == "ready"
+    assert (
+        _rank_provider_display_status("partial", "provider_quota_exceeded")
+        == "supplier_error"
+    )
+    assert (
+        _rank_provider_display_status("failed", "provider_ip_rejected")
+        == "supplier_error"
+    )
+    assert _rank_provider_display_status("partial", "provider_timeout") == (
+        "partially_available"
+    )
+    assert _rank_provider_display_status("failed", "provider_timeout") == (
+        "temporarily_unavailable"
+    )
+
+
+def test_provider_health_prefers_supplier_error_over_transient_failure() -> None:
+    timeout = SerpProviderError("provider_timeout", "请求超时", retryable=True)
+    quota = SerpProviderError(
+        "provider_quota_exceeded",
+        "接口额度不足",
+        status_code=436,
+    )
+    assert _preferred_provider_error([timeout, quota]) is quota
+    assert _preferred_provider_error([timeout]) is timeout
+    assert _preferred_provider_error([]) is None
