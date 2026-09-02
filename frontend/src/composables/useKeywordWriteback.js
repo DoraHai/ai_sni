@@ -23,7 +23,7 @@ export function useKeywordWriteback({ tenantId, onSuccess } = {}) {
 
     try {
       await ElMessageBox.confirm(
-        `将把「${keywordText || `关键词 #${keywordId}`}」的建议出价 ¥${Number(price).toFixed(2)}${currentPrice == null ? '' : `（当前 ¥${Number(currentPrice).toFixed(2)}）`}加入待回写台账。\n当前只读演练，不会修改百度账户；仍会执行 ±20% 渐进调价校验。`,
+        `将把「${keywordText || `关键词 #${keywordId}`}」的建议出价 ¥${Number(price).toFixed(2)}${currentPrice == null ? '' : `（当前 ¥${Number(currentPrice).toFixed(2)}）`}提交回写。\n系统将按当前客户、推广账户和动作门禁决定演练或真实执行；真实执行会修改百度账户。仍会执行 ±20% 渐进调价校验。`,
         '加入待回写台账',
         { confirmButtonText: '加入待回写', cancelButtonText: '取消', type: 'warning' },
       )
@@ -59,7 +59,7 @@ export function useKeywordWriteback({ tenantId, onSuccess } = {}) {
 
     try {
       await ElMessageBox.confirm(
-        `确认将「${keywordText}」的匹配模式从「${currentMatchLabel || '—'}」改为「${target.label}」？\n当前为演练模式时，仅记入回写台账、不会真改线上匹配模式。`,
+        `确认将「${keywordText}」的匹配模式从「${currentMatchLabel || '—'}」改为「${target.label}」？\n系统将按当前客户、推广账户和动作门禁决定演练或真实执行；真实执行会修改百度账户。`,
         '确认修改匹配模式',
         { confirmButtonText: '确认修改', cancelButtonText: '取消', type: 'warning' },
       )
@@ -96,7 +96,7 @@ export function useKeywordWriteback({ tenantId, onSuccess } = {}) {
 
     try {
       await ElMessageBox.confirm(
-        `将${action}关键词「${keywordText}」。\n受 dry-run 保护，演练模式下不真改线上。`,
+        `将${action}关键词「${keywordText}」。\n系统将按当前客户、推广账户和动作门禁决定演练或真实执行；真实执行会修改百度账户。`,
         `确认${action}`,
         { confirmButtonText: `确认${action}`, cancelButtonText: '取消', type: 'warning' },
       )
