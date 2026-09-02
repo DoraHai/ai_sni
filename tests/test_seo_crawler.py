@@ -52,6 +52,7 @@ def test_normalize_crawl_url_removes_fragment_and_rejects_credentials() -> None:
         ("https://example.com/calendar/event.ics?download=1", False),
         ("https://example.com/media/photo.JPG", False),
         ("https://example.com/software/archive.zip", False),
+        ("https://example.com/cdn-cgi/l/email-protection#abc123", False),
     ],
 )
 def test_is_html_page_url_rejects_known_file_assets(url: str, expected: bool) -> None:
@@ -80,7 +81,9 @@ def test_html_analysis_extracts_seo_evidence_and_issues() -> None:
       <script type="application/ld+json">{"@type":"Product","name":"Pump"}</script>
     </head><body><main><h1>Industrial Pump</h1>
       <p>Detailed product description with materials, applications, standards and technical specifications for buyers.</p>
-      <a href="/contact">Contact</a><img src="pump.jpg">
+      <a href="/contact">Contact</a>
+      <a href="/cdn-cgi/l/email-protection#abc123">Protected email</a>
+      <img src="pump.jpg">
     </main></body></html>
     """
     snapshot = analyze_html(_result("https://example.com/pump", html))

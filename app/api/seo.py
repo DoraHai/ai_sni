@@ -7084,7 +7084,11 @@ async def crawl_internal_links(tenant_id: int, page_id: int, session: AsyncSessi
     for node in soup.select("a[href]"):
         target = urljoin(document.final_url, str(node.get("href") or "")).split("#", 1)[0]
         parsed = urlparse(target)
-        if parsed.scheme in {"http", "https"} and parsed.hostname == source_host:
+        if (
+            parsed.scheme in {"http", "https"}
+            and parsed.hostname == source_host
+            and is_html_page_url(target)
+        ):
             discovered[target] = node.get_text(" ", strip=True)[:500] or None
     known_conditions = [SeoSitePage.tenant_id == tenant_id]
     if page.site_id is not None:
