@@ -62,6 +62,7 @@ const providerLabel = computed(() => currentProvider.value.provider === 'chinaz'
   : currentProvider.value.provider === 'dataforseo_live' ? 'DataForSEO' : '仅人工导入')
 const providerStatusText = computed(() => ({
   ready: '自动采集正常',
+  partially_available: '部分关键词采集失败',
   supplier_error: '供应商异常',
   temporarily_unavailable: '供应商暂时不可用',
   not_configured: '未配置',
@@ -180,7 +181,7 @@ async function loadSites() {
 
 async function loadCollectStatus() {
   if (!currentTenantId.value || !siteId.value) return
-  try { collectLimit.value = await fetchSeoRankCollectStatus({ tenantId: currentTenantId.value, siteId: siteId.value }) }
+  try { collectLimit.value = await fetchSeoRankCollectStatus({ tenantId: currentTenantId.value, siteId: siteId.value, engine: engine.value }) }
   catch (err) { error.value = err.message }
 }
 
@@ -226,8 +227,10 @@ async function collect() {
     const failed = Array.isArray(summary.errors) ? summary.errors.length : 0
     const collectedDevice = collectForm.devices.length === 1 ? collectForm.devices[0] : null
     collectOutcome.value = {
-      status: failed ? 'partial' : 'success',
-      title: failed
+      status: summary.manual_fallback ? 'partial' : failed ? 'partial' : 'success',
+      title: summary.manual_fallback
+        ? summary.message
+        : failed
         ? `采集部分完成：${summary.snapshots}/${summary.requests} 个排名快照成功，${failed} 个请求失败`
         : `采集完成：${summary.snapshots} 个排名快照成功`,
       requests: Number(summary.requests || 0),
@@ -335,7 +338,7 @@ async function confirmOwnership(item, ownershipType) {
 let timer
 watch(() => filters.q, () => { clearTimeout(timer); timer = setTimeout(load, 260) })
 watch([engine, device, siteId, ownership], load)
-watch(siteId, loadCollectStatus)
+watch([engine, siteId], loadCollectStatus)
 watch(siteId, loadProviders)
 watch([currentTenantId, siteId], () => { collectOutcome.value = null; collectForm.keyword_ids = [] })
 watch(currentTenantId, loadSites)

@@ -117,9 +117,9 @@ export function collectSeoRankSerp(payload) {
   return client.post('/api/v1/seo/rank-serp/collect', payload, { timeout: 180000 })
 }
 
-export function fetchSeoRankCollectStatus({ tenantId, siteId }) {
+export function fetchSeoRankCollectStatus({ tenantId, siteId, engine = 'baidu' }) {
   return client.get('/api/v1/seo/rank-serp/collect-status', {
-    params: { tenant_id: tenantId, site_id: siteId },
+    params: { tenant_id: tenantId, site_id: siteId, engine },
   })
 }
 

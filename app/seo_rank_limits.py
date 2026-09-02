@@ -38,6 +38,7 @@ class ManualRankLimitError(Exception):
 class ManualRankReservation:
     token: str
     requested: int
+    scope: str
     status: dict
 
 
@@ -145,14 +146,20 @@ def _active_reservation_retry_after(state: dict, now: datetime) -> int:
 def _payload(
     state: dict,
     *,
+    scope: str,
     now: datetime,
     cooldown_seconds: int,
     max_requests_per_day: int,
 ) -> dict:
     current_day = _local_day(now).isoformat()
     used = int(state.get("daily_requests") or 0) if state.get("daily_date") == current_day else 0
-    last_attempt = _aware_utc(state.get("last_attempt_at"))
-    next_allowed = last_attempt + timedelta(seconds=cooldown_seconds) if last_attempt else now
+    scoped_success = state.get("last_success_at_by_scope")
+    if not isinstance(scoped_success, dict):
+        scoped_success = {}
+    last_success = _aware_utc(scoped_success.get(scope))
+    if last_success is None and scope == "default":
+        last_success = _aware_utc(state.get("last_attempt_at"))
+    next_allowed = last_success + timedelta(seconds=cooldown_seconds) if last_success else now
     cooldown_retry = max(0, int((next_allowed - now).total_seconds() + 0.999))
     reservation_retry = _active_reservation_retry_after(state, now)
     retry_after = max(cooldown_retry, reservation_retry)
@@ -195,6 +202,7 @@ async def manual_rank_status(
     tenant_id: int,
     site_id: int,
     *,
+    scope: str = "default",
     cooldown_seconds: int,
     max_requests_per_day: int,
     now: datetime | None = None,
@@ -218,6 +226,7 @@ async def manual_rank_status(
                 await session.commit()
     return _payload(
         state,
+        scope=scope,
         now=current,
         cooldown_seconds=max(1, cooldown_seconds),
         max_requests_per_day=max(1, max_requests_per_day),
@@ -230,6 +239,7 @@ async def reserve_manual_rank_collection(
     site_id: int,
     request_count: int,
     *,
+    scope: str = "default",
     cooldown_seconds: int,
     max_requests_per_day: int,
     now: datetime | None = None,
@@ -256,6 +266,7 @@ async def reserve_manual_rank_collection(
             active_retry,
         )
     state.pop("reservation_token", None)
+    state.pop("reservation_scope", None)
     state.pop("reserved_requests", None)
     state.pop("reservation_expires_at", None)
     if state.get("daily_date") != current_day:
@@ -263,6 +274,7 @@ async def reserve_manual_rank_collection(
         state["daily_requests"] = 0
     status = _payload(
         state,
+        scope=scope,
         now=current,
         cooldown_seconds=cooldown,
         max_requests_per_day=daily_limit,
@@ -294,8 +306,8 @@ async def reserve_manual_rank_collection(
         )
     token = str(uuid4())
     state.update(
-        last_attempt_at=_naive_utc(current).isoformat(),
         reservation_token=token,
+        reservation_scope=scope,
         reserved_requests=requested,
         reservation_expires_at=_naive_utc(
             current + timedelta(seconds=MANUAL_RANK_RESERVATION_TTL_SECONDS)
@@ -306,8 +318,10 @@ async def reserve_manual_rank_collection(
     return ManualRankReservation(
         token=token,
         requested=requested,
+        scope=scope,
         status=_payload(
             state,
+            scope=scope,
             now=current,
             cooldown_seconds=cooldown,
             max_requests_per_day=daily_limit,
@@ -327,7 +341,10 @@ async def renew_manual_rank_collection(
     current = now or _utc_now()
     site = await _site(session, tenant_id, site_id, for_update=True)
     state = _state(site)
-    if state.get("reservation_token") != reservation.token:
+    if (
+        state.get("reservation_token") != reservation.token
+        or state.get("reservation_scope") != reservation.scope
+    ):
         await session.rollback()
         return False
     state["reservation_expires_at"] = _naive_utc(
@@ -352,7 +369,10 @@ async def settle_manual_rank_collection(
     current = now or _utc_now()
     site = await _site(session, tenant_id, site_id, for_update=True)
     state = _state(site)
-    if state.get("reservation_token") != reservation.token:
+    if (
+        state.get("reservation_token") != reservation.token
+        or state.get("reservation_scope") != reservation.scope
+    ):
         await session.rollback()
         raise ManualRankLimitError(
             "limit_reservation_lost",
@@ -361,13 +381,20 @@ async def settle_manual_rank_collection(
         )
     charged = min(reservation.requested, max(0, int(successful_requests)))
     state["daily_requests"] = int(state.get("daily_requests") or 0) + charged
+    if charged:
+        scoped_success = state.get("last_success_at_by_scope")
+        scoped_success = dict(scoped_success) if isinstance(scoped_success, dict) else {}
+        scoped_success[reservation.scope] = _naive_utc(current).isoformat()
+        state["last_success_at_by_scope"] = scoped_success
     state.pop("reservation_token", None)
+    state.pop("reservation_scope", None)
     state.pop("reserved_requests", None)
     state.pop("reservation_expires_at", None)
     _store_state(site, state)
     await session.commit()
     return _payload(
         state,
+        scope=reservation.scope,
         now=current,
         cooldown_seconds=max(1, cooldown_seconds),
         max_requests_per_day=max(1, max_requests_per_day),

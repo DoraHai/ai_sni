@@ -1980,22 +1980,36 @@ async def collect_rank_serp_for_tenant(
         for observed_device in devices:
             provider_errors = provider_errors_by_device.get(observed_device, [])
             error = provider_errors[0] if provider_errors else None
+            successful_observation = observed_device in provider_success_devices
+            health_status = (
+                "partial"
+                if error is not None and successful_observation
+                else "available" if error is None else "failed"
+            )
             session.add(SeoMetricSnapshot(
                 tenant_id=tenant_id,
                 site_id=site_id,
                 metric_type="rank_provider_health",
                 dimension=f"{engine}:{observed_device}",
-                text_value="ready" if error is None else error.code,
+                text_value=(
+                    "partial" if health_status == "partial"
+                    else "ready" if error is None else error.code
+                ),
                 source="chinaz",
                 data_quality="verified",
-                status="available" if error is None else "failed",
-                error_message=None if error is None else error.public_message,
+                status=health_status,
+                error_message=(
+                    None if error is None
+                    else f"部分关键词采集失败：{error.public_message}"
+                    if health_status == "partial"
+                    else error.public_message
+                ),
                 raw_payload={
                     "engine": engine,
                     "device": observed_device,
                     "code": None if error is None else error.code,
                     "status_code": None if error is None else error.status_code,
-                    "successful_observation": observed_device in provider_success_devices,
+                    "successful_observation": successful_observation,
                 },
                 observed_at=health_observed_at,
             ))
@@ -2108,6 +2122,7 @@ async def collect_rank_serp(
                 req.tenant_id,
                 req.site_id,
                 requested,
+                scope=req.engine,
                 cooldown_seconds=settings.seo_manual_rank_cooldown_seconds,
                 max_requests_per_day=settings.seo_manual_rank_max_requests_per_day,
             )
@@ -2179,8 +2194,16 @@ async def collect_rank_serp(
             ) from exc
     finally:
         release_file_lock(collection_lock)
-    if result["errors"] and result["snapshots"] == 0:
+    manual_fallback = bool(
+        result["errors"]
+        and result["snapshots"] == 0
+        and all(item.get("code") == "keyword_not_found" for item in result["errors"])
+    )
+    if result["errors"] and result["snapshots"] == 0 and not manual_fallback:
         raise HTTPException(502, "本次排名采集全部失败，请稍后重试或联系管理员")
+    result["manual_fallback"] = manual_fallback
+    if manual_fallback:
+        result["message"] = "自动站点词表未包含所选监控词，请使用人工导入"
     result["manual_limit"] = limit_status
     return result
 
@@ -2189,6 +2212,7 @@ async def collect_rank_serp(
 async def rank_serp_collect_status(
     tenant_id: int,
     site_id: int,
+    engine: Literal["baidu", "google", "bing", "360", "sogou"] = "baidu",
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     await _seo_site(session, tenant_id, site_id)
@@ -2198,6 +2222,7 @@ async def rank_serp_collect_status(
             session,
             tenant_id,
             site_id,
+            scope=engine,
             cooldown_seconds=settings.seo_manual_rank_cooldown_seconds,
             max_requests_per_day=settings.seo_manual_rank_max_requests_per_day,
         )
@@ -2234,6 +2259,7 @@ async def rank_serp_providers(
             code = str(raw.get("code") or "") or None
             device_status.update({
                 "status": "ready" if row.status == "available" else (
+                    "partially_available" if row.status == "partial" else
                     "supplier_error"
                     if code in {"provider_quota_exceeded", "provider_ip_rejected", "provider_auth_failed"}
                     else "temporarily_unavailable"

@@ -1433,6 +1433,7 @@ def test_all_failed_serp_collection_returns_generic_safe_error() -> None:
     )
     assert "provider" not in str(getattr(exc.value, "detail", ""))
     assert reserve.await_args.args[3] == 1
+    assert reserve.await_args.kwargs["scope"] == "baidu"
     assert settle.await_args.args[4] == 0
     assert collector.await_args.kwargs["keyword_ids"] == [3]
     assert collector.await_args.kwargs["max_keywords"] == 1
@@ -1494,6 +1495,64 @@ def test_partial_serp_collection_charges_only_successful_provider_requests() -> 
     assert settle.await_args.args[4] == 1
     assert collector.await_args.kwargs["commit"] is False
     assert result["manual_limit"]["daily_requests_used"] == 1
+
+
+def test_domain_keyword_miss_returns_manual_fallback_without_cooldown() -> None:
+    request = SerpCollectRequest(
+        tenant_id=1,
+        site_id=1,
+        engine="sogou",
+        keyword_ids=[3],
+        devices=["desktop"],
+        max_keywords=1,
+        use_ai=False,
+    )
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.keywords": "edit"},
+    )
+    collected = {
+        "snapshots": 0,
+        "requests": 1,
+        "errors": [{"keyword_id": 3, "device": "desktop", "code": "keyword_not_found"}],
+    }
+    session = AsyncMock()
+    session.scalar = AsyncMock(return_value=1)
+    reservation = SimpleNamespace(token="reservation-sogou", requested=1, scope="sogou", status={})
+    reserve = AsyncMock(return_value=reservation)
+    settle = AsyncMock(return_value={
+        "allowed": True,
+        "retry_after_seconds": 0,
+        "daily_requests_used": 0,
+    })
+    with patch(
+        "app.api.seo.collect_rank_serp_for_tenant",
+        new=AsyncMock(return_value=collected),
+    ), patch(
+        "app.api.seo._seo_site",
+        new=AsyncMock(return_value=object()),
+    ), patch(
+        "app.api.seo.acquire_file_lock",
+        return_value=object(),
+    ), patch(
+        "app.api.seo.release_file_lock",
+    ), patch(
+        "app.api.seo.reserve_manual_rank_collection",
+        reserve,
+    ), patch(
+        "app.api.seo.settle_manual_rank_collection",
+        settle,
+    ):
+        result = asyncio.run(collect_rank_serp(request, session, context))
+
+    assert result["manual_fallback"] is True
+    assert result["message"] == "自动站点词表未包含所选监控词，请使用人工导入"
+    assert result["manual_limit"]["retry_after_seconds"] == 0
+    assert reserve.await_args.kwargs["scope"] == "sogou"
+    assert settle.await_args.args[4] == 0
 
 
 @pytest.mark.parametrize("site_id", [None, 0, -1])

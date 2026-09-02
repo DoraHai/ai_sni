@@ -326,9 +326,12 @@ def test_seo_content_and_rank_views_are_site_scoped_and_html_safe() -> None:
     assert "keyword_ids: collectForm.keyword_ids" in ranking
     assert "formatSeoRankTime(serp.captured_at)" in ranking
     assert "供应商异常" in ranking
+    assert "部分关键词采集失败" in ranking
     assert "数据已过期" in ranking
     assert "数据源 {{ providerLabel }}" in ranking
     assert "manualImportVisible" in ranking
+    assert "summary.manual_fallback" in ranking
+    assert "engine: engine.value" in ranking
     assert "openKeywordDetail(row.id)" in ranking
     assert "query: { engine: engine.value, device: device.value }" in ranking
     keyword_detail = (root / "frontend/src/views/seo/SeoKeywordDetailView.vue").read_text(encoding="utf-8")
