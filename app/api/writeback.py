@@ -74,6 +74,8 @@ async def get_writeback_mode(
         account_modes.append(
             {
                 "baidu_account_id": account.id,
+                "account_name": account.baidu_username,
+                "external_account_id": str(account.baidu_ucid),
                 "live_scopes": live_scopes,
                 "mode": "limited_live" if live_scopes else "dry_run",
             }
