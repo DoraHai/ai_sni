@@ -81,6 +81,7 @@ for (const marker of [
   '接入 Google Search Console',
   '网站技术扫描确认',
   'include_known_pages',
+  '失败原因：',
 ]) {
   if (!javascript.includes(marker)) {
     throw new Error(`SEO build is missing the multi-engine/traffic marker: ${marker}`)
