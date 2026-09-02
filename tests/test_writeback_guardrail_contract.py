@@ -23,6 +23,7 @@ from app.baidu.writeback import (
     _preflight_active_account,
 )
 from app.api.writeback import get_writeback_mode
+from app.config import SEM_CUSTOMER_LIVE_WRITE_SCOPES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -181,9 +182,25 @@ def test_live_write_scope_is_checked_in_orchestration_and_http_client():
     assert "tenant_id=baidu_account.tenant_id" in account_client
     assert "baidu_account_id=baidu_account.id" in account_client
 
+    orchestration_scopes = {
+        node.args[2].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_effective_dry_run"
+        and len(node.args) >= 3
+        and isinstance(node.args[2], ast.Constant)
+        and isinstance(node.args[2].value, str)
+    }
+    assert orchestration_scopes == SEM_CUSTOMER_LIVE_WRITE_SCOPES
+
 
 def test_writeback_mode_only_reports_current_tenant_account_permissions():
-    account = SimpleNamespace(id=17)
+    account = SimpleNamespace(
+        id=17,
+        baidu_username="Tiger SEM",
+        baidu_ucid=50661708,
+    )
     session = SimpleNamespace(
         scalars=AsyncMock(
             return_value=SimpleNamespace(all=lambda: [account])
@@ -213,6 +230,8 @@ def test_writeback_mode_only_reports_current_tenant_account_permissions():
     assert result["accounts"] == [
         {
             "baidu_account_id": 17,
+            "account_name": "Tiger SEM",
+            "external_account_id": "50661708",
             "live_scopes": ["keyword_bid"],
             "mode": "limited_live",
         }
@@ -220,6 +239,7 @@ def test_writeback_mode_only_reports_current_tenant_account_permissions():
 
 
 def test_every_baidu_service_write_declares_an_action_scope():
+    builder_only_scopes = {"campaign_create", "adgroup_create", "creative_create"}
     service_root = ROOT / "app/baidu/services"
     for path in service_root.glob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -234,6 +254,7 @@ def test_every_baidu_service_write_declares_an_action_scope():
             assert scope is not None, f"{path.name}:{node.lineno} missing write_scope"
             if isinstance(scope, ast.Constant):
                 assert isinstance(scope.value, str) and scope.value
+                assert scope.value in SEM_CUSTOMER_LIVE_WRITE_SCOPES | builder_only_scopes
 
 
 def test_example_env_keeps_live_write_fail_closed():
@@ -242,6 +263,7 @@ def test_example_env_keeps_live_write_fail_closed():
     assert "BAIDU_LIVE_WRITE_TENANT_IDS=\n" in example
     assert "BAIDU_LIVE_WRITE_ACCOUNT_IDS=\n" in example
     assert "BAIDU_LIVE_WRITE_SCOPES=\n" in example
+    assert "BAIDU_LIVE_WRITE_GRANTS=\n" in example
     assert "BAIDU_LEGACY_SPLIT_CONFIRMATION_ENABLED=true" in example
 
 

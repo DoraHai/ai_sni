@@ -128,7 +128,7 @@ class ProdGuardTests(unittest.TestCase):
         matches = [issue for issue in issues if "ADMIN_API_KEY_QUERY_ENABLED" in issue]
         self.assertEqual(len(matches), 1)
 
-    def test_live_baidu_write_requires_nonempty_valid_double_allowlist(self):
+    def test_live_baidu_write_requires_nonempty_valid_bound_grants(self):
         key = base64.b64encode(b"6" * 32).decode()
         common = dict(
             app_env="prod",
@@ -139,9 +139,7 @@ class ProdGuardTests(unittest.TestCase):
             baidu_write_dry_run=False,
         )
         issues = collect_production_issues(SimpleNamespace(**common))
-        self.assertTrue(any("BAIDU_LIVE_WRITE_TENANT_IDS" in item for item in issues))
-        self.assertTrue(any("BAIDU_LIVE_WRITE_ACCOUNT_IDS" in item for item in issues))
-        self.assertTrue(any("BAIDU_LIVE_WRITE_SCOPES" in item for item in issues))
+        self.assertTrue(any("BAIDU_LIVE_WRITE_GRANTS" in item for item in issues))
         self.assertTrue(any("BAIDU_LEGACY_SPLIT_CONFIRMATION_ENABLED" in item for item in issues))
 
         invalid = collect_production_issues(
@@ -154,6 +152,24 @@ class ProdGuardTests(unittest.TestCase):
             )
         )
         self.assertTrue(any("positive integers" in item for item in invalid))
+
+        unsupported = collect_production_issues(
+            SimpleNamespace(
+                **common,
+                baidu_live_write_grants="3:17=campaign_create",
+                baidu_legacy_split_confirmation_enabled=False,
+            )
+        )
+        self.assertTrue(any("unsupported action scopes" in item for item in unsupported))
+
+        bound = collect_production_issues(
+            SimpleNamespace(
+                **common,
+                baidu_live_write_grants="3:17=keyword_bid;4:18=campaign_pause",
+                baidu_legacy_split_confirmation_enabled=False,
+            )
+        )
+        self.assertEqual(bound, [])
 
         allowed = collect_production_issues(
             SimpleNamespace(
