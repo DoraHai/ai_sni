@@ -330,7 +330,7 @@ onMounted(load)
       <div>
         <div class="page-title">拓词</div>
         <div class="page-desc">
-          4 源聚合候选关键词 ·「加入计划」一键加成关键词写回百度（dry-run 保护，演练模式不真改线上）
+          4 源聚合候选关键词 ·「加入计划」写回受客户、推广账户和动作门禁保护并记台账
           <template v-if="data?.last_synced_at"> · 同步于 {{ fmtTime(data.last_synced_at) }}</template>
           <template v-if="aiEnabled && data?.last_ai_eval_at"> · AI 评估于 {{ fmtTime(data.last_ai_eval_at) }}</template>
         </div>

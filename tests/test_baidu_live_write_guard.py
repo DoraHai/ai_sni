@@ -17,25 +17,80 @@ os.environ.setdefault(
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
 from app.baidu.client import BaiduAPIClient, BaiduLiveWriteBlockedError
-from app.config import parse_positive_id_csv, parse_write_scope_csv
+from app.config import (
+    Settings,
+    parse_positive_id_csv,
+    parse_write_scope_csv,
+    resolve_baidu_write_dry_run,
+)
 
 
 def _settings(
     *, dry_run: bool, tenants: set[int], accounts: set[int], scopes: set[str]
 ):
+    allowed = lambda tenant_id, account_id, write_scope: (
+        tenant_id in tenants
+        and account_id in accounts
+        and write_scope in scopes
+    )
     return SimpleNamespace(
         baidu_api_base_url="https://api.baidu.test",
         baidu_write_dry_run=dry_run,
         baidu_legacy_split_confirmation_enabled=False,
-        baidu_live_write_allowed=lambda tenant_id, account_id, write_scope: (
-            tenant_id in tenants
-            and account_id in accounts
-            and write_scope in scopes
+        baidu_live_write_allowed=allowed,
+        baidu_write_is_dry_run=lambda tenant_id, account_id, write_scope: (
+            dry_run or not allowed(tenant_id, account_id, write_scope)
         ),
     )
 
 
 class BaiduLiveWriteGuardTests(unittest.TestCase):
+    def test_effective_mode_requires_exact_tenant_account_and_scope(self):
+        settings = Settings().model_copy(
+            update={
+                "baidu_write_dry_run": False,
+                "baidu_live_write_tenant_ids": "3",
+                "baidu_live_write_account_ids": "17",
+                "baidu_live_write_scopes": "keyword_bid",
+                "baidu_legacy_split_confirmation_enabled": False,
+            }
+        )
+        self.assertFalse(settings.baidu_write_is_dry_run(3, 17, "keyword_bid"))
+        for tenant_id, account_id, scope in (
+            (4, 17, "keyword_bid"),
+            (3, 18, "keyword_bid"),
+            (3, 17, "keyword_pause"),
+            (3, 17, None),
+        ):
+            with self.subTest(
+                tenant_id=tenant_id,
+                account_id=account_id,
+                scope=scope,
+            ):
+                self.assertTrue(
+                    settings.baidu_write_is_dry_run(tenant_id, account_id, scope)
+                )
+
+    def test_invalid_allowlist_fails_closed_to_dry_run(self):
+        settings = Settings().model_copy(
+            update={
+                "baidu_write_dry_run": False,
+                "baidu_live_write_tenant_ids": "3,invalid",
+                "baidu_live_write_account_ids": "17",
+                "baidu_live_write_scopes": "keyword_bid",
+                "baidu_legacy_split_confirmation_enabled": False,
+            }
+        )
+        self.assertTrue(settings.baidu_write_is_dry_run(3, 17, "keyword_bid"))
+        self.assertTrue(
+            resolve_baidu_write_dry_run(
+                SimpleNamespace(baidu_write_dry_run=False),
+                3,
+                17,
+                "keyword_bid",
+            )
+        )
+
     def test_allowlist_parser_rejects_ambiguous_or_non_positive_ids(self):
         self.assertEqual(parse_positive_id_csv("7, 9,7", label="TEST"), {7, 9})
         for value in ("0", "-1", "7.0", "7,abc", "７"):
@@ -62,7 +117,7 @@ class BaiduLiveWriteGuardTests(unittest.TestCase):
             )
         self.assertTrue(result["_dry_run"])
 
-    def test_live_write_rejects_missing_or_mismatched_scope(self):
+    def test_non_allowlisted_identity_stays_in_dry_run(self):
         settings = _settings(
             dry_run=False, tenants={3}, accounts={17}, scopes={"keyword_bid"}
         )
@@ -75,13 +130,13 @@ class BaiduLiveWriteGuardTests(unittest.TestCase):
                         tenant_id=tenant_id,
                         baidu_account_id=account_id,
                     )
-                    with self.assertRaises(BaiduLiveWriteBlockedError):
-                        asyncio.run(
-                            client.call(
-                                "KeywordService", "updateWord", {}, is_write=True,
-                                write_scope="keyword_bid",
-                            )
+                    result = asyncio.run(
+                        client.call(
+                            "KeywordService", "updateWord", {}, is_write=True,
+                            write_scope="keyword_bid",
                         )
+                    )
+                    self.assertTrue(result["_dry_run"])
 
     def test_live_write_reaches_http_only_for_exact_scope(self):
         settings = _settings(
@@ -112,30 +167,30 @@ class BaiduLiveWriteGuardTests(unittest.TestCase):
         self.assertEqual(result, {"ok": True})
         http.post.assert_awaited_once()
 
-    def test_live_write_rejects_unlisted_action_for_allowed_account(self):
+    def test_unlisted_action_stays_in_dry_run_for_allowed_account(self):
         settings = _settings(
             dry_run=False, tenants={3}, accounts={17}, scopes={"keyword_bid"}
         )
         with patch("app.baidu.client.get_settings", return_value=settings):
             client = BaiduAPIClient("user", "token", tenant_id=3, baidu_account_id=17)
-            with self.assertRaises(BaiduLiveWriteBlockedError):
-                asyncio.run(
-                    client.call(
-                        "KeywordService", "updateWord", {}, is_write=True,
-                        write_scope="keyword_pause",
-                    )
+            result = asyncio.run(
+                client.call(
+                    "KeywordService", "updateWord", {}, is_write=True,
+                    write_scope="keyword_pause",
                 )
+            )
+        self.assertTrue(result["_dry_run"])
 
-    def test_live_write_rejects_missing_action_for_allowed_account(self):
+    def test_missing_action_stays_in_dry_run_for_allowed_account(self):
         settings = _settings(
             dry_run=False, tenants={3}, accounts={17}, scopes={"keyword_bid"}
         )
         with patch("app.baidu.client.get_settings", return_value=settings):
             client = BaiduAPIClient("user", "token", tenant_id=3, baidu_account_id=17)
-            with self.assertRaises(BaiduLiveWriteBlockedError):
-                asyncio.run(
-                    client.call("KeywordService", "updateWord", {}, is_write=True)
-                )
+            result = asyncio.run(
+                client.call("KeywordService", "updateWord", {}, is_write=True)
+            )
+        self.assertTrue(result["_dry_run"])
 
     def test_live_write_is_blocked_during_legacy_protocol_rollout(self):
         settings = _settings(

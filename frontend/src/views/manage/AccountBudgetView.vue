@@ -60,12 +60,12 @@ async function save() {
     ElMessage.warning(`日预算需在 ¥${min.value} ~ ¥${max.value} 之间`)
     return
   }
-  const dryNote = '当前为只读演练模式，本次只加入待回写台账、不会修改百度账户。'
+  const modeNote = '系统将按当前客户、推广账户和账户预算动作门禁决定演练或真实执行；真实执行会修改百度账户。'
   try {
     await ElMessageBox.confirm(
-      `确认把账户日预算从 ${fmtMoney(data.value.budget)} 改为 ¥${v.toFixed(2)}？\n${dryNote}`,
+      `确认把账户日预算从 ${fmtMoney(data.value.budget)} 改为 ¥${v.toFixed(2)}？\n${modeNote}`,
       '确认修改账户日预算',
-      { confirmButtonText: '加入待回写', cancelButtonText: '取消', type: 'warning' },
+      { confirmButtonText: '确认提交', cancelButtonText: '取消', type: 'warning' },
     )
   } catch {
     return // 用户取消
@@ -113,7 +113,7 @@ async function save() {
       :closable="false"
       show-icon
       style="margin-bottom: 14px"
-      title="当前为只读演练模式：预算建议只加入待回写台账，不会修改百度账户。"
+      title="账户预算回写受客户、推广账户和动作门禁保护；已开放动作会真实修改百度账户。"
     />
 
     <div v-if="activeAccounts.length > 1" class="account-selector">

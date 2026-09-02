@@ -18,12 +18,13 @@ from app.baidu.writeback_approval import (
     WritebackApprovalError,
     payload_fingerprint,
 )
-from app.config import get_settings
+from app.config import SEM_CUSTOMER_LIVE_WRITE_SCOPES, get_settings
 from app.database import get_session
 from app.module_scope import ensure_module_access
 from app.models import (
     WRITEBACK_ACTION_LABELS,
     WRITEBACK_STATUS_LABELS,
+    BaiduAccount,
     BidWriteback,
     WritebackAction,
     WritebackApproval,
@@ -38,6 +39,59 @@ router = APIRouter(
     tags=["调价回写台账"],
     dependencies=[Depends(require_scoped_auth)],
 )
+
+
+@router.get("/mode")
+async def get_writeback_mode(
+    tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """返回当前客户可见的有效回写模式，不暴露其他客户白名单。"""
+    ctx.ensure_tenant(tenant_id)
+    await ensure_module_access(session, ctx, tenant_id, "sem")
+    await ensure_sem_identity_access(session, tenant_id)
+    accounts = list(
+        (
+            await session.scalars(
+                select(BaiduAccount)
+                .where(
+                    BaiduAccount.tenant_id == tenant_id,
+                    BaiduAccount.status == "active",
+                )
+                .order_by(BaiduAccount.id)
+            )
+        ).all()
+    )
+    settings = get_settings()
+    account_modes = []
+    for account in accounts:
+        live_scopes = sorted(
+            scope
+            for scope in SEM_CUSTOMER_LIVE_WRITE_SCOPES
+            if not settings.baidu_write_is_dry_run(tenant_id, account.id, scope)
+        )
+        account_modes.append(
+            {
+                "baidu_account_id": account.id,
+                "live_scopes": live_scopes,
+                "mode": "limited_live" if live_scopes else "dry_run",
+            }
+        )
+    live_scopes = sorted(
+        {
+            scope
+            for account in account_modes
+            for scope in account["live_scopes"]
+        }
+    )
+    return {
+        "tenant_id": tenant_id,
+        "mode": "limited_live" if live_scopes else "dry_run",
+        "writeback_enabled": bool(live_scopes),
+        "live_scopes": live_scopes,
+        "accounts": account_modes,
+    }
 
 
 class ApprovalRequest(BaseModel):
@@ -316,6 +370,7 @@ async def list_writeback_queue(
 ) -> dict:
     """统一审计视图：演练记录是待回写，不冒充百度已执行。"""
     ctx.ensure_tenant(tenant_id)
+    mode = await get_writeback_mode(tenant_id, ctx, session)
     bids = list((await session.scalars(
         select(BidWriteback).where(BidWriteback.tenant_id == tenant_id)
         .order_by(BidWriteback.id.desc()).limit(limit)
@@ -358,4 +413,10 @@ async def list_writeback_queue(
     }
     for item in items:
         counts[item["stage"]] += 1
-    return {"writeback_enabled": False, "counts": counts, "items": items}
+    return {
+        "writeback_enabled": mode["writeback_enabled"],
+        "mode": mode["mode"],
+        "live_scopes": mode["live_scopes"],
+        "counts": counts,
+        "items": items,
+    }
