@@ -285,10 +285,10 @@
 
 此处改**监测定位**（hybrid / simulation / real_only）。
 
-### AI 配置 `/geo/ai-settings`
+### AI 能力
 
-租户级大模型凭证。默认推荐阿里云百炼 OpenAI 兼容模式。未配租户 Key 时，可用环境变量 `DASHSCOPE_API_KEY` / `DEEPSEEK_API_KEY` 兜底。  
-母稿生成、渠道成稿、巡检真采样都走这里。
+大模型凭证由平台统一托管，客户不需要也不能配置 API Key、Base URL 或模型。
+母稿生成、渠道成稿和监测回退会自动使用平台提供的 AI 能力。
 
 ### 渠道成稿提示词 `/geo/channel-polish-prompts`
 

@@ -1,4 +1,9 @@
-"""GEO AI 能力配置：默认走阿里云百炼 OpenAI 兼容接口。"""
+"""GEO AI 能力配置 helpers.
+
+Runtime model credentials are platform-managed server secrets. Historical
+tenant rows remain readable for compatibility (for example monitoring stance),
+but they must never override the credentials used for an AI call.
+"""
 
 from __future__ import annotations
 
@@ -100,26 +105,16 @@ def settings_public_payload(row: GeoAiSetting) -> dict[str, Any]:
 async def resolve_llm_credentials(
     session: AsyncSession, tenant_id: int
 ) -> dict[str, str] | None:
-    """Resolve API credentials for GEO AI calls.
+    """Resolve the platform-managed credentials used by every GEO tenant.
 
-    Priority: tenant enabled + key → env DASHSCOPE_API_KEY / DEEPSEEK_API_KEY.
+    ``session`` and ``tenant_id`` stay in the signature because all existing
+    GEO call sites are tenant-scoped. Credentials themselves intentionally come
+    only from the geo-service environment, never from a tenant database row.
     """
-    row = await get_ai_setting_row(session, tenant_id)
-    if row is not None and row.enabled:
-        key = _decrypt_key(row)
-        if key:
-            return {
-                "api_key": key,
-                "base_url": (row.base_url or PROVIDER_PRESETS["dashscope"]["base_url"]).rstrip(
-                    "/"
-                ),
-                "model": row.model or PROVIDER_PRESETS["dashscope"]["model"],
-                "provider": row.provider or "dashscope",
-                "source": "tenant",
-            }
+    del session, tenant_id
 
     s = get_settings()
-    # Prefer DashScope env for 阿里云路径
+    # Prefer DashScope when both platform providers are configured.
     dash_key = (getattr(s, "dashscope_api_key", None) or "").strip()
     if dash_key:
         preset = PROVIDER_PRESETS["dashscope"]

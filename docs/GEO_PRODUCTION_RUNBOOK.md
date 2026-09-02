@@ -116,7 +116,7 @@ python3 -c "from base64 import b64encode; from os import urandom; print(b64encod
 | --- | --- |
 | `GEO_PATROL_MAX_RUNS_PER_DAY` | 默认 24；单租户自然日巡检启动上限 |
 | `GEO_PATROL_MAX_CELLS_PER_RUN` | 默认 200；单次「词×引擎」格数上限 |
-| `DASHSCOPE_API_KEY` / 租户 AI 配置 | 生产真采样；可走库内「AI 能力配置」 |
+| `DASHSCOPE_API_KEY` / `DEEPSEEK_API_KEY` | 平台统一托管的 GEO AI 能力；客户不可读取、测试或覆盖 |
 | `LOG_LEVEL` | 生产建议 `INFO` |
 
 ### 3.3 启动门禁说明

@@ -201,7 +201,7 @@ onMounted(load)
     :loading="loading"
   >
     <template #actions>
-      <router-link class="gd-btn" to="/geo/ai-settings">AI 配置</router-link>
+      <span class="gd-badge">AI 能力由平台统一提供</span>
       <router-link class="gd-btn" to="/geo/tasks">优化文章</router-link>
       <button type="button" class="gd-btn" :disabled="loading" @click="load">刷新</button>
       <button type="button" class="gd-btn primary" :disabled="saving" @click="save">保存全部</button>

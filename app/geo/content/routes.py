@@ -49,12 +49,8 @@ from app.geo.content.review import (
     review_payload,
 )
 from app.geo.content.ai_settings import (
-    apply_provider_preset,
     encrypt_api_key,
-    ensure_ai_setting,
-    preset_payload,
     resolve_llm_credentials,
-    settings_public_payload,
 )
 from app.geo.content.deliverables import (
     build_deliverables_pack,
@@ -5079,11 +5075,8 @@ async def get_ai_settings(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     await _ensure_tenant_exists(session, tenant_id)
-    row = await ensure_ai_setting(session, tenant_id)
     effective = await resolve_llm_credentials(session, tenant_id)
-    payload = settings_public_payload(row)
-    payload["presets"] = preset_payload()
-    payload["effective"] = (
+    public_effective = (
         {
             "enabled": True,
             "provider": effective["provider"],
@@ -5094,7 +5087,20 @@ async def get_ai_settings(
         if effective
         else {"enabled": False, "source": None}
     )
-    return payload
+    return {
+        "tenant_id": tenant_id,
+        "managed_by": "platform",
+        "read_only": True,
+        "enabled": bool(effective),
+        "provider": effective["provider"] if effective else None,
+        "base_url": effective["base_url"] if effective else None,
+        "model": effective["model"] if effective else None,
+        "api_key_configured": bool(effective),
+        "api_key_masked": None,
+        "note": "AI 能力由平台统一提供",
+        "presets": [],
+        "effective": public_effective,
+    }
 
 
 @router.put("/ai-settings")
@@ -5104,47 +5110,7 @@ async def put_ai_settings(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(req.tenant_id)
-    await _ensure_tenant_exists(session, req.tenant_id)
-    row = await ensure_ai_setting(session, req.tenant_id)
-    if req.apply_preset:
-        preset = apply_provider_preset(req.provider)
-        row.provider = preset["provider"]
-        row.base_url = preset["base_url"]
-        row.model = preset["model"]
-    else:
-        row.provider = req.provider
-        if req.base_url:
-            row.base_url = req.base_url.strip().rstrip("/")
-        elif not row.base_url:
-            row.base_url = apply_provider_preset(req.provider)["base_url"]
-        if req.model:
-            row.model = req.model.strip()
-        elif not row.model:
-            row.model = apply_provider_preset(req.provider)["model"]
-    row.enabled = bool(req.enabled)
-    row.note = req.note
-    row.updated_by = ctx.user_id
-    if req.clear_api_key:
-        row.api_key_encrypted = None
-    elif req.api_key:
-        row.api_key_encrypted = encrypt_api_key(req.api_key)
-    await session.commit()
-    await session.refresh(row)
-    effective = await resolve_llm_credentials(session, req.tenant_id)
-    payload = settings_public_payload(row)
-    payload["presets"] = preset_payload()
-    payload["effective"] = (
-        {
-            "enabled": True,
-            "provider": effective["provider"],
-            "base_url": effective["base_url"],
-            "model": effective["model"],
-            "source": effective["source"],
-        }
-        if effective
-        else {"enabled": False, "source": None}
-    )
-    return payload
+    raise HTTPException(403, "AI 能力由平台统一配置，客户不可修改")
 
 
 @router.get("/channel-polish-prompts")
@@ -5194,37 +5160,9 @@ async def test_ai_settings(
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """用当前生效配置打一条极短 JSON 请求，验证 Key / 线路。"""
-    from app.ai.deepseek import DeepSeekError, chat_json
-
+    """Customer-triggered credential tests are disabled for platform secrets."""
     ctx.ensure_tenant(tenant_id)
-    llm = await resolve_llm_credentials(session, tenant_id)
-    if not llm:
-        raise HTTPException(503, "尚未配置可用的 AI API Key")
-    try:
-        # Avoid user="ping" — some models reply literally "PONG" and break JSON parse.
-        data = await chat_json(
-            '你是连通性检测。只输出一个 JSON 对象，不要 markdown 代码块。',
-            '请返回：{"ok": true, "echo": "geo-ai-settings-test"}',
-            timeout=30.0,
-            api_key=llm["api_key"],
-            base_url=llm["base_url"],
-            model=llm["model"],
-        )
-    except DeepSeekError as exc:
-        raise HTTPException(502, str(exc)) from exc
-    if not isinstance(data, dict) or data.get("ok") is not True:
-        raise HTTPException(
-            502,
-            f"AI 已连通但返回不符合约定：{data!r}",
-        )
-    return {
-        "ok": True,
-        "provider": llm["provider"],
-        "model": llm["model"],
-        "source": llm["source"],
-        "sample": data,
-    }
+    raise HTTPException(403, "AI 能力由平台统一配置，客户不可测试平台凭证")
 
 
 # ---------- tracking engines (Wave B2) ----------

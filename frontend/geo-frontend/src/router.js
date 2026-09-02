@@ -29,7 +29,7 @@ const routes = [
       { path: 'tasks', component: () => import('../../src/views/geo/GeoTasksView.vue'), meta: geoMeta('GEO 文章') },
       { path: 'tasks/:taskId/distribution', component: () => import('../../src/views/geo/GeoDistributionView.vue'), meta: geoMeta('分发记录') },
       { path: 'tasks/:taskId', component: () => import('../../src/views/geo/GeoTaskEditorView.vue'), meta: geoMeta('内容编辑器', { fluidMain: true }) },
-      { path: 'ai-settings', component: () => import('../../src/views/geo/GeoAiSettingsView.vue'), meta: geoMeta('AI 能力配置') },
+      { path: 'ai-settings', redirect: GEO_WORKBENCH_START },
       { path: 'channel-polish-prompts', component: () => import('../../src/views/geo/GeoChannelPolishPromptsView.vue'), meta: geoMeta('渠道成稿提示词') },
       { path: 'publishing', component: () => import('../../src/views/geo/GeoChannelsView.vue'), meta: geoMeta('分发平台') },
       { path: 'placements', component: () => import('../../src/views/geo/GeoPlacementsView.vue'), meta: geoMeta('媒体 / 信源策略') },

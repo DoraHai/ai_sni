@@ -33,7 +33,6 @@ export const GEO_WORKBENCH_NAV = [
     children: [
       { label: '品牌信息', path: '/geo/brand', key: 'geo.content', icon: '▰' },
       { label: '知识库', path: '/geo/knowledge', key: 'geo.content', icon: '▣' },
-      { label: 'AI 能力配置', path: '/geo/ai-settings', key: 'geo.content', icon: '⚙' },
       { label: 'AI 引擎管理', path: '/geo/models', key: 'geo.content', icon: '◇' },
     ],
   },
