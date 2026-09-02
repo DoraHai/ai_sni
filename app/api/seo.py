@@ -73,9 +73,10 @@ from app.seo_distribution import (
 from app.seo_serp import (
     SerpProviderError,
     canonical_url,
+    chinaz_rank_status,
     dataforseo_status,
     deterministic_match,
-    fetch_baidu_top50_batch,
+    fetch_chinaz_domestic_rank_batch,
     fetch_dataforseo_serp_batch,
     url_domain,
 )
@@ -406,6 +407,16 @@ def _rank_position_label(value: int | None) -> str:
     return f"第 {value} 位" if value is not None else "前 100 之外"
 
 
+def _rank_snapshot_is_stale(row: SeoRankSnapshot | None) -> bool:
+    if row is None or not str(row.source or "").startswith(("chinaz_", "dataforseo_")):
+        return False
+    hours = max(1, int(get_settings().seo_rank_snapshot_stale_hours))
+    checked_at = row.checked_at
+    if checked_at.tzinfo is not None:
+        checked_at = checked_at.astimezone(timezone.utc).replace(tzinfo=None)
+    return checked_at < datetime.utcnow() - timedelta(hours=hours)
+
+
 def _content_asset_keyword_ids(row: SeoContentAsset) -> set[int]:
     values = row.keyword_ids or ([row.keyword_id] if row.keyword_id else [])
     return {int(value) for value in values if value is not None}
@@ -416,9 +427,11 @@ def _keyword_payload(
     latest: SeoRankSnapshot | None = None,
     previous: SeoRankSnapshot | None = None,
 ) -> dict[str, Any]:
+    stale = _rank_snapshot_is_stale(latest)
+    current = None if stale else latest
     delta = None
-    if latest and previous and latest.rank is not None and previous.rank is not None:
-        delta = previous.rank - latest.rank
+    if current and previous and current.rank is not None and previous.rank is not None:
+        delta = previous.rank - current.rank
     return {
         "id": row.id,
         "tenant_id": row.tenant_id,
@@ -433,10 +446,13 @@ def _keyword_payload(
         "status": row.status,
         "source": row.source,
         "notes": row.notes,
-        "latest_rank": None if not latest else latest.rank,
+        "latest_rank": None if not current else current.rank,
         "rank_delta": delta,
-        "rank_url": None if not latest else latest.result_url,
+        "rank_url": None if not current else current.result_url,
         "rank_checked_at": None if not latest else _rank_iso(latest.checked_at),
+        "rank_source": None if not latest else latest.source,
+        "rank_is_stale": stale,
+        "last_observed_rank": None if not latest else latest.rank,
         "created_at": _database_iso(row.created_at),
         "updated_at": _database_iso(row.updated_at),
     }
@@ -577,7 +593,7 @@ class BrandProfileUpdate(BaseModel):
 class SerpCollectRequest(BaseModel):
     tenant_id: int
     site_id: PositiveInt
-    engine: Literal["baidu", "google", "bing"] = "baidu"
+    engine: Literal["baidu", "google", "bing", "360", "sogou"] = "baidu"
     keyword_ids: list[int] | None = Field(None, max_length=50)
     devices: list[Literal["desktop", "mobile"]] = Field(
         default_factory=lambda: ["desktop"], min_length=1
@@ -1797,14 +1813,14 @@ async def collect_rank_serp_for_tenant(
     keyword_ids: list[int] | None = None,
     devices: list[Literal["desktop", "mobile"]] | None = None,
     max_keywords: int | None = None,
-    engine: Literal["baidu", "google", "bing"] = "baidu",
+    engine: Literal["baidu", "google", "bing", "360", "sogou"] = "baidu",
     use_ai: bool = True,
     captured_at: datetime | None = None,
     commit: bool = True,
 ) -> dict[str, Any]:
     """采集一个客户的真实 SERP；供人工刷新与每日定时任务共用。"""
     tenant = await _tenant(session, tenant_id)
-    await _seo_site(session, tenant_id, site_id)
+    site = await _seo_site(session, tenant_id, site_id)
     devices = list(dict.fromkeys(devices or ["desktop"]))
     if not devices:
         raise HTTPException(400, "至少选择一个设备")
@@ -1833,9 +1849,14 @@ async def collect_rank_serp_for_tenant(
         for device in devices
     ]
     provider_requests = [(keyword.keyword, device) for keyword, device in batch_requests]
-    if engine == "baidu":
-        batch_results = await fetch_baidu_top50_batch(provider_requests)
-        source = "chinaz_top50"
+    if engine in {"baidu", "360", "sogou"}:
+        domain = str(site.canonical_domain or "").strip() if site else ""
+        if not domain:
+            raise HTTPException(409, "当前网站缺少可用于自动排名采集的规范域名")
+        batch_results = await fetch_chinaz_domestic_rank_batch(
+            engine, domain, provider_requests
+        )
+        source = "chinaz"
     else:
         batch_results = await fetch_dataforseo_serp_batch(engine, provider_requests)
         source = "dataforseo_live"
@@ -1856,6 +1877,8 @@ async def collect_rank_serp_for_tenant(
     snapshot_rows: list[SeoRankSnapshot] = []
     ai_available = is_enabled()
     ai_attempted = False
+    provider_errors_by_device: dict[str, list[SerpProviderError]] = defaultdict(list)
+    provider_success_devices: set[str] = set()
     for keyword, device, result, fetch_error in fetched:
         if fetch_error or result is None:
             provider_error = fetch_error or SerpProviderError(
@@ -1863,6 +1886,8 @@ async def collect_rank_serp_for_tenant(
                 "搜索引擎排名接口调用失败",
             )
             errors.append(_serp_error_payload(keyword.id, device, provider_error))
+            if provider_error.code != "keyword_not_found":
+                provider_errors_by_device[device].append(provider_error)
             logger.warning(
                 "[SEO][SERP] provider request failed tenant_id=%s site_id=%s "
                 "keyword_id=%s device=%s code=%s status_code=%s "
@@ -1878,6 +1903,7 @@ async def collect_rank_serp_for_tenant(
                 provider_error.attempts,
             )
             continue
+        provider_success_devices.add(device)
         prepared: list[dict[str, Any]] = []
         unresolved: list[dict[str, Any]] = []
         for index, item in enumerate(result["items"]):
@@ -1939,12 +1965,40 @@ async def collect_rank_serp_for_tenant(
             subject_type="own",
             rank=best["rank"] if best else None,
             result_url=best["result_url"] if best else None,
-            source=source,
+            source=(
+                "chinaz_domain_keywords"
+                if engine == "sogou" or (engine == "360" and device == "mobile")
+                else "chinaz_rank"
+            ) if engine in {"baidu", "360", "sogou"} else source,
             checked_at=batch_captured_at,
         )
         session.add(snapshot_row)
         snapshot_rows.append(snapshot_row)
         snapshots += 1
+    if engine in {"baidu", "360", "sogou"} and site_id is not None:
+        health_observed_at = datetime.utcnow()
+        for observed_device in devices:
+            provider_errors = provider_errors_by_device.get(observed_device, [])
+            error = provider_errors[0] if provider_errors else None
+            session.add(SeoMetricSnapshot(
+                tenant_id=tenant_id,
+                site_id=site_id,
+                metric_type="rank_provider_health",
+                dimension=f"{engine}:{observed_device}",
+                text_value="ready" if error is None else error.code,
+                source="chinaz",
+                data_quality="verified",
+                status="available" if error is None else "failed",
+                error_message=None if error is None else error.public_message,
+                raw_payload={
+                    "engine": engine,
+                    "device": observed_device,
+                    "code": None if error is None else error.code,
+                    "status_code": None if error is None else error.status_code,
+                    "successful_observation": observed_device in provider_success_devices,
+                },
+                observed_at=health_observed_at,
+            ))
     await session.flush()
     optimization = {"created": 0, "task_ids": [], "skipped_existing": 0}
     if site_id is not None and snapshot_rows:
@@ -2162,21 +2216,39 @@ async def rank_serp_providers(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     await _seo_site(session, tenant_id, site_id)
-    settings = get_settings()
     external = dataforseo_status()
+    domestic = chinaz_rank_status()
+    provider_health = await _latest_site_metrics(
+        session, tenant_id, site_id, "rank_provider_health"
+    )
+    cutoff = datetime.utcnow() - timedelta(
+        hours=max(1, int(get_settings().seo_rank_snapshot_stale_hours))
+    )
+    for engine in ("baidu", "360", "sogou"):
+        for device in ("desktop", "mobile"):
+            row = provider_health.get(("rank_provider_health", f"{engine}:{device}", "chinaz"))
+            if row is None or row.observed_at < cutoff:
+                continue
+            device_status = domestic[engine]["devices"][device]
+            raw = row.raw_payload if isinstance(row.raw_payload, dict) else {}
+            code = str(raw.get("code") or "") or None
+            device_status.update({
+                "status": "ready" if row.status == "available" else (
+                    "supplier_error"
+                    if code in {"provider_quota_exceeded", "provider_ip_rejected", "provider_auth_failed"}
+                    else "temporarily_unavailable"
+                ),
+                "reason": row.error_message,
+                "code": code,
+                "status_code": raw.get("status_code"),
+                "checked_at": _rank_iso(row.observed_at),
+            })
     return {
-        "baidu": {
-            "configured": bool(settings.chinaz_api_enabled and (
-                settings.chinaz_baidu_pc_top50_api_key
-                or settings.chinaz_baidu_mobile_top50_api_key
-                or settings.chinaz_api_key
-            )),
-            "provider": "chinaz_top50",
-        },
+        "baidu": domestic["baidu"],
         "google": dict(external),
         "bing": dict(external),
-        "360": {"configured": False, "provider": None, "reason": "暂无稳定自动采集接口"},
-        "sogou": {"configured": False, "provider": None, "reason": "暂无稳定自动采集接口"},
+        "360": domestic["360"],
+        "sogou": domestic["sogou"],
     }
 
 

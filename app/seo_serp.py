@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import random
+import re
+import unicodedata
 from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any
@@ -24,6 +26,9 @@ DATAFORSEO_ENGINES = {"google", "bing"}
 DATAFORSEO_MAX_CONCURRENCY = 2
 DATAFORSEO_MAX_ATTEMPTS = 3
 DATAFORSEO_RETRY_BASE_SECONDS = 0.5
+CHINAZ_DOMESTIC_ENGINES = {"baidu", "360", "sogou"}
+
+_CHINAZ_PROVIDER_HEALTH: dict[tuple[str, str], dict[str, Any]] = {}
 
 
 class SerpProviderError(RuntimeError):
@@ -50,6 +55,81 @@ class SerpProviderError(RuntimeError):
         self.elapsed_ms = elapsed_ms
         self.attempts = attempts
         self.retry_after_seconds = retry_after_seconds
+
+
+def _remember_chinaz_health(
+    engine: str,
+    device: str,
+    error: SerpProviderError | None = None,
+) -> None:
+    _CHINAZ_PROVIDER_HEALTH[(engine, device)] = {
+        "status": "ready" if error is None else (
+            "supplier_error"
+            if error.code in {"provider_quota_exceeded", "provider_ip_rejected", "provider_auth_failed"}
+            else "temporarily_unavailable"
+        ),
+        "reason": None if error is None else error.public_message,
+        "code": None if error is None else error.code,
+        "status_code": None if error is None else error.status_code,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _chinaz_http_error(
+    status_code: int,
+    *,
+    elapsed_ms: int,
+    retry_after_raw: str = "",
+) -> SerpProviderError:
+    retry_after_seconds: float | None = None
+    if status_code in {429, 531}:
+        try:
+            retry_after_seconds = min(60.0, max(0.0, float(retry_after_raw)))
+        except ValueError:
+            retry_after_seconds = CHINAZ_RATE_LIMIT_RETRY_SECONDS
+        return SerpProviderError(
+            "provider_rate_limited",
+            "站长之家接口请求受限",
+            retryable=True,
+            status_code=status_code,
+            elapsed_ms=elapsed_ms,
+            retry_after_seconds=retry_after_seconds,
+        )
+    if status_code == 436:
+        return SerpProviderError(
+            "provider_quota_exceeded",
+            "站长之家供应商额度或 APIKey 异常",
+            status_code=status_code,
+            elapsed_ms=elapsed_ms,
+        )
+    if status_code == 437:
+        return SerpProviderError(
+            "provider_ip_rejected",
+            "站长之家供应商 IP 白名单异常",
+            status_code=status_code,
+            elapsed_ms=elapsed_ms,
+        )
+    if status_code in {401, 403, 431, 432, 433, 434}:
+        return SerpProviderError(
+            "provider_auth_failed",
+            "站长之家接口认证失败",
+            status_code=status_code,
+            elapsed_ms=elapsed_ms,
+        )
+    if 500 <= status_code < 600:
+        return SerpProviderError(
+            "provider_unavailable",
+            "站长之家接口暂时不可用",
+            retryable=True,
+            status_code=status_code,
+            elapsed_ms=elapsed_ms,
+        )
+    return SerpProviderError(
+        "provider_request_rejected" if 400 <= status_code < 500 else "provider_http_error",
+        "站长之家接口拒绝请求" if 400 <= status_code < 500 else "站长之家接口返回 HTTP 错误",
+        status_code=status_code,
+        elapsed_ms=elapsed_ms,
+    )
 
 
 def create_chinaz_client() -> httpx.AsyncClient:
@@ -270,51 +350,10 @@ async def fetch_baidu_top50(
             ) from exc
         except httpx.HTTPStatusError as exc:
             status_code = exc.response.status_code
-            retry_after_seconds = None
-            if status_code in {429, 436}:
-                retry_after_raw = exc.response.headers.get("retry-after", "")
-                try:
-                    retry_after_seconds = min(60.0, max(0.0, float(retry_after_raw)))
-                except ValueError:
-                    retry_after_seconds = None
-                if retry_after_seconds is None:
-                    retry_after_seconds = CHINAZ_RATE_LIMIT_RETRY_SECONDS
-                code, message, retryable = (
-                    "provider_rate_limited",
-                    "站长之家接口请求受限",
-                    True,
-                )
-            elif status_code in {401, 403}:
-                code, message, retryable = (
-                    "provider_auth_failed",
-                    "站长之家接口认证失败",
-                    False,
-                )
-            elif 500 <= status_code < 600:
-                code, message, retryable = (
-                    "provider_unavailable",
-                    "站长之家接口暂时不可用",
-                    True,
-                )
-            elif 400 <= status_code < 500:
-                code, message, retryable = (
-                    "provider_request_rejected",
-                    "站长之家接口拒绝请求",
-                    False,
-                )
-            else:
-                code, message, retryable = (
-                    "provider_http_error",
-                    "站长之家接口返回 HTTP 错误",
-                    False,
-                )
-            raise SerpProviderError(
-                code,
-                message,
-                retryable=retryable,
-                status_code=status_code,
+            raise _chinaz_http_error(
+                status_code,
                 elapsed_ms=max(0, round((perf_counter() - started_at) * 1000)),
-                retry_after_seconds=retry_after_seconds,
+                retry_after_raw=exc.response.headers.get("retry-after", ""),
             ) from exc
         except httpx.RequestError as exc:
             raise SerpProviderError(
@@ -347,9 +386,21 @@ async def fetch_baidu_top50(
         raise AssertionError("unreachable")
 
     if client is not None:
-        return await request_with_retry(client)
+        try:
+            result = await request_with_retry(client)
+        except SerpProviderError as exc:
+            _remember_chinaz_health("baidu", device, exc)
+            raise
+        _remember_chinaz_health("baidu", device)
+        return result
     async with create_chinaz_client() as owned_client:
-        return await request_with_retry(owned_client)
+        try:
+            result = await request_with_retry(owned_client)
+        except SerpProviderError as exc:
+            _remember_chinaz_health("baidu", device, exc)
+            raise
+        _remember_chinaz_health("baidu", device)
+        return result
 
 
 async def fetch_baidu_top50_batch(
@@ -372,6 +423,290 @@ async def fetch_baidu_top50_batch(
             except SerpProviderError as exc:
                 results.append((None, exc))
     return results
+
+
+def _normalized_keyword(value: Any) -> str:
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+def parse_domain_ranking_response(payload: Any) -> dict[str, Any]:
+    """Normalize Chinaz domain+keyword ranking products into SERP-shaped data."""
+    if not isinstance(payload, dict):
+        raise SerpProviderError("invalid_response", "站长之家接口返回格式异常")
+    try:
+        state_code = int(payload.get("StateCode", -1))
+    except (TypeError, ValueError) as exc:
+        raise SerpProviderError("invalid_response", "站长之家接口返回格式异常") from exc
+    if state_code != 1:
+        raise SerpProviderError("provider_rejected", "站长之家未返回有效排名结果")
+    result = payload.get("Result")
+    if result is None:
+        result = {}
+    if not isinstance(result, dict):
+        raise SerpProviderError("invalid_response", "站长之家接口返回格式异常")
+    ranks = result.get("Ranks") if isinstance(result.get("Ranks"), list) else []
+    if not ranks and any(result.get(key) for key in ("RankStr", "Url", "Title")):
+        ranks = [result]
+    if not ranks and any(payload.get(key) for key in ("RankStr", "Url", "Title")):
+        ranks = [payload]
+    items: list[dict[str, Any]] = []
+    for index, row in enumerate(ranks[:1], start=1):
+        if not isinstance(row, dict):
+            continue
+        result_url = str(row.get("Url") or "").strip()
+        rank_label = str(row.get("RankStr") or "").strip()
+        if not result_url or not rank_label:
+            continue
+        items.append({
+            "rank": rank_number(rank_label, index),
+            "rank_label": rank_label,
+            "title": str(row.get("Title") or "").strip(),
+            "description": str(row.get("Description") or "").strip(),
+            "result_url": result_url,
+            "domain": url_domain(result_url),
+        })
+    return {
+        "site_count": result.get("SiteCount", payload.get("SiteCount")),
+        "captured_at": datetime.now(timezone.utc).replace(tzinfo=None),
+        "items": items,
+    }
+
+
+def parse_domain_keyword_response(payload: Any) -> dict[str, Any]:
+    """Normalize one page of a Chinaz website-keyword product."""
+    if not isinstance(payload, dict):
+        raise SerpProviderError("invalid_response", "站长之家接口返回格式异常")
+    try:
+        state_code = int(payload.get("StateCode", -1))
+    except (TypeError, ValueError) as exc:
+        raise SerpProviderError("invalid_response", "站长之家接口返回格式异常") from exc
+    if state_code == 10006:
+        return {"items": [], "page": 1, "pages": 1}
+    if state_code != 1:
+        raise SerpProviderError("provider_rejected", "站长之家未返回有效网站关键词")
+    result = payload.get("Result")
+    if not isinstance(result, dict):
+        raise SerpProviderError("invalid_response", "站长之家接口返回格式异常")
+    rows = result.get("List") if isinstance(result.get("List"), list) else []
+    items: list[dict[str, Any]] = []
+    for index, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            continue
+        keyword = str(row.get("Keyword") or "").strip()
+        result_url = str(row.get("Url") or "").strip()
+        rank_label = str(row.get("RankStr") or "").strip()
+        if not keyword or not result_url or not rank_label:
+            continue
+        items.append({
+            "keyword": keyword,
+            "rank": rank_number(rank_label, index),
+            "rank_label": rank_label,
+            "title": str(row.get("Title") or "").strip(),
+            "description": str(row.get("Description") or "").strip(),
+            "result_url": result_url,
+            "domain": url_domain(result_url),
+        })
+    try:
+        page = max(1, int(result.get("Current") or 1))
+        pages = max(page, int(result.get("Pages") or page))
+    except (TypeError, ValueError):
+        page = pages = 1
+    return {"items": items, "page": page, "pages": pages}
+
+
+async def _chinaz_get_json(
+    *,
+    endpoint: str,
+    params: dict[str, Any],
+    client: httpx.AsyncClient,
+) -> dict[str, Any]:
+    operation_started_at = perf_counter()
+    for attempt in range(1, CHINAZ_MAX_ATTEMPTS + 1):
+        started_at = perf_counter()
+        try:
+            response = await client.get(endpoint, params=params)
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("not an object")
+            return payload
+        except httpx.TimeoutException as exc:
+            error = SerpProviderError(
+                "provider_timeout",
+                "站长之家接口请求超时",
+                retryable=True,
+                timeout_phase=_timeout_phase(exc),
+                elapsed_ms=max(0, round((perf_counter() - started_at) * 1000)),
+            )
+        except httpx.HTTPStatusError as exc:
+            error = _chinaz_http_error(
+                exc.response.status_code,
+                elapsed_ms=max(0, round((perf_counter() - started_at) * 1000)),
+                retry_after_raw=exc.response.headers.get("retry-after", ""),
+            )
+        except httpx.RequestError as exc:
+            error = SerpProviderError(
+                "provider_network_error",
+                "站长之家接口网络连接失败",
+                retryable=True,
+                elapsed_ms=max(0, round((perf_counter() - started_at) * 1000)),
+            )
+        except (ValueError, TypeError) as exc:
+            error = SerpProviderError(
+                "invalid_response",
+                "站长之家接口返回格式异常",
+                elapsed_ms=max(0, round((perf_counter() - started_at) * 1000)),
+            )
+        if not error.retryable or attempt >= CHINAZ_MAX_ATTEMPTS:
+            error.attempts = attempt
+            error.elapsed_ms = max(0, round((perf_counter() - operation_started_at) * 1000))
+            raise error
+        backoff = CHINAZ_RETRY_BASE_SECONDS * (2 ** (attempt - 1))
+        jitter = random.uniform(0, CHINAZ_RETRY_BASE_SECONDS)
+        await asyncio.sleep(max(backoff + jitter, error.retry_after_seconds or 0))
+    raise AssertionError("unreachable")
+
+
+def _chinaz_direct_rank_config(settings: Any, engine: str, device: str) -> tuple[str, str]:
+    mapping = {
+        ("baidu", "desktop"): ("baidupc_keywordranking", "chinaz_baidu_pc_ranking_api_key"),
+        ("baidu", "mobile"): ("baidumobile_keywordranking", "chinaz_baidu_mobile_ranking_api_key"),
+        ("360", "desktop"): ("sopc_keywordranking", "chinaz_360_pc_ranking_api_key"),
+    }
+    path, setting_name = mapping.get((engine, device), ("", ""))
+    return path, str(getattr(settings, setting_name, "") or "")
+
+
+def _chinaz_domain_list_config(settings: Any, engine: str, device: str) -> tuple[str, str]:
+    mapping = {
+        ("sogou", "desktop"): ("keyword_sogoupc", "chinaz_sogou_pc_keywords_api_key"),
+        ("sogou", "mobile"): ("keyword_sogoumobile", "chinaz_sogou_mobile_keywords_api_key"),
+        ("360", "mobile"): ("keyword_360mobile", "chinaz_360_mobile_keywords_api_key"),
+    }
+    path, setting_name = mapping.get((engine, device), ("", ""))
+    return path, str(getattr(settings, setting_name, "") or "")
+
+
+def chinaz_rank_status() -> dict[str, dict[str, Any]]:
+    settings = get_settings()
+    result: dict[str, dict[str, Any]] = {}
+    for engine in sorted(CHINAZ_DOMESTIC_ENGINES):
+        devices: dict[str, dict[str, Any]] = {}
+        for device in ("desktop", "mobile"):
+            direct_path, direct_key = _chinaz_direct_rank_config(settings, engine, device)
+            list_path, list_key = _chinaz_domain_list_config(settings, engine, device)
+            configured = bool(settings.chinaz_api_enabled and (direct_key or list_key))
+            health = _CHINAZ_PROVIDER_HEALTH.get((engine, device), {})
+            devices[device] = {
+                "configured": configured,
+                "provider": "chinaz" if configured else None,
+                "mode": "keyword_ranking" if direct_path else "domain_keyword_list" if list_path else None,
+                "status": health.get("status") if configured else "not_configured",
+                "reason": health.get("reason") if configured else "未配置站长之家接口 Key",
+                "code": health.get("code") if configured else "provider_not_configured",
+                "status_code": health.get("status_code") if configured else None,
+                "checked_at": health.get("checked_at") if configured else None,
+            }
+            if configured and not devices[device]["status"]:
+                devices[device]["status"] = "ready"
+        result[engine] = {
+            "configured": any(item["configured"] for item in devices.values()),
+            "provider": "chinaz",
+            "devices": devices,
+        }
+    return result
+
+
+async def fetch_chinaz_domestic_rank_batch(
+    engine: str,
+    domain: str,
+    requests: list[tuple[str, str]],
+) -> list[tuple[dict[str, Any] | None, SerpProviderError | None]]:
+    """Collect Baidu/360 direct rankings or match Sogou/360 domain keyword lists."""
+    settings = get_settings()
+    if engine not in CHINAZ_DOMESTIC_ENGINES:
+        error = SerpProviderError("unsupported_engine", "该搜索引擎暂不支持站长之家自动采集")
+        return [(None, error) for _ in requests]
+    async with create_chinaz_client() as client:
+        direct_requests: list[tuple[int, str, str, str, str]] = []
+        grouped_lists: dict[str, list[tuple[int, str]]] = {}
+        aligned: list[
+            tuple[dict[str, Any] | None, SerpProviderError | None] | None
+        ] = [None] * len(requests)
+        for index, (keyword, device) in enumerate(requests):
+            path, key = _chinaz_direct_rank_config(settings, engine, device)
+            if path and key and settings.chinaz_api_enabled:
+                direct_requests.append((index, keyword, device, path, key))
+                continue
+            list_path, list_key = _chinaz_domain_list_config(settings, engine, device)
+            if list_path and list_key and settings.chinaz_api_enabled:
+                grouped_lists.setdefault(device, []).append((index, keyword))
+                continue
+            error = SerpProviderError("provider_not_configured", "未配置站长之家排名接口 Key")
+            _remember_chinaz_health(engine, device, error)
+            aligned[index] = (None, error)
+
+        for sequence, (index, keyword, device, path, key) in enumerate(direct_requests):
+            if sequence:
+                await asyncio.sleep(CHINAZ_BATCH_REQUEST_INTERVAL_SECONDS)
+            endpoint = f"{settings.chinaz_api_base_url.rstrip('/')}/{path}"
+            try:
+                payload = await _chinaz_get_json(
+                    endpoint=endpoint,
+                    params={"domain": domain, "keyword": keyword, "APIKey": key, "ChinazVer": "1.0"},
+                    client=client,
+                )
+                parsed = parse_domain_ranking_response(payload)
+                _remember_chinaz_health(engine, device)
+                aligned[index] = (parsed, None)
+            except SerpProviderError as exc:
+                _remember_chinaz_health(engine, device, exc)
+                aligned[index] = (None, exc)
+
+        for device, indexed_keywords in grouped_lists.items():
+            path, key = _chinaz_domain_list_config(settings, engine, device)
+            endpoint = f"{settings.chinaz_api_base_url.rstrip('/')}/{path}"
+            wanted = {_normalized_keyword(keyword): (index, keyword) for index, keyword in indexed_keywords}
+            matched: dict[str, dict[str, Any]] = {}
+            max_pages = max(1, min(100, int(getattr(settings, "chinaz_domain_keyword_max_pages", 10))))
+            page = 1
+            try:
+                while page <= max_pages and len(matched) < len(wanted):
+                    payload = await _chinaz_get_json(
+                        endpoint=endpoint,
+                        params={"domain": domain, "page": page, "APIKey": key, "ChinazVer": "1.0"},
+                        client=client,
+                    )
+                    parsed_page = parse_domain_keyword_response(payload)
+                    for item in parsed_page["items"]:
+                        normalized = _normalized_keyword(item.pop("keyword", ""))
+                        if normalized in wanted and normalized not in matched:
+                            matched[normalized] = item
+                    if page >= min(max_pages, int(parsed_page["pages"])):
+                        break
+                    page += 1
+                    await asyncio.sleep(CHINAZ_BATCH_REQUEST_INTERVAL_SECONDS)
+                _remember_chinaz_health(engine, device)
+                captured_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                for normalized, (index, _keyword) in wanted.items():
+                    item = matched.get(normalized)
+                    if item is None:
+                        aligned[index] = (
+                            None,
+                            SerpProviderError(
+                                "keyword_not_found",
+                                "站长之家站点词表未包含该监控词，请使用人工导入",
+                            ),
+                        )
+                    else:
+                        aligned[index] = ({"site_count": None, "captured_at": captured_at, "items": [item]}, None)
+            except SerpProviderError as exc:
+                _remember_chinaz_health(engine, device, exc)
+                for index, _keyword in indexed_keywords:
+                    aligned[index] = (None, exc)
+    fallback = SerpProviderError("provider_error", "站长之家排名采集未完成")
+    return [item if item is not None else (None, fallback) for item in aligned]
 
 
 def dataforseo_status() -> dict[str, Any]:

@@ -13,16 +13,18 @@ from app.module_scope import list_active_module_tenants
 from app.process_lock import acquire_file_lock, release_file_lock
 from app.seo_automation_runs import finish_automation_run, start_automation_run
 from app.seo_rank_limits import SEO_RANK_COLLECTION_LOCK_PATH
-from app.seo_serp import dataforseo_status
+from app.seo_serp import chinaz_rank_status, dataforseo_status
 
 logger = logging.getLogger(__name__)
 
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
-_SUPPORTED_SCHEDULED_ENGINES = ("baidu", "google", "bing")
+_SUPPORTED_SCHEDULED_ENGINES = ("baidu", "sogou", "360", "google", "bing")
 _ENGINE_SOURCES = {
-    "baidu": "chinaz_top50",
-    "google": "dataforseo_live",
-    "bing": "dataforseo_live",
+    "baidu": {"chinaz_rank", "chinaz_top50"},
+    "sogou": {"chinaz_domain_keywords"},
+    "360": {"chinaz_rank", "chinaz_domain_keywords"},
+    "google": {"dataforseo_live"},
+    "bing": {"dataforseo_live"},
 }
 
 
@@ -30,6 +32,7 @@ def _scheduled_rank_engines(
     settings: object,
     *,
     dataforseo_configured: bool | None = None,
+    chinaz_status: dict[str, dict] | None = None,
 ) -> list[str]:
     """Return ordered, supported engines whose provider is ready to run."""
     raw = str(getattr(settings, "seo_rank_scheduler_engines", "baidu"))
@@ -42,10 +45,19 @@ def _scheduled_rank_engines(
     )
     if dataforseo_configured is None:
         dataforseo_configured = bool(dataforseo_status()["configured"])
+    if chinaz_status is None:
+        # Preserve the historical helper contract for tests/callers that only
+        # supplied DataForSEO readiness. The real scheduler always passes the
+        # complete device-aware Chinaz status computed above.
+        chinaz_status = {"baidu": {"configured": True}}
     return [
         engine
         for engine in requested
-        if engine == "baidu" or dataforseo_configured
+        if (
+            dataforseo_configured
+            if engine in {"google", "bing"}
+            else bool(chinaz_status.get(engine, {}).get("configured"))
+        )
     ]
 
 
@@ -104,9 +116,11 @@ async def collect_daily_seo_rankings() -> None:
     )
     batch_size = max(1, settings.seo_rank_scheduler_batch_size)
     provider_status = dataforseo_status()
+    domestic_status = chinaz_rank_status()
     engines = _scheduled_rank_engines(
         settings,
         dataforseo_configured=bool(provider_status["configured"]),
+        chinaz_status=domestic_status,
     )
     requested_engines = str(
         getattr(settings, "seo_rank_scheduler_engines", "baidu")
@@ -230,7 +244,7 @@ async def collect_daily_seo_rankings() -> None:
                     completed = {
                         (int(row[0]), row[1], row[2])
                         for row in completed_rows
-                        if row[3] == _ENGINE_SOURCES.get(row[1])
+                        if row[3] in _ENGINE_SOURCES.get(row[1], set())
                     }
 
                     for engine in engines:

@@ -98,6 +98,7 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("app.seo_ranking_jobs.get_settings", return_value=settings),
+            patch("app.seo_ranking_jobs.chinaz_rank_status", return_value={"baidu": {"configured": True}}),
             patch("app.seo_ranking_jobs.acquire_file_lock", return_value=object()),
             patch(
                 "app.seo_ranking_jobs.list_active_module_tenants",
@@ -137,6 +138,7 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch("app.seo_ranking_jobs.get_settings", return_value=settings),
+            patch("app.seo_ranking_jobs.chinaz_rank_status", return_value={"baidu": {"configured": True}}),
             patch("app.seo_ranking_jobs.acquire_file_lock", return_value=object()),
             patch(
                 "app.seo_ranking_jobs.list_active_module_tenants",
@@ -186,6 +188,7 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
         finish_run = AsyncMock()
         with (
             patch("app.seo_ranking_jobs.get_settings", return_value=settings),
+            patch("app.seo_ranking_jobs.chinaz_rank_status", return_value={"baidu": {"configured": True}}),
             patch("app.seo_ranking_jobs.acquire_file_lock", return_value=object()),
             patch(
                 "app.seo_ranking_jobs.list_active_module_tenants",
@@ -265,6 +268,7 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
                 "app.seo_ranking_jobs.dataforseo_status",
                 return_value={"configured": True},
             ),
+            patch("app.seo_ranking_jobs.chinaz_rank_status", return_value={"baidu": {"configured": True}}),
             patch("app.seo_ranking_jobs.acquire_file_lock", return_value=object()),
             patch(
                 "app.seo_ranking_jobs.list_active_module_tenants",

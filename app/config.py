@@ -66,10 +66,17 @@ class Settings(BaseSettings):
     chinaz_baidu_mobile_keywords_api_key: str = ""
     chinaz_baidu_pc_top50_api_key: str = ""
     chinaz_baidu_mobile_top50_api_key: str = ""
+    chinaz_baidu_pc_ranking_api_key: str = ""
+    chinaz_baidu_mobile_ranking_api_key: str = ""
+    chinaz_sogou_pc_keywords_api_key: str = ""
+    chinaz_sogou_mobile_keywords_api_key: str = ""
+    chinaz_360_pc_ranking_api_key: str = ""
+    chinaz_360_mobile_keywords_api_key: str = ""
     chinaz_weight_all_api_key: str = ""
     chinaz_whois_api_key: str = ""
     chinaz_api_base_url: str = "https://openapi.chinaz.net/v1/1001"
     chinaz_api_timeout_seconds: float = 8.0
+    chinaz_domain_keyword_max_pages: int = 10
     # 每天 02:00 自动采集全部启用 SEO 关键词的 PC/移动自然排名。
     seo_rank_scheduler_enabled: bool = True
     seo_rank_scheduler_engines: str = "baidu,google,bing"
@@ -77,6 +84,7 @@ class Settings(BaseSettings):
     seo_rank_scheduler_use_ai: bool = True
     seo_rank_scheduler_max_keywords_per_tenant: int = 200
     seo_rank_scheduler_max_requests_per_run: int = 1000
+    seo_rank_snapshot_stale_hours: int = 36
     # 排名下降达到阈值时，只生成“计划中”优化任务，不调 AI、不发布。
     seo_rank_drop_tasks_enabled: bool = True
     seo_rank_drop_task_threshold: int = 3
