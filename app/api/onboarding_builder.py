@@ -612,12 +612,26 @@ async def apply_draft(
     if account is None:
         raise HTTPException(400, "当前客户没有可用的百度授权账户")
 
-    dry_run = get_settings().baidu_write_dry_run
-    if not dry_run:
+    settings = get_settings()
+    builder_scopes = (
+        "campaign_create",
+        "adgroup_create",
+        "keyword_create",
+        "creative_create",
+    )
+    if any(
+        not settings.baidu_write_is_dry_run(
+            req.tenant_id,
+            account.id,
+            scope,
+        )
+        for scope in builder_scopes
+    ):
         raise HTTPException(
             503,
             "智能搭建真实执行暂未启用；请保持演练模式，并通过独立审批流程执行投放变更",
         )
+    dry_run = True
     client = _account_client(account)
     campaign_svc = CampaignService(client)
     adgroup_svc = AdgroupService(client)
