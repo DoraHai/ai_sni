@@ -105,6 +105,17 @@ commit=<release_sha>
 migration=not-run
 ```
 
+真实回写授权优先使用显式绑定配置：
+
+```text
+BAIDU_LIVE_WRITE_GRANTS=<tenant_id>:<local_account_id>=<scope>,<scope>;<tenant_id>:<local_account_id>=<scope>
+```
+
+每一项都把租户、本地百度账户和动作绑定在一起，不能把多个客户共用的租户、账户和动作分别
+放入三个集合。旧的 `BAIDU_LIVE_WRITE_TENANT_IDS`、`BAIDU_LIVE_WRITE_ACCOUNT_IDS` 和
+`BAIDU_LIVE_WRITE_SCOPES` 只保留单租户、单账户兼容；出现多个租户或账户时会失败关闭。
+显式配置与旧配置不能同时使用，未登记的动作 scope 会被生产启动防护拒绝。
+
 ## 5. 数据库与共享基础设施边界
 
 普通 SEM 前端或后端发布均不得：

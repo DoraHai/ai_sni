@@ -41,7 +41,7 @@ def parse_positive_id_csv(value: str, *, label: str) -> frozenset[int]:
 
 
 def parse_write_scope_csv(value: str, *, label: str) -> frozenset[str]:
-    """Parse explicit snake-case live-write scopes and reject ambiguous values."""
+    """Parse supported live-write scopes and reject typos or hidden actions."""
     scopes: set[str] = set()
     for raw in str(value or "").split(","):
         item = raw.strip()
@@ -52,7 +52,80 @@ def parse_write_scope_csv(value: str, *, label: str) -> frozenset[str]:
                 f"{label} must contain only comma-separated lowercase action scopes"
             )
         scopes.add(item)
+    unsupported = scopes - SEM_CUSTOMER_LIVE_WRITE_SCOPES
+    if unsupported:
+        raise ValueError(
+            f"{label} contains unsupported action scopes: {', '.join(sorted(unsupported))}"
+        )
     return frozenset(scopes)
+
+
+def parse_live_write_grants(
+    value: str,
+    *,
+    label: str = "BAIDU_LIVE_WRITE_GRANTS",
+) -> dict[tuple[int, int], frozenset[str]]:
+    """Parse ``tenant:account=scope,scope;...`` grants without cross-products."""
+    grants: dict[tuple[int, int], frozenset[str]] = {}
+    for raw in str(value or "").split(";"):
+        item = raw.strip()
+        if not item:
+            continue
+        identity, separator, raw_scopes = item.partition("=")
+        identity_parts = [part.strip() for part in identity.split(":")]
+        if separator != "=" or len(identity_parts) != 2:
+            raise ValueError(
+                f"{label} must use tenant_id:account_id=scope,scope entries"
+            )
+        tenant_ids = parse_positive_id_csv(identity_parts[0], label=f"{label} tenant ID")
+        account_ids = parse_positive_id_csv(identity_parts[1], label=f"{label} account ID")
+        if len(tenant_ids) != 1 or len(account_ids) != 1:
+            raise ValueError(f"{label} entries require exactly one tenant and account ID")
+        scopes = parse_write_scope_csv(raw_scopes, label=f"{label} scopes")
+        if not scopes:
+            raise ValueError(f"{label} entries require at least one action scope")
+        key = (next(iter(tenant_ids)), next(iter(account_ids)))
+        if key in grants:
+            raise ValueError(f"{label} contains a duplicate tenant/account grant")
+        grants[key] = scopes
+    return grants
+
+
+def resolve_baidu_live_write_grants(
+    settings: object,
+) -> dict[tuple[int, int], frozenset[str]]:
+    """Resolve explicit grants, with safe single-account legacy compatibility."""
+    explicit = str(getattr(settings, "baidu_live_write_grants", "") or "").strip()
+    legacy_tenants = str(getattr(settings, "baidu_live_write_tenant_ids", "") or "")
+    legacy_accounts = str(getattr(settings, "baidu_live_write_account_ids", "") or "")
+    legacy_scopes = str(getattr(settings, "baidu_live_write_scopes", "") or "")
+    if explicit:
+        if any(value.strip() for value in (legacy_tenants, legacy_accounts, legacy_scopes)):
+            raise ValueError(
+                "BAIDU_LIVE_WRITE_GRANTS cannot be combined with legacy live-write allowlists"
+            )
+        return parse_live_write_grants(explicit)
+
+    tenant_ids = parse_positive_id_csv(
+        legacy_tenants,
+        label="BAIDU_LIVE_WRITE_TENANT_IDS",
+    )
+    account_ids = parse_positive_id_csv(
+        legacy_accounts,
+        label="BAIDU_LIVE_WRITE_ACCOUNT_IDS",
+    )
+    scopes = parse_write_scope_csv(
+        legacy_scopes,
+        label="BAIDU_LIVE_WRITE_SCOPES",
+    )
+    if not tenant_ids and not account_ids and not scopes:
+        return {}
+    if len(tenant_ids) != 1 or len(account_ids) != 1 or not scopes:
+        raise ValueError(
+            "legacy BAIDU live-write allowlists support exactly one tenant/account pair; "
+            "use BAIDU_LIVE_WRITE_GRANTS for multiple grants"
+        )
+    return {(next(iter(tenant_ids)), next(iter(account_ids))): scopes}
 
 
 def resolve_baidu_write_dry_run(
@@ -97,6 +170,9 @@ class Settings(BaseSettings):
     baidu_live_write_tenant_ids: str = ""
     baidu_live_write_account_ids: str = ""
     baidu_live_write_scopes: str = ""
+    # 推荐格式：tenant_id:account_id=scope,scope;tenant_id:account_id=scope
+    # 显式绑定每个客户、账户和动作，避免多个独立白名单形成权限笛卡尔积。
+    baidu_live_write_grants: str = ""
     baidu_write_confirmation_ttl_minutes: int = Field(default=15, ge=1, le=120)
     # 仅用于先后发布兼容。真实写开启时 prod_guard 强制要求关闭。
     baidu_legacy_split_confirmation_enabled: bool = True
@@ -108,15 +184,8 @@ class Settings(BaseSettings):
     ) -> bool:
         if tenant_id is None or account_id is None:
             return False
-        tenant_ids = parse_positive_id_csv(
-            self.baidu_live_write_tenant_ids,
-            label="BAIDU_LIVE_WRITE_TENANT_IDS",
-        )
-        account_ids = parse_positive_id_csv(
-            self.baidu_live_write_account_ids,
-            label="BAIDU_LIVE_WRITE_ACCOUNT_IDS",
-        )
-        return int(tenant_id) in tenant_ids and int(account_id) in account_ids
+        grants = resolve_baidu_live_write_grants(self)
+        return (int(tenant_id), int(account_id)) in grants
 
     def baidu_live_write_allowed(
         self,
@@ -124,13 +193,10 @@ class Settings(BaseSettings):
         account_id: int | None,
         write_scope: str | None,
     ) -> bool:
-        if not self.baidu_live_write_identity_allowed(tenant_id, account_id):
+        if tenant_id is None or account_id is None or not write_scope:
             return False
-        scopes = parse_write_scope_csv(
-            self.baidu_live_write_scopes,
-            label="BAIDU_LIVE_WRITE_SCOPES",
-        )
-        return bool(write_scope) and write_scope in scopes
+        grants = resolve_baidu_live_write_grants(self)
+        return write_scope in grants.get((int(tenant_id), int(account_id)), frozenset())
 
     def baidu_write_is_dry_run(
         self,
