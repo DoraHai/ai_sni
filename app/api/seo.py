@@ -82,7 +82,7 @@ from app.seo_serp import (
 )
 from app.seo_rank_optimization import create_rank_drop_content_tasks_safely
 from app.seo_traffic import GscError, gsc_status, query_gsc_traffic, validate_property
-from app.seo_crawler import crawl_site
+from app.seo_crawler import crawl_site, is_html_page_url
 from app.seo_competitor import (
     COMPETITOR_MANUAL_COOLDOWN_SECONDS,
     COMPETITOR_MAX_PAGES_PER_RUN,
@@ -3386,6 +3386,15 @@ def _page_tdk_suggestions(
     return title, description[:160]
 
 
+def _site_page_is_tdk_eligible(row: SeoSitePage) -> bool:
+    """Keep file assets and failed URLs out of the editable TDK workflow."""
+    return (
+        is_html_page_url(row.url)
+        and not row.last_error
+        and (row.http_status is None or row.http_status < 400)
+    )
+
+
 @router.post("/site-pages/suggestions/generate")
 async def generate_site_page_suggestions(
     req: SitePageSuggestionRequest,
@@ -3420,6 +3429,9 @@ async def generate_site_page_suggestions(
     generated = 0
     skipped = 0
     for row in rows:
+        if not _site_page_is_tdk_eligible(row):
+            skipped += 1
+            continue
         if not req.overwrite and row.title_suggestion and row.description_suggestion:
             skipped += 1
             continue
@@ -3459,6 +3471,8 @@ async def create_site_page(
         url = normalize_url(req.url)
     except GeoAuditError as exc:
         raise HTTPException(400, str(exc)) from exc
+    if not is_html_page_url(url):
+        raise HTTPException(400, "仅支持导入 HTML 页面，文件和媒体资源不能作为 TDK 页面")
     row = SeoSitePage(
         tenant_id=req.tenant_id,
         site_id=req.site_id,
@@ -3503,6 +3517,9 @@ async def import_site_pages(
             url = normalize_url(raw)
         except GeoAuditError:
             skipped.append({"url": raw, "reason": "网址无效"})
+            continue
+        if not is_html_page_url(url):
+            skipped.append({"url": url, "reason": "非 HTML 页面"})
             continue
         if url in existing:
             skipped.append({"url": url, "reason": "已存在"})

@@ -33,6 +33,7 @@ from app.api.seo import (
     _iso,
     _apply_site_page_audit,
     _site_page_status_after_audit,
+    _site_page_is_tdk_eligible,
     _content_keywords,
     _content_payload,
     _fetch_internal_link_document,
@@ -187,6 +188,18 @@ def test_full_crawl_preserves_tdk_workflow_status() -> None:
     assert _site_page_status_after_audit("approved", [], has_error=True) == "approved"
     assert _site_page_status_after_audit("implemented", []) == "verified"
     assert _site_page_status_after_audit("implemented", ["description"]) == "needs_fix"
+
+
+def test_tdk_generation_rejects_failed_urls_and_file_assets() -> None:
+    assert _site_page_is_tdk_eligible(
+        SimpleNamespace(url="https://example.com/product.jsp", last_error=None, http_status=200)
+    )
+    assert not _site_page_is_tdk_eligible(
+        SimpleNamespace(url="https://example.com/photo.jpg", last_error=None, http_status=200)
+    )
+    assert not _site_page_is_tdk_eligible(
+        SimpleNamespace(url="https://example.com/missing", last_error="HTTP 404", http_status=404)
+    )
 
 
 def test_tdk_suggestions_include_keyword_and_brand_without_claims() -> None:

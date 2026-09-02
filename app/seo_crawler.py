@@ -29,6 +29,15 @@ MAX_RESPONSE_BYTES = 3 * 1024 * 1024
 FETCH_TIMEOUT_SECONDS = 15.0
 logger = logging.getLogger(__name__)
 
+NON_HTML_PAGE_SUFFIXES = (
+    ".7z", ".avi", ".bmp", ".css", ".csv", ".doc", ".docx", ".eot",
+    ".gif", ".gz", ".ico", ".ics", ".jpeg", ".jpg", ".js", ".json",
+    ".m4a", ".mov", ".mp3", ".mp4", ".mpeg", ".ogg", ".otf", ".pdf",
+    ".png", ".ppt", ".pptx", ".rar", ".rss", ".svg", ".tar", ".tgz",
+    ".tif", ".tiff", ".ttf", ".txt", ".wav", ".webm", ".webp", ".woff",
+    ".woff2", ".xls", ".xlsx", ".xml", ".zip",
+)
+
 
 class SeoCrawlError(Exception):
     pass
@@ -129,6 +138,15 @@ def normalize_crawl_url(value: str) -> str:
     if path != "/":
         path = path.rstrip("/")
     return urlunparse((parsed.scheme.lower(), netloc, path, "", parsed.query, ""))
+
+
+def is_html_page_url(value: str) -> bool:
+    """Return whether a URL is a plausible HTML page rather than a file asset."""
+    try:
+        path = urlparse(normalize_crawl_url(value)).path.lower()
+    except SeoCrawlError:
+        return False
+    return not path.endswith(NON_HTML_PAGE_SUFFIXES)
 
 
 async def _ensure_public_host(url: str) -> str:
@@ -522,6 +540,8 @@ async def crawl_site(
         except SeoCrawlError:
             continue
         if (urlparse(url).hostname or "").lower() == allowed_host and url not in queued:
+            if not is_html_page_url(url):
+                continue
             queued.add(url)
             queue.append((url, 0, source))
 
@@ -583,7 +603,12 @@ async def crawl_site(
                 if depth >= max_depth:
                     continue
                 for target in internal_links:
-                    if target not in queued and target not in visited and len(queued) < max_urls * 4:
+                    if (
+                        is_html_page_url(target)
+                        and target not in queued
+                        and target not in visited
+                        and len(queued) < max_urls * 4
+                    ):
                         queued.add(target)
                         queue.append((target, depth + 1, "internal_link"))
 
