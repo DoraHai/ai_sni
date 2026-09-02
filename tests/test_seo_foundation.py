@@ -33,6 +33,7 @@ from app.api.seo import (
     _database_iso,
     _iso,
     _apply_site_page_audit,
+    _apply_site_page_audit_failure,
     _site_page_status_after_audit,
     _site_page_is_tdk_eligible,
     _content_keywords,
@@ -187,9 +188,44 @@ def test_implemented_page_becomes_verified_only_after_clean_reaudit() -> None:
 
 def test_full_crawl_preserves_tdk_workflow_status() -> None:
     assert _site_page_status_after_audit("proposed", ["title"]) == "proposed"
-    assert _site_page_status_after_audit("approved", [], has_error=True) == "approved"
+    assert _site_page_status_after_audit("approved", [], has_error=True) == "error"
+    assert _site_page_status_after_audit("proposed", ["http_4xx"], has_error=True) == "error"
     assert _site_page_status_after_audit("implemented", []) == "verified"
     assert _site_page_status_after_audit("implemented", ["description"]) == "needs_fix"
+
+
+def test_failed_url_retires_only_unconfirmed_tdk_suggestions() -> None:
+    proposed = SimpleNamespace(
+        status="proposed",
+        title_suggestion="旧自动标题",
+        description_suggestion="旧自动描述",
+        issue_codes=[],
+        http_status=None,
+    )
+    _apply_site_page_audit_failure(
+        proposed,
+        "HTTP 404",
+        http_status=404,
+        issue_codes=["http_4xx"],
+    )
+    assert proposed.status == "error"
+    assert proposed.title_suggestion is None
+    assert proposed.description_suggestion is None
+    assert proposed.http_status == 404
+    assert proposed.issue_codes == ["http_4xx"]
+    assert proposed.last_error == "HTTP 404"
+
+    approved = SimpleNamespace(
+        status="approved",
+        title_suggestion="人工确认标题",
+        description_suggestion="人工确认描述",
+        issue_codes=[],
+        http_status=200,
+    )
+    _apply_site_page_audit_failure(approved, "timeout")
+    assert approved.status == "error"
+    assert approved.title_suggestion == "人工确认标题"
+    assert approved.description_suggestion == "人工确认描述"
 
 
 def test_tdk_generation_rejects_failed_urls_and_file_assets() -> None:
