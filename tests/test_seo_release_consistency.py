@@ -400,6 +400,21 @@ def test_site_optimization_has_success_feedback_and_contextual_empty_state() -> 
     assert ':empty-text="emptyStateText"' in view
 
 
+def test_site_optimization_non_html_cleanup_is_previewed_and_scope_locked() -> None:
+    root = Path(__file__).parents[1]
+    view = (root / "frontend/src/views/seo/SeoSiteOptimizationView.vue").read_text(
+        encoding="utf-8"
+    )
+    api = (root / "frontend/src/api/seo.js").read_text(encoding="utf-8")
+
+    assert "清理非网页资源" in view
+    assert "dry_run: true" in view
+    assert "dry_run: false" in view
+    assert "page_ids: preview.items.map((item) => item.id)" in view
+    assert "tenantId !== currentTenantId.value || selectedSiteId !== siteId.value" in view
+    assert "'/api/v1/seo/site-pages/non-html-assets/cleanup'" in api
+
+
 def test_seo_batch_handlers_reject_reentry() -> None:
     root = Path(__file__).parents[1]
     site = (root / "frontend/src/views/seo/SeoSiteOptimizationView.vue").read_text(encoding="utf-8")

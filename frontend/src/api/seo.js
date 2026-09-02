@@ -76,6 +76,10 @@ export function generateSeoSitePageSuggestions(payload) {
   return client.post('/api/v1/seo/site-pages/suggestions/generate', payload)
 }
 
+export function cleanupSeoNonHtmlSitePages(payload) {
+  return client.post('/api/v1/seo/site-pages/non-html-assets/cleanup', payload)
+}
+
 export function createSeoSitePage(payload) {
   return client.post('/api/v1/seo/site-pages', payload)
 }

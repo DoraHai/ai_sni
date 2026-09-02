@@ -26,6 +26,7 @@ from app.api.seo import (
     SeoContentAssistRequest,
     SitePageImport,
     SitePageCreate,
+    SitePageNonHtmlCleanupRequest,
     SitePageUpdate,
     _keyword_payload,
     _merge_crawl_seed_urls,
@@ -39,6 +40,7 @@ from app.api.seo import (
     _fetch_internal_link_document,
     _metric_payload,
     _missing_content_keywords,
+    _non_html_site_page_cleanup_plan,
     _number_or_text,
     _provider_metric_status,
     _preferred_provider_error,
@@ -202,6 +204,40 @@ def test_tdk_generation_rejects_failed_urls_and_file_assets() -> None:
     )
 
 
+def test_non_html_cleanup_plan_only_selects_unlinked_file_assets() -> None:
+    rows = [
+        SimpleNamespace(
+            id=1, url="https://example.com/page.jsp", status="healthy",
+            title_suggestion=None, description_suggestion=None,
+        ),
+        SimpleNamespace(
+            id=2, url="https://example.com/calendar.ics", status="error",
+            title_suggestion=None, description_suggestion=None,
+        ),
+        SimpleNamespace(
+            id=3, url="https://example.com/manual.zip", status="proposed",
+            title_suggestion="错误建议", description_suggestion=None,
+        ),
+    ]
+
+    plan = _non_html_site_page_cleanup_plan(rows, {3})
+
+    assert [item["id"] for item in plan["items"]] == [2]
+    assert plan["items"][0]["has_suggestion"] is False
+    assert [item["id"] for item in plan["skipped"]] == [3]
+    assert plan["skipped"][0]["reason"] == "已关联内容任务"
+    assert plan["skipped"][0]["has_suggestion"] is True
+
+
+def test_non_html_cleanup_execute_requires_explicit_previewed_ids() -> None:
+    request = SitePageNonHtmlCleanupRequest(tenant_id=1, site_id=1)
+    assert request.dry_run is True
+    assert request.page_ids == []
+    assert SitePageNonHtmlCleanupRequest(
+        tenant_id=1, site_id=1, dry_run=False, page_ids=[2, 3]
+    ).page_ids == [2, 3]
+
+
 def test_tdk_suggestions_include_keyword_and_brand_without_claims() -> None:
     page = SimpleNamespace(
         h1="工业齿轮箱选型",
@@ -343,6 +379,7 @@ def test_keyword_history_query_is_engine_device_and_tenant_scoped() -> None:
         ("/api/v1/seo/keywords", "POST", "seo.keywords", True),
         ("/api/v1/seo/rank-snapshots", "POST", "seo.keywords", True),
         ("/api/v1/seo/site-pages", "GET", "seo.site", False),
+        ("/api/v1/seo/site-pages/non-html-assets/cleanup", "POST", "seo.site", True),
         ("/api/v1/seo/site-pages/1/audit", "POST", "seo.site", True),
         ("/api/v1/seo/site/crawl-runs", "POST", "seo.site", True),
         ("/api/v1/seo/overview", "GET", "seo.dashboard", False),

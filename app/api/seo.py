@@ -756,6 +756,13 @@ class SitePageSuggestionRequest(BaseModel):
     overwrite: bool = False
 
 
+class SitePageNonHtmlCleanupRequest(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt
+    dry_run: bool = True
+    page_ids: list[PositiveInt] = Field(default_factory=list, max_length=100)
+
+
 class MetricSnapshotCreate(BaseModel):
     tenant_id: int
     site_id: int
@@ -3393,6 +3400,100 @@ def _site_page_is_tdk_eligible(row: SeoSitePage) -> bool:
         and not row.last_error
         and (row.http_status is None or row.http_status < 400)
     )
+
+
+def _non_html_site_page_cleanup_plan(
+    rows: list[SeoSitePage], linked_page_ids: set[int]
+) -> dict[str, list[dict[str, Any]]]:
+    """Describe safe cleanup candidates without mutating database state."""
+    items: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for row in rows:
+        if is_html_page_url(row.url):
+            continue
+        item = {
+            "id": int(row.id),
+            "url": row.url,
+            "status": row.status,
+            "has_suggestion": bool(row.title_suggestion or row.description_suggestion),
+        }
+        if int(row.id) in linked_page_ids:
+            skipped.append({**item, "reason": "已关联内容任务"})
+        else:
+            items.append(item)
+    return {"items": items, "skipped": skipped}
+
+
+@router.post("/site-pages/non-html-assets/cleanup")
+async def cleanup_non_html_site_pages(
+    req: SitePageNonHtmlCleanupRequest,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    """Preview or remove file/media records mistakenly stored as HTML pages."""
+    ctx.ensure_tenant(req.tenant_id)
+    await _tenant(session, req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
+    if not req.dry_run and not req.page_ids:
+        raise HTTPException(400, "执行清理前必须先预览并提交明确的页面 ID")
+
+    conditions = [
+        SeoSitePage.tenant_id == req.tenant_id,
+        SeoSitePage.site_id == req.site_id,
+    ]
+    requested_ids = {int(page_id) for page_id in req.page_ids}
+    if requested_ids:
+        conditions.append(SeoSitePage.id.in_(requested_ids))
+    rows = list(
+        await session.scalars(
+            select(SeoSitePage).where(*conditions).order_by(SeoSitePage.id)
+        )
+    )
+
+    if not req.dry_run:
+        returned_ids = {int(row.id) for row in rows}
+        if returned_ids != requested_ids or any(is_html_page_url(row.url) for row in rows):
+            raise HTTPException(409, "待清理页面范围已变化，请重新预览")
+
+    candidate_ids = [int(row.id) for row in rows if not is_html_page_url(row.url)]
+    linked_page_ids: set[int] = set()
+    if candidate_ids:
+        linked_page_ids = {
+            int(page_id)
+            for page_id in await session.scalars(
+                select(SeoContentAsset.source_page_id).where(
+                    SeoContentAsset.tenant_id == req.tenant_id,
+                    SeoContentAsset.site_id == req.site_id,
+                    SeoContentAsset.source_page_id.in_(candidate_ids),
+                )
+            )
+            if page_id is not None
+        }
+    plan = _non_html_site_page_cleanup_plan(rows, linked_page_ids)
+    if not req.dry_run and plan["skipped"]:
+        raise HTTPException(409, "待清理资源已关联内容任务，请重新预览并人工处理")
+
+    deleted = 0
+    if not req.dry_run:
+        row_map = {int(row.id): row for row in rows}
+        for item in plan["items"]:
+            await session.delete(row_map[item["id"]])
+            deleted += 1
+        await session.commit()
+        logger.info(
+            "Cleaned non-HTML SEO site-page records tenant_id=%s site_id=%s page_ids=%s",
+            req.tenant_id,
+            req.site_id,
+            [item["id"] for item in plan["items"]],
+        )
+
+    return {
+        "dry_run": req.dry_run,
+        "matched": len(plan["items"]) + len(plan["skipped"]),
+        "deletable": len(plan["items"]),
+        "deleted": deleted,
+        **plan,
+    }
 
 
 @router.post("/site-pages/suggestions/generate")
