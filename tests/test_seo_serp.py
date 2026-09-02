@@ -568,6 +568,34 @@ def test_domain_keyword_batch_does_not_write_an_empty_unmatched_rank() -> None:
     assert client.get.await_count == 1
 
 
+def test_domestic_rank_batch_retries_chinaz_state_level_system_error() -> None:
+    settings = _provider_settings()
+    settings.chinaz_360_pc_ranking_api_key = "360-ranking-key"
+    unavailable = MagicMock()
+    unavailable.raise_for_status.return_value = None
+    unavailable.json.return_value = {"StateCode": -1, "Reason": "系统异常"}
+    success = MagicMock()
+    success.raise_for_status.return_value = None
+    success.json.return_value = {
+        "StateCode": 1,
+        "Result": {"Ranks": [{"RankStr": "1-2", "Title": "NORD", "Url": "https://www.nord.cn/"}]},
+    }
+    client = AsyncMock()
+    client.get.side_effect = [unavailable, success]
+    context = AsyncMock()
+    context.__aenter__.return_value = client
+    with patch("app.seo_serp.get_settings", return_value=settings), patch(
+        "app.seo_serp.create_chinaz_client", return_value=context
+    ), patch("app.seo_serp.asyncio.sleep", new=AsyncMock()) as sleep_mock:
+        results = asyncio.run(fetch_chinaz_domestic_rank_batch(
+            "360", "nord.cn", [("诺德", "desktop")]
+        ))
+    assert results[0][1] is None
+    assert results[0][0]["items"][0]["rank"] == 2
+    assert client.get.await_count == 2
+    sleep_mock.assert_awaited_once()
+
+
 def test_provider_batch_reuses_one_client_and_caps_concurrency() -> None:
     context = AsyncMock()
     provider_client = object()
