@@ -19,6 +19,7 @@ os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 from app.baidu.client import BaiduAPIClient, BaiduLiveWriteBlockedError
 from app.config import (
     Settings,
+    parse_live_write_grants,
     parse_positive_id_csv,
     parse_write_scope_csv,
     resolve_baidu_write_dry_run,
@@ -71,6 +72,54 @@ class BaiduLiveWriteGuardTests(unittest.TestCase):
                     settings.baidu_write_is_dry_run(tenant_id, account_id, scope)
                 )
 
+    def test_explicit_grants_do_not_share_scopes_between_customers(self):
+        settings = Settings().model_copy(
+            update={
+                "baidu_write_dry_run": False,
+                "baidu_live_write_grants": (
+                    "3:17=keyword_bid;4:18=campaign_pause"
+                ),
+                "baidu_live_write_tenant_ids": "",
+                "baidu_live_write_account_ids": "",
+                "baidu_live_write_scopes": "",
+                "baidu_legacy_split_confirmation_enabled": False,
+            }
+        )
+        self.assertFalse(settings.baidu_write_is_dry_run(3, 17, "keyword_bid"))
+        self.assertFalse(settings.baidu_write_is_dry_run(4, 18, "campaign_pause"))
+        for tenant_id, account_id, scope in (
+            (3, 17, "campaign_pause"),
+            (4, 18, "keyword_bid"),
+            (3, 18, "campaign_pause"),
+            (4, 17, "keyword_bid"),
+        ):
+            self.assertTrue(settings.baidu_write_is_dry_run(tenant_id, account_id, scope))
+
+    def test_multiple_legacy_allowlist_values_fail_closed(self):
+        settings = Settings().model_copy(
+            update={
+                "baidu_write_dry_run": False,
+                "baidu_live_write_tenant_ids": "3,4",
+                "baidu_live_write_account_ids": "17,18",
+                "baidu_live_write_scopes": "keyword_bid,campaign_pause",
+                "baidu_legacy_split_confirmation_enabled": False,
+            }
+        )
+        self.assertTrue(settings.baidu_write_is_dry_run(3, 17, "keyword_bid"))
+
+    def test_explicit_and_legacy_grants_cannot_be_combined(self):
+        settings = Settings().model_copy(
+            update={
+                "baidu_write_dry_run": False,
+                "baidu_live_write_grants": "3:17=keyword_bid",
+                "baidu_live_write_tenant_ids": "3",
+                "baidu_live_write_account_ids": "17",
+                "baidu_live_write_scopes": "keyword_bid",
+                "baidu_legacy_split_confirmation_enabled": False,
+            }
+        )
+        self.assertTrue(settings.baidu_write_is_dry_run(3, 17, "keyword_bid"))
+
     def test_invalid_allowlist_fails_closed_to_dry_run(self):
         settings = Settings().model_copy(
             update={
@@ -103,10 +152,33 @@ class BaiduLiveWriteGuardTests(unittest.TestCase):
             parse_write_scope_csv("keyword_bid, account_budget", label="TEST"),
             {"keyword_bid", "account_budget"},
         )
-        for value in ("*", "Keyword_Bid", "keyword-bid", "1keyword_bid", "关键词出价"):
+        for value in (
+            "*", "Keyword_Bid", "keyword-bid", "1keyword_bid", "关键词出价",
+            "campaign_create", "keyword_bdi",
+        ):
             with self.subTest(value=value):
                 with self.assertRaises(ValueError):
                     parse_write_scope_csv(value, label="TEST")
+
+    def test_explicit_grant_parser_rejects_ambiguous_entries(self):
+        self.assertEqual(
+            parse_live_write_grants(
+                "3:17=keyword_bid,keyword_pause;4:18=campaign_pause"
+            ),
+            {
+                (3, 17): frozenset({"keyword_bid", "keyword_pause"}),
+                (4, 18): frozenset({"campaign_pause"}),
+            },
+        )
+        for value in (
+            "3=keyword_bid",
+            "3:17=",
+            "3:17=campaign_create",
+            "3:17=keyword_bid;3:17=keyword_pause",
+        ):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    parse_live_write_grants(value)
 
     def test_dry_run_blocks_write_before_live_allowlist(self):
         settings = _settings(dry_run=True, tenants=set(), accounts=set(), scopes=set())
