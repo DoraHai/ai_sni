@@ -6,9 +6,10 @@ import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { changePassword, fetchMe, fetchTenants } from './api/auth'
 import { fetchAlerts } from './api/alerts'
 import { fetchCandidates } from './api/expansion'
+import { fetchWritebackMode } from './api/writeback'
 import { session } from './store/session'
 import { redirectToLogin } from './auth/loginRedirect'
-import { SEM_READ_ONLY_MESSAGE, SEM_WRITEBACK_ENABLED } from './constants/semCapabilities'
+import { SEM_LIMITED_LIVE_MESSAGE, SEM_READ_ONLY_MESSAGE } from './constants/semCapabilities'
 import { parseUtcTimestamp } from './utils/dateTime'
 
 const route = useRoute()
@@ -34,6 +35,30 @@ const showSemAccountContext = computed(() => (
 const tenantPopoverOpen = ref(false)
 const bootstrapError = ref('')
 let tenantLoadGeneration = 0
+let writebackModeGeneration = 0
+const writebackMode = ref({ mode: 'dry_run', live_scopes: [] })
+const writebackModeMessage = computed(() => (
+  writebackMode.value.mode === 'limited_live'
+    ? `${SEM_LIMITED_LIVE_MESSAGE}已开放 ${writebackMode.value.live_scopes.length} 类动作。`
+    : SEM_READ_ONLY_MESSAGE
+))
+
+async function loadWritebackMode() {
+  const tenantId = Number(session.tenantId) || null
+  const generation = ++writebackModeGeneration
+  writebackMode.value = { mode: 'dry_run', live_scopes: [] }
+  if (tenantModuleScope.value !== 'sem' || !tenantId) return
+  const tenant = session.tenants.find((item) => item.id === tenantId)
+  if (session.isLoggedIn && !tenant) return
+  if (tenant?.sem_identity?.status === 'blocked') return
+  try {
+    const result = await fetchWritebackMode(tenantId)
+    if (generation !== writebackModeGeneration || tenantId !== session.tenantId) return
+    writebackMode.value = result
+  } catch {
+    // 获取失败时必须保持演练提示，不得猜测真实回写已开启。
+  }
+}
 const themeStorageKey = 'sem_console_theme'
 const currentTheme = ref(localStorage.getItem(themeStorageKey) === 'dark' ? 'dark' : 'light')
 const themeLabel = computed(() => (currentTheme.value === 'dark' ? '暗橘' : '亮橘'))
@@ -236,6 +261,7 @@ async function loadTenants() {
     if (generation !== tenantLoadGeneration || moduleScope !== tenantModuleScope.value) return
     session.setTenants(t.tenants)
     loadBadges()
+    loadWritebackMode()
     bootstrapError.value = ''
   } catch (error) {
     if (error.code !== 'AUTH_EXPIRED') bootstrapError.value = `客户列表加载失败：${error.message}`
@@ -301,16 +327,16 @@ function closeTenantPopoverOnOutside(event) {
   tenantPopoverOpen.value = false
 }
 
-watch(() => session.isLoggedIn, (v) => { if (v) { loadTenants(); loadBadges() } })
-watch(() => session.tenantId, loadBadges)
-watch(tenantModuleScope, loadTenants)
+watch(() => session.isLoggedIn, (v) => { if (v) { loadTenants(); loadBadges(); loadWritebackMode() } })
+watch(() => session.tenantId, () => { loadBadges(); loadWritebackMode() })
+watch(tenantModuleScope, () => { loadTenants(); loadWritebackMode() })
 watch(() => session.tenantListRevision, loadTenants)
 watch(() => route.path, () => {
   tenantPopoverOpen.value = false
   syncOpenToRoute()
 })
 onMounted(() => {
-  refreshMe(); loadTenants(); loadBadges(); syncOpenToRoute()
+  refreshMe(); loadTenants(); loadBadges(); loadWritebackMode(); syncOpenToRoute()
   document.addEventListener('keydown', closeTenantPopoverOnEscape, true)
   document.addEventListener('click', closeTenantPopoverOnOutside, true)
 })
@@ -493,9 +519,13 @@ onBeforeUnmount(() => {
           show-icon
           class="identity-block-alert"
         />
-        <div v-if="!SEM_WRITEBACK_ENABLED" class="readonly-banner">
-          <b>只读演练</b>
-          <span>{{ SEM_READ_ONLY_MESSAGE }}</span>
+        <div
+          v-if="tenantModuleScope === 'sem'"
+          class="readonly-banner"
+          :class="{ 'limited-live': writebackMode.mode === 'limited_live' }"
+        >
+          <b>{{ writebackMode.mode === 'limited_live' ? '受控真实回写' : '只读演练' }}</b>
+          <span>{{ writebackModeMessage }}</span>
         </div>
         <div class="main-inner">
           <router-view v-if="!showSemIdentityBlock" />
@@ -513,6 +543,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .readonly-banner { display: flex; align-items: center; gap: 10px; margin: 0 18px 12px; padding: 9px 13px; border: 1px solid #f1c27d; border-radius: 8px; background: #fff8eb; color: #7a4b0b; font-size: 12px; line-height: 1.5; }
 .readonly-banner b { flex: none; padding: 1px 7px; border-radius: 10px; background: #f3b85b; color: #4f2c00; font-size: 11px; }
+.readonly-banner.limited-live { border-color: #e37b38; background: #fff2e8; color: #8a3515; }
+.readonly-banner.limited-live b { background: #d95d19; color: #fff; }
 .identity-block-alert { margin: 0 18px 12px; }
 .identity-block-panel { margin: 24px 18px; padding: 24px; display: grid; gap: 8px; border: 1px solid #efb1b1; border-radius: 12px; background: #fff6f6; color: #8f2525; }
 .account-context.conflict { border-color: #ef9a9a; background: #fff1f1; color: #a12626; }

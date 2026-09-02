@@ -286,7 +286,7 @@ async function adopt(action, msg) {
     if (action.budget == null) return ElMessage.warning('该建议没有预算金额')
     try {
       await ElMessageBox.confirm(
-        `将把账户日预算设为 ¥${action.budget}。受演练/护栏/台账保护。确认采纳？`,
+        `将把账户日预算设为 ¥${action.budget}。系统将按当前客户、推广账户和动作门禁决定演练或真实执行；真实执行会修改百度账户。确认采纳？`,
         '确认采纳', { confirmButtonText: '确认执行', cancelButtonText: '再想想', type: 'warning' },
       )
     } catch { return }
@@ -310,7 +310,7 @@ async function adopt(action, msg) {
   if (!kws.length) return ElMessage.warning('该建议没有具体关键词')
   try {
     await ElMessageBox.confirm(
-      `将执行：${actionSummary(action)}\n共 ${kws.length} 个词。受演练/护栏/台账保护。确认采纳？`,
+      `将执行：${actionSummary(action)}\n共 ${kws.length} 个词。系统将按当前客户、推广账户和动作门禁决定演练或真实执行；真实执行会修改百度账户。确认采纳？`,
       '确认采纳', { confirmButtonText: '确认执行', cancelButtonText: '再想想', type: 'warning' },
     )
   } catch { return }

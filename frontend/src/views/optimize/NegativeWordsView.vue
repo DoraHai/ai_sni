@@ -180,7 +180,7 @@ async function removeNeg(row) {
   if (row.scope !== 'adgroup') return ElMessage.warning('计划级否词暂只能在百度后台删除（updateCampaign 未做）')
   try {
     await ElMessageBox.confirm(
-      `将从单元「${row.adgroup_name || row.adgroup_id}」删除否词「${row.word}」（${row.match_label || ''}）。\n演练模式下不真改线上。`,
+      `将从单元「${row.adgroup_name || row.adgroup_id}」删除否词「${row.word}」（${row.match_label || ''}）。\n系统将按当前客户、推广账户和动作门禁决定演练或真实执行；真实执行会修改百度账户。`,
       '删除否词', { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' },
     )
   } catch {
@@ -210,7 +210,7 @@ onMounted(load)
         <div class="page-desc">
           现有否词 <b>{{ fmtInt(summary?.total) }}</b> 条 ·
           待审建议 <b class="danger-text">{{ fmtInt(reviewCount) }}</b> 条 ·
-          数据源：百度计划/单元否词（每日同步）+ 自研搜索词扫描 · 当前操作仅加入待回写台账，不修改百度账户
+          数据源：百度计划/单元否词（每日同步）+ 自研搜索词扫描 · 操作记入台账并受客户级回写门禁保护
         </div>
       </div>
       <div class="page-actions">

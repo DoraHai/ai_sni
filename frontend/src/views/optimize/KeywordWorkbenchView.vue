@@ -240,7 +240,7 @@ async function saveLanding() {
 
 async function editAdgroupBid(row) {
   const { value } = await ElMessageBox.prompt(
-    `单元「${row.adgroup_name}」当前出价 ${fmtMoney(row.max_price)}。\n输入新的单元出价（¥0.01 ~ 999.99，且不超过所属计划日预算）。当前为演练模式，只记台账不真改。`,
+    `单元「${row.adgroup_name}」当前出价 ${fmtMoney(row.max_price)}。\n输入新的单元出价（¥0.01 ~ 999.99，且不超过所属计划日预算）。实际执行模式由当前客户、推广账户和动作门禁决定。`,
     '修改单元出价',
     {
       confirmButtonText: '确认',
@@ -594,7 +594,7 @@ async function batchWriteback() {
   try {
     await ElMessageBox.confirm(
       `将对 ${items.length} 个关键词回写各自的最终执行价（受 ±20% 渐进调价硬上限保护并记台账）。\n` +
-        `若当前为演练模式，仅记台账、不会真改线上出价。`,
+        `系统将按当前客户、推广账户和动作门禁决定演练或真实执行；真实执行会修改百度账户。`,
       '加入待回写台账',
       { confirmButtonText: `确认回写 ${items.length} 个`, cancelButtonText: '取消', type: 'warning' },
     )
@@ -628,7 +628,7 @@ async function batchPause(pause) {
   if (!ids.length) return
   try {
     await ElMessageBox.confirm(
-      `将批量${pause ? '暂停' : '启用'} ${ids.length} 个关键词。\n受 dry-run 保护，演练模式下不真改线上。`,
+      `将批量${pause ? '暂停' : '启用'} ${ids.length} 个关键词。\n系统将按当前客户、推广账户和动作门禁决定演练或真实执行；真实执行会修改百度账户。`,
       pause ? '批量暂停' : '批量启用',
       { confirmButtonText: `确认${pause ? '暂停' : '启用'} ${ids.length} 个`, cancelButtonText: '取消', type: 'warning' },
     )
@@ -741,10 +741,10 @@ onBeforeUnmount(() => {
             {{ refreshing ? '同步中…' : '刷新数据' }}
           </button>
           <button class="pbtn" :disabled="exporting" @click="exportCsv">{{ exporting ? '导出中…' : '导出' }}</button>
-          <el-tooltip content="当前只读演练；导入/新建将在开放回写后执行" placement="bottom">
+          <el-tooltip content="导入/新建的执行模式由当前客户、推广账户和动作门禁决定" placement="bottom">
             <button class="pbtn" disabled>导入关键词</button>
           </el-tooltip>
-          <el-tooltip content="当前只读演练；可在词表内把建议加入待回写台账" placement="bottom">
+          <el-tooltip content="可在词表内提交建议；执行模式由当前客户门禁决定" placement="bottom">
             <button class="pbtn" disabled>批量调价</button>
           </el-tooltip>
         </div>
@@ -840,16 +840,16 @@ onBeforeUnmount(() => {
             </el-dropdown-menu>
           </template>
         </el-dropdown>
-        <el-tooltip content="对所选关键词回写各自的「最终执行价」（默认=AI建议价，可在表内调整），受 ±20% 硬上限保护并记台账；演练模式下不真改线上" placement="top">
+        <el-tooltip content="对所选关键词回写各自的「最终执行价」（默认=AI建议价，可在表内调整），受 ±20% 硬上限和客户级回写门禁保护并记台账" placement="top">
           <button class="bt-btn bt-primary" :disabled="!selection.length" @click="batchWriteback">批量回写</button>
         </el-tooltip>
-        <el-tooltip content="批量暂停所选关键词（updateWord 写回，dry-run 保护，演练模式不真改线上）" placement="top">
+        <el-tooltip content="批量暂停所选关键词（updateWord 写回），受客户、推广账户和动作门禁保护" placement="top">
           <button class="bt-btn" :disabled="!selection.length" @click="batchPause(true)">批量暂停</button>
         </el-tooltip>
-        <el-tooltip content="批量启用所选关键词（updateWord 写回，dry-run 保护，演练模式不真改线上）" placement="top">
+        <el-tooltip content="批量启用所选关键词（updateWord 写回），受客户、推广账户和动作门禁保护" placement="top">
           <button class="bt-btn" :disabled="!selection.length" @click="batchPause(false)">批量启用</button>
         </el-tooltip>
-        <el-tooltip content="当前只读演练，匹配方式建议仅加入待回写台账" placement="top">
+        <el-tooltip content="匹配方式变更受客户、推广账户和动作门禁保护并记台账" placement="top">
           <button class="bt-btn" disabled>批量加否词</button>
         </el-tooltip>
         <span v-if="selection.length" class="bt-clear" @click="tableRef?.clearSelection()">取消选择</span>
@@ -857,7 +857,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="suggestionPending" class="ai-note">
-      💡 本页含 AI 调价建议（共 <b>{{ suggestionPending }}</b> 条待处理）。当前只读演练，可把建议加入待回写台账，待管理员开放回写后再执行。
+      💡 本页含 AI 调价建议（共 <b>{{ suggestionPending }}</b> 条待处理）。操作会记入回写台账，并按当前客户、推广账户和动作门禁决定演练或真实执行。
     </div>
 
     <div class="table-panel">
@@ -1232,7 +1232,7 @@ onBeforeUnmount(() => {
         type="warning"
         :closable="false"
         show-icon
-        title="当前为演练模式：保存后只记台账，不会真改百度线上。"
+        title="回写模式按客户、推广账户和动作门禁判定；已开放动作会真实修改百度账户。"
         style="margin-bottom: 14px"
       />
       <el-form label-position="top">
