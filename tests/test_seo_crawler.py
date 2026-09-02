@@ -16,6 +16,7 @@ from app.seo_crawler import (
     classify_fetch_error,
     crawl_site,
     fetch_url,
+    is_html_page_url,
     normalize_crawl_url,
     sitemap_urls,
 )
@@ -41,6 +42,20 @@ def test_normalize_crawl_url_removes_fragment_and_rejects_credentials() -> None:
         normalize_crawl_url("https://user:pass@example.com")
     with pytest.raises(SeoCrawlError, match="Invalid URL port"):
         normalize_crawl_url("https://example.com:not-a-port/path")
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://example.com/products/widget.jsp", True),
+        ("https://example.com/products/", True),
+        ("https://example.com/calendar/event.ics?download=1", False),
+        ("https://example.com/media/photo.JPG", False),
+        ("https://example.com/software/archive.zip", False),
+    ],
+)
+def test_is_html_page_url_rejects_known_file_assets(url: str, expected: bool) -> None:
+    assert is_html_page_url(url) is expected
 
 
 def test_sitemap_parser_supports_urlset_and_index() -> None:
@@ -172,6 +187,43 @@ def test_crawl_site_isolates_one_page_failure_and_strips_internal_links() -> Non
     failed = next(item for item in result["snapshots"] if item["url"].endswith("/broken"))
     assert failed["error_type"] == "crawl_error"
     assert failed["fetch_error"] == "one page exploded"
+
+
+def test_crawl_site_does_not_enqueue_binary_assets() -> None:
+    pages = {
+        "https://example.com/robots.txt": _result(
+            "https://example.com/robots.txt", "User-agent: *\nAllow: /", "text/plain"
+        ),
+        "https://example.com/sitemap.xml": _result(
+            "https://example.com/sitemap.xml",
+            "<urlset><url><loc>https://example.com/download.zip</loc></url></urlset>",
+            "application/xml",
+        ),
+        "https://example.com/": _result(
+            "https://example.com/",
+            '<html><body><a href="/photo.jpg">photo</a><a href="/page">page</a></body></html>',
+        ),
+        "https://example.com/page": _result(
+            "https://example.com/page", "<html><body><h1>Page</h1></body></html>"
+        ),
+    }
+
+    async def fake_fetch(url: str, **_: object) -> FetchResult:
+        return pages[url]
+
+    result = asyncio.run(
+        crawl_site(
+            "https://example.com",
+            max_urls=5,
+            extra_seeds=["https://example.com/calendar.ics"],
+            fetcher=fake_fetch,
+        )
+    )
+
+    assert {item["url"] for item in result["snapshots"]} == {
+        "https://example.com/",
+        "https://example.com/page",
+    }
 
 
 def test_fetch_url_blocks_loopback_before_network_request() -> None:
