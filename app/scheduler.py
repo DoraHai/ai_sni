@@ -530,7 +530,7 @@ def start_scheduler() -> None:
         )
         scheduler.add_job(
             probe_site_health_alerts,
-            CronTrigger(minute=20),
+            CronTrigger(hour=4, minute=20),
             id="probe_site_health_alerts",
             replace_existing=True,
             max_instances=1,

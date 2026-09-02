@@ -1653,6 +1653,7 @@ async def apply_account_budget_writeback(
         await _ensure_no_unresolved_funds_writeback(
             session, WritebackAction,
             WritebackAction.tenant_id == tenant_id,
+            WritebackAction.baidu_account_id == acc.id,
             WritebackAction.action_type == "set_account_budget",
         )
     await _claim_funds_approval(

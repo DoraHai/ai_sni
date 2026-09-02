@@ -21,8 +21,9 @@ os.environ.setdefault("BAIDU_SELF_TOKEN_EXPIRES_AT", "2099-01-01T00:00:00")
 os.environ.setdefault("CRYPTO_MASTER_KEY_B64", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
-from app.security.auth import AuthContext, require_scoped_auth
+from app.api.keywords import BatchCategoryRequest, batch_update_category
 from app.permissions import OPERATOR_PERMS
+from app.security.auth import AuthContext, require_scoped_auth
 
 
 class _BudgetRequest(BaseModel):
@@ -89,6 +90,107 @@ class TenantIsolationTests(unittest.IsolatedAsyncioTestCase):
 
         module_guard.assert_awaited_once_with(session, ctx, 10, "sem")
         guard.assert_awaited_once_with(session, 10)
+
+    async def test_integral_float_tenant_body_cannot_bypass_tenant_scope(self):
+        body = b'{"tenant_id":5.0,"keyword_ids":[1],"category":"brand"}'
+
+        async def receive():
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/api/v1/keywords/batch-category",
+                "query_string": b"",
+                "headers": [(b"content-type", b"application/json")],
+            },
+            receive,
+        )
+        ctx = AuthContext(
+            user_id=1,
+            username="op",
+            role_name="ops",
+            tenant_id=10,
+            permissions={"optimize.keywords": "edit"},
+        )
+
+        with self.assertRaises(HTTPException) as cm:
+            await require_scoped_auth(request, ctx, object())
+
+        self.assertEqual(cm.exception.status_code, 403)
+
+    async def test_fractional_tenant_body_is_rejected(self):
+        body = b'{"tenant_id":5.5,"keyword_ids":[1],"category":"brand"}'
+
+        async def receive():
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/api/v1/keywords/batch-category",
+                "query_string": b"",
+                "headers": [(b"content-type", b"application/json")],
+            },
+            receive,
+        )
+        ctx = AuthContext(
+            user_id=1,
+            username="op",
+            role_name="ops",
+            tenant_id=10,
+            permissions={"optimize.keywords": "edit"},
+        )
+
+        with self.assertRaises(HTTPException) as cm:
+            await require_scoped_auth(request, ctx, object())
+
+        self.assertEqual(cm.exception.status_code, 422)
+
+    async def test_query_tenant_cannot_mask_different_body_tenant(self):
+        body = b'{"tenant_id":5,"keyword_ids":[1],"category":"brand"}'
+
+        async def receive():
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/api/v1/keywords/batch-category",
+                "query_string": b"tenant_id=10",
+                "headers": [(b"content-type", b"application/json")],
+            },
+            receive,
+        )
+        ctx = AuthContext(
+            user_id=1,
+            username="op",
+            role_name="ops",
+            tenant_id=10,
+            permissions={"optimize.keywords": "edit"},
+        )
+
+        with self.assertRaises(HTTPException) as cm:
+            await require_scoped_auth(request, ctx, object())
+
+        self.assertEqual(cm.exception.status_code, 422)
+        self.assertIn("不一致", cm.exception.detail)
+
+    async def test_batch_category_has_endpoint_level_tenant_check(self):
+        req = BatchCategoryRequest(
+            tenant_id=5.0,
+            keyword_ids=[1],
+            category="brand",
+        )
+        ctx = self._ctx(10)
+
+        with self.assertRaises(HTTPException) as cm:
+            await batch_update_category(req, session=object(), ctx=ctx)
+
+        self.assertEqual(cm.exception.status_code, 403)
 
     async def test_customer_identity_admin_page_remains_available_for_repair(self):
         request = Request(

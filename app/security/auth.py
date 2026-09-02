@@ -346,18 +346,40 @@ async def require_scoped_auth(
         if not ok:
             verb = "编辑" if need_edit else "访问"
             raise HTTPException(403, f"当前角色无权{verb}此功能")
-    tid = request.query_params.get("tenant_id")
-    if not tid:
-        tid = request.path_params.get("tenant_id")
-    if not tid and request.method not in _READ_METHODS:
+    tenant_id_values: list[object] = []
+    query_tid = request.query_params.get("tenant_id")
+    path_tid = request.path_params.get("tenant_id")
+    if query_tid is not None:
+        tenant_id_values.append(query_tid)
+    if path_tid is not None:
+        tenant_id_values.append(path_tid)
+    if request.method not in _READ_METHODS:
         try:
             payload = await request.json()
         except (ValueError, RuntimeError):
             payload = None
-        if isinstance(payload, dict):
-            tid = payload.get("tenant_id")
-    tenant_id = int(tid) if str(tid or "").lstrip("-").isdigit() else None
-    if tenant_id is not None:
+        if isinstance(payload, dict) and "tenant_id" in payload:
+            tenant_id_values.append(payload["tenant_id"])
+
+    parsed_tenant_ids: list[int] = []
+    for tid in tenant_id_values:
+        if isinstance(tid, bool) or tid is None:
+            raise HTTPException(422, "tenant_id 必须是整数")
+        if isinstance(tid, float):
+            if not tid.is_integer():
+                raise HTTPException(422, "tenant_id 必须是整数")
+            parsed_tenant_ids.append(int(tid))
+        elif isinstance(tid, int):
+            parsed_tenant_ids.append(tid)
+        elif isinstance(tid, str) and tid.strip().lstrip("-").isdigit():
+            parsed_tenant_ids.append(int(tid.strip()))
+        else:
+            raise HTTPException(422, "tenant_id 必须是整数")
+
+    if len(set(parsed_tenant_ids)) > 1:
+        raise HTTPException(422, "请求中的 tenant_id 不一致")
+    if parsed_tenant_ids:
+        tenant_id = parsed_tenant_ids[0]
         ctx.ensure_tenant(tenant_id)
         if request.url.path.startswith(_SEM_IDENTITY_GUARDED_PREFIXES):
             await ensure_module_access(session, ctx, tenant_id, "sem")
