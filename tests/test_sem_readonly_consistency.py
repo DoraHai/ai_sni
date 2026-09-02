@@ -52,12 +52,14 @@ def test_sem_shell_switcher_keeps_settings_routes_in_sem_scope():
     assert 'v-for="t in session.tenants"' not in account_roles
 
 
-def test_sem_frontend_labels_write_actions_as_pending_in_readonly_mode():
+def test_sem_frontend_labels_effective_customer_writeback_mode():
     capabilities = _read("frontend/src/constants/semCapabilities.js")
     app_shell = _read("frontend/src/App.vue")
     workbench = _read("frontend/src/views/optimize/KeywordWorkbenchView.vue")
 
-    assert "SEM_WRITEBACK_ENABLED = false" in capabilities
+    assert "SEM_LIMITED_LIVE_MESSAGE" in capabilities
+    assert "fetchWritebackMode" in app_shell
+    assert "writebackMode.mode === 'limited_live'" in app_shell
     assert "只读演练" in app_shell
     assert "加入待回写" in workbench
     assert "优化建议" in app_shell
@@ -97,7 +99,9 @@ def test_readonly_actions_have_a_unified_auditable_queue():
 
     assert '@router.get("/queue")' in api
     assert '"pending_writeback"' in api
-    assert '"writeback_enabled": False' in api
+    assert '@router.get("/mode")' in api
+    assert '"writeback_enabled": bool(live_scopes)' in api
+    assert '"writeback_enabled": mode["writeback_enabled"]' in api
     assert "待回写队列" in pending
     assert "待回写（演练记录）" in labels
 

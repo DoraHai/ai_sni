@@ -7,6 +7,12 @@ export function fetchWritebacks({ tenantId, status = null, limit = 200 }) {
   })
 }
 
+export function fetchWritebackMode(tenantId) {
+  return client.get('/api/v1/writeback/mode', {
+    params: { tenant_id: tenantId },
+  })
+}
+
 export function fetchWritebackApprovals({ tenantId, status = null, limit = 100 }) {
   return client.get('/api/v1/writeback/approvals', {
     params: { tenant_id: tenantId, status, limit },

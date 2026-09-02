@@ -127,7 +127,8 @@ def test_p1_p2_frontend_contracts_are_present():
     assert "fetchTenants('sem')" in accounts
     assert "params: module ? { module } : undefined" in auth_api
     assert "tenantModuleScope" in app and "fetchTenants(moduleScope)" in app
-    assert "watch(tenantModuleScope, loadTenants)" in app
+    assert "watch(tenantModuleScope" in app
+    assert "loadTenants(); loadWritebackMode()" in app
     assert "tenantModuleScope.value !== 'sem'" in app
     assert "fetchTenants('seo')" in seo_shell
     assert "fetchTenants('geo')" in diagnosis

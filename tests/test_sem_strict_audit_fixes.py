@@ -76,10 +76,11 @@ def test_background_sem_work_is_entitlement_scoped():
 
 def test_smart_builder_cannot_real_write_without_its_own_approval_flow():
     source = _read("app/api/onboarding_builder.py")
-    dry_run_guard = source.index("if not dry_run:", source.index('router.post("/apply")'))
+    dry_run_guard = source.index("if any(", source.index('router.post("/apply")'))
     first_service = source.index("CampaignService(client)", dry_run_guard)
     assert dry_run_guard < first_service
     assert "智能搭建真实执行暂未启用" in source[dry_run_guard:first_service]
+    assert "dry_run = True" in source[dry_run_guard:first_service]
     preheat = source[source.index("async def _preheat_expansion_candidates"):source.index("def _creative_items")]
     assert '"message": str(e)' not in preheat
     assert '"message": e.message' not in preheat

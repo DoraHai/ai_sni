@@ -222,7 +222,10 @@ def test_bulk_negative_writeback_is_idempotent_across_candidate_sources() -> Non
             patch("app.baidu.writeback.AdgroupService", return_value=service),
             patch(
                 "app.baidu.writeback.get_settings",
-                return_value=SimpleNamespace(baidu_write_dry_run=False),
+                return_value=SimpleNamespace(
+                    baidu_write_dry_run=False,
+                    baidu_write_is_dry_run=lambda tenant_id, account_id, scope: False,
+                ),
             ),
         ):
             return await apply_negative_batch_writeback(

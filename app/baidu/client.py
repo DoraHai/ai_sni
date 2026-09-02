@@ -22,7 +22,7 @@ from typing import Any
 
 import httpx
 
-from app.config import get_settings
+from app.config import get_settings, resolve_baidu_write_dry_run
 
 logger = logging.getLogger(__name__)
 
@@ -133,10 +133,19 @@ class BaiduAPIClient:
         # 一律不发 HTTP，直接返回模拟成功体。保证开发/验证阶段绝无写请求落到百度线上。
         settings = get_settings()
         is_write_request = is_write or _looks_like_write(method)
-        if is_write_request and settings.baidu_write_dry_run:
+        effective_dry_run = is_write_request and resolve_baidu_write_dry_run(
+            settings, self._tenant_id, self._baidu_account_id, write_scope
+        )
+        if effective_dry_run:
             logger.warning(
-                "[DRY-RUN] 拦截写请求 service=%s method=%s body=%s（未发送，仅记台账）",
-                service, method, body,
+                "[DRY-RUN] 拦截写请求 tenant=%s account=%s scope=%s "
+                "service=%s method=%s body=%s（未发送，仅记台账）",
+                self._tenant_id,
+                self._baidu_account_id,
+                write_scope,
+                service,
+                method,
+                body,
             )
             return {"_dry_run": True, "data": []}
         if is_write_request:

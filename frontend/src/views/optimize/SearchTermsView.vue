@@ -315,7 +315,7 @@ const statCards = computed(() => {
           <el-radio label="phrase">短语否</el-radio>
         </el-radio-group>
 
-        <div class="neg-tip">当前只读演练：仅加入待回写台账，不修改百度账户。</div>
+        <div class="neg-tip">操作会记入回写台账；执行模式由当前客户、推广账户和动作门禁决定。</div>
       </div>
       <template #footer>
         <el-button @click="negDialogVisible = false">取消</el-button>

@@ -5,6 +5,26 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+SEM_CUSTOMER_LIVE_WRITE_SCOPES = frozenset(
+    {
+        "account_budget",
+        "adgroup_bid",
+        "adgroup_landing_url",
+        "adgroup_negative_words",
+        "adgroup_pause",
+        "campaign_budget",
+        "campaign_negative_words",
+        "campaign_pause",
+        "campaign_region",
+        "campaign_schedule",
+        "keyword_bid",
+        "keyword_create",
+        "keyword_match_type",
+        "keyword_pause",
+    }
+)
+
+
 def parse_positive_id_csv(value: str, *, label: str) -> frozenset[int]:
     """Parse a comma-separated positive-ID allowlist and fail closed on typos."""
     ids: set[int] = set()
@@ -33,6 +53,20 @@ def parse_write_scope_csv(value: str, *, label: str) -> frozenset[str]:
             )
         scopes.add(item)
     return frozenset(scopes)
+
+
+def resolve_baidu_write_dry_run(
+    settings: object,
+    tenant_id: int | None,
+    account_id: int | None,
+    write_scope: str | None,
+) -> bool:
+    """兼容测试/过渡配置并默认失败关闭真实回写。"""
+    resolver = getattr(settings, "baidu_write_is_dry_run", None)
+    if callable(resolver):
+        return bool(resolver(tenant_id, account_id, write_scope))
+    # A partial/legacy settings object cannot prove an exact allowlist match.
+    return True
 
 
 class Settings(BaseSettings):
@@ -97,6 +131,25 @@ class Settings(BaseSettings):
             label="BAIDU_LIVE_WRITE_SCOPES",
         )
         return bool(write_scope) and write_scope in scopes
+
+    def baidu_write_is_dry_run(
+        self,
+        tenant_id: int | None,
+        account_id: int | None,
+        write_scope: str | None,
+    ) -> bool:
+        """Resolve the effective mode for one customer/account/action."""
+        if self.baidu_write_dry_run or self.baidu_legacy_split_confirmation_enabled:
+            return True
+        try:
+            return not self.baidu_live_write_allowed(
+                tenant_id,
+                account_id,
+                write_scope,
+            )
+        except (TypeError, ValueError):
+            # Invalid allowlists must never turn a request into a live write.
+            return True
 
     # P0 自授权：苏尔寿单租户硬编码进 env。P1 多租户后改为从 baidu_accounts 表读。
     baidu_default_username: str

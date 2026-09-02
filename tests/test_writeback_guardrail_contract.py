@@ -22,6 +22,7 @@ from app.baidu.writeback import (
     _claim_funds_approval,
     _preflight_active_account,
 )
+from app.api.writeback import get_writeback_mode
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -150,12 +151,72 @@ def test_live_write_scope_is_checked_in_orchestration_and_http_client():
         orchestration,
         _async_function(ast.parse(orchestration), "_load_active_account"),
     )
-    assert "baidu_live_write_identity_allowed(tenant_id, acc.id)" in loader
-    assert "if not settings.baidu_write_dry_run" in loader
+    effective_mode = ast.get_source_segment(
+        orchestration,
+        next(
+            node
+            for node in ast.parse(orchestration).body
+            if isinstance(node, ast.FunctionDef) and node.name == "_effective_dry_run"
+        ),
+    )
+    assert "return acc" in loader
+    assert "resolve_baidu_write_dry_run(" in effective_mode
+    assert orchestration.count("_effective_dry_run(tenant_id, acc.id") == 16
+    assert "get_settings().baidu_write_dry_run" not in orchestration
+    tree = ast.parse(orchestration)
+    approval_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_claim_funds_approval"
+    ]
+    assert len(approval_calls) == 4
+    assert all(
+        any(keyword.arg == "dry_run" for keyword in call.keywords)
+        for call in approval_calls
+    )
     assert "is_write_request" in client
     assert "settings.baidu_live_write_allowed(" in client
     assert "tenant_id=baidu_account.tenant_id" in account_client
     assert "baidu_account_id=baidu_account.id" in account_client
+
+
+def test_writeback_mode_only_reports_current_tenant_account_permissions():
+    account = SimpleNamespace(id=17)
+    session = SimpleNamespace(
+        scalars=AsyncMock(
+            return_value=SimpleNamespace(all=lambda: [account])
+        )
+    )
+    ctx = SimpleNamespace(ensure_tenant=lambda tenant_id: None)
+    settings = SimpleNamespace(
+        baidu_write_is_dry_run=lambda tenant_id, account_id, scope: not (
+            tenant_id == 3
+            and account_id == 17
+            and scope == "keyword_bid"
+        )
+    )
+
+    async def run():
+        with (
+            patch("app.api.writeback.ensure_module_access", new_callable=AsyncMock),
+            patch("app.api.writeback.ensure_sem_identity_access", new_callable=AsyncMock),
+            patch("app.api.writeback.get_settings", return_value=settings),
+        ):
+            return await get_writeback_mode(3, ctx, session)
+
+    result = asyncio.run(run())
+    assert result["mode"] == "limited_live"
+    assert result["writeback_enabled"] is True
+    assert result["live_scopes"] == ["keyword_bid"]
+    assert result["accounts"] == [
+        {
+            "baidu_account_id": 17,
+            "live_scopes": ["keyword_bid"],
+            "mode": "limited_live",
+        }
+    ]
 
 
 def test_every_baidu_service_write_declares_an_action_scope():
@@ -253,6 +314,7 @@ def test_real_writeback_claims_approval_but_dry_run_does_not():
                 action_type="keyword_bid",
                 payload={"keyword_id": 7, "new_bid": 1.23},
                 operator_user_id=9,
+                dry_run=False,
             )
         )
         claim.assert_awaited_once()
@@ -272,6 +334,7 @@ def test_real_writeback_claims_approval_but_dry_run_does_not():
                 action_type="keyword_bid",
                 payload={"keyword_id": 7, "new_bid": 1.23},
                 operator_user_id=9,
+                dry_run=True,
             )
         )
         claim.assert_not_awaited()
