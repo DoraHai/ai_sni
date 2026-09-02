@@ -2574,9 +2574,30 @@ async def confirm_serp_ownership(
 class SeoCrawlRequest(BaseModel):
     tenant_id: int
     site_id: int
-    max_urls: int = Field(50, ge=20, le=100)
+    max_urls: int = Field(50, ge=20, le=200)
     max_depth: int = Field(3, ge=1, le=5)
     seed_urls: list[str] = Field(default_factory=list, max_length=10)
+    include_known_pages: bool = True
+
+
+def _merge_crawl_seed_urls(
+    requested: list[str],
+    known_pages: list[str],
+    *,
+    limit: int,
+) -> list[str]:
+    """Keep explicit seeds first, then rotate through known pages without duplicates."""
+    merged: list[str] = []
+    seen: set[str] = set()
+    for raw in [*requested, *known_pages]:
+        value = str(raw or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        merged.append(value)
+        if len(merged) >= limit:
+            break
+    return merged
 
 
 def _crawl_run_payload(row: SeoCrawlRun) -> dict[str, Any]:
@@ -2686,6 +2707,27 @@ async def create_seo_crawl_run(
     )
     if active is not None:
         raise HTTPException(409, "This SEO site already has a crawl in progress")
+    known_page_urls: list[str] = []
+    if req.include_known_pages:
+        known_page_urls = list(
+            await session.scalars(
+                select(SeoSitePage.url)
+                .where(
+                    SeoSitePage.tenant_id == req.tenant_id,
+                    SeoSitePage.site_id == req.site_id,
+                )
+                .order_by(
+                    SeoSitePage.last_checked_at.asc().nulls_first(),
+                    SeoSitePage.id.asc(),
+                )
+                .limit(req.max_urls)
+            )
+        )
+    crawl_seed_urls = _merge_crawl_seed_urls(
+        list(req.seed_urls),
+        known_page_urls,
+        limit=req.max_urls,
+    )
     settings = get_settings()
     try:
         await charge_seo_usage(
@@ -2722,7 +2764,7 @@ async def create_seo_crawl_run(
         seed_url,
         req.max_urls,
         req.max_depth,
-        list(req.seed_urls),
+        crawl_seed_urls,
         ctx.user_id,
     )
     return {"run": _crawl_run_payload(run), "snapshots": []}

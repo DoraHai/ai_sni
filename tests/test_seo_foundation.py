@@ -22,11 +22,13 @@ from app.api.seo import (
     MetricSnapshotCreate,
     RankSnapshotCreate,
     SerpCollectRequest,
+    SeoCrawlRequest,
     SeoContentAssistRequest,
     SitePageImport,
     SitePageCreate,
     SitePageUpdate,
     _keyword_payload,
+    _merge_crawl_seed_urls,
     _database_iso,
     _iso,
     _apply_site_page_audit,
@@ -87,6 +89,31 @@ from app.geo.audit import GeoAuditError, PageDocument
 from app.permissions import CLIENT_PERMS, MENU_KEYS, OPERATOR_PERMS
 from app.security.auth import AuthContext, _required
 from app.seo_serp import SerpProviderError
+
+
+def test_crawl_request_supports_safe_full_site_batch() -> None:
+    request = SeoCrawlRequest(tenant_id=1, site_id=2, max_urls=200)
+
+    assert request.max_urls == 200
+    assert request.include_known_pages is True
+    with pytest.raises(ValidationError):
+        SeoCrawlRequest(tenant_id=1, site_id=2, max_urls=201)
+
+
+def test_crawl_seed_merge_prioritizes_explicit_then_known_pages() -> None:
+    assert _merge_crawl_seed_urls(
+        ["https://example.com/manual", "https://example.com/manual"],
+        [
+            "https://example.com/oldest",
+            "https://example.com/manual",
+            "https://example.com/newest",
+        ],
+        limit=3,
+    ) == [
+        "https://example.com/manual",
+        "https://example.com/oldest",
+        "https://example.com/newest",
+    ]
 
 
 def _request(

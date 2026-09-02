@@ -79,6 +79,8 @@ for (const marker of [
   '/api/v1/seo/traffic/gsc/collect',
   'DataForSEO',
   '接入 Google Search Console',
+  '网站技术扫描确认',
+  'include_known_pages',
 ]) {
   if (!javascript.includes(marker)) {
     throw new Error(`SEO build is missing the multi-engine/traffic marker: ${marker}`)
