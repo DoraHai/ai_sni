@@ -246,6 +246,76 @@ PAGE_ISSUE_FILTER_CODES = {
         "connection_error",
     },
 }
+PAGE_ISSUE_GROUPS = {
+    "crawl": {
+        "label": "抓取与可访问性",
+        "severity": "high",
+        "guidance": "优先确认状态码、重定向、DNS/TLS 和页面响应，保证搜索引擎能够稳定访问。",
+    },
+    "indexable": {
+        "label": "索引控制",
+        "severity": "high",
+        "guidance": "核对 robots、noindex 与响应头，避免应收录页面被意外屏蔽。",
+    },
+    "canonical": {
+        "label": "Canonical",
+        "severity": "medium",
+        "guidance": "为页面设置唯一且可访问的规范地址，并确认没有跨页面错误指向。",
+    },
+    "title": {
+        "label": "Title",
+        "severity": "medium",
+        "guidance": "补齐唯一、准确的页面标题，覆盖主关键词并保留品牌或型号信息。",
+    },
+    "description": {
+        "label": "Description",
+        "severity": "medium",
+        "guidance": "补齐与页面内容一致的摘要，避免重复、空白或模板化描述。",
+    },
+    "h1": {
+        "label": "H1 与标题结构",
+        "severity": "medium",
+        "guidance": "保留一个清晰的主标题，并按内容层级组织后续标题。",
+    },
+    "schema": {
+        "label": "结构化数据",
+        "severity": "medium",
+        "guidance": "补充适合页面类型的有效 Schema，并修复 JSON-LD 解析错误。",
+    },
+    "content": {
+        "label": "内容质量",
+        "severity": "low",
+        "guidance": "围绕搜索意图补充有效正文、事实、步骤、FAQ 或对比信息。",
+    },
+    "image": {
+        "label": "图片可访问性",
+        "severity": "low",
+        "guidance": "为承载信息的图片添加准确 Alt，装饰图片可保留空 Alt。",
+    },
+    "language": {
+        "label": "页面语言",
+        "severity": "low",
+        "guidance": "设置正确的 HTML lang，帮助搜索引擎识别页面语言。",
+    },
+}
+PAGE_COMPARISON_FIELDS = {
+    "status_code": "HTTP 状态",
+    "final_url": "最终地址",
+    "canonical_url": "Canonical",
+    "indexable": "可索引",
+    "title": "Title",
+    "title_length": "Title 长度",
+    "meta_description": "Description",
+    "description_length": "Description 长度",
+    "h1_texts": "H1",
+    "h1_count": "H1 数量",
+    "word_count": "正文词数",
+    "schema_types": "Schema 类型",
+    "schema_parse_error": "Schema 解析错误",
+    "internal_links_count": "站内链接数",
+    "external_links_count": "外部链接数",
+    "images_missing_alt_count": "缺少 Alt 的图片",
+}
 BRAND_ASSET_TYPES = {"official_domain", "content_url", "platform_account"}
 OWNERSHIP_TYPES = {"official_site", "brand_content", "ai_suspected", "unrelated", "unresolved"}
 METRIC_STATUSES = {"available", "not_configured", "pending", "failed", "stale"}
@@ -289,6 +359,43 @@ def _page_issue_filter_condition(issue_code: str):
     return or_(
         *(SeoSitePage.issue_codes.contains([alias]) for alias in sorted(aliases))
     )
+
+
+def _page_issue_group(code: str) -> str:
+    for group, aliases in PAGE_ISSUE_FILTER_CODES.items():
+        if code in aliases:
+            return group
+    return "other"
+
+
+def _page_snapshot_comparison(
+    latest: SeoPageSnapshot | None,
+    previous: SeoPageSnapshot | None,
+) -> dict[str, Any]:
+    if latest is None:
+        return {
+            "available": False,
+            "changed_fields": [],
+            "resolved_issues": [],
+            "new_issues": [],
+        }
+    latest_issues = set(latest.issue_codes or [])
+    previous_issues = set(previous.issue_codes or []) if previous else set()
+    changed_fields = []
+    if previous is not None:
+        for field, label in PAGE_COMPARISON_FIELDS.items():
+            before = getattr(previous, field)
+            after = getattr(latest, field)
+            if before != after:
+                changed_fields.append(
+                    {"field": field, "label": label, "before": before, "after": after}
+                )
+    return {
+        "available": previous is not None,
+        "changed_fields": changed_fields,
+        "resolved_issues": sorted(previous_issues - latest_issues),
+        "new_issues": sorted(latest_issues - previous_issues),
+    }
 
 
 async def _tenant(session: AsyncSession, tenant_id: int) -> Tenant:
@@ -2951,6 +3058,213 @@ async def list_site_pages(
             "verified": int(stats_verified or 0),
             "average_score": round(float(average_score or 0), 1),
         },
+    }
+
+
+@router.get("/site-pages/issues")
+async def list_site_page_issues(
+    tenant_id: int,
+    site_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Aggregate page-level findings into an actionable site issue centre."""
+    await _tenant(session, tenant_id)
+    await _seo_site(session, tenant_id, site_id)
+    pages = list(
+        await session.scalars(
+            select(SeoSitePage)
+            .where(
+                SeoSitePage.tenant_id == tenant_id,
+                SeoSitePage.site_id == site_id,
+            )
+            .order_by(SeoSitePage.id)
+        )
+    )
+    page_by_id = {int(row.id): row for row in pages}
+    grouped_ids: dict[str, set[int]] = defaultdict(set)
+    grouped_codes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for row in pages:
+        groups_on_page: set[str] = set()
+        for raw_code in row.issue_codes or []:
+            code = str(raw_code)
+            group = _page_issue_group(code)
+            grouped_codes[group][code] += 1
+            groups_on_page.add(group)
+        for group in groups_on_page:
+            grouped_ids[group].add(int(row.id))
+
+    def add_duplicate_group(key: str, attribute: str) -> None:
+        values: dict[str, list[int]] = defaultdict(list)
+        for row in pages:
+            normalized = " ".join(str(getattr(row, attribute) or "").split()).casefold()
+            if normalized:
+                values[normalized].append(int(row.id))
+        affected = {
+            page_id
+            for page_ids in values.values()
+            if len(page_ids) > 1
+            for page_id in page_ids
+        }
+        if affected:
+            grouped_ids[key].update(affected)
+
+    add_duplicate_group("duplicate_title", "title")
+    add_duplicate_group("duplicate_description", "meta_description")
+
+    edges = list(
+        await session.execute(
+            select(SeoInternalLink.source_page_id, SeoInternalLink.target_page_id).where(
+                SeoInternalLink.tenant_id == tenant_id,
+                SeoInternalLink.site_id == site_id,
+            )
+        )
+    )
+    if edges:
+        inbound_ids = {int(target_id) for _, target_id in edges}
+        orphan_ids = {
+            int(row.id)
+            for row in pages
+            if int(row.id) not in inbound_ids and urlparse(row.url).path.rstrip("/")
+        }
+        if orphan_ids:
+            grouped_ids["orphan_pages"].update(orphan_ids)
+
+    virtual_groups = {
+        "duplicate_title": {
+            "label": "重复 Title",
+            "severity": "medium",
+            "guidance": "区分页面搜索意图，为每个可索引页面设置唯一 Title。",
+        },
+        "duplicate_description": {
+            "label": "重复 Description",
+            "severity": "medium",
+            "guidance": "根据页面内容重写摘要，避免多个页面使用同一模板描述。",
+        },
+        "orphan_pages": {
+            "label": "疑似孤立页面",
+            "severity": "medium",
+            "guidance": "从相关栏目或内容页补充自然内链，并确认页面应继续保留和收录。",
+        },
+        "other": {
+            "label": "其他检测问题",
+            "severity": "low",
+            "guidance": "打开页面诊断详情查看检测证据，再决定修复方式。",
+        },
+    }
+    severity_order = {"high": 0, "medium": 1, "low": 2}
+    items = []
+    for key, affected_ids in grouped_ids.items():
+        if not affected_ids:
+            continue
+        meta = PAGE_ISSUE_GROUPS.get(key) or virtual_groups.get(key) or virtual_groups["other"]
+        sample_rows = [page_by_id[page_id] for page_id in sorted(affected_ids)[:100] if page_id in page_by_id]
+        items.append(
+            {
+                "key": key,
+                **meta,
+                "affected_pages": len(affected_ids),
+                "codes": [
+                    {"code": code, "count": count}
+                    for code, count in sorted(
+                        grouped_codes.get(key, {}).items(),
+                        key=lambda item: (-item[1], item[0]),
+                    )
+                ],
+                "pages": [
+                    {
+                        "id": row.id,
+                        "url": row.url,
+                        "title": row.title,
+                        "status": row.status,
+                        "audit_score": row.audit_score,
+                        "last_checked_at": _iso(row.last_checked_at),
+                    }
+                    for row in sample_rows
+                ],
+            }
+        )
+    items.sort(
+        key=lambda item: (
+            severity_order.get(item["severity"], 9),
+            -item["affected_pages"],
+            item["label"],
+        )
+    )
+    return {
+        "items": items,
+        "summary": {
+            "groups": len(items),
+            "high": sum(item["severity"] == "high" for item in items),
+            "medium": sum(item["severity"] == "medium" for item in items),
+            "low": sum(item["severity"] == "low" for item in items),
+            "affected_pages": len({page_id for ids in grouped_ids.values() for page_id in ids}),
+        },
+    }
+
+
+@router.get("/site-pages/{page_id}/detail")
+async def get_site_page_detail(
+    page_id: int,
+    tenant_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Return current evidence, internal-link counts and two-scan comparison."""
+    row = await _site_page(session, page_id, tenant_id)
+    snapshots = list(
+        await session.scalars(
+            select(SeoPageSnapshot)
+            .where(
+                SeoPageSnapshot.tenant_id == tenant_id,
+                SeoPageSnapshot.site_id == row.site_id,
+                or_(SeoPageSnapshot.url == row.url, SeoPageSnapshot.final_url == row.url),
+            )
+            .order_by(SeoPageSnapshot.fetched_at.desc(), SeoPageSnapshot.id.desc())
+            .limit(2)
+        )
+    )
+    latest = snapshots[0] if snapshots else None
+    previous = snapshots[1] if len(snapshots) > 1 else None
+    incoming = int(
+        await session.scalar(
+            select(func.count()).select_from(SeoInternalLink).where(
+                SeoInternalLink.tenant_id == tenant_id,
+                SeoInternalLink.site_id == row.site_id,
+                SeoInternalLink.target_page_id == row.id,
+            )
+        )
+        or 0
+    )
+    outgoing = int(
+        await session.scalar(
+            select(func.count()).select_from(SeoInternalLink).where(
+                SeoInternalLink.tenant_id == tenant_id,
+                SeoInternalLink.site_id == row.site_id,
+                SeoInternalLink.source_page_id == row.id,
+            )
+        )
+        or 0
+    )
+    issue_details = []
+    for raw_code in row.issue_codes or []:
+        code = str(raw_code)
+        group = _page_issue_group(code)
+        meta = PAGE_ISSUE_GROUPS.get(group, {})
+        issue_details.append(
+            {
+                "code": code,
+                "group": group,
+                "label": meta.get("label", "其他检测问题"),
+                "severity": meta.get("severity", "low"),
+                "guidance": meta.get("guidance", "结合页面检测证据人工核对并修复。"),
+            }
+        )
+    return {
+        "page": _page_payload(row),
+        "issue_details": issue_details,
+        "internal_links": {"incoming": incoming, "outgoing": outgoing},
+        "latest_snapshot": _page_snapshot_payload(latest) if latest else None,
+        "previous_snapshot": _page_snapshot_payload(previous) if previous else None,
+        "comparison": _page_snapshot_comparison(latest, previous),
     }
 
 

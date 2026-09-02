@@ -60,6 +60,18 @@ export function fetchSeoSitePages({ tenantId, siteId, pageId, q, status, issueCo
   })
 }
 
+export function fetchSeoSitePageIssues({ tenantId, siteId }) {
+  return client.get('/api/v1/seo/site-pages/issues', {
+    params: { tenant_id: tenantId, site_id: siteId },
+  })
+}
+
+export function fetchSeoSitePageDetail({ pageId, tenantId }) {
+  return client.get(`/api/v1/seo/site-pages/${pageId}/detail`, {
+    params: { tenant_id: tenantId },
+  })
+}
+
 export function generateSeoSitePageSuggestions(payload) {
   return client.post('/api/v1/seo/site-pages/suggestions/generate', payload)
 }

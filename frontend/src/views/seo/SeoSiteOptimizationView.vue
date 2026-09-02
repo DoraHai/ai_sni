@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { auditPendingSeoSitePages, auditSeoSitePage, fetchSeoContentAssets, fetchSeoKeywords, fetchSeoSitePages, generateSeoSitePageSuggestions, importSeoSitePages, updateSeoContentAsset, updateSeoSitePage } from '../../api/seo'
+import { auditPendingSeoSitePages, auditSeoSitePage, fetchSeoContentAssets, fetchSeoKeywords, fetchSeoSitePageDetail, fetchSeoSitePageIssues, fetchSeoSitePages, generateSeoSitePageSuggestions, importSeoSitePages, updateSeoContentAsset, updateSeoSitePage } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { formatSeoCsvTime } from './seoRankTime'
@@ -34,6 +34,13 @@ const linkPage = ref(null)
 const linkCandidates = ref([])
 const selectedContentId = ref(null)
 const linkingContent = ref(false)
+const issueLoading = ref(false)
+const issueResult = ref({ items: [], summary: {} })
+const issueDialogOpen = ref(false)
+const activeIssue = ref(null)
+const detailOpen = ref(false)
+const detailLoading = ref(false)
+const detailResult = ref(null)
 const editForm = reactive({ page_type: '', target_keyword_id: null, title_suggestion: '', description_suggestion: '', status: 'pending' })
 
 const canEdit = computed(() => !session.isLoggedIn || session.canEdit('seo.site'))
@@ -43,6 +50,15 @@ const actionScopeLabel = computed(() => selectedRows.value.length ? `已选 ${se
 function fmt(value) { return value == null ? '—' : Number(value).toLocaleString('zh-CN') }
 function statusLabel(value) { return {pending:'待检测',healthy:'健康',needs_fix:'需优化',proposed:'待确认',approved:'已确认',implemented:'待复检',verified:'已复检',error:'检测失败'}[value] || value }
 function statusType(value) { return {pending:'info',healthy:'success',needs_fix:'warning',proposed:'warning',approved:'primary',implemented:'primary',verified:'success',error:'danger'}[value] || 'info' }
+function severityLabel(value) { return {high:'严重',medium:'一般',low:'提示'}[value] || value }
+function severityType(value) { return {high:'danger',medium:'warning',low:'info'}[value] || 'info' }
+function displayValue(value) {
+  if (value == null || value === '') return '—'
+  if (Array.isArray(value)) return value.length ? value.join('、') : '—'
+  if (typeof value === 'boolean') return value ? '是' : '否'
+  return String(value)
+}
+function formatTime(value) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—' }
 function issueLabel(code) { return {
   title:'Title 需优化',title_missing:'缺少 Title',title_too_long:'Title 过长',
   description:'Description 需优化',description_missing:'缺少 Description',
@@ -68,8 +84,29 @@ async function load() {
     if (page.value > lastPage) { page.value = lastPage; return await load() }
     result.value = response
     selectedRows.value = []
+    void loadIssues()
   }
   catch (e) { error.value = e.message } finally { loading.value = false }
+}
+async function loadIssues() {
+  if (!currentTenantId.value || !siteId.value) { issueResult.value = { items: [], summary: {} }; return }
+  const requestedSiteId = siteId.value
+  issueLoading.value = true
+  try {
+    const response = await fetchSeoSitePageIssues({ tenantId: currentTenantId.value, siteId: requestedSiteId })
+    if (requestedSiteId === siteId.value) issueResult.value = response
+  } catch (e) {
+    if (requestedSiteId === siteId.value) error.value = e.message
+  } finally { if (requestedSiteId === siteId.value) issueLoading.value = false }
+}
+function openIssue(item) { activeIssue.value = item; issueDialogOpen.value = true }
+async function openPageDetail(row) {
+  detailOpen.value = true
+  detailLoading.value = true
+  detailResult.value = null
+  try { detailResult.value = await fetchSeoSitePageDetail({ pageId: row.id, tenantId: currentTenantId.value }) }
+  catch (e) { ElMessage.error(e.message); detailOpen.value = false }
+  finally { detailLoading.value = false }
 }
 async function loadKeywordOptions() {
   if (!currentTenantId.value) { keywordOptions.value = []; return }
@@ -218,8 +255,18 @@ onMounted(loadSites)
       <article><span>待优化</span><strong>{{ fmt(stats.needs_fix || 0) }}</strong><small>存在 TDK 或技术问题</small></article>
       <article><span>平均健康度</span><strong>{{ stats.average_score || 0 }}</strong><small>满分 100</small></article>
     </section>
+    <section class="site-panel issue-centre">
+      <header><div><span>01 / ISSUE CENTRE</span><h2>站内问题中心</h2></div><small>严重 {{ issueResult.summary?.high || 0 }} · 一般 {{ issueResult.summary?.medium || 0 }} · 影响 {{ issueResult.summary?.affected_pages || 0 }} 个页面</small></header>
+      <el-table v-loading="issueLoading" :data="issueResult.items" empty-text="最近检测没有发现站内问题">
+        <el-table-column label="级别" width="82"><template #default="{row}"><el-tag :type="severityType(row.severity)" effect="light">{{ severityLabel(row.severity) }}</el-tag></template></el-table-column>
+        <el-table-column prop="label" label="问题类型" min-width="155" />
+        <el-table-column label="影响页面" width="105"><template #default="{row}"><strong>{{ row.affected_pages }}</strong> 个</template></el-table-column>
+        <el-table-column label="修复建议" min-width="420"><template #default="{row}"><span class="guidance">{{ row.guidance }}</span></template></el-table-column>
+        <el-table-column label="操作" width="100"><template #default="{row}"><button class="table-action" @click="openIssue(row)">查看页面</button></template></el-table-column>
+      </el-table>
+    </section>
     <section class="site-panel">
-      <header><div><span>01 / PAGE INVENTORY</span><h2>页面资产与 TDK</h2></div><small>检测使用网站公开页面，不会修改客户网站代码</small></header>
+      <header><div><span>02 / PAGE INVENTORY</span><h2>页面资产与 TDK</h2></div><small>检测使用网站公开页面，不会修改客户网站代码</small></header>
       <div class="filters"><el-input v-model="filters.q" clearable placeholder="搜索 URL 或页面标题" /><el-select v-model="filters.issueCode" clearable placeholder="全部问题"><el-option v-for="item in [{v:'title',n:'Title'},{v:'description',n:'Description'},{v:'h1',n:'H1'},{v:'canonical',n:'Canonical'},{v:'indexable',n:'索引'},{v:'schema',n:'Schema'},{v:'content',n:'内容质量'},{v:'image',n:'图片'},{v:'language',n:'语言'},{v:'crawl',n:'抓取/可访问性'}]" :key="item.v" :label="item.n" :value="item.v" /></el-select><el-select v-model="filters.status" clearable placeholder="全部状态"><el-option v-for="item in [{v:'pending',n:'待检测'},{v:'needs_fix',n:'需优化'},{v:'proposed',n:'待确认'},{v:'approved',n:'已确认'},{v:'implemented',n:'待复检'},{v:'verified',n:'已复检'},{v:'healthy',n:'健康'},{v:'error',n:'检测失败'}]" :key="item.v" :label="item.n" :value="item.v" /></el-select><span>{{ result.total }} 个页面 · 已选 {{ selectedRows.length }} 个</span></div>
       <el-table v-loading="loading" :data="result.items" :empty-text="emptyStateText" @selection-change="selectedRows = $event">
         <el-table-column type="selection" width="44" />
@@ -230,10 +277,52 @@ onMounted(loadSites)
         <el-table-column label="当前 TDK" min-width="220"><template #default="{row}"><div class="suggestion current"><b>{{ row.title || '缺少 Title' }}</b><small>{{ row.meta_description || '缺少 Description' }}</small></div></template></el-table-column>
         <el-table-column label="建议 TDK" min-width="240"><template #default="{row}"><div class="suggestion"><b>{{ row.title_suggestion || '尚未生成 Title 建议' }}</b><small>{{ row.description_suggestion || '尚未生成 Description 建议' }}</small></div></template></el-table-column>
         <el-table-column label="状态" width="100"><template #default="{row}"><el-tag :type="statusType(row.status)" effect="light">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="230" fixed="right"><template #default="{row}"><div class="actions"><button v-if="canEdit" :disabled="batchAuditing||auditing.has(row.id)" @click="audit(row)">{{ auditing.has(row.id) ? '检测中…' : (row.status==='implemented'?'复检':'检测') }}</button><button v-if="canEdit" :disabled="batchAuditing" @click="openEdit(row)">优化记录</button><button :disabled="batchAuditing" @click="createContentTask(row)">{{ row.content_task_id ? '查看内容任务' : '创建内容任务' }}</button></div></template></el-table-column>
+        <el-table-column label="操作" width="280" fixed="right"><template #default="{row}"><div class="actions"><button @click="openPageDetail(row)">诊断详情</button><button v-if="canEdit" :disabled="batchAuditing||auditing.has(row.id)" @click="audit(row)">{{ auditing.has(row.id) ? '检测中…' : (row.status==='implemented'?'复检':'检测') }}</button><button v-if="canEdit" :disabled="batchAuditing" @click="openEdit(row)">优化记录</button><button :disabled="batchAuditing" @click="createContentTask(row)">{{ row.content_task_id ? '查看内容任务' : '创建内容任务' }}</button></div></template></el-table-column>
       </el-table>
       <div class="pagination"><span>批量生成和导出默认作用于当前页；批量检测需先勾选，单次最多 50 条。未勾选时仅补抓待检测页面。</span><el-pagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[25,50,100]" :total="result.total" layout="total, sizes, prev, pager, next, jumper" @current-change="load" @size-change="page = 1; load()" /></div>
     </section>
+
+    <el-dialog v-model="issueDialogOpen" :title="activeIssue?.label || '受影响页面'" width="760px">
+      <p class="dialog-tip">{{ activeIssue?.guidance }}<template v-if="activeIssue?.affected_pages > 100"> 当前先展示前 100 个受影响页面。</template></p>
+      <div v-if="activeIssue?.codes?.length" class="issue-codes"><span v-for="item in activeIssue.codes" :key="item.code">{{ issueLabel(item.code) }} × {{ item.count }}</span></div>
+      <el-table :data="activeIssue?.pages || []" max-height="430">
+        <el-table-column label="页面" min-width="400"><template #default="{row}"><b class="page-title">{{ row.title || '未读取页面标题' }}</b><small class="page-url">{{ row.url }}</small></template></el-table-column>
+        <el-table-column prop="audit_score" label="健康度" width="85" />
+        <el-table-column label="状态" width="95"><template #default="{row}"><el-tag :type="statusType(row.status)" effect="light">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
+        <el-table-column label="操作" width="90"><template #default="{row}"><el-button link type="primary" @click="issueDialogOpen=false; openPageDetail(row)">详情</el-button></template></el-table-column>
+      </el-table>
+    </el-dialog>
+
+    <el-drawer v-model="detailOpen" title="页面诊断详情" size="760px">
+      <div v-loading="detailLoading" class="detail-drawer">
+        <template v-if="detailResult">
+          <section class="detail-head">
+            <div><h3>{{ detailResult.page.title || '未读取页面标题' }}</h3><a :href="detailResult.page.url" target="_blank" rel="noopener noreferrer">{{ detailResult.page.url }}</a></div>
+            <el-tag :type="statusType(detailResult.page.status)" effect="light">{{ statusLabel(detailResult.page.status) }}</el-tag>
+          </section>
+          <section class="detail-metrics">
+            <article><span>健康度</span><strong>{{ detailResult.page.audit_score ?? '—' }}</strong></article>
+            <article><span>HTTP</span><strong>{{ detailResult.page.http_status ?? detailResult.latest_snapshot?.status_code ?? '—' }}</strong></article>
+            <article><span>入链</span><strong>{{ detailResult.internal_links.incoming }}</strong></article>
+            <article><span>出链</span><strong>{{ detailResult.internal_links.outgoing }}</strong></article>
+          </section>
+          <section class="detail-block"><h4>当前值与优化建议</h4><div class="tdk-compare">
+            <div><span>当前 Title</span><b>{{ displayValue(detailResult.page.title) }}</b></div><div class="suggested"><span>建议 Title</span><b>{{ displayValue(detailResult.page.title_suggestion) }}</b></div>
+            <div><span>当前 Description</span><b>{{ displayValue(detailResult.page.meta_description) }}</b></div><div class="suggested"><span>建议 Description</span><b>{{ displayValue(detailResult.page.description_suggestion) }}</b></div>
+          </div></section>
+          <section class="detail-block"><h4>当前问题与处理建议</h4><el-empty v-if="!detailResult.issue_details.length" description="当前没有检测问题" :image-size="54"/><div v-else class="detail-issues"><article v-for="item in detailResult.issue_details" :key="item.code"><el-tag :type="severityType(item.severity)" size="small">{{ severityLabel(item.severity) }}</el-tag><div><b>{{ issueLabel(item.code) }}</b><p>{{ item.guidance }}</p></div></article></div></section>
+          <section class="detail-block"><h4>最近抓取证据</h4><div v-if="detailResult.latest_snapshot" class="evidence-grid">
+            <div><span>抓取时间</span><b>{{ formatTime(detailResult.latest_snapshot.fetched_at) }}</b></div><div><span>最终地址</span><b>{{ displayValue(detailResult.latest_snapshot.final_url) }}</b></div>
+            <div><span>Canonical</span><b>{{ displayValue(detailResult.latest_snapshot.canonical_url) }}</b></div><div><span>可索引</span><b>{{ displayValue(detailResult.latest_snapshot.indexable) }}</b></div>
+            <div><span>Title / 长度</span><b>{{ displayValue(detailResult.latest_snapshot.title) }} / {{ displayValue(detailResult.latest_snapshot.title_length) }}</b></div><div><span>Description 长度</span><b>{{ displayValue(detailResult.latest_snapshot.description_length) }}</b></div>
+            <div><span>H1</span><b>{{ displayValue(detailResult.latest_snapshot.h1_texts) }}</b></div><div><span>正文词数</span><b>{{ displayValue(detailResult.latest_snapshot.word_count) }}</b></div>
+            <div><span>Schema</span><b>{{ displayValue(detailResult.latest_snapshot.schema_types) }}</b></div><div><span>缺 Alt 图片</span><b>{{ displayValue(detailResult.latest_snapshot.images_missing_alt_count) }}</b></div>
+            <div><span>响应时间</span><b>{{ detailResult.latest_snapshot.response_time_ms == null ? '—' : `${detailResult.latest_snapshot.response_time_ms} ms` }}</b></div><div><span>重定向次数</span><b>{{ detailResult.latest_snapshot.redirect_chain?.length || 0 }}</b></div>
+          </div><el-empty v-else description="暂无全站扫描证据，请先运行网站技术扫描" :image-size="54"/></section>
+          <section class="detail-block"><h4>修复前后对比</h4><template v-if="detailResult.comparison.available"><div class="compare-summary"><span class="resolved">已解决 {{ detailResult.comparison.resolved_issues.length }}</span><span class="new-issue">新增 {{ detailResult.comparison.new_issues.length }}</span><span>字段变化 {{ detailResult.comparison.changed_fields.length }}</span></div><el-table :data="detailResult.comparison.changed_fields" empty-text="两次扫描的主要字段没有变化" max-height="330"><el-table-column prop="label" label="字段" width="130"/><el-table-column label="上次"><template #default="{row}">{{ displayValue(row.before) }}</template></el-table-column><el-table-column label="本次"><template #default="{row}">{{ displayValue(row.after) }}</template></el-table-column></el-table></template><el-empty v-else description="至少完成两次全站扫描后才能生成修复前后对比" :image-size="54"/></section>
+        </template>
+      </div>
+    </el-drawer>
 
     <el-dialog v-model="importOpen" title="导入站内页面" width="600px">
       <p class="dialog-tip">每行一个公开页面 URL。导入后可逐页运行真实检测；系统不会自动修改客户网站。</p>
@@ -265,5 +354,6 @@ onMounted(loadSites)
 <style scoped>
 .pagination{padding:14px 17px;display:flex;align-items:center;justify-content:space-between;gap:16px;border-top:1px solid #edf1ef}.pagination>span{color:#788683;font-size:11px}
 .hero-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}.hero-actions button:disabled{cursor:wait;opacity:.6}.hero-actions button.secondary{border:1px solid #b9d4cf;background:#fff;color:var(--teal);box-shadow:none}
-.site-page{--ink:#17233d;--teal:#168b83;--line:#e3e8ef;min-height:100%;padding:26px;background:radial-gradient(circle at 78% -16%,rgba(22,139,131,.1),transparent 35%),#f5f8f7;color:var(--ink)}.site-hero{display:flex;align-items:end;justify-content:space-between;gap:28px;padding:27px 30px;border:1px solid #dbe7e4;border-radius:17px;background:#fff;box-shadow:0 16px 45px rgba(29,69,64,.05)}.site-hero>div>span,.site-panel header span{color:var(--teal);font:800 10px ui-monospace,monospace;letter-spacing:.13em}.site-hero h1{margin:9px 0 7px;font:750 34px "Noto Serif SC","Songti SC",serif}.site-hero p{max-width:760px;margin:0;color:#72817e;line-height:1.7}.site-hero button{height:40px;padding:0 18px;border:0;border-radius:9px;background:var(--teal);color:#fff;font-weight:700;cursor:pointer;box-shadow:0 8px 20px rgba(22,139,131,.2)}.el-alert{margin-top:14px}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:15px 0}.metrics article{padding:19px 20px;border:1px solid var(--line);border-radius:13px;background:#fff}.metrics span,.metrics small{display:block;color:#768582;font-size:11px}.metrics strong{display:block;margin:10px 0 5px;font-size:28px}.site-panel{overflow:hidden;border:1px solid var(--line);border-radius:15px;background:#fff}.site-panel>header{display:flex;align-items:end;justify-content:space-between;padding:16px 19px;border-bottom:1px solid #edf1ef}.site-panel h2{margin:4px 0 0;font-size:15px}.site-panel header small{color:#82908d}.filters{display:flex;gap:9px;padding:14px 17px}.filters .el-input{max-width:350px}.filters .el-select{width:140px}.filters>span{align-self:center;margin-left:auto;color:#788683;font-size:11px}.page-title,.page-url{display:block}.page-url{max-width:330px;overflow:hidden;margin-top:4px;color:#5d7f79;text-overflow:ellipsis;white-space:nowrap}.issues{display:flex;gap:4px;flex-wrap:wrap}.issues span{padding:3px 6px;border-radius:5px;background:#fff0e3;color:#a65e24;font-size:10px}.suggestion b,.suggestion small{display:block;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.suggestion small{margin-top:4px;color:#899491}.actions{display:flex;gap:5px}.actions button{padding:5px 7px;border:1px solid #dce5e2;border-radius:6px;background:#fff;color:#52736e;font-size:10.5px;cursor:pointer}.actions button:hover{border-color:#7bb3aa;color:var(--teal)}.actions button:disabled{opacity:.55;cursor:wait}.dialog-tip{margin:-6px 0 15px;color:#75827f;font-size:12px;line-height:1.6}.el-form :deep(.el-select){width:100%}@media(max-width:980px){.metrics{grid-template-columns:repeat(2,1fr)}.pagination{align-items:flex-start;flex-direction:column}}@media(max-width:680px){.site-page{padding:14px}.site-hero{align-items:flex-start;flex-direction:column}.metrics{grid-template-columns:1fr 1fr}.filters{flex-wrap:wrap}.filters .el-input{max-width:none;width:100%}.filters>span{margin-left:0}.pagination{overflow-x:auto}}
+.site-page{--ink:#17233d;--teal:#168b83;--line:#e3e8ef;min-height:100%;padding:26px;background:radial-gradient(circle at 78% -16%,rgba(22,139,131,.1),transparent 35%),#f5f8f7;color:var(--ink)}.site-hero{display:flex;align-items:end;justify-content:space-between;gap:28px;padding:27px 30px;border:1px solid #dbe7e4;border-radius:17px;background:#fff;box-shadow:0 16px 45px rgba(29,69,64,.05)}.site-hero>div>span,.site-panel header span{color:var(--teal);font:800 10px ui-monospace,monospace;letter-spacing:.13em}.site-hero h1{margin:9px 0 7px;font:750 34px "Noto Serif SC","Songti SC",serif}.site-hero p{max-width:760px;margin:0;color:#72817e;line-height:1.7}.site-hero button{height:40px;padding:0 18px;border:0;border-radius:9px;background:var(--teal);color:#fff;font-weight:700;cursor:pointer;box-shadow:0 8px 20px rgba(22,139,131,.2)}.el-alert{margin-top:14px}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:15px 0}.metrics article{padding:19px 20px;border:1px solid var(--line);border-radius:13px;background:#fff}.metrics span,.metrics small{display:block;color:#768582;font-size:11px}.metrics strong{display:block;margin:10px 0 5px;font-size:28px}.site-panel{overflow:hidden;margin-bottom:15px;border:1px solid var(--line);border-radius:15px;background:#fff}.site-panel>header{display:flex;align-items:end;justify-content:space-between;padding:16px 19px;border-bottom:1px solid #edf1ef}.site-panel h2{margin:4px 0 0;font-size:15px}.site-panel header small{color:#82908d}.filters{display:flex;gap:9px;padding:14px 17px}.filters .el-input{max-width:350px}.filters .el-select{width:140px}.filters>span{align-self:center;margin-left:auto;color:#788683;font-size:11px}.page-title,.page-url{display:block}.page-url{max-width:430px;overflow:hidden;margin-top:4px;color:#5d7f79;text-overflow:ellipsis;white-space:nowrap}.issues{display:flex;gap:4px;flex-wrap:wrap}.issues span,.issue-codes span{padding:3px 6px;border-radius:5px;background:#fff0e3;color:#a65e24;font-size:10px}.suggestion b,.suggestion small{display:block;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.suggestion small{margin-top:4px;color:#899491}.actions{display:flex;gap:5px}.actions button,.table-action{padding:5px 7px;border:1px solid #dce5e2;border-radius:6px;background:#fff;color:#52736e;font-size:10.5px;cursor:pointer}.actions button:hover,.table-action:hover{border-color:#7bb3aa;color:var(--teal)}.actions button:disabled{opacity:.55;cursor:wait}.dialog-tip{margin:-6px 0 15px;color:#75827f;font-size:12px;line-height:1.6}.issue-codes{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:13px}.guidance{color:#556963;line-height:1.6}.detail-drawer{min-height:300px}.detail-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding-bottom:16px;border-bottom:1px solid #edf1ef}.detail-head h3{margin:0 0 7px;font-size:18px}.detail-head a{display:block;max-width:610px;overflow-wrap:anywhere;color:var(--teal);font-size:12px}.detail-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin:15px 0}.detail-metrics article{padding:13px;border:1px solid var(--line);border-radius:10px;background:#f8fbfa}.detail-metrics span{display:block;color:#7a8985;font-size:11px}.detail-metrics strong{display:block;margin-top:6px;font-size:20px}.detail-block{margin-top:14px;padding:16px;border:1px solid var(--line);border-radius:12px}.detail-block h4{margin:0 0 13px}.detail-issues{display:grid;gap:8px}.detail-issues article{display:flex;align-items:flex-start;gap:10px;padding:10px;border-radius:9px;background:#faf8f4}.detail-issues b{font-size:13px}.detail-issues p{margin:4px 0 0;color:#687873;font-size:12px;line-height:1.55}.tdk-compare{display:grid;grid-template-columns:1fr 1fr;gap:9px}.tdk-compare>div{padding:11px;border-radius:9px;background:#f7f9f8}.tdk-compare>div.suggested{background:#edf8f5}.tdk-compare span,.tdk-compare b{display:block}.tdk-compare span{color:#7c8986;font-size:10px}.tdk-compare b{overflow-wrap:anywhere;margin-top:5px;font-size:12px;line-height:1.55}.evidence-grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line)}.evidence-grid>div{min-width:0;padding:10px;background:#fff}.evidence-grid span,.evidence-grid b{display:block}.evidence-grid span{color:#7c8986;font-size:10px}.evidence-grid b{overflow-wrap:anywhere;margin-top:4px;font-size:12px}.compare-summary{display:flex;gap:8px;margin-bottom:11px}.compare-summary span{padding:5px 8px;border-radius:6px;background:#f0f3f2;color:#5e706c;font-size:11px}.compare-summary .resolved{background:#e8f7f1;color:#187a5d}.compare-summary .new-issue{background:#fff0e8;color:#b55f2c}.el-form :deep(.el-select){width:100%}@media(max-width:980px){.metrics{grid-template-columns:repeat(2,1fr)}.pagination{align-items:flex-start;flex-direction:column}}@media(max-width:680px){.site-page{padding:14px}.site-hero{align-items:flex-start;flex-direction:column}.metrics,.detail-metrics,.evidence-grid,.tdk-compare{grid-template-columns:1fr 1fr}.filters{flex-wrap:wrap}.filters .el-input{max-width:none;width:100%}.filters>span{margin-left:0}.pagination{overflow-x:auto}}
+:deep(.el-drawer){max-width:100%}
 </style>
