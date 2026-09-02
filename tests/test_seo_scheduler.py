@@ -19,6 +19,8 @@ os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
 from app.seo_ranking_jobs import (
     _SHANGHAI_TZ,
+    _engine_interval_days,
+    _engines_due_today,
     _group_keyword_ids_by_site,
     _limited_batches,
     _local_day_start_utc,
@@ -57,6 +59,47 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             _scheduled_rank_engines(settings, dataforseo_configured=True),
             ["baidu", "google", "bing"],
+        )
+
+    def test_engine_cadence_supports_daily_and_every_two_days(self):
+        settings = SimpleNamespace(
+            seo_rank_scheduler_engine_interval_days="baidu:1,sogou:2,360:2"
+        )
+        self.assertEqual(
+            _engine_interval_days(settings),
+            {"baidu": 1, "sogou": 2, "360": 2},
+        )
+        self.assertEqual(
+            _engines_due_today(
+                ["baidu", "sogou", "360"],
+                settings,
+                now=datetime(2026, 9, 2, 2, 0, tzinfo=_SHANGHAI_TZ),
+            ),
+            ["baidu", "sogou", "360"],
+        )
+        self.assertEqual(
+            _engines_due_today(
+                ["baidu", "sogou", "360"],
+                settings,
+                now=datetime(2026, 9, 3, 2, 0, tzinfo=_SHANGHAI_TZ),
+            ),
+            ["baidu"],
+        )
+
+    def test_invalid_engine_cadence_falls_back_to_daily(self):
+        settings = SimpleNamespace(
+            seo_rank_scheduler_engine_interval_days=(
+                "baidu:0,sogou:not-a-number,360:31,unknown:2"
+            )
+        )
+        self.assertEqual(_engine_interval_days(settings), {})
+        self.assertEqual(
+            _engines_due_today(
+                ["baidu", "sogou", "360"],
+                settings,
+                now=datetime(2026, 9, 3, 2, 0, tzinfo=_SHANGHAI_TZ),
+            ),
+            ["baidu", "sogou", "360"],
         )
 
     async def test_disabled_collection_does_not_take_run_lock(self):

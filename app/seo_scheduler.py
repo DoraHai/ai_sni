@@ -8,6 +8,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from app.config import get_settings
 from app.process_lock import acquire_file_lock, release_file_lock
 from app.seo_ranking_jobs import collect_daily_seo_rankings
 from app.seo_monitoring_jobs import (
@@ -39,9 +40,12 @@ def _start_seo_scheduler() -> None:
     if not _acquire_scheduler_lock():
         logger.info("[scheduler][SEO] 未抢到调度锁，本 worker 不启动 SEO 调度")
         return
+    settings = get_settings()
+    rank_hour = min(23, max(0, int(settings.seo_rank_scheduler_hour)))
+    rank_minute = min(59, max(0, int(settings.seo_rank_scheduler_minute)))
     seo_scheduler.add_job(
         collect_daily_seo_rankings,
-        CronTrigger(hour=2, minute=0),
+        CronTrigger(hour=rank_hour, minute=rank_minute),
         id="collect_daily_seo_rankings",
         replace_existing=True,
         max_instances=1,
