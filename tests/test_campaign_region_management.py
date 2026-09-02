@@ -124,7 +124,10 @@ def test_region_writeback_uses_campaign_baidu_account_and_clears_factors():
             patch("app.baidu.writeback._account_client", return_value=object()),
             patch(
                 "app.baidu.writeback.get_settings",
-                return_value=SimpleNamespace(baidu_write_dry_run=False),
+                return_value=SimpleNamespace(
+                    baidu_write_dry_run=False,
+                    baidu_write_is_dry_run=lambda tenant_id, account_id, scope: False,
+                ),
             ),
             patch("app.baidu.writeback.CampaignService.update_campaign_region", update_region),
         ):

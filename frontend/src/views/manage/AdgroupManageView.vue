@@ -119,7 +119,7 @@ async function saveLanding() {
 
 async function editBid(row) {
   const { value } = await ElMessageBox.prompt(
-    `单元「${row.adgroup_name}」当前出价 ${fmtMoney(row.max_price)}。\n输入新的单元出价（¥0.01 ~ 999.99，且不超过所属计划日预算）。当前为演练模式，只记台账不真改。`,
+    `单元「${row.adgroup_name}」当前出价 ${fmtMoney(row.max_price)}。\n输入新的单元出价（¥0.01 ~ 999.99，且不超过所属计划日预算）。实际执行模式由当前客户、推广账户和动作门禁决定。`,
     '修改单元出价',
     {
       confirmButtonText: '加入待回写',
@@ -161,7 +161,7 @@ async function togglePause(row) {
   const toPause = !isPaused(row)
   try {
     await ElMessageBox.confirm(
-      `确认${toPause ? '暂停' : '恢复投放'}单元「${row.adgroup_name}」？当前为演练模式，只记台账不真改。`,
+      `确认${toPause ? '暂停' : '恢复投放'}单元「${row.adgroup_name}」？实际执行模式由当前客户、推广账户和动作门禁决定，真实执行会修改百度账户。`,
       toPause ? '暂停单元' : '恢复投放',
       { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' },
     )
@@ -196,7 +196,7 @@ async function togglePause(row) {
       :closable="false"
       show-icon
       style="margin-bottom: 14px"
-      title="当前为演练模式：修改出价/启停只记台账、不会真改线上百度账户。"
+      title="回写模式按客户、推广账户和动作门禁判定；已开放动作会真实修改百度账户。"
     />
 
     <div class="table-panel">
@@ -261,7 +261,7 @@ async function togglePause(row) {
         type="warning"
         :closable="false"
         show-icon
-        title="当前为演练模式：保存后只记台账，不会真改百度线上。"
+        title="回写模式按客户、推广账户和动作门禁判定；已开放动作会真实修改百度账户。"
         style="margin-bottom: 14px"
       />
       <el-form label-position="top">

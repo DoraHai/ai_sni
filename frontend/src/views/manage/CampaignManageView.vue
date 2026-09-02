@@ -368,7 +368,7 @@ async function saveRegion() {
 
 async function editBudget(row) {
   const { value } = await ElMessageBox.prompt(
-    `计划「${row.campaign_name}」当前日预算 ${fmtMoney(row.budget)}。\n输入新的日预算（¥${min.value} ~ 不超过账户日预算）。当前为演练模式，只记台账不真改。`,
+    `计划「${row.campaign_name}」当前日预算 ${fmtMoney(row.budget)}。\n输入新的日预算（¥${min.value} ~ 不超过账户日预算）。实际执行模式由当前客户、推广账户和动作门禁决定。`,
     '修改计划日预算',
     {
       confirmButtonText: '加入待回写',
@@ -410,7 +410,7 @@ async function togglePause(row) {
   const toPause = !paused
   try {
     await ElMessageBox.confirm(
-      `确认${toPause ? '暂停' : '恢复投放'}计划「${row.campaign_name}」？当前为演练模式，只记台账不真改。`,
+      `确认${toPause ? '暂停' : '恢复投放'}计划「${row.campaign_name}」？实际执行模式由当前客户、推广账户和动作门禁决定，真实执行会修改百度账户。`,
       toPause ? '暂停计划' : '恢复投放',
       { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' },
     )
@@ -447,7 +447,7 @@ async function togglePause(row) {
       :closable="false"
       show-icon
       style="margin-bottom: 14px"
-      title="当前为演练模式：修改计划预算只记台账、不会真改线上百度账户。"
+      title="回写模式按客户、推广账户和动作门禁判定；已开放动作会真实修改百度账户。"
     />
 
     <div class="table-panel">

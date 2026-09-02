@@ -29,7 +29,7 @@ from app.baidu.writeback_approval import (
     WritebackApprovalError,
     claim_approval,
 )
-from app.config import get_settings
+from app.config import get_settings, resolve_baidu_write_dry_run
 from app.models import (
     Adgroup,
     BaiduAccount,
@@ -76,9 +76,10 @@ async def _claim_funds_approval(
     action_type: str,
     payload: dict,
     operator_user_id: int | None,
+    dry_run: bool,
 ) -> None:
     """演练不消耗确认；真实资金回写必须消费本人绑定参数的一次性确认。"""
-    if get_settings().baidu_write_dry_run:
+    if dry_run:
         return
     try:
         await claim_approval(
@@ -221,7 +222,7 @@ async def apply_keyword_writeback(
         ).with_for_update()
     )
 
-    dry_run = get_settings().baidu_write_dry_run
+    dry_run = _effective_dry_run(tenant_id, acc.id, "keyword_bid")
     if not dry_run:
         await _ensure_no_unresolved_funds_writeback(
             session, BidWriteback,
@@ -235,6 +236,7 @@ async def apply_keyword_writeback(
         action_type=ACTION_KEYWORD_BID,
         payload={"keyword_id": keyword_id, "new_bid": new_bid},
         operator_user_id=operator_user_id,
+        dry_run=dry_run,
     )
 
     rec = BidWriteback(
@@ -332,16 +334,6 @@ async def _load_active_account(
         if baidu_account_id is not None:
             raise WritebackError("计划所属的百度账户未授权或已停用，无法回写")
         raise WritebackError("该租户没有生效的百度账户授权，无法回写")
-    settings = get_settings()
-    if not settings.baidu_write_dry_run:
-        try:
-            allowed = settings.baidu_live_write_identity_allowed(tenant_id, acc.id)
-        except (TypeError, ValueError) as exc:
-            raise WritebackError("百度真实回写白名单配置无效，已拒绝请求") from exc
-        if not allowed:
-            raise WritebackError(
-                "当前客户或推广账户不在百度真实回写白名单中，已拒绝请求"
-            )
     return acc
 
 
@@ -372,6 +364,17 @@ def _asset_account_id(asset: Any, label: str) -> int:
     if account_id is None:
         raise WritebackError(f"{label}缺少所属百度账户，请先重新同步对应资产")
     return int(account_id)
+
+
+def _effective_dry_run(
+    tenant_id: int,
+    account_id: int,
+    write_scope: str,
+) -> bool:
+    """按客户、推广账户和动作计算本次回写模式。"""
+    return resolve_baidu_write_dry_run(
+        get_settings(), tenant_id, account_id, write_scope
+    )
 
 
 async def apply_negative_writeback(
@@ -409,7 +412,7 @@ async def apply_negative_writeback(
         raise WritebackError(f"「{word}」已在该单元的{'精确' if match_mode == 'exact' else '短语'}否词中")
     new_list = current + [word]
 
-    dry_run = get_settings().baidu_write_dry_run
+    dry_run = _effective_dry_run(tenant_id, acc.id, "adgroup_negative_words")
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id, action_type="negative",
         word=word, match_mode=match_mode,
@@ -484,7 +487,7 @@ async def apply_negative_batch_writeback(
     current = list(getattr(adg, field) or [])
     current_words = set(current)
     new_words: list[str] = []
-    dry_run = get_settings().baidu_write_dry_run
+    dry_run = _effective_dry_run(tenant_id, acc.id, "adgroup_negative_words")
     results: list[NegativeBatchWritebackResult] = []
     results_by_word: dict[str, NegativeBatchWritebackResult] = {}
     pending_results: list[NegativeBatchWritebackResult] = []
@@ -623,7 +626,7 @@ async def apply_negative_writeback_campaign(
         )
     new_list = current + [word]
 
-    dry_run = get_settings().baidu_write_dry_run
+    dry_run = _effective_dry_run(tenant_id, acc.id, "campaign_negative_words")
     rec = WritebackAction(
         tenant_id=tenant_id,
         baidu_account_id=acc.id,
@@ -702,7 +705,7 @@ async def apply_add_word_writeback(
         raise WritebackError("单元不在维度表中，请先执行单元维度同步")
     acc = await _active_account(session, tenant_id, _asset_account_id(adg, "单元"))
 
-    dry_run = get_settings().baidu_write_dry_run
+    dry_run = _effective_dry_run(tenant_id, acc.id, "keyword_create")
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id, action_type="add_word",
         word=word, match_mode=match_mode, price=price,
@@ -753,7 +756,7 @@ async def apply_pause_writeback(
         raise WritebackError("关键词不在维度表中，请先执行关键词维度同步")
     acc = await _active_account(session, tenant_id, _asset_account_id(kw, "关键词"))
 
-    dry_run = get_settings().baidu_write_dry_run
+    dry_run = _effective_dry_run(tenant_id, acc.id, "keyword_pause")
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id,
         action_type="pause" if pause else "enable",
@@ -815,7 +818,7 @@ async def apply_match_type_writeback(
         raise WritebackError("关键词不在维度表中，请先执行关键词维度同步")
     acc = await _active_account(session, tenant_id, _asset_account_id(kw, "关键词"))
 
-    dry_run = get_settings().baidu_write_dry_run
+    dry_run = _effective_dry_run(tenant_id, acc.id, "keyword_match_type")
     rec = WritebackAction(
         tenant_id=tenant_id,
         baidu_account_id=acc.id,
@@ -885,7 +888,7 @@ async def apply_remove_negative_writeback(
         raise WritebackError(f"「{word}」不在该单元的{'精确' if match_mode == 'exact' else '短语'}否词中")
     new_list = [w for w in current if w != word]
 
-    dry_run = get_settings().baidu_write_dry_run
+    dry_run = _effective_dry_run(tenant_id, acc.id, "adgroup_negative_words")
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id, action_type="remove_negative",
         word=word, match_mode=match_mode,
@@ -988,7 +991,7 @@ async def apply_campaign_budget_writeback(
     acc = await _active_account(session, tenant_id, locked_account_id)
 
     old_budget = float(camp.budget) if camp.budget is not None else None
-    dry_run = get_settings().baidu_write_dry_run
+    dry_run = _effective_dry_run(tenant_id, acc.id, "campaign_budget")
     if not dry_run:
         await _ensure_no_unresolved_funds_writeback(
             session, WritebackAction,
@@ -1003,6 +1006,7 @@ async def apply_campaign_budget_writeback(
         action_type=ACTION_CAMPAIGN_BUDGET,
         payload={"campaign_id": campaign_id, "new_budget": new_budget},
         operator_user_id=operator_user_id,
+        dry_run=dry_run,
     )
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id, action_type="set_campaign_budget",
@@ -1062,7 +1066,7 @@ async def apply_campaign_pause_writeback(
         raise WritebackError("计划不在维度表中，请先执行计划维度同步")
     acc = await _active_account(session, tenant_id, _asset_account_id(camp, "计划"))
 
-    dry_run = get_settings().baidu_write_dry_run
+    dry_run = _effective_dry_run(tenant_id, acc.id, "campaign_pause")
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id,
         action_type="campaign_pause" if pause else "campaign_enable",
@@ -1152,7 +1156,7 @@ async def apply_campaign_schedule_writeback(
         raise WritebackError("计划缺少所属百度账户，请先重新同步计划维度")
     acc = await _active_account(session, tenant_id, camp.baidu_account_id)
     old_schedule = list(camp.schedule_price_factors or [])
-    dry_run = get_settings().baidu_write_dry_run
+    dry_run = _effective_dry_run(tenant_id, acc.id, "campaign_schedule")
     rec = WritebackAction(
         tenant_id=tenant_id,
         baidu_account_id=acc.id,
@@ -1271,7 +1275,7 @@ async def apply_campaign_region_writeback(
     acc = await _active_account(session, tenant_id, camp.baidu_account_id)
 
     old_regions = list(camp.region_target or [])
-    dry_run = get_settings().baidu_write_dry_run
+    dry_run = _effective_dry_run(tenant_id, acc.id, "campaign_region")
     rec = WritebackAction(
         tenant_id=tenant_id,
         baidu_account_id=acc.id,
@@ -1339,7 +1343,7 @@ async def apply_adgroup_pause_writeback(
         raise WritebackError("单元不在维度表中，请先执行单元维度同步")
     acc = await _active_account(session, tenant_id, _asset_account_id(adg, "单元"))
 
-    dry_run = get_settings().baidu_write_dry_run
+    dry_run = _effective_dry_run(tenant_id, acc.id, "adgroup_pause")
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id,
         action_type="adgroup_pause" if pause else "adgroup_enable",
@@ -1414,7 +1418,7 @@ async def apply_adgroup_bid_writeback(
     acc = await _active_account(session, tenant_id, _asset_account_id(adg, "单元"))
 
     old_price = float(adg.max_price) if adg.max_price is not None else None
-    dry_run = get_settings().baidu_write_dry_run
+    dry_run = _effective_dry_run(tenant_id, acc.id, "adgroup_bid")
     if not dry_run:
         await _ensure_no_unresolved_funds_writeback(
             session, WritebackAction,
@@ -1429,6 +1433,7 @@ async def apply_adgroup_bid_writeback(
         action_type=ACTION_ADGROUP_BID,
         payload={"adgroup_id": adgroup_id, "new_price": new_price},
         operator_user_id=operator_user_id,
+        dry_run=dry_run,
     )
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id, action_type="set_adgroup_bid",
@@ -1544,7 +1549,7 @@ async def apply_adgroup_landing_url_writeback(
     if old_snapshot == new_snapshot:
         raise WritebackError("落地页设置没有变化")
 
-    dry_run = get_settings().baidu_write_dry_run
+    dry_run = _effective_dry_run(tenant_id, acc.id, "adgroup_landing_url")
     rec = WritebackAction(
         tenant_id=tenant_id,
         baidu_account_id=acc.id,
@@ -1643,7 +1648,7 @@ async def apply_account_budget_writeback(
     if acc.id != preflight_account_id:
         raise WritebackError("推广账户状态已变化，请重试")
 
-    dry_run = get_settings().baidu_write_dry_run
+    dry_run = _effective_dry_run(tenant_id, acc.id, "account_budget")
     if not dry_run:
         await _ensure_no_unresolved_funds_writeback(
             session, WritebackAction,
@@ -1657,6 +1662,7 @@ async def apply_account_budget_writeback(
         action_type=ACTION_ACCOUNT_BUDGET,
         payload={"baidu_account_id": acc.id, "new_budget": new_budget},
         operator_user_id=operator_user_id,
+        dry_run=dry_run,
     )
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id, action_type="set_account_budget",
