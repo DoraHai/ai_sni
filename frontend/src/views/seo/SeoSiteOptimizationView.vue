@@ -1,8 +1,8 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { auditPendingSeoSitePages, auditSeoSitePage, fetchSeoContentAssets, fetchSeoKeywords, fetchSeoSitePageDetail, fetchSeoSitePageIssues, fetchSeoSitePages, generateSeoSitePageSuggestions, importSeoSitePages, updateSeoContentAsset, updateSeoSitePage } from '../../api/seo'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { auditPendingSeoSitePages, auditSeoSitePage, cleanupSeoNonHtmlSitePages, fetchSeoContentAssets, fetchSeoKeywords, fetchSeoSitePageDetail, fetchSeoSitePageIssues, fetchSeoSitePages, generateSeoSitePageSuggestions, importSeoSitePages, updateSeoContentAsset, updateSeoSitePage } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { formatSeoCsvTime } from './seoRankTime'
@@ -25,6 +25,7 @@ const saving = ref(false)
 const auditing = ref(new Set())
 const batchAuditing = ref(false)
 const generating = ref(false)
+const cleaningNonHtml = ref(false)
 const selectedRows = ref([])
 const page = ref(1)
 const pageSize = ref(50)
@@ -179,6 +180,42 @@ async function generateSuggestions() {
     await load()
   } catch (e) { ElMessage.error(e.message) } finally { generating.value = false }
 }
+async function cleanupNonHtmlAssets() {
+  const tenantId = currentTenantId.value
+  const selectedSiteId = siteId.value
+  if (!tenantId || !selectedSiteId) return ElMessage.warning('请先选择客户和 SEO 网站')
+  cleaningNonHtml.value = true
+  try {
+    const preview = await cleanupSeoNonHtmlSitePages({ tenant_id: tenantId, site_id: selectedSiteId, dry_run: true, page_ids: [] })
+    if (!preview.deletable) {
+      const skipped = preview.skipped?.length ? `；另有 ${preview.skipped.length} 条已关联内容任务，未纳入清理` : ''
+      return ElMessage.info(`没有可安全清理的非网页资源${skipped}`)
+    }
+    const sample = preview.items.slice(0, 4).map((item) => item.url).join('\n')
+    const extra = preview.items.length > 4 ? `\n另有 ${preview.items.length - 4} 条` : ''
+    await ElMessageBox.confirm(
+      `将删除 ${preview.deletable} 条误入页面库的文件/媒体资源及其 TDK 记录：\n${sample}${extra}\n已关联内容任务的记录会被阻止删除。此操作不可恢复。`,
+      '清理非网页资源',
+      { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消' },
+    )
+    if (tenantId !== currentTenantId.value || selectedSiteId !== siteId.value) {
+      return ElMessage.warning('客户或网站已切换，请重新预览')
+    }
+    const response = await cleanupSeoNonHtmlSitePages({
+      tenant_id: tenantId,
+      site_id: selectedSiteId,
+      dry_run: false,
+      page_ids: preview.items.map((item) => item.id),
+    })
+    ElMessage.success(`已清理 ${response.deleted} 条非网页资源`)
+    selectedRows.value = []
+    await load()
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close') ElMessage.error(e.message || String(e))
+  } finally {
+    cleaningNonHtml.value = false
+  }
+}
 function csvCell(value) { return `"${String(value ?? '').replace(/"/g, '""')}"` }
 function exportHandoff() {
   const rows = selectedRows.value.length ? selectedRows.value : result.value.items
@@ -246,7 +283,7 @@ onMounted(loadSites)
   <div class="site-page">
     <section class="site-hero">
       <div><span>SEO / ONSITE OPTIMIZATION</span><h1>站内优化</h1><p>管理页面资产、TDK、H1、Canonical 与索引状态。检测结果保存到页面档案，可用于上线前后复核。</p></div>
-      <div class="hero-actions"><el-select v-model="siteId" placeholder="选择 SEO 网站"><el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id"/></el-select><button v-if="canEdit" :disabled="generating||batchAuditing||!siteId" :title="`作用范围：${actionScopeLabel}`" @click="generateSuggestions">{{generating?'生成中…':`生成 TDK（${actionScopeLabel}）`}}</button><button :disabled="batchAuditing||!siteId" class="secondary" :title="`作用范围：${actionScopeLabel}`" @click="exportHandoff">导出交接单（{{ actionScopeLabel }}）</button><button v-if="canEdit" :disabled="batchAuditing||auditing.size>0||!siteId" :title="selectedRows.length ? '最多处理已选的前 50 个页面' : '补抓最多 10 个待检测页面'" @click="auditPending">{{batchAuditing?'检测中…':(selectedRows.length?`批量检测（已选 ${selectedRows.length}）`:'补抓待检测页面')}}</button><button v-if="canEdit" :disabled="batchAuditing||!siteId" @click="importOpen = true">＋ 导入页面</button></div>
+      <div class="hero-actions"><el-select v-model="siteId" placeholder="选择 SEO 网站"><el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id"/></el-select><button v-if="canEdit" :disabled="generating||batchAuditing||cleaningNonHtml||!siteId" :title="`作用范围：${actionScopeLabel}`" @click="generateSuggestions">{{generating?'生成中…':`生成 TDK（${actionScopeLabel}）`}}</button><button :disabled="batchAuditing||cleaningNonHtml||!siteId" class="secondary" :title="`作用范围：${actionScopeLabel}`" @click="exportHandoff">导出交接单（{{ actionScopeLabel }}）</button><button v-if="canEdit" :disabled="batchAuditing||auditing.size>0||cleaningNonHtml||!siteId" :title="selectedRows.length ? '最多处理已选的前 50 个页面' : '补抓最多 10 个待检测页面'" @click="auditPending">{{batchAuditing?'检测中…':(selectedRows.length?`批量检测（已选 ${selectedRows.length}）`:'补抓待检测页面')}}</button><button v-if="canEdit" class="secondary" :disabled="batchAuditing||cleaningNonHtml||!siteId" @click="cleanupNonHtmlAssets">{{ cleaningNonHtml ? '检查中…' : '清理非网页资源' }}</button><button v-if="canEdit" :disabled="batchAuditing||cleaningNonHtml||!siteId" @click="importOpen = true">＋ 导入页面</button></div>
     </section>
     <el-alert v-if="error" :title="error" type="warning" :closable="false" show-icon />
     <section class="metrics">

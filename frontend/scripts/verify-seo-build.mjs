@@ -82,6 +82,7 @@ for (const marker of [
   '网站技术扫描确认',
   'include_known_pages',
   '失败原因：',
+  '清理非网页资源',
 ]) {
   if (!javascript.includes(marker)) {
     throw new Error(`SEO build is missing the multi-engine/traffic marker: ${marker}`)
