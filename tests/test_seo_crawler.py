@@ -39,6 +39,8 @@ def test_normalize_crawl_url_removes_fragment_and_rejects_credentials() -> None:
     assert normalize_crawl_url("Example.com/products/#spec") == "https://example.com/products"
     with pytest.raises(SeoCrawlError):
         normalize_crawl_url("https://user:pass@example.com")
+    with pytest.raises(SeoCrawlError, match="Invalid URL port"):
+        normalize_crawl_url("https://example.com:not-a-port/path")
 
 
 def test_sitemap_parser_supports_urlset_and_index() -> None:
@@ -139,6 +141,37 @@ def test_crawl_site_deduplicates_seed_also_listed_in_sitemap() -> None:
     assert [item["url"] for item in result["snapshots"]] == ["https://example.com/"]
     assert result["snapshots"][0]["discovery_source"] == "seed"
     assert fetch_counts["https://example.com/"] == 1
+
+
+def test_crawl_site_isolates_one_page_failure_and_strips_internal_links() -> None:
+    pages = {
+        "https://example.com/robots.txt": _result(
+            "https://example.com/robots.txt", "User-agent: *\nAllow: /", "text/plain"
+        ),
+        "https://example.com/sitemap.xml": FetchResult(
+            "https://example.com/sitemap.xml", "https://example.com/sitemap.xml",
+            404, [], "text/plain", "", 0, 1, {},
+        ),
+        "https://example.com/": _result(
+            "https://example.com/",
+            '<html><body><a href="/broken">broken</a><a href="https://example.com:bad/skip">bad</a></body></html>',
+        ),
+    }
+
+    async def fake_fetch(url: str, **_: object) -> FetchResult:
+        if url == "https://example.com/broken":
+            raise RuntimeError("one page exploded")
+        return pages[url]
+
+    result = asyncio.run(
+        crawl_site("https://example.com", max_urls=2, max_depth=1, fetcher=fake_fetch)
+    )
+
+    assert len(result["snapshots"]) == 2
+    assert all("internal_links" not in item for item in result["snapshots"])
+    failed = next(item for item in result["snapshots"] if item["url"].endswith("/broken"))
+    assert failed["error_type"] == "crawl_error"
+    assert failed["fetch_error"] == "one page exploded"
 
 
 def test_fetch_url_blocks_loopback_before_network_request() -> None:

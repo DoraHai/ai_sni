@@ -8,6 +8,7 @@ from contextvars import ContextVar
 import hashlib
 import ipaddress
 import json
+import logging
 import re
 import socket
 import time
@@ -26,6 +27,7 @@ USER_AGENT = "GrowthSniperSEO/1.0"
 MAX_REDIRECTS = 5
 MAX_RESPONSE_BYTES = 3 * 1024 * 1024
 FETCH_TIMEOUT_SECONDS = 15.0
+logger = logging.getLogger(__name__)
 
 
 class SeoCrawlError(Exception):
@@ -118,7 +120,10 @@ def normalize_crawl_url(value: str) -> str:
     if parsed.username or parsed.password:
         raise SeoCrawlError("URL credentials are not allowed")
     host = parsed.hostname.lower()
-    port = parsed.port
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise SeoCrawlError("Invalid URL port") from exc
     netloc = host if port is None else f"{host}:{port}"
     path = re.sub(r"/{2,}", "/", parsed.path or "/")
     if path != "/":
@@ -539,16 +544,34 @@ async def crawl_site(
 
             async def process(item: tuple[str, int, str]) -> tuple[tuple[str, int, str], dict[str, Any]]:
                 url, _, _ = item
-                allowed = robot_parser.can_fetch(USER_AGENT, url)
-                if not allowed:
-                    result = FetchResult(url, url, None, [], None, "", None, None, {}, "robots_blocked", "Blocked by robots.txt")
-                    return item, analyze_html(result, robots_allowed=False)
-                result = await fetcher(url, client=client)
-                return item, analyze_html(result, robots_allowed=True)
+                try:
+                    allowed = robot_parser.can_fetch(USER_AGENT, url)
+                    if not allowed:
+                        result = FetchResult(url, url, None, [], None, "", None, None, {}, "robots_blocked", "Blocked by robots.txt")
+                        return item, analyze_html(result, robots_allowed=False)
+                    result = await fetcher(url, client=client)
+                    return item, analyze_html(result, robots_allowed=True)
+                except Exception as exc:
+                    logger.exception("[SEO][crawl] page processing failed url=%s", url)
+                    result = FetchResult(
+                        url,
+                        url,
+                        None,
+                        [],
+                        None,
+                        "",
+                        None,
+                        None,
+                        {},
+                        "crawl_error",
+                        str(exc)[:2000] or exc.__class__.__name__,
+                    )
+                    return item, analyze_html(result, robots_allowed=True)
 
             processed = await asyncio.gather(*(process(item) for item in batch))
             for (url, depth, source), snapshot in processed:
                 visited.add(url)
+                internal_links = snapshot.pop("internal_links", [])
                 snapshot_url = snapshot.get("url")
                 if snapshot_url in snapshot_urls:
                     continue
@@ -559,7 +582,7 @@ async def crawl_site(
                 snapshots.append(snapshot)
                 if depth >= max_depth:
                     continue
-                for target in snapshot.pop("internal_links", []):
+                for target in internal_links:
                     if target not in queued and target not in visited and len(queued) < max_urls * 4:
                         queued.add(target)
                         queue.append((target, depth + 1, "internal_link"))

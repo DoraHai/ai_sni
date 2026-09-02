@@ -130,6 +130,16 @@ def test_seo_dashboard_shows_tenant_automation_run_status() -> None:
     assert "'/api/v1/seo/overview/automation-runs/trigger'" in api
 
 
+def test_seo_dashboard_keeps_crawl_failure_reason_visible() -> None:
+    root = Path(__file__).parents[1]
+    dashboard = (root / "frontend/src/views/seo/SeoDashboardView.vue").read_text(
+        encoding="utf-8"
+    )
+
+    assert "data.crawl?.error_summary" in dashboard
+    assert "失败原因：{{ data.crawl.error_summary }}" in dashboard
+
+
 def test_trends_are_scoped_by_site_and_selected_time_range() -> None:
     root = Path(__file__).parents[1]
     trends = (root / "frontend/src/views/seo/SeoTrendsView.vue").read_text(
