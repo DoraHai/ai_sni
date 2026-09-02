@@ -168,18 +168,18 @@ def _record_writeback_exception(
 
 
 def _validate(old_bid: float | None, new_bid: float) -> float | None:
-    """校验目标价，返回 change_pct（无旧价则 None）。越界抛 WritebackError。"""
+    """校验目标价，返回带方向的 change_pct（无旧价则 None）。"""
     if new_bid < MIN_BID or new_bid > MAX_BID:
         raise WritebackError(f"目标出价 {new_bid} 超出合法区间 [{MIN_BID}, {MAX_BID}]")
     if old_bid is None or old_bid <= 0:
         return None
-    change_pct = abs(new_bid - old_bid) / old_bid * 100
-    if change_pct > MAX_CHANGE_PCT + 1e-6:
+    signed_change_pct = (new_bid - old_bid) / old_bid * 100
+    if abs(signed_change_pct) > MAX_CHANGE_PCT + 1e-6:
         raise WritebackError(
-            f"调价幅度 {change_pct:.1f}% 超过渐进调价硬上限 {MAX_CHANGE_PCT:.0f}%"
+            f"调价幅度 {abs(signed_change_pct):.1f}% 超过渐进调价硬上限 {MAX_CHANGE_PCT:.0f}%"
             f"（{old_bid} → {new_bid}）"
         )
-    return round(change_pct, 2)
+    return round(signed_change_pct, 2)
 
 
 async def apply_keyword_writeback(

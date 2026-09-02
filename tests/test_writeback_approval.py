@@ -25,6 +25,7 @@ from app.baidu.writeback_approval import (
 from app.baidu.writeback import (
     _ensure_no_unresolved_funds_writeback,
     _record_writeback_exception,
+    _validate,
     apply_account_budget_writeback,
     apply_adgroup_bid_writeback,
     apply_campaign_budget_writeback,
@@ -38,6 +39,7 @@ from app.api.writeback import (
     ApprovalRequest,
     ReconciliationDecision,
     _queue_stage,
+    _signed_writeback_change_pct,
     reconcile_writeback,
     request_writeback_approval,
 )
@@ -66,6 +68,27 @@ def _live_confirmation_settings(*, legacy: bool = False):
 
 
 class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
+    def test_writeback_change_percentage_preserves_direction(self):
+        self.assertEqual(_validate(13.28, 13.27), -0.08)
+        self.assertEqual(_validate(10.0, 11.0), 10.0)
+
+        self.assertEqual(_validate(10.0, 8.0), -20.0)
+        self.assertEqual(_validate(10.0, 12.0), 20.0)
+        with self.assertRaisesRegex(WritebackError, "20%"):
+            _validate(10.0, 7.99)
+        with self.assertRaisesRegex(WritebackError, "20%"):
+            _validate(10.0, 12.01)
+
+        historical_decrease = SimpleNamespace(
+            old_bid=13.28,
+            new_bid=13.27,
+            change_pct=0.08,
+        )
+        self.assertEqual(
+            _signed_writeback_change_pct(historical_decrease),
+            -0.08,
+        )
+
     async def test_single_operator_confirmation_is_created_ready_to_execute(self):
         class Session:
             def __init__(self):
