@@ -45,7 +45,9 @@ from app.api.seo import (
     _serp_error_payload,
     _normalize_brand_homepage,
     _page_tdk_suggestions,
+    _page_issue_group,
     _page_issue_filter_condition,
+    _page_snapshot_comparison,
     _seo_ai_prompt,
     _selected_keyword_ids,
     _sanitize_content_html,
@@ -869,6 +871,39 @@ def test_site_page_stats_are_aggregated_in_the_database() -> None:
     source = inspect.getsource(list_site_pages)
     assert "func.avg(SeoSitePage.audit_score)" in source
     assert "all_rows" not in source
+
+
+def test_site_page_issue_groups_cover_aliases_and_unknown_codes() -> None:
+    assert _page_issue_group("robots_blocked") == "indexable"
+    assert _page_issue_group("description_missing") == "description"
+    assert _page_issue_group("schema_invalid") == "schema"
+    assert _page_issue_group("future_check") == "other"
+
+
+def test_site_page_snapshot_comparison_reports_changes_and_issue_delta() -> None:
+    previous = SimpleNamespace(
+        issue_codes=["title_missing", "image_alt_missing"],
+        **{field: None for field in (
+            "status_code", "final_url", "canonical_url", "indexable", "title",
+            "title_length", "meta_description", "description_length", "h1_texts",
+            "h1_count", "word_count", "schema_types", "schema_parse_error",
+            "internal_links_count", "external_links_count", "images_missing_alt_count",
+        )},
+    )
+    latest_values = dict(vars(previous))
+    latest_values.update(
+        issue_codes=["image_alt_missing", "canonical"],
+        status_code=200,
+        title="NORDAC 操作手册｜NORD",
+    )
+    latest = SimpleNamespace(**latest_values)
+
+    result = _page_snapshot_comparison(latest, previous)
+
+    assert result["available"] is True
+    assert result["resolved_issues"] == ["title_missing"]
+    assert result["new_issues"] == ["canonical"]
+    assert {item["field"] for item in result["changed_fields"]} == {"status_code", "title"}
 
 
 def test_new_rank_snapshot_rejects_a_keyword_without_the_same_site() -> None:
