@@ -530,6 +530,22 @@ async def _chinaz_get_json(
             payload = response.json()
             if not isinstance(payload, dict):
                 raise ValueError("not an object")
+            try:
+                state_code = int(payload.get("StateCode", 1))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("invalid StateCode") from exc
+            if state_code == -1:
+                raise SerpProviderError(
+                    "provider_unavailable",
+                    "站长之家接口暂时不可用",
+                    retryable=True,
+                    status_code=state_code,
+                )
+            if state_code in {436, 437, 531}:
+                raise _chinaz_http_error(
+                    state_code,
+                    elapsed_ms=max(0, round((perf_counter() - started_at) * 1000)),
+                )
             return payload
         except httpx.TimeoutException as exc:
             error = SerpProviderError(
@@ -552,6 +568,8 @@ async def _chinaz_get_json(
                 retryable=True,
                 elapsed_ms=max(0, round((perf_counter() - started_at) * 1000)),
             )
+        except SerpProviderError as exc:
+            error = exc
         except (ValueError, TypeError) as exc:
             error = SerpProviderError(
                 "invalid_response",
