@@ -2846,13 +2846,20 @@ async def _execute_seo_crawl_run(
                 page.content_units = item.get("word_count")
                 page.issue_codes = item.get("issue_codes") or []
                 page.audit_score = max(0, 100 - len(page.issue_codes) * 10)
-                page.status = _site_page_status_after_audit(
-                    page.status,
-                    page.issue_codes,
-                    has_error=bool(item.get("error_type")),
-                )
-                page.last_error = item.get("fetch_error")
-                page.last_checked_at = datetime.utcnow()
+                if item.get("error_type"):
+                    _apply_site_page_audit_failure(
+                        page,
+                        item.get("fetch_error") or str(item["error_type"]),
+                        http_status=item.get("status_code"),
+                        issue_codes=page.issue_codes,
+                    )
+                else:
+                    page.status = _site_page_status_after_audit(
+                        page.status,
+                        page.issue_codes,
+                    )
+                    page.last_error = None
+                    page.last_checked_at = datetime.utcnow()
 
             fetched = sum(item.get("status_code") is not None and not item.get("error_type") for item in snapshot_values)
             blocked = sum(item.get("error_type") == "robots_blocked" for item in snapshot_values)
@@ -3646,14 +3653,39 @@ def _site_page_status_after_audit(
     *,
     has_error: bool = False,
 ) -> str:
-    """Keep human TDK workflow state while refreshing technical audit facts."""
-    if previous_status in {"proposed", "approved"}:
-        return previous_status
+    """Keep TDK workflow state only while the audited URL remains reachable."""
     if has_error:
         return "error"
+    if previous_status in {"proposed", "approved"}:
+        return previous_status
     if not issue_codes:
         return "verified" if previous_status in {"implemented", "verified"} else "healthy"
     return "needs_fix"
+
+
+def _apply_site_page_audit_failure(
+    row: SeoSitePage,
+    message: str,
+    *,
+    http_status: int | None = None,
+    issue_codes: list[str] | None = None,
+) -> None:
+    """Persist crawl evidence and retire only stale, unconfirmed automatic TDK work."""
+    previous_status = getattr(row, "status", None)
+    if previous_status == "proposed":
+        row.title_suggestion = None
+        row.description_suggestion = None
+    row.status = _site_page_status_after_audit(
+        previous_status,
+        issue_codes if issue_codes is not None else getattr(row, "issue_codes", None),
+        has_error=True,
+    )
+    if http_status is not None:
+        row.http_status = http_status
+    if issue_codes is not None:
+        row.issue_codes = issue_codes
+    row.last_error = message[:1000]
+    row.last_checked_at = datetime.utcnow()
 
 
 def _apply_site_page_audit(row: SeoSitePage, result: dict[str, Any]) -> None:
@@ -3705,9 +3737,7 @@ async def audit_pending_site_pages(
             _apply_site_page_audit(row, result)
             completed += 1
         except GeoAuditError as exc:
-            row.status = "error"
-            row.last_error = str(exc)[:1000]
-            row.last_checked_at = datetime.utcnow()
+            _apply_site_page_audit_failure(row, str(exc))
             failed.append({"page_id": row.id, "message": str(exc)[:300]})
     await session.commit()
     return {
@@ -3752,9 +3782,7 @@ async def audit_site_page(
     try:
         result = await audit_url(row.url)
     except GeoAuditError as exc:
-        row.status = "error"
-        row.last_error = str(exc)
-        row.last_checked_at = datetime.utcnow()
+        _apply_site_page_audit_failure(row, str(exc))
         await session.commit()
         raise HTTPException(422, str(exc)) from exc
 
