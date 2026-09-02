@@ -60,6 +60,9 @@ def test_sem_frontend_labels_effective_customer_writeback_mode():
     assert "SEM_LIMITED_LIVE_MESSAGE" in capabilities
     assert "fetchWritebackMode" in app_shell
     assert "writebackMode.mode === 'limited_live'" in app_shell
+    assert "liveWriteAccounts" in app_shell
+    assert "account.external_account_id" in app_shell
+    assert "SEM_WRITE_SCOPE_LABELS" in app_shell
     assert "只读演练" in app_shell
     assert "加入待回写" in workbench
     assert "优化建议" in app_shell
