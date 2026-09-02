@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { auditPendingSeoSitePages, auditSeoSitePage, cleanupSeoNonHtmlSitePages, fetchSeoContentAssets, fetchSeoKeywords, fetchSeoSitePageDetail, fetchSeoSitePageIssues, fetchSeoSitePages, generateSeoSitePageSuggestions, importSeoSitePages, updateSeoContentAsset, updateSeoSitePage } from '../../api/seo'
+import { auditPendingSeoSitePages, auditSeoSitePage, cleanupSeoNonHtmlSitePages, fetchSeoBrokenLinkReport, fetchSeoContentAssets, fetchSeoKeywords, fetchSeoSitePageDetail, fetchSeoSitePageIssues, fetchSeoSitePages, generateSeoSitePageSuggestions, importSeoSitePages, updateSeoContentAsset, updateSeoSitePage } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { formatSeoCsvTime } from './seoRankTime'
@@ -26,6 +26,7 @@ const auditing = ref(new Set())
 const batchAuditing = ref(false)
 const generating = ref(false)
 const cleaningNonHtml = ref(false)
+const exportingBrokenLinks = ref(false)
 const selectedRows = ref([])
 const page = ref(1)
 const pageSize = ref(50)
@@ -217,6 +218,24 @@ async function cleanupNonHtmlAssets() {
   }
 }
 function csvCell(value) { return `"${String(value ?? '').replace(/"/g, '""')}"` }
+async function exportBrokenLinks() {
+  if (!currentTenantId.value || !siteId.value) return ElMessage.warning('请先选择客户和 SEO 网站')
+  exportingBrokenLinks.value = true
+  try {
+    const response = await fetchSeoBrokenLinkReport({ tenantId: currentTenantId.value, siteId: siteId.value })
+    if (!response.items?.length) return ElMessage.info('当前没有 HTTP 4xx 页面')
+    const headers = ['失效页面ID','失效URL','HTTP状态','失败原因','最近检测时间','来源页面ID','来源页面URL','来源页面标题','锚文本','关系发现时间','处理建议']
+    const rows = response.items.map((item) => [
+      item.target_page_id,item.target_url,item.http_status,item.last_error,formatSeoCsvTime(item.last_checked_at),
+      item.source?.source_page_id,item.source?.source_url,item.source?.source_title,item.source?.anchor_text,
+      formatSeoCsvTime(item.source?.discovered_at),item.action,
+    ])
+    const blob = new Blob(['\ufeff' + [headers,...rows].map((line) => line.map(csvCell).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' })
+    const anchor = document.createElement('a'); anchor.href = URL.createObjectURL(blob); anchor.download = `SEO-404修复清单-${siteId.value}.csv`; anchor.click(); URL.revokeObjectURL(anchor.href)
+    const summary = `已导出 ${response.stats.broken_pages} 个失效页面、${response.stats.linked_sources} 条来源关系`
+    response.stats.untraced_pages ? ElMessage.warning(`${summary}；${response.stats.untraced_pages} 个页面待下次全站扫描补齐来源`) : ElMessage.success(summary)
+  } catch (e) { ElMessage.error(e.message) } finally { exportingBrokenLinks.value = false }
+}
 function exportHandoff() {
   const rows = selectedRows.value.length ? selectedRows.value : result.value.items
   if (!rows.length) return ElMessage.warning('当前没有可导出的页面')
@@ -283,7 +302,7 @@ onMounted(loadSites)
   <div class="site-page">
     <section class="site-hero">
       <div><span>SEO / ONSITE OPTIMIZATION</span><h1>站内优化</h1><p>管理页面资产、TDK、H1、Canonical 与索引状态。检测结果保存到页面档案，可用于上线前后复核。</p></div>
-      <div class="hero-actions"><el-select v-model="siteId" placeholder="选择 SEO 网站"><el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id"/></el-select><button v-if="canEdit" :disabled="generating||batchAuditing||cleaningNonHtml||!siteId" :title="`作用范围：${actionScopeLabel}`" @click="generateSuggestions">{{generating?'生成中…':`生成 TDK（${actionScopeLabel}）`}}</button><button :disabled="batchAuditing||cleaningNonHtml||!siteId" class="secondary" :title="`作用范围：${actionScopeLabel}`" @click="exportHandoff">导出交接单（{{ actionScopeLabel }}）</button><button v-if="canEdit" :disabled="batchAuditing||auditing.size>0||cleaningNonHtml||!siteId" :title="selectedRows.length ? '最多处理已选的前 50 个页面' : '补抓最多 10 个待检测页面'" @click="auditPending">{{batchAuditing?'检测中…':(selectedRows.length?`批量检测（已选 ${selectedRows.length}）`:'补抓待检测页面')}}</button><button v-if="canEdit" class="secondary" :disabled="batchAuditing||cleaningNonHtml||!siteId" @click="cleanupNonHtmlAssets">{{ cleaningNonHtml ? '检查中…' : '清理非网页资源' }}</button><button v-if="canEdit" :disabled="batchAuditing||cleaningNonHtml||!siteId" @click="importOpen = true">＋ 导入页面</button></div>
+      <div class="hero-actions"><el-select v-model="siteId" placeholder="选择 SEO 网站"><el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id"/></el-select><button v-if="canEdit" :disabled="generating||batchAuditing||cleaningNonHtml||!siteId" :title="`作用范围：${actionScopeLabel}`" @click="generateSuggestions">{{generating?'生成中…':`生成 TDK（${actionScopeLabel}）`}}</button><button :disabled="batchAuditing||cleaningNonHtml||!siteId" class="secondary" :title="`作用范围：${actionScopeLabel}`" @click="exportHandoff">导出交接单（{{ actionScopeLabel }}）</button><button class="secondary" :disabled="exportingBrokenLinks||!siteId" @click="exportBrokenLinks">{{ exportingBrokenLinks ? '导出中…' : '导出 404 修复清单' }}</button><button v-if="canEdit" :disabled="batchAuditing||auditing.size>0||cleaningNonHtml||!siteId" :title="selectedRows.length ? '最多处理已选的前 50 个页面' : '补抓最多 10 个待检测页面'" @click="auditPending">{{batchAuditing?'检测中…':(selectedRows.length?`批量检测（已选 ${selectedRows.length}）`:'补抓待检测页面')}}</button><button v-if="canEdit" class="secondary" :disabled="batchAuditing||cleaningNonHtml||!siteId" @click="cleanupNonHtmlAssets">{{ cleaningNonHtml ? '检查中…' : '清理非网页资源' }}</button><button v-if="canEdit" :disabled="batchAuditing||cleaningNonHtml||!siteId" @click="importOpen = true">＋ 导入页面</button></div>
     </section>
     <el-alert v-if="error" :title="error" type="warning" :closable="false" show-icon />
     <section class="metrics">
@@ -348,6 +367,7 @@ onMounted(loadSites)
             <div><span>当前 Description</span><b>{{ displayValue(detailResult.page.meta_description) }}</b></div><div class="suggested"><span>建议 Description</span><b>{{ displayValue(detailResult.page.description_suggestion) }}</b></div>
           </div></section>
           <section class="detail-block"><h4>当前问题与处理建议</h4><el-empty v-if="!detailResult.issue_details.length" description="当前没有检测问题" :image-size="54"/><div v-else class="detail-issues"><article v-for="item in detailResult.issue_details" :key="item.code"><el-tag :type="severityType(item.severity)" size="small">{{ severityLabel(item.severity) }}</el-tag><div><b>{{ issueLabel(item.code) }}</b><p>{{ item.guidance }}</p></div></article></div></section>
+          <section v-if="detailResult.page.issue_codes?.includes('http_4xx')" class="detail-block"><h4>失效链接来源</h4><el-table :data="detailResult.internal_links.incoming_sources || []" empty-text="来源关系待下次全站扫描补齐" max-height="300"><el-table-column label="来源页面" min-width="330"><template #default="{row}"><b class="page-title">{{ row.source_title || '未读取页面标题' }}</b><a class="page-url" :href="row.source_url" target="_blank" rel="noopener noreferrer">{{ row.source_url }}</a></template></el-table-column><el-table-column prop="anchor_text" label="锚文本" min-width="150"><template #default="{row}">{{ row.anchor_text || '—' }}</template></el-table-column></el-table></section>
           <section class="detail-block"><h4>最近抓取证据</h4><div v-if="detailResult.latest_snapshot" class="evidence-grid">
             <div><span>抓取时间</span><b>{{ formatTime(detailResult.latest_snapshot.fetched_at) }}</b></div><div><span>最终地址</span><b>{{ displayValue(detailResult.latest_snapshot.final_url) }}</b></div>
             <div><span>Canonical</span><b>{{ displayValue(detailResult.latest_snapshot.canonical_url) }}</b></div><div><span>可索引</span><b>{{ displayValue(detailResult.latest_snapshot.indexable) }}</b></div>

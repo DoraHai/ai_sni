@@ -2861,6 +2861,37 @@ async def _execute_seo_crawl_run(
                     page.last_error = None
                     page.last_checked_at = datetime.utcnow()
 
+            await session.flush()
+            crawled_source_ids = {
+                int(existing_pages[item["url"]].id)
+                for item in snapshot_values
+                if item.get("url") in existing_pages
+            }
+            if crawled_source_ids:
+                await session.execute(
+                    delete(SeoInternalLink).where(
+                        SeoInternalLink.tenant_id == tenant_id,
+                        SeoInternalLink.site_id == site_id,
+                        SeoInternalLink.source_page_id.in_(crawled_source_ids),
+                    )
+                )
+            page_ids_by_url = {
+                url: int(page.id)
+                for url, page in existing_pages.items()
+                if page.id is not None
+            }
+            for edge in _crawl_internal_link_plan(
+                page_ids_by_url,
+                result.get("internal_link_edges") or [],
+            ):
+                session.add(
+                    SeoInternalLink(
+                        tenant_id=tenant_id,
+                        site_id=site_id,
+                        **edge,
+                    )
+                )
+
             fetched = sum(item.get("status_code") is not None and not item.get("error_type") for item in snapshot_values)
             blocked = sum(item.get("error_type") == "robots_blocked" for item in snapshot_values)
             failed = sum(bool(item.get("error_type")) and item.get("error_type") != "robots_blocked" for item in snapshot_values)
@@ -2897,6 +2928,33 @@ async def _execute_seo_crawl_run(
                 await refund_seo_usage(session, tenant_id, "crawl_urls", max_urls)
         except Exception:
             logger.exception("[SEO][crawl] failed to refund quota run_id=%s", run_id)
+
+
+def _crawl_internal_link_plan(
+    page_ids_by_url: dict[str, int],
+    raw_edges: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Map crawl URL edges to deduplicated, persistable site-page relationships."""
+    planned: list[dict[str, Any]] = []
+    seen: set[tuple[int, int, str | None]] = set()
+    for edge in raw_edges:
+        source_id = page_ids_by_url.get(str(edge.get("source_url") or ""))
+        target_id = page_ids_by_url.get(str(edge.get("target_url") or ""))
+        if source_id is None or target_id is None or source_id == target_id:
+            continue
+        anchor_text = str(edge.get("anchor_text") or "").strip()[:500] or None
+        key = (source_id, target_id, anchor_text)
+        if key in seen:
+            continue
+        seen.add(key)
+        planned.append(
+            {
+                "source_page_id": source_id,
+                "target_page_id": target_id,
+                "anchor_text": anchor_text,
+            }
+        )
+    return planned
 
 
 @router.get("/site/crawl-runs")
@@ -3258,6 +3316,126 @@ async def list_site_page_issues(
     }
 
 
+def _incoming_source_payload(
+    source_id: int,
+    source_url: str,
+    source_title: str | None,
+    anchor_text: str | None,
+    discovered_at: datetime | None,
+) -> dict[str, Any]:
+    return {
+        "source_page_id": int(source_id),
+        "source_url": source_url,
+        "source_title": source_title,
+        "anchor_text": anchor_text,
+        "discovered_at": _database_iso(discovered_at),
+    }
+
+
+async def _incoming_site_page_sources(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    site_id: int | None,
+    target_page_ids: list[int],
+    limit: int = 1000,
+) -> dict[int, list[dict[str, Any]]]:
+    if not target_page_ids:
+        return {}
+    rows = list(
+        await session.execute(
+            select(
+                SeoInternalLink.target_page_id,
+                SeoInternalLink.anchor_text,
+                SeoInternalLink.discovered_at,
+                SeoSitePage.id,
+                SeoSitePage.url,
+                SeoSitePage.title,
+            )
+            .join(SeoSitePage, SeoSitePage.id == SeoInternalLink.source_page_id)
+            .where(
+                SeoInternalLink.tenant_id == tenant_id,
+                SeoInternalLink.site_id == site_id,
+                SeoInternalLink.target_page_id.in_(target_page_ids),
+                SeoSitePage.tenant_id == tenant_id,
+                SeoSitePage.site_id == site_id,
+            )
+            .order_by(SeoInternalLink.target_page_id, SeoSitePage.id)
+            .limit(limit)
+        )
+    )
+    grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for target_id, anchor, discovered_at, source_id, source_url, source_title in rows:
+        grouped[int(target_id)].append(
+            _incoming_source_payload(
+                source_id,
+                source_url,
+                source_title,
+                anchor,
+                discovered_at,
+            )
+        )
+    return dict(grouped)
+
+
+@router.get("/site-pages/broken-link-report")
+async def get_broken_link_report(
+    tenant_id: int,
+    site_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Return HTTP 4xx targets and every known site page that links to them."""
+    await _tenant(session, tenant_id)
+    await _seo_site(session, tenant_id, site_id)
+    broken_pages = list(
+        await session.scalars(
+            select(SeoSitePage)
+            .where(
+                SeoSitePage.tenant_id == tenant_id,
+                SeoSitePage.site_id == site_id,
+                _page_issue_filter_condition("http_4xx"),
+            )
+            .order_by(SeoSitePage.id)
+        )
+    )
+    sources_by_target = await _incoming_site_page_sources(
+        session,
+        tenant_id=tenant_id,
+        site_id=site_id,
+        target_page_ids=[int(page.id) for page in broken_pages],
+    )
+    items: list[dict[str, Any]] = []
+    for page in broken_pages:
+        sources = sources_by_target.get(int(page.id)) or [None]
+        for source in sources:
+            items.append(
+                {
+                    "target_page_id": int(page.id),
+                    "target_url": page.url,
+                    "http_status": page.http_status,
+                    "last_error": page.last_error,
+                    "last_checked_at": _iso(page.last_checked_at),
+                    "source": source,
+                    "action": (
+                        "修正或移除来源页面中的失效链接"
+                        if source
+                        else "来源关系待下次全站扫描补齐"
+                    ),
+                }
+            )
+    traced_page_ids = {
+        int(page_id) for page_id, sources in sources_by_target.items() if sources
+    }
+    return {
+        "items": items,
+        "stats": {
+            "broken_pages": len(broken_pages),
+            "linked_sources": sum(len(sources) for sources in sources_by_target.values()),
+            "untraced_pages": len(broken_pages) - len(traced_page_ids),
+        },
+    }
+
+
 @router.get("/site-pages/{page_id}/detail")
 async def get_site_page_detail(
     page_id: int,
@@ -3300,6 +3478,15 @@ async def get_site_page_detail(
         )
         or 0
     )
+    incoming_sources = (
+        await _incoming_site_page_sources(
+            session,
+            tenant_id=tenant_id,
+            site_id=row.site_id,
+            target_page_ids=[int(row.id)],
+            limit=100,
+        )
+    ).get(int(row.id), [])
     issue_details = []
     for raw_code in row.issue_codes or []:
         code = str(raw_code)
@@ -3317,7 +3504,11 @@ async def get_site_page_detail(
     return {
         "page": _page_payload(row),
         "issue_details": issue_details,
-        "internal_links": {"incoming": incoming, "outgoing": outgoing},
+        "internal_links": {
+            "incoming": incoming,
+            "outgoing": outgoing,
+            "incoming_sources": incoming_sources,
+        },
         "latest_snapshot": _page_snapshot_payload(latest) if latest else None,
         "previous_snapshot": _page_snapshot_payload(previous) if previous else None,
         "comparison": _page_snapshot_comparison(latest, previous),

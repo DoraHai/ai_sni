@@ -28,6 +28,8 @@ from app.api.seo import (
     SitePageCreate,
     SitePageNonHtmlCleanupRequest,
     SitePageUpdate,
+    _crawl_internal_link_plan,
+    _incoming_source_payload,
     _keyword_payload,
     _merge_crawl_seed_urls,
     _database_iso,
@@ -118,6 +120,57 @@ def test_crawl_seed_merge_prioritizes_explicit_then_known_pages() -> None:
         "https://example.com/oldest",
         "https://example.com/newest",
     ]
+
+
+def test_crawl_internal_link_plan_maps_deduplicates_and_skips_unknown_pages() -> None:
+    assert _crawl_internal_link_plan(
+        {
+            "https://example.com/source": 10,
+            "https://example.com/broken": 20,
+        },
+        [
+            {
+                "source_url": "https://example.com/source",
+                "target_url": "https://example.com/broken",
+                "anchor_text": " Broken link ",
+            },
+            {
+                "source_url": "https://example.com/source",
+                "target_url": "https://example.com/broken",
+                "anchor_text": " Broken link ",
+            },
+            {
+                "source_url": "https://example.com/source",
+                "target_url": "https://example.com/source",
+                "anchor_text": "self",
+            },
+            {
+                "source_url": "https://example.com/source",
+                "target_url": "https://example.com/not-imported",
+                "anchor_text": "unknown",
+            },
+        ],
+    ) == [
+        {
+            "source_page_id": 10,
+            "target_page_id": 20,
+            "anchor_text": "Broken link",
+        }
+    ]
+
+
+def test_incoming_source_payload_emits_explicit_database_timezone() -> None:
+    payload = _incoming_source_payload(
+        10,
+        "https://example.com/source",
+        "Source page",
+        "Broken link",
+        datetime(2026, 9, 2, 8, 30),
+    )
+
+    assert payload["source_page_id"] == 10
+    assert payload["anchor_text"] == "Broken link"
+    assert payload["discovered_at"].endswith("+08:00")
 
 
 def _request(
@@ -415,6 +468,7 @@ def test_keyword_history_query_is_engine_device_and_tenant_scoped() -> None:
         ("/api/v1/seo/keywords", "POST", "seo.keywords", True),
         ("/api/v1/seo/rank-snapshots", "POST", "seo.keywords", True),
         ("/api/v1/seo/site-pages", "GET", "seo.site", False),
+        ("/api/v1/seo/site-pages/broken-link-report", "GET", "seo.site", False),
         ("/api/v1/seo/site-pages/non-html-assets/cleanup", "POST", "seo.site", True),
         ("/api/v1/seo/site-pages/1/audit", "POST", "seo.site", True),
         ("/api/v1/seo/site/crawl-runs", "POST", "seo.site", True),

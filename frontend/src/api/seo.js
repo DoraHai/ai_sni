@@ -72,6 +72,12 @@ export function fetchSeoSitePageDetail({ pageId, tenantId }) {
   })
 }
 
+export function fetchSeoBrokenLinkReport({ tenantId, siteId }) {
+  return client.get('/api/v1/seo/site-pages/broken-link-report', {
+    params: { tenant_id: tenantId, site_id: siteId },
+  })
+}
+
 export function generateSeoSitePageSuggestions(payload) {
   return client.post('/api/v1/seo/site-pages/suggestions/generate', payload)
 }
