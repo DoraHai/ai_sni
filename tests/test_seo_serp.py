@@ -169,11 +169,14 @@ def test_dataforseo_batch_reuses_client_and_caps_concurrency() -> None:
     seen_clients: list[object] = []
 
     async def fake_fetch(
-        engine: str, keyword: str, device: str, *, client: object
+        engine: str, keyword: str, device: str, *, client: object,
+        request_counter=None,
     ) -> dict:
         nonlocal active, peak
         assert engine == "google"
         seen_clients.append(client)
+        if request_counter is not None:
+            request_counter.consume()
         active += 1
         peak = max(peak, active)
         await asyncio.sleep(0.01)
@@ -194,6 +197,7 @@ def test_dataforseo_batch_reuses_client_and_caps_concurrency() -> None:
     assert fetch.await_count == len(requests)
     assert seen_clients == [provider_client] * len(requests)
     assert all(error is None for _, error in results)
+    assert results.provider_requests == len(requests)
     factory.assert_called_once_with()
 
 
@@ -565,6 +569,7 @@ def test_domain_keyword_batch_does_not_write_an_empty_unmatched_rank() -> None:
     assert results[0][0]["items"][0]["rank"] == 3
     assert results[1][0] is None
     assert results[1][1].code == "keyword_not_found"
+    assert results.provider_requests == 1
     assert client.get.await_count == 1
 
 
@@ -592,8 +597,38 @@ def test_domestic_rank_batch_retries_chinaz_state_level_system_error() -> None:
         ))
     assert results[0][1] is None
     assert results[0][0]["items"][0]["rank"] == 2
+    assert results.provider_requests == 2
     assert client.get.await_count == 2
     sleep_mock.assert_awaited_once()
+
+
+def test_domain_keyword_batch_enforces_exact_provider_request_budget() -> None:
+    settings = _provider_settings()
+    settings.chinaz_sogou_pc_keywords_api_key = "sogou-key"
+    settings.chinaz_domain_keyword_max_pages = 10
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "StateCode": 1,
+        "Result": {"Current": 1, "Pages": 2, "List": []},
+    }
+    client = AsyncMock(return_value=response)
+    client.get.return_value = response
+    context = AsyncMock()
+    context.__aenter__.return_value = client
+    with patch("app.seo_serp.get_settings", return_value=settings), patch(
+        "app.seo_serp.create_chinaz_client", return_value=context
+    ), patch("app.seo_serp.asyncio.sleep", new=AsyncMock()):
+        results = asyncio.run(fetch_chinaz_domestic_rank_batch(
+            "sogou",
+            "www.nord.cn",
+            [("missing", "desktop")],
+            max_provider_requests=1,
+        ))
+    assert results.provider_requests == 1
+    assert client.get.await_count == 1
+    assert results[0][0] is None
+    assert results[0][1].code == "provider_budget_exhausted"
 
 
 def test_provider_batch_reuses_one_client_and_caps_concurrency() -> None:

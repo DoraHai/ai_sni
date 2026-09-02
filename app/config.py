@@ -1,7 +1,52 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+SEO_RANK_ENGINES = frozenset({"baidu", "sogou", "360", "google", "bing"})
+
+
+def parse_seo_rank_engine_intervals(value: str | None) -> dict[str, int]:
+    """Parse strict ``engine:days`` cadence configuration."""
+    intervals: dict[str, int] = {}
+    for raw_entry in str(value or "").split(","):
+        entry = raw_entry.strip().lower()
+        if not entry:
+            continue
+        engine, separator, days_raw = entry.partition(":")
+        if separator != ":" or engine not in SEO_RANK_ENGINES:
+            raise ValueError(f"invalid SEO rank engine cadence entry: {entry}")
+        if engine in intervals:
+            raise ValueError(f"duplicate SEO rank engine cadence entry: {engine}")
+        try:
+            days = int(days_raw)
+        except ValueError as exc:
+            raise ValueError(
+                f"SEO rank engine cadence days must be an integer: {entry}"
+            ) from exc
+        if not 1 <= days <= 30:
+            raise ValueError(
+                f"SEO rank engine cadence days must be between 1 and 30: {entry}"
+            )
+        intervals[engine] = days
+    return intervals
+
+
+def seo_rank_engine_interval_days(settings: object, engine: str) -> int:
+    intervals = parse_seo_rank_engine_intervals(
+        getattr(settings, "seo_rank_scheduler_engine_interval_days", "")
+    )
+    return intervals.get(str(engine).lower(), 1)
+
+
+def seo_rank_freshness_hours(settings: object, engine: str) -> int:
+    """Cover cadence, the next daily scheduler slot, and a small grace period."""
+    configured = max(1, int(getattr(settings, "seo_rank_snapshot_stale_hours", 36)))
+    cadence = seo_rank_engine_interval_days(settings, engine)
+    if cadence <= 1:
+        return configured
+    return max(configured, cadence * 24 + 30)
 
 
 class Settings(BaseSettings):
@@ -79,10 +124,10 @@ class Settings(BaseSettings):
     chinaz_domain_keyword_max_pages: int = 10
     # 每天按上海时间检查一次，引擎可配置独立的间隔天数。
     seo_rank_scheduler_enabled: bool = True
-    seo_rank_scheduler_engines: str = "baidu,google,bing"
-    seo_rank_scheduler_engine_interval_days: str = ""
-    seo_rank_scheduler_hour: int = 2
-    seo_rank_scheduler_minute: int = 0
+    seo_rank_scheduler_engines: str = "baidu,sogou,360,google,bing"
+    seo_rank_scheduler_engine_interval_days: str = "baidu:1,sogou:2,360:2"
+    seo_rank_scheduler_hour: int = Field(2, ge=0, le=23)
+    seo_rank_scheduler_minute: int = Field(0, ge=0, le=59)
     seo_rank_scheduler_batch_size: int = 20
     seo_rank_scheduler_use_ai: bool = True
     seo_rank_scheduler_max_keywords_per_tenant: int = 200
@@ -153,6 +198,12 @@ class Settings(BaseSettings):
     geo_gap_sla_days: int = 7
 
     log_level: str = "INFO"
+
+    @field_validator("seo_rank_scheduler_engine_interval_days")
+    @classmethod
+    def validate_seo_rank_engine_intervals(cls, value: str) -> str:
+        parse_seo_rank_engine_intervals(value)
+        return value
 
 
 @lru_cache

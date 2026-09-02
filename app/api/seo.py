@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.deepseek import DeepSeekError, chat_json, is_enabled
 from app.database import async_session_factory, get_session
-from app.config import get_settings
+from app.config import get_settings, seo_rank_freshness_hours
 from app.geo.audit import GeoAuditError, PageDocument, audit_url, normalize_url, safe_fetch
 from app.geo.chinaz import fetch_chinaz_seo_metrics
 from app.models import (
@@ -410,7 +410,7 @@ def _rank_position_label(value: int | None) -> str:
 def _rank_snapshot_is_stale(row: SeoRankSnapshot | None) -> bool:
     if row is None or not str(row.source or "").startswith(("chinaz_", "dataforseo_")):
         return False
-    hours = max(1, int(get_settings().seo_rank_snapshot_stale_hours))
+    hours = seo_rank_freshness_hours(get_settings(), row.engine)
     checked_at = row.checked_at
     if checked_at.tzinfo is not None:
         checked_at = checked_at.astimezone(timezone.utc).replace(tzinfo=None)
@@ -1805,6 +1805,25 @@ def _serp_error_payload(
     return payload
 
 
+def _preferred_provider_error(
+    errors: list[SerpProviderError],
+) -> SerpProviderError | None:
+    """Surface supplier configuration/quota failures ahead of transient errors."""
+    if not errors:
+        return None
+    return next(
+        (
+            error for error in errors
+            if error.code in {
+                "provider_quota_exceeded",
+                "provider_ip_rejected",
+                "provider_auth_failed",
+            }
+        ),
+        errors[0],
+    )
+
+
 async def collect_rank_serp_for_tenant(
     *,
     session: AsyncSession,
@@ -1817,6 +1836,7 @@ async def collect_rank_serp_for_tenant(
     use_ai: bool = True,
     captured_at: datetime | None = None,
     commit: bool = True,
+    provider_request_budget: int | None = None,
 ) -> dict[str, Any]:
     """采集一个客户的真实 SERP；供人工刷新与每日定时任务共用。"""
     tenant = await _tenant(session, tenant_id)
@@ -1854,11 +1874,18 @@ async def collect_rank_serp_for_tenant(
         if not domain:
             raise HTTPException(409, "当前网站缺少可用于自动排名采集的规范域名")
         batch_results = await fetch_chinaz_domestic_rank_batch(
-            engine, domain, provider_requests
+            engine,
+            domain,
+            provider_requests,
+            max_provider_requests=provider_request_budget,
         )
         source = "chinaz"
     else:
-        batch_results = await fetch_dataforseo_serp_batch(engine, provider_requests)
+        batch_results = await fetch_dataforseo_serp_batch(
+            engine,
+            provider_requests,
+            max_provider_requests=provider_request_budget,
+        )
         source = "dataforseo_live"
     fetched = [
         (keyword, device, result, fetch_error)
@@ -1979,7 +2006,7 @@ async def collect_rank_serp_for_tenant(
         health_observed_at = datetime.utcnow()
         for observed_device in devices:
             provider_errors = provider_errors_by_device.get(observed_device, [])
-            error = provider_errors[0] if provider_errors else None
+            error = _preferred_provider_error(provider_errors)
             successful_observation = observed_device in provider_success_devices
             health_status = (
                 "partial"
@@ -2030,6 +2057,9 @@ async def collect_rank_serp_for_tenant(
         "engine": engine,
         "source": source,
         "requests": len(keywords) * len(devices),
+        "provider_requests": int(
+            getattr(batch_results, "provider_requests", len(provider_requests))
+        ),
         "serp_results": created,
         "confirmed_brand_results": matched,
         "ai_suspected_results": suspected,
@@ -2246,10 +2276,11 @@ async def rank_serp_providers(
     provider_health = await _latest_site_metrics(
         session, tenant_id, site_id, "rank_provider_health"
     )
-    cutoff = datetime.utcnow() - timedelta(
-        hours=max(1, int(get_settings().seo_rank_snapshot_stale_hours))
-    )
+    settings = get_settings()
     for engine in ("baidu", "360", "sogou"):
+        cutoff = datetime.utcnow() - timedelta(
+            hours=seo_rank_freshness_hours(settings, engine)
+        )
         for device in ("desktop", "mobile"):
             row = provider_health.get(("rank_provider_health", f"{engine}:{device}", "chinaz"))
             if row is None or row.observed_at < cutoff:
@@ -2258,12 +2289,7 @@ async def rank_serp_providers(
             raw = row.raw_payload if isinstance(row.raw_payload, dict) else {}
             code = str(raw.get("code") or "") or None
             device_status.update({
-                "status": "ready" if row.status == "available" else (
-                    "partially_available" if row.status == "partial" else
-                    "supplier_error"
-                    if code in {"provider_quota_exceeded", "provider_ip_rejected", "provider_auth_failed"}
-                    else "temporarily_unavailable"
-                ),
+                "status": _rank_provider_display_status(row.status, code),
                 "reason": row.error_message,
                 "code": code,
                 "status_code": raw.get("status_code"),
@@ -2276,6 +2302,20 @@ async def rank_serp_providers(
         "360": domestic["360"],
         "sogou": domestic["sogou"],
     }
+
+
+def _rank_provider_display_status(status: str, code: str | None) -> str:
+    if status == "available":
+        return "ready"
+    if code in {
+        "provider_quota_exceeded",
+        "provider_ip_rejected",
+        "provider_auth_failed",
+    }:
+        return "supplier_error"
+    if status == "partial":
+        return "partially_available"
+    return "temporarily_unavailable"
 
 
 @router.get("/rank-serp/results")
