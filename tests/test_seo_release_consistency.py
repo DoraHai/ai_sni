@@ -415,6 +415,20 @@ def test_site_optimization_non_html_cleanup_is_previewed_and_scope_locked() -> N
     assert "'/api/v1/seo/site-pages/non-html-assets/cleanup'" in api
 
 
+def test_site_optimization_exposes_broken_link_workbench_contract() -> None:
+    root = Path(__file__).parents[1]
+    view = (root / "frontend/src/views/seo/SeoSiteOptimizationView.vue").read_text(
+        encoding="utf-8"
+    )
+    api = (root / "frontend/src/api/seo.js").read_text(encoding="utf-8")
+
+    assert "'/api/v1/seo/site-pages/broken-link-report'" in api
+    assert "导出 404 修复清单" in view
+    assert "SEO-404修复清单-" in view
+    assert "失效链接来源" in view
+    assert "来源关系待下次全站扫描补齐" in view
+
+
 def test_seo_batch_handlers_reject_reentry() -> None:
     root = Path(__file__).parents[1]
     site = (root / "frontend/src/views/seo/SeoSiteOptimizationView.vue").read_text(encoding="utf-8")

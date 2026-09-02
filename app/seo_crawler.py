@@ -372,6 +372,7 @@ def analyze_html(result: FetchResult, *, robots_allowed: bool = True) -> dict[st
     main_text = main.get_text(" ", strip=True)
     word_count = len(re.findall(r"[\u4e00-\u9fff]|[A-Za-z0-9]+", main_text))
     internal_links: list[str] = []
+    internal_link_details: list[dict[str, str | None]] = []
     external_links_count = 0
     origin_host = (urlparse(result.final_url).hostname or "").lower()
     for node in soup.select("a[href]"):
@@ -385,6 +386,12 @@ def analyze_html(result: FetchResult, *, robots_allowed: bool = True) -> dict[st
         if (urlparse(target).hostname or "").lower() == origin_host:
             if target not in internal_links:
                 internal_links.append(target)
+                internal_link_details.append(
+                    {
+                        "url": target,
+                        "anchor_text": node.get_text(" ", strip=True)[:500] or None,
+                    }
+                )
         else:
             external_links_count += 1
 
@@ -459,6 +466,7 @@ def analyze_html(result: FetchResult, *, robots_allowed: bool = True) -> dict[st
         "hreflang_tags": hreflang_tags,
         "issue_codes": issues,
         "internal_links": internal_links,
+        "internal_link_details": internal_link_details,
     }
 
 
@@ -548,6 +556,7 @@ async def crawl_site(
     visited: set[str] = set()
     snapshot_urls: set[str] = set()
     snapshots: list[dict[str, Any]] = []
+    internal_link_edges: list[dict[str, str | None]] = []
     async with pinned_async_client(
         timeout=FETCH_TIMEOUT_SECONDS,
         follow_redirects=False,
@@ -592,6 +601,7 @@ async def crawl_site(
             for (url, depth, source), snapshot in processed:
                 visited.add(url)
                 internal_links = snapshot.pop("internal_links", [])
+                internal_link_details = snapshot.pop("internal_link_details", [])
                 snapshot_url = snapshot.get("url")
                 if snapshot_url in snapshot_urls:
                     continue
@@ -600,6 +610,16 @@ async def crawl_site(
                 snapshot["discovery_source"] = source
                 snapshot["click_depth"] = depth
                 snapshots.append(snapshot)
+                if snapshot_url:
+                    internal_link_edges.extend(
+                        {
+                            "source_url": snapshot_url,
+                            "target_url": str(detail["url"]),
+                            "anchor_text": detail.get("anchor_text"),
+                        }
+                        for detail in internal_link_details
+                        if detail.get("url")
+                    )
                 if depth >= max_depth:
                     continue
                 for target in internal_links:
@@ -619,4 +639,5 @@ async def crawl_site(
         "sitemaps": sorted(checked_sitemaps),
         "discovered": len(queued),
         "snapshots": snapshots,
+        "internal_link_edges": internal_link_edges,
     }

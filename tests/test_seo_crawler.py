@@ -126,6 +126,11 @@ def test_crawl_site_uses_robots_sitemap_and_internal_links() -> None:
     assert "https://example.com/" in crawled
     assert "https://example.com/product" in crawled
     assert result["robots_status"] == 200
+    assert {
+        "source_url": "https://example.com/",
+        "target_url": "https://example.com/contact",
+        "anchor_text": "Contact",
+    } in result["internal_link_edges"]
 
 
 def test_crawl_site_deduplicates_seed_also_listed_in_sitemap() -> None:
@@ -184,6 +189,14 @@ def test_crawl_site_isolates_one_page_failure_and_strips_internal_links() -> Non
 
     assert len(result["snapshots"]) == 2
     assert all("internal_links" not in item for item in result["snapshots"])
+    assert all("internal_link_details" not in item for item in result["snapshots"])
+    assert result["internal_link_edges"] == [
+        {
+            "source_url": "https://example.com/",
+            "target_url": "https://example.com/broken",
+            "anchor_text": "broken",
+        }
+    ]
     failed = next(item for item in result["snapshots"] if item["url"].endswith("/broken"))
     assert failed["error_type"] == "crawl_error"
     assert failed["fetch_error"] == "one page exploded"

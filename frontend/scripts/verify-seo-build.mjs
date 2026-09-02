@@ -83,6 +83,7 @@ for (const marker of [
   'include_known_pages',
   '失败原因：',
   '清理非网页资源',
+  '导出 404 修复清单',
 ]) {
   if (!javascript.includes(marker)) {
     throw new Error(`SEO build is missing the multi-engine/traffic marker: ${marker}`)
