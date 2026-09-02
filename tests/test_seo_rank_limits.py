@@ -115,6 +115,7 @@ def test_manual_collection_system_failure_does_not_charge_daily_quota() -> None:
             1,
             2,
             4,
+            scope="sogou",
             cooldown_seconds=60,
             max_requests_per_day=5,
             now=now,
@@ -134,7 +135,65 @@ def test_manual_collection_system_failure_does_not_charge_daily_quota() -> None:
     )
     assert _limit_state(row)["daily_requests"] == 0
     assert status["daily_requests_used"] == 0
-    assert status["retry_after_seconds"] == 50
+    assert status["retry_after_seconds"] == 0
+    assert status["allowed"] is True
+
+
+def test_manual_collection_success_cooldown_is_isolated_by_engine() -> None:
+    row = _row()
+    session = _session(row)
+    now = datetime(2026, 8, 24, 6, 0, tzinfo=timezone.utc)
+    reservation = asyncio.run(
+        reserve_manual_rank_collection(
+            session,
+            1,
+            2,
+            1,
+            scope="sogou",
+            cooldown_seconds=3600,
+            max_requests_per_day=5,
+            now=now,
+        )
+    )
+    asyncio.run(
+        settle_manual_rank_collection(
+            session,
+            1,
+            2,
+            reservation,
+            1,
+            cooldown_seconds=3600,
+            max_requests_per_day=5,
+            now=now + timedelta(seconds=10),
+        )
+    )
+
+    sogou = asyncio.run(
+        manual_rank_status(
+            session,
+            1,
+            2,
+            scope="sogou",
+            cooldown_seconds=3600,
+            max_requests_per_day=5,
+            now=now + timedelta(seconds=20),
+        )
+    )
+    baidu = asyncio.run(
+        manual_rank_status(
+            session,
+            1,
+            2,
+            scope="baidu",
+            cooldown_seconds=3600,
+            max_requests_per_day=5,
+            now=now + timedelta(seconds=20),
+        )
+    )
+    assert sogou["allowed"] is False
+    assert sogou["retry_after_seconds"] == 3590
+    assert baidu["allowed"] is True
+    assert baidu["retry_after_seconds"] == 0
 
 
 def test_manual_collection_heartbeat_renews_active_reservation() -> None:
