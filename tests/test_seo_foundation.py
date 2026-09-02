@@ -1274,6 +1274,41 @@ def test_rank_delta_uses_smaller_rank_as_improvement() -> None:
     assert payload["rank_delta"] == 5
 
 
+def test_stale_automatic_rank_is_not_exposed_as_current_rank() -> None:
+    old = datetime.utcnow() - timedelta(hours=48)
+    keyword = SeoKeywordAsset(
+        id=1,
+        tenant_id=2,
+        keyword="SEO 服务",
+        priority="P1",
+        status="active",
+        source="manual",
+        created_at=old,
+        updated_at=old,
+    )
+    latest = SeoRankSnapshot(
+        id=11,
+        tenant_id=2,
+        keyword_id=1,
+        engine="baidu",
+        device="desktop",
+        region="全国",
+        subject_type="own",
+        rank=4,
+        source="chinaz_rank",
+        checked_at=old,
+    )
+    with patch(
+        "app.api.seo.get_settings",
+        return_value=SimpleNamespace(seo_rank_snapshot_stale_hours=36),
+    ):
+        payload = _keyword_payload(keyword, latest)
+    assert payload["latest_rank"] is None
+    assert payload["rank_is_stale"] is True
+    assert payload["last_observed_rank"] == 4
+    assert payload["rank_source"] == "chinaz_rank"
+
+
 def test_rank_timestamps_are_serialized_as_explicit_utc_instants() -> None:
     assert _rank_iso(datetime(2026, 8, 24, 16, 57, 3)) == "2026-08-24T16:57:03Z"
     shanghai_value = datetime(
@@ -1477,8 +1512,10 @@ def test_manual_serp_collection_requires_positive_site_id(site_id: int | None) -
 def test_serp_collection_accepts_only_implemented_automatic_engines() -> None:
     assert SerpCollectRequest(tenant_id=1, site_id=1, engine="google").engine == "google"
     assert SerpCollectRequest(tenant_id=1, site_id=1, engine="bing").engine == "bing"
+    assert SerpCollectRequest(tenant_id=1, site_id=1, engine="sogou").engine == "sogou"
+    assert SerpCollectRequest(tenant_id=1, site_id=1, engine="360").engine == "360"
     with pytest.raises(ValidationError):
-        SerpCollectRequest(tenant_id=1, site_id=1, engine="sogou")
+        SerpCollectRequest(tenant_id=1, site_id=1, engine="unsupported")
 
 
 def test_models_use_separate_seo_tables() -> None:

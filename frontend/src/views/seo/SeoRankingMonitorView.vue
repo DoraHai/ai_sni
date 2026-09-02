@@ -50,7 +50,25 @@ const assetForm = reactive({ asset_type: 'content_url', name: '', match_value: '
 
 const engines = [{ k: 'baidu', n: '百度' }, { k: 'google', n: 'Google' }, { k: 'bing', n: 'Bing' }, { k: '360', n: '360' }, { k: 'sogou', n: '搜狗' }]
 const engineName = computed(() => engines.find((item) => item.k === engine.value)?.n || engine.value)
-const providerConfigured = computed(() => Boolean(providers.value[engine.value]?.configured))
+const currentProvider = computed(() => {
+  const base = providers.value[engine.value] || {}
+  const selectedDevice = base.devices?.[device.value]
+  return selectedDevice ? { ...base, ...selectedDevice } : base
+})
+const providerConfigured = computed(() => Boolean(currentProvider.value.configured))
+const providerStatus = computed(() => currentProvider.value.status || (providerConfigured.value ? 'ready' : 'not_configured'))
+const providerLabel = computed(() => currentProvider.value.provider === 'chinaz'
+  ? 'Chinaz'
+  : currentProvider.value.provider === 'dataforseo_live' ? 'DataForSEO' : '仅人工导入')
+const providerStatusText = computed(() => ({
+  ready: '自动采集正常',
+  supplier_error: '供应商异常',
+  temporarily_unavailable: '供应商暂时不可用',
+  not_configured: '未配置',
+})[providerStatus.value] || providerStatus.value)
+const manualImportVisible = computed(() => !providerConfigured.value
+  || providerStatus.value !== 'ready'
+  || currentProvider.value.mode === 'domain_keyword_list')
 const ownershipTabs = [
   { k: '', n: '全部结果' },
   { k: 'official_site', n: '官网' },
@@ -83,7 +101,6 @@ const avg = computed(() => ranked.value.length
   ? (ranked.value.reduce((sum, item) => sum + item.latest_rank, 0) / ranked.value.length).toFixed(1)
   : '—')
 const requestCount = computed(() => collectForm.keyword_ids.length * collectForm.devices.length)
-const estimatedCost = computed(() => (requestCount.value * 0.04).toFixed(2))
 const cooldownSeconds = computed(() => collectLimit.value.next_allowed_at
   ? Math.max(0, Math.ceil((new Date(collectLimit.value.next_allowed_at).getTime() - clock.value) / 1000))
   : Number(collectLimit.value.retry_after_seconds || 0))
@@ -99,6 +116,12 @@ const collectButtonText = computed(() => {
 const fmt = (value) => value == null ? '—' : Number(value).toLocaleString('zh-CN')
 const delta = (item) => !item.rank_delta ? '—' : `${item.rank_delta > 0 ? '↑' : '↓'}${Math.abs(item.rank_delta)}`
 const deviceLabel = (value) => `${engineName.value} ${value === 'mobile' ? '移动' : 'PC'}`
+const rankText = (item) => item.rank_is_stale ? '—' : (item.latest_rank || '50+')
+const engineOptionLabel = (item) => {
+  const value = providers.value[item.k] || {}
+  if (value.configured) return item.n
+  return `${item.n}（仅人工）`
+}
 function openKeywordDetail(keywordId) {
   router.push({ path: `/seo/keywords/${keywordId}`, query: { engine: engine.value, device: device.value } })
 }
@@ -220,7 +243,7 @@ async function collect() {
     } else {
       ElMessage.success(`采集完成：${summary.snapshots} 个排名快照，确认 ${summary.confirmed_brand_results} 条品牌结果`)
     }
-    await load()
+    await Promise.all([load(), loadProviders()])
   } catch (err) {
     collectDialog.value = false
     collectOutcome.value = {
@@ -235,7 +258,7 @@ async function collect() {
       completedAt: formatSeoRankTime(new Date()),
     }
     ElMessage.error(err.message)
-    await loadCollectStatus()
+    await Promise.all([loadCollectStatus(), loadProviders()])
   } finally {
     collecting.value = false
   }
@@ -334,7 +357,7 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
           <el-option v-for="site in sites" :key="site.id" :label="site.name || site.canonical_domain" :value="site.id" />
         </el-select>
         <el-select v-model="engine" class="site-picker" placeholder="选择搜索引擎">
-          <el-option v-for="item in engines" :key="item.k" :label="`${item.n}${providers[item.k]?.configured ? '' : '（可人工导入）'}`" :value="item.k" />
+          <el-option v-for="item in engines" :key="item.k" :label="engineOptionLabel(item)" :value="item.k" />
         </el-select>
         <div class="kw-segment device-switch">
           <button :class="{ active: device === 'desktop' }" @click="device = 'desktop'">{{ engineName }} PC</button>
@@ -342,7 +365,7 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
         </div>
         <div class="kw-actions">
           <button class="kw-btn" @click="openAssets">品牌资产</button>
-          <button class="kw-btn" @click="manualDialog = true">导入实测排名</button>
+          <button v-if="manualImportVisible" class="kw-btn" @click="manualDialog = true">导入实测排名</button>
           <button class="kw-btn" @click="exportCsv">⇩ 导出排名</button>
           <button class="kw-btn primary" :disabled="!collectAllowed || collecting || !providerConfigured" @click="openCollect">{{providerConfigured ? collectButtonText : '自动采集未配置'}}</button>
         </div>
@@ -350,6 +373,13 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
     </section>
 
     <el-alert v-if="error" :title="error" type="warning" :closable="false" />
+    <el-alert
+      v-else-if="providerStatus !== 'ready'"
+      :title="`${engineName} ${device === 'desktop' ? 'PC' : '移动'}：${providerStatusText}`"
+      :description="currentProvider.reason || '当前仅保留人工导入，不会把历史快照当作现网排名。'"
+      type="warning"
+      :closable="false"
+    />
 
     <section v-if="collectOutcome" class="collect-outcome" :class="collectOutcome.status" aria-live="polite">
       <header>
@@ -388,7 +418,7 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
       <header class="kw-card-head monitor-head">
         <div>
           <h3>{{ view === 'ranking' ? '自然排名明细' : `${engineName} 搜索结果品牌识别` }}</h3>
-          <p>{{ serp.captured_at ? `最近采集 ${formatSeoRankTime(serp.captured_at)}` : '尚未采集前 50 搜索结果' }} · {{ device === 'desktop' ? 'PC' : '移动' }} · 全国</p>
+          <p>数据源 {{ providerLabel }} · {{ providerStatusText }} · {{ serp.captured_at ? `最近采集 ${formatSeoRankTime(serp.captured_at)}` : '尚无当前采集结果' }} · {{ device === 'desktop' ? 'PC' : '移动' }} · 全国</p>
         </div>
         <div class="kw-segment">
           <button :class="{ active: view === 'ranking' }" @click="view = 'ranking'">关键词排名</button>
@@ -411,10 +441,10 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
               <tr v-for="row in rows" :key="row.id">
                 <td class="keyword-cell"><span class="kw-name"><button @click="openKeywordDetail(row.id)">{{ row.keyword }}</button></span><small class="kw-sub">{{ row.cluster || '未归类' }}</small></td>
                 <td><span class="kw-priority" :class="row.priority.toLowerCase()">{{ row.priority }}</span></td>
-                <td><span class="kw-rank"><strong>{{ row.latest_rank || '50+' }}</strong><i :class="row.rank_delta > 0 ? 'up' : row.rank_delta < 0 ? 'down' : ''">{{ delta(row) }}</i></span></td>
+                <td><span class="kw-rank"><strong>{{ rankText(row) }}</strong><i :class="row.rank_delta > 0 ? 'up' : row.rank_delta < 0 ? 'down' : ''">{{ row.rank_is_stale ? '已过期' : delta(row) }}</i></span></td>
                 <td><svg v-if="spark(row)" width="92" height="28" viewBox="0 0 92 28"><polyline :points="spark(row)" fill="none" :stroke="row.rank_delta >= 0 ? '#248a64' : '#d9544d'" stroke-width="2" /></svg><span v-else>—</span></td>
-                <td><div class="kw-link">{{ row.rank_url || '前 50 暂无已确认品牌结果' }}</div></td>
-                <td><span class="kw-pill" :class="row.latest_rank == null ? 'gray' : row.rank_delta < 0 ? 'red' : 'green'">{{ row.latest_rank == null ? '50名外' : row.rank_delta < 0 ? '排名波动' : '已覆盖' }}</span></td>
+                <td><div class="kw-link">{{ row.rank_is_stale ? `历史结果 ${row.last_observed_rank || '50+'}，等待重新采集` : (row.rank_url || '前 50 暂无已确认品牌结果') }}</div></td>
+                <td><span class="kw-pill" :class="row.rank_is_stale || row.latest_rank == null ? 'gray' : row.rank_delta < 0 ? 'red' : 'green'">{{ row.rank_is_stale ? '数据已过期' : row.latest_rank == null ? '50名外' : row.rank_delta < 0 ? '排名波动' : '已覆盖' }}</span></td>
                 <td><button class="kw-btn small" @click="openKeywordDetail(row.id)">查看历史 →</button></td>
               </tr>
               <tr v-if="!rows.length"><td colspan="7"><div class="kw-empty"><b>暂无排名数据</b>{{providerConfigured ? `点击“更新排名”采集 ${engineName} 搜索结果` : `通过“导入实测排名”录入 ${engineName} 真人测试结果`}}</div></td></tr>
@@ -458,7 +488,7 @@ onBeforeUnmount(() => window.clearInterval(clockTimer))
         <label><span>采集关键词</span><el-select v-model="collectForm.keyword_ids" multiple filterable collapse-tags collapse-tags-tooltip :multiple-limit="50" placeholder="选择要更新的关键词"><el-option v-for="item in result.items" :key="item.id" :label="`${item.keyword}（ID ${item.id}）`" :value="item.id" /></el-select><small>已选择 {{ collectForm.keyword_ids.length }} 个关键词；只会采集明确勾选的关键词。</small></label>
         <label><span>采集设备</span><el-checkbox-group v-model="collectForm.devices"><el-checkbox value="desktop">{{ engineName }} PC</el-checkbox><el-checkbox value="mobile">{{ engineName }} 移动</el-checkbox></el-checkbox-group></label>
         <label><span>AI 兜底判断</span><el-switch v-model="collectForm.use_ai" /><small>仅处理 URL、官网域名和平台账号规则无法识别的结果</small></label>
-        <div class="cost-note"><b>预计调用 {{ requestCount }} 次{{ engine === 'baidu' ? '站长之家' : 'DataForSEO' }}实时接口</b><span v-if="engine === 'baidu'">按最高单价 0.04 元/次估算，约 ¥{{ estimatedCost }}；实际以购买套餐为准。</span><span>同一网站人工更新后冷却 1 小时；今日已使用 {{collectLimit.daily_requests_used||0}} / {{collectLimit.daily_requests_limit||0}} 次请求。</span></div>
+        <div class="cost-note"><b>计划处理 {{ requestCount }} 个关键词/设备组合 · 数据源 {{ providerLabel }}</b><span v-if="currentProvider.mode === 'domain_keyword_list'">该引擎按站点词表分页拉取后精确匹配监控词；匹配不到不会写入空排名，可改用人工导入。</span><span>同一网站人工更新后冷却 1 小时；今日已使用 {{collectLimit.daily_requests_used||0}} / {{collectLimit.daily_requests_limit||0}} 次请求。</span></div>
       </div>
       <template #footer><button class="kw-btn" @click="collectDialog = false">取消</button><button class="kw-btn primary" :disabled="collecting || !collectForm.keyword_ids.length || !collectForm.devices.length" @click="collect">{{ collecting ? '正在采集…' : '确认采集' }}</button></template>
     </el-dialog>

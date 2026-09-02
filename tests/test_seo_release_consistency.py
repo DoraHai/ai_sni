@@ -325,6 +325,10 @@ def test_seo_content_and_rank_views_are_site_scoped_and_html_safe() -> None:
     assert 'v-model="collectForm.keyword_ids"' in ranking
     assert "keyword_ids: collectForm.keyword_ids" in ranking
     assert "formatSeoRankTime(serp.captured_at)" in ranking
+    assert "供应商异常" in ranking
+    assert "数据已过期" in ranking
+    assert "数据源 {{ providerLabel }}" in ranking
+    assert "manualImportVisible" in ranking
     assert "openKeywordDetail(row.id)" in ranking
     assert "query: { engine: engine.value, device: device.value }" in ranking
     keyword_detail = (root / "frontend/src/views/seo/SeoKeywordDetailView.vue").read_text(encoding="utf-8")
@@ -336,6 +340,8 @@ def test_seo_content_and_rank_views_are_site_scoped_and_html_safe() -> None:
     assert "setRankContext(item.k,device)" in keyword_detail
     assert "setRankContext(engine,'mobile')" in keyword_detail
     assert "manual_import:'人工导入'" in keyword_detail
+    assert "chinaz_rank:'站长之家排名'" in keyword_detail
+    assert "chinaz_domain_keywords:'站长之家网站关键词'" in keyword_detail
     assert "data.value?.diagnoses||[]" in keyword_detail
     assert 'optimizationTask.value.id' in keyword_detail
     assert "查看优化任务" in keyword_detail

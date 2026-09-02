@@ -16,9 +16,12 @@ from app.seo_serp import (
     domain_matches,
     fetch_baidu_top50,
     fetch_baidu_top50_batch,
+    fetch_chinaz_domestic_rank_batch,
     fetch_dataforseo_serp,
     fetch_dataforseo_serp_batch,
     parse_dataforseo_response,
+    parse_domain_keyword_response,
+    parse_domain_ranking_response,
     parse_top50_response,
     rank_number,
 )
@@ -308,7 +311,8 @@ def test_mobile_provider_uses_official_top50_endpoint() -> None:
     [
         (401, "provider_auth_failed", False),
         (403, "provider_auth_failed", False),
-        (436, "provider_rate_limited", True),
+        (436, "provider_quota_exceeded", False),
+        (437, "provider_ip_rejected", False),
         (429, "provider_rate_limited", True),
         (503, "provider_unavailable", True),
     ],
@@ -462,24 +466,106 @@ def test_provider_rate_limit_honors_retry_after() -> None:
     assert all(call.args[0] >= 2 for call in sleep_mock.await_args_list)
 
 
-def test_provider_436_uses_safe_default_backoff_and_recovers() -> None:
+def test_provider_436_is_not_retried_because_it_consumes_no_useful_work() -> None:
     request = httpx.Request("GET", "https://openapi.chinaz.net/private")
     limited = httpx.Response(436, request=request)
-    success = MagicMock()
-    success.raise_for_status.return_value = None
-    success.json.return_value = {"StateCode": 1, "Result": {"Ranks": []}}
     client = AsyncMock()
-    client.get.side_effect = [limited, success]
+    client.get.return_value = limited
 
     with patch("app.seo_serp.get_settings", return_value=_provider_settings()), patch(
         "app.seo_serp.asyncio.sleep", new=AsyncMock()
-    ) as sleep_mock:
-        result = asyncio.run(fetch_baidu_top50("safe-keyword", "desktop", client=client))
+    ) as sleep_mock, pytest.raises(SerpProviderError) as exc:
+        asyncio.run(fetch_baidu_top50("safe-keyword", "desktop", client=client))
 
-    assert result["items"] == []
-    assert client.get.await_count == 2
-    sleep_mock.assert_awaited_once()
-    assert sleep_mock.await_args.args[0] >= 5
+    assert exc.value.code == "provider_quota_exceeded"
+    assert client.get.await_count == 1
+    sleep_mock.assert_not_awaited()
+
+
+def test_domain_ranking_response_supports_nested_rank_rows() -> None:
+    result = parse_domain_ranking_response({
+        "StateCode": 1,
+        "Result": {
+            "SiteCount": 100,
+            "Ranks": [{"RankStr": "2-4", "Title": "NORD", "Url": "https://www.nord.cn/cn/home-cn.jsp"}],
+        },
+    })
+    assert result["items"][0]["rank"] == 14
+    assert result["items"][0]["domain"] == "www.nord.cn"
+
+
+def test_domain_keyword_response_normalizes_site_keyword_rows() -> None:
+    result = parse_domain_keyword_response({
+        "StateCode": 1,
+        "Result": {
+            "Current": 1,
+            "Pages": 2,
+            "List": [{"Keyword": "诺德减速机", "RankStr": "1-2", "Title": "诺德", "Url": "https://www.nord.cn/"}],
+        },
+    })
+    assert result["page"] == 1
+    assert result["pages"] == 2
+    assert result["items"][0]["keyword"] == "诺德减速机"
+    assert result["items"][0]["rank"] == 2
+
+
+def test_domestic_direct_rank_batch_uses_domain_keyword_product() -> None:
+    settings = _provider_settings()
+    settings.chinaz_baidu_pc_ranking_api_key = "pc-ranking-key"
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "StateCode": 1,
+        "Result": {"Ranks": [{"RankStr": "1-2", "Title": "NORD", "Url": "https://www.nord.cn/"}]},
+    }
+    client = AsyncMock()
+    client.get.return_value = response
+    context = AsyncMock()
+    context.__aenter__.return_value = client
+    with patch("app.seo_serp.get_settings", return_value=settings), patch(
+        "app.seo_serp.create_chinaz_client", return_value=context
+    ):
+        results = asyncio.run(fetch_chinaz_domestic_rank_batch(
+            "baidu", "www.nord.cn", [("诺德减速机", "desktop")]
+        ))
+    parsed, error = results[0]
+    assert error is None
+    assert parsed["items"][0]["rank"] == 2
+    args, kwargs = client.get.call_args
+    assert args[0].endswith("/baidupc_keywordranking")
+    assert kwargs["params"]["domain"] == "www.nord.cn"
+    assert kwargs["params"]["ChinazVer"] == "1.0"
+
+
+def test_domain_keyword_batch_does_not_write_an_empty_unmatched_rank() -> None:
+    settings = _provider_settings()
+    settings.chinaz_sogou_pc_keywords_api_key = "sogou-key"
+    settings.chinaz_domain_keyword_max_pages = 10
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "StateCode": 1,
+        "Result": {
+            "Current": 1,
+            "Pages": 1,
+            "List": [{"Keyword": "nord", "RankStr": "1-3", "Title": "NORD", "Url": "https://www.nord.cn/"}],
+        },
+    }
+    client = AsyncMock()
+    client.get.return_value = response
+    context = AsyncMock()
+    context.__aenter__.return_value = client
+    with patch("app.seo_serp.get_settings", return_value=settings), patch(
+        "app.seo_serp.create_chinaz_client", return_value=context
+    ):
+        results = asyncio.run(fetch_chinaz_domestic_rank_batch(
+            "sogou", "www.nord.cn", [("NORD", "desktop"), ("不存在的词", "desktop")]
+        ))
+    assert results[0][1] is None
+    assert results[0][0]["items"][0]["rank"] == 3
+    assert results[1][0] is None
+    assert results[1][1].code == "keyword_not_found"
+    assert client.get.await_count == 1
 
 
 def test_provider_batch_reuses_one_client_and_caps_concurrency() -> None:
