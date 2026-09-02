@@ -242,7 +242,7 @@ onMounted(load)
     :loading="loading"
   >
     <template #actions>
-      <router-link class="gd-btn" to="/geo/ai-settings">AI 能力配置</router-link>
+      <span class="more">AI 能力由平台统一提供</span>
       <button class="gd-btn" type="button" @click="load">刷新</button>
       <button class="gd-btn primary" type="button" :disabled="saving" @click="saveTable">保存</button>
     </template>

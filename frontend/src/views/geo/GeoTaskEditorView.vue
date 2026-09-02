@@ -3,7 +3,7 @@
  * Vue 母稿编辑器
  * Brief / 母稿 / 渠道稿（勾选生成、预览、复制）/ 检查
  */
-import { computed, h, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -65,26 +65,11 @@ const taskId = computed(() => Number(route.params.taskId))
 
 function toastError(e, fallback) {
   const msg = formatGeoError(e, fallback)
-  const aiMissing = /未配置 AI|AI 能力配置|填写 API Key/.test(msg)
+  const aiMissing = /未配置 AI|填写 API Key/.test(msg)
   ElMessage({
     type: 'error',
     message: aiMissing
-      ? h('span', [
-          msg,
-          ' ',
-          h(
-            'a',
-            {
-              href: '/geo/ai-settings',
-              style: 'color:#5b5ce2;font-weight:700',
-              onClick: (ev) => {
-                ev.preventDefault()
-                router.push('/geo/ai-settings')
-              },
-            },
-            '去配置',
-          ),
-        ])
+      ? `${msg}，请联系平台管理员检查 AI 服务配置`
       : msg,
     duration: aiMissing ? 8000 : 6000,
     showClose: true,
@@ -2646,9 +2631,6 @@ onMounted(load)
               <el-dropdown-item command="refresh" divided>刷新</el-dropdown-item>
               <el-dropdown-item command="focus">{{ focusMode ? '退出专注' : '专注模式' }}</el-dropdown-item>
               <el-dropdown-item divided>
-                <router-link class="ed-dd-link" to="/geo/ai-settings">AI 能力配置</router-link>
-              </el-dropdown-item>
-              <el-dropdown-item>
                 <router-link class="ed-dd-link" to="/geo/channel-polish-prompts">渠道成稿提示词</router-link>
               </el-dropdown-item>
             </el-dropdown-menu>
