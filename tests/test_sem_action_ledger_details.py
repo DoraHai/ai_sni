@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,6 +18,7 @@ os.environ.setdefault(
 os.environ.setdefault("ADMIN_API_KEY", "ci-admin-key")
 
 from app.api.search_terms import _action_dict  # noqa: E402
+from app.models import WRITEBACK_ACTION_LABELS  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +34,7 @@ def test_action_api_exposes_budget_change_and_execution_context():
         price=None,
         old_value=50,
         new_value=50,
+        baidu_response="must-not-be-exposed",
         campaign_name="2026_竞品计划_Mob",
         adgroup_id=None,
         adgroup_name=None,
@@ -49,17 +52,39 @@ def test_action_api_exposes_budget_change_and_execution_context():
     assert result["new_value"] == 50.0
     assert result["execution_mode"] == "dry_run"
     assert result["execution_mode_label"] == "演练（未修改百度）"
+    assert "baidu_response" not in result
 
 
-def test_action_ledger_renders_budget_details_without_exposing_raw_response():
-    source = (ROOT / "frontend/src/views/verify/AdjustmentLogView.vue").read_text(
-        encoding="utf-8"
+def test_action_api_exposes_live_execution_context():
+    row = SimpleNamespace(
+        id=42,
+        baidu_account_id=8,
+        action_type="set_adgroup_bid",
+        word="测试单元",
+        match_mode=None,
+        price=None,
+        old_value=None,
+        new_value=3.5,
+        campaign_name="测试计划",
+        adgroup_id=19,
+        adgroup_name="测试单元",
+        dry_run=False,
+        status="success",
+        error_msg=None,
+        operator_name="operator",
+        created_at=datetime(2026, 9, 1, 21, 0),
     )
 
-    assert "匹配 / 变更" in source
-    assert "actionChangeText(row)" in source
-    assert "fmtMoney(row.old_value)" in source
-    assert "fmtMoney(row.new_value)" in source
-    assert "actionAccountLabel(row)" in source
-    assert "仅记录台账，未修改百度账户" in source
-    assert "row.baidu_response" not in source
+    result = _action_dict(row)
+
+    assert result["old_value"] is None
+    assert result["new_value"] == 3.5
+    assert result["execution_mode"] == "live"
+    assert result["execution_mode_label"] == "真实执行"
+
+
+def test_frontend_action_filters_cover_every_backend_action_type():
+    source = (ROOT / "frontend/src/utils/actionLedger.js").read_text(encoding="utf-8")
+    frontend_codes = set(re.findall(r"\{ code: '([^']+)'", source))
+
+    assert frontend_codes == set(WRITEBACK_ACTION_LABELS)
