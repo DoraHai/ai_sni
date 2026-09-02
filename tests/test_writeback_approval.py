@@ -72,6 +72,13 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_validate(13.28, 13.27), -0.08)
         self.assertEqual(_validate(10.0, 11.0), 10.0)
 
+        self.assertEqual(_validate(10.0, 8.0), -20.0)
+        self.assertEqual(_validate(10.0, 12.0), 20.0)
+        with self.assertRaisesRegex(WritebackError, "20%"):
+            _validate(10.0, 7.99)
+        with self.assertRaisesRegex(WritebackError, "20%"):
+            _validate(10.0, 12.01)
+
         historical_decrease = SimpleNamespace(
             old_bid=13.28,
             new_bid=13.27,
