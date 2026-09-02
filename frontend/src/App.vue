@@ -9,7 +9,11 @@ import { fetchCandidates } from './api/expansion'
 import { fetchWritebackMode } from './api/writeback'
 import { session } from './store/session'
 import { redirectToLogin } from './auth/loginRedirect'
-import { SEM_LIMITED_LIVE_MESSAGE, SEM_READ_ONLY_MESSAGE } from './constants/semCapabilities'
+import {
+  SEM_LIMITED_LIVE_MESSAGE,
+  SEM_READ_ONLY_MESSAGE,
+  SEM_WRITE_SCOPE_LABELS,
+} from './constants/semCapabilities'
 import { parseUtcTimestamp } from './utils/dateTime'
 
 const route = useRoute()
@@ -39,8 +43,17 @@ let writebackModeGeneration = 0
 const writebackMode = ref({ mode: 'dry_run', live_scopes: [] })
 const writebackModeMessage = computed(() => (
   writebackMode.value.mode === 'limited_live'
-    ? `${SEM_LIMITED_LIVE_MESSAGE}已开放 ${writebackMode.value.live_scopes.length} 类动作。`
+    ? `${SEM_LIMITED_LIVE_MESSAGE}已开放 ${writebackMode.value.live_scopes.length} 类动作，具体账户如下。`
     : SEM_READ_ONLY_MESSAGE
+))
+const liveWriteAccounts = computed(() => (
+  (writebackMode.value.accounts || [])
+    .filter((account) => account.mode === 'limited_live')
+    .map((account) => ({
+      ...account,
+      displayName: account.account_name || `百度账户 ${account.external_account_id || account.baidu_account_id}`,
+      scopeLabels: account.live_scopes.map((scope) => SEM_WRITE_SCOPE_LABELS[scope] || scope),
+    }))
 ))
 
 async function loadWritebackMode() {
@@ -525,7 +538,16 @@ onBeforeUnmount(() => {
           :class="{ 'limited-live': writebackMode.mode === 'limited_live' }"
         >
           <b>{{ writebackMode.mode === 'limited_live' ? '受控真实回写' : '只读演练' }}</b>
-          <span>{{ writebackModeMessage }}</span>
+          <span>
+            {{ writebackModeMessage }}
+            <span
+              v-for="account in liveWriteAccounts"
+              :key="account.baidu_account_id"
+              class="live-account-grant"
+            >
+              {{ account.displayName }}（账户 ID {{ account.external_account_id || '未返回' }}）：{{ account.scopeLabels.join('、') }}
+            </span>
+          </span>
         </div>
         <div class="main-inner">
           <router-view v-if="!showSemIdentityBlock" />
@@ -545,6 +567,7 @@ onBeforeUnmount(() => {
 .readonly-banner b { flex: none; padding: 1px 7px; border-radius: 10px; background: #f3b85b; color: #4f2c00; font-size: 11px; }
 .readonly-banner.limited-live { border-color: #e37b38; background: #fff2e8; color: #8a3515; }
 .readonly-banner.limited-live b { background: #d95d19; color: #fff; }
+.live-account-grant { display: block; margin-top: 3px; font-weight: 600; }
 .identity-block-alert { margin: 0 18px 12px; }
 .identity-block-panel { margin: 24px 18px; padding: 24px; display: grid; gap: 8px; border: 1px solid #efb1b1; border-radius: 12px; background: #fff6f6; color: #8f2525; }
 .account-context.conflict { border-color: #ef9a9a; background: #fff1f1; color: #a12626; }
