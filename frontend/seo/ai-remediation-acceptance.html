@@ -1,0 +1,32 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>本地 AI 整改模拟验收</title></head><body><div id="app"></div><script type="module">
+import { createApp, h, ref } from 'vue'
+import ElementPlus from 'element-plus'
+import 'element-plus/dist/index.css'
+import { createRouter, createMemoryHistory } from 'vue-router'
+import client from '../src/api/client.js'
+import Dialog from '../src/views/seo/SeoRemediationDialog.vue'
+const calls = ref([]), saved = ref(''), visible = ref(true), tenant = ref(1), site = ref(1)
+const previewPage = {id:999,url:'https://example.com/manual'}
+const change = text => ({ text, reason:'根据 title 和 body1 保留软件名称及文档编号，需人工核实', evidence_ids:['title','body1'] })
+const fixture = { source:'ai', saved:false, page_id:999, tenant_id:1, site_id:1, note:'本地模拟 AI 响应，未连接任何真实提供方。',
+  evidence:{ current:{title:'NORDAC NORDCON BU0000 操作手册', description:'',h1:'使用手册'},url:'https://example.com/manual',fetched_at:'2026-09-03T06:00:00Z',body_sha256:'local-fixture-only',protected_terms:['NORDAC','NORDCON','BU0000'],evidence:[{id:'title',text:'NORDAC NORDCON BU0000 操作手册'},{id:'body1',text:'使用手册适合 NORDAC 变频器及软启动器的操作软件及参数设置软件 NORDCON，文档编号 BU0000。'}]},
+  proposal:{title:change('操作手册｜NORDAC NORDCON BU0000'),description:change('查阅 NORDAC 操作软件及参数设置软件 NORDCON 使用手册（BU0000）。'),h1:change('NORDCON 操作与参数设置手册 BU0000'),outline:[change('根据实际手册整理适用软件、操作步骤和参数说明；细节需编辑核实。')]}}
+client.defaults.adapter = async config => {
+  calls.value.push(config.method + ' ' + config.url)
+  let data
+  if (config.url.endsWith('/ai-remediation')) data = fixture
+  else if (config.method === 'get') data = { items:[] }
+  else { saved.value = JSON.parse(config.data).draft; data = {id:999,status:'drafting'} }
+  return {status:200,statusText:'OK',data,headers:{},config}
+}
+const app = createApp({setup(){return()=>h('div',{style:'padding:24px'},[
+ h('h1','本地模拟验收：不连接生产、不调用 AI、不写生产数据'),
+ h('button',{onClick:()=>{visible.value=true}},'打开 AI 整改'),
+ h('pre',{id:'calls'},calls.value.join('\n')),
+ h('pre',{id:'saved'},saved.value),
+ h(Dialog,{visible:visible.value,'onUpdate:visible':v=>visible.value=v,tenantId:tenant.value,siteId:site.value,page:previewPage})
+])}})
+app.use(ElementPlus)
+app.use(createRouter({history:createMemoryHistory(),routes:[{path:'/',component:{render:()=>null}}]}))
+app.mount('#app')
+</script></body></html>
