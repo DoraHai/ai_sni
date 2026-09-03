@@ -634,6 +634,7 @@ class SeoPageSnapshot(Base):
     external_links_count: Mapped[int | None] = mapped_column(Integer)
     images_count: Mapped[int | None] = mapped_column(Integer)
     images_missing_alt_count: Mapped[int | None] = mapped_column(Integer)
+    image_alt_evidence: Mapped[dict | None] = mapped_column(JSONB)
     hreflang_tags: Mapped[list | None] = mapped_column(JSONB)
     issue_codes: Mapped[list | None] = mapped_column(JSONB)
     fetched_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())

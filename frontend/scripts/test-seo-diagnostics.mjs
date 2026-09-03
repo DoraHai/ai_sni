@@ -9,7 +9,7 @@ const code = compileScript(parse(source).descriptor, { id: 'test', genDefaultAs:
 const requests = [], writes = [], messages = []
 const deferred = args => { let resolve; const promise = new Promise(r => { resolve = r }); return { args, resolve, promise } }
 const bindings = { computed: Vue.computed, onBeforeUnmount: Vue.onBeforeUnmount, ref: Vue.ref, watch: Vue.watch,
-  SeoRemediationDialog: { render: () => null }, session: { canEdit: () => true },
+  SeoRemediationDialog: { render: () => null }, SeoImageEvidenceDialog: { render: () => null }, session: { canEdit: () => true },
   ElMessage: Object.fromEntries(['success', 'warning', 'error'].map(k => [k, text => messages.push([k, text])])),
   fetchSeoSiteDiagnostics: args => { const d = deferred(args); requests.push(d); return d.promise },
   saveSeoIndexReview: args => { const d = deferred(args); writes.push(d); return d.promise },
@@ -57,3 +57,4 @@ assert.deepEqual(state().result.items, [])
 assert.equal(state().saving, false)
 app.unmount()
 console.log('SEO diagnostics Vue checks passed: stale response, blank note, duplicate save, Chinese payload, tenant switch')
+await import('./test-seo-image-evidence.mjs')
