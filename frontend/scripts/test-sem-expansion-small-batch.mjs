@@ -8,6 +8,17 @@ assert.match(source, /row.ai_freshness !== 'current'/)
 assert.match(source, /历史结果未核验/)
 assert.match(source, /普通评估会跳过旧结果/)
 assert.match(source, /不作为默认 AI 出价依据/)
+// Check each visible explanation, not just one matching occurrence in the file.
+const footer = source.match(/<div class="note">([\s\S]*?)<\/div>/)[1]
+assert.match(footer, /系统配置的模型/)
+assert.match(footer, /AI 评估每次最多 5 个去重词/)
+assert.match(footer, /实际数量见评估按钮/)
+assert.match(footer, /超时不自动重试/)
+assert.match(footer, /不自动继续或采纳/)
+assert.match(footer, /需人工确认，不等于已判定为无关词/)
+assert.match(footer, /「仅看业务相关」会隐藏其他分类/)
+assert.match(source, /候选拉取上限/)
+assert.doesNotMatch(source, /DeepSeek|隐藏通用噪音|每次最多 20/)
 const script = source.match(/<script setup>([\s\S]*?)<\/script>/)[1]
   .replace(/^import[\s\S]*?from ['"][^'"]+['"]\s*$/gm, '')
   .replace(/import\.meta\.env/g, '({})')
@@ -67,6 +78,22 @@ const confirmed = fixture({ElMessageBox:{confirm:async message => {confirmationT
 await confirmed.view.runEvaluate(true)
 assert.match(confirmationText, /每批最多 5 词/)
 assert.equal(confirmed.calls[0][1].limit, 5, 'confirmation and transmitted limit agree')
+
+for (const limit of [1, 3, 5, 6, 20]) {
+  let prompt = ''
+  const bounded = fixture({ElMessageBox:{confirm:async message => {prompt = message}}})
+  bounded.view.syncForm.limit = limit
+  await bounded.view.runEvaluate(true)
+  const actual = Math.min(limit, 5)
+  assert.match(prompt, new RegExp(`每批最多 ${actual} 词`))
+  assert.equal(bounded.calls[0][1].limit, actual)
+  assert.equal(bounded.calls.length, 1, 'one explicit evaluation, no hidden continuation')
+}
+
+const disabled = fixture({evaluateCandidates:async () => ({enabled:false})})
+await disabled.view.runEvaluate()
+assert.deepEqual(disabled.messages, [['warning', '未启用 AI 评估，请联系管理员检查模型配置']])
+assert.equal(disabled.view.evaluationRound.value, null)
 
 const rejected = fixture({evaluateCandidates: async () => {throw new Error('HTTP 422')}})
 rejected.view.evaluationRound.value = {force:true,failedIds:[1,2,3,4,5,6],nextAfterId:20,deferred:5}
