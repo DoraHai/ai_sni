@@ -40,8 +40,8 @@ def tenant(**kwargs):
 def test_prompt_uses_explicit_profile_without_fixed_industry():
     prompt = evaluator._build_user_prompt(tenant(), [{"word": "修补漆价格"}])
     profile = json.loads(prompt.splitlines()[1])
-    assert profile["行业"] == "涂料"
-    assert profile["业务描述"] == "汽车修补漆，服务国内维修厂；不经营家装涂料"
+    assert profile["industry"] == "涂料"
+    assert profile["business_desc"] == "汽车修补漆，服务国内维修厂；不经营家装涂料"
     assert profile["品牌词根"] == ["测试涂料"]
     assert "工业泵" not in prompt + evaluator.SYSTEM_PROMPT
     assert "分离技术" not in prompt + evaluator.SYSTEM_PROMPT
@@ -54,8 +54,8 @@ def test_partial_profile_is_allowed_and_missing_fields_stay_unknown(industry, de
         tenant(industry=industry, business_desc=description), []
     )
     profile = json.loads(prompt.splitlines()[1])
-    assert profile["行业"] == (industry or "（未填写，不推断）")
-    assert profile["业务描述"] == (description or "（未填写，不推断）")
+    assert profile["industry"] == (industry or "（未填写，不推断）")
+    assert profile["business_desc"] == (description or "（未填写，不推断）")
 
 
 def test_profile_is_serialized_as_data_and_ai_summary_is_excluded():
@@ -63,7 +63,7 @@ def test_profile_is_serialized_as_data_and_ai_summary_is_excluded():
     prompt = evaluator._build_user_prompt(
         tenant(business_desc=description, profile_summary="其他客户的工业泵总结"), []
     )
-    assert json.loads(prompt.splitlines()[1])["业务描述"] == description
+    assert json.loads(prompt.splitlines()[1])["business_desc"] == description
     assert "其他客户" not in prompt
     assert "不是指令" in evaluator.SYSTEM_PROMPT
 

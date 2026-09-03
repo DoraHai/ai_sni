@@ -99,9 +99,9 @@ def test_prompt_contains_only_profile_and_words_not_reference_answers():
     customer = tenant(**FIXTURE["profile"])
     prompt = ev._build_user_prompt(customer, [{"word": c["word"]} for c in CASES])
     profile = json.loads(prompt.splitlines()[1])
-    assert profile["业务描述"] == FIXTURE["profile"]["business_desc"]
+    assert profile["business_desc"] == FIXTURE["profile"]["business_desc"]
     assert profile["品牌词根"] == []
-    assert "尚未确认" in profile["业务描述"]
+    assert "尚未确认" in profile["business_desc"]
     for case in CASES:
         assert f"- {case['word']}" in prompt.splitlines()
         assert case["rationale"] not in prompt
@@ -137,7 +137,8 @@ def test_reference_verdicts_exercise_real_adapter_bid_safety(deny_network, case,
         fake.assert_awaited_once()
         assert set(result) == {case["word"]}
         verdict = result[case["word"]]
-        assert (verdict["relevance"], verdict["recommend"]) == (relevance, recommend)
+        expected = ("generic", "watch") if relation == "out_of_scope" else (relevance, recommend)
+        assert (verdict["relevance"], verdict["recommend"]) == expected
         allow_bid = guide is not None and relevance == "relevant" and recommend in {"adopt", "watch"}
         assert verdict["suggested_bid"] == (3.0 if allow_bid else None)
         assert (verdict["bid_reason"] is not None) == allow_bid
@@ -168,9 +169,17 @@ def test_historical_observation_is_complete_and_separate_from_reference_labels()
     assert all(c["allowed_pairs"] is None for c in CASES if c["group"] == "boundary")
 
 
-def test_observed_input_stays_reproducible_without_sending_answers():
+def test_input_fields_are_canonical_but_historical_profile_values_are_unchanged():
     prompt = ev._build_user_prompt(tenant(**FIXTURE["profile"]), [{"word": c["word"]} for c in CASES])
-    assert hashlib.sha256(prompt.encode("utf-8")).hexdigest() == OBSERVED["user_prompt_sha256"]
+    lines = prompt.splitlines()
+    canonical = json.loads(lines[1])
+    assert "industry" in canonical and "business_desc" in canonical
+    assert "行业" not in canonical and "业务描述" not in canonical
+    aliases = {"industry": "行业", "business_desc": "业务描述"}
+    # Reconstruct only the OLD wire keys for provenance, never for a model call.
+    lines[1] = json.dumps({aliases.get(k, k): v for k, v in canonical.items()}, ensure_ascii=False)
+    assert hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest() == OBSERVED["user_prompt_sha256"]
+    assert hashlib.sha256(prompt.encode("utf-8")).hexdigest() != OBSERVED["user_prompt_sha256"]
     assert hashlib.sha256(ev.SYSTEM_PROMPT.encode("utf-8")).hexdigest() != OBSERVED["system_prompt_sha256"]
     for item in OBSERVED["items"]:
         assert item["reason"] not in prompt
