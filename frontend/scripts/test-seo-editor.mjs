@@ -3,7 +3,7 @@ import { test, after } from 'node:test'
 import { readFile } from 'node:fs/promises'
 import { JSDOM } from 'jsdom'
 import { parse, compileScript, compileTemplate, compileStyle } from '@vue/compiler-sfc'
-import { sanitizeSeoEditorHtml, seoPlainTextHtml } from '../src/views/seo/seoEditorHtml.js'
+import { sanitizeSeoEditorHtml, seoPlainTextHtml, seoContentWordCount } from '../src/views/seo/seoEditorHtml.js'
 import { remediationHandoff, remediationDraftPatch } from '../src/views/seo/seoRemediationDraft.js'
 
 const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>')
@@ -25,19 +25,19 @@ const flush = async () => { for (let i = 0; i < 8; i++) { await Promise.resolve(
 const heading = '页面整改交接单（AI 辅助，人工编辑，勿直接发布）'
 const handoff = `${heading}\n来源页面：#234\n\nTitle 建议：NORDBLOC.1\n理由：人工核实正常。`
 
-async function mountEditor(draft, status = 'drafting', saveDraft = value => value) {
-  let row = { id: 10, title: '验收勿发布', keyword_ids: [5], draft, status, version_count: 1, source_page_id: 234 }
+async function mountEditor(draft, status = 'drafting', saveDraft = value => value, options = {}) {
+  let row = { id: 10, title: '验收勿发布', content_type: 'guide', keyword_ids: [5], draft, status, version_count: 1, source_page_id: 234, ...options.item }
   const writes = [], errors = []
   const bindings = {
-    computed: Vue.computed, nextTick: Vue.nextTick, onMounted: Vue.onMounted, reactive: Vue.reactive, ref: Vue.ref, sanitizeSeoEditorHtml,
-    useRoute: () => ({ query: { id: '10', site_id: '1' } }), useRouter: () => ({ push() {}, replace() {} }),
+    computed: Vue.computed, nextTick: Vue.nextTick, onMounted: Vue.onMounted, reactive: Vue.reactive, ref: Vue.ref, sanitizeSeoEditorHtml, seoContentWordCount,
+    useRoute: () => ({ query: { id: '10', site_id: '1', ...options.query } }), useRouter: () => ({ push() {}, replace() {} }),
     currentTenantId: Vue.ref(1), siteId: Vue.ref(1), session: { user: { name: '测试管理员' } },
     ElMessage: { warning: x => errors.push(x), error: x => errors.push(x), success() {} },
     fetchSeoSites: async () => ({ sites: [{ id: 1, status: 'active', name: '测试站' }] }),
     fetchSeoKeywords: async () => ({ items: [{ id: 5, keyword: '诺德传动' }] }),
-    fetchSeoContentAssets: async () => ({ items: [{ ...row }] }),
+    fetchSeoContentAssets: async () => ({ items: options.missing ? [] : [{ ...row }] }),
     fetchSeoSitePages: async () => ({ items: [{ id: 234, title: '来源', url: 'https://example.com/page' }] }),
-    updateSeoContentAsset: async args => { writes.push(args); row = { ...row, ...args.payload, draft: saveDraft(args.payload.draft), version_count: row.version_count + 1 }; return row },
+    updateSeoContentAsset: async args => { writes.push(args); row = { ...row, ...args.payload, ...('draft' in args.payload ? { draft: saveDraft(args.payload.draft) } : {}), version_count: row.version_count + 1 }; return row },
     createSeoContentAsset: () => { throw Error('Must not create another task') },
     assistSeoContent: () => { throw Error('Must not call AI') },
     submitSeoContentReview: () => { throw Error('Must not submit a review') },
@@ -52,6 +52,136 @@ async function mountEditor(draft, status = 'drafting', saveDraft = value => valu
   const instance = app.mount(host); await flush()
   const state = instance.$.setupState, editor = host.querySelector('.article-editor')
   return { host, editor, state, writes, errors, close() { app.unmount(); host.remove() } }
+}
+
+// Exercise the actual list component and its Continue editing button, not a
+// separately reimplemented routing function.
+async function mountContentList(rows, canEdit = true) {
+  const source = await readFile(new URL('../src/views/seo/SeoContentView.vue', import.meta.url), 'utf8')
+  const descriptor = parse(source).descriptor
+  const script = compileScript(descriptor, { id: 'seo-content-list-test', genDefaultAs: 'component' })
+  const code = script.content.replace(/^import .*$/gm, '')
+  let template = compileTemplate({ source: descriptor.template.content, id: 'seo-content-list-test', compilerOptions: { bindingMetadata: script.bindings } }).code
+  template = template.replace(/import \{([\s\S]*?)\} from "vue"/g, (_, names) => `const {${names.replace(/ as /g, ':')}} = Vue`).replace('export function render', 'function render')
+  const pushes = []
+  const bindings = {
+    computed: Vue.computed, onMounted: Vue.onMounted, reactive: Vue.reactive, ref: Vue.ref, watch: Vue.watch, seoContentWordCount,
+    useRoute: () => ({ meta: { contentMode: 'article' }, query: {} }),
+    useRouter: () => ({ push: value => pushes.push(value) }),
+    currentTenantId: Vue.ref(1), siteId: Vue.ref(1),
+    session: { isLoggedIn: true, canEdit: () => canEdit, user: { name: '测试管理员' } },
+    ElMessage: { error: message => { throw Error(message) } }, ElMessageBox: {},
+    fetchSeoSites: async () => ({ sites: [{ id: 1, status: 'active' }] }),
+    fetchSeoContentAssets: async () => ({ items: rows, total: rows.length, status_counts: { drafting: rows.length } }),
+    fetchSeoKeywords: async () => ({ items: [{ id: 5, keyword: '操作手册' }] }),
+  }
+  const Component = new Function('b', `const {${Object.keys(bindings).join(',')}}=b;${code};return component`)(bindings)
+  Component.render = new Function('Vue', `${template};return render`)(Vue)
+  const host = document.createElement('div'); document.body.append(host)
+  const app = Vue.createApp(Component)
+  app.directive('loading', {})
+  for (const name of ['el-select','el-option','el-dialog','el-form','el-alert','el-form-item','el-input','el-button','el-pagination']) {
+    app.component(name, { render() { return Vue.h('div', this.$slots.default?.()) } })
+  }
+  const instance = app.mount(host); await flush()
+  return { host, pushes, state: instance.$.setupState, close() { app.unmount(); host.remove() } }
+}
+
+const acceptanceText = '【验收勿发布】仅验证编辑器保存，不调用 AI、不审核、不发布。\n第一段：NORD 操作手册测试。\n第二段：保留换行与中文尾字，正常。\n字面标签：<h1>R&D</h1>\n字面实体：&amp; 与 &lt; 保持原样。\n测试链接：https://example.com/?a=1&b=2'
+
+test('list and editor count the same visible text, decoding HTML entities only once', async () => {
+  const html = seoPlainTextHtml(acceptanceText)
+  const expected = Array.from(acceptanceText.replace(/\s+/g, '')).length
+  const row = { id: 11, site_id: 1, title: '验收勿发布', status: 'drafting', content_type: 'guide', draft: '旧稿', humanized_content: html }
+  const list = await mountContentList([row])
+  const editor = await mountEditor(html)
+  try {
+    assert.equal(list.state.wordCount(row), expected)
+    assert.equal(editor.state.wordCount, expected)
+    assert.ok(list.host.textContent.includes(`${expected} 字`))
+    assert.ok(editor.host.querySelector('.document-status').textContent.includes(`${expected} 字`))
+    assert.equal(editor.editor.querySelector('h1'), null)
+    await editor.state.save(); await editor.state.load(); await flush()
+    assert.equal(editor.state.wordCount, expected)
+  } finally { list.close(); editor.close() }
+})
+
+test('word count excludes tags, attributes, comments and active content; preserves literal entities and Unicode', () => {
+  for (const [html, text] of [
+    ['<p>中文 &amp; 😀</p><div>尾字</div>', '中文&😀尾字'],
+    ['<p>&lt;h1&gt; &amp;amp; &#x4E2D;</p>', '<h1>&amp;中'],
+    ['字面 &amp;\n正常', '字面&amp;正常'],
+    ['<p>正文<img src="https://example.com/x" alt="不计属性"></p><!--不计注释--><script>不计脚本</script><style>不计样式</style>', '正文'],
+    ['<p><br>&nbsp; \n</p>', ''],
+    [null, ''],
+  ]) assert.equal(seoContentWordCount(html), Array.from(text).length, String(html))
+})
+
+test('Continue editing opens the existing site-scoped full editor, never the old dialog or a new draft', async () => {
+  const row = { id: 11, site_id: 1, title: '验收勿发布', status: 'drafting', content_type: 'guide' }
+  const view = await mountContentList([row])
+  try {
+    const button = [...view.host.querySelectorAll('button')].find(node => node.textContent === '继续编辑')
+    assert.ok(button)
+    button.click(); await flush()
+    assert.deepEqual(view.pushes, [{ path: '/seo/content/editor', query: { id: 11, site_id: 1, type: 'original' } }])
+    assert.equal(view.state.dialog, false)
+    for (const [content_type, type] of [['rewrite', 'rewrite'], ['faq', 'qa'], ['qa', 'qa'], ['landing', 'original'], ['comparison', 'original']]) {
+      view.state.continueEditing({ ...row, content_type })
+      assert.deepEqual(view.pushes.at(-1).query, { id: 11, site_id: 1, type })
+    }
+    const count = view.pushes.length
+    for (const status of ['review', 'ready', 'published', 'archived']) view.state.continueEditing({ ...row, status })
+    view.state.continueEditing({ ...row, site_id: 2 })
+    assert.equal(view.pushes.length, count)
+  } finally { view.close() }
+})
+
+test('read-only content permission cannot enter editing through list action', async () => {
+  const row = { id: 11, site_id: 1, status: 'drafting', content_type: 'guide' }
+  const view = await mountContentList([row], false)
+  try {
+    assert.equal([...view.host.querySelectorAll('button')].some(node => node.textContent === '继续编辑'), false)
+    view.state.continueEditing(row)
+    assert.equal(view.pushes.length, 0)
+  } finally { view.close() }
+})
+
+test('an unavailable existing task must not save a default template over its record', async () => {
+  const view = await mountEditor('', 'drafting', value => value, { missing: true })
+  try {
+    view.state.form.title = '不能保存'
+    view.state.form.keyword_ids = [5]
+    await view.state.save()
+    assert.equal(view.writes.length, 0)
+    assert.ok(view.errors.includes('任务尚未成功载入，请刷新后重试'))
+  } finally { view.close() }
+})
+
+for (const content_type of ['article', 'guide', 'landing', 'comparison', 'faq', 'qa', 'rewrite']) {
+  test(`existing ${content_type} retains type, source, version and reviewed field when reopened without a template`, async () => {
+    const view = await mountEditor('<p>原始草稿</p>', 'drafting', value => value, {
+      item: { content_type, humanized_content: '<p>审核定稿</p>', outline: '', source_text: '原文事实', originality_score: 81 },
+      query: { type: content_type === 'rewrite' ? 'rewrite' : ['qa','faq'].includes(content_type) ? 'qa' : 'original' },
+    })
+    try {
+      view.editor.innerHTML = '<p>修改审核定稿，正常。</p>'
+      view.editor.dispatchEvent(new Event('input', { bubbles: true })); await flush()
+      await view.state.save()
+      assert.equal(view.writes.length, 1)
+      const payload = view.writes[0].payload
+      assert.equal(payload.content_type, content_type)
+      assert.equal(payload.humanized_content, '<p>修改审核定稿，正常。</p>')
+      for (const key of ['draft','source_text','originality_score','rewrite_progress']) assert.equal(key in payload, false, key)
+      assert.equal(payload.outline, null, 'do not insert the default guide outline into an existing record')
+      assert.equal(payload.source_page_id, 234)
+      assert.equal(payload.version_count, 1)
+      await view.state.load(); await flush()
+      assert.equal(view.editor.textContent, '修改审核定稿，正常。')
+      assert.ok(view.host.textContent.includes('任务 #10'))
+      assert.equal(view.host.querySelector('input[readonly]').value, view.state.contentTypeLabel)
+    } finally { view.close() }
+  })
 }
 
 test('plain text and blank lines become explicit breaks; load/save/reopen is stable', async () => {
