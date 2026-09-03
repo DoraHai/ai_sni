@@ -10,9 +10,10 @@ from pydantic import ValidationError
 from sqlalchemy.dialects import postgresql
 
 from app.api.seo_site_diagnostics import (
-    IndexReviewCreate, create_index_review, list_diagnostics, list_index_reviews, get_image_evidence,
+    ImageAltReviewUpdate, IndexReviewCreate, create_index_review, get_image_remediation,
+    list_diagnostics, list_index_reviews, get_image_evidence, save_image_remediation,
 )
-from app.models.seo import SeoPageIndexReview, SeoSitePage
+from app.models.seo import SeoImageAltReview, SeoPageIndexReview, SeoSitePage
 from app.security.auth import AuthContext, _required
 from app.seo_site_diagnostics import FATAL_CODES, assessed_condition, diagnostic_payload
 
@@ -180,9 +181,9 @@ def test_listing_is_scoped_paged_and_keeps_latest_human_intent():
 
 def test_routes_use_seo_site_permissions_and_parent_subscription_guard():
     from app.api.seo import router, require_seo_module_access
-    for suffix, method in [("diagnostics", "GET"), ("index-reviews", "POST"), ("index-reviews", "GET"), ("image-evidence", "GET")]:
+    for suffix, method in [("diagnostics", "GET"), ("index-reviews", "POST"), ("index-reviews", "GET"), ("image-evidence", "GET"), ("image-remediation", "GET"), ("image-remediation", "PUT")]:
         path = f"/api/v1/seo/site-pages/{suffix}"
-        assert _required(path, method) == ({"seo.site"}, method == "POST")
+        assert _required(path, method) == ({"seo.site"}, method in {"POST", "PUT"})
         route = next(r for r in router.routes if r.path == path and method in r.methods)
         assert require_seo_module_access in [d.call for d in route.dependant.dependencies]
 
@@ -229,6 +230,119 @@ def test_image_evidence_no_snapshot_is_unknown():
     result = asyncio.run(get_image_evidence(1, 1, 231, context(), db))
     assert result["evidence"] is None and result["snapshot_id"] is None
     assert result["legacy_candidate_count"] is None
+
+
+def image_snapshot(snapshot_id=12):
+    return SimpleNamespace(id=snapshot_id, error_type=None, image_alt_evidence={"items": [
+        {"position": 2, "source_url": "https://cdn.example/a.webp", "alt_state": "empty"},
+    ]})
+
+
+def image_review_request(**values):
+    return ImageAltReviewUpdate(**(dict(
+        tenant_id=1, site_id=1, page_id=231, expected_snapshot_id=12, position=2,
+        expected_review_id=None,
+        decision="informative", alt_suggestion="NORDBLOC.1 伞齿轮减速电机", note="产品主图",
+        review_status="approved",
+    ) | values))
+
+
+def test_image_remediation_is_scoped_to_latest_snapshot():
+    saved = SimpleNamespace(id=4, snapshot_id=12, position=2, source_url="https://cdn.example/a.webp",
+                            observed_alt_state="empty", decision="informative", alt_suggestion="product",
+                            note=None, review_status="draft", actor_id=7, actor_name="operator",
+                            reviewed_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc))
+    db = AsyncMock(); db.scalar.side_effect = [1, page(), image_snapshot()]; db.scalars.return_value = [saved]
+    result = asyncio.run(get_image_remediation(1, 1, 231, context(), db))
+    assert result["snapshot_id"] == 12 and result["items"][0]["position"] == 2
+    sql = str(db.scalars.call_args.args[0].compile(dialect=postgresql.dialect()))
+    for field in ("tenant_id", "site_id", "page_id", "snapshot_id"):
+        assert f"seo_image_alt_reviews.{field} =" in sql
+    db.commit.assert_not_awaited()
+
+
+def test_save_image_remediation_validates_evidence_and_real_actor():
+    db = AsyncMock(); db.add = MagicMock(); db.scalar.side_effect = [1, page(), image_snapshot(), None]
+    result = asyncio.run(save_image_remediation(image_review_request(), context(), db))
+    saved = db.add.call_args.args[0]
+    assert isinstance(saved, SeoImageAltReview)
+    assert (saved.tenant_id, saved.site_id, saved.page_id, saved.snapshot_id, saved.position) == (1, 1, 231, 12, 2)
+    assert saved.actor_id == 7 and saved.review_status == "approved"
+    assert result["alt_suggestion"] == "NORDBLOC.1 伞齿轮减速电机"
+    assert db.scalar.call_args_list[1].args[0]._for_update_arg is not None
+    db.commit.assert_awaited_once()
+
+
+def test_image_remediation_stale_review_is_rejected():
+    existing = SimpleNamespace(id=9)
+    db = AsyncMock(); db.scalar.side_effect = [1, page(), image_snapshot(), existing]
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(save_image_remediation(image_review_request(expected_review_id=8), context(), db))
+    assert error.value.status_code == 409
+    db.commit.assert_not_awaited()
+
+
+def test_image_remediation_requires_explicit_optimistic_review_token():
+    values = image_review_request().model_dump()
+    values.pop("expected_review_id")
+    with pytest.raises(ValidationError):
+        ImageAltReviewUpdate(**values)
+
+
+def test_decorative_image_clears_alt_suggestion_before_save():
+    db = AsyncMock(); db.add = MagicMock(); db.scalar.side_effect = [1, page(), image_snapshot(), None]
+    asyncio.run(save_image_remediation(image_review_request(
+        decision="decorative", alt_suggestion="不应保存", review_status="approved"), context(), db))
+    saved = db.add.call_args.args[0]
+    assert saved.alt_suggestion is None
+
+
+@pytest.mark.parametrize("request_values,status", [
+    ({"expected_snapshot_id": 11}, 409),
+    ({"position": 3}, 409),
+    ({"decision": "undecided", "review_status": "approved"}, 422),
+    ({"alt_suggestion": None, "review_status": "approved"}, 422),
+    ({}, 409),
+])
+def test_image_remediation_rejects_stale_or_unreviewable_writes(request_values, status):
+    db = AsyncMock(); db.scalar.side_effect = [1, page(), image_snapshot()]
+    if not request_values:
+        db.scalar.side_effect = [1, page(), SimpleNamespace(
+            id=12, error_type=None, image_alt_evidence={"items": [
+                {"position": 2, "source_url": "https://cdn.example/a.webp", "alt_state": "unknown"},
+            ]})]
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(save_image_remediation(image_review_request(**request_values), context(), db))
+    assert error.value.status_code == status
+    db.commit.assert_not_awaited()
+
+
+def test_image_alt_review_model_constraints():
+    table = SeoImageAltReview.__table__
+    assert {"ck_seo_image_alt_review_position", "ck_seo_image_alt_review_observed_state",
+            "ck_seo_image_alt_review_decision", "ck_seo_image_alt_review_status",
+            "ck_seo_image_alt_review_suggestion"} <= {constraint.name for constraint in table.constraints}
+    for name in ("tenant_id", "site_id", "page_id", "snapshot_id"):
+        assert next(iter(table.c[name].foreign_keys)).ondelete == "CASCADE"
+
+
+def test_image_alt_review_migration_renders_scoped_timezone_aware_table():
+    import importlib.util
+    import io
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    path = Path(__file__).parents[1] / "migrations/versions/20260904_0088_seo_image_alt_reviews.py"
+    spec = importlib.util.spec_from_file_location("image_alt_review_migration", path)
+    migration = importlib.util.module_from_spec(spec); spec.loader.exec_module(migration)
+    output = io.StringIO()
+    migration.op = Operations(MigrationContext.configure(
+        dialect_name="postgresql", opts={"as_sql": True, "output_buffer": output}))
+    migration.upgrade()
+    sql = output.getvalue()
+    assert "CREATE TABLE seo_image_alt_reviews" in sql
+    assert sql.count("ON DELETE CASCADE") == 4
+    assert sql.count("TIMESTAMP WITH TIME ZONE") == 2
+    assert "uq_seo_image_alt_review_snapshot_position" in sql
 
 
 @pytest.mark.parametrize("status", [None, 301, 404, 503])
