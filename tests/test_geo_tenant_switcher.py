@@ -35,7 +35,8 @@ def test_geo_topbar_keeps_one_customer_select():
     assert 'class="geo-tenant-switcher"' in header
     assert "当前客户" in header
     assert 'v-if="session.tenants.length"' not in header
-    assert 'class="geo-side-foot"' in shell
+    assert 'class="geo-side-foot"' not in shell
+    assert 'class="geo-tenant"' not in shell
     assert "geo-tenant-switcher" not in page
     assert "fetchGeoTenants()" in app
     assert "session.isLoggedIn ? fetchMe() : Promise.resolve(null)" in app

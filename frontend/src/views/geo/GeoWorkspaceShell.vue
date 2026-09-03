@@ -1,24 +1,16 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { session } from '../../store/session'
 import { GEO_WORKBENCH_NAV } from '../../utils/geoPrototypeNavigation'
 
 const route = useRoute()
 const router = useRouter()
 const mobileOpen = ref(false)
-const tenantPopoverOpen = ref(false)
 const geoNavCollapsed = ref(false)
 const geoNavHover = ref(false)
 const isMobile = ref(false)
 const isEditor = computed(() => /^\/geo\/tasks\/[^/]+/.test(route.path))
 const geoNavRail = computed(() => geoNavCollapsed.value && !geoNavHover.value && !isMobile.value)
-const tenantName = computed(() => {
-  const tenant = session.tenants.find((item) => item.id === session.tenantId)
-  if (tenant?.name) return tenant.name
-  if (session.tenantId) return `客户 #${session.tenantId}`
-  return '未选择客户'
-})
 const isActive = (item) => route.path === item.path || route.path.startsWith(`${item.path}/`)
 
 watch(isEditor, (v) => { geoNavCollapsed.value = !!v }, { immediate: true })
@@ -26,25 +18,6 @@ watch(isEditor, (v) => { geoNavCollapsed.value = !!v }, { immediate: true })
 function go(path) {
   mobileOpen.value = false
   router.push(path)
-}
-
-function onTenantPick(id) {
-  tenantPopoverOpen.value = false
-  if (!id || id === session.tenantId) return
-  session.setTenant(id)
-  if (route.path.startsWith('/geo/tasks/')) router.push('/geo/tasks')
-}
-
-function tenantInitials(tenant) {
-  const trimmed = String(tenant?.name || '').trim()
-  if (!trimmed) return '—'
-  const ascii = trimmed.match(/[A-Za-z]+/g)?.join('')
-  if (ascii && /^[A-Za-z0-9_-]/.test(trimmed)) return ascii.slice(0, 2).toUpperCase()
-  return Array.from(trimmed).slice(0, 2).join('')
-}
-
-function tenantTone(id) {
-  return ['blue', 'green', 'amber', 'violet', 'red'][Math.abs(Number(id) || 0) % 5]
 }
 
 function onGeoNavEnter() {
@@ -113,45 +86,10 @@ onUnmounted(() => {
         </section>
       </nav>
       <div class="geo-shell-links">
-        <a href="/monitor/dashboard"><span>SEM</span><span class="geo-quick-label">搜索广告工作台</span></a>
+        <a href="/monitor/dashboard" target="_top"><span>SEM</span><span class="geo-quick-label">搜索广告工作台</span></a>
         <a href="/seo/dashboard"><span>SEO</span><span class="geo-quick-label">SEO 内容工作台</span></a>
         <a href="/diagnostic-center/"><span>DX</span><span class="geo-quick-label">诊断中心</span></a>
-        <a class="portal-link" href="/deal-sniper/portal"><span>←</span><span class="geo-quick-label">返回平台门户</span></a>
-      </div>
-      <div class="geo-side-foot">
-        <el-popover
-          v-if="session.tenants.length"
-          v-model:visible="tenantPopoverOpen"
-          placement="top-start"
-          :width="286"
-          trigger="click"
-          popper-class="tenant-popover"
-        >
-          <template #reference>
-            <button type="button" class="geo-tenant" :title="tenantName">
-              {{ geoNavRail ? tenantInitials({ name: tenantName }) : (tenantName + ' ▾') }}
-            </button>
-          </template>
-          <div class="tenant-panel">
-            <div class="tenant-section-title">切换客户</div>
-            <button
-              v-for="t in session.tenants"
-              :key="'g-'+t.id"
-              class="tenant-option"
-              :class="{ active: t.id === session.tenantId }"
-              type="button"
-              @click="onTenantPick(t.id)"
-            >
-              <span class="tenant-avatar" :class="'tone-' + tenantTone(t.id)">{{ tenantInitials(t) }}</span>
-              <span class="tenant-copy">
-                <span class="tenant-title">{{ t.name }}</span>
-                <span class="tenant-meta">独立账户数据 · 客户 ID {{ t.id }}</span>
-              </span>
-              <span v-if="t.id === session.tenantId" class="tenant-check">✓</span>
-            </button>
-          </div>
-        </el-popover>
-        <button v-else type="button" class="geo-tenant" disabled>选择客户</button>
+        <a class="portal-link" href="/deal-sniper/portal" target="_top"><span>←</span><span class="geo-quick-label">返回平台门户</span></a>
       </div>
     </aside>
     <main class="geo-shell-main">
@@ -280,23 +218,6 @@ onUnmounted(() => {
   border-top: 1px solid #e8eaf0;
   border-radius: 0;
 }
-.geo-side-foot {
-  padding: 8px 10px 12px;
-  border-top: 1px solid #e8eaf0;
-}
-.geo-tenant {
-  display: block;
-  width: 100%;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: #6b7280;
-  font-size: 12px;
-  text-align: left;
-  padding: 8px 10px;
-  cursor: pointer;
-}
-.geo-tenant:hover { background: #f5f0ff; color: #7c3aed; }
 .geo-shell-side.is-rail { overflow: hidden; }
 .geo-shell-side.is-rail .geo-shell-brand { justify-content: center; padding-left: 0; padding-right: 0; }
 .geo-shell-side.is-rail .geo-shell-brand-copy,
@@ -307,8 +228,6 @@ onUnmounted(() => {
 .geo-shell-side.is-rail .geo-shell-links { padding: 8px 6px; }
 .geo-shell-side.is-rail .geo-shell-links a { justify-content: center; gap: 0; padding: 6px 0; }
 .geo-shell-side.is-rail .geo-shell-links a > span:first-child { width: auto; }
-.geo-shell-side.is-rail .geo-side-foot { padding: 8px 6px 12px; }
-.geo-shell-side.is-rail .geo-tenant { text-align: center; padding: 8px 0; font-weight: 650; }
 .geo-shell-main {
   min-width: 0;
   min-height: 0;
@@ -350,64 +269,4 @@ onUnmounted(() => {
   }
   .geo-shell-side.is-open { transform: none; }
 }
-</style>
-<style>
-.tenant-popover.el-popper {
-  padding: 0;
-  border: 1px solid #e5ebf2;
-  border-radius: 8px;
-  box-shadow: 0 16px 38px rgba(15, 23, 42, 0.13);
-  overflow: hidden;
-}
-.tenant-panel { padding: 13px 8px 10px; background: #fff; }
-.tenant-section-title {
-  margin: 0 0 6px;
-  padding: 0 9px;
-  color: #9aa6b5;
-  font-size: 11px;
-  font-weight: 700;
-}
-.tenant-option {
-  width: 100%;
-  min-height: 44px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) 14px;
-  align-items: center;
-  gap: 9px;
-  padding: 7px 9px;
-  text-align: left;
-  cursor: pointer;
-  color: #1f2937;
-}
-.tenant-option:hover { background: #f6f9fd; }
-.tenant-option.active { background: #edf4ff; }
-.tenant-avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  font-size: 11px;
-  font-weight: 700;
-}
-.tenant-avatar.tone-blue { background: #2069b4; }
-.tenant-avatar.tone-green { background: #26a77a; }
-.tenant-avatar.tone-amber { background: #ca8321; }
-.tenant-avatar.tone-violet { background: #7657c8; }
-.tenant-avatar.tone-red { background: #e55353; }
-.tenant-copy { min-width: 0; display: grid; gap: 2px; }
-.tenant-title {
-  font-size: 13px;
-  font-weight: 700;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.tenant-meta { color: #8a94a3; font-size: 11px; }
-.tenant-check { color: #7c3aed; font-weight: 700; }
 </style>
