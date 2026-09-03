@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { previewSeoRemediation, fetchSeoContentAssets, createSeoContentAsset, updateSeoContentAsset } from '../../api/seo'
 import { remediationHandoff, validRemediationEdits, remediationDraftPatch } from './seoRemediationDraft'
+import { seoPlainTextHtml } from './seoEditorHtml'
 
 const props = defineProps({ visible: Boolean, tenantId: Number, siteId: Number, page: Object })
 const emit = defineEmits(['update:visible'])
@@ -54,7 +55,7 @@ async function save() {
         payload: remediationDraftPatch(task.value, handoff) })
     } else {
       response = await createSeoContentAsset({ tenant_id: s.tenant_id, site_id: s.site_id, source_page_id: s.page_id,
-        status: 'drafting', title: `【整改草稿，勿发布】${proposal.value.title.text}`, content_type: 'guide', draft: handoff })
+        status: 'drafting', title: `【整改草稿，勿发布】${proposal.value.title.text}`, content_type: 'guide', draft: seoPlainTextHtml(handoff) })
     }
     if (!current(token, s)) return
     savedId.value = response.id

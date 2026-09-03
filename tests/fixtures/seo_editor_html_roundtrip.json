@@ -1,0 +1,34 @@
+[
+  {
+    "name": "legacy mixed HTML handoff decodes backend entities once",
+    "input": "<p>原稿</p>\n页面整改交接单（AI 辅助，人工编辑，勿直接发布）\n来源：https://example.com/?a=1&b=2\nTitle：R&D，示例 &amp; &#65;",
+    "api_value": "<p>原稿</p>\n页面整改交接单（AI 辅助，人工编辑，勿直接发布）\n来源：https://example.com/?a=1&amp;b=2\nTitle：R&amp;D，示例 &amp; A",
+    "editor_html": "<p>原稿</p><br>页面整改交接单（AI 辅助，人工编辑，勿直接发布）<br>来源：https://example.com/?a=1&amp;b=2<br>Title：R&amp;D，示例 &amp; A",
+    "api_saved_again": "<p>原稿</p><br/>页面整改交接单（AI 辅助，人工编辑，勿直接发布）<br/>来源：https://example.com/?a=1&amp;b=2<br/>Title：R&amp;D，示例 &amp; A",
+    "text_includes": ["R&D", "?a=1&b=2", "示例 & A"]
+  },
+  {
+    "name": "legacy plain handoff keeps literal entity notation",
+    "input": "页面整改交接单（AI 辅助，人工编辑，勿直接发布）\nTitle：R&D，示例 &amp; &#65;",
+    "api_value": "页面整改交接单（AI 辅助，人工编辑，勿直接发布）\nTitle：R&D，示例 &amp; &#65;",
+    "editor_html": "页面整改交接单（AI 辅助，人工编辑，勿直接发布）<br>Title：R&amp;D，示例 &amp;amp; &amp;#65;",
+    "api_saved_again": "页面整改交接单（AI 辅助，人工编辑，勿直接发布）<br/>Title：R&amp;D，示例 &amp;amp; &amp;#65;",
+    "text_includes": ["R&D", "示例 &amp; &#65;"]
+  },
+  {
+    "name": "single line plain text stays stable over repeated saves",
+    "input": "R&D &amp; &#65;",
+    "api_value": "R&D &amp; &#65;",
+    "editor_html": "<div>R&amp;D &amp;amp; &amp;#65;</div>",
+    "api_saved_again": "<div>R&amp;D &amp;amp; &amp;#65;</div>",
+    "text_includes": ["R&D &amp; &#65;"]
+  },
+  {
+    "name": "new HTML handoff preserves literal tag examples through backend cleaning",
+    "input": "<div>页面整改交接单（AI 辅助，人工编辑，勿直接发布）<br>&lt;h1&gt;R&amp;D&lt;/h1&gt; &amp;amp; &amp;#65;</div>",
+    "api_value": "<div>页面整改交接单（AI 辅助，人工编辑，勿直接发布）<br/>&lt;h1&gt;R&amp;D&lt;/h1&gt; &amp;amp; &amp;#65;</div>",
+    "editor_html": "<div>页面整改交接单（AI 辅助，人工编辑，勿直接发布）<br>&lt;h1&gt;R&amp;D&lt;/h1&gt; &amp;amp; &amp;#65;</div>",
+    "api_saved_again": "<div>页面整改交接单（AI 辅助，人工编辑，勿直接发布）<br/>&lt;h1&gt;R&amp;D&lt;/h1&gt; &amp;amp; &amp;#65;</div>",
+    "text_includes": ["<h1>R&D</h1> &amp; &#65;"]
+  }
+]
