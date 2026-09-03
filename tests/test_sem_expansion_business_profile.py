@@ -95,7 +95,7 @@ def test_api_missing_profile_returns_actionable_conflict(monkeypatch):
     monkeypatch.setattr(evaluator, "is_enabled", lambda: True)
     session = SimpleNamespace(get=AsyncMock(return_value=tenant(industry=None, business_desc=None)))
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(evaluate_candidates(tenant_id=3, force=False, limit=None, session=session))
+        asyncio.run(evaluate_candidates(tenant_id=3, force=False, limit=5, session=session))
     assert exc.value.status_code == 409
     assert "填写行业或业务描述" in exc.value.detail
 
