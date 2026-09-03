@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.deepseek import is_enabled as ai_enabled
-from app.ai.expansion_eval import evaluate_candidates_for_tenant
+from app.ai.expansion_eval import MissingBusinessProfileError, evaluate_candidates_for_tenant
 from app.baidu.writeback import (
     WritebackError,
     apply_add_word_writeback,
@@ -426,7 +426,10 @@ async def evaluate_candidates(
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
-    result = await evaluate_candidates_for_tenant(session, tenant, force=force, limit=limit)
+    try:
+        result = await evaluate_candidates_for_tenant(session, tenant, force=force, limit=limit)
+    except MissingBusinessProfileError as exc:
+        raise HTTPException(409, str(exc)) from exc
     return {"status": "ok", "tenant_id": tenant_id, **result}
 
 
