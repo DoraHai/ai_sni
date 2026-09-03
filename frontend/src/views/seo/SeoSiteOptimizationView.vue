@@ -105,7 +105,7 @@ async function saveEdit() {
 }
 async function audit(row) {
   const next = new Set(auditing.value); next.add(row.id); auditing.value = next
-  try { await auditSeoSitePage({ pageId: row.id, tenantId: currentTenantId.value }); ElMessage.success('页面检测完成'); await load() }
+  try { await auditSeoSitePage({ pageId: row.id, tenantId: currentTenantId.value, siteId: row.site_id }); ElMessage.success('单页检测完成，图片明细已保存'); await load() }
   catch (e) { ElMessage.error(e.message); await load() }
   finally { const done = new Set(auditing.value); done.delete(row.id); auditing.value = done }
 }
@@ -113,8 +113,8 @@ async function auditPending() {
   batchAuditing.value = true
   try {
     const response = await auditPendingSeoSitePages({ tenantId: currentTenantId.value, siteId: siteId.value, maxPages: 10 })
-    const message = `已补抓 ${response.completed} 个页面${response.failed?.length ? `，失败 ${response.failed.length} 个` : ''}`
-    response.failed?.length ? ElMessage.warning(message) : ElMessage.success(message)
+    const message = `已补抓 ${response.completed} 个页面${response.failed?.length ? `，失败 ${response.failed.length} 个` : ''}${response.skipped ? `，跳过 ${response.skipped} 个已更新页面` : ''}${response.deferred ? `，${response.deferred} 个留待下次补抓` : ''}`
+    response.failed?.length || response.deferred ? ElMessage.warning(message) : ElMessage.success(message)
     await load()
   } catch (e) { ElMessage.error(e.message) } finally { batchAuditing.value = false }
 }
