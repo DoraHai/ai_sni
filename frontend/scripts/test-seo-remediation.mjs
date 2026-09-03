@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import * as Vue from 'vue'
 import { remediationHandoff, validRemediationEdits, remediationDraftPatch } from '../src/views/seo/seoRemediationDraft.js'
+import { seoPlainTextHtml } from '../src/views/seo/seoEditorHtml.js'
 
 const change = () => ({ text: 'NORDAC NORDCON BU0000 操作手册正常。', reason: '保留型号，需人工核实', evidence_ids: ['title'] })
 const response = () => ({ page_id: 231, tenant_id: 1, site_id: 1, proposal: { title: change(), description: change(), h1: change(), outline: [change()] },
@@ -18,14 +19,15 @@ assert.equal(validRemediationEdits(blank), false)
 assert.throws(() => remediationDraftPatch({ draft: '原文' }, handoff), /版本/)
 const patch = remediationDraftPatch({ draft: '原文', humanized_content: '人工润色原文', version_count: 3 }, handoff)
 assert.equal(patch.version_count, 3)
-assert.ok(patch.draft.startsWith('原文') && patch.humanized_content.startsWith('人工润色原文'))
+assert.ok(patch.draft.startsWith('<div>原文</div>') && patch.humanized_content.startsWith('<div>人工润色原文</div>'))
+assert.throws(() => remediationDraftPatch({ draft: '原文', version_count: 1 }, '&'.repeat(17000)), /80000/)
 
 const source = await readFile(new URL('../src/views/seo/SeoRemediationDialog.vue', import.meta.url), 'utf8')
 const code = compileScript(parse(source).descriptor, { id: 'test', genDefaultAs: 'component' }).content.replace(/^import .* from .*$/gm, '')
 const deferred = args => { let resolve, reject; const promise = new Promise((r, j) => { resolve = r; reject = j }); return { args, resolve, reject, promise } }
 const reads = [], previews = [], creates = [], updates = [], messages = []
 const bindings = { computed: Vue.computed, onBeforeUnmount: Vue.onBeforeUnmount, ref: Vue.ref, watch: Vue.watch,
-  useRouter: () => ({ push() {} }), remediationHandoff, validRemediationEdits, remediationDraftPatch,
+  useRouter: () => ({ push() {} }), remediationHandoff, validRemediationEdits, remediationDraftPatch, seoPlainTextHtml,
   ElMessage: Object.fromEntries(['success','warning','error'].map(k => [k, text => messages.push([k,text])])),
   previewSeoRemediation: args => { const d = deferred(args); previews.push(d); return d.promise },
   fetchSeoContentAssets: args => { const d = deferred(args); reads.push(d); return d.promise },
@@ -56,6 +58,7 @@ assert.equal(creates.length, 1)
 assert.equal(creates[0].args.source_page_id, 231)
 assert.equal(creates[0].args.status, 'drafting')
 assert.match(creates[0].args.draft, /真人中文尾字正常。/)
+assert.ok(creates[0].args.draft.startsWith('<div>') && creates[0].args.draft.includes('<br>'))
 creates[0].resolve({ id: 77 }); await saving
 await state().save(); assert.equal(creates.length, 1, 'saved draft cannot be created twice')
 
@@ -64,7 +67,7 @@ reads.at(-1).resolve({ items: [{ id: 77, status: 'drafting', title:'已有稿', 
 const again = state().generate(); previews.at(-1).resolve(response()); await again
 const append = state().save(); assert.equal(updates.length, 1)
 assert.equal(updates[0].args.payload.version_count, 9)
-assert.ok(updates[0].args.payload.draft.startsWith('原稿'))
+assert.ok(updates[0].args.payload.draft.startsWith('<div>原稿</div>'))
 updates[0].reject(new Error('内容已被其他操作更新')); await append
 assert.equal(state().savedId, null, 'version conflict keeps proposal and never reports saved')
 
