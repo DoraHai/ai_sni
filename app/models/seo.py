@@ -4,6 +4,7 @@ from decimal import Decimal
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -195,6 +196,31 @@ class SeoSitePage(Base):
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "site_id", "url", name="uq_seo_site_page_site_url"),
+    )
+
+
+class SeoPageIndexReview(Base):
+    """Append-only human intent; never changes the customer's website or TDK."""
+
+    __tablename__ = "seo_page_index_reviews"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    site_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("seo_sites.id", ondelete="CASCADE"), nullable=False)
+    page_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("seo_site_pages.id", ondelete="CASCADE"), nullable=False)
+    intent: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    actor_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    evidence: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("intent IN ('undecided', 'index', 'noindex')", name="ck_seo_index_review_intent"),
+        CheckConstraint("length(trim(reason)) BETWEEN 1 AND 2000", name="ck_seo_index_review_reason"),
+        Index("ix_seo_index_review_scope_page", "tenant_id", "site_id", "page_id", "id"),
+        Index("ix_seo_index_review_page", "page_id"),
+        Index("ix_seo_index_review_site", "site_id"),
     )
 
 

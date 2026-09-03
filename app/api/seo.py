@@ -83,6 +83,8 @@ from app.seo_serp import (
 from app.seo_rank_optimization import create_rank_drop_content_tasks_safely
 from app.seo_traffic import GscError, gsc_status, query_gsc_traffic, validate_property
 from app.seo_crawler import crawl_site, is_html_page_url
+from app.seo_site_diagnostics import assessed_condition, assessment_state, diagnostic_payload
+from app.api.seo_site_diagnostics import router as site_diagnostics_router
 from app.seo_competitor import (
     COMPETITOR_MANUAL_COOLDOWN_SECONDS,
     COMPETITOR_MAX_PAGES_PER_RUN,
@@ -187,6 +189,7 @@ router = APIRouter(
     dependencies=[Depends(require_seo_module_access)],
 )
 logger = logging.getLogger(__name__)
+router.include_router(site_diagnostics_router)
 
 ENGINES = {"baidu", "google", "bing", "360", "sogou"}
 PRIORITIES = {"P0", "P1", "P2", "P3"}
@@ -586,6 +589,7 @@ def _rank_payload(row: SeoRankSnapshot) -> dict[str, Any]:
 def _page_payload(
     row: SeoSitePage, *, content_task_id: int | None = None
 ) -> dict[str, Any]:
+    diagnostic = diagnostic_payload(row)
     return {
         "id": row.id,
         "tenant_id": row.tenant_id,
@@ -601,7 +605,8 @@ def _page_payload(
         "indexable": row.indexable,
         "http_status": row.http_status,
         "content_units": row.content_units,
-        "audit_score": row.audit_score,
+        "audit_score": diagnostic["audit_score"],
+        "diagnostic": diagnostic,
         "issue_codes": row.issue_codes or [],
         "title_suggestion": row.title_suggestion,
         "description_suggestion": row.description_suggestion,
@@ -2860,6 +2865,8 @@ async def _execute_seo_crawl_run(
                     )
                     page.last_error = None
                     page.last_checked_at = datetime.utcnow()
+                if assessment_state(page) != "assessed":
+                    page.audit_score = None
 
             await session.flush()
             crawled_source_ids = {
@@ -3123,7 +3130,8 @@ async def list_site_pages(
             select(
                 func.count(SeoSitePage.id),
                 func.count(SeoSitePage.id).filter(
-                    SeoSitePage.status.in_(("healthy", "verified"))
+                    SeoSitePage.status.in_(("healthy", "verified")),
+                    assessed_condition(SeoSitePage),
                 ),
                 func.count(SeoSitePage.id).filter(
                     SeoSitePage.status.in_(
@@ -3135,7 +3143,7 @@ async def list_site_pages(
                 func.count(SeoSitePage.id).filter(SeoSitePage.status == "approved"),
                 func.count(SeoSitePage.id).filter(SeoSitePage.status == "implemented"),
                 func.count(SeoSitePage.id).filter(SeoSitePage.status == "verified"),
-                func.avg(SeoSitePage.audit_score),
+                func.avg(SeoSitePage.audit_score).filter(assessed_condition(SeoSitePage)),
             ).where(*all_conditions)
         )
     ).one()
@@ -3170,7 +3178,7 @@ async def list_site_pages(
             "approved": int(stats_approved or 0),
             "implemented": int(stats_implemented or 0),
             "verified": int(stats_verified or 0),
-            "average_score": round(float(average_score or 0), 1),
+            "average_score": round(float(average_score), 1) if average_score is not None else None,
         },
     }
 

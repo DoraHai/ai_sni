@@ -99,6 +99,7 @@ jobs:
           tests/test_seo_scheduler.py
           tests/test_seo_serp.py
           tests/test_seo_site_association.py
+          tests/test_seo_site_diagnostics.py
           tests/test_seo_traffic.py
           tests/test_urlwords.py
 
@@ -116,7 +117,7 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0084_seo_crawl_queued_status (head)'
+          printf '%s\n' "$heads" | grep -F '0086_seo_index_review_merge (head)'
 
       - working-directory: frontend
         run: npm ci
@@ -127,7 +128,7 @@ jobs:
 
       - name: Rebuild and verify the isolated SEO frontend
         working-directory: frontend
-        run: npm run build:seo && npm run verify:seo-build
+        run: node scripts/test-seo-diagnostics.mjs && npm run build:seo && npm run verify:seo-build
 
       - name: Create immutable SEO-only release archive
         env:

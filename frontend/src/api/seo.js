@@ -1,5 +1,21 @@
 import client from './client'
 
+export function fetchSeoSiteDiagnostics({ tenantId, siteId, q = '', reviewState = 'all', page = 1 }) {
+  return client.get('/api/v1/seo/site-pages/diagnostics', {
+    params: { tenant_id: tenantId, site_id: siteId, q, review_state: reviewState, page, page_size: 25 },
+  })
+}
+
+export function saveSeoIndexReview(payload) {
+  return client.post('/api/v1/seo/site-pages/index-reviews', payload)
+}
+
+export function fetchSeoIndexReviews({ tenantId, siteId, pageId, beforeId }) {
+  return client.get('/api/v1/seo/site-pages/index-reviews', {
+    params: { tenant_id: tenantId, site_id: siteId, page_id: pageId, before_id: beforeId },
+  })
+}
+
 export function fetchSeoKeywords({ tenantId, siteId, q, priority, intent, status = 'active', engine = 'baidu', device = 'desktop', page = 1, pageSize = 50 }) {
   return client.get('/api/v1/seo/keywords', {
     params: {
