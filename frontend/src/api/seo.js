@@ -313,6 +313,14 @@ export function fetchSeoImageEvidence({ tenantId, siteId, pageId }) {
   return client.get('/api/v1/seo/site-pages/image-evidence', { params: { tenant_id: tenantId, site_id: siteId, page_id: pageId } })
 }
 
+export function fetchSeoImageRemediation({ tenantId, siteId, pageId }) {
+  return client.get('/api/v1/seo/site-pages/image-remediation', { params: { tenant_id: tenantId, site_id: siteId, page_id: pageId } })
+}
+
+export function saveSeoImageRemediation(payload) {
+  return client.put('/api/v1/seo/site-pages/image-remediation', payload)
+}
+
 export function previewSeoRemediation(payload) {
   return client.post('/api/v1/seo/site-pages/ai-remediation', payload, { timeout: 95000 })
 }

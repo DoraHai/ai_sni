@@ -64,7 +64,7 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0087_seo_image_alt_evidence (head)'
+          printf '%s\n' "$heads" | grep -F '0088_seo_image_alt_reviews (head)'
           pytest -q tests/test_seo_migration_merge.py
 
   sem-logrotate-config:
