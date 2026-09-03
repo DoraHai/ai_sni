@@ -352,7 +352,17 @@ class ApplyPatchRequest(BaseModel):
     author_name: str | None = Field(None, max_length=100)
 
 
-SnapshotEngine = Literal["chatgpt", "deepseek", "doubao", "kimi", "perplexity", "other"]
+SnapshotEngine = Literal[
+    "chatgpt",
+    "deepseek",
+    "doubao",
+    "qwen",
+    "hunyuan",
+    "wenxin",
+    "kimi",
+    "perplexity",
+    "other",
+]
 BrandPosition = Literal["first", "alternative", "mentioned", "absent", "unknown"]
 SnapshotSentiment = Literal["positive", "neutral", "negative", "unknown"]
 CitationFormat = Literal["linked", "plaintext", "mixed", "none", "unknown"]

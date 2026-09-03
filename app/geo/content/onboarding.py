@@ -502,36 +502,57 @@ def _engine_suggestions() -> list[dict[str, Any]]:
         {
             "engine_key": "deepseek",
             "display_name": "DeepSeek",
-            "sample_mode": "mock_persona",
-            "note": "国内易得；可先模拟，再配真 Key",
+            "sample_mode": "openai_compat",
+            "note": "平台统一配置",
             "recommended": True,
         },
         {
             "engine_key": "doubao",
             "display_name": "豆包",
-            "sample_mode": "mock_persona",
-            "note": "国内场景常见",
+            "sample_mode": "openai_compat",
+            "note": "平台统一配置",
+            "recommended": True,
+        },
+        {
+            "engine_key": "qwen",
+            "display_name": "通义千问",
+            "sample_mode": "openai_compat",
+            "note": "平台统一配置",
+            "recommended": True,
+        },
+        {
+            "engine_key": "hunyuan",
+            "display_name": "腾讯混元",
+            "sample_mode": "openai_compat",
+            "note": "平台统一配置；不等同于元宝网页端抽样",
+            "recommended": True,
+        },
+        {
+            "engine_key": "wenxin",
+            "display_name": "文心一言",
+            "sample_mode": "openai_compat",
+            "note": "平台统一配置",
             "recommended": True,
         },
         {
             "engine_key": "kimi",
             "display_name": "Kimi",
-            "sample_mode": "mock_persona",
-            "note": "长文/引用场景",
+            "sample_mode": "openai_compat",
+            "note": "平台统一配置",
             "recommended": True,
         },
         {
             "engine_key": "chatgpt",
             "display_name": "ChatGPT",
             "sample_mode": "mock_persona",
-            "note": "真采样需海外 API Key；默认模拟",
+            "note": "未配置时使用模拟样本",
             "recommended": False,
         },
         {
             "engine_key": "perplexity",
             "display_name": "Perplexity",
             "sample_mode": "mock_persona",
-            "note": "强引用；真采样门槛高",
+            "note": "未配置时使用模拟样本",
             "recommended": False,
         },
     ]
@@ -767,9 +788,9 @@ def build_readiness_items(
         _check(
             "engine_keys",
             real_engine_count > 0 or stance == "simulation",
-            "引擎真采样 Key",
+            "平台真采样引擎",
             (
-                f"{real_engine_count} 个引擎已配 Key"
+                f"{real_engine_count} 个引擎已由平台配置"
                 if real_engine_count
                 else (
                     "当前是模拟评估，交付须标注"
@@ -782,9 +803,9 @@ def build_readiness_items(
         _check(
             "ai_key",
             ai_key_configured,
-            "AI 能力 Key",
-            "已配置" if ai_key_configured else "写稿 / 审稿 / 探测需要租户 LLM Key",
-            "/geo/ai-settings",
+            "平台 AI 能力",
+            "已配置" if ai_key_configured else "写稿 / 审稿 / 模拟探测需要平台 AI 能力",
+            "/geo/engines",
         ),
         _check(
             "patrol",
@@ -825,7 +846,7 @@ async def tenant_readiness(session: Any, tenant_id: int) -> dict[str, Any]:
     """查库组装开户就绪检查表。"""
     from sqlalchemy import func, select
 
-    from app.geo.content.ai_settings import get_ai_setting_row, settings_public_payload
+    from app.geo.content.ai_settings import get_ai_setting_row, resolve_llm_credentials
     from app.geo.content.monitoring_stance import normalize_stance
     from app.models import (
         GeoFact,
@@ -894,13 +915,15 @@ async def tenant_readiness(session: Any, tenant_id: int) -> dict[str, Any]:
         )
     )
     enabled = [e for e in engines if e.enabled]
+    from app.geo.content.engine_providers import resolve_platform_engine_credentials
+
     real = [
         e
         for e in enabled
-        if (e.sample_mode or "") == "openai_compat" and bool(e.api_key_encrypted)
+        if resolve_platform_engine_credentials(e.engine_key)
     ]
     setting = await get_ai_setting_row(session, tenant_id)
-    ai_pub = settings_public_payload(setting) if setting is not None else {}
+    effective_ai = await resolve_llm_credentials(session, tenant_id)
     patrol = await session.get(GeoVisibilityPatrolSettings, tenant_id)
     ch_n = int(
         await session.scalar(
@@ -936,7 +959,7 @@ async def tenant_readiness(session: Any, tenant_id: int) -> dict[str, Any]:
         verified_fact_count=verified_n,
         engine_count=len(enabled),
         real_engine_count=len(real),
-        ai_key_configured=bool(ai_pub.get("api_key_configured")),
+        ai_key_configured=bool(effective_ai),
         patrol_enabled=bool(patrol and patrol.enabled),
         channel_count=ch_n,
         stance=stance,
