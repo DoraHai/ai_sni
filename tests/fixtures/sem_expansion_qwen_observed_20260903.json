@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "kind": "historical_observation_not_expected_answers",
+  "observed_at": "2026-09-03T20:05:38+08:00",
+  "model": "qwen-plus",
+  "system_prompt_sha256": "185e1110822210dc7f9dc4e19fb788d767a6a2750929d9c1b9fc8454f5a23a5e",
+  "user_prompt_sha256": "d28c8f686174ab938507da92e09f57ebb460dc0a84d6fee51e9f15ee98f113ba",
+  "scenario_file": "sem_expansion_acceptance_v1.json",
+  "scenario_source_commit": "0bcd274471b3598dd82902f742e38370c8a86f18",
+  "provenance": "Transcribed from the authorized single offline request report, 20260903-qwen-plus.md. Full 20-item response fields below; not a new request or evidence about the production model. Input contained only the virtual profile and words, no price guides, volume or competition. Labels include known deviations; do not use as expected answers.",
+  "items": [
+    {"word":"工业粉末涂料采购","relevance":"relevant","recommend":"adopt","reason":"精准匹配核心业务与采购意图","suggested_bid":8.5,"bid_reason":"高商业意图，搜索量中等偏上"},
+    {"word":"粉末涂料供应商","relevance":"relevant","recommend":"adopt","reason":"直指B端供应角色，采购决策词","suggested_bid":7.2,"bid_reason":"通用但强商业属性，贴指导价试投"},
+    {"word":"粉末涂料批发报价","relevance":"relevant","recommend":"watch","reason":"含价格意图，需确认是否主推批发","suggested_bid":null,"bid_reason":null},
+    {"word":"金属表面粉末涂料","relevance":"relevant","recommend":"adopt","reason":"契合‘金属粉末涂料’细分场景","suggested_bid":6.8,"bid_reason":"技术+应用双指向，竞争适中"},
+    {"word":"艾仕得粉末涂料","relevance":"relevant","recommend":"watch","reason":"竞品词，客户明确其为同行","suggested_bid":null,"bid_reason":null},
+    {"word":"阿克苏诺贝尔粉末涂料","relevance":"relevant","recommend":"watch","reason":"竞品词，客户明确其为同行","suggested_bid":null,"bid_reason":null},
+    {"word":"艾仕得粉末涂料替代","relevance":"relevant","recommend":"adopt","reason":"强替代需求，隐含自有方案机会","suggested_bid":9.0,"bid_reason":"高转化潜力，建议略高于指导价"},
+    {"word":"粉末涂料品牌对比","relevance":"relevant","recommend":"watch","reason":"选型阶段词，价值待验证意图","suggested_bid":null,"bid_reason":null},
+    {"word":"艾仕得涂料官网","relevance":"irrelevant","recommend":"drop","reason":"纯导航词，无采购或替代意图","suggested_bid":null,"bid_reason":null},
+    {"word":"艾仕得涂料算大公司吗","relevance":"irrelevant","recommend":"drop","reason":"品牌认知类泛问，无商业意图","suggested_bid":null,"bid_reason":null},
+    {"word":"艾仕得涂料配方查询","relevance":"irrelevant","recommend":"drop","reason":"技术细节查询，非采购/选型场景","suggested_bid":null,"bid_reason":null},
+    {"word":"设备","relevance":"generic","recommend":"drop","reason":"纯通用词，无行业指向性","suggested_bid":null,"bid_reason":null},
+    {"word":"中心","relevance":"generic","recommend":"drop","reason":"泛后缀词，无业务语义","suggested_bid":null,"bid_reason":null},
+    {"word":"厂家","relevance":"generic","recommend":"drop","reason":"泛称，未绑定粉末涂料品类","suggested_bid":null,"bid_reason":null},
+    {"word":"宠物猫粮批发","relevance":"irrelevant","recommend":"drop","reason":"完全偏离工业涂料行业","suggested_bid":null,"bid_reason":null},
+    {"word":"手机屏幕维修","relevance":"irrelevant","recommend":"drop","reason":"消费电子服务，与业务零关联","suggested_bid":null,"bid_reason":null},
+    {"word":"机票查询","relevance":"irrelevant","recommend":"drop","reason":"通用生活服务，无工业属性","suggested_bid":null,"bid_reason":null},
+    {"word":"艾仕得水性漆","relevance":"irrelevant","recommend":"drop","reason":"水性漆非粉末涂料，品类不匹配","suggested_bid":null,"bid_reason":null},
+    {"word":"汽车修补漆","relevance":"irrelevant","recommend":"drop","reason":"液态修补漆，非粉末涂料范畴","suggested_bid":null,"bid_reason":null},
+    {"word":"家装乳胶漆","relevance":"irrelevant","recommend":"drop","reason":"民用装饰漆，非工业粉末涂料","suggested_bid":null,"bid_reason":null}
+  ]
+}
