@@ -2,6 +2,8 @@
 import asyncio
 from collections import Counter
 from copy import deepcopy
+from datetime import datetime
+import hashlib
 import json
 from pathlib import Path
 import socket
@@ -12,6 +14,8 @@ import pytest
 # Reuse the existing offline settings bootstrap and non-persisted tenant factory.
 from tests.test_sem_expansion_business_profile import tenant
 from app.ai import expansion_eval as ev
+from app.api.expansion import _candidate_payload
+from app.models import KeywordCandidate
 
 
 FIXTURE = json.loads(
@@ -20,6 +24,10 @@ FIXTURE = json.loads(
 )
 CASES = FIXTURE["cases"]
 SCORED = [case for case in CASES if case["review"] == "scored_draft"]
+OBSERVED = json.loads(
+    (Path(__file__).parent / "fixtures" / "sem_expansion_qwen_observed_20260903.json")
+    .read_text(encoding="utf-8")
+)
 
 
 @pytest.fixture(autouse=True)
@@ -135,3 +143,83 @@ def test_boundary_cases_remain_unscored_and_have_no_reference_prices():
     assert {c["word"] for c in boundary} == {"艾仕得水性漆", "汽车修补漆", "家装乳胶漆"}
     assert all(c["allowed_pairs"] is None for c in boundary)
     assert all("suggested_bid" not in c for c in CASES)
+
+
+def test_historical_observation_is_complete_and_separate_from_reference_labels():
+    assert OBSERVED["kind"] == "historical_observation_not_expected_answers"
+    observed = {item["word"]: item for item in OBSERVED["items"]}
+    assert len(observed) == len(OBSERVED["items"]) == 20
+    assert set(observed) == {c["word"] for c in CASES}
+    deviations = []
+    for case in SCORED:
+        item = observed[case["word"]]
+        if [item["relevance"], item["recommend"]] not in case["allowed_pairs"]:
+            deviations.append(case["id"])
+    # Historical 13/17 against a DRAFT, not a quality pass for this new prompt.
+    assert deviations == ["competitor-03", "information-01", "information-02", "information-03"]
+    assert sum(item["suggested_bid"] is not None for item in observed.values()) == 4
+    assert all(c["allowed_pairs"] is None for c in CASES if c["group"] == "boundary")
+
+
+def test_observed_input_stays_reproducible_without_sending_answers():
+    prompt = ev._build_user_prompt(tenant(**FIXTURE["profile"]), [{"word": c["word"]} for c in CASES])
+    assert hashlib.sha256(prompt.encode("utf-8")).hexdigest() == OBSERVED["user_prompt_sha256"]
+    assert hashlib.sha256(ev.SYSTEM_PROMPT.encode("utf-8")).hexdigest() != OBSERVED["system_prompt_sha256"]
+    for item in OBSERVED["items"]:
+        assert item["reason"] not in prompt
+        if item["bid_reason"]:
+            assert item["bid_reason"] not in prompt
+
+
+def test_historical_response_replay_removes_unfounded_prices_not_semantic_errors(deny_network):
+    runner, guard = deny_network
+    customer = tenant(**FIXTURE["profile"])
+    words = [{"word": c["word"]} for c in CASES]
+    original = deepcopy(OBSERVED)
+    fake = AsyncMock(return_value={"items": deepcopy(OBSERVED["items"])})
+    guard.setattr(ev, "chat_json", fake)
+    verdicts = runner.run(ev._evaluate_batch(customer, words))
+    fake.assert_awaited_once_with(ev.SYSTEM_PROMPT, ev._build_user_prompt(customer, words))
+    assert len(verdicts) == 20
+    for raw in OBSERVED["items"]:
+        verdict = verdicts[raw["word"]]
+        assert verdict["suggested_bid"] is None and verdict["bid_reason"] is None
+        # Deliberately expose the adapter's limit: valid semantic errors survive.
+        # Never rewrite competitor words/labels to fake a model-quality pass.
+        for field in ("relevance", "recommend", "reason"):
+            assert verdict[field] == raw[field]
+    assert OBSERVED == original
+
+
+def test_cached_observed_quotes_are_hidden_by_api_without_changing_manual_presets():
+    fingerprint = ev.context_fingerprint(tenant(**FIXTURE["profile"]))
+    for raw in OBSERVED["items"]:
+        row = KeywordCandidate(
+            id=1, tenant_id=3, word=raw["word"], source="planner", status="pending",
+            preset_price=2, ai_relevance=raw["relevance"], ai_recommend=raw["recommend"],
+            ai_reason=raw["reason"], ai_suggested_bid=raw["suggested_bid"],
+            ai_bid_reason=raw["bid_reason"], ai_evaluated_at=datetime(2026, 9, 3),
+            raw={ev.EVALUATION_META_KEY: {"context_hash": fingerprint}},
+        )
+        payload = _candidate_payload(row, fingerprint)
+        assert payload["ai_freshness"] == "current"  # not merely stale-price suppression
+        assert payload["ai_suggested_bid"] is None and payload["ai_bid_reason"] is None
+        assert payload["preset_price"] == 2
+        assert row.ai_suggested_bid == raw["suggested_bid"] and row.status == "pending"
+
+
+@pytest.mark.parametrize("rule", [
+    "主营不等于唯一经营范围，未提及不等于明确排除",
+    "相邻产品是否经营尚未确认时用 generic/watch",
+    "不能因投放策略未知抹去已确认的业务相关性",
+    "已知同行的官网导航用 relevant/drop",
+    "不得仅因出现“替代”就给 adopt",
+    "缺指导价时 suggested_bid=null 且 bid_reason=null",
+    "未提供的搜索量、竞争度、指导价和转化表现均为未知",
+    "adopt 只是运营建议，不是投放许可",
+])
+def test_prompt_preserves_reviewed_decision_policy(rule):
+    # Text-policy contract only; cannot assert that a real model obeys it.
+    assert rule in ev.SYSTEM_PROMPT
+    assert "艾仕得" not in ev.SYSTEM_PROMPT and "阿克苏诺贝尔" not in ev.SYSTEM_PROMPT
+    assert "suggested_bid\": null" in ev.SYSTEM_PROMPT
