@@ -48,7 +48,7 @@ export const ENGINE_LABEL = {
   qwen: '通义千问',
   tongyi: '通义千问',
   yuanbao: '腾讯元宝',
-  hunyuan: '腾讯元宝',
+  hunyuan: '腾讯混元',
   claude: 'Claude',
   gemini: 'Gemini',
   perplexity: 'Perplexity',

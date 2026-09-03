@@ -117,12 +117,13 @@ async def build_strategy_impacts(
         )
     )
     enabled = {str(e.engine_key) for e in engines if e.enabled}
+    from app.geo.content.engine_providers import resolve_platform_engine_credentials
+
     real_ready = {
         str(e.engine_key)
         for e in engines
         if e.enabled
-        and str(getattr(e, "sample_mode", "") or "") == "openai_compat"
-        and bool(getattr(e, "api_key_encrypted", None))
+        and bool(resolve_platform_engine_credentials(e.engine_key))
     }
 
     today = date.today()
@@ -184,7 +185,7 @@ async def build_strategy_impacts(
             trend_id="kimi-longctx",
             level="info",
             title="Kimi 仍为人设模拟",
-            detail="若需真采样，在引擎页将 Kimi 设为 openai_compat 并配置 Key。",
+            detail="平台尚未配置 Kimi 真采样，请联系管理员处理服务密钥或余额。",
             href="/geo/engines",
             tags=["engine_kimi", "patrol"],
         )
@@ -194,7 +195,7 @@ async def build_strategy_impacts(
             trend_id="ds-v3-dashscope",
             level="warning",
             title="真采样引擎未就绪",
-            detail="巡检将回退人设模拟/租户 LLM。建议配置引擎 openai_compat 或完善 AI 配置。",
+            detail="巡检将回退人设模拟。请联系管理员配置平台托管的引擎凭证。",
             href="/geo/engines",
             tags=["patrol", "llm_config"],
         )

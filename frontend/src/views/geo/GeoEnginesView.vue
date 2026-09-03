@@ -21,6 +21,7 @@ const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
 const items = ref([])
+const supportServices = ref([])
 const editing = ref(null)
 const configOpen = computed({
   get: () => !!editing.value,
@@ -36,64 +37,11 @@ const patrol = ref({
   prompt_limit: 20,
 })
 
-const BAILIAN_PRESET = {
-  api_base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-  model: 'deepseek-v3',
-}
-const OFFICIAL_PRESET = {
-  chatgpt: { api_base_url: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
-  kimi: { api_base_url: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
-  perplexity: { api_base_url: 'https://api.perplexity.ai', model: 'sonar' },
-  doubao: { api_base_url: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-pro-32k' },
-  deepseek: { api_base_url: 'https://api.deepseek.com', model: 'deepseek-chat' },
-}
-
-function isDeepseekEngine(key) {
-  return String(key || '').toLowerCase().includes('deepseek')
-}
-
-function isDashscopeUrl(url) {
-  const u = String(url || '').toLowerCase()
-  return u.includes('dashscope') || u.includes('aliyuncs.com')
-}
-
-function dashscopeBlocked(row) {
-  return !!(row && !isDeepseekEngine(row.engine_key) && isDashscopeUrl(row.api_base_url))
-}
-
-function applyBailian(row) {
-  if (!isDeepseekEngine(row.engine_key)) {
-    ElMessage.warning('阿里云百炼仅可用于 DeepSeek 监测')
-    return
-  }
-  row.sample_mode = 'openai_compat'
-  row.api_base_url = BAILIAN_PRESET.api_base_url
-  row.model = BAILIAN_PRESET.model
-}
-
-function applyOfficial(row) {
-  const p = OFFICIAL_PRESET[String(row.engine_key || '').toLowerCase()]
-  if (!p) {
-    dropBailian(row)
-    return
-  }
-  row.sample_mode = 'openai_compat'
-  row.api_base_url = p.api_base_url
-  row.model = p.model
-  ElMessage.success('已改为该引擎官方兼容地址，填写对应 API Key 后保存即可真采样')
-}
-
-function dropBailian(row) {
-  row.api_base_url = ''
-  row.model = ''
-  row.sample_mode = 'mock_persona'
-  ElMessage.success('已清空百炼地址，改为人设模拟。点保存后生效')
-}
-
 function cardBadge(row) {
-  if (row.enabled && dashscopeBlocked(row)) return { text: '百炼仅 DeepSeek', cls: 'red' }
-  if (row.enabled) return { text: '监测中', cls: 'green' }
-  return { text: '未开启', cls: 'amber' }
+  if (!row.enabled) return { text: '未开启', cls: 'amber' }
+  if (row.api_key_configured) return { text: '平台已配置', cls: 'green' }
+  if (row.platform_managed) return { text: '平台待配置', cls: 'amber' }
+  return { text: '仅模拟', cls: 'amber' }
 }
 
 function modeLabel(mode) {
@@ -106,8 +54,6 @@ function hydrateItems(list) {
     sample_mode: it.sample_mode || 'mock_persona',
     api_base_url: it.api_base_url || '',
     model: it.model || '',
-    api_key: '',
-    clear_api_key: false,
   }))
 }
 
@@ -118,18 +64,14 @@ function enginePayload(it, idx) {
     enabled: !!it.enabled,
     note: it.note || null,
     sort_order: it.sort_order ?? idx * 10,
-    sample_mode: it.sample_mode || 'mock_persona',
-    api_base_url: it.api_base_url || null,
-    model: it.model || null,
-    api_key: it.api_key && it.api_key.length >= 8 ? it.api_key : undefined,
-    clear_api_key: !!it.clear_api_key,
   }
 }
 
 async function load() {
   if (!tenantId.value) {
-    error.value = '请先选择客户或配置本地 API Key'
+    error.value = '请先选择已开通 GEO 的客户'
     items.value = []
+    supportServices.value = []
     return
   }
   loading.value = true
@@ -140,6 +82,7 @@ async function load() {
       fetchVisibilityPatrolSettings(tenantId.value).catch(() => null),
     ])
     items.value = hydrateItems(data.items)
+    supportServices.value = data.support_services || []
     if (patrolRes) {
       patrol.value = {
         enabled: !!patrolRes.enabled,
@@ -152,6 +95,7 @@ async function load() {
   } catch (e) {
     error.value = e.message || '加载失败'
     items.value = []
+    supportServices.value = []
   } finally {
     loading.value = false
   }
@@ -168,9 +112,6 @@ function closeConfig() {
 async function saveConfig() {
   const row = editing.value
   if (!tenantId.value || !row) return
-  if (row.enabled && dashscopeBlocked(row)) {
-    applyOfficial(row)
-  }
   saving.value = true
   try {
     const data = await putGeoTrackingEngines(
@@ -238,7 +179,7 @@ onMounted(load)
   <GeoWorkbenchPage
     title="AI 引擎管理"
     :show-period="false"
-    sub="配置要监测的 AI 大模型与巡检频率"
+    sub="平台统一管理引擎接口与密钥；客户只需选择参与监测的引擎"
     :loading="loading"
   >
     <template #actions>
@@ -283,7 +224,7 @@ onMounted(load)
             </el-table-column>
             <el-table-column label="操作" width="100" fixed="right">
               <template #default="{ row }">
-                <el-button link type="primary" @click="openConfig(row)">高级</el-button>
+                <el-button link type="primary" @click="openConfig(row)">状态</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -291,9 +232,9 @@ onMounted(load)
       </section>
 
       <details class="adv mb">
-        <summary>高级设置</summary>
+        <summary>平台状态与巡检设置</summary>
         <div class="adv-body">
-          <p class="hint">引擎接口配置与巡检调度。点表格「高级」可单独配置真采样 Base URL / Key。</p>
+          <p class="hint">接口、模型与密钥由平台统一维护；客户可查看状态并设置巡检调度。</p>
           <div class="geo-eng-grid">
             <button
               v-for="row in items"
@@ -307,7 +248,7 @@ onMounted(load)
               </span>
               <div class="geo-eng-copy">
                 <b>{{ row.display_name || engineDisplay(row.engine_key) }}</b>
-                <div class="gd-sub" style="margin:0">{{ row.engine_key }} · 点击配置接口</div>
+                <div class="gd-sub" style="margin:0">{{ row.engine_key }} · 查看平台状态</div>
               </div>
               <div class="geo-eng-flags">
                 <span class="gd-badge" :class="cardBadge(row).cls">{{ cardBadge(row).text }}</span>
@@ -368,9 +309,24 @@ onMounted(load)
         </div>
       </details>
 
+      <div v-if="supportServices.length" class="gd-card geo-support-card">
+        <div class="gd-hd"><h3>联网搜索辅助服务</h3></div>
+        <div class="gd-bd">
+          <div v-for="service in supportServices" :key="service.service_key" class="geo-set-row">
+            <div>
+              <b>{{ service.display_name }}</b>
+              <div class="gd-sub">用于搜索与信源补充，不作为 AI 引擎回答样本</div>
+            </div>
+            <span class="gd-badge" :class="service.configured ? 'green' : 'amber'">
+              {{ service.configured ? '平台已配置' : '平台待配置' }}
+            </span>
+          </div>
+        </div>
+      </div>
+
       <el-dialog
         v-model="configOpen"
-        :title="editing ? `配置 ${editing.display_name || engineDisplay(editing.engine_key)}` : '配置引擎'"
+        :title="editing ? `${editing.display_name || engineDisplay(editing.engine_key)} 平台状态` : '引擎平台状态'"
         width="520px"
         class="geo-form-dialog"
         @closed="closeConfig"
@@ -379,55 +335,18 @@ onMounted(load)
           <el-form-item label="监测">
             <el-switch v-model="editing.enabled" />
           </el-form-item>
-          <el-form-item label="采样">
-            <el-select v-model="editing.sample_mode" style="width: 100%">
-              <el-option :label="modeLabel('mock_persona')" value="mock_persona" />
-              <el-option :label="modeLabel('openai_compat')" value="openai_compat" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="Base URL">
-            <el-input
-              v-model="editing.api_base_url"
-              :disabled="editing.sample_mode !== 'openai_compat'"
-              placeholder="真采样时必填"
-            />
-          </el-form-item>
-          <el-form-item label="模型">
-            <el-input
-              v-model="editing.model"
-              :disabled="editing.sample_mode !== 'openai_compat'"
-              placeholder="真采样时必填"
-            />
-          </el-form-item>
-          <el-form-item label="API Key">
-            <el-input
-              v-model="editing.api_key"
-              type="password"
-              show-password
-              :disabled="editing.sample_mode !== 'openai_compat'"
-              :placeholder="editing.api_key_configured ? '已配置 · 留空保留' : '至少 8 位'"
-            />
-            <el-checkbox
-              v-if="editing.api_key_configured && editing.sample_mode === 'openai_compat'"
-              v-model="editing.clear_api_key"
-            >
-              清除 Key
-            </el-checkbox>
-          </el-form-item>
           <el-alert
-            v-if="dashscopeBlocked(editing)"
-            type="error"
+            :type="editing.api_key_configured ? 'success' : 'warning'"
             :closable="false"
             show-icon
-            title="当前接口为阿里云百炼，仅支持 DeepSeek 监测。请填写该引擎的官方兼容接口，或改用人设模拟。"
+            :title="editing.api_key_configured ? '平台接口已配置；巡检将调用真实 API，调用失败会单独记录' : '平台尚未配置该接口，当前使用人设模拟样本'"
           />
-          <el-form-item v-if="dashscopeBlocked(editing)">
-            <el-button type="primary" @click="applyOfficial(editing)">改用官方接口</el-button>
-            <el-button @click="dropBailian(editing)">改用人设模拟</el-button>
-          </el-form-item>
-          <el-form-item v-if="isDeepseekEngine(editing.engine_key)">
-            <el-button @click="applyBailian(editing)">使用阿里云百炼</el-button>
-          </el-form-item>
+          <div class="geo-platform-meta">
+            <div><span>提供商</span><b>{{ editing.provider_label || '平台未配置' }}</b></div>
+            <div><span>模型</span><b>{{ editing.model || '—' }}</b></div>
+            <div><span>采样方式</span><b>{{ modeLabel(editing.sample_mode) }}</b></div>
+          </div>
+          <div class="gd-sub geo-managed-note">API Key、接口地址和模型由平台管理员统一维护，客户侧不可查看或修改。</div>
         </el-form>
         <template #footer>
           <el-button @click="closeConfig">取消</el-button>
@@ -468,4 +387,17 @@ onMounted(load)
   gap: 6px;
   margin-left: auto;
 }
+.geo-support-card { margin-bottom: 16px; }
+.geo-platform-meta {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 10px;
+  background: #f7f9fc;
+}
+.geo-platform-meta > div { display: flex; justify-content: space-between; gap: 16px; }
+.geo-platform-meta span { color: #77849a; }
+.geo-platform-meta b { text-align: right; overflow-wrap: anywhere; }
+.geo-managed-note { margin-top: 12px; }
 </style>

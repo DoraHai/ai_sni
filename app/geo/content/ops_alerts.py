@@ -100,7 +100,7 @@ async def build_ops_alerts(
                     "level": "warning",
                     "code": "patrol_cell_fail",
                     "title": f"最近巡检有 {fail} 格失败",
-                    "detail": "请检查引擎 Key / LLM 配置",
+                    "detail": "请联系管理员检查平台引擎配置",
                     "href": "/geo/visibility/patrol",
                 }
             )

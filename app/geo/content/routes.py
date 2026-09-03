@@ -3560,7 +3560,7 @@ async def probe_answer_snapshot(
 ) -> dict:
     """单引擎草稿探测：不写库，供运营确认后手工保存。
 
-    默认租户 LLM + 引擎人设模拟；引擎配置 sample_mode=openai_compat 且有 Key 时走真采样。
+    平台配置了该引擎时走真采样；否则使用平台能力 LLM 做明确标记的人设模拟。
     """
     from app.ai.deepseek import DeepSeekError, chat_json
 
@@ -3576,7 +3576,7 @@ async def probe_answer_snapshot(
     if not llm or not llm.get("api_key"):
         raise HTTPException(
             503,
-            "未配置 AI 能力：请在「AI 能力配置」或引擎 openai_compat 凭证中填写 API Key，或改用粘贴登记",
+            "平台尚未配置该 AI 引擎，请联系管理员，或改用粘贴登记",
         )
     brand, brand_names = await _brand_context_for_prompt(session, prompt, tenant)
     try:
@@ -3609,7 +3609,7 @@ async def probe_answer_snapshot_batch(
 ) -> dict:
     """对多个跟踪引擎生成探测草稿；不写库。失败引擎记入 error，不中断整批。
 
-    每引擎可独立 openai_compat 凭证；未配置则回退租户 LLM + 人设模拟。
+    每个引擎只使用平台托管凭证；未配置则回退平台能力 LLM + 人设模拟。
     """
     from app.ai.deepseek import DeepSeekError, chat_json
 
@@ -3625,12 +3625,14 @@ async def probe_answer_snapshot_batch(
     engines = resolve_batch_engines(req.engines, enabled_keys)
     if not engines:
         raise HTTPException(400, "没有可探测的引擎，请先在「AI 引擎管理」启用引擎")
+    from app.geo.content.engine_providers import resolve_platform_engine_credentials
+
     if not tenant_llm and not any(
-        getattr(row_by_key.get(e), "api_key_encrypted", None) for e in engines
+        resolve_platform_engine_credentials(e) for e in engines
     ):
         raise HTTPException(
             503,
-            "未配置 AI 能力：请在「AI 能力配置」或引擎 openai_compat 凭证中填写 API Key，或改用粘贴登记",
+            "平台尚未配置可用的 AI 引擎，请联系管理员，或改用粘贴登记",
         )
 
     brand, brand_names = await _brand_context_for_prompt(session, prompt, tenant)
@@ -4405,11 +4407,9 @@ async def get_monitoring_stance(
         )
     )
     enabled = [e for e in engines if e.enabled]
-    real_ready = [
-        e
-        for e in enabled
-        if (e.sample_mode or "") == "openai_compat" and e.api_key_encrypted
-    ]
+    from app.geo.content.engine_providers import resolve_platform_engine_credentials
+
+    real_ready = [e for e in enabled if resolve_platform_engine_credentials(e.engine_key)]
     banner = compose_stance_banner(
         stance,
         real_ready_engines=len(real_ready),
@@ -4424,9 +4424,7 @@ async def get_monitoring_stance(
         "engines_summary": {
             "enabled": len(enabled),
             "real_ready": len(real_ready),
-            "mock_persona": sum(
-                1 for e in enabled if (e.sample_mode or "mock_persona") == "mock_persona"
-            ),
+            "mock_persona": len(enabled) - len(real_ready),
             "will_run": skip_preview["enabled_will_run"],
             "will_skip": skip_preview["enabled_will_skip"],
         },
@@ -4607,10 +4605,13 @@ async def visibility_patrol_ops_status(
             .order_by(GeoTrackingEngine.sort_order, GeoTrackingEngine.id)
         )
     )
+    from app.geo.content.engine_providers import platform_engine_public_status
+
     engine_items = []
     for e in engines:
-        has_key = bool(getattr(e, "api_key_encrypted", None))
-        mode = str(getattr(e, "sample_mode", None) or "mock_persona")
+        platform = platform_engine_public_status(e.engine_key)
+        has_key = bool(platform["configured"])
+        mode = "openai_compat" if has_key else "mock_persona"
         engine_items.append(
             {
                 "engine_key": e.engine_key,
@@ -4642,7 +4643,7 @@ async def visibility_patrol_ops_status(
         summary = last.summary or {}
         fail = int(summary.get("cells_fail") or 0)
         if fail:
-            alerts.append(f"最近巡检 #{last.id} 有 {fail} 格失败，请检查引擎 Key / LLM")
+            alerts.append(f"最近巡检 #{last.id} 有 {fail} 格失败，请联系管理员检查平台引擎")
         if summary.get("truncated"):
             alerts.append(summary.get("truncated_reason") or "最近巡检触发格数截断")
     if used >= day_limit:
@@ -4650,7 +4651,7 @@ async def visibility_patrol_ops_status(
     if not any(e["enabled"] for e in engine_items):
         alerts.append("无启用引擎，巡检无法运行")
     if not any(e["ready_for_real"] for e in engine_items):
-        alerts.append("未配置 openai_compat 引擎 Key：巡检将以人设模拟为主")
+        alerts.append("平台未配置真采样引擎：巡检将以人设模拟为主")
 
     from app.geo.content.patrol import patrol_run_payload
 
@@ -4849,7 +4850,7 @@ async def create_visibility_patrol_run(
 ) -> dict:
     """启动一次全自动巡检：多机会词 × 启用引擎探测，默认自动落库快照。
 
-    真采样：引擎 sample_mode=openai_compat 且配置 Key；否则租户 LLM + 人设（标记 simulated）。
+    真采样凭证仅来自服务器环境；未配置的引擎回退为明确标记的人设模拟。
     产品化配额：GEO_PATROL_MAX_RUNS_PER_DAY 限制单租户自然日启动次数。
 
     异步执行使用 Starlette BackgroundTasks（请求返回后再跑），避免 asyncio.create_task
@@ -5002,7 +5003,7 @@ async def suggest_answer_snapshot_fields(
         if not llm:
             raise HTTPException(
                 503,
-                "未配置 AI 能力：请在「AI 能力配置」填写 API Key，或将 use_llm=false 仅用启发式",
+                "平台尚未配置 AI 能力，请联系管理员，或将 use_llm=false 仅用启发式",
             )
         try:
             llm_data = await chat_json(
@@ -5169,23 +5170,10 @@ async def test_ai_settings(
 
 
 def _engine_payload(row: GeoTrackingEngine) -> dict[str, Any]:
-    from app.geo.content.ai_settings import mask_api_key
-    from app.geo.content.engines import sanitize_engine_endpoint
-    from app.security.crypto import decrypt
+    from app.geo.content.engine_providers import platform_engine_public_status
 
-    plain = None
-    if getattr(row, "api_key_encrypted", None):
-        try:
-            plain = decrypt(row.api_key_encrypted)
-        except Exception:  # noqa: BLE001
-            plain = None
-    url, model, mode, _changed = sanitize_engine_endpoint(
-        row.engine_key,
-        getattr(row, "api_base_url", None),
-        getattr(row, "model", None),
-        getattr(row, "sample_mode", None) or "mock_persona",
-        has_key=bool(plain),
-    )
+    platform = platform_engine_public_status(row.engine_key)
+    configured = bool(platform["configured"])
     return {
         "id": row.id,
         "tenant_id": row.tenant_id,
@@ -5194,11 +5182,15 @@ def _engine_payload(row: GeoTrackingEngine) -> dict[str, Any]:
         "enabled": bool(row.enabled),
         "note": row.note,
         "sort_order": row.sort_order,
-        "sample_mode": mode,
-        "api_base_url": url,
-        "model": model,
-        "api_key_configured": bool(plain),
-        "api_key_masked": mask_api_key(plain) if plain else None,
+        "sample_mode": "openai_compat" if configured else "mock_persona",
+        "api_base_url": platform["base_url"],
+        "model": platform["model"],
+        "api_key_configured": configured,
+        "api_key_masked": None,
+        "platform_managed": bool(platform["platform_managed"]),
+        "provider": platform["provider"],
+        "provider_label": platform["provider_label"],
+        "configuration_source": platform["source"],
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
     }
@@ -5239,34 +5231,6 @@ async def _ensure_default_engines(
                 .order_by(GeoTrackingEngine.sort_order, GeoTrackingEngine.id)
             )
         )
-    from app.geo.content.engines import sanitize_engine_endpoint
-    from app.security.crypto import decrypt
-
-    dirty = False
-    for r in rows:
-        has_key = False
-        if getattr(r, "api_key_encrypted", None):
-            try:
-                has_key = bool(decrypt(r.api_key_encrypted))
-            except Exception:  # noqa: BLE001
-                has_key = False
-        url, model, mode, changed = sanitize_engine_endpoint(
-            r.engine_key,
-            getattr(r, "api_base_url", None),
-            getattr(r, "model", None),
-            getattr(r, "sample_mode", None),
-            has_key=has_key,
-        )
-        if not changed:
-            continue
-        r.api_base_url = url
-        r.model = model
-        r.sample_mode = mode
-        dirty = True
-    if dirty:
-        await session.commit()
-        for r in rows:
-            await session.refresh(r)
     return rows
 
 
@@ -5281,7 +5245,12 @@ async def list_tracking_engines(
     rows = await _ensure_default_engines(session, tenant_id)
     if enabled_only:
         rows = [r for r in rows if r.enabled]
-    return {"items": [_engine_payload(r) for r in rows]}
+    from app.geo.content.engine_providers import tencent_wsa_public_status
+
+    return {
+        "items": [_engine_payload(r) for r in rows],
+        "support_services": [tencent_wsa_public_status()],
+    }
 
 
 @router.put("/tracking-engines")
@@ -5292,7 +5261,8 @@ async def put_tracking_engines(
 ) -> dict:
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
-    # Preserve encrypted keys when client does not resend api_key
+    # Legacy encrypted keys remain preserved for rollback compatibility, but are
+    # never resolved or exposed. New tenant-level credentials are forbidden.
     existing_rows = list(
         await session.scalars(
             select(GeoTrackingEngine).where(GeoTrackingEngine.tenant_id == req.tenant_id)
@@ -5304,32 +5274,17 @@ async def put_tracking_engines(
     )
     created: list[GeoTrackingEngine] = []
     seen: set[str] = set()
-    from app.geo.content.ai_settings import encrypt_api_key
-
     for item in req.items:
         if item.engine_key in seen:
             continue
         seen.add(item.engine_key)
         enc = existing_keys.get(item.engine_key)
-        if item.clear_api_key:
-            enc = None
-        elif item.api_key:
-            try:
-                enc = encrypt_api_key(item.api_key)
-            except ValueError as exc:
-                raise HTTPException(400, str(exc)) from exc
-        mode = (item.sample_mode or "mock_persona").strip()
-        if mode not in ("mock_persona", "openai_compat"):
-            mode = "mock_persona"
-        from app.geo.content.engines import sanitize_engine_endpoint
+        if item.api_key or item.clear_api_key:
+            raise HTTPException(400, "AI 引擎凭证由平台统一管理，客户不能修改")
+        from app.geo.content.engine_providers import platform_engine_public_status
 
-        url, model, mode, _changed = sanitize_engine_endpoint(
-            item.engine_key,
-            item.api_base_url,
-            item.model,
-            mode,
-            has_key=bool(enc),
-        )
+        platform = platform_engine_public_status(item.engine_key)
+        mode = "openai_compat" if platform["configured"] else "mock_persona"
         row = GeoTrackingEngine(
             tenant_id=req.tenant_id,
             engine_key=item.engine_key,
@@ -5338,8 +5293,8 @@ async def put_tracking_engines(
             note=item.note,
             sort_order=int(item.sort_order),
             sample_mode=mode,
-            api_base_url=url,
-            model=model,
+            api_base_url=None,
+            model=None,
             api_key_encrypted=enc,
         )
         session.add(row)

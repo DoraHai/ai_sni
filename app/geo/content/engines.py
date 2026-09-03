@@ -6,8 +6,11 @@ DEFAULT_TRACKING_ENGINES: list[tuple[str, str, int]] = [
     ("chatgpt", "ChatGPT", 10),
     ("deepseek", "DeepSeek", 20),
     ("doubao", "豆包", 30),
-    ("kimi", "Kimi", 35),
-    ("perplexity", "Perplexity", 40),
+    ("qwen", "通义千问", 35),
+    ("hunyuan", "腾讯混元", 40),
+    ("wenxin", "文心一言", 45),
+    ("kimi", "Kimi", 50),
+    ("perplexity", "Perplexity", 60),
     ("other", "其他", 90),
 ]
 
@@ -18,6 +21,9 @@ ENGINE_COMPAT_PRESETS: dict[str, tuple[str, str]] = {
     "perplexity": ("https://api.perplexity.ai", "sonar"),
     "doubao": ("https://ark.cn-beijing.volces.com/api/v3", "doubao-pro-32k"),
     "deepseek": ("https://api.deepseek.com", "deepseek-chat"),
+    "qwen": ("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-max"),
+    "hunyuan": ("https://api.hunyuan.cloud.tencent.com/v1", "hunyuan-turbos-latest"),
+    "wenxin": ("https://qianfan.bj.baidubce.com/v2", "ernie-5.1"),
 }
 
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from app.geo.content.probe import (
     ENGINE_PERSONAS,
@@ -33,7 +33,16 @@ class ProbeBatchHelpersTests(unittest.IsolatedAsyncioTestCase):
         )
 
     def test_persona_covers_defaults(self):
-        for key in ("chatgpt", "deepseek", "doubao", "perplexity", "other"):
+        for key in (
+            "chatgpt",
+            "deepseek",
+            "doubao",
+            "qwen",
+            "hunyuan",
+            "wenxin",
+            "perplexity",
+            "other",
+        ):
             self.assertIn(key, ENGINE_PERSONAS)
             prompt = build_probe_system_prompt(brand="Acme", engine=key)
             self.assertIn("Acme", prompt)
@@ -162,22 +171,29 @@ class ProbeBatchHelpersTests(unittest.IsolatedAsyncioTestCase):
             "model": "deepseek-v3",
             "provider": "dashscope",
         }
-        blocked, mode, reason = resolve_engine_llm(
-            engine="chatgpt", tenant_llm=tenant, engine_row=Row()
-        )
+        with patch(
+            "app.geo.content.engine_providers.resolve_platform_engine_credentials",
+            return_value=None,
+        ):
+            blocked, mode, reason = resolve_engine_llm(
+                engine="chatgpt", tenant_llm=tenant, engine_row=Row()
+            )
         self.assertEqual(blocked, {})
-        self.assertEqual(mode, SAMPLE_MODE_REAL)
+        self.assertEqual(mode, SAMPLE_MODE_PERSONA)
         self.assertEqual(reason, SKIP_DASHSCOPE_OTHER_ENGINE)
 
-        llm, mode, reason = resolve_engine_llm(
-            engine="deepseek", tenant_llm=tenant, engine_row=Row()
-        )
-        self.assertEqual(mode, SAMPLE_MODE_REAL)
+        with patch(
+            "app.geo.content.engine_providers.resolve_platform_engine_credentials",
+            return_value=None,
+        ):
+            llm, mode, reason = resolve_engine_llm(
+                engine="deepseek", tenant_llm=tenant, engine_row=Row()
+            )
+        self.assertEqual(mode, SAMPLE_MODE_PERSONA)
         self.assertEqual(llm["api_key"], "tk")
-        self.assertIn("tenant_fallback", str(llm.get("source") or ""))
         self.assertIsNone(reason)
 
-    def test_resolve_engine_llm_falls_back_without_key(self):
+    def test_resolve_engine_llm_ignores_tenant_engine_key(self):
         class Row:
             sample_mode = SAMPLE_MODE_REAL
             api_key_encrypted = None
@@ -190,13 +206,34 @@ class ProbeBatchHelpersTests(unittest.IsolatedAsyncioTestCase):
             "model": "tenant-m",
             "provider": "openai",
         }
-        llm, mode, reason = resolve_engine_llm(
-            engine="chatgpt", tenant_llm=tenant, engine_row=Row()
-        )
-        # 非百炼租户凭证仍可回退为真采样。
-        self.assertEqual(mode, SAMPLE_MODE_REAL)
+        with patch(
+            "app.geo.content.engine_providers.resolve_platform_engine_credentials",
+            return_value=None,
+        ):
+            llm, mode, reason = resolve_engine_llm(
+                engine="chatgpt", tenant_llm=tenant, engine_row=Row()
+            )
+        self.assertEqual(mode, SAMPLE_MODE_PERSONA)
         self.assertEqual(llm["api_key"], "tk")
-        self.assertIn("tenant_fallback", str(llm.get("source") or ""))
+        self.assertIsNone(reason)
+
+    def test_resolve_engine_llm_prefers_platform_engine(self):
+        platform = {
+            "api_key": "platform-key",
+            "base_url": "https://api.example/v1",
+            "model": "provider-model",
+            "provider": "qwen",
+            "source": "env:GEO_QWEN",
+        }
+        with patch(
+            "app.geo.content.engine_providers.resolve_platform_engine_credentials",
+            return_value=platform,
+        ):
+            llm, mode, reason = resolve_engine_llm(
+                engine="qwen", tenant_llm=None, engine_row=None
+            )
+        self.assertEqual(llm, platform)
+        self.assertEqual(mode, SAMPLE_MODE_REAL)
         self.assertIsNone(reason)
 
     def test_probe_batch_requires_geo_content_edit(self):
