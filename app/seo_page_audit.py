@@ -111,9 +111,9 @@ async def save_page_snapshot(session, page, values, actor_id, started_at):
     blocked = values.get('error_type') == 'robots_blocked'
     run = SeoCrawlRun(
         tenant_id=page.tenant_id, site_id=page.site_id, seed_url=page.url,
-        # Explicit single-page provenance; full-site selectors also require
-        # max_urls > 1. Per-page history may still compare these observations.
-        status='single_failed' if failed else 'single_completed', max_urls=1,
+        # Keep the deployed status CHECK contract. Single-page provenance is
+        # max_urls=1 plus snapshot.discovery_source; full-site lists exclude it.
+        status='failed' if failed else 'completed', max_urls=1,
         discovered_count=1, fetched_count=int(not failed),
         failed_count=int(failed and not blocked), blocked_count=int(blocked),
         issue_count=len(values.get('issue_codes') or []),

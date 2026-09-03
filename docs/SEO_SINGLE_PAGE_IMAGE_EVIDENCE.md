@@ -13,7 +13,7 @@ HTML 中畸形链接（非法端口、无效 IPv6 等）按单个属性忽略，
 ## 持久化与隔离
 
 - 复用已存在的 SeoCrawlRun/SeoPageSnapshot，无新增数据库迁移。
-- 单页 run 使用 max_urls=1、single_completed/single_failed；快照 discovery_source=single_page。
+- 单页 run 使用 max_urls=1、数据库允许的 completed/failed；快照 discovery_source=single_page。
 - run、快照和页面状态同一事务提交。失败快照不带图片明细，读取接口不会回退到旧成功证据。
 - 快照记录观测结束时的显式 CST，匹配现有快照字段时区约定；页面 checked_at 仍为 UTC。
 - 入口校验 SEO 订阅、编辑权限、租户、页面和所属网站。前端同时传 site_id；旧客户端缺省 site_id 时仍按存储记录验证所属网站。
@@ -27,6 +27,8 @@ HTML 中畸形链接（非法端口、无效 IPv6 等）按单个属性忽略，
 
 运行全部 tests/test_seo*.py；图片证据与诊断 Vue 测试；SEO 构建与产物隔离检查。
 新增 SQLite 隔离数据库测试真实提交后换 Session 读取，验证 JSON 明细、事务回滚、后续失败不回退旧证据。SQLite 不代替 PostgreSQL 的行锁测试；NOWAIT SQL 与锁冲突错误处理由单元测试覆盖。
+
+2026-09-04 单页验收发现状态约束遗漏：single_completed/single_failed 不在生产 CHECK 允许值内，导致抓取成功但保存 500。现复用 completed/failed，不修改数据库；单页/全站仍由 max_urls 与 discovery_source 区分。SQLite 测试装载迁移中的实际状态约束，并验证非法值会被拒绝。已有 PostgreSQL 迁移集成门禁增加迁移后真实约束下的成功/失败快照保存测试，使用隔离测试数据库中的临时表，不触碰生产。
 
 本轮不连接生产数据库、不抓取诺德、不调用 AI、不部署。
 
