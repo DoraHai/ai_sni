@@ -470,18 +470,9 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
                         items.append(cell)
                         continue
                     if row.prefer_real and sample_mode != SAMPLE_MODE_REAL:
-                        # prefer_real：有引擎 Key 或租户百炼时，强制走 openai_compat 真采样
-                        if engine_row is not None and (
-                            getattr(engine_row, "api_key_encrypted", None) or tenant_llm
-                        ):
-                            engine_row.sample_mode = SAMPLE_MODE_REAL  # type: ignore[attr-defined]
-                            llm, sample_mode, fallback_reason = resolve_engine_llm(
-                                engine=engine,
-                                tenant_llm=tenant_llm,
-                                engine_row=engine_row,
-                                monitoring_stance=stance,
-                            )
-                        elif tenant_llm and tenant_llm.get("api_key") and dashscope_usable_for_engine(
+                        # Platform engine credentials are resolved above. The shared
+                        # capability LLM may only become a real DeepSeek sample.
+                        if tenant_llm and tenant_llm.get("api_key") and dashscope_usable_for_engine(
                             engine,
                             base_url=str(tenant_llm.get("base_url") or ""),
                             provider=str(tenant_llm.get("provider") or ""),
@@ -495,7 +486,7 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
                             sample_mode = SAMPLE_MODE_REAL
                             fallback_reason = None
                     if not llm or not llm.get("api_key"):
-                        raise ValueError("无可用 LLM 凭证（请配置 AI 能力或引擎 openai_compat）")
+                        raise ValueError("平台尚未配置该 AI 引擎")
 
                     cell_brand, cell_names = _brand_for_prompt(prompt)
                     draft = await run_probe_draft(

@@ -16,6 +16,9 @@ ENGINE_PERSONAS: dict[str, str] = {
     "chatgpt": "请模拟 ChatGPT（OpenAI）公开回答的语气与结构（可适度分点，少空话）。",
     "deepseek": "请模拟 DeepSeek 公开回答的语气与结构（偏技术、条理清晰）。",
     "doubao": "请模拟豆包公开回答的语气与结构（口语友好、适合国内用户）。",
+    "qwen": "请模拟通义千问公开回答的语气与结构（中文表达自然、条理清晰）。",
+    "hunyuan": "请模拟腾讯混元公开回答的语气与结构（简洁、稳健、注重实用信息）。",
+    "wenxin": "请模拟文心一言公开回答的语气与结构（中文知识表达清晰、重点明确）。",
     "kimi": "请模拟 Kimi（月之暗面）公开回答的语气与结构（长文能力强、条理清晰、可适度引用公开常识）。",
     "perplexity": "请模拟 Perplexity 公开回答的语气与结构（偏检索综述，可提及常见公开来源类型，勿编造具体不存在的 URL）。",
     "other": "请用常见中文 AI 助手的公开回答语气作答。",
@@ -107,8 +110,9 @@ def resolve_engine_llm(
     """Pick credentials + sample mode for one engine.
 
     Returns (llm_dict, sample_mode, fallback_reason).
-    Prefer per-engine openai_compat when key is present; otherwise tenant LLM + persona.
-    DashScope/百炼 credentials only apply to the DeepSeek engine.
+    Prefer platform-managed per-engine credentials; otherwise use the platform
+    capability LLM for a clearly labelled persona simulation. Tenant database
+    credentials are intentionally ignored.
 
     monitoring_stance (W3):
       real_only — 无真 Key 时不降级 persona，返回空 llm + skip reason
@@ -116,9 +120,7 @@ def resolve_engine_llm(
       hybrid — 现行为
     """
     stance = (monitoring_stance or "hybrid").strip().lower()
-    mode = SAMPLE_MODE_PERSONA
-    if engine_row is not None:
-        mode = (getattr(engine_row, "sample_mode", None) or SAMPLE_MODE_PERSONA).strip()
+    del engine_row  # legacy signature; tenant rows no longer carry credentials
     usable_tenant = tenant_llm_for_engine(engine, tenant_llm)
 
     if stance == "simulation":
@@ -126,66 +128,19 @@ def resolve_engine_llm(
             return {}, SAMPLE_MODE_PERSONA, "simulation 定位：无可用租户 LLM"
         return usable_tenant, SAMPLE_MODE_PERSONA, "simulation 定位：强制人设模拟"
 
-    if mode == SAMPLE_MODE_REAL and engine_row is not None:
-        from app.security.crypto import decrypt
+    from app.geo.content.engine_providers import resolve_platform_engine_credentials
 
-        row_base = (getattr(engine_row, "api_base_url", None) or "").strip().rstrip("/")
-        if row_base and not dashscope_usable_for_engine(engine, base_url=row_base):
-            return {}, SAMPLE_MODE_REAL, SKIP_DASHSCOPE_OTHER_ENGINE
-        raw_key = None
-        enc = getattr(engine_row, "api_key_encrypted", None)
-        if enc:
-            try:
-                raw_key = decrypt(enc)
-            except Exception:  # noqa: BLE001
-                raw_key = None
-        if raw_key:
-            model = (getattr(engine_row, "model", None) or "").strip()
-            if not row_base or not model:
-                if stance == "real_only":
-                    return {}, SAMPLE_MODE_REAL, "skipped:real_only_missing_base_or_model"
-                if not usable_tenant:
-                    return {}, SAMPLE_MODE_PERSONA, "openai_compat 缺少 base_url 或 model"
-                return (
-                    usable_tenant,
-                    SAMPLE_MODE_PERSONA,
-                    "openai_compat 缺少 base_url 或 model，已回退人设模拟",
-                )
-            return (
-                {
-                    "api_key": raw_key,
-                    "base_url": row_base,
-                    "model": model,
-                    "provider": f"engine:{engine}",
-                    "source": "engine_openai_compat",
-                },
-                SAMPLE_MODE_REAL,
-                None,
-            )
-        # Real mode without per-engine key
-        if usable_tenant and usable_tenant.get("api_key") and stance != "real_only":
-            return (
-                {
-                    **usable_tenant,
-                    "provider": usable_tenant.get("provider") or "dashscope",
-                    "source": f"tenant_fallback:{engine}",
-                },
-                SAMPLE_MODE_REAL,
-                None,
-            )
-        if tenant_llm and tenant_llm.get("api_key") and usable_tenant is None:
-            return {}, SAMPLE_MODE_REAL, SKIP_DASHSCOPE_OTHER_ENGINE
-        if stance == "real_only":
-            return {}, SAMPLE_MODE_REAL, "skipped:real_only_no_engine_key"
-        return {}, SAMPLE_MODE_PERSONA, "openai_compat 未配置引擎 Key 且无租户 LLM"
+    platform_llm = resolve_platform_engine_credentials(engine)
+    if platform_llm:
+        return platform_llm, SAMPLE_MODE_REAL, None
 
-    if stance == "real_only" and mode != SAMPLE_MODE_REAL:
-        return {}, SAMPLE_MODE_REAL, "skipped:real_only_persona_engine_disabled"
+    if stance == "real_only":
+        return {}, SAMPLE_MODE_REAL, "skipped:real_only_no_platform_key"
 
     if not usable_tenant:
         if tenant_llm:
             return {}, SAMPLE_MODE_PERSONA, SKIP_DASHSCOPE_OTHER_ENGINE
-        return {}, SAMPLE_MODE_PERSONA, "无租户/环境 LLM 凭证"
+        return {}, SAMPLE_MODE_PERSONA, "无平台 AI 能力凭证"
     return usable_tenant, SAMPLE_MODE_PERSONA, None
 
 
