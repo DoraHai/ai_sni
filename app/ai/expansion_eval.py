@@ -11,12 +11,16 @@
 降级：未配 DEEPSEEK_API_KEY 返回 enabled=False；单批 API 失败跳过该批（保留旧值），
 不阻断其余批次。已评估过的（ai_evaluated_at 非空）默认跳过，force=True 全量重评。
 """
+import hashlib
 import json
 import logging
+import math
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import Text, case, cast, func, select
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.ai.deepseek import DeepSeekError, chat_json, is_enabled
 from app.models import (
@@ -41,13 +45,19 @@ SYSTEM_PROMPT = """你是资深国内百度 SEM 优化师，为当前客户筛�
 
 判断维度：
 - relevance（相关性）：
-  - relevant = 与本次客户资料明确描述的业务语义相关、值得拓展的词
+  - relevant = 与本次客户资料明确描述的业务语义相关，不代表值得投放
   - generic = 通用噪音词，单独看没有商业指向（"设备""中心""厂家""价格"这类太泛、纯地名、公司后缀）
   - irrelevant = 明显跑偏、与该行业无关的词
 - recommend（处理建议）：
   - adopt = 相关且有拓展价值，建议加词
   - watch = 相关但价值不确定，可观察
-  - drop = 噪音或不相关，建议忽略
+  - drop = 不相关、噪音，或虽相关但没有投放价值，建议忽略
+相关性与投放价值必须分别判断：同行竞品不等于行业无关，也不等于自有品牌。
+若客户资料明确竞品属于同行，竞品品牌、公司全称、官网导航词仍可为 relevant，
+但是否投放另看意图和客户策略；导航官网、招聘等无采购意图可给 relevant/drop，
+竞品比较、替代选型可给 relevant/watch。不得仅凭“竞品”“非自有品牌”“无自身商业价值”
+给 irrelevant。未明确竞品所属业务或客户策略时用 generic/watch 并说明需确认，
+不要自动采纳竞品词，也不要把行业相关等同于投放许可。
 - reason：给运营看的中文理由，一句话，20 字以内
 - suggested_bid（建议首次出价，元）：新词无历史效果数据，仅在业务相关性明确且有百度指导价时，参考 PC/移动指导价 + 竞争度 + 搜索量给保守的试投建议，不代表效果承诺。指导价缺失、业务依据不足、recommend=drop 或 relevance=irrelevant 时给 null。
 - bid_reason：出价理由，一句话，15 字以内（如"竞争度高，贴指导价试投"）
@@ -59,6 +69,83 @@ items 必须覆盖我给的每一个词，word 原样回填。务实判断，拿
 
 class MissingBusinessProfileError(ValueError):
     """No customer-supplied business context is available for evaluation."""
+
+
+EVALUATION_META_KEY = "__sem_ai_evaluation_v1"
+FRESHNESS_LABELS = {
+    "not_evaluated": "未评估",
+    "unverified": "历史结果未核验",
+    "stale": "画像或评估规则已变更",
+    "current": "当前资料下的评估",
+}
+
+
+def context_fingerprint(tenant: Tenant) -> str | None:
+    """Bind a verdict to explicit inputs and prompt policy without new columns.
+
+    Re-sync can replace raw metadata. Such verdicts become unverified, never
+    silently fresh. Historical data is not backfilled or automatically evaluated.
+    """
+    try:
+        profile = _business_profile(tenant)
+    except MissingBusinessProfileError:
+        return None
+    payload = json.dumps([tenant.id, SYSTEM_PROMPT, profile], ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def fingerprint_status(stored, fingerprint: str | None) -> str:
+    if (not isinstance(stored, str) or len(stored) != 64
+            or any(char not in "0123456789abcdef" for char in stored)):
+        return "unverified"
+    return "current" if fingerprint and stored == fingerprint else "stale"
+
+
+def evaluation_freshness(candidate: KeywordCandidate, fingerprint: str | None) -> str:
+    if candidate.ai_evaluated_at is None:
+        return "not_evaluated"
+    raw = candidate.raw if isinstance(candidate.raw, dict) else {}
+    meta = raw.get(EVALUATION_META_KEY)
+    stored = meta.get("context_hash") if isinstance(meta, dict) else None
+    return fingerprint_status(stored, fingerprint)
+
+
+def evaluation_stamp_expression(fingerprint: str):
+    """Patch only our metadata at SQL execution time, not a stale raw snapshot."""
+    raw = KeywordCandidate.raw
+    meta = {EVALUATION_META_KEY: {"context_hash": fingerprint}}
+    return case(
+        (func.jsonb_typeof(raw) == "object", func.jsonb_set(
+            raw, cast([EVALUATION_META_KEY], ARRAY(Text)),
+            cast(meta[EVALUATION_META_KEY], JSONB), True,
+        )),
+        ((raw.is_(None)) | (func.jsonb_typeof(raw) == "null"), cast(meta, JSONB)),
+        # Unexpected upstream arrays/scalars are source data, not ours to erase.
+        # Retain them unchanged; the result remains explicitly unverified.
+        else_=raw,
+    )
+
+
+def validated_suggested_bid(value) -> float | None:
+    """Apply the SEM form's price bounds to model output and legacy cached bids."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        price = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(price) or not 0.01 <= price <= 999.99:
+        return None
+    return round(price, 2)
+
+
+def supported_suggested_bid(value, relevance, recommend, price_pc, price_mobile) -> float | None:
+    """Only clear business relevance plus a usable provider guide permits an AI bid."""
+    if relevance != "relevant" or recommend not in ("adopt", "watch"):
+        return None
+    if not any(validated_suggested_bid(price) is not None for price in (price_pc, price_mobile)):
+        return None
+    return validated_suggested_bid(value)
 
 
 def _business_profile(tenant: Tenant) -> dict:
@@ -107,7 +194,9 @@ def _build_user_prompt(tenant: Tenant, words: list[dict]) -> str:
 
 def _valid(relevance: str | None, recommend: str | None) -> bool:
     return (
-        relevance in CANDIDATE_AI_RELEVANCE_LABELS
+        isinstance(relevance, str)
+        and isinstance(recommend, str)
+        and relevance in CANDIDATE_AI_RELEVANCE_LABELS
         and recommend in CANDIDATE_AI_RECOMMEND_LABELS
     )
 
@@ -115,26 +204,42 @@ def _valid(relevance: str | None, recommend: str | None) -> bool:
 async def _evaluate_batch(tenant: Tenant, words: list[dict]) -> dict[str, dict]:
     """评估一批词，返回 {word: {relevance, recommend, reason}}。失败抛 DeepSeekError。"""
     out = await chat_json(SYSTEM_PROMPT, _build_user_prompt(tenant, words))
-    items = out.get("items")
+    items = out.get("items") if isinstance(out, dict) else None
     if not isinstance(items, list):
-        raise DeepSeekError(f"返回结构异常（缺 items 数组）：{json.dumps(out)[:200]}")
+        raise DeepSeekError("返回结构异常（需对象及 items 数组）")
+    requested = {w["word"]: w for w in words}
+    seen = set()
     result: dict[str, dict] = {}
     for it in items:
         if not isinstance(it, dict):
             continue
-        word = str(it.get("word") or "").strip()
+        raw_word = it.get("word")
+        if not isinstance(raw_word, str):
+            continue
+        word = raw_word.strip()
+        if word not in requested:
+            continue
+        if word in seen:
+            # Ambiguous duplicates cannot silently pick an arbitrary verdict.
+            result.pop(word, None)
+            continue
+        seen.add(word)
         rel, rec = it.get("relevance"), it.get("recommend")
+        if any(it.get(field) is not None and not isinstance(it[field], str)
+               for field in ("reason", "bid_reason")):
+            continue
         if word and _valid(rel, rec):
-            try:
-                sb = round(float(it["suggested_bid"]), 2) if it.get("suggested_bid") is not None else None
-            except (TypeError, ValueError):
-                sb = None
+            meta = requested[word]
+            sb = supported_suggested_bid(
+                it.get("suggested_bid"), rel, rec,
+                meta.get("recommend_price_pc"), meta.get("recommend_price_mobile"),
+            )
             result[word] = {
                 "relevance": rel,
                 "recommend": rec,
                 "reason": str(it.get("reason") or "")[:200],
                 "suggested_bid": sb,
-                "bid_reason": str(it.get("bid_reason") or "")[:200] or None,
+                "bid_reason": (str(it.get("bid_reason") or "")[:200] or None) if sb is not None else None,
             }
     return result
 
@@ -160,6 +265,7 @@ async def evaluate_candidates_for_tenant(
     # Fail before querying/updating candidates or calling the model. In particular,
     # do not cache guesses for an unconfigured customer, including force requests.
     _business_profile(tenant)
+    fingerprint = context_fingerprint(tenant)
 
     cond = [KeywordCandidate.tenant_id == tenant.id, KeywordCandidate.status == "pending"]
     if not force:
@@ -229,6 +335,13 @@ async def evaluate_candidates_for_tenant(
                 c.ai_suggested_bid = v["suggested_bid"]
                 c.ai_bid_reason = v["bid_reason"]
                 c.ai_evaluated_at = now
+                # ORM normally omits assignments equal to its loaded snapshot.
+                # A concurrent evaluation may already have changed those columns:
+                # always persist the whole verdict with its provenance, atomically.
+                for field in ("ai_relevance", "ai_recommend", "ai_reason",
+                              "ai_suggested_bid", "ai_bid_reason", "ai_evaluated_at"):
+                    flag_modified(c, field)
+                c.raw = evaluation_stamp_expression(fingerprint)
                 evaluated += 1
         await session.commit()  # 逐批提交，部分进度可留存
 
