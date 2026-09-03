@@ -1,15 +1,17 @@
 import asyncio
+import ast
 import inspect
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import BigInteger, Column, Integer, JSON, MetaData, Table, create_engine
+from sqlalchemy import BigInteger, CheckConstraint, Column, Integer, JSON, MetaData, Table, create_engine
 from sqlalchemy.dialects.postgresql import JSONB, dialect
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api import seo
@@ -209,7 +211,7 @@ def test_route_commits_one_observation_with_actor_site_and_tenant(monkeypatch):
     fetch.assert_awaited_once_with(URL)
     run, saved = [call.args[0] for call in db.add.call_args_list]
     assert isinstance(run, SeoCrawlRun) and run.max_urls == 1
-    assert run.status == 'single_completed' and run.created_by == 7
+    assert run.status == 'completed' and run.created_by == 7
     assert isinstance(saved, SeoPageSnapshot)
     assert (saved.crawl_run_id, saved.tenant_id, saved.site_id) == (123, 1, 1)
     assert saved.image_alt_evidence['candidate_count'] == 3
@@ -335,6 +337,17 @@ def evidence_engine(tmp_path):
                 column.type = JSON()
             elif isinstance(column.type, BigInteger):
                 column.type = Integer()
+    # ORM metadata omits this deployed constraint. Exercise the migration's
+    # actual SQL rather than silently testing a more permissive database.
+    migration = Path(__file__).parents[1] / 'migrations/versions/20260818_0068_seo_crawler_foundation.py'
+    tree = ast.parse(migration.read_text(encoding='utf-8'))
+    constraints = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                   and isinstance(node.func, ast.Attribute) and node.func.attr == 'CheckConstraint'
+                   and any(kw.arg == 'name' and isinstance(kw.value, ast.Constant)
+                           and kw.value.value == 'ck_seo_crawl_run_status' for kw in node.keywords)]
+    assert len(constraints) == 1
+    metadata.tables['seo_crawl_runs'].append_constraint(CheckConstraint(
+        ast.literal_eval(constraints[0].args[0]), name='ck_seo_crawl_run_status'))
     for table in list(metadata.tables.values()):
         for fk in table.foreign_keys:
             name = fk.target_fullname.split('.')[0]
@@ -381,7 +394,23 @@ def test_evidence_survives_new_session_and_later_failure_hides_old_success(tmp_p
             result = asyncio.run(get_image_evidence(1, 1, 234, ctx(), AsyncFacade(db)))
             assert result['fetch_error'] == 'timeout' and result['evidence'] is None
             assert db.query(SeoPageSnapshot).count() == 2
+            assert [run.status for run in db.query(SeoCrawlRun).order_by(SeoCrawlRun.id)] == ['completed', 'failed']
             assert db.query(SeoCrawlRun).filter(SeoCrawlRun.max_urls > 1).count() == 0
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize('invalid_status', ['single_completed', 'single_failed'])
+def test_database_fixture_rejects_unsupported_single_page_status(tmp_path, invalid_status):
+    engine = evidence_engine(tmp_path)
+    try:
+        with Session(engine) as db:
+            db.add(SeoCrawlRun(tenant_id=1, site_id=1, seed_url=URL,
+                               status=invalid_status, max_urls=1))
+            with pytest.raises(IntegrityError, match='ck_seo_crawl_run_status'):
+                db.flush()
+            db.rollback()
+            assert db.query(SeoCrawlRun).count() == 0
     finally:
         engine.dispose()
 
