@@ -65,6 +65,9 @@ SYSTEM_PROMPT = """你是资深国内百度 SEM 优化师，为当前客户筛�
 3. 投放建议：已知同行的官网导航用 relevant/drop；公司信息、技术资料查询用 relevant/watch 或
    relevant/drop。已知同行的比较、替代选型在客户未明确竞品投放策略时用 relevant/watch，
    不得仅因出现“替代”就给 adopt；reason 说明需确认竞品策略或产品适配。
+   只有候选词本身明确包含“官网”“网站”“网址”“首页”“登录”“入口”等导航信号时，
+   才能给 intent=navigation 并因纯导航建议 drop。品牌名、公司名或“系统”等主体词本身
+   不能证明导航意图；没有明确导航信号时按 information 处理，价值不确定用 relevant/watch。
    对于竞品主体信息，同行关系未知时用 generic/watch；不能因投放策略未知抹去已确认的业务相关性。
    产品类别相关性与替代适配、落地页匹配、竞品投放策略是不同问题：product_scope 只判断前者，
    不要求已证明具体型号可替代。客户明确经营同一产品类别时，应引用该类别的客户原文确认范围；
@@ -248,6 +251,29 @@ def _valid(relevance: str | None, recommend: str | None) -> bool:
     )
 
 
+NAVIGATION_CUES = ("官网", "官方网站", "网站", "网址", "首页", "登录", "入口")
+
+
+def _unsupported_peer_navigation(word: str, item: dict) -> bool:
+    """Reject a model-only navigation claim for a peer entity.
+
+    A peer/company name can be informational.  Treating it as navigation is a
+    semantic assertion that must be visible in the keyword itself; otherwise a
+    model wording error could turn a useful watch candidate into an auto-drop
+    recommendation.
+    """
+    basis = item.get("basis")
+    return (
+        isinstance(basis, dict)
+        and basis.get("relation") == "peer"
+        and basis.get("subject") == "entity"
+        and basis.get("intent") == "navigation"
+        and item.get("relevance") == "relevant"
+        and item.get("recommend") == "drop"
+        and not any(cue in word for cue in NAVIGATION_CUES)
+    )
+
+
 def _has_profile_quote(tenant: Tenant, evidence: dict) -> bool:
     """Validate a whitelisted current-profile citation, not its entailment."""
     field, quote = evidence.get("field"), evidence.get("quote")
@@ -346,7 +372,16 @@ async def _evaluate_batch(tenant: Tenant, words: list[dict]) -> dict[str, dict]:
             continue
         if word and _valid(rel, rec):
             meta = requested[word]
-            if not _basis_consistent(tenant, it):
+            validation_item = it
+            navigation_guarded = _unsupported_peer_navigation(word, it)
+            if navigation_guarded:
+                # Preserve the verified peer relationship while removing the
+                # unsupported navigation/drop claim.  Do not mutate model output.
+                validation_item = dict(it)
+                validation_item["basis"] = dict(it["basis"], intent="information")
+                validation_item["recommend"] = "watch"
+                rel, rec = "relevant", "watch"
+            if not _basis_consistent(tenant, validation_item):
                 result[word] = {
                     "relevance": "generic", "recommend": "watch",
                     "reason": "业务依据不足或结论冲突，待人工确认",
@@ -360,9 +395,11 @@ async def _evaluate_batch(tenant: Tenant, words: list[dict]) -> dict[str, dict]:
             result[word] = {
                 "relevance": rel,
                 "recommend": rec,
-                "reason": str(it.get("reason") or "")[:200],
-                "suggested_bid": sb,
-                "bid_reason": (str(it.get("bid_reason") or "")[:200] or None) if sb is not None else None,
+                "reason": ("竞品主体词，导航意图待确认" if navigation_guarded
+                           else str(it.get("reason") or "")[:200]),
+                "suggested_bid": None if navigation_guarded else sb,
+                "bid_reason": ((str(it.get("bid_reason") or "")[:200] or None)
+                               if sb is not None and not navigation_guarded else None),
             }
     return result
 
