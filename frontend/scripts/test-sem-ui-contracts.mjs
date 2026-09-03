@@ -61,4 +61,5 @@ assert.match(
   /batch-negative'[\s\S]*?\}, \{ timeout: 60000 \}\)/,
 )
 
+await import('./test-sem-expansion-small-batch.mjs')
 console.log('SEM UI contracts passed')
