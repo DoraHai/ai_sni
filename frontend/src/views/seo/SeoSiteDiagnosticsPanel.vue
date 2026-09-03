@@ -143,7 +143,7 @@ onBeforeUnmount(() => { disposed = true; ++generation; ++dialogGeneration })
     </el-table>
     <el-pagination v-model:current-page="page" :page-size="25" :total="result.total" layout="total, prev, pager, next" @current-change="load" />
     <SeoRemediationDialog v-model:visible="remediationOpen" :tenant-id="tenantId" :site-id="siteId" :page="remediationPage" />
-    <SeoImageEvidenceDialog v-model:visible="imageEvidenceOpen" :tenant-id="tenantId" :site-id="siteId" :page="imageEvidencePage" />
+    <SeoImageEvidenceDialog v-model:visible="imageEvidenceOpen" :tenant-id="tenantId" :site-id="siteId" :page="imageEvidencePage" :can-edit="canEdit" />
     <el-dialog v-model="dialog" title="人工确认索引意图" width="min(680px, 94vw)" :close-on-click-modal="!saving" :close-on-press-escape="!saving" :show-close="!saving">
       <template v-if="selected">
         <p class="url">#{{ selected.id }} {{ selected.url }}</p>

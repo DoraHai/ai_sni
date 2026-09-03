@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
 from app.models.module_workspace import SeoSite
-from app.models.seo import SeoPageIndexReview, SeoSitePage, SeoPageSnapshot
+from app.models.seo import SeoImageAltReview, SeoPageIndexReview, SeoSitePage, SeoPageSnapshot
 from app.security.auth import AuthContext, require_scoped_auth
 from app.seo_site_diagnostics import assessed_condition, checked_iso, diagnostic_payload
 
@@ -107,6 +107,118 @@ async def get_image_evidence(
             "fetch_error": fetch_error,
             "legacy_candidate_count": snapshot.images_missing_alt_count if snapshot else None,
             "evidence": snapshot.image_alt_evidence if snapshot and not fetch_error else None}
+
+
+def image_review_payload(row):
+    return {
+        "id": row.id, "snapshot_id": row.snapshot_id, "position": row.position,
+        "source_url": row.source_url, "observed_alt_state": row.observed_alt_state,
+        "decision": row.decision, "alt_suggestion": row.alt_suggestion,
+        "note": row.note, "review_status": row.review_status,
+        "actor_id": row.actor_id, "actor_name": row.actor_name,
+        "reviewed_at": checked_iso(row.reviewed_at), "updated_at": checked_iso(row.updated_at),
+    }
+
+
+async def _page_and_latest_snapshot(session, tenant_id, site_id, page_id, *, lock_page=False):
+    page_query = select(SeoSitePage).where(
+        SeoSitePage.id == page_id, SeoSitePage.tenant_id == tenant_id, SeoSitePage.site_id == site_id,
+    )
+    page = await session.scalar(page_query.with_for_update() if lock_page else page_query)
+    if page is None:
+        raise HTTPException(404, "页面不存在")
+    snapshot = await session.scalar(select(SeoPageSnapshot).where(
+        SeoPageSnapshot.tenant_id == tenant_id, SeoPageSnapshot.site_id == site_id,
+        SeoPageSnapshot.url == page.url,
+    ).order_by(SeoPageSnapshot.fetched_at.desc(), SeoPageSnapshot.id.desc()).limit(1))
+    return page, snapshot
+
+
+@router.get("/site-pages/image-remediation")
+async def get_image_remediation(
+    tenant_id: PositiveInt, site_id: PositiveInt, page_id: PositiveInt,
+    ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session),
+):
+    await _scope(session, ctx, tenant_id, site_id)
+    _, snapshot = await _page_and_latest_snapshot(session, tenant_id, site_id, page_id)
+    if snapshot is None or snapshot.error_type or not snapshot.image_alt_evidence:
+        return {"snapshot_id": snapshot.id if snapshot else None, "items": []}
+    reviews = list(await session.scalars(select(SeoImageAltReview).where(
+        SeoImageAltReview.tenant_id == tenant_id, SeoImageAltReview.site_id == site_id,
+        SeoImageAltReview.page_id == page_id, SeoImageAltReview.snapshot_id == snapshot.id,
+    ).order_by(SeoImageAltReview.position)))
+    return {"snapshot_id": snapshot.id, "items": [image_review_payload(row) for row in reviews]}
+
+
+class ImageAltReviewUpdate(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt
+    page_id: PositiveInt
+    expected_snapshot_id: PositiveInt
+    expected_review_id: PositiveInt | None
+    position: PositiveInt
+    decision: Literal["undecided", "decorative", "informative"]
+    alt_suggestion: str | None = Field(None, max_length=300)
+    note: str | None = Field(None, max_length=1000)
+    review_status: Literal["draft", "approved"] = "draft"
+
+    @field_validator("alt_suggestion", "note")
+    @classmethod
+    def trim_optional(cls, value):
+        return value.strip() or None if value is not None else None
+
+
+@router.put("/site-pages/image-remediation")
+async def save_image_remediation(
+    req: ImageAltReviewUpdate, ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+):
+    await _scope(session, ctx, req.tenant_id, req.site_id, write=True)
+    if ctx.user_id is None:
+        raise HTTPException(403, "图片用途必须由已登录的真实用户确认")
+    _, snapshot = await _page_and_latest_snapshot(
+        session, req.tenant_id, req.site_id, req.page_id, lock_page=True)
+    if snapshot is None or snapshot.id != req.expected_snapshot_id:
+        raise HTTPException(409, "图片证据已更新，请重新读取后确认")
+    evidence = snapshot.image_alt_evidence if not snapshot.error_type else None
+    candidates = evidence.get("items", []) if isinstance(evidence, dict) else []
+    candidate = next((item for item in candidates if item.get("position") == req.position), None)
+    if candidate is None:
+        raise HTTPException(409, "当前快照中不存在该图片证据")
+    observed_state = candidate.get("alt_state")
+    if observed_state not in {"missing", "empty", "whitespace"}:
+        raise HTTPException(409, "当前图片证据状态无效，请重新检测页面后再确认")
+    suggestion = req.alt_suggestion
+    if req.decision != "informative":
+        suggestion = None
+    if req.review_status == "approved" and req.decision == "undecided":
+        raise HTTPException(422, "审核前请先确认图片用途")
+    if req.review_status == "approved" and req.decision == "informative" and not suggestion:
+        raise HTTPException(422, "内容图审核通过前必须填写 Alt 建议")
+    row = await session.scalar(select(SeoImageAltReview).where(
+        SeoImageAltReview.snapshot_id == snapshot.id,
+        SeoImageAltReview.position == req.position,
+    ).with_for_update())
+    if (row.id if row else None) != req.expected_review_id:
+        raise HTTPException(409, "图片整改记录已被其他操作更新，请刷新后重试")
+    values = {
+        "tenant_id": req.tenant_id, "site_id": req.site_id, "page_id": req.page_id,
+        "snapshot_id": snapshot.id, "position": req.position,
+        "source_url": candidate.get("source_url"),
+        "observed_alt_state": observed_state, "decision": req.decision,
+        "alt_suggestion": suggestion, "note": req.note, "review_status": req.review_status,
+        "actor_id": ctx.user_id, "actor_name": ctx.username,
+        "reviewed_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc),
+    }
+    if row is None:
+        row = SeoImageAltReview(**values)
+        session.add(row)
+    else:
+        for key, value in values.items():
+            setattr(row, key, value)
+    await session.commit()
+    await session.refresh(row)
+    return image_review_payload(row)
 
 
 class IndexReviewCreate(BaseModel):
