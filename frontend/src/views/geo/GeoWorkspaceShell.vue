@@ -96,9 +96,10 @@ async function onUserCommand(cmd) {
         </section>
       </nav>
       <div class="geo-shell-links">
-        <a href="/diagnostic-center/"><span>!</span><span>诊断中心</span></a>
-        <a href="/seo/dashboard"><span>S</span><span>SEO 内容工作台</span></a>
-        <a href="/deal-sniper/portal"><span>←</span><span>返回平台门户</span></a>
+        <a href="/monitor/dashboard"><span>SEM</span>搜索广告工作台</a>
+        <a href="/seo/dashboard"><span>SEO</span>SEO 内容工作台</a>
+        <a href="/diagnostic-center/"><span>DX</span>诊断中心</a>
+        <a class="portal-link" href="/deal-sniper/portal">← 返回平台门户</a>
       </div>
     </aside>
     <main class="geo-shell-main">
@@ -254,28 +255,34 @@ async function onUserCommand(cmd) {
   font-size: 13px;
 }
 .geo-shell-links {
-  display: grid;
-  gap: 1px;
   padding: 8px 2px;
   border-top: 1px solid #e8eaf0;
 }
 .geo-shell-links a {
+  min-height: 32px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 8px;
+  gap: 9px;
+  padding: 6px 8px;
   border-radius: 8px;
   color: #6b7280;
   font-size: 12px;
   text-decoration: none;
 }
 .geo-shell-links a span:first-child {
-  width: 18px;
-  text-align: center;
+  width: 24px;
+  color: #8b95a5;
+  font-size: 10px;
+  font-weight: 700;
 }
 .geo-shell-links a:hover {
   background: #f5f0ff;
   color: #7c3aed;
+}
+.geo-shell-links .portal-link {
+  margin-top: 4px;
+  border-top: 1px solid #e8eaf0;
+  border-radius: 0;
 }
 .geo-shell-main,
 .geo-shell-content {

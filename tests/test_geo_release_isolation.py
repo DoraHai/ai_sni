@@ -134,6 +134,21 @@ def test_geo_standalone_uses_shared_customer_and_account_header():
     assert "geo-tenant-switcher" not in page
 
 
+def test_geo_sidebar_keeps_cross_product_shortcuts_aligned_with_seo():
+    shell = _read("frontend/src/views/geo/GeoWorkspaceShell.vue")
+
+    shortcuts = [
+        '<a href="/monitor/dashboard"><span>SEM</span>搜索广告工作台</a>',
+        '<a href="/seo/dashboard"><span>SEO</span>SEO 内容工作台</a>',
+        '<a href="/diagnostic-center/"><span>DX</span>诊断中心</a>',
+        '<a class="portal-link" href="/deal-sniper/portal">← 返回平台门户</a>',
+    ]
+    positions = [shell.index(shortcut) for shortcut in shortcuts]
+
+    assert positions == sorted(positions)
+    assert ".geo-shell-links .portal-link" in shell
+
+
 def test_geo_editor_keeps_the_complete_editor_first_interactions():
     editor = _read("frontend/src/views/geo/GeoTaskEditorView.vue")
 
