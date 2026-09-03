@@ -166,8 +166,9 @@ def test_geo_standalone_uses_shared_customer_and_account_header():
     nav = _read("frontend/src/utils/geoPrototypeNavigation.js")
 
     assert "grid-template-columns: 216px minmax(0, 1fr);" in shell
-    assert 'class="geo-side-foot"' in shell
-    assert 'class="geo-tenant"' in shell
+    assert 'class="geo-side-foot"' not in shell
+    assert 'class="geo-tenant"' not in shell
+    assert "tenantPopoverOpen" not in shell
     assert "geo-editor-focus" in shell
     assert "is-rail" in shell
     assert "提问监控" in nav
@@ -177,7 +178,7 @@ def test_geo_standalone_uses_shared_customer_and_account_header():
     assert 'class="geo-topbar"' in header
     assert 'class="geo-tenant-switcher"' in header
     assert "当前客户" in header
-    assert "session.setTenant(id)" in shell
+    assert "session.setTenant(id)" in header
     assert "geo-tenant-switcher" not in page
 
 
@@ -185,10 +186,10 @@ def test_geo_sidebar_keeps_cross_product_shortcuts_aligned_with_seo():
     shell = _read("frontend/src/views/geo/GeoWorkspaceShell.vue")
 
     shortcuts = [
-        'href="/monitor/dashboard"',
+        'href="/monitor/dashboard" target="_top"',
         'href="/seo/dashboard"',
         'href="/diagnostic-center/"',
-        'href="/deal-sniper/portal"',
+        'href="/deal-sniper/portal" target="_top"',
     ]
     positions = [shell.index(shortcut) for shortcut in shortcuts]
 
