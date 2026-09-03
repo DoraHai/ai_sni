@@ -146,7 +146,7 @@ async function saveEdit() {
 async function audit(row) {
   if (batchAuditing.value || auditing.value.has(row.id)) return ElMessage.warning('页面检测正在进行，请勿重复提交')
   const next = new Set(auditing.value); next.add(row.id); auditing.value = next
-  try { await auditSeoSitePage({ pageId: row.id, tenantId: currentTenantId.value }); ElMessage.success('页面检测完成'); await load() }
+  try { await auditSeoSitePage({ pageId: row.id, tenantId: currentTenantId.value, siteId: row.site_id }); ElMessage.success('单页检测完成，图片明细已保存'); await load() }
   catch (e) { ElMessage.error(e.message); await load() }
   finally { const done = new Set(auditing.value); done.delete(row.id); auditing.value = done }
 }
@@ -160,7 +160,7 @@ async function auditPending() {
       auditing.value = new Set([...auditing.value, ...ids])
       const response = await runSeoBatch(
         rows,
-        (row) => auditSeoSitePage({ pageId: row.id, tenantId: currentTenantId.value }),
+        (row) => auditSeoSitePage({ pageId: row.id, tenantId: currentTenantId.value, siteId: row.site_id }),
         { concurrency: 3, limit: 50 },
       )
       const message = `批量检测完成：成功 ${response.completed.length}，失败 ${response.failed.length}，跳过 ${response.skipped.length}`
@@ -169,8 +169,8 @@ async function auditPending() {
       return
     }
     const response = await auditPendingSeoSitePages({ tenantId: currentTenantId.value, siteId: siteId.value, maxPages: 10 })
-    const message = `已补抓 ${response.completed} 个页面${response.failed?.length ? `，失败 ${response.failed.length} 个` : ''}`
-    response.failed?.length ? ElMessage.warning(message) : ElMessage.success(message)
+    const message = `已补抓 ${response.completed} 个页面${response.failed?.length ? `，失败 ${response.failed.length} 个` : ''}${response.skipped ? `，跳过 ${response.skipped} 个已更新页面` : ''}${response.deferred ? `，${response.deferred} 个留待下次补抓` : ''}`
+    response.failed?.length || response.deferred ? ElMessage.warning(message) : ElMessage.success(message)
     await load()
   } catch (e) { ElMessage.error(e.message) } finally { batchAuditing.value = false; auditing.value = new Set() }
 }
@@ -390,7 +390,7 @@ onBeforeUnmount(() => { disposed = true; ++sitesGeneration; clearTimeout(timer) 
             <div><span>Schema</span><b>{{ displayValue(detailResult.latest_snapshot.schema_types) }}</b></div><div><span>缺 Alt 图片</span><b>{{ displayValue(detailResult.latest_snapshot.images_missing_alt_count) }}</b></div>
             <div><span>响应时间</span><b>{{ detailResult.latest_snapshot.response_time_ms == null ? '—' : `${detailResult.latest_snapshot.response_time_ms} ms` }}</b></div><div><span>重定向次数</span><b>{{ detailResult.latest_snapshot.redirect_chain?.length || 0 }}</b></div>
           </div><el-empty v-else description="暂无全站扫描证据，请先运行网站技术扫描" :image-size="54"/></section>
-          <section class="detail-block"><h4>修复前后对比</h4><template v-if="detailResult.comparison.available"><div class="compare-summary"><span class="resolved">已解决 {{ detailResult.comparison.resolved_issues.length }}</span><span class="new-issue">新增 {{ detailResult.comparison.new_issues.length }}</span><span>字段变化 {{ detailResult.comparison.changed_fields.length }}</span></div><el-table :data="detailResult.comparison.changed_fields" empty-text="两次扫描的主要字段没有变化" max-height="330"><el-table-column prop="label" label="字段" width="130"/><el-table-column label="上次"><template #default="{row}">{{ displayValue(row.before) }}</template></el-table-column><el-table-column label="本次"><template #default="{row}">{{ displayValue(row.after) }}</template></el-table-column></el-table></template><el-empty v-else description="至少完成两次全站扫描后才能生成修复前后对比" :image-size="54"/></section>
+          <section class="detail-block"><h4>修复前后对比</h4><template v-if="detailResult.comparison.available"><div class="compare-summary"><span class="resolved">已解决 {{ detailResult.comparison.resolved_issues.length }}</span><span class="new-issue">新增 {{ detailResult.comparison.new_issues.length }}</span><span>字段变化 {{ detailResult.comparison.changed_fields.length }}</span></div><el-table :data="detailResult.comparison.changed_fields" empty-text="两次检测的主要字段没有变化" max-height="330"><el-table-column prop="label" label="字段" width="130"/><el-table-column label="上次"><template #default="{row}">{{ displayValue(row.before) }}</template></el-table-column><el-table-column label="本次"><template #default="{row}">{{ displayValue(row.after) }}</template></el-table-column></el-table></template><el-empty v-else description="同一页面至少两次有效检测后才能生成修复前后对比" :image-size="54"/></section>
         </template>
       </div>
     </el-drawer>
