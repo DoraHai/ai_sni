@@ -76,6 +76,8 @@ async def main() -> None:
                             brand_terms=["冒烟泵业"])
             session.add(tenant)
             await session.flush()
+        tenant.industry = "工业泵 / 分离技术"
+        tenant.business_desc = "工业泵及化工分离设备，不经营招聘业务"
         acc = await session.scalar(select(BaiduAccount).where(BaiduAccount.tenant_id == tenant.id))
         if acc is None:
             acc = BaiduAccount(
