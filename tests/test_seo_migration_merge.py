@@ -3,14 +3,15 @@ import asyncio
 import hashlib
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import inspect, text
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy import inspect, select, text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 
 ROOT = Path(__file__).parents[1]
@@ -234,6 +235,36 @@ def test_postgres_upgrade_from_sem_head_applies_only_pending_seo_branch(monkeypa
                 content_indexes,
                 content_unique_constraints,
             ) = await connection.run_sync(inspect_schema)
+            # Exercise the application writer against the migrated PostgreSQL
+            # CHECK constraints, not just ORM metadata. Temp copies preserve
+            # constraints/defaults without needing unrelated tenant fixtures.
+            from app.models.seo import SeoCrawlRun, SeoPageSnapshot, SeoSitePage
+            from app.seo_page_audit import save_page_snapshot
+
+            for table in ('seo_crawl_runs', 'seo_site_pages', 'seo_page_snapshots'):
+                await connection.execute(text(
+                    f'CREATE TEMP TABLE {table} (LIKE public.{table} INCLUDING ALL) ON COMMIT DROP'))
+            async with AsyncSession(bind=connection, expire_on_commit=False) as session:
+                page = SeoSitePage(tenant_id=1, site_id=1, url='https://example.com/audit', status='approved',
+                                   title_suggestion='Keep approved title')
+                session.add(page)
+                await session.flush()
+                for failed in (False, True):
+                    values = dict(url=page.url, discovery_source='single_page', click_depth=0,
+                                  status_code=None if failed else 200, issue_codes=['timeout'] if failed else [],
+                                  error_type='timeout' if failed else None,
+                                  image_alt_evidence=None if failed else {'candidate_count': 1, 'items': []})
+                    await save_page_snapshot(session, page, values, None, datetime.now(timezone.utc).replace(tzinfo=None))
+                    await session.flush()
+                runs = list(await session.scalars(select(SeoCrawlRun).order_by(SeoCrawlRun.id)))
+                assert [run.status for run in runs] == ['completed', 'failed']
+                assert all(run.max_urls == 1 for run in runs)
+                snapshots = list(await session.scalars(select(SeoPageSnapshot).order_by(SeoPageSnapshot.id)))
+                assert len(snapshots) == 2
+                assert all(row.discovery_source == 'single_page' for row in snapshots)
+                assert snapshots[0].image_alt_evidence['candidate_count'] == 1
+                assert snapshots[1].image_alt_evidence is None
+                assert page.title_suggestion == 'Keep approved title'
         await engine.dispose()
         return (
             current,
