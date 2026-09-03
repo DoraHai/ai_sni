@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "review_status": "draft_requires_business_review",
+  "provenance": "Scenario distilled from the 2026-09-03 read-only SEM profile review; keywords are acceptance examples, not a production export or model results.",
+  "profile": {
+    "name": "离线粉末涂料验收客户",
+    "industry": "工业粉末涂料 / 表面涂饰材料",
+    "business_desc": "主要推广粉末涂料、金属粉末涂料及工业表面涂饰解决方案，重点为企业采购、材料选型与技术咨询。艾仕得、阿克苏诺贝尔是同行竞品，不是自有品牌。服务地域及非经营范围尚未确认，不据此自动排除关键词。工业数码打印油墨是否属于推广范围待确认。",
+    "brand_terms": []
+  },
+  "cases": [
+    {"id":"purchase-01","group":"purchase","word":"工业粉末涂料采购","review":"scored_draft","allowed_pairs":[["relevant","adopt"],["relevant","watch"]],"rationale":"明确采购意图；投放还需预算、落地页与人工确认。"},
+    {"id":"purchase-02","group":"purchase","word":"粉末涂料供应商","review":"scored_draft","allowed_pairs":[["relevant","adopt"],["relevant","watch"]],"rationale":"产品及供应需求与画像一致。"},
+    {"id":"purchase-03","group":"purchase","word":"粉末涂料批发报价","review":"scored_draft","allowed_pairs":[["relevant","adopt"],["relevant","watch"]],"rationale":"采购询价，不等于效果或出价保证。"},
+    {"id":"purchase-04","group":"purchase","word":"金属表面粉末涂料","review":"scored_draft","allowed_pairs":[["relevant","adopt"],["relevant","watch"]],"rationale":"产品选型与画像一致。"},
+    {"id":"competitor-01","group":"competitor","word":"艾仕得粉末涂料","review":"scored_draft","allowed_pairs":[["relevant","watch"],["relevant","drop"]],"rationale":"同行竞品相关；纯品牌意图不能视为投放许可。"},
+    {"id":"competitor-02","group":"competitor","word":"阿克苏诺贝尔粉末涂料","review":"scored_draft","allowed_pairs":[["relevant","watch"],["relevant","drop"]],"rationale":"不能只因非自有品牌判无关；可观察或保守忽略。"},
+    {"id":"competitor-03","group":"competitor","word":"艾仕得粉末涂料替代","review":"scored_draft","allowed_pairs":[["relevant","watch"]],"rationale":"替代选型需确认产品适配及竞品策略，不直接采纳。"},
+    {"id":"competitor-04","group":"competitor","word":"粉末涂料品牌对比","review":"scored_draft","allowed_pairs":[["relevant","watch"]],"rationale":"比较选型相关，但投放价值需要复核。"},
+    {"id":"information-01","group":"information","word":"艾仕得涂料官网","review":"scored_draft","allowed_pairs":[["relevant","drop"]],"rationale":"同行官网导航，与业务相关但无明确采购意图。"},
+    {"id":"information-02","group":"information","word":"艾仕得涂料算大公司吗","review":"scored_draft","allowed_pairs":[["relevant","watch"],["relevant","drop"]],"rationale":"公司信息查询，采购意图不明确，不建议直接采纳。"},
+    {"id":"information-03","group":"information","word":"艾仕得涂料配方查询","review":"scored_draft","allowed_pairs":[["relevant","watch"],["relevant","drop"]],"rationale":"资料或技术查询，需区分技术咨询与采购意图。"},
+    {"id":"noise-01","group":"noise","word":"设备","review":"scored_draft","allowed_pairs":[["generic","watch"],["generic","drop"]],"rationale":"过泛，不能推断具体业务或给 AI 出价。"},
+    {"id":"noise-02","group":"noise","word":"中心","review":"scored_draft","allowed_pairs":[["generic","watch"],["generic","drop"]],"rationale":"缺少产品及意图上下文。"},
+    {"id":"noise-03","group":"noise","word":"厂家","review":"scored_draft","allowed_pairs":[["generic","watch"],["generic","drop"]],"rationale":"泛化主体词，不具备具体采购对象。"},
+    {"id":"unrelated-01","group":"unrelated","word":"宠物猫粮批发","review":"scored_draft","allowed_pairs":[["irrelevant","drop"]],"rationale":"与已提供工业涂料业务明显无关。"},
+    {"id":"unrelated-02","group":"unrelated","word":"手机屏幕维修","review":"scored_draft","allowed_pairs":[["irrelevant","drop"]],"rationale":"维修服务与当前工业材料业务不同。"},
+    {"id":"unrelated-03","group":"unrelated","word":"机票查询","review":"scored_draft","allowed_pairs":[["irrelevant","drop"]],"rationale":"出行查询与当前业务明显无关。"},
+    {"id":"boundary-01","group":"boundary","word":"艾仕得水性漆","review":"business_confirmation_required","allowed_pairs":null,"rationale":"竞品相关但不是粉末涂料；需确认水性体系是否经营。"},
+    {"id":"boundary-02","group":"boundary","word":"汽车修补漆","review":"business_confirmation_required","allowed_pairs":null,"rationale":"交通运输应用不等于经营汽车修补漆。"},
+    {"id":"boundary-03","group":"boundary","word":"家装乳胶漆","review":"business_confirmation_required","allowed_pairs":null,"rationale":"建筑建材应用不等于经营家装乳胶漆。"}
+  ]
+}

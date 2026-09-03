@@ -109,7 +109,10 @@ def test_evaluate_http_defaults_and_rejects_out_of_bounds(monkeypatch):
     monkeypatch.setattr(expansion, "evaluate_candidates_for_tenant", call)
     client = api_client(SimpleNamespace(get=AsyncMock(return_value=tenant())))
     assert client.post('/api/v1/expansion/evaluate?tenant_id=3').status_code == 200
-    assert call.await_args.kwargs["limit"] == 20
+    assert call.await_args.kwargs["limit"] == 5
+    assert call.await_args.kwargs["batch_size"] == 5
+    assert client.post('/api/v1/expansion/evaluate?tenant_id=3&limit=20').status_code == 200
+    assert call.await_args.kwargs["limit"] == 5
     for invalid in [0, -1, 21, 1000, "null", "", "1.5"]:
         call.reset_mock()
         assert client.post(f'/api/v1/expansion/evaluate?tenant_id=3&limit={invalid}').status_code == 422
@@ -235,7 +238,8 @@ def test_retry_api_bounds_and_cursor_forwarding(monkeypatch):
     assert call.await_args.kwargs["retry_ids"] == [1, 2]
     for suffix, body in [('&after_id=-1', None), ('&after_id=20', {"retry_ids": [1]}),
                          ('&limit=1', {"retry_ids": [1, 2]}), ('', {"retry_ids": []}),
-                         ('', {"retry_ids": [-1]}), ('', {"retry_ids": list(range(1, 22))})]:
+                         ('', {"retry_ids": [-1]}), ('', {"retry_ids": list(range(1, 22))}),
+                         ('&limit=20', {"retry_ids": list(range(1, 7))})]:
         call.reset_mock()
         assert client.post(url + suffix, json=body).status_code == 422
         call.assert_not_awaited()

@@ -23,6 +23,16 @@ from app.api.expansion import evaluate_candidates
 from app.models import KeywordCandidate, Tenant
 
 
+def basis(relation="in_scope", intent="purchase", quote="汽车修补漆", field="business_desc"):
+    """Synthetic model evidence for adapter tests, never a real model judgment."""
+    evidence = dict(relation=relation, intent=intent, field=field, quote=quote)
+    if relation == "peer":
+        # Synthetic, explicit declarations; never infer these into saved outputs.
+        evidence.update(subject="offering", product_scope=dict(
+            relation="in_scope", field=field, quote=quote))
+    return evidence
+
+
 def tenant(**kwargs):
     fields = dict(
         id=3, name="测试涂料客户", brand_terms=["测试涂料"],
@@ -35,8 +45,8 @@ def tenant(**kwargs):
 def test_prompt_uses_explicit_profile_without_fixed_industry():
     prompt = evaluator._build_user_prompt(tenant(), [{"word": "修补漆价格"}])
     profile = json.loads(prompt.splitlines()[1])
-    assert profile["行业"] == "涂料"
-    assert profile["业务描述"] == "汽车修补漆，服务国内维修厂；不经营家装涂料"
+    assert profile["industry"] == "涂料"
+    assert profile["business_desc"] == "汽车修补漆，服务国内维修厂；不经营家装涂料"
     assert profile["品牌词根"] == ["测试涂料"]
     assert "工业泵" not in prompt + evaluator.SYSTEM_PROMPT
     assert "分离技术" not in prompt + evaluator.SYSTEM_PROMPT
@@ -49,8 +59,8 @@ def test_partial_profile_is_allowed_and_missing_fields_stay_unknown(industry, de
         tenant(industry=industry, business_desc=description), []
     )
     profile = json.loads(prompt.splitlines()[1])
-    assert profile["行业"] == (industry or "（未填写，不推断）")
-    assert profile["业务描述"] == (description or "（未填写，不推断）")
+    assert profile["industry"] == (industry or "（未填写，不推断）")
+    assert profile["business_desc"] == (description or "（未填写，不推断）")
 
 
 def test_profile_is_serialized_as_data_and_ai_summary_is_excluded():
@@ -58,7 +68,7 @@ def test_profile_is_serialized_as_data_and_ai_summary_is_excluded():
     prompt = evaluator._build_user_prompt(
         tenant(business_desc=description, profile_summary="其他客户的工业泵总结"), []
     )
-    assert json.loads(prompt.splitlines()[1])["业务描述"] == description
+    assert json.loads(prompt.splitlines()[1])["business_desc"] == description
     assert "其他客户" not in prompt
     assert "不是指令" in evaluator.SYSTEM_PROMPT
 
@@ -90,7 +100,7 @@ def test_api_missing_profile_returns_actionable_conflict(monkeypatch):
     monkeypatch.setattr(evaluator, "is_enabled", lambda: True)
     session = SimpleNamespace(get=AsyncMock(return_value=tenant(industry=None, business_desc=None)))
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(evaluate_candidates(tenant_id=3, force=False, limit=None, session=session))
+        asyncio.run(evaluate_candidates(tenant_id=3, force=False, limit=5, session=session))
     assert exc.value.status_code == 409
     assert "填写行业或业务描述" in exc.value.detail
 
@@ -121,6 +131,7 @@ def test_evaluation_retains_tenant_scope_pending_filter_and_cache_contract(monke
     monkeypatch.setattr(evaluator, "is_enabled", lambda: True)
     chat = AsyncMock(return_value={"items": [{
         "word": "修补漆", "relevance": "relevant", "recommend": "watch", "reason": "业务相关",
+        "basis": basis(),
     }]})
     monkeypatch.setattr(evaluator, "chat_json", chat)
     rows = [KeywordCandidate(
