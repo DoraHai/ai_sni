@@ -54,7 +54,7 @@ SYSTEM_PROMPT = """你是资深国内百度 SEM 优化师，为当前客户筛�
 - recommend（处理建议）：
   - adopt = 相关且有拓展价值，建议加词
   - watch = 相关但价值不确定，或业务依据待确认，暂不采纳
-  - drop = 不相关、噪音，或虽相关但没有投放价值，建议忽略
+  - drop = 虽相关但没有投放价值，建议忽略；当前未核验噪音和范围外判断只允许 watch 待确认
 按以下顺序分别判断，不得用后一步的结论倒推前一步：
 1. 业务依据：从客户资料确定产品范围和同行关系。主营不等于唯一经营范围，未提及不等于明确排除。
    相邻产品是否经营尚未确认时用 generic/watch，reason 说明需确认范围，不猜测经营或非经营事实。
@@ -66,6 +66,10 @@ SYSTEM_PROMPT = """你是资深国内百度 SEM 优化师，为当前客户筛�
    relevant/drop。已知同行的比较、替代选型在客户未明确竞品投放策略时用 relevant/watch，
    不得仅因出现“替代”就给 adopt；reason 说明需确认竞品策略或产品适配。
    对于竞品主体信息，同行关系未知时用 generic/watch；不能因投放策略未知抹去已确认的业务相关性。
+   产品类别相关性与替代适配、落地页匹配、竞品投放策略是不同问题：product_scope 只判断前者，
+   不要求已证明具体型号可替代。客户明确经营同一产品类别时，应引用该类别的客户原文确认范围；
+   后三者未知只影响 recommend，保留 relevant/watch，不得据此把 product_scope 改成 unknown。
+   若候选是未确认的不同产品类别，仍用 unknown，不能仅因同一品牌或行业大类就判 in_scope。
    不要自动采纳竞品词。adopt 只是运营建议，不是投放许可，不代表执行加词或真实回写。
 4. 出价依据：先检查当前词是否真的提供百度 PC/移动指导价，再考虑 suggested_bid。
    缺指导价时 suggested_bid=null 且 bid_reason=null，即使 relevant/adopt 也不得报价。
@@ -80,7 +84,11 @@ out_of_scope（明确不相关或明确排除）、generic（通用噪音）、u
 basis.intent 为 purchase、comparison、navigation、information、unknown 之一。
 in_scope/peer 必须引用客户行业或业务描述的连续原文（2–500 字符），field 使用输入 JSON 中的 industry 或 business_desc，
 quote 不得引用候选词自身、AI 总结或编造语句。引用存在不等于支持结论，必须核对其语义。
-unknown/generic 的 field、quote 为 null。业务边界不明必须用 unknown，不得用主营描述证明相邻业务不经营。
+unknown/generic 的 field、quote 为 null。generic 只用于缺少具体对象的通用噪音；有明确产品或
+服务对象但跨行业的词不是 generic。不得为了通过应用校验将 out_of_scope 改报 generic。
+当前没有独立审核的噪音/排除清单，generic 与 unknown/out_of_scope 一样只交人工复核，
+不能用 generic/drop 绕开排除保护；generic 结论仅允许 generic/watch，两项报价为 null。
+业务边界不明必须用 unknown，不得用主营描述证明相邻业务不经营。
 out_of_scope 是模型提出的范围外判断，不是已核验事实：当前没有结构化人工排除清单，应用一律将其
 转为 generic/watch 交人工确认（包括看起来明显跨行业的词），不因引用真实主营文字就认可排除。
 peer 仅允许 relevant/watch 或 relevant/drop；in_scope 的 adopt 仅用于 purchase/comparison。
@@ -89,7 +97,7 @@ peer 必须另给 basis.subject：entity 仅指品牌/公司主体信息或官�
 entity 仅允许 intent=information/navigation，basis.product_scope=null；同行范围已知而投放策略
 未知，仍可 relevant/watch。offering 必须给 basis.product_scope 对象：relation 为 in_scope、
 unknown 或 out_of_scope，field/quote 引用当前客户 industry/business_desc 中支持该具体产品范围
-的原文（2–500 字符）。仅有同行名单不证明其所有产品均在客户范围内。
+的原文（2–500 字符），这里的产品范围指类别相关性，不是具体型号替代能力。仅有同行名单不证明其所有产品均在客户范围内。
 offering 的 product_scope 未知、范围外、缺失或引用不足时，一律 generic/watch，两项报价为 null；
 产品范围未知优先于已知同行关系，reason 说明范围待确认，不输出 relevant。不得只改成 entity 绕过。
 例如结构（不是待评词答案）：basis={"relation":"peer","intent":"information","field":"business_desc",
@@ -271,8 +279,11 @@ def _basis_consistent(tenant: Tenant, item: dict) -> bool:
         return False
     rel, rec = item.get("relevance"), item.get("recommend")
     if relation == "generic":
+        # The model can mislabel a concrete out-of-scope offering as noise.
+        # Without an independent noise source, do not accept generic/drop as
+        # an alternate path around scope-exclusion review (even for real noise).
         return (basis.get("field") is None and basis.get("quote") is None
-                and rel == "generic" and rec in ("watch", "drop"))
+                and rel == "generic" and rec == "watch")
     if relation not in {"in_scope", "peer"}:
         # A real quote is not proof of a negative business-scope assertion. Until
         # an independently reviewed scope source exists, do not accept it, even

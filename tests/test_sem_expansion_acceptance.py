@@ -137,7 +137,7 @@ def test_reference_verdicts_exercise_real_adapter_bid_safety(deny_network, case,
         fake.assert_awaited_once()
         assert set(result) == {case["word"]}
         verdict = result[case["word"]]
-        expected = ("generic", "watch") if relation == "out_of_scope" else (relevance, recommend)
+        expected = ("generic", "watch") if relation in ("out_of_scope", "generic") else (relevance, recommend)
         assert (verdict["relevance"], verdict["recommend"]) == expected
         allow_bid = guide is not None and relevance == "relevant" and recommend in {"adopt", "watch"}
         assert verdict["suggested_bid"] == (3.0 if allow_bid else None)
