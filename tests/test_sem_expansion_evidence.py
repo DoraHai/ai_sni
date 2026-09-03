@@ -59,7 +59,7 @@ def test_contradictory_verdicts_go_to_review_not_auto_corrected_positive(deny_ne
     ("peer", "comparison", "relevant", "watch", 3),
     ("in_scope", "purchase", "relevant", "adopt", 3),
     ("in_scope", "comparison", "relevant", "adopt", 3),
-    ("generic", "unknown", "generic", "drop", None),
+    ("generic", "unknown", "generic", "watch", None),
 ])
 def test_consistent_structured_verdicts_remain_distinct(deny_network, relation, intent, rel, rec, price):
     evidence = basis(relation, intent)
