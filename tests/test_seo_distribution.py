@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -19,6 +20,7 @@ from app.api.seo import (
     _distribution_content,
     _distribution_variant_payload,
     _require_content_ready,
+    _sanitize_content_html,
     adapt_content_distribution,
     complete_manual_publication,
     preflight_content_distribution,
@@ -36,6 +38,17 @@ from app.models.seo import (
     SeoPublishAttempt,
 )
 from app import seo_distribution as distribution
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    json.loads((Path(__file__).parent / "fixtures" / "seo_editor_html_roundtrip.json").read_text(encoding="utf-8")),
+    ids=lambda fixture: fixture["name"],
+)
+def test_editor_html_backend_roundtrip_contract(fixture: dict) -> None:
+    # Also consumed by the real Vue editor DOM test in test-seo-editor.mjs.
+    assert _sanitize_content_html(fixture["input"]) == fixture["api_value"]
+    assert _sanitize_content_html(fixture["editor_html"]) == fixture["api_saved_again"]
 
 
 def test_distribution_requires_an_approved_main_content_asset() -> None:

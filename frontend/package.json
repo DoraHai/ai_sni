@@ -10,6 +10,7 @@
     "build:auth": "vite build --config vite.auth.config.js",
     "build:seo": "vite build --config vite.seo.config.js",
     "verify:seo-build": "node scripts/verify-seo-build.mjs dist-seo",
+    "test:seo-editor": "node --test scripts/test-seo-editor.mjs",
     "verify:auth-build": "node scripts/verify-auth-build.mjs dist-auth",
     "verify:sem-build": "node scripts/verify-sem-build.mjs dist",
     "deploy:sem": "bash scripts/deploy-sem.sh",
@@ -30,6 +31,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.6",
+    "jsdom": "30.0.1",
     "vite": "^8.0.12"
   }
 }

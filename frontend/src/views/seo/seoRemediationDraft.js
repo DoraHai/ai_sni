@@ -1,3 +1,5 @@
+import { seoPlainTextHtml } from './seoEditorHtml.js'
+
 // The handoff is a reviewable draft, not an article to publish automatically.
 export function remediationHandoff(result, proposal) {
   const labels = { title: 'Title', description: 'Description', h1: 'H1' }
@@ -31,7 +33,10 @@ export function validRemediationEdits(proposal) {
 
 export function remediationDraftPatch(task, handoff) {
   if (!Number.isInteger(task.version_count) || task.version_count < 1) throw new Error('无法确认原草稿版本，请重新打开后再保存')
-  const append = value => [value, handoff].filter(Boolean).join('\n\n---\n\n')
+  const append = value => {
+    const original = value ? (value.includes('<') ? value : seoPlainTextHtml(value)) : ''
+    return [original, seoPlainTextHtml(handoff)].filter(Boolean).join('<hr>')
+  }
   const payload = { version_count: task.version_count, draft: append(task.draft) }
   // Editors can display the humanized body instead of draft; preserve and append to both.
   if (task.humanized_content) payload.humanized_content = append(task.humanized_content)
