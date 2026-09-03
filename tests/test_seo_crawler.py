@@ -279,6 +279,7 @@ def test_image_alt_evidence_is_bounded_and_empty_is_not_unknown():
     assert snapshot["image_alt_evidence"]["items"] == []
     assert snapshot["image_alt_evidence"]["candidate_count"] == 0
     snapshot.pop("internal_links")
+    snapshot.pop("internal_link_details")  # Production crawl_site stores link evidence separately.
     row = SeoPageSnapshot(tenant_id=1, site_id=1, crawl_run_id=1, **snapshot)
     assert row.image_alt_evidence["version"] == 1
     assert SeoPageSnapshot().image_alt_evidence is None

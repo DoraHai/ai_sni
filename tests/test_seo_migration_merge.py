@@ -145,6 +145,10 @@ def test_index_review_promotion_preserves_both_histories_and_upgrades_only_new_t
         "0085_seo_page_index_reviews", "0086_seo_index_review_merge",
         "0087_seo_image_alt_evidence",
     ]
+    assert script.get_revision("0087_seo_image_alt_evidence").down_revision == "0086_seo_index_review_merge"
+    assert [step.revision.revision for step in script._upgrade_revs("head", "0086_seo_index_review_merge")] == [
+        "0087_seo_image_alt_evidence",
+    ]
 
 
 def test_site_data_repair_is_tenant_scoped_and_page_231_is_fail_closed() -> None:

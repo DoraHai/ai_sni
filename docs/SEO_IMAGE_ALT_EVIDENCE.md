@@ -37,10 +37,10 @@ before separately reviewing and authorizing its database migration. The normal
 SEO workflow must continue recording `migration=not-run`; no deployment script
 was changed to apply schema automatically. Health and CI require the new head.
 
-Development starts from main (`0085_seo_page_index_reviews`). Production has
-the additional `0086_seo_index_review_merge` head. During the independent
-production promotion PR, reconcile the 0087 parent to the approved production
-head, preserving its lineage, then revalidate a single head and upgrade plan.
+Development starts from main (`0085_seo_page_index_reviews`). This production
+promotion attaches 0087 to `0086_seo_index_review_merge`, preserving both existing
+histories. The reviewed upgrade plan from the current production head contains
+only `0087_seo_image_alt_evidence`.
 Do not ship the main migration graph directly into production or stamp past it.
 Recheck the production crawler's snapshot construction and pinned transport;
 do not replace its newer runtime code with main's older implementation.
