@@ -1,10 +1,12 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { fetchSeoImageEvidence } from '../../api/seo'
+import { ElMessage } from 'element-plus'
+import { fetchSeoImageEvidence, fetchSeoImageRemediation, saveSeoImageRemediation } from '../../api/seo'
 
-const props = defineProps({ visible: Boolean, tenantId: Number, siteId: Number, page: Object })
+const props = defineProps({ visible: Boolean, tenantId: Number, siteId: Number, page: Object, canEdit: Boolean })
 const emit = defineEmits(['update:visible'])
 const data = ref(null), loading = ref(false), error = ref(''), filter = ref('all')
+const drafts = ref({}), savingPosition = ref(null)
 let generation = 0
 const evidence = computed(() => data.value?.evidence)
 const items = computed(() => (evidence.value?.items || []).filter(row => filter.value === 'all' || row.alt_state === filter.value))
@@ -16,8 +18,25 @@ async function load() {
   if (!props.visible || !props.tenantId || !props.siteId || !props.page?.id) return
   loading.value = true
   try {
-    const response = await fetchSeoImageEvidence({ tenantId: props.tenantId, siteId: props.siteId, pageId: props.page.id })
-    if (token === generation) data.value = response
+    const [response, remediation] = await Promise.all([
+      fetchSeoImageEvidence({ tenantId: props.tenantId, siteId: props.siteId, pageId: props.page.id }),
+      fetchSeoImageRemediation({ tenantId: props.tenantId, siteId: props.siteId, pageId: props.page.id }),
+    ])
+    if (token === generation) {
+      data.value = response
+      // The two reads can straddle a new crawl. Never project reviews from one
+      // immutable snapshot onto evidence from another snapshot.
+      const saved = remediation.snapshot_id === response.snapshot_id
+        ? Object.fromEntries((remediation.items || []).map(row => [row.position, row]))
+        : {}
+      drafts.value = Object.fromEntries((response.evidence?.items || []).map(row => [row.position, {
+        id: saved[row.position]?.id || null,
+        decision: saved[row.position]?.decision || 'undecided',
+        alt_suggestion: saved[row.position]?.alt_suggestion || '',
+        note: saved[row.position]?.note || '',
+        review_status: saved[row.position]?.review_status || 'draft',
+      }]))
+    }
   } catch (e) { if (token === generation) error.value = e.message || '读取失败，请重试' }
   finally { if (token === generation) loading.value = false }
 }
@@ -25,6 +44,34 @@ watch(() => [props.visible, props.tenantId, props.siteId, props.page?.id], () =>
   filter.value = 'all'; load()
 }, { immediate: true, flush: 'sync' })
 onBeforeUnmount(() => { ++generation })
+async function saveReview(row) {
+  const draft = drafts.value[row.position]
+  if (!draft || savingPosition.value) return
+  savingPosition.value = row.position
+  try {
+    await saveSeoImageRemediation({ tenant_id: props.tenantId, site_id: props.siteId, page_id: props.page.id,
+      expected_snapshot_id: data.value.snapshot_id, expected_review_id: draft.id, position: row.position,
+      decision: draft.decision, alt_suggestion: draft.alt_suggestion, note: draft.note, review_status: draft.review_status })
+    ElMessage.success('图片整改记录已保存，未修改客户官网')
+    await load()
+  } catch (e) { ElMessage.error(e.message) }
+  finally { savingPosition.value = null }
+}
+function csvCell(value) {
+  let text = String(value ?? '')
+  if (/^[=+\-@]/.test(text.trimStart())) text = `'${text}`
+  return `"${text.replace(/"/g, '""')}"`
+}
+function exportWorklist() {
+  const headers = ['页面ID','页面URL','快照ID','图片位置','区域','图片地址证据','检测Alt状态','人工用途','Alt建议','审核状态','备注']
+  const rows = (evidence.value?.items || []).map(row => { const draft = drafts.value[row.position] || {}; return [
+    props.page.id, props.page.url, data.value.snapshot_id, row.position, row.section, row.source_url,
+    stateLabel(row.alt_state), ({undecided:'待判断',decorative:'装饰图',informative:'内容图'}[draft.decision] || ''),
+    draft.alt_suggestion, ({draft:'草稿',approved:'已审核'}[draft.review_status] || ''), draft.note,
+  ] })
+  const blob = new Blob(['\ufeff' + [headers, ...rows].map(line => line.map(csvCell).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' })
+  const anchor = document.createElement('a'); anchor.href = URL.createObjectURL(blob); anchor.download = `SEO图片整改-${props.page.id}-snapshot-${data.value.snapshot_id}.csv`; anchor.click(); URL.revokeObjectURL(anchor.href)
+}
 </script>
 
 <template>
@@ -45,17 +92,23 @@ onBeforeUnmount(() => { ++generation })
           <el-option label="全部候选项" value="all" /><el-option label="缺少 Alt 属性" value="missing" />
           <el-option label="空 Alt" value="empty" /><el-option label="仅空白" value="whitespace" />
         </el-select>
-        <el-table :data="items" max-height="420" :empty-text="evidence.candidate_count ? '当前筛选下没有已记录的候选项' : '本次静态 HTML 未发现缺少或空 Alt 的图片；不代表图片描述质量已通过'">
+        <el-table :data="items" max-height="520" :empty-text="evidence.candidate_count ? '当前筛选下没有已记录的候选项' : '本次静态 HTML 未发现缺少或空 Alt 的图片；不代表图片描述质量已通过'">
           <el-table-column label="位置" width="165"><template #default="{ row }">第 {{ row.position }} 张 · {{ row.section }}<small v-if="row.element_id">ID：{{ row.element_id }}</small><small>{{ row.in_link ? '位于链接内' : '不在链接内' }}</small><small v-if="row.role">声明 role：{{ row.role }}（非用途结论）</small></template></el-table-column>
           <el-table-column label="图片地址证据" min-width="330"><template #default="{ row }"><div class="wrap">{{ row.source_url || '未取得可展示的 HTTP(S) 地址' }}</div><small v-if="row.source_url_truncated">地址过长，已截断；请按图片位置核对完整地址。</small><small v-if="row.source_attribute">属性：{{ row.source_attribute }}</small><small v-if="row.srcset" class="wrap">候选 srcset（可能截断）：{{ row.srcset }}</small></template></el-table-column>
           <el-table-column label="Alt 状态" width="185"><template #default="{ row }">{{ stateLabel(row.alt_state) }}</template></el-table-column>
+          <el-table-column label="人工整改" min-width="320"><template #default="{ row }"><div v-if="drafts[row.position]" class="review-fields">
+            <el-select v-model="drafts[row.position].decision" :disabled="!canEdit || savingPosition === row.position" aria-label="图片用途"><el-option label="待判断" value="undecided"/><el-option label="装饰图（保留空 Alt）" value="decorative"/><el-option label="内容图（需 Alt）" value="informative"/></el-select>
+            <el-input v-if="drafts[row.position].decision === 'informative'" v-model="drafts[row.position].alt_suggestion" :disabled="!canEdit || savingPosition === row.position" maxlength="300" placeholder="填写可审核的 Alt 建议" />
+            <el-input v-model="drafts[row.position].note" :disabled="!canEdit || savingPosition === row.position" maxlength="1000" placeholder="判断依据 / 备注" />
+            <div><el-select v-model="drafts[row.position].review_status" :disabled="!canEdit || savingPosition === row.position" aria-label="审核状态"><el-option label="草稿" value="draft"/><el-option label="已审核" value="approved"/></el-select><el-button v-if="canEdit" :loading="savingPosition === row.position" @click="saveReview(row)">保存</el-button></div>
+          </div></template></el-table-column>
         </el-table>
       </template>
     </template>
-    <template #footer><el-button :loading="loading" @click="load">重新读取存档</el-button><el-button @click="emit('update:visible', false)">关闭</el-button></template>
+    <template #footer><el-button v-if="evidence" @click="exportWorklist">导出图片整改清单</el-button><el-button :loading="loading" @click="load">重新读取存档</el-button><el-button @click="emit('update:visible', false)">关闭</el-button></template>
   </el-dialog>
 </template>
 
 <style scoped>
-p{font-size:14px;line-height:1.7}.wrap,small{overflow-wrap:anywhere;white-space:normal}small{display:block;font-size:13px;color:#657774;margin-top:6px}.filter{width:230px;margin:10px 0}
+p{font-size:14px;line-height:1.7}.wrap,small{overflow-wrap:anywhere;white-space:normal}small{display:block;font-size:13px;color:#657774;margin-top:6px}.filter{width:230px;margin:10px 0}.review-fields{display:grid;gap:7px}.review-fields>div{display:flex;gap:7px}.review-fields .el-select{width:100%}
 </style>

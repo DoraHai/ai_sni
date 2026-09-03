@@ -684,6 +684,39 @@ class SeoPageSnapshot(Base):
     )
 
 
+class SeoImageAltReview(Base):
+    """Human-owned remediation state for one candidate in a stored snapshot."""
+
+    __tablename__ = "seo_image_alt_reviews"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    site_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("seo_sites.id", ondelete="CASCADE"), nullable=False)
+    page_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("seo_site_pages.id", ondelete="CASCADE"), nullable=False)
+    snapshot_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("seo_page_snapshots.id", ondelete="CASCADE"), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_url: Mapped[str | None] = mapped_column(Text)
+    observed_alt_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    alt_suggestion: Mapped[str | None] = mapped_column(Text)
+    note: Mapped[str | None] = mapped_column(Text)
+    review_status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    actor_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    actor_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("snapshot_id", "position", name="uq_seo_image_alt_review_snapshot_position"),
+        CheckConstraint("position > 0", name="ck_seo_image_alt_review_position"),
+        CheckConstraint("observed_alt_state IN ('missing', 'empty', 'whitespace')", name="ck_seo_image_alt_review_observed_state"),
+        CheckConstraint("decision IN ('undecided', 'decorative', 'informative')", name="ck_seo_image_alt_review_decision"),
+        CheckConstraint("review_status IN ('draft', 'approved')", name="ck_seo_image_alt_review_status"),
+        CheckConstraint("alt_suggestion IS NULL OR length(alt_suggestion) <= 300", name="ck_seo_image_alt_review_suggestion"),
+        Index("ix_seo_image_alt_review_scope", "tenant_id", "site_id", "page_id", "snapshot_id"),
+    )
+
+
 class SeoMetricSnapshot(Base):
     """A site-scoped SEO metric observation with explicit provenance and availability."""
 
