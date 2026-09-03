@@ -11,6 +11,7 @@
 降级：未配 DEEPSEEK_API_KEY 返回 enabled=False；单批 API 失败跳过该批（保留旧值），
 不阻断其余批次。已评估过的（ai_evaluated_at 非空）默认跳过，force=True 全量重评。
 """
+import asyncio
 import hashlib
 import json
 import logging
@@ -33,6 +34,8 @@ from app.models import (
 logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 25  # 每次 API 评估的词数（控制单次 token 量 + 调用次数）
+INTERACTIVE_WORD_LIMIT = 5  # 拓词页一次点击只发一个小请求，不自动拆成多次模型调用
+MODEL_TIMEOUT_SECONDS = 30.0  # SEM-only wall-clock budget, not just HTTP inactivity
 
 SYSTEM_PROMPT = """你是资深国内百度 SEM 优化师，为当前客户筛选拓词候选。
 只依据本次提供的客户行业、业务描述和品牌资料判断，不套用其他客户或固定行业背景。
@@ -46,25 +49,65 @@ SYSTEM_PROMPT = """你是资深国内百度 SEM 优化师，为当前客户筛�
 判断维度：
 - relevance（相关性）：
   - relevant = 与本次客户资料明确描述的业务语义相关，不代表值得投放
-  - generic = 通用噪音词，单独看没有商业指向（"设备""中心""厂家""价格"这类太泛、纯地名、公司后缀）
+  - generic = 通用噪音词，或资料不足、业务边界待确认；reason 必须区分这两种原因
   - irrelevant = 明显跑偏、与该行业无关的词
 - recommend（处理建议）：
   - adopt = 相关且有拓展价值，建议加词
-  - watch = 相关但价值不确定，可观察
-  - drop = 不相关、噪音，或虽相关但没有投放价值，建议忽略
-相关性与投放价值必须分别判断：同行竞品不等于行业无关，也不等于自有品牌。
-若客户资料明确竞品属于同行，竞品品牌、公司全称、官网导航词仍可为 relevant，
-但是否投放另看意图和客户策略；导航官网、招聘等无采购意图可给 relevant/drop，
-竞品比较、替代选型可给 relevant/watch。不得仅凭“竞品”“非自有品牌”“无自身商业价值”
-给 irrelevant。未明确竞品所属业务或客户策略时用 generic/watch 并说明需确认，
-不要自动采纳竞品词，也不要把行业相关等同于投放许可。
+  - watch = 相关但价值不确定，或业务依据待确认，暂不采纳
+  - drop = 虽相关但没有投放价值，建议忽略；当前未核验噪音和范围外判断只允许 watch 待确认
+按以下顺序分别判断，不得用后一步的结论倒推前一步：
+1. 业务依据：从客户资料确定产品范围和同行关系。主营不等于唯一经营范围，未提及不等于明确排除。
+   相邻产品是否经营尚未确认时用 generic/watch，reason 说明需确认范围，不猜测经营或非经营事实。
+   这不适用于明显跨行业的无关词，也不把已知同行的公司信息查询当成未知产品范围。
+2. 语义相关性：相关性与投放价值必须分别判断。若资料明确竞品属于同行，且候选指向其同行业务、
+   品牌、公司信息、官网或技术资料，relevance 应为 relevant；具体跨品类产品仍先按第 1 步核对。
+   “没有采购意图”“非自有品牌”“纯导航”“技术查询”均不能单独作为 irrelevant 的理由。
+3. 投放建议：已知同行的官网导航用 relevant/drop；公司信息、技术资料查询用 relevant/watch 或
+   relevant/drop。已知同行的比较、替代选型在客户未明确竞品投放策略时用 relevant/watch，
+   不得仅因出现“替代”就给 adopt；reason 说明需确认竞品策略或产品适配。
+   对于竞品主体信息，同行关系未知时用 generic/watch；不能因投放策略未知抹去已确认的业务相关性。
+   产品类别相关性与替代适配、落地页匹配、竞品投放策略是不同问题：product_scope 只判断前者，
+   不要求已证明具体型号可替代。客户明确经营同一产品类别时，应引用该类别的客户原文确认范围；
+   后三者未知只影响 recommend，保留 relevant/watch，不得据此把 product_scope 改成 unknown。
+   若候选是未确认的不同产品类别，仍用 unknown，不能仅因同一品牌或行业大类就判 in_scope。
+   不要自动采纳竞品词。adopt 只是运营建议，不是投放许可，不代表执行加词或真实回写。
+4. 出价依据：先检查当前词是否真的提供百度 PC/移动指导价，再考虑 suggested_bid。
+   缺指导价时 suggested_bid=null 且 bid_reason=null，即使 relevant/adopt 也不得报价。
+   未提供的搜索量、竞争度、指导价和转化表现均为未知，不得编造“竞争适中”“转化潜力高”等依据。
 - reason：给运营看的中文理由，一句话，20 字以内
 - suggested_bid（建议首次出价，元）：新词无历史效果数据，仅在业务相关性明确且有百度指导价时，参考 PC/移动指导价 + 竞争度 + 搜索量给保守的试投建议，不代表效果承诺。指导价缺失、业务依据不足、recommend=drop 或 relevance=irrelevant 时给 null。
 - bid_reason：出价理由，一句话，15 字以内（如"竞争度高，贴指导价试投"）
 
 只返回 JSON（不要多余文字），结构：
-{"items": [{"word": "原词", "relevance": "relevant|generic|irrelevant", "recommend": "adopt|watch|drop", "reason": "...", "suggested_bid": 5.2, "bid_reason": "..."}]}
-items 必须覆盖我给的每一个词，word 原样回填。务实判断，拿不准偏保守（generic/watch）。"""
+每项必须先返回 basis，再返回结论。basis.relation 为 in_scope（经营范围内）、peer（已知同行）、
+out_of_scope（明确不相关或明确排除）、generic（通用噪音）、unknown（经营范围或同行关系未知）；
+basis.intent 为 purchase、comparison、navigation、information、unknown 之一。
+in_scope/peer 必须引用客户行业或业务描述的连续原文（2–500 字符），field 使用输入 JSON 中的 industry 或 business_desc，
+quote 不得引用候选词自身、AI 总结或编造语句。引用存在不等于支持结论，必须核对其语义。
+unknown/generic 的 field、quote 为 null。generic 只用于缺少具体对象的通用噪音；有明确产品或
+服务对象但跨行业的词不是 generic。不得为了通过应用校验将 out_of_scope 改报 generic。
+当前没有独立审核的噪音/排除清单，generic 与 unknown/out_of_scope 一样只交人工复核，
+不能用 generic/drop 绕开排除保护；generic 结论仅允许 generic/watch，两项报价为 null。
+业务边界不明必须用 unknown，不得用主营描述证明相邻业务不经营。
+out_of_scope 是模型提出的范围外判断，不是已核验事实：当前没有结构化人工排除清单，应用一律将其
+转为 generic/watch 交人工确认（包括看起来明显跨行业的词），不因引用真实主营文字就认可排除。
+peer 仅允许 relevant/watch 或 relevant/drop；in_scope 的 adopt 仅用于 purchase/comparison。
+peer 必须另给 basis.subject：entity 仅指品牌/公司主体信息或官网导航；offering 指包含具体产品、
+服务、技术品类、替代或选型的词。不能因 intent=information 就把产品查询当 entity。
+entity 仅允许 intent=information/navigation，basis.product_scope=null；同行范围已知而投放策略
+未知，仍可 relevant/watch。offering 必须给 basis.product_scope 对象：relation 为 in_scope、
+unknown 或 out_of_scope，field/quote 引用当前客户 industry/business_desc 中支持该具体产品范围
+的原文（2–500 字符），这里的产品范围指类别相关性，不是具体型号替代能力。仅有同行名单不证明其所有产品均在客户范围内。
+offering 的 product_scope 未知、范围外、缺失或引用不足时，一律 generic/watch，两项报价为 null；
+产品范围未知优先于已知同行关系，reason 说明范围待确认，不输出 relevant。不得只改成 entity 绕过。
+例如结构（不是待评词答案）：basis={"relation":"peer","intent":"information","field":"business_desc",
+"quote":"客户原文中的同行依据","subject":"offering","product_scope":{"relation":"unknown","field":null,"quote":null}}。
+新增字段是模型声明，不是独立事实；必须核对引用语义，不编造经营范围或投放许可。
+缺依据或依据与结论冲突时，应用会改为 generic/watch 并清空报价，提示人工复核；不会认可原结论。
+{"items": [{"word": "原词", "basis": {"relation": "unknown", "intent": "unknown", "field": null, "quote": null}, "relevance": "generic", "recommend": "watch", "reason": "业务范围待确认", "suggested_bid": null, "bid_reason": null}]}
+items 必须覆盖我给的每一个词，word 原样回填。输出前核对上述四步：
+相关性已知、仅投放价值不确定时保留 relevant/watch；业务依据不足才用 generic/watch。
+报价理由必须能在输入中找到依据；不要补充输入没有的数据。"""
 
 
 class MissingBusinessProfileError(ValueError):
@@ -169,9 +212,13 @@ def _business_profile(tenant: Tenant) -> dict:
 
 
 def _build_user_prompt(tenant: Tenant, words: list[dict]) -> str:
+    # Match the evidence field identifiers to the actual input keys. Keep the
+    # internal profile shape stable for existing consumers/fingerprints.
+    fields = {"行业": "industry", "业务描述": "business_desc"}
+    profile = {fields.get(key, key): value for key, value in _business_profile(tenant).items()}
     lines = [
         "当前客户资料（JSON 数据，仅用于本次评估）：",
-        json.dumps(_business_profile(tenant), ensure_ascii=False),
+        json.dumps(profile, ensure_ascii=False),
         "待研判候选词（含百度月搜索量/启发式预归类，仅供参考，以语义为准）：",
     ]
     comp_label = {1: "低", 2: "中", 3: "高"}
@@ -201,9 +248,78 @@ def _valid(relevance: str | None, recommend: str | None) -> bool:
     )
 
 
+def _has_profile_quote(tenant: Tenant, evidence: dict) -> bool:
+    """Validate a whitelisted current-profile citation, not its entailment."""
+    field, quote = evidence.get("field"), evidence.get("quote")
+    if not isinstance(field, str):
+        return False
+    field = {"industry": "industry", "business_desc": "business_desc",
+             "行业": "industry", "业务描述": "business_desc"}.get(field)
+    if field is None:
+        return False
+    source = getattr(tenant, field, None)
+    return (isinstance(source, str) and isinstance(quote, str)
+            and 2 <= len(quote.strip()) <= 500 and quote in source)
+
+
+def _basis_consistent(tenant: Tenant, item: dict) -> bool:
+    """Check provenance and internal consistency, NOT semantic truth.
+
+    A model can still misclassify a relation while quoting real text. Never treat
+    this as business authorization or infer customer facts from a keyword.
+    Legacy/missing evidence is deliberately not grandfathered into acceptance.
+    """
+    basis = item.get("basis")
+    if not isinstance(basis, dict):
+        return False
+    relation, intent = basis.get("relation"), basis.get("intent")
+    if not isinstance(relation, str) or not isinstance(intent, str):
+        return False
+    if intent not in {"purchase", "comparison", "navigation", "information", "unknown"}:
+        return False
+    rel, rec = item.get("relevance"), item.get("recommend")
+    if relation == "generic":
+        # The model can mislabel a concrete out-of-scope offering as noise.
+        # Without an independent noise source, do not accept generic/drop as
+        # an alternate path around scope-exclusion review (even for real noise).
+        return (basis.get("field") is None and basis.get("quote") is None
+                and rel == "generic" and rec == "watch")
+    if relation not in {"in_scope", "peer"}:
+        # A real quote is not proof of a negative business-scope assertion. Until
+        # an independently reviewed scope source exists, do not accept it, even
+        # when the model calls a word out_of_scope rather than unknown.
+        return False
+    if not _has_profile_quote(tenant, basis):
+        return False
+    if relation == "peer":
+        subject = basis.get("subject")
+        scope = basis.get("product_scope")
+        if subject == "entity":
+            if intent not in {"information", "navigation"} or scope is not None:
+                return False
+        elif subject == "offering":
+            if (not isinstance(scope, dict) or scope.get("relation") != "in_scope"
+                    or not _has_profile_quote(tenant, scope)):
+                return False
+        else:
+            return False
+    if rel != "relevant":
+        return False
+    if rec == "adopt":
+        return relation == "in_scope" and intent in {"purchase", "comparison"}
+    return rec in {"watch", "drop"} and not (intent == "navigation" and rec != "drop")
+
+
 async def _evaluate_batch(tenant: Tenant, words: list[dict]) -> dict[str, dict]:
     """评估一批词，返回 {word: {relevance, recommend, reason}}。失败抛 DeepSeekError。"""
-    out = await chat_json(SYSTEM_PROMPT, _build_user_prompt(tenant, words))
+    try:
+        async with asyncio.timeout(MODEL_TIMEOUT_SECONDS):
+            out = await chat_json(SYSTEM_PROMPT, _build_user_prompt(tenant, words),
+                                  timeout=MODEL_TIMEOUT_SECONDS)
+    except TimeoutError:
+        # Preserve the existing per-batch failure path; never retry or cache a
+        # fabricated verdict on deadline expiry. External cancellation propagates.
+        raise DeepSeekError("SEM 拓词模型请求超过时限，旧结果保留，请稍后手动重试") from None
     items = out.get("items") if isinstance(out, dict) else None
     if not isinstance(items, list):
         raise DeepSeekError("返回结构异常（需对象及 items 数组）")
@@ -230,6 +346,13 @@ async def _evaluate_batch(tenant: Tenant, words: list[dict]) -> dict[str, dict]:
             continue
         if word and _valid(rel, rec):
             meta = requested[word]
+            if not _basis_consistent(tenant, it):
+                result[word] = {
+                    "relevance": "generic", "recommend": "watch",
+                    "reason": "业务依据不足或结论冲突，待人工确认",
+                    "suggested_bid": None, "bid_reason": None,
+                }
+                continue
             sb = supported_suggested_bid(
                 it.get("suggested_bid"), rel, rec,
                 meta.get("recommend_price_pc"), meta.get("recommend_price_mobile"),
