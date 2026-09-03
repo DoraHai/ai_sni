@@ -1,6 +1,7 @@
 """W3 skip preview: dry-run engine resolve under monitoring_stance."""
 
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from app.geo.content.monitoring_stance import (
     build_skip_preview,
@@ -80,7 +81,19 @@ def test_build_skip_preview_counts():
             model=None,
         ),
     ]
-    out = build_skip_preview(engines, monitoring_stance="real_only")
+    def status(engine_key):
+        ready = engine_key == "b"
+        return {
+            "configured": ready,
+            "base_url": "https://x" if ready else None,
+            "model": "m" if ready else None,
+        }
+
+    with patch(
+        "app.geo.content.engine_providers.platform_engine_public_status",
+        side_effect=status,
+    ):
+        out = build_skip_preview(engines, monitoring_stance="real_only")
     assert out["enabled_will_skip"] == 1  # a
     assert out["enabled_will_run"] == 1  # b
     assert len(out["items"]) == 3

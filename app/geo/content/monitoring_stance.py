@@ -14,7 +14,7 @@ STANCES: dict[str, dict[str, Any]] = {
     "simulation": {
         "key": "simulation",
         "label": "AI 回答模拟评估",
-        "summary": "用租户 LLM 扮演各引擎输出；适合方法论演练与内容质量自检，不宣称真实外站可见度。",
+        "summary": "用平台能力 LLM 扮演各引擎输出；适合方法论演练与内容质量自检，不宣称真实外站可见度。",
         "deliverable_ok": False,
         "badge": "模拟评估",
         "client_facing_warning": "本报告样本为人设模拟，不可作为真实引擎收录证明。",
@@ -62,7 +62,7 @@ def compose_stance_banner(
     if info["key"] == "simulation":
         msgs.append("当前定位为模拟评估，勿将数字直接写入客户合同附件。")
     elif info["key"] == "hybrid" and real_ready_engines == 0 and enabled_engines > 0:
-        msgs.append("尚未配置任何真采样引擎 Key，实际运行将全部为模拟。")
+        msgs.append("平台尚未配置任何真采样引擎，实际运行将全部为模拟。")
     elif info["key"] == "real_only" and real_ready_engines == 0:
         msgs.append("定位为仅真采样，但无引擎就绪——巡检结果将为空或被过滤。")
     if simulated_share is not None and simulated_share > 0.5:
@@ -78,11 +78,12 @@ def compose_stance_banner(
 
 # Human-readable reasons for UI skip preview (aligned with probe.resolve_engine_llm)
 _SKIP_REASON_LABELS: dict[str, str] = {
+    "skipped:real_only_no_platform_key": "仅真采样：平台尚未配置该引擎",
     "skipped:real_only_no_engine_key": "仅真采样：引擎未配置 Key",
     "skipped:real_only_missing_base_or_model": "仅真采样：缺 Base URL 或 Model",
     "skipped:real_only_persona_engine_disabled": "仅真采样：人设模拟引擎不参与",
     "simulation 定位：强制人设模拟": "模拟评估：强制人设路径",
-    "simulation 定位：无租户 LLM": "模拟评估：无租户 LLM",
+    "simulation 定位：无租户 LLM": "模拟评估：无平台能力 LLM",
 }
 
 
@@ -114,7 +115,7 @@ def preview_engine_skip(
             "will_run": True,
             "will_skip": False,
             "reason": None,
-            "reason_label": "模拟评估：走租户 LLM 人设",
+            "reason_label": "模拟评估：走平台能力 LLM 人设",
             "sample_mode_effective": "mock_persona",
         }
     if stance == "real_only":
@@ -179,12 +180,15 @@ def build_skip_preview(
     monitoring_stance: str | None,
 ) -> dict[str, Any]:
     """Per-engine skip preview for engines config UI."""
+    from app.geo.content.engine_providers import platform_engine_public_status
+
     items: list[dict[str, Any]] = []
     for e in engines:
-        mode = getattr(e, "sample_mode", None) or "mock_persona"
-        key_ok = bool(getattr(e, "api_key_encrypted", None))
-        base_ok = bool(str(getattr(e, "api_base_url", None) or "").strip())
-        model_ok = bool(str(getattr(e, "model", None) or "").strip())
+        platform = platform_engine_public_status(getattr(e, "engine_key", None))
+        key_ok = bool(platform["configured"])
+        mode = "openai_compat" if key_ok else "mock_persona"
+        base_ok = bool(platform["base_url"])
+        model_ok = bool(platform["model"])
         enabled = bool(getattr(e, "enabled", True))
         pred = preview_engine_skip(
             monitoring_stance=monitoring_stance,

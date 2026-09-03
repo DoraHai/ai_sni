@@ -92,6 +92,36 @@ class Settings(BaseSettings):
     dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     dashscope_model: str = "deepseek-v3"
 
+    # GEO multi-engine sampling. Credentials are platform-managed server secrets:
+    # tenants may enable/disable engines, but can never override these values.
+    geo_openai_api_key: str = ""
+    geo_openai_base_url: str = "https://api.openai.com/v1"
+    geo_openai_model: str = "gpt-4o-mini"
+    geo_deepseek_api_key: str = ""
+    geo_deepseek_base_url: str = "https://api.deepseek.com"
+    geo_deepseek_model: str = "deepseek-chat"
+    geo_qwen_api_key: str = ""
+    geo_qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    geo_qwen_model: str = "qwen-max"
+    geo_doubao_api_key: str = ""
+    geo_doubao_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
+    geo_doubao_model: str = "doubao-seed-2-0-pro-260215"
+    geo_hunyuan_api_key: str = ""
+    geo_hunyuan_base_url: str = "https://api.hunyuan.cloud.tencent.com/v1"
+    geo_hunyuan_model: str = "hunyuan-turbos-latest"
+    geo_qianfan_api_key: str = ""
+    geo_qianfan_base_url: str = "https://qianfan.bj.baidubce.com/v2"
+    geo_qianfan_model: str = "ernie-5.1"
+    geo_kimi_api_key: str = ""
+    geo_kimi_base_url: str = "https://api.moonshot.cn/v1"
+    geo_kimi_model: str = "kimi-k2.6"
+    geo_perplexity_api_key: str = ""
+    geo_perplexity_base_url: str = "https://api.perplexity.ai"
+    geo_perplexity_model: str = "sonar"
+    # Tencent WSA is a search source, not a model answer engine.
+    geo_tencent_wsa_api_key: str = ""
+    geo_tencent_wsa_base_url: str = "https://api.wsa.cloud.tencent.com"
+
     # GEO 母稿质量门禁（P2/P3）：默认关闭，仅 warn 不挡发布
     geo_score_gate: bool = False
     geo_score_threshold: int = 60

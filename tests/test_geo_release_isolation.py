@@ -46,6 +46,16 @@ def test_geo_service_has_a_dedicated_optional_secret_override():
     assert 'chmod 0640 "$GEO_ENV_FILE"' in setup
     assert "DASHSCOPE_API_KEY=" in example
     assert "DEEPSEEK_API_KEY=" in example
+    for key in (
+        "GEO_DEEPSEEK_API_KEY=",
+        "GEO_QWEN_API_KEY=",
+        "GEO_DOUBAO_API_KEY=",
+        "GEO_HUNYUAN_API_KEY=",
+        "GEO_QIANFAN_API_KEY=",
+        "GEO_KIMI_API_KEY=",
+        "GEO_TENCENT_WSA_API_KEY=",
+    ):
+        assert key in example
     assert "geo-demo-local-key" not in example
 
 
@@ -53,6 +63,19 @@ def test_geo_release_keeps_query_api_keys_disabled_by_default():
     config = _read("app/config.py")
 
     assert "admin_api_key_query_enabled: bool = False" in config
+
+
+def test_geo_engine_credentials_are_platform_managed():
+    probe = _read("app/geo/content/probe.py")
+    routes = _read("app/geo/content/routes.py")
+    engine_page = _read("frontend/src/views/geo/GeoEnginesView.vue")
+
+    assert "resolve_platform_engine_credentials" in probe
+    assert "Tenant database" in probe
+    assert "credentials are intentionally ignored" in probe
+    assert "AI 引擎凭证由平台统一管理，客户不能修改" in routes
+    assert 'v-model="editing.api_key"' not in engine_page
+    assert "客户侧不可查看或修改" in engine_page
 
 
 def test_geo_frontend_is_mounted_without_replacing_the_sem_shell():
