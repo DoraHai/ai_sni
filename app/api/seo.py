@@ -8,6 +8,7 @@ import logging
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from time import monotonic
 from typing import Any, Literal
 from urllib.parse import urljoin, urlparse
 
@@ -15,7 +16,7 @@ from bs4 import BeautifulSoup
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field, PositiveInt, field_validator
 from sqlalchemy import and_, delete, func, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.deepseek import DeepSeekError, chat_json, is_enabled
@@ -44,6 +45,7 @@ from app.models import (
 )
 from app.models.module_workspace import SeoSite
 from app.models.seo import SeoCrawlRun, SeoMetricSnapshot, SeoPageSnapshot
+from app.seo_page_audit import collect_page_snapshot, save_page_snapshot
 from app.models.seo import (
     SeoContentPublication,
     SeoDistributionConnection,
@@ -2364,6 +2366,7 @@ async def list_seo_crawl_runs(
     conditions = [
         SeoCrawlRun.tenant_id == tenant_id,
         SeoCrawlRun.site_id == site_id,
+        SeoCrawlRun.max_urls > 1,
     ]
     if run_id is not None:
         conditions.append(SeoCrawlRun.id == run_id)
@@ -2376,7 +2379,7 @@ async def list_seo_crawl_runs(
         )
     )
     snapshots: list[SeoPageSnapshot] = []
-    selected_run_id = run_id or (runs[0].id if runs else None)
+    selected_run_id = runs[0].id if runs else None
     if selected_run_id is not None:
         snapshots = list(
             await session.scalars(
@@ -2762,8 +2765,12 @@ async def audit_pending_site_pages(
     site_id: int | None = None,
     max_pages: int = Query(10, ge=1, le=20),
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
     """Audit a bounded pending/title-less batch without requiring one click per row."""
+    ctx.ensure_tenant(tenant_id)
+    if not ctx.can_edit("seo.site"):
+        raise HTTPException(403, "无权操作站内优化")
     await _tenant(session, tenant_id)
     await _seo_site(session, tenant_id, site_id)
     conditions = [
@@ -2772,27 +2779,42 @@ async def audit_pending_site_pages(
     ]
     if site_id is not None:
         conditions.append(SeoSitePage.site_id == site_id)
-    rows = list(
+    page_ids = list(
         await session.scalars(
-            select(SeoSitePage).where(*conditions).order_by(SeoSitePage.id).limit(max_pages)
+            select(SeoSitePage.id).where(*conditions).order_by(SeoSitePage.id).limit(max_pages)
         )
     )
     completed = 0
+    skipped = 0
     failed: list[dict[str, Any]] = []
-    for row in rows:
+    started = monotonic()
+    for page_id in page_ids:
+        # Leave room for one 40-second page attempt plus persistence. Remaining
+        # pages stay pending; never keep a synchronous batch running for 20*40s.
+        if monotonic() - started >= 70:
+            break
         try:
-            result = await audit_url(row.url)
-            _apply_site_page_audit(row, result)
-            completed += 1
-        except GeoAuditError as exc:
-            row.status = "error"
-            row.last_error = str(exc)[:1000]
-            row.last_checked_at = datetime.utcnow()
-            failed.append({"page_id": row.id, "message": str(exc)[:300]})
-    await session.commit()
+            row = await _audit_site_page_observation(
+                page_id, tenant_id, session, ctx, site_id, pending_only=True,
+            )
+            if row is None:
+                skipped += 1
+            else:
+                completed += 1
+        except HTTPException as exc:
+            # Expected fetch failures have already committed their snapshot.
+            # Scope/lock failures have no writes; release any open transaction.
+            await session.rollback()
+            failed.append({"page_id": page_id, "message": str(exc.detail)[:300]})
+        except Exception:
+            await session.rollback()
+            logging.getLogger(__name__).exception("SEO pending page audit failed: page_id=%s", page_id)
+            failed.append({"page_id": page_id, "message": "检测或保存失败，请稍后重试"})
     return {
-        "selected": len(rows),
+        "selected": len(page_ids),
         "completed": completed,
+        "skipped": skipped,
+        "deferred": len(page_ids) - completed - len(failed) - skipped,
         "failed": failed,
         "remaining": int(
             await session.scalar(select(func.count()).select_from(SeoSitePage).where(*conditions))
@@ -2827,21 +2849,47 @@ async def audit_site_page(
     page_id: int,
     tenant_id: int,
     session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+    site_id: int | None = None,
 ) -> dict[str, Any]:
-    row = await _site_page(session, page_id, tenant_id)
-    try:
-        result = await audit_url(row.url)
-    except GeoAuditError as exc:
-        row.status = "error"
-        row.last_error = str(exc)
-        row.last_checked_at = datetime.utcnow()
-        await session.commit()
-        raise HTTPException(422, str(exc)) from exc
-
-    _apply_site_page_audit(row, result)
-    await session.commit()
-    await session.refresh(row)
+    row = await _audit_site_page_observation(page_id, tenant_id, session, ctx, site_id)
     return _page_payload(row)
+
+
+async def _audit_site_page_observation(
+    page_id, tenant_id, session, ctx, site_id=None, *, pending_only=False,
+):
+    """Shared single/batch path: lock, recheck scope, collect and commit evidence."""
+    ctx.ensure_tenant(tenant_id)
+    if not ctx.can_edit("seo.site"):
+        raise HTTPException(403, "无权操作站内优化")
+    conditions = [SeoSitePage.id == page_id, SeoSitePage.tenant_id == tenant_id]
+    if site_id is not None:
+        conditions.append(SeoSitePage.site_id == site_id)
+    # Serialize observations for this page, including failed observations.
+    try:
+        row = await session.scalar(select(SeoSitePage).where(*conditions).with_for_update(nowait=True))
+    except DBAPIError as exc:
+        if getattr(exc.orig, "sqlstate", None) == "55P03":
+            await session.rollback()
+            raise HTTPException(409, "该页面正在检测或更新，请稍后重试") from exc
+        raise
+    if row is None:
+        raise HTTPException(404, "站内页面不存在")
+    if pending_only and row.status != "pending" and row.title is not None:
+        await session.rollback()
+        return None
+    if row.site_id is None:
+        raise HTTPException(422, "请先将页面关联到 SEO 网站")
+    await _seo_site(session, tenant_id, row.site_id)
+    started_at = datetime.utcnow()
+    values = await collect_page_snapshot(row.url)
+    await save_page_snapshot(session, row, values, ctx.user_id, started_at)
+    await session.commit()
+    if values.get("error_type"):
+        raise HTTPException(422, values.get("fetch_error") or "单页检测失败，已保存失败记录")
+    await session.refresh(row)
+    return row
 
 
 # ===== SEO 总览与异常 =====
@@ -2953,6 +3001,7 @@ async def seo_overview(
             .where(
                 SeoCrawlRun.tenant_id == tenant_id,
                 SeoCrawlRun.site_id == site_id,
+                SeoCrawlRun.max_urls > 1,
             )
             .order_by(SeoCrawlRun.started_at.desc(), SeoCrawlRun.id.desc())
             .limit(1)

@@ -36,7 +36,7 @@ onBeforeUnmount(() => { ++generation })
     <template v-else-if="data">
       <p>存档抓取时间：{{ time(data.fetched_at) }}<span v-if="data.snapshot_id"> · 快照 #{{ data.snapshot_id }}</span></p>
       <el-alert v-if="data.fetch_error" title="最近抓取失败，不能据此判断图片情况；未回退展示旧成功记录。" type="warning" :closable="false" />
-      <p v-else-if="!evidence">{{ data.snapshot_id ? '旧存档未记录逐图明细，需要后续成功扫描才能补齐。' : '尚无抓取存档，不能判断图片情况。' }}<span v-if="data.legacy_candidate_count != null">旧计数：{{ data.legacy_candidate_count }}（不代表全部需要修改）。</span></p>
+      <p v-else-if="!evidence">{{ data.snapshot_id ? '旧存档未记录逐图明细，可对本页执行一次成功检测后补齐，无需全站扫描。' : '尚无抓取存档，可对本页执行检测后查看图片明细。' }}<span v-if="data.legacy_candidate_count != null">旧计数：{{ data.legacy_candidate_count }}（不代表全部需要修改）。</span></p>
       <template v-else>
         <p>静态 HTML 中 {{ evidence.images_count }} 张图片，{{ evidence.candidate_count }} 个待核查项：缺属性 {{ evidence.counts.missing }}、空 Alt {{ evidence.counts.empty }}、仅空白 {{ evidence.counts.whitespace }}。不含脚本动态生成图片。</p>
         <p>位置按静态 HTML 中的图片顺序记录；地址仅为属性证据，不代表浏览器最终选用或已验证可访问的图片。</p>

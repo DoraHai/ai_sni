@@ -94,9 +94,9 @@ export function updateSeoSitePage({ pageId, tenantId, payload }) {
   })
 }
 
-export function auditSeoSitePage({ pageId, tenantId }) {
+export function auditSeoSitePage({ pageId, tenantId, siteId }) {
   return client.post(`/api/v1/seo/site-pages/${pageId}/audit`, null, {
-    params: { tenant_id: tenantId },
+    params: { tenant_id: tenantId, site_id: siteId },
     timeout: 60000,
   })
 }
