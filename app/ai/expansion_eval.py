@@ -84,6 +84,17 @@ unknown/generic 的 field、quote 为 null。业务边界不明必须用 unknown
 out_of_scope 是模型提出的范围外判断，不是已核验事实：当前没有结构化人工排除清单，应用一律将其
 转为 generic/watch 交人工确认（包括看起来明显跨行业的词），不因引用真实主营文字就认可排除。
 peer 仅允许 relevant/watch 或 relevant/drop；in_scope 的 adopt 仅用于 purchase/comparison。
+peer 必须另给 basis.subject：entity 仅指品牌/公司主体信息或官网导航；offering 指包含具体产品、
+服务、技术品类、替代或选型的词。不能因 intent=information 就把产品查询当 entity。
+entity 仅允许 intent=information/navigation，basis.product_scope=null；同行范围已知而投放策略
+未知，仍可 relevant/watch。offering 必须给 basis.product_scope 对象：relation 为 in_scope、
+unknown 或 out_of_scope，field/quote 引用当前客户 industry/business_desc 中支持该具体产品范围
+的原文（2–500 字符）。仅有同行名单不证明其所有产品均在客户范围内。
+offering 的 product_scope 未知、范围外、缺失或引用不足时，一律 generic/watch，两项报价为 null；
+产品范围未知优先于已知同行关系，reason 说明范围待确认，不输出 relevant。不得只改成 entity 绕过。
+例如结构（不是待评词答案）：basis={"relation":"peer","intent":"information","field":"business_desc",
+"quote":"客户原文中的同行依据","subject":"offering","product_scope":{"relation":"unknown","field":null,"quote":null}}。
+新增字段是模型声明，不是独立事实；必须核对引用语义，不编造经营范围或投放许可。
 缺依据或依据与结论冲突时，应用会改为 generic/watch 并清空报价，提示人工复核；不会认可原结论。
 {"items": [{"word": "原词", "basis": {"relation": "unknown", "intent": "unknown", "field": null, "quote": null}, "relevance": "generic", "recommend": "watch", "reason": "业务范围待确认", "suggested_bid": null, "bid_reason": null}]}
 items 必须覆盖我给的每一个词，word 原样回填。输出前核对上述四步：
@@ -229,6 +240,20 @@ def _valid(relevance: str | None, recommend: str | None) -> bool:
     )
 
 
+def _has_profile_quote(tenant: Tenant, evidence: dict) -> bool:
+    """Validate a whitelisted current-profile citation, not its entailment."""
+    field, quote = evidence.get("field"), evidence.get("quote")
+    if not isinstance(field, str):
+        return False
+    field = {"industry": "industry", "business_desc": "business_desc",
+             "行业": "industry", "业务描述": "business_desc"}.get(field)
+    if field is None:
+        return False
+    source = getattr(tenant, field, None)
+    return (isinstance(source, str) and isinstance(quote, str)
+            and 2 <= len(quote.strip()) <= 500 and quote in source)
+
+
 def _basis_consistent(tenant: Tenant, item: dict) -> bool:
     """Check provenance and internal consistency, NOT semantic truth.
 
@@ -253,17 +278,20 @@ def _basis_consistent(tenant: Tenant, item: dict) -> bool:
         # an independently reviewed scope source exists, do not accept it, even
         # when the model calls a word out_of_scope rather than unknown.
         return False
-    field, quote = basis.get("field"), basis.get("quote")
-    if not isinstance(field, str):
+    if not _has_profile_quote(tenant, basis):
         return False
-    field = {"industry": "industry", "business_desc": "business_desc",
-             "行业": "industry", "业务描述": "business_desc"}.get(field)
-    if field is None:
-        return False
-    source = getattr(tenant, field, None)
-    if (not isinstance(source, str) or not isinstance(quote, str)
-            or not 2 <= len(quote.strip()) <= 500 or quote not in source):
-        return False
+    if relation == "peer":
+        subject = basis.get("subject")
+        scope = basis.get("product_scope")
+        if subject == "entity":
+            if intent not in {"information", "navigation"} or scope is not None:
+                return False
+        elif subject == "offering":
+            if (not isinstance(scope, dict) or scope.get("relation") != "in_scope"
+                    or not _has_profile_quote(tenant, scope)):
+                return False
+        else:
+            return False
     if rel != "relevant":
         return False
     if rec == "adopt":

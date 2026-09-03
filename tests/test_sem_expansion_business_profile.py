@@ -25,7 +25,12 @@ from app.models import KeywordCandidate, Tenant
 
 def basis(relation="in_scope", intent="purchase", quote="汽车修补漆", field="business_desc"):
     """Synthetic model evidence for adapter tests, never a real model judgment."""
-    return dict(relation=relation, intent=intent, field=field, quote=quote)
+    evidence = dict(relation=relation, intent=intent, field=field, quote=quote)
+    if relation == "peer":
+        # Synthetic, explicit declarations; never infer these into saved outputs.
+        evidence.update(subject="offering", product_scope=dict(
+            relation="in_scope", field=field, quote=quote))
+    return evidence
 
 
 def tenant(**kwargs):

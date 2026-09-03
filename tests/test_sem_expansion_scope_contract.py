@@ -48,17 +48,18 @@ def test_real_chinese_fields_work_without_certifying_scope_exclusions(deny_netwo
         assert item["word"] == case["word"]
         processed = result[item["word"]]
         assert processed["suggested_bid"] is None and processed["bid_reason"] is None
-        if case["group"] in ("unrelated", "boundary"):
+        if case["group"] in ("competitor", "information", "unrelated", "boundary"):
             assert processed["relevance"] == "generic" and processed["recommend"] == "watch"
             assert "待人工确认" in processed["reason"]
             review.append(case["id"])
         else:
             assert (processed["relevance"], processed["recommend"]) == (item["relevance"], item["recommend"])
             accepted.append(case["id"])
-    assert len(accepted) == 14 and len(review) == 6
+    # Historical peers have no subject/product_scope; do not retrofit evidence.
+    assert len(accepted) == 7 and len(review) == 13
     # Do not change the gold draft to hide lost automatic negative discrimination.
     assert sum([result[c["word"]]["relevance"], result[c["word"]]["recommend"]] in c["allowed_pairs"]
-               for c in FIXTURE["cases"] if c["allowed_pairs"] is not None) == 14
+               for c in FIXTURE["cases"] if c["allowed_pairs"] is not None) == 7
 
 
 @pytest.mark.parametrize("field,quote", [
