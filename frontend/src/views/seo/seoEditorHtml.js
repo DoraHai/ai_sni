@@ -12,6 +12,14 @@ export function seoPlainTextHtml(value) {
   return `<div>${text.replace(/\r\n?/g, '\n').replace(/\n/g, '<br>')}</div>`
 }
 
+// Count rendered text, not markup or serialized entity spelling. Use the same
+// sanitizer/one-pass decoding contract as the editor; do not modify stored HTML.
+export function seoContentWordCount(value, doc = document) {
+  const template = doc.createElement('template')
+  template.innerHTML = sanitizeSeoEditorHtml(value, doc)
+  return Array.from((template.content.textContent || '').replace(/\s+/g, '')).length
+}
+
 function replaceTextNewlines(node, doc) {
   const lines = node.textContent.replace(/\r\n?/g, '\n').split('\n')
   const fragment = doc.createDocumentFragment()

@@ -6,7 +6,7 @@ import { assistSeoContent, createSeoContentAsset, fetchSeoContentAssets, fetchSe
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
-import { sanitizeSeoEditorHtml } from './seoEditorHtml'
+import { sanitizeSeoEditorHtml, seoContentWordCount } from './seoEditorHtml'
 
 const route = useRoute()
 const router = useRouter()
@@ -30,6 +30,8 @@ const sourcePageId = ref(Number(route.query.source_page_id) || null)
 const sourcePage = ref(null)
 const assetVersion = ref(1)
 const assetStatus = ref('planned')
+const assetContentType = ref(null)
+const editingHumanized = ref(false)
 const workflowLocked = computed(() => ['review', 'ready', 'published'].includes(assetStatus.value))
 const mode = computed(() => route.query.type === 'rewrite' ? 'rewrite' : route.query.type === 'qa' ? 'qa' : 'original')
 const pageTitle = computed(() => mode.value === 'rewrite' ? '文章改写编辑' : mode.value === 'qa' ? '问答编辑器' : '原创文章编辑')
@@ -46,7 +48,8 @@ const templateMap = {
 }
 const selectedTemplate = computed(() => templateMap[route.query.template] || templateMap.guide)
 const form = reactive({ title: '', keyword_ids: [], outline: '', draft: '', author: session.user?.name || session.user?.username || '' })
-const wordCount = computed(() => Array.from(form.draft.replace(/<[^>]+>/g, '').replace(/\s+/g, '')).length)
+const wordCount = computed(() => seoContentWordCount(form.draft))
+const contentTypeLabel = computed(() => ({ article: '原创文章', guide: '深度指南', landing: '落地页', comparison: '对比内容', rewrite: '文章改写', qa: '问答内容', faq: 'FAQ' })[assetContentType.value] || selectedTemplate.value.name)
 const keywordNames = computed(() => form.keyword_ids.map((id) => keywords.value.find((item) => item.id === id)?.keyword).filter(Boolean))
 const keywordSummary = computed(() => keywordNames.value.length ? keywordNames.value.join('、') : '尚未选择')
 const primaryAiAction = computed(() => mode.value === 'rewrite' ? 'rewrite' : 'generate')
@@ -70,6 +73,8 @@ async function load() {
     if (assetId.value) {
       const item = contentResult.items.find((row) => row.id === assetId.value)
       if (!item) return ElMessage.warning('改写任务不存在或已被删除')
+      assetContentType.value = item.content_type
+      editingHumanized.value = Boolean(item.humanized_content)
       Object.assign(form,{title:item.title||'',keyword_ids:[...(item.keyword_ids?.length?item.keyword_ids:item.keyword_id?[item.keyword_id]:[])],outline:item.outline||'',draft:sanitizeEditorHtml(item.humanized_content||item.draft||''),author:item.author||form.author})
       Object.assign(publishForm,{page_url:item.page_url||'',target_platforms:[...(item.target_platforms||[])]})
       publishedAt.value=item.published_at||null
@@ -257,6 +262,7 @@ async function assist(action) {
 async function save(status = 'drafting', options = {}) {
   if (workflowLocked.value) return ElMessage.warning('待审核或待发布内容不能直接编辑，请先退回修改')
   if (editorComposing.value) return ElMessage.warning('中文输入尚未完成，请选定文字后再保存')
+  if (assetId.value && !assetContentType.value) return ElMessage.warning('任务尚未成功载入，请刷新后重试')
   syncDraft()
   if (!currentTenantId.value) return ElMessage.warning('请先选择客户')
   if (!siteId.value) return ElMessage.warning('请先选择或创建 SEO 网站')
@@ -273,7 +279,7 @@ async function save(status = 'drafting', options = {}) {
       title: form.title,
       keyword_id: form.keyword_ids[0] || null,
       keyword_ids: form.keyword_ids,
-      content_type: mode.value === 'rewrite' ? 'rewrite' : mode.value === 'qa' ? 'qa' : selectedTemplate.value.type,
+      content_type: assetContentType.value || (mode.value === 'rewrite' ? 'rewrite' : mode.value === 'qa' ? 'qa' : selectedTemplate.value.type),
       outline: form.outline || selectedTemplate.value.outline,
       draft: form.draft || null,
       humanized_content: mode.value === 'rewrite' ? form.draft || null : null,
@@ -287,13 +293,19 @@ async function save(status = 'drafting', options = {}) {
       published_at: options.publishedAt ?? publishedAt.value,
     }
     if(assetId.value){
-      const {tenant_id,site_id,...values}=payload
+      // An existing record is not a new template: preserve its original draft
+      // when editing the reviewed text, and retain non-editor metadata.
+      const {tenant_id,site_id,draft,humanized_content,source_text,rewrite_progress,originality_score,...values}=payload
+      values[editingHumanized.value ? 'humanized_content' : 'draft'] = form.draft || null
+      values.outline = form.outline || null
       values.version_count = assetVersion.value
       const saved = await updateSeoContentAsset({contentId:assetId.value,tenantId:currentTenantId.value,payload:values})
       assetVersion.value = saved.version_count || assetVersion.value
     }else{
       const created=await createSeoContentAsset(payload)
       assetId.value=created.id
+      assetContentType.value=created.content_type||payload.content_type
+      editingHumanized.value=Boolean(payload.humanized_content)
       assetVersion.value=created.version_count||1
       sourcePageId.value=created.source_page_id||null
       await router.replace({ query: { ...route.query, id: created.id, source_page_id: created.source_page_id || undefined } })
@@ -378,13 +390,13 @@ onMounted(async () => {
   <div class="editor-page">
     <header class="editor-topbar">
       <button class="editor-back" type="button" @click="router.push(backPath)">← 返回{{ mode==='rewrite'?'文章改写':mode==='qa'?'问答运营':'原创文章' }}</button>
-      <div><h1>{{ pageTitle }}</h1><p>{{ mode==='rewrite'?'基于导入原文 · 深度改写':mode==='qa'?'搜索问答 · 新建回答':`${selectedTemplate.name} · 新建内容` }}</p></div>
+      <div><h1>{{ pageTitle }}</h1><p>{{ assetId ? `${contentTypeLabel} · 任务 #${assetId}` : mode==='rewrite'?'基于导入原文 · 深度改写':mode==='qa'?'搜索问答 · 新建回答':`${selectedTemplate.name} · 新建内容` }}</p></div>
       <div class="editor-top-actions"><span>{{ saveState }}</span><button v-if="sourcePageId" type="button" @click="router.push(sourcePageRoute)">返回来源页面</button><button v-if="['planned','drafting'].includes(assetStatus)" type="button" :disabled="saving || editorComposing" @click="save('drafting')">保存草稿</button><button v-if="['planned','drafting'].includes(assetStatus)" type="button" :disabled="saving || editorComposing" @click="submitReview">提交审核</button><button v-if="assetStatus==='ready'" class="primary" type="button" @click="router.push('/seo/distribution')">进入发布流程</button><b>{{ String(session.user?.name || session.user?.username || 'DZ').slice(0, 2).toUpperCase() }}</b></div>
     </header>
 
     <main class="editor-workspace">
       <aside class="editor-side">
-        <section class="side-section"><h3>内容 Brief</h3><div v-if="sourcePage" class="source-link"><b>来源站内页面 #{{ sourcePage.id }}</b><span>{{ sourcePage.title || sourcePage.url }}</span><button type="button" @click="router.push(sourcePageRoute)">查看页面优化记录</button></div><label>SEO 网站</label><el-select v-model="siteId" :disabled="!!assetId||!!sourcePageId" placeholder="选择 SEO 网站" @change="changeSite"><el-option v-for="site in sites" :key="site.id" :label="site.name || site.canonical_domain" :value="site.id" /></el-select><label>搜索引擎</label><div class="engine-picks"><button v-for="item in ['百度', 'Google', 'Bing']" :key="item" :class="{ selected: engine === item }" type="button" @click="engine = item">{{ item }}</button></div><label>目标关键词（1–5个）</label><el-select v-model="form.keyword_ids" class="brief-keywords" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="2" :multiple-limit="5" filterable placeholder="选择主关键词和辅助关键词"><el-option v-for="item in keywords" :key="item.id" :label="item.keyword" :value="item.id" /></el-select><small class="keyword-guidance">第一个为主关键词。建议选择 1 个品牌词，再搭配 1–2 个产品词、应用词或行业词。</small><label>内容模式</label><input :value="mode==='rewrite'?'深度改写':mode==='qa'?'专题问答':selectedTemplate.name" readonly><label>负责人</label><input v-model="form.author" placeholder="负责人"></section>
+        <section class="side-section"><h3>内容 Brief</h3><div v-if="sourcePage" class="source-link"><b>来源站内页面 #{{ sourcePage.id }}</b><span>{{ sourcePage.title || sourcePage.url }}</span><button type="button" @click="router.push(sourcePageRoute)">查看页面优化记录</button></div><label>SEO 网站</label><el-select v-model="siteId" :disabled="!!assetId||!!sourcePageId" placeholder="选择 SEO 网站" @change="changeSite"><el-option v-for="site in sites" :key="site.id" :label="site.name || site.canonical_domain" :value="site.id" /></el-select><label>搜索引擎</label><div class="engine-picks"><button v-for="item in ['百度', 'Google', 'Bing']" :key="item" :class="{ selected: engine === item }" type="button" @click="engine = item">{{ item }}</button></div><label>目标关键词（1–5个）</label><el-select v-model="form.keyword_ids" class="brief-keywords" multiple collapse-tags collapse-tags-tooltip :max-collapse-tags="2" :multiple-limit="5" filterable placeholder="选择主关键词和辅助关键词"><el-option v-for="item in keywords" :key="item.id" :label="item.keyword" :value="item.id" /></el-select><small class="keyword-guidance">第一个为主关键词。建议选择 1 个品牌词，再搭配 1–2 个产品词、应用词或行业词。</small><label>内容模式</label><input :value="assetId ? contentTypeLabel : (mode==='rewrite'?'深度改写':mode==='qa'?'专题问答':selectedTemplate.name)" readonly><label>负责人</label><input v-model="form.author" placeholder="负责人"></section>
         <section v-if="mode==='rewrite'" class="side-section"><h3>原文事实基础</h3><div class="source-box">{{sourceText||'尚未导入原文'}}</div></section>
         <section class="side-section"><h3>文章结构</h3><textarea v-model="form.outline" rows="10" /><button class="side-action" type="button" @click="insertOutline">应用大纲到正文</button></section>
         <section class="side-section brief-score"><div><b>{{ keywords.length }}</b><span>可选关键词</span></div><div><b>{{ wordCount }}</b><span>当前字数</span></div></section>
