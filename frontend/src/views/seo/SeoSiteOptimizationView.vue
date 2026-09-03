@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { auditPendingSeoSitePages, auditSeoSitePage, cleanupSeoNonHtmlSitePages, fetchSeoBrokenLinkReport, fetchSeoContentAssets, fetchSeoKeywords, fetchSeoSitePageDetail, fetchSeoSitePageIssues, fetchSeoSitePages, generateSeoSitePageSuggestions, importSeoSitePages, updateSeoContentAsset, updateSeoSitePage } from '../../api/seo'
@@ -278,11 +278,19 @@ async function linkExistingContentTask() {
   } catch (e) { ElMessage.error(e.message) } finally { linkingContent.value = false }
 }
 let timer
+let disposed = false
+let sitesGeneration = 0
 watch(() => filters.q, () => { clearTimeout(timer); timer = setTimeout(() => { page.value = 1; load() }, 260) })
 async function loadSites() {
+  const token = ++sitesGeneration
+  const tenantId = currentTenantId.value
+  const requestedScopeSite = siteId.value
+  const isCurrent = () => !disposed && token === sitesGeneration && tenantId === currentTenantId.value && requestedScopeSite === siteId.value
   if (!currentTenantId.value) { sites.value = []; siteId.value = null; return }
   try {
-    sites.value = (await fetchSeoSites(currentTenantId.value)).sites || []
+    const response = await fetchSeoSites(tenantId)
+    if (!isCurrent()) return
+    sites.value = response.sites || []
     const requestedSiteId = Number(route.query.site_id) || null
     const nextSiteId = sites.value.some((site) => site.id === requestedSiteId)
       ? requestedSiteId
@@ -290,6 +298,7 @@ async function loadSites() {
     if (nextSiteId !== siteId.value) siteId.value = nextSiteId
     else { await load(); await loadKeywordOptions() }
   } catch (e) {
+    if (!isCurrent()) return
     sites.value = []; siteId.value = null; error.value = e.message
   }
 }
@@ -299,6 +308,7 @@ watch(() => route.query.site_id, loadSites)
 watch(siteId, () => { page.value = 1; load(); loadKeywordOptions() })
 watch(currentTenantId, loadSites)
 onMounted(loadSites)
+onBeforeUnmount(() => { disposed = true; ++sitesGeneration; clearTimeout(timer) })
 </script>
 
 <template>

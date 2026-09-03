@@ -65,6 +65,9 @@ const javascript = (
   )
 ).join('\n')
 const portalUrl = '/deal-sniper/portal'
+for (const marker of ['/api/v1/seo/site-pages/ai-remediation', 'AI 辅助整改（单页草稿）', '复制整改交接单', '保存为关联内容草稿']) {
+  if (!javascript.includes(marker)) throw new Error(`SEO build is missing the reviewed remediation UI: ${marker}`)
+}
 if (!javascript.includes(portalUrl)) {
   throw new Error(`SEO build does not contain the same-origin portal URL: ${portalUrl}`)
 }
