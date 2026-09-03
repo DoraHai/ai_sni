@@ -209,7 +209,7 @@ async function runEvaluate(force = false, action = 'start') {
     const resp = await evaluateCandidates({ tenantId, force, limit, afterId, retryIds })
     if (tenantId !== TENANT_ID.value) return
     if (resp.enabled === false) {
-      ElMessage.warning('未配置 DeepSeek，AI 评估不可用')
+      ElMessage.warning('未启用 AI 评估，请联系管理员检查模型配置')
     } else {
       const previousFailures = action === 'start' ? [] : round.failedIds.filter(id => !retryIds?.includes(id))
       evaluationRound.value = {
@@ -415,7 +415,7 @@ onMounted(load)
         </div>
       </div>
       <div class="page-actions">
-        <label v-if="session.canEdit('optimize.expand')">每批上限
+        <label v-if="session.canEdit('optimize.expand')">候选拉取上限
           <el-input-number v-model="syncForm.limit" :min="1" :max="20" :precision="0" :disabled="operationBusy" aria-label="每批去重词上限" />
         </label>
         <el-button :loading="exporting" @click="exportCsv">导出 CSV</el-button>
@@ -550,7 +550,7 @@ onMounted(load)
         text
         @click="filters.aiRelevance = filters.aiRelevance === 'relevant' ? '' : 'relevant'"
       >
-        {{ filters.aiRelevance === 'relevant' ? '✓ 已隐藏通用噪音' : '隐藏通用噪音' }}
+        {{ filters.aiRelevance === 'relevant' ? '✓ 仅看业务相关' : '仅看业务相关' }}
       </el-button>
       <el-input v-model="filters.q" placeholder="搜索候选词" clearable style="width: 200px" />
     </div>
@@ -704,8 +704,9 @@ onMounted(load)
     <div class="note">
       <b>说明</b>：潜力分由搜索量/真实触发流量、竞争度、特色标签综合估算（启发式 v1）；建议分类仅供参考，
       加入计划后请在关键词工作台完成最终 5 类分级。月搜索量与指导价来自百度规划师；窗口展现/点击来自搜索词报告（已触发未添加）。
-      <template v-if="aiEnabled"><br><b>AI 研判</b>：DeepSeek 对候选词做语义相关性判断（业务相关/通用噪音/不相关），
-      帮你快速筛掉"设备""中心"、地名等通用词噪音；仅作参考，不影响潜力分排序。小批量拉取不自动评估；AI 评估每次最多 20 个去重词，不自动继续。多源拉取保留原有自动评估行为，不属于小批量验收。</template>
+      <template v-if="aiEnabled"><br><b>AI 研判</b>：由系统配置的模型结合客户业务资料评估候选词，分类和建议仅供参考，不影响潜力分排序。
+      业务依据不足或结论冲突的结果需人工确认，不等于已判定为无关词；「仅看业务相关」会隐藏其他分类，请切回「AI 相关性 · 全部」查看。
+      小批量拉取不自动评估；AI 评估每次最多 5 个去重词，实际数量见评估按钮，一次模型请求，超时不自动重试，不自动继续或采纳。多源拉取保留原有自动评估行为，不属于小批量验收。</template>
     </div>
 
     <AddToPlanDialog ref="addToPlanDialogRef" :tenant-id="TENANT_ID" @success="load" />
