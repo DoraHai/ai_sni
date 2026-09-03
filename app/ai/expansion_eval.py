@@ -75,9 +75,11 @@ SYSTEM_PROMPT = """你是资深国内百度 SEM 优化师，为当前客户筛�
 每项必须先返回 basis，再返回结论。basis.relation 为 in_scope（经营范围内）、peer（已知同行）、
 out_of_scope（明确不相关或明确排除）、generic（通用噪音）、unknown（经营范围或同行关系未知）；
 basis.intent 为 purchase、comparison、navigation、information、unknown 之一。
-in_scope/peer/out_of_scope 必须引用客户行业或业务描述的连续原文，field 使用 industry 或 business_desc，
+in_scope/peer 必须引用客户行业或业务描述的连续原文（2–500 字符），field 使用输入 JSON 中的 industry 或 business_desc，
 quote 不得引用候选词自身、AI 总结或编造语句。引用存在不等于支持结论，必须核对其语义。
 unknown/generic 的 field、quote 为 null。业务边界不明必须用 unknown，不得用主营描述证明相邻业务不经营。
+out_of_scope 是模型提出的范围外判断，不是已核验事实：当前没有结构化人工排除清单，应用一律将其
+转为 generic/watch 交人工确认（包括看起来明显跨行业的词），不因引用真实主营文字就认可排除。
 peer 仅允许 relevant/watch 或 relevant/drop；in_scope 的 adopt 仅用于 purchase/comparison。
 缺依据或依据与结论冲突时，应用会改为 generic/watch 并清空报价，提示人工复核；不会认可原结论。
 {"items": [{"word": "原词", "basis": {"relation": "unknown", "intent": "unknown", "field": null, "quote": null}, "relevance": "generic", "recommend": "watch", "reason": "业务范围待确认", "suggested_bid": null, "bid_reason": null}]}
@@ -188,9 +190,13 @@ def _business_profile(tenant: Tenant) -> dict:
 
 
 def _build_user_prompt(tenant: Tenant, words: list[dict]) -> str:
+    # Match the evidence field identifiers to the actual input keys. Keep the
+    # internal profile shape stable for existing consumers/fingerprints.
+    fields = {"行业": "industry", "业务描述": "business_desc"}
+    profile = {fields.get(key, key): value for key, value in _business_profile(tenant).items()}
     lines = [
         "当前客户资料（JSON 数据，仅用于本次评估）：",
-        json.dumps(_business_profile(tenant), ensure_ascii=False),
+        json.dumps(profile, ensure_ascii=False),
         "待研判候选词（含百度月搜索量/启发式预归类，仅供参考，以语义为准）：",
     ]
     comp_label = {1: "低", 2: "中", 3: "高"}
@@ -239,17 +245,22 @@ def _basis_consistent(tenant: Tenant, item: dict) -> bool:
     if relation == "generic":
         return (basis.get("field") is None and basis.get("quote") is None
                 and rel == "generic" and rec in ("watch", "drop"))
-    if relation not in {"in_scope", "peer", "out_of_scope"}:
-        return False  # unknown is always human review, even if the model says drop
+    if relation not in {"in_scope", "peer"}:
+        # A real quote is not proof of a negative business-scope assertion. Until
+        # an independently reviewed scope source exists, do not accept it, even
+        # when the model calls a word out_of_scope rather than unknown.
+        return False
     field, quote = basis.get("field"), basis.get("quote")
-    if not isinstance(field, str) or field not in {"industry", "business_desc"}:
+    if not isinstance(field, str):
+        return False
+    field = {"industry": "industry", "business_desc": "business_desc",
+             "行业": "industry", "业务描述": "business_desc"}.get(field)
+    if field is None:
         return False
     source = getattr(tenant, field, None)
     if (not isinstance(source, str) or not isinstance(quote, str)
             or not 2 <= len(quote.strip()) <= 500 or quote not in source):
         return False
-    if relation == "out_of_scope":
-        return rel == "irrelevant" and rec == "drop"
     if rel != "relevant":
         return False
     if rec == "adopt":

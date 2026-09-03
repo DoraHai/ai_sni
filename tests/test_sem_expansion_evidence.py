@@ -59,7 +59,6 @@ def test_contradictory_verdicts_go_to_review_not_auto_corrected_positive(deny_ne
     ("peer", "comparison", "relevant", "watch", 3),
     ("in_scope", "purchase", "relevant", "adopt", 3),
     ("in_scope", "comparison", "relevant", "adopt", 3),
-    ("out_of_scope", "unknown", "irrelevant", "drop", None),
     ("generic", "unknown", "generic", "drop", None),
 ])
 def test_consistent_structured_verdicts_remain_distinct(deny_network, relation, intent, rel, rec, price):
@@ -76,12 +75,10 @@ def test_evidence_is_tenant_local_not_candidate_text_or_ai_summary(deny_network)
     assert result["relevance"] == "generic" and result["suggested_bid"] is None
 
 
-def test_real_quote_is_not_proof_that_relation_is_true(deny_network):
-    # Explicitly document the remaining semantic limit. A model can pair a real
-    # industry quote with a false relation; string membership cannot detect this.
+def test_real_quote_no_longer_certifies_a_negative_scope_assertion(deny_network):
     result = replay(deny_network, verdict(relevance="irrelevant", recommend="drop",
                                          basis=basis("out_of_scope")))
-    assert result["relevance"] == "irrelevant"
+    assert result["relevance"] == "generic" and result["recommend"] == "watch"
 
 
 def test_review_result_never_changes_candidate_status_or_manual_price(deny_network):

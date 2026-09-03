@@ -66,7 +66,7 @@ async def fake_chat_json(system: str, user: str, timeout: float = 30.0) -> dict:
             items.append({"word": w, "relevance": rel, "recommend": rec, "reason": reason,
                           "basis": {"relation": relation, "intent": "purchase",
                                     "field": "business_desc" if relation != "generic" else None,
-                                    "quote": profile["业务描述"] if relation != "generic" else None}})
+                                    "quote": profile["business_desc"] if relation != "generic" else None}})
     return {"items": items}
 
 
@@ -141,7 +141,7 @@ async def main() -> None:
               await relof("多级离心泵 选型", "planner") == "relevant"
               and await relof("多级离心泵 选型", "cold") == "relevant")
         check("通用噪音识别 设备→generic", await relof("设备", "url") == "generic")
-        check("不相关 招聘→irrelevant", await relof("冒烟泵业 招聘", "query") == "irrelevant")
+        check("范围外判断 招聘→generic 待确认", await relof("冒烟泵业 招聘", "query") == "generic")
         check("adopted 词不评估（仍 None）", await relof("已采纳词", "planner") is None)
 
         # 理由/建议回填
