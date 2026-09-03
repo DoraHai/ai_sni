@@ -22,10 +22,17 @@ export function fetchCandidates({
 }
 
 // AI 语义相关性评估（治通用词噪音，按词去重批量调 DeepSeek，可能要数十秒~数分钟）
-export function evaluateCandidates({ tenantId, force }) {
-  return client.post('/api/v1/expansion/evaluate', null, {
-    params: { tenant_id: tenantId, force: force || undefined },
+export function evaluateCandidates({ tenantId, force, limit = 20, afterId = 0, retryIds }) {
+  return client.post('/api/v1/expansion/evaluate', retryIds ? { retry_ids: retryIds } : null, {
+    params: { tenant_id: tenantId, force: force || undefined, limit, after_id: afterId },
     timeout: 600000,
+  })
+}
+
+export function sampleCandidates({ tenantId, seed, limit = 20 }) {
+  return client.post('/api/v1/expansion/sample', null, {
+    params: { tenant_id: tenantId, seed, limit },
+    timeout: 120000,
   })
 }
 

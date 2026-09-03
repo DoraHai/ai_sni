@@ -145,6 +145,8 @@ async def evaluate_candidates_for_tenant(
     force: bool = False,
     batch_size: int = BATCH_SIZE,
     limit: int | None = None,
+    after_id: int = 0,
+    retry_ids: list[int] | None = None,
 ) -> dict:
     """对租户的待处理候选词逐批做 AI 相关性研判，回写 4 列。
 
@@ -164,10 +166,10 @@ async def evaluate_candidates_for_tenant(
         cond.append(KeywordCandidate.ai_evaluated_at.is_(None))
 
     rows = (
-        await session.scalars(select(KeywordCandidate).where(*cond))
+        await session.scalars(select(KeywordCandidate).where(*cond).order_by(
+            KeywordCandidate.id.asc(),
+        ))
     ).all()
-    if not rows:
-        return {"enabled": True, "evaluated": 0, "batches": 0, "failed_batches": 0, "remaining": 0}
 
     # 按词去重：相关性是词的语义属性，与来源无关。同词多源行共用一次评估结果。
     by_word: dict[str, list[KeywordCandidate]] = {}
@@ -185,12 +187,22 @@ async def evaluate_candidates_for_tenant(
                 "competition": c.competition,
             }
 
-    all_words = list(word_meta.values())
+    # Stable per-word key: progress must not depend on success timestamps.
+    word_ids = {word: min(c.id for c in candidates) for word, candidates in by_word.items()}
+    ordered = sorted(word_meta, key=word_ids.__getitem__)
+    if retry_ids is not None:
+        retry_set = set(retry_ids)
+        ordered = [word for word in ordered if any(c.id in retry_set for c in by_word[word])]
+    else:
+        ordered = [word for word in ordered if word_ids[word] > after_id]
+    all_words = [word_meta[word] for word in ordered]
     # limit 截断：本次只评前 N 个去重词，剩余留给后续调用（存量回填分批清空，防单请求超时）
     distinct_words = all_words[:limit] if limit else all_words
     remaining = len(all_words) - len(distinct_words)
     now = datetime.utcnow()
     evaluated = batches = failed = 0
+    successful_words = 0
+    failed_candidate_ids = [word_ids[w["word"]] for w in distinct_words]
 
     for i in range(0, len(distinct_words), batch_size):
         chunk = distinct_words[i : i + batch_size]
@@ -208,6 +220,8 @@ async def evaluate_candidates_for_tenant(
             v = verdicts.get(w["word"])
             if v is None:
                 continue  # 该词 AI 没回，留到下次重评
+            successful_words += 1
+            failed_candidate_ids.remove(word_ids[w["word"]])
             for c in by_word[w["word"]]:
                 c.ai_relevance = v["relevance"]
                 c.ai_recommend = v["recommend"]
@@ -217,6 +231,10 @@ async def evaluate_candidates_for_tenant(
                 c.ai_evaluated_at = now
                 evaluated += 1
         await session.commit()  # 逐批提交，部分进度可留存
+
+    deferred = remaining
+    failed_words = len(distinct_words) - successful_words
+    remaining += failed_words  # Missing/failed verdicts are not completed work.
 
     logger.info(
         "租户 %s 拓词 AI 评估：%d 词去重 → %d 行已评估（%d 批，%d 批失败，剩 %d 词）",
@@ -229,4 +247,9 @@ async def evaluate_candidates_for_tenant(
         "batches": batches,
         "failed_batches": failed,
         "remaining": remaining,
+        "successful_words": successful_words,
+        "failed_words": failed_words,
+        "deferred": deferred,
+        "failed_candidate_ids": failed_candidate_ids,
+        "next_after_id": word_ids[distinct_words[-1]["word"]] if deferred and distinct_words else None,
     }

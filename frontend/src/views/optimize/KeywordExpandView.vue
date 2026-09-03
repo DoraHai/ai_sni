@@ -9,6 +9,7 @@ import {
   candidatesExportUrl,
   evaluateCandidates,
   fetchCandidates,
+  sampleCandidates,
   syncExpansion,
   syncUrlWords,
   updateCandidateStatus,
@@ -51,25 +52,39 @@ const sortOrder = ref('desc')
 const selection = ref([])
 const addToPlanDialogRef = ref(null)
 
-const syncForm = reactive({ seeds: '', queryDays: 30 })
+const syncForm = reactive({ seeds: '', queryDays: 30, smallBatch: true, limit: 20 })
+const evaluationResult = ref('')
+const evaluationRound = ref(null)
+const operationBusy = computed(() => syncing.value || evaluating.value || crawling.value)
+
+function validBatchLimit() {
+  if (Number.isInteger(syncForm.limit) && syncForm.limit >= 1 && syncForm.limit <= 20) return true
+  ElMessage.warning('每批上限必须为 1–20 的整数')
+  return false
+}
 const urlForm = reactive({ urls: '' })
 const crawling = ref(false)
 
+let loadVersion = 0
 async function load() {
+  const version = ++loadVersion
+  const tenantId = TENANT_ID.value
   loading.value = true
   error.value = ''
   try {
-    data.value = await fetchCandidates({
-      tenantId: TENANT_ID.value,
+    const result = await fetchCandidates({
+      tenantId,
       ...filters,
       sortBy: sortBy.value,
       order: sortOrder.value,
     })
+    if (version !== loadVersion || tenantId !== TENANT_ID.value) return
+    data.value = result
     selection.value = []
   } catch (e) {
-    error.value = e.message
+    if (version === loadVersion && tenantId === TENANT_ID.value) error.value = e.message
   } finally {
-    loading.value = false
+    if (version === loadVersion && tenantId === TENANT_ID.value) loading.value = false
   }
 }
 
@@ -101,24 +116,48 @@ function toggleSource(s) {
 }
 
 async function runSync() {
+  if (operationBusy.value) return
+  if (syncForm.smallBatch && !validBatchLimit()) return
+  const tenantId = TENANT_ID.value
+  const seed = syncForm.seeds.trim()
+  if (syncForm.smallBatch && (!seed || /[,，\n\r]/.test(seed))) {
+    ElMessage.warning('小批量拉取请填写一个种子词')
+    return
+  }
+  if (!syncForm.smallBatch) {
+    try {
+      await ElMessageBox.confirm('多源拉取不受小批量上限控制，并自动评估未评候选；确认继续？', '确认多源拉取', { type: 'warning' })
+    } catch { return }
+    if (tenantId !== TENANT_ID.value || operationBusy.value) return
+  }
   syncing.value = true
   try {
+    if (syncForm.smallBatch) {
+      const resp = await sampleCandidates({ tenantId, seed, limit: syncForm.limit })
+      if (tenantId !== TENANT_ID.value) return
+      ElMessage.success(`小批量拉取完成：${resp.candidates_written} 条候选已更新；未调用 AI、未加入计划`)
+      evaluationResult.value = ''
+      await load()
+      return
+    }
     const resp = await syncExpansion({
-      tenantId: TENANT_ID.value,
+      tenantId,
       seeds: syncForm.seeds.split(/[,，\n]/).map((s) => s.trim()).filter(Boolean).join(','),
       queryDays: syncForm.queryDays,
     })
+    if (tenantId !== TENANT_ID.value) return
     if (resp.status === 'error') throw new Error(resp.message)
     ElMessage.success(`拉取完成：规划师 ${resp.planner_candidates} 条 / 搜索词 ${resp.query_candidates} 条（种子词 ${resp.seeds.length} 个）`)
     load()
   } catch (e) {
-    ElMessage.error('拉取失败：' + e.message)
+    if (tenantId === TENANT_ID.value) ElMessage.error('拉取失败：' + e.message)
   } finally {
     syncing.value = false
   }
 }
 
 async function runUrlCrawl() {
+  if (operationBusy.value) return
   const urls = urlForm.urls.split(/[\n,，\s]+/).map((s) => s.trim()).filter(Boolean)
   if (!urls.length) {
     ElMessage.warning('请先输入至少 1 个 URL')
@@ -145,20 +184,46 @@ async function runUrlCrawl() {
   }
 }
 
-async function runEvaluate(force = false) {
+async function runEvaluate(force = false, action = 'start') {
+  if (operationBusy.value) return
+  if (!validBatchLimit()) return
+  const tenantId = TENANT_ID.value
+  const round = evaluationRound.value
+  if (action !== 'start' && !round) return
+  if (action === 'next' && round.nextAfterId == null) return
+  if (action === 'retry' && !round.failedIds.length) return
+  if (action !== 'start') force = round.force
+  if (action === 'start' && (force || round?.nextAfterId != null || round?.failedIds.length)) {
+    try {
+      await ElMessageBox.confirm(`从头开始${force ? '重评（含旧结果）' : '评估'}，每批最多 ${syncForm.limit} 词；当前批次进度将重置，旧评估结果保留。不会自动继续或采纳。继续？`, '开始新一轮评估')
+    } catch { return }
+    if (tenantId !== TENANT_ID.value || operationBusy.value) return
+  }
+  const retryIds = action === 'retry' ? round.failedIds.slice(0, syncForm.limit) : undefined
+  const afterId = action === 'next' ? round.nextAfterId : 0
   evaluating.value = true
+  evaluationResult.value = ''
   try {
-    const resp = await evaluateCandidates({ tenantId: TENANT_ID.value, force })
+    const resp = await evaluateCandidates({ tenantId, force, limit: syncForm.limit, afterId, retryIds })
+    if (tenantId !== TENANT_ID.value) return
     if (resp.enabled === false) {
       ElMessage.warning('未配置 DeepSeek，AI 评估不可用')
-    } else if (resp.evaluated === 0) {
-      ElMessage.info(force ? '没有可评估的候选' : '待处理候选都已评估过（重评请用「全部重评」）')
     } else {
-      ElMessage.success(`AI 评估完成：${resp.distinct_words} 词去重 → ${resp.evaluated} 行已研判${resp.failed_batches ? `（${resp.failed_batches} 批失败已跳过）` : ''}`)
+      const previousFailures = action === 'start' ? [] : round.failedIds.filter(id => !retryIds?.includes(id))
+      evaluationRound.value = {
+        force,
+        failedIds: [...new Set([...previousFailures, ...(resp.failed_candidate_ids || [])])],
+        nextAfterId: action === 'retry' ? round.nextAfterId : resp.next_after_id ?? null,
+        deferred: action === 'retry' ? round.deferred : resp.deferred ?? 0,
+      }
+      const progress = evaluationRound.value
+      evaluationResult.value = `本次成功 ${resp.successful_words ?? 0} 个去重词 / ${resp.evaluated} 行；失败或缺失 ${resp.failed_words ?? 0} 词。本轮未尝试剩余 ${progress.deferred} 词，待重试 ${progress.failedIds.length} 词。${progress.nextAfterId == null ? '已到本轮末尾。' : '可继续下一批。'}不会自动继续；刷新或切换客户会重置进度。`
+      if (resp.failed_batches || resp.failed_words) ElMessage.warning('部分词未评估成功，旧结果保留，可稍后重试')
+      else ElMessage.success(resp.evaluated ? '小批量 AI 评估完成，建议未采纳' : '没有需要评估的候选')
     }
     load()
   } catch (e) {
-    ElMessage.error('AI 评估失败：' + e.message)
+    if (tenantId === TENANT_ID.value) ElMessage.error('AI 评估失败：' + e.message)
   } finally {
     evaluating.value = false
   }
@@ -321,7 +386,17 @@ const aiUnevaluated = computed(() => data.value?.ai_unevaluated ?? 0)
 const aiRelCount = (code) => data.value?.ai_relevance_counts?.[code] ?? 0
 
 // 顶栏切换客户后重新拉数
-watch(TENANT_ID, () => { filters.page = 1; load() })
+watch(TENANT_ID, () => {
+  data.value = null
+  selection.value = []
+  filters.page = 1
+  syncForm.seeds = ''
+  syncForm.smallBatch = true
+  syncForm.limit = 20
+  evaluationResult.value = ''
+  evaluationRound.value = null
+  load()
+})
 
 onMounted(load)
 </script>
@@ -338,21 +413,27 @@ onMounted(load)
         </div>
       </div>
       <div class="page-actions">
+        <label v-if="session.canEdit('optimize.expand')">每批上限
+          <el-input-number v-model="syncForm.limit" :min="1" :max="20" :precision="0" :disabled="operationBusy" aria-label="每批去重词上限" />
+        </label>
         <el-button :loading="exporting" @click="exportCsv">导出 CSV</el-button>
         <el-dropdown
           v-if="session.canEdit('optimize.expand') && aiEnabled"
           split-button
           type="primary"
           :loading="evaluating"
+          :disabled="operationBusy"
           @click="runEvaluate(false)"
         >
-          {{ evaluating ? 'AI 研判中…' : `AI 评估${aiUnevaluated ? `（${aiUnevaluated} 待评）` : ''}` }}
+          {{ evaluating ? 'AI 研判中…' : `小批量 AI 评估（最多 ${syncForm.limit} 词）` }}
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item @click="runEvaluate(true)">全部重评（含已评估）</el-dropdown-item>
+              <el-dropdown-item :disabled="operationBusy" @click="runEvaluate(true)">新一轮小批量重评（含旧结果）</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
+        <el-button v-if="session.canEdit('optimize.expand') && aiEnabled && evaluationRound?.nextAfterId != null" :disabled="operationBusy" @click="runEvaluate(false, 'next')">继续下一批</el-button>
+        <el-button v-if="session.canEdit('optimize.expand') && aiEnabled && evaluationRound?.failedIds.length" :disabled="operationBusy" @click="runEvaluate(false, 'retry')">重试失败词（{{ evaluationRound.failedIds.length }}）</el-button>
         <el-tooltip content="批量加入计划需统一指定目标单元，暂未支持，请逐条「加入计划」" placement="top">
           <span><el-button type="primary" disabled>批量加入计划</el-button></span>
         </el-tooltip>
@@ -360,6 +441,8 @@ onMounted(load)
     </div>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 14px" />
+    <el-alert v-if="evaluationResult" :title="evaluationResult" type="info" :closable="false" style="margin-bottom: 14px" />
+    <div v-if="aiEnabled" class="sync-hint">当前客户待评 {{ aiUnevaluated }} 行；评估按词去重，上限不受列表筛选或勾选影响，不自动采纳。</div>
 
     <!-- 4 源卡 -->
     <div class="source-tabs">
@@ -388,7 +471,7 @@ onMounted(load)
         placeholder="每行一个 URL，最多 5 个，示例：&#10;https://www.sulzer.com/zh-cn/products/pumps"
         style="flex: 1; max-width: 620px"
       />
-      <el-button type="primary" :loading="crawling" @click="runUrlCrawl">
+      <el-button type="primary" :loading="crawling" :disabled="operationBusy" @click="runUrlCrawl">
         {{ crawling ? '爬取中（约 20-60 秒）' : '开始爬取' }}
       </el-button>
       <span class="sync-hint">仅爬页面文本 · 单 URL 最多 30 个候选 · 自动回查百度搜索量</span>
@@ -396,22 +479,25 @@ onMounted(load)
 
     <!-- 拉取面板 -->
     <div v-else-if="session.canEdit('optimize.expand')" class="sync-panel">
+      <el-switch v-model="syncForm.smallBatch" active-text="小批量（仅规划师）" :disabled="operationBusy" />
       <span class="sync-label">种子词</span>
       <el-input
         v-model="syncForm.seeds"
-        placeholder="逗号分隔，最多 20 个；留空自动取累计展现最高的重点/一般词"
+        :placeholder="syncForm.smallBatch ? '填写一个种子词，例如：粉末涂料' : '逗号分隔，最多 20 个；留空自动选种子词'"
+        :disabled="operationBusy"
         clearable
         style="flex: 1; max-width: 520px"
       />
-      <span class="sync-label">搜索词回看</span>
-      <el-select v-model="syncForm.queryDays" style="width: 110px">
+      <span v-if="!syncForm.smallBatch" class="sync-label">搜索词回看</span>
+      <el-select v-if="!syncForm.smallBatch" v-model="syncForm.queryDays" style="width: 110px" :disabled="operationBusy">
         <el-option label="近 30 天" :value="30" />
         <el-option label="近 60 天" :value="60" />
         <el-option label="近 91 天" :value="91" />
       </el-select>
-      <el-button type="primary" :loading="syncing" @click="runSync">
-        {{ syncing ? '拉取中（约 10-30 秒）' : '拉取最新候选' }}
+      <el-button type="primary" :loading="syncing" :disabled="operationBusy" @click="runSync">
+        {{ syncing ? '拉取中（约 10-30 秒）' : (syncForm.smallBatch ? '小批量拉取候选' : '多源拉取（非小批量）') }}
       </el-button>
+      <span v-if="syncForm.smallBatch" class="sync-hint">最多更新 {{ syncForm.limit }} 个候选，不自动评估；已有候选不保证新增，未返回数量未知。</span>
     </div>
 
     <!-- 筛选行 -->
@@ -610,7 +696,7 @@ onMounted(load)
       <b>说明</b>：潜力分由搜索量/真实触发流量、竞争度、特色标签综合估算（启发式 v1）；建议分类仅供参考，
       加入计划后请在关键词工作台完成最终 5 类分级。月搜索量与指导价来自百度规划师；窗口展现/点击来自搜索词报告（已触发未添加）。
       <template v-if="aiEnabled"><br><b>AI 研判</b>：DeepSeek 对候选词做语义相关性判断（业务相关/通用噪音/不相关），
-      帮你快速筛掉"设备""中心"、地名等通用词噪音；仅作参考，不影响潜力分排序。点「AI 评估」对未评估候选研判，同步时也会自动跟跑一次。</template>
+      帮你快速筛掉"设备""中心"、地名等通用词噪音；仅作参考，不影响潜力分排序。小批量拉取不自动评估；AI 评估每次最多 20 个去重词，不自动继续。多源拉取保留原有自动评估行为，不属于小批量验收。</template>
     </div>
 
     <AddToPlanDialog ref="addToPlanDialogRef" :tenant-id="TENANT_ID" @success="load" />

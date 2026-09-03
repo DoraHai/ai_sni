@@ -7,15 +7,16 @@ import csv
 import io
 import logging
 from datetime import date, datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
+from pydantic import BaseModel, Field, PositiveInt
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.deepseek import is_enabled as ai_enabled
 from app.ai.expansion_eval import MissingBusinessProfileError, evaluate_candidates_for_tenant
+from app.baidu import BaiduAPIError
 from app.baidu.writeback import (
     WritebackError,
     apply_add_word_writeback,
@@ -29,9 +30,11 @@ from app.models import (
     CANDIDATE_STATUS_LABELS,
     SUGGESTED_CATEGORY_LABELS,
     KeywordCandidate,
+    BaiduAccount,
     Tenant,
 )
 from app.security.auth import AuthContext, require_scoped_auth
+from app.sem_expansion_sample import sample_planner_candidates
 
 logger = logging.getLogger(__name__)
 
@@ -409,25 +412,61 @@ async def add_candidate_to_plan(
     }
 
 
+@router.post("/sample")
+async def sample_candidates(
+    tenant_id: int = Query(...),
+    seed: str = Query(..., min_length=1, max_length=100),
+    limit: int = Query(20, ge=1, le=20),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """One seed, at most 20 local candidates; never auto-evaluate or add words."""
+    if not seed.strip() or any(c in seed for c in ",，\n\r"):
+        raise HTTPException(422, "小批量拉取必须填写一个种子词")
+    if await session.get(Tenant, tenant_id) is None:
+        raise HTTPException(404, "客户不存在")
+    accounts = (await session.scalars(select(BaiduAccount).where(
+        BaiduAccount.tenant_id == tenant_id, BaiduAccount.status == "active",
+    ).limit(2))).all()
+    if len(accounts) != 1:
+        raise HTTPException(409, "小批量拉取需客户恰有一个有效推广账户；未拉取任何候选")
+    try:
+        count = await sample_planner_candidates(session, accounts[0], seed, limit)
+    except BaiduAPIError:
+        raise HTTPException(502, "百度规划师拉取失败，请检查账户授权后重试") from None
+    return {"status": "ok", "tenant_id": tenant_id, "candidates_written": count,
+            "limit": limit, "ai_evaluated": False}
+
+
+class EvaluationSelection(BaseModel):
+    retry_ids: list[PositiveInt] = Field(min_length=1, max_length=20)
+
+
 @router.post("/evaluate")
 async def evaluate_candidates(
     tenant_id: int = Query(..., description="本地租户 ID"),
     force: bool = Query(False, description="true=重评已评估过的候选；默认只评未评估的"),
-    limit: int | None = Query(
-        None, ge=1, description="本次最多评估的去重词数；存量回填可分多次调用清空（防单请求超时）"
+    limit: int = Query(
+        20, ge=1, le=20, description="本次最多评估 1–20 个去重词；不自动继续下一批"
     ),
     session: AsyncSession = Depends(get_session),
+    after_id: Annotated[int, Query(ge=0)] = 0,
+    selection: Annotated[EvaluationSelection | None, Body()] = None,
 ) -> dict:
     """AI 语义相关性评估（治通用词噪音）。只评 pending 候选，按词去重批量调 DeepSeek。
 
     🚫 红线：只产研判、不写回百度。未配 DEEPSEEK_API_KEY 时 enabled=false。
     返回 remaining=本次未评的剩余词数（>0 说明被 limit 截断，可再调一次）。
     """
+    if selection is not None and (after_id or len(selection.retry_ids) > limit):
+        raise HTTPException(422, "重试不能同时使用游标，且重试词数不能超过每批上限")
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
     try:
-        result = await evaluate_candidates_for_tenant(session, tenant, force=force, limit=limit)
+        result = await evaluate_candidates_for_tenant(
+            session, tenant, force=force, limit=limit, after_id=after_id,
+            retry_ids=selection.retry_ids if selection is not None else None,
+        )
     except MissingBusinessProfileError as exc:
         raise HTTPException(409, str(exc)) from exc
     return {"status": "ok", "tenant_id": tenant_id, **result}
