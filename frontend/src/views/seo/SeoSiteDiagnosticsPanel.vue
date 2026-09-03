@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { fetchSeoSiteDiagnostics, saveSeoIndexReview, fetchSeoIndexReviews } from '../../api/seo'
 import SeoRemediationDialog from './SeoRemediationDialog.vue'
+import SeoImageEvidenceDialog from './SeoImageEvidenceDialog.vue'
 import { session } from '../../store/session'
 
 const props = defineProps({ tenantId: Number, siteId: Number, canEdit: Boolean, refreshKey: Number })
@@ -15,6 +16,8 @@ const page = ref(1)
 const dialog = ref(false)
 const remediationOpen = ref(false)
 const remediationPage = ref(null)
+const imageEvidenceOpen = ref(false)
+const imageEvidencePage = ref(null)
 const selected = ref(null)
 const intent = ref('undecided')
 const reason = ref('')
@@ -104,6 +107,7 @@ watch(() => [props.tenantId, props.siteId], () => {
   result.value = { items: [], total: 0, coverage: {} }; selected.value = null
   history.value = []; dialog.value = false; saving.value = false; historyLoading.value = false
   remediationOpen.value = false; remediationPage.value = null
+  imageEvidenceOpen.value = false; imageEvidencePage.value = null
   page.value = 1; query.value = ''; reviewState.value = 'all'
   load()
 }, { immediate: true, flush: 'sync' })
@@ -135,10 +139,11 @@ onBeforeUnmount(() => { disposed = true; ++generation; ++dialogGeneration })
       </template></el-table-column>
       <el-table-column label="人工意图" min-width="180"><template #default="{ row }">{{ intentLabel(row.diagnostic.index_intent) }}<small v-if="row.review">{{ row.review.actor_name }} · {{ time(row.review.created_at) }}</small></template></el-table-column>
       <el-table-column label="整改参考（规则建议）" min-width="290"><template #default="{ row }"><b>{{ outcomeLabel(row.diagnostic.review_outcome) }}</b><p>{{ row.diagnostic.guidance }}</p></template></el-table-column>
-      <el-table-column label="操作" width="130"><template #default="{ row }"><el-button link type="primary" :disabled="saving" @click="open(row)">{{ canEdit ? '复核 / 记录' : '查看记录' }}</el-button><el-button v-if="canEdit && session.canEdit('seo.content')" link type="primary" @click="remediationPage = row; remediationOpen = true">AI 整改草稿</el-button></template></el-table-column>
+      <el-table-column label="操作" width="130"><template #default="{ row }"><el-button link type="primary" :disabled="saving" @click="open(row)">{{ canEdit ? '复核 / 记录' : '查看记录' }}</el-button><el-button link type="primary" @click="imageEvidencePage = row; imageEvidenceOpen = true">图片 Alt 明细</el-button><el-button v-if="canEdit && session.canEdit('seo.content')" link type="primary" @click="remediationPage = row; remediationOpen = true">AI 整改草稿</el-button></template></el-table-column>
     </el-table>
     <el-pagination v-model:current-page="page" :page-size="25" :total="result.total" layout="total, prev, pager, next" @current-change="load" />
     <SeoRemediationDialog v-model:visible="remediationOpen" :tenant-id="tenantId" :site-id="siteId" :page="remediationPage" />
+    <SeoImageEvidenceDialog v-model:visible="imageEvidenceOpen" :tenant-id="tenantId" :site-id="siteId" :page="imageEvidencePage" />
     <el-dialog v-model="dialog" title="人工确认索引意图" width="min(680px, 94vw)" :close-on-click-modal="!saving" :close-on-press-escape="!saving" :show-close="!saving">
       <template v-if="selected">
         <p class="url">#{{ selected.id }} {{ selected.url }}</p>

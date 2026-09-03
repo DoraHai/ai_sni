@@ -399,6 +399,8 @@ def analyze_html(result: FetchResult, *, robots_allowed: bool = True) -> dict[st
         else:
             external_links_count += 1
 
+    from app.seo_image_evidence import image_alt_evidence
+
     images = soup.select("img")
     missing_alt = sum(not str(node.get("alt") or "").strip() for node in images)
     hreflang_tags = [
@@ -467,6 +469,7 @@ def analyze_html(result: FetchResult, *, robots_allowed: bool = True) -> dict[st
         "external_links_count": external_links_count,
         "images_count": len(images),
         "images_missing_alt_count": missing_alt,
+        "image_alt_evidence": image_alt_evidence(soup, result.final_url),
         "hreflang_tags": hreflang_tags,
         "issue_codes": issues,
         "internal_links": internal_links,
