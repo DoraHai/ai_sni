@@ -146,6 +146,8 @@ def is_html_page_url(value: str) -> bool:
         path = urlparse(normalize_crawl_url(value)).path.lower()
     except SeoCrawlError:
         return False
+    if path == "/cdn-cgi/l/email-protection":
+        return False
     return not path.endswith(NON_HTML_PAGE_SUFFIXES)
 
 
@@ -384,6 +386,8 @@ def analyze_html(result: FetchResult, *, robots_allowed: bool = True) -> dict[st
         except SeoCrawlError:
             continue
         if (urlparse(target).hostname or "").lower() == origin_host:
+            if not is_html_page_url(target):
+                continue
             if target not in internal_links:
                 internal_links.append(target)
                 internal_link_details.append(

@@ -427,6 +427,8 @@ def test_site_optimization_exposes_broken_link_workbench_contract() -> None:
     assert "SEO-404修复清单-" in view
     assert "失效链接来源" in view
     assert "来源关系待下次全站扫描补齐" in view
+    crawler = (root / "app/seo_crawler.py").read_text(encoding="utf-8")
+    assert 'path == "/cdn-cgi/l/email-protection"' in crawler
 
 
 def test_seo_batch_handlers_reject_reentry() -> None:
