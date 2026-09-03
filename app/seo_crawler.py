@@ -119,25 +119,33 @@ class FetchResult:
     fetch_error: str | None = None
 
 
-def normalize_crawl_url(value: str) -> str:
+def normalize_crawl_url(value: str, *, preserve_path: bool = False) -> str:
     raw = value.strip()
     if not re.match(r"^https?://", raw, re.I):
         raw = f"https://{raw}"
-    parsed = urlparse(raw)
+    try:
+        parsed = urlparse(raw)
+    except ValueError as exc:
+        raise SeoCrawlError("Invalid HTTP/HTTPS URL") from exc
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise SeoCrawlError("Invalid URL port") from exc
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise SeoCrawlError("Invalid HTTP/HTTPS URL")
     if parsed.username or parsed.password:
         raise SeoCrawlError("URL credentials are not allowed")
     host = parsed.hostname.lower()
-    try:
-        port = parsed.port
-    except ValueError as exc:
-        raise SeoCrawlError("Invalid URL port") from exc
     netloc = host if port is None else f"{host}:{port}"
-    path = re.sub(r"/{2,}", "/", parsed.path or "/")
-    if path != "/":
-        path = path.rstrip("/")
-    return urlunparse((parsed.scheme.lower(), netloc, path, "", parsed.query, ""))
+    # Deduplication keys are not wire URLs: /page and /page/ can be distinct
+    # resources. Actual requests must retain path separators and parameters.
+    path = parsed.path or "/"
+    if not preserve_path:
+        path = re.sub(r"/{2,}", "/", path)
+        if path != "/":
+            path = path.rstrip("/")
+    return urlunparse((parsed.scheme.lower(), netloc, path,
+                       parsed.params if preserve_path else "", parsed.query, ""))
 
 
 def is_html_page_url(value: str) -> bool:
@@ -221,7 +229,7 @@ async def fetch_url(
     allow_text: bool = False,
     allow_xml: bool = False,
 ) -> FetchResult:
-    requested = normalize_crawl_url(url)
+    requested = normalize_crawl_url(url, preserve_path=True)
     current = requested
     redirects: list[str] = []
     owns_client = client is None
@@ -247,7 +255,7 @@ async def fetch_url(
                         location = response.headers.get("location")
                         if not location:
                             raise SeoCrawlError("Redirect response has no target")
-                        current = normalize_crawl_url(urljoin(current, location))
+                        current = normalize_crawl_url(urljoin(current, location), preserve_path=True)
                         redirects.append(current)
                         continue
                     content_type = response.headers.get("content-type", "").lower()
@@ -351,7 +359,15 @@ def analyze_html(result: FetchResult, *, robots_allowed: bool = True) -> dict[st
     description = description_node.get("content", "").strip() if description_node else None
     h1_texts = [node.get_text(" ", strip=True) for node in soup.select("h1") if node.get_text(" ", strip=True)]
     canonical_node = soup.select_one('link[rel~="canonical" i]')
-    canonical = urljoin(result.final_url, canonical_node.get("href", "").strip()) if canonical_node and canonical_node.get("href") else None
+    canonical = None
+    if canonical_node and canonical_node.get("href"):
+        try:
+            canonical = normalize_crawl_url(
+                urljoin(result.final_url, canonical_node.get("href", "").strip()),
+                preserve_path=True,
+            )
+        except (SeoCrawlError, ValueError):
+            pass
     robots_node = soup.select_one('meta[name="robots" i]')
     meta_robots = robots_node.get("content", "").strip() if robots_node else None
     x_robots = result.headers.get("x-robots-tag")
@@ -383,7 +399,7 @@ def analyze_html(result: FetchResult, *, robots_allowed: bool = True) -> dict[st
             continue
         try:
             target = normalize_crawl_url(urljoin(result.final_url, raw_href))
-        except SeoCrawlError:
+        except (SeoCrawlError, ValueError):
             continue
         if (urlparse(target).hostname or "").lower() == origin_host:
             if not is_html_page_url(target):
@@ -403,14 +419,18 @@ def analyze_html(result: FetchResult, *, robots_allowed: bool = True) -> dict[st
 
     images = soup.select("img")
     missing_alt = sum(not str(node.get("alt") or "").strip() for node in images)
-    hreflang_tags = [
-        {
-            "lang": str(node.get("hreflang") or "").strip(),
-            "url": urljoin(result.final_url, str(node.get("href") or "").strip()),
-        }
-        for node in soup.select('link[rel~="alternate"][hreflang]')
-        if node.get("href")
-    ]
+    hreflang_tags = []
+    for node in soup.select('link[rel~="alternate"][hreflang]'):
+        if not node.get("href"):
+            continue
+        try:
+            target = normalize_crawl_url(
+                urljoin(result.final_url, str(node.get("href")).strip()),
+                preserve_path=True,
+            )
+        except (SeoCrawlError, ValueError):
+            continue
+        hreflang_tags.append({"lang": str(node.get("hreflang") or "").strip(), "url": target})
 
     issues: list[str] = []
     if result.status_code and result.status_code >= 400:

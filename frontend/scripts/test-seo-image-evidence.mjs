@@ -56,3 +56,12 @@ assert(!source.includes('v-html'))
 assert(!/<img\b|:src=|:href=/.test(source), 'no untrusted resource loading or navigation')
 for (const marker of ['旧存档未记录逐图明细', '尚无抓取存档', '最近抓取失败', '不代表图片描述质量已通过', 'evidence.truncated']) assert(source.includes(marker))
 console.log('SEO image evidence checks passed: filtering, legacy/error states, stale scope/close/unmount, no external loads')
+
+const apiSource = await readFile(new URL('../src/api/seo.js', import.meta.url), 'utf8')
+const auditCode = apiSource.match(/export function auditSeoSitePage[\s\S]*?\n}/)[0].replace('export ', '')
+const sent = []
+const audit = new Function('client', `${auditCode}; return auditSeoSitePage`)({ post: (...args) => sent.push(args) })
+audit({ pageId: 234, tenantId: 1, siteId: 1 })
+assert.deepEqual(sent[0], ['/api/v1/seo/site-pages/234/audit', null, { params: { tenant_id: 1, site_id: 1 }, timeout: 60000 }])
+assert(source.includes('无需全站扫描'))
+console.log('SEO single-page audit request preserves page, tenant and site scope')
