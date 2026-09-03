@@ -8,11 +8,13 @@ import { currentTenantId, session } from '../../store/session'
 import { formatSeoCsvTime } from './seoRankTime'
 import { runSeoBatch } from './seoBatchOperations'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
+import SeoSiteDiagnosticsPanel from './SeoSiteDiagnosticsPanel.vue'
 
 const route = useRoute()
 const router = useRouter()
 
 const loading = ref(false)
+const diagnosticRefreshKey = ref(0)
 const error = ref('')
 const sites = ref([])
 const result = ref({ items: [], total: 0, stats: {} })
@@ -85,6 +87,7 @@ async function load() {
     const lastPage = Math.max(1, Math.ceil((response.total || 0) / pageSize.value))
     if (page.value > lastPage) { page.value = lastPage; return await load() }
     result.value = response
+    diagnosticRefreshKey.value++
     selectedRows.value = []
     void loadIssues()
   }
@@ -309,26 +312,27 @@ onMounted(loadSites)
       <article><span>页面资产</span><strong>{{ fmt(stats.total || 0) }}</strong><small>已纳入持续维护</small></article>
       <article><span>健康页面</span><strong>{{ fmt(stats.healthy || 0) }}</strong><small>最近检测未发现问题</small></article>
       <article><span>待优化</span><strong>{{ fmt(stats.needs_fix || 0) }}</strong><small>存在 TDK 或技术问题</small></article>
-      <article><span>平均健康度</span><strong>{{ stats.average_score || 0 }}</strong><small>满分 100</small></article>
+      <article><span>平均规则评分</span><strong>{{ stats.average_score ?? '—' }}</strong><small>仅计可评估页面；不代表收录或排名</small></article>
     </section>
+    <SeoSiteDiagnosticsPanel :tenant-id="Number(currentTenantId) || undefined" :site-id="Number(siteId) || undefined" :can-edit="session.isLoggedIn && session.canEdit('seo.site')" :refresh-key="diagnosticRefreshKey" />
     <section class="site-panel issue-centre">
       <header><div><span>01 / ISSUE CENTRE</span><h2>站内问题中心</h2></div><small>严重 {{ issueResult.summary?.high || 0 }} · 一般 {{ issueResult.summary?.medium || 0 }} · 影响 {{ issueResult.summary?.affected_pages || 0 }} 个页面</small></header>
       <el-table v-loading="issueLoading" :data="issueResult.items" empty-text="最近检测没有发现站内问题">
         <el-table-column label="级别" width="82"><template #default="{row}"><el-tag :type="severityType(row.severity)" effect="light">{{ severityLabel(row.severity) }}</el-tag></template></el-table-column>
         <el-table-column prop="label" label="问题类型" min-width="155" />
         <el-table-column label="影响页面" width="105"><template #default="{row}"><strong>{{ row.affected_pages }}</strong> 个</template></el-table-column>
-        <el-table-column label="修复建议" min-width="420"><template #default="{row}"><span class="guidance">{{ row.guidance }}</span></template></el-table-column>
+        <el-table-column label="修复建议（规则）" min-width="420"><template #default="{row}"><span class="guidance">{{ row.guidance }}</span></template></el-table-column>
         <el-table-column label="操作" width="100"><template #default="{row}"><button class="table-action" @click="openIssue(row)">查看页面</button></template></el-table-column>
       </el-table>
     </section>
     <section class="site-panel">
-      <header><div><span>02 / PAGE INVENTORY</span><h2>页面资产与 TDK</h2></div><small>检测使用网站公开页面，不会修改客户网站代码</small></header>
+      <header><div><span>02 / PAGE INVENTORY</span><h2>页面资产与 TDK</h2></div><small>程序检测 · TDK 规则生成，可人工编辑（非 AI）· 不修改客户官网</small></header>
       <div class="filters"><el-input v-model="filters.q" clearable placeholder="搜索 URL 或页面标题" /><el-select v-model="filters.issueCode" clearable placeholder="全部问题"><el-option v-for="item in [{v:'title',n:'Title'},{v:'description',n:'Description'},{v:'h1',n:'H1'},{v:'canonical',n:'Canonical'},{v:'indexable',n:'索引'},{v:'schema',n:'Schema'},{v:'content',n:'内容质量'},{v:'image',n:'图片'},{v:'language',n:'语言'},{v:'crawl',n:'抓取/可访问性'}]" :key="item.v" :label="item.n" :value="item.v" /></el-select><el-select v-model="filters.status" clearable placeholder="全部状态"><el-option v-for="item in [{v:'pending',n:'待检测'},{v:'needs_fix',n:'需优化'},{v:'proposed',n:'待确认'},{v:'approved',n:'已确认'},{v:'implemented',n:'待复检'},{v:'verified',n:'已复检'},{v:'healthy',n:'健康'},{v:'error',n:'检测失败'}]" :key="item.v" :label="item.n" :value="item.v" /></el-select><span>{{ result.total }} 个页面 · 已选 {{ selectedRows.length }} 个</span></div>
       <el-table v-loading="loading" :data="result.items" :empty-text="emptyStateText" @selection-change="selectedRows = $event">
         <el-table-column type="selection" width="44" />
         <el-table-column label="页面 / URL" min-width="280"><template #default="{row}"><b class="page-title">{{ row.title || '未读取页面标题' }}</b><small class="page-url">{{ row.url }}</small></template></el-table-column>
         <el-table-column label="目标关键词" width="120"><template #default="{row}">{{ row.target_keyword_id ? `#${row.target_keyword_id}` : '待绑定' }}</template></el-table-column>
-        <el-table-column label="健康度" width="100"><template #default="{row}"><strong>{{ row.audit_score ?? '—' }}</strong></template></el-table-column>
+        <el-table-column label="规则评分" width="100"><template #default="{row}"><strong>{{ row.audit_score ?? '—' }}</strong><small v-if="row.diagnostic?.assessment_state !== 'assessed'">{{ row.diagnostic?.assessment_state === 'not_checked' ? '未检测' : '无法评估' }}</small></template></el-table-column>
         <el-table-column label="检测问题" min-width="210"><template #default="{row}"><div class="issues"><span v-for="code in (row.issue_codes || []).slice(0,4)" :key="code">{{ issueLabel(code) }}</span><small v-if="!(row.issue_codes || []).length">—</small></div></template></el-table-column>
         <el-table-column label="当前 TDK" min-width="220"><template #default="{row}"><div class="suggestion current"><b>{{ row.title || '缺少 Title' }}</b><small>{{ row.meta_description || '缺少 Description' }}</small></div></template></el-table-column>
         <el-table-column label="建议 TDK" min-width="240"><template #default="{row}"><div class="suggestion"><b>{{ row.title_suggestion || '尚未生成 Title 建议' }}</b><small>{{ row.description_suggestion || '尚未生成 Description 建议' }}</small></div></template></el-table-column>

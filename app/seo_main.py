@@ -20,7 +20,7 @@ from app.seo_scheduler import shutdown_seo_scheduler, start_seo_scheduler
 
 settings = get_settings()
 enforce_production_secrets(settings, hard_fail=True)
-SEO_REQUIRED_SCHEMA_REVISION = "0084_seo_crawl_queued_status"
+SEO_REQUIRED_SCHEMA_REVISION = "0086_seo_index_review_merge"
 
 
 @asynccontextmanager
