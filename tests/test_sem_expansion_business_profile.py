@@ -23,6 +23,11 @@ from app.api.expansion import evaluate_candidates
 from app.models import KeywordCandidate, Tenant
 
 
+def basis(relation="in_scope", intent="purchase", quote="汽车修补漆", field="business_desc"):
+    """Synthetic model evidence for adapter tests, never a real model judgment."""
+    return dict(relation=relation, intent=intent, field=field, quote=quote)
+
+
 def tenant(**kwargs):
     fields = dict(
         id=3, name="测试涂料客户", brand_terms=["测试涂料"],
@@ -121,6 +126,7 @@ def test_evaluation_retains_tenant_scope_pending_filter_and_cache_contract(monke
     monkeypatch.setattr(evaluator, "is_enabled", lambda: True)
     chat = AsyncMock(return_value={"items": [{
         "word": "修补漆", "relevance": "relevant", "recommend": "watch", "reason": "业务相关",
+        "basis": basis(),
     }]})
     monkeypatch.setattr(evaluator, "chat_json", chat)
     rows = [KeywordCandidate(

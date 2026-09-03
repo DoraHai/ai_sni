@@ -72,7 +72,15 @@ SYSTEM_PROMPT = """你是资深国内百度 SEM 优化师，为当前客户筛�
 - bid_reason：出价理由，一句话，15 字以内（如"竞争度高，贴指导价试投"）
 
 只返回 JSON（不要多余文字），结构：
-{"items": [{"word": "原词", "relevance": "relevant|generic|irrelevant", "recommend": "adopt|watch|drop", "reason": "...", "suggested_bid": null, "bid_reason": null}]}
+每项必须先返回 basis，再返回结论。basis.relation 为 in_scope（经营范围内）、peer（已知同行）、
+out_of_scope（明确不相关或明确排除）、generic（通用噪音）、unknown（经营范围或同行关系未知）；
+basis.intent 为 purchase、comparison、navigation、information、unknown 之一。
+in_scope/peer/out_of_scope 必须引用客户行业或业务描述的连续原文，field 使用 industry 或 business_desc，
+quote 不得引用候选词自身、AI 总结或编造语句。引用存在不等于支持结论，必须核对其语义。
+unknown/generic 的 field、quote 为 null。业务边界不明必须用 unknown，不得用主营描述证明相邻业务不经营。
+peer 仅允许 relevant/watch 或 relevant/drop；in_scope 的 adopt 仅用于 purchase/comparison。
+缺依据或依据与结论冲突时，应用会改为 generic/watch 并清空报价，提示人工复核；不会认可原结论。
+{"items": [{"word": "原词", "basis": {"relation": "unknown", "intent": "unknown", "field": null, "quote": null}, "relevance": "generic", "recommend": "watch", "reason": "业务范围待确认", "suggested_bid": null, "bid_reason": null}]}
 items 必须覆盖我给的每一个词，word 原样回填。输出前核对上述四步：
 相关性已知、仅投放价值不确定时保留 relevant/watch；业务依据不足才用 generic/watch。
 报价理由必须能在输入中找到依据；不要补充输入没有的数据。"""
@@ -212,6 +220,43 @@ def _valid(relevance: str | None, recommend: str | None) -> bool:
     )
 
 
+def _basis_consistent(tenant: Tenant, item: dict) -> bool:
+    """Check provenance and internal consistency, NOT semantic truth.
+
+    A model can still misclassify a relation while quoting real text. Never treat
+    this as business authorization or infer customer facts from a keyword.
+    Legacy/missing evidence is deliberately not grandfathered into acceptance.
+    """
+    basis = item.get("basis")
+    if not isinstance(basis, dict):
+        return False
+    relation, intent = basis.get("relation"), basis.get("intent")
+    if not isinstance(relation, str) or not isinstance(intent, str):
+        return False
+    if intent not in {"purchase", "comparison", "navigation", "information", "unknown"}:
+        return False
+    rel, rec = item.get("relevance"), item.get("recommend")
+    if relation == "generic":
+        return (basis.get("field") is None and basis.get("quote") is None
+                and rel == "generic" and rec in ("watch", "drop"))
+    if relation not in {"in_scope", "peer", "out_of_scope"}:
+        return False  # unknown is always human review, even if the model says drop
+    field, quote = basis.get("field"), basis.get("quote")
+    if not isinstance(field, str) or field not in {"industry", "business_desc"}:
+        return False
+    source = getattr(tenant, field, None)
+    if (not isinstance(source, str) or not isinstance(quote, str)
+            or not 2 <= len(quote.strip()) <= 500 or quote not in source):
+        return False
+    if relation == "out_of_scope":
+        return rel == "irrelevant" and rec == "drop"
+    if rel != "relevant":
+        return False
+    if rec == "adopt":
+        return relation == "in_scope" and intent in {"purchase", "comparison"}
+    return rec in {"watch", "drop"} and not (intent == "navigation" and rec != "drop")
+
+
 async def _evaluate_batch(tenant: Tenant, words: list[dict]) -> dict[str, dict]:
     """评估一批词，返回 {word: {relevance, recommend, reason}}。失败抛 DeepSeekError。"""
     out = await chat_json(SYSTEM_PROMPT, _build_user_prompt(tenant, words))
@@ -241,6 +286,13 @@ async def _evaluate_batch(tenant: Tenant, words: list[dict]) -> dict[str, dict]:
             continue
         if word and _valid(rel, rec):
             meta = requested[word]
+            if not _basis_consistent(tenant, it):
+                result[word] = {
+                    "relevance": "generic", "recommend": "watch",
+                    "reason": "业务依据不足或结论冲突，待人工确认",
+                    "suggested_bid": None, "bid_reason": None,
+                }
+                continue
             sb = supported_suggested_bid(
                 it.get("suggested_bid"), rel, rec,
                 meta.get("recommend_price_pc"), meta.get("recommend_price_mobile"),

@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 # Reuse the existing offline settings bootstrap and non-persisted tenant factory.
-from tests.test_sem_expansion_business_profile import tenant
+from tests.test_sem_expansion_business_profile import tenant, basis
 from app.ai import expansion_eval as ev
 from app.api.expansion import _candidate_payload
 from app.models import KeywordCandidate
@@ -120,8 +120,15 @@ def test_reference_verdicts_exercise_real_adapter_bid_safety(deny_network, case,
     before_words = deepcopy(words)
     # Exercise every allowed pair, including relevant/drop and generic/watch.
     for relevance, recommend in case["allowed_pairs"]:
+        # Synthetic evidence tests structural consistency, not entailment. An
+        # actual industry quote alone cannot prove out_of_scope for a given word.
+        relation = {"relevant": "in_scope", "generic": "generic", "irrelevant": "out_of_scope"}[relevance]
+        evidence = basis(relation=relation, quote=customer.industry, field="industry")
+        if relation == "generic":
+            evidence.update(field=None, quote=None)
         fake = AsyncMock(return_value={"items": [{
             "word": case["word"], "relevance": relevance, "recommend": recommend,
+            "basis": evidence,
             "reason": "模拟模型返回，仅测试解析和出价保护",
             "suggested_bid": 3.0, "bid_reason": "模拟价格，不用于投放",
         }]})
@@ -171,7 +178,7 @@ def test_observed_input_stays_reproducible_without_sending_answers():
             assert item["bid_reason"] not in prompt
 
 
-def test_historical_response_replay_removes_unfounded_prices_not_semantic_errors(deny_network):
+def test_legacy_response_without_evidence_is_review_not_a_quality_pass(deny_network):
     runner, guard = deny_network
     customer = tenant(**FIXTURE["profile"])
     words = [{"word": c["word"]} for c in CASES]
@@ -184,10 +191,10 @@ def test_historical_response_replay_removes_unfounded_prices_not_semantic_errors
     for raw in OBSERVED["items"]:
         verdict = verdicts[raw["word"]]
         assert verdict["suggested_bid"] is None and verdict["bid_reason"] is None
-        # Deliberately expose the adapter's limit: valid semantic errors survive.
-        # Never rewrite competitor words/labels to fake a model-quality pass.
-        for field in ("relevance", "recommend", "reason"):
-            assert verdict[field] == raw[field]
+        # Old response schema is NOT accepted silently, for positives or negatives.
+        # All-review is safety fallback, not semantic accuracy improvement.
+        assert (verdict["relevance"], verdict["recommend"]) == ("generic", "watch")
+        assert "待人工确认" in verdict["reason"]
     assert OBSERVED == original
 
 
