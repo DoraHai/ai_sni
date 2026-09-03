@@ -99,10 +99,52 @@ def test_valid_product_scope_preserves_watch_without_adopting(deny_network, fiel
     assert verdict['suggested_bid'] == 3
 
 
-@pytest.mark.parametrize('intent,recommend', [('information', 'watch'), ('information', 'drop'), ('navigation', 'drop')])
-def test_entity_query_can_remain_related_without_inventing_product_scope(deny_network, intent, recommend):
-    verdict = replay(deny_network, item(subject='entity', intent=intent, recommend=recommend))
+@pytest.mark.parametrize('word,intent,recommend', [
+    ('测试公司', 'information', 'watch'),
+    ('测试公司', 'information', 'drop'),
+    ('测试公司官网', 'navigation', 'drop'),
+])
+def test_entity_query_can_remain_related_without_inventing_product_scope(
+    deny_network, word, intent, recommend,
+):
+    verdict = replay(deny_network, item(word=word, subject='entity', intent=intent, recommend=recommend))
     assert (verdict['relevance'], verdict['recommend']) == ('relevant', recommend)
+
+
+@pytest.mark.parametrize('word', ['艾仕得涂料系统', '竞品公司', '竞品品牌'])
+def test_peer_entity_without_navigation_cue_cannot_be_dropped_as_navigation(deny_network, word):
+    raw = item(word=word, subject='entity', intent='navigation', recommend='drop',
+               reason='竞品官网导航，无投放价值', suggested_bid=4, bid_reason='模型误报')
+    verdict = replay(deny_network, raw)
+    assert verdict == {
+        'relevance': 'relevant',
+        'recommend': 'watch',
+        'reason': '竞品主体词，导航意图待确认',
+        'suggested_bid': None,
+        'bid_reason': None,
+    }
+
+
+@pytest.mark.parametrize('relevance,recommend', [
+    ('generic', 'drop'),
+    ('generic', 'watch'),
+    ('relevant', 'watch'),
+])
+def test_navigation_guard_does_not_promote_other_invalid_model_combinations(
+    deny_network, relevance, recommend,
+):
+    raw = item(word='竞品公司', subject='entity', intent='navigation',
+               relevance=relevance, recommend=recommend)
+    verdict = replay(deny_network, raw)
+    assert (verdict['relevance'], verdict['recommend']) == ('generic', 'watch')
+    assert verdict['suggested_bid'] is None
+
+
+@pytest.mark.parametrize('cue', ev.NAVIGATION_CUES)
+def test_explicit_navigation_cues_still_allow_peer_entity_drop(deny_network, cue):
+    verdict = replay(deny_network, item(word=f'竞品{cue}', subject='entity',
+                                        intent='navigation', recommend='drop'))
+    assert (verdict['relevance'], verdict['recommend']) == ('relevant', 'drop')
 
 
 @pytest.mark.parametrize('raw', [item(subject='entity', intent='purchase'),
@@ -137,3 +179,10 @@ def test_schema_cannot_prove_model_subject_or_citation_semantics():
     assert ev._basis_consistent(tenant(), item(word='边界产品', subject='entity'))
     assert ev._basis_consistent(tenant(), item(word='边界产品', scope=product_scope()))
     assert not ev._basis_consistent(tenant(), item(scope=product_scope(relation='unknown')))
+
+
+def test_prompt_requires_explicit_navigation_signal_without_customer_specific_patch():
+    for clause in ('只有候选词本身明确包含', '才能给 intent=navigation',
+                   '品牌名、公司名', '按 information 处理'):
+        assert clause in ev.SYSTEM_PROMPT
+    assert '艾仕得' not in ev.SYSTEM_PROMPT
