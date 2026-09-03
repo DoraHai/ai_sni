@@ -9,6 +9,7 @@
       PYTHONPATH=. .venv/bin/python scripts/dev_smoke_expansion_eval.py
 """
 import asyncio
+import json
 from datetime import datetime
 from unittest.mock import patch
 
@@ -57,10 +58,15 @@ def _parse_words(user_prompt: str) -> list[str]:
 
 async def fake_chat_json(system: str, user: str, timeout: float = 30.0) -> dict:
     items = []
+    profile = json.loads(user.splitlines()[1])
     for w in _parse_words(user):
         if w in VERDICTS:
             rel, rec, reason = VERDICTS[w]
-            items.append({"word": w, "relevance": rel, "recommend": rec, "reason": reason})
+            relation = {"relevant": "in_scope", "irrelevant": "out_of_scope", "generic": "generic"}[rel]
+            items.append({"word": w, "relevance": rel, "recommend": rec, "reason": reason,
+                          "basis": {"relation": relation, "intent": "purchase",
+                                    "field": "business_desc" if relation != "generic" else None,
+                                    "quote": profile["业务描述"] if relation != "generic" else None}})
     return {"items": items}
 
 

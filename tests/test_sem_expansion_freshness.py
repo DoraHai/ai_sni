@@ -10,7 +10,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Session, make_transient_to_detached
 from sqlalchemy.orm.attributes import get_history, set_committed_value
 
-from tests.test_sem_expansion_business_profile import tenant
+from tests.test_sem_expansion_business_profile import tenant, basis
 from app.ai import expansion_eval as ev
 from app.api import expansion as api
 from app.models import KeywordCandidate
@@ -86,6 +86,7 @@ def test_competitor_is_not_forced_to_adopt_and_drop_never_gets_ai_bid(monkeypatc
     assert "不要自动采纳竞品词" in ev.SYSTEM_PROMPT
     monkeypatch.setattr(ev, "chat_json", AsyncMock(return_value={"items": [{
         "word": "同行涂料官网", "relevance": "relevant", "recommend": "drop",
+        "basis": basis(relation="peer", intent="navigation"),
         "reason": "同行但导航意图，建议忽略", "suggested_bid": 4, "bid_reason": "错误出价",
     }]}))
     verdict = asyncio.run(ev._evaluate_batch(tenant(), [{"word": "同行涂料官网", "recommend_price_pc": 4}]))["同行涂料官网"]
@@ -269,6 +270,7 @@ def test_price_requires_clear_relevance_and_real_guide_at_write_and_read(
     words = [{"word": word, "recommend_price_pc": pc, "recommend_price_mobile": mobile}]
     monkeypatch.setattr(ev, "chat_json", AsyncMock(return_value={"items": [{
         "word": word, "relevance": relevance, "recommend": recommend,
+        "basis": basis(),
         "suggested_bid": 2.5, "bid_reason": "参考指导价",
         "recommend_price_pc": 10,  # Model-invented guide is never provider evidence.
     }]}))
@@ -310,6 +312,7 @@ def test_malformed_result_preserves_old_row_and_allows_next_batch(monkeypatch):
     chat = AsyncMock(side_effect=[
         {"items": [{"word": "坏词", "relevance": [], "recommend": "watch"}]},
         {"items": [{"word": "好词", "relevance": "relevant", "recommend": "watch",
+                    "basis": basis(),
                     "reason": "新评估", "suggested_bid": 2.5}]},
     ])
     monkeypatch.setattr(ev, "chat_json", chat)
@@ -360,6 +363,7 @@ def test_invalid_whole_batch_is_counted_and_later_batch_runs(monkeypatch):
     monkeypatch.setattr(ev, "is_enabled", lambda: True)
     monkeypatch.setattr(ev, "chat_json", AsyncMock(side_effect=[[], {"items": [{
         "word": "后批", "relevance": "relevant", "recommend": "watch", "reason": "新结论",
+        "basis": basis(),
     }]}]))
     session = SimpleNamespace(scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: rows)),
                               commit=AsyncMock())
