@@ -195,7 +195,8 @@ def test_legacy_response_without_evidence_is_review_not_a_quality_pass(deny_netw
     fake = AsyncMock(return_value={"items": deepcopy(OBSERVED["items"])})
     guard.setattr(ev, "chat_json", fake)
     verdicts = runner.run(ev._evaluate_batch(customer, words))
-    fake.assert_awaited_once_with(ev.SYSTEM_PROMPT, ev._build_user_prompt(customer, words))
+    fake.assert_awaited_once_with(ev.SYSTEM_PROMPT, ev._build_user_prompt(customer, words),
+                                  timeout=ev.MODEL_TIMEOUT_SECONDS)
     assert len(verdicts) == 20
     for raw in OBSERVED["items"]:
         verdict = verdicts[raw["word"]]

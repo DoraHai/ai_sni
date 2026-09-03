@@ -44,7 +44,7 @@ f.view.syncForm.seeds = '粉末涂料'
 await f.view.runSync()
 assert.deepEqual(f.calls, [['sample',{tenantId:3,seed:'粉末涂料',limit:20}]])
 await f.view.runEvaluate()
-assert.deepEqual(f.calls[1], ['eval',{tenantId:3,force:false,limit:20,afterId:0,retryIds:undefined}])
+assert.deepEqual(f.calls[1], ['eval',{tenantId:3,force:false,limit:5,afterId:0,retryIds:undefined}])
 assert.match(f.view.evaluationResult.value, /剩余 0 词/)
 assert.match(f.view.evaluationResult.value, /失败或缺失 1 词/)
 assert.equal(f.calls.length, 2, 'no automatic AI after sample or continuation after evaluation')
@@ -61,6 +61,17 @@ cancel.view.syncForm.smallBatch = false
 await cancel.view.runSync()
 await cancel.view.runEvaluate(true)
 assert.equal(cancel.calls.length, 0, 'bulk and force actions require confirmation')
+
+let confirmationText = ''
+const confirmed = fixture({ElMessageBox:{confirm:async message => {confirmationText = message}}})
+await confirmed.view.runEvaluate(true)
+assert.match(confirmationText, /每批最多 5 词/)
+assert.equal(confirmed.calls[0][1].limit, 5, 'confirmation and transmitted limit agree')
+
+const rejected = fixture({evaluateCandidates: async () => {throw new Error('HTTP 422')}})
+rejected.view.evaluationRound.value = {force:true,failedIds:[1,2,3,4,5,6],nextAfterId:20,deferred:5}
+await rejected.view.runEvaluate(false, 'retry')
+assert.deepEqual(rejected.view.evaluationRound.value.failedIds, [1,2,3,4,5,6], 'rejected retry must retain every queued ID')
 
 let finish
 let evaluationCalls = 0
@@ -101,7 +112,8 @@ assert.equal(batchCalls[1].force, true, 'continuation preserves the round mode')
 assert.equal(batches.view.evaluationRound.value.nextAfterId, null)
 await batches.view.runEvaluate(false, 'next')
 assert.equal(batchCalls.length, 2, 'end-of-round does not restart automatically')
-batches.view.syncForm.limit = 5
+// Even an old 20-word failure queue retries only five IDs; retain the rest.
+assert.equal(batches.view.syncForm.limit, 20)
 await batches.view.runEvaluate(false, 'retry')
 assert.deepEqual(batchCalls[2].retryIds, [1,2,3,4,5])
 assert.equal(batchCalls[2].afterId, 0)
@@ -121,6 +133,10 @@ const requestModule = await import(`data:text/javascript,${encodeURIComponent(ap
 assert.equal(requestModule.sampleCandidates({tenantId:3,seed:'粉末'})[2].params.limit, 20)
 assert.equal(requestModule.evaluateCandidates({tenantId:3,force:true,limit:5})[2].params.limit, 5)
 assert.equal(requestModule.evaluateCandidates({tenantId:3,afterId:20})[2].params.after_id, 20)
+assert.equal(requestModule.evaluateCandidates({tenantId:3})[2].params.limit, 5)
+assert.equal(requestModule.evaluateCandidates({tenantId:3})[2].timeout, 60000)
+assert.match(source, /Math.min\(syncForm.limit, 5\)/)
+assert.match(source, /每次最多 5 词/)
 assert.deepEqual(requestModule.evaluateCandidates({tenantId:3,retryIds:[1,2]})[1], {retry_ids:[1,2]})
 assert.match(source, /:max="20"/)
 assert.doesNotMatch(source, /全部重评/)

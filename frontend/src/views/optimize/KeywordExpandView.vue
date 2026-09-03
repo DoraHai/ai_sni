@@ -53,6 +53,7 @@ const selection = ref([])
 const addToPlanDialogRef = ref(null)
 
 const syncForm = reactive({ seeds: '', queryDays: 30, smallBatch: true, limit: 20 })
+const evaluationLimit = computed(() => Math.min(syncForm.limit, 5))
 const evaluationResult = ref('')
 const evaluationRound = ref(null)
 const operationBusy = computed(() => syncing.value || evaluating.value || crawling.value)
@@ -189,22 +190,23 @@ async function runEvaluate(force = false, action = 'start') {
   if (!validBatchLimit()) return
   const tenantId = TENANT_ID.value
   const round = evaluationRound.value
+  const limit = evaluationLimit.value
   if (action !== 'start' && !round) return
   if (action === 'next' && round.nextAfterId == null) return
   if (action === 'retry' && !round.failedIds.length) return
   if (action !== 'start') force = round.force
   if (action === 'start' && (force || round?.nextAfterId != null || round?.failedIds.length)) {
     try {
-      await ElMessageBox.confirm(`从头开始${force ? '重评（含旧结果）' : '评估'}，每批最多 ${syncForm.limit} 词；当前批次进度将重置，旧评估结果保留。不会自动继续或采纳。继续？`, '开始新一轮评估')
+      await ElMessageBox.confirm(`从头开始${force ? '重评（含旧结果）' : '评估'}，每批最多 ${limit} 词；当前批次进度将重置，旧评估结果保留。不会自动继续或采纳。继续？`, '开始新一轮评估')
     } catch { return }
     if (tenantId !== TENANT_ID.value || operationBusy.value) return
   }
-  const retryIds = action === 'retry' ? round.failedIds.slice(0, syncForm.limit) : undefined
+  const retryIds = action === 'retry' ? round.failedIds.slice(0, limit) : undefined
   const afterId = action === 'next' ? round.nextAfterId : 0
   evaluating.value = true
   evaluationResult.value = ''
   try {
-    const resp = await evaluateCandidates({ tenantId, force, limit: syncForm.limit, afterId, retryIds })
+    const resp = await evaluateCandidates({ tenantId, force, limit, afterId, retryIds })
     if (tenantId !== TENANT_ID.value) return
     if (resp.enabled === false) {
       ElMessage.warning('未配置 DeepSeek，AI 评估不可用')
@@ -425,7 +427,7 @@ onMounted(load)
           :disabled="operationBusy"
           @click="runEvaluate(false)"
         >
-          {{ evaluating ? 'AI 研判中…' : `小批量 AI 评估（最多 ${syncForm.limit} 词）` }}
+          {{ evaluating ? 'AI 研判中…' : `小批量 AI 评估（最多 ${evaluationLimit} 词）` }}
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item :disabled="operationBusy" @click="runEvaluate(true)">新一轮小批量重评（含旧结果）</el-dropdown-item>
@@ -442,12 +444,12 @@ onMounted(load)
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 14px" />
     <el-alert v-if="evaluationResult" :title="evaluationResult" type="info" :closable="false" style="margin-bottom: 14px" />
-    <div v-if="aiEnabled" class="sync-hint">当前客户待评 {{ aiUnevaluated }} 行；评估按词去重，上限不受列表筛选或勾选影响，不自动采纳。</div>
+    <div v-if="aiEnabled" class="sync-hint">当前客户待评 {{ aiUnevaluated }} 行；AI 每次最多 5 词、一次模型请求，超时不自动重试；候选拉取仍按每批上限。评估按词去重，上限不受列表筛选或勾选影响，不自动采纳。</div>
     <el-alert
       v-if="aiEnabled && ((data?.ai_freshness_counts?.stale || 0) + (data?.ai_freshness_counts?.unverified || 0) > 0)"
       type="warning" :closable="false" show-icon
       title="部分 AI 结论需要重新核验"
-      :description="`画像或评估规则已变更 ${data?.ai_freshness_counts?.stale || 0} 条；历史结果未核验 ${data?.ai_freshness_counts?.unverified || 0} 条。旧结论仍保留并参与当前筛选，但不作为默认 AI 出价依据。普通评估会跳过旧结果；请通过下拉菜单手动开启新一轮小批量重评（含旧结果），每次最多 20 词，不自动继续或采纳。`"
+      :description="`画像或评估规则已变更 ${data?.ai_freshness_counts?.stale || 0} 条；历史结果未核验 ${data?.ai_freshness_counts?.unverified || 0} 条。旧结论仍保留并参与当前筛选，但不作为默认 AI 出价依据。普通评估会跳过旧结果；请通过下拉菜单手动开启新一轮小批量重评（含旧结果），每次最多 5 词，不自动继续或采纳。`"
     />
 
     <!-- 4 源卡 -->

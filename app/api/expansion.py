@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.deepseek import is_enabled as ai_enabled
 from app.ai.expansion_eval import (
-    EVALUATION_META_KEY, FRESHNESS_LABELS, MissingBusinessProfileError,
+    EVALUATION_META_KEY, FRESHNESS_LABELS, INTERACTIVE_WORD_LIMIT, MissingBusinessProfileError,
     context_fingerprint, evaluation_freshness, fingerprint_status,
     evaluate_candidates_for_tenant,
     supported_suggested_bid,
@@ -481,7 +481,8 @@ async def evaluate_candidates(
     tenant_id: int = Query(..., description="本地租户 ID"),
     force: bool = Query(False, description="true=重评已评估过的候选；默认只评未评估的"),
     limit: int = Query(
-        20, ge=1, le=20, description="本次最多评估 1–20 个去重词；不自动继续下一批"
+        INTERACTIVE_WORD_LIMIT, ge=1, le=20,
+        description="本次最多评估 5 个去重词；兼容旧客户端 1–20 输入但按 5 截断，不自动继续"
     ),
     session: AsyncSession = Depends(get_session),
     after_id: Annotated[int, Query(ge=0)] = 0,
@@ -492,14 +493,17 @@ async def evaluate_candidates(
     🚫 红线：只产研判、不写回百度。未配 DEEPSEEK_API_KEY 时 enabled=false。
     返回 remaining=本次未评的剩余词数（>0 说明被 limit 截断，可再调一次）。
     """
+    limit = min(limit, INTERACTIVE_WORD_LIMIT)
     if selection is not None and (after_id or len(selection.retry_ids) > limit):
-        raise HTTPException(422, "重试不能同时使用游标，且重试词数不能超过每批上限")
+        # Reject rather than silently truncate: an older UI removes all submitted
+        # retry IDs from its queue, which would otherwise lose unattempted words.
+        raise HTTPException(422, "重试不能同时使用游标，且每次最多重试 5 词（不能超过所选上限）")
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
     try:
         result = await evaluate_candidates_for_tenant(
-            session, tenant, force=force, limit=limit, after_id=after_id,
+            session, tenant, force=force, limit=limit, batch_size=INTERACTIVE_WORD_LIMIT, after_id=after_id,
             retry_ids=selection.retry_ids if selection is not None else None,
         )
     except MissingBusinessProfileError as exc:

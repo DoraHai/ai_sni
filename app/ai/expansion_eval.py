@@ -11,6 +11,7 @@
 降级：未配 DEEPSEEK_API_KEY 返回 enabled=False；单批 API 失败跳过该批（保留旧值），
 不阻断其余批次。已评估过的（ai_evaluated_at 非空）默认跳过，force=True 全量重评。
 """
+import asyncio
 import hashlib
 import json
 import logging
@@ -33,6 +34,8 @@ from app.models import (
 logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 25  # 每次 API 评估的词数（控制单次 token 量 + 调用次数）
+INTERACTIVE_WORD_LIMIT = 5  # 拓词页一次点击只发一个小请求，不自动拆成多次模型调用
+MODEL_TIMEOUT_SECONDS = 30.0  # SEM-only wall-clock budget, not just HTTP inactivity
 
 SYSTEM_PROMPT = """你是资深国内百度 SEM 优化师，为当前客户筛选拓词候选。
 只依据本次提供的客户行业、业务描述和品牌资料判断，不套用其他客户或固定行业背景。
@@ -270,7 +273,14 @@ def _basis_consistent(tenant: Tenant, item: dict) -> bool:
 
 async def _evaluate_batch(tenant: Tenant, words: list[dict]) -> dict[str, dict]:
     """评估一批词，返回 {word: {relevance, recommend, reason}}。失败抛 DeepSeekError。"""
-    out = await chat_json(SYSTEM_PROMPT, _build_user_prompt(tenant, words))
+    try:
+        async with asyncio.timeout(MODEL_TIMEOUT_SECONDS):
+            out = await chat_json(SYSTEM_PROMPT, _build_user_prompt(tenant, words),
+                                  timeout=MODEL_TIMEOUT_SECONDS)
+    except TimeoutError:
+        # Preserve the existing per-batch failure path; never retry or cache a
+        # fabricated verdict on deadline expiry. External cancellation propagates.
+        raise DeepSeekError("SEM 拓词模型请求超过时限，旧结果保留，请稍后手动重试") from None
     items = out.get("items") if isinstance(out, dict) else None
     if not isinstance(items, list):
         raise DeepSeekError("返回结构异常（需对象及 items 数组）")
