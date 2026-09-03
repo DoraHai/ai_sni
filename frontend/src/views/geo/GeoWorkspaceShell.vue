@@ -112,6 +112,12 @@ onUnmounted(() => {
           </button>
         </section>
       </nav>
+      <div class="geo-shell-links">
+        <a href="/monitor/dashboard"><span>SEM</span><span class="geo-quick-label">搜索广告工作台</span></a>
+        <a href="/seo/dashboard"><span>SEO</span><span class="geo-quick-label">SEO 内容工作台</span></a>
+        <a href="/diagnostic-center/"><span>DX</span><span class="geo-quick-label">诊断中心</span></a>
+        <a class="portal-link" href="/deal-sniper/portal"><span>←</span><span class="geo-quick-label">返回平台门户</span></a>
+      </div>
       <div class="geo-side-foot">
         <el-popover
           v-if="session.tenants.length"
@@ -243,6 +249,37 @@ onUnmounted(() => {
   flex: none;
   font-size: 13px;
 }
+.geo-shell-links {
+  padding: 8px 2px;
+  border-top: 1px solid #e8eaf0;
+}
+.geo-shell-links a {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  color: #6b7280;
+  font-size: 12px;
+  text-decoration: none;
+}
+.geo-shell-links a > span:first-child {
+  width: 24px;
+  flex: none;
+  color: #8b95a5;
+  font-size: 10px;
+  font-weight: 700;
+}
+.geo-shell-links a:hover {
+  background: #f5f0ff;
+  color: #7c3aed;
+}
+.geo-shell-links .portal-link {
+  margin-top: 4px;
+  border-top: 1px solid #e8eaf0;
+  border-radius: 0;
+}
 .geo-side-foot {
   padding: 8px 10px 12px;
   border-top: 1px solid #e8eaf0;
@@ -264,8 +301,12 @@ onUnmounted(() => {
 .geo-shell-side.is-rail .geo-shell-brand { justify-content: center; padding-left: 0; padding-right: 0; }
 .geo-shell-side.is-rail .geo-shell-brand-copy,
 .geo-shell-side.is-rail .geo-shell-nav h2,
-.geo-shell-side.is-rail .geo-nav-label { display: none; }
+.geo-shell-side.is-rail .geo-nav-label,
+.geo-shell-side.is-rail .geo-quick-label { display: none; }
 .geo-shell-side.is-rail .geo-shell-nav button { justify-content: center; padding: 10px 0; }
+.geo-shell-side.is-rail .geo-shell-links { padding: 8px 6px; }
+.geo-shell-side.is-rail .geo-shell-links a { justify-content: center; gap: 0; padding: 6px 0; }
+.geo-shell-side.is-rail .geo-shell-links a > span:first-child { width: auto; }
 .geo-shell-side.is-rail .geo-side-foot { padding: 8px 6px 12px; }
 .geo-shell-side.is-rail .geo-tenant { text-align: center; padding: 8px 0; font-weight: 650; }
 .geo-shell-main {

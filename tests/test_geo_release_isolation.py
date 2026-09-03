@@ -147,7 +147,6 @@ def test_geo_standalone_uses_shared_customer_and_account_header():
     assert 'class="geo-tenant"' in shell
     assert "geo-editor-focus" in shell
     assert "is-rail" in shell
-    assert "/seo/dashboard" not in shell
     assert "提问监控" in nav
     assert "GEO 文章" in nav
     assert "官网结构优化" in nav
@@ -157,6 +156,23 @@ def test_geo_standalone_uses_shared_customer_and_account_header():
     assert "当前客户" in header
     assert "session.setTenant(id)" in shell
     assert "geo-tenant-switcher" not in page
+
+
+def test_geo_sidebar_keeps_cross_product_shortcuts_aligned_with_seo():
+    shell = _read("frontend/src/views/geo/GeoWorkspaceShell.vue")
+
+    shortcuts = [
+        'href="/monitor/dashboard"',
+        'href="/seo/dashboard"',
+        'href="/diagnostic-center/"',
+        'href="/deal-sniper/portal"',
+    ]
+    positions = [shell.index(shortcut) for shortcut in shortcuts]
+
+    assert positions == sorted(positions)
+    for label in ("搜索广告工作台", "SEO 内容工作台", "诊断中心", "返回平台门户"):
+        assert label in shell
+    assert ".geo-shell-links .portal-link" in shell
 
 
 def test_geo_editor_keeps_the_complete_editor_first_interactions():
