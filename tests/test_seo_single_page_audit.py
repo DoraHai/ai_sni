@@ -100,10 +100,11 @@ def test_overall_deadline_is_bounded(monkeypatch):
 
 
 def test_default_fetch_uses_existing_pinned_crawler():
-    from app.seo_crawler import fetch_url
+    from app.seo_crawler import fetch_url, pin_public_target
     assert audit.fetch_url is fetch_url
     assert 'pinned_async_client' in inspect.getsource(fetch_url)
-    assert '_ensure_public_host' in inspect.getsource(fetch_url)
+    assert 'pin_public_target(current)' in inspect.getsource(fetch_url)
+    assert '_ensure_public_host' in inspect.getsource(pin_public_target)
 
 
 @pytest.mark.parametrize('target,redirect', [

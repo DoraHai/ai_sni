@@ -65,3 +65,10 @@ audit({ pageId: 234, tenantId: 1, siteId: 1 })
 assert.deepEqual(sent[0], ['/api/v1/seo/site-pages/234/audit', null, { params: { tenant_id: 1, site_id: 1 }, timeout: 60000 }])
 assert(source.includes('无需全站扫描'))
 console.log('SEO single-page audit request preserves page, tenant and site scope')
+
+const siteView = await readFile(new URL('../src/views/seo/SeoSiteOptimizationView.vue', import.meta.url), 'utf8')
+const auditCalls = [...siteView.matchAll(/auditSeoSitePage\(\{([^}]+)\}\)/g)]
+assert.equal(auditCalls.length, 2, 'single and batch audit calls remain covered')
+for (const call of auditCalls) assert(call[1].includes('siteId: row.site_id'))
+assert(siteView.includes('同一页面至少两次有效检测'))
+assert(!siteView.includes('至少完成两次全站扫描后才能生成修复前后对比'))

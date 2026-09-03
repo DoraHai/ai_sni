@@ -37,3 +37,11 @@ HTML 中畸形链接（非法端口、无效 IPv6 等）按单个属性忽略，
 保留生产抓取器现有 SSRF/IP 钉住、internal_link_details、失败判定等加固。新单页存储会去掉辅助链接数据，不生成监控关系。
 
 发布后才执行已授权的 #234 单页验收：只点一次检测；核对明细总数、缺属性/空白分类、URL/区域和刷新持久化。失败时停止，不扩大到全站扫描。
+
+## 2026-09-03 生产同步
+
+已审核源为 main PR #251（d329fe1，合并提交 388ebdb）；生产基线 a73cc7d。独立 promotion 仅移植本修复，不合入整棵 main。
+保留生产 pin_public_target 的逐跳 IP 校验、固定连接与上下文清理；适配相应测试断言。批量检测增加 site_id，对比空态改为同页两次有效检测。新增测试接入 SEO baseline 和正式发布门禁，发布路径白名单只增加本次模块、测试与文档三个明确路径。
+
+发布前健康检查正常，前后端当前均为 20260903T132328Z-a73cc7d5bf1e，数据库版本为 0087_seo_image_alt_evidence。本次不新增 migration，记录 migration=not-run。
+受控完整 SEO workflow 切换两端 release 并仅重启 seo-service；不改 Nginx、不触碰其他模块，不触发客户抓取或 AI。失败由受控 deployer 恢复上述两端旧 release 并仅重启 SEO 服务。页面 #234 的一次实际检测留待部署后单独验收。
