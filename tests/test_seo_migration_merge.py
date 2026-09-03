@@ -71,7 +71,7 @@ def test_merge_revisions_are_noop_and_sem_seo_merge_is_only_head() -> None:
     _assert_noop_revision(SEM_SEO_MERGE_REVISION)
 
     script = ScriptDirectory.from_config(_config())
-    assert script.get_heads() == ["0086_seo_index_review_merge"]
+    assert script.get_heads() == ["0087_seo_image_alt_evidence"]
     merge = script.get_revision("0074_merge_geo_seo_heads")
     assert set(merge._normalized_down_revisions) == {
         "0073_geo_schema_repair",
@@ -130,6 +130,7 @@ def test_upgrade_plan_from_production_sem_head_runs_only_seo_branch() -> None:
         "0083_seo_manual_rerun",
         "0084_seo_crawl_queued_status",
         "0086_seo_index_review_merge",
+        "0087_seo_image_alt_evidence",
     ]
 
 
@@ -142,6 +143,11 @@ def test_index_review_promotion_preserves_both_histories_and_upgrades_only_new_t
     steps = script._upgrade_revs("head", "0084_seo_crawl_queued_status")
     assert [step.revision.revision for step in steps] == [
         "0085_seo_page_index_reviews", "0086_seo_index_review_merge",
+        "0087_seo_image_alt_evidence",
+    ]
+    assert script.get_revision("0087_seo_image_alt_evidence").down_revision == "0086_seo_index_review_merge"
+    assert [step.revision.revision for step in script._upgrade_revs("head", "0086_seo_index_review_merge")] == [
+        "0087_seo_image_alt_evidence",
     ]
 
 
@@ -195,6 +201,10 @@ def test_postgres_upgrade_from_sem_head_applies_only_pending_seo_branch(monkeypa
 
             def inspect_schema(sync_connection) -> tuple[set[str], set[str]]:
                 inspector = inspect(sync_connection)
+                image_column = next(column for column in inspector.get_columns("seo_page_snapshots")
+                                    if column["name"] == "image_alt_evidence")
+                assert image_column["nullable"] is True
+                assert str(image_column["type"]) == "JSONB"
                 assert "seo_distribution_variants" in inspector.get_table_names()
                 assert "seo_content_review_events" in inspector.get_table_names()
                 assert "seo_automation_runs" in inspector.get_table_names()
@@ -325,7 +335,7 @@ def test_postgres_upgrade_from_sem_head_applies_only_pending_seo_branch(monkeypa
     ) = asyncio.run(schema_snapshot())
     get_settings.cache_clear()
 
-    assert after == "0086_seo_index_review_merge"
+    assert after == "0087_seo_image_alt_evidence"
     assert {
         "ix_seo_distribution_variants_tenant_id",
         "ix_seo_distribution_variants_content_asset_id",

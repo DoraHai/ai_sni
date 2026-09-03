@@ -62,7 +62,7 @@ def test_seo_service_mounts_only_seo_routes() -> None:
     assert "from app.scheduler" not in source
     assert "start_seo_scheduler" in source
     assert "shutdown_seo_scheduler" in source
-    assert 'SEO_REQUIRED_SCHEMA_REVISION = "0086_seo_index_review_merge"' in source
+    assert 'SEO_REQUIRED_SCHEMA_REVISION = "0087_seo_image_alt_evidence"' in source
     assert "SELECT version_num FROM alembic_version ORDER BY version_num" in source
     assert 'schema_status = "error"' in source
     assert "response.status_code = 503" in source
@@ -91,7 +91,7 @@ def test_seo_health_fails_closed_when_database_revision_is_stale() -> None:
     assert response.status_code == 503
     assert result["db"] == "error"
     assert result["schema"] == "error"
-    assert "expected 0086_seo_index_review_merge" in result["db_error"]
+    assert "expected 0087_seo_image_alt_evidence" in result["db_error"]
 
 
 def test_seo_scheduler_registers_only_rank_collection() -> None:

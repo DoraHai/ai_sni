@@ -341,6 +341,10 @@ export function assistSeoContent(payload) {
   return client.post('/api/v1/seo/content-ai/assist', payload, { timeout: 100000 })
 }
 
+export function fetchSeoImageEvidence({ tenantId, siteId, pageId }) {
+  return client.get('/api/v1/seo/site-pages/image-evidence', { params: { tenant_id: tenantId, site_id: siteId, page_id: pageId } })
+}
+
 export function previewSeoRemediation(payload) {
   return client.post('/api/v1/seo/site-pages/ai-remediation', payload, { timeout: 95000 })
 }

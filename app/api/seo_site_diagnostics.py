@@ -1,6 +1,6 @@
 """SEO-only diagnostic review; all writes are local, append-only intent records."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
 from app.models.module_workspace import SeoSite
-from app.models.seo import SeoPageIndexReview, SeoSitePage
+from app.models.seo import SeoPageIndexReview, SeoSitePage, SeoPageSnapshot
 from app.security.auth import AuthContext, require_scoped_auth
 from app.seo_site_diagnostics import assessed_condition, checked_iso, diagnostic_payload
 
@@ -73,6 +73,40 @@ async def list_diagnostics(
                      "unavailable": coverage[0] - coverage[1] - coverage[2],
                      "latest_checked_at": checked_iso(coverage[3]), "scope": "stored_page_inventory"},
     }
+
+
+@router.get("/site-pages/image-evidence")
+async def get_image_evidence(
+    tenant_id: PositiveInt, site_id: PositiveInt, page_id: PositiveInt,
+    ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session),
+):
+    await _scope(session, ctx, tenant_id, site_id)
+    page = await session.scalar(select(SeoSitePage).where(
+        SeoSitePage.id == page_id, SeoSitePage.tenant_id == tenant_id, SeoSitePage.site_id == site_id,
+    ))
+    if page is None:
+        raise HTTPException(404, "页面不存在")
+    # Do not fall back to an older successful observation if the latest failed.
+    snapshot = await session.scalar(select(SeoPageSnapshot).where(
+        SeoPageSnapshot.tenant_id == tenant_id, SeoPageSnapshot.site_id == site_id,
+        SeoPageSnapshot.url == page.url,
+    ).order_by(SeoPageSnapshot.fetched_at.desc(), SeoPageSnapshot.id.desc()).limit(1))
+    fetch_error = None
+    fetched_at = None
+    if snapshot is not None:
+        fetch_error = snapshot.error_type
+        if not fetch_error and (snapshot.status_code is None or not 200 <= snapshot.status_code < 300):
+            fetch_error = "http_status_unavailable" if snapshot.status_code is None else f"http_{snapshot.status_code}"
+        # fetched_at is DB-generated local CST, unlike site-page checked_at UTC.
+        fetched_at = snapshot.fetched_at
+        if fetched_at is not None and fetched_at.tzinfo is None:
+            fetched_at = fetched_at.replace(tzinfo=timezone(timedelta(hours=8)))
+    return {"page_id": page.id, "url": page.url,
+            "snapshot_id": snapshot.id if snapshot else None,
+            "fetched_at": fetched_at.isoformat() if fetched_at else None,
+            "fetch_error": fetch_error,
+            "legacy_candidate_count": snapshot.images_missing_alt_count if snapshot else None,
+            "evidence": snapshot.image_alt_evidence if snapshot and not fetch_error else None}
 
 
 class IndexReviewCreate(BaseModel):
