@@ -8,6 +8,17 @@ assert.match(source, /row.ai_freshness !== 'current'/)
 assert.match(source, /历史结果未核验/)
 assert.match(source, /普通评估会跳过旧结果/)
 assert.match(source, /不作为默认 AI 出价依据/)
+// Check each visible explanation, not just one matching occurrence in the file.
+const footer = source.match(/<div class="note">([\s\S]*?)<\/div>/)[1]
+assert.match(footer, /系统配置的模型/)
+assert.match(footer, /AI 评估每次最多 5 个去重词/)
+assert.match(footer, /实际数量见评估按钮/)
+assert.match(footer, /超时不自动重试/)
+assert.match(footer, /不自动继续或采纳/)
+assert.match(footer, /需人工确认，不等于已判定为无关词/)
+assert.match(footer, /「仅看业务相关」会隐藏其他分类/)
+assert.match(source, /候选拉取上限/)
+assert.doesNotMatch(source, /DeepSeek|隐藏通用噪音|每次最多 20/)
 const script = source.match(/<script setup>([\s\S]*?)<\/script>/)[1]
   .replace(/^import[\s\S]*?from ['"][^'"]+['"]\s*$/gm, '')
   .replace(/import\.meta\.env/g, '({})')
@@ -44,7 +55,7 @@ f.view.syncForm.seeds = '粉末涂料'
 await f.view.runSync()
 assert.deepEqual(f.calls, [['sample',{tenantId:3,seed:'粉末涂料',limit:20}]])
 await f.view.runEvaluate()
-assert.deepEqual(f.calls[1], ['eval',{tenantId:3,force:false,limit:20,afterId:0,retryIds:undefined}])
+assert.deepEqual(f.calls[1], ['eval',{tenantId:3,force:false,limit:5,afterId:0,retryIds:undefined}])
 assert.match(f.view.evaluationResult.value, /剩余 0 词/)
 assert.match(f.view.evaluationResult.value, /失败或缺失 1 词/)
 assert.equal(f.calls.length, 2, 'no automatic AI after sample or continuation after evaluation')
@@ -61,6 +72,33 @@ cancel.view.syncForm.smallBatch = false
 await cancel.view.runSync()
 await cancel.view.runEvaluate(true)
 assert.equal(cancel.calls.length, 0, 'bulk and force actions require confirmation')
+
+let confirmationText = ''
+const confirmed = fixture({ElMessageBox:{confirm:async message => {confirmationText = message}}})
+await confirmed.view.runEvaluate(true)
+assert.match(confirmationText, /每批最多 5 词/)
+assert.equal(confirmed.calls[0][1].limit, 5, 'confirmation and transmitted limit agree')
+
+for (const limit of [1, 3, 5, 6, 20]) {
+  let prompt = ''
+  const bounded = fixture({ElMessageBox:{confirm:async message => {prompt = message}}})
+  bounded.view.syncForm.limit = limit
+  await bounded.view.runEvaluate(true)
+  const actual = Math.min(limit, 5)
+  assert.match(prompt, new RegExp(`每批最多 ${actual} 词`))
+  assert.equal(bounded.calls[0][1].limit, actual)
+  assert.equal(bounded.calls.length, 1, 'one explicit evaluation, no hidden continuation')
+}
+
+const disabled = fixture({evaluateCandidates:async () => ({enabled:false})})
+await disabled.view.runEvaluate()
+assert.deepEqual(disabled.messages, [['warning', '未启用 AI 评估，请联系管理员检查模型配置']])
+assert.equal(disabled.view.evaluationRound.value, null)
+
+const rejected = fixture({evaluateCandidates: async () => {throw new Error('HTTP 422')}})
+rejected.view.evaluationRound.value = {force:true,failedIds:[1,2,3,4,5,6],nextAfterId:20,deferred:5}
+await rejected.view.runEvaluate(false, 'retry')
+assert.deepEqual(rejected.view.evaluationRound.value.failedIds, [1,2,3,4,5,6], 'rejected retry must retain every queued ID')
 
 let finish
 let evaluationCalls = 0
@@ -101,7 +139,8 @@ assert.equal(batchCalls[1].force, true, 'continuation preserves the round mode')
 assert.equal(batches.view.evaluationRound.value.nextAfterId, null)
 await batches.view.runEvaluate(false, 'next')
 assert.equal(batchCalls.length, 2, 'end-of-round does not restart automatically')
-batches.view.syncForm.limit = 5
+// Even an old 20-word failure queue retries only five IDs; retain the rest.
+assert.equal(batches.view.syncForm.limit, 20)
 await batches.view.runEvaluate(false, 'retry')
 assert.deepEqual(batchCalls[2].retryIds, [1,2,3,4,5])
 assert.equal(batchCalls[2].afterId, 0)
@@ -121,6 +160,10 @@ const requestModule = await import(`data:text/javascript,${encodeURIComponent(ap
 assert.equal(requestModule.sampleCandidates({tenantId:3,seed:'粉末'})[2].params.limit, 20)
 assert.equal(requestModule.evaluateCandidates({tenantId:3,force:true,limit:5})[2].params.limit, 5)
 assert.equal(requestModule.evaluateCandidates({tenantId:3,afterId:20})[2].params.after_id, 20)
+assert.equal(requestModule.evaluateCandidates({tenantId:3})[2].params.limit, 5)
+assert.equal(requestModule.evaluateCandidates({tenantId:3})[2].timeout, 60000)
+assert.match(source, /Math.min\(syncForm.limit, 5\)/)
+assert.match(source, /每次最多 5 词/)
 assert.deepEqual(requestModule.evaluateCandidates({tenantId:3,retryIds:[1,2]})[1], {retry_ids:[1,2]})
 assert.match(source, /:max="20"/)
 assert.doesNotMatch(source, /全部重评/)
