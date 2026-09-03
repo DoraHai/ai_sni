@@ -198,7 +198,9 @@ onMounted(loadContext)
         </div>
       </header>
       <main class="seo-content">
-        <router-view />
+        <!-- Discard customer-local view state (including late responses and open dialogs).
+             Onsite views additionally reset when switching websites or to no website. -->
+        <router-view :key="`${session.tenantId || 'none'}:${route.path === '/seo/site' ? currentSeoSiteId || 'none' : ''}`" />
       </main>
     </div>
   </div>
