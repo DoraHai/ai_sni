@@ -111,6 +111,58 @@ def test_crawl_site_uses_robots_sitemap_and_internal_links() -> None:
     assert result["robots_status"] == 200
 
 
+def test_image_alt_evidence_distinguishes_states_and_keeps_occurrences():
+    html = '''<html><head><base href="https://cdn.example.com/assets/"></head><body>
+      <header><img id="logo" src="logo.png"></header><main>
+      <a href="/product"><img src="same.png" alt=""></a>
+      <img src="same.png" alt="  "><img src="good.png" alt="产品">
+      <img src="placeholder.png" data-src="real.png" role="presentation">
+      <img src="javascript:alert(1)"><img src="https://user:pass@example.com/a">
+      <img srcset="one.png 1x, two.png 2x">
+      </main></body></html>'''
+    snapshot = analyze_html(_result("https://example.com/product", html))
+    evidence = snapshot["image_alt_evidence"]
+    assert evidence["images_count"] == 8
+    assert evidence["candidate_count"] == snapshot["images_missing_alt_count"] == 7
+    assert evidence["counts"] == {"missing": 5, "empty": 1, "whitespace": 1}
+    items = evidence["items"]
+    assert items[0]["section"] == "header" and items[0]["element_id"] == "logo"
+    assert items[0]["source_url"] == "https://cdn.example.com/assets/logo.png"
+    assert items[1]["in_link"] is True
+    assert items[2]["position"] == 3
+    assert items[3]["source_attribute"] == "data-src"
+    assert items[3]["source_url"] == "https://cdn.example.com/assets/real.png"
+    assert items[3]["role"] == "presentation"  # Evidence only; not auto-exempted.
+    assert items[4]["source_url"] is None and items[5]["source_url"] is None
+    assert items[6]["srcset"] == "one.png 1x, two.png 2x"
+    assert evidence["truncated"] is False
+
+
+def test_image_alt_evidence_is_bounded_and_empty_is_not_unknown():
+    from app.models.seo import SeoPageSnapshot
+    html = '<main>' + '<img src="/a.png">' * 205 + '</main>'
+    evidence = analyze_html(_result("https://example.com", html))["image_alt_evidence"]
+    assert len(evidence["items"]) == 200
+    assert evidence["candidate_count"] == 205 and evidence["truncated"] is True
+    snapshot = analyze_html(_result("https://example.com", '<img alt="Logo" src="/logo.png">'))
+    assert snapshot["image_alt_evidence"]["items"] == []
+    assert snapshot["image_alt_evidence"]["candidate_count"] == 0
+    snapshot.pop("internal_links")
+    row = SeoPageSnapshot(tenant_id=1, site_id=1, crawl_run_id=1, **snapshot)
+    assert row.image_alt_evidence["version"] == 1
+    assert SeoPageSnapshot().image_alt_evidence is None
+
+
+def test_image_evidence_bad_base_and_long_url_do_not_break_analysis():
+    from bs4 import BeautifulSoup
+    from app.seo_image_evidence import image_alt_evidence
+    evidence = image_alt_evidence(BeautifulSoup('<base href="http://[bad"><img src="/logo.png">', "html.parser"), "https://example.com/page")
+    assert evidence["items"][0]["source_url"] == "https://example.com/logo.png"
+    evidence = image_alt_evidence(BeautifulSoup('<img src="https://example.com/' + 'a' * 3000 + '">', "html.parser"), "https://example.com")
+    assert evidence["items"][0]["source_url_truncated"] is True
+    assert len(evidence["items"][0]["source_url"]) == 2048
+
+
 def test_fetch_url_blocks_loopback_before_network_request() -> None:
     result = asyncio.run(fetch_url("http://127.0.0.1/admin"))
     assert result.status_code is None

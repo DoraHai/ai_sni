@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from sqlalchemy.dialects import postgresql
 
 from app.api.seo_site_diagnostics import (
-    IndexReviewCreate, create_index_review, list_diagnostics, list_index_reviews,
+    IndexReviewCreate, create_index_review, list_diagnostics, list_index_reviews, get_image_evidence,
 )
 from app.models.seo import SeoPageIndexReview, SeoSitePage
 from app.security.auth import AuthContext, _required
@@ -180,7 +180,7 @@ def test_listing_is_scoped_paged_and_keeps_latest_human_intent():
 
 def test_routes_use_seo_site_permissions_and_parent_subscription_guard():
     from app.api.seo import router, require_seo_module_access
-    for suffix, method in [("diagnostics", "GET"), ("index-reviews", "POST"), ("index-reviews", "GET")]:
+    for suffix, method in [("diagnostics", "GET"), ("index-reviews", "POST"), ("index-reviews", "GET"), ("image-evidence", "GET")]:
         path = f"/api/v1/seo/site-pages/{suffix}"
         assert _required(path, method) == ({"seo.site"}, method == "POST")
         route = next(r for r in router.routes if r.path == path and method in r.methods)
@@ -193,6 +193,71 @@ def test_model_constraints_and_timezone():
     for name in ("tenant_id", "site_id", "page_id"):
         assert next(iter(table.c[name].foreign_keys)).ondelete == "CASCADE"
     assert {"ck_seo_index_review_reason", "ck_seo_index_review_intent"} <= {c.name for c in table.constraints}
+
+
+@pytest.mark.parametrize("evidence,error", [(None, None), (None, "timeout"), ({"items": [], "candidate_count": 0}, None)])
+def test_image_evidence_reads_latest_scoped_snapshot_without_network_or_writes(evidence, error):
+    db = AsyncMock()
+    db.scalar.side_effect = [1, page(), SimpleNamespace(id=9, fetched_at=datetime(2026, 9, 3, 18, 0),
+                            status_code=200, error_type=error, images_missing_alt_count=26, image_alt_evidence=evidence)]
+    result = asyncio.run(get_image_evidence(1, 1, 231, context(), db))
+    assert result["evidence"] == evidence
+    assert result["fetch_error"] == error
+    assert result["fetched_at"] == "2026-09-03T18:00:00+08:00"
+    query = db.scalar.call_args_list[2].args[0]
+    sql = str(query.compile(dialect=postgresql.dialect()))
+    for column in ("tenant_id", "site_id", "url"):
+        assert f"seo_page_snapshots.{column} =" in sql
+    assert "fetched_at DESC" in sql and "id DESC" in sql
+    assert query._limit_clause.value == 1
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize("ctx,values,expected", [
+    (context(tenant_id=2), [], 403), (context(permissions={}), [], 403),
+    (context(), [None], 404), (context(), [1, None], 404),
+])
+def test_image_evidence_rejects_cross_scope_and_missing_page(ctx, values, expected):
+    db = AsyncMock(); db.scalar.side_effect = values
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(get_image_evidence(1, 1, 231, ctx, db))
+    assert error.value.status_code == expected
+
+
+def test_image_evidence_no_snapshot_is_unknown():
+    db = AsyncMock(); db.scalar.side_effect = [1, page(), None]
+    result = asyncio.run(get_image_evidence(1, 1, 231, context(), db))
+    assert result["evidence"] is None and result["snapshot_id"] is None
+    assert result["legacy_candidate_count"] is None
+
+
+@pytest.mark.parametrize("status", [None, 301, 404, 503])
+def test_image_evidence_legacy_http_failure_is_not_a_successful_observation(status):
+    db = AsyncMock()
+    db.scalar.side_effect = [1, page(), SimpleNamespace(
+        id=9, fetched_at=datetime(2026, 9, 3, 10, 0, tzinfo=timezone.utc),
+        status_code=status, error_type=None, images_missing_alt_count=1,
+        image_alt_evidence={"items": [{"source_url": "https://example.com/error-logo.png"}]})]
+    result = asyncio.run(get_image_evidence(1, 1, 231, context(), db))
+    assert result["fetch_error"]
+    assert result["evidence"] is None
+    assert result["fetched_at"] == "2026-09-03T10:00:00+00:00"
+    assert db.scalar.await_count == 3  # Never query an older successful snapshot.
+
+
+def test_image_evidence_migration_is_nullable_and_offline():
+    import importlib.util
+    import io
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    path = Path(__file__).parents[1] / "migrations/versions/20260903_0087_seo_image_alt_evidence.py"
+    spec = importlib.util.spec_from_file_location("image_evidence_migration", path)
+    migration = importlib.util.module_from_spec(spec); spec.loader.exec_module(migration)
+    output = io.StringIO()
+    migration.op = Operations(MigrationContext.configure(dialect_name="postgresql", opts={"as_sql": True, "output_buffer": output}))
+    migration.upgrade()
+    assert "ADD COLUMN image_alt_evidence JSONB" in output.getvalue()
+    assert "NOT NULL" not in output.getvalue() and "UPDATE " not in output.getvalue()
 
 
 def test_frontend_marks_sources_and_prevents_stale_scope_and_duplicate_save():
