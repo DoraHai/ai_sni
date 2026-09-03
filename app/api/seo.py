@@ -85,6 +85,7 @@ from app.seo_traffic import GscError, gsc_status, query_gsc_traffic, validate_pr
 from app.seo_crawler import crawl_site, is_html_page_url
 from app.seo_site_diagnostics import assessed_condition, assessment_state, diagnostic_payload
 from app.api.seo_site_diagnostics import router as site_diagnostics_router
+from app.api.seo_remediation import router as remediation_router
 from app.seo_competitor import (
     COMPETITOR_MANUAL_COOLDOWN_SECONDS,
     COMPETITOR_MAX_PAGES_PER_RUN,
@@ -190,6 +191,7 @@ router = APIRouter(
 )
 logger = logging.getLogger(__name__)
 router.include_router(site_diagnostics_router)
+router.include_router(remediation_router)
 
 ENGINES = {"baidu", "google", "bing", "360", "sogou"}
 PRIORITIES = {"P0", "P1", "P2", "P3"}
