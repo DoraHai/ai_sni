@@ -2,6 +2,12 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
 const source = await readFile(new URL('../src/views/optimize/KeywordExpandView.vue', import.meta.url), 'utf8')
+assert.match(source, /ai_freshness_counts\?\.stale/)
+assert.match(source, /ai_freshness_counts\?\.unverified/)
+assert.match(source, /row.ai_freshness !== 'current'/)
+assert.match(source, /历史结果未核验/)
+assert.match(source, /普通评估会跳过旧结果/)
+assert.match(source, /不作为默认 AI 出价依据/)
 const script = source.match(/<script setup>([\s\S]*?)<\/script>/)[1]
   .replace(/^import[\s\S]*?from ['"][^'"]+['"]\s*$/gm, '')
   .replace(/import\.meta\.env/g, '({})')

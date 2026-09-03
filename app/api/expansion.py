@@ -12,10 +12,16 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field, PositiveInt
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.deepseek import is_enabled as ai_enabled
-from app.ai.expansion_eval import MissingBusinessProfileError, evaluate_candidates_for_tenant
+from app.ai.expansion_eval import (
+    EVALUATION_META_KEY, FRESHNESS_LABELS, MissingBusinessProfileError,
+    context_fingerprint, evaluation_freshness, fingerprint_status,
+    evaluate_candidates_for_tenant,
+    supported_suggested_bid,
+)
 from app.baidu import BaiduAPIError
 from app.baidu.writeback import (
     WritebackError,
@@ -47,7 +53,12 @@ router = APIRouter(
 COMPETITION_LABELS = {1: "低", 2: "中", 3: "高"}
 
 
-def _candidate_payload(c: KeywordCandidate) -> dict[str, Any]:
+def _candidate_payload(c: KeywordCandidate, fingerprint: str | None = None) -> dict[str, Any]:
+    freshness = evaluation_freshness(c, fingerprint)
+    suggested_bid = supported_suggested_bid(
+        c.ai_suggested_bid, c.ai_relevance, c.ai_recommend,
+        c.recommend_price_pc, c.recommend_price_mobile,
+    ) if freshness == "current" else None
     return {
         "id": c.id,
         "word": c.word,
@@ -81,9 +92,11 @@ def _candidate_payload(c: KeywordCandidate) -> dict[str, Any]:
         "ai_recommend": c.ai_recommend,
         "ai_recommend_label": CANDIDATE_AI_RECOMMEND_LABELS.get(c.ai_recommend),
         "ai_reason": c.ai_reason,
-        "ai_suggested_bid": float(c.ai_suggested_bid) if c.ai_suggested_bid is not None else None,
-        "ai_bid_reason": c.ai_bid_reason,
+        "ai_suggested_bid": suggested_bid,
+        "ai_bid_reason": c.ai_bid_reason if suggested_bid is not None else None,
         "ai_evaluated_at": c.ai_evaluated_at.isoformat() if c.ai_evaluated_at else None,
+        "ai_freshness": freshness,
+        "ai_freshness_label": FRESHNESS_LABELS[freshness],
     }
 
 
@@ -129,6 +142,10 @@ async def list_candidates(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """候选列表（默认按潜力分降序）+ 各源待处理计数 + 状态计数 + AI 相关性计数。"""
+    tenant = await session.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(404, "客户不存在")
+    fingerprint = context_fingerprint(tenant)
     cond = _filters(tenant_id, source, status, suggested_category, min_score, q, ai_relevance)
 
     total = await session.scalar(
@@ -179,6 +196,23 @@ async def list_candidates(
     ai_relevance_counts = {r: int(n) for r, n in ai_rows if r is not None}
     ai_unevaluated = sum(int(n) for r, n in ai_rows if r is None)
 
+    # Pending only, independent of filters/pagination; no historical backfill.
+    # Keep JSON types: a numeric hash must be unverified, not a string fingerprint.
+    # Extraction also tolerates legacy non-object raw values.
+    stamp = func.jsonb_extract_path(
+        KeywordCandidate.raw, EVALUATION_META_KEY, "context_hash", type_=JSONB,
+    )
+    provenance_rows = (await session.execute(
+        select(stamp, func.count()).where(
+            KeywordCandidate.tenant_id == tenant_id,
+            KeywordCandidate.status == "pending",
+            KeywordCandidate.ai_evaluated_at.is_not(None),
+        ).group_by(stamp)
+    )).all()
+    freshness_counts = {"current": 0, "stale": 0, "unverified": 0}
+    for stored, count in provenance_rows:
+        freshness_counts[fingerprint_status(stored, fingerprint)] += int(count)
+
     last_synced = await session.scalar(
         select(func.max(KeywordCandidate.synced_at)).where(
             KeywordCandidate.tenant_id == tenant_id
@@ -205,12 +239,13 @@ async def list_candidates(
         "ai_enabled": ai_enabled(),
         "ai_relevance_counts": ai_relevance_counts,
         "ai_unevaluated": int(ai_unevaluated),
+        "ai_freshness_counts": freshness_counts,
         "ai_relevance_options": [
             {"code": code, "label": label}
             for code, label in CANDIDATE_AI_RELEVANCE_LABELS.items()
         ],
         "last_ai_eval_at": last_ai_eval.isoformat() if last_ai_eval else None,
-        "candidates": [_candidate_payload(c) for c in rows],
+        "candidates": [_candidate_payload(c, fingerprint) for c in rows],
     }
 
 
@@ -487,6 +522,10 @@ async def export_candidates(
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     """按当前筛选导出 CSV（只读，最多 5000 行）。utf-8-sig 带 BOM。"""
+    tenant = await session.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(404, "客户不存在")
+    fingerprint = context_fingerprint(tenant)
     cond = _filters(tenant_id, source, status, suggested_category, min_score, q, ai_relevance)
     rows = (
         await session.scalars(
@@ -506,10 +545,10 @@ async def export_candidates(
         "候选词", "来源", "种子词", "潜力分", "建议分类",
         "百度月搜索量", "竞争度", "PC指导价", "移动指导价", "特色标签",
         "窗口展现", "窗口点击", "窗口消费", "触发关键词", "状态",
-        "AI相关性", "AI建议", "AI理由",
+        "AI相关性", "AI建议", "AI理由", "AI结果有效性",
     ])
     for c in rows:
-        p = _candidate_payload(c)
+        p = _candidate_payload(c, fingerprint)
         writer.writerow([
             p["word"], p["source_label"], p["seed_word"] or "",
             p["potential_score"], p["suggested_category_label"] or "",
@@ -519,6 +558,7 @@ async def export_candidates(
             p["impression"], p["click"], p["cost"], p["matched_keyword"] or "",
             p["status_label"],
             p["ai_relevance_label"] or "", p["ai_recommend_label"] or "", p["ai_reason"] or "",
+            p["ai_freshness_label"],
         ])
     filename = f"expansion_candidates_{tenant_id}_{date.today().isoformat()}.csv"
     return Response(

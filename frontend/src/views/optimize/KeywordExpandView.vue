@@ -443,6 +443,12 @@ onMounted(load)
     <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 14px" />
     <el-alert v-if="evaluationResult" :title="evaluationResult" type="info" :closable="false" style="margin-bottom: 14px" />
     <div v-if="aiEnabled" class="sync-hint">当前客户待评 {{ aiUnevaluated }} 行；评估按词去重，上限不受列表筛选或勾选影响，不自动采纳。</div>
+    <el-alert
+      v-if="aiEnabled && ((data?.ai_freshness_counts?.stale || 0) + (data?.ai_freshness_counts?.unverified || 0) > 0)"
+      type="warning" :closable="false" show-icon
+      title="部分 AI 结论需要重新核验"
+      :description="`画像或评估规则已变更 ${data?.ai_freshness_counts?.stale || 0} 条；历史结果未核验 ${data?.ai_freshness_counts?.unverified || 0} 条。旧结论仍保留并参与当前筛选，但不作为默认 AI 出价依据。普通评估会跳过旧结果；请通过下拉菜单手动开启新一轮小批量重评（含旧结果），每次最多 20 词，不自动继续或采纳。`"
+    />
 
     <!-- 4 源卡 -->
     <div class="source-tabs">
@@ -643,9 +649,10 @@ onMounted(load)
             </div>
           </template>
         </el-table-column>
-        <el-table-column v-if="aiEnabled" label="AI 研判" width="90">
+        <el-table-column v-if="aiEnabled" label="AI 研判" width="150">
           <template #default="{ row }">
             <template v-if="row.ai_relevance">
+              <span v-if="row.ai_freshness && row.ai_freshness !== 'current'" class="dim">{{ row.ai_freshness_label }} · 旧结论</span>
               <el-tooltip :content="row.ai_reason || '—'" placement="top" :disabled="!row.ai_reason">
                 <span class="ai-pill" :class="aiRelClass[row.ai_relevance]">
                   {{ row.ai_relevance_label }}
