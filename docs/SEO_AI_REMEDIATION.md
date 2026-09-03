@@ -31,6 +31,7 @@
 
 ## 验证与发布边界
 
+- SEO 生产兼容版基于 `1a331a37eb41`，增量提升 main PR #226；仅将新测试加入现有发布白名单，保留生产 0086 迁移头、原问题中心、异步抓取和导出功能。生产兼容版 SEO 后端测试 449 通过、1 项既有 PostgreSQL 测试本地跳过；前端组件测试通过、隔离产物 46 个，依赖审计 0 漏洞。
 - `python -m pytest tests/test_seo*.py -q`（PowerShell 应展开文件列表）：328 通过，1 项需 PostgreSQL 环境的既有迁移测试跳过。
 - `node frontend/scripts/test-seo-diagnostics.mjs`
 - `node frontend/scripts/test-seo-remediation.mjs`：实际 Vue 响应式组件与编译后的路由模板，覆盖显式调用、双击、草稿保存、中文尾字保持、追加原稿、版本冲突、受控任务保护、旧范围响应和视图 key。
