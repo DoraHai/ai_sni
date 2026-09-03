@@ -15,6 +15,11 @@ def _write(root: Path, relative: str, content: str) -> None:
 
 
 def test_source_allowlist_rejects_auth_and_other_modules() -> None:
+    assert source_path_allowed("frontend/package-lock.json")
+    assert source_path_allowed("frontend/scripts/test-seo-editor.mjs")
+    assert source_path_allowed("tests/fixtures/seo_editor_html_roundtrip.json")
+    assert not source_path_allowed("frontend/scripts/test-sem-editor.mjs")
+    assert not source_path_allowed("tests/fixtures/sem_editor_html_roundtrip.json")
     assert source_path_allowed(".gitattributes")
     assert source_path_allowed("app/api/seo.py")
     assert source_path_allowed("app/seo_distribution_import.py")
@@ -204,6 +209,18 @@ def test_content_review_ui_supports_rejected_draft_resubmission_and_audit_detail
     assert "fetchSeoContentReviewHistory" in content
     assert '@toggle="loadReviewHistory(row, $event)"' in content
     assert '"review_history"' in backend
+
+
+def test_seo_editor_preserves_plain_text_handoff_and_browser_paragraphs() -> None:
+    root = Path(__file__).parents[1]
+    editor = (root / "frontend/src/views/seo/SeoContentEditorView.vue").read_text(encoding="utf-8")
+    # Actual DOM/save/reopen behavior is covered by test-seo-editor.mjs.
+    assert "return sanitizeSeoEditorHtml(value)" in editor
+    # Preserve the existing IME-safe, one-way DOM read on input.
+    sync = re.search(r"function syncDraft\(\) \{(.*?)\n\}", editor, re.S).group(1)
+    assert "form.draft = editor.value?.innerHTML || ''" in sync
+    assert not re.search(r"innerHTML\s*=(?!=)", sync)
+    assert 'v-html="form.draft"' not in editor
 
 
 def test_rewrite_library_keeps_original_source_types_when_content_api_is_paginated() -> None:

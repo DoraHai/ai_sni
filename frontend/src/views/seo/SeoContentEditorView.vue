@@ -6,6 +6,7 @@ import { assistSeoContent, createSeoContentAsset, fetchSeoContentAssets, fetchSe
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
+import { sanitizeSeoEditorHtml } from './seoEditorHtml'
 
 const route = useRoute()
 const router = useRouter()
@@ -53,32 +54,8 @@ const primaryAiLabel = computed(() => {
   return mode.value === 'rewrite' ? 'DeepSeek 开始改写' : 'AI 生成初稿'
 })
 
-const editorAllowedTags = new Set(['P','H1','H2','H3','H4','H5','H6','A','IMG','UL','OL','LI','STRONG','B','EM','I','U','S','BLOCKQUOTE','PRE','CODE','BR','HR','TABLE','THEAD','TBODY','TR','TH','TD','FIGURE','FIGCAPTION'])
-const editorBlockedTags = new Set(['SCRIPT','STYLE','IFRAME','OBJECT','EMBED','FORM','INPUT','BUTTON','LINK','META'])
-const editorAllowedAttributes = new Set(['href','src','data-src','alt','title'])
-
 function sanitizeEditorHtml(value) {
-  const template = document.createElement('template')
-  template.innerHTML = String(value || '')
-  for (const node of [...template.content.querySelectorAll('*')]) {
-    if (editorBlockedTags.has(node.tagName)) {
-      node.remove()
-      continue
-    }
-    if (!editorAllowedTags.has(node.tagName)) {
-      node.replaceWith(...node.childNodes)
-      continue
-    }
-    for (const attribute of [...node.attributes]) {
-      const name = attribute.name.toLowerCase()
-      if (!editorAllowedAttributes.has(name)) node.removeAttribute(attribute.name)
-    }
-    for (const name of ['href', 'src', 'data-src']) {
-      const target = node.getAttribute(name)?.trim()
-      if (target && !/^(https?:|\/|#)/i.test(target)) node.removeAttribute(name)
-    }
-  }
-  return template.innerHTML.trim()
+  return sanitizeSeoEditorHtml(value)
 }
 
 async function load() {
@@ -174,6 +151,13 @@ function draftForAi() {
   template.content.querySelectorAll('img').forEach((image) => {
     const label = image.getAttribute('alt')?.trim()
     image.replaceWith(document.createTextNode(label ? `[图片：${label}]` : '[图片]'))
+  })
+  // Explicit editor breaks must survive conversion back to the AI's plain-text
+  // input; textContent alone concatenates adjacent paragraphs and BR lines.
+  template.content.querySelectorAll('br').forEach(node => node.replaceWith(document.createTextNode('\n')))
+  template.content.querySelectorAll('p,div,h1,h2,h3,h4,h5,h6,li,blockquote,pre,tr,figure,figcaption').forEach(node => {
+    if (node.previousSibling && !node.previousSibling.textContent.endsWith('\n')) node.before(document.createTextNode('\n'))
+    if (node.nextSibling && !node.nextSibling.textContent.startsWith('\n')) node.after(document.createTextNode('\n'))
   })
   return (template.content.textContent || '').trim()
 }
@@ -414,6 +398,7 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.article-editor { overflow-wrap: anywhere; }
 .source-link{margin-bottom:10px;padding:9px;border:1px solid #cfe0ff;border-radius:7px;background:#f4f7ff}.source-link b,.source-link span{display:block}.source-link b{color:#1d4ed8;font-size:10.5px}.source-link span{margin:4px 0 7px;overflow:hidden;color:#667085;font-size:10px;text-overflow:ellipsis;white-space:nowrap}.source-link button{padding:0;border:0;background:transparent;color:#2563eb;font-size:10px;cursor:pointer}
 .keyword-guidance{display:block;margin-top:6px;color:#8a93a1;font-size:9.5px;line-height:1.55}.brief-keywords{width:100%}.side-section :deep(.brief-keywords .el-select__wrapper){min-height:34px;padding:4px 8px;border-radius:6px;box-shadow:0 0 0 1px #dfe3e9 inset}
 .editor-page{min-height:100vh;background:#eef2f7;color:#1e2330;font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",Roboto,sans-serif}.editor-topbar{position:relative;z-index:5;min-height:76px;padding:0 24px 0 28px;display:flex;align-items:center;gap:18px;border-bottom:1px solid #dde3ec;background:linear-gradient(180deg,#fff 0%,#fbfcff 100%)}.editor-back{min-height:34px;padding:0 10px;border:1px solid transparent;border-radius:7px;background:transparent;color:#596272;font-size:12px;font-weight:650;cursor:pointer}.editor-back:hover{border-color:#d9e4fb;background:#f3f7ff;color:#1d4ed8}.editor-topbar h1{margin:0;font-size:16px}.editor-topbar p{margin:2px 0 0;color:#6b7280;font-size:12px}.editor-top-actions{margin-left:auto;display:flex;align-items:center;gap:10px}.editor-top-actions span{min-width:82px;color:#6f7785;font-size:11px;text-align:right}.editor-top-actions button,.side-action,.ai-primary{padding:8px 14px;border:1px solid #e8eaf0;border-radius:9px;background:#fff;color:#1e2330;font-size:12px;font-weight:600;cursor:pointer}.editor-top-actions button.primary,.side-action,.ai-primary{border-color:#2563eb;background:#2563eb;color:#fff}.editor-top-actions b{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:#2563eb;color:#fff;font-size:12px}.editor-workspace{height:calc(100vh - 76px);min-height:650px;padding:14px;display:grid;grid-template-columns:252px minmax(520px,1fr) 306px;gap:14px;overflow:hidden;background:#eef2f7}.editor-side,.ai-side{overflow-y:auto;border:1px solid #dce2eb;border-radius:8px;background:#fff;box-shadow:0 10px 24px rgba(31,41,55,.06)}.side-section{padding:16px;border-bottom:1px solid #e8eaf0}.side-section h3{margin:0 0 12px;color:#303746;font-size:12px}.side-section label{display:block;margin:11px 0 5px;color:#777f8d;font-size:10.5px;font-weight:650}.side-section :is(input,select,textarea),.ai-body textarea{width:100%;padding:8px 9px;border:1px solid #dfe3e9;border-radius:6px;outline:none;background:#fff;color:#303746;font:inherit;font-size:11.5px}.side-section textarea{resize:vertical;line-height:1.6}.source-box{max-height:150px;overflow:auto;padding:9px;border:1px solid #dfe3e9;border-radius:6px;background:#f7f8fa;color:#66707e;font-size:10.5px;line-height:1.6}.engine-picks{display:flex;flex-wrap:wrap;gap:6px}.engine-picks button{padding:5px 7px;border:1px solid #dfe3e9;border-radius:5px;background:#f8f9fb;color:#626b79;font-size:10.5px;cursor:pointer}.engine-picks button.selected{border-color:#9bb9f6;background:#eff4ff;color:#1d4ed8}.side-action{width:100%;margin-top:9px}.brief-score{display:grid;grid-template-columns:1fr 1fr;gap:7px}.brief-score div{padding:8px;border-left:2px solid #2563eb;background:#f5f7fb}.brief-score div:last-child{border-color:#16a34a}.brief-score b,.brief-score span{display:block}.brief-score b{font-size:16px}.brief-score span{color:#7d8592;font-size:9.5px}.editor-center{min-width:0;display:flex;flex-direction:column;overflow:hidden}.document-frame{width:min(820px,100%);min-height:0;margin:0 auto;display:flex;flex:1;flex-direction:column;overflow:hidden;border:1px solid #d7dce4;border-radius:8px;background:#fff;box-shadow:0 14px 32px rgba(34,43,60,.09)}.editor-toolbar{min-height:44px;padding:6px 10px;display:flex;align-items:center;gap:3px;border-bottom:1px solid #e4e7ec;background:#fbfcfd}.editor-toolbar button{width:30px;height:30px;padding:0;border:1px solid transparent;border-radius:5px;background:transparent;color:#505866;font-size:12px;font-weight:750;cursor:pointer}.editor-toolbar button:hover{border-color:#d4dff5;background:#eff4ff;color:#1d4ed8}.editor-toolbar i{width:1px;height:20px;margin:0 4px;background:#e1e4e9}.document-scroll{flex:1;overflow-y:auto;padding:38px clamp(32px,6vw,70px) 60px}.document-title{width:100%;margin-bottom:22px;padding:0 0 14px;border:0;border-bottom:1px solid #edf0f3;outline:none;background:transparent;color:#1d2432;font-size:25px;font-weight:750;line-height:1.35}.article-editor{min-height:420px;outline:none;color:#313846;font-size:14px;line-height:1.92}.article-editor:empty::before{color:#a0a7b2;content:attr(data-placeholder)}.article-editor :deep(h2){margin:28px 0 10px;color:#1f2735;font-size:19px}.article-editor :deep(h3){margin:22px 0 8px;font-size:16px}.article-editor :deep(p){margin:0 0 12px}.document-status{min-height:34px;padding:6px 12px;display:flex;align-items:center;gap:16px;border-top:1px solid #e8eaf0;background:#fbfcfd;color:#7c8491;font-size:10.5px}.document-status span:last-child{margin-left:auto}.ai-side>header{padding:17px 16px 14px;border-bottom:1px solid #e8eaf0;background:#202838}.ai-side>header h3{margin:0 0 4px;color:#fff;font-size:13px}.ai-side>header p{margin:0;color:#aeb7c6;font-size:10.5px}.ai-body{padding:14px}.ai-body textarea{min-height:78px;resize:vertical;line-height:1.55}.ai-primary{width:100%;margin-top:8px}.quick-actions{margin:13px 0;display:grid;grid-template-columns:1fr 1fr;gap:7px}.quick-actions button{min-height:48px;padding:8px;border:1px solid #e0e4ea;border-radius:6px;background:#f8f9fb;color:#4e5868;font-size:10.5px;text-align:left;cursor:pointer}.quick-actions button:hover{border-color:#adc3ef;background:#f0f5ff;color:#1d4ed8}.ai-message{margin-top:10px;padding:10px;border-left:2px solid #16a34a;background:#f0faf4;color:#5f6877;font-size:10.5px;line-height:1.55}.ai-body ul{margin:14px 0 0;padding:0;list-style:none}.ai-body li{padding:8px 0;display:flex;align-items:center;border-bottom:1px solid #eceef2;color:#626b79;font-size:10.5px}.ai-body li b{margin-left:auto;color:#d97706}.ai-body li b.ok{color:#16a34a}@media(max-width:1280px){.editor-workspace{grid-template-columns:232px minmax(460px,1fr) 280px}}@media(max-width:1020px){.editor-workspace{height:auto;grid-template-columns:1fr;overflow:visible}.editor-center{min-height:760px}}@media(max-width:700px){.editor-topbar{padding:12px 14px;flex-wrap:wrap}.editor-top-actions{width:100%;margin-left:0}.editor-top-actions span{display:none}.editor-workspace{padding:10px}.document-scroll{padding:28px 24px}}

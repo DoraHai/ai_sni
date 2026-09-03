@@ -110,7 +110,7 @@ jobs:
         run: npm ci
       - name: Build isolated SEO frontend
         working-directory: frontend
-        run: node scripts/test-seo-diagnostics.mjs && node scripts/test-seo-remediation.mjs && npm run build:seo
+        run: node scripts/test-seo-diagnostics.mjs && node scripts/test-seo-remediation.mjs && npm run test:seo-editor && npm run build:seo
       - name: Verify isolated SEO frontend
         working-directory: frontend
         run: npm run verify:seo-build
