@@ -154,12 +154,69 @@ class Proposal(BaseModel):
     outline: list[Change] = Field(min_length=1, max_length=8)
 
 
+# Deliberately narrow claim guard, not a general semantic fact checker. Public
+# product pages are not verified customer case briefs. IP ratings must be cited
+# and visibly qualified in the suggested copy, not just in the editor's reason.
+IP_RATING = re.compile(r"(?<![A-Za-z0-9])IP\s*[0-6X][0-9X]K?(?![A-Za-z0-9])", re.I)
+CASE_CLAIM = re.compile(r"案例|客户实绩|\bcase\s+stud(?:y|ies)\b|\b(?:customer|success)\s+stor(?:y|ies)\b", re.I)
+UNIVERSAL_CONFIGURATION = re.compile(r"全系|全系列|所有型号|全部型号|所有版本|标配|\ball\s+(?:models|variants|versions)\b", re.I)
+IP_SCOPE_NOTE = "适用版本及配置需人工核实"
+# Only exempt complete, explicit negative qualifications, never a sentence
+# merely containing a negation (which might also contain an affirmative claim).
+NEGATED_UNIVERSAL = re.compile(
+    r"(?:^|[，,（(：:])\s*(?:不代表|并不代表|并非|不是|不意味着|不能视为|不能理解为)\s*"
+    r"(?:(?:全系(?:列)?|所有型号|全部型号|所有版本)(?:的)?(?:标配)?|标配)"
+    r"(?=$|[，,）)；;。！？!?\s])"
+)
+DOTTED_TOKEN = re.compile(r"[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)+")
+
+
+def claim_sentences(text, evidence_by_id):
+    # Preserve decimals and source-backed dotted model names, not arbitrary
+    # "IP69K.NextSentence" strings that would join a claim to a detached note.
+    model_tokens = {token.casefold() for token in DOTTED_TOKEN.findall(
+        evidence_by_id.get("title", "") + " " + evidence_by_id.get("h1", ""))}
+    protected_dots = set()
+    for match in DOTTED_TOKEN.finditer(text):
+        token = match.group()
+        if token.casefold() in model_tokens or re.fullmatch(r"\d+(?:\.\d+)+", token):
+            protected_dots.update(match.start() + i for i, char in enumerate(token) if char == ".")
+    start = 0
+    for match in re.finditer(r"[。！？!?；;\n.]", text):
+        if match.start() not in protected_dots:
+            yield text[start:match.start()]
+            start = match.end()
+    yield text[start:]
+
+
+def has_universal_configuration(clause):
+    # Mask only the matched negative phrase; a subsequent "全系满足" must
+    # still be rejected. Double negatives do not match this conservative list.
+    return bool(UNIVERSAL_CONFIGURATION.search(NEGATED_UNIVERSAL.sub(" ", clause)))
+
+
+def validate_claim_scope(change, evidence_by_id):
+    if CASE_CLAIM.search(change.text):
+        raise ValueError("Product remediation must describe application scenarios, not customer cases")
+    cited_text = "\n".join(evidence_by_id[key] for key in change.evidence_ids)
+    cited_ratings = {re.sub(r"\s+", "", m.group()).upper() for m in IP_RATING.finditer(cited_text)}
+    for clause in claim_sentences(change.text, evidence_by_id):
+        ratings = {re.sub(r"\s+", "", m.group()).upper() for m in IP_RATING.finditer(clause)}
+        if not ratings:
+            continue
+        if not ratings <= cited_ratings:
+            raise ValueError("IP rating absent from cited evidence")
+        if IP_SCOPE_NOTE not in clause or has_universal_configuration(clause):
+            raise ValueError("IP rating needs a visible version/configuration qualification")
+
+
 def validate_proposal(raw, evidence):
     proposal = Proposal.model_validate(raw)
-    ids = {item["id"] for item in evidence["evidence"] if item["text"].strip()}
+    evidence_by_id = {item["id"]: item["text"] for item in evidence["evidence"] if item["text"].strip()}
     for change in [proposal.title, proposal.description, proposal.h1, *proposal.outline]:
-        if not set(change.evidence_ids) <= ids:
+        if not set(change.evidence_ids) <= evidence_by_id.keys():
             raise ValueError("Unknown/empty evidence reference")
+        validate_claim_scope(change, evidence_by_id)
     if len(proposal.title.text) > 180 or len(proposal.description.text) > 500 or len(proposal.h1.text) > 180:
         raise ValueError("TDK/H1 too long")
     for term in evidence.get("protected_terms", []):
@@ -174,6 +231,14 @@ async def generate(evidence, stored_diagnostic):
         "只基于资料提供 Title、Description、H1 和正文结构建议；保留品牌、型号、文档编号。"
         "Title 必须保留 protected_terms 中每个独立标识，不可用一个品牌长词代替另一个短词。"
         "不得编造产品能力、数值、认证、案例、搜索排名或收录结果；不得要求修改 robots/noindex/canonical。"
+        "保留原文中可选、选配、特定版本、适用场合等限定，不得将可选能力或局部配置写成全系标配。"
+        "建议 text 若提及 IP 防护等级，必须在所引 evidence_ids 的原文中出现该等级；"
+        "在同一句 text 中保留已知版本/配置限定，并添加括注（适用版本及配置需人工核实），不能只在 reason 中提醒。"
+        "例如可选涂层不等于所有型号具有 IP69K；无法确定适用范围时省略该防护等级，不猜测。"
+        "本入口仅产出产品页面整改，不撰写客户案例：典型应用或应用示例统一表述为典型应用场景，"
+        "text 不得使用案例、客户实绩、case study、customer story、success story 等表述。"
+        "功率、扭矩、范围、单位与对应型号必须保持对应，不能混用不同版本的参数。"
+        "现有 Title/H1 合格时允许保留原文，在 reason 说明无需改动，不为制造差异添加卖点。"
         "不输出发布操作、HTML 或脚本。不足之处在 reason 中明确写需人工补充，不写成既成事实。"
         "返回 JSON，严格只有 title、description、h1、outline 四个键。前三项为对象，outline 为 1–8 个对象数组。"
         "每个对象严格只有 text、reason、evidence_ids，后者引用程序提供的非空证据 ID。"
