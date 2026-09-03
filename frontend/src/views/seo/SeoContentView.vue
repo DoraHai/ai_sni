@@ -6,6 +6,7 @@ import { createSeoContentAsset, decideSeoContentReview, fetchSeoContentAssets, f
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
+import { seoContentWordCount } from './seoEditorHtml'
 import './seo-suite.css'
 
 const route = useRoute()
@@ -102,7 +103,7 @@ const typeName = (value) => ({ article: '原创文章', guide: '深度指南', l
 const keywordIdsFor = (row) => row.keyword_ids?.length ? row.keyword_ids : row.keyword_id ? [row.keyword_id] : []
 const keywordsFor = (row) => keywordIdsFor(row).map((id) => keywords.value.find((item) => item.id === id)?.keyword).filter(Boolean)
 const contentText = (row) => row.humanized_content || row.draft || ''
-const wordCount = (row) => Array.from(contentText(row).replace(/\s+/g, '')).length
+const wordCount = (row) => seoContentWordCount(contentText(row))
 const qualityScore = (row) => {
   if (!row.draft && !row.humanized_content) return null
   let score = 35
@@ -190,6 +191,13 @@ async function loadSites() {
   } catch (e) {
     error.value = e.message
   }
+}
+
+function continueEditing(row) {
+  if (!canEdit.value || !['planned', 'drafting'].includes(row.status)) return
+  if (!siteId.value || (row.site_id && row.site_id !== siteId.value)) return
+  const type = row.content_type === 'rewrite' ? 'rewrite' : ['qa', 'faq'].includes(row.content_type) ? 'qa' : 'original'
+  router.push({ path: '/seo/content/editor', query: { id: row.id, site_id: siteId.value, type } })
 }
 
 function open(row = null, preset = null) {
@@ -388,7 +396,7 @@ onMounted(loadSites)
                 <td><span v-if="platformFor(row)" class="platform-tag">{{ platformFor(row) }}</span><span v-else class="muted-tag">未选择</span></td>
                 <td class="time-cell">更新：{{ formatTime(row.updated_at || row.created_at) }}</td>
                 <td><div class="row-actions">
-                  <button v-if="canEdit && ['planned', 'drafting'].includes(row.status)" type="button" @click="open(row)">继续编辑</button>
+                  <button v-if="canEdit && ['planned', 'drafting'].includes(row.status)" type="button" @click="continueEditing(row)">继续编辑</button>
                   <button v-if="canEdit && ['planned', 'drafting'].includes(row.status)" type="button" @click="open(row)">提交审核</button>
                   <button v-if="canEdit && row.status === 'review'" type="button" @click="approveReview(row)">审核通过</button>
                   <button v-if="canEdit && row.status === 'review'" type="button" @click="rejectReview(row)">退回修改</button>
