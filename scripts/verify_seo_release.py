@@ -26,6 +26,7 @@ SOURCE_ALLOWED_EXACT = {
     "app/seo_site_diagnostics.py",
     "app/seo_image_evidence.py",
     "app/seo_page_audit.py",
+    "app/seo_image_alt_ai.py",
     "app/config.py",
     "app/main.py",
     "app/models/__init__.py",
