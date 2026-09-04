@@ -16,6 +16,7 @@ from app.api.seo import (
     ContentCreate,
     ContentReviewDecision,
     ContentReviewSubmit,
+    ContentSourcePageBinding,
     ContentUpdate,
     KeywordCreate,
     KeywordImport,
@@ -62,6 +63,7 @@ from app.api.seo import (
     _validate_target_keyword,
     _validated_seo_assist_result,
     assist_seo_content,
+    bind_content_source_page,
     collect_rank_serp,
     create_content_asset,
     create_rank_snapshot,
@@ -706,6 +708,126 @@ def test_existing_content_task_can_be_bound_to_a_source_page() -> None:
     assert row.source_page_id == 231
     assert result["source_page_id"] == 231
     session.commit.assert_awaited_once()
+
+
+def test_ready_landing_content_can_bind_a_source_page_without_reopening_text() -> None:
+    request = ContentSourcePageBinding(source_page_id=231, version_count=3)
+    row = SeoContentAsset(
+        tenant_id=1,
+        site_id=9,
+        title="已审核落地页优化",
+        content_type="landing",
+        status="ready",
+        version_count=3,
+    )
+    row.id = 88
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=row)
+    source_page = SimpleNamespace(id=231, tenant_id=1, site_id=9)
+    with (
+        patch("app.api.seo._site_page", new=AsyncMock(return_value=source_page)),
+        patch("app.api.seo._content_task_for_source_page", new=AsyncMock(return_value=None)),
+    ):
+        result = asyncio.run(
+            bind_content_source_page(88, 1, request, session, context)
+        )
+    assert row.source_page_id == 231
+    assert row.status == "ready"
+    assert row.version_count == 3
+    assert result["source_page_id"] == 231
+    session.get.assert_awaited_once_with(SeoContentAsset, 88, with_for_update=True)
+    session.commit.assert_awaited_once()
+
+
+def test_review_content_cannot_bind_a_source_page() -> None:
+    request = ContentSourcePageBinding(source_page_id=231)
+    row = SeoContentAsset(
+        tenant_id=1,
+        site_id=9,
+        title="待审核内容",
+        content_type="landing",
+        status="review",
+    )
+    row.id = 88
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=row)
+    with pytest.raises(Exception) as exc:
+        asyncio.run(bind_content_source_page(88, 1, request, session, context))
+    assert getattr(exc.value, "status_code", None) == 409
+    session.commit.assert_not_awaited()
+
+
+def test_bound_landing_content_cannot_be_silently_rebound() -> None:
+    request = ContentSourcePageBinding(source_page_id=232, version_count=3)
+    row = SeoContentAsset(
+        tenant_id=1,
+        site_id=9,
+        source_page_id=231,
+        title="已绑定落地页",
+        content_type="landing",
+        status="ready",
+        version_count=3,
+    )
+    row.id = 88
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=row)
+
+    with pytest.raises(Exception) as exc:
+        asyncio.run(bind_content_source_page(88, 1, request, session, context))
+
+    assert getattr(exc.value, "status_code", None) == 409
+    assert "不能直接改绑" in str(getattr(exc.value, "detail", ""))
+    assert row.source_page_id == 231
+    session.commit.assert_not_awaited()
+
+
+def test_source_page_binding_is_landing_content_only() -> None:
+    request = ContentSourcePageBinding(source_page_id=231)
+    row = SeoContentAsset(
+        tenant_id=1,
+        site_id=9,
+        title="普通文章",
+        content_type="article",
+        status="drafting",
+    )
+    row.id = 88
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=row)
+
+    with pytest.raises(Exception) as exc:
+        asyncio.run(bind_content_source_page(88, 1, request, session, context))
+
+    assert getattr(exc.value, "status_code", None) == 409
+    assert "只有落地页" in str(getattr(exc.value, "detail", ""))
+    session.commit.assert_not_awaited()
 
 
 def test_published_content_cannot_be_newly_bound_to_a_source_page() -> None:

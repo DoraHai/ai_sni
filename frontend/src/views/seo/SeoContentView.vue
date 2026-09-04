@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { createSeoContentAsset, decideSeoContentReview, fetchSeoContentAssets, fetchSeoContentReviewHistory, fetchSeoKeywords, submitSeoContentReview, updateSeoContentAsset } from '../../api/seo'
+import { bindSeoContentSourcePage, createSeoContentAsset, decideSeoContentReview, fetchSeoContentAssets, fetchSeoContentReviewHistory, fetchSeoKeywords, fetchSeoSitePages, submitSeoContentReview, updateSeoContentAsset } from '../../api/seo'
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
@@ -31,6 +31,12 @@ const page = ref(1)
 const pageSize = 20
 const total = ref(0)
 const statusCounts = ref({})
+const bindingVisible = ref(false)
+const bindingLoading = ref(false)
+const bindingSaving = ref(false)
+const bindingTarget = ref(null)
+const bindingPageId = ref(null)
+const bindingPages = ref([])
 const mode = computed(() => route.meta.contentMode || 'article')
 
 const definitions = {
@@ -122,6 +128,10 @@ const platformFor = (row) => {
     return host || '官网'
   } catch { return '官网' }
 }
+const canBindSourcePage = (row) => canEdit.value
+  && row.content_type === 'landing'
+  && !row.source_page_id
+  && ['planned', 'drafting', 'ready'].includes(row.status)
 const formatTime = (value) => {
   if (!value) return '—'
   const date = new Date(value)
@@ -268,6 +278,48 @@ async function copyContent(row) {
   ElMessage.success('正文已复制')
 }
 
+async function openSourcePageBinding(row) {
+  bindingTarget.value = row
+  bindingPageId.value = null
+  bindingPages.value = []
+  bindingVisible.value = true
+  bindingLoading.value = true
+  try {
+    const result = await fetchSeoSitePages({
+      tenantId: currentTenantId.value,
+      siteId: row.site_id || siteId.value,
+      page: 1,
+      pageSize: 200,
+    })
+    bindingPages.value = result.items || []
+  } catch (e) {
+    ElMessage.error(e.message)
+    bindingVisible.value = false
+  } finally {
+    bindingLoading.value = false
+  }
+}
+
+async function bindSourcePage() {
+  if (!bindingTarget.value || !bindingPageId.value) return ElMessage.warning('请选择承接页')
+  bindingSaving.value = true
+  try {
+    await bindSeoContentSourcePage({
+      contentId: bindingTarget.value.id,
+      tenantId: currentTenantId.value,
+      sourcePageId: bindingPageId.value,
+      versionCount: bindingTarget.value.version_count,
+    })
+    showSuccess('承接页已绑定')
+    bindingVisible.value = false
+    await load()
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    bindingSaving.value = false
+  }
+}
+
 async function approveReview(row) {
   try {
     const result = await ElMessageBox.prompt('审核通过后内容将进入“待发布”。可填写审核结论，留空也可以继续。', '审核通过', { type: 'warning', inputType: 'textarea', inputPlaceholder: '填写审核结论（选填）', confirmButtonText: '确认通过', cancelButtonText: '取消' })
@@ -375,7 +427,9 @@ onMounted(loadSites)
               <tr v-for="row in items" :key="row.id">
                 <td class="article-cell">
                   <strong>{{ row.title }}</strong>
-                  <small>任务 #{{ row.id }} · {{ typeName(row.content_type) }}<template v-if="wordCount(row)"> · {{ wordCount(row).toLocaleString() }} 字</template><template v-if="row.author"> · 负责人 {{ row.author }}</template></small>
+                  <small>任务 #{{ row.id }} · 内容类型：{{ typeName(row.content_type) }}<template v-if="wordCount(row)"> · {{ wordCount(row).toLocaleString() }} 字</template><template v-if="row.author"> · 负责人 {{ row.author }}</template></small>
+                  <small v-if="row.source_page_id" class="source-page-state">承接页：页面 #{{ row.source_page_id }}</small>
+                  <small v-else-if="row.content_type === 'landing'" class="source-page-state missing">承接页：未绑定</small>
                   <small v-if="row.review_submitted_at">提交：{{ formatTime(row.review_submitted_at) }} · {{ actorName(row.review_submitted_by, row.review_submitted_by_name) }}</small>
                   <small v-if="row.reviewed_at">审核：{{ formatTime(row.reviewed_at) }} · {{ actorName(row.reviewed_by, row.reviewed_by_name) }}</small>
                   <small v-if="row.review_note" class="review-note">{{ row.status === 'drafting' ? '退回意见' : '审核备注' }}：{{ row.review_note }}</small>
@@ -400,7 +454,8 @@ onMounted(loadSites)
                   <button v-if="canEdit && ['planned', 'drafting'].includes(row.status)" type="button" @click="open(row)">提交审核</button>
                   <button v-if="canEdit && row.status === 'review'" type="button" @click="approveReview(row)">审核通过</button>
                   <button v-if="canEdit && row.status === 'review'" type="button" @click="rejectReview(row)">退回修改</button>
-                  <button v-if="canEdit && row.status === 'ready'" type="button" @click="router.push('/seo/distribution')">进入发布</button>
+                  <button v-if="canBindSourcePage(row)" type="button" @click="openSourcePageBinding(row)">绑定承接页</button>
+                  <button v-if="canEdit && row.status === 'ready' && (row.content_type !== 'landing' || row.source_page_id)" type="button" @click="router.push('/seo/distribution')">进入发布</button>
                   <a v-if="row.status === 'published' && row.page_url" :href="row.page_url" target="_blank" rel="noopener">查看内容</a>
                   <button v-if="contentText(row)" type="button" @click="copyContent(row)">复制</button>
                   <button v-if="row.status === 'published'" type="button" @click="router.push('/seo/distribution')">分发记录</button>
@@ -446,6 +501,21 @@ onMounted(loadSites)
       </el-form>
       <template #footer><span v-if="editing" class="dialog-task-id">任务 #{{ editing.id }}</span><el-button @click="dialog = false">取消</el-button><el-button :loading="saving" :disabled="isComposing" @click="save()">保存</el-button><el-button v-if="['planned', 'drafting'].includes(form.status)" type="primary" :loading="saving" :disabled="isComposing" @click="save({ submit: true })">保存并提交审核</el-button></template>
     </el-dialog>
+
+    <el-dialog v-model="bindingVisible" title="绑定承接页" width="680px">
+      <el-alert title="只关联已纳入当前 SEO 站点的页面，不修改内容正文或客户官网。" type="info" :closable="false" show-icon />
+      <p v-if="bindingTarget" class="binding-task">任务 #{{ bindingTarget.id }} · {{ bindingTarget.title }}</p>
+      <el-select v-model="bindingPageId" v-loading="bindingLoading" class="binding-page-select" filterable placeholder="按标题或 URL 搜索承接页">
+        <el-option
+          v-for="item in bindingPages"
+          :key="item.id"
+          :label="`#${item.id} ${item.title || '未读取标题'} · ${item.url}`"
+          :value="item.id"
+          :disabled="Boolean(item.content_task_id && item.content_task_id !== bindingTarget?.id)"
+        />
+      </el-select>
+      <template #footer><el-button @click="bindingVisible = false">取消</el-button><el-button type="primary" :loading="bindingSaving" :disabled="!bindingPageId" @click="bindSourcePage">确认绑定</el-button></template>
+    </el-dialog>
   </div>
 </template>
 
@@ -453,6 +523,7 @@ onMounted(loadSites)
 .content-site-picker{width:220px}
 .form-guidance{display:block;margin-top:6px;color:#8a919e;font-size:10px;line-height:1.5}
 .dialog-task-id{margin-right:auto;color:#6b7280;font-size:12px}
+.source-page-state{color:#2563eb!important}.source-page-state.missing{color:#b45309!important}.binding-task{margin:16px 0 10px;color:#4b5563;font-size:12px}.binding-page-select{width:100%}
 .content-prototype{min-height:100vh;background:#f4f6f9;color:#1e2330;font-family:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",Roboto,sans-serif}.content-page-head{min-height:68px;padding:0 28px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e8eaf0;background:#fff}.content-page-head h1{margin:0;font-size:17px;line-height:1.35}.content-page-head p{margin:1px 0 0;color:#6b7280;font-size:12px}.page-actions,.task-search{display:flex;align-items:center;gap:12px}.ghost-action,.primary-action{height:auto;padding:8px 14px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer}.ghost-action{border:1px solid #e8eaf0;background:#fff;color:#1e2330}.primary-action{border:1px solid #2563eb;background:#2563eb;color:#fff;box-shadow:none}.user-avatar{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:#2563eb;color:#fff;font-size:12px;font-weight:700}.content-body{padding:20px 24px 28px}.content-manifesto{min-height:138px;margin-bottom:16px;display:grid;grid-template-columns:minmax(0,1.5fr) minmax(420px,1fr);overflow:hidden;border-radius:8px;background:#202838;color:#fff;box-shadow:0 12px 30px rgba(28,37,54,.13)}.manifesto-copy{padding:24px 26px;border-right:1px solid rgba(255,255,255,.1)}.manifesto-copy>span{color:#9ec0ff;font-size:11px;font-weight:750;letter-spacing:.08em;text-transform:uppercase}.manifesto-copy h2{margin:8px 0 6px;max-width:720px;font-size:21px;line-height:1.35;letter-spacing:0}.manifesto-copy p{max-width:720px;margin:0;color:#b9c1cf;font-size:13px;line-height:1.5}.manifesto-tags{margin-top:15px;display:flex;flex-wrap:wrap;gap:7px}.manifesto-tags b{padding:4px 8px;border:1px solid rgba(255,255,255,.12);border-radius:5px;background:rgba(255,255,255,.05);color:#d8deea;font-size:11px;font-weight:500}.content-steps{margin:0;padding:20px 20px 20px 12px;display:grid;grid-template-columns:repeat(4,1fr);align-items:center;list-style:none}.content-steps li{position:relative;min-width:0;padding:8px 9px}.content-steps li:not(:last-child)::after{content:"";position:absolute;top:22px;right:-3px;width:12px;height:1px;background:rgba(255,255,255,.25)}.content-steps i{width:24px;height:24px;margin-bottom:8px;border-radius:50%;display:grid;place-items:center;background:#9ec0ff;color:#182237;font-size:11px;font-style:normal;font-weight:800}.content-steps strong,.content-steps small{display:block}.content-steps strong{margin-bottom:5px;font-size:12px}.content-steps small{color:#aab3c2;font-size:10.5px;line-height:1.45}.content-task-card{overflow:hidden;border:1px solid #dfe3ea;border-radius:8px;background:#fff}.task-toolbar{min-height:58px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid #e5e7eb}.task-tabs{display:flex;align-items:center;gap:10px}.task-tabs h2{margin:0 10px 0 0;font-size:14px}.task-tabs button{height:auto;padding:6px 10px;border:1px solid #e0e4eb;border-radius:6px;background:#fff;color:#697180;font-size:11px;cursor:pointer}.task-tabs button.active{border-color:#9bb9f6;background:#f0f5ff;color:#1d4ed8;font-weight:700}.task-tabs button span{margin-left:3px}.task-search input{width:230px;height:auto;padding:8px 12px;border:1px solid #e8eaf0;border-radius:9px;outline:none;background:#f6f7fb;color:#1e2330;font-size:13px}.task-search input:focus{border-color:#9bb9f6;background:#fff}.task-search .primary-action{height:auto;white-space:nowrap}.content-table-wrap{overflow-x:auto}.content-table{width:100%;border-collapse:collapse;table-layout:auto;font-size:13px}.content-table th{padding:12px 14px;border-bottom:1px solid #e8eaf0;color:#6b7280;font-size:12px;font-weight:600;text-align:left}.content-table td{padding:12px 14px;border-bottom:1px solid #e8eaf0;color:#1e2330;font-size:13px;vertical-align:middle}.content-table tbody tr:last-child td{border-bottom:0}.content-table tbody tr:hover{background:#f6f7fb}.content-table th:nth-child(1){width:auto}.content-table th:nth-child(2){width:auto}.content-table th:nth-child(3){width:auto}.content-table th:nth-child(4){width:auto}.content-table th:nth-child(5){width:auto}.content-table th:nth-child(6){width:auto}.content-table th:nth-child(7){width:auto}.article-cell{min-width:320px}.article-cell strong,.article-cell small{display:block}.article-cell strong{max-width:520px;margin-bottom:4px;overflow:hidden;color:#222938;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.article-cell small{margin-top:0;color:#8a919e;font-size:11px}.keyword-tag,.platform-tag,.muted-tag{display:inline-block;margin:2px 5px 2px 0;padding:3px 7px;border-radius:5px;background:#f0f2f6;color:#626c7b;font-size:10.5px}.platform-tag{background:#e9f7ef;color:#137f4a}.muted-tag{color:#626c7b}.muted-text{color:#8a919e;font-size:11px}.quality-score{display:inline-flex;align-items:center;gap:6px;color:#5e6675;font-size:11px}.quality-score i{width:48px;height:5px;overflow:hidden;border-radius:4px;background:#e9ecf1}.quality-score b{height:100%;display:block;background:#16a34a}.quality-score span{color:#5e6675}.status-pill{display:inline-flex;padding:3px 9px;border-radius:999px;font-size:12px;font-weight:600}.status-planned,.status-drafting{background:#fdf2e0;color:#d97706}.status-review{background:#eff4ff;color:#2563eb}.status-published{background:#e7f7ee;color:#16a34a}.status-archived{background:#f0f1f5;color:#6b7280}.time-cell{white-space:nowrap}.row-actions{display:flex;align-items:center;gap:6px;white-space:nowrap}.row-actions button,.row-actions a{padding:5px 7px;border:0;background:transparent;color:#2563eb;font-size:11.5px;font-weight:700;text-decoration:none;cursor:pointer}.row-actions button:hover,.row-actions a:hover{background:#eff4ff}.table-empty{height:150px!important;color:#8a919e!important;text-align:center}.prototype-overlay{position:fixed;z-index:12000;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(19,27,41,.48);backdrop-filter:blur(2px)}.prototype-dialog{display:flex;width:min(780px,94vw);max-height:88vh;flex-direction:column;overflow:hidden;border-radius:8px;background:#fff;box-shadow:0 26px 70px rgba(17,24,39,.28)}.prototype-dialog>header{display:flex;align-items:flex-start;gap:12px;padding:17px 20px;border-bottom:1px solid #e5e8ed}.prototype-dialog>header h2{margin:0 0 3px;font-size:16px}.prototype-dialog>header p{margin:0;color:#7a8290;font-size:11px}.prototype-dialog>header button{display:grid;width:30px;height:30px;margin-left:auto;place-items:center;border:1px solid #e0e4e9;border-radius:6px;background:#fff;color:#68717e;font-size:18px;cursor:pointer}.prototype-dialog-body{padding:18px 20px;overflow:auto}.prototype-dialog footer{display:flex;justify-content:flex-end;gap:8px;padding:13px 20px;border-top:1px solid #e5e8ed;background:#fafbfc;box-shadow:0 -10px 24px rgba(15,23,42,.06)}.template-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.template-grid button{position:relative;min-height:92px;padding:12px;border:1px solid #dfe3e8;border-radius:7px;background:#fff;text-align:left;cursor:pointer}.template-grid button:hover{border-color:#adc3ef;background:#fff}.template-grid button.selected{border-color:#4c7fe4;background:#fff;box-shadow:0 0 0 2px #edf3ff inset}.template-grid button i{position:absolute;top:10px;right:10px;width:15px;height:15px;border:1px solid #cbd1da;border-radius:50%}.template-grid button.selected i{border:4px solid #2563eb}.template-grid strong,.template-grid small{display:block}.template-grid strong{margin-bottom:5px;font-size:12px}.template-grid small{color:#7d8592;font-size:10px;line-height:1.45}.source-label{display:block;margin-bottom:6px;color:#596272;font-size:11px;font-weight:700}.source-import{width:100%;min-height:160px;padding:10px;border:1px solid #dfe3e9;border-radius:6px;outline:none;resize:vertical}.source-options{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}.source-options label{color:#697180;font-size:11px}.source-options select{width:100%;margin-top:6px;padding:8px;border:1px solid #dfe3e9;border-radius:6px;background:#fff}.suite-error{margin:0 0 16px}.suite-form{display:grid;grid-template-columns:1fr 1fr;gap:0 15px}.suite-form .full{grid-column:1/-1}.suite-form :deep(.el-select){width:100%}
 @media(max-width:1200px){.content-manifesto{grid-template-columns:1fr}.content-steps{min-height:150px;border-top:1px solid #374155;border-left:0}.content-table{min-width:1120px}.task-toolbar{align-items:flex-start;flex-direction:column;padding-top:14px;padding-bottom:14px}}
 @media(max-width:700px){.content-page-head{height:auto;padding:16px;align-items:flex-start;gap:15px}.content-page-head p{max-width:300px}.page-actions .ghost-action{display:none}.content-body{padding:14px}.manifesto-copy{padding:24px 20px}.manifesto-copy h2{font-size:20px}.content-steps{grid-template-columns:repeat(2,1fr);gap:22px;padding:22px}.content-steps li::after{display:none}.task-tabs{flex-wrap:wrap}.task-tabs h2{width:100%}.task-search{width:100%}.task-search input{min-width:0;flex:1}.template-grid{grid-template-columns:1fr}.suite-form{grid-template-columns:1fr}.suite-form .full{grid-column:auto}}
