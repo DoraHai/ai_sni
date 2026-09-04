@@ -361,6 +361,14 @@ export function copySeoImageRemediation(payload) {
   return client.post('/api/v1/seo/site-pages/image-remediation/copy', payload)
 }
 
+export function fetchSeoImageRemediationReusePreview({ tenantId, siteId, pageId }) {
+  return client.get('/api/v1/seo/site-pages/image-remediation-reuse-preview', { params: { tenant_id: tenantId, site_id: siteId, page_id: pageId } })
+}
+
+export function reuseSeoImageRemediation(payload) {
+  return client.post('/api/v1/seo/site-pages/image-remediation/reuse', payload)
+}
+
 export function previewSeoRemediation(payload) {
   return client.post('/api/v1/seo/site-pages/ai-remediation', payload, { timeout: 95000 })
 }

@@ -10,9 +10,11 @@ from pydantic import ValidationError
 from sqlalchemy.dialects import postgresql
 
 from app.api.seo_site_diagnostics import (
-    ImageAltReviewCopy, ImageAltReviewUpdate, IndexReviewCreate, copy_image_remediation,
+    ImageAltReviewCopy, ImageAltReviewReuse, ImageAltReviewUpdate, IndexReviewCreate,
+    copy_image_remediation,
     create_index_review, get_image_remediation, list_diagnostics,
     list_image_remediation_history, list_index_reviews, get_image_evidence,
+    preview_cross_page_image_remediation_reuse, reuse_cross_page_image_remediation,
     save_image_remediation,
 )
 from app.models.seo import SeoImageAltReview, SeoPageIndexReview, SeoSitePage
@@ -183,7 +185,7 @@ def test_listing_is_scoped_paged_and_keeps_latest_human_intent():
 
 def test_routes_use_seo_site_permissions_and_parent_subscription_guard():
     from app.api.seo import router, require_seo_module_access
-    for suffix, method in [("diagnostics", "GET"), ("index-reviews", "POST"), ("index-reviews", "GET"), ("image-evidence", "GET"), ("image-remediation", "GET"), ("image-remediation", "PUT"), ("image-remediation-history", "GET"), ("image-remediation/copy", "POST")]:
+    for suffix, method in [("diagnostics", "GET"), ("index-reviews", "POST"), ("index-reviews", "GET"), ("image-evidence", "GET"), ("image-remediation", "GET"), ("image-remediation", "PUT"), ("image-remediation-history", "GET"), ("image-remediation/copy", "POST"), ("image-remediation-reuse-preview", "GET"), ("image-remediation/reuse", "POST")]:
         path = f"/api/v1/seo/site-pages/{suffix}"
         assert _required(path, method) == ({"seo.site"}, method in {"POST", "PUT"})
         route = next(r for r in router.routes if r.path == path and method in r.methods)
@@ -387,6 +389,98 @@ def test_copy_image_remediation_rejects_stale_or_current_source(request_values, 
     with pytest.raises(HTTPException) as error:
         asyncio.run(copy_image_remediation(ImageAltReviewCopy(**values), context(), db))
     assert error.value.status_code == status
+    db.commit.assert_not_awaited()
+
+
+def cross_page_reuse_data(*, conflicting=False, existing=False):
+    shared = {
+        "position": 33, "source_url": "https://example.com/icon.png",
+        "source_attribute": "src", "section": "footer", "in_link": True,
+        "role": None, "alt_state": "empty",
+    }
+    target = image_snapshot(451, datetime(2026, 9, 4, 10, 0), [{**shared, "position": 26}])
+    target.url = "https://example.com/product"
+    source = image_snapshot(450, datetime(2026, 9, 3, 10, 0), [shared])
+    source.url = "https://example.com/other"
+    approved = [SimpleNamespace(
+        id=8, tenant_id=1, site_id=1, page_id=232, snapshot_id=450, position=33,
+        source_url=shared["source_url"], observed_alt_state="empty",
+        decision="decorative", alt_suggestion=None, note="备案装饰图",
+    )]
+    sources = [source]
+    source_pages = [page(id=232, url=source.url)]
+    if conflicting:
+        conflicting_item = {**shared, "position": 21}
+        conflicting_source = image_snapshot(449, datetime(2026, 9, 2, 10, 0), [conflicting_item])
+        conflicting_source.url = "https://example.com/third"
+        sources.append(conflicting_source)
+        source_pages.append(page(id=233, url=conflicting_source.url))
+        approved.append(SimpleNamespace(
+            id=7, tenant_id=1, site_id=1, page_id=233, snapshot_id=449, position=21,
+            source_url=shared["source_url"], observed_alt_state="empty",
+            decision="informative", alt_suggestion="备案图标", note=None,
+        ))
+    current = [SimpleNamespace(position=26)] if existing else []
+    return target, sources, approved, source_pages, current
+
+
+def test_cross_page_image_reuse_preview_is_exact_and_site_scoped():
+    target, sources, approved, source_pages, current = cross_page_reuse_data()
+    db = AsyncMock(); db.scalar.side_effect = [1, page(url=target.url), target]
+    db.scalars.side_effect = [current, approved, sources, source_pages]
+    result = asyncio.run(preview_cross_page_image_remediation_reuse(1, 1, 231, context(), db))
+    assert result == {
+        "target_snapshot_id": 451, "eligible_count": 1, "source_page_count": 1,
+        "skipped_existing": 0, "skipped_ambiguous": 0,
+    }
+    approved_sql = str(db.scalars.call_args_list[1].args[0].compile(dialect=postgresql.dialect()))
+    for field in ("tenant_id", "site_id", "page_id", "review_status", "decision"):
+        assert f"seo_image_alt_reviews.{field}" in approved_sql
+    snapshot_sql = str(db.scalars.call_args_list[2].args[0].compile(dialect=postgresql.dialect()))
+    assert "seo_page_snapshots.tenant_id" in snapshot_sql and "seo_page_snapshots.site_id" in snapshot_sql
+
+
+def test_cross_page_image_reuse_copies_draft_with_page_provenance():
+    target, sources, approved, source_pages, current = cross_page_reuse_data()
+    db = AsyncMock(); db.add = MagicMock()
+    db.scalar.side_effect = [1, page(url=target.url), target]
+    db.scalars.side_effect = [current, approved, sources, source_pages]
+    result = asyncio.run(reuse_cross_page_image_remediation(ImageAltReviewReuse(
+        tenant_id=1, site_id=1, page_id=231, expected_snapshot_id=451,
+    ), context(), db))
+    assert result["copied_positions"] == [26] and result["review_status"] == "draft"
+    saved = db.add.call_args.args[0]
+    assert saved.page_id == 231 and saved.snapshot_id == 451 and saved.position == 26
+    assert saved.decision == "decorative" and saved.alt_suggestion is None
+    assert saved.review_status == "draft" and "页面 #232 快照 #450" in saved.note
+    assert saved.actor_id == 7 and saved.actor_name == "operator"
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.parametrize("conflicting,existing,skipped", [
+    (True, False, "skipped_ambiguous"),
+    (False, True, "skipped_existing"),
+])
+def test_cross_page_image_reuse_never_copies_conflicts_or_overwrites(conflicting, existing, skipped):
+    target, sources, approved, source_pages, current = cross_page_reuse_data(
+        conflicting=conflicting, existing=existing)
+    db = AsyncMock(); db.add = MagicMock()
+    db.scalar.side_effect = [1, page(url=target.url), target]
+    db.scalars.side_effect = [current, approved, sources, source_pages]
+    result = asyncio.run(reuse_cross_page_image_remediation(ImageAltReviewReuse(
+        tenant_id=1, site_id=1, page_id=231, expected_snapshot_id=451,
+    ), context(), db))
+    assert result["copied"] == 0 and result[skipped] == 1
+    db.add.assert_not_called(); db.commit.assert_not_awaited()
+
+
+def test_cross_page_image_reuse_rejects_stale_target():
+    db = AsyncMock(); db.scalar.side_effect = [1, page(), image_snapshot(452)]
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(reuse_cross_page_image_remediation(ImageAltReviewReuse(
+            tenant_id=1, site_id=1, page_id=231, expected_snapshot_id=451,
+        ), context(), db))
+    assert error.value.status_code == 409
     db.commit.assert_not_awaited()
 
 
