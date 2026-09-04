@@ -210,7 +210,7 @@ def test_ai_alt_drafts_are_scoped_current_human_reviewable_and_never_overwrite()
     db.scalar.side_effect = [1, row, snapshot, None, row, snapshot, None]
     generated = {"231:12:2": {"alt_suggestion": "NORDAC 操作手册封面", "reason": "文件名和页面标题一致"}}
     with patch("app.api.seo_site_diagnostics.reserve_ai_usage", AsyncMock(return_value=("2026-09-04", "token"))), \
-         patch("app.api.seo_site_diagnostics.settle_ai_usage", AsyncMock()) as settle, \
+         patch("app.api.seo_site_diagnostics.settle_ai_usage", AsyncMock(return_value=True)) as settle, \
          patch("app.api.seo_site_diagnostics.generate_alt_drafts", AsyncMock(return_value=generated)):
         result = asyncio.run(generate_image_alt_drafts(req, context(), db))
     saved = db.add.call_args.args[0]
@@ -219,7 +219,9 @@ def test_ai_alt_drafts_are_scoped_current_human_reviewable_and_never_overwrite()
     assert saved.decision == "informative" and saved.review_status == "draft"
     assert saved.alt_suggestion == "NORDAC 操作手册封面"
     assert "未读取图片像素" in saved.note
-    assert result == {"selected": 1, "eligible": 1, "generated": 1, "skipped": 0, "review_status": "draft"}
+    assert result == {"selected": 1, "eligible": 1, "generated": 1, "skipped": 0,
+                      "skipped_ai": 0, "skipped_changed": 0, "skipped_ineligible": 0,
+                      "review_status": "draft"}
     settle.assert_awaited_once_with(db, 1, ("2026-09-04", "token"), success=True)
 
 
@@ -234,11 +236,31 @@ def test_ai_alt_drafts_revalidate_after_provider_call_and_skip_human_race():
     db.scalar.side_effect = [1, page(), snapshot, None, page(), snapshot, 88]
     generated = {"231:12:2": {"alt_suggestion": "手册封面", "reason": "文件名线索"}}
     with patch("app.api.seo_site_diagnostics.reserve_ai_usage", AsyncMock(return_value=("2026-09-04", "token"))), \
-         patch("app.api.seo_site_diagnostics.settle_ai_usage", AsyncMock()), \
+         patch("app.api.seo_site_diagnostics.settle_ai_usage", AsyncMock(return_value=True)), \
          patch("app.api.seo_site_diagnostics.generate_alt_drafts", AsyncMock(return_value=generated)):
         result = asyncio.run(generate_image_alt_drafts(req, context(), db))
     assert result["generated"] == 0 and result["skipped"] == 1
+    assert result["skipped_changed"] == 1 and result["skipped_ai"] == 0
     db.add.assert_not_called()
+
+
+def test_ai_alt_drafts_fail_closed_when_quota_settlement_cannot_commit():
+    candidate = {"position": 2, "source_url": "https://cdn.example/manual.webp",
+                 "section": "main", "alt_state": "empty"}
+    snapshot = SimpleNamespace(id=12, error_type=None, image_alt_evidence={"items": [candidate]})
+    req = ImageAltAiDraftRequest(tenant_id=1, site_id=1, items=[{
+        "page_id": 231, "expected_snapshot_id": 12, "position": 2, "expected_review_id": None,
+    }])
+    db = AsyncMock(); db.add = MagicMock()
+    db.scalar.side_effect = [1, page(), snapshot, None, page(), snapshot, None]
+    generated = {"231:12:2": {"alt_suggestion": "手册封面", "reason": "文件名线索"}}
+    with patch("app.api.seo_site_diagnostics.reserve_ai_usage", AsyncMock(return_value=("2026-09-04", "token"))), \
+         patch("app.api.seo_site_diagnostics.settle_ai_usage", AsyncMock(return_value=False)), \
+         patch("app.api.seo_site_diagnostics.generate_alt_drafts", AsyncMock(return_value=generated)):
+        with pytest.raises(HTTPException) as error:
+            asyncio.run(generate_image_alt_drafts(req, context(), db))
+    assert error.value.status_code == 409
+    assert db.rollback.await_count >= 1
 
 
 def test_ai_alt_draft_request_is_bounded_unique_and_unreviewed_only():
@@ -284,6 +306,14 @@ def test_ai_alt_model_output_is_strict_scoped_and_skip_cannot_smuggle_text():
                                "alt_suggestion": unsupported, "reason": "x"}]}
         with pytest.raises(ValueError):
             validate_drafts(invalid, evidence)
+    missing = {"items": [{"candidate_id": "1:2:3", "action": "skip",
+                           "alt_suggestion": None, "reason": "线索不足"}]}
+    with pytest.raises(ValueError, match="every candidate"):
+        validate_drafts(missing, evidence | {"1:2:4": {"page_title": "NORDCON"}})
+    invented = {"items": [{"candidate_id": "1:2:3", "action": "draft",
+                            "alt_suggestion": "NORDAC 高效节能变频器操作说明", "reason": "x"}]}
+    with pytest.raises(ValueError, match="not supported"):
+        validate_drafts(invented, evidence)
 
 
 def test_ai_alt_provider_failure_returns_sanitized_error():

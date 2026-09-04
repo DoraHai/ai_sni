@@ -35,6 +35,7 @@ function isSelectable(row) { return props.canEdit && (isEligible(row) || (row.re
 
 async function load() {
   const token = ++generation
+  selected.value = []
   const tenantId = props.tenantId
   const siteId = props.siteId
   if (!tenantId || !siteId) { result.value = { items: [], total: 0, stats: {} }; error.value = ''; return }
@@ -44,7 +45,7 @@ async function load() {
     if (disposed || token !== generation || tenantId !== props.tenantId || siteId !== props.siteId) return
     const lastPage = Math.max(1, Math.ceil(Number(response.total || 0) / pageSize.value))
     if (page.value > lastPage) { page.value = lastPage; return load() }
-    result.value = response; selected.value = []
+    result.value = response
   } catch (e) { if (!disposed && token === generation) error.value = e.message }
   finally { if (!disposed && token === generation) loading.value = false }
 }
@@ -53,19 +54,24 @@ function openReview(row) {
   dialogOpen.value = true
 }
 async function generateAiDrafts() {
+  if (loading.value || generating.value || approving.value) return
   const rows = aiEligible.value
   if (!rows.length) return ElMessage.warning('请勾选尚未人工处理的图片（每次最多 20 条）')
   try {
     await ElMessageBox.confirm(`AI 只会根据存档的文件名、页面标题等文本线索，为 ${rows.length} 条图片生成待审草稿；不读取图片、不自动通过、不修改官网。确认继续？`, 'AI 生成 Alt 草稿', { type: 'warning' })
   } catch { return }
+  const tenantId = props.tenantId
+  const siteId = props.siteId
   generating.value = true
   try {
     const response = await generateSeoImageAltDrafts({
-      tenant_id: props.tenantId, site_id: props.siteId,
+      tenant_id: tenantId, site_id: siteId,
       items: rows.map(row => ({ page_id: row.page_id, expected_snapshot_id: row.snapshot_id, position: row.position, expected_review_id: null })),
     })
-    if (response.generated) ElMessage.success(`AI 已生成 ${response.generated} 条待审草稿，跳过 ${response.skipped} 条证据不足项`)
-    else ElMessage.warning('AI 未发现证据足够的图片，未生成草稿')
+    if (tenantId !== props.tenantId || siteId !== props.siteId) return
+    if (response.generated) ElMessage.success(`AI 已生成 ${response.generated} 条待审草稿；AI 明确跳过 ${response.skipped_ai || 0} 条，状态变化 ${response.skipped_changed || 0} 条，不可处理 ${response.skipped_ineligible || 0} 条`)
+    else if (response.skipped_changed || response.skipped_ineligible) ElMessage.warning(`未保存草稿：状态变化 ${response.skipped_changed || 0} 条，不可处理 ${response.skipped_ineligible || 0} 条；请刷新后重试`)
+    else ElMessage.warning(`AI 明确跳过 ${response.skipped_ai || 0} 条证据不足项，未生成草稿`)
     await load()
   } catch (e) { ElMessage.error(e.message) }
   finally { generating.value = false }
@@ -123,9 +129,9 @@ async function exportApproved() {
   finally { exporting.value = false }
 }
 function dialogClosed() { dialogPage.value = null; load() }
-watch(() => filters.q, () => { clearTimeout(timer); timer = setTimeout(() => { page.value = 1; load() }, 260) })
-watch([() => props.tenantId, () => props.siteId, () => props.refreshKey], () => { page.value = 1; load() }, { immediate: true })
-watch([() => filters.reviewState, () => filters.decision], () => { page.value = 1; load() })
+watch(() => filters.q, () => { selected.value = []; clearTimeout(timer); timer = setTimeout(() => { page.value = 1; load() }, 260) })
+watch([() => props.tenantId, () => props.siteId, () => props.refreshKey], () => { selected.value = []; page.value = 1; load() }, { immediate: true })
+watch([() => filters.reviewState, () => filters.decision], () => { selected.value = []; page.value = 1; load() })
 watch(dialogOpen, value => { if (!value && dialogPage.value) dialogClosed() })
 onBeforeUnmount(() => { disposed = true; ++generation; clearTimeout(timer) })
 </script>
@@ -134,7 +140,7 @@ onBeforeUnmount(() => { disposed = true; ++generation; clearTimeout(timer) })
   <section class="image-workbench">
     <header>
       <div><span>IMAGE ALT WORKBENCH</span><h2>全站图片整改</h2><p>程序汇总最新抓取证据；图片用途与 Alt 文案由人工确认，不会自动修改官网。</p></div>
-      <div class="header-actions"><el-button :loading="exporting" :disabled="!stats.informative_approved_count" @click="exportApproved">导出已审核整改</el-button><el-button v-if="canEdit" :loading="generating" :disabled="!aiEligible.length" @click="generateAiDrafts">AI 生成 Alt 草稿（{{ aiEligible.length }}）</el-button><el-button v-if="canEdit" type="primary" :loading="approving" :disabled="!eligible.length" @click="batchApprove">批量审核通过（{{ eligible.length }}）</el-button></div>
+      <div class="header-actions"><el-button :loading="exporting" :disabled="!stats.informative_approved_count" @click="exportApproved">导出已审核整改</el-button><el-button v-if="canEdit" :loading="generating" :disabled="loading || approving || !aiEligible.length" @click="generateAiDrafts">AI 生成 Alt 草稿（{{ aiEligible.length }}）</el-button><el-button v-if="canEdit" type="primary" :loading="approving" :disabled="loading || generating || !eligible.length" @click="batchApprove">批量审核通过（{{ eligible.length }}）</el-button></div>
     </header>
     <el-alert v-if="error" :title="error" type="warning" :closable="false" show-icon />
     <div class="summary">
