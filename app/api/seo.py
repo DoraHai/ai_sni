@@ -6536,6 +6536,25 @@ async def publish_content_distribution(
         attempt.completed_at = datetime.utcnow()
         await session.commit()
         raise HTTPException(502, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        # A provider/library bug must never strand the durable task in
+        # ``publishing``. Keep the public error generic while retaining the
+        # exception class in the operator-facing audit trail.
+        error = f"未预期发布错误：{type(exc).__name__}"
+        row.status = "failed"
+        row.last_error = error
+        attempt.status = "failed"
+        attempt.error = error
+        attempt.completed_at = datetime.utcnow()
+        await session.commit()
+        logger.error(
+            "SEO publication failed unexpectedly publication_id=%s error_type=%s",
+            row.id,
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            502, "发布平台出现未预期错误，任务已恢复为失败状态；请核对平台后台后再重试"
+        ) from exc
     row.status = remote.status
     row.external_id = remote.external_id
     row.page_url = remote.page_url
@@ -6565,7 +6584,9 @@ async def complete_manual_publication(
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
-    row = await session.get(SeoContentPublication, publication_id)
+    row = await session.get(
+        SeoContentPublication, publication_id, with_for_update=True
+    )
     if not row or row.tenant_id != req.tenant_id:
         raise HTTPException(404, "发布任务不存在")
     content = await _distribution_content(
@@ -6621,7 +6642,9 @@ async def sync_content_publication(
 ) -> dict[str, Any]:
     ctx.ensure_tenant(tenant_id)
     await _seo_site(session, tenant_id, site_id)
-    row = await session.get(SeoContentPublication, publication_id)
+    row = await session.get(
+        SeoContentPublication, publication_id, with_for_update=True
+    )
     if not row or row.tenant_id != tenant_id:
         raise HTTPException(404, "发布任务不存在")
     content = await _distribution_content(
@@ -6639,7 +6662,10 @@ async def sync_content_publication(
         created_by=ctx.user_id,
     )
     session.add(attempt)
-    await session.commit()
+    # Keep the publication row lock until the remote observation and local
+    # state transition commit together. Committing here would release the lock
+    # while status is still ``publishing`` and allow duplicate sync attempts.
+    await session.flush()
     try:
         remote = await sync_publish_status(
             row.platform_code,
@@ -6766,6 +6792,22 @@ async def retry_content_publication(
         attempt.completed_at = datetime.utcnow()
         await session.commit()
         raise HTTPException(502, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        error = f"未预期发布错误：{type(exc).__name__}"
+        row.status = "failed"
+        row.last_error = error
+        attempt.status = "failed"
+        attempt.error = error
+        attempt.completed_at = datetime.utcnow()
+        await session.commit()
+        logger.error(
+            "SEO publication retry failed unexpectedly publication_id=%s error_type=%s",
+            row.id,
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            502, "发布平台出现未预期错误，任务已恢复为失败状态；请核对平台后台后再重试"
+        ) from exc
     row.status = remote.status
     row.external_id = remote.external_id or row.external_id
     row.page_url = remote.page_url or row.page_url

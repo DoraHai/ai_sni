@@ -427,7 +427,7 @@ async def generate_image_alt_drafts(
     initial = await _ai_draft_candidates(session, req)
     if not initial:
         raise HTTPException(409, "所选图片已有草稿、已过期或不再可处理，请刷新后重试")
-    reservation = await reserve_ai_usage(session, req.tenant_id)
+    reservation = await reserve_ai_usage(session, req.tenant_id, units=len(initial))
     try:
         prompt_items = [candidate_prompt_item(candidate_id, page, candidate)
                         for candidate_id, page, _, candidate in initial]

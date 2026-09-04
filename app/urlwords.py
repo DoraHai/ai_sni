@@ -11,12 +11,14 @@ from urllib.parse import urlparse
 import jieba.analyse
 from bs4 import BeautifulSoup
 
-from app.seo_crawler import SeoCrawlError, fetch_url
+from app.seo_crawler import SeoCrawlError, USER_AGENT, fetch_url
 
 logger = logging.getLogger(__name__)
 
 MAX_WORDS_PER_URL = 30
 MAX_CONTENT_BYTES = 2 * 1024 * 1024  # 2MB 上限，防大文件拖死
+# Backward-compatible name used by the GEO sitemap/search collectors.
+UA = USER_AGENT
 
 # getPvSearch 的 keywordName 上限 40 字节（中文 2 字节）→ 中文词最长 20 字
 MAX_WORD_CHARS = 20

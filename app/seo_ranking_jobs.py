@@ -1,6 +1,7 @@
 """Background jobs owned exclusively by the independent SEO service."""
 
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import TypeVar
 from zoneinfo import ZoneInfo
@@ -186,6 +187,37 @@ async def _latest_successful_collections(
     return latest
 
 
+async def _rollback_tenant_session(session, tenant_id: int) -> None:
+    """Contain a broken transaction/connection inside one tenant run."""
+    try:
+        await session.rollback()
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "[scheduler][SEO] 客户 %s 的数据库会话回滚失败，已隔离该会话",
+            tenant_id,
+        )
+        try:
+            await session.close()
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "[scheduler][SEO] 客户 %s 的数据库会话关闭失败",
+                tenant_id,
+            )
+
+
+@asynccontextmanager
+async def _isolated_tenant_session(tenant_id: int):
+    """Give each tenant a disposable session and contain connection failures."""
+    try:
+        async with async_session_factory() as session:
+            yield session
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "[scheduler][SEO] 客户 %s 的数据库会话失败，已跳过且不影响后续客户",
+            tenant_id,
+        )
+
+
 def _scheduled_health_summary(
     *,
     incomplete: bool,
@@ -330,16 +362,16 @@ async def collect_daily_seo_rankings() -> None:
         "unassigned_keywords": 0,
     }
     try:
-        async with async_session_factory() as session:
+        async with async_session_factory() as discovery_session:
             entitled_tenant_ids = [
                 tenant.id
-                for tenant in await list_active_module_tenants(session, "seo")
+                for tenant in await list_active_module_tenants(discovery_session, "seo")
             ]
             if not entitled_tenant_ids:
                 logger.info("[scheduler][SEO] 没有已开通且有效的 SEO 客户，本次跳过")
                 return
             unassigned_rows = (
-                await session.execute(
+                await discovery_session.execute(
                     select(SeoKeywordAsset.tenant_id, func.count())
                     .where(
                         SeoKeywordAsset.tenant_id.in_(entitled_tenant_ids),
@@ -359,7 +391,7 @@ async def collect_daily_seo_rankings() -> None:
                     unassigned_count,
                 )
             tenant_ids = list(
-                await session.scalars(
+                await discovery_session.scalars(
                     select(SeoKeywordAsset.tenant_id)
                     .where(
                         SeoKeywordAsset.tenant_id.in_(entitled_tenant_ids),
@@ -370,14 +402,15 @@ async def collect_daily_seo_rankings() -> None:
                     .order_by(SeoKeywordAsset.tenant_id)
                 )
             )
-            if max_requests < len(tenant_ids):
-                tenant_ids = _rotate_daily(tenant_ids, batch_captured_at)
-            per_tenant_request_budget = max(
-                1, max_requests // max(1, len(tenant_ids))
-            )
-            for tenant_id in tenant_ids:
-                if totals["requests"] >= max_requests:
-                    break
+        if max_requests < len(tenant_ids):
+            tenant_ids = _rotate_daily(tenant_ids, batch_captured_at)
+        per_tenant_request_budget = max(
+            1, max_requests // max(1, len(tenant_ids))
+        )
+        for tenant_id in tenant_ids:
+            if totals["requests"] >= max_requests:
+                break
+            async with _isolated_tenant_session(int(tenant_id)) as session:
                 selected_rows = (
                     await session.execute(
                         select(SeoKeywordAsset.id, SeoKeywordAsset.site_id)
@@ -564,7 +597,7 @@ async def collect_daily_seo_rankings() -> None:
                                     provider_request_budget=remaining,
                                 )
                             except Exception as exc:  # noqa: BLE001
-                                await session.rollback()
+                                await _rollback_tenant_session(session, int(tenant_id))
                                 # The collector can fail after the provider has already
                                 # accepted requests but before it returns exact usage.
                                 # Conservatively reserve the full allowance passed to
@@ -681,7 +714,7 @@ async def collect_daily_seo_rankings() -> None:
                         tenant_skipped += budget_skipped
                         totals["skipped_pairs"] += budget_skipped
                 except Exception as exc:  # noqa: BLE001
-                    await session.rollback()
+                    await _rollback_tenant_session(session, int(tenant_id))
                     remaining_pairs = max(
                         0,
                         planned_count

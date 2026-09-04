@@ -209,7 +209,7 @@ def test_ai_alt_drafts_are_scoped_current_human_reviewable_and_never_overwrite()
     db.add = MagicMock()
     db.scalar.side_effect = [1, row, snapshot, None, row, snapshot, None]
     generated = {"231:12:2": {"alt_suggestion": "NORDAC 操作手册封面", "reason": "文件名和页面标题一致"}}
-    with patch("app.api.seo_site_diagnostics.reserve_ai_usage", AsyncMock(return_value=("2026-09-04", "token"))), \
+    with patch("app.api.seo_site_diagnostics.reserve_ai_usage", AsyncMock(return_value=("2026-09-04", "token"))) as reserve, \
          patch("app.api.seo_site_diagnostics.settle_ai_usage", AsyncMock(return_value=True)) as settle, \
          patch("app.api.seo_site_diagnostics.generate_alt_drafts", AsyncMock(return_value=generated)):
         result = asyncio.run(generate_image_alt_drafts(req, context(), db))
@@ -222,6 +222,7 @@ def test_ai_alt_drafts_are_scoped_current_human_reviewable_and_never_overwrite()
     assert result == {"selected": 1, "eligible": 1, "generated": 1, "skipped": 0,
                       "skipped_ai": 0, "skipped_changed": 0, "skipped_ineligible": 0,
                       "review_status": "draft"}
+    reserve.assert_awaited_once_with(db, 1, units=1)
     settle.assert_awaited_once_with(db, 1, ("2026-09-04", "token"), success=True)
 
 
