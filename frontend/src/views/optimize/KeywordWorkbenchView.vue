@@ -11,7 +11,7 @@ import {
   writebackKeywordBatch,
 } from '../../api/keywords'
 import { setAdgroupBid, setAdgroupLandingUrl } from '../../api/manage'
-import { WRITEBACK_CONFIRMATION } from '../../api/writeback'
+import { fetchWritebackMode, WRITEBACK_CONFIRMATION } from '../../api/writeback'
 import {
   fetchSuggestionAssignees,
   fetchSuggestions,
@@ -31,6 +31,33 @@ const loading = ref(false)
 const refreshing = ref(false)
 const error = ref('')
 const data = ref(null)
+// 获取失败时必须按演练模式展示，不能猜测已开启真实回写。
+const keywordBidLive = ref(false)
+const keywordWritebackButtonLabel = computed(() => (
+  keywordBidLive.value ? '确认并真实执行' : '加入待回写'
+))
+const keywordWritebackHint = computed(() => (
+  keywordBidLive.value
+    ? '当前客户已开启关键词出价真实回写：最终执行价可人工调整，确认后会修改百度账户并保留完整台账。'
+    : '最终执行价默认填入 AI 建议价（无建议则为当前出价），可人工调整并加入待回写台账；当前不会修改百度账户。'
+))
+let writebackModeGeneration = 0
+async function loadKeywordWritebackMode() {
+  const tenantId = TENANT_ID.value
+  const generation = ++writebackModeGeneration
+  keywordBidLive.value = false
+  if (!tenantId) return
+  try {
+    const writebackMode = await fetchWritebackMode(tenantId)
+    if (generation !== writebackModeGeneration || tenantId !== TENANT_ID.value) return
+    keywordBidLive.value = Boolean(
+      writebackMode?.mode === 'limited_live'
+      && writebackMode.live_scopes?.includes('keyword_bid'),
+    )
+  } catch {
+    // 获取失败时保持演练文案，不展示真实执行。
+  }
+}
 const syncDiagnosis = computed(() => {
   if (!data.value || data.value.total) return null
   const totals = data.value.totals || {}
@@ -699,12 +726,13 @@ const headerStats = computed(() => {
 })
 
 // 顶栏切换客户后重新拉数
-watch(TENANT_ID, () => { filters.page = 1; campaignData.value = null; adgroupData.value = null; activeView.value = 'keywords'; load(); loadSuggestionAssignees(); scheduleStickyScrollSync() })
+watch(TENANT_ID, () => { filters.page = 1; campaignData.value = null; adgroupData.value = null; activeView.value = 'keywords'; load(); loadKeywordWritebackMode(); loadSuggestionAssignees(); scheduleStickyScrollSync() })
 watch(activeView, scheduleStickyScrollSync)
 watch(() => [data.value?.keywords?.length, campaignData.value?.campaigns?.length, adgroupData.value?.adgroups?.length, loading.value], scheduleStickyScrollSync)
 
 onMounted(() => {
   load()
+  loadKeywordWritebackMode()
   loadSuggestionAssignees()
   window.addEventListener('resize', updateStickyScrollVisibility)
   window.addEventListener('scroll', updateStickyScrollVisibility, { passive: true })
@@ -910,7 +938,7 @@ onBeforeUnmount(() => {
         <el-table-column label="价格调整" width="145">
           <template #header>
             价格调整
-            <el-tooltip placement="top" content="最终执行价默认填入 AI 建议价（无建议则为当前出价），可人工调整并加入待回写台账；当前不会修改百度账户。">
+            <el-tooltip placement="top" :content="keywordWritebackHint">
               <span class="dim">ⓘ</span>
             </el-tooltip>
           </template>
@@ -1050,7 +1078,7 @@ onBeforeUnmount(() => {
         <el-table-column label="操作" min-width="190">
           <template #default="{ row }">
             <div class="op-cell">
-              <button class="op-btn primary" @click="applyWriteback(row)">加入待回写</button>
+              <button class="op-btn primary" @click="applyWriteback(row)">{{ keywordWritebackButtonLabel }}</button>
               <el-dropdown trigger="click" @command="(command) => openMatchTypeDialog(row, command)">
                 <button class="op-btn" type="button">改匹配 ▾</button>
                 <template #dropdown>
