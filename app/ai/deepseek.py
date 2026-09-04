@@ -18,6 +18,19 @@ class DeepSeekError(Exception):
     pass
 
 
+# Moonshot 的 kimi-k2 系列只接受 temperature=1，其余取值一律 400 invalid_request_error。
+FIXED_TEMPERATURE_MODEL_PREFIXES: dict[str, float] = {"kimi-k2": 1.0}
+
+
+def normalize_temperature(model: str | None, temperature: float) -> float:
+    """Force the only temperature a provider accepts for models that pin it."""
+    mdl = (model or "").strip().lower()
+    for prefix, fixed in FIXED_TEMPERATURE_MODEL_PREFIXES.items():
+        if mdl.startswith(prefix):
+            return fixed
+    return temperature
+
+
 def _parse_json_content(content: str) -> dict:
     """Parse model JSON output with a few tolerant cleanups."""
     text = (content or "").strip()
@@ -111,6 +124,7 @@ async def chat_json(
     # 默认 0.3 偏判断；成稿润色可传更高 temperature 提升叙述完整度
     temp = 0.3 if temperature is None else float(temperature)
     temp = max(0.0, min(temp, 1.2))
+    temp = normalize_temperature(mdl, temp)
     payload = {
         "model": mdl,
         "messages": [
@@ -164,7 +178,7 @@ async def chat_messages(
     payload = {
         "model": mdl,
         "messages": messages,
-        "temperature": temperature,
+        "temperature": normalize_temperature(mdl, temperature),
         "stream": False,
     }
     if json_mode:
