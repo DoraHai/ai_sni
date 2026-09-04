@@ -293,8 +293,10 @@ def test_backend_and_frontend_keep_approval_id_wiring():
     assert manage_api.count("idempotency_key=req.idempotency_key") == 3
     assert keyword_api.count("idempotency_key: str | None") == 1
     assert "idempotency_key=req.idempotency_key" in keyword_api
-    assert manage_client.count("idempotency_key: idempotencyKey") == 3
-    assert "idempotency_key: idempotencyKey" in keyword_client
+    assert manage_client.count("idempotency_key: requestKey") == 3
+    assert manage_client.count("runIdempotentWriteback(operationKey") == 3
+    assert "idempotency_key: requestKey" in keyword_client
+    assert "runIdempotentWriteback(operationKey" in keyword_client
     assert "crypto?.randomUUID" in idempotency_client
     assert approval_view.count("approvalId: row.id") == 4
     assert "CONFIRM_BAIDU_WRITEBACK" in approval_client

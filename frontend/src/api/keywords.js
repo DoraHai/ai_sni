@@ -1,5 +1,5 @@
 import client from './client'
-import { createWritebackIdempotencyKey } from './idempotency'
+import { runIdempotentWriteback } from './idempotency'
 
 export function fetchKeywordDetail({ keywordId, tenantId, startDate, endDate }) {
   return client.get(`/api/v1/keywords/${keywordId}`, {
@@ -65,15 +65,18 @@ export function writebackKeyword({
   price,
   approvalId = null,
   confirmation = null,
-  idempotencyKey = createWritebackIdempotencyKey(),
+  idempotencyKey = null,
 }) {
-  return client.post(`/api/v1/keywords/${keywordId}/writeback`, {
-    tenant_id: tenantId,
-    price,
-    approval_id: approvalId,
-    confirmation,
-    idempotency_key: idempotencyKey,
-  })
+  const operationKey = JSON.stringify(['keyword_bid', tenantId, keywordId, price, approvalId])
+  return runIdempotentWriteback(operationKey, (requestKey) => (
+    client.post(`/api/v1/keywords/${keywordId}/writeback`, {
+      tenant_id: tenantId,
+      price,
+      approval_id: approvalId,
+      confirmation,
+      idempotency_key: requestKey,
+    })
+  ), idempotencyKey)
 }
 
 // 批量回写：items = [{ keyword_id, price }]。返回 { total, applied, simulated, rejected, failed }
