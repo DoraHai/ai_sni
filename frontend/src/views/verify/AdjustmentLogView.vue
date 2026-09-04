@@ -29,6 +29,7 @@ const wbSub = ref('bid')
 const WB_STATUS = { success: '已写回', failed: '失败', dry_run: '演练（未真改）' }
 const wbData = ref(null)
 const wbLoading = ref(false)
+const wbError = ref('')
 const approvalData = ref(null)
 const approvalLoading = ref(false)
 const APPROVAL_ACTIONS = {
@@ -40,25 +41,62 @@ const APPROVAL_ACTIONS = {
 const APPROVAL_STATUS = {
   pending: '待确认', approved: '已确认', rejected: '已取消', consumed: '已执行',
 }
+let wbLoadGeneration = 0
+let approvalLoadGeneration = 0
+let actionLoadGeneration = 0
+let operationLoadGeneration = 0
+const latestSuccessfulBidWriteback = computed(() => (
+  (wbData.value?.writebacks || []).find((row) => row.status === 'success') || null
+))
+const baiduEvidenceDescription = computed(() => {
+  const latest = latestSuccessfulBidWriteback.value
+  if (!latest) return ''
+  const keyword = latest.keyword || `关键词 #${latest.keyword_id}`
+  const change = `${fmtMoney(latest.old_bid)} → ${fmtMoney(latest.new_bid)}`
+  const writtenAt = fmtTime(latest.created_at)
+  const syncedAt = data.value?.last_synced_at ? fmtSyncTime(data.value.last_synced_at) : '尚未同步'
+  return `最近平台成功回写：${keyword} ${change}（${writtenAt}）。百度操作记录是独立同步证据，当前最后同步于 ${syncedAt}；未出现新记录不代表回写失败，可点击“同步百度记录（只读）”重新核对。`
+})
 async function loadWb() {
-  wbLoading.value = true
-  try {
-    wbData.value = await fetchWritebacks({ tenantId: TENANT_ID.value })
-  } catch (e) {
-    error.value = e.message
-  } finally {
+  const generation = ++wbLoadGeneration
+  const tenantId = TENANT_ID.value
+  if (!tenantId) {
+    wbData.value = null
     wbLoading.value = false
+    return
+  }
+  wbLoading.value = true
+  wbError.value = ''
+  try {
+    const result = await fetchWritebacks({ tenantId })
+    if (generation !== wbLoadGeneration || tenantId !== TENANT_ID.value) return
+    wbData.value = result
+  } catch (e) {
+    if (generation === wbLoadGeneration && tenantId === TENANT_ID.value) {
+      wbError.value = e.message || '平台回写台账加载失败'
+    }
+  } finally {
+    if (generation === wbLoadGeneration) wbLoading.value = false
   }
 }
 
 async function loadApprovals() {
+  const generation = ++approvalLoadGeneration
+  const tenantId = TENANT_ID.value
+  if (!tenantId) {
+    approvalData.value = null
+    approvalLoading.value = false
+    return
+  }
   approvalLoading.value = true
   try {
-    approvalData.value = await fetchWritebackApprovals({ tenantId: TENANT_ID.value })
+    const result = await fetchWritebackApprovals({ tenantId })
+    if (generation !== approvalLoadGeneration || tenantId !== TENANT_ID.value) return
+    approvalData.value = result
   } catch (e) {
-    error.value = e.message
+    if (generation === approvalLoadGeneration && tenantId === TENANT_ID.value) error.value = e.message
   } finally {
-    approvalLoading.value = false
+    if (generation === approvalLoadGeneration) approvalLoading.value = false
   }
 }
 
@@ -110,13 +148,22 @@ const actData = ref(null)
 const actLoading = ref(false)
 
 async function loadActions() {
+  const generation = ++actionLoadGeneration
+  const tenantId = TENANT_ID.value
+  if (!tenantId) {
+    actData.value = null
+    actLoading.value = false
+    return
+  }
   actLoading.value = true
   try {
-    actData.value = await fetchActions({ tenantId: TENANT_ID.value, actionType: actType.value })
+    const result = await fetchActions({ tenantId, actionType: actType.value })
+    if (generation !== actionLoadGeneration || tenantId !== TENANT_ID.value) return
+    actData.value = result
   } catch (e) {
-    error.value = e.message
+    if (generation === actionLoadGeneration && tenantId === TENANT_ID.value) error.value = e.message
   } finally {
-    actLoading.value = false
+    if (generation === actionLoadGeneration) actLoading.value = false
   }
 }
 
@@ -183,14 +230,23 @@ function periodRange() {
 }
 
 async function load() {
+  const generation = ++operationLoadGeneration
+  const tenantId = TENANT_ID.value
+  if (!tenantId) {
+    data.value = null
+    loading.value = false
+    return
+  }
   loading.value = true
   error.value = ''
   try {
-    data.value = await fetchOperationRecords({ tenantId: TENANT_ID.value, ...filters, ...periodRange() })
+    const result = await fetchOperationRecords({ tenantId, ...filters, ...periodRange() })
+    if (generation !== operationLoadGeneration || tenantId !== TENANT_ID.value) return
+    data.value = result
   } catch (e) {
-    error.value = e.message
+    if (generation === operationLoadGeneration && tenantId === TENANT_ID.value) error.value = e.message
   } finally {
-    loading.value = false
+    if (generation === operationLoadGeneration) loading.value = false
   }
 }
 
@@ -214,6 +270,8 @@ async function syncBaiduOperations() {
     const summary = `已同步 ${Number(result.accounts_succeeded || 0)}/${Number(result.accounts_total || 0)} 个账户，拉取 ${Number(result.records_fetched || 0)} 条记录`
     if (result.status === 'partial') {
       ElMessage.warning(`${summary}；部分账户失败，请检查授权状态后重试`)
+    } else if (Number(result.records_fetched || 0) === 0) {
+      ElMessage.warning(`${summary}；百度暂未返回新操作记录，可稍后再次核对，平台回写状态不受影响`)
     } else {
       ElMessage.success(summary)
     }
@@ -275,11 +333,19 @@ function loadWbSub() {
 
 // 顶栏切换客户后重新拉当前视图的数
 watch(TENANT_ID, () => {
-  if (mainView.value === 'writeback') loadWbSub()
-  else { filters.page = 1; load() }
+  data.value = null
+  wbData.value = null
+  wbError.value = ''
+  approvalData.value = null
+  actData.value = null
+  const pageChanged = filters.page !== 1
+  filters.page = 1
+  if (!pageChanged) load()
+  loadWb()
+  if (mainView.value === 'writeback' && wbSub.value !== 'bid') loadWbSub()
 })
 
-onMounted(load)
+onMounted(() => Promise.all([load(), loadWb()]))
 </script>
 
 <template>
@@ -297,7 +363,7 @@ onMounted(load)
           v-if="mainView === 'baidu' && session.canEdit('verify.adjustments')"
           :loading="syncingOperations"
           @click="syncBaiduOperations"
-        >同步百度记录</el-button>
+        >同步百度记录（只读）</el-button>
         <el-button
           v-if="session.canView('verify.adjustments')"
           type="warning" plain
@@ -316,6 +382,15 @@ onMounted(load)
 
     <!-- ===== 百度后台操作记录（只读同步） ===== -->
     <template v-if="mainView === 'baidu'">
+    <el-alert
+      v-if="latestSuccessfulBidWriteback"
+      title="平台已写回不等于百度操作记录已同步"
+      :description="baiduEvidenceDescription"
+      type="info"
+      :closable="false"
+      show-icon
+      style="margin-bottom: 14px"
+    />
     <!-- 统计卡 -->
     <div class="stat-grid">
       <div v-for="c in statCards" :key="c.label" class="stat-card" :class="{ danger: c.danger }">
@@ -398,7 +473,7 @@ onMounted(load)
           <template #default="{ row }"><span class="source-pill">{{ row.source }}</span></template>
         </el-table-column>
         <template #empty>
-          <div class="empty-line">当前筛选条件下没有操作记录。首次使用请先执行操作记录回灌（admin/sync-operation-records）。</div>
+          <div class="empty-line">当前筛选条件下没有百度操作记录。可点击页面上方“同步百度记录（只读）”重新核对；平台回写结果请查看“平台回写台账”。</div>
         </template>
       </el-table>
       <div class="table-footer">
@@ -437,6 +512,7 @@ onMounted(load)
 
       <!-- 出价回写（updateWord 留痕） -->
       <div v-if="wbSub === 'bid'" v-loading="wbLoading">
+        <el-alert v-if="wbError" :title="wbError" type="error" :closable="false" style="margin-bottom: 12px" />
         <el-alert
           type="info"
           :closable="false"
