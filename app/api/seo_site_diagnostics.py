@@ -435,6 +435,7 @@ async def generate_image_alt_drafts(
         # Lock the same page rows used by manual saves, then revalidate after the
         # external call. This prevents AI from overwriting a human's concurrent edit.
         current = await _ai_draft_candidates(session, req, lock_pages=True)
+        current_ids = {row[0] for row in current}
         now = datetime.now(timezone.utc)
         created = []
         for candidate_id, page, snapshot, candidate in current:
@@ -456,9 +457,19 @@ async def generate_image_alt_drafts(
         # settle_ai_usage commits the quota state and these drafts together. Do
         # not commit drafts first: a settlement failure must not return an error
         # after leaving persisted records behind.
-        await settle_ai_usage(session, req.tenant_id, reservation, success=True)
+        settled = await settle_ai_usage(session, req.tenant_id, reservation, success=True)
+        if not settled:
+            await session.rollback()
+            raise HTTPException(409, "AI 整改请求已过期或被新请求取代，本次草稿未保存")
+        initial_ids = {row[0] for row in initial}
+        suggestion_ids = set(suggestions)
+        skipped_ai = len(initial_ids - suggestion_ids)
+        skipped_changed = len(suggestion_ids - current_ids)
+        skipped_ineligible = len(req.items) - len(initial)
         return {"selected": len(req.items), "eligible": len(initial), "generated": len(created),
-                "skipped": len(req.items) - len(created), "review_status": "draft"}
+                "skipped": len(req.items) - len(created), "skipped_ai": skipped_ai,
+                "skipped_changed": skipped_changed, "skipped_ineligible": skipped_ineligible,
+                "review_status": "draft"}
     except Exception:
         await session.rollback()
         await settle_ai_usage(session, req.tenant_id, reservation, success=False)

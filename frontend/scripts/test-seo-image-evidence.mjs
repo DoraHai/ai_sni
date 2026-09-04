@@ -188,5 +188,41 @@ const generateDrafts = new Function('client', `${aiDraftApiCode}; return generat
 const aiPayload = { tenant_id: 1, site_id: 2, items: [{ page_id: 3, expected_snapshot_id: 4, position: 5, expected_review_id: null }] }
 generateDrafts(aiPayload)
 assert.deepEqual(aiDraftCalls[0], ['/api/v1/seo/site-pages/image-remediation/ai-drafts', aiPayload, { timeout: 60000 }])
-for (const marker of ["row.review_status === 'unreviewed'", "row.decision === 'undecided'", '.slice(0, 20)', 'expected_review_id: null']) assert(workbenchSource.includes(marker))
+for (const marker of ["row.review_status === 'unreviewed'", "row.decision === 'undecided'", '.slice(0, 20)', 'expected_review_id: null', 'loading || approving || !aiEligible.length', 'loading || generating || !eligible.length', 'skipped_changed', 'skipped_ineligible']) assert(workbenchSource.includes(marker))
+
+const workbenchCode = compileScript(parse(workbenchSource).descriptor, { id: 'workbench-test', genDefaultAs: 'component' }).content.replace(/^import .* from .*$/gm, '')
+const workbenchRequests = [], generatedPayloads = [], workbenchMessages = []
+const workbenchBindings = {
+  computed: Vue.computed, ref: Vue.ref, reactive: Vue.reactive, watch: Vue.watch,
+  onBeforeUnmount: Vue.onBeforeUnmount, SeoImageEvidenceDialog: { render: () => null },
+  fetchSeoImageRemediationWorkbench: args => new Promise((resolve, reject) => workbenchRequests.push({ args, resolve, reject })),
+  generateSeoImageAltDrafts: async payload => { generatedPayloads.push(payload); return { generated: 1, skipped: 0, skipped_ai: 0, skipped_changed: 0, skipped_ineligible: 0 } },
+  saveSeoImageRemediation: async () => ({}),
+  ElMessage: { success: value => workbenchMessages.push(value), warning: value => workbenchMessages.push(value), error: value => workbenchMessages.push(value) },
+  ElMessageBox: { confirm: async () => true },
+}
+const Workbench = new Function('b', `const {${Object.keys(workbenchBindings)}}=b;${workbenchCode};return component`)(workbenchBindings)
+Workbench.render = () => null
+const workbenchRef = Vue.ref()
+const workbenchProps = Vue.reactive({ tenantId: 1, siteId: 2, canEdit: true, refreshKey: 0 })
+const workbenchApp = renderer.createApp({ render: () => Vue.h(Workbench, { ...workbenchProps, ref: workbenchRef }) })
+workbenchApp.mount({})
+const workbenchState = () => workbenchRef.value.$.setupState
+const unreviewedRow = { page_id: 3, snapshot_id: 4, position: 5, review_status: 'unreviewed', decision: 'undecided', review: null }
+workbenchRequests[0].resolve({ items: [unreviewedRow], total: 1, stats: {} })
+await flush()
+workbenchState().selected = [unreviewedRow]
+const generateRun = workbenchState().generateAiDrafts()
+await flush()
+assert.deepEqual(generatedPayloads[0], aiPayload)
+workbenchRequests.at(-1).resolve({ items: [{ ...unreviewedRow, review_status: 'draft', decision: 'informative' }], total: 1, stats: {} })
+await generateRun
+workbenchState().selected = [unreviewedRow]
+workbenchState().filters.reviewState = 'draft'
+await Vue.nextTick()
+assert.deepEqual(workbenchState().selected, [], 'filter changes clear stale selections before loading finishes')
+assert.equal(workbenchState().loading, true)
+workbenchRequests.at(-1).resolve({ items: [], total: 0, stats: {} })
+await flush()
+workbenchApp.unmount()
 console.log('SEO image remediation workbench checks passed: scoped query, bounded AI drafts, human-only approvals, safe export')
