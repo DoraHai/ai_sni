@@ -20,7 +20,7 @@ const Component = new Function('b', `const {${Object.keys(bindings)}}=b;${code};
 Component.render = () => null
 const renderer = Vue.createRenderer({ createElement: () => ({}), createText: () => ({}), createComment: () => ({}),
   setText() {}, setElementText() {}, patchProp() {}, insert() {}, remove() {}, parentNode: () => null, nextSibling: () => null })
-const props = Vue.reactive({ visible: true, tenantId: 1, siteId: 1, page: { id: 234 } })
+const props = Vue.reactive({ visible: true, tenantId: 1, siteId: 1, page: { id: 234, review_status: 'draft' }, focusPosition: 2 })
 const child = Vue.ref()
 const app = renderer.createApp({ render: () => Vue.h(Component, { ...props, ref: child }) })
 app.mount({})
@@ -33,7 +33,7 @@ assert.deepEqual(previewRequests[0].args, { tenantId: 1, siteId: 1, pageId: 234 
 props.tenantId = 2; props.siteId = 2
 await flush()
 requests.at(-1).resolve({ snapshot_id: 12, evidence: { items: [{ position: 1, alt_state: 'empty' }, { position: 2, alt_state: 'missing' }] } })
-remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [{ id: 7, position: 2, decision: 'informative', alt_suggestion: '产品图', review_status: 'draft' }] })
+remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [{ id: 7, position: 2, decision: 'informative', alt_suggestion: '产品图', note: '由 AI 根据已存档文本线索生成，未读取图片像素，必须人工核对', review_status: 'draft' }] })
 historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [{ snapshot_id: 12, approved_count: 0, candidate_count: 2 }, { snapshot_id: 11, approved_count: 1, candidate_count: 1 }] })
 previewRequests.at(-1).resolve({ target_snapshot_id: 12, eligible_count: 1, source_page_count: 1 })
 await flush()
@@ -42,6 +42,22 @@ remediationRequests[0].resolve({ snapshot_id: 11, items: [] })
 historyRequests[0].resolve({ current_snapshot_id: 11, items: [] })
 previewRequests[0].resolve({ target_snapshot_id: 11, eligible_count: 0, source_page_count: 0 })
 await flush()
+assert.equal(state().reviewFilter, 'draft')
+assert.equal(state().focusedOnly, true)
+assert.deepEqual(state().items, [{ position: 2, alt_state: 'missing' }], 'workbench entry focuses the selected draft')
+const focusedDraftRow = state().items[0]
+assert.equal(state().isAiDraft(focusedDraftRow), true)
+state().drafts[2].review_status = 'approved'
+state().drafts[2].decision = 'undecided'
+assert.equal(state().canSaveReview(focusedDraftRow), false)
+assert.equal(state().approvalError(focusedDraftRow), '标记已审核前，请先确认图片用途')
+state().drafts[2].decision = 'informative'
+state().drafts[2].alt_suggestion = ''
+assert.equal(state().canSaveReview(focusedDraftRow), false)
+state().drafts[2].review_status = 'draft'
+state().drafts[2].alt_suggestion = '产品图'
+state().focusedOnly = false
+state().reviewFilter = 'all'
 assert.equal(state().items.length, 2)
 state().filter = 'missing'
 assert.deepEqual(state().items, [{ position: 2, alt_state: 'missing' }])
@@ -154,6 +170,7 @@ for (const marker of ['旧存档未记录逐图明细', '尚无抓取存档', '�
 for (const marker of ['历史快照', '复制上一快照审核结论', '复制后统一为草稿', 'isHistorical']) assert(source.includes(marker))
 for (const marker of ['复用同站图片结论', '地址和使用上下文完全一致', '必须逐项人工复核']) assert(source.includes(marker))
 for (const marker of ['导出图片整改清单', '导出全部审核记录', '已审核且需要 Alt 的内容图']) assert(source.includes(marker))
+for (const marker of ['当前选中图片', '本页全部候选', '全部审核状态', 'AI 待审建议', '查看 srcset 候选', '当前显示', '标记已审核前']) assert(source.includes(marker))
 console.log('SEO image evidence checks passed: filtering, legacy/error states, stale scope/close/unmount, no external loads')
 
 const apiSource = await readFile(new URL('../src/api/seo.js', import.meta.url), 'utf8')
@@ -188,10 +205,11 @@ const generateDrafts = new Function('client', `${aiDraftApiCode}; return generat
 const aiPayload = { tenant_id: 1, site_id: 2, items: [{ page_id: 3, expected_snapshot_id: 4, position: 5, expected_review_id: null }] }
 generateDrafts(aiPayload)
 assert.deepEqual(aiDraftCalls[0], ['/api/v1/seo/site-pages/image-remediation/ai-drafts', aiPayload, { timeout: 60000 }])
-for (const marker of ["row.review_status === 'unreviewed'", "row.decision === 'undecided'", '.slice(0, 20)', 'expected_review_id: null', 'loading || approving || !aiEligible.length', 'loading || generating || !eligible.length', 'skipped_changed', 'skipped_ineligible']) assert(workbenchSource.includes(marker))
+for (const marker of ["row.review_status === 'unreviewed'", "row.decision === 'undecided'", '.slice(0, 20)', 'expected_review_id: null', 'loading || approving || !aiEligible.length', 'loading || generating || !eligible.length', 'skipped_changed', 'skipped_ineligible', 'tenantId !== props.tenantId || siteId !== props.siteId']) assert(workbenchSource.includes(marker))
 
 const workbenchCode = compileScript(parse(workbenchSource).descriptor, { id: 'workbench-test', genDefaultAs: 'component' }).content.replace(/^import .* from .*$/gm, '')
 const workbenchRequests = [], generatedPayloads = [], workbenchMessages = []
+let workbenchConfirm = async () => true
 const workbenchBindings = {
   computed: Vue.computed, ref: Vue.ref, reactive: Vue.reactive, watch: Vue.watch,
   onBeforeUnmount: Vue.onBeforeUnmount, SeoImageEvidenceDialog: { render: () => null },
@@ -199,7 +217,7 @@ const workbenchBindings = {
   generateSeoImageAltDrafts: async payload => { generatedPayloads.push(payload); return { generated: 1, skipped: 0, skipped_ai: 0, skipped_changed: 0, skipped_ineligible: 0 } },
   saveSeoImageRemediation: async () => ({}),
   ElMessage: { success: value => workbenchMessages.push(value), warning: value => workbenchMessages.push(value), error: value => workbenchMessages.push(value) },
-  ElMessageBox: { confirm: async () => true },
+  ElMessageBox: { confirm: (...args) => workbenchConfirm(...args) },
 }
 const Workbench = new Function('b', `const {${Object.keys(workbenchBindings)}}=b;${workbenchCode};return component`)(workbenchBindings)
 Workbench.render = () => null
@@ -217,11 +235,24 @@ await flush()
 assert.deepEqual(generatedPayloads[0], aiPayload)
 workbenchRequests.at(-1).resolve({ items: [{ ...unreviewedRow, review_status: 'draft', decision: 'informative' }], total: 1, stats: {} })
 await generateRun
+assert.equal(workbenchState().filters.reviewState, 'draft', 'successful AI generation opens the draft result view')
 workbenchState().selected = [unreviewedRow]
-workbenchState().filters.reviewState = 'draft'
+workbenchState().filters.decision = 'informative'
 await Vue.nextTick()
 assert.deepEqual(workbenchState().selected, [], 'filter changes clear stale selections before loading finishes')
 assert.equal(workbenchState().loading, true)
+workbenchRequests.at(-1).resolve({ items: [], total: 0, stats: {} })
+await flush()
+let releaseConfirmation
+workbenchConfirm = () => new Promise(resolve => { releaseConfirmation = resolve })
+workbenchState().selected = [unreviewedRow]
+const staleGenerate = workbenchState().generateAiDrafts()
+await flush()
+workbenchProps.siteId = 3
+await Vue.nextTick()
+releaseConfirmation(true)
+await staleGenerate
+assert.equal(generatedPayloads.length, 1, 'site changes during confirmation must cancel the stale AI write')
 workbenchRequests.at(-1).resolve({ items: [], total: 0, stats: {} })
 await flush()
 workbenchApp.unmount()

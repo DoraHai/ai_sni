@@ -50,18 +50,22 @@ async function load() {
   finally { if (!disposed && token === generation) loading.value = false }
 }
 function openReview(row) {
-  dialogPage.value = { id: row.page_id, title: row.page_title, url: row.page_url }
+  dialogPage.value = {
+    id: row.page_id, title: row.page_title, url: row.page_url,
+    position: row.position, review_status: row.review_status,
+  }
   dialogOpen.value = true
 }
 async function generateAiDrafts() {
   if (loading.value || generating.value || approving.value) return
   const rows = aiEligible.value
   if (!rows.length) return ElMessage.warning('请勾选尚未人工处理的图片（每次最多 20 条）')
+  const tenantId = props.tenantId
+  const siteId = props.siteId
   try {
     await ElMessageBox.confirm(`AI 只会根据存档的文件名、页面标题等文本线索，为 ${rows.length} 条图片生成待审草稿；不读取图片、不自动通过、不修改官网。确认继续？`, 'AI 生成 Alt 草稿', { type: 'warning' })
   } catch { return }
-  const tenantId = props.tenantId
-  const siteId = props.siteId
+  if (tenantId !== props.tenantId || siteId !== props.siteId) return
   generating.value = true
   try {
     const response = await generateSeoImageAltDrafts({
@@ -72,23 +76,31 @@ async function generateAiDrafts() {
     if (response.generated) ElMessage.success(`AI 已生成 ${response.generated} 条待审草稿；AI 明确跳过 ${response.skipped_ai || 0} 条，状态变化 ${response.skipped_changed || 0} 条，不可处理 ${response.skipped_ineligible || 0} 条`)
     else if (response.skipped_changed || response.skipped_ineligible) ElMessage.warning(`未保存草稿：状态变化 ${response.skipped_changed || 0} 条，不可处理 ${response.skipped_ineligible || 0} 条；请刷新后重试`)
     else ElMessage.warning(`AI 明确跳过 ${response.skipped_ai || 0} 条证据不足项，未生成草稿`)
-    await load()
-  } catch (e) { ElMessage.error(e.message) }
+    if (response.generated && filters.reviewState !== 'draft') {
+      filters.reviewState = 'draft'
+      filters.decision = 'all'
+      page.value = 1
+    } else await load()
+  } catch (e) { if (tenantId === props.tenantId && siteId === props.siteId) ElMessage.error(e.message) }
   finally { generating.value = false }
 }
 async function batchApprove() {
   const rows = eligible.value
   if (!rows.length) return ElMessage.warning('请勾选已完成人工判断的草稿')
+  const tenantId = props.tenantId
+  const siteId = props.siteId
   try {
     await ElMessageBox.confirm(`仅将 ${rows.length} 条完整草稿标记为已审核，不会修改客户官网。确认继续？`, '批量审核图片整改', { type: 'warning' })
   } catch { return }
+  if (tenantId !== props.tenantId || siteId !== props.siteId) return
   approving.value = true
   let completed = 0
   const failures = []
   for (const row of rows) {
+    if (tenantId !== props.tenantId || siteId !== props.siteId) break
     try {
       await saveSeoImageRemediation({
-        tenant_id: props.tenantId, site_id: props.siteId, page_id: row.page_id,
+        tenant_id: tenantId, site_id: siteId, page_id: row.page_id,
         expected_snapshot_id: row.snapshot_id, expected_review_id: row.review?.id || null,
         position: row.position, decision: row.decision, alt_suggestion: row.alt_suggestion,
         note: row.note, review_status: 'approved',
@@ -97,6 +109,7 @@ async function batchApprove() {
     } catch (e) { failures.push(`#${row.page_id} 图片 ${row.position}: ${e.message}`) }
   }
   approving.value = false
+  if (tenantId !== props.tenantId || siteId !== props.siteId) return
   failures.length ? ElMessage.warning(`已通过 ${completed} 条，失败 ${failures.length} 条；请刷新后逐项处理`) : ElMessage.success(`已审核通过 ${completed} 条图片整改记录`)
   await load()
 }
@@ -107,25 +120,30 @@ function safeCsv(value) {
 }
 async function exportApproved() {
   if (!props.tenantId || !props.siteId) return
+  const tenantId = props.tenantId
+  const siteId = props.siteId
+  const query = filters.q
   exporting.value = true
   try {
     const rows = []
     let cursor = 1
     while (true) {
-      const response = await fetchSeoImageRemediationWorkbench({ tenantId: props.tenantId, siteId: props.siteId, q: filters.q, reviewState: 'approved', decision: 'informative', page: cursor, pageSize: 100 })
+      if (tenantId !== props.tenantId || siteId !== props.siteId) return
+      const response = await fetchSeoImageRemediationWorkbench({ tenantId, siteId, q: query, reviewState: 'approved', decision: 'informative', page: cursor, pageSize: 100 })
       rows.push(...(response.items || []))
       if (rows.length >= Number(response.total || 0)) break
       cursor++
     }
     const actionable = rows.filter(row => row.alt_suggestion?.trim())
+    if (tenantId !== props.tenantId || siteId !== props.siteId) return
     if (!actionable.length) return ElMessage.warning('暂无全站已审核的内容图 Alt 整改记录')
     const headers = ['页面ID','页面标题','页面URL','快照ID','图片位置','区块','图片URL','检测状态','用途','Alt建议','备注','审核人','审核时间']
     const body = actionable.map(row => [row.page_id,row.page_title,row.page_url,row.snapshot_id,row.position,row.section,row.source_url,row.observed_alt_state,decisionLabel(row.decision),row.alt_suggestion,row.note,row.review?.actor_name,row.review?.updated_at])
     const blob = new Blob(['\ufeff' + [headers, ...body].map(line => line.map(safeCsv).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
-    const anchor = document.createElement('a'); anchor.href = url; anchor.download = `SEO全站图片Alt整改-${props.siteId}.csv`; anchor.style.display = 'none'
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = `SEO全站图片Alt整改-${siteId}.csv`; anchor.style.display = 'none'
     document.body.appendChild(anchor); anchor.click(); anchor.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000)
-  } catch (e) { ElMessage.error(e.message) }
+  } catch (e) { if (tenantId === props.tenantId && siteId === props.siteId) ElMessage.error(e.message) }
   finally { exporting.value = false }
 }
 function dialogClosed() { dialogPage.value = null; load() }
@@ -149,20 +167,20 @@ onBeforeUnmount(() => { disposed = true; ++generation; clearTimeout(timer) })
       <article><strong>{{ stats.unreviewed_count || 0 }}</strong><span>尚未人工判断</span></article>
       <article><strong>{{ coverage }}%</strong><span>人工审核覆盖率</span></article>
     </div>
-    <div class="filters"><el-input v-model="filters.q" clearable placeholder="搜索页面标题或 URL"/><el-select v-model="filters.reviewState"><el-option label="全部审核状态" value="all"/><el-option label="未判断" value="unreviewed"/><el-option label="草稿" value="draft"/><el-option label="已审核" value="approved"/></el-select><el-select v-model="filters.decision"><el-option label="全部图片用途" value="all"/><el-option label="未判断" value="undecided"/><el-option label="装饰图" value="decorative"/><el-option label="内容图" value="informative"/></el-select><small>{{ result.total }} 条证据 · 草稿 {{ stats.draft_count || 0 }} · 已审核 {{ stats.approved_count || 0 }}</small></div>
+    <div class="filters"><el-input v-model="filters.q" clearable placeholder="搜索页面标题或 URL"/><el-select v-model="filters.reviewState" aria-label="全站图片审核状态"><el-option label="全部审核状态" value="all"/><el-option label="未判断" value="unreviewed"/><el-option label="草稿" value="draft"/><el-option label="已审核" value="approved"/></el-select><el-select v-model="filters.decision" aria-label="全站图片用途"><el-option label="全部图片用途" value="all"/><el-option label="未判断" value="undecided"/><el-option label="装饰图" value="decorative"/><el-option label="内容图" value="informative"/></el-select><small>当前筛选 {{ result.total }} 条 · 全站草稿 {{ stats.draft_count || 0 }} · 已审核 {{ stats.approved_count || 0 }}</small></div>
     <el-table v-loading="loading" :data="result.items" empty-text="当前筛选下没有图片整改证据" @selection-change="selected = $event">
       <el-table-column type="selection" width="44" :selectable="isSelectable"/>
       <el-table-column label="页面" min-width="250"><template #default="{row}"><b>{{ row.page_title || `页面 #${row.page_id}` }}</b><small class="url">{{ row.page_url }}</small></template></el-table-column>
       <el-table-column label="图片证据" min-width="250"><template #default="{row}"><span>位置 {{ row.position }} · {{ row.section || '未知区块' }}</span><small class="url">{{ row.source_url || '未记录图片地址' }}</small></template></el-table-column>
       <el-table-column label="检测" width="90"><template #default="{row}">{{ {missing:'缺少 Alt',empty:'空 Alt',whitespace:'空白 Alt'}[row.observed_alt_state] || row.observed_alt_state }}</template></el-table-column>
       <el-table-column label="人工结论" min-width="210"><template #default="{row}"><el-tag :type="row.review_status === 'approved' ? 'success' : row.review_status === 'draft' ? 'warning' : 'info'">{{ stateLabel(row) }}</el-tag><b class="decision">{{ decisionLabel(row.decision) }}</b><small v-if="row.alt_suggestion" class="suggestion">{{ row.alt_suggestion }}</small></template></el-table-column>
-      <el-table-column label="操作" width="110" fixed="right"><template #default="{row}"><el-button link type="primary" @click="openReview(row)">进入逐图审核</el-button></template></el-table-column>
+      <el-table-column label="操作" width="105" fixed="right"><template #default="{row}"><el-button link type="primary" @click="openReview(row)">审核此图</el-button></template></el-table-column>
     </el-table>
     <footer><span>AI 只生成草稿且不读取图片像素；批量通过只处理已填写完整的草稿，仍需人工核对。</span><el-pagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[25,50,100]" :total="result.total" layout="total, sizes, prev, pager, next" @current-change="load" @size-change="page = 1; load()"/></footer>
-    <SeoImageEvidenceDialog v-model:visible="dialogOpen" :tenant-id="tenantId" :site-id="siteId" :page="dialogPage" :can-edit="canEdit"/>
+    <SeoImageEvidenceDialog v-model:visible="dialogOpen" :tenant-id="tenantId" :site-id="siteId" :page="dialogPage" :focus-position="dialogPage?.position" :can-edit="canEdit"/>
   </section>
 </template>
 
 <style scoped>
-.image-workbench{margin:15px 0;overflow:hidden;border:1px solid #e3e8ef;border-radius:15px;background:#fff}.image-workbench>header{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;padding:18px 20px;border-bottom:1px solid #edf1ef}.image-workbench header span{color:#168b83;font:800 10px ui-monospace,monospace;letter-spacing:.13em}.image-workbench h2{margin:5px 0 3px;font-size:16px}.image-workbench header p{margin:0;color:#7a8885;font-size:12px}.header-actions{display:flex;gap:8px}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:#edf1ef}.summary article{padding:14px 20px;background:#fafcfb}.summary strong,.summary span{display:block}.summary strong{font-size:22px}.summary span{margin-top:3px;color:#778581;font-size:11px}.filters{display:flex;gap:9px;align-items:center;padding:14px 17px}.filters .el-input{max-width:310px}.filters .el-select{width:145px}.filters small{margin-left:auto;color:#778581}.url,.suggestion{display:block;max-width:360px;overflow:hidden;margin-top:4px;color:#70817d;text-overflow:ellipsis;white-space:nowrap}.decision{margin-left:8px;font-size:12px}.image-workbench footer{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:13px 17px;border-top:1px solid #edf1ef}.image-workbench footer>span{color:#788683;font-size:11px}@media(max-width:900px){.summary{grid-template-columns:1fr 1fr}.filters,.image-workbench>header,.image-workbench footer{align-items:flex-start;flex-direction:column}.filters .el-input,.filters .el-select{width:100%;max-width:none}.filters small{margin-left:0}}
+.image-workbench{margin:15px 0;overflow:hidden;border:1px solid #e3e8ef;border-radius:15px;background:#fff}.image-workbench>header{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;padding:18px 20px;border-bottom:1px solid #edf1ef}.image-workbench header span{color:#168b83;font:800 10px ui-monospace,monospace;letter-spacing:.13em}.image-workbench h2{margin:5px 0 3px;font-size:16px}.image-workbench header p{margin:0;color:#7a8885;font-size:12px}.header-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:#edf1ef}.summary article{padding:14px 20px;background:#fafcfb}.summary strong,.summary span{display:block}.summary strong{font-size:22px}.summary span{margin-top:3px;color:#778581;font-size:11px}.filters{display:flex;flex-wrap:wrap;gap:9px;align-items:center;padding:14px 17px}.filters .el-input{max-width:310px}.filters .el-select{width:145px}.filters small{margin-left:auto;color:#778581}.url,.suggestion{display:block;max-width:360px;overflow:hidden;margin-top:4px;color:#70817d;text-overflow:ellipsis;white-space:nowrap}.decision{margin-left:8px;font-size:12px}.image-workbench footer{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:13px 17px;border-top:1px solid #edf1ef}.image-workbench footer>span{color:#788683;font-size:11px}@media(max-width:900px){.summary{grid-template-columns:1fr 1fr}.filters,.image-workbench>header,.image-workbench footer{align-items:flex-start;flex-direction:column}.header-actions{justify-content:flex-start}.filters .el-input,.filters .el-select{width:100%;max-width:none}.filters small{margin-left:0}}
 </style>
