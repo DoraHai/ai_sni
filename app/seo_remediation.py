@@ -28,7 +28,13 @@ def now_cst():
     return datetime.now(ZoneInfo("Asia/Shanghai"))
 
 
-async def reserve(session, tenant_id):
+async def reserve(session, tenant_id, *, units: int = 1):
+    if (
+        not isinstance(units, int)
+        or isinstance(units, bool)
+        or not 1 <= units <= DAILY_LIMIT
+    ):
+        raise HTTPException(422, "AI 整改计费数量必须在 1–20 之间")
     module = await session.scalar(select(TenantModule).where(
         TenantModule.tenant_id == tenant_id, TenantModule.module_code == "seo",
     ).with_for_update().execution_options(populate_existing=True))
@@ -41,11 +47,14 @@ async def reserve(session, tenant_id):
         state = {"date": now.date().isoformat(), "used": 0, "attempts": 0}
     if state.get("expires", 0) > now.timestamp():
         raise HTTPException(429, "该客户已有 AI 整改请求进行中，请稍后重试")
-    if state.get("used", 0) >= DAILY_LIMIT or state.get("attempts", 0) >= 100:
+    if (
+        state.get("used", 0) + units > DAILY_LIMIT
+        or state.get("attempts", 0) >= 100
+    ):
         raise HTTPException(429, "今日 AI 整改额度或请求保护上限已达到，请明天再试")
     token = uuid4().hex
-    state.update(used=state.get("used", 0) + 1, attempts=state.get("attempts", 0) + 1,
-                 token=token, expires=now.timestamp() + 120)
+    state.update(used=state.get("used", 0) + units, attempts=state.get("attempts", 0) + 1,
+                 token=token, reserved_units=units, expires=now.timestamp() + 120)
     settings[USAGE_KEY] = state
     module.module_settings = settings
     await session.commit()
@@ -64,8 +73,10 @@ async def settle(session, tenant_id, reservation, *, success):
     if (state.get("date"), state.get("token")) != reservation:
         return False
     if not success:
-        state["used"] = max(0, state.get("used", 0) - 1)
+        reserved_units = max(1, int(state.get("reserved_units", 1)))
+        state["used"] = max(0, state.get("used", 0) - reserved_units)
     state.pop("token", None)
+    state.pop("reserved_units", None)
     state.pop("expires", None)
     settings[USAGE_KEY] = state
     module.module_settings = settings

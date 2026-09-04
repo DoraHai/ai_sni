@@ -27,6 +27,7 @@ from app.api.seo import (
     publish_content_distribution,
     review_distribution_variant,
     retry_content_publication,
+    sync_content_publication,
 )
 from app.security.auth import AuthContext
 from app.models.seo import (
@@ -1102,6 +1103,52 @@ def test_confirmed_failed_task_retries_same_content_version() -> None:
     assert "保留的专属正文" in prepared["content_html"]
 
 
+def test_unexpected_retry_error_restores_failed_state() -> None:
+    publication = SeoContentPublication(
+        id=12, tenant_id=1, content_asset_id=5, connection_id=9,
+        platform_code="wordpress", platform_name="WordPress",
+        publish_mode="draft", status="failed", source_version=2,
+        adapted_title="已审核标题", adapted_content="<div>已审核正文</div>",
+    )
+    content = SeoContentAsset(
+        id=5, tenant_id=1, site_id=8, content_type="article",
+        title="测试文章", draft="<p>正文内容</p>", status="drafting",
+        version_count=2,
+    )
+    connection = SeoDistributionConnection(
+        id=9, tenant_id=1, platform_code="wordpress", name="品牌官网",
+        mode="api", base_url="https://example.com", enabled=True,
+        status="connected", has_credentials=True,
+    )
+    session = AsyncMock()
+    session.scalar = AsyncMock(return_value=publication)
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+    context = AuthContext(
+        user_id=7, username="operator", role_name="运营", tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+    request = DistributionRetryRequest(tenant_id=1, site_id=8, confirm=True)
+
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
+        patch("app.api.seo._distribution_connection", new=AsyncMock(return_value=connection)),
+        patch("app.api.seo.decrypt_credentials", return_value={"username": "u", "application_password": "p"}),
+        patch("app.api.seo.publish_content", new=AsyncMock(side_effect=RuntimeError("adapter bug"))),
+        pytest.raises(Exception) as exc,
+    ):
+        asyncio.run(retry_content_publication(12, request, session, context))
+
+    attempt = session.add.call_args.args[0]
+    assert getattr(exc.value, "status_code", None) == 502
+    assert publication.status == "failed"
+    assert publication.last_error == "未预期发布错误：RuntimeError"
+    assert attempt.status == "failed"
+    assert attempt.error == "未预期发布错误：RuntimeError"
+    assert session.commit.await_count == 2
+
+
 def test_manual_handoff_completion_is_site_scoped_and_audited() -> None:
     publication = SeoContentPublication(
         id=12,
@@ -1149,10 +1196,60 @@ def test_manual_handoff_completion_is_site_scoped_and_audited() -> None:
 
     attempt = session.add.call_args.args[0]
     content_lookup.assert_awaited_once_with(session, 1, 5, 8)
+    session.get.assert_awaited_once_with(
+        SeoContentPublication, 12, with_for_update=True
+    )
     assert attempt.action == "manual_complete"
     assert attempt.response_summary == {"page_url_host": "zhuanlan.zhihu.com"}
     assert publication.status == "published"
     assert result["page_url"] == "https://zhuanlan.zhihu.com/p/123"
+
+
+def test_publication_sync_locks_row_before_remote_status_update() -> None:
+    publication = SeoContentPublication(
+        id=12, tenant_id=1, content_asset_id=5, connection_id=9,
+        platform_code="wechat_official", platform_name="微信公众号",
+        publish_mode="publish", status="publishing", source_version=2,
+        external_id="media-1",
+    )
+    content = SeoContentAsset(
+        id=5, tenant_id=1, site_id=8, content_type="article",
+        title="测试文章", draft="<p>正文</p>", status="ready", version_count=2,
+    )
+    connection = SeoDistributionConnection(
+        id=9, tenant_id=1, platform_code="wechat_official", name="公众号",
+        mode="api", enabled=True, status="connected", has_credentials=True,
+    )
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=publication)
+    session.add = MagicMock()
+    session.flush = AsyncMock()
+    session.commit = AsyncMock()
+    remote = distribution.RemotePublishResult(
+        status="published", external_id="publish-1",
+        page_url="https://mp.weixin.qq.com/s/example",
+        response_summary={"publish_id": "publish-1"},
+    )
+
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
+        patch("app.api.seo._distribution_connection", new=AsyncMock(return_value=connection)),
+        patch("app.api.seo.decrypt_credentials", return_value={"app_id": "id", "app_secret": "secret"}),
+        patch("app.api.seo.sync_publish_status", new=AsyncMock(return_value=remote)),
+    ):
+        result = asyncio.run(sync_content_publication(12, 1, 8, session, AuthContext(
+            user_id=7, username="operator", role_name="运营", tenant_id=1,
+            permissions={"seo.content": "edit"},
+        )))
+
+    session.get.assert_awaited_once_with(
+        SeoContentPublication, 12, with_for_update=True
+    )
+    session.flush.assert_awaited_once()
+    assert session.commit.await_count == 1
+    assert publication.status == "published"
+    assert result["external_id"] == "publish-1"
 
 
 def test_distribution_migration_backfills_legacy_links_and_is_linear() -> None:

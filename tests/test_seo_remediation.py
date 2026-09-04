@@ -328,12 +328,51 @@ def test_quota_reserve_singleflight_refund_and_date(monkeypatch):
     assert module.module_settings['other_module_setting'] == 'preserve'
 
 
+def test_quota_counts_each_ai_candidate_and_refunds_the_full_failed_batch(monkeypatch):
+    monkeypatch.setattr(
+        service,
+        'now_cst',
+        lambda: datetime(2026, 9, 3, tzinfo=ZoneInfo('Asia/Shanghai')),
+    )
+    module = SimpleNamespace(module_settings={})
+    session = session_for(module)
+
+    reservation = asyncio.run(service.reserve(session, 1, units=20))
+    state = module.module_settings[service.USAGE_KEY]
+    assert state['used'] == 20 and state['reserved_units'] == 20
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(service.reserve(session, 1, units=1))
+    assert exc.value.status_code == 429
+
+    assert asyncio.run(service.settle(session, 1, reservation, success=False)) is True
+    state = module.module_settings[service.USAGE_KEY]
+    assert state['used'] == 0 and 'reserved_units' not in state
+
+
+@pytest.mark.parametrize('units', [0, 21, True])
+def test_quota_rejects_invalid_candidate_units(units):
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(service.reserve(session_for(SimpleNamespace(module_settings={})), 1, units=units))
+    assert exc.value.status_code == 422
+
+
 @pytest.mark.parametrize('state', [{'used':20}, {'used':0, 'attempts':100}])
 def test_daily_limits(monkeypatch, state):
     monkeypatch.setattr(service, 'now_cst', lambda: datetime(2026, 9, 3, tzinfo=ZoneInfo('Asia/Shanghai')))
     module = SimpleNamespace(module_settings={service.USAGE_KEY: {'date':'2026-09-03', **state}})
     with pytest.raises(HTTPException) as exc: asyncio.run(service.reserve(session_for(module), 1))
     assert exc.value.status_code == 429
+
+
+def test_weighted_quota_rejects_batch_that_would_cross_daily_limit(monkeypatch):
+    monkeypatch.setattr(service, 'now_cst', lambda: datetime(2026, 9, 3, tzinfo=ZoneInfo('Asia/Shanghai')))
+    module = SimpleNamespace(module_settings={service.USAGE_KEY: {
+        'date': '2026-09-03', 'used': 19, 'attempts': 3,
+    }})
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(service.reserve(session_for(module), 1, units=2))
+    assert exc.value.status_code == 429
+    assert module.module_settings[service.USAGE_KEY]['used'] == 19
 
 
 def ctx(**kw):

@@ -23,10 +23,12 @@ from app.seo_ranking_jobs import (
     _collection_due,
     _engine_interval_days,
     _group_keyword_ids_by_site,
+    _isolated_tenant_session,
     _latest_successful_collections,
     _limited_batches,
     _local_day_start_utc,
     _rotate_daily,
+    _rollback_tenant_session,
     _scheduled_health_summary,
     _scheduled_rank_engines,
     collect_daily_seo_rankings,
@@ -35,6 +37,34 @@ from app.seo_scheduler import shutdown_seo_scheduler, start_seo_scheduler
 
 
 class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_tenant_session_contains_body_and_exit_failures(self):
+        session = SimpleNamespace()
+
+        class BrokenExitContext:
+            async def __aenter__(self):
+                return session
+
+            async def __aexit__(self, *_args):
+                raise RuntimeError("connection lost during close")
+
+        with patch(
+            "app.seo_ranking_jobs.async_session_factory",
+            return_value=BrokenExitContext(),
+        ):
+            async with _isolated_tenant_session(7) as actual:
+                self.assertIs(actual, session)
+
+    async def test_failed_rollback_is_contained_inside_tenant_session(self):
+        session = SimpleNamespace(
+            rollback=AsyncMock(side_effect=RuntimeError("connection lost")),
+            close=AsyncMock(),
+        )
+
+        await _rollback_tenant_session(session, 7)
+
+        session.rollback.assert_awaited_once()
+        session.close.assert_awaited_once()
+
     def test_default_rank_schedule_enables_domestic_cadence(self):
         defaults = Settings.model_fields
         self.assertEqual(
@@ -229,7 +259,7 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
             patch(
                 "app.seo_ranking_jobs.async_session_factory",
                 return_value=SessionContext(),
-            ),
+            ) as session_factory,
             patch(
                 "app.api.seo.collect_rank_serp_for_tenant",
                 new=AsyncMock(),
@@ -244,6 +274,7 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
 
         collector.assert_not_awaited()
         start_run.assert_not_awaited()
+        self.assertEqual(session_factory.call_count, 2)
 
     async def test_disabled_collection_does_not_take_run_lock(self):
         settings = SimpleNamespace(seo_rank_scheduler_enabled=False)
@@ -587,7 +618,7 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
             patch("app.seo_scheduler.seo_scheduler.start") as scheduler_start,
         ):
             start_seo_scheduler()
-        self.assertEqual(add_job.call_count, 4)
+        self.assertEqual(add_job.call_count, 5)
         self.assertEqual(
             {call.kwargs["id"] for call in add_job.call_args_list},
             {
@@ -595,6 +626,7 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
                 "collect_scheduled_seo_competitors",
                 "verify_scheduled_seo_backlinks",
                 "fail_stale_seo_crawl_runs",
+                "prune_old_seo_single_page_snapshots",
             },
         )
         scheduler_start.assert_called_once_with()

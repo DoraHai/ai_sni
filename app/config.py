@@ -146,6 +146,10 @@ class Settings(BaseSettings):
     seo_ai_max_requests_per_tenant_per_day: int = 100
     seo_competitor_scheduler_max_per_run: int = 50
     seo_backlink_scheduler_max_per_run: int = 200
+    # 单页检测证据保留：旧记录分批清理，人工图片审核引用永不自动删除。
+    seo_snapshot_retention_days: int = Field(30, ge=1, le=3650)
+    seo_snapshot_retention_min_per_url: int = Field(10, ge=1, le=100)
+    seo_snapshot_retention_batch_size: int = Field(1000, ge=1, le=10000)
 
     # SEO multi-engine live SERP. Credentials are server-only and never stored per site.
     seo_dataforseo_login: str = ""

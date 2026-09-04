@@ -3,8 +3,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.seo_crawler import FetchResult, SeoCrawlError
-from app.urlwords import UrlFetchError, extract_words, fetch_page_text
+from app.seo_crawler import FetchResult, SeoCrawlError, USER_AGENT
+from app.urlwords import UA, UrlFetchError, extract_words, fetch_page_text
+
+
+def test_legacy_geo_user_agent_alias_uses_hardened_crawler_identity() -> None:
+    assert UA == USER_AGENT
 
 
 def _fetch_result(*, error_type: str | None = None) -> FetchResult:
