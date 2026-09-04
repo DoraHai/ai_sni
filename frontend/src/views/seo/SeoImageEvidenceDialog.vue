@@ -46,6 +46,12 @@ const scopeIsCurrent = value => value.tenantId === props.tenantId && value.siteI
 const stateLabel = state => ({ missing: '缺少 Alt 属性', empty: '空 Alt（需判断用途）', whitespace: 'Alt 仅含空白' }[state] || '未知')
 const time = value => value ? new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) + ' CST' : '—'
 const historyLabel = row => `快照 #${row.snapshot_id} · ${time(row.fetched_at)} · 已审核 ${row.approved_count}/${row.candidate_count}`
+function changeSnapshot(snapshotId) {
+  filter.value = 'all'
+  reviewFilter.value = 'all'
+  focusedOnly.value = false
+  load(snapshotId)
+}
 async function load(snapshotId = null) {
   const token = ++generation
   data.value = null; reusePreview.value = null; error.value = ''; loading.value = false
@@ -121,6 +127,7 @@ async function copyPrevious() {
     if (!scopeIsCurrent(active)) return
     const message = `已复制 ${result.copied} 条为草稿；跳过已有 ${result.skipped_existing} 条、无法唯一匹配 ${result.skipped_ambiguous} 条`
     result.copied ? ElMessage.success(message) : ElMessage.warning(message)
+    if (result.copied) { focusedOnly.value = false; reviewFilter.value = 'draft'; filter.value = 'all' }
     await load(active.snapshotId)
   } catch (e) {
     if (scopeIsCurrent(active) && e !== 'cancel' && e !== 'close') ElMessage.error(e.message || '复制失败，请重试')
@@ -145,6 +152,7 @@ async function reuseAcrossPages() {
     if (!scopeIsCurrent(active)) return
     const message = `已复用 ${result.copied} 条为草稿；跳过已有 ${result.skipped_existing} 条、重复或冲突 ${result.skipped_ambiguous} 条`
     result.copied ? ElMessage.success(message) : ElMessage.warning(message)
+    if (result.copied) { focusedOnly.value = false; reviewFilter.value = 'draft'; filter.value = 'all' }
     await load(active.snapshotId)
   } catch (e) {
     if (scopeIsCurrent(active) && e !== 'cancel' && e !== 'close') ElMessage.error(e.message || '复用失败，请重试')
@@ -204,7 +212,7 @@ function exportAuditRecords() {
     <el-alert v-else-if="error" :title="error" type="error" :closable="false" />
     <template v-else-if="data">
       <p>存档抓取时间：{{ time(data.fetched_at) }}<span v-if="data.snapshot_id"> · 快照 #{{ data.snapshot_id }}</span></p>
-      <div v-if="history.length" class="history-toolbar"><span>历史快照</span><el-select v-model="selectedSnapshotId" aria-label="图片整改历史快照" @change="load"><el-option v-for="row in history" :key="row.snapshot_id" :label="historyLabel(row)" :value="row.snapshot_id" /></el-select></div>
+      <div v-if="history.length" class="history-toolbar"><span>历史快照</span><el-select v-model="selectedSnapshotId" aria-label="图片整改历史快照" @change="changeSnapshot"><el-option v-for="row in history" :key="row.snapshot_id" :label="historyLabel(row)" :value="row.snapshot_id" /></el-select></div>
       <el-alert v-if="isHistorical" title="当前查看历史快照，仅供追溯和导出；不能修改历史审核记录。" type="info" :closable="false" />
       <el-alert v-if="data.fetch_error" title="最近抓取失败，不能据此判断图片情况；未回退展示旧成功记录。" type="warning" :closable="false" />
       <p v-else-if="!evidence">{{ data.snapshot_id ? '旧存档未记录逐图明细，可对本页执行一次成功检测后补齐，无需全站扫描。' : '尚无抓取存档，可对本页执行检测后查看图片明细。' }}<span v-if="data.legacy_candidate_count != null">旧计数：{{ data.legacy_candidate_count }}（不代表全部需要修改）。</span></p>
