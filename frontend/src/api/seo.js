@@ -309,16 +309,24 @@ export function assistSeoContent(payload) {
   return client.post('/api/v1/seo/content-ai/assist', payload, { timeout: 100000 })
 }
 
-export function fetchSeoImageEvidence({ tenantId, siteId, pageId }) {
-  return client.get('/api/v1/seo/site-pages/image-evidence', { params: { tenant_id: tenantId, site_id: siteId, page_id: pageId } })
+export function fetchSeoImageEvidence({ tenantId, siteId, pageId, snapshotId }) {
+  return client.get('/api/v1/seo/site-pages/image-evidence', { params: { tenant_id: tenantId, site_id: siteId, page_id: pageId, snapshot_id: snapshotId || undefined } })
 }
 
-export function fetchSeoImageRemediation({ tenantId, siteId, pageId }) {
-  return client.get('/api/v1/seo/site-pages/image-remediation', { params: { tenant_id: tenantId, site_id: siteId, page_id: pageId } })
+export function fetchSeoImageRemediation({ tenantId, siteId, pageId, snapshotId }) {
+  return client.get('/api/v1/seo/site-pages/image-remediation', { params: { tenant_id: tenantId, site_id: siteId, page_id: pageId, snapshot_id: snapshotId || undefined } })
 }
 
 export function saveSeoImageRemediation(payload) {
   return client.put('/api/v1/seo/site-pages/image-remediation', payload)
+}
+
+export function fetchSeoImageRemediationHistory({ tenantId, siteId, pageId, beforeSnapshotId, limit = 20 }) {
+  return client.get('/api/v1/seo/site-pages/image-remediation-history', { params: { tenant_id: tenantId, site_id: siteId, page_id: pageId, before_snapshot_id: beforeSnapshotId || undefined, limit } })
+}
+
+export function copySeoImageRemediation(payload) {
+  return client.post('/api/v1/seo/site-pages/image-remediation/copy', payload)
 }
 
 export function previewSeoRemediation(payload) {

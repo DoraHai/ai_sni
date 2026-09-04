@@ -1,5 +1,6 @@
 """SEO-only diagnostic review; all writes are local, append-only intent records."""
 
+from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from typing import Literal
 
@@ -79,6 +80,7 @@ async def list_diagnostics(
 async def get_image_evidence(
     tenant_id: PositiveInt, site_id: PositiveInt, page_id: PositiveInt,
     ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session),
+    snapshot_id: PositiveInt | None = None,
 ):
     await _scope(session, ctx, tenant_id, site_id)
     page = await session.scalar(select(SeoSitePage).where(
@@ -87,10 +89,18 @@ async def get_image_evidence(
     if page is None:
         raise HTTPException(404, "页面不存在")
     # Do not fall back to an older successful observation if the latest failed.
-    snapshot = await session.scalar(select(SeoPageSnapshot).where(
+    snapshot_query = select(SeoPageSnapshot).where(
         SeoPageSnapshot.tenant_id == tenant_id, SeoPageSnapshot.site_id == site_id,
         SeoPageSnapshot.url == page.url,
-    ).order_by(SeoPageSnapshot.fetched_at.desc(), SeoPageSnapshot.id.desc()).limit(1))
+    )
+    if snapshot_id is not None:
+        snapshot_query = snapshot_query.where(SeoPageSnapshot.id == snapshot_id)
+    else:
+        snapshot_query = snapshot_query.order_by(
+            SeoPageSnapshot.fetched_at.desc(), SeoPageSnapshot.id.desc()).limit(1)
+    snapshot = await session.scalar(snapshot_query)
+    if snapshot_id is not None and snapshot is None:
+        raise HTTPException(404, "图片快照不存在")
     fetch_error = None
     fetched_at = None
     if snapshot is not None:
@@ -134,13 +144,32 @@ async def _page_and_latest_snapshot(session, tenant_id, site_id, page_id, *, loc
     return page, snapshot
 
 
+async def _page_and_snapshot(session, tenant_id, site_id, page_id, snapshot_id):
+    page = await session.scalar(select(SeoSitePage).where(
+        SeoSitePage.id == page_id, SeoSitePage.tenant_id == tenant_id, SeoSitePage.site_id == site_id,
+    ))
+    if page is None:
+        raise HTTPException(404, "页面不存在")
+    snapshot = await session.scalar(select(SeoPageSnapshot).where(
+        SeoPageSnapshot.id == snapshot_id, SeoPageSnapshot.tenant_id == tenant_id,
+        SeoPageSnapshot.site_id == site_id, SeoPageSnapshot.url == page.url,
+    ))
+    if snapshot is None:
+        raise HTTPException(404, "图片快照不存在")
+    return page, snapshot
+
+
 @router.get("/site-pages/image-remediation")
 async def get_image_remediation(
     tenant_id: PositiveInt, site_id: PositiveInt, page_id: PositiveInt,
     ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session),
+    snapshot_id: PositiveInt | None = None,
 ):
     await _scope(session, ctx, tenant_id, site_id)
-    _, snapshot = await _page_and_latest_snapshot(session, tenant_id, site_id, page_id)
+    if snapshot_id is None:
+        _, snapshot = await _page_and_latest_snapshot(session, tenant_id, site_id, page_id)
+    else:
+        _, snapshot = await _page_and_snapshot(session, tenant_id, site_id, page_id, snapshot_id)
     if snapshot is None or snapshot.error_type or not snapshot.image_alt_evidence:
         return {"snapshot_id": snapshot.id if snapshot else None, "items": []}
     reviews = list(await session.scalars(select(SeoImageAltReview).where(
@@ -148,6 +177,62 @@ async def get_image_remediation(
         SeoImageAltReview.page_id == page_id, SeoImageAltReview.snapshot_id == snapshot.id,
     ).order_by(SeoImageAltReview.position)))
     return {"snapshot_id": snapshot.id, "items": [image_review_payload(row) for row in reviews]}
+
+
+def _image_snapshot_time(snapshot):
+    value = snapshot.fetched_at
+    if value is not None and value.tzinfo is None:
+        value = value.replace(tzinfo=timezone(timedelta(hours=8)))
+    return value.isoformat() if value else None
+
+
+@router.get("/site-pages/image-remediation-history")
+async def list_image_remediation_history(
+    tenant_id: PositiveInt, site_id: PositiveInt, page_id: PositiveInt,
+    before_snapshot_id: PositiveInt | None = None,
+    limit: int = Query(20, ge=1, le=50),
+    ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session),
+):
+    await _scope(session, ctx, tenant_id, site_id)
+    page, current = await _page_and_latest_snapshot(session, tenant_id, site_id, page_id)
+    query = select(SeoPageSnapshot).where(
+        SeoPageSnapshot.tenant_id == tenant_id, SeoPageSnapshot.site_id == site_id,
+        SeoPageSnapshot.url == page.url, SeoPageSnapshot.image_alt_evidence.is_not(None),
+    )
+    if before_snapshot_id is not None:
+        query = query.where(SeoPageSnapshot.id < before_snapshot_id)
+    snapshots = list(await session.scalars(query.order_by(
+        SeoPageSnapshot.fetched_at.desc(), SeoPageSnapshot.id.desc()).limit(limit + 1)))
+    visible = snapshots[:limit]
+    snapshot_ids = [row.id for row in visible]
+    reviews = []
+    if snapshot_ids:
+        reviews = list(await session.scalars(select(SeoImageAltReview).where(
+            SeoImageAltReview.tenant_id == tenant_id, SeoImageAltReview.site_id == site_id,
+            SeoImageAltReview.page_id == page_id,
+            SeoImageAltReview.snapshot_id.in_(snapshot_ids),
+        ).order_by(SeoImageAltReview.snapshot_id.desc(), SeoImageAltReview.position)))
+    grouped = defaultdict(list)
+    for review in reviews:
+        grouped[review.snapshot_id].append(review)
+    items = []
+    for snapshot in visible:
+        evidence = snapshot.image_alt_evidence if isinstance(snapshot.image_alt_evidence, dict) else {}
+        saved = grouped[snapshot.id]
+        items.append({
+            "snapshot_id": snapshot.id,
+            "fetched_at": _image_snapshot_time(snapshot),
+            "candidate_count": int(evidence.get("candidate_count") or len(evidence.get("items", []))),
+            "saved_count": len(saved),
+            "approved_count": sum(row.review_status == "approved" for row in saved),
+            "draft_count": sum(row.review_status == "draft" for row in saved),
+            "is_current": bool(current and current.id == snapshot.id),
+        })
+    return {
+        "current_snapshot_id": current.id if current else None,
+        "items": items,
+        "next_before_snapshot_id": visible[-1].id if len(snapshots) > limit and visible else None,
+    }
 
 
 class ImageAltReviewUpdate(BaseModel):
@@ -219,6 +304,139 @@ async def save_image_remediation(
     await session.commit()
     await session.refresh(row)
     return image_review_payload(row)
+
+
+class ImageAltReviewCopy(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt
+    page_id: PositiveInt
+    expected_snapshot_id: PositiveInt
+    source_snapshot_id: PositiveInt
+
+
+_IMAGE_FINGERPRINT_FIELDS = (
+    "source_url", "source_attribute", "srcset", "section", "element_id",
+    "in_link", "role", "alt_state",
+)
+
+
+def _image_fingerprint(candidate):
+    if not isinstance(candidate, dict):
+        return None
+    return tuple(candidate.get(field) for field in _IMAGE_FINGERPRINT_FIELDS)
+
+
+def _unique_candidates(evidence):
+    grouped = defaultdict(list)
+    items = evidence.get("items", []) if isinstance(evidence, dict) else []
+    for candidate in items:
+        fingerprint = _image_fingerprint(candidate)
+        if fingerprint is not None:
+            grouped[fingerprint].append(candidate)
+    return {fingerprint: rows[0] for fingerprint, rows in grouped.items() if len(rows) == 1}
+
+
+@router.post("/site-pages/image-remediation/copy")
+async def copy_image_remediation(
+    req: ImageAltReviewCopy, ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+):
+    await _scope(session, ctx, req.tenant_id, req.site_id, write=True)
+    if ctx.user_id is None:
+        raise HTTPException(403, "图片整改记录必须由已登录的真实用户复制")
+    page, target = await _page_and_latest_snapshot(
+        session, req.tenant_id, req.site_id, req.page_id, lock_page=True)
+    if target is None or target.id != req.expected_snapshot_id:
+        raise HTTPException(409, "图片证据已更新，请重新读取后确认")
+    if req.source_snapshot_id == target.id:
+        raise HTTPException(422, "请选择较早的图片快照")
+    source = await session.scalar(select(SeoPageSnapshot).where(
+        SeoPageSnapshot.id == req.source_snapshot_id,
+        SeoPageSnapshot.tenant_id == req.tenant_id,
+        SeoPageSnapshot.site_id == req.site_id,
+        SeoPageSnapshot.url == page.url,
+    ))
+    if source is None or source.error_type or not source.image_alt_evidence:
+        raise HTTPException(404, "来源图片快照不存在或没有可复用证据")
+    if (source.fetched_at, source.id) >= (target.fetched_at, target.id):
+        raise HTTPException(422, "来源图片快照必须早于当前快照")
+    if target.error_type or not target.image_alt_evidence:
+        raise HTTPException(409, "当前图片快照没有可审核证据")
+
+    source_candidates = _unique_candidates(source.image_alt_evidence)
+    target_candidates = _unique_candidates(target.image_alt_evidence)
+    source_by_position = {
+        item.get("position"): item
+        for item in source.image_alt_evidence.get("items", [])
+        if isinstance(item, dict)
+    }
+    approved = list(await session.scalars(select(SeoImageAltReview).where(
+        SeoImageAltReview.tenant_id == req.tenant_id,
+        SeoImageAltReview.site_id == req.site_id,
+        SeoImageAltReview.page_id == req.page_id,
+        SeoImageAltReview.snapshot_id == source.id,
+        SeoImageAltReview.review_status == "approved",
+        SeoImageAltReview.decision.in_(("decorative", "informative")),
+    ).order_by(SeoImageAltReview.position)))
+    existing = list(await session.scalars(select(SeoImageAltReview).where(
+        SeoImageAltReview.tenant_id == req.tenant_id,
+        SeoImageAltReview.site_id == req.site_id,
+        SeoImageAltReview.page_id == req.page_id,
+        SeoImageAltReview.snapshot_id == target.id,
+    ).with_for_update()))
+    existing_positions = {row.position for row in existing}
+    now = datetime.now(timezone.utc)
+    copied = []
+    skipped_ambiguous = 0
+    skipped_existing = 0
+    for prior in approved:
+        source_candidate = source_by_position.get(prior.position)
+        fingerprint = _image_fingerprint(source_candidate)
+        if (fingerprint is None or source_candidates.get(fingerprint) is not source_candidate
+                or fingerprint not in target_candidates):
+            skipped_ambiguous += 1
+            continue
+        if (prior.observed_alt_state != source_candidate.get("alt_state")
+                or prior.source_url != source_candidate.get("source_url")
+                or (prior.decision == "informative" and not prior.alt_suggestion)):
+            skipped_ambiguous += 1
+            continue
+        target_candidate = target_candidates[fingerprint]
+        target_position = target_candidate.get("position")
+        if not isinstance(target_position, int) or target_position <= 0:
+            skipped_ambiguous += 1
+            continue
+        if target_position in existing_positions:
+            skipped_existing += 1
+            continue
+        provenance = f"复制自快照 #{source.id}，需核对当前图片后重新审核"
+        note = f"{provenance}；{prior.note}" if prior.note else provenance
+        row = SeoImageAltReview(
+            tenant_id=req.tenant_id, site_id=req.site_id, page_id=req.page_id,
+            snapshot_id=target.id, position=target_position,
+            source_url=target_candidate.get("source_url"),
+            observed_alt_state=target_candidate.get("alt_state"),
+            decision=prior.decision,
+            alt_suggestion=prior.alt_suggestion if prior.decision == "informative" else None,
+            note=note[:1000], review_status="draft",
+            actor_id=ctx.user_id, actor_name=ctx.username,
+            reviewed_at=now, updated_at=now,
+        )
+        session.add(row)
+        copied.append(target_position)
+        existing_positions.add(target_position)
+    if copied:
+        await session.commit()
+    return {
+        "source_snapshot_id": source.id,
+        "target_snapshot_id": target.id,
+        "approved_source_count": len(approved),
+        "copied": len(copied),
+        "copied_positions": sorted(copied),
+        "skipped_existing": skipped_existing,
+        "skipped_ambiguous": skipped_ambiguous,
+        "review_status": "draft",
+    }
 
 
 class IndexReviewCreate(BaseModel):
