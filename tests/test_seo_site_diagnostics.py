@@ -13,6 +13,7 @@ from app.api.seo_site_diagnostics import (
     ImageAltReviewCopy, ImageAltReviewReuse, ImageAltReviewUpdate, IndexReviewCreate,
     copy_image_remediation,
     create_index_review, get_image_remediation, list_diagnostics,
+    list_image_remediation_workbench,
     list_image_remediation_history, list_index_reviews, get_image_evidence,
     preview_cross_page_image_remediation_reuse, reuse_cross_page_image_remediation,
     save_image_remediation,
@@ -185,7 +186,7 @@ def test_listing_is_scoped_paged_and_keeps_latest_human_intent():
 
 def test_routes_use_seo_site_permissions_and_parent_subscription_guard():
     from app.api.seo import router, require_seo_module_access
-    for suffix, method in [("diagnostics", "GET"), ("index-reviews", "POST"), ("index-reviews", "GET"), ("image-evidence", "GET"), ("image-remediation", "GET"), ("image-remediation", "PUT"), ("image-remediation-history", "GET"), ("image-remediation/copy", "POST"), ("image-remediation-reuse-preview", "GET"), ("image-remediation/reuse", "POST")]:
+    for suffix, method in [("diagnostics", "GET"), ("index-reviews", "POST"), ("index-reviews", "GET"), ("image-evidence", "GET"), ("image-remediation", "GET"), ("image-remediation", "PUT"), ("image-remediation-workbench", "GET"), ("image-remediation-history", "GET"), ("image-remediation/copy", "POST"), ("image-remediation-reuse-preview", "GET"), ("image-remediation/reuse", "POST")]:
         path = f"/api/v1/seo/site-pages/{suffix}"
         assert _required(path, method) == ({"seo.site"}, method in {"POST", "PUT"})
         route = next(r for r in router.routes if r.path == path and method in r.methods)
@@ -254,6 +255,41 @@ def image_snapshot(snapshot_id=12, fetched_at=None, items=None):
         fetched_at=fetched_at or datetime(2026, 9, 4, 3, 0),
         image_alt_evidence={"candidate_count": len(candidates), "items": candidates},
     )
+
+
+def test_image_remediation_workbench_uses_only_latest_scoped_snapshots_and_filters():
+    pages = [page(id=231, url="https://example.com/a", title="A"),
+             page(id=232, url="https://example.com/b", title="B")]
+    candidate_a = {"position": 1, "source_url": "https://cdn.example/a.png", "section": "main", "alt_state": "missing"}
+    candidate_old = {"position": 9, "source_url": "https://cdn.example/old.png", "section": "footer", "alt_state": "empty"}
+    candidate_b = {"position": 2, "source_url": "https://cdn.example/b.png", "section": "main", "alt_state": "empty"}
+    latest_a = image_snapshot(22, items=[candidate_a]); latest_a.url = pages[0].url; latest_a.status_code = 200
+    old_a = image_snapshot(21, items=[candidate_old]); old_a.url = pages[0].url; old_a.status_code = 200
+    latest_b = image_snapshot(23, items=[candidate_b]); latest_b.url = pages[1].url; latest_b.status_code = 200
+    approved = SimpleNamespace(
+        id=8, snapshot_id=22, position=1, source_url=candidate_a["source_url"],
+        observed_alt_state="missing", decision="informative", alt_suggestion="产品图",
+        note="人工确认", review_status="approved", actor_id=7, actor_name="operator",
+        reviewed_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+    )
+    db = AsyncMock(); db.scalar.side_effect = [1]
+    db.scalars.side_effect = [pages, [latest_a, latest_b], [approved]]
+    result = asyncio.run(list_image_remediation_workbench(
+        1, 1, "", "approved", "informative", 1, 50, context(), db))
+    assert result["total"] == 1 and result["items"][0]["snapshot_id"] == 22
+    assert result["stats"] == {
+        "page_count": 2, "candidate_count": 2, "unreviewed_count": 1,
+        "draft_count": 0, "approved_count": 1,
+        "informative_approved_count": 1, "decorative_approved_count": 0,
+    }
+    assert all(row["position"] != 9 for row in result["items"])
+    for query in db.scalars.call_args_list:
+        sql = str(query.args[0].compile(dialect=postgresql.dialect()))
+        if "seo_site_pages" in sql or "seo_page_snapshots" in sql or "seo_image_alt_reviews" in sql:
+            assert "tenant_id" in sql and "site_id" in sql
+    snapshot_sql = str(db.scalars.call_args_list[1].args[0].compile(dialect=postgresql.dialect()))
+    assert "row_number() OVER" in snapshot_sql and "latest_rank" in snapshot_sql
+    db.commit.assert_not_awaited()
 
 
 def image_review_request(**values):

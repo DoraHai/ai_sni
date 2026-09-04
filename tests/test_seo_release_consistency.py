@@ -312,6 +312,21 @@ def test_seo_workflows_require_the_current_reviewed_migration_head() -> None:
     assert "0078_seo_site_data_repairs (head)" not in production
 
 
+def test_seo_workflows_use_osv_lockfile_gate_without_implicit_npm_audits() -> None:
+    root = Path(__file__).parents[1]
+    baseline = (root / ".github/workflows/seo-baseline-check.yml").read_text(encoding="utf-8")
+    backend_deploy = (root / ".github/workflows/production-seo-deploy.yml").read_text(encoding="utf-8")
+    frontend_deploy = (root / ".github/workflows/production-seo-frontend-deploy.yml").read_text(encoding="utf-8")
+
+    assert "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@0c58c542420dfd23fcac08dd9c8ca3cca9c36f1a" in baseline
+    assert "--lockfile=./frontend/package-lock.json" in baseline
+    assert "fail-on-vuln: true" in baseline
+    for workflow in (baseline, backend_deploy, frontend_deploy):
+        assert 'node-version: "24"' in workflow
+        assert "npm ci --no-audit" in workflow
+        assert "npm audit" not in workflow
+
+
 def test_seo_release_and_deploy_use_production_branch_authority() -> None:
     root = Path(__file__).parents[1]
     baseline = (root / ".github/workflows/seo-baseline-check.yml").read_text(encoding="utf-8")
