@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAccountBudget, setAccountBudget } from '../../api/manage'
+import { WRITEBACK_CONFIRMATION } from '../../api/writeback'
 import { session } from '../../store/session'
 
 const TENANT_ID = computed(() => session.tenantId) // 当前客户，顶栏切换器驱动
@@ -76,6 +77,7 @@ async function save() {
       tenantId: TENANT_ID.value,
       baiduAccountId: selectedAccountId.value,
       budget: v,
+      confirmation: WRITEBACK_CONFIRMATION,
     })
     if (res.status === 'dry_run') {
       ElMessage.success(`已加入待回写：日预算 ${fmtMoney(res.old_budget)} → ${fmtMoney(res.new_budget)}（百度账户未修改）`)
