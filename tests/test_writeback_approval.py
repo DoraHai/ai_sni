@@ -123,6 +123,11 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["approval"]["status"], "approved")
         self.assertEqual(result["approval"]["requested_by"], 9)
         self.assertEqual(result["approval"]["approved_by"], 9)
+        self.assertIsNotNone(session.row.decided_at)
+        self.assertLess(
+            abs((_shanghai_now_naive() - session.row.decided_at).total_seconds()),
+            5,
+        )
         session.commit.assert_awaited_once()
 
     async def test_one_click_confirmation_creates_parameter_bound_audit_row(self):

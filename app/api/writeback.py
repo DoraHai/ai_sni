@@ -17,6 +17,7 @@ from app.baidu.writeback_approval import (
     WRITEBACK_CONFIRMATION,
     WritebackApprovalError,
     payload_fingerprint,
+    shanghai_now_naive,
 )
 from app.config import SEM_CUSTOMER_LIVE_WRITE_SCOPES, get_settings
 from app.database import get_session
@@ -181,7 +182,7 @@ async def request_writeback_approval(
         requested_by=ctx.user_id,
         approved_by=None if legacy_pending else ctx.user_id,
         decision_note=None if legacy_pending else "本人二次确认",
-        decided_at=None if legacy_pending else datetime.utcnow(),
+        decided_at=None if legacy_pending else shanghai_now_naive(),
     )
     session.add(row)
     await session.commit()

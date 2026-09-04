@@ -861,6 +861,19 @@ def _parse_opt_time(v: Any) -> datetime | None:
     return _parse_baidu_time(v)
 
 
+def _operation_record_dedup_key(
+    baidu_account_id: int, fields: tuple[str, ...]
+) -> str:
+    """Keep otherwise identical records from different Baidu accounts distinct."""
+    material = (str(baidu_account_id), *fields)
+    return hashlib.md5("|".join(material).encode("utf-8")).hexdigest()
+
+
+def _legacy_operation_record_dedup_key(fields: tuple[str, ...]) -> str:
+    """Return the pre-account-scoping key for a safe, duplicate-free transition."""
+    return hashlib.md5("|".join(fields).encode("utf-8")).hexdigest()
+
+
 async def sync_operation_records_for_account(
     session: AsyncSession,
     baidu_account: BaiduAccount,
@@ -903,7 +916,7 @@ async def sync_operation_records_for_account(
             str(r.get("planId")),
             str(r.get("unitId")),
         )
-        dedup = hashlib.md5("|".join(fields).encode("utf-8")).hexdigest()
+        dedup = _operation_record_dedup_key(baidu_account.id, fields)
         if dedup in seen:  # 同批内完全相同的行（同秒同操作），无法区分，保留一条
             continue
         seen.add(dedup)
@@ -921,9 +934,36 @@ async def sync_operation_records_for_account(
                 "plan_id": _to_int(r.get("planId")),
                 "unit_id": _to_int(r.get("unitId")),
                 "dedup_key": dedup,
+                "_legacy_dedup_key": _legacy_operation_record_dedup_key(fields),
                 "synced_at": now,
             }
         )
+    if not records:
+        return 0
+
+    # Existing rows use the legacy tenant-wide hash. Skip only legacy rows that
+    # belong to this same account; an identical row from another account must be
+    # allowed through with the new account-scoped hash.
+    existing_legacy_keys: set[str] = set()
+    legacy_keys = [record["_legacy_dedup_key"] for record in records]
+    for i in range(0, len(legacy_keys), UPSERT_CHUNK):
+        chunk = legacy_keys[i : i + UPSERT_CHUNK]
+        existing_legacy_keys.update(
+            (
+                await session.scalars(
+                    select(OperationRecord.dedup_key).where(
+                        OperationRecord.tenant_id == baidu_account.tenant_id,
+                        OperationRecord.baidu_account_id == baidu_account.id,
+                        OperationRecord.dedup_key.in_(chunk),
+                    )
+                )
+            ).all()
+        )
+    records = [
+        {key: value for key, value in record.items() if key != "_legacy_dedup_key"}
+        for record in records
+        if record["_legacy_dedup_key"] not in existing_legacy_keys
+    ]
     if not records:
         return 0
 
