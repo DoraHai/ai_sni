@@ -10,8 +10,10 @@ from pydantic import ValidationError
 from sqlalchemy.dialects import postgresql
 
 from app.api.seo_site_diagnostics import (
-    ImageAltReviewUpdate, IndexReviewCreate, create_index_review, get_image_remediation,
-    list_diagnostics, list_index_reviews, get_image_evidence, save_image_remediation,
+    ImageAltReviewCopy, ImageAltReviewUpdate, IndexReviewCreate, copy_image_remediation,
+    create_index_review, get_image_remediation, list_diagnostics,
+    list_image_remediation_history, list_index_reviews, get_image_evidence,
+    save_image_remediation,
 )
 from app.models.seo import SeoImageAltReview, SeoPageIndexReview, SeoSitePage
 from app.security.auth import AuthContext, _required
@@ -181,7 +183,7 @@ def test_listing_is_scoped_paged_and_keeps_latest_human_intent():
 
 def test_routes_use_seo_site_permissions_and_parent_subscription_guard():
     from app.api.seo import router, require_seo_module_access
-    for suffix, method in [("diagnostics", "GET"), ("index-reviews", "POST"), ("index-reviews", "GET"), ("image-evidence", "GET"), ("image-remediation", "GET"), ("image-remediation", "PUT")]:
+    for suffix, method in [("diagnostics", "GET"), ("index-reviews", "POST"), ("index-reviews", "GET"), ("image-evidence", "GET"), ("image-remediation", "GET"), ("image-remediation", "PUT"), ("image-remediation-history", "GET"), ("image-remediation/copy", "POST")]:
         path = f"/api/v1/seo/site-pages/{suffix}"
         assert _required(path, method) == ({"seo.site"}, method in {"POST", "PUT"})
         route = next(r for r in router.routes if r.path == path and method in r.methods)
@@ -232,10 +234,24 @@ def test_image_evidence_no_snapshot_is_unknown():
     assert result["legacy_candidate_count"] is None
 
 
-def image_snapshot(snapshot_id=12):
-    return SimpleNamespace(id=snapshot_id, error_type=None, image_alt_evidence={"items": [
-        {"position": 2, "source_url": "https://cdn.example/a.webp", "alt_state": "empty"},
-    ]})
+def test_image_evidence_explicit_unknown_snapshot_is_404():
+    db = AsyncMock(); db.scalar.side_effect = [1, page(), None]
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(get_image_evidence(1, 1, 231, context(), db, snapshot_id=99))
+    assert error.value.status_code == 404
+
+
+def image_snapshot(snapshot_id=12, fetched_at=None, items=None):
+    candidates = items or [{
+        "position": 2, "source_url": "https://cdn.example/a.webp", "source_attribute": "src",
+        "srcset": None, "section": "main", "element_id": None, "in_link": False,
+        "role": None, "alt_state": "empty",
+    }]
+    return SimpleNamespace(
+        id=snapshot_id, error_type=None,
+        fetched_at=fetched_at or datetime(2026, 9, 4, 3, 0),
+        image_alt_evidence={"candidate_count": len(candidates), "items": candidates},
+    )
 
 
 def image_review_request(**values):
@@ -258,6 +274,119 @@ def test_image_remediation_is_scoped_to_latest_snapshot():
     sql = str(db.scalars.call_args.args[0].compile(dialect=postgresql.dialect()))
     for field in ("tenant_id", "site_id", "page_id", "snapshot_id"):
         assert f"seo_image_alt_reviews.{field} =" in sql
+    db.commit.assert_not_awaited()
+
+
+def test_image_remediation_can_read_an_explicit_historic_snapshot():
+    saved = SimpleNamespace(id=4, snapshot_id=11, position=2, source_url="https://cdn.example/a.webp",
+                            observed_alt_state="empty", decision="informative", alt_suggestion="product",
+                            note="old", review_status="approved", actor_id=7, actor_name="operator",
+                            reviewed_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc))
+    db = AsyncMock(); db.scalar.side_effect = [1, page(), image_snapshot(11)]; db.scalars.return_value = [saved]
+    result = asyncio.run(get_image_remediation(1, 1, 231, context(), db, snapshot_id=11))
+    assert result["snapshot_id"] == 11 and result["items"][0]["review_status"] == "approved"
+    snapshot_sql = str(db.scalar.call_args_list[2].args[0].compile(dialect=postgresql.dialect()))
+    assert "seo_page_snapshots.id =" in snapshot_sql
+    for field in ("tenant_id", "site_id", "url"):
+        assert f"seo_page_snapshots.{field} =" in snapshot_sql
+
+
+def test_image_remediation_history_is_scoped_and_summarized():
+    current = image_snapshot(12, datetime(2026, 9, 4, 3, 0))
+    previous = image_snapshot(11, datetime(2026, 9, 3, 3, 0))
+    approved = SimpleNamespace(snapshot_id=11, position=2, review_status="approved")
+    draft = SimpleNamespace(snapshot_id=12, position=2, review_status="draft")
+    db = AsyncMock(); db.scalar.side_effect = [1, page(), current]
+    db.scalars.side_effect = [[current, previous], [draft, approved]]
+    result = asyncio.run(list_image_remediation_history(1, 1, 231, None, 20, context(), db))
+    assert result["current_snapshot_id"] == 12
+    assert result["items"][0] == {
+        "snapshot_id": 12, "fetched_at": "2026-09-04T03:00:00+08:00",
+        "candidate_count": 1, "saved_count": 1, "approved_count": 0,
+        "draft_count": 1, "is_current": True,
+    }
+    assert result["items"][1]["approved_count"] == 1
+    history_sql = str(db.scalars.call_args_list[0].args[0].compile(dialect=postgresql.dialect()))
+    for field in ("tenant_id", "site_id", "url"):
+        assert f"seo_page_snapshots.{field} =" in history_sql
+    review_sql = str(db.scalars.call_args_list[1].args[0].compile(dialect=postgresql.dialect()))
+    for field in ("tenant_id", "site_id", "page_id", "snapshot_id"):
+        assert f"seo_image_alt_reviews.{field}" in review_sql
+
+
+def test_copy_image_remediation_matches_unique_evidence_and_resets_to_draft():
+    source_items = [{
+        "position": 2, "source_url": "https://cdn.example/a.webp", "source_attribute": "src",
+        "srcset": None, "section": "main", "element_id": "hero", "in_link": False,
+        "role": None, "alt_state": "empty",
+    }]
+    target_items = [{**source_items[0], "position": 7}]
+    source = image_snapshot(11, datetime(2026, 9, 3, 3, 0), source_items)
+    target = image_snapshot(12, datetime(2026, 9, 4, 3, 0), target_items)
+    approved = SimpleNamespace(position=2, source_url="https://cdn.example/a.webp",
+                               observed_alt_state="empty", decision="informative",
+                               alt_suggestion="产品主图", note="人工核对", review_status="approved")
+    db = AsyncMock(); db.add = MagicMock(); db.scalar.side_effect = [1, page(), target, source]
+    db.scalars.side_effect = [[approved], []]
+    req = ImageAltReviewCopy(tenant_id=1, site_id=1, page_id=231,
+                             expected_snapshot_id=12, source_snapshot_id=11)
+    result = asyncio.run(copy_image_remediation(req, context(), db))
+    assert result["copied_positions"] == [7] and result["review_status"] == "draft"
+    copied = db.add.call_args.args[0]
+    assert copied.snapshot_id == 12 and copied.position == 7
+    assert copied.decision == "informative" and copied.alt_suggestion == "产品主图"
+    assert copied.review_status == "draft" and "复制自快照 #11" in copied.note
+    assert copied.actor_id == 7 and copied.actor_name == "operator"
+    db.commit.assert_awaited_once()
+
+
+def test_copy_image_remediation_never_guesses_ambiguous_or_overwrites_existing():
+    repeated = {"source_url": "https://cdn.example/shared.webp", "source_attribute": "src",
+                "srcset": None, "section": "main", "element_id": None, "in_link": False,
+                "role": None, "alt_state": "empty"}
+    source = image_snapshot(11, datetime(2026, 9, 3), [{**repeated, "position": 2}, {**repeated, "position": 3}])
+    target = image_snapshot(12, datetime(2026, 9, 4), [{**repeated, "position": 4}, {**repeated, "position": 5}])
+    approved = SimpleNamespace(position=2, source_url="https://cdn.example/shared.webp",
+                               observed_alt_state="empty", decision="decorative",
+                               alt_suggestion=None, note=None, review_status="approved")
+    existing = SimpleNamespace(position=5)
+    db = AsyncMock(); db.add = MagicMock(); db.scalar.side_effect = [1, page(), target, source]
+    db.scalars.side_effect = [[approved], [existing]]
+    result = asyncio.run(copy_image_remediation(ImageAltReviewCopy(
+        tenant_id=1, site_id=1, page_id=231, expected_snapshot_id=12, source_snapshot_id=11,
+    ), context(), db))
+    assert result["copied"] == 0 and result["skipped_ambiguous"] == 1
+    db.add.assert_not_called(); db.commit.assert_not_awaited()
+
+
+def test_copy_image_remediation_does_not_overwrite_current_draft():
+    item = {"position": 2, "source_url": "https://cdn.example/a.webp", "source_attribute": "src",
+            "srcset": None, "section": "main", "element_id": "hero", "in_link": False,
+            "role": None, "alt_state": "empty"}
+    source = image_snapshot(11, datetime(2026, 9, 3), [item])
+    target = image_snapshot(12, datetime(2026, 9, 4), [{**item, "position": 7}])
+    approved = SimpleNamespace(position=2, source_url=item["source_url"], observed_alt_state="empty",
+                               decision="decorative", alt_suggestion=None, note=None)
+    db = AsyncMock(); db.add = MagicMock(); db.scalar.side_effect = [1, page(), target, source]
+    db.scalars.side_effect = [[approved], [SimpleNamespace(position=7)]]
+    result = asyncio.run(copy_image_remediation(ImageAltReviewCopy(
+        tenant_id=1, site_id=1, page_id=231, expected_snapshot_id=12, source_snapshot_id=11,
+    ), context(), db))
+    assert result["copied"] == 0 and result["skipped_existing"] == 1
+    db.add.assert_not_called(); db.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize("request_values,status", [
+    ({"expected_snapshot_id": 11}, 409),
+    ({"source_snapshot_id": 12}, 422),
+])
+def test_copy_image_remediation_rejects_stale_or_current_source(request_values, status):
+    db = AsyncMock(); db.scalar.side_effect = [1, page(), image_snapshot(12)]
+    values = dict(tenant_id=1, site_id=1, page_id=231,
+                  expected_snapshot_id=12, source_snapshot_id=11) | request_values
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(copy_image_remediation(ImageAltReviewCopy(**values), context(), db))
+    assert error.value.status_code == status
     db.commit.assert_not_awaited()
 
 

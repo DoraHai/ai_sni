@@ -5,12 +5,14 @@ import * as Vue from 'vue'
 
 const source = await readFile(new URL('../src/views/seo/SeoImageEvidenceDialog.vue', import.meta.url), 'utf8')
 const code = compileScript(parse(source).descriptor, { id: 'images-test', genDefaultAs: 'component' }).content.replace(/^import .* from .*$/gm, '')
-const requests = [], remediationRequests = []
+const requests = [], remediationRequests = [], historyRequests = [], copyRequests = []
 const bindings = { computed: Vue.computed, ref: Vue.ref, watch: Vue.watch, onBeforeUnmount: Vue.onBeforeUnmount,
   fetchSeoImageEvidence: args => new Promise((resolve, reject) => requests.push({ args, resolve, reject })),
   fetchSeoImageRemediation: args => new Promise((resolve, reject) => remediationRequests.push({ args, resolve, reject })),
+  fetchSeoImageRemediationHistory: args => new Promise((resolve, reject) => historyRequests.push({ args, resolve, reject })),
+  copySeoImageRemediation: async args => { copyRequests.push(args); return { copied: 1, skipped_existing: 0, skipped_ambiguous: 0 } },
   saveSeoImageRemediation: async () => ({}),
-  ElMessage: { success() {}, error() {} },
+  ElMessage: { success() {}, warning() {}, error() {} }, ElMessageBox: { confirm: async () => true },
 }
 const Component = new Function('b', `const {${Object.keys(bindings)}}=b;${code};return component`)(bindings)
 Component.render = () => null
@@ -22,36 +24,50 @@ const app = renderer.createApp({ render: () => Vue.h(Component, { ...props, ref:
 app.mount({})
 const state = () => child.value.$.setupState
 const flush = async () => { for (let i = 0; i < 4; i++) { await Promise.resolve(); await Vue.nextTick() } }
-assert.deepEqual(requests[0].args, { tenantId: 1, siteId: 1, pageId: 234 })
-assert.deepEqual(remediationRequests[0].args, { tenantId: 1, siteId: 1, pageId: 234 })
+assert.deepEqual(requests[0].args, { tenantId: 1, siteId: 1, pageId: 234, snapshotId: null })
+assert.deepEqual(remediationRequests[0].args, { tenantId: 1, siteId: 1, pageId: 234, snapshotId: null })
+assert.deepEqual(historyRequests[0].args, { tenantId: 1, siteId: 1, pageId: 234 })
 props.tenantId = 2; props.siteId = 2
 await flush()
 requests.at(-1).resolve({ snapshot_id: 12, evidence: { items: [{ position: 1, alt_state: 'empty' }, { position: 2, alt_state: 'missing' }] } })
 remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [{ id: 7, position: 2, decision: 'informative', alt_suggestion: '产品图', review_status: 'draft' }] })
+historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [{ snapshot_id: 12, approved_count: 0, candidate_count: 2 }, { snapshot_id: 11, approved_count: 1, candidate_count: 1 }] })
 await flush()
 requests[0].resolve({ snapshot_id: 11, evidence: { items: [{ secret: 'previous tenant' }] } })
 remediationRequests[0].resolve({ snapshot_id: 11, items: [] })
+historyRequests[0].resolve({ current_snapshot_id: 11, items: [] })
 await flush()
 assert.equal(state().items.length, 2)
 state().filter = 'missing'
 assert.deepEqual(state().items, [{ position: 2, alt_state: 'missing' }])
 assert.equal(state().drafts[2].id, 7)
+const copied = state().copyPrevious()
+await flush()
+assert.deepEqual(copyRequests[0], { tenant_id: 2, site_id: 2, page_id: 234, expected_snapshot_id: 12, source_snapshot_id: 11 })
+requests.at(-1).resolve({ snapshot_id: 12, evidence: { items: [{ position: 1, alt_state: 'empty' }, { position: 2, alt_state: 'missing' }] } })
+remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [{ id: 8, position: 2, decision: 'informative', alt_suggestion: '产品图', review_status: 'draft' }] })
+historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [{ snapshot_id: 12, approved_count: 0, candidate_count: 2 }, { snapshot_id: 11, approved_count: 1, candidate_count: 1 }] })
+await copied
+assert.equal(state().drafts[2].id, 8)
 state().filter = 'whitespace'
 assert.equal(state().items.length, 0)
 const crossed = state().load()
 requests.at(-1).resolve({ snapshot_id: 13, evidence: { items: [{ position: 2, alt_state: 'missing' }] } })
 remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [{ id: 99, position: 2, decision: 'informative' }] })
+historyRequests.at(-1).resolve({ current_snapshot_id: 13, items: [{ snapshot_id: 13, approved_count: 0, candidate_count: 1 }] })
 await crossed
 assert.equal(state().drafts[2].id, null, 'reviews from an older snapshot cannot appear on newer evidence')
 const reload = state().load()
 assert.equal(state().data, null)
 requests.at(-1).reject(new Error('offline'))
 remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [] })
+historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [] })
 await reload
 assert.equal(state().error, 'offline')
 const retry = state().load()
 requests.at(-1).resolve({ snapshot_id: 12, evidence: null, legacy_candidate_count: 26 })
 remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [] })
+historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [] })
 await retry
 assert.equal(state().evidence, null)
 assert.equal(state().data.legacy_candidate_count, 26)
@@ -60,6 +76,7 @@ props.visible = false
 await flush()
 requests.at(-1).resolve({ snapshot_id: 12, evidence: { items: [{ secret: 'closed dialog' }] } })
 remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [] })
+historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [] })
 await pending
 assert.equal(state().data, null)
 props.visible = true
@@ -67,10 +84,12 @@ await flush()
 app.unmount()
 requests.at(-1).resolve({ snapshot_id: 12, evidence: { items: [] } })
 remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [] })
+historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [] })
 await flush()
 assert(!source.includes('v-html'))
 assert(!/<img\b|:src=|:href=/.test(source), 'no untrusted resource loading or navigation')
 for (const marker of ['旧存档未记录逐图明细', '尚无抓取存档', '最近抓取失败', '不代表图片描述质量已通过', 'evidence.truncated']) assert(source.includes(marker))
+for (const marker of ['历史快照', '复制上一快照审核结论', '复制后统一为草稿', 'isHistorical']) assert(source.includes(marker))
 console.log('SEO image evidence checks passed: filtering, legacy/error states, stale scope/close/unmount, no external loads')
 
 const apiSource = await readFile(new URL('../src/api/seo.js', import.meta.url), 'utf8')
