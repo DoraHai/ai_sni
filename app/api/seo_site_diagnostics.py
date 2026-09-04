@@ -130,6 +130,109 @@ def image_review_payload(row):
     }
 
 
+def _image_candidate_payload(page, snapshot, candidate, review):
+    saved = image_review_payload(review) if review else None
+    return {
+        "page_id": page.id, "page_title": page.title, "page_url": page.url,
+        "snapshot_id": snapshot.id, "fetched_at": _image_snapshot_time(snapshot),
+        "position": candidate.get("position"), "section": candidate.get("section"),
+        "source_url": candidate.get("source_url"),
+        "source_attribute": candidate.get("source_attribute"),
+        "in_link": bool(candidate.get("in_link")),
+        "observed_alt_state": candidate.get("alt_state"),
+        "decision": review.decision if review else "undecided",
+        "alt_suggestion": review.alt_suggestion if review else None,
+        "note": review.note if review else None,
+        "review_status": review.review_status if review else "unreviewed",
+        "review": saved,
+    }
+
+
+@router.get("/site-pages/image-remediation-workbench")
+async def list_image_remediation_workbench(
+    tenant_id: PositiveInt, site_id: PositiveInt,
+    q: str = Query("", max_length=200),
+    review_state: Literal["all", "unreviewed", "draft", "approved"] = "all",
+    decision: Literal["all", "undecided", "decorative", "informative"] = "all",
+    page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=100),
+    ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session),
+):
+    """Latest-snapshot-only work queue for human image-alt remediation."""
+    await _scope(session, ctx, tenant_id, site_id)
+    page_query = select(SeoSitePage).where(
+        SeoSitePage.tenant_id == tenant_id, SeoSitePage.site_id == site_id,
+    )
+    if q.strip():
+        term = f"%{q.strip()}%"
+        page_query = page_query.where(or_(SeoSitePage.url.ilike(term), SeoSitePage.title.ilike(term)))
+    pages = list(await session.scalars(page_query.order_by(SeoSitePage.id)))
+    if not pages:
+        return {"items": [], "total": 0, "page": page, "page_size": page_size,
+                "stats": {"page_count": 0, "candidate_count": 0, "unreviewed_count": 0,
+                          "draft_count": 0, "approved_count": 0,
+                          "informative_approved_count": 0, "decorative_approved_count": 0}}
+
+    page_by_url = {row.url: row for row in pages}
+    ranked_snapshots = select(
+        SeoPageSnapshot.id,
+        func.row_number().over(
+            partition_by=SeoPageSnapshot.url,
+            order_by=(SeoPageSnapshot.fetched_at.desc(), SeoPageSnapshot.id.desc()),
+        ).label("latest_rank"),
+    ).where(
+        SeoPageSnapshot.tenant_id == tenant_id, SeoPageSnapshot.site_id == site_id,
+        SeoPageSnapshot.url.in_(list(page_by_url)),
+    ).subquery()
+    latest_ids = select(ranked_snapshots.c.id).where(ranked_snapshots.c.latest_rank == 1)
+    current = list(await session.scalars(select(SeoPageSnapshot).where(
+        SeoPageSnapshot.id.in_(latest_ids),
+        SeoPageSnapshot.tenant_id == tenant_id, SeoPageSnapshot.site_id == site_id,
+    ).order_by(SeoPageSnapshot.url)))
+    current = [row for row in current
+               if not row.error_type and row.status_code is not None and 200 <= row.status_code < 300
+               and isinstance(row.image_alt_evidence, dict)]
+    snapshot_ids = [row.id for row in current]
+    reviews = []
+    if snapshot_ids:
+        reviews = list(await session.scalars(select(SeoImageAltReview).where(
+            SeoImageAltReview.tenant_id == tenant_id, SeoImageAltReview.site_id == site_id,
+            SeoImageAltReview.snapshot_id.in_(snapshot_ids),
+        )))
+    review_by_key = {(row.snapshot_id, row.position): row for row in reviews}
+
+    all_items = []
+    candidate_pages = set()
+    for snapshot in current:
+        source_page = page_by_url[snapshot.url]
+        for candidate in snapshot.image_alt_evidence.get("items", []):
+            if not isinstance(candidate, dict) or candidate.get("alt_state") not in {"missing", "empty", "whitespace"}:
+                continue
+            position = candidate.get("position")
+            if not isinstance(position, int) or position <= 0:
+                continue
+            candidate_pages.add(source_page.id)
+            all_items.append(_image_candidate_payload(
+                source_page, snapshot, candidate, review_by_key.get((snapshot.id, position))))
+    stats = {
+        "page_count": len(candidate_pages), "candidate_count": len(all_items),
+        "unreviewed_count": sum(row["review_status"] == "unreviewed" or row["decision"] == "undecided" for row in all_items),
+        "draft_count": sum(row["review_status"] == "draft" for row in all_items),
+        "approved_count": sum(row["review_status"] == "approved" for row in all_items),
+        "informative_approved_count": sum(row["review_status"] == "approved" and row["decision"] == "informative" and bool(row["alt_suggestion"]) for row in all_items),
+        "decorative_approved_count": sum(row["review_status"] == "approved" and row["decision"] == "decorative" for row in all_items),
+    }
+    filtered = [row for row in all_items if (
+        review_state == "all" or
+        (review_state == "unreviewed" and (row["review_status"] == "unreviewed" or row["decision"] == "undecided")) or
+        row["review_status"] == review_state
+    ) and (decision == "all" or row["decision"] == decision)]
+    priority = {"unreviewed": 0, "draft": 1, "approved": 2}
+    filtered.sort(key=lambda row: (priority.get(row["review_status"], 3), row["page_id"], row["position"]))
+    start = (page - 1) * page_size
+    return {"items": filtered[start:start + page_size], "total": len(filtered),
+            "page": page, "page_size": page_size, "stats": stats}
+
+
 async def _page_and_latest_snapshot(session, tenant_id, site_id, page_id, *, lock_page=False):
     page_query = select(SeoSitePage).where(
         SeoSitePage.id == page_id, SeoSitePage.tenant_id == tenant_id, SeoSitePage.site_id == site_id,
