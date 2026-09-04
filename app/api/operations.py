@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select
+from sqlalchemy import Numeric, and_, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dashboard import _f
@@ -52,8 +52,27 @@ def _change(old: str | None, new: str | None) -> dict[str, Any] | None:
     o, n = float(old), float(new)
     if o == 0:
         return None
-    pct = round((n - o) / o * 100, 1)
-    return {"pct": pct, "over_limit": abs(pct) > 20}
+    raw_pct = (n - o) / o * 100
+    return {"pct": round(raw_pct, 1), "over_limit": abs(raw_pct) > 20}
+
+
+def _over_limit_clause():
+    """PostgreSQL predicate matching the numeric parsing rules used by ``_change``."""
+    old_text = func.btrim(OperationRecord.old_value)
+    new_text = func.btrim(OperationRecord.new_value)
+    old_is_numeric = old_text.op("~")(_NUM_RE.pattern)
+    new_is_numeric = new_text.op("~")(_NUM_RE.pattern)
+    # CASE prevents PostgreSQL from casting non-numeric historical values such as "-".
+    old_number = cast(case((old_is_numeric, old_text), else_=None), Numeric)
+    new_number = cast(case((new_is_numeric, new_text), else_=None), Numeric)
+    return and_(
+        OperationRecord.old_value.isnot(None),
+        OperationRecord.new_value.isnot(None),
+        old_is_numeric,
+        new_is_numeric,
+        old_number != 0,
+        func.abs((new_number - old_number) / func.nullif(old_number, 0)) > 0.2,
+    )
 
 
 @router.get("")
@@ -84,78 +103,111 @@ async def list_operation_records(
             OperationRecord.opt_time
             < datetime.combine(end_date + timedelta(days=1), datetime.min.time())
         )
+    if over_limit:
+        cond.append(_over_limit_clause())
 
-    rows_all = (
+    total = int(
+        await session.scalar(
+            select(func.count()).select_from(OperationRecord).where(*cond)
+        )
+        or 0
+    )
+    page_records = (
         await session.scalars(
-            select(OperationRecord).where(*cond).order_by(OperationRecord.opt_time.desc())
+            select(OperationRecord)
+            .where(*cond)
+            .order_by(OperationRecord.opt_time.desc(), OperationRecord.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
         )
     ).all()
 
-    # over_limit 筛选要先算 change，在 Python 侧过滤（数据量＝单租户操作流水，可控）
-    enriched = []
-    for r in rows_all:
-        change = _change(r.old_value, r.new_value)
-        if over_limit and not (change and change["over_limit"]):
-            continue
-        enriched.append((r, change))
+    page_rows = [(row, _change(row.old_value, row.new_value)) for row in page_records]
 
-    total = len(enriched)
-    page_rows = enriched[(page - 1) * page_size : (page - 1) * page_size + page_size]
-
+    plan_ids = {row.plan_id for row in page_records if row.plan_id is not None}
+    unit_ids = {row.unit_id for row in page_records if row.unit_id is not None}
     camp_names = {
-        c.campaign_id: c.campaign_name
+        (c.baidu_account_id, c.campaign_id): c.campaign_name
         for c in (
-            await session.scalars(select(Campaign).where(Campaign.tenant_id == tenant_id))
+            await session.scalars(
+                select(Campaign).where(
+                    Campaign.tenant_id == tenant_id,
+                    Campaign.campaign_id.in_(plan_ids),
+                )
+            )
         ).all()
-    }
+    } if plan_ids else {}
     adg_names = {
-        a.adgroup_id: a.adgroup_name
+        (a.baidu_account_id, a.adgroup_id): a.adgroup_name
         for a in (
-            await session.scalars(select(Adgroup).where(Adgroup.tenant_id == tenant_id))
+            await session.scalars(
+                select(Adgroup).where(
+                    Adgroup.tenant_id == tenant_id,
+                    Adgroup.adgroup_id.in_(unit_ids),
+                )
+            )
         ).all()
-    }
+    } if unit_ids else {}
 
     # 关键词级记录（opt_level=5）按名解析 keyword_id，供前端跳转详情页。
     # 操作记录里百度只给关键词名（opt_obj）不给 ID；同字面常对应多个 ID（不同单元/匹配方式，
     # 苏尔寿账户普遍如此）。无法确知操作的是哪一个，取**累计展现最高**的那个（最可能是主词，
     # 也最值得下钻）；查无匹配则 null（前端不可点）。
     # ⚠️ 百度对部分操作（如出价）的对象名带方括号「[碳足迹]」，需剥掉两端括号/引号再匹配。
-    kw_objs = {
-        _norm_kw(r.opt_obj) for r, _ in page_rows if r.opt_level == 5 and r.opt_obj
+    kw_keys = {
+        (r.baidu_account_id, _norm_kw(r.opt_obj))
+        for r, _ in page_rows
+        if r.opt_level == 5 and r.opt_obj and r.baidu_account_id is not None
     }
-    kw_id_map: dict[str, int] = {}
-    if kw_objs:
-        best: dict[str, tuple[int, int]] = {}  # 归一化名 -> (total_impression, keyword_id)
-        for name, kid, imp in (
+    kw_id_map: dict[tuple[int, str], int] = {}
+    if kw_keys:
+        account_ids = {account_id for account_id, _ in kw_keys}
+        keyword_names = {name for _, name in kw_keys}
+        best: dict[tuple[int, str], tuple[int, int]] = {}
+        for account_id, name, kid, imp in (
             await session.execute(
                 select(
-                    Keyword.keyword, Keyword.keyword_id, Keyword.total_impression
-                ).where(Keyword.tenant_id == tenant_id, Keyword.keyword.in_(kw_objs))
+                    Keyword.baidu_account_id,
+                    Keyword.keyword,
+                    Keyword.keyword_id,
+                    Keyword.total_impression,
+                ).where(
+                    Keyword.tenant_id == tenant_id,
+                    Keyword.baidu_account_id.in_(account_ids),
+                    Keyword.keyword.in_(keyword_names),
+                )
             )
         ).all():
+            key = (account_id, name)
+            if key not in kw_keys:
+                continue
             imp = int(imp or 0)
-            if name not in best or imp > best[name][0]:
-                best[name] = (imp, kid)
-        kw_id_map = {name: v[1] for name, v in best.items()}
+            if key not in best or imp > best[key][0]:
+                best[key] = (imp, kid)
+        kw_id_map = {key: value[1] for key, value in best.items()}
 
     # ===== 本月统计卡（不受筛选影响） =====
     month_start = date.today().replace(day=1)
-    month_rows = (
-        await session.scalars(
-            select(OperationRecord).where(
-                OperationRecord.tenant_id == tenant_id,
-                OperationRecord.opt_time >= datetime.combine(month_start, datetime.min.time()),
-            )
-        )
-    ).all()
-    month_over = sum(
-        1 for r in month_rows if (c := _change(r.old_value, r.new_value)) and c["over_limit"]
+    month_condition = (
+        OperationRecord.tenant_id == tenant_id,
+        OperationRecord.opt_time
+        >= datetime.combine(month_start, datetime.min.time()),
     )
+    month_total, month_keyword_level, month_coef_level, month_over = (
+        await session.execute(
+            select(
+                func.count(),
+                func.count().filter(OperationRecord.opt_level == 5),
+                func.count().filter(OperationRecord.opt_level.in_((1, 2))),
+                func.count().filter(_over_limit_clause()),
+            ).where(*month_condition)
+        )
+    ).one()
     summary = {
-        "month_total": len(month_rows),
-        "month_keyword_level": sum(1 for r in month_rows if r.opt_level == 5),
-        "month_coef_level": sum(1 for r in month_rows if r.opt_level in (1, 2)),
-        "month_over_limit": month_over,
+        "month_total": int(month_total or 0),
+        "month_keyword_level": int(month_keyword_level or 0),
+        "month_coef_level": int(month_coef_level or 0),
+        "month_over_limit": int(month_over or 0),
     }
 
     last_synced = await session.scalar(
@@ -185,9 +237,10 @@ async def list_operation_records(
                 "content_label": OPT_CONTENT_LABELS.get(r.opt_content, r.opt_content),
                 "opt_obj": r.opt_obj,
                 # 唯一解析到的关键词 ID（仅 opt_level=5），前端据此把关键词做成可跳详情页的链接
-                "keyword_id": kw_id_map.get(_norm_kw(r.opt_obj)) if r.opt_level == 5 else None,
-                "campaign_name": camp_names.get(r.plan_id),
-                "adgroup_name": adg_names.get(r.unit_id),
+                "keyword_id": kw_id_map.get((r.baidu_account_id, _norm_kw(r.opt_obj)))
+                if r.opt_level == 5 else None,
+                "campaign_name": camp_names.get((r.baidu_account_id, r.plan_id)),
+                "adgroup_name": adg_names.get((r.baidu_account_id, r.unit_id)),
                 "old_value": r.old_value,
                 "new_value": r.new_value,
                 "change": change,

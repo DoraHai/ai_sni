@@ -208,10 +208,15 @@ async function syncBaiduOperations() {
       startDate: formatLocalDate(start),
       endDate: formatLocalDate(today),
     })
-    if (result.status !== 'ok') throw new Error(result.message || '百度操作记录同步失败')
+    if (!['ok', 'partial'].includes(result.status)) throw new Error(result.message || '百度操作记录同步失败')
     if (tenantId !== TENANT_ID.value) return
     await load()
-    ElMessage.success(`已同步近 3 天百度操作记录，拉取 ${Number(result.records_fetched || 0)} 条`)
+    const summary = `已同步 ${Number(result.accounts_succeeded || 0)}/${Number(result.accounts_total || 0)} 个账户，拉取 ${Number(result.records_fetched || 0)} 条记录`
+    if (result.status === 'partial') {
+      ElMessage.warning(`${summary}；部分账户失败，请检查授权状态后重试`)
+    } else {
+      ElMessage.success(summary)
+    }
   } catch (e) {
     if (tenantId !== TENANT_ID.value) return
     const message = e.response?.data?.detail || e.message || '百度操作记录同步失败'
