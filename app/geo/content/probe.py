@@ -28,6 +28,7 @@ SAMPLE_MODE_PERSONA = "mock_persona"
 SAMPLE_MODE_REAL = "openai_compat"
 DASHSCOPE_MARKERS = ("dashscope", "aliyuncs.com")
 SKIP_DASHSCOPE_OTHER_ENGINE = "skipped:dashscope_only_for_deepseek"
+KIMI_FIXED_TEMPERATURE_MODEL_PREFIXES = ("kimi-k2",)
 
 
 def is_deepseek_engine(engine: str | None) -> bool:
@@ -67,6 +68,14 @@ def tenant_llm_for_engine(engine: str, tenant_llm: dict[str, Any] | None) -> dic
 
 def engine_persona(engine: str) -> str:
     return ENGINE_PERSONAS.get(engine, ENGINE_PERSONAS["other"])
+
+
+def probe_temperature_for_model(model: str | None) -> float | None:
+    """Return a GEO probe override only for models with a fixed temperature."""
+    value = str(model or "").strip().lower()
+    if value.startswith(KIMI_FIXED_TEMPERATURE_MODEL_PREFIXES):
+        return 1.0
+    return None
 
 
 def build_probe_system_prompt(*, brand: str, engine: str, simulated: bool = True) -> str:
@@ -161,15 +170,17 @@ async def run_probe_draft(
     simulated = sample_mode != SAMPLE_MODE_REAL
     system = build_probe_system_prompt(brand=brand, engine=engine, simulated=simulated)
     user = build_probe_user_prompt(brand=brand, question=question, engine=engine)
+    call_kwargs: dict[str, Any] = {
+        "timeout": 60.0,
+        "api_key": llm["api_key"],
+        "base_url": llm["base_url"],
+        "model": llm["model"],
+    }
+    fixed_temperature = probe_temperature_for_model(llm.get("model"))
+    if fixed_temperature is not None:
+        call_kwargs["temperature"] = fixed_temperature
     try:
-        data = await chat_json(
-            system,
-            user,
-            timeout=60.0,
-            api_key=llm["api_key"],
-            base_url=llm["base_url"],
-            model=llm["model"],
-        )
+        data = await chat_json(system, user, **call_kwargs)
     except DeepSeekError:
         raise
     raw_text = str(data.get("raw_text") or "").strip()
