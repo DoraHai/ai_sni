@@ -11,7 +11,18 @@ const geoNavHover = ref(false)
 const isMobile = ref(false)
 const isEditor = computed(() => /^\/geo\/tasks\/[^/]+/.test(route.path))
 const geoNavRail = computed(() => geoNavCollapsed.value && !geoNavHover.value && !isMobile.value)
+const expandedGroups = ref({
+  [GEO_WORKBENCH_NAV[0]?.label]: true,
+})
 const isActive = (item) => route.path === item.path || route.path.startsWith(`${item.path}/`)
+const isGroupExpanded = (group) => Boolean(expandedGroups.value[group.label])
+
+function toggleGroup(label) {
+  expandedGroups.value = {
+    ...expandedGroups.value,
+    [label]: !expandedGroups.value[label],
+  }
+}
 
 watch(isEditor, (v) => { geoNavCollapsed.value = !!v }, { immediate: true })
 
@@ -70,19 +81,37 @@ onUnmounted(() => {
         <button class="geo-mobile-close" type="button" aria-label="关闭 GEO 导航" @click.stop="mobileOpen = false">×</button>
       </div>
       <nav class="geo-shell-nav">
-        <section v-for="group in GEO_WORKBENCH_NAV" :key="group.label">
-          <h2>{{ group.label }}</h2>
+        <section v-for="(group, groupIndex) in GEO_WORKBENCH_NAV" :key="group.label" class="geo-nav-group">
           <button
-            v-for="item in group.children"
-            :key="item.path"
             type="button"
-            :class="{ active: isActive(item) }"
-            :title="item.label"
-            @click="go(item.path)"
+            class="geo-nav-group-toggle"
+            :aria-expanded="isGroupExpanded(group)"
+            :aria-controls="`geo-nav-group-${groupIndex}`"
+            @click="toggleGroup(group.label)"
           >
-            <span class="geo-shell-item-icon">{{ item.icon }}</span>
-            <span class="geo-nav-label">{{ item.label }}</span>
+            <span>{{ group.label }}</span>
+            <span class="geo-nav-group-chevron" aria-hidden="true">⌄</span>
           </button>
+          <Transition name="geo-nav-section">
+            <div
+              v-show="isGroupExpanded(group)"
+              :id="`geo-nav-group-${groupIndex}`"
+              class="geo-nav-group-items"
+            >
+              <button
+                v-for="item in group.children"
+                :key="item.path"
+                type="button"
+                class="geo-shell-nav-item"
+                :class="{ active: isActive(item) }"
+                :title="item.label"
+                @click="go(item.path)"
+              >
+                <span class="geo-shell-item-icon">{{ item.icon }}</span>
+                <span class="geo-nav-label">{{ item.label }}</span>
+              </button>
+            </div>
+          </Transition>
         </section>
       </nav>
       <div class="geo-shell-links">
@@ -148,15 +177,55 @@ onUnmounted(() => {
 .geo-mobile-close,
 .geo-mobile-toggle { display: none; }
 .geo-shell-nav { flex: 1; overflow: auto; padding-bottom: 8px; }
-.geo-shell-nav h2 {
+.geo-nav-group + .geo-nav-group { margin-top: 3px; }
+.geo-nav-group-toggle {
+  width: 100%;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin: 0;
-  padding: 13px 10px 5px;
+  padding: 9px 10px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
   color: #9aa1ad;
+  font: inherit;
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: .06em;
+  text-align: left;
+  cursor: pointer;
 }
-.geo-shell-nav button {
+.geo-nav-group-toggle:hover {
+  background: #faf8ff;
+  color: #776982;
+}
+.geo-nav-group-chevron {
+  display: inline-grid;
+  place-items: center;
+  color: #b1a8bb;
+  font-size: 15px;
+  line-height: 1;
+  transform: rotate(-90deg);
+  transition: transform .18s ease, color .18s ease;
+}
+.geo-nav-group-toggle[aria-expanded="true"] .geo-nav-group-chevron {
+  color: #7c3aed;
+  transform: rotate(0deg);
+}
+.geo-nav-group-items { overflow: hidden; }
+.geo-nav-section-enter-active,
+.geo-nav-section-leave-active {
+  transition: opacity .16s ease, transform .16s ease;
+  transform-origin: top;
+}
+.geo-nav-section-enter-from,
+.geo-nav-section-leave-to {
+  opacity: 0;
+  transform: translateY(-3px);
+}
+.geo-shell-nav-item {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -173,8 +242,8 @@ onUnmounted(() => {
   cursor: pointer;
   white-space: nowrap;
 }
-.geo-shell-nav button:hover,
-.geo-shell-nav button.active {
+.geo-shell-nav-item:hover,
+.geo-shell-nav-item.active {
   background: #f5f0ff;
   color: #7c3aed;
   font-weight: 600;
@@ -221,7 +290,7 @@ onUnmounted(() => {
 .geo-shell-side.is-rail { overflow: hidden; }
 .geo-shell-side.is-rail .geo-shell-brand { justify-content: center; padding-left: 0; padding-right: 0; }
 .geo-shell-side.is-rail .geo-shell-brand-copy,
-.geo-shell-side.is-rail .geo-shell-nav h2,
+.geo-shell-side.is-rail .geo-nav-group-toggle,
 .geo-shell-side.is-rail .geo-nav-label,
 .geo-shell-side.is-rail .geo-quick-label { display: none; }
 .geo-shell-side.is-rail .geo-shell-nav button { justify-content: center; padding: 10px 0; }

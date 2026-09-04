@@ -199,6 +199,17 @@ def test_geo_sidebar_keeps_cross_product_shortcuts_aligned_with_seo():
     assert ".geo-shell-links .portal-link" in shell
 
 
+def test_geo_sidebar_groups_default_to_dashboard_only_and_can_toggle():
+    shell = _read("frontend/src/views/geo/GeoWorkspaceShell.vue")
+
+    assert "const expandedGroups = ref({" in shell
+    assert "[GEO_WORKBENCH_NAV[0]?.label]: true" in shell
+    assert ':aria-expanded="isGroupExpanded(group)"' in shell
+    assert '@click="toggleGroup(group.label)"' in shell
+    assert 'v-show="isGroupExpanded(group)"' in shell
+    assert 'class="geo-shell-nav-item"' in shell
+
+
 def test_geo_editor_keeps_the_complete_editor_first_interactions():
     editor = _read("frontend/src/views/geo/GeoTaskEditorView.vue")
 
