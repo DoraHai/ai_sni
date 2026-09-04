@@ -61,7 +61,7 @@ jobs:
             frontend/geo-frontend/package-lock.json
       - name: Install shared frontend dependencies
         working-directory: frontend
-        run: npm ci
+        run: npm ci --no-audit
       - name: Build independent GEO frontend
         working-directory: frontend/geo-frontend
-        run: npm ci && npm run build
+        run: npm ci --no-audit && npm run build
