@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { fetchOperationRecords } from '../../api/operations'
+import { fetchOperationRecords, syncOperationRecords } from '../../api/operations'
 import {
   decideWritebackApproval, fetchWritebackApprovals, fetchWritebacks,
 } from '../../api/writeback'
@@ -142,6 +142,7 @@ function gotoKeyword(row) {
 }
 
 const loading = ref(false)
+const syncingOperations = ref(false)
 const error = ref('')
 const data = ref(null)
 
@@ -190,6 +191,34 @@ async function load() {
     error.value = e.message
   } finally {
     loading.value = false
+  }
+}
+
+async function syncBaiduOperations() {
+  if (syncingOperations.value || !TENANT_ID.value) return
+  syncingOperations.value = true
+  error.value = ''
+  const tenantId = TENANT_ID.value
+  const today = new Date()
+  const start = new Date(today)
+  start.setDate(start.getDate() - 2)
+  try {
+    const result = await syncOperationRecords({
+      tenantId,
+      startDate: formatLocalDate(start),
+      endDate: formatLocalDate(today),
+    })
+    if (result.status !== 'ok') throw new Error(result.message || '百度操作记录同步失败')
+    if (tenantId !== TENANT_ID.value) return
+    await load()
+    ElMessage.success(`已同步近 3 天百度操作记录，拉取 ${Number(result.records_fetched || 0)} 条`)
+  } catch (e) {
+    if (tenantId !== TENANT_ID.value) return
+    const message = e.response?.data?.detail || e.message || '百度操作记录同步失败'
+    error.value = message
+    ElMessage.error(message)
+  } finally {
+    syncingOperations.value = false
   }
 }
 
@@ -254,15 +283,22 @@ onMounted(load)
       <div>
         <div class="page-title">调价台账</div>
         <div class="page-desc">
-          数据源：百度 getOperationRecord 实时抓取（含百度后台直接操作）· 仅展示当前已有真实数据来源的字段
+          数据源：百度 getOperationRecord（含百度后台直接操作）· 每日 02:00 自动增量同步，可手动同步近 3 天
           <template v-if="data?.last_synced_at"> · 同步于 {{ fmtSyncTime(data.last_synced_at) }}</template>
         </div>
       </div>
-      <el-button
-        v-if="session.canView('verify.adjustments')"
-        type="warning" plain
-        @click="router.push({ path: '/verify/pending', query: { mode: 'queue' } })"
-      >人工对账队列</el-button>
+      <div class="header-actions">
+        <el-button
+          v-if="mainView === 'baidu' && session.canEdit('verify.adjustments')"
+          :loading="syncingOperations"
+          @click="syncBaiduOperations"
+        >同步百度记录</el-button>
+        <el-button
+          v-if="session.canView('verify.adjustments')"
+          type="warning" plain
+          @click="router.push({ path: '/verify/pending', query: { mode: 'queue' } })"
+        >人工对账队列</el-button>
+      </div>
     </div>
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-bottom: 14px" />
@@ -560,6 +596,7 @@ onMounted(load)
 .page-header { margin-bottom: 14px; display: flex; justify-content: space-between; align-items: flex-end; }
 .page-title { font-size: 20px; font-weight: 600; color: var(--sem-text); }
 .page-desc { font-size: 12px; color: var(--sem-text-sub); margin-top: 4px; }
+.header-actions { display: flex; gap: 8px; align-items: center; }
 
 .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
 @media (max-width: 1100px) { .stat-grid { grid-template-columns: repeat(2, 1fr); } }
