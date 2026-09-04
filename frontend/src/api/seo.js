@@ -349,6 +349,10 @@ export function fetchSeoImageRemediation({ tenantId, siteId, pageId, snapshotId 
   return client.get('/api/v1/seo/site-pages/image-remediation', { params: { tenant_id: tenantId, site_id: siteId, page_id: pageId, snapshot_id: snapshotId || undefined } })
 }
 
+export function fetchSeoImageRemediationWorkbench({ tenantId, siteId, q = '', reviewState = 'all', decision = 'all', page = 1, pageSize = 50 }) {
+  return client.get('/api/v1/seo/site-pages/image-remediation-workbench', { params: { tenant_id: tenantId, site_id: siteId, q: q || undefined, review_state: reviewState, decision, page, page_size: pageSize } })
+}
+
 export function saveSeoImageRemediation(payload) {
   return client.put('/api/v1/seo/site-pages/image-remediation', payload)
 }

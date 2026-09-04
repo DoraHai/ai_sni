@@ -9,6 +9,7 @@ import { formatSeoCsvTime } from './seoRankTime'
 import { runSeoBatch } from './seoBatchOperations'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
 import SeoSiteDiagnosticsPanel from './SeoSiteDiagnosticsPanel.vue'
+import SeoImageRemediationWorkbench from './SeoImageRemediationWorkbench.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -335,6 +336,7 @@ onBeforeUnmount(() => { disposed = true; ++sitesGeneration; clearTimeout(timer) 
         <el-table-column label="操作" width="100"><template #default="{row}"><button class="table-action" @click="openIssue(row)">查看页面</button></template></el-table-column>
       </el-table>
     </section>
+    <SeoImageRemediationWorkbench :tenant-id="Number(currentTenantId) || undefined" :site-id="Number(siteId) || undefined" :can-edit="session.isLoggedIn && session.canEdit('seo.site')" :refresh-key="diagnosticRefreshKey" />
     <section class="site-panel">
       <header><div><span>02 / PAGE INVENTORY</span><h2>页面资产与 TDK</h2></div><small>程序检测 · TDK 规则生成，可人工编辑（非 AI）· 不修改客户官网</small></header>
       <div class="filters"><el-input v-model="filters.q" clearable placeholder="搜索 URL 或页面标题" /><el-select v-model="filters.issueCode" clearable placeholder="全部问题"><el-option v-for="item in [{v:'title',n:'Title'},{v:'description',n:'Description'},{v:'h1',n:'H1'},{v:'canonical',n:'Canonical'},{v:'indexable',n:'索引'},{v:'schema',n:'Schema'},{v:'content',n:'内容质量'},{v:'image',n:'图片'},{v:'language',n:'语言'},{v:'crawl',n:'抓取/可访问性'}]" :key="item.v" :label="item.n" :value="item.v" /></el-select><el-select v-model="filters.status" clearable placeholder="全部状态"><el-option v-for="item in [{v:'pending',n:'待检测'},{v:'needs_fix',n:'需优化'},{v:'proposed',n:'待确认'},{v:'approved',n:'已确认'},{v:'implemented',n:'待复检'},{v:'verified',n:'已复检'},{v:'healthy',n:'健康'},{v:'error',n:'检测失败'}]" :key="item.v" :label="item.n" :value="item.v" /></el-select><span>{{ result.total }} 个页面 · 已选 {{ selectedRows.length }} 个</span></div>
