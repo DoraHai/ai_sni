@@ -9,6 +9,19 @@ on:
       - codex/production-seo
 
 jobs:
+  dependency-audit:
+    name: Dependencies / OSV production lockfile
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@0c58c542420dfd23fcac08dd9c8ca3cca9c36f1a # v2.5.0
+    with:
+      scan-args: |-
+        --lockfile=./frontend/package-lock.json
+      fail-on-vuln: true
+      upload-sarif: false
+
   pytest:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -49,17 +62,14 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
         working-directory: frontend
-        run: npm ci
-
-      - name: Audit production dependencies
-        working-directory: frontend
-        run: npm audit --omit=dev --audit-level=high
+        # Dependency vulnerability checking is handled by the pinned OSV job.
+        run: npm ci --no-audit
 
       - name: Build
         working-directory: frontend

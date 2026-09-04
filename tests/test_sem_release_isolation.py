@@ -35,7 +35,7 @@ def test_sem_frontend_deploy_uses_unprivileged_account_and_readable_modes():
     assert "StrictHostKeyChecking=yes" in script
 
 
-def test_sem_ci_uses_pinned_host_key_and_dedicated_secret():
+def test_sem_ci_uses_pinned_host_key_dedicated_secret_and_lockfile_audit():
     workflow = _read(".github/workflows/ci.yml")
 
     assert "SEM_DEPLOY_SSH_KEY" in workflow
@@ -43,7 +43,15 @@ def test_sem_ci_uses_pinned_host_key_and_dedicated_secret():
     assert "ssh-keyscan" not in workflow
     assert "DEPLOY_TARGET: sem-deploy@101.200.193.83" in workflow
     assert "environment: production" in workflow
-    assert "npm audit --omit=dev --audit-level=high" in workflow
+    assert 'node-version: "24"' in workflow
+    assert "npm ci --no-audit" in workflow
+    assert (
+        "google/osv-scanner-action/.github/workflows/"
+        "osv-scanner-reusable.yml@0c58c542420dfd23fcac08dd9c8ca3cca9c36f1a"
+        in workflow
+    )
+    assert "--lockfile=./frontend/package-lock.json" in workflow
+    assert "fail-on-vuln: true" in workflow
 
 
 def test_sem_frontend_dependencies_meet_security_floors():
