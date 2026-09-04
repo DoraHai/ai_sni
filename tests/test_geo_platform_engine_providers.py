@@ -1,5 +1,7 @@
+from pathlib import Path
 from types import SimpleNamespace
 
+from app.config import Settings
 from app.geo.content.engine_providers import (
     platform_engine_public_status,
     resolve_platform_engine_credentials,
@@ -69,3 +71,18 @@ def test_wsa_is_explicitly_not_an_answer_engine():
 def test_default_engines_include_domestic_platforms():
     keys = {row["engine_key"] for row in default_engine_rows(7)}
     assert {"deepseek", "doubao", "qwen", "hunyuan", "wenxin", "kimi"} <= keys
+
+
+DOUBAO_ACTIVATED_MODEL = "doubao-seed-2-1-pro-260628"
+
+
+def test_doubao_default_model_is_activated_on_the_ark_account():
+    # 方舟只接受账号已开通的完整模型 ID：旧的 doubao-seed-2-0-pro-260215 返回
+    # ModelNotOpen(404)，简称 doubao-seed-2-1-pro 返回 404。
+    assert Settings.model_fields["geo_doubao_model"].default == DOUBAO_ACTIVATED_MODEL
+
+
+def test_geo_env_example_doubao_model_matches_code_default():
+    example = Path(__file__).resolve().parents[1] / "deploy" / "geo-service.env.example"
+    line = f"GEO_DOUBAO_MODEL={DOUBAO_ACTIVATED_MODEL}"
+    assert line in example.read_text(encoding="utf-8").splitlines()

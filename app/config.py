@@ -327,7 +327,7 @@ class Settings(BaseSettings):
     geo_qwen_model: str = "qwen-max"
     geo_doubao_api_key: str = ""
     geo_doubao_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
-    geo_doubao_model: str = "doubao-seed-2-0-pro-260215"
+    geo_doubao_model: str = "doubao-seed-2-1-pro-260628"
     geo_hunyuan_api_key: str = ""
     geo_hunyuan_base_url: str = "https://api.hunyuan.cloud.tencent.com/v1"
     geo_hunyuan_model: str = "hunyuan-turbos-latest"
