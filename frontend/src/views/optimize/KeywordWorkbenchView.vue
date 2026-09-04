@@ -31,31 +31,62 @@ const loading = ref(false)
 const refreshing = ref(false)
 const error = ref('')
 const data = ref(null)
-// 获取失败时必须按演练模式展示，不能猜测已开启真实回写。
-const keywordBidLive = ref(false)
-const keywordWritebackButtonLabel = computed(() => (
-  keywordBidLive.value ? '确认并真实执行' : '加入待回写'
-))
+// 模式未确认时禁止提交，不能把“未知”伪装成不会修改百度账户的演练模式。
+const keywordWritebackModeState = ref('loading') // loading | ready | error
+const keywordWritebackAccountIds = ref(new Set())
+const keywordBidLiveAccountIds = ref(new Set())
 const keywordWritebackHint = computed(() => (
-  keywordBidLive.value
-    ? '当前客户已开启关键词出价真实回写：最终执行价可人工调整，确认后会修改百度账户并保留完整台账。'
-    : '最终执行价默认填入 AI 建议价（无建议则为当前出价），可人工调整并加入待回写台账；当前不会修改百度账户。'
+  keywordWritebackModeState.value === 'loading'
+    ? '正在确认当前客户各推广账户的回写模式，确认完成前禁止提交。'
+    : keywordWritebackModeState.value === 'error'
+      ? '无法确认当前客户的回写模式，已禁止提交，请刷新页面后重试。'
+      : '最终执行价可人工调整；每个关键词会按所属百度账户显示真实执行或演练模式，并保留完整台账。'
 ))
+function keywordWritebackModeFor(row) {
+  if (keywordWritebackModeState.value !== 'ready') return keywordWritebackModeState.value
+  const accountId = Number(row?.baidu_account_id)
+  if (!Number.isInteger(accountId) || !keywordWritebackAccountIds.value.has(accountId)) return 'unavailable'
+  return keywordBidLiveAccountIds.value.has(accountId) ? 'live' : 'dry_run'
+}
+function keywordWritebackButtonLabel(row) {
+  const mode = keywordWritebackModeFor(row)
+  if (mode === 'live') return '确认并真实执行'
+  if (mode === 'dry_run') return '加入待回写'
+  if (mode === 'loading') return '正在确认回写模式…'
+  return '回写模式不可用'
+}
+function keywordWritebackReady(row) {
+  return ['live', 'dry_run'].includes(keywordWritebackModeFor(row))
+}
 let writebackModeGeneration = 0
 async function loadKeywordWritebackMode() {
   const tenantId = TENANT_ID.value
   const generation = ++writebackModeGeneration
-  keywordBidLive.value = false
-  if (!tenantId) return
+  keywordWritebackModeState.value = 'loading'
+  keywordWritebackAccountIds.value = new Set()
+  keywordBidLiveAccountIds.value = new Set()
+  if (!tenantId) {
+    keywordWritebackModeState.value = 'error'
+    return
+  }
   try {
     const writebackMode = await fetchWritebackMode(tenantId)
     if (generation !== writebackModeGeneration || tenantId !== TENANT_ID.value) return
-    keywordBidLive.value = Boolean(
-      writebackMode?.mode === 'limited_live'
-      && writebackMode.live_scopes?.includes('keyword_bid'),
+    const accounts = Array.isArray(writebackMode?.accounts) ? writebackMode.accounts : []
+    keywordWritebackAccountIds.value = new Set(
+      accounts.map((account) => Number(account.baidu_account_id)).filter(Number.isInteger),
     )
+    keywordBidLiveAccountIds.value = new Set(
+      accounts
+        .filter((account) => account.live_scopes?.includes('keyword_bid'))
+        .map((account) => Number(account.baidu_account_id))
+        .filter(Number.isInteger),
+    )
+    keywordWritebackModeState.value = 'ready'
   } catch {
-    // 获取失败时保持演练文案，不展示真实执行。
+    if (generation === writebackModeGeneration && tenantId === TENANT_ID.value) {
+      keywordWritebackModeState.value = 'error'
+    }
   }
 }
 const syncDiagnosis = computed(() => {
@@ -66,6 +97,9 @@ const syncDiagnosis = computed(() => {
   return { type: 'info', text: '同步已完成，但当前筛选条件下没有关键词。可清除筛选后重试。' }
 })
 const selection = ref([])
+const batchWritebackReady = computed(() => (
+  selection.value.length > 0 && selection.value.every(keywordWritebackReady)
+))
 const suggestionMap = ref({}) // keyword_id -> 该词的 AI 建议（全量 pending，独立于列表分页）
 const suggestionList = ref([]) // AI 建议列表（顶部卡片区渲染）
 const suggestionPending = ref(0)
@@ -598,6 +632,10 @@ function _removeSuggestion(kwId) {
 
 // 回写的是「最终执行价」(finalPrices，可人工调整，默认=AI建议价/当前价)，不限于有 AI 建议的词
 async function applyWriteback(row) {
+  if (!keywordWritebackReady(row)) {
+    ElMessage.error('当前关键词的回写模式尚未确认，已禁止提交，请刷新页面后重试')
+    return
+  }
   const result = await submitKeywordWriteback(
     row.keyword_id,
     finalPrices[row.keyword_id],
@@ -608,10 +646,18 @@ async function applyWriteback(row) {
 }
 
 async function openMatchTypeDialog(row, command) {
+  if (!keywordWritebackReady(row)) {
+    ElMessage.error('当前关键词的回写模式尚未确认，已禁止修改匹配模式')
+    return
+  }
   await changeMatchType(row.keyword_id, row.keyword, row.match_type, command)
 }
 
 async function batchWriteback() {
+  if (!batchWritebackReady.value) {
+    ElMessage.error('所选关键词中存在回写模式尚未确认的账户，已禁止批量提交')
+    return
+  }
   // 勾选行的最终执行价批量回写（每行各自的 finalPrices）
   const items = selection.value
     .filter((r) => finalPrices[r.keyword_id] != null && Number(finalPrices[r.keyword_id]) > 0)
@@ -649,10 +695,18 @@ async function batchWriteback() {
 }
 
 async function togglePause(row) {
+  if (!keywordWritebackReady(row)) {
+    ElMessage.error('当前关键词的回写模式尚未确认，已禁止暂停或启用')
+    return
+  }
   await submitKeywordPause(row.keyword_id, row.keyword, row.pause)
 }
 
 async function batchPause(pause) {
+  if (!batchWritebackReady.value) {
+    ElMessage.error('所选关键词中存在回写模式尚未确认的账户，已禁止批量暂停或启用')
+    return
+  }
   const ids = selection.value.map((r) => r.keyword_id)
   if (!ids.length) return
   try {
@@ -726,7 +780,18 @@ const headerStats = computed(() => {
 })
 
 // 顶栏切换客户后重新拉数
-watch(TENANT_ID, () => { filters.page = 1; campaignData.value = null; adgroupData.value = null; activeView.value = 'keywords'; load(); loadKeywordWritebackMode(); loadSuggestionAssignees(); scheduleStickyScrollSync() })
+watch(TENANT_ID, () => {
+  tableRef.value?.clearSelection()
+  selection.value = []
+  filters.page = 1
+  campaignData.value = null
+  adgroupData.value = null
+  activeView.value = 'keywords'
+  load()
+  loadKeywordWritebackMode()
+  loadSuggestionAssignees()
+  scheduleStickyScrollSync()
+})
 watch(activeView, scheduleStickyScrollSync)
 watch(() => [data.value?.keywords?.length, campaignData.value?.campaigns?.length, adgroupData.value?.adgroups?.length, loading.value], scheduleStickyScrollSync)
 
@@ -871,13 +936,13 @@ onBeforeUnmount(() => {
           </template>
         </el-dropdown>
         <el-tooltip content="对所选关键词回写各自的「最终执行价」（默认=AI建议价，可在表内调整），受 ±20% 硬上限和客户级回写门禁保护并记台账" placement="top">
-          <button class="bt-btn bt-primary" :disabled="!selection.length" @click="batchWriteback">批量回写</button>
+          <button class="bt-btn bt-primary" :disabled="!batchWritebackReady" @click="batchWriteback">批量回写</button>
         </el-tooltip>
         <el-tooltip content="批量暂停所选关键词（updateWord 写回），受客户、推广账户和动作门禁保护" placement="top">
-          <button class="bt-btn" :disabled="!selection.length" @click="batchPause(true)">批量暂停</button>
+          <button class="bt-btn" :disabled="!batchWritebackReady" @click="batchPause(true)">批量暂停</button>
         </el-tooltip>
         <el-tooltip content="批量启用所选关键词（updateWord 写回），受客户、推广账户和动作门禁保护" placement="top">
-          <button class="bt-btn" :disabled="!selection.length" @click="batchPause(false)">批量启用</button>
+          <button class="bt-btn" :disabled="!batchWritebackReady" @click="batchPause(false)">批量启用</button>
         </el-tooltip>
         <el-tooltip content="匹配方式变更受客户、推广账户和动作门禁保护并记台账" placement="top">
           <button class="bt-btn" disabled>批量加否词</button>
@@ -913,7 +978,11 @@ onBeforeUnmount(() => {
               >{{ row.category.label }}<template v-if="row.category.source === 'manual'">·人工</template></span>
             </div>
             <div class="kw-cell-sub">
-              <el-dropdown trigger="click" @command="(cmd) => openMatchTypeDialog(row, cmd)">
+              <el-dropdown
+                trigger="click"
+                :disabled="!keywordWritebackReady(row)"
+                @command="(cmd) => openMatchTypeDialog(row, cmd)"
+              >
                 <span class="match-type-trigger">
                   {{ row.match_type || '—' }}
                   <span class="match-type-caret">▾</span>
@@ -1078,9 +1147,17 @@ onBeforeUnmount(() => {
         <el-table-column label="操作" min-width="190">
           <template #default="{ row }">
             <div class="op-cell">
-              <button class="op-btn primary" @click="applyWriteback(row)">{{ keywordWritebackButtonLabel }}</button>
-              <el-dropdown trigger="click" @command="(command) => openMatchTypeDialog(row, command)">
-                <button class="op-btn" type="button">改匹配 ▾</button>
+              <button
+                class="op-btn primary"
+                :disabled="!keywordWritebackReady(row)"
+                @click="applyWriteback(row)"
+              >{{ keywordWritebackButtonLabel(row) }}</button>
+              <el-dropdown
+                trigger="click"
+                :disabled="!keywordWritebackReady(row)"
+                @command="(command) => openMatchTypeDialog(row, command)"
+              >
+                <button class="op-btn" type="button" :disabled="!keywordWritebackReady(row)">改匹配 ▾</button>
                 <template #dropdown>
                   <el-dropdown-menu>
                     <el-dropdown-item command="exact">精确匹配</el-dropdown-item>
@@ -1089,7 +1166,7 @@ onBeforeUnmount(() => {
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
-              <button class="op-btn" @click="togglePause(row)">{{ row.pause ? '启用' : '暂停' }}</button>
+              <button class="op-btn" :disabled="!keywordWritebackReady(row)" @click="togglePause(row)">{{ row.pause ? '启用' : '暂停' }}</button>
               <button v-if="suggestionMap[row.keyword_id]" class="op-btn" @click="ignoreSuggestion(suggestionMap[row.keyword_id])">忽略建议</button>
               <button class="op-btn" @click="gotoDetail(row)">详情</button>
             </div>

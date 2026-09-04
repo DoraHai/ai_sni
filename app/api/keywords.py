@@ -807,6 +807,7 @@ async def list_keywords(
         rows.append(
             {
                 "keyword_id": k.keyword_id,
+                "baidu_account_id": k.baidu_account_id,
                 "keyword": k.keyword,
                 "category": _category_payload(k.category, k.category_source),
                 "campaign_id": k.campaign_id,
