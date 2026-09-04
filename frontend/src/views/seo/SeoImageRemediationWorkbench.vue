@@ -149,6 +149,12 @@ async function exportApproved() {
 function dialogClosed() { dialogPage.value = null; load() }
 watch(() => filters.q, () => { selected.value = []; clearTimeout(timer); timer = setTimeout(() => { page.value = 1; load() }, 260) })
 watch([() => props.tenantId, () => props.siteId, () => props.refreshKey], () => { selected.value = []; page.value = 1; load() }, { immediate: true })
+watch([() => props.tenantId, () => props.siteId], (next, previous) => {
+  if (previous && (next[0] !== previous[0] || next[1] !== previous[1])) {
+    dialogOpen.value = false
+    dialogPage.value = null
+  }
+})
 watch([() => filters.reviewState, () => filters.decision], () => { selected.value = []; page.value = 1; load() })
 watch(dialogOpen, value => { if (!value && dialogPage.value) dialogClosed() })
 onBeforeUnmount(() => { disposed = true; ++generation; clearTimeout(timer) })

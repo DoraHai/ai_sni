@@ -59,6 +59,24 @@ state().drafts[2].alt_suggestion = '产品图'
 state().focusedOnly = false
 state().reviewFilter = 'all'
 assert.equal(state().items.length, 2)
+state().focusedOnly = true
+state().reviewFilter = 'draft'
+state().filter = 'missing'
+state().changeSnapshot(11)
+assert.equal(state().focusedOnly, false)
+assert.equal(state().reviewFilter, 'all')
+assert.equal(state().filter, 'all')
+requests.at(-1).resolve({ snapshot_id: 11, evidence: { items: [{ position: 2, alt_state: 'missing' }] } })
+remediationRequests.at(-1).resolve({ snapshot_id: 11, items: [] })
+historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [{ snapshot_id: 12, approved_count: 0, candidate_count: 2 }, { snapshot_id: 11, approved_count: 1, candidate_count: 1 }] })
+previewRequests.at(-1).resolve({ target_snapshot_id: 12, eligible_count: 0, source_page_count: 0 })
+await flush()
+state().changeSnapshot(12)
+requests.at(-1).resolve({ snapshot_id: 12, evidence: { items: [{ position: 1, alt_state: 'empty' }, { position: 2, alt_state: 'missing' }] } })
+remediationRequests.at(-1).resolve({ snapshot_id: 12, items: [{ id: 7, position: 2, decision: 'informative', alt_suggestion: '产品图', note: '由 AI 根据已存档文本线索生成，未读取图片像素，必须人工核对', review_status: 'draft' }] })
+historyRequests.at(-1).resolve({ current_snapshot_id: 12, items: [{ snapshot_id: 12, approved_count: 0, candidate_count: 2 }, { snapshot_id: 11, approved_count: 1, candidate_count: 1 }] })
+previewRequests.at(-1).resolve({ target_snapshot_id: 12, eligible_count: 1, source_page_count: 1 })
+await flush()
 state().filter = 'missing'
 assert.deepEqual(state().items, [{ position: 2, alt_state: 'missing' }])
 assert.equal(state().drafts[2].id, 7)
@@ -247,6 +265,14 @@ await Vue.nextTick()
 releaseConfirmation(true)
 await staleGenerate
 assert.equal(generatedPayloads.length, 1, 'site changes during confirmation must cancel the stale AI write')
+workbenchRequests.at(-1).resolve({ items: [], total: 0, stats: {} })
+await flush()
+workbenchState().dialogOpen = true
+workbenchState().dialogPage = { id: 3, position: 5 }
+workbenchProps.siteId = 4
+await Vue.nextTick()
+assert.equal(workbenchState().dialogOpen, false, 'switching sites closes the old page dialog')
+assert.equal(workbenchState().dialogPage, null)
 workbenchRequests.at(-1).resolve({ items: [], total: 0, stats: {} })
 await flush()
 workbenchApp.unmount()
