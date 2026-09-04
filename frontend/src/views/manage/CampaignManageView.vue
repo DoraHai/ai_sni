@@ -5,6 +5,7 @@ import {
   fetchCampaigns, fetchRegionOptions, setCampaignBudget, setCampaignPause,
   setCampaignRegion, setCampaignSchedule,
 } from '../../api/manage'
+import { WRITEBACK_CONFIRMATION } from '../../api/writeback'
 import { session } from '../../store/session'
 
 const TENANT_ID = computed(() => session.tenantId)
@@ -387,7 +388,12 @@ async function editBudget(row) {
   }
   savingId.value = row.campaign_id
   try {
-    const res = await setCampaignBudget({ tenantId: TENANT_ID.value, campaignId: row.campaign_id, budget: v })
+    const res = await setCampaignBudget({
+      tenantId: TENANT_ID.value,
+      campaignId: row.campaign_id,
+      budget: v,
+      confirmation: WRITEBACK_CONFIRMATION,
+    })
     if (res.status === 'dry_run') {
       ElMessage.success(`演练完成：${fmtMoney(res.old_budget)} → ${fmtMoney(res.new_budget)}（未真改，已记台账）`)
     } else if (res.status === 'success') {
