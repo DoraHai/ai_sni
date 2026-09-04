@@ -116,7 +116,8 @@ const siteRequests = [], globalSite = Vue.ref(null), globalTenant = Vue.ref(1)
 const onsiteBindings = { computed:Vue.computed, ref:Vue.ref, reactive:Vue.reactive, watch:Vue.watch, onMounted:Vue.onMounted, onBeforeUnmount:Vue.onBeforeUnmount,
   useRoute: () => Vue.reactive({ query:{} }), useRouter: () => ({ push(){} }),
   currentTenantId:globalTenant, siteId:globalSite, session:{ isLoggedIn:true, canEdit:()=>true },
-  ElMessage:bindings.ElMessage, SeoSiteDiagnosticsPanel:{ render:()=>null }, formatSeoCsvTime:v=>v,
+  ElMessage:bindings.ElMessage, SeoSiteDiagnosticsPanel:{ render:()=>null },
+  SeoImageRemediationWorkbench:{ render:()=>null }, formatSeoCsvTime:v=>v,
   fetchSeoSites: arg => { const d = deferred(arg); siteRequests.push(d); return d.promise } }
 for (const match of onsiteSource.matchAll(/import \{ ([^}]+) \} from '\.\.\/\.\.\/api\/[^']+'/g)) {
   for (const name of match[1].split(',').map(v=>v.trim())) {
