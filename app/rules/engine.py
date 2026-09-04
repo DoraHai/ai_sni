@@ -78,6 +78,7 @@ def _alert_record(tenant: Tenant, draft) -> dict:
         "campaign_name": draft.campaign_name,
         "entity_ref": draft.entity_ref,
         "metrics": draft.metrics,
+        "status": "open",
     }
 
 
@@ -119,6 +120,7 @@ async def _upsert_keyword_alerts(session: AsyncSession, records: list[dict]) -> 
         index_where=Alert.keyword_id.isnot(None),
         set_={
             "priority": stmt.excluded.priority,
+            "status": stmt.excluded.status,
             "title": stmt.excluded.title,
             "message": stmt.excluded.message,
             "campaign_id": stmt.excluded.campaign_id,
@@ -138,6 +140,7 @@ async def _upsert_entity_alerts(session: AsyncSession, records: list[dict]) -> N
         index_where=Alert.entity_ref.isnot(None),
         set_={
             "priority": stmt.excluded.priority,
+            "status": stmt.excluded.status,
             "title": stmt.excluded.title,
             "message": stmt.excluded.message,
             "campaign_id": stmt.excluded.campaign_id,

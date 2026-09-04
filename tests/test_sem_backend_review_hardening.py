@@ -122,7 +122,7 @@ def test_site_health_probe_is_registered_once_daily():
 
 
 @pytest.mark.parametrize("upsert", [_upsert_keyword_alerts, _upsert_entity_alerts])
-def test_alert_upsert_refreshes_priority_without_reopening_status(upsert):
+def test_alert_upsert_refreshes_priority_and_reopens_status(upsert):
     record = {
         "tenant_id": 1,
         "rule_code": "test_rule",
@@ -136,6 +136,7 @@ def test_alert_upsert_refreshes_priority_without_reopening_status(upsert):
         "campaign_name": None,
         "entity_ref": None if upsert is _upsert_keyword_alerts else "url:test",
         "metrics": {},
+        "status": "open",
     }
     session = SimpleNamespace(execute=AsyncMock())
 
@@ -146,7 +147,7 @@ def test_alert_upsert_refreshes_priority_without_reopening_status(upsert):
         field for field, _value in statement._post_values_clause.update_values_to_set
     }
     assert "priority" in updated_fields
-    assert "status" not in updated_fields
+    assert "status" in updated_fields
 
 
 def test_oauth_empty_account_result_has_explicit_error():

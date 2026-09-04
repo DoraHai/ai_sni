@@ -279,6 +279,9 @@ def test_backend_and_frontend_keep_approval_id_wiring():
     keyword_controls = (
         ROOT / "frontend/src/composables/useKeywordWriteback.js"
     ).read_text(encoding="utf-8")
+    idempotency_client = (
+        ROOT / "frontend/src/api/idempotency.js"
+    ).read_text(encoding="utf-8")
 
     assert manage_api.count("approval_id: int | None = None") >= 3
     assert manage_api.count("approval_id=req.approval_id") >= 3
@@ -286,6 +289,15 @@ def test_backend_and_frontend_keep_approval_id_wiring():
     assert keyword_api.count("approval_id=") >= 2
     assert manage_client.count("approval_id: approvalId") == 3
     assert "approval_id: approvalId" in keyword_client
+    assert manage_api.count("idempotency_key: str | None") == 3
+    assert manage_api.count("idempotency_key=req.idempotency_key") == 3
+    assert keyword_api.count("idempotency_key: str | None") == 1
+    assert "idempotency_key=req.idempotency_key" in keyword_api
+    assert manage_client.count("idempotency_key: requestKey") == 3
+    assert manage_client.count("runIdempotentWriteback(operationKey") == 3
+    assert "idempotency_key: requestKey" in keyword_client
+    assert "runIdempotentWriteback(operationKey" in keyword_client
+    assert "crypto?.randomUUID" in idempotency_client
     assert approval_view.count("approvalId: row.id") == 4
     assert "CONFIRM_BAIDU_WRITEBACK" in approval_client
     assert "confirmation: WRITEBACK_CONFIRMATION" in keyword_controls
@@ -415,5 +427,6 @@ def test_real_writeback_can_create_and_consume_one_click_confirmation():
         payload={"keyword_id": 7, "new_bid": 1.23},
         operator_user_id=9,
         confirmation="CONFIRM_BAIDU_WRITEBACK",
+        idempotency_key=None,
     )
     assert claim.await_args.kwargs["approval_id"] == 41

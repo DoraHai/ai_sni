@@ -1,4 +1,5 @@
 import client from './client'
+import { runIdempotentWriteback } from './idempotency'
 
 // 投放管理 · 账户与预算（menu = manage.account）。
 export function fetchAccountBudget({ tenantId, baiduAccountId = null }) {
@@ -8,10 +9,12 @@ export function fetchAccountBudget({ tenantId, baiduAccountId = null }) {
 }
 
 // 写回账户日预算（dry-run 演练时只记台账不真改）。
-export function setAccountBudget({ tenantId, baiduAccountId = null, budget, approvalId = null, confirmation = null }) {
-  return client.post('/api/v1/manage/account-budget', {
+export function setAccountBudget({ tenantId, baiduAccountId = null, budget, approvalId = null, confirmation = null, idempotencyKey = null }) {
+  const operationKey = JSON.stringify(['account_budget', tenantId, baiduAccountId, budget, approvalId])
+  return runIdempotentWriteback(operationKey, (requestKey) => client.post('/api/v1/manage/account-budget', {
     tenant_id: tenantId, baidu_account_id: baiduAccountId, budget, approval_id: approvalId, confirmation,
-  })
+    idempotency_key: requestKey,
+  }), idempotencyKey)
 }
 
 // 计划列表（含日预算/状态，行内可改预算）。
@@ -22,10 +25,12 @@ export function fetchCampaigns({ tenantId, baiduAccountId }) {
 }
 
 // 写回计划日预算（dry-run 演练时只记台账不真改）。
-export function setCampaignBudget({ tenantId, campaignId, budget, approvalId = null, confirmation = null }) {
-  return client.post('/api/v1/manage/campaign-budget', {
+export function setCampaignBudget({ tenantId, campaignId, budget, approvalId = null, confirmation = null, idempotencyKey = null }) {
+  const operationKey = JSON.stringify(['campaign_budget', tenantId, campaignId, budget, approvalId])
+  return runIdempotentWriteback(operationKey, (requestKey) => client.post('/api/v1/manage/campaign-budget', {
     tenant_id: tenantId, campaign_id: campaignId, budget, approval_id: approvalId, confirmation,
-  })
+    idempotency_key: requestKey,
+  }), idempotencyKey)
 }
 
 // 计划启停（pause=true 暂停 / false 恢复投放）。
@@ -77,10 +82,12 @@ export function setAdgroupPause({ tenantId, adgroupId, pause }) {
 }
 
 // 单元出价写回。
-export function setAdgroupBid({ tenantId, adgroupId, maxPrice, approvalId = null, confirmation = null }) {
-  return client.post('/api/v1/manage/adgroup-bid', {
+export function setAdgroupBid({ tenantId, adgroupId, maxPrice, approvalId = null, confirmation = null, idempotencyKey = null }) {
+  const operationKey = JSON.stringify(['adgroup_bid', tenantId, adgroupId, maxPrice, approvalId])
+  return runIdempotentWriteback(operationKey, (requestKey) => client.post('/api/v1/manage/adgroup-bid', {
     tenant_id: tenantId, adgroup_id: adgroupId, max_price: maxPrice, approval_id: approvalId, confirmation,
-  })
+    idempotency_key: requestKey,
+  }), idempotencyKey)
 }
 
 // 单元落地页 / URL 拆分字段写回。

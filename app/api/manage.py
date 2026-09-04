@@ -9,7 +9,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -101,6 +101,7 @@ class AccountBudgetReq(BaseModel):
     budget: float
     approval_id: int | None = None
     confirmation: str | None = None
+    idempotency_key: str | None = Field(default=None, min_length=16, max_length=128)
 
 
 @router.post("/account-budget")
@@ -117,6 +118,7 @@ async def set_account_budget(
             operator_user_id=ctx.user_id, operator_name=ctx.username,
             approval_id=req.approval_id,
             confirmation=req.confirmation,
+            idempotency_key=req.idempotency_key,
             baidu_account_id=req.baidu_account_id,
         )
     except WritebackError as e:
@@ -191,6 +193,7 @@ class CampaignBudgetReq(BaseModel):
     budget: float
     approval_id: int | None = None
     confirmation: str | None = None
+    idempotency_key: str | None = Field(default=None, min_length=16, max_length=128)
 
 
 @router.post("/campaign-budget")
@@ -207,6 +210,7 @@ async def set_campaign_budget(
             operator_user_id=ctx.user_id, operator_name=ctx.username,
             approval_id=req.approval_id,
             confirmation=req.confirmation,
+            idempotency_key=req.idempotency_key,
         )
     except WritebackError as e:
         raise HTTPException(400, str(e))
@@ -444,6 +448,7 @@ class AdgroupBidReq(BaseModel):
     max_price: float
     approval_id: int | None = None
     confirmation: str | None = None
+    idempotency_key: str | None = Field(default=None, min_length=16, max_length=128)
 
 
 @router.post("/adgroup-bid")
@@ -460,6 +465,7 @@ async def set_adgroup_bid(
             operator_user_id=ctx.user_id, operator_name=ctx.username,
             approval_id=req.approval_id,
             confirmation=req.confirmation,
+            idempotency_key=req.idempotency_key,
         )
     except WritebackError as e:
         raise HTTPException(400, str(e))

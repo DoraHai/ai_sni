@@ -105,6 +105,37 @@ def test_api_missing_profile_returns_actionable_conflict(monkeypatch):
     assert "填写行业或业务描述" in exc.value.detail
 
 
+def test_admin_sync_keeps_success_when_optional_profile_is_missing(monkeypatch):
+    from app import main
+
+    customer = tenant(industry=None, business_desc=None)
+    session = SimpleNamespace(
+        get=AsyncMock(return_value=customer),
+        scalar=AsyncMock(return_value=SimpleNamespace(id=17)),
+    )
+    monkeypatch.setattr(main, "sync_planner_candidates_for_account", AsyncMock(return_value=4))
+    monkeypatch.setattr(main, "sync_query_candidates_for_account", AsyncMock(return_value=6))
+    monkeypatch.setattr(
+        evaluator,
+        "evaluate_candidates_for_tenant",
+        AsyncMock(side_effect=evaluator.MissingBusinessProfileError("请先填写客户画像")),
+    )
+
+    result = asyncio.run(main.sync_expansion(
+        tenant_id=3,
+        seeds="修补漆",
+        max_num=20,
+        query_days=7,
+        session=session,
+    ))
+
+    assert result["status"] == "ok"
+    assert result["planner_candidates"] == 4
+    assert result["query_candidates"] == 6
+    assert result["ai_eval"]["skipped"] == "missing_business_profile"
+    assert result["ai_eval"]["evaluated"] == 0
+
+
 def test_two_customers_get_separate_context_and_preserve_word_metadata(monkeypatch):
     chat = AsyncMock(return_value={"items": []})
     monkeypatch.setattr(evaluator, "chat_json", chat)

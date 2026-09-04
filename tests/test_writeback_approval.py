@@ -167,6 +167,91 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
         )
         session.flush.assert_awaited_once()
 
+    async def test_idempotent_confirmation_stores_only_digest_marker(self):
+        class Session:
+            def __init__(self):
+                self.row = None
+                self.execute = AsyncMock()
+                self.scalar = AsyncMock(return_value=None)
+                self.flush = AsyncMock()
+
+            def add(self, row):
+                self.row = row
+
+        session = Session()
+        raw_key = "sem-writeback-request-0001"
+        row = await create_self_approved_approval(
+            session,
+            tenant_id=3,
+            action_type=ACTION_KEYWORD_BID,
+            payload={"keyword_id": 7, "new_bid": 1.23},
+            operator_user_id=9,
+            confirmation=WRITEBACK_CONFIRMATION,
+            idempotency_key=raw_key,
+        )
+
+        self.assertTrue(row.request_note.startswith("idempotency-sha256:"))
+        self.assertNotIn(raw_key, row.request_note)
+        self.assertEqual(len(row.request_note), len("idempotency-sha256:") + 64)
+        self.assertIn("pg_advisory_xact_lock", str(session.execute.await_args.args[0]))
+        session.scalar.assert_awaited_once()
+        session.flush.assert_awaited_once()
+
+    async def test_idempotent_confirmation_reuses_matching_audit_row(self):
+        normalized, fingerprint = payload_fingerprint(
+            ACTION_KEYWORD_BID, {"keyword_id": 7, "new_bid": 1.23}
+        )
+        existing = SimpleNamespace(
+            id=41,
+            action_type=ACTION_KEYWORD_BID,
+            payload=normalized,
+            payload_hash=fingerprint,
+        )
+        session = SimpleNamespace(
+            execute=AsyncMock(),
+            scalar=AsyncMock(return_value=existing),
+            add=unittest.mock.Mock(),
+            flush=AsyncMock(),
+        )
+
+        row = await create_self_approved_approval(
+            session,
+            tenant_id=3,
+            action_type=ACTION_KEYWORD_BID,
+            payload={"keyword_id": 7, "new_bid": 1.23},
+            operator_user_id=9,
+            confirmation=WRITEBACK_CONFIRMATION,
+            idempotency_key="sem-writeback-request-0001",
+        )
+
+        self.assertIs(row, existing)
+        session.add.assert_not_called()
+        session.flush.assert_not_awaited()
+
+    async def test_idempotency_key_cannot_be_reused_for_different_parameters(self):
+        normalized, fingerprint = payload_fingerprint(
+            ACTION_KEYWORD_BID, {"keyword_id": 7, "new_bid": 1.24}
+        )
+        existing = SimpleNamespace(
+            id=41,
+            action_type=ACTION_KEYWORD_BID,
+            payload=normalized,
+            payload_hash=fingerprint,
+        )
+        session = SimpleNamespace(
+            execute=AsyncMock(), scalar=AsyncMock(return_value=existing)
+        )
+        with self.assertRaisesRegex(WritebackApprovalError, "其他执行参数"):
+            await create_self_approved_approval(
+                session,
+                tenant_id=3,
+                action_type=ACTION_KEYWORD_BID,
+                payload={"keyword_id": 7, "new_bid": 1.23},
+                operator_user_id=9,
+                confirmation=WRITEBACK_CONFIRMATION,
+                idempotency_key="sem-writeback-request-0001",
+            )
+
     async def test_one_click_confirmation_rejects_missing_confirmation(self):
         with self.assertRaisesRegex(WritebackApprovalError, WRITEBACK_CONFIRMATION):
             await create_self_approved_approval(
