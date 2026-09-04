@@ -29,6 +29,7 @@ from app.baidu.writeback_approval import (
     ACTION_KEYWORD_BID,
     WritebackApprovalError,
     claim_approval,
+    create_self_approved_approval,
 )
 from app.config import get_settings, resolve_baidu_write_dry_run
 from app.models import (
@@ -134,12 +135,23 @@ async def _claim_funds_approval(
     payload: dict,
     operator_user_id: int | None,
     dry_run: bool,
-) -> None:
+    confirmation: str | None = None,
+) -> int | None:
     """演练不消耗确认；真实资金回写必须消费本人绑定参数的一次性确认。"""
     if dry_run:
-        return
+        return None
     try:
-        await claim_approval(
+        if approval_id is None:
+            approval = await create_self_approved_approval(
+                session,
+                tenant_id=tenant_id,
+                action_type=action_type,
+                payload=payload,
+                operator_user_id=operator_user_id,
+                confirmation=confirmation,
+            )
+            approval_id = approval.id
+        approval = await claim_approval(
             session,
             approval_id=approval_id,
             tenant_id=tenant_id,
@@ -147,6 +159,7 @@ async def _claim_funds_approval(
             payload=payload,
             operator_user_id=operator_user_id,
         )
+        return approval.id
     except WritebackApprovalError as exc:
         raise WritebackError(str(exc)) from exc
 
@@ -248,6 +261,7 @@ async def apply_keyword_writeback(
     operator_user_id: int | None,
     operator_name: str | None,
     approval_id: int | None = None,
+    confirmation: str | None = None,
 ) -> BidWriteback:
     """把关键词的「最终执行价」回写百度，落台账并返回台账行。
 
@@ -286,7 +300,7 @@ async def apply_keyword_writeback(
             BidWriteback.tenant_id == tenant_id,
             BidWriteback.keyword_id == keyword_id,
         )
-    await _claim_funds_approval(
+    effective_approval_id = await _claim_funds_approval(
         session,
         approval_id=approval_id,
         tenant_id=tenant_id,
@@ -294,12 +308,13 @@ async def apply_keyword_writeback(
         payload={"keyword_id": keyword_id, "new_bid": new_bid},
         operator_user_id=operator_user_id,
         dry_run=dry_run,
+        confirmation=confirmation,
     )
 
     rec = BidWriteback(
         tenant_id=tenant_id,
         baidu_account_id=acc.id,
-        approval_id=approval_id if not dry_run else None,
+        approval_id=effective_approval_id,
         suggestion_id=sug.id if sug else None,
         keyword_id=keyword_id,
         keyword=kw.keyword,
@@ -1001,6 +1016,7 @@ async def apply_campaign_budget_writeback(
     operator_user_id: int | None,
     operator_name: str | None,
     approval_id: int | None = None,
+    confirmation: str | None = None,
 ) -> WritebackAction:
     """计划日预算写回（updateCampaign budget，文档 0046）。dry_run 时拦截不真发。
 
@@ -1064,7 +1080,7 @@ async def apply_campaign_budget_writeback(
             WritebackAction.action_type == "set_campaign_budget",
             WritebackAction.campaign_id == campaign_id,
         )
-    await _claim_funds_approval(
+    effective_approval_id = await _claim_funds_approval(
         session,
         approval_id=approval_id,
         tenant_id=tenant_id,
@@ -1072,10 +1088,11 @@ async def apply_campaign_budget_writeback(
         payload={"campaign_id": campaign_id, "new_budget": new_budget},
         operator_user_id=operator_user_id,
         dry_run=dry_run,
+        confirmation=confirmation,
     )
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id, action_type="set_campaign_budget",
-        approval_id=approval_id if not dry_run else None,
+        approval_id=effective_approval_id,
         word=camp.campaign_name or f"计划#{campaign_id}",
         campaign_id=campaign_id, campaign_name=camp.campaign_name,
         old_value=old_budget, new_value=new_budget,
@@ -1453,6 +1470,7 @@ async def apply_adgroup_bid_writeback(
     operator_user_id: int | None,
     operator_name: str | None,
     approval_id: int | None = None,
+    confirmation: str | None = None,
 ) -> WritebackAction:
     """单元出价 maxPrice 写回（updateAdgroup）。校验 (0,999.99] 且 ≤ 所属计划预算。
 
@@ -1491,7 +1509,7 @@ async def apply_adgroup_bid_writeback(
             WritebackAction.action_type == "set_adgroup_bid",
             WritebackAction.adgroup_id == adgroup_id,
         )
-    await _claim_funds_approval(
+    effective_approval_id = await _claim_funds_approval(
         session,
         approval_id=approval_id,
         tenant_id=tenant_id,
@@ -1499,10 +1517,11 @@ async def apply_adgroup_bid_writeback(
         payload={"adgroup_id": adgroup_id, "new_price": new_price},
         operator_user_id=operator_user_id,
         dry_run=dry_run,
+        confirmation=confirmation,
     )
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id, action_type="set_adgroup_bid",
-        approval_id=approval_id if not dry_run else None,
+        approval_id=effective_approval_id,
         word=adg.adgroup_name or f"单元#{adgroup_id}",
         campaign_id=adg.campaign_id, adgroup_id=adgroup_id, adgroup_name=adg.adgroup_name,
         old_value=old_price, new_value=new_price,
@@ -1678,6 +1697,7 @@ async def apply_account_budget_writeback(
     operator_user_id: int | None,
     operator_name: str | None,
     approval_id: int | None = None,
+    confirmation: str | None = None,
     baidu_account_id: int | None = None,
 ) -> WritebackAction:
     """账户日预算写回（updateAccountInfo budget，文档 0036）。dry_run 时拦截不真发。
@@ -1721,7 +1741,7 @@ async def apply_account_budget_writeback(
             WritebackAction.baidu_account_id == acc.id,
             WritebackAction.action_type == "set_account_budget",
         )
-    await _claim_funds_approval(
+    effective_approval_id = await _claim_funds_approval(
         session,
         approval_id=approval_id,
         tenant_id=tenant_id,
@@ -1729,10 +1749,11 @@ async def apply_account_budget_writeback(
         payload={"baidu_account_id": acc.id, "new_budget": new_budget},
         operator_user_id=operator_user_id,
         dry_run=dry_run,
+        confirmation=confirmation,
     )
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id, action_type="set_account_budget",
-        approval_id=approval_id if not dry_run else None,
+        approval_id=effective_approval_id,
         word="账户日预算", old_value=old_budget, new_value=new_budget,
         dry_run=dry_run, status="pending",
         operator_user_id=operator_user_id, operator_name=operator_name,

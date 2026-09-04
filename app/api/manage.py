@@ -100,6 +100,7 @@ class AccountBudgetReq(BaseModel):
     baidu_account_id: int | None = None
     budget: float
     approval_id: int | None = None
+    confirmation: str | None = None
 
 
 @router.post("/account-budget")
@@ -115,6 +116,7 @@ async def set_account_budget(
             session, req.tenant_id, req.budget,
             operator_user_id=ctx.user_id, operator_name=ctx.username,
             approval_id=req.approval_id,
+            confirmation=req.confirmation,
             baidu_account_id=req.baidu_account_id,
         )
     except WritebackError as e:
@@ -188,6 +190,7 @@ class CampaignBudgetReq(BaseModel):
     campaign_id: int
     budget: float
     approval_id: int | None = None
+    confirmation: str | None = None
 
 
 @router.post("/campaign-budget")
@@ -203,6 +206,7 @@ async def set_campaign_budget(
             session, req.tenant_id, req.campaign_id, req.budget,
             operator_user_id=ctx.user_id, operator_name=ctx.username,
             approval_id=req.approval_id,
+            confirmation=req.confirmation,
         )
     except WritebackError as e:
         raise HTTPException(400, str(e))
@@ -439,6 +443,7 @@ class AdgroupBidReq(BaseModel):
     adgroup_id: int
     max_price: float
     approval_id: int | None = None
+    confirmation: str | None = None
 
 
 @router.post("/adgroup-bid")
@@ -454,6 +459,7 @@ async def set_adgroup_bid(
             session, req.tenant_id, req.adgroup_id, req.max_price,
             operator_user_id=ctx.user_id, operator_name=ctx.username,
             approval_id=req.approval_id,
+            confirmation=req.confirmation,
         )
     except WritebackError as e:
         raise HTTPException(400, str(e))
