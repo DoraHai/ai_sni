@@ -18,7 +18,12 @@ os.environ.setdefault(
 )
 os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 
-from app.baidu.writeback import WritebackError, _MATCH_BY_MODE, apply_add_word_writeback
+from app.baidu.writeback import (
+    WritebackError,
+    _ensure_add_word_not_duplicate,
+    _MATCH_BY_MODE,
+    apply_add_word_writeback,
+)
 from app.api.expansion import AddToPlanRequest
 
 
@@ -136,7 +141,7 @@ def test_add_word_rejects_non_finite_price_before_database_access(price: float) 
     ("dimension_words", "recent_writes", "message"),
     [
         (["  工业泵  "], [], "目标单元已存在同名关键词"),
-        ([], ["工业泵"], "已有待确认或近期成功的加入记录"),
+        ([], ["工业泵"], "已有待确认、演练或近期成功的加入记录"),
     ],
 )
 def test_add_word_blocks_dimension_and_recent_ledger_duplicates(
@@ -175,3 +180,32 @@ def test_add_word_blocks_dimension_and_recent_ledger_duplicates(
     with pytest.raises(WritebackError, match=message):
         asyncio.run(run())
     service.add_word.assert_not_awaited()
+
+
+def test_add_word_duplicate_guard_includes_recent_dry_run_records() -> None:
+    class QueryCaptureSession:
+        def __init__(self) -> None:
+            self.statements = []
+
+        async def scalars(self, statement):
+            self.statements.append(statement)
+            return SimpleNamespace(all=lambda: [])
+
+    session = QueryCaptureSession()
+    asyncio.run(
+        _ensure_add_word_not_duplicate(
+            session,
+            tenant_id=3,
+            adgroup_id=202,
+            word="工业泵",
+        )
+    )
+
+    assert len(session.statements) == 2
+    ledger_params = session.statements[1].compile().params
+    status_sets = {
+        frozenset(value)
+        for value in ledger_params.values()
+        if isinstance(value, (list, tuple, set))
+    }
+    assert frozenset({"success", "dry_run"}) in status_sets
