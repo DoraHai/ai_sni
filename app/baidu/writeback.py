@@ -7,11 +7,12 @@
 红线见 memory feedback-no-baidu-writeback：功能要做，但验证阶段绝不改乱线上真实出价。
 """
 import logging
+import math
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.baidu.client import BaiduAPIError, BaiduLiveWriteBlockedError
@@ -51,10 +52,63 @@ MAX_BID = 999.99
 MIN_ACCOUNT_BUDGET = 50.0
 MAX_ACCOUNT_BUDGET = 10000000.0
 UNRESOLVED_REAL_STATUSES = {"pending", "reconcile"}
+ADD_WORD_DEDUP_WINDOW = timedelta(hours=24)
 
 
 class WritebackError(Exception):
     """回写前校验失败（业务拒绝，不调百度）。"""
+
+
+def _normalized_keyword_text(value: str | None) -> str:
+    """Normalize surrounding whitespace and case for add-word duplicate checks."""
+    return (value or "").strip().casefold()
+
+
+async def _ensure_add_word_not_duplicate(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    adgroup_id: int,
+    word: str,
+) -> None:
+    """Reject existing or just-written keywords before invoking Baidu addWord.
+
+    The caller already holds the target adgroup row lock, so concurrent requests
+    for the same unit are serialized. The recent successful ledger check covers
+    the interval before the next keyword dimension sync sees a newly added word.
+    """
+    normalized = _normalized_keyword_text(word)
+    existing_words = (
+        await session.scalars(
+            select(Keyword.keyword).where(
+                Keyword.tenant_id == tenant_id,
+                Keyword.adgroup_id == adgroup_id,
+                func.lower(func.btrim(Keyword.keyword)) == normalized,
+            )
+        )
+    ).all()
+    if any(_normalized_keyword_text(existing) == normalized for existing in existing_words):
+        raise WritebackError("目标单元已存在同名关键词，请勿重复加入")
+
+    recent_writes = (
+        await session.scalars(
+            select(WritebackAction.word).where(
+                WritebackAction.tenant_id == tenant_id,
+                WritebackAction.adgroup_id == adgroup_id,
+                WritebackAction.action_type == "add_word",
+                or_(
+                    WritebackAction.status.in_(["pending", "reconcile"]),
+                    and_(
+                        WritebackAction.status == "success",
+                        WritebackAction.created_at >= func.now() - ADD_WORD_DEDUP_WINDOW,
+                    ),
+                ),
+                func.lower(func.btrim(WritebackAction.word)) == normalized,
+            )
+        )
+    ).all()
+    if any(_normalized_keyword_text(existing) == normalized for existing in recent_writes):
+        raise WritebackError("该关键词已有待确认或近期成功的加入记录，请先同步并核对台账")
 
 
 @dataclass
@@ -695,6 +749,8 @@ async def apply_add_word_writeback(
     if match_mode not in _MATCH_BY_MODE:
         raise WritebackError("匹配方式只能是 exact / phrase / smart")
     price = round(float(price), 2)
+    if not math.isfinite(price):
+        raise WritebackError("出价必须是有限数值")
     if price < MIN_BID or price > MAX_BID:
         raise WritebackError(f"出价 {price} 超出合法区间 [{MIN_BID}, {MAX_BID}]")
 
@@ -704,6 +760,12 @@ async def apply_add_word_writeback(
     if adg is None:
         raise WritebackError("单元不在维度表中，请先执行单元维度同步")
     acc = await _active_account(session, tenant_id, _asset_account_id(adg, "单元"))
+    await _ensure_add_word_not_duplicate(
+        session,
+        tenant_id=tenant_id,
+        adgroup_id=adgroup_id,
+        word=word,
+    )
 
     dry_run = _effective_dry_run(tenant_id, acc.id, "keyword_create")
     rec = WritebackAction(

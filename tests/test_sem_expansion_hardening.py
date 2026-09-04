@@ -284,6 +284,32 @@ def test_add_to_plan_returns_error_when_writeback_failed() -> None:
     assert session.commits == 0
 
 
+def test_add_to_plan_rejects_already_processed_candidate() -> None:
+    candidate = SimpleNamespace(id=11, tenant_id=3, word="工业泵", status="adopted")
+    session = _CandidateSession(candidate)
+    request = AddToPlanRequest(
+        tenant_id=3,
+        adgroup_id=202,
+        price=3.6,
+        match_mode="exact",
+    )
+
+    async def run():
+        with patch(
+            "app.api.expansion.apply_add_word_writeback",
+            new=AsyncMock(),
+        ) as writeback:
+            with pytest.raises(HTTPException) as exc:
+                await add_candidate_to_plan(11, request, _ctx(), session)
+            writeback.assert_not_awaited()
+            return exc.value
+
+    error = asyncio.run(run())
+    assert error.status_code == 409
+    assert "已处理" in error.detail
+    assert session.commits == 0
+
+
 def test_other_keyword_and_negative_routes_do_not_report_failed_writeback_as_ok() -> None:
     failed_record = SimpleNamespace(status="failed", dry_run=False)
     session = SimpleNamespace()
