@@ -12,6 +12,7 @@ from app.geo.content.probe import (
     SKIP_DASHSCOPE_OTHER_ENGINE,
     build_probe_system_prompt,
     dashscope_usable_for_engine,
+    probe_temperature_for_model,
     resolve_batch_engines,
     resolve_engine_llm,
     run_probe_draft,
@@ -134,6 +135,64 @@ class ProbeBatchHelpersTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(draft["simulated"])
         self.assertEqual(draft["sample_mode"], SAMPLE_MODE_REAL)
+
+    async def test_run_probe_draft_pins_kimi_k2_temperature(self):
+        chat_json = AsyncMock(
+            return_value={
+                "raw_text": "Kimi 真实回答 Acme。",
+                "suggested_mentions_brand": True,
+                "competitors": [],
+                "brand_position": "first",
+                "sentiment": "neutral",
+            }
+        )
+        await run_probe_draft(
+            question="哪个品牌好？",
+            brand="Acme",
+            brand_names=["Acme"],
+            engine="kimi",
+            llm={
+                "api_key": "k",
+                "base_url": "https://api.moonshot.cn/v1",
+                "model": "kimi-k2.6",
+                "provider": "kimi",
+            },
+            chat_json=chat_json,
+            sample_mode=SAMPLE_MODE_REAL,
+        )
+        self.assertEqual(chat_json.await_args.kwargs["temperature"], 1.0)
+
+    async def test_run_probe_draft_keeps_other_model_default_temperature(self):
+        chat_json = AsyncMock(
+            return_value={
+                "raw_text": "千问真实回答 Acme。",
+                "suggested_mentions_brand": True,
+                "competitors": [],
+                "brand_position": "first",
+                "sentiment": "neutral",
+            }
+        )
+        await run_probe_draft(
+            question="哪个品牌好？",
+            brand="Acme",
+            brand_names=["Acme"],
+            engine="qwen",
+            llm={
+                "api_key": "k",
+                "base_url": "https://example.com/v1",
+                "model": "qwen3.8-max",
+                "provider": "qwen",
+            },
+            chat_json=chat_json,
+            sample_mode=SAMPLE_MODE_REAL,
+        )
+        self.assertNotIn("temperature", chat_json.await_args.kwargs)
+
+    def test_probe_temperature_override_is_model_scoped(self):
+        self.assertEqual(probe_temperature_for_model("kimi-k2.6"), 1.0)
+        self.assertEqual(probe_temperature_for_model("KIMI-K2-latest"), 1.0)
+        self.assertIsNone(probe_temperature_for_model("qwen3.8-max"))
+        self.assertIsNone(probe_temperature_for_model(None))
 
     def test_dashscope_only_usable_for_deepseek(self):
         self.assertTrue(
