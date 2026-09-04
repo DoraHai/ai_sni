@@ -18,3 +18,14 @@ export function fetchOperationRecords({
     },
   })
 }
+
+// 从百度只读拉取操作记录，写入本地去重台账，不会修改广告账户。
+export function syncOperationRecords({ tenantId, startDate, endDate }) {
+  return client.post('/api/v1/admin/sync-operation-records', null, {
+    params: {
+      tenant_id: tenantId,
+      start_date: startDate,
+      end_date: endDate,
+    },
+  })
+}
