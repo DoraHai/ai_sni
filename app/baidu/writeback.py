@@ -136,6 +136,7 @@ async def _claim_funds_approval(
     operator_user_id: int | None,
     dry_run: bool,
     confirmation: str | None = None,
+    idempotency_key: str | None = None,
 ) -> int | None:
     """演练不消耗确认；真实资金回写必须消费本人绑定参数的一次性确认。"""
     if dry_run:
@@ -149,6 +150,7 @@ async def _claim_funds_approval(
                 payload=payload,
                 operator_user_id=operator_user_id,
                 confirmation=confirmation,
+                idempotency_key=idempotency_key,
             )
             approval_id = approval.id
         approval = await claim_approval(
@@ -262,6 +264,7 @@ async def apply_keyword_writeback(
     operator_name: str | None,
     approval_id: int | None = None,
     confirmation: str | None = None,
+    idempotency_key: str | None = None,
 ) -> BidWriteback:
     """把关键词的「最终执行价」回写百度，落台账并返回台账行。
 
@@ -309,6 +312,7 @@ async def apply_keyword_writeback(
         operator_user_id=operator_user_id,
         dry_run=dry_run,
         confirmation=confirmation,
+        idempotency_key=idempotency_key,
     )
 
     rec = BidWriteback(
@@ -1017,6 +1021,7 @@ async def apply_campaign_budget_writeback(
     operator_name: str | None,
     approval_id: int | None = None,
     confirmation: str | None = None,
+    idempotency_key: str | None = None,
 ) -> WritebackAction:
     """计划日预算写回（updateCampaign budget，文档 0046）。dry_run 时拦截不真发。
 
@@ -1089,6 +1094,7 @@ async def apply_campaign_budget_writeback(
         operator_user_id=operator_user_id,
         dry_run=dry_run,
         confirmation=confirmation,
+        idempotency_key=idempotency_key,
     )
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id, action_type="set_campaign_budget",
@@ -1471,6 +1477,7 @@ async def apply_adgroup_bid_writeback(
     operator_name: str | None,
     approval_id: int | None = None,
     confirmation: str | None = None,
+    idempotency_key: str | None = None,
 ) -> WritebackAction:
     """单元出价 maxPrice 写回（updateAdgroup）。校验 (0,999.99] 且 ≤ 所属计划预算。
 
@@ -1518,6 +1525,7 @@ async def apply_adgroup_bid_writeback(
         operator_user_id=operator_user_id,
         dry_run=dry_run,
         confirmation=confirmation,
+        idempotency_key=idempotency_key,
     )
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id, action_type="set_adgroup_bid",
@@ -1698,6 +1706,7 @@ async def apply_account_budget_writeback(
     operator_name: str | None,
     approval_id: int | None = None,
     confirmation: str | None = None,
+    idempotency_key: str | None = None,
     baidu_account_id: int | None = None,
 ) -> WritebackAction:
     """账户日预算写回（updateAccountInfo budget，文档 0036）。dry_run 时拦截不真发。
@@ -1750,6 +1759,7 @@ async def apply_account_budget_writeback(
         operator_user_id=operator_user_id,
         dry_run=dry_run,
         confirmation=confirmation,
+        idempotency_key=idempotency_key,
     )
     rec = WritebackAction(
         tenant_id=tenant_id, baidu_account_id=acc.id, action_type="set_account_budget",
