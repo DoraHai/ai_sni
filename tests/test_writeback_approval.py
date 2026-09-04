@@ -18,8 +18,10 @@ os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 from app.baidu.writeback_approval import (
     ACTION_ACCOUNT_BUDGET,
     ACTION_KEYWORD_BID,
+    WRITEBACK_CONFIRMATION,
     WritebackApprovalError,
     claim_approval,
+    create_self_approved_approval,
     payload_fingerprint,
 )
 from app.baidu.writeback import (
@@ -117,6 +119,45 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["approval"]["requested_by"], 9)
         self.assertEqual(result["approval"]["approved_by"], 9)
         session.commit.assert_awaited_once()
+
+    async def test_one_click_confirmation_creates_parameter_bound_audit_row(self):
+        class Session:
+            def __init__(self):
+                self.row = None
+                self.flush = AsyncMock()
+
+            def add(self, row):
+                self.row = row
+
+        session = Session()
+        row = await create_self_approved_approval(
+            session,
+            tenant_id=3,
+            action_type=ACTION_KEYWORD_BID,
+            payload={"keyword_id": 7, "new_bid": 1.234},
+            operator_user_id=9,
+            confirmation=WRITEBACK_CONFIRMATION,
+        )
+
+        self.assertIs(row, session.row)
+        self.assertEqual(row.status, "approved")
+        self.assertEqual(row.payload, {"keyword_id": 7, "new_bid": 1.23})
+        self.assertEqual(row.requested_by, 9)
+        self.assertEqual(row.approved_by, 9)
+        self.assertEqual(row.decision_note, "本人一次确认")
+        self.assertIsNotNone(row.created_at)
+        session.flush.assert_awaited_once()
+
+    async def test_one_click_confirmation_rejects_missing_confirmation(self):
+        with self.assertRaisesRegex(WritebackApprovalError, WRITEBACK_CONFIRMATION):
+            await create_self_approved_approval(
+                SimpleNamespace(),
+                tenant_id=3,
+                action_type=ACTION_KEYWORD_BID,
+                payload={"keyword_id": 7, "new_bid": 1.23},
+                operator_user_id=9,
+                confirmation=None,
+            )
 
     async def test_legacy_frontend_can_create_pending_during_dry_run_rollout(self):
         class Session:

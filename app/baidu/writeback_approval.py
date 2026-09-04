@@ -104,6 +104,43 @@ def payload_fingerprint(action_type: str, payload: dict[str, Any]) -> tuple[dict
     return normalized, hashlib.sha256(raw).hexdigest()
 
 
+async def create_self_approved_approval(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    action_type: str,
+    payload: dict[str, Any],
+    operator_user_id: int | None,
+    confirmation: str | None,
+    note: str | None = None,
+) -> WritebackApproval:
+    """Create the parameter-bound audit row used by one-click live execution."""
+    if operator_user_id is None:
+        raise WritebackApprovalError("真实资金回写必须使用实名登录账号，不能使用 API Key")
+    if confirmation != WRITEBACK_CONFIRMATION:
+        raise WritebackApprovalError(
+            f"confirmation 必须精确等于 {WRITEBACK_CONFIRMATION}"
+        )
+    normalized, fingerprint = payload_fingerprint(action_type, payload)
+    now = datetime.utcnow()
+    approval = WritebackApproval(
+        tenant_id=tenant_id,
+        action_type=action_type,
+        payload=normalized,
+        payload_hash=fingerprint,
+        status="approved",
+        request_note=note,
+        requested_by=operator_user_id,
+        approved_by=operator_user_id,
+        decision_note="本人一次确认",
+        created_at=now,
+        decided_at=now,
+    )
+    session.add(approval)
+    await session.flush()
+    return approval
+
+
 async def claim_approval(
     session: AsyncSession,
     *,

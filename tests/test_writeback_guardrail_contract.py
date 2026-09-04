@@ -294,8 +294,14 @@ def test_backend_and_frontend_keep_approval_id_wiring():
     assert 'status="pending" if legacy_pending else "approved"' in approval_api
     assert "approved_by=None if legacy_pending else ctx.user_id" in approval_api
 
+    assert keyword_api.count("confirmation: str | None = None") >= 1
+    assert "confirmation=req.confirmation" in keyword_api
+    assert manage_api.count("confirmation: str | None = None") >= 3
+    assert manage_api.count("confirmation=req.confirmation") >= 3
+
     orchestration = (ROOT / "app/baidu/writeback.py").read_text(encoding="utf-8")
-    assert orchestration.count("approval_id=approval_id if not dry_run else None") == 4
+    assert "create_self_approved_approval" in orchestration
+    assert orchestration.count("approval_id=effective_approval_id") == 4
     migration = (
         ROOT / "migrations/versions/20260825_0076_oauth_rebind_intent.py"
     ).read_text(encoding="utf-8")
@@ -360,3 +366,42 @@ def test_real_writeback_claims_approval_but_dry_run_does_not():
             )
         )
         claim.assert_not_awaited()
+
+
+def test_real_writeback_can_create_and_consume_one_click_confirmation():
+    session = SimpleNamespace()
+    created = SimpleNamespace(id=41)
+    claimed = SimpleNamespace(id=41)
+    with (
+        patch(
+            "app.baidu.writeback.create_self_approved_approval",
+            new=AsyncMock(return_value=created),
+        ) as create,
+        patch(
+            "app.baidu.writeback.claim_approval",
+            new=AsyncMock(return_value=claimed),
+        ) as claim,
+    ):
+        approval_id = asyncio.run(
+            _claim_funds_approval(
+                session,
+                approval_id=None,
+                tenant_id=3,
+                action_type="keyword_bid",
+                payload={"keyword_id": 7, "new_bid": 1.23},
+                operator_user_id=9,
+                dry_run=False,
+                confirmation="CONFIRM_BAIDU_WRITEBACK",
+            )
+        )
+
+    assert approval_id == 41
+    create.assert_awaited_once_with(
+        session,
+        tenant_id=3,
+        action_type="keyword_bid",
+        payload={"keyword_id": 7, "new_bid": 1.23},
+        operator_user_id=9,
+        confirmation="CONFIRM_BAIDU_WRITEBACK",
+    )
+    assert claim.await_args.kwargs["approval_id"] == 41
