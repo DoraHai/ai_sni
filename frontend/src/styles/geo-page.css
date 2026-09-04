@@ -648,3 +648,31 @@
 .geo-wb .el-pagination.is-background .el-pager li.is-active {
   background-color: #7c3aed;
 }
+
+/* AI 提问管理：业务 / 关键词 / AI 提问三段等宽铺满，避免遗留空列。 */
+.geo-shell .geo-wb .prompt-page .layer-tabs {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.geo-shell .geo-wb .prompt-page .layer-tabs > div:empty {
+  display: none;
+}
+
+.geo-shell .geo-wb .prompt-page .layer-tab:nth-of-type(3) {
+  border-right: 0;
+}
+
+@media (max-width: 760px) {
+  .geo-shell .geo-wb .prompt-page .layer-tabs {
+    grid-template-columns: 1fr;
+  }
+
+  .geo-shell .geo-wb .prompt-page .layer-tab {
+    border-right: 0;
+    border-bottom: 1px solid #e8eaf0;
+  }
+
+  .geo-shell .geo-wb .prompt-page .layer-tab:nth-of-type(3) {
+    border-bottom: 0;
+  }
+}

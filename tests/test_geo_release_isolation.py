@@ -95,6 +95,16 @@ def test_geo_overview_desktop_actions_stay_on_one_row():
     assert "width: clamp(160px, 16vw, 240px)" in dashboard_css
 
 
+def test_geo_ask_management_tabs_fill_the_available_row():
+    page_css = _read("frontend/src/styles/geo-page.css")
+
+    assert ".geo-shell .geo-wb .prompt-page .layer-tabs" in page_css
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in page_css
+    assert ".layer-tabs > div:empty" in page_css
+    assert ".layer-tab:nth-of-type(3)" in page_css
+    assert "@media (max-width: 760px)" in page_css
+
+
 def test_geo_standalone_keeps_required_form_and_table_styles():
     entry = _read("frontend/geo-frontend/src/main.js")
     styles = _read("frontend/geo-frontend/src/standalone.css")
