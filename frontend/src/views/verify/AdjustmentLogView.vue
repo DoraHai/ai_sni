@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchOperationRecords } from '../../api/operations'
 import {
-  decideWritebackApproval, fetchWritebackApprovals, fetchWritebacks, requestWritebackApproval,
+  decideWritebackApproval, fetchWritebackApprovals, fetchWritebacks,
 } from '../../api/writeback'
 import { fetchActions } from '../../api/searchTerms'
 import { writebackKeyword } from '../../api/keywords'
@@ -40,34 +40,6 @@ const APPROVAL_ACTIONS = {
 const APPROVAL_STATUS = {
   pending: '待确认', approved: '已确认', rejected: '已取消', consumed: '已执行',
 }
-const WRITEBACK_CONFIRMATION = 'CONFIRM_BAIDU_WRITEBACK'
-const approvalDialog = ref(false)
-const approvalSubmitting = ref(false)
-const approvalForm = reactive({
-  actionType: 'keyword_bid', targetId: '', amount: '', note: '', confirmation: '',
-})
-
-function resetApprovalConfirmation() {
-  approvalForm.confirmation = ''
-}
-
-function openApprovalDialog() {
-  resetApprovalConfirmation()
-  approvalDialog.value = true
-}
-const activeSemAccounts = computed(() => {
-  const tenant = session.tenants.find((row) => row.id === TENANT_ID.value)
-  return (tenant?.sem_accounts || []).filter((row) => row.status === 'active')
-})
-
-watch([TENANT_ID, () => approvalForm.actionType, activeSemAccounts], ([, actionType, accounts]) => {
-  if (actionType !== 'account_budget') return
-  const currentId = Number(approvalForm.targetId)
-  if (!accounts.some((row) => row.id === currentId)) {
-    approvalForm.targetId = accounts[0]?.id ?? ''
-  }
-}, { immediate: true })
-
 async function loadWb() {
   wbLoading.value = true
   try {
@@ -102,42 +74,6 @@ async function decideApproval(row, decision) {
     await loadApprovals()
   } catch (e) {
     if (e !== 'cancel' && e !== 'close') ElMessage.error(e?.message || '确认失败')
-  }
-}
-
-async function submitApprovalRequest() {
-  const amount = Number(approvalForm.amount)
-  const targetId = Number(approvalForm.targetId)
-  if (!Number.isFinite(amount) || amount <= 0) {
-    ElMessage.error('请输入有效金额')
-    return
-  }
-  let payload
-  if (approvalForm.actionType === 'keyword_bid') payload = { keyword_id: targetId, new_bid: amount }
-  else if (approvalForm.actionType === 'adgroup_bid') payload = { adgroup_id: targetId, new_price: amount }
-  else if (approvalForm.actionType === 'campaign_budget') payload = { campaign_id: targetId, new_budget: amount }
-  else payload = { baidu_account_id: targetId, new_budget: amount }
-  if (!Number.isInteger(targetId) || targetId <= 0) {
-    ElMessage.error('请输入有效对象 ID')
-    return
-  }
-  approvalSubmitting.value = true
-  try {
-    await requestWritebackApproval({
-      tenantId: TENANT_ID.value,
-      actionType: approvalForm.actionType,
-      payload,
-      note: approvalForm.note || null,
-      confirmation: approvalForm.confirmation,
-    })
-    approvalDialog.value = false
-    approvalForm.confirmation = ''
-    ElMessage.success('资金回写确认已创建，可按绑定参数执行一次')
-    await loadApprovals()
-  } catch (e) {
-    ElMessage.error(e?.message || '申请提交失败')
-  } finally {
-    approvalSubmitting.value = false
   }
 }
 
@@ -446,7 +382,7 @@ onMounted(load)
         <div class="view-tabs">
           <div class="view-tab" :class="{ active: wbSub === 'bid' }" @click="wbSub = 'bid'">出价回写</div>
           <div class="view-tab" :class="{ active: wbSub === 'action' }" @click="wbSub = 'action'">动作回写</div>
-          <div class="view-tab" :class="{ active: wbSub === 'approval' }" @click="wbSub = 'approval'">资金确认</div>
+          <div class="view-tab" :class="{ active: wbSub === 'approval' }" @click="wbSub = 'approval'">确认记录</div>
         </div>
         <el-select
           v-if="wbSub === 'action'"
@@ -456,7 +392,6 @@ onMounted(load)
         >
           <el-option v-for="t in ACTION_TYPES" :key="t.code" :label="t.label" :value="t.code" />
         </el-select>
-        <el-button v-if="wbSub === 'approval'" type="primary" @click="openApprovalDialog">创建资金回写确认</el-button>
       </div>
 
       <!-- 出价回写（updateWord 留痕） -->
@@ -571,14 +506,14 @@ onMounted(load)
         </div>
       </div>
 
-      <!-- 高风险资金回写本人二次确认 -->
+      <!-- 高风险资金回写确认审计 -->
       <div v-else v-loading="approvalLoading">
         <el-alert
           type="warning"
           :closable="false"
           show-icon
           style="margin-bottom: 12px"
-          title="关键词/单元出价及计划/账户预算在真实回写前必须由实名操作员本人二次确认；确认与具体金额绑定且只能使用一次。当前 dry-run 不会消耗确认。"
+          title="关键词/单元出价及计划/账户预算在操作页确认执行时，会自动生成、绑定并消费一次性确认记录；无需在此重复创建。本页保留完整审计记录，并兼容处理历史待确认记录。"
         />
         <div class="table-panel">
           <el-table :data="approvalData?.approvals || []" class="kw-table" row-key="id">
@@ -618,53 +553,6 @@ onMounted(load)
       </div>
     </template>
 
-    <el-dialog v-model="approvalDialog" title="创建资金回写确认" width="480px" @closed="resetApprovalConfirmation">
-      <el-form label-width="100px">
-        <el-form-item label="动作类型">
-          <el-select v-model="approvalForm.actionType" style="width: 100%">
-            <el-option v-for="(label, code) in APPROVAL_ACTIONS" :key="code" :label="label" :value="code" />
-          </el-select>
-        </el-form-item>
-        <el-form-item :label="approvalForm.actionType === 'account_budget' ? '推广账户' : '对象 ID'">
-          <el-select
-            v-if="approvalForm.actionType === 'account_budget'"
-            v-model="approvalForm.targetId"
-            placeholder="选择推广账户"
-            style="width: 100%"
-          >
-            <el-option
-              v-for="account in activeSemAccounts"
-              :key="account.id"
-              :label="`${account.username} · ${account.ucid}`"
-              :value="account.id"
-            />
-          </el-select>
-          <el-input v-else v-model="approvalForm.targetId" placeholder="关键词 / 单元 / 计划 ID" />
-        </el-form-item>
-        <el-form-item label="目标金额">
-          <el-input v-model="approvalForm.amount" type="number" min="0.01" step="0.01" />
-        </el-form-item>
-        <el-form-item label="操作说明">
-          <el-input v-model="approvalForm.note" type="textarea" :rows="3" maxlength="1000" />
-        </el-form-item>
-        <el-form-item label="二次确认">
-          <el-input
-            v-model="approvalForm.confirmation"
-            :placeholder="`请输入 ${WRITEBACK_CONFIRMATION}`"
-            autocomplete="off"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="approvalDialog = false">取消</el-button>
-        <el-button
-          type="primary"
-          :loading="approvalSubmitting"
-          :disabled="approvalForm.confirmation !== WRITEBACK_CONFIRMATION"
-          @click="submitApprovalRequest"
-        >创建确认</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
