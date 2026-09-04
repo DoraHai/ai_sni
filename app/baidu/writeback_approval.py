@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -29,6 +29,7 @@ ALLOWED_ACTIONS = frozenset(
     }
 )
 WRITEBACK_CONFIRMATION = "CONFIRM_BAIDU_WRITEBACK"
+IDEMPOTENCY_NOTE_PREFIX = "idempotency-sha256:"
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 
@@ -111,6 +112,25 @@ def payload_fingerprint(action_type: str, payload: dict[str, Any]) -> tuple[dict
     return normalized, hashlib.sha256(raw).hexdigest()
 
 
+def _idempotency_marker(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not 16 <= len(value) <= 128:
+        raise WritebackApprovalError("idempotency_key 长度必须为 16~128 字符")
+    if any(not (char.isascii() and (char.isalnum() or char in "-_.:")) for char in value):
+        raise WritebackApprovalError("idempotency_key 只允许 ASCII 字母、数字和 -_.:")
+    return IDEMPOTENCY_NOTE_PREFIX + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _idempotency_lock_id(
+    tenant_id: int,
+    operator_user_id: int,
+    marker: str,
+) -> int:
+    scope = f"sem-writeback:{tenant_id}:{operator_user_id}:{marker}".encode("utf-8")
+    return int.from_bytes(hashlib.sha256(scope).digest()[:8], "big", signed=True)
+
+
 async def create_self_approved_approval(
     session: AsyncSession,
     *,
@@ -119,6 +139,7 @@ async def create_self_approved_approval(
     payload: dict[str, Any],
     operator_user_id: int | None,
     confirmation: str | None,
+    idempotency_key: str | None = None,
     note: str | None = None,
 ) -> WritebackApproval:
     """Create the parameter-bound audit row used by one-click live execution."""
@@ -129,6 +150,37 @@ async def create_self_approved_approval(
             f"confirmation 必须精确等于 {WRITEBACK_CONFIRMATION}"
         )
     normalized, fingerprint = payload_fingerprint(action_type, payload)
+    marker = _idempotency_marker(idempotency_key)
+    if marker is not None:
+        # Serialize equal client requests without a schema change. The lock is
+        # held until the funds intent is committed, so a concurrent replay can
+        # only observe and reuse the first approval, never create a second one.
+        await session.execute(
+            select(func.pg_advisory_xact_lock(
+                _idempotency_lock_id(tenant_id, operator_user_id, marker)
+            ))
+        )
+        existing = await session.scalar(
+            select(WritebackApproval)
+            .where(
+                WritebackApproval.tenant_id == tenant_id,
+                WritebackApproval.requested_by == operator_user_id,
+                WritebackApproval.request_note.like(f"{marker}%"),
+            )
+            .order_by(WritebackApproval.id.desc())
+            .limit(1)
+            .with_for_update()
+        )
+        if existing is not None:
+            if (
+                existing.action_type != action_type
+                or existing.payload_hash != fingerprint
+                or existing.payload != normalized
+            ):
+                raise WritebackApprovalError(
+                    "idempotency_key 已用于其他执行参数，请刷新后重试"
+                )
+            return existing
     now = shanghai_now_naive()
     approval = WritebackApproval(
         tenant_id=tenant_id,
@@ -136,7 +188,7 @@ async def create_self_approved_approval(
         payload=normalized,
         payload_hash=fingerprint,
         status="approved",
-        request_note=note,
+        request_note=(f"{marker}\n{note}" if marker and note else marker or note),
         requested_by=operator_user_id,
         approved_by=operator_user_id,
         decision_note="本人一次确认",

@@ -227,6 +227,51 @@ def test_cursor_and_retry_keep_multisource_words_together(monkeypatch):
     call.assert_not_awaited()
 
 
+def test_failed_multisource_word_returns_every_candidate_row_id(monkeypatch):
+    monkeypatch.setattr(evaluator, "is_enabled", lambda: True)
+    rows = [candidate(1, "粉末"), candidate(99, "粉末")]
+    monkeypatch.setattr(evaluator, "_evaluate_batch", AsyncMock(return_value={}))
+    session = SimpleNamespace(
+        scalars=AsyncMock(return_value=rows_result(rows)), commit=AsyncMock()
+    )
+
+    result = asyncio.run(
+        evaluator.evaluate_candidates_for_tenant(session, tenant(), limit=5)
+    )
+
+    assert result["failed_words"] == 1
+    assert result["failed_candidate_ids"] == [1, 99]
+    assert result["successful_candidate_ids"] == []
+
+
+def test_successful_multisource_word_reports_every_completed_row_id(monkeypatch):
+    monkeypatch.setattr(evaluator, "is_enabled", lambda: True)
+    rows = [candidate(1, "粉末"), candidate(99, "粉末")]
+    verdict = {
+        "粉末": dict(
+            relevance="relevant",
+            recommend="watch",
+            reason="相关",
+            suggested_bid=None,
+            bid_reason=None,
+        )
+    }
+    monkeypatch.setattr(evaluator, "_evaluate_batch", AsyncMock(return_value=verdict))
+    session = SimpleNamespace(
+        scalars=AsyncMock(return_value=rows_result(rows)), commit=AsyncMock()
+    )
+
+    result = asyncio.run(
+        evaluator.evaluate_candidates_for_tenant(
+            session, tenant(), limit=5, retry_ids=[99]
+        )
+    )
+
+    assert result["successful_words"] == 1
+    assert result["successful_candidate_ids"] == [1, 99]
+    assert result["failed_candidate_ids"] == []
+
+
 def test_retry_api_bounds_and_cursor_forwarding(monkeypatch):
     call = AsyncMock(return_value={"enabled": True, "evaluated": 0})
     monkeypatch.setattr(expansion, "evaluate_candidates_for_tenant", call)

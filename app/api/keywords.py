@@ -1388,6 +1388,7 @@ class KeywordWritebackRequest(BaseModel):
     price: float = Field(..., gt=0, description="最终执行价（元）")
     approval_id: int | None = None
     confirmation: str | None = None
+    idempotency_key: str | None = Field(default=None, min_length=16, max_length=128)
 
 
 class WritebackBatchItem(BaseModel):
@@ -1503,6 +1504,7 @@ async def writeback_one(
             operator_user_id=ctx.user_id, operator_name=ctx.username,
             approval_id=req.approval_id,
             confirmation=req.confirmation,
+            idempotency_key=req.idempotency_key,
         )
     except WritebackError as e:
         raise HTTPException(400, str(e))
