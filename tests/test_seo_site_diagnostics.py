@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -11,15 +11,18 @@ from sqlalchemy.dialects import postgresql
 
 from app.api.seo_site_diagnostics import (
     ImageAltReviewCopy, ImageAltReviewReuse, ImageAltReviewUpdate, IndexReviewCreate,
+    ImageAltAiDraftRequest,
     copy_image_remediation,
     create_index_review, get_image_remediation, list_diagnostics,
     list_image_remediation_workbench,
     list_image_remediation_history, list_index_reviews, get_image_evidence,
     preview_cross_page_image_remediation_reuse, reuse_cross_page_image_remediation,
-    save_image_remediation,
+    save_image_remediation, generate_image_alt_drafts,
 )
 from app.models.seo import SeoImageAltReview, SeoPageIndexReview, SeoSitePage
 from app.security.auth import AuthContext, _required
+from app.ai.deepseek import DeepSeekError
+from app.seo_image_alt_ai import candidate_prompt_item, generate_alt_drafts, source_filename, validate_drafts
 from app.seo_site_diagnostics import FATAL_CODES, assessed_condition, diagnostic_payload
 
 
@@ -186,11 +189,144 @@ def test_listing_is_scoped_paged_and_keeps_latest_human_intent():
 
 def test_routes_use_seo_site_permissions_and_parent_subscription_guard():
     from app.api.seo import router, require_seo_module_access
-    for suffix, method in [("diagnostics", "GET"), ("index-reviews", "POST"), ("index-reviews", "GET"), ("image-evidence", "GET"), ("image-remediation", "GET"), ("image-remediation", "PUT"), ("image-remediation-workbench", "GET"), ("image-remediation-history", "GET"), ("image-remediation/copy", "POST"), ("image-remediation-reuse-preview", "GET"), ("image-remediation/reuse", "POST")]:
+    for suffix, method in [("diagnostics", "GET"), ("index-reviews", "POST"), ("index-reviews", "GET"), ("image-evidence", "GET"), ("image-remediation", "GET"), ("image-remediation", "PUT"), ("image-remediation-workbench", "GET"), ("image-remediation-history", "GET"), ("image-remediation/copy", "POST"), ("image-remediation-reuse-preview", "GET"), ("image-remediation/reuse", "POST"), ("image-remediation/ai-drafts", "POST")]:
         path = f"/api/v1/seo/site-pages/{suffix}"
         assert _required(path, method) == ({"seo.site"}, method in {"POST", "PUT"})
         route = next(r for r in router.routes if r.path == path and method in r.methods)
         assert require_seo_module_access in [d.call for d in route.dependant.dependencies]
+
+
+def test_ai_alt_drafts_are_scoped_current_human_reviewable_and_never_overwrite():
+    candidate = {"position": 2, "source_url": "https://cdn.example/NORDAC-manual.webp",
+                 "source_attribute": "src", "section": "main", "element_id": "manual-cover",
+                 "role": None, "in_link": False, "alt_state": "missing"}
+    snapshot = SimpleNamespace(id=12, error_type=None, image_alt_evidence={"items": [candidate]})
+    row = page(title="NORDAC 操作手册")
+    req = ImageAltAiDraftRequest(tenant_id=1, site_id=1, items=[{
+        "page_id": 231, "expected_snapshot_id": 12, "position": 2, "expected_review_id": None,
+    }])
+    db = AsyncMock()
+    db.add = MagicMock()
+    db.scalar.side_effect = [1, row, snapshot, None, row, snapshot, None]
+    generated = {"231:12:2": {"alt_suggestion": "NORDAC 操作手册封面", "reason": "文件名和页面标题一致"}}
+    with patch("app.api.seo_site_diagnostics.reserve_ai_usage", AsyncMock(return_value=("2026-09-04", "token"))), \
+         patch("app.api.seo_site_diagnostics.settle_ai_usage", AsyncMock(return_value=True)) as settle, \
+         patch("app.api.seo_site_diagnostics.generate_alt_drafts", AsyncMock(return_value=generated)):
+        result = asyncio.run(generate_image_alt_drafts(req, context(), db))
+    saved = db.add.call_args.args[0]
+    assert isinstance(saved, SeoImageAltReview)
+    assert (saved.tenant_id, saved.site_id, saved.page_id, saved.snapshot_id, saved.position) == (1, 1, 231, 12, 2)
+    assert saved.decision == "informative" and saved.review_status == "draft"
+    assert saved.alt_suggestion == "NORDAC 操作手册封面"
+    assert "未读取图片像素" in saved.note
+    assert result == {"selected": 1, "eligible": 1, "generated": 1, "skipped": 0,
+                      "skipped_ai": 0, "skipped_changed": 0, "skipped_ineligible": 0,
+                      "review_status": "draft"}
+    settle.assert_awaited_once_with(db, 1, ("2026-09-04", "token"), success=True)
+
+
+def test_ai_alt_drafts_revalidate_after_provider_call_and_skip_human_race():
+    candidate = {"position": 2, "source_url": "https://cdn.example/manual.webp", "section": "main", "alt_state": "empty"}
+    snapshot = SimpleNamespace(id=12, error_type=None, image_alt_evidence={"items": [candidate]})
+    req = ImageAltAiDraftRequest(tenant_id=1, site_id=1, items=[{
+        "page_id": 231, "expected_snapshot_id": 12, "position": 2, "expected_review_id": None,
+    }])
+    db = AsyncMock(); db.add = MagicMock()
+    # The second review lookup sees a record created by a human while AI ran.
+    db.scalar.side_effect = [1, page(), snapshot, None, page(), snapshot, 88]
+    generated = {"231:12:2": {"alt_suggestion": "手册封面", "reason": "文件名线索"}}
+    with patch("app.api.seo_site_diagnostics.reserve_ai_usage", AsyncMock(return_value=("2026-09-04", "token"))), \
+         patch("app.api.seo_site_diagnostics.settle_ai_usage", AsyncMock(return_value=True)), \
+         patch("app.api.seo_site_diagnostics.generate_alt_drafts", AsyncMock(return_value=generated)):
+        result = asyncio.run(generate_image_alt_drafts(req, context(), db))
+    assert result["generated"] == 0 and result["skipped"] == 1
+    assert result["skipped_changed"] == 1 and result["skipped_ai"] == 0
+    db.add.assert_not_called()
+
+
+def test_ai_alt_drafts_fail_closed_when_quota_settlement_cannot_commit():
+    candidate = {"position": 2, "source_url": "https://cdn.example/manual.webp",
+                 "section": "main", "alt_state": "empty"}
+    snapshot = SimpleNamespace(id=12, error_type=None, image_alt_evidence={"items": [candidate]})
+    req = ImageAltAiDraftRequest(tenant_id=1, site_id=1, items=[{
+        "page_id": 231, "expected_snapshot_id": 12, "position": 2, "expected_review_id": None,
+    }])
+    db = AsyncMock(); db.add = MagicMock()
+    db.scalar.side_effect = [1, page(), snapshot, None, page(), snapshot, None]
+    generated = {"231:12:2": {"alt_suggestion": "手册封面", "reason": "文件名线索"}}
+    with patch("app.api.seo_site_diagnostics.reserve_ai_usage", AsyncMock(return_value=("2026-09-04", "token"))), \
+         patch("app.api.seo_site_diagnostics.settle_ai_usage", AsyncMock(return_value=False)), \
+         patch("app.api.seo_site_diagnostics.generate_alt_drafts", AsyncMock(return_value=generated)):
+        with pytest.raises(HTTPException) as error:
+            asyncio.run(generate_image_alt_drafts(req, context(), db))
+    assert error.value.status_code == 409
+    assert db.rollback.await_count >= 1
+
+
+def test_ai_alt_draft_request_is_bounded_unique_and_unreviewed_only():
+    base = {"page_id": 231, "expected_snapshot_id": 12, "position": 2, "expected_review_id": None}
+    with pytest.raises(ValidationError):
+        ImageAltAiDraftRequest(tenant_id=1, site_id=1, items=[base, base])
+    with pytest.raises(ValidationError):
+        ImageAltAiDraftRequest(tenant_id=1, site_id=1, items=[base] * 21)
+    with pytest.raises(ValidationError):
+        ImageAltAiDraftRequest(tenant_id=1, site_id=1, items=[base | {"expected_review_id": 9}])
+
+
+def test_ai_alt_prompt_uses_bounded_text_hints_without_exposing_image_url():
+    item = candidate_prompt_item("1:2:3", page(title="NORDAC 使用手册"), {
+        "source_url": "https://cdn.example/private/path/NORDAC%20cover.webp?token=secret",
+        "section": "main", "element_id": "hero", "source_attribute": "src",
+        "role": None, "in_link": True, "alt_state": "missing",
+    })
+    assert item["source_filename"] == "NORDAC cover.webp"
+    assert "cdn.example" not in str(item) and "token=secret" not in str(item)
+    assert source_filename("data:image/png;base64,secret") is None
+
+
+def test_ai_alt_model_output_is_strict_scoped_and_skip_cannot_smuggle_text():
+    assert validate_drafts({"items": [{
+        "candidate_id": "1:2:3", "action": "draft", "alt_suggestion": "NORDAC 操作手册封面",
+        "reason": "文件名和页面标题一致",
+    }, {"candidate_id": "1:2:4", "action": "skip", "alt_suggestion": None, "reason": "线索不足"}]}, {"1:2:3", "1:2:4"}) == {
+        "1:2:3": {"alt_suggestion": "NORDAC 操作手册封面", "reason": "文件名和页面标题一致"}}
+    for invalid in [
+        {"items": [{"candidate_id": "other", "action": "draft", "alt_suggestion": "x", "reason": "x"}]},
+        {"items": [{"candidate_id": "1:2:3", "action": "skip", "alt_suggestion": "hidden", "reason": "x"}]},
+        {"items": [{"candidate_id": "1:2:3", "action": "draft", "alt_suggestion": "https://bad.test", "reason": "x"}]},
+    ]:
+        with pytest.raises((ValueError, ValidationError)):
+            validate_drafts(invalid, {"1:2:3"})
+    evidence = {"1:2:3": {"page_title": "NORDAC 操作手册", "source_filename": "BU0000-cover.webp"}}
+    valid = {"items": [{"candidate_id": "1:2:3", "action": "draft",
+                         "alt_suggestion": "NORDAC 操作手册 BU0000 封面", "reason": "标题和文件名支持"}]}
+    assert validate_drafts(valid, evidence)["1:2:3"]["alt_suggestion"].startswith("NORDAC")
+    for unsupported in ("NORDAC 客户案例 X9000", "NORDAC 产品图片"):
+        invalid = {"items": [{"candidate_id": "1:2:3", "action": "draft",
+                               "alt_suggestion": unsupported, "reason": "x"}]}
+        with pytest.raises(ValueError):
+            validate_drafts(invalid, evidence)
+    missing = {"items": [{"candidate_id": "1:2:3", "action": "skip",
+                           "alt_suggestion": None, "reason": "线索不足"}]}
+    with pytest.raises(ValueError, match="every candidate"):
+        validate_drafts(missing, evidence | {"1:2:4": {"page_title": "NORDCON"}})
+    invented = {"items": [{"candidate_id": "1:2:3", "action": "draft",
+                            "alt_suggestion": "NORDAC 高效节能变频器操作说明", "reason": "x"}]}
+    with pytest.raises(ValueError, match="not supported"):
+        validate_drafts(invented, evidence)
+
+
+def test_ai_alt_provider_failure_returns_sanitized_error():
+    with patch("app.seo_image_alt_ai.chat_json", AsyncMock(side_effect=DeepSeekError("secret provider URL"))):
+        with pytest.raises(HTTPException) as provider_error:
+            asyncio.run(generate_alt_drafts([{"candidate_id": "1:2:3"}]))
+    assert provider_error.value.status_code == 502 and "secret" not in provider_error.value.detail
+    with patch("app.seo_image_alt_ai.chat_json", AsyncMock(return_value={"items": [{
+        "candidate_id": "1:2:3", "action": "draft", "alt_suggestion": "<script>x</script>", "reason": "x",
+    }]})):
+        with pytest.raises(HTTPException) as error:
+            asyncio.run(generate_alt_drafts([{"candidate_id": "1:2:3"}]))
+    assert error.value.status_code == 502 and "script" not in error.value.detail
 
 
 def test_model_constraints_and_timezone():

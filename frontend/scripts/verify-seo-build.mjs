@@ -68,6 +68,9 @@ const portalUrl = '/deal-sniper/portal'
 for (const marker of ['/api/v1/seo/site-pages/ai-remediation', 'AI 辅助整改（单页草稿）', '复制整改交接单', '保存为关联内容草稿']) {
   if (!javascript.includes(marker)) throw new Error(`SEO build is missing the reviewed remediation UI: ${marker}`)
 }
+for (const marker of ['/api/v1/seo/site-pages/image-remediation/ai-drafts', 'AI 生成 Alt 草稿', '不读取图片像素', '不自动通过']) {
+  if (!javascript.includes(marker)) throw new Error(`SEO build is missing the reviewed image Alt draft UI: ${marker}`)
+}
 if (!javascript.includes(portalUrl)) {
   throw new Error(`SEO build does not contain the same-origin portal URL: ${portalUrl}`)
 }

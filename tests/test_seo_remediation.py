@@ -314,16 +314,16 @@ def test_quota_reserve_singleflight_refund_and_date(monkeypatch):
     assert module.module_settings[service.USAGE_KEY]['used'] == 1
     with pytest.raises(HTTPException) as exc: asyncio.run(service.reserve(session, 1))
     assert exc.value.status_code == 429
-    asyncio.run(service.settle(session, 1, reservation, success=False))
+    assert asyncio.run(service.settle(session, 1, reservation, success=False)) is True
     assert module.module_settings[service.USAGE_KEY]['used'] == 0
     newer = asyncio.run(service.reserve(session, 1))
-    asyncio.run(service.settle(session, 1, reservation, success=False))
+    assert asyncio.run(service.settle(session, 1, reservation, success=False)) is False
     assert module.module_settings[service.USAGE_KEY]['used'] == 1
     today = datetime(2026, 9, 4, 0, 1, tzinfo=ZoneInfo('Asia/Shanghai'))
     newest = asyncio.run(service.reserve(session, 1))
-    asyncio.run(service.settle(session, 1, newer, success=False))
+    assert asyncio.run(service.settle(session, 1, newer, success=False)) is False
     assert module.module_settings[service.USAGE_KEY]['used'] == 1
-    asyncio.run(service.settle(session, 1, newest, success=True))
+    assert asyncio.run(service.settle(session, 1, newest, success=True)) is True
     assert module.module_settings[service.USAGE_KEY]['used'] == 1
     assert module.module_settings['other_module_setting'] == 'preserve'
 

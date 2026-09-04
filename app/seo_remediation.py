@@ -58,11 +58,11 @@ async def settle(session, tenant_id, reservation, *, success):
         TenantModule.tenant_id == tenant_id, TenantModule.module_code == "seo",
     ).with_for_update().execution_options(populate_existing=True))
     if module is None:
-        return
+        return False
     settings = dict(module.module_settings or {})
     state = dict(settings.get(USAGE_KEY) or {})
     if (state.get("date"), state.get("token")) != reservation:
-        return
+        return False
     if not success:
         state["used"] = max(0, state.get("used", 0) - 1)
     state.pop("token", None)
@@ -70,6 +70,7 @@ async def settle(session, tenant_id, reservation, *, success):
     settings[USAGE_KEY] = state
     module.module_settings = settings
     await session.commit()
+    return True
 
 
 def belongs_to_site(url, domain):

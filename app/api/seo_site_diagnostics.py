@@ -13,6 +13,8 @@ from app.database import get_session
 from app.models.module_workspace import SeoSite
 from app.models.seo import SeoImageAltReview, SeoPageIndexReview, SeoSitePage, SeoPageSnapshot
 from app.security.auth import AuthContext, require_scoped_auth
+from app.seo_image_alt_ai import candidate_prompt_item, generate_alt_drafts
+from app.seo_remediation import reserve as reserve_ai_usage, settle as settle_ai_usage
 from app.seo_site_diagnostics import assessed_condition, checked_iso, diagnostic_payload
 
 router = APIRouter()
@@ -354,6 +356,124 @@ class ImageAltReviewUpdate(BaseModel):
     @classmethod
     def trim_optional(cls, value):
         return value.strip() or None if value is not None else None
+
+
+class ImageAltAiDraftSelection(BaseModel):
+    page_id: PositiveInt
+    expected_snapshot_id: PositiveInt
+    position: PositiveInt
+    expected_review_id: None
+
+
+class ImageAltAiDraftRequest(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt
+    items: list[ImageAltAiDraftSelection] = Field(min_length=1, max_length=20)
+
+    @field_validator("items")
+    @classmethod
+    def unique_candidates(cls, value):
+        keys = {(item.page_id, item.position) for item in value}
+        if len(keys) != len(value):
+            raise ValueError("不能重复选择同一张图片")
+        return value
+
+
+async def _ai_draft_candidates(session, req, *, lock_pages=False):
+    """Resolve current evidence and reject stale/cross-scope candidate identities."""
+    resolved = []
+    pages = {}
+    snapshots = {}
+    for selected in req.items:
+        if selected.expected_review_id is not None:
+            continue
+        if selected.page_id not in pages:
+            page, snapshot = await _page_and_latest_snapshot(
+                session, req.tenant_id, req.site_id, selected.page_id, lock_page=lock_pages)
+            pages[selected.page_id] = page
+            snapshots[selected.page_id] = snapshot
+        page = pages[selected.page_id]
+        snapshot = snapshots[selected.page_id]
+        if (snapshot is None or snapshot.id != selected.expected_snapshot_id or snapshot.error_type
+                or not isinstance(snapshot.image_alt_evidence, dict)):
+            continue
+        candidate = next((item for item in snapshot.image_alt_evidence.get("items", [])
+                          if isinstance(item, dict) and item.get("position") == selected.position), None)
+        if candidate is None or candidate.get("alt_state") not in {"missing", "empty", "whitespace"}:
+            continue
+        existing = await session.scalar(select(SeoImageAltReview.id).where(
+            SeoImageAltReview.tenant_id == req.tenant_id,
+            SeoImageAltReview.site_id == req.site_id,
+            SeoImageAltReview.page_id == selected.page_id,
+            SeoImageAltReview.snapshot_id == snapshot.id,
+            SeoImageAltReview.position == selected.position,
+        ))
+        if existing is not None:
+            continue
+        candidate_id = f"{selected.page_id}:{snapshot.id}:{selected.position}"
+        resolved.append((candidate_id, page, snapshot, candidate))
+    return resolved
+
+
+@router.post("/site-pages/image-remediation/ai-drafts")
+async def generate_image_alt_drafts(
+    req: ImageAltAiDraftRequest, ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """Generate text-only AI drafts without overwriting human review state."""
+    await _scope(session, ctx, req.tenant_id, req.site_id, write=True)
+    if ctx.user_id is None:
+        raise HTTPException(403, "AI 图片草稿必须由已登录的真实用户发起")
+    initial = await _ai_draft_candidates(session, req)
+    if not initial:
+        raise HTTPException(409, "所选图片已有草稿、已过期或不再可处理，请刷新后重试")
+    reservation = await reserve_ai_usage(session, req.tenant_id)
+    try:
+        prompt_items = [candidate_prompt_item(candidate_id, page, candidate)
+                        for candidate_id, page, _, candidate in initial]
+        suggestions = await generate_alt_drafts(prompt_items)
+        # Lock the same page rows used by manual saves, then revalidate after the
+        # external call. This prevents AI from overwriting a human's concurrent edit.
+        current = await _ai_draft_candidates(session, req, lock_pages=True)
+        current_ids = {row[0] for row in current}
+        now = datetime.now(timezone.utc)
+        created = []
+        for candidate_id, page, snapshot, candidate in current:
+            suggestion = suggestions.get(candidate_id)
+            if suggestion is None:
+                continue
+            note = ("由 AI 根据已存档文本线索生成，未读取图片像素，必须人工核对；"
+                    + suggestion["reason"])[:1000]
+            row = SeoImageAltReview(
+                tenant_id=req.tenant_id, site_id=req.site_id, page_id=page.id,
+                snapshot_id=snapshot.id, position=candidate["position"],
+                source_url=candidate.get("source_url"), observed_alt_state=candidate.get("alt_state"),
+                decision="informative", alt_suggestion=suggestion["alt_suggestion"], note=note,
+                review_status="draft", actor_id=ctx.user_id, actor_name=ctx.username,
+                reviewed_at=now, updated_at=now,
+            )
+            session.add(row)
+            created.append(candidate_id)
+        # settle_ai_usage commits the quota state and these drafts together. Do
+        # not commit drafts first: a settlement failure must not return an error
+        # after leaving persisted records behind.
+        settled = await settle_ai_usage(session, req.tenant_id, reservation, success=True)
+        if not settled:
+            await session.rollback()
+            raise HTTPException(409, "AI 整改请求已过期或被新请求取代，本次草稿未保存")
+        initial_ids = {row[0] for row in initial}
+        suggestion_ids = set(suggestions)
+        skipped_ai = len(initial_ids - suggestion_ids)
+        skipped_changed = len(suggestion_ids - current_ids)
+        skipped_ineligible = len(req.items) - len(initial)
+        return {"selected": len(req.items), "eligible": len(initial), "generated": len(created),
+                "skipped": len(req.items) - len(created), "skipped_ai": skipped_ai,
+                "skipped_changed": skipped_changed, "skipped_ineligible": skipped_ineligible,
+                "review_status": "draft"}
+    except Exception:
+        await session.rollback()
+        await settle_ai_usage(session, req.tenant_id, reservation, success=False)
+        raise
 
 
 @router.put("/site-pages/image-remediation")
