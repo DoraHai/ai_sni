@@ -11,6 +11,7 @@ import {
   writebackKeywordBatch,
 } from '../../api/keywords'
 import { setAdgroupBid, setAdgroupLandingUrl } from '../../api/manage'
+import { WRITEBACK_CONFIRMATION } from '../../api/writeback'
 import {
   fetchSuggestionAssignees,
   fetchSuggestions,
@@ -262,6 +263,7 @@ async function editAdgroupBid(row) {
       tenantId: TENANT_ID.value,
       adgroupId: row.adgroup_id,
       maxPrice: price,
+      confirmation: WRITEBACK_CONFIRMATION,
     })
     const tag = res.dry_run ? '（演练：未真改）' : ''
     if (res.status === 'failed') ElMessage.error('失败：' + (res.error_msg || '未知错误'))

@@ -1,6 +1,7 @@
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { matchTypeWriteback, pauseKeywordBatch, writebackKeyword } from '../api/keywords'
+import { WRITEBACK_CONFIRMATION } from '../api/writeback'
 
 export const MATCH_TYPE_OPTIONS = {
   exact: { matchType: 1, phraseType: 1, label: '精确匹配' },
@@ -24,15 +25,20 @@ export function useKeywordWriteback({ tenantId, onSuccess } = {}) {
     try {
       await ElMessageBox.confirm(
         `将把「${keywordText || `关键词 #${keywordId}`}」的建议出价 ¥${Number(price).toFixed(2)}${currentPrice == null ? '' : `（当前 ¥${Number(currentPrice).toFixed(2)}）`}提交回写。\n系统将按当前客户、推广账户和动作门禁决定演练或真实执行；真实执行会修改百度账户。仍会执行 ±20% 渐进调价校验。`,
-        '加入待回写台账',
-        { confirmButtonText: '加入待回写', cancelButtonText: '取消', type: 'warning' },
+        '确认关键词出价',
+        { confirmButtonText: '确认并执行', cancelButtonText: '取消', type: 'warning' },
       )
     } catch {
       return null
     }
 
     try {
-      const response = await writebackKeyword({ keywordId, tenantId: tenantId.value, price: Number(price) })
+      const response = await writebackKeyword({
+        keywordId,
+        tenantId: tenantId.value,
+        price: Number(price),
+        confirmation: WRITEBACK_CONFIRMATION,
+      })
       if (response.dry_run) {
         ElMessage.success('已加入待回写台账，百度账户未修改')
         return { response, success: false, dryRun: true }

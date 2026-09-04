@@ -275,6 +275,10 @@ def test_backend_and_frontend_keep_approval_id_wiring():
     approval_view = (
         ROOT / "frontend/src/views/verify/AdjustmentLogView.vue"
     ).read_text(encoding="utf-8")
+    approval_client = (ROOT / "frontend/src/api/writeback.js").read_text(encoding="utf-8")
+    keyword_controls = (
+        ROOT / "frontend/src/composables/useKeywordWriteback.js"
+    ).read_text(encoding="utf-8")
 
     assert manage_api.count("approval_id: int | None = None") >= 3
     assert manage_api.count("approval_id=req.approval_id") >= 3
@@ -283,10 +287,18 @@ def test_backend_and_frontend_keep_approval_id_wiring():
     assert manage_client.count("approval_id: approvalId") == 3
     assert "approval_id: approvalId" in keyword_client
     assert approval_view.count("approvalId: row.id") == 4
-    assert "CONFIRM_BAIDU_WRITEBACK" in approval_view
-    assert "confirmation: approvalForm.confirmation" in approval_view
-    assert "@closed=\"resetApprovalConfirmation\"" in approval_view
-    assert "@click=\"openApprovalDialog\"" in approval_view
+    assert "CONFIRM_BAIDU_WRITEBACK" in approval_client
+    assert "confirmation: WRITEBACK_CONFIRMATION" in keyword_controls
+    for relative_path in (
+        "frontend/src/views/manage/AccountBudgetView.vue",
+        "frontend/src/views/manage/AdgroupManageView.vue",
+        "frontend/src/views/manage/CampaignManageView.vue",
+        "frontend/src/views/optimize/KeywordWorkbenchView.vue",
+    ):
+        direct_write_view = (ROOT / relative_path).read_text(encoding="utf-8")
+        assert "confirmation: WRITEBACK_CONFIRMATION" in direct_write_view
+    assert "无需在此重复创建" in approval_view
+    assert "创建资金回写确认" not in approval_view
 
     approval_api = (ROOT / "app/api/writeback.py").read_text(encoding="utf-8")
     assert "req.confirmation not in (None, WRITEBACK_CONFIRMATION)" in approval_api
@@ -294,8 +306,14 @@ def test_backend_and_frontend_keep_approval_id_wiring():
     assert 'status="pending" if legacy_pending else "approved"' in approval_api
     assert "approved_by=None if legacy_pending else ctx.user_id" in approval_api
 
+    assert keyword_api.count("confirmation: str | None = None") >= 1
+    assert "confirmation=req.confirmation" in keyword_api
+    assert manage_api.count("confirmation: str | None = None") >= 3
+    assert manage_api.count("confirmation=req.confirmation") >= 3
+
     orchestration = (ROOT / "app/baidu/writeback.py").read_text(encoding="utf-8")
-    assert orchestration.count("approval_id=approval_id if not dry_run else None") == 4
+    assert "create_self_approved_approval" in orchestration
+    assert orchestration.count("approval_id=effective_approval_id") == 4
     migration = (
         ROOT / "migrations/versions/20260825_0076_oauth_rebind_intent.py"
     ).read_text(encoding="utf-8")
@@ -360,3 +378,42 @@ def test_real_writeback_claims_approval_but_dry_run_does_not():
             )
         )
         claim.assert_not_awaited()
+
+
+def test_real_writeback_can_create_and_consume_one_click_confirmation():
+    session = SimpleNamespace()
+    created = SimpleNamespace(id=41)
+    claimed = SimpleNamespace(id=41)
+    with (
+        patch(
+            "app.baidu.writeback.create_self_approved_approval",
+            new=AsyncMock(return_value=created),
+        ) as create,
+        patch(
+            "app.baidu.writeback.claim_approval",
+            new=AsyncMock(return_value=claimed),
+        ) as claim,
+    ):
+        approval_id = asyncio.run(
+            _claim_funds_approval(
+                session,
+                approval_id=None,
+                tenant_id=3,
+                action_type="keyword_bid",
+                payload={"keyword_id": 7, "new_bid": 1.23},
+                operator_user_id=9,
+                dry_run=False,
+                confirmation="CONFIRM_BAIDU_WRITEBACK",
+            )
+        )
+
+    assert approval_id == 41
+    create.assert_awaited_once_with(
+        session,
+        tenant_id=3,
+        action_type="keyword_bid",
+        payload={"keyword_id": 7, "new_bid": 1.23},
+        operator_user_id=9,
+        confirmation="CONFIRM_BAIDU_WRITEBACK",
+    )
+    assert claim.await_args.kwargs["approval_id"] == 41

@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAdgroups, setAdgroupPause, setAdgroupBid, setAdgroupLandingUrl } from '../../api/manage'
+import { WRITEBACK_CONFIRMATION } from '../../api/writeback'
 import { session } from '../../store/session'
 
 const TENANT_ID = computed(() => session.tenantId)
@@ -138,7 +139,12 @@ async function editBid(row) {
   }
   savingId.value = row.adgroup_id
   try {
-    const res = await setAdgroupBid({ tenantId: TENANT_ID.value, adgroupId: row.adgroup_id, maxPrice: v })
+    const res = await setAdgroupBid({
+      tenantId: TENANT_ID.value,
+      adgroupId: row.adgroup_id,
+      maxPrice: v,
+      confirmation: WRITEBACK_CONFIRMATION,
+    })
     const tag = res.dry_run ? '（演练：未真改）' : ''
     if (['pending', 'reconcile'].includes(res.status)) {
       ElMessage.warning(res.error_msg || '百度执行结果未知，已转入人工对账')
