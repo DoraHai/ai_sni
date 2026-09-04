@@ -1,37 +1,45 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { copySeoImageRemediation, fetchSeoImageEvidence, fetchSeoImageRemediation, fetchSeoImageRemediationHistory, saveSeoImageRemediation } from '../../api/seo'
+import { copySeoImageRemediation, fetchSeoImageEvidence, fetchSeoImageRemediation, fetchSeoImageRemediationHistory, fetchSeoImageRemediationReusePreview, reuseSeoImageRemediation, saveSeoImageRemediation } from '../../api/seo'
 
 const props = defineProps({ visible: Boolean, tenantId: Number, siteId: Number, page: Object, canEdit: Boolean })
 const emit = defineEmits(['update:visible'])
 const data = ref(null), loading = ref(false), error = ref(''), filter = ref('all')
 const drafts = ref({}), savingPosition = ref(null)
 const history = ref([]), currentSnapshotId = ref(null), selectedSnapshotId = ref(null), copying = ref(false)
+const reusePreview = ref(null), reusing = ref(false)
 let generation = 0
 const evidence = computed(() => data.value?.evidence)
 const items = computed(() => (evidence.value?.items || []).filter(row => filter.value === 'all' || row.alt_state === filter.value))
 const isHistorical = computed(() => Boolean(data.value?.snapshot_id && currentSnapshotId.value && data.value.snapshot_id !== currentSnapshotId.value))
 const previousReviewedSnapshot = computed(() => history.value.find(row => row.snapshot_id !== currentSnapshotId.value && row.approved_count > 0) || null)
+const canReuseAcrossPages = computed(() => Boolean(
+  reusePreview.value?.eligible_count
+  && reusePreview.value.target_snapshot_id === data.value?.snapshot_id
+  && !isHistorical.value,
+))
 const stateLabel = state => ({ missing: '缺少 Alt 属性', empty: '空 Alt（需判断用途）', whitespace: 'Alt 仅含空白' }[state] || '未知')
 const time = value => value ? new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) + ' CST' : '—'
 const historyLabel = row => `快照 #${row.snapshot_id} · ${time(row.fetched_at)} · 已审核 ${row.approved_count}/${row.candidate_count}`
 async function load(snapshotId = null) {
   const token = ++generation
-  data.value = null; error.value = ''; loading.value = false
+  data.value = null; reusePreview.value = null; error.value = ''; loading.value = false
   if (!props.visible || !props.tenantId || !props.siteId || !props.page?.id) return
   loading.value = true
   try {
-    const [response, remediation, historyResponse] = await Promise.all([
+    const [response, remediation, historyResponse, reuseResponse] = await Promise.all([
       fetchSeoImageEvidence({ tenantId: props.tenantId, siteId: props.siteId, pageId: props.page.id, snapshotId }),
       fetchSeoImageRemediation({ tenantId: props.tenantId, siteId: props.siteId, pageId: props.page.id, snapshotId }),
       fetchSeoImageRemediationHistory({ tenantId: props.tenantId, siteId: props.siteId, pageId: props.page.id }),
+      fetchSeoImageRemediationReusePreview({ tenantId: props.tenantId, siteId: props.siteId, pageId: props.page.id }).catch(() => null),
     ])
     if (token === generation) {
       data.value = response
       history.value = historyResponse.items || []
       currentSnapshotId.value = historyResponse.current_snapshot_id || response.snapshot_id
       selectedSnapshotId.value = response.snapshot_id
+      reusePreview.value = reuseResponse
       // The two reads can straddle a new crawl. Never project reviews from one
       // immutable snapshot onto evidence from another snapshot.
       const saved = remediation.snapshot_id === response.snapshot_id
@@ -49,7 +57,7 @@ async function load(snapshotId = null) {
   finally { if (token === generation) loading.value = false }
 }
 watch(() => [props.visible, props.tenantId, props.siteId, props.page?.id], () => {
-  filter.value = 'all'; history.value = []; currentSnapshotId.value = null; selectedSnapshotId.value = null; load()
+  filter.value = 'all'; history.value = []; reusePreview.value = null; currentSnapshotId.value = null; selectedSnapshotId.value = null; load()
 }, { immediate: true, flush: 'sync' })
 onBeforeUnmount(() => { ++generation })
 async function saveReview(row) {
@@ -85,6 +93,27 @@ async function copyPrevious() {
   } catch (e) {
     if (e !== 'cancel' && e !== 'close') ElMessage.error(e.message || '复制失败，请重试')
   } finally { copying.value = false }
+}
+async function reuseAcrossPages() {
+  const preview = reusePreview.value
+  if (!canReuseAcrossPages.value || !data.value?.snapshot_id || reusing.value) return
+  try {
+    await ElMessageBox.confirm(
+      `同一网站内有 ${preview.eligible_count} 条图片结论可从 ${preview.source_page_count} 个页面复用。仅匹配地址和使用上下文完全一致、历史结论无冲突的图片；复用后仍为草稿，必须逐项人工复核。确定继续？`,
+      '复用同站图片审核结论',
+      { type: 'warning', confirmButtonText: '复用为草稿', cancelButtonText: '取消' },
+    )
+    reusing.value = true
+    const result = await reuseSeoImageRemediation({
+      tenant_id: props.tenantId, site_id: props.siteId, page_id: props.page.id,
+      expected_snapshot_id: data.value.snapshot_id,
+    })
+    const message = `已复用 ${result.copied} 条为草稿；跳过已有 ${result.skipped_existing} 条、重复或冲突 ${result.skipped_ambiguous} 条`
+    result.copied ? ElMessage.success(message) : ElMessage.warning(message)
+    await load(data.value.snapshot_id)
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close') ElMessage.error(e.message || '复用失败，请重试')
+  } finally { reusing.value = false }
 }
 function csvCell(value) {
   let text = String(value ?? '')
@@ -136,7 +165,7 @@ function exportWorklist() {
         </el-table>
       </template>
     </template>
-    <template #footer><el-button v-if="canEdit && evidence && !isHistorical && previousReviewedSnapshot" :loading="copying" @click="copyPrevious">复制上一快照审核结论</el-button><el-button v-if="evidence" @click="exportWorklist">导出图片整改清单</el-button><el-button :loading="loading" @click="load(selectedSnapshotId)">重新读取存档</el-button><el-button @click="emit('update:visible', false)">关闭</el-button></template>
+    <template #footer><el-button v-if="canEdit && evidence && canReuseAcrossPages" :loading="reusing" @click="reuseAcrossPages">复用同站图片结论（{{ reusePreview.eligible_count }}）</el-button><el-button v-if="canEdit && evidence && !isHistorical && previousReviewedSnapshot" :loading="copying" @click="copyPrevious">复制上一快照审核结论</el-button><el-button v-if="evidence" @click="exportWorklist">导出图片整改清单</el-button><el-button :loading="loading" @click="load(selectedSnapshotId)">重新读取存档</el-button><el-button @click="emit('update:visible', false)">关闭</el-button></template>
   </el-dialog>
 </template>
 
