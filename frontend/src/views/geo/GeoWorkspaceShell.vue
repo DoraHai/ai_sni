@@ -33,6 +33,14 @@ const initials = computed(() => Array.from(String(accountName.value)).slice(0, 2
 const pageTitle = computed(() => route.meta.title || 'GEO 工作台')
 const isActive = (item) => route.path === item.path || route.path.startsWith(`${item.path}/`)
 const isGroupExpanded = (group) => Boolean(expandedGroups.value[group.label])
+const isCurrentGroup = (group) => group.children.some((item) => isActive(item))
+
+const groupIcons = {
+  数据看板: '▦',
+  智能监测: '✦',
+  内容与信源: 'Aa',
+  设置: '⚙',
+}
 
 function toggleGroup(label) {
   expandedGroups.value = {
@@ -92,16 +100,19 @@ async function onUserCommand(cmd) {
         <button class="geo-mobile-close" type="button" aria-label="关闭 GEO 导航" @click="mobileOpen = false">×</button>
       </div>
       <nav class="geo-shell-nav">
+        <div class="geo-nav-section-title">GEO 增长工作流</div>
         <section v-for="(group, groupIndex) in GEO_WORKBENCH_NAV" :key="group.label" class="geo-nav-group">
           <button
             type="button"
             class="geo-nav-group-toggle"
+            :class="{ current: isCurrentGroup(group) }"
             :aria-expanded="isGroupExpanded(group)"
             :aria-controls="`geo-nav-group-${groupIndex}`"
             @click="toggleGroup(group.label)"
           >
-            <span>{{ group.label }}</span>
-            <span class="geo-nav-group-chevron" aria-hidden="true">⌄</span>
+            <span class="geo-nav-group-icon" aria-hidden="true">{{ groupIcons[group.label] || '·' }}</span>
+            <span class="geo-nav-group-name">{{ group.label }}</span>
+            <span class="geo-nav-group-chevron" aria-hidden="true">›</span>
           </button>
           <Transition name="geo-nav-section">
             <div
@@ -117,8 +128,8 @@ async function onUserCommand(cmd) {
                 :class="{ active: isActive(item) }"
                 @click="go(item.path)"
               >
-                <span class="geo-shell-item-icon">{{ item.icon }}</span>
-                <span>{{ item.label }}</span>
+                <span class="geo-nav-item-dot" aria-hidden="true" />
+                <span class="geo-nav-item-label">{{ item.label }}</span>
               </button>
             </div>
           </Transition>
@@ -189,7 +200,7 @@ async function onUserCommand(cmd) {
 .geo-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 216px minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr);
   background: #f6f7fb;
   color: #172033;
 }
@@ -200,86 +211,120 @@ async function onUserCommand(cmd) {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  padding: 16px 8px 0;
-  background: #fff;
-  border-right: 1px solid #e8eaf0;
+  padding: 0;
+  background: rgba(255, 255, 255, .97);
+  border-right: 1px solid #e7e3ec;
+  box-shadow: 8px 0 26px rgba(49, 35, 66, .035);
 }
 .geo-shell-brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 4px 8px 14px;
+  padding: 20px 18px 16px;
+  border-bottom: 1px solid #e7e3ec;
 }
 .geo-shell-logo {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   display: grid;
   place-items: center;
   flex: none;
-  border-radius: 7px;
+  border-radius: 8px;
   color: #fff;
   font-size: 13px;
-  font-weight: 750;
-  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  font-weight: 800;
+  background: linear-gradient(180deg, #9b72f2 0%, #7444d8 100%);
+  box-shadow: 0 8px 20px rgba(116, 68, 216, .22);
 }
 .geo-shell-brand-copy b,
 .geo-shell-brand-copy small {
   display: block;
 }
 .geo-shell-brand-copy b {
-  color: #172033;
-  font-size: 15px;
+  color: #65419b;
+  font-size: 14px;
+  font-weight: 700;
   line-height: 1.2;
 }
 .geo-shell-brand-copy small {
   margin-top: 1px;
-  color: #8a94a6;
+  color: #8b8494;
   font-size: 10.5px;
 }
 .geo-shell-nav {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 0 8px;
+  padding: 14px 12px 24px;
 }
-.geo-nav-group + .geo-nav-group { margin-top: 3px; }
+.geo-nav-section-title {
+  padding: 0 10px 8px;
+  color: #8b8494;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .04em;
+}
+.geo-nav-group { margin-bottom: 6px; user-select: none; }
 .geo-nav-group-toggle {
   width: 100%;
-  min-height: 30px;
+  min-height: 38px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   margin: 0;
-  padding: 9px 10px 6px;
-  border: 0;
-  border-radius: 7px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   background: transparent;
-  color: #9aa1ad;
+  color: #535a66;
   font: inherit;
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: .06em;
+  font-size: 13px;
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease, box-shadow .12s ease;
 }
 .geo-nav-group-toggle:hover {
-  background: #faf8ff;
-  color: #776982;
+  background: #faf7fd;
+  color: #282230;
 }
+.geo-nav-group-toggle.current {
+  background: linear-gradient(90deg, #f6efff 0%, #fff 100%);
+  border-color: #ddc9f2;
+  color: #6f3eb1;
+  box-shadow: inset 3px 0 0 #7c3aed;
+  font-weight: 650;
+}
+.geo-nav-group-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  color: #766e80;
+  font-size: 13px;
+}
+.geo-nav-group-toggle.current .geo-nav-group-icon {
+  border-radius: 5px;
+  background: #efe4ff;
+  color: #7844bd;
+}
+.geo-nav-group-name { flex: 1; text-align: left; }
 .geo-nav-group-chevron {
   display: inline-grid;
   place-items: center;
-  color: #b1a8bb;
-  font-size: 15px;
+  color: #9c94a5;
+  font-size: 12px;
   line-height: 1;
-  transform: rotate(-90deg);
+  transform: rotate(0deg);
   transition: transform .18s ease, color .18s ease;
 }
 .geo-nav-group-toggle[aria-expanded="true"] .geo-nav-group-chevron {
   color: #7c3aed;
-  transform: rotate(0deg);
+  transform: rotate(90deg);
 }
-.geo-nav-group-items { overflow: hidden; }
+.geo-nav-group-items { overflow: hidden; padding: 4px 0 2px; }
 .geo-nav-section-enter-active,
 .geo-nav-section-leave-active {
   transition: opacity .16s ease, transform .16s ease;
@@ -294,38 +339,44 @@ async function onUserCommand(cmd) {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 0;
-  padding: 7px 8px;
+  gap: 6px;
+  min-height: 32px;
+  margin: 1px 0;
+  padding: 0 10px 0 36px;
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: #5b6270;
+  color: #85808c;
   font: inherit;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   line-height: 1.3;
   text-align: left;
   cursor: pointer;
   white-space: nowrap;
 }
-.geo-shell-nav-item:hover,
+.geo-shell-nav-item:hover {
+  background: #faf6fe;
+  color: #7741ba;
+}
 .geo-shell-nav-item.active {
-  background: #f5f0ff;
-  color: #7c3aed;
+  background: #f3eaff;
+  color: #7741ba;
   font-weight: 600;
 }
-.geo-shell-item-icon {
-  width: 18px;
-  height: 18px;
-  display: grid;
-  place-items: center;
+.geo-nav-item-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #cdc7d3;
   flex: none;
-  font-size: 13px;
 }
+.geo-shell-nav-item.active .geo-nav-item-dot { background: #7c3aed; }
+.geo-nav-item-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .geo-shell-links {
-  padding: 8px 2px;
-  border-top: 1px solid #e8eaf0;
+  padding: 12px 18px 18px;
+  border-top: 1px solid #e7e3ec;
+  background: rgba(255, 255, 255, .97);
 }
 .geo-shell-links a {
   min-height: 32px;
@@ -345,8 +396,8 @@ async function onUserCommand(cmd) {
   font-weight: 700;
 }
 .geo-shell-links a:hover {
-  background: #f5f0ff;
-  color: #7c3aed;
+  background: transparent;
+  color: #7741ba;
 }
 .geo-shell-links .portal-link {
   margin-top: 4px;
