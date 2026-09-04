@@ -4722,6 +4722,15 @@ class ContentUpdate(BaseModel):
     published_at: datetime | None = None
 
 
+class ContentSourcePageBinding(BaseModel):
+    source_page_id: PositiveInt
+    version_count: int | None = Field(
+        None,
+        ge=1,
+        description="Expected current version used for optimistic concurrency control.",
+    )
+
+
 class DistributionConnectionCreate(BaseModel):
     tenant_id: PositiveInt
     platform_code: str = Field(min_length=1, max_length=40)
@@ -4917,6 +4926,8 @@ async def _distribution_content(
 def _require_content_ready(content: SeoContentAsset) -> None:
     if content.status not in {"ready", "published"}:
         raise HTTPException(409, "内容主稿尚未审核通过，不能进入发布流程")
+    if content.content_type == "landing" and content.source_page_id is None:
+        raise HTTPException(409, "落地页内容尚未绑定承接页，不能进入发布流程")
 
 
 def _prepare_distribution_variant(
@@ -6290,6 +6301,8 @@ async def preflight_content_distribution(
             warnings: list[str] = []
             if content.status not in {"ready", "published"}:
                 errors.append("内容主稿尚未审核通过")
+            if content.content_type == "landing" and content.source_page_id is None:
+                errors.append("落地页内容尚未绑定承接页")
             body = content.humanized_content or content.draft or ""
             if not connection.enabled:
                 errors.append("平台连接已停用")
@@ -6946,6 +6959,53 @@ async def decide_content_review(
         actor_id=ctx.user_id,
     ))
     await session.commit()
+    await session.refresh(row)
+    return _content_payload(row)
+
+
+@router.put("/content-assets/{content_id}/source-page")
+async def bind_content_source_page(
+    content_id: int,
+    tenant_id: int,
+    req: ContentSourcePageBinding,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    """Bind an audited landing page without reopening approved content text."""
+    ctx.ensure_tenant(tenant_id)
+    row = await session.get(SeoContentAsset, content_id, with_for_update=True)
+    if not row or row.tenant_id != tenant_id:
+        raise HTTPException(404, "SEO 内容资产不存在")
+    if row.content_type != "landing":
+        raise HTTPException(409, "只有落地页内容可以绑定承接页")
+    if row.status not in {"planned", "drafting", "ready"}:
+        raise HTTPException(409, "只有草稿或待发布内容可以绑定承接页")
+    if req.version_count is not None and req.version_count != (row.version_count or 1):
+        raise HTTPException(409, "内容已被其他操作更新，请刷新后重试")
+    if row.source_page_id is not None:
+        if row.source_page_id == req.source_page_id:
+            return _content_payload(row)
+        raise HTTPException(409, "承接页已绑定，不能直接改绑")
+    if row.site_id is None:
+        raise HTTPException(400, "内容任务没有有效站点，无法绑定承接页")
+    source_page = await _site_page(session, req.source_page_id, tenant_id)
+    if source_page.site_id != row.site_id:
+        raise HTTPException(400, "承接页与内容所属站点不一致")
+    existing_content_id = await _content_task_for_source_page(
+        session,
+        tenant_id,
+        row.site_id,
+        req.source_page_id,
+        exclude_content_id=row.id,
+    )
+    if existing_content_id is not None:
+        raise HTTPException(409, "该站内页面已经关联其他内容任务")
+    row.source_page_id = req.source_page_id
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(409, "该站内页面已经关联其他内容任务") from exc
     await session.refresh(row)
     return _content_payload(row)
 

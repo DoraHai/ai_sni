@@ -358,6 +358,11 @@ def test_seo_content_and_rank_views_are_site_scoped_and_html_safe() -> None:
     assert "if (!siteId.value) { ElMessage.warning('请先选择或创建 SEO 网站'); return }" in ranking
     assert '@click="openCollect"' in ranking
     assert "site_id: PositiveInt" in backend
+    assert "bindSeoContentSourcePage" in api
+    assert "承接页：未绑定" in content
+    assert "绑定承接页" in content
+    assert "先绑定承接页" in editor
+    assert "落地页内容尚未绑定承接页" in backend
     assert "? `采集部分完成" in ranking
     assert "Array.isArray(summary.errors)" in ranking
     assert "const collectOutcome = ref(null)" in ranking

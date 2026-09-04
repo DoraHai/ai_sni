@@ -63,6 +63,23 @@ def test_distribution_requires_an_approved_main_content_asset() -> None:
     _require_content_ready(published)
 
 
+def test_distribution_requires_landing_content_to_bind_a_source_page() -> None:
+    unbound = SeoContentAsset(
+        tenant_id=1,
+        site_id=1,
+        title="落地页优化",
+        content_type="landing",
+        status="ready",
+    )
+    with pytest.raises(Exception) as exc:
+        _require_content_ready(unbound)
+    assert getattr(exc.value, "status_code", None) == 409
+    assert "尚未绑定承接页" in str(getattr(exc.value, "detail", ""))
+
+    unbound.source_page_id = 231
+    _require_content_ready(unbound)
+
+
 def test_platform_catalog_distinguishes_api_assisted_and_planned_channels() -> None:
     catalog = {item["code"]: item for item in distribution.platform_catalog()}
 
@@ -956,6 +973,55 @@ def test_preflight_blocks_unconfigured_api_connection() -> None:
     assert result["blocked"] == 1
     assert "API 平台尚未通过连接测试" in result["rows"][0]["errors"]
     assert "API 平台尚未配置授权信息" in result["rows"][0]["errors"]
+
+
+def test_preflight_blocks_unbound_landing_content() -> None:
+    content = SeoContentAsset(
+        id=5,
+        tenant_id=1,
+        site_id=8,
+        content_type="landing",
+        title="落地页优化",
+        draft="<p>正文内容</p>",
+        status="ready",
+        version_count=1,
+    )
+    connection = SeoDistributionConnection(
+        id=10,
+        tenant_id=1,
+        platform_code="zhihu",
+        name="官方知乎",
+        mode="assisted",
+        enabled=True,
+        status="ready",
+        has_credentials=False,
+    )
+    session = AsyncMock()
+    session.scalars = AsyncMock(return_value=[])
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+    request = DistributionPreflightRequest(
+        tenant_id=1,
+        site_id=8,
+        content_ids=[5],
+        connection_ids=[10],
+        action="draft",
+    )
+
+    with (
+        patch("app.api.seo._seo_site", new=AsyncMock()),
+        patch("app.api.seo._distribution_content", new=AsyncMock(return_value=content)),
+        patch("app.api.seo._distribution_connection", new=AsyncMock(return_value=connection)),
+    ):
+        result = asyncio.run(preflight_content_distribution(request, session, context))
+
+    assert result["blocked"] == 1
+    assert "落地页内容尚未绑定承接页" in result["rows"][0]["errors"]
 
 
 def test_preflight_allows_published_content_to_continue_to_another_platform() -> None:

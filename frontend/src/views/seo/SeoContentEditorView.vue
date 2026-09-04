@@ -33,6 +33,7 @@ const assetStatus = ref('planned')
 const assetContentType = ref(null)
 const editingHumanized = ref(false)
 const workflowLocked = computed(() => ['review', 'ready', 'published'].includes(assetStatus.value))
+const landingBindingMissing = computed(() => assetContentType.value === 'landing' && !sourcePageId.value)
 const mode = computed(() => route.query.type === 'rewrite' ? 'rewrite' : route.query.type === 'qa' ? 'qa' : 'original')
 const pageTitle = computed(() => mode.value === 'rewrite' ? '文章改写编辑' : mode.value === 'qa' ? '问答编辑器' : '原创文章编辑')
 const backPath = computed(() => mode.value === 'rewrite' ? '/seo/content/rewrites' : mode.value === 'qa' ? '/seo/content/qa' : '/seo/content/articles')
@@ -391,7 +392,7 @@ onMounted(async () => {
     <header class="editor-topbar">
       <button class="editor-back" type="button" @click="router.push(backPath)">← 返回{{ mode==='rewrite'?'文章改写':mode==='qa'?'问答运营':'原创文章' }}</button>
       <div><h1>{{ pageTitle }}</h1><p>{{ assetId ? `${contentTypeLabel} · 任务 #${assetId}` : mode==='rewrite'?'基于导入原文 · 深度改写':mode==='qa'?'搜索问答 · 新建回答':`${selectedTemplate.name} · 新建内容` }}</p></div>
-      <div class="editor-top-actions"><span>{{ saveState }}</span><button v-if="sourcePageId" type="button" @click="router.push(sourcePageRoute)">返回来源页面</button><button v-if="['planned','drafting'].includes(assetStatus)" type="button" :disabled="saving || editorComposing" @click="save('drafting')">保存草稿</button><button v-if="['planned','drafting'].includes(assetStatus)" type="button" :disabled="saving || editorComposing" @click="submitReview">提交审核</button><button v-if="assetStatus==='ready'" class="primary" type="button" @click="router.push('/seo/distribution')">进入发布流程</button><b>{{ String(session.user?.name || session.user?.username || 'DZ').slice(0, 2).toUpperCase() }}</b></div>
+      <div class="editor-top-actions"><span>{{ saveState }}</span><button v-if="sourcePageId" type="button" @click="router.push(sourcePageRoute)">返回承接页</button><button v-if="['planned','drafting'].includes(assetStatus)" type="button" :disabled="saving || editorComposing" @click="save('drafting')">保存草稿</button><button v-if="['planned','drafting'].includes(assetStatus)" type="button" :disabled="saving || editorComposing" @click="submitReview">提交审核</button><button v-if="assetStatus==='ready' && landingBindingMissing" type="button" @click="router.push(backPath)">先绑定承接页</button><button v-if="assetStatus==='ready' && !landingBindingMissing" class="primary" type="button" @click="router.push('/seo/distribution')">进入发布流程</button><b>{{ String(session.user?.name || session.user?.username || 'DZ').slice(0, 2).toUpperCase() }}</b></div>
     </header>
 
     <main class="editor-workspace">

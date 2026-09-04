@@ -240,6 +240,13 @@ export function updateSeoContentAsset({ contentId, tenantId, payload }) {
   return client.patch(`/api/v1/seo/content-assets/${contentId}`, payload, { params: { tenant_id: tenantId } })
 }
 
+export function bindSeoContentSourcePage({ contentId, tenantId, sourcePageId, versionCount }) {
+  return client.put(`/api/v1/seo/content-assets/${contentId}/source-page`, {
+    source_page_id: sourcePageId,
+    version_count: versionCount,
+  }, { params: { tenant_id: tenantId } })
+}
+
 export function submitSeoContentReview({ contentId, tenantId, note = null }) {
   return client.post(`/api/v1/seo/content-assets/${contentId}/submit-review`, { note }, { params: { tenant_id: tenantId } })
 }
