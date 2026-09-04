@@ -120,15 +120,44 @@ function csvCell(value) {
   if (/^[=+\-@]/.test(text.trimStart())) text = `'${text}`
   return `"${text.replace(/"/g, '""')}"`
 }
-function exportWorklist() {
+function exportRows(rows, filename) {
   const headers = ['页面ID','页面URL','快照ID','图片位置','区域','图片地址证据','检测Alt状态','人工用途','Alt建议','审核状态','备注']
-  const rows = (evidence.value?.items || []).map(row => { const draft = drafts.value[row.position] || {}; return [
+  const values = rows.map(row => { const draft = drafts.value[row.position] || {}; return [
     props.page.id, props.page.url, data.value.snapshot_id, row.position, row.section, row.source_url,
     stateLabel(row.alt_state), ({undecided:'待判断',decorative:'装饰图',informative:'内容图'}[draft.decision] || ''),
     draft.alt_suggestion, ({draft:'草稿',approved:'已审核'}[draft.review_status] || ''), draft.note,
   ] })
-  const blob = new Blob(['\ufeff' + [headers, ...rows].map(line => line.map(csvCell).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' })
-  const anchor = document.createElement('a'); anchor.href = URL.createObjectURL(blob); anchor.download = `SEO图片整改-${props.page.id}-snapshot-${data.value.snapshot_id}.csv`; anchor.click(); URL.revokeObjectURL(anchor.href)
+  const blob = new Blob(['\ufeff' + [headers, ...values].map(line => line.map(csvCell).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url; anchor.download = filename; anchor.style.display = 'none'
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  // Some browsers start the download asynchronously. Revoking in the same
+  // task can invalidate the Blob before the download manager consumes it.
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+function exportWorklist() {
+  const rows = (evidence.value?.items || []).filter(row => {
+    const draft = drafts.value[row.position]
+    return draft?.decision === 'informative'
+      && draft.review_status === 'approved'
+      && Boolean(draft.alt_suggestion?.trim())
+  })
+  if (!rows.length) {
+    ElMessage.warning('暂无已审核且需要 Alt 的内容图')
+    return
+  }
+  exportRows(rows, `SEO图片整改-${props.page.id}-snapshot-${data.value.snapshot_id}.csv`)
+}
+function exportAuditRecords() {
+  const rows = evidence.value?.items || []
+  if (!rows.length) {
+    ElMessage.warning('当前快照没有图片候选记录')
+    return
+  }
+  exportRows(rows, `SEO图片审核记录-${props.page.id}-snapshot-${data.value.snapshot_id}.csv`)
 }
 </script>
 
@@ -165,7 +194,7 @@ function exportWorklist() {
         </el-table>
       </template>
     </template>
-    <template #footer><el-button v-if="canEdit && evidence && canReuseAcrossPages" :loading="reusing" @click="reuseAcrossPages">复用同站图片结论（{{ reusePreview.eligible_count }}）</el-button><el-button v-if="canEdit && evidence && !isHistorical && previousReviewedSnapshot" :loading="copying" @click="copyPrevious">复制上一快照审核结论</el-button><el-button v-if="evidence" @click="exportWorklist">导出图片整改清单</el-button><el-button :loading="loading" @click="load(selectedSnapshotId)">重新读取存档</el-button><el-button @click="emit('update:visible', false)">关闭</el-button></template>
+    <template #footer><el-button v-if="canEdit && evidence && canReuseAcrossPages" :loading="reusing" @click="reuseAcrossPages">复用同站图片结论（{{ reusePreview.eligible_count }}）</el-button><el-button v-if="canEdit && evidence && !isHistorical && previousReviewedSnapshot" :loading="copying" @click="copyPrevious">复制上一快照审核结论</el-button><el-button v-if="evidence" @click="exportWorklist">导出图片整改清单</el-button><el-button v-if="evidence" @click="exportAuditRecords">导出全部审核记录</el-button><el-button :loading="loading" @click="load(selectedSnapshotId)">重新读取存档</el-button><el-button @click="emit('update:visible', false)">关闭</el-button></template>
   </el-dialog>
 </template>
 
