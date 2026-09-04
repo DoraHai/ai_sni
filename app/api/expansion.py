@@ -425,6 +425,8 @@ async def add_candidate_to_plan(
     cand = await session.get(KeywordCandidate, candidate_id)
     if cand is None or cand.tenant_id != req.tenant_id:
         raise HTTPException(404, "候选词不存在")
+    if cand.status != "pending":
+        raise HTTPException(409, "候选词已处理，请勿重复加入计划")
     try:
         rec = await apply_add_word_writeback(
             session, req.tenant_id, cand.word, req.adgroup_id,
