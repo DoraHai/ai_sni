@@ -453,34 +453,57 @@ async def sync_operation_records(
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(404, "租户不存在，请确认 tenant_id")
-    acc = await session.scalar(
-        select(BaiduAccount).where(
-            BaiduAccount.tenant_id == tenant_id, BaiduAccount.status == "active"
-        )
+    accounts = list(
+        (
+            await session.scalars(
+                select(BaiduAccount)
+                .where(
+                    BaiduAccount.tenant_id == tenant_id,
+                    BaiduAccount.status == "active",
+                )
+                .order_by(BaiduAccount.id)
+            )
+        ).all()
     )
-    if acc is None:
+    if not accounts:
         raise HTTPException(404, f"tenant_id={tenant_id} 没有 active 的 baidu_account")
 
-    end = end_date or date.today()
+    end = end_date or datetime.now(ZoneInfo("Asia/Shanghai")).date()
     start = start_date or end - timedelta(days=90)
     if start > end:
         raise HTTPException(400, "start_date 不能晚于 end_date")
 
-    try:
-        n = await sync_operation_records_for_account(session, acc, start, end)
-    except BaiduAPIError as e:
-        return {
-            "status": "error",
-            "code": e.code,
-            "message": e.message,
-            "token_invalid": e.is_token_invalid,
-        }
+    fetched = 0
+    failures = []
+    for acc in accounts:
+        try:
+            fetched += await sync_operation_records_for_account(session, acc, start, end)
+        except BaiduAPIError as exc:
+            failures.append(
+                {
+                    "baidu_account_id": acc.id,
+                    "code": exc.code,
+                    "message": exc.message,
+                    "token_invalid": exc.is_token_invalid,
+                }
+            )
+    accounts_succeeded = len(accounts) - len(failures)
+    if failures and accounts_succeeded == 0:
+        status = "error"
+    elif failures:
+        status = "partial"
+    else:
+        status = "ok"
     return {
-        "status": "ok",
+        "status": status,
+        "message": "所有百度账户操作记录同步均失败" if status == "error" else None,
         "tenant_id": tenant_id,
         "start_date": start.isoformat(),
         "end_date": end.isoformat(),
-        "records_fetched": n,
+        "records_fetched": fetched,
+        "accounts_total": len(accounts),
+        "accounts_succeeded": accounts_succeeded,
+        "account_failures": failures,
     }
 
 

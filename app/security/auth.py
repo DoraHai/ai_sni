@@ -246,6 +246,9 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
     if p.startswith("/api/v1/oauth/baidu"):
         # 查看授权状态需 view；发起/更新授权需 edit。
         return {"onboarding"}, edit
+    if p == "/api/v1/writeback/mode":
+        # 关键词页和效果验证页都需要读取当前租户的门禁摘要；任一只读权限即可。
+        return {"optimize.keywords", "verify.adjustments"}, False
     if p.startswith("/api/v1/writeback"):
         # 回写台账（只读查询）归效果验证。回写动作本身走 /keywords/{id}/writeback（optimize.keywords edit）
         return {"verify.adjustments"}, edit

@@ -32,7 +32,7 @@ WRITEBACK_CONFIRMATION = "CONFIRM_BAIDU_WRITEBACK"
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 
-def _local_now() -> datetime:
+def shanghai_now_naive() -> datetime:
     """Return a naive Asia/Shanghai value for the project's existing DateTime columns."""
     return datetime.now(_SHANGHAI_TZ).replace(tzinfo=None)
 
@@ -129,7 +129,7 @@ async def create_self_approved_approval(
             f"confirmation 必须精确等于 {WRITEBACK_CONFIRMATION}"
         )
     normalized, fingerprint = payload_fingerprint(action_type, payload)
-    now = _local_now()
+    now = shanghai_now_naive()
     approval = WritebackApproval(
         tenant_id=tenant_id,
         action_type=action_type,
@@ -178,7 +178,7 @@ async def claim_approval(
     created_at = approval.created_at
     if created_at is None:
         raise WritebackApprovalError("确认记录缺少创建时间，请重新创建确认")
-    now = datetime.now(created_at.tzinfo) if created_at.tzinfo else _local_now()
+    now = datetime.now(created_at.tzinfo) if created_at.tzinfo else shanghai_now_naive()
     settings = get_settings()
     if settings.baidu_legacy_split_confirmation_enabled:
         raise WritebackApprovalError("旧确认协议兼容期间禁止真实资金回写")
@@ -195,6 +195,6 @@ async def claim_approval(
         raise WritebackApprovalError("确认记录必须由当前实名操作员本人创建并确认")
     approval.status = "consumed"
     approval.consumed_by = operator_user_id
-    approval.consumed_at = _local_now()
+    approval.consumed_at = shanghai_now_naive()
     await session.flush()
     return approval
