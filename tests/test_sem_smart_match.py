@@ -34,6 +34,9 @@ class _Session:
             adgroup_name="智能匹配测试单元",
         )
 
+    async def scalars(self, _statement):
+        return SimpleNamespace(all=lambda: [])
+
     def add(self, record) -> None:
         self.record = record
 
@@ -110,3 +113,65 @@ def test_add_word_rejects_unknown_match_mode_before_database_access() -> None:
                 operator_name="operator",
             )
         )
+
+
+@pytest.mark.parametrize("price", [float("nan"), float("inf"), float("-inf")])
+def test_add_word_rejects_non_finite_price_before_database_access(price: float) -> None:
+    with pytest.raises(WritebackError, match="有限数值"):
+        asyncio.run(
+            apply_add_word_writeback(
+                _Session(),
+                tenant_id=3,
+                word="工业泵",
+                adgroup_id=202,
+                price=price,
+                match_mode="exact",
+                operator_user_id=9,
+                operator_name="operator",
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("dimension_words", "recent_writes", "message"),
+    [
+        (["  工业泵  "], [], "目标单元已存在同名关键词"),
+        ([], ["工业泵"], "已有待确认或近期成功的加入记录"),
+    ],
+)
+def test_add_word_blocks_dimension_and_recent_ledger_duplicates(
+    dimension_words: list[str], recent_writes: list[str], message: str
+) -> None:
+    class DuplicateSession(_Session):
+        def __init__(self) -> None:
+            super().__init__()
+            self.results = [dimension_words, recent_writes]
+
+        async def scalars(self, _statement):
+            return SimpleNamespace(all=lambda: self.results.pop(0))
+
+    service = SimpleNamespace(add_word=AsyncMock())
+
+    async def run():
+        with (
+            patch(
+                "app.baidu.writeback._active_account",
+                new=AsyncMock(return_value=SimpleNamespace(id=7)),
+            ),
+            patch("app.baidu.writeback._account_client", return_value=object()),
+            patch("app.baidu.writeback.KeywordService", return_value=service),
+        ):
+            return await apply_add_word_writeback(
+                DuplicateSession(),
+                tenant_id=3,
+                word="工业泵",
+                adgroup_id=202,
+                price=3.6,
+                match_mode="exact",
+                operator_user_id=9,
+                operator_name="operator",
+            )
+
+    with pytest.raises(WritebackError, match=message):
+        asyncio.run(run())
+    service.add_word.assert_not_awaited()

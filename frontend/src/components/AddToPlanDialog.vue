@@ -113,7 +113,7 @@ defineExpose({ open })
           AI 建议 <b>¥{{ dialog.row.ai_suggested_bid }}</b>：{{ dialog.row.ai_bid_reason }}
         </div>
       </el-form>
-      <div class="pf-tip">走 ±20% 区间校验并记台账；执行模式由当前客户、推广账户和动作门禁决定。</div>
+      <div class="pf-tip">校验合法出价范围并记台账；执行模式由当前客户、推广账户和动作门禁决定。</div>
     </div>
     <template #footer>
       <el-button @click="dialog.visible = false">取消</el-button>
