@@ -53,6 +53,7 @@ MIN_ACCOUNT_BUDGET = 50.0
 MAX_ACCOUNT_BUDGET = 10000000.0
 UNRESOLVED_REAL_STATUSES = {"pending", "reconcile"}
 ADD_WORD_DEDUP_WINDOW = timedelta(hours=24)
+ADD_WORD_RECENT_DEDUP_STATUSES = ("success", "dry_run")
 
 
 class WritebackError(Exception):
@@ -76,6 +77,8 @@ async def _ensure_add_word_not_duplicate(
     The caller already holds the target adgroup row lock, so concurrent requests
     for the same unit are serialized. The recent successful ledger check covers
     the interval before the next keyword dimension sync sees a newly added word.
+    Recent dry-run rows are also blocked so an unchanged pending candidate cannot
+    create duplicate rehearsal ledger entries through repeated submissions.
     """
     normalized = _normalized_keyword_text(word)
     existing_words = (
@@ -99,7 +102,7 @@ async def _ensure_add_word_not_duplicate(
                 or_(
                     WritebackAction.status.in_(["pending", "reconcile"]),
                     and_(
-                        WritebackAction.status == "success",
+                        WritebackAction.status.in_(ADD_WORD_RECENT_DEDUP_STATUSES),
                         WritebackAction.created_at >= func.now() - ADD_WORD_DEDUP_WINDOW,
                     ),
                 ),
@@ -108,7 +111,7 @@ async def _ensure_add_word_not_duplicate(
         )
     ).all()
     if any(_normalized_keyword_text(existing) == normalized for existing in recent_writes):
-        raise WritebackError("该关键词已有待确认或近期成功的加入记录，请先同步并核对台账")
+        raise WritebackError("该关键词已有待确认、演练或近期成功的加入记录，请先同步并核对台账")
 
 
 @dataclass
