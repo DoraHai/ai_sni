@@ -468,7 +468,14 @@ async def evaluate_candidates_for_tenant(
     now = datetime.utcnow()
     evaluated = batches = failed = 0
     successful_words = 0
-    failed_candidate_ids = [word_ids[w["word"]] for w in distinct_words]
+    successful_candidate_ids: list[int] = []
+    # This field is consumed as candidate row IDs (including explicit retry
+    # selections), so preserve every source row for a failed deduplicated word.
+    failed_candidate_ids = [
+        candidate.id
+        for word in distinct_words
+        for candidate in by_word[word["word"]]
+    ]
 
     for i in range(0, len(distinct_words), batch_size):
         chunk = distinct_words[i : i + batch_size]
@@ -487,7 +494,13 @@ async def evaluate_candidates_for_tenant(
             if v is None:
                 continue  # 该词 AI 没回，留到下次重评
             successful_words += 1
-            failed_candidate_ids.remove(word_ids[w["word"]])
+            successful_ids = {candidate.id for candidate in by_word[w["word"]]}
+            successful_candidate_ids.extend(sorted(successful_ids))
+            failed_candidate_ids = [
+                candidate_id
+                for candidate_id in failed_candidate_ids
+                if candidate_id not in successful_ids
+            ]
             for c in by_word[w["word"]]:
                 c.ai_relevance = v["relevance"]
                 c.ai_recommend = v["recommend"]
@@ -524,5 +537,6 @@ async def evaluate_candidates_for_tenant(
         "failed_words": failed_words,
         "deferred": deferred,
         "failed_candidate_ids": failed_candidate_ids,
+        "successful_candidate_ids": successful_candidate_ids,
         "next_after_id": word_ids[distinct_words[-1]["word"]] if deferred and distinct_words else None,
     }

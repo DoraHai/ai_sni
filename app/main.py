@@ -566,9 +566,22 @@ async def sync_expansion(
         }
     # 同步完顺带跑一次 AI 语义评估（治通用词噪音）。未配 DeepSeek 时内部降级返回 enabled=false，
     # AI 失败不影响同步结果——新候选默认只评未评估过的。
-    from app.ai.expansion_eval import evaluate_candidates_for_tenant
+    from app.ai.expansion_eval import (
+        MissingBusinessProfileError,
+        evaluate_candidates_for_tenant,
+    )
 
-    ai_eval = await evaluate_candidates_for_tenant(session, tenant)
+    try:
+        ai_eval = await evaluate_candidates_for_tenant(session, tenant)
+    except MissingBusinessProfileError as exc:
+        # Candidate synchronization has already succeeded. Missing optional AI
+        # context must not turn that successful read-only sync into a 500.
+        ai_eval = {
+            "enabled": True,
+            "evaluated": 0,
+            "skipped": "missing_business_profile",
+            "message": str(exc),
+        }
     return {
         "status": "ok",
         "tenant_id": tenant_id,
