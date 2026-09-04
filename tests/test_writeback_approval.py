@@ -4,6 +4,7 @@ import os
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+from zoneinfo import ZoneInfo
 
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 os.environ.setdefault("BAIDU_APP_ID", "test-app")
@@ -67,6 +68,10 @@ def _live_confirmation_settings(*, legacy: bool = False):
         baidu_write_confirmation_ttl_minutes=15,
         baidu_legacy_split_confirmation_enabled=legacy,
     )
+
+
+def _shanghai_now_naive():
+    return datetime.now(ZoneInfo("Asia/Shanghai")).replace(tzinfo=None)
 
 
 class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
@@ -146,6 +151,15 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row.approved_by, 9)
         self.assertEqual(row.decision_note, "本人一次确认")
         self.assertIsNotNone(row.created_at)
+        self.assertIsNone(row.created_at.tzinfo)
+        self.assertLess(
+            abs(
+                (
+                    _shanghai_now_naive() - row.created_at
+                ).total_seconds()
+            ),
+            5,
+        )
         session.flush.assert_awaited_once()
 
     async def test_one_click_confirmation_rejects_missing_confirmation(self):
@@ -372,7 +386,7 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
             payload=payload,
             approved_by=9,
             requested_by=9,
-            created_at=datetime.utcnow(),
+            created_at=_shanghai_now_naive(),
             consumed_by=None,
             consumed_at=None,
         )
@@ -395,7 +409,7 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
         row = SimpleNamespace(
             tenant_id=3, status="approved", action_type=ACTION_KEYWORD_BID,
             payload_hash=fingerprint, payload=payload, approved_by=8, requested_by=9,
-            created_at=datetime.utcnow(), consumed_by=None, consumed_at=None,
+            created_at=_shanghai_now_naive(), consumed_by=None, consumed_at=None,
         )
         with (
             patch(
@@ -422,7 +436,7 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
             payload=payload,
             approved_by=9,
             requested_by=9,
-            created_at=datetime.utcnow(),
+            created_at=_shanghai_now_naive(),
             consumed_by=None,
             consumed_at=None,
         )
@@ -456,7 +470,7 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
             payload=payload,
             approved_by=8,
             requested_by=8,
-            created_at=datetime.utcnow(),
+            created_at=_shanghai_now_naive(),
             consumed_by=None,
             consumed_at=None,
         )
@@ -482,7 +496,7 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
             payload=payload,
             approved_by=9,
             requested_by=9,
-            created_at=datetime.utcnow() - timedelta(minutes=16),
+            created_at=_shanghai_now_naive() - timedelta(minutes=16),
             consumed_by=None,
             consumed_at=None,
         )
