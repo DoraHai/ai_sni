@@ -325,6 +325,10 @@ export function saveSeoImageRemediation(payload) {
   return client.put('/api/v1/seo/site-pages/image-remediation', payload)
 }
 
+export function generateSeoImageAltDrafts(payload) {
+  return client.post('/api/v1/seo/site-pages/image-remediation/ai-drafts', payload, { timeout: 60000 })
+}
+
 export function fetchSeoImageRemediationHistory({ tenantId, siteId, pageId, beforeSnapshotId, limit = 20 }) {
   return client.get('/api/v1/seo/site-pages/image-remediation-history', { params: { tenant_id: tenantId, site_id: siteId, page_id: pageId, before_snapshot_id: beforeSnapshotId || undefined, limit } })
 }
