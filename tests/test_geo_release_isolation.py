@@ -142,7 +142,7 @@ def test_geo_standalone_uses_shared_customer_and_account_header():
     shell = _read("frontend/src/views/geo/GeoWorkspaceShell.vue")
     page = _read("frontend/src/components/GeoWorkbenchPage.vue")
 
-    assert "grid-template-columns: 216px minmax(0, 1fr);" in shell
+    assert "grid-template-columns: 220px minmax(0, 1fr);" in shell
     assert 'class="geo-accountbar"' in shell
     assert 'class="geo-tenant-switcher"' in shell
     assert "当前客户" in shell
@@ -181,6 +181,20 @@ def test_geo_sidebar_groups_default_to_dashboard_only_and_can_toggle():
     assert '@click="toggleGroup(group.label)"' in shell
     assert 'v-show="isGroupExpanded(group)"' in shell
     assert 'class="geo-shell-nav-item"' in shell
+
+
+def test_geo_sidebar_uses_sem_light_theme_structure_with_geo_purple_accents():
+    shell = _read("frontend/src/views/geo/GeoWorkspaceShell.vue")
+
+    assert ':class="{ current: isCurrentGroup(group) }"' in shell
+    assert 'class="geo-nav-group-icon"' in shell
+    assert 'class="geo-nav-item-dot"' in shell
+    assert '<div class="geo-nav-section-title">GEO 增长工作流</div>' in shell
+    assert "min-height: 38px" in shell
+    assert "min-height: 32px" in shell
+    assert "linear-gradient(90deg, #f6efff 0%, #fff 100%)" in shell
+    assert "box-shadow: inset 3px 0 0 #7c3aed" in shell
+    assert ".geo-shell-nav-item.active .geo-nav-item-dot { background: #7c3aed; }" in shell
 
 
 def test_geo_editor_keeps_the_complete_editor_first_interactions():
