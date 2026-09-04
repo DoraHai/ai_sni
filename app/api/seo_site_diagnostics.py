@@ -314,6 +314,13 @@ class ImageAltReviewCopy(BaseModel):
     source_snapshot_id: PositiveInt
 
 
+class ImageAltReviewReuse(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt
+    page_id: PositiveInt
+    expected_snapshot_id: PositiveInt
+
+
 _IMAGE_FINGERPRINT_FIELDS = (
     "source_url", "source_attribute", "srcset", "section", "element_id",
     "in_link", "role", "alt_state",
@@ -334,6 +341,129 @@ def _unique_candidates(evidence):
         if fingerprint is not None:
             grouped[fingerprint].append(candidate)
     return {fingerprint: rows[0] for fingerprint, rows in grouped.items() if len(rows) == 1}
+
+
+_CROSS_PAGE_IMAGE_FINGERPRINT_FIELDS = (
+    "source_url", "source_attribute", "section", "in_link", "role", "alt_state",
+)
+
+
+def _cross_page_image_fingerprint(candidate):
+    if not isinstance(candidate, dict) or candidate.get("source_url_truncated"):
+        return None
+    source_url = candidate.get("source_url")
+    if not isinstance(source_url, str) or not source_url.startswith(("http://", "https://")):
+        return None
+    return tuple(candidate.get(field) for field in _CROSS_PAGE_IMAGE_FINGERPRINT_FIELDS)
+
+
+def _unique_cross_page_candidates(evidence):
+    grouped = defaultdict(list)
+    items = evidence.get("items", []) if isinstance(evidence, dict) else []
+    for candidate in items:
+        fingerprint = _cross_page_image_fingerprint(candidate)
+        if fingerprint is not None:
+            grouped[fingerprint].append(candidate)
+    return (
+        {fingerprint: rows[0] for fingerprint, rows in grouped.items() if len(rows) == 1},
+        sum(len(rows) for rows in grouped.values() if len(rows) > 1),
+    )
+
+
+async def _cross_page_reuse_plan(session, tenant_id, site_id, page_id, target, *, lock_existing=False):
+    """Return only exact, non-conflicting reuse candidates within one tenant/site."""
+    target_candidates, repeated_target_count = _unique_cross_page_candidates(target.image_alt_evidence)
+    existing_query = select(SeoImageAltReview).where(
+        SeoImageAltReview.tenant_id == tenant_id,
+        SeoImageAltReview.site_id == site_id,
+        SeoImageAltReview.page_id == page_id,
+        SeoImageAltReview.snapshot_id == target.id,
+    )
+    if lock_existing:
+        existing_query = existing_query.with_for_update()
+    existing = list(await session.scalars(existing_query))
+    existing_positions = {row.position for row in existing}
+    if not target_candidates:
+        return {
+            "reusable": [], "skipped_existing": 0,
+            "skipped_ambiguous": repeated_target_count, "candidate_count": repeated_target_count,
+        }
+
+    target_urls = {fingerprint[0] for fingerprint in target_candidates}
+    approved = list(await session.scalars(select(SeoImageAltReview).where(
+        SeoImageAltReview.tenant_id == tenant_id,
+        SeoImageAltReview.site_id == site_id,
+        SeoImageAltReview.page_id != page_id,
+        SeoImageAltReview.source_url.in_(target_urls),
+        SeoImageAltReview.review_status == "approved",
+        SeoImageAltReview.decision.in_(("decorative", "informative")),
+    ).order_by(SeoImageAltReview.updated_at.desc(), SeoImageAltReview.id.desc())))
+    snapshot_ids = {row.snapshot_id for row in approved}
+    page_ids = {row.page_id for row in approved}
+    snapshots = list(await session.scalars(select(SeoPageSnapshot).where(
+        SeoPageSnapshot.tenant_id == tenant_id,
+        SeoPageSnapshot.site_id == site_id,
+        SeoPageSnapshot.id.in_(snapshot_ids),
+    ))) if snapshot_ids else []
+    pages = list(await session.scalars(select(SeoSitePage).where(
+        SeoSitePage.tenant_id == tenant_id,
+        SeoSitePage.site_id == site_id,
+        SeoSitePage.id.in_(page_ids),
+    ))) if page_ids else []
+    snapshot_by_id = {row.id: row for row in snapshots}
+    page_by_id = {row.id: row for row in pages}
+    source_unique = {}
+    for snapshot in snapshots:
+        unique, _ = _unique_cross_page_candidates(snapshot.image_alt_evidence)
+        source_unique[snapshot.id] = unique
+
+    source_matches = defaultdict(list)
+    for review in approved:
+        snapshot = snapshot_by_id.get(review.snapshot_id)
+        source_page = page_by_id.get(review.page_id)
+        if (snapshot is None or source_page is None or snapshot.error_type
+                or snapshot.url != source_page.url):
+            continue
+        source_items = snapshot.image_alt_evidence.get("items", []) if isinstance(
+            snapshot.image_alt_evidence, dict) else []
+        candidate = next((item for item in source_items if item.get("position") == review.position), None)
+        fingerprint = _cross_page_image_fingerprint(candidate)
+        if (fingerprint is None or source_unique.get(snapshot.id, {}).get(fingerprint) is not candidate
+                or review.source_url != candidate.get("source_url")
+                or review.observed_alt_state != candidate.get("alt_state")
+                or (review.decision == "informative" and not (review.alt_suggestion or "").strip())):
+            continue
+        source_matches[fingerprint].append((review, source_page, snapshot))
+
+    reusable = []
+    skipped_existing = 0
+    skipped_ambiguous = repeated_target_count
+    for fingerprint, target_candidate in target_candidates.items():
+        position = target_candidate.get("position")
+        if not isinstance(position, int) or position <= 0:
+            skipped_ambiguous += 1
+            continue
+        matches = source_matches.get(fingerprint, [])
+        conclusions = {
+            (row.decision, (row.alt_suggestion or "").strip() if row.decision == "informative" else None)
+            for row, _, _ in matches
+        }
+        if len(conclusions) > 1:
+            skipped_ambiguous += 1
+            continue
+        if len(conclusions) == 1:
+            if position in existing_positions:
+                skipped_existing += 1
+                continue
+            review, source_page, source_snapshot = matches[0]
+            reusable.append((target_candidate, review, source_page, source_snapshot))
+    return {
+        "reusable": reusable,
+        "skipped_existing": skipped_existing,
+        "skipped_ambiguous": skipped_ambiguous,
+        "candidate_count": len(target.image_alt_evidence.get("items", []))
+        if isinstance(target.image_alt_evidence, dict) else 0,
+    }
 
 
 @router.post("/site-pages/image-remediation/copy")
@@ -435,6 +565,76 @@ async def copy_image_remediation(
         "copied_positions": sorted(copied),
         "skipped_existing": skipped_existing,
         "skipped_ambiguous": skipped_ambiguous,
+        "review_status": "draft",
+    }
+
+
+@router.get("/site-pages/image-remediation-reuse-preview")
+async def preview_cross_page_image_remediation_reuse(
+    tenant_id: PositiveInt, site_id: PositiveInt, page_id: PositiveInt,
+    ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session),
+):
+    await _scope(session, ctx, tenant_id, site_id)
+    _, target = await _page_and_latest_snapshot(session, tenant_id, site_id, page_id)
+    if target is None or target.error_type or not target.image_alt_evidence:
+        return {"target_snapshot_id": target.id if target else None, "eligible_count": 0,
+                "source_page_count": 0, "skipped_existing": 0, "skipped_ambiguous": 0}
+    plan = await _cross_page_reuse_plan(session, tenant_id, site_id, page_id, target)
+    return {
+        "target_snapshot_id": target.id,
+        "eligible_count": len(plan["reusable"]),
+        "source_page_count": len({row[2].id for row in plan["reusable"]}),
+        "skipped_existing": plan["skipped_existing"],
+        "skipped_ambiguous": plan["skipped_ambiguous"],
+    }
+
+
+@router.post("/site-pages/image-remediation/reuse")
+async def reuse_cross_page_image_remediation(
+    req: ImageAltReviewReuse, ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+):
+    await _scope(session, ctx, req.tenant_id, req.site_id, write=True)
+    if ctx.user_id is None:
+        raise HTTPException(403, "图片整改记录必须由已登录的真实用户复用")
+    _, target = await _page_and_latest_snapshot(
+        session, req.tenant_id, req.site_id, req.page_id, lock_page=True)
+    if target is None or target.id != req.expected_snapshot_id:
+        raise HTTPException(409, "图片证据已更新，请重新读取后确认")
+    if target.error_type or not target.image_alt_evidence:
+        raise HTTPException(409, "当前图片快照没有可审核证据")
+    plan = await _cross_page_reuse_plan(
+        session, req.tenant_id, req.site_id, req.page_id, target, lock_existing=True)
+    now = datetime.now(timezone.utc)
+    copied_positions = []
+    source_page_ids = set()
+    for target_candidate, prior, source_page, source_snapshot in plan["reusable"]:
+        position = target_candidate["position"]
+        provenance = f"复用自页面 #{source_page.id} 快照 #{source_snapshot.id}，需核对当前页面语境后重新审核"
+        note = f"{provenance}；{prior.note}" if prior.note else provenance
+        session.add(SeoImageAltReview(
+            tenant_id=req.tenant_id, site_id=req.site_id, page_id=req.page_id,
+            snapshot_id=target.id, position=position,
+            source_url=target_candidate.get("source_url"),
+            observed_alt_state=target_candidate.get("alt_state"),
+            decision=prior.decision,
+            alt_suggestion=(prior.alt_suggestion or "").strip() if prior.decision == "informative" else None,
+            note=note[:1000], review_status="draft",
+            actor_id=ctx.user_id, actor_name=ctx.username,
+            reviewed_at=now, updated_at=now,
+        ))
+        copied_positions.append(position)
+        source_page_ids.add(source_page.id)
+    if copied_positions:
+        await session.commit()
+    return {
+        "target_snapshot_id": target.id,
+        "eligible_count": len(plan["reusable"]),
+        "copied": len(copied_positions),
+        "copied_positions": sorted(copied_positions),
+        "source_page_count": len(source_page_ids),
+        "skipped_existing": plan["skipped_existing"],
+        "skipped_ambiguous": plan["skipped_ambiguous"],
         "review_status": "draft",
     }
 
