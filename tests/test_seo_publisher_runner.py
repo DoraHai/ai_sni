@@ -64,6 +64,21 @@ def test_draft_recovery_rejects_nonofficial_url():
     assert runner.editor_url('https://mp.toutiao.com/editor/1','toutiao').endswith('/1')
 
 
+@pytest.mark.parametrize('actual',['','不同的草稿'])
+def test_recovery_does_not_refill_redirected_or_changed_draft(actual):
+    field=Mock();field.evaluate.return_value=actual
+    with patch.object(runner,'unique_visible',return_value=field):
+        with pytest.raises(ValueError):runner.confirm_restored_draft(SimpleNamespace(url=task()['editor_url']),task())
+    field.fill.assert_not_called()
+
+
+def test_recovery_requires_both_original_title_and_original_body():
+    title=Mock();title.evaluate.return_value=task()['title']
+    body=Mock();body.evaluate.return_value=task()['text']
+    with patch.object(runner,'unique_visible',side_effect=[title,body]):runner.confirm_restored_draft(SimpleNamespace(url=task()['editor_url']),task())
+    title.fill.assert_not_called();body.fill.assert_not_called()
+
+
 def test_real_browser_category_cover_and_scoped_result_collection(tmp_path):
     import os,base64
     if not os.environ.get('SEO_RUNNER_BROWSER_TEST'):pytest.skip('opt-in Chromium fixture')
