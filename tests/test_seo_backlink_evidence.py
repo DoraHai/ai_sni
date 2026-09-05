@@ -62,6 +62,14 @@ def test_discovery_is_idempotent_without_overwriting_paused_assets():
     assert statement.compile().params['tenant_id'] == 7
 
 
+def test_internal_publication_is_not_fetched_or_counted_as_backlink():
+    session=SimpleNamespace(scalar=AsyncMock())
+    with patch('app.seo_backlinks.fetch_backlink_page',new=AsyncMock()) as fetch:
+        evidence=asyncio.run(discover_backlinks(session,7,9,'https://www.brand.example/article','brand.example'))
+    assert evidence['state']=='internal' and evidence['found']==0
+    fetch.assert_not_called();session.scalar.assert_not_called()
+
+
 def test_verify_rejects_cross_site_before_network():
     from app.api.seo import verify_site_backlink, BacklinkScope
     row = asset(); row.tenant_id=7;row.site_id=10
