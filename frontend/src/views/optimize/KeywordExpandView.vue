@@ -211,7 +211,11 @@ async function runEvaluate(force = false, action = 'start') {
     if (resp.enabled === false) {
       ElMessage.warning('未启用 AI 评估，请联系管理员检查模型配置')
     } else {
-      const previousFailures = action === 'start' ? [] : round.failedIds.filter(id => !retryIds?.includes(id))
+      const completedIds = new Set([
+        ...(retryIds || []),
+        ...(resp.successful_candidate_ids || []),
+      ])
+      const previousFailures = action === 'start' ? [] : round.failedIds.filter(id => !completedIds.has(id))
       evaluationRound.value = {
         force,
         failedIds: [...new Set([...previousFailures, ...(resp.failed_candidate_ids || [])])],
@@ -219,7 +223,7 @@ async function runEvaluate(force = false, action = 'start') {
         deferred: action === 'retry' ? round.deferred : resp.deferred ?? 0,
       }
       const progress = evaluationRound.value
-      evaluationResult.value = `本次成功 ${resp.successful_words ?? 0} 个去重词 / ${resp.evaluated} 行；失败或缺失 ${resp.failed_words ?? 0} 词。本轮未尝试剩余 ${progress.deferred} 词，待重试 ${progress.failedIds.length} 词。${progress.nextAfterId == null ? '已到本轮末尾。' : '可继续下一批。'}不会自动继续；刷新或切换客户会重置进度。`
+      evaluationResult.value = `本次成功 ${resp.successful_words ?? 0} 个去重词 / ${resp.evaluated} 行；失败或缺失 ${resp.failed_words ?? 0} 词。本轮未尝试剩余 ${progress.deferred} 词，待重试 ${progress.failedIds.length} 条候选记录。${progress.nextAfterId == null ? '已到本轮末尾。' : '可继续下一批。'}不会自动继续；刷新或切换客户会重置进度。`
       if (resp.failed_batches || resp.failed_words) ElMessage.warning('部分词未评估成功，旧结果保留，可稍后重试')
       else ElMessage.success(resp.evaluated ? '小批量 AI 评估完成，建议未采纳' : '没有需要评估的候选')
     }
@@ -435,7 +439,7 @@ onMounted(load)
           </template>
         </el-dropdown>
         <el-button v-if="session.canEdit('optimize.expand') && aiEnabled && evaluationRound?.nextAfterId != null" :disabled="operationBusy" @click="runEvaluate(false, 'next')">继续下一批</el-button>
-        <el-button v-if="session.canEdit('optimize.expand') && aiEnabled && evaluationRound?.failedIds.length" :disabled="operationBusy" @click="runEvaluate(false, 'retry')">重试失败词（{{ evaluationRound.failedIds.length }}）</el-button>
+        <el-button v-if="session.canEdit('optimize.expand') && aiEnabled && evaluationRound?.failedIds.length" :disabled="operationBusy" @click="runEvaluate(false, 'retry')">重试失败候选（{{ evaluationRound.failedIds.length }}）</el-button>
         <el-tooltip content="批量加入计划需统一指定目标单元，暂未支持，请逐条「加入计划」" placement="top">
           <span><el-button type="primary" disabled>批量加入计划</el-button></span>
         </el-tooltip>

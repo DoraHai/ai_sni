@@ -1,6 +1,7 @@
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { matchTypeWriteback, pauseKeywordBatch, writebackKeyword } from '../api/keywords'
+import { createWritebackIdempotencyKey } from '../api/idempotency'
 import { WRITEBACK_CONFIRMATION } from '../api/writeback'
 
 export const MATCH_TYPE_OPTIONS = {
@@ -11,6 +12,8 @@ export const MATCH_TYPE_OPTIONS = {
 
 /** Reusable keyword writeback controls for the workbench and detail view. */
 export function useKeywordWriteback({ tenantId, onSuccess } = {}) {
+  const pendingBidWrites = new Set()
+
   async function notifySuccess(result) {
     if (result?.success) await onSuccess?.(result.response)
     return result
@@ -22,6 +25,11 @@ export function useKeywordWriteback({ tenantId, onSuccess } = {}) {
       return null
     }
 
+    const writeKey = `${tenantId.value}:${keywordId}`
+    if (pendingBidWrites.has(writeKey)) return null
+    pendingBidWrites.add(writeKey)
+    const idempotencyKey = createWritebackIdempotencyKey()
+
     try {
       await ElMessageBox.confirm(
         `将把「${keywordText || `关键词 #${keywordId}`}」的建议出价 ¥${Number(price).toFixed(2)}${currentPrice == null ? '' : `（当前 ¥${Number(currentPrice).toFixed(2)}）`}提交回写。\n系统将按当前客户、推广账户和动作门禁决定演练或真实执行；真实执行会修改百度账户。仍会执行 ±20% 渐进调价校验。`,
@@ -29,6 +37,7 @@ export function useKeywordWriteback({ tenantId, onSuccess } = {}) {
         { confirmButtonText: '确认并执行', cancelButtonText: '取消', type: 'warning' },
       )
     } catch {
+      pendingBidWrites.delete(writeKey)
       return null
     }
 
@@ -38,6 +47,7 @@ export function useKeywordWriteback({ tenantId, onSuccess } = {}) {
         tenantId: tenantId.value,
         price: Number(price),
         confirmation: WRITEBACK_CONFIRMATION,
+        idempotencyKey,
       })
       if (response.dry_run) {
         ElMessage.success('已加入待回写台账，百度账户未修改')
@@ -56,6 +66,8 @@ export function useKeywordWriteback({ tenantId, onSuccess } = {}) {
     } catch (error) {
       ElMessage.error(error.response?.data?.detail || error.message)
       return null
+    } finally {
+      pendingBidWrites.delete(writeKey)
     }
   }
 
