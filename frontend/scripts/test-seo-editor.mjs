@@ -5,6 +5,7 @@ import { JSDOM } from 'jsdom'
 import { parse, compileScript, compileTemplate, compileStyle } from '@vue/compiler-sfc'
 import { sanitizeSeoEditorHtml, seoPlainTextHtml, seoContentWordCount } from '../src/views/seo/seoEditorHtml.js'
 import { remediationHandoff, remediationDraftPatch } from '../src/views/seo/seoRemediationDraft.js'
+import { buildSourcePageAssistInstruction, sourcePageRemediationContext } from '../src/views/seo/seoContentRemediationContext.js'
 
 const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>')
 for (const key of ['window', 'document', 'Document', 'ShadowRoot', 'Element', 'HTMLElement', 'SVGElement', 'Node', 'Event']) globalThis[key] = dom.window[key]
@@ -29,7 +30,7 @@ async function mountEditor(draft, status = 'drafting', saveDraft = value => valu
   let row = { id: 10, title: '验收勿发布', content_type: 'guide', keyword_ids: [5], draft, status, version_count: 1, source_page_id: 234, ...options.item }
   const writes = [], errors = []
   const bindings = {
-    computed: Vue.computed, nextTick: Vue.nextTick, onMounted: Vue.onMounted, reactive: Vue.reactive, ref: Vue.ref, sanitizeSeoEditorHtml, seoContentWordCount,
+    computed: Vue.computed, nextTick: Vue.nextTick, onMounted: Vue.onMounted, reactive: Vue.reactive, ref: Vue.ref, sanitizeSeoEditorHtml, seoContentWordCount, buildSourcePageAssistInstruction, sourcePageRemediationContext,
     useRoute: () => ({ query: { id: '10', site_id: '1', ...options.query } }), useRouter: () => ({ push() {}, replace() {} }),
     currentTenantId: Vue.ref(1), siteId: Vue.ref(1), session: { user: { name: '测试管理员' } },
     ElMessage: Object.assign(options => {
@@ -38,7 +39,7 @@ async function mountEditor(draft, status = 'drafting', saveDraft = value => valu
     fetchSeoSites: async () => ({ sites: [{ id: 1, status: 'active', name: '测试站' }] }),
     fetchSeoKeywords: async () => ({ items: [{ id: 5, keyword: '诺德传动' }] }),
     fetchSeoContentAssets: async () => ({ items: options.missing ? [] : [{ ...row }] }),
-    fetchSeoSitePages: async () => ({ items: [{ id: 234, title: '来源', url: 'https://example.com/page' }] }),
+    fetchSeoSitePages: async () => ({ items: [{ id: 234, title: '来源 Title', meta_description: '当前描述', h1: '当前 H1', title_suggestion: '建议 Title', description_suggestion: '建议描述', audit_score: 73, issue_codes: ['title', 'h1_missing'], last_checked_at: '2026-09-05T02:00:00+08:00', diagnostic: { assessment_state: 'assessed' }, url: 'https://example.com/page' }] }),
     updateSeoContentAsset: async args => { writes.push(args); row = { ...row, ...args.payload, ...('draft' in args.payload ? { draft: saveDraft(args.payload.draft) } : {}), version_count: row.version_count + 1 }; return row },
     createSeoContentAsset: () => { throw Error('Must not create another task') },
     assistSeoContent: () => { throw Error('Must not call AI') },
@@ -90,6 +91,42 @@ async function mountContentList(rows, canEdit = true) {
 }
 
 const acceptanceText = '【验收勿发布】仅验证编辑器保存，不调用 AI、不审核、不发布。\n第一段：NORD 操作手册测试。\n第二段：保留换行与中文尾字，正常。\n字面标签：<h1>R&D</h1>\n字面实体：&amp; 与 &lt; 保持原样。\n测试链接：https://example.com/?a=1&b=2'
+
+test('bound content shows archived program evidence without calling AI', async () => {
+  const view = await mountEditor('', 'planned')
+  try {
+    const text = view.host.textContent
+    assert.ok(text.includes('承接页整改依据'))
+    assert.ok(text.includes('检测：程序'))
+    assert.ok(text.includes('73 分'))
+    assert.ok(text.includes('来源 Title'))
+    assert.ok(text.includes('建议 Title'))
+    assert.ok(text.includes('缺少 H1'))
+    assert.ok(view.state.prompt.includes('承接页：https://example.com/page'))
+    assert.ok(view.state.prompt.includes('仅基于上述已存档证据辅助拟稿'))
+    assert.equal(view.writes.length, 0)
+  } finally { view.close() }
+})
+
+test('program guidance can refresh the AI instruction without invoking or saving', async () => {
+  const view = await mountEditor('', 'planned')
+  try {
+    view.state.prompt = ''
+    view.state.applySourcePageGuidance()
+    assert.ok(view.state.prompt.includes('程序检测 Title 需优化'))
+    assert.ok(view.state.prompt.includes('程序检测 缺少 H1'))
+    assert.equal(view.writes.length, 0)
+  } finally { view.close() }
+})
+
+test('remediation context bounds issue evidence and labels unknown rules safely', () => {
+  const page = { url: 'https://example.com', issue_codes: [...Array.from({ length: 13 }, (_, i) => `unknown_${i}`), 'title_missing'] }
+  const context = sourcePageRemediationContext(page)
+  assert.equal(context.issues.length, 12)
+  assert.equal(context.issues[0].label, 'unknown_0')
+  assert.ok(context.issues[0].action.includes('不自动修改官网'))
+  assert.ok(buildSourcePageAssistInstruction(page, ['NORD']).length <= 5000)
+})
 
 test('list and editor count the same visible text, decoding HTML entities only once', async () => {
   const html = seoPlainTextHtml(acceptanceText)

@@ -283,6 +283,22 @@ def test_seo_editor_preserves_plain_text_handoff_and_browser_paragraphs() -> Non
     assert 'v-html="form.draft"' not in editor
 
 
+def test_content_editor_exposes_program_remediation_evidence_before_optional_ai() -> None:
+    root = Path(__file__).parents[1]
+    editor = (root / "frontend/src/views/seo/SeoContentEditorView.vue").read_text(encoding="utf-8")
+    context = (root / "frontend/src/views/seo/seoContentRemediationContext.js").read_text(encoding="utf-8")
+
+    assert "承接页整改依据" in editor
+    assert "检测：程序" in editor
+    assert "填入 AI 要求（不调用 AI）" in editor
+    assert "buildSourcePageAssistInstruction" in editor
+    assert "issue_codes.slice(0, 12)" in context
+    assert "不自动修改官网" in context
+    assert "勿直接发布" in context
+    assert "可能经 AI 或人工编辑" in context
+    assert "timeZone: 'Asia/Shanghai'" in editor
+
+
 def test_rewrite_library_keeps_original_source_types_when_content_api_is_paginated() -> None:
     root = Path(__file__).parents[1]
     content = (root / "frontend/src/views/seo/SeoRewriteView.vue").read_text(encoding="utf-8")
