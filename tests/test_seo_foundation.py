@@ -58,6 +58,7 @@ from app.api.seo import (
     _page_issue_filter_condition,
     _page_snapshot_comparison,
     _seo_ai_prompt,
+    _source_outline_structure_issues,
     _unsupported_source_outline_topics,
     _selected_keyword_ids,
     _sanitize_content_html,
@@ -1643,6 +1644,11 @@ def test_source_bound_outline_prompt_is_a_grounded_remediation_plan() -> None:
     assert "待人工核验/补充" in system
     assert "品牌上下文只用于识别主体" in user
     assert "不得扩展为选型" in user
+    assert "程序确认问题" in user
+    assert "人工排查项" in user
+    assert "排名下降只是观测结果" in system
+    assert "不得为了 SEO 强制加入品牌词或目标关键词" in system
+    assert "目标关键词仅用于识别整改对象" in user
 
 
 def test_source_bound_outline_flags_unsupported_marketing_topics() -> None:
@@ -1664,6 +1670,30 @@ def test_source_bound_outline_flags_unsupported_marketing_topics() -> None:
         },
         request,
     ) == ["全球服务", "产品线", "质量保障", "服务网络"]
+
+
+def test_source_bound_outline_requires_classification_and_rejects_alt_keyword_stuffing() -> None:
+    assert _source_outline_structure_issues(
+        {
+            "outline": (
+                "## 图片 Alt 整改\n"
+                "- 检查信息图 Alt 是否自然包含“诺德”。\n"
+                "## 其他整改"
+            )
+        }
+    ) == [
+        "缺少‘程序确认问题’分区",
+        "缺少‘人工排查项’分区",
+        "图片 Alt 被要求强制加入关键词",
+    ]
+    assert _source_outline_structure_issues(
+        {
+            "outline": (
+                "## 程序确认问题\n- 图片缺少 Alt。装饰图保持空 Alt，"
+                "信息图只描述可见内容。\n## 人工排查项\n- 核对页面相关性，不预设原因。"
+            )
+        }
+    ) == []
 
 
 def test_source_bound_outline_repairs_unsupported_marketing_topics_once() -> None:
@@ -1699,7 +1729,7 @@ def test_source_bound_outline_repairs_unsupported_marketing_topics_once() -> Non
         permissions={"seo.content": "edit"},
     )
     repaired = {
-        "outline": "## 已确认问题\n- 图片缺少 Alt\n## 人工核验\n## 整改后复检",
+        "outline": "## 程序确认问题\n- 图片缺少 Alt\n## 人工排查项\n- 无",
         "feedback": "仅保留有证据的整改步骤。",
     }
 

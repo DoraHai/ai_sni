@@ -4478,6 +4478,8 @@ def _seo_ai_prompt(
             "只生成承接页站内整改执行大纲，返回 outline、feedback。"
             "大纲必须逐项对应输入中明确列出的程序检测问题和已有人工整改建议；"
             "它不是文章目录、产品选型指南或品牌宣传提纲。"
+            "大纲必须分为‘程序确认问题’和‘人工排查项’两部分；没有内容的部分写‘无’，"
+            "不得把排查项改写成已确认问题。"
         )
     selected_keywords = keywords or []
     primary_keyword = selected_keywords[0] if selected_keywords else None
@@ -4497,6 +4499,10 @@ def _seo_ai_prompt(
             "不得把这些未提供的事实写进标题、大纲、正文或反馈，也不得用常识补齐。"
             "生成整改大纲时只能列出：已明确问题、核验动作、拟修改位置、人工待补证据和复检步骤；"
             "每个事实不足的项目必须标为‘待人工核验/补充’，不得转换成肯定陈述。"
+            "排名下降只是观测结果，不得归因于 Title、Description、H1、正文、链接或任何页面因素；"
+            "这些因素只能列入‘人工排查项’，除非输入明确说明程序已确认对应问题。"
+            "图片 Alt 只服务于图片用途和无障碍描述：装饰图保持空 Alt，信息图描述可见内容；"
+            "不得为了 SEO 强制加入品牌词或目标关键词，也不得要求每张图片覆盖关键词。"
         )
     brand = "；".join(
         value for value in [
@@ -4515,7 +4521,12 @@ def _seo_ai_prompt(
             f"主关键词：{primary_keyword.keyword if primary_keyword else '未选择'}",
             f"辅助关键词：{'、'.join(item.keyword for item in secondary_keywords) if secondary_keywords else '无'}",
             "关键词意图：" + ("；".join(f"{item.keyword}={item.intent or '未标注'}" for item in selected_keywords) or "未标注"),
-            "关键词覆盖要求：全部选择词必须保持原词形自然出现，不能只使用近义词替代；优先保证可读性，避免连续堆叠。",
+            (
+                "关键词使用边界：目标关键词仅用于识别整改对象和人工核查页面相关性；"
+                "不得要求 Title、H1、正文或图片 Alt 强制加入关键词，更不得把关键词缺失写成排名下降原因。"
+                if source_bound
+                else "关键词覆盖要求：全部选择词必须保持原词形自然出现，不能只使用近义词替代；优先保证可读性，避免连续堆叠。"
+            ),
             f"品牌上下文：{brand}",
             (
                 "承接页证据边界：品牌上下文只用于识别主体，不是产品或服务事实证据；"
@@ -4611,6 +4622,26 @@ def _unsupported_source_outline_topics(
         for marker in _SOURCE_BOUND_OUTLINE_CLAIM_MARKERS
         if marker.casefold() in outline and marker.casefold() not in evidence
     ]
+
+
+def _source_outline_structure_issues(result: dict[str, Any]) -> list[str]:
+    """Require confirmed findings to stay separate from optional investigation."""
+    outline = str(result.get("outline") or "")
+    issues: list[str] = []
+    if "程序确认问题" not in outline:
+        issues.append("缺少‘程序确认问题’分区")
+    if "人工排查项" not in outline:
+        issues.append("缺少‘人工排查项’分区")
+    alt_keyword_pattern = re.compile(
+        r"(?i)alt.*(?:包含|加入|融入|覆盖).*(?:关键词|目标词|[‘“][^’”]+[’”])"
+    )
+    if any(
+        alt_keyword_pattern.search(line)
+        and not any(negation in line for negation in ("不得", "无需", "不应", "禁止"))
+        for line in outline.splitlines()
+    ):
+        issues.append("图片 Alt 被要求强制加入关键词")
+    return issues
 
 
 def _seo_assist_text(value: Any, *, separator: str = "\n") -> Any:
@@ -4814,13 +4845,23 @@ async def assist_seo_content(
             if result is not None and source_page is not None and req.action == "outline"
             else []
         )
+        outline_structure_issues = (
+            _source_outline_structure_issues(result)
+            if result is not None and source_page is not None and req.action == "outline"
+            else []
+        )
         if missing:
-            repair_reason = f"未完整覆盖目标关键词：{'、'.join(missing)}"
+            detail = f"未完整覆盖目标关键词：{'、'.join(missing)}"
+            repair_reason = "；".join(filter(None, (repair_reason, detail)))
         if unsupported_outline_topics:
-            repair_reason = (
+            detail = (
                 "承接页整改大纲包含输入证据未支持的产品或营销主题："
                 + "、".join(unsupported_outline_topics)
             )
+            repair_reason = "；".join(filter(None, (repair_reason, detail)))
+        if outline_structure_issues:
+            detail = "承接页整改大纲边界不合格：" + "；".join(outline_structure_issues)
+            repair_reason = "；".join(filter(None, (repair_reason, detail)))
         if repair_reason:
             correction = _seo_assist_repair_prompt(
                 user,
@@ -4855,6 +4896,11 @@ async def assist_seo_content(
                 if source_page is not None and req.action == "outline"
                 else []
             )
+            outline_structure_issues = (
+                _source_outline_structure_issues(result)
+                if source_page is not None and req.action == "outline"
+                else []
+            )
         if missing:
             raise HTTPException(502, f"AI 未完整覆盖目标关键词：{'、'.join(missing)}，请调整要求后重试")
         if unsupported_outline_topics:
@@ -4863,6 +4909,13 @@ async def assist_seo_content(
                 "AI 整改大纲仍包含输入证据未支持的主题："
                 + "、".join(unsupported_outline_topics)
                 + "，请补充经核验资料后重试",
+            )
+        if outline_structure_issues:
+            raise HTTPException(
+                502,
+                "AI 整改大纲仍未正确区分确认问题与排查项："
+                + "；".join(outline_structure_issues)
+                + "，请调整要求后重试",
             )
     except DeepSeekError as exc:
         raise HTTPException(502, f"DeepSeek 内容处理失败：{exc}") from exc
