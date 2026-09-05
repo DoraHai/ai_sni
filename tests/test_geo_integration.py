@@ -358,3 +358,15 @@ def test_linked_create_saves_real_baseline_and_content_reference():
     assert result['completion_evidence'] is None and result['created_by'] == 3
     assert result['status'] == 'open'
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.parametrize('metric_key', [SCORE, 'geo.visibility.ai_mention_rate_7d'])
+def test_task_rejects_impossible_bounded_metric_delta(metric_key):
+    for direction in ['increase', 'decrease']:
+        with pytest.raises(ValidationError, match='不能超过 100'):
+            TaskCreate(action_type='improve', title='test', assignee_role='operator',
+                params={'metric_key': metric_key, 'direction': direction, 'min_delta': 100.01})
+    TaskCreate(action_type='improve', title='test', assignee_role='operator',
+        params={'metric_key': metric_key, 'min_delta': 100})
+    TaskCreate(action_type='improve', title='test', assignee_role='operator',
+        params={'metric_key': MENTIONS, 'min_delta': 101})

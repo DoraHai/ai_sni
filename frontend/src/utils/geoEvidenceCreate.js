@@ -4,6 +4,7 @@ export function evidenceRequest(contentId, form) {
   if (!Number.isSafeInteger(contentId) || contentId <= 0) throw new Error('请选择有效的关联文章')
   if (!metrics.has(form.metric)) throw new Error('请选择有效的目标指标')
   if (!Number.isFinite(delta) || delta <= 0) throw new Error('提升量必须大于零')
+  if (form.metric !== 'geo.visibility.ai_mention_count_7d' && delta > 100) throw new Error('提及率和可见度分数的提升量不能超过100')
   if (!form.title.trim() || !form.role.trim()) throw new Error('请填写任务标题和负责人角色')
   return { module: 'geo', action_type: 'improve_content', title: form.title.trim(), assignee_role: form.role.trim(),
     params: { content_task_id: contentId, metric_key: form.metric, direction: 'increase', min_delta: delta } }

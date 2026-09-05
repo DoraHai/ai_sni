@@ -10,7 +10,7 @@ import Evidence from '../../src/components/GeoEvidenceTasks.vue'
 import client from '../../src/api/client'
 const task={id:10,title:'本地测试：验证真实指标改善',status:'in_progress',params:{content_task_id:12},assignee_role:'GEO运营'}
 let baseline=false,proof=false,retest=false
-const tenant=ref(7), content=ref(null)
+const tenant=ref(7), content=ref({id:12,title:'本地测试文章'})
 client.defaults.adapter=async config=>{
  const path=config.url,method=config.method
  let data

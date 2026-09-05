@@ -30,3 +30,11 @@ test('failed create keeps error and allows safe retry', async () => {
   fail = false; await controller.submit(evidenceRequest(12, form))
   assert.equal(state.result.id, 10)
 })
+
+test('bounded metrics reject impossible deltas while counts remain unbounded', () => {
+  for (const metric of [form.metric, 'geo.visibility.ai_visibility_score']) {
+    assert.throws(() => evidenceRequest(12, { ...form, metric, delta: 100.01 }))
+    assert.equal(evidenceRequest(12, { ...form, metric, delta: 100 }).params.min_delta, 100)
+  }
+  assert.equal(evidenceRequest(12, { ...form, metric: 'geo.visibility.ai_mention_count_7d', delta: 101 }).params.min_delta, 101)
+})

@@ -9,7 +9,7 @@ from sqlalchemy import select
 from app.database import get_session
 from app.models import GeoActionTicket, Tenant
 from app.security.auth import require_scoped_auth
-from app.geo.integration_metrics import load_weekly_snapshot, metric_dictionary, MENTIONS
+from app.geo.integration_metrics import load_weekly_snapshot, metric_dictionary, MENTIONS, RATE, SCORE
 
 router = APIRouter(prefix='/integration', tags=['GEO shared contract'])
 PREFIX = 'cockpit:v1:'
@@ -75,6 +75,8 @@ class TaskCreate(BaseModel):
         threshold = self.params.get('min_delta', 0)
         if isinstance(threshold, bool) or not isinstance(threshold, (int,float)) or not (0 <= threshold < float('inf')):
             raise ValueError('min_delta 必须为有限非负数')
+        if target in (RATE, SCORE) and threshold > 100:
+            raise ValueError('提及率和可见度分数的绝对变化量不能超过 100')
         return self
 
 

@@ -11,7 +11,7 @@ watch(() => [props.tenantId, props.content], () => {
   submitter.invalidate()
   Object.assign(state, { busy: false, error: '', result: null })
   Object.assign(form, { title: `提升AI可见度：${props.content?.title || ''}`.slice(0, 300), metric: 'geo.visibility.ai_mention_rate_7d', delta: 1, role: 'geo_operator' })
-})
+}, { immediate: true })
 onBeforeUnmount(submitter.invalidate)
 function submit() {
   try { submitter.submit(evidenceRequest(props.content?.id, form)) }
@@ -34,7 +34,7 @@ function submit() {
         <option value="geo.visibility.ai_mention_count_7d">AI提及次数（次）</option>
         <option value="geo.visibility.ai_visibility_score">AI可见度分数（分）</option>
       </select></label>
-      <label>至少提升量<input v-model="form.delta" type="number" min="0.01" step="any" required :disabled="state.busy" /></label>
+      <label>至少提升量<input v-model="form.delta" type="number" :max="form.metric === 'geo.visibility.ai_mention_count_7d' ? undefined : 100" min="0.0001" step="any" required :disabled="state.busy" /></label>
       <label>负责人角色<input v-model="form.role" maxlength="100" required :disabled="state.busy" /></label>
       <p>尚无合格周数据时可以先建任务，基线显示未知，不会自动记为零或完成。</p>
       <button class="gd-btn primary" :disabled="state.busy || !tenantId" type="submit">{{ state.busy ? '正在创建…' : '建立验收任务' }}</button>
