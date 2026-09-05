@@ -656,16 +656,47 @@ async def semantic_questions(req: SemanticQuestions, ctx=Auth, session=Db):
             '只找核心需求相同、可共用一个回答的问题；保留否定、型号、数字、适用条件和购买/排障等意图区别；相关但不同的问题不要归为同义。最多30对，不确定则不返回。不要编造ID。',
             json.dumps(questions, ensure_ascii=False), timeout=60, usage_receipt=receipt,
             operation={'request_key':req.request_id, 'payload':{'site_id':req.site_id,'questions':questions},
-                       'actor':str(ctx.user_id), 'kind':'qa_semantic'})
+                       'actor':str(ctx.user_id) if ctx.user_id is not None else 'api_key', 'kind':'qa_semantic'})
         charged = True
-        result = {'pairs':validated_semantic_pairs(raw, questions), 'questions':questions,
+        result = {'action':'qa_semantic', 'pairs':validated_semantic_pairs(raw, questions), 'questions':questions,
                   'meaning':'AI 语义候选，仅供人工确认；不会自动合并或修改问题'}
         return await settle_seo_ai_operation(session, req.tenant_id, receipt['operation_id'], result=result)
     except SeoAiReplay as replay:
-        return replay.result
+        return {**replay.result, 'action':'qa_semantic'}
     except (Exception, asyncio.CancelledError) as exc:
         if charged:
             await _refund_failed_seo_ai_request(session, req.tenant_id, operation_id=receipt.get('operation_id'), charged_on=receipt.get('date'))
         if isinstance(exc, (HTTPException, asyncio.CancelledError)):
             raise
         raise HTTPException(502, '语义分析未成功，请稍后重试') from exc
+
+
+@router.get('/planning/semantic/history')
+async def semantic_history(tenant_id: PositiveInt, site_id: PositiveInt, ctx=Auth, session=Db):
+    await access(session, ctx, tenant_id, site_id)
+    from app.models.seo import SeoAiOperation
+    from app.seo_task_center import actor_key
+    from app.seo_ai_operations import RESULT_RETENTION
+    rows = list(await session.scalars(select(SeoAiOperation).where(
+        SeoAiOperation.tenant_id == tenant_id, SeoAiOperation.site_id == site_id,
+        SeoAiOperation.actor == actor_key(ctx), SeoAiOperation.kind == 'qa_semantic')
+        .order_by(SeoAiOperation.created_at.desc(), SeoAiOperation.id).limit(20)))
+    return {'items':[{'id':r.id, 'status':r.status, 'created_at':r.created_at.replace(tzinfo=timezone.utc).isoformat(),
+        'has_result':r.status == 'succeeded' and r.result is not None and r.completed_at is not None
+            and r.completed_at > datetime.now(timezone.utc).replace(tzinfo=None) - RESULT_RETENTION} for r in rows]}
+
+
+@router.get('/planning/semantic/history/{operation_id}')
+async def semantic_result(operation_id: str, tenant_id: PositiveInt, site_id: PositiveInt, ctx=Auth, session=Db):
+    await access(session, ctx, tenant_id, site_id)
+    from app.models.seo import SeoAiOperation
+    from app.seo_task_center import actor_key
+    from app.seo_ai_operations import retained_result
+    row = await session.scalar(select(SeoAiOperation).where(
+        SeoAiOperation.id == operation_id, SeoAiOperation.tenant_id == tenant_id,
+        SeoAiOperation.site_id == site_id, SeoAiOperation.actor == actor_key(ctx), SeoAiOperation.kind == 'qa_semantic'))
+    if row is None:
+        raise HTTPException(404, '分析记录不存在或不属于当前范围')
+    if row.status != 'succeeded':
+        raise HTTPException(409, '分析尚未完成或已退款，请刷新记录')
+    return {**retained_result(row), 'action':'qa_semantic'}

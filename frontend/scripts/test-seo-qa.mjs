@@ -78,7 +78,7 @@ async function mountPlanning(api={},canEdit=true) {
   const compiled=compileScript(parse(source).descriptor,{id:'planning',genDefaultAs:'component'}).content
   const props=Vue.reactive({tenantId:1,siteId:10,canEdit,revision:1}),writes=[]
   const sample={groups:[{topic:'主题',intents:[{intent:'learn',questions:[{id:1,version:3,title:'问题',topic:'主题',answer_count:0}]}]}],similar_pairs:[]}
-  const bindings={...Vue,seoQaGet:async()=>sample,seoQaPost:async(...args)=>{writes.push(args);return {updated:1}},...api}
+  const bindings={...Vue,analyzeSeoQaSemantic:async payload=>{if(api.seoQaPost)return api.seoQaPost('planning/semantic',payload);writes.push(['planning/semantic',payload]);return {pairs:[]}},seoQaGet:async()=>sample,seoQaPost:async(...args)=>{writes.push(args);return {updated:1}},...api}
   const names=Object.keys(bindings).filter(k=>/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k))
   const component=new Function('b',`const {${names.join(',')}}=b;${compiled.replace(/^import .* from .*$/gm,'')};return component`)(bindings)
   component.render=()=>null
@@ -210,7 +210,7 @@ test('semantic analysis sends chosen versions and does not apply changes',async(
     assert.equal(m.writes.length,1)
     assert.equal(m.writes[0][0],'planning/semantic')
     assert.equal(m.writes[0][1].items.length,2)
-    assert.ok(m.writes[0][1].request_id)
+    assert.equal(m.writes[0][1].request_id,undefined)
   }finally{m.app.unmount()}
 })
 
@@ -229,5 +229,17 @@ test('semantic response is discarded after site change',async()=>{
     const request=m.state.analyzeSemantic();await flush();m.props.siteId=20;await flush()
     resolve({pairs:[{left_id:1,right_id:2}]});await request
     assert.equal(m.state.semantic,null)
+  }finally{m.app.unmount()}
+})
+
+
+test('recovered semantic candidates require current versions before classification',async()=>{
+  const m=await mountPlanning()
+  try {
+    m.state.result.groups[0].intents[0].questions.push({id:2,version:1,title:'问题二'})
+    m.state.semantic={questions:[{id:1,version:3},{id:2,version:1}]}
+    assert.equal(m.state.semanticPairCurrent({left_id:1,right_id:2}),true)
+    m.state.semantic.questions[0].version=2
+    assert.equal(m.state.semanticPairCurrent({left_id:1,right_id:2}),false)
   }finally{m.app.unmount()}
 })

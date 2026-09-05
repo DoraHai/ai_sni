@@ -497,3 +497,8 @@ export function querySeoBacklinkOpportunities(payload) {
 export function downloadSeoPublicationMaterials(id,payload) {
   return client.post(`/api/v1/seo/content-distribution/publications/${id}/materials`,payload,{responseType:'blob',timeout:30000})
 }
+
+
+export const analyzeSeoQaSemantic = payload => requestSeoAi('/api/v1/seo/qa/planning/semantic', {
+  ...payload, items: [...payload.items].sort((a,b) => a.id-b.id),
+})

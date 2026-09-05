@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from app.api import seo_qa as api
 from app.models.module_workspace import SeoSite
-from app.models.seo import SeoContentAsset, SeoSerpResult, SeoContentReviewEvent, SeoBacklink
+from app.models.seo import SeoContentAsset, SeoSerpResult, SeoContentReviewEvent, SeoBacklink, SeoAiOperation
 from app.models.seo_cockpit import SeoTask
 from app.models.seo_qa import SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement
 from app.security.auth import AuthContext
@@ -69,7 +69,7 @@ def database(scenario):
         try:
             async with engine.begin() as conn:
                 await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
-                for model in [SeoBacklink, SeoSite, SeoContentAsset, SeoContentReviewEvent, SeoTask, SeoSerpResult, SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement]:
+                for model in [SeoAiOperation, SeoBacklink, SeoSite, SeoContentAsset, SeoContentReviewEvent, SeoTask, SeoSerpResult, SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement]:
                     table = model.__table__.to_metadata(MetaData())
                     for fk in list(table.foreign_key_constraints):
                         table.constraints.remove(fk)
@@ -469,3 +469,27 @@ def test_semantic_result_rejects_coerced_ids_and_deduplicates_pairs():
     for bad in [True,'1',1.0,3]:
         with pytest.raises(ValueError):
             validated_semantic_pairs({'pairs':[{**pair,'left_id':bad}]},questions)
+
+
+
+def test_semantic_history_recovery_is_actor_site_scoped_and_read_only():
+    async def scenario(sessions):
+        async with sessions() as db:
+            now=datetime.now(timezone.utc).replace(tzinfo=None)
+            for i, actor, site, kind, status, age in [(1,'7',1,'qa_semantic','succeeded',0),
+                (2,'8',1,'qa_semantic','succeeded',0),(3,'7',2,'qa_semantic','succeeded',0),
+                (4,'7',1,'content_assist','succeeded',0),(5,'7',1,'qa_semantic','running',0),
+                (6,'7',1,'qa_semantic','succeeded',31)]:
+                db.add(SeoAiOperation(id=str(i),tenant_id=1,site_id=site,actor=actor,kind=kind,status=status,
+                    request_key=str(i),request_hash='a'*64,charged_on='2026-09-06',expires_at=now,
+                    completed_at=now-timedelta(days=age),result={'pairs':[],'questions':[]}))
+            await db.commit()
+            history=await api.semantic_history(1,1,CTX,db)
+            assert {r['id'] for r in history['items']}=={'1','5','6'}
+            assert {r['id'] for r in history['items'] if r['has_result']}=={'1'}
+            recovered=await api.semantic_result('1',1,1,CTX,db)
+            assert recovered['action']=='qa_semantic'
+            for i in ['2','3','4','5','6']:
+                with pytest.raises(HTTPException): await api.semantic_result(i,1,1,CTX,db)
+            assert (await db.get(SeoAiOperation,'1')).status=='succeeded'
+    database(scenario)
