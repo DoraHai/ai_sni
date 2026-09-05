@@ -1,4 +1,11 @@
 import client from './client'
+export const fetchSeoWorkOrders = params => client.get('/api/v1/seo/tasks', {params})
+export const createSeoWorkOrder = payload => client.post('/api/v1/seo/tasks', payload)
+export const updateSeoWorkOrder = (id,payload) => client.patch(`/api/v1/seo/tasks/${id}`,payload)
+export const fetchSeoBacklinkOutcomes = params => client.get('/api/v1/seo/backlinks/outcomes',{params})
+export const saveSeoReferral = payload => client.post('/api/v1/seo/backlinks/referrals',payload)
+export const seoVideoGet = (path,params) => client.get(`/api/v1/seo/content-distribution/video/${path}`,{params})
+export const seoVideoPost = (path,payload) => client.post(`/api/v1/seo/content-distribution/video/${path}`,payload,{timeout:120000})
 import { session } from '../store/session'
 import { createSeoAiRequester } from './seoAiRequests'
 

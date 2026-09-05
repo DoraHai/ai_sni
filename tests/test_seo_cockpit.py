@@ -14,6 +14,7 @@ from app.seo_image_verification import evaluate_image_repair,enqueue_image_verif
 from app.models.seo_cockpit import SeoTask,SeoImageVerification
 from app.models.seo import SeoSitePage,SeoImageAltReview,SeoPageSnapshot,SeoCrawlRun,SeoKeywordAsset,SeoRankSnapshot,SeoContentAsset,SeoMetricSnapshot
 from app.models.module_workspace import SeoSite
+from app.models.seo import SeoBacklink
 from app.security.auth import AuthContext
 from app.api.seo_cockpit import TaskCreate,TaskUpdate,create_task,update_task,get_task,cancel_task
 
@@ -50,7 +51,7 @@ def run_database(scenario):
         try:
             async with engine.begin() as connection:
                 await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
-                for model in [SeoSite,SeoSitePage,SeoImageAltReview,SeoPageSnapshot,SeoCrawlRun,SeoTask,SeoImageVerification,SeoKeywordAsset,SeoRankSnapshot,SeoContentAsset,SeoMetricSnapshot]:
+                for model in [SeoSite,SeoSitePage,SeoImageAltReview,SeoPageSnapshot,SeoCrawlRun,SeoTask,SeoImageVerification,SeoKeywordAsset,SeoRankSnapshot,SeoContentAsset,SeoMetricSnapshot,SeoBacklink]:
                     table=model.__table__.to_metadata(MetaData())
                     for fk in list(table.foreign_key_constraints):table.constraints.remove(fk)
                     await connection.run_sync(lambda sync:table.create(sync))

@@ -121,12 +121,69 @@ def click_exact(page, labels):
     controls[0].click(timeout=10000)
 
 
+def editor_url(value, platform):
+    parsed = urlparse(value)
+    if parsed.scheme != 'https' or parsed.hostname != PROFILES[platform]['host'] or parsed.username or parsed.password or parsed.port:
+        raise ValueError('草稿恢复地址必须属于对应平台官方编辑器')
+    return value
+
+
+def apply_settings(page, settings):
+    """Use unambiguous, accessible controls; unknown layouts stop for intervention."""
+    category = settings.get('category')
+    if category:
+        control = page.get_by_role('combobox', name=re.compile('分类|领域'))
+        if control.count() != 1 or not control.is_visible():
+            raise ValueError('未识别唯一分类控件，请在平台选择分类后继续')
+        control.select_option(label=category)
+    cover = settings.get('cover')
+    if cover:
+        path = Path(cover)
+        if path.is_symlink() or not path.is_file() or path.suffix.lower() not in {'.jpg','.jpeg','.png'} or path.stat().st_size > 3*1024*1024:
+            raise ValueError('封面必须是本机 JPG/PNG 文件，最大 3 MB')
+        control = page.get_by_label(re.compile('封面'))
+        if control.count()!=1 or control.get_attribute('type')!='file' or not accepts_images(control.get_attribute('accept'),[path]):
+            raise ValueError('未识别唯一封面上传入口，请在平台补充封面')
+        control.set_input_files(str(path))
+        # File selection is not upload completion. Require a loaded remote thumbnail.
+        page.wait_for_function("() => [...document.images].some(i => /封面/.test(i.alt) && /^https:/.test(i.currentSrc) && i.complete && i.naturalWidth > 0)", timeout=30000)
+
+
+def confirm_body_upload(page, task, count):
+    if not count:return
+    body=unique_visible(page,BODY)
+    # Do not count local blob/data previews as completed server uploads.
+    body.evaluate("""(el, count) => new Promise((resolve, reject) => {
+      const ready=()=>[...el.querySelectorAll('img')].filter(i=>/^https:/.test(i.currentSrc)&&i.complete&&i.naturalWidth>0).length>=count;
+      if(ready())return resolve(true);
+      const started=Date.now(),timer=setInterval(()=>{if(ready()){clearInterval(timer);resolve(true)}
+        else if(Date.now()-started>30000){clearInterval(timer);reject(new Error('图片尚未确认上传完成，请在平台核实'))}},250)
+    })""",count)
+
+
+def collect_result(page, task):
+    """Match one article row by exact title; never infer from page-wide status text."""
+    matches=page.get_by_role('row').filter(has=page.get_by_text(task['title'],exact=True))
+    if matches.count()!=1:return {'state':'unknown'}
+    row=matches.first
+    states=[value for value in ['审核中','待审核','已发布','未通过','草稿'] if row.get_by_text(value,exact=True).count()==1]
+    state=states[0] if len(states)==1 else 'unknown'
+    links=[]
+    if state=='已发布':
+        for link in row.get_by_role('link').all():
+            try:links.append(public_url(link.get_attribute('href') or '',task['platform_code']))
+            except ValueError:pass
+    return {'state':state,'page_url':links[0] if len(set(links))==1 else None}
+
+
 def main():
     parser = argparse.ArgumentParser(description='国内平台本地执行器：可见浏览器、素材上传、草稿及授权提交')
     parser.add_argument('package', type=Path)
     parser.add_argument('--workdir', type=Path, default=Path.home() / 'GSnipersPublisher')
     parser.add_argument('--images', type=Path, help='图片目录，按任务 ID 分子目录；每篇最多 20 张 JPG/PNG')
     parser.add_argument('--publish', action='store_true', help='允许逐篇确认后点击发布；默认只填稿/保存草稿')
+    parser.add_argument('--batch', action='store_true', help='展示全部任务并统一确认，只有异常需要介入')
+    parser.add_argument('--settings', type=Path, help='可选 JSON，以任务 ID 为键指定 category、cover 和 editor_url')
     args = parser.parse_args()
     if args.images and not args.images.is_dir():
         raise ValueError('图片目录不存在')
@@ -136,6 +193,19 @@ def main():
     if package.get('schema') != 'seo-domestic-publisher-v1' or not isinstance(package.get('items'), list) or not 1 <= len(package['items']) <= 50:
         raise ValueError('请选择有效任务包（1–50 条）')
     tasks = [validate_task(item) for item in package['items']]
+    args.recipes = {}
+    if args.settings:
+        if args.settings.stat().st_size>100000:raise ValueError('设置文件不能超过 100 KB')
+        args.recipes=json.loads(args.settings.read_text(encoding='utf-8-sig'))
+        if not isinstance(args.recipes,dict):raise ValueError('设置必须按任务 ID 组织')
+        for task in tasks:
+            setting=args.recipes.get(str(task['publication_id']),{})
+            if not isinstance(setting,dict) or set(setting)-{'category','cover','editor_url'}:raise ValueError('不支持的任务设置')
+            if setting.get('editor_url'):editor_url(setting['editor_url'],task['platform_code'])
+    if args.batch:
+        for task in tasks:print(task['publication_id'],task['platform_code'],task['account'],task['title'])
+        print('本批操作：', '提交发布' if args.publish else '保存草稿', '。请核对全部账号、内容和素材；平台登录、声明或未知页面需要介入。')
+        if input('输入 确认批次 开始：').strip()!='确认批次':return 0
     if len({t['publication_id'] for t in tasks}) != len(tasks):
         raise ValueError('任务 ID 重复')
     args.workdir.mkdir(parents=True, exist_ok=True)
@@ -174,30 +244,41 @@ def execute(args, tasks):
             try:
                 context = browser.chromium.launch_persistent_context(str(args.workdir / 'profiles' / account), headless=False)
                 page = context.pages[0] if context.pages else context.new_page()
-                page.goto(task['editor_url'], wait_until='domcontentloaded', timeout=45000)
                 previous = journal.get(key, {})
-                if previous.get('state') in {'preparation_attempted', 'prepared', 'submit_attempted', 'needs_result_check'}:
+                settings=getattr(args,'recipes',{}).get(str(task['publication_id']),{})
+                target=previous.get('draft_url') or settings.get('editor_url') or task['editor_url']
+                page.goto(editor_url(target,task['platform_code']), wait_until='domcontentloaded', timeout=45000)
+                if previous.get('state') in {'preparation_attempted', 'prepared', 'submit_attempted', 'needs_result_check','draft_save_attempted'}:
                     print('上次已开始处理，本次不会重复填稿、上传或提交。请到平台核实并完成剩余操作。')
                 else:
                     print(f"任务 {task['publication_id']} / {task['account']} / {task['title']}")
-                    input('请登录、确认账号并打开空白编辑器，完成后按 Enter：')
+                    if not getattr(args,'batch',False):input('请登录、确认账号并打开空白编辑器，完成后按 Enter：')
                     image_dir = args.images / str(task['publication_id']) if args.images else None
                     if image_dir and image_dir.is_symlink():
                         raise ValueError('不接受符号链接素材目录')
-                    files = sorted(image_dir.glob('*')) if image_dir else []
+                    files = sorted(image_dir.glob('*')) if image_dir and previous.get('state')!='draft_saved' else []
                     if len(files) > 20 or any(not p.is_file() or p.is_symlink() or p.suffix.lower() not in {'.jpg', '.jpeg', '.png'} or p.stat().st_size > 3*1024*1024 for p in files) or sum(p.stat().st_size for p in files) > 12*1024*1024:
                         raise ValueError('每篇最多 20 张 JPG/PNG，每张 3 MB、合计 12 MB，不接受符号链接')
                     journal[key] = {'publication_id': task['publication_id'], 'state': 'preparation_attempted'}
                     save_json(journal_path, journal)
                     print(prepare(page, task, files))
+                    if getattr(args,'batch',False):
+                        confirm_body_upload(page,task,len(files))
+                        if previous.get('state')!='draft_saved':apply_settings(page,settings)
                     journal[key] = {'publication_id': task['publication_id'], 'state': 'prepared'}
                     save_json(journal_path, journal)
-                    action = input('请在平台核对素材、封面、分类和声明。输入 draft 保存草稿，publish 提交，其他跳过操作：').strip()
+                    action = ('publish' if args.publish else 'draft') if getattr(args,'batch',False) else input('请在平台核对素材、封面、分类和声明。输入 draft 保存草稿，publish 提交，其他跳过操作：').strip()
                     current = urlparse(page.url)
                     if current.scheme != 'https' or current.hostname != PROFILES[task['platform_code']]['host'] or current.port:
                         raise ValueError('页面已离开对应平台，未执行保存或发布')
                     if action == 'draft':
+                        journal[key]['state']='draft_save_attempted';save_json(journal_path,journal)
                         click_exact(page, ['保存草稿', '存草稿'])
+                        if getattr(args,'batch',False):
+                            page.get_by_text(re.compile('^(保存成功|草稿已保存)$')).wait_for(timeout=15000)
+                            saved=editor_url(page.url,task['platform_code'])
+                            if urlparse(saved).path not in {'','/'}:
+                                journal[key].update(state='draft_saved',draft_url=saved);save_json(journal_path,journal)
                         print('已点击保存草稿，请核对平台保存结果。')
                     elif action == 'publish' and args.publish:
                         journal[key]['state'] = 'submit_attempted'
@@ -208,7 +289,9 @@ def execute(args, tasks):
                         print('已提交操作，请处理平台确认/审核；尚未判定发布成功。')
                     elif action == 'publish':
                         print('未启用 --publish，请在平台手动发布。')
-                value = input('平台确认发布后粘贴公开文章链接，留空保留待核实状态：').strip()
+                observed=collect_result(page,task) if getattr(args,'batch',False) else {}
+                task_report['platform_state']=observed.get('state','unknown')
+                value = observed.get('page_url') or ('' if getattr(args,'batch',False) else input('平台确认发布后粘贴公开文章链接，留空保留待核实状态：').strip())
                 if value:
                     value = public_url(value, task['platform_code'])
                     results['items'] = [r for r in results['items'] if r['publication_id'] != task['publication_id']]

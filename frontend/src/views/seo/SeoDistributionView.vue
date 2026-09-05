@@ -31,6 +31,7 @@ import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
 import { validateResults } from './publisher/core.js'
+import SeoVideoPublishing from './SeoVideoPublishing.vue'
 import { createPublisherPackage, publisherZip } from './seoPublisher'
 const publisherFiles = import.meta.glob('./publisher/*', { query: '?raw', import: 'default', eager: true })
 const runnerFiles = import.meta.glob('./publisher-runner/*', { query: '?raw', import: 'default', eager: true })
@@ -206,7 +207,7 @@ const filteredActiveTasks = computed(() => taskStatus.value === 'all' ? activeTa
 const publishedContentCount = computed(() => new Set(published.value.map(item => item.content_id)).size)
 const coverage = computed(() => contents.value.length ? Math.round(publishedContentCount.value / contents.value.length * 100) : 0)
 const connectedCount = computed(() => connections.value.filter(item => item.enabled && ['connected', 'ready'].includes(item.status)).length)
-const selectableConnections = computed(() => connections.value.filter(item => item.enabled && (item.mode === 'assisted' || item.status === 'connected')))
+const selectableConnections = computed(() => connections.value.filter(item => item.enabled && !['douyin_video','kuaishou_video'].includes(item.platform_code) && (item.mode === 'assisted' || item.status === 'connected')))
 const pendingContents = computed(() => contents.value.filter(item => !published.value.some(record => record.content_id === item.id)))
 const batchFailedCount = computed(() => batchResults.value.filter(item => !item.ok).length)
 
@@ -300,7 +301,7 @@ function openConnection(platform) {
     credentials: Object.fromEntries((platform.credential_fields || []).map(item => [item.key, ''])),
     clear_credentials: false,
     enabled: true,
-    test_after_save: platform.mode === 'api',
+    test_after_save: platform.mode === 'api' && !['douyin_video','kuaishou_video'].includes(platform.code),
   })
   connectionEditingId.value = null
   connectionCredentialsChanged.value = false
@@ -957,13 +958,16 @@ onMounted(loadSites)
     </section>
 
     <nav class="view-tabs">
+      <button :class="{ active: activeTab === 'video' }" @click="activeTab = 'video'">官方视频发布</button>
       <button :class="{ active: activeTab === 'channels' }" @click="activeTab = 'channels'">账号与渠道</button>
       <button :class="{ active: activeTab === 'variants' }" @click="activeTab = 'variants'">专属稿审核 <b v-if="variants.filter(item => item.status === 'pending_review').length">{{ variants.filter(item => item.status === 'pending_review').length }}</b></button>
       <button :class="{ active: activeTab === 'tasks' }" @click="activeTab = 'tasks'">发布任务 <b v-if="activeTasks.length">{{ activeTasks.length }}</b></button>
       <button :class="{ active: activeTab === 'records' }" @click="activeTab = 'records'">发布记录</button>
     </nav>
 
-    <template v-if="activeTab === 'channels'">
+    <SeoVideoPublishing v-show="activeTab==='video'" :tenant-id="currentTenantId" :site-id="siteId" :contents="contents" :can-edit="canEdit" @authorized="activeTab='video'"/>
+    <template v-if="activeTab === 'video'"></template>
+    <template v-else-if="activeTab === 'channels'">
       <section class="domestic-guide"><b>准备专属稿 → 审核 → 官方平台填稿 → 回填链接</b><p>浏览器渠道无需提供账号密码；请在自己的浏览器登录目标账号。公众号也可选择官方接口通道。填稿助手仅填写文字，配图和发布状态以平台为准。</p></section>
       <section class="channel-toolbar">
         <el-segmented v-model="channelFilter" :options="[{ label: '全部国内渠道', value: 'all' }, { label: '已连接', value: 'connected' }, { label: '可接入', value: 'available' }]" />

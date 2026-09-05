@@ -1,8 +1,20 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import SeoBacklinkWorkflow from './SeoBacklinkWorkflow.vue'
+import { createSeoWorkOrder } from '../../api/seo'
 import { fetchSeoBacklinkOpportunities, querySeoBacklinkOpportunities } from '../../api/seo'
 const props=defineProps({tenantId:Number,siteId:Number,canEdit:Boolean})
 const competitors=ref(''), result=ref(null), provider=ref(null), busy=ref(false), error=ref('')
+const filter=ref(''), minPeers=ref(1), workflow=ref(null), creating=ref(false)
+const filtered=computed(()=>(result.value?.items||[]).filter(row=>row.source_domain.includes(filter.value.trim())&&row.competitor_count>=minPeers.value))
+async function createTask(row){
+  if(!props.canEdit||creating.value)return
+  const ticket=generation;creating.value=true;error.value=''
+  try{
+    await createSeoWorkOrder({tenant_id:props.tenantId,site_id:props.siteId,module:'seo',action_type:'backlink_outreach',title:`评估并获取外链：${row.source_domain}`,assignee_role:'seo_operator',params:{source_url:row.evidence[0].source_url,opportunity_request_id:result.value.request_id}})
+    if(ticket===generation)await workflow.value?.load()
+  }catch(e){if(ticket===generation)error.value=e.message}finally{creating.value=false}
+}
 let generation=0
 async function load(){
   const ticket=++generation;result.value=null;provider.value=null;error.value=''
@@ -42,9 +54,11 @@ onMounted(load);onBeforeUnmount(()=>generation++)
       <p>{{result.message||'查询过程中会逐站保存结果，请稍后刷新。'}}</p>
       <el-button @click="download">导出分析与来源证据</el-button>
       <el-table :data="Object.entries(result.samples||{}).map(([domain,value])=>({domain,...value}))"><el-table-column prop="domain" label="查询域名"/><el-table-column label="数据状态"><template #default="{row}">{{row.state==='completed'?`返回 ${row.items.length} 条`:'查询失败，未当作零条'}}</template></el-table-column></el-table>
-      <el-table :data="result.items||[]" empty-text="暂无可展示的差距候选，请先确认各站查询状态"><el-table-column prop="source_domain" label="潜在来源"/><el-table-column prop="competitor_count" label="覆盖竞品数" width="120"/><el-table-column label="供应商来源证据" min-width="300"><template #default="{row}"><div v-for="item in row.evidence" :key="item.source_url+item.competitor"><a :href="item.source_url" target="_blank" rel="noopener noreferrer">{{item.competitor}}：{{item.source_url}}</a></div></template></el-table-column></el-table>
+      <el-input v-model="filter" placeholder="筛选来源域名"/><label>至少覆盖竞品数 <el-input-number v-model="minPeers" :min="1" :max="3"/></label>
+      <el-table :data="filtered" empty-text="暂无可展示的差距候选，请先确认各站查询状态"><el-table-column prop="source_domain" label="潜在来源"/><el-table-column prop="competitor_count" label="覆盖竞品数" width="120"/><el-table-column label="供应商来源证据" min-width="300"><template #default="{row}"><div v-for="item in row.evidence" :key="item.source_url+item.competitor"><a :href="item.source_url" target="_blank" rel="noopener noreferrer">{{item.competitor}}：{{item.source_url}}</a></div></template></el-table-column><el-table-column v-if="canEdit" label="跟进"><template #default="{row}"><el-button :disabled="creating" @click="createTask(row)">转为 SEO 任务</el-button></template></el-table-column></el-table>
       <p>这些是机会候选，尚未核实合作价值，也不是我方已获得的外链。来源按主机名比较，不合并不同子域；样本中未出现不能证明全网不存在。</p>
     </template>
+    <SeoBacklinkWorkflow ref="workflow" :tenant-id="tenantId" :site-id="siteId" :can-edit="canEdit"/>
   </section>
 </template>
 <style scoped>.opportunities{margin:18px 0;padding:20px}p,small{color:#64748b;font-size:13px}a{overflow-wrap:anywhere;color:#2658d7}.el-alert,.el-table{margin-top:14px}</style>

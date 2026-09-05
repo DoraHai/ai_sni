@@ -11,6 +11,13 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    "frontend/scripts/test-seo-video-workflow.mjs",
+    "app/api/seo_video.py",
+    "app/seo_video_platforms.py",
+    "app/api/seo_backlink_workflow.py",
+    "tests/test_seo_video_platforms.py",
+    "tests/test_seo_backlink_workflow.py",
+    "docs/SEO_DISTRIBUTION_ACCEPTANCE.md",
     "app/seo_backlink_opportunities.py",
     "tests/test_seo_backlink_opportunities.py",
     "tests/test_seo_publisher_runner.py",

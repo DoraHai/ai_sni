@@ -234,6 +234,10 @@ router.include_router(site_diagnostics_router)
 router.include_router(remediation_router)
 from app.api.seo_cockpit import router as cockpit_router
 router.include_router(cockpit_router)
+from app.api.seo_backlink_workflow import router as backlink_workflow_router
+router.include_router(backlink_workflow_router)
+from app.api.seo_video import router as video_router
+router.include_router(video_router)
 
 ENGINES = {"baidu", "google", "bing", "360", "sogou"}
 PRIORITIES = {"P0", "P1", "P2", "P3"}
@@ -7395,7 +7399,7 @@ async def list_publish_attempts(
                 "action": item.action,
                 "status": item.status,
                 "request_summary": item.request_summary,
-                "response_summary": item.response_summary,
+                "response_summary": {key:value for key,value in (item.response_summary or {}).items() if key!='sealed_video_media'},
                 "error": item.error,
                 "started_at": _database_iso(item.started_at),
                 "completed_at": _iso(item.completed_at),
@@ -7812,7 +7816,8 @@ async def query_backlink_index(req: BacklinkScope, session: AsyncSession = Depen
     settings = dict(site.site_settings or {})
     previous = settings.get("backlink_index") or {}
     now = datetime.utcnow()
-    if previous.get("domain") == site.canonical_domain and previous.get("attempted_at") and now - datetime.fromisoformat(previous["attempted_at"]) < timedelta(days=1):
+    if previous.get("attempted_at") and now - datetime.fromisoformat(previous["attempted_at"]) < timedelta(days=1):
+        if previous.get('domain')!=site.canonical_domain:raise HTTPException(429,'该网站今天已查询过旧域名，域名变更不会重置调用预算，请在 24 小时后查询')
         return {**previous, "cached":True}
     claim = {"state":"running", "attempted_at":now.isoformat(), "domain":site.canonical_domain, "request_id":uuid4().hex}
     settings["backlink_index"] = claim
