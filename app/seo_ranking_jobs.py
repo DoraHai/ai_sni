@@ -255,6 +255,19 @@ def _scheduled_health_summary(
     }
 
 
+def _actionable_error_labels(
+    engine: str,
+    device: str,
+    errors: list[dict],
+) -> list[str]:
+    """Keep expected domain-list misses from hiding actual provider failures."""
+    return [
+        f"{engine}/{device}:{item.get('code', 'provider_error')}"
+        for item in errors
+        if item.get("code") != "keyword_not_found"
+    ][:5]
+
+
 def _chunks(values: list[int], size: int) -> list[list[int]]:
     size = max(1, size)
     return [values[index : index + size] for index in range(0, len(values), size)]
@@ -360,7 +373,10 @@ async def collect_daily_seo_rankings() -> None:
         "skipped_pairs": 0,
         "capped_tenants": 0,
         "unassigned_keywords": 0,
+        "unknown_request_batches": 0,
     }
+    request_budget_consumed = 0
+    dataforseo_request_budget_consumed = 0
     try:
         async with async_session_factory() as discovery_session:
             entitled_tenant_ids = [
@@ -408,7 +424,7 @@ async def collect_daily_seo_rankings() -> None:
             1, max_requests // max(1, len(tenant_ids))
         )
         for tenant_id in tenant_ids:
-            if totals["requests"] >= max_requests:
+            if request_budget_consumed >= max_requests:
                 break
             async with _isolated_tenant_session(int(tenant_id)) as session:
                 selected_rows = (
@@ -561,13 +577,15 @@ async def collect_daily_seo_rankings() -> None:
                             )
                         attempted = 0
                         pair_provider_requests = 0
+                        pair_confirmed_provider_requests = 0
+                        pair_request_count_known = True
                         site_attempted = 0
                         site_incomplete = False
                         site_successful_observations = 0
                         site_errors: list[dict] = []
                         for candidate_batch in _chunks(pending_ids, batch_size):
                             remaining = min(
-                                max_requests - totals["requests"],
+                                max_requests - request_budget_consumed,
                                 per_tenant_request_budget - tenant_provider_requests,
                                 per_pair_request_budget - pair_provider_requests,
                             )
@@ -575,7 +593,7 @@ async def collect_daily_seo_rankings() -> None:
                                 remaining = min(
                                     remaining,
                                     max_dataforseo_requests
-                                    - totals["dataforseo_requests"],
+                                    - dataforseo_request_budget_consumed,
                                 )
                             if remaining <= 0:
                                 site_incomplete = True
@@ -602,11 +620,13 @@ async def collect_daily_seo_rankings() -> None:
                                 # accepted requests but before it returns exact usage.
                                 # Conservatively reserve the full allowance passed to
                                 # this batch so later work can never exceed a hard cap.
-                                totals["requests"] += remaining
+                                request_budget_consumed += remaining
                                 tenant_provider_requests += remaining
                                 pair_provider_requests += remaining
+                                pair_request_count_known = False
+                                totals["unknown_request_batches"] += 1
                                 if engine in {"google", "bing"}:
-                                    totals["dataforseo_requests"] += remaining
+                                    dataforseo_request_budget_consumed += remaining
                                 totals["errors"] += len(keyword_batch)
                                 tenant_failed += len(keyword_batch)
                                 site_incomplete = True
@@ -633,10 +653,13 @@ async def collect_daily_seo_rankings() -> None:
                                 )
                             provider_requests = max(0, int(reported_requests))
                             totals["requests"] += provider_requests
+                            request_budget_consumed += provider_requests
                             tenant_provider_requests += provider_requests
                             pair_provider_requests += provider_requests
+                            pair_confirmed_provider_requests += provider_requests
                             if engine in {"google", "bing"}:
                                 totals["dataforseo_requests"] += provider_requests
+                                dataforseo_request_budget_consumed += provider_requests
                             skipped_errors = sum(
                                 item.get("code") in {
                                     "keyword_not_found",
@@ -670,8 +693,11 @@ async def collect_daily_seo_rankings() -> None:
                                 - skipped_errors,
                             )
                             tenant_errors.extend(
-                                f"{engine}/{device}:{item.get('code', 'provider_error')}"
-                                for item in result["errors"][:5]
+                                _actionable_error_labels(
+                                    engine,
+                                    device,
+                                    result["errors"],
+                                )
                             )
                             totals["snapshots"] += result["snapshots"]
                             totals["serp_results"] += result["serp_results"]
@@ -705,7 +731,13 @@ async def collect_daily_seo_rankings() -> None:
                                     "status_code": health["status_code"],
                                     "attempted_keywords": site_attempted,
                                     "planned_keywords": len(pending_ids),
-                                    "provider_requests": pair_provider_requests,
+                                    "provider_requests": (
+                                        pair_confirmed_provider_requests
+                                        if pair_request_count_known
+                                        else None
+                                    ),
+                                    "provider_request_count_known": pair_request_count_known,
+                                    "provider_request_budget_reserved": pair_provider_requests,
                                 },
                                 observed_at=datetime.utcnow(),
                             ))
