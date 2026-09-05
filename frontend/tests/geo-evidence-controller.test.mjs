@@ -48,3 +48,31 @@ test('unmounted details cannot mutate state',async()=>{
  const a=deferred();const x=setup({readiness:()=>a.promise});const first=x.c.select({id:1})
  x.c.invalidate();a.resolve({task_id:1});await first;assert.equal(x.state.detail,null)
 })
+
+
+test('direct task lookup beyond first page does not corrupt pagination cursor', async () => {
+ const cursors=[]
+ const x=setup({list:async(_,cursor)=>{cursors.push(cursor);return cursor?[{id:201}]:Array.from({length:200},(_,i)=>({id:i+1}))},get:async(t,id)=>({id}),readiness:async(t,id)=>({task_id:id})})
+ await x.c.load(false,999)
+ assert.equal(x.state.selected.id,999);assert.equal(x.state.detail.task_id,999)
+ assert.equal(x.state.items.length,200)
+ await x.c.load(true);assert.deepEqual(cursors,[0,200])
+})
+test('late direct lookup cannot cross customer boundaries or start readiness request', async () => {
+ const pending=deferred()
+ const x=setup({list:async()=>[],get:()=>pending.promise,readiness:()=>assert.fail('stale readiness')})
+ const first=x.c.load(false,999)
+ await Promise.resolve();await Promise.resolve()
+ x.change(2);await x.c.load()
+ pending.resolve({id:999});await first
+ assert.equal(x.state.selected,null)
+})
+test('missing direct task displays failure without falling back to another task', async () => {
+ const x=setup({list:async()=>[{id:1}],get:async()=>{throw Error('任务不存在')}})
+ await x.c.load(false,999)
+ assert.equal(x.state.selected,null);assert.equal(x.state.error,'任务不存在')
+})
+test('invalid direct ids never query backend', async () => {
+ const x=setup({list:()=>assert.fail('invalid request')})
+ for(const id of [0,-1,NaN,1.5]) {await x.c.load(false,id);assert.ok(x.state.error)}
+})

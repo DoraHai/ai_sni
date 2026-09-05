@@ -1,5 +1,6 @@
 <script setup>
 import { reactive, watch, onBeforeUnmount } from 'vue'
+import { evidenceTaskLink } from '../utils/geoEvidenceLinks'
 import * as api from '../api/geoIntegration'
 import { evidenceRequest, createEvidenceSubmitter } from '../utils/geoEvidenceCreate'
 const props = defineProps({ tenantId: [Number, String], content: Object })
@@ -25,7 +26,7 @@ function submit() {
     <el-alert v-if="state.error" type="error" :title="state.error" :closable="false" />
     <template v-if="state.result">
       <p>指标验收任务 #{{ state.result.id }} 已就绪。重复提交会返回已有任务。</p>
-      <router-link to="/geo/tickets" @click="emit('close')">前往指标验收任务，查看基线和执行条件</router-link>
+      <router-link :to="evidenceTaskLink(tenantId, state.result.id)" @click="emit('close')">前往指标验收任务，查看基线和执行条件</router-link>
     </template>
     <form v-else @submit.prevent="submit" class="evidence-create">
       <label>任务标题<input v-model="form.title" maxlength="300" required :disabled="state.busy" /></label>

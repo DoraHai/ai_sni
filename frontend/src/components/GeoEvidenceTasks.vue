@@ -1,14 +1,24 @@
 <script setup>
 import { computed, reactive, ref, watch, onBeforeUnmount } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
+import { evidenceTaskLink, evidenceLinkTarget } from '../utils/geoEvidenceLinks'
 import * as api from '../api/geoIntegration'
 import { createEvidenceController } from '../utils/geoEvidenceController'
 const props = defineProps({ tenantId: [Number, String] })
 const router = useRouter()
+const route = useRoute()
+const lookupId = ref('')
+const linkTarget = computed(() => evidenceLinkTarget(route.query, props.tenantId))
 const state = reactive({ items: [], selected: null, detail: null, loading: false, busy: false, error: '', message: '', more: false })
 const publicationId = ref('')
 const controller = createEvidenceController(state, api, () => props.tenantId)
-watch(() => props.tenantId, () => { publicationId.value = ''; controller.load() }, { immediate: true })
+function reload() { publicationId.value = ''; return controller.load(false, linkTarget.value.id) }
+watch(() => [props.tenantId, route.query.evidence_task_id, route.query.evidence_tenant_id], () => { lookupId.value = ''; reload() }, { immediate: true })
+function lookup() {
+  if (!/^[1-9][0-9]*$/.test(lookupId.value) || !Number.isSafeInteger(Number(lookupId.value))) { state.error = '请输入有效的验收任务编号'; return }
+  if (linkTarget.value.id === Number(lookupId.value)) { reload(); return }
+  router.push(evidenceTaskLink(props.tenantId, lookupId.value))
+}
 onBeforeUnmount(controller.invalidate)
 const terminal = computed(() => ['done', 'cancelled'].includes(state.selected?.status))
 const contentId = computed(() => state.selected?.params?.content_task_id)
@@ -22,9 +32,14 @@ function select(row) { publicationId.value = ''; controller.select(row) }
 
 <template>
   <section class="gd-card mb evidence-tasks">
-    <div class="gd-hd"><h3>指标验收任务</h3><button class="gd-btn" :disabled="state.loading || state.busy" @click="controller.load()">刷新任务</button></div>
+    <div class="gd-hd"><h3>指标验收任务</h3><button class="gd-btn" :disabled="state.loading || state.busy" @click="reload()">刷新任务</button></div>
     <div class="gd-bd">
       <p class="gd-sub">查看基线、真实发布和周复测进度；完成须由服务端核验实际指标变化。</p>
+      <el-alert v-if="linkTarget.error" :title="linkTarget.error" type="warning" :closable="false" />
+      <form class="evidence-lookup" @submit.prevent="lookup">
+        <label>验收任务编号 <input v-model="lookupId" inputmode="numeric" placeholder="例如 12" /></label>
+        <button class="gd-btn" :disabled="!tenantId || state.loading || state.busy" type="submit">打开任务</button>
+      </form>
       <el-alert v-if="state.error" :title="state.error" type="error" :closable="false" />
       <el-alert v-if="state.message" :title="state.message" type="success" :closable="false" />
       <p v-if="state.loading">正在读取任务…</p>
@@ -69,6 +84,8 @@ function select(row) { publicationId.value = ''; controller.select(row) }
   </section>
 </template>
 <style scoped>
+.evidence-lookup { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; }
+.evidence-lookup input { width: 120px; padding: 6px; }
 .evidence-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 .evidence-list button { white-space: normal; text-align: left; }
 .evidence-detail { border-top: 1px solid #e5e7eb; margin-top: 16px; padding-top: 12px; overflow-wrap: anywhere; }

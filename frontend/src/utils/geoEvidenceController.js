@@ -3,16 +3,27 @@ export function createEvidenceController(state, api, getTenant) {
   let epoch = 0
   const current = (token, tenant) => token === epoch && tenant === getTenant()
   const invalidate = () => { epoch++ }
-  async function load(more = false) {
+  async function load(more = false, targetId = null) {
     const tenant = getTenant(), token = ++epoch
     Object.assign(state, { loading: true, busy: false, detail: null, selected: null, error: '', message: '' })
     if (!more) state.items = []
     if (!tenant) { state.loading = false; state.more = false; return }
+    if (targetId !== null && (!Number.isSafeInteger(targetId) || targetId < 1)) {
+      state.error = '验收任务编号无效'; state.loading = false; state.more = false; return
+    }
     try {
       const rows = await api.list(tenant, more ? state.items.at(-1)?.id || 0 : 0)
       if (!current(token, tenant)) return
       state.items = more ? [...state.items, ...rows] : rows
       state.more = rows.length === 200
+      if (targetId !== null) {
+        // Fetch by tenant-scoped ID; do not change the pagination cursor/list.
+        const row = await api.get(tenant, targetId)
+        if (!current(token, tenant)) return
+        state.selected = row
+        const detail = await api.readiness(tenant, targetId)
+        if (current(token, tenant)) state.detail = detail
+      }
     } catch (e) { if (current(token, tenant)) state.error = e.message || '读取任务失败' }
     finally { if (current(token, tenant)) state.loading = false }
   }
