@@ -8,6 +8,7 @@ from typing import Any
 
 # Note: avoid \b after Latin letters next to CJK (Python \w includes Han).
 FAKE_HINTS: list[tuple[str, str]] = [
+    (r"\[待填写[：:]", "存在未完成的内容结构，填写实际内容后才能发布"),
     (r"工具\s*[A-Z一二三四五六七八九十](?![A-Za-z0-9])", "出现「工具A/工具一」这类占位竞品名"),
     (r"某某|XX公司|xxx公司|示例公司", "出现占位公司名"),
     (r"(?i)\b(acme|foobar|example corp|competitor [a-z])\b", "出现占位英文品牌名"),

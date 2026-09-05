@@ -410,3 +410,25 @@ class GeoFixPatchesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_industrial_patches_do_not_invent_software_claims_or_pass_publication():
+    from datetime import date
+    from unittest.mock import patch
+    from app.geo.content.rules import check_fabrication_lint
+    data = _base(question='工业齿轮箱如何选型？', title='工业齿轮箱选型', body_markdown='工况核对。', outline={}, facts=[{'title': '工业齿轮箱扭矩', 'statement': '15,000 Nm', 'source_name': '厂家资料'}])
+    with patch('app.geo.content.time_windows.shanghai_today', return_value=date(2026, 9, 5)):
+        patches = build_fix_patches(data)
+    text = ''.join(p.get('insert_markdown', '') for p in patches)
+    assert '2026-09-05' in text and '2026-07-30' not in text
+    assert '私有化' not in text and '公有云' not in text and '数据分析平台' not in text
+    assert '[待填写：' in text
+    assert not check_fabrication_lint(_base(body_markdown=text)).passed
+
+
+def test_known_engineering_specification_counts_without_filler_numbers():
+    from app.geo.content.rules import check_numbers_extractable
+    facts = [{'statement': 'Output torque from 15,000 Nm to 282,000 Nm'}]
+    assert check_numbers_extractable(_base(body_markdown='系列输出扭矩为15,000–282,000 Nm。', facts=facts)).passed
+    assert not check_numbers_extractable(_base(body_markdown='扭矩范围尚待确认。', facts=facts)).passed
+    assert not check_numbers_extractable(_base(body_markdown='功率为282,000 kW。', facts=facts)).passed

@@ -320,7 +320,13 @@ def check_numbers_extractable(data: RuleInput) -> RuleCheck:
             message="事实卡无具体数字，正文未编造数字",
             action="",
         )
-    ok = _article_blocks(data).get("numbers", False)
+    # Industrial specifications are facts too; the generic density detector
+    # only recognizes consumer units and otherwise asks authors to add filler.
+    engineering = re.compile(r"(?<![A-Za-z0-9_.])\d+(?:,\d{3})*(?:\.\d+)?\s*(?:N[·⋅ ]?m|kW|mm|MPa|rpm)(?![A-Za-z])")
+    def tokens(value):
+        return {re.sub(r"[,\s·⋅]", "", m.group()).lower() for m in engineering.finditer(value or '')}
+    supported = set().union(*(tokens(f.get('statement')) for f in data.facts or []))
+    ok = _article_blocks(data).get("numbers", False) or bool(tokens(data.body_markdown) & supported)
     return RuleCheck(
         code="numbers_extractable",
         passed=ok,
@@ -541,8 +547,10 @@ def build_fix_patches(data: RuleInput) -> list[dict[str, Any]]:
     """返回 {code, insert_markdown, cursor_hint, label} 供编辑器一键插入。
 
     Patches are only offered when the corresponding *check* would fail, and
-    insert text is written to actually flip that detector.
+    Context-dependent scaffolds stay visibly unfinished and fail publication lint.
     """
+    from app.geo.content.time_windows import shanghai_today
+
     patches: list[dict[str, Any]] = []
     outline = data.outline or {}
     body = data.body_markdown or ""
@@ -551,11 +559,10 @@ def build_fix_patches(data: RuleInput) -> list[dict[str, Any]]:
         patches.append(
             {
                 "code": "conclusion_extractable",
-                "label": "插入结论段",
+                "label": "插入结论待填结构",
                 "insert_markdown": (
                     "\n## 结论\n\n"
-                    "综合以上维度，优先选择具备私有化部署、最小权限与可核验来源的平台，"
-                    "再通过小范围 POC 确认集成成本后再全面推广。\n"
+                    "[待填写：根据本文已核验事实回答目标问题，写清适用条件与限制。]\n"
                 ),
                 "cursor_hint": "append",
             }
@@ -565,13 +572,13 @@ def build_fix_patches(data: RuleInput) -> list[dict[str, Any]]:
         patches.append(
             {
                 "code": "faq_min",
-                "label": "插入 FAQ",
+                "label": "插入FAQ待填结构",
                 "insert_markdown": (
                     "\n## FAQ\n\n"
-                    "- **Q：** 私有化部署需要哪些前置条件？\n"
-                    "  **A：** 需明确网络隔离、账号权限模型与现有数据源清单。\n"
-                    "- **Q：** 如何验证上述信息？\n"
-                    "  **A：** 对照文末来源与已核验事实卡逐条核对。\n"
+                    "- **Q：** [待填写：目标读者的实际追问。]\n"
+                    "  **A：** [待填写：有已核验出处的回答。]\n"
+                    "- **Q：** [待填写：另一项适用条件或限制问题。]\n"
+                    "  **A：** [待填写：与当前主题相关的回答及出处。]\n"
                 ),
                 "cursor_hint": "append",
             }
@@ -582,7 +589,7 @@ def build_fix_patches(data: RuleInput) -> list[dict[str, Any]]:
             {
                 "code": "updated_at_visible",
                 "label": "插入更新日期",
-                "insert_markdown": "\n*更新时间：2026-07-30*\n",
+                "insert_markdown": f"\n*更新时间：{shanghai_today().isoformat()}*\n",
                 "cursor_hint": "append",
             }
         )
@@ -591,11 +598,10 @@ def build_fix_patches(data: RuleInput) -> list[dict[str, Any]]:
         patches.append(
             {
                 "code": "definition",
-                "label": "插入定义",
+                "label": "插入定义待填结构",
                 "insert_markdown": (
                     "\n## 定义\n\n"
-                    "私有化数据分析平台是一种部署在企业可控环境内的分析系统，"
-                    "用于在保障数据主权的前提下完成接入、建模与可视化。\n"
+                    "[待填写：定义本文讨论的产品或概念，并给出已核验出处。]\n"
                 ),
                 "cursor_hint": "append",
             }
@@ -608,11 +614,10 @@ def build_fix_patches(data: RuleInput) -> list[dict[str, Any]]:
         patches.append(
             {
                 "code": "comparison_extractable",
-                "label": "插入对比",
+                "label": "插入对比待填结构",
                 "insert_markdown": (
                     "\n## 对比选型\n\n"
-                    "与常见公有云 BI 或自建数仓相比：私有化更利于合规与内网集成，"
-                    "但需要自行承担运维；选型时应写清差异与自身局限。\n"
+                    "[待填写：按读者的实际选型条件对比候选方案，逐项注明证据与未知项。]\n"
                 ),
                 "cursor_hint": "append",
             }
@@ -621,12 +626,12 @@ def build_fix_patches(data: RuleInput) -> list[dict[str, Any]]:
         patches.append(
             {
                 "code": "howto_extractable",
-                "label": "插入步骤",
+                "label": "插入步骤待填结构",
                 "insert_markdown": (
                     "\n## 操作步骤\n\n"
-                    "步骤 1：明确场景与成功标准。\n"
-                    "步骤 2：核验事实卡与来源。\n"
-                    "步骤 3：小范围试点后推广。\n"
+                    "步骤 1：[待填写：当前主题的具体操作与输入。]\n"
+                    "步骤 2：[待填写：实际核对方法及依据。]\n"
+                    "步骤 3：[待填写：结果检查与下一步。]\n"
                 ),
                 "cursor_hint": "append",
             }
