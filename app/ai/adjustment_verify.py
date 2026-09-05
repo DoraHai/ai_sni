@@ -12,6 +12,7 @@ import logging
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.deepseek import DeepSeekError, chat_json, is_enabled
@@ -353,13 +354,21 @@ async def generate_verdict(session: AsyncSession, tenant: Tenant, item: dict, fo
         return None
     verdict = out.get("verdict") if out.get("verdict") in ("achieved", "missed", "watch") else "watch"
     reason = str(out.get("reason") or "")[:200]
-    if rv is None:
-        rv = AdjustmentReview(tenant_id=tenant.id, dedup_key=item["dedup_key"])
-        session.add(rv)
-    rv.ai_verdict = verdict
-    rv.ai_reason = AI_CACHE_PREFIX + json.dumps({
-        "fingerprint": _effect_fingerprint(item), "reason": reason,
-    }, ensure_ascii=False)
-    rv.ai_generated_at = datetime.utcnow()
+    # 模型调用期间人工审核或另一个 AI 请求可能已创建记录。
+    # 冲突分支仅更新 AI 列，绝不覆盖人工状态、判定、备注或证据。
+    ai_values = {
+        "ai_verdict": verdict,
+        "ai_reason": AI_CACHE_PREFIX + json.dumps({
+            "fingerprint": _effect_fingerprint(item), "reason": reason,
+        }, ensure_ascii=False),
+        "ai_generated_at": datetime.utcnow(),
+    }
+    stmt = insert(AdjustmentReview).values(
+        tenant_id=tenant.id, dedup_key=item["dedup_key"], **ai_values,
+    )
+    await session.execute(stmt.on_conflict_do_update(
+        index_elements=[AdjustmentReview.tenant_id, AdjustmentReview.dedup_key],
+        set_=ai_values,
+    ))
     await session.commit()
     return {"verdict": verdict, "reason": reason}

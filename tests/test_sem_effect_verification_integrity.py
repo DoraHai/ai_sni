@@ -1,4 +1,5 @@
 """Effect attribution regressions; real SQL against isolated in-memory synthetic data."""
+import asyncio
 import copy
 import hashlib
 import json
@@ -8,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import test_writeback_approval  # noqa: F401 -- isolated test settings
-from sqlalchemy import Column, JSON, MetaData, Table, create_engine
+from sqlalchemy import Column, Integer, JSON, MetaData, Table, UniqueConstraint, create_engine, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
@@ -418,5 +419,77 @@ class AiCacheTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(kw, "is_enabled", return_value=True), patch.object(kw, "_build_prompt", return_value="synthetic"), patch.object(kw, "chat_json", new_callable=AsyncMock, return_value={"verdict": "watch", "reason": "继续观察"}):
             result = await kw.generate_verdict(session, SimpleNamespace(id=1), item)
         self.assertEqual(result, {"verdict": "watch", "reason": "继续观察"})
-        self.assertEqual(kw._cached_ai(review, item), result)
+        params = session.execute.call_args.args[0].compile().params
+        stored = SimpleNamespace(ai_verdict=params["ai_verdict"], ai_reason=params["ai_reason"])
+        self.assertEqual(kw._cached_ai(stored, item), result)
+        self.assertEqual(review.ai_reason, "legacy")  # 不把旧 ORM 对象变脏触发隐式覆盖。
         session.commit.assert_awaited_once()
+
+
+class AiSaveRaceTests(unittest.IsolatedAsyncioTestCase):
+    """实际唯一约束/upsert + 可控 AI 等待交错；只用内存测试库。"""
+    def setUp(self):
+        self.engine = create_engine("sqlite:///:memory:")
+        metadata = MetaData()
+        self.table = Table(AdjustmentReview.__tablename__, metadata, *[
+            Column(c.name, Integer if c.primary_key else c.type,
+                   primary_key=c.primary_key, nullable=True)
+            for c in AdjustmentReview.__table__.columns
+        ], UniqueConstraint("tenant_id", "dedup_key"))
+        metadata.create_all(self.engine)
+        self.sessions = []
+
+    def tearDown(self):
+        for session in self.sessions:
+            session.close()
+        self.engine.dispose()
+
+    def session(self):
+        db = Session(self.engine)
+        self.sessions.append(db)
+        adapter = AsyncAdapter(db)
+        async def commit():
+            db.commit()
+        adapter.commit = commit
+        return adapter
+
+    async def test_human_creates_while_ai_waits_preserves_every_human_field(self):
+        item = AiCacheTests().item()
+        first = self.session()
+        verified_at = datetime(2026, 9, 5, 10)
+        human = dict(tenant_id=1, dedup_key="op", status="verified", verdict="missed",
+                     note=REVIEW_PREFIX + '{"note":"人工依据"}', verified_at=verified_at)
+        async def ai_result(*args):
+            other = self.session()
+            other.session.execute(self.table.insert().values(**human))
+            await other.commit()
+            return {"verdict": "achieved", "reason": "AI 判断"}
+        with patch.object(kw, "is_enabled", return_value=True), patch.object(kw, "_build_prompt", return_value="synthetic"), patch.object(kw, "chat_json", side_effect=ai_result):
+            await kw.generate_verdict(first, SimpleNamespace(id=1), item)
+        rows = self.session().session.execute(select(self.table)).mappings().all()
+        self.assertEqual(len(rows), 1)
+        for field, value in human.items():
+            self.assertEqual(rows[0][field], value)
+        self.assertEqual(rows[0]["ai_verdict"], "achieved")
+
+    async def test_two_ai_requests_read_missing_then_both_save_one_record(self):
+        item = AiCacheTests().item()
+        both_read = asyncio.Event()
+        arrivals = 0
+        async def ai_result(*args):
+            nonlocal arrivals
+            arrivals += 1
+            if arrivals == 2:
+                both_read.set()
+            await asyncio.wait_for(both_read.wait(), timeout=3)
+            return {"verdict": "watch", "reason": "观察"}
+        with patch.object(kw, "is_enabled", return_value=True), patch.object(kw, "_build_prompt", return_value="synthetic"), patch.object(kw, "chat_json", side_effect=ai_result):
+            results = await asyncio.gather(*[
+                kw.generate_verdict(self.session(), SimpleNamespace(id=1), item)
+                for _ in range(2)
+            ])
+        self.assertEqual(len(results), 2)
+        rows = self.session().session.execute(select(self.table)).mappings().all()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["status"], "pending")
+        self.assertIsNone(rows[0]["verdict"])
