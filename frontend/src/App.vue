@@ -112,14 +112,18 @@ async function loadBadges() {
   if (session.isLoggedIn && !tenant) return
   if (tenant?.sem_identity?.status === 'blocked') return
   try {
-    const [a, e] = await Promise.all([
-      fetchAlerts({ tenantId, status: 'open' }),
-      fetchCandidates({ tenantId, status: 'pending', page: 1, pageSize: 1 }),
+    const [a, e] = await Promise.allSettled([
+      !session.isLoggedIn || session.canView('monitor.alerts')
+        ? fetchAlerts({ tenantId, status: 'open' }) : Promise.resolve(null),
+      !session.isLoggedIn || session.canView('optimize.expand')
+        ? fetchCandidates({ tenantId, status: 'pending', page: 1, pageSize: 1 }) : Promise.resolve(null),
     ])
     if (generation !== badgeLoadGeneration || tenantId !== session.tenantId) return
-    badges.alerts = a.total_open ?? 0
-    badges.alertsToday = a.today_new ?? 0
-    badges.expand = e.status_counts?.pending ?? 0
+    if (a.status === 'fulfilled' && a.value) {
+      badges.alerts = a.value.total_open ?? 0
+      badges.alertsToday = a.value.today_new ?? 0
+    }
+    if (e.status === 'fulfilled' && e.value) badges.expand = e.value.status_counts?.pending ?? 0
   } catch {
     if (generation === badgeLoadGeneration && tenantId === session.tenantId) resetBadges()
   }
@@ -282,6 +286,7 @@ async function loadTenants() {
     loadWritebackMode()
     bootstrapError.value = ''
   } catch (error) {
+    if (generation !== tenantLoadGeneration || moduleScope !== tenantModuleScope.value) return
     if (error.code !== 'AUTH_EXPIRED') bootstrapError.value = `客户列表加载失败：${error.message}`
   }
 }
