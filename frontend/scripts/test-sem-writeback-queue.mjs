@@ -31,10 +31,12 @@ const context = {
   TENANT_ID: { value: 1 }, data: { value: { items: ['old'] } },
   error: { value: '' }, loading: { value: false }, mode: { value: 'queue' },
   days: { value: 7 }, statusFilter: { value: '' },
-  fetchWritebackQueue: () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+  queueFilter: { value: 'reconciliation_required' }, queueOffset: { value: 0 },
+  fetchWritebackQueue: (tenantId, params) => new Promise((resolve, reject) => pending.push({ tenantId, params, resolve, reject })),
 }
 const load = new Function(...Object.keys(context), `let loadSequence = 0; ${loaderSource}; return load`)(...Object.values(context))
 const first = load()
+assert.deepEqual(pending[0].params, { stage: 'reconciliation_required', offset: 0, limit: 200 })
 assert.equal(context.data.value, null)
 context.TENANT_ID.value = 2
 const second = load()
@@ -57,4 +59,14 @@ pending[3].resolve({ items: ['stale'] })
 await fourth
 assert.equal(context.data.value, null)
 assert.equal(context.loading.value, false)
+context.TENANT_ID.value = 2
+context.queueFilter.value = 'executed'
+context.queueOffset.value = 200
+const page = load()
+assert.deepEqual(pending[4].params, { stage: 'executed', offset: 200, limit: 200 })
+pending[4].resolve({ counts_scope: 'tenant_history', counts: { executed: 700 }, total: 700, items: ['page-2'] })
+await page
+assert.equal(context.data.value.total, 700)
+assert.ok(view.includes('queueOffset.value = 0'))
+assert.ok(view.includes('@current-change="changeQueuePage"'))
 console.log('SEM writeback queue tests passed')
