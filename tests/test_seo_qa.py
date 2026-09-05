@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from app.api import seo_qa as api
 from app.models.module_workspace import SeoSite
-from app.models.seo import SeoContentAsset, SeoSerpResult, SeoContentReviewEvent
+from app.models.seo import SeoContentAsset, SeoSerpResult, SeoContentReviewEvent, SeoBacklink
 from app.models.seo_cockpit import SeoTask
 from app.models.seo_qa import SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement
 from app.security.auth import AuthContext
@@ -69,7 +69,7 @@ def database(scenario):
         try:
             async with engine.begin() as conn:
                 await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
-                for model in [SeoSite, SeoContentAsset, SeoContentReviewEvent, SeoTask, SeoSerpResult, SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement]:
+                for model in [SeoBacklink, SeoSite, SeoContentAsset, SeoContentReviewEvent, SeoTask, SeoSerpResult, SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement]:
                     table = model.__table__.to_metadata(MetaData())
                     for fk in list(table.foreign_key_constraints):
                         table.constraints.remove(fk)
@@ -292,3 +292,49 @@ def test_batch_contract_rejects_empty_duplicate_and_null_changes():
     with pytest.raises(ValidationError):
         api.BatchQuestions(tenant_id=1, site_id=1, items=[{'id': 1, 'version': 1}]*2, changes={'owner': None})
     assert api.PlanningChanges(owner=None).model_dump(exclude_unset=True) == {'owner': None}
+
+
+@pytest.mark.parametrize('mode', ['link', 'absent', 'internal', 'blocked', 'missing_body', 'permission', 'failure'])
+def test_qa_backlink_return_uses_one_fetch_and_preserves_observation(mode):
+    async def scenario(sessions):
+        async with sessions() as db:
+            body = '应先确认设备型号与运行条件，再根据技术手册确认参数和适用范围。'
+            url = 'https://brand1.example/faq' if mode == 'internal' else 'https://www.zhihu.com/question/12/answer/34'
+            row = SeoQaPlacement(tenant_id=1, site_id=1, answer_id=1, platform='zhihu',
+                answer_url=url, content_version=1, body=body)
+            db.add(row)
+            await db.commit()
+            html = f'<p>{body}</p><a href="https://brand1.example/product" rel="nofollow ugc">官网</a>'
+            if mode == 'absent': html = f'<p>{body}</p>brand1.example'
+            if mode == 'blocked': html = '<title>登录</title>'
+            if mode == 'missing_body': html = '<p>另一个回答</p><a href="https://brand1.example/product">官网</a>'
+            fetched = SimpleNamespace(body=html, status_code=200, error_type=None, final_url=url)
+            ctx = CTX if mode == 'permission' else AuthContext(7, 'qa-test', 'operator', 1, {'seo.content':'edit', 'seo.links':'edit'})
+            async def fail(*args, **kwargs):
+                # A real SQL error verifies that the savepoint repairs the session.
+                await db.execute(text('SELECT * FROM nonexistent_qa_backlink_table'))
+            from contextlib import nullcontext
+            failure = patch('app.seo_backlinks.discover_backlinks', new=fail) if mode == 'failure' else nullcontext()
+            with patch('app.seo_backlinks.fetch_backlink_page', new=AsyncMock(return_value=fetched)) as fetch, failure:
+                result = await api.verify(row.id, api.Scoped(tenant_id=1, site_id=1), ctx, db)
+                fetch.assert_awaited_once_with(url)
+            evidence = result['observations'][-1]['backlink_discovery']
+            expected = {'link':'readable', 'absent':'readable', 'internal':'internal', 'blocked':'not_checked',
+                        'missing_body':'not_checked', 'permission':'permission_required', 'failure':'unavailable'}
+            assert evidence['state'] == expected[mode]
+            links = list((await db.scalars(select(SeoBacklink))).all())
+            assert len(links) == (1 if mode == 'link' else 0)
+            if mode == 'link':
+                assert links[0].tenant_id == 1 and links[0].site_id == 1
+                assert 'nofollow' in links[0].verification['rel']
+                assert evidence['found'] == evidence['created'] == 1
+                row.observations = []
+                await db.commit()
+                with patch('app.seo_backlinks.fetch_backlink_page', new=AsyncMock(return_value=fetched)):
+                    replay = await api.verify(row.id, api.Scoped(tenant_id=1, site_id=1), ctx, db)
+                assert replay['observations'][-1]['backlink_discovery']['created'] == 0
+            if mode == 'failure':
+                assert result['status'] == 'content_observed'
+                await db.refresh(row)
+                assert row.observations[-1]['backlink_discovery']['state'] == 'unavailable'
+    database(scenario)

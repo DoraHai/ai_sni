@@ -1,4 +1,5 @@
 """Question workbench. Reuses SEO content review; publishing is explicitly assisted."""
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -559,7 +560,7 @@ async def publication_draft(placement_id: int, tenant_id: PositiveInt, site_id: 
 
 @router.post('/placements/{placement_id}/verify')
 async def verify(placement_id: int, req: Scoped, ctx=Auth, session=Db):
-    await access(session, ctx, req.tenant_id, req.site_id, True)
+    site = await access(session, ctx, req.tenant_id, req.site_id, True)
     row = await record(session, SeoQaPlacement, placement_id, req.tenant_id, req.site_id, True)
     if not row.answer_url:
         raise HTTPException(409, '请先回填回答网址')
@@ -569,6 +570,21 @@ async def verify(placement_id: int, req: Scoped, ctx=Auth, session=Db):
     from app.seo_backlinks import fetch_backlink_page
     result = await fetch_backlink_page(row.answer_url)
     observation = observe_answer(result, row.body, row.answer_url)
+    discovery = {'state': 'not_checked', 'found': None, 'created': 0}
+    if observation['state'] == 'content_observed':
+        if not ctx.can_edit('seo.links'):
+            discovery['state'] = 'permission_required'
+        else:
+            from app.seo_backlinks import discover_backlinks
+            try:
+                # A secondary write failure must not discard the public-body observation.
+                async with session.begin_nested():
+                    discovery = await discover_backlinks(session, req.tenant_id, req.site_id,
+                        row.answer_url, site.canonical_domain, fetched_page=result)
+            except Exception:
+                logging.getLogger(__name__).exception('QA backlink discovery failed for placement %s', placement_id)
+                discovery = {'state': 'unavailable', 'found': None, 'created': 0}
+    observation['backlink_discovery'] = discovery
     row.observations = [*row.observations[-29:], observation]
     row.status = observation['state']
     row.version += 1

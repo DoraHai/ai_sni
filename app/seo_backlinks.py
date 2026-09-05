@@ -16,12 +16,12 @@ async def fetch_backlink_page(url):
         return SimpleNamespace(body="", final_url=url, status_code=None, error_type="timeout")
 
 
-async def discover_backlinks(session, tenant_id, site_id, source_url, domain):
+async def discover_backlinks(session, tenant_id, site_id, source_url, domain, *, fetched_page=None):
     from sqlalchemy.dialects.postgresql import insert
     from app.models.seo import SeoBacklink
     if belongs_to_site(source_url, domain):
         return {"state": "internal", "reason": "same_site", "checked_at": datetime.utcnow().isoformat(), "found": 0, "created": 0, "links": []}
-    result = await fetch_backlink_page(source_url)
+    result = fetched_page if fetched_page is not None else await fetch_backlink_page(source_url)
     evidence = page_evidence(result)
     evidence["checked_at"] = datetime.utcnow().isoformat()
     links = extract_site_links(result.body, result.final_url, domain) if evidence["state"] == "readable" else []

@@ -25,6 +25,14 @@ const receiptForm = reactive({ id: null, answer_url: '', version: 1 })
 const metricsForm = reactive({ id: null, version: 1, views: null, likes: null, comments: null, source_url: '', as_of: null })
 const reviewNote = ref('')
 const planningRevision = ref(0)
+function backlinkSummary(observation) {
+  const result = observation?.backlink_discovery
+  if (!result || result.state === 'not_checked') return '外链尚未检查'
+  if (result.state === 'permission_required') return '外链未检查：需要外链编辑权限'
+  if (result.state === 'internal') return '本站页面，不计入站外外链'
+  if (result.state !== 'readable') return '外链暂时无法核验，可稍后重试'
+  return `回答所在页面发现 ${result.found} 条官网链接，本次新增 ${result.created} 条外链资产`
+}
 const labels = { open: '待选题', selected: '已选题', archived: '已归档', planned: '草稿', drafting: '草稿', review: '待审核', ready: '已审核', published: '已发布', prepared: '待人工发布', reported: '已回填 · 待核验', content_observed: '页面正文匹配', not_observed: '未观测到正文', unavailable: '暂时无法核验' }
 const kinds = { manual: '人工录入', customer: '客服/销售', import: 'CSV 导入', suggestion: '建议问题', serp: '搜索结果' }
 const formats = { short: '直接短答', detailed: '详细解答', steps: '操作步骤', comparison: '条件对比', faq: '官网 FAQ' }
@@ -204,9 +212,10 @@ watch(scopeKey, () => {
       <el-empty v-if="!placements.length" description="回答审核通过后，点击“准备分发”建立记录。"/>
       <article class="qa-placement" v-for="row in placements" :key="row.id">
         <div class="qa-toolbar"><strong>#{{ row.id }} · {{ platformName(row.platform) }}</strong><el-tag>{{ labels[row.status] }}</el-tag><span class="qa-hint">稿件版本 {{ row.content_version }} · 计划 {{ row.scheduled_at?date(row.scheduled_at):'未设置' }}</span></div>
-        <div class="qa-toolbar"><a v-if="href(row.question_url)" :href="href(row.question_url)" target="_blank" rel="noopener noreferrer">打开指定问题 ↗</a><a v-if="href(row.answer_url)" :href="href(row.answer_url)" target="_blank" rel="noopener noreferrer">查看回答 ↗</a><el-button :disabled="!row.publishable" @click="copy(row)">复制审核稿</el-button><el-button :disabled="!row.publishable" @click="download(row)">下载文本</el-button><el-button :disabled="!canEdit || busy" @click="Object.assign(receiptForm,{id:row.id,answer_url:row.answer_url||'',version:row.version});dialog='receipt'">回填网址</el-button><el-button :disabled="!canEdit || busy || !row.answer_url" @click="verify(row)">核验正文</el-button><el-button :disabled="!canEdit || busy" @click="Object.assign(metricsForm,{id:row.id,version:row.version,views:null,likes:null,comments:null,source_url:row.answer_url||'',as_of:null});dialog='metrics'">录入平台数据</el-button></div>
+        <div class="qa-toolbar"><a v-if="href(row.question_url)" :href="href(row.question_url)" target="_blank" rel="noopener noreferrer">打开指定问题 ↗</a><a v-if="href(row.answer_url)" :href="href(row.answer_url)" target="_blank" rel="noopener noreferrer">查看回答 ↗</a><el-button :disabled="!row.publishable" @click="copy(row)">复制审核稿</el-button><el-button :disabled="!row.publishable" @click="download(row)">下载文本</el-button><el-button :disabled="!canEdit || busy" @click="Object.assign(receiptForm,{id:row.id,answer_url:row.answer_url||'',version:row.version});dialog='receipt'">回填网址</el-button><el-button :disabled="!canEdit || busy || !row.answer_url" @click="verify(row)">核验正文与外链</el-button><el-button :disabled="!canEdit || busy" @click="Object.assign(metricsForm,{id:row.id,version:row.version,views:null,likes:null,comments:null,source_url:row.answer_url||'',as_of:null});dialog='metrics'">录入平台数据</el-button></div>
         <p class="qa-hint">{{ row.reported_metrics ? `人工录入：阅读 ${row.reported_metrics.views ?? '未知'} · 赞同 ${row.reported_metrics.likes ?? '未知'} · 评论 ${row.reported_metrics.comments ?? '未知'} · ${date(row.reported_metrics.as_of)}` : '阅读 / 赞同 / 评论：未知' }}</p>
-        <p v-if="row.problems?.length" class="qa-warning">{{ row.problems.join('；') }}</p><details><summary>查看审核稿与核验记录</summary><pre>{{ row.body }}</pre><p v-for="(o,i) in row.observations" :key="i">{{ date(o.checked_at) }} · {{ labels[o.state] }} · {{ o.reason }}</p></details>
+        <p>{{ backlinkSummary(row.observations?.at(-1)) }}</p><p class="qa-hint">外链按页面中的真实链接统计；不代表链接属于该回答，也不保证传递排名权重。链接属性保存在外链核验记录中。</p>
+        <p v-if="row.problems?.length" class="qa-warning">{{ row.problems.join('；') }}</p><details><summary>查看审核稿与核验记录</summary><pre>{{ row.body }}</pre><p v-for="(o,i) in row.observations" :key="i">{{ date(o.checked_at) }} · {{ labels[o.state] }} · {{ o.reason }} · {{ backlinkSummary(o) }}</p></details>
       </article>
     </section>
 
