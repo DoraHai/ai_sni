@@ -181,4 +181,4 @@ jobs:
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
           printf '%s\n' "$heads" | grep -F '0090_seo_ai_operations (head)'
-          pytest -q tests/test_seo_migration_merge.py tests/test_seo_usage_limits.py tests/test_seo_ai_operations.py tests/test_seo_task_center.py
+          python -m pytest -q tests/test_seo_migration_merge.py tests/test_seo_usage_limits.py tests/test_seo_ai_operations.py tests/test_seo_task_center.py
