@@ -130,3 +130,18 @@ test('backlink presentation distinguishes unknown, internal and verified absence
     assert.match(summary({backlink_discovery:{state:'readable',found:2,created:1}}),/新增 1 条/)
   } finally {m.app.unmount()}
 })
+
+
+test('follow-up filter shows only flagged placements and updates after verification',async()=>{
+  const m=await mount()
+  try {
+    m.state.placements=[{id:1,followup:{needed:true}},{id:2,followup:{needed:false}},{id:3}]
+    assert.equal(m.state.followupCount,1)
+    assert.equal(m.state.visiblePlacements.length,3)
+    m.state.followupOnly=true
+    assert.deepEqual(m.state.visiblePlacements.map(r=>r.id),[1])
+    m.state.placements=[{id:1,followup:{needed:false}}]
+    assert.equal(m.state.visiblePlacements.length,0)
+    assert.equal(m.state.followupCount,0)
+  }finally{m.app.unmount()}
+})

@@ -338,3 +338,28 @@ def test_qa_backlink_return_uses_one_fetch_and_preserves_observation(mode):
                 await db.refresh(row)
                 assert row.observations[-1]['backlink_discovery']['state'] == 'unavailable'
     database(scenario)
+
+
+@pytest.mark.parametrize('case', ['missing_url', 'first', 'fresh', 'due', 'invalid_time', 'unavailable', 'body_changed', 'target_changed', 'unchanged'])
+def test_placement_followup_distinguishes_evidence_and_unknown(case):
+    from app.seo_qa import placement_followup
+    now = datetime(2026, 9, 6, tzinfo=timezone.utc)
+    url = 'https://www.zhihu.com/question/12/answer/34'
+    old = {'state':'content_observed', 'checked_at':now.isoformat(),
+           'backlink_discovery':{'state':'readable', 'links':[{'target_url':'https://brand.example/a'}]}}
+    last = {**old}
+    history = [old, last]
+    if case == 'missing_url': url = None
+    if case == 'first': history = []
+    if case == 'due': last['checked_at'] = (now-timedelta(days=7)).isoformat()
+    if case == 'invalid_time': last['checked_at'] = 'invalid'
+    if case == 'unavailable': last.update(state='unavailable', backlink_discovery={'state':'not_checked'})
+    if case == 'body_changed': last.update(state='not_observed', backlink_discovery={'state':'not_checked'})
+    if case == 'target_changed': last['backlink_discovery'] = {'state':'readable','links':[{'target_url':'https://brand.example/b'}]}
+    result = placement_followup(url, history, now=now)
+    assert result['needed'] == (case not in {'fresh','unchanged'})
+    reasons = ' '.join(result['reasons'])
+    if case == 'unavailable':
+        assert '不代表回答已删除' in reasons and '链接发生变化' not in reasons
+    if case == 'body_changed': assert '此前正文匹配' in reasons
+    if case == 'target_changed': assert '新增 1 条，未再发现 1 条' in reasons

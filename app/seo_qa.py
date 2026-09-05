@@ -172,3 +172,45 @@ def observe_answer(result, body, expected_url):
     return {**evidence, 'state': 'content_observed' if found else 'not_observed',
             'reason': 'matching_answer_text' if found else 'text_not_found', 'body_hash': body_hash(body),
             'meaning': '公开页面正文匹配，不证明账号归属、平台审核结论或阅读量'}
+
+
+def placement_followup(answer_url, observations, *, now=None):
+    """Read-only follow-up reasons; inaccessible pages never prove removal."""
+    now = now or datetime.now(timezone.utc)
+    reasons = []
+    last = observations[-1] if observations else {}
+    checked_at = last.get('checked_at')
+    try:
+        checked = datetime.fromisoformat(checked_at.replace('Z', '+00:00'))
+        if checked.tzinfo is None:
+            checked = checked.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError, AttributeError):
+        checked = None
+    if not answer_url:
+        reasons.append('待回填回答网址')
+    elif not last:
+        reasons.append('网址已回填，待首次核验')
+    else:
+        state = last.get('state')
+        if state == 'unavailable':
+            reasons.append('页面暂时无法核验，不代表回答已删除')
+        elif state == 'not_observed':
+            was_observed = any(o.get('state') == 'content_observed' for o in observations[:-1])
+            reasons.append('此前正文匹配，本次未匹配，请复查' if was_observed else '未匹配到审核正文，请核对网址或正文')
+        elif state != 'content_observed':
+            reasons.append('核验状态未知，请复查')
+        if checked is None or (now - checked).total_seconds() >= 7 * 86400:
+            reasons.append('距上次核验已满 7 天或核验时间未知，建议复查')
+        current = last.get('backlink_discovery') or {}
+        if current.get('state') in {'unavailable', 'blocked', 'unreachable'}:
+            reasons.append('外链暂时无法核验，请稍后复查')
+        if current.get('state') == 'readable':
+            previous = next((o.get('backlink_discovery') for o in reversed(observations[:-1])
+                if (o.get('backlink_discovery') or {}).get('state') == 'readable'), None)
+            if previous is not None:
+                # Compare targets, not counts: one link may replace another.
+                before = {x.get('target_url') for x in previous.get('links', []) if x.get('target_url')}
+                after = {x.get('target_url') for x in current.get('links', []) if x.get('target_url')}
+                if before != after:
+                    reasons.append(f'页面官网链接发生变化：新增 {len(after-before)} 条，未再发现 {len(before-after)} 条')
+    return {'needed': bool(reasons), 'reasons': reasons, 'last_checked_at': checked_at}

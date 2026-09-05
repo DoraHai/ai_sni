@@ -25,6 +25,9 @@ const receiptForm = reactive({ id: null, answer_url: '', version: 1 })
 const metricsForm = reactive({ id: null, version: 1, views: null, likes: null, comments: null, source_url: '', as_of: null })
 const reviewNote = ref('')
 const planningRevision = ref(0)
+const followupOnly = ref(false)
+const followupCount = computed(() => placements.value.filter(row => row.followup?.needed).length)
+const visiblePlacements = computed(() => followupOnly.value ? placements.value.filter(row => row.followup?.needed) : placements.value)
 function backlinkSummary(observation) {
   const result = observation?.backlink_discovery
   if (!result || result.state === 'not_checked') return '外链尚未检查'
@@ -209,11 +212,14 @@ watch(scopeKey, () => {
     <section v-if="tab==='placements'" class="qa-panel">
       <h2>分发与效果</h2><p class="qa-hint">平台回答由真人发布，计划时间用于安排工作。回填网址后抓取核验正文；正文匹配不代表账号归属或平台阅读量。最近 200 条记录。</p>
       <div class="qa-capabilities"><div v-for="p in platforms" :key="p.key"><strong>{{ p.name }}</strong><p>{{ p.description }}</p></div></div>
+      <div class="qa-toolbar"><el-checkbox v-model="followupOnly">仅看待跟进（{{ followupCount }}）</el-checkbox><span class="qa-hint">当前列表范围内，核验满 7 天建议复查；点击核验后更新结果。</span></div>
+      <el-empty v-if="placements.length && !visiblePlacements.length" description="当前列表范围内没有待跟进记录"/>
       <el-empty v-if="!placements.length" description="回答审核通过后，点击“准备分发”建立记录。"/>
-      <article class="qa-placement" v-for="row in placements" :key="row.id">
+      <article class="qa-placement" v-for="row in visiblePlacements" :key="row.id">
         <div class="qa-toolbar"><strong>#{{ row.id }} · {{ platformName(row.platform) }}</strong><el-tag>{{ labels[row.status] }}</el-tag><span class="qa-hint">稿件版本 {{ row.content_version }} · 计划 {{ row.scheduled_at?date(row.scheduled_at):'未设置' }}</span></div>
         <div class="qa-toolbar"><a v-if="href(row.question_url)" :href="href(row.question_url)" target="_blank" rel="noopener noreferrer">打开指定问题 ↗</a><a v-if="href(row.answer_url)" :href="href(row.answer_url)" target="_blank" rel="noopener noreferrer">查看回答 ↗</a><el-button :disabled="!row.publishable" @click="copy(row)">复制审核稿</el-button><el-button :disabled="!row.publishable" @click="download(row)">下载文本</el-button><el-button :disabled="!canEdit || busy" @click="Object.assign(receiptForm,{id:row.id,answer_url:row.answer_url||'',version:row.version});dialog='receipt'">回填网址</el-button><el-button :disabled="!canEdit || busy || !row.answer_url" @click="verify(row)">核验正文与外链</el-button><el-button :disabled="!canEdit || busy" @click="Object.assign(metricsForm,{id:row.id,version:row.version,views:null,likes:null,comments:null,source_url:row.answer_url||'',as_of:null});dialog='metrics'">录入平台数据</el-button></div>
         <p class="qa-hint">{{ row.reported_metrics ? `人工录入：阅读 ${row.reported_metrics.views ?? '未知'} · 赞同 ${row.reported_metrics.likes ?? '未知'} · 评论 ${row.reported_metrics.comments ?? '未知'} · ${date(row.reported_metrics.as_of)}` : '阅读 / 赞同 / 评论：未知' }}</p>
+        <p v-for="reason in row.followup?.reasons || []" :key="reason" class="qa-warning">{{ reason }}</p>
         <p>{{ backlinkSummary(row.observations?.at(-1)) }}</p><p class="qa-hint">外链按页面中的真实链接统计；不代表链接属于该回答，也不保证传递排名权重。链接属性保存在外链核验记录中。</p>
         <p v-if="row.problems?.length" class="qa-warning">{{ row.problems.join('；') }}</p><details><summary>查看审核稿与核验记录</summary><pre>{{ row.body }}</pre><p v-for="(o,i) in row.observations" :key="i">{{ date(o.checked_at) }} · {{ labels[o.state] }} · {{ o.reason }} · {{ backlinkSummary(o) }}</p></details>
       </article>
