@@ -8,6 +8,7 @@ const props = defineProps({ tenantId: [Number, String] })
 const router = useRouter()
 const route = useRoute()
 const lookupId = ref('')
+const statusFilter = ref('')
 const linkTarget = computed(() => evidenceLinkTarget(route.query, props.tenantId))
 const state = reactive({ items: [], selected: null, detail: null, loading: false, busy: false, error: '', message: '', more: false })
 const publicationId = ref('')
@@ -19,9 +20,10 @@ async function cancelTask() {
   await controller.act('cancel')
   if (tenant === props.tenantId && id === state.selected?.id) cancelPending.value = false
 }
-const controller = createEvidenceController(state, api, () => props.tenantId)
+const controller = createEvidenceController(state, api, () => props.tenantId, () => statusFilter.value)
 function reload() { publicationId.value = ''; return controller.load(false, linkTarget.value.id) }
 watch(() => [props.tenantId, route.query.evidence_task_id, route.query.evidence_tenant_id], () => { lookupId.value = ''; reload() }, { immediate: true })
+watch(statusFilter, reload)
 function lookup() {
   if (!props.tenantId || state.loading || state.busy) return
   if (!/^[1-9][0-9]*$/.test(lookupId.value) || !Number.isSafeInteger(Number(lookupId.value))) { state.error = '请输入有效的验收任务编号'; return }
@@ -50,6 +52,10 @@ function select(row) {
     <div class="gd-bd">
       <p class="gd-sub">查看基线、真实发布和周复测进度；完成须由服务端核验实际指标变化。</p>
       <el-alert v-if="linkTarget.error" :title="linkTarget.error" type="warning" :closable="false" />
+      <label>任务状态 <select v-model="statusFilter" :disabled="state.busy">
+        <option value="">全部状态</option><option value="open">待处理</option><option value="in_progress">进行中</option><option value="done">已完成</option><option value="cancelled">已取消</option>
+      </select></label>
+      <p v-if="statusFilter && state.selected && state.selected.status !== statusFilter">当前打开的任务不属于所选状态，保留详情供查阅。</p>
       <form class="evidence-lookup" @submit.prevent="lookup">
         <label>验收任务编号 <input v-model="lookupId" inputmode="numeric" placeholder="例如 12" /></label>
         <button class="gd-btn" :disabled="!tenantId || state.loading || state.busy" type="submit">打开任务</button>
@@ -57,7 +63,7 @@ function select(row) {
       <el-alert v-if="state.error" :title="state.error" type="error" :closable="false" />
       <el-alert v-if="state.message" :title="state.message" type="success" :closable="false" />
       <p v-if="state.loading">正在读取任务…</p>
-      <p v-else-if="!state.items.length && !state.selected && !state.error">暂无指标验收任务。</p>
+      <p v-else-if="!state.items.length && !state.selected && !state.error">当前筛选下暂无指标验收任务。</p>
       <div class="evidence-list">
         <button v-for="row in state.items" :key="row.id" class="gd-btn" :disabled="state.loading || state.busy" :aria-pressed="state.selected?.id === row.id" @click="select(row)">#{{ row.id }} {{ row.title }} · {{ labels[row.status] || row.status }}</button>
       </div>

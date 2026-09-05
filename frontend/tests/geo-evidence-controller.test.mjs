@@ -132,3 +132,21 @@ test('repeated start while request is pending sends only once', async () => {
  const first=x.c.act('start');await x.c.act('start');pending.resolve(row);await first
  assert.equal(calls,1)
 })
+
+
+test('status filtering is sent to the server and changed tasks leave the filtered list', async () => {
+ const state={items:[],selected:null,detail:null,busy:false,loading:false}
+ const calls=[];const row={id:200,status:'in_progress'}
+ const api={list:async(t,cursor,status)=>{calls.push([cursor,status]);return cursor?[]:Array.from({length:200},(_,i)=>({id:i+1,status:'open'}))},start:async()=>row,get:async()=>row,readiness:async()=>({})}
+ const c=createEvidenceController(state,api,()=>7,()=> 'open')
+ await c.load();state.selected=state.items.at(-1);await c.act('start')
+ assert.equal(state.items.length,199);assert.equal(state.selected.status,'in_progress')
+ await c.load(true);assert.deepEqual(calls,[[0,'open'],[200,'open']])
+})
+test('late status filter response cannot overwrite newer results', async () => {
+ let status='open';const pending=deferred()
+ const state={items:[],selected:null,detail:null,busy:false,loading:false}
+ const c=createEvidenceController(state,{list:async()=>status==='open'?pending.promise:[{id:2,status:'done'}]},()=>7,()=>status)
+ const first=c.load();status='done';await c.load();pending.resolve([{id:1,status:'open'}]);await first
+ assert.equal(state.items[0].status,'done')
+})

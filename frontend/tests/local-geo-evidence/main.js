@@ -15,7 +15,7 @@ client.defaults.adapter=async config=>{
  const path=config.url,method=config.method
  let data
  if(method==='post' && path.endsWith('/tasks')) {createdTask={...JSON.parse(config.data),id:11,status:'open'};data=createdTask}
- else if(method==='get' && path.endsWith('/tasks')) data=config.params.tenant_id===7?[task]:[]
+ else if(method==='get' && path.endsWith('/tasks')) data=config.params.tenant_id===7?[task,...(createdTask?[createdTask]:[])].filter(x=>!config.params.status||x.status===config.params.status):[]
  else if(method==='get' && path.endsWith('/execution-readiness')) data={baseline_valid:baseline,baseline:{value:baseline?0:null,unit:'count',as_of:'2026-08-31',metric_key:'geo.visibility.ai_mention_count_7d'},baseline_blocker:baseline?null:'等待完整周基线',publishing:{ready_count:0},publication_candidates:[{id:99,channel:'官网',url:'https://example.invalid/article'}],publication_evidence:proof?{first_verified_at:'2026-09-01'}:null,retest_plan:baseline?{total_samples:10}:null,can_retest:baseline&&proof&&!retest,retest_blocker:baseline&&proof?null:'等待基线和发布核验',latest_retest:retest?{id:42,status:'running'}:null}
  else if(method==='patch' && ['in_progress','cancelled'].includes(JSON.parse(config.data).status)) {data=path.endsWith('/11')?createdTask:task;data.status=JSON.parse(config.data).status}
  else if(method==='get') data=path.endsWith('/11')?createdTask:task

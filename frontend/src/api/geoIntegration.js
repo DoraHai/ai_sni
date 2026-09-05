@@ -1,7 +1,7 @@
 import client from './client'
 const base = '/api/v1/geo/integration/tasks'
 const config = (tenant) => ({ params: { tenant_id: tenant } })
-export const list = (tenant, after = 0) => client.get(base, { params: { tenant_id: tenant, limit: 200, after_id: after } })
+export const list = (tenant, after = 0, status = '') => client.get(base, { params: { tenant_id: tenant, limit: 200, after_id: after, ...(status ? { status } : {}) } })
 export const get = (tenant, id) => client.get(`${base}/${id}`, config(tenant))
 export const readiness = (tenant, id) => client.get(`${base}/${id}/execution-readiness`, config(tenant))
 export const baseline = (tenant, id) => client.post(`${base}/${id}/baseline`, {}, config(tenant))
