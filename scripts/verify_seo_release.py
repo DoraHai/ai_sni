@@ -104,6 +104,7 @@ SOURCE_ALLOWED_EXACT = {
     "migrations/versions/20260903_0085_seo_page_index_reviews.py",
     "migrations/versions/20260903_0087_seo_image_alt_evidence.py",
     "migrations/versions/20260904_0088_seo_image_alt_reviews.py",
+    "migrations/versions/20260905_0089_seo_metric_partial_status.py",
     "tests/test_seo_site_diagnostics.py",
     "migrations/versions/20260903_0086_seo_index_review_merge.py",
     "tests/test_seo_remediation.py",
