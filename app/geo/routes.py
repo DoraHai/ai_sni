@@ -75,6 +75,78 @@ class TicketUpdate(BaseModel):
     due_date: date | None = None
 
 
+class TicketExecution(BaseModel):
+    content_task_id: int = Field(..., gt=0)
+    before_snapshot_ids: list[int] = Field(default_factory=list, max_length=100)
+    after_snapshot_ids: list[int] = Field(default_factory=list, max_length=100)
+    change_note: str = Field(..., min_length=1, max_length=4000)
+
+
+@router.post('/action-tickets/{ticket_id}/execution')
+async def save_ticket_execution(
+    ticket_id: int, req: TicketExecution, tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session),
+) -> dict:
+    from app.models import GeoContentTask, GeoAnswerSnapshot, GeoArticleVersion, GeoPrompt
+    from app.geo.work_execution import freeze_samples, compare_samples, utc_naive
+
+    ctx.ensure_tenant(tenant_id)
+    row = await _work_ticket_for_update(session, ticket_id, tenant_id)
+    if not (row.advice_code or '').startswith('workqueue:v1:'):
+        raise HTTPException(400, '仅执行待办支持关联内容与复测')
+    task = await session.get(GeoContentTask, req.content_task_id)
+    if task is None or task.tenant_id != tenant_id:
+        raise HTTPException(404, '内容任务不存在')
+    if row.advice_code.startswith('workqueue:v1:prompt-') and row.advice_code != f'workqueue:v1:prompt-{task.prompt_id}':
+        raise HTTPException(400, '内容任务必须对应待办的同一问题')
+    prompt = await session.get(GeoPrompt, task.prompt_id)
+    if prompt is None or prompt.tenant_id != tenant_id or prompt.is_brand_probe:
+        raise HTTPException(400, '请关联非品牌点名问题的内容任务')
+    note = req.change_note.strip()
+    if not note:
+        raise HTTPException(400, '请填写具体修改内容')
+    before_ids, after_ids = set(req.before_snapshot_ids), set(req.after_snapshot_ids)
+    if before_ids & after_ids or any(i <= 0 for i in before_ids | after_ids):
+        raise HTTPException(400, '前后样本不得重复，编号必须为正整数')
+    if after_ids and not before_ids:
+        raise HTTPException(400, '请先关联修改前样本')
+    ids = before_ids | after_ids
+    snapshots = list(await session.scalars(select(GeoAnswerSnapshot).where(
+        GeoAnswerSnapshot.tenant_id == tenant_id, GeoAnswerSnapshot.prompt_id == task.prompt_id,
+        GeoAnswerSnapshot.id.in_(ids),
+    ).order_by(GeoAnswerSnapshot.id).with_for_update())) if ids else []
+    if {s.id for s in snapshots} != ids:
+        raise HTTPException(400, '样本不存在或不属于当前客户的同一问题')
+    article = await session.scalar(select(GeoArticleVersion).where(GeoArticleVersion.task_id == task.id)
+                                   .order_by(GeoArticleVersion.version_no.desc()).limit(1))
+    try:
+        before = freeze_samples([s for s in snapshots if s.id in before_ids])
+        after = freeze_samples([s for s in snapshots if s.id in after_ids])
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if after:
+        if article is None or not article.created_at:
+            raise HTTPException(400, '请先保存内容修改，再关联复测样本')
+        if min(utc_naive(s.captured_at) for s in snapshots if s.id in after_ids) <= max(utc_naive(s.captured_at) for s in snapshots if s.id in before_ids):
+            raise HTTPException(400, '复测必须晚于全部修改前样本')
+        if any(utc_naive(s.captured_at) > utc_naive(article.created_at) for s in snapshots if s.id in before_ids):
+            raise HTTPException(400, '修改前样本必须早于当前内容版本保存时间')
+        if any(utc_naive(s.captured_at) < utc_naive(article.created_at) for s in snapshots if s.id in after_ids):
+            raise HTTPException(400, '复测样本必须采集于当前内容版本保存之后')
+    row.content_task_id = task.id
+    row.baseline_snapshot = dict(workflow='content_retest_v1', prompt_id=task.prompt_id,
+                                 question=prompt.question, samples=before)
+    row.progress = dict(workflow='content_retest_v1', prompt_id=task.prompt_id,
+                        article_id=article.id if article else None, version_no=article.version_no if article else None,
+                        change_note=note, samples=after, comparison=compare_samples(before, after),
+                        recorded_at=datetime.utcnow().isoformat() + 'Z')
+    row.evidence = append_evidence(row.evidence, check='workflow.execution', result='recorded',
+                                   note=f'关联内容任务 #{task.id}；修改前 {len(before)} 条，复测 {len(after)} 条。{note}')
+    await session.commit()
+    await session.refresh(row)
+    return ticket_public_dict(row)
+
+
 def _payload(run: GeoAuditRun) -> dict[str, Any]:
     findings = run.findings or []
     return {

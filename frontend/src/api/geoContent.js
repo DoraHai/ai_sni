@@ -532,17 +532,20 @@ export function listGeoAsyncJobs(tenantId, params = {}) {
 export async function waitGeoAsyncJob(
   tenantId,
   jobId,
-  { intervalMs = 2500, maxMs = 45 * 60 * 1000, onTick } = {},
+  { intervalMs = 2500, maxMs = 45 * 60 * 1000, onTick, isCurrent = () => true } = {},
 ) {
   // Align with backend stale running window (~45min); do not fail UI while job still runs
   const start = Date.now()
   while (Date.now() - start < maxMs) {
+    if (!isCurrent()) return null
     const job = await getGeoAsyncJob(tenantId, jobId)
+    if (!isCurrent()) return null
     if (typeof onTick === 'function') onTick(job)
     if (['succeeded', 'failed', 'cancelled'].includes(job.status)) return job
     await new Promise((r) => setTimeout(r, intervalMs))
   }
   // Soft timeout: return last known job so UI can say「转后台继续」
+  if (!isCurrent()) return null
   try {
     return await getGeoAsyncJob(tenantId, jobId)
   } catch {

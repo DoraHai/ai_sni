@@ -56,6 +56,7 @@ jobs:
           tests/test_geo_job_ownership.py
           tests/test_geo_flow_integration.py
           tests/test_geo_work_queue_tickets.py
+          tests/test_geo_work_execution.py
           tests/test_geo_source_opportunity_tasks.py
           tests/test_geo_source_opportunities.py
           tests/test_geo_sample_provenance.py
@@ -100,6 +101,10 @@ jobs:
       - name: Build independent GEO frontend
         working-directory: frontend/geo-frontend
         run: npm ci && npm run build
+
+      - name: Verify GEO frontend regressions before deployment
+        working-directory: frontend
+        run: node --test tests/geo*.test.mjs
 
       - name: Create isolated GEO release archive
         run: |

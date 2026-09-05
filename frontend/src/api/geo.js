@@ -129,6 +129,12 @@ export function patchGeoActionTicket(tenantId, ticketId, body) {
   })
 }
 
+export function saveGeoTicketExecution(tenantId, ticketId, body) {
+  return client.post(`/api/v1/geo/action-tickets/${ticketId}/execution`, body, {
+    params: { tenant_id: tenantId },
+  })
+}
+
 export function verifyGeoActionTicket(tenantId, ticketId, recrawl = true) {
   return client.post(`/api/v1/geo/action-tickets/${ticketId}/verify`, null, {
     params: { tenant_id: tenantId, recrawl: !!recrawl },

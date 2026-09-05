@@ -58,6 +58,17 @@ client.defaults.adapter = async (config) => {
     let ticket = tickets.find((t) => t.tenant_id === tenant && t.advice_code === body.advice_code && t.status !== 'done')
     if (!ticket) { ticket = { ...body, id: tickets.length + 1, tenant_id: tenant, status: 'todo' }; tickets.push(ticket) }
     data = ticket
+  } else if (/\/action-tickets\/\d+\/execution$/.test(path) && method === 'post') {
+    const ticket = tickets.find((t) => t.id === Number(path.split('/').at(-2)) && t.tenant_id === tenant)
+    if (!ticket || !active || body.content_task_id !== 100 || !task) throw new Error('内容任务不存在')
+    if (body.before_snapshot_ids.some((id) => ![1, 2, 3].includes(id)) || body.after_snapshot_ids.some((id) => ![4, 5, 6].includes(id))) throw new Error('样本不存在或不属于同一问题')
+    ticket.content_task_id = 100
+    ticket.baseline_snapshot = { prompt_id: 2, samples: body.before_snapshot_ids.map((id) => ({ id })) }
+    ticket.progress = { version_no: 1, change_note: body.change_note, samples: body.after_snapshot_ids.map((id) => ({ id })), comparison: {
+      engines: [{ engine: 'deepseek', before_count: body.before_snapshot_ids.length, after_count: body.after_snapshot_ids.length, before_rate: 0, after_rate: 1, delta: null }],
+      delta: null, note: '本地模拟展示；样本不足，不证明内容修改造成效果。',
+    } }
+    data = ticket
   } else if (/\/action-tickets\/\d+$/.test(path) && method === 'patch') {
     const ticket = tickets.find((t) => t.id === Number(path.split('/').at(-1)) && t.tenant_id === tenant)
     if (!ticket) throw new Error('工单不存在')
@@ -87,6 +98,16 @@ client.defaults.adapter = async (config) => {
         facts: [], variants: [], article: null, rule_result: null, review: {}, brief_ready: false }
     }
     data = { created, task_id: 100, editor_path: '/geo/tasks/100' }
+  } else if (method === 'put' && path === '/api/v1/geo/content-tasks/100/article') {
+    if (!active || !task) throw new Error('任务不属于当前客户')
+    if (failSave) { failSave = false; throw new Error('本地模拟：正文保存失败') }
+    if (delaySave) {
+      delaySave = false; pendingSave.value = true
+      await new Promise((resolve) => { releaseSave = resolve })
+      pendingSave.value = false; releaseSave = null
+    }
+    task = { ...task, article: { ...task.article, ...body } }
+    data = task
   } else if (method === 'patch' && path === '/api/v1/geo/content-tasks/100') {
     if (!active || !task) throw new Error('任务不属于当前客户')
     if (failSave) { failSave = false; throw new Error('本地模拟：保存失败，请重试') }
@@ -139,6 +160,11 @@ const app = createApp({ setup() { return () => h('div', [
   h('div', { style: 'background:#fff4c2;padding:12px;position:sticky;top:0;z-index:9999' }, [
     h('strong', '本地模拟验收 · 无生产连接 '),
     h('button', { onClick: () => { router.push('/geo/tasks') } }, '工作台'),
+    h('button', { onClick: () => {
+      if (!task) return
+      task = { ...task, status: 'editing', article: { id: 1, title: '客户 A 正文', body_markdown: '客户 A 私有正文，仅供本地验收。', outline: {} } }
+      session.setTenant(7); router.push('/geo/tasks/100')
+    } }, '载入本地正文样稿'),
     h('button', { onClick: () => { session.setTenant(7); router.push('/geo/citations') } }, '客户 A / 信源'),
     h('button', { onClick: () => { session.setTenant(8); router.push('/geo/citations') } }, '客户 B / 信源'),
     h('button', { onClick: () => { opportunity.evidence_version = 'b'.repeat(64) } }, '使证据过期'),

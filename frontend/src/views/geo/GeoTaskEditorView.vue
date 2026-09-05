@@ -4,7 +4,7 @@ import { geoSnapshotLink } from '../../utils/geoRoutes'
  * Vue 母稿编辑器
  * Brief / 母稿 / 渠道稿（勾选生成、预览、复制）/ 检查
  */
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -58,6 +58,11 @@ import {
 } from '../../utils/geoEditorSurface'
 import RichTextMarkdownEditor from '../../components/RichTextMarkdownEditor.vue'
 
+import { createEditorContext } from '../../utils/geoEditorContext'
+
+let editorEpoch = 0
+let editorDisposed = false
+const captureEditorContext = () => createEditorContext(() => [tenantId.value, taskId.value, editorEpoch, editorDisposed])
 const route = useRoute()
 const router = useRouter()
 const { tenantId } = useGeoTenant()
@@ -409,6 +414,8 @@ const briefLocalDraft = ref(false)
 const briefSuggestHint = ref('')
 
 async function load() {
+  const editorRequest = captureEditorContext()
+  try {
   const gen = ++loadGeneration
   if (!tenantId.value || !taskId.value) {
     task.value = null
@@ -420,17 +427,18 @@ async function load() {
   error.value = ''
   try {
     if (!catalog.value) {
-      catalog.value = await fetchGeoBriefCatalog()
+      catalog.value = await editorRequest.wait(fetchGeoBriefCatalog())
     }
-    const [t, factsRes, chRes] = await Promise.all([
+    const [t, factsRes, chRes] = await editorRequest.wait(Promise.all([
       getGeoContentTask(tenantId.value, taskId.value),
       listGeoFacts(tenantId.value, { status: 'active' }),
       listGeoPublishingChannels(tenantId.value, false),
-    ])
+    ]))
     let accRes = { items: [] }
     try {
-      accRes = await listGeoChannelAccounts(tenantId.value)
+      accRes = await editorRequest.wait(listGeoChannelAccounts(tenantId.value))
     } catch {
+    if (!editorRequest.active()) return false
       accRes = { items: [] }
     }
     // Stale load: a newer load or AI suggest already owns the form
@@ -459,19 +467,19 @@ async function load() {
     scoredDraftSnapshot.value = t?.rule_result?.article_fingerprint ? currentDraftSnapshot() : ''
     if (hasMasterDraft.value && !generatingMaster.value) leftTab.value = 'score'
     else if (!hasMasterDraft.value) leftTab.value = 'brief'
-    await loadPushTargets()
+    await editorRequest.wait(loadPushTargets())
     if (
       (t.status === 'facts_bound' || (t.pipeline_step && t.pipeline_step !== 'opportunity')) &&
       !(t.facts || []).length
     ) {
-      if (gen === loadGeneration) await refreshTaskDetail({ skipBrief: true })
+      if (gen === loadGeneration) await editorRequest.wait(refreshTaskDetail({ skipBrief: true }))
     }
     if (docTab.value !== 'master') {
       const still = (task.value?.variants || []).some((v) => v.channel === docTab.value)
       if (!still) docTab.value = 'master'
     }
     applyVariantFromTask()
-    await resumeActiveJob()
+    await editorRequest.wait(resumeActiveJob())
     if (task.value?.rule_result) {
       const rr = task.value.rule_result
       checkResult.value = {
@@ -486,22 +494,33 @@ async function load() {
       }
     }
   } catch (e) {
+    if (!editorRequest.active()) return false
     if (gen !== loadGeneration) return
     error.value = e.message || '加载失败'
     task.value = null
   } finally {
+    if (editorRequest.active()) {
     if (gen === loadGeneration) loading.value = false
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
 async function saveBrief() {
+  const editorRequest = captureEditorContext()
+  try {
   const owner = tenantId.value
   const target = taskId.value
   const generation = loadGeneration
   const stillCurrent = () => owner === tenantId.value && target === taskId.value && generation === loadGeneration
   busy.value = 'brief'
   try {
-    const saved = await patchGeoContentTask(owner, target, { brief: briefPayload() })
+    const saved = await editorRequest.wait(patchGeoContentTask(owner, target, { brief: briefPayload() }))
     if (!stillCurrent()) return
     task.value = saved
     applyBriefToForm(saved.brief)
@@ -509,9 +528,18 @@ async function saveBrief() {
     briefSuggestHint.value = ''
     ElMessage.success('Brief 已保存')
   } catch (e) {
+    if (!editorRequest.active()) return false
     if (stillCurrent()) toastError(e, '保存 Brief 失败')
   } finally {
+    if (editorRequest.active()) {
     if (busy.value === 'brief') busy.value = ''
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
@@ -526,6 +554,8 @@ function briefRequiredEmpty() {
 }
 
 async function suggestBrief() {
+  const editorRequest = captureEditorContext()
+  try {
   busy.value = 'suggest'
   error.value = ''
   briefSuggestHint.value = '正在请求 AI 建议…'
@@ -541,10 +571,10 @@ async function suggestBrief() {
     }
     // Empty form → overwrite so merge does not keep schema-normalized blanks
     const overwrite = briefRequiredEmpty()
-    const res = await suggestGeoTaskBrief(tenantId.value, taskId.value, {
+    const res = await editorRequest.wait(suggestGeoTaskBrief(tenantId.value, taskId.value, {
       overwrite,
       use_llm: true,
-    })
+    }))
     const sb =
       res?.suggested_brief && typeof res.suggested_brief === 'object'
         ? res.suggested_brief
@@ -576,15 +606,16 @@ async function suggestBrief() {
       ElMessage.error(msg)
       // one automatic retry with overwrite=true
       try {
-        const res2 = await suggestGeoTaskBrief(tenantId.value, taskId.value, {
+        const res2 = await editorRequest.wait(suggestGeoTaskBrief(tenantId.value, taskId.value, {
           overwrite: true,
           use_llm: true,
-        })
+        }))
         if (res2?.suggested_brief) {
           applyBriefToForm(res2.suggested_brief)
           briefLocalDraft.value = true
         }
       } catch {
+    if (!editorRequest.active()) return false
         /* keep first error */
       }
       const filled2 = [
@@ -603,11 +634,20 @@ async function suggestBrief() {
     error.value = ''
     ElMessage({ type: 'success', message: msg, duration: 6000, showClose: true })
   } catch (e) {
+    if (!editorRequest.active()) return false
     const msg = toastError(e, '建议 Brief 失败')
     error.value = msg
     briefSuggestHint.value = msg
   } finally {
+    if (editorRequest.active()) {
     busy.value = ''
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
@@ -643,12 +683,21 @@ function applyTaskPayload(t, opts = {}) {
 }
 
 async function refreshTaskDetail(opts = {}) {
-  const t = await getGeoContentTask(tenantId.value, taskId.value)
+  const editorRequest = captureEditorContext()
+  try {
+  const t = await editorRequest.wait(getGeoContentTask(tenantId.value, taskId.value))
   return applyTaskPayload(t, opts)
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
+  }
 }
 
 /** Always PUT then GET so UI bound count never depends on a partial response. */
 async function bindAndRefresh(ids, successPrefix = '已绑定') {
+  const editorRequest = captureEditorContext()
+  try {
   const clean = coerceFactIds(ids)
   if (!clean.length) {
     const msg = '请先在下拉框中勾选至少 1 条事实，再点「保存绑定」'
@@ -656,14 +705,14 @@ async function bindAndRefresh(ids, successPrefix = '已绑定') {
     ElMessage.warning(msg)
     return 0
   }
-  await bindGeoTaskFacts(tenantId.value, taskId.value, clean)
+  await editorRequest.wait(bindGeoTaskFacts(tenantId.value, taskId.value, clean))
   // Always re-fetch detail — never trust only the PUT body for facts[]
-  let t = await refreshTaskDetail()
+  let t = await editorRequest.wait(refreshTaskDetail())
   let bound = (t?.facts || []).length
   if (bound === 0) {
     // rare race: one more pull
-    await new Promise((r) => setTimeout(r, 200))
-    t = await refreshTaskDetail()
+    await editorRequest.wait(new Promise((r) => setTimeout(r, 200)))
+    t = await editorRequest.wait(refreshTaskDetail())
     bound = (t?.facts || []).length
   }
   if (bound === 0) {
@@ -676,23 +725,41 @@ async function bindAndRefresh(ids, successPrefix = '已绑定') {
   ElMessage.success(`${successPrefix} ${bound} 条事实`)
   error.value = ''
   return bound
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
+  }
 }
 
 async function saveFacts() {
+  const editorRequest = captureEditorContext()
+  try {
   busy.value = 'facts'
   error.value = ''
   try {
-    await bindAndRefresh(selectedFactIds.value, '已绑定')
+    await editorRequest.wait(bindAndRefresh(selectedFactIds.value, '已绑定'))
   } catch (e) {
+    if (!editorRequest.active()) return false
     const msg = toastError(e, '绑定失败')
     error.value = msg
   } finally {
+    if (editorRequest.active()) {
     busy.value = ''
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
 /** Unblock B3: bind first N verified active facts without relying on retrieve. */
 async function bindTopVerified(n = 3) {
+  const editorRequest = captureEditorContext()
+  try {
   const verified = (allFacts.value || [])
     .filter((f) => f.status === 'active' || !f.status)
     .map((f) => Number(f.id))
@@ -708,31 +775,43 @@ async function bindTopVerified(n = 3) {
   busy.value = 'facts'
   error.value = ''
   try {
-    await bindAndRefresh(pick, '已绑定 verified')
+    await editorRequest.wait(bindAndRefresh(pick, '已绑定 verified'))
   } catch (e) {
+    if (!editorRequest.active()) return false
     const msg = toastError(e, '绑定失败')
     error.value = msg
   } finally {
+    if (editorRequest.active()) {
     busy.value = ''
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
 async function retrieveFacts() {
+  const editorRequest = captureEditorContext()
+  try {
   busy.value = 'retrieve'
   error.value = ''
   retrievePreview.value = []
   try {
     // Brief patch is best-effort; do not block retrieve if it fails
     try {
-      await patchGeoContentTask(tenantId.value, taskId.value, { brief: briefPayload() })
+      await editorRequest.wait(patchGeoContentTask(tenantId.value, taskId.value, { brief: briefPayload() }))
     } catch (pe) {
+    if (!editorRequest.active()) return false
       console.warn('retrieve: brief patch skipped', pe)
     }
-    const res = await retrieveGeoTaskFacts(tenantId.value, taskId.value, {
+    const res = await editorRequest.wait(retrieveGeoTaskFacts(tenantId.value, taskId.value, {
       limit: 8,
       verified_only: false,
       auto_bind: false,
-    })
+    }))
     // Support both {items:[{fact_id}]} and accidental nested shapes
     let items = Array.isArray(res?.items) ? res.items : []
     if (!items.length && Array.isArray(res?.results)) items = res.results
@@ -806,6 +885,7 @@ async function retrieveFacts() {
       error.value = ''
     }
   } catch (e) {
+    if (!editorRequest.active()) return false
     const raw = formatGeoError(e, '召回失败')
     const msg =
       /not found|404/i.test(raw)
@@ -814,14 +894,24 @@ async function retrieveFacts() {
     error.value = msg
     ElMessage({ type: 'error', message: msg, duration: 8000, showClose: true })
   } finally {
+    if (editorRequest.active()) {
     busy.value = ''
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
 async function applyRetrieveTop() {
+  const editorRequest = captureEditorContext()
+  try {
   let ids = coerceFactIds(retrievePreview.value.map((x) => x.fact_id))
   if (!ids.length) {
-    await retrieveFacts()
+    await editorRequest.wait(retrieveFacts())
     ids = coerceFactIds(retrievePreview.value.map((x) => x.fact_id))
   }
   if (!ids.length) {
@@ -841,26 +931,36 @@ async function applyRetrieveTop() {
   busy.value = 'apply'
   error.value = ''
   try {
-    await applyGeoRetrievedFacts(tenantId.value, taskId.value, ids)
-    const t = await refreshTaskDetail()
+    await editorRequest.wait(applyGeoRetrievedFacts(tenantId.value, taskId.value, ids))
+    const t = await editorRequest.wait(refreshTaskDetail())
     const bound = (t?.facts || []).length
     if (bound === 0) {
       // fallback to PUT path
-      await bindAndRefresh(ids, '已绑定召回')
+      await editorRequest.wait(bindAndRefresh(ids, '已绑定召回'))
     } else {
       ElMessage.success(`已绑定召回事实 ${bound} 条`)
       error.value = ''
     }
   } catch (e) {
+    if (!editorRequest.active()) return false
     // apply path failed — try PUT
     try {
-      await bindAndRefresh(ids, '已绑定')
+      await editorRequest.wait(bindAndRefresh(ids, '已绑定'))
     } catch (e2) {
+    if (!editorRequest.active()) return false
       const msg = toastError(e2, '绑定失败')
       error.value = msg
     }
   } finally {
+    if (editorRequest.active()) {
     busy.value = ''
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
@@ -884,10 +984,17 @@ function validateBeforeGenerate() {
 }
 
 async function ensurePrototypeMaterials() {
+  const editorRequest = captureEditorContext()
+  try {
   if ((task.value?.facts || []).length >= 3) return true
   if (libraryVerifiedCount.value < 3) return false
-  await bindTopVerified(3)
+  await editorRequest.wait(bindTopVerified(3))
   return (task.value?.facts || []).length >= 3
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
+  }
 }
 
 const generateHint = ref('')
@@ -924,7 +1031,14 @@ function removeCiteSentence(sent) {
 }
 
 async function reciteEvidence() {
-  await saveArticleBody()
+  const editorRequest = captureEditorContext()
+  try {
+  await editorRequest.wait(saveArticleBody())
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
+  }
 }
 
 const jobLive = computed(() =>
@@ -985,20 +1099,22 @@ const liveJobCard = computed(() => {
 })
 
 async function resumeActiveJob() {
+  const editorRequest = captureEditorContext()
+  try {
   if (!tenantId.value || !taskId.value) return
   try {
     const stored = Number(sessionStorage.getItem(jobStorageKey()) || 0)
-    const listed = await listGeoAsyncJobs(tenantId.value, {
+    const listed = await editorRequest.wait(listGeoAsyncJobs(tenantId.value, {
       ref_type: 'content_task',
       ref_id: taskId.value,
       limit: 5,
-    }).catch(() => ({ items: [] }))
+    }).catch(() => ({ items: [] })))
     const open = (listed.items || []).find((j) =>
       ['pending', 'running'].includes(j.status),
     )
     const jobId = open?.id || stored
     if (!jobId) return
-    const job = await getGeoAsyncJob(tenantId.value, jobId)
+    const job = await editorRequest.wait(getGeoAsyncJob(tenantId.value, jobId))
     activeJob.value = job
     if (['pending', 'running'].includes(job.status)) {
       persistJobId(job.id)
@@ -1009,17 +1125,27 @@ async function resumeActiveJob() {
       persistJobId(null)
     }
   } catch {
+    if (!editorRequest.active()) return false
     /* ignore */
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
 async function followJob(jobId, { maxMs = 12 * 60 * 1000 } = {}) {
+  const editorRequest = captureEditorContext()
+  try {
   persistJobId(jobId)
   try {
-    const job = await waitGeoAsyncJob(tenantId.value, jobId, {
+    const job = await editorRequest.wait(waitGeoAsyncJob(tenantId.value, jobId, {
+      isCurrent: editorRequest.active,
       intervalMs: 2000,
       maxMs,
       onTick: (j) => {
+        if (!editorRequest.active()) return
         activeJob.value = j
         if (j.cancel_requested) {
           generateHint.value = '已请求取消，等待当前步骤结束…'
@@ -1028,7 +1154,7 @@ async function followJob(jobId, { maxMs = 12 * 60 * 1000 } = {}) {
             j.progress_label || `后台任务 #${j.id} ${j.status}`
         }
       },
-    })
+    }))
     activeJob.value = job
     if (['pending', 'running'].includes(job.status)) {
       generateHint.value = `后台任务 #${job.id} 仍在跑，完成后刷新即可看到全部渠道稿`
@@ -1043,25 +1169,43 @@ async function followJob(jobId, { maxMs = 12 * 60 * 1000 } = {}) {
     persistJobId(null)
     return job
   } finally {
+    if (editorRequest.active()) {
     if (busy.value === 'generate' || busy.value === 'variants') busy.value = ''
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
 async function cancelActiveJob() {
+  const editorRequest = captureEditorContext()
+  try {
   if (!activeJob.value?.id) return
   try {
-    activeJob.value = await cancelGeoAsyncJob(tenantId.value, activeJob.value.id)
+    activeJob.value = await editorRequest.wait(cancelGeoAsyncJob(tenantId.value, activeJob.value.id))
     generateHint.value = '已请求取消'
     ElMessage.info('已请求取消，正在跑的模型调用结束后会停')
   } catch (e) {
+    if (!editorRequest.active()) return false
     toastError(e, '取消失败')
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
 async function generate() {
+  const editorRequest = captureEditorContext()
+  try {
   error.value = ''
   generateHint.value = '正在生成母稿…'
-  if (!(await ensurePrototypeMaterials())) {
+  if (!(await editorRequest.wait(ensurePrototypeMaterials()))) {
     const msg = '未能关联足够的可信材料，请先到知识库检查资料'
     error.value = msg
     generateHint.value = msg
@@ -1079,21 +1223,21 @@ async function generate() {
   checkResult.value = null
   busy.value = 'generate'
   try {
-    await patchGeoContentTask(tenantId.value, taskId.value, { brief: briefPayload() })
+    await editorRequest.wait(patchGeoContentTask(tenantId.value, taskId.value, { brief: briefPayload() }))
     generateHint.value = '已提交后台生成，请稍候…'
-    const gen = await generateGeoContentTask(tenantId.value, taskId.value, {
+    const gen = await editorRequest.wait(generateGeoContentTask(tenantId.value, taskId.value, {
       runAsync: true,
-    })
+    }))
     let payload = gen
     if (gen?.async && gen?.job?.id) {
       activeJob.value = gen.job
       persistJobId(gen.job.id)
-      const job = await followJob(gen.job.id)
+      const job = await editorRequest.wait(followJob(gen.job.id))
       if (job?.status === 'failed') {
         throw new Error(job.error || '后台生成失败')
       }
       if (job?.status === 'cancelled') return
-      payload = await getGeoContentTask(tenantId.value, taskId.value)
+      payload = await editorRequest.wait(getGeoContentTask(tenantId.value, taskId.value))
     }
     applyTaskPayload(payload)
     docTab.value = 'master'
@@ -1119,15 +1263,30 @@ async function generate() {
       ElMessage({ type: 'error', message: msg, duration: 8000, showClose: true })
     }
   } catch (e) {
+    if (!editorRequest.active()) return false
     const msg = toastError(e, '生成失败')
     error.value = msg
     generateHint.value = msg
   } finally {
+    if (editorRequest.active()) {
     busy.value = ''
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
 async function saveArticleBody({ silent = false } = {}) {
+  const editorRequest = captureEditorContext()
+  try {
+  const owner = tenantId.value
+  const target = taskId.value
+  const generation = loadGeneration
+  const stillCurrent = () => owner === tenantId.value && target === taskId.value && generation === loadGeneration
   if (!article.title.trim() || !article.body_markdown.trim()) {
     if (!silent) ElMessage.warning('标题与正文不能为空')
     return false
@@ -1135,11 +1294,13 @@ async function saveArticleBody({ silent = false } = {}) {
   if (!silent) busy.value = 'save'
   try {
     const outline = task.value?.article?.outline || {}
-    const savedTask = await saveGeoArticle(tenantId.value, taskId.value, {
+    const savedTask = await editorRequest.wait(saveGeoArticle(owner, target, {
       title: article.title.trim(),
       body_markdown: stripCiteAppendix(article.body_markdown),
       outline,
-    })
+    }))
+    // A stale save must also stop callers from scoring or optimizing the new task.
+    if (!stillCurrent()) return false
     const articleChanged = savedTask?.article_changed !== false
     task.value = savedTask
     applyArticleFromTask(task.value)
@@ -1152,18 +1313,29 @@ async function saveArticleBody({ silent = false } = {}) {
     if (!silent) ElMessage.success('母稿已保存')
     return true
   } catch (e) {
-    if (!silent) toastError(e, '保存失败')
+    if (!editorRequest.active()) return false
+    if (!silent && stillCurrent()) toastError(e, '保存失败')
     return false
   } finally {
-    if (!silent) busy.value = ''
+    if (editorRequest.active()) {
+    if (!silent && owner === tenantId.value && target === taskId.value && busy.value === 'save') busy.value = ''
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
 async function runGeoScore({ silent = false } = {}) {
+  const editorRequest = captureEditorContext()
+  try {
   busy.value = 'score'
   error.value = ''
   try {
-    const saved = await saveArticleBody({ silent: true })
+    const saved = await editorRequest.wait(saveArticleBody({ silent: true }))
     if (!saved) {
       const msg = '保存正文失败，无法进行 GEO 评分'
       if (!silent) {
@@ -1172,8 +1344,8 @@ async function runGeoScore({ silent = false } = {}) {
       }
       return null
     }
-    const res = await checkGeoContentTask(tenantId.value, taskId.value, false)
-    const lintResult = await lintGeoContentTask(tenantId.value, taskId.value)
+    const res = await editorRequest.wait(checkGeoContentTask(tenantId.value, taskId.value, false))
+    const lintResult = await editorRequest.wait(lintGeoContentTask(tenantId.value, taskId.value))
     checkResult.value = {
       ...res,
       lint: lintResult?.lint || res.lint,
@@ -1188,23 +1360,34 @@ async function runGeoScore({ silent = false } = {}) {
     if (!silent) ElMessage.success(`GEO 评分已更新：${res.geo_score ?? '—'} 分`)
     return checkResult.value
   } catch (e) {
+    if (!editorRequest.active()) return false
     if (!silent) error.value = toastError(e, 'GEO 评分失败')
     return null
   } finally {
+    if (editorRequest.active()) {
     busy.value = ''
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
 async function runAiReview() {
+  const editorRequest = captureEditorContext()
+  try {
   busy.value = 'ai-review'
   error.value = ''
   try {
-    const saved = await saveArticleBody({ silent: true })
+    const saved = await editorRequest.wait(saveArticleBody({ silent: true }))
     if (!saved) {
       ElMessage.error('保存当前正文失败，无法生成优化建议')
       return null
     }
-    const res = await aiReviewGeoContentTask(tenantId.value, taskId.value, { persist: true })
+    const res = await editorRequest.wait(aiReviewGeoContentTask(tenantId.value, taskId.value, { persist: true }))
     checkResult.value = {
       ...(checkResult.value || {}),
       ai_review: res.ai_review,
@@ -1218,14 +1401,25 @@ async function runAiReview() {
     ElMessage.success('AI 优化建议已更新')
     return res.ai_review
   } catch (e) {
+    if (!editorRequest.active()) return false
     error.value = toastError(e, '获取 AI 优化建议失败')
     return null
   } finally {
+    if (editorRequest.active()) {
     busy.value = ''
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
 async function runOptimize(scope) {
+  const editorRequest = captureEditorContext()
+  try {
   if (!hasMasterDraft.value) {
     ElMessage.warning('请先生成或保存母稿')
     return null
@@ -1245,12 +1439,12 @@ async function runOptimize(scope) {
   busy.value = `optimize-${scope}`
   error.value = ''
   try {
-    const saved = await saveArticleBody({ silent: true })
+    const saved = await editorRequest.wait(saveArticleBody({ silent: true }))
     if (!saved) {
       ElMessage.error('保存正文失败，无法优化')
       return null
     }
-    const res = await optimizeGeoArticle(taskId.value, body)
+    const res = await editorRequest.wait(optimizeGeoArticle(taskId.value, body))
     if (res?.task) applyTaskPayload(res.task)
     checkResult.value = res.evaluation
     scoredDraftSnapshot.value = res?.evaluation?.geo_score != null ? currentDraftSnapshot() : ''
@@ -1259,17 +1453,28 @@ async function runOptimize(scope) {
     ElMessage.success(codes === 'ai_rewrite' ? '已用 AI 改写当前母稿' : `已更新当前母稿：${codes}`)
     return res
   } catch (e) {
+    if (!editorRequest.active()) return false
     error.value = toastError(e, '优化失败')
     return null
   } finally {
+    if (editorRequest.active()) {
     busy.value = ''
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
 async function runCheck({ silent = false } = {}) {
+  const editorRequest = captureEditorContext()
+  try {
   busy.value = 'check'
   try {
-    const res = await checkGeoContentTask(tenantId.value, taskId.value, false)
+    const res = await editorRequest.wait(checkGeoContentTask(tenantId.value, taskId.value, false))
     checkResult.value = res
     if (res.task) {
       task.value = res.task
@@ -1287,21 +1492,32 @@ async function runCheck({ silent = false } = {}) {
     }
     return res
   } catch (e) {
+    if (!editorRequest.active()) return false
     toastError(e, '检查失败')
     return null
   } finally {
+    if (editorRequest.active()) {
     busy.value = ''
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
 async function applyPatch(code) {
+  const editorRequest = captureEditorContext()
+  try {
   busy.value = 'patch'
   error.value = ''
   const beforeLen = (article.body_markdown || '').length
   try {
     // Always edit master draft when applying structural patches
     docTab.value = 'master'
-    const res = await applyGeoContentPatch(tenantId.value, taskId.value, code)
+    const res = await editorRequest.wait(applyGeoContentPatch(tenantId.value, taskId.value, code))
     // Prefer explicit article on response; fall back to task.article then re-GET
     let art = res.article || res.task?.article || null
     if (res.task) {
@@ -1311,7 +1527,7 @@ async function applyPatch(code) {
       article.title = art.title || article.title
       article.body_markdown = sanitizeDraftHeadings(art.body_markdown)
     } else {
-      const t = await refreshTaskDetail()
+      const t = await editorRequest.wait(refreshTaskDetail())
       art = t?.article || null
     }
     const afterLen = (article.body_markdown || '').length
@@ -1359,13 +1575,24 @@ async function applyPatch(code) {
     }
     error.value = ''
   } catch (e) {
+    if (!editorRequest.active()) return false
     toastError(e, '写入失败')
   } finally {
+    if (editorRequest.active()) {
     busy.value = ''
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
 async function retryFailedVariants() {
+  const editorRequest = captureEditorContext()
+  try {
   const keys = failedVariantItems.value.map((f) => f.channel).filter(Boolean)
   if (!keys.length) {
     ElMessage.warning('没有失败渠道可重试')
@@ -1375,13 +1602,23 @@ async function retryFailedVariants() {
   const keep = channelPick.value
   channelPick.value = keys
   try {
-    await genVariants()
+    await editorRequest.wait(genVariants())
   } finally {
+    if (editorRequest.active()) {
     channelPick.value = [...new Set([...keep, ...channelPick.value])]
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
 async function genVariants() {
+  const editorRequest = captureEditorContext()
+  try {
   if (!channelDraftGate.value.allowed) {
     ElMessage.warning(channelDraftGate.value.reason)
     return
@@ -1396,14 +1633,14 @@ async function genVariants() {
   }
   busy.value = 'variants'
   try {
-    let t = await createGeoVariants(tenantId.value, taskId.value, channelPick.value, {
+    let t = await editorRequest.wait(createGeoVariants(tenantId.value, taskId.value, channelPick.value, {
       useLlm: true,
       runAsync: true,
-    })
+    }))
     if (t?.async && t?.job?.id) {
       activeJob.value = t.job
       persistJobId(t.job.id)
-      const job = await followJob(t.job.id)
+      const job = await editorRequest.wait(followJob(t.job.id))
       if (job?.status === 'cancelled') return
       if (job.status === 'failed') {
         throw new Error(job.error || '渠道稿后台生成失败')
@@ -1412,7 +1649,7 @@ async function genVariants() {
         ElMessage.info('三路渠道稿还在后台写，完成后请刷新，不要重复点生成')
         return
       }
-      t = await getGeoContentTask(tenantId.value, taskId.value)
+      t = await editorRequest.wait(getGeoContentTask(tenantId.value, taskId.value))
       if (job.result_meta?.variant_polish) {
         t = { ...t, variant_polish: job.result_meta.variant_polish }
       }
@@ -1441,10 +1678,11 @@ async function genVariants() {
     }
     // Always re-check so patches/score stay in sync with latest master + variants
     try {
-      const res = await checkGeoContentTask(tenantId.value, taskId.value, false)
+      const res = await editorRequest.wait(checkGeoContentTask(tenantId.value, taskId.value, false))
       checkResult.value = res
       if (res.task) applyTaskPayload(res.task)
     } catch {
+    if (!editorRequest.active()) return false
       /* keep variant success even if re-check fails */
     }
     applyVariantFromTask()
@@ -1475,9 +1713,18 @@ async function genVariants() {
       )
     }
   } catch (e) {
+    if (!editorRequest.active()) return false
     toastError(e, '生成成稿失败')
   } finally {
+    if (editorRequest.active()) {
     busy.value = ''
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
@@ -1533,6 +1780,8 @@ const currentVariantHasTable = computed(() => {
 
 /** Apply every available structural patch so publish gate can pass faster. */
 async function applyAllPatches() {
+  const editorRequest = captureEditorContext()
+  try {
   const codes = (patches.value || []).map((p) => p.code).filter(Boolean)
   if (!codes.length) {
     ElMessage.info('当前没有可自动写入的修改，请先点「检查就绪」')
@@ -1545,7 +1794,7 @@ async function applyAllPatches() {
   try {
     for (const code of codes) {
       try {
-        const res = await applyGeoContentPatch(tenantId.value, taskId.value, code)
+        const res = await editorRequest.wait(applyGeoContentPatch(tenantId.value, taskId.value, code))
         if (res.task) applyTaskPayload(res.task)
         if (res.article?.body_markdown != null) {
           article.body_markdown = sanitizeDraftHeadings(res.article.body_markdown)
@@ -1564,11 +1813,12 @@ async function applyAllPatches() {
         }
         applied += 1
       } catch (e) {
+    if (!editorRequest.active()) return false
         console.warn('patch skip', code, e)
       }
     }
     // Final check after batch
-    const res = await checkGeoContentTask(tenantId.value, taskId.value, false)
+    const res = await editorRequest.wait(checkGeoContentTask(tenantId.value, taskId.value, false))
     checkResult.value = res
     if (res.task) applyTaskPayload(res.task)
     ElMessage.success(
@@ -1577,13 +1827,24 @@ async function applyAllPatches() {
       }${res.geo_score != null ? `，就绪分 ${res.geo_score}` : ''}`,
     )
   } catch (e) {
+    if (!editorRequest.active()) return false
     toastError(e, '批量写入失败')
   } finally {
+    if (editorRequest.active()) {
     busy.value = ''
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
 async function saveVariantBody() {
+  const editorRequest = captureEditorContext()
+  try {
   if (docTab.value === 'master') return
   if (!variantEdit.title.trim() || !variantEdit.body_markdown.trim()) {
     ElMessage.warning('渠道稿标题与正文不能为空')
@@ -1591,29 +1852,40 @@ async function saveVariantBody() {
   }
   busy.value = 'saveVar'
   try {
-    task.value = await patchGeoVariant(tenantId.value, taskId.value, docTab.value, {
+    task.value = await editorRequest.wait(patchGeoVariant(tenantId.value, taskId.value, docTab.value, {
       title: variantEdit.title.trim(),
       body_markdown: variantEdit.body_markdown,
-    })
+    }))
     applyVariantFromTask()
     variantViewMode.value = 'preview'
     ElMessage.success('渠道稿已保存并刷新 HTML 正稿')
   } catch (e) {
+    if (!editorRequest.active()) return false
     toastError(e, '保存渠道稿失败')
   } finally {
+    if (editorRequest.active()) {
     busy.value = ''
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
 async function exportCurrentVariant() {
+  const editorRequest = captureEditorContext()
+  try {
   if (docTab.value === 'master') {
     ElMessage.warning('请先切换到渠道页签')
     return
   }
   busy.value = 'export'
   try {
-    const res = await exportGeoVariant(tenantId.value, taskId.value, docTab.value)
-    await load()
+    const res = await editorRequest.wait(exportGeoVariant(tenantId.value, taskId.value, docTab.value))
+    await editorRequest.wait(load())
     applyVariantFromTask()
     if (res.body_html) {
       variantEdit.body_html = res.body_html
@@ -1625,9 +1897,18 @@ async function exportCurrentVariant() {
         : `已导出 ${res.channel}（status=${res.status}）`,
     )
   } catch (e) {
+    if (!editorRequest.active()) return false
     toastError(e, '导出失败')
   } finally {
+    if (editorRequest.active()) {
     busy.value = ''
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
@@ -1637,9 +1918,11 @@ function goDistribution(mode) {
 }
 
 async function copyCurrentDoc() {
+  const editorRequest = captureEditorContext()
+  try {
   try {
     if (docTab.value === 'master') {
-      await navigator.clipboard.writeText(`# ${article.title}\n\n${article.body_markdown}`)
+      await editorRequest.wait(navigator.clipboard.writeText(`# ${article.title}\n\n${article.body_markdown}`))
       ElMessage.success('已复制母稿 Markdown（草案，勿直接外发）')
       return
     }
@@ -1659,7 +1942,7 @@ async function copyCurrentDoc() {
       ? `<h1>${title.replace(/</g, '&lt;')}</h1>\n${html}`
       : html
     try {
-      await navigator.clipboard.write([
+      await editorRequest.wait(navigator.clipboard.write([
         new ClipboardItem({
           'text/html': new Blob([payload], { type: 'text/html' }),
           'text/plain': new Blob(
@@ -1669,10 +1952,11 @@ async function copyCurrentDoc() {
             { type: 'text/plain' },
           ),
         }),
-      ])
+      ]))
     } catch {
+    if (!editorRequest.active()) return false
       // Fallback: plain HTML string
-      await navigator.clipboard.writeText(payload)
+      await editorRequest.wait(navigator.clipboard.writeText(payload))
     }
     ElMessage.success(
       currentVariantHasTable.value
@@ -1680,7 +1964,13 @@ async function copyCurrentDoc() {
         : '已复制 HTML 正稿（可粘贴到平台后台，非 Markdown）',
     )
   } catch {
+    if (!editorRequest.active()) return false
     ElMessage.error('复制失败')
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
@@ -1696,6 +1986,8 @@ const publishGateHint = computed(() => {
 })
 
 async function recordPublication() {
+  const editorRequest = captureEditorContext()
+  try {
   if (docTab.value === 'master') {
     const msg = '请切换到渠道页签再回填 URL'
     ElMessage.warning(msg)
@@ -1708,50 +2000,78 @@ async function recordPublication() {
   }
   busy.value = 'publish'
   try {
-    task.value = await publishGeoVariant(taskId.value, {
+    task.value = await editorRequest.wait(publishGeoVariant(taskId.value, {
       tenant_id: tenantId.value,
       channel: docTab.value,
       published_url: publishUrl.value.trim(),
       note: publishNote.value || null,
-    })
+    }))
     ElMessage.success('已回填发布 URL')
     error.value = ''
-    await loadImpact()
+    await editorRequest.wait(loadImpact())
   } catch (e) {
+    if (!editorRequest.active()) return false
     const msg = toastError(e, '回填失败')
     error.value = msg
   } finally {
+    if (editorRequest.active()) {
     busy.value = ''
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
 async function loadPushTargets() {
+  const editorRequest = captureEditorContext()
+  try {
   if (!tenantId.value || !taskId.value) return
   try {
-    const data = await fetchTaskPushTargets(tenantId.value, taskId.value)
+    const data = await editorRequest.wait(fetchTaskPushTargets(tenantId.value, taskId.value))
     pushTargets.value = data.targets || []
     const ready = (data.ready_targets || []).map(
       (t) => `${t.adapt_key || t.channel_type}:${t.account_id}`,
     )
     if (!pushSelected.value.length) pushSelected.value = ready
   } catch {
+    if (!editorRequest.active()) return false
     pushTargets.value = []
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
 async function loadImpact() {
+  const editorRequest = captureEditorContext()
+  try {
   if (!tenantId.value || !taskId.value) return
   impactLoading.value = true
   try {
-    impact.value = await fetchGeoContentTaskImpact(
+    impact.value = await editorRequest.wait(fetchGeoContentTaskImpact(
       tenantId.value,
       taskId.value,
       impactWindowDays.value,
-    )
+    ))
   } catch {
+    if (!editorRequest.active()) return false
     impact.value = null
   } finally {
+    if (editorRequest.active()) {
     impactLoading.value = false
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
@@ -1782,6 +2102,8 @@ const impactActionHint = computed(
 )
 
 async function pushWebhook() {
+  const editorRequest = captureEditorContext()
+  try {
   if (docTab.value === 'master') {
     ElMessage.warning('请切换到渠道页签')
     return
@@ -1792,7 +2114,7 @@ async function pushWebhook() {
   }
   busy.value = 'push'
   try {
-    const res = await pushGeoVariantWebhook(taskId.value, {
+    const res = await editorRequest.wait(pushGeoVariantWebhook(taskId.value, {
       tenant_id: tenantId.value,
       channel: docTab.value,
       account_id: webhookAccountId.value,
@@ -1800,21 +2122,32 @@ async function pushWebhook() {
       create_publication: true,
       published_url: publishUrl.value.trim() || null,
       note: publishNote.value || null,
-    })
+    }))
     if (res.task) task.value = res.task
-    else await load()
-    await loadPushTargets()
+    else await editorRequest.wait(load())
+    await editorRequest.wait(loadPushTargets())
     ElMessage.success(
       res?.connector === 'social' ? '社交直发完成' : 'Webhook 推送完成',
     )
   } catch (e) {
+    if (!editorRequest.active()) return false
     toastError(e, '推送失败')
   } finally {
+    if (editorRequest.active()) {
     busy.value = ''
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
 async function pushBatchSelected() {
+  const editorRequest = captureEditorContext()
+  try {
   if (!pushSelected.value.length) {
     ElMessage.warning('请勾选至少一个就绪渠道')
     return
@@ -1825,7 +2158,7 @@ async function pushBatchSelected() {
       const [channel, accountId] = String(key).split(':')
       return { channel, account_id: Number(accountId) }
     })
-    let res = await pushGeoVariantBatch(
+    let res = await editorRequest.wait(pushGeoVariantBatch(
       taskId.value,
       {
         tenant_id: tenantId.value,
@@ -1835,19 +2168,20 @@ async function pushBatchSelected() {
         note: publishNote.value || null,
       },
       { runAsync: true },
-    )
+    ))
     if (res?.async && res?.job?.id) {
       ElMessage.info(`推送任务 #${res.job.id} 排队中…`)
-      const job = await waitGeoAsyncJob(tenantId.value, res.job.id, {
+      const job = await editorRequest.wait(waitGeoAsyncJob(tenantId.value, res.job.id, {
+        isCurrent: editorRequest.active,
         intervalMs: 2000,
         maxMs: 180000,
-      })
+      }))
       if (job.status === 'failed') {
         throw new Error(job.error || '后台推送失败')
       }
       if (job.status === 'cancelled') {
         ElMessage.info('推送已取消')
-        await loadPushTargets()
+        await editorRequest.wait(loadPushTargets())
         return
       }
       res = {
@@ -1855,13 +2189,13 @@ async function pushBatchSelected() {
         fail_count: job.result_meta?.fail_count ?? 0,
         results: job.result_meta?.results || [],
       }
-      await load()
+      await editorRequest.wait(load())
     } else if (res.task) {
       task.value = res.task
     } else {
-      await load()
+      await editorRequest.wait(load())
     }
-    await loadPushTargets()
+    await editorRequest.wait(loadPushTargets())
     ElMessage.success(
       `多媒推送完成：成功 ${res.ok_count || 0} · 失败 ${res.fail_count || 0}`,
     )
@@ -1873,18 +2207,34 @@ async function pushBatchSelected() {
       if (errs.length) ElMessage.warning(errs.join('；'))
     }
   } catch (e) {
+    if (!editorRequest.active()) return false
     toastError(e, '批量推送失败')
   } finally {
+    if (editorRequest.active()) {
     pushBatchBusy.value = false
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
 async function pushBatchAllReady() {
+  const editorRequest = captureEditorContext()
+  try {
   const ready = (pushTargets.value || []).filter((t) => t.ready)
   pushSelected.value = ready.map(
     (t) => `${t.adapt_key || t.channel_type}:${t.account_id}`,
   )
-  await pushBatchSelected()
+  await editorRequest.wait(pushBatchSelected())
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
+  }
 }
 
 function normChannelKey(raw) {
@@ -1921,6 +2271,8 @@ const liveChannelCoverage = computed(() => {
 })
 
 async function loadChannelBlueprint() {
+  const editorRequest = captureEditorContext()
+  try {
   if (!tenantId.value) return
   const group =
     task.value?.prompt?.question_group ||
@@ -1928,9 +2280,15 @@ async function loadChannelBlueprint() {
     brief.intent ||
     '推荐'
   try {
-    channelBlueprint.value = await fetchChannelBlueprint(tenantId.value, group)
+    channelBlueprint.value = await editorRequest.wait(fetchChannelBlueprint(tenantId.value, group))
   } catch {
+    if (!editorRequest.active()) return false
     channelBlueprint.value = null
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 
@@ -2063,18 +2421,25 @@ function checkDetails(c) {
     .filter(Boolean)
 }
 async function fixCheck(code) {
+  const editorRequest = captureEditorContext()
+  try {
   const patch = patchForCheck(code)
   if (patch) {
-    await applyPatch(code)
+    await editorRequest.wait(applyPatch(code))
     return
   }
-  await runCheck({ silent: true })
+  await editorRequest.wait(runCheck({ silent: true }))
   if (patchForCheck(code)) {
-    await applyPatch(code)
+    await editorRequest.wait(applyPatch(code))
     return
   }
   ElMessage.closeAll()
   ElMessage.warning('这项需要对照右侧原文手工改，没有可自动写入的修改。')
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
+  }
 }
 const boundFacts = computed(() => task.value?.facts || [])
 const factsBindReady = computed(() => boundFacts.value.length >= 3)
@@ -2192,21 +2557,32 @@ function factOptionLabel(f) {
   return snippet ? `#${f.id} · ${title} — ${snippet}` : `#${f.id} · ${title}`
 }
 async function removeBoundFact(id) {
+  const editorRequest = captureEditorContext()
+  try {
   const nid = Number(id)
   selectedFactIds.value = (selectedFactIds.value || []).filter((x) => Number(x) !== nid)
   busy.value = 'facts'
   try {
     if (!selectedFactIds.value.length) {
-      await bindGeoTaskFacts(tenantId.value, taskId.value, [])
-      await refreshTaskDetail()
+      await editorRequest.wait(bindGeoTaskFacts(tenantId.value, taskId.value, []))
+      await editorRequest.wait(refreshTaskDetail())
       ElMessage.success('已清空事实绑定')
     } else {
-      await bindAndRefresh(selectedFactIds.value, '已更新绑定')
+      await editorRequest.wait(bindAndRefresh(selectedFactIds.value, '已更新绑定'))
     }
   } catch (e) {
+    if (!editorRequest.active()) return false
     toastError(e, '移除失败')
   } finally {
+    if (editorRequest.active()) {
     busy.value = ''
+
+    }
+  }
+
+  } catch (e) {
+    if (!editorRequest.active()) return false
+    throw e
   }
 }
 const channelOptions = computed(() => {
@@ -2572,7 +2948,30 @@ watch(
 )
 
 function resetEditorContext() {
+  editorEpoch++
+  allFacts.value = []
+  selectedFactIds.value = []
+  retrievePreview.value = []
+  channelAccounts.value = []
+  publishingChannels.value = []
+  channelBlueprint.value = null
+  webhookAccountId.value = null
+  publishUrl.value = ''
+  publishNote.value = ''
+  sectionHeading.value = ''
+  lastSavedAt.value = null
+  docTab.value = 'master'
+  variantEdit.title = ''
+  variantEdit.body_markdown = ''
+  activeJob.value = null
+  generateHint.value = ''
+  impact.value = null
+  pushTargets.value = []
+  pushSelected.value = []
+  pushBatchBusy.value = false
+  impactLoading.value = false
   clearTimeout(autosaveTimer)
+  busy.value = ''
   task.value = null
   article.title = ''
   article.body_markdown = ''
@@ -2587,6 +2986,7 @@ watch([tenantId, taskId], () => {
   resetEditorContext()
   load()
 }, { flush: 'sync' })
+onBeforeUnmount(() => { editorDisposed = true; editorEpoch++; loadGeneration++; clearTimeout(autosaveTimer) })
 onMounted(load)
 </script>
 

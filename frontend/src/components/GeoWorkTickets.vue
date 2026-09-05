@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { listGeoActionTickets, createGeoActionTicket, patchGeoActionTicket } from '../api/geo'
 import { workTicketPayload, shanghaiToday, ticketOverdue, filterWorkTickets, mergeAssignmentDrafts } from '../utils/geoWorkQueue'
 import { geoSnapshotLink } from '../utils/geoRoutes'
+import GeoTicketExecution from './GeoTicketExecution.vue'
 
 const props = defineProps({ tenantId: [Number, String], suggestions: { type: Array, default: () => [] }, period: String })
 const tickets = ref([]), notes = ref({}), error = ref(''), loading = ref(false), busy = ref(false)
@@ -80,6 +81,11 @@ function finish(ticket, pass) {
   mutate((owner) => patchGeoActionTicket(owner, ticket.id, { manual_pass: pass, verification_note: note }), { noteId: ticket.id, note: notes.value[ticket.id] })
 }
 function resetFilters() { statusFilter.value = 'open'; ownerFilter.value = ''; deadlineFilter.value = ''; search.value = '' }
+function executionSaved(saved) {
+  const next = tickets.value.map((ticket) => ticket.id === saved.id ? saved : ticket)
+  assignments.value = mergeAssignmentDrafts(tickets.value, next, assignments.value)
+  tickets.value = next
+}
 watch(() => props.tenantId, () => {
   tickets.value = []; assignments.value = {}; notes.value = {}; resetFilters(); load()
 }, { immediate: true, flush: 'sync' })
@@ -116,6 +122,7 @@ onBeforeUnmount(() => { generation++; clearInterval(dateTimer) })
       <p class="assignment-help">负责人按姓名登记；截止日当天不算逾期，按上海日期判断。清空字段后保存可取消设置。</p>
       <p class="details">{{ ticket.action }}</p>
       <p><b>验收要求：</b>{{ ticket.acceptance_desc }}</p>
+      <GeoTicketExecution :tenant-id="tenantId" :ticket="ticket" :disabled="busy || loading" @saved="executionSaved" />
       <router-link :to="geoSnapshotLink({ prompt_id: /^workqueue:v1:prompt-(\d+)$/.exec(ticket.advice_code || '')?.[1] })">打开采样与核验记录</router-link>
       <p v-if="ticket.last_note"><b>最近验收记录：</b>{{ ticket.last_note }}</p>
       <el-alert v-if="ticket.status === 'blocked'" :title="blockedReason(ticket) || '此历史待办未记录受阻原因，请补充。'" type="warning" :closable="false" />
