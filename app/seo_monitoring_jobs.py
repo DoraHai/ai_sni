@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.seo_backlinks import apply_backlink_evidence
+
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -225,31 +227,23 @@ async def verify_scheduled_backlinks() -> dict[str, int]:
                 continue
             try:
                 result = await fetch_url(candidate.source_url)
-                if result.error_type or not result.body:
-                    failed += 1
-                    tenant_failed += 1
-                    errors.append(f"{candidate.id}:{result.error_type or 'empty_response'}")
-                    continue
-                checked += 1
-                present = backlink_present(result.body, result.final_url, candidate.target_url)
                 async with async_session_factory() as session:
-                    row = await session.get(SeoBacklink, candidate.id)
-                    if row is None:
+                    row = await session.get(SeoBacklink, candidate.id, with_for_update=True)
+                    if row is None or row.status not in {"active", "lost"} or row.source_url != candidate.source_url or row.target_url != candidate.target_url:
                         tenant_skipped += 1
                         continue
-                    row.last_checked_at = datetime.utcnow()
-                    if present:
-                        row.status = "active"
-                        row.last_seen_at = row.last_checked_at
-                        row.missing_checks = 0
-                        found += 1
+                    evidence = apply_backlink_evidence(row, result)
+                    if evidence["state"] in {"blocked", "unreachable"}:
+                        failed += 1
+                        tenant_failed += 1
+                        errors.append(f"{candidate.id}:{evidence['state']}")
                     else:
-                        row.missing_checks = (row.missing_checks or 0) + 1
-                        if row.missing_checks >= 2:
-                            row.status = "lost"
-                            lost += 1
+                        checked += 1
+                        found += int(evidence["state"] == "found")
+                        lost += int(row.status == "lost")
                     await session.commit()
-                tenant_success += 1
+                if evidence["state"] not in {"blocked", "unreachable"}:
+                    tenant_success += 1
             except Exception as exc:  # noqa: BLE001
                 failed += 1
                 tenant_failed += 1

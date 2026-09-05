@@ -13,6 +13,7 @@ from typing import Any, Literal
 from urllib.parse import quote, urljoin, urlparse
 from uuid import uuid4
 
+from app.seo_backlinks import apply_backlink_evidence, belongs_to_site, discover_backlinks, fetch_backlink_page
 from app.seo_task_center import list_task_center, planned_checks, actor_key, JOB_PERMISSIONS
 from app.models.seo import SeoAiOperation
 
@@ -5283,6 +5284,7 @@ class DistributionManualComplete(BaseModel):
     site_id: PositiveInt | None = None
     page_url: str = Field(min_length=1, max_length=2000)
     published_at: datetime | None = None
+    source_version: PositiveInt | None = None
 
 
 class DistributionRetryRequest(BaseModel):
@@ -7087,6 +7089,10 @@ async def complete_manual_publication(
     content = await _distribution_content(
         session, req.tenant_id, row.content_asset_id, req.site_id
     )
+    if req.source_version is not None and row.source_version != req.source_version:
+        raise HTTPException(409, "发布任务版本已变化，请重新导出任务并核对结果")
+    if row.status == "published" and row.page_url == req.page_url.strip():
+        return _publication_payload(row, content=content)
     if row.status not in {"manual_required", "failed", "preparing"}:
         raise HTTPException(409, "当前任务状态不能人工完成")
     try:
@@ -7616,7 +7622,7 @@ class BacklinkCreate(BaseModel):
 
 
 def _backlink_payload(row: SeoBacklink) -> dict[str, Any]:
-    return {"id": row.id, "site_id": row.site_id, "source_url": row.source_url, "target_url": row.target_url, "source_domain": row.source_domain, "anchor_text": row.anchor_text, "authority_score": row.authority_score, "toxic_score": row.toxic_score, "status": row.status, "first_seen_at": _iso(row.first_seen_at), "last_seen_at": _iso(row.last_seen_at), "last_checked_at": _iso(row.last_checked_at), "missing_checks": row.missing_checks or 0}
+    return {"id": row.id, "site_id": row.site_id, "source_url": row.source_url, "target_url": row.target_url, "source_domain": row.source_domain, "anchor_text": row.anchor_text, "authority_score": row.authority_score, "toxic_score": row.toxic_score, "status": row.status, "first_seen_at": _iso(row.first_seen_at), "last_seen_at": _iso(row.last_seen_at), "last_checked_at": _iso(row.last_checked_at), "missing_checks": row.missing_checks or 0, "verification": getattr(row, "verification", None) or {"state": "pending"}}
 
 
 @router.get("/backlinks")
@@ -7629,7 +7635,7 @@ async def list_backlinks(tenant_id: int, site_id: int | None = None, status: str
     if status:
         conditions.append(SeoBacklink.status == status)
     rows = list(await session.scalars(select(SeoBacklink).where(*conditions).order_by(SeoBacklink.last_seen_at.desc().nullslast(), SeoBacklink.id.desc())))
-    return {"items": [_backlink_payload(row) for row in rows], "total": len(rows), "stats": {"active": sum(row.status == "active" for row in rows), "lost": sum(row.status == "lost" for row in rows), "toxic": sum((row.toxic_score or 0) >= 70 for row in rows), "domains": len({row.source_domain for row in rows})}}
+    return {"items": [_backlink_payload(row) for row in rows], "total": len(rows), "stats": {"active": sum(row.status == "active" and (getattr(row, "verification", None) or {}).get("state") == "found" for row in rows), "pending": sum(not getattr(row, "verification", None) for row in rows), "lost": sum(row.status == "lost" for row in rows), "toxic": sum((row.toxic_score or 0) >= 70 for row in rows), "domains": len({row.source_domain for row in rows})}}
 
 
 @router.post("/backlinks")
@@ -7644,6 +7650,90 @@ async def create_backlink(req: BacklinkCreate, session: AsyncSession = Depends(g
     except IntegrityError as exc:
         await session.rollback(); raise HTTPException(409, "该外链已存在") from exc
     await session.refresh(row); return _backlink_payload(row)
+
+
+class BacklinkScope(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt
+
+
+class BacklinkDiscovery(BacklinkScope):
+    source_url: str = Field(min_length=1, max_length=2000)
+    publication_id: PositiveInt | None = None
+
+
+@router.get("/backlinks/discovery-sources")
+async def backlink_discovery_sources(tenant_id: int, site_id: int, session: AsyncSession = Depends(get_session)):
+    await _seo_site(session, tenant_id, site_id)
+    rows = await session.scalars(select(SeoContentPublication).join(
+        SeoContentAsset, SeoContentAsset.id == SeoContentPublication.content_asset_id
+    ).where(SeoContentPublication.tenant_id == tenant_id, SeoContentAsset.tenant_id == tenant_id,
+            SeoContentAsset.site_id == site_id, SeoContentPublication.status == "published",
+            SeoContentPublication.page_url.is_not(None)).order_by(SeoContentPublication.id.desc()).limit(200))
+    return {"items": [{"id": row.id, "source_url": row.page_url, "platform_name": row.platform_name,
+                       "discovery": row.link_discovery} for row in rows]}
+
+
+@router.post("/backlinks/discover")
+async def discover_site_backlinks(req: BacklinkDiscovery, session: AsyncSession = Depends(get_session), ctx: AuthContext = Depends(require_scoped_auth)):
+    ctx.ensure_tenant(req.tenant_id)
+    site = await _seo_site(session, req.tenant_id, req.site_id)
+    try:
+        source, _ = normalize_publication_url(req.source_url)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if belongs_to_site(source, site.canonical_domain):
+        raise HTTPException(422, "来源属于当前网站，请在内链图谱中管理")
+    publication = None
+    if req.publication_id:
+        publication = await session.get(SeoContentPublication, req.publication_id)
+        content = await session.get(SeoContentAsset, publication.content_asset_id) if publication else None
+        if not publication or publication.tenant_id != req.tenant_id or not content or content.tenant_id != req.tenant_id or content.site_id != req.site_id or publication.page_url != source or publication.status != "published":
+            raise HTTPException(404, "该网站下未找到对应发布记录")
+    result = await discover_backlinks(session, req.tenant_id, req.site_id, source, site.canonical_domain)
+    if publication:
+        publication.link_discovery = result
+    await session.commit()
+    return result
+
+
+@router.post("/backlinks/{backlink_id}/verify")
+async def verify_site_backlink(backlink_id: int, req: BacklinkScope, session: AsyncSession = Depends(get_session), ctx: AuthContext = Depends(require_scoped_auth)):
+    ctx.ensure_tenant(req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
+    row = await session.get(SeoBacklink, backlink_id)
+    if not row or row.tenant_id != req.tenant_id or row.site_id != req.site_id:
+        raise HTTPException(404, "外链不存在")
+    if row.status == "disavow":
+        raise HTTPException(409, "该外链已停止监控")
+    source, target = row.source_url, row.target_url
+    result = await fetch_backlink_page(source)
+    await session.refresh(row, with_for_update=True)
+    if row.source_url != source or row.target_url != target or row.status == "disavow":
+        raise HTTPException(409, "外链已变更，请刷新后重试")
+    apply_backlink_evidence(row, result)
+    await session.commit()
+    return _backlink_payload(row)
+
+
+class BacklinkMonitoring(BacklinkScope):
+    enabled: bool
+
+
+@router.patch("/backlinks/{backlink_id}/monitoring")
+async def set_backlink_monitoring(backlink_id: int, req: BacklinkMonitoring, session: AsyncSession = Depends(get_session), ctx: AuthContext = Depends(require_scoped_auth)):
+    ctx.ensure_tenant(req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
+    row = await session.get(SeoBacklink, backlink_id, with_for_update=True)
+    if not row or row.tenant_id != req.tenant_id or row.site_id != req.site_id:
+        raise HTTPException(404, "外链不存在")
+    row.status = "active" if req.enabled else "disavow"
+    if req.enabled:
+        row.verification = {"state": "pending", "history": (row.verification or {}).get("history", [])}
+        row.last_checked_at = None
+        row.missing_checks = 0
+    await session.commit()
+    return _backlink_payload(row)
 
 
 @router.get("/internal-links")

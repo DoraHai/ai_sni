@@ -1,7 +1,8 @@
-import { validatePackage, platformHosts, fillField } from './core.js'
+import { validatePackage, platformHosts, fillField, publicationUrl, sanitizeRichText } from './core.js'
 const $ = id => document.getElementById(id)
 let pack = { items: [] }
 let busy = false
+let completed = {}
 const current = () => pack.items[Number($('tasks').value)]
 const status = message => { $('status').textContent = message }
 function render() {
@@ -12,8 +13,10 @@ function render() {
 function describe() {
   $('account').checked = false
   const item = current()
+  $('resultUrl').value = completed[item?.publication_id]?.page_url || ''
+  $('published').checked = false
   $('meta').textContent = item ? `任务 #${item.publication_id} / 原稿版本 ${item.source_version} / ${item.text.length} 字` : '暂无任务'
-  for (const id of ['open','title','body','copyTitle','copyBody']) $(id).disabled = !item
+  for (const id of ['open','title','body','copyTitle','copyBody','copyRich','capture','saveResult']) $(id).disabled = !item
 }
 $('tasks').onchange = describe
 $('file').onchange = async event => {
@@ -21,7 +24,7 @@ $('file').onchange = async event => {
     const file = event.target.files[0]
     if (!file || file.size > 2 * 1024 * 1024) throw new Error('任务包不得超过 2 MB')
     const next = validatePackage(JSON.parse(await file.text()))
-    await chrome.storage.session.set({ seoDrafts: next })
+    await chrome.storage.local.set({ seoDrafts: next, seoResults: {} }); completed = {}
     pack = next; render(); status(`已导入 ${pack.items.length} 条任务，请核对当前账号`)
   } catch (error) { status(error.message) }
   finally { event.target.value = '' }
@@ -48,9 +51,36 @@ for (const [id,field] of [['copyTitle','title'],['copyBody','text']]) $(id).oncl
   if (!current()) return
   await navigator.clipboard.writeText(current()[field]); status('已复制，可在官方编辑器粘贴')
 })
-$('clear').onclick = () => run(async () => { await chrome.storage.session.remove('seoDrafts'); pack = { items: [] }; render(); status('本次浏览器会话中的任务已清除') })
+$('clear').onclick = () => run(async () => { await chrome.storage.local.remove(['seoDrafts','seoResults']); completed = {}; pack = { items: [] }; render(); status('本次浏览器会话中的任务已清除') })
 try {
-  const { seoDrafts } = await chrome.storage.session.get('seoDrafts')
+  const { seoDrafts, seoResults } = await chrome.storage.local.get(['seoDrafts','seoResults'])
+  completed = seoResults || {}
   if (seoDrafts) pack = validatePackage(seoDrafts)
   render()
 } catch (error) { render(); status(error.message) }
+
+$('copyRich').onclick = () => run(async () => {
+  const item = current(); if (!item) return
+  await navigator.clipboard.write([new ClipboardItem({
+    'text/html': new Blob([sanitizeRichText(item.html || '')], {type:'text/html'}),
+    'text/plain': new Blob([item.text], {type:'text/plain'}),
+  })]); status('已复制图文排版，可粘贴到正文。请检查平台是否保留图片，必要时上传原图。')
+})
+$('capture').onclick = () => run(async () => {
+  const item=current(); if (!item) return
+  const [tab]=await chrome.tabs.query({ active:true,currentWindow:true })
+  $('resultUrl').value=publicationUrl(tab.url,item.platform_code)
+  status('已采集网址，请核对文章、账号和任务一致后保存结果。')
+})
+$('saveResult').onclick = () => run(async () => {
+  const item=current(); if (!item || !$('published').checked) throw new Error('请先确认文章与当前任务一致且已经发布')
+  completed[item.publication_id]={publication_id:item.publication_id,platform_code:item.platform_code,source_version:item.source_version,page_url:publicationUrl($('resultUrl').value,item.platform_code)}
+  await chrome.storage.local.set({seoResults:completed})
+  const next=pack.items.findIndex(row=>!completed[row.publication_id]); if(next>=0) $('tasks').value=next
+  describe(); status(`已保存 ${Object.keys(completed).length} 条结果；全部完成后导出，回到分发中心批量回收。`)
+})
+$('exportResults').onclick = () => run(async () => {
+  const items=Object.values(completed); if (!items.length) throw new Error('还没有已确认的发布结果')
+  const url=URL.createObjectURL(new Blob([JSON.stringify({schema:'seo-domestic-results-v1',items},null,2)],{type:'application/json'}))
+  const a=document.createElement('a'); a.href=url; a.download='SEO发布结果.json'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000)
+})

@@ -11,6 +11,10 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    "frontend/scripts/test-seo-backlinks.mjs",
+    "app/seo_backlinks.py",
+    "tests/test_seo_backlink_evidence.py",
+    "migrations/versions/20260905_0091_seo_backlink_evidence.py",
     ".env.example",
     ".gitattributes",
     ".github/workflows/ci.yml",

@@ -28,7 +28,7 @@ from app.seo_competitor import (
     collect_competitor_content,
 )
 from app.seo_crawler import fetch_url
-from app.seo_monitoring_jobs import backlink_present
+from app.seo_backlinks import apply_backlink_evidence
 from app.seo_rank_limits import (
     MANUAL_RANK_RESERVATION_TTL_SECONDS,
     ManualRankLimitError,
@@ -383,13 +383,8 @@ async def _run_backlinks(row: SeoAutomationRun) -> tuple[int, int, int, str]:
     for candidate in candidates:
         try:
             result = await fetch_url(candidate.source_url)
-            if result.error_type or not result.body:
-                failed += 1
-                errors.append(f"{candidate.id}:{result.error_type or 'empty_response'}")
-                continue
-            present = backlink_present(result.body, result.final_url, candidate.target_url)
             async with async_session_factory() as session:
-                current = await session.get(SeoBacklink, candidate.id)
+                current = await session.get(SeoBacklink, candidate.id, with_for_update=True)
                 if (
                     current is None
                     or current.tenant_id != row.tenant_id
@@ -399,17 +394,13 @@ async def _run_backlinks(row: SeoAutomationRun) -> tuple[int, int, int, str]:
                     or current.target_url != candidate.target_url
                 ):
                     continue
-                current.last_checked_at = datetime.utcnow()
-                if present:
-                    current.status = "active"
-                    current.last_seen_at = current.last_checked_at
-                    current.missing_checks = 0
-                else:
-                    current.missing_checks = (current.missing_checks or 0) + 1
-                    if current.missing_checks >= 2:
-                        current.status = "lost"
+                evidence = apply_backlink_evidence(current, result)
                 await session.commit()
-            success += 1
+            if evidence["state"] in {"blocked", "unreachable"}:
+                failed += 1
+                errors.append(f"{candidate.id}:{evidence['state']}")
+            else:
+                success += 1
         except Exception as exc:  # noqa: BLE001
             failed += 1
             errors.append(f"{candidate.id}:{type(exc).__name__}")

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { JSDOM } from 'jsdom'
 import { readFile } from 'node:fs/promises'
-import { fillField, validatePackage, platformHosts } from '../src/views/seo/publisher/core.js'
+import { fillField, validatePackage, platformHosts, validateResults, sanitizeRichText, publicationUrl } from '../src/views/seo/publisher/core.js'
 import { createPublisherPackage, publisherZip } from '../src/views/seo/seoPublisher.js'
 const row = {id:7,platform_code:'baijiahao',connection_name:'品牌A',status:'manual_required',adapted_title:'核验资料',adapted_content:'<p>正文事实</p><script>bad()</script><p>第二段</p>',handoff_url:'https://baijiahao.baidu.com/',source_version:2}
 function dom(html, url='https://baijiahao.baidu.com/editor') {
@@ -115,4 +115,24 @@ test('distribution view clears old scope before export and ignores stale loads',
     assert.ok(source.includes('@click="exportPublisherTasks(filteredActiveTasks)"'))
     assert.ok(source.includes('@click="downloadPublisher"'))
   } finally {app.unmount()}
+})
+
+
+test('result recovery rejects another task, stale version, wrong platform and editor URLs',()=>{
+  const data={schema:'seo-domestic-results-v1',items:[{publication_id:7,platform_code:'baijiahao',source_version:2,page_url:'https://baijiahao.baidu.com/s?id=123'}]}
+  assert.equal(validateResults(data,[row])[0].publication_id,7)
+  assert.throws(()=>validateResults(data,[{...row,source_version:3}]))
+  assert.throws(()=>validateResults(data,[{...row,id:8}]))
+  assert.throws(()=>validateResults({...data,items:[data.items[0],data.items[0]]},[row]))
+  assert.throws(()=>publicationUrl('https://baijiahao.baidu.com.attacker.test/s?id=123','baijiahao'))
+  assert.throws(()=>publicationUrl('https://baijiahao.baidu.com/editor','baijiahao'))
+  assert.throws(()=>publicationUrl('https://u:p@baijiahao.baidu.com/s?id=123','baijiahao'))
+})
+test('rich copy preserves safe structure and image URLs without active HTML',()=>{
+  const d=dom('')
+  try {
+    const cleaned=sanitizeRichText('<h2>标题</h2><p onclick="evil()">正文<img src="https://media.example/a.jpg" onerror="bad()"></p><iframe src="https://evil.test"></iframe><a href="javascript:bad()">资料</a>')
+    assert.ok(cleaned.includes('<h2>标题</h2>'));assert.ok(cleaned.includes('https://media.example/a.jpg'))
+    assert.ok(!/onclick|onerror|javascript|iframe|bad\(\)/.test(cleaned))
+  } finally {d.window.close()}
 })

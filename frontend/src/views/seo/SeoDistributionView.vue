@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  discoverSeoBacklinks,
   adaptSeoDistributionContent,
   completeSeoManualPublication,
   createSeoDistributionConnection,
@@ -28,6 +29,7 @@ import {
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
+import { validateResults } from './publisher/core.js'
 import { createPublisherPackage, publisherZip } from './seoPublisher'
 const publisherFiles = import.meta.glob('./publisher/*', { query: '?raw', import: 'default', eager: true })
 
@@ -38,6 +40,45 @@ const query = ref('')
 const channelFilter = ref('all')
 const channelRegion = ref('domestic')
 const helperDialog = ref(false)
+const resultInput = ref(null), resultDialog = ref(false), resultRows = ref([]), resultBusy = ref(false)
+let resultScope = ''
+const currentResultScope = () => `${currentTenantId.value}:${siteId.value}:${session.user?.id}`
+async function readPublisherResults(event) {
+  const file = event.target.files?.[0]; event.target.value = ''
+  if (!file) return
+  const scope = currentResultScope()
+  try {
+    if (file.size > 2*1024*1024) throw new Error('结果文件不得超过 2 MB')
+    const data = JSON.parse(await file.text())
+    if (scope !== currentResultScope()) return
+    resultRows.value = validateResults(data, publications.value).map(row => ({...row, outcome:'待回收'}))
+    resultScope = scope; resultDialog.value = true
+  } catch(e) { ElMessage.error(e.message) }
+}
+async function collectPublisherResults() {
+  if (resultBusy.value || !canEdit.value || resultScope !== currentResultScope()) return
+  const scope = resultScope, payload = {tenant_id:currentTenantId.value,site_id:siteId.value}
+  resultBusy.value = true
+  try {
+    for (const row of resultRows.value) {
+      if (scope !== currentResultScope()) break
+      if (row.outcome === '已回收') continue
+      try {
+        const existing = publications.value.find(item=>item.id===row.publication_id)
+        if (existing?.status === 'published' && existing.page_url !== row.page_url) throw new Error('任务已登记其他链接，请先核对')
+        if (existing?.status !== 'published') await completeSeoManualPublication({publicationId:row.publication_id,payload:{...payload,page_url:row.page_url,source_version:Number(row.source_version)}})
+        row.outcome = '已回收'
+        if ((!session.isLoggedIn || session.canEdit('seo.links')) && scope === currentResultScope()) {
+          try {
+            const evidence = await discoverSeoBacklinks({...payload,source_url:row.page_url,publication_id:row.publication_id})
+            row.evidence = evidence.state==='readable' ? `发现 ${evidence.found} 条外链，新入库 ${evidence.created} 条` : '页面暂不可读取，将由定时任务复查'
+          } catch(e) { row.evidence = `外链发现待重试：${e.message}` }
+        }
+      } catch(e) { row.outcome = e.message }
+    }
+    if (scope === currentResultScope()) await load()
+  } finally { resultBusy.value = false }
+}
 const catalog = ref([])
 const connections = ref([])
 const contents = ref([])
@@ -206,7 +247,7 @@ async function load() {
     connections.value = connectionResult.items || []
     contents.value = contentResult.items || []
     const contentIds = new Set(contents.value.map(item => item.id))
-    publications.value = (publicationResult.items || []).filter(item => contentIds.has(item.content_id))
+    publications.value = publicationResult.items || []
     variants.value = (variantResult.items || []).filter(item => contentIds.has(item.content_id))
     error.value = ''
   } catch (e) {
@@ -799,7 +840,7 @@ async function completeManual() {
     })
     completeDialog.value = false
     handoffItem.value = null
-    ElMessage.success('人工发布闭环已完成')
+    ElMessage.success('已登记发布结果，外链由发现任务检查')
     await load()
   } catch (e) {
     ElMessage.error(e.message)
@@ -864,6 +905,7 @@ async function downloadTemplate() {
 
 watch(() => [currentTenantId.value, siteId.value, session.user?.id], () => {
   loadSequence++; loadedScope = null
+  resultDialog.value = false; resultRows.value = []; resultScope = ''
   contents.value = []; publications.value = []; variants.value = []; connections.value = []
   handoffItem.value = null; completeDialog.value = false; batchDialog.value = false; variantDialog.value = false
   load()
@@ -959,7 +1001,7 @@ onMounted(loadSites)
     </template>
 
     <template v-else-if="activeTab === 'tasks'">
-      <div class="publisher-toolbar"><span>仅导出等待人工确认的浏览器任务，最多 50 条；可在单篇交接台分别导出。</span><el-button v-if="canEdit" @click="exportPublisherTasks(filteredActiveTasks)">导出待填稿任务包</el-button></div>
+      <div class="publisher-toolbar"><input ref="resultInput" type="file" accept=".json" hidden @change="readPublisherResults"><el-button v-if="canEdit" @click="resultInput?.click()">回收助手发布结果</el-button><span>仅导出等待人工确认的浏览器任务，最多 50 条；可在单篇交接台分别导出。</span><el-button v-if="canEdit" @click="exportPublisherTasks(filteredActiveTasks)">导出待填稿任务包</el-button></div>
       <section class="table-panel">
         <header><div><h2>发布任务</h2><p>API 发布、草稿创建和人工交接采用同一状态流，每次尝试都有记录。</p></div><div class="task-toolbar"><el-select v-model="taskStatus" size="small"><el-option label="全部待处理" value="all" /><el-option label="失败" value="failed" /><el-option label="发布中" value="publishing" /><el-option label="待人工确认" value="manual_required" /><el-option label="草稿已创建" value="draft_created" /></el-select><el-button @click="load">刷新</el-button><el-button v-if="canEdit" type="primary" @click="openBatch()">新建批量任务</el-button></div></header>
         <el-table :data="filteredActiveTasks" empty-text="暂无待处理任务">
@@ -998,8 +1040,13 @@ onMounted(loadSites)
       </section>
     </template>
 
-    <el-dialog v-model="helperDialog" title="浏览器填稿助手 · 本地开发版" width="660px">
-      <ol class="helper-steps"><li>下载并解压助手，在 Chrome / Edge 扩展管理页启用开发者模式，加载解压目录。</li><li>先在本工作台选择文章与账号，生成分发任务；从“发布任务”导出 JSON 填稿任务包。</li><li>在扩展中导入任务包，打开官方平台并登录。选择对应文章，核对账号后分别填入标题和正文。</li><li>在平台上传图片、检查封面、排版及原创 / AI 声明，自行发布，再将公开链接回填到工作台。</li></ol>
+    <el-dialog v-model="resultDialog" title="批量回收发布结果" width="800px" :close-on-click-modal="!resultBusy">
+      <p>确认这些是已发布的文章后，批量登记并发现外链。不会再次向平台发布。</p>
+      <el-table :data="resultRows"><el-table-column prop="title" label="文章"/><el-table-column prop="page_url" label="公开链接" show-overflow-tooltip/><el-table-column prop="outcome" label="回收状态"/><el-table-column prop="evidence" label="外链结果"/></el-table>
+      <template #footer><el-button :disabled="resultBusy" @click="resultDialog=false">关闭</el-button><el-button type="primary" :loading="resultBusy" @click="collectPublisherResults">确认并回收</el-button></template>
+    </el-dialog>
+    <el-dialog v-model="helperDialog" title="浏览器分发助手" width="660px">
+      <ol class="helper-steps"><li>下载并解压助手，在 Chrome / Edge 扩展管理页启用开发者模式，加载解压目录。</li><li>先在本工作台选择文章与账号，生成分发任务；从“发布任务”导出 JSON 填稿任务包。</li><li>在扩展中导入任务包，打开官方平台并登录。选择对应文章，核对账号后分别填入标题和正文。</li><li>在平台上传图片、检查封面、排版及原创 / AI 声明，自行发布。在助手采集公开文章链接，保存结果并处理下一篇；导出结果后在“发布任务”批量回收。</li></ol>
       <el-alert title="助手不托管登录、不覆盖已有内容、不点击发布。图片需在平台上传。真实平台编辑器兼容性仍需目标账号验收，识别失败时可用交接台复制粘贴。" type="info" :closable="false" />
       <template #footer><el-button @click="helperDialog = false">关闭</el-button><el-button type="primary" @click="downloadPublisher">下载 Chrome / Edge 填稿助手</el-button></template>
     </el-dialog>
@@ -1148,7 +1195,7 @@ onMounted(loadSites)
           <el-checkbox v-model="completeForm.confirmed">我已确认文章发布成功，且该链接可以正常访问</el-checkbox>
         </section>
       </div>
-      <template #footer><el-button @click="completeDialog = false">保存任务，稍后完成</el-button><el-button type="primary" :disabled="!completeForm.page_url.trim() || !completeForm.confirmed" :loading="completeSaving" @click="completeManual">验证链接并完成</el-button></template>
+      <template #footer><el-button @click="completeDialog = false">保存任务，稍后完成</el-button><el-button type="primary" :disabled="!completeForm.page_url.trim() || !completeForm.confirmed" :loading="completeSaving" @click="completeManual">登记发布结果</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="importDialog" title="Excel 批量登记预检" width="900px">
