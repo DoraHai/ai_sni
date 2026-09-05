@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import './test-sem-channel-reservations.mjs'
+import './test-sem-shell-requests.mjs'
 import { readFile } from 'node:fs/promises'
 
 
