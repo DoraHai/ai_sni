@@ -110,7 +110,25 @@ down_revision，禁止修改历史迁移。新表 FK 可能产生短暂锁等待
 本次执行结果：专项 48 passed；全量 1708 passed、2 skipped，git diff --check 通过。
 两项跳过是未配置专用本地 PostgreSQL 的历史测试，未连接生产数据库替代。
 新增汇总测试执行 SQLite 内存数据库真实 SQL；并发测试使用事务锁替身验证服务流程，
-不声称已完成原生 PostgreSQL 并发锁验收。真实 PostgreSQL 并发验收仍应在发布前的
-隔离测试库补充，不得使用客户账户真实写回验证。
+这是首轮结果；后续原生 PostgreSQL 验收结果见下节。
 全量测试使用进程级虚拟配置并清空 AI Key；首次继承本机 AI 配置时 GEO 的一项测试失败，
 在旧基线复现并确认隔离配置后通过，没有改动 GEO 来绕过测试。
+
+### 后续契约加固与原生数据库验收
+
+最终回归：1728 passed、0 skipped；按约定不收集 SEO 迁移执行测试；
+既有 jieba/pkg_resources 弃用警告 1 条。git diff --check 通过。
+
+- 指标响应接入 Pydantic，OpenAPI 暴露固定五项指标、单位、带时区 as_of、
+  缺失状态和趋势结构；拒绝错误单位、无时区时间、非有限数值、重复趋势日期和漏项。
+- 补每月第一天、跨月及闰年边界、补报重算测试；不把缺报误作零花费。
+- `tests/test_sem_foundation_postgres.py` 在 PostgreSQL 16.15 上验证原生事务：
+  并发请求等待提交后拒绝重复消费；第一次回滚时重试成功且只留一条记录；
+  已提交消费在后续数据库错误回滚后仍不可再消费；过期 key 与不同参数不能创建新确认。
+- 仅连接 `127.0.0.1` 且数据库名必须为 `sem_foundation_test`；每次测试生成随机
+  `sem_foundation_test_*` Schema，仅清理自己创建的 Schema。
+  拷贝审批表用于测试时移除外键，不创建客户或用户数据；这不替代外键完整性验收。
+- CI 新增 `sem-foundation-contracts` 测试作业：独立 postgres:16 服务、虚拟凭据，
+  自动执行原生测试，不依赖生产 Secret，不部署，不执行迁移。未改生产发布步骤。
+- 本地复现需显式设置 SEM_FOUNDATION_TEST_DATABASE_URL 为上述专用测试库，
+  执行 `python -m pytest -q tests/test_sem_foundation_contracts.py tests/test_sem_foundation_postgres.py tests/test_writeback_approval.py`。

@@ -16,6 +16,7 @@ from app.security.auth import AuthContext
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
+from pydantic import ValidationError
 
 
 def context(tenant_id=3, permissions=None):
@@ -235,3 +236,80 @@ def test_concurrent_one_click_requests_consume_once_with_transaction_lock():
         assert sorted(results) == ["consumed", "rejected"]
         assert len(rows) == 1
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("today,rows,expected", [
+    (Clock(2026, 10, 1, tzinfo=api.TZ), [(date(2026, 9, 30), Decimal(100), 1, 1)], None),
+    (Clock(2026, 10, 2, tzinfo=api.TZ), [(date(2026, 9, 30), Decimal(100), 1, 1),
+                                      (date(2026, 10, 1), Decimal(5), 1, 1)], 5),
+    (Clock(2028, 3, 1, tzinfo=api.TZ), [(date(2028, 2, 29), Decimal(100), 1, 1)], None),
+])
+def test_month_boundary_does_not_include_previous_month(today, rows, expected):
+    with patch.object(Clock, "now", return_value=today):
+        items = run_snapshot(session(rows))
+    spend = items["sem.spend.month_to_date_cny"]
+    assert spend["value"] == expected
+    assert len(spend["trend_7d"]) == 7
+    for point in spend["trend_7d"]:
+        if date.fromisoformat(point["date"]).month != today.month:
+            assert point["value"] is None
+
+
+def test_backfilled_report_recomputes_observed_totals_without_claiming_completeness():
+    initial = run_snapshot(session([(date(2026, 9, 4), Decimal(10), 1, 1)]))
+    backfilled = run_snapshot(session([(date(2026, 9, 1), Decimal(20), 1, 1),
+                                     (date(2026, 9, 4), Decimal(10), 1, 1)]))
+    assert initial["sem.spend.month_to_date_cny"]["value"] == 10
+    spend = backfilled["sem.spend.month_to_date_cny"]
+    assert spend["value"] == 30
+    assert spend["trend_7d"][-1]["value"] == 30
+    assert spend["data_status"] == "observed_reports"
+
+
+@pytest.mark.parametrize("change", [
+    {"metric_key": "seo.spend.total"}, {"unit": "account"}, {"value": float("nan")},
+    {"data_status": "no_reports", "value": 1}, {"as_of": "2026-09-04T00:00:00"},
+    {"trend_7d": [{"date": "2026-09-04", "value": 1}] * 2},
+    {"definition": ""}, {"unexpected": True},
+])
+def test_response_schema_rejects_contract_drift(change):
+    metric = run_snapshot(session([(date(2026, 9, 4), Decimal(10), 1, 1)]))["sem.spend.month_to_date_cny"]
+    with pytest.raises(ValidationError):
+        api.MetricSnapshot.model_validate(metric | change)
+
+
+def test_response_requires_all_five_metrics_and_http_exposes_schema():
+    items = list(run_snapshot(session()).values())
+    api.MetricSnapshotResponse.model_validate({"tenant_id": 3, "items": items})
+    with pytest.raises(ValidationError):
+        api.MetricSnapshotResponse.model_validate({"tenant_id": 3, "items": [items[0]] * 5})
+    app = FastAPI()
+    app.include_router(api.router)
+    app.dependency_overrides[api.require_auth] = lambda: context()
+    async def db():
+        yield session()
+    app.dependency_overrides[api.get_session] = db
+    with patch.object(api, "ensure_module_access", AsyncMock()), \
+         patch.object(api, "load_sem_identity_states", AsyncMock(return_value={3: {"status": "ok"}})), \
+         TestClient(app) as client:
+        response = client.get("/api/v1/sem/metrics/snapshot?tenant_id=3")
+        assert response.status_code == 200
+        assert len(response.json()["items"]) == 5
+        assert client.get("/api/v1/sem/metrics/snapshot?tenant_id=0").status_code == 422
+    assert "MetricSnapshotResponse" in app.openapi()["components"]["schemas"]
+
+
+def test_ci_runs_native_tests_in_dedicated_disposable_database():
+    from pathlib import Path
+    import yaml
+    from sqlalchemy.engine import make_url
+    config = yaml.load(Path(".github/workflows/ci.yml").read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    job = config["jobs"]["sem-foundation-contracts"]
+    assert job["permissions"] == {"contents": "read"}
+    assert job["services"]["postgres"]["image"] == "postgres:16"
+    step = job["steps"][-1]
+    url = make_url(step["env"]["SEM_FOUNDATION_TEST_DATABASE_URL"])
+    assert url.host == "127.0.0.1" and url.database == "sem_foundation_test"
+    assert "tests/test_sem_foundation_postgres.py" in step["run"]
+    assert "secrets." not in str(job)
+    assert "alembic" not in str(job).lower()

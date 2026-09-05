@@ -1,9 +1,11 @@
 """SEM 客户级只读指标契约；不调用百度、不补采、不写入快照。"""
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +18,56 @@ from app.security.sem_identity import load_sem_identity_states
 router = APIRouter(prefix="/api/v1/sem/metrics", tags=["SEM 指标契约"])
 TZ = ZoneInfo("Asia/Shanghai")
 
+MetricKey = Literal[
+    "sem.spend.month_to_date_cny", "sem.spend.budget_utilization_pct",
+    "sem.accounts.active_count", "sem.approvals.pending_count",
+    "sem.identity.conflict_tenant_count",
+]
+
+
+class TrendPoint(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    date: date
+    value: float | None
+
+
+class MetricSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    metric_key: MetricKey
+    value: float | int | None
+    unit: Literal["CNY", "percent", "account", "approval", "customer"]
+    as_of: AwareDatetime | None
+    trend_7d: list[TrendPoint] = Field(max_length=7)
+    definition: str = Field(min_length=1)
+    data_status: Literal["available", "observed_reports", "identity_blocked",
+                         "no_reports", "unattributed_reports", "no_budget"]
+
+    @model_validator(mode="after")
+    def validate_contract(self):
+        units = dict(zip(MetricKey.__args__, ("CNY", "percent", "account", "approval", "customer")))
+        if self.unit != units[self.metric_key]:
+            raise ValueError("metric unit does not match key")
+        if self.data_status not in {"available", "observed_reports"} and self.value is not None:
+            raise ValueError("unavailable metric must have null value")
+        if self.value is not None and self.as_of is None:
+            raise ValueError("observed value requires as_of")
+        dates = [point.date for point in self.trend_7d]
+        if dates != sorted(set(dates)):
+            raise ValueError("trend dates must be unique and increasing")
+        return self
+
+
+class MetricSnapshotResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tenant_id: int = Field(gt=0)
+    items: list[MetricSnapshot] = Field(min_length=5, max_length=5)
+
+    @model_validator(mode="after")
+    def require_all_metrics(self):
+        if {item.metric_key for item in self.items} != set(MetricKey.__args__):
+            raise ValueError("snapshot requires each SEM metric exactly once")
+        return self
+
 
 def metric(key, value, unit, as_of, definition, *, trend=None, status="available"):
     return {
@@ -25,7 +77,7 @@ def metric(key, value, unit, as_of, definition, *, trend=None, status="available
     }
 
 
-@router.get("/snapshot")
+@router.get("/snapshot", response_model=MetricSnapshotResponse)
 async def snapshot(
     tenant_id: int = Query(..., gt=0),
     ctx: AuthContext = Depends(require_auth),
