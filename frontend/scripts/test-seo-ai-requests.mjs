@@ -68,3 +68,18 @@ test('unavailable or corrupt recovery storage fails before sending an AI operati
   await assert.rejects(request('/assist', { tenant_id: 1 }), /保存请求标识/)
   assert.equal(calls, 0)
 })
+
+
+test('semantic analysis retries the same operation after response loss',async()=>{
+  const ids=[];let calls=0
+  const request=createSeoAiRequester(async(path,payload,config)=>{
+    assert.equal(path,'/api/v1/seo/qa/planning/semantic');assert.ok(config.timeout>60000)
+    ids.push(payload.request_id)
+    if(++calls===1)throw new Error('network lost')
+    return {action:'qa_semantic',pairs:[],questions:[]}
+  },()=> 'user:7',()=> 'semantic-request-id')
+  const payload={tenant_id:1,site_id:1,items:[{id:1,version:1},{id:2,version:1}]}
+  await assert.rejects(request('/api/v1/seo/qa/planning/semantic',payload))
+  assert.equal((await request('/api/v1/seo/qa/planning/semantic',payload)).action,'qa_semantic')
+  assert.deepEqual(ids,['semantic-request-id','semantic-request-id'])
+})
