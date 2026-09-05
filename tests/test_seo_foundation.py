@@ -1475,7 +1475,7 @@ def test_seo_ai_quick_actions_return_expected_contract(
         patch("app.api.seo._tenant", new=AsyncMock(return_value=tenant)),
             patch("app.api.seo._content_keywords", new=AsyncMock(return_value=keywords)),
             patch("app.api.seo.is_enabled", return_value=True),
-            patch("app.api.seo.charge_seo_usage", new=AsyncMock()),
+            patch("app.api.seo.charge_seo_usage", new=AsyncMock(return_value={"date": "2026-09-05"})),
             patch("app.api.seo.chat_json", new=AsyncMock(return_value=ai_result)) as chat,
     ):
         response = asyncio.run(assist_seo_content(request, AsyncMock(), context))
@@ -1519,7 +1519,7 @@ def test_seo_ai_repairs_incomplete_result_once_without_double_charging() -> None
         patch("app.api.seo._tenant", new=AsyncMock(return_value=tenant)),
         patch("app.api.seo._content_keywords", new=AsyncMock(return_value=keywords)),
         patch("app.api.seo.is_enabled", return_value=True),
-        patch("app.api.seo.charge_seo_usage", new=AsyncMock()) as charge,
+        patch("app.api.seo.charge_seo_usage", new=AsyncMock(return_value={"date": "2026-09-05"})) as charge,
         patch("app.api.seo.refund_seo_usage", new=AsyncMock()) as refund,
         patch(
             "app.api.seo.chat_json",
@@ -1535,7 +1535,7 @@ def test_seo_ai_repairs_incomplete_result_once_without_double_charging() -> None
     assert "必须返回的 JSON 字段" in chat.await_args_list[1].args[1]
 
 
-@pytest.mark.parametrize("repair_fails", [False, True])
+@pytest.mark.parametrize("repair_fails", [False, True, "cancel"])
 def test_seo_ai_refunds_when_repair_still_has_no_usable_result(repair_fails) -> None:
     from app.ai.deepseek import DeepSeekError
     request = SeoContentAssistRequest(
@@ -1566,45 +1566,49 @@ def test_seo_ai_refunds_when_repair_still_has_no_usable_result(repair_fails) -> 
         patch("app.api.seo._tenant", new=AsyncMock(return_value=tenant)),
         patch("app.api.seo._content_keywords", new=AsyncMock(return_value=keywords)),
         patch("app.api.seo.is_enabled", return_value=True),
-        patch("app.api.seo.charge_seo_usage", new=AsyncMock()) as charge,
+        patch("app.api.seo.charge_seo_usage", new=AsyncMock(return_value={"date": "2026-09-05"})) as charge,
         patch("app.api.seo.refund_seo_usage", new=AsyncMock()) as refund,
         patch(
             "app.api.seo.chat_json",
             new=AsyncMock(side_effect=[
                 {"content": "不完整"},
-                DeepSeekError("repair failed") if repair_fails else {"content": "仍不完整"},
+                asyncio.CancelledError() if repair_fails == "cancel" else (
+                    DeepSeekError("repair failed") if repair_fails else {"content": "仍不完整"}
+                ),
             ]),
         ) as chat,
     ):
-        with pytest.raises(Exception) as exc:
+        with pytest.raises(asyncio.CancelledError if repair_fails == "cancel" else Exception) as exc:
             asyncio.run(assist_seo_content(request, AsyncMock(), context))
 
-    assert getattr(exc.value, "status_code", None) == 502
+    if repair_fails != "cancel":
+        assert getattr(exc.value, "status_code", None) == 502
     assert chat.await_count == 2
     charge.assert_awaited_once()
-    refund.assert_awaited_once_with(ANY, 1, "ai_requests", 1)
+    refund.assert_awaited_once_with(ANY, 1, "ai_requests", 1, charged_on="2026-09-05")
 
 
+@pytest.mark.parametrize("cancelled", [False, True])
 @pytest.mark.parametrize("refund_fails", [False, True])
-def test_seo_ai_initial_failure_preserves_provider_error(refund_fails) -> None:
+def test_seo_ai_initial_failure_preserves_provider_error(refund_fails, cancelled) -> None:
     from app.ai.deepseek import DeepSeekError
     from app.api.seo import _limited_seo_chat_json
 
-    failure = DeepSeekError("provider unavailable")
+    failure = asyncio.CancelledError() if cancelled else DeepSeekError("provider unavailable")
     session = AsyncMock()
     with (
-        patch("app.api.seo.charge_seo_usage", new=AsyncMock()) as charge,
+        patch("app.api.seo.charge_seo_usage", new=AsyncMock(return_value={"date": "2026-09-05"})) as charge,
         patch("app.api.seo.refund_seo_usage", new=AsyncMock(
             side_effect=RuntimeError("refund unavailable") if refund_fails else None,
         )) as refund,
         patch("app.api.seo.chat_json", new=AsyncMock(side_effect=failure)),
     ):
-        with pytest.raises(DeepSeekError) as exc:
+        with pytest.raises(type(failure)) as exc:
             asyncio.run(_limited_seo_chat_json(session, 1, "system", "user", timeout=1))
 
     assert exc.value is failure
     charge.assert_awaited_once()
-    refund.assert_awaited_once_with(session, 1, "ai_requests", 1)
+    refund.assert_awaited_once_with(session, 1, "ai_requests", 1, charged_on="2026-09-05")
 
 
 def test_seo_ai_exhausted_quota_neither_calls_provider_nor_refunds() -> None:
@@ -1625,6 +1629,32 @@ def test_seo_ai_exhausted_quota_neither_calls_provider_nor_refunds() -> None:
     assert exc.value.status_code == 429
     chat.assert_not_awaited()
     refund.assert_not_awaited()
+
+
+def test_seo_ai_task_cancellation_refunds_before_propagating() -> None:
+    from app.api.seo import _limited_seo_chat_json
+
+    async def scenario():
+        started = asyncio.Event()
+
+        async def provider(*args, **kwargs):
+            started.set()
+            await asyncio.Event().wait()
+
+        with (
+            patch("app.api.seo.charge_seo_usage", new=AsyncMock(return_value={"date": "2026-09-05"})),
+            patch("app.api.seo.refund_seo_usage", new=AsyncMock()) as refund,
+            patch("app.api.seo.chat_json", new=provider),
+        ):
+            session = AsyncMock()
+            task = asyncio.create_task(_limited_seo_chat_json(session, 1, "system", "user", timeout=1))
+            await started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            refund.assert_awaited_once_with(session, 1, "ai_requests", 1, charged_on="2026-09-05")
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("action", ["generate", "rewrite"])
@@ -1849,7 +1879,7 @@ def test_source_bound_title_repairs_invented_intent_once() -> None:
         patch("app.api.seo._site_page", new=AsyncMock(return_value=source_page)),
         patch("app.api.seo._content_keywords", new=AsyncMock(return_value=[keyword])),
         patch("app.api.seo.is_enabled", return_value=True),
-        patch("app.api.seo.charge_seo_usage", new=AsyncMock()) as charge,
+        patch("app.api.seo.charge_seo_usage", new=AsyncMock(return_value={"date": "2026-09-05"})) as charge,
         patch(
             "app.api.seo.chat_json",
             new=AsyncMock(
@@ -1910,7 +1940,7 @@ def test_source_bound_outline_repairs_unsupported_marketing_topics_once() -> Non
         patch("app.api.seo._site_page", new=AsyncMock(return_value=source_page)),
         patch("app.api.seo._content_keywords", new=AsyncMock(return_value=[keyword])),
         patch("app.api.seo.is_enabled", return_value=True),
-        patch("app.api.seo.charge_seo_usage", new=AsyncMock()) as charge,
+        patch("app.api.seo.charge_seo_usage", new=AsyncMock(return_value={"date": "2026-09-05"})) as charge,
         patch(
             "app.api.seo.chat_json",
             new=AsyncMock(
@@ -1967,7 +1997,7 @@ def test_source_bound_content_can_rewrite_supplied_factual_draft() -> None:
         patch("app.api.seo._site_page", new=AsyncMock(return_value=source_page)),
         patch("app.api.seo._content_keywords", new=AsyncMock(return_value=[keyword])) as content_keywords,
         patch("app.api.seo.is_enabled", return_value=True),
-        patch("app.api.seo.charge_seo_usage", new=AsyncMock()),
+        patch("app.api.seo.charge_seo_usage", new=AsyncMock(return_value={"date": "2026-09-05"})),
         patch(
             "app.api.seo.chat_json",
             new=AsyncMock(return_value={"content": "优化后仍然仅包含目标词官网事实资料。"}),

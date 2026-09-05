@@ -167,6 +167,7 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://test:test@127.0.0.1:5432/test
           SEO_MIGRATION_TEST_DATABASE_URL: postgresql+asyncpg://test:test@127.0.0.1:5432/test
+          SEO_USAGE_TEST_DATABASE_URL: postgresql+asyncpg://test:test@127.0.0.1:5432/test
           BAIDU_APP_ID: ci-dummy
           BAIDU_SECRET_KEY: 1234567890abcdef
           BAIDU_DEFAULT_USERNAME: ci-dummy
@@ -179,4 +180,4 @@ jobs:
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
           printf '%s\n' "$heads" | grep -F '0089_seo_metric_partial_status (head)'
-          pytest -q tests/test_seo_migration_merge.py
+          pytest -q tests/test_seo_migration_merge.py tests/test_seo_usage_limits.py

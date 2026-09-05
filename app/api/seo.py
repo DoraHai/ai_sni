@@ -161,11 +161,13 @@ async def _limited_seo_chat_json(
     *,
     timeout: float,
     charge_usage: bool = True,
+    usage_receipt: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    charged_on: str | None = None
     if charge_usage:
         settings = get_settings()
         try:
-            await charge_seo_usage(
+            receipt = await charge_seo_usage(
                 session,
                 tenant_id,
                 "ai_requests",
@@ -178,21 +180,26 @@ async def _limited_seo_chat_json(
                 f"SEO AI 当日调用已达上限（{exc.used}/{exc.limit}）",
                 headers={"Retry-After": "3600"},
             ) from exc
+        charged_on = str(receipt["date"])
+        if usage_receipt is not None:
+            usage_receipt["date"] = charged_on
     try:
         return await chat_json(system, user, timeout=timeout)
-    except Exception:
+    except (Exception, asyncio.CancelledError):
         if charge_usage:
-            await _refund_failed_seo_ai_request(session, tenant_id)
+            await _refund_failed_seo_ai_request(session, tenant_id, charged_on=charged_on)
         raise
 
 
 async def _refund_failed_seo_ai_request(
     session: AsyncSession,
     tenant_id: int,
+    *,
+    charged_on: str | None = None,
 ) -> None:
     """Refund a charged user action without hiding its original failure."""
     try:
-        await refund_seo_usage(session, tenant_id, "ai_requests", 1)
+        await refund_seo_usage(session, tenant_id, "ai_requests", 1, charged_on=charged_on)
     except Exception:
         logger.exception(
             "Failed to refund SEO AI usage after terminal error tenant_id=%s",
@@ -4882,9 +4889,10 @@ async def assist_seo_content(
         raise HTTPException(503, "DeepSeek 尚未配置")
     system, user = _seo_ai_prompt(req, tenant, keywords)
     usage_charged = False
+    usage_receipt: dict[str, str] = {}
     try:
         raw_result = await _limited_seo_chat_json(
-            session, req.tenant_id, system, user, timeout=90.0
+            session, req.tenant_id, system, user, timeout=90.0, usage_receipt=usage_receipt
         )
         usage_charged = True
         repair_reason: str | None = None
@@ -5007,15 +5015,21 @@ async def assist_seo_content(
             )
     except HTTPException:
         if usage_charged:
-            await _refund_failed_seo_ai_request(session, req.tenant_id)
+            await _refund_failed_seo_ai_request(
+                session, req.tenant_id, charged_on=usage_receipt.get("date")
+            )
         raise
     except DeepSeekError as exc:
         if usage_charged:
-            await _refund_failed_seo_ai_request(session, req.tenant_id)
+            await _refund_failed_seo_ai_request(
+                session, req.tenant_id, charged_on=usage_receipt.get("date")
+            )
         raise HTTPException(502, f"DeepSeek 内容处理失败：{exc}") from exc
-    except Exception:
+    except (Exception, asyncio.CancelledError):
         if usage_charged:
-            await _refund_failed_seo_ai_request(session, req.tenant_id)
+            await _refund_failed_seo_ai_request(
+                session, req.tenant_id, charged_on=usage_receipt.get("date")
+            )
         raise
     allowed = {key: result.get(key) for key in ("title", "outline", "content", "feedback", "suggestions") if result.get(key) is not None}
     return {"action": req.action, "model": "deepseek-chat", "keyword_coverage": {"selected": [item.keyword for item in keywords], "missing": []}, **allowed}
@@ -6239,9 +6253,10 @@ async def adapt_content_distribution(
             req.instruction,
         )
         usage_charged = False
+        usage_receipt: dict[str, str] = {}
         try:
             raw_result = await _limited_seo_chat_json(
-                session, req.tenant_id, system, user, timeout=90.0
+                session, req.tenant_id, system, user, timeout=90.0, usage_receipt=usage_receipt
             )
             usage_charged = True
             result = _validated_distribution_ai_result(raw_result)
@@ -6281,19 +6296,27 @@ async def adapt_content_distribution(
             feedback = result["feedback"] or "AI 已按平台风格生成专属稿，请人工核对事实和表达。"
         except HTTPException:
             if usage_charged:
-                await _refund_failed_seo_ai_request(session, req.tenant_id)
+                await _refund_failed_seo_ai_request(
+                    session, req.tenant_id, charged_on=usage_receipt.get("date")
+                )
             raise
         except DeepSeekError as exc:
             if usage_charged:
-                await _refund_failed_seo_ai_request(session, req.tenant_id)
+                await _refund_failed_seo_ai_request(
+                    session, req.tenant_id, charged_on=usage_receipt.get("date")
+                )
             raise HTTPException(502, f"AI 平台专属稿生成失败：{exc}") from exc
         except SeoDistributionError as exc:
             if usage_charged:
-                await _refund_failed_seo_ai_request(session, req.tenant_id)
+                await _refund_failed_seo_ai_request(
+                    session, req.tenant_id, charged_on=usage_receipt.get("date")
+                )
             raise HTTPException(502, str(exc)) from exc
-        except Exception:
+        except (Exception, asyncio.CancelledError):
             if usage_charged:
-                await _refund_failed_seo_ai_request(session, req.tenant_id)
+                await _refund_failed_seo_ai_request(
+                    session, req.tenant_id, charged_on=usage_receipt.get("date")
+                )
             raise
 
     checks = _distribution_keyword_checks(prepared, keywords)
