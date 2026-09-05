@@ -4445,6 +4445,8 @@ async def seo_alerts(
 
 class SeoContentAssistRequest(BaseModel):
     tenant_id: int
+    site_id: PositiveInt | None = None
+    source_page_id: PositiveInt | None = None
     action: Literal["generate", "outline", "title", "keywords", "rewrite"]
     mode: Literal["original", "rewrite", "qa"] = "original"
     keyword_id: int | None = None
@@ -4691,8 +4693,29 @@ async def assist_seo_content(
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
     tenant = await _tenant(session, req.tenant_id)
+    source_page: SeoSitePage | None = None
+    if req.source_page_id is not None:
+        if req.site_id is None:
+            raise HTTPException(400, "关联承接页时必须指定 SEO 网站")
+        source_page = await _site_page(session, req.source_page_id, req.tenant_id)
+        if source_page.site_id != req.site_id:
+            raise HTTPException(400, "承接页与内容所属站点不一致")
+    if req.action == "generate" and source_page is not None:
+        raise HTTPException(
+            400,
+            "承接页任务不能仅凭 TDK/H1 和检测摘要生成完整正文；"
+            "请先生成整改大纲，再将经核验的官网事实资料粘贴到正文后使用‘优化表达’",
+        )
+    if req.action == "rewrite" and source_page is not None and not (req.draft or "").strip():
+        raise HTTPException(400, "承接页任务需先将经核验的官网事实资料粘贴到正文，再使用‘优化表达’")
     keyword_ids = _selected_keyword_ids(req.keyword_ids, req.keyword_id)
-    keywords = await _content_keywords(session, req.tenant_id, keyword_ids)
+    keywords = await _content_keywords(
+        session,
+        req.tenant_id,
+        keyword_ids,
+        req.site_id,
+        require_exact_site=source_page is not None,
+    )
     if req.action in {"generate", "outline", "title", "keywords"} and not keywords:
         raise HTTPException(400, "请先选择目标关键词")
     if req.action == "rewrite" and not (req.draft or req.source_text):

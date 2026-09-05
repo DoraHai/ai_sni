@@ -55,10 +55,11 @@ const contentTypeLabel = computed(() => ({ article: '原创文章', guide: '深�
 const keywordNames = computed(() => form.keyword_ids.map((id) => keywords.value.find((item) => item.id === id)?.keyword).filter(Boolean))
 const keywordSummary = computed(() => keywordNames.value.length ? keywordNames.value.join('、') : '尚未选择')
 const sourceRemediation = computed(() => sourcePageRemediationContext(sourcePage.value))
-const primaryAiAction = computed(() => mode.value === 'rewrite' ? 'rewrite' : 'generate')
+const primaryAiAction = computed(() => mode.value === 'rewrite' ? 'rewrite' : sourcePageId.value ? 'outline' : 'generate')
 const primaryAiLabel = computed(() => {
   if (aiBusy.value === primaryAiAction.value) return mode.value === 'rewrite' ? 'DeepSeek 改写中…' : 'DeepSeek 生成中…'
-  return mode.value === 'rewrite' ? 'DeepSeek 开始改写' : 'AI 生成初稿'
+  if (mode.value === 'rewrite') return 'DeepSeek 开始改写'
+  return sourcePageId.value ? 'AI 生成整改大纲' : 'AI 生成初稿'
 })
 
 function sanitizeEditorHtml(value) {
@@ -208,6 +209,8 @@ function buildAssistPayload(action, draftText) {
     .filter((id) => Number.isInteger(id) && id > 0)
   const payload = {
     tenant_id: Number(currentTenantId.value),
+    site_id: Number(siteId.value),
+    source_page_id: sourcePageId.value ? Number(sourcePageId.value) : null,
     action,
     mode: mode.value,
     keyword_id: keywordIds[0] || null,
@@ -235,7 +238,7 @@ function buildAssistPayload(action, draftText) {
     payload.title = form.title.trim() || null
     payload.outline = form.outline.trim() || null
     payload.draft = draftText || null
-    payload.source_text = sourceText.value.trim() || null
+    payload.source_text = mode.value === 'rewrite' ? sourceText.value.trim() || null : null
   }
   return payload
 }
@@ -245,9 +248,11 @@ async function assist(action) {
   if (!currentTenantId.value) return ElMessage.warning('请先选择客户')
   if (!siteId.value) return ElMessage.warning('请先选择或创建 SEO 网站')
   if (['generate','outline','title','keywords'].includes(action) && !form.keyword_ids.length) return ElMessage.warning('请至少选择 1 个目标关键词')
+  if (action === 'generate' && sourcePageId.value) return ElMessage.warning('承接页任务请先生成整改大纲；完整正文需粘贴经核验的官网事实资料后使用“优化表达”')
   syncDraft()
   const draftText = draftForAi()
   if (action === 'keywords' && !form.title.trim() && !draftText) return ElMessage.warning('请先输入标题或正文，再检查关键词')
+  if (action === 'rewrite' && sourcePageId.value && !draftText) return ElMessage.warning('请先将经核验的官网事实资料粘贴到正文，再使用“优化表达”')
   if (action === 'rewrite' && !draftText && !sourceText.value.trim()) return ElMessage.warning('请先输入正文，再优化表达')
   if (prompt.value.length > 5000) return ElMessage.warning('内容要求不能超过 5000 字')
   if (form.title.length > 300 && ['generate','outline','title','keywords','rewrite'].includes(action)) return ElMessage.warning('标题不能超过 300 字')
@@ -432,7 +437,7 @@ onMounted(async () => {
 
       <aside class="ai-side">
         <header><h3>AI 内容助手</h3><p>结合关键词、模板与品牌资料辅助创作</p></header>
-        <div class="ai-body"><textarea v-model="prompt" maxlength="5000" placeholder="输入你的内容要求，例如：保留事实并深度重构表达…" /><button class="ai-primary" type="button" :disabled="!!aiBusy" @click="assist(primaryAiAction)">{{ primaryAiLabel }}</button><div class="quick-actions"><button type="button" :disabled="!!aiBusy" @click="assist('outline')">{{aiBusy==='outline'?'生成中…':'生成大纲'}}</button><button type="button" :disabled="!!aiBusy" @click="assist('title')">{{aiBusy==='title'?'优化中…':'标题优化'}}</button><button type="button" :disabled="!!aiBusy" @click="assist('keywords')">{{aiBusy==='keywords'?'检查中…':'检查关键词'}}</button><button type="button" :disabled="!!aiBusy" @click="assist('rewrite')">{{aiBusy==='rewrite'?'优化中…':'优化表达'}}</button></div><div v-if="aiMessage" class="ai-message">{{ aiMessage }}</div><ul><li><span>AI 服务</span><b class="ok">DeepSeek</b></li><li><span>标题完整</span><b :class="{ ok: form.title }">{{ form.title ? '通过' : '待完善' }}</b></li><li><span>目标关键词</span><b :class="{ ok: form.keyword_ids.length }">{{ form.keyword_ids.length ? `已绑定 ${form.keyword_ids.length} 个` : '待选择' }}</b></li><li><span>正文内容</span><b :class="{ ok: wordCount > 300 }">{{ wordCount > 300 ? '已形成' : '待完善' }}</b></li></ul></div>
+        <div class="ai-body"><textarea v-model="prompt" maxlength="5000" placeholder="输入你的内容要求，例如：保留事实并深度重构表达…" /><p v-if="sourcePageId" class="grounding-note">承接页检测摘要不等于正文事实资料。AI 可先生成整改大纲；需生成正文时，请先将经核验的官网内容粘贴到正文，再点“优化表达”。</p><button class="ai-primary" type="button" :disabled="!!aiBusy" @click="assist(primaryAiAction)">{{ primaryAiLabel }}</button><div class="quick-actions"><button type="button" :disabled="!!aiBusy" @click="assist('outline')">{{aiBusy==='outline'?'生成中…':'生成大纲'}}</button><button type="button" :disabled="!!aiBusy" @click="assist('title')">{{aiBusy==='title'?'优化中…':'标题优化'}}</button><button type="button" :disabled="!!aiBusy" @click="assist('keywords')">{{aiBusy==='keywords'?'检查中…':'检查关键词'}}</button><button type="button" :disabled="!!aiBusy" @click="assist('rewrite')">{{aiBusy==='rewrite'?'优化中…':'优化表达'}}</button></div><div v-if="aiMessage" class="ai-message">{{ aiMessage }}</div><ul><li><span>AI 服务</span><b class="ok">DeepSeek</b></li><li><span>标题完整</span><b :class="{ ok: form.title }">{{ form.title ? '通过' : '待完善' }}</b></li><li><span>目标关键词</span><b :class="{ ok: form.keyword_ids.length }">{{ form.keyword_ids.length ? `已绑定 ${form.keyword_ids.length} 个` : '待选择' }}</b></li><li><span>正文内容</span><b :class="{ ok: wordCount > 300 }">{{ wordCount > 300 ? '已形成' : '待完善' }}</b></li></ul></div>
       </aside>
     </main>
     <el-dialog v-model="publishVisible" title="发布改写文章" width="620px">
@@ -448,6 +453,7 @@ onMounted(async () => {
 
 <style scoped>
 .article-editor { overflow-wrap: anywhere; }
+.grounding-note{margin:8px 0 0;padding:8px;border-left:2px solid #d97706;background:#fff8ee;color:#705a3b;font-size:10px;line-height:1.55}
 .source-link{margin-bottom:10px;padding:9px;border:1px solid #cfe0ff;border-radius:7px;background:#f4f7ff}.source-link b,.source-link span{display:block}.source-link b{color:#1d4ed8;font-size:10.5px}.source-link span{margin:4px 0 7px;overflow:hidden;color:#667085;font-size:10px;text-overflow:ellipsis;white-space:nowrap}.source-link button{padding:0;border:0;background:transparent;color:#2563eb;font-size:10px;cursor:pointer}
 .remediation-context h3{display:flex;align-items:center;justify-content:space-between}.remediation-context h3 em{padding:2px 5px;border-radius:4px;background:#e8f7f1;color:#187a5d;font-size:8.5px;font-style:normal}.remediation-meta{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;padding:8px;border-radius:6px;background:#f5f8f7}.remediation-meta b{color:#168b83;font-size:15px}.remediation-meta span{color:#7b8683;font-size:8.5px}.remediation-context dl{margin:0}.remediation-context dt{margin-top:8px;color:#7d8793;font-size:9px}.remediation-context dd{margin:2px 0 0;overflow-wrap:anywhere;color:#4d5665;font-size:10px;line-height:1.5}.remediation-context dd.suggested{color:#126e68}.remediation-issues{display:grid;gap:6px;margin-top:10px}.remediation-issues article{padding:7px;border-left:2px solid #d97706;background:#fff8ee}.remediation-issues b{font-size:9.5px}.remediation-issues p,.remediation-empty,.program-note{margin:3px 0 0;color:#707a87;font-size:9px;line-height:1.5}.program-note{display:block;margin-top:6px}
 .keyword-guidance{display:block;margin-top:6px;color:#8a93a1;font-size:9.5px;line-height:1.55}.brief-keywords{width:100%}.side-section :deep(.brief-keywords .el-select__wrapper){min-height:34px;padding:4px 8px;border-radius:6px;box-shadow:0 0 0 1px #dfe3e9 inset}
