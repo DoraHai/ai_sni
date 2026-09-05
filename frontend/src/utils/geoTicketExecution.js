@@ -14,3 +14,12 @@ export function executionDraft(ticket) {
     note: ticket.progress?.change_note || '',
   }
 }
+
+export function recommendedSamples(rows) {
+  const counts = new Map()
+  return rows.filter((row) => {
+    const count = counts.get(row.engine) || 0
+    counts.set(row.engine, count + 1)
+    return count < 3
+  }).map((row) => row.id).slice(0, 100)
+}

@@ -135,6 +135,18 @@ export function saveGeoTicketExecution(tenantId, ticketId, body) {
   })
 }
 
+export function fetchGeoExecutionPlan(tenantId, ticketId, taskId) {
+  return client.get(`/api/v1/geo/action-tickets/${ticketId}/execution-plan`, {
+    params: { tenant_id: tenantId, content_task_id: taskId || undefined },
+  })
+}
+
+export function prepareGeoTicketContent(tenantId, ticketId, promptId) {
+  return client.post(`/api/v1/geo/action-tickets/${ticketId}/prepare-content`, { prompt_id: promptId || null }, {
+    params: { tenant_id: tenantId },
+  })
+}
+
 export function verifyGeoActionTicket(tenantId, ticketId, recrawl = true) {
   return client.post(`/api/v1/geo/action-tickets/${ticketId}/verify`, null, {
     params: { tenant_id: tenantId, recrawl: !!recrawl },

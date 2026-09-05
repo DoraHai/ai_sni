@@ -82,6 +82,146 @@ class TicketExecution(BaseModel):
     change_note: str = Field(..., min_length=1, max_length=4000)
 
 
+class TicketPrepareContent(BaseModel):
+    prompt_id: int | None = Field(None, gt=0)
+
+
+@router.get('/action-tickets/{ticket_id}/execution-plan')
+async def get_ticket_execution_plan(
+    ticket_id: int, tenant_id: int = Query(...), content_task_id: int | None = Query(None, gt=0),
+    ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session),
+) -> dict:
+    from app.models import GeoContentTask, GeoPrompt, GeoAnswerSnapshot, GeoArticleVersion, GeoPublication, GeoChannelVariant
+    from app.geo.execution_plan import ticket_prompt_id, candidates, sample_gaps, execution_steps
+    from app.geo.content.brief import brief_ready
+    from app.geo.content.routes import _task_facts, _fact_dicts
+    from app.geo.content.evidence import prepare_facts_for_generation
+
+    ctx.ensure_tenant(tenant_id)
+    row = await _ticket_for_tenant(session, ticket_id, tenant_id)
+    if not (row.advice_code or '').startswith('workqueue:v1:'):
+        raise HTTPException(400, '仅执行待办支持执行计划')
+    fixed_prompt = ticket_prompt_id(row)
+    tasks_query = select(GeoContentTask).join(GeoPrompt, GeoPrompt.id == GeoContentTask.prompt_id).where(
+        GeoContentTask.tenant_id == tenant_id, GeoPrompt.tenant_id == tenant_id,
+        GeoPrompt.is_brand_probe.is_(False), GeoContentTask.status.notin_(['archived', 'cancelled']))
+    if fixed_prompt:
+        tasks_query = tasks_query.where(GeoContentTask.prompt_id == fixed_prompt)
+    tasks = list(await session.scalars(tasks_query.order_by(GeoContentTask.id.desc()).limit(100)))
+    task_id = content_task_id or row.content_task_id
+    task = await session.get(GeoContentTask, task_id) if task_id else (tasks[0] if fixed_prompt and tasks else None)
+    if task and (task.tenant_id != tenant_id or (fixed_prompt and task.prompt_id != fixed_prompt)):
+        raise HTTPException(404, '内容任务不存在或不属于同一问题')
+    if task_id and task is None:
+        raise HTTPException(404, '内容任务不存在')
+    prompt_id = task.prompt_id if task else fixed_prompt
+    prompts = list(await session.scalars(select(GeoPrompt).where(
+        GeoPrompt.tenant_id == tenant_id, GeoPrompt.is_brand_probe.is_(False), GeoPrompt.status == 'active',
+    ).order_by(GeoPrompt.id.desc()).limit(200)))
+    prompt = await session.get(GeoPrompt, prompt_id) if prompt_id else None
+    if prompt_id and prompt is None:
+        raise HTTPException(404, '问题不存在')
+    if prompt and (prompt.tenant_id != tenant_id or prompt.is_brand_probe):
+        raise HTTPException(404, '问题不存在')
+    article = await session.scalar(select(GeoArticleVersion).where(GeoArticleVersion.task_id == task.id)
+                                   .order_by(GeoArticleVersion.version_no.desc()).limit(1)) if task else None
+    before, after, excluded, truncated = [], [], 0, False
+    if prompt:
+        query = select(GeoAnswerSnapshot).where(GeoAnswerSnapshot.tenant_id == tenant_id, GeoAnswerSnapshot.prompt_id == prompt.id)
+        before_query = query.where(GeoAnswerSnapshot.captured_at <= article.created_at) if article else query
+        before_rows = list(await session.scalars(before_query.order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc()).limit(101)))
+        after_rows = list(await session.scalars(query.where(GeoAnswerSnapshot.captured_at > article.created_at)
+                         .order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc()).limit(101))) if article else []
+        before, b_excluded = candidates(before_rows[:100])
+        after, a_excluded = candidates(after_rows[:100])
+        excluded = b_excluded + a_excluded
+        truncated = len(before_rows) > 100 or len(after_rows) > 100
+    pubs = list(await session.scalars(select(GeoPublication).join(GeoChannelVariant, GeoChannelVariant.id == GeoPublication.variant_id).where(
+        GeoChannelVariant.task_id == task.id, GeoPublication.status == 'published', GeoPublication.published_url.is_not(None),
+        GeoChannelVariant.article_version_id == article.id,
+    ).order_by(GeoPublication.id.desc()).limit(20))) if task and article else []
+    facts = await _task_facts(session, task.id) if task else []
+    eligible_facts, _ = prepare_facts_for_generation(_fact_dicts(facts), min_eligible=3)
+    steps, next_step = execution_steps(row, task, article, len(eligible_facts), brief_ready(task.brief) if task else False, pubs)
+    return dict(prompt_id=prompt_id, question=prompt.question if prompt else None,
+                prompts=[dict(id=p.id, question=p.question) for p in prompts],
+                tasks=[dict(id=t.id, title=t.title, status=t.status) for t in tasks],
+                selected_task_id=task.id if task else None, article_id=article.id if article else None,
+                before=before, after=after, excluded=excluded, truncated=truncated,
+                steps=steps, next_step=next_step, gaps=sample_gaps(before, after))
+
+
+@router.post('/action-tickets/{ticket_id}/prepare-content')
+async def prepare_ticket_content(
+    ticket_id: int, req: TicketPrepareContent, tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session),
+) -> dict:
+    from app.models import GeoContentTask, GeoPrompt, GeoAnswerSnapshot, GeoArticleVersion
+    from app.geo.execution_plan import ticket_prompt_id
+    from app.geo.work_execution import freeze_samples
+    from app.geo.content.brief import normalize_brief
+    from app.geo.content.routes import _resolve_task_business_id, _resolve_active_period_id, _sync_task_pipeline
+
+    ctx.ensure_tenant(tenant_id)
+    row = await _work_ticket_for_update(session, ticket_id, tenant_id)
+    if not (row.advice_code or '').startswith('workqueue:v1:'):
+        raise HTTPException(400, '仅执行待办支持准备内容')
+    if row.status == 'done':
+        raise HTTPException(409, '请先重新打开待办，再准备内容任务')
+    fixed = ticket_prompt_id(row)
+    if fixed and req.prompt_id and fixed != req.prompt_id:
+        raise HTTPException(400, '必须使用待办的同一问题')
+    prompt_id = fixed or req.prompt_id
+    if not prompt_id:
+        raise HTTPException(400, '请先选择要执行的目标问题')
+    prompt = await session.scalar(select(GeoPrompt).where(GeoPrompt.id == prompt_id, GeoPrompt.tenant_id == tenant_id).with_for_update())
+    if prompt is None or prompt.is_brand_probe:
+        raise HTTPException(404, '非品牌点名问题不存在')
+    task = await session.get(GeoContentTask, row.content_task_id) if row.content_task_id else None
+    if row.content_task_id and (task is None or task.tenant_id != tenant_id or task.prompt_id != prompt.id):
+        raise HTTPException(409, '已有内容关联与目标问题不一致，请先核对')
+    if task is None:
+        task = await session.scalar(select(GeoContentTask).where(GeoContentTask.tenant_id == tenant_id,
+            GeoContentTask.prompt_id == prompt.id, GeoContentTask.status.notin_(['archived', 'cancelled']))
+            .order_by(GeoContentTask.id.desc()).limit(1))
+    created = task is None
+    if created:
+        business_id = await _resolve_task_business_id(session, prompt)
+        period_id = await _resolve_active_period_id(session, tenant_id=tenant_id, business_id=business_id)
+        task = GeoContentTask(tenant_id=tenant_id, prompt_id=prompt.id, business_id=business_id, period_id=period_id,
+            title=prompt.question[:300], status='draft', target_channels=['website'], owner_user_id=ctx.user_id,
+            pipeline_step='opportunity', brief=normalize_brief({'ai_question': prompt.question,
+            'notes': f'来自执行待办 #{row.id}\n{row.action or row.title}\n验收要求：{row.acceptance_desc or "核对事实与出处，完成后同题复测"}',
+            'must_cover': ['直接回答目标问题', '明确适用与不适用条件', '为关键事实保留可核验出处'],
+            'source_bar': 'verified_only'}))
+        session.add(task)
+        await session.flush()
+        prompt.last_task_id = task.id
+        await _sync_task_pipeline(session, task)
+    row.content_task_id = task.id
+    if not row.baseline_snapshot:
+        article = await session.scalar(select(GeoArticleVersion).where(GeoArticleVersion.task_id == task.id)
+                                       .order_by(GeoArticleVersion.version_no.desc()).limit(1))
+        query = select(GeoAnswerSnapshot).where(GeoAnswerSnapshot.tenant_id == tenant_id, GeoAnswerSnapshot.prompt_id == prompt.id)
+        if article:
+            query = query.where(GeoAnswerSnapshot.captured_at <= article.created_at)
+        snapshots = list(await session.scalars(query.order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc()).limit(100)))
+        frozen = []
+        for snapshot in snapshots:
+            try:
+                frozen.extend(freeze_samples([snapshot]))
+            except ValueError:
+                continue
+        row.baseline_snapshot = dict(workflow='content_retest_v1', prompt_id=prompt.id, question=prompt.question, samples=frozen)
+    if row.status in {'todo', 'reopened'}:
+        row.status = 'doing'
+    row.evidence = append_evidence(row.evidence, check='workflow.prepare', result='created' if created else 'linked',
+        note=f'已准备内容任务 #{task.id}，保留现有内容；下一步核对创作要求与事实。')
+    await session.commit()
+    await session.refresh(row)
+    return dict(ticket=ticket_public_dict(row), task_id=task.id, created=created)
+
+
 @router.post('/action-tickets/{ticket_id}/execution')
 async def save_ticket_execution(
     ticket_id: int, req: TicketExecution, tenant_id: int = Query(...),

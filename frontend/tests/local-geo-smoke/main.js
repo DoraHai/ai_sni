@@ -58,6 +58,30 @@ client.defaults.adapter = async (config) => {
     let ticket = tickets.find((t) => t.tenant_id === tenant && t.advice_code === body.advice_code && t.status !== 'done')
     if (!ticket) { ticket = { ...body, id: tickets.length + 1, tenant_id: tenant, status: 'todo' }; tickets.push(ticket) }
     data = ticket
+  } else if (/\/action-tickets\/\d+\/execution-plan$/.test(path) && method === 'get') {
+    const ticket = tickets.find((t) => t.id === Number(path.split('/').at(-2)) && t.tenant_id === tenant)
+    if (!ticket) throw new Error('工单不存在')
+    data = { prompt_id: 2, question, prompts: [{ id: 2, question }], tasks: task ? [{ id: 100, title: question, status: task.status }] : [],
+      selected_task_id: task?.id || null,
+      before: rows.map((r) => ({ ...r, mentions_brand: false })),
+      after: task?.article ? [4,5,6].map((id) => ({ id, engine: 'deepseek', captured_at: '2026-09-05T13:00:00Z', raw_text: '本地复测候选', mentions_brand: true })) : [],
+      steps: [{ id: 'baseline', title: '保留修改前证据', done: !!ticket.baseline_snapshot, instruction: '选择同题样本' },
+        { id: 'content', title: '准备内容任务', done: !!task, instruction: '准备创作要求与事实' },
+        { id: 'materials', title: '补齐创作要求与事实', done: false, instruction: '尚需绑定 3 条可生成事实' }],
+      next_step: task ? 'materials' : 'content', gaps: [{ engine: 'deepseek', before_count: 2, after_count: 0, before_needed: 1, after_needed: 3 }],
+      excluded: 0, truncated: false }
+  } else if (/\/action-tickets\/\d+\/prepare-content$/.test(path) && method === 'post') {
+    const ticket = tickets.find((t) => t.id === Number(path.split('/').at(-2)) && t.tenant_id === tenant)
+    if (!ticket || !active) throw new Error('工单不存在')
+    const created = !task
+    if (!task) {
+      counts.value++
+      task = { id: 100, tenant_id: 7, prompt_id: 2, prompt_question: question, title: question, status: 'draft',
+        brief: { ai_question: question, notes: ticket.action }, facts: [], variants: [], article: null, review: {}, target_channels: ['website'] }
+    }
+    ticket.content_task_id = 100; ticket.status = 'doing'
+    ticket.baseline_snapshot = { prompt_id: 2, samples: rows }
+    data = { ticket, created, task_id: 100 }
   } else if (/\/action-tickets\/\d+\/execution$/.test(path) && method === 'post') {
     const ticket = tickets.find((t) => t.id === Number(path.split('/').at(-2)) && t.tenant_id === tenant)
     if (!ticket || !active || body.content_task_id !== 100 || !task) throw new Error('内容任务不存在')

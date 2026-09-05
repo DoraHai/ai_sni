@@ -56,6 +56,7 @@ jobs:
           tests/test_geo_flow_integration.py
           tests/test_geo_work_queue_tickets.py
           tests/test_geo_work_execution.py
+          tests/test_geo_execution_plan.py
           tests/test_geo_source_opportunity_tasks.py
           tests/test_geo_source_opportunities.py
           tests/test_geo_sample_provenance.py
