@@ -11,6 +11,7 @@ import {
   reconcileWriteback,
 } from '../../api/adjustmentVerify'
 import { session } from '../../store/session'
+import { QUEUE_STAGES, filterQueue, queueCounts, queueStageMeta } from '../../utils/writebackQueue'
 
 const router = useRouter()
 const route = useRoute()
@@ -26,6 +27,14 @@ const days = ref(7)
 const statusFilter = ref('')
 const mode = ref(route.query.mode === 'queue' || !canViewPending.value ? 'queue' : 'keyword')
 const aiLoading = ref({})
+const queueFilter = ref('reconciliation_required')
+const queueOffset = ref(0)
+const queueServerPaged = computed(() => data.value?.counts_scope === 'tenant_history')
+const queueItems = computed(() => data.value?.items || [])
+const filteredQueue = computed(() => filterQueue(queueItems.value, queueFilter.value))
+const counts = computed(() => queueServerPaged.value ? data.value.counts : queueCounts(queueItems.value))
+const queueTotal = computed(() => queueServerPaged.value ? Object.values(counts.value).reduce((sum, n) => sum + n, 0) : queueItems.value.length)
+let loadSequence = 0
 
 const fmtMoney = (v) => (v == null ? '-' : '¥ ' + Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 2 }))
 const fmtCtr = (v) => (v == null ? '-' : (v * 100).toFixed(2) + '%')
@@ -46,19 +55,26 @@ const DIR_META = {
 }
 
 async function load() {
+  const sequence = ++loadSequence
+  data.value = null
+  error.value = ''
+  loading.value = false
   if (!TENANT_ID.value) return
   loading.value = true
-  error.value = ''
   try {
-    if (mode.value === 'queue') data.value = await fetchWritebackQueue(TENANT_ID.value)
+    let result
+    if (mode.value === 'queue') result = await fetchWritebackQueue(TENANT_ID.value, {
+      stage: queueFilter.value, offset: queueOffset.value, limit: 200,
+    })
     else {
       const fetcher = mode.value === 'budget' ? fetchBudgetAdjustments : fetchPendingAdjustments
-      data.value = await fetcher({ tenantId: TENANT_ID.value, days: days.value, status: statusFilter.value })
+      result = await fetcher({ tenantId: TENANT_ID.value, days: days.value, status: statusFilter.value })
     }
+    if (sequence === loadSequence) data.value = result
   } catch (e) {
-    error.value = e.message
+    if (sequence === loadSequence) error.value = e.message
   } finally {
-    loading.value = false
+    if (sequence === loadSequence) loading.value = false
   }
 }
 
@@ -146,7 +162,15 @@ async function reconcile(item, decision) {
   }
 }
 
-watch([TENANT_ID, days, statusFilter, mode], load)
+function changeQueuePage(page) {
+  queueOffset.value = (page - 1) * 200
+  load()
+}
+
+watch([TENANT_ID, days, statusFilter, mode, queueFilter], () => {
+  queueOffset.value = 0
+  load()
+})
 onMounted(load)
 </script>
 
@@ -165,7 +189,7 @@ onMounted(load)
       <el-radio-group v-model="mode" size="small">
         <el-radio-button v-if="canViewPending" label="keyword">关键词调价</el-radio-button>
         <el-radio-button v-if="canViewPending" label="budget">预算调整</el-radio-button>
-        <el-radio-button label="queue">待回写队列</el-radio-button>
+        <el-radio-button label="queue">人工对账队列</el-radio-button>
       </el-radio-group>
       <el-radio-group v-if="mode !== 'queue'" v-model="days" size="small">
         <el-radio-button :label="7">近 7 天</el-radio-button>
@@ -181,13 +205,23 @@ onMounted(load)
       </span>
     </div>
 
-    <el-alert v-if="mode === 'queue'" type="info" :closable="false" title="演练记录归入待回写；真实写回若结果未知会标为待人工对账，不会冒充百度已执行。" style="margin-bottom: 12px" />
-    <el-table v-if="mode === 'queue'" :data="data?.items || []" border empty-text="暂无待回写或执行记录">
+    <el-alert v-if="mode === 'queue'" type="info" :closable="false" title="默认仅显示待人工对账的真实回写。演练未修改百度；真实 pending 表示结果尚未确认，不代表仍在执行，请先核对百度后台，勿重复提交。" style="margin-bottom: 12px" />
+    <div v-if="mode === 'queue' && data && !error" class="toolbar">
+      <el-radio-group v-model="queueFilter" size="small" aria-label="回写状态筛选">
+        <el-radio-button v-for="stage in QUEUE_STAGES" :key="stage.value" :label="stage.value">{{ stage.label }} · {{ counts[stage.value] }}</el-radio-button>
+        <el-radio-button label="">全部 · {{ queueTotal }}</el-radio-button>
+      </el-radio-group>
+      <span v-if="queueServerPaged" class="summary">统计当前客户全部历史；按状态筛选后分页，每页最多 200 条。</span>
+      <span v-else class="summary">仅统计最近加载的最多 200 条记录，不代表全部历史。后端尚不支持历史分页。</span>
+      <span v-if="counts.unknown" class="summary">另有 {{ counts.unknown }} 条未知状态，请切换全部核查。</span>
+      <el-button v-if="session.canView('verify.adjustments')" @click="router.push('/verify/adjustments')">查看调价台账</el-button>
+    </div>
+    <el-table v-if="mode === 'queue' && !error" :data="filteredQueue" border :empty-text="loading ? '正在加载记录' : '当前页暂无此状态记录'">
       <el-table-column prop="created_at" label="记录时间" min-width="150"><template #default="{row}">{{ fmtTime(row.created_at) }}</template></el-table-column>
       <el-table-column prop="kind" label="动作" min-width="120" />
       <el-table-column prop="target" label="对象" min-width="180" />
       <el-table-column label="建议变化" min-width="130"><template #default="{row}">{{ row.before ?? '—' }} → {{ row.after ?? '—' }}</template></el-table-column>
-      <el-table-column label="状态" width="130"><template #default="{row}"><span class="st" :class="row.stage === 'failed' || row.stage === 'reconciliation_required' ? 'v-bad' : row.stage === 'executed' ? 'st-ok' : 'st-pending'">{{ row.stage === 'failed' ? '执行失败' : row.stage === 'reconciliation_required' ? '待人工对账' : row.stage === 'executed' ? '百度已执行' : '待回写' }}</span></template></el-table-column>
+      <el-table-column label="状态" width="180"><template #default="{row}"><span class="st" :class="queueStageMeta(row.stage).cls">{{ queueStageMeta(row.stage).label }}</span></template></el-table-column>
       <el-table-column prop="operator" label="记录人" min-width="100" />
       <el-table-column prop="error" label="失败原因" min-width="160" />
       <el-table-column v-if="canReconcile" label="人工对账" width="190" fixed="right">
@@ -200,6 +234,10 @@ onMounted(load)
         </template>
       </el-table-column>
     </el-table>
+
+    <el-pagination v-if="mode === 'queue' && queueServerPaged && !error"
+      :current-page="Math.floor(queueOffset / 200) + 1" :page-size="200" :total="data.total"
+      :disabled="loading" layout="prev, pager, next, total" @current-change="changeQueuePage" />
 
     <div v-for="it in mode === 'keyword' ? (data?.items || []) : []" :key="it.dedup_key" class="adj-card" :class="{ verified: it.review.status === 'verified' }">
       <div class="adj-head">
@@ -324,7 +362,7 @@ onMounted(load)
       </div>
     </div>
 
-    <div v-if="!loading && !(data?.items || []).length" class="empty">{{ emptyText }}</div>
+    <div v-if="mode !== 'queue' && !loading && !error && !(data?.items || []).length" class="empty">{{ emptyText }}</div>
   </div>
 </template>
 

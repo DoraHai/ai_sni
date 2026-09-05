@@ -26,8 +26,10 @@ export function genAiVerdict({ tenantId, dedupKey, force }) {
   })
 }
 
-export function fetchWritebackQueue(tenantId) {
-  return client.get('/api/v1/writeback/queue', { params: { tenant_id: tenantId } })
+export function fetchWritebackQueue(tenantId, { stage, offset = 0, limit = 200 } = {}) {
+  return client.get('/api/v1/writeback/queue', {
+    params: { tenant_id: tenantId, stage: stage || undefined, offset, limit },
+  })
 }
 
 export function reconcileWriteback({ tenantId, recordType, recordId, decision, note }) {
