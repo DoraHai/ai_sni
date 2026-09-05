@@ -182,7 +182,7 @@ def test_database_domestic_discovery_is_scoped_and_not_fake_heat():
     async def scenario(sessions):
         async with sessions() as db:
             for i, (tenant, engine, title) in enumerate([(1, 'baidu', '如何选型？'), (2, 'baidu', '如何泄露？'),
-                                                       (1, 'google', '如何优化？'), (1, 'baidu', '普通文章标题')], 1):
+                                                       (1, 'google', '如何优化？'), (1, 'baidu', '普通文章标题'), (1, 'baidu', '？？？')], 1):
                 db.add(SeoSerpResult(tenant_id=tenant, site_id=tenant, keyword_id=i, engine=engine, device='desktop',
                     rank=1, title=title, result_url=f'https://brand{tenant}.example/{i}', captured_at=datetime.utcnow()))
             await db.commit()
@@ -223,3 +223,72 @@ def test_database_replay_checks_current_body_and_finds_later_valid_answer():
             assert replay['id'] == second['id']
             assert len(list(await db.scalars(select(SeoQaAnswer)))) == 2
     database(scenario)
+
+
+def test_question_tree_and_conservative_similarity_candidates():
+    from app.seo_qa import question_plan
+    rows = [{'id': i, 'title': title, 'topic': '设备选型', 'intent': 'learn', 'answer_count': int(i == 1),
+             'reviewed_answer_count': 0} for i, title in enumerate([
+                 '减速机选型需要确认哪些运行条件？', '减速机选型需要确认什么运行条件？',
+                 '1.5kW 减速机选型需要确认哪些运行条件？', '15kW 减速机选型需要确认哪些运行条件？'], 1)]
+    result = question_plan(rows)
+    assert result['groups'][0]['question_count'] == 4
+    assert result['unanswered_count'] == 3 and result['reviewed_count'] == 0
+    assert [(pair['left_id'], pair['right_id']) for pair in result['similar_pairs']] == [(1, 2)]
+    assert len(rows) == 4  # Suggestions do not remove or merge original questions.
+
+
+def test_database_planning_scope_coverage_and_atomic_batch_updates():
+    async def scenario(sessions):
+        async with sessions() as db:
+            imported = await api.import_questions(api.ImportQuestions(tenant_id=1, site_id=1,
+                items=[{'title': '如何选择减速机'}, {'title': '如何选择电机'}]), CTX, db)
+            ids = sorted(imported['ids'])
+            db.add(SeoQuestion(id=1000, tenant_id=2, site_id=2, title='其他租户资料', fingerprint='foreign', topic='隐藏'))
+            db.add(SeoQuestion(id=1001, tenant_id=1, site_id=1, title='归档资料', fingerprint='archived', status='archived'))
+            await db.commit()
+            plan = await api.planning(1, 1, CTX, db)
+            assert plan['total'] == 2 and plan['included'] == 2 and not plan['truncated']
+            assert plan['unanswered_count'] == 2
+            answer = await api.create_answer(api.AnswerInput(tenant_id=1, site_id=1, question_id=ids[0], body='待审核草稿'), CTX, db)
+            plan = await api.planning(1, 1, CTX, db)
+            assert plan['unanswered_count'] == 1 and plan['reviewed_count'] == 0
+            content = await db.get(SeoContentAsset, answer['content_id'])
+            content.status = 'ready'
+            await db.commit()
+            plan = await api.planning(1, 1, CTX, db)
+            assert plan['reviewed_count'] == 1
+            refs = [{'id': i, 'version': 1} for i in ids]
+            with pytest.raises(HTTPException) as stale:
+                await api.batch_questions(api.BatchQuestions(tenant_id=1, site_id=1,
+                    items=[refs[0], {'id': ids[1], 'version': 99}], changes={'topic': '错误分类'}), CTX, db)
+            assert stale.value.status_code == 409
+            assert (await db.get(SeoQuestion, ids[0])).topic == '未分类'
+            with pytest.raises(HTTPException) as cross:
+                await api.batch_questions(api.BatchQuestions(tenant_id=1, site_id=1,
+                    items=[refs[0], {'id': 1000, 'version': 1}], changes={'owner': '不应写入'}), CTX, db)
+            assert cross.value.status_code == 404
+            assert (await db.get(SeoQuestion, ids[0])).owner is None
+            view = AuthContext(8, 'viewer', 'view', 1, {'seo.content': 'view'})
+            with pytest.raises(HTTPException) as readonly:
+                await api.batch_questions(api.BatchQuestions(tenant_id=1, site_id=1, items=refs, changes={'topic': '设备'}), view, db)
+            assert readonly.value.status_code == 403
+            changed = await api.batch_questions(api.BatchQuestions(tenant_id=1, site_id=1, items=refs,
+                changes={'topic': '设备选型', 'owner': '技术支持', 'status': 'selected'}), CTX, db)
+            assert changed['updated'] == 2
+            for question_id in ids:
+                row = await db.get(SeoQuestion, question_id)
+                assert row.topic == '设备选型' and row.version == 2 and row.sources
+            plan = await api.planning(1, 1, CTX, db)
+            assert len(plan['groups']) == 1
+            assert plan['groups'][0]['topic'] == '设备选型'
+    database(scenario)
+
+
+def test_batch_contract_rejects_empty_duplicate_and_null_changes():
+    for changes in [{}, {'topic': None}, {'status': None}]:
+        with pytest.raises(ValidationError):
+            api.BatchQuestions(tenant_id=1, site_id=1, items=[{'id': 1, 'version': 1}], changes=changes)
+    with pytest.raises(ValidationError):
+        api.BatchQuestions(tenant_id=1, site_id=1, items=[{'id': 1, 'version': 1}]*2, changes={'owner': None})
+    assert api.PlanningChanges(owner=None).model_dump(exclude_unset=True) == {'owner': None}

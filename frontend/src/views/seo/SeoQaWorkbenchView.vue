@@ -6,6 +6,7 @@ import { seoQaGet, seoQaPost, seoQaPatch, assistSeoContent, submitSeoContentRevi
 import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
 import './seo-suite.css'
+import SeoQaPlanning from './SeoQaPlanning.vue'
 
 const router = useRouter()
 const canEdit = computed(() => session.canEdit('seo.content'))
@@ -23,6 +24,7 @@ const placementForm = reactive({ answer_id: null, platform: 'zhihu', question_ur
 const receiptForm = reactive({ id: null, answer_url: '', version: 1 })
 const metricsForm = reactive({ id: null, version: 1, views: null, likes: null, comments: null, source_url: '', as_of: null })
 const reviewNote = ref('')
+const planningRevision = ref(0)
 const labels = { open: '待选题', selected: '已选题', archived: '已归档', planned: '草稿', drafting: '草稿', review: '待审核', ready: '已审核', published: '已发布', prepared: '待人工发布', reported: '已回填 · 待核验', content_observed: '页面正文匹配', not_observed: '未观测到正文', unavailable: '暂时无法核验' }
 const kinds = { manual: '人工录入', customer: '客服/销售', import: 'CSV 导入', suggestion: '建议问题', serp: '搜索结果' }
 const formats = { short: '直接短答', detailed: '详细解答', steps: '操作步骤', comparison: '条件对比', faq: '官网 FAQ' }
@@ -48,7 +50,7 @@ async function load() {
     ])
     if (seq !== loadSequence || key !== scopeKey.value) return
     items.value = questions.items; total.value = questions.total; facts.value = fs
-    placements.value = ps; maintenance.value = ms.items; platforms.value = cs.platforms
+    placements.value = ps; maintenance.value = ms.items; platforms.value = cs.platforms; planningRevision.value++
   } catch (e) { if (seq === loadSequence && key === scopeKey.value) error.value = messageOf(e) }
   finally { if (seq === loadSequence) loading.value = false }
 }
@@ -177,7 +179,7 @@ watch(scopeKey, () => {
     <header class="qa-header"><div><span class="qa-eyebrow">问题 · 证据 · 回答</span><h1>问答运营工作台</h1><p>从值得回答的问题开始，让每个答案有依据、有去向、可持续更新。</p></div><el-button @click="router.push({path:'/seo/content/qa-legacy',query:{site_id:siteId}})">历史问答资产</el-button></header>
     <el-alert v-if="!siteId" title="请先选择一个 SEO 网站" type="info" :closable="false" />
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
-    <div class="qa-tabs"><button v-for="[key,label] in [['questions','问题库'],['facts','事实与证据'],['placements','分发与效果'],['maintenance','待更新回答']]" :key="key" :class="{active:tab===key}" @click="tab=key">{{ label }}<span v-if="key==='maintenance' && maintenance.length">{{ maintenance.length }}</span></button><el-button text :loading="loading" @click="load">刷新</el-button></div>
+    <div class="qa-tabs"><button v-for="[key,label] in [['questions','问题库'],['planning','选题规划'],['facts','事实与证据'],['placements','分发与效果'],['maintenance','待更新回答']]" :key="key" :class="{active:tab===key}" @click="tab=key">{{ label }}<span v-if="key==='maintenance' && maintenance.length">{{ maintenance.length }}</span></button><el-button text :loading="loading" @click="load">刷新</el-button></div>
 
     <section v-if="tab==='questions'" class="qa-panel" :aria-busy="loading">
       <div class="qa-toolbar"><el-input v-model="query" placeholder="搜索问题或主题" clearable @keyup.enter="search" /><el-select v-model="status" placeholder="全部状态" clearable @change="search"><el-option v-for="s in ['open','selected','archived']" :key="s" :label="labels[s]" :value="s" /></el-select><el-button @click="search">搜索</el-button><div class="qa-spacer"/><el-button :disabled="!canEdit || busy || !siteId" @click="discover">从国内搜索结果发现</el-button><el-button :disabled="!canEdit || busy || !siteId" @click="dialog='csv';importing=''">导入 CSV</el-button><el-button type="primary" :disabled="!canEdit || busy || !siteId" @click="dialog='import';importing=''">录入问题</el-button></div>
@@ -190,6 +192,7 @@ watch(scopeKey, () => {
       <el-pagination v-model:current-page="page" :page-size="30" :total="total" layout="prev, pager, next, total" @current-change="load" />
     </section>
 
+    <SeoQaPlanning v-if="tab==='planning'" :tenant-id="scope.tenant_id" :site-id="scope.site_id" :can-edit="canEdit" :revision="planningRevision" @open="openQuestion" @changed="load"/>
     <section v-if="tab==='facts'" class="qa-panel">
       <div class="qa-toolbar"><div><h2>可追溯的事实资料</h2><p class="qa-hint">保存原文和资料出处。录入不代表系统已验证其真实性；过期或修改后，相关回答需要重新确认。</p></div><div class="qa-spacer"/><el-button type="primary" :disabled="!canEdit || busy || !siteId" @click="openFact()">添加事实</el-button></div>
       <el-table :data="facts" empty-text="添加产品手册、服务说明或可核实案例中的事实。"><el-table-column label="编号" width="80"><template #default="{row}">F{{ row.id }}</template></el-table-column><el-table-column prop="title" label="事实" min-width="190"/><el-table-column prop="source_name" label="出处" min-width="190"/><el-table-column label="有效性" width="140"><template #default="{row}"><el-tag :type="row.current?'success':'warning'">{{ row.current?'可引用':'已过期 / 停用' }}</el-tag></template></el-table-column><el-table-column label="操作" width="90"><template #default="{row}"><el-button text :disabled="!canEdit || busy" @click="openFact(row)">查看编辑</el-button></template></el-table-column></el-table>

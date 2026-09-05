@@ -73,6 +73,40 @@ class QuestionEdit(Scoped):
     owner: str | None = Field(None, max_length=120)
 
 
+class QuestionRef(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    id: PositiveInt
+    version: PositiveInt
+
+
+class PlanningChanges(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    topic: str | None = Field(None, min_length=1, max_length=120)
+    intent: Literal['learn', 'compare', 'buy', 'troubleshoot'] | None = None
+    relevance: int | None = Field(None, ge=0, le=5)
+    status: Literal['open', 'selected', 'archived'] | None = None
+    owner: str | None = Field(None, max_length=120)
+
+    @model_validator(mode='after')
+    def meaningful_changes(self):
+        if not self.model_fields_set:
+            raise ValueError('请至少指定一个要修改的字段')
+        if any(getattr(self, field) is None for field in self.model_fields_set - {'owner'}):
+            raise ValueError('主题、意图、相关性和状态不能设为空值')
+        return self
+
+
+class BatchQuestions(Scoped):
+    items: list[QuestionRef] = Field(min_length=1, max_length=100)
+    changes: PlanningChanges
+
+    @model_validator(mode='after')
+    def unique_questions(self):
+        if len({item.id for item in self.items}) != len(self.items):
+            raise ValueError('问题不能重复选择')
+        return self
+
+
 class FactInput(Scoped):
     title: str = Field(min_length=1, max_length=240)
     statement: str = Field(min_length=1, max_length=10000)
@@ -215,9 +249,10 @@ async def discover_questions(req: Scoped, ctx=Auth, session=Db):
         SeoSerpResult.site_id == req.site_id, SeoSerpResult.engine.in_(['baidu', 'sogou', '360']),
         SeoSerpResult.captured_at >= datetime.utcnow() - timedelta(days=30)).order_by(SeoSerpResult.captured_at.desc()).limit(500)))
     import re
-    candidates = [row for row in results if row.title and re.search(r'如何|怎么|为什么|是否|哪些|多少|怎么办|[?？]', row.title)]
+    candidates = [row for row in results if row.title and any(c.isalnum() for c in row.title[:300])
+                  and re.search(r'如何|怎么|为什么|是否|哪些|多少|怎么办|[?？]', row.title)]
     created = 0
-    for row in sorted(candidates[:200], key=lambda x: fingerprint(x.title)):
+    for row in sorted(candidates[:200], key=lambda x: fingerprint(x.title[:300])):
         try:
             url = public_url(row.result_url)
         except ValueError:
@@ -261,6 +296,51 @@ async def edit_question(question_id: int, req: QuestionEdit, ctx=Auth, session=D
     await session.commit()
     await session.refresh(row)
     return data(row)
+
+
+@router.post('/questions/batch')
+async def batch_questions(req: BatchQuestions, ctx=Auth, session=Db):
+    await access(session, ctx, req.tenant_id, req.site_id, True)
+    expected = {item.id: item.version for item in req.items}
+    rows = list(await session.scalars(select(SeoQuestion).where(SeoQuestion.tenant_id == req.tenant_id,
+        SeoQuestion.site_id == req.site_id, SeoQuestion.id.in_(expected)).order_by(SeoQuestion.id)
+        .with_for_update().execution_options(populate_existing=True)))
+    if len(rows) != len(expected):
+        raise HTTPException(404, '所选问题中存在不属于当前网站的记录，未执行批量修改')
+    for row in rows:
+        check_version(row, expected[row.id])
+    changes = req.changes.model_dump(exclude_unset=True)
+    for row in rows:
+        for key, value in changes.items():
+            setattr(row, key, value)
+        row.version += 1
+    await session.commit()
+    return {'updated': len(rows), 'ids': [row.id for row in rows], 'changes': changes}
+
+
+@router.get('/planning')
+async def planning(tenant_id: PositiveInt, site_id: PositiveInt, ctx=Auth, session=Db):
+    from app.seo_qa import question_plan
+    await access(session, ctx, tenant_id, site_id)
+    conditions = (SeoQuestion.tenant_id == tenant_id, SeoQuestion.site_id == site_id, SeoQuestion.status != 'archived')
+    total = await session.scalar(select(func.count()).select_from(SeoQuestion).where(*conditions))
+    rows = list(await session.scalars(select(SeoQuestion).where(*conditions)
+        .order_by(SeoQuestion.relevance.desc(), SeoQuestion.id.desc()).limit(500)))
+    ids = [row.id for row in rows]
+    answer_counts = (await session.execute(select(SeoQaAnswer.question_id, func.count(SeoQaAnswer.id),
+        func.count(SeoQaAnswer.id).filter(SeoContentAsset.status.in_(['ready', 'published'])))
+        .join(SeoContentAsset, SeoContentAsset.id == SeoQaAnswer.content_id)
+        .where(SeoQaAnswer.tenant_id == tenant_id, SeoQaAnswer.site_id == site_id, SeoQaAnswer.question_id.in_(ids),
+               SeoContentAsset.tenant_id == tenant_id, SeoContentAsset.site_id == site_id)
+        .group_by(SeoQaAnswer.question_id))).all()
+    counts = {key: (all_answers, reviewed) for key, all_answers, reviewed in answer_counts}
+    items = [{**data(row), 'answer_count': counts.get(row.id, (0, 0))[0],
+              'reviewed_answer_count': counts.get(row.id, (0, 0))[1]} for row in rows]
+    return {**question_plan(items), 'total': total, 'included': len(items), 'truncated': total > len(items),
+            'definitions': {'scope': '当前网站未归档问题，按业务相关性取前 500 条；分组数量仅统计本次范围',
+                'unanswered': '尚未建立回答草稿的问题数量',
+                'reviewed': '至少有一条 ready/published 内容的问题数量；不代表事实仍有效或公开发布已核验',
+                'similarity': '文本重合候选，不是语义同义判定；不自动合并问题、来源或回答。最多展示 50 对'}}
 
 
 @router.get('/facts')

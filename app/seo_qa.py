@@ -33,6 +33,46 @@ def body_hash(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+def question_plan(items):
+    """A reversible topic/intent view; lexical suggestions never merge records."""
+    groups = {}
+    for item in items:
+        group = groups.setdefault(item['topic'], {'topic': item['topic'], 'intents': {}, 'question_count': 0,
+            'unanswered_count': 0, 'reviewed_count': 0})
+        group['question_count'] += 1
+        group['unanswered_count'] += int(item['answer_count'] == 0)
+        group['reviewed_count'] += int(item['reviewed_answer_count'] > 0)
+        group['intents'].setdefault(item['intent'], []).append(item)
+    tree = [{**group, 'intents': [{'intent': key, 'questions': rows} for key, rows in sorted(group['intents'].items())]}
+            for group in sorted(groups.values(), key=lambda g: (-g['unanswered_count'], g['topic']))]
+
+    def features(title):
+        value = unicodedata.normalize('NFKC', title).casefold()
+        identifiers = frozenset(re.findall(r'\d+(?:\.\d+)?|[a-z][a-z0-9./+-]*', value))
+        value = re.sub(r'如何|怎么|怎样|什么|为什么|哪些|是否|请问', '', value)
+        value = normalized(value)
+        grams = {value[i:i+2] for i in range(len(value)-1)}
+        return grams, identifiers
+
+    prepared = [(item, *features(item['title'])) for item in items]
+    suggestions = []
+    for index, (left, a, left_ids) in enumerate(prepared):
+        if len(a) < 4:
+            continue
+        for right, b, right_ids in prepared[index+1:]:
+            if len(b) < 4 or left_ids != right_ids:
+                continue
+            score = 2 * len(a & b) / (len(a) + len(b))
+            if score >= .65:
+                suggestions.append({'left_id': left['id'], 'right_id': right['id'],
+                    'left_title': left['title'], 'right_title': right['title'], 'overlap_pct': round(score*100),
+                    'reason': '去除通用疑问词后，二字片段重合；请人工核对意图和适用条件'})
+    suggestions.sort(key=lambda pair: (-pair['overlap_pct'], pair['left_id'], pair['right_id']))
+    return {'groups': tree, 'similar_pairs': suggestions[:50], 'similar_pair_count': len(suggestions),
+            'unanswered_count': sum(item['answer_count'] == 0 for item in items),
+            'reviewed_count': sum(item['reviewed_answer_count'] > 0 for item in items)}
+
+
 def public_url(value):
     from app.seo_backlink_sources import candidate_url
     return candidate_url(value)
