@@ -48,11 +48,22 @@ def save_json(path, value):
     temporary.replace(path)
 
 
+def allowed_frame(frame, host):
+    parsed = urlparse(frame.url)
+    if parsed.scheme == 'https' and parsed.hostname == host and not parsed.port:
+        return True
+    if frame.url in {'about:blank', 'about:srcdoc'} and frame.parent_frame:
+        sandbox = frame.frame_element().get_attribute('sandbox')
+        if sandbox is not None and 'allow-same-origin' not in sandbox.split():
+            return False
+        return allowed_frame(frame.parent_frame, host)
+    return False
+
+
 def unique_visible(page, selector):
     matches = []
     for frame in page.frames:
-        frame_url = urlparse(frame.url)
-        if frame_url.scheme != 'https' or frame_url.hostname != urlparse(page.url).hostname or frame_url.port:
+        if not allowed_frame(frame, urlparse(page.url).hostname):
             continue
         for element in frame.locator(selector).all():
             if element.is_visible() and element.is_enabled():
@@ -62,8 +73,16 @@ def unique_visible(page, selector):
     return matches[0]
 
 
+def accepts_images(accept, images):
+    tokens = {token.strip().lower() for token in (accept or '').split(',')}
+    mime = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png'}
+    return bool(images) and all(path.suffix.lower() in mime and (
+        'image/*' in tokens or mime[path.suffix.lower()] in tokens or path.suffix.lower() in tokens
+    ) for path in images)
+
+
 def fill_empty(element, text):
-    existing = element.evaluate('(el) => "value" in el ? el.value : el.textContent') or ''
+    existing = element.evaluate('(el) => "value" in el ? el.value : el.innerText') or ''
     if existing.strip() == text.strip():
         return
     if existing.strip() or element.locator('img,video,iframe').count():
@@ -72,7 +91,7 @@ def fill_empty(element, text):
     if maximum and int(maximum) > 0 and len(text) > int(maximum):
         raise ValueError('内容超过编辑器长度限制')
     element.fill(text)
-    actual = element.evaluate('(el) => "value" in el ? el.value : el.textContent') or ''
+    actual = element.evaluate('(el) => "value" in el ? el.value : el.innerText') or ''
     if actual.strip() != text.strip():
         raise ValueError('编辑器未保留完整文字，需要人工检查')
 
@@ -87,7 +106,7 @@ def prepare(page, task, images):
     fill_empty(title, task['title'])
     fill_empty(body, task['text'])
     if images:
-        inputs = [el for el in page.locator('input[type=file]').all() if 'image' in (el.get_attribute('accept') or '')]
+        inputs = [el for el in page.locator('input[type=file]').all() if el.is_enabled() and accepts_images(el.get_attribute('accept'), images)]
         if len(inputs) != 1 or (len(images) > 1 and inputs[0].get_attribute('multiple') is None):
             raise ValueError('无法唯一识别支持这些图片的上传入口，请在平台上传；文字已保留')
         inputs[0].set_input_files([str(path) for path in images])
@@ -125,7 +144,8 @@ def main():
     with lock.open('x', encoding='utf-8') as handle:
         handle.write('正在运行；异常退出后先核实平台发布记录，再删除此锁文件。')
     try:
-        execute(args, tasks)
+        report = execute(args, tasks)
+        return 1 if report['failed'] else 0
     finally:
         lock.unlink(missing_ok=True)
 
@@ -135,14 +155,24 @@ def execute(args, tasks):
     journal_path, results_path = args.workdir / 'journal.json', args.workdir / 'results.json'
     journal = json.loads(journal_path.read_text(encoding='utf-8')) if journal_path.exists() else {}
     results = json.loads(results_path.read_text(encoding='utf-8')) if results_path.exists() else {'schema': 'seo-domestic-results-v1', 'items': []}
+    report = {'items': [], 'failed': 0, 'pending': 0, 'recorded': 0}
+    def record_report():
+        for state in ['failed', 'pending', 'recorded']:
+            report[state] = sum(item['state'] == state for item in report['items'])
+        save_json(args.workdir / 'run-report.json', report)
     with sync_playwright() as browser:
         for task in tasks:
             key = task_key(task)
+            task_report = {'publication_id': task['publication_id'], 'state': 'pending'}
+            report['items'].append(task_report)
             if journal.get(key, {}).get('state') == 'published_url_recorded':
+                task_report['state'] = 'recorded'
+                record_report()
                 print('跳过已回收结果的任务', task['publication_id']);continue
             account = hashlib.sha256((task['platform_code'] + ':' + task['account']).encode()).hexdigest()[:24]
-            context = browser.chromium.launch_persistent_context(str(args.workdir / 'profiles' / account), headless=False)
+            context = None
             try:
+                context = browser.chromium.launch_persistent_context(str(args.workdir / 'profiles' / account), headless=False)
                 page = context.pages[0] if context.pages else context.new_page()
                 page.goto(task['editor_url'], wait_until='domcontentloaded', timeout=45000)
                 previous = journal.get(key, {})
@@ -186,13 +216,23 @@ def execute(args, tasks):
                     save_json(results_path, results)
                     journal[key] = {'publication_id': task['publication_id'], 'state': 'published_url_recorded', 'page_url': value}
                     save_json(journal_path, journal)
+                    task_report['state'] = 'recorded'
             except Exception as exc:
+                task_report.update(state='failed', error=type(exc).__name__)
                 print('已暂停当前任务：', type(exc).__name__, str(exc)[:300])
                 print('已保留执行记录；请核对平台后继续。')
             finally:
-                context.close()
-    print('结果文件：', results_path, '，请在分发工作台回收。登录状态只保存在本机 profiles 目录。')
+                if context is not None:
+                    try:
+                        context.close()
+                    except Exception as exc:
+                        task_report.update(state='failed', error='browser_close_' + type(exc).__name__)
+                record_report()
+    print(f"本批处理：已记录链接 {report['recorded']}，待人工处理 {report['pending']}，失败 {report['failed']}。详见 run-report.json。")
+    if results_path.exists():
+        print('结果文件：', results_path, '，请在分发工作台回收。登录状态只保存在本机 profiles 目录。')
+    return report
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())
