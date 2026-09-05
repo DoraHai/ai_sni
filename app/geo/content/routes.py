@@ -2726,10 +2726,23 @@ async def _active_competitor_prompt_context(
         return [], {}, {}
     prompts = list(
         await session.scalars(
-            select(GeoPrompt).where(
+            select(GeoPrompt)
+            .join(
+                GeoOptimizationUnit,
+                GeoPrompt.unit_id == GeoOptimizationUnit.id,
+            )
+            .join(
+                GeoOptimizationBusiness,
+                GeoOptimizationUnit.business_id == GeoOptimizationBusiness.id,
+            )
+            .where(
                 GeoPrompt.tenant_id == tenant_id,
+                GeoOptimizationUnit.tenant_id == tenant_id,
+                GeoOptimizationBusiness.tenant_id == tenant_id,
                 GeoPrompt.id.in_(prompt_ids),
                 GeoPrompt.status == "active",
+                GeoOptimizationUnit.status == "active",
+                GeoOptimizationBusiness.status == "active",
             )
         )
     )

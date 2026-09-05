@@ -116,6 +116,10 @@ def test_geo_competitor_compare_excludes_archived_prompts():
     helper = helper.split('@router.get("/competitor-insights")', 1)[0]
 
     assert 'GeoPrompt.status == "active"' in helper
+    assert ".join(\n                GeoOptimizationUnit," in helper
+    assert ".join(\n                GeoOptimizationBusiness," in helper
+    assert 'GeoOptimizationUnit.status == "active"' in helper
+    assert 'GeoOptimizationBusiness.status == "active"' in helper
     assert "active_prompt_ids = set(questions)" in helper
     assert "row.prompt_id in active_prompt_ids" in helper
     assert routes.count("await _active_competitor_prompt_context(") == 4
