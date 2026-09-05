@@ -2,6 +2,7 @@
 import { computed, reactive, ref, watch, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { evidenceTaskLink, evidenceLinkTarget } from '../utils/geoEvidenceLinks'
+import GeoExecutionOverview from './GeoExecutionOverview.vue'
 import * as api from '../api/geoIntegration'
 import { createEvidenceController } from '../utils/geoEvidenceController'
 const props = defineProps({ tenantId: [Number, String] })
@@ -64,6 +65,7 @@ function select(row) {
       <el-alert v-if="state.message" :title="state.message" type="success" :closable="false" />
       <p v-if="state.loading">正在读取任务…</p>
       <p v-else-if="!state.items.length && !state.selected && !state.error">当前筛选下暂无指标验收任务。</p>
+      <GeoExecutionOverview :tenant-id="tenantId" :tasks="state.items" :disabled="state.loading || state.busy" @open="select" />
       <div class="evidence-list">
         <button v-for="row in state.items" :key="row.id" class="gd-btn" :disabled="state.loading || state.busy" :aria-pressed="state.selected?.id === row.id" @click="select(row)">#{{ row.id }} {{ row.title }} · {{ labels[row.status] || row.status }}</button>
       </div>
