@@ -4465,6 +4465,7 @@ def _seo_ai_prompt(
     tenant: Tenant,
     keywords: list[SeoKeywordAsset] | None,
 ) -> tuple[str, str]:
+    source_bound = req.source_page_id is not None
     action_rules = {
         "generate": "生成可直接进入人工编辑的标题、大纲和完整初稿，返回 title、outline、content、feedback。",
         "outline": "只生成层级清晰、覆盖搜索意图的大纲，返回 outline、feedback。",
@@ -4472,6 +4473,12 @@ def _seo_ai_prompt(
         "keywords": "检查关键词覆盖、堆砌风险和语义相关词机会，返回 feedback 和 suggestions 数组，不改正文。",
         "rewrite": "在不改变事实、数字、主体和结论的前提下深度润色或改写，返回 content、feedback。",
     }
+    if source_bound and req.action == "outline":
+        action_rules["outline"] = (
+            "只生成承接页站内整改执行大纲，返回 outline、feedback。"
+            "大纲必须逐项对应输入中明确列出的程序检测问题和已有人工整改建议；"
+            "它不是文章目录、产品选型指南或品牌宣传提纲。"
+        )
     selected_keywords = keywords or []
     primary_keyword = selected_keywords[0] if selected_keywords else None
     secondary_keywords = selected_keywords[1:]
@@ -4483,6 +4490,14 @@ def _seo_ai_prompt(
         "主关键词应自然出现在标题、开头和至少一个小标题中，辅助关键词按搜索意图分布在相关段落。"
         "输出必须是合法 JSON；content 使用纯文本或 Markdown，不输出脚本、样式或外链代码。"
     )
+    if source_bound:
+        system += (
+            "当前任务绑定了具体承接页。程序检测摘要、排名变化和关键词只证明需要整改，"
+            "不能证明任何产品参数、应用场景、行业地位、认证、客户案例、服务网络、售后能力或效果。"
+            "不得把这些未提供的事实写进标题、大纲、正文或反馈，也不得用常识补齐。"
+            "生成整改大纲时只能列出：已明确问题、核验动作、拟修改位置、人工待补证据和复检步骤；"
+            "每个事实不足的项目必须标为‘待人工核验/补充’，不得转换成肯定陈述。"
+        )
     brand = "；".join(
         value for value in [
             f"客户：{tenant.name}",
@@ -4502,6 +4517,12 @@ def _seo_ai_prompt(
             "关键词意图：" + ("；".join(f"{item.keyword}={item.intent or '未标注'}" for item in selected_keywords) or "未标注"),
             "关键词覆盖要求：全部选择词必须保持原词形自然出现，不能只使用近义词替代；优先保证可读性，避免连续堆叠。",
             f"品牌上下文：{brand}",
+            (
+                "承接页证据边界：品牌上下文只用于识别主体，不是产品或服务事实证据；"
+                "不得扩展为选型、产品线、技术优势、质量保障、服务能力或营销结论。"
+                if source_bound
+                else ""
+            ),
             f"人工要求：{req.instruction or '无额外要求'}",
             f"当前标题：{req.title or ''}",
             f"当前大纲：\n{req.outline or ''}",
@@ -4547,6 +4568,49 @@ async def _content_keywords(
 def _missing_content_keywords(result: dict[str, Any], keywords: list[SeoKeywordAsset]) -> list[str]:
     content = str(result.get("content") or "").casefold()
     return [item.keyword for item in keywords if item.keyword.casefold() not in content]
+
+
+_SOURCE_BOUND_OUTLINE_CLAIM_MARKERS = (
+    "行业地位",
+    "行业领先",
+    "全球知名",
+    "全球服务",
+    "全国服务",
+    "产品线",
+    "选型指南",
+    "应用场景",
+    "技术优势",
+    "能效优势",
+    "质量保障",
+    "客户案例",
+    "服务网络",
+    "售后服务",
+    "认证资质",
+)
+
+
+def _unsupported_source_outline_topics(
+    result: dict[str, Any],
+    req: SeoContentAssistRequest,
+) -> list[str]:
+    """Flag marketing/product topics absent from the supplied evidence."""
+    outline = str(result.get("outline") or "").casefold()
+    evidence = "\n".join(
+        value
+        for value in (
+            req.instruction,
+            req.title,
+            req.outline,
+            req.draft,
+            req.source_text,
+        )
+        if value
+    ).casefold()
+    return [
+        marker
+        for marker in _SOURCE_BOUND_OUTLINE_CLAIM_MARKERS
+        if marker.casefold() in outline and marker.casefold() not in evidence
+    ]
 
 
 def _seo_assist_text(value: Any, *, separator: str = "\n") -> Any:
@@ -4745,8 +4809,18 @@ async def assist_seo_content(
             if result is not None and req.action in {"generate", "rewrite"}
             else []
         )
+        unsupported_outline_topics = (
+            _unsupported_source_outline_topics(result, req)
+            if result is not None and source_page is not None and req.action == "outline"
+            else []
+        )
         if missing:
             repair_reason = f"未完整覆盖目标关键词：{'、'.join(missing)}"
+        if unsupported_outline_topics:
+            repair_reason = (
+                "承接页整改大纲包含输入证据未支持的产品或营销主题："
+                + "、".join(unsupported_outline_topics)
+            )
         if repair_reason:
             correction = _seo_assist_repair_prompt(
                 user,
@@ -4776,8 +4850,20 @@ async def assist_seo_content(
                 if req.action in {"generate", "rewrite"}
                 else []
             )
+            unsupported_outline_topics = (
+                _unsupported_source_outline_topics(result, req)
+                if source_page is not None and req.action == "outline"
+                else []
+            )
         if missing:
             raise HTTPException(502, f"AI 未完整覆盖目标关键词：{'、'.join(missing)}，请调整要求后重试")
+        if unsupported_outline_topics:
+            raise HTTPException(
+                502,
+                "AI 整改大纲仍包含输入证据未支持的主题："
+                + "、".join(unsupported_outline_topics)
+                + "，请补充经核验资料后重试",
+            )
     except DeepSeekError as exc:
         raise HTTPException(502, f"DeepSeek 内容处理失败：{exc}") from exc
     allowed = {key: result.get(key) for key in ("title", "outline", "content", "feedback", "suggestions") if result.get(key) is not None}
