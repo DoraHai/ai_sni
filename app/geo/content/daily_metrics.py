@@ -167,7 +167,8 @@ class MetricBucket:
                 self.brand_mentions += 1
             if (snap.brand_position or "") == "first":
                 self.top1_count += 1
-            comps = normalize_competitors(getattr(snap, "competitors", None) or [])
+            from app.geo.content.competitor_scope import competitor_names
+            comps = competitor_names(getattr(snap, "competitors", None))
             if comps:
                 self.any_competitor_mentions += 1
                 for name in comps:

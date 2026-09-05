@@ -36,15 +36,18 @@ export function findAliasClusters(items) {
  * Apply alias map { aliasName: canonicalName } and merge stats into canonical rows.
  */
 export function applyAliasMap(items, aliasMap) {
-  const map = aliasMap || {}
+  const map = new Map(Object.entries(aliasMap || {}).map(([key, value]) => [key.trim().toLowerCase(), value]))
+  const evidenceKeys = ['snapshot_ids', 'prompt_ids', 'source_urls']
   const buckets = new Map()
 
   for (const row of items || []) {
     const raw = row.name
-    const canonical = map[raw] || raw
-    const prev = buckets.get(canonical)
+    const hasEvidence = evidenceKeys.every((key) => Array.isArray(row[key]))
+    const canonical = hasEvidence ? (map.get(String(raw).trim().toLowerCase()) || raw) : raw
+    const bucketKey = hasEvidence ? canonical : Symbol(raw)
+    const prev = buckets.get(bucketKey)
     if (!prev) {
-      buckets.set(canonical, {
+      buckets.set(bucketKey, {
         ...row,
         name: canonical,
         aliases: raw !== canonical ? [raw] : [],
@@ -54,9 +57,10 @@ export function applyAliasMap(items, aliasMap) {
       })
       continue
     }
-    prev.mention_count = (prev.mention_count || 0) + (row.mention_count || 0)
-    prev.prompt_count = (prev.prompt_count || 0) + (row.prompt_count || 0)
-    prev.source_count = (prev.source_count || 0) + (row.source_count || 0)
+    for (const key of evidenceKeys) prev[key] = [...new Set([...(prev[key] || []), ...(row[key] || [])])]
+    prev.mention_count = prev.snapshot_ids.length
+    prev.prompt_count = prev.prompt_ids.length
+    prev.source_count = prev.source_urls.length
     const eng = new Set([...(prev.engines || []), ...(row.engines || [])])
     prev.engines = [...eng]
     const pks = new Set([...(prev.platform_keys || []), ...(row.platform_keys || [])])

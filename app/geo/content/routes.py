@@ -2808,9 +2808,10 @@ async def competitor_insights(
     rows, questions, _ = await _active_competitor_prompt_context(
         session, tenant_id, rows
     )
+    from app.geo.content.competitor_scope import competitor_names, WORKBENCH_SCOPE, engine_heatmap
     buckets: dict[str, dict[str, Any]] = {}
     for row in rows:
-        for name in row.competitors or []:
+        for name in competitor_names(row.competitors):
             key = str(name).strip()
             if not key:
                 continue
@@ -2820,6 +2821,7 @@ async def competitor_insights(
                     "name": key,
                     "mention_count": 0,
                     "prompt_ids": set(),
+                    "snapshot_ids": set(),
                     "engines": set(),
                     "urls": set(),
                     "platform_keys": set(),
@@ -2827,6 +2829,7 @@ async def competitor_insights(
                     "sample_prompt_question": None,
                 },
             )
+            bucket["snapshot_ids"].add(row.id)
             bucket["mention_count"] += 1
             bucket["prompt_ids"].add(row.prompt_id)
             bucket["engines"].add(row.engine)
@@ -2855,6 +2858,9 @@ async def competitor_insights(
                 "latest_captured_at": bucket["latest_captured_at"],
                 "sample_prompt_question": bucket["sample_prompt_question"],
                 "source_count": len(bucket["urls"]),
+                "snapshot_ids": sorted(bucket["snapshot_ids"]),
+                "prompt_ids": sorted(bucket["prompt_ids"]),
+                "source_urls": sorted(bucket["urls"]),
                 "platform_count": len(bucket["platform_keys"]),
                 "platform_keys": pkeys,
             }
@@ -2862,11 +2868,13 @@ async def competitor_insights(
     items.sort(key=lambda x: (-x["mention_count"], x["name"]))
 
     # Unique cited URLs on competitor-tagged snapshots in last 7 days
-    cutoff = datetime.utcnow() - timedelta(days=7)
+    from app.geo.content.time_windows import to_utc_naive
+    observed_at = datetime.utcnow()
+    cutoff = observed_at - timedelta(days=7)
     urls_7d: set[str] = set()
     for row in rows:
         captured = row.captured_at
-        if captured is not None and captured.replace(tzinfo=None) < cutoff:
+        if captured is None or not (cutoff <= to_utc_naive(captured) <= observed_at):
             continue
         if not (row.competitors or []):
             continue
@@ -2880,6 +2888,8 @@ async def competitor_insights(
     sample = composition_of(rows).to_dict()
     return {
         "items": items,
+        "statistical_scope": WORKBENCH_SCOPE,
+        "engine_heatmap": engine_heatmap(rows),
         "summary": {
             "competitor_count": len(items),
             "platform_count": len(all_platforms),
@@ -2955,7 +2965,9 @@ async def competitor_insights_daily(
                 n = int((meta or {}).get("mentions") or 0) if isinstance(meta, dict) else int(meta or 0)
                 name_totals[name] = name_totals.get(name, 0) + n
     top_names = sorted(name_totals.items(), key=lambda x: (-x[1], x[0]))[:20]
+    from app.geo.content.competitor_scope import WORKBENCH_SCOPE
     return {
+        "statistical_scope": WORKBENCH_SCOPE,
         "scope_key": sk,
         "scope_level": level,
         "engine": normalize_engine_key(engine) if engine else None,
@@ -2986,7 +2998,8 @@ async def competitor_insights_compare(
     rows, questions, _ = await _active_competitor_prompt_context(
         session, tenant_id, rows
     )
-    return build_competitor_compare(rows=rows, questions=questions)
+    from app.geo.content.competitor_scope import WORKBENCH_SCOPE
+    return {**build_competitor_compare(rows=rows, questions=questions), "statistical_scope": WORKBENCH_SCOPE}
 
 
 @router.get("/competitor-insights/trace")

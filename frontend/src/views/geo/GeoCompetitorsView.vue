@@ -14,16 +14,13 @@ import {
   fetchGeoCompetitorDaily,
   fetchGeoCompetitorInsights,
   fetchGeoCompetitorTrace,
-  listGeoAnswerSnapshots,
   getGeoCompetitorReport,
   listCompetitorAliases,
   listGeoBusinesses,
   listGeoCompetitorReports,
-  listGeoDailyMetrics,
   listOptimizationPeriods,
   patchGeoCompetitorReport,
   putCompetitorAliases,
-  rebuildGeoDailyMetrics,
   restoreGeoCompetitorReport,
   saveGeoCompetitorReport,
   searchGeoCompetitorWeb,
@@ -40,7 +37,7 @@ import {
   saveAliasMapAsync,
 } from '../../utils/competitorAlias'
 import { engineDisplay, fmtPct } from '../../utils/geoReportLabels'
-import { heatTone, mentionHeatFromSnapshots } from '../../utils/geoSnapshotSummary'
+import { heatTone } from '../../utils/geoSnapshotSummary'
 import { getGeoPrototypePageSurface } from '../../utils/geoEditorSurface'
 
 const router = useRouter()
@@ -62,10 +59,9 @@ const dailyItems = ref([])
 const dailyCompetitors = ref([])
 const dailyNote = ref('')
 const dailyDays = ref(14)
-const heatSnaps = ref([])
+const heatMap = ref({ engines: [], rows: [] })
 const aliasMap = ref({})
 const displayItems = computed(() => applyAliasMap(rawItems.value, aliasMap.value))
-const heatMap = computed(() => mentionHeatFromSnapshots(heatSnaps.value, '本品牌'))
 const leadScenes = computed(() =>
   (compareItems.value || [])
     .filter((r) => r.winner === 'brand')
@@ -387,54 +383,28 @@ async function load() {
     listCompetitorAliases,
   })
   try {
-    const [data, cmp, daily, sn] = await Promise.all([
+    const [data, cmp, daily] = await Promise.all([
       fetchGeoCompetitorInsights(tenantId.value),
       fetchGeoCompetitorCompare(tenantId.value).catch(() => null),
       fetchGeoCompetitorDaily(tenantId.value, {
         days: dailyDays.value,
         scope_level: 'tenant',
       }).catch(() => null),
-      listGeoAnswerSnapshots(tenantId.value).catch(() => ({ items: [] })),
       loadServerReports(),
       loadReportScopes(),
     ])
-    heatSnaps.value = sn.items || sn.snapshots || []
+    heatMap.value = data.engine_heatmap || { engines: [], rows: [] }
     rawItems.value = data.items || []
     apiSummary.value = data.summary || null
     compareItems.value = cmp?.items || []
     compareSummary.value = cmp?.summary || null
-    let dItems = daily?.items || []
-    // 缺日指标时静默补算（不暴露「重算」按钮）
-    if (!dItems.length && tenantId.value) {
-      try {
-        const to = new Date()
-        const from = new Date()
-        from.setDate(to.getDate() - (Number(dailyDays.value) || 14) + 1)
-        const iso = (d) => d.toISOString().slice(0, 10)
-        await rebuildGeoDailyMetrics(tenantId.value, {
-          dateFrom: iso(from),
-          dateTo: iso(to),
-        })
-        const daily2 = await listGeoDailyMetrics(tenantId.value, {
-          date_from: iso(from),
-          date_to: iso(to),
-          scope_level: 'tenant',
-        }).catch(() => null)
-        dItems = daily2?.items || []
-        dailyNote.value = daily2?.note || daily?.note || ''
-        dailyCompetitors.value = daily2?.competitors || daily?.competitors || []
-      } catch {
-        /* keep empty */
-      }
-    }
-    dailyItems.value = dItems
-    if (!dailyCompetitors.value?.length) {
-      dailyCompetitors.value = daily?.competitors || []
-    }
-    if (!dailyNote.value) dailyNote.value = daily?.note || ''
+    dailyItems.value = daily?.items || []
+    dailyCompetitors.value = daily?.competitors || []
+    dailyNote.value = daily?.note || ''
   } catch (e) {
     error.value = e.message || '加载失败'
     rawItems.value = []
+    heatMap.value = { engines: [], rows: [] }
     apiSummary.value = null
     compareItems.value = []
     compareSummary.value = null
@@ -878,7 +848,7 @@ onMounted(load)
 <template>
   <GeoWorkbenchPage
     title="竞品分析"
-    sub="你与竞品在各 AI 引擎中的推荐度对比"
+    sub="你与竞品在各 AI 引擎中的提及率对比"
     :loading="loading"
   >
     <template #actions>
@@ -886,15 +856,16 @@ onMounted(load)
       <button class="gd-btn" @click="router.push('/geo/brand')">管理竞品</button>
     </template>
     <div class="geo-dash geo-page">
+    <p class="gd-sub">统计口径：当前活动问题的合格真实快照；概览与同题对比使用全部历史，日序列按所选上海日期统计。服务端名称仅合并大小写和首尾空格；概览的人工别名按快照去重，同题和日序列不套用人工别名。回答中的来源链接不代表竞品拥有该页面；本页不等同于驾驶舱完整自然周指标。</p>
 
     <details v-if="prototypeSurface.showCompetitorAdvancedAnalysis" class="geo-glossary">
       <summary>统计口径（点击展开）</summary>
       <ul>
         <li>竞品名来自快照 competitors 字段（人工或 AI 建议）。</li>
-        <li>日监测写入按天汇总表；缺行时刷新静默补算，无需手动重算。</li>
+        <li>日监测按上海日期从合格快照只读计算；刷新不会补写历史数据。</li>
         <li>同题对比：同一意图词下本品提及 vs 竞品提及。</li>
         <li>竞品报告保存在服务端：草稿 → 确认 → 归档，支持版本、导出和从结论建任务。</li>
-        <li>别名合并仅保存在本机浏览器，用于展示归并，不改库内原始名。</li>
+        <li>人工别名优先保存服务端，本机缓存作兼容；概览按证据去重，不改原始快照。</li>
       </ul>
     </details>
 
@@ -907,8 +878,8 @@ onMounted(load)
 
     <div v-if="heatMap.engines.length" class="gd-card" style="margin-bottom:16px">
       <div class="gd-hd">
-        <h3>品牌 × AI 引擎 推荐度热力图</h3>
-        <span class="more">颜色越深推荐度越高</span>
+        <h3>品牌 × AI 引擎 提及率热力图</h3>
+        <span class="more">每引擎不足 8 条显示未知；颜色越深提及率越高</span>
       </div>
       <div class="gd-bd" style="padding:0;overflow:auto">
         <table class="gd-heat">
@@ -971,12 +942,13 @@ onMounted(load)
       </div>
     </div>
 
+
     <template v-if="prototypeSurface.showCompetitorAdvancedAnalysis">
     <div class="geo-kpi-grid">
       <div class="geo-kpi">
         <div class="kpi-label">竞品数</div>
         <div class="kpi-value">{{ summaryCards.competitor_count }}</div>
-        <div class="kpi-hint">合并别名后的去重数量</div>
+        <div class="kpi-hint">按人工别名及快照去重</div>
       </div>
       <div class="geo-kpi">
         <div class="kpi-label">被引用平台数</div>
@@ -984,9 +956,9 @@ onMounted(load)
         <div class="kpi-hint">全竞品来源平台去重</div>
       </div>
       <div class="geo-kpi">
-        <div class="kpi-label">近 7 天新增来源</div>
+        <div class="kpi-label">近 7 天出现的来源</div>
         <div class="kpi-value">{{ summaryCards.sources_last_7d }}</div>
-        <div class="kpi-hint">竞品快照中的去重 URL</div>
+        <div class="kpi-hint">滚动 168 小时内的去重 URL，非首次新增</div>
       </div>
       <div class="geo-kpi">
         <div class="kpi-label">待生成报告数</div>

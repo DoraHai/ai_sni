@@ -59,6 +59,7 @@ jobs:
           tests/test_geo_work_execution.py
           tests/test_geo_execution_plan.py
           tests/test_geo_article_save.py
+          tests/test_geo_diagnostic_scope.py
           tests/test_geo_execution_review.py
           tests/test_geo_webhook_connector.py
           tests/test_geo_integration.py

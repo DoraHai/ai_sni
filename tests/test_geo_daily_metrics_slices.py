@@ -181,10 +181,10 @@ def test_competitor_mentions_in_bucket():
     )
     t = buckets[scope_tenant()].to_metrics_dict()
     assert t["any_competitor_mentions"] == 3
-    assert t["top_competitor"] == "竞品A"
-    assert t["competitor_mentions"]["竞品A"]["mentions"] == 3
+    assert t["top_competitor"] == "竞品a"
+    assert t["competitor_mentions"]["竞品a"]["mentions"] == 3
     eng = buckets[scope_with_engine(scope_tenant(), "deepseek")].to_metrics_dict()
-    assert eng["competitor_mentions"]["竞品A"]["mentions"] == 2
+    assert eng["competitor_mentions"]["竞品a"]["mentions"] == 2
     assert eng["top_competitor_rate"] == 1.0  # 2/2 visibility
 
 

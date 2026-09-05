@@ -292,6 +292,7 @@ def build_competitor_report_markdown(
         "",
         f"- 生成时间：{stamp}",
         f"- 竞品：{name}",
+        "- 统计口径：当前活动问题的合格快照历史；来源为同一回答中的链接，不能直接证明竞品归属或支持关系，也不是驾驶舱完整自然周指标。",
         f"- 快照提及次数：{trace.get('mention_count') or 0}",
         f"- 关联提问数：{trace.get('prompt_count') or 0}",
         f"- 引擎：{', '.join(trace.get('engines') or []) or '—'}",
@@ -439,8 +440,8 @@ def build_competitor_compare(
         comps = getattr(row, "competitors", None)
         if comps is None and isinstance(row, dict):
             comps = row.get("competitors")
-        for raw in set(comps or []):
-            name = str(raw or "").strip()
+        from app.geo.content.competitor_scope import competitor_names
+        for name in competitor_names(comps):
             if not name:
                 continue
             hit = bucket["competitor_hits"].setdefault(

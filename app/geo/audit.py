@@ -18,7 +18,7 @@ MAX_HTML_BYTES = 3 * 1024 * 1024
 MAX_REDIRECTS = 5
 FETCH_TIMEOUT = 18.0
 USER_AGENT = "Mozilla/5.0 (compatible; GrowthSniper-GEO/1.0)"
-RULE_VERSION = "1.1.0"
+RULE_VERSION = "1.2.0"
 
 # Keep the established score contract for callers that aggregate multi-page audits.
 RULE_WEIGHTS = {
@@ -50,7 +50,7 @@ RULE_CRITERIA = {
     "https": "最终访问地址必须使用 HTTPS。",
     "title": "页面必须有唯一标题，标题长度为 12–70 个字符。",
     "description": "页面必须有 Meta Description，描述长度为 40–180 个字符。",
-    "canonical": "页面必须声明指向首选地址的 Canonical URL。",
+    "canonical": "HTML head须有唯一、可解析为HTTP(S)且无凭证或片段的Canonical；不验证目标可达性或搜索引擎采纳。",
     "indexable": "页面不得通过 robots meta 声明 noindex。",
     "h1": "页面必须且只能包含 1 个 H1 主标题。",
     "heading_depth": "页面至少包含 3 个可识别的 H1–H6 标题节点。",
@@ -58,7 +58,7 @@ RULE_CRITERIA = {
     "schema": "页面至少包含 1 种可解析的 JSON-LD Schema 类型。",
     "entity_schema": "JSON-LD 至少包含 Organization、LocalBusiness、Corporation 或 Brand 之一。",
     "faq": "页面包含 FAQPage Schema，或至少有 2 个可识别的问答式标题。",
-    "citations": "页面至少包含 2 个指向其他域名的外部证据或来源链接。",
+    "citations": "页面至少包含2个指向其他域名的外部来源链接；仅检查链接存在，不判定权威性或事实正确性。",
     "freshness": "页面必须同时提供可识别的作者信息和发布日期/更新时间。",
     "language": "HTML 根元素必须声明非空的 lang 页面语言。",
     "robots": "站点根目录的 robots.txt 必须可访问且内容非空。",
@@ -289,7 +289,7 @@ def _json_ld_items(soup: BeautifulSoup) -> list[dict[str, Any]]:
     for node in soup.select('script[type="application/ld+json"]'):
         try:
             parsed = json.loads(node.get_text(strip=True))
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError, RecursionError):
             continue
         if isinstance(parsed, dict):
             items.append(parsed)
@@ -309,10 +309,37 @@ def _schema_types(items: list[dict[str, Any]]) -> set[str]:
                 found.add(kind)
             elif isinstance(kind, list):
                 found.update(str(value) for value in kind)
-            graph = item.get("@graph")
-            if isinstance(graph, list):
-                queue.extend(graph)
+            queue.extend(value for key, value in item.items() if key != "@context" and isinstance(value, (dict, list)))
+        elif isinstance(item, list):
+            queue.extend(item)
     return found
+
+
+def canonical_evidence(soup, page_url):
+    nodes = soup.head.select('link[rel~="canonical" i]') if soup.head else []
+    if len(nodes) != 1:
+        return '', False, f'HTML head中的Canonical声明数量为{len(nodes)}，须唯一'
+    raw = str(nodes[0].get('href', '')).strip()
+    try:
+        base_node = soup.head.select_one('base[href]')
+        base = urljoin(page_url, str(base_node.get('href', ''))) if base_node else page_url
+        url = urljoin(base, raw)
+        parsed = urlparse(url)
+        valid = (bool(raw) and not re.search(r'\s|\\', raw) and parsed.scheme in {'http', 'https'}
+                 and bool(parsed.hostname) and not parsed.username and not parsed.password
+                 and not parsed.fragment and parsed.port != 0)
+    except ValueError:
+        return raw, False, 'Canonical URL格式无效'
+    return url, bool(valid), ('声明有效（未验证目标可达性或收录）' if valid else 'Canonical URL格式无效或含凭证/片段')
+
+
+def remove_hidden_content(soup):
+    for node in soup.select('[hidden], [aria-hidden="true" i], [style]'):
+        if node.attrs is None:
+            continue
+        if (node.has_attr('hidden') or str(node.get('aria-hidden', '')).lower() == 'true'
+                or re.search(r'(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\s*(?:!important\s*)?(?:;|$)', node.get('style', ''), re.I)):
+            node.decompose()
 
 
 def _finding(
@@ -349,23 +376,23 @@ async def audit_url(url: str) -> dict[str, Any]:
     for node in soup(["script", "style", "noscript", "template", "svg"]):
         node.decompose()
 
+    remove_hidden_content(soup)
     title = soup.title.get_text(" ", strip=True) if soup.title else ""
     description_node = soup.select_one('meta[name="description" i]')
     description = (
         str(description_node.get("content", "")).strip() if description_node else ""
     )
-    canonical_node = soup.select_one('link[rel~="canonical" i]')
-    canonical = str(canonical_node.get("href", "")).strip() if canonical_node else ""
+    canonical, canonical_ok, canonical_detail = canonical_evidence(soup, document.final_url)
     h1s = [node.get_text(" ", strip=True) for node in soup.find_all("h1")]
     headings = [
         {"level": int(node.name[1]), "text": node.get_text(" ", strip=True)[:180]}
         for node in soup.find_all(re.compile(r"^h[1-6]$"))
         if node.get_text(" ", strip=True)
     ]
-    body_text = soup.get_text(" ", strip=True)
+    body_text = (soup.body or soup).get_text(" ", strip=True)
     compact_text = re.sub(r"\s+", " ", body_text)
     cjk_count = len(re.findall(r"[\u3400-\u9fff]", compact_text))
-    latin_words = len(re.findall(r"\b[\w'-]+\b", compact_text))
+    latin_words = len(re.findall(r"[A-Za-z0-9]+(?:['-][A-Za-z0-9]+)*", compact_text))
     content_units = cjk_count + latin_words
     json_ld_items = _json_ld_items(BeautifulSoup(document.html, "html.parser"))
     schema_types = _schema_types(json_ld_items)
@@ -426,9 +453,9 @@ async def audit_url(url: str) -> dict[str, Any]:
 
     checks = [
         _finding("https", "HTTPS 安全访问", "技术基础", "high", document.final_url.startswith("https://"), document.final_url, "启用 HTTPS 并统一跳转到安全版本。", 8),
-        _finding("title", "页面标题清晰完整", "页面语义", "high", 12 <= len(title) <= 70, f"当前标题：{title or '缺失'}", "补充包含品牌、主题和用户意图的唯一标题，建议 12–70 字。", 8, True),
+        _finding("title", "页面标题清晰完整", "页面语义", "high", len(soup.find_all("title")) == 1 and 12 <= len(title) <= 70, f"当前标题：{title or '缺失'}", "补充包含品牌、主题和用户意图的唯一标题，建议 12–70 字。", 8, True),
         _finding("description", "Meta 描述可摘要", "页面语义", "medium", 40 <= len(description) <= 180, f"当前长度：{len(description)}", "编写能独立说明页面价值的 Meta Description，建议 40–180 字。", 5, True),
-        _finding("canonical", "Canonical 地址明确", "技术基础", "medium", bool(canonical), canonical or "未发现 canonical", "设置指向首选页面的 canonical URL，减少实体和内容信号分散。", 4, True),
+        _finding("canonical", "Canonical 地址明确", "技术基础", "medium", canonical_ok, f"{canonical_detail}：{canonical}", "设置指向首选页面的 canonical URL，减少实体和内容信号分散。", 4, True),
         _finding("indexable", "页面允许索引", "技术基础", "critical", not noindex, "发现 noindex" if noindex else "未发现 noindex", "如果页面需要公开获客，请移除 noindex；若为私有页面则保持现状。", 15),
         _finding("h1", "主标题结构唯一", "内容结构", "high", len(h1s) == 1, f"发现 {len(h1s)} 个 H1", "保留一个描述页面核心主题的 H1，其余标题按 H2/H3 组织。", 7, True),
         _finding("heading_depth", "内容具备分层标题", "内容结构", "medium", len(headings) >= 3, f"发现 {len(headings)} 个标题节点", "用 H2/H3 把定义、方案、证据和 FAQ 分成可独立引用的内容块。", 5, True),
@@ -436,7 +463,7 @@ async def audit_url(url: str) -> dict[str, Any]:
         _finding("schema", "存在有效 JSON-LD", "结构化数据", "high", bool(schema_types), f"识别类型：{', '.join(sorted(schema_types)) or '无'}", "至少增加 Organization、WebSite 和 WebPage JSON-LD。", 8, True),
         _finding("entity_schema", "品牌实体 Schema 完整", "结构化数据", "high", bool(schema_types & {"Organization", "LocalBusiness", "Corporation", "Brand"}), f"识别类型：{', '.join(sorted(schema_types)) or '无'}", "用 Organization/Brand 描述品牌名称、官网和可验证的官方资料。", 7, True),
         _finding("faq", "包含问答式内容", "AI 可引用性", "medium", "FAQPage" in schema_types or len(question_headings) >= 2, f"问答标题 {len(question_headings)} 个", "增加真实用户问题及简洁答案；符合条件时添加 FAQPage 标记。", 5, True),
-        _finding("citations", "存在外部证据或引用", "可信度", "high", len(external_links) >= 2, f"发现 {len(external_links)} 个外部来源链接", "为关键数字和结论增加权威来源、发布日期与链接。", 7),
+        _finding("citations", "外部来源链接可识别", "可信度", "high", len(external_links) >= 2, f"发现 {len(external_links)} 个外部来源链接", "为关键数字和结论增加权威来源、发布日期与链接。", 7),
         _finding("freshness", "作者与更新时间可识别", "可信度", "medium", has_author and has_date, f"作者：{'有' if has_author else '无'}；日期：{'有' if has_date else '无'}", "展示作者/审核人和最近更新时间，并使用结构化字段标记。", 5, True),
         _finding("language", "页面语言已声明", "技术基础", "low", bool(language), f"lang={language or '未设置'}", "在 html 元素设置准确的 lang 属性。", 2, True),
         _finding("robots", "robots.txt 可访问", "技术基础", "medium", robots_ok and bool(robots_text.strip()), robots_url, "发布 robots.txt，明确允许公开页面被合规抓取。", 3),

@@ -141,7 +141,7 @@ class CompetitorTraceTests(unittest.TestCase):
         # Sparse observations must not declare either side the winner.
         self.assertEqual(by_id[1]["winner"], "insufficient")
         self.assertEqual(by_id[2]["winner"], "insufficient")
-        self.assertEqual(by_id[1]["top_competitor"], "Tableau")
+        self.assertEqual(by_id[1]["top_competitor"], "tableau")
 
 
 class CompetitorPlacementTests(unittest.TestCase):
