@@ -451,6 +451,26 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(left, right)
         self.assertEqual(left_hash, right_hash)
 
+    def test_fingerprint_preserves_bigint_identity(self):
+        for value in (2**53, 2**53 + 1, 2**63 - 1):
+            with self.subTest(value=value):
+                normalized, digest = payload_fingerprint(
+                    ACTION_KEYWORD_BID, {"keyword_id": value, "new_bid": 1.23}
+                )
+                self.assertEqual(normalized["keyword_id"], value)
+                self.assertEqual(payload_fingerprint(
+                    ACTION_KEYWORD_BID, {"keyword_id": str(value), "new_bid": 1.23}
+                )[1], digest)
+        self.assertNotEqual(
+            payload_fingerprint(ACTION_KEYWORD_BID, {"keyword_id": 2**53, "new_bid": 1.23})[1],
+            payload_fingerprint(ACTION_KEYWORD_BID, {"keyword_id": 2**53 + 1, "new_bid": 1.23})[1],
+        )
+
+    def test_id_rejects_out_of_range_and_fractional_strings(self):
+        for value in (str(2**63), float(2**53), "7.0000000000000000001", "NaN", "Infinity", "1e999999", [], None):
+            with self.subTest(value=value), self.assertRaises(WritebackApprovalError):
+                payload_fingerprint(ACTION_KEYWORD_BID, {"keyword_id": value, "new_bid": 1.23})
+
     def test_payload_rejects_non_finite_or_non_positive_values(self):
         bad_payloads = (
             {"keyword_id": 7, "new_bid": float("nan")},
