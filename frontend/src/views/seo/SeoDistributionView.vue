@@ -33,6 +33,7 @@ import { currentSeoSiteId as siteId } from './seoSiteContext'
 import { validateResults } from './publisher/core.js'
 import { createPublisherPackage, publisherZip } from './seoPublisher'
 const publisherFiles = import.meta.glob('./publisher/*', { query: '?raw', import: 'default', eager: true })
+const runnerFiles = import.meta.glob('./publisher-runner/*', { query: '?raw', import: 'default', eager: true })
 
 const loading = ref(false)
 const error = ref('')
@@ -734,6 +735,10 @@ function downloadPublisher() {
   const files = Object.fromEntries(Object.entries(publisherFiles).map(([path, text]) => [path.split('/').pop(), text]))
   downloadBlob(publisherZip(files), 'G-Snipers国内填稿助手.zip')
 }
+function downloadRunner() {
+  const files = Object.fromEntries(Object.entries(runnerFiles).map(([path, text]) => [path.split('/').pop(), text]))
+  downloadBlob(publisherZip(files), 'G-Snipers国内本地执行器.zip')
+}
 
 async function copyHandoffTitle() {
   try {
@@ -1058,7 +1063,8 @@ onMounted(loadSites)
     <el-dialog v-model="helperDialog" title="浏览器分发助手" width="660px">
       <ol class="helper-steps"><li>下载并解压助手，在 Chrome / Edge 扩展管理页启用开发者模式，加载解压目录。</li><li>先在本工作台选择文章与账号，生成分发任务；从“发布任务”导出 JSON 填稿任务包。</li><li>在扩展中导入任务包，打开官方平台并登录。选择对应文章，核对账号后分别填入标题和正文。</li><li>在平台上传图片、检查封面、排版及原创 / AI 声明，自行发布。在助手采集公开文章链接，保存结果并处理下一篇；导出结果后在“发布任务”批量回收。</li></ol>
       <el-alert title="助手不托管登录、不覆盖已有内容、不点击发布。图片需在平台上传。真实平台编辑器兼容性仍需目标账号验收，识别失败时可用交接台复制粘贴。" type="info" :closable="false" />
-      <template #footer><el-button @click="helperDialog = false">关闭</el-button><el-button type="primary" @click="downloadPublisher">下载 Chrome / Edge 填稿助手</el-button></template>
+      <p>本地执行器试用版支持百家号、头条号、搜狐号的连续填稿、图片控件上传和草稿操作。需要本机安装 Python，按随包说明运行；可选逐篇授权提交，验证码及审核仍需人工处理，尚待真实账号验收。</p>
+      <template #footer><el-button @click="helperDialog = false">关闭</el-button><el-button @click="downloadRunner">下载本地执行器（试用）</el-button><el-button type="primary" @click="downloadPublisher">下载 Chrome / Edge 填稿助手</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="connectionDialog" :title="connectionEditingId ? '编辑分发账号' : '添加分发账号'" width="620px" destroy-on-close>

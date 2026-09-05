@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from app.seo_backlinks import apply_backlink_evidence, discover_backlinks, fetch_backlink_page
 from app.seo_backlink_sources import parse_backlink_csv, import_candidates, index_status, fetch_index_candidates, backlink_analysis
+from app.seo_backlink_opportunities import competitor_domains, compare_samples
 from app.seo_task_center import list_task_center, planned_checks, actor_key, JOB_PERMISSIONS
 from app.models.seo import SeoAiOperation
 
@@ -7697,6 +7698,76 @@ class BacklinkScope(BaseModel):
 class BacklinkDiscovery(BacklinkScope):
     source_url: str = Field(min_length=1, max_length=2000)
     publication_id: PositiveInt | None = None
+
+
+class BacklinkOpportunityQuery(BacklinkScope):
+    competitors: list[str] = Field(min_length=1, max_length=3)
+
+
+@router.get('/backlinks/opportunities')
+async def get_backlink_opportunities(tenant_id: int, site_id: int, session: AsyncSession = Depends(get_session)):
+    site = await _seo_site(session, tenant_id, site_id)
+    result = (site.site_settings or {}).get('backlink_opportunities')
+    if result and result.get('domain') != site.canonical_domain:
+        result = None
+    return {'provider': index_status(), 'result': result}
+
+
+@router.post('/backlinks/opportunities/query')
+async def query_backlink_opportunities(req: BacklinkOpportunityQuery, session: AsyncSession = Depends(get_session), ctx: AuthContext = Depends(require_scoped_auth)):
+    ctx.ensure_tenant(req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
+    if not index_status()['configured']:
+        raise HTTPException(503, '外链索引服务未启用或未配置凭据')
+    site = await session.get(SeoSite, req.site_id, with_for_update=True, populate_existing=True)
+    if not site or site.tenant_id != req.tenant_id:
+        raise HTTPException(404, '网站不存在')
+    try:
+        competitors = competitor_domains(req.competitors, site.canonical_domain)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    now = datetime.utcnow()
+    settings = dict(site.site_settings or {})
+    previous = settings.get('backlink_opportunities') or {}
+    # Reserve the whole batch before the first paid call, including failed calls.
+    # Changing competitors or the site domain cannot reset the daily budget.
+    if previous.get('attempted_at') and now - datetime.fromisoformat(previous['attempted_at']) < timedelta(days=1):
+        raise HTTPException(429, '该网站 24 小时内已执行过竞品分析，请刷新查看已保存结果；失败也计入调用限额')
+    claim = {'domain': site.canonical_domain, 'competitors': competitors, 'request_id': uuid4().hex,
+             'attempted_at': now.isoformat(), 'state': 'running', 'provider': 'DataForSEO',
+             'samples': {}, 'limit_per_domain': 100, 'max_provider_calls': 1 + len(competitors)}
+    settings['backlink_opportunities'] = claim
+    site.site_settings = settings
+    await session.commit()
+    samples = {}
+    for domain in [claim['domain'], *competitors]:
+        try:
+            value = await fetch_index_candidates(domain)
+            samples[domain] = {**value, 'state': 'completed', 'as_of': datetime.utcnow().isoformat()}
+        except Exception:
+            samples[domain] = {'state': 'failed', 'items': [], 'message': '供应商查询未完成，未自动重试；检查余额、权限及网络'}
+        site = await session.get(SeoSite, req.site_id, with_for_update=True, populate_existing=True)
+        if not site or site.tenant_id != req.tenant_id or site.canonical_domain != claim['domain'] or ((site.site_settings or {}).get('backlink_opportunities') or {}).get('request_id') != claim['request_id']:
+            await session.rollback()
+            raise HTTPException(409, '网站或查询任务已变化，停止后续查询，未写入过期结果')
+        settings = dict(site.site_settings or {})
+        settings['backlink_opportunities'] = {**claim, 'samples': dict(samples)}
+        site.site_settings = settings
+        await session.commit()  # Preserve partial results if a later call/process fails.
+    rows = list(await session.scalars(select(SeoBacklink).where(SeoBacklink.tenant_id == req.tenant_id, SeoBacklink.site_id == req.site_id)))
+    known = [row.source_url for row in rows if row.status == 'active' and (row.verification or {}).get('state') == 'found']
+    comparison = compare_samples(claim['domain'], samples, known)
+    outcome = {**claim, 'samples': samples, **comparison, 'completed_at': datetime.utcnow().isoformat(),
+               'state': 'completed' if all(s['state'] == 'completed' for s in samples.values()) else 'partial'}
+    site = await session.get(SeoSite, req.site_id, with_for_update=True, populate_existing=True)
+    if not site or site.tenant_id != req.tenant_id or site.canonical_domain != claim['domain'] or ((site.site_settings or {}).get('backlink_opportunities') or {}).get('request_id') != claim['request_id']:
+        await session.rollback()
+        raise HTTPException(409, '网站或查询任务已变化，未覆盖较新的结果')
+    settings = dict(site.site_settings or {})
+    settings['backlink_opportunities'] = outcome
+    site.site_settings = settings
+    await session.commit()
+    return outcome
 
 
 @router.post("/backlinks/import")

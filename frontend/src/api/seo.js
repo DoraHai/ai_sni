@@ -478,6 +478,12 @@ export function fetchSeoBacklinkIndexStatus({tenantId,siteId}) {
 export function querySeoBacklinkIndex(payload) {
   return client.post('/api/v1/seo/backlinks/query-index',payload,{timeout:30000})
 }
+export function fetchSeoBacklinkOpportunities({tenantId,siteId}) {
+  return client.get('/api/v1/seo/backlinks/opportunities',{params:{tenant_id:tenantId,site_id:siteId}})
+}
+export function querySeoBacklinkOpportunities(payload) {
+  return client.post('/api/v1/seo/backlinks/opportunities/query',payload,{timeout:120000})
+}
 export function downloadSeoPublicationMaterials(id,payload) {
   return client.post(`/api/v1/seo/content-distribution/publications/${id}/materials`,payload,{responseType:'blob',timeout:30000})
 }

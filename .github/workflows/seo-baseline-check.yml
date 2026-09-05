@@ -101,6 +101,9 @@ jobs:
           tests/test_seo_deploy_isolation.py
           tests/test_seo_distribution.py
           tests/test_seo_domestic_distribution.py
+          tests/test_seo_backlink_sources.py
+          tests/test_seo_backlink_opportunities.py
+          tests/test_seo_publisher_runner.py
           tests/test_seo_distribution_import.py
           tests/test_seo_cockpit.py
           tests/test_seo_cockpit_auth.py
@@ -117,6 +120,14 @@ jobs:
           tests/test_seo_monitoring_jobs.py
           tests/test_seo_usage_limits.py
           tests/test_urlwords.py
+
+      - name: Exercise local publisher in Chromium fixtures
+        env:
+          SEO_RUNNER_BROWSER_TEST: "1"
+        run: |
+          pip install -r frontend/src/views/seo/publisher-runner/requirements.txt
+          python -m playwright install --with-deps --no-shell chromium
+          pytest -q tests/test_seo_publisher_runner.py
 
   frontend-build:
     name: SEO / frontend-build

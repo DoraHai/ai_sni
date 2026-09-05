@@ -106,7 +106,7 @@ test('distribution view clears old scope before export and ignores stale loads',
       bindings[alias||original]=Vue[original]||(()=>Promise.resolve({items:[]}))
     }
     return ''
-  }).replace(/const publisherFiles = import\.meta\.glob\([^\n]+\)/,'const publisherFiles = {}')
+  }).replace(/const (publisherFiles|runnerFiles) = import\.meta\.glob\([^\n]+\)/g,'const $1 = {}')
   const tenant=Vue.ref(1),site=Vue.ref(10),reads=[]
   const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve}}
   Object.assign(bindings,{currentTenantId:tenant,siteId:site,session:Vue.reactive({user:{id:7},isLoggedIn:true,canEdit:()=>true}),
