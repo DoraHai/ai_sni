@@ -104,6 +104,9 @@ test('bound content shows archived program evidence without calling AI', async (
     assert.ok(text.includes('缺少 H1'))
     assert.ok(view.state.prompt.includes('承接页：https://example.com/page'))
     assert.ok(view.state.prompt.includes('仅基于上述已存档证据辅助拟稿'))
+    assert.equal(view.state.primaryAiAction, 'outline')
+    assert.ok(text.includes('AI 生成整改大纲'))
+    assert.ok(text.includes('承接页检测摘要不等于正文事实资料'))
     assert.equal(view.writes.length, 0)
   } finally { view.close() }
 })

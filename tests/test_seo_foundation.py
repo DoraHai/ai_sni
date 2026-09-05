@@ -3,7 +3,7 @@ import inspect
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -1530,6 +1530,136 @@ def test_seo_ai_repairs_incomplete_result_once_without_double_charging() -> None
     charge.assert_awaited_once()
     refund.assert_not_awaited()
     assert "必须返回的 JSON 字段" in chat.await_args_list[1].args[1]
+
+
+@pytest.mark.parametrize("action", ["generate", "rewrite"])
+def test_source_bound_content_rejects_ungrounded_full_text_ai_actions(action: str) -> None:
+    request = SeoContentAssistRequest(
+        tenant_id=1,
+        site_id=2,
+        source_page_id=234,
+        action=action,
+        keyword_ids=[11],
+        source_text="rank_snapshot_id=64" if action == "rewrite" else None,
+    )
+    source_page = SeoSitePage(
+        id=234,
+        tenant_id=1,
+        site_id=2,
+        url="https://example.com/page",
+        status="needs_fix",
+    )
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+
+    with (
+        patch("app.api.seo._tenant", new=AsyncMock(return_value=Tenant(id=1, name="测试品牌"))),
+        patch("app.api.seo._site_page", new=AsyncMock(return_value=source_page)),
+        patch("app.api.seo.chat_json", new=AsyncMock()) as chat,
+    ):
+        with pytest.raises(Exception) as exc:
+            asyncio.run(assist_seo_content(request, AsyncMock(), context))
+
+    assert getattr(exc.value, "status_code", None) == 400
+    assert "经核验" in str(getattr(exc.value, "detail", "")) or "不能仅凭" in str(
+        getattr(exc.value, "detail", "")
+    )
+    chat.assert_not_awaited()
+
+
+def test_source_bound_content_rejects_cross_site_ai_context() -> None:
+    request = SeoContentAssistRequest(
+        tenant_id=1,
+        site_id=2,
+        source_page_id=234,
+        action="outline",
+        keyword_ids=[11],
+    )
+    source_page = SeoSitePage(
+        id=234,
+        tenant_id=1,
+        site_id=3,
+        url="https://example.com/page",
+        status="needs_fix",
+    )
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+
+    with (
+        patch("app.api.seo._tenant", new=AsyncMock(return_value=Tenant(id=1, name="测试品牌"))),
+        patch("app.api.seo._site_page", new=AsyncMock(return_value=source_page)),
+    ):
+        with pytest.raises(Exception) as exc:
+            asyncio.run(assist_seo_content(request, AsyncMock(), context))
+
+    assert getattr(exc.value, "status_code", None) == 400
+    assert "站点不一致" in str(getattr(exc.value, "detail", ""))
+
+
+def test_source_bound_content_can_rewrite_supplied_factual_draft() -> None:
+    request = SeoContentAssistRequest(
+        tenant_id=1,
+        site_id=2,
+        source_page_id=234,
+        action="rewrite",
+        keyword_ids=[11],
+        draft="经人工核验的目标词官网事实资料。",
+    )
+    source_page = SeoSitePage(
+        id=234,
+        tenant_id=1,
+        site_id=2,
+        url="https://example.com/page",
+        status="needs_fix",
+    )
+    keyword = SeoKeywordAsset(
+        id=11,
+        tenant_id=1,
+        site_id=2,
+        keyword="目标词",
+        priority="P1",
+        status="active",
+        source="manual",
+    )
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+
+    with (
+        patch("app.api.seo._tenant", new=AsyncMock(return_value=Tenant(id=1, name="测试品牌"))),
+        patch("app.api.seo._site_page", new=AsyncMock(return_value=source_page)),
+        patch("app.api.seo._content_keywords", new=AsyncMock(return_value=[keyword])) as content_keywords,
+        patch("app.api.seo.is_enabled", return_value=True),
+        patch("app.api.seo.charge_seo_usage", new=AsyncMock()),
+        patch(
+            "app.api.seo.chat_json",
+            new=AsyncMock(return_value={"content": "优化后仍然仅包含目标词官网事实资料。"}),
+        ),
+    ):
+        response = asyncio.run(assist_seo_content(request, AsyncMock(), context))
+
+    assert "目标词" in response["content"]
+    content_keywords.assert_awaited_once_with(
+        ANY,
+        1,
+        [11],
+        2,
+        require_exact_site=True,
+    )
 
 
 def test_internal_link_fetch_retries_transient_error() -> None:
