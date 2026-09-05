@@ -11,6 +11,14 @@ const lookupId = ref('')
 const linkTarget = computed(() => evidenceLinkTarget(route.query, props.tenantId))
 const state = reactive({ items: [], selected: null, detail: null, loading: false, busy: false, error: '', message: '', more: false })
 const publicationId = ref('')
+const cancelPending = ref(false)
+watch(() => [props.tenantId, state.selected?.id, state.selected?.status], () => { cancelPending.value = false })
+async function cancelTask() {
+  if (!cancelPending.value || state.loading || state.busy) return
+  const tenant = props.tenantId, id = state.selected?.id
+  await controller.act('cancel')
+  if (tenant === props.tenantId && id === state.selected?.id) cancelPending.value = false
+}
 const controller = createEvidenceController(state, api, () => props.tenantId)
 function reload() { publicationId.value = ''; return controller.load(false, linkTarget.value.id) }
 watch(() => [props.tenantId, route.query.evidence_task_id, route.query.evidence_tenant_id], () => { lookupId.value = ''; reload() }, { immediate: true })
@@ -57,6 +65,13 @@ function select(row) {
       <div v-if="state.selected" class="evidence-detail">
         <h4>{{ state.selected.title }}</h4>
         <p>负责人角色：{{ state.selected.assignee_role }} · 状态：{{ labels[state.selected.status] }}</p>
+        <button v-if="state.selected.status === 'open'" class="gd-btn" :disabled="state.loading || state.busy" @click="controller.act('start')">开始处理</button>
+        <button v-if="!terminal && !cancelPending" class="gd-btn" :disabled="state.loading || state.busy" @click="cancelPending = true">取消任务…</button>
+        <div v-if="cancelPending && !terminal" role="group" aria-label="确认取消任务">
+          <p>取消后不能重新开启此任务，需要另建任务；已启动的采样会继续执行，取消不会撤销已经发生的调用。</p>
+          <button class="gd-btn" :disabled="state.loading || state.busy" @click="cancelTask">确认取消当前任务</button>
+          <button class="gd-btn" :disabled="state.busy" @click="cancelPending = false">保留任务</button>
+        </div>
         <button v-if="contentId" class="gd-btn" @click="router.push(`/geo/tasks/${contentId}`)">打开关联内容</button>
         <p v-if="state.busy">正在核验，请稍候…</p>
         <template v-if="state.detail">
@@ -78,10 +93,11 @@ function select(row) {
           <p v-if="state.detail.retest_plan">计划采样 {{ state.detail.retest_plan.total_samples }} 次，保持基线题目、模型和次数一致；启动后会调用已配置 AI 引擎。</p>
           <p v-if="state.detail.retest_blocker">{{ state.detail.retest_blocker }}</p>
           <p v-if="state.detail.latest_retest">最近复测 #{{ state.detail.latest_retest.id }}：{{ runLabels[state.detail.latest_retest.status] || state.detail.latest_retest.status }}；合格 {{ state.detail.latest_retest.result?.qualified_samples ?? '待执行' }} / {{ state.detail.latest_retest.result?.expected_samples ?? '待执行' }}。{{ state.detail.latest_retest.error }}</p>
-          <button class="gd-btn" :disabled="state.loading || state.busy || !state.detail.can_retest" @click="controller.act('retest')">启动精确复测</button>
+          <button class="gd-btn" :disabled="terminal || state.loading || state.busy || !state.detail.can_retest" @click="controller.act('retest')">启动精确复测</button>
           <button class="gd-btn" :disabled="state.loading || state.busy" @click="controller.select(state.selected)">刷新执行条件</button>
           <h4>4. 实际指标验收</h4>
           <p v-if="state.detail.completion_evidence">已核验变化：{{ state.detail.completion_evidence.before?.value }} → {{ state.detail.completion_evidence.after?.value }}，变化量 {{ state.detail.completion_evidence.delta }}。</p>
+          <p v-else-if="state.selected.status === 'cancelled'">任务已取消，不再进行完成验收；已有记录保留供查阅。</p>
           <p v-else>尚未完成。需等待符合条件的完整后测周，并达到任务目标；未通过会显示具体原因。</p>
           <button class="gd-btn" :disabled="terminal || state.loading || state.busy || !state.detail.baseline_valid" @click="controller.act('complete')">核验指标并完成</button>
         </template>

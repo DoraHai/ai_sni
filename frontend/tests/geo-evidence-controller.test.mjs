@@ -98,3 +98,37 @@ test('mutation cannot interrupt an in-flight page load', async () => {
  await x.c.act('complete')
  assert.equal(x.state.loading,true)
 })
+
+
+test('start uses server-confirmed status even when subsequent refresh fails', async () => {
+ const row={id:1,status:'in_progress'}
+ const x=setup({start:async()=>row,get:async()=>{throw Error('offline')},readiness:async()=>({})})
+ x.state.selected={id:1,status:'open'};x.state.items=[x.state.selected]
+ await x.c.act('start')
+ assert.equal(x.state.selected.status,'in_progress');assert.equal(x.state.items[0],row)
+ assert.match(x.state.error,/操作已受理/)
+})
+test('cancel preserves terminal status and never allows a subsequent start or retest', async () => {
+ let calls=0
+ const row={id:1,status:'cancelled',completion_evidence:null}
+ const x=setup({cancel:async()=>{calls++;return row},get:async()=>row,readiness:async()=>({}),start:()=>assert.fail('terminal start'),retest:()=>assert.fail('terminal retest')})
+ x.state.selected={id:1,status:'in_progress'}
+ await x.c.act('cancel');await x.c.act('start');await x.c.act('retest');await x.c.act('cancel')
+ assert.equal(calls,1);assert.equal(x.state.selected.completion_evidence,null)
+})
+test('late cancellation response cannot replace another customer task', async () => {
+ const pending=deferred()
+ const x=setup({cancel:()=>pending.promise,list:async()=>[],get:()=>assert.fail('stale refresh')})
+ x.state.selected={id:1,status:'open'}
+ const first=x.c.act('cancel');x.change(2);await x.c.load()
+ pending.resolve({id:1,status:'cancelled'});await first
+ assert.equal(x.state.selected,null)
+})
+test('repeated start while request is pending sends only once', async () => {
+ const pending=deferred();let calls=0
+ const row={id:1,status:'in_progress'}
+ const x=setup({start:()=>{calls++;return pending.promise},get:async()=>row,readiness:async()=>({})})
+ x.state.selected={id:1,status:'open'}
+ const first=x.c.act('start');await x.c.act('start');pending.resolve(row);await first
+ assert.equal(calls,1)
+})

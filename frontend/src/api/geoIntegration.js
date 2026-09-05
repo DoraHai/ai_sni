@@ -10,3 +10,6 @@ export const retest = (tenant, id) => client.post(`${base}/${id}/retest`, {}, co
 export const complete = (tenant, id) => client.patch(`${base}/${id}`, { status: 'done' }, config(tenant))
 
 export const create = (tenant, body) => client.post(base, body, config(tenant))
+
+export const start = (tenant, id) => client.patch(`${base}/${id}`, { status: 'in_progress' }, config(tenant))
+export const cancel = (tenant, id) => client.patch(`${base}/${id}`, { status: 'cancelled' }, config(tenant))
