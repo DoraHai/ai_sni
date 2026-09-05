@@ -1,4 +1,6 @@
 export function executionNext(task, detail, error = '') {
+  if (error) return { stage: '条件未知', next: error }
+  if (detail?.task_id != null && detail.task_id !== task.id) return { stage: '条件未知', next: '执行条件与任务编号不一致，请刷新重试' }
   const status = detail?.status || task.status
   if (status === 'done') return { stage: '已完成', next: '查看指标变化证据' }
   if (status === 'cancelled') return { stage: '已取消', next: '查看历史记录' }
@@ -47,9 +49,11 @@ export function createOverviewLoader(state, api) {
         try {
           if (token !== epoch) continue
           const detail = await api.readiness(tenant, task.id)
+          if (token !== epoch) continue
+          if (!detail || detail.task_id !== task.id) throw new Error('执行条件响应缺失或任务编号不一致，请刷新重试')
           if (token === epoch) state.rows[index] = { task, detail, error: '' }
         } catch (e) {
-          if (token === epoch) state.rows[index] = { task, detail: null, error: e.message || '读取失败，请刷新重试' }
+          if (token === epoch) state.rows[index] = { task, detail: null, error: e?.message || '读取失败，请刷新重试' }
         } finally { release() }
       }
     }

@@ -67,3 +67,35 @@ test('rapid batch changes share the same three-request limit',async()=>{
  assert.equal(calls.filter(([tenant])=>tenant===7).length,3)
  assert.equal(state.loading,false)
 })
+
+
+test('wrong task response cannot mark another task completed',async()=>{
+ const state={};const loader=createOverviewLoader(state,{readiness:async()=>({task_id:999,status:'done'})})
+ await loader.load(7,[task])
+ assert.equal(state.rows[0].detail,null);assert.match(state.rows[0].error,/编号不一致/)
+ assert.equal(executionNext(task,{task_id:999,status:'done'}).stage,'条件未知')
+})
+test('null responses and non-Error rejections release permits and can be retried',async()=>{
+ let fail=true;const state={}
+ const loader=createOverviewLoader(state,{readiness:async(t,id)=>{
+  if(fail) {if(id===1) return null;throw null}
+  return {task_id:id,baseline_valid:false}
+ }})
+ const tasks=Array.from({length:5},(_,i)=>({...task,id:i+1}))
+ await loader.load(7,tasks)
+ assert.equal(state.loading,false);assert.ok(state.rows.every(row=>row.error))
+ fail=false;await loader.load(7,tasks)
+ assert.ok(state.rows.every(row=>row.detail?.task_id===row.task.id));assert.equal(state.loading,false)
+})
+test('unmount drains obsolete waiters without fetching or changing the last rendered rows',async()=>{
+ const pending=[];let calls=0;const state={}
+ const loader=createOverviewLoader(state,{readiness:()=>{calls++;return new Promise(resolve=>pending.push(resolve))}})
+ const tasks=Array.from({length:6},(_,i)=>({...task,id:i+1}))
+ const first=loader.load(7,tasks);await Promise.resolve()
+ const second=loader.load(8,tasks)
+ loader.invalidate();const rows=state.rows
+ pending.forEach(resolve=>resolve({task_id:1}))
+ await Promise.all([first,second])
+ assert.equal(calls,3);assert.equal(state.rows,rows)
+ assert.ok(state.rows.every(row=>row.detail===null && row.error===''))
+})
