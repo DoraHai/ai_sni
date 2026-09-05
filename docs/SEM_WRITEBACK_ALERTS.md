@@ -20,4 +20,6 @@
 复用现有 alerts、bid_writebacks、writeback_actions，不更改 Schema，migration=not-run。
 发布仅需常规 SEM 后端同步 PR 和受控后端发布流程。
 验证包含 PostgreSQL 查询编译、去重键/跨天边界、演练排除和客户事务隔离；
-尚未在真实 PostgreSQL 上完成集成验收，上线前应在隔离测试库验证重复巡检与自动关闭。
+已在独立 CI 的 PostgreSQL 16 容器完成 UTC / Asia/Shanghai 两组集成验证：
+阈值过滤、租户/演练隔离、历史记录日期保留、重复巡检、重新打开和自动关闭均通过。
+测试只创建会话级临时表；未读取或修改生产数据库。
