@@ -9,7 +9,7 @@ import {
   runCompetitorAudit,
   createGeoTaskFromDiagnosis,
   runGeoAudit,
-} from '../../api/geo'
+} from '../../api/diagnostic'
 import { fetchTenants } from '../../api/auth'
 import { session } from '../../store/session'
 import diagnosticLogo from '../../assets/g-snipers-purple-logo.png'

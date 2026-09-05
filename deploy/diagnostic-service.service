@@ -1,0 +1,22 @@
+[Unit]
+Description=Growth Sniper Diagnostic API
+After=network.target
+
+[Service]
+Type=simple
+User=sem
+Group=sem
+WorkingDirectory=/opt/diagnostic-service/current
+EnvironmentFile=/opt/diagnostic-service/shared.env
+EnvironmentFile=-/opt/diagnostic-service/providers.env
+EnvironmentFile=-/opt/diagnostic-service/.env
+Environment=ADMIN_API_KEY_QUERY_ENABLED=false
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/diagnostic-service/.venv/bin/python -m uvicorn app.diagnostic_main:app --host 127.0.0.1 --port 8012 --workers 2
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

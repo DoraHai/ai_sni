@@ -1,0 +1,1 @@
+"""Independently released diagnostic center."""

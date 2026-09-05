@@ -9,7 +9,7 @@ import {
   fetchGeoKnowledge,
   saveGeoAudience,
   saveGeoBrand,
-} from '../../api/geo'
+} from '../../api/diagnostic'
 
 const props = defineProps({
   tenantId: { type: [Number, String], required: true },

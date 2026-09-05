@@ -1,0 +1,97 @@
+import client from './client'
+
+export function runGeoAudit({ tenantId, url, scope = 'single' }) {
+  return client.post('/api/v1/diagnostic/audits', { tenant_id: tenantId, url, scope }, {
+    timeout: scope === 'site' ? 120000 : 45000,
+  })
+}
+
+export function runCompetitorAudit({ tenantId, url, scope = 'single' }) {
+  return client.post('/api/v1/diagnostic/audits/competitor-preview', { tenant_id: tenantId, url, scope }, {
+    timeout: scope === 'site' ? 120000 : 45000,
+  })
+}
+
+export function fetchLatestGeoAudit(tenantId) {
+  return client.get('/api/v1/diagnostic/audits/latest', { params: { tenant_id: tenantId } })
+}
+
+export function fetchGeoAuditHistory(tenantId, limit = 12) {
+  return client.get('/api/v1/diagnostic/audits/history', { params: { tenant_id: tenantId, limit } })
+}
+
+export function fetchGeoAudit({ tenantId, auditId }) {
+  return client.get(`/api/v1/diagnostic/audits/${auditId}`, { params: { tenant_id: tenantId } })
+}
+
+export function fetchPageSpeedInsights({ tenantId, url, strategy = 'mobile' }) {
+  return client.get('/api/v1/diagnostic/pagespeed', {
+    params: { tenant_id: tenantId, url, strategy },
+    timeout: 65000,
+  })
+}
+
+export function generateGeoAdvice({ tenantId, auditId }) {
+  return client.post(`/api/v1/diagnostic/audits/${auditId}/advice`, null, {
+    params: { tenant_id: tenantId },
+    timeout: 65000,
+  })
+}
+
+export function runDeepSeekSample({ tenantId, auditId, questions = [] }) {
+  return client.post(`/api/v1/diagnostic/audits/${auditId}/ai-sample`, {
+    tenant_id: tenantId,
+    questions,
+  }, { timeout: 90000 })
+}
+
+export function generateGeoAssets({ tenantId, auditId }) {
+  return client.post(`/api/v1/diagnostic/audits/${auditId}/assets`, null, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function fetchGeoAssetProfile(tenantId, website = '') {
+  return client.get('/api/v1/diagnostic/assets/profile', {
+    params: { tenant_id: tenantId, website: website || undefined },
+  })
+}
+
+export function discoverGeoBrand({ tenantId, website }) {
+  return client.post('/api/v1/diagnostic/assets/brand/discover', {
+    tenant_id: tenantId,
+    website,
+  }, { timeout: 45000 })
+}
+
+export function saveGeoBrand(payload) {
+  return client.put('/api/v1/diagnostic/assets/brand', payload)
+}
+
+export function saveGeoAudience(payload) {
+  return client.put('/api/v1/diagnostic/assets/audience', payload)
+}
+
+export function fetchGeoKnowledge({ tenantId, q = '', itemType = '' }) {
+  return client.get('/api/v1/diagnostic/assets/knowledge', {
+    params: { tenant_id: tenantId, q, item_type: itemType },
+  })
+}
+
+export function createGeoKnowledge(payload) {
+  return client.post('/api/v1/diagnostic/assets/knowledge', payload)
+}
+
+export function deleteGeoKnowledge({ tenantId, knowledgeId }) {
+  return client.delete(`/api/v1/diagnostic/assets/knowledge/${knowledgeId}`, {
+    params: { tenant_id: tenantId },
+  })
+}
+
+export function createGeoTaskFromDiagnosis({ tenantId, auditId, adviceCode }) {
+  return client.post('/api/v1/geo/content-tasks/from-diagnosis', {
+    tenant_id: tenantId,
+    audit_id: auditId,
+    advice_code: adviceCode || null,
+  })
+}

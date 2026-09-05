@@ -16,6 +16,10 @@ export default defineConfig({
     port: 5174,
     strictPort: true,
     proxy: {
+      '/api/v1/diagnostic': {
+        target: process.env.DIAGNOSTIC_API_PROXY_TARGET || 'http://127.0.0.1:8012',
+        changeOrigin: true,
+      },
       '/api': {
         // GEO 独立进程（含 audits + content）；本机 8010 常被旧进程占用
         target: process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8011',
