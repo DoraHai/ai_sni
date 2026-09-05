@@ -6,7 +6,7 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -16,6 +16,7 @@ from app.models.seo import (
     SeoRankSnapshot,
     SeoSitePage,
 )
+from app.seo_serp import canonical_url
 
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,62 @@ def _keyword_ids(content: SeoContentAsset) -> set[int]:
 
 def _rank_label(rank: int | None) -> str:
     return f"第 {rank} 位" if rank is not None else "跌出前 100"
+
+
+def _canonical_url_or_empty(value: str | None) -> str:
+    try:
+        return canonical_url(value)
+    except (TypeError, ValueError):
+        return ""
+
+
+def _url_lookup_values(value: str | None) -> set[str]:
+    """Return bounded, case-insensitive exact URL variants for the DB lookup."""
+    raw = str(value or "").strip()
+    if not raw:
+        return set()
+    normalized = _canonical_url_or_empty(raw)
+    values = {item.casefold() for item in (raw, normalized) if item}
+    for item in list(values):
+        if item.endswith("/"):
+            values.add(item.rstrip("/"))
+        else:
+            values.add(f"{item}/")
+    return values
+
+
+def _source_page_for_keyword(
+    keyword: SeoKeywordAsset,
+    pages: list[SeoSitePage],
+    occupied_page_ids: set[int],
+) -> SeoSitePage | None:
+    """Prefer the configured landing URL, then the page's target keyword."""
+    available = [page for page in pages if int(page.id) not in occupied_page_ids]
+    landing_values = _url_lookup_values(keyword.landing_page)
+    if landing_values:
+        exact = [
+            page
+            for page in available
+            if str(page.url or "").strip().casefold() in landing_values
+        ]
+        if exact:
+            return min(exact, key=lambda page: int(page.id))
+        canonical_landing = _canonical_url_or_empty(keyword.landing_page)
+        if canonical_landing:
+            canonical_matches = [
+                page
+                for page in available
+                if _canonical_url_or_empty(page.url) == canonical_landing
+            ]
+            if canonical_matches:
+                return min(canonical_matches, key=lambda page: int(page.id))
+    keyword_matches = [
+        page
+        for page in available
+        if page.target_keyword_id is not None
+        and int(page.target_keyword_id) == int(keyword.id)
+    ]
+    return min(keyword_matches, key=lambda page: int(page.id)) if keyword_matches else None
 
 
 def _rank_drop_candidates(
@@ -217,20 +274,25 @@ async def create_rank_drop_content_tasks(
         )
         if content.source_page_id is not None
     }
+    landing_url_values = {
+        value
+        for keyword in keywords.values()
+        for value in _url_lookup_values(keyword.landing_page)
+    }
+    page_match_conditions = [SeoSitePage.target_keyword_id.in_(list(keywords))]
+    if landing_url_values:
+        page_match_conditions.append(
+            func.lower(SeoSitePage.url).in_(sorted(landing_url_values))
+        )
     pages = list(
         await session.scalars(
             select(SeoSitePage).where(
                 SeoSitePage.tenant_id == tenant_id,
                 SeoSitePage.site_id == site_id,
-                SeoSitePage.target_keyword_id.in_(list(keywords)),
+                or_(*page_match_conditions),
             )
         )
     )
-    page_by_keyword = {
-        int(page.target_keyword_id): page
-        for page in pages
-        if page.target_keyword_id is not None and page.id not in occupied_page_ids
-    }
 
     created_rows: list[SeoContentAsset] = []
     skipped_existing = 0
@@ -240,7 +302,7 @@ async def create_rank_drop_content_tasks(
         if keyword is None or keyword_id in active_keyword_ids:
             skipped_existing += 1
             continue
-        page = page_by_keyword.get(keyword_id)
+        page = _source_page_for_keyword(keyword, pages, occupied_page_ids)
         row = SeoContentAsset(
             tenant_id=tenant_id,
             site_id=site_id,

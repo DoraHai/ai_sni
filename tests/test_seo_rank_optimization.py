@@ -5,11 +5,13 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from app.models.seo import SeoContentAsset, SeoKeywordAsset, SeoRankSnapshot
+from app.models.seo import SeoContentAsset, SeoKeywordAsset, SeoRankSnapshot, SeoSitePage
 from app.seo_rank_optimization import (
     AUTO_RANK_DROP_AUTHOR,
     AUTO_RANK_DROP_TITLE_PREFIX,
     _rank_drop_candidates,
+    _source_page_for_keyword,
+    _url_lookup_values,
     create_rank_drop_content_tasks,
     create_rank_drop_content_tasks_safely,
 )
@@ -87,6 +89,77 @@ def test_rank_drop_candidates_ignore_improvement_and_subthreshold_change() -> No
         trigger_snapshot_ids={21},
         threshold=3,
     ) == []
+
+
+def test_source_page_prefers_configured_landing_url_over_keyword_assignment() -> None:
+    keyword = SeoKeywordAsset(
+        id=2,
+        tenant_id=1,
+        site_id=9,
+        keyword="NORD",
+        landing_page="https://www.nord.cn/cn/home-cn.jsp?utm_source=monitor",
+        status="active",
+    )
+    keyword_page = SeoSitePage(
+        id=120,
+        tenant_id=1,
+        site_id=9,
+        url="https://www.nord.cn/cn/other.jsp",
+        target_keyword_id=2,
+    )
+    landing_page = SeoSitePage(
+        id=119,
+        tenant_id=1,
+        site_id=9,
+        url="https://www.nord.cn/cn/home-cn.jsp",
+    )
+
+    assert "https://www.nord.cn/cn/home-cn.jsp" in _url_lookup_values(
+        keyword.landing_page
+    )
+    assert _source_page_for_keyword(keyword, [keyword_page, landing_page], set()) is landing_page
+    assert (
+        _source_page_for_keyword(keyword, [keyword_page, landing_page], {119})
+        is keyword_page
+    )
+
+
+def test_source_page_does_not_reuse_an_occupied_shared_landing_url() -> None:
+    keyword = SeoKeywordAsset(
+        id=2,
+        tenant_id=1,
+        site_id=9,
+        keyword="NORD",
+        landing_page="https://www.nord.cn/cn/home-cn.jsp",
+        status="active",
+    )
+    landing_page = SeoSitePage(
+        id=119,
+        tenant_id=1,
+        site_id=9,
+        url="https://www.nord.cn/cn/home-cn.jsp",
+    )
+
+    assert _source_page_for_keyword(keyword, [landing_page], {119}) is None
+
+
+def test_malformed_landing_urls_do_not_match_by_empty_canonical_value() -> None:
+    keyword = SeoKeywordAsset(
+        id=2,
+        tenant_id=1,
+        site_id=9,
+        keyword="NORD",
+        landing_page="https://example.com:invalid/landing",
+        status="active",
+    )
+    malformed_page = SeoSitePage(
+        id=119,
+        tenant_id=1,
+        site_id=9,
+        url="https://other.example:invalid/page",
+    )
+
+    assert _source_page_for_keyword(keyword, [malformed_page], set()) is None
 
 
 class _FakeSession:
@@ -179,6 +252,44 @@ def test_material_drop_creates_review_only_task_without_ai_or_publish() -> None:
     assert task.draft is None
     assert task.published_at is None
     assert "12 位" in task.outline and "18 位" in task.outline
+
+
+def test_material_drop_binds_the_configured_landing_page_without_target_keyword() -> None:
+    now = datetime(2026, 9, 1, 12, 0, 0)
+    previous = _rank(10, 12, now - timedelta(days=1))
+    latest = _rank(11, 18, now)
+    keyword = SeoKeywordAsset(
+        id=2,
+        tenant_id=1,
+        site_id=9,
+        keyword="NORD",
+        landing_page="https://www.nord.cn/cn/home-cn.jsp",
+        status="active",
+        source="manual",
+    )
+    page = SeoSitePage(
+        id=119,
+        tenant_id=1,
+        site_id=9,
+        url="https://www.nord.cn/cn/home-cn.jsp",
+        target_keyword_id=None,
+    )
+    session = _FakeSession([[latest], [latest, previous], [keyword], [], [], [page]])
+    settings = SimpleNamespace(
+        seo_rank_drop_tasks_enabled=True,
+        seo_rank_drop_task_threshold=3,
+    )
+
+    with patch("app.seo_rank_optimization.get_settings", return_value=settings):
+        result = asyncio.run(
+            create_rank_drop_content_tasks(
+                session, tenant_id=1, site_id=9, trigger_snapshot_ids={11}
+            )
+        )
+
+    assert result == {"created": 1, "task_ids": [100], "skipped_existing": 0}
+    assert session.added[0].source_page_id == 119
+    assert session.added[0].content_type == "landing"
 
 
 def test_existing_active_keyword_task_prevents_duplicate() -> None:
