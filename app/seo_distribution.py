@@ -198,6 +198,11 @@ for _code, _definition in PLATFORM_CATALOG.items():
             _definition["capabilities"].append("browser_package")
 PLATFORM_CATALOG["wechat_official"]["name"] = "微信公众号 · 官方接口"
 PLATFORM_CATALOG["wechat_browser"]["help"] = "无需 AppID 或 AppSecret；在自己的浏览器登录公众号，填稿后核对封面、排版并提交。"
+for _code,_name,_app,_secret in [('douyin_video','抖音视频 · 官方接口','client_key','client_secret'),('kuaishou_video','快手视频 · 官方接口','app_id','app_secret')]:
+    PLATFORM_CATALOG[_code]={'name':_name,'mode':'api','available':True,'region':'domestic','content_format':'视频',
+        'base_url_required':False,'capabilities':['user_oauth','video_upload','video_publish','async_status'],
+        'credential_fields':[{'key':_app,'label':_app,'type':'text'},{'key':_secret,'label':_secret,'type':'password'}],
+        'help':'需要开放平台应用权限及用户授权；在视频发布面板上传素材、确认提交并查询审核状态。尚待真实账号集中验收。'}
 
 
 def domestic_content_warnings(title: str, body: str, platform_code: str) -> list[str]:
@@ -553,6 +558,11 @@ async def test_connection(
     credentials: dict[str, str],
 ) -> dict[str, Any]:
     definition = platform_definition(platform_code)
+    if platform_code in {'douyin_video','kuaishou_video'}:
+        from app.seo_video_platforms import require_token,VideoError
+        try:require_token(credentials)
+        except VideoError as exc:raise SeoDistributionError(str(exc)) from exc
+        return {'status':'configured','message':'本地授权凭据有效，请在视频发布面板查询作品验证实际权限'}
     if definition["mode"] == "assisted":
         return {"status": "ready", "message": "半自动发布无需保存平台账号密码"}
     if not definition.get("available"):
@@ -595,6 +605,8 @@ async def publish_content(
     existing_external_id: str | None = None,
 ) -> RemotePublishResult:
     definition = platform_definition(platform_code)
+    if platform_code in {'douyin_video','kuaishou_video'}:
+        raise SeoDistributionError('视频渠道请使用视频发布面板上传素材并确认发布')
     if definition["mode"] == "assisted":
         return RemotePublishResult(
             status="manual_required",
@@ -738,6 +750,12 @@ async def sync_publish_status(
     credentials: dict[str, str],
     external_id: str | None,
 ) -> RemotePublishResult:
+    if platform_code in {'douyin_video','kuaishou_video'}:
+        from app.seo_video_platforms import sync,VideoError
+        if not external_id:raise SeoDistributionError('发布任务缺少作品 ID，请先到平台核实')
+        try:result=await sync(platform_code,credentials,external_id)
+        except VideoError as exc:raise SeoDistributionError(str(exc)) from exc
+        return RemotePublishResult(status=result['status'],external_id=external_id,page_url=result['page_url'],response_summary=result)
     if platform_code != "wechat_official":
         raise SeoDistributionError("该平台没有需要手动同步的异步发布任务")
     if not external_id:

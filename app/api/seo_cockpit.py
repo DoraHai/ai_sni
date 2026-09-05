@@ -12,8 +12,8 @@ from app.models.seo_cockpit import SeoTask,SeoImageVerification
 from app.seo_cockpit_metrics import metric_snapshot,metric_values,DEFINITIONS
 
 router=APIRouter()
-TASK_PERMS={'content_review':'seo.content','image_repair':'seo.site','ranking_improvement':'seo.keywords'}
-TASK_METRICS={'content_review':'seo.content.published_7d_count','image_repair':'seo.images.verified_repair_count','ranking_improvement':'seo.ranking.top10_keyword_count'}
+TASK_PERMS={'content_review':'seo.content','image_repair':'seo.site','ranking_improvement':'seo.keywords','backlink_outreach':'seo.links'}
+TASK_METRICS={'content_review':'seo.content.published_7d_count','image_repair':'seo.images.verified_repair_count','ranking_improvement':'seo.ranking.top10_keyword_count','backlink_outreach':'seo.backlinks.verified_count'}
 
 class TrendContract(BaseModel):
     direction:Literal['up','down','flat']|None
@@ -56,7 +56,7 @@ class TaskCreate(BaseModel):
     tenant_id:PositiveInt
     site_id:PositiveInt
     module:Literal['seo']='seo'
-    action_type:Literal['content_review','image_repair','ranking_improvement']
+    action_type:Literal['content_review','image_repair','ranking_improvement','backlink_outreach']
     title:str=Field(min_length=1,max_length=240)
     params:dict=Field(default_factory=dict)
     created_by:str|int|None=None
@@ -69,11 +69,13 @@ class TaskUpdate(BaseModel):
     title:str|None=Field(None,min_length=1,max_length=240)
     assignee_role:str|None=Field(None,min_length=1,max_length=80)
     status:Literal['open','in_progress','done','cancelled']|None=None
+    note:str|None=Field(None,min_length=1,max_length=2000)
 
 @router.get('/metrics/snapshot',response_model=list[MetricContract])
 async def snapshot(tenant_id:PositiveInt,site_id:PositiveInt,ctx=Depends(require_scoped_auth),session=Depends(get_session)):
-    for permission in TASK_PERMS.values():await scope(session,ctx,tenant_id,site_id,permission)
-    return await metric_snapshot(session,tenant_id,site_id)
+    for permission in ('seo.content','seo.site','seo.keywords'):await scope(session,ctx,tenant_id,site_id,permission)
+    values=await metric_snapshot(session,tenant_id,site_id)
+    return [value for value in values if value['metric_key']!='seo.backlinks.verified_count' or ctx.can_view('seo.links')]
 
 @router.get('/metrics/definitions')
 async def definitions(ctx=Depends(require_scoped_auth)):
@@ -88,7 +90,7 @@ async def task_record(session,ctx,task_id,tenant_id,site_id,write=False):
 
 @router.post('/tasks',response_model=TaskContract)
 async def create_task(req:TaskCreate,ctx=Depends(require_scoped_auth),session=Depends(get_session)):
-    await scope(session,ctx,req.tenant_id,req.site_id,TASK_PERMS[req.action_type],True)
+    site=await scope(session,ctx,req.tenant_id,req.site_id,TASK_PERMS[req.action_type],True)
     actor=str(ctx.user_id) if ctx.user_id is not None else 'cockpit'
     if req.created_by is not None and str(req.created_by)!=actor:raise HTTPException(403,'不能冒用任务创建人')
     if req.action_type=='content_review':
@@ -97,6 +99,15 @@ async def create_task(req:TaskCreate,ctx=Depends(require_scoped_auth),session=De
     elif req.action_type=='image_repair':
         review=await session.get(SeoImageAltReview,req.params.get('review_id')) if isinstance(req.params.get('review_id'),int) else None
         if not review or review.tenant_id!=req.tenant_id or review.site_id!=req.site_id:raise HTTPException(422,'需要当前网站的 review_id')
+    elif req.action_type=='backlink_outreach':
+        from app.seo_backlink_sources import candidate_url
+        from urllib.parse import urlparse
+        try:source=candidate_url(req.params.get('source_url'))
+        except ValueError as exc:raise HTTPException(422,str(exc)) from exc
+        from app.seo_backlinks import belongs_to_site
+        if belongs_to_site(source,site.canonical_domain):raise HTTPException(422,'外链机会必须来自站外')
+        req.params={'source_url':source,'source_domain':urlparse(source).hostname,
+                    'opportunity_request_id':str(req.params.get('opportunity_request_id') or '')[:64]}
     import json
     if len(json.dumps(req.params,ensure_ascii=False))>10000:raise HTTPException(422,'任务参数过大')
     values=await metric_values(session,req.tenant_id,req.site_id)
@@ -138,6 +149,15 @@ async def completion(session,row):
             SeoImageVerification.status=='verified',SeoImageVerification.checked_at>row.created_at).order_by(SeoImageVerification.id.desc()).limit(1))
         if verification is None:raise HTTPException(409,'需要重新抓取确认图片修复')
         proof={'verification_id':verification.id,**verification.evidence}
+    elif row.action_type=='backlink_outreach':
+        from app.models.seo import SeoBacklink
+        created=row.created_at.astimezone(timezone.utc).replace(tzinfo=None)
+        link=await session.scalar(select(SeoBacklink).where(SeoBacklink.tenant_id==row.tenant_id,SeoBacklink.site_id==row.site_id,
+            SeoBacklink.source_domain==row.params['source_domain'],SeoBacklink.status=='active',
+            SeoBacklink.verification['state'].astext=='found',SeoBacklink.last_checked_at>created,
+            SeoBacklink.first_seen_at>created).order_by(SeoBacklink.id.desc()).limit(1))
+        if link is None:raise HTTPException(409,'需要任务创建后从该来源实际发现并核实的新外链')
+        proof={'backlink_id':link.id,'source_url':link.source_url,'target_url':link.target_url,'checked_at':link.last_checked_at.isoformat()}
     else:
         from app.models.seo import SeoRankSnapshot,SeoKeywordAsset
         from datetime import timedelta
@@ -160,6 +180,11 @@ async def update_task(task_id:int,req:TaskUpdate,ctx=Depends(require_scoped_auth
     if req.status:row.status=req.status
     if req.title is not None:row.title=req.title.strip()
     if req.assignee_role is not None:row.assignee_role=req.assignee_role.strip()
+    if req.note is not None:
+        notes=list((row.params or {}).get('followups') or [])
+        if len(notes)>=100:raise HTTPException(409,'跟进记录已达 100 条上限，请保留现有记录')
+        notes.append({'note':req.note,'actor':str(ctx.user_id) if ctx.user_id is not None else 'cockpit','at':datetime.now(timezone.utc).isoformat()})
+        row.params={**row.params,'followups':notes}
     row.updated_at=datetime.now(timezone.utc)
     await session.commit();await session.refresh(row)
     return payload(row)

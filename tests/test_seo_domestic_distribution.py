@@ -14,7 +14,8 @@ def test_domestic_platforms_first_and_no_false_api_capability():
         assert 'publish' not in p['capabilities']
         assert p['editor_url'].startswith('https://')
     assert not {'wordpress','ghost','douyin'} & by_code.keys()
-    assert len(by_code) == 13
+    assert len(by_code) == 15
+    assert {'douyin_video','kuaishou_video'} <= by_code.keys()
     assert all(p['region']=='domestic' and p['available'] for p in catalog)
     assert by_code['wechat_official']['mode'] == 'api'
 

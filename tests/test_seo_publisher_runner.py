@@ -58,6 +58,39 @@ def test_atomic_journal_roundtrip(tmp_path):
     assert not path.with_suffix('.tmp').exists()
 
 
+def test_draft_recovery_rejects_nonofficial_url():
+    for url in ['http://mp.toutiao.com/editor/1','https://mp.toutiao.com.evil.test/','https://user@mp.toutiao.com/editor/1']:
+        with pytest.raises(ValueError):runner.editor_url(url,'toutiao')
+    assert runner.editor_url('https://mp.toutiao.com/editor/1','toutiao').endswith('/1')
+
+
+def test_real_browser_category_cover_and_scoped_result_collection(tmp_path):
+    import os,base64
+    if not os.environ.get('SEO_RUNNER_BROWSER_TEST'):pytest.skip('opt-in Chromium fixture')
+    from playwright.sync_api import sync_playwright
+    png=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=')
+    cover=tmp_path/'cover.png';cover.write_bytes(png)
+    with sync_playwright() as p:
+        browser=p.chromium.launch(headless=True,channel='chromium')
+        try:
+            page=browser.new_page()
+            html='''<label>分类<select><option>资讯</option><option>科技</option></select></label>
+              <label>封面<input type=file accept="image/png" onchange="document.querySelector('img').src='/cover.png'"></label><img alt="封面">
+              <table><tr><td>其他标题</td><td>已发布</td><td><a href="https://www.toutiao.com/article/old">查看</a></td></tr>
+              <tr><td>测试标题</td><td>审核中</td></tr></table>'''
+            page.route('**/*',lambda route:route.fulfill(status=200,content_type='image/png' if route.request.url.endswith('cover.png') else 'text/html; charset=utf-8',body=png if route.request.url.endswith('cover.png') else html))
+            page.goto(task('toutiao')['editor_url'])
+            runner.apply_settings(page,{'category':'科技','cover':str(cover)})
+            assert page.locator('select').input_value()=='科技'
+            result=runner.collect_result(page,task('toutiao'))
+            assert result['state']=='审核中' and result['page_url'] is None
+            page.locator('tr').last.evaluate("el=>el.innerHTML='<td>测试标题</td><td>已发布</td><td><a href=\"https://www.toutiao.com/article/new\">查看</a></td>'")
+            assert runner.collect_result(page,task('toutiao'))['page_url']=='https://www.toutiao.com/article/new'
+            page.locator('table').evaluate('(el)=>el.insertAdjacentHTML("beforeend",el.lastElementChild.outerHTML)')
+            assert runner.collect_result(page,task('toutiao'))['state']=='unknown'
+        finally:browser.close()
+
+
 def test_browser_start_failure_does_not_abort_later_tasks(tmp_path):
     import sys
     browser = MagicMock()

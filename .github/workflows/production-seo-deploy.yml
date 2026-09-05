@@ -95,6 +95,8 @@ jobs:
           tests/test_seo_distribution_import.py
           tests/test_seo_cockpit.py
           tests/test_seo_cockpit_auth.py
+          tests/test_seo_video_platforms.py
+          tests/test_seo_backlink_workflow.py
           tests/test_seo_foundation.py
           tests/test_seo_monitoring_jobs.py
           tests/test_seo_rank_limits.py
@@ -129,7 +131,7 @@ jobs:
 
       - name: Rebuild and verify the isolated SEO frontend
         working-directory: frontend
-        run: node --test scripts/test-seo-ai-requests.mjs && node scripts/test-seo-task-center.mjs && node --test scripts/test-seo-publisher.mjs scripts/test-seo-backlinks.mjs && node scripts/test-seo-diagnostics.mjs && node scripts/test-seo-remediation.mjs && npm run build:seo && npm run verify:seo-build
+        run: node --test scripts/test-seo-ai-requests.mjs && node scripts/test-seo-task-center.mjs && node --test scripts/test-seo-publisher.mjs scripts/test-seo-backlinks.mjs scripts/test-seo-video-workflow.mjs && node scripts/test-seo-diagnostics.mjs && node scripts/test-seo-remediation.mjs && npm run build:seo && npm run verify:seo-build
 
       - name: Create immutable SEO-only release archive
         env:

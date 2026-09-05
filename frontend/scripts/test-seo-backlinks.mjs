@@ -18,6 +18,7 @@ const compile=(api)=>new Function('Vue','api',source
 const flush=async()=>{await Promise.resolve();await Vue.nextTick();await Promise.resolve();await Vue.nextTick()}
 const opportunitiesDescriptor=parse(await readFile(new URL('../src/views/seo/SeoBacklinkOpportunities.vue',import.meta.url),'utf8')).descriptor
 const compileOpportunities=(api)=>new Function('Vue','api',compileScript(opportunitiesDescriptor,{id:'opportunities-test'}).content
+  .replace(/import SeoBacklinkWorkflow from '[^']+'/, 'const SeoBacklinkWorkflow = {}')
   .replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/g,(_,names)=>`const {${names.replace(/\s+as\s+/g,':')}}=Vue`)
   .replace(/import\s*\{([^}]+)\}\s*from\s*['"]\.\.\/\.\.\/api\/seo['"]/g,(_,names)=>`const {${names}}=api`)
   .replace('export default','return'))(Vue,api)
