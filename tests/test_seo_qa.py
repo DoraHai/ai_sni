@@ -406,3 +406,21 @@ def test_scheduled_qa_is_bounded_scoped_and_does_not_retry_fresh_receipts(mode):
                 assert row.status == 'unavailable' and row.observations[-1]['source'] == 'scheduled'
             if mode == 'normal': assert row.status == 'content_observed' and row.version == 2
     database(scenario)
+
+
+def test_body_only_recheck_preserves_last_link_change_or_failure():
+    from app.seo_qa import placement_followup
+    now = datetime.now(timezone.utc)
+    def observation(discovery):
+        return {'state':'content_observed','checked_at':now.isoformat(),'backlink_discovery':discovery}
+    before = observation({'state':'readable','links':[{'target_url':'https://brand.example/a'}]})
+    after = observation({'state':'readable','links':[]})
+    body_only = observation({'state':'not_checked'})
+    result = placement_followup('https://public.example/answer', [before,after,body_only], now=now)
+    assert any('未再发现 1 条' in reason for reason in result['reasons'])
+    failed = observation({'state':'unavailable'})
+    result = placement_followup('https://public.example/answer', [before,failed,body_only], now=now)
+    assert any('外链暂时无法核验' in reason for reason in result['reasons'])
+    # A subsequent successful link check supersedes the old failure.
+    result = placement_followup('https://public.example/answer', [before,failed,body_only,before], now=now)
+    assert not result['needed']

@@ -145,3 +145,57 @@ test('follow-up filter shows only flagged placements and updates after verificat
     assert.equal(m.state.followupCount,0)
   }finally{m.app.unmount()}
 })
+
+
+test('bulk verification is capped, sequential and keeps per-row errors',async()=>{
+  let active=0,maxActive=0,calls=[]
+  const m=await mount({seoQaPost:async path=>{
+    active++;maxActive=Math.max(maxActive,active);calls.push(path);await flush();active--
+    if(path.includes('/2/'))throw new Error('单条失败')
+    return {status:'content_observed'}
+  }})
+  try {
+    m.state.placements=Array.from({length:25},(_,i)=>({id:i+1,answer_url:'https://public.example/a'}))
+    await m.state.verifyBatch()
+    assert.equal(calls.length,20);assert.equal(maxActive,1)
+    assert.equal(m.state.batchResults.length,20)
+    assert.equal(m.state.batchResults.filter(r=>r.failed).length,1)
+  }finally{m.app.unmount()}
+})
+
+test('bulk verification stops after a tenant switch without showing old results',async()=>{
+  let resolve,calls=0
+  const m=await mount({seoQaPost:()=>{calls++;return new Promise(r=>resolve=r)}})
+  try {
+    m.state.placements=[{id:1,answer_url:'https://public.example/a'},{id:2,answer_url:'https://public.example/b'}]
+    const request=m.state.verifyBatch();await flush();m.tenant.value=2;await flush()
+    resolve({status:'content_observed'});await request
+    assert.equal(calls,1);assert.equal(m.state.batchResults.length,0)
+  }finally{m.app.unmount()}
+})
+
+test('bulk verification allows stopping and prevents read-only writes',async()=>{
+  const readonly=await mount({},false)
+  try {readonly.state.placements=[{id:1,answer_url:'https://public.example/a'}];await readonly.state.verifyBatch();assert.equal(readonly.writes.length,0)}finally{readonly.app.unmount()}
+  let m,calls=0
+  m=await mount({seoQaPost:async()=>{calls++;m.state.batchStop=true;return {status:'unavailable'}}})
+  try {
+    m.state.placements=[{id:1,answer_url:'https://public.example/a'},{id:2,answer_url:'https://public.example/b'}]
+    await m.state.verifyBatch();assert.equal(calls,1);assert.equal(m.state.batchResults.length,1)
+  }finally{m.app.unmount()}
+})
+
+test('CSV preserves unknowns and historical link dates while neutralizing formulas',async()=>{
+  const m=await mount()
+  try {
+    const link={checked_at:'2026-09-01T00:00:00Z',backlink_discovery:{state:'readable',found:1,created:1}}
+    const row={id:1,platform:'=1+1',status:'content_observed',observations:[link,{checked_at:'2026-09-06T00:00:00Z',backlink_discovery:{state:'not_checked'}}]}
+    m.state.placements=[row]
+    assert.equal(m.state.latestBacklink(row),link)
+    assert.match(m.state.resultsCsv(),/"'=1\+1"/)
+    assert.match(m.state.resultsCsv(),/2026-09-01T00:00:00Z/)
+    assert.match(m.state.resultsCsv(),/2026-09-06T00:00:00Z/)
+    assert.equal(m.state.csvCell('"quoted",value'),'"""quoted"",value"')
+    assert.equal(m.state.csvCell('  @SUM(A1)'), '"\'  @SUM(A1)"')
+  }finally{m.app.unmount()}
+})
