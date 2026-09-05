@@ -13,6 +13,22 @@ function dom(html, url='https://baijiahao.baidu.com/editor') {
   return d
 }
 
+for (const [platform, hosts] of Object.entries(platformHosts)) {
+  test(`${platform}: task package and simulated editor fill preserve user content`,()=>{
+    const d=dom('<input placeholder="请输入标题"><textarea></textarea><button>发布</button>',`https://${hosts[0]}/`)
+    try {
+      let clicks=0;document.querySelector('button').onclick=()=>clicks++
+      const pack=createPublisherPackage([{...row,platform_code:platform,handoff_url:`https://${hosts[0]}/`}])
+      assert.equal(validatePackage(pack).items[0].platform_code,platform)
+      assert.equal(fillField('title','测试标题',hosts).ok,true)
+      assert.equal(fillField('body','测试正文',hosts).ok,true)
+      assert.equal(fillField('body','不可覆盖',hosts).ok,false)
+      assert.equal(document.querySelector('textarea').value,'测试正文')
+      assert.equal(clicks,0)
+    } finally {d.window.close()}
+  })
+}
+
 test('task export keeps only pending browser tasks, strips active content and unrelated fields',()=>{
   const d=dom('')
   try {
