@@ -285,3 +285,57 @@ async def fail_stale_crawl_runs() -> dict[str, int]:
         async with async_session_factory() as session:
             await refund_seo_usage(session, tenant_id, "crawl_urls", max_urls)
     return {"failed": len(rows)}
+
+
+async def verify_scheduled_qa() -> dict[str, int]:
+    """Recheck previously verified receipts weekly, with isolated row transactions."""
+    from datetime import timezone
+    from types import SimpleNamespace
+    from app.models.module_workspace import SeoSite
+    from app.models.seo_qa import SeoQaPlacement
+    from app.seo_backlinks import fetch_backlink_page
+    from app.seo_qa import observe_answer
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    checked_at = SeoQaPlacement.observations[-1]['checked_at'].astext
+    def eligible():
+        return (SeoQaPlacement.tenant_id.in_(tenants),
+                SeoQaPlacement.answer_url.is_not(None), checked_at < cutoff,
+                SeoSite.tenant_id == SeoQaPlacement.tenant_id, SeoSite.status == 'active')
+    async with async_session_factory() as session:
+        tenants = [t.id for t in await list_active_module_tenants(session, 'seo')]
+        if not tenants:
+            return {'checked': 0, 'failed': 0, 'skipped': 0}
+        ids = list(await session.scalars(select(SeoQaPlacement.id)
+            .join(SeoSite, SeoSite.id == SeoQaPlacement.site_id).where(*eligible())
+            .order_by(checked_at, SeoQaPlacement.id).limit(20)))
+    checked = failed = skipped = 0
+    for placement_id in ids:
+        try:
+            async with async_session_factory() as session:
+                row = await session.scalar(select(SeoQaPlacement)
+                    .join(SeoSite, SeoSite.id == SeoQaPlacement.site_id)
+                    .where(SeoQaPlacement.id == placement_id, *eligible())
+                    .with_for_update(of=SeoQaPlacement, skip_locked=True))
+                if row is None:
+                    skipped += 1
+                    continue
+                try:
+                    result = await fetch_backlink_page(row.answer_url)
+                except Exception as exc:
+                    logger.warning('[SEO][QA] fetch failed id=%s type=%s', placement_id, type(exc).__name__)
+                    result = SimpleNamespace(body='', final_url=row.answer_url, status_code=None, error_type='fetch_failed')
+                observation = observe_answer(result, row.body, row.answer_url)
+                observation['source'] = 'scheduled'
+                # Existing backlink assets have their own verification schedule.
+                observation['backlink_discovery'] = {'state':'not_checked', 'found':None, 'created':0}
+                row.observations = [*row.observations[-29:], observation]
+                row.status = observation['state']
+                row.version += 1
+                await session.commit()
+                checked += 1
+        except Exception:
+            failed += 1
+            logger.exception('[SEO][QA] scheduled verification failed id=%s', placement_id)
+    logger.info('[SEO][QA] scheduled checked=%s failed=%s skipped=%s', checked, failed, skipped)
+    return {'checked': checked, 'failed': failed, 'skipped': skipped}

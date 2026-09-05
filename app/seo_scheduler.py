@@ -20,6 +20,7 @@ from app.seo_monitoring_jobs import (
     collect_scheduled_competitors,
     fail_stale_crawl_runs,
     verify_scheduled_backlinks,
+    verify_scheduled_qa,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,15 @@ def _start_seo_scheduler() -> None:
         collect_scheduled_competitors,
         CronTrigger(hour=3, minute=0),
         id="collect_scheduled_seo_competitors",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
+    )
+    seo_scheduler.add_job(
+        verify_scheduled_qa,
+        IntervalTrigger(hours=1),
+        id="verify_scheduled_seo_qa",
         replace_existing=True,
         max_instances=1,
         coalesce=True,

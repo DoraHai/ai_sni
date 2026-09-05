@@ -212,7 +212,7 @@ watch(scopeKey, () => {
     <section v-if="tab==='placements'" class="qa-panel">
       <h2>分发与效果</h2><p class="qa-hint">平台回答由真人发布，计划时间用于安排工作。回填网址后抓取核验正文；正文匹配不代表账号归属或平台阅读量。最近 200 条记录。</p>
       <div class="qa-capabilities"><div v-for="p in platforms" :key="p.key"><strong>{{ p.name }}</strong><p>{{ p.description }}</p></div></div>
-      <div class="qa-toolbar"><el-checkbox v-model="followupOnly">仅看待跟进（{{ followupCount }}）</el-checkbox><span class="qa-hint">当前列表范围内，核验满 7 天建议复查；点击核验后更新结果。</span></div>
+      <div class="qa-toolbar"><el-checkbox v-model="followupOnly">仅看待跟进（{{ followupCount }}）</el-checkbox><span class="qa-hint">已核验的回答满 7 天进入后台正文复查队列，每小时最多 20 条。首次核验由人工触发；外链资产由外链模块定期核验。</span></div>
       <el-empty v-if="placements.length && !visiblePlacements.length" description="当前列表范围内没有待跟进记录"/>
       <el-empty v-if="!placements.length" description="回答审核通过后，点击“准备分发”建立记录。"/>
       <article class="qa-placement" v-for="row in visiblePlacements" :key="row.id">
@@ -221,7 +221,7 @@ watch(scopeKey, () => {
         <p class="qa-hint">{{ row.reported_metrics ? `人工录入：阅读 ${row.reported_metrics.views ?? '未知'} · 赞同 ${row.reported_metrics.likes ?? '未知'} · 评论 ${row.reported_metrics.comments ?? '未知'} · ${date(row.reported_metrics.as_of)}` : '阅读 / 赞同 / 评论：未知' }}</p>
         <p v-for="reason in row.followup?.reasons || []" :key="reason" class="qa-warning">{{ reason }}</p>
         <p>{{ backlinkSummary(row.observations?.at(-1)) }}</p><p class="qa-hint">外链按页面中的真实链接统计；不代表链接属于该回答，也不保证传递排名权重。链接属性保存在外链核验记录中。</p>
-        <p v-if="row.problems?.length" class="qa-warning">{{ row.problems.join('；') }}</p><details><summary>查看审核稿与核验记录</summary><pre>{{ row.body }}</pre><p v-for="(o,i) in row.observations" :key="i">{{ date(o.checked_at) }} · {{ labels[o.state] }} · {{ o.reason }} · {{ backlinkSummary(o) }}</p></details>
+        <p v-if="row.problems?.length" class="qa-warning">{{ row.problems.join('；') }}</p><details><summary>查看审核稿与核验记录</summary><pre>{{ row.body }}</pre><p v-for="(o,i) in row.observations" :key="i">{{ date(o.checked_at) }} · {{ o.source === 'scheduled' ? '后台复查' : '人工核验' }} · {{ labels[o.state] }} · {{ o.reason }} · {{ backlinkSummary(o) }}</p></details>
       </article>
     </section>
 
