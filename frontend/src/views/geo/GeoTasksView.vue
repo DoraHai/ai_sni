@@ -9,6 +9,9 @@ import {
   listGeoPrompts,
 } from '../../api/geoContent'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
+import GeoEvidenceWorkQueue from '../../components/GeoEvidenceWorkQueue.vue'
+import { taskNextWork } from '../../utils/geoWorkQueue'
+import { geoSnapshotLink } from '../../utils/geoRoutes'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { engineDisplay, taskStatusLabel } from '../../utils/geoReportLabels'
 
@@ -21,6 +24,7 @@ const CHANNEL_CN = {
 }
 
 const loading = ref(false)
+let loadGeneration = 0
 const error = ref('')
 const items = ref([])
 const workbenchTab = ref('')
@@ -46,7 +50,7 @@ const tabs = computed(() => [
 function statusTagType(status) {
   if (status === 'published' || status === 'ready') return 'success'
   if (status === 'needs_fix' || status === 'failed') return 'danger'
-  return ''
+  return 'info'
 }
 
 function enginesText(row) {
@@ -62,7 +66,13 @@ function pubsText(row) {
 }
 
 async function load() {
+  const generation = ++loadGeneration
+  const owner = tenantId.value
+  items.value = []
+  total.value = 0
+  workbenchCounts.value = { all: 0, draft: 0, polish: 0, ready: 0, published: 0 }
   if (!tenantId.value) {
+    loading.value = false
     error.value = '请先选择客户或配置本地 API Key'
     items.value = []
     total.value = 0
@@ -77,7 +87,8 @@ async function load() {
     }
     if (workbenchTab.value) params.workbench_tab = workbenchTab.value
     if (q.value.trim()) params.q = q.value.trim()
-    const data = await listGeoContentTasks(tenantId.value, params)
+    const data = await listGeoContentTasks(owner, params)
+    if (generation !== loadGeneration) return
     items.value = data.items || []
     total.value = Number(data.total ?? items.value.length) || 0
     workbenchCounts.value = {
@@ -85,11 +96,12 @@ async function load() {
       ...(data.workbench_counts || {}),
     }
   } catch (e) {
+    if (generation !== loadGeneration) return
     error.value = e.message || '加载失败'
     items.value = []
     total.value = 0
   } finally {
-    loading.value = false
+    if (generation === loadGeneration) loading.value = false
   }
 }
 
@@ -210,6 +222,7 @@ onMounted(load)
     </template>
 
     <div class="geo-dash">
+      <GeoEvidenceWorkQueue :tenant-id="tenantId" />
       <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
 
       <section class="geo-intro mb">
@@ -275,6 +288,13 @@ onMounted(load)
             </el-table-column>
             <el-table-column label="发布信源" min-width="140">
               <template #default="{ row }">{{ pubsText(row) }}</template>
+            </el-table-column>
+            <el-table-column label="下一步与验收" min-width="300">
+              <template #default="{ row }">
+                <strong>{{ taskNextWork(row).action }}</strong>
+                <p>{{ taskNextWork(row).acceptance }}</p>
+                <el-button v-if="taskNextWork(row).retest" link type="primary" @click="router.push(geoSnapshotLink({ prompt_id: row.prompt_id }))">去同题复测</el-button>
+              </template>
             </el-table-column>
             <el-table-column label="操作" width="140" fixed="right">
               <template #default="{ row }">

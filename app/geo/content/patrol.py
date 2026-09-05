@@ -513,6 +513,8 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
                             "fallback_reason": draft.get("fallback_reason"),
                             "model": draft.get("model"),
                             "provider": draft.get("provider"),
+                            "sampling_method": draft.get("sampling_method"),
+                            "analysis_status": draft.get("analysis_status"),
                         }
                     )
                     if draft.get("sample_mode") == SAMPLE_MODE_REAL and not draft.get(
@@ -559,6 +561,8 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
                         note = (
                             f"auto-patrol #{run_id} · {sample_mode} · "
                             f"{'模拟' if simulated else '真采样'}"
+                            f" · method={draft.get('sampling_method', 'legacy')}"
+                            f" · analysis={draft.get('analysis_status', 'unknown')}"
                         )
                         matched_ids = await resolve_matched_publication_ids(
                             session,

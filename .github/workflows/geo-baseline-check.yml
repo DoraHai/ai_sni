@@ -12,6 +12,11 @@ on:
       - "app/models/**"
       - "frontend/geo-frontend/**"
       - "frontend/src/api/**"
+      - "frontend/src/views/geo/**"
+      - "frontend/src/components/Geo*.vue"
+      - "frontend/src/utils/geo*"
+      - "frontend/tests/geo*.test.mjs"
+      - ".github/workflows/geo-baseline-check.yml"
       - "migrations/versions/**"
       - "ops/platform-deploy/modules/geo"
       - ".github/workflows/production-geo-deploy.yml"
@@ -47,6 +52,15 @@ jobs:
           tests/test_geo_pagespeed.py
           tests/test_geo_release_isolation.py
           tests/test_geo_site_audit.py
+          tests/test_geo_job_ownership.py
+          tests/test_geo_flow_integration.py
+          tests/test_geo_work_queue_tickets.py
+          tests/test_geo_source_opportunity_tasks.py
+          tests/test_geo_source_opportunities.py
+          tests/test_geo_sample_provenance.py
+          tests/test_geo_unprimed_probe.py
+          tests/test_geo_probe_batch.py
+          tests/test_geo_tenant_switcher.py
 
   frontend-build:
     runs-on: ubuntu-latest
@@ -65,3 +79,6 @@ jobs:
       - name: Build independent GEO frontend
         working-directory: frontend/geo-frontend
         run: npm ci && npm run build
+      - name: GEO frontend contracts
+        working-directory: frontend
+        run: node --test tests/geo*.test.mjs

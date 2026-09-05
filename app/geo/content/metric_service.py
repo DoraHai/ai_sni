@@ -18,6 +18,7 @@ from app.geo.content.time_windows import (
     shanghai_today,
 )
 from app.models import GeoAnswerSnapshot, GeoPrompt
+from app.geo.content.sample_provenance import sample_provenance
 
 # ---- 指标字典（运行时机器可读）----
 
@@ -31,7 +32,7 @@ METRIC_DICTIONARY: dict[str, dict[str, Any]] = {
         "timezone": "Asia/Shanghai（按 captured_at 转上海日历日筛选）",
         "time_basis": "shanghai_calendar_day",
         "data_source": "geo_answer_snapshots 原始快照",
-        "sample_modes_default": "全部（报表须另展示真采样/模拟构成）",
+        "sample_modes_default": "默认排除模拟；显式包含模拟仅供内部查看",
         "null_when_empty": True,
         "note": "无可见性样本时为 null（未测），不得展示为 0%",
     },
@@ -103,6 +104,8 @@ class SampleComposition:
     unknown: int = 0
     prompt_n: int = 0
     engine_n: int = 0
+    sampling_methods: dict[str, int] = field(default_factory=dict)
+    needs_review: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -114,8 +117,12 @@ class SampleComposition:
             "prompt_n": self.prompt_n,
             "engine_n": self.engine_n,
             "has_simulated": self.simulated > 0,
+            "sampling_methods": dict(self.sampling_methods),
+            "mixed_sampling_methods": len(self.sampling_methods) > 1,
+            "needs_review": self.needs_review,
+            "legacy_method_warning": self.sampling_methods.get("legacy", 0) > 0,
             "label": (
-                f"真采样 {self.real} · 模拟 {self.simulated} · 人工 {self.manual}"
+                f"API 采样 {self.real} · 模拟 {self.simulated} · 人工 {self.manual}"
                 + f" · 提问 {self.prompt_n} · 引擎 {self.engine_n}"
                 + (f" · 未知 {self.unknown}" if self.unknown else "")
             ),
@@ -125,6 +132,12 @@ class SampleComposition:
 
 def sample_verdict(comp: SampleComposition) -> dict[str, Any]:
     """对外汇报是否站得住。样本/提问/引擎不足一律未形成有效结论。"""
+    if len(comp.sampling_methods) > 1 or comp.needs_review:
+        return {
+            "suitable_for_client": False,
+            "verdict": "采样口径待核对",
+            "verdict_reason": "采样方法混用或存在待复核判读；须使用同一方法且判读完成的样本形成结论。",
+        }
     real_n = int(comp.real or 0)
     sim_n = int(comp.simulated or 0)
     prompt_n = int(comp.prompt_n or 0)
@@ -209,24 +222,7 @@ class BrandMentionResult:
 
 
 def _classify_sample(snap: GeoAnswerSnapshot) -> str:
-    if getattr(snap, "simulated", False):
-        return "simulated"
-    mode = (getattr(snap, "sample_mode", None) or "").strip() or "unknown"
-    if mode == "openai_compat":
-        return "real"
-    if mode == "mock_persona":
-        return "simulated"
-    if mode == "manual":
-        return "manual"
-    # legacy rows
-    note = (getattr(snap, "note", None) or "")
-    if "模拟" in note:
-        return "simulated"
-    if "真采样" in note or "openai_compat" in note:
-        return "real"
-    if mode in ("", "unknown") and not note:
-        return "unknown"
-    return "manual" if mode == "manual" else "unknown"
+    return sample_provenance(snap)["sample_kind"]
 
 
 def composition_of(snaps: Sequence[GeoAnswerSnapshot]) -> SampleComposition:
@@ -234,9 +230,17 @@ def composition_of(snaps: Sequence[GeoAnswerSnapshot]) -> SampleComposition:
     prompts: set[int] = set()
     engines: set[str] = set()
     for s in snaps:
-        kind = _classify_sample(s)
+        provenance = sample_provenance(s)
+        kind = provenance["sample_kind"]
+        if provenance["sampling_method"] == "conflicting" or provenance["analysis_status"] == "needs_review" or (
+            provenance["sampling_method"] == "unprimed_json_v2"
+            and provenance["analysis_status"] != "completed"
+        ):
+            c.needs_review += 1
         if kind == "real":
             c.real += 1
+            method = provenance["sampling_method"]
+            c.sampling_methods[method] = c.sampling_methods.get(method, 0) + 1
             pid = getattr(s, "prompt_id", None)
             if pid is not None:
                 try:
@@ -334,10 +338,9 @@ async def load_snapshots_in_window(
         stmt = stmt.where(GeoAnswerSnapshot.engine.in_(list(engines)))
     if patrol_run_id is not None:
         stmt = stmt.where(GeoAnswerSnapshot.patrol_run_id == patrol_run_id)
-    if exclude_simulated is True:
-        stmt = stmt.where(GeoAnswerSnapshot.simulated.is_(False))
     stmt = stmt.order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
-    return list(await session.scalars(stmt))
+    rows = list(await session.scalars(stmt))
+    return [r for r in rows if _classify_sample(r) != "simulated"] if exclude_simulated is not False else rows
 
 
 async def load_probe_map(
@@ -374,8 +377,8 @@ async def brand_mention_rate(
                 )
             )
         )
-        if exclude_simulated is True:
-            rows = [r for r in rows if not getattr(r, "simulated", False)]
+        if exclude_simulated is not False:
+            rows = [r for r in rows if _classify_sample(r) != "simulated"]
         w_start = w_end = None
     else:
         if start is None or end is None:
@@ -466,22 +469,23 @@ class MetricsBundle:
     prompt_ids: list[int] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
+        comparable = len(self.composition.sampling_methods) <= 1 and not self.composition.needs_review
         return {
-            "brand_mention_rate": self.brand_mention_rate,
-            "visibility_mention_rate": self.brand_mention_rate,  # alias
+            "brand_mention_rate": self.brand_mention_rate if comparable else None,
+            "visibility_mention_rate": self.brand_mention_rate if comparable else None,  # alias
             "brand_mentions": self.brand_mentions,
             "snapshots_visibility": self.snapshots_visibility,
             "snapshots_visibility_mention": self.brand_mentions,
-            "top1_rate": self.top1_rate,
-            "visibility_top1_rate": self.top1_rate,
+            "top1_rate": self.top1_rate if comparable else None,
+            "visibility_top1_rate": self.top1_rate if comparable else None,
             "top1_count": self.top1_count,
             "snapshots_visibility_first": self.top1_count,
-            "probe_recognition_rate": self.probe_recognition_rate,
-            "brand_probe_recognition_rate": self.probe_recognition_rate,
+            "probe_recognition_rate": self.probe_recognition_rate if comparable else None,
+            "brand_probe_recognition_rate": self.probe_recognition_rate if comparable else None,
             "snapshots_probe": self.snapshots_probe,
             "brand_probe_hits": self.brand_probe_hits,
             "snapshots_probe_mention": self.brand_probe_hits,
-            "own_domain_cite_rate": self.own_domain_cite_rate,
+            "own_domain_cite_rate": self.own_domain_cite_rate if comparable else None,
             "snapshots_with_citations": self.snapshots_with_citations,
             "snapshots_own_domain": self.snapshots_own_domain,
             "snapshots_total": self.snapshots_total,
@@ -561,21 +565,9 @@ def compute_metrics_from_rows(
 
 async def resolve_exclude_simulated(
     session: AsyncSession, tenant_id: int, explicit: bool | None = None
-) -> bool | None:
-    """W3: real_only → 强制排除模拟；simulation/hybrid 尊重 explicit（默认不排除）。"""
-    if explicit is not None:
-        return explicit
-    try:
-        from app.geo.content.ai_settings import ensure_ai_setting
-        from app.geo.content.monitoring_stance import normalize_stance
-
-        row = await ensure_ai_setting(session, tenant_id)
-        stance = normalize_stance(getattr(row, "monitoring_stance", None))
-        if stance == "real_only":
-            return True
-    except Exception:  # noqa: BLE001
-        pass
-    return None
+) -> bool:
+    """统计默认排除模拟；显式 false 保留内部分析入口，不写入租户配置。"""
+    return explicit if explicit is not None else True
 
 
 async def compute_metrics(
@@ -594,7 +586,7 @@ async def compute_metrics(
     """统一入口：所有报表的品牌提及/首位/点名/自有域引用只走这里。
 
     时间一律上海日历日边界；all_time 时不做日期过滤（仍返回 composition）。
-    apply_stance=True 时 real_only 强制排除 simulated 样本。
+    默认排除模拟，只有显式 exclude_simulated=False 包含模拟；保留 apply_stance 参数兼容旧调用。
     """
     if apply_stance and exclude_simulated is None:
         exclude_simulated = await resolve_exclude_simulated(session, tenant_id)
@@ -609,8 +601,8 @@ async def compute_metrics(
                 rows = list(await session.scalars(stmt))
         else:
             rows = list(await session.scalars(stmt))
-        if exclude_simulated is True:
-            rows = [r for r in rows if not getattr(r, "simulated", False)]
+        if exclude_simulated is not False:
+            rows = [r for r in rows if _classify_sample(r) != "simulated"]
         w_start = w_end = None
     else:
         if start is None or end is None:

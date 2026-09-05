@@ -186,3 +186,68 @@ def test_competitor_mentions_in_bucket():
     eng = buckets[scope_with_engine(scope_tenant(), "deepseek")].to_metrics_dict()
     assert eng["competitor_mentions"]["竞品A"]["mentions"] == 2
     assert eng["top_competitor_rate"] == 1.0  # 2/2 visibility
+
+
+def test_simulated_samples_never_enter_any_daily_slice():
+    row = _snap(1, mentions=True)
+    row.sample_mode = "mock_persona"
+    buckets = aggregate_buckets([row], probe_map={}, unit_of_prompt={1: 2}, business_of_unit={2: 3})
+    assert list(buckets) == ['t']
+    assert buckets['t'].to_metrics_dict()['snapshots_visibility'] == 0
+
+
+def test_mixed_methods_hide_daily_rates_but_keep_counts():
+    first, second = _snap(1, mentions=True), _snap(1, mentions=False)
+    first.sample_mode = second.sample_mode = 'openai_compat'
+    first.note = 'method=unprimed_json_v2 · analysis=completed'
+    second.note = ''
+    bucket = MetricBucket()
+    bucket.add_snapshot(first, is_probe=False)
+    bucket.add_snapshot(second, is_probe=False)
+    result = bucket.to_metrics_dict()
+    assert result['snapshots_visibility'] == 2
+    assert result['brand_mention_rate'] is None
+
+
+def test_report_daily_rows_follow_shanghai_days_without_engine_slices():
+    from datetime import datetime, date
+    from app.geo.content.daily_metrics import snapshot_daily_rows, metric_row_payload
+    row = _snap(1, mentions=True, engine='deepseek')
+    row.captured_at = datetime(2026, 9, 1, 16, 30)
+    rows = snapshot_daily_rows([row], tenant_id=7, start=date(2026, 9, 1), end=date(2026, 9, 2),
+        probe_map={}, unit_of_prompt={1: 2}, business_of_unit={2: 3})
+    assert not any('@' in r.scope_key for r in rows)
+    business = [metric_row_payload(r) for r in rows if r.scope_key == 'b3']
+    assert business[0]['snapshots_visibility'] == 0
+    assert business[0]['brand_mention_rate'] is None
+    assert business[1]['metric_date'] == '2026-09-02'
+    assert business[1]['snapshots_visibility'] == 1
+    assert business[1]['tenant_id'] == 7
+
+
+def test_report_population_excludes_simulated_and_outside_window():
+    from datetime import datetime, date
+    from app.geo.content.daily_metrics import snapshot_daily_rows
+    real, simulated, outside = _snap(1), _snap(1), _snap(1)
+    real.captured_at = simulated.captured_at = datetime(2026, 9, 1, 1)
+    simulated.sample_mode = 'mock_persona'
+    outside.captured_at = datetime(2026, 8, 30)
+    rows = snapshot_daily_rows([real, simulated, outside], tenant_id=7, start=date(2026, 9, 1), end=date(2026, 9, 1), probe_map={}, unit_of_prompt={}, business_of_unit={})
+    assert next(r for r in rows if r.scope_key == 't').snapshots_visibility == 1
+
+
+def test_rebuild_clears_obsolete_cached_slices():
+    import asyncio
+    from datetime import date
+    from unittest.mock import AsyncMock, patch
+    from app.geo.content import daily_metrics as dm
+    session = AsyncMock()
+    session.scalars.return_value = [SimpleNamespace(scope_key='b3@deepseek', business_id=3, unit_id=None)]
+    async def run():
+        with patch.object(dm, 'load_day_snapshots', new=AsyncMock(return_value=[])), patch.object(dm, 'load_prompt_unit_maps', new=AsyncMock(return_value=({}, {}, {}))), patch.object(dm, 'upsert_metric_row', new=AsyncMock()) as upsert:
+            await dm.rebuild_day(session, 7, date(2026, 9, 1))
+            cached = next(call.kwargs['bucket'] for call in upsert.call_args_list if call.kwargs['scope_key'] == 'b3@deepseek')
+            assert cached.to_metrics_dict()['snapshots_visibility'] == 0
+            assert cached.to_metrics_dict()['brand_mention_rate'] is None
+            assert session.scalars.call_args.args[0].compile().params['tenant_id_1'] == 7
+    asyncio.run(run())

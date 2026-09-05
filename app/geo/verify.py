@@ -325,6 +325,8 @@ def ticket_public_dict(row: Any) -> dict[str, Any]:
         "audit_id": row.audit_id,
         "advice_code": row.advice_code,
         "content_task_id": row.content_task_id,
+        "owner_name": getattr(row, 'owner_name', None),
+        "due_date": row.due_date.isoformat() if getattr(row, 'due_date', None) else None,
         "media_placement_id": row.media_placement_id,
         "priority": row.priority,
         "title": row.title,

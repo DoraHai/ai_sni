@@ -1,9 +1,10 @@
 <script setup>
 import { geoSnapshotLink } from '../../utils/geoRoutes'
+import { opportunityExportRows } from '../../utils/geoSourceOpportunities'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { backfillAttribution, fetchGeoCitationInsights, formatGeoError } from '../../api/geoContent'
+import { createGeoSourceOpportunityTask, backfillAttribution, fetchGeoCitationInsights, formatGeoError } from '../../api/geoContent'
 import GeoEmptyState from '../../components/GeoEmptyState.vue'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { useClientPager } from '../../composables/useClientPager'
@@ -47,6 +48,9 @@ const loading = ref(false)
 const backfilling = ref(false)
 const error = ref('')
 const data = ref(null)
+let loadRequest = 0
+const creatingOpportunity = ref(null)
+const opportunities = computed(() => data.value?.source_opportunities?.items || [])
 const ownOnly = ref(false)
 const domainQuery = ref('')
 const showAllArticles = ref(false)
@@ -93,6 +97,7 @@ const platformStats = computed(() => {
 
 const topPlatform = computed(() => platformStats.value.rows[0] || null)
 const topShare = computed(() => {
+  if (data.value?.rates_comparable === false) return null
   const { total } = platformStats.value
   if (!topPlatform.value || !total) return null
   return topPlatform.value.cite_count / total
@@ -130,53 +135,17 @@ const visibleArticles = computed(() =>
   showAllArticles.value ? articleRows.value : articleRows.value.slice(0, ARTICLE_PREVIEW),
 )
 
-const layoutAdvice = computed(() => {
-  const items = data.value?.items || []
-  if (!items.length) return { rows: [], conclusion: '' }
-  const rows = []
-  for (const ch of pendingChannels.value.slice(0, 3)) {
-    rows.push({
-      tone: 'red',
-      tag: '缺口',
-      text: `${ch.name}尚未被引用`,
-      extra: ch.why,
-    })
-  }
-  const ownRate = data.value?.own_domain_cite_rate
-  if (ownRate != null && ownRate < 0.1) {
-    rows.push({
-      tone: 'amber',
-      tag: '薄弱',
-      text: `本品牌内容占比 ${fmtPct(ownRate)}`,
-      extra: '去信源策略 →',
-      to: '/geo/placements',
-    })
-  }
-  const good = HIGH_VALUE_CHANNELS.filter((ch) => citedKeys.value.has(ch.key) && ch.key !== 'official')
-    .map((ch) => {
-      const n = items
-        .filter((it) => it.blueprint_channel_key === ch.key)
-        .reduce((a, it) => a + Number(it.cite_count || 0), 0)
-      return { ...ch, n }
-    })
-    .filter((ch) => ch.n > 0)
-    .sort((a, b) => b.n - a.n)
-    .slice(0, 2)
-  for (const ch of good) {
-    rows.push({
-      tone: 'green',
-      tag: '良好',
-      text: `${ch.name}已被引用 ${fmtInt(ch.n)} 次`,
-      extra: '保持',
-    })
-  }
-  const gapNames = pendingChannels.value.slice(0, 2).map((ch) => ch.name)
-  let conclusion = ''
-  if (gapNames.length) conclusion = `建议：优先补「${gapNames.join(' + ')}」。`
-  else if (ownRate != null && ownRate < 0.1) conclusion = '建议：优先提升本品牌内容被引占比。'
-  else conclusion = '高价值渠道已有引用，继续保持。'
-  return { rows: rows.slice(0, 5), conclusion }
-})
+const layoutAdvice = computed(() => ({
+  rows: opportunities.value.slice(0, 5).map((item) => ({
+    tone: item.priority === '优先核对' ? 'amber' : 'green',
+    tag: item.priority,
+    text: item.question,
+    extra: item.reason,
+  })),
+  conclusion: opportunities.value.length
+    ? '先核验引用与品牌事实，再补充内容并复测；展开上方机会可查看逐条证据。'
+    : '当前没有可用机会结论，请检查样本量、采样方法和判读状态。',
+}))
 
 function rowMatchesQuery(row, q) {
   const hay = [
@@ -211,26 +180,57 @@ function articleLabel(row) {
 }
 
 async function load() {
-  if (!tenantId.value) {
+  const request = ++loadRequest
+  const requestedTenant = tenantId.value
+  data.value = null
+  if (!requestedTenant) {
+    loading.value = false
     error.value = '请先选择客户或配置本地 API Key'
     return
   }
   loading.value = true
   error.value = ''
   try {
-    data.value = await fetchGeoCitationInsights(tenantId.value, {
+    const result = await fetchGeoCitationInsights(requestedTenant, {
       date_from: obsStart.value,
       date_to: obsEnd.value,
       days: observationDays.value,
     })
+    if (request !== loadRequest || requestedTenant !== tenantId.value) return
+    data.value = result
     pager.resetPage()
     showAllArticles.value = false
   } catch (e) {
+    if (request !== loadRequest || requestedTenant !== tenantId.value) return
     error.value = e.message || '加载失败'
     data.value = null
   } finally {
-    loading.value = false
+    if (request === loadRequest) loading.value = false
   }
+}
+
+async function createOpportunityTask(row) {
+  if (creatingOpportunity.value !== null) return
+  const owner = tenantId.value
+  creatingOpportunity.value = row.prompt_id
+  try {
+    const result = await createGeoSourceOpportunityTask({
+      tenant_id: owner, prompt_id: row.prompt_id, snapshot_ids: row.sample_ids, evidence_version: row.evidence_version,
+    })
+    if (owner !== tenantId.value) return
+    ElMessage.success(result.created ? '已创建草稿任务并保留机会证据' : '该问题已有任务，已打开')
+    router.push(result.editor_path)
+  } catch (e) {
+    if (owner === tenantId.value) ElMessage.error(formatGeoError(e, '创建失败，请刷新机会清单'))
+  } finally {
+    creatingOpportunity.value = null
+  }
+}
+
+function exportOpportunities() {
+  const rows = opportunityExportRows(opportunities.value)
+  downloadCsv(`geo-source-opportunities-${tenantId.value}.csv`,
+    ['问题', '核对顺序', '观察依据', '建议行动', '快照编号', '引擎', '采样时间', '提及品牌', '记录的引用（待核验）'], rows)
 }
 
 function exportCsv() {
@@ -302,6 +302,56 @@ onMounted(load)
 
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="mb" show-icon />
 
+    <section v-if="data?.source_opportunities" class="gd-card" style="margin-bottom:16px">
+      <div class="gd-hd">
+        <h3>有样本依据的内容机会</h3>
+        <button class="gd-btn" :disabled="!opportunities.length" @click="exportOpportunities">导出机会与证据</button>
+      </div>
+      <div class="gd-bd">
+        <p>{{ data.source_opportunities.note }}</p>
+        <p>当前窗口可用样本 {{ data.source_opportunities.eligible_samples }} 条；
+          排除非 API {{ data.source_opportunities.excluded_samples.non_api }} 条、
+          旧方法 {{ data.source_opportunities.excluded_samples.legacy_method }} 条、
+          待复核 {{ data.source_opportunities.excluded_samples.needs_review }} 条、
+          点名或问题缺失 {{ data.source_opportunities.excluded_samples.brand_probe_or_missing_prompt }} 条、
+          已标记引用不准确 {{ data.source_opportunities.excluded_samples.inaccurate_citation }} 条。
+        </p>
+        <el-alert v-if="!data.source_opportunities.own_domains_configured" title="尚未配置自有域，引用归属需核对，暂不判断自有域缺口。" type="info" :closable="false" />
+        <el-table :data="opportunities" empty-text="当前没有满足条件的内容机会；这不代表没有缺口，请补充采样或核对排除原因。">
+          <el-table-column type="expand">
+            <template #default="{ row }">
+              <div style="padding:12px 24px">
+                <p>{{ row.next_action }}</p>
+                <p v-for="evidence in row.evidence" :key="evidence.snapshot_id">
+                  <el-button text type="primary" @click="router.push(geoSnapshotLink({ prompt_id: row.prompt_id, snapshot_id: evidence.snapshot_id }))">查看快照 #{{ evidence.snapshot_id }}</el-button>
+                  {{ engineDisplay(evidence.engine) }} · {{ evidence.captured_at }} · {{ evidence.mentions_brand ? '已提及' : '未提及' }}
+                  <span v-for="url in evidence.urls" :key="url" style="display:block;overflow-wrap:anywhere">{{ url }}</span>
+                </p>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column prop="question" label="问题" min-width="200" />
+          <el-table-column prop="priority" label="核对顺序" width="110" />
+          <el-table-column prop="reason" label="观察依据" min-width="250" />
+          <el-table-column prop="sample_count" label="可用样本" width="95" />
+          <el-table-column label="行动" width="135">
+            <template #default="{ row }">
+              <el-button text type="primary" :loading="creatingOpportunity === row.prompt_id" :disabled="creatingOpportunity !== null || !row.sample_ids?.length || row.sample_ids.length > 1000" @click="createOpportunityTask(row)">创建 / 打开任务</el-button>
+              <small v-if="row.sample_ids?.length > 1000">请缩小观察窗口</small>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </section>
+
+    <div v-if="data" style="margin-bottom:16px">
+      <p>{{ data.statistics_note }} 已排除模拟 {{ data.excluded_simulated || 0 }} 条。</p>
+      <p>{{ data.sample_composition?.label }}</p>
+      <el-alert v-if="data.rates_comparable === false" title="当前样本方法混用或存在待复核判读，百分比暂不展示" type="warning" :closable="false" />
+      <el-alert v-else-if="data.sample_composition?.suitable_for_client === false" :title="data.sample_composition.verdict_reason" type="info" :closable="false" />
+      <p v-if="data.sample_composition?.legacy_method_warning">包含历史未标记方法，无法确认是否采用品牌中立提问。</p>
+    </div>
+
     <div v-if="data" class="gd-kpis">
       <div class="gd-card gd-stat">
         <div class="label">已识别信源平台</div>
@@ -311,7 +361,7 @@ onMounted(load)
       <div class="gd-card gd-stat">
         <div class="label">最常被引平台</div>
         <div class="value value-platform">{{ topPlatform?.name || '—' }}</div>
-        <div class="delta hint">{{ topShare != null ? `占比 ${fmtPct(topShare)}` : '暂无引用' }}</div>
+        <div class="delta hint">{{ topShare != null ? `占比 ${fmtPct(topShare)}` : data?.rates_comparable === false ? '口径待核对' : '暂无引用' }}</div>
       </div>
       <div class="gd-card gd-stat">
         <div class="label">本品牌内容占比</div>
@@ -321,24 +371,24 @@ onMounted(load)
             !(data.own_domains || []).length
               ? '未配置官网渠道'
               : data.own_domain_cite_rate == null
-                ? '暂无引用'
+                ? (data.rates_comparable === false ? '口径待核对' : '暂无引用')
                 : '含引用快照中命中自有域'
           }}
         </div>
       </div>
       <div class="gd-card gd-stat">
-        <div class="label">高价值待铺信源</div>
+        <div class="label">参考渠道未见引用</div>
         <div class="value" :style="pendingChannels.length ? { color: 'var(--gd-warn)' } : {}">
           {{ (data.items || []).length ? fmtInt(pendingChannels.length) : '—' }}
         </div>
-        <div class="delta hint">建议布局</div>
+        <div class="delta hint">固定参考清单，不代表内容缺口</div>
       </div>
     </div>
 
-    <div v-if="heatMap.engines.length" class="gd-card" style="margin-bottom:16px">
+    <div v-if="heatMap.engines.length && data?.rates_comparable !== false" class="gd-card" style="margin-bottom:16px">
       <div class="gd-hd">
-        <h3>信源平台 × AI 引擎 引用占比</h3>
-        <span class="more">颜色越深引用越多</span>
+        <h3>信源平台 × 引擎的域名引用占比</h3>
+        <span class="more">各列分母为该引擎全部域名引用次数</span>
       </div>
       <div class="gd-bd" style="padding:0;overflow:auto">
         <table class="gd-heat">
@@ -402,7 +452,7 @@ onMounted(load)
       <div v-if="(data.items || []).length" class="gd-bottom">
         <div class="gd-card">
           <div class="gd-hd">
-            <h3>被 AI 引用最多的文章</h3>
+            <h3>被引用域名与样例页面</h3>
             <span
               class="more"
               :class="{ 'is-action': articleRows.length > ARTICLE_PREVIEW }"
@@ -413,9 +463,9 @@ onMounted(load)
             <table v-if="visibleArticles.length">
               <thead>
                 <tr>
-                  <th>文章</th>
+                  <th>样例页面</th>
                   <th>信源</th>
-                  <th>引用次数</th>
+                  <th>域名引用次数</th>
                   <th>归属</th>
                 </tr>
               </thead>

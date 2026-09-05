@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,6 +27,8 @@ class GeoActionTicket(Base):
     priority: Mapped[str] = mapped_column(String(16), nullable=False, default="medium")
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     action: Mapped[str | None] = mapped_column(Text)
+    owner_name: Mapped[str | None] = mapped_column(String(100))
+    due_date: Mapped[date | None] = mapped_column(Date)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="todo")
     acceptance_type: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
     acceptance_check: Mapped[str | None] = mapped_column(String(128))

@@ -46,7 +46,7 @@ class ProbeBatchHelpersTests(unittest.IsolatedAsyncioTestCase):
         ):
             self.assertIn(key, ENGINE_PERSONAS)
             prompt = build_probe_system_prompt(brand="Acme", engine=key)
-            self.assertIn("Acme", prompt)
+            self.assertNotIn("Acme", prompt)
             self.assertTrue(len(ENGINE_PERSONAS[key]) > 10)
             self.assertIn(ENGINE_PERSONAS[key][:8], prompt)
 

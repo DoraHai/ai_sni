@@ -1,4 +1,5 @@
 <script setup>
+import { geoSnapshotLink } from '../../utils/geoRoutes'
 /**
  * Vue 母稿编辑器
  * Brief / 母稿 / 渠道稿（勾选生成、预览、复制）/ 检查
@@ -408,11 +409,13 @@ const briefLocalDraft = ref(false)
 const briefSuggestHint = ref('')
 
 async function load() {
+  const gen = ++loadGeneration
   if (!tenantId.value || !taskId.value) {
+    task.value = null
+    loading.value = false
     error.value = '缺少租户或任务 ID'
     return
   }
-  const gen = ++loadGeneration
   loading.value = true
   error.value = ''
   try {
@@ -492,19 +495,23 @@ async function load() {
 }
 
 async function saveBrief() {
+  const owner = tenantId.value
+  const target = taskId.value
+  const generation = loadGeneration
+  const stillCurrent = () => owner === tenantId.value && target === taskId.value && generation === loadGeneration
   busy.value = 'brief'
   try {
-    task.value = await patchGeoContentTask(tenantId.value, taskId.value, {
-      brief: briefPayload(),
-    })
-    applyBriefToForm(task.value.brief)
+    const saved = await patchGeoContentTask(owner, target, { brief: briefPayload() })
+    if (!stillCurrent()) return
+    task.value = saved
+    applyBriefToForm(saved.brief)
     briefLocalDraft.value = false
     briefSuggestHint.value = ''
     ElMessage.success('Brief 已保存')
   } catch (e) {
-    toastError(e, '保存 Brief 失败')
+    if (stillCurrent()) toastError(e, '保存 Brief 失败')
   } finally {
-    busy.value = ''
+    if (busy.value === 'brief') busy.value = ''
   }
 }
 
@@ -2564,7 +2571,22 @@ watch(
   },
 )
 
-watch([tenantId, taskId], load)
+function resetEditorContext() {
+  clearTimeout(autosaveTimer)
+  task.value = null
+  article.title = ''
+  article.body_markdown = ''
+  briefLocalDraft.value = false
+  briefSuggestHint.value = ''
+  applyBriefToForm({})
+  scoredDraftSnapshot.value = ''
+  checkResult.value = null
+}
+
+watch([tenantId, taskId], () => {
+  resetEditorContext()
+  load()
+}, { flush: 'sync' })
 onMounted(load)
 </script>
 
@@ -3197,6 +3219,15 @@ onMounted(load)
         </ul>
       </aside>
     </div>
+    <details v-if="task?.source_opportunity && task.tenant_id === tenantId" style="padding:16px">
+      <summary>任务来源与复测依据</summary>
+      <p>{{ task.source_opportunity.question }}</p>
+      <p>{{ task.source_opportunity.reason }}</p>
+      <p>{{ task.source_opportunity.next_action }}</p>
+      <p>以下为创建任务时保存的依据，引用尚需核验；后续采样变化不会自动改写本记录。</p>
+      <el-button v-for="evidence in task.source_opportunity.evidence" :key="evidence.snapshot_id" text type="primary" @click="router.push(geoSnapshotLink({ prompt_id: task.prompt_id, snapshot_id: evidence.snapshot_id }))">查看快照 #{{ evidence.snapshot_id }}</el-button>
+      <el-button @click="router.push(geoSnapshotLink({ prompt_id: task.prompt_id }))">用同一问题复测</el-button>
+    </details>
     <el-alert
       v-if="error"
       type="error"

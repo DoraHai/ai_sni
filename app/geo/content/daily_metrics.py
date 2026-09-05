@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import re
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from typing import Any, Iterable
 
@@ -132,6 +132,7 @@ def parse_scope_key(scope_key: str) -> dict[str, Any]:
 
 @dataclass
 class MetricBucket:
+    samples: list = field(default_factory=list, repr=False)
     business_id: int | None = None
     unit_id: int | None = None
     snapshots_visibility: int = 0
@@ -151,6 +152,11 @@ class MetricBucket:
             self.competitor_counts = {}
 
     def add_snapshot(self, snap: GeoAnswerSnapshot, *, is_probe: bool) -> None:
+        from app.geo.content.sample_provenance import sample_provenance
+
+        if sample_provenance(snap)["sample_kind"] == "simulated":
+            return
+        self.samples.append(snap)
         if is_probe:
             self.snapshots_probe += 1
             if snap.mentions_brand:
@@ -174,6 +180,10 @@ class MetricBucket:
                 self.domains.add(d)
 
     def to_metrics_dict(self) -> dict[str, Any]:
+        from app.geo.content.metric_service import composition_of
+
+        composition = composition_of(self.samples)
+        comparable = len(composition.sampling_methods) <= 1 and not composition.needs_review
         vis_n = self.snapshots_visibility
         probe_n = self.snapshots_probe
         # Cap top competitors to keep JSON small
@@ -185,7 +195,7 @@ class MetricBucket:
         for name, n in ranked:
             competitor_mentions[name] = {
                 "mentions": int(n),
-                "rate": round(n / vis_n, 4) if vis_n else None,
+                "rate": round(n / vis_n, 4) if vis_n and comparable else None,
             }
         top_name = ranked[0][0] if ranked else None
         top_n = ranked[0][1] if ranked else 0
@@ -197,14 +207,14 @@ class MetricBucket:
             "top1_count": self.top1_count,
             "distinct_cited_domains": len(self.domains or set()),
             "citation_count": self.citation_count,
-            "brand_mention_rate": (self.brand_mentions / vis_n) if vis_n else None,
+            "brand_mention_rate": (self.brand_mentions / vis_n) if vis_n and comparable else None,
             "brand_probe_recognition_rate": (
-                (self.brand_probe_hits / probe_n) if probe_n else None
+                (self.brand_probe_hits / probe_n) if probe_n and comparable else None
             ),
-            "top1_rate": (self.top1_count / vis_n) if vis_n else None,
+            "top1_rate": (self.top1_count / vis_n) if vis_n and comparable else None,
             "competitor_mentions": competitor_mentions or None,
             "top_competitor": top_name,
-            "top_competitor_rate": (top_n / vis_n) if vis_n and top_name else None,
+            "top_competitor_rate": (top_n / vis_n) if vis_n and top_name and comparable else None,
             "any_competitor_mentions": self.any_competitor_mentions,
         }
 
@@ -230,6 +240,9 @@ def aggregate_buckets(
         return buckets[sk]
 
     for snap in snaps:
+        from app.geo.content.sample_provenance import sample_provenance
+        if sample_provenance(snap)["sample_kind"] == "simulated":
+            continue
         pid = snap.prompt_id
         is_probe = bool(probe_map.get(pid, False))
         unit_id = unit_of_prompt.get(pid)
@@ -259,6 +272,37 @@ def aggregate_buckets(
             )
 
     return buckets
+
+
+def snapshot_daily_rows(snaps, *, tenant_id, start, end, probe_map, unit_of_prompt, business_of_unit):
+    """Read-only daily rows for a report, built from its exact snapshot population."""
+    from types import SimpleNamespace
+    from app.geo.content.metric_service import composition_of
+    from app.geo.content.time_windows import shanghai_day_of_utc_naive
+
+    by_day = defaultdict(list)
+    for snap in snaps:
+        day = shanghai_day_of_utc_naive(snap.captured_at)
+        if day is not None and start <= day <= end:
+            by_day[day].append(snap)
+    templates = aggregate_buckets([row for rows in by_day.values() for row in rows],
+        probe_map=probe_map, unit_of_prompt=unit_of_prompt, business_of_unit=business_of_unit)
+    output = []
+    day = start
+    while day <= end:
+        buckets = aggregate_buckets(by_day.get(day, []), probe_map=probe_map,
+            unit_of_prompt=unit_of_prompt, business_of_unit=business_of_unit)
+        for key, template in templates.items():
+            buckets.setdefault(key, MetricBucket(business_id=template.business_id, unit_id=template.unit_id))
+        for key, bucket in buckets.items():
+            if "@" in key:
+                continue  # Report slices are across all engines.
+            output.append(SimpleNamespace(id=None, tenant_id=tenant_id, metric_date=day,
+                scope_key=key, business_id=bucket.business_id, unit_id=bucket.unit_id,
+                engine=None, sample_composition=composition_of(bucket.samples).to_dict(),
+                **bucket.to_metrics_dict()))
+        day += timedelta(days=1)
+    return output
 
 
 async def load_day_snapshots(
@@ -385,6 +429,14 @@ async def rebuild_day(
             bk = scope_business(u.business_id)
             if bk not in buckets:
                 buckets[bk] = MetricBucket(business_id=u.business_id, unit_id=None)
+
+    # A removed/reclassified/simulated-only slice must not retain yesterday's cached counts.
+    existing_rows = list(await session.scalars(select(GeoDailyMetric).where(
+        GeoDailyMetric.tenant_id == tenant_id, GeoDailyMetric.metric_date == day,
+    )))
+    for row in existing_rows:
+        if row.scope_key not in buckets:
+            buckets[row.scope_key] = MetricBucket(business_id=row.business_id, unit_id=row.unit_id)
 
     scopes_written: list[str] = []
     for sk, bucket in buckets.items():
@@ -572,6 +624,7 @@ def metric_row_payload(row: GeoDailyMetric) -> dict[str, Any]:
         "tenant_id": row.tenant_id,
         "metric_date": row.metric_date.isoformat() if row.metric_date else None,
         "scope_key": sk,
+        "sample_composition": getattr(row, "sample_composition", None),
         "scope_level": parsed["level"],
         "business_id": row.business_id if row.business_id is not None else parsed["business_id"],
         "unit_id": row.unit_id if row.unit_id is not None else parsed["unit_id"],

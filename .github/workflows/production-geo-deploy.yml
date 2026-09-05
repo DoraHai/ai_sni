@@ -53,6 +53,15 @@ jobs:
           tests/test_geo_pagespeed.py
           tests/test_geo_release_isolation.py
           tests/test_geo_site_audit.py
+          tests/test_geo_job_ownership.py
+          tests/test_geo_flow_integration.py
+          tests/test_geo_work_queue_tickets.py
+          tests/test_geo_source_opportunity_tasks.py
+          tests/test_geo_source_opportunities.py
+          tests/test_geo_sample_provenance.py
+          tests/test_geo_unprimed_probe.py
+          tests/test_geo_probe_batch.py
+          tests/test_geo_tenant_switcher.py
 
   deploy:
     name: Build and deploy GEO only

@@ -104,7 +104,21 @@ const patrolScheduleLabel = computed(() => {
   const on = s.enabled ? '已开启' : '未开启'
   return `${on} · ${s.window_start_hour ?? 8}–${s.window_end_hour ?? 22} 点 · 间隔 ${s.interval_hours ?? 24} 小时 · 每轮上限 ${s.prompt_limit ?? 20}`
 })
-const hasSimulated = computed(() => snapshots.value.some((s) => s.simulated))
+const evidenceOpen = ref(false)
+const selectedEvidence = ref(null)
+let snapshotRequest = 0
+function showEvidence(row) {
+  selectedEvidence.value = row
+  evidenceOpen.value = true
+}
+function safeEvidenceUrl(value) {
+  try {
+    const url = new URL(value)
+    return ['https:', 'http:'].includes(url.protocol) ? url.href : null
+  } catch {
+    return null
+  }
+}
 
 const evalKpis = computed(() => {
   const total = Number(evalData.value?.total || snapshots.value.length || 0)
@@ -148,6 +162,7 @@ const form = ref({
   competitors: '',
   cited_urls: '',
   note: '',
+  sample_mode: 'manual',
 })
 
 const enabledEngines = computed(() => {
@@ -229,9 +244,11 @@ function loadDraftIntoForm(draft) {
   }
   form.value.raw_text = draft.raw_text || ''
   if (draft.engine) form.value.engine = draft.engine
-  form.value.note = draft.simulated
+  form.value.sample_mode = draft.simulated ? 'mock_persona' : (draft.sample_mode || 'manual')
+  form.value.note = draft.note || (draft.simulated
     ? `${draft.engine} 模拟探测草稿（待确认）`
-    : `${draft.engine || 'deepseek'} 探测草稿（待确认）`
+    : `${draft.engine || 'deepseek'} 探测草稿（待确认）`)
+  if (draft.analysis_status === 'needs_review') ElMessage.warning('回答已保留，自动判读未完成，请人工复核标注')
   applySuggest(draft)
 }
 
@@ -260,6 +277,8 @@ async function loadPrompts() {
 }
 
 async function loadSnapshots() {
+  const request = ++snapshotRequest
+  const requestedTenant = tenantId.value
   const params = {}
   if (filterPromptId.value) params.prompt_id = filterPromptId.value
   if (filterEngine.value) params.engine = filterEngine.value
@@ -267,7 +286,8 @@ async function loadSnapshots() {
   if (filterSimulated.value === true || filterSimulated.value === false) {
     params.simulated = filterSimulated.value
   }
-  const data = await listGeoAnswerSnapshots(tenantId.value, params)
+  const data = await listGeoAnswerSnapshots(requestedTenant, params)
+  if (request !== snapshotRequest || requestedTenant !== tenantId.value) return
   let rows = data.items || []
   if (filterDomain.value) {
     const d = filterDomain.value.toLowerCase()
@@ -283,7 +303,11 @@ async function loadSnapshots() {
     const sid = Number(route.query.snapshot_id)
     const hit = snapshots.value.find((s) => s.id === sid)
     if (hit) {
-      ElMessage.info(`已定位巡检相关快照 #${sid}`)
+      showEvidence(hit)
+    } else {
+      evidenceOpen.value = false
+      selectedEvidence.value = null
+      ElMessage.warning(`快照 #${sid} 不在当前列表中，可能已删除或被筛选隐藏`)
     }
   }
 }
@@ -482,11 +506,13 @@ async function onSave() {
       competitors: form.value.competitors.split(/[,，]/).map((s) => s.trim()).filter(Boolean),
       cited_urls: form.value.cited_urls.split(/\n+/).map((s) => s.trim()).filter(Boolean),
       note: form.value.note || null,
+      sample_mode: form.value.sample_mode,
     })
     form.value.raw_text = ''
     form.value.cited_urls = ''
     form.value.competitors = ''
     form.value.note = ''
+    form.value.sample_mode = 'manual'
     form.value.mentions_brand = false
     form.value.brand_position = 'unknown'
     form.value.sentiment = 'unknown'
@@ -558,9 +584,10 @@ async function saveBatchItem(draft) {
       citation_accuracy: draft.suggested_citation_accuracy || 'unknown',
       competitors: draft.suggested_competitors || [],
       cited_urls: draft.suggested_cited_urls || [],
-      note: draft.simulated
+      sample_mode: draft.simulated ? 'mock_persona' : (draft.sample_mode || 'manual'),
+      note: draft.note || (draft.simulated
         ? `${draft.engine} 模拟探测（批量确认）`
-        : `${draft.engine} 探测（批量确认）`,
+        : `${draft.engine} 探测（批量确认）`),
     })
     ElMessage.success(`已保存 ${draft.engine}`)
     draft._saved = true
@@ -585,7 +612,23 @@ watch(
     })
   },
 )
-watch(tenantId, reloadAll)
+watch(
+  () => [route.query.prompt_id, route.query.snapshot_id],
+  () => {
+    filterPromptId.value = route.query.prompt_id ? Number(route.query.prompt_id) : null
+    evidenceOpen.value = false
+    selectedEvidence.value = null
+    loadSnapshots().catch((e) => { error.value = e.message })
+  },
+)
+watch(tenantId, () => {
+  ++snapshotRequest
+  evidenceOpen.value = false
+  selectedEvidence.value = null
+  snapshots.value = []
+  sampleComposition.value = null
+  reloadAll()
+})
 watch([observationDays, obsStart, obsEnd], () => {
   if (!tenantId.value) return
   loadCollectMeta().catch(() => {})
@@ -698,6 +741,14 @@ onMounted(reloadAll)
       </div>
 
       <SampleCredibilityAlert :composition="sampleComposition" />
+      <p v-if="sampleComposition?.sampling_methods" class="snip">
+        API 样本方法：
+        <span v-for="(count, method) in sampleComposition.sampling_methods" :key="method" style="margin-right: 12px">
+          {{ method === 'unprimed_json_v2' ? '回答与判读分离 v2' : method === 'legacy' ? '历史未标记' : method }} {{ count }} 条
+        </span>
+        <span v-if="sampleComposition.needs_review">待复核 {{ sampleComposition.needs_review }} 条</span>
+        <span v-if="sampleComposition.legacy_method_warning">历史样本无法确认是否采用品牌中立提问。</span>
+      </p>
       <el-alert
         v-if="snapshots.length && emptyReason?.key === 'no_mention'"
         type="warning"
@@ -753,9 +804,10 @@ onMounted(reloadAll)
             <el-table-column label="引擎" width="100" show-overflow-tooltip>
               <template #default="{ row }">{{ engineDisplay(row.engine) }}</template>
             </el-table-column>
-            <el-table-column v-if="hasSimulated" label="样本" width="80" align="center">
+            <el-table-column label="来源" width="110" align="center">
               <template #default="{ row }">
-                <span v-if="row.simulated" class="gd-badge amber">模拟</span>
+                <span class="gd-badge" :class="row.sample_kind === 'simulated' ? 'amber' : ''">{{ row.source_label || '来源未知' }}</span>
+                <div v-if="row.analysis_status === 'needs_review'" class="snip">判读待复核</div>
               </template>
             </el-table-column>
             <el-table-column label="提及" width="108" align="center">
@@ -807,8 +859,9 @@ onMounted(reloadAll)
             <el-table-column label="观测时间" width="108" show-overflow-tooltip>
               <template #default="{ row }">{{ fmtCaptured(row.captured_at) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="88" align="center">
+            <el-table-column label="操作" width="140" align="center">
               <template #default="{ row }">
+                <el-button size="small" text type="primary" @click="showEvidence(row)">证据</el-button>
                 <el-button size="small" text type="danger" @click="removeSnapshot(row)">
                   删除
                 </el-button>
@@ -842,6 +895,25 @@ onMounted(reloadAll)
         </div>
       </div>
     </div>
+
+    <el-dialog v-model="evidenceOpen" title="快照证据" width="min(800px, 94vw)" destroy-on-close>
+      <div v-if="selectedEvidence">
+        <p><strong>{{ selectedEvidence.prompt_question || `问题 #${selectedEvidence.prompt_id}` }}</strong></p>
+        <p>{{ selectedEvidence.source_label || '来源未知' }} · {{ engineDisplay(selectedEvidence.engine) }} · {{ fmtCaptured(selectedEvidence.captured_at) }}</p>
+        <p>采样方法：{{ selectedEvidence.sampling_method === 'unprimed_json_v2' ? '回答与品牌判读分离（v2）' : '历史或未标记方法' }}</p>
+        <p>判读状态：{{ selectedEvidence.analysis_status === 'completed' ? '已完成（引用准确性仍需核验）' : selectedEvidence.analysis_status === 'needs_review' ? '待复核，不可直接用于结论' : '未记录' }}</p>
+        <el-alert v-if="selectedEvidence.sample_kind === 'real'" title="API 回答仅代表本次接口采样，不等同于用户端搜索结果。" type="info" :closable="false" />
+        <h4>已保存的回答原文</h4>
+        <pre style="white-space: pre-wrap; overflow-wrap: anywhere; max-height: 45vh; overflow-y: auto; line-height: 1.7">{{ selectedEvidence.raw_text }}</pre>
+        <h4>记录的引用（尚未核验）</h4>
+        <p v-if="!selectedEvidence.cited_urls?.length">未记录引用</p>
+        <p v-for="(url, index) in selectedEvidence.cited_urls || []" :key="index" style="overflow-wrap: anywhere">
+          <a v-if="safeEvidenceUrl(url)" :href="safeEvidenceUrl(url)" target="_blank" rel="noopener noreferrer">{{ url }}</a>
+          <span v-else>{{ url }}</span>
+        </p>
+        <p v-if="selectedEvidence.note">备注：{{ selectedEvidence.note }}</p>
+      </div>
+    </el-dialog>
 
     <el-dialog v-model="registerOpen" title="登记快照" width="560px" class="geo-form-dialog">
       <p class="hint">粘贴或探测回答后保存。列表中可调整提及、位置和情感。</p>

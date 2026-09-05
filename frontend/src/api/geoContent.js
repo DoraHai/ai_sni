@@ -453,6 +453,10 @@ export function closeOptimizationPeriod(tenantId, periodId) {
   })
 }
 
+export function createGeoSourceOpportunityTask(body) {
+  return client.post('/api/v1/geo/content-tasks/from-source-opportunity', body)
+}
+
 export function createGeoContentTask(body) {
   return client.post('/api/v1/geo/content-tasks', body)
 }

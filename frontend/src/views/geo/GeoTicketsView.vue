@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createGeoActionTicket,
   fetchLatestGeoAudit,
@@ -137,9 +137,21 @@ async function verifyOne(row, recrawl = true) {
 }
 
 async function manualPass(row, pass) {
+  const owner = tenantId.value
+  let verification_note
+  if (row.advice_code?.startsWith('workqueue:v1:')) {
+    try {
+      const result = await ElMessageBox.prompt('请填写执行结果与核验依据', pass ? '人工验收通过' : '记录未达标', {
+        inputType: 'textarea', inputValidator: (value) => !!value?.trim() && value.trim().length <= 4000 || '请填写 1–4000 字的核验记录',
+      })
+      verification_note = result.value.trim()
+    } catch { return }
+    if (owner !== tenantId.value) return
+  }
   busy.value = `manual-${row.id}`
   try {
-    await patchGeoActionTicket(tenantId.value, row.id, { manual_pass: pass })
+    await patchGeoActionTicket(owner, row.id, { manual_pass: pass, verification_note })
+    if (owner !== tenantId.value) return
     ElMessage.success(pass ? '已人工通过' : '已标记未达标')
     await load()
   } catch (e) {
@@ -278,6 +290,7 @@ onMounted(load)
                   link
                   type="primary"
                   :loading="busy === `verify-${row.id}`"
+                  v-if="!row.advice_code?.startsWith('workqueue:v1:')"
                   @click="verifyOne(row, true)"
                 >验收</el-button>
                 <el-button link :loading="busy === `manual-${row.id}`" @click="manualPass(row, true)">通过</el-button>

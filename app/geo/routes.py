@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -57,6 +57,8 @@ class TicketCreate(BaseModel):
     acceptance_desc: str | None = None
     media_placement_id: int | None = None
     audit_id: int | None = None
+    owner_name: str | None = Field(None, max_length=100)
+    due_date: date | None = None
 
 
 class TicketUpdate(BaseModel):
@@ -67,6 +69,10 @@ class TicketUpdate(BaseModel):
     acceptance_check: str | None = None
     acceptance_desc: str | None = None
     manual_pass: bool | None = None
+    verification_note: str | None = Field(None, max_length=4000)
+    operation_note: str | None = Field(None, max_length=4000)
+    owner_name: str | None = Field(None, max_length=100)
+    due_date: date | None = None
 
 
 def _payload(run: GeoAuditRun) -> dict[str, Any]:
@@ -117,6 +123,19 @@ async def _ticket_for_tenant(
     row = await session.get(GeoActionTicket, ticket_id)
     if row is None or row.tenant_id != tenant_id:
         raise HTTPException(404, "验收工单不存在")
+    return row
+
+
+async def _work_ticket_for_update(session: AsyncSession, ticket_id: int, tenant_id: int) -> GeoActionTicket:
+    row = await _ticket_for_tenant(session, ticket_id, tenant_id)
+    if not (row.advice_code or '').startswith('workqueue:v1:'):
+        return row
+    # Same lock order as creation. Reload after waiting so history is not based
+    # on an older identity-map copy read before another writer committed.
+    await session.execute(select(Tenant.id).where(Tenant.id == tenant_id).with_for_update())
+    row = await session.get(GeoActionTicket, ticket_id, with_for_update=True, populate_existing=True)
+    if row is None or row.tenant_id != tenant_id:
+        raise HTTPException(404, '验收工单不存在')
     return row
 
 
@@ -548,6 +567,9 @@ async def verify_audit_tickets(
     results = []
     changed = 0
     for ticket in tickets:
+        if (ticket.advice_code or '').startswith('workqueue:v1:'):
+            results.append({'id': ticket.id, 'title': ticket.title, 'ok': None, 'note': '请在执行待办中填写结果并人工验收', 'skipped': True})
+            continue
         was = ticket.status
         if ticket.acceptance_type != "auto" or not ticket.acceptance_check:
             ok, note, prog = None, ticket.acceptance_desc or "需人工确认", None
@@ -603,6 +625,16 @@ async def create_action_ticket(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
+    if (req.advice_code or '').startswith('workqueue:v1:'):
+        # Serialize acceptance of the same suggestion without changing legacy tickets.
+        await session.execute(select(Tenant.id).where(Tenant.id == tenant_id).with_for_update())
+        existing = (await session.execute(select(GeoActionTicket).where(
+            GeoActionTicket.tenant_id == tenant_id,
+            GeoActionTicket.advice_code == req.advice_code,
+            GeoActionTicket.status != 'done',
+        ).order_by(GeoActionTicket.id.desc()).limit(1))).scalar_one_or_none()
+        if existing is not None:
+            return ticket_public_dict(existing)
     if req.audit_id is not None:
         await _run_for_tenant(session, req.audit_id, tenant_id)
     if req.media_placement_id is not None:
@@ -627,6 +659,8 @@ async def create_action_ticket(
         acceptance_check=check,
         acceptance_desc=req.acceptance_desc or "人工或自动验收通过",
         created_by=getattr(ctx, "user_id", None),
+        owner_name=(req.owner_name or '').strip() or None,
+        due_date=req.due_date,
     )
     session.add(row)
     await session.commit()
@@ -643,34 +677,77 @@ async def patch_action_ticket(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
-    row = await _ticket_for_tenant(session, ticket_id, tenant_id)
+    row = await _work_ticket_for_update(session, ticket_id, tenant_id)
     data = req.model_dump(exclude_unset=True)
     manual_pass = data.pop("manual_pass", None)
+    verification_note = (data.pop("verification_note", None) or '').strip()
+    operation_note = (data.pop('operation_note', None) or '').strip()
+    if 'owner_name' in data:
+        data['owner_name'] = (data['owner_name'] or '').strip() or None
+    queue_ticket = (row.advice_code or '').startswith('workqueue:v1:')
+    previous_status = row.status
+    previous_assignment = (row.owner_name, row.due_date)
+    if queue_ticket and 'status' in data and data['status'] is None:
+        raise HTTPException(400, '状态不能为空')
+    if queue_ticket and manual_pass is not None and 'status' in data:
+        raise HTTPException(400, '状态变更与验收请分别提交')
+    if queue_ticket and data.get('status') == 'blocked' and not operation_note:
+        raise HTTPException(400, '请填写受阻原因和需要的协助')
+    if queue_ticket and manual_pass is not None and not verification_note:
+        raise HTTPException(400, '请填写执行结果与核验依据后再验收')
+    if queue_ticket and data.get('status') == 'done' and manual_pass is not True:
+        raise HTTPException(400, '请通过人工验收完成待办')
+    reopening = previous_status == 'done' and (manual_pass is False or data.get('status') in {'todo', 'doing', 'reopened', 'blocked'})
+    if queue_ticket and reopening:
+        existing = (await session.execute(select(GeoActionTicket).where(
+            GeoActionTicket.tenant_id == tenant_id,
+            GeoActionTicket.advice_code == row.advice_code,
+            GeoActionTicket.id != row.id,
+            GeoActionTicket.status != 'done',
+        ).order_by(GeoActionTicket.id.desc()).limit(1))).scalar_one_or_none()
+        if existing is not None:
+            raise HTTPException(409, f'同类工作已有未完成待办 #{existing.id}，请刷新列表并继续处理该待办')
     for key, value in data.items():
         setattr(row, key, value)
+    if queue_ticket and data.get('status') in {'todo', 'doing', 'reopened', 'blocked'}:
+        row.closed_at = None
+        row.last_verdict = None
+        if row.status != previous_status or operation_note:
+            labels = {'todo': '待开始', 'doing': '执行中', 'reopened': '重新处理', 'blocked': '受阻', 'done': '已验收'}
+            note = f"{labels.get(previous_status, previous_status)} → {labels.get(row.status, row.status)}"
+            if operation_note:
+                note += f"：{operation_note}"
+            row.evidence = append_evidence(row.evidence, check='workflow.status', result=row.status, note=note)
+    if queue_ticket and previous_assignment != (row.owner_name, row.due_date):
+        def assignment_text(owner, due):
+            return f"负责人：{owner or '未指定'}，截止日期：{due.isoformat() if due else '未设置'}"
+        row.evidence = append_evidence(
+            row.evidence, check='workflow.assignment', result='updated',
+            note=f"{assignment_text(*previous_assignment)} → {assignment_text(row.owner_name, row.due_date)}",
+        )
     if manual_pass is True:
         row.status = "done"
         row.last_verdict = "pass"
-        row.last_note = "人工确认通过"
+        row.last_note = verification_note or "人工确认通过"
         row.last_verify_at = datetime.utcnow()
         row.closed_at = row.closed_at or datetime.utcnow()
         row.evidence = append_evidence(
             row.evidence,
             check=row.acceptance_check,
             result="pass",
-            note="人工确认通过",
+            note=row.last_note,
         )
     elif manual_pass is False:
         row.status = "reopened" if row.status == "done" else "todo"
         row.last_verdict = "fail"
-        row.last_note = "人工确认未达标"
+        row.last_note = verification_note or "人工确认未达标"
         row.last_verify_at = datetime.utcnow()
         row.closed_at = None
         row.evidence = append_evidence(
             row.evidence,
             check=row.acceptance_check,
             result="fail",
-            note="人工确认未达标",
+            note=row.last_note,
         )
     await session.commit()
     await session.refresh(row)
@@ -687,6 +764,8 @@ async def verify_one_ticket(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     ticket = await _ticket_for_tenant(session, ticket_id, tenant_id)
+    if (ticket.advice_code or '').startswith('workqueue:v1:'):
+        raise HTTPException(400, '请在执行待办中填写结果并人工验收')
     media = await _media_rows(session, tenant_id)
     audit_ctx: dict[str, Any] = {}
     fresh_audit_id = None

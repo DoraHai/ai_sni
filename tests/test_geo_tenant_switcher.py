@@ -28,10 +28,15 @@ def test_switcher_lists_enabled_geo_tenants_and_scopes_bound_accounts():
 def test_geo_topbar_keeps_one_customer_select():
     shell = _read("frontend/src/views/geo/GeoWorkspaceShell.vue")
     page = _read("frontend/src/components/GeoWorkbenchPage.vue")
-    header = _read("frontend/src/components/GeoPrototypePageHeader.vue")
+    header = _read("frontend/src/components/GeoAccountBar.vue")
     app = _read("frontend/geo-frontend/src/App.vue")
 
-    assert "GeoPrototypePageHeader" in page
+    assert shell.count("<GeoAccountBar />") == 1
+    assert "GeoPrototypePageHeader" not in page
+    assert "GeoAccountBar" not in page
+    assert header.count('<select') == 1
+    assert 'session.setTenant(id)' in header
+    assert "router.push('/geo/tasks')" in header
     assert 'class="geo-tenant-switcher"' in header
     assert "当前客户" in header
     assert 'v-if="session.tenants.length"' not in header

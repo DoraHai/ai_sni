@@ -113,6 +113,7 @@ from app.geo.content.schemas import (
     WebhookPushRequest,
     PushBatchRequest,
     TaskCreate,
+    SourceOpportunityTaskCreate,
     TaskFactsUpdate,
     TaskFromDiagnosis,
     TaskUpdate,
@@ -762,6 +763,7 @@ async def _task_payload(
         "target_channels": task.target_channels or [],
         "owner_user_id": task.owner_user_id,
         "brief": brief,
+        "source_opportunity": (task.brief or {}).get("source_opportunity") if isinstance(task.brief, dict) else None,
         "brief_ready": brief_ready(brief),
         "strategy_richness": strategy_richness(brief),
         **review_payload(task),
@@ -2490,6 +2492,8 @@ def _parse_captured_at(raw: str | None) -> datetime:
 
 
 def _snapshot_payload(row: GeoAnswerSnapshot, *, prompt_question: str | None = None) -> dict[str, Any]:
+    from app.geo.content.sample_provenance import sample_provenance
+
     cited = list(row.cited_urls or [])
     fmt = getattr(row, "citation_format", None) or "unknown"
     if fmt == "unknown":
@@ -2515,6 +2519,7 @@ def _snapshot_payload(row: GeoAnswerSnapshot, *, prompt_question: str | None = N
         "citation_format": fmt,
         "citation_accuracy": getattr(row, "citation_accuracy", None) or "unknown",
         "patrol_run_id": getattr(row, "patrol_run_id", None),
+        **sample_provenance(row),
         "sample_mode": getattr(row, "sample_mode", None) or "manual",
         "simulated": bool(getattr(row, "simulated", False)),
         "matched_publication_ids": list(
@@ -2621,8 +2626,8 @@ async def create_answer_snapshot(
         citation_format=citation_format,
         citation_accuracy=normalize_citation_accuracy(req.citation_accuracy),
         patrol_run_id=None,
-        sample_mode="manual",
-        simulated=False,
+        sample_mode=req.sample_mode,
+        simulated=req.sample_mode == "mock_persona",
         matched_publication_ids=matched_ids or None,
         note=req.note,
         created_by=ctx.user_id,
@@ -3453,18 +3458,14 @@ async def citation_insights(
 
     ctx.ensure_tenant(tenant_id)
     stmt = select(GeoAnswerSnapshot).where(GeoAnswerSnapshot.tenant_id == tenant_id)
-    if date_from or date_to or days:
-        start_d, end_d = default_observation_window(days=int(days or 14))
-        if date_from:
-            start_d = date_from
-        if date_to:
-            end_d = date_to
-        lo, _ = shanghai_day_bounds_utc_naive(start_d)
-        _, hi = shanghai_day_bounds_utc_naive(end_d)
-        stmt = stmt.where(
-            GeoAnswerSnapshot.captured_at >= lo,
-            GeoAnswerSnapshot.captured_at < hi,
-        )
+    start_d, end_d = default_observation_window(days=int(days or 14), end=date_to)
+    if date_from:
+        start_d = date_from
+    if start_d > end_d:
+        raise HTTPException(400, "起始日期不能晚于结束日期")
+    lo, _ = shanghai_day_bounds_utc_naive(start_d)
+    _, hi = shanghai_day_bounds_utc_naive(end_d)
+    stmt = stmt.where(GeoAnswerSnapshot.captured_at >= lo, GeoAnswerSnapshot.captured_at < hi)
     rows = list(
         await session.scalars(
             stmt.order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
@@ -3472,6 +3473,7 @@ async def citation_insights(
     )
     prompt_ids = {r.prompt_id for r in rows}
     questions: dict[int, str] = {}
+    opportunity_prompts = {}
     if prompt_ids:
         for p in await session.scalars(
             select(GeoPrompt).where(
@@ -3479,8 +3481,17 @@ async def citation_insights(
             )
         ):
             questions[p.id] = p.question
+            opportunity_prompts[p.id] = p
 
     own_domains = await _own_domains_for_tenant(session, tenant_id)
+    from app.geo.content.metric_service import composition_of
+    from app.geo.content.sample_provenance import sample_provenance
+
+    observed_rows = rows
+    rows = [row for row in rows if sample_provenance(row)["sample_kind"] != "simulated"]
+    composition = composition_of(rows).to_dict()
+    comparable = not composition["mixed_sampling_methods"] and not composition["needs_review"]
+
 
     buckets: dict[str, dict[str, Any]] = {}
     snapshots_with_citations = 0
@@ -3503,6 +3514,7 @@ async def citation_insights(
                     "cite_count": 0,
                     "prompt_ids": set(),
                     "engines": set(),
+                    "engine_counts": {},
                     "sample_urls": [],
                     "latest_captured_at": None,
                     "sample_prompt_question": None,
@@ -3511,6 +3523,7 @@ async def citation_insights(
             bucket["cite_count"] += 1
             bucket["prompt_ids"].add(row.prompt_id)
             bucket["engines"].add(row.engine)
+            bucket["engine_counts"][row.engine] = bucket["engine_counts"].get(row.engine, 0) + 1
             if bucket["latest_captured_at"] is None:
                 bucket["latest_captured_at"] = _iso(row.captured_at)
                 bucket["sample_prompt_question"] = questions.get(row.prompt_id)
@@ -3529,6 +3542,7 @@ async def citation_insights(
                 "cite_count": bucket["cite_count"],
                 "prompt_count": len(bucket["prompt_ids"]),
                 "engines": sorted(bucket["engines"]),
+                "engine_counts": bucket["engine_counts"],
                 "latest_captured_at": bucket["latest_captured_at"],
                 "sample_prompt_question": bucket["sample_prompt_question"],
                 "sample_urls": bucket["sample_urls"],
@@ -3574,12 +3588,20 @@ async def citation_insights(
             acc = "unknown"
         format_counts[fmt] += 1
         accuracy_counts[acc] += 1
+    from app.geo.content.source_opportunities import build_source_opportunities
+
     return {
+        "source_opportunities": build_source_opportunities(observed_rows, prompts=opportunity_prompts, own_domains=own_domains),
         "items": items,
         "snapshots_with_citations": snapshots_with_citations,
         "distinct_cited_domains": len(items),
         "own_domains": own_domains,
-        "own_domain_cite_rate": own_domain_cite_rate,
+        "own_domain_cite_rate": own_domain_cite_rate if comparable else None,
+        "sample_composition": composition,
+        "rates_comparable": comparable,
+        "excluded_simulated": len(observed_rows) - len(rows),
+        "window": {"start": start_d.isoformat(), "end": end_d.isoformat(), "timezone": "Asia/Shanghai"},
+        "statistics_note": "统计默认排除模拟，保留人工及历史样本并披露构成；机会清单另排除旧方法、点名题及待复核样本。引用次数按快照与域名去重，不代表网页已核验。",
         "format_counts": format_counts,
         "accuracy_counts": accuracy_counts,
         "total_snapshots": len(rows),
@@ -6353,6 +6375,66 @@ async def list_tasks(
     }
 
 
+@router.post("/content-tasks/from-source-opportunity")
+async def create_task_from_source_opportunity(
+    req: SourceOpportunityTaskCreate,
+    ctx: AuthContext = Depends(require_scoped_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    from app.geo.content.source_opportunities import build_source_opportunities
+    from app.geo.content.brief import normalize_brief
+
+    ctx.ensure_tenant(req.tenant_id)
+    # Serialize this entry point per question until the task transaction commits.
+    prompt = await session.scalar(select(GeoPrompt).where(
+        GeoPrompt.id == req.prompt_id, GeoPrompt.tenant_id == req.tenant_id,
+    ).with_for_update())
+    if prompt is None:
+        raise HTTPException(404, "问题不存在")
+    existing = await session.scalar(select(GeoContentTask.id).where(
+        GeoContentTask.tenant_id == req.tenant_id,
+        GeoContentTask.prompt_id == req.prompt_id,
+        GeoContentTask.status.notin_(["archived", "cancelled"]),
+    ).order_by(GeoContentTask.id.desc()).limit(1))
+    if existing:
+        await session.commit()
+        return {"created": False, "task_id": existing, "editor_path": f"/geo/tasks/{existing}"}
+    ids = sorted(set(req.snapshot_ids))
+    snapshots = list(await session.scalars(select(GeoAnswerSnapshot).where(
+        GeoAnswerSnapshot.tenant_id == req.tenant_id,
+        GeoAnswerSnapshot.prompt_id == req.prompt_id,
+        GeoAnswerSnapshot.id.in_(ids),
+    ).order_by(GeoAnswerSnapshot.id).with_for_update()))
+    if {row.id for row in snapshots} != set(ids):
+        raise HTTPException(409, "证据已变化或不属于该问题，请刷新机会清单")
+    result = build_source_opportunities(snapshots, prompts={prompt.id: prompt},
+        own_domains=await _own_domains_for_tenant(session, req.tenant_id))
+    if not result["items"] or result["eligible_samples"] != len(ids):
+        raise HTTPException(409, "证据已不满足机会条件，请刷新并复核")
+    opportunity = result["items"][0]
+    if opportunity["evidence_version"] != req.evidence_version:
+        raise HTTPException(409, "原文、引用或机会依据已变化，请刷新后重新确认")
+    business_id = await _resolve_task_business_id(session, prompt)
+    period_id = await _resolve_active_period_id(session, tenant_id=req.tenant_id, business_id=business_id)
+    brief = normalize_brief({
+        "ai_question": prompt.question,
+        "notes": opportunity["reason"] + "\n" + opportunity["next_action"],
+        "must_cover": ["核验引用来源和品牌事实", "补充问题所需依据", "发布后使用同一问题复测"],
+        "source_bar": "verified_only",
+    })
+    brief["source_opportunity"] = opportunity
+    task = GeoContentTask(tenant_id=req.tenant_id, prompt_id=prompt.id,
+        business_id=business_id, period_id=period_id, title=prompt.question[:300],
+        status="draft", target_channels=["website"], owner_user_id=ctx.user_id,
+        pipeline_step="opportunity", brief=brief)
+    session.add(task)
+    await session.flush()
+    prompt.last_task_id = task.id
+    await _sync_task_pipeline(session, task)
+    await session.commit()
+    return {"created": True, "task_id": task.id, "editor_path": f"/geo/tasks/{task.id}"}
+
+
 @router.post("/content-tasks")
 async def create_task(
     req: TaskCreate,
@@ -6464,6 +6546,8 @@ async def patch_task(
         if hasattr(raw, "model_dump"):
             raw = raw.model_dump(exclude_unset=True)
         data["brief"] = normalize_brief(raw)
+        if isinstance(task.brief, dict) and task.brief.get("source_opportunity"):
+            data["brief"]["source_opportunity"] = task.brief["source_opportunity"]
     if "target_channels" in data and data["target_channels"] is not None:
         data["target_channels"] = normalize_channels(data["target_channels"])
     if "status" in data and data["status"] is not None:
@@ -8442,8 +8526,6 @@ async def geo_deliverables_pack(
             pack = (prow.result_meta or {}).get("deliverable_pack")
             if pack:
                 if format == "md":
-                    from fastapi.responses import PlainTextResponse
-
                     lines = [
                         f"# {pack.get('period_name') or '期次交付'}",
                         f"固化于 {pack.get('frozen_at')}",
@@ -8518,6 +8600,7 @@ async def geo_deliverables_pack(
             start=start_d,
             end=end_d,
             apply_stance=False,
+            exclude_simulated=False,  # Export preflight must inspect simulations too.
         )
         if pre.composition.simulated > 0:
             raise HTTPException(
@@ -8627,14 +8710,11 @@ async def geo_deliverables_pack(
             if not bool(getattr(s, "simulated", False))
             and (getattr(s, "sample_mode", None) or "") != "mock_persona"
         ]
-    unified = await compute_metrics(
-        session,
-        tenant_id,
-        start=start_d,
-        end=end_d,
-        prompt_ids=list(allowed_prompt_ids) if allowed_prompt_ids is not None else None,
-        own_domains=own_domains,
-    )
+    from app.geo.content.daily_metrics import load_prompt_unit_maps
+    from app.geo.content.metric_service import compute_metrics_from_rows
+    maps = await load_prompt_unit_maps(session, tenant_id, {row.prompt_id for row in window_snaps})
+    unified = compute_metrics_from_rows(window_snaps, probe_map=maps[0], own_domains=own_domains,
+        window_start=start_d, window_end=end_d)
     split = unified.to_dict()
 
     prompt_ids = {s.prompt_id for s in window_snaps}
@@ -8707,11 +8787,19 @@ async def geo_deliverables_pack(
             .order_by(GeoContentTask.updated_at.desc(), GeoContentTask.id.desc())
         )
     )
+    from app.geo.content.time_windows import shanghai_day_bounds_utc_naive
+    from datetime import timezone
+    task_start, _ = shanghai_day_bounds_utc_naive(start_d)
+    _, task_end = shanghai_day_bounds_utc_naive(end_d)
+
+    def task_utc(value):
+        return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
+
     window_tasks = [
         t
         for t in task_rows
         if t.updated_at is not None
-        and start <= t.updated_at.replace(tzinfo=None) <= end
+        and task_start <= task_utc(t.updated_at) < task_end
         and (allowed_prompt_ids is None or t.prompt_id in allowed_prompt_ids)
     ]
     published = sum(1 for t in window_tasks if t.status == "published")
@@ -8787,98 +8875,38 @@ async def geo_deliverables_pack(
         "has_simulated_samples": sample_comp.to_dict()["has_simulated"],
     }
 
-    # ---- daily_metrics series for selected scope ----
-    day_from = start.date() if hasattr(start, "date") else start
-    day_to = end.date() if hasattr(end, "date") else end
-    dm_rows = list(
-        await session.scalars(
-            select(GeoDailyMetric)
-            .where(
-                GeoDailyMetric.tenant_id == tenant_id,
-                GeoDailyMetric.metric_date >= day_from,
-                GeoDailyMetric.metric_date <= day_to,
-                GeoDailyMetric.scope_key == dm_scope_key,
-            )
-            .order_by(GeoDailyMetric.metric_date.asc())
-        )
-    )
-    daily_series = [metric_row_payload(r) for r in dm_rows]
+    # Build report slices from the same window snapshots; do not read stale cached days.
+    from app.geo.content.daily_metrics import snapshot_daily_rows
+    current_rows = snapshot_daily_rows(window_snaps, tenant_id=tenant_id,
+        start=start_d, end=end_d, probe_map=maps[0], unit_of_prompt=maps[1], business_of_unit=maps[2])
+    window_comparable = len(sample_comp.sampling_methods) <= 1 and not sample_comp.needs_review
 
-    business_slices: list[dict[str, Any]] = []
-    unit_slices: list[dict[str, Any]] = []
-    if scope_level == "tenant":
-        biz_dm = list(
-            await session.scalars(
-                select(GeoDailyMetric).where(
-                    GeoDailyMetric.tenant_id == tenant_id,
-                    GeoDailyMetric.metric_date >= day_from,
-                    GeoDailyMetric.metric_date <= day_to,
-                    GeoDailyMetric.scope_key.like("b%"),
-                )
-            )
-        )
-        latest_biz: dict[int, GeoDailyMetric] = {}
-        for r in biz_dm:
-            bid = r.business_id
-            if bid is None:
-                continue
-            prev = latest_biz.get(bid)
-            if prev is None or r.metric_date >= prev.metric_date:
-                latest_biz[bid] = r
-        for bid, r in sorted(latest_biz.items()):
-            payload = metric_row_payload(r)
-            payload["business_name"] = biz_names.get(bid)
+    def report_metric(row):
+        payload = metric_row_payload(row)
+        if not window_comparable:
+            for key in ("brand_mention_rate", "brand_probe_recognition_rate", "top1_rate", "top_competitor_rate"):
+                payload[key] = None
+            for competitor in (payload.get("competitor_mentions") or {}).values():
+                competitor["rate"] = None
+        return payload
+
+    daily_series = [report_metric(row) for row in current_rows if row.scope_key == dm_scope_key]
+    business_slices = []
+    unit_slices = []
+    latest = {}
+    for row in current_rows:
+        latest[row.scope_key] = row
+    for key, row in sorted(latest.items()):
+        if scope_level == "tenant" and key.startswith("b"):
+            payload = report_metric(row)
+            payload["business_name"] = biz_names.get(row.business_id)
             business_slices.append(payload)
-
-        unit_dm = list(
-            await session.scalars(
-                select(GeoDailyMetric).where(
-                    GeoDailyMetric.tenant_id == tenant_id,
-                    GeoDailyMetric.metric_date >= day_from,
-                    GeoDailyMetric.metric_date <= day_to,
-                    GeoDailyMetric.scope_key.like("u%"),
-                )
-            )
-        )
-        latest_unit: dict[int, GeoDailyMetric] = {}
-        for r in unit_dm:
-            uid = r.unit_id
-            if uid is None:
-                continue
-            prev = latest_unit.get(uid)
-            if prev is None or r.metric_date >= prev.metric_date:
-                latest_unit[uid] = r
-        for uid, r in sorted(latest_unit.items()):
-            payload = metric_row_payload(r)
-            payload["unit_name"] = unit_names.get(uid)
-            bid = r.business_id or unit_biz.get(uid)
-            payload["business_id"] = bid
-            payload["business_name"] = biz_names.get(bid) if bid else None
-            unit_slices.append(payload)
-    elif scope_level == "business" and scope_biz_id is not None:
-        unit_dm = list(
-            await session.scalars(
-                select(GeoDailyMetric).where(
-                    GeoDailyMetric.tenant_id == tenant_id,
-                    GeoDailyMetric.metric_date >= day_from,
-                    GeoDailyMetric.metric_date <= day_to,
-                    GeoDailyMetric.business_id == scope_biz_id,
-                    GeoDailyMetric.scope_key.like("u%"),
-                )
-            )
-        )
-        latest_unit = {}
-        for r in unit_dm:
-            uid = r.unit_id
-            if uid is None:
-                continue
-            prev = latest_unit.get(uid)
-            if prev is None or r.metric_date >= prev.metric_date:
-                latest_unit[uid] = r
-        for uid, r in sorted(latest_unit.items()):
-            payload = metric_row_payload(r)
-            payload["unit_name"] = unit_names.get(uid)
-            payload["business_name"] = scope_biz_name
+        elif key.startswith("u") and key != "unc" and (
+            scope_level == "tenant" or (scope_level == "business" and row.business_id == scope_biz_id)
+        ):
+            payload = report_metric(row)
+            payload["unit_name"] = unit_names.get(row.unit_id)
+            payload["business_name"] = biz_names.get(row.business_id)
             unit_slices.append(payload)
 
     pack = build_deliverables_pack(

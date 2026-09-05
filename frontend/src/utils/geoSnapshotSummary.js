@@ -300,23 +300,25 @@ export function citationHeatFromItems(items = []) {
     const b = buckets.get(name)
     const n = Number(it.cite_count || 0)
     b.total += n
-    const list = it.engines || []
-    const share = list.length ? n / list.length : n
+    const counts = it.engine_counts || {}
+    const list = Object.keys(counts)
     for (const e of list) {
       if (!seenE.has(e)) {
         seenE.add(e)
         engines.push(e)
       }
-      b.byEng[e] = (b.byEng[e] || 0) + share
+      b.byEng[e] = (b.byEng[e] || 0) + Number(counts[e] || 0)
     }
   }
   const rows = [...buckets.values()].sort((a, b) => b.total - a.total).slice(0, 6)
-  const grand = rows.reduce((a, r) => a + r.total, 0) || 1
+  const totals = Object.fromEntries(engines.map((e) => [e,
+    [...buckets.values()].reduce((sum, row) => sum + (row.byEng[e] || 0), 0),
+  ]))
   return {
     engines,
     rows: rows.map((r) => ({
       name: r.name,
-      cells: engines.map((e) => (r.byEng[e] || 0) / grand),
+      cells: engines.map((e) => totals[e] ? (r.byEng[e] || 0) / totals[e] : null),
     })),
   }
 }

@@ -47,8 +47,15 @@
 | `simulated` | `true` = 人设模拟，不可当真实引擎效果 |
 | `patrol_run_id` | 所属巡检 run（人工粘贴为 null） |
 
-报表统一展示：`真采样 N · 模拟 M · 人工 K`。  
+报表统一展示：`API 采样 N · 模拟 M · 人工 K`。API 回答不等同于用户端搜索结果。
 **含模拟样本时交付摘要必须强制标注。**
+
+统一指标服务默认排除模拟样本；内部分析需显式传 `exclude_simulated=False`。
+`sample_composition` 同时提供 `sampling_methods`、`mixed_sampling_methods`、
+`needs_review` 和 `legacy_method_warning`。历史未标记方法归为 `legacy`；
+方法混用或存在待复核判读时，统一指标序列化百分比为 null，计数保留供核对。
+这些字段从已有备注派生，不是新增数据库列。实施边界见
+[第二批说明](GEO_PHASE2_METRICS_EVIDENCE.md)。
 
 ## 巡检 ↔ 报表回路
 

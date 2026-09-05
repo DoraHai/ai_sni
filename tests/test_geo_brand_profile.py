@@ -84,9 +84,11 @@ class GeoBrandProfileTests(unittest.TestCase):
         with patch.dict("os.environ", settings, clear=False):
             with (
                 patch("app.geo.brand_profile.safe_fetch", new=AsyncMock(return_value=document)),
-                patch("app.ai.deepseek.is_enabled", return_value=False),
+                patch("app.geo.ai_client.is_enabled", return_value=False),
+                patch("app.geo.ai_client.chat_json", new_callable=AsyncMock) as chat,
             ):
                 result = __import__("asyncio").run(discover_brand_profile(document.final_url))
+                chat.assert_not_awaited()
 
         self.assertFalse(result["ai_used"])
         self.assertEqual(result["competitor_discovery"]["status"], "unavailable")

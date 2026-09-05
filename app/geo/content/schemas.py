@@ -153,6 +153,13 @@ class FactVerifyRequest(BaseModel):
     note: str | None = Field(None, max_length=500)
 
 
+class SourceOpportunityTaskCreate(BaseModel):
+    evidence_version: str = Field(..., pattern=r"^[a-f0-9]{64}$")
+    tenant_id: int
+    prompt_id: int
+    snapshot_ids: list[int] = Field(..., min_length=1, max_length=1000)
+
+
 class TaskCreate(BaseModel):
     tenant_id: int
     prompt_id: int
@@ -402,6 +409,7 @@ class AnswerSnapshotCreate(BaseModel):
     citation_format: CitationFormat = "unknown"
     citation_accuracy: CitationAccuracy = "unknown"
     note: str | None = None
+    sample_mode: Literal["manual", "openai_compat", "mock_persona"] = "manual"
 
 
 class AnswerSnapshotUpdate(BaseModel):
