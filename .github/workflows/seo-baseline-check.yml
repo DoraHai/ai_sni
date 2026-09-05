@@ -107,6 +107,8 @@ jobs:
           tests/test_seo_distribution_import.py
           tests/test_seo_cockpit.py
           tests/test_seo_cockpit_auth.py
+          tests/test_seo_video_platforms.py
+          tests/test_seo_backlink_workflow.py
           tests/test_seo_foundation.py
           tests/test_seo_rank_limits.py
           tests/test_seo_rank_optimization.py
@@ -147,7 +149,7 @@ jobs:
         run: npm ci --no-audit
       - name: Build isolated SEO frontend
         working-directory: frontend
-        run: node --test scripts/test-seo-ai-requests.mjs && node scripts/test-seo-task-center.mjs && node --test scripts/test-seo-publisher.mjs scripts/test-seo-backlinks.mjs && node scripts/test-seo-diagnostics.mjs && node scripts/test-seo-remediation.mjs && npm run test:seo-editor && npm run build:seo
+        run: node --test scripts/test-seo-ai-requests.mjs && node scripts/test-seo-task-center.mjs && node --test scripts/test-seo-publisher.mjs scripts/test-seo-backlinks.mjs scripts/test-seo-video-workflow.mjs && node scripts/test-seo-diagnostics.mjs && node scripts/test-seo-remediation.mjs && npm run test:seo-editor && npm run build:seo
       - name: Verify isolated SEO frontend
         working-directory: frontend
         run: npm run verify:seo-build
@@ -194,4 +196,4 @@ jobs:
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
           printf '%s\n' "$heads" | grep -F '0092_seo_cockpit (head)'
-          python -m pytest -q tests/test_seo_migration_merge.py tests/test_seo_cockpit.py tests/test_seo_cockpit_auth.py tests/test_seo_usage_limits.py tests/test_seo_ai_operations.py tests/test_seo_task_center.py
+          python -m pytest -q tests/test_seo_migration_merge.py tests/test_seo_video_platforms.py tests/test_seo_backlink_workflow.py tests/test_seo_cockpit.py tests/test_seo_cockpit_auth.py tests/test_seo_usage_limits.py tests/test_seo_ai_operations.py tests/test_seo_task_center.py
