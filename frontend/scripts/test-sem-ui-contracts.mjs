@@ -76,6 +76,45 @@ assert.match(keywordExpand, /smart: '智能匹配'/)
 assert.match(keywordExpand, /<el-option label="智能匹配" value="smart" \/>/)
 assert.doesNotMatch(keywordExpand, /planDialog = reactive/)
 assert.doesNotMatch(keywordExpand, /function submitAddToPlan/)
+assert.match(keywordExpand, /待重试 \$\{progress\.failedIds\.length\} 条候选记录/)
+assert.match(keywordExpand, /重试失败候选/)
+assert.match(keywordExpand, /resp\.successful_candidate_ids/)
+assert.match(keywordExpand, /round\.failedIds\.filter\(id => !completedIds\.has\(id\)\)/)
+
+const idempotency = await source('src/api/idempotency.js')
+const keywordApi = await source('src/api/keywords.js')
+const manageApi = await source('src/api/manage.js')
+const keywordWriteback = await source('src/composables/useKeywordWriteback.js')
+assert.match(idempotency, /crypto\?\.randomUUID/)
+assert.match(idempotency, /pendingWritebacks\.get\(operationKey\)/)
+assert.match(keywordApi, /runIdempotentWriteback\(operationKey/)
+assert.match(keywordApi, /idempotency_key: requestKey/)
+assert.equal((manageApi.match(/idempotency_key: requestKey/g) || []).length, 3)
+assert.equal((manageApi.match(/runIdempotentWriteback\(operationKey/g) || []).length, 3)
+assert.match(keywordWriteback, /pendingBidWrites\.has\(writeKey\)/)
+assert.match(keywordWriteback, /idempotencyKey = createWritebackIdempotencyKey\(\)/)
+
+const idempotencyModule = await import(new URL('../src/api/idempotency.js', import.meta.url))
+let releaseWrite
+let writeCalls = 0
+const firstWrite = idempotencyModule.runIdempotentWriteback('same-write', () => {
+  writeCalls += 1
+  return new Promise(resolve => { releaseWrite = resolve })
+})
+const duplicateWrite = idempotencyModule.runIdempotentWriteback('same-write', () => {
+  writeCalls += 1
+  return Promise.resolve()
+})
+assert.equal(firstWrite, duplicateWrite)
+await Promise.resolve()
+assert.equal(writeCalls, 1)
+releaseWrite('ok')
+await firstWrite
+await idempotencyModule.runIdempotentWriteback('same-write', () => {
+  writeCalls += 1
+  return Promise.resolve('next')
+})
+assert.equal(writeCalls, 2)
 
 const expansionApi = await source('src/api/expansion.js')
 assert.match(expansionApi, /match_mode: matchMode/)

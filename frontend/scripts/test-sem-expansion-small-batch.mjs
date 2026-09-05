@@ -146,7 +146,7 @@ assert.deepEqual(batchCalls[2].retryIds, [1,2,3,4,5])
 assert.equal(batchCalls[2].afterId, 0)
 assert.equal(batches.view.evaluationRound.value.failedIds.length, 15)
 assert.equal(batches.view.evaluationRound.value.nextAfterId, null)
-assert.match(batches.view.evaluationResult.value, /待重试 15 词/)
+assert.match(batches.view.evaluationResult.value, /待重试 15 条候选记录/)
 
 const failedRetry = fixture({evaluateCandidates: async args => ({enabled:true,evaluated:0,failed_words:args.retryIds.length,failed_candidate_ids:args.retryIds})})
 failedRetry.view.evaluationRound.value = {force:true,failedIds:[1,2,3],nextAfterId:20,deferred:5}
