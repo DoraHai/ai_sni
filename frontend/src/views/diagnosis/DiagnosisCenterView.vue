@@ -40,6 +40,7 @@ const activeReport = ref('overview')
 const activeAsset = ref('')
 const expandedEvidence = ref('')
 const sampleQuestions = ref(['', '', ''])
+const automaticSampleAttempts = new Set()
 const brandReady = ref(false)
 const brandProfile = ref({})
 let stageTimer = null
@@ -725,20 +726,27 @@ async function createAdvice() {
   }
 }
 
-async function createDeepSeekSample() {
+async function createDeepSeekSample({ automatic = false } = {}) {
   if (!audit.value || samplingLoading.value) return
+  const requestedAudit = audit.value
+  const requestedTenant = tenantId.value
   samplingLoading.value = true
   try {
-    audit.value = await runDeepSeekSample({
-      tenantId: tenantId.value,
-      auditId: audit.value.id,
-      questions: sampleQuestions.value.map((item) => item.trim()).filter(Boolean),
+    const result = await runDeepSeekSample({
+      tenantId: requestedTenant,
+      auditId: requestedAudit.id,
+      questions: automatic ? [] : sampleQuestions.value.map((item) => item.trim()).filter(Boolean),
     })
+    // A finished request must not replace a different customer's or a newer report.
+    if (tenantId.value !== requestedTenant || audit.value?.id !== requestedAudit.id) return
+    audit.value = { ...audit.value, snapshot: { ...audit.value.snapshot, ai_sampling: result.snapshot?.ai_sampling } }
     sampleQuestions.value = (audit.value.snapshot?.ai_sampling?.results || []).map((item) => item.question)
     while (sampleQuestions.value.length < 3) sampleQuestions.value.push('')
     ElMessage.success('DeepSeek 品牌提及抽样完成')
   } catch (e) {
-    ElMessage.error(e.message || 'DeepSeek 抽样失败，请稍后重试')
+    if (tenantId.value === requestedTenant && audit.value?.id === requestedAudit.id) {
+      ElMessage.error(e.message || '自动抽样未完成，可点击按钮重试')
+    }
   } finally {
     samplingLoading.value = false
   }
@@ -981,6 +989,17 @@ watch(tenantId, () => {
   brandProfile.value = {}
   openAsset('brand')
 })
+
+watch(
+  () => [tenantId.value, audit.value?.id, audit.value?.ai_enabled, aiSample.value, samplingLoading.value],
+  () => {
+    if (!tenantId.value || !audit.value?.id || !audit.value.ai_enabled || isCompetitorAudit.value || samplingLoading.value) return
+    const key = `${tenantId.value}:${audit.value.id}`
+    if (aiSample.value || automaticSampleAttempts.has(key)) return
+    automaticSampleAttempts.add(key)
+    void createDeepSeekSample({ automatic: true })
+  },
+)
 
 watch(
   () => audit.value?.final_url || audit.value?.url || '',
@@ -1826,7 +1845,7 @@ onMounted(async () => {
                     v-model="sampleQuestions[index]"
                     type="text"
                     maxlength="300"
-                    :placeholder="index === 0 ? '留空则根据品牌行业自动生成三个中立问题' : '可选：输入客户真实会问的问题（不能包含待测品牌名）'"
+                    :placeholder="samplingLoading ? '正在根据品牌行业自动生成默认问题并抽样…' : '默认问题自动抽样；也可修改问题后重新抽样'"
                     :disabled="samplingLoading"
                   >
                 </label>
@@ -1836,7 +1855,7 @@ onMounted(async () => {
                 :disabled="samplingLoading || !audit.ai_enabled"
                 @click="createDeepSeekSample"
               >
-                {{ samplingLoading ? '正在进行真实抽样…' : aiSample ? '重新抽样 →' : '开始 DeepSeek 实测 →' }}
+                {{ samplingLoading ? '正在自动抽样…' : aiSample ? '重新抽样 →' : '重试抽样 →' }}
               </button>
               <small v-if="!audit.ai_enabled">DeepSeek 服务当前未启用</small>
             </div>

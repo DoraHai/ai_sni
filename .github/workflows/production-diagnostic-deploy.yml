@@ -54,6 +54,9 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Verify automatic default sampling
+        run: node frontend/scripts/test-diagnostic-auto-sample.mjs
+
       - name: Build diagnostic frontend
         working-directory: frontend
         run: npm run build:diagnostic-center
