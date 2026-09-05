@@ -200,3 +200,26 @@ def test_qa_prompt_does_not_reward_length_or_keyword_stuffing():
     system, user = _seo_ai_prompt(req, SimpleNamespace(name='品牌', industry=None, business_desc=None, brand_terms=[]), [])
     assert '[F编号]' in system and '不得编造' in system
     assert '必须逐字' not in system and '不强制逐字' in user
+
+
+def test_database_replay_checks_current_body_and_finds_later_valid_answer():
+    async def scenario(sessions):
+        async with sessions() as db:
+            imported = await api.import_questions(api.ImportQuestions(tenant_id=1, site_id=1,
+                items=[{'title': '如何确认设备运行条件？'}]), CTX, db)
+            req = api.AnswerInput(tenant_id=1, site_id=1, question_id=imported['ids'][0], body='原始回答正文')
+            first = await api.create_answer(req, CTX, db)
+            content = await db.get(SeoContentAsset, first['content_id'])
+            # The shared content editor may change the effective body without
+            # changing the QA evidence snapshot. It must not satisfy a retry.
+            content.humanized_content = '其他编辑器已经修改的正文'
+            content.version_count += 1
+            await db.commit()
+            second = await api.create_answer(req, CTX, db)
+            assert second['id'] != first['id']
+            assert (await db.get(SeoContentAsset, first['content_id'])).humanized_content == '其他编辑器已经修改的正文'
+            assert (await db.get(SeoContentAsset, second['content_id'])).draft == req.body
+            replay = await api.create_answer(req, CTX, db)
+            assert replay['id'] == second['id']
+            assert len(list(await db.scalars(select(SeoQaAnswer)))) == 2
+    database(scenario)
