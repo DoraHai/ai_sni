@@ -5,7 +5,6 @@ import { createServer } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { createSSRApp } from 'vue'
 import { renderToString } from '@vue/server-renderer'
-import { JSDOM } from 'jsdom'
 import { SEM_PLANNED_CHANNELS, semChannelPath } from '../src/constants/semChannels.js'
 
 const source = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8')
@@ -47,14 +46,11 @@ try {
   const { default: Component } = await server.ssrLoadModule('/src/views/manage/SemChannelComingSoonView.vue')
   for (const channel of SEM_PLANNED_CHANNELS) {
     const html = await renderToString(createSSRApp(Component, { channel }))
-    const dom = new JSDOM(html)
-    const doc = dom.window.document
-    assert.equal(doc.querySelector('h1').textContent, channel.name)
-    assert.equal(doc.querySelector('.status').textContent, '待开放')
-    assert.equal(doc.querySelectorAll('.capabilities li').length, 4)
-    assert.equal(doc.querySelectorAll('button, input, form, iframe, a[href]').length, 0)
-    assert.ok(doc.querySelector('[role="note"]').textContent.includes('不会展示百度数据'))
-    dom.window.close()
+    assert.match(html, new RegExp(`<h1\\b[^>]*>${channel.name}</h1>`))
+    assert.match(html, /class="status"[^>]*>待开放<\/span>/)
+    assert.equal([...html.matchAll(/<li\b/g)].length, 4)
+    assert.doesNotMatch(html, /<(?:button|input|form|iframe)\b|<a\b[^>]*href=/i)
+    assert.match(html, /role="note"[^>]*>[\s\S]*不会展示百度数据/)
   }
 } finally {
   await server.close()
