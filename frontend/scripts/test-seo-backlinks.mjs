@@ -13,8 +13,29 @@ const compile=(api)=>new Function('Vue','api',source
   .replace(/import\s*\{[^}]+\}\s*from\s*['"]element-plus['"]/g,'const ElMessage={warning(){}}')
   .replace(/import\s*\{([^}]+)\}\s*from\s*['"]\.\.\/\.\.\/api\/seo['"]/g,(_,names)=>`const {${names}}=api`)
   .replace(/import SeoBacklinkInsights from '[^']+'/, 'const SeoBacklinkInsights = {}')
+  .replace(/import SeoBacklinkOpportunities from '[^']+'/, 'const SeoBacklinkOpportunities = {}')
   .replace('export default','return'))(Vue,api)
 const flush=async()=>{await Promise.resolve();await Vue.nextTick();await Promise.resolve();await Vue.nextTick()}
+const opportunitiesDescriptor=parse(await readFile(new URL('../src/views/seo/SeoBacklinkOpportunities.vue',import.meta.url),'utf8')).descriptor
+const compileOpportunities=(api)=>new Function('Vue','api',compileScript(opportunitiesDescriptor,{id:'opportunities-test'}).content
+  .replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/g,(_,names)=>`const {${names.replace(/\s+as\s+/g,':')}}=Vue`)
+  .replace(/import\s*\{([^}]+)\}\s*from\s*['"]\.\.\/\.\.\/api\/seo['"]/g,(_,names)=>`const {${names}}=api`)
+  .replace('export default','return'))(Vue,api)
+
+test('opportunity query captures scope, prevents repeat calls and ignores late results',async()=>{
+  let release;const calls=[]
+  const component=compileOpportunities({fetchSeoBacklinkOpportunities:async()=>({provider:{configured:true},result:null}),
+    querySeoBacklinkOpportunities:async args=>{calls.push(args);return new Promise(resolve=>release=resolve)}})
+  component.render=()=>null
+  const props=Vue.reactive({tenantId:1,siteId:10,canEdit:true})
+  const app=Vue.createApp({render:()=>Vue.h(component,props)}),root=app.mount(document.getElementById('app'));await flush()
+  const state=root.$.subTree.component.setupState
+  state.competitors='peer.example';const pending=state.run();await state.run();assert.equal(calls.length,1)
+  props.tenantId=2;props.siteId=20;await flush();release({items:[{source_domain:'old.example'}]});await pending
+  assert.equal(state.result,null);assert.equal(calls[0].site_id,10);assert.equal(state.competitors,'')
+  props.canEdit=false;await flush();state.competitors='peer.example';await state.run();assert.equal(calls.length,1)
+  app.unmount()
+})
 const insightsDescriptor=parse(await readFile(new URL('../src/views/seo/SeoBacklinkInsights.vue',import.meta.url),'utf8')).descriptor
 const compileInsights=(api)=>new Function('Vue','api',compileScript(insightsDescriptor,{id:'insights-test'}).content
   .replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/g,(_,names)=>`const {${names.replace(/\s+as\s+/g,':')}}=Vue`)
