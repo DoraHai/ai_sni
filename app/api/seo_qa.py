@@ -12,7 +12,7 @@ from app.api.seo_cockpit import scope
 from app.models.seo import SeoContentAsset, SeoSerpResult
 from app.models.seo_qa import SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement
 from app.seo_qa import (PLATFORMS, fingerprint, public_url, platform_url, parse_questions_csv,
-                        fact_is_current, body_hash, answer_checks, observe_answer)
+                        fact_is_current, body_hash, answer_checks, observe_answer, placement_followup)
 
 router = APIRouter(prefix='/qa', tags=['SEO questions'])
 Auth = Depends(require_scoped_auth)
@@ -523,7 +523,8 @@ async def placements(tenant_id: PositiveInt, site_id: PositiveInt, ctx=Auth, ses
         problems = await evidence_problems(session, answer, content)
         if content.status not in {'ready', 'published'} or content.version_count != row.content_version:
             problems.append('该审核稿已被新版本替代或正在重新审核')
-        result.append({**data(row), 'publishable': not problems, 'problems': problems})
+        result.append({**data(row), 'publishable': not problems, 'problems': problems,
+                       'followup': placement_followup(row.answer_url, row.observations)})
     return result
 
 
