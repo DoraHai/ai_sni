@@ -984,7 +984,7 @@ onMounted(loadSites)
             </el-tag>
           </header>
           <p>{{ item.help }}</p>
-          <div class="capabilities"><span v-for="capability in item.capabilities" :key="capability">{{ ({ connection_test: '连接测试', draft: '创建草稿', publish: '正式发布', adapt: '内容适配', copy: '一键复制', open_editor: '打开编辑器', manual_confirm: '人工确认', status_link: '链接回流', async_status: '状态同步', media_upload: '图片上传', browser_package: '填稿任务包' })[capability] || capability }}</span></div>
+          <div class="capabilities"><span v-for="capability in item.capabilities" :key="capability">{{ ({ connection_test: '连接测试', draft: '创建草稿', publish: '正式发布', adapt: '内容适配', copy: '一键复制', open_editor: '打开编辑器', manual_confirm: '人工确认', status_link: '链接回流', async_status: '状态同步', media_upload: '图片上传', browser_package: '填稿任务包', user_oauth: '用户授权', video_upload: '视频上传', video_publish: '视频发布' })[capability] || capability }}</span></div>
           <div v-if="item.connections.length" class="connection-list">
             <div v-for="connection in item.connections" :key="connection.id">
               <span><b>{{ connection.name }}</b><small>{{ connection.base_url || '无需站点地址' }} · {{ connection.last_tested_at ? `最近测试 ${date(connection.last_tested_at)}` : connection.mode === 'api' ? '尚未测试' : '无需测试' }}</small><small v-if="connection.last_error" class="connection-error">{{ connection.last_error }}</small></span>

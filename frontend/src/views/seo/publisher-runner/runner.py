@@ -128,6 +128,16 @@ def editor_url(value, platform):
     return value
 
 
+def confirm_restored_draft(page, task):
+    """A saved URL can redirect to a blank/new editor. Never refill that as a resume."""
+    editor_url(page.url, task['platform_code'])
+    for selector, expected in [(TITLE, task['title']), (BODY, task['text'])]:
+        element=unique_visible(page,selector)
+        actual=element.evaluate('(el) => "value" in el ? el.value : el.innerText') or ''
+        if actual.strip()!=expected.strip():
+            raise ValueError('恢复地址未显示原草稿，或内容已被修改；未重新填稿、上传或发布，请在平台核实原草稿')
+
+
 def apply_settings(page, settings):
     """Use unambiguous, accessible controls; unknown layouts stop for intervention."""
     category = settings.get('category')
@@ -248,6 +258,7 @@ def execute(args, tasks):
                 settings=getattr(args,'recipes',{}).get(str(task['publication_id']),{})
                 target=previous.get('draft_url') or settings.get('editor_url') or task['editor_url']
                 page.goto(editor_url(target,task['platform_code']), wait_until='domcontentloaded', timeout=45000)
+                if previous.get('state')=='draft_saved':confirm_restored_draft(page,task)
                 if previous.get('state') in {'preparation_attempted', 'prepared', 'submit_attempted', 'needs_result_check','draft_save_attempted'}:
                     print('上次已开始处理，本次不会重复填稿、上传或提交。请到平台核实并完成剩余操作。')
                 else:
