@@ -4547,7 +4547,80 @@ def _missing_content_keywords(result: dict[str, Any], keywords: list[SeoKeywordA
     return [item.keyword for item in keywords if item.keyword.casefold() not in content]
 
 
+def _seo_assist_text(value: Any, *, separator: str = "\n") -> Any:
+    """Normalize common JSON-mode text shapes without inventing model content."""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list) and value and all(isinstance(item, str) for item in value):
+        return separator.join(item.strip() for item in value if item.strip())
+    return value
+
+
+def _normalized_seo_assist_result(result: Any) -> Any:
+    """Accept conservative provider variations while keeping the public contract stable."""
+    if not isinstance(result, dict):
+        return result
+
+    candidate = result
+    known_keys = {
+        "title", "outline", "content", "feedback", "suggestions",
+        "标题", "大纲", "正文", "初稿", "反馈", "建议",
+    }
+    if not known_keys.intersection(candidate):
+        for wrapper in ("result", "data", "output"):
+            nested = candidate.get(wrapper)
+            if isinstance(nested, dict):
+                candidate = nested
+                break
+
+    aliases = {
+        "title": ("title", "标题"),
+        "outline": ("outline", "大纲"),
+        "content": ("content", "body", "draft", "article", "正文", "初稿"),
+        "feedback": ("feedback", "反馈", "说明"),
+        "suggestions": ("suggestions", "建议"),
+    }
+    normalized = dict(candidate)
+    for target, sources in aliases.items():
+        if normalized.get(target) not in (None, "", []):
+            continue
+        for source in sources:
+            if candidate.get(source) not in (None, "", []):
+                normalized[target] = candidate[source]
+                break
+
+    for key in ("title", "outline", "content", "feedback"):
+        normalized[key] = _seo_assist_text(
+            normalized.get(key),
+            separator="\n\n" if key == "content" else "\n",
+        )
+    suggestions = normalized.get("suggestions")
+    if isinstance(suggestions, str) and suggestions.strip():
+        normalized["suggestions"] = [suggestions.strip()]
+    return normalized
+
+
+def _seo_assist_result_shape(result: Any) -> dict[str, Any]:
+    """Return a content-free diagnostic summary safe for production logs."""
+    if not isinstance(result, dict):
+        return {"type": type(result).__name__}
+    inspected = (
+        "title", "outline", "content", "feedback", "suggestions",
+        "标题", "大纲", "正文", "初稿", "反馈", "建议",
+        "result", "data", "output",
+    )
+    return {
+        "type": "dict",
+        "fields": {
+            key: type(result[key]).__name__
+            for key in inspected
+            if key in result
+        },
+    }
+
+
 def _validated_seo_assist_result(action: str, result: Any) -> dict[str, Any]:
+    result = _normalized_seo_assist_result(result)
     if not isinstance(result, dict):
         raise HTTPException(502, "AI 返回格式无效，请重试")
     expected = {
@@ -4587,18 +4660,18 @@ def _seo_assist_repair_prompt(
     reason: str,
 ) -> str:
     expected = {
-        "generate": "title、outline、content",
-        "outline": "outline",
-        "title": "title",
-        "keywords": "feedback 或 suggestions",
-        "rewrite": "content",
+        "generate": '{"title":"字符串","outline":"Markdown 字符串","content":"Markdown 字符串","feedback":"字符串"}',
+        "outline": '{"outline":"Markdown 字符串","feedback":"字符串"}',
+        "title": '{"title":"字符串","feedback":"字符串"}',
+        "keywords": '{"feedback":"字符串","suggestions":["建议字符串"]}',
+        "rewrite": '{"content":"Markdown 字符串","feedback":"字符串"}',
     }[action]
     return "\n".join(
         [
             user,
             "上一轮结果不符合输出契约，请仅修复结果，不得编造事实。",
             f"修复原因：{reason}",
-            f"必须返回的 JSON 字段：{expected}",
+            f"必须返回的 JSON 字段和结构如下（不要再包裹 data/result/output）：{expected}",
             "上一轮结果：" + json.dumps(result, ensure_ascii=False),
         ]
     )
@@ -4637,6 +4710,11 @@ async def assist_seo_content(
         except HTTPException as exc:
             if exc.status_code != 502:
                 raise
+            logger.warning(
+                "SEO AI result contract mismatch action=%s stage=initial shape=%s",
+                req.action,
+                _seo_assist_result_shape(raw_result),
+            )
             result = None
             repair_reason = str(exc.detail)
         missing = (
@@ -4653,17 +4731,23 @@ async def assist_seo_content(
                 raw_result,
                 reason=repair_reason,
             )
-            result = _validated_seo_assist_result(
-                req.action,
-                await _limited_seo_chat_json(
-                    session,
-                    req.tenant_id,
-                    system,
-                    correction,
-                    timeout=90.0,
-                    charge_usage=False,
-                ),
+            repaired_result = await _limited_seo_chat_json(
+                session,
+                req.tenant_id,
+                system,
+                correction,
+                timeout=90.0,
+                charge_usage=False,
             )
+            try:
+                result = _validated_seo_assist_result(req.action, repaired_result)
+            except HTTPException:
+                logger.warning(
+                    "SEO AI result contract mismatch action=%s stage=repair shape=%s",
+                    req.action,
+                    _seo_assist_result_shape(repaired_result),
+                )
+                raise
             missing = (
                 _missing_content_keywords(result, keywords)
                 if req.action in {"generate", "rewrite"}
