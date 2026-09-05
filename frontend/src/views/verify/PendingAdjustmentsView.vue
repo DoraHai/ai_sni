@@ -29,6 +29,7 @@ const mode = ref(route.query.mode === 'queue' || !canViewPending.value ? 'queue'
 const aiLoading = ref({})
 const queueFilter = ref('reconciliation_required')
 const queueOffset = ref(0)
+const effectOffset = ref(0)
 const queueServerPaged = computed(() => data.value?.counts_scope === 'tenant_history')
 const queueItems = computed(() => data.value?.items || [])
 const filteredQueue = computed(() => filterQueue(queueItems.value, queueFilter.value))
@@ -68,7 +69,7 @@ async function load() {
     })
     else {
       const fetcher = mode.value === 'budget' ? fetchBudgetAdjustments : fetchPendingAdjustments
-      result = await fetcher({ tenantId: TENANT_ID.value, days: days.value, status: statusFilter.value })
+      result = await fetcher({ tenantId: TENANT_ID.value, days: days.value, status: statusFilter.value, offset: effectOffset.value, limit: 50 })
     }
     if (sequence === loadSequence) data.value = result
   } catch (e) {
@@ -105,9 +106,23 @@ async function runAi(item) {
 }
 
 async function setVerdict(item, verdict) {
+  const tenantId = TENANT_ID.value
+  let note
+  if (verdict !== 'watch') {
+    if (item.effect.sample?.state !== 'ready') return ElMessage.warning('样本不足，只能继续观察')
+    try {
+      const result = await ElMessageBox.prompt('请依据页面实际前后指标填写核对依据；前后变化不等于本次调整的因果收益。', '人工效果验证', {
+        inputValidator: (value) => String(value || '').trim().length >= 4 || '请填写至少 4 个字的依据',
+        confirmButtonText: '保存判定与指标依据', cancelButtonText: '取消',
+      })
+      note = result.value.trim()
+    } catch { return }
+  }
+  if (tenantId !== TENANT_ID.value) return
   try {
-    await markVerified({ tenantId: TENANT_ID.value, dedupKey: item.dedup_key, verdict })
-    ElMessage.success('已标记：' + VERDICT_META[verdict].label)
+    await markVerified({ tenantId, dedupKey: item.dedup_key, verdict, note })
+    ElMessage.success(verdict === 'watch' ? '已记录观察，仍保留在待验证列表' : '已保存判定和指标依据')
+    effectOffset.value = 0
     load()
   } catch (e) {
     ElMessage.error(e.message)
@@ -117,6 +132,7 @@ async function setVerdict(item, verdict) {
 async function reopen(item) {
   try {
     await markVerified({ tenantId: TENANT_ID.value, dedupKey: item.dedup_key, reopen: true })
+    effectOffset.value = 0
     load()
   } catch (e) {
     ElMessage.error(e.message)
@@ -167,8 +183,14 @@ function changeQueuePage(page) {
   load()
 }
 
+function changeEffectPage(page) {
+  effectOffset.value = (page - 1) * 50
+  load()
+}
+
 watch([TENANT_ID, days, statusFilter, mode, queueFilter], () => {
   queueOffset.value = 0
+  effectOffset.value = 0
   load()
 })
 onMounted(load)
@@ -203,6 +225,11 @@ onMounted(load)
       <span v-if="data && mode !== 'queue'" class="summary">
         共 {{ data.summary.total }} · 待验证 <b>{{ data.summary.pending }}</b> · 已验证 {{ data.summary.verified }}
       </span>
+    </div>
+    <div v-if="data && mode !== 'queue' && !error" class="toolbar">
+      <span>统计所选日期范围全部记录；先筛状态再分页。观察仍属于待验证。</span>
+      <el-pagination :current-page="Math.floor(effectOffset / 50) + 1" :page-size="50" :total="data.total"
+        :disabled="loading" layout="prev, pager, next, total" @current-change="changeEffectPage" />
     </div>
 
     <el-alert v-if="mode === 'queue'" type="info" :closable="false" title="默认仅显示待人工对账的真实回写。演练未修改百度；真实 pending 表示结果尚未确认，不代表仍在执行，请先核对百度后台，勿重复提交。" style="margin-bottom: 12px" />
@@ -277,6 +304,16 @@ onMounted(load)
         </tbody>
       </table>
       <div class="sample-state" :class="it.effect.sample?.state">{{ it.effect.sample?.message || '样本状态未知' }}</div>
+      <div v-if="it.effect.window" class="sample-state">
+        {{ it.effect.window.message }}。窗口：{{ it.effect.window.after_from }} 至 {{ it.effect.window.after_through || '暂无完整日报' }}
+      </div>
+      <details v-if="it.review.evidence" class="sample-state">
+        <summary>查看人工判定时的指标依据（历史快照）</summary>
+        <div>账户 {{ it.review.evidence.baidu_account_id }} · 记录于 {{ it.review.evidence.recorded_at }}</div>
+        <div>当时日均消费：{{ fmtMoney(it.review.evidence.effect.before?.cost_per_day) }} → {{ fmtMoney(it.review.evidence.effect.after?.cost_per_day) }}</div>
+        <div>核对依据：{{ it.review.note || '继续观察' }}</div>
+      </details>
+      <div v-else-if="it.review.status === 'verified'" class="sample-state">历史人工标记未留指标快照，不代表效果已证实。</div>
 
       <div v-if="it.ai.verdict" class="ai" :class="VERDICT_META[it.ai.verdict]?.cls">
         <b>AI 研判：{{ VERDICT_META[it.ai.verdict]?.label }}</b> · {{ it.ai.reason }}
@@ -290,14 +327,14 @@ onMounted(load)
           <button v-if="canEdit" class="act" @click="reopen(it)">改回待验证</button>
         </template>
         <template v-else>
-          <button v-if="canEdit && aiEnabled" class="act" :disabled="aiLoading[it.dedup_key]" @click="runAi(it)">
+          <button v-if="canEdit && aiEnabled" class="act" :disabled="aiLoading[it.dedup_key] || it.effect.sample?.state !== 'ready'" @click="runAi(it)">
             {{ aiLoading[it.dedup_key] ? 'AI 研判中...' : (it.ai.verdict ? '重新 AI 研判' : 'AI 研判') }}
           </button>
           <span class="foot-spacer" />
           <template v-if="canEdit">
             <span class="judge-label">判定：</span>
-            <button class="act v-ok" @click="setVerdict(it, 'achieved')">达成</button>
-            <button class="act v-bad" @click="setVerdict(it, 'missed')">未达成</button>
+            <button class="act v-ok" :disabled="it.effect.sample?.state !== 'ready'" @click="setVerdict(it, 'achieved')">达成</button>
+            <button class="act v-bad" :disabled="it.effect.sample?.state !== 'ready'" @click="setVerdict(it, 'missed')">未达成</button>
             <button class="act v-watch" @click="setVerdict(it, 'watch')">观察</button>
           </template>
         </template>
@@ -342,6 +379,16 @@ onMounted(load)
         </tbody>
       </table>
       <div class="sample-state" :class="it.effect.sample?.state">{{ it.effect.sample?.message || '样本状态未知' }}</div>
+      <div v-if="it.effect.window" class="sample-state">
+        {{ it.effect.window.message }}。窗口：{{ it.effect.window.after_from }} 至 {{ it.effect.window.after_through || '暂无完整日报' }}
+      </div>
+      <details v-if="it.review.evidence" class="sample-state">
+        <summary>查看人工判定时的指标依据（历史快照）</summary>
+        <div>账户 {{ it.review.evidence.baidu_account_id }} · 记录于 {{ it.review.evidence.recorded_at }}</div>
+        <div>当时日均消费：{{ fmtMoney(it.review.evidence.effect.before?.cost_per_day) }} → {{ fmtMoney(it.review.evidence.effect.after?.cost_per_day) }}</div>
+        <div>核对依据：{{ it.review.note || '继续观察' }}</div>
+      </details>
+      <div v-else-if="it.review.status === 'verified'" class="sample-state">历史人工标记未留指标快照，不代表效果已证实。</div>
 
       <div class="adj-foot">
         <template v-if="it.review.status === 'verified'">
@@ -354,8 +401,8 @@ onMounted(load)
           <span class="foot-spacer" />
           <template v-if="canEdit">
             <span class="judge-label">判定：</span>
-            <button class="act v-ok" @click="setVerdict(it, 'achieved')">达成</button>
-            <button class="act v-bad" @click="setVerdict(it, 'missed')">未达成</button>
+            <button class="act v-ok" :disabled="it.effect.sample?.state !== 'ready'" @click="setVerdict(it, 'achieved')">达成</button>
+            <button class="act v-bad" :disabled="it.effect.sample?.state !== 'ready'" @click="setVerdict(it, 'missed')">未达成</button>
             <button class="act v-watch" @click="setVerdict(it, 'watch')">观察</button>
           </template>
         </template>
