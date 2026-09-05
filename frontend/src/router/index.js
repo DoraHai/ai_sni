@@ -130,6 +130,11 @@ const routes = [
       },
       {
         path: 'content/qa',
+        component: () => import('../views/seo/SeoQaWorkbenchView.vue'),
+        meta: { title: '问答运营', workflow: '内容增长', perm: 'seo.content', immersive: true },
+      },
+      {
+        path: 'content/qa-legacy',
         component: () => import('../views/seo/SeoContentView.vue'),
         meta: { title: '问答运营', workflow: '内容增长', contentMode: 'qa', perm: 'seo.content', bare: true, immersive: true },
       },

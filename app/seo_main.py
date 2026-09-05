@@ -20,7 +20,7 @@ from app.seo_scheduler import shutdown_seo_scheduler, start_seo_scheduler
 
 settings = get_settings()
 enforce_production_secrets(settings, hard_fail=True)
-SEO_REQUIRED_SCHEMA_REVISION = "0092_seo_cockpit"
+SEO_REQUIRED_SCHEMA_REVISION = "0093_seo_qa"
 
 
 @asynccontextmanager

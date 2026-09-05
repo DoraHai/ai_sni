@@ -11,6 +11,13 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    "app/models/seo_qa.py",
+    "app/api/seo_qa.py",
+    "app/seo_qa.py",
+    "migrations/versions/20260906_0093_seo_qa.py",
+    "tests/test_seo_qa.py",
+    "frontend/scripts/test-seo-qa.mjs",
+    "docs/SEO_QA_WORKBENCH.md",
     "frontend/scripts/test-seo-video-workflow.mjs",
     "app/api/seo_video.py",
     "app/seo_video_platforms.py",

@@ -73,7 +73,7 @@ def test_merge_revisions_are_noop_and_sem_seo_merge_is_only_head() -> None:
     _assert_noop_revision(SEM_SEO_MERGE_REVISION)
 
     script = ScriptDirectory.from_config(_config())
-    assert script.get_heads() == ["0092_seo_cockpit"]
+    assert script.get_heads() == ["0093_seo_qa"]
     merge = script.get_revision("0074_merge_geo_seo_heads")
     assert set(merge._normalized_down_revisions) == {
         "0073_geo_schema_repair",
@@ -194,6 +194,7 @@ def test_upgrade_plan_from_production_sem_head_runs_only_seo_branch() -> None:
         "0090_seo_ai_operations",
         "0091_seo_backlink_evidence",
         "0092_seo_cockpit",
+        "0093_seo_qa",
     ]
 
 
@@ -212,6 +213,7 @@ def test_index_review_promotion_preserves_both_histories_and_upgrades_only_new_t
         "0090_seo_ai_operations",
         "0091_seo_backlink_evidence",
         "0092_seo_cockpit",
+        "0093_seo_qa",
     ]
     assert script.get_revision("0087_seo_image_alt_evidence").down_revision == "0086_seo_index_review_merge"
     assert [step.revision.revision for step in script._upgrade_revs("head", "0086_seo_index_review_merge")] == [
@@ -221,6 +223,7 @@ def test_index_review_promotion_preserves_both_histories_and_upgrades_only_new_t
         "0090_seo_ai_operations",
         "0091_seo_backlink_evidence",
         "0092_seo_cockpit",
+        "0093_seo_qa",
     ]
 
 
@@ -438,7 +441,7 @@ def test_postgres_upgrade_from_sem_head_applies_only_pending_seo_branch(monkeypa
     ) = asyncio.run(schema_snapshot())
     get_settings.cache_clear()
 
-    assert after == "0092_seo_cockpit"
+    assert after == "0093_seo_qa"
     assert {
         "ix_seo_distribution_variants_tenant_id",
         "ix_seo_distribution_variants_content_asset_id",

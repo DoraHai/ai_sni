@@ -180,7 +180,7 @@ def _required(path: str, method: str) -> tuple[set[str] | None, bool]:
         return {"seo.alerts"}, edit
     if p.startswith("/api/v1/seo/keywords") or p.startswith("/api/v1/seo/rank"):
         return {"seo.keywords"}, edit
-    if p.startswith("/api/v1/seo/content"):
+    if p.startswith("/api/v1/seo/content") or p.startswith("/api/v1/seo/qa"):
         return {"seo.content"}, edit
     if p.startswith("/api/v1/seo/site"):
         return {"seo.site"}, edit

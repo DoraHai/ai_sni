@@ -1,5 +1,6 @@
 from app.models.tenant import Tenant
 from app.models.seo_cockpit import SeoTask, SeoImageVerification
+from app.models.seo_qa import SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement
 from app.models.baidu_account import BaiduAccount
 from app.models.baidu_oauth import BaiduOAuthGrant, BaiduOAuthState
 from app.models.api_audit_log import ApiAuditLog
