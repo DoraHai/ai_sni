@@ -11,6 +11,16 @@ from pathlib import Path
 
 
 SOURCE_ALLOWED_EXACT = {
+    "app/models/seo_cockpit.py",
+    "app/api/seo_cockpit.py",
+    "app/seo_cockpit_metrics.py",
+    "app/seo_image_verification.py",
+    "app/security/auth.py",
+    "app/rules/engine.py",
+    "tests/test_seo_cockpit_auth.py",
+    "tests/test_seo_cockpit.py",
+    "docs/SEO_COCKPIT_CONTRACT.md",
+    "migrations/versions/20260905_0092_seo_cockpit.py",
     "app/seo_backlink_sources.py",
     "app/seo_distribution_package.py",
     "tests/test_seo_backlink_sources.py",

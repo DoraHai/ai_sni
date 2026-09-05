@@ -46,7 +46,7 @@ def test_source_allowlist_rejects_auth_and_other_modules() -> None:
     assert source_path_allowed("frontend/tests/seoBatchOperations.test.mjs")
     assert source_path_allowed("frontend/package-lock.json")
     assert source_path_allowed("app/api/customer_modules.py")
-    assert not source_path_allowed("app/security/auth.py")
+    assert source_path_allowed("app/security/auth.py")  # Explicit tenant-coercion security backport.
     assert not source_path_allowed("app/api/geo.py")
     assert not source_path_allowed("app/baidu/writeback.py")
     assert not source_path_allowed("app/api/auth.py")
@@ -321,7 +321,7 @@ def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:
 
 def test_seo_workflows_require_the_current_reviewed_migration_head() -> None:
     root = Path(__file__).parents[1]
-    expected = "0091_seo_backlink_evidence (head)"
+    expected = "0092_seo_cockpit (head)"
     baseline = (root / ".github/workflows/seo-baseline-check.yml").read_text(encoding="utf-8")
     production = (root / ".github/workflows/production-seo-deploy.yml").read_text(encoding="utf-8")
     assert expected in baseline

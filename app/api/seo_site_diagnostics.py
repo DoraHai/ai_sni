@@ -524,9 +524,11 @@ async def save_image_remediation(
     else:
         for key, value in values.items():
             setattr(row, key, value)
+    from app.seo_image_verification import enqueue_image_verification
+    await enqueue_image_verification(session,row)
     await session.commit()
     await session.refresh(row)
-    return image_review_payload(row)
+    return {**image_review_payload(row), 'verification_status':'pending' if row.review_status=='approved' else None}
 
 
 class ImageAltReviewCopy(BaseModel):

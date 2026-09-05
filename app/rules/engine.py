@@ -1,7 +1,7 @@
 """规则引擎：跑所有规则 → upsert alerts → 同词归并。
 
 幂等：同 (tenant_id, rule_code, keyword_id, report_date) 重复跑只刷新
-title/message/metrics，不重复建告警、不覆盖人工 resolved 状态。
+title/message/metrics/priority/status，不重复建告警；重新命中恢复 open。
 
 同词归并：同一规则同一关键词多天触发时，只保留数据日期最新的一条 open，
 更早的 open 自动改为 merged（避免长期问题在列表里刷出一串）。
@@ -82,6 +82,7 @@ async def run_rules_for_tenant(
             "tenant_id": tenant.id,
             "rule_code": d.rule_code,
             "priority": d.priority,
+            "status": "open",
             "title": d.title,
             "message": d.message,
             "report_date": d.report_date,
@@ -100,7 +101,10 @@ async def run_rules_for_tenant(
             "title": stmt.excluded.title,
             "message": stmt.excluded.message,
             "metrics": stmt.excluded.metrics,
-            # 不动 status / resolved_at：已被人工处理的告警保持 resolved
+            "priority": stmt.excluded.priority,
+            "status": stmt.excluded.status,
+            "campaign_id": stmt.excluded.campaign_id,
+            "campaign_name": stmt.excluded.campaign_name,
         },
     )
     await session.execute(stmt)

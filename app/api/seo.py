@@ -231,6 +231,8 @@ router = APIRouter(
 logger = logging.getLogger(__name__)
 router.include_router(site_diagnostics_router)
 router.include_router(remediation_router)
+from app.api.seo_cockpit import router as cockpit_router
+router.include_router(cockpit_router)
 
 ENGINES = {"baidu", "google", "bing", "360", "sogou"}
 PRIORITIES = {"P0", "P1", "P2", "P3"}
@@ -878,6 +880,8 @@ async def create_metric_snapshot(
     ctx: AuthContext = Depends(require_scoped_auth),
 ) -> dict[str, Any]:
     ctx.ensure_tenant(req.tenant_id)
+    if req.source == 'cockpit_observation' or req.metric_type.startswith('seo.'):
+        raise HTTPException(422, '驾驶舱指标由系统计算，不接受人工写入观测')
     await _tenant(session, req.tenant_id)
     await _seo_site(session, req.tenant_id, req.site_id)
     row = SeoMetricSnapshot(**req.model_dump())
@@ -7038,11 +7042,12 @@ async def publish_content_distribution(
         # A provider/library bug must never strand the durable task in
         # ``publishing``. Keep the public error generic while retaining the
         # exception class in the operator-facing audit trail.
-        error = f"未预期发布错误：{type(exc).__name__}"
+        error = f"发布结果不确定，需要人工核对平台后台：{type(exc).__name__}"
         row.status = "failed"
         row.last_error = error
         attempt.status = "failed"
         attempt.error = error
+        attempt.response_summary = {"requires_manual_review": True, "outcome": "unknown"}
         attempt.completed_at = datetime.utcnow()
         await session.commit()
         logger.error(
@@ -7295,11 +7300,12 @@ async def retry_content_publication(
         await session.commit()
         raise HTTPException(502, str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
-        error = f"未预期发布错误：{type(exc).__name__}"
+        error = f"发布结果不确定，需要人工核对平台后台：{type(exc).__name__}"
         row.status = "failed"
         row.last_error = error
         attempt.status = "failed"
         attempt.error = error
+        attempt.response_summary = {"requires_manual_review": True, "outcome": "unknown"}
         attempt.completed_at = datetime.utcnow()
         await session.commit()
         logger.error(
@@ -7435,6 +7441,8 @@ async def submit_content_review(
         note=note,
         actor_id=ctx.user_id,
     ))
+    from app.api.seo_cockpit import stage_review_task
+    await stage_review_task(session,row,ctx)
     await session.commit()
     await session.refresh(row)
     return _content_payload(row)
@@ -7473,6 +7481,8 @@ async def decide_content_review(
         note=note or None,
         actor_id=ctx.user_id,
     ))
+    from app.api.seo_cockpit import stage_review_task
+    await stage_review_task(session,row,ctx,req.decision)
     await session.commit()
     await session.refresh(row)
     return _content_payload(row)
