@@ -236,6 +236,7 @@ class AiReviewRequest(BaseModel):
 
 
 class ArticleUpdate(BaseModel):
+    expected_article_id: int | None = Field(None, gt=0)
     title: str = Field(..., min_length=1)
     body_markdown: str = Field(..., min_length=1)
     outline: dict[str, Any] | None = None

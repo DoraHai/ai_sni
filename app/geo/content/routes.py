@@ -7122,12 +7122,20 @@ async def save_article(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
+    # Serialize manual saves of this task before reading its current version.
+    await session.refresh(task, with_for_update=True)
     latest = await _latest_article(session, task.id)
     version_no = (latest.version_no + 1) if latest else 1
     from app.geo.content.evidence_cite import strip_citation_appendix
 
     body = strip_citation_appendix(req.body_markdown)
     outline = dict(req.outline or (latest.outline if latest else {}) or {})
+    if (latest and latest.title == req.title.strip() and strip_citation_appendix(latest.body_markdown) == body
+            and (latest.outline or {}) == outline):
+        await session.commit()
+        return {**(await _task_payload(session, task, detail=True)), 'article_changed': False}
+    if 'expected_article_id' in req.model_fields_set and req.expected_article_id != (latest.id if latest else None):
+        raise HTTPException(409, '正文已有新版本，请保留本地修改并刷新核对后再保存')
     article = GeoArticleVersion(
         task_id=task.id,
         version_no=version_no,

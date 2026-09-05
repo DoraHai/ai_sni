@@ -179,3 +179,34 @@ test('current article save applies the result and releases saving state', async 
   assert.equal(c.busy.value, '')
   assert.deepEqual(events, ['success'])
 })
+
+
+for (const silent of [false, true]) {
+  test(`article save preserves typing made during the request (silent=${silent})`, async () => {
+    const { context: c, requests } = articleFixture()
+    const pending = c.saveArticleBody({ silent })
+    c.article.title = 'new local title'
+    c.article.body_markdown = 'new local paragraph'
+    requests[0].resolve({ id: 100, article: { id: 12, title: 'old saved title', body_markdown: 'old saved body' } })
+    assert.equal(await pending, false) // stop score/publish callers on an unsaved draft
+    assert.equal(c.article.title, 'new local title')
+    assert.equal(c.article.body_markdown, 'new local paragraph')
+    assert.equal(c.task.value.article.id, 12)
+    const next = c.saveArticleBody()
+    assert.equal(requests[1].body.expected_article_id, 12)
+    assert.equal(requests[1].body.body_markdown, 'new local paragraph')
+    requests[1].resolve({ id: 100, article: requests[1].body })
+    assert.equal(await next, true)
+  })
+}
+
+test('brief save preserves edits typed while the request is pending', async () => {
+  const f = fixture()
+  f.context.ElMessage.warning = () => f.events.push('warning')
+  const pending = f.context.saveBrief()
+  f.context.briefPayload = () => ({ notes: 'new local edit' })
+  f.finish({ id: 100, brief: { notes: 'old saved edit' } })
+  await pending
+  assert.equal(f.context.briefLocalDraft.value, true)
+  assert.deepEqual(f.events, ['warning'])
+})

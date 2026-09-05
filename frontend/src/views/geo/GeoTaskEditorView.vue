@@ -520,13 +520,20 @@ async function saveBrief() {
   const stillCurrent = () => owner === tenantId.value && target === taskId.value && generation === loadGeneration
   busy.value = 'brief'
   try {
-    const saved = await editorRequest.wait(patchGeoContentTask(owner, target, { brief: briefPayload() }))
+    const submittedBrief = briefPayload()
+    const submittedSnapshot = JSON.stringify(submittedBrief)
+    const saved = await editorRequest.wait(patchGeoContentTask(owner, target, { brief: submittedBrief }))
     if (!stillCurrent()) return
     task.value = saved
-    applyBriefToForm(saved.brief)
-    briefLocalDraft.value = false
-    briefSuggestHint.value = ''
-    ElMessage.success('Brief 已保存')
+    if (JSON.stringify(briefPayload()) === submittedSnapshot) {
+      applyBriefToForm(saved.brief)
+      briefLocalDraft.value = false
+      briefSuggestHint.value = ''
+      ElMessage.success('Brief 已保存')
+    } else {
+      briefLocalDraft.value = true
+      ElMessage.warning('已保存提交时的创作要求，后续输入已保留，请继续保存')
+    }
   } catch (e) {
     if (!editorRequest.active()) return false
     if (stillCurrent()) toastError(e, '保存 Brief 失败')
@@ -1293,25 +1300,31 @@ async function saveArticleBody({ silent = false } = {}) {
   }
   if (!silent) busy.value = 'save'
   try {
+    const submittedTitle = article.title, submittedBody = article.body_markdown
     const outline = task.value?.article?.outline || {}
     const savedTask = await editorRequest.wait(saveGeoArticle(owner, target, {
-      title: article.title.trim(),
-      body_markdown: stripCiteAppendix(article.body_markdown),
+      title: submittedTitle.trim(),
+      body_markdown: stripCiteAppendix(submittedBody),
+      expected_article_id: task.value?.article?.id ?? null,
       outline,
     }))
     // A stale save must also stop callers from scoring or optimizing the new task.
     if (!stillCurrent()) return false
     const articleChanged = savedTask?.article_changed !== false
     task.value = savedTask
-    applyArticleFromTask(task.value)
+    const draftUnchanged = article.title === submittedTitle && article.body_markdown === submittedBody
+    if (draftUnchanged) applyArticleFromTask(task.value)
     if (articleChanged) {
       checkResult.value = null
       scoredDraftSnapshot.value = ''
       docTab.value = 'master'
     }
     lastSavedAt.value = new Date()
-    if (!silent) ElMessage.success('母稿已保存')
-    return true
+    if (!silent) {
+      if (draftUnchanged) ElMessage.success('母稿已保存')
+      else ElMessage.warning('已保存提交时的正文，后续输入已保留，请继续保存')
+    }
+    return draftUnchanged
   } catch (e) {
     if (!editorRequest.active()) return false
     if (!silent && stillCurrent()) toastError(e, '保存失败')
