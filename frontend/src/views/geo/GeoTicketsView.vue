@@ -12,6 +12,7 @@ import {
   verifyGeoAuditTickets,
 } from '../../api/geo'
 import { listGeoMediaPlacements } from '../../api/geoContent'
+import GeoEvidenceTasks from '../../components/GeoEvidenceTasks.vue'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 
@@ -70,7 +71,7 @@ async function load() {
       listGeoActionTickets(tenantId.value, params),
       listGeoMediaPlacements(tenantId.value).catch(() => ({ items: [] })),
     ])
-    items.value = tickets.items || []
+    items.value = (tickets.items || []).filter((row) => !String(row.advice_code || '').startsWith('cockpit:v1:'))
     mediaItems.value = media.items || []
     if (!mediaPick.value && mediaItems.value.length) {
       mediaPick.value = mediaItems.value[0].id
@@ -202,6 +203,7 @@ onMounted(load)
     </template>
 
     <div class="geo-dash">
+      <GeoEvidenceTasks :tenant-id="tenantId" />
       <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
 
       <section class="gd-card mb">

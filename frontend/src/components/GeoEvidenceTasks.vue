@@ -1,0 +1,78 @@
+<script setup>
+import { computed, reactive, ref, watch, onBeforeUnmount } from 'vue'
+import { useRouter } from 'vue-router'
+import * as api from '../api/geoIntegration'
+import { createEvidenceController } from '../utils/geoEvidenceController'
+const props = defineProps({ tenantId: [Number, String] })
+const router = useRouter()
+const state = reactive({ items: [], selected: null, detail: null, loading: false, busy: false, error: '', message: '', more: false })
+const publicationId = ref('')
+const controller = createEvidenceController(state, api, () => props.tenantId)
+watch(() => props.tenantId, () => { publicationId.value = ''; controller.load() }, { immediate: true })
+onBeforeUnmount(controller.invalidate)
+const terminal = computed(() => ['done', 'cancelled'].includes(state.selected?.status))
+const contentId = computed(() => state.selected?.params?.content_task_id)
+const labels = { open: '待处理', in_progress: '进行中', done: '已完成', cancelled: '已取消' }
+const metricNames = { 'geo.visibility.ai_mention_count_7d': 'AI提及次数', 'geo.visibility.ai_mention_rate_7d': 'AI提及率', 'geo.visibility.ai_visibility_score': 'AI可见度分数' }
+const units = { count: '次', percent: '%', score: '分' }
+const runLabels = { pending: '排队中', running: '执行中', completed: '采样结束', failed: '执行失败' }
+const shown = (value) => value == null ? '尚无有效数据' : value
+function select(row) { publicationId.value = ''; controller.select(row) }
+</script>
+
+<template>
+  <section class="gd-card mb evidence-tasks">
+    <div class="gd-hd"><h3>指标验收任务</h3><button class="gd-btn" :disabled="state.loading || state.busy" @click="controller.load()">刷新任务</button></div>
+    <div class="gd-bd">
+      <p class="gd-sub">查看基线、真实发布和周复测进度；完成须由服务端核验实际指标变化。</p>
+      <el-alert v-if="state.error" :title="state.error" type="error" :closable="false" />
+      <el-alert v-if="state.message" :title="state.message" type="success" :closable="false" />
+      <p v-if="state.loading">正在读取任务…</p>
+      <p v-else-if="!state.items.length && !state.error">暂无指标验收任务。</p>
+      <div class="evidence-list">
+        <button v-for="row in state.items" :key="row.id" class="gd-btn" :aria-pressed="state.selected?.id === row.id" @click="select(row)">#{{ row.id }} {{ row.title }} · {{ labels[row.status] || row.status }}</button>
+      </div>
+      <button v-if="state.more" class="gd-btn" :disabled="state.loading || state.busy" @click="controller.load(true)">加载更多</button>
+      <div v-if="state.selected" class="evidence-detail">
+        <h4>{{ state.selected.title }}</h4>
+        <p>负责人角色：{{ state.selected.assignee_role }} · 状态：{{ labels[state.selected.status] }}</p>
+        <button v-if="contentId" class="gd-btn" @click="router.push(`/geo/tasks/${contentId}`)">打开关联内容</button>
+        <p v-if="state.busy">正在核验，请稍候…</p>
+        <template v-if="state.detail">
+          <h4>1. 完整周基线</h4>
+          <p>{{ metricNames[state.detail.baseline?.metric_key] || "目标指标" }}：{{ shown(state.detail.baseline?.value) }} {{ state.detail.baseline?.value == null ? "" : (units[state.detail.baseline?.unit] || "") }} · 截至 {{ state.detail.baseline?.as_of || '未知' }}</p>
+          <p v-if="state.detail.baseline_blocker">{{ state.detail.baseline_blocker }}</p>
+          <button class="gd-btn" :disabled="terminal || state.busy || state.detail.baseline_valid" @click="controller.act('baseline')">采集已结束周基线</button>
+          <template v-if="contentId">
+            <h4>2. 真实发布</h4>
+            <p v-if="state.detail.publication_evidence">当前稿件已核实上线，首次核验：{{ state.detail.publication_evidence.first_verified_at }}</p>
+            <p v-else>尚无发布核验证据。可自动发布渠道：{{ state.detail.publishing?.ready_count || 0 }}。稿件就绪不代表已经上线。</p>
+            <button class="gd-btn" @click="router.push('/geo/publishing')">配置发布渠道</button>
+            <button class="gd-btn" @click="router.push(`/geo/tasks/${contentId}/distribution`)">查看发布记录</button>
+            <p v-if="!state.detail.publication_candidates?.length">暂无当前版本的已发布记录，请先完成发布并登记结果。</p>
+            <label>当前稿件发布记录 <select v-model="publicationId" :disabled="terminal || state.busy"><option value="">请选择已发布记录</option><option v-for="pub in state.detail.publication_candidates || []" :key="pub.id" :value="pub.id">{{ pub.channel }} · {{ pub.url }}</option></select></label>
+            <button class="gd-btn" :disabled="terminal || state.busy || !publicationId" @click="controller.act('publication', Number(publicationId))">重新抓取核验发布</button>
+          </template>
+          <h4>3. 同题同模型周复测</h4>
+          <p v-if="state.detail.retest_plan">计划采样 {{ state.detail.retest_plan.total_samples }} 次，保持基线题目、模型和次数一致；启动后会调用已配置 AI 引擎。</p>
+          <p v-if="state.detail.retest_blocker">{{ state.detail.retest_blocker }}</p>
+          <p v-if="state.detail.latest_retest">最近复测 #{{ state.detail.latest_retest.id }}：{{ runLabels[state.detail.latest_retest.status] || state.detail.latest_retest.status }}；合格 {{ state.detail.latest_retest.result?.qualified_samples ?? '待执行' }} / {{ state.detail.latest_retest.result?.expected_samples ?? '待执行' }}。{{ state.detail.latest_retest.error }}</p>
+          <button class="gd-btn" :disabled="state.busy || !state.detail.can_retest" @click="controller.act('retest')">启动精确复测</button>
+          <button class="gd-btn" :disabled="state.busy" @click="controller.select(state.selected)">刷新执行条件</button>
+          <h4>4. 实际指标验收</h4>
+          <p v-if="state.detail.completion_evidence">已核验变化：{{ state.detail.completion_evidence.before?.value }} → {{ state.detail.completion_evidence.after?.value }}，变化量 {{ state.detail.completion_evidence.delta }}。</p>
+          <p v-else>尚未完成。需等待符合条件的完整后测周，并达到任务目标；未通过会显示具体原因。</p>
+          <button class="gd-btn" :disabled="terminal || state.busy || !state.detail.baseline_valid" @click="controller.act('complete')">核验指标并完成</button>
+        </template>
+      </div>
+    </div>
+  </section>
+</template>
+<style scoped>
+.evidence-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.evidence-list button { white-space: normal; text-align: left; }
+.evidence-detail { border-top: 1px solid #e5e7eb; margin-top: 16px; padding-top: 12px; overflow-wrap: anywhere; }
+.evidence-detail h4 { margin: 18px 0 8px; }
+.evidence-detail .gd-btn, .evidence-detail label { margin: 4px 8px 4px 0; }
+.evidence-detail select { max-width: 100%; width: 300px; }
+</style>

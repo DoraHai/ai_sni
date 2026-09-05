@@ -345,6 +345,46 @@ async def execution_readiness(task_id: int, tenant_id: int = Query(...),
         plan = await prepare_retest(session, row, check_window=False)
     except HTTPException as exc:
         blocker = exc.detail
+    baseline = metric(row.baseline_snapshot or {'metrics': []}, row.progress_first['params'].get('metric_key', MENTIONS))
+    baseline_valid = bool(baseline and baseline['value'] is not None)
+    terminal = row.status in {'done', 'cancelled'}
+    retest_blocker = blocker
+    if plan and not terminal:
+        try:
+            await prepare_retest(session, row, check_window=True)
+        except HTTPException as exc:
+            retest_blocker = exc.detail
+    publication_candidates = []
+    content_id = row.progress_first['params'].get('content_task_id')
+    if content_id:
+        from app.models import GeoPublication, GeoChannelVariant, GeoContentTask, GeoArticleVersion
+        latest_article = await session.scalar(select(GeoArticleVersion.id).join(
+            GeoContentTask, GeoContentTask.id == GeoArticleVersion.task_id).where(
+            GeoContentTask.id == content_id, GeoContentTask.tenant_id == tenant_id)
+            .order_by(GeoArticleVersion.version_no.desc()).limit(1))
+        if latest_article:
+            publications = (await session.execute(select(GeoPublication, GeoChannelVariant.channel).join(
+                GeoChannelVariant, GeoChannelVariant.id == GeoPublication.variant_id).join(
+                GeoContentTask, GeoContentTask.id == GeoChannelVariant.task_id).where(
+                GeoContentTask.id == content_id, GeoContentTask.tenant_id == tenant_id,
+                GeoChannelVariant.article_version_id == latest_article,
+                GeoPublication.status == 'published', GeoPublication.published_url.is_not(None))
+                .order_by(GeoPublication.id.desc()).limit(50))).all()
+            publication_candidates = [{'id': pub.id, 'channel': channel, 'url': pub.published_url}
+                                      for pub, channel in publications if pub.published_url]
+    latest_retest = None
+    reservations = (row.progress or {}).get('retest_runs') or {}
+    if reservations:
+        from app.models import GeoVisibilityPatrolRun
+        period = max(reservations)
+        run = await session.scalar(select(GeoVisibilityPatrolRun).where(
+            GeoVisibilityPatrolRun.id == reservations[period], GeoVisibilityPatrolRun.tenant_id == tenant_id))
+        if run:
+            latest_retest = {'id': run.id, 'status': run.status, 'window_start': period,
+                             'result': (run.summary or {}).get('retest_result'), 'error': run.error}
     return {'task_id': row.id, 'status': STATUS[row.status], 'retest_plan': plan, 'baseline_blocker': blocker,
+            'baseline': baseline, 'baseline_valid': baseline_valid,
+            'retest_blocker': retest_blocker, 'can_retest': bool(plan and not terminal and not retest_blocker),
+            'latest_retest': latest_retest, 'publication_candidates': publication_candidates,
             'publication_evidence': (row.progress or {}).get('publication_evidence'),
             'publishing': matrix, 'completion_evidence': (row.progress or {}).get('completion_evidence')}

@@ -244,3 +244,43 @@ def test_model_preflight_refuses_changed_provider_before_request():
     plan=plan_from_baseline(baseline_task())
     validate_plan_model(plan,1,'deepseek',{'provider':'test-provider','model':'test-model'})
     with pytest.raises(ValueError): validate_plan_model(plan,1,'deepseek',{'provider':'other','model':'test-model'})
+
+
+@pytest.mark.parametrize('window_blocked', [False, True])
+def test_execution_readiness_checks_actual_window_without_writes(window_blocked):
+    from app.geo.integration import execution_readiness
+    async def run():
+        row=task();session=NS(commit=AsyncMock(),flush=AsyncMock())
+        effects=[{'total_samples':12},HTTPException(409,'waiting for publication week') if window_blocked else {'total_samples':12}]
+        with patch('app.geo.integration.ticket',AsyncMock(return_value=row)),patch('app.geo.retest.prepare_retest',AsyncMock(side_effect=effects)) as prepare,patch('app.geo.content.multi_push.tenant_auto_push_matrix',AsyncMock(return_value={'ready_count':0})):
+            result=await execution_readiness(10,7,NS(ensure_tenant=lambda _:None),session)
+        assert result['baseline_valid'] and result['can_retest'] is (not window_blocked)
+        assert prepare.await_args_list[0].kwargs['check_window'] is False
+        assert prepare.await_args_list[1].kwargs['check_window'] is True
+        session.commit.assert_not_awaited();session.flush.assert_not_awaited()
+    asyncio.run(run())
+
+
+def test_readiness_retest_record_is_tenant_scoped():
+    from app.geo.integration import execution_readiness
+    async def run():
+        row=task();row.progress={'retest_runs':{'2026-09-06T16:00:00':88}}
+        session=NS(scalar=AsyncMock(return_value=NS(id=88,status='failed',summary={'retest_result':{'comparable':False}},error='failed sample')))
+        with patch('app.geo.integration.ticket',AsyncMock(return_value=row)),patch('app.geo.retest.prepare_retest',AsyncMock(side_effect=HTTPException(409,'blocked'))),patch('app.geo.content.multi_push.tenant_auto_push_matrix',AsyncMock(return_value={'ready_count':0})):
+            result=await execution_readiness(10,7,NS(ensure_tenant=lambda _:None),session)
+        assert 'tenant_id' in str(session.scalar.call_args.args[0])
+        assert result['latest_retest']['status']=='failed' and not result['can_retest']
+    asyncio.run(run())
+
+
+
+def test_publication_choices_use_current_version_and_tenant():
+    from app.geo.integration import execution_readiness
+    async def run():
+        row=task();row.progress_first['params']['content_task_id']=12
+        session=NS(scalar=AsyncMock(return_value=15),execute=AsyncMock(return_value=NS(all=lambda:[(NS(id=99,published_url='https://example.com'), 'website')])) )
+        with patch('app.geo.integration.ticket',AsyncMock(return_value=row)),patch('app.geo.retest.prepare_retest',AsyncMock(side_effect=HTTPException(409,'blocked'))),patch('app.geo.content.multi_push.tenant_auto_push_matrix',AsyncMock(return_value={'ready_count':0})):
+            result=await execution_readiness(10,7,NS(ensure_tenant=lambda _:None),session)
+        assert result['publication_candidates']==[{'id':99,'channel':'website','url':'https://example.com'}]
+        sql=str(session.execute.call_args.args[0]); assert 'tenant_id' in sql and 'article_version_id' in sql
+    asyncio.run(run())
