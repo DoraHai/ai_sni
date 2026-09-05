@@ -424,3 +424,48 @@ def test_body_only_recheck_preserves_last_link_change_or_failure():
     # A subsequent successful link check supersedes the old failure.
     result = placement_followup('https://public.example/answer', [before,failed,body_only,before], now=now)
     assert not result['needed']
+
+
+@pytest.mark.parametrize('mode', ['success', 'invalid', 'foreign', 'stale'])
+def test_semantic_analysis_is_scoped_validated_and_refunds_invalid_output(mode):
+    async def scenario(sessions):
+        async with sessions() as db:
+            result = await api.import_questions(api.ImportQuestions(tenant_id=1,site_id=1,
+                items=[{'title':'设备为何无法启动？'},{'title':'机器开不了机怎么办？'}]), CTX, db)
+            ids = result['ids']
+            req = api.SemanticQuestions(tenant_id=2 if mode=='foreign' else 1,site_id=1,
+                request_id='semantic-test-123',items=[{'id':i,'version':99 if mode=='stale' else 1} for i in ids])
+            async def generate(*args, **kwargs):
+                kwargs['usage_receipt'].update(operation_id='op-test',date='2026-09-06')
+                return {'pairs':[{'left_id':ids[0],'right_id':99999 if mode=='invalid' else ids[1],'reason':'同样询问无法启动的排查方法'}]}
+            async def settle(*args, **kwargs): return kwargs['result']
+            with patch('app.ai.deepseek.is_enabled', return_value=True), \
+                 patch('app.api.seo._limited_seo_chat_json', new=AsyncMock(side_effect=generate)) as ai, \
+                 patch('app.api.seo._refund_failed_seo_ai_request', new=AsyncMock()) as refund, \
+                 patch('app.seo_ai_operations.settle_seo_ai_operation', new=AsyncMock(side_effect=settle)):
+                if mode=='success':
+                    response=await api.semantic_questions(req,CTX,db)
+                    assert len(response['pairs'])==1
+                    assert response['pairs'][0]['left_title']==(await db.get(SeoQuestion,ids[0])).title
+                    refund.assert_not_awaited()
+                else:
+                    with pytest.raises(HTTPException) as error:
+                        await api.semantic_questions(req,CTX,db)
+                    if mode=='invalid':
+                        assert error.value.status_code==502
+                        refund.assert_awaited_once()
+                    else:
+                        ai.assert_not_awaited()
+                for i in ids:
+                    assert (await db.get(SeoQuestion,i)).version==1
+    database(scenario)
+
+
+def test_semantic_result_rejects_coerced_ids_and_deduplicates_pairs():
+    from app.seo_qa import validated_semantic_pairs
+    questions=[{'id':1,'title':'问题一'},{'id':2,'title':'问题二'}]
+    pair={'left_id':1,'right_id':2,'reason':'相同需求'}
+    assert len(validated_semantic_pairs({'pairs':[pair,{**pair,'left_id':2,'right_id':1}]},questions))==1
+    for bad in [True,'1',1.0,3]:
+        with pytest.raises(ValueError):
+            validated_semantic_pairs({'pairs':[{**pair,'left_id':bad}]},questions)

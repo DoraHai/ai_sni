@@ -199,3 +199,35 @@ test('CSV preserves unknowns and historical link dates while neutralizing formul
     assert.equal(m.state.csvCell('  @SUM(A1)'), '"\'  @SUM(A1)"')
   }finally{m.app.unmount()}
 })
+
+
+test('semantic analysis sends chosen versions and does not apply changes',async()=>{
+  const m=await mountPlanning()
+  try {
+    m.state.result.groups[0].intents[0].questions.push({id:2,version:1,title:'另一问题'})
+    m.state.chosen=[1,2]
+    await m.state.analyzeSemantic()
+    assert.equal(m.writes.length,1)
+    assert.equal(m.writes[0][0],'planning/semantic')
+    assert.equal(m.writes[0][1].items.length,2)
+    assert.ok(m.writes[0][1].request_id)
+  }finally{m.app.unmount()}
+})
+
+test('semantic analysis is disabled for read-only users',async()=>{
+  const m=await mountPlanning({},false)
+  try {m.state.chosen=[1,2];await m.state.analyzeSemantic();assert.equal(m.writes.length,0)}finally{m.app.unmount()}
+})
+
+
+test('semantic response is discarded after site change',async()=>{
+  let resolve
+  const m=await mountPlanning({seoQaPost:()=>new Promise(r=>resolve=r)})
+  try {
+    m.state.result.groups[0].intents[0].questions.push({id:2,version:1,title:'另一问题'})
+    m.state.chosen=[1,2]
+    const request=m.state.analyzeSemantic();await flush();m.props.siteId=20;await flush()
+    resolve({pairs:[{left_id:1,right_id:2}]});await request
+    assert.equal(m.state.semantic,null)
+  }finally{m.app.unmount()}
+})

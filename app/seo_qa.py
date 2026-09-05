@@ -215,3 +215,26 @@ def placement_followup(answer_url, observations, *, now=None):
                 if before != after:
                     reasons.append(f'页面官网链接发生变化：新增 {len(after-before)} 条，未再发现 {len(before-after)} 条')
     return {'needed': bool(reasons), 'reasons': reasons, 'last_checked_at': checked_at}
+
+
+def validated_semantic_pairs(raw, questions):
+    """Do not accept invented references or silently coerce model output."""
+    if not isinstance(raw, dict) or not isinstance(raw.get('pairs'), list) or len(raw['pairs']) > 30:
+        raise ValueError('Invalid semantic result')
+    known = {q['id']:q for q in questions}
+    seen, pairs = set(), []
+    for pair in raw['pairs']:
+        if not isinstance(pair, dict):
+            raise ValueError('Invalid semantic pair')
+        left, right, reason = pair.get('left_id'), pair.get('right_id'), pair.get('reason')
+        if type(left) is not int or type(right) is not int or left == right or left not in known or right not in known:
+            raise ValueError('Invalid question references')
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 500:
+            raise ValueError('Invalid semantic reason')
+        key = tuple(sorted((left, right)))
+        if key in seen:
+            continue
+        seen.add(key)
+        pairs.append({'left_id':left,'right_id':right,'left_title':known[left]['title'],
+                      'right_title':known[right]['title'],'reason':reason.strip()})
+    return pairs

@@ -16,12 +16,26 @@ const groups = computed(() => (result.value?.groups || []).map(group => ({ ...gr
   questions: intent.questions.filter(q => (!flags.unanswered || !q.answer_count) && (!query.value.trim() || `${q.title} ${q.topic}`.toLowerCase().includes(query.value.trim().toLowerCase()))),
 })).filter(i => i.questions.length) })).filter(g => g.intents.length))
 const pairs = computed(() => (result.value?.similar_pairs || []).filter(p => !query.value.trim() || `${p.left_title} ${p.right_title}`.toLowerCase().includes(query.value.trim().toLowerCase())))
+const semantic = ref(null)
 let generation = 0
+async function analyzeSemantic() {
+  if (!props.canEdit || saving.value || loading.value || chosen.value.length < 2 || chosen.value.length > 30) return
+  const key = scopeKey.value, ticket = generation
+  const selected = chosen.value.map(id => byId.value.get(id))
+  if (selected.some(row => !row)) return
+  saving.value = true; error.value = ''; semantic.value = null
+  try {
+    const response = await seoQaPost('planning/semantic', {tenant_id:props.tenantId, site_id:props.siteId,
+      items:selected.map(row=>({id:row.id,version:row.version})), request_id:crypto.randomUUID()})
+    if (key === scopeKey.value && ticket === generation) semantic.value = response
+  } catch(e) { if (key === scopeKey.value && ticket === generation) error.value = detail(e) }
+  finally { saving.value = false }
+}
 
 function detail(e) { return typeof e?.response?.data?.detail === 'string' ? e.response.data.detail : e.message || '操作失败，请刷新后重试' }
 async function load() {
   const ticket = ++generation, key = scopeKey.value
-  loading.value = true; error.value = ''; result.value = null; chosen.value = []
+  loading.value = true; error.value = ''; result.value = null; chosen.value = []; semantic.value = null
   if (!props.tenantId || !props.siteId) { loading.value = false; return }
   try {
     const response = await seoQaGet('planning', { tenant_id: props.tenantId, site_id: props.siteId })
@@ -70,6 +84,8 @@ watch([scopeKey, () => props.revision], () => { chosen.value = []; query.value =
       <p class="plan-note">{{ result.definitions.scope }}。{{ result.truncated ? `共 ${result.total} 个未归档问题，本页未涵盖全部。` : '' }}已审核数量不等于已核验发布数量。</p>
       <div class="plan-toolbar"><el-button :type="view==='tree'?'primary':'default'" @click="view='tree'">主题问题树</el-button><el-button :type="view==='pairs'?'primary':'default'" @click="view='pairs'">相似问题候选</el-button><el-input v-model="query" placeholder="筛选本次规划中的问题或主题" clearable/><el-checkbox v-if="view==='tree'" v-model="flags.unanswered">只看尚无回答的问题</el-checkbox></div>
       <div class="plan-batch" v-if="canEdit"><strong>已选 {{ chosen.length }} / 100</strong><el-select v-model="action" @change="value=''"><el-option value="topic" label="归入主题"/><el-option value="owner" label="分配负责人"/><el-option value="intent" label="设置意图"/><el-option value="status" label="设置选题状态"/></el-select><el-select v-if="action==='intent'" v-model="value" placeholder="选择意图"><el-option v-for="(label,key) in intents" :key="key" :value="key" :label="label"/></el-select><el-select v-else-if="action==='status'" v-model="value" placeholder="选择状态"><el-option v-for="(label,key) in statuses" :key="key" :value="key" :label="label"/></el-select><el-input v-else v-model="value" :placeholder="action==='owner'?'负责人；留空清除分配':'填写主题名称'" maxlength="120"/><el-button type="primary" :loading="saving" :disabled="loading || !chosen.length" @click="apply">应用到所选问题</el-button><el-button :disabled="saving" @click="chosen=[]">清空选择</el-button></div>
+      <div v-if="canEdit" class="plan-toolbar"><el-button :disabled="saving || loading || chosen.length < 2 || chosen.length > 30" @click="analyzeSemantic">AI 分析所选问题的语义</el-button><span class="plan-note">选择 2–30 个问题，消耗一次 SEO AI 用量；结果需人工确认。</span></div>
+      <div v-if="semantic"><p class="plan-note">{{ semantic.meaning }}</p><el-empty v-if="!semantic.pairs.length" description="本次未返回语义候选，不代表已证明所有问题不同"/><article v-for="pair in semantic.pairs" :key="`${pair.left_id}:${pair.right_id}`" class="plan-pair"><div><button :disabled="saving" @click="open(pair.left_id)">{{ pair.left_title }}</button><button :disabled="saving" @click="open(pair.right_id)">{{ pair.right_title }}</button><p>AI 判断：{{ pair.reason }}</p></div><el-button :disabled="saving" @click="selectPair(pair)">选择这两个问题归类</el-button></article></div>
       <p v-if="chosen.length" class="plan-note">所选：{{ chosen.map(id=>byId.get(id)?.title).filter(Boolean).join('；') }}。批量操作只修改选题信息，保留每条问题的来源、回答和发布记录。</p>
       <template v-if="view==='tree'">
         <el-empty v-if="!groups.length" description="没有符合条件的问题，可以先录入问题或调整筛选。"/>
