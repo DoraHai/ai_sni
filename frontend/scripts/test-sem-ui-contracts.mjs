@@ -133,4 +133,5 @@ assert.match(
 
 await import('./test-sem-expansion-small-batch.mjs')
 await import('./test-sem-writeback-queue.mjs')
+await import('./test-sem-effect-verification.mjs')
 console.log('SEM UI contracts passed')

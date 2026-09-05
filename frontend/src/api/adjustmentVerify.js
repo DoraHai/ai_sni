@@ -1,15 +1,15 @@
 import client from './client'
 
 // 待验证调价（效果验证 · 待验证调价）。menu = verify.pending。
-export function fetchPendingAdjustments({ tenantId, days, status }) {
+export function fetchPendingAdjustments({ tenantId, days, status, offset = 0, limit = 50 }) {
   return client.get('/api/v1/adjustment-verify', {
-    params: { tenant_id: tenantId, days: days || undefined, status: status || undefined },
+    params: { tenant_id: tenantId, days: days || undefined, status: status || undefined, offset, limit },
   })
 }
 
-export function fetchBudgetAdjustments({ tenantId, days, status }) {
+export function fetchBudgetAdjustments({ tenantId, days, status, offset = 0, limit = 50 }) {
   return client.get('/api/v1/adjustment-verify/budget', {
-    params: { tenant_id: tenantId, days: days || undefined, status: status || undefined },
+    params: { tenant_id: tenantId, days: days || undefined, status: status || undefined, offset, limit },
   })
 }
 
