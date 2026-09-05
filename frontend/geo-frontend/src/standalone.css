@@ -565,3 +565,37 @@ html {
   font-weight: 700;
   letter-spacing: 0.01em;
 }
+
+/* GEO article workbench: keep the editorial banner compact above the task table. */
+#app .geo-tasks .geo-intro > div:first-child {
+  padding: 18px 28px;
+}
+
+#app .geo-tasks .geo-intro h2 {
+  margin: 8px 0;
+  font-size: 20px;
+  line-height: 1.38;
+}
+
+#app .geo-tasks .geo-intro p {
+  line-height: 1.55;
+}
+
+#app .geo-tasks .geo-principles {
+  gap: 6px;
+  margin-top: 12px;
+}
+
+#app .geo-tasks .geo-principles span {
+  padding: 4px 8px;
+}
+
+#app .geo-tasks .geo-flow-step {
+  grid-template-columns: 28px minmax(0, 1fr);
+  padding: 14px 20px;
+}
+
+#app .geo-tasks .geo-flow-no {
+  width: 28px;
+  height: 28px;
+}
