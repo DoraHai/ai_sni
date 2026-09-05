@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import GeoAccountBar from '../../components/GeoAccountBar.vue'
 import { GEO_WORKBENCH_NAV } from '../../utils/geoPrototypeNavigation'
 
 const route = useRoute()
@@ -134,6 +135,7 @@ onUnmounted(() => {
       </div>
     </aside>
     <main class="geo-shell-main">
+      <GeoAccountBar />
       <div class="geo-shell-content"><router-view /></div>
     </main>
   </div>
@@ -381,8 +383,10 @@ onUnmounted(() => {
   min-width: 0;
   min-height: 0;
   overflow: auto;
+  display: flex;
+  flex-direction: column;
 }
-.geo-shell-content { min-height: 100%; }
+.geo-shell-content { min-height: 100%; padding: 0; }
 .geo-mobile-mask { display: none; }
 @media (max-width: 767px) {
   .geo-shell,
