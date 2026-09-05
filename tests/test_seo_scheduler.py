@@ -640,13 +640,14 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
             patch("app.seo_scheduler.seo_scheduler.start") as scheduler_start,
         ):
             start_seo_scheduler()
-        self.assertEqual(add_job.call_count, 9)
+        self.assertEqual(add_job.call_count, 10)
         self.assertEqual(
             {call.kwargs["id"] for call in add_job.call_args_list},
             {
                 "collect_daily_seo_rankings",
                 "collect_scheduled_seo_competitors",
                 "verify_scheduled_seo_backlinks",
+                "verify_scheduled_seo_qa",
                 "discover_published_seo_backlinks",
                 "fail_stale_seo_crawl_runs",
                 "prune_old_seo_single_page_snapshots",
@@ -655,6 +656,9 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
                 "collect_seo_cockpit_metrics",
             },
         )
+        qa_job = next(call for call in add_job.call_args_list if call.kwargs['id'] == 'verify_scheduled_seo_qa')
+        self.assertEqual(qa_job.args[1].interval.total_seconds(), 3600)
+        self.assertEqual(qa_job.kwargs['max_instances'], 1)
         scheduler_start.assert_called_once_with()
 
     def test_start_failure_releases_owner_lock(self):

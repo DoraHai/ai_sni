@@ -363,3 +363,46 @@ def test_placement_followup_distinguishes_evidence_and_unknown(case):
         assert '不代表回答已删除' in reasons and '链接发生变化' not in reasons
     if case == 'body_changed': assert '此前正文匹配' in reasons
     if case == 'target_changed': assert '新增 1 条，未再发现 1 条' in reasons
+
+
+@pytest.mark.parametrize('mode', ['normal', 'fetch_failure', 'no_entitlement', 'locked'])
+def test_scheduled_qa_is_bounded_scoped_and_does_not_retry_fresh_receipts(mode):
+    from app import seo_monitoring_jobs as jobs
+    async def scenario(sessions):
+        body = '应先确认设备型号与运行条件，再根据技术手册确认参数和适用范围。'
+        old = (datetime.now(timezone.utc)-timedelta(days=8)).isoformat()
+        async with sessions() as db:
+            for i in range(1, 25):
+                db.add(SeoQaPlacement(id=i, tenant_id=1, site_id=1, answer_id=i, platform='zhihu',
+                    content_version=1, body=body, answer_url=f'https://www.zhihu.com/question/12/answer/{i}',
+                    observations=[{'state':'content_observed','checked_at':old}]))
+            db.add(SeoQaPlacement(id=25, tenant_id=2, site_id=2, answer_id=25, platform='zhihu',
+                content_version=1, body=body, answer_url='https://www.zhihu.com/question/12/answer/25',
+                observations=[{'state':'content_observed','checked_at':old}]))
+            db.add(SeoQaPlacement(id=26, tenant_id=1, site_id=1, answer_id=26, platform='zhihu',
+                content_version=1, body=body, answer_url='https://www.zhihu.com/question/12/answer/26', observations=[]))
+            await db.commit()
+        async def fetch(url):
+            if mode == 'fetch_failure' and url.endswith('/1'): raise RuntimeError('temporary fetch error')
+            return SimpleNamespace(body=f'<p>{body}</p>',final_url=url,status_code=200,error_type=None)
+        async with sessions() as lock_session:
+            if mode == 'locked':
+                await lock_session.scalar(select(SeoQaPlacement).where(SeoQaPlacement.id == 1).with_for_update())
+            with patch.object(jobs, 'async_session_factory', sessions), \
+                 patch.object(jobs, 'list_active_module_tenants', new=AsyncMock(return_value=[] if mode=='no_entitlement' else [SimpleNamespace(id=1)])), \
+                 patch('app.seo_backlinks.fetch_backlink_page', new=AsyncMock(side_effect=fetch)) as mocked:
+                first = await jobs.verify_scheduled_qa()
+                assert first['checked'] == (0 if mode=='no_entitlement' else 19 if mode=='locked' else 20)
+                assert first['skipped'] == (1 if mode=='locked' else 0)
+                await jobs.verify_scheduled_qa()
+                assert mocked.await_count == (0 if mode=='no_entitlement' else 23 if mode=='locked' else 24)
+                assert (await jobs.verify_scheduled_qa())['checked'] == 0
+            await lock_session.rollback()
+        async with sessions() as db:
+            assert (await db.get(SeoQaPlacement,25)).version == 1
+            assert not (await db.get(SeoQaPlacement,26)).observations
+            row = await db.get(SeoQaPlacement,1)
+            if mode == 'fetch_failure':
+                assert row.status == 'unavailable' and row.observations[-1]['source'] == 'scheduled'
+            if mode == 'normal': assert row.status == 'content_observed' and row.version == 2
+    database(scenario)
