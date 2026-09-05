@@ -29,6 +29,8 @@ async def charge_seo_usage(
     resource: str,
     amount: int,
     limit: int,
+    *,
+    commit: bool = True,
 ) -> dict[str, int | str]:
     amount = max(1, int(amount))
     limit = max(1, int(limit))
@@ -55,7 +57,8 @@ async def charge_seo_usage(
     usage[resource] = used + amount
     settings[SEO_USAGE_KEY] = usage
     module.module_settings = settings
-    await session.commit()
+    if commit:
+        await session.commit()
     return {"date": today, "used": used + amount, "limit": limit}
 
 

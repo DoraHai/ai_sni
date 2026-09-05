@@ -15,6 +15,11 @@ const seoChildren = [
     meta: { title: 'SEO 工作台', workflow: '今日概览', perm: 'seo.dashboard', immersive: true },
   },
   {
+    path: 'tasks',
+    component: () => import('./views/seo/SeoTaskCenterView.vue'),
+    meta: { title: '自动任务中心', workflow: '今日概览', perm: 'seo.dashboard' },
+  },
+  {
     path: 'alerts',
     component: () => import('./views/seo/SeoAlertsView.vue'),
     meta: { title: '异常提醒', workflow: '数据看板', perm: 'seo.alerts' },

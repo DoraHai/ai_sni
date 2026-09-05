@@ -22,6 +22,30 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
 
+class SeoAiOperation(Base):
+    __tablename__ = "seo_ai_operations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    site_id: Mapped[int | None] = mapped_column(BigInteger)
+    request_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    charged_on: Mapped[str] = mapped_column(String(10), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    result: Mapped[dict | None] = mapped_column(JSONB)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "request_key", name="uq_seo_ai_operation_request"),
+        CheckConstraint("status IN ('running','succeeded','refunded')", name="ck_seo_ai_operation_status"),
+        Index("ix_seo_ai_operation_expiry", "status", "expires_at"),
+        Index("ix_seo_ai_operation_tenant_actor", "tenant_id", "actor", "created_at"),
+    )
+
+
 class SeoKeywordAsset(Base):
     """SEO 自然搜索关键词资产，与 SEM 已购关键词严格分表。"""
 

@@ -11,6 +11,14 @@ from datetime import datetime, timedelta, timezone
 from time import monotonic
 from typing import Any, Literal
 from urllib.parse import quote, urljoin, urlparse
+from uuid import uuid4
+
+from app.seo_task_center import list_task_center, planned_checks, actor_key, JOB_PERMISSIONS
+from app.models.seo import SeoAiOperation
+
+from app.seo_ai_operations import (
+    SeoAiReplay, claim_seo_ai_operation, settle_seo_ai_operation, refund_failed_operation, retained_result,
+)
 
 from bs4 import BeautifulSoup
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, Response, UploadFile
@@ -57,6 +65,7 @@ from app.module_scope import ensure_module_access
 from app.security.auth import AuthContext, require_scoped_auth
 from app.process_lock import acquire_file_lock, release_file_lock
 from app.seo_distribution import (
+    domestic_content_warnings,
     SeoDistributionError,
     decrypt_credentials,
     encrypt_credentials,
@@ -162,17 +171,18 @@ async def _limited_seo_chat_json(
     timeout: float,
     charge_usage: bool = True,
     usage_receipt: dict[str, str] | None = None,
+    operation: dict | None = None,
 ) -> dict[str, Any]:
     charged_on: str | None = None
     if charge_usage:
         settings = get_settings()
         try:
-            receipt = await charge_seo_usage(
-                session,
-                tenant_id,
-                "ai_requests",
-                1,
-                settings.seo_ai_max_requests_per_tenant_per_day,
+            operation = operation or {"payload": {"system": system, "user": user}, "actor": "internal", "kind": "internal"}
+            receipt = await claim_seo_ai_operation(
+                session, tenant_id,
+                request_key=operation.get("request_key") or str(uuid4()),
+                payload=operation["payload"], actor=operation["actor"], kind=operation["kind"],
+                limit=settings.seo_ai_max_requests_per_tenant_per_day,
             )
         except SeoUsageLimitError as exc:
             raise HTTPException(
@@ -182,12 +192,12 @@ async def _limited_seo_chat_json(
             ) from exc
         charged_on = str(receipt["date"])
         if usage_receipt is not None:
-            usage_receipt["date"] = charged_on
+            usage_receipt.update(receipt)
     try:
         return await chat_json(system, user, timeout=timeout)
     except (Exception, asyncio.CancelledError):
         if charge_usage:
-            await _refund_failed_seo_ai_request(session, tenant_id, charged_on=charged_on)
+            await _refund_failed_seo_ai_request(session, tenant_id, charged_on=charged_on, operation_id=receipt.get("operation_id"))
         raise
 
 
@@ -196,10 +206,14 @@ async def _refund_failed_seo_ai_request(
     tenant_id: int,
     *,
     charged_on: str | None = None,
+    operation_id: str | None = None,
 ) -> None:
     """Refund a charged user action without hiding its original failure."""
     try:
-        await refund_seo_usage(session, tenant_id, "ai_requests", 1, charged_on=charged_on)
+        if operation_id:
+            await refund_failed_operation(tenant_id, operation_id)
+        else:
+            await refund_seo_usage(session, tenant_id, "ai_requests", 1, charged_on=charged_on)
     except Exception:
         logger.exception(
             "Failed to refund SEO AI usage after terminal error tenant_id=%s",
@@ -3097,6 +3111,71 @@ async def trigger_seo_automation_run(
     }
 
 
+@router.get("/overview/task-center")
+async def seo_task_center(
+    tenant_id: int,
+    site_id: int | None = None,
+    kind: Literal["ranking", "competitor", "backlink", "crawl", "ai"] | None = None,
+    status: Literal["queued", "running", "completed", "partial", "failed", "refunded", "expired"] | None = None,
+    page: int = Query(1, ge=1, le=10000),
+    page_size: int = Query(20, ge=1, le=50),
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    if not ctx.can_view("seo.dashboard"):
+        raise HTTPException(403, "没有任务中心查看权限")
+    await _tenant(session, tenant_id)
+    if site_id is not None:
+        await _seo_site(session, tenant_id, site_id)
+    result = await list_task_center(session, tenant_id, site_id, ctx, kind=kind, status=status, page=page, page_size=page_size)
+    result["schedules"] = planned_checks(get_settings(), ctx)
+    return result
+
+
+@router.get("/content-ai/operations/{operation_id}")
+async def recover_seo_ai_operation(
+    operation_id: str,
+    tenant_id: int,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(tenant_id)
+    if not ctx.can_view("seo.content"):
+        raise HTTPException(403, "没有 AI 内容查看权限")
+    row = await session.scalar(select(SeoAiOperation).where(
+        SeoAiOperation.id == operation_id, SeoAiOperation.tenant_id == tenant_id,
+        SeoAiOperation.actor == actor_key(ctx),
+    ))
+    if row is None:
+        raise HTTPException(404, "操作不存在或不属于当前用户")
+    if row.status != "succeeded":
+        raise HTTPException(409, "结果尚不可取回，请刷新任务状态")
+    return retained_result(row)
+
+
+@router.post("/overview/task-center/{run_id}/retry", status_code=202)
+async def retry_seo_task(
+    run_id: int,
+    req: ManualAutomationTriggerRequest,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict[str, Any]:
+    ctx.ensure_tenant(req.tenant_id)
+    if not ctx.can_edit("seo.dashboard") or not ctx.can_edit(JOB_PERMISSIONS[req.job_type]):
+        raise HTTPException(403, "没有该任务的重试权限")
+    row = await session.scalar(select(SeoAutomationRun).where(
+        SeoAutomationRun.id == run_id, SeoAutomationRun.tenant_id == req.tenant_id,
+        SeoAutomationRun.job_type == req.job_type,
+    ))
+    if row is None or (row.site_id is not None and row.site_id != req.site_id):
+        raise HTTPException(404, "任务不属于当前客户或网站")
+    if row.status not in {"failed", "partial"}:
+        raise HTTPException(409, "只有失败或部分完成的任务可在此重试")
+    return await trigger_seo_automation_run(req, background_tasks, session, ctx)
+
+
 @router.get("/site-pages")
 async def list_site_pages(
     tenant_id: int,
@@ -4465,6 +4544,7 @@ async def seo_alerts(
 
 
 class SeoContentAssistRequest(BaseModel):
+    request_id: str | None = Field(None, min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     tenant_id: int
     site_id: PositiveInt | None = None
     source_page_id: PositiveInt | None = None
@@ -4892,7 +4972,9 @@ async def assist_seo_content(
     usage_receipt: dict[str, str] = {}
     try:
         raw_result = await _limited_seo_chat_json(
-            session, req.tenant_id, system, user, timeout=90.0, usage_receipt=usage_receipt
+            session, req.tenant_id, system, user, timeout=90.0, usage_receipt=usage_receipt,
+                operation={"request_key": req.request_id, "payload": req.model_dump(mode="json", exclude={"request_id"}),
+                           "actor": str(ctx.user_id) if ctx.user_id is not None else "api_key", "kind": "content_assist"}
         )
         usage_charged = True
         repair_reason: str | None = None
@@ -5013,26 +5095,32 @@ async def assist_seo_content(
                 + "、".join(unsupported_title_topics)
                 + "，请补充经核验资料后重试",
             )
+    except SeoAiReplay as replay:
+        return replay.result
     except HTTPException:
         if usage_charged:
             await _refund_failed_seo_ai_request(
-                session, req.tenant_id, charged_on=usage_receipt.get("date")
+                session, req.tenant_id, charged_on=usage_receipt.get("date"), operation_id=usage_receipt.get("operation_id")
             )
         raise
     except DeepSeekError as exc:
         if usage_charged:
             await _refund_failed_seo_ai_request(
-                session, req.tenant_id, charged_on=usage_receipt.get("date")
+                session, req.tenant_id, charged_on=usage_receipt.get("date"), operation_id=usage_receipt.get("operation_id")
             )
         raise HTTPException(502, f"DeepSeek 内容处理失败：{exc}") from exc
     except (Exception, asyncio.CancelledError):
         if usage_charged:
             await _refund_failed_seo_ai_request(
-                session, req.tenant_id, charged_on=usage_receipt.get("date")
+                session, req.tenant_id, charged_on=usage_receipt.get("date"), operation_id=usage_receipt.get("operation_id")
             )
         raise
     allowed = {key: result.get(key) for key in ("title", "outline", "content", "feedback", "suggestions") if result.get(key) is not None}
-    return {"action": req.action, "model": "deepseek-chat", "keyword_coverage": {"selected": [item.keyword for item in keywords], "missing": []}, **allowed}
+    response = {"action": req.action, "model": "deepseek-chat", "keyword_coverage": {"selected": [item.keyword for item in keywords], "missing": []}, **allowed}
+
+    if usage_receipt.get("operation_id"):
+        return await settle_seo_ai_operation(session, req.tenant_id, usage_receipt["operation_id"], result=response)
+    return response
 
 
 class ContentCreate(BaseModel):
@@ -5124,6 +5212,7 @@ class DistributionPreflightRequest(BaseModel):
 
 
 class DistributionAdaptRequest(BaseModel):
+    request_id: str | None = Field(None, min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     tenant_id: PositiveInt
     site_id: PositiveInt | None = None
     content_id: PositiveInt
@@ -6256,7 +6345,9 @@ async def adapt_content_distribution(
         usage_receipt: dict[str, str] = {}
         try:
             raw_result = await _limited_seo_chat_json(
-                session, req.tenant_id, system, user, timeout=90.0, usage_receipt=usage_receipt
+                session, req.tenant_id, system, user, timeout=90.0, usage_receipt=usage_receipt,
+                operation={"request_key": req.request_id, "payload": req.model_dump(mode="json", exclude={"request_id"}),
+                           "actor": str(ctx.user_id) if ctx.user_id is not None else "api_key", "kind": "distribution_adapt"}
             )
             usage_charged = True
             result = _validated_distribution_ai_result(raw_result)
@@ -6294,28 +6385,30 @@ async def adapt_content_distribution(
                     f"AI 未完整覆盖目标关键词：{'、'.join(missing)}，请调整要求后重试",
                 )
             feedback = result["feedback"] or "AI 已按平台风格生成专属稿，请人工核对事实和表达。"
+        except SeoAiReplay as replay:
+            return replay.result
         except HTTPException:
             if usage_charged:
                 await _refund_failed_seo_ai_request(
-                    session, req.tenant_id, charged_on=usage_receipt.get("date")
+                    session, req.tenant_id, charged_on=usage_receipt.get("date"), operation_id=usage_receipt.get("operation_id")
                 )
             raise
         except DeepSeekError as exc:
             if usage_charged:
                 await _refund_failed_seo_ai_request(
-                    session, req.tenant_id, charged_on=usage_receipt.get("date")
+                    session, req.tenant_id, charged_on=usage_receipt.get("date"), operation_id=usage_receipt.get("operation_id")
                 )
             raise HTTPException(502, f"AI 平台专属稿生成失败：{exc}") from exc
         except SeoDistributionError as exc:
             if usage_charged:
                 await _refund_failed_seo_ai_request(
-                    session, req.tenant_id, charged_on=usage_receipt.get("date")
+                    session, req.tenant_id, charged_on=usage_receipt.get("date"), operation_id=usage_receipt.get("operation_id")
                 )
             raise HTTPException(502, str(exc)) from exc
         except (Exception, asyncio.CancelledError):
             if usage_charged:
                 await _refund_failed_seo_ai_request(
-                    session, req.tenant_id, charged_on=usage_receipt.get("date")
+                    session, req.tenant_id, charged_on=usage_receipt.get("date"), operation_id=usage_receipt.get("operation_id")
                 )
             raise
 
@@ -6327,7 +6420,7 @@ async def adapt_content_distribution(
         warnings.append("主关键词未出现在标题中，建议人工确认是否需要补充")
     if any(not item["in_content"] for item in checks):
         warnings.append("正文尚未完整覆盖目标关键词，发布前必须补齐")
-    return {
+    response = {
         "content_id": content.id,
         "connection_id": connection.id,
         "platform_code": connection.platform_code,
@@ -6347,6 +6440,10 @@ async def adapt_content_distribution(
         "feedback": feedback,
         "ai_generated": req.use_ai,
     }
+
+    if req.use_ai and usage_receipt.get("operation_id"):
+        return await settle_seo_ai_operation(session, req.tenant_id, usage_receipt["operation_id"], result=response)
+    return response
 
 
 @router.get("/content-distribution/variants")
@@ -6726,6 +6823,7 @@ async def preflight_content_distribution(
                     "publishing", "draft_created", "published", "manual_required"
                 }:
                     errors.append("当前文章版本已存在该平台发布任务")
+            warnings.extend(domestic_content_warnings(content.title, body, connection.platform_code))
             if connection.mode == "assisted":
                 warnings.append("需要在平台官方编辑器中人工确认发布")
             if connection.platform_code == "wechat_official" and image_count > 20:

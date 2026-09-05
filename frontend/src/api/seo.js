@@ -1,4 +1,25 @@
 import client from './client'
+import { session } from '../store/session'
+import { createSeoAiRequester } from './seoAiRequests'
+
+const requestSeoAi = createSeoAiRequester(
+  (path, payload, config) => client.post(path, payload, config),
+  () => session.user?.id != null ? `user:${session.user.id}` : session.token || 'api_key',
+  () => crypto.randomUUID(),
+  { storage: () => sessionStorage },
+)
+
+export function fetchSeoTaskCenter(params) {
+  return client.get('/api/v1/seo/overview/task-center', { params })
+}
+
+export function recoverSeoAiOperation(operationId, tenantId) {
+  return client.get(`/api/v1/seo/content-ai/operations/${encodeURIComponent(operationId)}`, { params: { tenant_id: tenantId } })
+}
+
+export function retrySeoTask(runId, payload) {
+  return client.post(`/api/v1/seo/overview/task-center/${runId}/retry`, payload)
+}
 
 export function fetchSeoSiteDiagnostics({ tenantId, siteId, q = '', reviewState = 'all', page = 1 }) {
   return client.get('/api/v1/seo/site-pages/diagnostics', {
@@ -301,6 +322,7 @@ export function preflightSeoDistribution(payload) {
 }
 
 export function adaptSeoDistributionContent(payload) {
+  if (payload.use_ai) return requestSeoAi('/api/v1/seo/content-distribution/adapt', payload)
   return client.post('/api/v1/seo/content-distribution/adapt', payload, { timeout: 100000 })
 }
 
@@ -345,7 +367,7 @@ export function fetchSeoPublicationAttempts({ publicationId, tenantId, siteId })
 }
 
 export function assistSeoContent(payload) {
-  return client.post('/api/v1/seo/content-ai/assist', payload, { timeout: 100000 })
+  return requestSeoAi('/api/v1/seo/content-ai/assist', payload)
 }
 
 export function fetchSeoImageEvidence({ tenantId, siteId, pageId, snapshotId }) {

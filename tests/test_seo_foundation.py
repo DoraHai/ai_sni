@@ -1475,7 +1475,7 @@ def test_seo_ai_quick_actions_return_expected_contract(
         patch("app.api.seo._tenant", new=AsyncMock(return_value=tenant)),
             patch("app.api.seo._content_keywords", new=AsyncMock(return_value=keywords)),
             patch("app.api.seo.is_enabled", return_value=True),
-            patch("app.api.seo.charge_seo_usage", new=AsyncMock(return_value={"date": "2026-09-05"})),
+            patch("app.api.seo.claim_seo_ai_operation", new=AsyncMock(return_value={"date": "2026-09-05"})),
             patch("app.api.seo.chat_json", new=AsyncMock(return_value=ai_result)) as chat,
     ):
         response = asyncio.run(assist_seo_content(request, AsyncMock(), context))
@@ -1519,7 +1519,7 @@ def test_seo_ai_repairs_incomplete_result_once_without_double_charging() -> None
         patch("app.api.seo._tenant", new=AsyncMock(return_value=tenant)),
         patch("app.api.seo._content_keywords", new=AsyncMock(return_value=keywords)),
         patch("app.api.seo.is_enabled", return_value=True),
-        patch("app.api.seo.charge_seo_usage", new=AsyncMock(return_value={"date": "2026-09-05"})) as charge,
+        patch("app.api.seo.claim_seo_ai_operation", new=AsyncMock(return_value={"date": "2026-09-05"})) as charge,
         patch("app.api.seo.refund_seo_usage", new=AsyncMock()) as refund,
         patch(
             "app.api.seo.chat_json",
@@ -1566,7 +1566,7 @@ def test_seo_ai_refunds_when_repair_still_has_no_usable_result(repair_fails) -> 
         patch("app.api.seo._tenant", new=AsyncMock(return_value=tenant)),
         patch("app.api.seo._content_keywords", new=AsyncMock(return_value=keywords)),
         patch("app.api.seo.is_enabled", return_value=True),
-        patch("app.api.seo.charge_seo_usage", new=AsyncMock(return_value={"date": "2026-09-05"})) as charge,
+        patch("app.api.seo.claim_seo_ai_operation", new=AsyncMock(return_value={"date": "2026-09-05"})) as charge,
         patch("app.api.seo.refund_seo_usage", new=AsyncMock()) as refund,
         patch(
             "app.api.seo.chat_json",
@@ -1597,7 +1597,7 @@ def test_seo_ai_initial_failure_preserves_provider_error(refund_fails, cancelled
     failure = asyncio.CancelledError() if cancelled else DeepSeekError("provider unavailable")
     session = AsyncMock()
     with (
-        patch("app.api.seo.charge_seo_usage", new=AsyncMock(return_value={"date": "2026-09-05"})) as charge,
+        patch("app.api.seo.claim_seo_ai_operation", new=AsyncMock(return_value={"date": "2026-09-05"})) as charge,
         patch("app.api.seo.refund_seo_usage", new=AsyncMock(
             side_effect=RuntimeError("refund unavailable") if refund_fails else None,
         )) as refund,
@@ -1617,7 +1617,7 @@ def test_seo_ai_exhausted_quota_neither_calls_provider_nor_refunds() -> None:
     from app.seo_usage_limits import SeoUsageLimitError
 
     with (
-        patch("app.api.seo.charge_seo_usage", new=AsyncMock(
+        patch("app.api.seo.claim_seo_ai_operation", new=AsyncMock(
             side_effect=SeoUsageLimitError("ai_requests", 5, 5),
         )),
         patch("app.api.seo.refund_seo_usage", new=AsyncMock()) as refund,
@@ -1642,7 +1642,7 @@ def test_seo_ai_task_cancellation_refunds_before_propagating() -> None:
             await asyncio.Event().wait()
 
         with (
-            patch("app.api.seo.charge_seo_usage", new=AsyncMock(return_value={"date": "2026-09-05"})),
+            patch("app.api.seo.claim_seo_ai_operation", new=AsyncMock(return_value={"date": "2026-09-05"})),
             patch("app.api.seo.refund_seo_usage", new=AsyncMock()) as refund,
             patch("app.api.seo.chat_json", new=provider),
         ):
@@ -1879,7 +1879,7 @@ def test_source_bound_title_repairs_invented_intent_once() -> None:
         patch("app.api.seo._site_page", new=AsyncMock(return_value=source_page)),
         patch("app.api.seo._content_keywords", new=AsyncMock(return_value=[keyword])),
         patch("app.api.seo.is_enabled", return_value=True),
-        patch("app.api.seo.charge_seo_usage", new=AsyncMock(return_value={"date": "2026-09-05"})) as charge,
+        patch("app.api.seo.claim_seo_ai_operation", new=AsyncMock(return_value={"date": "2026-09-05"})) as charge,
         patch(
             "app.api.seo.chat_json",
             new=AsyncMock(
@@ -1940,7 +1940,7 @@ def test_source_bound_outline_repairs_unsupported_marketing_topics_once() -> Non
         patch("app.api.seo._site_page", new=AsyncMock(return_value=source_page)),
         patch("app.api.seo._content_keywords", new=AsyncMock(return_value=[keyword])),
         patch("app.api.seo.is_enabled", return_value=True),
-        patch("app.api.seo.charge_seo_usage", new=AsyncMock(return_value={"date": "2026-09-05"})) as charge,
+        patch("app.api.seo.claim_seo_ai_operation", new=AsyncMock(return_value={"date": "2026-09-05"})) as charge,
         patch(
             "app.api.seo.chat_json",
             new=AsyncMock(
@@ -1997,7 +1997,7 @@ def test_source_bound_content_can_rewrite_supplied_factual_draft() -> None:
         patch("app.api.seo._site_page", new=AsyncMock(return_value=source_page)),
         patch("app.api.seo._content_keywords", new=AsyncMock(return_value=[keyword])) as content_keywords,
         patch("app.api.seo.is_enabled", return_value=True),
-        patch("app.api.seo.charge_seo_usage", new=AsyncMock(return_value={"date": "2026-09-05"})),
+        patch("app.api.seo.claim_seo_ai_operation", new=AsyncMock(return_value={"date": "2026-09-05"})),
         patch(
             "app.api.seo.chat_json",
             new=AsyncMock(return_value={"content": "优化后仍然仅包含目标词官网事实资料。"}),

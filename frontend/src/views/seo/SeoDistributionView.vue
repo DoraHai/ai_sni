@@ -28,12 +28,16 @@ import {
 import { fetchSeoSites } from '../../api/moduleAssets'
 import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
+import { createPublisherPackage, publisherZip } from './seoPublisher'
+const publisherFiles = import.meta.glob('./publisher/*', { query: '?raw', import: 'default', eager: true })
 
 const loading = ref(false)
 const error = ref('')
 const activeTab = ref('channels')
 const query = ref('')
 const channelFilter = ref('all')
+const channelRegion = ref('domestic')
+const helperDialog = ref(false)
 const catalog = ref([])
 const connections = ref([])
 const contents = ref([])
@@ -138,7 +142,7 @@ const statusMeta = {
   failed: ['失败', 'danger'],
   cancelled: ['已取消', 'info'],
 }
-const modeName = value => ({ api: 'API 直连', assisted: '辅助发布', share: '分享发布', oauth: 'OAuth', draft: '创建草稿', publish: '正式发布', manual: '人工登记' })[value] || '人工登记'
+const modeName = value => ({ api: '官方接口', assisted: '浏览器发布', share: '分享发布', oauth: 'OAuth', draft: '创建草稿', publish: '正式发布', manual: '人工登记' })[value] || '人工登记'
 const statusName = value => statusMeta[value]?.[0] || value
 const statusType = value => statusMeta[value]?.[1] || 'info'
 const date = value => value ? new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '尚未执行'
@@ -166,10 +170,16 @@ const visibleChannels = computed(() => channelCards.value.filter(item => {
     || (channelFilter.value === 'connected' && item.connections.length)
     || (channelFilter.value === 'available' && item.available && !item.connections.length)
     || (channelFilter.value === 'planned' && !item.available)
-  return matchesText && matchesFilter
+  return matchesText && matchesFilter && (channelRegion.value === 'all' || item.region === channelRegion.value)
 }))
 
+let loadSequence = 0
+let sitesSequence = 0
+let loadedScope = null
+const scopeKey = () => `${currentTenantId.value}:${siteId.value}:${session.user?.id}`
 async function load() {
+  const requestSequence = ++loadSequence
+  const requestedScope = scopeKey()
   if (!currentTenantId.value) {
     error.value = '请先选择客户'
     return
@@ -190,6 +200,8 @@ async function load() {
       fetchSeoContentPublications({ tenantId: currentTenantId.value, siteId: siteId.value }),
       fetchSeoDistributionVariants({ tenantId: currentTenantId.value, siteId: siteId.value }),
     ])
+    if (requestSequence !== loadSequence || requestedScope !== scopeKey()) return
+    loadedScope = requestedScope
     catalog.value = catalogResult.items || []
     connections.value = connectionResult.items || []
     contents.value = contentResult.items || []
@@ -198,20 +210,24 @@ async function load() {
     variants.value = (variantResult.items || []).filter(item => contentIds.has(item.content_id))
     error.value = ''
   } catch (e) {
-    error.value = e.message
+    if (requestSequence === loadSequence && requestedScope === scopeKey()) error.value = e.message
   } finally {
-    loading.value = false
+    if (requestSequence === loadSequence) loading.value = false
   }
 }
 
 async function loadSites() {
+  const token = ++sitesSequence
+  const tenant = currentTenantId.value
   if (!currentTenantId.value) {
     sites.value = []
     siteId.value = null
     return load()
   }
   try {
-    sites.value = (await fetchSeoSites(currentTenantId.value)).sites || []
+    const response = await fetchSeoSites(tenant)
+    if (token !== sitesSequence || tenant !== currentTenantId.value) return
+    sites.value = response.sites || []
     const selected = sites.value.some(item => item.id === siteId.value)
       ? siteId.value
       : (sites.value.find(item => item.status === 'active')?.id || sites.value[0]?.id || null)
@@ -645,6 +661,28 @@ async function executeBatch() {
   await load()
 }
 
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a'); link.href = url; link.download = filename
+  document.body.append(link); link.click(); link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+function exportPublisherTasks(rows) {
+  if (!canEdit.value) return
+  if (loadedScope !== scopeKey()) return ElMessage.warning('客户或网站已切换，请等待当前任务加载完成')
+  try {
+    const pack = createPublisherPackage(rows)
+    const text = JSON.stringify(pack, null, 2)
+    if (new Blob([text]).size > 2 * 1024 * 1024) throw new Error('任务内容超过 2 MB，请在交接台逐篇导出')
+    downloadBlob(new Blob([text], { type: 'application/json' }), `SEO填稿任务-${currentTenantId.value}-${siteId.value}.json`)
+    ElMessage.success(`已导出 ${pack.items.length} 条待填稿任务，导入助手后选择账号执行`)
+  } catch (error) { ElMessage.warning(error.message) }
+}
+function downloadPublisher() {
+  const files = Object.fromEntries(Object.entries(publisherFiles).map(([path, text]) => [path.split('/').pop(), text]))
+  downloadBlob(publisherZip(files), 'G-Snipers国内填稿助手.zip')
+}
+
 async function copyHandoffTitle() {
   try {
     await navigator.clipboard.writeText(handoffTitle.value)
@@ -824,7 +862,12 @@ async function downloadTemplate() {
   }
 }
 
-watch(siteId, load)
+watch(() => [currentTenantId.value, siteId.value, session.user?.id], () => {
+  loadSequence++; loadedScope = null
+  contents.value = []; publications.value = []; variants.value = []; connections.value = []
+  handoffItem.value = null; completeDialog.value = false; batchDialog.value = false; variantDialog.value = false
+  load()
+})
 watch(currentTenantId, loadSites)
 onMounted(loadSites)
 </script>
@@ -833,37 +876,39 @@ onMounted(loadSites)
   <div class="distribution-page" v-loading="loading">
     <section class="distribution-hero">
       <div>
-        <span>CONTENT DISTRIBUTION</span>
-        <h1>内容分发中心</h1>
-        <p>连接发布平台、批量预检并追踪每篇文章在每个渠道的真实状态。</p>
+        <span>国内内容运营 / 多平台分发</span>
+        <h1>国内内容分发中心</h1>
+        <p>选择品牌账号，为各平台准备专属稿，填稿发布后统一收回文章链接。</p>
       </div>
       <div class="hero-actions">
         <el-select v-model="siteId" class="distribution-site-picker" placeholder="选择 SEO 网站"><el-option v-for="site in sites" :key="site.id" :label="site.name||site.canonical_domain" :value="site.id" /></el-select>
         <input v-if="canEdit" ref="importInput" class="file-input" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" @change="previewImport">
         <el-button v-if="canEdit" :loading="importing" @click="selectImport">Excel 批量登记</el-button>
         <el-button v-if="canEdit" @click="openManual()">登记发布链接</el-button>
-        <el-button v-if="canEdit" type="primary" @click="openBatch()">批量发布</el-button>
+        <el-button @click="helperDialog = true">浏览器填稿助手</el-button><el-button v-if="canEdit" type="primary" @click="openBatch()">一文多平台分发</el-button>
       </div>
     </section>
 
     <el-alert v-if="error" :title="error" type="warning" :closable="false" show-icon />
 
     <section class="summary-grid">
-      <article><span>平台连接</span><strong>{{ connectedCount }}</strong><small>可立即执行的渠道</small></article>
+      <article><span>分发账号</span><strong>{{ connectedCount }}</strong><small>已配置，可准备分发任务</small></article>
       <article><span>发布记录</span><strong>{{ published.length }}</strong><small>每个平台独立保存</small></article>
       <article><span>待处理任务</span><strong>{{ activeTasks.length }}</strong><small>失败与人工确认均可追踪</small></article>
       <article><span>内容覆盖率</span><strong>{{ coverage }}%</strong><small>{{ publishedContentCount }}/{{ contents.length }} 篇已有发布记录</small></article>
     </section>
 
     <nav class="view-tabs">
-      <button :class="{ active: activeTab === 'channels' }" @click="activeTab = 'channels'">平台连接</button>
+      <button :class="{ active: activeTab === 'channels' }" @click="activeTab = 'channels'">账号与渠道</button>
       <button :class="{ active: activeTab === 'variants' }" @click="activeTab = 'variants'">专属稿审核 <b v-if="variants.filter(item => item.status === 'pending_review').length">{{ variants.filter(item => item.status === 'pending_review').length }}</b></button>
       <button :class="{ active: activeTab === 'tasks' }" @click="activeTab = 'tasks'">发布任务 <b v-if="activeTasks.length">{{ activeTasks.length }}</b></button>
       <button :class="{ active: activeTab === 'records' }" @click="activeTab = 'records'">发布记录</button>
     </nav>
 
     <template v-if="activeTab === 'channels'">
+      <section class="domestic-guide"><b>准备专属稿 → 审核 → 官方平台填稿 → 回填链接</b><p>浏览器渠道无需提供账号密码；请在自己的浏览器登录目标账号。公众号也可选择官方接口通道。填稿助手仅填写文字，配图和发布状态以平台为准。</p></section>
       <section class="channel-toolbar">
+        <el-select v-model="channelRegion" aria-label="渠道范围" style="width:155px"><el-option label="国内平台" value="domestic" /><el-option label="自有网站" value="website" /><el-option label="全部渠道" value="all" /></el-select>
         <el-segmented v-model="channelFilter" :options="[{ label: '全部', value: 'all' }, { label: '已连接', value: 'connected' }, { label: '可接入', value: 'available' }, { label: '规划中', value: 'planned' }]" />
         <el-input v-model="query" clearable placeholder="搜索平台或连接名称" />
         <el-button @click="load">刷新状态</el-button>
@@ -872,17 +917,17 @@ onMounted(loadSites)
         <article v-for="item in visibleChannels" :key="item.code" class="channel-card" :class="{ muted: !item.available }">
           <header>
             <span class="channel-logo">{{ item.name.slice(0, 1) }}</span>
-            <div><strong>{{ item.name }}</strong><small>{{ modeName(item.mode) }}</small></div>
+            <div><strong>{{ item.name }}</strong><small>{{ item.content_format }} · {{ modeName(item.mode) }}</small></div>
             <el-tag :type="item.connections.length ? 'success' : item.available ? 'primary' : 'info'" effect="light">
-              {{ item.connections.length ? `${item.connections.length} 个连接` : item.available ? '可接入' : '规划中' }}
+              {{ item.connections.length ? `${item.connections.length} 个账号` : item.available ? '可接入' : '规划中' }}
             </el-tag>
           </header>
           <p>{{ item.help }}</p>
-          <div class="capabilities"><span v-for="capability in item.capabilities" :key="capability">{{ ({ connection_test: '连接测试', draft: '创建草稿', publish: '正式发布', adapt: '内容适配', copy: '一键复制', open_editor: '打开编辑器', manual_confirm: '人工确认', status_link: '链接回流', async_status: '状态同步', media_upload: '图片上传' })[capability] || capability }}</span></div>
+          <div class="capabilities"><span v-for="capability in item.capabilities" :key="capability">{{ ({ connection_test: '连接测试', draft: '创建草稿', publish: '正式发布', adapt: '内容适配', copy: '一键复制', open_editor: '打开编辑器', manual_confirm: '人工确认', status_link: '链接回流', async_status: '状态同步', media_upload: '图片上传', browser_package: '填稿任务包' })[capability] || capability }}</span></div>
           <div v-if="item.connections.length" class="connection-list">
             <div v-for="connection in item.connections" :key="connection.id">
               <span><b>{{ connection.name }}</b><small>{{ connection.base_url || '无需站点地址' }} · {{ connection.last_tested_at ? `最近测试 ${date(connection.last_tested_at)}` : connection.mode === 'api' ? '尚未测试' : '无需测试' }}</small><small v-if="connection.last_error" class="connection-error">{{ connection.last_error }}</small></span>
-              <el-tag size="small" :type="connection.status === 'failed' ? 'danger' : ['connected', 'ready'].includes(connection.status) ? 'success' : 'warning'">{{ ({ connected: '已连接', ready: '已就绪', configured: '待测试', failed: '连接失败' })[connection.status] || connection.status }}</el-tag>
+              <el-tag size="small" :type="connection.status === 'failed' ? 'danger' : ['connected', 'ready'].includes(connection.status) ? 'success' : 'warning'">{{ ({ connected: '已连接', ready: '待浏览器核对', configured: '待测试', failed: '连接失败' })[connection.status] || connection.status }}</el-tag>
               <el-button v-if="canEdit" link type="primary" @click="editConnection(connection)">编辑</el-button>
               <el-button v-if="canEdit && connection.mode === 'api'" link type="primary" :loading="connectionTestingId === connection.id" @click="testConnection(connection)">测试</el-button>
               <el-switch v-if="canEdit" :model-value="connection.enabled" :loading="connectionTogglingId === connection.id" @change="value => toggleConnection(connection, value)" />
@@ -890,8 +935,8 @@ onMounted(loadSites)
           </div>
           <footer>
             <span>已发布 {{ item.published }} 篇</span>
-            <el-button v-if="canEdit && item.available" type="primary" plain @click="openConnection(item)">添加连接</el-button>
-            <el-button v-else-if="!item.available" disabled>等待接口开放</el-button>
+            <el-button v-if="canEdit && item.available" type="primary" plain @click="openConnection(item)">添加账号</el-button>
+            <el-button v-else-if="!item.available" disabled>暂未接入</el-button>
           </footer>
         </article>
       </section>
@@ -914,6 +959,7 @@ onMounted(loadSites)
     </template>
 
     <template v-else-if="activeTab === 'tasks'">
+      <div class="publisher-toolbar"><span>仅导出等待人工确认的浏览器任务，最多 50 条；可在单篇交接台分别导出。</span><el-button v-if="canEdit" @click="exportPublisherTasks(filteredActiveTasks)">导出待填稿任务包</el-button></div>
       <section class="table-panel">
         <header><div><h2>发布任务</h2><p>API 发布、草稿创建和人工交接采用同一状态流，每次尝试都有记录。</p></div><div class="task-toolbar"><el-select v-model="taskStatus" size="small"><el-option label="全部待处理" value="all" /><el-option label="失败" value="failed" /><el-option label="发布中" value="publishing" /><el-option label="待人工确认" value="manual_required" /><el-option label="草稿已创建" value="draft_created" /></el-select><el-button @click="load">刷新</el-button><el-button v-if="canEdit" type="primary" @click="openBatch()">新建批量任务</el-button></div></header>
         <el-table :data="filteredActiveTasks" empty-text="暂无待处理任务">
@@ -952,10 +998,16 @@ onMounted(loadSites)
       </section>
     </template>
 
-    <el-dialog v-model="connectionDialog" :title="connectionEditingId ? '编辑平台连接' : '添加平台连接'" width="620px" destroy-on-close>
+    <el-dialog v-model="helperDialog" title="浏览器填稿助手 · 本地开发版" width="660px">
+      <ol class="helper-steps"><li>下载并解压助手，在 Chrome / Edge 扩展管理页启用开发者模式，加载解压目录。</li><li>先在本工作台选择文章与账号，生成分发任务；从“发布任务”导出 JSON 填稿任务包。</li><li>在扩展中导入任务包，打开官方平台并登录。选择对应文章，核对账号后分别填入标题和正文。</li><li>在平台上传图片、检查封面、排版及原创 / AI 声明，自行发布，再将公开链接回填到工作台。</li></ol>
+      <el-alert title="助手不托管登录、不覆盖已有内容、不点击发布。图片需在平台上传。真实平台编辑器兼容性仍需目标账号验收，识别失败时可用交接台复制粘贴。" type="info" :closable="false" />
+      <template #footer><el-button @click="helperDialog = false">关闭</el-button><el-button type="primary" @click="downloadPublisher">下载 Chrome / Edge 填稿助手</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="connectionDialog" :title="connectionEditingId ? '编辑分发账号' : '添加分发账号'" width="620px" destroy-on-close>
       <div v-if="selectedPlatform" class="dialog-intro"><b>{{ selectedPlatform.name }}</b><span>{{ selectedPlatform.help }}</span></div>
       <el-form label-position="top">
-        <el-form-item label="连接名称" required><el-input v-model="connectionForm.name" placeholder="例如：品牌官网、官方知乎账号" /></el-form-item>
+        <el-form-item label="账号备注名" required><el-input v-model="connectionForm.name" placeholder="例如：品牌A · 百家号主账号（请与平台账号对应）" /></el-form-item>
         <el-form-item v-if="selectedPlatform?.mode === 'api' && selectedPlatform?.base_url_required !== false" :label="selectedPlatform.base_url_label || '平台地址'" required><el-input v-model="connectionForm.base_url" placeholder="https://example.com" /></el-form-item>
         <el-form-item v-for="field in selectedPlatform?.credential_fields || []" :key="field.key" :label="field.label" :required="!connectionEditingId || !editingConnection?.has_credentials">
           <el-input v-model="connectionForm.credentials[field.key]" :type="field.type" :show-password="field.type === 'password'" :autocomplete="field.type === 'password' ? 'new-password' : 'off'" :placeholder="connectionEditingId && editingConnection?.has_credentials ? '留空保持现有授权信息' : ''" @input="markCredentialsChanged" />
@@ -964,7 +1016,7 @@ onMounted(loadSites)
         <el-form-item v-if="connectionEditingId && editingConnection?.has_credentials" label="授权信息"><el-checkbox v-model="connectionForm.clear_credentials" @change="markCredentialsCleared">清除现有授权信息</el-checkbox></el-form-item>
         <el-form-item label="连接状态"><el-switch v-model="connectionForm.enabled" active-text="启用" inactive-text="停用" /></el-form-item>
         <el-form-item v-if="selectedPlatform?.mode === 'api'" label="保存后操作"><el-checkbox v-model="connectionForm.test_after_save">保存后立即测试连接</el-checkbox></el-form-item>
-        <el-alert v-if="selectedPlatform?.mode === 'assisted'" title="无需填写平台账号密码。发布时系统会复制适配稿并打开官方编辑器。" type="info" :closable="false" show-icon />
+        <el-alert v-if="selectedPlatform?.mode === 'assisted'" title="登记账号备注不代表已登录。无需填写账号密码；发布时在自己的浏览器登录，使用填稿助手或复制专属稿。" type="info" :closable="false" show-icon />
       </el-form>
       <template #footer><el-button @click="connectionDialog = false">取消</el-button><el-button type="primary" :loading="connectionSaving" @click="saveConnection">{{ connectionForm.test_after_save && selectedPlatform?.mode === 'api' ? '保存并测试' : '保存连接' }}</el-button></template>
     </el-dialog>
@@ -987,7 +1039,7 @@ onMounted(loadSites)
               <header><b>发布到 {{ variantMeta.platform_name }}</b><span>{{ variantPlain.length }} 字</span></header>
               <el-form label-position="top">
                 <el-form-item :label="`专属标题（最多 ${variantMeta.content_rules?.title_max || 60} 字）`" required>
-                  <el-input v-model="variantForm.title" :maxlength="variantMeta.content_rules?.title_max || 60" show-word-limit @input="variantDirty = true" />
+                  <el-input v-model="variantForm.title" :maxlength="variantMeta.content_rules?.title_max || 60" show-word-limit @input="variantDirty = true" /><small v-if="variantMeta.content_rules?.limits_note" class="form-tip">{{ variantMeta.content_rules.limits_note }}</small>
                 </el-form-item>
                 <el-form-item label="专属正文" required>
                   <div ref="variantEditor" class="variant-editor" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="请输入平台专属正文" @input="syncVariantEditor" @paste="pasteVariantText"></div>
@@ -1075,11 +1127,12 @@ onMounted(loadSites)
       <template #footer><el-button @click="manualDialog = false">取消</el-button><el-button type="primary" :loading="manualSaving" @click="saveManual">保存发布记录</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="completeDialog" title="辅助发布交接台" width="820px" destroy-on-close>
+    <el-dialog v-model="completeDialog" title="国内平台发布交接台" width="820px" destroy-on-close>
       <div v-if="handoffItem" class="handoff-workbench">
         <div class="handoff-heading"><span><b>{{ handoffItem.connection_name || handoffItem.platform_name }}</b><small>{{ handoffItem.content_title }} · 内容版本 {{ handoffItem.source_version }}</small></span><el-tag type="warning">等待平台确认</el-tag></div>
         <el-steps :active="completeForm.confirmed ? 3 : handoffOpened ? 2 : (handoffCopied.title || handoffCopied.content) ? 1 : 0" finish-status="success" simple><el-step title="复制内容" /><el-step title="平台发布" /><el-step title="回填链接" /></el-steps>
         <section class="handoff-copy-card">
+          <el-button v-if="canEdit" @click="exportPublisherTasks([handoffItem])">导出此篇填稿任务</el-button>
           <header><b>1. 复制适配内容</b><span>标题和正文分开复制，更适合平台编辑器</span></header>
           <div class="handoff-field"><label>标题</label><el-input :model-value="handoffTitle" readonly /><el-button :type="handoffCopied.title ? 'success' : 'primary'" plain @click="copyHandoffTitle">{{ handoffCopied.title ? '标题已复制' : '复制标题' }}</el-button></div>
           <div class="handoff-body"><label>正文预览 · {{ handoffPlain.length }} 字</label><el-input :model-value="handoffPlain" type="textarea" :rows="8" readonly resize="vertical" /><el-button :type="handoffCopied.content ? 'success' : 'primary'" plain @click="copyHandoffContent">{{ handoffCopied.content ? '正文已复制' : '复制正文（保留格式）' }}</el-button></div>
@@ -1112,6 +1165,7 @@ onMounted(loadSites)
 </template>
 
 <style scoped>
+.domestic-guide{padding:16px 20px;background:#edf4ff;border:1px solid #dce7f6;border-radius:10px;margin:16px 0;color:#325783}.domestic-guide p{font-size:12px;line-height:1.7;margin:7px 0 0}.publisher-toolbar{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:16px 0;font-size:12px;color:#61738c}.helper-steps{line-height:1.9;padding-left:22px}.helper-steps li{margin-bottom:12px}
 .distribution-site-picker{width:220px}
 .distribution-page{min-height:100%;padding:22px 26px 40px;background:#f5f7fb;color:#202938}.distribution-hero{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:24px 28px;border:1px solid #e0e5ec;border-radius:12px;background:linear-gradient(135deg,#fff 60%,#eef4ff)}.distribution-hero span{color:#2563eb;font-size:10px;font-weight:800;letter-spacing:1.5px}.distribution-hero h1{margin:6px 0 5px;font-size:26px}.distribution-hero p{margin:0;color:#697386;font-size:12px}.hero-actions{display:flex;gap:8px}.file-input{display:none}.summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0}.summary-grid article{padding:17px 18px;border:1px solid #e1e5eb;border-radius:10px;background:#fff}.summary-grid span,.summary-grid small,.summary-grid strong{display:block}.summary-grid span{color:#6d7685;font-size:11px}.summary-grid strong{margin:5px 0 2px;font-size:25px}.summary-grid small{color:#949baa;font-size:10px}.view-tabs{display:flex;gap:4px;margin-bottom:14px;padding:4px;border:1px solid #e1e5eb;border-radius:9px;background:#fff}.view-tabs button{padding:8px 15px;border:0;border-radius:6px;background:transparent;color:#657083;font-size:12px;font-weight:650;cursor:pointer}.view-tabs button.active{background:#eaf1ff;color:#1d4ed8}.view-tabs b{display:inline-grid;min-width:18px;height:18px;margin-left:4px;place-items:center;border-radius:10px;background:#f59e0b;color:#fff;font-size:10px}.channel-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:14px}.channel-toolbar .el-input{width:280px;margin-left:auto}.channel-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.channel-card{display:flex;min-height:255px;padding:17px;flex-direction:column;border:1px solid #dfe4eb;border-radius:10px;background:#fff}.channel-card.muted{background:#fafbfc}.channel-card header{display:flex;align-items:center;gap:10px}.channel-card header>div{min-width:0;flex:1}.channel-card header strong,.channel-card header small{display:block}.channel-card header strong{font-size:14px}.channel-card header small{margin-top:2px;color:#8b94a3;font-size:10px}.channel-logo{display:grid;width:36px;height:36px;place-items:center;border-radius:9px;background:#2563eb;color:#fff;font-weight:800}.channel-card>p{min-height:38px;margin:14px 0 10px;color:#687386;font-size:11px;line-height:1.7}.capabilities{display:flex;flex-wrap:wrap;gap:5px}.capabilities span{padding:3px 6px;border-radius:5px;background:#eef2f7;color:#667083;font-size:9.5px}.connection-list{display:grid;gap:6px;margin-top:12px}.connection-list>div{display:flex;align-items:center;gap:7px;padding:8px;border-radius:7px;background:#f7f9fc}.connection-list>div>span{min-width:0;flex:1}.connection-list b,.connection-list small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.connection-list b{font-size:10.5px}.connection-list small{color:#9299a5;font-size:9px}.channel-card footer{display:flex;align-items:center;justify-content:space-between;margin-top:auto;padding-top:14px;color:#7b8492;font-size:10px}.table-panel,.pending-suggestions{overflow:hidden;border:1px solid #dfe4eb;border-radius:10px;background:#fff}.table-panel>header,.pending-suggestions>header{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid #e8ebef}.table-panel h2,.pending-suggestions h2{margin:0;font-size:14px}.table-panel p{margin:3px 0 0;color:#89919f;font-size:10px}.table-panel a{color:#2563eb;text-decoration:none}.muted-text{color:#9098a5;font-size:10px}.pending-suggestions{margin-top:14px}.pending-suggestions>div{display:flex;align-items:center;gap:12px;padding:11px 18px;border-bottom:1px solid #eef0f3}.pending-suggestions>div:last-child{border:0}.pending-suggestions>div>span{min-width:0;flex:1}.pending-suggestions b,.pending-suggestions small{display:block}.pending-suggestions b{font-size:11px}.pending-suggestions small{margin-top:3px;color:#9299a5;font-size:9.5px}.dialog-intro{display:flex;margin-bottom:14px;padding:12px 14px;flex-direction:column;gap:4px;border-radius:8px;background:#f2f6ff}.dialog-intro b{font-size:13px}.dialog-intro span{color:#647085;font-size:10.5px}.batch-select,.batch-preview,.batch-execution{margin-top:18px}.batch-select .el-select{width:100%}.form-tip{display:block;margin-top:6px;color:#8a93a1;font-size:10px}.check-message{margin-left:7px;color:#7a8392;font-size:10px}.batch-execution{display:grid;gap:16px}.result-list{display:grid;max-height:400px;overflow:auto;border:1px solid #e5e8ed;border-radius:8px}.result-list>div{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #edf0f3}.result-list>div:last-child{border:0}.result-list>div>span{min-width:0;flex:1}.result-list b,.result-list small{display:block}.result-list b{font-size:11px}.result-list small{margin-top:2px;color:#7f8897;font-size:9.5px}.result-list .ok{color:#16a36a}.result-list .fail{color:#d84b4b}.import-preview{display:grid;gap:14px}.import-summary{display:flex;gap:18px;color:#687386;font-size:12px}.import-summary span{margin-right:auto}.valid{color:#16825d}.invalid{color:#c2413a}.import-help{margin:0;color:#737c8b;font-size:11px}.import-help button{border:0;background:none;color:#2563eb;font-weight:700;cursor:pointer}.el-form{margin-top:12px}.el-select{width:100%}@media(max-width:1150px){.channel-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:800px){.distribution-page{padding:14px}.distribution-hero{align-items:flex-start;flex-direction:column}.hero-actions{width:100%;flex-wrap:wrap}.summary-grid,.channel-grid{grid-template-columns:1fr 1fr}.channel-toolbar{align-items:stretch;flex-direction:column}.channel-toolbar .el-input{width:100%;margin:0}.view-tabs{overflow-x:auto}.view-tabs button{white-space:nowrap}}@media(max-width:560px){.summary-grid,.channel-grid{grid-template-columns:1fr}.hero-actions .el-button{margin-left:0;flex:1}.summary-grid article{padding:14px}.distribution-hero{padding:20px}.batch-preview{overflow-x:auto}}
 .result-dot{display:grid;width:20px;height:20px;place-items:center;border-radius:50%;font-size:11px;font-style:normal;font-weight:800}.result-dot.ok{background:#e7f7ef;color:#16825d}.result-dot.fail{background:#feecec;color:#c2413a}.result-dot.pending{background:#eef2f7;color:#64748b}
@@ -1120,4 +1174,5 @@ onMounted(loadSites)
 .handoff-workbench{display:grid;gap:14px}.handoff-heading{display:flex;align-items:center;justify-content:space-between}.handoff-heading span,.handoff-heading b,.handoff-heading small{display:block}.handoff-heading small{margin-top:4px;color:#7b8492;font-size:10.5px}.handoff-workbench section{display:grid;gap:10px;padding:14px;border:1px solid #e2e7ee;border-radius:9px;background:#fafbfd}.handoff-workbench section header{display:flex;align-items:center;justify-content:space-between}.handoff-workbench section header b{font-size:12px}.handoff-workbench section header span{color:#8992a0;font-size:10px}.handoff-field{display:grid;grid-template-columns:52px minmax(0,1fr) 110px;align-items:center;gap:8px}.handoff-field label,.handoff-body label{color:#687386;font-size:10.5px}.handoff-body{display:grid;grid-template-columns:minmax(0,1fr) 150px;align-items:end;gap:8px}.handoff-body label{grid-column:1/-1}.handoff-publish-card .el-button{width:max-content}.handoff-complete-card .el-checkbox{height:auto;white-space:normal}@media(max-width:700px){.handoff-field,.handoff-body{grid-template-columns:1fr}.handoff-field label,.handoff-body label{grid-column:1}.handoff-workbench section header{align-items:flex-start;flex-direction:column;gap:3px}}
 .variant-workbench{min-height:220px}.variant-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.variant-heading span,.variant-heading b,.variant-heading small{display:block}.variant-heading small{margin-top:4px;color:#7b8492;font-size:10.5px}.variant-columns{display:grid;grid-template-columns:1fr 1fr;gap:14px}.variant-columns>section,.variant-keywords,.variant-ai{min-width:0;padding:14px;border:1px solid #e1e6ed;border-radius:9px;background:#fafbfd}.variant-columns section>header,.variant-keywords>header,.variant-ai>header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:11px}.variant-columns header b,.variant-keywords header b,.variant-ai header b{font-size:12px}.variant-columns header span,.variant-keywords header span,.variant-ai header small{color:#818b9a;font-size:10px}.variant-source h3{margin:0 0 10px;font-size:15px}.variant-preview,.variant-editor{height:310px;overflow:auto;padding:12px;border:1px solid #dce2ea;border-radius:7px;background:#fff;color:#303846;font-size:12px;line-height:1.75}.variant-preview :deep(img),.variant-editor :deep(img){max-width:100%;height:auto}.variant-editor{outline:none}.variant-editor:focus{border-color:#409eff;box-shadow:0 0 0 1px #409eff}.variant-editor:empty::before{color:#a8abb2;content:attr(data-placeholder)}.variant-keywords,.variant-ai{display:grid;gap:10px;margin-top:14px}.keyword-check-list{display:flex;flex-wrap:wrap;gap:8px}.keyword-check-list>span{display:flex;align-items:center;gap:5px;padding:6px 8px;border-radius:7px;background:#fff}.keyword-check-list b{margin-right:2px;font-size:10.5px}.variant-ai header span,.variant-ai header b,.variant-ai header small{display:block}.variant-ai header small{margin-top:3px}.variant-ai .el-alert+.el-alert{margin-top:6px}@media(max-width:800px){.variant-columns{grid-template-columns:1fr}.variant-preview,.variant-editor{height:260px}.variant-heading{align-items:flex-start;flex-direction:column;gap:8px}}
 .variant-workbench>.el-alert{margin-bottom:14px}.variant-heading-tags{display:flex!important;align-items:center;flex-direction:row;gap:6px}.batch-variant-toolbar{display:flex;align-items:center;gap:8px;margin:10px 0;padding:9px 10px;border-radius:7px;background:#f2f6ff}.batch-variant-toolbar>span{margin-right:auto;color:#61708a;font-size:10.5px}.variant-row-actions{display:flex;align-items:center;flex-wrap:wrap;gap:3px}.table-panel td .muted-text,.table-panel td .preflight-warning{display:block;margin-top:3px}@media(max-width:800px){.batch-variant-toolbar{align-items:stretch;flex-direction:column}.batch-variant-toolbar>span{margin:0}.variant-heading-tags{flex-wrap:wrap}}
+.distribution-hero{flex-wrap:wrap}.hero-actions{flex-wrap:wrap;width:100%}.hero-actions .distribution-site-picker{flex:0 0 220px}.hero-actions .el-button{margin-left:0}
 </style>

@@ -82,6 +82,7 @@ from app.models.geo_content import (
 from app.models.seo import (
     SeoBacklink,
     SeoAutomationRun,
+    SeoAiOperation,
     SeoBrandAsset,
     SeoCompetitor,
     SeoCompetitorEvent,
@@ -193,6 +194,7 @@ __all__ = [
     "SeoImageAltReview",
     "SeoBacklink",
     "SeoAutomationRun",
+    "SeoAiOperation",
     "SeoCompetitor",
     "SeoCompetitorEvent",
 ]

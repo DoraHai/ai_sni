@@ -169,6 +169,56 @@ PLATFORM_CONTENT_RULES: dict[str, dict[str, Any]] = {
 }
 
 
+# Product editing recommendations, not claims about platform approval or API access.
+_DOMESTIC_CHANNELS = {
+    "baijiahao": ("百家号", "https://baijiahao.baidu.com/", "资讯长文", 30, "面向搜索与资讯阅读，说明事实来源、适用范围和时间，避免夸大标题"),
+    "toutiao": ("头条号", "https://mp.toutiao.com/", "资讯长文", 30, "开头交代读者关心的问题，分段讲清事实，不编造热点或新闻来源"),
+    "sohu": ("搜狐号", "https://mp.sohu.com/", "资讯长文", 40, "采用资讯文章结构，保留可核验出处和作者立场，避免堆砌广告"),
+    "wangyi": ("网易号", "https://mp.163.com/", "资讯长文", 30, "信息清晰、事实有出处，避免标题党与重复营销信息"),
+    "penguin": ("企鹅号", "https://om.qq.com/", "资讯长文", 30, "面向资讯读者，正文逻辑完整，事实、观点与引用明确区分"),
+    "wechat_browser": ("微信公众号 · 浏览器", "https://mp.weixin.qq.com/", "公众号文章", 32, "适合手机阅读，导语简洁、段落清楚，保留事实和资料来源"),
+    "xiaohongshu": ("小红书", "https://creator.xiaohongshu.com/", "图文笔记", 20, "改写为简洁图文笔记，突出适用场景和可核验建议，不虚构亲身体验或用户评价"),
+    "weibo": ("微博", "https://weibo.com/", "动态", 40, "提炼主要观点与资料出处，短段落表达，不虚构热点、数据或使用体验"),
+}
+for _code, (_name, _editor, _format, _title_max, _style) in _DOMESTIC_CHANNELS.items():
+    PLATFORM_CATALOG[_code] = {
+        "name": _name, "mode": "assisted", "available": True,
+        "credential_fields": [], "editor_url": _editor, "region": "domestic",
+        "content_format": _format,
+        "capabilities": ["adapt", "copy", "open_editor", "manual_confirm", "browser_package"],
+        "help": "登记账号后生成专属稿，通过浏览器填稿助手或复制到官方后台；登录、配图及最终发布在平台完成。",
+    }
+    PLATFORM_CONTENT_RULES[_code] = {"title_max": _title_max, "style": _style,
+        "limits_note": "本工作台的编辑建议；平台实时限制和审核结果以官方编辑器为准"}
+for _code, _definition in PLATFORM_CATALOG.items():
+    _definition.setdefault("region", "website" if _code in {"wordpress", "ghost"} else "domestic")
+    _definition.setdefault("content_format", "文章")
+    if _definition["mode"] == "assisted":
+        if "browser_package" not in _definition["capabilities"]:
+            _definition["capabilities"].append("browser_package")
+PLATFORM_CATALOG["wechat_official"]["name"] = "微信公众号 · 官方接口"
+PLATFORM_CATALOG["wechat_browser"]["help"] = "无需 AppID 或 AppSecret；在自己的浏览器登录公众号，填稿后核对封面、排版并提交。"
+
+
+def domestic_content_warnings(title: str, body: str, platform_code: str) -> list[str]:
+    if PLATFORM_CATALOG[platform_code].get("region") != "domestic":
+        return []
+    soup = BeautifulSoup(sanitize_article_html(body), "html.parser")
+    text = soup.get_text(" ", strip=True)
+    warnings = []
+    if platform_code in {"xiaohongshu", "weibo"} and len(text) > 1000:
+        warnings.append("正文较长，建议先编辑为简短图文或动态；不会自动截断正文")
+    if platform_code == "xiaohongshu" and not soup.find("img"):
+        warnings.append("尚无配图；请在小红书后台上传笔记图片并检查封面")
+    if soup.find("a") or re.search(r"https?://", text):
+        warnings.append("正文含外部链接，请核对目标平台的链接展示与导流要求")
+    if re.search(r"保证排名|百分之百|100%|全网第一|绝对有效", title + text):
+        warnings.append("发现绝对化或效果承诺表达，请核对证据并修改不准确描述")
+    if PLATFORM_CATALOG[platform_code]["mode"] == "assisted":
+        warnings.append("发布前在平台检查账号、封面、分类、原创声明和 AI 内容标识；任务生成不等于发布成功")
+    return warnings
+
+
 def platform_catalog() -> list[dict[str, Any]]:
     return [
         {
@@ -178,7 +228,7 @@ def platform_catalog() -> list[dict[str, Any]]:
                 code, {"title_max": 60, "style": "保持原文事实并优化平台可读性"}
             ),
         }
-        for code, value in PLATFORM_CATALOG.items()
+        for code, value in sorted(PLATFORM_CATALOG.items(), key=lambda pair: (pair[1].get("region") != "domestic", list(_DOMESTIC_CHANNELS).index(pair[0]) if pair[0] in _DOMESTIC_CHANNELS else 99))
     ]
 
 

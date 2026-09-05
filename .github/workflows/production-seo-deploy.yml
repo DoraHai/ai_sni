@@ -91,6 +91,7 @@ jobs:
           tests/test_seo_competitors.py
           tests/test_seo_deploy_isolation.py
           tests/test_seo_distribution.py
+          tests/test_seo_domestic_distribution.py
           tests/test_seo_distribution_import.py
           tests/test_seo_foundation.py
           tests/test_seo_monitoring_jobs.py
@@ -119,14 +120,14 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0089_seo_metric_partial_status (head)'
+          printf '%s\n' "$heads" | grep -F '0090_seo_ai_operations (head)'
 
       - working-directory: frontend
         run: npm ci --no-audit
 
       - name: Rebuild and verify the isolated SEO frontend
         working-directory: frontend
-        run: node scripts/test-seo-diagnostics.mjs && node scripts/test-seo-remediation.mjs && npm run build:seo && npm run verify:seo-build
+        run: node --test scripts/test-seo-ai-requests.mjs && node scripts/test-seo-task-center.mjs && node --test scripts/test-seo-publisher.mjs && node scripts/test-seo-diagnostics.mjs && node scripts/test-seo-remediation.mjs && npm run build:seo && npm run verify:seo-build
 
       - name: Create immutable SEO-only release archive
         env:
