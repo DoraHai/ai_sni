@@ -1379,6 +1379,46 @@ def test_seo_ai_quick_actions_reject_missing_result_fields(
 
 
 @pytest.mark.parametrize(
+    ("action", "result", "expected"),
+    [
+        (
+            "generate",
+            {
+                "data": {
+                    "标题": "目标词指南",
+                    "大纲": ["一、概述", "二、方案"],
+                    "正文": ["目标词背景。", "目标词方案。"],
+                }
+            },
+            {
+                "title": "目标词指南",
+                "outline": "一、概述\n二、方案",
+                "content": "目标词背景。\n\n目标词方案。",
+            },
+        ),
+        (
+            "outline",
+            {"outline": ["一、需求", "二、方案"]},
+            {"outline": "一、需求\n二、方案"},
+        ),
+        (
+            "keywords",
+            {"feedback": "覆盖自然", "suggestions": "补充应用场景"},
+            {"feedback": "覆盖自然", "suggestions": ["补充应用场景"]},
+        ),
+    ],
+)
+def test_seo_ai_quick_actions_normalize_safe_provider_variations(
+    action: str,
+    result: dict[str, object],
+    expected: dict[str, object],
+) -> None:
+    normalized = _validated_seo_assist_result(action, result)
+    for key, value in expected.items():
+        assert normalized[key] == value
+
+
+@pytest.mark.parametrize(
     ("action", "request_values", "ai_result", "expected_key"),
     [
         ("outline", {}, {"outline": "一、需求\n二、方案", "feedback": "已生成"}, "outline"),
