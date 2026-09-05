@@ -10,13 +10,14 @@ import Evidence from '../../src/components/GeoEvidenceTasks.vue'
 import client from '../../src/api/client'
 const task={id:10,title:'本地测试：验证真实指标改善',status:'in_progress',params:{content_task_id:12},assignee_role:'GEO运营'}
 let baseline=false,proof=false,retest=false,createdTask=null
+const mismatch=ref(false)
 const tenant=ref(7), content=ref({id:12,title:'本地测试文章'})
 client.defaults.adapter=async config=>{
  const path=config.url,method=config.method
  let data
  if(method==='post' && path.endsWith('/tasks')) {createdTask={...JSON.parse(config.data),id:11,status:'open'};data=createdTask}
  else if(method==='get' && path.endsWith('/tasks')) data=config.params.tenant_id===7?[task,...(createdTask?[createdTask]:[])].filter(x=>!config.params.status||x.status===config.params.status):[]
- else if(method==='get' && path.endsWith('/execution-readiness')) data={task_id:Number(path.split('/').at(-2)),baseline_valid:baseline,baseline:{value:baseline?0:null,unit:'count',as_of:'2026-08-31',metric_key:'geo.visibility.ai_mention_count_7d'},baseline_blocker:baseline?null:'等待完整周基线',publishing:{ready_count:0},publication_candidates:[{id:99,channel:'官网',url:'https://example.invalid/article'}],publication_evidence:proof?{first_verified_at:'2026-09-01'}:null,retest_plan:baseline?{total_samples:10}:null,can_retest:baseline&&proof&&!retest,retest_blocker:baseline&&proof?null:'等待基线和发布核验',latest_retest:retest?{id:42,status:'running'}:null}
+ else if(method==='get' && path.endsWith('/execution-readiness')) data={task_id:Number(path.split('/').at(-2)),baseline_valid:baseline,baseline:{value:baseline?0:null,unit:'count',as_of:'2026-08-31',metric_key:'geo.visibility.ai_mention_count_7d'},baseline_blocker:baseline?null:'等待完整周基线',publishing:{ready_count:0},publication_candidates:[{id:99,channel:'官网',url:'https://example.invalid/article'}],publication_evidence:proof?{first_verified_at:'2026-09-01'}:null,retest_plan:baseline?{total_samples:10}:null,can_retest:baseline&&proof&&!retest&&!mismatch.value,retest_blocker:baseline&&proof?null:'等待基线和发布核验',latest_retest:mismatch.value?{id:42,status:'completed',result:{comparable:false,expected_samples:10,qualified_samples:8,missing:[{prompt_id:71,engine:'deepseek',count:2}]}}:retest?{id:42,status:'running'}:null}
  else if(method==='patch' && ['in_progress','cancelled'].includes(JSON.parse(config.data).status)) {data=path.endsWith('/11')?createdTask:task;data.status=JSON.parse(config.data).status}
  else if(method==='get') data=path.endsWith('/11')?createdTask:task
  else if(path.endsWith('/baseline')) {baseline=true;data=task}
@@ -26,5 +27,5 @@ client.defaults.adapter=async config=>{
  return {data:JSON.parse(JSON.stringify(data)),status:200,statusText:'OK',headers:{},config}
 }
 const router=createRouter({history:createMemoryHistory(),routes:[{path:'/:pathMatch(.*)*',component:{render:()=>null}}]})
-const app=createApp({setup:()=>()=>h('main',{class:'geo-dash geo-page',style:'max-width:1000px;margin:24px auto;padding:20px'},[h('h2','仅内存数据，不连接生产'),h('button',{onClick:()=>tenant.value=tenant.value===7?8:7},'切换测试客户'),h('button',{onClick:()=>content.value={id:12,title:'本地测试文章'}},'建立指标验收任务'),h(CreateEvidence,{tenantId:tenant.value,content:content.value,onClose:()=>content.value=null}),h(Evidence,{tenantId:tenant.value})])})
+const app=createApp({setup:()=>()=>h('main',{class:'geo-dash geo-page',style:'max-width:1000px;margin:24px auto;padding:20px'},[h('h2','仅内存数据，不连接生产'),h('button',{onClick:()=>tenant.value=tenant.value===7?8:7},'切换测试客户'),h('button',{onClick:()=>content.value={id:12,title:'本地测试文章'}},'建立指标验收任务'),h(CreateEvidence,{tenantId:tenant.value,content:content.value,onClose:()=>content.value=null}),h('button',{onClick:()=>{mismatch.value=true;baseline=true;proof=true}},'模拟复测缺样'),h(Evidence,{tenantId:tenant.value})])})
 app.use(router).use(ElementPlus).mount('#app')

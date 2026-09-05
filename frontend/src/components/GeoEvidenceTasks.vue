@@ -2,6 +2,9 @@
 import { computed, reactive, ref, watch, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { evidenceTaskLink, evidenceLinkTarget } from '../utils/geoEvidenceLinks'
+import { retestDiagnosis } from '../utils/geoRetestDiagnosis'
+import { geoSnapshotLink } from '../utils/geoRoutes'
+import { engineDisplay } from '../utils/geoReportLabels'
 import GeoExecutionOverview from './GeoExecutionOverview.vue'
 import * as api from '../api/geoIntegration'
 import { createEvidenceController } from '../utils/geoEvidenceController'
@@ -32,6 +35,7 @@ function lookup() {
   router.push(evidenceTaskLink(props.tenantId, lookupId.value))
 }
 onBeforeUnmount(controller.invalidate)
+const diagnosis = computed(() => retestDiagnosis(state.detail?.latest_retest))
 const terminal = computed(() => ['done', 'cancelled'].includes(state.selected?.status))
 const contentId = computed(() => state.selected?.params?.content_task_id)
 const labels = { open: '待处理', in_progress: '进行中', done: '已完成', cancelled: '已取消' }
@@ -101,6 +105,16 @@ function select(row) {
           <p v-if="state.detail.retest_plan">计划采样 {{ state.detail.retest_plan.total_samples }} 次，保持基线题目、模型和次数一致；启动后会调用已配置 AI 引擎。</p>
           <p v-if="state.detail.retest_blocker">{{ state.detail.retest_blocker }}</p>
           <p v-if="state.detail.latest_retest">最近复测 #{{ state.detail.latest_retest.id }}：{{ runLabels[state.detail.latest_retest.status] || state.detail.latest_retest.status }}；合格 {{ state.detail.latest_retest.result?.qualified_samples ?? '待执行' }} / {{ state.detail.latest_retest.result?.expected_samples ?? '待执行' }}。{{ state.detail.latest_retest.error }}</p>
+          <section v-if="diagnosis" aria-label="复测结果诊断">
+            <h4>{{ diagnosis.label }}</h4><p>{{ diagnosis.note }}</p>
+            <table v-if="diagnosis.missing.length">
+              <thead><tr><th>问题</th><th>引擎</th><th>缺少合格样本</th></tr></thead>
+              <tbody><tr v-for="cell in diagnosis.missing" :key="`${cell.prompt_id}:${cell.engine}`">
+                <td><button class="gd-btn" @click="router.push(geoSnapshotLink({ prompt_id: cell.prompt_id }))">查看问题 #{{ cell.prompt_id }} 采样记录</button></td>
+                <td>{{ engineDisplay(cell.engine) }}</td><td>{{ cell.count }} 次</td>
+              </tr></tbody>
+            </table>
+          </section>
           <button class="gd-btn" :disabled="terminal || state.loading || state.busy || !state.detail.can_retest" @click="controller.act('retest')">启动精确复测</button>
           <button class="gd-btn" :disabled="state.loading || state.busy" @click="controller.select(state.selected)">刷新执行条件</button>
           <h4>4. 实际指标验收</h4>

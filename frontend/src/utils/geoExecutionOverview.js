@@ -15,6 +15,7 @@ export function executionNext(task, detail, error = '') {
   if (['pending', 'running'].includes(detail.latest_retest?.status)) return { stage: '复测执行中', next: '查看采样进度，等待本次执行结束' }
   if (detail.can_retest === true) return { stage: '可启动复测', next: '检查计划后启动同题同模型复测，会调用 AI 引擎' }
   if (detail.latest_retest?.status === 'failed') return { stage: '复测异常', next: detail.latest_retest.error || detail.retest_blocker || '查看失败原因和执行条件' }
+  if (detail.latest_retest?.status === 'completed' && detail.latest_retest.result?.comparable === false) return { stage: '复测样本不匹配', next: '查看缺失样本和原始采样记录，不要直接追加本周样本' }
   return { stage: '等待后测或验收', next: detail.retest_blocker || '查看完整周结果，再由服务端核验指标变化；采样结束不代表达标' }
 }
 
