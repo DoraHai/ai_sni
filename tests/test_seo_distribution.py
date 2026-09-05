@@ -1226,9 +1226,9 @@ def test_unexpected_retry_error_restores_failed_state() -> None:
     attempt = session.add.call_args.args[0]
     assert getattr(exc.value, "status_code", None) == 502
     assert publication.status == "failed"
-    assert publication.last_error == "未预期发布错误：RuntimeError"
+    assert publication.last_error == "发布结果不确定，需要人工核对平台后台：RuntimeError"
     assert attempt.status == "failed"
-    assert attempt.error == "未预期发布错误：RuntimeError"
+    assert attempt.error == "发布结果不确定，需要人工核对平台后台：RuntimeError"
     assert session.commit.await_count == 2
 
 

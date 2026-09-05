@@ -15,6 +15,7 @@ from sqlalchemy import delete, exists, func, select
 from app.config import get_settings
 from app.database import async_session_factory
 from app.models.seo import SeoCrawlRun, SeoImageAltReview, SeoPageSnapshot
+from app.models.seo_cockpit import SeoImageVerification
 
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ def retention_candidate_ids(*, cutoff: datetime, min_per_url: int, batch_size: i
         .where(
             ranked.c.fetched_at < cutoff,
             ranked.c.recency_rank > min_per_url,
+            ~exists().where(SeoImageVerification.result_snapshot_id == ranked.c.snapshot_id),
             ~exists().where(
                 SeoImageAltReview.snapshot_id == ranked.c.snapshot_id
             ),
@@ -74,6 +76,7 @@ async def prune_old_single_page_snapshots() -> dict[str, int]:
             delete(SeoPageSnapshot)
             .where(
                 SeoPageSnapshot.id.in_(candidate_ids),
+                ~exists().where(SeoImageVerification.result_snapshot_id == SeoPageSnapshot.id),
                 ~exists().where(
                     SeoImageAltReview.snapshot_id == SeoPageSnapshot.id
                 ),

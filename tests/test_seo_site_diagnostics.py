@@ -120,7 +120,7 @@ def test_save_appends_evidence_without_mutating_page_and_history_survives():
     db.scalar.side_effect = [1, row, None]
     db.add = MagicMock()
     result = asyncio.run(create_index_review(request(), context(), db))
-    saved = db.add.call_args.args[0]
+    saved = next(call.args[0] for call in db.add.call_args_list if isinstance(call.args[0], (SeoImageAltReview, SeoPageIndexReview)))
     assert isinstance(saved, SeoPageIndexReview)
     assert (saved.tenant_id, saved.site_id, saved.page_id) == (1, 1, 231)
     assert saved.actor_id == 7 and saved.actor_name == "operator"
@@ -213,7 +213,7 @@ def test_ai_alt_drafts_are_scoped_current_human_reviewable_and_never_overwrite()
          patch("app.api.seo_site_diagnostics.settle_ai_usage", AsyncMock(return_value=True)) as settle, \
          patch("app.api.seo_site_diagnostics.generate_alt_drafts", AsyncMock(return_value=generated)):
         result = asyncio.run(generate_image_alt_drafts(req, context(), db))
-    saved = db.add.call_args.args[0]
+    saved = next(call.args[0] for call in db.add.call_args_list if isinstance(call.args[0], (SeoImageAltReview, SeoPageIndexReview)))
     assert isinstance(saved, SeoImageAltReview)
     assert (saved.tenant_id, saved.site_id, saved.page_id, saved.snapshot_id, saved.position) == (1, 1, 231, 12, 2)
     assert saved.decision == "informative" and saved.review_status == "draft"
@@ -622,7 +622,7 @@ def test_cross_page_image_reuse_copies_draft_with_page_provenance():
         tenant_id=1, site_id=1, page_id=231, expected_snapshot_id=451,
     ), context(), db))
     assert result["copied_positions"] == [26] and result["review_status"] == "draft"
-    saved = db.add.call_args.args[0]
+    saved = next(call.args[0] for call in db.add.call_args_list if isinstance(call.args[0], (SeoImageAltReview, SeoPageIndexReview)))
     assert saved.page_id == 231 and saved.snapshot_id == 451 and saved.position == 26
     assert saved.decision == "decorative" and saved.alt_suggestion is None
     assert saved.review_status == "draft" and "页面 #232 快照 #450" in saved.note
@@ -660,7 +660,7 @@ def test_cross_page_image_reuse_rejects_stale_target():
 def test_save_image_remediation_validates_evidence_and_real_actor():
     db = AsyncMock(); db.add = MagicMock(); db.scalar.side_effect = [1, page(), image_snapshot(), None]
     result = asyncio.run(save_image_remediation(image_review_request(), context(), db))
-    saved = db.add.call_args.args[0]
+    saved = next(call.args[0] for call in db.add.call_args_list if isinstance(call.args[0], (SeoImageAltReview, SeoPageIndexReview)))
     assert isinstance(saved, SeoImageAltReview)
     assert (saved.tenant_id, saved.site_id, saved.page_id, saved.snapshot_id, saved.position) == (1, 1, 231, 12, 2)
     assert saved.actor_id == 7 and saved.review_status == "approved"
@@ -689,7 +689,7 @@ def test_decorative_image_clears_alt_suggestion_before_save():
     db = AsyncMock(); db.add = MagicMock(); db.scalar.side_effect = [1, page(), image_snapshot(), None]
     asyncio.run(save_image_remediation(image_review_request(
         decision="decorative", alt_suggestion="不应保存", review_status="approved"), context(), db))
-    saved = db.add.call_args.args[0]
+    saved = next(call.args[0] for call in db.add.call_args_list if isinstance(call.args[0], (SeoImageAltReview, SeoPageIndexReview)))
     assert saved.alt_suggestion is None
 
 

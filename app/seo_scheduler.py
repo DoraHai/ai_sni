@@ -8,6 +8,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from app.seo_backlinks import discover_published_backlinks
+from app.seo_image_verification import verify_pending_images
+from app.seo_cockpit_metrics import collect_cockpit_metrics
 
 from app.config import get_settings
 from app.process_lock import acquire_file_lock, release_file_lock
@@ -109,6 +111,8 @@ def _start_seo_scheduler() -> None:
         coalesce=True,
         misfire_grace_time=60,
     )
+    seo_scheduler.add_job(verify_pending_images,IntervalTrigger(minutes=1),id='verify_seo_images',replace_existing=True,max_instances=1,coalesce=True,misfire_grace_time=60)
+    seo_scheduler.add_job(collect_cockpit_metrics,IntervalTrigger(hours=1),id='collect_seo_cockpit_metrics',replace_existing=True,max_instances=1,coalesce=True,misfire_grace_time=3600)
     seo_scheduler.start()
     logger.info("[scheduler][SEO] 独立调度器已启动")
 

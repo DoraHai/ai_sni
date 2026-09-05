@@ -93,6 +93,8 @@ jobs:
           tests/test_seo_distribution.py
           tests/test_seo_domestic_distribution.py
           tests/test_seo_distribution_import.py
+          tests/test_seo_cockpit.py
+          tests/test_seo_cockpit_auth.py
           tests/test_seo_foundation.py
           tests/test_seo_monitoring_jobs.py
           tests/test_seo_rank_limits.py
@@ -120,7 +122,7 @@ jobs:
         run: |
           heads="$(python -m alembic heads)"
           test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
-          printf '%s\n' "$heads" | grep -F '0091_seo_backlink_evidence (head)'
+          printf '%s\n' "$heads" | grep -F '0092_seo_cockpit (head)'
 
       - working-directory: frontend
         run: npm ci --no-audit

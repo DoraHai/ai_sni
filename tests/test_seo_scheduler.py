@@ -640,7 +640,7 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
             patch("app.seo_scheduler.seo_scheduler.start") as scheduler_start,
         ):
             start_seo_scheduler()
-        self.assertEqual(add_job.call_count, 7)
+        self.assertEqual(add_job.call_count, 9)
         self.assertEqual(
             {call.kwargs["id"] for call in add_job.call_args_list},
             {
@@ -651,6 +651,8 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
                 "fail_stale_seo_crawl_runs",
                 "prune_old_seo_single_page_snapshots",
                 "reconcile_seo_ai_operations",
+                "verify_seo_images",
+                "collect_seo_cockpit_metrics",
             },
         )
         scheduler_start.assert_called_once_with()
