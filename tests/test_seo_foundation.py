@@ -1535,7 +1535,9 @@ def test_seo_ai_repairs_incomplete_result_once_without_double_charging() -> None
     assert "必须返回的 JSON 字段" in chat.await_args_list[1].args[1]
 
 
-def test_seo_ai_refunds_when_repair_still_has_no_usable_result() -> None:
+@pytest.mark.parametrize("repair_fails", [False, True])
+def test_seo_ai_refunds_when_repair_still_has_no_usable_result(repair_fails) -> None:
+    from app.ai.deepseek import DeepSeekError
     request = SeoContentAssistRequest(
         tenant_id=1,
         action="generate",
@@ -1568,7 +1570,10 @@ def test_seo_ai_refunds_when_repair_still_has_no_usable_result() -> None:
         patch("app.api.seo.refund_seo_usage", new=AsyncMock()) as refund,
         patch(
             "app.api.seo.chat_json",
-            new=AsyncMock(side_effect=[{"content": "不完整"}, {"content": "仍不完整"}]),
+            new=AsyncMock(side_effect=[
+                {"content": "不完整"},
+                DeepSeekError("repair failed") if repair_fails else {"content": "仍不完整"},
+            ]),
         ) as chat,
     ):
         with pytest.raises(Exception) as exc:
@@ -1578,6 +1583,48 @@ def test_seo_ai_refunds_when_repair_still_has_no_usable_result() -> None:
     assert chat.await_count == 2
     charge.assert_awaited_once()
     refund.assert_awaited_once_with(ANY, 1, "ai_requests", 1)
+
+
+@pytest.mark.parametrize("refund_fails", [False, True])
+def test_seo_ai_initial_failure_preserves_provider_error(refund_fails) -> None:
+    from app.ai.deepseek import DeepSeekError
+    from app.api.seo import _limited_seo_chat_json
+
+    failure = DeepSeekError("provider unavailable")
+    session = AsyncMock()
+    with (
+        patch("app.api.seo.charge_seo_usage", new=AsyncMock()) as charge,
+        patch("app.api.seo.refund_seo_usage", new=AsyncMock(
+            side_effect=RuntimeError("refund unavailable") if refund_fails else None,
+        )) as refund,
+        patch("app.api.seo.chat_json", new=AsyncMock(side_effect=failure)),
+    ):
+        with pytest.raises(DeepSeekError) as exc:
+            asyncio.run(_limited_seo_chat_json(session, 1, "system", "user", timeout=1))
+
+    assert exc.value is failure
+    charge.assert_awaited_once()
+    refund.assert_awaited_once_with(session, 1, "ai_requests", 1)
+
+
+def test_seo_ai_exhausted_quota_neither_calls_provider_nor_refunds() -> None:
+    from fastapi import HTTPException
+    from app.api.seo import _limited_seo_chat_json
+    from app.seo_usage_limits import SeoUsageLimitError
+
+    with (
+        patch("app.api.seo.charge_seo_usage", new=AsyncMock(
+            side_effect=SeoUsageLimitError("ai_requests", 5, 5),
+        )),
+        patch("app.api.seo.refund_seo_usage", new=AsyncMock()) as refund,
+        patch("app.api.seo.chat_json", new=AsyncMock()) as chat,
+    ):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(_limited_seo_chat_json(AsyncMock(), 1, "system", "user", timeout=1))
+
+    assert exc.value.status_code == 429
+    chat.assert_not_awaited()
+    refund.assert_not_awaited()
 
 
 @pytest.mark.parametrize("action", ["generate", "rewrite"])

@@ -182,7 +182,7 @@ async def _limited_seo_chat_json(
         return await chat_json(system, user, timeout=timeout)
     except Exception:
         if charge_usage:
-            await refund_seo_usage(session, tenant_id, "ai_requests", 1)
+            await _refund_failed_seo_ai_request(session, tenant_id)
         raise
 
 
