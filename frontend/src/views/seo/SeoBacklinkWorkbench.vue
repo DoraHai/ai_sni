@@ -7,6 +7,7 @@ const rows = ref([]), sources = ref([]), selected = ref([]), query = ref(''), fi
 let generation = 0
 const scope = () => ({ tenant_id: props.tenantId, site_id: props.siteId })
 const names = { pending: '尚未核验', found: '发现外链', missing: '本次未发现', unreachable: '无法访问', blocked: '登录或验证拦截', readable: '页面可读取' }
+const reasonName = value => ({timeout:'页面抓取超时',login_or_challenge:'需要登录或验证码',empty_response:'页面未返回正文',http_error:'来源页面返回错误'}[value] || value || '—')
 const state = row => row.status === 'disavow' ? 'paused' : row.verification?.state || 'pending'
 const visible = computed(() => rows.value.filter(row => (filter.value === 'all' || state(row) === filter.value || filter.value === 'lost' && row.status === 'lost') && `${row.source_url} ${row.target_url} ${row.anchor_text || ''}`.toLowerCase().includes(query.value.toLowerCase())))
 const domains = computed(() => new Set(rows.value.map(row => row.source_domain)).size)
@@ -43,6 +44,10 @@ async function run(items, action) {
     if (ticket === generation) {
       const value = await fetchSeoBacklinks({ tenantId: payload.tenant_id, siteId: payload.site_id })
       if (ticket === generation) rows.value = value.items || []
+      if (ticket === generation) {
+        const sourceResult = await fetchSeoBacklinkSources({ tenantId: payload.tenant_id, siteId: payload.site_id })
+        if (ticket === generation) sources.value = sourceResult.items || []
+      }
     }
   } catch (e) { if (ticket === generation) error.value = e.message }
   finally { busy.value = false; progress.value = '' }
@@ -74,6 +79,9 @@ defineExpose({ load })
     <div class="actions"><el-button v-if="canEdit" type="primary" :disabled="busy" @click="scanUrls">扫描这些页面</el-button><el-button v-if="canEdit" :disabled="busy || !sources.length" @click="discover(sources.slice(0,50))">扫描最近分发页面（{{Math.min(sources.length,50)}}）</el-button><span>{{progress}}</span></div>
     <p>这是公开页面发现，不代表全网外链总量。无法访问、登录拦截和无外链会分别展示；收录、排名和权重不由外链数量保证。</p>
     <el-table v-if="results.length" :data="results" max-height="260"><el-table-column prop="url" label="来源页面" show-overflow-tooltip/><el-table-column label="扫描结果" width="160"><template #default="{row}">{{names[row.state] || (row.state==='paused'?'已停止监控':'处理失败')}}</template></el-table-column><el-table-column label="发现 / 新入库" width="130"><template #default="{row}">{{row.found ?? '—'}} / {{row.created ?? '—'}}</template></el-table-column><el-table-column prop="reason" label="原因"/></el-table>
+  </section>
+  <section class="suite-panel discovery"><header><div><h2>分发来源与发现结果</h2><small>每小时处理最多 20 条待扫描来源；已扫描页面 7 天后复查，也可立即重试。</small></div><el-button :disabled="busy" @click="load">刷新结果</el-button></header>
+    <el-table :data="sources" max-height="320" empty-text="分发完成后回收公开文章链接，这里会自动纳入发现任务"><el-table-column prop="platform_name" label="平台" width="120"/><el-table-column label="来源页面" min-width="250" show-overflow-tooltip><template #default="{row}"><a :href="row.source_url" target="_blank" rel="noopener noreferrer">{{row.source_url}}</a></template></el-table-column><el-table-column label="最近结果" width="170"><template #default="{row}">{{row.discovery?.state==='readable' ? `发现 ${row.discovery.found || 0} 条外链` : names[row.discovery?.state || 'pending']}}<small class="url">{{reasonName(row.discovery?.reason)}}</small></template></el-table-column><el-table-column label="扫描时间" width="180"><template #default="{row}">{{time(row.discovery?.checked_at)}}</template></el-table-column><el-table-column label="操作" width="90"><template #default="{row}"><el-button v-if="canEdit" link :disabled="busy" @click="discover([row])">{{row.discovery?'重试':'扫描'}}</el-button></template></el-table-column></el-table>
   </section>
   <section class="suite-panel"><header><h2>外链资产与监控</h2><el-button @click="exportCsv">导出筛选结果</el-button></header>
     <div class="actions"><el-input v-model="query" placeholder="搜索域名、来源、目标或锚文本" clearable style="max-width:340px"/><el-select v-model="filter" style="width:160px"><el-option label="全部" value="all"/><el-option v-for="(label,key) in names" :key="key" :label="label" :value="key"/><el-option label="确认丢失" value="lost"/><el-option label="停止监控" value="paused"/></el-select><el-button v-if="canEdit" :disabled="busy || !selected.length" @click="verify(selected.filter(row=>row.status!=='disavow'))">核验所选（{{selected.length}}）</el-button></div>
