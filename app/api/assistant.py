@@ -69,6 +69,14 @@ async def adopt(
     ctx.ensure_tenant(req.tenant_id)
     if req.type not in ADOPT_TYPES:
         raise HTTPException(400, f"不支持的动作类型：{req.type}")
+    action_permission = {
+        "pause": "optimize.keywords",
+        "adjust_bid": "optimize.keywords",
+        "negative": "optimize.negatives",
+        "set_budget": "manage.account",
+    }[req.type]
+    if not ctx.can_edit(action_permission):
+        raise HTTPException(403, "采纳此建议需要对应业务的编辑权限")
     if req.type == "set_budget":
         if req.budget is None:
             raise HTTPException(400, "设日预算需要 budget 金额")

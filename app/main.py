@@ -81,14 +81,6 @@ async def lifespan(_app: FastAPI):
         settings.app_base_url,
         settings.baidu_default_username,
     )
-    try:
-        from app.geo.content.async_jobs import recover_jobs_on_startup
-
-        stats = await recover_jobs_on_startup(requeue_pending=True)
-        if any(stats.values()):
-            logger.info("GEO async job recover: %s", stats)
-    except Exception:  # noqa: BLE001
-        logger.exception("GEO async job recover on startup failed")
     start_scheduler()
     try:
         yield

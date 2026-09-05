@@ -28,6 +28,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.database import async_session_factory
 from app.models import BaiduAccount, BaiduOAuthGrant, BaiduOAuthState, Tenant, TenantModule
 from app.security.crypto import decrypt, encrypt
 
@@ -577,19 +578,21 @@ async def refresh_expiring_oauth_grants(session: AsyncSession) -> dict[str, int]
     now = datetime.utcnow()
     grants = (
         await session.scalars(
-            select(BaiduOAuthGrant).where(
+            select(BaiduOAuthGrant.id).where(
                 BaiduOAuthGrant.status == "active",
                 BaiduOAuthGrant.expires_at <= now + _REFRESH_AHEAD,
             )
         )
     ).all()
     result = {"checked": len(grants), "refreshed": 0, "failed": 0}
-    for grant in grants:
+    for grant_id in grants:
         try:
-            if await refresh_grant(session, grant):
-                result["refreshed"] += 1
+            async with async_session_factory() as grant_session:
+                grant = await grant_session.get(BaiduOAuthGrant, grant_id)
+                if grant is not None and grant.status == "active":
+                    if await refresh_grant(grant_session, grant):
+                        result["refreshed"] += 1
         except Exception:  # noqa: BLE001
             result["failed"] += 1
-            await session.rollback()
-            logger.exception("百度 OAuth Token 刷新失败 grant_id=%s", grant.id)
+            logger.exception("百度 OAuth Token 刷新失败 grant_id=%s", grant_id)
     return result
