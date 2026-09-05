@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from copy import deepcopy
 from html import escape
 from typing import Any
 
@@ -24,7 +25,7 @@ def report_payload(row: GeoCompetitorReport, *, versions: list[GeoCompetitorRepo
         "markdown": row.markdown,
         "source_urls": list(row.source_urls or []),
         "platform_keys": list(row.platform_keys or []),
-        "evidence": row.evidence or {},
+        "evidence": public_report_evidence(row.evidence),
         "version_no": row.version_no,
         "created_by": row.created_by,
         "confirmed_by": row.confirmed_by,
@@ -47,6 +48,7 @@ def report_payload(row: GeoCompetitorReport, *, versions: list[GeoCompetitorRepo
 
 
 def snapshot_version(row: GeoCompetitorReport, *, user_id: int | None) -> GeoCompetitorReportVersion:
+    freeze_report_state(row)
     return GeoCompetitorReportVersion(
         report_id=row.id,
         tenant_id=row.tenant_id,
@@ -76,3 +78,41 @@ def apply_snapshot_fields(row: GeoCompetitorReport, **fields: Any) -> None:
         if val is not None or key in {"insight", "action", "note", "markdown"}:
             setattr(row, key, val)
     row.updated_at = datetime.utcnow()
+
+
+_REPORT_HISTORY = '_version_snapshots'
+_REPORT_FIELDS = ('title', 'competitor', 'business_id', 'period_id', 'insight', 'action', 'note',
+                  'markdown', 'source_urls', 'platform_keys')
+
+
+def public_report_evidence(evidence):
+    return {k: deepcopy(v) for k, v in (evidence or {}).items() if k != _REPORT_HISTORY}
+
+
+def freeze_report_state(row):
+    evidence = row.evidence or {}
+    history = deepcopy(evidence.get(_REPORT_HISTORY) or {})
+    history[str(row.version_no or 1)] = {**{key: deepcopy(getattr(row, key, None)) for key in _REPORT_FIELDS},
+                                        'evidence': public_report_evidence(evidence)}
+    row.evidence = {**public_report_evidence(evidence), _REPORT_HISTORY: history}
+
+
+def preserve_report_history(row, history):
+    row.evidence = {**public_report_evidence(row.evidence), _REPORT_HISTORY: deepcopy(history)}
+
+
+def invalidate_report_confirmation(row):
+    row.status = 'draft'
+    row.confirmed_by = None
+    row.confirmed_at = None
+
+
+def restore_report_state(row, version_no):
+    history = (row.evidence or {}).get(_REPORT_HISTORY) or {}
+    state = history.get(str(version_no))
+    if not state:
+        raise ValueError('该历史版本缺少完整证据快照，不能安全恢复；请另建草稿核验')
+    for key in _REPORT_FIELDS:
+        setattr(row, key, deepcopy(state.get(key)))
+    row.evidence = {**deepcopy(state['evidence']), _REPORT_HISTORY: deepcopy(history)}
+    invalidate_report_confirmation(row)

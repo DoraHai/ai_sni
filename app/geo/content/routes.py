@@ -2767,6 +2767,7 @@ async def _active_competitor_prompt_context(
                 GeoOptimizationBusiness.tenant_id == tenant_id,
                 GeoPrompt.id.in_(prompt_ids),
                 GeoPrompt.status == "active",
+                GeoPrompt.is_brand_probe.is_(False),
                 GeoOptimizationUnit.status == "active",
                 GeoOptimizationBusiness.status == "active",
             )
@@ -2779,8 +2780,9 @@ async def _active_competitor_prompt_context(
         if prompt.question_group
     }
     active_prompt_ids = set(questions)
+    from app.geo.content.sample_provenance import eligible_visibility_sample
     active_rows = [
-        row for row in rows if row.prompt_id in active_prompt_ids
+        row for row in rows if row.prompt_id in active_prompt_ids and eligible_visibility_sample(row)
     ]
     return active_rows, questions, groups
 
@@ -2928,18 +2930,18 @@ async def competitor_insights_daily(
 
     end = shanghai_today()
     start = end - timedelta(days=days - 1)
-    rows = list(
-        await session.scalars(
-            select(GeoDailyMetric)
-            .where(
-                GeoDailyMetric.tenant_id == tenant_id,
-                GeoDailyMetric.scope_key == sk,
-                GeoDailyMetric.metric_date >= start,
-                GeoDailyMetric.metric_date <= end,
-            )
-            .order_by(GeoDailyMetric.metric_date.asc())
-        )
-    )
+    # Rebuild in memory from raw evidence: old daily rows may have truncated names.
+    from app.geo.content.time_windows import shanghai_day_bounds_utc_naive
+    from app.geo.content.daily_metrics import load_prompt_unit_maps, snapshot_daily_rows
+    lower = shanghai_day_bounds_utc_naive(start)[0]
+    upper = shanghai_day_bounds_utc_naive(end)[1]
+    snapshots = list(await session.scalars(select(GeoAnswerSnapshot).where(
+        GeoAnswerSnapshot.tenant_id == tenant_id, GeoAnswerSnapshot.captured_at >= lower,
+        GeoAnswerSnapshot.captured_at < upper)))
+    snapshots, _, _ = await _active_competitor_prompt_context(session, tenant_id, snapshots)
+    probe_map, units, businesses = await load_prompt_unit_maps(session, tenant_id, {r.prompt_id for r in snapshots})
+    rows = [row for row in snapshot_daily_rows(snapshots, tenant_id=tenant_id, start=start, end=end,
+        probe_map=probe_map, unit_of_prompt=units, business_of_unit=businesses, include_engines=True) if row.scope_key == sk]
     items = [metric_row_payload(r) for r in rows]
     # Flatten top competitors across window for table
     name_totals: dict[str, int] = {}
@@ -2957,7 +2959,7 @@ async def competitor_insights_daily(
         "period": {"from": start.isoformat(), "to": end.isoformat(), "days": days},
         "items": items,
         "competitors": [{"name": n, "mentions": m} for n, m in top_names],
-        "note": "数据来自 geo_daily_metrics；无行时请先在概览/业务页「重算」日指标。",
+        "note": "按当前活动问题的合格真实快照只读重算；不受历史日排行截断影响。",
     }
 
 
@@ -8997,6 +8999,8 @@ async def upsert_competitor_report(
     from app.models.geo_competitor_report import GeoCompetitorReport
 
     ctx.ensure_tenant(req.tenant_id)
+    if req.status == "confirmed":
+        raise HTTPException(400, "请先保存草稿，再通过确认接口核验")
     title = (req.title or "").strip() or f"竞品溯源报告 · {req.competitor.strip()}"
     row = GeoCompetitorReport(
         tenant_id=req.tenant_id,
@@ -9011,7 +9015,7 @@ async def upsert_competitor_report(
         markdown=req.markdown,
         source_urls=req.source_urls,
         platform_keys=req.platform_keys,
-        evidence=req.evidence,
+        evidence={k: v for k, v in (req.evidence or {}).items() if k != "_version_snapshots"},
         version_no=1,
         created_by=ctx.user_id,
     )
@@ -9059,12 +9063,21 @@ async def patch_competitor_report(
     from app.models.geo_competitor_report import GeoCompetitorReport
 
     ctx.ensure_tenant(tenant_id)
-    row = await session.get(GeoCompetitorReport, report_id)
+    row = await session.get(GeoCompetitorReport, report_id, with_for_update=True)
     if row is None or row.tenant_id != tenant_id:
         raise HTTPException(404, "报告不存在")
+    from app.geo.content.competitor_reports import freeze_report_state, preserve_report_history, invalidate_report_confirmation
     data = req.model_dump(exclude_unset=True)
+    if data.get('status') == 'confirmed':
+        raise HTTPException(400, '请通过确认接口核验新版本')
+    freeze_report_state(row)
+    history = row.evidence['_version_snapshots']
     for k, v in data.items():
         setattr(row, k, v)
+    preserve_report_history(row, history)
+    invalidate_report_confirmation(row)
+    if data.get('status') == 'archived':
+        row.status = 'archived'
     row.version_no = int(row.version_no or 1) + 1
     session.add(snapshot_version(row, user_id=ctx.user_id))
     await session.commit()
@@ -9085,7 +9098,7 @@ async def confirm_competitor_report(
     from app.models.geo_competitor_report import GeoCompetitorReport
 
     ctx.ensure_tenant(tenant_id)
-    row = await session.get(GeoCompetitorReport, report_id)
+    row = await session.get(GeoCompetitorReport, report_id, with_for_update=True)
     if row is None or row.tenant_id != tenant_id:
         raise HTTPException(404, "报告不存在")
     row.status = "confirmed"
@@ -9155,7 +9168,7 @@ async def restore_competitor_report_version(
     from app.models.geo_competitor_report import GeoCompetitorReport, GeoCompetitorReportVersion
 
     ctx.ensure_tenant(tenant_id)
-    row = await session.get(GeoCompetitorReport, report_id)
+    row = await session.get(GeoCompetitorReport, report_id, with_for_update=True)
     if row is None or row.tenant_id != tenant_id:
         raise HTTPException(404, "报告不存在")
     ver = await session.scalar(
@@ -9166,10 +9179,11 @@ async def restore_competitor_report_version(
     )
     if ver is None:
         raise HTTPException(404, "该版本不存在")
-    row.insight = ver.insight
-    row.action = ver.action
-    row.note = ver.note
-    row.markdown = ver.markdown
+    from app.geo.content.competitor_reports import restore_report_state
+    try:
+        restore_report_state(row, version_no)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     row.version_no = int(row.version_no or 1) + 1
     session.add(snapshot_version(row, user_id=ctx.user_id))
     await session.commit()

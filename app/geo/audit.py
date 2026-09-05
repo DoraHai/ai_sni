@@ -7,7 +7,7 @@ import ipaddress
 import json
 import re
 import socket
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -87,7 +87,7 @@ AI_CRAWLER_AGENTS = (
 def parse_robots_ai_agents(robots_text: str) -> dict[str, Any]:
     """Parse robots.txt for allow/disallow of known AI crawler UAs.
 
-    status: allowed | blocked | unspecified
+    status: allowed | blocked | partial | unspecified
     """
     text = robots_text or ""
     blocks: list[dict[str, Any]] = []
@@ -131,16 +131,20 @@ def parse_robots_ai_agents(robots_text: str) -> dict[str, Any]:
                 matched.extend(block["rules"])
             if "*" in uas_l:
                 star.extend(block["rules"])
-        rules = matched if matched else star
+        has_specific = any(ua_l in [u.lower() for u in block["uas"]] for block in blocks)
+        rules = matched if has_specific else star
         disallows = [path for kind, path in rules if kind == "disallow" and path]
-        if any(path.strip() == "/" for path in disallows):
+        # This check describes site-wide blocking, not accessibility of every path.
+        global_block = any(path in {"/", "/*"} for path in disallows)
+        exceptions = any(kind == "allow" and path.startswith("/") for kind, path in rules)
+        if global_block and not exceptions:
             return "blocked", disallows
-        if matched:
-            return ("blocked" if disallows else "allowed"), disallows
-        return "unspecified", disallows
+        if disallows and not any(kind == "allow" and path == "/" for kind, path in rules):
+            return "partial", disallows
+        return ("allowed" if has_specific else "unspecified"), disallows
 
     agents = []
-    allowed = blocked = unspecified = 0
+    allowed = blocked = unspecified = partial = 0
     for ua in AI_CRAWLER_AGENTS:
         st, disallows = status_for(ua)
         agents.append({"ua": ua, "status": st, "disallows": disallows[:8]})
@@ -148,6 +152,8 @@ def parse_robots_ai_agents(robots_text: str) -> dict[str, Any]:
             allowed += 1
         elif st == "blocked":
             blocked += 1
+        elif st == "partial":
+            partial += 1
         else:
             unspecified += 1
     return {
@@ -155,6 +161,7 @@ def parse_robots_ai_agents(robots_text: str) -> dict[str, Any]:
         "allowed_count": allowed,
         "blocked_count": blocked,
         "unspecified_count": unspecified,
+        "partial_count": partial,
     }
 
 
@@ -168,6 +175,7 @@ class PageDocument:
     final_url: str
     html: str
     content_type: str
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 def normalize_url(value: str) -> str:
@@ -185,7 +193,7 @@ def normalize_url(value: str) -> str:
     return url
 
 
-async def _ensure_public_host(url: str) -> None:
+async def _ensure_public_host(url: str) -> list[str]:
     parsed = urlparse(url)
     host = parsed.hostname
     if not host:
@@ -206,6 +214,7 @@ async def _ensure_public_host(url: str) -> None:
         addresses = list({ipaddress.ip_address(info[4][0]) for info in infos})
     if not addresses or any(not address.is_global for address in addresses):
         raise GeoAuditError("禁止诊断本机、内网或保留地址")
+    return sorted((str(address) for address in addresses), key=lambda ip: (ipaddress.ip_address(ip).version, ip))
 
 
 async def safe_fetch(
@@ -216,15 +225,21 @@ async def safe_fetch(
     async with httpx.AsyncClient(
         timeout=FETCH_TIMEOUT,
         follow_redirects=False,
+        trust_env=False,
+        limits=httpx.Limits(max_keepalive_connections=0),
         headers={
             "User-Agent": USER_AGENT,
             "Accept": "text/html,application/xml,text/xml;q=0.9,text/plain;q=0.8",
         },
     ) as client:
         for _ in range(MAX_REDIRECTS + 1):
-            await _ensure_public_host(current)
+            current = normalize_url(current)
+            addresses = await _ensure_public_host(current)
+            original = httpx.URL(current)
+            pinned = original.copy_with(host=addresses[0])
             try:
-                async with client.stream("GET", current) as response:
+                async with client.stream("GET", pinned, headers={"Host": original.netloc.decode("ascii")},
+                                         extensions={"sni_hostname": original.raw_host.decode("ascii")}) as response:
                     if response.status_code in {301, 302, 303, 307, 308}:
                         location = response.headers.get("location")
                         if not location:
@@ -251,9 +266,10 @@ async def safe_fetch(
                     encoding = response.encoding or "utf-8"
                     return PageDocument(
                         requested_url=url,
-                        final_url=str(response.url),
+                        final_url=current,
                         html=b"".join(chunks).decode(encoding, errors="replace"),
                         content_type=content_type,
+                        headers={"x-robots-tag": ",".join(response.headers.get_list("x-robots-tag"))},
                     )
             except httpx.HTTPError as exc:
                 raise GeoAuditError(f"网站连接失败：{exc}") from exc
@@ -381,8 +397,9 @@ async def audit_url(url: str) -> dict[str, Any]:
     (robots_ok, robots_text), (llms_ok, llms_text) = await asyncio.gather(
         _optional_text(robots_url), _optional_text(llms_url)
     )
-    robots_meta = soup.select_one('meta[name="robots" i]')
-    noindex = bool(robots_meta and "noindex" in str(robots_meta.get("content", "")).lower())
+    directives = [str(node.get("content", "")) for node in soup.select('meta[name="robots" i]')]
+    directives.append(document.headers.get("x-robots-tag", ""))
+    noindex = any(re.search(r"(?:^|[\s,:])(noindex|none)(?:$|[\s,])", value, re.I) for value in directives)
     language = str(soup.html.get("lang", "")).strip() if soup.html else ""
 
     from app.geo.content.extractable_blocks import block_findings, blocks_payload
@@ -402,7 +419,7 @@ async def audit_url(url: str) -> dict[str, Any]:
     ai_detail = (
         f"允许 {robots_ai['allowed_count']} · "
         f"拦截 {robots_ai['blocked_count']} · "
-        f"未声明 {robots_ai['unspecified_count']}"
+        f"局部限制 {robots_ai['partial_count']} · 未声明 {robots_ai['unspecified_count']}"
         if robots_ok
         else "robots.txt 不可读，无法审计 AI 爬虫 UA"
     )

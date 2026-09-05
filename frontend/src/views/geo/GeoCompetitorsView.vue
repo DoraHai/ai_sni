@@ -463,6 +463,7 @@ const fmtRate = (v, row) => {
 }
 
 function winnerLabel(w) {
+  if (w === 'insufficient') return '样本不足'
   if (w === 'brand') return '本品领先'
   if (w === 'competitor') return '竞品领先'
   return '持平'

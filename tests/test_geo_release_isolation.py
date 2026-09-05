@@ -124,7 +124,7 @@ def test_geo_competitor_compare_excludes_archived_prompts():
     assert 'GeoOptimizationBusiness.status == "active"' in helper
     assert "active_prompt_ids = set(questions)" in helper
     assert "row.prompt_id in active_prompt_ids" in helper
-    assert routes.count("await _active_competitor_prompt_context(") == 4
+    assert routes.count("await _active_competitor_prompt_context(") == 5
 
 
 def test_geo_standalone_keeps_required_form_and_table_styles():

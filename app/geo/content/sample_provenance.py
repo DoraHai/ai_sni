@@ -37,3 +37,15 @@ def sample_provenance(snapshot: Any) -> dict[str, str]:
         "sampling_method": method,
         "analysis_status": analysis,
     }
+
+
+def eligible_visibility_sample(snapshot):
+    """Evidence population for comparable visibility numbers (prompt filtering is also required)."""
+    from types import SimpleNamespace
+    if isinstance(snapshot, dict):
+        snapshot = SimpleNamespace(**snapshot)
+    source = sample_provenance(snapshot)
+    return (source['sample_kind'] == 'real' and source['sampling_method'] == 'unprimed_json_v2'
+            and source['analysis_status'] == 'completed'
+            and getattr(snapshot, 'citation_accuracy', None) != 'inaccurate'
+            and not getattr(snapshot, 'is_brand_probe', False))

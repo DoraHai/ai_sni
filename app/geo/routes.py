@@ -842,6 +842,8 @@ async def create_action_ticket(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
+    if (req.advice_code or "").startswith("cockpit:v1:"):
+        raise HTTPException(400, "统一任务请通过 integration/tasks 创建")
     if (req.advice_code or '').startswith('workqueue:v1:'):
         # Serialize acceptance of the same suggestion without changing legacy tickets.
         await session.execute(select(Tenant.id).where(Tenant.id == tenant_id).with_for_update())
@@ -895,6 +897,8 @@ async def patch_action_ticket(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     row = await _work_ticket_for_update(session, ticket_id, tenant_id)
+    if (row.advice_code or '').startswith('cockpit:v1:'):
+        raise HTTPException(409, '统一任务请使用 integration/tasks 接口核验真实指标')
     data = req.model_dump(exclude_unset=True)
     manual_pass = data.pop("manual_pass", None)
     verification_note = (data.pop("verification_note", None) or '').strip()
@@ -994,6 +998,8 @@ async def verify_one_ticket(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     ticket = await _ticket_for_tenant(session, ticket_id, tenant_id)
+    if (ticket.advice_code or '').startswith('cockpit:v1:'):
+        raise HTTPException(409, '统一任务请使用 integration/tasks 接口核验真实指标')
     if (ticket.advice_code or '').startswith('workqueue:v1:'):
         raise HTTPException(400, '请在执行待办中填写结果并人工验收')
     media = await _media_rows(session, tenant_id)
@@ -1052,3 +1058,6 @@ async def verify_one_ticket(
 from app.geo.content.routes import router as content_router  # noqa: E402
 
 router.include_router(content_router)
+
+from app.geo.integration import router as integration_router
+router.include_router(integration_router)

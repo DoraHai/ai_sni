@@ -129,15 +129,18 @@ class CompetitorTraceTests(unittest.TestCase):
                 competitors=[],
             ),
         ]
+        for row in rows:
+            row.sample_mode = 'openai_compat'
+            row.note = 'method=unprimed_json_v2 analysis=completed'
         out = build_competitor_compare(
             rows=rows,
             questions={1: "如何选型 BI？", 2: "有哪些工具？"},
         )
         self.assertEqual(out["summary"]["prompt_count"], 2)
         by_id = {i["prompt_id"]: i for i in out["items"]}
-        # brand 1/2 vs tableau 2/2 → competitor lead
-        self.assertEqual(by_id[1]["winner"], "competitor")
-        self.assertEqual(by_id[2]["winner"], "brand")
+        # Sparse observations must not declare either side the winner.
+        self.assertEqual(by_id[1]["winner"], "insufficient")
+        self.assertEqual(by_id[2]["winner"], "insufficient")
         self.assertEqual(by_id[1]["top_competitor"], "Tableau")
 
 

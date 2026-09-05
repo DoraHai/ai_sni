@@ -387,6 +387,8 @@ def build_competitor_compare(
 
     Each item is one prompt with snapshot aggregates for brand and competitors.
     """
+    from app.geo.content.sample_provenance import eligible_visibility_sample
+    rows = [row for row in rows if eligible_visibility_sample(row)]
     questions = questions or {}
     by_prompt: dict[int, dict[str, Any]] = {}
 
@@ -437,7 +439,7 @@ def build_competitor_compare(
         comps = getattr(row, "competitors", None)
         if comps is None and isinstance(row, dict):
             comps = row.get("competitors")
-        for raw in comps or []:
+        for raw in set(comps or []):
             name = str(raw or "").strip()
             if not name:
                 continue
@@ -471,7 +473,12 @@ def build_competitor_compare(
                 best_comp_name = hit["name"]
         comps.sort(key=lambda x: (-x["mention_rate"], x["name"]))
 
-        if brand_rate > best_comp_rate + 1e-9:
+        sufficient = bucket["snapshot_count"] >= 8 and len(bucket["engines"]) >= 2
+        if not sufficient:
+            winner = "insufficient"
+            for comp in comps:
+                comp["mention_rate"] = None
+        elif brand_rate > best_comp_rate + 1e-9:
             winner = "brand"
             brand_lead += 1
         elif best_comp_rate > brand_rate + 1e-9:

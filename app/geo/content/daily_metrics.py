@@ -186,11 +186,11 @@ class MetricBucket:
         comparable = len(composition.sampling_methods) <= 1 and not composition.needs_review
         vis_n = self.snapshots_visibility
         probe_n = self.snapshots_probe
-        # Cap top competitors to keep JSON small
+        # Persist all competitors; ranking limits belong only in presentation.
         ranked = sorted(
             (self.competitor_counts or {}).items(),
             key=lambda x: (-x[1], x[0]),
-        )[:15]
+        )
         competitor_mentions: dict[str, Any] = {}
         for name, n in ranked:
             competitor_mentions[name] = {
@@ -274,7 +274,7 @@ def aggregate_buckets(
     return buckets
 
 
-def snapshot_daily_rows(snaps, *, tenant_id, start, end, probe_map, unit_of_prompt, business_of_unit):
+def snapshot_daily_rows(snaps, *, tenant_id, start, end, probe_map, unit_of_prompt, business_of_unit, include_engines=False):
     """Read-only daily rows for a report, built from its exact snapshot population."""
     from types import SimpleNamespace
     from app.geo.content.metric_service import composition_of
@@ -295,7 +295,7 @@ def snapshot_daily_rows(snaps, *, tenant_id, start, end, probe_map, unit_of_prom
         for key, template in templates.items():
             buckets.setdefault(key, MetricBucket(business_id=template.business_id, unit_id=template.unit_id))
         for key, bucket in buckets.items():
-            if "@" in key:
+            if "@" in key and not include_engines:
                 continue  # Report slices are across all engines.
             output.append(SimpleNamespace(id=None, tenant_id=tenant_id, metric_date=day,
                 scope_key=key, business_id=bucket.business_id, unit_id=bucket.unit_id,
