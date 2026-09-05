@@ -1,4 +1,7 @@
 import client from './client'
+export const seoQaGet = (path, params) => client.get(`/api/v1/seo/qa/${path}`, { params })
+export const seoQaPost = (path, payload) => client.post(`/api/v1/seo/qa/${path}`, payload, { timeout: 35000 })
+export const seoQaPatch = (path, payload) => client.patch(`/api/v1/seo/qa/${path}`, payload)
 export const fetchSeoWorkOrders = params => client.get('/api/v1/seo/tasks', {params})
 export const createSeoWorkOrder = payload => client.post('/api/v1/seo/tasks', payload)
 export const updateSeoWorkOrder = (id,payload) => client.patch(`/api/v1/seo/tasks/${id}`,payload)
