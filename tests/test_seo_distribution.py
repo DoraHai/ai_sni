@@ -621,12 +621,15 @@ def test_ai_platform_variant_retries_missing_keyword_and_sanitizes_html() -> Non
         patch("app.api.seo._content_keywords", new=AsyncMock(return_value=[keyword])),
             patch("app.api.seo._tenant", new=AsyncMock(return_value=SimpleNamespace(name="Growth Sniper", industry="SaaS"))),
             patch("app.api.seo.is_enabled", return_value=True),
-            patch("app.api.seo.charge_seo_usage", new=AsyncMock()),
+            patch("app.api.seo.charge_seo_usage", new=AsyncMock()) as charge,
+            patch("app.api.seo.refund_seo_usage", new=AsyncMock()) as refund,
             patch("app.api.seo.chat_json", new=chat_mock),
     ):
         result = asyncio.run(adapt_content_distribution(request, AsyncMock(), context))
 
     assert chat_mock.await_count == 2
+    charge.assert_awaited_once()
+    refund.assert_not_awaited()
     assert result["ai_generated"] is True
     assert result["feedback"] == "已修订"
     assert result["keyword_checks"][0]["in_content"] is True

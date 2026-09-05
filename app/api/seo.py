@@ -186,6 +186,20 @@ async def _limited_seo_chat_json(
         raise
 
 
+async def _refund_failed_seo_ai_request(
+    session: AsyncSession,
+    tenant_id: int,
+) -> None:
+    """Refund a charged user action without hiding its original failure."""
+    try:
+        await refund_seo_usage(session, tenant_id, "ai_requests", 1)
+    except Exception:
+        logger.exception(
+            "Failed to refund SEO AI usage after terminal error tenant_id=%s",
+            tenant_id,
+        )
+
+
 router = APIRouter(
     prefix="/api/v1/seo",
     tags=["SEO"],
@@ -4867,10 +4881,12 @@ async def assist_seo_content(
     if not is_enabled():
         raise HTTPException(503, "DeepSeek 尚未配置")
     system, user = _seo_ai_prompt(req, tenant, keywords)
+    usage_charged = False
     try:
         raw_result = await _limited_seo_chat_json(
             session, req.tenant_id, system, user, timeout=90.0
         )
+        usage_charged = True
         repair_reason: str | None = None
         try:
             result = _validated_seo_assist_result(req.action, raw_result)
@@ -4989,8 +5005,18 @@ async def assist_seo_content(
                 + "、".join(unsupported_title_topics)
                 + "，请补充经核验资料后重试",
             )
+    except HTTPException:
+        if usage_charged:
+            await _refund_failed_seo_ai_request(session, req.tenant_id)
+        raise
     except DeepSeekError as exc:
+        if usage_charged:
+            await _refund_failed_seo_ai_request(session, req.tenant_id)
         raise HTTPException(502, f"DeepSeek 内容处理失败：{exc}") from exc
+    except Exception:
+        if usage_charged:
+            await _refund_failed_seo_ai_request(session, req.tenant_id)
+        raise
     allowed = {key: result.get(key) for key in ("title", "outline", "content", "feedback", "suggestions") if result.get(key) is not None}
     return {"action": req.action, "model": "deepseek-chat", "keyword_coverage": {"selected": [item.keyword for item in keywords], "missing": []}, **allowed}
 
@@ -6212,12 +6238,13 @@ async def adapt_content_distribution(
             keywords,
             req.instruction,
         )
+        usage_charged = False
         try:
-            result = _validated_distribution_ai_result(
-                await _limited_seo_chat_json(
-                    session, req.tenant_id, system, user, timeout=90.0
-                )
+            raw_result = await _limited_seo_chat_json(
+                session, req.tenant_id, system, user, timeout=90.0
             )
+            usage_charged = True
+            result = _validated_distribution_ai_result(raw_result)
             prepared = _prepare_distribution_variant(
                 result["title"], result["content"], connection.platform_code
             )
@@ -6232,11 +6259,15 @@ async def adapt_content_distribution(
                         "首轮结果：" + json.dumps(result, ensure_ascii=False),
                     ]
                 )
-                result = _validated_distribution_ai_result(
-                    await _limited_seo_chat_json(
-                        session, req.tenant_id, system, correction, timeout=90.0
-                    )
+                repaired_result = await _limited_seo_chat_json(
+                    session,
+                    req.tenant_id,
+                    system,
+                    correction,
+                    timeout=90.0,
+                    charge_usage=False,
                 )
+                result = _validated_distribution_ai_result(repaired_result)
                 prepared = _prepare_distribution_variant(
                     result["title"], result["content"], connection.platform_code
                 )
@@ -6248,10 +6279,22 @@ async def adapt_content_distribution(
                     f"AI 未完整覆盖目标关键词：{'、'.join(missing)}，请调整要求后重试",
                 )
             feedback = result["feedback"] or "AI 已按平台风格生成专属稿，请人工核对事实和表达。"
+        except HTTPException:
+            if usage_charged:
+                await _refund_failed_seo_ai_request(session, req.tenant_id)
+            raise
         except DeepSeekError as exc:
+            if usage_charged:
+                await _refund_failed_seo_ai_request(session, req.tenant_id)
             raise HTTPException(502, f"AI 平台专属稿生成失败：{exc}") from exc
         except SeoDistributionError as exc:
+            if usage_charged:
+                await _refund_failed_seo_ai_request(session, req.tenant_id)
             raise HTTPException(502, str(exc)) from exc
+        except Exception:
+            if usage_charged:
+                await _refund_failed_seo_ai_request(session, req.tenant_id)
+            raise
 
     checks = _distribution_keyword_checks(prepared, keywords)
     warnings: list[str] = []

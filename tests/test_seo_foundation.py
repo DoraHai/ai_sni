@@ -1535,6 +1535,51 @@ def test_seo_ai_repairs_incomplete_result_once_without_double_charging() -> None
     assert "必须返回的 JSON 字段" in chat.await_args_list[1].args[1]
 
 
+def test_seo_ai_refunds_when_repair_still_has_no_usable_result() -> None:
+    request = SeoContentAssistRequest(
+        tenant_id=1,
+        action="generate",
+        keyword_ids=[11],
+    )
+    tenant = Tenant(id=1, name="测试品牌")
+    keywords = [
+        SeoKeywordAsset(
+            id=11,
+            tenant_id=1,
+            keyword="目标词",
+            priority="P1",
+            status="active",
+            source="manual",
+        )
+    ]
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+
+    with (
+        patch("app.api.seo._tenant", new=AsyncMock(return_value=tenant)),
+        patch("app.api.seo._content_keywords", new=AsyncMock(return_value=keywords)),
+        patch("app.api.seo.is_enabled", return_value=True),
+        patch("app.api.seo.charge_seo_usage", new=AsyncMock()) as charge,
+        patch("app.api.seo.refund_seo_usage", new=AsyncMock()) as refund,
+        patch(
+            "app.api.seo.chat_json",
+            new=AsyncMock(side_effect=[{"content": "不完整"}, {"content": "仍不完整"}]),
+        ) as chat,
+    ):
+        with pytest.raises(Exception) as exc:
+            asyncio.run(assist_seo_content(request, AsyncMock(), context))
+
+    assert getattr(exc.value, "status_code", None) == 502
+    assert chat.await_count == 2
+    charge.assert_awaited_once()
+    refund.assert_awaited_once_with(ANY, 1, "ai_requests", 1)
+
+
 @pytest.mark.parametrize("action", ["generate", "rewrite"])
 def test_source_bound_content_rejects_ungrounded_full_text_ai_actions(action: str) -> None:
     request = SeoContentAssistRequest(
