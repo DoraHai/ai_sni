@@ -489,6 +489,21 @@ async def sync_search_terms_daily() -> None:
     logger.info("[scheduler] 搜索词报告每日同步完成: %s", result)
 
 
+async def check_writeback_health() -> None:
+    """Independent transactions prevent one customer's failure blocking others."""
+    from app.rules.writeback_health import refresh_writeback_alerts
+
+    async with async_session_factory() as session:
+        tenant_ids = [t.id for t in await list_active_module_tenants(session, "sem")]
+    for tenant_id in tenant_ids:
+        try:
+            async with async_session_factory() as session:
+                await refresh_writeback_alerts(session, tenant_id)
+                await session.commit()
+        except Exception:  # noqa: BLE001
+            logger.exception("[scheduler] 回写告警检查失败 tenant=%s", tenant_id)
+
+
 def start_scheduler() -> None:
     if not _acquire_scheduler_lock():
         logger.info(
@@ -532,6 +547,14 @@ def start_scheduler() -> None:
             probe_site_health_alerts,
             CronTrigger(hour=4, minute=20),
             id="probe_site_health_alerts",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.add_job(
+            check_writeback_health,
+            CronTrigger(minute="*/5"),
+            id="check_writeback_health",
             replace_existing=True,
             max_instances=1,
             coalesce=True,
