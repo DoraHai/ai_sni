@@ -2713,6 +2713,39 @@ async def delete_answer_snapshot(
     return {"deleted": True, "id": snapshot_id}
 
 
+async def _active_competitor_prompt_context(
+    session: AsyncSession,
+    tenant_id: int,
+    rows: list[GeoAnswerSnapshot],
+) -> tuple[list[GeoAnswerSnapshot], dict[int, str], dict[int, str]]:
+    """Keep competitor views aligned with the active prompt inventory."""
+    prompt_ids = {
+        int(row.prompt_id) for row in rows if row.prompt_id is not None
+    }
+    if not prompt_ids:
+        return [], {}, {}
+    prompts = list(
+        await session.scalars(
+            select(GeoPrompt).where(
+                GeoPrompt.tenant_id == tenant_id,
+                GeoPrompt.id.in_(prompt_ids),
+                GeoPrompt.status == "active",
+            )
+        )
+    )
+    questions = {prompt.id: prompt.question for prompt in prompts}
+    groups = {
+        prompt.id: prompt.question_group
+        for prompt in prompts
+        if prompt.question_group
+    }
+    active_prompt_ids = set(questions)
+    active_rows = [
+        row for row in rows if row.prompt_id in active_prompt_ids
+    ]
+    return active_rows, questions, groups
+
+
 @router.get("/competitor-insights")
 async def competitor_insights(
     tenant_id: int = Query(...),
@@ -2728,15 +2761,9 @@ async def competitor_insights(
             .order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
         )
     )
-    prompt_ids = {r.prompt_id for r in rows}
-    questions: dict[int, str] = {}
-    if prompt_ids:
-        for p in await session.scalars(
-            select(GeoPrompt).where(
-                GeoPrompt.tenant_id == tenant_id, GeoPrompt.id.in_(prompt_ids)
-            )
-        ):
-            questions[p.id] = p.question
+    rows, questions, _ = await _active_competitor_prompt_context(
+        session, tenant_id, rows
+    )
     buckets: dict[str, dict[str, Any]] = {}
     for row in rows:
         for name in row.competitors or []:
@@ -2912,15 +2939,9 @@ async def competitor_insights_compare(
             .order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
         )
     )
-    prompt_ids = {r.prompt_id for r in rows if r.prompt_id}
-    questions: dict[int, str] = {}
-    if prompt_ids:
-        for p in await session.scalars(
-            select(GeoPrompt).where(
-                GeoPrompt.tenant_id == tenant_id, GeoPrompt.id.in_(list(prompt_ids))
-            )
-        ):
-            questions[p.id] = p.question
+    rows, questions, _ = await _active_competitor_prompt_context(
+        session, tenant_id, rows
+    )
     return build_competitor_compare(rows=rows, questions=questions)
 
 
@@ -2942,27 +2963,12 @@ async def competitor_insights_trace(
             .order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
         )
     )
-    prompt_ids = {r.prompt_id for r in rows if r.prompt_id is not None}
-    questions: dict[int, str] = {}
-    if prompt_ids:
-        for p in await session.scalars(
-            select(GeoPrompt).where(
-                GeoPrompt.tenant_id == tenant_id, GeoPrompt.id.in_(prompt_ids)
-            )
-        ):
-            questions[p.id] = p.question
+    rows, questions, groups = await _active_competitor_prompt_context(
+        session, tenant_id, rows
+    )
     payload = build_competitor_trace(
         competitor=name, rows=rows, questions=questions
     )
-    groups: dict[int, str] = {}
-    if prompt_ids:
-        for p in await session.scalars(
-            select(GeoPrompt).where(
-                GeoPrompt.tenant_id == tenant_id, GeoPrompt.id.in_(prompt_ids)
-            )
-        ):
-            if p.question_group:
-                groups[p.id] = p.question_group
     from app.geo.content.competitor_placements import attach_geo_reverse
     from app.geo.content.competitor_trace import snapshot_mentions_competitor
 
@@ -3018,15 +3024,9 @@ async def competitor_insights_report(
             .order_by(GeoAnswerSnapshot.captured_at.desc(), GeoAnswerSnapshot.id.desc())
         )
     )
-    prompt_ids = {r.prompt_id for r in rows if r.prompt_id is not None}
-    questions: dict[int, str] = {}
-    if prompt_ids:
-        for p in await session.scalars(
-            select(GeoPrompt).where(
-                GeoPrompt.tenant_id == req.tenant_id, GeoPrompt.id.in_(prompt_ids)
-            )
-        ):
-            questions[p.id] = p.question
+    rows, questions, _ = await _active_competitor_prompt_context(
+        session, req.tenant_id, rows
+    )
     trace = build_competitor_trace(
         competitor=req.competitor, rows=rows, questions=questions
     )

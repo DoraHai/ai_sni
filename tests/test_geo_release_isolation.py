@@ -110,6 +110,17 @@ def test_geo_ask_management_tabs_fill_the_available_row():
     assert "@media (max-width: 760px)" in page_css
 
 
+def test_geo_competitor_compare_excludes_archived_prompts():
+    routes = _read("app/geo/content/routes.py")
+    helper = routes.split("async def _active_competitor_prompt_context", 1)[1]
+    helper = helper.split('@router.get("/competitor-insights")', 1)[0]
+
+    assert 'GeoPrompt.status == "active"' in helper
+    assert "active_prompt_ids = set(questions)" in helper
+    assert "row.prompt_id in active_prompt_ids" in helper
+    assert routes.count("await _active_competitor_prompt_context(") == 4
+
+
 def test_geo_standalone_keeps_required_form_and_table_styles():
     entry = _read("frontend/geo-frontend/src/main.js")
     styles = _read("frontend/geo-frontend/src/standalone.css")
