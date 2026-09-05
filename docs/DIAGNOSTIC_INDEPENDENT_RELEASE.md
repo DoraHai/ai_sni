@@ -1,6 +1,7 @@
 # 诊断中心独立发布
 
-诊断服务从 codex/diagnostic-independent-service 分支开始维护，独立提交与发布。
+生产分支为 codex/production-diagnostic；功能分支通过 PR 合入后自动发布。
+本次功能分支为 codex/diagnostic-independent-service。
 GEO 生产分支的发布不会替换下列诊断目录、进程和 API 路由。
 
 - API：app.diagnostic_main:app，127.0.0.1:8012，/api/v1/diagnostic/
@@ -25,6 +26,20 @@ GEO 生产分支的发布不会替换下列诊断目录、进程和 API 路由�
 
 每次发布：
 
+    功能分支 → PR 到 codex/production-diagnostic → 检查通过 → 合并 → 自动部署
+
+GitHub Actions：Production Diagnostic deployment。
+PR 仅测试和构建；生产分支 push 才能进入 production 环境并调用受限发布账号。
+复用现有 production 环境的 DEPLOY_HOST、DEPLOY_PORT、DEPLOY_USER、
+DEPLOY_SSH_KEY、DEPLOY_KNOWN_HOSTS，不复制或创建新的 GitHub 凭据。
+首次安装服务器入口：bash ops/platform-deploy/install-diagnostic.sh。
+该入口只启用 diagnostic 模块，不替换其他模块入口或通用 sudoers。
+上传包验证 SHA256、路径、大小、文件类型和 manifest，拒绝软链接及环境文件。
+运行中用独立发布锁防止诊断部署并发，健康或接口检查失败自动回滚前后端。
+独立 Python 依赖环境不随发布更新；新增依赖需先单独安装，发布不会升级其他模块依赖。
+
+紧急人工发布（管理员，自动流水线不可用时）：
+
     bash scripts/deploy_diagnostic.sh
 
 该脚本构建诊断前端，上传后端快照与前端，先验证独立 API/数据库健康，再切换前端。
@@ -36,7 +51,7 @@ GEO 生产分支的发布不会替换下列诊断目录、进程和 API 路由�
 分别切回发布输出的 previous_backend / previous_frontend，再仅重启 diagnostic-service。
 首次迁移的旧前端目录保存在 /opt/diagnostic-center/releases/pre-independent-<时间戳>。
 
-后续不要从旧 GEO checkout 执行旧诊断部署脚本。诊断发布必须使用本分支的新脚本。
+后续不要从旧 GEO checkout 执行旧诊断部署脚本。诊断发布以生产诊断分支为基线。
 
 ## 首次生产切换记录（2026-09-05）
 

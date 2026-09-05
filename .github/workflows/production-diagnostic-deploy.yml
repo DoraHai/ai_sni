@@ -1,0 +1,161 @@
+name: Production Diagnostic deployment
+
+on:
+  push:
+    branches:
+      - codex/production-diagnostic
+  pull_request:
+    branches: [codex/production-diagnostic]
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type DEPLOY_DIAGNOSTIC to publish the approved DIAGNOSTIC baseline
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diagnostic-${{ github.event.pull_request.number || 'production' }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify DIAGNOSTIC baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt pytest
+
+      - name: Run DIAGNOSTIC regression tests
+        env:
+          PYTHONPATH: .
+          TZ: UTC
+        run: >-
+          pytest -q tests/test_diagnostic_service.py tests/test_diagnostic_pipeline.py
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install shared frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build diagnostic frontend
+        working-directory: frontend
+        run: npm run build:diagnostic-center
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: diagnostic-frontend
+          path: frontend/dist-diagnostic-center/
+          retention-days: 7
+
+  deploy:
+    name: Build and deploy DIAGNOSTIC only
+    if: github.event_name != 'pull_request' && github.ref_name == 'codex/production-diagnostic'
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - name: Validate confirmation
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$CONFIRMATION" != "DEPLOY_DIAGNOSTIC" ]; then
+            echo "Confirmation must be DEPLOY_DIAGNOSTIC" >&2
+            exit 2
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: diagnostic-frontend
+          path: frontend/dist-diagnostic-center/
+
+      - name: Create isolated DIAGNOSTIC release archive
+        run: |
+          commit="$(git rev-parse HEAD)"
+          release_root="$RUNNER_TEMP/diagnostic-release"
+          install -d "$release_root/backend" "$release_root/frontend"
+          cp -a app "$release_root/backend/app"
+          cp requirements.txt "$release_root/backend/"
+          cp -a frontend/dist-diagnostic-center/. "$release_root/frontend/"
+          {
+            echo 'module=diagnostic'
+            echo "commit=$commit"
+            echo 'migration=not-run'
+          } > "$release_root/MANIFEST"
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/diagnostic-${commit}.tgz" diagnostic-release
+          echo "DIAGNOSTIC_COMMIT=$commit" >> "$GITHUB_ENV"
+          echo "DIAGNOSTIC_ARCHIVE=$RUNNER_TEMP/diagnostic-${commit}.tgz" >> "$GITHUB_ENV"
+          echo "DIAGNOSTIC_ARCHIVE_SHA256=$(sha256sum "$RUNNER_TEMP/diagnostic-${commit}.tgz" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/platform-deploy
+          chmod 600 ~/.ssh/platform-deploy
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Upload DIAGNOSTIC release archive
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          remote_path="/home/platform-deploy/uploads/diagnostic-${DIAGNOSTIC_COMMIT}.tgz"
+          scp \
+            -i ~/.ssh/platform-deploy \
+            -P "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$DIAGNOSTIC_ARCHIVE" \
+            "$DEPLOY_USER@$DEPLOY_HOST:${remote_path}.part"
+          ssh \
+            -i ~/.ssh/platform-deploy \
+            -p "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "mv '${remote_path}.part' '$remote_path'"
+
+      - name: Apply DIAGNOSTIC release without database migration
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          remote_path="/home/platform-deploy/uploads/diagnostic-${DIAGNOSTIC_COMMIT}.tgz"
+          ssh \
+            -i ~/.ssh/platform-deploy \
+            -p "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "sudo -n /usr/local/sbin/platform-deploy apply diagnostic '$remote_path' '$DIAGNOSTIC_COMMIT' '$DIAGNOSTIC_ARCHIVE_SHA256' DEPLOY_DIAGNOSTIC"

@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() {
+  printf 'diagnostic-deploy: %s\n' "$*" >&2
+  exit 64
+}
+
+exec 9>/run/lock/diagnostic-deploy.lock
+flock -n 9 || fail "another diagnostic deployment is running"
+
+archive="${1:-}"
+commit="${2:-}"
+archive_sha256="${3:-}"
+confirmation="${4:-}"
+
+[[ "$confirmation" == "DEPLOY_DIAGNOSTIC" ]] || fail 'confirmation must be DEPLOY_DIAGNOSTIC'
+[[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail 'commit must be a full lowercase SHA'
+[[ "$archive_sha256" =~ ^[0-9a-f]{64}$ ]] || fail 'archive sha256 is invalid'
+[[ "$archive" == "/home/platform-deploy/uploads/diagnostic-${commit}.tgz" ]] || fail 'unexpected archive path'
+[[ -f "$archive" && ! -L "$archive" ]] || fail 'archive is missing or is a symlink'
+[[ "$(stat -c '%U' "$archive")" == "platform-deploy" ]] || fail 'archive owner must be platform-deploy'
+[[ "$(stat -c '%s' "$archive")" -le 524288000 ]] || fail 'archive exceeds 500 MiB'
+printf '%s  %s\n' "$archive_sha256" "$archive" | sha256sum -c - >/dev/null
+
+if tar -tvzf "$archive" | awk '$1 ~ /^[lh]/ { found=1 } END { exit(found ? 0 : 1) }'; then
+  fail 'archive must not contain symbolic or hard links'
+fi
+
+member=''
+while IFS= read -r member; do
+  [[ "$member" == diagnostic-release/* ]] || fail "archive member outside diagnostic-release: $member"
+  case "/$member/" in
+    */../*) fail "archive contains parent traversal: $member" ;;
+  esac
+done < <(tar -tzf "$archive")
+
+stage_root="$(mktemp -d /opt/platform-deploy-diagnostic.XXXXXX)"
+cleanup() {
+  case "$stage_root" in
+    /opt/platform-deploy-diagnostic.*) rm -rf -- "$stage_root" ;;
+  esac
+}
+trap cleanup EXIT
+
+cp -- "$archive" "$stage_root/release.tgz"
+printf '%s  %s\n' "$archive_sha256" "$stage_root/release.tgz" | sha256sum -c - >/dev/null
+/usr/bin/python3 /etc/platform-deploy/modules/diagnostic_archive.py "$stage_root/release.tgz"
+tar -xzf "$stage_root/release.tgz" -C "$stage_root" --no-same-owner --no-same-permissions
+payload="$stage_root/diagnostic-release"
+
+[[ -f "$payload/MANIFEST" ]] || fail 'MANIFEST is missing'
+grep -Fxq 'module=diagnostic' "$payload/MANIFEST" || fail 'manifest module mismatch'
+grep -Fxq "commit=$commit" "$payload/MANIFEST" || fail 'manifest commit mismatch'
+[[ -f "$payload/backend/app/diagnostic_main.py" ]] || fail 'Diagnostic API entry is missing'
+[[ -f "$payload/frontend/index.html" ]] || fail 'Diagnostic frontend index is missing'
+[[ ! -e "$payload/backend/.env" ]] || fail '.env must not be included in a release'
+
+backend_root='/opt/diagnostic-service'
+frontend_root='/opt/diagnostic-center'
+release_id="$(date -u +%Y%m%dT%H%M%SZ)-${commit:0:12}"
+backend_release="$backend_root/releases/$release_id"
+frontend_release="$frontend_root/releases/$release_id"
+
+[[ ! -e "$backend_release" && ! -e "$frontend_release" ]] || fail 'release already exists'
+install -d -o root -g root -m 755 "$backend_release" "$frontend_release"
+cp -a "$payload/backend/." "$backend_release/"
+cp -a "$payload/frontend/." "$frontend_release/"
+printf '%s\n' "$commit" > "$backend_release/RELEASE_COMMIT"
+printf '%s\n' "$commit" > "$frontend_release/RELEASE_COMMIT"
+chown -R sem:sem "$backend_release"
+chmod -R a+rX "$frontend_release"
+
+# Use diagnostic-service's dedicated Python dependency environment.
+python_bin='/opt/diagnostic-service/.venv/bin/python'
+[[ -x "$python_bin" ]] || fail "Diagnostic Python runtime is missing: $python_bin"
+(cd "$backend_release" && runuser -u sem -- "$python_bin" -m compileall -q app)
+
+previous_backend="$(readlink "$backend_root/current" 2>/dev/null || true)"
+previous_frontend="$(readlink "$frontend_root/dist" 2>/dev/null || true)"
+[[ -n "$previous_backend" && -n "$previous_frontend" ]] || fail 'current release links are missing'
+
+rollback() {
+  ln -sfn "$previous_backend" "$backend_root/current.next"
+  mv -Tf "$backend_root/current.next" "$backend_root/current"
+  ln -sfn "$previous_frontend" "$frontend_root/dist.next"
+  mv -Tf "$frontend_root/dist.next" "$frontend_root/dist"
+  systemctl restart diagnostic-service
+}
+
+if ! {
+  ln -sfn "$backend_release" "$backend_root/current.next" &&
+  mv -Tf "$backend_root/current.next" "$backend_root/current" &&
+  ln -sfn "$frontend_release" "$frontend_root/dist.next" &&
+  mv -Tf "$frontend_root/dist.next" "$frontend_root/dist" &&
+  systemctl restart diagnostic-service
+}; then
+  rollback
+  fail 'Diagnostic release switch failed; previous release restored'
+fi
+
+health_body=''
+if ! health_body="$(curl -fsS --retry 60 --retry-delay 1 --retry-connrefused http://127.0.0.1:8012/health/diagnostic)"; then
+  rollback
+  fail 'Diagnostic health request failed; previous release restored'
+fi
+if ! grep -q '"db":"ok"' <<<"$health_body"; then
+  rollback
+  fail 'Diagnostic database health is not ok; previous release restored'
+fi
+
+if ! code="$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:8012/api/v1/diagnostic/assets/brand/discover)" || [[ "$code" != 401 ]]; then
+  rollback
+  fail 'Diagnostic route smoke failed; previous release restored'
+fi
+
+printf 'module=diagnostic\n'
+printf 'commit=%s\n' "$commit"
+printf 'backend_release=%s\n' "$backend_release"
+printf 'frontend_release=%s\n' "$frontend_release"
+printf 'migration=not-run\n'
