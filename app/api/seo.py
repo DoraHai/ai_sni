@@ -13,7 +13,7 @@ from typing import Any, Literal
 from urllib.parse import quote, urljoin, urlparse
 from uuid import uuid4
 
-from app.seo_backlinks import apply_backlink_evidence, belongs_to_site, discover_backlinks, fetch_backlink_page
+from app.seo_backlinks import apply_backlink_evidence, discover_backlinks, fetch_backlink_page
 from app.seo_task_center import list_task_center, planned_checks, actor_key, JOB_PERMISSIONS
 from app.models.seo import SeoAiOperation
 
@@ -7682,8 +7682,6 @@ async def discover_site_backlinks(req: BacklinkDiscovery, session: AsyncSession 
         source, _ = normalize_publication_url(req.source_url)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    if belongs_to_site(source, site.canonical_domain):
-        raise HTTPException(422, "来源属于当前网站，请在内链图谱中管理")
     publication = None
     if req.publication_id:
         publication = await session.get(SeoContentPublication, req.publication_id)

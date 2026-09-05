@@ -19,6 +19,8 @@ async def fetch_backlink_page(url):
 async def discover_backlinks(session, tenant_id, site_id, source_url, domain):
     from sqlalchemy.dialects.postgresql import insert
     from app.models.seo import SeoBacklink
+    if belongs_to_site(source_url, domain):
+        return {"state": "internal", "reason": "same_site", "checked_at": datetime.utcnow().isoformat(), "found": 0, "created": 0, "links": []}
     result = await fetch_backlink_page(source_url)
     evidence = page_evidence(result)
     evidence["checked_at"] = datetime.utcnow().isoformat()
@@ -44,12 +46,13 @@ async def discover_backlinks(session, tenant_id, site_id, source_url, domain):
 
 async def discover_published_backlinks():
     """Bounded recovery job also covers imported/API/manual publication records."""
-    from sqlalchemy import select, or_
+    from sqlalchemy import select, or_, and_
     from app.database import async_session_factory
     from app.models.seo import SeoContentPublication, SeoContentAsset
     from app.models.module_workspace import SeoSite
     from app.module_scope import list_active_module_tenants
     cutoff = (datetime.utcnow() - timedelta(days=7)).isoformat()
+    retry_cutoff = (datetime.utcnow() - timedelta(hours=1)).isoformat()
     async with async_session_factory() as session:
         tenants = [row.id for row in await list_active_module_tenants(session, "seo")]
         if not tenants:
@@ -62,7 +65,8 @@ async def discover_published_backlinks():
             .where(SeoContentPublication.tenant_id.in_(tenants), SeoContentAsset.tenant_id == SeoContentPublication.tenant_id,
                    SeoSite.tenant_id == SeoContentPublication.tenant_id, SeoSite.status == "active",
                    SeoContentPublication.status == "published", SeoContentPublication.page_url.is_not(None),
-                   or_(SeoContentPublication.link_discovery["checked_at"].astext.is_(None), SeoContentPublication.link_discovery["checked_at"].astext < cutoff))
+                   or_(SeoContentPublication.link_discovery["checked_at"].astext.is_(None), SeoContentPublication.link_discovery["checked_at"].astext < cutoff,
+                       and_(SeoContentPublication.link_discovery["state"].astext.in_(["unreachable", "blocked"]), SeoContentPublication.link_discovery["checked_at"].astext < retry_cutoff)))
             .order_by(SeoContentPublication.link_discovery["checked_at"].astext.asc().nullsfirst(), SeoContentPublication.id)
             .limit(20))).all())
     checked = 0
