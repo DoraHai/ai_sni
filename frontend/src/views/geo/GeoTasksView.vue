@@ -115,7 +115,10 @@ async function openCreate() {
   createMode.value = 'prompt'
   createOpen.value = true
   try {
-    const data = await listGeoPrompts(tenantId.value, { status: 'active' })
+    const data = await listGeoPrompts(tenantId.value, {
+      status: 'active',
+      active_inventory_only: true,
+    })
     prompts.value = data.items || []
     if (!form.value.prompt_id && prompts.value.length) {
       form.value.prompt_id = prompts.value[0].id

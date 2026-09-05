@@ -2017,6 +2017,10 @@ async def rebuild_daily_metrics(
 async def list_prompts(
     tenant_id: int = Query(...),
     status: str | None = Query(None),
+    active_inventory_only: bool = Query(
+        False,
+        description="仅返回归属于当前租户启用业务和启用优化单元的提问",
+    ),
     tag: str | None = Query(None),
     question_group: str | None = Query(None),
     is_brand_probe: bool | None = Query(None),
@@ -2028,6 +2032,23 @@ async def list_prompts(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     stmt = select(GeoPrompt).where(GeoPrompt.tenant_id == tenant_id)
+    if active_inventory_only:
+        stmt = (
+            stmt.join(
+                GeoOptimizationUnit,
+                GeoPrompt.unit_id == GeoOptimizationUnit.id,
+            )
+            .join(
+                GeoOptimizationBusiness,
+                GeoOptimizationUnit.business_id == GeoOptimizationBusiness.id,
+            )
+            .where(
+                GeoOptimizationUnit.tenant_id == tenant_id,
+                GeoOptimizationBusiness.tenant_id == tenant_id,
+                GeoOptimizationUnit.status == "active",
+                GeoOptimizationBusiness.status == "active",
+            )
+        )
     if status:
         stmt = stmt.where(GeoPrompt.status == status)
     if is_brand_probe is not None:
