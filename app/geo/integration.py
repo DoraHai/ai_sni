@@ -67,7 +67,7 @@ class TaskCreate(BaseModel):
         target = self.params.get('metric_key', MENTIONS)
         if not isinstance(target, str) or not target.startswith('geo.'):
             raise ValueError('params.metric_key 必须属于 GEO')
-        if self.params.get('direction', 'increase') not in {'increase', 'decrease'}:
+        if self.params.get('direction', 'increase') not in ('increase', 'decrease'):
             raise ValueError('direction 必须为 increase/decrease')
         threshold = self.params.get('min_delta', 0)
         if isinstance(threshold, bool) or not isinstance(threshold, (int,float)) or not (0 <= threshold < float('inf')):
@@ -185,12 +185,15 @@ def completion_evidence(row, current):
         raise HTTPException(409, '需等待任务创建后一个完整自然周的观测结果')
     if baseline['cohort'] != current['cohort'] or baseline['own_domains'] != current['own_domains']:
         raise HTTPException(409, '前后问题、引擎或自有域口径发生变化，不能生成完成证据')
+    if not baseline.get('sample_counts') or baseline['sample_counts'] != current.get('sample_counts'):
+        raise HTTPException(409, '前后各问题与引擎的采样次数不一致或缺少记录，不能生成完成证据')
     delta = after['value'] - before['value']
     signed = delta if params.get('direction','increase') == 'increase' else -delta
     if signed <= 0 or signed < params.get('min_delta', 0):
         raise HTTPException(409, '真实指标变化尚未达到任务目标')
     return dict(metric_key=key, before=before, after=after, delta=round(delta,4),
                 before_snapshot_ids=baseline['sample_ids'], after_snapshot_ids=current['sample_ids'],
+                before_sample_counts=baseline['sample_counts'], after_sample_counts=current['sample_counts'],
                 source=f'/api/v1/geo/integration/metrics/snapshot?tenant_id={row.tenant_id}&week_end={after["as_of"][:10]}', verified_at=iso(datetime.utcnow()),
                 note='同题同引擎周指标的实际观察变化，不证明本任务造成该变化。')
 

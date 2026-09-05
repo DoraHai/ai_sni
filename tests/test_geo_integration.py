@@ -82,6 +82,7 @@ def test_competitors_are_not_truncated_before_weekly_counts():
 def test_completion_contains_actual_changes_and_traceable_samples():
     evidence=completion_evidence(task(),state())
     assert evidence['delta']==12
+    assert evidence['before_sample_counts'] == evidence['after_sample_counts']
     assert len(evidence['before_snapshot_ids'])==12
     assert len(evidence['after_snapshot_ids'])==12
     row=task();row.progress={'completion_evidence':evidence};row.status='done'
@@ -253,3 +254,52 @@ def test_database_loader_filters_server_source_and_scopes_every_query():
         params=call.args[0].compile().params
         assert params['tenant_id_1']==7
     session.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize('direction', [[], {}, ['increase'], 1, None])
+def test_invalid_direction_is_a_validation_error(direction):
+    with pytest.raises(ValidationError):
+        TaskCreate(action_type='improve', title='test', assignee_role='operator',
+                   params={'direction': direction})
+
+
+@pytest.mark.parametrize('week_end', [date(1, 1, 1), date(1, 1, 8), date(1, 1, 15)])
+def test_early_week_rejected_before_database_read(week_end):
+    from app.geo.integration import snapshot
+    session = NS(scalars=AsyncMock())
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(snapshot(session, 7, week_end))
+    assert exc.value.status_code == 400
+    session.scalars.assert_not_awaited()
+
+
+def test_more_sampling_cannot_complete_a_task_with_unchanged_mention_rate():
+    row = task()
+    row.baseline_snapshot = build_weekly_snapshot(samples(20, mention=True), ['brand.example'], date(2026, 8, 24))
+    current = build_weekly_snapshot(samples(27, mention=True) + samples(27, mention=True, start_id=20),
+                                    ['brand.example'], date(2026, 8, 31))
+    assert row.baseline_snapshot['cohort'] == current['cohort']
+    assert metric_map(current)[MENTIONS]['value'] == 24
+    with pytest.raises(HTTPException) as exc:
+        completion_evidence(row, current)
+    assert exc.value.status_code == 409
+
+
+def test_missing_sampling_distribution_cannot_complete_legacy_task():
+    row = task()
+    row.baseline_snapshot.pop('sample_counts')
+    with pytest.raises(HTTPException) as exc:
+        completion_evidence(row, state())
+    assert exc.value.status_code == 409
+
+
+def test_same_total_with_changed_sample_weights_cannot_complete_task():
+    rows = samples(27, mention=True)
+    rows[0].prompt_id = 3
+    current = build_weekly_snapshot(rows, ['brand.example'], date(2026, 8, 31))
+    row = task()
+    assert row.baseline_snapshot['cohort'] == current['cohort']
+    assert len(row.baseline_snapshot['sample_ids']) == len(current['sample_ids'])
+    with pytest.raises(HTTPException) as exc:
+        completion_evidence(row, current)
+    assert exc.value.status_code == 409

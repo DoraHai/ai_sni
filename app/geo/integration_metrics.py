@@ -79,7 +79,10 @@ def build_weekly_snapshot(rows, own_domains, week_end, tracked_names=()):
     metrics = [dict(metric_key=key, value=value, unit='score' if key == SCORE else 'percent' if key == RATE else 'count',
                     as_of=as_of, trend_7d=metric_trend(value, prior_values[key], comparable=comparable))
                for key, value in current_values.items()]
+    sample_counts = [[prompt, engine, count] for (prompt, engine), count
+                     in sorted(Counter((r.prompt_id, r.engine) for r in current).items())]
     return dict(metrics=metrics, sample_ids=sorted(r.id for r in current), cohort=cohort(current),
+                sample_counts=sample_counts,
                 own_domains=sorted(own_domains), window_start=start.isoformat()+'Z',
                 competitor_names={competitor_key(name): name for name in names})
 
@@ -112,6 +115,8 @@ def verified_patrol_rows(rows, runs):
 
 async def load_weekly_snapshot(session, tenant_id, week_end=None):
     week_end = week_end or closed_week_end()
+    if week_end < date(1, 1, 22):
+        raise ValueError('week_end 必须留足两个完整周的统计窗口')
     if week_end.weekday() != 0 or week_end > closed_week_end():
         raise ValueError('week_end 必须为不晚于本周周一的上海日期')
     start = shanghai_day_bounds_utc_naive(week_end-timedelta(days=14))[0]
