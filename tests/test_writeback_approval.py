@@ -135,6 +135,8 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
             def __init__(self):
                 self.row = None
                 self.flush = AsyncMock()
+                self.execute = AsyncMock()
+                self.scalar = AsyncMock(return_value=None)
 
             def add(self, row):
                 self.row = row
@@ -147,6 +149,7 @@ class WritebackApprovalTests(unittest.IsolatedAsyncioTestCase):
             payload={"keyword_id": 7, "new_bid": 1.234},
             operator_user_id=9,
             confirmation=WRITEBACK_CONFIRMATION,
+            idempotency_key="sem-one-click-audit-0001",
         )
 
         self.assertIs(row, session.row)

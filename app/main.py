@@ -39,6 +39,7 @@ from app.api import (
     seo_router,
 )
 from app.baidu import BaiduAPIError
+from app.api.sem_metrics import router as sem_metrics_router
 from app.baidu.sync import (
     sync_operation_records_for_account,
     sync_adgroups_for_account,
@@ -116,6 +117,7 @@ app.include_router(customer_modules_router)
 app.include_router(geo_projects_router)
 app.include_router(adjustments_verify_router)
 app.include_router(writeback_router)
+app.include_router(sem_metrics_router)
 app.include_router(search_terms_router)
 app.include_router(leads_router)
 app.include_router(ocpc_router)

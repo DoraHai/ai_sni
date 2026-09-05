@@ -1,0 +1,109 @@
+"""SEM 客户级只读指标契约；不调用百度、不补采、不写入快照。"""
+from datetime import datetime, timedelta
+from decimal import Decimal
+from zoneinfo import ZoneInfo
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database import get_session
+from app.models import BaiduAccount, KwReportSnapshot, Tenant, WritebackApproval
+from app.module_scope import ensure_module_access
+from app.security.auth import AuthContext, require_auth
+from app.security.sem_identity import load_sem_identity_states
+
+router = APIRouter(prefix="/api/v1/sem/metrics", tags=["SEM 指标契约"])
+TZ = ZoneInfo("Asia/Shanghai")
+
+
+def metric(key, value, unit, as_of, definition, *, trend=None, status="available"):
+    return {
+        "metric_key": f"sem.{key}", "value": value, "unit": unit,
+        "as_of": as_of.isoformat() if as_of else None,
+        "trend_7d": trend or [], "definition": definition, "data_status": status,
+    }
+
+
+@router.get("/snapshot")
+async def snapshot(
+    tenant_id: int = Query(..., gt=0),
+    ctx: AuthContext = Depends(require_auth),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    # This composite endpoint must not bypass the approval ledger's view permission.
+    if not (ctx.can_view("monitor.dashboard") and ctx.can_view("verify.adjustments")):
+        raise HTTPException(403, "需要数据看板及效果验证查看权限")
+    await ensure_module_access(session, ctx, tenant_id, "sem")
+    tenant = await session.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(404, "客户不存在")
+    now = datetime.now(TZ)
+    today = now.date()
+    end = today - timedelta(days=1)
+    month_start = today.replace(day=1)
+    trend_start = end - timedelta(days=6)
+    start = min(month_start, trend_start)
+    identity = (await load_sem_identity_states(session, [tenant_id]))[tenant_id]
+    blocked = identity["status"] == "blocked"
+    items = [metric(
+        "identity.conflict_tenant_count", int(blocked), "customer", now,
+        "当前请求客户存在隔离标记或生效 UCID 跨客户重复时为 1，否则为 0；不是全站客户数。",
+    )]
+    if blocked:
+        for key, unit, definition in (
+            ("spend.month_to_date_cny", "CNY", "本月截至昨日的已归属关键词报表花费合计，不是实时账户总花费。"),
+            ("spend.budget_utilization_pct", "percent", "本月已归属关键词报表花费除以当前客户月预算乘 100。"),
+            ("accounts.active_count", "account", "当前客户状态为 active 的本地推广账户记录数，不验证远端 token 有效性。"),
+            ("approvals.pending_count", "approval", "当前客户审批表中 status=pending 的记录数，不含已批准或已消费记录。"),
+        ):
+            items.append(metric(key, None, unit, None, definition, status="identity_blocked"))
+        return {"tenant_id": tenant_id, "items": items}
+
+    active = await session.scalar(select(func.count()).select_from(BaiduAccount).where(
+        BaiduAccount.tenant_id == tenant_id, BaiduAccount.status == "active",
+    ))
+    pending = await session.scalar(select(func.count()).select_from(WritebackApproval).where(
+        WritebackApproval.tenant_id == tenant_id, WritebackApproval.status == "pending",
+    ))
+    # Outer join detects unattributed or cross-tenant report rows instead of silently
+    # dropping their cost and presenting an understated month total.
+    rows = (await session.execute(
+        select(KwReportSnapshot.report_date, func.sum(KwReportSnapshot.cost),
+               func.count(), func.count(BaiduAccount.id))
+        .outerjoin(BaiduAccount, (BaiduAccount.id == KwReportSnapshot.baidu_account_id)
+                   & (BaiduAccount.tenant_id == tenant_id))
+        .where(KwReportSnapshot.tenant_id == tenant_id,
+               KwReportSnapshot.report_date >= start, KwReportSnapshot.report_date <= end)
+        .group_by(KwReportSnapshot.report_date)
+    )).all()
+    daily = {day: (Decimal(cost), count == attributed) for day, cost, count, attributed in rows}
+    month_rows = {day: row for day, row in daily.items() if day >= month_start}
+    valid = bool(month_rows) and all(ok for _, ok in month_rows.values())
+    amount = sum((cost for cost, _ in month_rows.values()), Decimal(0)) if valid else None
+    status = "observed_reports" if valid else ("unattributed_reports" if month_rows else "no_reports")
+    as_of = datetime.combine(max(month_rows), datetime.min.time(), TZ) if valid else None
+    budget = tenant.monthly_budget
+    utilization = round(float(amount / budget * 100), 2) if amount is not None and budget and budget > 0 else None
+    trend = []
+    for offset in range(7):
+        day = trend_start + timedelta(days=offset)
+        observed = [row for date, row in month_rows.items() if date <= day]
+        # Same metric as value (month-to-date), not a misleading daily-cost series.
+        value = (float(sum((cost for cost, _ in observed), Decimal(0)))
+                 if day in month_rows and all(ok for _, ok in observed) else None)
+        trend.append({"date": day.isoformat(), "value": value})
+    items.extend([
+        metric("spend.month_to_date_cny", float(amount) if amount is not None else None, "CNY", as_of,
+               "本月截至昨日的已归属关键词报表花费合计，不是实时账户总花费；缺报日期不推算。",
+               trend=trend, status=status),
+        metric("spend.budget_utilization_pct", utilization, "percent", as_of,
+               "本月已归属关键词报表花费除以当前客户月预算乘 100；未配置正数预算时为空。",
+               status=status if budget and budget > 0 else "no_budget"),
+        metric("accounts.active_count", active, "account", now,
+               "当前客户状态为 active 的本地推广账户记录数，不验证远端 token 有效性。"),
+        metric("approvals.pending_count", pending, "approval", now,
+               "当前客户审批表中 status=pending 的记录数，不含已批准或已消费记录。"),
+    ])
+    return {"tenant_id": tenant_id, "items": items}

@@ -151,6 +151,8 @@ async def create_self_approved_approval(
         )
     normalized, fingerprint = payload_fingerprint(action_type, payload)
     marker = _idempotency_marker(idempotency_key)
+    if marker is None:
+        raise WritebackApprovalError("一键真实回写必须提供 idempotency_key，请刷新后重试")
     if marker is not None:
         # Serialize equal client requests without a schema change. The lock is
         # held until the funds intent is committed, so a concurrent replay can
