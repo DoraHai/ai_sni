@@ -92,12 +92,14 @@ def test_geo_frontend_is_mounted_without_replacing_the_sem_shell():
 def test_geo_overview_desktop_keeps_prototype_workbench_actions():
     overview = _read("frontend/src/views/geo/GeoOverviewView.vue")
     dashboard_css = _read("frontend/src/styles/geo-dashboard.css")
+    account_bar = _read("frontend/src/components/GeoAccountBar.vue")
 
     assert "Demo 最短路径" in overview
     assert "可见度期次对比" in overview
     assert 'class="gd-search"' in overview
-    assert ".geo-topbar" in dashboard_css
-    assert ".geo-tenant-switcher" in dashboard_css
+    assert ".geo-page-banner" in dashboard_css
+    assert ".geo-accountbar" in account_bar
+    assert ".geo-tenant-switcher" in account_bar
 
 
 def test_geo_ask_management_tabs_fill_the_available_row():
@@ -187,7 +189,7 @@ def test_geo_standalone_bootstraps_logged_in_tenant_context():
 def test_geo_standalone_uses_shared_customer_and_account_header():
     shell = _read("frontend/src/views/geo/GeoWorkspaceShell.vue")
     page = _read("frontend/src/components/GeoWorkbenchPage.vue")
-    header = _read("frontend/src/components/GeoPrototypePageHeader.vue")
+    account_bar = _read("frontend/src/components/GeoAccountBar.vue")
     nav = _read("frontend/src/utils/geoPrototypeNavigation.js")
 
     assert "grid-template-columns: 220px minmax(0, 1fr);" in shell
@@ -199,11 +201,13 @@ def test_geo_standalone_uses_shared_customer_and_account_header():
     assert "提问监控" in nav
     assert "GEO 文章" in nav
     assert "官网结构优化" in nav
-    assert "GeoPrototypePageHeader" in page
-    assert 'class="geo-topbar"' in header
-    assert 'class="geo-tenant-switcher"' in header
-    assert "当前客户" in header
-    assert "session.setTenant(id)" in header
+    assert "GeoAccountBar" in shell
+    assert "<GeoAccountBar />" in shell
+    assert 'class="geo-accountbar"' in account_bar
+    assert 'class="geo-tenant-switcher"' in account_bar
+    assert "当前客户" in account_bar
+    assert "session.setTenant(id)" in account_bar
+    assert 'class="geo-page-banner"' in page
     assert "geo-tenant-switcher" not in page
 
 
