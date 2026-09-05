@@ -46,3 +46,26 @@ assert.equal(context.sampleQuestions.value[0], 'new default')
 callback()
 assert.equal(requests.length, 2, 'each report automatically runs only once')
 console.log('Diagnostic automatic sampling checks passed')
+
+const report = { id: 42 }
+let focused = false
+const formContext = vm.createContext({
+  loading: { value: false }, newDiagnosisOpen: { value: false },
+  audit: { value: report }, error: { value: '' }, quickMode: { value: 'own' },
+  quickUrl: { value: '' }, url: { value: 'https://example.com' }, brandProfile: { value: {} },
+  quickProfile: { value: null }, quickProfileOpen: { value: false },
+  activeAsset: { value: '' }, activeReport: { value: '' },
+  window: { history: { replaceState() {} }, location: { pathname: '/diagnostic-center/' } },
+  nextTick: async () => {}, focusQuickInput() { focused = true },
+})
+vm.runInContext(source.slice(source.indexOf('async function startNewDiagnosis()'), source.indexOf('function websiteKey(')), formContext)
+await vm.runInContext('startNewDiagnosis()', formContext)
+assert.equal(formContext.newDiagnosisOpen.value, true)
+assert.equal(formContext.audit.value, report, 'opening form preserves the current report')
+assert.equal(focused, true)
+assert.ok(source.includes('v-if="newDiagnosisOpen && !loading" id="quick-audit"'))
+formContext.newDiagnosisOpen.value = false
+formContext.loading.value = true
+await vm.runInContext('startNewDiagnosis()', formContext)
+assert.equal(formContext.newDiagnosisOpen.value, false, 'cannot open during an active diagnosis')
+console.log('Diagnostic new form visibility checks passed')

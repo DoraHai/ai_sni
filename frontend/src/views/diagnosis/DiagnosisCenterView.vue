@@ -19,6 +19,7 @@ const tenantId = computed(() => session.tenantId || (import.meta.env.DEV && impo
 
 const url = ref('')
 const quickMode = ref('own')
+const newDiagnosisOpen = ref(false)
 const quickUrl = ref('')
 const quickUrlInput = ref(null)
 const quickProfile = ref(null)
@@ -550,35 +551,17 @@ async function ensureTenant() {
 
 async function startNewDiagnosis() {
   if (loading.value) return
-  if (audit.value) {
-    try {
-      await ElMessageBox.confirm(
-        '新建后将清空当前页面，并重新填写本次诊断的基础信息。',
-        '新建诊断',
-        { confirmButtonText: '重新填写', cancelButtonText: '保留当前页面', type: 'info' },
-      )
-    } catch {
-      return
-    }
-  }
-  audit.value = null
-  pageSpeed.value = null
+  newDiagnosisOpen.value = true
   error.value = ''
-  issueFilter.value = 'all'
-  expandedEvidence.value = ''
-  sampleQuestions.value = ['', '', '']
   quickMode.value = 'own'
-  quickUrl.value = ''
+  quickUrl.value = url.value || brandProfile.value?.website || ''
   quickProfile.value = null
   quickProfileOpen.value = false
-  auditScope.value = 'single'
-  brandReady.value = false
-  brandProfile.value = {}
-  url.value = ''
-  activeReport.value = ''
-  openAsset('brand')
+  activeAsset.value = ''
+  activeReport.value = 'overview'
+  window.history.replaceState(null, '', `${window.location.pathname}#section-overview`)
   await nextTick()
-  ElMessage.success('请填写本次诊断的基础信息')
+  focusQuickInput()
 }
 
 function websiteKey(value) {
@@ -611,6 +594,7 @@ async function startAudit() {
   startStageProgress()
   try {
     audit.value = await runGeoAudit({ tenantId: tenantId.value, url: normalized, scope: auditScope.value })
+    newDiagnosisOpen.value = false
     url.value = audit.value.final_url || normalized
     quickMode.value = 'own'
     quickUrl.value = url.value
@@ -699,6 +683,7 @@ async function startQuickAudit() {
     ])
     if (auditResult.status === 'rejected') throw auditResult.reason
     audit.value = auditResult.value
+    newDiagnosisOpen.value = false
     if (profileResult.status === 'fulfilled' && profileResult.value) quickProfile.value = profileResult.value
     quickUrl.value = audit.value.final_url || normalized
     loadingStage.value = loadingStages.length - 1
@@ -978,6 +963,7 @@ async function printReport() {
 }
 
 watch(tenantId, () => {
+  newDiagnosisOpen.value = false
   audit.value = null
   pageSpeed.value = null
   url.value = ''
@@ -1080,7 +1066,7 @@ onMounted(async () => {
         <div id="section-overview" class="report-overview-anchor" />
         <p v-if="error" class="diagnosis-error-banner">{{ error }}</p>
 
-        <section v-if="!loading" id="quick-audit" class="quick-audit-bar" :class="quickMode">
+        <section v-if="newDiagnosisOpen && !loading" id="quick-audit" class="quick-audit-bar" :class="quickMode">
           <header>
             <div>
               <span>QUICK WEBSITE CHECK</span>
