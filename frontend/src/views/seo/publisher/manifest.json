@@ -1,0 +1,8 @@
+{
+  "manifest_version": 3,
+  "name": "G-Snipers 国内填稿助手",
+  "version": "0.1.0",
+  "description": "导入 SEO 分发任务，在当前官方编辑器按需填入标题和正文；不执行发布。",
+  "permissions": ["activeTab", "scripting", "storage", "clipboardWrite"],
+  "action": {"default_popup": "popup.html"}
+}

@@ -4,7 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -569,7 +569,8 @@ def test_platform_variant_adapts_content_and_reports_keyword_coverage() -> None:
     assert result["ai_generated"] is False
 
 
-def test_ai_platform_variant_retries_missing_keyword_and_sanitizes_html() -> None:
+@pytest.mark.parametrize("repair_outcome", ["success", "invalid", "cancel"])
+def test_ai_platform_variant_retries_missing_keyword_and_sanitizes_html(repair_outcome) -> None:
     content = SeoContentAsset(
         id=5,
         tenant_id=1,
@@ -610,7 +611,10 @@ def test_ai_platform_variant_retries_missing_keyword_and_sanitizes_html() -> Non
     chat_mock = AsyncMock(
         side_effect=[
             {"title": "首轮标题", "content": "<p>首轮遗漏关键词</p>", "feedback": "首轮"},
-            {"title": "SEO 内容分发实践", "content": "<p>SEO 内容分发修订稿</p><script>bad()</script>", "feedback": "已修订"},
+            asyncio.CancelledError() if repair_outcome == "cancel" else (
+                {} if repair_outcome == "invalid" else
+                {"title": "SEO 内容分发实践", "content": "<p>SEO 内容分发修订稿</p><script>bad()</script>", "feedback": "已修订"}
+            ),
         ]
     )
 
@@ -621,12 +625,25 @@ def test_ai_platform_variant_retries_missing_keyword_and_sanitizes_html() -> Non
         patch("app.api.seo._content_keywords", new=AsyncMock(return_value=[keyword])),
             patch("app.api.seo._tenant", new=AsyncMock(return_value=SimpleNamespace(name="Growth Sniper", industry="SaaS"))),
             patch("app.api.seo.is_enabled", return_value=True),
-            patch("app.api.seo.charge_seo_usage", new=AsyncMock()),
+            patch("app.api.seo.claim_seo_ai_operation", new=AsyncMock(return_value={"date": "2026-09-05"})) as charge,
+            patch("app.api.seo.refund_seo_usage", new=AsyncMock()) as refund,
             patch("app.api.seo.chat_json", new=chat_mock),
     ):
-        result = asyncio.run(adapt_content_distribution(request, AsyncMock(), context))
+        if repair_outcome == "success":
+            result = asyncio.run(adapt_content_distribution(request, AsyncMock(), context))
+        else:
+            from fastapi import HTTPException
+            with pytest.raises(asyncio.CancelledError if repair_outcome == "cancel" else HTTPException) as exc:
+                asyncio.run(adapt_content_distribution(request, AsyncMock(), context))
+            if repair_outcome == "invalid":
+                assert exc.value.status_code == 502
 
     assert chat_mock.await_count == 2
+    charge.assert_awaited_once()
+    if repair_outcome != "success":
+        refund.assert_awaited_once_with(ANY, 1, "ai_requests", 1, charged_on="2026-09-05")
+        return
+    refund.assert_not_awaited()
     assert result["ai_generated"] is True
     assert result["feedback"] == "已修订"
     assert result["keyword_checks"][0]["in_content"] is True
@@ -1341,7 +1358,7 @@ def test_distribution_frontend_exposes_guided_publish_flow() -> None:
     view = (root / "frontend/src/views/seo/SeoDistributionView.vue").read_text(encoding="utf-8")
     api = (root / "frontend/src/api/seo.js").read_text(encoding="utf-8")
 
-    for label in ("平台连接", "编辑平台连接", "保存并测试", "发布预检", "优先创建草稿", "平台专属稿", "AI 生成平台专属稿", "目标关键词覆盖", "保存草稿", "提交审核", "专属稿审核", "修订记录", "批量生成基础稿", "AI 批量生成并提交审核", "辅助发布交接台", "复制正文（保留格式）", "打开官方编辑器", "确认后重试", "发布尝试记录", "同一文章可保留多个平台链接", "正在转存"):
+    for label in ("平台连接", "编辑分发账号", "保存并测试", "发布预检", "优先创建草稿", "平台专属稿", "AI 生成平台专属稿", "目标关键词覆盖", "保存草稿", "提交审核", "专属稿审核", "修订记录", "批量生成基础稿", "AI 批量生成并提交审核", "国内平台发布交接台", "复制正文（保留格式）", "打开官方编辑器", "确认后重试", "发布尝试记录", "同一文章可保留多个平台链接", "正在转存"):
         assert label in view
     for function_name in (
         "fetchSeoDistributionConnections",

@@ -25,6 +25,7 @@ SEO_MONITOR_CASCADE_REVISION = ROOT / "migrations/versions/20260831_0081_seo_mon
 SEO_AUTOMATION_RUNS_REVISION = ROOT / "migrations/versions/20260901_0082_seo_automation_runs.py"
 SEO_MANUAL_RERUN_REVISION = ROOT / "migrations/versions/20260901_0083_seo_manual_rerun.py"
 SEO_CRAWL_QUEUED_REVISION = ROOT / "migrations/versions/20260901_0084_seo_crawl_queued_status.py"
+SEO_METRIC_PARTIAL_REVISION = ROOT / "migrations/versions/20260905_0089_seo_metric_partial_status.py"
 EXPECTED_GEO_REPAIR_SHA256 = "4e785eefd6bcc7a6f1158ff38b19769cb5ee2ffafa433e9f616f30c85ac533ba"
 CANONICAL_SEM_MIGRATION_SHA256 = {
     "20260822_0074_suggestion_workflow.py": "c082bfbab80ad2db03e11d00c0855bdbd2167ee3418259433b2caddc9d18addc",
@@ -72,7 +73,7 @@ def test_merge_revisions_are_noop_and_sem_seo_merge_is_only_head() -> None:
     _assert_noop_revision(SEM_SEO_MERGE_REVISION)
 
     script = ScriptDirectory.from_config(_config())
-    assert script.get_heads() == ["0088_seo_image_alt_reviews"]
+    assert script.get_heads() == ["0090_seo_ai_operations"]
     merge = script.get_revision("0074_merge_geo_seo_heads")
     assert set(merge._normalized_down_revisions) == {
         "0073_geo_schema_repair",
@@ -115,6 +116,62 @@ def test_crawl_status_migration_allows_queued_and_has_safe_downgrade() -> None:
     assert "SET status = 'failed'" in source
 
 
+def test_metric_status_migration_allows_partial_and_has_safe_downgrade() -> None:
+    source = SEO_METRIC_PARTIAL_REVISION.read_text(encoding="utf-8")
+    assert "status IN ('available','not_configured','pending','partial','failed','stale')" in source
+    assert "SET status = 'failed' WHERE status = 'partial'" in source
+
+
+@pytest.mark.skipif(not os.getenv("SEO_MIGRATION_TEST_DATABASE_URL"), reason="requires isolated PostgreSQL")
+def test_postgres_metric_partial_upgrade_and_downgrade_preserve_rows() -> None:
+    import importlib.util
+    from uuid import uuid4
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy.exc import IntegrityError
+
+    spec = importlib.util.spec_from_file_location("metric_partial_migration", SEO_METRIC_PARTIAL_REVISION)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+
+    async def scenario():
+        engine = create_async_engine(os.environ["SEO_MIGRATION_TEST_DATABASE_URL"])
+        schema = "seo_metric_test_" + uuid4().hex
+        try:
+            async with engine.begin() as connection:
+                await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+                await connection.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+                await connection.execute(text("""CREATE TABLE seo_metric_snapshots (
+                    id integer PRIMARY KEY, status text NOT NULL,
+                    CONSTRAINT ck_seo_metric_snapshot_status CHECK
+                    (status IN ('available','not_configured','pending','failed','stale')))"""))
+                await connection.execute(text("INSERT INTO seo_metric_snapshots VALUES (1, 'available')"))
+
+                def migrate(sync_connection, direction):
+                    with Operations.context(MigrationContext.configure(sync_connection)):
+                        getattr(migration, direction)()
+
+                await connection.run_sync(migrate, "upgrade")
+                await connection.execute(text("INSERT INTO seo_metric_snapshots VALUES (2, 'partial')"))
+                with pytest.raises(IntegrityError):
+                    async with connection.begin_nested():
+                        await connection.execute(text("INSERT INTO seo_metric_snapshots VALUES (3, 'bogus')"))
+                await connection.run_sync(migrate, "downgrade")
+                rows = (await connection.execute(text("SELECT id, status FROM seo_metric_snapshots ORDER BY id"))).all()
+                assert rows == [(1, "available"), (2, "failed")]
+                with pytest.raises(IntegrityError):
+                    async with connection.begin_nested():
+                        await connection.execute(text("INSERT INTO seo_metric_snapshots VALUES (3, 'partial')"))
+                await connection.run_sync(migrate, "upgrade")
+                await connection.execute(text("INSERT INTO seo_metric_snapshots VALUES (3, 'partial')"))
+        finally:
+            async with engine.begin() as connection:
+                await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+            await engine.dispose()
+
+    asyncio.run(scenario())
+
+
 def test_upgrade_plan_from_production_sem_head_runs_only_seo_branch() -> None:
     script = ScriptDirectory.from_config(_config())
     steps = script._upgrade_revs("head", "0076_oauth_rebind_intent")
@@ -133,6 +190,8 @@ def test_upgrade_plan_from_production_sem_head_runs_only_seo_branch() -> None:
         "0086_seo_index_review_merge",
         "0087_seo_image_alt_evidence",
         "0088_seo_image_alt_reviews",
+        "0089_seo_metric_partial_status",
+        "0090_seo_ai_operations",
     ]
 
 
@@ -147,11 +206,15 @@ def test_index_review_promotion_preserves_both_histories_and_upgrades_only_new_t
         "0085_seo_page_index_reviews", "0086_seo_index_review_merge",
         "0087_seo_image_alt_evidence",
         "0088_seo_image_alt_reviews",
+        "0089_seo_metric_partial_status",
+        "0090_seo_ai_operations",
     ]
     assert script.get_revision("0087_seo_image_alt_evidence").down_revision == "0086_seo_index_review_merge"
     assert [step.revision.revision for step in script._upgrade_revs("head", "0086_seo_index_review_merge")] == [
         "0087_seo_image_alt_evidence",
         "0088_seo_image_alt_reviews",
+        "0089_seo_metric_partial_status",
+        "0090_seo_ai_operations",
     ]
 
 
@@ -369,7 +432,7 @@ def test_postgres_upgrade_from_sem_head_applies_only_pending_seo_branch(monkeypa
     ) = asyncio.run(schema_snapshot())
     get_settings.cache_clear()
 
-    assert after == "0088_seo_image_alt_reviews"
+    assert after == "0090_seo_ai_operations"
     assert {
         "ix_seo_distribution_variants_tenant_id",
         "ix_seo_distribution_variants_content_asset_id",

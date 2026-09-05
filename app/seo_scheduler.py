@@ -11,6 +11,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.config import get_settings
 from app.process_lock import acquire_file_lock, release_file_lock
 from app.seo_ranking_jobs import collect_daily_seo_rankings
+from app.seo_ai_operations import reconcile_seo_ai_operations
 from app.seo_snapshot_retention import prune_old_single_page_snapshots
 from app.seo_monitoring_jobs import (
     collect_scheduled_competitors,
@@ -88,6 +89,15 @@ def _start_seo_scheduler() -> None:
         max_instances=1,
         coalesce=True,
         misfire_grace_time=3600,
+    )
+    seo_scheduler.add_job(
+        reconcile_seo_ai_operations,
+        IntervalTrigger(minutes=1),
+        id="reconcile_seo_ai_operations",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=60,
     )
     seo_scheduler.start()
     logger.info("[scheduler][SEO] 独立调度器已启动")

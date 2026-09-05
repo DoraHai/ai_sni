@@ -29,6 +29,8 @@ async def charge_seo_usage(
     resource: str,
     amount: int,
     limit: int,
+    *,
+    commit: bool = True,
 ) -> dict[str, int | str]:
     amount = max(1, int(amount))
     limit = max(1, int(limit))
@@ -39,6 +41,7 @@ async def charge_seo_usage(
             TenantModule.module_code == "seo",
         )
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if module is None:
         raise SeoUsageLimitError(resource, limit, limit)
@@ -54,7 +57,8 @@ async def charge_seo_usage(
     usage[resource] = used + amount
     settings[SEO_USAGE_KEY] = usage
     module.module_settings = settings
-    await session.commit()
+    if commit:
+        await session.commit()
     return {"date": today, "used": used + amount, "limit": limit}
 
 
@@ -63,6 +67,8 @@ async def refund_seo_usage(
     tenant_id: int,
     resource: str,
     amount: int,
+    *,
+    charged_on: str | None = None,
 ) -> None:
     module = await session.scalar(
         select(TenantModule)
@@ -71,6 +77,7 @@ async def refund_seo_usage(
             TenantModule.module_code == "seo",
         )
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if module is None:
         await session.rollback()
@@ -78,7 +85,8 @@ async def refund_seo_usage(
     settings = dict(module.module_settings or {})
     usage = dict(settings.get(SEO_USAGE_KEY) or {})
     today = datetime.now(SEO_USAGE_TIMEZONE).date().isoformat()
-    if usage.get("date") == today:
+    # An operation started yesterday must never refund today's other requests.
+    if usage.get("date") == (charged_on or today):
         usage[resource] = max(0, int(usage.get(resource) or 0) - max(1, int(amount)))
         settings[SEO_USAGE_KEY] = usage
         module.module_settings = settings

@@ -2,7 +2,7 @@ import os
 import unittest
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 os.environ.setdefault("BAIDU_APP_ID", "test-app")
@@ -20,6 +20,7 @@ os.environ.setdefault("ADMIN_API_KEY", "test-admin-key")
 from app.config import Settings
 from app.seo_ranking_jobs import (
     _SHANGHAI_TZ,
+    _actionable_error_labels,
     _collection_due,
     _engine_interval_days,
     _group_keyword_ids_by_site,
@@ -474,6 +475,7 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
 
         collector = AsyncMock(side_effect=RuntimeError("post-provider failure"))
         finish_run = AsyncMock()
+        info = MagicMock()
         with (
             patch("app.seo_ranking_jobs.get_settings", return_value=settings),
             patch(
@@ -501,6 +503,7 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
                 "app.seo_ranking_jobs.finish_automation_run",
                 new=finish_run,
             ),
+            patch("app.seo_ranking_jobs.logger.info", new=info),
             patch("app.seo_ranking_jobs.release_file_lock"),
         ):
             await collect_daily_seo_rankings()
@@ -516,6 +519,25 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
             skipped_count=1,
             error_summary=f"baidu/{attempted_device}:RuntimeError",
         )
+        completion = next(
+            call for call in info.call_args_list
+            if call.args and "每日多引擎自然排名采集完成" in call.args[0]
+        )
+        totals = completion.args[2]
+        self.assertEqual(totals["requests"], 0)
+        self.assertEqual(totals["unknown_request_batches"], 1)
+
+    def test_expected_domain_keyword_misses_do_not_hide_provider_errors(self):
+        labels = _actionable_error_labels(
+            "sogou",
+            "desktop",
+            [
+                {"code": "keyword_not_found"},
+                {"code": "provider_timeout"},
+                {"code": "keyword_not_found"},
+            ],
+        )
+        self.assertEqual(labels, ["sogou/desktop:provider_timeout"])
 
     async def test_configured_google_and_bing_join_daily_collection(self):
         settings = SimpleNamespace(
@@ -618,7 +640,7 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
             patch("app.seo_scheduler.seo_scheduler.start") as scheduler_start,
         ):
             start_seo_scheduler()
-        self.assertEqual(add_job.call_count, 5)
+        self.assertEqual(add_job.call_count, 6)
         self.assertEqual(
             {call.kwargs["id"] for call in add_job.call_args_list},
             {
@@ -627,6 +649,7 @@ class SeoSchedulerTests(unittest.IsolatedAsyncioTestCase):
                 "verify_scheduled_seo_backlinks",
                 "fail_stale_seo_crawl_runs",
                 "prune_old_seo_single_page_snapshots",
+                "reconcile_seo_ai_operations",
             },
         )
         scheduler_start.assert_called_once_with()

@@ -27,6 +27,7 @@ const groups = [
     index: '01',
     items: [
       { label: 'SEO 工作台', path: '/seo/dashboard', perm: 'seo.dashboard', mark: '▦' },
+      { label: '自动任务中心', path: '/seo/tasks', perm: 'seo.dashboard', mark: '◷' },
       { label: '异常提醒', path: '/seo/alerts', perm: 'seo.alerts', mark: '!' },
     ],
   },
