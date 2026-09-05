@@ -3,7 +3,7 @@ import json
 from datetime import date, datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from app.database import get_session
@@ -69,6 +69,9 @@ class TaskCreate(BaseModel):
             raise ValueError('params.metric_key 必须属于 GEO')
         if self.params.get('direction', 'increase') not in ('increase', 'decrease'):
             raise ValueError('direction 必须为 increase/decrease')
+        content_id = self.params.get('content_task_id')
+        if content_id is not None and (isinstance(content_id, bool) or not isinstance(content_id, int) or content_id <= 0):
+            raise ValueError('content_task_id 必须为正整数')
         threshold = self.params.get('min_delta', 0)
         if isinstance(threshold, bool) or not isinstance(threshold, (int,float)) or not (0 <= threshold < float('inf')):
             raise ValueError('min_delta 必须为有限非负数')
@@ -174,7 +177,7 @@ async def get_task(task_id: int, tenant_id: int = Query(...), ctx=Depends(requir
     return task_payload(await ticket(session, tenant_id, task_id))
 
 
-def completion_evidence(row, current):
+def completion_evidence(row, current, publication_proof=None):
     params = row.progress_first['params']
     key = params.get('metric_key', MENTIONS)
     baseline = row.baseline_snapshot or {}
@@ -185,8 +188,15 @@ def completion_evidence(row, current):
         raise HTTPException(409, '需等待任务创建后一个完整自然周的观测结果')
     if baseline['cohort'] != current['cohort'] or baseline['own_domains'] != current['own_domains']:
         raise HTTPException(409, '前后问题、引擎或自有域口径发生变化，不能生成完成证据')
+    if not baseline.get('questions') or baseline['questions'] != current.get('questions'):
+        raise HTTPException(409, '题目原文变化或缺少记录，不能生成完成证据')
     if not baseline.get('sample_counts') or baseline['sample_counts'] != current.get('sample_counts'):
         raise HTTPException(409, '前后各问题与引擎的采样次数不一致或缺少记录，不能生成完成证据')
+    if params.get('content_task_id'):
+        proof = publication_proof or (row.progress or {}).get('publication_evidence') or {}
+        first = proof.get('first_verified_at')
+        if not first or datetime.fromisoformat(first.replace('Z', '+00:00')) > datetime.fromisoformat(current['window_start'].replace('Z', '+00:00')):
+            raise HTTPException(409, '后测周须完整位于已核实发布之后')
     delta = after['value'] - before['value']
     signed = delta if params.get('direction','increase') == 'increase' else -delta
     if signed <= 0 or signed < params.get('min_delta', 0):
@@ -208,9 +218,24 @@ async def update_task(task_id: int, req: TaskUpdate, tenant_id: int = Query(...)
     if row.status in {'done','cancelled'}:
         raise HTTPException(409, '已结束任务不能重写，请新建后续任务')
     if req.status == 'done':
+        proof = None
+        if row.progress_first['params'].get('content_task_id'):
+            from app.geo.publication_evidence import verify_publication
+            proof = (row.progress or {}).get('publication_evidence') or {}
+            if not proof.get('publication_id'):
+                raise HTTPException(409, '先核验真实发布页，不能以内容就绪代替上线')
+            proof = await verify_publication(session, row, proof['publication_id'])
         current = await snapshot(session, tenant_id)
-        evidence = completion_evidence(row, current)
-        row.progress = {'completion_evidence': evidence}
+        evidence = completion_evidence(row, current, proof)
+        fresh = await snapshot(session, tenant_id, date.fromisoformat(evidence['before']['as_of'][:10]))
+        baseline = row.baseline_snapshot
+        fresh_metric = metric(fresh, evidence['metric_key'])
+        if (fresh_metric is None or fresh_metric['value'] != evidence['before']['value']
+                or any(fresh.get(k) != baseline.get(k) for k in ['sample_ids', 'sample_counts', 'questions', 'cohort', 'own_domains'])):
+            raise HTTPException(409, '基线来源已被复核更正或口径变化，不能继续使用旧基线完成任务')
+        row.progress = {**(row.progress or {}), 'completion_evidence': evidence}
+        if proof:
+            row.progress = {**row.progress, 'publication_evidence': proof}
         row.closed_at = datetime.utcnow()
     row.status = REVERSE_STATUS[req.status]
     row.updated_at = datetime.utcnow()
@@ -237,3 +262,84 @@ async def capture_baseline(task_id: int, tenant_id: int = Query(...),
     await session.commit()
     await session.refresh(row)
     return task_payload(row)
+
+
+@router.get('/tasks/{task_id}/retest-plan')
+async def get_retest_plan(task_id: int, tenant_id: int = Query(...),
+                          ctx=Depends(require_scoped_auth), session=Depends(get_session)):
+    from app.geo.retest import prepare_retest
+    ctx.ensure_tenant(tenant_id)
+    row = await ticket(session, tenant_id, task_id)
+    return await prepare_retest(session, row, check_window=False)
+
+
+@router.post('/tasks/{task_id}/retest', status_code=202)
+async def start_retest(task_id: int, background_tasks: BackgroundTasks, tenant_id: int = Query(...),
+                       ctx=Depends(require_scoped_auth), session=Depends(get_session)):
+    from app.models import GeoVisibilityPatrolRun
+    from app.geo.retest import prepare_retest
+    from app.geo.content.patrol import run_patrol_in_background, count_patrol_runs_today
+    from app.config import get_settings
+    ctx.ensure_tenant(tenant_id)
+    await session.execute(select(Tenant.id).where(Tenant.id == tenant_id).with_for_update())
+    row = await ticket(session, tenant_id, task_id, lock=True)
+    from app.geo.integration_metrics import closed_week_end
+    from app.geo.content.time_windows import shanghai_day_bounds_utc_naive
+    period = shanghai_day_bounds_utc_naive(closed_week_end())[0].isoformat()
+    progress = dict(row.progress or {})
+    if period in progress.get('retest_runs', {}):
+        return {'run_id': progress['retest_runs'][period], 'already_started': True}
+    plan = await prepare_retest(session, row)
+    limit = max(1, min(int(get_settings().geo_patrol_max_runs_per_day or 24), 500))
+    if await count_patrol_runs_today(session, tenant_id) >= limit:
+        raise HTTPException(429, '今日巡检次数已达上限')
+    # Durable weekly reservation remains even if the worker fails or creates no samples.
+    run = GeoVisibilityPatrolRun(tenant_id=tenant_id, status='pending', trigger='contract_retest',
+        auto_persist=True, prefer_real=True, prompt_limit=len({c['prompt_id'] for c in plan['cells']}),
+        engine_keys=sorted({c['engine'] for c in plan['cells']}), summary={'contract_plan': plan}, created_by=ctx.user_id)
+    session.add(run)
+    await session.flush()
+    progress['retest_runs'] = {**progress.get('retest_runs', {}), plan['window_start']: run.id}
+    row.progress = progress
+    await session.commit()
+    background_tasks.add_task(run_patrol_in_background, run.id)
+    return {'run_id': run.id, 'already_started': False, 'plan': plan}
+
+
+class PublicationCheck(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    publication_id: int = Field(gt=0)
+
+
+@router.post('/tasks/{task_id}/publication-check', response_model=TaskContract)
+async def check_publication(task_id: int, req: PublicationCheck, tenant_id: int = Query(...),
+                            ctx=Depends(require_scoped_auth), session=Depends(get_session)):
+    from app.geo.publication_evidence import verify_publication
+    ctx.ensure_tenant(tenant_id)
+    row = await ticket(session, tenant_id, task_id, lock=True)
+    if row.status in {'done', 'cancelled'}:
+        raise HTTPException(409, '终态任务不能重写证据')
+    proof = await verify_publication(session, row, req.publication_id)
+    row.progress = {**(row.progress or {}), 'publication_evidence': proof}
+    row.updated_at = datetime.utcnow()
+    await session.commit()
+    await session.refresh(row)
+    return task_payload(row)
+
+
+@router.get('/tasks/{task_id}/execution-readiness')
+async def execution_readiness(task_id: int, tenant_id: int = Query(...),
+                              ctx=Depends(require_scoped_auth), session=Depends(get_session)):
+    from app.geo.content.multi_push import tenant_auto_push_matrix
+    from app.geo.retest import prepare_retest
+    ctx.ensure_tenant(tenant_id)
+    row = await ticket(session, tenant_id, task_id)
+    matrix = await tenant_auto_push_matrix(session, tenant_id=tenant_id)
+    plan, blocker = None, None
+    try:
+        plan = await prepare_retest(session, row, check_window=False)
+    except HTTPException as exc:
+        blocker = exc.detail
+    return {'task_id': row.id, 'status': STATUS[row.status], 'retest_plan': plan, 'baseline_blocker': blocker,
+            'publication_evidence': (row.progress or {}).get('publication_evidence'),
+            'publishing': matrix, 'completion_evidence': (row.progress or {}).get('completion_evidence')}

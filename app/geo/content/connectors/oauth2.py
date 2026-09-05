@@ -117,8 +117,11 @@ async def exchange_code_for_tokens(creds: dict[str, Any], *, code: str) -> dict[
     if not client_id or not client_secret:
         raise OAuth2Error("client_id / client_secret 必填")
 
+    from app.geo.content.connectors.safe_http import development_mode
     # Dev mock token endpoint
     if "mock" in token_url.lower() or str(client_id).startswith("mock_"):
+        if not development_mode():
+            raise OAuth2Error("生产环境禁止模拟OAuth凭证")
         now = datetime.utcnow()
         return {
             "access_token": f"mock_oauth_at_{code[:8]}",
@@ -136,19 +139,22 @@ async def exchange_code_for_tokens(creds: dict[str, Any], *, code: str) -> dict[
         "redirect_uri": redirect_uri,
     }
     try:
-        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT) as client:
-            resp = await client.post(token_url, data=data)
+        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT, trust_env=False, limits=httpx.Limits(max_keepalive_connections=0)) as client:
+            from app.geo.content.connectors.safe_http import public_request
+            resp = await public_request(client, "POST", token_url, data=data)
     except httpx.HTTPError as exc:
-        raise OAuth2Error(f"OAuth token 交换失败: {exc}") from exc
+        raise OAuth2Error(f"OAuth token 交换失败: {type(exc).__name__}") from exc
 
     try:
         body = resp.json()
     except Exception as exc:  # noqa: BLE001
-        raise OAuth2Error(f"OAuth token 响应非 JSON: {(resp.text or '')[:300]}") from exc
+        raise OAuth2Error("OAuth token 响应非 JSON") from exc
 
-    if resp.status_code >= 400 or body.get("error"):
+    if not isinstance(body, dict):
+        raise OAuth2Error("OAuth 响应结构无效")
+    if not 200 <= resp.status_code < 300 or body.get("error"):
         raise OAuth2Error(
-            f"OAuth token 失败: {body.get('error') or body.get('message') or resp.status_code}"
+            f"OAuth token 失败: HTTP {resp.status_code}"
         )
     access = str(body.get("access_token") or "").strip()
     if not access:
@@ -172,7 +178,10 @@ async def refresh_access_token(creds: dict[str, Any]) -> dict[str, Any]:
     refresh = str(creds.get("refresh_token") or "").strip()
     if not refresh:
         raise OAuth2Error("无 refresh_token，请重新 OAuth 授权")
+    from app.geo.content.connectors.safe_http import development_mode
     if str(client_id).startswith("mock_") or "mock" in token_url.lower():
+        if not development_mode():
+            raise OAuth2Error("生产环境禁止模拟OAuth凭证")
         now = datetime.utcnow()
         return {
             "access_token": f"mock_oauth_at_refreshed_{int(now.timestamp())}",
@@ -187,16 +196,19 @@ async def refresh_access_token(creds: dict[str, Any]) -> dict[str, Any]:
         "client_secret": client_secret,
     }
     try:
-        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT) as client:
-            resp = await client.post(token_url, data=data)
+        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT, trust_env=False, limits=httpx.Limits(max_keepalive_connections=0)) as client:
+            from app.geo.content.connectors.safe_http import public_request
+            resp = await public_request(client, "POST", token_url, data=data)
     except httpx.HTTPError as exc:
-        raise OAuth2Error(f"OAuth refresh 失败: {exc}") from exc
+        raise OAuth2Error(f"OAuth refresh 失败: {type(exc).__name__}") from exc
     try:
         body = resp.json()
     except Exception as exc:  # noqa: BLE001
-        raise OAuth2Error(f"OAuth refresh 非 JSON: {(resp.text or '')[:300]}") from exc
-    if resp.status_code >= 400 or body.get("error"):
-        raise OAuth2Error(f"OAuth refresh 失败: {body.get('error') or resp.status_code}")
+        raise OAuth2Error("OAuth refresh 响应非 JSON") from exc
+    if not isinstance(body, dict):
+        raise OAuth2Error("OAuth 响应结构无效")
+    if not 200 <= resp.status_code < 300 or body.get("error"):
+        raise OAuth2Error(f"OAuth refresh 失败: HTTP {resp.status_code}")
     access = str(body.get("access_token") or "").strip()
     if not access:
         raise OAuth2Error("OAuth refresh 未返回 access_token")

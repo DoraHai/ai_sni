@@ -2657,6 +2657,8 @@ async def update_answer_snapshot(
 ) -> dict:
     ctx.ensure_tenant(tenant_id)
     row = await _get_snapshot(session, snapshot_id, tenant_id)
+    if getattr(row, 'patrol_run_id', None) and req.model_fields_set - {'citation_accuracy', 'brand_position', 'sentiment'}:
+        raise HTTPException(409, '服务端巡检原始证据不可改写；可记录引用准确性等复核判断')
     prompt = await _get_prompt(session, row.prompt_id, tenant_id)
     if req.engine is not None:
         row.engine = req.engine
@@ -2697,8 +2699,7 @@ async def update_answer_snapshot(
     # W4: raw_text-only PATCH must re-extract URLs and recompute attribution
     if req.raw_text is not None and req.cited_urls is None:
         extracted = extract_cited_urls_from_text(row.raw_text)
-        if extracted:
-            row.cited_urls = extracted
+        row.cited_urls = extracted
     if req.cited_urls is not None or req.raw_text is not None:
         row.matched_publication_ids = (
             await resolve_matched_publication_ids(
@@ -2727,6 +2728,8 @@ async def delete_answer_snapshot(
     """Hard-delete one answer snapshot (test data / wrong paste cleanup)."""
     ctx.ensure_tenant(tenant_id)
     row = await _get_snapshot(session, snapshot_id, tenant_id)
+    if getattr(row, 'patrol_run_id', None):
+        raise HTTPException(409, '巡检快照是指标来源，不能删除；错误引用请标记为 inaccurate')
     captured = row.captured_at
     await session.delete(row)
     await session.commit()
@@ -4925,6 +4928,10 @@ async def create_visibility_patrol_run(
 
     ctx.ensure_tenant(req.tenant_id)
     await _ensure_tenant_exists(session, req.tenant_id)
+    await session.execute(select(Tenant.id).where(Tenant.id == req.tenant_id).with_for_update())
+    from app.geo.retest import reserved_week
+    if await reserved_week(session, req.tenant_id):
+        raise HTTPException(409, '本周已有精确复测预约，不能追加普通巡检改变采样分布')
     day_limit = int(getattr(get_settings(), "geo_patrol_max_runs_per_day", 24) or 24)
     day_limit = max(1, min(day_limit, 500))
     used = await count_patrol_runs_today(session, req.tenant_id)
@@ -4962,7 +4969,7 @@ async def create_visibility_patrol_run(
 async def delete_visibility_patrol_run(
     run_id: int,
     tenant_id: int = Query(...),
-    force: bool = Query(False, description="true 时取消 running/pending 并删除"),
+    force: bool = Query(False, description="兼容参数；有真实样本或仍在执行的巡检不可删除"),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -4971,11 +4978,14 @@ async def delete_visibility_patrol_run(
     row = await session.get(GeoVisibilityPatrolRun, run_id)
     if row is None or row.tenant_id != tenant_id:
         raise HTTPException(404, "巡检任务不存在")
-    if row.status in ("pending", "running") and not force:
+    if row.status in ("pending", "running"):
         raise HTTPException(
             400,
-            "进行中的巡检不可删除；请等待结束，或 force=true 强制删除",
+            "进行中的巡检不可删除；请等待结束，避免破坏正在执行的采样",
         )
+    has_samples = await session.scalar(select(GeoAnswerSnapshot.id).where(GeoAnswerSnapshot.patrol_run_id == run_id).limit(1))
+    if has_samples or (row.summary or {}).get('contract_plan'):
+        raise HTTPException(409, '巡检包含指标证据或复测计划，不能删除来源记录')
     await session.delete(row)
     await session.commit()
     return {"deleted": True, "id": run_id}
@@ -5011,6 +5021,10 @@ async def cleanup_visibility_patrol_runs(
         if only_terminal and not terminal:
             continue
         if r.status in ("pending", "running"):
+            continue
+        has_samples = await session.scalar(select(GeoAnswerSnapshot.id).where(GeoAnswerSnapshot.patrol_run_id == r.id).limit(1))
+        if has_samples or (r.summary or {}).get('contract_plan'):
+            keep_ids.add(r.id)
             continue
         await session.delete(r)
         deleted += 1

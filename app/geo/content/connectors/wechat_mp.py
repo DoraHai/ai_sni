@@ -38,6 +38,9 @@ MEDIA_UPLOAD_URL = "https://api.weixin.qq.com/cgi-bin/material/add_material"
 
 
 def wechat_mp_mock_enabled(app_id: str | None = None) -> bool:
+    from app.geo.content.connectors.safe_http import development_mode
+    if not development_mode():
+        return False
     flag = str(os.environ.get("GEO_WECHAT_MP_MOCK") or "").strip().lower()
     if flag in {"1", "true", "yes", "on"}:
         return True
@@ -118,11 +121,12 @@ async def download_image_bytes(url: str) -> tuple[bytes, str]:
     if not str(url).startswith(("https://", "http://")):
         raise WechatMpError("cover_image_url 须为 http(s) 地址")
     try:
-        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT, follow_redirects=True) as client:
-            resp = await client.get(url)
+        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT, trust_env=False, limits=httpx.Limits(max_keepalive_connections=0)) as client:
+            from app.geo.content.connectors.safe_http import public_request
+            resp = await public_request(client, "GET", url, allow_http=True, max_bytes=2 * 1024 * 1024)
     except httpx.HTTPError as exc:
-        raise WechatMpError(f"下载封面失败: {exc}") from exc
-    if resp.status_code >= 400:
+        raise WechatMpError(f"下载封面失败: {type(exc).__name__}") from exc
+    if not 200 <= resp.status_code < 300:
         raise WechatMpError(f"下载封面 HTTP {resp.status_code}")
     data = resp.content or b""
     if len(data) < 100:

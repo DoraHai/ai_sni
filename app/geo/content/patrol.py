@@ -297,6 +297,11 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
     if row is None:
         raise ValueError(f"patrol run {run_id} not found")
 
+    await session.refresh(row, with_for_update=True)
+    if row.status != "pending":
+        await session.commit()
+        return row
+    contract_plan = (row.summary or {}).get("contract_plan")
     row.status = "running"
     row.started_at = datetime.utcnow()
     row.error = None
@@ -312,6 +317,9 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
         "real_samples": 0,
         "persona_samples": 0,
     }
+
+    if contract_plan:
+        summary["contract_plan"] = contract_plan
 
     try:
         tenant = await session.get(Tenant, row.tenant_id)
@@ -349,6 +357,8 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
             max_cells = 200
         max_cells = max(1, min(max_cells, 500))
         summary["max_cells"] = max_cells
+        if contract_plan and contract_plan["total_samples"] > max_cells:
+            raise ValueError("精确复测超过当前单次采样上限，不能截断执行")
 
         brand = getattr(tenant, "name", None) or f"租户{row.tenant_id}"
         brand_names = brand_names_from_tenant(
@@ -356,27 +366,34 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
             brand_terms=getattr(tenant, "brand_terms", None),
         ) or [brand]
 
-        prompts = list(
-            await session.scalars(
-                select(GeoPrompt)
-                .where(
-                    GeoPrompt.tenant_id == row.tenant_id,
-                    GeoPrompt.status == "active",
-                )
-                .order_by(GeoPrompt.priority.desc(), GeoPrompt.id.desc())
-                .limit(max(1, min(int(row.prompt_limit or 20), 50)))
-            )
-        )
-        if not prompts:
-            # fallback any prompts
+        if contract_plan:
+            from app.geo.retest import validate_plan_prompts
+            ids = {c['prompt_id'] for c in contract_plan['cells']}
+            prompts = list(await session.scalars(select(GeoPrompt).where(
+                GeoPrompt.tenant_id == row.tenant_id, GeoPrompt.id.in_(ids)).order_by(GeoPrompt.id)))
+            validate_plan_prompts(contract_plan, prompts)
+        else:
             prompts = list(
                 await session.scalars(
                     select(GeoPrompt)
-                    .where(GeoPrompt.tenant_id == row.tenant_id)
-                    .order_by(GeoPrompt.id.desc())
+                    .where(
+                        GeoPrompt.tenant_id == row.tenant_id,
+                        GeoPrompt.status == "active",
+                    )
+                    .order_by(GeoPrompt.priority.desc(), GeoPrompt.id.desc())
                     .limit(max(1, min(int(row.prompt_limit or 20), 50)))
                 )
             )
+            if not prompts:
+                # fallback any prompts
+                prompts = list(
+                    await session.scalars(
+                        select(GeoPrompt)
+                        .where(GeoPrompt.tenant_id == row.tenant_id)
+                        .order_by(GeoPrompt.id.desc())
+                        .limit(max(1, min(int(row.prompt_limit or 20), 50)))
+                    )
+                )
         summary["prompts"] = len(prompts)
         if not prompts:
             raise ValueError("没有可巡检的机会词，请先在「机会词」中创建")
@@ -421,7 +438,13 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
 
         cells_planned = 0
         for prompt in prompts:
-            for engine in engines:
+            selected_engines = engines
+            if contract_plan:
+                from app.geo.retest import engines_for_prompt
+                selected_engines = engines_for_prompt(contract_plan, prompt.id)
+            for engine in selected_engines:
+                if contract_plan and datetime.utcnow() >= datetime.fromisoformat(contract_plan['window_end']):
+                    raise ValueError('复测已跨出约定自然周，停止采样')
                 if cells_planned >= max_cells:
                     summary["truncated"] = True
                     summary["truncated_reason"] = (
@@ -453,6 +476,8 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
                         )
                     except Exception:  # noqa: BLE001
                         pass
+                    if contract_plan:
+                        stance = "real_only"
                     llm, sample_mode, fallback_reason = resolve_engine_llm(
                         engine=engine,
                         tenant_llm=tenant_llm,
@@ -621,6 +646,9 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
             if summary.get("truncated"):
                 break
 
+        if contract_plan:
+            from app.geo.retest import validate_run_result
+            summary["retest_result"] = validate_run_result(contract_plan, items)
         row.items = items
         row.summary = summary
         row.status = "completed"

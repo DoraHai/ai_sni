@@ -42,6 +42,8 @@ def test_concurrent_completion_preserves_terminal_evidence(second_status):
             pids = {}
 
             async def observed_snapshot(*args):
+                if len(args) > 2:
+                    return task().baseline_snapshot
                 entered.set()
                 await asyncio.wait_for(release.wait(), 10)
                 return state()
@@ -83,7 +85,7 @@ def test_concurrent_completion_preserves_terminal_evidence(second_status):
                     assert second_result == first_result
                 else:
                     assert second_result == 409
-                snapshot.assert_awaited_once()
+                assert snapshot.await_count == 2
             async with sessions() as session:
                 stored = await ticket(session, 7, 10)
                 assert stored.status == 'done'

@@ -292,19 +292,20 @@ async def post_social(
 
     method = str(norm.get("method") or "POST").upper()
     try:
-        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT, follow_redirects=False) as client:
-            resp = await client.request(
+        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT, follow_redirects=False, trust_env=False, limits=httpx.Limits(max_keepalive_connections=0)) as client:
+            from app.geo.content.connectors.safe_http import public_request
+            resp = await public_request(client,
                 method,
                 url,
                 headers=headers,
                 content=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             )
     except httpx.HTTPError as exc:
-        raise SocialError(f"社交 API 请求失败: {exc}") from exc
+        raise SocialError(f"社交 API 请求失败: {type(exc).__name__}") from exc
 
-    if resp.status_code >= 400:
+    if not 200 <= resp.status_code < 300:
         text = (resp.text or "")[:500]
-        raise SocialError(f"社交 API 返回 HTTP {resp.status_code}: {text}")
+        raise SocialError(f"社交 API 返回 HTTP {resp.status_code}")
 
     remote_url = None
     try:

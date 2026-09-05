@@ -217,7 +217,7 @@ def test_tracked_competitor_remains_a_zero_metric_without_recent_mentions():
 def test_verified_task_completion_persists_actual_evidence():
     row=task();session=NS(commit=AsyncMock(),refresh=AsyncMock())
     async def run():
-        with patch('app.geo.integration.ticket',AsyncMock(return_value=row)) as lookup,patch('app.geo.integration.snapshot',AsyncMock(return_value=state())):
+        with patch('app.geo.integration.ticket',AsyncMock(return_value=row)) as lookup,patch('app.geo.integration.snapshot',AsyncMock(side_effect=[state(), row.baseline_snapshot])):
             result=await update_task(10,TaskUpdate(status='done'),7,NS(ensure_tenant=lambda value:None),session)
             lookup.assert_awaited_once_with(session,7,10,lock=True)
             return result

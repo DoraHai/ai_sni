@@ -36,7 +36,7 @@ class WebhookConnectorError(ValueError):
     """User-facing connector validation / remote failure."""
 
 
-async def ensure_webhook_public_url(url: str) -> None:
+async def ensure_webhook_public_url(url: str) -> list[str] | None:
     """SSRF guard with optional dev hostname allowlist for demo sinks."""
     from app.config import get_settings
 
@@ -50,7 +50,7 @@ async def ensure_webhook_public_url(url: str) -> None:
     if env in {"dev", "test", "local", "development"} and host in _DEV_WEBHOOK_HOST_ALLOWLIST:
         return
     try:
-        await _ensure_public_host(url)
+        return await _ensure_public_host(url)
     except GeoAuditError as exc:
         raise WebhookConnectorError(str(exc)) from exc
 
@@ -146,7 +146,7 @@ async def post_webhook(
 ) -> dict[str, Any]:
     """Send webhook; returns {http_status, remote_url, response_json}."""
     creds = normalize_webhook_credentials(credentials)
-    await ensure_webhook_public_url(creds["webhook_url"])
+    addresses = await ensure_webhook_public_url(creds["webhook_url"])
 
     host = (urlparse(creds["webhook_url"]).hostname or "").lower()
     from app.config import get_settings
@@ -176,16 +176,17 @@ async def post_webhook(
         headers["X-GEO-Signature"] = f"sha256={digest}"
 
     owns_client = client is None
-    http = client or httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT, follow_redirects=False)
+    http = client or httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT, follow_redirects=False, trust_env=False, limits=httpx.Limits(max_keepalive_connections=0))
     try:
-        response = await http.request(
+        from app.geo.content.connectors.safe_http import public_request
+        response = await public_request(http,
             creds["method"],
             creds["webhook_url"],
             content=body,
-            headers=headers,
+            headers=headers, addresses=addresses,
         )
     except httpx.HTTPError as exc:
-        raise WebhookConnectorError(f"Webhook 请求失败: {exc}") from exc
+        raise WebhookConnectorError(f"Webhook 请求失败: {type(exc).__name__}") from exc
     finally:
         if owns_client:
             await http.aclose()
@@ -193,7 +194,7 @@ async def post_webhook(
     if response.status_code < 200 or response.status_code >= 300:
         snippet = (response.text or "")[:200]
         raise WebhookConnectorError(
-            f"Webhook 返回 HTTP {response.status_code}: {snippet}"
+            f"Webhook 返回 HTTP {response.status_code}"
         )
 
     parsed: Any = None

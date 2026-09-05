@@ -69,7 +69,7 @@ class WebhookConnectorTests(unittest.IsolatedAsyncioTestCase):
         async with httpx.AsyncClient(transport=transport) as client:
             with patch(
                 "app.geo.content.connectors.webhook._ensure_public_host",
-                new=AsyncMock(return_value=None),
+                new=AsyncMock(return_value=["93.184.216.34"]),
             ):
                 result = await post_webhook(
                     {
@@ -90,7 +90,7 @@ class WebhookConnectorTests(unittest.IsolatedAsyncioTestCase):
         async with httpx.AsyncClient(transport=transport) as client:
             with patch(
                 "app.geo.content.connectors.webhook._ensure_public_host",
-                new=AsyncMock(return_value=None),
+                new=AsyncMock(return_value=["93.184.216.34"]),
             ):
                 with self.assertRaises(WebhookConnectorError):
                     await post_webhook(

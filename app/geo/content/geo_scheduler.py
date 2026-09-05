@@ -51,7 +51,7 @@ async def run_geo_visibility_patrols() -> None:
         execute_patrol_run,
         should_run_scheduled_patrol,
     )
-    from app.models import GeoVisibilityPatrolRun, GeoVisibilityPatrolSettings
+    from app.models import GeoVisibilityPatrolRun, GeoVisibilityPatrolSettings, Tenant
 
     now = datetime.now(ZoneInfo("Asia/Shanghai"))
     day_limit = int(getattr(get_settings(), "geo_patrol_max_runs_per_day", 24) or 24)
@@ -65,8 +65,8 @@ async def run_geo_visibility_patrols() -> None:
             )
         )
         for st in rows:
-            start_h = int(getattr(st, "window_start_hour", None) or st.daily_hour or 6)
-            end_h = int(getattr(st, "window_end_hour", None) or st.daily_hour or 22)
+            start_h = int(st.window_start_hour if st.window_start_hour is not None else st.daily_hour if st.daily_hour is not None else 6)
+            end_h = int(st.window_end_hour if st.window_end_hour is not None else st.daily_hour if st.daily_hour is not None else 22)
             interval = int(getattr(st, "interval_hours", None) or 24)
             last_at = getattr(st, "last_scheduled_at", None)
             if not should_run_scheduled_patrol(
@@ -77,6 +77,11 @@ async def run_geo_visibility_patrols() -> None:
                 last_scheduled_at=last_at,
             ):
                 continue
+            await session.execute(select(Tenant.id).where(Tenant.id == st.tenant_id).with_for_update())
+            from app.geo.retest import reserved_week
+            if await reserved_week(session, st.tenant_id):
+                await session.commit()
+                continue
             used = await count_patrol_runs_today(session, st.tenant_id)
             if used >= day_limit:
                 logger.warning(
@@ -85,12 +90,12 @@ async def run_geo_visibility_patrols() -> None:
                     used,
                     day_limit,
                 )
+                await session.commit()
                 continue
             inflight = await session.scalar(
                 select(GeoVisibilityPatrolRun.id)
                 .where(
                     GeoVisibilityPatrolRun.tenant_id == st.tenant_id,
-                    GeoVisibilityPatrolRun.trigger == "schedule",
                     GeoVisibilityPatrolRun.status.in_(("pending", "running")),
                 )
                 .limit(1)
@@ -101,6 +106,7 @@ async def run_geo_visibility_patrols() -> None:
                     st.tenant_id,
                     inflight,
                 )
+                await session.commit()
                 continue
             run = GeoVisibilityPatrolRun(
                 tenant_id=st.tenant_id,

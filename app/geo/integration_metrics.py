@@ -31,6 +31,10 @@ def cohort(rows):
     return [list(pair) for pair in sorted({(row.prompt_id, row.engine) for row in rows})]
 
 
+def questions(rows):
+    return [list(pair) for pair in sorted({(r.prompt_id, str(getattr(r, '_source_question', '') or '').strip()) for r in rows})]
+
+
 def sufficient(rows):
     return len(rows) >= 8 and len({r.prompt_id for r in rows}) >= 3 and len({r.engine for r in rows}) >= 2
 
@@ -75,14 +79,15 @@ def build_weekly_snapshot(rows, own_domains, week_end, tracked_names=()):
     current_values = weekly_values(current, own_domains, names)
     prior_values = weekly_values(previous, own_domains, names)
     as_of = datetime.combine(week_end, datetime.min.time(), tzinfo=TENANT_TZ).isoformat()
-    comparable = cohort(current) == cohort(previous)
+    comparable = (cohort(current) == cohort(previous) and questions(current) == questions(previous)
+                  and Counter((r.prompt_id, r.engine) for r in current) == Counter((r.prompt_id, r.engine) for r in previous))
     metrics = [dict(metric_key=key, value=value, unit='score' if key == SCORE else 'percent' if key == RATE else 'count',
                     as_of=as_of, trend_7d=metric_trend(value, prior_values[key], comparable=comparable))
                for key, value in current_values.items()]
     sample_counts = [[prompt, engine, count] for (prompt, engine), count
                      in sorted(Counter((r.prompt_id, r.engine) for r in current).items())]
     return dict(metrics=metrics, sample_ids=sorted(r.id for r in current), cohort=cohort(current),
-                sample_counts=sample_counts,
+                sample_counts=sample_counts, questions=questions(current),
                 own_domains=sorted(own_domains), window_start=start.isoformat()+'Z',
                 competitor_names={competitor_key(name): name for name in names})
 
@@ -109,6 +114,7 @@ def verified_patrol_rows(rows, runs):
                 or sorted(normalize_competitors(cell.get('competitors'))) != sorted(normalize_competitors(row.competitors))
                 or sorted(normalize_cited_urls(extract_cited_urls_from_text(row.raw_text))) != sorted(normalize_cited_urls(row.cited_urls))):
             continue
+        row._source_question = cell.get('prompt_question') or ''
         result.append(row)
     return result
 
