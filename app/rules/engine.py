@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.models import Alert, Tenant
+from app.database import async_session_factory
 from app.module_scope import list_active_module_tenants
 from app.rules.ai_anomaly import AIAnomalyRule
 from app.rules.base import Rule
@@ -114,6 +115,12 @@ def _dedupe_alert_records(records: list[dict]) -> list[dict]:
 async def _upsert_keyword_alerts(session: AsyncSession, records: list[dict]) -> None:
     if not records:
         return
+    # Leave room for SQLAlchemy defaults as well as explicit record fields.
+    chunk_size = min(1000, 30000 // (max(map(len, records)) + 4))
+    if len(records) > chunk_size:
+        for start in range(0, len(records), chunk_size):
+            await _upsert_keyword_alerts(session, records[start:start + chunk_size])
+        return
     stmt = pg_insert(Alert).values(records)
     stmt = stmt.on_conflict_do_update(
         index_elements=["tenant_id", "rule_code", "keyword_id", "report_date"],
@@ -133,6 +140,11 @@ async def _upsert_keyword_alerts(session: AsyncSession, records: list[dict]) -> 
 
 async def _upsert_entity_alerts(session: AsyncSession, records: list[dict]) -> None:
     if not records:
+        return
+    chunk_size = min(1000, 30000 // (max(map(len, records)) + 4))
+    if len(records) > chunk_size:
+        for start in range(0, len(records), chunk_size):
+            await _upsert_entity_alerts(session, records[start:start + chunk_size])
         return
     stmt = pg_insert(Alert).values(records)
     stmt = stmt.on_conflict_do_update(
@@ -156,12 +168,16 @@ async def run_rules_for_tenant(
 ) -> int:
     """Evaluate all daily rules for one tenant and return written/refreshed alert count."""
     drafts = []
+    tenant_id = tenant.id
     for rule in ALL_RULES:
         try:
-            drafts.extend(await rule.evaluate(session, tenant, target_date))
+            # A database failure must not poison subsequent rules in this tenant.
+            async with session.begin_nested():
+                rule_drafts = await rule.evaluate(session, tenant, target_date)
+            drafts.extend(rule_drafts)
         except Exception:  # noqa: BLE001
             logger.exception(
-                "rule %s failed for tenant %s date %s", rule.code, tenant.id, target_date
+                "rule %s failed for tenant %s date %s", rule.code, tenant_id, target_date
             )
 
     if not drafts:
@@ -201,11 +217,16 @@ async def run_rules_for_all_tenants(
 ) -> dict[str, int]:
     """Evaluate daily rules for all tenants."""
     tenants = await list_active_module_tenants(session, "sem")
+    tenant_refs = [(tenant.id, tenant.name) for tenant in tenants]
     result: dict[str, int] = {}
-    for tenant in tenants:
+    for tenant_id, tenant_name in tenant_refs:
         try:
-            result[tenant.name] = await run_rules_for_tenant(session, tenant, target_date)
+            async with async_session_factory() as tenant_session:
+                tenant = await tenant_session.get(Tenant, tenant_id)
+                if tenant is None:
+                    continue
+                result[tenant_name] = await run_rules_for_tenant(tenant_session, tenant, target_date)
         except Exception:  # noqa: BLE001
-            logger.exception("tenant %s rule engine failed", tenant.name)
-            result[tenant.name] = -1
+            logger.exception("tenant %s rule engine failed", tenant_name)
+            result[tenant_name] = -1
     return result

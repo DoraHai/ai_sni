@@ -9,11 +9,12 @@
 import logging
 from datetime import timedelta
 
-from sqlalchemy import func, or_, select, update
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import BigInteger, all_, any_, bindparam, case, func, or_, select, update
+from sqlalchemy.dialects.postgresql import ARRAY, insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Keyword, KwReportSnapshot, Suggestion, Tenant
+from app.database import async_session_factory
 from app.module_scope import list_active_module_tenants
 from app.suggestions.base import KeywordProfile, SuggestionContext
 from app.suggestions.guardrails import apply_guardrails
@@ -26,6 +27,75 @@ WINDOW_DAYS = 7
 
 def _f(v) -> float | None:
     return float(v) if v is not None else None
+
+
+def _keyword_ids_parameter(ids):
+    # PostgreSQL array is ONE bind, unlike an expanding IN/NOT IN list.
+    return bindparam("keyword_ids", value=list(ids), type_=ARRAY(BigInteger))
+
+
+async def _persist_suggestions(
+    session: AsyncSession, tenant_id: int, target_date, records: list[dict],
+    *, evaluated_keyword_ids=None,
+) -> None:
+    """Batch writes and stale cleanup share a transaction; never overwrite human state."""
+    evaluated_ids = None if evaluated_keyword_ids is None else list(evaluated_keyword_ids)
+    if not records and not evaluated_ids:
+        return
+    # Include implicit column defaults in the budget, not just explicit record keys.
+    chunk_size = min(1000, 30000 // len(Suggestion.__table__.columns))
+    try:
+        for start in range(0, len(records), chunk_size):
+            stmt = pg_insert(Suggestion).values(records[start:start + chunk_size])
+            stmt = stmt.on_conflict_do_update(
+                constraint="uq_suggestions_tenant_kw_date",
+                set_={
+                    "rule_code": stmt.excluded.rule_code,
+                    "suggestion_type": stmt.excluded.suggestion_type,
+                    "priority": stmt.excluded.priority,
+                    "confidence": stmt.excluded.confidence,
+                    "current_bid": stmt.excluded.current_bid,
+                    "suggested_bid": stmt.excluded.suggested_bid,
+                    "change_pct": stmt.excluded.change_pct,
+                    "reason": stmt.excluded.reason,
+                    "signals": stmt.excluded.signals,
+                    # Only reactivate system-expired results; preserve human decisions.
+                    "status": case(
+                        (Suggestion.status == "expired", "pending"),
+                        else_=Suggestion.status,
+                    ),
+                    # 不动 adopted_at 或内部协作状态。
+                },
+            )
+            await session.execute(stmt)
+
+        # 不对 NOT IN 分块执行：那会把其他批次的新建议错误标记为过期。
+        cleanup = (
+            update(Suggestion)
+            .where(
+                Suggestion.tenant_id == tenant_id,
+                Suggestion.status == "pending",
+                Suggestion.report_date <= target_date,
+                or_(
+                    Suggestion.report_date != target_date,
+                    Suggestion.keyword_id != all_(
+                        _keyword_ids_parameter(r["keyword_id"] for r in records)
+                    ),
+                ),
+            )
+            .values(status="expired")
+            .execution_options(synchronize_session=False)
+        )
+        if evaluated_ids is not None:
+            # Missing reports/assets are not evidence that an old suggestion is invalid.
+            cleanup = cleanup.where(Suggestion.keyword_id == any_(bindparam(
+                "evaluated_keyword_ids", value=evaluated_ids, type_=ARRAY(BigInteger)
+            )))
+        await session.execute(cleanup)
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
 
 
 async def run_suggestions_for_tenant(
@@ -99,13 +169,16 @@ async def run_suggestions_for_tenant(
         await session.scalars(
             select(Keyword).where(
                 Keyword.tenant_id == tenant.id,
-                Keyword.keyword_id.in_(list(metrics.keys())),
+                Keyword.keyword_id == any_(_keyword_ids_parameter(metrics.keys())),
                 Keyword.pause.isnot(True),
             )
         )
     ).all()
 
+    if not kw_rows or not ALL_RULES:
+        return 0  # no usable assets/rules: do not treat missing input as a rejection
     drafts = []
+    evaluation_failed = False
     profiles: dict[int, KeywordProfile] = {}
     for kw in kw_rows:
         m = metrics.get(kw.keyword_id)
@@ -135,6 +208,7 @@ async def run_suggestions_for_tenant(
             try:
                 d = rule(p, ctx)
             except Exception:  # noqa: BLE001
+                evaluation_failed = True
                 logger.exception(
                     "建议规则 %s 对词 %s 执行失败", rule.__name__, kw.keyword_id
                 )
@@ -145,7 +219,13 @@ async def run_suggestions_for_tenant(
             if d is not None:
                 drafts.append(d)
 
+    if evaluation_failed:
+        # A partial rule pass is not an authoritative replacement of previous results.
+        raise RuntimeError("建议规则评估未完整完成，已保留原有建议，请重试")
     if not drafts:
+        await _persist_suggestions(
+            session, tenant.id, ctx.target_date, [], evaluated_keyword_ids=profiles.keys()
+        )
         return 0
 
     # 同词仲裁：一个关键词只留一条主建议（优先级最高，同级取置信度高）。
@@ -175,8 +255,6 @@ async def run_suggestions_for_tenant(
         if nd is not None:
             final.append(nd)
     drafts = final
-    if not drafts:
-        return 0
 
     records = [
         {
@@ -199,41 +277,9 @@ async def run_suggestions_for_tenant(
         }
         for d in drafts
     ]
-    stmt = pg_insert(Suggestion).values(records)
-    stmt = stmt.on_conflict_do_update(
-        constraint="uq_suggestions_tenant_kw_date",
-        set_={
-            "rule_code": stmt.excluded.rule_code,
-            "suggestion_type": stmt.excluded.suggestion_type,
-            "priority": stmt.excluded.priority,
-            "confidence": stmt.excluded.confidence,
-            "current_bid": stmt.excluded.current_bid,
-            "suggested_bid": stmt.excluded.suggested_bid,
-            "change_pct": stmt.excluded.change_pct,
-            "reason": stmt.excluded.reason,
-            "signals": stmt.excluded.signals,
-            # 不动 status / adopted_at：不覆盖人工采纳/忽略
-        },
+    await _persist_suggestions(
+        session, tenant.id, ctx.target_date, records, evaluated_keyword_ids=profiles.keys()
     )
-    await session.execute(stmt)
-    await session.commit()
-
-    # 清理过时 pending：本次没再产出的旧 pending 标 expired（AI 否决、或数据变化后
-    # 不再触发的旧建议），不动人工 adopted/ignored
-    this_kw_ids = [d.keyword_id for d in drafts]
-    await session.execute(
-        update(Suggestion)
-        .where(
-            Suggestion.tenant_id == tenant.id,
-            Suggestion.status == "pending",
-            or_(
-                Suggestion.report_date != ctx.target_date,
-                Suggestion.keyword_id.notin_(this_kw_ids),
-            ),
-        )
-        .values(status="expired")
-    )
-    await session.commit()
 
     logger.info(
         "租户 %s 建议引擎产出 %d 条（窗口 %s ~ %s）",
@@ -250,11 +296,16 @@ async def run_suggestions_for_all_tenants(
 ) -> dict[str, int]:
     """对所有租户跑建议引擎（每日同步后调用）。返回 {租户名: 条数}。"""
     tenants = await list_active_module_tenants(session, "sem")
+    tenant_refs = [(tenant.id, tenant.name) for tenant in tenants]
     result: dict[str, int] = {}
-    for t in tenants:
+    for tenant_id, tenant_name in tenant_refs:
         try:
-            result[t.name] = await run_suggestions_for_tenant(session, t, window_days)
+            async with async_session_factory() as tenant_session:
+                tenant = await tenant_session.get(Tenant, tenant_id)
+                if tenant is None:
+                    continue
+                result[tenant_name] = await run_suggestions_for_tenant(tenant_session, tenant, window_days)
         except Exception:  # noqa: BLE001
-            logger.exception("租户 %s 建议引擎失败", t.name)
-            result[t.name] = -1
+            logger.exception("租户 %s 建议引擎失败", tenant_name)
+            result[tenant_name] = -1
     return result
