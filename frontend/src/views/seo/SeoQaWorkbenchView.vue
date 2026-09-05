@@ -161,6 +161,11 @@ async function readCsv(event) {
   if (key === scopeKey.value && dialog.value === 'csv') importing.value = value
 }
 function search() { page.value = 1; return load() }
+function findMaintenanceQuestion(item) {
+  if (busy.value) return
+  tab.value = 'questions'; query.value = item.title; status.value = ''
+  return search()
+}
 watch(scopeKey, () => {
   ++answerSequence; selected.value = null; items.value = []; facts.value = []; placements.value = []; maintenance.value = []; platforms.value = []
   total.value = 0; page.value = 1; dialog.value = ''; resetAnswer(); load()
@@ -202,7 +207,7 @@ watch(scopeKey, () => {
       </article>
     </section>
 
-    <section v-if="tab==='maintenance'" class="qa-panel"><h2>需要重新确认的回答</h2><p class="qa-hint">检查最近更新的 200 个回答，识别证据过期、来源版本变化和正文引用问题。</p><el-empty v-if="!maintenance.length" description="当前检查范围内没有发现待修复的证据问题"/><div v-for="m in maintenance" :key="m.answer_id" class="qa-maintenance"><strong>{{ m.title }}</strong><p>{{ m.problems.join('；') }}</p><el-button :disabled="busy" @click="tab='questions';query=m.title;search()">找到问题并更新</el-button></div></section>
+    <section v-if="tab==='maintenance'" class="qa-panel"><h2>需要重新确认的回答</h2><p class="qa-hint">检查最近更新的 200 个回答，识别证据过期、来源版本变化和正文引用问题。</p><el-empty v-if="!maintenance.length" description="当前检查范围内没有发现待修复的证据问题"/><div v-for="m in maintenance" :key="m.answer_id" class="qa-maintenance"><strong>{{ m.title }}</strong><p>{{ m.problems.join('；') }}</p><el-button :disabled="busy" @click="findMaintenanceQuestion(m)">找到问题并更新</el-button></div></section>
 
     <el-drawer :model-value="!!selected" title="问题与回答" size="min(960px, 96vw)" :close-on-click-modal="false" :close-on-press-escape="!busy" :show-close="!busy" @close="selected=null;++answerSequence">
       <template v-if="selected"><el-alert v-if="error" :title="error" type="error" :closable="false"/><h2>{{ selected.title }}</h2><div class="qa-provenance" v-for="(source,i) in selected.sources" :key="i"><el-tag size="small">{{ kinds[source.kind] }}</el-tag> {{ source.name }} · {{ date(source.captured_at) }} <a v-if="href(source.url)" :href="href(source.url)" target="_blank" rel="noopener noreferrer">查看来源 ↗</a></div>

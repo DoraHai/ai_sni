@@ -57,3 +57,18 @@ test('AI response cannot populate another tenant workspace',async()=>{
     assert.equal(m.state.answerForm.body,'');assert.equal(m.state.selected,null)
   }finally{m.app.unmount()}
 })
+
+test('maintenance navigation clears stale filters and pagination',async()=>{
+  const reads=[]
+  const m=await mount({seoQaGet:async(path,params)=>{
+    reads.push({path,params})
+    return path==='questions'?{items:[],total:0}:path==='maintenance'?{items:[]}:path==='capabilities'?{platforms:[]}:[]
+  }})
+  try {
+    m.state.status='archived';m.state.page=4;m.state.query='之前的搜索';m.state.tab='maintenance'
+    await m.state.findMaintenanceQuestion({title:'需要更新的问题'})
+    const request=reads.filter(r=>r.path==='questions').at(-1)
+    assert.equal(request.params.status,undefined);assert.equal(request.params.page,1)
+    assert.equal(request.params.q,'需要更新的问题');assert.equal(m.state.tab,'questions')
+  } finally {m.app.unmount()}
+})

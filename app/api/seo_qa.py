@@ -348,11 +348,18 @@ async def save_answer(req, session, ctx, answer_id=None):
         raise HTTPException(409, '归档问题请先恢复')
     snapshots = await fact_snapshots(session, req.tenant_id, req.site_id, req.fact_ids)
     if answer_id is None:
-        existing = await session.scalar(select(SeoQaAnswer).where(SeoQaAnswer.question_id == question.id,
+        match = (await session.execute(select(SeoQaAnswer, SeoContentAsset)
+            .join(SeoContentAsset, SeoContentAsset.id == SeoQaAnswer.content_id)
+            .where(SeoQaAnswer.question_id == question.id,
             SeoQaAnswer.tenant_id == req.tenant_id, SeoQaAnswer.site_id == req.site_id,
-            SeoQaAnswer.evidence_hash == body_hash(req.body), SeoQaAnswer.format == req.format))
-        if existing and existing.fact_snapshots == snapshots:
-            content = await session.get(SeoContentAsset, existing.content_id)
+            SeoQaAnswer.evidence_hash == body_hash(req.body), SeoQaAnswer.format == req.format,
+            SeoQaAnswer.fact_snapshots == snapshots,
+            SeoContentAsset.tenant_id == req.tenant_id, SeoContentAsset.site_id == req.site_id,
+            func.coalesce(func.nullif(SeoContentAsset.humanized_content, ''), SeoContentAsset.draft, '') == req.body)
+            .order_by(SeoQaAnswer.id).limit(1).with_for_update(of=SeoContentAsset)
+            .execution_options(populate_existing=True))).first()
+        if match:
+            existing, content = match
             await session.commit()
             return {**data(existing), 'content_version': content.version_count, 'problems': answer_checks(req.body, snapshots)}
         content = SeoContentAsset(tenant_id=req.tenant_id, site_id=req.site_id, title=question.title,
