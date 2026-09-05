@@ -15,7 +15,7 @@ from typing import Any
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.baidu.client import BaiduAPIError, BaiduLiveWriteBlockedError
+from app.baidu.client import BaiduAPIError, BaiduHTTPError, BaiduLiveWriteBlockedError
 from app.baidu.regions import ALL_REGIONS_ID, region_ids
 from app.baidu.services.account import AccountService
 from app.baidu.services.adgroup import AdgroupService
@@ -227,7 +227,11 @@ def _record_writeback_exception(
     """网络或未知异常无法证明百度未执行；真实模式必须进入人工对账。"""
     definitive_api_failure = (
         isinstance(error, BaiduLiveWriteBlockedError)
-        or (isinstance(error, BaiduAPIError) and error.code is not None)
+        or (
+            isinstance(error, BaiduAPIError)
+            and not isinstance(error, BaiduHTTPError)
+            and error.code is not None
+        )
     )
     record.status = "failed" if dry_run or definitive_api_failure else "reconcile"
     if isinstance(error, BaiduAPIError):
