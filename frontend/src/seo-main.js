@@ -24,6 +24,8 @@ import {
   ElSwitch,
   ElTable,
   ElTableColumn,
+  ElTabs,
+  ElTabPane,
   ElTag,
   provideGlobalConfig,
 } from 'element-plus'
@@ -58,6 +60,8 @@ const elementComponents = [
   ElSwitch,
   ElTable,
   ElTableColumn,
+  ElTabs,
+  ElTabPane,
   ElTag,
 ]
 

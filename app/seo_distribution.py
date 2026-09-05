@@ -472,7 +472,7 @@ async def _ensure_public_image_url(value: str) -> str:
     return raw
 
 
-async def _download_wechat_image(value: str, position: int) -> tuple[str, bytes, str]:
+async def _download_wechat_image(value: str, position: int, *, max_bytes: int = _WECHAT_IMAGE_MAX_BYTES) -> tuple[str, bytes, str]:
     url = value
     timeout = httpx.Timeout(15.0, connect=8.0)
     async with pinned_async_client(timeout=timeout, follow_redirects=False) as client:
@@ -495,13 +495,13 @@ async def _download_wechat_image(value: str, position: int) -> tuple[str, bytes,
                                 f"第 {position} 张图片下载失败（HTTP {response.status_code}）"
                             )
                         declared_size = int(response.headers.get("content-length") or 0)
-                        if declared_size > _WECHAT_IMAGE_MAX_BYTES:
-                            raise SeoDistributionError(f"第 {position} 张图片超过微信 1MB 限制")
+                        if declared_size > max_bytes:
+                            raise SeoDistributionError(f"第 {position} 张图片超过 {max_bytes // (1024 * 1024)}MB 下载限制")
                         data = bytearray()
                         async for chunk in response.aiter_bytes():
                             data.extend(chunk)
-                            if len(data) > _WECHAT_IMAGE_MAX_BYTES:
-                                raise SeoDistributionError(f"第 {position} 张图片超过微信 1MB 限制")
+                            if len(data) > max_bytes:
+                                raise SeoDistributionError(f"第 {position} 张图片超过 {max_bytes // (1024 * 1024)}MB 下载限制")
                         raw = bytes(data)
                         if raw.startswith(b"\x89PNG\r\n\x1a\n"):
                             return f"article-{position}.png", raw, "image/png"

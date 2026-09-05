@@ -12,8 +12,45 @@ const compile=(api)=>new Function('Vue','api',source
   .replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/g,(_,names)=>`const {${names.replace(/\s+as\s+/g,':')}}=Vue`)
   .replace(/import\s*\{[^}]+\}\s*from\s*['"]element-plus['"]/g,'const ElMessage={warning(){}}')
   .replace(/import\s*\{([^}]+)\}\s*from\s*['"]\.\.\/\.\.\/api\/seo['"]/g,(_,names)=>`const {${names}}=api`)
+  .replace(/import SeoBacklinkInsights from '[^']+'/, 'const SeoBacklinkInsights = {}')
   .replace('export default','return'))(Vue,api)
 const flush=async()=>{await Promise.resolve();await Vue.nextTick();await Promise.resolve();await Vue.nextTick()}
+const insightsDescriptor=parse(await readFile(new URL('../src/views/seo/SeoBacklinkInsights.vue',import.meta.url),'utf8')).descriptor
+const compileInsights=(api)=>new Function('Vue','api',compileScript(insightsDescriptor,{id:'insights-test'}).content
+  .replace(/import\s*\{([^}]+)\}\s*from\s*['"]vue['"]/g,(_,names)=>`const {${names.replace(/\s+as\s+/g,':')}}=Vue`)
+  .replace(/import\s*\{([^}]+)\}\s*from\s*['"]\.\.\/\.\.\/api\/seo['"]/g,(_,names)=>`const {${names}}=api`)
+  .replace('export default','return'))(Vue,api)
+
+test('CSV preview rejects stale customer responses and invalid rows cannot commit',async()=>{
+  let release
+  const calls=[]
+  const component=compileInsights({fetchSeoBacklinkAnalysis:async()=>({pending:0}),fetchSeoBacklinkIndexStatus:async()=>({configured:true}),
+    importSeoBacklinkCsv:async(args)=>{calls.push(args);return new Promise(resolve=>release=resolve)}})
+  component.render=()=>null
+  const props=Vue.reactive({tenantId:1,siteId:10,canEdit:true})
+  const app=Vue.createApp({render:()=>Vue.h(component,props)}),root=app.mount(document.getElementById('app'));await flush()
+  const state=root.$.subTree.component.setupState
+  const pending=state.chooseFile({target:{files:[{size:10}],value:'file'}});await flush()
+  props.siteId=20;await flush();release({items:[{}],errors:[]});await pending
+  assert.equal(state.preview,null);assert.equal(state.dialog,false);assert.equal(calls[0].siteId,10)
+  state.file={size:10};state.preview={items:[{}],errors:[{reason:'invalid'}]};await state.commit();assert.equal(calls.length,1)
+  props.canEdit=false;await flush();state.preview={items:[{}],errors:[]};await state.commit();assert.equal(calls.length,1)
+  app.unmount()
+})
+
+test('index query blocks duplicate clicks and discards response after site switch',async()=>{
+  let release;let calls=0
+  const component=compileInsights({fetchSeoBacklinkAnalysis:async()=>({pending:0}),fetchSeoBacklinkIndexStatus:async()=>({configured:true}),
+    querySeoBacklinkIndex:async()=>{calls++;return new Promise(resolve=>release=resolve)}})
+  component.render=()=>null
+  const props=Vue.reactive({tenantId:1,siteId:10,canEdit:true})
+  const app=Vue.createApp({render:()=>Vue.h(component,props)}),root=app.mount(document.getElementById('app'));await flush()
+  const state=root.$.subTree.component.setupState
+  const pending=state.queryIndex();await flush();await state.queryIndex();assert.equal(calls,1)
+  props.siteId=20;await flush();release({state:'completed',received:1,created:1});await pending
+  assert.equal(state.message,'');assert.equal(state.busy,false)
+  props.canEdit=false;await flush();await state.queryIndex();assert.equal(calls,1);app.unmount()
+})
 
 test('batch discovery uses captured site, stops on scope change and discards late results',async()=>{
   let release

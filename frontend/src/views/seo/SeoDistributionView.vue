@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  downloadSeoPublicationMaterials,
   discoverSeoBacklinks,
   adaptSeoDistributionContent,
   completeSeoManualPublication,
@@ -39,6 +40,17 @@ const activeTab = ref('channels')
 const query = ref('')
 const channelFilter = ref('all')
 const channelRegion = ref('domestic')
+const materialsBusy = ref(false)
+async function downloadMaterials(item) {
+  if (!canEdit.value || materialsBusy.value) return
+  const requested = currentResultScope()
+  materialsBusy.value = true
+  try {
+    const blob = await downloadSeoPublicationMaterials(item.id,{tenant_id:currentTenantId.value,site_id:siteId.value,source_version:item.source_version})
+    if (requested === currentResultScope()) { downloadBlob(blob,`SEO发布材料-${item.id}.zip`); ElMessage.success('材料包已下载，请查看配图清单中的缺失项') }
+  } catch(e) { if (requested === currentResultScope()) ElMessage.error(e.message) }
+  finally { materialsBusy.value = false }
+}
 const helperDialog = ref(false)
 const resultInput = ref(null), resultDialog = ref(false), resultRows = ref([]), resultBusy = ref(false)
 let resultScope = ''
@@ -1179,6 +1191,7 @@ onMounted(loadSites)
         <div class="handoff-heading"><span><b>{{ handoffItem.connection_name || handoffItem.platform_name }}</b><small>{{ handoffItem.content_title }} · 内容版本 {{ handoffItem.source_version }}</small></span><el-tag type="warning">等待平台确认</el-tag></div>
         <el-steps :active="completeForm.confirmed ? 3 : handoffOpened ? 2 : (handoffCopied.title || handoffCopied.content) ? 1 : 0" finish-status="success" simple><el-step title="复制内容" /><el-step title="平台发布" /><el-step title="回填链接" /></el-steps>
         <section class="handoff-copy-card">
+          <el-button v-if="canEdit" :loading="materialsBusy" @click="downloadMaterials(handoffItem)">下载正文与配图材料包</el-button>
           <el-button v-if="canEdit" @click="exportPublisherTasks([handoffItem])">导出此篇填稿任务</el-button>
           <header><b>1. 复制适配内容</b><span>标题和正文分开复制，更适合平台编辑器</span></header>
           <div class="handoff-field"><label>标题</label><el-input :model-value="handoffTitle" readonly /><el-button :type="handoffCopied.title ? 'success' : 'primary'" plain @click="copyHandoffTitle">{{ handoffCopied.title ? '标题已复制' : '复制标题' }}</el-button></div>

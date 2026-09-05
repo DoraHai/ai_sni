@@ -14,6 +14,7 @@ from urllib.parse import quote, urljoin, urlparse
 from uuid import uuid4
 
 from app.seo_backlinks import apply_backlink_evidence, discover_backlinks, fetch_backlink_page
+from app.seo_backlink_sources import parse_backlink_csv, import_candidates, index_status, fetch_index_candidates, backlink_analysis
 from app.seo_task_center import list_task_center, planned_checks, actor_key, JOB_PERMISSIONS
 from app.models.seo import SeoAiOperation
 
@@ -7330,6 +7331,32 @@ async def retry_content_publication(
     return _publication_payload(row, content=content, connection=connection)
 
 
+class DistributionMaterialsRequest(BaseModel):
+    tenant_id: PositiveInt
+    site_id: PositiveInt
+    source_version: PositiveInt
+
+
+@router.post("/content-distribution/publications/{publication_id}/materials")
+async def download_publication_materials(publication_id: int, req: DistributionMaterialsRequest, session: AsyncSession = Depends(get_session), ctx: AuthContext = Depends(require_scoped_auth)):
+    from app.seo_distribution_package import build_publication_package
+    ctx.ensure_tenant(req.tenant_id)
+    if req.site_id is None:
+        raise HTTPException(422, "请选择网站")
+    await _seo_site(session, req.tenant_id, req.site_id)
+    row = await session.get(SeoContentPublication, publication_id)
+    if not row or row.tenant_id != req.tenant_id:
+        raise HTTPException(404, "发布任务不存在")
+    content = await _distribution_content(session, req.tenant_id, row.content_asset_id, req.site_id)
+    if req.source_version != row.source_version or (content.version_count or 1) != row.source_version:
+        raise HTTPException(409, "稿件版本已变化，请重新生成分发任务")
+    try:
+        data, manifest = await build_publication_package(row.adapted_title or content.title, row.adapted_content or "", row.id, row.source_version)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return Response(data, media_type="application/zip", headers={"Content-Disposition":f'attachment; filename="seo-materials-{row.id}.zip"',"X-Missing-Images":str(manifest["missing"]),"Cache-Control":"no-store"})
+
+
 @router.get("/content-distribution/publications/{publication_id}/attempts")
 async def list_publish_attempts(
     publication_id: int,
@@ -7660,6 +7687,78 @@ class BacklinkScope(BaseModel):
 class BacklinkDiscovery(BacklinkScope):
     source_url: str = Field(min_length=1, max_length=2000)
     publication_id: PositiveInt | None = None
+
+
+@router.post("/backlinks/import")
+async def import_backlink_file(tenant_id: int, site_id: int, dry_run: bool = True, file: UploadFile = File(...), session: AsyncSession = Depends(get_session), ctx: AuthContext = Depends(require_scoped_auth)):
+    ctx.ensure_tenant(tenant_id)
+    site = await _seo_site(session, tenant_id, site_id)
+    try:
+        preview = parse_backlink_csv(await file.read(2 * 1024 * 1024 + 1), site.canonical_domain)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if dry_run:
+        return {**preview, "committed": False}
+    if preview["errors"]:
+        raise HTTPException(422, {"message": "请修复错误行后重新导入，本次未写入", "errors":preview["errors"]})
+    imported = await import_candidates(session, tenant_id, site_id, preview["items"], "csv")
+    await session.commit()
+    return {**preview, **imported, "committed":True}
+
+
+@router.get("/backlinks/analysis")
+async def analyse_site_backlinks(tenant_id: int, site_id: int, session: AsyncSession = Depends(get_session)):
+    await _seo_site(session, tenant_id, site_id)
+    rows = list(await session.scalars(select(SeoBacklink).where(SeoBacklink.tenant_id == tenant_id, SeoBacklink.site_id == site_id)))
+    return backlink_analysis(rows)
+
+
+@router.get("/backlinks/index-status")
+async def backlink_index_status(tenant_id: int, site_id: int, session: AsyncSession = Depends(get_session)):
+    site = await _seo_site(session, tenant_id, site_id)
+    return {**index_status(), "last_query":(site.site_settings or {}).get("backlink_index")}
+
+
+@router.post("/backlinks/query-index")
+async def query_backlink_index(req: BacklinkScope, session: AsyncSession = Depends(get_session), ctx: AuthContext = Depends(require_scoped_auth)):
+    ctx.ensure_tenant(req.tenant_id)
+    await _seo_site(session, req.tenant_id, req.site_id)
+    if not index_status()["configured"]:
+        raise HTTPException(503, "外链索引未启用，可先导入 CSV 或扫描来源页面")
+    site = await session.get(SeoSite, req.site_id, with_for_update=True, populate_existing=True)
+    if not site or site.tenant_id != req.tenant_id:
+        raise HTTPException(404, "网站不存在")
+    settings = dict(site.site_settings or {})
+    previous = settings.get("backlink_index") or {}
+    now = datetime.utcnow()
+    if previous.get("domain") == site.canonical_domain and previous.get("attempted_at") and now - datetime.fromisoformat(previous["attempted_at"]) < timedelta(days=1):
+        return {**previous, "cached":True}
+    claim = {"state":"running", "attempted_at":now.isoformat(), "domain":site.canonical_domain, "request_id":uuid4().hex}
+    settings["backlink_index"] = claim
+    site.site_settings = settings
+    domain = site.canonical_domain
+    await session.commit()  # Durable reservation survives uncertain provider/network outcomes.
+    try:
+        result = await fetch_index_candidates(domain)
+        site = await session.get(SeoSite, req.site_id, with_for_update=True, populate_existing=True)
+        if not site or site.tenant_id != req.tenant_id or site.canonical_domain != domain or ((site.site_settings or {}).get("backlink_index") or {}).get("request_id") != claim["request_id"]:
+            raise HTTPException(409, "网站或查询任务已变化，未写入过期结果")
+        imported = await import_candidates(session, req.tenant_id, req.site_id, result["items"], "dataforseo_index")
+        outcome = {**claim, **imported, "received":len(result["items"]), "rejected":result["rejected"], "state":"completed"}
+    except HTTPException:
+        await session.rollback()
+        raise
+    except Exception as exc:
+        await session.rollback()
+        outcome = {**claim, "state":"failed", "message":str(exc) if isinstance(exc, ValueError) else "索引查询未完成，请检查服务状态；未自动重试"}
+    site = await session.get(SeoSite, req.site_id, with_for_update=True, populate_existing=True)
+    if not site or site.tenant_id != req.tenant_id or ((site.site_settings or {}).get("backlink_index") or {}).get("request_id") != claim["request_id"]:
+        raise HTTPException(409, "查询任务已变化，未覆盖较新的结果")
+    settings = dict(site.site_settings or {})
+    settings["backlink_index"] = outcome
+    site.site_settings = settings
+    await session.commit()
+    return {**outcome, "cached":False}
 
 
 @router.get("/backlinks/discovery-sources")

@@ -152,6 +152,7 @@ class Settings(BaseSettings):
     seo_snapshot_retention_batch_size: int = Field(1000, ge=1, le=10000)
 
     # SEO multi-engine live SERP. Credentials are server-only and never stored per site.
+    seo_backlink_index_enabled: bool = False
     seo_dataforseo_login: str = ""
     seo_dataforseo_password: str = ""
     seo_dataforseo_base_url: str = "https://api.dataforseo.com/v3"
