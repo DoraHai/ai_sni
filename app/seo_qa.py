@@ -201,11 +201,12 @@ def placement_followup(answer_url, observations, *, now=None):
             reasons.append('核验状态未知，请复查')
         if checked is None or (now - checked).total_seconds() >= 7 * 86400:
             reasons.append('距上次核验已满 7 天或核验时间未知，建议复查')
-        current = last.get('backlink_discovery') or {}
+        link_history = [o for o in observations if (o.get('backlink_discovery') or {}).get('state') not in {None, 'not_checked'}]
+        current = (link_history[-1].get('backlink_discovery') or {}) if link_history else {}
         if current.get('state') in {'unavailable', 'blocked', 'unreachable'}:
             reasons.append('外链暂时无法核验，请稍后复查')
         if current.get('state') == 'readable':
-            previous = next((o.get('backlink_discovery') for o in reversed(observations[:-1])
+            previous = next((o.get('backlink_discovery') for o in reversed(link_history[:-1])
                 if (o.get('backlink_discovery') or {}).get('state') == 'readable'), None)
             if previous is not None:
                 # Compare targets, not counts: one link may replace another.

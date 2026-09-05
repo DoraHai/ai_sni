@@ -28,6 +28,49 @@ const planningRevision = ref(0)
 const followupOnly = ref(false)
 const followupCount = computed(() => placements.value.filter(row => row.followup?.needed).length)
 const visiblePlacements = computed(() => followupOnly.value ? placements.value.filter(row => row.followup?.needed) : placements.value)
+const batchRunning = ref(false), batchStop = ref(false), batchResults = ref([])
+const batchCandidates = computed(() => visiblePlacements.value.filter(row => row.answer_url).slice(0, 20))
+function latestBacklink(row) {
+  return [...(row.observations || [])].reverse().find(o => o.backlink_discovery && o.backlink_discovery.state !== 'not_checked')
+}
+async function verifyBatch() {
+  if (busy.value || !canEdit.value || !scope.value.tenant_id || !scope.value.site_id) return
+  const key = scopeKey.value, params = { ...scope.value }, candidates = [...batchCandidates.value]
+  busy.value = true; batchRunning.value = true; batchStop.value = false; batchResults.value = []; error.value = ''
+  try {
+    for (const row of candidates) {
+      if (batchStop.value || key !== scopeKey.value) break
+      try {
+        const result = await seoQaPost(`placements/${row.id}/verify`, params)
+        if (key !== scopeKey.value) break
+        batchResults.value.push({ id: row.id, message: labels[result.status] || '核验完成', failed: false })
+      } catch (e) {
+        if (key !== scopeKey.value) break
+        batchResults.value.push({ id: row.id, message: messageOf(e), failed: true })
+        if ([401, 403].includes(e?.response?.status)) break
+      }
+    }
+    if (key === scopeKey.value) await load()
+  } finally { busy.value = false; batchRunning.value = false }
+}
+function csvCell(value) {
+  let text = String(value ?? '')
+  if (/^[\s\u0000-\u001f]*[=+@-]/.test(text)) text = "'" + text
+  return '"' + text.replaceAll('"', '""') + '"'
+}
+function resultsCsv() {
+  const rows = [['记录编号', '平台', '回答网址', '正文状态', '最近核验时间', '外链结果', '外链观测时间', '待跟进原因']]
+  for (const row of visiblePlacements.value) {
+    const link = latestBacklink(row)
+    rows.push([row.id, platformName(row.platform), row.answer_url, labels[row.status] || row.status,
+      row.observations?.at(-1)?.checked_at, backlinkSummary(link), link?.checked_at, row.followup?.reasons?.join('；')])
+  }
+  return '\ufeff' + rows.map(row => row.map(csvCell).join(',')).join('\r\n')
+}
+function exportResults() {
+  const blob = new Blob([resultsCsv()], {type:'text/csv;charset=utf-8'}), url = URL.createObjectURL(blob)
+  const a = document.createElement('a'); a.href = url; a.download = `问答核验-${scope.value.site_id}.csv`; a.click(); URL.revokeObjectURL(url)
+}
 function backlinkSummary(observation) {
   const result = observation?.backlink_discovery
   if (!result || result.state === 'not_checked') return '外链尚未检查'
@@ -180,6 +223,7 @@ function findMaintenanceQuestion(item) {
   return search()
 }
 watch(scopeKey, () => {
+  batchStop.value = true; batchResults.value = []; followupOnly.value = false
   ++answerSequence; selected.value = null; items.value = []; facts.value = []; placements.value = []; maintenance.value = []; platforms.value = []
   total.value = 0; page.value = 1; dialog.value = ''; resetAnswer(); load()
 }, { immediate: true })
@@ -212,6 +256,8 @@ watch(scopeKey, () => {
     <section v-if="tab==='placements'" class="qa-panel">
       <h2>分发与效果</h2><p class="qa-hint">平台回答由真人发布，计划时间用于安排工作。回填网址后抓取核验正文；正文匹配不代表账号归属或平台阅读量。最近 200 条记录。</p>
       <div class="qa-capabilities"><div v-for="p in platforms" :key="p.key"><strong>{{ p.name }}</strong><p>{{ p.description }}</p></div></div>
+      <div class="qa-toolbar"><el-button :disabled="!canEdit || busy || !batchCandidates.length" @click="verifyBatch">批量核验当前列表（最多 20 条）</el-button><el-button v-if="batchRunning" @click="batchStop=true">停止后续核验</el-button><el-button :disabled="busy || !visiblePlacements.length" @click="exportResults">导出当前筛选结果</el-button></div>
+      <div v-if="batchResults.length" class="qa-hint"><p>本次已返回 {{ batchResults.length }} 条结果；失败记录可单独重试。</p><p v-for="r in batchResults" :key="r.id" :class="{'qa-warning':r.failed}">#{{ r.id }} · {{ r.message }}</p></div>
       <div class="qa-toolbar"><el-checkbox v-model="followupOnly">仅看待跟进（{{ followupCount }}）</el-checkbox><span class="qa-hint">已核验的回答满 7 天进入后台正文复查队列，每小时最多 20 条。首次核验由人工触发；外链资产由外链模块定期核验。</span></div>
       <el-empty v-if="placements.length && !visiblePlacements.length" description="当前列表范围内没有待跟进记录"/>
       <el-empty v-if="!placements.length" description="回答审核通过后，点击“准备分发”建立记录。"/>
@@ -220,7 +266,7 @@ watch(scopeKey, () => {
         <div class="qa-toolbar"><a v-if="href(row.question_url)" :href="href(row.question_url)" target="_blank" rel="noopener noreferrer">打开指定问题 ↗</a><a v-if="href(row.answer_url)" :href="href(row.answer_url)" target="_blank" rel="noopener noreferrer">查看回答 ↗</a><el-button :disabled="!row.publishable" @click="copy(row)">复制审核稿</el-button><el-button :disabled="!row.publishable" @click="download(row)">下载文本</el-button><el-button :disabled="!canEdit || busy" @click="Object.assign(receiptForm,{id:row.id,answer_url:row.answer_url||'',version:row.version});dialog='receipt'">回填网址</el-button><el-button :disabled="!canEdit || busy || !row.answer_url" @click="verify(row)">核验正文与外链</el-button><el-button :disabled="!canEdit || busy" @click="Object.assign(metricsForm,{id:row.id,version:row.version,views:null,likes:null,comments:null,source_url:row.answer_url||'',as_of:null});dialog='metrics'">录入平台数据</el-button></div>
         <p class="qa-hint">{{ row.reported_metrics ? `人工录入：阅读 ${row.reported_metrics.views ?? '未知'} · 赞同 ${row.reported_metrics.likes ?? '未知'} · 评论 ${row.reported_metrics.comments ?? '未知'} · ${date(row.reported_metrics.as_of)}` : '阅读 / 赞同 / 评论：未知' }}</p>
         <p v-for="reason in row.followup?.reasons || []" :key="reason" class="qa-warning">{{ reason }}</p>
-        <p>{{ backlinkSummary(row.observations?.at(-1)) }}</p><p class="qa-hint">外链按页面中的真实链接统计；不代表链接属于该回答，也不保证传递排名权重。链接属性保存在外链核验记录中。</p>
+        <p>{{ backlinkSummary(latestBacklink(row)) }}<span v-if="latestBacklink(row)" class="qa-hint"> · 外链观测 {{ date(latestBacklink(row).checked_at) }}</span></p><p class="qa-hint">外链按页面中的真实链接统计；不代表链接属于该回答，也不保证传递排名权重。链接属性保存在外链核验记录中。</p>
         <p v-if="row.problems?.length" class="qa-warning">{{ row.problems.join('；') }}</p><details><summary>查看审核稿与核验记录</summary><pre>{{ row.body }}</pre><p v-for="(o,i) in row.observations" :key="i">{{ date(o.checked_at) }} · {{ o.source === 'scheduled' ? '后台复查' : '人工核验' }} · {{ labels[o.state] }} · {{ o.reason }} · {{ backlinkSummary(o) }}</p></details>
       </article>
     </section>
