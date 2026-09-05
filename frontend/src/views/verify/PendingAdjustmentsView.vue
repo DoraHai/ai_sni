@@ -28,9 +28,12 @@ const statusFilter = ref('')
 const mode = ref(route.query.mode === 'queue' || !canViewPending.value ? 'queue' : 'keyword')
 const aiLoading = ref({})
 const queueFilter = ref('reconciliation_required')
+const queueOffset = ref(0)
+const queueServerPaged = computed(() => data.value?.counts_scope === 'tenant_history')
 const queueItems = computed(() => data.value?.items || [])
 const filteredQueue = computed(() => filterQueue(queueItems.value, queueFilter.value))
-const counts = computed(() => queueCounts(queueItems.value))
+const counts = computed(() => queueServerPaged.value ? data.value.counts : queueCounts(queueItems.value))
+const queueTotal = computed(() => queueServerPaged.value ? Object.values(counts.value).reduce((sum, n) => sum + n, 0) : queueItems.value.length)
 let loadSequence = 0
 
 const fmtMoney = (v) => (v == null ? '-' : '¥ ' + Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 2 }))
@@ -60,7 +63,9 @@ async function load() {
   loading.value = true
   try {
     let result
-    if (mode.value === 'queue') result = await fetchWritebackQueue(TENANT_ID.value)
+    if (mode.value === 'queue') result = await fetchWritebackQueue(TENANT_ID.value, {
+      stage: queueFilter.value, offset: queueOffset.value, limit: 200,
+    })
     else {
       const fetcher = mode.value === 'budget' ? fetchBudgetAdjustments : fetchPendingAdjustments
       result = await fetcher({ tenantId: TENANT_ID.value, days: days.value, status: statusFilter.value })
@@ -157,7 +162,15 @@ async function reconcile(item, decision) {
   }
 }
 
-watch([TENANT_ID, days, statusFilter, mode], load)
+function changeQueuePage(page) {
+  queueOffset.value = (page - 1) * 200
+  load()
+}
+
+watch([TENANT_ID, days, statusFilter, mode, queueFilter], () => {
+  queueOffset.value = 0
+  load()
+})
 onMounted(load)
 </script>
 
@@ -196,13 +209,14 @@ onMounted(load)
     <div v-if="mode === 'queue' && data && !error" class="toolbar">
       <el-radio-group v-model="queueFilter" size="small" aria-label="回写状态筛选">
         <el-radio-button v-for="stage in QUEUE_STAGES" :key="stage.value" :label="stage.value">{{ stage.label }} · {{ counts[stage.value] }}</el-radio-button>
-        <el-radio-button label="">全部 · {{ queueItems.length }}</el-radio-button>
+        <el-radio-button label="">全部 · {{ queueTotal }}</el-radio-button>
       </el-radio-group>
-      <span class="summary">仅统计最近加载的最多 200 条记录，不代表全部历史。</span>
+      <span v-if="queueServerPaged" class="summary">统计当前客户全部历史；按状态筛选后分页，每页最多 200 条。</span>
+      <span v-else class="summary">仅统计最近加载的最多 200 条记录，不代表全部历史。后端尚不支持历史分页。</span>
       <span v-if="counts.unknown" class="summary">另有 {{ counts.unknown }} 条未知状态，请切换全部核查。</span>
       <el-button v-if="session.canView('verify.adjustments')" @click="router.push('/verify/adjustments')">查看调价台账</el-button>
     </div>
-    <el-table v-if="mode === 'queue' && !error" :data="filteredQueue" border :empty-text="loading ? '正在加载记录' : '最近加载记录中暂无此状态记录'">
+    <el-table v-if="mode === 'queue' && !error" :data="filteredQueue" border :empty-text="loading ? '正在加载记录' : '当前页暂无此状态记录'">
       <el-table-column prop="created_at" label="记录时间" min-width="150"><template #default="{row}">{{ fmtTime(row.created_at) }}</template></el-table-column>
       <el-table-column prop="kind" label="动作" min-width="120" />
       <el-table-column prop="target" label="对象" min-width="180" />
@@ -220,6 +234,10 @@ onMounted(load)
         </template>
       </el-table-column>
     </el-table>
+
+    <el-pagination v-if="mode === 'queue' && queueServerPaged && !error"
+      :current-page="Math.floor(queueOffset / 200) + 1" :page-size="200" :total="data.total"
+      :disabled="loading" layout="prev, pager, next, total" @current-change="changeQueuePage" />
 
     <div v-for="it in mode === 'keyword' ? (data?.items || []) : []" :key="it.dedup_key" class="adj-card" :class="{ verified: it.review.status === 'verified' }">
       <div class="adj-head">

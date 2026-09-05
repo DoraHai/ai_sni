@@ -84,6 +84,10 @@ class BaiduLiveWriteBlockedError(RuntimeError):
     """A real Baidu write was rejected by the tenant/account allowlist."""
 
 
+class BaiduHTTPError(BaiduAPIError):
+    """HTTP transport failure does not prove that Baidu rejected a write."""
+
+
 class BaiduAPIClient:
     """无状态客户端：一次调用一个 HTTP 连接（httpx.AsyncClient 上下文）。
 
@@ -178,7 +182,7 @@ class BaiduAPIClient:
             )
 
         if resp.status_code != 200:
-            raise BaiduAPIError(
+            raise BaiduHTTPError(
                 code=resp.status_code,
                 message=f"HTTP {resp.status_code}: {resp.text[:500]}",
             )

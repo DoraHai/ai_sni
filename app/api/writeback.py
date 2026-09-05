@@ -9,7 +9,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.baidu.writeback_approval import (
@@ -326,6 +326,24 @@ def _queue_stage(status: str, dry_run: bool) -> str:
     return "reconciliation_required"
 
 
+def _queue_rows_query(tenant_id: int):
+    """SQL stage classification precedes pagination, including old unresolved rows."""
+    queries = []
+    for model, kind in ((BidWriteback, "bid"), (WritebackAction, "action")):
+        stage = case(
+            (model.status == "failed", "failed"),
+            (and_(model.dry_run.is_(False), model.status.in_(["pending", "reconcile"])),
+             "reconciliation_required"),
+            (model.dry_run.is_(True) | (model.status == "dry_run"), "pending_writeback"),
+            (model.status == "success", "executed"),
+            else_="reconciliation_required",
+        ).label("stage")
+        queries.append(select(model.id.label("id"), literal(kind).label("kind"),
+                              model.created_at.label("created_at"), stage)
+                       .where(model.tenant_id == tenant_id))
+    return union_all(*queries).subquery()
+
+
 @router.post("/queue/{record_type}/{record_id}/reconcile")
 async def reconcile_writeback(
     record_type: Literal["bid", "action"],
@@ -386,18 +404,32 @@ async def list_writeback_queue(
     limit: int = Query(200, ge=1, le=500),
     ctx: AuthContext = Depends(require_scoped_auth),
     session: AsyncSession = Depends(get_session),
+    stage: Literal["pending_writeback", "reconciliation_required", "executed", "failed"] | None = None,
+    offset: int = Query(0, ge=0),
 ) -> dict:
     """统一审计视图：演练记录是待回写，不冒充百度已执行。"""
     ctx.ensure_tenant(tenant_id)
     mode = await get_writeback_mode(tenant_id, ctx, session)
+    queue = _queue_rows_query(tenant_id)
+    counts = dict.fromkeys(("pending_writeback", "reconciliation_required", "executed", "failed"), 0)
+    for label, count in (await session.execute(
+        select(queue.c.stage, func.count()).group_by(queue.c.stage)
+    )).all():
+        counts[label] = int(count)
+    total = counts[stage] if stage else sum(counts.values())
+    page = select(queue.c.id, queue.c.kind)
+    if stage:
+        page = page.where(queue.c.stage == stage)
+    page = page.order_by(queue.c.created_at.desc().nulls_last(), queue.c.kind.desc(), queue.c.id.desc())
+    refs = (await session.execute(page.offset(offset).limit(limit))).all()
+    bid_ids = [row.id for row in refs if row.kind == "bid"]
+    action_ids = [row.id for row in refs if row.kind == "action"]
     bids = list((await session.scalars(
-        select(BidWriteback).where(BidWriteback.tenant_id == tenant_id)
-        .order_by(BidWriteback.id.desc()).limit(limit)
-    )).all())
+        select(BidWriteback).where(BidWriteback.tenant_id == tenant_id, BidWriteback.id.in_(bid_ids))
+    )).all()) if bid_ids else []
     actions = list((await session.scalars(
-        select(WritebackAction).where(WritebackAction.tenant_id == tenant_id)
-        .order_by(WritebackAction.id.desc()).limit(limit)
-    )).all())
+        select(WritebackAction).where(WritebackAction.tenant_id == tenant_id, WritebackAction.id.in_(action_ids))
+    )).all()) if action_ids else []
     items = [
         {
             "key": f"bid:{row.id}", "kind": "关键词调价", "target": row.keyword,
@@ -422,20 +454,17 @@ async def list_writeback_queue(
         }
         for row in actions
     ]
-    items.sort(key=lambda item: item["created_at"] or "", reverse=True)
-    items = items[:limit]
-    counts = {
-        "pending_writeback": 0,
-        "reconciliation_required": 0,
-        "executed": 0,
-        "failed": 0,
-    }
-    for item in items:
-        counts[item["stage"]] += 1
+    order = {f"{row.kind}:{row.id}": index for index, row in enumerate(refs)}
+    items.sort(key=lambda item: order[item["key"]])
     return {
         "writeback_enabled": mode["writeback_enabled"],
         "mode": mode["mode"],
         "live_scopes": mode["live_scopes"],
         "counts": counts,
+        "counts_scope": "tenant_history",
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "has_more": offset + limit < total,
         "items": items,
     }

@@ -391,7 +391,9 @@ async def require_scoped_auth(
 
 
 async def require_admin(ctx: AuthContext = Depends(require_auth)) -> AuthContext:
-    """账号/角色管理：需 settings.accounts edit。"""
+    """全局账号/角色管理：仅未绑定客户的账号管理员可访问。"""
+    if ctx.tenant_id is not None:
+        raise HTTPException(403, "单客户账号不能管理全局账号与角色")
     if not ctx.can_edit("settings.accounts"):
         raise HTTPException(403, "仅有账号与权限管理权的角色可执行此操作")
     return ctx
