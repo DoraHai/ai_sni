@@ -1,5 +1,5 @@
 """SEM 客户级只读指标契约；不调用百度、不补采、不写入快照。"""
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -25,10 +25,11 @@ MetricKey = Literal[
 ]
 
 
-class TrendPoint(BaseModel):
+class MetricTrend(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
-    date: date
-    value: float | None
+    direction: Literal["up", "down", "flat"] | None
+    change_pct: float | None
+    change_abs: float | None
 
 
 class MetricSnapshot(BaseModel):
@@ -37,7 +38,7 @@ class MetricSnapshot(BaseModel):
     value: float | int | None
     unit: Literal["CNY", "percent", "account", "approval", "customer"]
     as_of: AwareDatetime | None
-    trend_7d: list[TrendPoint] = Field(max_length=7)
+    trend_7d: MetricTrend | None
     definition: str = Field(min_length=1)
     data_status: Literal["available", "observed_reports", "identity_blocked",
                          "no_reports", "unattributed_reports", "no_budget"]
@@ -51,9 +52,8 @@ class MetricSnapshot(BaseModel):
             raise ValueError("unavailable metric must have null value")
         if self.value is not None and self.as_of is None:
             raise ValueError("observed value requires as_of")
-        dates = [point.date for point in self.trend_7d]
-        if dates != sorted(set(dates)):
-            raise ValueError("trend dates must be unique and increasing")
+        if self.trend_7d is not None and self.value is None:
+            raise ValueError("unavailable metric cannot have a trend")
         return self
 
 
@@ -73,8 +73,31 @@ def metric(key, value, unit, as_of, definition, *, trend=None, status="available
     return {
         "metric_key": f"sem.{key}", "value": value, "unit": unit,
         "as_of": as_of.isoformat() if as_of else None,
-        "trend_7d": trend or [], "definition": definition, "data_status": status,
+        "trend_7d": trend, "definition": definition, "data_status": status,
     }
+
+
+def compare_seven_days(current: Decimal, previous: Decimal) -> dict:
+    """Direction is factual only; a zero baseline has no defined percent change."""
+    delta = current - previous
+    return {
+        "direction": "up" if delta > 0 else "down" if delta < 0 else "flat",
+        "change_pct": float(delta / abs(previous) * 100) if previous else None,
+        "change_abs": float(delta),
+    }
+
+
+def month_spend_trend(month_rows, month_start, end):
+    baseline = end - timedelta(days=7)
+    if baseline < month_start:
+        return None
+    days = [month_start + timedelta(days=offset) for offset in range((end - month_start).days + 1)]
+    # Missing dates are not zero. Do not compare incomplete month totals.
+    if any(day not in month_rows or not month_rows[day][1] for day in days):
+        return None
+    current = sum((month_rows[day][0] for day in days), Decimal(0))
+    previous = sum((month_rows[day][0] for day in days if day <= baseline), Decimal(0))
+    return compare_seven_days(current, previous)
 
 
 @router.get("/snapshot", response_model=MetricSnapshotResponse)
@@ -95,8 +118,7 @@ async def snapshot(
     today = now.date()
     end = today - timedelta(days=1)
     month_start = today.replace(day=1)
-    trend_start = end - timedelta(days=6)
-    start = min(month_start, trend_start)
+    start = month_start
     identity = (await load_sem_identity_states(session, [tenant_id]))[tenant_id]
     blocked = identity["status"] == "blocked"
     items = [metric(
@@ -138,14 +160,7 @@ async def snapshot(
     as_of = datetime.combine(max(month_rows), datetime.min.time(), TZ) if valid else None
     budget = tenant.monthly_budget
     utilization = round(float(amount / budget * 100), 2) if amount is not None and budget and budget > 0 else None
-    trend = []
-    for offset in range(7):
-        day = trend_start + timedelta(days=offset)
-        observed = [row for date, row in month_rows.items() if date <= day]
-        # Same metric as value (month-to-date), not a misleading daily-cost series.
-        value = (float(sum((cost for cost, _ in observed), Decimal(0)))
-                 if day in month_rows and all(ok for _, ok in observed) else None)
-        trend.append({"date": day.isoformat(), "value": value})
+    trend = month_spend_trend(month_rows, month_start, end)
     items.extend([
         metric("spend.month_to_date_cny", float(amount) if amount is not None else None, "CNY", as_of,
                "本月截至昨日的已归属关键词报表花费合计，不是实时账户总花费；缺报日期不推算。",

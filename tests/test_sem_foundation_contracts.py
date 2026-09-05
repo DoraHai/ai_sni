@@ -57,8 +57,7 @@ def test_metrics_observed_month_total_and_same_metric_trend():
     spend = items["sem.spend.month_to_date_cny"]
     assert spend["value"] == 30.5
     assert spend["as_of"] == "2026-09-04T00:00:00+08:00"
-    assert spend["trend_7d"][-1]["value"] == 30.5
-    assert spend["trend_7d"][-2]["value"] is None
+    assert spend["trend_7d"] is None
     assert items["sem.spend.budget_utilization_pct"]["value"] == 30.5
     assert items["sem.accounts.active_count"]["value"] == 2
     assert items["sem.approvals.pending_count"]["value"] == 3
@@ -66,7 +65,7 @@ def test_metrics_observed_month_total_and_same_metric_trend():
     for item in items.values():
         assert item["definition"]
         assert {"metric_key", "value", "unit", "as_of", "trend_7d"} <= item.keys()
-    assert items["sem.approvals.pending_count"]["trend_7d"] == []
+    assert items["sem.approvals.pending_count"]["trend_7d"] is None
     for call in db.scalar.await_args_list + db.execute.await_args_list:
         stmt = call.args[0]
         assert "tenant_id" in str(stmt)
@@ -249,10 +248,7 @@ def test_month_boundary_does_not_include_previous_month(today, rows, expected):
         items = run_snapshot(session(rows))
     spend = items["sem.spend.month_to_date_cny"]
     assert spend["value"] == expected
-    assert len(spend["trend_7d"]) == 7
-    for point in spend["trend_7d"]:
-        if date.fromisoformat(point["date"]).month != today.month:
-            assert point["value"] is None
+    assert spend["trend_7d"] is None
 
 
 def test_backfilled_report_recomputes_observed_totals_without_claiming_completeness():
@@ -262,7 +258,7 @@ def test_backfilled_report_recomputes_observed_totals_without_claiming_completen
     assert initial["sem.spend.month_to_date_cny"]["value"] == 10
     spend = backfilled["sem.spend.month_to_date_cny"]
     assert spend["value"] == 30
-    assert spend["trend_7d"][-1]["value"] == 30
+    assert spend["trend_7d"] is None
     assert spend["data_status"] == "observed_reports"
 
 
@@ -313,3 +309,42 @@ def test_ci_runs_native_tests_in_dedicated_disposable_database():
     assert "tests/test_sem_foundation_postgres.py" in step["run"]
     assert "secrets." not in str(job)
     assert "alembic" not in str(job).lower()
+
+
+@pytest.mark.parametrize("current,previous,expected", [
+    (120, 100, {"direction": "up", "change_pct": 20, "change_abs": 20}),
+    (80, 100, {"direction": "down", "change_pct": -20, "change_abs": -20}),
+    (100, 100, {"direction": "flat", "change_pct": 0, "change_abs": 0}),
+    (10, 0, {"direction": "up", "change_pct": None, "change_abs": 10}),
+    (0, 0, {"direction": "flat", "change_pct": None, "change_abs": 0}),
+])
+def test_shared_trend_direction_and_zero_baseline(current, previous, expected):
+    trend = api.compare_seven_days(Decimal(current), Decimal(previous))
+    assert trend == expected
+    api.MetricTrend.model_validate(trend)
+
+
+def test_seven_day_comparison_uses_exact_prior_date():
+    rows = [(date(2026, 9, day), Decimal(10), 1, 1) for day in range(1, 10)]
+    with patch.object(Clock, "now", return_value=Clock(2026, 9, 10, tzinfo=api.TZ)):
+        items = run_snapshot(session(rows))
+    assert items["sem.spend.month_to_date_cny"]["trend_7d"] == {
+        "direction": "up", "change_pct": 350, "change_abs": 70}
+    assert items["sem.spend.budget_utilization_pct"]["trend_7d"] is None
+    api.MetricSnapshotResponse.model_validate({"tenant_id": 3, "items": list(items.values())})
+
+
+@pytest.mark.parametrize("missing", [1, 2, 5, 9])
+def test_missing_history_never_becomes_zero_change(missing):
+    rows = [(date(2026, 9, day), Decimal(10), 1, 1) for day in range(1, 10) if day != missing]
+    with patch.object(Clock, "now", return_value=Clock(2026, 9, 10, tzinfo=api.TZ)):
+        items = run_snapshot(session(rows))
+    assert items["sem.spend.month_to_date_cny"]["trend_7d"] is None
+
+
+def test_full_zero_history_is_flat_not_unknown():
+    rows = [(date(2026, 9, day), Decimal(0), 1, 1) for day in range(1, 10)]
+    with patch.object(Clock, "now", return_value=Clock(2026, 9, 10, tzinfo=api.TZ)):
+        items = run_snapshot(session(rows))
+    assert items["sem.spend.month_to_date_cny"]["trend_7d"] == {
+        "direction": "flat", "change_pct": None, "change_abs": 0}
