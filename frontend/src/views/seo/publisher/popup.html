@@ -4,6 +4,6 @@
 <label>导入任务包 <input id="file" type="file" accept=".json,application/json"></label>
 <label>当前任务 <select id="tasks"><option>请先导入任务</option></select></label>
 <p id="meta"></p><label class="confirm"><input type="checkbox" id="account">我已核对当前登录账号与任务账号一致</label>
-<div class="actions"><button id="open">打开平台</button><button id="title">填入标题</button><button id="body">填入正文</button><button id="copyTitle">复制标题</button><button id="copyBody">复制正文</button><button id="clear">清除任务</button></div>
-<p id="status" role="status" aria-live="polite"></p><small>只填文字，不上传图片、不点发布。已有内容不会覆盖。任务仅保留到浏览器关闭；不读取账号密码或 Cookie。平台编辑器仍需账号实测。</small>
+<div class="actions"><button id="open">打开平台</button><button id="title">填入标题</button><button id="body">填入正文</button><button id="copyTitle">复制标题</button><button id="copyBody">复制正文</button><button id="copyRich">复制图文排版</button><button id="clear">清除任务</button></div>
+<h2>回收发布结果</h2><p>发布后打开公开文章页，再点击采集。请核对文章与当前任务一致。</p><button id="capture">采集当前文章链接</button><label>公开链接<input id="resultUrl" type="url"></label><label class="confirm"><input id="published" type="checkbox">我已确认该链接为本任务已发布的文章</label><button id="saveResult">保存结果并下一篇</button><button id="exportResults">导出发布结果</button><p id="status" role="status" aria-live="polite"></p><small>只填文字，不上传图片、不点发布。已有内容不会覆盖。任务和进度保存在本机扩展中，完成后可清除；不读取账号密码或 Cookie。平台编辑器仍需账号实测。</small>
 <script type="module" src="popup.js"></script></body></html>

@@ -451,3 +451,16 @@ export function collectSeoCompetitor({ competitorId, tenantId, siteId, maxPages 
     max_pages: maxPages,
   }, { timeout: 180000 })
 }
+
+export function discoverSeoBacklinks(payload) {
+  return client.post('/api/v1/seo/backlinks/discover', payload)
+}
+export function fetchSeoBacklinkSources({ tenantId, siteId }) {
+  return client.get('/api/v1/seo/backlinks/discovery-sources', { params: { tenant_id: tenantId, site_id: siteId } })
+}
+export function verifySeoBacklink(id, payload) {
+  return client.post(`/api/v1/seo/backlinks/${id}/verify`, payload)
+}
+export function monitorSeoBacklink(id, payload) {
+  return client.patch(`/api/v1/seo/backlinks/${id}/monitoring`, payload)
+}

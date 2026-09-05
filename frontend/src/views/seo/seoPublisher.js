@@ -1,9 +1,10 @@
-import { platformHosts, validatePackage } from './publisher/core.js'
+import { platformHosts, validatePackage, sanitizeRichText } from './publisher/core.js'
 
 export function createPublisherPackage(rows) {
   return validatePackage({ schema: 'seo-domestic-publisher-v1', items: rows.filter(row => row.status === 'manual_required' && platformHosts[row.platform_code]).map(row => ({
     publication_id: row.id, platform_code: row.platform_code, account: row.connection_name || row.platform_name,
     title: row.adapted_title || row.content_title, text: plainArticle(row.adapted_content || ''),
+    html: sanitizeRichText(row.adapted_content || ''),
     editor_url: row.handoff_url, source_version: row.source_version,
   })) })
 }

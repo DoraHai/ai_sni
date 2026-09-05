@@ -7,6 +7,7 @@ from pathlib import Path
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+from app.seo_backlinks import discover_published_backlinks
 
 from app.config import get_settings
 from app.process_lock import acquire_file_lock, release_file_lock
@@ -58,6 +59,15 @@ def _start_seo_scheduler() -> None:
         collect_scheduled_competitors,
         CronTrigger(hour=3, minute=0),
         id="collect_scheduled_seo_competitors",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
+    )
+    seo_scheduler.add_job(
+        discover_published_backlinks,
+        IntervalTrigger(hours=1),
+        id="discover_published_seo_backlinks",
         replace_existing=True,
         max_instances=1,
         coalesce=True,

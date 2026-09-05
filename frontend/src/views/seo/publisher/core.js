@@ -16,9 +16,50 @@ export function validatePackage(value) {
     if (typeof item.account !== 'string' || !item.account.trim() || item.account.length > 200) throw new Error('任务缺少账号标识')
     seen.add(item.publication_id)
     return { publication_id: item.publication_id, platform_code: item.platform_code, account: item.account,
-      title: item.title, text: item.text, editor_url: url.href, source_version: String(item.source_version || '').slice(0,40) }
+      title: item.title, text: item.text, html: typeof item.html === 'string' ? sanitizeRichText(item.html.slice(0,400000)) : '', editor_url: url.href, source_version: String(item.source_version || '').slice(0,40) }
   })
   return { schema: value.schema, items }
+}
+
+export function sanitizeRichText(value) {
+  const doc = new DOMParser().parseFromString(value, 'text/html')
+  doc.querySelectorAll('script,style,iframe,object,embed,svg,math,form,template').forEach(el => el.remove())
+  const allowed = new Set(['P','BR','DIV','H1','H2','H3','H4','H5','H6','UL','OL','LI','BLOCKQUOTE','PRE','CODE','STRONG','B','EM','I','U','A','IMG'])
+  for (const el of [...doc.body.querySelectorAll('*')]) {
+    if (!allowed.has(el.tagName)) { el.replaceWith(...el.childNodes); continue }
+    for (const attr of [...el.attributes]) {
+      if (!((el.tagName==='A' && attr.name==='href') || (el.tagName==='IMG' && ['src','alt'].includes(attr.name)))) el.removeAttribute(attr.name)
+    }
+    for (const key of ['href','src']) if (el.hasAttribute(key)) {
+      try { const url = new URL(el.getAttribute(key)); if (!['https:','http:'].includes(url.protocol) || url.username || url.password) throw Error(); }
+      catch { el.removeAttribute(key) }
+    }
+  }
+  return doc.body.innerHTML
+}
+
+const publishedHosts = {
+  baijiahao:['baijiahao.baidu.com'], toutiao:['www.toutiao.com','toutiao.com'], sohu:['www.sohu.com'],
+  wangyi:['www.163.com'], penguin:['new.qq.com'], wechat_browser:['mp.weixin.qq.com'],
+  xiaohongshu:['www.xiaohongshu.com','xiaohongshu.com'], weibo:['weibo.com','www.weibo.com'],
+  zhihu:['zhuanlan.zhihu.com','www.zhihu.com'], csdn:['blog.csdn.net'], juejin:['juejin.cn'], jianshu:['www.jianshu.com'],
+}
+export function publicationUrl(value, platform) {
+  const url = new URL(value)
+  if (!['https:','http:'].includes(url.protocol) || url.username || url.password || url.port || !publishedHosts[platform]?.includes(url.hostname) || url.pathname==='/' || /\/editor|\/write|\/draft|\/login/.test(url.pathname)) throw new Error('请选择对应平台已公开的文章页面，不能使用编辑器或登录页地址')
+  url.hash = ''
+  return url.href
+}
+
+export function validateResults(value, tasks) {
+  if (value?.schema !== 'seo-domestic-results-v1' || !Array.isArray(value.items) || !value.items.length || value.items.length>50) throw new Error('发布结果文件无效（1–50 条）')
+  const seen = new Set()
+  return value.items.map(item => {
+    const task = tasks.find(row => (row.publication_id ?? row.id) === item.publication_id)
+    if (!task || seen.has(item.publication_id) || task.platform_code !== item.platform_code || String(task.source_version) !== String(item.source_version)) throw new Error('结果与当前网站任务或稿件版本不匹配，请重新导出任务')
+    seen.add(item.publication_id)
+    return { publication_id:item.publication_id, platform_code:item.platform_code, source_version:String(item.source_version), page_url:publicationUrl(item.page_url,item.platform_code), title:task.title || task.content_title }
+  })
 }
 
 // Runs as a serialized function in the active tab: no imports, network, or submit clicks.
