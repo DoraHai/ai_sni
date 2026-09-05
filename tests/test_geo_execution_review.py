@@ -20,6 +20,7 @@ def baseline_task():
     row = task()
     row.baseline_snapshot['questions'] = [[1, 'question one'], [2, 'question two']]
     row.baseline_snapshot['sample_counts'] = [[1, 'deepseek', 2], [1, 'kimi', 1], [2, 'deepseek', 3]]
+    row.baseline_snapshot['model_counts'] = [[pid, engine, 'test-provider', 'test-model', n] for pid, engine, n in row.baseline_snapshot['sample_counts']]
     return row
 
 
@@ -211,9 +212,35 @@ def test_executor_calls_only_exact_sparse_matrix():
         engines=[NS(engine_key=e,enabled=True) for e in ['deepseek','kimi']]
         session=NS(get=AsyncMock(side_effect=[row,tenant]),refresh=AsyncMock(),commit=AsyncMock(),scalars=AsyncMock(side_effect=[engines,prompts]),scalar=AsyncMock(return_value=None))
         draft=dict(raw_text='real answer',sample_mode='openai_compat',simulated=False,suggested_mentions_brand=False,analysis_status='completed')
-        with patch('app.geo.content.ai_settings.resolve_llm_credentials',AsyncMock(return_value={'api_key':'test'})),patch('app.geo.content.patrol.resolve_engine_llm',return_value=({'api_key':'test'},'openai_compat',None)),patch('app.geo.content.patrol.run_probe_draft',AsyncMock(return_value=draft)) as probe:
+        with patch('app.geo.content.ai_settings.resolve_llm_credentials',AsyncMock(return_value={'api_key':'test'})),patch('app.geo.content.patrol.resolve_engine_llm',return_value=({'api_key':'test','model':'test-model','provider':'test-provider'},'openai_compat',None)),patch('app.geo.content.patrol.run_probe_draft',AsyncMock(return_value=draft)) as probe:
             result=await execute_patrol_run(session,42)
         assert result.status=='completed', result.error
         assert [(c.kwargs['question'],c.kwargs['engine']) for c in probe.await_args_list]==[('question one','deepseek'),('question one','deepseek'),('question one','kimi')]+[('question two','deepseek')]*3
         assert not result.summary['retest_result']['comparable']  # No persisted snapshot IDs means no evidence.
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('field', ['_source_model', '_source_provider'])
+def test_model_drift_preserves_values_but_blocks_trend_and_completion(field):
+    from test_geo_integration import samples
+    from app.geo.integration_metrics import build_weekly_snapshot, MENTIONS
+    before=samples(20);after=samples(27,mention=True,start_id=20)
+    setattr(after[0],field,'changed')
+    current=build_weekly_snapshot(before+after,['brand.example'],date(2026,8,31))
+    assert next(m for m in current['metrics'] if m['metric_key']==MENTIONS)['value']==12
+    assert all(m['trend_7d'] is None for m in current['metrics'])
+    with pytest.raises(HTTPException): completion_evidence(task(),current)
+
+
+def test_missing_model_history_and_mixed_versions_cannot_be_guessed():
+    row=baseline_task();row.baseline_snapshot.pop('model_counts')
+    with pytest.raises(HTTPException): plan_from_baseline(row)
+    row=baseline_task();row.baseline_snapshot['model_counts'].append([1,'deepseek','other','other',1])
+    with pytest.raises(HTTPException): plan_from_baseline(row)
+
+
+def test_model_preflight_refuses_changed_provider_before_request():
+    from app.geo.retest import validate_plan_model
+    plan=plan_from_baseline(baseline_task())
+    validate_plan_model(plan,1,'deepseek',{'provider':'test-provider','model':'test-model'})
+    with pytest.raises(ValueError): validate_plan_model(plan,1,'deepseek',{'provider':'other','model':'test-model'})

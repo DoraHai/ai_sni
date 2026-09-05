@@ -513,6 +513,9 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
                     if not llm or not llm.get("api_key"):
                         raise ValueError("平台尚未配置该 AI 引擎")
 
+                    if contract_plan:
+                        from app.geo.retest import validate_plan_model
+                        validate_plan_model(contract_plan, prompt.id, engine, llm)
                     cell_brand, cell_names = _brand_for_prompt(prompt)
                     draft = await run_probe_draft(
                         question=prompt.question,

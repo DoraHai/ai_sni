@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from app.geo.integration_metrics import MENTIONS, closed_week_end
+from app.geo.integration_metrics import MENTIONS, closed_week_end, complete_model_counts
 from app.geo.content.time_windows import shanghai_day_bounds_utc_naive, to_utc_naive
 from app.models import GeoPrompt, GeoVisibilityPatrolRun, GeoAnswerSnapshot
 
@@ -21,6 +21,9 @@ def plan_from_baseline(task):
     questions = {int(pid): question for pid, question in state.get('questions', [])}
     if len(questions) != len(state.get('questions', [])):
         raise HTTPException(409, '同一基线问题含多个原文版本，不能精确复测')
+    fingerprints = state.get('model_counts')
+    if not complete_model_counts(fingerprints):
+        raise HTTPException(409, '基线缺少模型或供应商记录，不能精确复测')
     cells = []
     seen = set()
     for pid, engine, count in state.get('sample_counts', []):
@@ -28,7 +31,11 @@ def plan_from_baseline(task):
             raise HTTPException(409, '基线采样矩阵不完整')
         if not questions.get(pid):
             raise HTTPException(409, '基线缺少题目原文，不能猜测复测口径')
-        cells.append({'prompt_id': pid, 'engine': engine, 'count': count, 'question': questions[pid]})
+        versions = [c for c in fingerprints if c[0] == pid and c[1] == engine]
+        if len(versions) != 1 or versions[0][4] != count:
+            raise HTTPException(409, '基线同题同引擎存在混合模型或次数不一致，不能精确复测')
+        cells.append({'prompt_id': pid, 'engine': engine, 'count': count, 'question': questions[pid],
+                      'provider': versions[0][2], 'model': versions[0][3]})
         seen.add((pid, engine))
     if not cells or sum(c['count'] for c in cells) > 200:
         raise HTTPException(409, '复测需1至200次明确采样')
@@ -97,3 +104,9 @@ async def reserved_week(session, tenant_id):
     return await session.scalar(select(GeoVisibilityPatrolRun.id).where(
         GeoVisibilityPatrolRun.tenant_id == tenant_id,
         GeoVisibilityPatrolRun.summary['contract_plan']['window_start'].astext == period).limit(1))
+
+
+def validate_plan_model(plan, prompt_id, engine, llm):
+    cell = next(c for c in plan['cells'] if c['prompt_id'] == prompt_id and c['engine'] == engine)
+    if any(str(llm.get(k) or '').strip() != cell[k] for k in ('provider', 'model')):
+        raise ValueError('当前模型或供应商与基线不同，停止该单元复测')

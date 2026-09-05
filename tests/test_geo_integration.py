@@ -16,7 +16,8 @@ def samples(day, *, mention=False, start_id=1):
     return [NS(id=start_id+i, prompt_id=i%3+1, engine=['a','b'][i%2], captured_at=datetime(2026,8,day),
                mentions_brand=mention, cited_urls=['https://brand.example/page'] if mention else [],
                competitors=['Rival','RIVAL'] if mention else [], sample_mode='openai_compat', simulated=False,
-               note='method=unprimed_json_v2 analysis=completed', citation_accuracy='unknown') for i in range(12)]
+               note='method=unprimed_json_v2 analysis=completed', citation_accuracy='unknown',
+               _source_provider='test-provider', _source_model='test-model') for i in range(12)]
 
 
 def state():

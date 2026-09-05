@@ -192,6 +192,10 @@ def completion_evidence(row, current, publication_proof=None):
         raise HTTPException(409, '题目原文变化或缺少记录，不能生成完成证据')
     if not baseline.get('sample_counts') or baseline['sample_counts'] != current.get('sample_counts'):
         raise HTTPException(409, '前后各问题与引擎的采样次数不一致或缺少记录，不能生成完成证据')
+    from app.geo.integration_metrics import complete_model_counts
+    if (not complete_model_counts(baseline.get('model_counts'))
+            or baseline['model_counts'] != current.get('model_counts')):
+        raise HTTPException(409, '模型或供应商分布变化或缺少来源记录，不能生成完成证据')
     if params.get('content_task_id'):
         proof = publication_proof or (row.progress or {}).get('publication_evidence') or {}
         first = proof.get('first_verified_at')
@@ -204,6 +208,7 @@ def completion_evidence(row, current, publication_proof=None):
     return dict(metric_key=key, before=before, after=after, delta=round(delta,4),
                 before_snapshot_ids=baseline['sample_ids'], after_snapshot_ids=current['sample_ids'],
                 before_sample_counts=baseline['sample_counts'], after_sample_counts=current['sample_counts'],
+                before_model_counts=baseline['model_counts'], after_model_counts=current['model_counts'],
                 source=f'/api/v1/geo/integration/metrics/snapshot?tenant_id={row.tenant_id}&week_end={after["as_of"][:10]}', verified_at=iso(datetime.utcnow()),
                 note='同题同引擎周指标的实际观察变化，不证明本任务造成该变化。')
 
@@ -231,7 +236,7 @@ async def update_task(task_id: int, req: TaskUpdate, tenant_id: int = Query(...)
         baseline = row.baseline_snapshot
         fresh_metric = metric(fresh, evidence['metric_key'])
         if (fresh_metric is None or fresh_metric['value'] != evidence['before']['value']
-                or any(fresh.get(k) != baseline.get(k) for k in ['sample_ids', 'sample_counts', 'questions', 'cohort', 'own_domains'])):
+                or any(fresh.get(k) != baseline.get(k) for k in ['sample_ids', 'sample_counts', 'model_counts', 'questions', 'cohort', 'own_domains'])):
             raise HTTPException(409, '基线来源已被复核更正或口径变化，不能继续使用旧基线完成任务')
         row.progress = {**(row.progress or {}), 'completion_evidence': evidence}
         if proof:
