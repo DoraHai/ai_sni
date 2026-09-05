@@ -106,10 +106,10 @@ def extract_site_links(body: str, source_url: str, domain: str) -> list[dict]:
     for anchor in soup.select("a[href]"):
         target = urljoin(base_url, str(anchor["href"]))
         parsed = urlparse(target)
-        if parsed.scheme not in {"http", "https"} or parsed.username or parsed.password or not belongs_to_site(target, domain):
+        if len(target) > 2000 or parsed.scheme not in {"http", "https"} or parsed.username or parsed.password or not belongs_to_site(target, domain):
             continue
         target = canonical_url(target)
-        rel = sorted({str(value).lower() for value in anchor.get("rel", [])})
+        rel = sorted({str(value).lower() for value in anchor.get("rel", [])} & {"nofollow", "ugc", "sponsored", "noopener", "noreferrer", "external"})
         links.setdefault(target, {"target_url": target, "anchor_text": anchor.get_text(" ", strip=True)[:1000], "rel": rel})
         if len(links) >= 100:
             break
@@ -134,6 +134,9 @@ def apply_backlink_evidence(row, result, now=None) -> dict:
     evidence = page_evidence(result)
     evidence["checked_at"] = now.isoformat()
     previous = getattr(row, "verification", None) or {}
+    old_status = row.status
+    if previous.get("provenance"):
+        evidence["provenance"] = previous["provenance"]
     row.last_checked_at = now
     if evidence["state"] == "readable":
         domain = urlparse(row.target_url).hostname or ""
@@ -142,6 +145,8 @@ def apply_backlink_evidence(row, result, now=None) -> dict:
         if match:
             evidence.update(state="found", rel=match["rel"])
             row.anchor_text = match["anchor_text"]
+            if old_status == "lost":
+                evidence["transition"] = "recovered"
             row.status = "active"
             row.first_seen_at = getattr(row, "first_seen_at", None) or now
             row.last_seen_at = now
@@ -159,6 +164,8 @@ def apply_backlink_evidence(row, result, now=None) -> dict:
                 last_missing = now.isoformat()
             evidence["last_missing_at"] = last_missing
             if row.missing_checks >= 2:
+                if old_status != "lost":
+                    evidence["transition"] = "lost"
                 row.status = "lost"
     elif previous.get("last_missing_at"):
         evidence["last_missing_at"] = previous["last_missing_at"]

@@ -464,3 +464,20 @@ export function verifySeoBacklink(id, payload) {
 export function monitorSeoBacklink(id, payload) {
   return client.patch(`/api/v1/seo/backlinks/${id}/monitoring`, payload)
 }
+
+export function importSeoBacklinkCsv({ tenantId, siteId, file, dryRun = true }) {
+  const form = new FormData(); form.append('file',file)
+  return client.post('/api/v1/seo/backlinks/import',form,{params:{tenant_id:tenantId,site_id:siteId,dry_run:dryRun}})
+}
+export function fetchSeoBacklinkAnalysis({tenantId,siteId}) {
+  return client.get('/api/v1/seo/backlinks/analysis',{params:{tenant_id:tenantId,site_id:siteId}})
+}
+export function fetchSeoBacklinkIndexStatus({tenantId,siteId}) {
+  return client.get('/api/v1/seo/backlinks/index-status',{params:{tenant_id:tenantId,site_id:siteId}})
+}
+export function querySeoBacklinkIndex(payload) {
+  return client.post('/api/v1/seo/backlinks/query-index',payload,{timeout:30000})
+}
+export function downloadSeoPublicationMaterials(id,payload) {
+  return client.post(`/api/v1/seo/content-distribution/publications/${id}/materials`,payload,{responseType:'blob',timeout:30000})
+}
