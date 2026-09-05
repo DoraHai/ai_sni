@@ -43,8 +43,8 @@ def test_frozen_evidence_does_not_change_when_source_is_edited():
     assert len(frozen[0]['cited_urls']) == 1
 
 
-def run_route(*, task_tenant=7, prompt_id=2, requested_before=None, requested_after=None, snapshots=None, article_at=None, note='补充了适用条件'):
-    row = GeoActionTicket(id=10, tenant_id=7, advice_code='workqueue:v1:prompt-2', status='doing', title='修改内容')
+def run_route(*, status='doing', expected_article='omitted', task_tenant=7, prompt_id=2, requested_before=None, requested_after=None, snapshots=None, article_at=None, note='补充了适用条件'):
+    row = GeoActionTicket(id=10, tenant_id=7, advice_code='workqueue:v1:prompt-2', status=status, title='修改内容')
     task = NS(id=100, tenant_id=task_tenant, prompt_id=prompt_id)
     prompt = NS(id=prompt_id, tenant_id=7, is_brand_probe=False, question='如何选型？')
     session = NS(commit=AsyncMock(), refresh=AsyncMock(),
@@ -53,6 +53,8 @@ def run_route(*, task_tenant=7, prompt_id=2, requested_before=None, requested_af
     session.get = AsyncMock(side_effect=lambda model, id: task if model is GeoContentTask else prompt)
     req = TicketExecution(content_task_id=100, before_snapshot_ids=[1] if requested_before is None else requested_before,
                           after_snapshot_ids=[3] if requested_after is None else requested_after, change_note=note)
+    if expected_article != 'omitted':
+        req.expected_article_id = expected_article
     async def execute():
         with patch('app.geo.routes._work_ticket_for_update', AsyncMock(return_value=row)):
             return await save_ticket_execution(10, req, 7, NS(ensure_tenant=lambda x: None), session)
@@ -92,3 +94,36 @@ def test_link_before_retest_exists():
     assert result['content_task_id'] == 100
     assert result['progress']['samples'] == []
     assert result['progress']['comparison']['comparable'] is False
+
+
+def test_completed_ticket_cannot_rewrite_execution_evidence():
+    execute, session, row = run_route(status='done')
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(execute())
+    assert exc.value.status_code == 409
+    session.commit.assert_not_awaited()
+    assert row.content_task_id is None
+
+
+@pytest.mark.parametrize('version', [None, 98])
+def test_stale_plan_cannot_attach_evidence_to_new_article(version):
+    execute, session, row = run_route(expected_article=version)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(execute())
+    assert exc.value.status_code == 409
+    assert row.content_task_id is None
+    session.commit.assert_not_awaited()
+
+
+def test_current_plan_can_save_execution():
+    execute, session, row = run_route(expected_article=99)
+    asyncio.run(execute())
+    session.commit.assert_awaited_once()
+
+
+def test_before_only_evidence_must_precede_article():
+    execute, session, row = run_route(requested_before=[3], requested_after=[], snapshots=[snap(3)])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(execute())
+    assert exc.value.status_code == 400
+    session.commit.assert_not_awaited()

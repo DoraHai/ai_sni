@@ -56,7 +56,7 @@ for (const fail of [false, true]) {
     let resolve, reject
     const events = []
     const c = vm.createContext({ generation: 1, props: { tenantId: 7, ticket: { id: 10 }, disabled: false },
-      saving: { value: false }, error: { value: '' }, plan: { value: { prompt_id: 2 } },
+      planLoading: { value: false }, saving: { value: false }, error: { value: '' }, plan: { value: { prompt_id: 2 } },
       draft: { value: { note: 'keep local' } }, promptChoice: { value: '' }, executionDraft,
       prepareGeoTicketContent: () => new Promise((a, b) => { resolve = a; reject = b }),
       emit: (...args) => events.push(args), loadPlan: () => events.push('reload'),
@@ -73,3 +73,29 @@ for (const fail of [false, true]) {
     assert.equal(c.saving.value, true)
   })
 }
+
+
+for (const name of ['save', 'prepare']) {
+  for (const reason of ['loading', 'done', 'missing']) {
+    test(`${name} rejects execution edits while ${reason}`, async () => {
+      const c = vm.createContext({ saving: { value: false }, props: { disabled: false, ticket: { status: reason === 'done' ? 'done' : 'doing' } },
+        planLoading: { value: reason === 'loading' }, plan: { value: reason === 'missing' ? null : {} } })
+      vm.runInContext(handler(name), c)
+      await c[name]()
+      assert.equal(c.saving.value, false)
+    })
+  }
+}
+
+test('child execution saving synchronously locks and unlocks parent actions', () => {
+  const node = parse(source, { sourceType: 'module' }).program.body.find((n) =>
+    n.type === 'ExpressionStatement' && n.expression.callee?.name === 'watch' && n.expression.arguments[0]?.name === 'saving')
+  const events = [], saving = ref(false)
+  const c = vm.createContext({ watch, saving, emit: (...args) => events.push(args) })
+  const stop = vm.runInContext(source.slice(node.start, node.end), c)
+  saving.value = true
+  assert.deepEqual(events, [['busy', true]])
+  saving.value = false
+  assert.deepEqual(events, [['busy', true], ['busy', false]])
+  stop()
+})

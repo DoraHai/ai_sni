@@ -5,7 +5,7 @@ import { executionDraft, snapshotIds, recommendedSamples } from '../utils/geoTic
 import { geoSnapshotLink } from '../utils/geoRoutes'
 
 const props = defineProps({ tenantId: [Number, String], ticket: { type: Object, required: true }, disabled: Boolean })
-const emit = defineEmits(['saved'])
+const emit = defineEmits(['saved', 'busy'])
 const draft = ref({}), saving = ref(false), error = ref('')
 const plan = ref(null), planLoading = ref(false), planError = ref(''), promptChoice = ref('')
 let generation = 0, planRequest = 0
@@ -13,7 +13,8 @@ watch([() => props.tenantId, () => props.ticket.id], () => {
   generation++; planRequest++; draft.value = executionDraft(props.ticket); error.value = ''; saving.value = false
   plan.value = null; planError.value = ''; planLoading.value = false; promptChoice.value = ''
 }, { immediate: true, flush: 'sync' })
-onBeforeUnmount(() => { generation++; planRequest++ })
+watch(saving, (value) => emit('busy', value), { flush: 'sync' })
+onBeforeUnmount(() => { generation++; planRequest++; if (saving.value) emit('busy', false) })
 const rate = (n) => n == null ? '—' : `${(n * 100).toFixed(1)}%`
 const delta = (n) => n == null ? '样本不足，暂不判断' : `${n > 0 ? '+' : ''}${(n * 100).toFixed(1)} 个百分点`
 async function loadPlan() {
@@ -43,7 +44,7 @@ function recommend() {
   draft.value.after = recommendedSamples(plan.value?.after || []).join(', ')
 }
 async function prepare() {
-  if (saving.value || props.disabled || !plan.value) return
+  if (saving.value || props.disabled || planLoading.value || props.ticket.status === 'done' || !plan.value) return
   const current = generation
   saving.value = true; error.value = ''
   try {
@@ -56,7 +57,7 @@ async function prepare() {
   finally { if (current === generation) saving.value = false }
 }
 async function save() {
-  if (saving.value || props.disabled) return
+  if (saving.value || props.disabled || planLoading.value || props.ticket.status === 'done' || !plan.value) return
   const current = generation, owner = props.tenantId, id = props.ticket.id
   saving.value = true; error.value = ''
   try {
@@ -65,6 +66,7 @@ async function save() {
     if (!draft.value.note.trim()) throw new Error('请填写具体修改内容')
     const saved = await saveGeoTicketExecution(owner, id, {
       content_task_id: taskId, before_snapshot_ids: snapshotIds(draft.value.before),
+      expected_article_id: plan.value.article_id ?? null,
       after_snapshot_ids: snapshotIds(draft.value.after), change_note: draft.value.note.trim(),
     })
     if (current !== generation) return
@@ -84,9 +86,10 @@ async function save() {
     <p v-if="planError" role="alert">{{ planError }}</p>
     <template v-if="plan">
       <ol class="steps"><li v-for="step in plan.steps" :key="step.id" :class="{ current: step.id === plan.next_step }"><b>{{ step.done ? '已具备' : '待处理' }} · {{ step.title }}</b><p>{{ step.instruction }}</p></li></ol>
+      <p v-if="ticket.content_task_id">{{ plan.next_step === 'acceptance' ? '执行条件已具备，请在下方填写核验结论并验收。' : '验收前请补齐标记为待处理的步骤；保存关联后刷新进度。' }}</p>
       <p v-if="plan.question"><b>目标问题：</b>{{ plan.question }}</p>
       <label v-if="!plan.prompt_id">选择目标问题 <select v-model="promptChoice" aria-label="待办目标问题"><option value="">请选择</option><option v-for="prompt in plan.prompts" :key="prompt.id" :value="prompt.id">{{ prompt.question }}</option></select></label>
-      <el-button v-if="!ticket.content_task_id" :loading="saving" :disabled="disabled || saving || (!plan.prompt_id && !promptChoice)" @click="prepare">准备内容任务并保留基线</el-button>
+      <el-button v-if="!ticket.content_task_id" :loading="saving" :disabled="disabled || saving || planLoading || ticket.status === 'done' || (!plan.prompt_id && !promptChoice)" @click="prepare">准备内容任务并保留基线</el-button>
       <p v-if="!ticket.content_task_id">优先关联同题已有任务；没有时创建草稿并带入待办要求，不覆盖已有正文。</p>
       <p v-if="draft.taskId"><router-link :to="`/geo/tasks/${draft.taskId}`">继续完善事实、制作内容与发布</router-link></p>
       <p v-if="plan.prompt_id"><router-link :to="geoSnapshotLink({ prompt_id: plan.prompt_id })">打开同题采样，补齐下方缺口</router-link></p>
@@ -94,7 +97,7 @@ async function save() {
       <p v-if="plan.truncated">每侧最多显示最近 100 条记录，请结合观察期选择证据。</p>
       <p v-if="plan.excluded">已排除 {{ plan.excluded }} 条不符合真实采样或判读要求的记录。</p>
     </template>
-    <fieldset :disabled="saving || disabled">
+    <fieldset :disabled="saving || disabled || planLoading || !plan || ticket.status === 'done'">
       <label>关联内容任务 <select v-model="draft.taskId" aria-label="关联内容任务" @change="changeTask"><option value="">请选择或准备任务</option><option v-if="ticket.content_task_id && !plan?.tasks?.some((t) => t.id === ticket.content_task_id)" :value="ticket.content_task_id">已关联任务 #{{ ticket.content_task_id }}</option><option v-for="task in plan?.tasks || []" :key="task.id" :value="task.id">{{ task.title }} · #{{ task.id }} · {{ task.status }}</option></select></label>
       <el-button :disabled="!plan || planLoading" @click="recommend">选择每个引擎最近 3 条候选</el-button>
       <div v-for="group in [{ key: 'before', label: '修改前证据' }, { key: 'after', label: '复测证据' }]" :key="group.key">
@@ -109,6 +112,7 @@ async function save() {
     <template v-if="ticket.content_task_id">
       <router-link :to="`/geo/tasks/${ticket.content_task_id}`">打开关联内容任务 #{{ ticket.content_task_id }}</router-link>
       <p v-if="ticket.progress?.change_note">已记录修改：{{ ticket.progress.change_note }} · 内容版本 {{ ticket.progress.version_no || '尚未保存' }}</p>
+      <p v-if="ticket.progress?.acceptance"><b>执行验收回执：</b>{{ ticket.progress.acceptance.checked_at }} · 内容版本记录 #{{ ticket.progress.acceptance.article_id }} · {{ ticket.progress.acceptance.note }}。回执保留验收当时的检查结果，后续内容变化需重新核验。</p>
       <router-link :to="geoSnapshotLink({ prompt_id: ticket.baseline_snapshot?.prompt_id })">用同一问题采样 / 查看记录</router-link>
       <div v-for="group in [{ label: '修改前', samples: ticket.baseline_snapshot?.samples }, { label: '复测', samples: ticket.progress?.samples }]" :key="group.label">
         <p>{{ group.label }}证据：<router-link v-for="sample in group.samples || []" :key="sample.id" :to="geoSnapshotLink({ prompt_id: ticket.baseline_snapshot?.prompt_id, snapshot_id: sample.id })"> #{{ sample.id }} </router-link></p>

@@ -39,7 +39,7 @@ def test_execution_steps_require_current_content_evidence():
     by_id = {s['id']: s['done'] for s in steps}
     assert by_id['baseline'] and by_id['materials']
     assert not by_id['publication'] and not by_id['retest'] and not by_id['comparison']
-    steps, next_step = execution_steps(row, task, NS(id=11), 3, True, [object()])
+    steps, next_step = execution_steps(row, task, NS(id=11), 3, True, [NS(published_url='https://example.com/article')])
     assert all(s['done'] for s in steps) and next_step == 'acceptance'
 
 
@@ -138,3 +138,49 @@ def test_read_plan_rejects_cross_tenant_task_selection():
     with pytest.raises(HTTPException) as exc:
         asyncio.run(run())
     assert exc.value.status_code == 404
+
+
+@pytest.mark.parametrize('missing', ['baseline', 'content', 'materials', 'article', 'publication', 'retest', 'comparison'])
+def test_acceptance_requires_every_execution_step(missing):
+    from app.geo.execution_plan import acceptance_blockers
+    steps = [dict(id=key, title=key, done=key != missing) for key in
+             ['baseline', 'content', 'materials', 'article', 'publication', 'retest', 'comparison']]
+    assert acceptance_blockers({'steps': steps}) == [missing]
+    assert acceptance_blockers({'steps': [s for s in steps if s['id'] != missing]})
+
+
+@pytest.mark.parametrize('ready', [False, True])
+def test_linked_ticket_acceptance_checks_plan_before_writing(ready):
+    from app.geo.routes import patch_action_ticket, TicketUpdate
+    row = ticket()
+    row.content_task_id = 100
+    row.progress = {'article_id': 11, 'change_note': '保留修改记录'}
+    session = NS(commit=AsyncMock(), refresh=AsyncMock())
+    plan = dict(article_id=11, steps=[dict(id=key, title=key, done=ready) for key in
+                ['baseline', 'content', 'materials', 'article', 'publication', 'retest', 'comparison']])
+    async def run():
+        with patch('app.geo.routes._work_ticket_for_update', AsyncMock(return_value=row)), \
+             patch('app.geo.routes.get_ticket_execution_plan', AsyncMock(return_value=plan)) as read_plan:
+            result = await patch_action_ticket(10, TicketUpdate(manual_pass=True, verification_note='核验完成'),
+                                              7, NS(ensure_tenant=lambda x: None), session)
+            read_plan.assert_awaited_once()
+            return result
+    if ready:
+        result = asyncio.run(run())
+        assert result['status'] == 'done'
+        assert result['progress']['acceptance']['article_id'] == 11
+        assert result['progress']['change_note'] == '保留修改记录'
+        session.commit.assert_awaited_once()
+    else:
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(run())
+        assert exc.value.status_code == 409
+        assert row.status == 'todo'
+        assert 'acceptance' not in row.progress
+        session.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize('url', ['', '   ', 'javascript:alert(1)', 'file:///etc/passwd'])
+def test_publication_requires_usable_web_address(url):
+    steps, _ = execution_steps(ticket(), None, None, 0, False, [NS(published_url=url)])
+    assert not next(s for s in steps if s['id'] == 'publication')['done']

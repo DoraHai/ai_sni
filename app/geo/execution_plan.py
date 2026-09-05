@@ -3,6 +3,16 @@ import re
 from collections import Counter
 
 from app.geo.work_execution import freeze_samples
+from app.geo.content.source_opportunities import source_url
+
+
+def acceptance_blockers(plan):
+    """Fail closed if any execution prerequisite is missing from the plan."""
+    required = {'baseline', 'content', 'materials', 'article', 'publication', 'retest', 'comparison'}
+    steps = {step['id']: step for step in plan.get('steps', [])}
+    if required - steps.keys():
+        return ['执行进度不完整，请刷新后重试']
+    return [steps[key]['title'] for key in sorted(required) if not steps[key].get('done')]
 
 
 def ticket_prompt_id(ticket):
@@ -39,7 +49,7 @@ def execution_steps(ticket, task, article, fact_count, brief_ready, publications
         ('content', '准备内容任务', bool(task), '直接创建或关联这个问题的内容任务，保留待办要求。'),
         ('materials', '补齐创作要求与事实', bool(brief_ready and fact_count >= 3), f'已绑定 {fact_count} 条可生成事实；确认创作要求并至少绑定 3 条。'),
         ('article', '完成内容修改', bool(article), '在编辑器补充事实、出处和适用条件，保存新版本并检查。'),
-        ('publication', '完成发布回填', bool(publications), '核对实际发布页面，在内容任务中回填发布记录。'),
+        ('publication', '完成发布回填', any(source_url(getattr(p, 'published_url', '') or '') for p in publications), '核对实际发布页面，在内容任务中回填当前版本的有效 HTTP(S) 发布地址。'),
         ('retest', '完成同题复测', bool(current and progress.get('samples')), '发布或保存修改后，用同一问题、同一引擎采样并关联。'),
         ('comparison', '核验前后变化', bool(current and (progress.get('comparison') or {}).get('comparable')), '前后每个引擎至少 3 条样本，核对差异后再人工验收。'),
     ]

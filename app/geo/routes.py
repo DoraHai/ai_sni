@@ -77,6 +77,7 @@ class TicketUpdate(BaseModel):
 
 class TicketExecution(BaseModel):
     content_task_id: int = Field(..., gt=0)
+    expected_article_id: int | None = Field(None, gt=0)
     before_snapshot_ids: list[int] = Field(default_factory=list, max_length=100)
     after_snapshot_ids: list[int] = Field(default_factory=list, max_length=100)
     change_note: str = Field(..., min_length=1, max_length=4000)
@@ -234,6 +235,8 @@ async def save_ticket_execution(
     row = await _work_ticket_for_update(session, ticket_id, tenant_id)
     if not (row.advice_code or '').startswith('workqueue:v1:'):
         raise HTTPException(400, '仅执行待办支持关联内容与复测')
+    if row.status == 'done':
+        raise HTTPException(409, '请先重新打开待办，再修改执行证据')
     task = await session.get(GeoContentTask, req.content_task_id)
     if task is None or task.tenant_id != tenant_id:
         raise HTTPException(404, '内容任务不存在')
@@ -259,18 +262,20 @@ async def save_ticket_execution(
         raise HTTPException(400, '样本不存在或不属于当前客户的同一问题')
     article = await session.scalar(select(GeoArticleVersion).where(GeoArticleVersion.task_id == task.id)
                                    .order_by(GeoArticleVersion.version_no.desc()).limit(1))
+    if 'expected_article_id' in req.model_fields_set and req.expected_article_id != (article.id if article else None):
+        raise HTTPException(409, '内容版本已变化，请刷新执行进度后重新核对证据')
     try:
         before = freeze_samples([s for s in snapshots if s.id in before_ids])
         after = freeze_samples([s for s in snapshots if s.id in after_ids])
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    if article and any(utc_naive(s.captured_at) > utc_naive(article.created_at) for s in snapshots if s.id in before_ids):
+        raise HTTPException(400, '修改前样本必须早于当前内容版本保存时间')
     if after:
         if article is None or not article.created_at:
             raise HTTPException(400, '请先保存内容修改，再关联复测样本')
         if min(utc_naive(s.captured_at) for s in snapshots if s.id in after_ids) <= max(utc_naive(s.captured_at) for s in snapshots if s.id in before_ids):
             raise HTTPException(400, '复测必须晚于全部修改前样本')
-        if any(utc_naive(s.captured_at) > utc_naive(article.created_at) for s in snapshots if s.id in before_ids):
-            raise HTTPException(400, '修改前样本必须早于当前内容版本保存时间')
         if any(utc_naive(s.captured_at) < utc_naive(article.created_at) for s in snapshots if s.id in after_ids):
             raise HTTPException(400, '复测样本必须采集于当前内容版本保存之后')
     row.content_task_id = task.id
@@ -909,6 +914,19 @@ async def patch_action_ticket(
         raise HTTPException(400, '请填写执行结果与核验依据后再验收')
     if queue_ticket and data.get('status') == 'done' and manual_pass is not True:
         raise HTTPException(400, '请通过人工验收完成待办')
+    if queue_ticket and manual_pass is True and row.content_task_id:
+        if previous_status == 'done':
+            raise HTTPException(409, '该待办已验收，请先重新打开后再记录新的验收结果')
+        from app.geo.execution_plan import acceptance_blockers
+        plan = await get_ticket_execution_plan(ticket_id, tenant_id, row.content_task_id, ctx, session)
+        blockers = acceptance_blockers(plan)
+        if blockers:
+            raise HTTPException(409, '执行验收尚未就绪：' + '；'.join(blockers))
+        row.progress = {**(row.progress or {}), 'acceptance': {
+            'checked_at': datetime.utcnow().isoformat() + 'Z',
+            'article_id': plan['article_id'], 'content_task_id': row.content_task_id,
+            'steps': plan['steps'], 'note': verification_note,
+        }}
     reopening = previous_status == 'done' and (manual_pass is False or data.get('status') in {'todo', 'doing', 'reopened', 'blocked'})
     if queue_ticket and reopening:
         existing = (await session.execute(select(GeoActionTicket).where(

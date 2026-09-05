@@ -98,11 +98,11 @@ onBeforeUnmount(() => { generation++; clearInterval(dateTimer) })
     <p>加入后会保存观察期、原因、动作与验收要求。建议变化不会覆盖已有待办；人工验收表示本次工作完成，不代表 GEO 效果提升。</p>
     <el-button :loading="loading" :disabled="busy || !tenantId" @click="load">刷新待办</el-button>
     <div class="actions" aria-label="待办筛选">
-      <label>状态 <select v-model="statusFilter" aria-label="待办状态筛选"><option value="open">未完成</option><option value="">全部状态</option><option v-for="(name, key) in states" :key="key" :value="key">{{ name }}</option></select></label>
-      <label>负责人 <select v-model="ownerFilter" aria-label="待办负责人筛选"><option value="">全部负责人</option><option value="__unassigned__">未指定</option><option v-for="owner in owners" :key="owner" :value="owner">{{ owner }}</option></select></label>
-      <label>期限 <select v-model="deadlineFilter" aria-label="待办期限筛选"><option value="">全部期限</option><option value="overdue">已逾期</option><option value="today">今天到期</option><option value="unset">未设置期限</option></select></label>
-      <input v-model="search" aria-label="搜索执行待办" placeholder="搜索标题、负责人或工作内容" />
-      <el-button @click="resetFilters">重置筛选</el-button>
+      <label>状态 <select v-model="statusFilter" :disabled="busy" aria-label="待办状态筛选"><option value="open">未完成</option><option value="">全部状态</option><option v-for="(name, key) in states" :key="key" :value="key">{{ name }}</option></select></label>
+      <label>负责人 <select v-model="ownerFilter" :disabled="busy" aria-label="待办负责人筛选"><option value="">全部负责人</option><option value="__unassigned__">未指定</option><option v-for="owner in owners" :key="owner" :value="owner">{{ owner }}</option></select></label>
+      <label>期限 <select v-model="deadlineFilter" :disabled="busy" aria-label="待办期限筛选"><option value="">全部期限</option><option value="overdue">已逾期</option><option value="today">今天到期</option><option value="unset">未设置期限</option></select></label>
+      <input v-model="search" :disabled="busy" aria-label="搜索执行待办" placeholder="搜索标题、负责人或工作内容" />
+      <el-button :disabled="busy" @click="resetFilters">重置筛选</el-button>
     </div>
     <p>当前显示 {{ visible.length }} / {{ tickets.length }} 项；上方未完成与逾期统计为当前客户全部待办。未完成优先，逾期优先，其后按截止日期排序。</p>
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
@@ -122,7 +122,7 @@ onBeforeUnmount(() => { generation++; clearInterval(dateTimer) })
       <p class="assignment-help">负责人按姓名登记；截止日当天不算逾期，按上海日期判断。清空字段后保存可取消设置。</p>
       <p class="details">{{ ticket.action }}</p>
       <p><b>验收要求：</b>{{ ticket.acceptance_desc }}</p>
-      <GeoTicketExecution :tenant-id="tenantId" :ticket="ticket" :disabled="busy || loading" @saved="executionSaved" />
+      <GeoTicketExecution :tenant-id="tenantId" :ticket="ticket" :disabled="busy || loading" @saved="executionSaved" @busy="busy = $event" />
       <router-link :to="geoSnapshotLink({ prompt_id: /^workqueue:v1:prompt-(\d+)$/.exec(ticket.advice_code || '')?.[1] })">打开采样与核验记录</router-link>
       <p v-if="ticket.last_note"><b>最近验收记录：</b>{{ ticket.last_note }}</p>
       <el-alert v-if="ticket.status === 'blocked'" :title="blockedReason(ticket) || '此历史待办未记录受阻原因，请补充。'" type="warning" :closable="false" />
@@ -143,7 +143,7 @@ onBeforeUnmount(() => { generation++; clearInterval(dateTimer) })
         <div class="actions">
           <el-button :disabled="busy || ticket.status === 'doing'" @click="state(ticket, 'doing')">开始执行</el-button>
           <el-button :disabled="busy" @click="state(ticket, 'blocked')">{{ ticket.status === 'blocked' ? '补充受阻原因' : '标记受阻' }}</el-button>
-          <el-button type="primary" :disabled="busy" @click="finish(ticket, true)">记录结果并验收通过</el-button>
+          <el-button type="primary" :disabled="busy" @click="finish(ticket, true)">{{ ticket.content_task_id ? '检查执行条件并验收' : '记录结果并验收通过' }}</el-button>
           <el-button :disabled="busy" @click="finish(ticket, false)">记录未达标</el-button>
         </div>
       </template>
