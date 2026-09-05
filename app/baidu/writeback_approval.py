@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -45,16 +46,19 @@ class WritebackApprovalError(ValueError):
 def _positive_id(payload: dict[str, Any], key: str) -> int:
     try:
         raw = payload[key]
-        if isinstance(raw, bool):
+        if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
             raise ValueError
-        numeric = float(raw)
-        if not math.isfinite(numeric) or not numeric.is_integer():
+        # IDs must not pass through binary floating point: adjacent bigint IDs
+        # above 2**53 can otherwise share an approval fingerprint.
+        if isinstance(raw, float) and abs(raw) >= 2**53:
+            raise ValueError
+        numeric = Decimal(str(raw))
+        if (not numeric.is_finite() or numeric != numeric.to_integral_value()
+                or not 0 < numeric <= 9_223_372_036_854_775_807):
             raise ValueError
         value = int(numeric)
-    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+    except (KeyError, TypeError, ValueError, OverflowError, InvalidOperation) as exc:
         raise WritebackApprovalError(f"{key} 必须是正整数") from exc
-    if value <= 0 or value > 9_223_372_036_854_775_807:
-        raise WritebackApprovalError(f"{key} 必须是正整数")
     return value
 
 
