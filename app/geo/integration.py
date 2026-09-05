@@ -143,6 +143,33 @@ async def create_task(req: TaskCreate, tenant_id: int = Query(...),
         raise HTTPException(403, 'created_by 必须与认证身份一致')
     if await session.get(Tenant, tenant_id) is None:
         raise HTTPException(404, '客户不存在')
+    content_id = req.params.get('content_task_id')
+    if content_id is not None:
+        from app.models.geo_content import GeoContentTask
+        # Serialize creations linked to this article, including request retries.
+        content = await session.scalar(select(GeoContentTask).where(
+            GeoContentTask.id == content_id, GeoContentTask.tenant_id == tenant_id
+        ).with_for_update().execution_options(populate_existing=True))
+        if content is None:
+            raise HTTPException(404, '关联内容不存在')
+        if content.status == 'archived':
+            raise HTTPException(409, '归档内容不能建立新的验收任务')
+        rows = await session.scalars(select(GeoActionTicket).where(
+            GeoActionTicket.tenant_id == tenant_id,
+            GeoActionTicket.advice_code == PREFIX+'task',
+            GeoActionTicket.status.in_(['todo', 'doing']),
+            GeoActionTicket.progress_first['params']['content_task_id'].as_integer() == content_id
+        ).order_by(GeoActionTicket.id))
+        for existing in rows:
+            meta = existing.progress_first or {}
+            if (meta.get('params') or {}).get('metric_key', MENTIONS) != req.params.get('metric_key', MENTIONS):
+                continue
+            if (meta.get('params') == req.params and existing.title == req.title.strip()
+                    and meta.get('action_type') == req.action_type
+                    and meta.get('assignee_role') == req.assignee_role.strip()
+                    and meta.get('created_by') == creator):
+                return task_payload(existing)
+            raise HTTPException(409, f'该内容已有相同指标的进行中验收任务 #{existing.id}，请先处理现有任务')
     baseline = await snapshot(session, tenant_id)
     if metric(baseline, req.params.get('metric_key', MENTIONS)) is None:
         raise HTTPException(400, '未知指标，请使用指标字典中的 metric_key')

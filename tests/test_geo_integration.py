@@ -304,3 +304,57 @@ def test_same_total_with_changed_sample_weights_cannot_complete_task():
     with pytest.raises(HTTPException) as exc:
         completion_evidence(row, current)
     assert exc.value.status_code == 409
+
+
+@pytest.mark.parametrize('content_status', [None, 'archived'])
+def test_create_rejects_missing_or_archived_link_before_reading_metrics(content_status):
+    session = NS(get=AsyncMock(return_value=NS(id=7)), scalar=AsyncMock(
+        return_value=None if content_status is None else NS(status=content_status)), commit=AsyncMock())
+    req = TaskCreate(action_type='improve', title='test', assignee_role='operator', params={'content_task_id': 12})
+    with patch('app.geo.integration.snapshot', AsyncMock()) as load:
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(create_task(req, 7, NS(user_id=3, ensure_tenant=lambda t: None), session))
+    assert exc.value.status_code == (404 if content_status is None else 409)
+    load.assert_not_awaited()
+    session.commit.assert_not_awaited()
+    query = str(session.scalar.call_args.args[0])
+    assert 'geo_content_tasks.tenant_id' in query and 'FOR UPDATE' in query
+
+
+@pytest.mark.parametrize('same_request', [True, False])
+def test_linked_create_reuses_identical_active_task_and_rejects_conflicting_goal(same_request):
+    row = task()
+    row.progress_first['params']['content_task_id'] = 12
+    req = TaskCreate(action_type='improve_content', title=row.title,
+        assignee_role='geo_operator', params=deepcopy(row.progress_first['params']))
+    if not same_request:
+        req.params['min_delta'] = 99
+    session = NS(get=AsyncMock(return_value=NS(id=7)), scalar=AsyncMock(return_value=NS(status='ready')),
+        scalars=AsyncMock(return_value=[row]), add=Mock(), commit=AsyncMock())
+    async def run():
+        return await create_task(req, 7, NS(user_id=None, ensure_tenant=lambda t: None), session)
+    with patch('app.geo.integration.snapshot', AsyncMock()) as load:
+        if same_request:
+            assert asyncio.run(run())['id'] == row.id
+        else:
+            with pytest.raises(HTTPException) as exc:
+                asyncio.run(run())
+            assert exc.value.status_code == 409
+    load.assert_not_awaited()
+    session.add.assert_not_called()
+    session.commit.assert_not_awaited()
+
+
+def test_linked_create_saves_real_baseline_and_content_reference():
+    session = NS(get=AsyncMock(return_value=NS(id=7)), scalar=AsyncMock(return_value=NS(status='ready')),
+        scalars=AsyncMock(return_value=[]), add=Mock(), commit=AsyncMock(), refresh=AsyncMock())
+    def assign_id(row): row.id = 21
+    session.add.side_effect = assign_id
+    req = TaskCreate(action_type='improve_content', title='验证文章', assignee_role='geo_operator',
+        params={'content_task_id': 12, 'metric_key': MENTIONS, 'min_delta': 1})
+    with patch('app.geo.integration.snapshot', AsyncMock(return_value=state())):
+        result = asyncio.run(create_task(req, 7, NS(user_id=3, ensure_tenant=lambda t: None), session))
+    assert result['params']['content_task_id'] == 12
+    assert result['completion_evidence'] is None and result['created_by'] == 3
+    assert result['status'] == 'open'
+    session.commit.assert_awaited_once()

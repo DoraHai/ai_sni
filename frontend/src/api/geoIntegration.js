@@ -8,3 +8,5 @@ export const baseline = (tenant, id) => client.post(`${base}/${id}/baseline`, {}
 export const publication = (tenant, id, publicationId) => client.post(`${base}/${id}/publication-check`, { publication_id: publicationId }, config(tenant))
 export const retest = (tenant, id) => client.post(`${base}/${id}/retest`, {}, config(tenant))
 export const complete = (tenant, id) => client.patch(`${base}/${id}`, { status: 'done' }, config(tenant))
+
+export const create = (tenant, body) => client.post(base, body, config(tenant))

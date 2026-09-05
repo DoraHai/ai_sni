@@ -8,6 +8,7 @@ import {
   listGeoContentTasks,
   listGeoPrompts,
 } from '../../api/geoContent'
+import GeoCreateEvidenceTask from '../../components/GeoCreateEvidenceTask.vue'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import GeoEvidenceWorkQueue from '../../components/GeoEvidenceWorkQueue.vue'
 import { taskNextWork } from '../../utils/geoWorkQueue'
@@ -29,6 +30,7 @@ const error = ref('')
 const items = ref([])
 const workbenchTab = ref('')
 const q = ref('')
+const evidenceContent = ref(null)
 const createOpen = ref(false)
 const createMode = ref('prompt')
 const creating = ref(false)
@@ -183,6 +185,7 @@ function openCitations(row) {
 }
 
 function handleRowAction(row, command) {
+  if (command === 'evidence') { evidenceContent.value = row; return }
   if (command === 'distribution') return openDistribution(row)
   if (command === 'citations') return openCitations(row)
   if (command === 'archive') return archiveTask(row)
@@ -203,6 +206,7 @@ async function archiveTask(row) {
 }
 
 watch(tenantId, () => {
+  evidenceContent.value = null
   page.value = 1
   load()
 })
@@ -223,6 +227,7 @@ onMounted(load)
 
     <div class="geo-dash">
       <GeoEvidenceWorkQueue :tenant-id="tenantId" />
+      <GeoCreateEvidenceTask :tenant-id="tenantId" :content="evidenceContent" @close="evidenceContent = null" />
       <el-alert v-if="error" type="error" :title="error" show-icon class="mb" />
 
       <section class="geo-intro mb">
@@ -304,6 +309,7 @@ onMounted(load)
                     <el-button link>更多</el-button>
                     <template #dropdown>
                       <el-dropdown-menu>
+                        <el-dropdown-item v-if="row.status !== 'archived'" command="evidence">建立指标验收任务</el-dropdown-item>
                         <el-dropdown-item command="distribution">分发记录</el-dropdown-item>
                         <el-dropdown-item command="citations">引用回流</el-dropdown-item>
                         <el-dropdown-item v-if="row.status !== 'archived'" command="archive" divided>归档</el-dropdown-item>
