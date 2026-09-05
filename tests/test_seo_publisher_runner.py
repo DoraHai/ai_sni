@@ -1,7 +1,7 @@
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, MagicMock, patch
 
 import pytest
 
@@ -56,6 +56,83 @@ def test_atomic_journal_roundtrip(tmp_path):
     runner.save_json(path, {'state':'needs_result_check'})
     assert 'needs_result_check' in path.read_text()
     assert not path.with_suffix('.tmp').exists()
+
+
+def test_browser_start_failure_does_not_abort_later_tasks(tmp_path):
+    import sys
+    browser = MagicMock()
+    context = MagicMock()
+    page = context.pages[0]
+    page.url = task()['editor_url']
+    browser.chromium.launch_persistent_context.side_effect = [RuntimeError('profile locked'), context]
+    manager = MagicMock()
+    manager.__enter__.return_value = browser
+    args = SimpleNamespace(workdir=tmp_path, images=None, publish=False)
+    with patch.dict(sys.modules, {'playwright.sync_api': SimpleNamespace(sync_playwright=lambda: manager)}), patch('builtins.input', return_value=''), patch.object(runner, 'prepare', return_value='prepared'):
+        report = runner.execute(args, [task(), {**task(), 'publication_id': 8}])
+    assert browser.chromium.launch_persistent_context.call_count == 2
+    assert report['failed'] == 1 and report['pending'] == 1
+    assert (tmp_path/'run-report.json').exists()
+    context.close.assert_called_once()
+
+
+def test_submit_timeout_is_recorded_before_click_and_not_retried(tmp_path):
+    import sys,json
+    browser=MagicMock();context=MagicMock();context.pages[0].url=task()['editor_url']
+    browser.chromium.launch_persistent_context.return_value=context
+    manager=MagicMock();manager.__enter__.return_value=browser
+    args=SimpleNamespace(workdir=tmp_path,images=None,publish=True)
+    def timeout(*_):
+        journal=json.loads((tmp_path/'journal.json').read_text())
+        assert journal[runner.task_key(task())]['state']=='submit_attempted'
+        raise TimeoutError('uncertain submit')
+    with patch.dict(sys.modules,{'playwright.sync_api':SimpleNamespace(sync_playwright=lambda:manager)}), patch.object(runner,'prepare',return_value='prepared') as prepare, patch.object(runner,'click_exact',side_effect=timeout) as click:
+        with patch('builtins.input',side_effect=['','publish']):
+            result=runner.execute(args,[task()])
+        assert result['failed']==1
+        with patch('builtins.input',return_value=''):
+            resumed=runner.execute(args,[task()])
+        assert resumed['pending']==1
+        assert click.call_count==1 and prepare.call_count==1
+
+
+def test_default_mode_cannot_submit_even_if_operator_types_publish(tmp_path):
+    import sys
+    browser=MagicMock();context=MagicMock();context.pages[0].url=task()['editor_url']
+    browser.chromium.launch_persistent_context.return_value=context
+    manager=MagicMock();manager.__enter__.return_value=browser
+    args=SimpleNamespace(workdir=tmp_path,images=None,publish=False)
+    with patch.dict(sys.modules,{'playwright.sync_api':SimpleNamespace(sync_playwright=lambda:manager)}),patch.object(runner,'prepare',return_value='prepared'),patch.object(runner,'click_exact') as click,patch('builtins.input',side_effect=['','publish','']):
+        assert runner.execute(args,[task()])['pending']==1
+    click.assert_not_called()
+
+
+def test_opaque_sandbox_frame_and_incompatible_image_types_are_rejected():
+    frame=SimpleNamespace(url='about:srcdoc',parent_frame=SimpleNamespace(url='https://baijiahao.baidu.com/'),frame_element=lambda:SimpleNamespace(get_attribute=lambda _:'allow-scripts'))
+    assert runner.allowed_frame(frame,'baijiahao.baidu.com') is False
+    assert runner.accepts_images('.png,.jpg',[Path('image.png')]) is True
+    assert runner.accepts_images('image/jpeg',[Path('image.png')]) is False
+    assert runner.accepts_images('image/*',[Path('document.txt')]) is False
+
+
+def test_inherited_editor_and_extension_only_image_upload(tmp_path):
+    import os
+    if not os.environ.get('SEO_RUNNER_BROWSER_TEST'):
+        pytest.skip('opt-in real Chromium fixture')
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        browser=p.chromium.launch(headless=True,channel='chromium')
+        try:
+            page=browser.new_page()
+            html='<input placeholder="标题"><iframe srcdoc="&lt;body contenteditable=true&gt;&lt;/body&gt;"></iframe><input type=file accept=".jpg,.jpeg,.png">'
+            page.route('**/*',lambda route:route.fulfill(status=200,content_type='text/html; charset=utf-8',body=html))
+            page.goto(task()['editor_url'])
+            page.frame_locator('iframe').locator('body').wait_for()
+            image=tmp_path/'test.png';image.write_bytes(b'fixture')
+            runner.prepare(page,task(),[image])
+            assert page.frame_locator('iframe').locator('body').inner_text()==task()['text']
+            assert page.locator('input[type=file]').evaluate('(el)=>el.files.length')==1
+        finally:browser.close()
 
 
 @pytest.mark.parametrize('platform', list(runner.PROFILES))
