@@ -4481,6 +4481,17 @@ def _seo_ai_prompt(
             "大纲必须分为‘程序确认问题’和‘人工排查项’两部分；没有内容的部分写‘无’，"
             "不得把排查项改写成已确认问题。"
         )
+    if source_bound and req.action == "title":
+        action_rules["title"] = (
+            "只给出一个承接页标题候选，返回 title、feedback。"
+            "标题只能重组输入中已有的页面主题、主体和名词；"
+            "不得自行增加‘指南’‘选型’‘方案’‘对比’‘评测’‘案例’等搜索意图或内容承诺。"
+        )
+    if source_bound and req.action == "keywords":
+        action_rules["keywords"] = (
+            "检查现有材料的关键词使用边界，返回 feedback 和 suggestions 数组，不改正文。"
+            "输入中的‘人工优化建议/人工排查项’不是已确认原因，不得将其表述成系统已经归因。"
+        )
     selected_keywords = keywords or []
     primary_keyword = selected_keywords[0] if selected_keywords else None
     secondary_keywords = selected_keywords[1:]
@@ -4503,6 +4514,8 @@ def _seo_ai_prompt(
             "这些因素只能列入‘人工排查项’，除非输入明确说明程序已确认对应问题。"
             "图片 Alt 只服务于图片用途和无障碍描述：装饰图保持空 Alt，信息图描述可见内容；"
             "不得为了 SEO 强制加入品牌词或目标关键词，也不得要求每张图片覆盖关键词。"
+            "标题候选只能使用输入中已经出现的事实名词和页面主题；不得新增内容体裁、搜索意图或承诺。"
+            "‘人工建议’‘建议检查’‘人工排查’表示尚未确认，不得改写为程序已确认或已经归因。"
         )
     brand = "；".join(
         value for value in [
@@ -4599,6 +4612,18 @@ _SOURCE_BOUND_OUTLINE_CLAIM_MARKERS = (
     "认证资质",
 )
 
+_SOURCE_BOUND_TITLE_INTENT_MARKERS = (
+    "指南",
+    "选型",
+    "对比",
+    "评测",
+    "案例",
+    "教程",
+    "攻略",
+    "排行榜",
+    "推荐",
+)
+
 
 def _unsupported_source_outline_topics(
     result: dict[str, Any],
@@ -4621,6 +4646,30 @@ def _unsupported_source_outline_topics(
         marker
         for marker in _SOURCE_BOUND_OUTLINE_CLAIM_MARKERS
         if marker.casefold() in outline and marker.casefold() not in evidence
+    ]
+
+
+def _unsupported_source_title_topics(
+    result: dict[str, Any],
+    req: SeoContentAssistRequest,
+) -> list[str]:
+    """Reject newly invented content intent in a source-bound title."""
+    title = str(result.get("title") or "").casefold()
+    evidence = "\n".join(
+        value
+        for value in (
+            req.instruction,
+            req.title,
+            req.outline,
+            req.draft,
+            req.source_text,
+        )
+        if value
+    ).casefold()
+    return [
+        marker
+        for marker in _SOURCE_BOUND_TITLE_INTENT_MARKERS
+        if marker.casefold() in title and marker.casefold() not in evidence
     ]
 
 
@@ -4850,6 +4899,11 @@ async def assist_seo_content(
             if result is not None and source_page is not None and req.action == "outline"
             else []
         )
+        unsupported_title_topics = (
+            _unsupported_source_title_topics(result, req)
+            if result is not None and source_page is not None and req.action == "title"
+            else []
+        )
         if missing:
             detail = f"未完整覆盖目标关键词：{'、'.join(missing)}"
             repair_reason = "；".join(filter(None, (repair_reason, detail)))
@@ -4861,6 +4915,12 @@ async def assist_seo_content(
             repair_reason = "；".join(filter(None, (repair_reason, detail)))
         if outline_structure_issues:
             detail = "承接页整改大纲边界不合格：" + "；".join(outline_structure_issues)
+            repair_reason = "；".join(filter(None, (repair_reason, detail)))
+        if unsupported_title_topics:
+            detail = (
+                "承接页标题新增了输入证据未支持的内容意图："
+                + "、".join(unsupported_title_topics)
+            )
             repair_reason = "；".join(filter(None, (repair_reason, detail)))
         if repair_reason:
             correction = _seo_assist_repair_prompt(
@@ -4901,6 +4961,11 @@ async def assist_seo_content(
                 if source_page is not None and req.action == "outline"
                 else []
             )
+            unsupported_title_topics = (
+                _unsupported_source_title_topics(result, req)
+                if source_page is not None and req.action == "title"
+                else []
+            )
         if missing:
             raise HTTPException(502, f"AI 未完整覆盖目标关键词：{'、'.join(missing)}，请调整要求后重试")
         if unsupported_outline_topics:
@@ -4916,6 +4981,13 @@ async def assist_seo_content(
                 "AI 整改大纲仍未正确区分确认问题与排查项："
                 + "；".join(outline_structure_issues)
                 + "，请调整要求后重试",
+            )
+        if unsupported_title_topics:
+            raise HTTPException(
+                502,
+                "AI 标题仍包含输入证据未支持的内容意图："
+                + "、".join(unsupported_title_topics)
+                + "，请补充经核验资料后重试",
             )
     except DeepSeekError as exc:
         raise HTTPException(502, f"DeepSeek 内容处理失败：{exc}") from exc

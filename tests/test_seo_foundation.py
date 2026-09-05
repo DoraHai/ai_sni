@@ -60,6 +60,7 @@ from app.api.seo import (
     _seo_ai_prompt,
     _source_outline_structure_issues,
     _unsupported_source_outline_topics,
+    _unsupported_source_title_topics,
     _selected_keyword_ids,
     _sanitize_content_html,
     _validate_target_keyword,
@@ -1694,6 +1695,85 @@ def test_source_bound_outline_requires_classification_and_rejects_alt_keyword_st
             )
         }
     ) == []
+
+
+def test_source_bound_title_rejects_new_content_intent() -> None:
+    request = SeoContentAssistRequest(
+        tenant_id=1,
+        site_id=2,
+        source_page_id=234,
+        action="title",
+        keyword_ids=[11],
+        title="【自动建议·勿发布】目标词排名下降优化",
+        instruction="当前 Title：目标词驱动产品",
+    )
+
+    assert _unsupported_source_title_topics(
+        {"title": "目标词驱动产品选型指南"},
+        request,
+    ) == ["指南", "选型"]
+    assert _unsupported_source_title_topics(
+        {"title": "目标词驱动产品"},
+        request,
+    ) == []
+
+
+def test_source_bound_title_repairs_invented_intent_once() -> None:
+    request = SeoContentAssistRequest(
+        tenant_id=1,
+        site_id=2,
+        source_page_id=234,
+        action="title",
+        keyword_ids=[11],
+        title="【自动建议·勿发布】目标词排名下降优化",
+        instruction="当前 Title：目标词驱动产品",
+    )
+    source_page = SeoSitePage(
+        id=234,
+        tenant_id=1,
+        site_id=2,
+        url="https://example.com/page",
+        status="needs_fix",
+    )
+    keyword = SeoKeywordAsset(
+        id=11,
+        tenant_id=1,
+        site_id=2,
+        keyword="目标词",
+        priority="P1",
+        status="active",
+        source="manual",
+    )
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+
+    with (
+        patch("app.api.seo._tenant", new=AsyncMock(return_value=Tenant(id=1, name="测试品牌"))),
+        patch("app.api.seo._site_page", new=AsyncMock(return_value=source_page)),
+        patch("app.api.seo._content_keywords", new=AsyncMock(return_value=[keyword])),
+        patch("app.api.seo.is_enabled", return_value=True),
+        patch("app.api.seo.charge_seo_usage", new=AsyncMock()) as charge,
+        patch(
+            "app.api.seo.chat_json",
+            new=AsyncMock(
+                side_effect=[
+                    {"title": "目标词驱动产品选型指南", "feedback": "扩展搜索意图"},
+                    {"title": "目标词驱动产品", "feedback": "仅重组已有事实"},
+                ]
+            ),
+        ) as chat,
+    ):
+        response = asyncio.run(assist_seo_content(request, AsyncMock(), context))
+
+    assert response["title"] == "目标词驱动产品"
+    assert chat.await_count == 2
+    assert "内容意图" in chat.await_args_list[1].args[1]
+    charge.assert_awaited_once()
 
 
 def test_source_bound_outline_repairs_unsupported_marketing_topics_once() -> None:
