@@ -105,7 +105,7 @@ def test_readonly_actions_have_a_unified_auditable_queue():
     assert '@router.get("/mode")' in api
     assert '"writeback_enabled": bool(live_scopes)' in api
     assert '"writeback_enabled": mode["writeback_enabled"]' in api
-    assert "待回写队列" in pending
+    assert "人工对账队列" in pending
     assert "待回写（演练记录）" in labels
 
 
