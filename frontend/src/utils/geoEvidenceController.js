@@ -5,8 +5,8 @@ export function createEvidenceController(state, api, getTenant) {
   const invalidate = () => { epoch++ }
   async function load(more = false, targetId = null) {
     const tenant = getTenant(), token = ++epoch
-    Object.assign(state, { loading: true, busy: false, detail: null, selected: null, error: '', message: '' })
-    if (!more) state.items = []
+    Object.assign(state, { loading: true, busy: false, error: '', message: '' })
+    if (!more) Object.assign(state, { items: [], more: false, detail: null, selected: null })
     if (!tenant) { state.loading = false; state.more = false; return }
     if (targetId !== null && (!Number.isSafeInteger(targetId) || targetId < 1)) {
       state.error = '验收任务编号无效'; state.loading = false; state.more = false; return
@@ -38,7 +38,7 @@ export function createEvidenceController(state, api, getTenant) {
     finally { if (current(token, tenant)) state.busy = false }
   }
   async function act(kind, publicationId) {
-    if (state.busy || !state.selected || !['baseline', 'publication', 'retest', 'complete'].includes(kind)) return
+    if (state.loading || state.busy || !state.selected || !['baseline', 'publication', 'retest', 'complete'].includes(kind)) return
     if (kind === 'publication' && (!Number.isSafeInteger(publicationId) || publicationId < 1)) {
       state.error = '请选择有效的发布记录'; return
     }

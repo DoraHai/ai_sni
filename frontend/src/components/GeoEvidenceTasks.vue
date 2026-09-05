@@ -15,6 +15,7 @@ const controller = createEvidenceController(state, api, () => props.tenantId)
 function reload() { publicationId.value = ''; return controller.load(false, linkTarget.value.id) }
 watch(() => [props.tenantId, route.query.evidence_task_id, route.query.evidence_tenant_id], () => { lookupId.value = ''; reload() }, { immediate: true })
 function lookup() {
+  if (!props.tenantId || state.loading || state.busy) return
   if (!/^[1-9][0-9]*$/.test(lookupId.value) || !Number.isSafeInteger(Number(lookupId.value))) { state.error = '请输入有效的验收任务编号'; return }
   if (linkTarget.value.id === Number(lookupId.value)) { reload(); return }
   router.push(evidenceTaskLink(props.tenantId, lookupId.value))
@@ -27,7 +28,12 @@ const metricNames = { 'geo.visibility.ai_mention_count_7d': 'AI提及次数', 'g
 const units = { count: '次', percent: '%', score: '分' }
 const runLabels = { pending: '排队中', running: '执行中', completed: '采样结束', failed: '执行失败' }
 const shown = (value) => value == null ? '尚无有效数据' : value
-function select(row) { publicationId.value = ''; controller.select(row) }
+function select(row) {
+  if (state.loading || state.busy) return
+  publicationId.value = ''
+  if (linkTarget.value.id === row.id) { reload(); return }
+  router.push(evidenceTaskLink(props.tenantId, row.id))
+}
 </script>
 
 <template>
@@ -43,9 +49,9 @@ function select(row) { publicationId.value = ''; controller.select(row) }
       <el-alert v-if="state.error" :title="state.error" type="error" :closable="false" />
       <el-alert v-if="state.message" :title="state.message" type="success" :closable="false" />
       <p v-if="state.loading">正在读取任务…</p>
-      <p v-else-if="!state.items.length && !state.error">暂无指标验收任务。</p>
+      <p v-else-if="!state.items.length && !state.selected && !state.error">暂无指标验收任务。</p>
       <div class="evidence-list">
-        <button v-for="row in state.items" :key="row.id" class="gd-btn" :aria-pressed="state.selected?.id === row.id" @click="select(row)">#{{ row.id }} {{ row.title }} · {{ labels[row.status] || row.status }}</button>
+        <button v-for="row in state.items" :key="row.id" class="gd-btn" :disabled="state.loading || state.busy" :aria-pressed="state.selected?.id === row.id" @click="select(row)">#{{ row.id }} {{ row.title }} · {{ labels[row.status] || row.status }}</button>
       </div>
       <button v-if="state.more" class="gd-btn" :disabled="state.loading || state.busy" @click="controller.load(true)">加载更多</button>
       <div v-if="state.selected" class="evidence-detail">
@@ -57,7 +63,7 @@ function select(row) { publicationId.value = ''; controller.select(row) }
           <h4>1. 完整周基线</h4>
           <p>{{ metricNames[state.detail.baseline?.metric_key] || "目标指标" }}：{{ shown(state.detail.baseline?.value) }} {{ state.detail.baseline?.value == null ? "" : (units[state.detail.baseline?.unit] || "") }} · 截至 {{ state.detail.baseline?.as_of || '未知' }}</p>
           <p v-if="state.detail.baseline_blocker">{{ state.detail.baseline_blocker }}</p>
-          <button class="gd-btn" :disabled="terminal || state.busy || state.detail.baseline_valid" @click="controller.act('baseline')">采集已结束周基线</button>
+          <button class="gd-btn" :disabled="terminal || state.loading || state.busy || state.detail.baseline_valid" @click="controller.act('baseline')">采集已结束周基线</button>
           <template v-if="contentId">
             <h4>2. 真实发布</h4>
             <p v-if="state.detail.publication_evidence">当前稿件已核实上线，首次核验：{{ state.detail.publication_evidence.first_verified_at }}</p>
@@ -65,19 +71,19 @@ function select(row) { publicationId.value = ''; controller.select(row) }
             <button class="gd-btn" @click="router.push('/geo/publishing')">配置发布渠道</button>
             <button class="gd-btn" @click="router.push(`/geo/tasks/${contentId}/distribution`)">查看发布记录</button>
             <p v-if="!state.detail.publication_candidates?.length">暂无当前版本的已发布记录，请先完成发布并登记结果。</p>
-            <label>当前稿件发布记录 <select v-model="publicationId" :disabled="terminal || state.busy"><option value="">请选择已发布记录</option><option v-for="pub in state.detail.publication_candidates || []" :key="pub.id" :value="pub.id">{{ pub.channel }} · {{ pub.url }}</option></select></label>
-            <button class="gd-btn" :disabled="terminal || state.busy || !publicationId" @click="controller.act('publication', Number(publicationId))">重新抓取核验发布</button>
+            <label>当前稿件发布记录 <select v-model="publicationId" :disabled="terminal || state.loading || state.busy"><option value="">请选择已发布记录</option><option v-for="pub in state.detail.publication_candidates || []" :key="pub.id" :value="pub.id">{{ pub.channel }} · {{ pub.url }}</option></select></label>
+            <button class="gd-btn" :disabled="terminal || state.loading || state.busy || !publicationId" @click="controller.act('publication', Number(publicationId))">重新抓取核验发布</button>
           </template>
           <h4>3. 同题同模型周复测</h4>
           <p v-if="state.detail.retest_plan">计划采样 {{ state.detail.retest_plan.total_samples }} 次，保持基线题目、模型和次数一致；启动后会调用已配置 AI 引擎。</p>
           <p v-if="state.detail.retest_blocker">{{ state.detail.retest_blocker }}</p>
           <p v-if="state.detail.latest_retest">最近复测 #{{ state.detail.latest_retest.id }}：{{ runLabels[state.detail.latest_retest.status] || state.detail.latest_retest.status }}；合格 {{ state.detail.latest_retest.result?.qualified_samples ?? '待执行' }} / {{ state.detail.latest_retest.result?.expected_samples ?? '待执行' }}。{{ state.detail.latest_retest.error }}</p>
-          <button class="gd-btn" :disabled="state.busy || !state.detail.can_retest" @click="controller.act('retest')">启动精确复测</button>
-          <button class="gd-btn" :disabled="state.busy" @click="controller.select(state.selected)">刷新执行条件</button>
+          <button class="gd-btn" :disabled="state.loading || state.busy || !state.detail.can_retest" @click="controller.act('retest')">启动精确复测</button>
+          <button class="gd-btn" :disabled="state.loading || state.busy" @click="controller.select(state.selected)">刷新执行条件</button>
           <h4>4. 实际指标验收</h4>
           <p v-if="state.detail.completion_evidence">已核验变化：{{ state.detail.completion_evidence.before?.value }} → {{ state.detail.completion_evidence.after?.value }}，变化量 {{ state.detail.completion_evidence.delta }}。</p>
           <p v-else>尚未完成。需等待符合条件的完整后测周，并达到任务目标；未通过会显示具体原因。</p>
-          <button class="gd-btn" :disabled="terminal || state.busy || !state.detail.baseline_valid" @click="controller.act('complete')">核验指标并完成</button>
+          <button class="gd-btn" :disabled="terminal || state.loading || state.busy || !state.detail.baseline_valid" @click="controller.act('complete')">核验指标并完成</button>
         </template>
       </div>
     </div>

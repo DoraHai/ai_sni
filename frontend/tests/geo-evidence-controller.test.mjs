@@ -76,3 +76,25 @@ test('invalid direct ids never query backend', async () => {
  const x=setup({list:()=>assert.fail('invalid request')})
  for(const id of [0,-1,NaN,1.5]) {await x.c.load(false,id);assert.ok(x.state.error)}
 })
+
+
+test('loading more preserves the opened task and its execution details', async () => {
+ const x=setup({list:async()=>[{id:201}]})
+ const selected={id:999},detail={task_id:999,baseline_valid:true}
+ x.state.items=[{id:200}];x.state.selected=selected;x.state.detail=detail
+ await x.c.load(true)
+ assert.equal(x.state.selected,selected);assert.equal(x.state.detail,detail)
+ assert.deepEqual(x.state.items,[{id:200},{id:201}])
+})
+test('failed fresh list does not retain stale pagination control', async () => {
+ const x=setup({list:async()=>{throw Error('offline')}})
+ x.state.more=true;x.state.selected={id:1};x.state.detail={task_id:1}
+ await x.c.load()
+ assert.equal(x.state.more,false);assert.equal(x.state.selected,null)
+})
+test('mutation cannot interrupt an in-flight page load', async () => {
+ const x=setup({complete:()=>assert.fail('mutation during loading')})
+ x.state.loading=true;x.state.selected={id:1}
+ await x.c.act('complete')
+ assert.equal(x.state.loading,true)
+})
