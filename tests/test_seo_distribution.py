@@ -83,9 +83,9 @@ def test_distribution_requires_landing_content_to_bind_a_source_page() -> None:
 def test_platform_catalog_distinguishes_api_assisted_and_planned_channels() -> None:
     catalog = {item["code"]: item for item in distribution.platform_catalog()}
 
-    assert catalog["wordpress"]["mode"] == "api"
-    assert catalog["wordpress"]["available"] is True
-    assert {"draft", "publish"} <= set(catalog["wordpress"]["capabilities"])
+    assert not {"wordpress", "ghost", "douyin"} & catalog.keys()
+    # Legacy adapters remain readable for historical publication records.
+    assert distribution.platform_definition("wordpress")["mode"] == "api"
     assert catalog["zhihu"]["mode"] == "assisted"
     assert catalog["zhihu"]["credential_fields"] == []
     assert catalog["wechat_official"]["available"] is True

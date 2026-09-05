@@ -39,7 +39,6 @@ const error = ref('')
 const activeTab = ref('channels')
 const query = ref('')
 const channelFilter = ref('all')
-const channelRegion = ref('domestic')
 const materialsBusy = ref(false)
 async function downloadMaterials(item) {
   if (!canEdit.value || materialsBusy.value) return
@@ -223,7 +222,7 @@ const visibleChannels = computed(() => channelCards.value.filter(item => {
     || (channelFilter.value === 'connected' && item.connections.length)
     || (channelFilter.value === 'available' && item.available && !item.connections.length)
     || (channelFilter.value === 'planned' && !item.available)
-  return matchesText && matchesFilter && (channelRegion.value === 'all' || item.region === channelRegion.value)
+  return matchesText && matchesFilter
 }))
 
 let loadSequence = 0
@@ -962,8 +961,7 @@ onMounted(loadSites)
     <template v-if="activeTab === 'channels'">
       <section class="domestic-guide"><b>准备专属稿 → 审核 → 官方平台填稿 → 回填链接</b><p>浏览器渠道无需提供账号密码；请在自己的浏览器登录目标账号。公众号也可选择官方接口通道。填稿助手仅填写文字，配图和发布状态以平台为准。</p></section>
       <section class="channel-toolbar">
-        <el-select v-model="channelRegion" aria-label="渠道范围" style="width:155px"><el-option label="国内平台" value="domestic" /><el-option label="自有网站" value="website" /><el-option label="全部渠道" value="all" /></el-select>
-        <el-segmented v-model="channelFilter" :options="[{ label: '全部', value: 'all' }, { label: '已连接', value: 'connected' }, { label: '可接入', value: 'available' }, { label: '规划中', value: 'planned' }]" />
+        <el-segmented v-model="channelFilter" :options="[{ label: '全部国内渠道', value: 'all' }, { label: '已连接', value: 'connected' }, { label: '可接入', value: 'available' }]" />
         <el-input v-model="query" clearable placeholder="搜索平台或连接名称" />
         <el-button @click="load">刷新状态</el-button>
       </section>

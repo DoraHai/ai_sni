@@ -229,6 +229,7 @@ def platform_catalog() -> list[dict[str, Any]]:
             ),
         }
         for code, value in sorted(PLATFORM_CATALOG.items(), key=lambda pair: (pair[1].get("region") != "domestic", list(_DOMESTIC_CHANNELS).index(pair[0]) if pair[0] in _DOMESTIC_CHANNELS else 99))
+        if value.get("region") == "domestic" and value.get("available")
     ]
 
 
