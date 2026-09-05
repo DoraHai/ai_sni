@@ -744,6 +744,10 @@ class SeoMetricSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
 
     __table_args__ = (
+        CheckConstraint(
+            "status IN ('available','not_configured','pending','partial','failed','stale')",
+            name="ck_seo_metric_snapshot_status",
+        ),
         UniqueConstraint(
             "site_id",
             "metric_type",

@@ -25,6 +25,7 @@ SEO_MONITOR_CASCADE_REVISION = ROOT / "migrations/versions/20260831_0081_seo_mon
 SEO_AUTOMATION_RUNS_REVISION = ROOT / "migrations/versions/20260901_0082_seo_automation_runs.py"
 SEO_MANUAL_RERUN_REVISION = ROOT / "migrations/versions/20260901_0083_seo_manual_rerun.py"
 SEO_CRAWL_QUEUED_REVISION = ROOT / "migrations/versions/20260901_0084_seo_crawl_queued_status.py"
+SEO_METRIC_PARTIAL_REVISION = ROOT / "migrations/versions/20260905_0089_seo_metric_partial_status.py"
 EXPECTED_GEO_REPAIR_SHA256 = "4e785eefd6bcc7a6f1158ff38b19769cb5ee2ffafa433e9f616f30c85ac533ba"
 CANONICAL_SEM_MIGRATION_SHA256 = {
     "20260822_0074_suggestion_workflow.py": "c082bfbab80ad2db03e11d00c0855bdbd2167ee3418259433b2caddc9d18addc",
@@ -72,7 +73,7 @@ def test_merge_revisions_are_noop_and_sem_seo_merge_is_only_head() -> None:
     _assert_noop_revision(SEM_SEO_MERGE_REVISION)
 
     script = ScriptDirectory.from_config(_config())
-    assert script.get_heads() == ["0088_seo_image_alt_reviews"]
+    assert script.get_heads() == ["0089_seo_metric_partial_status"]
     merge = script.get_revision("0074_merge_geo_seo_heads")
     assert set(merge._normalized_down_revisions) == {
         "0073_geo_schema_repair",
@@ -115,6 +116,12 @@ def test_crawl_status_migration_allows_queued_and_has_safe_downgrade() -> None:
     assert "SET status = 'failed'" in source
 
 
+def test_metric_status_migration_allows_partial_and_has_safe_downgrade() -> None:
+    source = SEO_METRIC_PARTIAL_REVISION.read_text(encoding="utf-8")
+    assert "status IN ('available','not_configured','pending','partial','failed','stale')" in source
+    assert "SET status = 'failed' WHERE status = 'partial'" in source
+
+
 def test_upgrade_plan_from_production_sem_head_runs_only_seo_branch() -> None:
     script = ScriptDirectory.from_config(_config())
     steps = script._upgrade_revs("head", "0076_oauth_rebind_intent")
@@ -133,6 +140,7 @@ def test_upgrade_plan_from_production_sem_head_runs_only_seo_branch() -> None:
         "0086_seo_index_review_merge",
         "0087_seo_image_alt_evidence",
         "0088_seo_image_alt_reviews",
+        "0089_seo_metric_partial_status",
     ]
 
 
@@ -147,11 +155,13 @@ def test_index_review_promotion_preserves_both_histories_and_upgrades_only_new_t
         "0085_seo_page_index_reviews", "0086_seo_index_review_merge",
         "0087_seo_image_alt_evidence",
         "0088_seo_image_alt_reviews",
+        "0089_seo_metric_partial_status",
     ]
     assert script.get_revision("0087_seo_image_alt_evidence").down_revision == "0086_seo_index_review_merge"
     assert [step.revision.revision for step in script._upgrade_revs("head", "0086_seo_index_review_merge")] == [
         "0087_seo_image_alt_evidence",
         "0088_seo_image_alt_reviews",
+        "0089_seo_metric_partial_status",
     ]
 
 
