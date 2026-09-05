@@ -15,6 +15,7 @@ import {
   SEM_WRITE_SCOPE_LABELS,
 } from './constants/semCapabilities'
 import { parseUtcTimestamp } from './utils/dateTime'
+import { SEM_PLANNED_CHANNELS, semChannelPath } from './constants/semChannels'
 
 const route = useRoute()
 const router = useRouter()
@@ -32,7 +33,8 @@ const tenantModuleScope = computed(() => {
   return 'sem'
 })
 const showSemAccountContext = computed(() => (
-  !route.path.startsWith('/seo')
+  !route.meta.semChannelReservation
+  && !route.path.startsWith('/seo')
   && !route.path.startsWith('/geo')
   && !route.path.startsWith('/deal-sniper')
 ))
@@ -126,6 +128,9 @@ async function loadBadges() {
 // 侧边导航结构（按 v3.0 工作流）：真实可用功能前置，低频/设置后置。
 // 本地无登录(dev API Key)时全显示。
 const ALL_GROUPS = computed(() => [
+  { label: '广告渠道', icon: '🌐', children: [
+    ...SEM_PLANNED_CHANNELS.map((channel) => ({ label: `${channel.name} · 待开放`, path: semChannelPath(channel.id), key: 'sem.assets' })),
+  ] },
   { label: '智能助手', icon: '✨', children: [
     { label: 'AI 助手', path: '/assistant', key: 'assistant' },
   ] },
@@ -533,7 +538,7 @@ onBeforeUnmount(() => {
           class="identity-block-alert"
         />
         <div
-          v-if="tenantModuleScope === 'sem'"
+          v-if="tenantModuleScope === 'sem' && !route.meta.semChannelReservation"
           class="readonly-banner"
           :class="{ 'limited-live': writebackMode.mode === 'limited_live' }"
         >
