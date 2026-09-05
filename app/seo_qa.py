@@ -117,9 +117,18 @@ def parse_questions_csv(value):
         title = (row.get('title') or '').strip()
         if not title or len(title) > 300:
             raise ValueError(f'第 {line} 行问题为空或超过 300 字')
-        items.append({'title': title, 'topic': (row.get('topic') or '未分类').strip(),
-                      'source': {'kind': 'import', 'name': (row.get('source_name') or 'CSV 导入').strip(),
-                                 'url': (row.get('source_url') or '').strip() or None}})
+        source = {'kind': (row.get('source_kind') or 'import').strip(),
+                  'name': (row.get('source_name') or 'CSV 导入').strip(),
+                  'url': (row.get('source_url') or '').strip() or None}
+        for key in ['count','metric','period_start','period_end','definition']:
+            value = (row.get(key) or '').strip()
+            if value:
+                if key == 'count':
+                    if not value.isascii() or not value.isdigit() or len(value)>10:
+                        raise ValueError(f'第 {line} 行 count 必须是非负整数')
+                    value = int(value)
+                source[key] = value
+        items.append({'title': title, 'topic': (row.get('topic') or '未分类').strip(), 'source': source})
     if not items:
         raise ValueError('CSV 中没有问题')
     return items

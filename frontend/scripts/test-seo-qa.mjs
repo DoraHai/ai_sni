@@ -243,3 +243,16 @@ test('recovered semantic candidates require current versions before classificati
     assert.equal(m.state.semanticPairCurrent({left_id:1,right_id:2}),false)
   }finally{m.app.unmount()}
 })
+
+
+test('demand priority uses recent positive evidence and unanswered state, not mixed totals',async()=>{
+  const m=await mountPlanning()
+  try {
+    const source={count:1,period_end:new Date().toISOString().slice(0,10)}
+    assert.equal(m.state.demandPriority({answer_count:0,sources:[source]}),1)
+    assert.equal(m.state.demandPriority({answer_count:1,sources:[source]}),0)
+    assert.equal(m.state.demandPriority({sources:[{...source,count:0}]}),0)
+    assert.equal(m.state.demandPriority({sources:[{...source,period_end:'2000-01-01'}]}),0)
+    assert.equal(m.state.demandPriority({sources:[]}),0)
+  }finally{m.app.unmount()}
+})

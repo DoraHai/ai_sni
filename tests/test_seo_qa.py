@@ -493,3 +493,30 @@ def test_semantic_history_recovery_is_actor_site_scoped_and_read_only():
                 with pytest.raises(HTTPException): await api.semantic_result(i,1,1,CTX,db)
             assert (await db.get(SeoAiOperation,'1')).status=='succeeded'
     database(scenario)
+
+
+def test_demand_csv_preserves_zero_and_requires_complete_compatible_window():
+    csv='title,source_kind,source_name,count,metric,period_start,period_end,definition\n如何排查,site_search,站内搜索,0,searches,2026-01-01,2026-01-07,按搜索事件计数'
+    req=api.ImportQuestions(tenant_id=1,site_id=1,csv=csv)
+    assert req.items[0].source.count==0
+    for invalid in [csv.replace(',0,',',1.5,'),csv.replace(',searches,',',clicks,'),csv.replace('2026-01-07','2025-01-01'),csv.replace(',按搜索事件计数',''),csv.replace('2026-01-07','2099-01-01')]:
+        with pytest.raises((ValidationError,ValueError)): api.ImportQuestions(tenant_id=1,site_id=1,csv=invalid)
+
+
+def test_demand_import_replay_correction_and_separate_periods():
+    async def scenario(sessions):
+        async with sessions() as db:
+            source={'kind':'customer','name':'工单导出','count':12,'metric':'inquiries',
+                    'period_start':'2026-01-01','period_end':'2026-01-07','definition':'有效工单去重'}
+            async def import_source(value):
+                return await api.import_questions(api.ImportQuestions(tenant_id=1,site_id=1,
+                    items=[{'title':'无法启动如何排查','source':value}]),CTX,db)
+            first=await import_source(source);row=await db.get(SeoQuestion,first['ids'][0])
+            assert row.sources[0]['count']==12
+            await import_source(source);await db.refresh(row)
+            assert row.version==1 and len(row.sources)==1
+            await import_source({**source,'count':15});await db.refresh(row)
+            assert row.sources[0]['count']==15 and row.version==2
+            await import_source({**source,'period_start':'2026-01-08','period_end':'2026-01-14'});await db.refresh(row)
+            assert len(row.sources)==2 and row.version==3
+    database(scenario)

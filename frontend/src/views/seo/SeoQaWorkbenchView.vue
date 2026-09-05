@@ -71,6 +71,14 @@ function exportResults() {
   const blob = new Blob([resultsCsv()], {type:'text/csv;charset=utf-8'}), url = URL.createObjectURL(blob)
   const a = document.createElement('a'); a.href = url; a.download = `问答核验-${scope.value.site_id}.csv`; a.click(); URL.revokeObjectURL(url)
 }
+const demandMetrics = {inquiries:'咨询次数',searches:'站内搜索次数',impressions:'曝光量',clicks:'点击量'}
+function demandRecords(row) {return (row.sources || []).filter(s=>Number.isInteger(s.count) && s.metric)}
+function demandText(s) {return `${s.name} · ${demandMetrics[s.metric] || s.metric} ${s.count} · ${s.period_start} 至 ${s.period_end} · ${s.definition}`}
+function downloadDemandTemplate() {
+  const value='\ufefftitle,topic,source_kind,source_name,count,metric,period_start,period_end,definition,source_url\r\n设备无法启动如何排查,故障排查,customer,客服工单导出,12,inquiries,2026-01-01,2026-01-07,指定产品有效工单按工单编号去重,\r\n'
+  const url=URL.createObjectURL(new Blob([value],{type:'text/csv;charset=utf-8'}))
+  const a=document.createElement('a');a.href=url;a.download='需求数据模板-示例请替换.csv';a.click();URL.revokeObjectURL(url)
+}
 function backlinkSummary(observation) {
   const result = observation?.backlink_discovery
   if (!result || result.state === 'not_checked') return '外链尚未检查'
@@ -80,7 +88,7 @@ function backlinkSummary(observation) {
   return `回答所在页面发现 ${result.found} 条官网链接，本次新增 ${result.created} 条外链资产`
 }
 const labels = { open: '待选题', selected: '已选题', archived: '已归档', planned: '草稿', drafting: '草稿', review: '待审核', ready: '已审核', published: '已发布', prepared: '待人工发布', reported: '已回填 · 待核验', content_observed: '页面正文匹配', not_observed: '未观测到正文', unavailable: '暂时无法核验' }
-const kinds = { manual: '人工录入', customer: '客服/销售', import: 'CSV 导入', suggestion: '建议问题', serp: '搜索结果' }
+const kinds = { manual: '人工录入', customer: '客服/销售', import: 'CSV 导入', suggestion: '建议问题', serp: '搜索结果', site_search:'站内搜索', search_console:'搜索平台数据' }
 const formats = { short: '直接短答', detailed: '详细解答', steps: '操作步骤', comparison: '条件对比', faq: '官网 FAQ' }
 const dirtyAnswer = computed(() => {
   const saved = answerItems.value.find(a => a.id === answerForm.id)
@@ -241,6 +249,7 @@ watch(scopeKey, () => {
       <p class="qa-hint">按业务相关性排序。搜索发现使用近 30 天已有采集结果；暂无平台热度数据，建议问题单独标注。</p>
       <el-table :data="items" empty-text="还没有问题。录入客户常问的问题，或从已有搜索结果提取。" @row-click="openQuestion" class="qa-question-table">
         <el-table-column label="问题 / 来源" min-width="340"><template #default="{row}"><strong>{{ row.title }}</strong><div class="qa-source"><el-tag v-for="kind in [...new Set(row.sources.map(s=>s.kind))]" :key="kind" size="small" :type="kind==='suggestion'?'warning':'info'">{{ kinds[kind] }}</el-tag><span>{{ row.topic }}</span></div></template></el-table-column>
+        <el-table-column label="导入需求记录" min-width="320"><template #default="{row}"><span v-if="!demandRecords(row).length" class="qa-hint">暂无频次数据</span><p v-for="s in demandRecords(row)" :key="`${s.kind}:${s.name}:${s.metric}:${s.period_start}:${s.period_end}`" class="qa-hint">{{ demandText(s) }}</p></template></el-table-column>
         <el-table-column label="相关性" width="130"><template #default="{row}"><span :title="row.priority_reason">{{ row.relevance }} / 5</span></template></el-table-column>
         <el-table-column label="回答" prop="answer_count" width="80"/><el-table-column label="状态" width="110"><template #default="{row}">{{ labels[row.status] }}</template></el-table-column><el-table-column label="负责人" prop="owner" width="130"/>
       </el-table>
@@ -291,7 +300,7 @@ watch(scopeKey, () => {
 
     <el-dialog :model-value="!!dialog" :title="({import:'录入问题',csv:'批量导入问题',fact:'事实证据',placement:'准备问答分发',receipt:'回填回答网址',metrics:'录入平台数据'})[dialog]" width="min(680px,94vw)" :close-on-click-modal="false" :show-close="!busy" :close-on-press-escape="!busy" @close="dialog=''">
       <el-alert v-if="error" :title="error" type="error" :closable="false"/><el-form label-position="top" :disabled="busy || !canEdit">
-        <template v-if="['import','csv'].includes(dialog)"><p>{{ dialog==='csv'?'列名：title,source_url,source_name,topic。最多 200 行，UTF-8 编码。':'每行一个问题，同类重复问题会合并来源。' }}</p><input v-if="dialog==='csv'" type="file" accept=".csv" @change="readCsv"/><el-form-item v-if="dialog==='import'" label="来源类型"><el-select v-model="sourceKind"><el-option v-for="k in ['manual','customer','suggestion']" :key="k" :value="k" :label="kinds[k]"/></el-select></el-form-item><el-form-item v-if="dialog==='import'" label="出处名称"><el-input v-model="sourceName" maxlength="240"/></el-form-item><el-form-item v-if="dialog==='import'" label="来源网址（可选）"><el-input v-model="sourceUrl"/></el-form-item><el-input v-model="importing" type="textarea" :rows="10"/><el-button type="primary" @click="importQuestions">导入问题</el-button></template>
+        <template v-if="['import','csv'].includes(dialog)"><p>{{ dialog==='csv'?'问题列：title,source_url,source_name,topic；需求记录增加 source_kind,count,metric,period_start,period_end,definition。最多 200 行，UTF-8 编码。':'每行一个问题，同类重复问题会合并来源。' }}</p><el-button v-if="dialog==='csv'" @click="downloadDemandTemplate">下载需求数据模板</el-button><p v-if="dialog==='csv'" class="qa-hint">模板是示例，导入前请替换为真实数据。source_kind：customer / site_search / search_console；metric：inquiries / searches / impressions / clicks。同一来源、指标及日期窗口重复导入按最新值更新，不累计；不同窗口独立保留。</p><input v-if="dialog==='csv'" type="file" accept=".csv" @change="readCsv"/><el-form-item v-if="dialog==='import'" label="来源类型"><el-select v-model="sourceKind"><el-option v-for="k in ['manual','customer','suggestion']" :key="k" :value="k" :label="kinds[k]"/></el-select></el-form-item><el-form-item v-if="dialog==='import'" label="出处名称"><el-input v-model="sourceName" maxlength="240"/></el-form-item><el-form-item v-if="dialog==='import'" label="来源网址（可选）"><el-input v-model="sourceUrl"/></el-form-item><el-input v-model="importing" type="textarea" :rows="10"/><el-button type="primary" @click="importQuestions">导入问题</el-button></template>
         <template v-if="dialog==='fact'"><el-form-item label="事实标题"><el-input v-model="factForm.title" maxlength="240"/></el-form-item><el-form-item label="事实原文"><el-input v-model="factForm.statement" type="textarea" :rows="6" maxlength="10000"/></el-form-item><el-form-item label="出处名称 / 文档版本"><el-input v-model="factForm.source_name" maxlength="240"/></el-form-item><el-form-item label="来源网址（可选）"><el-input v-model="factForm.source_url"/></el-form-item><el-form-item label="有效期（可选）"><el-date-picker v-model="factForm.expires_at" type="datetime"/></el-form-item><el-form-item label="使用状态"><el-select v-model="factForm.status"><el-option value="active" label="启用"/><el-option value="retired" label="停用"/></el-select></el-form-item><el-button type="primary" @click="saveFact">保存事实</el-button></template>
         <template v-if="dialog==='placement'"><el-form-item label="发布平台"><el-select v-model="placementForm.platform"><el-option v-for="p in platforms" :key="p.key" :value="p.key" :label="p.name"/></el-select></el-form-item><p>{{ platforms.find(p=>p.key===placementForm.platform)?.description }}</p><el-form-item v-if="placementForm.platform!=='website'" label="要回答的问题网址"><el-input v-model="placementForm.question_url"/></el-form-item><el-form-item label="计划发布时间（不会自动代发）"><el-date-picker v-model="placementForm.scheduled_at" type="datetime"/></el-form-item><el-button type="primary" @click="prepare">生成审核稿与发布记录</el-button></template>
         <template v-if="dialog==='receipt'"><p>回填后状态为待核验，不会直接记为发布成功。</p><el-form-item label="回答网址"><el-input v-model="receiptForm.answer_url"/></el-form-item><el-button type="primary" @click="saveReceipt">保存网址</el-button></template>

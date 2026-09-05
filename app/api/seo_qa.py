@@ -2,7 +2,7 @@
 import logging
 import json
 import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt, field_validator, model_validator
@@ -29,9 +29,28 @@ class Scoped(BaseModel):
 
 class Source(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
-    kind: Literal['manual', 'customer', 'import', 'suggestion'] = 'manual'
+    kind: Literal['manual', 'customer', 'import', 'suggestion', 'site_search', 'search_console'] = 'manual'
     name: str = Field(default='人工录入', min_length=1, max_length=240)
     url: str | None = Field(None, max_length=2000)
+
+    count: int | None = Field(None, strict=True, ge=0, le=1_000_000_000)
+    metric: Literal['inquiries', 'searches', 'impressions', 'clicks'] | None = None
+    period_start: date | None = None
+    period_end: date | None = None
+    definition: str | None = Field(None, min_length=1, max_length=500)
+
+    @model_validator(mode='after')
+    def demand_window(self):
+        fields = [self.count, self.metric, self.period_start, self.period_end, self.definition]
+        if any(value is not None for value in fields):
+            if any(value is None for value in fields):
+                raise ValueError('需求频次必须同时提供 count、metric、period_start、period_end、definition')
+            allowed = {'customer':{'inquiries'}, 'site_search':{'searches'}, 'search_console':{'impressions','clicks'}}
+            if self.metric not in allowed.get(self.kind, set()):
+                raise ValueError('需求指标与来源类型不匹配')
+            if self.period_end < self.period_start or self.period_end > datetime.now(timezone.utc).date():
+                raise ValueError('统计日期必须按先后排列，且不能晚于今天')
+        return self
 
     @field_validator('url')
     @classmethod
@@ -224,12 +243,21 @@ async def add_question(db, tenant_id, site_id, title, topic, source):
         return row_id, True
     row = await db.scalar(select(SeoQuestion).where(SeoQuestion.tenant_id == tenant_id, SeoQuestion.site_id == site_id,
                                                    SeoQuestion.fingerprint == key).with_for_update())
-    identity = (source['kind'], source.get('url'), source.get('name'))
-    if not any((s['kind'], s.get('url'), s.get('name')) == identity for s in row.sources):
+    def identity(value):
+        return tuple(value.get(k) for k in ('kind','url','name','metric','period_start','period_end'))
+    match = next((i for i, value in enumerate(row.sources) if identity(value) == identity(source)), None)
+    if match is None:
         if len(row.sources) >= 50:
             raise HTTPException(422, '单个问题最多保留 50 个来源')
         row.sources = [*row.sources, source]
         row.version += 1
+    elif source.get('count') is not None:
+        previous = row.sources[match]
+        if (previous.get('count'),previous.get('definition')) != (source['count'],source['definition']):
+            values = list(row.sources)
+            values[match] = source
+            row.sources = values
+            row.version += 1
     return row.id, False
 
 
@@ -246,7 +274,7 @@ async def import_questions(req: ImportQuestions, ctx=Auth, session=Db):
     ids, created = [], 0
     # Deterministic lock order avoids deadlock across concurrent overlapping imports.
     for item in sorted(req.items, key=lambda x: fingerprint(x.title)):
-        source = {**item.source.model_dump(), 'captured_at': datetime.now(timezone.utc).isoformat()}
+        source = {**item.source.model_dump(mode='json', exclude_none=True), 'captured_at': datetime.now(timezone.utc).isoformat()}
         row_id, new = await add_question(session, req.tenant_id, req.site_id, item.title, item.topic, source)
         ids.append(row_id)
         created += int(new)
