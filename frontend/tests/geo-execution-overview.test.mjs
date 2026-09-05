@@ -36,7 +36,34 @@ test('customer change discards late responses and stops scheduling old tasks',as
  const pending=[];const calls=[];const state={}
  const loader=createOverviewLoader(state,{readiness:(tenant,id)=>{calls.push([tenant,id]);return new Promise(resolve=>pending.push(resolve))}})
  const first=loader.load(7,Array.from({length:10},(_,i)=>({...task,id:i+1})))
+ await Promise.resolve() // Let the first three requests enter the adapter.
  await loader.load(8,[{...task,id:20,status:'done'}])
  pending.forEach(resolve=>resolve({task_id:1}));await first
  assert.equal(calls.length,3);assert.equal(state.rows[0].task.id,20);assert.equal(state.loading,false)
+})
+
+
+test('missing or malformed baseline flags remain unknown',()=>{
+ for (const detail of [{},{baseline_valid:null},{baseline_valid:'false'}]) {
+  assert.equal(executionNext(task,detail).stage,'条件未知')
+ }
+ assert.notEqual(executionNext(task,{...base,can_retest:'true'}).stage,'可启动复测')
+})
+test('rapid batch changes share the same three-request limit',async()=>{
+ let active=0,max=0;const calls=[];const state={}
+ const loader=createOverviewLoader(state,{readiness:async(tenant,id)=>{
+  calls.push([tenant,id]);active++;max=Math.max(max,active)
+  await new Promise(resolve=>setTimeout(resolve,8));active--
+  return {task_id:id}
+ }})
+ const tasks=Array.from({length:10},(_,i)=>({...task,id:i+1}))
+ const first=loader.load(7,tasks)
+ await new Promise(resolve=>setTimeout(resolve,1))
+ const second=loader.load(8,tasks)
+ const third=loader.load(9,[{...task,id:99}])
+ await Promise.all([first,second,third])
+ assert.equal(max,3);assert.equal(state.rows[0].detail.task_id,99)
+ assert.ok(!calls.some(([tenant])=>tenant===8))
+ assert.equal(calls.filter(([tenant])=>tenant===7).length,3)
+ assert.equal(state.loading,false)
 })
