@@ -116,3 +116,17 @@ test('planning conflict preserves selection and never silently retries',async()=
   const m=await mountPlanning({seoQaPost:async()=>{calls++;throw {response:{data:{detail:'记录已更新，请刷新后重试'}}}}})
   try {m.state.toggle(1,true);m.state.value='主题';await m.state.apply();assert.equal(calls,1);assert.deepEqual(m.state.chosen,[1]);assert.match(m.state.error,/更新/)}finally{m.app.unmount()}
 })
+
+
+test('backlink presentation distinguishes unknown, internal and verified absence', async()=>{
+  const m=await mount()
+  try {
+    const summary=m.state.backlinkSummary
+    assert.match(summary(null),/尚未检查/)
+    assert.match(summary({backlink_discovery:{state:'permission_required'}}),/权限/)
+    assert.match(summary({backlink_discovery:{state:'internal'}}),/不计入/)
+    assert.match(summary({backlink_discovery:{state:'unavailable'}}),/无法核验/)
+    assert.match(summary({backlink_discovery:{state:'readable',found:0,created:0}}),/发现 0 条/)
+    assert.match(summary({backlink_discovery:{state:'readable',found:2,created:1}}),/新增 1 条/)
+  } finally {m.app.unmount()}
+})
