@@ -58,6 +58,7 @@ from app.api.seo import (
     _page_issue_filter_condition,
     _page_snapshot_comparison,
     _seo_ai_prompt,
+    _unsupported_source_outline_topics,
     _selected_keyword_ids,
     _sanitize_content_html,
     _validate_target_keyword,
@@ -1604,6 +1605,126 @@ def test_source_bound_content_rejects_cross_site_ai_context() -> None:
 
     assert getattr(exc.value, "status_code", None) == 400
     assert "站点不一致" in str(getattr(exc.value, "detail", ""))
+
+
+def test_source_bound_outline_prompt_is_a_grounded_remediation_plan() -> None:
+    request = SeoContentAssistRequest(
+        tenant_id=1,
+        site_id=2,
+        source_page_id=234,
+        action="outline",
+        keyword_ids=[11],
+        instruction="程序检测 图片缺少 Alt：逐图人工判断用途。",
+        outline="排名下降后核对搜索意图与承接页匹配度。",
+    )
+    tenant = Tenant(
+        id=1,
+        name="测试品牌",
+        industry="工业设备",
+        business_desc="驱动产品",
+        brand_terms=["测试品牌"],
+    )
+    keyword = SeoKeywordAsset(
+        id=11,
+        tenant_id=1,
+        site_id=2,
+        keyword="目标词",
+        priority="P1",
+        status="active",
+        source="manual",
+    )
+
+    system, user = _seo_ai_prompt(request, tenant, [keyword])
+
+    assert "站内整改执行大纲" in user
+    assert "不是文章目录、产品选型指南或品牌宣传提纲" in user
+    assert "程序检测摘要、排名变化和关键词只证明需要整改" in system
+    assert "服务网络" in system
+    assert "待人工核验/补充" in system
+    assert "品牌上下文只用于识别主体" in user
+    assert "不得扩展为选型" in user
+
+
+def test_source_bound_outline_flags_unsupported_marketing_topics() -> None:
+    request = SeoContentAssistRequest(
+        tenant_id=1,
+        site_id=2,
+        source_page_id=234,
+        action="outline",
+        keyword_ids=[11],
+        instruction="程序检测 图片缺少 Alt：逐图人工判断用途。",
+    )
+
+    assert _unsupported_source_outline_topics(
+        {
+            "outline": (
+                "## 产品线解析\n## 技术创新与质量保障\n"
+                "## 全球服务网络\n## 图片 Alt 复检"
+            )
+        },
+        request,
+    ) == ["全球服务", "产品线", "质量保障", "服务网络"]
+
+
+def test_source_bound_outline_repairs_unsupported_marketing_topics_once() -> None:
+    request = SeoContentAssistRequest(
+        tenant_id=1,
+        site_id=2,
+        source_page_id=234,
+        action="outline",
+        keyword_ids=[11],
+        instruction="程序检测 图片缺少 Alt：逐图人工判断用途。",
+    )
+    source_page = SeoSitePage(
+        id=234,
+        tenant_id=1,
+        site_id=2,
+        url="https://example.com/page",
+        status="needs_fix",
+    )
+    keyword = SeoKeywordAsset(
+        id=11,
+        tenant_id=1,
+        site_id=2,
+        keyword="目标词",
+        priority="P1",
+        status="active",
+        source="manual",
+    )
+    context = AuthContext(
+        user_id=7,
+        username="operator",
+        role_name="运营",
+        tenant_id=1,
+        permissions={"seo.content": "edit"},
+    )
+    repaired = {
+        "outline": "## 已确认问题\n- 图片缺少 Alt\n## 人工核验\n## 整改后复检",
+        "feedback": "仅保留有证据的整改步骤。",
+    }
+
+    with (
+        patch("app.api.seo._tenant", new=AsyncMock(return_value=Tenant(id=1, name="测试品牌"))),
+        patch("app.api.seo._site_page", new=AsyncMock(return_value=source_page)),
+        patch("app.api.seo._content_keywords", new=AsyncMock(return_value=[keyword])),
+        patch("app.api.seo.is_enabled", return_value=True),
+        patch("app.api.seo.charge_seo_usage", new=AsyncMock()) as charge,
+        patch(
+            "app.api.seo.chat_json",
+            new=AsyncMock(
+                side_effect=[
+                    {"outline": "## 产品线与服务网络", "feedback": "扩展内容"},
+                    repaired,
+                ]
+            ),
+        ) as chat,
+    ):
+        response = asyncio.run(assist_seo_content(request, AsyncMock(), context))
+
+    assert response["outline"] == repaired["outline"]
+    assert chat.await_count == 2
+    assert "产品或营销主题" in chat.await_args_list[1].args[1]
+    charge.assert_awaited_once()
 
 
 def test_source_bound_content_can_rewrite_supplied_factual_draft() -> None:
