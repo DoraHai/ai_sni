@@ -37,3 +37,13 @@ GEO 生产分支的发布不会替换下列诊断目录、进程和 API 路由�
 首次迁移的旧前端目录保存在 /opt/diagnostic-center/releases/pre-independent-<时间戳>。
 
 后续不要从旧 GEO checkout 执行旧诊断部署脚本。诊断发布必须使用本分支的新脚本。
+
+## 首次生产切换记录（2026-09-05）
+
+- 发布目录：/opt/diagnostic-service/releases/20260905T133426Z
+- 已验证：数据库健康、带鉴权的档案/历史/知识库读取、品牌识别路由、公网 API 与前端入口
+- GEO/SEM 进程号和启动时间在切换前后保持不变
+- 上一前端：/opt/diagnostic-center/releases/20260818T201048Z-verified-ui
+- Nginx 备份：/etc/nginx/conf.d/gsnipers.conf.pre-diagnostic-20260905T133419Z
+- 站长 API 仍按原生产配置保持暂停；此次没有消耗站长 API 额度
+- 可用 scripts/smoke_diagnostic.py 在服务器再次做只读验收；不会输出凭据或客户资料
