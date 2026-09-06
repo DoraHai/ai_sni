@@ -58,15 +58,19 @@ await test('附加检测未完成可先看报告，后续仍更新同一 audit',
 await test('旧抽样和性能结果不能覆盖新诊断',async()=>{const sample=deferred(),perf=deferred();let n=0,m=0;const t=setup({runDeepSeekSample:()=>++n===1?sample.promise:Promise.resolve({snapshot:{ai_sampling:{results:[{question:'新'}]}}}),fetchPageSpeedInsights:()=>++m===1?perf.promise:Promise.resolve({status:'available',marker:'new'})});t.state.audit.value=record(1);await flush();t.flow.reset();t.state.audit.value=record(2);await flush();sample.resolve({snapshot:{ai_sampling:{results:[{question:'旧'}]}}});perf.resolve({status:'available',marker:'old'});await flush();assert.equal(t.state.audit.value.id,2);assert.equal(t.state.audit.value.snapshot.ai_sampling.results[0].question,'新');assert.equal(t.state.pageSpeed.value.marker,'new');t.scope.stop()})
 await test('租户切换与旧识别/audit 响应隔离',async()=>{const pending=deferred();const t=setup({discoverGeoBrand:()=>pending.promise});t.flow.website.value=brand.website;const request=t.flow.discover();t.state.tenantId.value=2;await flush();pending.resolve({brand});await request;assert.equal(t.flow.stage.value,'entry');assert.equal(t.flow.draft.name,'');t.scope.stop()})
 await test('未启用 AI 不调用模型，已有抽样不重复调用',async()=>{for(const r of [{...record(),ai_enabled:false},{...record(),snapshot:{ai_sampling:{results:[]}}}]){const t=setup();t.state.audit.value=r;await flush();assert.equal(t.calls.sample.length,0);t.scope.stop()}})
-await test('正式导航仅报告状态显示，打印入口保留，假进度已移除',()=>{const view=readFileSync(new URL('DiagnosisCenterView.vue',root),'utf8');assert.ok(view.includes("flow.stage.value !== 'report'"));assert.ok(view.includes('v-else class="diagnosis-center"'));assert.ok(view.includes('window.print()'));assert.ok(view.includes('@click="printReport"'));assert.ok(!view.includes('2600'));assert.ok(!view.includes('loadingStage'));})
+await test('正式导航仅报告状态显示，打印入口保留，假进度已移除',()=>{const view=readFileSync(new URL('DiagnosisCenterView.vue',root),'utf8');assert.ok(view.includes("flow.stage.value !== 'report'"));assert.ok(view.includes('v-else class="diagnosis-center"'));assert.ok(view.includes('window.print()'));assert.ok(view.includes('@export="printReport"'));assert.ok(!view.includes('2600'));assert.ok(!view.includes('loadingStage'));})
 await test('旧 audit 响应不覆盖新一轮状态',async()=>{const old=deferred();const t=setup({runGeoAudit:()=>old.promise});t.state.url.value=brand.website;const task=t.flow.runAudit();t.flow.reset();old.resolve(record(99));await task;assert.equal(t.state.audit.value,null);assert.equal(t.flow.stage.value,'entry');t.scope.stop()})
-await test('正式报告样式与打印方法逐字保持原版本',()=>{
+await test('报告内部内容及原始卡片样式保持不变，外框独立适配',()=>{
   const path='frontend/src/views/diagnosis/DiagnosisCenterView.vue'
   const before=execFileSync('git',['show',`HEAD:${path}`],{encoding:'utf8'})
   const after=readFileSync(new URL('DiagnosisCenterView.vue',root),'utf8')
-  assert.equal(after.slice(after.indexOf('<style scoped>')),before.slice(before.indexOf('<style scoped>')))
-  const method=s=>s.slice(s.indexOf('async function printReport()'),s.indexOf('\nwatch(tenantId'))
-  assert.equal(method(after),method(before))
+  const css=s=>s.slice(s.indexOf('<style scoped>'),s.indexOf('</style>'))
+  assert.equal(css(after),css(before))
+  const content=s=>s.slice(s.indexOf('<section class="flow-screen overview-screen">'),s.indexOf('\n        </template>\n      </div>')).replaceAll('v-show="printing || expandedEvidence === item.code"','v-if="expandedEvidence === item.code"')
+  assert.equal(content(after),content(before))
+  assert.ok(!after.includes('<aside class="diagnosis-sidebar">'))
+  assert.ok(after.includes('await preparePrint()'))
+  assert.ok(after.includes("window.addEventListener('afterprint', finishPrint)"))
 })
 await test('基础诊断完成立即进入报告，待完成的附加检测继续更新', async () => {
   const sample = deferred(), performance = deferred()

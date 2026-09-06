@@ -1,0 +1,24 @@
+/* Shell-only overrides. Existing report card styling stays in the view. */
+.diagnosis-center { display:block; background:#f6f5f8; }
+.diagnosis-center .diagnosis-content { box-sizing:border-box; width:100%; max-width:1360px; margin:0 auto; padding:24px 40px 56px; }
+.diagnosis-center :is(.flow-stage-heading, [id^="section-"], .report-anchor) { scroll-margin-top:140px; }
+.diagnosis-center .diagnosis-content > .flow-screen:first-of-type { margin-top:0; }
+@media (max-width:700px) {
+  .diagnosis-center .diagnosis-content { padding:16px 16px 32px; }
+  .diagnosis-center .flow-screen { min-width:0; padding:14px; }
+  .diagnosis-center :is(.summary-grid,.insight-grid,.capability-grid,.diagnostic-grid,.conclusion-main-findings) { grid-template-columns:minmax(0,1fr); }
+  .diagnosis-center :is(.ai-conclusion-card,.authority-proof,.seo-health-overview,.diagnosis-highlights) { grid-template-columns:minmax(0,1fr); }
+  .diagnosis-center :is(.conclusion-copy,.conclusion-score,.authority-proof-brand) { min-width:0; }
+  .diagnosis-center .authority-proof-brand strong { white-space:normal; }
+  .diagnosis-center .diagnosis-content { overflow-wrap:anywhere; }
+  .diagnosis-center :is(.flow-stage-heading,[id^="section-"]) { scroll-margin-top:130px; }
+}
+@media print {
+  .diagnosis-center .diagnosis-content { max-width:none; padding:0; }
+  .diagnosis-center .flow-screen { box-shadow:none; margin:12px 0; padding:10px; break-inside:auto; background:#fff; }
+  .diagnosis-center .evidence-detail { display:block!important; }
+  .diagnosis-center .score-rules-popover { position:static; width:auto; max-height:none; overflow:visible; box-shadow:none; }
+  .diagnosis-center .score-rule-list { max-height:none; overflow:visible; }
+  .diagnosis-center .score-rule-list small { white-space:normal; overflow:visible; }
+  .diagnosis-center :is(.bridge-btn,.evidence-actions,.full-plan-cta,.sample-question-editor,.ai-sample-controls) { display:none!important; }
+}

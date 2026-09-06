@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   discoverGeoBrand,
@@ -13,6 +13,7 @@ import { session } from '../../store/session'
 import diagnosticLogo from '../../assets/g-snipers-purple-logo.png'
 import DiagnosisAssetsView from './DiagnosisAssetsView.vue'
 import FreeDiagnosisFlow from './flow/FreeDiagnosisFlow.vue'
+import ReportShell from './ReportShell.vue'
 import { useFreeDiagnosisFlow } from './useFreeDiagnosisFlow'
 
 const tenantId = computed(() => session.tenantId || (import.meta.env.DEV && import.meta.env.VITE_API_KEY ? 1 : null))
@@ -39,6 +40,7 @@ const issueFilter = ref('all')
 const activeReport = ref('overview')
 const activeAsset = ref('')
 const expandedEvidence = ref('')
+const printing = ref(false)
 const sampleQuestions = ref(['', '', ''])
 const brandReady = ref(false)
 const brandProfile = ref({})
@@ -55,13 +57,6 @@ function showFlowReport() {
 watch(() => flow.stage.value, (stage) => {
   if (stage === 'report') showFlowReport()
 }, { flush: 'post' })
-
-const reportNav = [
-  { key: 'overview', label: '网站体检', icon: '◉' },
-  { key: 'seo', label: 'SEO 诊断', icon: '⌕' },
-  { key: 'geo', label: 'GEO / AI 搜索诊断', icon: '✦' },
-  { key: 'issues', label: '问题清单', icon: '!' },
-]
 
 const assetNav = [
   {
@@ -493,7 +488,7 @@ async function copyEvidence(item) {
 }
 
 const filteredProblems = computed(() => {
-  if (issueFilter.value === 'all') return sortedProblems.value
+  if (printing.value || issueFilter.value === 'all') return sortedProblems.value
   if (issueFilter.value === 'critical') {
     return sortedProblems.value.filter((item) => ['critical', 'high'].includes(item.severity))
   }
@@ -710,6 +705,15 @@ async function copySampleResponse(item) {
   }
 }
 
+async function navigateSection(id) {
+  activeAsset.value = ''
+  await nextTick()
+  const target = document.getElementById(id)
+  if (!target) return
+  window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#${id}`)
+  target.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' })
+}
+
 async function navigateReport(key) {
   if (!brandReady.value) {
     openAsset('brand')
@@ -885,11 +889,33 @@ async function loadPageSpeed(targetUrl) {
   await flow.performance()
 }
 
+let printState = null
+async function preparePrint() {
+  if (!audit.value || printState) return
+  printState = { asset: activeAsset.value, title: document.title, details: [] }
+  printing.value = true
+  activeAsset.value = ''
+  await nextTick()
+  printState?.details.push(...Array.from(document.querySelectorAll('.diagnosis-content details')).map(node => ({ node, open: node.open })))
+  printState?.details.forEach(({ node }) => { node.open = true })
+}
+function finishPrint() {
+  if (!printState) return
+  const previous = printState
+  printState = null
+  previous.details.forEach(({ node, open }) => { node.open = open })
+  activeAsset.value = previous.asset
+  document.title = previous.title
+  printing.value = false
+}
+onMounted(() => { window.addEventListener('beforeprint', preparePrint); window.addEventListener('afterprint', finishPrint) })
+onBeforeUnmount(() => { window.removeEventListener('beforeprint', preparePrint); window.removeEventListener('afterprint', finishPrint) })
+
 async function printReport() {
   if (!audit.value) return
   ElMessage.closeAll()
   ElMessageBox.close()
-  const originalTitle = document.title
+  await preparePrint()
   const domain = (() => {
     try { return new URL(audit.value.final_url || audit.value.url).hostname.replace(/^www\./, '') }
     catch { return 'website' }
@@ -897,13 +923,7 @@ async function printReport() {
   const date = new Date(audit.value.created_at || Date.now()).toISOString().slice(0, 10)
   document.title = `G-Snipers_${domain}_诊断报告_${date}`
   await nextTick()
-  const restoreTitle = () => {
-    document.title = originalTitle
-    window.removeEventListener('afterprint', restoreTitle)
-  }
-  window.addEventListener('afterprint', restoreTitle)
   window.print()
-  window.setTimeout(restoreTitle, 3000)
 }
 
 watch(tenantId, () => {
@@ -929,62 +949,10 @@ onMounted(async () => {
 <template>
   <FreeDiagnosisFlow v-if="flow.stage.value !== 'report'" :flow="flow" :audit="audit" @report="showFlowReport" />
   <main v-else class="diagnosis-center">
-    <aside class="diagnosis-sidebar">
-      <div class="diagnosis-brand">
-        <img class="brand-mark" :src="diagnosticLogo" alt="G-Snipers 获客狙击手" />
-        <span><strong>获客狙击手</strong><small>G-SNIPERS · 诊断中心</small></span>
-      </div>
-
-      <div class="nav-label">诊断报告</div>
-      <button
-        v-for="item in reportNav"
-        :key="item.key"
-        class="sidebar-item"
-        :class="{ active: activeReport === item.key }"
-        type="button"
-        @click="navigateReport(item.key)"
-      >
-        <span class="sidebar-icon">{{ item.icon }}</span>{{ item.label }}
-      </button>
-
-      <div class="nav-label asset-label">品牌资产</div>
-      <button
-        v-for="item in assetNav"
-        :key="item.page"
-        class="sidebar-item"
-        :class="{ active: activeAsset === item.page }"
-        type="button"
-        @click="openAsset(item.page)"
-      >
-        <span class="sidebar-icon">{{ item.icon }}</span>{{ item.label }}
-      </button>
-
-      <div class="sidebar-spacer" />
-      <a class="sidebar-item module-link" href="/deal-sniper/sem/dashboard"><span>¥</span>去 SEM 模块</a>
-      <a class="sidebar-item module-link" href="/deal-sniper/seo/dashboard"><span>⌕</span>去 SEO 模块</a>
-      <a class="sidebar-item module-link" href="/deal-sniper/geo/dashboard"><span>✦</span>去 GEO 模块</a>
-      <div class="sidebar-bottom">
-        <a href="/deal-sniper/hub/dashboard">⌂ 全域驾驶舱</a>
-        <a href="/deal-sniper/portal">← 平台门户</a>
-      </div>
-    </aside>
-
-    <section class="diagnosis-main">
-      <header class="diagnosis-topbar">
-        <div>
-          <span class="topbar-kicker">{{ activeAsset ? `DIAGNOSTIC CENTER / ${currentAsset.kicker}` : 'AI ACQUISITION COMMAND / OVERVIEW' }}</span>
-          <h1>{{ activeAsset ? currentAsset.label : '诊断指挥舱' }}</h1>
-          <p>{{ activeAsset ? currentAsset.description : '汇聚 SEO、GEO 与可信信号，定位影响获客的关键阻力' }}</p>
-        </div>
-        <div class="topbar-actions">
-          <template v-if="!activeAsset">
-            <button type="button" :disabled="loading" @click="startNewDiagnosis">⌁ 新建诊断</button>
-            <button type="button" :disabled="!audit" @click="printReport">⇩ 导出报告</button>
-          </template>
-          <button v-else-if="brandReady" type="button" @click="navigateReport('overview')">← 返回网站体检</button>
-          <span class="avatar">DZ</span>
-        </div>
-      </header>
+    <ReportShell :audit="audit" :brand="brandProfile" :user="session.user" :loading="loading"
+      :active-asset="activeAsset" :asset-title="currentAsset.label" :competitor="isCompetitorAudit"
+      :site-audit="isSiteAudit" :page-count="sitePages.length"
+      @new="startNewDiagnosis" @export="printReport" @asset="openAsset" @section="navigateSection">
 
       <div v-if="!activeAsset" class="diagnosis-content">
         <div id="section-overview" class="report-overview-anchor" />
@@ -1090,26 +1058,7 @@ onMounted(async () => {
         <template v-else>
           <div id="diagnosis-report" class="report-anchor" />
 
-          <section class="print-report-header">
-            <div><img :src="diagnosticLogo" alt="G-Snipers"><span><b>G-Snipers 官网 AI 搜索诊断报告</b><small>专业团队审核 · 基于网站公开证据生成</small></span></div>
-            <p><strong>{{ audit.page_title || '网站诊断报告' }}</strong><span>{{ audit.final_url || audit.url }}</span></p>
-          </section>
 
-          <section class="report-meta">
-            <div>
-              <span class="live-dot" /> {{ isCompetitorAudit ? '竞品公开检测完成' : '诊断完成' }}
-              <strong>{{ audit.page_title || '页面未设置标题' }}</strong>
-              <a :href="audit.final_url" target="_blank" rel="noopener">{{ audit.final_url }}</a>
-            </div>
-            <span>{{ formatDate(audit.created_at) }} · {{ isSiteAudit ? `全站抽样 ${sitePages.length} 页` : '单页诊断' }} · 规则版本 v{{ audit.rule_version || '1.1.0' }}</span>
-          </section>
-
-          <nav class="flow-map" :class="{ compact: isCompetitorAudit }" aria-label="诊断报告阅读顺序">
-            <a href="#flow-overview"><b>01</b><span>诊断总览<small>得分与能力结构</small></span></a>
-            <a href="#flow-diagnosis"><b>02</b><span>SEO / GEO 诊断<small>规则、证据与扣分</small></span></a>
-            <a v-if="!isCompetitorAudit" href="#flow-brand"><b>03</b><span>AI 品牌识别<small>品牌、竞品与提及</small></span></a>
-            <a href="#flow-action"><b>{{ isCompetitorAudit ? '03' : '04' }}</b><span>{{ isCompetitorAudit ? '竞品问题' : '问题与行动' }}<small>优先级与诊断依据</small></span></a>
-          </nav>
 
           <section class="flow-screen overview-screen">
           <div id="flow-overview" class="flow-stage-heading">
@@ -1584,7 +1533,7 @@ onMounted(async () => {
                     </button>
                   </div>
                   <span class="impact-badge" :class="item.passed ? 'passed' : item.severity">{{ impactLevel(item) }}</span>
-                  <div v-if="expandedEvidence === item.code" class="evidence-detail">
+                  <div v-show="printing || expandedEvidence === item.code" class="evidence-detail">
                     <header><span>抓取证据明细</span><button type="button" @click="copyEvidence(item)">复制全部</button></header>
                     <ol>
                       <li v-for="(detail, index) in evidenceRows(item)" :key="`${item.code}-${index}`" :class="{ failed: detail.passed === false }">
@@ -1633,7 +1582,7 @@ onMounted(async () => {
                   </button>
                 </div>
                 <span class="impact-badge" :class="item.passed ? 'passed' : item.severity">{{ impactLevel(item) }}</span>
-                <div v-if="expandedEvidence === item.code" class="evidence-detail">
+                <div v-show="printing || expandedEvidence === item.code" class="evidence-detail">
                   <header><span>抓取证据明细</span><button type="button" @click="copyEvidence(item)">复制全部</button></header>
                   <ol>
                     <li v-for="(detail, index) in evidenceRows(item)" :key="`${item.code}-${index}`" :class="{ failed: detail.passed === false }">
@@ -1892,7 +1841,7 @@ onMounted(async () => {
         :initial-brand="brandReady ? brandProfile : null"
         @brand-saved="handleBrandSaved"
       />
-    </section>
+    </ReportShell>
   </main>
 </template>
 
@@ -2754,6 +2703,8 @@ button { color: inherit; }
   .site-coverage-panel,.capability-panel,.diagnostic-section,.issues-panel,.action-panel,.ai-sample-panel,.summary-grid article { break-inside:avoid; box-shadow:none; }
 }
 </style>
+
+<style scoped src="./report-shell-layout.css"></style>
 
 <style>
 @media print {
