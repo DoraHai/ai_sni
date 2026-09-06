@@ -212,12 +212,12 @@
           '<td><button class="wb-btn" data-ch="' + v.channel + '">复制</button></td>';
         tr.querySelector('button').onclick = async function () {
           try {
-            if (!v.export_revision) throw new Error('请刷新稿件后重新导出');
-            var data = await GeoAPI.exportVariant(task.id, v.channel, v.export_revision);
+            var copyTenant = GeoAPI.getTenantId();
+            var copyTaskId = task.id;
+            var data = await GeoAPI.previewVariantExport(copyTaskId, v.channel);
+            if (GeoAPI.getTenantId() !== copyTenant || task.id !== copyTaskId) throw new Error('页面已切换，请重新复制');
             await navigator.clipboard.writeText('# ' + data.title + '\n\n' + data.body_markdown);
-            alert('已复制 ' + label(v.channel));
-            task = await GeoAPI.getTask(task.id);
-            await loadDetail();
+            alert('已复制 ' + label(v.channel) + ' 已保存内容；未登记导出');
           } catch (e) { GeoWB.showError(err, e); }
         };
         tbody.appendChild(tr);

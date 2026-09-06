@@ -8,7 +8,7 @@
 - POST同路径为显式登记，必须geo.content edit及有效GEO资格。JSON要求expected_revision（64位十六进制内容版本摘要），来自任务详情渠道稿或GET预览。获取并刷新任务行锁后，依据当前渠道稿ID/关联母稿/当前最新母稿ID/标题/正文/已保存HTML重新计算，变化409。摘要用于乐观冲突检测，不是授权token。
 - POST沿用原exported状态登记、HTML表示缓存、pipeline_step/blocked_reason及prompt.last_task_id同步；不改review_status/reviewed_by，不创建发布记录、不调用采集/模型/发布。published任务和渠道稿不降级，保留publication_monitor/push_deliveries。导出不把delivery=adapted_draft_not_publishable升级，也不默认quality=publish_ready。
 - 新POST首次填充HTML后摘要可能变化；重用旧摘要409，客户端需采用刷新后的版本。监测元数据更新不纳入摘要，POST在同一任务锁后读取最新元数据并合并，避免丢失监测历史。
-- Vue和静态台显式导出调用POST并提交当前保存的摘要；缺摘要要求刷新。Vue阻止未保存稿件导出，迟到响应不刷新其他客户。原Webhook验收脚本改为只读预览取摘要再POST登记；本轮没有运行其外发流程。
+- Vue显式导出调用POST并提交当前保存的摘要；缺摘要要求刷新。静态台“复制”入口改用独立previewVariantExport GET，不登记、不刷新任务状态，保留view用户复制能力。Vue阻止未保存稿件导出，迟到响应不刷新其他客户。原Webhook验收脚本改为只读预览取摘要再POST登记；本轮没有运行其外发流程。
 - 旧GET调用仍能获得内容，但不再登记exported；这是刻意的行为修正。旧静态前端调用新API但未携带摘要会422，需前后端一起发布并刷新缓存。客户仍只审核一次，无额外审核流程。
 
 ## 验证
@@ -18,3 +18,11 @@
 - 用pg_blocking_pids确认POST实际等待任务锁；等待期间正文改变或新母稿产生后409，未错误登记旧稿；只有监测变化时可登记且保留最新监测。已published记录导出后仍published。
 - 前端147项通过，无跳过；包括真实导出函数保存版本参数、未保存/缺版本不请求、客户切换迟到响应及POST适配。独立GEO前端构建成功，保留已有大包提示。
 - GET纯内容不意味着事实已合格；H1及真实发布仍未验收。本笔按负责人复审后再安排发布，测试/文档不单独发布。
+
+## 复审修正：静态复制只读
+
+基准5dbf017。静态channels/editor复制均仅调用GET与剪贴板，不再调用POST、getTask、loadDetail或renderAll。保留独立exportVariant POST用于显式登记，Vue和脚本按原拆分方案使用它。
+
+渠道编辑器若存在未保存修改，复制前提示先保存，不发送请求、不改输入；请求期间继续编辑、切客户/页签或服务端正文已变化时停止复制并提示。母稿复制仍直接取当前输入，明确提示“未执行保存”，不冒充已保存稿。渠道列表复制提示取的是已保存内容、未登记导出。
+
+7项新测试执行实际静态GET适配和两页复制回调，证明无写请求/任务刷新、未保存内容和迟到响应正确处理。前端全量154 passed，无跳过，GEO构建通过。本次仅前端与文档，无后端改动；954项后端及真实PG view GET允许/POST403/记录不变证据为前笔结果，不宣称重新执行。

@@ -420,6 +420,12 @@
         body: body,
       });
     },
+    previewVariantExport: function (id, channel) {
+      return api('/content-tasks/' + id + '/export', {
+        method: 'GET',
+        query: Object.assign(withTenantQuery(), { channel: channel || 'website' }),
+      });
+    },
     exportVariant: function (id, channel, expectedRevision) {
       return api('/content-tasks/' + id + '/export', {
         method: 'POST',
