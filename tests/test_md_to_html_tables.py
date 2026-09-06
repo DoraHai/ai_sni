@@ -35,6 +35,29 @@ def test_no_table():
     assert ensure_comparison_table_hint(md) is False
 
 
+def test_faq_answers_stay_after_their_questions():
+    md = "- **Q：** 问题一\n答案一\n- **Q：** 问题二\n答案二"
+    rendered = markdown_to_publish_html(md)
+    positions = [rendered.index(text) for text in ("问题一", "答案一", "问题二", "答案二")]
+    assert positions == sorted(positions)
+
+
+def test_indented_answer_stays_inside_its_list_item():
+    rendered = markdown_to_publish_html("- 问题一\n  答案一\n- 问题二\n  答案二")
+    assert "<li>问题一 答案一</li><li>问题二 答案二</li>" in rendered
+
+
+def test_ordered_list_precedes_following_paragraph():
+    rendered = markdown_to_publish_html("1. 步骤一\n操作说明")
+    assert rendered.index("步骤一") < rendered.index("操作说明")
+
+
+def test_list_precedes_horizontal_rule():
+    for marker in ("-", "1."):
+        rendered = markdown_to_publish_html(f"{marker} 核对项\n---\n说明")
+        assert rendered.index("核对项") < rendered.index("<hr/>") < rendered.index("说明")
+
+
 def test_html_to_plain():
     plain = html_to_plain("<p>你好<strong>世界</strong></p>")
     assert "你好" in plain

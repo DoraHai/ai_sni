@@ -168,11 +168,21 @@ def markdown_to_publish_html(md: str, *, wrap_article: bool = True) -> str:
         # hr
         if re.fullmatch(r"-{3,}|\*{3,}", stripped):
             _flush_para(para, out)
+            _flush_list(ul_items, False, out)
+            _flush_list(ol_items, True, out)
             out.append("<hr/>\n")
             i += 1
             continue
 
-        para.append(stripped)
+        # Keep an indented continuation with its list item; a new paragraph
+        # must flush the preceding list before entering the paragraph buffer.
+        if line.startswith(("  ", "\t")) and (ul_items or ol_items):
+            items = ul_items or ol_items
+            items[-1] += " " + stripped
+        else:
+            _flush_list(ul_items, False, out)
+            _flush_list(ol_items, True, out)
+            para.append(stripped)
         i += 1
 
     _flush_para(para, out)
