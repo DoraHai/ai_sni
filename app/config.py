@@ -143,6 +143,8 @@ def resolve_baidu_write_dry_run(
 
 
 class Settings(BaseSettings):
+    # Enable only after separately reviewed schema installation; never auto-create tables.
+    sem_tasks_enabled: bool = False
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
 
     app_env: str = "dev"
