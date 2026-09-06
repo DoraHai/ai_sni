@@ -27,6 +27,59 @@ def delivery_items(variants):
             for key, entry in ((v.adapt_meta or {}).get('push_deliveries') or {}).items()]
 
 
+def assert_recoverable(*, task, variant, account, article, key, entry, user_id, now=None):
+    now = now or datetime.now(timezone.utc)
+    if user_id is None:
+        raise HTTPException(403, '需要已登录的操作人员核对，API Key 不能代替人工确认')
+    if (account is None or variant.task_id != task.id or account.tenant_id != task.tenant_id
+            or not entry or entry.get('account_id') != account.id):
+        raise HTTPException(404, '当前客户的发布记录不存在')
+    if entry.get('state') not in {'unknown', 'sending', 'failed'}:
+        raise HTTPException(409, '记录已处理，请刷新后查看')
+    if entry.get('state') == 'sending':
+        try:
+            started = datetime.fromisoformat(str(entry['updated_at']).replace('Z', '+00:00'))
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+        except (ValueError, KeyError, TypeError):
+            raise HTTPException(409, '发送时间无效，需要管理员排查')
+        if now - started < timedelta(minutes=10):
+            raise HTTPException(409, '发送请求仍可能在执行，请至少等待 10 分钟后再核对')
+    if (article is None or article.id != variant.article_version_id
+            or entry.get('article_id') != article.id
+            or delivery_key(task, variant, account, entry.get('mode')) != key):
+        raise HTTPException(409, '稿件版本已经变化，不能用当前稿件核销历史发送')
+    try:
+        assert_review_approved(task)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    history = list(entry.get('recovery_history') or [])
+    if len(history) >= 100:
+        raise HTTPException(409, '恢复操作次数已达上限，需要管理员排查')
+
+
+def recovery_availability(**kwargs):
+    entry = kwargs['entry']
+    result = {'can_confirm_published': False, 'can_allow_retry': False,
+              'blocked_reason': None, 'available_at': None}
+    if entry.get('state') == 'sending':
+        try:
+            started = datetime.fromisoformat(str(entry.get('updated_at', '')).replace('Z', '+00:00'))
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            result['available_at'] = (started + timedelta(minutes=10)).isoformat()
+        except (ValueError, TypeError, OverflowError):
+            pass
+    try:
+        assert_recoverable(**kwargs)
+    except HTTPException as exc:
+        result['blocked_reason'] = exc.detail
+        return result
+    result['can_confirm_published'] = entry.get('mode') == 'publish'
+    result['can_allow_retry'] = True
+    return result
+
+
 async def resolve_delivery(session, *, task, variant, account, key, req, user_id):
     from app.geo.content.routes import _latest_article, _write_publication
     if user_id is None:
@@ -41,29 +94,10 @@ async def resolve_delivery(session, *, task, variant, account, key, req, user_id
     entry = journal.get(key)
     if not entry or entry.get('account_id') != account.id:
         raise HTTPException(404, '发布记录不存在')
-    if entry.get('state') not in {'unknown', 'sending', 'failed'}:
-        raise HTTPException(409, '记录已处理，请刷新后查看')
-    if entry.get('state') == 'sending':
-        try:
-            started = datetime.fromisoformat(entry['updated_at'].replace('Z', '+00:00'))
-            if started.tzinfo is None:
-                started = started.replace(tzinfo=timezone.utc)
-        except (ValueError, KeyError, TypeError):
-            raise HTTPException(409, '发送时间无效，需要管理员排查')
-        if datetime.now(timezone.utc) - started < timedelta(minutes=10):
-            raise HTTPException(409, '发送请求仍可能在执行，请至少等待 10 分钟后再核对')
     article = await _latest_article(session, task.id)
-    if (article is None or article.id != variant.article_version_id
-            or entry.get('article_id') != article.id
-            or delivery_key(task, variant, account, entry.get('mode')) != key):
-        raise HTTPException(409, '稿件版本已经变化，不能用当前稿件核销历史发送')
-    try:
-        assert_review_approved(task)
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
+    assert_recoverable(task=task, variant=variant, account=account, article=article,
+                       key=key, entry=entry, user_id=user_id)
     history = list(entry.get('recovery_history') or [])
-    if len(history) >= 100:
-        raise HTTPException(409, '恢复操作次数已达上限，需要管理员排查')
     now = datetime.now(timezone.utc).isoformat()
     event = dict(action=req.action, user_id=user_id, note=req.note.strip(), at=now,
                  previous_state=entry['state'])

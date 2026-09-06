@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
+import { ref, computed } from 'vue'
 const source = readFileSync(new URL('../src/components/GeoDeliveryRecovery.vue', import.meta.url), 'utf8')
 const handlers = source.slice(source.indexOf('async function load()'), source.indexOf('watch(() =>'))
 function fixture() {
@@ -46,4 +47,22 @@ test('failed recovery retains operator inputs and permits correction', async () 
   await ctx.resolve(row, 'confirm_published')
   assert.equal(ctx.busy.value, false); assert.equal(row.note, '核对记录')
   assert.equal(ctx.error.value, '正文不匹配')
+})
+
+
+test('pending view excludes successes and counts only currently actionable records', () => {
+  const ctx = vm.createContext({ ref, computed })
+  const declarations = source.slice(source.indexOf('const rows ='), source.indexOf('let epoch ='))
+  vm.runInContext(declarations + '; result = { rows, pendingRows, visibleRows, actionableCount, showAll };', ctx)
+  const state = ctx.result
+  state.rows.value = [
+    {state:'succeeded'},
+    {state:'unknown',can_confirm_published:true,can_allow_retry:true},
+    {state:'sending',can_confirm_published:false,can_allow_retry:false,blocked_reason:'等待'},
+  ]
+  assert.equal(state.pendingRows.value.length, 2)
+  assert.equal(state.visibleRows.value.length, 2)
+  assert.equal(state.actionableCount.value, 1)
+  state.showAll.value = true
+  assert.equal(state.visibleRows.value.length, 3)
 })

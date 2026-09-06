@@ -83,3 +83,60 @@ def test_list_exposes_no_connector_result_or_reservation():
     args = case(result={'response': 'secret'}, reservation_id='private')
     rows = delivery_items([args['variant']])
     assert 'secret' not in str(rows) and 'reservation_id' not in str(rows)
+
+
+def availability(args, **kw):
+    from app.geo.content.delivery_recovery import recovery_availability
+    return recovery_availability(**{k:v for k,v in args.items() if k != 'session'},
+        article=NS(id=16), entry=args['variant'].adapt_meta['push_deliveries'][args['key']], **kw)
+
+
+@pytest.mark.parametrize('seconds,allowed', [(599,False),(600,True)])
+def test_recovery_availability_uses_exact_wait_boundary(seconds,allowed):
+    from datetime import timedelta
+    start=datetime(2026,9,6,tzinfo=timezone.utc)
+    args=case(state='sending',updated_at=start.isoformat())
+    result=availability(args,now=start+timedelta(seconds=seconds))
+    assert result['can_allow_retry'] is allowed
+    assert result['available_at']=='2026-09-06T00:10:00+00:00'
+    assert bool(result['blocked_reason']) is not allowed
+
+
+@pytest.mark.parametrize('kind', ['anonymous','changed_body','unapproved','missing_account','bad_time','resolved','limit'])
+def test_list_recovery_options_fail_closed_for_blocked_records(kind):
+    args=case()
+    entry=args['variant'].adapt_meta['push_deliveries'][args['key']]
+    if kind=='anonymous':args['user_id']=None
+    if kind=='changed_body':args['variant'].body_markdown+='a change'
+    if kind=='unapproved':args['task'].review_status='pending'
+    if kind=='missing_account':args['account']=None
+    if kind=='bad_time':entry.update(state='sending',updated_at=12345)
+    if kind=='resolved':entry['state']='succeeded'
+    if kind=='limit':entry['recovery_history']=[{}]*100
+    result=availability(args)
+    assert not result['can_confirm_published'] and not result['can_allow_retry']
+    assert result['blocked_reason']
+
+
+def test_draft_recovery_never_offers_confirm_published():
+    args=case(mode='draft')
+    old=args['key'];args['key']=delivery_key(args['task'],args['variant'],args['account'],'draft')
+    journal=args['variant'].adapt_meta['push_deliveries'];journal[args['key']]=journal.pop(old)
+    result=availability(args)
+    assert result['can_allow_retry'] and not result['can_confirm_published']
+
+
+def test_delivery_list_adds_availability_without_mutating_journal():
+    from app.geo.content.routes import list_task_deliveries
+    args=case();variant=args['variant'];session=args['session']
+    import copy
+    before=copy.deepcopy(variant.adapt_meta)
+    session.scalars=AsyncMock(return_value=[args['account']])
+    with patch('app.geo.content.routes._get_task',AsyncMock(return_value=args['task'])), \
+         patch('app.geo.content.routes._variants',AsyncMock(return_value=[variant])), \
+         patch('app.geo.content.routes._latest_article',AsyncMock(return_value=NS(id=16))):
+        result=asyncio.run(list_task_deliveries(12,1,NS(user_id=9,ensure_tenant=lambda _:None),session))
+    assert result['actionable_count']==1 and result['blocked_count']==0
+    assert result['items'][0]['can_confirm_published']
+    assert variant.adapt_meta==before
+    session.commit.assert_not_awaited()

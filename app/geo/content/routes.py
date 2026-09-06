@@ -18,7 +18,7 @@ from app.geo.content.bridge import (
     create_task_from_diagnosis,
     editor_path,
 )
-from app.geo.content.delivery_recovery import DeliveryResolution, delivery_items, resolve_delivery
+from app.geo.content.delivery_recovery import DeliveryResolution, delivery_items, resolve_delivery, recovery_availability
 from app.geo.content.gate import PublishGateError, assert_can_publish
 from app.geo.content.generate_article import (
     generate_master_article,
@@ -7994,7 +7994,24 @@ async def list_task_deliveries(task_id: int, tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session)) -> dict:
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
-    return {"items": delivery_items(await _variants(session, task.id))}
+    variants = await _variants(session, task.id)
+    items = delivery_items(variants)
+    if not items:
+        return {"items": [], "actionable_count": 0, "blocked_count": 0}
+    article = await _latest_article(session, task.id)
+    accounts = {a.id: a for a in await session.scalars(select(GeoChannelAccount).where(
+        GeoChannelAccount.tenant_id == tenant_id))}
+    by_id = {v.id: v for v in variants}
+    for item in items:
+        variant = by_id[item["variant_id"]]
+        entry = variant.adapt_meta["push_deliveries"][item["delivery_key"]]
+        item.update(recovery_availability(task=task, variant=variant,
+            account=accounts.get(item["account_id"]), article=article,
+            key=item["delivery_key"], entry=entry, user_id=ctx.user_id))
+    actionable = sum(bool(i["can_confirm_published"] or i["can_allow_retry"]) for i in items)
+    blocked = sum(i["state"] in {"unknown", "sending", "failed"}
+                  and not (i["can_confirm_published"] or i["can_allow_retry"]) for i in items)
+    return {"items": items, "actionable_count": actionable, "blocked_count": blocked}
 
 
 @router.post("/content-tasks/{task_id}/deliveries/{variant_id}/{delivery_id}/resolve")
