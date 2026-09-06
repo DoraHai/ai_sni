@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import GeoAsyncJob, GeoContentTask
@@ -20,6 +21,36 @@ KIND_VARIANTS = "create_variants"
 # Defaults; runtime reads settings when reconciling
 STALE_PENDING_SECONDS = 120
 STALE_RUNNING_SECONDS = 45 * 60
+
+
+@asynccontextmanager
+async def job_execution_lock(job_id: int):
+    """Hold cross-worker ownership on a dedicated PostgreSQL connection."""
+    from app.database import engine
+
+    params = {"key": f"geo:async-job:{job_id}"}
+    async with engine.connect() as conn:
+        acquired = False
+        try:
+            acquired = bool(
+                await conn.scalar(
+                    text("SELECT pg_try_advisory_lock(hashtextextended(:key, 0))"),
+                    params,
+                )
+            )
+            await conn.commit()
+            yield conn if acquired else None
+        finally:
+            if acquired:
+                try:
+                    await conn.execute(
+                        text("SELECT pg_advisory_unlock(hashtextextended(:key, 0))"),
+                        params,
+                    )
+                    await conn.commit()
+                except BaseException:
+                    await conn.invalidate()
+                    raise
 
 
 def job_payload(row: GeoAsyncJob) -> dict[str, Any]:
@@ -44,6 +75,24 @@ def job_payload(row: GeoAsyncJob) -> dict[str, Any]:
         "started_at": row.started_at.isoformat() if row.started_at else None,
         "finished_at": row.finished_at.isoformat() if row.finished_at else None,
     }
+
+
+def job_read_payload(row: GeoAsyncJob) -> dict[str, Any]:
+    """Describe stored progress and timeout observation without reconciling it."""
+    payload = job_payload(row)
+    pending_limit, running_limit = _stale_limits()
+    anchor = row.created_at if row.status == "pending" else row.started_at or row.created_at
+    limit = pending_limit if row.status == "pending" else running_limit
+    age = _age_seconds(anchor) if row.status in {"pending", "running"} else None
+    stale = age is not None and age >= limit
+    payload.update(
+        stored_status=row.status,
+        stale=stale,
+        stale_reason="elapsed_threshold_exceeded" if stale else None,
+        status_source="stored",
+        reconciliation="background",
+    )
+    return payload
 
 
 async def set_job_progress(
@@ -125,6 +174,16 @@ async def _release_task_lock(
 async def reconcile_stale_job(
     session: AsyncSession, row: GeoAsyncJob
 ) -> GeoAsyncJob:
+    async with job_execution_lock(row.id) as acquired:
+        if not acquired:
+            return row
+        await session.refresh(row)
+        return await _reconcile_unowned_job(session, row)
+
+
+async def _reconcile_unowned_job(
+    session: AsyncSession, row: GeoAsyncJob
+) -> GeoAsyncJob:
     """Mark hanging pending/running jobs failed; free content-task locks."""
     if row.status not in {"pending", "running"}:
         return row
@@ -181,6 +240,11 @@ async def reconcile_stale_content_tasks(
             .where(
                 GeoAsyncJob.tenant_id == tenant_id,
                 GeoAsyncJob.ref_id == task.id,
+                or_(
+                    GeoAsyncJob.ref_type.is_(None),
+                    GeoAsyncJob.ref_type == "content_task",
+                ),
+                GeoAsyncJob.kind.in_([KIND_GENERATE, KIND_VARIANTS]),
                 GeoAsyncJob.status.in_(["pending", "running"]),
             )
             .limit(1)
@@ -229,7 +293,12 @@ async def recover_jobs_on_startup(*, requeue_pending: bool = True) -> dict[str, 
     from app.database import async_session_factory
 
     pending_lim, _running_lim = _stale_limits()
-    stats = {"failed_running": 0, "failed_stale_pending": 0, "requeued": 0}
+    stats = {
+        "failed_running": 0,
+        "failed_stale_pending": 0,
+        "requeued": 0,
+        "released_tasks": 0,
+    }
     requeue_ids: list[int] = []
 
     async with async_session_factory() as session:
@@ -240,34 +309,30 @@ async def recover_jobs_on_startup(*, requeue_pending: bool = True) -> dict[str, 
                 )
             )
         )
-        for row in rows:
-            if row.status == "running":
-                reason = "进程重启：中断的 running 作业已标记失败，请重试"
-                row.status = "failed"
-                row.error = reason
-                row.finished_at = datetime.utcnow()
-                await _release_task_lock(session, row, reason=reason)
-                stats["failed_running"] += 1
-                continue
-            # pending
-            age = _age_seconds(row.created_at)
-            if age is not None and age >= pending_lim:
-                reason = f"进程重启且排队已超时（>{pending_lim}s），标记失败"
-                row.status = "failed"
-                row.error = reason
-                row.finished_at = datetime.utcnow()
-                await _release_task_lock(session, row, reason=reason)
-                stats["failed_stale_pending"] += 1
-            elif requeue_pending:
-                requeue_ids.append(int(row.id))
-                stats["requeued"] += 1
-            else:
-                reason = "进程重启：pending 作业未自动续跑（requeue 关闭）"
-                row.status = "failed"
-                row.error = reason
-                row.finished_at = datetime.utcnow()
-                await _release_task_lock(session, row, reason=reason)
-                stats["failed_stale_pending"] += 1
+        for candidate in rows:
+            async with job_execution_lock(candidate.id) as acquired:
+                if not acquired:
+                    continue
+                await session.refresh(candidate)
+                await _recover_unowned_job(
+                    session,
+                    candidate,
+                    pending_lim,
+                    requeue_pending,
+                    stats,
+                    requeue_ids,
+                )
+        tenant_ids = list(
+            await session.scalars(
+                select(GeoContentTask.tenant_id)
+                .where(GeoContentTask.status.in_(["generating", "adapting"]))
+                .distinct()
+            )
+        )
+        for tenant_id in tenant_ids:
+            stats["released_tasks"] += await reconcile_stale_content_tasks(
+                session, tenant_id=int(tenant_id)
+            )
         await session.commit()
 
     for jid in requeue_ids:
@@ -278,6 +343,78 @@ async def recover_jobs_on_startup(*, requeue_pending: bool = True) -> dict[str, 
     if any(stats.values()):
         logger.info("geo async recover_on_startup %s", stats)
     return stats
+
+
+async def reconcile_stale_jobs_background() -> dict[str, int]:
+    """Persist timeout recovery outside request handlers."""
+    from app.database import async_session_factory
+
+    stats = {"failed_jobs": 0, "released_tasks": 0}
+    async with async_session_factory() as session:
+        rows = list(
+            await session.scalars(
+                select(GeoAsyncJob).where(
+                    GeoAsyncJob.status.in_(["pending", "running"])
+                )
+            )
+        )
+        for row in rows:
+            before = row.status
+            await reconcile_stale_job(session, row)
+            if before in {"pending", "running"} and row.status == "failed":
+                stats["failed_jobs"] += 1
+        tenant_ids = list(
+            await session.scalars(
+                select(GeoContentTask.tenant_id)
+                .where(GeoContentTask.status.in_(["generating", "adapting"]))
+                .distinct()
+            )
+        )
+        for tenant_id in tenant_ids:
+            stats["released_tasks"] += await reconcile_stale_content_tasks(
+                session, tenant_id=int(tenant_id)
+            )
+    return stats
+
+
+async def _recover_unowned_job(
+    session,
+    row,
+    pending_limit,
+    requeue_pending,
+    stats,
+    requeue_ids,
+):
+    if row.status not in {"pending", "running"}:
+        return
+    if row.status == "running":
+        reason = "进程重启：中断的 running 作业已标记失败，请重试"
+        row.status = "failed"
+        row.error = reason
+        row.finished_at = datetime.utcnow()
+        await _release_task_lock(session, row, reason=reason)
+        stats["failed_running"] += 1
+        await session.commit()
+        return
+    age = _age_seconds(row.created_at)
+    if age is not None and age >= pending_limit:
+        reason = f"进程重启且排队已超时（>{pending_limit}s），标记失败"
+        row.status = "failed"
+        row.error = reason
+        row.finished_at = datetime.utcnow()
+        await _release_task_lock(session, row, reason=reason)
+        stats["failed_stale_pending"] += 1
+    elif requeue_pending:
+        requeue_ids.append(int(row.id))
+        stats["requeued"] += 1
+    else:
+        reason = "进程重启：pending 作业未自动续跑（requeue 关闭）"
+        row.status = "failed"
+        row.error = reason
+        row.finished_at = datetime.utcnow()
+        await _release_task_lock(session, row, reason=reason)
+        stats["failed_stale_pending"] += 1
+    await session.commit()
 
 
 async def mark_job(
@@ -304,14 +441,25 @@ async def mark_job(
 
 
 async def run_job_in_background(job_id: int) -> None:
+    async with job_execution_lock(job_id) as acquired:
+        if acquired:
+            await _run_owned_job(job_id, connection=acquired)
+
+
+async def _run_owned_job(job_id: int, *, connection=None) -> None:
     from app.database import async_session_factory
 
     try:
-        async with async_session_factory() as session:
-            row = await session.get(GeoAsyncJob, job_id)
-            if row is None:
+        async with async_session_factory(bind=connection) as session:
+            claimed = await session.scalar(
+                update(GeoAsyncJob)
+                .where(GeoAsyncJob.id == job_id, GeoAsyncJob.status == "pending")
+                .values(status="running", started_at=datetime.utcnow())
+                .returning(GeoAsyncJob.id)
+            )
+            await session.commit()
+            if claimed is None:
                 return
-            await mark_job(session, job_id, status="running")
             row = await session.get(GeoAsyncJob, job_id)
             if row is not None and cancel_requested(row):
                 await mark_job(session, job_id, status="cancelled", error="已取消")
