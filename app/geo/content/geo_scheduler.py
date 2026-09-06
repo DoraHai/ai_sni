@@ -48,7 +48,7 @@ async def run_geo_visibility_patrols() -> None:
     from app.database import async_session_factory
     from app.geo.content.patrol import (
         count_patrol_runs_today,
-        execute_patrol_run,
+        execute_patrol_run_owned,
         should_run_scheduled_patrol,
     )
     from app.models import GeoVisibilityPatrolRun, GeoVisibilityPatrolSettings, Tenant
@@ -124,7 +124,7 @@ async def run_geo_visibility_patrols() -> None:
             await session.refresh(run)
             rid = run.id
             try:
-                await execute_patrol_run(session, rid)
+                await execute_patrol_run_owned(session, rid)
                 logger.info(
                     "[geo-scheduler] patrol done tenant=%s run=%s window=%s-%s interval=%sh",
                     st.tenant_id,
@@ -139,6 +139,24 @@ async def run_geo_visibility_patrols() -> None:
                     st.tenant_id,
                     rid,
                 )
+
+
+async def run_geo_stale_reconciliation() -> None:
+    """Persist stale task recovery independently from all GET requests."""
+    from app.geo.content.async_jobs import reconcile_stale_jobs_background
+    from app.geo.content.patrol import reconcile_stale_patrol_runs_background
+
+    try:
+        jobs = await reconcile_stale_jobs_background()
+        patrols = await reconcile_stale_patrol_runs_background()
+        if any(jobs.values()) or any(patrols.values()):
+            logger.info(
+                "[geo-scheduler] stale reconciliation jobs=%s patrols=%s",
+                jobs,
+                patrols,
+            )
+    except Exception:  # noqa: BLE001
+        logger.exception("[geo-scheduler] stale reconciliation failed")
 
 
 def _lock_path() -> Path:

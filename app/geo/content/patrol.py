@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.geo.content.probe import (
@@ -44,6 +45,7 @@ PATROL_INTERVAL_HOURS_CHOICES = (1, 2, 3, 4, 6, 8, 12, 24)
 # Stuck-run recovery (async workers / process restart)
 STALE_PENDING_SECONDS = 90
 STALE_RUNNING_SECONDS = 45 * 60
+PATROL_EXECUTION_PROTOCOL = "advisory_v1"
 
 
 def _naive_utc(dt: datetime | None) -> datetime | None:
@@ -52,6 +54,36 @@ def _naive_utc(dt: datetime | None) -> datetime | None:
     if dt.tzinfo is not None:
         return dt.astimezone(timezone.utc).replace(tzinfo=None)
     return dt
+
+
+@asynccontextmanager
+async def patrol_execution_lock(run_id: int):
+    """Own one patrol across workers while allowing safe background recovery."""
+    from app.database import engine
+
+    params = {"key": f"geo:patrol-run:{run_id}"}
+    async with engine.connect() as conn:
+        acquired = False
+        try:
+            acquired = bool(
+                await conn.scalar(
+                    text("SELECT pg_try_advisory_lock(hashtextextended(:key, 0))"),
+                    params,
+                )
+            )
+            await conn.commit()
+            yield acquired
+        finally:
+            if acquired:
+                try:
+                    await conn.execute(
+                        text("SELECT pg_advisory_unlock(hashtextextended(:key, 0))"),
+                        params,
+                    )
+                    await conn.commit()
+                except BaseException:
+                    await conn.invalidate()
+                    raise
 
 
 async def mark_patrol_run_failed(
@@ -87,28 +119,61 @@ async def reconcile_stale_patrol_run(
     """Close out zombie pending/running rows so history does not hang forever."""
     if row.status not in ("pending", "running"):
         return row
-    now = datetime.utcnow()
+    stale, _reason = patrol_stale_view(row)
+    if not stale:
+        return row
+    if row.status == "running" and not patrol_has_advisory_owner(row):
+        return row
+    async with patrol_execution_lock(row.id) as acquired:
+        if not acquired:
+            return row
+        await session.refresh(row, with_for_update=True)
+        if row.status not in ("pending", "running"):
+            return row
+        if row.status == "running" and not patrol_has_advisory_owner(row):
+            return row
+        stale, reason = patrol_stale_view(row)
+        if not stale:
+            return row
+        failed = await mark_patrol_run_failed(
+            session,
+            row.id,
+            reason or "巡检超时，已自动结束。",
+            only_if_status=(row.status,),
+        )
+        return failed or row
+
+
+def patrol_stale_view(row: GeoVisibilityPatrolRun) -> tuple[bool, str | None]:
+    if row.status not in ("pending", "running"):
+        return False, None
     anchor = _naive_utc(row.started_at) or _naive_utc(row.created_at)
     if anchor is None:
-        return row
-    age = (now - anchor).total_seconds()
+        return False, None
+    age = (datetime.utcnow() - anchor).total_seconds()
     if row.status == "pending" and age >= STALE_PENDING_SECONDS:
-        failed = await mark_patrol_run_failed(
-            session,
-            row.id,
-            "后台任务未在时限内启动（可能进程重启或任务丢失）。请重新「立即巡检」。",
-            only_if_status=("pending",),
-        )
-        return failed or row
+        return True, "后台任务未在时限内启动（可能进程重启或任务丢失）。请重新「立即巡检」。"
     if row.status == "running" and age >= STALE_RUNNING_SECONDS:
-        failed = await mark_patrol_run_failed(
-            session,
-            row.id,
-            f"巡检运行超时（>{STALE_RUNNING_SECONDS // 60} 分钟）已自动结束。请缩小机会词/引擎后重试。",
-            only_if_status=("running",),
-        )
-        return failed or row
-    return row
+        return True, f"巡检运行超时（>{STALE_RUNNING_SECONDS // 60} 分钟）已自动结束。请缩小机会词/引擎后重试。"
+    return False, None
+
+
+def patrol_has_advisory_owner(row: GeoVisibilityPatrolRun) -> bool:
+    summary = row.summary if isinstance(row.summary, dict) else {}
+    return summary.get("execution_protocol") == PATROL_EXECUTION_PROTOCOL
+
+
+def patrol_read_payload(row: GeoVisibilityPatrolRun) -> dict[str, Any]:
+    payload = patrol_run_payload(row)
+    stale, _reason = patrol_stale_view(row)
+    payload.update(
+        stored_status=row.status,
+        stale=stale,
+        stale_reason="elapsed_threshold_exceeded" if stale else None,
+        status_source="stored",
+        reconciliation="background",
+    )
+    return payload
 
 
 async def run_patrol_in_background(run_id: int) -> None:
@@ -116,21 +181,116 @@ async def run_patrol_in_background(run_id: int) -> None:
     from app.database import async_session_factory
 
     try:
-        async with async_session_factory() as session:
-            try:
-                await execute_patrol_run(session, run_id)
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("patrol background execute failed run=%s", run_id)
+        async with patrol_execution_lock(run_id) as acquired:
+            if not acquired:
+                return
+            async with async_session_factory() as session:
                 try:
-                    await mark_patrol_run_failed(
+                    await execute_patrol_run(
                         session,
                         run_id,
-                        f"巡检执行异常: {exc}",
+                        execution_protocol=PATROL_EXECUTION_PROTOCOL,
                     )
-                except Exception:  # noqa: BLE001
-                    logger.exception("patrol mark failed also failed run=%s", run_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("patrol background execute failed run=%s", run_id)
+                    try:
+                        await mark_patrol_run_failed(
+                            session,
+                            run_id,
+                            f"巡检执行异常: {exc}",
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.exception("patrol mark failed also failed run=%s", run_id)
     except Exception:  # noqa: BLE001
         logger.exception("patrol background session failed run=%s", run_id)
+
+
+async def execute_patrol_run_owned(
+    session: AsyncSession, run_id: int
+) -> GeoVisibilityPatrolRun:
+    async with patrol_execution_lock(run_id) as acquired:
+        if not acquired:
+            row = await session.get(GeoVisibilityPatrolRun, run_id)
+            if row is None:
+                raise ValueError(f"patrol run {run_id} not found")
+            return row
+        return await execute_patrol_run(
+            session,
+            run_id,
+            execution_protocol=PATROL_EXECUTION_PROTOCOL,
+        )
+
+
+async def reconcile_stale_patrol_runs_background() -> dict[str, int]:
+    """Persist timeout recovery on a scheduler tick, never on GET."""
+    from app.database import async_session_factory
+
+    failed = 0
+    async with async_session_factory() as session:
+        rows = list(
+            await session.scalars(
+                select(GeoVisibilityPatrolRun).where(
+                    GeoVisibilityPatrolRun.status.in_(("pending", "running"))
+                )
+            )
+        )
+        for row in rows:
+            before = row.status
+            await reconcile_stale_patrol_run(session, row)
+            if before in ("pending", "running") and row.status == "failed":
+                failed += 1
+    return {"failed_runs": failed}
+
+
+async def recover_patrol_runs_on_startup() -> dict[str, int]:
+    """Close owned interrupted runs without starting queued collection work."""
+    from app.database import async_session_factory
+
+    stats = {
+        "failed_running": 0,
+        "failed_stale_pending": 0,
+        "pending_deferred": 0,
+        "legacy_running_deferred": 0,
+    }
+    async with async_session_factory() as session:
+        rows = list(
+            await session.scalars(
+                select(GeoVisibilityPatrolRun).where(
+                    GeoVisibilityPatrolRun.status.in_(("pending", "running"))
+                )
+            )
+        )
+        for row in rows:
+            async with patrol_execution_lock(row.id) as acquired:
+                if not acquired:
+                    continue
+                await session.refresh(row, with_for_update=True)
+                if row.status == "running":
+                    if not patrol_has_advisory_owner(row):
+                        stats["legacy_running_deferred"] += 1
+                        continue
+                    await mark_patrol_run_failed(
+                        session,
+                        row.id,
+                        "进程重启：中断的巡检已标记失败，请重试。",
+                        only_if_status=("running",),
+                    )
+                    stats["failed_running"] += 1
+                elif row.status == "pending":
+                    stale, reason = patrol_stale_view(row)
+                    if stale:
+                        await mark_patrol_run_failed(
+                            session,
+                            row.id,
+                            reason or "进程重启且巡检排队超时。",
+                            only_if_status=("pending",),
+                        )
+                        stats["failed_stale_pending"] += 1
+                    else:
+                        # A legacy worker may already own its in-memory queue without
+                        # holding the new advisory lock. Startup must not duplicate it.
+                        stats["pending_deferred"] += 1
+    return stats
 
 
 async def count_patrol_runs_today(session: AsyncSession, tenant_id: int) -> int:
@@ -286,7 +446,12 @@ def patrol_run_payload(row: GeoVisibilityPatrolRun) -> dict[str, Any]:
     }
 
 
-async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilityPatrolRun:
+async def execute_patrol_run(
+    session: AsyncSession,
+    run_id: int,
+    *,
+    execution_protocol: str | None = None,
+) -> GeoVisibilityPatrolRun:
     """Run patrol to completion inside one session (commit at end of phases)."""
     from app.ai.deepseek import DeepSeekError, chat_json
     from app.geo.content.ai_settings import resolve_llm_credentials
@@ -305,6 +470,9 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
     row.status = "running"
     row.started_at = datetime.utcnow()
     row.error = None
+    row.summary = dict(row.summary) if isinstance(row.summary, dict) else {}
+    if execution_protocol == PATROL_EXECUTION_PROTOCOL:
+        row.summary["execution_protocol"] = PATROL_EXECUTION_PROTOCOL
     await session.commit()
 
     items: list[dict[str, Any]] = []
@@ -317,6 +485,8 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
         "real_samples": 0,
         "persona_samples": 0,
     }
+    if execution_protocol == PATROL_EXECUTION_PROTOCOL:
+        summary["execution_protocol"] = PATROL_EXECUTION_PROTOCOL
 
     if contract_plan:
         summary["contract_plan"] = contract_plan

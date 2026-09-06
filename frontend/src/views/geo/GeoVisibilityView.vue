@@ -37,6 +37,7 @@ import {
   fmtInt,
   labelOf,
 } from '../../utils/geoReportLabels'
+import { staleProgressHint } from '../../utils/geoProgressStatus'
 
 const route = useRoute()
 const router = useRouter()
@@ -97,7 +98,12 @@ const emptyReason = computed(() =>
   }),
 )
 
-const lastRun = computed(() => patrolOps.value?.last_run || patrolRuns.value[0] || null)
+const lastRun = computed(() => {
+  const opsRun = patrolOps.value?.last_run
+  const listedRun = patrolRuns.value[0]
+  if (opsRun?.id && listedRun?.id === opsRun.id) return { ...opsRun, ...listedRun }
+  return opsRun || listedRun || null
+})
 const patrolScheduleLabel = computed(() => {
   const s = patrolOps.value?.settings
   if (!s) return '尚未加载'
@@ -144,8 +150,9 @@ const evalKpis = computed(() => {
   ]
 })
 
-function runStatusLabel(status) {
-  return labelOf(PATROL_STATUS_LABEL, status, status || '—')
+function runStatusLabel(row) {
+  return staleProgressHint(row, '巡检')
+    || labelOf(PATROL_STATUS_LABEL, row?.status, row?.status || '—')
 }
 
 const registerOpen = ref(false)
@@ -670,7 +677,7 @@ onMounted(reloadAll)
           <h3>自动采集</h3>
           <span class="more">
             <template v-if="lastRun">
-              最近 #{{ lastRun.id }} {{ runStatusLabel(lastRun.status) }}
+              最近 #{{ lastRun.id }} {{ runStatusLabel(lastRun) }}
               · {{ fmtCaptured(lastRun.finished_at || lastRun.created_at) }}
             </template>
             <template v-else>尚未采集</template>

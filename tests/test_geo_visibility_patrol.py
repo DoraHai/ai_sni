@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from contextlib import asynccontextmanager
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -57,7 +58,12 @@ class StalePatrolReconcileTests(unittest.IsolatedAsyncioTestCase):
         session.get = AsyncMock(return_value=row)
         session.commit = AsyncMock()
         session.refresh = AsyncMock()
-        out = await reconcile_stale_patrol_run(session, row)
+        @asynccontextmanager
+        async def available(_run_id):
+            yield True
+
+        with patch("app.geo.content.patrol.patrol_execution_lock", available):
+            out = await reconcile_stale_patrol_run(session, row)
         self.assertEqual(out.status, "failed")
         self.assertIn("后台任务", out.error or "")
 

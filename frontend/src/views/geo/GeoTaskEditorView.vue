@@ -62,6 +62,7 @@ import GeoLaunchChecklist from '../../components/GeoLaunchChecklist.vue'
 import RichTextMarkdownEditor from '../../components/RichTextMarkdownEditor.vue'
 
 import { createEditorContext } from '../../utils/geoEditorContext'
+import { staleProgressHint } from '../../utils/geoProgressStatus'
 
 let editorEpoch = 0
 let editorDisposed = false
@@ -1142,7 +1143,7 @@ async function resumeActiveJob() {
     activeJob.value = job
     if (['pending', 'running'].includes(job.status)) {
       persistJobId(job.id)
-      generateHint.value = job.progress_label || `后台任务 #${job.id} ${job.status}`
+      generateHint.value = staleProgressHint(job) || job.progress_label || `后台任务 #${job.id} ${job.status}`
       busy.value = job.kind === 'create_variants' ? 'variants' : 'generate'
       followJob(job.id)
     } else {
@@ -1175,13 +1176,14 @@ async function followJob(jobId, { maxMs = 12 * 60 * 1000 } = {}) {
           generateHint.value = '已请求取消，等待当前步骤结束…'
         } else {
           generateHint.value =
-            j.progress_label || `后台任务 #${j.id} ${j.status}`
+            staleProgressHint(j) || j.progress_label || `后台任务 #${j.id} ${j.status}`
         }
       },
     }))
     activeJob.value = job
     if (['pending', 'running'].includes(job.status)) {
-      generateHint.value = `后台任务 #${job.id} 仍在跑，完成后刷新即可看到全部渠道稿`
+      generateHint.value = staleProgressHint(job)
+        || `后台任务 #${job.id} 仍在跑，完成后刷新即可看到全部渠道稿`
       return job
     }
     if (job.status === 'failed') throw new Error(job.error || '后台任务失败')

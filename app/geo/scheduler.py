@@ -22,7 +22,7 @@ from app.database import async_session_factory
 from app.geo.content.daily_metrics import nightly_rebuild_recent_tenants
 from app.geo.content.patrol import (
     count_patrol_runs_today,
-    execute_patrol_run,
+    execute_patrol_run_owned,
     should_run_scheduled_patrol,
 )
 from app.models import GeoVisibilityPatrolRun, GeoVisibilityPatrolSettings
@@ -148,7 +148,7 @@ async def run_geo_visibility_patrols() -> None:
             await session.commit()
             await session.refresh(run)
             try:
-                await execute_patrol_run(session, run.id)
+                await execute_patrol_run_owned(session, run.id)
                 logger.info(
                     "[geo-scheduler] patrol completed tenant=%s run=%s",
                     patrol_settings.tenant_id,

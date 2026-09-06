@@ -4611,40 +4611,40 @@ async def attribution_backfill(
     }
 
 
-@router.get("/async-jobs/{job_id}")
+@router.get(
+    "/async-jobs/{job_id}",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def get_async_job(
     job_id: int,
     tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(geo_read_session),
 ) -> dict:
-    from app.geo.content.async_jobs import job_payload, reconcile_stale_job
+    from app.geo.content.async_jobs import job_read_payload
 
     ctx.ensure_tenant(tenant_id)
     row = await session.get(GeoAsyncJob, job_id)
     if row is None or row.tenant_id != tenant_id:
         raise HTTPException(404, "异步作业不存在")
-    row = await reconcile_stale_job(session, row)
-    return job_payload(row)
+    return job_read_payload(row)
 
 
-@router.get("/async-jobs")
+@router.get(
+    "/async-jobs",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def list_async_jobs(
     tenant_id: int = Query(...),
     ref_type: str | None = Query(None),
     ref_id: int | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
     ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(geo_read_session),
 ) -> dict:
-    from app.geo.content.async_jobs import (
-        job_payload,
-        reconcile_stale_content_tasks,
-        reconcile_stale_job,
-    )
+    from app.geo.content.async_jobs import job_read_payload
 
     ctx.ensure_tenant(tenant_id)
-    released = await reconcile_stale_content_tasks(session, tenant_id=tenant_id)
     stmt = select(GeoAsyncJob).where(GeoAsyncJob.tenant_id == tenant_id)
     if ref_type:
         stmt = stmt.where(GeoAsyncJob.ref_type == ref_type)
@@ -4652,11 +4652,11 @@ async def list_async_jobs(
         stmt = stmt.where(GeoAsyncJob.ref_id == ref_id)
     stmt = stmt.order_by(GeoAsyncJob.id.desc()).limit(limit)
     rows = list(await session.scalars(stmt))
-    out = []
-    for r in rows:
-        r = await reconcile_stale_job(session, r)
-        out.append(job_payload(r))
-    return {"items": out, "stale_tasks_released": released}
+    return {
+        "items": [job_read_payload(row) for row in rows],
+        "stale_tasks_released": 0,
+        "reconciliation": "background",
+    }
 
 
 @router.post("/async-jobs/{job_id}/cancel")
@@ -4820,14 +4820,17 @@ async def put_visibility_patrol_settings(
     return patrol_settings_payload(row, req.tenant_id)
 
 
-@router.get("/visibility-patrol/runs")
+@router.get(
+    "/visibility-patrol/runs",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def list_visibility_patrol_runs(
     tenant_id: int = Query(...),
     limit: int = Query(20, ge=1, le=100),
     ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(geo_read_session),
 ) -> dict:
-    from app.geo.content.patrol import patrol_run_payload, reconcile_stale_patrol_run
+    from app.geo.content.patrol import patrol_read_payload
 
     ctx.ensure_tenant(tenant_id)
     rows = list(
@@ -4838,29 +4841,30 @@ async def list_visibility_patrol_runs(
             .limit(limit)
         )
     )
-    # Close zombie pending/running so history UI does not hang forever
-    out = []
-    for r in rows:
-        out.append(await reconcile_stale_patrol_run(session, r))
-    return {"items": [patrol_run_payload(r) for r in out]}
+    return {
+        "items": [patrol_read_payload(row) for row in rows],
+        "reconciliation": "background",
+    }
 
 
-@router.get("/visibility-patrol/runs/{run_id}")
+@router.get(
+    "/visibility-patrol/runs/{run_id}",
+    dependencies=[Depends(require_geo_read_entitlement)],
+)
 async def get_visibility_patrol_run(
     run_id: int,
     tenant_id: int = Query(...),
     ctx: AuthContext = Depends(require_scoped_auth),
-    session: AsyncSession = Depends(get_session),
+    session: AsyncSession = Depends(geo_read_session),
 ) -> dict:
     from app.geo.content.metric_service import composition_of, compute_brand_mention_from_rows
-    from app.geo.content.patrol import patrol_run_payload, reconcile_stale_patrol_run
+    from app.geo.content.patrol import patrol_read_payload
 
     ctx.ensure_tenant(tenant_id)
     row = await session.get(GeoVisibilityPatrolRun, run_id)
     if row is None or row.tenant_id != tenant_id:
         raise HTTPException(404, "巡检任务不存在")
-    row = await reconcile_stale_patrol_run(session, row)
-    payload = patrol_run_payload(row)
+    payload = patrol_read_payload(row)
 
     # 本次巡检落库快照（可下钻）
     snaps = list(
@@ -4952,7 +4956,6 @@ async def create_visibility_patrol_run(
     from app.config import get_settings
     from app.geo.content.patrol import (
         count_patrol_runs_today,
-        execute_patrol_run,
         patrol_quota_message,
         patrol_run_payload,
         run_patrol_in_background,
@@ -4993,7 +4996,9 @@ async def create_visibility_patrol_run(
         background_tasks.add_task(run_patrol_in_background, run_id)
         return {"run": patrol_run_payload(run), "started": True, "async": True}
 
-    done = await execute_patrol_run(session, run_id)
+    from app.geo.content.patrol import execute_patrol_run_owned
+
+    done = await execute_patrol_run_owned(session, run_id)
     return {"run": patrol_run_payload(done), "started": True, "async": False}
 
 

@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, text, update
+from sqlalchemy import or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import GeoAsyncJob, GeoContentTask
@@ -75,6 +75,24 @@ def job_payload(row: GeoAsyncJob) -> dict[str, Any]:
         "started_at": row.started_at.isoformat() if row.started_at else None,
         "finished_at": row.finished_at.isoformat() if row.finished_at else None,
     }
+
+
+def job_read_payload(row: GeoAsyncJob) -> dict[str, Any]:
+    """Compatibility payload with timeout observation, without reconciliation writes."""
+    payload = job_payload(row)
+    pending_lim, running_lim = _stale_limits()
+    anchor = row.created_at if row.status == "pending" else row.started_at or row.created_at
+    limit = pending_lim if row.status == "pending" else running_lim
+    age = _age_seconds(anchor) if row.status in {"pending", "running"} else None
+    stale = age is not None and age >= limit
+    payload.update(
+        stored_status=row.status,
+        stale=stale,
+        stale_reason="elapsed_threshold_exceeded" if stale else None,
+        status_source="stored",
+        reconciliation="background",
+    )
+    return payload
 
 
 async def set_job_progress(
@@ -222,6 +240,11 @@ async def reconcile_stale_content_tasks(
             .where(
                 GeoAsyncJob.tenant_id == tenant_id,
                 GeoAsyncJob.ref_id == task.id,
+                or_(
+                    GeoAsyncJob.ref_type.is_(None),
+                    GeoAsyncJob.ref_type == "content_task",
+                ),
+                GeoAsyncJob.kind.in_([KIND_GENERATE, KIND_VARIANTS]),
                 GeoAsyncJob.status.in_(["pending", "running"]),
             )
             .limit(1)
@@ -270,7 +293,12 @@ async def recover_jobs_on_startup(*, requeue_pending: bool = True) -> dict[str, 
     from app.database import async_session_factory
 
     pending_lim, _running_lim = _stale_limits()
-    stats = {"failed_running": 0, "failed_stale_pending": 0, "requeued": 0}
+    stats = {
+        "failed_running": 0,
+        "failed_stale_pending": 0,
+        "requeued": 0,
+        "released_tasks": 0,
+    }
     requeue_ids: list[int] = []
 
     async with async_session_factory() as session:
@@ -287,10 +315,53 @@ async def recover_jobs_on_startup(*, requeue_pending: bool = True) -> dict[str, 
                     continue
                 await session.refresh(candidate)
                 await _recover_unowned_job(session, candidate, pending_lim, requeue_pending, stats, requeue_ids)
+        tenant_ids = list(
+            await session.scalars(
+                select(GeoContentTask.tenant_id)
+                .where(GeoContentTask.status.in_(["generating", "adapting"]))
+                .distinct()
+            )
+        )
+        for tenant_id in tenant_ids:
+            stats["released_tasks"] += await reconcile_stale_content_tasks(
+                session, tenant_id=int(tenant_id)
+            )
         await session.commit()
 
     for jid in requeue_ids:
         asyncio.create_task(run_job_in_background(jid))
+    return stats
+
+
+async def reconcile_stale_jobs_background() -> dict[str, int]:
+    """Persist stale-job and orphan-task recovery outside request handlers."""
+    from app.database import async_session_factory
+
+    stats = {"failed_jobs": 0, "released_tasks": 0}
+    async with async_session_factory() as session:
+        rows = list(
+            await session.scalars(
+                select(GeoAsyncJob).where(
+                    GeoAsyncJob.status.in_(["pending", "running"])
+                )
+            )
+        )
+        for row in rows:
+            before = row.status
+            await reconcile_stale_job(session, row)
+            if before in {"pending", "running"} and row.status == "failed":
+                stats["failed_jobs"] += 1
+        tenant_ids = list(
+            await session.scalars(
+                select(GeoContentTask.tenant_id)
+                .where(GeoContentTask.status.in_(["generating", "adapting"]))
+                .distinct()
+            )
+        )
+        for tenant_id in tenant_ids:
+            stats["released_tasks"] += await reconcile_stale_content_tasks(
+                session, tenant_id=int(tenant_id)
+            )
     return stats
 
 
