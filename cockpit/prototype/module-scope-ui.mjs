@@ -1,4 +1,4 @@
-import { MODULES, moduleScope, taskInModuleScope, taskScopeReference, planInModuleScope, panelInModuleScope } from './module-scope.mjs?v=20260907-58';
+import { MODULES, moduleScope, taskInModuleScope, taskScopeReference, planInModuleScope, panelInModuleScope, navigationAccess } from './module-scope.mjs?v=20260907-59';
 
 // Local customer-profile rehearsal. This selection never grants API permissions.
 let enabled = [...MODULES];
@@ -25,6 +25,26 @@ function suggestions() {
   $('#chatSuggestions').innerHTML = profile().questions.map(({ module, text }) => `<button data-profile-question="${module}">${text}</button>`).join('');
   const welcome = document.querySelector('.first-welcome .first-starts button span');
   if (welcome) welcome.textContent = enabled.map(module => names[module]).join('、') + ' ↗';
+}
+
+function decorateNavigation() {
+  document.querySelectorAll('.page-tabs [data-page]').forEach(button => {
+    const access = navigationAccess(button.dataset.page, enabled);
+    if (!button.dataset.scopeLabel) button.dataset.scopeLabel = button.textContent.trim();
+    if (access.allowed) {
+      if (button.dataset.scopeDisabled === 'true') button.textContent = button.dataset.scopeLabel;
+      button.disabled = false;
+      delete button.dataset.scopeDisabled;
+      button.removeAttribute('title');
+      button.removeAttribute('aria-label');
+      return;
+    }
+    button.disabled = true;
+    button.dataset.scopeDisabled = 'true';
+    button.textContent = `${button.dataset.scopeLabel} · ${button.dataset.page === 'acquisition' ? '需 SEM' : '需全模块'}`;
+    button.title = access.reason;
+    button.setAttribute('aria-label', `${button.dataset.scopeLabel}，${access.reason}`);
+  });
 }
 
 function scopedView() {
@@ -80,10 +100,8 @@ pSuggestions = function(...args) { originalSuggestions(...args); suggestions(); 
 
 const originalNavigate = navigate;
 navigate = function(page, ...args) {
-  if (partial() && !['panorama', 'tasks', 'quality'].includes(page)) {
-    toast('当前组合请从全景工作台查看已开通模块。');
-    return originalNavigate('panorama');
-  }
+  const access = navigationAccess(page, enabled);
+  if (!access.allowed) return toast(access.reason);
   return originalNavigate(page, ...args);
 };
 const originalQuality = renderQuality;
@@ -141,6 +159,7 @@ window.addEventListener('change', event => {
   dock();
   renderPanorama();
   renderTasks();
+  decorateNavigation();
   pSuggestions();
   if (!partial()) {
     const welcome = document.querySelector('.first-welcome .first-starts button span');
@@ -150,6 +169,13 @@ window.addEventListener('change', event => {
 }, true);
 
 window.addEventListener('click', event => {
+  const brand = event.target.closest('a.brand');
+  if (brand && partial()) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    navigate('panorama');
+    return;
+  }
   const restore = event.target.closest('[data-restore]');
   if (restore) {
     const panel = panels.get(restore.dataset.restore);
@@ -168,3 +194,4 @@ window.addEventListener('click', event => {
   else pTalk(button.dataset.profileDiscuss || 'overview', button.textContent);
 }, true);
 renderPanorama();
+decorateNavigation();
