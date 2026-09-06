@@ -228,6 +228,8 @@ async def execute_variants_for_task(
             variant.title = title
             variant.body_markdown = body
             variant.article_version_id = article.id
+            if (variant.adapt_meta or {}).get("push_deliveries"):
+                meta["push_deliveries"] = variant.adapt_meta["push_deliveries"]
             variant.adapt_meta = meta
             variant.status = "draft"
             if profile:

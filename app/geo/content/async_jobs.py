@@ -640,21 +640,14 @@ async def _execute_push_batch(session: AsyncSession, job: GeoAsyncJob) -> dict[s
             )
             remote_url = remote.get("remote_url")
             publication_created = False
-            if create_pub and remote_url and str(remote_url).startswith(
+            if mode == "publish" and create_pub and remote_url and str(remote_url).startswith(
                 ("http://", "https://")
             ):
-                pub = GeoPublication(
-                    variant_id=variant.id,
-                    channel=channel_key,
-                    publish_mode="auto_publish",
-                    published_url=str(remote_url),
-                    published_at=datetime.utcnow(),
-                    status="published",
+                from app.geo.content.routes import _write_publication
+                await _write_publication(session, task=task, variant=variant,
+                    channel=channel_key, published_url=str(remote_url),
                     note=meta.get("note") or f"async batch {remote.get('connector')}",
-                )
-                session.add(pub)
-                variant.status = "published"
-                task.status = "published"
+                    publish_mode="auto_publish")
                 publication_created = True
             results.append(
                 {**remote, "ok": True, "publication_created": publication_created}

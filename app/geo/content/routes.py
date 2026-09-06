@@ -7912,6 +7912,15 @@ async def _write_publication(
     publish_mode: str,
 ) -> None:
     from app.geo.content.attribution import normalize_url_for_match
+    await session.refresh(task, with_for_update=True)
+    from app.geo.content.review import assert_review_approved
+    assert_review_approved(task)
+    existing = await session.scalar(select(GeoPublication).where(
+        GeoPublication.variant_id == variant.id,
+        GeoPublication.published_url == published_url,
+    ).limit(1))
+    if existing is not None:
+        return
 
     period_id = getattr(task, "period_id", None)
     if period_id is None:
@@ -8075,7 +8084,7 @@ async def push_variant_webhook(
 
     remote_url = (req.published_url or "").strip() or remote.get("remote_url")
     publication_created = False
-    if req.create_publication and remote_url:
+    if req.mode == "publish" and req.create_publication and remote_url:
         if not str(remote_url).startswith(("http://", "https://")):
             raise HTTPException(400, "发布 URL 无效")
         await _write_publication(
@@ -8232,7 +8241,7 @@ async def push_variant_batch(
             )
             remote_url = remote.get("remote_url")
             publication_created = False
-            if req.create_publication and remote_url and str(remote_url).startswith(
+            if req.mode == "publish" and req.create_publication and remote_url and str(remote_url).startswith(
                 ("http://", "https://")
             ):
                 await _write_publication(

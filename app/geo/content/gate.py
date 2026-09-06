@@ -48,8 +48,11 @@ def assert_can_publish(
             )
 
     if task is not None:
-        # Single-enterprise delivery: retain factual / structural checks, but do
-        # not require a separate review or AI-review approval state to publish.
+        from app.geo.content.review import assert_review_approved
+        try:
+            assert_review_approved(task)
+        except ValueError as exc:
+            raise PublishGateError(str(exc)) from exc
         rr = getattr(task, "rule_result", None) or {}
         if not isinstance(rr, dict):
             rr = {}

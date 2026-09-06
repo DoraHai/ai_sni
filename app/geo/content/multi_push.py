@@ -8,6 +8,10 @@ from __future__ import annotations
 
 import json
 import logging
+import asyncio
+import hashlib
+from datetime import datetime
+import httpx
 from typing import Any
 
 from sqlalchemy import select
@@ -151,6 +155,8 @@ async def list_push_targets(
             continue
 
         reasons: list[str] = []
+        if getattr(task, "review_status", None) != "approved":
+            reasons.append("尚未通过人工审批")
         if mode != "auto_publish":
             reasons.append("发布模式不是 auto_publish（在发布渠道里改为 auto_publish）")
         if variant is None:
@@ -196,7 +202,7 @@ async def list_push_targets(
     return targets
 
 
-async def execute_single_push(
+async def _perform_single_push(
     session: AsyncSession,
     *,
     task: GeoContentTask,
@@ -284,6 +290,96 @@ async def execute_single_push(
         "mode": mode,
         "response": remote.get("response"),
     }
+
+
+def delivery_key(task, variant, account, mode):
+    body = json.dumps([task.tenant_id, task.id, variant.id, variant.article_version_id,
+                       account.id, mode, variant.title, variant.body_markdown], ensure_ascii=False)
+    return hashlib.sha256(body.encode()).hexdigest()
+
+
+def safe_connection_failure(exc):
+    """Only connection-establishment failures are safe to resend automatically."""
+    return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)) or isinstance(
+        exc.__cause__, (httpx.ConnectError, httpx.ConnectTimeout)
+    )
+
+
+async def execute_single_push(session, *, task, variant, channel_row, account, mode, article):
+    from app.geo.content.routes import _latest_article, _build_rule_input
+    from app.geo.content.gate import assert_can_publish
+    if mode not in {"draft", "publish"}:
+        raise ValueError("不支持的发布操作")
+    await session.refresh(task, with_for_update=True)
+    await session.refresh(variant)
+    await session.refresh(account)
+    await session.refresh(channel_row)
+    if (variant.task_id != task.id or account.tenant_id != task.tenant_id
+            or channel_row.tenant_id != task.tenant_id or account.channel_id != channel_row.id):
+        raise ValueError("发布目标不属于当前任务或客户")
+    if not channel_row.enabled or channel_row.publish_mode != "auto_publish" or account.status != "active":
+        raise ValueError("发布渠道或账号未启用")
+    article = await _latest_article(session, task.id)
+    if article is None or variant.article_version_id != article.id:
+        raise ValueError("渠道稿不是最新母稿版本，请重新生成并审校")
+    assert_can_publish(await _build_rule_input(session, task, article), task=task)
+    key = delivery_key(task, variant, account, mode)
+    journal = dict((variant.adapt_meta or {}).get("push_deliveries") or {})
+    previous = journal.get(key) or {}
+    if previous.get("state") == "succeeded":
+        return {**previous["result"], "deduplicated": True}
+    if previous.get("state") in {"sending", "unknown"}:
+        raise ValueError("上次发布结果尚未确定，请先核对渠道后台，禁止直接重发以免重复发布")
+    if len(journal) >= 200 and key not in journal:
+        raise ValueError("该稿件发布记录已达上限，请整理发布记录后再操作")
+    kind = account_push_kind(account.auth_type, str(channel_row.channel_type).lower())
+    creds = decrypt_credentials_json(account.credentials_encrypted)
+    if kind == "webhook":
+        from app.geo.content.connectors.webhook import normalize_webhook_credentials
+        normalize_webhook_credentials(creds)
+    elif kind == "social":
+        from app.geo.content.connectors.social import normalize_social_credentials
+        normalize_social_credentials({"platform": channel_row.channel_type, **creds})
+    else:
+        raise ValueError("账号鉴权类型与发布渠道不匹配")
+
+    def record(state, **extra):
+        current_journal = dict((variant.adapt_meta or {}).get("push_deliveries") or {})
+        current_journal[key] = {"state": state, "account_id": account.id, "mode": mode,
+                        "article_id": article.id, "updated_at": datetime.utcnow().isoformat(), **extra}
+        variant.adapt_meta = {**(variant.adapt_meta or {}), "push_deliveries": current_journal}
+
+    record("sending")
+    # Durable reservation survives a worker crash or a lost response.
+    await session.commit()
+    await session.refresh(task, with_for_update=True)
+    await session.refresh(variant)
+    current_article = await _latest_article(session, task.id)
+    if (task.review_status != "approved" or current_article is None or current_article.id != article.id
+            or delivery_key(task, variant, account, mode) != key):
+        record("failed", reason="content_changed_before_send")
+        await session.commit()
+        raise ValueError("稿件或审批已变化，本次未发送，请重新审校")
+    for attempt in range(1, 4):
+        try:
+            result = await _perform_single_push(session, task=task, variant=variant,
+                channel_row=channel_row, account=account, mode=mode, article=article)
+            # Store only delivery metadata, never remote response bodies or tokens.
+            result.pop("response", None)
+            record("succeeded", attempts=attempt, result=result)
+            await session.commit()
+            await session.refresh(task, with_for_update=True)
+            return result
+        except (ValueError, httpx.HTTPError) as exc:
+            safe = safe_connection_failure(exc)
+            if safe and attempt < 3:
+                await asyncio.sleep(0.5 * attempt)
+                continue
+            record("failed" if safe else "unknown", attempts=attempt, reason=type(exc).__name__)
+            await session.commit()
+            if not safe:
+                raise ValueError("发布结果未确认，已记录异常；请核对渠道后台后处理，系统不会自动重发") from exc
+            raise ValueError("连接失败，已重试3次；本次未建立连接，可稍后重试") from exc
 
 
 async def tenant_auto_push_matrix(

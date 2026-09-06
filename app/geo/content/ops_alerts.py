@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     GeoChannelAccount,
+    GeoChannelVariant,
     GeoContentTask,
     GeoPrompt,
     GeoPublishingChannel,
@@ -70,6 +71,19 @@ async def build_ops_alerts(
     from app.geo.content.patrol import count_patrol_runs_today
 
     alerts: list[dict[str, Any]] = []
+    recent_variants = list(await session.scalars(
+        select(GeoChannelVariant).join(GeoContentTask, GeoContentTask.id == GeoChannelVariant.task_id)
+        .where(GeoContentTask.tenant_id == tenant_id, GeoContentTask.status != "archived")
+        .order_by(GeoChannelVariant.updated_at.desc()).limit(200)
+    ))
+    for variant in recent_variants:
+        entries = (variant.adapt_meta or {}).get("push_deliveries") or {}
+        unresolved = [e for e in entries.values() if e.get("state") in {"unknown", "failed", "sending"}]
+        if unresolved:
+            alerts.append({"level": "warning", "code": "publish_delivery_unresolved",
+                "title": f"文章 #{variant.task_id} 有发布记录需要核对",
+                "detail": "连接失败可重试；发送中或结果未确认时，请先核对渠道后台，避免重复发布。",
+                "href": f"/geo/tasks/{variant.task_id}/distribution"})
 
     # ---- patrol ----
     day_limit = int(getattr(get_settings(), "geo_patrol_max_runs_per_day", 24) or 24)

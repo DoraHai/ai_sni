@@ -98,8 +98,11 @@ class ReviewFsmTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             assert_review_approved(task)
 
-    def test_publish_gate_does_not_require_review_when_task_passed(self):
+    def test_publish_gate_requires_review_even_when_quality_passed(self):
         task = SimpleNamespace(review_status=REVIEW_PENDING)
+        with self.assertRaises(PublishGateError):
+            assert_can_publish(_ready_input(), task=task)
+        task.review_status = REVIEW_APPROVED
         checks = assert_can_publish(_ready_input(), task=task)
         self.assertTrue(any(c.passed for c in checks))
 

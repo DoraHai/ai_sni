@@ -61,6 +61,8 @@ def apply_decision(
         raise ValueError("decision 仅支持 approved / rejected")
     if normalize_review_status(task.review_status) != REVIEW_PENDING:
         raise ValueError("仅「待审」任务可审批")
+    if decision_norm == REVIEW_APPROVED and reviewer_id is None:
+        raise ValueError("审批通过需要已登录的审核人员账号，API Key 不能代替审核身份")
     if allow_self_approve is None:
         try:
             from app.config import get_settings
