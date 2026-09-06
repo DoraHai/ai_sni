@@ -72,3 +72,20 @@ export function panelInModuleScope(key, snapshot, entitlements) {
   const legacy = { spend: 'sem', organic: 'seo', visibility: 'geo' };
   return Object.hasOwn(legacy, key) && scope.enabled.includes(legacy[key]);
 }
+
+export function navigationAccess(page, entitlements) {
+  const scope = moduleScope(entitlements);
+  const requirements = {
+    panorama: [], tasks: [], quality: [],
+    acquisition: ['sem'],
+    dashboard: MODULES, overview: MODULES, module: MODULES,
+  };
+  if (!Object.hasOwn(requirements, page) || scope.empty) {
+    return { allowed: false, reason: '当前入口不可用。' };
+  }
+  const allowed = requirements[page].every(module => scope.enabled.includes(module));
+  if (allowed) return { allowed: true, reason: null };
+  if (page === 'acquisition') return { allowed: false, reason: '预算试算需要开通 SEM。' };
+  if (page === 'module') return { allowed: false, reason: '旧模块页尚未完成当前组合的范围适配，请使用全景工作台。' };
+  return { allowed: false, reason: '该入口仍包含多个模块，当前组合暂未开放，请使用全景工作台。' };
+}
