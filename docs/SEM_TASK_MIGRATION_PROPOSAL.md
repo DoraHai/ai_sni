@@ -6,8 +6,8 @@
 - 草案 down_revision：`0094_seo_qa_batches`。
 - 文件：`docs/migration_proposals/0095_sem_tasks.py`。
 - 这是本提案定义的候选 ID，不是已获批生产版本。不得仅凭此文加入生产兼容白名单并部署。
-- 编制与代码自审：本 SEM 任务；最终审批：项目负责人。共享迁移链及 SEO 兼容审核尚待双方完成，
-  不冒充已有独立审核人签字。
+- 编制与代码自审：本 SEM 任务；最终审批：项目负责人。负责人已转交 SEO 对 #370
+  `66455f1` 的源码审核通过记录（#369 `8eee1e2`）及 GEO 无阻断反馈；生产执行尚未批准。
 - 仅新增 sem_tasks、其自增序列、主键/两个索引及 CHECK/FK。tenant_id 为 BIGINT，
   FK ON DELETE RESTRICT，不修改任何现存 SEO 表，不回填客户数据，不调整权限。
 - downgrade 显式拒绝破坏性删除；运行时故障优先关闭功能、保留审计表及数据。
@@ -86,3 +86,9 @@ BIGINT 四组边界、真实模块/指标查询、FK、并发验收；不读取�
 本轮授权本地 Alembic 后：新增专项 15 passed；扩大回归 1853 passed，1 条既有 jieba
 弃用警告。扩大回归仍排除上述 4 个文件；未跳过本次 15 项源包/实际迁移验证。
 无生产连接，无生产 Alembic，无部署或功能启用。
+
+## 源码审核后的执行设计
+
+见 `docs/SEM_TASK_CONTROLLED_MIGRATION_REVIEW.md`：记录两侧审核边界、正式入口契约、
+结构对账、备份/PITR、停并发和失败处置。新增 `preflight-readonly.psql` 供审核后只读核验。
+此阶段仅交付设计和核验脚本，不是生产 apply 实现；本地入口限制保持原样。

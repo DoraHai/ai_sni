@@ -50,3 +50,7 @@ python -m pytest -q tests/test_sem_task_migration_bundle.py
 4. 单独明确批准迁移；SemTask 开关及应用重启另行批准。
 
 不修改现有发布 workflow，不让普通应用发布运行迁移；普通发布仍为 `migration=not-run`。
+
+正式入口设计及分工见 `docs/SEM_TASK_CONTROLLED_MIGRATION_REVIEW.md`。
+`preflight-readonly.psql` 是另行获准后供管理员执行的结构核验草案，不由本工具/CI 自动运行；
+它不包含建表或版本修改。不要把该脚本存在等同于生产核验已经完成。
