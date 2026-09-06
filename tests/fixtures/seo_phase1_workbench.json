@@ -1,0 +1,400 @@
+{
+  "schema": "seo_phase1_fixture_v1",
+  "synthetic": true,
+  "production_data": false,
+  "executable_urls": false,
+  "notes": [
+    "全部ID、正文、时间、URL为虚构，仅离线消费；example.com路径不用于平台发布或核验。",
+    "raw为现有接口字段节选，不是完整HTTP响应；expected_workbench是工作台适配断言，不是已上线SEO接口字段。",
+    "候选页面ID仅构造多候选场景，不代表SEO已提供自动URL关联接口。"
+  ],
+  "scenarios": [
+    {
+      "id": "approved_unpublished",
+      "raw": {
+        "content": {
+          "id": 91001,
+          "tenant_id": 99001,
+          "site_id": 99002,
+          "title": "虚构文章：设备安装检查",
+          "status": "ready",
+          "version_count": 2,
+          "source_page_id": null,
+          "page_url": null,
+          "review_submitted_by": 99101,
+          "reviewed_by": 99102,
+          "reviewed_at": "2026-09-06T06:00:00Z",
+          "published_at": null,
+          "updated_at": "2026-09-06T14:00:00+08:00"
+        },
+        "publications": [],
+        "page_detail": null
+      },
+      "expected_workbench": {
+        "content_label": "已审核待发布",
+        "independent_review": true,
+        "publication_count": 0,
+        "check_state": "not_checked"
+      }
+    },
+    {
+      "id": "multi_platform_mixed",
+      "raw": {
+        "content": {
+          "id": 91001,
+          "tenant_id": 99001,
+          "site_id": 99002,
+          "title": "虚构文章：设备安装检查",
+          "status": "published",
+          "version_count": 2,
+          "source_page_id": null,
+          "page_url": null,
+          "review_submitted_by": 99101,
+          "reviewed_by": 99102,
+          "reviewed_at": "2026-09-06T06:00:00Z",
+          "published_at": null,
+          "updated_at": "2026-09-06T14:00:00+08:00"
+        },
+        "publications": [
+          {
+            "id": 92001,
+            "tenant_id": 99001,
+            "content_id": 91001,
+            "platform_code": "zhihu",
+            "publish_mode": "manual",
+            "status": "published",
+            "source_version": 2,
+            "page_url": "https://example.com/platform-a/article-1",
+            "published_at": "2026-09-06T06:10:00Z",
+            "last_error": null
+          },
+          {
+            "id": 92002,
+            "tenant_id": 99001,
+            "content_id": 91001,
+            "platform_code": "csdn",
+            "publish_mode": "manual",
+            "status": "failed",
+            "source_version": 2,
+            "page_url": null,
+            "published_at": null,
+            "last_error": "虚构故障：发布接口未确认"
+          }
+        ],
+        "page_detail": null
+      },
+      "expected_workbench": {
+        "unique_content_count": 1,
+        "publication_record_count": 2,
+        "successful_record_count": 1,
+        "failed_record_count": 1,
+        "api_success_not_inferred": true
+      }
+    },
+    {
+      "id": "missing_url",
+      "raw": {
+        "content": {
+          "id": 91001,
+          "tenant_id": 99001,
+          "site_id": 99002,
+          "title": "虚构文章：设备安装检查",
+          "status": "ready",
+          "version_count": 2,
+          "source_page_id": null,
+          "page_url": null,
+          "review_submitted_by": 99101,
+          "reviewed_by": 99102,
+          "reviewed_at": "2026-09-06T06:00:00Z",
+          "published_at": null,
+          "updated_at": "2026-09-06T14:00:00+08:00"
+        },
+        "publications": [
+          {
+            "id": 92001,
+            "tenant_id": 99001,
+            "content_id": 91001,
+            "platform_code": "zhihu",
+            "publish_mode": "manual",
+            "status": "published",
+            "source_version": 2,
+            "page_url": null,
+            "published_at": "2026-09-06T06:10:00Z",
+            "last_error": null
+          }
+        ],
+        "page_detail": null
+      },
+      "expected_workbench": {
+        "mapping_state": "missing_url",
+        "page_id": null,
+        "latest_check": null
+      }
+    },
+    {
+      "id": "unmapped_url",
+      "raw": {
+        "content": {
+          "id": 91001,
+          "tenant_id": 99001,
+          "site_id": 99002,
+          "title": "虚构文章：设备安装检查",
+          "status": "ready",
+          "version_count": 2,
+          "source_page_id": null,
+          "page_url": null,
+          "review_submitted_by": 99101,
+          "reviewed_by": 99102,
+          "reviewed_at": "2026-09-06T06:00:00Z",
+          "published_at": null,
+          "updated_at": "2026-09-06T14:00:00+08:00"
+        },
+        "publications": [
+          {
+            "id": 92001,
+            "tenant_id": 99001,
+            "content_id": 91001,
+            "platform_code": "zhihu",
+            "publish_mode": "manual",
+            "status": "published",
+            "source_version": 2,
+            "page_url": "https://example.com/platform-a/article-1",
+            "published_at": "2026-09-06T06:10:00Z",
+            "last_error": null
+          }
+        ],
+        "page_detail": null
+      },
+      "expected_workbench": {
+        "mapping_state": "unmapped",
+        "page_id": null,
+        "latest_check": null
+      }
+    },
+    {
+      "id": "ambiguous_url",
+      "raw": {
+        "content": {
+          "id": 91001,
+          "tenant_id": 99001,
+          "site_id": 99002,
+          "title": "虚构文章：设备安装检查",
+          "status": "ready",
+          "version_count": 2,
+          "source_page_id": null,
+          "page_url": null,
+          "review_submitted_by": 99101,
+          "reviewed_by": 99102,
+          "reviewed_at": "2026-09-06T06:00:00Z",
+          "published_at": null,
+          "updated_at": "2026-09-06T14:00:00+08:00"
+        },
+        "publications": [
+          {
+            "id": 92001,
+            "tenant_id": 99001,
+            "content_id": 91001,
+            "platform_code": "zhihu",
+            "publish_mode": "manual",
+            "status": "published",
+            "source_version": 2,
+            "page_url": "https://example.com/platform-a/article-1",
+            "published_at": "2026-09-06T06:10:00Z",
+            "last_error": null
+          }
+        ],
+        "page_detail": null
+      },
+      "expected_workbench": {
+        "mapping_state": "ambiguous",
+        "page_id": null,
+        "latest_check": null,
+        "candidate_ids_for_fixture": [
+          93001,
+          93002
+        ]
+      }
+    },
+    {
+      "id": "matched_not_checked",
+      "raw": {
+        "content": {
+          "id": 91001,
+          "tenant_id": 99001,
+          "site_id": 99002,
+          "title": "虚构文章：设备安装检查",
+          "status": "ready",
+          "version_count": 2,
+          "source_page_id": 93001,
+          "page_url": null,
+          "review_submitted_by": 99101,
+          "reviewed_by": 99102,
+          "reviewed_at": "2026-09-06T06:00:00Z",
+          "published_at": null,
+          "updated_at": "2026-09-06T14:00:00+08:00"
+        },
+        "publications": [],
+        "page_detail": {
+          "page": {
+            "id": 93001,
+            "tenant_id": 99001,
+            "site_id": 99002,
+            "url": "https://example.com/article-1",
+            "issue_codes": [],
+            "diagnostic": {
+              "assessment_state": "not_checked",
+              "checked_at": null,
+              "http_status": null,
+              "search_engine_indexed": null
+            }
+          },
+          "latest_snapshot": null,
+          "previous_snapshot": null
+        }
+      },
+      "expected_workbench": {
+        "mapping_state": "matched",
+        "check_state": "not_checked",
+        "not_passed": true
+      }
+    },
+    {
+      "id": "latest_failed_old_success",
+      "raw": {
+        "content": {
+          "id": 91001,
+          "tenant_id": 99001,
+          "site_id": 99002,
+          "title": "虚构文章：设备安装检查",
+          "status": "ready",
+          "version_count": 2,
+          "source_page_id": 93001,
+          "page_url": null,
+          "review_submitted_by": 99101,
+          "reviewed_by": 99102,
+          "reviewed_at": "2026-09-06T06:00:00Z",
+          "published_at": null,
+          "updated_at": "2026-09-06T14:00:00+08:00"
+        },
+        "publications": [],
+        "page_detail": {
+          "page": {
+            "id": 93001,
+            "tenant_id": 99001,
+            "site_id": 99002,
+            "url": "https://example.com/article-1",
+            "issue_codes": [],
+            "diagnostic": {
+              "assessment_state": "unavailable",
+              "checked_at": "2026-09-06T07:00:00Z",
+              "http_status": null,
+              "search_engine_indexed": null
+            }
+          },
+          "latest_snapshot": {
+            "id": 94002,
+            "url": "https://example.com/article-1",
+            "fetched_at": "2026-09-06T07:00:00Z",
+            "status_code": null,
+            "fetch_error": "虚构超时",
+            "error_type": "timeout"
+          },
+          "previous_snapshot": {
+            "id": 94001,
+            "url": "https://example.com/article-1",
+            "fetched_at": "2026-09-05T07:00:00Z",
+            "status_code": 200,
+            "fetch_error": null
+          }
+        }
+      },
+      "expected_workbench": {
+        "mapping_state": "matched",
+        "check_state": "unavailable",
+        "must_not_use_previous_as_current": true
+      }
+    },
+    {
+      "id": "historical_self_review",
+      "raw": {
+        "content": {
+          "id": 91001,
+          "tenant_id": 99001,
+          "site_id": 99002,
+          "title": "虚构文章：设备安装检查",
+          "status": "ready",
+          "version_count": 2,
+          "source_page_id": null,
+          "page_url": null,
+          "review_submitted_by": 99101,
+          "reviewed_by": 99101,
+          "reviewed_at": "2026-09-06T06:00:00Z",
+          "published_at": null,
+          "updated_at": "2026-09-06T14:00:00+08:00"
+        },
+        "publications": [],
+        "page_detail": null
+      },
+      "expected_workbench": {
+        "independent_review": false,
+        "review_label": "历史审核，独立性未确认"
+      }
+    }
+  ],
+  "pagination_examples": {
+    "content": {
+      "items": [
+        {
+          "id": 91001,
+          "tenant_id": 99001,
+          "site_id": 99002,
+          "title": "虚构文章：设备安装检查",
+          "status": "ready",
+          "version_count": 2,
+          "source_page_id": null,
+          "page_url": null,
+          "review_submitted_by": 99101,
+          "reviewed_by": 99102,
+          "reviewed_at": "2026-09-06T06:00:00Z",
+          "published_at": null,
+          "updated_at": "2026-09-06T14:00:00+08:00"
+        }
+      ],
+      "total": 1,
+      "page": 1,
+      "page_size": 20,
+      "status_counts": {
+        "ready": 3,
+        "review": 2
+      }
+    },
+    "meaning": "total为当前筛选结果1；status_counts为同基础范围未应用q/status的统计5，不能互换。"
+  },
+  "unsupported": {
+    "article_clicks": null,
+    "topic_daily_clicks": null,
+    "assigned_user": null,
+    "due_at": null,
+    "customer_confirmation": null
+  },
+  "errors": [
+    {
+      "http_status": 401,
+      "body": {
+        "detail": "示例：未登录"
+      }
+    },
+    {
+      "http_status": 404,
+      "body": {
+        "detail": "示例：页面不存在"
+      }
+    },
+    {
+      "http_status": 503,
+      "body": {
+        "detail": "示例：读取失败"
+      }
+    }
+  ]
+}
