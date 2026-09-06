@@ -256,3 +256,16 @@ test('demand priority uses recent positive evidence and unanswered state, not mi
     assert.equal(m.state.demandPriority({sources:[]}),0)
   }finally{m.app.unmount()}
 })
+
+
+test('import requires a preview and changing input invalidates it',async()=>{
+  const m=await mount({seoQaPost:async(path,payload)=>({preview_token:'a'.repeat(64),summary:{new_question:1},rows:[]})})
+  try {
+    m.state.dialog='csv';m.state.importing='title\n如何排查';await flush()
+    await m.state.importQuestions();assert.equal(m.writes.length,0)
+    await m.state.previewImport();assert.ok(m.state.importPreview)
+    m.state.importing='title\n另一问题';await flush()
+    assert.equal(m.state.importPreview,null)
+    assert.match(m.state.messageOf({response:{data:{detail:[{msg:'第 2 条记录日期无效'}]}}}),/第 2 条/)
+  }finally{m.app.unmount()}
+})

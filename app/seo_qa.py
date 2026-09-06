@@ -110,8 +110,16 @@ def parse_questions_csv(value):
     reader = csv.DictReader(io.StringIO(value.lstrip('\ufeff')))
     if not reader.fieldnames or 'title' not in reader.fieldnames:
         raise ValueError('CSV 必须有 title 列，可选 source_url、source_name、topic 列')
+    allowed = {'title','topic','source_url','source_name','source_kind','count','metric','period_start','period_end','definition'}
+    if len(set(reader.fieldnames)) != len(reader.fieldnames):
+        raise ValueError('CSV 包含重复列名')
+    unknown = set(reader.fieldnames)-allowed
+    if unknown:
+        raise ValueError('CSV 包含不支持的列名：' + '、'.join(sorted(unknown)))
     items = []
     for line, row in enumerate(reader, 2):
+        if None in row or any(value is None for value in row.values()):
+            raise ValueError(f'第 {line} 条记录列数与表头不一致')
         if len(items) >= 200:
             raise ValueError('一次最多导入 200 个问题')
         title = (row.get('title') or '').strip()

@@ -1,11 +1,12 @@
 """Question workbench. Reuses SEO content review; publishing is explicitly assisted."""
 import logging
 import json
+import hashlib
 import asyncio
 from datetime import date, datetime, timezone, timedelta
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field, PositiveInt, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PositiveInt, field_validator, model_validator, ValidationError
 from sqlalchemy import select, func
 from sqlalchemy.dialects.postgresql import insert
 from app.database import get_session
@@ -71,18 +72,36 @@ class QuestionItem(BaseModel):
         return value
 
 
+def source_identity(value):
+    return tuple(value.get(k) for k in ('kind','url','name','metric','period_start','period_end'))
+
+
 class ImportQuestions(Scoped):
     items: list[QuestionItem] = Field(default_factory=list, max_length=200)
     csv: str | None = Field(None, max_length=500_000)
+    preview_token: str | None = Field(None, pattern=r'^[a-f0-9]{64}$')
 
     @model_validator(mode='after')
     def import_input(self):
         if self.csv is not None:
             if self.items:
                 raise ValueError('CSV 与列表不能同时提交')
-            self.items = [QuestionItem(**item) for item in parse_questions_csv(self.csv)]
+            self.items = []
+            for line, item in enumerate(parse_questions_csv(self.csv), 2):
+                try:
+                    self.items.append(QuestionItem(**item))
+                except ValidationError as exc:
+                    raise ValueError(f"第 {line} 条记录：{exc.errors()[0]['msg']}") from exc
         if not self.items:
             raise ValueError('请填写需要导入的问题')
+        seen = {}
+        for line, item in enumerate(self.items, 2 if self.csv is not None else 1):
+            source = item.source.model_dump(mode='json', exclude_none=True)
+            key = (fingerprint(item.title), source_identity(source))
+            value = (source.get('count'), source.get('definition'))
+            if key in seen and seen[key] != value:
+                raise ValueError(f'第 {line} 条记录与本批前面的同一统计窗口冲突，请先统一计数和口径')
+            seen[key] = value
         return self
 
 
@@ -243,9 +262,7 @@ async def add_question(db, tenant_id, site_id, title, topic, source):
         return row_id, True
     row = await db.scalar(select(SeoQuestion).where(SeoQuestion.tenant_id == tenant_id, SeoQuestion.site_id == site_id,
                                                    SeoQuestion.fingerprint == key).with_for_update())
-    def identity(value):
-        return tuple(value.get(k) for k in ('kind','url','name','metric','period_start','period_end'))
-    match = next((i for i, value in enumerate(row.sources) if identity(value) == identity(source)), None)
+    match = next((i for i, value in enumerate(row.sources) if source_identity(value) == source_identity(source)), None)
     if match is None:
         if len(row.sources) >= 50:
             raise HTTPException(422, '单个问题最多保留 50 个来源')
@@ -268,14 +285,69 @@ async def capabilities(tenant_id: PositiveInt, site_id: PositiveInt, ctx=Auth, s
             'automatic_platform_publish': False, 'heat_source': None}
 
 
+async def import_preview_plan(req, session, *, lock=False):
+    keys = sorted({fingerprint(item.title) for item in req.items})
+    query = select(SeoQuestion).where(SeoQuestion.tenant_id == req.tenant_id,
+        SeoQuestion.site_id == req.site_id, SeoQuestion.fingerprint.in_(keys)).order_by(SeoQuestion.fingerprint)
+    if lock:
+        query = query.with_for_update()
+    rows = list(await session.scalars(query))
+    existing = {row.fingerprint:row for row in rows}
+    payload = {'tenant_id':req.tenant_id,'site_id':req.site_id,
+        'items':[item.model_dump(mode='json') for item in req.items],
+        'versions':{row.fingerprint:row.version for row in rows}}
+    token = hashlib.sha256(json.dumps(payload,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+    sources = {key:list(row.sources) for key,row in existing.items()}
+    preview = []
+    for index, item in sorted(enumerate(req.items, 2 if req.csv is not None else 1), key=lambda pair:fingerprint(pair[1].title)):
+        key = fingerprint(item.title)
+        source = item.source.model_dump(mode='json',exclude_none=True)
+        if key not in sources:
+            action, previous = 'new_question', None
+            sources[key] = [source]
+        else:
+            values = sources[key]
+            match = next((i for i,v in enumerate(values) if source_identity(v)==source_identity(source)),None)
+            previous = values[match].get('count') if match is not None else None
+            if match is None:
+                if len(values)>=50:
+                    raise HTTPException(422,f'第 {index} 条记录超过单问题 50 个来源上限')
+                action = 'new_source'; values.append(source)
+            elif source.get('count') is not None and (previous,values[match].get('definition')) != (source['count'],source['definition']):
+                action = 'correction'; values[match] = source
+            else:
+                action = 'unchanged'
+        preview.append({'row':index,'title':item.title,'action':action,'previous_count':previous,'count':source.get('count')})
+    return {'preview_token':token,'rows':sorted(preview,key=lambda r:r['row']),
+            'summary':{action:sum(r['action']==action for r in preview) for action in ['new_question','new_source','correction','unchanged']}}, set(existing)
+
+
+@router.post('/questions/import/preview')
+async def preview_questions(req: ImportQuestions, ctx=Auth, session=Db):
+    await access(session, ctx, req.tenant_id, req.site_id, True)
+    result, _ = await import_preview_plan(req,session)
+    return result
+
+
 @router.post('/questions/import')
 async def import_questions(req: ImportQuestions, ctx=Auth, session=Db):
     await access(session, ctx, req.tenant_id, req.site_id, True)
+    existing = None
+    if req.preview_token:
+        preview, existing = await import_preview_plan(req,session,lock=True)
+        if preview['preview_token'] != req.preview_token:
+            raise HTTPException(409,'问题或导入内容已变化，请重新预览后导入')
     ids, created = [], 0
+    seen = set()
     # Deterministic lock order avoids deadlock across concurrent overlapping imports.
     for item in sorted(req.items, key=lambda x: fingerprint(x.title)):
         source = {**item.source.model_dump(mode='json', exclude_none=True), 'captured_at': datetime.now(timezone.utc).isoformat()}
         row_id, new = await add_question(session, req.tenant_id, req.site_id, item.title, item.topic, source)
+        key = fingerprint(item.title)
+        if existing is not None and key not in existing and key not in seen and not new:
+            await session.rollback()
+            raise HTTPException(409,'预览后出现了同名问题，请重新预览')
+        seen.add(key)
         ids.append(row_id)
         created += int(new)
     await session.commit()
