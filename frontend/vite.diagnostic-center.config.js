@@ -9,6 +9,9 @@ export default defineConfig({
   publicDir: false,
   plugins: [vue()],
   build: {
+    rollupOptions: {
+      input: { report:resolve('diagnostic-center/index.html'), free:resolve('diagnostic-center/free.html') },
+    },
     outDir: resolve('dist-diagnostic-center'),
     emptyOutDir: true,
   },

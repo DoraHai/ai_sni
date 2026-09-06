@@ -3,9 +3,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   discoverGeoBrand,
-  fetchPageSpeedInsights,
   generateGeoAdvice,
-  runDeepSeekSample,
   runCompetitorAudit,
   createGeoTaskFromDiagnosis,
   runGeoAudit,
@@ -14,6 +12,8 @@ import { fetchTenants } from '../../api/auth'
 import { session } from '../../store/session'
 import diagnosticLogo from '../../assets/g-snipers-purple-logo.png'
 import DiagnosisAssetsView from './DiagnosisAssetsView.vue'
+import FreeDiagnosisFlow from './flow/FreeDiagnosisFlow.vue'
+import { useFreeDiagnosisFlow } from './useFreeDiagnosisFlow'
 
 const tenantId = computed(() => session.tenantId || (import.meta.env.DEV && import.meta.env.VITE_API_KEY ? 1 : null))
 
@@ -36,16 +36,21 @@ const samplingLoading = ref(false)
 const bridgeLoading = ref(false)
 const error = ref('')
 const issueFilter = ref('all')
-const loadingStage = ref(0)
 const activeReport = ref('overview')
 const activeAsset = ref('')
 const expandedEvidence = ref('')
 const sampleQuestions = ref(['', '', ''])
-const automaticSampleAttempts = new Set()
 const brandReady = ref(false)
 const brandProfile = ref({})
-let stageTimer = null
-let pageSpeedRequestId = 0
+const flow = useFreeDiagnosisFlow({ tenantId, audit, pageSpeed, brandProfile, brandReady, url, samplingLoading, pageSpeedLoading, sampleQuestions, ensureTenant })
+function showFlowReport() {
+  flow.showReport()
+  newDiagnosisOpen.value = false
+  activeAsset.value = ''
+  activeReport.value = 'overview'
+  quickUrl.value = audit.value?.final_url || url.value
+  window.scrollTo({ top:0 })
+}
 
 const reportNav = [
   { key: 'overview', label: '网站体检', icon: '◉' },
@@ -74,12 +79,6 @@ const assetNav = [
 ]
 const currentAsset = computed(() => assetNav.find((item) => item.page === activeAsset.value) || assetNav[0])
 
-const loadingStages = [
-  '正在建立安全连接',
-  '正在读取页面静态代码',
-  '正在检查 SEO 与 Schema 信号',
-  '正在生成诊断报告',
-]
 
 const ruleNarratives = {
   https: {
@@ -517,19 +516,6 @@ function normalizeUrl(value) {
   return /^https?:\/\//i.test(input) ? input : `https://${input}`
 }
 
-function startStageProgress() {
-  loadingStage.value = 0
-  clearInterval(stageTimer)
-  stageTimer = window.setInterval(() => {
-    if (loadingStage.value < loadingStages.length - 1) loadingStage.value += 1
-  }, 2600)
-}
-
-function stopStageProgress() {
-  clearInterval(stageTimer)
-  stageTimer = null
-}
-
 async function ensureTenant() {
   if (tenantId.value) return true
   tenantLoading.value = true
@@ -551,6 +537,7 @@ async function ensureTenant() {
 
 async function startNewDiagnosis() {
   if (loading.value) return
+  flow.reset(url.value || brandProfile.value?.website || '')
   newDiagnosisOpen.value = true
   error.value = ''
   quickMode.value = 'own'
@@ -591,7 +578,6 @@ async function startAudit() {
   }
   loading.value = true
   audit.value = null
-  startStageProgress()
   try {
     audit.value = await runGeoAudit({ tenantId: tenantId.value, url: normalized, scope: auditScope.value })
     newDiagnosisOpen.value = false
@@ -599,14 +585,12 @@ async function startAudit() {
     quickMode.value = 'own'
     quickUrl.value = url.value
     sampleQuestions.value = ['', '', '']
-    loadingStage.value = loadingStages.length - 1
     ElMessage.success('网站诊断完成')
     await nextTick()
     document.querySelector('#diagnosis-report')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   } catch (e) {
     error.value = e.message || '诊断失败，请确认网址可公开访问'
   } finally {
-    stopStageProgress()
     loading.value = false
   }
 }
@@ -675,7 +659,6 @@ async function startQuickAudit() {
   error.value = ''
   loading.value = true
   audit.value = null
-  startStageProgress()
   try {
     const [auditResult, profileResult] = await Promise.allSettled([
       runCompetitorAudit({ tenantId: tenantId.value, url: normalized, scope: auditScope.value }),
@@ -686,14 +669,12 @@ async function startQuickAudit() {
     newDiagnosisOpen.value = false
     if (profileResult.status === 'fulfilled' && profileResult.value) quickProfile.value = profileResult.value
     quickUrl.value = audit.value.final_url || normalized
-    loadingStage.value = loadingStages.length - 1
     ElMessage.success('竞品公开网站检测完成')
     await nextTick()
     document.querySelector('#diagnosis-report')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   } catch (e) {
     error.value = e.message || '竞品网站检测失败，请确认网址可公开访问'
   } finally {
-    stopStageProgress()
     loading.value = false
   }
 }
@@ -712,29 +693,8 @@ async function createAdvice() {
 }
 
 async function createDeepSeekSample({ automatic = false } = {}) {
-  if (!audit.value || samplingLoading.value) return
-  const requestedAudit = audit.value
-  const requestedTenant = tenantId.value
-  samplingLoading.value = true
-  try {
-    const result = await runDeepSeekSample({
-      tenantId: requestedTenant,
-      auditId: requestedAudit.id,
-      questions: automatic ? [] : sampleQuestions.value.map((item) => item.trim()).filter(Boolean),
-    })
-    // A finished request must not replace a different customer's or a newer report.
-    if (tenantId.value !== requestedTenant || audit.value?.id !== requestedAudit.id) return
-    audit.value = { ...audit.value, snapshot: { ...audit.value.snapshot, ai_sampling: result.snapshot?.ai_sampling } }
-    sampleQuestions.value = (audit.value.snapshot?.ai_sampling?.results || []).map((item) => item.question)
-    while (sampleQuestions.value.length < 3) sampleQuestions.value.push('')
-    ElMessage.success('DeepSeek 品牌提及抽样完成')
-  } catch (e) {
-    if (tenantId.value === requestedTenant && audit.value?.id === requestedAudit.id) {
-      ElMessage.error(e.message || '自动抽样未完成，可点击按钮重试')
-    }
-  } finally {
-    samplingLoading.value = false
-  }
+  await flow.sample({ automatic })
+  if (flow.statuses.sample === 'error') ElMessage.error(flow.errors.sample || '抽样未完成，可重试')
 }
 
 async function copySampleResponse(item) {
@@ -918,27 +878,7 @@ const pageSpeedSourceLabel = computed(() => {
 })
 
 async function loadPageSpeed(targetUrl) {
-  const normalized = normalizeUrl(targetUrl)
-  if (!normalized || !tenantId.value) {
-    pageSpeed.value = null
-    return
-  }
-  const requestId = ++pageSpeedRequestId
-  pageSpeedLoading.value = true
-  try {
-    const result = await fetchPageSpeedInsights({
-      tenantId: tenantId.value,
-      url: normalized,
-      strategy: 'mobile',
-    })
-    if (requestId === pageSpeedRequestId) pageSpeed.value = result
-  } catch (e) {
-    if (requestId === pageSpeedRequestId) {
-      pageSpeed.value = { status: 'error', reason: e.message || 'PageSpeed 检测暂时失败', metrics: {} }
-    }
-  } finally {
-    if (requestId === pageSpeedRequestId) pageSpeedLoading.value = false
-  }
+  await flow.performance()
 }
 
 async function printReport() {
@@ -973,38 +913,18 @@ watch(tenantId, () => {
   quickProfileOpen.value = false
   brandReady.value = false
   brandProfile.value = {}
-  openAsset('brand')
+  activeAsset.value = ''
+  activeReport.value = 'overview'
 })
-
-watch(
-  () => [tenantId.value, audit.value?.id, audit.value?.ai_enabled, aiSample.value, samplingLoading.value],
-  () => {
-    if (!tenantId.value || !audit.value?.id || !audit.value.ai_enabled || isCompetitorAudit.value || samplingLoading.value) return
-    const key = `${tenantId.value}:${audit.value.id}`
-    if (aiSample.value || automaticSampleAttempts.has(key)) return
-    automaticSampleAttempts.add(key)
-    void createDeepSeekSample({ automatic: true })
-  },
-)
-
-watch(
-  () => audit.value?.final_url || audit.value?.url || '',
-  (targetUrl) => loadPageSpeed(targetUrl),
-)
 
 onMounted(async () => {
   await ensureTenant()
-  audit.value = null
-  brandReady.value = false
-  brandProfile.value = {}
-  url.value = ''
-  quickUrl.value = ''
-  openAsset('brand')
 })
 </script>
 
 <template>
-  <main class="diagnosis-center">
+  <FreeDiagnosisFlow v-if="flow.stage.value !== 'report'" :flow="flow" :audit="audit" @report="showFlowReport" />
+  <main v-else class="diagnosis-center">
     <aside class="diagnosis-sidebar">
       <div class="diagnosis-brand">
         <img class="brand-mark" :src="diagnosticLogo" alt="G-Snipers 获客狙击手" />
@@ -1137,15 +1057,8 @@ onMounted(async () => {
           <div class="loading-orbit"><span /><i /></div>
           <div>
             <span class="section-index">ANALYSIS IN PROGRESS</span>
-            <h2>{{ loadingStages[loadingStage] }}</h2>
-            <p>{{ loadingStage + 1 }} / {{ loadingStages.length }} · 请保持当前页面打开</p>
-          </div>
-          <div class="stage-track">
-            <span
-              v-for="(stage, index) in loadingStages"
-              :key="stage"
-              :class="{ done: index <= loadingStage }"
-            >{{ index + 1 }}</span>
+            <h2>正在执行网站诊断</h2>
+            <p>等待诊断接口返回结果 · 请保持当前页面打开</p>
           </div>
         </section>
 

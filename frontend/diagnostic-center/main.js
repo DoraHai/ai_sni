@@ -9,6 +9,8 @@ import 'element-plus/theme-chalk/el-message-box.css'
 import '../src/style.css'
 import DiagnosisCenterView from '../src/views/diagnosis/DiagnosisCenterView.vue'
 import { session } from '../src/store/session'
+import { loginUrl } from '../src/auth/loginRedirect'
+import { initialWebsite, diagnosisDestination } from '../src/views/diagnosis/diagnosisWebsite'
 
 const hasDevKey = Boolean(import.meta.env.VITE_API_KEY && import.meta.env.DEV)
 const devBypass = !session.isLoggedIn && hasDevKey
@@ -19,6 +21,8 @@ if (session.isLoggedIn && !session.user && hasDevKey) {
 }
 
 if (!session.isLoggedIn && !devBypass && !hasDevKey) {
+  const carried = initialWebsite(window.location.search).website
+  window.location.replace(loginUrl(carried ? diagnosisDestination(carried) : '/diagnostic-center/'))
   // Mini-app has no /login route; show a clear message instead of blank redirect
   document.getElementById('app').innerHTML =
     '<main style="min-height:100vh;display:grid;place-items:center;font:600 14px sans-serif;color:#5f7478;background:#f4f7f6;padding:24px;text-align:center">' +

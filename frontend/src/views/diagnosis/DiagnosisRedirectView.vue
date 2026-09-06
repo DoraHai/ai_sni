@@ -1,8 +1,10 @@
 <script setup>
 import { onMounted } from 'vue'
+import { initialWebsite, diagnosisDestination } from './diagnosisWebsite'
 
 onMounted(() => {
-  window.location.replace('/diagnostic-center/')
+  const website = initialWebsite(window.location.search).website
+  window.location.replace(website ? diagnosisDestination(website) : '/diagnostic-center/')
 })
 </script>
 

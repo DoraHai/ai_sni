@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { splitLines, joinLines, brandFields, missingBrandFields } from './brandProfileFields'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createGeoKnowledge,
@@ -53,15 +54,11 @@ const typeOptions = [
   { value: 'other', label: '其他' },
 ]
 const typeLabel = (value) => typeOptions.find((item) => item.value === value)?.label || '其他'
-const splitLines = (value) => value.split(/\n|，|,/).map((item) => item.trim()).filter(Boolean)
-const joinLines = (value) => Array.isArray(value) ? value.join('\n') : ''
 const activePage = computed(() => props.asset.page)
-const requiredFields = computed(() => [
-  { label: '官方网站', ready: Boolean(brand.website.trim()) },
-  { label: '品牌名称', ready: Boolean(brand.name.trim()) },
-  { label: '所属行业', ready: Boolean(brand.industry.trim()) },
-  { label: '核心产品与服务', ready: splitLines(brand.core_products).length > 0 },
-])
+const requiredFields = computed(() => {
+  const missing = new Set(missingBrandFields(brand).map(field => field.key))
+  return brandFields.filter(field => field.required).map(field => ({ label:field.label, ready:!missing.has(field.key) }))
+})
 const requiredReady = computed(() => requiredFields.value.every((item) => item.ready))
 const missingRequiredLabels = computed(() => requiredFields.value.filter((item) => !item.ready).map((item) => item.label))
 const completion = computed(() => requiredFields.value.filter((item) => item.ready).length * 25)
@@ -150,12 +147,8 @@ async function saveProfile() {
       // Competitor editing has been removed from this page. Preserve any
       // existing hidden values while the visible brand fields are refreshed
       // for this diagnosis session.
-      try {
-        const existing = await fetchGeoAssetProfile(props.tenantId, brand.website)
-        savedCompetitors.value = Array.isArray(existing.brand?.competitors) ? existing.brand.competitors : []
-      } catch {
-        savedCompetitors.value = []
-      }
+      const existing = await fetchGeoAssetProfile(props.tenantId, brand.website)
+      savedCompetitors.value = Array.isArray(existing.brand?.competitors) ? existing.brand.competitors : []
       const result = await saveGeoBrand({
         tenant_id: Number(props.tenantId),
         ...brand,
