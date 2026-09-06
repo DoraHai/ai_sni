@@ -13,6 +13,11 @@ context。业务资源按现有角色权限映射：`monitor.dashboard`→report
 生产建议与现有SEM前端部署在同一origin，由Nginx转发`/api/v1/`；跨源部署须另行核对明确的
 CORS白名单。当前transport要求显式HTTPS origin，且拒绝请求中的跨源绝对URL。
 
+宿主登录态的`revision`发生任何变化（重新登录、登出、token刷新、切换用户或权限刷新）时，
+必须在更新宿主session的同时调用`createSemAuthorizedClient(...).invalidate()`，再按当前客户重新
+`connect()`。transport对revision的检查只保护单个HTTP请求；多步资格预检及已经建立的读取上下文
+由authorized client的代次负责失效。不能只更新`getSession()`返回值后继续复用旧context。
+
 ```js
 import { createSemReadonlyClient } from './readonly-client.mjs'
 
