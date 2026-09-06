@@ -9,7 +9,7 @@ async function mount(api={},canEdit=true) {
   const source=await readFile(new URL('../src/views/seo/SeoQaWorkbenchView.vue',import.meta.url),'utf8')
   const compiled=compileScript(parse(source).descriptor,{id:'qa',genDefaultAs:'component'}).content
   const tenant=Vue.ref(1),site=Vue.ref(10),writes=[]
-  const bindings={...Vue,SeoQaPlanning:{},currentTenantId:tenant,siteId:site,session:{canEdit:()=>canEdit},useRouter:()=>({push(){}}),ElMessage:{success(){}},
+  const bindings={...Vue,SeoQaPlanning:{},publisherZip:()=>null,qaRunnerSource:'',runnerSource:'',runnerRequirements:'',currentTenantId:tenant,siteId:site,session:{canEdit:()=>canEdit},useRouter:()=>({push(){}}),ElMessage:{success(){}},
     seoQaGet:async path=>path==='questions'?{items:[],total:0}:path==='maintenance'?{items:[]}:path==='capabilities'?{platforms:[]}:[],
     seoQaPost:async(...args)=>{writes.push(args);return {created:1,merged:0}},seoQaPatch:async()=>({}),assistSeoContent:async()=>({content:'草稿'}),
     submitSeoContentReview:async(...args)=>writes.push(args),decideSeoContentReview:async()=>({}),...api}
