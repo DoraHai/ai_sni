@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from unittest.mock import AsyncMock, Mock, patch
@@ -11,6 +10,8 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import text
+
+from tests.geo_postgres_guard import require_geo_test_url
 
 
 def _run_dependency(dependency):
@@ -109,23 +110,13 @@ def test_geo_entitlement_reuses_main_module_scope(row, allowed):
     ctx.ensure_tenant.assert_called_once_with(15)
 
 
-@pytest.mark.skipif(
-    not os.getenv("GEO_TEST_POSTGRES_URL"),
-    reason="requires a dedicated loopback geo_ci database",
-)
 def test_geo_read_session_is_enforced_by_postgresql_and_releases_connection():
-    from sqlalchemy.engine import make_url
     from sqlalchemy.exc import DBAPIError
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from app.geo.read_session import geo_read_session
 
-    url = os.environ["GEO_TEST_POSTGRES_URL"]
-    parsed = make_url(url)
-    assert parsed.drivername == "postgresql+asyncpg"
-    assert parsed.host in {"127.0.0.1", "localhost"}
-    assert parsed.username == parsed.database == "geo_ci"
-    assert not parsed.query
+    url = require_geo_test_url()
 
     async def run():
         engine = create_async_engine(url, pool_size=1, max_overflow=0)

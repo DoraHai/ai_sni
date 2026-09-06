@@ -1,0 +1,117 @@
+name: GEO read-only PostgreSQL check
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "app/geo/question_read_routes.py"
+      - "app/geo/read_session.py"
+      - "app/geo/tenant_scope.py"
+      - "app/geo/routes.py"
+      - "app/database.py"
+      - "app/module_scope.py"
+      - "app/security/auth.py"
+      - "app/models/geo_prompt.py"
+      - "app/models/geo_optimization.py"
+      - "app/models/module_workspace.py"
+      - "app/models/tenant.py"
+      - "requirements.txt"
+      - "requirements-dev.txt"
+      - "tests/geo_postgres_guard.py"
+      - "tests/test_geo_postgres_guard.py"
+      - "tests/test_geo_question_read_postgres.py"
+      - "tests/test_geo_question_read_routes.py"
+      - "tests/test_geo_read_session.py"
+      - "tests/test_geo_progress_locks_postgres.py"
+      - ".github/workflows/geo-read-postgres-check.yml"
+  pull_request:
+    paths:
+      - "app/geo/question_read_routes.py"
+      - "app/geo/read_session.py"
+      - "app/geo/tenant_scope.py"
+      - "app/geo/routes.py"
+      - "app/database.py"
+      - "app/module_scope.py"
+      - "app/security/auth.py"
+      - "app/models/geo_prompt.py"
+      - "app/models/geo_optimization.py"
+      - "app/models/module_workspace.py"
+      - "app/models/tenant.py"
+      - "requirements.txt"
+      - "requirements-dev.txt"
+      - "tests/geo_postgres_guard.py"
+      - "tests/test_geo_postgres_guard.py"
+      - "tests/test_geo_question_read_postgres.py"
+      - "tests/test_geo_question_read_routes.py"
+      - "tests/test_geo_read_session.py"
+      - "tests/test_geo_progress_locks_postgres.py"
+      - ".github/workflows/geo-read-postgres-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  native-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      geo-postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: geo_ci
+          POSTGRES_PASSWORD: geo_ci_only
+          POSTGRES_DB: geo_ci
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U geo_ci -d geo_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Validate GEO read-only behavior on disposable PostgreSQL
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@127.0.0.1:1/test
+          GEO_TEST_POSTGRES_URL: postgresql+asyncpg://geo_ci:geo_ci_only@127.0.0.1:55432/geo_ci
+          BAIDU_APP_ID: ci-dummy
+          BAIDU_SECRET_KEY: ci-dummy-secret1
+          BAIDU_DEFAULT_USERNAME: ci-dummy
+          BAIDU_DEFAULT_UCID: "1"
+          BAIDU_SELF_ACCESS_TOKEN: ci-dummy
+          BAIDU_SELF_TOKEN_EXPIRES_AT: "2099-01-01T00:00:00+00:00"
+          CRYPTO_MASTER_KEY_B64: j/QGqbWO8IVw9cCVeAq+u/alTyjLsSQXjROH9uW/3tA=
+          ADMIN_API_KEY: ci-admin-key
+          DASHSCOPE_API_KEY: ""
+          DEEPSEEK_API_KEY: ""
+          GEO_OPENAI_API_KEY: ""
+        shell: bash
+        run: |
+          set +e
+          python -m pytest -q -rs \
+            tests/test_geo_read_session.py \
+            tests/test_geo_progress_locks_postgres.py \
+            tests/test_geo_postgres_guard.py \
+            tests/test_geo_question_read_routes.py \
+            tests/test_geo_question_read_postgres.py \
+            2>&1 | tee "$RUNNER_TEMP/geo-read-postgres.log"
+          test_status=${PIPESTATUS[0]}
+          if [[ "$test_status" -ne 0 ]]; then
+            {
+              echo "### GEO PostgreSQL test failure"
+              echo '```text'
+              tail -n 120 "$RUNNER_TEMP/geo-read-postgres.log"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            failure_tail="$(tail -n 40 "$RUNNER_TEMP/geo-read-postgres.log")"
+            failure_tail="${failure_tail//'%'/'%25'}"
+            failure_tail="${failure_tail//$'\r'/'%0D'}"
+            failure_tail="${failure_tail//$'\n'/'%0A'}"
+            echo "::error title=GEO PostgreSQL tests failed::$failure_tail"
+          fi
+          exit "$test_status"

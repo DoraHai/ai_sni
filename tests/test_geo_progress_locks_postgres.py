@@ -1,25 +1,21 @@
 """Real PostgreSQL ownership checks for GEO progress recovery."""
 
 import asyncio
-import os
 from unittest.mock import patch
 
-import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
 
-
-pytestmark = pytest.mark.skipif(
-    not os.getenv("GEO_TEST_POSTGRES_URL"),
-    reason="requires isolated PostgreSQL",
-)
+from tests.geo_postgres_guard import require_geo_test_url
 
 
 def test_job_and_patrol_advisory_locks_exclude_live_workers():
     from app.geo.content.async_jobs import job_execution_lock
     from app.geo.content.patrol import patrol_execution_lock
 
+    url = require_geo_test_url()
+
     async def scenario():
-        engine = create_async_engine(os.environ["GEO_TEST_POSTGRES_URL"])
+        engine = create_async_engine(url)
         try:
             with patch("app.database.engine", engine):
                 async with job_execution_lock(71001) as first_job:
