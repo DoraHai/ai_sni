@@ -23,7 +23,8 @@ settings = get_settings()
 enforce_production_secrets(settings, hard_fail=True)
 SEO_REQUIRED_SCHEMA_REVISION = "0094_seo_qa_batches"
 # Add a shared migration revision only after its ID, parent and DDL are reviewed.
-SEO_COMPATIBLE_SCHEMA_REVISIONS = frozenset({SEO_REQUIRED_SCHEMA_REVISION})
+# Reviewed #370 source package; enabling compatibility does not authorize migration.
+SEO_COMPATIBLE_SCHEMA_REVISIONS = frozenset({SEO_REQUIRED_SCHEMA_REVISION, "0095_sem_tasks"})
 
 
 def _required_schema_columns():

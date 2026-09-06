@@ -131,6 +131,47 @@ downgrade or a pre-migration database snapshot; changing code symlinks alone is
 not a database rollback.
 
 
+## Shared SemTask compatibility: current Draft implementation
+
+Development of the actual two-version allowlist is now authorized. PR #369
+remains Draft: do not merge, deploy or execute a migration. This supersedes the
+current-only/test-patched allowlist described in the historical review notes below.
+
+The runtime allowlist contains exactly `0094_seo_qa_batches` and `0095_sem_tasks`.
+The required SEO baseline stays `0094_seo_qa_batches`. A healthy result requires
+exactly one allowed revision row AND the existing necessary SEO structure checks.
+Unknown, empty, duplicate or multiple rows fail, including a row for each of the
+two individually allowed versions. Tests use the actual allowlist without patching.
+Missing tables/columns, integer/JSONB mismatches and catalog errors still fail.
+
+Source contract: #370 at `a62a003262f53fab1d1e8ec69175e747266b9469`, direct
+parent `0094_seo_qa_batches` to target `0095_sem_tasks`. Relative to reviewed
+`66455f1`, only execution-design documentation, a read-only preflight script and
+its offline tests were added; candidate migration, source lock, builder and env
+are unchanged. The preflight script has not been executed by this SEO task.
+This is compatibility implementation, not approval of the production executor.
+
+### Separate approval and rollback requirements
+
+1. Independently approve and deploy the SEO compatibility release first. Record
+   its exact commit, artifact checksum and successful health result against the
+   current 0094 database. Development approval is not deployment approval.
+2. Before separately approving the database migration, retain an independently
+   reviewed, tested and deployable rollback artifact that also accepts BOTH 0094
+   and 0095 and preserves the required structure checks. Record its exact commit
+   and checksum in the release record. No rollback artifact is designated by
+   this Draft, and a generic previous-release symlink is insufficient evidence.
+3. Only after separate migration approval may the database advance to 0095.
+   After that, never roll SEO back to an older 0094-only health checker (including
+   backend baseline `4e83611`). Application rollback must use the recorded
+   compatible artifact; do not stamp/downgrade the version table or drop SemTask
+   audit data to make an older application appear healthy.
+4. If no eligible rollback artifact is available, the migration is not ready
+   for execution approval. Shared schema reconciliation, production execution
+   review and SemTask enablement remain separate gates.
+
+## Historical review log (superseded where noted above)
+
 ## Shared SemTask revision compatibility review — 2026-09-06 (DRAFT — awaiting shared migration review)
 
 The latest SEM confirmation supersedes the earlier framework release instruction.
