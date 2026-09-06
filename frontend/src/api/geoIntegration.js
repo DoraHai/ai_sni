@@ -13,3 +13,5 @@ export const create = (tenant, body) => client.post(base, body, config(tenant))
 
 export const start = (tenant, id) => client.patch(`${base}/${id}`, { status: 'in_progress' }, config(tenant))
 export const cancel = (tenant, id) => client.patch(`${base}/${id}`, { status: 'cancelled' }, config(tenant))
+
+export const baselineReadiness = (tenant, id) => client.get(`${base}/${id}/baseline-readiness`, config(tenant))

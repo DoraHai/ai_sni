@@ -370,3 +370,51 @@ def test_task_rejects_impossible_bounded_metric_delta(metric_key):
         params={'metric_key': metric_key, 'min_delta': 100})
     TaskCreate(action_type='improve', title='test', assignee_role='operator',
         params={'metric_key': MENTIONS, 'min_delta': 101})
+
+
+def test_baseline_window_diagnostic_distinguishes_open_week_from_missing_samples():
+    from app.geo.integration_metrics import describe_baseline_windows
+    empty = build_weekly_snapshot([], ['brand.example'], date(2026,8,24))
+    diagnostic = describe_baseline_windows(empty, state(), MENTIONS)
+    assert diagnostic['state'] == 'waiting_for_week_close'
+    assert diagnostic['current_week_counts'] == {'samples':12,'questions':3,'engines':2}
+    assert diagnostic['current_week_end'] == '2026-08-31T00:00:00+08:00'
+    assert '不要' in diagnostic['message'] and 'metrics' not in diagnostic
+    assert describe_baseline_windows(state(), state(), MENTIONS)['state'] == 'closed_week_ready'
+    assert describe_baseline_windows(empty, empty, MENTIONS)['state'] == 'insufficient_samples'
+
+
+def test_baseline_window_diagnostic_respects_qualification_and_missing_domain():
+    from app.geo.integration_metrics import describe_baseline_windows
+    rows=samples(27)
+    for row in rows: row.simulated=True
+    current=build_weekly_snapshot(rows,[],date(2026,8,31))
+    empty=build_weekly_snapshot([],[],date(2026,8,24))
+    result=describe_baseline_windows(empty,current,MENTIONS)
+    assert result['current_week_counts']['samples']==0
+    assert result['state']=='insufficient_samples'
+    assert describe_baseline_windows(empty,current,SCORE)['state']=='missing_own_domain'
+
+
+def test_baseline_diagnostic_endpoint_uses_task_tenant_without_writes():
+    from app.geo.integration import baseline_readiness
+    row=task();session=NS(commit=AsyncMock())
+    diagnostic={'state':'waiting_for_week_close'}
+    with patch('app.geo.integration.ticket',AsyncMock(return_value=row)) as lookup, patch('app.geo.integration_metrics.baseline_window_readiness',AsyncMock(return_value=diagnostic)) as windows:
+        result=asyncio.run(baseline_readiness(10,7,NS(ensure_tenant=Mock()),session))
+    assert result==diagnostic
+    lookup.assert_awaited_once_with(session,7,10)
+    windows.assert_awaited_once_with(session,7,MENTIONS)
+    session.commit.assert_not_awaited()
+
+
+def test_capture_baseline_reports_waiting_without_overwriting_evidence():
+    from app.geo.integration import capture_baseline
+    row=task();row.baseline_snapshot=build_weekly_snapshot([],[],date(2026,8,24))
+    session=NS(commit=AsyncMock());old=deepcopy(row.baseline_snapshot)
+    with patch('app.geo.integration.ticket',AsyncMock(return_value=row)), patch('app.geo.integration.snapshot',AsyncMock(return_value=old)), patch('app.geo.integration_metrics.baseline_window_readiness',AsyncMock(return_value={'message':'等待周一，不要重复采样'})):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(capture_baseline(10,7,NS(ensure_tenant=lambda _:None),session))
+    assert exc.value.status_code==409 and '等待周一' in exc.value.detail
+    assert row.baseline_snapshot==old
+    session.commit.assert_not_awaited()

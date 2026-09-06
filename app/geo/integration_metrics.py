@@ -139,6 +139,11 @@ async def load_weekly_snapshot(session, tenant_id, week_end=None):
         raise ValueError('week_end 必须留足两个完整周的统计窗口')
     if week_end.weekday() != 0 or week_end > closed_week_end():
         raise ValueError('week_end 必须为不晚于本周周一的上海日期')
+    return await _load_snapshot_window(session, tenant_id, week_end)
+
+
+async def _load_snapshot_window(session, tenant_id, week_end):
+    # Internal diagnostic use may inspect the open week; public metrics remain closed-week only.
     start = shanghai_day_bounds_utc_naive(week_end-timedelta(days=14))[0]
     end = shanghai_day_bounds_utc_naive(week_end)[0]
     rows = list(await session.scalars(select(GeoAnswerSnapshot).join(GeoPrompt, GeoPrompt.id == GeoAnswerSnapshot.prompt_id).where(
@@ -167,3 +172,37 @@ def metric_dictionary(names=None):
             SCORE: common+'值为50×品牌提及率+50×自有域引用率；引用率以全部合格回答为分母，自有域仅取启用的website/docs渠道，无自有域配置返回null。'}
     docs.update({key: common+f'竞品“{name}”提及回答条数，名称strip/casefold归一，每条回答去重；key使用归一名称SHA256前20位。' for key,name in (names or {}).items()})
     return docs
+
+
+def describe_baseline_windows(closed, current, metric_key):
+    def counts(state):
+        cells = state['sample_counts']
+        return {'samples': len(state['sample_ids']), 'questions': len({c[0] for c in cells}),
+                'engines': len({c[1] for c in cells})}
+    before = next((m for m in closed['metrics'] if m['metric_key'] == metric_key), None)
+    candidate = next((m for m in current['metrics'] if m['metric_key'] == metric_key), None)
+    if before is None and candidate is None:
+        raise ValueError('未知指标，请使用指标字典中的 metric_key')
+    enough = bool(candidate and candidate['value'] is not None)
+    if before and before['value'] is not None:
+        status, message = 'closed_week_ready', '已结束周有有效指标，可采集基线；已有有效基线不能覆盖。'
+    elif enough:
+        status = 'waiting_for_week_close'
+        message = f"本周已有达到统计门槛的合格样本，请在 {current['metrics'][0]['as_of']} 周结束后重新检查，不要仅因正式指标为空重复采样。"
+    elif metric_key == SCORE and not current['own_domains']:
+        status, message = 'missing_own_domain', '可见度分数缺少启用的官网或文档域名配置；同时检查样本覆盖。'
+    else:
+        status, message = 'insufficient_samples', '当前周尚未达到统计门槛（8条、3题、2引擎），请检查真实采样及复核结果。'
+    return {'metric_key': metric_key, 'state': status, 'message': message,
+            'closed_week_as_of': closed['metrics'][0]['as_of'],
+            'current_week_end': current['metrics'][0]['as_of'],
+            'closed_week_counts': counts(closed), 'current_week_counts': counts(current),
+            'minimum_counts': {'samples': 8, 'questions': 3, 'engines': 2},
+            'note': '当前周仅展示来源校验通过的样本覆盖，不是正式指标或冻结基线；周结束后仍须重新校验。'}
+
+
+async def baseline_window_readiness(session, tenant_id, metric_key=MENTIONS):
+    end = closed_week_end()
+    closed = await _load_snapshot_window(session, tenant_id, end)
+    current = await _load_snapshot_window(session, tenant_id, end + timedelta(days=7))
+    return describe_baseline_windows(closed, current, metric_key)

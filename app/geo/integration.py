@@ -290,7 +290,9 @@ async def capture_baseline(task_id: int, tenant_id: int = Query(...),
     state = await snapshot(session, tenant_id)
     selected = metric(state, key)
     if selected is None or selected['value'] is None:
-        raise HTTPException(409, '当前仍无有效基线，请先完成真实采样')
+        from app.geo.integration_metrics import baseline_window_readiness
+        diagnostic = await baseline_window_readiness(session, tenant_id, key)
+        raise HTTPException(409, diagnostic['message'])
     row.baseline_snapshot = state
     row.updated_at = datetime.utcnow()
     await session.commit()
@@ -417,3 +419,16 @@ async def execution_readiness(task_id: int, tenant_id: int = Query(...),
             'latest_retest': latest_retest, 'publication_candidates': publication_candidates,
             'publication_evidence': (row.progress or {}).get('publication_evidence'),
             'publishing': matrix, 'completion_evidence': (row.progress or {}).get('completion_evidence')}
+
+
+@router.get('/tasks/{task_id}/baseline-readiness')
+async def baseline_readiness(task_id: int, tenant_id: int = Query(...),
+                             ctx=Depends(require_scoped_auth), session=Depends(get_session)):
+    from app.geo.integration_metrics import baseline_window_readiness
+    ctx.ensure_tenant(tenant_id)
+    row = await ticket(session, tenant_id, task_id)
+    key = (row.progress_first or {}).get('params', {}).get('metric_key', MENTIONS)
+    try:
+        return await baseline_window_readiness(session, tenant_id, key)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc

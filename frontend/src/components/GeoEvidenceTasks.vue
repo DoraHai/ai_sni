@@ -5,6 +5,7 @@ import { evidenceTaskLink, evidenceLinkTarget } from '../utils/geoEvidenceLinks'
 import { retestDiagnosis } from '../utils/geoRetestDiagnosis'
 import { geoSnapshotLink } from '../utils/geoRoutes'
 import { engineDisplay } from '../utils/geoReportLabels'
+import GeoBaselineWindow from './GeoBaselineWindow.vue'
 import GeoExecutionOverview from './GeoExecutionOverview.vue'
 import * as api from '../api/geoIntegration'
 import { createEvidenceController } from '../utils/geoEvidenceController'
@@ -88,6 +89,7 @@ function select(row) {
         <p v-if="state.busy">正在核验，请稍候…</p>
         <template v-if="state.detail">
           <h4>1. 完整周基线</h4>
+          <GeoBaselineWindow v-if="!terminal && !state.detail.baseline_valid" :tenant-id="tenantId" :task-id="state.selected.id" :disabled="state.loading || state.busy" />
           <p>{{ metricNames[state.detail.baseline?.metric_key] || "目标指标" }}：{{ shown(state.detail.baseline?.value) }} {{ state.detail.baseline?.value == null ? "" : (units[state.detail.baseline?.unit] || "") }} · 截至 {{ state.detail.baseline?.as_of || '未知' }}</p>
           <p v-if="state.detail.baseline_blocker">{{ state.detail.baseline_blocker }}</p>
           <button class="gd-btn" :disabled="terminal || state.loading || state.busy || state.detail.baseline_valid" @click="controller.act('baseline')">采集已结束周基线</button>
