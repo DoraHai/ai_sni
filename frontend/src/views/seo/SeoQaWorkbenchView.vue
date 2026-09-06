@@ -27,6 +27,9 @@ const factForm = reactive({ id: null, title: '', statement: '', source_name: '',
 const questionForm = reactive({ topic: '', intent: 'learn', relevance: 3, owner: '', status: 'open', version: 1 })
 const answerForm = reactive({ id: null, content_id: null, content_version: null, body: '', format: 'short', fact_ids: [], status: 'drafting' })
 const placementForm = reactive({ answer_id: null, platform: 'zhihu', question_url: '', scheduled_at: null })
+const assistantReceipt = ref(null)
+const receiptFileBusy = ref(false)
+let receiptReadSequence=0
 const receiptForm = reactive({ id: null, answer_url: '', version: 1 })
 const metricsForm = reactive({ id: null, version: 1, views: null, likes: null, comments: null, source_url: '', as_of: null })
 const reviewNote = ref('')
@@ -85,6 +88,29 @@ function downloadDemandTemplate() {
   const url=URL.createObjectURL(new Blob([value],{type:'text/csv;charset=utf-8'}))
   const a=document.createElement('a');a.href=url;a.download='需求数据模板-示例请替换.csv';a.click();URL.revokeObjectURL(url)
 }
+async function readAssistantReceipt(event) {
+  const file=event.target.files?.[0], key=scopeKey.value, id=receiptForm.id
+  event.target.value=''
+  assistantReceipt.value=null
+  if(!file || !canEdit.value || busy.value || receiptFileBusy.value) return
+  const seq=++receiptReadSequence
+  receiptFileBusy.value=true;error.value=''
+  try {
+    if(file.size>20000) throw new Error('回执文件过大')
+    const value=JSON.parse((await file.text()).replace(/^\uFEFF/,''))
+    if(seq!==receiptReadSequence || key!==scopeKey.value || dialog.value!=='receipt' || id!==receiptForm.id) return
+    const row=placements.value.find(item=>item.id===id)
+    if(!value || value.kind!=='seo_qa_receipt' || value.schema_version!==1 ||
+       value.tenant_id!==scope.value.tenant_id || value.site_id!==scope.value.site_id ||
+       value.placement_id!==id || value.version!==row?.version || value.content_version!==row?.content_version ||
+       value.platform!==row?.platform || value.question_url!==row?.question_url ||
+       typeof value.answer_url!=='string' || !href(value.answer_url)) throw new Error('回执与当前站点、记录或版本不匹配，请核对后重新导入')
+    assistantReceipt.value=value
+    receiptForm.answer_url=value.answer_url
+  } catch(e) {if(seq===receiptReadSequence && key===scopeKey.value && dialog.value==='receipt' && id===receiptForm.id) error.value=messageOf(e)}
+  finally{receiptFileBusy.value=false}
+}
+
 async function downloadQaAssistant(row) {
   if(busy.value || !canEdit.value) return
   const key=scopeKey.value
@@ -92,7 +118,7 @@ async function downloadQaAssistant(row) {
   try {
     const task=await seoQaGet(`placements/${row.id}/assistant-task`,{...scope.value})
     if(key!==scopeKey.value)return
-    const readme='问答本地填稿试用包（知乎 / CSDN）\n安装 Python 3.11+，运行 pip install -r requirements.txt，再运行 python -m playwright install chromium。\n运行 python qa_runner.py task.json --account "你的账号标签"。登录后手动打开指定问题的回答编辑器，点击正文输入区后回车。\n仅填入正文，不点击保存或发布；已有不同文字或疑似评论框会停止。首次操作请人工确认编辑框。任务30分钟有效，过期重新下载；下载后审核稿若有变化请丢弃旧包。\n平台可能自动保存草稿，请自行检查。发布后回工作台回填网址并核验。账号登录状态仅保存在本机 .qa-assistant 目录。真实账号编辑器仍待验收。\n'
+    const readme='问答本地填稿试用包（知乎 / CSDN）\n安装 Python 3.11+，运行 pip install -r requirements.txt，再运行 python -m playwright install chromium。\n运行 python qa_runner.py task.json --account "你的账号标签"。登录后手动打开指定问题的回答编辑器，点击正文输入区后回车。\n仅填入正文，不点击保存或发布；已有不同文字或疑似评论框会停止。首次操作请人工确认编辑框。任务30分钟有效，过期重新下载；下载后审核稿若有变化请丢弃旧包。\n平台可能自动保存草稿，请自行检查。发布后在终端粘贴公开网址生成回执 JSON，回工作台“回填网址”导入、检查后保存并核验。账号登录状态仅保存在本机 .qa-assistant 目录。真实账号编辑器仍待验收。\n'
     const url=URL.createObjectURL(publisherZip({'qa_runner.py':qaRunnerSource,'runner.py':runnerSource,'requirements.txt':runnerRequirements,'task.json':JSON.stringify(task,null,2),'README.txt':readme}))
     const a=document.createElement('a');a.href=url;a.download=`问答填稿-${row.id}.zip`;a.click();URL.revokeObjectURL(url)
   } catch(e){if(key===scopeKey.value)error.value=messageOf(e)}
@@ -226,7 +252,9 @@ function prepare() {
 }
 function saveReceipt() {
   const { id, answer_url, version } = receiptForm
-  return act(p => seoQaPost(`placements/${id}/receipt`, { ...p, answer_url, version }), () => { dialog.value = '' })
+  if(receiptFileBusy.value) return
+  const imported=assistantReceipt.value
+  return act(p => seoQaPost(`placements/${id}/${imported?'assistant-receipt':'receipt'}`, imported ? {...imported,...p,answer_url} : { ...p, answer_url, version }), () => { dialog.value = '' })
 }
 function verify(row) { return act(p => seoQaPost(`placements/${row.id}/verify`, p)) }
 function saveMetrics() {
@@ -263,6 +291,7 @@ function findMaintenanceQuestion(item) {
   tab.value = 'questions'; query.value = item.title; status.value = ''
   return search()
 }
+watch([dialog,scopeKey,()=>receiptForm.id],()=>{++receiptReadSequence;assistantReceipt.value=null})
 watch([importing,sourceKind,sourceName,sourceUrl,dialog,scopeKey],()=>{importPreview.value=null})
 watch(scopeKey, () => {
   batchStop.value = true; batchResults.value = []; followupOnly.value = false
@@ -337,7 +366,7 @@ watch(scopeKey, () => {
         <template v-if="['import','csv'].includes(dialog)"><p>{{ dialog==='csv'?'问题列：title,source_url,source_name,topic；需求记录增加 source_kind,count,metric,period_start,period_end,definition。最多 200 行，UTF-8 编码。':'每行一个问题，同类重复问题会合并来源。' }}</p><el-button v-if="dialog==='csv'" @click="downloadDemandTemplate">下载需求数据模板</el-button><p v-if="dialog==='csv'" class="qa-hint">模板是示例，导入前请替换为真实数据。source_kind：customer / site_search / search_console；metric：inquiries / searches / impressions / clicks。同一来源、指标及日期窗口重复导入按最新值更新，不累计；不同窗口独立保留。</p><input v-if="dialog==='csv'" type="file" accept=".csv" @change="readCsv"/><el-form-item v-if="dialog==='import'" label="来源类型"><el-select v-model="sourceKind"><el-option v-for="k in ['manual','customer','suggestion']" :key="k" :value="k" :label="kinds[k]"/></el-select></el-form-item><el-form-item v-if="dialog==='import'" label="出处名称"><el-input v-model="sourceName" maxlength="240"/></el-form-item><el-form-item v-if="dialog==='import'" label="来源网址（可选）"><el-input v-model="sourceUrl"/></el-form-item><el-input v-model="importing" type="textarea" :rows="10"/><el-button @click="previewImport">预览导入结果</el-button><div v-if="importPreview"><p>{{ Object.entries(importPreview.summary).map(([key,count])=>`${previewActions[key]} ${count}`).join(' · ') }}</p><p v-for="r in importPreview.rows" :key="r.row" class="qa-hint">记录 {{ r.row }} · {{ r.title }} · {{ previewActions[r.action] }}<span v-if="r.action==='correction'"> · {{ r.previous_count }} → {{ r.count }}</span></p></div><el-button type="primary" :disabled="!importPreview" @click="importQuestions">按预览导入</el-button></template>
         <template v-if="dialog==='fact'"><el-form-item label="事实标题"><el-input v-model="factForm.title" maxlength="240"/></el-form-item><el-form-item label="事实原文"><el-input v-model="factForm.statement" type="textarea" :rows="6" maxlength="10000"/></el-form-item><el-form-item label="出处名称 / 文档版本"><el-input v-model="factForm.source_name" maxlength="240"/></el-form-item><el-form-item label="来源网址（可选）"><el-input v-model="factForm.source_url"/></el-form-item><el-form-item label="有效期（可选）"><el-date-picker v-model="factForm.expires_at" type="datetime"/></el-form-item><el-form-item label="使用状态"><el-select v-model="factForm.status"><el-option value="active" label="启用"/><el-option value="retired" label="停用"/></el-select></el-form-item><el-button type="primary" @click="saveFact">保存事实</el-button></template>
         <template v-if="dialog==='placement'"><el-form-item label="发布平台"><el-select v-model="placementForm.platform"><el-option v-for="p in platforms" :key="p.key" :value="p.key" :label="p.name"/></el-select></el-form-item><p>{{ platforms.find(p=>p.key===placementForm.platform)?.description }}</p><el-form-item v-if="placementForm.platform!=='website'" label="要回答的问题网址"><el-input v-model="placementForm.question_url"/></el-form-item><el-form-item label="计划发布时间（不会自动代发）"><el-date-picker v-model="placementForm.scheduled_at" type="datetime"/></el-form-item><el-button type="primary" @click="prepare">生成审核稿与发布记录</el-button></template>
-        <template v-if="dialog==='receipt'"><p>回填后状态为待核验，不会直接记为发布成功。</p><el-form-item label="回答网址"><el-input v-model="receiptForm.answer_url"/></el-form-item><el-button type="primary" @click="saveReceipt">保存网址</el-button></template>
+        <template v-if="dialog==='receipt'"><p>回填后状态为待核验，不会直接记为发布成功。</p><el-form-item label="本地助手回执"><input type="file" accept=".json,application/json" :disabled="!canEdit || busy || receiptFileBusy" @change="readAssistantReceipt"/></el-form-item><p v-if="assistantReceipt" class="qa-hint">回执已读取，请检查下方网址后保存。</p><el-form-item label="回答网址"><el-input v-model="receiptForm.answer_url"/></el-form-item><el-button type="primary" :disabled="receiptFileBusy" @click="saveReceipt">保存网址</el-button></template>
         <template v-if="dialog==='metrics'"><p>数据标注为人工录入；没有的数据留空。</p><el-form-item v-for="[key,label] in [['views','阅读量'],['likes','赞同数'],['comments','评论数']]" :key="key" :label="label"><el-input-number v-model="metricsForm[key]" :min="0" :precision="0"/></el-form-item><el-form-item label="数据来源网址"><el-input v-model="metricsForm.source_url"/></el-form-item><el-form-item label="观测时间"><el-date-picker v-model="metricsForm.as_of" type="datetime"/></el-form-item><el-button type="primary" @click="saveMetrics">保存观测值</el-button></template>
       </el-form>
     </el-dialog>

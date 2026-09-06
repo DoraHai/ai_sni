@@ -211,6 +211,15 @@ class ReceiptInput(Scoped):
     answer_url: str = Field(min_length=1, max_length=2000)
 
 
+class AssistantReceiptInput(ReceiptInput):
+    kind: Literal['seo_qa_receipt']
+    schema_version: Literal[1]
+    placement_id: PositiveInt
+    content_version: PositiveInt
+    platform: Literal['zhihu', 'csdn_qa']
+    question_url: str = Field(min_length=1, max_length=2000)
+
+
 class MetricsInput(Scoped):
     version: PositiveInt
     views: int | None = Field(None, ge=0)
@@ -810,6 +819,19 @@ async def assistant_task(placement_id: int, tenant_id: PositiveInt, site_id: Pos
     if row.platform not in {'zhihu','csdn_qa'} or not row.question_url:
         raise HTTPException(422,'本地问答填稿目前支持知乎和 CSDN 指定问题页')
     return {'kind':'seo_qa_assist','schema_version':1,'tenant_id':tenant_id,'site_id':site_id,
-            'placement_id':row.id,'content_version':draft['content_version'],'platform':row.platform,
+            'placement_id':row.id,'version':row.version,'content_version':draft['content_version'],'platform':row.platform,
             'question_url':row.question_url,'body':draft['body'],
             'expires_at':(datetime.now(timezone.utc)+timedelta(minutes=30)).isoformat()}
+
+
+@router.post('/placements/{placement_id}/assistant-receipt')
+async def assistant_receipt(placement_id: int, req: AssistantReceiptInput, ctx=Auth, session=Db):
+    await access(session, ctx, req.tenant_id, req.site_id, True)
+    row = await record(session, SeoQaPlacement, placement_id, req.tenant_id, req.site_id, True)
+    if (req.placement_id != row.id or req.platform != row.platform or
+            req.question_url != row.question_url or req.content_version != row.content_version):
+        raise HTTPException(409, '回执与分发记录不匹配，请核对问题和稿件版本')
+    await publication_draft(placement_id, req.tenant_id, req.site_id, ctx, session)
+    check_version(row, req.version)
+    return await receipt(placement_id, ReceiptInput(tenant_id=req.tenant_id, site_id=req.site_id,
+        version=req.version, answer_url=req.answer_url), ctx, session)

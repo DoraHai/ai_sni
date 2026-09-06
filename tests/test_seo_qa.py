@@ -138,7 +138,22 @@ def test_database_full_question_answer_evidence_and_placement_lifecycle():
                 await api.receipt(placement['id'], api.ReceiptInput(tenant_id=1, site_id=1, version=1,
                     answer_url='https://www.zhihu.com/question/13/answer/14'), CTX, db)
             url = 'https://www.zhihu.com/question/12/answer/14'
-            receipt = await api.receipt(placement['id'], api.ReceiptInput(tenant_id=1, site_id=1, version=1, answer_url=url), CTX, db)
+            payload={key:exported[key] for key in ['tenant_id','site_id','placement_id','version','content_version','platform','question_url']}
+            payload.update(kind='seo_qa_receipt',schema_version=1,answer_url=url)
+            for changed in [{'placement_id':999},{'content_version':999},{'version':999},
+                            {'question_url':'https://www.zhihu.com/question/999'},
+                            {'answer_url':'https://www.zhihu.com/question/999/answer/14'}]:
+                with pytest.raises(HTTPException):
+                    await api.assistant_receipt(placement['id'],api.AssistantReceiptInput(**{**payload,**changed}),CTX,db)
+            with pytest.raises(HTTPException) as denied:
+                await api.assistant_receipt(placement['id'],api.AssistantReceiptInput(**payload),viewer,db)
+            assert denied.value.status_code==403
+            with pytest.raises(HTTPException):
+                await api.assistant_receipt(placement['id'],api.AssistantReceiptInput(**{**payload,'tenant_id':2,'site_id':2}),CTX,db)
+            receipt = await api.assistant_receipt(placement['id'],api.AssistantReceiptInput(**payload),CTX,db)
+            with pytest.raises(HTTPException) as stale_receipt:
+                await api.assistant_receipt(placement['id'],api.AssistantReceiptInput(**payload),CTX,db)
+            assert stale_receipt.value.status_code==409
             assert receipt['status'] == 'reported' and receipt['observations'] == []
             page = SimpleNamespace(body=f'<p>{fact["statement"]}</p>', final_url=url, status_code=200, error_type=None)
             with patch('app.seo_backlinks.fetch_backlink_page', new=AsyncMock(return_value=page)):
