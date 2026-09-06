@@ -276,3 +276,35 @@ def answer_quality(body, snapshots, problems):
             'linked_fact_count':len(known), 'cited_fact_count':len(refs & known),
             'manual_review':['是否直接回答了问题及其子问题','适用条件、限制和操作步骤是否完整','引用原文是否真正支持对应断言'],
             'meaning':'程序检查引用、版本与文字特征，不证明事实真实、回答完整或平台合规；无提示也不代表质量合格'}
+
+
+def extracted_candidates(raw, text):
+    rows = raw.get('candidates') if isinstance(raw,dict) else None
+    if not isinstance(rows,list) or len(rows)>20: raise ValueError('Invalid extraction list')
+    result=[]; seen=set()
+    for row in rows:
+        if not isinstance(row,dict): raise ValueError('Invalid candidate')
+        question,quote=row.get('question'),row.get('quote')
+        if not isinstance(question,str) or not 2<=len(question.strip())<=300: raise ValueError('Invalid question')
+        if not isinstance(quote,str) or not 8<=len(quote)<=3000 or quote not in text: raise ValueError('引用无法在原文中逐字定位')
+        key=fingerprint(question)
+        if key in seen: continue
+        seen.add(key);start=text.index(quote)
+        result.append({'index':len(result),'question':question.strip(),'quote':quote,'start':start,'end':start+len(quote)})
+    return result
+
+
+def semantic_quality_issues(raw, body, facts):
+    rows=raw.get('issues') if isinstance(raw,dict) else None
+    if not isinstance(rows,list) or len(rows)>20: raise ValueError('Invalid issues')
+    known={fact['id'] for fact in facts};result=[]
+    for row in rows:
+        if not isinstance(row,dict) or row.get('kind') not in {'missing_answer','missing_condition','unsupported_claim','contradiction'}: raise ValueError('Invalid issue kind')
+        quote,reason,suggestion,ids=row.get('quote'),row.get('reason'),row.get('suggestion'),row.get('fact_ids')
+        if not isinstance(quote,str) or len(quote)>2000 or (quote and quote not in body): raise ValueError('Invalid answer quote')
+        if row['kind'] in {'unsupported_claim','contradiction'} and not quote: raise ValueError('Claim needs exact quote')
+        if not isinstance(reason,str) or not 1<=len(reason.strip())<=600: raise ValueError('Invalid reason')
+        if not isinstance(suggestion,str) or not 1<=len(suggestion.strip())<=1000: raise ValueError('Invalid suggestion')
+        if not isinstance(ids,list) or len(ids)>20 or any(type(i) is not int or i not in known for i in ids): raise ValueError('Invalid fact reference')
+        result.append({'kind':row['kind'],'quote':quote,'reason':reason.strip(),'suggestion':suggestion.strip(),'fact_ids':sorted(set(ids))})
+    return result

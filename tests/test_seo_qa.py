@@ -620,3 +620,114 @@ def test_quality_hints_are_explainable_bounded_and_not_a_truth_score():
     assert report['method']=='rules' and 'score' not in report and report['manual_review']
     limited=answer_quality('价格100元\n'*60,[],['缺少资料'])
     assert limited['hints_total']==60 and len(limited['hints'])==50 and limited['blocking_issues']==['缺少资料']
+
+
+def test_document_quote_and_semantic_issue_references_are_strict():
+    from app.seo_qa import extracted_candidates, semantic_quality_issues
+    text='  设备仅适用于室内环境，额定功率15kW，使用前必须确认电源和环境条件。  '
+    req=api.ExtractRequest(tenant_id=1,site_id=1,request_id='test-document-123',text=text,source_name='手册')
+    assert req.text==text
+    origin={'kind':'document','name':'手册','document_hash':'v1','quote_start':0,'quote_end':20}
+    assert api.source_identity(origin)!=api.source_identity({**origin,'document_hash':'v2'})
+    assert api.source_identity(origin)!=api.source_identity({**origin,'quote_start':1})
+    quote='设备仅适用于室内环境，额定功率15kW'
+    rows=extracted_candidates({'candidates':[{'question':'设备适用条件？','quote':quote}]},text)
+    assert text[rows[0]['start']:rows[0]['end']]==quote and rows[0]['start']==2
+    with pytest.raises(ValueError): extracted_candidates({'candidates':[{'question':'设备适用条件？','quote':'设备可用于室外，功率150kW'}]},text)
+    issue={'kind':'contradiction','quote':'室外可用','fact_ids':[1],'reason':'与室内条件不一致','suggestion':'按资料保留室内条件'}
+    assert semantic_quality_issues({'issues':[issue]},'室外可用',[{'id':1}])[0]['fact_ids']==[1]
+    for changed in [{'quote':'不存在的正文'},{'fact_ids':[True]},{'fact_ids':[99]},{'quote':''},{'kind':'approved'}]:
+        with pytest.raises(ValueError): semantic_quality_issues({'issues':[{**issue,**changed}]},'室外可用',[{'id':1}])
+    for indices in [[True],[0,0],[-1],[20]]:
+        with pytest.raises(ValidationError): api.AcceptCandidates(tenant_id=1,site_id=1,indices=indices)
+
+
+@pytest.mark.parametrize('mode',['success','invalid','foreign','readonly','replay'])
+def test_document_extraction_validates_refunds_and_never_auto_imports(mode):
+    async def scenario(sessions):
+        async with sessions() as db:
+            text='设备仅适用于室内环境，额定功率15kW，使用前必须确认电源和环境条件。'
+            req=api.ExtractRequest(tenant_id=2 if mode=='foreign' else 1,site_id=1,request_id='document-test-123',text=text,source_name='手册')
+            async def generate(*args,**kwargs):
+                if mode=='replay':
+                    from app.seo_ai_operations import SeoAiReplay
+                    raise SeoAiReplay({'action':'qa_extract','operation_id':'cached','candidates':[]})
+                kwargs['usage_receipt'].update(operation_id='op-document',date='2026-09-06')
+                return {'candidates':[{'question':'设备适用条件？','quote':'不存在的原文内容' if mode=='invalid' else text}]}
+            async def settle(*args,**kwargs): return kwargs['result']
+            viewer=AuthContext(8,'viewer','view',1,{'seo.content':'view'})
+            with patch('app.ai.deepseek.is_enabled',return_value=True),patch('app.api.seo._limited_seo_chat_json',new=AsyncMock(side_effect=generate)) as ai,patch('app.api.seo._refund_failed_seo_ai_request',new=AsyncMock()) as refund,patch('app.seo_ai_operations.settle_seo_ai_operation',new=AsyncMock(side_effect=settle)):
+                if mode in ['success','replay']:
+                    result=await api.extract_document(req,CTX,db)
+                    assert result['action']=='qa_extract'
+                    if mode=='success': assert result['candidates'][0]['quote']==text
+                    refund.assert_not_awaited()
+                else:
+                    with pytest.raises(HTTPException): await api.extract_document(req,viewer if mode=='readonly' else CTX,db)
+                    if mode=='invalid': refund.assert_awaited_once()
+                    else: ai.assert_not_awaited()
+            assert not list(await db.scalars(select(SeoQuestion))) and not list(await db.scalars(select(SeoQaFact)))
+    database(scenario)
+
+
+def test_document_accept_is_actor_scoped_atomic_idempotent_and_expiring():
+    async def scenario(sessions):
+        now=datetime.now(timezone.utc).replace(tzinfo=None)
+        async with sessions() as db:
+            result={'action':'qa_extract','operation_id':'extract-op','source_name':'手册','source_url':None,'source_hash':'x'*64,
+                'candidates':[{'index':0,'question':'设备怎么使用？','quote':'使用设备前应确认电源与环境条件。','start':0,'end':18}], 'accepted':{}}
+            db.add(SeoAiOperation(id='extract-op',tenant_id=1,site_id=1,request_key='extract-op-key',request_hash='a'*64,
+                actor='7',kind='qa_extract',charged_on=now.date().isoformat(),status='succeeded',expires_at=now+timedelta(minutes=15),completed_at=now,result=result))
+            await db.commit()
+            with patch('app.seo_ai_operations._module',new=AsyncMock()):
+                req=api.AcceptCandidates(tenant_id=1,site_id=1,indices=[0])
+                with pytest.raises(HTTPException): await api.accept_document_candidates('extract-op',req,AuthContext(8,'other','operator',1,{'seo.content':'edit'}),db)
+                with pytest.raises(HTTPException): await api.accept_document_candidates('extract-op',api.AcceptCandidates(tenant_id=1,site_id=1,indices=[0,1]),CTX,db)
+                assert not list(await db.scalars(select(SeoQaFact)))
+                with patch('app.api.seo_qa.add_question',new=AsyncMock(side_effect=HTTPException(422,'模拟来源冲突'))):
+                    with pytest.raises(HTTPException): await api.accept_document_candidates('extract-op',req,CTX,db)
+                await db.rollback()
+                assert not list(await db.scalars(select(SeoQaFact)))
+                assert not (await db.get(SeoAiOperation,'extract-op')).result['accepted']
+                first=await api.accept_document_candidates('extract-op',req,CTX,db)
+                assert (await api.accept_document_candidates('extract-op',req,CTX,db))==first
+                assert len(list(await db.scalars(select(SeoQaFact))))==1
+                assert len(list(await db.scalars(select(SeoQuestion))))==1
+                assert not list(await db.scalars(select(SeoQaAnswer)))
+                history=await api.research_history(1,1,'extract',None,CTX,db)
+                assert len(history['items'])==1
+                assert (await api.research_result('extract-op',1,1,CTX,db))['accepted']==first['accepted']
+                row=await db.get(SeoAiOperation,'extract-op');row.completed_at=now-timedelta(days=31);await db.commit()
+                with pytest.raises(HTTPException): await api.accept_document_candidates('extract-op',req,CTX,db)
+    database(scenario)
+
+
+@pytest.mark.parametrize('mode',['success','invalid','stale','expired_fact'])
+def test_semantic_quality_uses_saved_scoped_evidence_without_mutation(mode):
+    async def scenario(sessions):
+        async with sessions() as db:
+            imported=await api.import_questions(api.ImportQuestions(tenant_id=1,site_id=1,items=[{'title':'设备能在室外使用吗？'}]),CTX,db)
+            fact=await api.create_fact(api.FactInput(tenant_id=1,site_id=1,title='适用环境',statement='设备仅适用于室内环境。',source_name='手册'),CTX,db)
+            answer=await api.create_answer(api.AnswerInput(tenant_id=1,site_id=1,question_id=imported['ids'][0],body=f'室外也能使用[F{fact["id"]}]',fact_ids=[fact['id']]),CTX,db)
+            if mode=='expired_fact':
+                row=await db.get(SeoQaFact,fact['id']);row.status='retired';await db.commit()
+            req=api.QualityRequest(tenant_id=1,site_id=1,answer_id=answer['id'],content_version=999 if mode=='stale' else answer['content_version'],request_id='quality-test-123')
+            async def generate(*args,**kwargs):
+                kwargs['usage_receipt'].update(operation_id='quality-op',date='2026-09-06')
+                return {'issues':[{'kind':'contradiction','quote':'室外也能使用','fact_ids':[999 if mode=='invalid' else fact['id']], 'reason':'与资料中室内条件不一致','suggestion':'保留室内适用条件'}]}
+            async def settle(*args,**kwargs): return kwargs['result']
+            with patch('app.ai.deepseek.is_enabled',return_value=True),patch('app.api.seo._limited_seo_chat_json',new=AsyncMock(side_effect=generate)) as ai,patch('app.api.seo._refund_failed_seo_ai_request',new=AsyncMock()) as refund,patch('app.seo_ai_operations.settle_seo_ai_operation',new=AsyncMock(side_effect=settle)):
+                if mode=='success':
+                    result=await api.analyze_answer_quality(req,CTX,db)
+                    assert result['answer_id']==answer['id'] and result['issues'][0]['kind']=='contradiction' and result['current']
+                    stored_fact=await db.get(SeoQaFact,fact['id']);stored_fact.version+=1;await db.flush()
+                    assert not await api.quality_snapshot_current(db,1,1,result)
+                    assert ai.await_args.kwargs['operation']['kind']=='qa_quality'
+                    refund.assert_not_awaited()
+                else:
+                    with pytest.raises(HTTPException): await api.analyze_answer_quality(req,CTX,db)
+                    if mode=='invalid': refund.assert_awaited_once()
+                    else: ai.assert_not_awaited()
+            content=await db.get(SeoContentAsset,answer['content_id'])
+            assert content.status=='drafting' and content.version_count==answer['content_version']
+    database(scenario)

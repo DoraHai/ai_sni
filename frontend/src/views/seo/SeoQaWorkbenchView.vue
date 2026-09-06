@@ -7,6 +7,7 @@ import { currentTenantId, session } from '../../store/session'
 import { currentSeoSiteId as siteId } from './seoSiteContext'
 import './seo-suite.css'
 import SeoQaPlanning from './SeoQaPlanning.vue'
+import SeoQaResearch from './SeoQaResearch.vue'
 import { publisherZip } from './seoPublisher'
 import qaRunnerSource from './publisher-runner/qa_runner.py?raw'
 import runnerSource from './publisher-runner/runner.py?raw'
@@ -135,7 +136,7 @@ function backlinkSummary(observation) {
   return `回答所在页面发现 ${result.found} 条官网链接，本次新增 ${result.created} 条外链资产`
 }
 const labels = { open: '待选题', selected: '已选题', archived: '已归档', planned: '草稿', drafting: '草稿', review: '待审核', ready: '已审核', published: '已发布', prepared: '待人工发布', reported: '已回填 · 待核验', content_observed: '页面正文匹配', not_observed: '未观测到正文', unavailable: '暂时无法核验' }
-const kinds = { manual: '人工录入', customer: '客服/销售', import: 'CSV 导入', suggestion: '建议问题', serp: '搜索结果', site_search:'站内搜索', search_console:'搜索平台数据' }
+const kinds = { document:'资料推导（AI）', manual: '人工录入', customer: '客服/销售', import: 'CSV 导入', suggestion: '建议问题', serp: '搜索结果', site_search:'站内搜索', search_console:'搜索平台数据' }
 const formats = { short: '直接短答', detailed: '详细解答', steps: '操作步骤', comparison: '条件对比', faq: '官网 FAQ' }
 const dirtyAnswer = computed(() => {
   const saved = answerItems.value.find(a => a.id === answerForm.id)
@@ -325,6 +326,7 @@ watch(scopeKey, () => {
 
     <SeoQaPlanning v-if="tab==='planning'" :tenant-id="scope.tenant_id" :site-id="scope.site_id" :can-edit="canEdit" :revision="planningRevision" @open="openQuestion" @changed="load"/>
     <section v-if="tab==='facts'" class="qa-panel">
+      <SeoQaResearch :tenant-id="scope.tenant_id" :site-id="scope.site_id" :can-edit="canEdit" mode="extract" @changed="load"/>
       <div class="qa-toolbar"><div><h2>可追溯的事实资料</h2><p class="qa-hint">保存原文和资料出处。录入不代表系统已验证其真实性；过期或修改后，相关回答需要重新确认。</p></div><div class="qa-spacer"/><el-button type="primary" :disabled="!canEdit || busy || !siteId" @click="openFact()">添加事实</el-button></div>
       <el-table :data="facts" empty-text="添加产品手册、服务说明或可核实案例中的事实。"><el-table-column label="编号" width="80"><template #default="{row}">F{{ row.id }}</template></el-table-column><el-table-column prop="title" label="事实" min-width="190"/><el-table-column prop="source_name" label="出处" min-width="190"/><el-table-column label="有效性" width="140"><template #default="{row}"><el-tag :type="row.current?'success':'warning'">{{ row.current?'可引用':'已过期 / 停用' }}</el-tag></template></el-table-column><el-table-column label="操作" width="90"><template #default="{row}"><el-button text :disabled="!canEdit || busy" @click="openFact(row)">查看编辑</el-button></template></el-table-column></el-table>
     </section>
@@ -382,6 +384,7 @@ watch(scopeKey, () => {
           </template>
           <details><summary>本回答保存时的引用原文</summary><p v-for="f in answerItems.find(a=>a.id===answerForm.id).fact_snapshots" :key="f.id">[F{{ f.id }}] {{ f.title }} · 版本 {{ f.version }}<br/>{{ f.statement }}<br/>来源：{{ f.source_name }} <a v-if="href(f.source_url)" :href="href(f.source_url)" target="_blank" rel="noopener noreferrer">查看出处</a></p></details>
         </section>
+        <SeoQaResearch v-if="answerForm.id" :key="answerForm.id" :tenant-id="scope.tenant_id" :site-id="scope.site_id" :can-edit="canEdit" mode="quality" :answer-id="answerForm.id" :content-version="answerForm.content_version" :question-version="questionDetail?.question?.version||selected.version" :blocked="dirtyAnswer||busy||!!answerItems.find(a=>a.id===answerForm.id)?.problems?.length"/>
         <div v-if="answerForm.id" class="qa-review"><p v-if="dirtyAnswer" class="qa-warning">有未保存的修改。请保存后再提交审核或准备分发。</p><p v-for="p in answerItems.find(a=>a.id===answerForm.id)?.problems||[]" :key="p" class="qa-warning">{{ p }}</p><el-input v-model="reviewNote" placeholder="审核意见，退回时必填" :disabled="!canEdit || busy"/><div class="qa-toolbar"><el-button v-if="['planned','drafting'].includes(answerForm.status)" :disabled="!canEdit || busy" @click="review('submit')">提交已保存版本审核</el-button><template v-if="answerForm.status==='review'"><el-button type="success" :disabled="!canEdit || busy" @click="review('approve')">审核通过</el-button><el-button :disabled="!canEdit || busy || !reviewNote.trim()" @click="review('reject')">退回修改</el-button></template><el-button v-if="['ready','published'].includes(answerForm.status)" type="primary" :disabled="!canEdit || busy" @click="openPlacement">准备分发</el-button></div></div>
       </template>
     </el-drawer>
