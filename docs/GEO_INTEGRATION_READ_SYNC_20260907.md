@@ -97,8 +97,9 @@ GET /api/v1/geo/integration/read/questions?tenant_id=16&limit=50&before_id=120
         "name": "驱动产品",
         "status": "active"
       },
-      "created_at": "2026-09-01T01:00:00Z",
-      "updated_at": "2026-09-06T08:00:00Z"
+      "created_at": "2026-09-01T01:00:00",
+      "updated_at": "2026-09-06T08:00:00",
+      "timestamp_source_timezone": "unknown"
     }
   ]
 }
@@ -108,6 +109,13 @@ GET /api/v1/geo/integration/read/questions?tenant_id=16&limit=50&before_id=120
 没有回答正式准入结论，也不能作为正式指标样本清单。正式指标仍只读取
 `/integration/metrics/snapshot`；回答详情必须单独保留真实、人工、模拟、未知来源以及
 逐条排除原因。
+
+`geo_prompts.created_at` 和 `updated_at` 的历史数据库类型是 PostgreSQL
+`timestamp without time zone`，由数据库 `now()` 或旧写入路径生成，仓库没有能够证明所有
+历史值统一采用 UTC 或上海时区的约束。因此接口按实际值返回不带 offset 的 ISO 时间，并以
+`timestamp_source_timezone: "unknown"` 明示来源时区未知；消费方不得给它补 `Z`，也不得在
+未知来源时区之间做绝对时刻比较。`evaluated_at` 是接口本次查询时刻，单独使用带 offset 的
+UTC 时间。
 
 ### 隔离与只读保证
 

@@ -189,6 +189,14 @@ def test_questions_use_native_readonly_transaction_and_tenant_entitlement():
                     assert first.status_code == 200
                     first_body = first.json()
                     assert [item["ref"]["id"] for item in first_body["items"]] == [105, 104]
+                    assert all(
+                        item["timestamp_source_timezone"] == "unknown"
+                        and not item["created_at"].endswith("Z")
+                        and "+" not in item["created_at"]
+                        and not item["updated_at"].endswith("Z")
+                        and "+" not in item["updated_at"]
+                        for item in first_body["items"]
+                    )
                     assert first_body["pagination"]["next_before_id"] == 104
 
                     second = await client.get(

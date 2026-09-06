@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -17,7 +17,7 @@ from app.models import GeoOptimizationBusiness, GeoOptimizationUnit, GeoPrompt
 from app.security.auth import AuthContext, require_scoped_auth
 
 
-NOW = datetime(2026, 9, 7, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 7, 9, 0, 0)
 
 
 class ReadOnlyFakeSession:
@@ -132,6 +132,9 @@ def test_endpoint_returns_stable_refs_and_does_not_expose_internal_owner_fields(
     assert body["items"][0]["unit_ref"]["id"] == 8
     assert body["items"][0]["business_ref"]["id"] == 3
     assert body["items"][0]["question_source"] == "manual"
+    assert body["items"][0]["created_at"] == "2026-09-07T09:00:00"
+    assert body["items"][0]["updated_at"] == "2026-09-07T09:00:00"
+    assert body["items"][0]["timestamp_source_timezone"] == "unknown"
     assert "owner_user_id" not in body["items"][0]
     assert "created_by" not in body["items"][0]
     assert "demand_note" not in body["items"][0]

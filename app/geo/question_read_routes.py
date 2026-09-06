@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -48,6 +49,7 @@ class QuestionReadItem(BaseModel):
     business_ref: QuestionScopeRef | None
     created_at: datetime
     updated_at: datetime
+    timestamp_source_timezone: Literal["unknown"] = "unknown"
 
 
 class QuestionPagination(BaseModel):
