@@ -16,6 +16,8 @@ const tab = ref('questions'), busy = ref(false), loading = ref(false), error = r
 const items = ref([]), facts = ref([]), placements = ref([]), maintenance = ref([]), platforms = ref([])
 const total = ref(0), page = ref(1), query = ref(''), status = ref('')
 const selected = ref(null), answerItems = ref([]), dialog = ref(''), importing = ref('')
+const importPreview = ref(null)
+const previewActions = {new_question:'新增问题',new_source:'新增来源',correction:'修正统计',unchanged:'无需更改'}
 const sourceKind = ref('manual'), sourceName = ref('人工录入'), sourceUrl = ref('')
 const factForm = reactive({ id: null, title: '', statement: '', source_name: '', source_url: '', expires_at: null, status: 'active', version: 1 })
 const questionForm = reactive({ topic: '', intent: 'learn', relevance: 3, owner: '', status: 'open', version: 1 })
@@ -96,7 +98,7 @@ const dirtyAnswer = computed(() => {
 })
 let loadSequence = 0, answerSequence = 0
 
-function messageOf(e) { const detail = e?.response?.data?.detail; return typeof detail === 'string' ? detail : e?.message || '操作失败，请重试' }
+function messageOf(e) { const detail = e?.response?.data?.detail; return typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.slice(0,3).map(item=>item.msg).join('；') : detail?.message || e?.message || '操作失败，请重试' }
 function date(value) { return value ? new Date(value).toLocaleString('zh-CN') : '未知' }
 function href(value) { try { const u = new URL(value); return ['https:', 'http:'].includes(u.protocol) ? u.href : null } catch { return null } }
 function platformName(key) { return platforms.value.find(p => p.key === key)?.name || key }
@@ -149,8 +151,22 @@ async function refreshAnswers(id) {
   answerItems.value = result
   if (id) { const answer = result.find(a => a.id === id); if (answer) editAnswer(answer) }
 }
+function importPayload() {
+  return dialog.value === 'csv' ? {csv:importing.value} : {items:importing.value.split('\n').map(t=>t.trim()).filter(Boolean).map(title=>({title,source:{kind:sourceKind.value,name:sourceName.value,url:sourceUrl.value||null}}))}
+}
+async function previewImport() {
+  if(busy.value || !canEdit.value) return
+  const key=scopeKey.value, signature=JSON.stringify(importPayload())
+  busy.value=true;error.value='';importPreview.value=null
+  try {
+    const result=await seoQaPost('questions/import/preview',{...scope.value,...importPayload()})
+    if(key===scopeKey.value && signature===JSON.stringify(importPayload())) importPreview.value=result
+  } catch(e) {if(key===scopeKey.value) error.value=messageOf(e)}
+  finally {busy.value=false}
+}
 function importQuestions() {
-  const payload = dialog.value === 'csv' ? { csv: importing.value } : { items: importing.value.split('\n').map(t => t.trim()).filter(Boolean).map(title => ({ title, source: { kind: sourceKind.value, name: sourceName.value, url: sourceUrl.value || null } })) }
+  if (!importPreview.value) { error.value='请先预览导入结果'; return }
+  const payload = {...importPayload(),preview_token:importPreview.value.preview_token}
   return act(p => seoQaPost('questions/import', { ...p, ...payload }), result => { dialog.value = ''; importing.value = ''; ElMessage.success(`新增 ${result.created} 个，合并 ${result.merged} 个`) })
 }
 function discover() { return act(p => seoQaPost('questions/discover', p), r => ElMessage.success(`新增 ${r.created} 个问题；检查了 ${r.examined} 条已采集结果`)) }
@@ -230,6 +246,7 @@ function findMaintenanceQuestion(item) {
   tab.value = 'questions'; query.value = item.title; status.value = ''
   return search()
 }
+watch([importing,sourceKind,sourceName,sourceUrl,dialog,scopeKey],()=>{importPreview.value=null})
 watch(scopeKey, () => {
   batchStop.value = true; batchResults.value = []; followupOnly.value = false
   ++answerSequence; selected.value = null; items.value = []; facts.value = []; placements.value = []; maintenance.value = []; platforms.value = []
@@ -300,7 +317,7 @@ watch(scopeKey, () => {
 
     <el-dialog :model-value="!!dialog" :title="({import:'录入问题',csv:'批量导入问题',fact:'事实证据',placement:'准备问答分发',receipt:'回填回答网址',metrics:'录入平台数据'})[dialog]" width="min(680px,94vw)" :close-on-click-modal="false" :show-close="!busy" :close-on-press-escape="!busy" @close="dialog=''">
       <el-alert v-if="error" :title="error" type="error" :closable="false"/><el-form label-position="top" :disabled="busy || !canEdit">
-        <template v-if="['import','csv'].includes(dialog)"><p>{{ dialog==='csv'?'问题列：title,source_url,source_name,topic；需求记录增加 source_kind,count,metric,period_start,period_end,definition。最多 200 行，UTF-8 编码。':'每行一个问题，同类重复问题会合并来源。' }}</p><el-button v-if="dialog==='csv'" @click="downloadDemandTemplate">下载需求数据模板</el-button><p v-if="dialog==='csv'" class="qa-hint">模板是示例，导入前请替换为真实数据。source_kind：customer / site_search / search_console；metric：inquiries / searches / impressions / clicks。同一来源、指标及日期窗口重复导入按最新值更新，不累计；不同窗口独立保留。</p><input v-if="dialog==='csv'" type="file" accept=".csv" @change="readCsv"/><el-form-item v-if="dialog==='import'" label="来源类型"><el-select v-model="sourceKind"><el-option v-for="k in ['manual','customer','suggestion']" :key="k" :value="k" :label="kinds[k]"/></el-select></el-form-item><el-form-item v-if="dialog==='import'" label="出处名称"><el-input v-model="sourceName" maxlength="240"/></el-form-item><el-form-item v-if="dialog==='import'" label="来源网址（可选）"><el-input v-model="sourceUrl"/></el-form-item><el-input v-model="importing" type="textarea" :rows="10"/><el-button type="primary" @click="importQuestions">导入问题</el-button></template>
+        <template v-if="['import','csv'].includes(dialog)"><p>{{ dialog==='csv'?'问题列：title,source_url,source_name,topic；需求记录增加 source_kind,count,metric,period_start,period_end,definition。最多 200 行，UTF-8 编码。':'每行一个问题，同类重复问题会合并来源。' }}</p><el-button v-if="dialog==='csv'" @click="downloadDemandTemplate">下载需求数据模板</el-button><p v-if="dialog==='csv'" class="qa-hint">模板是示例，导入前请替换为真实数据。source_kind：customer / site_search / search_console；metric：inquiries / searches / impressions / clicks。同一来源、指标及日期窗口重复导入按最新值更新，不累计；不同窗口独立保留。</p><input v-if="dialog==='csv'" type="file" accept=".csv" @change="readCsv"/><el-form-item v-if="dialog==='import'" label="来源类型"><el-select v-model="sourceKind"><el-option v-for="k in ['manual','customer','suggestion']" :key="k" :value="k" :label="kinds[k]"/></el-select></el-form-item><el-form-item v-if="dialog==='import'" label="出处名称"><el-input v-model="sourceName" maxlength="240"/></el-form-item><el-form-item v-if="dialog==='import'" label="来源网址（可选）"><el-input v-model="sourceUrl"/></el-form-item><el-input v-model="importing" type="textarea" :rows="10"/><el-button @click="previewImport">预览导入结果</el-button><div v-if="importPreview"><p>{{ Object.entries(importPreview.summary).map(([key,count])=>`${previewActions[key]} ${count}`).join(' · ') }}</p><p v-for="r in importPreview.rows" :key="r.row" class="qa-hint">记录 {{ r.row }} · {{ r.title }} · {{ previewActions[r.action] }}<span v-if="r.action==='correction'"> · {{ r.previous_count }} → {{ r.count }}</span></p></div><el-button type="primary" :disabled="!importPreview" @click="importQuestions">按预览导入</el-button></template>
         <template v-if="dialog==='fact'"><el-form-item label="事实标题"><el-input v-model="factForm.title" maxlength="240"/></el-form-item><el-form-item label="事实原文"><el-input v-model="factForm.statement" type="textarea" :rows="6" maxlength="10000"/></el-form-item><el-form-item label="出处名称 / 文档版本"><el-input v-model="factForm.source_name" maxlength="240"/></el-form-item><el-form-item label="来源网址（可选）"><el-input v-model="factForm.source_url"/></el-form-item><el-form-item label="有效期（可选）"><el-date-picker v-model="factForm.expires_at" type="datetime"/></el-form-item><el-form-item label="使用状态"><el-select v-model="factForm.status"><el-option value="active" label="启用"/><el-option value="retired" label="停用"/></el-select></el-form-item><el-button type="primary" @click="saveFact">保存事实</el-button></template>
         <template v-if="dialog==='placement'"><el-form-item label="发布平台"><el-select v-model="placementForm.platform"><el-option v-for="p in platforms" :key="p.key" :value="p.key" :label="p.name"/></el-select></el-form-item><p>{{ platforms.find(p=>p.key===placementForm.platform)?.description }}</p><el-form-item v-if="placementForm.platform!=='website'" label="要回答的问题网址"><el-input v-model="placementForm.question_url"/></el-form-item><el-form-item label="计划发布时间（不会自动代发）"><el-date-picker v-model="placementForm.scheduled_at" type="datetime"/></el-form-item><el-button type="primary" @click="prepare">生成审核稿与发布记录</el-button></template>
         <template v-if="dialog==='receipt'"><p>回填后状态为待核验，不会直接记为发布成功。</p><el-form-item label="回答网址"><el-input v-model="receiptForm.answer_url"/></el-form-item><el-button type="primary" @click="saveReceipt">保存网址</el-button></template>

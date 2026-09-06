@@ -520,3 +520,41 @@ def test_demand_import_replay_correction_and_separate_periods():
             await import_source({**source,'period_start':'2026-01-08','period_end':'2026-01-14'});await db.refresh(row)
             assert len(row.sources)==2 and row.version==3
     database(scenario)
+
+
+
+def test_import_preview_is_read_only_and_stale_token_cannot_overwrite():
+    async def scenario(sessions):
+        async with sessions() as db:
+            source={'kind':'customer','name':'工单','count':12,'metric':'inquiries',
+                'period_start':'2026-01-01','period_end':'2026-01-07','definition':'有效工单计数'}
+            def req(count, token=None):
+                return api.ImportQuestions(tenant_id=1,site_id=1,items=[{'title':'如何排查故障','source':{**source,'count':count}}],preview_token=token)
+            preview=await api.preview_questions(req(12),CTX,db)
+            assert preview['summary']['new_question']==1
+            assert await db.scalar(select(SeoQuestion)) is None
+            imported=await api.import_questions(req(12,preview['preview_token']),CTX,db)
+            row=await db.get(SeoQuestion,imported['ids'][0])
+            correction=await api.preview_questions(req(15),CTX,db)
+            assert correction['rows'][0]['previous_count']==12 and correction['summary']['correction']==1
+            assert row.sources[0]['count']==12
+            await api.import_questions(req(20),CTX,db)
+            with pytest.raises(HTTPException) as error:
+                await api.import_questions(req(15,correction['preview_token']),CTX,db)
+            assert error.value.status_code==409
+            await db.rollback();await db.refresh(row)
+            assert row.sources[0]['count']==20
+            duplicate=await api.preview_questions(req(20),CTX,db)
+            assert duplicate['summary']['unchanged']==1
+    database(scenario)
+
+
+def test_import_rejects_duplicate_headers_uneven_rows_and_conflicting_window():
+    for value in ['title,title\n如何处理,如何处理','title,topic\n如何处理','title\n如何处理,多余列']:
+        with pytest.raises((ValueError,ValidationError)): api.ImportQuestions(tenant_id=1,site_id=1,csv=value)
+    base='title,source_kind,source_name,count,metric,period_start,period_end,definition\n'
+    row='如何排查,customer,工单,12,inquiries,2026-01-01,2026-01-07,按工单计数'
+    with pytest.raises(ValidationError,match='冲突'):
+        api.ImportQuestions(tenant_id=1,site_id=1,csv=base+row+'\n'+row.replace(',12,',',15,'))
+    with pytest.raises(ValidationError,match='第 2 条记录'):
+        api.ImportQuestions(tenant_id=1,site_id=1,csv=base+row.replace('2026-01-07','bad-date'))
