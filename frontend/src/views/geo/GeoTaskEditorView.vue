@@ -56,6 +56,7 @@ import {
   getGeoChannelDraftGate,
   getGeoPrototypeEditorSurface,
 } from '../../utils/geoEditorSurface'
+import GeoLaunchChecklist from '../../components/GeoLaunchChecklist.vue'
 import RichTextMarkdownEditor from '../../components/RichTextMarkdownEditor.vue'
 
 import { createEditorContext } from '../../utils/geoEditorContext'
@@ -87,6 +88,17 @@ const loading = ref(false)
 const busy = ref('')
 const error = ref('')
 const task = ref(null)
+const launchChecklist = ref(null)
+function submitReview() { launchChecklist.value?.requestReview() }
+const reviewDraftChanged = computed(() => {
+  if (!task.value?.article) return false
+  if (article.title.trim() !== task.value.article.title?.trim() || sanitizeDraftHeadings(stripCiteAppendix(article.body_markdown)) !== sanitizeDraftHeadings(stripCiteAppendix(task.value.article.body_markdown || ''))) return true
+  if (docTab.value !== 'master') {
+    const saved = (task.value.variants || []).find(v => v.channel === docTab.value)
+    if (saved && (variantEdit.title !== saved.title || variantEdit.body_markdown !== saved.body_markdown)) return true
+  }
+  return false
+})
 const allFacts = ref([])
 const catalog = ref(null)
 const checkResult = ref(null)
@@ -3074,6 +3086,7 @@ onMounted(load)
       </div>
     </header>
 
+    <GeoLaunchChecklist v-if="task" ref="launchChecklist" :tenant-id="tenantId" :task="task" :disabled="!!busy || loading || reviewDraftChanged" @changed="load" />
     <div v-if="task" class="ed-body">
       <aside v-show="!focusMode" class="ed-left">
         <div class="ed-tabs">

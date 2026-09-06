@@ -1,0 +1,1 @@
+运行 `node frontend/tests/local-geo-evidence/server.mjs`，访问 `/tests/local-geo-checklist/index.html`。内存模拟单次客户确认、缺少账号及等待基线状态，不调用生产。

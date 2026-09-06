@@ -15,3 +15,5 @@ export const start = (tenant, id) => client.patch(`${base}/${id}`, { status: 'in
 export const cancel = (tenant, id) => client.patch(`${base}/${id}`, { status: 'cancelled' }, config(tenant))
 
 export const baselineReadiness = (tenant, id) => client.get(`${base}/${id}/baseline-readiness`, config(tenant))
+
+export const listForContent = (tenant, contentId) => client.get(base, { params: { tenant_id: tenant, content_task_id: contentId, limit: 200 } })

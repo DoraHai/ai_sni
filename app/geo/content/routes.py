@@ -7858,6 +7858,12 @@ async def decide_task_review(
     ctx.ensure_tenant(tenant_id)
     task = await _get_task(session, task_id, tenant_id)
     await session.refresh(task, with_for_update=True)
+    if req.expected_article_id is not None:
+        article = await _latest_article(session, task.id)
+        if article is None or article.id != req.expected_article_id:
+            raise HTTPException(409, "稿件版本已变化，请刷新后重新审核")
+    if req.expected_updated_at is not None and req.expected_updated_at != _iso(task.updated_at):
+        raise HTTPException(409, "任务或渠道稿已变化，请刷新后重新审核")
     try:
         apply_decision(
             task,

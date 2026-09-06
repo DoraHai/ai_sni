@@ -190,10 +190,14 @@ async def create_task(req: TaskCreate, tenant_id: int = Query(...),
 @router.get('/tasks', response_model=list[TaskContract])
 async def list_tasks(tenant_id: int = Query(...), status: Literal['open','in_progress','done','cancelled'] | None = None,
                      limit: int = Query(100, ge=1, le=200), after_id: int = Query(0, ge=0),
-                     ctx=Depends(require_scoped_auth), session=Depends(get_session)):
+                     ctx=Depends(require_scoped_auth), session=Depends(get_session), content_task_id: int | None = None):
     ctx.ensure_tenant(tenant_id)
     query = select(GeoActionTicket).where(GeoActionTicket.tenant_id == tenant_id,
         GeoActionTicket.advice_code == PREFIX+'task', GeoActionTicket.id > after_id)
+    if content_task_id is not None:
+        if content_task_id <= 0:
+            raise HTTPException(422, 'content_task_id 必须为正整数')
+        query = query.where(GeoActionTicket.progress_first['params']['content_task_id'].as_integer() == content_task_id)
     if status:
         query = query.where(GeoActionTicket.status == REVERSE_STATUS[status])
     rows = list(await session.scalars(query.order_by(GeoActionTicket.id).limit(limit)))

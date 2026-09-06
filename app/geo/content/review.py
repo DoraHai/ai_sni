@@ -54,7 +54,6 @@ def apply_decision(
     decision: str,
     note: str | None,
     reviewer_id: int | None,
-    allow_self_approve: bool | None = None,
 ) -> None:
     decision_norm = str(decision or "").strip().lower()
     if decision_norm not in {REVIEW_APPROVED, REVIEW_REJECTED}:
@@ -63,25 +62,7 @@ def apply_decision(
         raise ValueError("仅「待审」任务可审批")
     if decision_norm == REVIEW_APPROVED and reviewer_id is None:
         raise ValueError("审批通过需要已登录的审核人员账号，API Key 不能代替审核身份")
-    if allow_self_approve is None:
-        try:
-            from app.config import get_settings
-
-            allow_self_approve = bool(
-                getattr(get_settings(), "geo_allow_self_review", False)
-            )
-        except Exception:  # noqa: BLE001
-            allow_self_approve = False
-    if (
-        not allow_self_approve
-        and decision_norm == REVIEW_APPROVED
-        and reviewer_id is not None
-    ):
-        submitter = getattr(task, "review_submitted_by", None)
-        if submitter is None:
-            submitter = getattr(task, "owner_user_id", None)
-        if submitter is not None and int(submitter) == int(reviewer_id):
-            raise ValueError("禁止自审自批：请由其他账号审批通过后再发布")
+    # One customer review is sufficient; author and reviewer may be the same account.
     task.review_status = decision_norm
     task.review_note = (note or "").strip() or None
     task.reviewed_by = reviewer_id

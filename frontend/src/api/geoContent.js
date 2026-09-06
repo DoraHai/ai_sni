@@ -716,10 +716,10 @@ export function submitGeoTaskReview(tenantId, taskId, note = null) {
   )
 }
 
-export function decideGeoTaskReview(tenantId, taskId, decision, note = null) {
+export function decideGeoTaskReview(tenantId, taskId, decision, note = null, expected = {}) {
   return client.post(
     `/api/v1/geo/content-tasks/${taskId}/review`,
-    { decision, note },
+    { decision, note, ...expected },
     { params: { tenant_id: tenantId } },
   )
 }

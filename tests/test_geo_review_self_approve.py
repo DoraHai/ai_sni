@@ -1,4 +1,4 @@
-"""禁止自审自批。"""
+"""客户单次审核，允许同一客户账号创作并确认。"""
 
 import unittest
 from types import SimpleNamespace
@@ -7,7 +7,7 @@ from app.geo.content.review import apply_decision, apply_submit
 
 
 class SelfApproveTests(unittest.TestCase):
-    def test_block_self_approve(self):
+    def test_customer_can_approve_own_submission(self):
         task = SimpleNamespace(
             review_status="none",
             review_note=None,
@@ -19,9 +19,10 @@ class SelfApproveTests(unittest.TestCase):
         apply_submit(task, note="please review", submitter_id=7)
         self.assertEqual(task.review_status, "pending")
         self.assertEqual(task.review_submitted_by, 7)
-        with self.assertRaises(ValueError) as ctx:
-            apply_decision(task, decision="approved", note="ok", reviewer_id=7)
-        self.assertIn("自审自批", str(ctx.exception))
+        apply_decision(task, decision="approved", note="客户确认", reviewer_id=7)
+        self.assertEqual(task.review_status, "approved")
+        self.assertEqual(task.reviewed_by, 7)
+        self.assertIsNotNone(task.reviewed_at)
 
     def test_other_user_can_approve(self):
         task = SimpleNamespace(

@@ -293,6 +293,8 @@ class ReviewSubmit(BaseModel):
 
 
 class ReviewDecision(BaseModel):
+    expected_article_id: int | None = Field(None, gt=0)
+    expected_updated_at: str | None = Field(None, max_length=60)
     decision: Literal["approved", "rejected"]
     note: str | None = Field(None, max_length=2000)
 
