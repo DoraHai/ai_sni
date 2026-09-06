@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 _NUM = re.compile(
-    r"(?<![\w.])(\d+(?:\.\d+)?)\s*(%|％|个|人|名|家|秒|分钟|小时|天|日|周|月|年|万|亿|倍)?"
+    r"(?<![A-Za-z0-9_.])(\d+(?:\.\d+)?)\s*(%|％|个|人|名|家|秒|分钟|小时|天|日|周|月|年|万|亿|倍)?"
 )
 
 _STAT_UNITS = {"%", "％", "个", "人", "名", "家", "秒", "分钟", "小时", "天", "日", "万", "亿", "倍"}
@@ -44,9 +44,10 @@ _CASE_TERMS = (
 # or causal explanation. Conservative matching deliberately requires review of
 # paraphrases/translations that cannot be established from the stored statement.
 _QUALITATIVE = re.compile(
-    r"(?:适用于|适合于|可用于|可覆盖|可成为|广泛用于|例如|比如|如[：:]|诸如)[^。！？!?；;\n]{2,100}"
+    r"(?:适用于|适合于|可用于|可覆盖|可成为|广泛用于|能够胜任)[^。！？!?；;\n]{2,100}"
     r"|(?:包括|例如|如(?!果|需|有|您|你|何))[^。！？!?；;\n]{2,60}(?:设备|机械|机)[^。！？!?；;\n]{0,40}"
     r"|[^。！？!?；;\n]{0,45}(?:导致|防止|直接影响|决定了|有效降低|延长|缩短)[^。！？!?；;\n]{2,100}"
+    r"|[^。！？!?；;\n]{0,60}(?:寿命|效率|产能|性能)[^。！？!?；;\n]{0,12}(?:翻番|翻倍|倍增)"
 )
 
 
@@ -75,9 +76,43 @@ def qualitative_claims(text: str, facts: list[dict[str, Any]]) -> list[dict[str,
     body = re.sub(r"[（(]来源[：:][^）)\n]*[）)]", "", text or '')
     for match in _QUALITATIVE.finditer(body):
         span = match.group().strip()
+        # Exact reproduction of the entire source sentence keeps its subject,
+        # negation and conditions. Never exempt just a matching predicate.
+        start = max((body.rfind(c, 0, match.start()) for c in '。！？!?；;\n'), default=-1) + 1
+        end = min((pos for c in '。！？!?；;\n' if (pos := body.find(c, match.end())) >= 0), default=len(body))
+        sentence = compact(body[start:end]).strip()
+        if any(sentence and sentence == clause for source in statements
+               for clause in re.split(r'[。！？!?；;]', source)):
+            continue
         if not supported(span):
             hits.append({'kind': 'qualitative', 'token': span, 'excerpt': span[:180]})
     return hits
+
+
+_QUANTITY = r'\d+(?:,\d{3})*(?:\.\d+)?'
+_UNIT = r'(?:N[·.]?m|kW|W|MPa|kPa|Pa|mm|cm|kg|rpm|r/min|℃|°C|m|g)'
+_ENGINEERING = re.compile(
+    rf'(?<![A-Za-z0-9_.])({_QUANTITY})\s*(?:({_UNIT})\s*)?'
+    rf'(?:至|到|to|[-–—~～])\s*({_QUANTITY})\s*({_UNIT})(?![A-Za-z])'
+    rf'|(?<![A-Za-z0-9_.])({_QUANTITY})\s*({_UNIT})(?![A-Za-z])'
+)
+
+
+def engineering_quantities(text: str) -> list[tuple[str, str]]:
+    from decimal import Decimal
+    def num(value):
+        return str(Decimal(value.replace(',', '')).normalize())
+    def unit(value):
+        return value.replace('·', '').replace('.', '').replace('℃', '°C').replace('r/min', 'rpm')
+    result = []
+    for match in _ENGINEERING.finditer(text or ''):
+        low, first_unit, high, last_unit, single, single_unit = match.groups()
+        if single is not None:
+            key = num(single) + ' ' + unit(single_unit)
+        else:
+            key = num(low) + ' ' + unit(first_unit or last_unit) + '..' + num(high) + ' ' + unit(last_unit)
+        result.append((key, match.group()))
+    return result
 
 
 def _norm_num(raw: str) -> str:
@@ -169,11 +204,16 @@ def ungrounded_claims(text: str, facts: list[dict[str, Any]]) -> list[dict[str, 
         hits.append({"kind": kind, "token": token, "excerpt": excerpt[:80]})
 
     allowed_n = {norm_stat_token(x) for x in allowed if str(x).strip()}
+    sql_patterns = [x.span() for x in re.finditer(r"\bLIKE\s+'[^'\n]*'", body, re.I)]
     for m in _NUM.finditer(body):
         unit = m.group(2) or ""
         token = _norm_num(m.group(0))
         num = _norm_num(m.group(1))
         compact = norm_stat_token(token)
+        # A SQL LIKE wildcard is syntax, not a percentage assertion. Limit
+        # this exception to the quoted pattern, not its surrounding sentence.
+        if any(a <= m.start() and m.end() <= b for a, b in sql_patterns):
+            continue
         if unit not in _STAT_UNITS:
             continue
         if _is_calendar_token(num, unit):
@@ -192,6 +232,11 @@ def ungrounded_claims(text: str, facts: list[dict[str, Any]]) -> list[dict[str, 
     for term in _CASE_TERMS:
         if term in body and term not in blob:
             _add("case", term, term)
+
+    quantities = {key for fact in facts or [] for key, _ in engineering_quantities(str(fact.get('statement') or ''))}
+    for key, raw in engineering_quantities(body):
+        if key not in quantities:
+            _add('number', raw, raw)
 
     hits.extend(qualitative_claims(body, facts))
 
