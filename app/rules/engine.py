@@ -128,6 +128,8 @@ async def _upsert_keyword_alerts(session: AsyncSession, records: list[dict]) -> 
         set_={
             "priority": stmt.excluded.priority,
             "status": stmt.excluded.status,
+            # A reactivated alert must not retain its old completion timestamp.
+            "resolved_at": None,
             "title": stmt.excluded.title,
             "message": stmt.excluded.message,
             "campaign_id": stmt.excluded.campaign_id,
@@ -153,6 +155,7 @@ async def _upsert_entity_alerts(session: AsyncSession, records: list[dict]) -> N
         set_={
             "priority": stmt.excluded.priority,
             "status": stmt.excluded.status,
+            "resolved_at": None,
             "title": stmt.excluded.title,
             "message": stmt.excluded.message,
             "campaign_id": stmt.excluded.campaign_id,
