@@ -32,10 +32,12 @@ async def environment(*, extra_models=(), legacy_routes=False):
     from ops.run_geo_checks import validate_ci_database
     from app.database import get_session
     from app.geo import read_routes as api
+    from app.geo.question_read_routes import router as question_read_router
     from app.geo.integration import router as metrics
     from app.models import (Tenant, GeoAnswerSnapshot, GeoPrompt, GeoVisibilityPatrolRun,
                             GeoTrackingEngine, GeoPublishingChannel, GeoContentTask, GeoArticleVersion,
-                            GeoChannelVariant, GeoPublication, GeoAsyncJob, GeoActionTicket, GeoAiSetting)
+                            GeoChannelVariant, GeoPublication, GeoAsyncJob, GeoActionTicket, GeoAiSetting,
+                            GeoOptimizationBusiness, GeoOptimizationUnit)
     from app.security.auth import AuthContext, require_auth
 
     url = os.environ['GEO_TEST_POSTGRES_URL']
@@ -45,9 +47,11 @@ async def environment(*, extra_models=(), legacy_routes=False):
     engine = None
     created = False
     metadata = MetaData(schema=schema)
-    for model in (Tenant, GeoAnswerSnapshot, GeoPrompt, GeoVisibilityPatrolRun, GeoTrackingEngine,
-                  GeoPublishingChannel, GeoContentTask, GeoArticleVersion, GeoChannelVariant,
-                  GeoPublication, GeoAsyncJob, GeoActionTicket, GeoAiSetting, *extra_models):
+    fixture_models = (Tenant, GeoAnswerSnapshot, GeoPrompt, GeoVisibilityPatrolRun, GeoTrackingEngine,
+                      GeoPublishingChannel, GeoContentTask, GeoArticleVersion, GeoChannelVariant,
+                      GeoPublication, GeoAsyncJob, GeoActionTicket, GeoAiSetting,
+                      GeoOptimizationBusiness, GeoOptimizationUnit, *extra_models)
+    for model in dict.fromkeys(fixture_models):
         Table(model.__tablename__, metadata, *(Column(c.name, c.type, nullable=True)
                                                for c in model.__table__.columns))
     Table('tenant_modules', metadata, Column('tenant_id', BigInteger), Column('module_code', String),
@@ -75,6 +79,7 @@ async def environment(*, extra_models=(), legacy_routes=False):
                                       tenant_id=None, permissions={'geo.content': 'view'})}
         app = FastAPI()  # Deliberately no production app/lifespan/schedulers.
         app.include_router(api.router, prefix='/api/v1/geo')
+        app.include_router(question_read_router, prefix='/api/v1/geo')
         app.include_router(metrics, prefix='/api/v1/geo')
         if legacy_routes:
             from app.geo.content.routes import router as legacy
@@ -119,6 +124,7 @@ def test_entitlement_http_uses_real_module_rows_and_fails_closed():
                         await conn.execute(tables['tenant_modules'].insert().values(
                             tenant_id=tid, module_code=module, status=status, expires_at=expiry))
             routes = [('/read/answers', 200), ('/read/answers/999', 404),
+                      ('/read/questions', 200),
                       ('/read/period-context', 200), ('/read/capabilities', 200),
                       ('/read/content-tasks/999', 404), ('/read/patrol-runs', 200),
                       ('/read/patrol-runs/999', 404), ('/read/async-jobs', 200),
@@ -154,6 +160,48 @@ def test_entitlement_http_uses_real_module_rows_and_fails_closed():
             finally:
                 async with engine.begin() as conn:
                     await conn.run_sync(tables['tenant_modules'].create)
+    asyncio.run(run())
+
+
+def test_question_catalog_http_uses_real_sql_tenant_joins_and_keyset_pagination():
+    async def run():
+        async with environment() as (client, engine, tables, identity):
+            stamp = datetime(2026, 9, 6, 12)
+            async with engine.begin() as conn:
+                await conn.execute(tables['tenants'].insert(), [
+                    {'id': 1, 'name': 'fixture'}, {'id': 2, 'name': 'other'}])
+                await conn.execute(tables['tenant_modules'].insert(), [
+                    {'tenant_id': i, 'module_code': 'geo', 'status': 'active'} for i in (1, 2)])
+                await conn.execute(tables['geo_optimization_businesses'].insert(), [
+                    {'id': 10, 'tenant_id': 1, 'name': 'fixture business', 'status': 'active'},
+                    {'id': 20, 'tenant_id': 2, 'name': 'other business', 'status': 'active'}])
+                await conn.execute(tables['geo_optimization_units'].insert(), [
+                    {'id': 11, 'tenant_id': 1, 'business_id': 10, 'name': 'fixture unit', 'status': 'active'},
+                    {'id': 21, 'tenant_id': 2, 'business_id': 20, 'name': 'other unit', 'status': 'active'}])
+                common = dict(language='zh-CN', priority=1, tags=['fixture'], status='active',
+                              source='manual', market='cn', is_brand_probe=False,
+                              created_at=stamp, updated_at=stamp)
+                await conn.execute(tables['geo_prompts'].insert(), [
+                    {**common, 'id': 101, 'tenant_id': 1, 'unit_id': 11, 'question': 'fixture 101'},
+                    {**common, 'id': 102, 'tenant_id': 1, 'unit_id': 11, 'question': 'fixture 102'},
+                    {**common, 'id': 201, 'tenant_id': 2, 'unit_id': 21, 'question': 'other tenant'}])
+
+            path = '/api/v1/geo/integration/read/questions'
+            first = await client.get(path, params={'tenant_id': 1, 'limit': 1})
+            assert first.status_code == 200, first.text
+            first = first.json()
+            assert [item['ref']['id'] for item in first['items']] == [102]
+            assert first['items'][0]['business_ref']['id'] == 10
+            assert first['items'][0]['timestamp_source_timezone'] == 'unknown'
+            assert first['items'][0]['created_at'] == '2026-09-06T12:00:00'
+            assert first['pagination']['next_before_id'] == 102
+            second = await client.get(path, params={
+                'tenant_id': 1, 'limit': 1, 'before_id': first['pagination']['next_before_id']})
+            assert second.status_code == 200, second.text
+            assert [item['ref']['id'] for item in second.json()['items']] == [101]
+
+            identity['ctx'].tenant_id = 1
+            assert (await client.get(path, params={'tenant_id': 2})).status_code == 403
     asyncio.run(run())
 
 
