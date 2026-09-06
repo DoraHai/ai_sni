@@ -226,3 +226,34 @@ of missing tables/columns, incorrect integer/JSONB types and catalog denial at
 both versions, and rejection of 0095 by the unchanged runtime allowlist.
 No candidate code was imported or executed for this static review; no Alembic,
 DDL, version-table change, merge or deployment was performed. PR #369 remains Draft.
+
+
+### Independent SEO source review: #370 at 66455f1
+
+Reviewed exact commit `66455f1f81c1eee69db9e75369930534ceb7bb92`:
+`ops/sem-task-migration/SOURCE_LOCK.json`, builder/verifier, local-only env,
+rehearsal tests and candidate. Independently compared all 116 locked files with
+Git blobs at `4e83611aabc8c3d9bb6ecee1a6aff37a2fbfbe21`; all SHA-256 values
+match, including the complete inventory of 111 historical migration files.
+The candidate bytes and SHA-256 are unchanged from the preceding review.
+Static graph inspection confirms the sole head `0095_sem_tasks` and direct
+parent `0094_seo_qa_batches`, with no duplicate IDs or missing parents.
+
+SEO source-level conclusion: no blocking issue found in the pinned independent
+source package or the proposed one-step contract. Keeping this package separate
+from main avoids rewriting the conflicting historical 0087 parent. This finding
+is scoped to these exact source bytes, not approval of historical execution
+provenance, production schema reconciliation or migration execution.
+
+The verifier checks complete inventory and hashes before Alembic imports;
+the runner fixes the one-step target, rejects other starting revisions and
+existing target objects, and uses one transaction with bounded lock/statement
+waits. The provided entry is explicitly local-only, not a production runner.
+Independent no-database test run: 4 passed, 11 explicitly skipped. Actual local
+Alembic rehearsals reported by SEM were inspected in source, not re-executed
+by this SEO review. No production or local database was connected.
+
+Next gates remain current-schema reconciliation, review of a production entry
+and operational prerequisites, and explicit release/execution authorization.
+#369 remains Draft with its 0094-only runtime allowlist; candidate compatibility
+is still simulated only in tests. No merge, deployment or migration occurred.
