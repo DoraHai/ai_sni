@@ -12,6 +12,26 @@ The tenant must also have an active or trial SEO module. This client does not
 select a tenant or the first available site, and it never uses an administrator
 key.
 
+`authorization-context.mjs` resolves that context from the host-injected
+transport. It requires an explicit tenant and site selected by the user, then
+checks `/api/v1/auth/me`, `/api/v1/auth/modules`, and
+`/api/v1/auth/tenants?module=seo`. SEM availability never qualifies SEO access.
+It uses a one-row content list as the site ownership probe when `seo.content` is
+readable, otherwise a one-row page list when `seo.site` is readable. Both server
+routes validate tenant, active SEO module and `site_id` before returning data,
+so an empty HTTP 200 is valid evidence only for that selected site's ownership
+and the one permission used by the probe. It does not validate detail routes or
+claim that every SEO permission was exercised. A 403 means scope/module/menu
+access is unavailable; a 404 means the selected site is absent from that tenant,
+and the resolver does not try a different site as a fallback.
+Without either permission the resolver refuses to create a context. It does not
+request `seo.assets` or discover/select a site.
+
+The authorized wrapper invalidates older concurrent connects and the readonly
+consumer on reconnect or logout. The host must still call `invalidate()` whenever
+its session revision changes. The resolver receives transport and session
+invalidation from the host; it never reads or persists a token itself.
+
 Parent references are deliberately sequential:
 
 1. Read `contents` before review history or publications.

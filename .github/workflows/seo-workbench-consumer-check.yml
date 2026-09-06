@@ -27,4 +27,4 @@ jobs:
         with:
           node-version: '24'
       - name: Validate readonly scope, references and failure states offline
-        run: node --test integrations/seo-workbench/readonly-client.test.mjs integrations/workbench/seo-transport.test.mjs
+        run: node --test integrations/seo-workbench/readonly-client.test.mjs integrations/seo-workbench/authorization-context.test.mjs integrations/workbench/seo-transport.test.mjs
