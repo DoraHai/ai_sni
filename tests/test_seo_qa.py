@@ -731,3 +731,37 @@ def test_semantic_quality_uses_saved_scoped_evidence_without_mutation(mode):
             content=await db.get(SeoContentAsset,answer['content_id'])
             assert content.status=='drafting' and content.version_count==answer['content_version']
     database(scenario)
+
+@pytest.mark.parametrize('mode', ['success','question_changed','fact_changed','invalid_ai','readonly','other_tenant'])
+def test_batch_draft_versions_permissions_and_save_retry(mode):
+    async def scenario(sessions):
+        async with sessions() as db:
+            imported=await api.import_questions(api.ImportQuestions(tenant_id=1,site_id=1,items=[{'title':'设备使用前应检查哪些条件？'}]),CTX,db)
+            fact=await api.create_fact(api.FactInput(tenant_id=1,site_id=1,title='使用条件',statement='设备仅用于室内，额定功率1.5kW，使用前先检查电源和环境条件。',source_name='产品手册'),CTX,db)
+            req=api.DraftRequest(tenant_id=2 if mode=='other_tenant' else 1,site_id=1,question={'id':imported['ids'][0],'version':99 if mode=='question_changed' else 1},facts=[{'id':fact['id'],'version':99 if mode=='fact_changed' else fact['version']}],request_id='batch-test-123')
+            async def generate(*args,**kwargs):
+                kwargs['usage_receipt'].update(operation_id='batch-op',date='2026-09-06')
+                return {'body':fact['statement']+('[F999]' if mode=='invalid_ai' else f'[F{fact["id"]}]')}
+            async def settle(*args,**kwargs): return kwargs['result']
+            actor=AuthContext(8,'reader','operator',1,{'seo.content':'view'}) if mode=='readonly' else CTX
+            with patch('app.ai.deepseek.is_enabled',return_value=True),patch('app.api.seo._limited_seo_chat_json',new=AsyncMock(side_effect=generate)) as ai,patch('app.api.seo._refund_failed_seo_ai_request',new=AsyncMock()) as refund,patch('app.seo_ai_operations.settle_seo_ai_operation',new=AsyncMock(side_effect=settle)):
+                if mode!='success':
+                    with pytest.raises(HTTPException): await api.generate_question_draft(req,actor,db)
+                    if mode=='invalid_ai': refund.assert_awaited_once()
+                    else: ai.assert_not_awaited()
+                    return
+                result=await api.generate_question_draft(req,actor,db)
+                assert not list(await db.scalars(select(SeoQaAnswer)))
+                payload={k:v for k,v in result.items() if k not in {'action','operation_id'}}
+                save=api.AnswerInput(tenant_id=1,site_id=1,**payload)
+                first=await api.create_answer(save,CTX,db)
+                second=await api.create_answer(save,CTX,db)
+                assert first['id']==second['id']
+                content=await db.get(SeoContentAsset,first['content_id'])
+                assert content.status=='drafting'
+                stored=await db.get(SeoQaFact,fact['id']);stored.version+=1;await db.commit()
+                with pytest.raises(HTTPException) as exc: await api.create_answer(save,CTX,db)
+                assert exc.value.status_code==409
+                assert len(list(await db.scalars(select(SeoQaAnswer))))==1
+                refund.assert_not_awaited()
+    database(scenario)

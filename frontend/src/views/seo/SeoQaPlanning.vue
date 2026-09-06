@@ -1,4 +1,5 @@
 <script setup>
+import SeoQaBatchDrafts from './SeoQaBatchDrafts.vue'
 import { computed, reactive, ref, watch } from 'vue'
 import { seoQaGet, seoQaPost, analyzeSeoQaSemantic } from '../../api/seo'
 
@@ -74,6 +75,13 @@ async function load() {
   } catch (e) { if (ticket === generation && key === scopeKey.value) error.value = detail(e) }
   finally { if (ticket === generation) loading.value = false }
 }
+async function refreshAfterDrafts() {
+  const key=scopeKey.value,ticket=generation
+  try {
+    const value=await seoQaGet('planning',{tenant_id:props.tenantId,site_id:props.siteId})
+    if(key===scopeKey.value&&ticket===generation)result.value=value
+  } catch(e) {if(key===scopeKey.value&&ticket===generation)error.value=detail(e)}
+}
 function toggle(id, checked) {
   if (!props.canEdit || saving.value) return
   if (checked && !chosen.value.includes(id)) {
@@ -111,6 +119,7 @@ watch([scopeKey, () => props.revision], () => { chosen.value = []; query.value =
     <header><div><h2>选题规划</h2><p>按主题和意图组织问题，先找到尚未回答的需求，再安排内容工作。</p></div><el-button :loading="loading" :disabled="saving" @click="load">刷新规划</el-button></header>
     <el-alert v-if="error" :title="error" type="error" :closable="false"/>
     <template v-if="result">
+      <SeoQaBatchDrafts :tenant-id="tenantId" :site-id="siteId" :can-edit="canEdit" :questions="chosen.map(id=>byId.get(id)).filter(Boolean)" @changed="refreshAfterDrafts" @open="row=>emit('open',row)"/>
       <div class="plan-stats"><div><strong>{{ result.included }}</strong><span>本次纳入问题</span></div><div><strong>{{ result.unanswered_count }}</strong><span>尚无回答草稿</span></div><div><strong>{{ result.reviewed_count }}</strong><span>有已审核内容</span></div><div><strong>{{ result.similar_pair_count }}</strong><span>文本重合候选对</span></div></div>
       <div class="plan-stats"><div><strong>{{ result.valid_covered_count ?? '未知' }}</strong><span>有有效审核回答</span></div><div><strong>{{ result.coverage_gap_count ?? '未知' }}</strong><span>尚无有效审核回答</span></div><div><strong>{{ result.observed_question_count ?? '未知' }}</strong><span>当前版本曾公开匹配</span></div></div><p class="plan-note">有效审核回答须当前证据关联有效；不是独立事实核实。公开匹配按最近观测，不代表实时存续或账号归属。</p><p class="plan-note">{{ result.definitions.scope }}。{{ result.truncated ? `共 ${result.total} 个未归档问题，本页未涵盖全部。` : '' }}已审核数量不等于已核验发布数量。</p>
       <div class="plan-toolbar"><el-button :type="view==='tree'?'primary':'default'" @click="view='tree'">主题问题树</el-button><el-button :type="view==='pairs'?'primary':'default'" @click="view='pairs'">相似问题候选</el-button><el-input v-model="query" placeholder="筛选本次规划中的问题或主题" clearable/><el-checkbox v-if="view==='tree'" v-model="flags.unanswered">只看尚无回答的问题</el-checkbox><el-checkbox v-if="view==='tree'" v-model="flags.coverageGap">只看尚无有效审核回答</el-checkbox><el-checkbox v-if="view==='tree'" v-model="flags.demandFirst">组内优先近期有需求且未回答</el-checkbox></div>
