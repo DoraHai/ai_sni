@@ -1,4 +1,5 @@
 <script setup>
+import { publicationEvidence, channelBoundary, countPublishedListedContents } from '../../utils/seoPublicationEvidence'
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -196,7 +197,7 @@ const statusMeta = {
   failed: ['失败', 'danger'],
   cancelled: ['已取消', 'info'],
 }
-const modeName = value => ({ api: '官方接口', assisted: '浏览器发布', share: '分享发布', oauth: 'OAuth', draft: '创建草稿', publish: '正式发布', manual: '人工登记' })[value] || '人工登记'
+const modeName = value => ({ api: '官方接口', assisted: '半自动填稿', share: '分享发布', oauth: 'OAuth', draft: '创建草稿', publish: '正式发布', manual: '人工登记' })[value] || '人工登记'
 const statusName = value => statusMeta[value]?.[0] || value
 const statusType = value => statusMeta[value]?.[1] || 'info'
 const date = value => value ? new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '尚未执行'
@@ -204,7 +205,7 @@ const date = value => value ? new Date(value).toLocaleString('zh-CN', { month: '
 const published = computed(() => publications.value.filter(item => item.status === 'published'))
 const activeTasks = computed(() => publications.value.filter(item => item.status !== 'published'))
 const filteredActiveTasks = computed(() => taskStatus.value === 'all' ? activeTasks.value : activeTasks.value.filter(item => item.status === taskStatus.value))
-const publishedContentCount = computed(() => new Set(published.value.map(item => item.content_id)).size)
+const publishedContentCount = computed(() => countPublishedListedContents(contents.value, publications.value))
 const coverage = computed(() => contents.value.length ? Math.round(publishedContentCount.value / contents.value.length * 100) : 0)
 const connectedCount = computed(() => connections.value.filter(item => item.enabled && ['connected', 'ready'].includes(item.status)).length)
 const selectableConnections = computed(() => connections.value.filter(item => item.enabled && !['douyin_video','kuaishou_video'].includes(item.platform_code) && (item.mode === 'assisted' || item.status === 'connected')))
@@ -952,9 +953,9 @@ onMounted(loadSites)
 
     <section class="summary-grid">
       <article><span>分发账号</span><strong>{{ connectedCount }}</strong><small>已配置，可准备分发任务</small></article>
-      <article><span>发布记录</span><strong>{{ published.length }}</strong><small>每个平台独立保存</small></article>
+      <article><span>发布记录</span><strong>{{ published.length }}</strong><small>人工确认或接口返回；不等于已核验</small></article>
       <article><span>待处理任务</span><strong>{{ activeTasks.length }}</strong><small>失败与人工确认均可追踪</small></article>
-      <article><span>内容覆盖率</span><strong>{{ coverage }}%</strong><small>{{ publishedContentCount }}/{{ contents.length }} 篇已有发布记录</small></article>
+      <article><span>内容覆盖率</span><strong>{{ coverage }}%</strong><small>{{ publishedContentCount }}/{{ contents.length }}  篇当前列表内容已有发布记录</small></article>
     </section>
 
     <nav class="view-tabs">
@@ -980,10 +981,10 @@ onMounted(loadSites)
             <span class="channel-logo">{{ item.name.slice(0, 1) }}</span>
             <div><strong>{{ item.name }}</strong><small>{{ item.content_format }} · {{ modeName(item.mode) }}</small></div>
             <el-tag :type="item.connections.length ? 'success' : item.available ? 'primary' : 'info'" effect="light">
-              {{ item.connections.length ? `${item.connections.length} 个账号` : item.available ? '可接入' : '规划中' }}
+              {{ item.connections.length ? `${item.connections.length} 个账号` : item.available ? '支持配置' : '规划中' }}
             </el-tag>
           </header>
-          <p>{{ item.help }}</p>
+          <p>{{ item.help }}</p><p>{{ channelBoundary(item) }}</p>
           <div class="capabilities"><span v-for="capability in item.capabilities" :key="capability">{{ ({ connection_test: '连接测试', draft: '创建草稿', publish: '正式发布', adapt: '内容适配', copy: '一键复制', open_editor: '打开编辑器', manual_confirm: '人工确认', status_link: '链接回流', async_status: '状态同步', media_upload: '图片上传', browser_package: '填稿任务包', user_oauth: '用户授权', video_upload: '视频上传', video_publish: '视频发布' })[capability] || capability }}</span></div>
           <div v-if="item.connections.length" class="connection-list">
             <div v-for="connection in item.connections" :key="connection.id">
@@ -995,7 +996,7 @@ onMounted(loadSites)
             </div>
           </div>
           <footer>
-            <span>已发布 {{ item.published }} 篇</span>
+            <span>发布记录 {{ item.published }} 条</span>
             <el-button v-if="canEdit && item.available" type="primary" plain @click="openConnection(item)">添加账号</el-button>
             <el-button v-else-if="!item.available" disabled>暂未接入</el-button>
           </footer>
@@ -1047,13 +1048,14 @@ onMounted(loadSites)
 
     <template v-else>
       <section class="table-panel">
-        <header><div><h2>已发布记录</h2><p>同一文章可保留多个平台链接，不再互相覆盖。</p></div><el-button @click="selectImport">批量登记</el-button></header>
+        <header><div><h2>发布成功记录</h2><p>包含人工确认和平台接口返回，均不代表页面正文、外链或搜索收录已核验。核验结果请查看问答跟进或外链模块。</p></div><el-button @click="selectImport">批量登记</el-button></header>
         <el-table :data="published" empty-text="暂无已发布记录">
           <el-table-column prop="content_title" label="文章" min-width="220" show-overflow-tooltip />
           <el-table-column prop="platform_name" label="平台" width="130" />
-          <el-table-column prop="connection_name" label="连接" width="150"><template #default="scope">{{ scope.row.connection_name || '人工登记' }}</template></el-table-column>
+          <el-table-column prop="connection_name" label="连接" width="150"><template #default="scope">{{ scope.row.connection_name || (scope.row.publish_mode === 'manual' ? '人工登记' : '未关联账号') }}</template></el-table-column>
           <el-table-column prop="page_url" label="发布链接" min-width="260" show-overflow-tooltip><template #default="scope"><a :href="scope.row.page_url" target="_blank" rel="noopener">{{ scope.row.page_url }}</a></template></el-table-column>
-          <el-table-column prop="published_at" label="发布时间" width="150"><template #default="scope">{{ date(scope.row.published_at) }}</template></el-table-column>
+          <el-table-column label="发布依据" width="200"><template #default="scope">{{ publicationEvidence(scope.row) }}</template></el-table-column>
+          <el-table-column prop="published_at" label="发布/登记时间" width="150"><template #default="scope">{{ scope.row.published_at ? date(scope.row.published_at) : '时间未记录' }}</template></el-table-column>
           <el-table-column label="操作" width="100"><template #default="scope"><el-button link type="primary" @click="showAttempts(scope.row)">尝试记录</el-button></template></el-table-column>
         </el-table>
       </section>

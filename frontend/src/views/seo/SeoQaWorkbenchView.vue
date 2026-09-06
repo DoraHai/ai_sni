@@ -135,7 +135,7 @@ function backlinkSummary(observation) {
   if (result.state !== 'readable') return '外链暂时无法核验，可稍后重试'
   return `回答所在页面发现 ${result.found} 条官网链接，本次新增 ${result.created} 条外链资产`
 }
-const labels = { open: '待选题', selected: '已选题', archived: '已归档', planned: '草稿', drafting: '草稿', review: '待审核', ready: '已审核', published: '已发布', prepared: '待人工发布', reported: '已回填 · 待核验', content_observed: '页面正文匹配', not_observed: '未观测到正文', unavailable: '暂时无法核验' }
+const labels = { open: '待选题', selected: '已选题', archived: '已归档', planned: '草稿', drafting: '草稿', review: '待审核', ready: '已审核', published: '已有发布记录', prepared: '待人工发布', reported: '已回填 · 待核验', content_observed: '页面正文匹配', not_observed: '未观测到正文', unavailable: '暂时无法核验' }
 const kinds = { document:'资料推导（AI）', manual: '人工录入', customer: '客服/销售', import: 'CSV 导入', suggestion: '建议问题', serp: '搜索结果', site_search:'站内搜索', search_console:'搜索平台数据' }
 const formats = { short: '直接短答', detailed: '详细解答', steps: '操作步骤', comparison: '条件对比', faq: '官网 FAQ' }
 const dirtyAnswer = computed(() => {

@@ -6,7 +6,7 @@ const emit=defineEmits(['changed','open'])
 const result=ref(null),loading=ref(false),acting=ref(false),error=ref(''),exportMessage=ref(''),filter=ref('all'),notes=ref({}),rowErrors=ref({})
 const scopeKey=computed(()=>`${props.tenantId}:${props.siteId}:${props.batchId}`)
 const buckets={all:'全部',draft:'待提交',review:'待审核',needs_fix:'需修复',approved:'已审核',not_saved:'尚不可验收'}
-const labels={planned:'草稿',drafting:'草稿',review:'待审核',ready:'已审核',published:'已发布'}
+const labels={planned:'草稿',drafting:'草稿',review:'待审核',ready:'已审核',published:'已有发布记录'}
 const shown=computed(()=>result.value?.items.filter(r=>filter.value==='all'||r.bucket===filter.value)||[])
 let generation=0
 function params(){return {tenant_id:props.tenantId,site_id:props.siteId}}
