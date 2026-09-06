@@ -1029,3 +1029,36 @@ def test_batch_retry_admission_and_active_history():
         assert sum(r==409 for r in results if isinstance(r,int))==1
         assert sum(isinstance(r,dict) and r['status']=='queued' for r in results)==1
     database(scenario)
+
+
+@pytest.mark.parametrize("requested_status", [None, "ready", "review"])
+def test_phase1_content_readonly_pagination_keeps_scope_and_full_status_counts(requested_status):
+    """Existing API contract: filtered total differs from base-scope status counts."""
+    from app.api import seo
+    async def scenario(sessions):
+        async with sessions() as db:
+            db.add_all([
+                SeoContentAsset(tenant_id=1, site_id=1, title="approved", content_type="article", status="ready"),
+                SeoContentAsset(tenant_id=1, site_id=1, title="pending", content_type="article", status="review"),
+                SeoContentAsset(tenant_id=2, site_id=2, title="other tenant", content_type="article", status="ready"),
+            ])
+            await db.commit()
+            await db.execute(text("SET TRANSACTION READ ONLY"))
+            # Scope/resource guards are independently tested; fixture omits tenants/users.
+            with patch.object(seo, "_tenant", new=AsyncMock()), patch.object(seo, "_seo_site", new=AsyncMock()), patch.object(seo, "_content_review_user_names", new=AsyncMock(return_value={})):
+                first = await seo.list_content_assets(tenant_id=1, site_id=1, status=requested_status,
+                    q=None, page=1, page_size=1, session=db)
+                second = await seo.list_content_assets(tenant_id=1, site_id=1, status=requested_status,
+                    q=None, page=2, page_size=1, session=db)
+            assert first["status_counts"] == second["status_counts"] == {"ready": 1, "review": 1}
+            expected = 2 if requested_status is None else 1
+            assert first["total"] == second["total"] == expected
+            assert len(first["items"]) == 1 and len(second["items"]) == expected - 1
+            rows = first["items"] + second["items"]
+            assert len({r["id"] for r in rows}) == expected
+            assert all(r["tenant_id"] == 1 and r["site_id"] == 1 for r in rows)
+            assert all(r["page_url"] is None and r["source_page_id"] is None for r in rows)
+            if requested_status:
+                assert rows[0]["status"] == requested_status
+            assert await db.scalar(text("SHOW transaction_read_only")) == "on"
+    database(scenario)
