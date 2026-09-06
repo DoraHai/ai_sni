@@ -1,11 +1,31 @@
 """Pure-query SEM cockpit contract; no live API, cache or task writes."""
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import String, func, literal, select
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.sql.functions import FunctionElement
 
 from app.models import BaiduAccount, KwReportSnapshot
+
+
+class _SourceJSONType(FunctionElement):
+    """Preserve source booleans vs numbers across PostgreSQL and test SQLite."""
+    type = String()
+    inherit_cache = True
+
+
+@compiles(_SourceJSONType, "postgresql")
+def _postgres_json_type(element, compiler, **kw):
+    column, key = list(element.clauses)
+    return f"jsonb_typeof({compiler.process(column, **kw)} -> {compiler.process(key, **kw)})"
+
+
+@compiles(_SourceJSONType, "sqlite")
+def _sqlite_json_type(element, compiler, **kw):
+    column, key = list(element.clauses)
+    return f"json_type({compiler.process(column, **kw)}, '$.' || {compiler.process(key, **kw)})"
 
 
 def validate_window(start: date, end: date) -> None:
@@ -31,14 +51,51 @@ def report_metrics(rows):
     if not rows:
         return dict(cost=None, click=None, impression=None, ctr=None, cpc=None)
     cost = sum((r.cost for r in rows), Decimal(0))
-    click = sum(r.click for r in rows)
-    impression = sum(r.impression for r in rows)
+    # PostgreSQL SUM(bigint) returns numeric/Decimal, unlike SQLite's integer.
+    click = int(sum(r.click for r in rows))
+    impression = int(sum(r.impression for r in rows))
     return dict(cost=round(float(cost), 2), click=click, impression=impression,
                 ctr=round(click / impression, 6) if impression else None,
                 cpc=round(float(cost) / click, 2) if click else None)
 
 
-async def read_report(session, tenant_id, start, end, account_id):
+def phone_summary(rows):
+    """Only explicit finite nonnegative integer source values are observations.
+
+    Rows contain raw_value and row_count; no raw JSON or PII leaves this layer.
+    Complete here means fields on stored rows, never complete source ingestion.
+    """
+    total = known = subtotal = 0
+    for row in rows:
+        total += row.row_count
+        try:
+            raw_value = row.raw_value if row.raw_type in {"number", "integer", "real", "string", "text"} else None
+            value = Decimal(str(raw_value))
+            valid = value.is_finite() and 0 <= value <= 9223372036854775807 and value == value.to_integral_value()
+        except (InvalidOperation, ValueError):
+            valid = False
+        if valid:
+            known += row.row_count
+            subtotal += int(value) * row.row_count
+    return {"value": subtotal if total and total == known else None,
+            "known_subtotal": subtotal if known else None, "unit": "count",
+            "source_field": "ocpcConversionsDetail2",
+            "status": "no_data" if not total else "observed" if known == total else "partial" if known else "unavailable",
+            "stored_rows": total, "known_rows": known, "unknown_rows": total - known,
+            "completeness": "unknown"}
+
+
+async def read_phone_rows(session, cond, group_columns=()):
+    # Extract only the field, not whole raw report payloads. Preserve type before
+    # dialect coercion so a JSON boolean cannot be mistaken for a numeric count.
+    raw = KwReportSnapshot.raw_metrics["ocpcConversionsDetail2"].as_string()
+    raw_type = _SourceJSONType(KwReportSnapshot.raw_metrics, literal("ocpcConversionsDetail2"))
+    return (await session.execute(select(
+        *group_columns, raw.label("raw_value"), raw_type.label("raw_type"), func.count().label("row_count")
+    ).where(*cond).group_by(*group_columns, raw, raw_type))).all()
+
+
+async def read_report(session, tenant_id, start, end, account_id, keyword_id=None):
     validate_window(start, end)
     accounts = (await session.execute(
         select(BaiduAccount.id, BaiduAccount.status)
@@ -50,6 +107,8 @@ async def read_report(session, tenant_id, start, end, account_id):
             KwReportSnapshot.report_date >= start, KwReportSnapshot.report_date <= end]
     if account_id is not None:
         cond.append(KwReportSnapshot.baidu_account_id == account_id)
+    if keyword_id is not None:
+        cond.append(KwReportSnapshot.keyword_id == keyword_id)
     rows = (await session.execute(select(
         KwReportSnapshot.baidu_account_id, KwReportSnapshot.report_date,
         KwReportSnapshot.device,

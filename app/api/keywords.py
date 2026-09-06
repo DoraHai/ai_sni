@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,6 +43,8 @@ from app.models import (
 )
 from app.baidu.writeback import WritebackError, apply_keyword_writeback, apply_pause_writeback
 from app.security.auth import AuthContext, require_scoped_auth
+from app.sem_cockpit_details import read_keyword_detail, read_keywords
+from app.sem_cockpit_readonly import validate_query
 
 logger = logging.getLogger(__name__)
 
@@ -569,6 +571,41 @@ SORTABLE = {
     "price": Keyword.price,
     "quality": Keyword.quality,
 }
+
+
+@router.get("/cockpit")
+async def cockpit_keywords(
+    request: Request,
+    tenant_id: int = Query(..., gt=0),
+    baidu_account_id: int | None = Query(None, gt=0),
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
+    q: str | None = Query(None, max_length=200),
+    campaign_id: int | None = Query(None, gt=0),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    validate_query(request.query_params, {"tenant_id", "baidu_account_id", "start_date", "end_date", "q", "campaign_id", "page", "page_size"})
+    return await read_keywords(session, tenant_id, baidu_account_id, start_date, end_date, q, campaign_id, page, page_size)
+
+
+@router.get("/cockpit/{keyword_id}")
+async def cockpit_keyword_detail(
+    request: Request,
+    keyword_id: int,
+    tenant_id: int = Query(..., gt=0),
+    start_date: date = Query(...),
+    end_date: date = Query(...),
+    baidu_account_id: int | None = Query(None, gt=0),
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    validate_query(request.query_params, {"tenant_id", "baidu_account_id", "start_date", "end_date"})
+    return await read_keyword_detail(session, tenant_id, baidu_account_id, keyword_id, start_date, end_date)
 
 
 @router.get("")
