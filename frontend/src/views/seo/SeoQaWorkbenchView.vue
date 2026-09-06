@@ -186,7 +186,11 @@ async function openQuestion(row) {
   const seq = ++answerSequence, key = scopeKey.value
   try {
     const [result,detail] = await Promise.all([seoQaGet('answers', { ...scope.value, question_id: row.id }),seoQaGet(`questions/${row.id}/detail`,{...scope.value})])
-    if (seq === answerSequence && key === scopeKey.value) {answerItems.value = result;questionDetail.value=detail}
+    if (seq === answerSequence && key === scopeKey.value) {answerItems.value = result;questionDetail.value=detail
+      const answer = row.preferred_answer_id ? result.find(a => a.id === row.preferred_answer_id) : result.find(a => ['ready','published'].includes(a.status) && !a.problems?.length) || result[0]
+      if (row.preferred_answer_id && !answer) error.value = '该批次回答已不可用，请刷新批次；未自动切换其他回答。'
+      if (answer) editAnswer(answer)
+    }
   } catch (e) { if (seq === answerSequence && key === scopeKey.value) error.value = messageOf(e) }
 }
 function editAnswer(row) { Object.assign(answerForm, row, { fact_ids: row.fact_snapshots.map(f => f.id) }); reviewNote.value = '' }
@@ -338,7 +342,10 @@ watch(scopeKey, () => {
       <div v-if="batchResults.length" class="qa-hint"><p>本次已返回 {{ batchResults.length }} 条结果；失败记录可单独重试。</p><p v-for="r in batchResults" :key="r.id" :class="{'qa-warning':r.failed}">#{{ r.id }} · {{ r.message }}</p></div>
       <div class="qa-toolbar"><el-checkbox v-model="followupOnly">仅看待跟进（{{ followupCount }}）</el-checkbox><span class="qa-hint">已核验的回答满 7 天进入后台正文复查队列，每小时最多 20 条。首次核验由人工触发；外链资产由外链模块定期核验。</span></div>
       <el-empty v-if="placements.length && !visiblePlacements.length" description="当前列表范围内没有待跟进记录"/>
-      <el-empty v-if="!placements.length" description="回答审核通过后，点击“准备分发”建立记录。"/>
+      <el-empty v-if="!placements.length" description="尚未建立分发记录，审核通过不会自动创建记录。">
+        <el-button type="primary" :disabled="busy" @click="tab='planning'">从站点批次选择已审核回答</el-button>
+      </el-empty>
+      <p v-if="!placements.length" class="qa-hint">进入“站点批次”的已审核回答，点击“打开回答准备分发”，选择平台并填写目标问题网址。生成记录后，真人发布并回填公开网址，才可核验正文；当前没有网址，批量核验不可用。</p>
       <article class="qa-placement" v-for="row in visiblePlacements" :key="row.id">
         <div class="qa-toolbar"><strong>#{{ row.id }} · {{ platformName(row.platform) }}</strong><el-tag>{{ labels[row.status] }}</el-tag><span class="qa-hint">稿件版本 {{ row.content_version }} · 计划 {{ row.scheduled_at?date(row.scheduled_at):'未设置' }}</span></div>
         <div class="qa-toolbar"><a v-if="href(row.question_url)" :href="href(row.question_url)" target="_blank" rel="noopener noreferrer">打开指定问题 ↗</a><a v-if="href(row.answer_url)" :href="href(row.answer_url)" target="_blank" rel="noopener noreferrer">查看回答 ↗</a><el-button :disabled="!row.publishable" @click="copy(row)">复制审核稿</el-button><el-button :disabled="!row.publishable" @click="download(row)">下载文本</el-button><el-button v-if="['zhihu','csdn_qa'].includes(row.platform)" :disabled="!canEdit || busy || !row.publishable" @click="downloadQaAssistant(row)">本地填稿包（试用）</el-button><el-button :disabled="!canEdit || busy" @click="Object.assign(receiptForm,{id:row.id,answer_url:row.answer_url||'',version:row.version});dialog='receipt'">回填网址</el-button><el-button :disabled="!canEdit || busy || !row.answer_url" @click="verify(row)">核验正文与外链</el-button><el-button :disabled="!canEdit || busy" @click="Object.assign(metricsForm,{id:row.id,version:row.version,views:null,likes:null,comments:null,source_url:row.answer_url||'',as_of:null});dialog='metrics'">录入平台数据</el-button></div>

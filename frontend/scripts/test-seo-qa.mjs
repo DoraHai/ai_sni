@@ -490,3 +490,21 @@ test('shared batch cannot be controlled by another site editor',async()=>{
 test('submitter cannot approve but can return the answer for editing',async()=>{
   const m=await mountBatchReview();try{m.row.can_approve=false;await m.state.review(m.row,'approve');assert.equal(m.writes.length,0);m.state.notes[m.state.key(m.row)]='请修改';await m.state.review(m.row,'reject');assert.equal(m.writes[0][1].action,'reject')}finally{m.app.unmount()}
 })
+
+
+test('opening a reviewed batch answer selects that exact answer without creating a placement', async()=>{
+  const answers=[{id:1,status:'ready',body:'old',fact_snapshots:[],format:'short',problems:[]},{id:2,status:'ready',body:'batch',fact_snapshots:[],format:'short',problems:[]}]
+  const m=await mount({seoQaGet:async path=>path==='answers'?answers:path.endsWith('/detail')?{question:{id:7}}:path==='questions'?{items:[],total:0}:path==='maintenance'?{items:[]}:path==='capabilities'?{platforms:[]}:[]})
+  try {
+    await m.state.openQuestion({id:7,preferred_answer_id:2})
+    assert.equal(m.state.answerForm.id,2)
+    m.state.openPlacement()
+    assert.equal(m.state.placementForm.answer_id,2)
+    assert.equal(m.state.dialog,'placement')
+    assert.equal(m.writes.length,0)
+    m.state.dialog=''
+    await m.state.openQuestion({id:7,preferred_answer_id:99})
+    assert.equal(m.state.answerForm.id,null)
+    assert.match(m.state.error,/未自动切换/)
+  } finally {m.app.unmount()}
+})
