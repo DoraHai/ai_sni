@@ -1813,10 +1813,6 @@ onMounted(async () => {
                 <span>{{ String(index + 1).padStart(2, '0') }}</span>
                 <h3>{{ item.title }}</h3>
                 <p>{{ item.description }}</p>
-                <small>关联 {{ item.count }} 项当前问题</small>
-                <button class="bridge-btn" :disabled="bridgeLoading" @click="bridgeToContent(item.codes[0])">
-                  创建 GEO 优化文章 →
-                </button>
               </article>
             </div>
             <div v-else class="priority-clean-state">
@@ -1824,7 +1820,7 @@ onMounted(async () => {
             </div>
             <footer v-if="!isCompetitorAudit" class="full-plan-cta">
               <div><strong>需要负责人、执行步骤和验收标准？</strong><p>进入优化工作区，获取基于本次诊断的完整优化方案。</p></div>
-              <a href="/deal-sniper/geo/dashboard">获取完整优化方案 →</a>
+              <a href="/deal-sniper/portal">获取完整优化方案 →</a>
             </footer>
           </section>
           </section>
