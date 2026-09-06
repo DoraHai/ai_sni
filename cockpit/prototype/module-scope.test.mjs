@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { MODULES, moduleScope, scopedMetrics, taskInModuleScope, taskScopeReference, planInModuleScope } from './module-scope.mjs';
+import { MODULES, moduleScope, scopedMetrics, taskInModuleScope, taskScopeReference, planInModuleScope, panelInModuleScope } from './module-scope.mjs';
+
+test('panel reopening and nested destinations obey current module scope', () => {
+  assert.equal(panelInModuleScope('spend', null, ['seo']), false);
+  assert.equal(panelInModuleScope('sem:3', null, ['seo']), false);
+  assert.equal(panelInModuleScope('seo:6', null, ['seo']), true);
+  assert.equal(panelInModuleScope('results', null, ['sem', 'seo']), false);
+  assert.equal(panelInModuleScope('pano_old', { card: 'trend' }, ['seo']), false);
+  assert.equal(panelInModuleScope('pano_new', { card: 'content' }, ['seo']), true);
+  assert.equal(panelInModuleScope('pano_mix', { card: 'journey' }, ['sem', 'seo']), false);
+  assert.equal(panelInModuleScope('unknown', null, []), false);
+  assert.equal(panelInModuleScope('spend', null, MODULES), true);
+});
 
 test('all seven customer combinations expose only their own cards and suggestions', () => {
   for (let mask = 1; mask < 8; mask++) {

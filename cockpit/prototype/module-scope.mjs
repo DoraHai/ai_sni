@@ -61,3 +61,14 @@ export function planInModuleScope(type, entitlements) {
   if (!Object.hasOwn(types, type)) return false;
   return taskInModuleScope({ modules: types[type] }, entitlements);
 }
+
+export function panelInModuleScope(key, snapshot, entitlements) {
+  const scope = moduleScope(entitlements);
+  if (scope.empty) return false;
+  if (scope.enabled.length === MODULES.length) return true;
+  if (snapshot) return scope.cards.includes(snapshot.card) || snapshot.card === 'execution';
+  const module = /^(sem|seo|geo):\d+$/.exec(key)?.[1];
+  if (module) return scope.enabled.includes(module);
+  const legacy = { spend: 'sem', organic: 'seo', visibility: 'geo' };
+  return Object.hasOwn(legacy, key) && scope.enabled.includes(legacy[key]);
+}
