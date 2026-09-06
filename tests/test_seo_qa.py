@@ -844,3 +844,53 @@ def test_batch_worker_reloads_live_account_permissions(mode):
             with pytest.raises(HTTPException) as exc: await current_actor(session,batch)
             assert exc.value.status_code==403
     asyncio.run(scenario())
+
+@pytest.mark.parametrize('mode',['success','stale_content','stale_question','expired_fact','foreign_batch','readonly','reject'])
+def test_batch_review_current_content_and_versioned_actions(mode):
+    async def scenario(sessions):
+        async with sessions() as db:
+            imported=await api.import_questions(api.ImportQuestions(tenant_id=1,site_id=1,items=[{'title':'设备如何选型？'}]),CTX,db)
+            qid=imported['ids'][0]
+            fact=await api.create_fact(api.FactInput(tenant_id=1,site_id=1,title='参数',statement='仅在室内使用，先确认设备型号和工作条件，再根据说明书选择合适参数。',source_name='手册'),CTX,db)
+            answer=await api.create_answer(api.AnswerInput(tenant_id=1,site_id=1,question_id=qid,body=f'当前保存的回答：{fact["statement"]}[F{fact["id"]}]',fact_ids=[fact['id']]),CTX,db)
+            batch=SeoQaBatch(tenant_id=1,site_id=1,actor='7',request_key='review-batch',request_hash='fixture',status='completed',items=[{'question_id':qid,'title':'生成时旧问题','state':'done','answer_id':answer['id'],'draft':{'body':'旧的生成正文'},'request':{'question':{'id':qid,'version':1}}}])
+            db.add(batch);await db.commit()
+            if mode=='expired_fact':
+                f=await db.get(SeoQaFact,fact['id']);f.status='retired';await db.commit()
+            snapshot=await api.batch_review(batch.id,1,1,CTX,db)
+            row=snapshot['items'][0]
+            assert row['body'].startswith('当前保存的回答') and row['title']=='设备如何选型？'
+            assert snapshot['counts']['needs_fix' if mode=='expired_fact' else 'draft']==1
+            if mode=='expired_fact': assert row['facts'][0]['current'] is False
+            req=api.BatchReviewDecision(tenant_id=1,site_id=1,content_version=99 if mode=='stale_content' else 1,question_version=99 if mode=='stale_question' else 1,action='submit')
+            actor=AuthContext(8,'readonly','operator',1,{'seo.content':'view'}) if mode=='readonly' else CTX
+            bid=batch.id+100 if mode=='foreign_batch' else batch.id
+            if mode in ('stale_content','stale_question','expired_fact','foreign_batch','readonly'):
+                with pytest.raises(HTTPException): await api.review_batch_answer(bid,answer['id'],req,actor,db)
+                assert (await db.get(SeoContentAsset,answer['content_id'])).status=='drafting'
+                assert not list(await db.scalars(select(SeoContentReviewEvent)))
+                return
+            with patch('app.api.seo_cockpit.metric_values',new=AsyncMock(return_value={'seo.content.published_7d_count':0})):
+                await api.review_batch_answer(batch.id,answer['id'],req,CTX,db)
+                assert (await api.batch_review(batch.id,1,1,CTX,db))['counts']['review']==1
+                decision=req.model_copy(update={'action':'reject' if mode=='reject' else 'approve','note':'请补充适用条件' if mode=='reject' else '已核对'})
+                if mode=='reject':
+                    with pytest.raises(HTTPException): await api.review_batch_answer(batch.id,answer['id'],decision.model_copy(update={'note':None}),CTX,db)
+                await api.review_batch_answer(batch.id,answer['id'],decision,CTX,db)
+            current=await api.batch_review(batch.id,1,1,CTX,db)
+            assert current['counts']['draft' if mode=='reject' else 'approved']==1
+            events=list(await db.scalars(select(SeoContentReviewEvent).order_by(SeoContentReviewEvent.id)))
+            assert [e.action for e in events]==['submit','reject' if mode=='reject' else 'approve']
+            assert all(e.actor_id==CTX.user_id for e in events)
+    database(scenario)
+
+
+def test_batch_review_missing_answer_is_explicit_and_cannot_review_other_answer():
+    async def scenario(sessions):
+        async with sessions() as db:
+            batch=SeoQaBatch(tenant_id=1,site_id=1,actor='7',request_key='missing-review',request_hash='fixture',status='completed',items=[{'question_id':9,'title':'已删除题目','state':'done','answer_id':999}])
+            db.add(batch);await db.commit()
+            result=await api.batch_review(batch.id,1,1,CTX,db)
+            assert result['counts']['not_saved']==1 and result['items'][0]['available'] is False
+            with pytest.raises(HTTPException): await api.review_batch_answer(batch.id,1,api.BatchReviewDecision(tenant_id=1,site_id=1,content_version=1,question_version=1,action='approve'),CTX,db)
+    database(scenario)

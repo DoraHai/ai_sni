@@ -388,7 +388,7 @@ async function mountBatch(api={},options={}){
   const compiled=compileScript(parse(source).descriptor,{id:'batch',genDefaultAs:'component'}).content
   const props=Vue.reactive({tenantId:1,siteId:10,canEdit:true,questions:[{id:1,version:2,title:'问题'}],...options}),writes=[]
   const batch={id:8,status:'queued',items:[{question_id:1,title:'问题',state:'pending'}]}
-  const bindings={...Vue,seoQaGet:async path=>path==='facts'?[{id:3,version:4,current:true,title:'手册'}]:path==='batches'?{items:[batch]}:batch,seoQaPost:async(path,payload)=>{writes.push([path,payload]);return batch},...api}
+  const bindings={...Vue,SeoQaBatchReview:{},seoQaGet:async path=>path==='facts'?[{id:3,version:4,current:true,title:'手册'}]:path==='batches'?{items:[batch]}:batch,seoQaPost:async(path,payload)=>{writes.push([path,payload]);return batch},...api}
   const names=Object.keys(bindings).filter(k=>/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k))
   const component=new Function('b',`const {${names.join(',')}}=b;${compiled.replace(/^import .* from .*$/gm,'')};return component`)(bindings)
   component.render=()=>null
@@ -415,4 +415,38 @@ test('late recovered batch does not enter a different site',async()=>{
 })
 test('fresh mount lists previously submitted batches without starting work',async()=>{
   const m=await mountBatch();try{assert.equal(m.state.history[0].id,8);assert.equal(m.writes.length,0);await m.state.selectBatch(8);assert.equal(m.state.current.items[0].state,'pending')}finally{m.app.unmount()}
+})
+
+async function mountBatchReview(api={},options={}){
+  const source=await readFile(new URL('../src/views/seo/SeoQaBatchReview.vue',import.meta.url),'utf8')
+  const compiled=compileScript(parse(source).descriptor,{id:'review',genDefaultAs:'component'}).content
+  const props=Vue.reactive({tenantId:1,siteId:10,batchId:8,canEdit:true,disabled:false,...options}),writes=[]
+  const row={question_id:1,answer_id:2,title:'问题',available:true,content_version:3,question_version:4,status:'review',bucket:'review',problems:[],facts:[],quality:{hints:[],manual_review:[]}}
+  const value={batch_id:8,items:[row],counts:{review:1}}
+  const bindings={...Vue,seoQaGet:async()=>value,seoQaPost:async(path,payload)=>{writes.push([path,payload]);return {}},...api}
+  const names=Object.keys(bindings).filter(k=>/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k))
+  const component=new Function('b',`const {${names.join(',')}}=b;${compiled.replace(/^import .* from .*$/gm,'')};return component`)(bindings)
+  component.render=()=>null
+  const app=renderer.createApp({render:()=>Vue.h(component,props)}),root=app.mount({});await flush()
+  return {app,state:root.$.subTree.component.setupState,props,writes,row}
+}
+test('batch review requires explicit action and sends displayed versions',async()=>{
+  const m=await mountBatchReview();try{assert.equal(m.writes.length,0);await m.state.review(m.row,'approve');assert.deepEqual(m.writes[0],['batches/8/answers/2/review',{tenant_id:1,site_id:10,action:'approve',note:null,content_version:3,question_version:4}])}finally{m.app.unmount()}
+})
+test('batch review read-only and invalid evidence cannot approve',async()=>{
+  const m=await mountBatchReview({}, {canEdit:false});try{await m.state.review(m.row,'approve');assert.equal(m.writes.length,0);m.props.canEdit=true;await flush();m.row.problems=['资料过期'];await m.state.review(m.row,'approve');assert.equal(m.writes.length,0)}finally{m.app.unmount()}
+})
+test('batch rejection requires an opinion but remains possible with stale evidence',async()=>{
+  const m=await mountBatchReview();try{m.row.problems=['失效'];await m.state.review(m.row,'reject');assert.equal(m.writes.length,0);assert.ok(m.state.rowErrors[m.state.key(m.row)]);m.state.notes[m.state.key(m.row)]='补充新证据';await m.state.review(m.row,'reject');assert.equal(m.writes[0][1].note,'补充新证据')}finally{m.app.unmount()}
+})
+test('version conflict is shown without automatic approval retry',async()=>{
+  let calls=0;const m=await mountBatchReview({seoQaPost:async()=>{calls++;throw {response:{data:{detail:'正文已更新'}}}}})
+  try{await m.state.review(m.row,'approve');assert.equal(calls,1);assert.equal(m.state.rowErrors[m.state.key(m.row)],'正文已更新');assert.equal(m.state.result.items[0].status,'review')}finally{m.app.unmount()}
+})
+test('switching batch drops a delayed review snapshot and fetches the new batch',async()=>{
+  const pending=[];const m=await mountBatchReview({seoQaGet:path=>new Promise(resolve=>pending.push({path,resolve}))})
+  try{m.props.batchId=9;await flush();assert.equal(pending.length,2);pending[1].resolve({batch_id:9,items:[],counts:{}});await flush();pending[0].resolve({batch_id:8,items:[{answer_id:99}],counts:{}});await flush();assert.equal(m.state.result.batch_id,9);assert.equal(m.state.loading,false)}finally{m.app.unmount()}
+})
+test('batch review source links reject executable protocols and embedded credentials',async()=>{
+  const m=await mountBatchReview();try{assert.equal(m.state.href('javascript:alert(1)'),null);assert.equal(m.state.href('https://user:pass@example.com'),null);assert.equal(m.state.href('https://example.com/manual'),'https://example.com/manual')}finally{m.app.unmount()}
 })
