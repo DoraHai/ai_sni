@@ -76,9 +76,9 @@ export function panelInModuleScope(key, snapshot, entitlements) {
 export function navigationAccess(page, entitlements) {
   const scope = moduleScope(entitlements);
   const requirements = {
-    panorama: [], tasks: [], quality: [],
+    panorama: [], dashboard: [], tasks: [], quality: [],
     acquisition: ['sem'],
-    dashboard: MODULES, overview: MODULES, module: null,
+    overview: MODULES, module: null,
   };
   if (!Object.hasOwn(requirements, page) || scope.empty) {
     return { allowed: false, reason: '当前入口不可用。' };
@@ -90,6 +90,18 @@ export function navigationAccess(page, entitlements) {
   if (allowed) return { allowed: true, reason: null };
   if (page === 'acquisition') return { allowed: false, reason: '预算试算需要开通 SEM。' };
   return { allowed: false, reason: '该入口仍包含多个模块，当前组合暂未开放，请使用全景工作台。' };
+}
+
+export function scopedCapabilities(capabilities, entitlements, query = '') {
+  const enabled = moduleScope(entitlements).enabled;
+  const needle = String(query).trim().toLocaleLowerCase('zh-CN');
+  return enabled.flatMap(module => {
+    const items = Array.isArray(capabilities?.[module]) ? capabilities[module] : [];
+    return items.map((name, index) => ({ module, index, name: String(name) }))
+      .filter(({ module: key, name }) => !needle
+        || key.includes(needle)
+        || name.toLocaleLowerCase('zh-CN').includes(needle));
+  });
 }
 
 export function moduleEntryAccess(module, entitlements) {
