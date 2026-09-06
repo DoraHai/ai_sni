@@ -2,22 +2,27 @@
 import asyncio
 import os
 import uuid
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
 import test_writeback_approval  # noqa: F401
-from sqlalchemy import Column, Integer, MetaData, Table, func, select, text
+from sqlalchemy import BigInteger, ForeignKeyConstraint, MetaData, func, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.api import sem_tasks as api
 from app.models.sem_task import SemTask
+from app.models import Tenant, TenantModule, BaiduAccount, KwReportSnapshot, WritebackApproval
+from app.api import sem_metrics
 from test_sem_tasks import context, evidence
 
 
-def test_native_task_constraints_lifecycle_and_concurrent_verify():
+@pytest.mark.parametrize("tenant_id", [3, 2**31, 2**53 + 1, 2**63 - 1])
+@pytest.mark.parametrize("schema_source", ["model", "review_ddl"])
+def test_native_task_constraints_lifecycle_and_concurrent_verify(tenant_id, schema_source):
     url = os.getenv("SEM_TASK_TEST_DATABASE_URL")
     if not url:
         pytest.skip("requires dedicated local sem_tasks_test database")
@@ -26,6 +31,11 @@ def test_native_task_constraints_lifecycle_and_concurrent_verify():
     assert parsed.host in {"127.0.0.1", "localhost"} and parsed.database == "sem_tasks_test"
     assert not parsed.query  # No alternate host/service routing.
     schema = "sem_tasks_test_" + uuid.uuid4().hex
+
+    def scoped_evidence(value, when=None):
+        result = evidence(value, when)
+        result["tenant_id"] = tenant_id
+        return result
 
     async def run():
         admin = create_async_engine(url, poolclass=NullPool)
@@ -37,22 +47,53 @@ def test_native_task_constraints_lifecycle_and_concurrent_verify():
                 await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
                 created = True
             metadata = MetaData()
-            tenant = Table("tenants", metadata, Column("id", Integer, primary_key=True))
+            # Mirror the operator-confirmed BIGINT tenant PK in this isolated DB;
+            # leave the legacy shared application mapper unchanged.
+            for model in (Tenant, TenantModule, BaiduAccount, KwReportSnapshot, WritebackApproval):
+                table = model.__table__.to_metadata(metadata)
+                for constraint in list(table.constraints):
+                    if isinstance(constraint, ForeignKeyConstraint):
+                        table.constraints.remove(constraint)
+                table.foreign_keys.clear()
+                for column in table.c:
+                    column.foreign_keys.clear()
+            tenant = metadata.tables["tenants"]
+            tenant.c.id.type = BigInteger()
             SemTask.__table__.to_metadata(metadata)
             async with engine.begin() as conn:
-                await conn.run_sync(metadata.create_all)
-                await conn.execute(tenant.insert().values(id=3))
-            with patch.object(api, "observation", AsyncMock(return_value=evidence(3))):
+                if schema_source == "model":
+                    await conn.run_sync(metadata.create_all)
+                else:
+                    tables = [t for t in metadata.tables.values() if t.name != "sem_tasks"]
+                    await conn.run_sync(lambda sync: metadata.create_all(sync, tables=tables))
+                    # Execute the repository-owned review DDL only inside this
+                    # dedicated local test schema, never against production.
+                    ddl = Path("docs/SEM_TASK_SCHEMA_REVIEW.sql").read_text(encoding="utf-8")
+                    ddl = "\n".join(line for line in ddl.splitlines() if not line.lstrip().startswith("--"))
+                    for statement in ddl.split(";"):
+                        if statement.strip():
+                            await conn.execute(text(statement))
+                await conn.execute(tenant.insert().values(id=tenant_id, name="local-test"))
+                await conn.execute(metadata.tables["tenant_modules"].insert().values(
+                    tenant_id=tenant_id, module_code="sem", status="active"))
+            # Exercise real metric SQL and its bigint bind, not only mocked evidence.
+            # Include actual module entitlement and identity queries in this path.
+            async with AsyncSession(engine) as session:
+                metrics = await sem_metrics.snapshot(tenant_id=tenant_id, ctx=context(tenant=tenant_id), session=session)
+                assert metrics["tenant_id"] == tenant_id
+                assert next(x for x in metrics["items"] if x["metric_key"] == "sem.accounts.active_count")["value"] == 0
+            with patch.object(api, "observation", AsyncMock(return_value=scoped_evidence(3))):
                 async with AsyncSession(engine, expire_on_commit=False) as session:
                     result = await api.create(api.CreateTask(title="核对审批", params={
                         "metric_key": "sem.approvals.pending_count", "direction": "down", "target_value": 1}),
-                        tenant_id=3, ctx=context(), session=session)
+                        tenant_id=tenant_id, ctx=context(tenant=tenant_id), session=session)
                     task_id = result["id"]
                     assert result["created_at"].tzinfo is not None
                     assert result["created_by"] == "user:9"
+                    assert result["tenant_id"] == tenant_id
                     # Deterministic baseline precedes the verified observation.
-                    row = await api.load(session, task_id, 3, lock=True)
-                    row.baseline_snapshot = evidence(3, datetime.now(timezone.utc)-timedelta(hours=1))
+                    row = await api.load(session, task_id, tenant_id, lock=True)
+                    row.baseline_snapshot = scoped_evidence(3, datetime.now(timezone.utc)-timedelta(hours=1))
                     await session.commit()
 
             entered, release = asyncio.Event(), asyncio.Event()
@@ -62,11 +103,11 @@ def test_native_task_constraints_lifecycle_and_concurrent_verify():
                 calls += 1
                 entered.set()
                 await release.wait()
-                return evidence(1)
+                return scoped_evidence(1)
 
             async def verify():
                 async with AsyncSession(engine, expire_on_commit=False) as session:
-                    return await api.verify(task_id=task_id, tenant_id=3, ctx=context(), session=session)
+                    return await api.verify(task_id=task_id, tenant_id=tenant_id, ctx=context(tenant=tenant_id), session=session)
 
             with patch.object(api, "observation", observe):
                 first = asyncio.create_task(verify())
@@ -86,10 +127,10 @@ def test_native_task_constraints_lifecycle_and_concurrent_verify():
                     await session.execute(text("UPDATE sem_tasks SET completion_evidence = NULL WHERE id=:id"), {"id": task_id})
                 await session.rollback()
                 with pytest.raises(IntegrityError):
-                    await session.execute(text("DELETE FROM tenants WHERE id=3"))
+                    await session.execute(tenant.delete().where(tenant.c.id == tenant_id))
                 await session.rollback()
                 assert await session.scalar(select(func.count()).select_from(SemTask)) == 1
-                assert (await api.load(session, task_id, 3)).status == "done"
+                assert (await api.load(session, task_id, tenant_id)).status == "done"
         finally:
             await engine.dispose()
             if created:

@@ -23,7 +23,8 @@ class SemTask(Base):
         Index("ix_sem_tasks_action", "tenant_id", "action_type", "id"),
     )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False)
+    # Production tenants.id is BIGINT; do not inherit the legacy shared ORM type.
+    tenant_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False)
     module: Mapped[str] = mapped_column(String(8), nullable=False, default="sem")
     action_type: Mapped[str] = mapped_column(String(64), nullable=False)
     title: Mapped[str] = mapped_column(String(300), nullable=False)
