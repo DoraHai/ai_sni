@@ -3,7 +3,7 @@ import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { seoQaGet, seoQaPost } from '../../api/seo'
 const props=defineProps({tenantId:Number,siteId:Number,batchId:Number,canEdit:Boolean,disabled:Boolean})
 const emit=defineEmits(['changed','open'])
-const result=ref(null),loading=ref(false),acting=ref(false),error=ref(''),filter=ref('all'),notes=ref({}),rowErrors=ref({})
+const result=ref(null),loading=ref(false),acting=ref(false),error=ref(''),exportMessage=ref(''),filter=ref('all'),notes=ref({}),rowErrors=ref({})
 const scopeKey=computed(()=>`${props.tenantId}:${props.siteId}:${props.batchId}`)
 const buckets={all:'全部',draft:'待提交',review:'待审核',needs_fix:'需修复',approved:'已审核',not_saved:'尚不可验收'}
 const labels={planned:'草稿',drafting:'草稿',review:'待审核',ready:'已审核',published:'已发布'}
@@ -32,13 +32,26 @@ async function review(row,action){
     if(ticket===generation&&scope===scopeKey.value){delete notes.value[rowKey];await load();if(ticket===generation&&scope===scopeKey.value)emit('changed')}
   }catch(e){if(ticket===generation)rowErrors.value[rowKey]=detail(e)}finally{acting.value=false}
 }
+async function exportBatch(kind){
+  if(acting.value||loading.value||props.disabled)return
+  const ticket=generation,scope=scopeKey.value;acting.value=true;error.value='';exportMessage.value=''
+  try{
+    const value=await seoQaGet(`batches/${props.batchId}/export`,{...params(),kind})
+    if(ticket!==generation||scope!==scopeKey.value)return
+    const bytes=Uint8Array.from(atob(value.content_base64),c=>c.charCodeAt(0))
+    const url=URL.createObjectURL(new Blob([bytes],{type:'application/zip'}))
+    const link=document.createElement('a');link.href=url;link.download=value.filename;document.body.appendChild(link)
+    try{link.click()}finally{link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)}
+    exportMessage.value=`已导出 ${value.included_count} 条，未包含 ${value.excluded_count} 条；快照时间 ${value.as_of}。平台发布前请再次确认有效性。`
+  }catch(e){if(ticket===generation)error.value=detail(e)}finally{acting.value=false}
+}
 async function open(row){
   if(acting.value||loading.value||props.disabled)return
   const ticket=generation,scope=scopeKey.value
   try{const value=await seoQaGet(`questions/${row.question_id}/detail`,params());if(ticket===generation&&scope===scopeKey.value)emit('open',value.question)}
   catch(e){if(ticket===generation)error.value=detail(e)}
 }
-watch(scopeKey,()=>{++generation;result.value=null;notes.value={};rowErrors.value={};filter.value='all';load(true)},{immediate:true})
+watch(scopeKey,()=>{++generation;result.value=null;exportMessage.value='';notes.value={};rowErrors.value={};filter.value='all';load(true)},{immediate:true})
 onBeforeUnmount(()=>{++generation})
 </script>
 <template>
@@ -48,6 +61,8 @@ onBeforeUnmount(()=>{++generation})
     <el-alert v-if="error" :title="error" type="error" :closable="false"/>
     <template v-if="result">
       <p>{{ result.meaning }}</p>
+      <div class="review-actions"><el-button :disabled="acting||loading||disabled" @click="exportBatch('approved')">导出已审核交付包</el-button><el-button :disabled="acting||loading||disabled" @click="exportBatch('pending')">导出待处理清单</el-button></div>
+      <p v-if="exportMessage" role="status">{{ exportMessage }}</p>
       <div class="review-filters"><el-button v-for="(label,bucket) in buckets" :key="bucket" :type="filter===bucket?'primary':'default'" @click="filter=bucket">{{ label }} {{ bucket==='all'?result.items.length:result.counts[bucket] }}</el-button></div>
       <el-empty v-if="!shown.length" description="当前筛选下没有待处理回答"/>
       <details v-for="row in shown" :key="`${row.question_id}:${row.content_version||0}`" class="review-card">

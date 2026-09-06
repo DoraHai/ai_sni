@@ -882,6 +882,30 @@ def test_batch_review_current_content_and_versioned_actions(mode):
             events=list(await db.scalars(select(SeoContentReviewEvent).order_by(SeoContentReviewEvent.id)))
             assert [e.action for e in events]==['submit','reject' if mode=='reject' else 'approve']
             assert all(e.actor_id==CTX.user_id for e in events)
+            if mode=='success':
+                import base64,io,json,zipfile,hashlib
+                exported=await api.export_batch(batch.id,1,1,'approved',CTX,db)
+                with zipfile.ZipFile(io.BytesIO(base64.b64decode(exported['content_base64']))) as archive:
+                    manifest=json.loads(archive.read('manifest.json'))
+                    assert manifest['included_count']==1 and manifest['tenant_id']==1
+                    for file in manifest['files']:
+                        assert hashlib.sha256(archive.read(file['path'])).hexdigest()==file['sha256']
+                    body=archive.read(next(n for n in archive.namelist() if n.startswith('answers/'))).decode()
+                    assert '[F' not in body and '当前保存的回答' in body
+                with pytest.raises(HTTPException):
+                    await api.export_batch(batch.id,1,1,'approved',AuthContext(8,'other','operator',1,{'seo.content':'view'}),db)
+                question=await db.get(SeoQuestion,qid);question.version+=1;await db.commit()
+                with pytest.raises(HTTPException) as exc: await api.export_batch(batch.id,1,1,'approved',CTX,db)
+                assert exc.value.status_code==409
+                pending=await api.export_batch(batch.id,1,1,'pending',CTX,db)
+                assert pending['included_count']==1
+                # Re-review against the new question version records a new anchor.
+                content=await db.get(SeoContentAsset,answer['content_id']);content.status='review';await db.commit()
+                with patch('app.api.seo_cockpit.metric_values',new=AsyncMock(return_value={'seo.content.published_7d_count':0})):
+                    await api.review_batch_answer(batch.id,answer['id'],decision.model_copy(update={'question_version':2}),CTX,db)
+                assert (await api.export_batch(batch.id,1,1,'approved',CTX,db))['included_count']==1
+                f=await db.get(SeoQaFact,fact['id']);f.status='retired';await db.commit()
+                with pytest.raises(HTTPException): await api.export_batch(batch.id,1,1,'approved',CTX,db)
     database(scenario)
 
 
@@ -894,3 +918,15 @@ def test_batch_review_missing_answer_is_explicit_and_cannot_review_other_answer(
             assert result['counts']['not_saved']==1 and result['items'][0]['available'] is False
             with pytest.raises(HTTPException): await api.review_batch_answer(batch.id,1,api.BatchReviewDecision(tenant_id=1,site_id=1,content_version=1,question_version=1,action='approve'),CTX,db)
     database(scenario)
+
+
+def test_handoff_pending_csv_is_formula_safe():
+    import base64,io,zipfile,csv
+    from app.seo_qa import handoff_archive
+    rows=[{'question_id':i,'title':title,'bucket':'not_saved','generation_error':'@SUM(1)'} for i,title in enumerate(['=1+1','  +cmd','\t-cmd','正常问题'])]
+    value=handoff_archive({'batch_id':1,'items':rows,'counts':{'not_saved':4}},1,1,'pending')
+    with zipfile.ZipFile(io.BytesIO(base64.b64decode(value['content_base64']))) as archive:
+        cells=list(csv.reader(io.StringIO(archive.read('pending.csv').decode('utf-8-sig'))))
+        assert all(row[1].startswith("'") for row in cells[1:4])
+        assert cells[4][1]=='正常问题'
+        assert all(row[-1].startswith("'") for row in cells[1:])

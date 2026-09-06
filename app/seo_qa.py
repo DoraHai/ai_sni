@@ -308,3 +308,43 @@ def semantic_quality_issues(raw, body, facts):
         if not isinstance(ids,list) or len(ids)>20 or any(type(i) is not int or i not in known for i in ids): raise ValueError('Invalid fact reference')
         result.append({'kind':row['kind'],'quote':quote,'reason':reason.strip(),'suggestion':suggestion.strip(),'fact_ids':sorted(set(ids))})
     return result
+
+
+def handoff_archive(snapshot, tenant_id, site_id, kind):
+    """Export a freshly authorized review snapshot; never changes publication state."""
+    import base64
+    import json
+    import zipfile
+    rows=[r for r in snapshot['items'] if (r['bucket']=='approved')==(kind=='approved')]
+    as_of=datetime.now(timezone.utc).isoformat()
+    files={}
+    if kind=='approved':
+        for row in rows:
+            stem=f"question-{row['question_id']}-answer-{row['answer_id']}-v{row['content_version']}"
+            files[f'answers/{stem}.txt']=re.sub(r'\[F\d+\]', '', row['body']).encode('utf-8')
+            files[f'evidence/{stem}.json']=json.dumps(row,ensure_ascii=False,indent=2).encode('utf-8')
+    else:
+        stream=io.StringIO(newline='');writer=csv.writer(stream)
+        writer.writerow(['问题 ID','问题','回答 ID','正文版本','状态','待处理原因'])
+        def cell(value):
+            value=str(value if value is not None else '')
+            # Neutralize formula prefixes even after whitespace/control characters.
+            return "'"+value if value.lstrip(''.join(chr(i) for i in range(33))).startswith(('=','+','-','@')) or value.startswith(('\t','\r','\n')) else value
+        for row in rows:
+            writer.writerow([cell(v) for v in [row['question_id'],row['title'],row.get('answer_id'),row.get('content_version'),row['bucket'],
+                '；'.join(row.get('problems',[])) or row.get('generation_error') or row.get('reason') or '请在批次集中验收中继续提交或审核']])
+        files['pending.csv']=stream.getvalue().encode('utf-8-sig')
+    files['README.txt']=('本包是导出时的交付快照，不代表已在平台发布。发布前请重新确认审核和事实有效性。'
+        'answers 为移除内部事实编号的正文；evidence 保留审核正文、版本和出处。'
+        '真人负责平台账号、验证码、排版与最终发布，并在系统回填真实网址核验。').encode('utf-8')
+    manifest={'batch_id':snapshot['batch_id'],'tenant_id':tenant_id,'site_id':site_id,'as_of':as_of,'kind':kind,
+        'included_count':len(rows),'excluded_count':len(snapshot['items'])-len(rows),'counts':snapshot['counts'],
+        'files':[{'path':name,'sha256':hashlib.sha256(data).hexdigest()} for name,data in files.items()]}
+    files['manifest.json']=json.dumps(manifest,ensure_ascii=False,indent=2).encode('utf-8')
+    stream=io.BytesIO()
+    with zipfile.ZipFile(stream,'w',zipfile.ZIP_DEFLATED) as archive:
+        for name,data in files.items(): archive.writestr(name,data)
+    data=stream.getvalue()
+    return {**{k:manifest[k] for k in ['as_of','included_count','excluded_count']},
+        'filename':f"qa-batch-{snapshot['batch_id']}-{kind}.zip",'mime_type':'application/zip',
+        'content_base64':base64.b64encode(data).decode('ascii'),'sha256':hashlib.sha256(data).hexdigest()}

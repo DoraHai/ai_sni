@@ -1286,6 +1286,9 @@ async def batch_review(batch_id:int,tenant_id:PositiveInt,site_id:PositiveInt,ct
             answer,content,question=found;body=content.humanized_content or content.draft or ''
             problems=await evidence_problems(session,answer,content,fact_map)
             if question.status=='archived': problems.append('问题已归档，请先恢复问题')
+            baseline=item.get('reviewed_question_version') if item.get('reviewed_content_version')==content.version_count else item['request']['question']['version']
+            if content.status in ('ready','published') and question.version!=baseline:
+                problems.append('问题在审核后已修改，请编辑回答并重新提交审核')
             bucket='needs_fix' if problems else 'approved' if content.status in ('ready','published') else 'review' if content.status=='review' else 'draft'
             entry.update(available=True,title=question.title,question_version=question.version,
                 question_changed=question.version!=item['request']['question']['version'],
@@ -1322,4 +1325,22 @@ async def review_batch_answer(batch_id:int,answer_id:int,req:BatchReviewDecision
     if req.action!='reject' and question.status=='archived': raise HTTPException(409,'归档问题请先恢复')
     if req.action=='submit':
         return await submit_content_review(content.id,req.tenant_id,ContentReviewSubmit(note=req.note),session,ctx)
+    if req.action=='approve':
+        from copy import deepcopy
+        batch=await owned_batch(session,ctx,req.tenant_id,req.site_id,batch_id,True)
+        items=deepcopy(batch.items)
+        for item in items:
+            if item.get('answer_id')==answer_id:
+                item.update(reviewed_question_version=question.version,reviewed_content_version=content.version_count)
+        batch.items=items
     return await decide_content_review(content.id,req.tenant_id,ContentReviewDecision(decision=req.action,note=req.note),session,ctx)
+
+
+@router.get('/batches/{batch_id}/export')
+async def export_batch(batch_id:int,tenant_id:PositiveInt,site_id:PositiveInt,
+                       kind:Literal['approved','pending']='approved',ctx=Auth,session=Db):
+    from app.seo_qa import handoff_archive
+    snapshot=await batch_review(batch_id,tenant_id,site_id,ctx,session)
+    if not any((row['bucket']=='approved')==(kind=='approved') for row in snapshot['items']):
+        raise HTTPException(409,'当前没有可导出的已审核回答' if kind=='approved' else '当前没有待处理项目')
+    return handoff_archive(snapshot,tenant_id,site_id,kind)
