@@ -1,5 +1,5 @@
 <script setup>
-import { publicationEvidence, channelBoundary, countPublishedListedContents } from '../../utils/seoPublicationEvidence'
+import { publicationEvidence, channelBoundary, countPublishedListedContents } from './seoPublicationEvidence'
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
