@@ -1,0 +1,63 @@
+-- REVIEW COPY: run only after separate approval of production read-only access.
+-- Use an authenticated psql session; never put a password/DSN on the command line.
+\set ON_ERROR_STOP on
+\pset tuples_only on
+\pset format unaligned
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
+SET LOCAL statement_timeout = '10s';
+SET LOCAL lock_timeout = '1s';
+SET LOCAL search_path = pg_catalog;
+
+-- No customer rows are read. Schema definitions remain internal audit material.
+WITH relations AS (
+    SELECT c.oid, n.nspname AS schema_name, c.relname, c.relkind,
+           c.relrowsecurity, c.relforcerowsecurity, pg_get_userbyid(c.relowner) AS owner
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relkind IN ('r','p','v','m','S','f')
+), columns AS (
+    SELECT r.relname, a.attnum, a.attname, format_type(a.atttypid,a.atttypmod) AS type,
+           a.attnotnull, a.attidentity, a.attgenerated,
+           md5(pg_get_expr(d.adbin,d.adrelid)) AS default_definition_fingerprint
+    FROM relations r JOIN pg_attribute a ON a.attrelid=r.oid
+    LEFT JOIN pg_attrdef d ON d.adrelid=r.oid AND d.adnum=a.attnum
+    WHERE a.attnum > 0 AND NOT a.attisdropped
+), constraints AS (
+    SELECT r.relname, c.conname, c.contype, c.convalidated,
+           pg_get_constraintdef(c.oid,true) AS definition
+    FROM relations r JOIN pg_constraint c ON c.conrelid=r.oid
+), indexes AS (
+    SELECT r.relname, c.relname AS index_name, i.indisvalid, i.indisready,
+           pg_get_indexdef(i.indexrelid) AS definition
+    FROM relations r JOIN pg_index i ON i.indrelid=r.oid
+    JOIN pg_class c ON c.oid=i.indexrelid
+), version_tables AS (
+    SELECT n.nspname AS schema_name, c.relkind
+    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE c.relname='alembic_version' AND n.nspname NOT LIKE 'pg_%'
+      AND n.nspname <> 'information_schema'
+)
+SELECT jsonb_build_object(
+    'captured_at', transaction_timestamp(),
+    'read_only', current_setting('transaction_read_only'),
+    'isolation', current_setting('transaction_isolation'),
+    'database', current_database(), 'role', current_user,
+    'server_address', inet_server_addr(), 'server_port', inet_server_port(),
+    'server_version', current_setting('server_version'),
+    'inspected_schema', 'public',
+    'version_tables', (SELECT coalesce(jsonb_agg(to_jsonb(v) ORDER BY schema_name),'[]'::jsonb) FROM version_tables v),
+    'revisions', (SELECT coalesce(jsonb_agg(version_num ORDER BY version_num),'[]'::jsonb) FROM public.alembic_version),
+    'target_relations', (SELECT jsonb_object_agg(name, to_regclass('public.' || name) IS NOT NULL)
+        FROM unnest(ARRAY['sem_tasks','sem_tasks_id_seq','sem_tasks_pkey',
+                         'ix_sem_tasks_action','ix_sem_tasks_queue']) AS x(name)),
+    'privileges', jsonb_build_object(
+        'schema_usage', has_schema_privilege(current_user,'public','USAGE'),
+        'schema_create', has_schema_privilege(current_user,'public','CREATE'),
+        'tenants_references', has_table_privilege(current_user,'public.tenants','REFERENCES'),
+        'version_select', has_table_privilege(current_user,'public.alembic_version','SELECT'),
+        'version_update', has_table_privilege(current_user,'public.alembic_version','UPDATE')),
+    'relations', (SELECT coalesce(jsonb_agg(to_jsonb(r) - 'oid' ORDER BY relname),'[]'::jsonb) FROM relations r),
+    'columns', (SELECT coalesce(jsonb_agg(to_jsonb(c) ORDER BY relname,attnum),'[]'::jsonb) FROM columns c),
+    'constraints', (SELECT coalesce(jsonb_agg(to_jsonb(c) ORDER BY relname,conname),'[]'::jsonb) FROM constraints c),
+    'indexes', (SELECT coalesce(jsonb_agg(to_jsonb(i) ORDER BY relname,index_name),'[]'::jsonb) FROM indexes i)
+);
+ROLLBACK;
