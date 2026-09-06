@@ -1,0 +1,99 @@
+{
+  "source_commit": "2f481ff3afd200f7a4664787dcbd92775d851287",
+  "method": "git show captured as raw bytes vs Path.read_bytes; SHA256 without text decoding; normalization used only as an explicit equality experiment, not as release hashing.",
+  "files": [
+    {
+      "file": "editor.html",
+      "git_blob": {
+        "sha256": "0e75a9983f9a0d36c2df1c3e593a0af3d58bf8992d5c949ac8ae5344168798db",
+        "bytes": 42337,
+        "crlf_count": 0,
+        "lf_count": 914,
+        "utf8_bom": false
+      },
+      "working_tree": {
+        "sha256": "143a3f2628cd3e76f9e9ce7c8b64cf97fd0c0b924aa22a090e25912b35f5bd9a",
+        "bytes": 43233,
+        "crlf_count": 896,
+        "lf_count": 914,
+        "utf8_bom": false
+      },
+      "byte_identical": false,
+      "crlf_to_lf_equals_blob": true,
+      "geo_build_outputs": [
+        {
+          "path": "frontend/geo-frontend/dist/editor.html",
+          "exists": false,
+          "bytes": null
+        },
+        {
+          "path": "frontend/geo-frontend/dist/deal-sniper-prototype/geo/editor.html",
+          "exists": false,
+          "bytes": null
+        }
+      ]
+    },
+    {
+      "file": "channels.html",
+      "git_blob": {
+        "sha256": "3cc7310f76d53009b41645c87acdcaa2e5aa203fdafcad9a6553f29fe88eeed7",
+        "bytes": 11840,
+        "crlf_count": 0,
+        "lf_count": 279,
+        "utf8_bom": false
+      },
+      "working_tree": {
+        "sha256": "5aff894d96a6ca086fe40f9a9163435da565ffbe58ebdf1ce997ba5d3f7dd8f9",
+        "bytes": 12113,
+        "crlf_count": 273,
+        "lf_count": 279,
+        "utf8_bom": false
+      },
+      "byte_identical": false,
+      "crlf_to_lf_equals_blob": true,
+      "geo_build_outputs": [
+        {
+          "path": "frontend/geo-frontend/dist/channels.html",
+          "exists": false,
+          "bytes": null
+        },
+        {
+          "path": "frontend/geo-frontend/dist/deal-sniper-prototype/geo/channels.html",
+          "exists": false,
+          "bytes": null
+        }
+      ]
+    },
+    {
+      "file": "assets/geo-api-v1.js",
+      "git_blob": {
+        "sha256": "f49b08471efa2849dae9b49679a48a623effee05f7b26fb135ecb6991c30e475",
+        "bytes": 21439,
+        "crlf_count": 0,
+        "lf_count": 619,
+        "utf8_bom": false
+      },
+      "working_tree": {
+        "sha256": "1b58fbb1f33370d67fa75000ee817519b506c3615d11481a76271e6eab8ef3ff",
+        "bytes": 22045,
+        "crlf_count": 606,
+        "lf_count": 619,
+        "utf8_bom": false
+      },
+      "byte_identical": false,
+      "crlf_to_lf_equals_blob": true,
+      "geo_build_outputs": [
+        {
+          "path": "frontend/geo-frontend/dist/assets/geo-api-v1.js",
+          "exists": false,
+          "bytes": null
+        },
+        {
+          "path": "frontend/geo-frontend/dist/deal-sniper-prototype/geo/assets/geo-api-v1.js",
+          "exists": false,
+          "bytes": null
+        }
+      ]
+    }
+  ]
+}
