@@ -8,8 +8,8 @@ const partial = () => enabled.length !== 3;
 const rawTasks = allTasks;
 allTasks = () => rawTasks().filter(task => taskInModuleScope(taskScopeReference(task), enabled));
 
-function selector() {
-  return `<label>演示客户已开通 <select id="customerModuleProfile" aria-label="演示客户开通组合">${Array.from({ length: 7 }, (_, i) => {
+function selector(id = 'customerModuleProfile', label = '全景客户开通组合') {
+  return `<label>演示客户已开通 <select id="${id}" aria-label="${label}">${Array.from({ length: 7 }, (_, i) => {
     const modules = MODULES.filter((_, index) => (i + 1) & (1 << index));
     return `<option value="${modules.join(',')}" ${modules.join(',') === enabled.join(',') ? 'selected' : ''}>${modules.map(module => module.toUpperCase()).join(' + ')}</option>`;
   }).join('')}</select></label>`;
@@ -78,7 +78,7 @@ function scopedCapabilityGrid(query = '') {
 
 function scopedCapabilitiesView(query = '') {
   const cards = { sem: 'trend', seo: 'content', geo: 'heatmap' };
-  $('#page-dashboard').innerHTML = `<div class="dashboard-header"><div><p class="eyebrow">AVAILABLE CAPABILITIES / 已开通能力</p><h1>全部功能</h1><p>${enabled.map(module => names[module]).join(' · ')}。这里只展示当前客户已开通模块的能力入口。</p></div><button class="secondary-button" data-page="panorama">← 返回全景工作台</button></div><div class="p-controls">${selector()}</div><section class="cap-explorer"><header><div><h2>能力索引 · ${enabled.reduce((count, module) => count + capabilities[module].length, 0)} 项</h2><p class="scope-label">能力名称与操作指引来自现有模块演示；原型没有连接真实数据接口。</p></div><input class="cap-search" id="capSearch" type="search" value="${esc(query)}" placeholder="搜索当前已开通能力…" aria-label="搜索当前已开通模块能力"></header><div class="dash-links">${enabled.map(module => `<button data-profile-open="${cards[module]}">进入${names[module]}已审核卡片 ↗</button>`).join('')}</div><div class="cap-grid" id="capGrid">${scopedCapabilityGrid(query)}</div></section>`;
+  $('#page-dashboard').innerHTML = `<div class="dashboard-header"><div><p class="eyebrow">AVAILABLE CAPABILITIES / 已开通能力</p><h1>全部功能</h1><p>${enabled.map(module => names[module]).join(' · ')}。这里只展示当前客户已开通模块的能力入口。</p></div><button class="secondary-button" data-page="panorama">← 返回全景工作台</button></div><div class="p-controls">${selector('capabilityModuleProfile', '全部功能客户开通组合')}</div><section class="cap-explorer"><header><div><h2>能力索引 · ${enabled.reduce((count, module) => count + capabilities[module].length, 0)} 项</h2><p class="scope-label">能力名称与操作指引来自现有模块演示；原型没有连接真实数据接口。</p></div><input class="cap-search" id="capSearch" type="search" value="${esc(query)}" placeholder="搜索当前已开通能力…" aria-label="搜索当前已开通模块能力"></header><div class="dash-links">${enabled.map(module => `<button data-profile-open="${cards[module]}">查看${names[module]}明细 ↗</button>`).join('')}</div><div class="cap-grid" id="capGrid">${scopedCapabilityGrid(query)}</div></section>`;
 }
 
 const originalDashboardRender = renderDashboard;
@@ -159,7 +159,7 @@ pPlan = function(type = 'verify', ...args) {
 };
 
 window.addEventListener('change', event => {
-  if (event.target.id !== 'customerModuleProfile') return;
+  if (!['customerModuleProfile', 'capabilityModuleProfile'].includes(event.target.id)) return;
   const next = moduleScope(event.target.value.split(',')).enabled;
   if (!next.length) return;
   const oldMessages = [...$('#chatStream').children].filter(node => !node.hasAttribute('data-profile-history') && !node.querySelector('.first-welcome'));
