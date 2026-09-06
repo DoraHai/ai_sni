@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>G‑Snipers 获客工作台 · 诺德新材料</title>
+<link rel="stylesheet" href="cockpit.css?v=20260907-57">
+<link rel="stylesheet" href="dashboard.css?v=20260907-57">
+<link rel="stylesheet" href="business-explorer.css?v=20260907-57">
+<link rel="stylesheet" href="conversation.css?v=20260907-57">
+<link rel="stylesheet" href="acquisition.css?v=20260907-57">
+<link rel="stylesheet" href="panorama.css?v=20260907-57">
+<link rel="stylesheet" href="decision-workspace.css?v=20260907-57">
+<link rel="stylesheet" href="command-center.css?v=20260907-57">
+<link rel="stylesheet" href="execution-rehearsal.css?v=20260907-57">
+<link rel="stylesheet" href="fluid-dashboard.css?v=20260907-57">
+<link rel="stylesheet" href="exploration-path.css?v=20260907-57">
+<link rel="stylesheet" href="chat-refinement.css?v=20260907-57">
+<link rel="stylesheet" href="tracking-boundary.css?v=20260907-57">
+<link rel="stylesheet" href="dashboard-hierarchy.css?v=20260907-57">
+<link rel="stylesheet" href="sem-depth.css?v=20260907-57">
+<link rel="stylesheet" href="seo-depth.css?v=20260907-57">
+<link rel="stylesheet" href="geo-depth.css?v=20260907-57">
+<link rel="stylesheet" href="detail-polish.css?v=20260907-57">
+<link rel="stylesheet" href="object-guidance.css?v=20260907-57">
+<link rel="stylesheet" href="first-screen.css?v=20260907-57">
+<link rel="stylesheet" href="demo-finish.css?v=20260907-57">
+<link rel="stylesheet" href="service-states.css?v=20260907-57">
+<link rel="stylesheet" href="task-handoff.css?v=20260907-57">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="#overview" aria-label="G‑Snipers 获客工作台首页"><span class="brand-mark">S</span><span>G‑Snipers<span class="brand-divider">/</span><b>获客工作台</b></span></a>
+  <div class="tenant"><span class="tenant-dot"></span>诺德新材料 <span class="muted">· 示例客户</span></div>
+  <span class="avatar" title="决策者视角">ND</span>
+</header>
+<div class="demo-line"><span class="demo-pill">交互原型</span><span>数据与回答均为演示；指令与执行为本地演练，不操作真实业务。</span><button class="text-button" data-action="quality">查看数据边界 ↗</button></div>
+<div class="workspace" id="workspace" data-mode="split">
+  <aside class="assistant" id="assistant" aria-label="业务分析">
+    <div class="assistant-head"><div class="assistant-symbol"></div><div><b>业务分析</b><small>查看依据与处理建议</small></div><button class="icon-button" data-action="newChat" title="清空本次对话" aria-label="清空本次对话">↺</button></div>
+    <div class="chat-context"><span class="small-label">当前关注</span><button id="contextTitle" data-action="focusCurrent">智能仓储 · 花费与承接 ↗</button></div>
+    <div class="chat-stream" id="chatStream" role="log" aria-live="polite" aria-label="对话记录"></div>
+    <div class="chat-suggestions" id="chatSuggestions"></div>
+    <form id="chatForm" class="chat-form"><label class="sr-only" for="chatInput">向获客推广AI智能体提问</label><textarea id="chatInput" rows="2" maxlength="1000" placeholder="问依据、看进度，或讨论下一步…"></textarea><div class="composer-bottom"><small>示例问答 · 仅解释已有信息</small><button class="send-button" type="submit" aria-label="发送问题">↑</button></div></form>
+  </aside>
+  <div class="resize-handle" id="resizeHandle" tabindex="0" role="separator" aria-label="调整助手宽度" aria-orientation="vertical" aria-valuemin="260" aria-valuemax="500" aria-valuenow="310"></div>
+  <main class="main" id="main">
+    <div class="workspace-toolbar"><nav class="page-tabs" aria-label="获客工作台导航"><button data-page="dashboard">经营大盘</button><button data-page="overview" class="active">经营分析</button><button data-page="tasks">待办与进度 <span id="taskCount">3</span></button><button data-page="quality">数据健康 <i class="warning-dot"></i></button></nav><div class="view-modes" aria-label="布局切换"><button data-mode="chat-focus" aria-label="对话为主" title="对话为主">▤</button><button data-mode="screen-focus" aria-label="大屏为主" title="大屏为主">▥</button><button data-mode="split" class="active" aria-label="左右分屏" title="左右分屏">◫</button><button data-mode="fullscreen" aria-label="全屏看板" title="全屏看板">⛶</button></div></div>
+    <div class="page-scroll" id="pageScroll">
+      <section class="page" id="page-dashboard" aria-label="综合经营大盘"></section>
+      <section class="page active" id="page-overview" aria-labelledby="briefTitle">
+        <div class="page-heading"><div><p class="eyebrow">本周经营分析</p><h1 id="briefTitle">经营分析</h1><p class="lead">本周 3 个关注事项，1 项行动等待检查结果。</p></div><div class="date-label"><span>08.31 — 09.06</span><small>2026 · 对比前一周</small></div></div>
+        <div class="metric-strip" id="metricStrip"></div>
+        <div class="section-heading"><h2>本周关注</h2><span>按核验优先级排序 · 示例事项</span></div>
+        <div class="issue-tabs" id="issueTabs" role="tablist" aria-label="关注事项"></div>
+        <article class="decision-card" id="decisionCard" aria-live="polite"></article>
+        <div class="lower-grid"><section class="surface followups"><div class="section-heading"><h2>上次说的事，怎么样了？</h2><button class="text-button" data-page="tasks">全部行动 ↗</button></div><div id="followups"></div></section><section class="surface source-summary"><div class="section-heading"><h2>结论的可信边界</h2><button class="text-button" data-page="quality">明细 ↗</button></div><div class="source-health"><span><i class="status-dot green"></i>SEM · 官方报表口径</span><b>可核对</b></div><div class="source-health"><span><i class="status-dot green"></i>SEO · 排名 / 重抓记录</span><b>可核对</b></div><div class="source-health"><span><i class="status-dot amber"></i>GEO · 混合来源样本</span><b class="amber-text">需拆分</b></div><p class="footnote">上方是示例数据的来源口径；实际三个模块均未连接。</p></section></div>
+        <div class="section-heading module-heading"><h2>进入模块，查看对应经营依据</h2><span>同一客户 · 相同周窗口</span></div><div class="module-links" id="moduleLinks"></div>
+      </section>
+      <section class="page" id="page-tasks" aria-labelledby="tasksTitle"><div class="page-heading"><div><p class="eyebrow">处理进度与结果</p><h1 id="tasksTitle">待办与进度</h1><p class="lead">分别查看事情做到哪一步、结果是否达到要求。新建方案仅保存在当前浏览器标签页。</p></div></div><div class="ledger-summary" id="ledgerSummary"></div><div class="ledger-tools"><div class="filter-tabs" id="taskFilters"><button class="active" data-filter="all">全部</button><button data-filter="draft">待确认方案</button><button data-filter="active">进行中 / 待检查</button><button data-filter="verified">检查已通过</button><button data-filter="cancelled">已撤回</button></div><input id="taskSearch" type="search" aria-label="搜索行动" placeholder="搜索事项、负责人…"></div><div id="taskList"></div></section>
+      <section class="page" id="page-quality" aria-labelledby="qualityTitle"></section>
+      <section class="page" id="page-module" aria-labelledby="moduleTitle"></section>
+    </div>
+  </main>
+  <button class="assistant-fab" data-action="showChat"> <span>打开分析</span></button>
+</div>
+<dialog id="detailDialog" class="detail-dialog"><div class="dialog-top"><span class="eyebrow" id="dialogEyebrow">EVIDENCE / 依据</span><button class="icon-button" data-action="closeDialog" aria-label="关闭详情">✕</button></div><div id="dialogBody"></div></dialog>
+<div id="toast" role="status" class="toast"></div>
+<div id="panelLayer"></div><div id="panelDock" aria-label="已打开的详情"></div>
+<script src="cockpit.js?v=20260907-57"></script>
+<script src="dashboard.js?v=20260907-57"></script>
+<script src="business-records.js?v=20260907-57"></script>
+<script src="business-explorer.js?v=20260907-57"></script>
+<script src="conversation.js?v=20260907-57"></script>
+<script src="acquisition.js?v=20260907-57"></script>
+<script src="panorama-data.js?v=20260907-57"></script>
+<script src="panorama.js?v=20260907-57"></script>
+<script src="decision-workspace.js?v=20260907-57"></script>
+<script src="execution-rehearsal.js?v=20260907-57"></script>
+<script src="fluid-dashboard.js?v=20260907-57"></script>
+<script src="exploration-path.js?v=20260907-57"></script>
+<script src="chat-reading.js?v=20260907-57"></script>
+<script src="tracking-boundary.js?v=20260907-57"></script>
+<script src="dashboard-hierarchy.js?v=20260907-57"></script>
+<script src="sem-depth.js?v=20260907-57"></script>
+<script src="seo-depth.js?v=20260907-57"></script>
+<script src="geo-depth.js?v=20260907-57"></script>
+<script src="detail-polish.js?v=20260907-57"></script>
+<script src="object-guidance.js?v=20260907-57"></script>
+<script src="first-screen.js?v=20260907-57"></script>
+<script src="demo-finish.js?v=20260907-57"></script>
+<script src="service-states.js?v=20260907-57"></script>
+<script src="task-handoff.js?v=20260907-57"></script>
+<script type="module" src="geo-evidence-preview.mjs?v=20260907-57"></script>
+<script type="module" src="seo-evidence-preview.mjs?v=20260907-57"></script>
+<script type="module" src="module-scope-ui.mjs?v=20260907-57"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+.tracking-boundary{display:flex;gap:8px;align-items:center;margin:4px 0 14px;padding:8px 10px;border:1px solid #2c425b;border-radius:8px;background:#0f2033;color:#a0b9d1;font-size:10px}
+.tracking-boundary>span{white-space:nowrap}
+.tracking-boundary button{flex:1;text-align:left;background:transparent;color:#acc4db;padding:4px 8px;border-left:1px solid #2c425b;font-size:10px;line-height:1.7}
+.tracking-boundary b{color:#d7eaff;margin-right:4px}
+.tracking-boundary small{display:block;color:#95afc8;font-size:10px}
+.tracking-boundary button:hover{background:#19334c;border-radius:4px}
+.tracking-boundary button:focus-visible{outline:2px solid #8bc7ef;outline-offset:2px}
+@container(max-width:600px){.tracking-boundary{flex-wrap:wrap}.tracking-boundary>span{width:100%}.tracking-boundary button{padding:3px 5px}}
