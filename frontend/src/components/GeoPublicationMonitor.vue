@@ -5,19 +5,22 @@ const props = defineProps({ tenantId: Number, taskId: Number, revision: Number }
 const rows = ref([])
 const error = ref('')
 const busy = ref(false)
+const loading = ref(false)
 let epoch = 0
 const labels = { pending: '等待首次检查', healthy: '正文匹配', unreachable: '抓取失败，待重试', mismatch: '正文不匹配', version_changed: '登记后稿件已变化' }
 async function load() {
   const run = ++epoch
-  rows.value = []; error.value = ''; busy.value = false
+  rows.value = []; error.value = ''; busy.value = false; loading.value = false
   if (!props.tenantId || !props.taskId) return
+  loading.value = true
   try {
     const data = await listGeoPublicationMonitor(props.taskId, props.tenantId)
     if (run === epoch) rows.value = data.items || []
   } catch (e) { if (run === epoch) error.value = e.message || '监测记录读取失败' }
+  finally { if (run === epoch) loading.value = false }
 }
 async function check(row) {
-  if (busy.value) return
+  if (busy.value || loading.value) return
   const run = epoch
   busy.value = true; error.value = ''
   try {
@@ -35,7 +38,8 @@ onBeforeUnmount(() => { epoch++ })
     <h3>发布后监测</h3>
     <p>正常页面每天复查，异常每小时重试；连续两次异常生成跟进工单。页面匹配不代表 AI 可见度提升。</p>
     <p v-if="error" role="alert">{{ error }}</p>
-    <p v-if="!rows.length && !error">真实发布登记后，自动开始监测。</p>
+    <p v-if="loading">正在读取发布监测记录…</p>
+    <p v-if="!loading && !rows.length && !error">真实发布登记后，自动开始监测。</p>
     <article v-for="row in rows" :key="row.publication_id">
       <strong>#{{ row.publication_id }} · {{ labels[row.state] || row.state }}</strong>
       <p>{{ row.url }}</p>

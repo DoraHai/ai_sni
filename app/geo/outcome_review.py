@@ -54,9 +54,25 @@ async def update_outcome_review(session, task_id):
         if previous != evidence['after']['as_of']:
             if follow.status == 'done':
                 follow.status, follow.closed_at = 'reopened', None
+                follow.last_verdict = None
             follow.evidence = append_evidence(follow.evidence, check=evidence['metric_key'], result='needs_review',
                 note=f"{evidence['before']['value']} → {evidence['after']['value']}，周结束 {evidence['after']['as_of']}；{evidence['source']}", limit=30)
-        follow.progress = {**(follow.progress or {}), 'source_task_id': row.id, 'outcome_review': assessment}
+        follow.progress = {**(follow.progress or {}), 'source_task_id': row.id, 'outcome_review': assessment, 'current_outcome_review': assessment}
+        follow.title = f'复盘任务 #{row.id}：完整周指标尚未达标'
+        follow.last_note = '完整周实际观察尚未达到目标，请记录复盘结论与下一步行动'
+    else:
+        # Keep the historical review and human conclusion, but expose the latest
+        # observation so old work cannot advertise an obsolete metric result.
+        follow = await session.scalar(select(GeoActionTicket).where(
+            GeoActionTicket.tenant_id == row.tenant_id,
+            GeoActionTicket.advice_code == 'review:v1:' + str(row.id))
+            .order_by(GeoActionTicket.id).limit(1).with_for_update())
+        if follow is not None:
+            follow.title = f'复盘任务 #{row.id}：历史观察复盘'
+            follow.progress = {**(follow.progress or {}), 'current_outcome_review': assessment}
+            follow.last_note = ('当前观察已达目标；历史复盘记录保留，原指标任务须单独验收'
+                               if assessment['state'] == 'target_met'
+                               else '当前待观察：' + assessment.get('reason', '缺少可比数据'))
     await session.commit()
 
 

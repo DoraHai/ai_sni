@@ -12,7 +12,7 @@ from app.models import GeoActionTicket, GeoChannelVariant
 
 
 @pytest.mark.skipif(not os.getenv('GEO_TEST_POSTGRES_URL'), reason='requires isolated PostgreSQL')
-@pytest.mark.parametrize('scenario', ['diagnosis_merge','publication_monitor'])
+@pytest.mark.parametrize('scenario', ['diagnosis_merge','publication_monitor','cancelled_monitor','outcome_review'])
 def test_followup_real_concurrency(scenario):
     async def run():
         schema='geo_followup_test_'+uuid4().hex
@@ -64,6 +64,53 @@ def test_followup_real_concurrency(scenario):
                     rows=list(await s.scalars(select(GeoActionTicket)))
                     assert len(rows)==1 and sorted(rows[0].baseline_snapshot['diagnosis_ids'])==[1,2]
                     assert await s.scalar(select(GeoActionTicket.id).where(audit_ticket_filter(GeoActionTicket,2)))==rows[0].id
+            elif scenario=='outcome_review':
+                from app.geo.outcome_review import update_outcome_review
+                async with sessions() as s:
+                    await s.execute(text("INSERT INTO geo_action_tickets(id,tenant_id,advice_code,status,progress_first,progress) VALUES(50,7,'cockpit:v1:test','doing',:meta,'{}')"),
+                                    {'meta':'{"params":{"content_task_id":12}}'})
+                    await s.commit()
+                assessment={'state':'needs_review','evidence':{'metric_key':'geo.visibility.test',
+                    'before':{'value':3},'after':{'value':2,'as_of':'2026-09-07'},'source':'test-only'}}
+                entered=asyncio.Event()
+                async def assess(*args):
+                    entered.set();await release.wait();return assessment
+                async def review():
+                    async with sessions() as s:await update_outcome_review(s,50)
+                with patch('app.geo.outcome_review.assess_outcome',side_effect=assess):
+                    workers=[asyncio.create_task(review())]
+                    await asyncio.wait_for(entered.wait(),5)
+                    await asyncio.wait_for(review(),5)  # skip locked, not duplicate work
+                    release.set();await asyncio.wait_for(workers[0],5)
+                async with sessions() as s:
+                    follow=list(await s.scalars(select(GeoActionTicket).where(GeoActionTicket.advice_code=='review:v1:50')))
+                    assert len(follow)==1
+                    follow[0].status='done';follow[0].last_verdict='pass';await s.commit()
+                with patch('app.geo.outcome_review.assess_outcome',AsyncMock(return_value=assessment)):
+                    await review()
+                    async with sessions() as s:
+                        assert (await s.scalar(select(GeoActionTicket).where(GeoActionTicket.advice_code=='review:v1:50'))).status=='done'
+                    assessment['evidence']['after']['as_of']='2026-09-14'
+                    await review()
+                async with sessions() as s:
+                    follow=list(await s.scalars(select(GeoActionTicket).where(GeoActionTicket.advice_code=='review:v1:50')))
+                    assert len(follow)==1 and follow[0].status=='reopened' and len(follow[0].evidence)==2 and follow[0].last_verdict is None
+            elif scenario=='cancelled_monitor':
+                from app.geo.publication_monitor import check_publication
+                entered=asyncio.Event()
+                async def interrupted_fetch(url):
+                    entered.set();await release.wait();return NS(html='html',final_url=url)
+                async def check():
+                    async with sessions() as s:return await check_publication(s,7,12,4)
+                with patch('app.geo.publication_monitor.safe_fetch',side_effect=interrupted_fetch), \
+                     patch('app.geo.publication_monitor.match_publication',return_value={'observed_sha256':'actual'}):
+                    workers=[asyncio.create_task(check())]
+                    await asyncio.wait_for(entered.wait(),5);workers[0].cancel()
+                    with pytest.raises(asyncio.CancelledError):await workers[0]
+                    async with sessions() as s:
+                        assert not (await s.get(GeoChannelVariant,3)).adapt_meta
+                    release.set();result=await asyncio.wait_for(check(),5)
+                    assert result['state']=='healthy'
             else:
                 from app.geo.publication_monitor import check_publication,run_monitor_batch
                 calls=[];entered=asyncio.Event()

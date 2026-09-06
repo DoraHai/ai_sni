@@ -5,7 +5,7 @@ import vm from 'node:vm'
 const source = readFileSync(new URL('../src/components/GeoPublicationMonitor.vue', import.meta.url), 'utf8')
 const handlers = source.slice(source.indexOf('async function load()'), source.indexOf('watch(() =>'))
 function fixture() {
- const ctx=vm.createContext({epoch:0,props:{tenantId:7,taskId:12},rows:{value:[]},error:{value:''},busy:{value:false},
+ const ctx=vm.createContext({epoch:0,props:{tenantId:7,taskId:12},rows:{value:[]},error:{value:''},busy:{value:false},loading:{value:false},
    listGeoPublicationMonitor:async()=>({items:[]}),checkGeoPublicationMonitor:async()=>({state:'healthy'})})
  vm.runInContext(handlers,ctx);return ctx
 }

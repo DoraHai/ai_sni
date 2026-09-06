@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -79,7 +79,15 @@ const webhookAccounts = computed(() => accounts.value.filter((account) => {
   return channel?.enabled && ['website', 'docs'].includes(channel.channel_type) && channel.publish_mode === 'auto_publish' && account.auth_type === 'webhook'
 }))
 
+let contextVersion = 0
+let loadVersion = 0
+function sameContext(version) { return version === contextVersion }
+
 async function load() {
+  const version = contextVersion, request = ++loadVersion
+  const current = () => sameContext(version) && request === loadVersion
+  channels.value = []; accounts.value = []; task.value = null; pushTargets.value = []
+  loading.value = false
   if (!tenantId.value) {
     error.value = '请先选择客户或配置本地 API Key'
     return
@@ -97,6 +105,7 @@ async function load() {
       getGeoContentTask(tenantId.value, taskId.value),
       fetchTaskPushTargets(tenantId.value, taskId.value).catch(() => ({ targets: [] })),
     ])
+    if (!current()) return
     channels.value = channelResult.items || []
     accounts.value = accountResult.items || []
     task.value = taskResult
@@ -104,24 +113,28 @@ async function load() {
     if (!webhookAccountId.value && webhookAccounts.value.length) webhookAccountId.value = webhookAccounts.value[0].id
     if (!backfillChannel.value && taskResult.variants?.length) backfillChannel.value = taskResult.variants[0].channel
   } catch (e) {
-    error.value = e.message || '加载分发记录失败'
+    if (current()) error.value = e.message || '加载分发记录失败'
   } finally {
-    loading.value = false
+    if (current()) loading.value = false
   }
 }
 
 async function copyVariant(row) {
+  if (loading.value || !task.value) return
+  const version = contextVersion
   const text = row.variant?.body_markdown || row.variant?.body_plain || row.variant?.body_html
   if (!text) return ElMessage.warning('尚无渠道稿')
   try {
     await navigator.clipboard.writeText(text)
-    ElMessage.success('已复制')
+    if (sameContext(version)) ElMessage.success('已复制')
   } catch (e) {
-    ElMessage.error(e.message || '复制失败')
+    if (sameContext(version)) ElMessage.error(e.message || '复制失败')
   }
 }
 
 async function pushRow(row, mode) {
+  if (busy.value || loading.value || !task.value) return
+  const version = contextVersion
   if (!row.ready || !row.accountId) return ElMessage.warning(row.blockReasons.join('；') || '当前渠道不可推送')
   busy.value = `${mode}-${row.key}`
   try {
@@ -132,16 +145,19 @@ async function pushRow(row, mode) {
       mode,
       create_publication: true,
     })
+    if (!sameContext(version)) return
     ElMessage.success(mode === 'draft' ? '已推送草稿' : '已推送发布')
     await load()
   } catch (e) {
-    ElMessage.error(e.message || '推送失败')
+    if (sameContext(version)) ElMessage.error(e.message || '推送失败')
   } finally {
-    busy.value = ''
+    if (sameContext(version)) busy.value = ''
   }
 }
 
 async function pushWebhook(mode) {
+  if (busy.value || loading.value || !task.value) return
+  const version = contextVersion
   const account = webhookAccounts.value.find((item) => item.id === webhookAccountId.value)
   const channel = channels.value.find((item) => item.id === account?.channel_id)
   if (!account || !channel) return ElMessage.warning('请选择 Webhook 账号')
@@ -155,16 +171,19 @@ async function pushWebhook(mode) {
       published_url: webhookUrl.value.trim() || undefined,
       create_publication: true,
     })
+    if (!sameContext(version)) return
     ElMessage.success(mode === 'draft' ? '已推送草稿' : '已推送发布')
     await load()
   } catch (e) {
-    ElMessage.error(e.message || '推送失败')
+    if (sameContext(version)) ElMessage.error(e.message || '推送失败')
   } finally {
-    busy.value = ''
+    if (sameContext(version)) busy.value = ''
   }
 }
 
 async function backfill() {
+  if (busy.value || loading.value || !task.value) return
+  const version = contextVersion
   if (!backfillChannel.value || !backfillUrl.value.trim().startsWith('http')) {
     return ElMessage.warning('请选择渠道并填写 http(s) 发布 URL')
   }
@@ -176,17 +195,25 @@ async function backfill() {
       published_url: backfillUrl.value.trim(),
       note: backfillNote.value || null,
     })
+    if (!sameContext(version)) return
     ElMessage.success('已回填发布 URL')
     backfillUrl.value = ''
     await load()
   } catch (e) {
-    ElMessage.error(e.message || '回填失败')
+    if (sameContext(version)) ElMessage.error(e.message || '回填失败')
   } finally {
-    busy.value = ''
+    if (sameContext(version)) busy.value = ''
   }
 }
 
-watch([tenantId, taskId], load)
+watch([tenantId, taskId], () => {
+  contextVersion++
+  busy.value = ''; error.value = ''
+  webhookAccountId.value = null; webhookUrl.value = ''
+  backfillChannel.value = ''; backfillUrl.value = ''; backfillNote.value = ''
+  load()
+}, { flush: 'sync' })
+onBeforeUnmount(() => { contextVersion++; loadVersion++ })
 onMounted(load)
 </script>
 

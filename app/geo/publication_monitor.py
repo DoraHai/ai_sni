@@ -64,9 +64,12 @@ async def follow_up(session, content, pub, state):
                      'mismatch': '抓回的正文未匹配登记稿件', 'version_changed': '稿件已变化，需确认原发布版本或登记新版发布'}[state['state']]
     row.last_verdict = 'pass' if state['state'] == 'healthy' else 'fail'
     if state['state'] == 'healthy':
-        row.status, row.closed_at = 'done', datetime.utcnow()
-    elif row.status == 'done':
+        row.status, row.closed_at = 'done', row.closed_at or datetime.utcnow()
+    elif row.status == 'done' and actionable:
         row.status, row.closed_at = 'reopened', None
+    elif row.status == 'done':
+        row.last_verdict = 'pending'
+        row.last_note += '；单次异常待复查，尚未重新打开工单'
     row.evidence = append_evidence(row.evidence, check='publication.monitor', result=state['state'], note=row.last_note, limit=30)
 
 

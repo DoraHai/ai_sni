@@ -76,6 +76,36 @@ def test_recovery_closes_and_regression_reopens_same_ticket():
     assert row.status=='reopened' and row.closed_at is None and row.owner_name=='customer'
 
 
+def test_recovered_ticket_requires_two_failures_to_reopen_and_preserves_closure_time():
+    _,p,c,_=fixture();closed=datetime(2026,9,1)
+    row=GeoActionTicket(id=1,status='done',closed_at=closed,progress={})
+    s=NS(scalar=AsyncMock(return_value=row),add=lambda _:pytest.fail('duplicate'))
+    asyncio.run(follow_up(s,c,p,{'state':'healthy','failures':0}))
+    assert row.closed_at==closed
+    asyncio.run(follow_up(s,c,p,{'state':'unreachable','failures':1}))
+    assert row.status=='done' and row.closed_at==closed and row.last_verdict=='pending'
+    asyncio.run(follow_up(s,c,p,{'state':'unreachable','failures':2}))
+    assert row.status=='reopened' and row.closed_at is None
+
+
+def test_timeout_is_recorded_as_unknown_availability_not_a_content_match():
+    _,_,_,s=fixture()
+    with patch('app.geo.publication_monitor.safe_fetch',AsyncMock(side_effect=TimeoutError)), \
+         patch('app.geo.publication_monitor.follow_up',AsyncMock()):
+        result=asyncio.run(check_publication(s,7,5,4))
+    assert result['state']=='unreachable' and 'observed_sha256' not in result
+    s.commit.assert_awaited_once()
+
+
+def test_cancelled_fetch_does_not_commit_success_or_failure():
+    v,p,_,s=fixture()
+    old=dict(v.adapt_meta['publication_monitor'][str(p.id)])
+    with patch('app.geo.publication_monitor.safe_fetch',AsyncMock(side_effect=asyncio.CancelledError)):
+        with pytest.raises(asyncio.CancelledError):asyncio.run(check_publication(s,7,5,4))
+    s.commit.assert_not_awaited()
+    assert v.adapt_meta['publication_monitor'][str(p.id)]==old
+
+
 def test_monitor_cannot_be_manually_marked_complete():
     from app.geo.routes import patch_action_ticket,TicketUpdate
     row=NS(advice_code='monitor:v1:4')

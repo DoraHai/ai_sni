@@ -33,7 +33,7 @@ def test_unknown_or_incomparable_data_cannot_be_called_no_improvement(change):
 
 def test_missing_data_stores_waiting_and_does_not_create_work():
     row=task();row.progress_first['params']['content_task_id']=12
-    s=NS(scalar=AsyncMock(return_value=row),commit=AsyncMock(),add=lambda _:pytest.fail('must not create'))
+    s=NS(scalar=AsyncMock(side_effect=[row,None]),commit=AsyncMock(),add=lambda _:pytest.fail('must not create'))
     with patch('app.geo.outcome_review.assess_outcome',AsyncMock(side_effect=HTTPException(409,'not enough data'))):
         asyncio.run(update_outcome_review(s,10))
     assert row.progress['outcome_review']['state']=='waiting' and row.status=='doing'
@@ -57,3 +57,18 @@ def test_repeated_review_reuses_ticket_and_same_week_does_not_reopen_finished_re
     with patch('app.geo.outcome_review.assess_outcome',AsyncMock(return_value=assessment)):
         asyncio.run(update_outcome_review(s,10))
     assert follow.status=='done' and row.status=='doing'
+
+
+@pytest.mark.parametrize('new_state',['waiting','target_met'])
+def test_later_observation_updates_existing_review_without_erasing_history_or_auto_closing(new_state):
+    row=task();row.progress_first['params']['content_task_id']=12
+    historical={'state':'needs_review','evidence':{'after':{'as_of':'2026-08-31'}}}
+    follow=NS(progress={'outcome_review':historical},status='doing',evidence=[{'note':'customer plan'}])
+    assessment={'state':new_state,'reason':'data missing'}
+    s=NS(scalar=AsyncMock(side_effect=[row,follow]),commit=AsyncMock(),add=lambda _:pytest.fail('duplicate'))
+    with patch('app.geo.outcome_review.assess_outcome',AsyncMock(return_value=assessment)):
+        asyncio.run(update_outcome_review(s,10))
+    assert follow.progress['current_outcome_review']==assessment
+    assert follow.progress['outcome_review']==historical and follow.status=='doing'
+    assert follow.evidence==[{'note':'customer plan'}] and row.status=='doing'
+    assert ('待观察' if new_state=='waiting' else '已达目标') in follow.last_note
