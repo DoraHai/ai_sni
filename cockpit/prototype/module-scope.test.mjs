@@ -1,6 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { MODULES, moduleScope, scopedMetrics, taskInModuleScope, taskScopeReference, planInModuleScope, panelInModuleScope, navigationAccess, moduleEntryAccess } from './module-scope.mjs';
+import { MODULES, moduleScope, scopedMetrics, taskInModuleScope, taskScopeReference, planInModuleScope, panelInModuleScope, navigationAccess, moduleEntryAccess, scopedCapabilities } from './module-scope.mjs';
+
+const CAPABILITIES = {
+  sem: ['预算管理', '搜索词'],
+  seo: ['内容分发', '排名追踪'],
+  geo: ['问题库', '引用与信源'],
+};
+
+test('capability index and search only include entitled modules', () => {
+  for (let mask = 1; mask < 8; mask++) {
+    const enabled = MODULES.filter((_, index) => mask & (1 << index));
+    const rows = scopedCapabilities(CAPABILITIES, enabled);
+    assert.deepEqual([...new Set(rows.map(row => row.module))], enabled);
+    assert.equal(rows.length, enabled.length * 2);
+    assert.deepEqual(scopedCapabilities(CAPABILITIES, enabled, '预算').map(row => row.module), enabled.includes('sem') ? ['sem'] : []);
+    assert.deepEqual(scopedCapabilities(CAPABILITIES, enabled, 'seo').map(row => row.module), enabled.includes('seo') ? ['seo', 'seo'] : []);
+  }
+  assert.deepEqual(scopedCapabilities(CAPABILITIES, ['seo'], '预算'), []);
+  assert.deepEqual(scopedCapabilities(CAPABILITIES, [], ''), []);
+});
 
 test('module entries map only entitled modules to reviewed cards', () => {
   const cards = { sem: 'trend', seo: 'content', geo: 'heatmap' };
@@ -20,17 +39,15 @@ test('module entries map only entitled modules to reviewed cards', () => {
   assert.equal(moduleEntryAccess('seo', []).allowed, false);
 });
 
-test('partial navigation keeps common pages and exposes budget only with SEM', () => {
+test('partial navigation exposes all functions but keeps business analysis disabled', () => {
   for (let mask = 1; mask < 8; mask++) {
     const enabled = MODULES.filter((_, index) => mask & (1 << index));
     const full = enabled.length === MODULES.length;
-    for (const page of ['panorama', 'tasks', 'quality']) {
+    for (const page of ['panorama', 'dashboard', 'tasks', 'quality']) {
       assert.equal(navigationAccess(page, enabled).allowed, true);
     }
     assert.equal(navigationAccess('acquisition', enabled).allowed, enabled.includes('sem'));
-    for (const page of ['dashboard', 'overview']) {
-      assert.equal(navigationAccess(page, enabled).allowed, full);
-    }
+    assert.equal(navigationAccess('overview', enabled).allowed, full);
     assert.equal(navigationAccess('module', enabled).allowed, false);
   }
   assert.deepEqual(navigationAccess('acquisition', ['seo']), {

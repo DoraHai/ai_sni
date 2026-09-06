@@ -1,4 +1,4 @@
-import { MODULES, moduleScope, taskInModuleScope, taskScopeReference, planInModuleScope, panelInModuleScope, navigationAccess, moduleEntryAccess } from './module-scope.mjs?v=20260907-60';
+import { MODULES, moduleScope, taskInModuleScope, taskScopeReference, planInModuleScope, panelInModuleScope, navigationAccess, moduleEntryAccess, scopedCapabilities } from './module-scope.mjs?v=20260907-61';
 
 // Local customer-profile rehearsal. This selection never grants API permissions.
 let enabled = [...MODULES];
@@ -62,6 +62,37 @@ function scopedView() {
   pContext();
   suggestions();
 }
+
+function scopedCapabilityGrid(query = '') {
+  const rows = scopedCapabilities(capabilities, enabled, query);
+  if (!rows.length) {
+    const term = String(query).trim();
+    return `<div class="empty-state"><p>${term ? `当前已开通模块中没有与“${esc(term)}”匹配的能力。` : '当前没有可展示的模块能力。'}</p>${term ? '<button class="text-button" data-profile-clear-search>清空搜索</button>' : ''}</div>`;
+  }
+  return enabled.map(module => {
+    const items = rows.filter(row => row.module === module);
+    if (!items.length) return '';
+    return `<div class="cap-column" data-capability-module="${module}"><h3 style="color:${colors[module]}">${module.toUpperCase()}</h3>${items.map(({ index, name }) => openButton(`${module}:${index}`, `${String(index + 1).padStart(2, '0')} · ${name}`)).join('')}</div>`;
+  }).join('');
+}
+
+function scopedCapabilitiesView(query = '') {
+  const cards = { sem: 'trend', seo: 'content', geo: 'heatmap' };
+  $('#page-dashboard').innerHTML = `<div class="dashboard-header"><div><p class="eyebrow">AVAILABLE CAPABILITIES / 已开通能力</p><h1>全部功能</h1><p>${enabled.map(module => names[module]).join(' · ')}。这里只展示当前客户已开通模块的能力入口。</p></div><button class="secondary-button" data-page="panorama">← 返回全景工作台</button></div><div class="p-controls">${selector()}</div><section class="cap-explorer"><header><div><h2>能力索引 · ${enabled.reduce((count, module) => count + capabilities[module].length, 0)} 项</h2><p class="scope-label">能力名称与操作指引来自现有模块演示；原型没有连接真实数据接口。</p></div><input class="cap-search" id="capSearch" type="search" value="${esc(query)}" placeholder="搜索当前已开通能力…" aria-label="搜索当前已开通模块能力"></header><div class="dash-links">${enabled.map(module => `<button data-profile-open="${cards[module]}">进入${names[module]}已审核卡片 ↗</button>`).join('')}</div><div class="cap-grid" id="capGrid">${scopedCapabilityGrid(query)}</div></section>`;
+}
+
+const originalDashboardRender = renderDashboard;
+renderDashboard = function(...args) {
+  if (!partial()) return originalDashboardRender(...args);
+  const query = $('#capSearch')?.value || '';
+  scopedCapabilitiesView(query);
+};
+const originalCapabilityRender = renderCapabilities;
+renderCapabilities = function(...args) {
+  if (!partial()) return originalCapabilityRender(...args);
+  const grid = $('#capGrid');
+  if (grid) grid.innerHTML = scopedCapabilityGrid($('#capSearch')?.value || '');
+};
 
 const originalRender = renderPanorama;
 renderPanorama = function(...args) { originalRender(...args); scopedView(); };
@@ -164,6 +195,7 @@ window.addEventListener('change', event => {
   focusedPanel = null;
   dock();
   renderPanorama();
+  renderDashboard();
   renderTasks();
   decorateNavigation();
   pSuggestions();
@@ -204,6 +236,16 @@ window.addEventListener('click', event => {
       return;
     }
   }
+  const clearSearch = event.target.closest('[data-profile-clear-search]');
+  if (clearSearch) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const search = $('#capSearch');
+    if (search) search.value = '';
+    renderCapabilities();
+    search?.focus();
+    return;
+  }
   const button = event.target.closest('[data-profile-open], [data-profile-discuss], [data-profile-question]');
   if (!button) return;
   event.preventDefault();
@@ -212,4 +254,5 @@ window.addEventListener('click', event => {
   else pTalk(button.dataset.profileDiscuss || 'overview', button.textContent);
 }, true);
 renderPanorama();
+renderDashboard();
 decorateNavigation();
