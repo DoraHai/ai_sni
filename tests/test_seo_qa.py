@@ -98,6 +98,7 @@ def test_database_full_question_answer_evidence_and_placement_lifecycle():
             assert first['created'] == 1
             assert (await api.import_questions(req, CTX, db))['merged'] == 1
             question_id = first['ids'][0]
+            assert (await api.question_detail(question_id,1,1,CTX,db))['coverage']['state']=='unanswered'
             fact = await api.create_fact(api.FactInput(tenant_id=1, site_id=1, title='选型要求',
                 statement='先确认设备型号与运行条件，再根据技术手册确认参数和适用范围。', source_name='产品手册 v1'), CTX, db)
             body = fact['statement'] + f'[F{fact["id"]}]'
@@ -106,6 +107,10 @@ def test_database_full_question_answer_evidence_and_placement_lifecycle():
             replay = await api.create_answer(api.AnswerInput(tenant_id=1, site_id=1, question_id=question_id,
                 body=body, fact_ids=[fact['id']]), CTX, db)
             assert replay['id'] == answer['id']
+            assert (await api.question_detail(question_id,1,1,CTX,db))['coverage']['state']=='draft_only'
+            assert (await api.planning(1,1,CTX,db))['coverage_gap_count']==1
+            with pytest.raises(HTTPException):
+                await api.question_detail(question_id,2,2,CTX,db)
             content = await db.get(SeoContentAsset, answer['content_id'])
             assert await api.require_answer_evidence(db, content)
             with pytest.raises(HTTPException, match='审核'):
@@ -117,6 +122,10 @@ def test_database_full_question_answer_evidence_and_placement_lifecycle():
             assert submitted['status'] == 'review'
             approved = await decide_content_review(content.id, 1, ContentReviewDecision(decision='approve'), db, CTX)
             assert approved['status'] == 'ready'
+            assert (await api.question_detail(question_id,1,1,CTX,db))['coverage']['state']=='reviewed_current'
+            assert (await api.planning(1,1,CTX,db))['valid_covered_count']==1
+            checked=(await api.answers(1,1,question_id,CTX,db))[0]['quality']
+            assert checked['method']=='rules' and checked['blocking_issues']==[]
             task = await db.scalar(select(SeoTask))
             assert task.status == 'in_progress' and task.completion_evidence is None
             req = api.PlacementInput(tenant_id=1, site_id=1, answer_id=answer['id'], platform='zhihu',
@@ -159,6 +168,18 @@ def test_database_full_question_answer_evidence_and_placement_lifecycle():
             with patch('app.seo_backlinks.fetch_backlink_page', new=AsyncMock(return_value=page)):
                 observed = await api.verify(placement['id'], api.Scoped(tenant_id=1, site_id=1), CTX, db)
             assert observed['status'] == 'content_observed' and content.status == 'ready'
+            detail=await api.question_detail(question_id,1,1,CTX,db)
+            assert detail['coverage']['state']=='observed' and detail['placement_total']==1
+            assert (await api.planning(1,1,CTX,db))['observed_question_count']==1
+            assert (await api.question_detail(question_id,1,1,viewer,db))['coverage']['observed_answer_count']==1
+            stored=await db.get(SeoQaPlacement,placement['id']);original=list(stored.observations)
+            stored.observations=original+[{'state':'unavailable','checked_at':datetime.now(timezone.utc).isoformat()}]
+            await db.flush()
+            assert (await api.question_detail(question_id,1,1,CTX,db))['coverage']['state']=='reviewed_current'
+            stored.observations=original;stored.content_version+=1;await db.flush()
+            assert (await api.question_detail(question_id,1,1,CTX,db))['coverage']['observed_answer_count']==0
+            stored.content_version-=1;await db.flush()
+
             assert '不证明账号归属' in observed['observations'][0]['meaning']
             with pytest.raises(HTTPException) as rate:
                 await api.verify(placement['id'], api.Scoped(tenant_id=1, site_id=1), CTX, db)
@@ -173,6 +194,11 @@ def test_database_full_question_answer_evidence_and_placement_lifecycle():
             assert issues['items'][0]['answer_id'] == answer['id']
             stale = await api.placements(1, 1, CTX, db)
             assert not stale[0]['publishable']
+            detail=await api.question_detail(question_id,1,1,CTX,db)
+            assert detail['coverage']['state']=='needs_update' and detail['coverage']['observed_answer_count']==0
+            plan=await api.planning(1,1,CTX,db)
+            assert plan['valid_covered_count']==0 and plan['coverage_gap_count']==1
+            assert (await api.answers(1,1,question_id,CTX,db))[0]['quality']['blocking_issues']
             with pytest.raises(HTTPException):
                 await api.publication_draft(placement['id'], 1, 1, CTX, db)
             with pytest.raises(HTTPException):
@@ -584,3 +610,13 @@ def test_import_rejects_duplicate_headers_uneven_rows_and_conflicting_window():
         api.ImportQuestions(tenant_id=1,site_id=1,csv=base+row+'\n'+row.replace(',12,',',15,'))
     with pytest.raises(ValidationError,match='第 2 条记录'):
         api.ImportQuestions(tenant_id=1,site_id=1,csv=base+row.replace('2026-01-07','bad-date'))
+
+
+def test_quality_hints_are_explainable_bounded_and_not_a_truth_score():
+    from app.seo_qa import answer_quality
+    report=answer_quality('价格为100元。\n保证永不损坏。\n额定功率15kW[F1]',[{'id':1}],[])
+    assert [(h['code'],h['paragraph']) for h in report['hints']]==[('numeric_claim',1),('absolute_claim',2)]
+    assert report['cited_fact_count']==1 and report['linked_fact_count']==1
+    assert report['method']=='rules' and 'score' not in report and report['manual_review']
+    limited=answer_quality('价格100元\n'*60,[],['缺少资料'])
+    assert limited['hints_total']==60 and len(limited['hints'])==50 and limited['blocking_issues']==['缺少资料']

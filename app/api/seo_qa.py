@@ -15,7 +15,7 @@ from app.api.seo_cockpit import scope
 from app.models.seo import SeoContentAsset, SeoSerpResult
 from app.models.seo_qa import SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement
 from app.seo_qa import (PLATFORMS, fingerprint, public_url, platform_url, parse_questions_csv,
-                        fact_is_current, body_hash, answer_checks, observe_answer, placement_followup)
+                        fact_is_current, body_hash, answer_checks, observe_answer, placement_followup, answer_quality)
 
 router = APIRouter(prefix='/qa', tags=['SEO questions'])
 Auth = Depends(require_scoped_auth)
@@ -441,6 +441,58 @@ async def batch_questions(req: BatchQuestions, ctx=Auth, session=Db):
     return {'updated': len(rows), 'ids': [row.id for row in rows], 'changes': changes}
 
 
+async def coverage_for_questions(session, tenant_id, site_id, ids):
+    result = {key:{'answer_count':0,'reviewed_answer_count':0,'valid_answer_count':0,
+                   'stale_answer_count':0,'observed_answer_count':0,'state':'unanswered'} for key in ids}
+    if not ids: return result
+    rows = (await session.execute(select(SeoQaAnswer, SeoContentAsset)
+        .join(SeoContentAsset, SeoContentAsset.id == SeoQaAnswer.content_id)
+        .where(SeoQaAnswer.tenant_id == tenant_id, SeoQaAnswer.site_id == site_id,
+               SeoQaAnswer.question_id.in_(ids), SeoContentAsset.tenant_id == tenant_id,
+               SeoContentAsset.site_id == site_id))).all()
+    fact_ids = {snapshot['id'] for answer, _ in rows for snapshot in answer.fact_snapshots}
+    fact_map = {row.id:row for row in await session.scalars(select(SeoQaFact).where(
+        SeoQaFact.tenant_id == tenant_id, SeoQaFact.site_id == site_id, SeoQaFact.id.in_(fact_ids)))} if fact_ids else {}
+    answer_ids = [answer.id for answer, _ in rows]
+    placements = list(await session.scalars(select(SeoQaPlacement).where(SeoQaPlacement.tenant_id == tenant_id,
+        SeoQaPlacement.site_id == site_id, SeoQaPlacement.answer_id.in_(answer_ids)))) if answer_ids else []
+    observed = {(row.answer_id,row.content_version) for row in placements if row.answer_url and row.observations
+                and row.observations[-1].get('state') == 'content_observed'}
+    for answer, content in rows:
+        item = result[answer.question_id]; item['answer_count'] += 1
+        reviewed = content.status in {'ready','published'}
+        problems = await evidence_problems(session, answer, content, fact_map)
+        item['reviewed_answer_count'] += int(reviewed)
+        item['stale_answer_count'] += int(bool(problems))
+        if reviewed and not problems:
+            item['valid_answer_count'] += 1
+            item['observed_answer_count'] += int((answer.id,content.version_count) in observed)
+    for item in result.values():
+        item['state'] = ('observed' if item['observed_answer_count'] else 'reviewed_current' if item['valid_answer_count']
+                         else 'needs_update' if item['stale_answer_count'] else 'draft_only' if item['answer_count'] else 'unanswered')
+    return result
+
+
+@router.get('/questions/{question_id}/detail')
+async def question_detail(question_id: int, tenant_id: PositiveInt, site_id: PositiveInt, ctx=Auth, session=Db):
+    await access(session, ctx, tenant_id, site_id)
+    question = await record(session, SeoQuestion, question_id, tenant_id, site_id)
+    coverage = (await coverage_for_questions(session,tenant_id,site_id,[question_id]))[question_id]
+    condition = (SeoQaPlacement.tenant_id == tenant_id, SeoQaPlacement.site_id == site_id,
+                 SeoQaAnswer.tenant_id == tenant_id, SeoQaAnswer.site_id == site_id, SeoQaAnswer.question_id == question_id)
+    query = select(SeoQaPlacement).join(SeoQaAnswer,SeoQaAnswer.id == SeoQaPlacement.answer_id).where(*condition)
+    placements = list(await session.scalars(query.order_by(SeoQaPlacement.id.desc()).limit(200)))
+    total = await session.scalar(select(func.count()).select_from(SeoQaPlacement)
+        .join(SeoQaAnswer,SeoQaAnswer.id == SeoQaPlacement.answer_id).where(*condition))
+    actions = {'unanswered':'选择事实资料并创建第一篇回答','draft_only':'完善草稿并提交审核',
+               'needs_update':'先更新失效证据或重新确认正文，再审核', 'reviewed_current':'准备分发或补齐公开网址核验',
+               'observed':'跟进公开页面与事实变化，按需更新回答'}
+    return {'question':data(question),'coverage':coverage,'next_action':actions[coverage['state']],
+            'placements':[data(row) for row in placements], 'placement_total':total,
+            'placements_truncated':total > len(placements),
+            'meaning':'有效回答指当前审核状态且证据关联未失效，不代表事实已被独立证实；公开匹配按当前稿件版本最近一次观测，不证明账号归属或实时存续'}
+
+
 @router.get('/planning')
 async def planning(tenant_id: PositiveInt, site_id: PositiveInt, ctx=Auth, session=Db):
     from app.seo_qa import question_plan
@@ -450,18 +502,16 @@ async def planning(tenant_id: PositiveInt, site_id: PositiveInt, ctx=Auth, sessi
     rows = list(await session.scalars(select(SeoQuestion).where(*conditions)
         .order_by(SeoQuestion.relevance.desc(), SeoQuestion.id.desc()).limit(500)))
     ids = [row.id for row in rows]
-    answer_counts = (await session.execute(select(SeoQaAnswer.question_id, func.count(SeoQaAnswer.id),
-        func.count(SeoQaAnswer.id).filter(SeoContentAsset.status.in_(['ready', 'published'])))
-        .join(SeoContentAsset, SeoContentAsset.id == SeoQaAnswer.content_id)
-        .where(SeoQaAnswer.tenant_id == tenant_id, SeoQaAnswer.site_id == site_id, SeoQaAnswer.question_id.in_(ids),
-               SeoContentAsset.tenant_id == tenant_id, SeoContentAsset.site_id == site_id)
-        .group_by(SeoQaAnswer.question_id))).all()
-    counts = {key: (all_answers, reviewed) for key, all_answers, reviewed in answer_counts}
-    items = [{**data(row), 'answer_count': counts.get(row.id, (0, 0))[0],
-              'reviewed_answer_count': counts.get(row.id, (0, 0))[1]} for row in rows]
-    return {**question_plan(items), 'total': total, 'included': len(items), 'truncated': total > len(items),
+    coverage = await coverage_for_questions(session,tenant_id,site_id,ids)
+    items = [{**data(row), **coverage[row.id]} for row in rows]
+    return {**question_plan(items), 'valid_covered_count':sum(item['valid_answer_count'] > 0 for item in items),
+            'coverage_gap_count':sum(item['valid_answer_count'] == 0 for item in items),
+            'observed_question_count':sum(item['observed_answer_count'] > 0 for item in items), 'total': total, 'included': len(items), 'truncated': total > len(items),
             'definitions': {'scope': '当前网站未归档问题，按业务相关性取前 500 条；分组数量仅统计本次范围',
                 'unanswered': '尚未建立回答草稿的问题数量',
+                'valid_covered': '本次范围内至少有一条当前审核通过且证据关联有效回答的问题数，不代表独立事实核实',
+                'coverage_gap': '本次范围内没有当前有效审核回答的问题数，包括仅有草稿或证据失效的问题',
+                'observed': '本次范围内有当前有效审核回答，且该版本至少一条分发记录最近观测正文匹配的问题数，不代表实时存续',
                 'reviewed': '至少有一条 ready/published 内容的问题数量；不代表事实仍有效或公开发布已核验',
                 'similarity': '文本重合候选，不是语义同义判定；不自动合并问题、来源或回答。最多展示 50 对'}}
 
@@ -508,13 +558,13 @@ async def fact_snapshots(session, tenant_id, site_id, fact_ids):
     return snapshots
 
 
-async def evidence_problems(session, answer, content):
+async def evidence_problems(session, answer, content, fact_map=None):
     body = content.humanized_content or content.draft or ''
     problems = answer_checks(body, answer.fact_snapshots)
     if body_hash(body) != answer.evidence_hash:
         problems.append('正文已在其他编辑器更新，请回到问答工作台重新确认事实关联')
     for snapshot in answer.fact_snapshots:
-        row = await session.get(SeoQaFact, snapshot['id'])
+        row = fact_map.get(snapshot['id']) if fact_map is not None else await session.get(SeoQaFact, snapshot['id'])
         if row is None or row.tenant_id != answer.tenant_id or row.site_id != answer.site_id or not fact_is_current(row) or row.version != snapshot['version']:
             problems.append(f'事实 F{snapshot["id"]} 已更新、过期或停用')
     return problems
@@ -537,11 +587,18 @@ async def answers(tenant_id: PositiveInt, site_id: PositiveInt, question_id: Pos
     await access(session, ctx, tenant_id, site_id)
     await record(session, SeoQuestion, question_id, tenant_id, site_id)
     rows = await session.execute(select(SeoQaAnswer, SeoContentAsset).join(SeoContentAsset, SeoContentAsset.id == SeoQaAnswer.content_id)
-        .where(SeoQaAnswer.tenant_id == tenant_id, SeoQaAnswer.site_id == site_id, SeoQaAnswer.question_id == question_id)
+        .where(SeoQaAnswer.tenant_id == tenant_id, SeoQaAnswer.site_id == site_id, SeoQaAnswer.question_id == question_id,
+               SeoContentAsset.tenant_id == tenant_id, SeoContentAsset.site_id == site_id)
         .order_by(SeoQaAnswer.id.desc()).limit(100))
-    return [{**data(row), 'body': content.humanized_content or content.draft or '', 'status': content.status,
-             'content_version': content.version_count, 'review_note': content.review_note,
-             'problems': await evidence_problems(session, row, content)} for row, content in rows]
+    result = []
+    for row, content in rows:
+        body = content.humanized_content or content.draft or ''
+        problems = await evidence_problems(session, row, content)
+        result.append({**data(row), 'body':body, 'status':content.status,
+            'content_version':content.version_count, 'review_note':content.review_note,
+            'problems':problems, 'quality':answer_quality(body,row.fact_snapshots,problems)})
+    return result
+
 
 
 async def save_answer(req, session, ctx, answer_id=None):

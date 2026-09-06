@@ -255,3 +255,24 @@ def validated_semantic_pairs(raw, questions):
         pairs.append({'left_id':left,'right_id':right,'left_title':known[left]['title'],
                       'right_title':known[right]['title'],'reason':reason.strip()})
     return pairs
+
+
+def answer_quality(body, snapshots, problems):
+    """Deterministic editorial hints, not semantic truth verification."""
+    known = {item['id'] for item in snapshots}
+    refs = {int(value) for value in re.findall(r'\[F(\d+)\]', body)}
+    hints = []
+    for index, paragraph in enumerate(re.split(r'\n\s*\n|\n', body), 1):
+        text = re.sub(r'\[F\d+\]', '', paragraph).strip()
+        if not text: continue
+        if re.search(r'\d+(?:\.\d+)?\s*(?:%|元|万元|天|小时|年|kW|mm|kg)', text, re.I) and not re.search(r'\[F\d+\]', paragraph):
+            hints.append({'code':'numeric_claim', 'paragraph':index, 'excerpt':text[:160],
+                          'message':'此段含数字、价格或参数，未见引用标记，请核对依据'})
+        if re.search(r'保证|百分之百|绝对|永不|零风险|最便宜', text):
+            hints.append({'code':'absolute_claim', 'paragraph':index, 'excerpt':text[:160],
+                          'message':'此段含绝对化表述，请核对适用条件与依据'})
+    return {'method':'rules', 'checked_at':datetime.now(timezone.utc).isoformat(),
+            'blocking_issues':list(problems), 'hints':hints[:50], 'hints_total':len(hints),
+            'linked_fact_count':len(known), 'cited_fact_count':len(refs & known),
+            'manual_review':['是否直接回答了问题及其子问题','适用条件、限制和操作步骤是否完整','引用原文是否真正支持对应断言'],
+            'meaning':'程序检查引用、版本与文字特征，不证明事实真实、回答完整或平台合规；无提示也不代表质量合格'}
