@@ -259,3 +259,38 @@ def test_openapi_exposes_typed_task_contract(setup):
     assert {"id", "tenant_id", "module", "action_type", "title", "params", "status", "created_by",
             "assignee_role", "completion_evidence", "baseline_snapshot", "created_at", "updated_at"} == set(fields)
     assert fields["created_at"]["format"] == "date-time"
+
+
+@pytest.mark.parametrize("tenant_id", [2**31, 2**53 + 1, 2**63 - 1])
+def test_bigint_tenant_create_is_exact_and_scoped(setup, tenant_id):
+    client, app, db = setup
+    app.dependency_overrides[api.require_auth] = lambda: context(tenant=tenant_id)
+    api.snapshot.return_value = {"tenant_id": tenant_id, "items": [metric()]}
+    response = client.post(f"/api/v1/sem/tasks?tenant_id={tenant_id}", json=PAYLOAD)
+    assert response.status_code == 201, response.text
+    assert response.json()["tenant_id"] == tenant_id
+    assert response.json()["baseline_snapshot"]["tenant_id"] == tenant_id
+    api.ensure_module_access.assert_awaited_once_with(db, context(tenant=tenant_id), tenant_id, "sem")
+
+
+def test_bigint_other_tenant_still_denied(setup):
+    client, app, db = setup
+    app.dependency_overrides[api.require_auth] = lambda: context(tenant=2**53 + 1)
+    assert client.get(f"/api/v1/sem/tasks?tenant_id={2**53}").status_code == 403
+    db.scalars.assert_not_awaited()
+
+
+def test_bigint_overflow_rejected_before_database(setup):
+    client, _, db = setup
+    assert client.get(f"/api/v1/sem/tasks?tenant_id={2**63}").status_code == 422
+    db.scalars.assert_not_awaited()
+
+
+def test_task_ddl_and_mapper_use_bigint_tenant_id():
+    from pathlib import Path
+    from sqlalchemy import BigInteger
+    from sqlalchemy.schema import CreateTable
+    from app.models.sem_task import SemTask
+    assert isinstance(SemTask.__table__.c.tenant_id.type, BigInteger)
+    assert "tenant_id BIGINT NOT NULL" in str(CreateTable(SemTask.__table__).compile(dialect=postgresql.dialect()))
+    assert "tenant_id BIGINT NOT NULL" in Path("docs/SEM_TASK_SCHEMA_REVIEW.sql").read_text()
