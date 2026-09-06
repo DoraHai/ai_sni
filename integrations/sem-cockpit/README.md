@@ -52,3 +52,17 @@ READ_FAILED显示失败，保留范围说明，不补0、不发重同步。服�
 测试：`node --test integrations/sem-cockpit/readonly-client.test.mjs`。测试全部使用本地合成响应，
 不建立网络连接。
 更多账户/字段/缺失规则见 `../../docs/SEM_COCKPIT_READONLY_DETAILS.md`。
+
+## 纯展示函数
+
+`display.mjs` 仅转换已经通过本包校验的字段，不发送请求、不存储身份，也不判断授权。
+`semMetric(value, unit, coverage)` 保留缺报与真实零值，CTR 的 ratio 转成百分数。
+有缺报时标注已观测小计（比率/均价标注已有记录计算值），通用value保持null，
+单独的observedValue仅用于带覆盖说明的展示；未传覆盖信息标记coverage_unknown。
+`semPhoneClicks(phone)` 对 partial 仅标注已知小计；缺少原始依据显示不可用，
+已有完整记录也仅代表该批报告中的电话按钮点击，不能当成有效咨询。
+返回对象中的 `state`、`note` 必须与 `text` 一起呈现。电话partial的value保持null，
+小计另存knownSubtotal；不能把knownSubtotal或observedValue当完整总数累计。
+
+本层尚未接入原型页面；报告覆盖、账户范围、更新时间和搜索词实际窗口仍必须由页面单独显示，
+不能仅靠一个格式化数值宣称数据完整。测试：`node --test integrations/sem-cockpit/display.test.mjs`。

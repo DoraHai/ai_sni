@@ -1,0 +1,27 @@
+name: SEM cockpit consumer checks
+
+on:
+  pull_request:
+    paths:
+      - 'integrations/sem-cockpit/**'
+      - '.github/workflows/sem-cockpit-consumer-check.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'integrations/sem-cockpit/**'
+      - '.github/workflows/sem-cockpit-consumer-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  consumer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Validate consumer and display boundaries offline
+        run: node --test integrations/sem-cockpit/readonly-client.test.mjs integrations/sem-cockpit/display.test.mjs
