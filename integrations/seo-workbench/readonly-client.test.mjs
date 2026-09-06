@@ -204,3 +204,63 @@ test('refreshing publications revokes removed publication references', async () 
   await client.read('publications', { contentId: 101 })
   await assert.rejects(client.read('attempts', { publicationId: 201 }), { code: 'UNVERIFIED_REFERENCE' })
 })
+
+test('an empty content refresh revokes prior content and every dependent reference', async () => {
+  let contentReads = 0
+  const { client } = fixture(path => {
+    if (path.includes('publications?')) return response({ items: [publication], total: 1, status_counts: { published: 1 } })
+    contentReads++
+    return contentReads === 1
+      ? response({ items: [content], total: 1, page: 1, page_size: 50, status_counts: { ready: 1 } })
+      : response({ items: [], total: 0, page: 1, page_size: 50, status_counts: {} })
+  })
+  client.setContext(context)
+  await client.read('contents'); await client.read('publications', { contentId: 101 })
+  await client.read('contents')
+  assert.throws(() => client.snapshot(101), { code: 'UNVERIFIED_REFERENCE' })
+  await assert.rejects(client.read('reviewHistory', { contentId: 101 }), { code: 'UNVERIFIED_REFERENCE' })
+  await assert.rejects(client.read('attempts', { publicationId: 201 }), { code: 'UNVERIFIED_REFERENCE' })
+})
+
+test('an empty page refresh revokes prior page and image-evidence access', async () => {
+  let pageReads = 0
+  const { client } = fixture(() => {
+    pageReads++
+    return pageReads === 1
+      ? response({ items: [page], total: 1, page: 1, page_size: 50, stats: {} })
+      : response({ items: [], total: 0, page: 1, page_size: 50, stats: {} })
+  })
+  client.setContext(context)
+  await client.read('pages'); await client.read('pages')
+  await assert.rejects(client.read('imageEvidence', { pageId: 301 }), { code: 'UNVERIFIED_REFERENCE' })
+})
+
+test('a late attempt cannot refill cache after its publication set is refreshed away', async () => {
+  let finishAttempt
+  let publicationReads = 0
+  const { client } = fixture(path => {
+    if (path.includes('/201/attempts')) return new Promise(resolve => { finishAttempt = resolve })
+    if (path.includes('publications?')) {
+      publicationReads++
+      return publicationReads === 1
+        ? response({ items: [publication], total: 1, status_counts: { published: 1 } })
+        : response({ items: [], total: 0, status_counts: {} })
+    }
+    return response({ items: [content], total: 1, page: 1, page_size: 50, status_counts: { ready: 1 } })
+  })
+  client.setContext(context)
+  await client.read('contents'); await client.read('publications', { contentId: 101 })
+  const late = client.read('attempts', { publicationId: 201 })
+  await client.read('publications', { contentId: 101 })
+  finishAttempt(response({ items: [{ id: 401, action: 'publish', status: 'succeeded', error: null,
+    started_at: '2026-09-07T02:00:00Z', completed_at: '2026-09-07T02:01:00Z' }] }))
+  await assert.rejects(late, { code: 'STALE_RESPONSE' })
+  await assert.rejects(client.read('attempts', { publicationId: 201 }), { code: 'UNVERIFIED_REFERENCE' })
+})
+
+test('filtered publication subsets cannot drive an all-publication snapshot', async () => {
+  const { client, calls } = fixture()
+  client.setContext(context)
+  await assert.rejects(client.read('publications', { contentId: 101, status: 'failed' }), { code: 'UNSUPPORTED_FILTER' })
+  assert.equal(calls.length, 0)
+})

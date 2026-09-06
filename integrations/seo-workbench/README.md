@@ -28,7 +28,16 @@ their response envelopes do not echo the complete scope.
 An empty HTTP 200 response remains an empty list. A 401/403 clears the current
 context; 404 remains a missing association; server, network and contract errors
 remain unavailable. No failure becomes demo data or a zero metric. Publication
-lists are unpaginated because that is the current server contract.
+lists are unpaginated because that is the current server contract. The consumer
+reads the complete publication set for one verified content record and rejects
+status-filtered subsets, because a subset cannot drive an all-platform count or
+the "approved, pending publication" label.
+
+Starting a new content or page list read revokes the previously verified visible
+set and its descendants, including when the new result is empty or fails. A new
+publication read likewise revokes the prior publication and attempt set for that
+content. This prevents paging, filtering, deletion, or a late child response from
+turning a record that was once observed into a permanent authorization cache.
 
 `snapshot()` keeps review, publication, page checking and search performance
 separate. Page `assessment_state=assessed` does not become a whole-page pass;

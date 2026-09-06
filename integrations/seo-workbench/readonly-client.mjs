@@ -18,7 +18,9 @@ const resources = Object.freeze({
 const allowedParams = Object.freeze({
   contents: new Set(['contentId', 'sourcePageId', 'status', 'contentType', 'contentTypes', 'q', 'page', 'pageSize']),
   reviewHistory: new Set(['contentId']),
-  publications: new Set(['contentId', 'status']),
+  // A snapshot needs the complete per-content publication set. A filtered
+  // subset cannot safely drive record_count or the pending-publication label.
+  publications: new Set(['contentId']),
   attempts: new Set(['publicationId']),
   pages: new Set(['pageId', 'q', 'status', 'issueCode', 'page', 'pageSize']),
   imageEvidence: new Set(['pageId', 'snapshotId']),
@@ -148,6 +150,43 @@ export function createSeoReadonlyClient({ transport, onClear }) {
     attempts.clear(); pages.clear(); imageEvidence.clear()
   }
 
+  function abortPending(prefixes) {
+    for (const [key, controller] of pending) {
+      if (prefixes.some(prefix => key.startsWith(prefix))) {
+        controller.abort()
+        pending.delete(key)
+      }
+    }
+  }
+
+  function revokePublicationSet(contentId) {
+    const priorIds = publicationsByContent.get(contentId) ?? []
+    for (const id of priorIds) {
+      const pendingAttempt = pending.get(`attempts:${id}`)
+      pendingAttempt?.abort()
+      pending.delete(`attempts:${id}`)
+      publications.delete(id)
+      attempts.delete(id)
+    }
+    publicationsByContent.delete(contentId)
+  }
+
+  function beginContentRefresh() {
+    // The client represents the currently visible content result, not an
+    // unbounded identity cache. Paging or changing filters revokes the old set.
+    abortPending(['reviewHistory:', 'publications:', 'attempts:'])
+    contents.clear()
+    publications.clear()
+    publicationsByContent.clear()
+    attempts.clear()
+  }
+
+  function beginPageRefresh() {
+    abortPending(['imageEvidence:'])
+    pages.clear()
+    imageEvidence.clear()
+  }
+
   function invalidate() {
     revision++
     context = null
@@ -210,17 +249,15 @@ export function createSeoReadonlyClient({ transport, onClear }) {
         contents.set(item.id, item)
       }
     } else if (resource === 'reviewHistory') {
+      contract(contents.has(params.contentId))
       validateEnvelope(data); contract(data.total === data.items.length && nonnegative(data.total))
       for (const item of data.items) {
         contract(object(item) && positive(item.id) && typeof item.action === 'string')
         contract(item.actor_id === null || positive(item.actor_id)); contract(timestamp(item.created_at))
       }
     } else if (resource === 'publications') {
+      contract(contents.has(params.contentId))
       validateEnvelope(data); contract(nonnegative(data.total) && data.total === data.items.length); validateCounts(data.status_counts)
-      for (const priorId of publicationsByContent.get(params.contentId) ?? []) {
-        publications.delete(priorId)
-        attempts.delete(priorId)
-      }
       const rows = []
       for (const item of data.items) {
         contract(object(item) && positive(item.id) && item.tenant_id === active.tenantId)
@@ -232,6 +269,7 @@ export function createSeoReadonlyClient({ transport, onClear }) {
       }
       publicationsByContent.set(params.contentId, rows)
     } else if (resource === 'attempts') {
+      contract(publications.has(params.publicationId))
       validateEnvelope(data)
       for (const item of data.items) {
         contract(object(item) && positive(item.id) && typeof item.action === 'string' && typeof item.status === 'string')
@@ -248,7 +286,7 @@ export function createSeoReadonlyClient({ transport, onClear }) {
       }
     } else if (resource === 'imageEvidence') {
       const page = pages.get(params.pageId)
-      contract(object(data) && data.page_id === params.pageId && data.url === page.url)
+      contract(page && object(data) && data.page_id === params.pageId && data.url === page.url)
       contract(data.snapshot_id === null || positive(data.snapshot_id))
       if (params.snapshotId !== undefined) contract(data.snapshot_id === params.snapshotId)
       contract(timestamp(data.fetched_at) && nullableString(data.fetch_error))
@@ -263,6 +301,9 @@ export function createSeoReadonlyClient({ transport, onClear }) {
     if (!context || !context.allowedReads.includes(resource)) fail('NOT_AUTHORIZED', '尚未确认该 SEO 读取权限')
     validateFilters(resource, params)
     requireReference(resource, params)
+    if (resource === 'contents') beginContentRefresh()
+    else if (resource === 'pages') beginPageRefresh()
+    else if (resource === 'publications') revokePublicationSet(params.contentId)
     const active = context
     const atRevision = revision
     const key = resource === 'reviewHistory' || resource === 'publications' ? `${resource}:${params.contentId}` :
