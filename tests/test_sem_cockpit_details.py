@@ -5,13 +5,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from tests.test_sem_cockpit_readonly import ReadSession  # sets dummy config before app imports
+from tests.sem_cockpit_fixtures import ReadSession, make_fixture_tables, seed_fixture, make_sqlite_engine, only_select
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import Column, JSON, MetaData, Table, create_engine, event
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import event
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
 
 from app.api import dashboard, keywords, search_terms
 from app.database import get_session
@@ -20,55 +18,14 @@ from app.security import auth
 from app.sem_cockpit_readonly import phone_summary
 
 
-def make_fixture_tables(native_json=False):
-    metadata = MetaData()
-    tables = {}
-    # Only synthetic table DDL, never Alembic or application metadata.create_all.
-    for model in (BaiduAccount,Keyword,KeywordHourlyReport,KeywordRegionReport,KwReportSnapshot,SearchTermReport):
-        tables[model] = Table(model.__tablename__,metadata,*[
-            Column(c.name,JSON() if isinstance(c.type,JSONB) and not native_json else c.type,nullable=True) for c in model.__table__.columns])
-    return metadata, tables
-
-
-def seed_fixture(conn, tables):
-    stamp = datetime(2026,9,4,1)
-    conn.execute(tables[BaiduAccount].insert(),[dict(id=11,tenant_id=1,status="active"),dict(id=12,tenant_id=1,status="inactive"),dict(id=21,tenant_id=2,status="active")])
-    for id_,aid,tid in [(1,11,1),(2,12,1),(3,None,1),(4,21,2)]:
-        conn.execute(tables[Keyword].insert(),dict(id=id_,tenant_id=tid,baidu_account_id=aid,keyword_id=100,
-                     keyword="test%词",campaign_id=7,adgroup_id=8,price=1,pause=False,synced_at=stamp))
-    conn.execute(tables[Keyword].insert(),dict(id=5,tenant_id=1,baidu_account_id=11,keyword_id=101,keyword="no report"))
-    for aid,tid,cost,raw in [(11,1,10,{"ocpcConversionsDetail2":"2"}),(12,1,50,{"ocpcConversionsDetail2":0}),
-                             (None,1,7,{}),(21,2,999,{"ocpcConversionsDetail2":999})]:
-        conn.execute(tables[KwReportSnapshot].insert(),dict(tenant_id=tid,baidu_account_id=aid,keyword_id=100,
-            report_date=date(2026,9,1),device=0,cost=cost,click=2,impression=100,fetched_at=stamp,raw_metrics=raw))
-    conn.execute(tables[KwReportSnapshot].insert(),dict(tenant_id=1,baidu_account_id=11,keyword_id=100,
-        report_date=date(2026,9,3),device=1,cost=0,click=0,impression=0,fetched_at=stamp,raw_metrics={"ocpcConversionsDetail2":False}))
-    for level,name in [("province","省A"),("city","市A")]:
-        conn.execute(tables[KeywordRegionReport].insert(),dict(tenant_id=1,baidu_account_id=11,keyword_id=100,
-            report_date=date(2026,9,1),region_level=level,region_name=name,cost=10,click=2,impression=100,
-            fetched_at=datetime(2026,9,2,1)))
-    conn.execute(tables[KeywordRegionReport].insert(),dict(tenant_id=1,baidu_account_id=12,keyword_id=100,
-        report_date=date(2026,9,1),region_level="city",region_name="市B",cost=50,click=2,impression=100,fetched_at=stamp))
-    conn.execute(tables[KeywordHourlyReport].insert(),dict(tenant_id=1,baidu_account_id=11,keyword_id=100,
-        report_date=date(2026,9,1),report_datetime=datetime(2026,9,1,9),hour=9,cost=0,click=0,impression=0,
-        fetched_at=datetime(2026,9,2,2)))
-    for id_,aid,start,end,click,imp in [(1,11,date(2026,9,1),date(2026,9,3),2,100),
-        (2,12,date(2026,8,1),date(2026,8,31),None,100),(3,11,date(2026,9,1),date(2026,9,3),0,0)]:
-        conn.execute(tables[SearchTermReport].insert(),dict(id=id_,tenant_id=1,baidu_account_id=aid,
-            query_word="搜索%词" if id_ != 3 else "别词",trigger_keyword="test%词",campaign_id=7,adgroup_id=8,
-            window_start=start,window_end=end,synced_at=stamp,click=click,impression=imp,cost=10,ctr=999))
-
-
 @pytest.fixture
 def client(monkeypatch):
-    engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread":False})
+    engine = make_sqlite_engine()
     metadata, tables = make_fixture_tables()
     metadata.create_all(engine)
     with engine.begin() as conn:
         seed_fixture(conn, tables)
-    def only_read(conn,cursor,statement,parameters,context,executemany):
-        assert statement.lstrip().upper().startswith("SELECT"),statement
-    event.listen(engine,"before_cursor_execute",only_read)
+    event.listen(engine,"before_cursor_execute",only_select)
     from app.baidu.client import BaiduAPIClient
     from app.ai import monthly_report
     blocked = AsyncMock(side_effect=AssertionError("No external calls permitted"))
