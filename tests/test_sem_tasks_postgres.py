@@ -21,7 +21,7 @@ from test_sem_tasks import context, evidence
 
 
 @pytest.mark.parametrize("tenant_id", [3, 2**31, 2**53 + 1, 2**63 - 1])
-@pytest.mark.parametrize("schema_source", ["model", "review_ddl"])
+@pytest.mark.parametrize("schema_source", ["model", "review_ddl", "migration_proposal"])
 def test_native_task_constraints_lifecycle_and_concurrent_verify(tenant_id, schema_source):
     url = os.getenv("SEM_TASK_TEST_DATABASE_URL")
     if not url:
@@ -68,7 +68,18 @@ def test_native_task_constraints_lifecycle_and_concurrent_verify(tenant_id, sche
                     await conn.run_sync(lambda sync: metadata.create_all(sync, tables=tables))
                     # Execute the repository-owned review DDL only inside this
                     # dedicated local test schema, never against production.
-                    ddl = Path("docs/SEM_TASK_SCHEMA_REVIEW.sql").read_text(encoding="utf-8")
+                    if schema_source == "migration_proposal":
+                        # Compile the proposal with an in-memory op recorder;
+                        # never import Alembic or write its version table.
+                        from test_sem_task_migration_proposal import proposal_definitions
+                        from sqlalchemy.schema import CreateTable, CreateIndex
+                        from sqlalchemy.dialects.postgresql import dialect
+                        _, recorder = proposal_definitions()
+                        proposed = recorder.metadata.tables["sem_tasks"]
+                        ddl = str(CreateTable(proposed).compile(dialect=dialect())) + ";"
+                        ddl += ";".join(str(CreateIndex(i).compile(dialect=dialect())) for i in proposed.indexes)
+                    else:
+                        ddl = Path("docs/SEM_TASK_SCHEMA_REVIEW.sql").read_text(encoding="utf-8")
                     ddl = "\n".join(line for line in ddl.splitlines() if not line.lstrip().startswith("--"))
                     for statement in ddl.split(";"):
                         if statement.strip():
