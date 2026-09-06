@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - 'integrations/seo-workbench/**'
+      - 'integrations/workbench/**'
       - '.github/workflows/seo-workbench-consumer-check.yml'
   push:
     branches: [main]
     paths:
       - 'integrations/seo-workbench/**'
+      - 'integrations/workbench/**'
       - '.github/workflows/seo-workbench-consumer-check.yml'
 
 permissions:
@@ -25,4 +27,4 @@ jobs:
         with:
           node-version: '24'
       - name: Validate readonly scope, references and failure states offline
-        run: node --test integrations/seo-workbench/readonly-client.test.mjs
+        run: node --test integrations/seo-workbench/readonly-client.test.mjs integrations/workbench/seo-transport.test.mjs

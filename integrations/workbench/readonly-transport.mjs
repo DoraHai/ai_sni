@@ -10,6 +10,15 @@ const paths = [
   /^\/api\/v1\/search-terms\/cockpit$/,
 ]
 
+const seoRoutes = [
+  [/^\/api\/v1\/seo\/content-assets$/, ['tenant_id', 'site_id', 'content_id', 'source_page_id', 'status', 'content_type', 'content_types', 'q', 'page', 'page_size']],
+  [/^\/api\/v1\/seo\/content-assets\/[1-9]\d*\/review-history$/, ['tenant_id']],
+  [/^\/api\/v1\/seo\/content-distribution\/publications$/, ['tenant_id', 'site_id', 'content_id']],
+  [/^\/api\/v1\/seo\/content-distribution\/publications\/[1-9]\d*\/attempts$/, ['tenant_id', 'site_id']],
+  [/^\/api\/v1\/seo\/site-pages$/, ['tenant_id', 'site_id', 'page_id', 'q', 'status', 'issue_code', 'page', 'page_size']],
+  [/^\/api\/v1\/seo\/site-pages\/image-evidence$/, ['tenant_id', 'site_id', 'page_id', 'snapshot_id']],
+]
+
 function reject(code) { const error = new Error(code); error.code = code; throw error }
 
 export function createReadonlyTransport({ origin, fetchImpl, getSession }) {
@@ -30,15 +39,25 @@ export function createReadonlyTransport({ origin, fetchImpl, getSession }) {
     if (typeof path !== 'string' || !path.startsWith('/api/v1/') || /[\\#\s]/.test(path)) reject('ROUTE_DENIED')
     const url = new URL(path, base)
     // Reject normalization tricks and credentials in query strings as well as unknown routes.
-    if (url.origin !== origin || path.split('?')[0] !== url.pathname || !paths.some(rule => rule.test(url.pathname))) reject('ROUTE_DENIED')
+    const seoRoute = seoRoutes.find(([rule]) => rule.test(url.pathname))
+    if (url.origin !== origin || path.split('?')[0] !== url.pathname || (!seoRoute && !paths.some(rule => rule.test(url.pathname)))) reject('ROUTE_DENIED')
     const authTenants = url.pathname === '/api/v1/auth/tenants'
     const authNoQuery = url.pathname === '/api/v1/auth/me' || url.pathname === '/api/v1/auth/modules'
-    const allowed = new Set(authTenants ? ['module'] : authNoQuery ? []
+    const allowed = new Set(seoRoute ? seoRoute[1] : authTenants ? ['module'] : authNoQuery ? []
       : ['tenant_id', 'start_date', 'end_date', 'baidu_account_id', 'q', 'campaign_id', 'adgroup_id', 'page', 'page_size'])
     for (const key of url.searchParams.keys()) {
       if (!allowed.has(key) || url.searchParams.getAll(key).length !== 1) reject('QUERY_DENIED')
     }
     if (authTenants && (url.searchParams.size !== 1 || url.searchParams.get('module') !== 'sem')) reject('QUERY_DENIED')
+    if (seoRoute) {
+      const required = seoRoute[1].includes('site_id') ? ['tenant_id', 'site_id'] : ['tenant_id']
+      if (url.pathname.endsWith('/image-evidence')) required.push('page_id')
+      if (url.pathname.endsWith('/publications')) required.push('content_id')
+      for (const key of required) {
+        const value = url.searchParams.get(key)
+        if (!/^[1-9]\d*$/.test(value ?? '') || !Number.isSafeInteger(Number(value))) reject('QUERY_DENIED')
+      }
+    }
     const session = getSession()
     if (!session || typeof session.token !== 'string' || !session.token || /\s/.test(session.token) || !Number.isSafeInteger(session.revision)) reject('NO_SESSION')
     const revision = session.revision

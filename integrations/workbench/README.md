@@ -2,8 +2,12 @@
 
 This is a host-injected transport for `createSemReadonlyClient`, not an activated
 production connection. No login, token persistence, demo fallback or business writes.
-Only the four reviewed SEM cockpit GET paths are enabled. SEO/GEO and identity routes
-require their own reviewed contracts before inclusion.
+The four reviewed SEM cockpit GET paths and SEM identity preflight are enabled.
+Six SEO GET resources are enabled with route-specific query keys and required
+tenant/site scope. Review history uses tenant scope plus a verified content reference;
+it must not pretend an ignored site_id parameter provides server-side site isolation.
+Publication reads require a content ID and cannot use filtered subsets as totals.
+GEO routes remain pending integration. This does not activate any UI or grant access.
 
 The browser host must supply its **own HTTPS origin**, `fetch`, and a synchronous
 `getSession()` returning `{ token, revision }` from the ordinary authenticated session.
