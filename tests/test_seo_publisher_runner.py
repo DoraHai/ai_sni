@@ -261,3 +261,19 @@ def test_qa_assistant_browser_only_fills_selected_empty_answer(tmp_path,platform
         page.goto(url[:-2]+'13');page.locator('#answer').focus()
         with pytest.raises(ValueError): qa.prepare_answer(page,task)
         browser.close()
+
+
+@pytest.mark.parametrize('platform,question,answer', [
+    ('zhihu','https://www.zhihu.com/question/12','https://www.zhihu.com/question/12/answer/34'),
+    ('csdn_qa','https://ask.csdn.net/questions/12','https://ask.csdn.net/questions/12#answer_34')])
+def test_qa_receipt_only_records_operator_url_without_success_claim(platform,question,answer):
+    qa=qa_module(); task={**qa_task(),'version':3,'platform':platform,'question_url':question,
+                           'expires_at':'2000-01-01T00:00:00Z'}
+    # Filling TTL is not a deadline for reporting an actual later publication.
+    result=qa.make_receipt(task,answer)
+    assert result['answer_url']==answer and result['version']==3
+    assert 'body' not in result and 'status' not in result and result['kind']=='seo_qa_receipt'
+    for bad in ['https://evil.example/questions/12',question.replace('/12','/99'),
+                'javascript:alert(1)','https://user:pass@'+question[8:]]:
+        with pytest.raises(ValueError): qa.make_receipt(task,bad)
+    with pytest.raises(ValueError): qa.make_receipt({**task,'version':None},answer)

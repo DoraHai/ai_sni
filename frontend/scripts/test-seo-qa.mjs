@@ -269,3 +269,50 @@ test('import requires a preview and changing input invalidates it',async()=>{
     assert.match(m.state.messageOf({response:{data:{detail:[{msg:'第 2 条记录日期无效'}]}}}),/第 2 条/)
   }finally{m.app.unmount()}
 })
+
+
+function assistantFixture() {
+  return {kind:'seo_qa_receipt',schema_version:1,tenant_id:1,site_id:10,placement_id:7,version:2,
+    content_version:3,platform:'zhihu',question_url:'https://www.zhihu.com/question/12',
+    answer_url:'https://www.zhihu.com/question/12/answer/34'}
+}
+async function setupReceipt(m) {
+  const item=assistantFixture()
+  m.state.placements=[{...item,id:7}]
+  Object.assign(m.state.receiptForm,{id:7,version:2,answer_url:''})
+  m.state.dialog='receipt';await flush()
+  return item
+}
+function receiptFile(item) {return {target:{value:'file',files:[{size:300,text:async()=>JSON.stringify(item)}]}}}
+test('assistant receipt previews locally then submits scoped versioned report',async()=>{
+  const m=await mount()
+  try {
+    const item=await setupReceipt(m)
+    await m.state.readAssistantReceipt(receiptFile(item))
+    assert.equal(m.writes.length,0);assert.equal(m.state.receiptForm.answer_url,item.answer_url)
+    await m.state.saveReceipt()
+    assert.equal(m.writes[0][0],'placements/7/assistant-receipt')
+    assert.deepEqual(m.writes[0][1],item)
+  }finally{m.app.unmount()}
+})
+test('assistant receipt rejects other scopes and stale versions before any write',async()=>{
+  const m=await mount()
+  try {
+    const item=await setupReceipt(m)
+    for(const patch of [{tenant_id:2},{site_id:2},{placement_id:8},{version:99},{content_version:99},{kind:'published'}, {answer_url:'javascript:alert(1)'}]) {
+      await m.state.readAssistantReceipt(receiptFile({...item,...patch}))
+      assert.equal(m.state.assistantReceipt,null);assert.ok(m.state.error)
+    }
+    assert.equal(m.writes.length,0)
+  }finally{m.app.unmount()}
+})
+test('late receipt read is discarded after closing and reopening dialog',async()=>{
+  const m=await mount()
+  try {
+    const item=await setupReceipt(m);let resolve
+    const work=m.state.readAssistantReceipt({target:{value:'file',files:[{size:300,text:()=>new Promise(r=>{resolve=r})}]}})
+    m.state.dialog='';await flush();m.state.dialog='receipt';await flush()
+    resolve(JSON.stringify(item));await work
+    assert.equal(m.state.assistantReceipt,null);assert.equal(m.state.receiptForm.answer_url,'')
+  }finally{m.app.unmount()}
+})

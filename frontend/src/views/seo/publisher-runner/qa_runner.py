@@ -48,6 +48,36 @@ def prepare_answer(page,task):
     return '已填入审核正文，请人工检查并自行发布；发布后回工作台回填网址。'
 
 
+def make_receipt(task, answer_url):
+    # A receipt is an operator report, never proof of publication.
+    if type(task.get('version')) is not int or task['version'] <= 0:
+        raise ValueError('旧任务不支持回执，请在工作台手动回填网址')
+    actual, expected = urlparse(answer_url.strip()), urlparse(task['question_url'])
+    question_path = expected.path.rstrip('/')
+    valid_path = (bool(re.fullmatch(re.escape(question_path) + r'/answer/\d+/?', actual.path))
+                  if task['platform'] == 'zhihu' else actual.path.rstrip('/') == question_path)
+    if (actual.scheme != 'https' or actual.hostname != expected.hostname or actual.username or
+            actual.password or actual.port or not valid_path or len(answer_url) > 2000):
+        raise ValueError('回答网址必须属于当前平台的指定问题，不接受编辑页')
+    return {**{key: task[key] for key in ['tenant_id','site_id','placement_id','version',
+            'content_version','platform','question_url']}, 'kind':'seo_qa_receipt','schema_version':1,
+            'answer_url':actual._replace(query='').geturl()}
+
+
+def collect_receipt(task, output):
+    while True:
+        value = input('发布后粘贴公开回答网址生成回执；尚未发布可直接回车跳过：').strip()
+        if not value: return
+        try:
+            receipt = make_receipt(task, value)
+        except ValueError as exc:
+            print(str(exc)); continue
+        with output.open('x', encoding='utf-8') as target:
+            json.dump(receipt, target, ensure_ascii=False, indent=2)
+        print('已生成 '+str(output)+'，请在工作台“回填网址”中导入并核验。此文件不是发布成功证明。')
+        return
+
+
 def main():
     parser=argparse.ArgumentParser(description='问答本地填稿助手：不点击保存或发布')
     parser.add_argument('task',type=Path)
@@ -72,7 +102,7 @@ def main():
             with journal.open('x',encoding='utf-8') as output:
                 json.dump({'state':'fill_attempted','placement_id':task['placement_id']},output)
             print(prepare_answer(page,task))
-            input('请检查正文、链接、排版和平台声明，自行发布并复制网址；完成后回车关闭本机浏览器：')
+            collect_receipt(task, Path.cwd()/('qa-receipt-'+key[:16]+'.json'))
         finally: context.close()
 
 
