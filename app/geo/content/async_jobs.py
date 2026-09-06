@@ -284,9 +284,10 @@ async def create_job(
 
 
 async def recover_jobs_on_startup(*, requeue_pending: bool = True) -> dict[str, int]:
-    """进程启动时：running 一律标失败；pending 未过期则 requeue，过期标失败。
+    """进程启动时仅恢复没有被活跃执行者持锁的作业。
 
-    BackgroundTasks 不跨进程，重启后需显式恢复，否则任务永久卡在 generating。
+    中断的 running 作业失败；fresh pending 只进入原队列，不改排序，最终由
+    advisory lock 与条件状态更新保证只执行一次。
     """
     import asyncio
 
