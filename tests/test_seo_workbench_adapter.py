@@ -126,6 +126,39 @@ def test_historical_self_review_is_not_presented_as_independent():
     assert review["label"] == "历史审核，独立性未确认"
 
 
+@pytest.mark.parametrize(
+    "reviewed_at",
+    ["not-a-date", "2026-09-06", "", True, 20260906, {}, []],
+)
+def test_invalid_review_time_cannot_mark_content_approved(reviewed_at):
+    raw = deepcopy(scenario("approved_unpublished")["raw"])
+    raw["content"]["reviewed_at"] = reviewed_at
+    result = adapt_seo_workbench_item(
+        raw,
+        expected_context=CONTEXT,
+        response_context=CONTEXT,
+    )
+    assert result["review"]["state"] == "not_reviewed"
+    assert result["review"]["reviewed_at"] is None
+    assert result["content"]["label"] == "未审核"
+
+
+@pytest.mark.parametrize(
+    "reviewed_at",
+    ["2026-09-06T06:00:00", "2026-09-06T14:00:00+08:00"],
+)
+def test_review_time_accepts_api_iso_datetime_shapes(reviewed_at):
+    raw = deepcopy(scenario("approved_unpublished")["raw"])
+    raw["content"]["reviewed_at"] = reviewed_at
+    result = adapt_seo_workbench_item(
+        raw,
+        expected_context=CONTEXT,
+        response_context=CONTEXT,
+    )
+    assert result["review"]["state"] == "approved"
+    assert result["review"]["reviewed_at"] == reviewed_at
+
+
 def test_latest_attempt_is_exposed_without_changing_publication_success():
     attempts = [
         {
@@ -312,7 +345,12 @@ def test_platform_page_check_requires_an_explicit_publication_binding():
                 "http_status": 200,
             },
         },
-        "latest_snapshot": {"id": 94003, "status_code": 200, "fetch_error": None},
+        "latest_snapshot": {
+            "id": 94003,
+            "url": page_url,
+            "status_code": 200,
+            "fetch_error": None,
+        },
     }
     binding = {
         "tenant_id": 99001,
@@ -341,6 +379,50 @@ def test_platform_page_check_requires_an_explicit_publication_binding():
             response_context=CONTEXT,
             page_binding=bad,
         )
+
+
+def test_latest_snapshot_must_belong_to_the_explicitly_bound_page():
+    raw = deepcopy(scenario("latest_failed_old_success")["raw"])
+    page_url = raw["page_detail"]["page"]["url"]
+    raw["content"]["page_url"] = page_url
+    raw["page_detail"]["latest_snapshot"]["url"] = "https://example.com/other-page"
+    binding = {
+        "tenant_id": 99001,
+        "site_id": 99002,
+        "page_id": 93001,
+        "target_kind": "content_page_url",
+        "page_url": page_url,
+    }
+    with pytest.raises(WorkbenchPayloadError, match="快照"):
+        adapt_seo_workbench_item(
+            raw,
+            expected_context=CONTEXT,
+            response_context=CONTEXT,
+            page_binding=binding,
+        )
+
+
+def test_redirect_snapshot_can_belong_by_final_url():
+    raw = deepcopy(scenario("latest_failed_old_success")["raw"])
+    page_url = raw["page_detail"]["page"]["url"]
+    raw["content"]["page_url"] = page_url
+    raw["page_detail"]["latest_snapshot"].update(
+        url="https://example.com/redirect-source",
+        final_url=page_url,
+    )
+    result = adapt_seo_workbench_item(
+        raw,
+        expected_context=CONTEXT,
+        response_context=CONTEXT,
+        page_binding={
+            "tenant_id": 99001,
+            "site_id": 99002,
+            "page_id": 93001,
+            "target_kind": "content_page_url",
+            "page_url": page_url,
+        },
+    )
+    assert result["page_evidence"]["latest_snapshot_id"] == 94002
 
 
 def test_attempt_order_normalizes_timezone_offsets():
