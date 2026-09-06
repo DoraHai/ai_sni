@@ -6,7 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
-from tests.test_sem_cockpit_details import make_fixture_tables, seed_fixture
+from tests.sem_cockpit_fixtures import make_fixture_tables, seed_fixture
 from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
