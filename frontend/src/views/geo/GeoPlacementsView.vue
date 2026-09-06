@@ -13,6 +13,7 @@ import {
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { useClientPager } from '../../composables/useClientPager'
 import { useGeoTenant } from '../../composables/useGeoTenant'
+import { isPersistedGeoRow } from '../../utils/geoVirtualDefaults'
 
 const { tenantId } = useGeoTenant()
 const loading = ref(false)
@@ -122,7 +123,7 @@ function openCreate() {
 }
 
 function openEdit(row) {
-  editing.value = row
+  editing.value = isPersistedGeoRow(row) ? row : null
   form.value = {
     name: row.name || '',
     channel_type: row.channel_type || 'website',
@@ -151,7 +152,7 @@ async function submitForm() {
       priority: Number(form.value.priority) || 0,
       authority_note: form.value.authority_note.trim() || null,
     }
-    if (editing.value) {
+    if (isPersistedGeoRow(editing.value)) {
       await patchGeoMediaPlacement(tenantId.value, editing.value.id, payload)
       ElMessage.success('已保存')
     } else {
@@ -168,6 +169,10 @@ async function submitForm() {
 }
 
 async function markPublished(row) {
+  if (!isPersistedGeoRow(row)) {
+    ElMessage.warning('请先把默认建议加入信源计划')
+    return
+  }
   try {
     await patchGeoMediaPlacement(tenantId.value, row.id, { status: 'published' })
     ElMessage.success('计划已标为已发布（不会向该平台发文）')
@@ -178,6 +183,10 @@ async function markPublished(row) {
 }
 
 async function remove(row) {
+  if (!isPersistedGeoRow(row)) {
+    ElMessage.warning('这是尚未保存的默认建议，无需删除')
+    return
+  }
   try {
     await ElMessageBox.confirm(`删除信源「${row.name}」？`, '删除', {
       type: 'warning',
@@ -245,14 +254,14 @@ onMounted(load)
           <el-table-column label="操作" min-width="180">
             <template #default="{ row }">
               <div class="geo-act">
-                <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+                <el-button link type="primary" @click="openEdit(row)">{{ row.virtual_default ? '加入计划' : '编辑' }}</el-button>
                 <el-button
-                  v-if="row.status !== 'published'"
+                  v-if="!row.virtual_default && row.status !== 'published'"
                   link
                   class="act-publish"
                   @click="markPublished(row)"
                 >发布</el-button>
-                <el-button link type="danger" @click="remove(row)">删除</el-button>
+                <el-button v-if="!row.virtual_default" link type="danger" @click="remove(row)">删除</el-button>
               </div>
             </template>
           </el-table-column>

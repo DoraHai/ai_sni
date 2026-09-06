@@ -25,6 +25,7 @@ import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import NeedHintAlert from '../../components/NeedHintAlert.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { getGeoPrototypePageSurface } from '../../utils/geoEditorSurface'
+import { isPersistedGeoRow, persistedGeoRows } from '../../utils/geoVirtualDefaults'
 
 const { tenantId } = useGeoTenant()
 const prototypeSurface = getGeoPrototypePageSurface()
@@ -127,7 +128,7 @@ const editForm = ref({
 })
 
 function channelById(id) {
-  return channels.value.find((x) => x.id === Number(id)) || null
+  return persistedChannels.value.find((x) => x.id === Number(id)) || null
 }
 
 function isAutoPublish(ch) {
@@ -181,8 +182,10 @@ function modeTagType(mode) {
   return 'info'
 }
 
+const persistedChannels = computed(() => persistedGeoRows(channels.value))
+
 const channelTabs = computed(() => {
-  const list = (channels.value || []).map((c) => {
+  const list = persistedChannels.value.map((c) => {
     const accs = (accounts.value || []).filter((a) => a.channel_id === c.id)
     const webhookReady = accs.some(
       (a) =>
@@ -231,7 +234,7 @@ const filteredAccounts = computed(() => {
 })
 
 const autoChannels = computed(() =>
-  (channels.value || []).filter((c) => isAutoPublish(c) && c.enabled),
+  persistedChannels.value.filter((c) => isAutoPublish(c) && c.enabled),
 )
 
 async function load() {
@@ -305,6 +308,17 @@ async function createChannel() {
 }
 
 function openEditChannel(row) {
+  if (!isPersistedGeoRow(row)) {
+    chForm.value = {
+      channel_type: row.channel_type || 'website',
+      name: row.name || '',
+      publish_mode: row.publish_mode || defaultModeForType(row.channel_type),
+      base_url: row.base_url || '',
+      enabled: !!row.enabled,
+    }
+    createChOpen.value = true
+    return
+  }
   editChForm.value = {
     id: row.id,
     name: row.name || '',
@@ -332,6 +346,10 @@ async function saveEditChannel() {
 }
 
 async function toggleChannel(row) {
+  if (!isPersistedGeoRow(row)) {
+    ElMessage.warning('请先保存该默认渠道')
+    return
+  }
   try {
     await patchGeoPublishingChannel(tenantId.value, row.id, { enabled: !row.enabled })
     ElMessage.success(row.enabled ? '已禁用渠道' : '已启用渠道')
@@ -342,6 +360,10 @@ async function toggleChannel(row) {
 }
 
 async function removeChannel(row) {
+  if (!isPersistedGeoRow(row)) {
+    ElMessage.warning('这是尚未保存的默认渠道，无需删除')
+    return
+  }
   try {
     await ElMessageBox.confirm(
       `物理删除渠道「${row.name}」及其账号？不可恢复。`,
@@ -446,12 +468,16 @@ function buildSocialCredentials(form, channelType) {
 }
 
 function openCreateAccount(prefillChannelId) {
-  const cid =
+  const preferredId =
     prefillChannelId ||
     (activeTab.value !== 'all' ? Number(activeTab.value) : null) ||
-    autoChannels.value[0]?.id ||
-    channels.value[0]?.id ||
-    null
+    autoChannels.value[0]?.id
+  const selected = channelById(preferredId) || persistedChannels.value[0]
+  if (!selected) {
+    ElMessage.warning('请先保存一个发布渠道，再添加账号')
+    return
+  }
+  const cid = selected.id
   const ch = channelById(cid)
   const auth = defaultAuthForChannel(cid)
   accForm.value = {
@@ -770,7 +796,7 @@ onMounted(load)
       </div>
       <div class="auto-cards">
         <div
-          v-for="c in channels.filter((x) => typeSupportsWebhook(x.channel_type))"
+          v-for="c in persistedChannels.filter((x) => typeSupportsWebhook(x.channel_type))"
           :key="c.id"
           class="auto-card"
           :class="{ ready: isAutoPublish(c) && c.enabled && accounts.some((a) => a.channel_id === c.id && a.auth_type === 'webhook' && a.has_credentials && a.status === 'active') }"
@@ -850,12 +876,12 @@ onMounted(load)
         <el-table-column label="操作" min-width="220">
           <template #default="{ row }">
             <div class="geo-act">
-              <el-button link type="primary" @click="openEditChannel(row)">配置</el-button>
-              <el-button link type="primary" @click="openCreateAccount(row.id)">账号</el-button>
-              <el-button link type="primary" @click="toggleChannel(row)">
+              <el-button link type="primary" @click="openEditChannel(row)">{{ row.virtual_default ? '保存渠道' : '配置' }}</el-button>
+              <el-button v-if="!row.virtual_default" link type="primary" @click="openCreateAccount(row.id)">账号</el-button>
+              <el-button v-if="!row.virtual_default" link type="primary" @click="toggleChannel(row)">
                 {{ row.enabled ? '停用' : '启用' }}
               </el-button>
-              <el-button link type="danger" @click="removeChannel(row)">删除</el-button>
+              <el-button v-if="!row.virtual_default" link type="danger" @click="removeChannel(row)">删除</el-button>
             </div>
           </template>
         </el-table-column>
@@ -1120,7 +1146,7 @@ onMounted(load)
             @change="onAccChannelChange"
           >
             <el-option
-              v-for="c in channels"
+              v-for="c in persistedChannels"
               :key="c.id"
               :label="`${c.name} · ${modeLabel(c.publish_mode)} · 渠道 ID ${c.id}`"
               :value="c.id"

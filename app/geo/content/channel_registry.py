@@ -95,6 +95,7 @@ def channel_options_from_registry(
         options.append(
             {
                 "publishing_channel_id": row.get("id"),
+                "virtual_default": row.get("id") is None,
                 "name": row.get("name"),
                 "channel_type": ctype,
                 "publish_mode": row.get("publish_mode"),
