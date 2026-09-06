@@ -23,6 +23,20 @@ jobs:
     name: Verify GEO baseline
     if: github.ref_name == 'codex/production-geo'
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: geo_ci
+          POSTGRES_PASSWORD: geo_ci_test
+          POSTGRES_DB: geo_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U geo_ci -d geo_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -36,40 +50,11 @@ jobs:
 
       - run: pip install -r requirements.txt pytest
 
-      - name: Run GEO regression tests
+      - name: Run all GEO regressions including PostgreSQL concurrency
         env:
-          PYTHONPATH: .
-          TZ: UTC
-        run: >-
-          pytest -q
-          tests/test_geo_content_task_create.py
-          tests/test_geo_daily_metrics_slices.py
-          tests/test_geo_ai_sampling.py
-          tests/test_geo_audit.py
-          tests/test_geo_brand_profile.py
-          tests/test_geo_chinaz.py
-          tests/test_geo_content_rules.py
-          tests/test_geo_evidence_cite.py
-          tests/test_geo_pagespeed.py
-          tests/test_geo_release_isolation.py
-          tests/test_geo_site_audit.py
-          tests/test_geo_job_ownership.py
-          tests/test_geo_flow_integration.py
-          tests/test_geo_work_queue_tickets.py
-          tests/test_geo_work_execution.py
-          tests/test_geo_execution_plan.py
-          tests/test_geo_article_save.py
-          tests/test_geo_diagnostic_scope.py
-          tests/test_geo_execution_review.py
-          tests/test_geo_webhook_connector.py
-          tests/test_geo_integration.py
-          tests/test_geo_core_review_fixes.py
-          tests/test_geo_source_opportunity_tasks.py
-          tests/test_geo_source_opportunities.py
-          tests/test_geo_sample_provenance.py
-          tests/test_geo_unprimed_probe.py
-          tests/test_geo_probe_batch.py
-          tests/test_geo_tenant_switcher.py
+          GEO_TEST_POSTGRES_URL: postgresql+asyncpg://geo_ci:geo_ci_test@127.0.0.1:5432/geo_ci
+        run: python ops/run_geo_checks.py --postgres
+
 
   deploy:
     name: Build and deploy GEO only

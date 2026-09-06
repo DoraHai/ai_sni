@@ -189,3 +189,12 @@ POST /integration/tasks 对 content_task_id 校验当前客户归属并拒绝归
 - 分发页面提供核对入口；运营异常提示仍链接到此页面。此功能不改变驾驶舱 Task / Metric 契约，不影响 SEM/SEO。
 
 真实 PostgreSQL 测试使用 `GEO_TEST_POSTGRES_URL` 显式启用。测试在随机独立 schema 复制所需表的空结构，不复制客户数据、不使用生产序列；模拟外部连接器，结束后删除测试 schema。覆盖同账号并发防重、不同账号记录保留、读超时禁止重发，以及发送和恢复并发互斥。
+
+
+## 自动发布门禁：全量回归与真实数据库并发
+
+统一入口为 `python ops/run_geo_checks.py`，自动发现 `tests/test_geo*.py`，同时运行指标、Markdown 表格和文章质量测试。入口固定使用测试配置、忽略本地 `.env`、清空继承的 API Key，并使普通测试数据库不可连接。普通模式跳过明确要求 PostgreSQL 的测试。
+
+GEO 检查与部署前验证均运行 `python ops/run_geo_checks.py --postgres`，配有独立 PostgreSQL 16 临时服务。仅接受回环地址、`geo_ci` 数据库和 `geo_ci` 用户；初始化前必须没有已有表，只创建七张测试所需的空表结构。连接配置缺失会退出失败，不能把数据库测试跳过后当成验证通过。生产部署依赖此验证任务成功，不使用生产数据库凭据，也不执行迁移。
+
+真实数据库部分包含四项发布/恢复并发测试和五项统一任务创建/完成并发测试。测试失败时取消尚未结束的协程，使连接释放和临时 schema 清理能够执行。此次本地统一入口 768 项通过，9 项数据库测试另行在真实 PostgreSQL 隔离 schema 中通过；新增工作流需推送后由 GitHub Actions 实际运行。

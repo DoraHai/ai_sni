@@ -79,6 +79,9 @@ def test_concurrent_completion_preserves_terminal_evidence(second_status):
                     first_result, second_result = await asyncio.wait_for(asyncio.gather(a, b), 10)
                 finally:
                     release.set()
+                    for worker in (a, b):
+                        if not worker.done():
+                            worker.cancel()
                     await asyncio.gather(a, b, return_exceptions=True)
                 assert first_result['status'] == 'done'
                 if second_status == 'done':
@@ -170,6 +173,9 @@ def test_concurrent_linked_creation_serializes_and_reuses_task(conflicting_goal)
                     first_result, second_result = await asyncio.wait_for(asyncio.gather(a, b), 10)
                 finally:
                     release.set()
+                    for worker in (a, b):
+                        if not worker.done():
+                            worker.cancel()
                     await asyncio.gather(a, b, return_exceptions=True)
                 assert first_result['status'] == 'open'
                 assert second_result == (409 if conflicting_goal else first_result)
