@@ -144,6 +144,30 @@ def test_live_patrol_lock_prevents_timeout_reconciliation():
     asyncio.run(scenario())
 
 
+def test_background_reconciliation_defers_legacy_running_job():
+    async def scenario():
+        row = _job()
+        row.request_meta = {}
+        session = Mock(
+            scalars=AsyncMock(side_effect=[[row], []]),
+            refresh=AsyncMock(),
+            commit=AsyncMock(),
+        )
+
+        @asynccontextmanager
+        async def factory():
+            yield session
+
+        with patch("app.database.async_session_factory", factory):
+            stats = await async_jobs.reconcile_stale_jobs_background()
+        assert row.status == "running"
+        assert stats == {"failed_jobs": 0, "released_tasks": 0}
+        session.refresh.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
+    asyncio.run(scenario())
+
+
 def test_patrol_execution_lock_releases_after_worker_failure():
     async def scenario():
         connection = Mock(

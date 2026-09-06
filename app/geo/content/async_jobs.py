@@ -21,6 +21,7 @@ KIND_VARIANTS = "create_variants"
 # Defaults; runtime reads settings when reconciling
 STALE_PENDING_SECONDS = 120
 STALE_RUNNING_SECONDS = 45 * 60
+JOB_EXECUTION_PROTOCOL = "advisory_v1"
 
 
 @asynccontextmanager
@@ -93,6 +94,12 @@ def job_read_payload(row: GeoAsyncJob) -> dict[str, Any]:
         reconciliation="background",
     )
     return payload
+
+
+def job_has_advisory_owner(row: GeoAsyncJob) -> bool:
+    request_meta = getattr(row, "request_meta", None)
+    meta = request_meta if isinstance(request_meta, dict) else {}
+    return meta.get("execution_protocol") == JOB_EXECUTION_PROTOCOL
 
 
 async def set_job_progress(
@@ -174,6 +181,8 @@ async def _release_task_lock(
 async def reconcile_stale_job(
     session: AsyncSession, row: GeoAsyncJob
 ) -> GeoAsyncJob:
+    if row.status == "running" and not job_has_advisory_owner(row):
+        return row
     async with job_execution_lock(row.id) as acquired:
         if not acquired:
             return row
@@ -186,6 +195,8 @@ async def _reconcile_unowned_job(
 ) -> GeoAsyncJob:
     """Mark hanging pending/running jobs failed; free content-task locks."""
     if row.status not in {"pending", "running"}:
+        return row
+    if row.status == "running" and not job_has_advisory_owner(row):
         return row
     pending_lim, running_lim = _stale_limits()
     if row.status == "pending":
@@ -299,6 +310,7 @@ async def recover_jobs_on_startup(*, requeue_pending: bool = True) -> dict[str, 
         "failed_stale_pending": 0,
         "requeued": 0,
         "released_tasks": 0,
+        "legacy_running_deferred": 0,
     }
     requeue_ids: list[int] = []
 
@@ -389,6 +401,9 @@ async def _recover_unowned_job(
     if row.status not in {"pending", "running"}:
         return
     if row.status == "running":
+        if not job_has_advisory_owner(row):
+            stats["legacy_running_deferred"] += 1
+            return
         reason = "进程重启：中断的 running 作业已标记失败，请重试"
         row.status = "failed"
         row.error = reason
@@ -462,6 +477,10 @@ async def _run_owned_job(job_id: int, *, connection=None) -> None:
             if claimed is None:
                 return
             row = await session.get(GeoAsyncJob, job_id)
+            meta = dict(row.request_meta or {})
+            meta["execution_protocol"] = JOB_EXECUTION_PROTOCOL
+            row.request_meta = meta
+            await session.commit()
             if row is not None and cancel_requested(row):
                 await mark_job(session, job_id, status="cancelled", error="已取消")
                 return

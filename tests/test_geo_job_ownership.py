@@ -49,7 +49,12 @@ def test_live_job_not_reconciled_even_when_old():
         @asynccontextmanager
         async def busy(job_id):
             yield None
-        row = SimpleNamespace(id=1, status='running', started_at=datetime.utcnow()-timedelta(days=1))
+        row = SimpleNamespace(
+            id=1,
+            status='running',
+            started_at=datetime.utcnow()-timedelta(days=1),
+            request_meta={'execution_protocol': jobs.JOB_EXECUTION_PROTOCOL},
+        )
         session = SimpleNamespace(refresh=AsyncMock(), commit=AsyncMock())
         with patch.object(jobs, 'job_execution_lock', busy):
             assert await jobs.reconcile_stale_job(session, row) is row
@@ -78,14 +83,69 @@ def test_startup_skips_job_owned_by_another_worker():
 
 def test_interrupted_running_job_is_failed_not_replayed():
     async def scenario():
-        row = SimpleNamespace(id=1, status='running', ref_id=None)
+        row = SimpleNamespace(
+            id=1,
+            status='running',
+            ref_id=None,
+            request_meta={'execution_protocol': jobs.JOB_EXECUTION_PROTOCOL},
+        )
         session = SimpleNamespace(commit=AsyncMock())
-        stats = dict(failed_running=0, failed_stale_pending=0, requeued=0)
+        stats = dict(
+            failed_running=0,
+            failed_stale_pending=0,
+            requeued=0,
+            legacy_running_deferred=0,
+        )
         queue = []
         await jobs._recover_unowned_job(session, row, 120, True, stats, queue)
         assert row.status == 'failed'
         assert stats['failed_running'] == 1
         assert queue == []
+    asyncio.run(scenario())
+
+
+def test_legacy_running_job_is_never_auto_failed():
+    async def scenario():
+        row = SimpleNamespace(
+            id=1,
+            status='running',
+            request_meta={},
+            started_at=datetime.utcnow() - timedelta(days=1),
+        )
+        session = SimpleNamespace(refresh=AsyncMock(), commit=AsyncMock())
+        assert await jobs.reconcile_stale_job(session, row) is row
+        assert row.status == 'running'
+        session.refresh.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
+    asyncio.run(scenario())
+
+
+def test_startup_defers_legacy_running_job():
+    async def scenario():
+        row = SimpleNamespace(id=1, status='running', request_meta={})
+        session = SimpleNamespace(
+            scalars=AsyncMock(side_effect=[[row], []]),
+            refresh=AsyncMock(),
+            commit=AsyncMock(),
+        )
+
+        @asynccontextmanager
+        async def available(_job_id):
+            yield object()
+
+        @asynccontextmanager
+        async def factory():
+            yield session
+
+        with (
+            patch.object(jobs, 'job_execution_lock', available),
+            patch('app.database.async_session_factory', factory),
+        ):
+            stats = await jobs.recover_jobs_on_startup()
+        assert row.status == 'running'
+        assert stats['legacy_running_deferred'] == 1
+
     asyncio.run(scenario())
 
 
@@ -104,6 +164,40 @@ def test_unclaimed_job_never_executes_and_claim_is_conditional():
         assert 'geo_async_jobs.status =' in str(compiled)
         assert 'pending' in compiled.params.values()
         assert 42 in compiled.params.values()
+    asyncio.run(scenario())
+
+
+def test_claimed_job_persists_new_execution_protocol():
+    async def scenario():
+        row = SimpleNamespace(
+            id=42,
+            kind=jobs.KIND_GENERATE,
+            status='running',
+            request_meta={},
+            ref_id=None,
+            started_at=None,
+            finished_at=None,
+            error=None,
+            result_meta=None,
+        )
+        session = SimpleNamespace(
+            scalar=AsyncMock(return_value=42),
+            commit=AsyncMock(),
+            get=AsyncMock(return_value=row),
+        )
+
+        @asynccontextmanager
+        async def factory(**kwargs):
+            yield session
+
+        with (
+            patch('app.database.async_session_factory', factory),
+            patch.object(jobs, '_execute_generate', AsyncMock(return_value={'ok': True})),
+        ):
+            await jobs._run_owned_job(42)
+        assert row.request_meta['execution_protocol'] == jobs.JOB_EXECUTION_PROTOCOL
+        assert row.status == 'succeeded'
+
     asyncio.run(scenario())
 
 
