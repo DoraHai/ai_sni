@@ -8,7 +8,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import text
+from sqlalchemy import text, BigInteger, Integer, SmallInteger
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.api.customer_modules import seo_sites_router
 from app.api.seo import router as seo_router
@@ -21,6 +22,47 @@ from app.seo_scheduler import shutdown_seo_scheduler, start_seo_scheduler
 settings = get_settings()
 enforce_production_secrets(settings, hard_fail=True)
 SEO_REQUIRED_SCHEMA_REVISION = "0094_seo_qa_batches"
+# Add a shared migration revision only after its ID, parent and DDL are reviewed.
+SEO_COMPATIBLE_SCHEMA_REVISIONS = frozenset({SEO_REQUIRED_SCHEMA_REVISION})
+
+
+def _required_schema_columns():
+    from app.models.seo import SeoContentAsset, SeoAiOperation, SeoMetricSnapshot, SeoImageAltReview
+    from app.models.seo_cockpit import SeoTask, SeoImageVerification
+    from app.models.seo_qa import SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement, SeoQaBatch
+    from app.models.module_workspace import SeoSite
+    models = (SeoSite, SeoContentAsset, SeoAiOperation, SeoMetricSnapshot, SeoImageAltReview,
+              SeoTask, SeoImageVerification, SeoQuestion, SeoQaFact, SeoQaAnswer, SeoQaPlacement, SeoQaBatch)
+    required = {}
+    for model in models:
+        for column in model.__table__.columns:
+            kind = ('int8' if isinstance(column.type, BigInteger) else 'int2' if isinstance(column.type, SmallInteger)
+                    else 'int4' if isinstance(column.type, Integer)
+                    else 'jsonb' if isinstance(column.type, JSONB) else None)
+            required[(model.__tablename__, column.name)] = kind
+    return required
+
+
+SEO_REQUIRED_COLUMNS = _required_schema_columns()
+SEO_SCHEMA_COLUMNS_SQL = text("""
+    SELECT requested.name, a.attname, t.typname
+    FROM unnest(CAST(:tables AS text[])) AS requested(name)
+    JOIN pg_catalog.pg_class c ON c.oid = to_regclass(requested.name)
+    JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+    JOIN pg_catalog.pg_type t ON t.oid = a.atttypid
+    WHERE c.relkind IN ('r', 'p') AND a.attnum > 0 AND NOT a.attisdropped
+""")
+
+
+async def _check_seo_structure(conn):
+    rows = await conn.execute(SEO_SCHEMA_COLUMNS_SQL,
+                              {'tables': sorted({table for table, _ in SEO_REQUIRED_COLUMNS})})
+    actual = {(table, column): kind for table, column, kind in rows}
+    incompatible = [f'{table}.{column}' for (table, column), kind in SEO_REQUIRED_COLUMNS.items()
+                    if (table, column) not in actual or (kind and actual[(table, column)] != kind)]
+    if incompatible:
+        raise RuntimeError('SEO required columns missing or incompatible: ' + ', '.join(sorted(incompatible)))
+
 
 
 @asynccontextmanager
@@ -62,13 +104,15 @@ async def seo_health(response: Response) -> dict:
                 ).scalars()
             )
             schema_revision = ",".join(revisions) or None
-            if revisions != [SEO_REQUIRED_SCHEMA_REVISION]:
+            if len(revisions) != 1 or revisions[0] not in SEO_COMPATIBLE_SCHEMA_REVISIONS:
                 schema_status = "error"
                 raise RuntimeError(
                     "SEO database schema mismatch: "
-                    f"expected {SEO_REQUIRED_SCHEMA_REVISION}, "
+                    f"expected {SEO_REQUIRED_SCHEMA_REVISION} or an explicitly reviewed compatible revision, "
                     f"found {schema_revision or 'none'}"
                 )
+            schema_status = "error"
+            await _check_seo_structure(conn)
             schema_status = "ok"
     except Exception as exc:  # noqa: BLE001 - health must report infra failure
         db_status = "error"
@@ -82,4 +126,5 @@ async def seo_health(response: Response) -> dict:
         "schema": schema_status,
         "schema_revision": schema_revision,
         "required_schema_revision": SEO_REQUIRED_SCHEMA_REVISION,
+        "compatible_schema_revisions": sorted(SEO_COMPATIBLE_SCHEMA_REVISIONS),
     }

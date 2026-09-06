@@ -129,3 +129,56 @@ Database migrations are never applied by this workflow. If a separately
 approved migration is ever executed, its rollback requires a reviewed Alembic
 downgrade or a pre-migration database snapshot; changing code symlinks alone is
 not a database rollback.
+
+
+## Shared SemTask revision compatibility review — 2026-09-06 (DRAFT)
+
+This proposal must not be merged/deployed or used to authorize a migration yet.
+The current database and SEO baseline are `0094_seo_qa_batches`. No SemTask target
+revision, parent, migration file or responsible shared-migration owner has been
+confirmed. `0094_seo_qa_batches` is a candidate parent based on the current single
+head, not an approved new migration parent. Do not allocate a guessed `0095` or
+rewrite deployed migration history.
+
+The health implementation keeps `required_schema_revision` as the SEO baseline,
+adds a code-reviewed explicit `compatible_schema_revisions` set, requires exactly
+one Alembic version row, and rejects empty, duplicate, multiple, stale and unknown
+versions. For now the set contains only 0094. The test-only target is not a real
+migration ID and is never in the application allowlist.
+
+Before reporting healthy, a read-only pg_catalog query follows the connection's
+search_path via to_regclass and checks all mapped column names on 12 critical SEO
+tables: sites, content assets, AI operations, metric snapshots, image reviews and
+verification queue, SEO tasks, and five question/answer tables. Integer widths
+(SMALLINT/INTEGER/BIGINT) and JSONB types are checked. Missing tables/columns,
+incompatible checked types and catalog errors fail with HTTP 503. This is a
+minimum runtime contract, not validation of all indexes, foreign keys, checks,
+string lengths, nullability or migration contents; migration review must cover
+those separately. Extra columns/tables are allowed only at an explicitly accepted
+revision. No new dependency on sem_tasks is introduced.
+
+Validation: 2026-09-06 production read-only transaction, 5-second statement timeout,
+12 tables/172 columns, actual single revision 0094, no incompatibilities. No DDL,
+version-table writes, customer-row reads, service changes or deployment were used.
+An initial test implementation confused SMALLINT with INTEGER inheritance; this
+was corrected before PR and covered by a dedicated regression test.
+
+Completion gates:
+
+1. The shared migration owner identifies the exact target revision/down_revision,
+   migration source commit and reviewed additive DDL (including lineage evidence).
+2. Review compatibility and add only that exact target to the allowlist in this PR;
+   replace/supplement the test-only target case with a test for the actual value.
+3. Test current and target structures, missing critical fields, unknown and multiple
+   revision rows. The current unit tests exercise the algorithm only; they are not
+   acceptance of an unassigned SemTask target or execution of its migration.
+4. Independently authorize deployment of the compatibility release, then independently
+   authorize the shared migration. This PR grants neither approval. Do not roll the
+   application back to a 0094-only health checker after advancing the database;
+   retain an explicitly compatible rollback release, and do not stamp/downgrade the
+   shared version table to make an incompatible application look healthy.
+
+SEM handoff reviewed: `SEM_TASK_SCHEMA_COMPATIBILITY_REVIEW_REQUIRED.md` and
+`SEM_TASK_MIGRATION_EVIDENCE_UPDATE_20260906.md` in the local sem-acceptance-results
+folder. The contacted task "1.0" clarified it is GEO and cannot confirm SemTask's
+owner or migration IDs. Shared-owner confirmation remains outstanding.
