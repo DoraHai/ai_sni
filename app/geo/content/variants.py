@@ -40,9 +40,12 @@ def _extract_faq_block(body: str, limit: int = 3) -> str:
         match = re.search(r"(?is)##\s*常见问题\s*\n(.*?)(?=\n##\s|\Z)", body or "")
     if not match:
         return ""
-    lines = [ln for ln in match.group(1).splitlines() if ln.strip()]
-    kept = lines[: max(4, limit * 2)]
-    return "## FAQ\n\n" + "\n".join(kept) + "\n"
+    text = match.group(1).strip()
+    # Count questions, not lines: an answer may span several paragraphs.
+    questions = list(re.finditer(r"(?m)^\s*(?:[-*+]\s+)?(?:\*\*)?Q[:：]", text))
+    if len(questions) > limit:
+        text = text[: questions[limit].start()].rstrip()
+    return "## FAQ\n\n" + text + "\n"
 
 
 def _extract_section(body: str, heading_pat: str) -> str:
@@ -93,6 +96,20 @@ def _sources_block(body_md: str, *, wechat_style: bool = False) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _middle_sections(body_md: str) -> list[str]:
+    """Preserve substantive sections and whole tables without guessing headings."""
+    sections = re.findall(r"(?ms)^##[ \t]+[^\n]+\n.*?(?=^##[ \t]+|\Z)", body_md)
+    reserved = r"定义|是什么|简介|FAQ|常见问题|结论|总结|一句话结论|来源|参考说明"
+    return [section.strip() for section in sections if not re.match(
+        rf"(?i)^##[ \t]+(?:{reserved})[ \t]*\n", section
+    )]
+
+
+def _without_updated_line(body_md: str) -> str:
+    # The update footer is appended once after all extracted sections.
+    return re.sub(r"(?m)^[ \t]*\*更新时间：[^\n]*\*[ \t]*$", "", body_md or "")
+
+
 def rewrite_short_form(
     body_md: str,
     outline: dict[str, Any] | None = None,
@@ -101,6 +118,8 @@ def rewrite_short_form(
 ) -> str:
     profile = profile or CHANNEL_PROFILES["zhihu"]
     outline = outline or {}
+    updated = _updated_line(body_md, outline)
+    body_md = _without_updated_line(body_md)
     parts: list[str] = []
     direct = _direct_answer(body_md, outline)
     if direct:
@@ -109,8 +128,10 @@ def rewrite_short_form(
     if profile.keep_definition:
         definition = _extract_section(body_md, r"定义|是什么|简介")
         if definition:
-            parts.extend(definition.splitlines()[:8])
+            parts.extend(definition.splitlines())
             parts.append("")
+
+    parts.extend(_middle_sections(body_md))
 
     faq = _extract_faq_block(body_md, limit=profile.faq_limit)
     if faq:
@@ -126,7 +147,6 @@ def rewrite_short_form(
         if src:
             parts.append(src)
 
-    updated = _updated_line(body_md, outline)
     if updated:
         parts.append(updated)
     return "\n".join(parts).strip() + "\n"
@@ -135,8 +155,10 @@ def rewrite_short_form(
 def rewrite_wechat_form(
     body_md: str, outline: dict[str, Any] | None = None, *, profile: ChannelProfile
 ) -> str:
-    """公众号：比知乎略长，保留定义与结论，来源改文末说明。"""
+    """公众号：保留正文与完整表格，来源改文末说明。"""
     outline = outline or {}
+    updated = _updated_line(body_md, outline)
+    body_md = _without_updated_line(body_md)
     parts: list[str] = []
     direct = _direct_answer(body_md, outline)
     if direct:
@@ -144,15 +166,10 @@ def rewrite_wechat_form(
 
     definition = _extract_section(body_md, r"定义|是什么|简介")
     if definition:
-        parts.extend(definition.splitlines()[:12])
+        parts.extend(definition.splitlines())
         parts.append("")
 
-    # keep a short middle section if present
-    compare = _extract_section(body_md, r"对比|怎么选|选型|适用场景")
-    if compare:
-        lines = compare.splitlines()
-        parts.extend(lines[:10])
-        parts.append("")
+    parts.extend(_middle_sections(body_md))
 
     faq = _extract_faq_block(body_md, limit=profile.faq_limit)
     if faq:
@@ -166,7 +183,6 @@ def rewrite_wechat_form(
     if src:
         parts.append(src)
 
-    updated = _updated_line(body_md, outline)
     if updated:
         parts.append(updated)
     return "\n".join(parts).strip() + "\n"
@@ -205,8 +221,6 @@ def build_adapt_meta(
             dropped.append("definition")
         if profile.faq_limit < 8:
             dropped.append(f"faq_trimmed_to_{profile.faq_limit}")
-        if profile.mode == "short":
-            dropped.append("long_body_sections")
         if profile.key == "wechat":
             dropped.append("clickable_external_links")
     meta = {

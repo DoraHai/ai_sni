@@ -1,5 +1,6 @@
 """GEO channel adapt profiles and rewriting."""
 
+import asyncio
 import unittest
 
 from app.geo.content.channel_profiles import (
@@ -54,6 +55,60 @@ class ChannelProfileTests(unittest.TestCase):
         self.assertEqual(meta["profile_key"], "zhihu")
         self.assertEqual(meta["engine"], "deterministic_v1")
         self.assertIn("faq_trimmed_to_3", meta["dropped"])
+        self.assertNotIn("long_body_sections", meta["dropped"])
+
+    def test_preserves_descriptive_sections_and_entire_selection_table(self):
+        rows = "\n".join(f"| 工况{i} | 条件{i} |" for i in range(15))
+        body = (
+            "# 标题\n\n直接答案。\n\n## 选型前需要确认哪些项目？\n\n"
+            "| 项目 | 信息 |\n|---|---|\n" + rows +
+            "\n\n## 连续运行时怎样核对散热方案？\n\n保留限制条件和来源。\n\n"
+            "## 结论\n\n按工况核算。\n\n*更新时间：2026-09-05*\n"
+        )
+        for channel in ("wechat", "zhihu"):
+            with self.subTest(channel=channel):
+                _, out = adapt_for_channel(channel, "标题", body)
+                self.assertIn(rows, out)
+                self.assertIn("保留限制条件和来源。", out)
+                self.assertEqual(out.count("更新时间："), 1)
+                self.assertEqual(out.count("## 结论"), 1)
+
+    def test_faq_limit_preserves_multi_paragraph_answers(self):
+        questions = "\n\n".join(
+            f"- **Q：** 问题{i}\n\n答案{i}第一段\n\n答案{i}第二段"
+            for i in range(1, 5)
+        )
+        body = "开头\n\n## FAQ\n\n" + questions + "\n\n## 结论\n\n结论。"
+        for channel in ("wechat", "zhihu"):
+            _, out = adapt_for_channel(channel, "标题", body)
+            self.assertIn("答案3第二段", out)
+            self.assertNotIn("问题4", out)
+            self.assertNotIn("答案4", out)
+
+    def test_repeated_update_footer_is_normalized(self):
+        body = BODY + "\n*更新时间：2026-07-28*\n"
+        for channel in ("wechat", "zhihu"):
+            _, out = adapt_for_channel(channel, "标题", body, OUTLINE)
+            self.assertEqual(out.count("更新时间："), 1)
+
+    def test_full_fallback_pipeline_keeps_table_without_approving_draft(self):
+        from app.geo.content.channel_polish import adapt_or_polish_for_channel
+
+        body = (
+            "直接答案。\n\n## 选型前需要确认哪些项目？\n\n"
+            "| 项目 | 信息 |\n|---|---|\n| 安装 | 空间 |\n\n"
+            "[参数出处](https://example.com/spec)\n\n"
+            "## 结论\n\n核对工况。\n\n*更新时间：2026-09-05*\n"
+        )
+        for channel in ("wechat", "zhihu"):
+            _, out, meta = asyncio.run(adapt_or_polish_for_channel(
+                channel, "标题", body, use_llm=False
+            ))
+            self.assertIn("<table", meta["body_html"])
+            self.assertIn("https://example.com/spec", meta["body_html"])
+            self.assertEqual(out.count("更新时间："), 1)
+            self.assertFalse(meta["publishable"])
+            self.assertEqual(meta["quality"], "adapted_draft_not_publishable")
 
     def test_auth_channel_profiles(self):
         self.assertEqual(
