@@ -450,3 +450,15 @@ test('switching batch drops a delayed review snapshot and fetches the new batch'
 test('batch review source links reject executable protocols and embedded credentials',async()=>{
   const m=await mountBatchReview();try{assert.equal(m.state.href('javascript:alert(1)'),null);assert.equal(m.state.href('https://user:pass@example.com'),null);assert.equal(m.state.href('https://example.com/manual'),'https://example.com/manual')}finally{m.app.unmount()}
 })
+
+test('export downloads fresh scoped server snapshot even for read-only viewer',async()=>{
+  let clicked=0,removed=0;const requests=[]
+  const m=await mountBatchReview({document:{body:{appendChild(){}},createElement:()=>({click(){clicked++},remove(){removed++}})},seoQaGet:async(path,params)=>{requests.push([path,params]);return path.endsWith('/export')?{filename:'qa.zip',content_base64:'UEs=',included_count:1,excluded_count:2,as_of:'now'}:{items:[],counts:{}}}},{canEdit:false})
+  try{await m.state.exportBatch('approved');assert.equal(clicked,1);assert.equal(removed,1);assert.deepEqual(requests.at(-1),['batches/8/export',{tenant_id:1,site_id:10,kind:'approved'}]);assert.match(m.state.exportMessage,/1 条，未包含 2 条/);assert.equal(m.writes.length,0)}finally{m.app.unmount()}
+})
+test('export refuses download after scope change and exposes server conflict',async()=>{
+  let resolve,clicked=0;const m=await mountBatchReview({document:{createElement(){clicked++;return {}}},seoQaGet:async path=>path.endsWith('/export')?new Promise(r=>{resolve=r}):{items:[],counts:{}}})
+  try{const work=m.state.exportBatch('approved');m.props.siteId=20;await flush();resolve({content_base64:'UEs='});await work;assert.equal(clicked,0);assert.equal(m.state.exportMessage,'')}finally{m.app.unmount()}
+  const failed=await mountBatchReview({seoQaGet:async path=>{if(path.endsWith('/export'))throw {response:{data:{detail:'当前没有可导出的已审核回答'}}};return {items:[],counts:{}}}})
+  try{await failed.state.exportBatch('approved');assert.match(failed.state.error,/没有可导出/);assert.equal(failed.state.acting,false)}finally{failed.app.unmount()}
+})
