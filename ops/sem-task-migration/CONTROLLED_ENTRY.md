@@ -10,7 +10,7 @@
 - `check`：离线校验审批材料、有效窗口、干净的获审 Git checkout、获审源包、唯一迁移图、
   数据库元数据基线。不连接数据库；输出 passed 不代表备份/停并发已落实。
 - `apply`：独立生产入口候选，Unix-only，需额外提供 owner-only 凭据文件与全新审计回执路径。
-  使用系统信任库验证数据库 TLS，固定 public、起点 0094、目标 0095，拒绝 query 参数覆盖。
+  使用审批摘要锁定的 CA bundle 验证数据库 TLS，固定 public、起点 0094、目标 0095，拒绝 query 参数覆盖。
   不提供 head/stamp/downgrade/任意 schema/关闭 TLS 开关。
 
 复用旧源包的 **已验字节和版本文件**，但不执行其中的本地 env.py；改用本受控 env。
@@ -34,6 +34,7 @@
 | checkout_commit | 包含入口代码的获审完整 40 位小写 SHA |
 | manifest_sha256 | 构建后的 MANIFEST.json 原始字节 SHA-256 |
 | baseline_sha256 / schema_sha256 | 完整只读 JSON 原始字节摘要 / 本工具规范化结构摘要 |
+| ca_bundle_sha256 | 经审核 CA PEM bundle 原始字节 SHA-256（64 位小写）；不是服务器叶证书摘要 |
 | not_before / expires_at | 带时区 ISO 时间，窗口不超过 1 小时，过期拒绝 |
 | database | host、port、name、role、server_address、server_port 全部明确；无密码 |
 | application_role | 必须等于 database.role；不同角色/GRANT 方案本版不支持 |
@@ -55,13 +56,31 @@
 
 ```text
 python -I -B ops/sem-task-migration/controlled.py fingerprint --baseline <只读JSON>
-python -I -B ops/sem-task-migration/controlled.py check --baseline <只读JSON> --approval <审批JSON> --approval-sha256 <独立核验摘要> --bundle <源包目录>
+python -I -B ops/sem-task-migration/controlled.py check --baseline <只读JSON> --approval <审批JSON> --approval-sha256 <独立核验摘要> --bundle <源包目录> --ca-file <获审CA链PEM>
 ```
 
+`check` 和 `apply` 均必须提供 `--ca-file`，旧审批材料缺少 `ca_bundle_sha256` 将拒绝。
 未来明确授权的生产调用为同一接口 `apply`，额外要求 `--credential-file` 与 `--receipt`。
 凭据文件仅包含数据库 URL，Unix 当前用户所有、无组/其他权限、正规文件、拒绝链接/硬链接；
 不用明文 URL 命令参数或环境 DATABASE_URL。操作者通过已获准保密渠道准备，凭据生命周期
 由运维流程负责；工具不复制、不修改、不删除共享 .env。TLS 信任不符时停止，不降级明文。
+
+### RDS CA 与凭据适配（两类独立文件）
+
+- CA 文件：由有权限的管理员从阿里云官方渠道取得适用于目标 RDS 实例的 CA 证书链，
+  审核来源、有效期和适用实例后，将原始文件摘要纳入审批。不得把探测时收到的未知证书
+  直接自签信任；不在本工具内下载证书，也不自动更换信任链。
+- `--ca-file` 仅接受 PEM 证书集合，最大 1 MiB，至少包含一张 CA；拒绝私钥和其它内容。
+  CA 是公开信任材料，不是数据库密码。存放于受控、不可被无关用户写入的位置。
+- 入口读取一次文件，先比对审批摘要，再从相同内存字节加载证书；不二次读取路径，
+  不加载系统默认根或 `SSL_CERT_FILE`/`SSL_CERT_DIR` 信任覆盖。始终要求证书链有效及
+  URL 主机名匹配；没有关闭验证、忽略主机名或明文回退选项。CA 轮换需重新审批摘要。
+- 凭据文件：另外准备仅含一行数据库 URL 的 owner-only 正规文件（通常 0600），
+  必须属于执行用户。共享应用 `.env` 内容和 0640 权限不满足该要求，不能直接传入。
+  仅通过获准保密渠道准备，禁止把密码或完整 URL 放入聊天、命令参数和日志。
+- `check` 只离线验证 CA 文件内容、摘要与本地 TLS 上下文，不验证远端证书、网络或认证。
+  此次本地 TLS 测试也不能替代获准环境中针对实际 RDS 主机的证书链/主机名核验。
+  不得用 `apply` 试探连接是否正常；生产 TLS 核验须单独走获准的只读流程。
 
 审计回执必须是新文件（O_EXCL，0600），记录审批摘要、提交、阶段、时间，不记录连接串。
 事务开始、待提交、提交获确认均落盘；失败统一标记结果未确认，需只读复核，不自动重试。
@@ -91,6 +110,19 @@ python -I -B ops/sem-task-migration/controlled.py check --baseline <只读JSON> 
 没有上述批准，不得运行 apply。代码存在不代表已经安装或具备生产执行权限。
 
 ## 本轮验证
+
+### TLS 修正验证（在以下历史结果之后）
+
+- 受控入口专项：39 passed、8 skipped。新增测试通过内存 BIO 完成真实 TLS 握手，
+  覆盖获审私有 CA 成功、错误 CA/主机名拒绝、摘要不符/缺文件/损坏/空文件/超大文件/
+  仅叶证书/混入私钥拒绝，以及引擎复用已验证 SSLContext。无网络或数据库连接。
+- 连同迁移草案、源包契约回归：47 passed、19 skipped；额外 11 项为未启用的本地迁移演练。
+  `git diff --check` 通过。缺少 `--ca-file` 的 check/apply 均在读取凭据前拒绝。
+- 8 个跳过项是 1 个 POSIX 凭据权限测试和 7 个原生 PostgreSQL 场景；本次未设置
+  一次性数据库连接，未重新执行数据库迁移演练。以下为之前测试记录，不冒充本次结果。
+- 未下载生产 CA、未准备生产凭据、未运行生产 apply；四项外部前置条件仍未确认。
+
+### 先前事务内核验证记录
 
 - 受控入口专项：31 passed、1 skipped。跳过项为 Unix 凭据文件权限/链接测试，
   当前 Windows 本地环境不能代替该项；已纳入测试，须在 Linux CI/受控环境确认。

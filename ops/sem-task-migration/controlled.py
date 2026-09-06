@@ -59,7 +59,7 @@ def validate_approval(a):
         if not re.fullmatch("[0-9a-f]{40}", a[key]):
             raise ValueError("Full reviewed commit required")
     for key in ("manifest_sha256", "baseline_sha256", "schema_sha256",
-                "seo_release_sha256", "seo_rollback_sha256"):
+                "seo_release_sha256", "seo_rollback_sha256", "ca_bundle_sha256"):
         if not re.fullmatch("[0-9a-f]{64}", a[key]):
             raise ValueError("Reviewed SHA-256 required")
     for key in ("change_id", "operator", "reviewer", "backup_evidence", "restore_evidence",
@@ -229,11 +229,33 @@ def validate_url(raw, a):
     return url
 
 
-async def apply(a, baseline, cfg, url, receipt):
+def tls_context(path, expected_sha256):
+    """Trust only the approved PEM bundle; never ambient OS/environment roots."""
+    if not re.fullmatch("[0-9a-f]{64}", expected_sha256):
+        raise ValueError("Reviewed CA SHA-256 required")
+    with Path(path).open("rb") as f:
+        raw = f.read(1024 * 1024 + 1)
+    if len(raw) > 1024 * 1024 or sha(raw) != expected_sha256:
+        raise ValueError("CA bundle size/digest mismatch")
+    pem = raw.decode("ascii")
+    certificate = r"-----BEGIN CERTIFICATE-----\s+[A-Za-z0-9+/=\s]+-----END CERTIFICATE-----"
+    if not re.fullmatch(r"\s*(?:" + certificate + r"\s*)+", pem):
+        raise ValueError("CA bundle must contain PEM certificates only")
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.verify_mode = ssl.CERT_REQUIRED
+    ctx.check_hostname = True
+    # Load exactly the bytes hashed above, not a second read of a mutable path.
+    ctx.load_verify_locations(cadata=pem)
+    if not ctx.cert_store_stats()["x509_ca"]:
+        raise ValueError("CA bundle has no CA certificates")
+    return ctx
+
+
+async def apply(a, baseline, cfg, url, receipt, tls):
     from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy.pool import NullPool
     engine = create_async_engine(url, poolclass=NullPool, hide_parameters=True,
-                                 connect_args={"ssl": ssl.create_default_context(), "timeout": 10})
+                                 connect_args={"ssl": tls, "timeout": 10})
     try:
         # Total timeout includes connection, locks, migration and COMMIT. If it
         # fires during COMMIT, outcome is unknown: inspect, never retry blindly.
@@ -255,6 +277,7 @@ def main():
     p.add_argument("--baseline", required=True)
     p.add_argument("--bundle")
     p.add_argument("--credential-file")
+    p.add_argument("--ca-file")
     p.add_argument("--receipt")
     args = p.parse_args()
     if args.mode == "fingerprint":
@@ -262,10 +285,11 @@ def main():
         report = json.loads(raw)
         print(json.dumps({"baseline_sha256": sha(raw), "schema_sha256": sha(canonical(structural(report)))}))
         return
-    if not args.approval or not args.approval_sha256 or not args.bundle:
-        raise ValueError("Approval, externally verified approval digest and source bundle required")
+    if not args.approval or not args.approval_sha256 or not args.bundle or not args.ca_file:
+        raise ValueError("Approval, externally verified approval digest, source bundle and CA file required")
     a = checked_json(args.approval, args.approval_sha256)
     validate_approval(a)
+    tls = tls_context(args.ca_file, a["ca_bundle_sha256"])
     verify_checkout(a["checkout_commit"])
     baseline = checked_json(args.baseline, a["baseline_sha256"])
     checked_baseline(a, baseline)
@@ -289,7 +313,7 @@ def main():
             os.fsync(log.fileno())
         receipt("validated")
         try:
-            asyncio.run(apply(a, baseline, cfg, url, receipt))
+            asyncio.run(apply(a, baseline, cfg, url, receipt, tls))
         except BaseException:
             receipt("not_confirmed_requires_readonly_reconciliation")
             raise

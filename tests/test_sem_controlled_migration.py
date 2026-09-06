@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import importlib.util
 import json
 import os
+import ssl
 from pathlib import Path
 import subprocess
 import sys
@@ -23,7 +24,7 @@ def approval():
     now = datetime.now(timezone.utc)
     a = {k: 'a' * 40 for k in ('checkout_commit', 'seo_release_commit', 'seo_rollback_commit')}
     a.update({k: 'b' * 64 for k in ('manifest_sha256','baseline_sha256','schema_sha256',
-                                  'seo_release_sha256','seo_rollback_sha256')})
+                                  'seo_release_sha256','seo_rollback_sha256','ca_bundle_sha256')})
     a.update({k: 'test-evidence' for k in ('change_id','operator','reviewer','backup_evidence',
              'restore_evidence','pause_evidence','seo_compatibility_evidence','schema_review_evidence')})
     a.update(confirmation='MIGRATE_SEM_TASKS_0095', schema='public', start_revision=ctl.bundle.START,
@@ -37,6 +38,7 @@ def approval():
 @pytest.mark.parametrize('key,value', [
     ('target_revision','head'), ('start_revision','0093_seo_qa'), ('schema','other'),
     ('confirmation','DEPLOY_SEM'), ('checkout_commit','main'), ('manifest_sha256',''),
+    ('ca_bundle_sha256',''), ('ca_bundle_sha256','A'*64),
     ('backup_evidence',''), ('restore_evidence','UNKNOWN'), ('pause_evidence','TBD'),
     ('application_role','different_role'), ('expires_at','2000-01-01T00:00:00+00:00'),
     ('not_before','2099-01-01T00:00:00+00:00'), ('expires_at','2099-01-01T00:00:00'),
@@ -71,24 +73,132 @@ def test_commit_acknowledgement_is_not_assumed(monkeypatch,commit_error):
     class Engine:
         def begin(self): return Tx()
         async def dispose(self): pass
-    monkeypatch.setattr(sa_async,'create_async_engine',lambda *a,**k:Engine())
+    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    def create_engine(*args, **kwargs):
+        assert kwargs['connect_args']['ssl'] is tls
+        assert tls.check_hostname and tls.verify_mode == ssl.CERT_REQUIRED
+        return Engine()
+    monkeypatch.setattr(sa_async,'create_async_engine',create_engine)
     monkeypatch.setattr(ctl,'migrate_transaction',AsyncMock())
     phases=[]
     if commit_error:
-        with pytest.raises(ConnectionError): asyncio.run(ctl.apply(approval(),{},None,None,phases.append))
+        with pytest.raises(ConnectionError): asyncio.run(ctl.apply(approval(),{},None,None,phases.append,tls))
         assert phases==['transaction_started','ready_to_commit']
     else:
-        asyncio.run(ctl.apply(approval(),{},None,None,phases.append))
+        asyncio.run(ctl.apply(approval(),{},None,None,phases.append,tls))
         assert phases==['transaction_started','ready_to_commit','commit_acknowledged']
 
 
 def test_credentials_are_not_taken_from_application_environment():
     source=(ROOT/'ops/sem-task-migration/controlled.py').read_text(encoding='utf-8')
     assert 'os.environ' not in source
-    assert 'os.O_NOFOLLOW' in source and 'ssl.create_default_context()' in source
+    assert 'os.O_NOFOLLOW' in source and 'ssl.PROTOCOL_TLS_CLIENT' in source
+    assert 'ssl.create_default_context' not in source
+    assert 'load_default_certs' not in source
     assert 'choices=["fingerprint", "check", "apply"]' in source
     assert 'command.upgrade(cfg, bundle.TARGET)' in source
     assert 'command.stamp' not in source and 'command.downgrade' not in source
+
+
+def test_ca_digest_is_mandatory_in_approval():
+    a = approval(); del a['ca_bundle_sha256']
+    with pytest.raises(KeyError): ctl.validate_approval(a)
+
+
+@pytest.mark.parametrize('mode', ['check', 'apply'])
+def test_cli_requires_ca_before_loading_credentials(monkeypatch, mode):
+    monkeypatch.setattr(sys, 'argv', ['controlled.py', mode, '--baseline', 'unused',
+                                    '--approval', 'unused', '--approval-sha256', 'a'*64,
+                                    '--bundle', 'unused'])
+    def unexpected(*args): pytest.fail('Must refuse before reading credentials/approval')
+    monkeypatch.setattr(ctl, 'credential_url', unexpected)
+    monkeypatch.setattr(ctl, 'checked_json', unexpected)
+    with pytest.raises(ValueError, match='CA file required'):
+        ctl.main()
+
+
+@pytest.fixture
+def tls_material(tmp_path):
+    # Ephemeral test-only CA/server key. Handshakes below use memory BIOs, no network/DB.
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+    now = datetime.now(timezone.utc)
+    def cert(subject, issuer, public_key, signer, ca):
+        builder = (x509.CertificateBuilder().subject_name(subject).issuer_name(issuer)
+                   .public_key(public_key).serial_number(x509.random_serial_number())
+                   .not_valid_before(now-timedelta(days=1)).not_valid_after(now+timedelta(days=1))
+                   .add_extension(x509.BasicConstraints(ca=ca, path_length=None), critical=True))
+        if not ca:
+            builder = builder.add_extension(x509.SubjectAlternativeName([x509.DNSName('db.test')]), False)
+        return builder.sign(signer, hashes.SHA256()).public_bytes(serialization.Encoding.PEM)
+    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'Ephemeral test CA')])
+    ca = cert(name, name, ca_key.public_key(), ca_key, True)
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    leaf = cert(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'db.test')]), name,
+                key.public_key(), ca_key, False)
+    other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    other = cert(name, name, other_key.public_key(), other_key, True)
+    ca_file = tmp_path/'ca.pem'; ca_file.write_bytes(ca)
+    cert_file = tmp_path/'server.pem'; cert_file.write_bytes(leaf)
+    key_file = tmp_path/'test-key.pem'
+    key_file.write_bytes(key.private_bytes(serialization.Encoding.PEM,
+                                          serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server.load_cert_chain(cert_file, key_file)
+    return ca_file, server, other, leaf
+
+
+def handshake(client_ctx, server_ctx, hostname):
+    ci, co, si, so = (ssl.MemoryBIO() for _ in range(4))
+    client = client_ctx.wrap_bio(ci, co, server_hostname=hostname)
+    server = server_ctx.wrap_bio(si, so, server_side=True)
+    done = [False, False]
+    for _ in range(20):
+        for i, peer in enumerate((client, server)):
+            if not done[i]:
+                try:
+                    peer.do_handshake(); done[i] = True
+                except ssl.SSLWantReadError:
+                    pass
+        si.write(co.read()); ci.write(so.read())
+        if all(done): return
+    pytest.fail('TLS handshake did not finish')
+
+
+def test_approved_private_ca_and_hostname_handshake(tls_material, monkeypatch):
+    ca, server, _, _ = tls_material
+    monkeypatch.setenv('SSL_CERT_FILE', 'nonexistent-ambient-ca')
+    ctx = ctl.tls_context(ca, ctl.sha(ca.read_bytes()))
+    assert ctx.check_hostname and ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ctx.cert_store_stats()['x509_ca'] == 1
+    handshake(ctx, server, 'db.test')
+
+
+@pytest.mark.parametrize('failure', ['wrong_ca', 'wrong_hostname'])
+def test_tls_handshake_refuses_untrusted_server(tls_material, failure):
+    ca, server, other, _ = tls_material
+    if failure == 'wrong_ca': ca.write_bytes(other)
+    ctx = ctl.tls_context(ca, ctl.sha(ca.read_bytes()))
+    with pytest.raises(ssl.SSLCertVerificationError):
+        handshake(ctx, server, 'wrong.test' if failure == 'wrong_hostname' else 'db.test')
+
+
+@pytest.mark.parametrize('failure', ['digest', 'missing', 'corrupt', 'empty', 'oversize', 'leaf_only', 'private_key'])
+def test_ca_file_refused_offline(tls_material, failure):
+    ca, _, _, leaf = tls_material
+    digest = ctl.sha(ca.read_bytes())
+    if failure == 'missing': ca.unlink()
+    elif failure == 'digest': ca.write_bytes(ca.read_bytes()+b'\n')
+    else:
+        raw = {'corrupt': b'-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----',
+               'empty': b'', 'oversize': b'x'*(1024*1024+1), 'leaf_only': leaf,
+               'private_key': ca.read_bytes()+b'\n-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----'}[failure]
+        ca.write_bytes(raw); digest = ctl.sha(raw)
+    with pytest.raises((ValueError, OSError)):
+        ctl.tls_context(ca, digest)
 
 
 @pytest.mark.parametrize('url',[
