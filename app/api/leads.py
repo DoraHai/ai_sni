@@ -5,9 +5,9 @@
 归 verify.leads 菜单。阶段一：录入/列表/状态流转/统计；阶段二再反哺 AI 调价砍词。
 """
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,7 @@ from app.models import (
     Lead,
 )
 from app.security.auth import AuthContext, require_scoped_auth
+from app.sem_cockpit_readonly import validate_query, validate_window
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,64 @@ def _validate_enums(status: str | None, intent: str | None) -> None:
         raise HTTPException(400, f"非法意向等级：{intent}")
 
 
+def _lead_filters(tenant_id, status, campaign_id, start_date, end_date):
+    _validate_enums(status, None)
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(422, "线索日期起不能晚于日期止")
+    cond = [Lead.tenant_id == tenant_id]
+    if status is not None:
+        cond.append(Lead.status == status)
+    if campaign_id is not None:
+        cond.append(Lead.campaign_id == campaign_id)
+    if start_date:
+        cond.append(Lead.lead_time >= start_date)
+    if end_date:
+        cond.append(Lead.lead_time <= end_date)
+    return cond
+
+
+@router.get("/cockpit-summary")
+async def cockpit_lead_summary(
+    request: Request,
+    tenant_id: int = Query(..., gt=0),
+    start_date: date = Query(...),
+    end_date: date = Query(...),
+    status: str | None = Query(None),
+    campaign_id: int | None = Query(None),
+    baidu_account_id: int | None = Query(None, gt=0),
+    session: AsyncSession = Depends(get_session),
+    ctx: AuthContext = Depends(require_scoped_auth),
+) -> dict:
+    """无个人信息的线索台账汇总；不能推断账户归因或有效咨询。"""
+    ctx.ensure_tenant(tenant_id)
+    validate_query(request.query_params, {"tenant_id", "start_date", "end_date",
+                                          "status", "campaign_id", "baidu_account_id"})
+    validate_window(start_date, end_date)
+    if baidu_account_id is not None:
+        raise HTTPException(422, "线索台账无可靠账户归属，不支持账户筛选")
+    cond = _lead_filters(tenant_id, status, campaign_id, start_date, end_date)
+    summary = await _summary(session, tenant_id, cond)
+    return {
+        "contract_version": "sem-cockpit-v1", "module": "sem", "is_demo": False,
+        "read_only": True, "tenant_id": tenant_id, "source": "leads",
+        "window": {"start": start_date.isoformat(), "end": end_date.isoformat(),
+                   "timezone": "Asia/Shanghai", "inclusive": True},
+        "filters": {"status": status, "campaign_id": campaign_id, "account_scope": "tenant_only"},
+        "retrieved_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": None, "completeness": "unknown",
+        "metrics": {"received_leads": summary["total"], "new": summary["new"],
+                    "following": summary["following"], "won": summary["won"],
+                    "invalid": summary["invalid"], "not_invalid": summary["not_invalid"],
+                    "deal_amount": (summary["deal_amount"] if summary["won_with_amount"] == summary["won"] else None),
+                    "valid_consultations": None},
+        "deal_amount_coverage": {"won": summary["won"], "with_amount": summary["won_with_amount"]},
+        "units": {"counts": "count", "deal_amount": "CNY"},
+        "limitations": ["仅按 lead_time 统计已有台账，未填日期不计入",
+                        "状态为当前值，非历史时点状态；未标无效包含未核实新线索",
+                        "无来源同步完成证据；零条不证明零咨询；更新时间未知"],
+    }
+
+
 @router.post("")
 async def create_lead(
     req: LeadCreate,
@@ -156,16 +215,8 @@ async def list_leads(
     page_size: int = Query(20, ge=1, le=200),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """线索列表（分页 + 筛选）+ 统计（全量，不受分页/筛选影响）。"""
-    cond = [Lead.tenant_id == tenant_id]
-    if status:
-        cond.append(Lead.status == status)
-    if campaign_id is not None:
-        cond.append(Lead.campaign_id == campaign_id)
-    if start_date:
-        cond.append(Lead.lead_time >= start_date)
-    if end_date:
-        cond.append(Lead.lead_time <= end_date)
+    """线索列表及同筛选统计；统计不受分页影响。"""
+    cond = _lead_filters(tenant_id, status, campaign_id, start_date, end_date)
 
     total = (await session.scalar(select(func.count()).select_from(Lead).where(*cond))) or 0
     rows = (
@@ -175,36 +226,43 @@ async def list_leads(
         )
     ).all()
 
-    # 统计：本租户全量（不随筛选变），给统计卡用
-    summary = await _summary(session, tenant_id)
+    summary = await _summary(session, tenant_id, cond)
     return {
         "total": total,
         "summary": summary,
+        "summary_scope": "filtered",
         "leads": [_lead_dict(r) for r in rows],
     }
 
 
-async def _summary(session: AsyncSession, tenant_id: int) -> dict:
-    base = select(func.count()).select_from(Lead).where(Lead.tenant_id == tenant_id)
+async def _summary(session: AsyncSession, tenant_id: int, filters=None) -> dict:
+    cond = [Lead.tenant_id == tenant_id, *(filters or [])]
+    base = select(func.count()).select_from(Lead).where(*cond)
     total = (await session.scalar(base)) or 0
     following = (await session.scalar(base.where(Lead.status == "following"))) or 0
     won = (await session.scalar(base.where(Lead.status == "won"))) or 0
     deal_sum = (
         await session.scalar(
             select(func.coalesce(func.sum(Lead.deal_amount), 0)).where(
-                Lead.tenant_id == tenant_id, Lead.status == "won"
+                *cond, Lead.status == "won"
             )
         )
     ) or 0
-    # 成交率分母用有效线索（排除无效），更贴销售口径
+    # 未标无效包含未核实 new，不能称有效咨询。
     valid = (await session.scalar(base.where(Lead.status != "invalid"))) or 0
     win_rate = round(won / valid * 100, 1) if valid else 0.0
     return {
         "total": total,
         "following": following,
         "won": won,
+        "won_with_amount": (await session.scalar(base.where(Lead.status == "won", Lead.deal_amount.is_not(None)))) or 0,
         "deal_amount": float(deal_sum),
         "win_rate": win_rate,
+        "win_rate_unit": "percent",
+        "win_rate_denominator": "not_invalid_in_filtered_scope",
+        "not_invalid": valid,
+        "new": (await session.scalar(base.where(Lead.status == "new"))) or 0,
+        "invalid": (await session.scalar(base.where(Lead.status == "invalid"))) or 0,
     }
 
 
