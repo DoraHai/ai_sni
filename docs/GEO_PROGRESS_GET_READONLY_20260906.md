@@ -26,17 +26,19 @@ GET 不获取任务执行锁，不调用 reconcile，不 commit，也不释放�
 ## 后台持久化恢复
 
 - GEO 服务启动时继续恢复异步作业，并新增孤立 `generating/adapting` 内容任务释放。
-- GEO 服务启动时恢复巡检：带 `advisory_v1` 执行协议且无活跃执行锁的中断 running 记失败；未超时 pending 重新排队，超时 pending 记失败。
+- 异步内容作业的启动重排是生产基线已有行为，本批没有新增这类采集/生成启动入口；新增锁用于阻止多个 worker 重复接管。
+- 巡检启动恢复是本批新增的状态修复，但不会重排或启动 pending 巡检：未超时 pending 原样保留，超时 pending 只记失败；带 `advisory_v1` 执行协议且无活跃执行锁的中断 running 记失败。
 - GEO 独立进程的监督循环每分钟执行一次异步作业、孤立内容任务和巡检恢复；即使共享旧进程持有巡检调度器文件锁，恢复循环仍会运行。
 - 异步作业与巡检分别使用 PostgreSQL advisory lock。活跃执行者持锁时，后台恢复跳过该任务；进程退出后数据库自动释放锁。
-- 手动异步巡检、同步巡检以及两套现存 GEO 调度入口都通过巡检执行锁，避免重复执行和超时误杀。
+- 手动异步巡检、同步巡检以及两套现存 GEO 调度入口都通过巡检执行锁；只有持锁包装器会把执行标记为 `advisory_v1`，执行本体被直接调用时不会伪造协议归属。
 - 共享旧进程可能仍在执行未持新锁的巡检。此类 running 行没有 `advisory_v1` 标记，只报告 stale，不自动失败；待旧执行窗口结束后再受控处理，避免新旧版本共存时误杀。
+- 恢复在取得 advisory lock 后用 `SELECT ... FOR UPDATE` 重新读取状态和协议，再决定是否写失败；即使外层先读到 pending、旧 worker 随后提交未标记 running，也会在锁内重新识别并保留。
 
 ## 验证
 
-- 定向单元测试：43 passed、1 Windows 平台锁测试 skipped。
+- 竞态修复后的定向后端与 PostgreSQL 测试：31 passed；包含两个真实数据库会话的 pending → legacy running 交错。
 - 隔离 PostgreSQL HTTP/SQL：四个旧 GET 返回 stored running + stale，读取后数据库仍为 running/generating；后台 tick 后异步作业和巡检为 failed、内容任务为 editing。
-- GEO 全量隔离 PostgreSQL：970 passed、1 skipped、1 warning；跳过项仅为 Windows 不支持 Linux flock。
+- GEO 全量隔离 PostgreSQL：971 passed、1 skipped、1 warning；跳过项仅为 Windows 不支持 Linux flock。
 - 前端：166 passed、0 failed；生产构建成功，只有既有依赖注释与大 chunk 提示。
 - `compileall` 与 `git diff --check` 通过。
 

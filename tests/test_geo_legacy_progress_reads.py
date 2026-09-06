@@ -215,7 +215,7 @@ def test_orphan_task_recovery_only_accepts_content_generation_jobs_as_live():
     asyncio.run(scenario())
 
 
-def test_patrol_startup_fails_interrupted_run_and_requeues_pending():
+def test_patrol_startup_fails_owned_interrupted_run_without_requeueing_pending():
     async def scenario():
         running = _patrol("running")
         running.summary = {"execution_protocol": patrol.PATROL_EXECUTION_PROTOCOL}
@@ -240,17 +240,15 @@ def test_patrol_startup_fails_interrupted_run_and_requeues_pending():
         with (
             patch("app.database.async_session_factory", factory),
             patch.object(patrol, "patrol_execution_lock", available),
-            patch("asyncio.create_task", side_effect=lambda coro: coro.close()) as create_task,
         ):
             stats = await patrol.recover_patrol_runs_on_startup()
         assert running.status == "failed"
         assert stats == {
             "failed_running": 1,
             "failed_stale_pending": 0,
-            "requeued": 1,
+            "pending_deferred": 1,
             "legacy_running_deferred": 0,
         }
-        create_task.assert_called_once()
 
     asyncio.run(scenario())
 
@@ -271,5 +269,29 @@ def test_legacy_running_patrol_is_reported_stale_but_never_auto_failed():
         assert patrol.patrol_read_payload(row)["stale"]
         session.refresh.assert_not_awaited()
         session.commit.assert_not_awaited()
+
+    asyncio.run(scenario())
+
+
+def test_owned_patrol_wrapper_is_the_only_marker_entry_point():
+    async def scenario():
+        row = _patrol("pending")
+        session = Mock()
+
+        @asynccontextmanager
+        async def available(_run_id):
+            yield True
+
+        execute = AsyncMock(return_value=row)
+        with (
+            patch.object(patrol, "patrol_execution_lock", available),
+            patch.object(patrol, "execute_patrol_run", execute),
+        ):
+            assert await patrol.execute_patrol_run_owned(session, row.id) is row
+        execute.assert_awaited_once_with(
+            session,
+            row.id,
+            execution_protocol=patrol.PATROL_EXECUTION_PROTOCOL,
+        )
 
     asyncio.run(scenario())

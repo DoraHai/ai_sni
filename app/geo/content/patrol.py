@@ -127,7 +127,11 @@ async def reconcile_stale_patrol_run(
     async with patrol_execution_lock(row.id) as acquired:
         if not acquired:
             return row
-        await session.refresh(row)
+        await session.refresh(row, with_for_update=True)
+        if row.status not in ("pending", "running"):
+            return row
+        if row.status == "running" and not patrol_has_advisory_owner(row):
+            return row
         stale, reason = patrol_stale_view(row)
         if not stale:
             return row
@@ -182,7 +186,11 @@ async def run_patrol_in_background(run_id: int) -> None:
                 return
             async with async_session_factory() as session:
                 try:
-                    await execute_patrol_run(session, run_id)
+                    await execute_patrol_run(
+                        session,
+                        run_id,
+                        execution_protocol=PATROL_EXECUTION_PROTOCOL,
+                    )
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("patrol background execute failed run=%s", run_id)
                     try:
@@ -206,7 +214,11 @@ async def execute_patrol_run_owned(
             if row is None:
                 raise ValueError(f"patrol run {run_id} not found")
             return row
-        return await execute_patrol_run(session, run_id)
+        return await execute_patrol_run(
+            session,
+            run_id,
+            execution_protocol=PATROL_EXECUTION_PROTOCOL,
+        )
 
 
 async def reconcile_stale_patrol_runs_background() -> dict[str, int]:
@@ -231,18 +243,15 @@ async def reconcile_stale_patrol_runs_background() -> dict[str, int]:
 
 
 async def recover_patrol_runs_on_startup() -> dict[str, int]:
-    """Close interrupted running patrols and requeue pending patrols after restart."""
-    import asyncio
-
+    """Close owned interrupted runs without starting queued collection work."""
     from app.database import async_session_factory
 
     stats = {
         "failed_running": 0,
         "failed_stale_pending": 0,
-        "requeued": 0,
+        "pending_deferred": 0,
         "legacy_running_deferred": 0,
     }
-    requeue_ids: list[int] = []
     async with async_session_factory() as session:
         rows = list(
             await session.scalars(
@@ -255,7 +264,7 @@ async def recover_patrol_runs_on_startup() -> dict[str, int]:
             async with patrol_execution_lock(row.id) as acquired:
                 if not acquired:
                     continue
-                await session.refresh(row)
+                await session.refresh(row, with_for_update=True)
                 if row.status == "running":
                     if not patrol_has_advisory_owner(row):
                         stats["legacy_running_deferred"] += 1
@@ -278,10 +287,9 @@ async def recover_patrol_runs_on_startup() -> dict[str, int]:
                         )
                         stats["failed_stale_pending"] += 1
                     else:
-                        requeue_ids.append(int(row.id))
-                        stats["requeued"] += 1
-    for run_id in requeue_ids:
-        asyncio.create_task(run_patrol_in_background(run_id))
+                        # A legacy worker may already own its in-memory queue without
+                        # holding the new advisory lock. Startup must not duplicate it.
+                        stats["pending_deferred"] += 1
     return stats
 
 
@@ -438,7 +446,12 @@ def patrol_run_payload(row: GeoVisibilityPatrolRun) -> dict[str, Any]:
     }
 
 
-async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilityPatrolRun:
+async def execute_patrol_run(
+    session: AsyncSession,
+    run_id: int,
+    *,
+    execution_protocol: str | None = None,
+) -> GeoVisibilityPatrolRun:
     """Run patrol to completion inside one session (commit at end of phases)."""
     from app.ai.deepseek import DeepSeekError, chat_json
     from app.geo.content.ai_settings import resolve_llm_credentials
@@ -457,15 +470,13 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
     row.status = "running"
     row.started_at = datetime.utcnow()
     row.error = None
-    row.summary = {
-        **(row.summary if isinstance(row.summary, dict) else {}),
-        "execution_protocol": PATROL_EXECUTION_PROTOCOL,
-    }
+    row.summary = dict(row.summary) if isinstance(row.summary, dict) else {}
+    if execution_protocol == PATROL_EXECUTION_PROTOCOL:
+        row.summary["execution_protocol"] = PATROL_EXECUTION_PROTOCOL
     await session.commit()
 
     items: list[dict[str, Any]] = []
     summary = {
-        "execution_protocol": PATROL_EXECUTION_PROTOCOL,
         "prompts": 0,
         "engines": 0,
         "cells_ok": 0,
@@ -474,6 +485,8 @@ async def execute_patrol_run(session: AsyncSession, run_id: int) -> GeoVisibilit
         "real_samples": 0,
         "persona_samples": 0,
     }
+    if execution_protocol == PATROL_EXECUTION_PROTOCOL:
+        summary["execution_protocol"] = PATROL_EXECUTION_PROTOCOL
 
     if contract_plan:
         summary["contract_plan"] = contract_plan

@@ -63,6 +63,47 @@ def test_legacy_progress_gets_are_read_only_and_background_recovery_persists():
     asyncio.run(run())
 
 
+def test_pending_to_legacy_running_race_is_rechecked_under_row_lock():
+    from app.geo.content.patrol import reconcile_stale_patrol_run
+    from app.models import GeoVisibilityPatrolRun
+
+    async def run():
+        async with environment(legacy_routes=True) as (_client, engine, tables, identity):
+            old = datetime(2020, 1, 1)
+            async with engine.begin() as conn:
+                await conn.execute(tables['tenants'].insert().values(id=1, name='fixture'))
+                await conn.execute(tables['geo_visibility_patrol_runs'].insert().values(
+                    id=7, tenant_id=1, status='pending', trigger='manual', created_at=old))
+
+            async with identity['sessions']() as recovery_session:
+                stale_view = await recovery_session.get(GeoVisibilityPatrolRun, 7)
+                assert stale_view.status == 'pending'
+
+                # A legacy worker commits running after recovery's initial read. It
+                # cannot publish the new advisory protocol marker.
+                async with identity['sessions']() as legacy_worker_session:
+                    live = await legacy_worker_session.get(GeoVisibilityPatrolRun, 7)
+                    live.status = 'running'
+                    live.started_at = old
+                    live.summary = {}
+                    await legacy_worker_session.commit()
+
+                with patch('app.database.engine', engine):
+                    result = await reconcile_stale_patrol_run(recovery_session, stale_view)
+                assert result.status == 'running'
+                assert result.summary == {}
+
+            async with engine.connect() as conn:
+                stored = (await conn.execute(select(
+                    tables['geo_visibility_patrol_runs'].c.status,
+                    tables['geo_visibility_patrol_runs'].c.summary,
+                ))).one()
+            assert stored.status == 'running'
+            assert stored.summary == {}
+
+    asyncio.run(run())
+
+
 def test_readiness_reports_orphans_without_assigning_and_write_helper_still_assigns():
     from app.models import GeoFact, GeoOptimizationBusiness, GeoVisibilityPatrolSettings
     from app.geo.content.onboarding import attach_orphan_onboarding_facts
