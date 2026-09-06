@@ -138,6 +138,10 @@ test('CTR remains a ratio and missing dates cannot be fabricated as zero', async
 test('partial phone evidence cannot be presented as a complete value', async () => {
   await rejectsContract('keywords', data => { data.items[0].phone_button_clicks.value = 2 })
   await rejectsContract('keywordDetail', data => { data.phone_button_clicks.unknown_rows = 0 })
+  await rejectsContract('keywords', data => {
+    data.items[0].phone_button_clicks = { ...data.items[0].phone_button_clicks,
+      status: 'observed', known_rows: 2, unknown_rows: 0, value: null, known_subtotal: null }
+  })
 })
 
 test('dimension and search-window shapes reject incomplete or mixed summaries', async () => {
@@ -196,4 +200,15 @@ test('keyword default window can truthfully return no report anchor', async () =
     response.window = { start: '2026-09-01', end: '2026-09-03', timezone: 'Asia/Shanghai', inclusive: true, mode: 'latest_report_7d' }
     response.account_scope = { mode: 'all', baidu_account_id: null, configured_account_ids: [11, 12], observed_account_ids: [11] }
   }, {})
+})
+
+test('all-account dimensions retain independently observed unassigned rows', async () => {
+  const data = structuredClone(examples.keywordDetail.response)
+  data.account_scope = { mode: 'all', baidu_account_id: null, includes_unassigned: false }
+  data.dimensions.region.accounts.push({ ...structuredClone(data.dimensions.region.accounts[0]), baidu_account_id: null })
+  data.dimensions.schedule.accounts.push({ ...structuredClone(data.dimensions.schedule.accounts[0]), baidu_account_id: null })
+  const client = createSemReadonlyClient({ onClear() {}, transport: async () => response(data) })
+  client.setContext(context)
+  const result = await client.read('keywordDetail', { ...dates, keyword_id: 100 })
+  assert.equal(result.dimensions.region.accounts.at(-1).baidu_account_id, null)
 })

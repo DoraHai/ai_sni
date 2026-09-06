@@ -89,7 +89,8 @@ function validatePhone(phone) {
   contract(phone.value === null || nonnegativeInteger(phone.value))
   contract(phone.known_subtotal === null || nonnegativeInteger(phone.known_subtotal))
   if (phone.status === 'no_data') contract(phone.stored_rows === 0 && phone.value === null && phone.known_subtotal === null)
-  if (phone.status === 'observed') contract(phone.stored_rows > 0 && phone.known_rows === phone.stored_rows && phone.value === phone.known_subtotal)
+  if (phone.status === 'observed') contract(phone.stored_rows > 0 && phone.known_rows === phone.stored_rows &&
+    nonnegativeInteger(phone.value) && nonnegativeInteger(phone.known_subtotal) && phone.value === phone.known_subtotal)
   if (phone.status === 'partial') contract(phone.known_rows > 0 && phone.unknown_rows > 0 && phone.value === null && phone.known_subtotal !== null)
   if (phone.status === 'unavailable') contract(phone.stored_rows > 0 && phone.known_rows === 0 && phone.value === null && phone.known_subtotal === null)
 }
@@ -143,25 +144,26 @@ function validateKeywords(data, params) {
     validateMetrics(item.metrics); validateCoverage(item.coverage, data.window, item.metrics); validatePhone(item.phone_button_clicks)
   }
 }
-function validateDimensionAccounts(payload, expectedIds) {
+function validateDimensionAccounts(payload, expectedIds, accountId) {
   contract(Array.isArray(payload.accounts))
   const ids = new Set()
   for (const account of payload.accounts) {
     contract(object(account) && (account.baidu_account_id === null || positive(account.baidu_account_id)) && !ids.has(account.baidu_account_id))
     ids.add(account.baidu_account_id); validateCoverage(account.coverage, payload.window)
   }
-  contract(ids.size === expectedIds.size && [...ids].every(id => expectedIds.has(id)))
+  contract([...expectedIds].every(id => ids.has(id)))
+  if (accountId !== undefined) contract(ids.size === 1 && ids.has(accountId))
 }
-function validateDimensions(dimensions, window, expectedAccountIds) {
+function validateDimensions(dimensions, window, expectedAccountIds, accountId) {
   contract(object(dimensions) && object(dimensions.region) && object(dimensions.schedule))
   const region = dimensions.region
   contract(region.source === 'keyword_region_reports' && Array.isArray(region.rows) && Array.isArray(region.totals_by_level))
-  validateWindow(region.window, window.start, window.end, 'explicit'); validateCoverage(region.coverage, region.window); validateDimensionAccounts(region, expectedAccountIds)
+  validateWindow(region.window, window.start, window.end, 'explicit'); validateCoverage(region.coverage, region.window); validateDimensionAccounts(region, expectedAccountIds, accountId)
   region.rows.forEach(row => { contract(object(row) && typeof row.region_level === 'string' && typeof row.region_name === 'string'); validateMetrics(row.metrics) })
   region.totals_by_level.forEach(row => { contract(object(row) && typeof row.region_level === 'string'); validateMetrics(row.metrics) })
   const schedule = dimensions.schedule
   contract(schedule.source === 'keyword_hourly_reports' && schedule.dimension === 'weekday_hour' && Array.isArray(schedule.cells) && schedule.cells.length === 168)
-  validateWindow(schedule.window, window.start, window.end, 'explicit'); validateCoverage(schedule.coverage, schedule.window); validateDimensionAccounts(schedule, expectedAccountIds); validateMetrics(schedule.metrics)
+  validateWindow(schedule.window, window.start, window.end, 'explicit'); validateCoverage(schedule.coverage, schedule.window); validateDimensionAccounts(schedule, expectedAccountIds, accountId); validateMetrics(schedule.metrics)
   const keys = new Set()
   for (const cell of schedule.cells) {
     const key = `${cell.weekday}:${cell.hour}`
@@ -208,7 +210,7 @@ function validatePayload(resource, data, params) {
       contract(object(asset) && (asset.baidu_account_id === null || positive(asset.baidu_account_id)) && (asset.keyword === null || typeof asset.keyword === 'string') && validStamp(asset.asset_updated_at))
       if (params.baidu_account_id !== undefined) contract(asset.baidu_account_id === params.baidu_account_id)
     }
-    validateDimensions(data.dimensions, data.window, new Set(data.accounts.map(account => account.baidu_account_id)))
+    validateDimensions(data.dimensions, data.window, new Set(data.accounts.map(account => account.baidu_account_id)), params.baidu_account_id)
   }
   if (resource === 'searchTerms') validateSearchTerms(data, params)
 }
