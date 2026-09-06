@@ -11,7 +11,7 @@ from runner import allowed_frame, fill_empty
 HOSTS = {'zhihu':'www.zhihu.com','csdn_qa':'ask.csdn.net'}
 
 
-def validate_task(task):
+def validate_task(task, *, require_fresh=True):
     if not isinstance(task,dict) or task.get('kind')!='seo_qa_assist' or task.get('schema_version')!=1:
         raise ValueError('不是问答填稿任务')
     for key in ['tenant_id','site_id','placement_id','content_version']:
@@ -25,7 +25,7 @@ def validate_task(task):
     body=task.get('body')
     if not isinstance(body,str) or not body.strip() or len(body)>200000: raise ValueError('回答正文无效')
     expires=datetime.fromisoformat(task.get('expires_at','').replace('Z','+00:00'))
-    if expires.tzinfo is None or expires<=datetime.now(timezone.utc): raise ValueError('任务已过期，请从工作台重新下载')
+    if expires.tzinfo is None or (require_fresh and expires<=datetime.now(timezone.utc)): raise ValueError('任务已过期，请从工作台重新下载')
     return task
 
 
@@ -64,6 +64,16 @@ def make_receipt(task, answer_url):
             'answer_url':actual._replace(query='').geturl()}
 
 
+def write_receipt(output, receipt):
+    try:
+        with output.open('x', encoding='utf-8') as target:
+            json.dump(receipt, target, ensure_ascii=False, indent=2)
+    except FileExistsError:
+        if json.loads(output.read_text(encoding='utf-8')) != receipt:
+            raise ValueError('目标文件已存在且内容不同，请使用 --output 指定新文件，不覆盖旧回执')
+    return output
+
+
 def collect_receipt(task, output):
     while True:
         value = input('发布后粘贴公开回答网址生成回执；尚未发布可直接回车跳过：').strip()
@@ -72,8 +82,7 @@ def collect_receipt(task, output):
             receipt = make_receipt(task, value)
         except ValueError as exc:
             print(str(exc)); continue
-        with output.open('x', encoding='utf-8') as target:
-            json.dump(receipt, target, ensure_ascii=False, indent=2)
+        write_receipt(output, receipt)
         print('已生成 '+str(output)+'，请在工作台“回填网址”中导入并核验。此文件不是发布成功证明。')
         return
 
@@ -81,17 +90,30 @@ def collect_receipt(task, output):
 def main():
     parser=argparse.ArgumentParser(description='问答本地填稿助手：不点击保存或发布')
     parser.add_argument('task',type=Path)
-    parser.add_argument('--account',required=True,help='本机账号标签，用于隔离浏览器登录目录')
+    parser.add_argument('--account',help='本机账号标签，用于隔离浏览器登录目录')
+    parser.add_argument('--receipt-only', action='store_true', help='只登记人工发布网址，不打开浏览器、不重复填稿')
+    parser.add_argument('--answer-url', help='与 --receipt-only 配合使用的公开回答网址')
+    parser.add_argument('--output', type=Path, help='与 --receipt-only 配合使用的回执输出路径')
     args=parser.parse_args()
-    if not args.account.strip() or len(args.account)>200: raise ValueError('账号标签无效')
+    if not args.receipt_only and (args.answer_url or args.output):
+        raise ValueError('--answer-url 和 --output 仅用于 --receipt-only')
     if args.task.stat().st_size>1000000: raise ValueError('任务文件过大')
-    task=validate_task(json.loads(args.task.read_text(encoding='utf-8-sig')))
+    task=validate_task(json.loads(args.task.read_text(encoding='utf-8-sig')), require_fresh=not args.receipt_only)
+    if args.receipt_only:
+        output=args.output or Path.cwd()/('qa-receipt-'+str(task['tenant_id'])+'-'+str(task['site_id'])+'-'+str(task['placement_id'])+'.json')
+        if args.answer_url:
+            write_receipt(output, make_receipt(task,args.answer_url))
+            print('回执已保存：'+str(output)+'。请回工作台导入并核验，尚未证明发布成功。')
+        else:
+            collect_receipt(task,output)
+        return
+    if not args.account or not args.account.strip() or len(args.account)>200: raise ValueError('填稿必须提供 --account 账号标签')
     from playwright.sync_api import sync_playwright
     profile=hashlib.sha256((task['platform']+'|'+args.account).encode()).hexdigest()[:24]
     key=hashlib.sha256(json.dumps([task['tenant_id'],task['site_id'],task['placement_id'],task['content_version'],task['body'],args.account],ensure_ascii=False).encode()).hexdigest()
     root=Path.cwd()/'.qa-assistant';root.mkdir(exist_ok=True)
     journal=root/(key+'.json')
-    if journal.exists(): raise ValueError('该账号已尝试此版填稿。请人工核对平台，不自动重复；需要重试时先确认无残留再处理本机记录。')
+    if journal.exists(): raise ValueError('该账号已尝试此版填稿。请人工核对平台，不自动重复；如已人工发布，请用 --receipt-only 补生成回执，不必重新填稿。')
     with sync_playwright() as p:
         context=p.chromium.launch_persistent_context(str(root/profile),headless=False)
         try:

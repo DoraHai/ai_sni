@@ -277,3 +277,29 @@ def test_qa_receipt_only_records_operator_url_without_success_claim(platform,que
                 'javascript:alert(1)','https://user:pass@'+question[8:]]:
         with pytest.raises(ValueError): qa.make_receipt(task,bad)
     with pytest.raises(ValueError): qa.make_receipt({**task,'version':None},answer)
+
+
+def test_receipt_only_cli_recovers_expired_task_without_browser_or_journal(tmp_path, monkeypatch):
+    import json, sys
+    qa=qa_module();task={**qa_task(),'version':3,'expires_at':'2000-01-01T00:00:00Z'}
+    path=tmp_path/'task.json';path.write_text(json.dumps(task),encoding='utf-8')
+    output=tmp_path/'receipt.json'
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys,'argv',['qa_runner.py',str(path),'--receipt-only','--answer-url',
+        'https://www.zhihu.com/question/12/answer/34','--output',str(output)])
+    with patch.dict(sys.modules,{'playwright.sync_api':None}):
+        qa.main();before=output.stat().st_mtime_ns;qa.main()
+    assert output.stat().st_mtime_ns==before
+    assert json.loads(output.read_text(encoding='utf-8'))['version']==3
+    assert not (tmp_path/'.qa-assistant').exists()
+    with pytest.raises(ValueError): qa.validate_task(task)
+    monkeypatch.setattr(sys,'argv',['qa_runner.py',str(path),'--receipt-only','--answer-url',
+        'https://www.zhihu.com/question/12/answer/99','--output',str(output)])
+    with pytest.raises(ValueError,match='已存在'): qa.main()
+    assert json.loads(output.read_text(encoding='utf-8'))['answer_url'].endswith('/34')
+
+
+@pytest.mark.parametrize('change', [{'question_url':'https://evil.example/question/12'},
+    {'platform':'website'},{'placement_id':True},{'body':''},{'expires_at':'invalid'}])
+def test_receipt_recovery_still_validates_task_structure(change):
+    with pytest.raises(ValueError): qa_module().validate_task({**qa_task(),**change}, require_fresh=False)
