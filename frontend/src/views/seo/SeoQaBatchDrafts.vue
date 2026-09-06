@@ -58,7 +58,7 @@ async function submit(){
   }catch(e){if(ticket===generation)error.value=detail(e)}finally{busy.value=false}
 }
 async function control(action,questionId=null){
-  if(!props.canEdit||busy.value||!current.value?.id)return
+  if(!props.canEdit||busy.value||!current.value?.id||current.value.can_control===false)return
   const ticket=generation,key=scopeKey.value,id=current.value.id;busy.value=true;error.value=''
   try{
     const value=await seoQaPost(`batches/${id}/control`,{...params(),action,question_id:questionId})
@@ -77,18 +77,18 @@ onBeforeUnmount(()=>{++generation;clearInterval(poll)})
 <template>
   <section class="batch-drafts">
     <h3>后台批量生成回答</h3>
-    <p>选择 1–20 道问题，逐题选事实并提交后台。关闭页面后继续执行，重新打开可在“本人批次”查看进度。每题消耗 1 次 AI 用量，保存为草稿后仍需逐条核对审核。</p>
+    <p>选择 1–20 道问题，逐题选事实并提交后台。关闭页面后继续执行，重新打开可在“站点批次”查看进度。每题消耗 1 次 AI 用量，保存为草稿后仍需逐条核对审核。</p>
     <p>暂停会让当前题完成后停止后续题目；取消不保证撤回已发出的请求。服务重启后继续处理，账号或资料失效会阻止执行。进度每 10 秒刷新。</p>
     <el-alert v-if="error" :title="error" type="error" :closable="false"/>
     <div class="batch-actions"><el-button :loading="loading" :disabled="!canEdit||busy||!questions.length||questions.length>20" @click="prepare">用所选问题准备批次（{{ questions.length }}）</el-button><el-select v-model="format" :disabled="busy||!canEdit"><el-option label="短答" value="short"/><el-option label="详答" value="detailed"/><el-option label="步骤" value="steps"/><el-option label="比较" value="comparison"/><el-option label="FAQ" value="faq"/></el-select></div>
     <article v-for="row in rows" :key="row.question.id"><strong>{{ row.question.title }}</strong><el-select v-model="row.factIds" multiple :multiple-limit="20" filterable placeholder="选择本题适用事实" :disabled="busy||!canEdit"><el-option v-for="fact in facts" :key="fact.id" :label="`F${fact.id} · ${fact.title}`" :value="fact.id"/></el-select></article>
     <el-button v-if="rows.length" type="primary" :loading="busy" :disabled="!canEdit||loading" @click="submit">提交后台（{{ rows.length }} 题）</el-button>
-    <div class="batch-actions"><strong>本人批次（最近 20 个）</strong><el-button :disabled="busy" @click="refresh">刷新进度</el-button></div>
+    <div class="batch-actions"><strong>站点批次（全部活动批次及最近 20 个已结束批次）</strong><el-button :disabled="busy" @click="refresh">刷新进度</el-button></div>
     <div v-for="batch in history" :key="batch.id" class="batch-actions"><el-button :disabled="busy" @click="selectBatch(batch.id)">#{{ batch.id }} · {{ statusLabels[batch.status] }} · 已保存 {{ batch.items.filter(i=>i.state==='done').length }}/{{ batch.items.length }}</el-button><span>{{ new Date(batch.created_at).toLocaleString('zh-CN') }}</span></div>
     <template v-if="current">
       <h4>批次 #{{ current.id }} · {{ statusLabels[current.status] }}</h4>
-      <div class="batch-actions"><el-button v-if="['queued','running'].includes(current.status)" :disabled="busy||!canEdit" @click="control('pause')">暂停后续题目</el-button><el-button v-if="current.status==='paused'" :disabled="busy||!canEdit" @click="control('resume')">恢复后台处理</el-button><el-button v-if="current.items.some(i=>i.state==='failed')&&current.status!=='cancelled'" :disabled="busy||!canEdit" @click="control('retry')">重试失败题目</el-button><el-button v-if="['queued','running','paused'].includes(current.status)" :disabled="busy||!canEdit" @click="control('cancel')">取消批次</el-button></div>
-      <article v-for="item in current.items" :key="item.question_id"><strong>{{ item.title }}</strong><span>{{ itemLabels[item.state] }}</span><p v-if="item.error" class="batch-error">{{ item.error }}。资料或问题版本变化时，请刷新规划并重新准备批次。</p><details v-if="item.draft"><summary>生成时正文（历史快照）</summary><pre>{{ item.draft.body }}</pre></details><div class="batch-actions"><el-button v-if="item.state==='failed'&&current.status!=='cancelled'" :disabled="busy||!canEdit" @click="control('retry',item.question_id)">{{ item.draft?'只重试保存（不调用 AI）':'重试本题' }}</el-button><el-button v-if="item.answer_id" @click="openQuestion(item)">打开问题逐条审核</el-button></div></article>
+      <div class="batch-actions"><el-button v-if="['queued','running'].includes(current.status)" :disabled="busy||!canEdit||current.can_control===false" @click="control('pause')">暂停后续题目</el-button><el-button v-if="current.status==='paused'" :disabled="busy||!canEdit||current.can_control===false" @click="control('resume')">恢复后台处理</el-button><el-button v-if="current.items.some(i=>i.state==='failed')&&current.status!=='cancelled'" :disabled="busy||!canEdit||current.can_control===false" @click="control('retry')">重试失败题目</el-button><el-button v-if="['queued','running','paused'].includes(current.status)" :disabled="busy||!canEdit||current.can_control===false" @click="control('cancel')">取消批次</el-button></div>
+      <article v-for="item in current.items" :key="item.question_id"><strong>{{ item.title }}</strong><span>{{ itemLabels[item.state] }}</span><p v-if="item.error" class="batch-error">{{ item.error }}。资料或问题版本变化时，请刷新规划并重新准备批次。</p><details v-if="item.draft"><summary>生成时正文（历史快照）</summary><pre>{{ item.draft.body }}</pre></details><div class="batch-actions"><el-button v-if="item.state==='failed'&&current.status!=='cancelled'" :disabled="busy||!canEdit||current.can_control===false" @click="control('retry',item.question_id)">{{ item.draft?'只重试保存（不调用 AI）':'重试本题' }}</el-button><el-button v-if="item.answer_id" @click="openQuestion(item)">打开问题逐条审核</el-button></div></article>
       <SeoQaBatchReview :key="current.id" :tenant-id="tenantId" :site-id="siteId" :batch-id="current.id" :can-edit="canEdit" :disabled="busy" @changed="emit('changed')" @open="row=>emit('open',row)"/>
     </template>
   </section>

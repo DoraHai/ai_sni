@@ -120,7 +120,7 @@ def test_database_full_question_answer_evidence_and_placement_lifecycle():
             with patch('app.api.seo_cockpit.metric_values', new=AsyncMock(return_value={'seo.content.published_7d_count': 0})):
                 submitted = await submit_content_review(content.id, 1, ContentReviewSubmit(), db, CTX)
             assert submitted['status'] == 'review'
-            approved = await decide_content_review(content.id, 1, ContentReviewDecision(decision='approve'), db, CTX)
+            approved = await decide_content_review(content.id, 1, ContentReviewDecision(decision='approve'), db, AuthContext(8,'reviewer','operator',1,{'seo.content':'edit'}))
             assert approved['status'] == 'ready'
             assert (await api.question_detail(question_id,1,1,CTX,db))['coverage']['state']=='reviewed_current'
             assert (await api.planning(1,1,CTX,db))['valid_covered_count']==1
@@ -778,7 +778,7 @@ def test_durable_batch_worker_and_controls(mode):
             assert (await api.create_batch(req,CTX,db))['id']==batch['id']
             assert len(list(await db.scalars(select(SeoQaBatch))))==1
             with pytest.raises(HTTPException): await api.get_batch(batch['id'],2,2,CTX,db)
-            with pytest.raises(HTTPException): await api.get_batch(batch['id'],1,1,AuthContext(8,'other','operator',1,{'seo.content':'edit'}),db)
+            assert not (await api.get_batch(batch['id'],1,1,AuthContext(8,'other','operator',1,{'seo.content':'edit'}),db))['can_control']
             if mode in ('pause','cancel'):
                 await api.control_batch(batch['id'],api.BatchCommand(tenant_id=1,site_id=1,action=mode),CTX,db)
             if mode=='restart':
@@ -876,12 +876,30 @@ def test_batch_review_current_content_and_versioned_actions(mode):
                 decision=req.model_copy(update={'action':'reject' if mode=='reject' else 'approve','note':'请补充适用条件' if mode=='reject' else '已核对'})
                 if mode=='reject':
                     with pytest.raises(HTTPException): await api.review_batch_answer(batch.id,answer['id'],decision.model_copy(update={'note':None}),CTX,db)
-                await api.review_batch_answer(batch.id,answer['id'],decision,CTX,db)
+                await api.review_batch_answer(batch.id,answer['id'],decision,AuthContext(8,'reviewer','operator',1,{'seo.content':'edit'}),db)
             current=await api.batch_review(batch.id,1,1,CTX,db)
             assert current['counts']['draft' if mode=='reject' else 'approved']==1
             events=list(await db.scalars(select(SeoContentReviewEvent).order_by(SeoContentReviewEvent.id)))
             assert [e.action for e in events]==['submit','reject' if mode=='reject' else 'approve']
-            assert all(e.actor_id==CTX.user_id for e in events)
+            assert [e.actor_id for e in events]==[7,8]
+            if mode=='reject':
+                reviewer=AuthContext(8,'reviewer','operator',1,{'seo.content':'edit'})
+                revised=await api.save_answer(api.AnswerInput(tenant_id=1,site_id=1,question_id=qid,
+                    body=f'修改后的回答：{fact["statement"]}[F{fact["id"]}]',fact_ids=[fact['id']],content_version=1),db,CTX,answer['id'])
+                assert revised['content_version']==2
+                request=req.model_copy(update={'content_version':2})
+                with patch('app.api.seo_cockpit.metric_values',new=AsyncMock(return_value={'seo.content.published_7d_count':0})):
+                    await api.review_batch_answer(batch.id,answer['id'],request,CTX,db)
+                    with pytest.raises(HTTPException) as exc:
+                        await api.review_batch_answer(batch.id,answer['id'],request.model_copy(update={'action':'approve'}),CTX,db)
+                    assert exc.value.status_code==403
+                    await db.rollback()
+                    await db.refresh(batch)
+                    await api.review_batch_answer(batch.id,answer['id'],request.model_copy(update={'action':'approve'}),reviewer,db)
+                assert (await api.export_batch(batch.id,1,1,'approved',reviewer,db))['included_count']==1
+                events=list(await db.scalars(select(SeoContentReviewEvent).order_by(SeoContentReviewEvent.id)))
+                assert [e.action for e in events]==['submit','reject','submit','approve']
+                assert [e.actor_id for e in events]==[7,8,7,8]
             if mode=='success':
                 import base64,io,json,zipfile,hashlib
                 exported=await api.export_batch(batch.id,1,1,'approved',CTX,db)
@@ -893,7 +911,7 @@ def test_batch_review_current_content_and_versioned_actions(mode):
                     body=archive.read(next(n for n in archive.namelist() if n.startswith('answers/'))).decode()
                     assert '[F' not in body and '当前保存的回答' in body
                 with pytest.raises(HTTPException):
-                    await api.export_batch(batch.id,1,1,'approved',AuthContext(8,'other','operator',1,{'seo.content':'view'}),db)
+                    await api.export_batch(batch.id,1,1,'approved',AuthContext(8,'other','operator',2,{'seo.content':'view'}),db)
                 question=await db.get(SeoQuestion,qid);question.version+=1;await db.commit()
                 with pytest.raises(HTTPException) as exc: await api.export_batch(batch.id,1,1,'approved',CTX,db)
                 assert exc.value.status_code==409
@@ -902,7 +920,7 @@ def test_batch_review_current_content_and_versioned_actions(mode):
                 # Re-review against the new question version records a new anchor.
                 content=await db.get(SeoContentAsset,answer['content_id']);content.status='review';await db.commit()
                 with patch('app.api.seo_cockpit.metric_values',new=AsyncMock(return_value={'seo.content.published_7d_count':0})):
-                    await api.review_batch_answer(batch.id,answer['id'],decision.model_copy(update={'question_version':2}),CTX,db)
+                    await api.review_batch_answer(batch.id,answer['id'],decision.model_copy(update={'question_version':2}),AuthContext(8,'reviewer','operator',1,{'seo.content':'edit'}),db)
                 assert (await api.export_batch(batch.id,1,1,'approved',CTX,db))['included_count']==1
                 f=await db.get(SeoQaFact,fact['id']);f.status='retired';await db.commit()
                 with pytest.raises(HTTPException): await api.export_batch(batch.id,1,1,'approved',CTX,db)
@@ -953,7 +971,7 @@ def test_full_batch_and_concurrent_review_requests():
             answer_id=batch['items'][0]['answer_id']
         async def review(action):
             async with sessions() as db:
-                try:return await api.review_batch_answer(a['id'],answer_id,api.BatchReviewDecision(tenant_id=1,site_id=1,content_version=1,question_version=1,action=action),CTX,db)
+                try:return await api.review_batch_answer(a['id'],answer_id,api.BatchReviewDecision(tenant_id=1,site_id=1,content_version=1,question_version=1,action=action),CTX if action=='submit' else AuthContext(8,'reviewer','operator',1,{'seo.content':'edit'}),db)
                 except HTTPException as exc:return exc.status_code
         with patch('app.api.seo_cockpit.metric_values',new=AsyncMock(return_value={'seo.content.published_7d_count':0})):
             for action in ['submit','approve']:
@@ -962,4 +980,52 @@ def test_full_batch_and_concurrent_review_requests():
         async with sessions() as db:
             events=list(await db.scalars(select(SeoContentReviewEvent)))
             assert len(events)==2 and [e.action for e in events]==['submit','approve']
+    database(scenario)
+
+
+@pytest.mark.parametrize('actor', [AuthContext(7,'superadmin','superadmin',None,{},True), AuthContext(None,'key','api_key',None,{},True)])
+def test_qa_self_approval_is_rejected_at_shared_review_endpoint(actor):
+    from app.api.seo import decide_content_review, ContentReviewDecision
+    async def scenario(sessions):
+        async with sessions() as db:
+            row=SeoContentAsset(tenant_id=1,site_id=1,title='review fixture',content_type='qa',draft='fixture',status='review',review_submitted_by=7)
+            db.add(row);await db.commit()
+            with pytest.raises(HTTPException) as exc:
+                await decide_content_review(row.id,1,ContentReviewDecision(decision='approve'),db,actor)
+            assert exc.value.status_code==403
+            assert row.status=='review'
+            assert not list(await db.scalars(select(SeoContentReviewEvent)))
+    database(scenario)
+
+
+def test_batch_retry_admission_and_active_history():
+    def row(key,status):
+        return SeoQaBatch(tenant_id=1,site_id=1,actor='7',request_key=key,request_hash='fixture',status=status,
+            items=[{'question_id':1,'title':'fixture','state':'failed','draft':{'body':'saved'},'error':'fixture','answer_id':None}])
+    async def scenario(sessions):
+        async with sessions() as db:
+            paused=row('paused','paused');db.add(paused);await db.commit()
+            old=row('old','completed');db.add_all([old]+[row(str(i),'completed') for i in range(20)]+[row('active1','queued'),row('active2','running')]);await db.commit()
+            bid=old.id;paused_id=paused.id
+            history=await api.list_batches(1,1,CTX,db)
+            assert len(history['items'])==23 and paused.id in [r['id'] for r in history['items']]
+            with pytest.raises(HTTPException) as exc:
+                await api.control_batch(bid,api.BatchCommand(tenant_id=1,site_id=1,action='retry'),CTX,db)
+            assert exc.value.status_code==409
+            await db.rollback()
+        reviewer=AuthContext(8,'reviewer','operator',1,{'seo.content':'edit'})
+        async with sessions() as db:
+            assert not (await api.get_batch(bid,1,1,reviewer,db))['can_control']
+            with pytest.raises(HTTPException): await api.control_batch(bid,api.BatchCommand(tenant_id=1,site_id=1,action='retry'),reviewer,db)
+        async with sessions() as db:
+            await api.control_batch(paused_id,api.BatchCommand(tenant_id=1,site_id=1,action='cancel'),CTX,db)
+        async def retry(batch_id):
+            async with sessions() as db:
+                try: return await api.control_batch(batch_id,api.BatchCommand(tenant_id=1,site_id=1,action='retry'),CTX,db)
+                except HTTPException as exc: return exc.status_code
+        async with sessions() as db:
+            other=row('retry-other','completed');db.add(other);await db.commit();other_id=other.id
+        results=await asyncio.gather(retry(bid),retry(other_id))
+        assert sum(r==409 for r in results if isinstance(r,int))==1
+        assert sum(isinstance(r,dict) and r['status']=='queued' for r in results)==1
     database(scenario)
