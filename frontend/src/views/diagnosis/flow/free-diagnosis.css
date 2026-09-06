@@ -9,3 +9,60 @@
 @keyframes fd-spin{to{transform:rotate(360deg)}}
 @media(max-width:700px){.free-diagnosis .fd-header{padding:18px 20px;gap:12px}.free-diagnosis .fd-header>span{font-size:11px}.free-diagnosis .fd-body{padding:46px 22px}.free-diagnosis h1{font-size:32px}.free-diagnosis .fd-intro{font-size:14px}.free-diagnosis .fd-url{flex-direction:column;gap:6px}.free-diagnosis .fd-url input{width:100%;font-size:16px}.free-diagnosis .fd-capabilities{grid-template-columns:repeat(2,1fr);margin-top:44px;gap:22px}.free-diagnosis .fd-editor{grid-template-columns:1fr}.free-diagnosis .fd-results{gap:12px}.free-diagnosis .fd-results strong{font-size:34px}.free-diagnosis .fd-results small{font-size:11px}.free-diagnosis .fd-actions>*{width:100%}.free-diagnosis .fd-centered{margin-top:20px}.free-diagnosis dl>div{grid-template-columns:65px 1fr;gap:10px}}
 @media(prefers-reduced-motion:reduce){.free-diagnosis *{animation:none!important;transition:none!important}}
+
+/* Keep the website entry within a typical desktop viewport without clipping.
+   Recognition, confirmation, progress and the report keep their own spacing. */
+.free-diagnosis:has(.fd-entry) {
+  min-height: 100svh;
+}
+.free-diagnosis:has(.fd-entry) .fd-header {
+  margin: 0 auto;
+  padding-block: clamp(14px, 2.4svh, 24px);
+}
+.free-diagnosis:has(.fd-entry) .fd-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-block: clamp(16px, 2.5svh, 36px);
+}
+.free-diagnosis .fd-entry .fd-eyebrow {
+  margin-bottom: clamp(12px, 2svh, 20px);
+}
+.free-diagnosis .fd-entry h1 {
+  font-size: clamp(36px, min(4.2vw, 6.5svh), 58px);
+  line-height: 1.25;
+  margin-bottom: clamp(16px, 2.8svh, 26px);
+}
+.free-diagnosis .fd-entry .fd-intro {
+  margin-bottom: 0;
+}
+.free-diagnosis .fd-entry .fd-url {
+  margin-top: clamp(20px, 3.4svh, 32px);
+}
+.free-diagnosis .fd-entry .fd-note {
+  margin-block: 12px 0;
+}
+.free-diagnosis .fd-entry .fd-capabilities {
+  margin-top: clamp(24px, 4svh, 40px);
+  padding-top: clamp(16px, 2.5svh, 24px);
+}
+.free-diagnosis .fd-entry .fd-capabilities h2 {
+  margin-block: 8px 6px;
+}
+.free-diagnosis .fd-entry .fd-capabilities p {
+  margin: 0;
+}
+.free-diagnosis:has(.fd-entry) .fd-footer {
+  padding-block: 12px;
+}
+@media (max-width: 700px) {
+  .free-diagnosis:has(.fd-entry) .fd-body {
+    padding-block: 24px;
+  }
+  .free-diagnosis .fd-entry h1 {
+    font-size: clamp(28px, 6.5vw, 40px);
+  }
+  .free-diagnosis .fd-entry .fd-capabilities {
+    gap: 20px;
+  }
+}
