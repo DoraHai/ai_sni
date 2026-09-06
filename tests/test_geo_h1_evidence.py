@@ -98,3 +98,25 @@ def test_generation_accepts_grounded_rewrite():
         result = asyncio.run(generate_master_article(tenant_name='示例品牌', question='产品有什么特点？', facts=FACTS, brief={'industry':'工业传动','audience':'采购','intent':'scenario','content_type':'thought_leadership','cta':'咨询选型'},
                                              llm={'api_key': 'dummy', 'base_url': 'http://invalid', 'model': 'test'}))
         assert '港口' not in str(result)
+
+
+@pytest.mark.parametrize('text', [
+    '如果您正在为具体设备进行选型，建议预约诊断或咨询专业选型服务，以获取针对性的方案。',
+    '如需了解设备选型，请联系专业团队。',
+    '如有设备选型问题，请向专业团队咨询。',
+    '如何为具体设备进行选型？建议咨询专业团队。',
+])
+def test_conditional_consultation_is_not_an_equipment_example(text):
+    assert not ungrounded_claims(text, FACTS)
+    assert not any(row.get('level') == '高' for row in lint_draft(text, facts=FACTS))
+    assert not any(row['needs_fact'] for row in build_sentence_citations(text, FACTS))
+
+
+@pytest.mark.parametrize('text', [
+    '如长期高负荷运转的工业机械）对驱动系统的核心部件——工业齿轮箱提出了严苛要求。',
+    '如果您正在选型，该产品适用于矿业和港口。',
+    '如需了解设备，该结构可有效降低润滑劣化风险。',
+    '例如破碎机和搅拌机需要连续运行。',
+])
+def test_conditional_word_does_not_exempt_real_claims(text):
+    assert any(row['kind'] == 'qualitative' for row in ungrounded_claims(text, FACTS))
