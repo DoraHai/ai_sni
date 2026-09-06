@@ -131,9 +131,10 @@ downgrade or a pre-migration database snapshot; changing code symlinks alone is
 not a database rollback.
 
 
-## Shared SemTask revision compatibility review — 2026-09-06 (DRAFT)
+## Shared SemTask revision compatibility review — 2026-09-06 (framework release)
 
-This proposal must not be merged/deployed or used to authorize a migration yet.
+The user authorized merging and deploying the current-only compatibility framework.
+This release does not authorize a shared migration or accept its unassigned target.
 The current database and SEO baseline are `0094_seo_qa_batches`. No SemTask target
 revision, parent, migration file or responsible shared-migration owner has been
 confirmed. `0094_seo_qa_batches` is a candidate parent based on the current single
@@ -163,17 +164,18 @@ version-table writes, customer-row reads, service changes or deployment were use
 An initial test implementation confused SMALLINT with INTEGER inheritance; this
 was corrected before PR and covered by a dedicated regression test.
 
-Completion gates:
+Remaining gates for accepting the SemTask migration target:
 
 1. The shared migration owner identifies the exact target revision/down_revision,
    migration source commit and reviewed additive DDL (including lineage evidence).
-2. Review compatibility and add only that exact target to the allowlist in this PR;
+2. Review compatibility and add only that exact target to the allowlist in a follow-up PR;
    replace/supplement the test-only target case with a test for the actual value.
 3. Test current and target structures, missing critical fields, unknown and multiple
    revision rows. The current unit tests exercise the algorithm only; they are not
    acceptance of an unassigned SemTask target or execution of its migration.
 4. Independently authorize deployment of the compatibility release, then independently
-   authorize the shared migration. This PR grants neither approval. Do not roll the
+   authorize the shared migration. The current framework release does not satisfy
+   target-version compatibility or authorize database changes. Do not roll the
    application back to a 0094-only health checker after advancing the database;
    retain an explicitly compatible rollback release, and do not stamp/downgrade the
    shared version table to make an incompatible application look healthy.
