@@ -4,7 +4,8 @@ This process intentionally mounts only GEO routes. Deploying or restarting it
 does not restart the SEM scheduler or expose unrelated SEM endpoints.
 """
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,6 +26,20 @@ from app.security.prod_guard import enforce_production_secrets
 settings = get_settings()
 
 
+async def _supervise_stale_reconciliation() -> None:
+    """Run recovery even when this process does not own the scheduler lock."""
+    from app.geo.content.geo_scheduler import run_geo_stale_reconciliation
+
+    while True:
+        await asyncio.sleep(60)
+        try:
+            await run_geo_stale_reconciliation()
+        except Exception:  # noqa: BLE001
+            import logging
+
+            logging.getLogger("geo-api").exception("stale reconciliation tick failed")
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     # Productization must-do: refuse demo keys when APP_ENV=prod|production
@@ -41,10 +56,26 @@ async def _lifespan(_app: FastAPI):
         import logging
 
         logging.getLogger("geo-api").exception("async job recover on startup failed")
+    try:
+        from app.geo.content.patrol import recover_patrol_runs_on_startup
+
+        stats = await recover_patrol_runs_on_startup()
+        if any(stats.values()):
+            import logging
+
+            logging.getLogger("geo-api").info("patrol recover: %s", stats)
+    except Exception:  # noqa: BLE001 — never block API boot
+        import logging
+
+        logging.getLogger("geo-api").exception("patrol recover on startup failed")
     start_geo_scheduler()
+    stale_supervisor = asyncio.create_task(_supervise_stale_reconciliation())
     try:
         yield
     finally:
+        stale_supervisor.cancel()
+        with suppress(asyncio.CancelledError):
+            await stale_supervisor
         shutdown_geo_scheduler()
 
 
