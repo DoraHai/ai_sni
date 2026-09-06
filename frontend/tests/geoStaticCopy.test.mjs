@@ -31,6 +31,7 @@ const editor = clickHandler('editor.html', "document.getElementById('btnCopyActi
 const channels = clickHandler('channels.html', "tr.querySelector('button').onclick")
 const apiSource = readFileSync(new URL(base + 'assets/geo-api-v1.js', import.meta.url), 'utf8')
 const preview = find(parse(apiSource), n => n.type === 'ObjectProperty' && n.key?.name === 'previewVariantExport').value
+const registration = find(parse(apiSource), n => n.type === 'ObjectProperty' && n.key?.name === 'exportVariant').value
 
 function setup(handler) {
   const requests = [], copied = [], messages = [], errors = []
@@ -116,4 +117,38 @@ test('a late copy read cannot replace clipboard after customer switch', async ()
   await pending
   assert.equal(s.copied.length, 0)
   assert.match(s.errors[0], /页面已切换/)
+})
+
+test('legacy HTML two-argument copy call rejects before any network or clipboard work', async () => {
+  const s = setup(editor)
+  vm.runInContext('GeoAPI.exportVariant = ' + apiSource.slice(registration.start, registration.end), s.context)
+  // Reproduce the actual a22263c08461 editor/channels call contract, verified
+  // against the three deployed file hashes. Do not require old git history in CI.
+  vm.runInContext(`async function legacyCopy() {
+    var data = await GeoAPI.exportVariant(taskId, 'website');
+    await navigator.clipboard.writeText('# ' + data.title + '\\n\\n' + data.body_markdown);
+    task = await GeoAPI.getTask(taskId);
+    renderAll();
+  }`, s.context)
+  await assert.rejects(s.context.legacyCopy(), /刷新页面/)
+  assert.equal(s.requests.length, 0)
+  assert.equal(s.copied.length, 0)
+})
+
+test('registration rejects malformed revisions without GET fallback or auto-fetch', async () => {
+  const s = setup(editor)
+  vm.runInContext('GeoAPI.exportVariant = ' + apiSource.slice(registration.start, registration.end), s.context)
+  for (const revision of [undefined, null, '', {}, 42, 'a'.repeat(63), 'g'.repeat(64), 'A'.repeat(64)]) {
+    await assert.rejects(s.context.GeoAPI.exportVariant(14, 'website', revision), /刷新页面/)
+  }
+  assert.equal(s.requests.length, 0)
+})
+
+test('valid saved revision still performs one explicit POST', async () => {
+  const s = setup(editor)
+  vm.runInContext('GeoAPI.exportVariant = ' + apiSource.slice(registration.start, registration.end), s.context)
+  await s.context.GeoAPI.exportVariant(14, 'website', 'a'.repeat(64))
+  assert.deepEqual(s.requests, [{ path: '/content-tasks/14/export', options: {
+    method: 'POST', body: { expected_revision: 'a'.repeat(64) }, query: { tenant_id: 1, channel: 'website' },
+  } }])
 })

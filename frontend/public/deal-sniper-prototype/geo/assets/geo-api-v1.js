@@ -427,6 +427,9 @@
       });
     },
     exportVariant: function (id, channel, expectedRevision) {
+      if (typeof expectedRevision !== 'string' || !/^[0-9a-f]{64}$/.test(expectedRevision)) {
+        return Promise.reject(new Error('页面版本已变化，请刷新页面后重新导出'));
+      }
       return api('/content-tasks/' + id + '/export', {
         method: 'POST',
         body: { expected_revision: expectedRevision },
