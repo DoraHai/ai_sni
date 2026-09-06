@@ -321,7 +321,7 @@ def test_deployed_login_and_seo_distribution_heads_are_merged() -> None:
 
 def test_seo_workflows_require_the_current_reviewed_migration_head() -> None:
     root = Path(__file__).parents[1]
-    expected = "0093_seo_qa (head)"
+    expected = "0094_seo_qa_batches (head)"
     baseline = (root / ".github/workflows/seo-baseline-check.yml").read_text(encoding="utf-8")
     production = (root / ".github/workflows/production-seo-deploy.yml").read_text(encoding="utf-8")
     assert expected in baseline
