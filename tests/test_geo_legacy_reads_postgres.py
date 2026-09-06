@@ -1,6 +1,8 @@
 """Approved legacy query fixes, exercised with real SQL and fixture identity."""
 import asyncio
 import os
+from datetime import datetime
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select, text
@@ -8,6 +10,56 @@ from sqlalchemy import select, text
 from test_geo_read_http_postgres import environment
 
 pytestmark = pytest.mark.skipif(not os.getenv('GEO_TEST_POSTGRES_URL'), reason='requires isolated PostgreSQL')
+
+
+def test_legacy_progress_gets_are_read_only_and_background_recovery_persists():
+    from app.geo.content.async_jobs import reconcile_stale_jobs_background
+    from app.geo.content.patrol import reconcile_stale_patrol_runs_background
+
+    async def run():
+        async with environment(legacy_routes=True) as (client, engine, tables, identity):
+            old = datetime(2020, 1, 1)
+            async with engine.begin() as conn:
+                await conn.execute(tables['tenants'].insert().values(id=1, name='fixture'))
+                await conn.execute(tables['tenant_modules'].insert().values(
+                    tenant_id=1, module_code='geo', status='active'))
+                await conn.execute(tables['geo_content_tasks'].insert().values(
+                    id=14, tenant_id=1, prompt_id=1, title='fixture', status='generating', updated_at=old))
+                await conn.execute(tables['geo_async_jobs'].insert().values(
+                    id=9, tenant_id=1, kind='generate_article', status='running',
+                    ref_type='content_task', ref_id=14, created_at=old, started_at=old))
+                await conn.execute(tables['geo_visibility_patrol_runs'].insert().values(
+                    id=7, tenant_id=1, status='running', trigger='manual', created_at=old, started_at=old))
+
+            paths = ('/async-jobs', '/async-jobs/9', '/visibility-patrol/runs', '/visibility-patrol/runs/7')
+            for path in paths:
+                response = await client.get('/api/v1/geo' + path, params={'tenant_id': 1})
+                assert response.status_code == 200, (path, response.text)
+                payload = response.json()
+                item = payload['items'][0] if path in {
+                    '/async-jobs', '/visibility-patrol/runs'
+                } else payload
+                assert item['status'] == item['stored_status'] == 'running'
+                assert item['stale'] and item['reconciliation'] == 'background'
+
+            async with engine.connect() as conn:
+                assert await conn.scalar(select(tables['geo_async_jobs'].c.status)) == 'running'
+                assert await conn.scalar(select(tables['geo_visibility_patrol_runs'].c.status)) == 'running'
+                assert await conn.scalar(select(tables['geo_content_tasks'].c.status)) == 'generating'
+
+            with (
+                patch('app.database.engine', engine),
+                patch('app.database.async_session_factory', identity['sessions']),
+            ):
+                assert (await reconcile_stale_jobs_background())['failed_jobs'] == 1
+                assert (await reconcile_stale_patrol_runs_background())['failed_runs'] == 1
+
+            async with engine.connect() as conn:
+                assert await conn.scalar(select(tables['geo_async_jobs'].c.status)) == 'failed'
+                assert await conn.scalar(select(tables['geo_visibility_patrol_runs'].c.status)) == 'failed'
+                assert await conn.scalar(select(tables['geo_content_tasks'].c.status)) == 'editing'
+
+    asyncio.run(run())
 
 
 def test_readiness_reports_orphans_without_assigning_and_write_helper_still_assigns():

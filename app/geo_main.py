@@ -47,6 +47,18 @@ async def _lifespan(_app: FastAPI):
         import logging
 
         logging.getLogger("geo-api").exception("async job recover on startup failed")
+    try:
+        from app.geo.content.patrol import recover_patrol_runs_on_startup
+
+        stats = await recover_patrol_runs_on_startup()
+        if any(stats.values()):
+            import logging
+
+            logging.getLogger("geo-api").info("patrol recover: %s", stats)
+    except Exception:  # noqa: BLE001 — never block API boot
+        import logging
+
+        logging.getLogger("geo-api").exception("patrol recover on startup failed")
     start_geo_scheduler()
     followup_supervisor = asyncio.create_task(supervise_geo_followups())
     try:

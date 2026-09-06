@@ -64,7 +64,7 @@ def test_startup_skips_job_owned_by_another_worker():
         async def busy(job_id):
             yield None
         row = SimpleNamespace(id=1, status='running')
-        session = SimpleNamespace(scalars=AsyncMock(return_value=[row]), refresh=AsyncMock(), commit=AsyncMock())
+        session = SimpleNamespace(scalars=AsyncMock(side_effect=[[row], []]), refresh=AsyncMock(), commit=AsyncMock())
         @asynccontextmanager
         async def factory():
             yield session
