@@ -38,6 +38,10 @@ set and its descendants, including when the new result is empty or fails. A new
 publication read likewise revokes the prior publication and attempt set for that
 content. This prevents paging, filtering, deletion, or a late child response from
 turning a record that was once observed into a permanent authorization cache.
+The host must clear the corresponding rendered detail panel, selected object and
+conversation-derived references when it starts one of these refreshes. Clearing
+the consumer's internal maps cannot remove data that the host already copied into
+the DOM or another UI store.
 
 `snapshot()` keeps review, publication, page checking and search performance
 separate. Page `assessment_state=assessed` does not become a whole-page pass;
