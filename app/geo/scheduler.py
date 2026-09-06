@@ -185,12 +185,6 @@ def start_geo_scheduler() -> None:
         max_instances=1,
         coalesce=True,
     )
-    from app.geo.publication_monitor import run_monitor_batch
-    from app.geo.outcome_review import run_outcome_reviews
-    geo_scheduler.add_job(run_monitor_batch, CronTrigger(minute='*/10'),
-                          id='geo_publication_monitor', replace_existing=True, max_instances=1, coalesce=True)
-    geo_scheduler.add_job(run_outcome_reviews, CronTrigger(hour=9, minute=15),
-                          id='geo_outcome_reviews', replace_existing=True, max_instances=1, coalesce=True)
     geo_scheduler.start()
     logger.info("[geo-scheduler] started")
 
@@ -200,3 +194,24 @@ def shutdown_geo_scheduler() -> None:
     if geo_scheduler.running:
         geo_scheduler.shutdown(wait=False)
     _release_scheduler_lock()
+
+
+def start_geo_followup_scheduler() -> bool:
+    """Only the independent GEO process starts followups, using its own file lock.
+
+    The shared content scheduler may be owned by the main service. Do not depend
+    on that process adopting a GEO-only release, or start a second patrol job.
+    """
+    if geo_scheduler.running:
+        return True
+    if not _acquire_scheduler_lock():
+        return False
+    from app.geo.publication_monitor import run_monitor_batch
+    from app.geo.outcome_review import run_outcome_reviews
+    geo_scheduler.add_job(run_monitor_batch, CronTrigger(minute='*/10', timezone=ZoneInfo('Asia/Shanghai')),
+                          id='geo_publication_monitor', replace_existing=True, max_instances=1, coalesce=True)
+    geo_scheduler.add_job(run_outcome_reviews, CronTrigger(hour=9, minute=15, timezone=ZoneInfo('Asia/Shanghai')),
+                          id='geo_outcome_reviews', replace_existing=True, max_instances=1, coalesce=True)
+    geo_scheduler.start()
+    logger.info('[geo-followup-scheduler] started publication monitoring and outcome reviews')
+    return True

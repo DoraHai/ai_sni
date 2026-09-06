@@ -20,6 +20,11 @@ from app.geo.content.geo_scheduler import (
     shutdown_geo_scheduler,
     start_geo_scheduler,
 )
+from app.geo.scheduler import (
+    geo_scheduler as followup_scheduler,
+    start_geo_followup_scheduler,
+    shutdown_geo_scheduler as shutdown_geo_followup_scheduler,
+)
 from app.security.prod_guard import enforce_production_secrets
 
 settings = get_settings()
@@ -42,9 +47,11 @@ async def _lifespan(_app: FastAPI):
 
         logging.getLogger("geo-api").exception("async job recover on startup failed")
     start_geo_scheduler()
+    start_geo_followup_scheduler()
     try:
         yield
     finally:
+        shutdown_geo_followup_scheduler()
         shutdown_geo_scheduler()
 
 
@@ -78,4 +85,5 @@ async def geo_health(response: Response) -> dict:
         "db": db_status,
         "db_error": db_error,
         "geo_scheduler": scheduler_status(),
+        "geo_followup_scheduler": "running" if followup_scheduler.running else "standby",
     }
