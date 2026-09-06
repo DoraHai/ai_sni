@@ -1000,3 +1000,11 @@ export async function downloadGeoDeliverablesMarkdown(tenantId, params = {}) {
   })
   return typeof data === 'string' ? data : String(data ?? '')
 }
+
+export function listGeoDeliveries(taskId, tenantId) {
+  return client.get(`/api/v1/geo/content-tasks/${taskId}/deliveries`, { params: { tenant_id: tenantId } })
+}
+
+export function resolveGeoDelivery(taskId, variantId, key, payload) {
+  return client.post(`/api/v1/geo/content-tasks/${taskId}/deliveries/${variantId}/${key}/resolve`, payload)
+}

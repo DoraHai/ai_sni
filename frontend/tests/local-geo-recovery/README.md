@@ -1,0 +1,1 @@
+运行 `node frontend/tests/local-geo-evidence/server.mjs`，访问 `http://127.0.0.1:5278/tests/local-geo-recovery/index.html`。全部请求由内存适配器处理；用于检查核对失败保留输入、允许重试记录以及客户切换隔离。

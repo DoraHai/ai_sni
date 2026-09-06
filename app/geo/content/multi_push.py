@@ -343,9 +343,13 @@ async def execute_single_push(session, *, task, variant, channel_row, account, m
     else:
         raise ValueError("账号鉴权类型与发布渠道不匹配")
 
+    from uuid import uuid4
+    reservation_id = uuid4().hex
+
     def record(state, **extra):
         current_journal = dict((variant.adapt_meta or {}).get("push_deliveries") or {})
-        current_journal[key] = {"state": state, "account_id": account.id, "mode": mode,
+        current_journal[key] = {"recovery_history": (current_journal.get(key) or {}).get("recovery_history", []),
+                        "reservation_id": reservation_id, "state": state, "account_id": account.id, "mode": mode,
                         "article_id": article.id, "updated_at": datetime.utcnow().isoformat(), **extra}
         variant.adapt_meta = {**(variant.adapt_meta or {}), "push_deliveries": current_journal}
 
@@ -354,6 +358,9 @@ async def execute_single_push(session, *, task, variant, channel_row, account, m
     await session.commit()
     await session.refresh(task, with_for_update=True)
     await session.refresh(variant)
+    reservation = ((variant.adapt_meta or {}).get("push_deliveries") or {}).get(key) or {}
+    if reservation.get("reservation_id") != reservation_id or reservation.get("state") != "sending":
+        raise ValueError("发布记录已被核对或恢复，本次请求不再发送，请刷新状态")
     current_article = await _latest_article(session, task.id)
     if (task.review_status != "approved" or current_article is None or current_article.id != article.id
             or delivery_key(task, variant, account, mode) != key):

@@ -18,6 +18,7 @@ from app.geo.content.bridge import (
     create_task_from_diagnosis,
     editor_path,
 )
+from app.geo.content.delivery_recovery import DeliveryResolution, delivery_items, resolve_delivery
 from app.geo.content.gate import PublishGateError, assert_can_publish
 from app.geo.content.generate_article import (
     generate_master_article,
@@ -7986,6 +7987,31 @@ async def record_publication(
     await session.commit()
     await session.refresh(task)
     return await _task_payload(session, task, detail=True)
+
+
+@router.get("/content-tasks/{task_id}/deliveries")
+async def list_task_deliveries(task_id: int, tenant_id: int = Query(...),
+    ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session)) -> dict:
+    ctx.ensure_tenant(tenant_id)
+    task = await _get_task(session, task_id, tenant_id)
+    return {"items": delivery_items(await _variants(session, task.id))}
+
+
+@router.post("/content-tasks/{task_id}/deliveries/{variant_id}/{delivery_id}/resolve")
+async def resolve_task_delivery(task_id: int, variant_id: int, delivery_id: str, req: DeliveryResolution,
+    ctx: AuthContext = Depends(require_scoped_auth), session: AsyncSession = Depends(get_session)) -> dict:
+    ctx.ensure_tenant(req.tenant_id)
+    task = await _get_task(session, task_id, req.tenant_id)
+    await session.refresh(task, with_for_update=True)
+    variant = await session.scalar(select(GeoChannelVariant).where(
+        GeoChannelVariant.id == variant_id, GeoChannelVariant.task_id == task.id))
+    if variant is None:
+        raise HTTPException(404, "发布记录不存在")
+    entry = ((variant.adapt_meta or {}).get("push_deliveries") or {}).get(delivery_id) or {}
+    account = await session.scalar(select(GeoChannelAccount).where(
+        GeoChannelAccount.id == entry.get("account_id"), GeoChannelAccount.tenant_id == req.tenant_id))
+    return await resolve_delivery(session, task=task, variant=variant, account=account,
+                                  key=delivery_id, req=req, user_id=ctx.user_id)
 
 
 @router.get("/content-tasks/{task_id}/push-targets")

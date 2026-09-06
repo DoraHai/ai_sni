@@ -117,3 +117,27 @@ def test_sibling_reservation_is_preserved_when_result_is_saved():
     with patches(args,AsyncMock(side_effect=send)):
         asyncio.run(execute_single_push(session,**args))
     assert args['variant'].adapt_meta['push_deliveries']['sibling']['state']=='sending'
+
+
+def test_recovery_revokes_reserved_sender_before_external_send():
+    session,args=setup_case();send=AsyncMock();calls=0
+    async def refresh(row,**kwargs):
+        nonlocal calls
+        if row is args['task']:
+            calls+=1
+            if calls==2:
+                entry=next(iter(args['variant'].adapt_meta['push_deliveries'].values()))
+                entry.update(state='failed',reason='operator_confirmed_not_published')
+    session.refresh.side_effect=refresh
+    with patches(args,send),pytest.raises(ValueError):asyncio.run(execute_single_push(session,**args))
+    send.assert_not_awaited()
+    assert next(iter(args['variant'].adapt_meta['push_deliveries'].values()))['reason']=='operator_confirmed_not_published'
+
+
+def test_retry_keeps_operator_recovery_history():
+    session,args=setup_case();send=AsyncMock(return_value={'ok':True})
+    key=delivery_key(args['task'],args['variant'],args['account'],'publish')
+    history=[{'action':'allow_retry','user_id':9,'note':'checked platform'}]
+    args['variant'].adapt_meta={'push_deliveries':{key:{'state':'failed','recovery_history':history}}}
+    with patches(args,send):asyncio.run(execute_single_push(session,**args))
+    assert args['variant'].adapt_meta['push_deliveries'][key]['recovery_history']==history

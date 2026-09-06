@@ -10,6 +10,7 @@ import {
   publishGeoVariant,
   pushGeoVariantWebhook,
 } from '../../api/geoContent'
+import GeoDeliveryRecovery from '../../components/GeoDeliveryRecovery.vue'
 import GeoWorkbenchPage from '../../components/GeoWorkbenchPage.vue'
 import { useGeoTenant } from '../../composables/useGeoTenant'
 import { pushBlockLabels } from '../../utils/geoPushBlockers'
@@ -238,6 +239,7 @@ onMounted(load)
           </el-table>
         </div>
       </section>
+      <GeoDeliveryRecovery :tenant-id="tenantId" :task-id="taskId" @resolved="load" />
       <section class="gd-card" :class="{ focus: focusMode === 'manual' }">
         <div class="gd-hd"><h3>URL 回填</h3></div>
         <div class="actions">
